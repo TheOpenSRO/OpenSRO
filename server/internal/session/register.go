@@ -1,0 +1,94 @@
+package session
+
+import (
+	"context"
+	"errors"
+
+	"github.com/OpenSRO/srrevamp/server/internal/account"
+	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/proto"
+)
+
+// Opcodes for account registration, our own protocol (see login.go).
+const (
+	OpRegister       uint16 = 0x0003 // client -> server
+	OpRegisterResult uint16 = 0x0004 // server -> client
+)
+
+// RegisterRequest is the OpRegister payload. Same shape as LoginRequest
+// today, kept as a distinct type since registration will likely grow fields
+// (email, etc.) that login never needs.
+type RegisterRequest struct {
+	Username string
+	Password string
+}
+
+func (r *RegisterRequest) Encode() []byte { return encodeStrings(r.Username, r.Password) }
+
+func DecodeRegisterRequest(data []byte) (*RegisterRequest, error) {
+	fields, err := decodeStrings(data, 2)
+	if err != nil {
+		return nil, err
+	}
+	return &RegisterRequest{Username: fields[0], Password: fields[1]}, nil
+}
+
+// RegisterResult is the OpRegisterResult payload. Same shape as LoginResult;
+// kept distinct for the same reason as RegisterRequest.
+type RegisterResult struct {
+	OK     bool
+	Reason string
+}
+
+func (r *RegisterResult) Encode() []byte {
+	out := make([]byte, 0, 3+len(r.Reason))
+	if r.OK {
+		out = append(out, 1)
+	} else {
+		out = append(out, 0)
+	}
+	return append(out, encodeStrings(r.Reason)...)
+}
+
+func DecodeRegisterResult(data []byte) (*RegisterResult, error) {
+	if len(data) < 1 {
+		return nil, errors.New("session: decoding RegisterResult: empty payload")
+	}
+	fields, err := decodeStrings(data[1:], 1)
+	if err != nil {
+		return nil, err
+	}
+	return &RegisterResult{OK: data[0] != 0, Reason: fields[0]}, nil
+}
+
+// RegisterHandler returns a gateway.Handler implementing account
+// registration against reg. Unrecognized opcodes are ignored, same
+// convention as LoginHandler.
+func RegisterHandler(reg account.Registerer) gateway.Handler {
+	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		if p.Opcode != OpRegister {
+			return nil
+		}
+
+		req, err := DecodeRegisterRequest(p.Data)
+		if err != nil {
+			return sess.Send(&proto.Packet{
+				Opcode: OpRegisterResult,
+				Data:   (&RegisterResult{OK: false, Reason: "malformed request"}).Encode(),
+			})
+		}
+
+		result := &RegisterResult{OK: true}
+		if _, err := reg.Register(ctx, req.Username, req.Password); err != nil {
+			result.OK = false
+			switch {
+			case errors.Is(err, account.ErrUsernameTaken):
+				result.Reason = "username already taken"
+			default:
+				result.Reason = "registration failed"
+			}
+		}
+
+		return sess.Send(&proto.Packet{Opcode: OpRegisterResult, Data: result.Encode()})
+	}
+}

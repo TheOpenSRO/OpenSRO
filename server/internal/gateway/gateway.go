@@ -19,6 +19,21 @@ import (
 // closes that session's connection.
 type Handler func(ctx context.Context, sess *Session, p *proto.Packet) error
 
+// Chain combines multiple Handlers into one, calling each in order for
+// every packet. Each Handler is expected to check the opcode(s) it cares
+// about and no-op (return nil) otherwise — Chain itself does no opcode
+// routing. Stops and returns early on the first error.
+func Chain(handlers ...Handler) Handler {
+	return func(ctx context.Context, sess *Session, p *proto.Packet) error {
+		for _, h := range handlers {
+			if err := h(ctx, sess, p); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
 // Session is one accepted, live client connection.
 type Session struct {
 	conn net.Conn

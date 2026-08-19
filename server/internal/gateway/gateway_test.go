@@ -72,3 +72,44 @@ func TestServerEchoesPackets(t *testing.T) {
 		t.Fatalf("unexpected reply: %+v", reply)
 	}
 }
+
+func TestChainCallsEachHandlerInOrder(t *testing.T) {
+	var order []string
+	a := Handler(func(context.Context, *Session, *proto.Packet) error {
+		order = append(order, "a")
+		return nil
+	})
+	b := Handler(func(context.Context, *Session, *proto.Packet) error {
+		order = append(order, "b")
+		return nil
+	})
+
+	if err := Chain(a, b)(context.Background(), nil, &proto.Packet{}); err != nil {
+		t.Fatalf("Chain: %v", err)
+	}
+	if len(order) != 2 || order[0] != "a" || order[1] != "b" {
+		t.Fatalf("got call order %v, want [a b]", order)
+	}
+}
+
+func TestChainStopsOnFirstError(t *testing.T) {
+	wantErr := errTest("boom")
+	called := false
+	a := Handler(func(context.Context, *Session, *proto.Packet) error { return wantErr })
+	b := Handler(func(context.Context, *Session, *proto.Packet) error {
+		called = true
+		return nil
+	})
+
+	err := Chain(a, b)(context.Background(), nil, &proto.Packet{})
+	if err != wantErr {
+		t.Fatalf("got error %v, want %v", err, wantErr)
+	}
+	if called {
+		t.Fatal("expected Chain to stop after the first error, but second handler ran")
+	}
+}
+
+type errTest string
+
+func (e errTest) Error() string { return string(e) }

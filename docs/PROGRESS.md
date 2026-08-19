@@ -2,6 +2,17 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 10)
+
+- Closed the gap noted in the previous entry's TODO (a freshly started real server had no way to
+  create accounts to log into): added `account.Registerer` interface + `MemStore.Register`, and
+  `server/internal/session/register.go` (`OpRegister`/`OpRegisterResult`, same pattern as login).
+  Added `gateway.Chain` to combine multiple opcode handlers into one, since `gateway.Server.Handle`
+  is a single function — `cmd/server` now chains login + register. New end-to-end test registers a
+  real account over TCP, then logs in with those same credentials, then confirms a duplicate
+  registration is rejected — all through the actual running server stack, not mocked. All
+  packages build/vet/test/gofmt clean.
+
 ## 2026-08-19 (cont'd 9)
 
 - **Direction decision**: confirmed with OpenSRO that the new Go server and new Godot client only

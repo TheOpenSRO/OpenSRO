@@ -23,6 +23,10 @@ var ErrInvalidCredentials = errors.New("account: invalid username or password")
 // has the right password, but is currently blocked.
 var ErrBlocked = errors.New("account: account is blocked")
 
+// ErrUsernameTaken is returned by Registerer.Register when the requested
+// username already exists.
+var ErrUsernameTaken = errors.New("account: username already taken")
+
 // Account is one registered player account.
 type Account struct {
 	ID           int64
@@ -53,4 +57,14 @@ type Store interface {
 	// password is wrong, or ErrBlocked if the credentials are correct but
 	// the account is currently blocked.
 	Authenticate(ctx context.Context, username, password string) (*Account, error)
+}
+
+// Registerer is anything that can create new accounts. Kept separate from
+// Store so a read-mostly deployment (e.g. a world server that only ever
+// authenticates, never registers) can depend on just Store.
+type Registerer interface {
+	// Register creates a new account with the given username and plaintext
+	// password (hashed internally before storage). Returns ErrUsernameTaken
+	// if the username already exists.
+	Register(ctx context.Context, username, password string) (*Account, error)
 }

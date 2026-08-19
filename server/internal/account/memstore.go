@@ -18,15 +18,13 @@ func NewMemStore() *MemStore {
 	return &MemStore{byUser: make(map[string]*Account)}
 }
 
-// Add registers a new account with the given username and plaintext
-// password (hashed internally), returning the created Account. Returns an
-// error if the username is already taken.
-func (m *MemStore) Add(username, password string) (*Account, error) {
+// Register implements account.Registerer.
+func (m *MemStore) Register(_ context.Context, username, password string) (*Account, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if _, exists := m.byUser[username]; exists {
-		return nil, errAlreadyExists(username)
+		return nil, ErrUsernameTaken
 	}
 
 	hash, err := HashPassword(password)
@@ -38,6 +36,11 @@ func (m *MemStore) Add(username, password string) (*Account, error) {
 	acc := &Account{ID: m.nextID, Username: username, PasswordHash: hash}
 	m.byUser[username] = acc
 	return acc, nil
+}
+
+// Add is a test/dev convenience wrapper around Register.
+func (m *MemStore) Add(username, password string) (*Account, error) {
+	return m.Register(context.Background(), username, password)
 }
 
 // SetBlocked sets an existing account's blocked status and reason.
@@ -70,10 +73,6 @@ func (m *MemStore) Authenticate(_ context.Context, username, password string) (*
 	cp := *acc
 	return &cp, nil
 }
-
-type errAlreadyExists string
-
-func (e errAlreadyExists) Error() string { return "account: username already exists: " + string(e) }
 
 type errNotFound string
 
