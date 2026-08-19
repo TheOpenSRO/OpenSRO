@@ -17,6 +17,7 @@ import (
 
 func main() {
 	addr := flag.String("addr", ":15779", "listen address for the gateway service")
+	accountDB := flag.String("account-db", "accounts.db", "path to the SQLite database for accounts (use :memory: for an ephemeral one)")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -24,9 +25,16 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// TODO: swap for persistent Stores once they exist — MemStore state
-	// doesn't survive a restart.
-	accounts := account.NewMemStore()
+	accounts, err := account.OpenSQLStore(*accountDB)
+	if err != nil {
+		logger.Error("opening account database", "path", *accountDB, "error", err)
+		os.Exit(1)
+	}
+	defer accounts.Close()
+	logger.Info("account database ready", "path", *accountDB)
+
+	// TODO: character state still doesn't survive a restart — give it the
+	// same SQLite treatment as accounts once its schema settles.
 	chars := character.NewMemStore()
 	handle := gateway.Chain(
 		session.LoginHandler(accounts),

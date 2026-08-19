@@ -2,6 +2,25 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 13)
+
+- Closed the most-repeated TODO from earlier entries: `account.SQLStore` (`server/internal/account/sqlstore.go`)
+  is a real, persistent `Store`/`Registerer` backed by SQLite via the pure-Go `modernc.org/sqlite`
+  driver (no cgo, so it builds the same way everywhere). Own schema (see `db_schema.md`'s facts,
+  not the original's `TB_User` layout). Tests cover the same scenarios as `MemStore` plus one that
+  actually matters for a "persistent" store and wouldn't be caught by in-memory tests alone:
+  closing and reopening a file-backed database and confirming the account survives.
+  `cmd/server` now opens a real SQLite database by default (`-account-db` flag, `:memory:`
+  supported for ephemeral runs) instead of starting with an empty `MemStore` every time.
+  Character storage is still `MemStore` — noted as the next TODO now that accounts are solid.
+- Adding `modernc.org/sqlite` pulled in a transitive dependency requiring Go >= 1.25, which bumped
+  `go.mod`'s directive automatically. Caught a self-inflicted mistake here: manually reverting that
+  bump back to 1.22 (trying to "keep it minimal") broke the build in a confusing way — Go's
+  toolchain auto-upgrade only kicks in based on the module's own declared `go` line, not by
+  re-deriving it from dependencies at build time, so hand-editing it backwards after `go get` set
+  it correctly was wrong. Fixed by restoring `go 1.25.0` and bumping CI's pinned Go version to
+  match, rather than fighting the toolchain resolution.
+
 ## 2026-08-19 (cont'd 12)
 
 - Added character creation/selection, extending the same account -> session pattern:

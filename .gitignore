@@ -8,6 +8,10 @@ server/bin/
 *.exe
 *.test
 *.out
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 
 # Godot
 client/.godot/
