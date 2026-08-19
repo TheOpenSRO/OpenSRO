@@ -2,6 +2,30 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 9)
+
+- **Direction decision**: confirmed with OpenSRO that the new Go server and new Godot client only
+  need to speak a protocol they both define — no requirement to be wire-compatible with the
+  original, unmodified Joymax client. Written up in new `docs/protocol/PROTOCOL_DECISION.md`. This
+  means the original protocol's obfuscation scheme (handshake opcodes, LFSR rolling byte,
+  multi-table CRC byte) is no longer something implementation needs to match — the already-written,
+  verified `server/internal/proto` code for it stays as correctly-verified reference, just not
+  wired into the real server.
+  Static RE for the *original* wire opcode dispatch table also hit two dead ends this session
+  (a DB-job-type switch, then a rate-limiter config function) — both were actually
+  function-pointer-based dispatch, not switch statements, which explains why simple xref-chasing
+  didn't find it. Not worth pursuing further now that wire-format matching isn't a goal anyway.
+- Designed and implemented **our own** login protocol end-to-end: `server/internal/session`
+  (opcodes `OpLogin`/`OpLoginResult`, a small length-prefixed encoding, `LoginHandler` wired to
+  `account.Store`), plus a real end-to-end test that dials actual TCP through `gateway.Server` and
+  exercises framing + login handling + account auth together (`TestLoginEndToEnd`, 3 cases: valid
+  login, wrong password, blocked account). `cmd/server/main.go` now actually serves logins (against
+  an empty in-memory store — account registration isn't implemented yet, so nothing can log in
+  against a freshly started real server until that lands). All packages build/vet/test clean.
+- Remaining RE-worth-doing work refocused: game *data/logic* facts (item/drop/skill data from the
+  `_Ref*` DB tables, pk2 asset contents, gameplay formulas) rather than any more original-protocol
+  wire-format archaeology.
+
 ## 2026-08-19 (cont'd 8)
 
 - Implemented the handshake's LFSR-based seed derivation (`lfsrByte`, `DeriveSeed` in
