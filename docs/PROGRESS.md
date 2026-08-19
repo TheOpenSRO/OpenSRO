@@ -2,6 +2,23 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 24)
+
+- Closed the client/server parity gap: the last several rounds added inventory, equipment, shop,
+  and combat to the Go server's protocol, but the GDScript client had no code for any of them
+  (only login/character-select). Ported all four: `client/scripts/net/{inventory,equipment,shop,
+  combat}.gd`, matching each Go payload shape exactly. Wired all of it into the `NetClient`
+  autoload as new signals/methods.
+  Worth noting one real protocol shape discovered while wiring `NetClient`: `OpEquipmentResult`
+  covers list results *and* equip/unequip acks with the same opcode and payload shape (a successful
+  equip ack is just an empty items list) — there's no way for the client to distinguish "this is a
+  list response" from "this is my equip request's ack" at the opcode level. Went with a single
+  `equipment_result` signal reflecting that reality rather than inventing a false distinction the
+  wire format doesn't actually support.
+  Reconfirmed byte-exact wire compatibility for the three most structurally complex new payloads
+  (`AttackResult`, `EquipRequest`, `ShopBuyRequest`) by hex-diffing independently generated output
+  from the Go and GDScript sides. All 10 GDScript test suites pass headless; wired into CI.
+
 ## 2026-08-19 (cont'd 23)
 
 - Made combat two-directional: characters previously had no HP and monsters never fought back, so

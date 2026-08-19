@@ -25,6 +25,17 @@ signal entity_entered(snapshot: WorldNet.EntitySnapshot)
 signal entity_moved(moved: WorldNet.EntityMoved)
 signal entity_left(character_id: int)
 
+signal inventory_list_result(slots: Array, error: String)
+## Fires for OpEquipmentList AND for equip/unequip acks -- the server uses
+## one opcode/shape for all three (a successful equip/unequip ack just has
+## an empty items array). Callers that need to react to "my equip request
+## succeeded" specifically should track that they're awaiting one.
+signal equipment_result(items: Array, error: String)
+signal shop_buy_result(ok: bool, reason: String)
+signal attack_result(result: CombatNet.AttackResult)
+signal monster_damaged(damaged: CombatNet.MonsterDamaged)
+signal monster_died(monster_id: int)
+
 var _peer: StreamPeerTCP
 var _connecting := false
 
@@ -99,6 +110,24 @@ func enter_world(char_name: String) -> void:
 func move_to(x: float, y: float, z: float) -> void:
 	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z))
 
+func list_inventory(char_name: String) -> void:
+	_send(InventoryNet.OP_LIST, InventoryNet.encode_list_request(char_name))
+
+func list_equipment(char_name: String) -> void:
+	_send(EquipmentNet.OP_LIST, EquipmentNet.encode_list_request(char_name))
+
+func equip(char_name: String, slot: int, inventory_slot: int) -> void:
+	_send(EquipmentNet.OP_EQUIP, EquipmentNet.encode_equip(char_name, slot, inventory_slot))
+
+func unequip(char_name: String, slot: int) -> void:
+	_send(EquipmentNet.OP_UNEQUIP, EquipmentNet.encode_unequip(char_name, slot))
+
+func shop_buy(char_name: String, item_id: int, quantity: int) -> void:
+	_send(ShopNet.OP_BUY, ShopNet.encode_buy(char_name, item_id, quantity))
+
+func attack(char_name: String, target_monster_id: int) -> void:
+	_send(CombatNet.OP_ATTACK, CombatNet.encode_attack(char_name, target_monster_id))
+
 func _dispatch(p: Packet) -> void:
 	match p.opcode:
 		Auth.OP_LOGIN_RESULT:
@@ -124,5 +153,20 @@ func _dispatch(p: Packet) -> void:
 			entity_moved.emit(WorldNet.decode_entity_moved(p.data))
 		WorldNet.OP_ENTITY_LEFT:
 			entity_left.emit(WorldNet.decode_entity_left(p.data))
+		InventoryNet.OP_LIST_RESULT:
+			var r := InventoryNet.decode_list_result(p.data)
+			inventory_list_result.emit(r.slots, r.error)
+		EquipmentNet.OP_RESULT:
+			var r := EquipmentNet.decode_result(p.data)
+			equipment_result.emit(r.items, r.error)
+		ShopNet.OP_BUY_RESULT:
+			var r := ShopNet.decode_buy_result(p.data)
+			shop_buy_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		CombatNet.OP_ATTACK_RESULT:
+			attack_result.emit(CombatNet.decode_attack_result(p.data))
+		CombatNet.OP_MONSTER_DAMAGED:
+			monster_damaged.emit(CombatNet.decode_monster_damaged(p.data))
+		CombatNet.OP_MONSTER_DIED:
+			monster_died.emit(CombatNet.decode_monster_died(p.data))
 		_:
 			push_warning("NetClient: unhandled opcode 0x%04x" % p.opcode)
