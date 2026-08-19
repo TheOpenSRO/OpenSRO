@@ -112,6 +112,36 @@ func (h *Hub) EntitiesInZone(zone string) []Entity {
 	return out
 }
 
+// EntityBySession returns the entity currently associated with sessionID,
+// if it's in the world. Used by systems (e.g. chat) that need to know a
+// session's current character/zone without themselves tracking it.
+func (h *Hub) EntityBySession(sessionID uint64) (Entity, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	e, ok := h.bySession[sessionID]
+	if !ok {
+		return Entity{}, false
+	}
+	return *e, true
+}
+
+// FindByName returns the entity for the character named name, if they're
+// currently in the world (in any zone). Used for cross-zone lookups like
+// whispers, where the sender doesn't know or care which zone the target is
+// in.
+func (h *Hub) FindByName(name string) (Entity, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, e := range h.bySession {
+		if e.Name == name {
+			return *e, true
+		}
+	}
+	return Entity{}, false
+}
+
 // removeLocked removes a session's entity from both indexes. Caller must
 // hold h.mu.
 func (h *Hub) removeLocked(sessionID uint64) {

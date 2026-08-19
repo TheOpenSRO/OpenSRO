@@ -154,6 +154,7 @@ func main() {
 		session.UseSkillHandler(chars, eq, refItems, skills, hub, monsters),
 		session.PartyHandler(chars, parties),
 		session.GuildHandler(chars, guilds),
+		session.ChatHandler(hub),
 	)
 
 	worldDisconnect := session.WorldDisconnectHandler(hub)

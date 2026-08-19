@@ -2,6 +2,30 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 28)
+
+- Added a chat system: zone-wide "say" and cross-zone "whisper", the last piece of basic MMO
+  social infrastructure that was entirely missing (players could group up and guild up but had
+  no way to talk to each other). Deliberately lightweight: `session/chat.go` needs only
+  `world.Hub`, not `character.Store` -- a chatting session's identity and current zone come from
+  its existing `world.Hub` entity (added two small accessors, `EntityBySession` and `FindByName`,
+  rather than making callers re-resolve a character name they already established by entering the
+  world). Opcodes 0x00A0-0x00A4: `OpChatSay` broadcasts to everyone in the sender's zone
+  (including the sender itself, so the sender's own client renders it the same way as everyone
+  else's -- no separate "local echo" path to keep in sync); `OpChatWhisper` looks the target up
+  by name across all zones and delivers directly to their session, with an explicit ack back to
+  the sender (`OK` or a reason like "player not found") rather than silently dropping whispers to
+  offline/nonexistent players.
+  Full flow tested end-to-end over two real TCP connections: both characters enter the same zone,
+  a Say from one is received by both (including the sender, verified as a distinct read from the
+  sender's own connection, not inferred), a Whisper is received only by its target with a
+  separate delivery ack for the sender, and whispering a name that isn't in the world returns a
+  clear failure reason instead of hanging.
+  Ported to GDScript (`chat.gd` + test), wired into `NetClient`, reconfirmed byte-exact wire
+  compatibility for `ChatMessage` and `ChatWhisperRequest` via independent Go/GDScript hex
+  generation. All 14 GDScript suites pass headless; wired into CI. Full Go test suite green;
+  server binary smoke-tested with chat wired in.
+
 ## 2026-08-19 (cont'd 27)
 
 - Added a guild system, distinct from party in one deliberate way: parties (`internal/party`)

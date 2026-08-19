@@ -47,6 +47,10 @@ signal guild_create_result(result: GuildNet.Result)
 signal guild_join_result(result: GuildNet.Result)
 signal guild_leave_result(ok: bool, reason: String)
 
+signal chat_message(message: ChatNet.Message)
+signal chat_whisper_result(ok: bool, reason: String)
+signal chat_whisper_message(message: ChatNet.Message)
+
 var _peer: StreamPeerTCP
 var _connecting := false
 
@@ -165,6 +169,12 @@ func join_guild(char_name: String, guild_id: int) -> void:
 func leave_guild(char_name: String) -> void:
 	_send(GuildNet.OP_LEAVE, GuildNet.encode_name_request(char_name))
 
+func say(message_text: String) -> void:
+	_send(ChatNet.OP_SAY, ChatNet.encode_say(message_text))
+
+func whisper(target_name: String, message_text: String) -> void:
+	_send(ChatNet.OP_WHISPER, ChatNet.encode_whisper(target_name, message_text))
+
 func _dispatch(p: Packet) -> void:
 	match p.opcode:
 		Auth.OP_LOGIN_RESULT:
@@ -226,5 +236,12 @@ func _dispatch(p: Packet) -> void:
 		GuildNet.OP_LEAVE_RESULT:
 			var r := GuildNet.decode_leave_result(p.data)
 			guild_leave_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		ChatNet.OP_MESSAGE:
+			chat_message.emit(ChatNet.decode_message(p.data))
+		ChatNet.OP_WHISPER_RESULT:
+			var r := ChatNet.decode_whisper_result(p.data)
+			chat_whisper_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		ChatNet.OP_WHISPER_MESSAGE:
+			chat_whisper_message.emit(ChatNet.decode_message(p.data))
 		_:
 			push_warning("NetClient: unhandled opcode 0x%04x" % p.opcode)
