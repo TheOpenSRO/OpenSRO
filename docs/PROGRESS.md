@@ -2,6 +2,20 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 7)
+
+- Tried to trace the real wire-opcode dispatch table in `AgentServer.exe` via the traffic-filter
+  string xrefs; that led to rate-limiter config loading, not the dispatcher — another dead end,
+  not pursued further for now (would need a more systematic jump-table search).
+- Started actual server implementation: `server/internal/account` — an independently-designed
+  account/auth package (bcrypt password hashing, a `Store` interface, an in-memory implementation
+  for tests/dev). Informed by the facts in `docs/protocol/opcodes/login.md` and
+  `docs/protocol/db_schema.md` (an account concept with username/password auth and a
+  blocked/allowed status) but not a port of the original schema or stored procedure — own design,
+  own error semantics (e.g. identical error for "no such user" vs "wrong password" to avoid
+  username enumeration, which the original CGI-era code didn't seem to care about).
+  `gofmt`/`go vet`/`go test` all clean.
+
 ## 2026-08-19 (cont'd 6)
 
 - Attempted to trace the wire-opcode dispatch table in `GatewayServer.exe` starting from the login
