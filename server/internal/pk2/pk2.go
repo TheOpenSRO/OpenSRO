@@ -134,37 +134,39 @@ func (a *Archive) readBlockChain(startOffset uint32) ([]Entry, error) {
 			decryptECB(a.cipher, block)
 		}
 
-		next := uint32(0)
+		var next uint64
 		for i := 0; i < entriesPerBlock; i++ {
 			raw := block[i*entrySize : (i+1)*entrySize]
 			entryType := raw[0]
 
 			switch entryType {
-			case entryTypeEmpty:
-				continue
 			case entryTypeFolder, entryTypeFile:
 				name := string(bytes.TrimRight(raw[0x01:0x01+81], "\x00"))
-				if name == "." || name == ".." {
-					continue
+				if name != "." && name != ".." {
+					pos := binary.LittleEndian.Uint32(raw[0x5A:])
+					size := binary.LittleEndian.Uint32(raw[0x5E:])
+					out = append(out, Entry{
+						Name:   name,
+						IsDir:  entryType == entryTypeFolder,
+						Size:   size,
+						offset: pos,
+					})
 				}
-				pos := binary.LittleEndian.Uint32(raw[0x5A:])
-				size := binary.LittleEndian.Uint32(raw[0x5E:])
-				out = append(out, Entry{
-					Name:   name,
-					IsDir:  entryType == entryTypeFolder,
-					Size:   size,
-					offset: pos,
-				})
-			default:
-				// Unknown/terminator entry type; nothing more useful in this slot.
+			}
+
+			// Per docs/protocol/PK2_FORMAT.md, the last slot of a block
+			// carries the offset of the next block in this directory's
+			// chain (0 = end of chain). This is best-effort against public
+			// documentation and has only been validated against our own
+			// synthetic multi-block fixtures in pk2_test.go, not a real
+			// archive — flag any bug here if a real pk2's folder with >19
+			// entries fails to read fully.
+			if i == entriesPerBlock-1 {
+				next = binary.LittleEndian.Uint64(raw[0x62:])
 			}
 		}
-		// Next-block pointer lives in the last entry slot's "next" field in
-		// many observed layouts; conservatively treat 0 as end-of-chain.
-		_ = next
-		break // single-block directories are the common case; chained
-		// blocks (>20 entries in one folder) are left as a follow-up once
-		// we have real archives to test the multi-block path against.
+
+		offset = uint32(next)
 	}
 
 	return out, nil

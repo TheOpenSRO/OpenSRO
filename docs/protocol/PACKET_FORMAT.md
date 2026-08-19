@@ -38,6 +38,8 @@ a couple of real opcodes are solid.
 ## Status
 
 - [x] Frame header parsing/writing (`server/internal/proto`)
+- [x] TCP accept loop dispatching decoded packets (`server/internal/gateway`, wired into
+      `cmd/server`) — no opcode table yet, just logs what it sees
 - [ ] Session key exchange / encrypted packets
 - [ ] Massive-packet reassembly
 - [ ] Opcode table (`docs/protocol/opcodes/`) — starts empty, grows one documented opcode at a

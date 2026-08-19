@@ -2,6 +2,20 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 2)
+
+- Fixed a real bug in the pk2 multi-block directory chain: the `continue` in the
+  `entryTypeEmpty` case was skipping the next-block-pointer read for that same slot, so chained
+  directories with >18 entries silently truncated. Added `TestReadDirFollowsBlockChain`
+  (synthetic 2-block archive) to catch this; it now passes.
+- Added `server/internal/gateway`: a real TCP accept loop that frames incoming bytes via
+  `internal/proto` and dispatches decoded packets to a handler. Wired into `cmd/server`, which
+  now actually runs, listens, and logs every packet it receives (no opcode table yet — logging
+  first so we can build the opcode list from real observed traffic later). Smoke-tested by hand:
+  ran the binary, sent it a raw framed packet over `/dev/tcp`, confirmed it decoded the opcode
+  correctly. Also has an automated test that dials a real socket end-to-end.
+- All packages (`pk2`, `proto`, `gateway`) build/vet/test clean locally and in CI.
+
 ## 2026-08-19 (cont'd)
 
 - Installed a local Go 1.22 toolchain so builds/tests run locally, not just in CI (this box had
