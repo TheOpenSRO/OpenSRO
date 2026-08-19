@@ -3,16 +3,29 @@ package account
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 )
 
+// testDSN points at a local PostgreSQL instance for tests. Override with
+// SRREVAMP_TEST_POSTGRES_DSN if your dev setup differs (e.g. CI).
+func testDSN() string {
+	if v := os.Getenv("SRREVAMP_TEST_POSTGRES_DSN"); v != "" {
+		return v
+	}
+	return "postgres://postgres:postgres@localhost:5432/srrevamp_test?sslmode=disable"
+}
+
 func openTestSQLStore(t *testing.T) *SQLStore {
 	t.Helper()
-	// A unique in-memory database per test (not a shared cache) so tests
-	// can't interfere with each other.
-	s, err := OpenSQLStore(":memory:")
+	s, err := OpenSQLStore(testDSN())
 	if err != nil {
-		t.Fatalf("OpenSQLStore: %v", err)
+		t.Fatalf("OpenSQLStore: %v (is postgres running? see testDSN)", err)
+	}
+	// Each test gets a clean table -- tests share one real Postgres
+	// instance/database, unlike SQLite's ":memory:" trick.
+	if _, err := s.db.Exec(`TRUNCATE TABLE accounts RESTART IDENTITY CASCADE`); err != nil {
+		t.Fatalf("truncating accounts table: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
@@ -101,25 +114,21 @@ func TestSQLStoreSetBlockedUnknownAccount(t *testing.T) {
 	}
 }
 
-// TestSQLStorePersistsAcrossReopen uses a temp file (not :memory:) to
-// confirm data actually survives closing and reopening the store -- the
-// whole point of this being a persistent Store rather than MemStore.
+// TestSQLStorePersistsAcrossReopen confirms data survives closing this
+// store's connection and reopening a new one against the same database --
+// the whole point of this being a persistent Store rather than MemStore.
 func TestSQLStorePersistsAcrossReopen(t *testing.T) {
-	dsn := "file:" + t.TempDir() + "/test.db"
+	store := openTestSQLStore(t) // truncates, but we close it ourselves below
 	ctx := context.Background()
 
-	s1, err := OpenSQLStore(dsn)
-	if err != nil {
-		t.Fatalf("OpenSQLStore (first open): %v", err)
-	}
-	if _, err := s1.Register(ctx, "alice", "hunter2"); err != nil {
+	if _, err := store.Register(ctx, "alice", "hunter2"); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if err := s1.Close(); err != nil {
+	if err := store.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
-	s2, err := OpenSQLStore(dsn)
+	s2, err := OpenSQLStore(testDSN())
 	if err != nil {
 		t.Fatalf("OpenSQLStore (second open): %v", err)
 	}

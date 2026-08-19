@@ -28,11 +28,12 @@ import (
 
 func main() {
 	itemsCSV := flag.String("items-csv", "", "path to a headerless CSV export of item reference data (required)")
-	db := flag.String("db", "refdata.db", "path to the SQLite database to populate")
+	dsn := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
+		"PostgreSQL connection string to populate")
 	flag.Parse()
 
 	if *itemsCSV == "" {
-		fmt.Fprintln(os.Stderr, "usage: import-refdata -items-csv <path> [-db <path>]")
+		fmt.Fprintln(os.Stderr, "usage: import-refdata -items-csv <path> [-postgres-dsn <dsn>]")
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
@@ -49,9 +50,9 @@ func main() {
 	}
 	log.Printf("parsed %d items from %s", len(items), *itemsCSV)
 
-	store, err := refdata.OpenSQLStore(*db)
+	store, err := refdata.OpenSQLStore(*dsn)
 	if err != nil {
-		log.Fatalf("opening %s: %v", *db, err)
+		log.Fatalf("opening postgres store: %v", err)
 	}
 	defer store.Close()
 
@@ -64,5 +65,5 @@ func main() {
 	if err != nil {
 		log.Fatalf("verifying import: %v", err)
 	}
-	log.Printf("import complete: %s now has %d items", *db, count)
+	log.Printf("import complete: database now has %d items", count)
 }

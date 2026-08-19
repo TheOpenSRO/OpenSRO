@@ -3,14 +3,27 @@ package character
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 )
 
+// testDSN points at a local PostgreSQL instance for tests. Override with
+// SRREVAMP_TEST_POSTGRES_DSN if your dev setup differs (e.g. CI).
+func testDSN() string {
+	if v := os.Getenv("SRREVAMP_TEST_POSTGRES_DSN"); v != "" {
+		return v
+	}
+	return "postgres://postgres:postgres@localhost:5432/srrevamp_test?sslmode=disable"
+}
+
 func openTestSQLStore(t *testing.T) *SQLStore {
 	t.Helper()
-	s, err := OpenSQLStore(":memory:")
+	s, err := OpenSQLStore(testDSN())
 	if err != nil {
-		t.Fatalf("OpenSQLStore: %v", err)
+		t.Fatalf("OpenSQLStore: %v (is postgres running? see testDSN)", err)
+	}
+	if _, err := s.db.Exec(`TRUNCATE TABLE characters RESTART IDENTITY CASCADE`); err != nil {
+		t.Fatalf("truncating characters table: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
@@ -110,24 +123,20 @@ func TestSQLStoreDeleteWrongAccountFails(t *testing.T) {
 	}
 }
 
-// TestSQLStorePersistsAcrossReopen confirms data survives closing and
-// reopening the store, which is the entire point of it over MemStore.
+// TestSQLStorePersistsAcrossReopen confirms data survives closing this
+// store's connection and reopening a new one against the same database.
 func TestSQLStorePersistsAcrossReopen(t *testing.T) {
-	dsn := "file:" + t.TempDir() + "/test.db"
+	store := openTestSQLStore(t)
 	ctx := context.Background()
 
-	s1, err := OpenSQLStore(dsn)
-	if err != nil {
-		t.Fatalf("OpenSQLStore (first open): %v", err)
-	}
-	if _, err := s1.Create(ctx, 1, "Aria"); err != nil {
+	if _, err := store.Create(ctx, 1, "Aria"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := s1.Close(); err != nil {
+	if err := store.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
-	s2, err := OpenSQLStore(dsn)
+	s2, err := OpenSQLStore(testDSN())
 	if err != nil {
 		t.Fatalf("OpenSQLStore (second open): %v", err)
 	}

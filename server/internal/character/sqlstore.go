@@ -6,34 +6,39 @@ import (
 	"fmt"
 	"strings"
 
-	_ "modernc.org/sqlite" // driver registration
+	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )
 
 // schema creates the characters table if it doesn't already exist. Own
-// schema (see docs/protocol/db_schema.md), not a port of the original.
-// COLLATE NOCASE on name gives SQLite-level case-insensitive uniqueness,
-// matching MemStore's normalizeName behavior.
+// schema (see docs/protocol/db_schema.md), not a port of the original. The
+// unique index on lower(name) gives case-insensitive uniqueness, matching
+// MemStore's normalizeName behavior (Postgres has no COLLATE NOCASE).
 const schema = `
 CREATE TABLE IF NOT EXISTS characters (
-	id         INTEGER PRIMARY KEY AUTOINCREMENT,
-	account_id INTEGER NOT NULL,
-	name       TEXT NOT NULL COLLATE NOCASE UNIQUE
+	id         BIGSERIAL PRIMARY KEY,
+	account_id BIGINT NOT NULL,
+	name       TEXT NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS characters_name_lower ON characters (LOWER(name));
 CREATE INDEX IF NOT EXISTS characters_account_id ON characters(account_id);
 `
 
-// SQLStore is a Store backed by SQLite via the pure-Go modernc.org/sqlite
-// driver — same approach as account.SQLStore.
+// SQLStore is a Store backed by PostgreSQL (via the pgx driver) — same
+// approach as account.SQLStore.
 type SQLStore struct {
 	db *sql.DB
 }
 
-// OpenSQLStore opens (creating if necessary) a SQLite database at dsn and
-// ensures its schema exists. Use ":memory:" for an ephemeral database.
+// OpenSQLStore opens a PostgreSQL database at dsn and ensures its schema
+// exists.
 func OpenSQLStore(dsn string) (*SQLStore, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("character: opening sqlite database: %w", err)
+		return nil, fmt.Errorf("character: opening postgres connection: %w", err)
+	}
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("character: connecting to postgres: %w", err)
 	}
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -50,7 +55,7 @@ func (s *SQLStore) Close() error {
 // ListByAccount implements Store.
 func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Character, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, account_id, name FROM characters WHERE account_id = ? ORDER BY id`, accountID)
+		`SELECT id, account_id, name FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("character: listing characters: %w", err)
 	}
@@ -71,25 +76,21 @@ func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Chara
 func (s *SQLStore) Create(ctx context.Context, accountID int64, name string) (*Character, error) {
 	var count int
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM characters WHERE account_id = ?`, accountID).Scan(&count); err != nil {
+		`SELECT COUNT(*) FROM characters WHERE account_id = $1`, accountID).Scan(&count); err != nil {
 		return nil, fmt.Errorf("character: counting existing characters: %w", err)
 	}
 	if count >= MaxPerAccount {
 		return nil, ErrAccountFull
 	}
 
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO characters (account_id, name) VALUES (?, ?)`, accountID, name)
+	var id int64
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO characters (account_id, name) VALUES ($1, $2) RETURNING id`, accountID, name).Scan(&id)
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			return nil, ErrNameTaken
 		}
 		return nil, fmt.Errorf("character: inserting character: %w", err)
-	}
-
-	id, err := res.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("character: reading new character id: %w", err)
 	}
 	return &Character{ID: id, AccountID: accountID, Name: name}, nil
 }
@@ -97,7 +98,7 @@ func (s *SQLStore) Create(ctx context.Context, accountID int64, name string) (*C
 // Delete implements Store.
 func (s *SQLStore) Delete(ctx context.Context, accountID, characterID int64) error {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM characters WHERE id = ? AND account_id = ?`, characterID, accountID)
+		`DELETE FROM characters WHERE id = $1 AND account_id = $2`, characterID, accountID)
 	if err != nil {
 		return fmt.Errorf("character: deleting character: %w", err)
 	}
@@ -112,5 +113,5 @@ func (s *SQLStore) Delete(ctx context.Context, accountID, characterID int64) err
 }
 
 func isUniqueConstraintErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+	return err != nil && strings.Contains(err.Error(), "duplicate key value violates unique constraint")
 }

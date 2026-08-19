@@ -2,6 +2,26 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 18)
+
+- Migrated all three persistent stores (`account`, `character`, `refdata`) from SQLite to
+  PostgreSQL, per OpenSRO's preference. Swapped `modernc.org/sqlite` for `jackc/pgx/v5` (via its
+  `database/sql` compatibility shim, `pgx/v5/stdlib`, so the rest of the code didn't need to change
+  shape) and adjusted each schema for real Postgres idioms rather than a lazy port of the SQLite
+  DDL: `BIGSERIAL`/`RETURNING id` instead of `AUTOINCREMENT`/`LastInsertId()` (Postgres's
+  `database/sql` driver doesn't support the latter), native `BOOLEAN` instead of an `INTEGER`
+  0/1 hack, `DOUBLE PRECISION` instead of SQLite's untyped `REAL`, and a
+  `CREATE UNIQUE INDEX ON characters (LOWER(name))` for case-insensitive name uniqueness in place
+  of SQLite's `COLLATE NOCASE` (Postgres has no direct equivalent).
+  Installed PostgreSQL 14 locally to actually test against a real instance rather than guessing —
+  SQLite's `:memory:` trick doesn't exist for Postgres, so tests now share one local
+  `srrevamp_test` database and `TRUNCATE` their own tables per test for isolation
+  (`SRREVAMP_TEST_POSTGRES_DSN` env var overrides the default local connection string, used by CI's
+  new `postgres:16` service container). `cmd/server` and `cmd/import-refdata` now take a single
+  `-postgres-dsn` flag instead of per-store SQLite file paths. Full test suite passes against the
+  real local Postgres instance, and the built server binary smoke-tested starting up and connecting
+  successfully. `go.sum`/`go.mod` no longer reference `modernc.org/sqlite` at all.
+
 ## 2026-08-19 (cont'd 17)
 
 - Static game data pipeline, first slice: string-scanning a `.Bak` file (the earlier `db_schema.md`

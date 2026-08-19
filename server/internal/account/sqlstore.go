@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	_ "modernc.org/sqlite" // driver registration
+	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )
 
 // schema creates the accounts table if it doesn't already exist. Our own
@@ -15,28 +15,31 @@ import (
 // not a port of the original's TB_User layout.
 const schema = `
 CREATE TABLE IF NOT EXISTS accounts (
-	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	id            BIGSERIAL PRIMARY KEY,
 	username      TEXT NOT NULL UNIQUE,
-	password_hash BLOB NOT NULL,
-	blocked       INTEGER NOT NULL DEFAULT 0,
+	password_hash BYTEA NOT NULL,
+	blocked       BOOLEAN NOT NULL DEFAULT FALSE,
 	block_reason  TEXT NOT NULL DEFAULT ''
 );
 `
 
-// SQLStore is a Store and Registerer backed by SQLite (via the pure-Go
-// modernc.org/sqlite driver — no cgo, so it builds the same way everywhere
-// this project's Go code does).
+// SQLStore is a Store and Registerer backed by PostgreSQL (via the pgx
+// driver, registered under the "pgx" database/sql driver name).
 type SQLStore struct {
 	db *sql.DB
 }
 
-// OpenSQLStore opens (creating if necessary) a SQLite database at dsn and
-// ensures its schema exists. Use ":memory:" for an ephemeral in-memory
-// database (handy for tests), or a file path for real persistence.
+// OpenSQLStore opens a PostgreSQL database at dsn (e.g.
+// "postgres://user:pass@host:5432/dbname?sslmode=disable") and ensures its
+// schema exists.
 func OpenSQLStore(dsn string) (*SQLStore, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("account: opening sqlite database: %w", err)
+		return nil, fmt.Errorf("account: opening postgres connection: %w", err)
+	}
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("account: connecting to postgres: %w", err)
 	}
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -57,22 +60,15 @@ func (s *SQLStore) Register(ctx context.Context, username, password string) (*Ac
 		return nil, err
 	}
 
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO accounts (username, password_hash) VALUES (?, ?)`, username, hash)
+	var id int64
+	err = s.db.QueryRowContext(ctx,
+		`INSERT INTO accounts (username, password_hash) VALUES ($1, $2) RETURNING id`,
+		username, hash).Scan(&id)
 	if err != nil {
-		// SQLite's UNIQUE constraint violation doesn't map to a typed Go
-		// error via database/sql; string-matching the driver's message is
-		// the pragmatic option here (same approach modernc.org/sqlite's own
-		// docs point to, absent a stable sentinel error).
 		if isUniqueConstraintErr(err) {
 			return nil, ErrUsernameTaken
 		}
 		return nil, fmt.Errorf("account: inserting account: %w", err)
-	}
-
-	id, err := res.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("account: reading new account id: %w", err)
 	}
 	return &Account{ID: id, Username: username, PasswordHash: hash}, nil
 }
@@ -80,16 +76,14 @@ func (s *SQLStore) Register(ctx context.Context, username, password string) (*Ac
 // Authenticate implements Store.
 func (s *SQLStore) Authenticate(ctx context.Context, username, password string) (*Account, error) {
 	var acc Account
-	var blockedInt int
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, blocked, block_reason FROM accounts WHERE username = ?`, username)
-	if err := row.Scan(&acc.ID, &acc.Username, &acc.PasswordHash, &blockedInt, &acc.BlockReason); err != nil {
+		`SELECT id, username, password_hash, blocked, block_reason FROM accounts WHERE username = $1`, username)
+	if err := row.Scan(&acc.ID, &acc.Username, &acc.PasswordHash, &acc.Blocked, &acc.BlockReason); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrInvalidCredentials
 		}
 		return nil, fmt.Errorf("account: querying account: %w", err)
 	}
-	acc.Blocked = blockedInt != 0
 
 	if !acc.verify(password) {
 		return nil, ErrInvalidCredentials
@@ -102,12 +96,8 @@ func (s *SQLStore) Authenticate(ctx context.Context, username, password string) 
 
 // SetBlocked sets an existing account's blocked status and reason.
 func (s *SQLStore) SetBlocked(ctx context.Context, username string, blocked bool, reason string) error {
-	blockedInt := 0
-	if blocked {
-		blockedInt = 1
-	}
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE accounts SET blocked = ?, block_reason = ? WHERE username = ?`, blockedInt, reason, username)
+		`UPDATE accounts SET blocked = $1, block_reason = $2 WHERE username = $3`, blocked, reason, username)
 	if err != nil {
 		return fmt.Errorf("account: updating blocked status: %w", err)
 	}
@@ -122,5 +112,5 @@ func (s *SQLStore) SetBlocked(ctx context.Context, username string, blocked bool
 }
 
 func isUniqueConstraintErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+	return err != nil && strings.Contains(err.Error(), "duplicate key value violates unique constraint")
 }

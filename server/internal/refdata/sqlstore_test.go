@@ -2,16 +2,35 @@ package refdata
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
 
-func TestImportAndGetItem(t *testing.T) {
-	store, err := OpenSQLStore(":memory:")
-	if err != nil {
-		t.Fatalf("OpenSQLStore: %v", err)
+// testDSN points at a local PostgreSQL instance for tests. Override with
+// SRREVAMP_TEST_POSTGRES_DSN if your dev setup differs (e.g. CI).
+func testDSN() string {
+	if v := os.Getenv("SRREVAMP_TEST_POSTGRES_DSN"); v != "" {
+		return v
 	}
-	defer store.Close()
+	return "postgres://postgres:postgres@localhost:5432/srrevamp_test?sslmode=disable"
+}
+
+func openTestSQLStore(t *testing.T) *SQLStore {
+	t.Helper()
+	s, err := OpenSQLStore(testDSN())
+	if err != nil {
+		t.Fatalf("OpenSQLStore: %v (is postgres running? see testDSN)", err)
+	}
+	if _, err := s.db.Exec(`TRUNCATE TABLE items`); err != nil {
+		t.Fatalf("truncating items table: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+func TestImportAndGetItem(t *testing.T) {
+	store := openTestSQLStore(t)
 	ctx := context.Background()
 
 	csv := "1,5000,10,0,1,0,0.5,1.0,10.0,20.0,5.0,15.0,50.0,80.0,20.0,40.0,0.5,0.9,0.1,0.3\n"
@@ -41,11 +60,7 @@ func TestImportAndGetItem(t *testing.T) {
 }
 
 func TestImportItemsUpserts(t *testing.T) {
-	store, err := OpenSQLStore(":memory:")
-	if err != nil {
-		t.Fatalf("OpenSQLStore: %v", err)
-	}
-	defer store.Close()
+	store := openTestSQLStore(t)
 	ctx := context.Background()
 
 	first := Item{ID: 1, MaxStack: 100}
@@ -76,12 +91,7 @@ func TestImportItemsUpserts(t *testing.T) {
 }
 
 func TestGetItemNotFound(t *testing.T) {
-	store, err := OpenSQLStore(":memory:")
-	if err != nil {
-		t.Fatalf("OpenSQLStore: %v", err)
-	}
-	defer store.Close()
-
+	store := openTestSQLStore(t)
 	if _, err := store.GetItem(context.Background(), 999); err == nil {
 		t.Fatal("expected an error looking up a nonexistent item, got nil")
 	}

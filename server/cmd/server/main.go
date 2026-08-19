@@ -18,8 +18,8 @@ import (
 
 func main() {
 	addr := flag.String("addr", ":15779", "listen address for the gateway service")
-	accountDB := flag.String("account-db", "accounts.db", "path to the SQLite database for accounts (use :memory: for an ephemeral one)")
-	characterDB := flag.String("character-db", "characters.db", "path to the SQLite database for characters (use :memory: for an ephemeral one)")
+	postgresDSN := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
+		"PostgreSQL connection string for account/character storage")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -27,21 +27,20 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	accounts, err := account.OpenSQLStore(*accountDB)
+	accounts, err := account.OpenSQLStore(*postgresDSN)
 	if err != nil {
-		logger.Error("opening account database", "path", *accountDB, "error", err)
+		logger.Error("opening account store", "error", err)
 		os.Exit(1)
 	}
 	defer accounts.Close()
-	logger.Info("account database ready", "path", *accountDB)
 
-	chars, err := character.OpenSQLStore(*characterDB)
+	chars, err := character.OpenSQLStore(*postgresDSN)
 	if err != nil {
-		logger.Error("opening character database", "path", *characterDB, "error", err)
+		logger.Error("opening character store", "error", err)
 		os.Exit(1)
 	}
 	defer chars.Close()
-	logger.Info("character database ready", "path", *characterDB)
+	logger.Info("postgres storage ready")
 
 	hub := world.NewHub()
 	handle := gateway.Chain(
