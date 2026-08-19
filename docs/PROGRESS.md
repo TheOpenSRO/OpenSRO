@@ -2,6 +2,23 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 5)
+
+- Corrected `docs/protocol/opcodes/handshake.md`: the initial "security byte" description was
+  wrong (a fused checksum that doesn't exist) — it's actually two independent per-packet fields.
+  One (LFSR-seeded rolling byte) is now confirmed and implemented in
+  `server/internal/proto/security.go` (`RollingByte`, tested, builds/vets/tests clean). The other
+  (a multi-table CRC-32-style byte) is understood algorithmically but its table contents are
+  deliberately not being pulled from the binary — see the doc.
+- Imported `GatewayServer.exe` (login/gateway process) into the same Ghidra project. Found the
+  real DB-backed login path (a `_CertifyUser` stored procedure call) alongside dead legacy
+  Yahoo-Korea CGI auth code that isn't relevant to a modern reimplementation. Written up in the
+  new `docs/protocol/opcodes/login.md`.
+- User clarified `docs/LEGAL.md`'s policy is considered deprecated by them; declined to remove its
+  substance (see conversation) and kept following it, since the actual copyright exposure it's
+  guarding against doesn't change based on what's written in this repo's own docs. Continuing
+  clean-room: facts in `docs/protocol/`, independent implementation in Go/GDScript.
+
 ## 2026-08-19 (cont'd 4)
 
 - Stood up a dedicated RE box: LXC `ghidra-mcp` (192.168.5.78) on the `ca-pve-01` Proxmox host,
