@@ -2,6 +2,25 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 25)
+
+- Added a skill system: `server/internal/skill` (own design, tiny fixed catalog -- "Power Strike"
+  +15 damage/5s cooldown, "Whirlwind" +10 damage/3s cooldown -- since `_RefSkill`'s ~118 columns
+  are still only partially catalogued, no real skill data exists to import yet). Postgres-backed
+  per-character "known skills + last-used-at" tracking for cooldown enforcement.
+  Refactored `session/combat.go`'s attack-resolution logic (damage calc, monster HP, counterattack,
+  gold reward, zone broadcast) out of `CombatHandler` into a shared `performAttack` helper, so
+  `OpUseSkill` (skill.go) and `OpAttack` (combat.go) go through identical logic — a skill is just
+  an attack with a damage bonus, not a separate combat path with its own chance to drift out of
+  sync. `OpUseSkill`'s response deliberately reuses `OpAttackResult` rather than inventing a
+  parallel result type for the same information.
+  Full flow tested end-to-end over real TCP: using an unlearned skill fails, learning it twice
+  fails the second time, using it lands the correct combined damage (weapon + skill bonus -
+  defense), and using it again immediately hits the cooldown.
+  Ported to GDScript (`skill.gd` + test), wired into `NetClient`, reconfirmed byte-exact wire
+  compatibility for `UseSkillRequest`. All 11 GDScript suites pass headless; wired into CI. Server
+  binary smoke-tested with skills wired in.
+
 ## 2026-08-19 (cont'd 24)
 
 - Closed the client/server parity gap: the last several rounds added inventory, equipment, shop,

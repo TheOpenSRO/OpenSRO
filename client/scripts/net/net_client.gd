@@ -35,6 +35,7 @@ signal shop_buy_result(ok: bool, reason: String)
 signal attack_result(result: CombatNet.AttackResult)
 signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
+signal learn_skill_result(ok: bool, reason: String)
 
 var _peer: StreamPeerTCP
 var _connecting := false
@@ -128,6 +129,14 @@ func shop_buy(char_name: String, item_id: int, quantity: int) -> void:
 func attack(char_name: String, target_monster_id: int) -> void:
 	_send(CombatNet.OP_ATTACK, CombatNet.encode_attack(char_name, target_monster_id))
 
+func learn_skill(char_name: String, skill_id: int) -> void:
+	_send(SkillNet.OP_LEARN, SkillNet.encode_learn(char_name, skill_id))
+
+## Response arrives as attack_result (see SkillNet's doc comment: using a
+## skill reuses OpAttackResult, since it's just an attack with a bonus).
+func use_skill(char_name: String, skill_id: int, target_monster_id: int) -> void:
+	_send(SkillNet.OP_USE, SkillNet.encode_use(char_name, skill_id, target_monster_id))
+
 func _dispatch(p: Packet) -> void:
 	match p.opcode:
 		Auth.OP_LOGIN_RESULT:
@@ -168,5 +177,8 @@ func _dispatch(p: Packet) -> void:
 			monster_damaged.emit(CombatNet.decode_monster_damaged(p.data))
 		CombatNet.OP_MONSTER_DIED:
 			monster_died.emit(CombatNet.decode_monster_died(p.data))
+		SkillNet.OP_LEARN_RESULT:
+			var r := SkillNet.decode_learn_result(p.data)
+			learn_skill_result.emit(r.ok, r.reason if r.error == "" else r.error)
 		_:
 			push_warning("NetClient: unhandled opcode 0x%04x" % p.opcode)

@@ -171,84 +171,104 @@ func CombatHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 		}
 
-		monster, ok := monsters.Get(req.TargetMonsterID)
-		if !ok {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found"}).Encode()})
-		}
+		return performAttack(ctx, sess, chars, eq, items, hub, monsters, characterID, req.TargetMonsterID, 0)
+	}
+}
 
-		damage, err := attackerDamage(ctx, characterID, eq, items)
+// performAttack computes damage (the attacker's base weapon/unarmed damage
+// plus damageBonus -- 0 for a plain OpAttack, a skill's DamageBonus for
+// OpUseSkill), applies it to the target monster, resolves the monster's
+// counterattack, sends OpAttackResult to sess, grants gold on a kill, and
+// broadcasts to everyone else in the zone. Shared by CombatHandler and
+// skill.UseHandler so both attack paths behave identically.
+func performAttack(
+	ctx context.Context,
+	sess *gateway.Session,
+	chars character.Store,
+	eq equipment.Store,
+	items combat.ItemLookup,
+	hub *world.Hub,
+	monsters *combat.Hub,
+	characterID, targetMonsterID int64,
+	damageBonus int,
+) error {
+	monster, ok := monsters.Get(targetMonsterID)
+	if !ok {
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found"}).Encode()})
+	}
+
+	base, err := attackerDamage(ctx, characterID, eq, items)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})
+	}
+
+	net := base + damageBonus - monster.Defense
+	if net < 1 {
+		net = 1
+	}
+
+	updated, monsterDied, ok := monsters.ApplyDamage(targetMonsterID, net)
+	if !ok {
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found"}).Encode()})
+	}
+
+	result := &AttackResult{MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP), MonsterDied: monsterDied}
+
+	// A dead monster can't counterattack. A surviving one always hits
+	// back -- there's no dodge/evade system yet, see docs' open items.
+	if monsterDied {
+		// No damage taken, but the client still wants to know current HP.
+		hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
 		if err != nil {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})
+			return fmt.Errorf("combat: reading player hp: %w", err)
 		}
-
-		net := damage - monster.Defense
-		if net < 1 {
-			net = 1
+		result.PlayerHP = int32(hp)
+	} else {
+		hp, playerDied, err := chars.ApplyDamage(ctx, characterID, monster.Attack)
+		if err != nil {
+			return fmt.Errorf("combat: applying counterattack: %w", err)
 		}
-
-		updated, monsterDied, ok := monsters.ApplyDamage(req.TargetMonsterID, net)
-		if !ok {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found"}).Encode()})
-		}
-
-		result := &AttackResult{MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP), MonsterDied: monsterDied}
-
-		// A dead monster can't counterattack. A surviving one always hits
-		// back -- there's no dodge/evade system yet, see docs' open items.
-		if monsterDied {
-			// No damage taken, but the client still wants to know current HP.
-			hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
-			if err != nil {
-				return fmt.Errorf("combat: reading player hp: %w", err)
+		result.PlayerDamageTaken = int32(monster.Attack)
+		result.PlayerDied = playerDied
+		if playerDied {
+			if err := chars.ResetHP(ctx, characterID); err != nil {
+				return fmt.Errorf("combat: respawning player: %w", err)
 			}
-			result.PlayerHP = int32(hp)
+			result.PlayerHP = int32(character.MaxHP)
 		} else {
-			hp, playerDied, err := chars.ApplyDamage(ctx, characterID, monster.Attack)
-			if err != nil {
-				return fmt.Errorf("combat: applying counterattack: %w", err)
-			}
-			result.PlayerDamageTaken = int32(monster.Attack)
-			result.PlayerDied = playerDied
-			if playerDied {
-				if err := chars.ResetHP(ctx, characterID); err != nil {
-					return fmt.Errorf("combat: respawning player: %w", err)
-				}
-				result.PlayerHP = int32(character.MaxHP)
-			} else {
-				result.PlayerHP = int32(hp)
-			}
+			result.PlayerHP = int32(hp)
 		}
+	}
 
-		if err := sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: result.Encode()}); err != nil {
-			return err
+	if err := sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: result.Encode()}); err != nil {
+		return err
+	}
+
+	// The attacker already got the richer OpAttackResult above; only
+	// broadcast to everyone *else* in the zone, not back to them too.
+	var others []world.Entity
+	for _, e := range hub.EntitiesInZone(monster.Zone) {
+		if e.Session.ID() != sess.ID() {
+			others = append(others, e)
 		}
+	}
 
-		// The attacker already got the richer OpAttackResult above; only
-		// broadcast to everyone *else* in the zone, not back to them too.
-		var others []world.Entity
-		for _, e := range hub.EntitiesInZone(monster.Zone) {
-			if e.Session.ID() != sess.ID() {
-				others = append(others, e)
-			}
+	if monsterDied {
+		if err := chars.AddGold(ctx, characterID, monster.GoldReward); err != nil {
+			return fmt.Errorf("combat: granting gold reward: %w", err)
 		}
-
-		if monsterDied {
-			if err := chars.AddGold(ctx, characterID, monster.GoldReward); err != nil {
-				return fmt.Errorf("combat: granting gold reward: %w", err)
-			}
-			msg := &MonsterDied{MonsterID: req.TargetMonsterID}
-			for _, e := range others {
-				e.Session.Send(&proto.Packet{Opcode: OpMonsterDied, Data: msg.Encode()})
-			}
-			return nil
-		}
-
-		msg := &MonsterDamaged{MonsterID: req.TargetMonsterID, Damage: int32(net), RemainingHP: int32(updated.HP)}
+		msg := &MonsterDied{MonsterID: targetMonsterID}
 		for _, e := range others {
-			e.Session.Send(&proto.Packet{Opcode: OpMonsterDamaged, Data: msg.Encode()})
+			e.Session.Send(&proto.Packet{Opcode: OpMonsterDied, Data: msg.Encode()})
 		}
 		return nil
 	}
+
+	msg := &MonsterDamaged{MonsterID: targetMonsterID, Damage: int32(net), RemainingHP: int32(updated.HP)}
+	for _, e := range others {
+		e.Session.Send(&proto.Packet{Opcode: OpMonsterDamaged, Data: msg.Encode()})
+	}
+	return nil
 }
 
 // attackerDamage resolves characterID's raw physical attack power from

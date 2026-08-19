@@ -19,6 +19,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/session"
 	"github.com/OpenSRO/srrevamp/server/internal/shop"
+	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
@@ -115,6 +116,13 @@ func main() {
 		os.Exit(1)
 	}
 	defer eq.Close()
+
+	skills, err := skill.OpenSQLStore(*postgresDSN)
+	if err != nil {
+		logger.Error("opening skill store", "error", err)
+		os.Exit(1)
+	}
+	defer skills.Close()
 	logger.Info("postgres storage ready")
 
 	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
@@ -132,6 +140,8 @@ func main() {
 		session.EquipmentHandler(chars, eq),
 		session.ShopHandler(chars, shopSvc),
 		session.CombatHandler(chars, eq, refItems, hub, monsters),
+		session.LearnSkillHandler(chars, skills),
+		session.UseSkillHandler(chars, eq, refItems, skills, hub, monsters),
 	)
 
 	srv := &gateway.Server{
