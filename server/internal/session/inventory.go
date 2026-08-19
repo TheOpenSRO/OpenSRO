@@ -1,0 +1,165 @@
+package session
+
+import (
+	"context"
+	"encoding/binary"
+	"fmt"
+
+	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/srrevamp/server/internal/proto"
+)
+
+// Inventory opcodes, our own protocol. Requires a prior OpLogin. Only
+// listing is exposed over the wire so far -- there's no legitimate way for
+// a player to add/remove items yet (no shops, combat, or drops), so
+// inventory.Store's AddItem/RemoveItem aren't wired to any opcode; they'll
+// get one each once those systems exist.
+const (
+	OpInventoryList       uint16 = 0x0030 // client -> server
+	OpInventoryListResult uint16 = 0x0031 // server -> client
+)
+
+// InventorySlotSnapshot is one occupied slot, as sent over the wire.
+type InventorySlotSnapshot struct {
+	Slot     int
+	ItemID   int64
+	Quantity int
+}
+
+func (s *InventorySlotSnapshot) Encode() []byte {
+	out := make([]byte, 4)
+	binary.LittleEndian.PutUint32(out, uint32(s.Slot))
+	out = append(out, encodeInt64(s.ItemID)...)
+	countBuf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(countBuf, uint32(s.Quantity))
+	return append(out, countBuf...)
+}
+
+func decodeInventorySlotSnapshot(data []byte) (*InventorySlotSnapshot, []byte, error) {
+	if len(data) < 4 {
+		return nil, nil, fmt.Errorf("slot index: truncated")
+	}
+	slot := int(binary.LittleEndian.Uint32(data))
+	rest := data[4:]
+
+	itemID, rest, err := decodeInt64(rest)
+	if err != nil {
+		return nil, nil, fmt.Errorf("item id: %w", err)
+	}
+
+	if len(rest) < 4 {
+		return nil, nil, fmt.Errorf("quantity: truncated")
+	}
+	qty := int(binary.LittleEndian.Uint32(rest))
+	rest = rest[4:]
+
+	return &InventorySlotSnapshot{Slot: slot, ItemID: itemID, Quantity: qty}, rest, nil
+}
+
+// InventoryListResult is the OpInventoryListResult payload.
+type InventoryListResult struct {
+	Error string // non-empty on failure; Slots is empty in that case
+	Slots []InventorySlotSnapshot
+}
+
+func (r *InventoryListResult) Encode() []byte {
+	out := encodeStrings(r.Error)
+	countBuf := make([]byte, 2)
+	binary.LittleEndian.PutUint16(countBuf, uint16(len(r.Slots)))
+	out = append(out, countBuf...)
+	for _, sl := range r.Slots {
+		out = append(out, sl.Encode()...)
+	}
+	return out
+}
+
+func DecodeInventoryListResult(data []byte) (*InventoryListResult, error) {
+	fields, rest, err := decodeStringsPrefix(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding InventoryListResult: %w", err)
+	}
+	if len(rest) < 2 {
+		return nil, fmt.Errorf("session: decoding InventoryListResult: truncated slot count")
+	}
+	count := int(binary.LittleEndian.Uint16(rest))
+	rest = rest[2:]
+
+	result := &InventoryListResult{Error: fields[0]}
+	for i := 0; i < count; i++ {
+		var snap *InventorySlotSnapshot
+		snap, rest, err = decodeInventorySlotSnapshot(rest)
+		if err != nil {
+			return nil, fmt.Errorf("session: decoding InventoryListResult: slot %d: %w", i, err)
+		}
+		result.Slots = append(result.Slots, *snap)
+	}
+	return result, nil
+}
+
+// InventoryHandler returns a gateway.Handler implementing OpInventoryList
+// against store, scoped to whichever account authenticated on the
+// connection. Takes character name via the same "resolve by name against
+// the authenticated account" pattern as WorldHandler.
+func InventoryHandler(chars character.Store, store inventory.Store) gateway.Handler {
+	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		if p.Opcode != OpInventoryList {
+			return nil
+		}
+
+		accountID, ok := AuthenticatedAccountID(sess)
+		if !ok {
+			return sess.Send(&proto.Packet{
+				Opcode: OpInventoryListResult,
+				Data:   (&InventoryListResult{Error: errNotAuthenticated}).Encode(),
+			})
+		}
+
+		req, err := DecodeCharacterCreateRequest(p.Data) // reuse: it's just {Name string}
+		if err != nil {
+			return sess.Send(&proto.Packet{
+				Opcode: OpInventoryListResult,
+				Data:   (&InventoryListResult{Error: "malformed request"}).Encode(),
+			})
+		}
+
+		list, err := chars.ListByAccount(ctx, accountID)
+		if err != nil {
+			return sess.Send(&proto.Packet{
+				Opcode: OpInventoryListResult,
+				Data:   (&InventoryListResult{Error: "lookup failed"}).Encode(),
+			})
+		}
+		var characterID int64 = -1
+		for _, c := range list {
+			if c.Name == req.Name {
+				characterID = c.ID
+				break
+			}
+		}
+		if characterID == -1 {
+			return sess.Send(&proto.Packet{
+				Opcode: OpInventoryListResult,
+				Data:   (&InventoryListResult{Error: "no such character on this account"}).Encode(),
+			})
+		}
+
+		slots, err := store.List(ctx, characterID)
+		if err != nil {
+			return sess.Send(&proto.Packet{
+				Opcode: OpInventoryListResult,
+				Data:   (&InventoryListResult{Error: "list failed"}).Encode(),
+			})
+		}
+
+		snaps := make([]InventorySlotSnapshot, len(slots))
+		for i, sl := range slots {
+			snaps[i] = InventorySlotSnapshot{Slot: sl.Index, ItemID: sl.ItemID, Quantity: sl.Quantity}
+		}
+		return sess.Send(&proto.Packet{
+			Opcode: OpInventoryListResult,
+			Data:   (&InventoryListResult{Slots: snaps}).Encode(),
+		})
+	}
+}

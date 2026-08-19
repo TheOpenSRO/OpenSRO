@@ -2,6 +2,24 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 19)
+
+- Added `server/internal/inventory`: an independently-designed per-character item store (fixed
+  50 slots, stacking up to each item's `refdata`-defined `MaxStack`, own placement logic — fill
+  existing under-full stacks before opening new slots). Postgres-backed, same pattern as
+  account/character/refdata. `refdata.SQLStore` now also implements `inventory.MaxStackLookup`
+  (`GetMaxStack`) so inventory doesn't need its own copy of item stack-size data.
+  Wired `OpInventoryList` into the protocol (`session/inventory.go`) — deliberately **not** wiring
+  add/remove to any opcode yet, since there's no legitimate way for a player to acquire items
+  without a shop, combat, or drop system, none of which exist yet; those opcodes land once those
+  systems do.
+  Caught and fixed a real bug while writing the session-level test: forgot that Postgres-backed
+  test packages need their own truncate-between-runs step, unlike `MemStore`-only packages — the
+  first run of the full end-to-end test silently accumulated inventory across repeated test runs
+  (5 items became 10) before being caught and fixed with a small `TruncateForTest` helper.
+  All packages build/vet/test clean against the local Postgres instance; full server binary
+  smoke-tested with inventory wired in.
+
 ## 2026-08-19 (cont'd 18)
 
 - Migrated all three persistent stores (`account`, `character`, `refdata`) from SQLite to

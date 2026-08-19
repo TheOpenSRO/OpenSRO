@@ -11,7 +11,9 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/account"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/session"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
@@ -40,6 +42,20 @@ func main() {
 		os.Exit(1)
 	}
 	defer chars.Close()
+
+	refItems, err := refdata.OpenSQLStore(*postgresDSN)
+	if err != nil {
+		logger.Error("opening refdata store", "error", err)
+		os.Exit(1)
+	}
+	defer refItems.Close()
+
+	inv, err := inventory.OpenSQLStore(*postgresDSN, refItems)
+	if err != nil {
+		logger.Error("opening inventory store", "error", err)
+		os.Exit(1)
+	}
+	defer inv.Close()
 	logger.Info("postgres storage ready")
 
 	hub := world.NewHub()
@@ -48,6 +64,7 @@ func main() {
 		session.RegisterHandler(accounts),
 		session.CharacterHandler(chars),
 		session.WorldHandler(chars, hub),
+		session.InventoryHandler(chars, inv),
 	)
 
 	srv := &gateway.Server{

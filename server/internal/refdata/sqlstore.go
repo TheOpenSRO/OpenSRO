@@ -136,3 +136,13 @@ func (s *SQLStore) Count(ctx context.Context) (int, error) {
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items`).Scan(&n)
 	return n, err
 }
+
+// GetMaxStack implements inventory.MaxStackLookup.
+func (s *SQLStore) GetMaxStack(ctx context.Context, itemID int64) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT max_stack FROM items WHERE id = $1`, itemID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("refdata: querying max stack for item %d: %w", itemID, err)
+	}
+	return n, nil
+}
