@@ -15,6 +15,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/session"
@@ -129,6 +130,7 @@ func main() {
 
 	hub := world.NewHub()
 	monsters := combat.NewHub()
+	parties := party.NewHub()
 	go maintainMonster(ctx, monsters, logger)
 
 	handle := gateway.Chain(
@@ -142,7 +144,11 @@ func main() {
 		session.CombatHandler(chars, eq, refItems, hub, monsters),
 		session.LearnSkillHandler(chars, skills),
 		session.UseSkillHandler(chars, eq, refItems, skills, hub, monsters),
+		session.PartyHandler(chars, parties),
 	)
+
+	worldDisconnect := session.WorldDisconnectHandler(hub)
+	partyDisconnect := session.PartyDisconnectHandler(parties)
 
 	srv := &gateway.Server{
 		Addr:   *addr,
@@ -151,7 +157,10 @@ func main() {
 			logger.Info("packet received", "addr", sess.RemoteAddr(), "opcode", p.Opcode, "size", len(p.Data))
 			return handle(ctx, sess, p)
 		},
-		OnDisconnect: session.WorldDisconnectHandler(hub),
+		OnDisconnect: func(sess *gateway.Session) {
+			worldDisconnect(sess)
+			partyDisconnect(sess)
+		},
 	}
 
 	if err := srv.ListenAndServe(ctx); err != nil {

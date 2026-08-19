@@ -37,6 +37,12 @@ signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
 signal learn_skill_result(ok: bool, reason: String)
 
+signal party_create_result(result: PartyNet.Result)
+signal party_join_result(result: PartyNet.Result)
+signal party_leave_result(ok: bool, reason: String)
+signal party_member_joined(member: PartyNet.MemberJoined)
+signal party_member_left(character_id: int)
+
 var _peer: StreamPeerTCP
 var _connecting := false
 
@@ -137,6 +143,15 @@ func learn_skill(char_name: String, skill_id: int) -> void:
 func use_skill(char_name: String, skill_id: int, target_monster_id: int) -> void:
 	_send(SkillNet.OP_USE, SkillNet.encode_use(char_name, skill_id, target_monster_id))
 
+func create_party(char_name: String) -> void:
+	_send(PartyNet.OP_CREATE, PartyNet.encode_name_request(char_name))
+
+func join_party(char_name: String, party_id: int) -> void:
+	_send(PartyNet.OP_JOIN, PartyNet.encode_join(char_name, party_id))
+
+func leave_party(char_name: String) -> void:
+	_send(PartyNet.OP_LEAVE, PartyNet.encode_name_request(char_name))
+
 func _dispatch(p: Packet) -> void:
 	match p.opcode:
 		Auth.OP_LOGIN_RESULT:
@@ -180,5 +195,16 @@ func _dispatch(p: Packet) -> void:
 		SkillNet.OP_LEARN_RESULT:
 			var r := SkillNet.decode_learn_result(p.data)
 			learn_skill_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		PartyNet.OP_CREATE_RESULT:
+			party_create_result.emit(PartyNet.decode_result(p.data))
+		PartyNet.OP_JOIN_RESULT:
+			party_join_result.emit(PartyNet.decode_result(p.data))
+		PartyNet.OP_LEAVE_RESULT:
+			var r := PartyNet.decode_leave_result(p.data)
+			party_leave_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		PartyNet.OP_MEMBER_JOINED:
+			party_member_joined.emit(PartyNet.decode_member_joined(p.data))
+		PartyNet.OP_MEMBER_LEFT:
+			party_member_left.emit(PartyNet.decode_member_left(p.data))
 		_:
 			push_warning("NetClient: unhandled opcode 0x%04x" % p.opcode)

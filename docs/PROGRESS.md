@@ -2,6 +2,31 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 26)
+
+- Added a party/grouping system, closing the "parties/guilds/PvP: 0%" gap from the earlier scope
+  assessment (guilds/PvP still remain future work). `server/internal/party`: an in-memory `Hub`
+  (own design, no real party data to RE — parties are pure session state, not persisted) tracking
+  parties by ID, a character->party index, and a session->character index used specifically for
+  disconnect cleanup. `MaxSize = 5`. `Leave` promotes the next member to leader or disbands the
+  party if the leaving member was last; `LeaveBySession` wraps the same logic keyed by session ID
+  so a dropped TCP connection cleans up its party membership without the client sending an
+  explicit leave first.
+  `server/internal/session/party.go`: opcodes 0x0080-0x0087 (create/join/leave requests + results,
+  plus member-joined/member-left broadcasts to the rest of the party). `PartyDisconnectHandler`
+  wired alongside the existing `WorldDisconnectHandler` into `cmd/server`'s combined
+  `OnDisconnect` hook.
+  Full flow tested end-to-end over two real TCP connections: alice creates a party, bob joins it
+  and alice receives the `PartyMemberJoined` broadcast, bob leaves and alice receives
+  `PartyMemberLeft`. (First draft of this test file used an over-engineered generic type-assertion
+  helper that didn't make sense — scrapped it for the same plain `net.Conn` pattern already used
+  by every other session test.)
+  Ported to GDScript (`party.gd` + test), wired into `NetClient` (signals + create/join/leave
+  methods + dispatch cases), reconfirmed byte-exact wire compatibility for `PartyResult` and
+  `PartyJoinRequest` via independent Go/GDScript hex generation. All 12 GDScript suites pass
+  headless; wired into CI. Full Go test suite green across all packages; server binary
+  smoke-tested with parties wired in.
+
 ## 2026-08-19 (cont'd 25)
 
 - Added a skill system: `server/internal/skill` (own design, tiny fixed catalog -- "Power Strike"
