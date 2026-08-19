@@ -2,6 +2,25 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 4)
+
+- Stood up a dedicated RE box: LXC `ghidra-mcp` (192.168.5.78) on the `ca-pve-01` Proxmox host,
+  running Ghidra 12.1.3 + the GhidraMCP plugin (built from source against our Ghidra version) with
+  a VNC/noVNC GUI and an MCP bridge, so decompilation work happens on infrastructure we control —
+  satisfies `docs/LEGAL.md` policy #2's precondition for doing RE at all.
+- Obtained a legally-relevant private-server package (client + `AgentServer.exe` + DB backups) and
+  imported `AgentServer.exe` into a Ghidra project there. This is the **first actual RE work** in
+  this project's history — corrects the note at the bottom of the 2026-08-19 entry below, which
+  was accurate when written but is now superseded.
+- Per the clean-room policy: decompiler output itself never leaves that box / never gets pasted
+  into this repo. Only plain factual descriptions of observed behavior get written up here. First
+  result: `docs/protocol/opcodes/handshake.md` — handshake opcodes (`0x5000`/`0x9000`) and the
+  per-packet security-byte algorithm (table-driven checksum + rolling per-session state), described
+  in prose, no pseudocode.
+- Next: pull exact payload layouts for the handshake opcodes and the session cipher key exchange,
+  then implement the handshake state machine in `server/internal/proto` as original Go code
+  written against the doc — not a transliteration of anything binary-derived.
+
 ## 2026-08-19 (cont'd 3)
 
 - Installed Godot 4.2.2 headless locally (had none) to actually run and test GDScript, not just
