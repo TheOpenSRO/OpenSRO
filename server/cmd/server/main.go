@@ -10,6 +10,7 @@ import (
 
 	"github.com/OpenSRO/srrevamp/server/internal/account"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
@@ -56,6 +57,13 @@ func main() {
 		os.Exit(1)
 	}
 	defer inv.Close()
+
+	eq, err := equipment.OpenSQLStore(*postgresDSN, inv)
+	if err != nil {
+		logger.Error("opening equipment store", "error", err)
+		os.Exit(1)
+	}
+	defer eq.Close()
 	logger.Info("postgres storage ready")
 
 	hub := world.NewHub()
@@ -65,6 +73,7 @@ func main() {
 		session.CharacterHandler(chars),
 		session.WorldHandler(chars, hub),
 		session.InventoryHandler(chars, inv),
+		session.EquipmentHandler(chars, eq),
 	)
 
 	srv := &gateway.Server{

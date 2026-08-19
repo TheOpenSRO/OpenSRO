@@ -117,3 +117,69 @@ func TestDeleteNonexistent(t *testing.T) {
 		t.Fatalf("got %v, want ErrNotFound", err)
 	}
 }
+
+func TestNewCharacterHasStartingGold(t *testing.T) {
+	store := NewMemStore()
+	c, _ := store.Create(context.Background(), 1, "Aria")
+	if c.Gold != StartingGold {
+		t.Fatalf("got Gold %d, want StartingGold %d", c.Gold, StartingGold)
+	}
+}
+
+func TestAddGold(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+	c, _ := store.Create(ctx, 1, "Aria")
+
+	if err := store.AddGold(ctx, c.ID, 500); err != nil {
+		t.Fatalf("AddGold: %v", err)
+	}
+
+	list, _ := store.ListByAccount(ctx, 1)
+	if list[0].Gold != StartingGold+500 {
+		t.Fatalf("got Gold %d, want %d", list[0].Gold, StartingGold+500)
+	}
+}
+
+func TestDeductGold(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+	c, _ := store.Create(ctx, 1, "Aria")
+
+	if err := store.DeductGold(ctx, c.ID, 300); err != nil {
+		t.Fatalf("DeductGold: %v", err)
+	}
+
+	list, _ := store.ListByAccount(ctx, 1)
+	if list[0].Gold != StartingGold-300 {
+		t.Fatalf("got Gold %d, want %d", list[0].Gold, StartingGold-300)
+	}
+}
+
+func TestDeductGoldInsufficientFunds(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+	c, _ := store.Create(ctx, 1, "Aria")
+
+	err := store.DeductGold(ctx, c.ID, StartingGold+1)
+	if !errors.Is(err, ErrInsufficientGold) {
+		t.Fatalf("got %v, want ErrInsufficientGold", err)
+	}
+
+	// Balance should be unchanged.
+	list, _ := store.ListByAccount(ctx, 1)
+	if list[0].Gold != StartingGold {
+		t.Fatalf("got Gold %d, want unchanged %d", list[0].Gold, StartingGold)
+	}
+}
+
+func TestGoldOperationsOnNonexistentCharacter(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+	if err := store.AddGold(ctx, 999, 100); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("AddGold: got %v, want ErrNotFound", err)
+	}
+	if err := store.DeductGold(ctx, 999, 100); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("DeductGold: got %v, want ErrNotFound", err)
+	}
+}

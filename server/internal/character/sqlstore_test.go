@@ -151,4 +151,43 @@ func TestSQLStorePersistsAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestSQLStoreGoldOperations(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+	c, err := store.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if c.Gold != StartingGold {
+		t.Fatalf("got starting Gold %d, want %d", c.Gold, StartingGold)
+	}
+
+	if err := store.AddGold(ctx, c.ID, 500); err != nil {
+		t.Fatalf("AddGold: %v", err)
+	}
+	if err := store.DeductGold(ctx, c.ID, 200); err != nil {
+		t.Fatalf("DeductGold: %v", err)
+	}
+
+	list, err := store.ListByAccount(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListByAccount: %v", err)
+	}
+	want := int64(StartingGold) + 500 - 200
+	if list[0].Gold != want {
+		t.Fatalf("got Gold %d, want %d", list[0].Gold, want)
+	}
+}
+
+func TestSQLStoreDeductGoldInsufficientFunds(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+	c, _ := store.Create(ctx, 1, "Aria")
+
+	err := store.DeductGold(ctx, c.ID, StartingGold+1)
+	if !errors.Is(err, ErrInsufficientGold) {
+		t.Fatalf("got %v, want ErrInsufficientGold", err)
+	}
+}
+
 var _ Store = (*SQLStore)(nil)

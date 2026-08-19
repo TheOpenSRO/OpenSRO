@@ -31,11 +31,20 @@ var ErrAccountFull = errors.New("character: account already has the maximum numb
 // use it to enumerate other accounts' character IDs).
 var ErrNotFound = errors.New("character: no such character on this account")
 
+// ErrInsufficientGold is returned by Store.DeductGold when the character
+// doesn't have enough to cover the requested amount.
+var ErrInsufficientGold = errors.New("character: insufficient gold")
+
+// StartingGold is how much currency a newly-created character has. Own
+// design choice.
+const StartingGold = 1000
+
 // Character is one player character.
 type Character struct {
 	ID        int64
 	AccountID int64
 	Name      string
+	Gold      int64
 }
 
 // Store is anything that can list, create, and delete characters for an
@@ -52,4 +61,11 @@ type Store interface {
 	// Delete removes characterID from accountID. Returns ErrNotFound if it
 	// doesn't exist under that account.
 	Delete(ctx context.Context, accountID, characterID int64) error
+
+	// AddGold credits amount (must be positive) to characterID's balance.
+	AddGold(ctx context.Context, characterID int64, amount int64) error
+
+	// DeductGold debits amount (must be positive) from characterID's
+	// balance. Returns ErrInsufficientGold if the balance is too low.
+	DeductGold(ctx context.Context, characterID int64, amount int64) error
 }

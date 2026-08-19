@@ -17,8 +17,10 @@ const schema = `
 CREATE TABLE IF NOT EXISTS characters (
 	id         BIGSERIAL PRIMARY KEY,
 	account_id BIGINT NOT NULL,
-	name       TEXT NOT NULL
+	name       TEXT NOT NULL,
+	gold       BIGINT NOT NULL DEFAULT 0
 );
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS gold BIGINT NOT NULL DEFAULT 0;
 CREATE UNIQUE INDEX IF NOT EXISTS characters_name_lower ON characters (LOWER(name));
 CREATE INDEX IF NOT EXISTS characters_account_id ON characters(account_id);
 `
@@ -55,7 +57,7 @@ func (s *SQLStore) Close() error {
 // ListByAccount implements Store.
 func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Character, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, account_id, name FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
+		`SELECT id, account_id, name, gold FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("character: listing characters: %w", err)
 	}
@@ -64,7 +66,7 @@ func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Chara
 	var out []*Character
 	for rows.Next() {
 		var c Character
-		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name); err != nil {
+		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold); err != nil {
 			return nil, fmt.Errorf("character: scanning row: %w", err)
 		}
 		out = append(out, &c)
@@ -85,14 +87,15 @@ func (s *SQLStore) Create(ctx context.Context, accountID int64, name string) (*C
 
 	var id int64
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO characters (account_id, name) VALUES ($1, $2) RETURNING id`, accountID, name).Scan(&id)
+		`INSERT INTO characters (account_id, name, gold) VALUES ($1, $2, $3) RETURNING id`,
+		accountID, name, StartingGold).Scan(&id)
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			return nil, ErrNameTaken
 		}
 		return nil, fmt.Errorf("character: inserting character: %w", err)
 	}
-	return &Character{ID: id, AccountID: accountID, Name: name}, nil
+	return &Character{ID: id, AccountID: accountID, Name: name, Gold: StartingGold}, nil
 }
 
 // Delete implements Store.
@@ -108,6 +111,50 @@ func (s *SQLStore) Delete(ctx context.Context, accountID, characterID int64) err
 	}
 	if n == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// AddGold implements Store.
+func (s *SQLStore) AddGold(ctx context.Context, characterID int64, amount int64) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE characters SET gold = gold + $1 WHERE id = $2`, amount, characterID)
+	if err != nil {
+		return fmt.Errorf("character: adding gold: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("character: checking update result: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeductGold implements Store.
+func (s *SQLStore) DeductGold(ctx context.Context, characterID int64, amount int64) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE characters SET gold = gold - $1 WHERE id = $2 AND gold >= $1`, amount, characterID)
+	if err != nil {
+		return fmt.Errorf("character: deducting gold: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("character: checking update result: %w", err)
+	}
+	if n == 0 {
+		// Either the character doesn't exist, or gold was insufficient --
+		// distinguish so callers get an accurate error.
+		var exists bool
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM characters WHERE id = $1)`, characterID).Scan(&exists); err != nil {
+			return fmt.Errorf("character: checking existence: %w", err)
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		return ErrInsufficientGold
 	}
 	return nil
 }

@@ -2,6 +2,26 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 20)
+
+- Added currency: `character.Character` gained a `Gold` field (`StartingGold` = 1000, own design),
+  `Store` gained `AddGold`/`DeductGold` (both `MemStore` and `SQLStore`). Caught a real migration
+  bug: `CREATE TABLE IF NOT EXISTS` doesn't add columns to an already-existing table, so the shared
+  local Postgres instance (which already had a `characters` table from earlier sessions) silently
+  kept the old schema until an explicit `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` was added — a
+  real "works on a fresh DB, breaks on an existing one" class of bug, caught by testing against the
+  actual persistent local instance rather than a fresh one each time.
+- Added `server/internal/equipment`: own design, two slots for now (`SlotWeapon`, `SlotArmor` —
+  enough to make combat math meaningful without over-building). Equip moves an item out of
+  inventory (swapping out and returning whatever was previously equipped first, so nothing is ever
+  silently lost); Unequip returns it. Depends on `inventory.Store` as an interface, not a concrete
+  type. Wired `OpEquipmentList`/`OpEquip`/`OpUnequip` into the protocol. Full equip -> list ->
+  unequip flow tested end-to-end over real TCP, confirming the item actually leaves and returns to
+  the inventory, not just that the equipment table looks right in isolation.
+- All packages build/vet/test clean against the real local Postgres instance; full server binary
+  wired with accounts/characters/refdata/inventory/equipment all sharing one Postgres connection
+  string.
+
 ## 2026-08-19 (cont'd 19)
 
 - Added `server/internal/inventory`: an independently-designed per-character item store (fixed
