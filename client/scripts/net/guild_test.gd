@@ -1,0 +1,109 @@
+extends SceneTree
+
+var _failures := 0
+
+func _check(cond: bool, msg: String) -> void:
+	if cond:
+		print("ok  " + msg)
+	else:
+		print("FAIL " + msg)
+		_failures += 1
+
+func _test_encode_create() -> void:
+	var encoded := GuildNet.encode_create("Aria", "Silk Legion")
+	_check(encoded.decode_u16(0) == 4, "character name length prefix is 4")
+	var guild_name_len_offset := 2 + 4
+	_check(encoded.decode_u16(guild_name_len_offset) == 11, "guild name length prefix is 11")
+
+func _test_encode_join() -> void:
+	var encoded := GuildNet.encode_join("Bram", 1)
+	_check(encoded.decode_u16(0) == 4, "name length prefix is 4")
+	_check(encoded.decode_s64(6) == 1, "guild id round-trips")
+
+func _build_result(error: String, guild_id: int, guild_name: String, leader_id: int, members: Array) -> PackedByteArray:
+	var out := PackedByteArray()
+	var error_bytes := error.to_utf8_buffer()
+	var len_buf := PackedByteArray()
+	len_buf.resize(2)
+	len_buf.encode_u16(0, error_bytes.size())
+	out.append_array(len_buf)
+	out.append_array(error_bytes)
+	if error != "":
+		return out
+
+	var id_buf := PackedByteArray()
+	id_buf.resize(8)
+	id_buf.encode_s64(0, guild_id)
+	out.append_array(id_buf)
+
+	var name_bytes := guild_name.to_utf8_buffer()
+	len_buf.encode_u16(0, name_bytes.size())
+	out.append_array(len_buf)
+	out.append_array(name_bytes)
+
+	var leader_buf := PackedByteArray()
+	leader_buf.resize(8)
+	leader_buf.encode_s64(0, leader_id)
+	out.append_array(leader_buf)
+
+	var count_buf := PackedByteArray()
+	count_buf.resize(2)
+	count_buf.encode_u16(0, members.size())
+	out.append_array(count_buf)
+
+	for m in members:
+		var mid_buf := PackedByteArray()
+		mid_buf.resize(8)
+		mid_buf.encode_s64(0, m["id"])
+		out.append_array(mid_buf)
+		var mname_bytes: PackedByteArray = m["name"].to_utf8_buffer()
+		len_buf.encode_u16(0, mname_bytes.size())
+		out.append_array(len_buf)
+		out.append_array(mname_bytes)
+		var role_buf := PackedByteArray()
+		role_buf.resize(4)
+		role_buf.encode_u32(0, m["role"])
+		out.append_array(role_buf)
+
+	return out
+
+func _test_decode_result() -> void:
+	var payload := _build_result("", 1, "Silk Legion", 100,
+		[{"id": 100, "name": "Aria", "role": GuildNet.ROLE_LEADER}, {"id": 200, "name": "Bram", "role": GuildNet.ROLE_MEMBER}])
+	var result := GuildNet.decode_result(payload)
+	_check(result.error == "", "no decode error")
+	_check(result.guild_id == 1, "guild id round-trips")
+	_check(result.guild_name == "Silk Legion", "guild name round-trips")
+	_check(result.leader_id == 100, "leader id round-trips")
+	_check(result.members.size() == 2, "two members decoded")
+	if result.members.size() == 2:
+		_check(result.members[0].character_id == 100, "first member id round-trips")
+		_check(result.members[0].member_name == "Aria", "first member name round-trips")
+		_check(result.members[0].role == GuildNet.ROLE_LEADER, "first member role round-trips")
+		_check(result.members[1].role == GuildNet.ROLE_MEMBER, "second member role round-trips")
+
+func _test_decode_result_error() -> void:
+	var payload := _build_result("guild name already taken", 0, "", 0, [])
+	var result := GuildNet.decode_result(payload)
+	_check(result.error == "guild name already taken", "error round-trips")
+	_check(result.members.size() == 0, "no members alongside an error")
+
+func _test_decode_leave_result() -> void:
+	var payload := PackedByteArray([1, 0, 0])
+	var result := GuildNet.decode_leave_result(payload)
+	_check(result.error == "", "no decode error")
+	_check(result.ok, "ok is true")
+
+func _init() -> void:
+	_test_encode_create()
+	_test_encode_join()
+	_test_decode_result()
+	_test_decode_result_error()
+	_test_decode_leave_result()
+
+	if _failures == 0:
+		print("ALL PASS")
+		quit(0)
+	else:
+		print("%d FAILURES" % _failures)
+		quit(1)

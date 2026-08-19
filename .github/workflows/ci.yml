@@ -70,6 +70,7 @@ jobs:
           godot --headless --path . --script res://scripts/net/combat_test.gd
           godot --headless --path . --script res://scripts/net/skill_test.gd
           godot --headless --path . --script res://scripts/net/party_test.gd
+          godot --headless --path . --script res://scripts/net/guild_test.gd
 
   no-assets-check:
     name: Guard against committed pk2/game assets

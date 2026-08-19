@@ -2,6 +2,34 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 27)
+
+- Added a guild system, distinct from party in one deliberate way: parties (`internal/party`)
+  are in-memory/session-scoped by design (dissolving on restart is fine for a live grouping),
+  but guilds are meant to be a long-lived social structure, so `server/internal/guild` is
+  Postgres-backed from the start -- no `MemStore` variant, matching the reasoning that a
+  guild you can lose on server restart isn't really a guild. Schema: `guilds` (id, name, unique
+  case-insensitively) + `guild_members` (guild_id, character_id unique across all guilds, role,
+  joined_at). Create/Join/Leave all run inside a transaction so a name clash or a
+  duplicate-membership race can't leave a half-created guild or double membership behind.
+  Leave promotes the earliest-joined remaining member (by `joined_at`) to leader, or deletes the
+  guild row entirely if the leaver was the last member -- transactional, so a crash mid-leave
+  can't leave a leaderless guild.
+  `server/internal/session/guild.go`: opcodes 0x0090-0x0095 (create/join/leave requests +
+  results). Deliberately no broadcast opcodes here (unlike party's MemberJoined/MemberLeft) --
+  `guild.Store` has no notion of which members are currently online since membership outlives
+  any one session, so there's no session list to broadcast to; a client learns about roster
+  changes from its own join/leave response instead. Documented this reasoning inline rather than
+  leaving it to look like a missed feature.
+  Full flow tested end-to-end over two real TCP connections against a real Postgres-backed
+  `guild.Store` (not a mock): Alice founds a guild, Bob joins it, Alice (the founder) leaves and
+  leadership passes to Bob rather than disbanding the guild since he's the only member left.
+  Ported to GDScript (`guild.gd` + test), wired into `NetClient`, reconfirmed byte-exact wire
+  compatibility for `GuildResult` and `GuildCreateRequest` via independent Go/GDScript hex
+  generation. All 13 GDScript suites pass headless; wired into CI. Full Go test suite green
+  across all packages including the new `guild` package; server binary smoke-tested with guilds
+  wired in.
+
 ## 2026-08-19 (cont'd 26)
 
 - Added a party/grouping system, closing the "parties/guilds/PvP: 0%" gap from the earlier scope
