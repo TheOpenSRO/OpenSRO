@@ -14,7 +14,7 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
@@ -30,7 +30,7 @@ jobs:
     name: Validate client (Godot)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up Godot
         uses: chickensoft-games/setup-godot@v2
         with:
@@ -44,7 +44,7 @@ jobs:
     name: Guard against committed pk2/game assets
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Fail if any pk2/original asset files are committed
         run: |
           if git ls-files | grep -iE '\.(pk2|gr2|ddj)$'; then
