@@ -1,0 +1,12 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+
+config_version=5
+
+[application]
+
+config/name="SRRevamp"
+config/description="Clean-room MMO client scaffold. Requires user-supplied *.pk2 data files at runtime."
+run/main_scene="res://scenes/Boot.tscn"
+config/features=PackedStringArray("4.2")

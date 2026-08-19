@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  server:
+    name: Build & test server (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: server/go.sum
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./... -v
+
+  client:
+    name: Validate client (Godot)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.2.2
+          use-dotnet: false
+      - name: Import & check project
+        working-directory: client
+        run: godot --headless --path . --import --quit
+
+  no-assets-check:
+    name: Guard against committed pk2/game assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if any pk2/original asset files are committed
+        run: |
+          if git ls-files | grep -iE '\.(pk2|gr2|ddj)$'; then
+            echo "::error::Committed game data files found. This repo must never contain original pk2/asset files."
+            exit 1
+          fi
+          echo "No disallowed asset files found."

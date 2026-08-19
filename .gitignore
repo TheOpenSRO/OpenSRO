@@ -1,0 +1,19 @@
+# Never commit original game data
+*.pk2
+*.gr2
+*.ddj
+
+# Go
+server/bin/
+*.exe
+*.test
+*.out
+
+# Godot
+client/.godot/
+client/export_presets.cfg
+*.translation
+
+# OS/editor
+.DS_Store
+*.swp
