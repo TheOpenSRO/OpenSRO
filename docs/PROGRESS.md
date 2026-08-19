@@ -2,6 +2,18 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 6)
+
+- Attempted to trace the wire-opcode dispatch table in `GatewayServer.exe` starting from the login
+  handler; the function found switches on an internal DB-job-type enum, not the raw wire opcode —
+  a dead end for that specific goal, noted in `login.md`'s open items rather than left unexplained.
+- Pivoted to a higher-yield target: scanned the `SRO_VT_ACCOUNT`/`SRO_VT_SHARD` `.Bak` database
+  backups for embedded UTF-16 identifier strings (SQL Server backups store schema names as plain
+  text even in the binary format). Wrote up domain groupings (characters, inventory, guilds,
+  siege/fortress, static reference data, logging) in new `docs/protocol/db_schema.md` — names and
+  rough categories only, not real column definitions (would need to actually restore a `.Bak` into
+  SQL Server for that).
+
 ## 2026-08-19 (cont'd 5)
 
 - Corrected `docs/protocol/opcodes/handshake.md`: the initial "security byte" description was
