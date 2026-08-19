@@ -2,6 +2,26 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd)
+
+- Installed a local Go 1.22 toolchain so builds/tests run locally, not just in CI (this box had
+  none). Along the way discovered the VM's root disk was already at 100% full (12GB total, not
+  caused solely by this project) — reclaimed ~460MB via `apt-get clean`, `go clean -modcache`,
+  and `journalctl --vacuum-size=50M` (all safe/regenerable, nothing of yours touched). Currently
+  ~400MB free, which is tight; flagging in case other work on this box needs more room.
+- Added `docs/protocol/PK2_FORMAT.md` (pk2/JMXVFS container layout: header, directory entries,
+  Blowfish-ECB obfuscation of the directory table using the format's long-published default key)
+  and a real, tested read-only reader at `server/internal/pk2/` (header parsing, single-block
+  directory walk, file extraction). Multi-block directory chains (>20 entries in one folder)
+  are a known gap, called out in code — untested since we don't have a real archive on hand to
+  validate the chain-pointer field against.
+- Added `docs/protocol/PACKET_FORMAT.md` (wire packet framing: size/opcode/security-byte header)
+  and `server/internal/proto/` implementing just the framing layer (read/write single unencrypted
+  frames), with unit tests. Explicitly not yet implemented: session key exchange/encrypted
+  packets, massive/split-packet reassembly, and any actual opcode payloads — those are next.
+- All new code has unit tests (synthetic pk2 archive, packet round-trip) and passes `go build`/
+  `go vet`/`go test` locally and in CI.
+
 ## 2026-08-19
 
 - Repo created at github.com/OpenSRO/srrevamp (private), `main` (default-intended prod) +
