@@ -2,6 +2,37 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 22)
+
+- Added `server/internal/combat`: the closing piece of the core gameplay loop this session built
+  toward. Own design throughout — `Hub` tracks live monsters (in-memory, same reasoning as
+  `world.Hub`), damage = attacker's equipped weapon's `PhysAttackMax` (or a flat `unarmedDamage`
+  fallback with nothing equipped) minus the monster's `Defense`, floored at 1 so combat can never
+  stall at zero damage. `world.Hub` gained `EntitiesInZone` (everyone in a zone, unlike the
+  existing `Move`/`Enter`/`Leave` methods which return "everyone *except* the mover") so combat can
+  broadcast hits to bystanders.
+  Wired `OpAttack` + `OpMonsterDamaged`/`OpMonsterDied` broadcasts into the protocol.
+  Caught a real bug via the end-to-end test, not by inspection: the first version broadcast
+  `OpMonsterDamaged`/`OpMonsterDied` to *everyone* in the zone including the attacker themselves,
+  who already gets a richer direct `OpAttackResult` — so the attacker's socket received two packets
+  per attack, and a test helper that read only one response per request decoded the second attack's
+  reply as the *first attack's leftover broadcast*, producing nonsense values (`RemainingHP:5120`
+  instead of 0). Fixed by excluding the attacker's own session from the broadcast.
+  `cmd/server` now spawns a single placeholder monster ("Stone Golem", own invented content — no
+  real monster/drop data has been imported, see `refdata_schema.md`'s open items) in the world's
+  one spawn zone, with a background loop that respawns it 10s after each death.
+  Full flow (login -> enter world -> equip weapon -> attack twice -> confirm damage/death/gold
+  reward -> confirm the dead monster is actually gone) tested end-to-end over real TCP. All
+  packages build/vet/test clean; full server binary smoke-tested spawning its monster on startup.
+
+**This closes out "do it all" for the core MVP gameplay loop**: account -> character ->
+persistence -> world/movement -> inventory -> equipment -> shop -> combat, all cross-verified
+between Go and (for the client-facing pieces) GDScript where applicable. What's *not* done and
+worth being honest about: skills, real monster/drop content (this session's monster and shop
+prices are placeholder own-designed content, not derived from the original's actual game-balance
+data), quests, parties/guilds/PvP, and all client-side 3D rendering/UI beyond login and character
+select.
+
 ## 2026-08-19 (cont'd 21)
 
 - Added `server/internal/shop`: a basic NPC vendor, entirely own design. No original pricing data

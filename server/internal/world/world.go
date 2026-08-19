@@ -98,6 +98,20 @@ func (h *Hub) Move(sess *gateway.Session, pos Position) (entity Entity, others [
 	return *e, h.othersInZoneLocked(e.Zone, sess.ID()), true
 }
 
+// EntitiesInZone returns a snapshot of every entity currently in zone.
+// Used by other systems (e.g. combat) that need to broadcast to everyone
+// present rather than "everyone except the session that triggered this".
+func (h *Hub) EntitiesInZone(zone string) []Entity {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	var out []Entity
+	for _, e := range h.byZone[zone] {
+		out = append(out, *e)
+	}
+	return out
+}
+
 // removeLocked removes a session's entity from both indexes. Caller must
 // hold h.mu.
 func (h *Hub) removeLocked(sessionID uint64) {

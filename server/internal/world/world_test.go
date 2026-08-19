@@ -92,6 +92,34 @@ func TestLeaveUnknownSessionFails(t *testing.T) {
 	}
 }
 
+func TestEntitiesInZoneIncludesEveryone(t *testing.T) {
+	h := NewHub()
+	s1, s2, s3 := fakeSession(1), fakeSession(2), fakeSession(3)
+	h.Enter(s1, 100, "Aria", "jangan", Position{})
+	h.Enter(s2, 200, "Bram", "jangan", Position{})
+	h.Enter(s3, 300, "Cora", "donwhang", Position{})
+
+	entities := h.EntitiesInZone("jangan")
+	if len(entities) != 2 {
+		t.Fatalf("got %d entities, want 2 (Aria and Bram)", len(entities))
+	}
+
+	names := map[string]bool{}
+	for _, e := range entities {
+		names[e.Name] = true
+	}
+	if !names["Aria"] || !names["Bram"] {
+		t.Fatalf("expected both Aria and Bram, got %+v", entities)
+	}
+}
+
+func TestEntitiesInZoneEmptyForUnknownZone(t *testing.T) {
+	h := NewHub()
+	if entities := h.EntitiesInZone("nowhere"); len(entities) != 0 {
+		t.Fatalf("expected no entities for an unknown zone, got %+v", entities)
+	}
+}
+
 func TestReenterMovesRatherThanDuplicates(t *testing.T) {
 	h := NewHub()
 	s1 := fakeSession(1)
