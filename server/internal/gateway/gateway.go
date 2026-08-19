@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 )
@@ -41,15 +42,33 @@ func Chain(handlers ...Handler) Handler {
 // — e.g. "which account authenticated on this connection" — without gateway
 // itself knowing anything about accounts or characters.
 type Session struct {
+	id   uint64
 	conn net.Conn
 
 	mu     sync.RWMutex
 	values map[string]any
 }
 
+// ID uniquely identifies this session for the life of the process (not
+// stable across restarts). Useful as a map key for higher-level state (e.g.
+// world.Hub tracking who's in which zone) without comparing *Session
+// pointers directly.
+func (s *Session) ID() uint64 {
+	return s.id
+}
+
 // RemoteAddr returns the client's address, mainly for logging.
 func (s *Session) RemoteAddr() net.Addr {
 	return s.conn.RemoteAddr()
+}
+
+// NewTestSession returns a *Session with the given ID and no real
+// connection, for other packages' tests that need something to key state
+// by (e.g. world.Hub, keyed on session ID) without spinning up a real TCP
+// connection. Calling Send or RemoteAddr on the result will panic (nil
+// conn) — it's only useful for its ID() and the Set/Get value bag.
+func NewTestSession(id uint64) *Session {
+	return &Session{id: id}
 }
 
 // Set stores a value under key for the lifetime of this connection.
@@ -85,6 +104,17 @@ type Server struct {
 	Addr   string
 	Handle Handler
 	Logger *slog.Logger
+
+	// OnDisconnect, if set, is called once when a session's connection ends
+	// (client disconnect, read error, or a Handler error). Lets
+	// higher-level state (e.g. world.Hub) clean up without gateway knowing
+	// anything about what that state is. Don't assume anything about
+	// whether the connection is still open at this point — use it for
+	// bookkeeping (removing the session from other state), not for sending
+	// a farewell packet to the disconnecting client.
+	OnDisconnect func(sess *Session)
+
+	nextSessionID atomic.Uint64
 }
 
 // ListenAndServe binds Addr and serves connections until ctx is canceled or
@@ -127,8 +157,11 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 }
 
 func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logger) {
-	sess := &Session{conn: conn}
+	sess := &Session{id: s.nextSessionID.Add(1), conn: conn}
 	defer sess.Close()
+	if s.OnDisconnect != nil {
+		defer s.OnDisconnect(sess)
+	}
 
 	logger.Info("session connected", "addr", sess.RemoteAddr())
 	defer logger.Info("session disconnected", "addr", sess.RemoteAddr())

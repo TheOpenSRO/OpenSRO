@@ -1,0 +1,166 @@
+extends RefCounted
+class_name WorldNet
+
+## Opcodes and payload encoding for entering the world and movement,
+## mirroring server/internal/session (world.go). OpEnterWorld requires a
+## prior successful login; OpMove requires a prior successful OpEnterWorld.
+
+const OP_ENTER_WORLD := 0x0020         # client -> server
+const OP_ENTER_WORLD_RESULT := 0x0021  # server -> client
+const OP_MOVE := 0x0022                # client -> server, no reply
+const OP_ENTITY_ENTERED := 0x0023      # server -> client, broadcast
+const OP_ENTITY_MOVED := 0x0024        # server -> client, broadcast
+const OP_ENTITY_LEFT := 0x0025         # server -> client, broadcast
+
+## One character's presence in the world: who they are and where they are.
+class EntitySnapshot:
+	var character_id: int
+	var char_name: String
+	var x: float
+	var y: float
+	var z: float
+
+## Encodes an OpEnterWorld request: just a character name.
+static func encode_enter_world(character_name: String) -> PackedByteArray:
+	var name_bytes := character_name.to_utf8_buffer()
+	var out := PackedByteArray()
+	out.resize(2)
+	out.encode_u16(0, name_bytes.size())
+	out.append_array(name_bytes)
+	return out
+
+## Encodes an OpMove request: three float32 fields, no length prefix.
+static func encode_move(x: float, y: float, z: float) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(12)
+	out.encode_float(0, x)
+	out.encode_float(4, y)
+	out.encode_float(8, z)
+	return out
+
+## Result of decode_enter_world_result(): either an error, or the assigned
+## zone/position plus a snapshot of everyone else already there.
+class EnterWorldResult:
+	var ok: bool
+	var reason: String
+	var zone: String
+	var x: float
+	var y: float
+	var z: float
+	var others: Array[EntitySnapshot] = []
+	var error: String # decode error, distinct from a well-formed "not ok" response
+
+## Parses one EntitySnapshot from data starting at offset, returning it
+## along with the offset just past it (or -1 on truncation).
+static func _decode_entity_snapshot(data: PackedByteArray, offset: int) -> Array:
+	if offset + 8 > data.size():
+		return [null, -1]
+	var snap := EntitySnapshot.new()
+	snap.character_id = data.decode_s64(offset)
+	offset += 8
+
+	if offset + 2 > data.size():
+		return [null, -1]
+	var name_len := data.decode_u16(offset)
+	offset += 2
+	if offset + name_len > data.size():
+		return [null, -1]
+	snap.char_name = data.slice(offset, offset + name_len).get_string_from_utf8()
+	offset += name_len
+
+	if offset + 12 > data.size():
+		return [null, -1]
+	snap.x = data.decode_float(offset)
+	snap.y = data.decode_float(offset + 4)
+	snap.z = data.decode_float(offset + 8)
+	offset += 12
+
+	return [snap, offset]
+
+## Decodes an OpEnterWorldResult payload.
+static func decode_enter_world_result(data: PackedByteArray) -> EnterWorldResult:
+	var result := EnterWorldResult.new()
+	if data.size() < 1:
+		result.error = "empty payload"
+		return result
+
+	result.ok = data[0] != 0
+	var offset := 1
+
+	if offset + 2 > data.size():
+		result.error = "truncated reason length"
+		return result
+	var reason_len := data.decode_u16(offset)
+	offset += 2
+	if offset + reason_len > data.size():
+		result.error = "truncated reason"
+		return result
+	result.reason = data.slice(offset, offset + reason_len).get_string_from_utf8()
+	offset += reason_len
+
+	if not result.ok:
+		return result
+
+	if offset + 2 > data.size():
+		result.error = "truncated zone length"
+		return result
+	var zone_len := data.decode_u16(offset)
+	offset += 2
+	if offset + zone_len > data.size():
+		result.error = "truncated zone"
+		return result
+	result.zone = data.slice(offset, offset + zone_len).get_string_from_utf8()
+	offset += zone_len
+
+	if offset + 12 > data.size():
+		result.error = "truncated position"
+		return result
+	result.x = data.decode_float(offset)
+	result.y = data.decode_float(offset + 4)
+	result.z = data.decode_float(offset + 8)
+	offset += 12
+
+	if offset + 2 > data.size():
+		result.error = "truncated entity count"
+		return result
+	var count := data.decode_u16(offset)
+	offset += 2
+
+	for i in range(count):
+		var decoded := _decode_entity_snapshot(data, offset)
+		if decoded[0] == null:
+			result.error = "truncated entity %d" % i
+			return result
+		result.others.append(decoded[0])
+		offset = decoded[1]
+
+	return result
+
+## Decodes an OpEntityEntered broadcast payload (a single EntitySnapshot).
+static func decode_entity_entered(data: PackedByteArray) -> EntitySnapshot:
+	var decoded := _decode_entity_snapshot(data, 0)
+	return decoded[0]
+
+## Result of decode_entity_moved().
+class EntityMoved:
+	var character_id: int
+	var x: float
+	var y: float
+	var z: float
+
+static func decode_entity_moved(data: PackedByteArray) -> EntityMoved:
+	if data.size() < 20:
+		return null
+	var m := EntityMoved.new()
+	m.character_id = data.decode_s64(0)
+	m.x = data.decode_float(8)
+	m.y = data.decode_float(12)
+	m.z = data.decode_float(16)
+	return m
+
+## Decodes an OpEntityLeft broadcast payload, returning the character ID
+## (or -1 on truncation).
+static func decode_entity_left(data: PackedByteArray) -> int:
+	if data.size() < 8:
+		return -1
+	return data.decode_s64(0)

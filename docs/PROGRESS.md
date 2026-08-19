@@ -2,6 +2,30 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 15)
+
+- Added a minimal world/zone system: `server/internal/world` (`Hub`, in-memory by design — live
+  position data resetting on restart is normal for an MMO, unlike account/character data) tracks
+  which characters are present in which zone and who's near whom; `server/internal/session/world.go`
+  wires it to the wire protocol (`OpEnterWorld`, `OpMove`, and three broadcast opcodes —
+  `OpEntityEntered`/`OpEntityMoved`/`OpEntityLeft`). One fixed spawn point (`jangan`, `{0,0,0}`)
+  since no real map data has been pulled apart yet.
+  Needed two additions to `gateway` that didn't exist before: a unique `Session.ID()` (so `Hub` can
+  key state without comparing `*Session` pointers) and an `OnDisconnect` hook (so leaving the world
+  on disconnect doesn't require every handler to poll for dead connections).
+  Full flow tested end-to-end over real TCP with two simultaneous connections: second player's
+  `OpEnterWorld` sees the first as an "other", first player receives `OpEntityEntered` for the
+  second, a move broadcasts `OpEntityMoved`, and disconnecting broadcasts `OpEntityLeft` — all
+  through the actual server stack, not mocked.
+  Caught a real bug while writing the result decoder: `EnterWorldResult` has more fields after
+  `Reason` when `OK=true` (zone, position, others), but the shared `decodeOKReason` helper requires
+  *nothing* follow `Reason` — reusing it here would have made every successful `OpEnterWorldResult`
+  fail to decode. Wrote a manual decoder for this one instead of forcing the shared helper to fit.
+  Ported the same opcodes to GDScript (`client/scripts/net/world.gd` + test), wired into CI, and
+  reconfirmed byte-exact wire compatibility for both `EnterWorldResult` and `MoveRequest`.
+- Also pushed 15 accumulated local commits to `origin/dev` (merging in one commit — a README edit —
+  that had landed there independently in the meantime; no conflicts).
+
 ## 2026-08-19 (cont'd 14)
 
 - Gave `character` the same SQLite treatment as `account` (the TODO flagged in the previous

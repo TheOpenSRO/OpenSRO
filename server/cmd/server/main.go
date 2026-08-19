@@ -13,6 +13,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/session"
+	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
 func main() {
@@ -41,10 +42,13 @@ func main() {
 	}
 	defer chars.Close()
 	logger.Info("character database ready", "path", *characterDB)
+
+	hub := world.NewHub()
 	handle := gateway.Chain(
 		session.LoginHandler(accounts),
 		session.RegisterHandler(accounts),
 		session.CharacterHandler(chars),
+		session.WorldHandler(chars, hub),
 	)
 
 	srv := &gateway.Server{
@@ -54,6 +58,7 @@ func main() {
 			logger.Info("packet received", "addr", sess.RemoteAddr(), "opcode", p.Opcode, "size", len(p.Data))
 			return handle(ctx, sess, p)
 		},
+		OnDisconnect: session.WorldDisconnectHandler(hub),
 	}
 
 	if err := srv.ListenAndServe(ctx); err != nil {

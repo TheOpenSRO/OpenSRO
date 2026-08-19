@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -113,3 +114,109 @@ func TestChainStopsOnFirstError(t *testing.T) {
 type errTest string
 
 func (e errTest) Error() string { return string(e) }
+
+func TestOnDisconnectCalledOnClientClose(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	disconnected := make(chan uint64, 1)
+	srv := &Server{
+		Addr:         "127.0.0.1:0",
+		Handle:       func(context.Context, *Session, *proto.Packet) error { return nil },
+		OnDisconnect: func(sess *Session) { disconnected <- sess.ID() },
+	}
+
+	ln, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	srv.Addr = addr
+
+	go srv.ListenAndServe(ctx)
+
+	var conn net.Conn
+	for i := 0; i < 50; i++ {
+		conn, err = net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	conn.Close() // client hangs up
+
+	select {
+	case id := <-disconnected:
+		if id == 0 {
+			t.Fatal("expected a nonzero session ID")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for OnDisconnect to fire")
+	}
+}
+
+func TestSessionIDsAreUnique(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	seen := map[uint64]bool{}
+	srv := &Server{
+		Addr: "127.0.0.1:0",
+		Handle: func(_ context.Context, sess *Session, _ *proto.Packet) error {
+			mu.Lock()
+			seen[sess.ID()] = true
+			mu.Unlock()
+			return nil
+		},
+	}
+
+	ln, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	srv.Addr = addr
+
+	go srv.ListenAndServe(ctx)
+
+	for i := 0; i < 3; i++ {
+		var conn net.Conn
+		for j := 0; j < 50; j++ {
+			conn, err = net.DialTimeout("tcp", addr, 100*time.Millisecond)
+			if err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if err != nil {
+			t.Fatalf("dial %d: %v", i, err)
+		}
+		if err := proto.Write(conn, &proto.Packet{Opcode: 1}); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+		conn.Close()
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(seen)
+		mu.Unlock()
+		if n == 3 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 3 {
+		t.Fatalf("got %d unique session IDs, want 3", len(seen))
+	}
+}

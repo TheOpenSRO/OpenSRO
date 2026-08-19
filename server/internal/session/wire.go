@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 )
 
 // This file holds payload encoding helpers shared across this package's
@@ -60,6 +61,38 @@ func decodeStrings(data []byte, count int) ([]string, error) {
 		return nil, fmt.Errorf("%d unexpected trailing byte(s) after %d field(s)", len(rest), count)
 	}
 	return fields, nil
+}
+
+// encodeInt64 serializes v as 8 bytes LE.
+func encodeInt64(v int64) []byte {
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, uint64(v))
+	return buf
+}
+
+// decodeInt64 reads an 8-byte LE int64 from the front of data, returning it
+// along with whatever bytes remain.
+func decodeInt64(data []byte) (v int64, rest []byte, err error) {
+	if len(data) < 8 {
+		return 0, nil, errors.New("truncated int64")
+	}
+	return int64(binary.LittleEndian.Uint64(data)), data[8:], nil
+}
+
+// encodeFloat32 serializes v as 4 bytes LE (IEEE 754 bit pattern).
+func encodeFloat32(v float32) []byte {
+	buf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buf, math.Float32bits(v))
+	return buf
+}
+
+// decodeFloat32 reads a 4-byte LE float32 from the front of data, returning
+// it along with whatever bytes remain.
+func decodeFloat32(data []byte) (v float32, rest []byte, err error) {
+	if len(data) < 4 {
+		return 0, nil, errors.New("truncated float32")
+	}
+	return math.Float32frombits(binary.LittleEndian.Uint32(data)), data[4:], nil
 }
 
 // decodeStringsPrefix parses count length-prefixed strings from the front
