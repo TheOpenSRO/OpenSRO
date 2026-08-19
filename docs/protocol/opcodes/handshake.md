@@ -26,7 +26,21 @@ leaving a description we don't actually believe is right:
    by one, feeding back a bit computed by XORing several tapped bit positions together. This is
    consistent with the "security byte" / count-byte generator long documented by the private
    server community for this MMO family (an LFSR-based per-session keystream, not a simple static
-   CRC) — we're not yet confident enough in the exact tap positions to state them as fact.
+   CRC).
+
+   The tap/feedback computation, confirmed by direct observation, one round: given the current
+   32-bit register value `v`, XOR five progressively-shifted taps together — shift amounts
+   2, 2, 1, 1, 1, each result re-XORed against `v` again before the next shift — and take bit 0 of
+   the final result as the feedback bit. Separately, the *old* bit 0 of `v` moves up to become the
+   *new* bit 31 (a rotate), and the new bit 0 becomes the feedback bit just computed; bits 1-30 of
+   the new value are bits 2-31 of the old one, shifted down. Run 32 times per derived byte. This is
+   an algorithm/method, not a literal data table, so — unlike the CRC table in point 3 below —
+   there's no concern about reproducing it in an original implementation (see `docs/LEGAL.md`
+   policy #2: facts about behavior, including precise algorithms, are fair game to document and
+   reimplement; it's copying literal proprietary *data* or *source text* that isn't).
+   Four such derived bytes get combined (XORed pairwise, with a `0 -> 1` substitution to avoid a
+   degenerate zero state) into the three seed bytes that feed the rolling generator in point 2.
+   Implemented as `server/internal/proto.lfsrByte` / `DeriveSeed`.
 2. Those derived bytes seed a small rolling one-byte generator used once per outgoing packet:
    `next = ((~prev0 + prev1) * prev2)`, then `next = (next >> 4) XOR next`, where only one of the
    three state bytes updates per packet (the other two stay fixed for the life of the session,

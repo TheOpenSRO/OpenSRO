@@ -2,6 +2,16 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 8)
+
+- Implemented the handshake's LFSR-based seed derivation (`lfsrByte`, `DeriveSeed` in
+  `server/internal/proto/security.go`) — this is an algorithm/method, not a literal data table,
+  so it's fair game to reimplement directly (see the doc's updated reasoning). Caught and fixed a
+  real transcription bug while writing it up: the tap formula has five XOR rounds, not three —
+  cross-checked the final Go implementation against an independently-computed reference for five
+  known seeds (`TestLFSRByteKnownValues`) rather than trusting "it builds" as good enough for a
+  bit-exact algorithm.
+
 ## 2026-08-19 (cont'd 7)
 
 - Tried to trace the real wire-opcode dispatch table in `AgentServer.exe` via the traffic-filter
