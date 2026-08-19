@@ -13,6 +13,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
@@ -125,10 +126,19 @@ func TestCombatFullFlow(t *testing.T) {
 	// Monster hits back for 15 whenever it survives a hit.
 	monster := monsters.Spawn("jangan", "Stone Golem", 40, 10, 15, 500)
 
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	if err := quests.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating quests: %v", err)
+	}
+
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, hub),
-		CombatHandler(chars, eq, items, hub, monsters),
+		CombatHandler(chars, eq, items, hub, monsters, quests),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()

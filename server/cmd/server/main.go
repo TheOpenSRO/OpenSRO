@@ -18,6 +18,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/session"
 	"github.com/OpenSRO/srrevamp/server/internal/shop"
@@ -132,6 +133,13 @@ func main() {
 		os.Exit(1)
 	}
 	defer guilds.Close()
+
+	quests, err := quest.OpenSQLStore(*postgresDSN)
+	if err != nil {
+		logger.Error("opening quest store", "error", err)
+		os.Exit(1)
+	}
+	defer quests.Close()
 	logger.Info("postgres storage ready")
 
 	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
@@ -149,12 +157,13 @@ func main() {
 		session.InventoryHandler(chars, inv),
 		session.EquipmentHandler(chars, eq),
 		session.ShopHandler(chars, shopSvc),
-		session.CombatHandler(chars, eq, refItems, hub, monsters),
+		session.CombatHandler(chars, eq, refItems, hub, monsters, quests),
 		session.LearnSkillHandler(chars, skills),
-		session.UseSkillHandler(chars, eq, refItems, skills, hub, monsters),
+		session.UseSkillHandler(chars, eq, refItems, skills, hub, monsters, quests),
 		session.PartyHandler(chars, parties),
 		session.GuildHandler(chars, guilds),
 		session.ChatHandler(hub),
+		session.QuestHandler(chars, quests),
 	)
 
 	worldDisconnect := session.WorldDisconnectHandler(hub)

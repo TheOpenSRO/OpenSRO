@@ -2,6 +2,34 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 29)
+
+- Added a quest system, closing the last named 0% gap from the earlier scope assessment
+  (quests/guilds/PvP -- guilds and quests are now done; PvP/duels remain future work).
+  `server/internal/quest`: a small fixed catalog (own design, same pattern as `skill.Catalog` --
+  currently one quest, "Golem Cull": kill 3 Stone Golems for 200 gold) with Postgres-backed
+  per-character progress (`character_quests`: character_id, quest_id, kills, completed_at) that
+  survives disconnects, unlike party/combat state.
+  The interesting wiring problem: quest progress needs to react to monster deaths, which already
+  happen deep inside `session/combat.go`'s `performAttack` (shared by plain attacks and skill
+  uses). Rather than inventing a separate event/pubsub layer, threaded a `quest.Store` straight
+  through `performAttack`'s existing parameter list (and both its callers, `CombatHandler` and
+  `UseSkillHandler`) -- on a kill, it now calls `quests.RecordKill(characterID, monster.Name)`
+  right where the existing gold-reward logic already lives, granting quest gold and sending a new
+  `OpQuestCompleted` packet the same way. Added opcodes 0x00B0-0x00B4 for list/accept/completed.
+  Updated `combat_test.go` and `skill_test.go`'s existing full-flow tests for the new parameter
+  (both now spin up a real Postgres-backed `quest.Store`, matching the pattern already used for
+  inventory/equipment/skill in those same tests) -- confirms the wiring didn't regress plain
+  attacks or skill-boosted attacks.
+  Full flow tested end-to-end over real TCP: accept a quest, re-accepting the same one fails
+  cleanly, killing three one-hit-kill monsters progresses it, and the third kill triggers
+  `OpQuestCompleted` with the correct gold reward (not the first or second) -- verified as a
+  distinct packet read, not inferred from side effects.
+  Ported to GDScript (`quest.gd` + test), wired into `NetClient`, reconfirmed byte-exact wire
+  compatibility for `QuestListResult` and `QuestCompleted` via independent Go/GDScript hex
+  generation. All 15 GDScript suites pass headless; wired into CI. Full Go test suite green
+  across all packages; server binary smoke-tested with quests wired in.
+
 ## 2026-08-19 (cont'd 28)
 
 - Added a chat system: zone-wide "say" and cross-zone "whisper", the last piece of basic MMO

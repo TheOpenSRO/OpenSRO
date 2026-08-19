@@ -51,6 +51,10 @@ signal chat_message(message: ChatNet.Message)
 signal chat_whisper_result(ok: bool, reason: String)
 signal chat_whisper_message(message: ChatNet.Message)
 
+signal quest_list_result(entries: Array, error: String)
+signal quest_accept_result(ok: bool, reason: String)
+signal quest_completed(completed: QuestNet.Completed)
+
 var _peer: StreamPeerTCP
 var _connecting := false
 
@@ -175,6 +179,12 @@ func say(message_text: String) -> void:
 func whisper(target_name: String, message_text: String) -> void:
 	_send(ChatNet.OP_WHISPER, ChatNet.encode_whisper(target_name, message_text))
 
+func list_quests(char_name: String) -> void:
+	_send(QuestNet.OP_LIST, QuestNet.encode_list_request(char_name))
+
+func accept_quest(char_name: String, quest_id: int) -> void:
+	_send(QuestNet.OP_ACCEPT, QuestNet.encode_accept(char_name, quest_id))
+
 func _dispatch(p: Packet) -> void:
 	match p.opcode:
 		Auth.OP_LOGIN_RESULT:
@@ -243,5 +253,13 @@ func _dispatch(p: Packet) -> void:
 			chat_whisper_result.emit(r.ok, r.reason if r.error == "" else r.error)
 		ChatNet.OP_WHISPER_MESSAGE:
 			chat_whisper_message.emit(ChatNet.decode_message(p.data))
+		QuestNet.OP_LIST_RESULT:
+			var r := QuestNet.decode_list_result(p.data)
+			quest_list_result.emit(r.entries, r.error)
+		QuestNet.OP_ACCEPT_RESULT:
+			var r := Auth.decode_result(p.data)
+			quest_accept_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		QuestNet.OP_COMPLETED:
+			quest_completed.emit(QuestNet.decode_completed(p.data))
 		_:
 			push_warning("NetClient: unhandled opcode 0x%04x" % p.opcode)

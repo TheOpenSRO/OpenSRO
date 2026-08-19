@@ -13,6 +13,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
@@ -83,11 +84,18 @@ func TestSkillFullFlow(t *testing.T) {
 	// (defense) = 35 net damage.
 	monster := monsters.Spawn("jangan", "Stone Golem", 100, 10, 5, 500)
 
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	quests.TruncateForTest(ctx)
+
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, hub),
 		LearnSkillHandler(chars, skills),
-		UseSkillHandler(chars, eq, items, skills, hub, monsters),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()

@@ -11,6 +11,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
@@ -155,6 +156,7 @@ func CombatHandler(
 	items combat.ItemLookup,
 	hub *world.Hub,
 	monsters *combat.Hub,
+	quests quest.Store,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpAttack {
@@ -171,7 +173,7 @@ func CombatHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 		}
 
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, characterID, req.TargetMonsterID, 0)
+		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, characterID, req.TargetMonsterID, 0)
 	}
 }
 
@@ -189,6 +191,7 @@ func performAttack(
 	items combat.ItemLookup,
 	hub *world.Hub,
 	monsters *combat.Hub,
+	quests quest.Store,
 	characterID, targetMonsterID int64,
 	damageBonus int,
 ) error {
@@ -260,6 +263,20 @@ func performAttack(
 		msg := &MonsterDied{MonsterID: targetMonsterID}
 		for _, e := range others {
 			e.Session.Send(&proto.Packet{Opcode: OpMonsterDied, Data: msg.Encode()})
+		}
+
+		completedQuests, err := quests.RecordKill(ctx, characterID, monster.Name)
+		if err != nil {
+			return fmt.Errorf("combat: recording quest kill: %w", err)
+		}
+		for _, q := range completedQuests {
+			if err := chars.AddGold(ctx, characterID, q.GoldReward); err != nil {
+				return fmt.Errorf("combat: granting quest reward: %w", err)
+			}
+			completedMsg := &QuestCompleted{QuestID: q.ID, GoldReward: q.GoldReward}
+			if err := sess.Send(&proto.Packet{Opcode: OpQuestCompleted, Data: completedMsg.Encode()}); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
