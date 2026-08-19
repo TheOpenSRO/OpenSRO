@@ -2,6 +2,27 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 3)
+
+- Installed Godot 4.2.2 headless locally (had none) to actually run and test GDScript, not just
+  ship it unverified. Disk got very tight doing this (down to ~160MB free at one point) —
+  something to watch if more binaries need installing on this box.
+- Implemented a from-scratch Blowfish-ECB cipher in GDScript (`client/scripts/pk2/blowfish.gd`).
+  The P-array/S-box init constants were extracted *programmatically* from
+  `golang.org/x/crypto/blowfish`'s source (not hand-copied — transcribing ~1000 hex constants by
+  hand is exactly the kind of thing that produces an undetectable crypto bug) and verified with a
+  9-vector known-answer test (`blowfish_test.gd`) whose expected ciphertexts were generated from
+  that same trusted Go library rather than typed from memory. All 9 pass, including the actual
+  pk2 default key. Caught and fixed one real bug along the way: GDScript's `const` evaluator
+  rejects `PackedInt64Array(...)` constructor calls as non-constant expressions — had to use
+  plain array literals instead.
+- Implemented `client/scripts/pk2/pk2_reader.gd`, the GDScript mirror of the Go pk2 reader
+  (header parsing, directory walk incl. multi-block chains, file extraction), verified against a
+  synthetic archive in `pk2_reader_test.gd`. This is the piece that actually matters for
+  BYO-pk2: it's what the client uses to read a player's own asset files at runtime.
+- Wired both new GDScript test scripts into CI (`godot --headless --script ...`), so they run on
+  every push/PR, not just once locally.
+
 ## 2026-08-19 (cont'd 2)
 
 - Fixed a real bug in the pk2 multi-block directory chain: the `continue` in the

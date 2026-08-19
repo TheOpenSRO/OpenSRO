@@ -80,3 +80,7 @@ implement DEFLATE to read a `.zip`.
 - `client/scripts/pk2` (GDScript): client-side reader used at runtime to stream assets out of a
   user-supplied pk2 without ever writing decrypted/extracted copies back to disk.
 - Both are read-only. Neither reader nor any code in this repo re-encrypts or repacks pk2s.
+- Both implementations are kept independently in sync against this doc; the Go one is unit
+  tested (`go test`), the GDScript one has a headless test suite
+  (`godot --headless --script res://scripts/pk2/pk2_reader_test.gd`, wired into CI) including a
+  Blowfish known-answer test cross-validated against `golang.org/x/crypto/blowfish`.
