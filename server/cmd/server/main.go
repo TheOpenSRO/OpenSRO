@@ -16,6 +16,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/session"
+	"github.com/OpenSRO/srrevamp/server/internal/shop"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
@@ -66,6 +67,8 @@ func main() {
 	defer eq.Close()
 	logger.Info("postgres storage ready")
 
+	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
+
 	hub := world.NewHub()
 	handle := gateway.Chain(
 		session.LoginHandler(accounts),
@@ -74,6 +77,7 @@ func main() {
 		session.WorldHandler(chars, hub),
 		session.InventoryHandler(chars, inv),
 		session.EquipmentHandler(chars, eq),
+		session.ShopHandler(chars, shopSvc),
 	)
 
 	srv := &gateway.Server{

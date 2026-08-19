@@ -2,6 +2,21 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 21)
+
+- Added `server/internal/shop`: a basic NPC vendor, entirely own design. No original pricing data
+  exists to draw from (never restored/mined a real price table from the obtained DB backups), so
+  `Price()` computes cost from an item's own combat stats via a simple own formula
+  (`basePrice + statMultiplier * sum-of-attack/defense`) rather than looking anything up. `Service`
+  composes `character.Store` (gold), `inventory.Store` (receiving items), and an `ItemLookup`
+  (catalog/pricing) — not backed by its own table, just a computed layer over the others.
+  `Buy` refunds gold automatically if adding the item to inventory fails after gold was already
+  deducted (e.g. no inventory room), so a failed purchase can't silently take someone's money.
+  Wired `OpShopBuy` into the protocol; full buy flow (login -> buy -> confirm gold deducted and
+  item received) tested end-to-end over real TCP.
+- All packages build/vet/test clean; full server binary (accounts, characters, refdata, inventory,
+  equipment, shop, all sharing one Postgres connection) smoke-tested starting up cleanly.
+
 ## 2026-08-19 (cont'd 20)
 
 - Added currency: `character.Character` gained a `Gold` field (`StartingGold` = 1000, own design),
