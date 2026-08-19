@@ -2,6 +2,20 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 11)
+
+- Ported the client side of our own protocol into GDScript: `client/scripts/net/packet.gd`
+  (framing, mirrors `server/internal/proto`) and `client/scripts/net/auth.gd` (login/register
+  credential + result encoding, mirrors `server/internal/session`). Both have headless GDScript
+  tests, now wired into CI alongside the existing pk2/Blowfish ones.
+  Caught two real GDScript static-typing parse errors while writing this (untyped `for` loop
+  variable breaking `:=` inference in `encode_credentials`, and a `StreamPeer` vs `StreamPeerTCP`
+  method mismatch in the framing reader) — fixed before landing, not discovered later.
+  Then did the thing that actually matters: generated the *same* login-request and login-result
+  frames from both the Go server code and this new GDScript code for identical inputs, and
+  diffed the hex — byte-for-byte identical. Real cross-language wire-compatibility confirmation,
+  not just "both sides compile."
+
 ## 2026-08-19 (cont'd 10)
 
 - Closed the gap noted in the previous entry's TODO (a freshly started real server had no way to
