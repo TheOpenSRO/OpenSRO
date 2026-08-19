@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/OpenSRO/srrevamp/server/internal/account"
+	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/session"
@@ -23,10 +24,15 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// TODO: swap for a persistent Store once one exists — MemStore's
-	// accounts don't survive a restart.
-	store := account.NewMemStore()
-	handle := gateway.Chain(session.LoginHandler(store), session.RegisterHandler(store))
+	// TODO: swap for persistent Stores once they exist — MemStore state
+	// doesn't survive a restart.
+	accounts := account.NewMemStore()
+	chars := character.NewMemStore()
+	handle := gateway.Chain(
+		session.LoginHandler(accounts),
+		session.RegisterHandler(accounts),
+		session.CharacterHandler(chars),
+	)
 
 	srv := &gateway.Server{
 		Addr:   *addr,

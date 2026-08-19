@@ -7,7 +7,6 @@ package session
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 
@@ -52,26 +51,15 @@ type LoginResult struct {
 }
 
 // Encode serializes a LoginResult: one byte (0/1) then the Reason field.
-func (r *LoginResult) Encode() []byte {
-	out := make([]byte, 0, 3+len(r.Reason))
-	if r.OK {
-		out = append(out, 1)
-	} else {
-		out = append(out, 0)
-	}
-	return append(out, encodeStrings(r.Reason)...)
-}
+func (r *LoginResult) Encode() []byte { return encodeOKReason(r.OK, r.Reason) }
 
 // DecodeLoginResult parses an OpLoginResult payload.
 func DecodeLoginResult(data []byte) (*LoginResult, error) {
-	if len(data) < 1 {
-		return nil, errors.New("session: decoding LoginResult: empty payload")
-	}
-	fields, err := decodeStrings(data[1:], 1)
+	ok, reason, err := decodeOKReason(data)
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding LoginResult: %w", err)
 	}
-	return &LoginResult{OK: data[0] != 0, Reason: fields[0]}, nil
+	return &LoginResult{OK: ok, Reason: reason}, nil
 }
 
 // LoginHandler returns a gateway.Handler implementing the login exchange
@@ -93,7 +81,8 @@ func LoginHandler(store account.Store) gateway.Handler {
 		}
 
 		result := &LoginResult{OK: true}
-		if _, err := store.Authenticate(ctx, req.Username, req.Password); err != nil {
+		acc, err := store.Authenticate(ctx, req.Username, req.Password)
+		if err != nil {
 			result.OK = false
 			switch {
 			case errors.Is(err, account.ErrBlocked):
@@ -101,36 +90,10 @@ func LoginHandler(store account.Store) gateway.Handler {
 			default:
 				result.Reason = "invalid username or password"
 			}
+		} else {
+			authenticate(sess, acc.ID)
 		}
 
 		return sess.Send(&proto.Packet{Opcode: OpLoginResult, Data: result.Encode()})
 	}
-}
-
-func encodeStrings(fields ...string) []byte {
-	var out []byte
-	for _, f := range fields {
-		lenBuf := make([]byte, 2)
-		binary.LittleEndian.PutUint16(lenBuf, uint16(len(f)))
-		out = append(out, lenBuf...)
-		out = append(out, f...)
-	}
-	return out
-}
-
-func decodeStrings(data []byte, count int) ([]string, error) {
-	out := make([]string, 0, count)
-	for i := 0; i < count; i++ {
-		if len(data) < 2 {
-			return nil, fmt.Errorf("field %d: truncated length prefix", i)
-		}
-		n := binary.LittleEndian.Uint16(data)
-		data = data[2:]
-		if int(n) > len(data) {
-			return nil, fmt.Errorf("field %d: declared length %d exceeds remaining %d bytes", i, n, len(data))
-		}
-		out = append(out, string(data[:n]))
-		data = data[n:]
-	}
-	return out, nil
 }

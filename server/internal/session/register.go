@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/OpenSRO/srrevamp/server/internal/account"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
@@ -40,25 +41,14 @@ type RegisterResult struct {
 	Reason string
 }
 
-func (r *RegisterResult) Encode() []byte {
-	out := make([]byte, 0, 3+len(r.Reason))
-	if r.OK {
-		out = append(out, 1)
-	} else {
-		out = append(out, 0)
-	}
-	return append(out, encodeStrings(r.Reason)...)
-}
+func (r *RegisterResult) Encode() []byte { return encodeOKReason(r.OK, r.Reason) }
 
 func DecodeRegisterResult(data []byte) (*RegisterResult, error) {
-	if len(data) < 1 {
-		return nil, errors.New("session: decoding RegisterResult: empty payload")
-	}
-	fields, err := decodeStrings(data[1:], 1)
+	ok, reason, err := decodeOKReason(data)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("session: decoding RegisterResult: %w", err)
 	}
-	return &RegisterResult{OK: data[0] != 0, Reason: fields[0]}, nil
+	return &RegisterResult{OK: ok, Reason: reason}, nil
 }
 
 // RegisterHandler returns a gateway.Handler implementing account

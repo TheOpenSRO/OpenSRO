@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 )
@@ -34,14 +35,39 @@ func Chain(handlers ...Handler) Handler {
 	}
 }
 
-// Session is one accepted, live client connection.
+// Session is one accepted, live client connection. It also carries a small
+// generic key/value bag so higher-level handlers (login, character
+// selection, ...) can remember state across packets on the same connection
+// — e.g. "which account authenticated on this connection" — without gateway
+// itself knowing anything about accounts or characters.
 type Session struct {
 	conn net.Conn
+
+	mu     sync.RWMutex
+	values map[string]any
 }
 
 // RemoteAddr returns the client's address, mainly for logging.
 func (s *Session) RemoteAddr() net.Addr {
 	return s.conn.RemoteAddr()
+}
+
+// Set stores a value under key for the lifetime of this connection.
+func (s *Session) Set(key string, value any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.values == nil {
+		s.values = make(map[string]any)
+	}
+	s.values[key] = value
+}
+
+// Get retrieves a value previously stored with Set.
+func (s *Session) Get(key string) (any, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, ok := s.values[key]
+	return v, ok
 }
 
 // Send writes a packet back to this session's client.

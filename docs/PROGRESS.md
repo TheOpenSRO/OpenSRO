@@ -2,6 +2,29 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 12)
+
+- Added character creation/selection, extending the same account -> session pattern:
+  `server/internal/character` (independent design — `MaxPerAccount`, case-insensitive global name
+  uniqueness matching the `_IsExistingCharName`-style fact from `db_schema.md`, `Store`
+  interface, `MemStore`), and `server/internal/session/character.go` (`OpCharacterList` /
+  `OpCharacterCreate` / `OpCharacterDelete` + results, our own protocol).
+- `gateway.Session` gained a small generic key/value bag so handlers can remember state across
+  packets on one connection — needed so character requests know which account authenticated,
+  without `gateway` itself knowing anything about accounts. `session/authstate.go` wraps it with
+  typed helpers.
+- Refactored the repeated OK/Reason payload shape (login, register, and now two character results)
+  into shared `encodeOKReason`/`decodeOKReason` helpers in new `session/wire.go` instead of
+  copy-pasting a fourth time. Caught a real bug while doing this refactor: the character
+  create/delete handlers set `Reason` on failure but never flipped `OK` back to `false`, so a
+  failed create/delete would have reported success with an error message attached — fixed before
+  it shipped, not found via a passing-but-wrong test.
+- Ported the same character opcodes to GDScript (`client/scripts/net/character.gd` + test), wired
+  into CI, and reconfirmed byte-exact wire compatibility with the Go implementation for
+  `CharacterListResult` by hex-diffing independently generated output from both sides (same
+  method as the earlier login/register check).
+- All Go packages build/vet/test/gofmt clean; all GDScript tests pass headless.
+
 ## 2026-08-19 (cont'd 11)
 
 - Ported the client side of our own protocol into GDScript: `client/scripts/net/packet.gd`
