@@ -10,3 +10,7 @@ config/name="SRRevamp"
 config/description="Clean-room MMO client scaffold. Requires user-supplied *.pk2 data files at runtime."
 run/main_scene="res://scenes/Boot.tscn"
 config/features=PackedStringArray("4.2")
+
+[autoload]
+
+NetClient="*res://scripts/net/net_client.gd"

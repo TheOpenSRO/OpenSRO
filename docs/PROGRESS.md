@@ -2,6 +2,29 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 16)
+
+- Built actual Godot client scenes wired to the protocol layer that already worked in isolation:
+  `NetClient` (`client/scripts/net/net_client.gd`, an autoload singleton) wraps a `StreamPeerTCP`
+  connection and dispatches decoded packets as signals; `Login.tscn`/`.gd` and
+  `CharacterSelect.tscn`/`.gd` are real UI (LineEdit/Button/ItemList, not mockups) driving login,
+  registration, character list/create/delete, and entering the world. `Boot.gd` now transitions
+  into `Login.tscn` instead of just printing a message.
+  Hit a real Godot gotcha immediately: `NetClient`'s script had both `class_name NetClient` and an
+  autoload registered under the same name — Godot refuses this ("hides an autoload singleton") and
+  it broke every scene referencing it. Fixed by dropping `class_name` (the script is only ever used
+  as the autoload, never instantiated as a standalone type elsewhere).
+  Verified for real, not just "loads without errors": ran a throwaway script that instantiated
+  `NetClient` directly (autoloads aren't available in `--script` mode) against the actual running
+  Go server binary and drove it through register -> login -> list (empty) -> create -> enter world,
+  asserting on every response -- full stack, real TCP, real server process, not mocked. Deleted the
+  script after (not meant to be a committed test, just a one-time integration check); the committed
+  GDScript unit tests only cover encode/decode, not the live networking wrapper, which is a real
+  coverage gap worth closing with a proper integration test harness later.
+  No in-world 3D scene exists yet (needs real map/asset rendering, out of scope here) — character
+  select shows a confirmation of zone/position/nearby-player-count as the current end of this
+  vertical slice.
+
 ## 2026-08-19 (cont'd 15)
 
 - Added a minimal world/zone system: `server/internal/world` (`Hub`, in-memory by design — live

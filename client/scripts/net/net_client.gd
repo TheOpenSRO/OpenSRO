@@ -1,0 +1,128 @@
+extends Node
+
+## Thin client-side wrapper around a TCP connection to the Go server,
+## dispatching decoded packets (via Packet/Auth/CharacterNet/WorldNet) as
+## signals for UI scenes to react to. Meant to be used as an autoload
+## singleton (see project.godot) so any scene can reach it.
+##
+## Known limitation: Packet.read_from busy-waits (in small increments) for a
+## payload to fully arrive once its header is seen, which is fine for a
+## local dev server but would stall a frame against a slow/adversarial
+## connection. Acceptable for now; worth revisiting before this talks to
+## anything over a real network.
+
+signal connected
+signal connection_failed
+signal disconnected
+
+signal login_result(ok: bool, reason: String)
+signal register_result(ok: bool, reason: String)
+signal character_list_result(names: Array, error: String)
+signal character_create_result(ok: bool, reason: String)
+signal character_delete_result(ok: bool, reason: String)
+signal enter_world_result(result: WorldNet.EnterWorldResult)
+signal entity_entered(snapshot: WorldNet.EntitySnapshot)
+signal entity_moved(moved: WorldNet.EntityMoved)
+signal entity_left(character_id: int)
+
+var _peer: StreamPeerTCP
+var _connecting := false
+
+func _process(_delta: float) -> void:
+	if _peer == null:
+		return
+
+	if _connecting:
+		_peer.poll()
+		var status := _peer.get_status()
+		if status == StreamPeerTCP.STATUS_CONNECTED:
+			_connecting = false
+			connected.emit()
+		elif status == StreamPeerTCP.STATUS_ERROR or status == StreamPeerTCP.STATUS_NONE:
+			_connecting = false
+			connection_failed.emit()
+		return
+
+	if _peer.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+		return
+
+	# Drain everything currently available; Packet.read_from returns null
+	# once there's not a full header buffered yet.
+	while true:
+		var p := Packet.read_from(_peer)
+		if p == null:
+			break
+		_dispatch(p)
+
+func connect_to_server(host: String, port: int) -> void:
+	_peer = StreamPeerTCP.new()
+	var err := _peer.connect_to_host(host, port)
+	if err != OK:
+		push_error("NetClient: connect_to_host failed: %s" % err)
+		connection_failed.emit()
+		return
+	_connecting = true
+
+func disconnect_from_server() -> void:
+	if _peer != null:
+		_peer.disconnect_from_host()
+		_peer = null
+	disconnected.emit()
+
+func is_connected_to_server() -> bool:
+	return _peer != null and _peer.get_status() == StreamPeerTCP.STATUS_CONNECTED
+
+func _send(opcode: int, data: PackedByteArray = PackedByteArray()) -> void:
+	if not is_connected_to_server():
+		push_error("NetClient: _send called while not connected")
+		return
+	_peer.put_data(Packet.new(opcode, data).encode())
+
+func login(username: String, password: String) -> void:
+	_send(Auth.OP_LOGIN, Auth.encode_credentials(username, password))
+
+func register_account(username: String, password: String) -> void:
+	_send(Auth.OP_REGISTER, Auth.encode_credentials(username, password))
+
+func list_characters() -> void:
+	_send(CharacterNet.OP_LIST)
+
+func create_character(char_name: String) -> void:
+	_send(CharacterNet.OP_CREATE, CharacterNet.encode_name(char_name))
+
+func delete_character(char_name: String) -> void:
+	_send(CharacterNet.OP_DELETE, CharacterNet.encode_name(char_name))
+
+func enter_world(char_name: String) -> void:
+	_send(WorldNet.OP_ENTER_WORLD, WorldNet.encode_enter_world(char_name))
+
+func move_to(x: float, y: float, z: float) -> void:
+	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z))
+
+func _dispatch(p: Packet) -> void:
+	match p.opcode:
+		Auth.OP_LOGIN_RESULT:
+			var r := Auth.decode_result(p.data)
+			login_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		Auth.OP_REGISTER_RESULT:
+			var r := Auth.decode_result(p.data)
+			register_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		CharacterNet.OP_LIST_RESULT:
+			var r := CharacterNet.decode_list_result(p.data)
+			character_list_result.emit(r.names, r.error)
+		CharacterNet.OP_CREATE_RESULT:
+			var r := Auth.decode_result(p.data)
+			character_create_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		CharacterNet.OP_DELETE_RESULT:
+			var r := Auth.decode_result(p.data)
+			character_delete_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		WorldNet.OP_ENTER_WORLD_RESULT:
+			enter_world_result.emit(WorldNet.decode_enter_world_result(p.data))
+		WorldNet.OP_ENTITY_ENTERED:
+			entity_entered.emit(WorldNet.decode_entity_entered(p.data))
+		WorldNet.OP_ENTITY_MOVED:
+			entity_moved.emit(WorldNet.decode_entity_moved(p.data))
+		WorldNet.OP_ENTITY_LEFT:
+			entity_left.emit(WorldNet.decode_entity_left(p.data))
+		_:
+			push_warning("NetClient: unhandled opcode 0x%04x" % p.opcode)
