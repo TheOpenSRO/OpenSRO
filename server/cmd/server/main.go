@@ -31,6 +31,7 @@ const (
 	monsterName       = "Stone Golem"
 	monsterMaxHP      = 200
 	monsterDefense    = 10
+	monsterAttack     = 8
 	monsterGoldReward = 50
 	respawnDelay      = 10 * time.Second
 )
@@ -39,7 +40,7 @@ const (
 // it respawnDelay after each death, until ctx is canceled.
 func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Logger) {
 	spawn := func() int64 {
-		m := monsters.Spawn(monsterZone, monsterName, monsterMaxHP, monsterDefense, monsterGoldReward)
+		m := monsters.Spawn(monsterZone, monsterName, monsterMaxHP, monsterDefense, monsterAttack, monsterGoldReward)
 		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone)
 		return m.ID
 	}

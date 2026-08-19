@@ -69,7 +69,7 @@ func (m *MemStore) Create(_ context.Context, accountID int64, name string) (*Cha
 	}
 
 	m.nextID++
-	c := &Character{ID: m.nextID, AccountID: accountID, Name: name, Gold: StartingGold}
+	c := &Character{ID: m.nextID, AccountID: accountID, Name: name, Gold: StartingGold, HP: MaxHP}
 	m.byID[c.ID] = c
 	m.namesTaken[key] = true
 
@@ -117,5 +117,34 @@ func (m *MemStore) DeductGold(_ context.Context, characterID int64, amount int64
 		return ErrInsufficientGold
 	}
 	c.Gold -= amount
+	return nil
+}
+
+// ApplyDamage implements Store.
+func (m *MemStore) ApplyDamage(_ context.Context, characterID int64, amount int) (int, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.byID[characterID]
+	if !ok {
+		return 0, false, ErrNotFound
+	}
+	c.HP -= amount
+	if c.HP < 0 {
+		c.HP = 0
+	}
+	return c.HP, c.HP == 0, nil
+}
+
+// ResetHP implements Store.
+func (m *MemStore) ResetHP(_ context.Context, characterID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.byID[characterID]
+	if !ok {
+		return ErrNotFound
+	}
+	c.HP = MaxHP
 	return nil
 }

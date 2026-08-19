@@ -183,3 +183,62 @@ func TestGoldOperationsOnNonexistentCharacter(t *testing.T) {
 		t.Fatalf("DeductGold: got %v, want ErrNotFound", err)
 	}
 }
+
+func TestNewCharacterHasFullHP(t *testing.T) {
+	store := NewMemStore()
+	c, _ := store.Create(context.Background(), 1, "Aria")
+	if c.HP != MaxHP {
+		t.Fatalf("got HP %d, want MaxHP %d", c.HP, MaxHP)
+	}
+}
+
+func TestApplyDamageReducesHP(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+	c, _ := store.Create(ctx, 1, "Aria")
+
+	hp, died, err := store.ApplyDamage(ctx, c.ID, 30)
+	if err != nil {
+		t.Fatalf("ApplyDamage: %v", err)
+	}
+	if died || hp != MaxHP-30 {
+		t.Fatalf("got hp=%d died=%v, want hp=%d died=false", hp, died, MaxHP-30)
+	}
+}
+
+func TestApplyDamageClampsAtZeroAndReportsDeath(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+	c, _ := store.Create(ctx, 1, "Aria")
+
+	hp, died, err := store.ApplyDamage(ctx, c.ID, MaxHP+50)
+	if err != nil {
+		t.Fatalf("ApplyDamage: %v", err)
+	}
+	if !died || hp != 0 {
+		t.Fatalf("got hp=%d died=%v, want hp=0 died=true", hp, died)
+	}
+}
+
+func TestApplyDamageNonexistentCharacter(t *testing.T) {
+	store := NewMemStore()
+	if _, _, err := store.ApplyDamage(context.Background(), 999, 10); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got %v, want ErrNotFound", err)
+	}
+}
+
+func TestResetHP(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+	c, _ := store.Create(ctx, 1, "Aria")
+	store.ApplyDamage(ctx, c.ID, MaxHP)
+
+	if err := store.ResetHP(ctx, c.ID); err != nil {
+		t.Fatalf("ResetHP: %v", err)
+	}
+
+	list, _ := store.ListByAccount(ctx, 1)
+	if list[0].HP != MaxHP {
+		t.Fatalf("got HP %d after reset, want %d", list[0].HP, MaxHP)
+	}
+}

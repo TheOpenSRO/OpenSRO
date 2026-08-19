@@ -25,6 +25,7 @@ type Monster struct {
 	MaxHP      int
 	HP         int
 	Defense    int
+	Attack     int // counter-damage dealt to whoever attacks it, before their own defense (none exists yet)
 	GoldReward int64
 }
 
@@ -43,12 +44,12 @@ func NewHub() *Hub {
 }
 
 // Spawn creates a new monster in zone with full HP and returns it.
-func (h *Hub) Spawn(zone, name string, maxHP, defense int, goldReward int64) *Monster {
+func (h *Hub) Spawn(zone, name string, maxHP, defense, attack int, goldReward int64) *Monster {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: name, Zone: zone, MaxHP: maxHP, HP: maxHP, Defense: defense, GoldReward: goldReward}
+	m := &Monster{ID: id, Name: name, Zone: zone, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward}
 	h.byID[id] = m
 	return m
 }

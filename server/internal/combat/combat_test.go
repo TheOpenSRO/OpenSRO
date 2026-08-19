@@ -4,7 +4,7 @@ import "testing"
 
 func TestSpawnStartsAtFullHP(t *testing.T) {
 	h := NewHub()
-	m := h.Spawn("jangan", "Stone Golem", 100, 10, 50)
+	m := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
 	if m.HP != 100 || m.MaxHP != 100 {
 		t.Fatalf("got HP=%d MaxHP=%d, want both 100", m.HP, m.MaxHP)
 	}
@@ -15,8 +15,8 @@ func TestSpawnStartsAtFullHP(t *testing.T) {
 
 func TestSpawnAssignsUniqueIDs(t *testing.T) {
 	h := NewHub()
-	m1 := h.Spawn("jangan", "Stone Golem", 100, 10, 50)
-	m2 := h.Spawn("jangan", "Stone Golem", 100, 10, 50)
+	m1 := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
+	m2 := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
 	if m1.ID == m2.ID {
 		t.Fatalf("expected unique IDs, got %d and %d", m1.ID, m2.ID)
 	}
@@ -24,7 +24,7 @@ func TestSpawnAssignsUniqueIDs(t *testing.T) {
 
 func TestGetReturnsLiveMonster(t *testing.T) {
 	h := NewHub()
-	spawned := h.Spawn("jangan", "Stone Golem", 100, 10, 50)
+	spawned := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
 
 	got, ok := h.Get(spawned.ID)
 	if !ok {
@@ -44,7 +44,7 @@ func TestGetUnknownID(t *testing.T) {
 
 func TestApplyDamageReducesHP(t *testing.T) {
 	h := NewHub()
-	m := h.Spawn("jangan", "Stone Golem", 100, 10, 50)
+	m := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
 
 	updated, died, ok := h.ApplyDamage(m.ID, 30)
 	if !ok {
@@ -60,7 +60,7 @@ func TestApplyDamageReducesHP(t *testing.T) {
 
 func TestApplyDamageKillsAndRemoves(t *testing.T) {
 	h := NewHub()
-	m := h.Spawn("jangan", "Stone Golem", 100, 10, 50)
+	m := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
 
 	updated, died, ok := h.ApplyDamage(m.ID, 150)
 	if !ok || !died {

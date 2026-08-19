@@ -50,21 +50,33 @@ func DecodeAttackRequest(data []byte) (*AttackRequest, error) {
 }
 
 // AttackResult is the OpAttackResult payload (direct reply to the
-// attacker). On failure, only Error is meaningful.
+// attacker): what happened to the monster, and what happened to the
+// attacker in the monster's counterattack (skipped if the monster died).
+// On failure, only Error is meaningful.
 type AttackResult struct {
-	Error       string
-	Damage      int32
-	RemainingHP int32
-	Died        bool
+	Error string
+
+	MonsterDamage      int32
+	MonsterRemainingHP int32
+	MonsterDied        bool
+
+	PlayerDamageTaken int32
+	PlayerHP          int32
+	PlayerDied        bool // true if the counterattack killed the player (they've been respawned with full HP already)
 }
 
 func (r *AttackResult) Encode() []byte {
 	out := encodeStrings(r.Error)
-	buf := make([]byte, 9)
-	binary.LittleEndian.PutUint32(buf[0:4], uint32(r.Damage))
-	binary.LittleEndian.PutUint32(buf[4:8], uint32(r.RemainingHP))
-	if r.Died {
+	buf := make([]byte, 18)
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(r.MonsterDamage))
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(r.MonsterRemainingHP))
+	if r.MonsterDied {
 		buf[8] = 1
+	}
+	binary.LittleEndian.PutUint32(buf[9:13], uint32(r.PlayerDamageTaken))
+	binary.LittleEndian.PutUint32(buf[13:17], uint32(r.PlayerHP))
+	if r.PlayerDied {
+		buf[17] = 1
 	}
 	return append(out, buf...)
 }
@@ -74,14 +86,17 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding AttackResult: %w", err)
 	}
-	if len(rest) < 9 {
+	if len(rest) < 18 {
 		return nil, errors.New("session: decoding AttackResult: truncated")
 	}
 	return &AttackResult{
-		Error:       fields[0],
-		Damage:      int32(binary.LittleEndian.Uint32(rest[0:4])),
-		RemainingHP: int32(binary.LittleEndian.Uint32(rest[4:8])),
-		Died:        rest[8] != 0,
+		Error:              fields[0],
+		MonsterDamage:      int32(binary.LittleEndian.Uint32(rest[0:4])),
+		MonsterRemainingHP: int32(binary.LittleEndian.Uint32(rest[4:8])),
+		MonsterDied:        rest[8] != 0,
+		PlayerDamageTaken:  int32(binary.LittleEndian.Uint32(rest[9:13])),
+		PlayerHP:           int32(binary.LittleEndian.Uint32(rest[13:17])),
+		PlayerDied:         rest[17] != 0,
 	}, nil
 }
 
@@ -171,15 +186,40 @@ func CombatHandler(
 			net = 1
 		}
 
-		updated, died, ok := monsters.ApplyDamage(req.TargetMonsterID, net)
+		updated, monsterDied, ok := monsters.ApplyDamage(req.TargetMonsterID, net)
 		if !ok {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found"}).Encode()})
 		}
 
-		if err := sess.Send(&proto.Packet{
-			Opcode: OpAttackResult,
-			Data:   (&AttackResult{Damage: int32(net), RemainingHP: int32(updated.HP), Died: died}).Encode(),
-		}); err != nil {
+		result := &AttackResult{MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP), MonsterDied: monsterDied}
+
+		// A dead monster can't counterattack. A surviving one always hits
+		// back -- there's no dodge/evade system yet, see docs' open items.
+		if monsterDied {
+			// No damage taken, but the client still wants to know current HP.
+			hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
+			if err != nil {
+				return fmt.Errorf("combat: reading player hp: %w", err)
+			}
+			result.PlayerHP = int32(hp)
+		} else {
+			hp, playerDied, err := chars.ApplyDamage(ctx, characterID, monster.Attack)
+			if err != nil {
+				return fmt.Errorf("combat: applying counterattack: %w", err)
+			}
+			result.PlayerDamageTaken = int32(monster.Attack)
+			result.PlayerDied = playerDied
+			if playerDied {
+				if err := chars.ResetHP(ctx, characterID); err != nil {
+					return fmt.Errorf("combat: respawning player: %w", err)
+				}
+				result.PlayerHP = int32(character.MaxHP)
+			} else {
+				result.PlayerHP = int32(hp)
+			}
+		}
+
+		if err := sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: result.Encode()}); err != nil {
 			return err
 		}
 
@@ -192,7 +232,7 @@ func CombatHandler(
 			}
 		}
 
-		if died {
+		if monsterDied {
 			if err := chars.AddGold(ctx, characterID, monster.GoldReward); err != nil {
 				return fmt.Errorf("combat: granting gold reward: %w", err)
 			}

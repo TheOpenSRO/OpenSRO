@@ -39,12 +39,17 @@ var ErrInsufficientGold = errors.New("character: insufficient gold")
 // design choice.
 const StartingGold = 1000
 
+// MaxHP is every character's maximum health. Flat for now -- own design
+// choice, revisit once there's a leveling/stats system to scale it.
+const MaxHP = 100
+
 // Character is one player character.
 type Character struct {
 	ID        int64
 	AccountID int64
 	Name      string
 	Gold      int64
+	HP        int
 }
 
 // Store is anything that can list, create, and delete characters for an
@@ -68,4 +73,11 @@ type Store interface {
 	// DeductGold debits amount (must be positive) from characterID's
 	// balance. Returns ErrInsufficientGold if the balance is too low.
 	DeductGold(ctx context.Context, characterID int64, amount int64) error
+
+	// ApplyDamage reduces characterID's HP by amount (never below 0),
+	// returning the resulting HP and whether this brought it to exactly 0.
+	ApplyDamage(ctx context.Context, characterID int64, amount int) (remainingHP int, died bool, err error)
+
+	// ResetHP restores characterID's HP to MaxHP (e.g. after death/respawn).
+	ResetHP(ctx context.Context, characterID int64) error
 }

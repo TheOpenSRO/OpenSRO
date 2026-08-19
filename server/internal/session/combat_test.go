@@ -29,7 +29,10 @@ func TestAttackRequestRoundTrip(t *testing.T) {
 }
 
 func TestAttackResultRoundTrip(t *testing.T) {
-	want := &AttackResult{Damage: 15, RemainingHP: 85, Died: false}
+	want := &AttackResult{
+		MonsterDamage: 15, MonsterRemainingHP: 85, MonsterDied: false,
+		PlayerDamageTaken: 8, PlayerHP: 92, PlayerDied: false,
+	}
 	got, err := DecodeAttackResult(want.Encode())
 	if err != nil {
 		t.Fatalf("DecodeAttackResult: %v", err)
@@ -119,7 +122,8 @@ func TestCombatFullFlow(t *testing.T) {
 	hub := world.NewHub()
 	monsters := combat.NewHub()
 	// 30 attack - 10 defense = 20 net damage/hit; 40 HP dies in 2 hits.
-	monster := monsters.Spawn("jangan", "Stone Golem", 40, 10, 500)
+	// Monster hits back for 15 whenever it survives a hit.
+	monster := monsters.Spawn("jangan", "Stone Golem", 40, 10, 15, 500)
 
 	handle := gateway.Chain(
 		LoginHandler(accounts),
@@ -155,24 +159,32 @@ func TestCombatFullFlow(t *testing.T) {
 		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
 	}
 
-	// First hit: 40 -> 20 HP, not dead.
+	// First hit: monster 40 -> 20 HP, survives, so it counterattacks for 15
+	// (player 100 -> 85 HP).
 	resp = send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode())
 	ar, err := DecodeAttackResult(resp.Data)
 	if err != nil {
 		t.Fatalf("DecodeAttackResult: %v", err)
 	}
-	if ar.Error != "" || ar.Damage != 20 || ar.RemainingHP != 20 || ar.Died {
-		t.Fatalf("first hit: got %+v, want damage=20 remaining=20 died=false", ar)
+	if ar.Error != "" || ar.MonsterDamage != 20 || ar.MonsterRemainingHP != 20 || ar.MonsterDied {
+		t.Fatalf("first hit (monster side): got %+v, want damage=20 remaining=20 died=false", ar)
+	}
+	if ar.PlayerDamageTaken != 15 || ar.PlayerHP != int32(character.MaxHP)-15 || ar.PlayerDied {
+		t.Fatalf("first hit (player side): got %+v, want damageTaken=15 hp=%d died=false", ar, character.MaxHP-15)
 	}
 
-	// Second hit: 20 -> 0 HP, dead. Gold reward granted.
+	// Second hit: monster 20 -> 0 HP, dies -- no counterattack, gold reward
+	// granted, player HP unchanged from before.
 	resp = send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode())
 	ar, err = DecodeAttackResult(resp.Data)
 	if err != nil {
 		t.Fatalf("DecodeAttackResult: %v", err)
 	}
-	if ar.Error != "" || ar.RemainingHP != 0 || !ar.Died {
-		t.Fatalf("second hit: got %+v, want remaining=0 died=true", ar)
+	if ar.Error != "" || ar.MonsterRemainingHP != 0 || !ar.MonsterDied {
+		t.Fatalf("second hit (monster side): got %+v, want remaining=0 died=true", ar)
+	}
+	if ar.PlayerDamageTaken != 0 || ar.PlayerHP != int32(character.MaxHP)-15 {
+		t.Fatalf("second hit (player side): got %+v, want no further damage, hp still %d", ar, character.MaxHP-15)
 	}
 
 	list, err := chars.ListByAccount(ctx, 1)

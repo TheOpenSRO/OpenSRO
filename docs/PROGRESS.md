@@ -2,6 +2,24 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 23)
+
+- Made combat two-directional: characters previously had no HP and monsters never fought back, so
+  the "combat" system landed last round was really just a damage sponge with no risk. Added
+  `character.MaxHP`/`HP` (flat 100, own design) with `ApplyDamage`/`ResetHP` on `Store` (both
+  `MemStore` and `SQLStore` — another `ALTER TABLE ... ADD COLUMN IF NOT EXISTS hp` migration,
+  same pattern as gold's). `combat.Monster` gained an `Attack` field; `CombatHandler` now applies a
+  monster's counterattack to the attacking player whenever the monster survives the hit (a dead
+  monster can't retaliate). Death auto-respawns the player at full HP rather than leaving them
+  stuck — no harsh MMO death penalty for this MVP.
+  Reshaped `AttackResult`'s wire format to carry both sides of the exchange (`MonsterDamage`/
+  `MonsterRemainingHP`/`MonsterDied` and `PlayerDamageTaken`/`PlayerHP`/`PlayerDied`) rather than
+  bolting player fields onto the old monster-only shape.
+  Full flow re-verified end-to-end: first hit shows the monster taking damage *and* the player
+  taking counter-damage; second hit kills the monster with no counterattack and confirms the
+  player's HP carries over unchanged from the first hit (not reset, not further reduced).
+  All packages build/vet/test clean; server binary smoke-tested.
+
 ## 2026-08-19 (cont'd 22)
 
 - Added `server/internal/combat`: the closing piece of the core gameplay loop this session built

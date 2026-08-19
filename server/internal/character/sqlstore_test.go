@@ -190,4 +190,50 @@ func TestSQLStoreDeductGoldInsufficientFunds(t *testing.T) {
 	}
 }
 
+func TestSQLStoreHPOperations(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+	c, err := store.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if c.HP != MaxHP {
+		t.Fatalf("got starting HP %d, want %d", c.HP, MaxHP)
+	}
+
+	hp, died, err := store.ApplyDamage(ctx, c.ID, 30)
+	if err != nil {
+		t.Fatalf("ApplyDamage: %v", err)
+	}
+	if died || hp != MaxHP-30 {
+		t.Fatalf("got hp=%d died=%v, want hp=%d died=false", hp, died, MaxHP-30)
+	}
+
+	hp, died, err = store.ApplyDamage(ctx, c.ID, MaxHP)
+	if err != nil {
+		t.Fatalf("ApplyDamage: %v", err)
+	}
+	if !died || hp != 0 {
+		t.Fatalf("got hp=%d died=%v, want hp=0 died=true (clamped, not negative)", hp, died)
+	}
+
+	if err := store.ResetHP(ctx, c.ID); err != nil {
+		t.Fatalf("ResetHP: %v", err)
+	}
+	list, err := store.ListByAccount(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListByAccount: %v", err)
+	}
+	if list[0].HP != MaxHP {
+		t.Fatalf("got HP %d after reset, want %d", list[0].HP, MaxHP)
+	}
+}
+
+func TestSQLStoreApplyDamageNonexistentCharacter(t *testing.T) {
+	store := openTestSQLStore(t)
+	if _, _, err := store.ApplyDamage(context.Background(), 999, 10); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got %v, want ErrNotFound", err)
+	}
+}
+
 var _ Store = (*SQLStore)(nil)
