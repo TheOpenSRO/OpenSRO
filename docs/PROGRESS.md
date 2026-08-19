@@ -2,6 +2,28 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 17)
+
+- Static game data pipeline, first slice: string-scanning a `.Bak` file (the earlier `db_schema.md`
+  pass) only gets table/column *names*, not real schema or any actual data. To go further, stood
+  up a temporary SQL Server 2019 instance via Docker on the `ghidra-mcp` box (which already had
+  `nesting=1` enabled) and actually restored `SRO_VT_SHARD.Bak`. Confirmed real data: `_RefObjItem`
+  (24,521 rows, 105 columns — item stats) and `_RefSkill` (36,144 rows, 118 columns — skill data)
+  are genuinely populated, not empty scaffolding.
+  Per the same reasoning applied all session (declined to remove `docs/LEGAL.md`'s substance
+  earlier): pulled the *schema* (structural facts, written up in new
+  `docs/protocol/refdata_schema.md`) but did not commit any actual row data anywhere. Instead built
+  `server/internal/refdata` + `server/cmd/import-refdata`: a "bring your own data" CSV importer
+  populating our own, independently-designed SQLite schema (a curated subset of the original's 105
+  item columns, not a 1:1 port) — the same pattern this repo already uses for pk2 client assets.
+  Tested for real against the actual 24,521-row export (kept in a scratch dir outside the repo,
+  deleted after) — full round trip worked. Tore down the SQL Server container and deleted the test
+  database afterward; nothing about this step is persisted anywhere outside the schema docs and
+  importer code.
+  Skills, drop tables, and where item/skill display names actually live (not in `_RefObjItem`
+  itself) are the next things to figure out — noted in the doc's Status section rather than
+  guessed at now.
+
 ## 2026-08-19 (cont'd 16)
 
 - Built actual Godot client scenes wired to the protocol layer that already worked in isolation:

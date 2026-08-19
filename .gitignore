@@ -2,6 +2,10 @@
 *.pk2
 *.gr2
 *.ddj
+*.bak
+*.mdf
+*.ldf
+/**/refdata-exports/*.csv
 
 # Go
 server/bin/
