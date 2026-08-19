@@ -18,6 +18,7 @@ import (
 func main() {
 	addr := flag.String("addr", ":15779", "listen address for the gateway service")
 	accountDB := flag.String("account-db", "accounts.db", "path to the SQLite database for accounts (use :memory: for an ephemeral one)")
+	characterDB := flag.String("character-db", "characters.db", "path to the SQLite database for characters (use :memory: for an ephemeral one)")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -33,9 +34,13 @@ func main() {
 	defer accounts.Close()
 	logger.Info("account database ready", "path", *accountDB)
 
-	// TODO: character state still doesn't survive a restart — give it the
-	// same SQLite treatment as accounts once its schema settles.
-	chars := character.NewMemStore()
+	chars, err := character.OpenSQLStore(*characterDB)
+	if err != nil {
+		logger.Error("opening character database", "path", *characterDB, "error", err)
+		os.Exit(1)
+	}
+	defer chars.Close()
+	logger.Info("character database ready", "path", *characterDB)
 	handle := gateway.Chain(
 		session.LoginHandler(accounts),
 		session.RegisterHandler(accounts),

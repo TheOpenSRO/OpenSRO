@@ -2,6 +2,16 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 (cont'd 14)
+
+- Gave `character` the same SQLite treatment as `account` (the TODO flagged in the previous
+  entry): `character.SQLStore`, same pattern (pure-Go driver, own schema, `COLLATE NOCASE` for
+  case-insensitive name uniqueness at the DB level matching `MemStore`'s behavior), same test
+  shape including a reopen-persistence test. `cmd/server` now opens both databases by default
+  (`-account-db`/`-character-db` flags, both `:memory:`-capable for ephemeral runs) — nothing in
+  the running server is backed by `MemStore` anymore. Smoke-tested the actual built binary starts
+  and opens both databases cleanly, not just `go test`.
+
 ## 2026-08-19 (cont'd 13)
 
 - Closed the most-repeated TODO from earlier entries: `account.SQLStore` (`server/internal/account/sqlstore.go`)
