@@ -85,6 +85,16 @@ extends Control
 @onready var trade_cancel_button: Button = $ActionTabs/Trade/TradeButtonRow/CancelButton
 @onready var trade_status_label: Label = $ActionTabs/Trade/TradeStatusLabel
 
+@onready var friend_list: ItemList = $ActionTabs/Friends/FriendList
+@onready var friend_remove_button: Button = $ActionTabs/Friends/RemoveButton
+@onready var friend_pending_list: ItemList = $ActionTabs/Friends/PendingList
+@onready var friend_accept_button: Button = $ActionTabs/Friends/PendingButtonRow/AcceptButton
+@onready var friend_decline_button: Button = $ActionTabs/Friends/PendingButtonRow/DeclineButton
+@onready var friend_target_input: LineEdit = $ActionTabs/Friends/RequestRow/TargetInput
+@onready var friend_request_button: Button = $ActionTabs/Friends/RequestRow/RequestButton
+@onready var friend_refresh_button: Button = $ActionTabs/Friends/RefreshButton
+@onready var friend_status_label: Label = $ActionTabs/Friends/FriendStatusLabel
+
 # character_id -> display name, for the nearby-entities list.
 var _nearby: Dictionary = {}
 
@@ -99,6 +109,9 @@ var _shop_entries: Array[ShopNet.CatalogEntry] = []
 # Decline know who to respond to (the server needs it explicitly).
 var _pending_duel_challenger := ""
 var _pending_trade_requester := ""
+
+var _friends: Array[FriendNet.FriendEntry] = []
+var _pending_friend_requests: Array[FriendNet.PendingRequest] = []
 
 # equipment_result fires for OpEquipmentList *and* equip/unequip acks (see
 # NetClient.equipment_result's doc comment: a successful equip/unequip ack
@@ -169,6 +182,15 @@ func _ready() -> void:
 	NetClient.trade_completed.connect(_on_trade_completed)
 	NetClient.trade_cancelled.connect(_on_trade_cancelled)
 
+	NetClient.friend_request_result.connect(_on_friend_request_result)
+	NetClient.friend_request_received.connect(_on_friend_request_received)
+	NetClient.friend_accept_result.connect(_on_friend_accept_result)
+	NetClient.friend_accepted.connect(_on_friend_accepted)
+	NetClient.friend_decline_result.connect(_on_friend_decline_result)
+	NetClient.friend_list_result.connect(_on_friend_list_result)
+	NetClient.friend_remove_result.connect(_on_friend_remove_result)
+	NetClient.friend_pending_list_result.connect(_on_friend_pending_list_result)
+
 	send_button.pressed.connect(_on_send_pressed)
 	chat_input.text_submitted.connect(func(_text: String): _on_send_pressed())
 	disconnect_button.pressed.connect(_on_disconnect_pressed)
@@ -206,6 +228,12 @@ func _ready() -> void:
 	trade_confirm_button.pressed.connect(func(): NetClient.trade_confirm(NetClient.current_character_name))
 	trade_cancel_button.pressed.connect(func(): NetClient.trade_cancel(NetClient.current_character_name))
 
+	friend_request_button.pressed.connect(_on_friend_request_pressed)
+	friend_accept_button.pressed.connect(_on_friend_accept_pressed)
+	friend_decline_button.pressed.connect(_on_friend_decline_pressed)
+	friend_remove_button.pressed.connect(_on_friend_remove_pressed)
+	friend_refresh_button.pressed.connect(_refresh_friends)
+
 	NetClient.list_monsters()
 	NetClient.list_inventory(NetClient.current_character_name)
 	NetClient.list_equipment(NetClient.current_character_name)
@@ -213,6 +241,7 @@ func _ready() -> void:
 	NetClient.list_shop()
 	NetClient.party_info(NetClient.current_character_name)
 	NetClient.guild_info(NetClient.current_character_name)
+	_refresh_friends()
 
 func _refresh_entity_list() -> void:
 	entity_list.clear()
@@ -656,3 +685,87 @@ func _on_trade_cancelled(cancelled: TradeNet.Cancelled) -> void:
 	var by_whom := cancelled.cancelled_by_name if cancelled.cancelled_by_name != "" else "the system"
 	trade_status_label.text = "Trade cancelled by %s." % by_whom
 	trade_their_offer_label.text = "Their offer: (none yet)"
+
+# --- Friends tab -----------------------------------------------------------
+
+func _refresh_friends() -> void:
+	NetClient.friend_list(NetClient.current_character_name)
+	NetClient.friend_pending_list(NetClient.current_character_name)
+
+func _on_friend_request_pressed() -> void:
+	var target := friend_target_input.text.strip_edges()
+	if target.is_empty():
+		friend_status_label.text = "Enter a target name first."
+		return
+	NetClient.friend_request(NetClient.current_character_name, target)
+
+func _on_friend_request_result(ok: bool, reason: String) -> void:
+	friend_status_label.text = "Request sent." if ok else "Request failed: %s" % reason
+
+func _on_friend_request_received(received: FriendNet.RequestReceived) -> void:
+	if received == null:
+		return
+	_log_system("%s sent you a friend request." % received.requester_name)
+	_refresh_friends()
+
+func _on_friend_accept_pressed() -> void:
+	var selected := friend_pending_list.get_selected_items()
+	if selected.is_empty():
+		friend_status_label.text = "Select a pending request first."
+		return
+	var chosen: FriendNet.PendingRequest = _pending_friend_requests[selected[0]]
+	NetClient.friend_accept(NetClient.current_character_name, chosen.requester_id)
+
+func _on_friend_accept_result(ok: bool, reason: String) -> void:
+	friend_status_label.text = "Friend added." if ok else "Accept failed: %s" % reason
+	if ok:
+		_refresh_friends()
+
+func _on_friend_accepted(accepted: FriendNet.Accepted) -> void:
+	if accepted == null:
+		return
+	_log_system("%s accepted your friend request." % accepted.accepter_name)
+	_refresh_friends()
+
+func _on_friend_decline_pressed() -> void:
+	var selected := friend_pending_list.get_selected_items()
+	if selected.is_empty():
+		friend_status_label.text = "Select a pending request first."
+		return
+	var chosen: FriendNet.PendingRequest = _pending_friend_requests[selected[0]]
+	NetClient.friend_decline(NetClient.current_character_name, chosen.requester_id)
+
+func _on_friend_decline_result(ok: bool, reason: String) -> void:
+	friend_status_label.text = "Declined." if ok else "Decline failed: %s" % reason
+	if ok:
+		_refresh_friends()
+
+func _on_friend_list_result(friends: Array, error: String) -> void:
+	if error != "":
+		friend_status_label.text = "Error: %s" % error
+		return
+	_friends.assign(friends)
+	friend_list.clear()
+	for f in _friends:
+		friend_list.add_item("%s [%s]" % [f.friend_name, "online" if f.online else "offline"])
+
+func _on_friend_remove_pressed() -> void:
+	var selected := friend_list.get_selected_items()
+	if selected.is_empty():
+		friend_status_label.text = "Select a friend first."
+		return
+	var chosen: FriendNet.FriendEntry = _friends[selected[0]]
+	NetClient.friend_remove(NetClient.current_character_name, chosen.character_id)
+
+func _on_friend_remove_result(ok: bool, reason: String) -> void:
+	friend_status_label.text = "Removed." if ok else "Remove failed: %s" % reason
+	if ok:
+		_refresh_friends()
+
+func _on_friend_pending_list_result(requests: Array, error: String) -> void:
+	if error != "":
+		return
+	_pending_friend_requests.assign(requests)
+	friend_pending_list.clear()
+	for r in _pending_friend_requests:
+		friend_pending_list.add_item(r.requester_name)

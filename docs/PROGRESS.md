@@ -2,6 +2,30 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 12)
+
+- Made friends playable from `World.tscn`, completing the "close the protocol-to-UI gap 1:1" pass
+  -- every system built this session (party, guild, chat, quests, duels, trade, friends) now has a
+  working tab in `World.tscn`, not just a tested-but-invisible wire protocol. No server changes
+  needed: `OpFriendRequest`/`OpFriendPendingList`/`OpFriendAccept`/`OpFriendDecline`/
+  `OpFriendList`/`OpFriendRemove` already covered everything a UI needs.
+  Friends tab: a friends list (name + online/offline, from `FriendSnapshot.Online`), a pending-
+  requests list, Accept/Decline acting on the selected pending request (by ID, same
+  persistence-safe pattern as party/guild info from last round -- friend requests survive a
+  relog), a request-by-name field (target must be online, same tradeoff as duel/trade/chat), and
+  Remove acting on the selected friend.
+  Verified end-to-end with two live `NetClient` instances against a real server, applying both
+  lessons learned from the last two rounds: uniquified character names to avoid cross-run
+  collisions, and every listener attached before triggering the action that produces it. Confirmed
+  the full sequence for real: Alice requests Bob, Bob gets a live notification and sees it in his
+  pending list, Bob accepts and Alice gets a live acceptance notification, both sides' friend
+  lists show each other (Alice sees Bob correctly marked online), and removing the friendship
+  empties both lists.
+  All 19 GDScript suites pass headless (no new files -- Friends reuses `Auth.decode_result` for
+  its OK/reason acks, same as every other tab this pass). No Go changes this round. This closes
+  out the UI-wiring pass started a few rounds back: combat, inventory, equipment, quests, shop,
+  party, guild, duel, trade, and friends are all now playable from one scene.
+
 ## 2026-08-20 (cont'd 11)
 
 - Made duel and trade playable from `World.tscn` -- no server changes needed this round, since

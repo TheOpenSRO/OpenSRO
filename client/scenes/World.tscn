@@ -435,3 +435,63 @@ text = "Cancel"
 layout_mode = 2
 text = ""
 autowrap_mode = 2
+
+[node name="Friends" type="VBoxContainer" parent="ActionTabs"]
+visible = false
+layout_mode = 2
+
+[node name="FriendLabel" type="Label" parent="ActionTabs/Friends"]
+layout_mode = 2
+text = "Friends"
+
+[node name="FriendList" type="ItemList" parent="ActionTabs/Friends"]
+custom_minimum_size = Vector2(0, 80)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="RemoveButton" type="Button" parent="ActionTabs/Friends"]
+layout_mode = 2
+text = "Remove Selected Friend"
+
+[node name="PendingLabel" type="Label" parent="ActionTabs/Friends"]
+layout_mode = 2
+text = "Pending Requests"
+
+[node name="PendingList" type="ItemList" parent="ActionTabs/Friends"]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="PendingButtonRow" type="HBoxContainer" parent="ActionTabs/Friends"]
+layout_mode = 2
+
+[node name="AcceptButton" type="Button" parent="ActionTabs/Friends/PendingButtonRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Accept Selected"
+
+[node name="DeclineButton" type="Button" parent="ActionTabs/Friends/PendingButtonRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Decline Selected"
+
+[node name="RequestRow" type="HBoxContainer" parent="ActionTabs/Friends"]
+layout_mode = 2
+
+[node name="TargetInput" type="LineEdit" parent="ActionTabs/Friends/RequestRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Character name (must be online)"
+
+[node name="RequestButton" type="Button" parent="ActionTabs/Friends/RequestRow"]
+layout_mode = 2
+text = "Send Request"
+
+[node name="RefreshButton" type="Button" parent="ActionTabs/Friends"]
+layout_mode = 2
+text = "Refresh"
+
+[node name="FriendStatusLabel" type="Label" parent="ActionTabs/Friends"]
+layout_mode = 2
+text = ""
+autowrap_mode = 2
