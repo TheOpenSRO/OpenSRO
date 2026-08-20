@@ -2,6 +2,42 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 41) — real assets wired into `World3D` live, plus a real camera bug and a real screenshot-technique fix
+
+- User asked directly why none of the RE'd assets/skeletons were showing up in the 3D scene — a
+  fair callout: `World3D.gd` only had placeholder capsules and a placeholder ground, none of the
+  proven `ObjectLoader`/`Skeleton3DBuilder` pipelines were reachable from it. Wired both in for
+  real, gated behind environment variables (this project ships no game data, BYO):
+  `SRREVAMP_PK2_PATH`+`SRREVAMP_BSR_PATH` loads real textured scenery via `ObjectLoader`;
+  `SRREVAMP_BSK_PATH`+`SRREVAMP_BAN_PATH` builds a real, live-animated `Skeleton3D` via
+  `Skeleton3DBuilder`, cycling through the `.ban` track's keyframes at a plausible (unconfirmed)
+  30fps. Either can be left unset — same graceful-degradation pattern used throughout this
+  project.
+- Found and fixed a real gap while verifying: a bare `Skeleton3D` has no mesh of its own (no
+  confirmed bone-weight/skinning data exists in `.bms` yet), so it was invisible in the live
+  scene despite being built correctly. Added `Skeleton3DBuilder.build_debug_visualization()` /
+  `update_debug_visualization()` — the same joint-sphere/bone-cylinder debug rendering
+  `client/tools/render_skeleton3d_animated.gd` uses, now reusable and kept in sync with the
+  animated pose every frame.
+- **Verified against real data, not just a compile check**: rendered `World3D.tscn` live with
+  `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH` pointed at the real `sample.bsk`/`sample_bandi.ban`
+  samples this project has used throughout — a real 38-bone, 100-keyframe skeleton animating
+  live next to the player capsule, screenshot sent to OpenSRO. For scenery, no real `.bsr` exists
+  inside any pk2 archive available in this environment (every real `.bsr` sample found so far was
+  a loose file, not packed) — so verified the new glue code against the same synthetic pk2
+  archive `object_loader_test.gd` already uses (built to an absolute path with a throwaway script,
+  deleted after use), confirming it opens the archive, calls `ObjectLoader`, and places 2 real
+  mesh pieces in the live scene without error.
+- Along the way, found the actual fix needed to get *any* screenshot out of a normally-launched
+  scene (autoloads active) in this sandbox: Godot's own `--write-movie <path>.png --quit-after N`
+  movie-recording mode, not a manual `get_texture()` capture (which reliably produced a blank
+  frame here for reasons not fully traced) — recorded as a reusable technique. Also found and
+  fixed a real, separate bug this surfaced: `World3D.tscn`'s `Camera3D` never had `current = true`
+  set, so it wasn't guaranteed to activate at all.
+- `README.md` and `client/scripts/World3D.gd` doc comments updated with the new environment
+  variables and current honest scope (no real terrain, no automatic asset selection since no
+  type-ID-to-resource mapping exists, no real mesh skinning).
+
 ## 2026-08-20 (cont'd 40) — a real, multiply-replicated periodicity signal in `.mapm`, still not confirmed as the grid width
 
 - Went back at the `.mapm` grid-dimensions open question with a more rigorous tool than the

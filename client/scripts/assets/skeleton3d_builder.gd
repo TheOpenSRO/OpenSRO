@@ -94,3 +94,81 @@ static func apply_ban_keyframe(skeleton: Skeleton3D, track: BanReader.Bone, fram
 	var delta: Quaternion = target_rot * rest_rot.inverse()
 	skeleton.set_bone_pose_rotation(bone_idx, delta)
 	skeleton.force_update_all_bone_transforms() # see build_skeleton3d()'s note on why this is needed
+
+## A bare Skeleton3D has no visual representation of its own -- there's no
+## confirmed real bone-weight/skinning data in .bms yet to bind a real mesh
+## to it (see docs/protocol/BMS_FORMAT.md), so this builds the same
+## joint-sphere/bone-cylinder debug visualization
+## client/tools/render_skeleton3d_animated.gd already uses, as a reusable
+## child of the given skeleton. Call update_debug_visualization() after
+## changing the skeleton's pose (e.g. apply_ban_keyframe()) to reposition
+## it.
+static func build_debug_visualization(skeleton: Skeleton3D, color: Color = Color(1, 0.8, 0.2)) -> Node3D:
+	var viz := Node3D.new()
+	viz.name = "DebugVisualization"
+	skeleton.add_child(viz)
+
+	var bone_count := skeleton.get_bone_count()
+	var min_pos := Vector3.INF
+	var max_pos := -Vector3.INF
+	for i in range(bone_count):
+		var pos: Vector3 = skeleton.get_bone_global_pose(i).origin
+		min_pos = Vector3(min(min_pos.x, pos.x), min(min_pos.y, pos.y), min(min_pos.z, pos.z))
+		max_pos = Vector3(max(max_pos.x, pos.x), max(max_pos.y, pos.y), max(max_pos.z, pos.z))
+	var extent := (max_pos - min_pos).length()
+	if extent < 1.0:
+		extent = 100.0
+	var joint_radius: float = clamp(extent * 0.015, 0.5, 6.0)
+
+	var joint_mesh := SphereMesh.new()
+	joint_mesh.radius = joint_radius
+	joint_mesh.height = joint_radius * 2.0
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+
+	for i in range(bone_count):
+		var joint := MeshInstance3D.new()
+		joint.mesh = joint_mesh
+		joint.material_override = mat
+		joint.set_meta("bone_idx", i)
+		viz.add_child(joint)
+
+		var parent_idx := skeleton.get_bone_parent(i)
+		if parent_idx != -1:
+			var cyl := CylinderMesh.new()
+			cyl.top_radius = joint_radius * 0.5
+			cyl.bottom_radius = joint_radius * 0.5
+			cyl.height = 1.0 # updated per-frame in update_debug_visualization()
+			var bone_instance := MeshInstance3D.new()
+			bone_instance.mesh = cyl
+			bone_instance.material_override = mat
+			bone_instance.set_meta("bone_idx", i)
+			bone_instance.set_meta("parent_idx", parent_idx)
+			viz.add_child(bone_instance)
+
+	update_debug_visualization(viz, skeleton)
+	return viz
+
+## Repositions a Node3D built by build_debug_visualization() to match
+## skeleton's current pose. Call this after every pose change (e.g. each
+## apply_ban_keyframe()) to keep the visualization animated.
+static func update_debug_visualization(viz: Node3D, skeleton: Skeleton3D) -> void:
+	for child in viz.get_children():
+		var bone_idx: int = child.get_meta("bone_idx")
+		var pos: Vector3 = skeleton.get_bone_global_pose(bone_idx).origin
+		if child.has_meta("parent_idx"):
+			var parent_idx: int = child.get_meta("parent_idx")
+			var parent_pos: Vector3 = skeleton.get_bone_global_pose(parent_idx).origin
+			var seg := parent_pos - pos
+			var length := seg.length()
+			child.visible = length > 0.01
+			if child.visible:
+				child.position = (pos + parent_pos) / 2.0
+				child.mesh.height = length
+				if seg.normalized().is_equal_approx(Vector3.UP):
+					child.transform.basis = Basis.IDENTITY
+				else:
+					child.transform.basis = Basis.IDENTITY.looking_at(seg.normalized(), Vector3.UP) \
+						* Basis(Vector3.RIGHT, deg_to_rad(90))
+		else:
+			child.position = pos

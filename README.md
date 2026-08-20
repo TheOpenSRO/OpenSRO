@@ -32,6 +32,19 @@ go run ./cmd/server
 
 Either way, then open `client/` in the Godot 4.2 editor (or `godot4 --path client`) — it boots to
 the login screen and connects to `127.0.0.1:15779` by default (see `client/scripts/Login.gd`).
+Log in, pick a character, and hit "3D View" in the World HUD to walk around in 3D.
+
+**Optional — see real game assets in the 3D view**: this project ships with no game data (BYO,
+see `docs/LEGAL.md`). If you have your own real Silkroad client files, set these environment
+variables before launching the client to have `World3D.tscn` load and place them live (see
+`client/scripts/World3D.gd`):
+- `SRREVAMP_PK2_PATH` + `SRREVAMP_BSR_PATH` — a pk2 archive and a `.bsr` path inside it, loaded
+  as real, textured scenery via `ObjectLoader`.
+- `SRREVAMP_BSK_PATH` + `SRREVAMP_BAN_PATH` — a real `.bsk` skeleton and `.ban` animation (loose
+  files, not inside a pk2 — see `docs/protocol/BSK_FORMAT.md`), built into a real, live-animated
+  `Skeleton3D` via `Skeleton3DBuilder`.
+
+Leave any of them unset and that piece is skipped — the scene works fine with none of them set.
 
 Run the test suites from `server/` (`go test ./...`, needs the same local Postgres) and `client/`
 (`godot4 --headless --path . --script res://scripts/net/<name>_test.gd` for each file, or see
@@ -143,12 +156,20 @@ property's raw bytes end, so nothing is lost data-wise, but parent/child relatio
 properties aren't reconstructed. See `docs/protocol/EFP_FORMAT.md` for what that tradeoff means
 and what a deeper future pass would need.
 
-Not yet done: `World3D.tscn` (see above) proves real movement/sync in 3D, but doesn't render any
-real game assets yet — no real ground/terrain, no real character meshes, no real placed objects.
-Neither skeleton pipeline above (manual FK or the real `Skeleton3D` one) is integrated with
-`ObjectLoader` or real mesh skinning yet; every render tool still produces a standalone
-screenshot rather than something used in the live 3D scene. That's the current focus (see
-`docs/PROGRESS.md`). The material-layer-to-mesh-piece pairing when a `.bmt` has multiple layers is
-a documented, unconfirmed heuristic (pairs by index when counts match); `.efp`'s nested tree
+`World3D.tscn` now loads real `.bsr` scenery (via `ObjectLoader`) and a real, live-animated
+`Skeleton3D` (via `Skeleton3DBuilder`) if pointed at real game data through environment variables
+(see "Running locally" above) — the same pipelines previously only exercised by standalone
+`client/tools/` screenshots are now live in the actual playable scene. A bare `Skeleton3D` has no
+mesh of its own (no confirmed bone-weight/skinning data exists in `.bms` yet — see
+`docs/protocol/BMS_FORMAT.md`), so it renders with the same joint/bone debug visualization the dev
+tools use, not a real skinned character model.
+
+Not yet done: no real ground/terrain (blocked on `.mapm` grid dimensions — see above), no
+automatic asset selection (nothing maps a server-side character or a `.mapo` type ID to a real
+asset path — see `docs/protocol/MAPO_FORMAT.md` — so real assets have to be pointed at manually via
+the environment variables above, not chosen automatically), and no real mesh skinning. That's the
+current focus (see `docs/PROGRESS.md`). The material-layer-to-mesh-piece pairing when a `.bmt` has
+multiple layers is a documented, unconfirmed heuristic (pairs by index when counts match); `.efp`'s
+nested tree
 structure (see above). See `docs/protocol/{PK2,BSR,BMS,DDJ,BMT,BAN,BSK,MAPO,MAPM,EFP}_FORMAT.md` and
 `docs/PROGRESS.md` for the detailed running log.
