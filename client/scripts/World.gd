@@ -38,6 +38,16 @@ extends Control
 @onready var unequip_armor_button: Button = $ActionTabs/Equipment/EquipmentButtonRow/UnequipArmorButton
 @onready var equipment_status_label: Label = $ActionTabs/Equipment/EquipmentStatusLabel
 
+@onready var quest_list: ItemList = $ActionTabs/Quests/QuestList
+@onready var quest_refresh_button: Button = $ActionTabs/Quests/QuestButtonRow/RefreshButton
+@onready var quest_accept_button: Button = $ActionTabs/Quests/QuestButtonRow/AcceptButton
+@onready var quest_status_label: Label = $ActionTabs/Quests/QuestStatusLabel
+
+@onready var shop_list: ItemList = $ActionTabs/Shop/ShopList
+@onready var shop_refresh_button: Button = $ActionTabs/Shop/ShopButtonRow/RefreshButton
+@onready var shop_buy_button: Button = $ActionTabs/Shop/ShopButtonRow/BuyButton
+@onready var shop_status_label: Label = $ActionTabs/Shop/ShopStatusLabel
+
 # character_id -> display name, for the nearby-entities list.
 var _nearby: Dictionary = {}
 
@@ -45,6 +55,8 @@ var _nearby: Dictionary = {}
 # structured data per row on its own, so track what each row actually is.
 var _monsters: Array[CombatNet.MonsterSnapshot] = []
 var _inventory_slots: Array[InventoryNet.Slot] = []
+var _quests: Array[QuestNet.Entry] = []
+var _shop_entries: Array[ShopNet.CatalogEntry] = []
 
 # equipment_result fires for OpEquipmentList *and* equip/unequip acks (see
 # NetClient.equipment_result's doc comment: a successful equip/unequip ack
@@ -77,6 +89,11 @@ func _ready() -> void:
 	NetClient.loot_dropped.connect(_on_loot_dropped)
 	NetClient.inventory_list_result.connect(_on_inventory_list_result)
 	NetClient.equipment_result.connect(_on_equipment_result)
+	NetClient.quest_list_result.connect(_on_quest_list_result)
+	NetClient.quest_accept_result.connect(_on_quest_accept_result)
+	NetClient.quest_completed.connect(_on_quest_completed)
+	NetClient.shop_list_result.connect(_on_shop_list_result)
+	NetClient.shop_buy_result.connect(_on_shop_buy_result)
 
 	send_button.pressed.connect(_on_send_pressed)
 	chat_input.text_submitted.connect(func(_text: String): _on_send_pressed())
@@ -90,10 +107,16 @@ func _ready() -> void:
 	equipment_refresh_button.pressed.connect(func(): NetClient.list_equipment(NetClient.current_character_name))
 	unequip_weapon_button.pressed.connect(func(): _on_unequip_pressed(EquipmentNet.SLOT_WEAPON))
 	unequip_armor_button.pressed.connect(func(): _on_unequip_pressed(EquipmentNet.SLOT_ARMOR))
+	quest_refresh_button.pressed.connect(func(): NetClient.list_quests(NetClient.current_character_name))
+	quest_accept_button.pressed.connect(_on_quest_accept_pressed)
+	shop_refresh_button.pressed.connect(func(): NetClient.list_shop())
+	shop_buy_button.pressed.connect(_on_shop_buy_pressed)
 
 	NetClient.list_monsters()
 	NetClient.list_inventory(NetClient.current_character_name)
 	NetClient.list_equipment(NetClient.current_character_name)
+	NetClient.list_quests(NetClient.current_character_name)
+	NetClient.list_shop()
 
 func _refresh_entity_list() -> void:
 	entity_list.clear()
@@ -184,6 +207,10 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		return
 	if result.monster_died:
 		monster_status_label.text = "Hit for %d -- it died!" % result.monster_damage
+		# A kill may have progressed a quest's kill count even without
+		# completing it (OpQuestCompleted only fires on completion), so
+		# refresh here rather than only on _on_quest_completed.
+		NetClient.list_quests(NetClient.current_character_name)
 	else:
 		monster_status_label.text = "Hit for %d (%d HP left). Took %d damage (HP %d)." % [
 			result.monster_damage, result.monster_remaining_hp, result.player_damage_taken, result.player_hp
@@ -249,3 +276,61 @@ func _on_equipment_result(items: Array, error: String) -> void:
 func _on_unequip_pressed(slot: int) -> void:
 	_awaiting_equip_ack = true
 	NetClient.unequip(NetClient.current_character_name, slot)
+
+# --- Quests tab --------------------------------------------------------
+
+func _on_quest_list_result(entries: Array, error: String) -> void:
+	if error != "":
+		quest_status_label.text = "Error: %s" % error
+		return
+	_quests.assign(entries)
+	quest_list.clear()
+	for q in _quests:
+		var state := "completed" if q.completed else ("accepted" if q.accepted else "available")
+		quest_list.add_item("%s: kill %s (%d/%d) for %dg [%s]" % [
+			q.quest_name, q.monster_name, q.kills, q.target_kills, q.gold_reward, state
+		])
+
+func _on_quest_accept_pressed() -> void:
+	var selected := quest_list.get_selected_items()
+	if selected.is_empty():
+		quest_status_label.text = "Select a quest first."
+		return
+	var chosen: QuestNet.Entry = _quests[selected[0]]
+	NetClient.accept_quest(NetClient.current_character_name, chosen.quest_id)
+
+func _on_quest_accept_result(ok: bool, reason: String) -> void:
+	quest_status_label.text = "Quest accepted." if ok else "Accept failed: %s" % reason
+	NetClient.list_quests(NetClient.current_character_name)
+
+func _on_quest_completed(completed: QuestNet.Completed) -> void:
+	if completed == null:
+		return
+	_log_system("Quest complete! +%dg" % completed.gold_reward)
+	NetClient.list_quests(NetClient.current_character_name)
+
+# --- Shop tab ------------------------------------------------------------
+
+func _on_shop_list_result(entries: Array, error: String) -> void:
+	if error != "":
+		shop_status_label.text = "Error: %s" % error
+		return
+	_shop_entries.assign(entries)
+	shop_list.clear()
+	for e in _shop_entries:
+		shop_list.add_item("Item #%d (class %d, atk %.1f/def %.1f) -- %dg" % [
+			e.item_id, e.item_class, e.phys_attack_max, e.phys_defense_max, e.price
+		])
+
+func _on_shop_buy_pressed() -> void:
+	var selected := shop_list.get_selected_items()
+	if selected.is_empty():
+		shop_status_label.text = "Select an item first."
+		return
+	var chosen: ShopNet.CatalogEntry = _shop_entries[selected[0]]
+	NetClient.shop_buy(NetClient.current_character_name, chosen.item_id, 1)
+
+func _on_shop_buy_result(ok: bool, reason: String) -> void:
+	shop_status_label.text = "Purchased." if ok else "Purchase failed: %s" % reason
+	if ok:
+		NetClient.list_inventory(NetClient.current_character_name)

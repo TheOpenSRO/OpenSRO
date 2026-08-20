@@ -29,6 +29,14 @@ func (s stubItems) GetItem(_ context.Context, id int64) (*refdata.Item, error) {
 	return item, nil
 }
 
+func (s stubItems) ListAll(_ context.Context) ([]*refdata.Item, error) {
+	out := make([]*refdata.Item, 0, len(s))
+	for _, item := range s {
+		out = append(out, item)
+	}
+	return out, nil
+}
+
 func TestPriceIsDeterministicAndScalesWithStats(t *testing.T) {
 	cheap := &refdata.Item{ID: 1}
 	strong := &refdata.Item{ID: 2, PhysAttackMax: 50, PhysDefenseMax: 20}
@@ -146,5 +154,33 @@ func TestBuyNonexistentItem(t *testing.T) {
 	err := svc.Buy(ctx, characterID, 999, 1)
 	if !errors.Is(err, ErrItemNotFound) {
 		t.Fatalf("got %v, want ErrItemNotFound", err)
+	}
+}
+
+func TestCatalogListsEveryItemWithComputedPrice(t *testing.T) {
+	ctx := context.Background()
+	items := stubItems{
+		100: {ID: 100, PhysAttackMax: 30},
+		200: {ID: 200, PhysDefenseMax: 20},
+	}
+	svc, _, _ := newTestService(t, items)
+
+	entries, err := svc.Catalog(ctx)
+	if err != nil {
+		t.Fatalf("Catalog: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(entries))
+	}
+
+	byID := make(map[int64]CatalogEntry, len(entries))
+	for _, e := range entries {
+		byID[e.ItemID] = e
+	}
+	if byID[100].Price != Price(items[100]) || byID[100].PhysAttackMax != 30 {
+		t.Fatalf("unexpected entry for item 100: %+v", byID[100])
+	}
+	if byID[200].Price != Price(items[200]) || byID[200].PhysDefenseMax != 20 {
+		t.Fatalf("unexpected entry for item 200: %+v", byID[200])
 	}
 }

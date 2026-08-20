@@ -188,3 +188,55 @@ text = "Unequip Armor"
 layout_mode = 2
 text = ""
 autowrap_mode = 2
+
+[node name="Quests" type="VBoxContainer" parent="ActionTabs"]
+visible = false
+layout_mode = 2
+
+[node name="QuestList" type="ItemList" parent="ActionTabs/Quests"]
+custom_minimum_size = Vector2(0, 140)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="QuestButtonRow" type="HBoxContainer" parent="ActionTabs/Quests"]
+layout_mode = 2
+
+[node name="RefreshButton" type="Button" parent="ActionTabs/Quests/QuestButtonRow"]
+layout_mode = 2
+text = "Refresh"
+
+[node name="AcceptButton" type="Button" parent="ActionTabs/Quests/QuestButtonRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Accept Selected"
+
+[node name="QuestStatusLabel" type="Label" parent="ActionTabs/Quests"]
+layout_mode = 2
+text = ""
+autowrap_mode = 2
+
+[node name="Shop" type="VBoxContainer" parent="ActionTabs"]
+visible = false
+layout_mode = 2
+
+[node name="ShopList" type="ItemList" parent="ActionTabs/Shop"]
+custom_minimum_size = Vector2(0, 140)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="ShopButtonRow" type="HBoxContainer" parent="ActionTabs/Shop"]
+layout_mode = 2
+
+[node name="RefreshButton" type="Button" parent="ActionTabs/Shop/ShopButtonRow"]
+layout_mode = 2
+text = "Refresh"
+
+[node name="BuyButton" type="Button" parent="ActionTabs/Shop/ShopButtonRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Buy 1"
+
+[node name="ShopStatusLabel" type="Label" parent="ActionTabs/Shop"]
+layout_mode = 2
+text = ""
+autowrap_mode = 2

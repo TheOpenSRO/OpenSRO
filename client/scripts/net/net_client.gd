@@ -30,6 +30,7 @@ signal inventory_list_result(slots: Array, error: String)
 ## succeeded" specifically should track that they're awaiting one.
 signal equipment_result(items: Array, error: String)
 signal shop_buy_result(ok: bool, reason: String)
+signal shop_list_result(entries: Array, error: String)
 signal attack_result(result: CombatNet.AttackResult)
 signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
@@ -237,6 +238,9 @@ func unequip(char_name: String, slot: int) -> void:
 func shop_buy(char_name: String, item_id: int, quantity: int) -> void:
 	_send(ShopNet.OP_BUY, ShopNet.encode_buy(char_name, item_id, quantity))
 
+func list_shop() -> void:
+	_send(ShopNet.OP_LIST, ShopNet.encode_list_request())
+
 func attack(char_name: String, target_monster_id: int) -> void:
 	_send(CombatNet.OP_ATTACK, CombatNet.encode_attack(char_name, target_monster_id))
 
@@ -359,6 +363,9 @@ func _dispatch(p: Packet) -> void:
 		ShopNet.OP_BUY_RESULT:
 			var r := ShopNet.decode_buy_result(p.data)
 			shop_buy_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		ShopNet.OP_LIST_RESULT:
+			var r := ShopNet.decode_list_result(p.data)
+			shop_list_result.emit(r.entries, r.error)
 		CombatNet.OP_ATTACK_RESULT:
 			attack_result.emit(CombatNet.decode_attack_result(p.data))
 		CombatNet.OP_MONSTER_DAMAGED:

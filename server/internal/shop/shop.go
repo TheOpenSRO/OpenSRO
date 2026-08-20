@@ -35,10 +35,24 @@ func Price(item *refdata.Item) int64 {
 	return basePrice + int64(statTotal*statMultiplier)
 }
 
-// ItemLookup resolves an item's stats, for pricing and existence checks.
-// Satisfied by refdata.SQLStore in production.
+// ItemLookup resolves item stats, for pricing, existence checks, and
+// building the shop's catalog. Satisfied by refdata.SQLStore in
+// production.
 type ItemLookup interface {
 	GetItem(ctx context.Context, id int64) (*refdata.Item, error)
+	ListAll(ctx context.Context) ([]*refdata.Item, error)
+}
+
+// CatalogEntry is one item available for purchase: its computed price
+// plus enough stats to tell items apart in a UI, since refdata.Item has
+// no display name (the curated schema never included one -- see
+// docs/protocol/refdata_schema.md).
+type CatalogEntry struct {
+	ItemID         int64
+	Price          int64
+	ItemClass      int
+	PhysAttackMax  float64
+	PhysDefenseMax float64
 }
 
 // Service is the NPC shop: buy items from the catalog with character gold.
@@ -73,4 +87,25 @@ func (s *Service) Buy(ctx context.Context, characterID, itemID int64, quantity i
 		return fmt.Errorf("shop: adding item to inventory: %w", err)
 	}
 	return nil
+}
+
+// Catalog returns every purchasable item (the entire refdata catalog --
+// there's no curated "shop-only" subset, see this package's doc comment)
+// with its computed price.
+func (s *Service) Catalog(ctx context.Context) ([]CatalogEntry, error) {
+	items, err := s.Items.ListAll(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("shop: listing catalog: %w", err)
+	}
+	out := make([]CatalogEntry, len(items))
+	for i, item := range items {
+		out[i] = CatalogEntry{
+			ItemID:         item.ID,
+			Price:          Price(item),
+			ItemClass:      item.ItemClass,
+			PhysAttackMax:  item.PhysAttackMax,
+			PhysDefenseMax: item.PhysDefenseMax,
+		}
+	}
+	return out, nil
 }

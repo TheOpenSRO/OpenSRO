@@ -35,10 +35,60 @@ func _test_decode_buy_result_failure() -> void:
 	_check(not result.ok, "ok is false")
 	_check(result.reason == reason, "reason round-trips")
 
+func _build_catalog_entry(item_id: int, price: int, item_class: int, phys_attack: float, phys_defense: float) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(16)
+	out.encode_s64(0, item_id)
+	out.encode_s64(8, price)
+	var buf := PackedByteArray()
+	buf.resize(12)
+	buf.encode_u32(0, item_class)
+	buf.encode_float(4, phys_attack)
+	buf.encode_float(8, phys_defense)
+	out.append_array(buf)
+	return out
+
+func _build_list_result(error: String, entries: Array) -> PackedByteArray:
+	var out := PackedByteArray()
+	var len_buf := PackedByteArray()
+	len_buf.resize(2)
+	var error_bytes := error.to_utf8_buffer()
+	len_buf.encode_u16(0, error_bytes.size())
+	out.append_array(len_buf)
+	out.append_array(error_bytes)
+	if error != "":
+		return out
+	var count_buf := PackedByteArray()
+	count_buf.resize(2)
+	count_buf.encode_u16(0, entries.size())
+	out.append_array(count_buf)
+	for e in entries:
+		out.append_array(_build_catalog_entry(e["id"], e["price"], e["class"], e["attack"], e["defense"]))
+	return out
+
+func _test_decode_list_result() -> void:
+	var payload := _build_list_result("", [{"id": 100, "price": 250, "class": 3, "attack": 30.5, "defense": 0.0}])
+	var result := ShopNet.decode_list_result(payload)
+	_check(result.error == "", "no decode error")
+	_check(result.entries.size() == 1, "one entry decoded")
+	if result.entries.size() == 1:
+		_check(result.entries[0].item_id == 100, "item id round-trips")
+		_check(result.entries[0].price == 250, "price round-trips")
+		_check(result.entries[0].item_class == 3, "item class round-trips")
+		_check(is_equal_approx(result.entries[0].phys_attack_max, 30.5), "phys attack round-trips")
+
+func _test_decode_list_result_error() -> void:
+	var payload := _build_list_result("failed to load catalog", [])
+	var result := ShopNet.decode_list_result(payload)
+	_check(result.error == "failed to load catalog", "error round-trips")
+	_check(result.entries.size() == 0, "no entries alongside an error")
+
 func _init() -> void:
 	_test_encode_buy()
 	_test_decode_buy_result_ok()
 	_test_decode_buy_result_failure()
+	_test_decode_list_result()
+	_test_decode_list_result_error()
 
 	if _failures == 0:
 		print("ALL PASS")

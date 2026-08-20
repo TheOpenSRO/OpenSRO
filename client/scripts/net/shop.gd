@@ -6,12 +6,28 @@ class_name ShopNet
 
 const OP_BUY := 0x0050         # client -> server
 const OP_BUY_RESULT := 0x0051  # server -> client
+const OP_LIST := 0x0052        # client -> server
+const OP_LIST_RESULT := 0x0053 # server -> client
 
 ## Result of decode_buy_result().
 class BuyResult:
 	var ok: bool
 	var reason: String
 	var error: String # decode error, distinct from a well-formed "not ok" response
+
+## One purchasable item, with enough stats to tell items apart -- refdata
+## items have no display name (see docs/protocol/refdata_schema.md).
+class CatalogEntry:
+	var item_id: int
+	var price: int
+	var item_class: int
+	var phys_attack_max: float
+	var phys_defense_max: float
+
+## Result of decode_list_result().
+class ListResult:
+	var error: String
+	var entries: Array[CatalogEntry] = []
 
 ## Encodes an OpShopBuy request.
 static func encode_buy(character_name: String, item_id: int, quantity: int) -> PackedByteArray:
@@ -52,4 +68,57 @@ static func decode_buy_result(data: PackedByteArray) -> BuyResult:
 
 	result.ok = ok
 	result.reason = data.slice(3, 3 + reason_len).get_string_from_utf8()
+	return result
+
+## Encodes an OpShopList request (no payload).
+static func encode_list_request() -> PackedByteArray:
+	return PackedByteArray()
+
+static func _decode_catalog_entry(data: PackedByteArray, offset: int) -> Array:
+	if offset + 16 > data.size():
+		return [null, -1]
+	var e := CatalogEntry.new()
+	e.item_id = data.decode_s64(offset)
+	e.price = data.decode_s64(offset + 8)
+	offset += 16
+
+	if offset + 12 > data.size():
+		return [null, -1]
+	e.item_class = data.decode_u32(offset)
+	e.phys_attack_max = data.decode_float(offset + 4)
+	e.phys_defense_max = data.decode_float(offset + 8)
+	offset += 12
+
+	return [e, offset]
+
+## Decodes an OpShopListResult payload.
+static func decode_list_result(data: PackedByteArray) -> ListResult:
+	var result := ListResult.new()
+	if data.size() < 2:
+		result.error = "truncated"
+		return result
+
+	var error_len := data.decode_u16(0)
+	var offset := 2 + error_len
+	if offset > data.size():
+		result.error = "truncated error field"
+		return result
+	result.error = data.slice(2, offset).get_string_from_utf8()
+	if result.error != "":
+		return result
+
+	if offset + 2 > data.size():
+		result.error = "truncated entry count"
+		return result
+	var count := data.decode_u16(offset)
+	offset += 2
+
+	for i in range(count):
+		var decoded := _decode_catalog_entry(data, offset)
+		if decoded[0] == null:
+			result.error = "truncated entry %d" % i
+			return result
+		result.entries.append(decoded[0])
+		offset = decoded[1]
+
 	return result

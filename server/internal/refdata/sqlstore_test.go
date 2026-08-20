@@ -59,6 +59,29 @@ func TestImportAndGetItem(t *testing.T) {
 	}
 }
 
+func TestListAll(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+
+	csv := "1,5000,10,0,1,0,0.5,1.0,10.0,20.0,5.0,15.0,50.0,80.0,20.0,40.0,0.5,0.9,0.1,0.3\n" +
+		"2,5000,10,0,1,0,0.5,1.0,10.0,20.0,5.0,15.0,50.0,80.0,20.0,40.0,0.5,0.9,0.1,0.3\n"
+	items, err := LoadItemsCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("LoadItemsCSV: %v", err)
+	}
+	if err := store.ImportItems(ctx, items); err != nil {
+		t.Fatalf("ImportItems: %v", err)
+	}
+
+	got, err := store.ListAll(ctx)
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != 1 || got[1].ID != 2 {
+		t.Fatalf("got %+v, want items 1 and 2 in ID order", got)
+	}
+}
+
 func TestImportItemsUpserts(t *testing.T) {
 	store := openTestSQLStore(t)
 	ctx := context.Background()

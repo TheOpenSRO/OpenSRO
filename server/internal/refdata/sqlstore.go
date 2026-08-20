@@ -130,6 +130,41 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 	return &it, nil
 }
 
+// ListAll returns every imported item, ordered by ID. Used by the shop to
+// build its catalog -- with refdata being "bring your own data" (see
+// docs/protocol/refdata_schema.md), a real deployment's catalog could be
+// large, but this project's own placeholder/test data is small enough
+// that a full listing is the simplest thing that works.
+func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, max_stack, req_str, req_int, item_class, two_handed,
+			durability_min, durability_max, phys_defense_min, phys_defense_max,
+			mag_defense_min, mag_defense_max, phys_attack_min, phys_attack_max,
+			mag_attack_min, mag_attack_max, hit_rate_min, hit_rate_max,
+			critical_min, critical_max
+		FROM items ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("refdata: listing items: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*Item
+	for rows.Next() {
+		var it Item
+		if err := rows.Scan(
+			&it.ID, &it.MaxStack, &it.ReqStr, &it.ReqInt, &it.ItemClass, &it.TwoHanded,
+			&it.DurabilityMin, &it.DurabilityMax, &it.PhysDefenseMin, &it.PhysDefenseMax,
+			&it.MagDefenseMin, &it.MagDefenseMax, &it.PhysAttackMin, &it.PhysAttackMax,
+			&it.MagAttackMin, &it.MagAttackMax, &it.HitRateMin, &it.HitRateMax,
+			&it.CriticalMin, &it.CriticalMax,
+		); err != nil {
+			return nil, fmt.Errorf("refdata: scanning item: %w", err)
+		}
+		out = append(out, &it)
+	}
+	return out, rows.Err()
+}
+
 // Count returns how many items are stored.
 func (s *SQLStore) Count(ctx context.Context) (int, error) {
 	var n int

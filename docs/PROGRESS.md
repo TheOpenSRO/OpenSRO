@@ -2,6 +2,38 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 9)
+
+- Made quests and the NPC shop playable from `World.tscn`, continuing the "close the protocol-to-
+  UI gap 1:1" pass. Quests needed no server changes -- `OpQuestList`/`OpQuestAccept` already
+  covered everything a UI needs, so this was pure client wiring: a Quests tab (list + Accept
+  button) that also refreshes on every kill (progress can advance without completing, and
+  `OpQuestCompleted` only fires on completion, so `_on_attack_result` now re-lists quests on every
+  kill too, not just `_on_quest_completed`).
+  The shop needed the same kind of protocol gap fix combat did last round: **there was no way for
+  a client to discover what's actually purchasable.** `shop.Service.Buy` accepts any refdata item
+  ID with no curated catalog, but nothing exposed the catalog itself. Added `refdata.SQLStore.
+  ListAll` and `shop.Service.Catalog` (computing each item's price via the existing `Price`
+  formula), then a new `OpShopList`/`OpShopListResult` opcode pair (0x0052/0x0053). Extending
+  `shop.ItemLookup` with `ListAll` broke both existing test stubs (`stubItems` in `shop`,
+  `stubShopItems` in `session`) at compile time via `go vet` -- fixed both rather than narrowing
+  the interface back down, since every real caller (refdata.SQLStore) needs it anyway.
+  Worth noting honestly: `refdata.Item` has no display name field (the curated schema never
+  included one), so the shop list can only show item ID + stats + computed price -- `ShopCatalogEntry`
+  surfaces `ItemClass`/`PhysAttackMax`/`PhysDefenseMax` specifically so a UI has *something* to
+  tell items apart by, rather than pretending a name exists.
+  Verified for real again: booted `World.tscn` directly to confirm the two new tabs' node paths
+  resolve, then built another temporary end-to-end test scene (deleted after this run) that seeded
+  one real item into the dev Postgres `items` table via `psql`, registered an account, entered the
+  world, and drove the actual Shop/Quests UI controls against a live server -- confirmed the shop
+  list populated with the seeded item, clicking Buy actually deducted gold and landed the item in
+  inventory, the quest list populated with the catalog's two quests, and clicking Accept actually
+  accepted one. Cleaned up the seeded row afterward.
+  Go: `TestListAll` (refdata), `TestCatalogListsEveryItemWithComputedPrice` (shop), plus
+  `OpShopList` round-trip and full-flow coverage in `session`. Full Go test suite green. GDScript:
+  extended `shop_test.gd` with `ShopListResult` coverage, reconfirmed byte-exact wire compatibility
+  via independent Go/GDScript hex generation. All 19 GDScript suites pass headless.
+
 ## 2026-08-20 (cont'd 8)
 
 - Made combat, inventory, and equipment actually playable from `World.tscn`, closing a real
