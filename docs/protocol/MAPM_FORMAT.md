@@ -1,0 +1,139 @@
+# MAPM terrain/heightmap format (JMXVMAPM)
+
+`.m` files inside `Map.pk2` (one per map region, alongside that region's `.o` object-placement
+file — see [MAPO_FORMAT.md](MAPO_FORMAT.md)) are the terrain/heightmap data.
+
+No decompiled loader was found via the usual technique (searching for "JMXV" immediately followed
+by the 4-letter type suffix) in either `sro_client.exe` or `EternityLib.dll`, both given a full
+Ghidra auto-analysis pass, including an RTTI class name check (none found) — so this is confirmed
+entirely empirically, using the same brute-force byte-analysis approach that cracked `.bsk` and
+`.mapo`.
+
+**Lower confidence than every other format in this project.** Originally derived from one real
+sample; since cross-checked against 10 real files pulled directly from `Map.pk2` via this
+project's own `server/internal/pk2` reader — real confidence increase, and it revealed a second
+tile record shape (see below) that a single-sample derivation couldn't have found. Still, several
+fields remain genuinely unconfirmed (see "What's still not confirmed" below), so treat this as
+real but less settled than `.bsk` (8 files, fully cracked) or `.mapo` (11 files, fully cracked).
+
+## What was tried first, and why it was wrong
+
+An earlier pass at this format found a `uint16` reading exactly `97` at file offset `0x18` and
+guessed it was a header field storing the classic Silkroad 97×97 terrain grid width. Re-examined
+by dumping the raw bytes of many consecutive 11-byte chunks starting at that offset: `0x61` (97)
+recurs as the **first byte of individual tile records**, not as a one-time header field — it's
+just a very common tile value (the most frequent single-byte value in the file, appearing on
+about 6% of tiles), not a grid dimension. The "97 = grid width" idea is very likely a coincidence
+of that byte's high frequency; there's no confirmed connection to any actual grid geometry.
+
+## Two tile record shapes, picked by file size class
+
+Cross-checking against 10 real files (5 more from the original ~136-137KB size class, plus 5 from
+a visibly different ~92KB size class) found **two different tile record shapes**, one per size
+class — something a single-sample derivation had no way to discover:
+
+- **Shape A** (`length=11, heightOff=5`) — the originally-confirmed layout, used by every
+  ~136-137KB file checked (`0/0.m`, `0/1.m`, `0/2.m`, `1/0.m`, `1/1.m`).
+- **Shape B** (`length=7, heightOff=2`) — 2 unconfirmed leading bytes, the height float, 1
+  unconfirmed trailing byte. Used by every ~92KB file checked (`100/100.m`-`100/104.m`). Found the
+  same way Shape A originally was: measuring the byte stride between recurring float-shaped
+  patterns in the raw data.
+
+There's no header field declaring which shape a file uses. Both readers detect it the same way
+this project resolves every other such ambiguity: try every `(shape, starting offset)` combination
+in a small window right after the version tag, and pick whichever produces the longest unbroken
+run of plausible tiles (a real height value: not NaN/Inf, and not the subnormal-float noise
+misaligned binary data produces — see below). This reliably picks the right shape and the right
+starting offset on every real file checked, including correctly ignoring the small false-positive
+runs an all-zero header region can otherwise produce (see "Verification" below).
+
+## Tile record
+
+| Field | Shape A (11 bytes) | Shape B (7 bytes) |
+|---|---|---|
+| Leading bytes | 1 byte: a small integer, plausibly a texture/terrain-type index or blend weight. Real data shows **over 200 distinct values** — too many and too evenly spread to be a small fixed catalog the way `.mapo`'s object type IDs are, so this isn't confirmed as a "type ID" beyond "a per-tile byte that varies." | 2 bytes, unconfirmed. |
+| More leading bytes | 4 bytes: two `uint16`-shaped values that change from tile to tile in a locally-structured way (e.g. one was seen incrementing by a fixed step across a run of consecutive tiles before resetting) — plausibly some kind of row/column or patch-relative index, not confirmed. | (none — shape B has no equivalent field) |
+| Height | `float32` — confirmed as a real elevation value in both shapes: real data ranges roughly -920 to +3844 across all 10 files checked, with no NaN/Inf. | same |
+| Trailing bytes | 2 bytes, unconfirmed, observed `00 00` on every tile checked so far. | 1 byte, unconfirmed. |
+
+Both shapes' non-height bytes are kept raw on `Tile.Extra` / `tile.extra` rather than mislabeled.
+
+## The stride isn't perfectly regular — a resync scan is needed
+
+A naive fixed-stride walk of an entire file (once the right shape is known) still degrades partway
+through on some files — a small fraction of "tiles" come out as NaN or wildly out-of-range floats.
+Handled with a **plausibility-based resync scan** (the same technique `.mapo`'s variable-length
+trailer needed): read a tile at the current offset if it looks plausible; if not, scan forward
+byte-by-byte for the next offset that does, and resume from there. On the files where this format
+holds all the way through, only a small fraction of tiles ever need a resync — the fixed stride is
+correct almost everywhere, and the scan recovers the rest, landing at (or extremely close to) the
+exact end of file.
+
+The "plausible tile" check itself has a subtlety worth calling out (a real bug hit and fixed
+during development, the same shape of bug `.mapo` also hit): a height check that only rejects
+NaN/Inf and enforces a magnitude range still lets through *subnormal-range* float noise (values
+like `1.5e-30`) that misaligned binary data produces relatively often — these were being accepted
+as "sane" and causing the resync scan to lock onto the wrong offset. Fixed by also requiring a
+nonzero value to have magnitude above `1e-3`.
+
+## Real tile data can be interleaved with long non-tile runs — the resync bound matters
+
+2 of the 5 Shape-B files (`100/103.m`, `100/104.m`) initially only recovered ~290 tiles (out of an
+~13,200 expected for that size class) before the resync scan gave up — traced to a byte offset
+(`0x800` in both files) where the data stops looking like tile records and becomes a long,
+repeating `00 01 00 01 ...` pattern. **An earlier version of this doc concluded this was a real
+section boundary and stopping there was the correct behavior — that conclusion was wrong.**
+Scanning the *entire* file for every plausible (nonzero) float value, ignoring the tile stride
+assumption entirely, revealed the real structure: both files are organized into repeating bands of
+~2025 bytes of genuine tile data separated by gaps of a repeating non-tile pattern **up to 509
+bytes long** — far wider than the 64-byte resync bound this format's readers originally used
+(sized for `.mapo`'s much shorter trailers). The resync scan wasn't hitting a real, unparseable
+section; it was giving up on a genuine gap before reaching the real tile data on the far side of
+it, which resumes normally afterward.
+
+Fixed by widening the resync bound to 600 bytes (comfortably past the largest gap observed, 509
+bytes). Both previously-"anomalous" files now recover 12,698 and 12,947 tiles respectively —
+consistent with the ~13,200 tiles their sibling files in the same size class have — with sane
+height ranges and no NaN. The repeating `00 01` pattern itself is still not understood (plausibly
+a "no data here" run-length/mask section marking sparse or void terrain within the region — not
+confirmed), but it no longer blocks recovering the real data around it.
+
+## Verification
+
+`server/internal/mapm` and `client/scripts/mapm/mapm_reader.gd` implement the shape-detecting,
+resync-scanning reader above and produce identical results across all 10 real files:
+
+| File | Size | Shape | Tiles | Height range |
+|---|---:|---|---:|---|
+| `0/0.m` | 137128 | A | 12417 | -195.4 to 598.5 |
+| `0/1.m` | 136128 | A | 12363 | 0.0 to 193.6 |
+| `0/2.m` | 137128 | A | 12457 | 0.0 to 0.0 (flat) |
+| `1/0.m` | 136128 | A | 12366 | 0.0 to 0.0 (flat) |
+| `1/1.m` | 136128 | A | 12365 | 0.0 to 0.0 (flat) |
+| `100/100.m` | 92712 | B | 13211 | -31.3 to 3677.7 |
+| `100/101.m` | 92712 | B | 13211 | -512.6 to 2862.7 |
+| `100/102.m` | 92712 | B | 13211 | -20.0 to 3844.2 |
+| `100/103.m` | 92712 | B | 12698 | -475.1 to 2857.7 |
+| `100/104.m` | 92712 | B | 12947 | -920.8 to 1198.6 |
+
+Both sides also have synthetic unit tests for both shapes and the resync path (a single unreadable
+byte the fixed-stride walk can't skip past on its own).
+
+## What's still not confirmed
+
+- Whether there's a grid width/height anywhere in the file (the `97` idea is retracted — see
+  above) — the tile count doesn't obviously factor into a clean square, and no other field looked
+  like a dimension.
+- Shape A's two `uint16`-shaped fields.
+- The exact cause of the short (sub-64-byte) resync-needed misalignments seen in most files (no
+  coherent explanatory structure was found in the skipped bytes, unlike `.mapo`'s trailing block).
+- What the long (up to 509-byte) repeating `00 01` runs interleaved with real tile data in some
+  Shape-B files actually are.
+- Whether the terrain-type byte (Shape A, offset 0x00) corresponds to anything a renderer could
+  use directly (a texture index into some other table not yet identified).
+
+## Real samples available for future verification
+
+`Map.pk2` → `<region>/<region>.m` — 10 pulled in this environment: `0/0.m`, `0/1.m`, `0/2.m`,
+`1/0.m`, `1/1.m` (Shape A) and `100/100.m`-`100/104.m` (Shape B). Extracted directly from a real
+`Map.pk2` (1.5GB) via this project's own `server/internal/pk2` reader.

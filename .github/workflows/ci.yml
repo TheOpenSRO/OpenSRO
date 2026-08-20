@@ -60,6 +60,19 @@ jobs:
         run: |
           godot --headless --path . --script res://scripts/pk2/blowfish_test.gd
           godot --headless --path . --script res://scripts/pk2/pk2_reader_test.gd
+          godot --headless --path . --script res://scripts/ddj/ddj_reader_test.gd
+          godot --headless --path . --script res://scripts/bms/bms_reader_test.gd
+          godot --headless --path . --script res://scripts/bsr/bsr_reader_test.gd
+          godot --headless --path . --script res://scripts/bmt/inflate_test.gd
+          godot --headless --path . --script res://scripts/bmt/bmt_reader_test.gd
+          godot --headless --path . --script res://scripts/ban/ban_reader_test.gd
+          godot --headless --path . --script res://scripts/bsk/bsk_reader_test.gd
+          godot --headless --path . --script res://scripts/mapo/mapo_reader_test.gd
+          godot --headless --path . --script res://scripts/mapm/mapm_reader_test.gd
+          godot --headless --path . --script res://scripts/efp/efp_reader_test.gd
+          godot --headless --path . --script res://scripts/assets/skeleton_pose_test.gd
+          godot --headless --path . --script res://scripts/assets/skeleton3d_builder_test.gd
+          godot --headless --path . --script res://scripts/assets/object_loader_test.gd
           godot --headless --path . --script res://scripts/net/packet_test.gd
           godot --headless --path . --script res://scripts/net/packet_reader_test.gd
           godot --headless --path . --script res://scripts/net/auth_test.gd
@@ -85,7 +98,7 @@ jobs:
       - uses: actions/checkout@v5
       - name: Fail if any pk2/original asset files are committed
         run: |
-          if git ls-files | grep -iE '\.(pk2|gr2|ddj)$'; then
+          if git ls-files | grep -iE '\.(pk2|gr2|ddj|bms|bsr|bmt|ban|bsk|efp)$'; then
             echo "::error::Committed game data files found. This repo must never contain original pk2/asset files."
             exit 1
           fi

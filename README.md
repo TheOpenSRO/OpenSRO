@@ -47,6 +47,108 @@ Run the test suites from `server/` (`go test ./...`, needs the same local Postgr
 
 Server-side protocol (accounts, characters, world/chat, combat/loot, inventory/equipment, shop,
 quests, party/guild, duels, trade, friends) is implemented and tested end-to-end, with a matching
-2D client HUD (`client/scenes/World.tscn`) wired to all of it. No 3D rendering yet — that needs
-its own reverse-engineering pass on the original asset formats (mesh/texture/animation), which
-hasn't started. See `docs/PROGRESS.md` for the detailed running log.
+2D client HUD (`client/scenes/World.tscn`) wired to all of it. This is genuinely playable today:
+`docker compose up --build` (or a local Postgres + `go run ./cmd/server`) plus opening `client/`
+in Godot gets you a real login → character select → 2D world loop against a real server.
+
+There's now also a first real 3D scene (`client/scenes/World3D.tscn`, reachable from the 2D HUD
+via a "3D View" button): a `CharacterBody3D` player with WASD movement and a third-person camera,
+synced to the server over the same movement protocol the 2D client already decoded but never
+sent or rendered anything for — see `docs/PROGRESS.md` for that finding. Other connected
+characters render as labeled capsules at their real, server-authoritative positions (placeholder
+primitives on purpose — no real character/ground assets wired in yet). **Verified against the
+real running stack**: the full connect → register → login → create character → enter world flow,
+and two concurrent real client instances genuinely seeing each other enter and move in real time,
+both confirmed by actually running the Go server + client together, not just unit tests.
+
+3D asset formats are reverse-engineered and have real, tested readers on both sides
+(`server/internal/{pk2,bsr,bms,ddj,bmt,ban,bsk,mapo,mapm,efp}` in Go,
+`client/scripts/{pk2,bsr,bms,ddj,bmt,ban,bsk,mapo,mapm,efp}` in GDScript) — **every container
+format found so far has at least a working reader**, 10 total: the pk2 archive container, `.bsr` composite "static object" descriptors, `.bms` mesh
+geometry, `.ddj` textures (a thin wrapper around standard DDS), `.bmt` materials (zlib-compressed
+color + texture-reference layers — decompressed with a from-scratch pure-GDScript DEFLATE decoder,
+`client/scripts/bmt/inflate.gd`, after Godot's own built-in decompressor was confirmed to fail on
+real zlib streams that a standard library decodes correctly), `.ban` bone-animation data
+(quaternion + position keyframes per named bone), `.bsk` skeleton/bone-hierarchy data (the
+parent-bone references `.ban` itself lacks), and `.o` (`Map.pk2`'s per-region object-placement
+list — type ID + world position for everything placed in a map region).
+
+All of this has been verified against real extracted game archives, not just synthetic
+fixtures — including an actual rendered screenshot (real mesh + real DXT3 texture from
+`Particles.pk2`, decoded and displayed correctly by this project's own readers, no engine-native
+DDS/model import involved).
+
+`client/scripts/assets/object_loader.gd` ties all of them together end-to-end: given an open pk2
+archive and a `.bsr` path, it resolves every mesh piece, its material, and that material's
+texture, and returns a real, renderable, **textured** Godot `Node3D`/`MeshInstance3D` tree —
+verified against a full synthetic pk2 archive exercising the whole pk2→bsr→bms→bmt→ddj chain, not
+just parser-level unit tests. `.bsr` sub-mesh pieces need no extra per-part transform — confirmed
+against two real sub-mesh pieces of the same object, each already carries its own absolute
+position baked into its vertex data. `.bsk` (bone hierarchy — the piece `.ban` itself lacks) is
+also reverse-engineered and has real, tested readers on both sides (`server/internal/bsk`,
+`client/scripts/bsk/bsk_reader.gd`) — **fully cracked**, verified against 8 real files spanning
+two structurally different skeleton styles (a mirrored-decoration rig, and the common real-world
+"3ds Max Biped" naming convention used by real creature/character rigs, `Bip01`, `Bip01 Pelvis`,
+...), every one parsed to complete, exact end-of-file consumption. `client/tools/render_skeleton.gd`
+renders a real `.bsk` file's bone hierarchy to a screenshot — run against a real 66-bone Biped
+creature skeleton, it produces a genuinely recognizable humanoid figure with correctly
+left/right-mirrored arms (including individual fingers) and legs.
+`client/tools/render_skeleton_animated.gd` goes further: applies a real `.ban` animation's
+rotation to a real `.bsk` bone chain via basic forward kinematics and renders bind-pose vs.
+animated-pose screenshots, showing real, visible movement driven by real keyframe data. That
+bind-pose/FK logic is now real, tested library code —
+`client/scripts/assets/skeleton_pose.gd` (`SkeletonPose`) — not just inline in the dev tools.
+There's also a real engine-backed version now: `client/scripts/assets/skeleton3d_builder.gd`
+(`Skeleton3DBuilder`) builds an actual Godot `Skeleton3D` from a parsed `.bsk` skeleton and drives
+it with real `.ban` keyframe rotations through `Skeleton3D`'s own pose-hierarchy propagation
+(verified to reproduce the exact same result as the manual FK math) —
+`client/tools/render_skeleton3d_animated.gd` is its dev-tool counterpart, run against the same
+real data with the same visible-movement result.
+
+`.o` (`Map.pk2`'s per-region object-placement list — very likely where a `.bsr` object's real
+world position lives, since `.bsr` itself has none) is now also reverse-engineered and has real,
+tested readers on both sides (`server/internal/mapo`, `client/scripts/mapo/mapo_reader.gd`),
+verified against 11 real map regions: type ID + world position recovered correctly across all of
+them (up to 11 distinct object types seen), including a real bug found and fixed via that broader
+cross-check — some regions use a header 2 bytes narrower than originally assumed, which silently
+produced zero recovered objects until fixed to scan for the real boundary instead of trusting a
+fixed offset. Rotation doesn't appear to be present in any recovered field yet — open question,
+see `docs/protocol/MAPO_FORMAT.md`. `client/tools/render_map_objects.gd` renders a real region's
+placements as a top-down scatter (colored markers standing in for real models, since no
+type-ID-to-`.bsr` mapping has been found) — run against a real 95-object region, it shows a
+genuinely sensible spatial layout, not noise.
+
+`.m` (`Map.pk2` terrain/heightmap) also now has a real, working reader on both sides
+(`server/internal/mapm`, `client/scripts/mapm/mapm_reader.gd`) — a real-looking elevation float
+per tile, recovered via the same plausibility-based resync scan `.mapo` needed for its
+variable-length records. Cross-checked against 10 real files pulled from `Map.pk2`, which turned
+out to use **two different tile record shapes** depending on region file-size class; both readers
+auto-detect which one applies (try every shape/offset combination in a small window, keep
+whichever produces the longest run of plausible tiles) rather than assuming one. All 10 real files
+now parse to ~100% completion, including 2 that were originally thought to hit a genuine
+unreadable section partway through — that turned out to be a wrong conclusion, corrected after
+further investigation found real tile data resumes past a wider-than-expected (up to 509-byte)
+gap; the resync bound was widened accordingly, and both files now recover their full tile counts.
+**Still flagged as lower-confidence than every other format in this project** — real per-tile
+fields remain unconfirmed (grid dimensions, Shape A's two `uint16` fields) — see
+`docs/protocol/MAPM_FORMAT.md` for the honest detail.
+
+`.efp` (particle-effect definitions — structurally a self-describing, nested, tagged property
+system rather than a fixed record, closer to a small serialization format than a struct) now also
+has a real, tested reader on both sides (`server/internal/efp`, `client/scripts/efp/efp_reader.gd`),
+parsing all 30 real files sampled from `Particles.pk2` without error. It recovers a **flat**
+sequence of every `(name, value)` pair in a file rather than the format's true nested tree — the
+value-boundary-finding technique doesn't need to know the tree structure to find where each
+property's raw bytes end, so nothing is lost data-wise, but parent/child relationships between
+properties aren't reconstructed. See `docs/protocol/EFP_FORMAT.md` for what that tradeoff means
+and what a deeper future pass would need.
+
+Not yet done: `World3D.tscn` (see above) proves real movement/sync in 3D, but doesn't render any
+real game assets yet — no real ground/terrain, no real character meshes, no real placed objects.
+Neither skeleton pipeline above (manual FK or the real `Skeleton3D` one) is integrated with
+`ObjectLoader` or real mesh skinning yet; every render tool still produces a standalone
+screenshot rather than something used in the live 3D scene. That's the current focus (see
+`docs/PROGRESS.md`). The material-layer-to-mesh-piece pairing when a `.bmt` has multiple layers is
+a documented, unconfirmed heuristic (pairs by index when counts match); `.efp`'s nested tree
+structure (see above). See `docs/protocol/{PK2,BSR,BMS,DDJ,BMT,BAN,BSK,MAPO,MAPM,EFP}_FORMAT.md` and
+`docs/PROGRESS.md` for the detailed running log.

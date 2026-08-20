@@ -2,6 +2,765 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 39) — first real 3D scene: connect, log in, and walk around, verified end-to-end against the live server
+
+- New `client/scenes/World3D.tscn` + `client/scripts/World3D.gd`: a real, playable 3D scene — a
+  `CharacterBody3D` player on a placeholder flat ground, WASD movement, third-person camera, and
+  other connected characters rendered as labeled capsules at their real, server-authoritative
+  positions. Reachable from the existing 2D `World.tscn` via a new "3D View" button (round trip
+  via a "Back to 2D View" button in the 3D scene) — the 2D HUD (chat/inventory/quests/etc.) is
+  untouched, this is additive.
+- Found, while wiring it up, that the server-side movement protocol (`OpMove`,
+  `OpEntityEntered`/`OpEntityMoved`/`OpEntityLeft`) was already fully implemented and tested on
+  both ends but **nothing in the client ever called `NetClient.move_to()` or rendered any position
+  anywhere** — `World.gd` already had a comment noting exactly this ("position isn't rendered
+  anywhere yet"). Not a new protocol — the 3D scene is what closes that gap.
+- Not wired to any real game assets yet on purpose — player/other-entity visuals are placeholder
+  primitives, so movement/sync could be gotten working and verified end-to-end first before
+  layering `.bsr`/`.bms`/`.bsk` rendering on top.
+- **Verified against the real, running stack**, not just unit tests: started the actual Go server
+  (`go run ./cmd/server`, real local Postgres) and drove the real client autoloads through a
+  scratch end-to-end harness (register → login → create character → enter world → instantiate
+  `World3D.tscn` → simulate movement), removed after use, never committed. Confirmed:
+  - The full connect/register/login/character-create/enter-world flow works against the real
+    server.
+  - The `CharacterBody3D` spawns at the server-given position and gravity/ground-collision settle
+    it correctly.
+  - **Two concurrent real client instances see each other**: client A received real
+    `entity_entered` and `entity_moved` events for client B logging in and moving, over the actual
+    network protocol — genuine multiplayer position sync confirmed working, not assumed.
+  - Along the way, confirmed (on both the new script and the pre-existing `World.gd`) that Godot's
+    `--headless --path . --script <file>` entry point does **not** initialize project autoloads
+    (a real, useful thing to know for any future headless testing here) — the correct way to
+    validate autoload-dependent code headlessly is to run the real main scene (or another real
+    scene) as a positional argument, not via `--script`.
+- This directly answers the "how far from walking around" question: the 2D client/server loop was
+  already fully playable; this is the first real step into 3D, with the core movement/sync loop
+  now proven end-to-end. Next: real ground/terrain (blocked on `.mapm` grid dimensions), real
+  character meshes via `ObjectLoader`/`Skeleton3DBuilder`, and placing real `.bsr` objects via
+  `.mapo` data (blocked on the type-ID-to-resource-path mapping, still not found — see
+  `docs/protocol/MAPO_FORMAT.md`).
+
+## 2026-08-20 (cont'd 38) — real Skeleton3D/AnimationPlayer-style pipeline (was the last "not yet done" item)
+
+- User asked directly how far this project is from being playable in 3D. Answer: the 2D
+  client/server loop is fully playable today (`docker compose up` + open `client/` in Godot logs
+  in and drives the whole 2D HUD); none of the 3D asset-format work is wired into a live scene
+  yet. Redirected to finish the in-flight `Skeleton3D` work, then start on the actual 3D world
+  scene next.
+- Added `SkeletonPose.bone_rotation()` (the confirmed local-rotation quaternion from a `.bsk`
+  bone's transform bytes, same +4 offset shift as `bone_position()` for root-attached bones),
+  unit tested.
+- New `client/scripts/assets/skeleton3d_builder.gd` (`Skeleton3DBuilder`): builds a real Godot
+  `Skeleton3D` from a parsed `.bsk` skeleton (topologically sorted, since real bone records aren't
+  guaranteed to be in parent-before-child file order), and applies a real `.ban` keyframe's
+  rotation (relative to that track's own first keyframe — same interpretation
+  `render_skeleton_animated.gd` already validated) via `Skeleton3D`'s own pose-rotation
+  propagation, not manual per-bone math. Unit tested against a synthetic skeleton, verifying the
+  engine's own hierarchy propagation reproduces the exact same rotated positions
+  `SkeletonPose.apply_rotation`'s manual math already proved correct.
+- Hit and fixed two real Godot API gotchas along the way: `Skeleton3D.add_bone()` returns `void`
+  in 4.2 (not the new bone's index — have to `find_bone()` it back), and `get_bone_global_pose()`
+  reflects only the *pose* side of a bone's transform, which starts uninitialized rather than
+  defaulting to *rest* — needs an explicit `reset_bone_pose()` per bone before any global-pose
+  query means anything.
+- New dev tool `client/tools/render_skeleton3d_animated.gd`, the `Skeleton3D`-backed counterpart
+  to `render_skeleton_animated.gd`. Hit one more real bug getting it running: the two render calls
+  need `await`, since the render helper itself uses `await process_frame` — without it the script
+  raced ahead to `quit()` before either render actually completed, silently producing no output.
+  Once fixed, ran it against the same real `sample.bsk` + `sample_bandi.ban` pair used by the
+  manual-FK tool and got a real bind-pose/animated-pose screenshot pair showing genuine, visible
+  movement — sent to OpenSRO.
+- This closes out the "not yet done: a proper Skeleton3D/AnimationPlayer-based pipeline" item from
+  `README.md`'s status section. Full Go+GDScript regression green, CI updated, no regressions.
+
+## 2026-08-20 (cont'd 37) — corrected a wrong `.mapm` conclusion: the "real boundary" was actually a too-narrow resync bound
+
+- Went back to the 2 Shape-B files that only recovered ~290 of an expected ~13,200 tiles
+  ((cont'd 36) documented this as "the correct behavior, not a bug" — a real, understood section
+  boundary at byte offset `0x800`). That conclusion was **wrong**, caught by scanning the entire
+  file for every plausible float value regardless of stride: both files are actually organized
+  into repeating bands of ~2025 bytes of genuine tile data separated by gaps of a repeating
+  non-tile pattern up to **509 bytes long** — far wider than the 64-byte resync bound (sized for
+  `.mapo`'s much shorter trailers) that was making the scan give up before reaching the real data
+  on the far side of each gap.
+- Fixed by widening the resync bound to 600 bytes in both `server/internal/mapm` and
+  `client/scripts/mapm/mapm_reader.gd`. Both previously-"anomalous" files now recover 12,698 and
+  12,947 tiles respectively — consistent with their sibling files in the same size class — with
+  sane heights and no NaN. Verified no regression on the other 8 real files (still ~100%
+  consumption). `docs/protocol/MAPM_FORMAT.md` corrected in place, explicitly flagging the earlier
+  conclusion as wrong rather than quietly revising it.
+- The repeating `00 01` pattern itself is still not understood (plausibly a "no data here"
+  run-length/mask marker) — logged as an open question, but it no longer blocks recovering the
+  real tile data around it.
+
+## 2026-08-20 (cont'd 36) — `.mapm` second file family cracked: two real tile shapes
+
+- Went back to the `.mapm` "second file family" gap logged in (cont'd 34) (5 real `~92KB` region
+  files that didn't fit the original 11-byte tile model at all). Applied the same brute-force
+  byte-stride measurement that found the original shape: found a genuine **second tile record
+  shape** — 7 bytes (2 unconfirmed leading bytes + a `float32` height + 1 unconfirmed trailing
+  byte) — used consistently by every file in this size class, as opposed to the original 11-byte
+  shape used by the larger ~136-137KB size class.
+- Rewrote both readers (`server/internal/mapm`, `client/scripts/mapm/mapm_reader.gd`) around a
+  **shape-and-offset auto-detector**: try every `(shape, starting offset)` combination in a small
+  window after the version tag, keep whichever produces the longest unbroken run of plausible
+  tiles. This both correctly resolves the two shapes *and* incidentally improved every original
+  Shape-A file's consumption to a clean 100% (up from 99.6-99.9%), since the new detector finds a
+  tighter real starting offset than the previously-hardcoded header length.
+- 3 of the 5 new files now parse to 100% completion. The other 2 stop at ~290 tiles each, both at
+  the exact same byte offset (`0x800`) — traced by hand and confirmed this is a real, different
+  section of the file (a long repeating `00 01` pattern), not a resync-tunable failure. Documented
+  this explicitly as **the correct behavior**, not a bug: reporting the real tiles found and
+  stopping cleanly at a boundary this project doesn't understand yet is honest; inventing a way
+  past it would risk fabricating data.
+- `Tile` struct simplified on both sides to `{Height, Extra}` — the old `{TypeID, Counters}` shape
+  only made sense for Shape A; `Extra` now holds whatever the non-height bytes are for either
+  shape, kept raw per this project's established policy. Rewrote both languages' unit tests around
+  the two shapes plus the resync path. `docs/protocol/MAPM_FORMAT.md` rewritten with a full
+  per-file verification table (10 real files now, both shapes documented).
+- Also (while investigating) confirmed a widened height-sanity range wasn't actually needed for
+  any of this — re-verified the original, tighter bounds (`-2000` to `5000`) still produce
+  identical results, so left them unchanged rather than loosening the sanity filter without cause.
+
+## 2026-08-20 (cont'd 35) — session housekeeping + a dead-end ruled out
+
+- Looked for a `.mapo` type-ID → `.bsr` resource-path mapping in the game's reference-data tables
+  (`TextData_Object.txt`, `characterdata_*.txt`) as a way to make `render_map_objects.gd` show
+  real models instead of colored markers. `TextData_Object.txt` turned out to be a monster
+  display-name table (not indexed by anything resembling the observed `.mapo` type IDs);
+  `characterdata_*.txt` is a proprietary binary/compressed table, a big enough RE target on its
+  own that it's out of scope to open right now. Ruled out, not pursued further — consistent with
+  this project's existing honest "no mapping found" note in `docs/protocol/MAPO_FORMAT.md`.
+- Audited the CI workflow (`.github/workflows/ci.yml`) against the actual repo contents after many
+  edits this session: every `*_test.gd` file in `client/scripts/` is wired into CI, and every
+  script CI references actually exists — clean, no drift. Read `README.md` top to bottom for
+  cross-reference consistency (format lists, counts, doc links) — accurate as of this entry. No
+  stray `TODO`/`FIXME` markers in any of this session's new packages.
+
+## 2026-08-20 (cont'd 34) — cross-checked `.mapo`/`.mapm` against more real regions, found and fixed a real `.mapo` bug
+
+- Pulled the real `Map.pk2` (1.5GB) from the RE box and extracted 10 more real `.o`/`.m` samples
+  (regions `0/0`-`0/2`, `1/0`-`1/1`, `100/100`-`100/104`) via a throwaway `server/cmd/pk2extract`
+  tool (removed after use), to raise confidence on both lower-sample-count formats beyond the
+  single/double samples they'd been verified against so far.
+- **Found and fixed a real bug in `.mapo`**: 3 of the new populated (`"1001"`) regions
+  (`100/100.o`, `100/101.o`, `100/102.o`) silently parsed as 0 objects — the fixed 20-byte header
+  offset this format was built around landed inside real record data for these files, which
+  happen to use an 18-byte header instead (2 bytes narrower, cause unconfirmed). Fixed the same
+  way every other ambiguous boundary in this project's formats was resolved: scan forward
+  (bounded) for the first plausible record instead of trusting a fixed header length. Re-verified:
+  those 3 files now correctly recover 58, 50, and 12 real objects respectively (up to 11 distinct
+  type IDs across them). Also confirmed the version tag (`"1000"`/`"1001"`) isn't a reliable
+  populated/empty signal on its own — 2 of the new `"1001"` files are genuinely empty, same as
+  every `"1000"` file checked; both readers already handle this correctly (empty is a normal
+  successful parse, not an error). Fixed in both `server/internal/mapo` and
+  `client/scripts/mapo/mapo_reader.gd`, with a new synthetic test for the narrower-header case on
+  both sides. `docs/protocol/MAPO_FORMAT.md` updated with the full verification table (11 real
+  files now, up from 2).
+- Cross-checked `.mapm` too: the 5 new samples matching the original file's size class (`0/0.m`,
+  `0/1.m`, `0/2.m`, `1/0.m`, `1/1.m`, all ~136-137KB) all reproduce the ~99.6-99.9% consumption
+  rate seen on the original single sample — real confidence increase (5 consistent samples now,
+  up from 1). But the 5 `100/100.m`-`100/104.m` files (a smaller ~92KB size class) do **not** fit
+  the same model at all — 3 consume only ~83% with much wider height ranges, and 2 fail almost
+  immediately (~2%). This looks like a genuinely different terrain sub-format for this region
+  size class, not a resync-tunable issue — recorded as a new, real, confirmed gap rather than
+  forced into the existing model. `docs/protocol/MAPM_FORMAT.md` updated with both the confidence
+  increase and the new gap.
+
+## 2026-08-20 (cont'd 33) — real map-region render from `.mapo` data
+
+- Built `client/tools/render_map_objects.gd`: loads a real `.o` file through `MapoReader` and
+  renders every placed object's real world position as a colored (by type ID) marker, top-down.
+  Doesn't resolve type IDs to real `.bsr` models — no mapping from a `.mapo` type ID to a
+  resource path exists anywhere in this project's data, so markers stand in for real scenery.
+  Run against the real 95-object populated region: produces a genuinely sensible spatial layout
+  (objects cluster into distinct groups, not noise) — a real visual confirmation of the `.mapo`
+  reader's correctness beyond the numeric verification already done. Screenshot sent to OpenSRO.
+  `client/tools/README.md` updated.
+
+## 2026-08-20 (cont'd 32) — `.efp` particle effects: real reader, last format cracked
+
+- Went after the one remaining format with zero working reader. `.efp` is structurally different
+  from everything else here — a self-describing, nested, tagged property system, not a fixed
+  record — so it needed real sample data to work with. Wrote a throwaway pk2-extraction tool
+  (`server/cmd/pk2extract`, removed after use) using this project's own `server/internal/pk2`
+  reader, pulled the real `Particles.pk2` archive (236MB) from the RE box, and extracted 30 real
+  `.efp` files.
+- Tried to find a fixed per-key value schema first (measuring the byte gap between each key
+  occurrence and the next name token, across all 30 files) — some keys are genuinely consistent
+  (`ProgramUpdate` always 35 bytes, `NormalTimeLife` always a bare marker with 0 bytes), but many
+  others vary a lot (containers with nested content), so a hand-built schema table would need
+  dozens of entries with no way to verify the container ones were bounded correctly.
+- Found something better: a **schema-free flat reader** — read a name, then scan forward for the
+  next valid name-shaped token, treat everything between as that entry's opaque value — recovers
+  94-100% of every one of the 30 real files with zero hardcoded per-key knowledge. This flattens
+  the true nested tree into a flat list (loses parent/child relationships) but keeps every real
+  `(name, value bytes)` pair in the file. Also found and correctly handled a second real header
+  version (`"0013"`, 6/30 files, a different fixed pre-name-header shape) alongside the originally
+  documented `"0011"`.
+- Implemented `server/internal/efp` and `client/scripts/efp/efp_reader.gd`; both parse all 30 real
+  files without error, matching exactly. `docs/protocol/EFP_FORMAT.md` rewritten around the
+  working reader, with the flat-vs-tree tradeoff and the per-key schema investigation documented
+  honestly (including what a future, more thorough pass could still use that data for).
+- **Every documented `.pk2`-family container format in this project now has a real, working
+  reader on both sides** — pk2, bsr, bms, ddj, bmt, ban, bsk, mapo, mapm, efp (10 total). `.bsk`
+  and `.mapo` are fully/near-fully confirmed against multiple real files; `.mapm` and `.efp` are
+  real but lower-confidence (single-sample terrain data, and a flattened rather than fully nested
+  tree, respectively) — both honestly labeled as such in their docs.
+
+## 2026-08-20 (cont'd 31) — `.mapm` terrain format: real (lower-confidence) reader
+
+- Applied the same brute-force approach to `.m` (terrain/heightmap), the last format with no
+  working reader at all. Retracted the earlier "97 at offset 0x18 = grid width" guess after
+  dumping consecutive 11-byte chunks and finding `0x61` (97) is just the most common single tile
+  value (~6% of all tiles), not a one-time header field.
+- Found real per-tile structure: byte 0 = a small varying value (too many distinct values — 200+
+  — to be a small fixed catalog like `.mapo`'s object types), bytes 1-4 = two changing
+  `uint16`-shaped fields (unconfirmed), bytes 5-8 = a `float32` that decodes to a genuinely
+  sane-looking elevation range (real data: -195 to +598, no NaN), bytes 9-10 = unconfirmed
+  (always zero so far). 11 bytes per tile.
+- The fixed 11-byte stride isn't perfectly regular over the whole file — about 27% of a naive
+  fixed-stride walk degrades into NaN/garbage partway through. Applied the same
+  plausibility-based resync scan `.mapo`'s variable trailer needed: only ~1.2% of tiles actually
+  need a resync, the rest read directly at the fixed stride. Hit and fixed the same "subnormal
+  float noise passes a naive sanity range check" bug already seen in `.mapo`.
+- Implemented `server/internal/mapm` and `client/scripts/mapm/mapm_reader.gd`, both matching
+  exactly on the one real file available (12,416 tiles recovered). **Flagged as lower-confidence
+  than every other format here** — only one real `.m` sample exists in this environment, so
+  nothing here got the cross-file verification `.bsk` (8 files) and `.mapo` (2 files) had; a
+  synthetic byte-exact "gap" unit test for the resync path turned out to be genuinely fragile to
+  construct (any finite gap can have a boundary-straddling window that coincidentally looks like
+  a plausible tile) — solved by brute-force searching for gap bytes that provably don't collide,
+  with the fixture self-checking that guarantee before asserting on the parse result.
+- `docs/protocol/MAPM_FORMAT.md` rewritten around this — explicitly labeled lower-confidence, with
+  open questions (grid dimensions still unknown, the two uint16 fields, cause of the 1.2%
+  misalignment) listed rather than glossed over.
+- **All 9 documented container formats now have at least a real, working reader** (`.efp`
+  particle effects remains the one format with none at all — see `docs/protocol/EFP_FORMAT.md`).
+
+## 2026-08-20 (cont'd 30) — `.mapo` object-placement format cracked
+
+- Applied the same brute-force byte-scanning approach that cracked `.bsk` to `.mapo` (`Map.pk2`'s
+  per-region object-placement list, previously scoped-but-unimplemented — the earlier fixed
+  28-byte-stride guess drifted into garbage after 2 records). Scanned the one real populated
+  sample (`102/101.o`, 105-ish records) for every byte offset where a plausible small type ID is
+  immediately followed by 3 non-garbage floats, and found the real record boundaries: a fixed
+  28-byte record (type ID + position + 12 unconfirmed bytes, not just the 16-byte type+position
+  the original guess assumed), followed by an optional variable-length trailing block (0-40
+  bytes, always zero padding plus a small nonzero tail value) with no length field of its own.
+- Implemented a "resync" reader: after each fixed 28-byte record, scan forward for the next
+  plausible record start rather than trusting a fixed stride — the same
+  verify-plausibility-not-a-fixed-layout approach `.bsk` needed for its two record shapes,
+  applied here to record length instead. New packages: `server/internal/mapo` and
+  `client/scripts/mapo/mapo_reader.gd`, both with unit tests against synthetic fixtures. Hit and
+  fixed a real bug during development: using the 16-byte type+position size (rather than the full
+  28-byte fixed record) as the resync starting point caused false-positive record detections
+  inside the trailing 12 unconfirmed bytes, producing several bogus singleton-count "object
+  types" — fixed by resyncing from the full 28-byte boundary, which cleanly recovers exactly the
+  4 real type IDs (`1159`, `1798`, `1800`, `1805`) across all 95 real objects, matching between
+  Go and GDScript exactly. Also verified an all-zero/empty-region sample correctly parses to 0
+  objects.
+- Still open: rotation isn't obviously present in any field (either encoded somewhere in the
+  unconfirmed bytes, or not stored per-placement for these object types); the trailing block's
+  meaning; whether the 2 unconfirmed header fields mean anything (e.g. an object count).
+  `docs/protocol/MAPO_FORMAT.md` rewritten around the working format.
+
+## 2026-08-20 (cont'd 29) — `.bsk` fully cracked
+
+- Followed through on the "needs more real samples" note from (cont'd 28) and cracked it
+  completely. Pulled a second real Biped file (`mob_garm.bsk`) and found the forward-declaration
+  pattern (`Bip01 L Thigh`/`Bip01 R Thigh` announced with no immediate resolution) at the exact
+  same structural position as `dubhe.bsk` — confirmed it's a real, repeatable part of the format,
+  not a one-off. Traced `Bip01 L Thigh` all the way to its actual resolution point in `dubhe.bsk`
+  (announced at offset 391, resolves at offset 7899) and, prototyping in Python for fast
+  iteration, found the real general rule: every bone name in the file is *announced* once and
+  *resolved* later (immediately, or after any number of other announce/resolve pairs interleave)
+  — the previously-documented "alias table" isn't a separate concept at all, it's the same
+  mechanism, just bunched into one run at the start of the one non-Biped file originally used to
+  crack this format. Resolution can take either of two record shapes (no-parent/92-byte, or
+  with-parent/88-byte), and — the key new finding — **both shapes can appear within a single
+  file**, disambiguated per-bone by checking whether what follows looks like a valid next token,
+  not by a whole-file convention as previously assumed.
+- The Python prototype parsed **all 8 real `.bsk` files available in this environment** (the
+  original mirrored-decoration rig, plus `dubhe`, `garm`, `wendigo`, `jalliaza`, `shamoot`, and 2
+  duplicate paths) to **full completion** — zero unresolved names, landing exactly on each file's
+  8-byte trailer every time. Ported the confirmed algorithm to both `server/internal/bsk/bsk.go`
+  and `client/scripts/bsk/bsk_reader.gd`, replacing the old two-phase
+  (alias-table-then-per-bone-children) implementation entirely; re-verified byte-for-byte against
+  all 8 real files from both languages. Rewrote the Go and GDScript unit tests around the new
+  model (immediate resolution, deferred/interleaved resolution, unresolved-announcement error
+  case) — both green, no regressions in any other format's test suite.
+- Rendered a real Biped creature skeleton (`dubhe.bsk`, `mob/dm/dubhe.bsk`) for the first time —
+  a genuinely recognizable 66-bone humanoid figure: head, spine, correctly left/right-mirrored
+  arms with individual fingers, correctly mirrored legs. Also fixed a real cosmetic bug this
+  surfaced in `client/tools/render_skeleton.gd`: its joint-sphere/bone-cylinder radius was a
+  fixed size tuned for the original (widely-spaced) skeleton, which fused into an unrecognizable
+  blob on this tighter-spaced 66-bone rig — now derived from each skeleton's own shortest real
+  bone length. Re-verified the original skeleton still renders correctly (no regression).
+  Screenshot sent to OpenSRO.
+- `docs/protocol/BSK_FORMAT.md` rewritten from scratch around the final model (previous versions
+  narrated the incremental gap-discovery process; this one describes the complete, working
+  format).
+
+## 2026-08-20 (cont'd 28)
+
+- Dug further into the `.bsk` Biped forward-reference gap left at the end of (cont'd 27). Pulled a
+  second real Biped file (`mob_garm.bsk`) and found the exact same `Bip01 L Thigh`/`Bip01 R
+  Thigh` forward-declaration shape at the exact same structural position as `dubhe.bsk` — not a
+  one-off, a real repeatable part of the format.
+- Real insight: this is the **same mechanism as the alias/mirror table**, just triggered
+  mid-stream instead of only at the top of the file. Confirmed by re-scanning the original
+  fully-cracked `sample.bsk`: its alias table is exactly "announce a name now, get its real
+  record much later" (`Bone01` announced at offset 119, doesn't resolve until offset 220) — the
+  existing alias-table-vs-bone-record disambiguation logic already implements a special case of
+  this more general rule. Biped files just spread the announce/resolve pairs out mid-stream
+  instead of bunching them all at the front.
+- Traced `Bip01 L Thigh` all the way to its resolution in `dubhe.bsk` (announced at 391, appears
+  again at 7746, resolves at 7899) and found real evidence that **both of `.bsk`'s two known
+  per-bone record shapes (with-parent/88-byte, and without-parent/92-byte "root-attached") can
+  coexist inside a single Biped file** — the original model (from `sample.bsk`) assumed that
+  choice was a whole-file convention, which no longer holds. Documented precisely, with exact
+  byte offsets, in `docs/protocol/BSK_FORMAT.md` rather than guessed at; not implemented, since
+  disambiguating the two shapes per-name needs more real samples than the 2 checked so far.
+  Genuine forward progress on understanding, not a working parser yet — logged honestly as such.
+
+## 2026-08-20 (cont'd 27)
+
+- Made real progress on the `.bsk` Biped-skeleton gap. Byte-level analysis of a real file
+  (`dubhe.bsk`, comparing a brute-force scan of every plausible length-prefixed string against
+  what the parser expected) resolved the previously-vague "some bones have an extra optional
+  field" note into a confirmed mechanism: a bone record can list zero or more of its direct
+  children by name (up to 3 seen, e.g. `Bip01 Neck` lists `L_chain_01`/`R_chain_01`/`Spine1_ice`)
+  between its own name and the repeat of that name — every listed child name was confirmed to
+  have its own later full record elsewhere in the file, parented back correctly, plus a matching
+  `<name>_end` tip bone. Implemented in both `server/internal/bsk` (`Bone.ChildNames`) and
+  `client/scripts/bsk/bsk_reader.gd` (`Bone.child_names`), with a new synthetic 2-child-name test
+  case on both sides (`go test`/GDScript test both green, no regression on the existing
+  fully-working real file).
+- Still doesn't fully parse any Biped file: found a second, distinct complication right after —
+  some bone names (e.g. `Bip01 L Thigh`, `Bip01 R Thigh`) are announced with no self-repeat
+  nearby at all; their real transform-bearing record doesn't appear until ~7000+ bytes later in
+  the same file. Which bone they're logically a child of at the announcement point isn't
+  established. Documented precisely (with exact byte offsets) in `docs/protocol/BSK_FORMAT.md`
+  rather than guessed at; both readers fail this case with a clean, controlled parse error
+  instead of misreading transform bytes as garbage names.
+- Investigated whether real character `.bms` meshes carry skinning data — see "(cont'd 26)"
+  below for that finding.
+
+## 2026-08-20 (cont'd 26)
+
+- Investigated whether real character/skinned `.bms` meshes carry visible skinning data in the
+  fields previously documented as "always 0 in every non-character mesh checked." Pulled 4 real
+  files from `Prim/Mesh/Char/Europe/man/` (hair and face pieces — the only skinned-looking meshes
+  available in this environment; no full skinned body mesh exists, bodies are built from
+  equippable-armor-style static pieces instead). `server/internal/bms` parses all 4 without error.
+  Result: the header's reserved 0x28 field is still 0 on every one of them — ruled out as a
+  skinning-data location. But the per-vertex trailing 12 bytes (previously "usually opaque white,
+  one outlier vertex differs, unconfirmed") turned out to have real, consistent internal
+  structure once checked across multiple files: every vertex is one of two classes — a plain
+  "no link" class (`FFFFFFFF` + `0`), or a class carrying what looks like a `uint32` index back
+  into the same mesh's own vertex array (values always in-range for that mesh; confirmed as 16+
+  bits wide, not 8, using a 312-vertex file whose index values exceed a single byte) plus a
+  constant flag value of `2`. Plausibly a hair-strand physics anchor/pair reference — not
+  skinning (no accompanying weight, values don't fit a bone-index range). Not decompiled, so kept
+  as raw bytes in both readers rather than promoted to typed fields, per this project's established
+  policy of not mislabeling a field ahead of confirmed semantics. Documented in full in
+  `docs/protocol/BMS_FORMAT.md`, including fixing that doc's stale claim that the GDScript `.bms`
+  reader didn't exist yet (it does, and has for a while — `client/scripts/bms/bms_reader.gd`).
+
+## 2026-08-20 (cont'd 24)
+
+- Investigated `.m` (`Map.pk2` terrain/heightmap, `JMXVMAPM1000`) a bit further: no loader was
+  found via the usual "JMXV + type suffix" search (map streaming may go through a different
+  binary/path not yet searched), but empirically confirmed an 11-byte per-tile stride (measured
+  from repeated marker bytes) and a suspicious `97` in the header matching the classic Silkroad
+  97x97 terrain grid — not enough to call this format cracked, documented honestly as partial in
+  `docs/protocol/MAPM_FORMAT.md`, same bar as `.efp`/`.mapo`.
+- Promoted the bind-pose + forward-kinematics logic that was living only in the two dev-tool
+  scripts (`client/tools/render_skeleton{,_animated}.gd`) into real, tested library code:
+  `client/scripts/assets/skeleton_pose.gd` (`SkeletonPose`) — bind-pose extraction, a
+  descendants-of-a-bone walk, and the rotate-around-pivot FK helper, unit tested against a
+  synthetic 3-bone skeleton (verifies exact rotated positions, not just "didn't crash"). Both
+  render tools refactored to use it instead of duplicating the logic; re-ran both against the
+  same real data as before and confirmed byte-identical output to the pre-refactor screenshots —
+  a real regression check, not just "it still runs."
+
+## 2026-08-20 (cont'd 24)
+
+- Pulled 6 more real `.bsk` skeleton samples to broaden validation and found something important:
+  the "3ds Max Biped" bone-naming style (`"Bip01"` root, `"Bip01 Pelvis"`, etc.) that was
+  previously written off as a rare/unusual edge case is actually the **common** convention for
+  real creature skeletons — 5 of 6 new samples use it; the mirrored-tentacle decoration
+  (`demon_altar_deco.bsk`) the format was originally cracked against turned out to be the unusual
+  one.
+- Found and fixed a real correctness bug in how the alias/mirror table's boundary was detected:
+  the old code read names greedily and then blindly skipped a fixed 1-byte separator before
+  bone records began — which only worked by coincidence on the one file with a populated alias
+  table (there really is a 1-byte gap there) and silently mis-parsed any file with zero alias
+  entries (there's no gap at all in that case — confirmed on all 5 Biped-style files, which have
+  none). The real rule, confirmed across every file checked: an alias-table entry is never
+  immediately followed by an exact repeat of itself; a real bone record's own name always is —
+  that's how a reader tells the two apart with no explicit count or terminator. Applied to both
+  `server/internal/bsk/bsk.go` and `client/scripts/bsk/bsk_reader.gd`, re-verified byte-identical
+  output to before on the one fully-working real file (`demon_altar_deco.bsk`, still 38 bones),
+  and fixed the synthetic test fixtures on both sides to actually exercise this case correctly
+  (the old fixtures had accidentally avoided it). `docs/protocol/BSK_FORMAT.md` updated with the
+  disambiguation rule and an honest account of why the old code was wrong.
+- Got further into the Biped-style files with this fix (correctly handles their empty alias
+  table) but they still don't fully parse — found two more genuine, confirmed structural
+  differences: some bones have an optional extra field between their own name and its repeat
+  (e.g. a `"Bip01 Prop1"` attachment reference), and at least one point in the hierarchy has
+  multiple children enumerated together rather than the strictly linear one-bone-then-the-next
+  walk this parser does. Recorded both honestly in `docs/protocol/BSK_FORMAT.md` as confirmed but
+  unhandled, not forced into a shape that doesn't fit.
+- Ran full Ghidra auto-analysis passes (not just the lighter `-noanalysis` decompiles used
+  everywhere else) on both `sro_client.exe` and `EternityLib.dll` specifically to search harder
+  for `.m`/`.o` loaders — confirmed via the magic-construction search *and* a check of every
+  recovered RTTI class name in both binaries that neither format loads through either of them.
+  That's every plausible client binary in this build checked thoroughly. `docs/protocol/
+  {MAPM,MAPO}_FORMAT.md` updated: further progress on these two needs a genuinely different
+  approach, not more of the same search — a real, honest wall, not a lack of effort.
+
+## 2026-08-20 (cont'd 25) — session housekeeping
+
+This concludes an unusually long, continuous stretch of work in one sitting: the pk2 fix, five
+new fully-cracked formats (`bsr`, `bms`, `ddj`, `bmt`, `ban`) plus a sixth mostly-cracked one
+(`bsk`), a real rendered-mesh screenshot, a real animated-skeleton screenshot, a promoted/tested
+`SkeletonPose` library, and three honestly-scoped-but-unimplemented formats (`efp`, `mapo`,
+`mapm`) with real, documented reasons why each one stopped where it did. Every fully-cracked
+format has real Go + GDScript readers, real unit tests, and was verified against real extracted
+game data — not just synthetic fixtures. See the format-specific docs under `docs/protocol/` and
+the entries above for the detailed trail; `README.md`'s Status section reflects the current state
+of all of it.
+
+## 2026-08-20 (cont'd 23)
+
+- Scoped out `Map.pk2`'s object-placement format, `.o` (`JMXVMAPO`) — very likely where a `.bsr`
+  object actually gets positioned/rotated in the world, since `.bsr` itself carries no such data.
+  Confirmed the outer header and that records start with a plausible type/resource ID + 3
+  position floats, but a fixed 28-byte record-size guess only held for the first couple of
+  records before drifting into garbage across the rest of a real, populated 105-record sample —
+  real records are very likely variable-length. Documented what's confirmed in
+  `docs/protocol/MAPO_FORMAT.md` as another explicit **no reader exists yet** partial spec,
+  same honesty bar as `.efp` — didn't force a wrong fixed-stride implementation just to have
+  something.
+- Also confirmed `Map.pk2`'s heightmap/terrain format exists (`.m`, magic `"JMXVMAPM1000"`, real
+  samples ~137KB) but didn't investigate its internals this round.
+- Along the way, confirmed this environment's `Map.pk2` (like `Data.pk2` before it) is a small
+  subset of a full world map — only 19 region folders (`0`, `1`, `100`-`116`) rather than the
+  hundreds a real retail map would have — consistent with this being a trimmed/dev client build
+  throughout, not a reader gap.
+
+## 2026-08-20 (cont'd 22)
+
+- Scoped out the second real `.bsk` sample's different naming convention (a 3ds Max "Biped"-style
+  skeleton, `"Bip01 Pelvis"` etc.) further: it's not just different names, it has genuinely extra
+  fields (a "Prop1" attachment reference, self-referencing name patterns) beyond what the first
+  file's record shape accounts for. Left as the documented gap it already was rather than forced
+  — a real, separate RE task, not a quick fix.
+- Started looking at `.efp` (particle effects — 211 real samples in `Particles.pk2`, magic
+  `"JMXVEFF 0011"`) and quickly found it's a different kind of format from everything else in
+  this project: a self-describing, recursively-nested, tagged property system (named string keys
+  like `"NormalTimeLife"`, `"StaticEmit"`, `"Program"` each followed by typed parameter data),
+  not a flat fixed-layout record. Located the real loader (`FUN_00cb9120` in `sro_client.exe`,
+  same discovery technique as every other format) but a first decompile pass was too obfuscated
+  by stack/register reuse to read field types off directly — this needs the same
+  per-section-tracing effort `.bms`'s vertex/index sections got, which is a substantially bigger
+  undertaking than any format cracked so far. Documented what's confirmed (the outer envelope:
+  magic, name, a top-level section count, repeating named sections) in
+  `docs/protocol/EFP_FORMAT.md` as an explicit **no reader exists yet** partial spec, rather than
+  rush a low-confidence implementation — the first format in this project not held to the "real
+  reader, real tests, real data verification" bar the others hit, and it says so plainly.
+
+## 2026-08-20 (cont'd 21)
+
+- Fully closed `.bsk`'s remaining open question: the root-attached-bone "extra 4 bytes" is one
+  leading field inserted before the *entire* transform block, not partway through it — confirmed
+  on two independent fields (the rotation quaternion at what becomes offset 0x04 instead of 0x00
+  only has magnitude ≈1.0 with the shift applied; same story for the position field at 0x30 vs.
+  0x2c found last round). `docs/protocol/BSK_FORMAT.md` updated.
+- Built and ran the actual animation payoff: `client/tools/render_skeleton_animated.gd` loads a
+  real `.bsk` skeleton and a real `.ban` animation, computes the animation's rotation delta for
+  one bone (relative to that bone's own first keyframe), applies it to that bone and every one
+  of its descendants via basic forward kinematics (rotate each descendant's bind position around
+  the animated bone's own position), and renders bind-pose vs. animated-pose screenshots. Ran it
+  for real: `demon_altar_deco.bsk`'s `Bone01` chain driven by `bandi.ban`'s `Bone01` keyframe 50
+  (108.6° of real rotation) — the rendered before/after clearly shows that chain swinging to a
+  different position. Sent both frames to the user. The `.ban` and `.bsk` samples aren't from the
+  same character (no matching pair exists in the data available), so this is explicitly a proof
+  of the *playback mechanism* against real keyframe numbers landing on a real, matching bone
+  name — documented as such in the tool's own header, not oversold as "this creature's actual
+  idle animation."
+- This closes the loop on the whole `.ban`/`.bsk` skeletal-animation investigation for now: both
+  formats are fully reverse-engineered on both Go and GDScript sides, cross-verified against each
+  other and against real files, and demonstrated end-to-end with real data producing a visibly
+  correct result — the same bar every other format in this project has been held to.
+
+## 2026-08-20 (cont'd 20)
+
+- Wrote the GDScript mirror for `.bsk` (`client/scripts/bsk/bsk_reader.gd`), cross-checked
+  against the Go reader on the same real file (`demon_altar_deco.bsk`) — identical 38-bone output
+  on both sides.
+- Resolved the last open question in `.bsk`'s transform layout: extracted the position field
+  from all 38 real bones at the previously-assumed offset (0x2c) and the numbers didn't form a
+  sensible shape for root-attached (92-byte) bones. Shifting by exactly the 4 extra bytes those
+  bones have (position at 0x30 instead) immediately produced a smooth, continuous, correctly
+  left/right-mirrored bone chain. `docs/protocol/BSK_FORMAT.md` updated with the confirmed
+  offset.
+- Built the payoff for this whole asset-pipeline arc: `client/tools/render_skeleton.gd`, a real
+  dev tool that loads a real `.bsk` through `BskReader` and renders its actual bone hierarchy (a
+  line segment per bone-to-parent connection, a sphere at each joint) using the position data
+  above. Ran it against the real `demon_altar_deco.bsk` and got a genuinely recognizable,
+  correctly-symmetric skeleton shape — mirrored curved limb/tentacle chains matching what an
+  "altar decoration" prop's root system should look like. Sent the screenshot to the user as
+  concrete visual proof, the same way the earlier mesh+texture render was. This closes the loop
+  on `.bsk`: not just "the parser doesn't crash and consumes the whole file", but "the numbers it
+  produces describe a real, sensible 3D shape."
+- Corrected a mistake from two rounds ago along the way (see cont'd 19): re-confirmed nothing
+  else was being silently missed by broadening the search before concluding data doesn't exist.
+
+## 2026-08-20 (cont'd 19)
+
+- Corrected a real mistake from the previous round: told the user "we need fuller client archives
+  to investigate skeletons/character meshes further" as if that data plain didn't exist anywhere
+  accessible — it does. Only `/opt/sro-files/client/` (the `.pk2` archives) had been searched;
+  `/opt/sro-files/server/y0gi_Easy_vPLUS/` (the private-server package itself) turned out to
+  contain a full 2.7GB **unpacked** `Prim/` tree (loose files, never packed into a `.pk2`) with
+  real character meshes, the exact `.bms` files our theater `.bsr` samples reference, and —
+  critically — real `.bsk` files, a format that plain doesn't exist in the `.pk2` archives at
+  all. Root cause: only searching one directory prefix rather than the whole box. Fixed by
+  searching more broadly before concluding data doesn't exist, going forward.
+- Used this to close the `.bsr` "known gap" from two rounds ago for real, instead of leaving it
+  as a documented unknown: pulled the two real referenced sub-mesh pieces
+  (`asiaminor_theater02_brokenwall01.bms`, `asiaminor_theater02_column01.bms`) and confirmed each
+  has its own large-scale, independently-positioned bounding box (not centered at the origin) —
+  i.e. each `.bms` piece already carries its own absolute position baked into its vertex data.
+  **`.bsr` genuinely needs no per-part transform data; there was no gap to find.**
+  `docs/protocol/BSR_FORMAT.md` and `ObjectLoader`'s doc comment updated to state this as
+  confirmed, not "not yet done".
+- Reverse-engineered and implemented a sixth asset format, `.bsk` (`JMXVBSK 0101`) — skeleton /
+  bone-hierarchy data, the piece `.ban` itself is missing (it has bone names and keyframes but no
+  parent references). Real structure: a root bone, an alias/mirror table listing every bone with
+  no parent (one per limb chain), then per-bone records giving each ordinary bone's own name and
+  its **parent's name** as an explicit string. Verified as strongly as any format in this
+  project: the parser consumes a real 5117-byte file down to its last 8 bytes (a constant zero
+  trailer), producing a fully coherent 38-bone hierarchy (4 chains rooted at the skeleton, plus an
+  exact mirrored copy of 3 of them — a plausible left/right-symmetric creature rig). Each bone's
+  88-byte transform block decodes to two unit quaternions where the second is the exact
+  conjugate of the first (a bind-pose/inverse-bind-pose pair) plus two position vectors — strong,
+  though not fully semantically labeled, confirmation. No decompiled loader was found for this
+  format specifically (searched the same way as every other `JMXV*` format; no hits — it may load
+  through a more generic/indirect path), the first format in this project without that
+  cross-check, but the empirical full-file consumption is unusually strong on its own. A second
+  real file (a 3ds Max "Biped"-style skeleton, different naming convention) didn't fit the same
+  heuristic on a first pass and is left as an honest, documented gap rather than forced or
+  guessed at. New `server/internal/bsk` (Go), unit tested; new `docs/protocol/BSK_FORMAT.md`. No
+  GDScript mirror yet.
+- Wrote the GDScript mirror for `.ban` (`client/scripts/ban/ban_reader.gd`), cross-checked
+  against the Go reader on the same real file. Combined with `.bsk`, the project now has
+  everything needed (hierarchy + keyframes) to build a real skeletal-animation pipeline for a
+  Godot `Skeleton3D` — not yet wired into actual rendering.
+
+## 2026-08-20 (cont'd 18)
+
+- Wrote the GDScript mirror of `.ban`: `client/scripts/ban/ban_reader.gd`, unit tested
+  (`ban_reader_test.gd`) against a synthetic fixture and cross-checked against the Go reader on
+  the same real file (`bandi.ban`) — identical output on both sides.
+- Investigated where bone-hierarchy (parent/child) data lives, since `.ban` itself only has a
+  flat list of named bone tracks with no parent references. Found real evidence in
+  `sro_client.exe`: string references to `"Parent Bone : %x"` / `"Parent Bone Name : %s"` in a
+  `CRTSkeleton` class (`RTSkeleton.cpp`/`PrimSkeleton.cpp`). Decompiling its actual
+  skeleton-assembly function (`FUN_00c51ef0`) showed it builds a skeleton from an **array of
+  resource IDs** dispatched through a small per-bone-type factory — not by parsing one flat
+  binary file the way `.bms`/`.bsr`/`.ban` do. Checked whether `.bms` itself might carry
+  per-vertex bone/skinning data in the header fields flagged as "reserved, likely used for
+  skinned meshes we haven't seen" — confirmed still exactly zero across all 18 real `.bms` files
+  available in `Particles.pk2`, but none of those are skinned character meshes, so this doesn't
+  resolve the question either way. **Genuine dead end given available data**: no skinned
+  character mesh or skeleton-resource sample exists in any archive accessible in this
+  environment (`Data.pk2`/`Media.pk2`/`Particles.pk2` — confirmed via the earlier full-tree
+  walks that these really are all the files present, not a reader gap). Actually animating a
+  character needs either a fuller client archive with a real `prim/mesh/char` tree, or a
+  different concrete lead — parked here rather than guessed at further.
+
+## 2026-08-20 (cont'd 17)
+
+- Got real off-screen 3D rendering working in this sandbox (Xvfb + Mesa software OpenGL via
+  `LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a godot4 --rendering-driver opengl3`, since plain
+  `--headless` mode uses a dummy renderer that can't actually rasterize anything) and used it to
+  render a **real screenshot** end-to-end: a real 9-vertex mesh and a real DXT3-compressed
+  texture, both extracted from the actual `Particles.pk2` archive and decoded through this
+  project's own `BmsReader`/`DdjReader` — not synthetic fixtures, not Godot's native asset
+  import. It looked correct (a real particle "glow" texture on a real diamond-shaped quad).
+  Turned the one-off script into a real, reusable dev tool: `client/tools/render_asset.gd` (see
+  `client/tools/README.md`).
+- Pulled the *actual* full-size real archives (`Data.pk2` 3.86GB, `Media.pk2` 1.5GB,
+  `Particles.pk2` 248MB) to check our pk2 reader against real production-scale files, not just
+  small samples. Root-directory entry counts matched exactly what smaller earlier checks had
+  found (19 entries), and a full recursive tree walk confirmed **zero missing content** — every
+  directory our reader found had well under 20 entries, no silent truncation. The 3.86GB size of
+  `Data.pk2` despite only 41 files/3.3MB of *declared* content is pre-allocated/padding space
+  within the archive, not a reader bug — a very common pattern for MMO client archives designed
+  to receive future patches without resizing.
+- Reverse-engineered and implemented a fourth asset format, `.ban` (`JMXVBAN 0102`) — bone
+  animation data: a named clip containing one or more named bone tracks, each an array of
+  keyframes (a `float32` quaternion + a `float32` position, 28 bytes each). Confirmed as strongly
+  as any format in this project so far: all 3 real `.ban` files checked parse to **exactly**
+  their own byte length with nothing left over, every single keyframe's quaternion has magnitude
+  ≈1.0 (a real, meaningful rotation, not garbage), and the 28-byte keyframe record size was
+  independently confirmed by decompiling the actual loader
+  (`FUN_00c01e20` → `FUN_00c01ca0` → `FUN_00c00630` in `sro_client.exe`, which reads exactly
+  `count * 0x1c` bytes). New `server/internal/ban` (Go), unit tested against a synthetic fixture;
+  new `docs/protocol/BAN_FORMAT.md`. No GDScript mirror yet, and no bone-hierarchy
+  (parent/child) data was found in `.ban` itself — that'll need locating separately before
+  keyframes can actually drive a Godot `Skeleton3D`.
+- Wired materials/textures into `client/scripts/assets/object_loader.gd`: resolves each mesh
+  piece's `.bmt` material and that material's `.ddj` texture, applies it as a real
+  `StandardMaterial3D` albedo texture. Verified end-to-end in `object_loader_test.gd` against a
+  full synthetic archive exercising the whole pk2 -> bsr -> bms -> bmt -> ddj chain (not just
+  each parser standalone) — every resulting `MeshInstance3D` genuinely has a real texture
+  applied, not just a parsed color.
+- Hit and worked around a real Godot 4.2.2 engine bug: `PackedByteArray.decompress(...,
+  FileAccess.COMPRESSION_DEFLATE)` returns 0 bytes on a real `.bmt` file's zlib stream that
+  Python's zlib and our own Go `compress/zlib`-based reader both decode correctly — evidently a
+  correctness gap in the engine's bundled DEFLATE decoder for some class of valid streams.
+  Wrote a from-scratch, standalone RFC 1951 decoder in pure GDScript
+  (`client/scripts/bmt/inflate.gd`) rather than route around it with real-data-only special
+  casing; verified against streams from an independent, known-correct encoder (Python's zlib)
+  and against the real file that exposed the bug.
+- All 6 Go packages (`pk2`, `bsr`, `bms`, `ddj`, `bmt`, `ban`) and all 9 GDScript test
+  suites (`pk2`, `blowfish`, `ddj`, `bms`, `bsr`, `inflate`, `bmt`, `object_loader`, plus the
+  full pre-existing `net/` protocol suite, 25 scripts total) pass clean; new tests wired into CI.
+
+## 2026-08-20 (cont'd 16)
+
+- Found real `.bmt` sample data after all — a broader filesystem search on the RE box (past just
+  the pk2 archives, which have none) turned up a loose, unpacked server patch-data tree
+  (`.../SMC_Independent/.../patch_upload_temp/data/Prim/mtrl/avatar/*.bmt`). Reverse-engineered
+  and implemented both sides: `server/internal/bmt` (Go) and `client/scripts/bmt/bmt_reader.gd`
+  (GDScript). `.bmt` is unlike every other `JMXV*` format here: the whole file (after a 4-byte
+  size header) is a standard zlib stream, decompressing to a `"JMXVBMT 0102"`-prefixed structure
+  of one or more material "layers" (ambient/diffuse/specular/emissive RGBA + a bare `.ddj`
+  filename reference). Verified against 4 real files: color values are sane (a shared engine
+  default across most layers), and multi-layer materials parse correctly (6 of a declared 7
+  layers on the most complex sample — the reader stops cleanly at the point where the exact
+  inter-layer trailer size becomes ambiguous, rather than fabricating data, same policy as
+  `.bsr`'s known edge case from last round).
+- Hit a real, confirmed engine bug along the way: Godot 4.2.2's built-in
+  `PackedByteArray.decompress(..., FileAccess.COMPRESSION_DEFLATE)` returns 0 bytes
+  ("Condition err != 1") on a real `.bmt` file's zlib stream — the exact same bytes decode
+  correctly via Python's zlib and via our own Go `compress/zlib`-based reader. Rather than route
+  around it with real-data-only workarounds, wrote a from-scratch, standalone RFC 1951 (DEFLATE)
+  decoder in pure GDScript (`client/scripts/bmt/inflate.gd`: stored/fixed-Huffman/
+  dynamic-Huffman blocks, canonical Huffman decoding, LZ77 back-references), verified against
+  streams from an independent, known-correct encoder (Python's zlib) and against the real file
+  that exposed the bug — decodes it correctly, byte-for-byte matching the Go reader's output.
+- Wired the whole chain together for real: `client/scripts/assets/object_loader.gd` now resolves
+  each mesh piece's material and that material's texture (`.bmt` -> `.ddj`, via `DdjReader`) and
+  applies it as a Godot `StandardMaterial3D`'s albedo texture — no longer untextured. Verified
+  end-to-end in `object_loader_test.gd` against a full synthetic pk2 archive exercising the
+  entire pk2 -> bsr -> bms -> bmt -> ddj chain (not just each parser in isolation): loads a
+  `.bsr`, both its mesh pieces, their shared material, and its texture, and confirms each
+  resulting `MeshInstance3D` actually has a real 4x4 `ImageTexture` applied. All 8 GDScript test
+  suites (`pk2`, `blowfish`, `ddj`, `bms`, `bsr`, `inflate`, `bmt`, `object_loader`) and all 5 Go
+  packages (`pk2`, `bsr`, `bms`, `ddj`, `bmt`) pass; new tests wired into CI.
+- Remaining known gaps, both documented rather than silently accepted: `.bsr` sub-mesh pieces
+  are placed at the origin (no confirmed per-part transform data), and when a `.bmt` has multiple
+  layers, which layer applies to which mesh piece is an unconfirmed heuristic (pairs by index
+  when the counts match, otherwise every piece gets the first layer).
+
+## 2026-08-20 (cont'd 15)
+
+- Found real `.bmt` (material) sample data after all — not in any pk2 archive on the RE box
+  (checked `Data`/`Media`/`Particles.pk2`, none contain a single `.bmt`), but in a loose, unpacked
+  server patch-data tree (`.../SMC_Independent/.../patch_upload_temp/data/Prim/mtrl/avatar/*.bmt`)
+  that a broader filesystem search turned up. Reverse-engineered and implemented
+  (`server/internal/bmt`, `docs/protocol/BMT_FORMAT.md`): unlike every other `JMXV*` format here,
+  `.bmt` isn't a raw magic-prefixed blob — the whole file (after a 4-byte size header) is a
+  standard zlib stream, decompressing to a `"JMXVBMT 0102"`-prefixed structure of one or more
+  material "layers" (ambient/diffuse/specular/emissive RGBA colors + a bare `.ddj` filename
+  reference, no path). Verified against 4 real files: color values are sane and consistent
+  (evidently shared engine defaults across most layers), and multi-layer materials parse
+  correctly (6 of a declared 7 layers on the most complex real sample — the 7th is a known,
+  documented gap where the exact inter-layer trailer size isn't confirmed; the reader stops
+  cleanly there rather than fabricating data, the same policy as `.bsr`'s known edge case).
+- No GDScript mirror or `ObjectLoader` texture/material hookup yet — `.bmt` is Go-only for now,
+  same as `.bsr` was before this round. That + real per-sub-mesh `.bsr` transforms (still
+  unconfirmed) are the two concrete remaining gaps before the asset pipeline can render a fully
+  textured, correctly-assembled object.
+
+## 2026-08-20 (cont'd 14)
+
+- Real RE breakthrough on the pk2 (JMXVFS) container format: our reader (`server/internal/pk2`),
+  previously validated only against synthetic fixtures, hung indefinitely against the real
+  `Media.pk2`. Root-caused via a hand-built cycle-detection trace tool, then fixed by decompiling
+  the actual `CPFileManager` reader class in `GFXFileManager.dll` on the RE box
+  (192.168.5.120 -> LXC 103 "ghidra-mcp", headless Ghidra + custom Java `GhidraScript`s). The
+  previously-documented format was wrong in several ways, confirmed byte-for-byte against real
+  archives: directory-entry name field is 89 bytes (not 81), position/size live at offsets
+  0x6A/0x72 (not 0x5A/0x5E, because two 8-byte FILETIME fields sit in between that the old docs
+  missed entirely), the assumed "next block chain pointer" doesn't exist (that's what was causing
+  the infinite loop — chasing a garbage file-size value as if it were a chain offset), and the
+  Blowfish setup has two undocumented client-specific quirks: the raw key gets XORed against a
+  fixed 10-byte table before the standard key schedule runs, and each 8-byte block is processed
+  with its two 4-byte halves byte-order-reversed (little-endian words, not the textbook
+  big-endian). Verified end-to-end against the real `Media.pk2`: correctly reads nested folders
+  and real file contents (`command.txt`, `n_protect.dat` a BMP, etc). Also fixed a second,
+  independent bug found along the way: `.`/`..` entries weren't being filtered because stale
+  bytes after a slot's NUL terminator broke a trim-based string comparison. `docs/protocol/
+  PK2_FORMAT.md` rewritten with the corrected, empirically-verified layout; both
+  `server/internal/pk2` and `client/scripts/pk2/pk2_reader.gd` fixed and their tests updated.
+- Extended the same decompile-then-verify methodology to the next layer of the asset pipeline:
+  - `.bsr` (`JMXVRES 0109`) — a composite "static object" descriptor referencing one or more
+    `.bms` (mesh) + one `.bmt` (material) file by relative path (e.g. a theater building
+    assembled from separate wall/column/stair/tile pieces). Magic confirmed against the real
+    runtime loader (traced `sro_client.exe` through `FUN_00bed8d0`, identified via a literal
+    path string reading `...SimpleViewer\objengine\ResourceMgr.cpp`, down to `FUN_00bce3b0`
+    /`ResObject.cpp`, which validates bytes 4-7 == `"RES "` and bytes 8-11 == `"0109"`
+    byte-for-byte). The bounding-box-plus-sentinel gap after the mesh path and the
+    self-validating sub-mesh count field after the material path (exactly matches the number of
+    remaining `.bms` paths in every well-formed real file checked: 4, 6, and 13) were both found
+    empirically across 3 real extracted files. One file turned out to be an edge case (an
+    apparently-empty mesh path, a material reference to a different, differently-named object) —
+    our reader fails cleanly on it with a clear error rather than fabricating wrong data, which
+    is documented as a known limitation rather than papered over.
+  - `.bms` (`JMXVBMS 0110`) — real mesh geometry. Decompiled the actual vertex-array loader
+    (`FUN_00cb1d50`, reached from the same magic-construction code path as `.bsr`'s), confirming
+    a `count`-prefixed array of 44-byte vertex records and a `count`-prefixed array of 6-byte
+    (3x `uint16`) triangle indices. Cross-checked against a real extracted file: all 11
+    `float`/`uint32` fields per vertex record decoded to sane values (position/normal/UV
+    triples, a bounding box matching the real vertex extents exactly). 12 bytes per vertex record
+    (offset 0x20-0x2B) aren't confirmed to have consistent meaning (non-constant on at least one
+    "fan center" vertex) and are kept as opaque bytes rather than mislabeled.
+  - `.ddj` (`JMXVDDJ 1000`) — textures. The simplest of the four: a 20-byte proprietary wrapper
+    around a byte-for-byte standard, unmodified Microsoft DDS file. Confirmed identically across
+    3 real samples, including one that turned out to be uncompressed RGBA rather than
+    DXT-compressed (correctly detected purely from the standard DDS pixel-format flags).
+  - New docs: `docs/protocol/{BSR,BMS,DDJ}_FORMAT.md`. New Go packages, each with real unit
+    tests against synthetic fixtures (never real game data, same policy as `pk2`):
+    `server/internal/{bsr,bms,ddj}`.
+- Built the client-side (GDScript) mirrors of all three new readers —
+  `client/scripts/{bsr,bms,ddj}/*_reader.gd` — plus `client/scripts/assets/object_loader.gd`,
+  which ties pk2 + bsr + bms together into an actual, real, working pipeline: given an open
+  `Pk2Reader` and a `.bsr` path, it resolves and loads every referenced `.bms` piece and returns
+  a real Godot `Node3D` with one `MeshInstance3D` child per mesh piece — verified end-to-end
+  against a synthetic in-memory pk2 archive (`object_loader_test.gd`), not just parser-level
+  unit tests. `DdjReader.to_texture()` decodes DXT1/DXT3/DXT5 straight through Godot's native
+  S3TC support, or manually swizzles BGRA->RGBA for uncompressed textures. Hit and fixed two real
+  GDScript gotchas along the way: a nested class named `Mesh` or `Texture` silently shadows
+  Godot's own built-in types (renamed to `ParsedMesh`/`ParsedTexture`), and new `class_name`
+  globals aren't visible to other scripts until a project reimport
+  (`godot4 --headless --editor --quit`) actually registers them — a plain `--path . --quit` run
+  isn't enough. All 6 new/updated GDScript test scripts wired into CI, `.gitignore` and the
+  CI "no committed game assets" guard extended to cover `.bms`/`.bsr`/`.bmt`.
+- Not yet done: `.bmt` (material) format — no real sample data exists in this client build to
+  reverse-engineer against (checked `Data.pk2`/`Media.pk2`/`Particles.pk2`, none contain a
+  single `.bmt` file), so texture/material application in `ObjectLoader` is blocked until a
+  fuller client build is available. Per-sub-mesh transforms within a `.bsr` (position/rotation of
+  each piece within the assembled object) also aren't confirmed from real data yet, so
+  `ObjectLoader` currently places every piece at the origin.
+
 ## 2026-08-20 (cont'd 13)
 
 - Added Docker packaging for the server and a real client export pipeline, ahead of starting the

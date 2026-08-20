@@ -20,6 +20,7 @@ extends Control
 @onready var chat_input: LineEdit = $ChatPanel/ChatInputRow/ChatInput
 @onready var send_button: Button = $ChatPanel/ChatInputRow/SendButton
 @onready var disconnect_button: Button = $DisconnectButton
+@onready var view3d_button: Button = $View3DButton
 
 @onready var monster_list: ItemList = $ActionTabs/Monsters/MonsterList
 @onready var monster_refresh_button: Button = $ActionTabs/Monsters/MonsterButtonRow/RefreshButton
@@ -194,6 +195,7 @@ func _ready() -> void:
 	send_button.pressed.connect(_on_send_pressed)
 	chat_input.text_submitted.connect(func(_text: String): _on_send_pressed())
 	disconnect_button.pressed.connect(_on_disconnect_pressed)
+	view3d_button.pressed.connect(_on_view3d_pressed)
 
 	monster_refresh_button.pressed.connect(func(): NetClient.list_monsters())
 	attack_button.pressed.connect(_on_attack_pressed)
@@ -301,6 +303,9 @@ func _on_send_pressed() -> void:
 
 func _on_disconnect_pressed() -> void:
 	NetClient.disconnect_from_server()
+
+func _on_view3d_pressed() -> void:
+	get_tree().change_scene_to_file("res://scenes/World3D.tscn")
 
 func _on_disconnected() -> void:
 	get_tree().change_scene_to_file("res://scenes/Login.tscn")

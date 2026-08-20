@@ -90,6 +90,15 @@ offset_right = 88.0
 offset_bottom = 34.0
 text = "Log Out"
 
+[node name="View3DButton" type="Button" parent="."]
+layout_mode = 1
+anchors_preset = 0
+offset_left = 8.0
+offset_top = 38.0
+offset_right = 88.0
+offset_bottom = 64.0
+text = "3D View"
+
 [node name="ActionTabs" type="TabContainer" parent="."]
 layout_mode = 1
 anchors_preset = 15
