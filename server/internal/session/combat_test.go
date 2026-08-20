@@ -138,7 +138,7 @@ func TestCombatFullFlow(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -219,5 +219,143 @@ func TestCombatFullFlow(t *testing.T) {
 	}
 	if ar.Error != "target not found" {
 		t.Fatalf("got %+v, want error 'target not found'", ar)
+	}
+}
+
+func TestLootDroppedRoundTrip(t *testing.T) {
+	want := &LootDropped{
+		MonsterID: 1,
+		Drops:     []LootDrop{{ItemID: 500, Quantity: 1}, {ItemID: 600, Quantity: 3}},
+	}
+	got, err := DecodeLootDropped(want.Encode())
+	if err != nil {
+		t.Fatalf("DecodeLootDropped: %v", err)
+	}
+	if got.MonsterID != want.MonsterID || len(got.Drops) != 2 {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	if got.Drops[0] != want.Drops[0] || got.Drops[1] != want.Drops[1] {
+		t.Fatalf("drop mismatch: got %+v", got.Drops)
+	}
+}
+
+// TestCombatLootFlow kills a one-hit monster whose species ("Stone Golem")
+// has a 100% guaranteed loot entry in combat.LootTables, confirming both
+// the OpLootDropped message and the actual inventory.Store state -- not
+// just the wire message.
+func TestCombatLootFlow(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+
+	// Item 500 matches combat.LootTables["Stone Golem"]'s guaranteed drop.
+	items := stubCombatItems{100: {ID: 100, PhysAttackMax: 30}, 500: {ID: 500}}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	if err := inv.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating inventory: %v", err)
+	}
+	if err := inv.AddItem(ctx, c.ID, 100, 1); err != nil {
+		t.Fatalf("seeding inventory: %v", err)
+	}
+
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	if err := eq.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating equipment: %v", err)
+	}
+	if err := eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0); err != nil {
+		t.Fatalf("equipping weapon: %v", err)
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	// 30 attack - 0 defense, 1 HP: dies in one hit.
+	monster := monsters.Spawn("jangan", "Stone Golem", 1, 0, 0, 10)
+
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	if err := quests.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating quests: %v", err)
+	}
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, hub),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	resp = send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	resp = send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode())
+	ar, err := DecodeAttackResult(resp.Data)
+	if err != nil || ar.Error != "" || !ar.MonsterDied {
+		t.Fatalf("kill: err=%v result=%+v", err, ar)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	lootPkt, err := proto.Read(r)
+	if err != nil {
+		t.Fatalf("reading OpLootDropped: %v", err)
+	}
+	if lootPkt.Opcode != OpLootDropped {
+		t.Fatalf("got opcode 0x%04x, want OpLootDropped", lootPkt.Opcode)
+	}
+	ld, err := DecodeLootDropped(lootPkt.Data)
+	if err != nil || len(ld.Drops) != 1 || ld.Drops[0].ItemID != 500 || ld.Drops[0].Quantity != 1 {
+		t.Fatalf("unexpected LootDropped: %+v (err=%v)", ld, err)
+	}
+
+	slots, err := inv.List(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("inv.List: %v", err)
+	}
+	var foundLoot bool
+	for _, s := range slots {
+		if s.ItemID == 500 && s.Quantity == 1 {
+			foundLoot = true
+		}
+	}
+	if !foundLoot {
+		t.Fatalf("expected item 500 in inventory after loot, got %+v", slots)
 	}
 }

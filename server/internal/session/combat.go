@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 
+	"math/rand"
+
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
@@ -22,6 +25,7 @@ const (
 	OpAttackResult   uint16 = 0x0061 // server -> client, direct ack to the attacker
 	OpMonsterDamaged uint16 = 0x0062 // server -> client, broadcast to the zone
 	OpMonsterDied    uint16 = 0x0063 // server -> client, broadcast to the zone
+	OpLootDropped    uint16 = 0x0064 // server -> client, direct to the killer (only sent if there's loot)
 )
 
 // unarmedDamage is the base damage dealt with no weapon equipped. Own
@@ -146,6 +150,97 @@ func DecodeMonsterDied(data []byte) (*MonsterDied, error) {
 	return &MonsterDied{MonsterID: id}, nil
 }
 
+// LootDrop is one item dropped from a monster kill.
+type LootDrop struct {
+	ItemID   int64
+	Quantity int32
+}
+
+func (d *LootDrop) Encode() []byte {
+	out := encodeInt64(d.ItemID)
+	buf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buf, uint32(d.Quantity))
+	return append(out, buf...)
+}
+
+func decodeLootDrop(data []byte) (*LootDrop, []byte, error) {
+	itemID, rest, err := decodeInt64(data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("item id: %w", err)
+	}
+	if len(rest) < 4 {
+		return nil, nil, errors.New("truncated quantity")
+	}
+	return &LootDrop{ItemID: itemID, Quantity: int32(binary.LittleEndian.Uint32(rest))}, rest[4:], nil
+}
+
+// LootDropped is the OpLootDropped payload: everything a kill dropped for
+// the killer, in one message (only sent if there's at least one drop).
+type LootDropped struct {
+	MonsterID int64
+	Drops     []LootDrop
+}
+
+func (r *LootDropped) Encode() []byte {
+	out := encodeInt64(r.MonsterID)
+	countBuf := make([]byte, 2)
+	binary.LittleEndian.PutUint16(countBuf, uint16(len(r.Drops)))
+	out = append(out, countBuf...)
+	for _, d := range r.Drops {
+		out = append(out, d.Encode()...)
+	}
+	return out
+}
+
+func DecodeLootDropped(data []byte) (*LootDropped, error) {
+	monsterID, rest, err := decodeInt64(data)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding LootDropped: monster id: %w", err)
+	}
+	if len(rest) < 2 {
+		return nil, errors.New("session: decoding LootDropped: truncated drop count")
+	}
+	count := int(binary.LittleEndian.Uint16(rest))
+	rest = rest[2:]
+	r := &LootDropped{MonsterID: monsterID}
+	for i := 0; i < count; i++ {
+		var d *LootDrop
+		d, rest, err = decodeLootDrop(rest)
+		if err != nil {
+			return nil, fmt.Errorf("session: decoding LootDropped: drop %d: %w", i, err)
+		}
+		r.Drops = append(r.Drops, *d)
+	}
+	return r, nil
+}
+
+// rollLoot rolls combat.LootTables[monsterName] and adds anything won to
+// characterID's inventory, returning what actually landed. AddItem
+// failures (unknown ref item, full inventory) are skipped rather than
+// failing the whole kill -- loot is enrichment on top of a successful
+// attack, not a precondition for one.
+func rollLoot(ctx context.Context, inv inventory.Store, characterID int64, monsterName string) []LootDrop {
+	entries, ok := combat.LootTables[monsterName]
+	if !ok {
+		return nil
+	}
+	var drops []LootDrop
+	for _, e := range entries {
+		if rand.Float64() > e.Chance {
+			continue
+		}
+		qty := e.MinQuantity
+		if e.MaxQuantity > e.MinQuantity {
+			qty += rand.Intn(e.MaxQuantity - e.MinQuantity + 1)
+		}
+		if err := inv.AddItem(ctx, characterID, e.ItemID, qty); err != nil {
+			continue
+		}
+		drops = append(drops, LootDrop{ItemID: e.ItemID, Quantity: int32(qty)})
+	}
+	return drops
+}
+
 // CombatHandler returns a gateway.Handler implementing OpAttack: resolves
 // the attacker's equipped weapon (via eq/items) for damage, applies it to
 // the target monster (via monsters), grants gold to the killer on death
@@ -157,6 +252,7 @@ func CombatHandler(
 	hub *world.Hub,
 	monsters *combat.Hub,
 	quests quest.Store,
+	inv inventory.Store,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpAttack {
@@ -173,7 +269,7 @@ func CombatHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 		}
 
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, characterID, req.TargetMonsterID, 0)
+		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, characterID, req.TargetMonsterID, 0)
 	}
 }
 
@@ -192,6 +288,7 @@ func performAttack(
 	hub *world.Hub,
 	monsters *combat.Hub,
 	quests quest.Store,
+	inv inventory.Store,
 	characterID, targetMonsterID int64,
 	damageBonus int,
 ) error {
@@ -275,6 +372,13 @@ func performAttack(
 			}
 			completedMsg := &QuestCompleted{QuestID: q.ID, GoldReward: q.GoldReward}
 			if err := sess.Send(&proto.Packet{Opcode: OpQuestCompleted, Data: completedMsg.Encode()}); err != nil {
+				return err
+			}
+		}
+
+		if drops := rollLoot(ctx, inv, characterID, monster.Name); len(drops) > 0 {
+			lootMsg := &LootDropped{MonsterID: targetMonsterID, Drops: drops}
+			if err := sess.Send(&proto.Packet{Opcode: OpLootDropped, Data: lootMsg.Encode()}); err != nil {
 				return err
 			}
 		}

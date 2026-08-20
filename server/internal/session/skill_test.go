@@ -95,7 +95,7 @@ func TestSkillFullFlow(t *testing.T) {
 		LoginHandler(accounts),
 		WorldHandler(chars, hub),
 		LearnSkillHandler(chars, skills),
-		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()

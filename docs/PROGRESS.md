@@ -2,6 +2,37 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 2)
+
+- Added monster loot drops -- combat previously only ever granted gold on a kill, never items,
+  which made the item/inventory/equipment/shop systems built earlier feel disconnected from
+  actually playing the game. `server/internal/combat/loot.go`: `LootTables map[string][]LootEntry`
+  keyed by monster species name (own design, same pattern as `skill.Catalog`/`quest.Catalog` --
+  not real `_RefObjItem` drop-rate data, which hasn't been catalogued). Currently one entry:
+  "Stone Golem" guarantees 1x placeholder item 500, chosen deliberately as a 100%-chance drop so
+  the flow is deterministic and testable without flaky probability-based assertions.
+  Wired into `session/combat.go`'s existing kill-hook location (same spot quests hook in):
+  `rollLoot` resolves the table, rolls each entry's chance/quantity range, and calls
+  `inventory.Store.AddItem` directly -- failures (unknown ref item, full inventory) are swallowed
+  rather than failing the kill, since loot is enrichment on a successful attack, not a
+  precondition for one. This needed threading `inventory.Store` through `CombatHandler`,
+  `UseSkillHandler`, and `performAttack` (same shape as the quest.Store threading from last
+  round) -- updated all call sites (`cmd/server/main.go`, and `combat_test.go`/`skill_test.go`/
+  `quest_test.go`'s existing full-flow tests) to pass the `inv` store each already had on hand
+  for equipment.
+  New `OpLootDropped` opcode (0x0064), sent directly to the killer only when there's at least one
+  actual drop (not sent on every kill) -- deliberately a separate message rather than bolting a
+  variable-length field onto the existing fixed-shape `AttackResult`, which would have broken its
+  simple `!=` struct-comparison round-trip tests.
+  Full flow tested end-to-end over real TCP against the "Stone Golem" guaranteed drop, confirming
+  both the `OpLootDropped` message contents AND the actual `inventory.Store` state afterward (not
+  just the wire message) -- same store-level verification discipline used for trade's swap test.
+  Ported to GDScript (extended `combat.gd`/`combat_test.gd` rather than a new file, since loot is
+  part of the existing combat protocol), wired into `NetClient`, reconfirmed byte-exact wire
+  compatibility for `LootDropped` via independent Go/GDScript hex generation. All 17 GDScript
+  suites still pass headless (no new CI entry needed -- no new test file). Full Go test suite
+  green across all packages; server binary smoke-tested with loot wired in.
+
 ## 2026-08-20 (cont'd)
 
 - Added player-to-player trading, rounding out the social/economy feature set (parties, guilds,

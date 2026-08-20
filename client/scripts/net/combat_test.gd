@@ -71,12 +71,50 @@ func _test_decode_monster_died() -> void:
 	buf.encode_s64(0, 42)
 	_check(CombatNet.decode_monster_died(buf) == 42, "monster id round-trips")
 
+func _build_loot_dropped(monster_id: int, drops: Array) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(8)
+	out.encode_s64(0, monster_id)
+	var count_buf := PackedByteArray()
+	count_buf.resize(2)
+	count_buf.encode_u16(0, drops.size())
+	out.append_array(count_buf)
+	for d in drops:
+		var buf := PackedByteArray()
+		buf.resize(12)
+		buf.encode_s64(0, d["item_id"])
+		buf.encode_u32(8, d["quantity"])
+		out.append_array(buf)
+	return out
+
+func _test_decode_loot_dropped() -> void:
+	var payload := _build_loot_dropped(1, [{"item_id": 500, "quantity": 1}, {"item_id": 600, "quantity": 3}])
+	var result := CombatNet.decode_loot_dropped(payload)
+	_check(result != null, "decodes successfully")
+	if result != null:
+		_check(result.monster_id == 1, "monster id round-trips")
+		_check(result.drops.size() == 2, "two drops decoded")
+		if result.drops.size() == 2:
+			_check(result.drops[0].item_id == 500, "first drop item id round-trips")
+			_check(result.drops[0].quantity == 1, "first drop quantity round-trips")
+			_check(result.drops[1].item_id == 600, "second drop item id round-trips")
+			_check(result.drops[1].quantity == 3, "second drop quantity round-trips")
+
+func _test_decode_loot_dropped_empty() -> void:
+	var payload := _build_loot_dropped(1, [])
+	var result := CombatNet.decode_loot_dropped(payload)
+	_check(result != null, "decodes successfully with no drops")
+	if result != null:
+		_check(result.drops.size() == 0, "no drops")
+
 func _init() -> void:
 	_test_encode_attack()
 	_test_decode_attack_result()
 	_test_decode_attack_result_deaths()
 	_test_decode_monster_damaged()
 	_test_decode_monster_died()
+	_test_decode_loot_dropped()
+	_test_decode_loot_dropped_empty()
 
 	if _failures == 0:
 		print("ALL PASS")

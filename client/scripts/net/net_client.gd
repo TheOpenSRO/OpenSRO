@@ -35,6 +35,7 @@ signal shop_buy_result(ok: bool, reason: String)
 signal attack_result(result: CombatNet.AttackResult)
 signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
+signal loot_dropped(dropped: CombatNet.LootDropped)
 signal learn_skill_result(ok: bool, reason: String)
 
 signal party_create_result(result: PartyNet.Result)
@@ -269,6 +270,8 @@ func _dispatch(p: Packet) -> void:
 			monster_damaged.emit(CombatNet.decode_monster_damaged(p.data))
 		CombatNet.OP_MONSTER_DIED:
 			monster_died.emit(CombatNet.decode_monster_died(p.data))
+		CombatNet.OP_LOOT_DROPPED:
+			loot_dropped.emit(CombatNet.decode_loot_dropped(p.data))
 		SkillNet.OP_LEARN_RESULT:
 			var r := SkillNet.decode_learn_result(p.data)
 			learn_skill_result.emit(r.ok, r.reason if r.error == "" else r.error)

@@ -9,6 +9,7 @@ const OP_ATTACK := 0x0060           # client -> server
 const OP_ATTACK_RESULT := 0x0061    # server -> client, direct ack to the attacker
 const OP_MONSTER_DAMAGED := 0x0062  # server -> client, broadcast to the zone
 const OP_MONSTER_DIED := 0x0063     # server -> client, broadcast to the zone
+const OP_LOOT_DROPPED := 0x0064     # server -> client, direct to the killer (only sent if there's loot)
 
 ## Result of decode_attack_result(): both sides of the exchange -- what
 ## happened to the monster, and what happened to the attacker in the
@@ -27,6 +28,16 @@ class MonsterDamaged:
 	var monster_id: int
 	var damage: int
 	var remaining_hp: int
+
+## One item dropped from a kill.
+class LootDrop:
+	var item_id: int
+	var quantity: int
+
+## Result of decode_loot_dropped().
+class LootDropped:
+	var monster_id: int
+	var drops: Array[LootDrop] = []
 
 ## Encodes an OpAttack request.
 static func encode_attack(character_name: String, target_monster_id: int) -> PackedByteArray:
@@ -84,3 +95,21 @@ static func decode_monster_died(data: PackedByteArray) -> int:
 	if data.size() < 8:
 		return -1
 	return data.decode_s64(0)
+
+## Decodes an OpLootDropped payload.
+static func decode_loot_dropped(data: PackedByteArray) -> LootDropped:
+	if data.size() < 10:
+		return null
+	var result := LootDropped.new()
+	result.monster_id = data.decode_s64(0)
+	var count := data.decode_u16(8)
+	var offset := 10
+	for i in range(count):
+		if offset + 12 > data.size():
+			return null
+		var d := LootDrop.new()
+		d.item_id = data.decode_s64(offset)
+		d.quantity = data.decode_u32(offset + 8)
+		result.drops.append(d)
+		offset += 12
+	return result
