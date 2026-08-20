@@ -126,6 +126,21 @@ func (h *Hub) EntityBySession(sessionID uint64) (Entity, bool) {
 	return *e, true
 }
 
+// EntityByCharacterID returns the entity for characterID, if they're
+// currently in the world (in any zone). Used for online-status checks
+// (e.g. friend lists) that only have a character ID on hand, not a name.
+func (h *Hub) EntityByCharacterID(characterID int64) (Entity, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, e := range h.bySession {
+		if e.CharacterID == characterID {
+			return *e, true
+		}
+	}
+	return Entity{}, false
+}
+
 // FindByName returns the entity for the character named name, if they're
 // currently in the world (in any zone). Used for cross-zone lookups like
 // whispers, where the sender doesn't know or care which zone the target is

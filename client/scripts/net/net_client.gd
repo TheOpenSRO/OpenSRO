@@ -74,6 +74,15 @@ signal trade_confirm_result(ok: bool, reason: String)
 signal trade_completed(completed: TradeNet.Completed)
 signal trade_cancelled(cancelled: TradeNet.Cancelled)
 
+signal friend_request_result(ok: bool, reason: String)
+signal friend_request_received(received: FriendNet.RequestReceived)
+signal friend_accept_result(ok: bool, reason: String)
+signal friend_accepted(accepted: FriendNet.Accepted)
+signal friend_decline_result(ok: bool, reason: String)
+signal friend_list_result(friends: Array, error: String)
+signal friend_remove_result(ok: bool, reason: String)
+signal friend_pending_list_result(requests: Array, error: String)
+
 var _peer: StreamPeerTCP
 var _connecting := false
 var _reader: PacketReader
@@ -230,6 +239,24 @@ func trade_confirm(char_name: String) -> void:
 func trade_cancel(char_name: String) -> void:
 	_send(TradeNet.OP_CANCEL, TradeNet.encode_cancel(char_name))
 
+func friend_request(char_name: String, target_name: String) -> void:
+	_send(FriendNet.OP_REQUEST, FriendNet.encode_request(char_name, target_name))
+
+func friend_accept(char_name: String, requester_id: int) -> void:
+	_send(FriendNet.OP_ACCEPT, FriendNet.encode_accept(char_name, requester_id))
+
+func friend_decline(char_name: String, requester_id: int) -> void:
+	_send(FriendNet.OP_DECLINE, FriendNet.encode_decline(char_name, requester_id))
+
+func friend_list(char_name: String) -> void:
+	_send(FriendNet.OP_LIST, FriendNet.encode_name_request(char_name))
+
+func friend_remove(char_name: String, friend_id: int) -> void:
+	_send(FriendNet.OP_REMOVE, FriendNet.encode_remove(char_name, friend_id))
+
+func friend_pending_list(char_name: String) -> void:
+	_send(FriendNet.OP_PENDING_LIST, FriendNet.encode_name_request(char_name))
+
 func _dispatch(p: Packet) -> void:
 	match p.opcode:
 		Auth.OP_LOGIN_RESULT:
@@ -350,5 +377,27 @@ func _dispatch(p: Packet) -> void:
 			trade_completed.emit(TradeNet.decode_completed(p.data))
 		TradeNet.OP_CANCELLED:
 			trade_cancelled.emit(TradeNet.decode_cancelled(p.data))
+		FriendNet.OP_REQUEST_RESULT:
+			var r := Auth.decode_result(p.data)
+			friend_request_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		FriendNet.OP_REQUEST_RECEIVED:
+			friend_request_received.emit(FriendNet.decode_request_received(p.data))
+		FriendNet.OP_ACCEPT_RESULT:
+			var r := Auth.decode_result(p.data)
+			friend_accept_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		FriendNet.OP_ACCEPTED:
+			friend_accepted.emit(FriendNet.decode_accepted(p.data))
+		FriendNet.OP_DECLINE_RESULT:
+			var r := Auth.decode_result(p.data)
+			friend_decline_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		FriendNet.OP_LIST_RESULT:
+			var r := FriendNet.decode_list_result(p.data)
+			friend_list_result.emit(r.friends, r.error)
+		FriendNet.OP_REMOVE_RESULT:
+			var r := Auth.decode_result(p.data)
+			friend_remove_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		FriendNet.OP_PENDING_LIST_RESULT:
+			var r := FriendNet.decode_pending_list_result(p.data)
+			friend_pending_list_result.emit(r.requests, r.error)
 		_:
 			push_warning("NetClient: unhandled opcode 0x%04x" % p.opcode)

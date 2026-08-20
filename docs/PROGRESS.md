@@ -2,6 +2,40 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 5)
+
+- Added a persistent friends list, the last piece of core MMO social infrastructure (party/guild/
+  chat/quests/duels/trade/friends are all in now). `server/internal/friend`: Postgres-backed from
+  the start, like guild -- a friendship should survive a relog or restart, unlike party/duel/
+  trade's live session state. `friend_requests` (pending, one row per outstanding request) and
+  `friendships` (accepted, one row per direction so each side's list query is a plain indexed
+  SELECT rather than an OR'd lookup). `AcceptRequest` runs in a transaction: consume the request,
+  insert both directions of the friendship, all-or-nothing.
+  Caught a real design mistake mid-implementation, not after: the first draft of
+  `session/friend.go` had `OpFriendAccept`/`OpFriendDecline`/`OpFriendRemove` all take the other
+  character's *name*, resolved the same way duel/trade resolve a target -- via `world.Hub`, which
+  only finds someone if they're currently online. That's fine for *sending* a request (you're
+  interacting with someone live), but it quietly broke the entire point of a *persistent* friends
+  list: you'd only be able to accept a request from someone who happened to still be online, which
+  defeats "accept it later." Reworked accept/decline/remove to take a character ID instead (which
+  the client already has from a prior list response), and added a new `OpFriendPendingList`
+  opcode so there's actually a way to see incoming requests by ID before acting on them. Documented
+  this reasoning directly in `friend.go`'s opcode comment so the asymmetry (request-by-name,
+  respond-by-ID) doesn't look like an inconsistency later.
+  `OpFriendRequestReceived`/`OpFriendAccepted` notifications are still best-effort/online-only
+  (same tradeoff duel/trade already made for their own live notifications) -- an offline
+  recipient just sees the change next time they list. Added `world.Hub.EntityByCharacterID`
+  (mirroring the existing `FindByName`) to resolve online status by ID for friends-list responses.
+  Full flow tested end-to-end over two real TCP connections: Aria requests Bram (online), Bram
+  gets a live notification, lists pending requests and accepts by ID, Aria gets a live
+  acceptance notification, both lists show each other online, Aria removes Bram and both lists
+  go back to empty. A second test confirms requesting an offline/nonexistent name fails cleanly.
+  Ported to GDScript (`friend.gd` + test), wired into `NetClient`, reconfirmed byte-exact wire
+  compatibility for `FriendListResult` and `FriendPendingListResult` via independent Go/GDScript
+  hex generation. All 19 GDScript suites pass headless; wired into CI. Full Go test suite green
+  across all packages including the new `friend` package; server binary smoke-tested with
+  friends wired in.
+
 ## 2026-08-20 (cont'd 4)
 
 - Fixed the `Packet.read_from` busy-wait limitation that's been flagged in `NetClient`'s doc

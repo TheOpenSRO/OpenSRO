@@ -14,6 +14,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/duel"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
+	"github.com/OpenSRO/srrevamp/server/internal/friend"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/guild"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
@@ -152,6 +153,13 @@ func main() {
 		os.Exit(1)
 	}
 	defer quests.Close()
+
+	friends, err := friend.OpenSQLStore(*postgresDSN)
+	if err != nil {
+		logger.Error("opening friend store", "error", err)
+		os.Exit(1)
+	}
+	defer friends.Close()
 	logger.Info("postgres storage ready")
 
 	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
@@ -182,6 +190,7 @@ func main() {
 		session.QuestHandler(chars, quests),
 		session.DuelHandler(chars, eq, refItems, hub, duels),
 		session.TradeHandler(chars, inv, hub, trades),
+		session.FriendHandler(chars, friends, hub),
 	)
 
 	worldDisconnect := session.WorldDisconnectHandler(hub)
