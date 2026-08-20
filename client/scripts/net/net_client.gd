@@ -83,26 +83,62 @@ signal friend_list_result(friends: Array, error: String)
 signal friend_remove_result(ok: bool, reason: String)
 signal friend_pending_list_result(requests: Array, error: String)
 
-var _peer: StreamPeerTCP
+var _tcp_peer: StreamPeerTCP  # the real socket, always present once connecting starts
+var _peer: StreamPeer         # what packets are actually read/written through -- _tcp_peer directly, or a StreamPeerTLS wrapping it once connected with use_tls
 var _connecting := false
+var _tls_handshaking := false
+var _connected := false
 var _reader: PacketReader
 
+var _use_tls := false
+var _tls_host := ""
+
 func _process(_delta: float) -> void:
-	if _peer == null:
+	if _tcp_peer == null:
 		return
 
 	if _connecting:
-		_peer.poll()
-		var status := _peer.get_status()
+		_tcp_peer.poll()
+		var status := _tcp_peer.get_status()
 		if status == StreamPeerTCP.STATUS_CONNECTED:
 			_connecting = false
-			connected.emit()
+			if _use_tls:
+				var tls_peer := StreamPeerTLS.new()
+				# InsecureSkipVerify-equivalent: this project's dev/local
+				# setup uses self-signed certs (see gateway.Server.TLSConfig
+				# in server/internal/gateway), so there's no CA chain to
+				# validate against. A deployment with a real cert should
+				# pass a proper TLSOptions.client() here instead.
+				var tls_options := TLSOptions.client_unsafe()
+				if tls_peer.connect_to_stream(_tcp_peer, _tls_host, tls_options) != OK:
+					push_error("NetClient: starting TLS handshake failed")
+					connection_failed.emit()
+					return
+				_peer = tls_peer
+				_tls_handshaking = true
+			else:
+				_peer = _tcp_peer
+				_connected = true
+				connected.emit()
 		elif status == StreamPeerTCP.STATUS_ERROR or status == StreamPeerTCP.STATUS_NONE:
 			_connecting = false
 			connection_failed.emit()
 		return
 
-	if _peer.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+	if _tls_handshaking:
+		var tls_peer := _peer as StreamPeerTLS
+		tls_peer.poll()
+		var status := tls_peer.get_status()
+		if status == StreamPeerTLS.STATUS_CONNECTED:
+			_tls_handshaking = false
+			_connected = true
+			connected.emit()
+		elif status == StreamPeerTLS.STATUS_ERROR or status == StreamPeerTLS.STATUS_ERROR_HOSTNAME_MISMATCH:
+			_tls_handshaking = false
+			connection_failed.emit()
+		return
+
+	if not _connected:
 		return
 
 	# Drain everything currently available; PacketReader.poll returns null
@@ -113,10 +149,19 @@ func _process(_delta: float) -> void:
 			break
 		_dispatch(p)
 
-func connect_to_server(host: String, port: int) -> void:
-	_peer = StreamPeerTCP.new()
+## Connects to host:port. If use_tls is true, wraps the connection in TLS
+## once the underlying TCP handshake completes (see gateway.Server.TLSConfig
+## server-side for the matching -tls-cert/-tls-key flags) -- otherwise
+## plain TCP, same as before TLS support existed.
+func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
+	_tcp_peer = StreamPeerTCP.new()
+	_peer = null
 	_reader = PacketReader.new()
-	var err := _peer.connect_to_host(host, port)
+	_use_tls = use_tls
+	_tls_host = host
+	_tls_handshaking = false
+	_connected = false
+	var err := _tcp_peer.connect_to_host(host, port)
 	if err != OK:
 		push_error("NetClient: connect_to_host failed: %s" % err)
 		connection_failed.emit()
@@ -124,13 +169,18 @@ func connect_to_server(host: String, port: int) -> void:
 	_connecting = true
 
 func disconnect_from_server() -> void:
-	if _peer != null:
-		_peer.disconnect_from_host()
-		_peer = null
+	if _peer is StreamPeerTLS:
+		(_peer as StreamPeerTLS).disconnect_from_stream()
+	if _tcp_peer != null:
+		_tcp_peer.disconnect_from_host()
+	_tcp_peer = null
+	_peer = null
+	_connected = false
+	_tls_handshaking = false
 	disconnected.emit()
 
 func is_connected_to_server() -> bool:
-	return _peer != null and _peer.get_status() == StreamPeerTCP.STATUS_CONNECTED
+	return _connected
 
 func _send(opcode: int, data: PackedByteArray = PackedByteArray()) -> void:
 	if not is_connected_to_server():

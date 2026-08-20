@@ -2,6 +2,44 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 6)
+
+- Added optional TLS support, closing the transport-security gap `docs/protocol/
+  PROTOCOL_DECISION.md` explicitly named back when the own-protocol decision was made: "a
+  from-scratch client and server talking to each other over a connection we control (TLS
+  available if wanted) has no reason to replicate [the original's rolling-byte obfuscation]" --
+  TLS just hadn't actually been wired up yet until now.
+  Server: `gateway.Server` gained a `TLSConfig *tls.Config` field; when set, `ListenAndServe`
+  wraps the plain `net.Listener` with `tls.NewListener` (one-line change, since `serveConn`
+  already just needs a `net.Conn`, which `*tls.Conn` satisfies). `cmd/server/main.go` gained
+  `-tls-cert`/`-tls-key` flags -- both required together or the server refuses to start with a
+  clear error, rather than silently ignoring a half-supplied pair. Plain TCP remains the default
+  with no flags set, so nothing about local dev changes unless TLS is explicitly requested.
+  Client: `NetClient` now tracks connection state as `_tcp_peer` (the real socket) plus `_peer`
+  (a `StreamPeer` -- either `_tcp_peer` directly, or a `StreamPeerTLS` wrapping it once
+  `connect_to_server(host, port, use_tls)`'s TCP phase completes and the TLS handshake starts).
+  Deliberately tracks connection state via its own `_connected`/`_tls_handshaking` booleans
+  rather than comparing `get_status()` against `StreamPeerTCP.STATUS_CONNECTED` after the TLS
+  phase begins -- `StreamPeerTCP.Status` and `StreamPeerTLS.Status` are different enums, and
+  relying on their integer values happening to line up would've been fragile. `PacketReader.poll`
+  and `Packet`'s type hints loosened from `StreamPeerTCP` to the shared `StreamPeer` base so the
+  same frame-reading code works over either transport unchanged.
+  Verified for real, not just type-checked: a new `gateway_test.go` generates a genuine
+  self-signed ECDSA certificate in-memory and runs two tests against a real `tls.Config`-backed
+  `Server` -- one confirms a real `tls.Dial` handshake and framed round-trip work, the other
+  confirms a plaintext TCP connection against a TLS-configured server fails during the handshake
+  rather than being silently accepted as unencrypted. On the client side, manually drove a real
+  `NetClient` instance (instantiated directly, not through the editor) against a locally-run
+  server binary twice -- once with `-tls-cert`/`-tls-key` and `use_tls=true` (confirmed `connected`
+  fires only after the TLS handshake completes, and a real login round-trip works over the
+  encrypted channel) and once plain (confirming the refactor didn't regress the existing
+  no-TLS path). Self-signed certs use `TLSOptions.client_unsafe()` client-side (no CA to
+  validate against for local dev) -- documented inline that a real deployment with a real cert
+  should use `TLSOptions.client()` instead.
+  All 19 GDScript suites still pass headless. Full Go test suite green, including two new TLS
+  tests in `gateway`. No new CI entries needed (extended existing `gateway_test.go` and
+  `net_client.gd`/`packet_reader.gd`, no new files).
+
 ## 2026-08-20 (cont'd 5)
 
 - Added a persistent friends list, the last piece of core MMO social infrastructure (party/guild/

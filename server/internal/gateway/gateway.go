@@ -7,6 +7,7 @@ package gateway
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"log/slog"
@@ -105,6 +106,15 @@ type Server struct {
 	Handle Handler
 	Logger *slog.Logger
 
+	// TLSConfig, if set, makes ListenAndServe serve TLS instead of plain
+	// TCP -- see docs/protocol/PROTOCOL_DECISION.md: this project's own
+	// protocol deliberately has no custom encryption/obfuscation layer
+	// (unlike the original game's rolling-byte scheme), on the reasoning
+	// that a from-scratch client/server pair should reach for standard
+	// TLS instead of reinventing crypto. Plain TCP (nil TLSConfig) remains
+	// the default for local development.
+	TLSConfig *tls.Config
+
 	// OnDisconnect, if set, is called once when a session's connection ends
 	// (client disconnect, read error, or a Handler error). Lets
 	// higher-level state (e.g. world.Hub) clean up without gateway knowing
@@ -132,7 +142,12 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	}
 	defer ln.Close()
 
-	logger.Info("gateway listening", "addr", s.Addr)
+	if s.TLSConfig != nil {
+		ln = tls.NewListener(ln, s.TLSConfig)
+		logger.Info("gateway listening (TLS)", "addr", s.Addr)
+	} else {
+		logger.Info("gateway listening", "addr", s.Addr)
+	}
 
 	go func() {
 		<-ctx.Done()

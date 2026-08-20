@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"log/slog"
 	"os"
@@ -91,6 +92,8 @@ func main() {
 	addr := flag.String("addr", ":15779", "listen address for the gateway service")
 	postgresDSN := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
 		"PostgreSQL connection string for account/character storage")
+	tlsCert := flag.String("tls-cert", "", "path to a TLS certificate (PEM); if set with -tls-key, the gateway serves TLS instead of plain TCP")
+	tlsKey := flag.String("tls-key", "", "path to a TLS private key (PEM); see -tls-cert")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -198,9 +201,24 @@ func main() {
 	duelDisconnect := session.DuelDisconnectHandler(hub, duels)
 	tradeDisconnect := session.TradeDisconnectHandler(hub, trades)
 
+	var tlsConfig *tls.Config
+	if *tlsCert != "" || *tlsKey != "" {
+		if *tlsCert == "" || *tlsKey == "" {
+			logger.Error("-tls-cert and -tls-key must both be set together")
+			os.Exit(1)
+		}
+		cert, err := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
+		if err != nil {
+			logger.Error("loading TLS certificate", "error", err)
+			os.Exit(1)
+		}
+		tlsConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
+	}
+
 	srv := &gateway.Server{
-		Addr:   *addr,
-		Logger: logger,
+		Addr:      *addr,
+		Logger:    logger,
+		TLSConfig: tlsConfig,
 		Handle: func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 			logger.Info("packet received", "addr", sess.RemoteAddr(), "opcode", p.Opcode, "size", len(p.Data))
 			return handle(ctx, sess, p)

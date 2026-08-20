@@ -16,8 +16,10 @@ var _pending_size := 0
 ## Attempts to read one complete frame from peer without blocking. Returns
 ## the Packet once one is fully buffered, or null if there isn't enough
 ## data yet (the caller should try again on a later frame) or on a hard
-## read error.
-func poll(peer: StreamPeerTCP) -> Packet:
+## read error. peer can be a plain StreamPeerTCP or a StreamPeerTLS wrapping
+## one -- both implement the same get_available_bytes/get_data/poll
+## contract via the shared StreamPeer base.
+func poll(peer: StreamPeer) -> Packet:
 	peer.poll()
 
 	if not _have_header:
