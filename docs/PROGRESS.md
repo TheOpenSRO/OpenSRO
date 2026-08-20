@@ -2,6 +2,42 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 8)
+
+- Made combat, inventory, and equipment actually playable from `World.tscn`, closing a real
+  protocol gap discovered while building the UI: **there was no way for a client to ever learn a
+  monster's ID.** `OpAttack` requires a `TargetMonsterID`, but nothing broadcasts monster IDs to
+  a client on entering a zone or otherwise -- every existing combat test only worked because the
+  Go test code has direct access to `monster.ID` from `Hub.Spawn()`'s return value, which a real
+  client obviously never gets. Fixed at the source: added `combat.Hub.InZone(zone)` and a new
+  `OpMonsterList`/`OpMonsterListResult` opcode pair (0x0065/0x0066) resolving the requester's zone
+  via `world.Hub.EntityBySession` (same pattern chat/duel/trade/friends already use) -- no
+  character name needed in the request. Added a session test that discovers a monster's ID purely
+  through `OpMonsterList` and then successfully uses that exact ID against `OpAttack`, proving the
+  list isn't just decorative.
+  Extended `World.tscn` with a `TabContainer` (Monsters / Inventory / Equipment) alongside the
+  existing HUD/chat. Monsters tab: list + Attack button, refreshing after every attack/damage/
+  death signal. Inventory tab: list + two explicit "Equip as Weapon"/"Equip as Armor" buttons
+  (own design -- simpler than a slot picker). Equipment tab: list + two explicit unequip buttons.
+  Hit a real ambiguity while wiring the equipment tab: `NetClient.equipment_result` fires for
+  *both* `OpEquipmentList` and equip/unequip acks, and a successful ack has the same empty-items
+  shape as "you have nothing equipped" -- already flagged in that signal's own doc comment as
+  something callers need to track themselves. Added an `_awaiting_equip_ack` flag in `World.gd`
+  set right before sending an equip/unequip request, so an empty response is correctly read as
+  "action succeeded, go refresh" instead of wrongly clearing the equipment list on a real ack.
+  Verified for real, not just structurally: booted `World.tscn` directly through the normal
+  engine bootstrap (confirming all new `@onready` paths in the extended scene resolve), then built
+  a temporary end-to-end test scene (deleted after this run, not committed) that registered a
+  fresh account, logged in, created a character, entered the world, and drove the actual `World.gd`
+  UI controls -- not `NetClient` directly -- against a live server: confirmed the monster list
+  populates for real, and clicking Attack really damaged a monster (counterattack and all) with
+  the status label reflecting the real server response.
+  Go: `TestInZoneOnlyReturnsMatchingZone`/`TestInZoneEmptyForUnknownZone`/
+  `TestInZoneExcludesDeadMonsters` in `combat`, `TestMonsterListFlow` (the discover-then-attack
+  test) plus round-trip tests in `session`. Full Go test suite green. GDScript: extended
+  `combat_test.gd` with `MonsterListResult` round-trip coverage, reconfirmed byte-exact wire
+  compatibility via independent Go/GDScript hex generation. All 19 GDScript suites pass headless.
+
 ## 2026-08-20 (cont'd 7)
 
 - Added the first in-world client scene, closing the biggest remaining gap named in every prior

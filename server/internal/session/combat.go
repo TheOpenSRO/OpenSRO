@@ -21,11 +21,13 @@ import (
 // Combat opcodes, our own protocol. OpAttack requires a prior successful
 // OpEnterWorld (the attacker's zone comes from world.Hub).
 const (
-	OpAttack         uint16 = 0x0060 // client -> server
-	OpAttackResult   uint16 = 0x0061 // server -> client, direct ack to the attacker
-	OpMonsterDamaged uint16 = 0x0062 // server -> client, broadcast to the zone
-	OpMonsterDied    uint16 = 0x0063 // server -> client, broadcast to the zone
-	OpLootDropped    uint16 = 0x0064 // server -> client, direct to the killer (only sent if there's loot)
+	OpAttack            uint16 = 0x0060 // client -> server
+	OpAttackResult      uint16 = 0x0061 // server -> client, direct ack to the attacker
+	OpMonsterDamaged    uint16 = 0x0062 // server -> client, broadcast to the zone
+	OpMonsterDied       uint16 = 0x0063 // server -> client, broadcast to the zone
+	OpLootDropped       uint16 = 0x0064 // server -> client, direct to the killer (only sent if there's loot)
+	OpMonsterList       uint16 = 0x0065 // client -> server
+	OpMonsterListResult uint16 = 0x0066 // server -> client
 )
 
 // unarmedDamage is the base damage dealt with no weapon equipped. Own
@@ -214,6 +216,87 @@ func DecodeLootDropped(data []byte) (*LootDropped, error) {
 	return r, nil
 }
 
+// MonsterSnapshot is one live monster, as sent over the wire.
+type MonsterSnapshot struct {
+	ID    int64
+	Name  string
+	MaxHP int32
+	HP    int32
+}
+
+func (m *MonsterSnapshot) Encode() []byte {
+	out := append(encodeInt64(m.ID), encodeStrings(m.Name)...)
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(m.MaxHP))
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(m.HP))
+	return append(out, buf...)
+}
+
+func decodeMonsterSnapshot(data []byte) (*MonsterSnapshot, []byte, error) {
+	id, rest, err := decodeInt64(data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("monster id: %w", err)
+	}
+	names, rest, err := decodeStringsPrefix(rest, 1)
+	if err != nil {
+		return nil, nil, fmt.Errorf("name: %w", err)
+	}
+	if len(rest) < 8 {
+		return nil, nil, errors.New("truncated hp fields")
+	}
+	return &MonsterSnapshot{
+		ID: id, Name: names[0],
+		MaxHP: int32(binary.LittleEndian.Uint32(rest[0:4])),
+		HP:    int32(binary.LittleEndian.Uint32(rest[4:8])),
+	}, rest[8:], nil
+}
+
+// MonsterListResult is the OpMonsterListResult payload.
+type MonsterListResult struct {
+	Error    string
+	Monsters []MonsterSnapshot
+}
+
+func (r *MonsterListResult) Encode() []byte {
+	out := encodeStrings(r.Error)
+	if r.Error != "" {
+		return out
+	}
+	countBuf := make([]byte, 2)
+	binary.LittleEndian.PutUint16(countBuf, uint16(len(r.Monsters)))
+	out = append(out, countBuf...)
+	for _, m := range r.Monsters {
+		out = append(out, m.Encode()...)
+	}
+	return out
+}
+
+func DecodeMonsterListResult(data []byte) (*MonsterListResult, error) {
+	fields, rest, err := decodeStringsPrefix(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding MonsterListResult: %w", err)
+	}
+	r := &MonsterListResult{Error: fields[0]}
+	if r.Error != "" {
+		return r, nil
+	}
+
+	if len(rest) < 2 {
+		return nil, errors.New("session: decoding MonsterListResult: truncated monster count")
+	}
+	count := int(binary.LittleEndian.Uint16(rest))
+	rest = rest[2:]
+	for i := 0; i < count; i++ {
+		var snap *MonsterSnapshot
+		snap, rest, err = decodeMonsterSnapshot(rest)
+		if err != nil {
+			return nil, fmt.Errorf("session: decoding MonsterListResult: monster %d: %w", i, err)
+		}
+		r.Monsters = append(r.Monsters, *snap)
+	}
+	return r, nil
+}
+
 // rollLoot rolls combat.LootTables[monsterName] and adds anything won to
 // characterID's inventory, returning what actually landed. AddItem
 // failures (unknown ref item, full inventory) are skipped rather than
@@ -255,22 +338,43 @@ func CombatHandler(
 	inv inventory.Store,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
-		if p.Opcode != OpAttack {
+		switch p.Opcode {
+		case OpAttack:
+			req, err := DecodeAttackRequest(p.Data)
+			if err != nil {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "malformed request"}).Encode()})
+			}
+
+			characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
+			if errStr != "" {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
+			}
+
+			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, characterID, req.TargetMonsterID, 0)
+		case OpMonsterList:
+			return handleMonsterList(sess, hub, monsters)
+		default:
 			return nil
 		}
-
-		req, err := DecodeAttackRequest(p.Data)
-		if err != nil {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "malformed request"}).Encode()})
-		}
-
-		characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
-		if errStr != "" {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
-		}
-
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, characterID, req.TargetMonsterID, 0)
 	}
+}
+
+// handleMonsterList responds with every live monster in the requesting
+// session's current zone (via world.Hub -- same "who am I / where am I"
+// resolution chat/duel/trade already use). Without this, a client has no
+// way to discover a monster's ID to attack it at all.
+func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.Hub) error {
+	entity, ok := hub.EntityBySession(sess.ID())
+	if !ok {
+		return sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: (&MonsterListResult{Error: "not in the world"}).Encode()})
+	}
+
+	inZone := monsters.InZone(entity.Zone)
+	snapshots := make([]MonsterSnapshot, len(inZone))
+	for i, m := range inZone {
+		snapshots[i] = MonsterSnapshot{ID: m.ID, Name: m.Name, MaxHP: int32(m.MaxHP), HP: int32(m.HP)}
+	}
+	return sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: (&MonsterListResult{Monsters: snapshots}).Encode()})
 }
 
 // performAttack computes damage (the attacker's base weapon/unarmed damage

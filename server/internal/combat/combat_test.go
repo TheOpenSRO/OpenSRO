@@ -82,3 +82,38 @@ func TestApplyDamageUnknownID(t *testing.T) {
 		t.Fatalf("got died=%v ok=%v, want both false for an unknown monster", died, ok)
 	}
 }
+
+func TestInZoneOnlyReturnsMatchingZone(t *testing.T) {
+	h := NewHub()
+	a := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
+	b := h.Spawn("jangan", "Wild Boar", 80, 3, 4, 15)
+	h.Spawn("donwhang", "Sand Scorpion", 350, 18, 14, 120)
+
+	got := h.InZone("jangan")
+	if len(got) != 2 {
+		t.Fatalf("got %d monsters, want 2", len(got))
+	}
+	ids := map[int64]bool{got[0].ID: true, got[1].ID: true}
+	if !ids[a.ID] || !ids[b.ID] {
+		t.Fatalf("got IDs %v, want %d and %d", ids, a.ID, b.ID)
+	}
+}
+
+func TestInZoneEmptyForUnknownZone(t *testing.T) {
+	h := NewHub()
+	h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
+	if got := h.InZone("nowhere"); len(got) != 0 {
+		t.Fatalf("got %d monsters, want 0", len(got))
+	}
+}
+
+func TestInZoneExcludesDeadMonsters(t *testing.T) {
+	h := NewHub()
+	m := h.Spawn("jangan", "Stone Golem", 10, 0, 0, 50)
+	if _, died, ok := h.ApplyDamage(m.ID, 10); !ok || !died {
+		t.Fatalf("setup: got died=%v ok=%v, want both true", died, ok)
+	}
+	if got := h.InZone("jangan"); len(got) != 0 {
+		t.Fatalf("got %d monsters, want 0 (dead monster should be gone)", len(got))
+	}
+}

@@ -10,6 +10,8 @@ const OP_ATTACK_RESULT := 0x0061    # server -> client, direct ack to the attack
 const OP_MONSTER_DAMAGED := 0x0062  # server -> client, broadcast to the zone
 const OP_MONSTER_DIED := 0x0063     # server -> client, broadcast to the zone
 const OP_LOOT_DROPPED := 0x0064     # server -> client, direct to the killer (only sent if there's loot)
+const OP_MONSTER_LIST := 0x0065     # client -> server
+const OP_MONSTER_LIST_RESULT := 0x0066 # server -> client
 
 ## Result of decode_attack_result(): both sides of the exchange -- what
 ## happened to the monster, and what happened to the attacker in the
@@ -28,6 +30,18 @@ class MonsterDamaged:
 	var monster_id: int
 	var damage: int
 	var remaining_hp: int
+
+## One live monster, from decode_monster_list_result().
+class MonsterSnapshot:
+	var monster_id: int
+	var monster_name: String
+	var max_hp: int
+	var hp: int
+
+## Result of decode_monster_list_result().
+class MonsterListResult:
+	var error: String
+	var monsters: Array[MonsterSnapshot] = []
 
 ## One item dropped from a kill.
 class LootDrop:
@@ -112,4 +126,65 @@ static func decode_loot_dropped(data: PackedByteArray) -> LootDropped:
 		d.quantity = data.decode_u32(offset + 8)
 		result.drops.append(d)
 		offset += 12
+	return result
+
+## Encodes an OpMonsterList request (no payload -- the server resolves the
+## requester's zone from world.Hub).
+static func encode_monster_list() -> PackedByteArray:
+	return PackedByteArray()
+
+static func _decode_monster_snapshot(data: PackedByteArray, offset: int) -> Array:
+	if offset + 8 > data.size():
+		return [null, -1]
+	var m := MonsterSnapshot.new()
+	m.monster_id = data.decode_s64(offset)
+	offset += 8
+
+	if offset + 2 > data.size():
+		return [null, -1]
+	var name_len := data.decode_u16(offset)
+	offset += 2
+	if offset + name_len > data.size():
+		return [null, -1]
+	m.monster_name = data.slice(offset, offset + name_len).get_string_from_utf8()
+	offset += name_len
+
+	if offset + 8 > data.size():
+		return [null, -1]
+	m.max_hp = data.decode_u32(offset)
+	m.hp = data.decode_u32(offset + 4)
+	offset += 8
+
+	return [m, offset]
+
+## Decodes an OpMonsterListResult payload.
+static func decode_monster_list_result(data: PackedByteArray) -> MonsterListResult:
+	var result := MonsterListResult.new()
+	if data.size() < 2:
+		result.error = "truncated"
+		return result
+
+	var error_len := data.decode_u16(0)
+	var offset := 2 + error_len
+	if offset > data.size():
+		result.error = "truncated error field"
+		return result
+	result.error = data.slice(2, offset).get_string_from_utf8()
+	if result.error != "":
+		return result
+
+	if offset + 2 > data.size():
+		result.error = "truncated monster count"
+		return result
+	var count := data.decode_u16(offset)
+	offset += 2
+
+	for i in range(count):
+		var decoded := _decode_monster_snapshot(data, offset)
+		if decoded[0] == null:
+			result.error = "truncated monster %d" % i
+			return result
+		result.monsters.append(decoded[0])
+		offset = decoded[1]
+
 	return result

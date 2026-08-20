@@ -107,6 +107,58 @@ func _test_decode_loot_dropped_empty() -> void:
 	if result != null:
 		_check(result.drops.size() == 0, "no drops")
 
+func _build_monster_snapshot(id: int, name: String, max_hp: int, hp: int) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(8)
+	out.encode_s64(0, id)
+	var name_bytes := name.to_utf8_buffer()
+	var len_buf := PackedByteArray()
+	len_buf.resize(2)
+	len_buf.encode_u16(0, name_bytes.size())
+	out.append_array(len_buf)
+	out.append_array(name_bytes)
+	var hp_buf := PackedByteArray()
+	hp_buf.resize(8)
+	hp_buf.encode_u32(0, max_hp)
+	hp_buf.encode_u32(4, hp)
+	out.append_array(hp_buf)
+	return out
+
+func _build_monster_list_result(error: String, monsters: Array) -> PackedByteArray:
+	var out := PackedByteArray()
+	var len_buf := PackedByteArray()
+	len_buf.resize(2)
+	var error_bytes := error.to_utf8_buffer()
+	len_buf.encode_u16(0, error_bytes.size())
+	out.append_array(len_buf)
+	out.append_array(error_bytes)
+	if error != "":
+		return out
+	var count_buf := PackedByteArray()
+	count_buf.resize(2)
+	count_buf.encode_u16(0, monsters.size())
+	out.append_array(count_buf)
+	for m in monsters:
+		out.append_array(_build_monster_snapshot(m["id"], m["name"], m["max_hp"], m["hp"]))
+	return out
+
+func _test_decode_monster_list_result() -> void:
+	var payload := _build_monster_list_result("", [{"id": 1, "name": "Stone Golem", "max_hp": 200, "hp": 150}])
+	var result := CombatNet.decode_monster_list_result(payload)
+	_check(result.error == "", "no decode error")
+	_check(result.monsters.size() == 1, "one monster decoded")
+	if result.monsters.size() == 1:
+		_check(result.monsters[0].monster_id == 1, "monster id round-trips")
+		_check(result.monsters[0].monster_name == "Stone Golem", "monster name round-trips")
+		_check(result.monsters[0].max_hp == 200, "max hp round-trips")
+		_check(result.monsters[0].hp == 150, "hp round-trips")
+
+func _test_decode_monster_list_result_error() -> void:
+	var payload := _build_monster_list_result("not in the world", [])
+	var result := CombatNet.decode_monster_list_result(payload)
+	_check(result.error == "not in the world", "error round-trips")
+	_check(result.monsters.size() == 0, "no monsters alongside an error")
+
 func _init() -> void:
 	_test_encode_attack()
 	_test_decode_attack_result()
@@ -115,6 +167,8 @@ func _init() -> void:
 	_test_decode_monster_died()
 	_test_decode_loot_dropped()
 	_test_decode_loot_dropped_empty()
+	_test_decode_monster_list_result()
+	_test_decode_monster_list_result_error()
 
 	if _failures == 0:
 		print("ALL PASS")

@@ -34,6 +34,7 @@ signal attack_result(result: CombatNet.AttackResult)
 signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
 signal loot_dropped(dropped: CombatNet.LootDropped)
+signal monster_list_result(monsters: Array, error: String)
 signal learn_skill_result(ok: bool, reason: String)
 
 signal party_create_result(result: PartyNet.Result)
@@ -239,6 +240,9 @@ func shop_buy(char_name: String, item_id: int, quantity: int) -> void:
 func attack(char_name: String, target_monster_id: int) -> void:
 	_send(CombatNet.OP_ATTACK, CombatNet.encode_attack(char_name, target_monster_id))
 
+func list_monsters() -> void:
+	_send(CombatNet.OP_MONSTER_LIST, CombatNet.encode_monster_list())
+
 func learn_skill(char_name: String, skill_id: int) -> void:
 	_send(SkillNet.OP_LEARN, SkillNet.encode_learn(char_name, skill_id))
 
@@ -363,6 +367,9 @@ func _dispatch(p: Packet) -> void:
 			monster_died.emit(CombatNet.decode_monster_died(p.data))
 		CombatNet.OP_LOOT_DROPPED:
 			loot_dropped.emit(CombatNet.decode_loot_dropped(p.data))
+		CombatNet.OP_MONSTER_LIST_RESULT:
+			var r := CombatNet.decode_monster_list_result(p.data)
+			monster_list_result.emit(r.monsters, r.error)
 		SkillNet.OP_LEARN_RESULT:
 			var r := SkillNet.decode_learn_result(p.data)
 			learn_skill_result.emit(r.ok, r.reason if r.error == "" else r.error)

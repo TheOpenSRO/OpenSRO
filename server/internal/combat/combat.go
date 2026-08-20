@@ -66,6 +66,24 @@ func (h *Hub) Get(id int64) (Monster, bool) {
 	return *m, true
 }
 
+// InZone returns a snapshot of every live monster currently in zone. Used
+// so a client can discover monster IDs to attack -- without this, a
+// client has no way to learn a monster's ID at all (it's never broadcast
+// on its own; only Attack's responses reference an ID the caller already
+// supplied).
+func (h *Hub) InZone(zone string) []Monster {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	var out []Monster
+	for _, m := range h.byID {
+		if m.Zone == zone {
+			out = append(out, *m)
+		}
+	}
+	return out
+}
+
 // ApplyDamage reduces monster id's HP by amount (never below 0) and
 // returns the updated monster, whether this hit killed it, and whether the
 // monster existed at all. A dead monster is removed from the hub as part

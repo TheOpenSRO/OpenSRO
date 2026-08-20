@@ -359,3 +359,126 @@ func TestCombatLootFlow(t *testing.T) {
 		t.Fatalf("expected item 500 in inventory after loot, got %+v", slots)
 	}
 }
+
+func TestMonsterListResultRoundTrip(t *testing.T) {
+	want := &MonsterListResult{
+		Monsters: []MonsterSnapshot{
+			{ID: 1, Name: "Stone Golem", MaxHP: 200, HP: 150},
+			{ID: 2, Name: "Wild Boar", MaxHP: 80, HP: 80},
+		},
+	}
+	got, err := DecodeMonsterListResult(want.Encode())
+	if err != nil {
+		t.Fatalf("DecodeMonsterListResult: %v", err)
+	}
+	if len(got.Monsters) != 2 || got.Monsters[0] != want.Monsters[0] || got.Monsters[1] != want.Monsters[1] {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestMonsterListResultErrorRoundTrip(t *testing.T) {
+	want := &MonsterListResult{Error: "not in the world"}
+	got, err := DecodeMonsterListResult(want.Encode())
+	if err != nil {
+		t.Fatalf("DecodeMonsterListResult: %v", err)
+	}
+	if got.Error != want.Error || len(got.Monsters) != 0 {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+// TestMonsterListFlow confirms a client can discover monster IDs in its
+// zone purely from OpMonsterList -- without ever being told an ID any
+// other way -- and that the discovered ID actually works against OpAttack.
+func TestMonsterListFlow(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	if _, err := chars.Create(ctx, 1, "Aria"); err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+
+	items := stubCombatItems{}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	if err := inv.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating inventory: %v", err)
+	}
+
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	if err := eq.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating equipment: %v", err)
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	spawned := monsters.Spawn("jangan", "Stone Golem", 1, 0, 0, 10)
+	monsters.Spawn("donwhang", "Sand Scorpion", 100, 10, 10, 100) // different zone -- shouldn't show up
+
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	if err := quests.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating quests: %v", err)
+	}
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, hub),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	resp = send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	resp = send(OpMonsterList, nil)
+	lr, err := DecodeMonsterListResult(resp.Data)
+	if err != nil || lr.Error != "" {
+		t.Fatalf("monster list failed: err=%v result=%+v", err, lr)
+	}
+	if len(lr.Monsters) != 1 || lr.Monsters[0].ID != spawned.ID || lr.Monsters[0].Name != "Stone Golem" {
+		t.Fatalf("got %+v, want only the jangan Stone Golem (id %d)", lr.Monsters, spawned.ID)
+	}
+
+	// The discovered ID should actually work against OpAttack -- proving
+	// this isn't just a decorative list disconnected from the real IDs.
+	resp = send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: lr.Monsters[0].ID}).Encode())
+	ar, err := DecodeAttackResult(resp.Data)
+	if err != nil || ar.Error != "" || !ar.MonsterDied {
+		t.Fatalf("attack using discovered id: err=%v result=%+v", err, ar)
+	}
+}

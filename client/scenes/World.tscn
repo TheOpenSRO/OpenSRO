@@ -83,12 +83,108 @@ text = "Send"
 
 [node name="DisconnectButton" type="Button" parent="."]
 layout_mode = 1
-anchors_preset = 2
-anchor_top = 1.0
+anchors_preset = 0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = 88.0
+offset_bottom = 34.0
+text = "Log Out"
+
+[node name="ActionTabs" type="TabContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 8.0
-offset_top = -190.0
-offset_right = 88.0
-offset_bottom = -164.0
-grow_vertical = 0
-text = "Log Out"
+offset_top = 64.0
+offset_right = -192.0
+offset_bottom = -168.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Monsters" type="VBoxContainer" parent="ActionTabs"]
+layout_mode = 2
+
+[node name="MonsterList" type="ItemList" parent="ActionTabs/Monsters"]
+custom_minimum_size = Vector2(0, 140)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="MonsterButtonRow" type="HBoxContainer" parent="ActionTabs/Monsters"]
+layout_mode = 2
+
+[node name="RefreshButton" type="Button" parent="ActionTabs/Monsters/MonsterButtonRow"]
+layout_mode = 2
+text = "Refresh"
+
+[node name="AttackButton" type="Button" parent="ActionTabs/Monsters/MonsterButtonRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Attack Selected"
+
+[node name="MonsterStatusLabel" type="Label" parent="ActionTabs/Monsters"]
+layout_mode = 2
+text = ""
+autowrap_mode = 2
+
+[node name="Inventory" type="VBoxContainer" parent="ActionTabs"]
+visible = false
+layout_mode = 2
+
+[node name="InventoryList" type="ItemList" parent="ActionTabs/Inventory"]
+custom_minimum_size = Vector2(0, 140)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="InventoryButtonRow" type="HBoxContainer" parent="ActionTabs/Inventory"]
+layout_mode = 2
+
+[node name="RefreshButton" type="Button" parent="ActionTabs/Inventory/InventoryButtonRow"]
+layout_mode = 2
+text = "Refresh"
+
+[node name="EquipWeaponButton" type="Button" parent="ActionTabs/Inventory/InventoryButtonRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Equip as Weapon"
+
+[node name="EquipArmorButton" type="Button" parent="ActionTabs/Inventory/InventoryButtonRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Equip as Armor"
+
+[node name="InventoryStatusLabel" type="Label" parent="ActionTabs/Inventory"]
+layout_mode = 2
+text = ""
+autowrap_mode = 2
+
+[node name="Equipment" type="VBoxContainer" parent="ActionTabs"]
+visible = false
+layout_mode = 2
+
+[node name="EquipmentList" type="ItemList" parent="ActionTabs/Equipment"]
+custom_minimum_size = Vector2(0, 140)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="EquipmentButtonRow" type="HBoxContainer" parent="ActionTabs/Equipment"]
+layout_mode = 2
+
+[node name="RefreshButton" type="Button" parent="ActionTabs/Equipment/EquipmentButtonRow"]
+layout_mode = 2
+text = "Refresh"
+
+[node name="UnequipWeaponButton" type="Button" parent="ActionTabs/Equipment/EquipmentButtonRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Unequip Weapon"
+
+[node name="UnequipArmorButton" type="Button" parent="ActionTabs/Equipment/EquipmentButtonRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Unequip Armor"
+
+[node name="EquipmentStatusLabel" type="Label" parent="ActionTabs/Equipment"]
+layout_mode = 2
+text = ""
+autowrap_mode = 2
