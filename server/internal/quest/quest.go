@@ -21,9 +21,10 @@ type Quest struct {
 }
 
 // Catalog is the fixed set of quests available. Own design; monster names
-// reference cmd/server's own placeholder monster content.
+// reference cmd/server's own placeholder monster content (monsterSpecs).
 var Catalog = map[int64]Quest{
 	1: {ID: 1, Name: "Golem Cull", MonsterName: "Stone Golem", TargetKills: 3, GoldReward: 200},
+	2: {ID: 2, Name: "Boar Hunt", MonsterName: "Wild Boar", TargetKills: 5, GoldReward: 100},
 }
 
 // ErrAlreadyAccepted is returned by Store.Accept when the character has

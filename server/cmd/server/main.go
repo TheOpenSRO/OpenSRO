@@ -28,25 +28,35 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
-// spawnZone/monster stats are our own placeholder PvE content -- a single
-// "training dummy" monster kept alive in the world's one spawn zone, since
-// no real map/monster data exists yet. See docs/protocol/refdata_schema.md
-// for what's still missing (a real drop/monster table).
-const (
-	monsterZone       = "jangan"
-	monsterName       = "Stone Golem"
-	monsterMaxHP      = 200
-	monsterDefense    = 10
-	monsterAttack     = 8
-	monsterGoldReward = 50
-	respawnDelay      = 10 * time.Second
-)
+// monsterSpec describes one species of monster to keep alive somewhere in
+// the world. Our own placeholder PvE content -- no real map/monster data
+// exists yet. See docs/protocol/refdata_schema.md for what's still missing
+// (a real drop/monster table); combat.LootTables and quest.Catalog key off
+// these Names, so a new entry here should usually come with matching
+// entries there too.
+type monsterSpec struct {
+	Zone       string
+	Name       string
+	MaxHP      int
+	Defense    int
+	Attack     int
+	GoldReward int64
+}
 
-// maintainMonster keeps exactly one monster alive in monsterZone, respawning
-// it respawnDelay after each death, until ctx is canceled.
-func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Logger) {
+var monsterSpecs = []monsterSpec{
+	{Zone: "jangan", Name: "Stone Golem", MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
+	{Zone: "jangan", Name: "Wild Boar", MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
+	{Zone: "donwhang", Name: "Sand Scorpion", MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
+}
+
+const respawnDelay = 10 * time.Second
+
+// maintainMonster keeps exactly one instance of spec's species alive in its
+// zone, respawning it respawnDelay after each death, until ctx is
+// canceled. main() runs one of these per monsterSpecs entry.
+func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Logger, spec monsterSpec) {
 	spawn := func() int64 {
-		m := monsters.Spawn(monsterZone, monsterName, monsterMaxHP, monsterDefense, monsterAttack, monsterGoldReward)
+		m := monsters.Spawn(spec.Zone, spec.Name, spec.MaxHP, spec.Defense, spec.Attack, spec.GoldReward)
 		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone)
 		return m.ID
 	}
@@ -151,7 +161,9 @@ func main() {
 	parties := party.NewHub()
 	duels := duel.NewHub()
 	trades := trade.NewHub()
-	go maintainMonster(ctx, monsters, logger)
+	for _, spec := range monsterSpecs {
+		go maintainMonster(ctx, monsters, logger, spec)
+	}
 
 	handle := gateway.Chain(
 		session.LoginHandler(accounts),

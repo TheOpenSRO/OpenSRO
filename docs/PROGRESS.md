@@ -2,6 +2,26 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 3)
+
+- Expanded monster content from one placeholder species to three: `cmd/server/main.go`'s
+  `maintainMonster` took a single hardcoded zone/name/stats set; refactored it to take a
+  `monsterSpec` and run one goroutine per entry in a new `monsterSpecs` slice, so adding a
+  species is now a one-line data addition rather than a code change. Added "Wild Boar" (jangan,
+  weaker/faster to kill) and "Sand Scorpion" (donwhang, a second zone, tougher) alongside the
+  existing "Stone Golem". Own placeholder content throughout, same as before -- no real
+  `_RefObjMonster`-equivalent data has been catalogued to import.
+  Extended `combat.LootTables` and `quest.Catalog` to match: Wild Boar and Sand Scorpion both get
+  loot entries (Sand Scorpion has two independently-rolled entries, exercising the multi-entry
+  path `LootTable []LootEntry` was already designed for but only had one monster using), and a
+  second quest ("Boar Hunt": kill 5 Wild Boar for 100 gold) joins "Golem Cull" in the catalog.
+  No protocol changes needed -- this was purely content, reusing everything wired in the last few
+  rounds (loot rolling, quest kill-tracking, gold rewards all already keyed by monster name).
+  Verified via a clean build and full Go test suite (existing quest-listing test loops over
+  entries by ID rather than asserting an exact catalog size, so it stayed valid with two quests
+  instead of one), plus a server binary smoke-test confirming all three species actually spawn
+  (in their correct zones) on startup.
+
 ## 2026-08-20 (cont'd 2)
 
 - Added monster loot drops -- combat previously only ever granted gold on a kill, never items,
