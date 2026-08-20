@@ -240,3 +240,82 @@ text = "Buy 1"
 layout_mode = 2
 text = ""
 autowrap_mode = 2
+
+[node name="Party" type="VBoxContainer" parent="ActionTabs"]
+visible = false
+layout_mode = 2
+
+[node name="PartyList" type="ItemList" parent="ActionTabs/Party"]
+custom_minimum_size = Vector2(0, 100)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="PartyButtonRow" type="HBoxContainer" parent="ActionTabs/Party"]
+layout_mode = 2
+
+[node name="CreateButton" type="Button" parent="ActionTabs/Party/PartyButtonRow"]
+layout_mode = 2
+text = "Create Party"
+
+[node name="LeaveButton" type="Button" parent="ActionTabs/Party/PartyButtonRow"]
+layout_mode = 2
+text = "Leave Party"
+
+[node name="PartyJoinRow" type="HBoxContainer" parent="ActionTabs/Party"]
+layout_mode = 2
+
+[node name="JoinIdInput" type="LineEdit" parent="ActionTabs/Party/PartyJoinRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Party ID"
+
+[node name="JoinButton" type="Button" parent="ActionTabs/Party/PartyJoinRow"]
+layout_mode = 2
+text = "Join by ID"
+
+[node name="PartyStatusLabel" type="Label" parent="ActionTabs/Party"]
+layout_mode = 2
+text = ""
+autowrap_mode = 2
+
+[node name="Guild" type="VBoxContainer" parent="ActionTabs"]
+visible = false
+layout_mode = 2
+
+[node name="GuildList" type="ItemList" parent="ActionTabs/Guild"]
+custom_minimum_size = Vector2(0, 100)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="GuildCreateRow" type="HBoxContainer" parent="ActionTabs/Guild"]
+layout_mode = 2
+
+[node name="GuildNameInput" type="LineEdit" parent="ActionTabs/Guild/GuildCreateRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "New guild name"
+
+[node name="CreateButton" type="Button" parent="ActionTabs/Guild/GuildCreateRow"]
+layout_mode = 2
+text = "Create Guild"
+
+[node name="GuildJoinRow" type="HBoxContainer" parent="ActionTabs/Guild"]
+layout_mode = 2
+
+[node name="JoinIdInput" type="LineEdit" parent="ActionTabs/Guild/GuildJoinRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Guild ID"
+
+[node name="JoinButton" type="Button" parent="ActionTabs/Guild/GuildJoinRow"]
+layout_mode = 2
+text = "Join by ID"
+
+[node name="LeaveButton" type="Button" parent="ActionTabs/Guild/GuildJoinRow"]
+layout_mode = 2
+text = "Leave Guild"
+
+[node name="GuildStatusLabel" type="Label" parent="ActionTabs/Guild"]
+layout_mode = 2
+text = ""
+autowrap_mode = 2

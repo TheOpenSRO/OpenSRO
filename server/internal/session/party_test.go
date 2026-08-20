@@ -150,3 +150,60 @@ func TestPartyFullFlow(t *testing.T) {
 		t.Fatalf("got opcode 0x%04x, want OpPartyMemberLeft", left.Opcode)
 	}
 }
+
+// TestPartyInfoFlow confirms OpPartyInfo reports "not in a party" before
+// joining one, and the real roster afterward -- this is what lets a
+// client that just entered the world learn about an existing party
+// without guessing.
+func TestPartyInfoFlow(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	chars.Create(ctx, 1, "Aria")
+
+	parties := party.NewHub()
+	handle := gateway.Chain(LoginHandler(accounts), PartyHandler(chars, parties))
+
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+
+	resp = send(OpPartyInfo, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	pr, err := DecodePartyResult(resp.Data)
+	if err != nil || pr.Error != "" || pr.PartyID != 0 || len(pr.Members) != 0 {
+		t.Fatalf("expected 'not in a party', got err=%v result=%+v", err, pr)
+	}
+
+	resp = send(OpPartyCreate, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	pr, err = DecodePartyResult(resp.Data)
+	if err != nil || pr.Error != "" {
+		t.Fatalf("create party failed: err=%v result=%+v", err, pr)
+	}
+
+	resp = send(OpPartyInfo, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	pr, err = DecodePartyResult(resp.Data)
+	if err != nil || pr.Error != "" || pr.PartyID == 0 || len(pr.Members) != 1 {
+		t.Fatalf("expected the real party after creating one, got err=%v result=%+v", err, pr)
+	}
+}

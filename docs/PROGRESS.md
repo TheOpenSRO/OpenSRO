@@ -2,6 +2,41 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 10)
+
+- Made party and guild playable from `World.tscn`, and fixed a discoverability gap affecting
+  both -- worse for guild, since guild membership is **persistent**: a player who already has a
+  guild from a previous session had no way to learn that on entering the world, short of trying
+  to Create/Join and getting an `ErrAlreadyInGuild` surprise back. Added `OpPartyInfo`/
+  `OpPartyInfoResult` (0x0088/0x0089) and `OpGuildInfo`/`OpGuildInfoResult` (0x0096/0x0097),
+  reusing the existing `PartyResult`/`GuildResult` wire shapes (`PartyID`/`GuildID == 0` with no
+  members means "not in one" -- real IDs start at 1, so no ambiguity). `World.gd` queries both on
+  `_ready()` alongside the other list queries from previous rounds.
+  Party/guild join still has an accepted, undocumented-until-now gap: joining requires already
+  knowing the party/guild's numeric ID, and there's no invite or discovery mechanism for *finding*
+  one -- unlike duel/trade/friends, which resolve a target by name via `world.Hub`. Fixing that
+  properly would mean designing an invite flow, out of scope for a UI-wiring pass; the pragmatic
+  answer for this round is a "Join by ID" text field, with the ID meant to be shared out-of-band
+  (e.g. via the chat already built) -- the creator sees their own ID in the tab's status label
+  after creating.
+  Hit a real, instructive bug while writing this round's end-to-end verification (not in the
+  feature itself): GDScript lambdas capture outer local variables **by value**, so `func(): done =
+  true` inside a closure silently rebinds a snapshot rather than mutating the outer `done` that a
+  polling loop was checking -- the test looked like the feature was broken (timeouts, "no such
+  character" errors that were actually fallout from an unrelated character-name collision across
+  repeated runs) when the actual bug was in the test harness's closure usage. Fixed by capturing
+  results in single-key Dictionaries (a reference type) instead of primitives, and wrote up the
+  gotcha directly in the temporary test file's own comment in case it recurs.
+  Verified end-to-end for real once the harness was fixed: two separate `NetClient` instances
+  (two players) against a live server -- Alice creates a party, Bob joins using only the ID Alice
+  was given (no other channel), `OpPartyInfo` confirms Alice's real roster; same sequence for
+  guild, plus confirming `OpGuildInfo` sees the guild on a fresh query (standing in for a relog,
+  since guild membership persists).
+  Go: `TestPartyInfoFlow`/`TestGuildInfoFlow` (both: "not in one" before, real roster after). Full
+  Go test suite green. GDScript: `party.gd`/`guild.gd` gained `encode_name_request`-based info
+  requests (no new wire shape, reused `decode_result`), all 19 GDScript suites still pass headless
+  (no new test file needed -- info reuses already-verified `PartyResult`/`GuildResult` decoding).
+
 ## 2026-08-20 (cont'd 9)
 
 - Made quests and the NPC shop playable from `World.tscn`, continuing the "close the protocol-to-

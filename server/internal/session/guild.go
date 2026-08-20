@@ -24,6 +24,8 @@ const (
 	OpGuildJoinResult   uint16 = 0x0093 // server -> client
 	OpGuildLeave        uint16 = 0x0094 // client -> server
 	OpGuildLeaveResult  uint16 = 0x0095 // server -> client
+	OpGuildInfo         uint16 = 0x0096 // client -> server
+	OpGuildInfoResult   uint16 = 0x0097 // server -> client
 )
 
 // GuildMemberSnapshot is one guild member, as sent over the wire.
@@ -200,10 +202,39 @@ func GuildHandler(chars character.Store, guilds guild.Store) gateway.Handler {
 			return handleGuildJoin(ctx, sess, p, chars, guilds)
 		case OpGuildLeave:
 			return handleGuildLeave(ctx, sess, p, chars, guilds)
+		case OpGuildInfo:
+			return handleGuildInfo(ctx, sess, p, chars, guilds)
 		default:
 			return nil
 		}
 	}
+}
+
+// handleGuildInfo answers "am I already in a guild?" -- important
+// specifically because guild membership is persistent: a client that just
+// logged in (possibly for the first time this session) otherwise has no
+// way to learn about an existing guild except by trying to Create/Join and
+// getting ErrAlreadyInGuild back. Reuses GuildResult's shape: GuildID == 0
+// and no members means "not in a guild" (real guild IDs start at 1).
+func handleGuildInfo(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store) error {
+	req, err := DecodeCharacterCreateRequest(p.Data) // reuse: {Name string}
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpGuildInfoResult, Data: (&GuildResult{Error: "malformed request"}).Encode()})
+	}
+	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.Name)
+	if errStr != "" {
+		return sess.Send(&proto.Packet{Opcode: OpGuildInfoResult, Data: (&GuildResult{Error: errStr}).Encode()})
+	}
+
+	g, err := guilds.GetByCharacter(ctx, characterID)
+	if errors.Is(err, guild.ErrNotInGuild) {
+		return sess.Send(&proto.Packet{Opcode: OpGuildInfoResult, Data: (&GuildResult{}).Encode()})
+	}
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpGuildInfoResult, Data: (&GuildResult{Error: "failed to load guild info"}).Encode()})
+	}
+	result := &GuildResult{GuildID: g.ID, Name: g.Name, LeaderID: g.LeaderID, Members: guildMemberSnapshots(g.Members)}
+	return sess.Send(&proto.Packet{Opcode: OpGuildInfoResult, Data: result.Encode()})
 }
 
 func guildMemberSnapshots(members []guild.Member) []GuildMemberSnapshot {

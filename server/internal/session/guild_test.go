@@ -162,3 +162,61 @@ func TestGuildFullFlow(t *testing.T) {
 		t.Fatalf("leave guild failed: err=%v result=%+v", err, lr)
 	}
 }
+
+// TestGuildInfoFlow confirms OpGuildInfo reports "not in a guild" before
+// joining one, and the real roster afterward -- specifically important
+// for guilds since membership is persistent (unlike party), so a client
+// that just logged in needs a way to learn about an existing guild
+// without guessing or getting an ErrAlreadyInGuild surprise.
+func TestGuildInfoFlow(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	chars.Create(ctx, 1, "Aria")
+
+	guilds := openTestGuildStore(t)
+	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guilds))
+
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+
+	resp = send(OpGuildInfo, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	gr, err := DecodeGuildResult(resp.Data)
+	if err != nil || gr.Error != "" || gr.GuildID != 0 || len(gr.Members) != 0 {
+		t.Fatalf("expected 'not in a guild', got err=%v result=%+v", err, gr)
+	}
+
+	resp = send(OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "Silk Legion"}).Encode())
+	gr, err = DecodeGuildResult(resp.Data)
+	if err != nil || gr.Error != "" {
+		t.Fatalf("create guild failed: err=%v result=%+v", err, gr)
+	}
+
+	resp = send(OpGuildInfo, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	gr, err = DecodeGuildResult(resp.Data)
+	if err != nil || gr.Error != "" || gr.GuildID == 0 || gr.Name != "Silk Legion" || len(gr.Members) != 1 {
+		t.Fatalf("expected the real guild after creating one, got err=%v result=%+v", err, gr)
+	}
+}

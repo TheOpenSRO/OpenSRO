@@ -22,6 +22,8 @@ const (
 	OpPartyLeaveResult  uint16 = 0x0085 // server -> client
 	OpPartyMemberJoined uint16 = 0x0086 // server -> client, broadcast to other party members
 	OpPartyMemberLeft   uint16 = 0x0087 // server -> client, broadcast to remaining party members
+	OpPartyInfo         uint16 = 0x0088 // client -> server
+	OpPartyInfoResult   uint16 = 0x0089 // server -> client
 )
 
 // PartyMemberSnapshot is one party member, as sent over the wire.
@@ -188,10 +190,36 @@ func PartyHandler(chars character.Store, parties *party.Hub) gateway.Handler {
 			return handlePartyJoin(ctx, sess, p, chars, parties)
 		case OpPartyLeave:
 			return handlePartyLeave(ctx, sess, p, chars, parties)
+		case OpPartyInfo:
+			return handlePartyInfo(ctx, sess, p, chars, parties)
 		default:
 			return nil
 		}
 	}
+}
+
+// handlePartyInfo answers "am I already in a party?" -- without this, a
+// client that just entered the world (e.g. after a relog) has no way to
+// learn it's already in a party except by trying to Create/Join and
+// getting ErrAlreadyInParty back. Reuses PartyResult's shape: PartyID == 0
+// and no members means "not in a party" (real party IDs start at 1, so
+// there's no ambiguity).
+func handlePartyInfo(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, parties *party.Hub) error {
+	req, err := DecodeCharacterCreateRequest(p.Data) // reuse: {Name string}
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpPartyInfoResult, Data: (&PartyResult{Error: "malformed request"}).Encode()})
+	}
+	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.Name)
+	if errStr != "" {
+		return sess.Send(&proto.Packet{Opcode: OpPartyInfoResult, Data: (&PartyResult{Error: errStr}).Encode()})
+	}
+
+	pt, in := parties.Get(characterID)
+	if !in {
+		return sess.Send(&proto.Packet{Opcode: OpPartyInfoResult, Data: (&PartyResult{}).Encode()})
+	}
+	result := &PartyResult{PartyID: pt.ID, Members: partyMemberSnapshots(pt.Members)}
+	return sess.Send(&proto.Packet{Opcode: OpPartyInfoResult, Data: result.Encode()})
 }
 
 func partyMemberSnapshots(members []party.Member) []PartyMemberSnapshot {

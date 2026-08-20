@@ -12,6 +12,8 @@ const OP_LEAVE := 0x0084           # client -> server
 const OP_LEAVE_RESULT := 0x0085    # server -> client
 const OP_MEMBER_JOINED := 0x0086   # server -> client, broadcast
 const OP_MEMBER_LEFT := 0x0087     # server -> client, broadcast
+const OP_INFO := 0x0088            # client -> server
+const OP_INFO_RESULT := 0x0089     # server -> client
 
 ## One party member.
 class Member:

@@ -48,6 +48,21 @@ extends Control
 @onready var shop_buy_button: Button = $ActionTabs/Shop/ShopButtonRow/BuyButton
 @onready var shop_status_label: Label = $ActionTabs/Shop/ShopStatusLabel
 
+@onready var party_list: ItemList = $ActionTabs/Party/PartyList
+@onready var party_create_button: Button = $ActionTabs/Party/PartyButtonRow/CreateButton
+@onready var party_leave_button: Button = $ActionTabs/Party/PartyButtonRow/LeaveButton
+@onready var party_join_id_input: LineEdit = $ActionTabs/Party/PartyJoinRow/JoinIdInput
+@onready var party_join_button: Button = $ActionTabs/Party/PartyJoinRow/JoinButton
+@onready var party_status_label: Label = $ActionTabs/Party/PartyStatusLabel
+
+@onready var guild_list: ItemList = $ActionTabs/Guild/GuildList
+@onready var guild_name_input: LineEdit = $ActionTabs/Guild/GuildCreateRow/GuildNameInput
+@onready var guild_create_button: Button = $ActionTabs/Guild/GuildCreateRow/CreateButton
+@onready var guild_join_id_input: LineEdit = $ActionTabs/Guild/GuildJoinRow/JoinIdInput
+@onready var guild_join_button: Button = $ActionTabs/Guild/GuildJoinRow/JoinButton
+@onready var guild_leave_button: Button = $ActionTabs/Guild/GuildJoinRow/LeaveButton
+@onready var guild_status_label: Label = $ActionTabs/Guild/GuildStatusLabel
+
 # character_id -> display name, for the nearby-entities list.
 var _nearby: Dictionary = {}
 
@@ -95,6 +110,18 @@ func _ready() -> void:
 	NetClient.shop_list_result.connect(_on_shop_list_result)
 	NetClient.shop_buy_result.connect(_on_shop_buy_result)
 
+	NetClient.party_create_result.connect(_on_party_result)
+	NetClient.party_join_result.connect(_on_party_result)
+	NetClient.party_leave_result.connect(_on_party_leave_result)
+	NetClient.party_member_joined.connect(_on_party_member_joined)
+	NetClient.party_member_left.connect(_on_party_member_left)
+	NetClient.party_info_result.connect(_on_party_result)
+
+	NetClient.guild_create_result.connect(_on_guild_result)
+	NetClient.guild_join_result.connect(_on_guild_result)
+	NetClient.guild_leave_result.connect(_on_guild_leave_result)
+	NetClient.guild_info_result.connect(_on_guild_result)
+
 	send_button.pressed.connect(_on_send_pressed)
 	chat_input.text_submitted.connect(func(_text: String): _on_send_pressed())
 	disconnect_button.pressed.connect(_on_disconnect_pressed)
@@ -112,11 +139,21 @@ func _ready() -> void:
 	shop_refresh_button.pressed.connect(func(): NetClient.list_shop())
 	shop_buy_button.pressed.connect(_on_shop_buy_pressed)
 
+	party_create_button.pressed.connect(func(): NetClient.create_party(NetClient.current_character_name))
+	party_leave_button.pressed.connect(func(): NetClient.leave_party(NetClient.current_character_name))
+	party_join_button.pressed.connect(_on_party_join_pressed)
+
+	guild_create_button.pressed.connect(_on_guild_create_pressed)
+	guild_join_button.pressed.connect(_on_guild_join_pressed)
+	guild_leave_button.pressed.connect(func(): NetClient.leave_guild(NetClient.current_character_name))
+
 	NetClient.list_monsters()
 	NetClient.list_inventory(NetClient.current_character_name)
 	NetClient.list_equipment(NetClient.current_character_name)
 	NetClient.list_quests(NetClient.current_character_name)
 	NetClient.list_shop()
+	NetClient.party_info(NetClient.current_character_name)
+	NetClient.guild_info(NetClient.current_character_name)
 
 func _refresh_entity_list() -> void:
 	entity_list.clear()
@@ -334,3 +371,89 @@ func _on_shop_buy_result(ok: bool, reason: String) -> void:
 	shop_status_label.text = "Purchased." if ok else "Purchase failed: %s" % reason
 	if ok:
 		NetClient.list_inventory(NetClient.current_character_name)
+
+# --- Party tab -------------------------------------------------------------
+
+func _refresh_party_list(result: PartyNet.Result) -> void:
+	party_list.clear()
+	for m in result.members:
+		party_list.add_item(m.member_name)
+
+func _on_party_result(result: PartyNet.Result) -> void:
+	if result == null:
+		return
+	if result.error != "":
+		party_status_label.text = "Error: %s" % result.error
+		return
+	if result.party_id == 0:
+		party_status_label.text = "Not in a party."
+		party_list.clear()
+		return
+	party_status_label.text = "Party #%d (%d member(s))." % [result.party_id, result.members.size()]
+	_refresh_party_list(result)
+
+func _on_party_join_pressed() -> void:
+	var id_text := party_join_id_input.text.strip_edges()
+	if not id_text.is_valid_int():
+		party_status_label.text = "Enter a numeric party ID."
+		return
+	NetClient.join_party(NetClient.current_character_name, id_text.to_int())
+
+func _on_party_leave_result(ok: bool, reason: String) -> void:
+	if ok:
+		party_status_label.text = "Left the party."
+		party_list.clear()
+	else:
+		party_status_label.text = "Leave failed: %s" % reason
+
+func _on_party_member_joined(member: PartyNet.MemberJoined) -> void:
+	if member == null:
+		return
+	_log_system("%s joined your party." % member.member_name)
+	NetClient.party_info(NetClient.current_character_name)
+
+func _on_party_member_left(character_id: int) -> void:
+	_log_system("A party member left (character #%d)." % character_id)
+	NetClient.party_info(NetClient.current_character_name)
+
+# --- Guild tab -------------------------------------------------------------
+
+func _refresh_guild_list(result: GuildNet.Result) -> void:
+	guild_list.clear()
+	for m in result.members:
+		var role_name := "Leader" if m.role == GuildNet.ROLE_LEADER else "Member"
+		guild_list.add_item("%s [%s]" % [m.member_name, role_name])
+
+func _on_guild_result(result: GuildNet.Result) -> void:
+	if result == null:
+		return
+	if result.error != "":
+		guild_status_label.text = "Error: %s" % result.error
+		return
+	if result.guild_id == 0:
+		guild_status_label.text = "Not in a guild."
+		guild_list.clear()
+		return
+	guild_status_label.text = "%s (#%d, %d member(s))." % [result.guild_name, result.guild_id, result.members.size()]
+	_refresh_guild_list(result)
+
+func _on_guild_create_pressed() -> void:
+	var guild_name := guild_name_input.text.strip_edges()
+	if guild_name.is_empty():
+		guild_status_label.text = "Enter a guild name first."
+		return
+	NetClient.create_guild(NetClient.current_character_name, guild_name)
+
+func _on_guild_join_pressed() -> void:
+	var id_text := guild_join_id_input.text.strip_edges()
+	if not id_text.is_valid_int():
+		guild_status_label.text = "Enter a numeric guild ID."
+		return
+	NetClient.join_guild(NetClient.current_character_name, id_text.to_int())
+
+func _on_guild_leave_result(ok: bool, reason: String) -> void:
+	if ok:
+		guild_status_label.text = "Left the guild."
+		guild_list.clear()
+	else:
+		guild_status_label.text = "Leave failed: %s" % reason

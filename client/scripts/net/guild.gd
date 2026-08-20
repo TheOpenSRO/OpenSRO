@@ -13,6 +13,8 @@ const OP_JOIN := 0x0092            # client -> server
 const OP_JOIN_RESULT := 0x0093     # server -> client
 const OP_LEAVE := 0x0094           # client -> server
 const OP_LEAVE_RESULT := 0x0095    # server -> client
+const OP_INFO := 0x0096            # client -> server
+const OP_INFO_RESULT := 0x0097     # server -> client
 
 const ROLE_MEMBER := 0
 const ROLE_LEADER := 1

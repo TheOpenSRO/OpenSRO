@@ -43,10 +43,12 @@ signal party_join_result(result: PartyNet.Result)
 signal party_leave_result(ok: bool, reason: String)
 signal party_member_joined(member: PartyNet.MemberJoined)
 signal party_member_left(character_id: int)
+signal party_info_result(result: PartyNet.Result)
 
 signal guild_create_result(result: GuildNet.Result)
 signal guild_join_result(result: GuildNet.Result)
 signal guild_leave_result(ok: bool, reason: String)
+signal guild_info_result(result: GuildNet.Result)
 
 signal chat_message(message: ChatNet.Message)
 signal chat_whisper_result(ok: bool, reason: String)
@@ -264,6 +266,9 @@ func join_party(char_name: String, party_id: int) -> void:
 func leave_party(char_name: String) -> void:
 	_send(PartyNet.OP_LEAVE, PartyNet.encode_name_request(char_name))
 
+func party_info(char_name: String) -> void:
+	_send(PartyNet.OP_INFO, PartyNet.encode_name_request(char_name))
+
 func create_guild(char_name: String, guild_name: String) -> void:
 	_send(GuildNet.OP_CREATE, GuildNet.encode_create(char_name, guild_name))
 
@@ -272,6 +277,9 @@ func join_guild(char_name: String, guild_id: int) -> void:
 
 func leave_guild(char_name: String) -> void:
 	_send(GuildNet.OP_LEAVE, GuildNet.encode_name_request(char_name))
+
+func guild_info(char_name: String) -> void:
+	_send(GuildNet.OP_INFO, GuildNet.encode_name_request(char_name))
 
 func say(message_text: String) -> void:
 	_send(ChatNet.OP_SAY, ChatNet.encode_say(message_text))
@@ -391,6 +399,8 @@ func _dispatch(p: Packet) -> void:
 			party_member_joined.emit(PartyNet.decode_member_joined(p.data))
 		PartyNet.OP_MEMBER_LEFT:
 			party_member_left.emit(PartyNet.decode_member_left(p.data))
+		PartyNet.OP_INFO_RESULT:
+			party_info_result.emit(PartyNet.decode_result(p.data))
 		GuildNet.OP_CREATE_RESULT:
 			guild_create_result.emit(GuildNet.decode_result(p.data))
 		GuildNet.OP_JOIN_RESULT:
@@ -398,6 +408,8 @@ func _dispatch(p: Packet) -> void:
 		GuildNet.OP_LEAVE_RESULT:
 			var r := GuildNet.decode_leave_result(p.data)
 			guild_leave_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		GuildNet.OP_INFO_RESULT:
+			guild_info_result.emit(GuildNet.decode_result(p.data))
 		ChatNet.OP_MESSAGE:
 			chat_message.emit(ChatNet.decode_message(p.data))
 		ChatNet.OP_WHISPER_RESULT:
