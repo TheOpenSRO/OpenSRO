@@ -64,6 +64,17 @@ signal duel_attack_result(result: DuelNet.AttackResult)
 signal duel_opponent_damaged(damaged: DuelNet.OpponentDamaged)
 signal duel_ended(ended: DuelNet.Ended)
 
+signal trade_request_result(ok: bool, reason: String)
+signal trade_invite(invite: TradeNet.Invite)
+signal trade_respond_result(ok: bool, reason: String)
+signal trade_started(started: TradeNet.Started)
+signal trade_declined(declined: TradeNet.Declined)
+signal trade_offer_result(ok: bool, reason: String)
+signal trade_offer_updated(updated: TradeNet.OfferUpdated)
+signal trade_confirm_result(ok: bool, reason: String)
+signal trade_completed(completed: TradeNet.Completed)
+signal trade_cancelled(cancelled: TradeNet.Cancelled)
+
 var _peer: StreamPeerTCP
 var _connecting := false
 
@@ -203,6 +214,21 @@ func duel_respond(char_name: String, challenger_name: String, accept: bool) -> v
 func duel_attack(char_name: String) -> void:
 	_send(DuelNet.OP_ATTACK, DuelNet.encode_attack(char_name))
 
+func trade_request(char_name: String, target_name: String) -> void:
+	_send(TradeNet.OP_REQUEST, TradeNet.encode_request(char_name, target_name))
+
+func trade_respond(char_name: String, requester_name: String, accept: bool) -> void:
+	_send(TradeNet.OP_RESPOND, TradeNet.encode_respond(char_name, requester_name, accept))
+
+func trade_set_offer(char_name: String, gold: int, item_slot: int, quantity: int) -> void:
+	_send(TradeNet.OP_SET_OFFER, TradeNet.encode_set_offer(char_name, gold, item_slot, quantity))
+
+func trade_confirm(char_name: String) -> void:
+	_send(TradeNet.OP_CONFIRM, TradeNet.encode_confirm(char_name))
+
+func trade_cancel(char_name: String) -> void:
+	_send(TradeNet.OP_CANCEL, TradeNet.encode_cancel(char_name))
+
 func _dispatch(p: Packet) -> void:
 	match p.opcode:
 		Auth.OP_LOGIN_RESULT:
@@ -297,5 +323,29 @@ func _dispatch(p: Packet) -> void:
 			duel_opponent_damaged.emit(DuelNet.decode_opponent_damaged(p.data))
 		DuelNet.OP_ENDED:
 			duel_ended.emit(DuelNet.decode_ended(p.data))
+		TradeNet.OP_REQUEST_RESULT:
+			var r := Auth.decode_result(p.data)
+			trade_request_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		TradeNet.OP_INVITE:
+			trade_invite.emit(TradeNet.decode_invite(p.data))
+		TradeNet.OP_RESPOND_RESULT:
+			var r := Auth.decode_result(p.data)
+			trade_respond_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		TradeNet.OP_STARTED:
+			trade_started.emit(TradeNet.decode_started(p.data))
+		TradeNet.OP_DECLINED:
+			trade_declined.emit(TradeNet.decode_declined(p.data))
+		TradeNet.OP_OFFER_RESULT:
+			var r := Auth.decode_result(p.data)
+			trade_offer_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		TradeNet.OP_OFFER_UPDATED:
+			trade_offer_updated.emit(TradeNet.decode_offer_updated(p.data))
+		TradeNet.OP_CONFIRM_RESULT:
+			var r := Auth.decode_result(p.data)
+			trade_confirm_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		TradeNet.OP_COMPLETED:
+			trade_completed.emit(TradeNet.decode_completed(p.data))
+		TradeNet.OP_CANCELLED:
+			trade_cancelled.emit(TradeNet.decode_cancelled(p.data))
 		_:
 			push_warning("NetClient: unhandled opcode 0x%04x" % p.opcode)

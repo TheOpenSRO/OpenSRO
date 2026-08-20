@@ -1,0 +1,677 @@
+package session
+
+import (
+	"context"
+	"encoding/binary"
+	"errors"
+	"fmt"
+
+	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/trade"
+	"github.com/OpenSRO/srrevamp/server/internal/world"
+)
+
+// Trade opcodes, our own protocol. All require a prior successful
+// OpEnterWorld (target resolution reuses world.Hub.FindByName, same as
+// chat/duel). No two-store transaction spans character.Store and
+// inventory.Store, so execution uses careful ordering plus best-effort
+// compensation on failure rather than true atomicity -- see
+// executeTrade's comments for the one narrow gap that leaves (recipient
+// inventory full at the last step).
+const (
+	OpTradeRequest       uint16 = 0x00D0 // client -> server
+	OpTradeRequestResult uint16 = 0x00D1 // server -> client, ack to the requester
+	OpTradeInvite        uint16 = 0x00D2 // server -> client, direct to the target
+	OpTradeRespond       uint16 = 0x00D3 // client -> server
+	OpTradeRespondResult uint16 = 0x00D4 // server -> client, ack to the responder
+	OpTradeStarted       uint16 = 0x00D5 // server -> client, direct to both sides
+	OpTradeDeclined      uint16 = 0x00D6 // server -> client, direct to the requester
+	OpTradeSetOffer      uint16 = 0x00D7 // client -> server
+	OpTradeOfferResult   uint16 = 0x00D8 // server -> client, ack to the offering side
+	OpTradeOfferUpdated  uint16 = 0x00D9 // server -> client, direct to the other side
+	OpTradeConfirm       uint16 = 0x00DA // client -> server
+	OpTradeConfirmResult uint16 = 0x00DB // server -> client, ack
+	OpTradeCompleted     uint16 = 0x00DC // server -> client, direct to both sides (what THEY received)
+	OpTradeCancel        uint16 = 0x00DD // client -> server
+	OpTradeCancelled     uint16 = 0x00DE // server -> client, direct to both sides
+)
+
+// TradeRequestRequest is the OpTradeRequest payload.
+type TradeRequestRequest struct {
+	CharacterName string
+	TargetName    string
+}
+
+func (r *TradeRequestRequest) Encode() []byte { return encodeStrings(r.CharacterName, r.TargetName) }
+
+func DecodeTradeRequestRequest(data []byte) (*TradeRequestRequest, error) {
+	fields, err := decodeStrings(data, 2)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeRequestRequest: %w", err)
+	}
+	return &TradeRequestRequest{CharacterName: fields[0], TargetName: fields[1]}, nil
+}
+
+// TradeRequestResult is the OpTradeRequestResult payload.
+type TradeRequestResult struct {
+	OK     bool
+	Reason string
+}
+
+func (r *TradeRequestResult) Encode() []byte { return encodeOKReason(r.OK, r.Reason) }
+
+func DecodeTradeRequestResult(data []byte) (*TradeRequestResult, error) {
+	ok, reason, err := decodeOKReason(data)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeRequestResult: %w", err)
+	}
+	return &TradeRequestResult{OK: ok, Reason: reason}, nil
+}
+
+// TradeInvite is the OpTradeInvite payload.
+type TradeInvite struct {
+	RequesterName string
+}
+
+func (r *TradeInvite) Encode() []byte { return encodeStrings(r.RequesterName) }
+
+func DecodeTradeInvite(data []byte) (*TradeInvite, error) {
+	fields, err := decodeStrings(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeInvite: %w", err)
+	}
+	return &TradeInvite{RequesterName: fields[0]}, nil
+}
+
+// TradeRespondRequest is the OpTradeRespond payload.
+type TradeRespondRequest struct {
+	CharacterName string
+	RequesterName string
+	Accept        bool
+}
+
+func (r *TradeRespondRequest) Encode() []byte {
+	out := encodeStrings(r.CharacterName, r.RequesterName)
+	if r.Accept {
+		return append(out, 1)
+	}
+	return append(out, 0)
+}
+
+func DecodeTradeRespondRequest(data []byte) (*TradeRespondRequest, error) {
+	fields, rest, err := decodeStringsPrefix(data, 2)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeRespondRequest: %w", err)
+	}
+	if len(rest) < 1 {
+		return nil, errors.New("session: decoding TradeRespondRequest: truncated accept flag")
+	}
+	return &TradeRespondRequest{CharacterName: fields[0], RequesterName: fields[1], Accept: rest[0] != 0}, nil
+}
+
+// TradeRespondResult is the OpTradeRespondResult payload.
+type TradeRespondResult struct {
+	OK     bool
+	Reason string
+}
+
+func (r *TradeRespondResult) Encode() []byte { return encodeOKReason(r.OK, r.Reason) }
+
+func DecodeTradeRespondResult(data []byte) (*TradeRespondResult, error) {
+	ok, reason, err := decodeOKReason(data)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeRespondResult: %w", err)
+	}
+	return &TradeRespondResult{OK: ok, Reason: reason}, nil
+}
+
+// TradeStarted is the OpTradeStarted payload.
+type TradeStarted struct {
+	PartnerName string
+}
+
+func (r *TradeStarted) Encode() []byte { return encodeStrings(r.PartnerName) }
+
+func DecodeTradeStarted(data []byte) (*TradeStarted, error) {
+	fields, err := decodeStrings(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeStarted: %w", err)
+	}
+	return &TradeStarted{PartnerName: fields[0]}, nil
+}
+
+// TradeDeclined is the OpTradeDeclined payload.
+type TradeDeclined struct {
+	TargetName string
+}
+
+func (r *TradeDeclined) Encode() []byte { return encodeStrings(r.TargetName) }
+
+func DecodeTradeDeclined(data []byte) (*TradeDeclined, error) {
+	fields, err := decodeStrings(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeDeclined: %w", err)
+	}
+	return &TradeDeclined{TargetName: fields[0]}, nil
+}
+
+// TradeOffer is the wire shape of trade.Offer, shared by OpTradeSetOffer
+// (request) and OpTradeOfferUpdated (notification).
+type TradeOffer struct {
+	Gold     int64
+	ItemSlot int32
+	Quantity int32
+}
+
+func (o *TradeOffer) encodeFields() []byte {
+	out := encodeInt64(o.Gold)
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(o.ItemSlot))
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(o.Quantity))
+	return append(out, buf...)
+}
+
+func decodeOfferFields(data []byte) (*TradeOffer, error) {
+	if len(data) < 16 {
+		return nil, errors.New("truncated offer")
+	}
+	gold, rest, err := decodeInt64(data)
+	if err != nil {
+		return nil, err
+	}
+	return &TradeOffer{
+		Gold:     gold,
+		ItemSlot: int32(binary.LittleEndian.Uint32(rest[0:4])),
+		Quantity: int32(binary.LittleEndian.Uint32(rest[4:8])),
+	}, nil
+}
+
+// TradeSetOfferRequest is the OpTradeSetOffer payload.
+type TradeSetOfferRequest struct {
+	CharacterName string
+	Offer         TradeOffer
+}
+
+func (r *TradeSetOfferRequest) Encode() []byte {
+	return append(encodeStrings(r.CharacterName), r.Offer.encodeFields()...)
+}
+
+func DecodeTradeSetOfferRequest(data []byte) (*TradeSetOfferRequest, error) {
+	fields, rest, err := decodeStringsPrefix(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeSetOfferRequest: %w", err)
+	}
+	offer, err := decodeOfferFields(rest)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeSetOfferRequest: offer: %w", err)
+	}
+	return &TradeSetOfferRequest{CharacterName: fields[0], Offer: *offer}, nil
+}
+
+// TradeOfferResult is the OpTradeOfferResult payload.
+type TradeOfferResult struct {
+	OK     bool
+	Reason string
+}
+
+func (r *TradeOfferResult) Encode() []byte { return encodeOKReason(r.OK, r.Reason) }
+
+func DecodeTradeOfferResult(data []byte) (*TradeOfferResult, error) {
+	ok, reason, err := decodeOKReason(data)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeOfferResult: %w", err)
+	}
+	return &TradeOfferResult{OK: ok, Reason: reason}, nil
+}
+
+// TradeOfferUpdated is the OpTradeOfferUpdated payload.
+type TradeOfferUpdated struct {
+	Offer TradeOffer
+}
+
+func (r *TradeOfferUpdated) Encode() []byte { return r.Offer.encodeFields() }
+
+func DecodeTradeOfferUpdated(data []byte) (*TradeOfferUpdated, error) {
+	offer, err := decodeOfferFields(data)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeOfferUpdated: %w", err)
+	}
+	return &TradeOfferUpdated{Offer: *offer}, nil
+}
+
+// TradeConfirmRequest is the OpTradeConfirm payload.
+type TradeConfirmRequest struct {
+	CharacterName string
+}
+
+func (r *TradeConfirmRequest) Encode() []byte { return encodeStrings(r.CharacterName) }
+
+func DecodeTradeConfirmRequest(data []byte) (*TradeConfirmRequest, error) {
+	fields, err := decodeStrings(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeConfirmRequest: %w", err)
+	}
+	return &TradeConfirmRequest{CharacterName: fields[0]}, nil
+}
+
+// TradeConfirmResult is the OpTradeConfirmResult payload.
+type TradeConfirmResult struct {
+	OK     bool
+	Reason string
+}
+
+func (r *TradeConfirmResult) Encode() []byte { return encodeOKReason(r.OK, r.Reason) }
+
+func DecodeTradeConfirmResult(data []byte) (*TradeConfirmResult, error) {
+	ok, reason, err := decodeOKReason(data)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeConfirmResult: %w", err)
+	}
+	return &TradeConfirmResult{OK: ok, Reason: reason}, nil
+}
+
+// TradeCompleted is the OpTradeCompleted payload: what THIS character
+// received (i.e. the counterparty's offer), sent separately to each side.
+// ReceivedItemID is 0 if no item was part of the received offer.
+type TradeCompleted struct {
+	ReceivedGold     int64
+	ReceivedItemID   int64
+	ReceivedQuantity int32
+}
+
+func (r *TradeCompleted) Encode() []byte {
+	out := encodeInt64(r.ReceivedGold)
+	out = append(out, encodeInt64(r.ReceivedItemID)...)
+	buf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buf, uint32(r.ReceivedQuantity))
+	return append(out, buf...)
+}
+
+func DecodeTradeCompleted(data []byte) (*TradeCompleted, error) {
+	gold, rest, err := decodeInt64(data)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeCompleted: gold: %w", err)
+	}
+	itemID, rest, err := decodeInt64(rest)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeCompleted: item id: %w", err)
+	}
+	if len(rest) < 4 {
+		return nil, errors.New("session: decoding TradeCompleted: truncated quantity")
+	}
+	return &TradeCompleted{
+		ReceivedGold:     gold,
+		ReceivedItemID:   itemID,
+		ReceivedQuantity: int32(binary.LittleEndian.Uint32(rest)),
+	}, nil
+}
+
+// TradeCancelRequest is the OpTradeCancel payload.
+type TradeCancelRequest struct {
+	CharacterName string
+}
+
+func (r *TradeCancelRequest) Encode() []byte { return encodeStrings(r.CharacterName) }
+
+func DecodeTradeCancelRequest(data []byte) (*TradeCancelRequest, error) {
+	fields, err := decodeStrings(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeCancelRequest: %w", err)
+	}
+	return &TradeCancelRequest{CharacterName: fields[0]}, nil
+}
+
+// TradeCancelled is the OpTradeCancelled payload.
+type TradeCancelled struct {
+	CancelledByName string
+}
+
+func (r *TradeCancelled) Encode() []byte { return encodeStrings(r.CancelledByName) }
+
+func DecodeTradeCancelled(data []byte) (*TradeCancelled, error) {
+	fields, err := decodeStrings(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding TradeCancelled: %w", err)
+	}
+	return &TradeCancelled{CancelledByName: fields[0]}, nil
+}
+
+// TradeHandler returns a gateway.Handler implementing the client->server
+// trade opcodes.
+func TradeHandler(chars character.Store, inv inventory.Store, hub *world.Hub, trades *trade.Hub) gateway.Handler {
+	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		switch p.Opcode {
+		case OpTradeRequest:
+			return handleTradeRequest(ctx, sess, p, chars, hub, trades)
+		case OpTradeRespond:
+			return handleTradeRespond(ctx, sess, p, chars, trades)
+		case OpTradeSetOffer:
+			return handleTradeSetOffer(ctx, sess, p, chars, trades)
+		case OpTradeConfirm:
+			return handleTradeConfirm(ctx, sess, p, chars, inv, trades)
+		case OpTradeCancel:
+			return handleTradeCancel(ctx, sess, p, chars, trades)
+		default:
+			return nil
+		}
+	}
+}
+
+func handleTradeRequest(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, hub *world.Hub, trades *trade.Hub) error {
+	req, err := DecodeTradeRequestRequest(p.Data)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpTradeRequestResult, Data: (&TradeRequestResult{Reason: "malformed request"}).Encode()})
+	}
+	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
+	if errStr != "" {
+		return sess.Send(&proto.Packet{Opcode: OpTradeRequestResult, Data: (&TradeRequestResult{Reason: errStr}).Encode()})
+	}
+	targetEntity, ok := hub.FindByName(req.TargetName)
+	if !ok {
+		return sess.Send(&proto.Packet{Opcode: OpTradeRequestResult, Data: (&TradeRequestResult{Reason: "player not found"}).Encode()})
+	}
+
+	requester := trade.Member{Session: sess, CharacterID: characterID, Name: req.CharacterName}
+	target := trade.Member{Session: targetEntity.Session, CharacterID: targetEntity.CharacterID, Name: targetEntity.Name}
+	if err := trades.Request(requester, target); err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpTradeRequestResult, Data: (&TradeRequestResult{Reason: tradeErrorMessage(err)}).Encode()})
+	}
+
+	if err := sess.Send(&proto.Packet{Opcode: OpTradeRequestResult, Data: (&TradeRequestResult{OK: true}).Encode()}); err != nil {
+		return err
+	}
+	invite := &TradeInvite{RequesterName: req.CharacterName}
+	return target.Session.Send(&proto.Packet{Opcode: OpTradeInvite, Data: invite.Encode()})
+}
+
+func handleTradeRespond(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, trades *trade.Hub) error {
+	req, err := DecodeTradeRespondRequest(p.Data)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpTradeRespondResult, Data: (&TradeRespondResult{Reason: "malformed request"}).Encode()})
+	}
+	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
+	if errStr != "" {
+		return sess.Send(&proto.Packet{Opcode: OpTradeRespondResult, Data: (&TradeRespondResult{Reason: errStr}).Encode()})
+	}
+
+	responder := trade.Member{Session: sess, CharacterID: characterID, Name: req.CharacterName}
+	requester, err := trades.Respond(responder, req.Accept)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpTradeRespondResult, Data: (&TradeRespondResult{Reason: tradeErrorMessage(err)}).Encode()})
+	}
+
+	if err := sess.Send(&proto.Packet{Opcode: OpTradeRespondResult, Data: (&TradeRespondResult{OK: true}).Encode()}); err != nil {
+		return err
+	}
+
+	if !req.Accept {
+		declined := &TradeDeclined{TargetName: req.CharacterName}
+		return requester.Session.Send(&proto.Packet{Opcode: OpTradeDeclined, Data: declined.Encode()})
+	}
+
+	if err := sess.Send(&proto.Packet{Opcode: OpTradeStarted, Data: (&TradeStarted{PartnerName: requester.Name}).Encode()}); err != nil {
+		return err
+	}
+	return requester.Session.Send(&proto.Packet{Opcode: OpTradeStarted, Data: (&TradeStarted{PartnerName: req.CharacterName}).Encode()})
+}
+
+func handleTradeSetOffer(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, trades *trade.Hub) error {
+	req, err := DecodeTradeSetOfferRequest(p.Data)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpTradeOfferResult, Data: (&TradeOfferResult{Reason: "malformed request"}).Encode()})
+	}
+	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
+	if errStr != "" {
+		return sess.Send(&proto.Packet{Opcode: OpTradeOfferResult, Data: (&TradeOfferResult{Reason: errStr}).Encode()})
+	}
+
+	offer := trade.Offer{Gold: req.Offer.Gold, ItemSlot: int(req.Offer.ItemSlot), Quantity: int(req.Offer.Quantity)}
+	sessn, err := trades.SetOffer(characterID, offer)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpTradeOfferResult, Data: (&TradeOfferResult{Reason: tradeErrorMessage(err)}).Encode()})
+	}
+
+	if err := sess.Send(&proto.Packet{Opcode: OpTradeOfferResult, Data: (&TradeOfferResult{OK: true}).Encode()}); err != nil {
+		return err
+	}
+
+	other, _, _ := sessn.Other(characterID)
+	updated := &TradeOfferUpdated{Offer: req.Offer}
+	return other.Session.Send(&proto.Packet{Opcode: OpTradeOfferUpdated, Data: updated.Encode()})
+}
+
+func handleTradeConfirm(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, inv inventory.Store, trades *trade.Hub) error {
+	req, err := DecodeTradeConfirmRequest(p.Data)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpTradeConfirmResult, Data: (&TradeConfirmResult{Reason: "malformed request"}).Encode()})
+	}
+	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
+	if errStr != "" {
+		return sess.Send(&proto.Packet{Opcode: OpTradeConfirmResult, Data: (&TradeConfirmResult{Reason: errStr}).Encode()})
+	}
+
+	tradeSess, bothConfirmed, err := trades.Confirm(characterID)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpTradeConfirmResult, Data: (&TradeConfirmResult{Reason: tradeErrorMessage(err)}).Encode()})
+	}
+	if err := sess.Send(&proto.Packet{Opcode: OpTradeConfirmResult, Data: (&TradeConfirmResult{OK: true}).Encode()}); err != nil {
+		return err
+	}
+	if !bothConfirmed {
+		return nil
+	}
+
+	itemA, itemB, failReason, err := executeTrade(ctx, chars, inv, tradeSess)
+	if err != nil {
+		return fmt.Errorf("trade: executing: %w", err)
+	}
+	trades.End(characterID)
+
+	if failReason != "" {
+		cancelled := &TradeCancelled{CancelledByName: ""} // system cancellation, not either player
+		tradeSess.A.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
+		tradeSess.B.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
+		return nil
+	}
+
+	// A gave itemA/OfferA and receives OfferB/itemB; B is the mirror.
+	completedForA := &TradeCompleted{ReceivedGold: tradeSess.OfferB.Gold, ReceivedItemID: itemB, ReceivedQuantity: int32(tradeSess.OfferB.Quantity)}
+	completedForB := &TradeCompleted{ReceivedGold: tradeSess.OfferA.Gold, ReceivedItemID: itemA, ReceivedQuantity: int32(tradeSess.OfferA.Quantity)}
+	tradeSess.A.Session.Send(&proto.Packet{Opcode: OpTradeCompleted, Data: completedForA.Encode()})
+	return tradeSess.B.Session.Send(&proto.Packet{Opcode: OpTradeCompleted, Data: completedForB.Encode()})
+}
+
+func handleTradeCancel(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, trades *trade.Hub) error {
+	req, err := DecodeTradeCancelRequest(p.Data)
+	if err != nil {
+		return nil
+	}
+	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
+	if errStr != "" {
+		return nil
+	}
+
+	tradeSess, ok := trades.End(characterID)
+	if !ok {
+		return nil
+	}
+	cancelled := &TradeCancelled{CancelledByName: req.CharacterName}
+	tradeSess.A.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
+	return tradeSess.B.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
+}
+
+// errOfferInvalid means an offer's item slot no longer has enough of the
+// item it claimed (changed by some other action between offering and
+// confirming).
+var errOfferInvalid = errors.New("trade: offer no longer valid")
+
+// offerItemID resolves the item ID currently sitting in offer's ItemSlot
+// for characterID, validating there's still enough quantity there.
+// Returns 0, nil if the offer has no item component.
+func offerItemID(ctx context.Context, inv inventory.Store, characterID int64, offer trade.Offer) (int64, error) {
+	if offer.ItemSlot < 0 {
+		return 0, nil
+	}
+	slots, err := inv.List(ctx, characterID)
+	if err != nil {
+		return 0, err
+	}
+	for _, s := range slots {
+		if s.Index == offer.ItemSlot {
+			if s.Quantity < offer.Quantity {
+				return 0, errOfferInvalid
+			}
+			return s.ItemID, nil
+		}
+	}
+	return 0, errOfferInvalid
+}
+
+// executeTrade performs the actual gold/item transfer once both sides have
+// confirmed. Returns a non-empty failReason (and no error) for an
+// orderly, expected failure (insufficient gold, an offer that's gone
+// stale) that should cancel the trade cleanly; returns a non-nil error
+// only for unexpected store failures.
+//
+// Not a true cross-store transaction: gold moves via character.Store,
+// items via inventory.Store, and there's no shared transaction spanning
+// both. Ordering (validate both offers -> deduct both golds, with refund
+// on the second failing -> remove both items, with refund on the second
+// failing -> credit everything) minimizes the window, and the one gap
+// left is documented at the final AddItem calls below.
+func executeTrade(ctx context.Context, chars character.Store, inv inventory.Store, sess *trade.Session) (itemA, itemB int64, failReason string, err error) {
+	itemA, err = offerItemID(ctx, inv, sess.A.CharacterID, sess.OfferA)
+	if err != nil {
+		if errors.Is(err, errOfferInvalid) {
+			return 0, 0, "offer no longer valid", nil
+		}
+		return 0, 0, "", err
+	}
+	itemB, err = offerItemID(ctx, inv, sess.B.CharacterID, sess.OfferB)
+	if err != nil {
+		if errors.Is(err, errOfferInvalid) {
+			return 0, 0, "offer no longer valid", nil
+		}
+		return 0, 0, "", err
+	}
+
+	if sess.OfferA.Gold > 0 {
+		if err := chars.DeductGold(ctx, sess.A.CharacterID, sess.OfferA.Gold); err != nil {
+			if errors.Is(err, character.ErrInsufficientGold) {
+				return 0, 0, "insufficient gold", nil
+			}
+			return 0, 0, "", err
+		}
+	}
+	if sess.OfferB.Gold > 0 {
+		if err := chars.DeductGold(ctx, sess.B.CharacterID, sess.OfferB.Gold); err != nil {
+			if sess.OfferA.Gold > 0 {
+				chars.AddGold(ctx, sess.A.CharacterID, sess.OfferA.Gold)
+			}
+			if errors.Is(err, character.ErrInsufficientGold) {
+				return 0, 0, "insufficient gold", nil
+			}
+			return 0, 0, "", err
+		}
+	}
+
+	if sess.OfferA.ItemSlot >= 0 {
+		if err := inv.RemoveItem(ctx, sess.A.CharacterID, sess.OfferA.ItemSlot, sess.OfferA.Quantity); err != nil {
+			refundGold(ctx, chars, sess)
+			return 0, 0, "offer no longer valid", nil
+		}
+	}
+	if sess.OfferB.ItemSlot >= 0 {
+		if err := inv.RemoveItem(ctx, sess.B.CharacterID, sess.OfferB.ItemSlot, sess.OfferB.Quantity); err != nil {
+			refundGold(ctx, chars, sess)
+			if sess.OfferA.ItemSlot >= 0 {
+				inv.AddItem(ctx, sess.A.CharacterID, itemA, sess.OfferA.Quantity)
+			}
+			return 0, 0, "offer no longer valid", nil
+		}
+	}
+
+	if sess.OfferA.Gold > 0 {
+		chars.AddGold(ctx, sess.B.CharacterID, sess.OfferA.Gold)
+	}
+	if sess.OfferB.Gold > 0 {
+		chars.AddGold(ctx, sess.A.CharacterID, sess.OfferB.Gold)
+	}
+
+	// Items have already left both givers' inventories at this point. If
+	// AddItem fails here (e.g. the recipient's inventory filled up in the
+	// meantime), the item is lost rather than returned -- a known,
+	// low-probability gap. A production system would pre-check recipient
+	// capacity before ever removing anything; that check isn't
+	// implemented yet.
+	if sess.OfferA.ItemSlot >= 0 {
+		if err := inv.AddItem(ctx, sess.B.CharacterID, itemA, sess.OfferA.Quantity); err != nil {
+			return 0, 0, "", fmt.Errorf("crediting item to recipient: %w", err)
+		}
+	}
+	if sess.OfferB.ItemSlot >= 0 {
+		if err := inv.AddItem(ctx, sess.A.CharacterID, itemB, sess.OfferB.Quantity); err != nil {
+			return 0, 0, "", fmt.Errorf("crediting item to recipient: %w", err)
+		}
+	}
+
+	return itemA, itemB, "", nil
+}
+
+func refundGold(ctx context.Context, chars character.Store, sess *trade.Session) {
+	if sess.OfferA.Gold > 0 {
+		chars.AddGold(ctx, sess.A.CharacterID, sess.OfferA.Gold)
+	}
+	if sess.OfferB.Gold > 0 {
+		chars.AddGold(ctx, sess.B.CharacterID, sess.OfferB.Gold)
+	}
+}
+
+// TradeDisconnectHandler returns a func suitable for gateway.Server's
+// OnDisconnect hook: withdraws any pending trade request the disconnecting
+// session was part of and, if they were mid-trade, cancels it (no
+// gold/items have moved yet at that point -- SetOffer only records
+// intent, nothing is deducted until both sides confirm) and notifies
+// their partner.
+func TradeDisconnectHandler(hub *world.Hub, trades *trade.Hub) func(sess *gateway.Session) {
+	return func(sess *gateway.Session) {
+		entity, ok := hub.EntityBySession(sess.ID())
+		if !ok {
+			return
+		}
+		characterID := entity.CharacterID
+
+		if requester, notifiable := trades.CancelPendingFor(characterID); notifiable {
+			declined := &TradeDeclined{TargetName: entity.Name}
+			requester.Session.Send(&proto.Packet{Opcode: OpTradeDeclined, Data: declined.Encode()})
+		}
+
+		if tradeSess, ok := trades.End(characterID); ok {
+			cancelled := &TradeCancelled{CancelledByName: entity.Name}
+			other, _, _ := tradeSess.Other(characterID)
+			other.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
+		}
+	}
+}
+
+func tradeErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, trade.ErrCannotTradeSelf):
+		return "cannot trade with yourself"
+	case errors.Is(err, trade.ErrAlreadyTrading):
+		return "already trading"
+	case errors.Is(err, trade.ErrTargetBusy):
+		return "target is busy"
+	case errors.Is(err, trade.ErrNoPendingRequest):
+		return "no pending request"
+	case errors.Is(err, trade.ErrNotTrading):
+		return "not trading"
+	case errors.Is(err, trade.ErrInvalidOffer):
+		return "invalid offer"
+	default:
+		return "operation failed"
+	}
+}

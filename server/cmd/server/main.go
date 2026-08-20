@@ -24,6 +24,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/session"
 	"github.com/OpenSRO/srrevamp/server/internal/shop"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
+	"github.com/OpenSRO/srrevamp/server/internal/trade"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
@@ -149,6 +150,7 @@ func main() {
 	monsters := combat.NewHub()
 	parties := party.NewHub()
 	duels := duel.NewHub()
+	trades := trade.NewHub()
 	go maintainMonster(ctx, monsters, logger)
 
 	handle := gateway.Chain(
@@ -167,11 +169,13 @@ func main() {
 		session.ChatHandler(hub),
 		session.QuestHandler(chars, quests),
 		session.DuelHandler(chars, eq, refItems, hub, duels),
+		session.TradeHandler(chars, inv, hub, trades),
 	)
 
 	worldDisconnect := session.WorldDisconnectHandler(hub)
 	partyDisconnect := session.PartyDisconnectHandler(parties)
 	duelDisconnect := session.DuelDisconnectHandler(hub, duels)
+	tradeDisconnect := session.TradeDisconnectHandler(hub, trades)
 
 	srv := &gateway.Server{
 		Addr:   *addr,
@@ -181,10 +185,11 @@ func main() {
 			return handle(ctx, sess, p)
 		},
 		OnDisconnect: func(sess *gateway.Session) {
-			// duelDisconnect must run before worldDisconnect: it looks the
-			// disconnecting session up in world.Hub, which worldDisconnect
-			// removes them from.
+			// duelDisconnect/tradeDisconnect must run before
+			// worldDisconnect: both look the disconnecting session up in
+			// world.Hub, which worldDisconnect removes them from.
 			duelDisconnect(sess)
+			tradeDisconnect(sess)
 			worldDisconnect(sess)
 			partyDisconnect(sess)
 		},

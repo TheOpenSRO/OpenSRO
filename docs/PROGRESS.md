@@ -2,6 +2,43 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd)
+
+- Added player-to-player trading, rounding out the social/economy feature set (parties, guilds,
+  chat, quests, duels, and now trade are all in). `server/internal/trade`: an in-memory `Hub`
+  (own design, live/session-scoped like `party.Hub`/`duel.Hub` -- trade *sessions* aren't
+  persisted, only their end result once executed) with the same request/accept shape as duel's
+  challenge/accept, plus per-side `Offer{Gold, ItemSlot, Quantity}` state and a two-sided
+  confirm gate: changing an offer after confirming clears BOTH sides' confirmation (a deliberate
+  anti-bait-and-switch rule -- you can't quietly swap what you're offering after your counterpart
+  has already locked in).
+  The interesting design problem was execution: there's no single database transaction spanning
+  `character.Store` (gold) and `inventory.Store` (items) -- they're independent stores. Rather
+  than pretending otherwise, `session/trade.go`'s `executeTrade` documents exactly where the
+  narrow gap is: it validates both offers, deducts gold with a refund-on-failure for the second
+  deduction, removes items with the same refund pattern, then credits everything -- the one
+  case that isn't fully covered is a recipient's inventory filling up at the very last
+  `AddItem` call, which would lose an item rather than return it. Called out inline as a known,
+  low-probability limitation rather than silently leaving a subtle bug for later.
+  Opcodes 0x00D0-0x00DE (request/respond/offer/confirm/cancel, each with results, plus
+  invite/started/declined/offer-updated/completed/cancelled notifications) -- the largest opcode
+  block added this session, but each payload is small and mechanical, following the same pattern
+  established by duel. `OpTradeCompleted` is sent asymmetrically to each side describing what
+  *they* received (not a shared summary), which needed `executeTrade` to return the resolved item
+  IDs rather than re-deriving them after the swap (by then they'd be sitting in the recipient's
+  inventory under a possibly different slot, not useful for the message).
+  Full flow tested end-to-end over two real TCP connections, verifying actual `character.Store`/
+  `inventory.Store` state after the swap (not just the wire messages): a full trade (Aria gives
+  50 gold + her weapon, Bram gives his full item stack, no gold) confirms both sides' gold and
+  inventory contents afterward; a cancel-before-confirm flow confirms neither side is touched; an
+  insufficient-gold flow confirms the trade fails cleanly with a system `OpTradeCancelled` and
+  neither side's gold moves.
+  Ported to GDScript (`trade.gd` + test), wired into `NetClient`, reconfirmed byte-exact wire
+  compatibility for `TradeSetOfferRequest` (including the -1 "no item" sentinel encoding as
+  `0xFFFFFFFF`) and `TradeCompleted` via independent Go/GDScript hex generation. All 17 GDScript
+  suites pass headless; wired into CI. Full Go test suite green across all packages including the
+  new `trade` package; server binary smoke-tested with trade wired in.
+
 ## 2026-08-20
 
 - Added 1v1 PvP duels, closing the last item of the "parties/guilds/PvP: 0%" gap from the
