@@ -63,6 +63,28 @@ extends Control
 @onready var guild_leave_button: Button = $ActionTabs/Guild/GuildJoinRow/LeaveButton
 @onready var guild_status_label: Label = $ActionTabs/Guild/GuildStatusLabel
 
+@onready var duel_target_input: LineEdit = $ActionTabs/Duel/ChallengeRow/TargetInput
+@onready var duel_challenge_button: Button = $ActionTabs/Duel/ChallengeRow/ChallengeButton
+@onready var duel_invite_label: Label = $ActionTabs/Duel/InviteRow/InviteLabel
+@onready var duel_accept_button: Button = $ActionTabs/Duel/InviteRow/AcceptButton
+@onready var duel_decline_button: Button = $ActionTabs/Duel/InviteRow/DeclineButton
+@onready var duel_attack_button: Button = $ActionTabs/Duel/AttackButton
+@onready var duel_status_label: Label = $ActionTabs/Duel/DuelStatusLabel
+
+@onready var trade_target_input: LineEdit = $ActionTabs/Trade/RequestRow/TargetInput
+@onready var trade_request_button: Button = $ActionTabs/Trade/RequestRow/RequestButton
+@onready var trade_invite_label: Label = $ActionTabs/Trade/InviteRow/InviteLabel
+@onready var trade_accept_button: Button = $ActionTabs/Trade/InviteRow/AcceptButton
+@onready var trade_decline_button: Button = $ActionTabs/Trade/InviteRow/DeclineButton
+@onready var trade_gold_input: LineEdit = $ActionTabs/Trade/OfferRow/GoldInput
+@onready var trade_item_slot_input: LineEdit = $ActionTabs/Trade/OfferRow/ItemSlotInput
+@onready var trade_quantity_input: LineEdit = $ActionTabs/Trade/OfferRow/QuantityInput
+@onready var trade_set_offer_button: Button = $ActionTabs/Trade/OfferRow/SetOfferButton
+@onready var trade_their_offer_label: Label = $ActionTabs/Trade/TheirOfferLabel
+@onready var trade_confirm_button: Button = $ActionTabs/Trade/TradeButtonRow/ConfirmButton
+@onready var trade_cancel_button: Button = $ActionTabs/Trade/TradeButtonRow/CancelButton
+@onready var trade_status_label: Label = $ActionTabs/Trade/TradeStatusLabel
+
 # character_id -> display name, for the nearby-entities list.
 var _nearby: Dictionary = {}
 
@@ -72,6 +94,11 @@ var _monsters: Array[CombatNet.MonsterSnapshot] = []
 var _inventory_slots: Array[InventoryNet.Slot] = []
 var _quests: Array[QuestNet.Entry] = []
 var _shop_entries: Array[ShopNet.CatalogEntry] = []
+
+# Name of whoever last challenged/requested-trade-with us, so Accept/
+# Decline know who to respond to (the server needs it explicitly).
+var _pending_duel_challenger := ""
+var _pending_trade_requester := ""
 
 # equipment_result fires for OpEquipmentList *and* equip/unequip acks (see
 # NetClient.equipment_result's doc comment: a successful equip/unequip ack
@@ -122,6 +149,26 @@ func _ready() -> void:
 	NetClient.guild_leave_result.connect(_on_guild_leave_result)
 	NetClient.guild_info_result.connect(_on_guild_result)
 
+	NetClient.duel_challenge_result.connect(_on_duel_challenge_result)
+	NetClient.duel_invite.connect(_on_duel_invite)
+	NetClient.duel_respond_result.connect(_on_duel_respond_result)
+	NetClient.duel_started.connect(_on_duel_started)
+	NetClient.duel_declined.connect(_on_duel_declined)
+	NetClient.duel_attack_result.connect(_on_duel_attack_result)
+	NetClient.duel_opponent_damaged.connect(_on_duel_opponent_damaged)
+	NetClient.duel_ended.connect(_on_duel_ended)
+
+	NetClient.trade_request_result.connect(_on_trade_request_result)
+	NetClient.trade_invite.connect(_on_trade_invite)
+	NetClient.trade_respond_result.connect(_on_trade_respond_result)
+	NetClient.trade_started.connect(_on_trade_started)
+	NetClient.trade_declined.connect(_on_trade_declined)
+	NetClient.trade_offer_result.connect(_on_trade_offer_result)
+	NetClient.trade_offer_updated.connect(_on_trade_offer_updated)
+	NetClient.trade_confirm_result.connect(_on_trade_confirm_result)
+	NetClient.trade_completed.connect(_on_trade_completed)
+	NetClient.trade_cancelled.connect(_on_trade_cancelled)
+
 	send_button.pressed.connect(_on_send_pressed)
 	chat_input.text_submitted.connect(func(_text: String): _on_send_pressed())
 	disconnect_button.pressed.connect(_on_disconnect_pressed)
@@ -146,6 +193,18 @@ func _ready() -> void:
 	guild_create_button.pressed.connect(_on_guild_create_pressed)
 	guild_join_button.pressed.connect(_on_guild_join_pressed)
 	guild_leave_button.pressed.connect(func(): NetClient.leave_guild(NetClient.current_character_name))
+
+	duel_challenge_button.pressed.connect(_on_duel_challenge_pressed)
+	duel_accept_button.pressed.connect(func(): _on_duel_respond_pressed(true))
+	duel_decline_button.pressed.connect(func(): _on_duel_respond_pressed(false))
+	duel_attack_button.pressed.connect(func(): NetClient.duel_attack(NetClient.current_character_name))
+
+	trade_request_button.pressed.connect(_on_trade_request_pressed)
+	trade_accept_button.pressed.connect(func(): _on_trade_respond_pressed(true))
+	trade_decline_button.pressed.connect(func(): _on_trade_respond_pressed(false))
+	trade_set_offer_button.pressed.connect(_on_trade_set_offer_pressed)
+	trade_confirm_button.pressed.connect(func(): NetClient.trade_confirm(NetClient.current_character_name))
+	trade_cancel_button.pressed.connect(func(): NetClient.trade_cancel(NetClient.current_character_name))
 
 	NetClient.list_monsters()
 	NetClient.list_inventory(NetClient.current_character_name)
@@ -457,3 +516,143 @@ func _on_guild_leave_result(ok: bool, reason: String) -> void:
 		guild_list.clear()
 	else:
 		guild_status_label.text = "Leave failed: %s" % reason
+
+# --- Duel tab --------------------------------------------------------------
+
+func _on_duel_challenge_pressed() -> void:
+	var target := duel_target_input.text.strip_edges()
+	if target.is_empty():
+		duel_status_label.text = "Enter a target name first."
+		return
+	NetClient.duel_challenge(NetClient.current_character_name, target)
+
+func _on_duel_challenge_result(ok: bool, reason: String) -> void:
+	duel_status_label.text = "Challenge sent." if ok else "Challenge failed: %s" % reason
+
+func _on_duel_invite(invite: DuelNet.Invite) -> void:
+	if invite == null:
+		return
+	_pending_duel_challenger = invite.challenger_name
+	duel_invite_label.text = "%s challenges you to a duel!" % invite.challenger_name
+
+func _on_duel_respond_pressed(accept: bool) -> void:
+	if _pending_duel_challenger.is_empty():
+		duel_status_label.text = "No pending challenge to respond to."
+		return
+	NetClient.duel_respond(NetClient.current_character_name, _pending_duel_challenger, accept)
+	_pending_duel_challenger = ""
+	duel_invite_label.text = "(no pending challenge)"
+
+func _on_duel_respond_result(ok: bool, reason: String) -> void:
+	if not ok:
+		duel_status_label.text = "Respond failed: %s" % reason
+
+func _on_duel_started(started: DuelNet.Started) -> void:
+	if started == null:
+		return
+	duel_status_label.text = "Dueling %s! Attack away." % started.opponent_name
+
+func _on_duel_declined(declined: DuelNet.Declined) -> void:
+	if declined == null:
+		return
+	duel_status_label.text = "%s declined your challenge." % declined.target_name
+
+func _on_duel_attack_result(result: DuelNet.AttackResult) -> void:
+	if result == null:
+		return
+	if result.error != "":
+		duel_status_label.text = "Attack failed: %s" % result.error
+		return
+	if result.opponent_died:
+		duel_status_label.text = "Hit for %d -- you won!" % result.damage
+	else:
+		duel_status_label.text = "Hit for %d (opponent HP %d)." % [result.damage, result.opponent_hp]
+
+func _on_duel_opponent_damaged(damaged: DuelNet.OpponentDamaged) -> void:
+	if damaged == null:
+		return
+	duel_status_label.text = "Took %d damage (HP %d)." % [damaged.damage, damaged.remaining_hp]
+
+func _on_duel_ended(ended: DuelNet.Ended) -> void:
+	if ended == null:
+		return
+	duel_status_label.text = "Duel over -- %s won." % ended.winner_name
+
+# --- Trade tab ---------------------------------------------------------
+
+func _on_trade_request_pressed() -> void:
+	var target := trade_target_input.text.strip_edges()
+	if target.is_empty():
+		trade_status_label.text = "Enter a target name first."
+		return
+	NetClient.trade_request(NetClient.current_character_name, target)
+
+func _on_trade_request_result(ok: bool, reason: String) -> void:
+	trade_status_label.text = "Trade request sent." if ok else "Request failed: %s" % reason
+
+func _on_trade_invite(invite: TradeNet.Invite) -> void:
+	if invite == null:
+		return
+	_pending_trade_requester = invite.requester_name
+	trade_invite_label.text = "%s wants to trade with you!" % invite.requester_name
+
+func _on_trade_respond_pressed(accept: bool) -> void:
+	if _pending_trade_requester.is_empty():
+		trade_status_label.text = "No pending request to respond to."
+		return
+	NetClient.trade_respond(NetClient.current_character_name, _pending_trade_requester, accept)
+	_pending_trade_requester = ""
+	trade_invite_label.text = "(no pending request)"
+
+func _on_trade_respond_result(ok: bool, reason: String) -> void:
+	if not ok:
+		trade_status_label.text = "Respond failed: %s" % reason
+
+func _on_trade_started(started: TradeNet.Started) -> void:
+	if started == null:
+		return
+	trade_status_label.text = "Trading with %s. Set your offer below." % started.partner_name
+	trade_their_offer_label.text = "Their offer: (none yet)"
+
+func _on_trade_declined(declined: TradeNet.Declined) -> void:
+	if declined == null:
+		return
+	trade_status_label.text = "%s declined your trade request." % declined.target_name
+
+func _on_trade_set_offer_pressed() -> void:
+	var gold_text := trade_gold_input.text.strip_edges()
+	var slot_text := trade_item_slot_input.text.strip_edges()
+	var qty_text := trade_quantity_input.text.strip_edges()
+	var gold := int(gold_text) if gold_text.is_valid_int() else 0
+	var item_slot := int(slot_text) if slot_text.is_valid_int() else TradeNet.ITEM_SLOT_NONE
+	var quantity := int(qty_text) if qty_text.is_valid_int() else 0
+	NetClient.trade_set_offer(NetClient.current_character_name, gold, item_slot, quantity)
+
+func _on_trade_offer_result(ok: bool, reason: String) -> void:
+	if not ok:
+		trade_status_label.text = "Offer failed: %s" % reason
+
+func _on_trade_confirm_result(ok: bool, reason: String) -> void:
+	trade_status_label.text = "Confirmed. Waiting on the other side." if ok else "Confirm failed: %s" % reason
+
+func _on_trade_offer_updated(updated: TradeNet.OfferUpdated) -> void:
+	if updated == null:
+		return
+	var item_desc := "no item" if updated.offer.item_slot < 0 else "slot %d x%d" % [updated.offer.item_slot, updated.offer.quantity]
+	trade_their_offer_label.text = "Their offer: %dg, %s" % [updated.offer.gold, item_desc]
+
+func _on_trade_completed(completed: TradeNet.Completed) -> void:
+	if completed == null:
+		return
+	_log_system("Trade complete! Received %dg%s" % [
+		completed.received_gold,
+		(" and %dx item #%d" % [completed.received_quantity, completed.received_item_id]) if completed.received_item_id != 0 else ""
+	])
+	NetClient.list_inventory(NetClient.current_character_name)
+
+func _on_trade_cancelled(cancelled: TradeNet.Cancelled) -> void:
+	if cancelled == null:
+		return
+	var by_whom := cancelled.cancelled_by_name if cancelled.cancelled_by_name != "" else "the system"
+	trade_status_label.text = "Trade cancelled by %s." % by_whom
+	trade_their_offer_label.text = "Their offer: (none yet)"

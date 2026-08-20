@@ -319,3 +319,119 @@ text = "Leave Guild"
 layout_mode = 2
 text = ""
 autowrap_mode = 2
+
+[node name="Duel" type="VBoxContainer" parent="ActionTabs"]
+visible = false
+layout_mode = 2
+
+[node name="ChallengeRow" type="HBoxContainer" parent="ActionTabs/Duel"]
+layout_mode = 2
+
+[node name="TargetInput" type="LineEdit" parent="ActionTabs/Duel/ChallengeRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Target character name"
+
+[node name="ChallengeButton" type="Button" parent="ActionTabs/Duel/ChallengeRow"]
+layout_mode = 2
+text = "Challenge"
+
+[node name="InviteRow" type="HBoxContainer" parent="ActionTabs/Duel"]
+layout_mode = 2
+
+[node name="InviteLabel" type="Label" parent="ActionTabs/Duel/InviteRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "(no pending challenge)"
+
+[node name="AcceptButton" type="Button" parent="ActionTabs/Duel/InviteRow"]
+layout_mode = 2
+text = "Accept"
+
+[node name="DeclineButton" type="Button" parent="ActionTabs/Duel/InviteRow"]
+layout_mode = 2
+text = "Decline"
+
+[node name="AttackButton" type="Button" parent="ActionTabs/Duel"]
+layout_mode = 2
+text = "Attack Opponent"
+
+[node name="DuelStatusLabel" type="Label" parent="ActionTabs/Duel"]
+layout_mode = 2
+text = ""
+autowrap_mode = 2
+
+[node name="Trade" type="VBoxContainer" parent="ActionTabs"]
+visible = false
+layout_mode = 2
+
+[node name="RequestRow" type="HBoxContainer" parent="ActionTabs/Trade"]
+layout_mode = 2
+
+[node name="TargetInput" type="LineEdit" parent="ActionTabs/Trade/RequestRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Target character name"
+
+[node name="RequestButton" type="Button" parent="ActionTabs/Trade/RequestRow"]
+layout_mode = 2
+text = "Request Trade"
+
+[node name="InviteRow" type="HBoxContainer" parent="ActionTabs/Trade"]
+layout_mode = 2
+
+[node name="InviteLabel" type="Label" parent="ActionTabs/Trade/InviteRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "(no pending request)"
+
+[node name="AcceptButton" type="Button" parent="ActionTabs/Trade/InviteRow"]
+layout_mode = 2
+text = "Accept"
+
+[node name="DeclineButton" type="Button" parent="ActionTabs/Trade/InviteRow"]
+layout_mode = 2
+text = "Decline"
+
+[node name="OfferRow" type="HBoxContainer" parent="ActionTabs/Trade"]
+layout_mode = 2
+
+[node name="GoldInput" type="LineEdit" parent="ActionTabs/Trade/OfferRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Gold"
+
+[node name="ItemSlotInput" type="LineEdit" parent="ActionTabs/Trade/OfferRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Item slot (-1 = none)"
+
+[node name="QuantityInput" type="LineEdit" parent="ActionTabs/Trade/OfferRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Quantity"
+
+[node name="SetOfferButton" type="Button" parent="ActionTabs/Trade/OfferRow"]
+layout_mode = 2
+text = "Set Offer"
+
+[node name="TheirOfferLabel" type="Label" parent="ActionTabs/Trade"]
+layout_mode = 2
+text = "Their offer: (none yet)"
+autowrap_mode = 2
+
+[node name="TradeButtonRow" type="HBoxContainer" parent="ActionTabs/Trade"]
+layout_mode = 2
+
+[node name="ConfirmButton" type="Button" parent="ActionTabs/Trade/TradeButtonRow"]
+layout_mode = 2
+text = "Confirm"
+
+[node name="CancelButton" type="Button" parent="ActionTabs/Trade/TradeButtonRow"]
+layout_mode = 2
+text = "Cancel"
+
+[node name="TradeStatusLabel" type="Label" parent="ActionTabs/Trade"]
+layout_mode = 2
+text = ""
+autowrap_mode = 2

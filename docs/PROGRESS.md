@@ -2,6 +2,31 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 11)
+
+- Made duel and trade playable from `World.tscn` -- no server changes needed this round, since
+  both protocols already resolve their target by name via `world.Hub` (the same online-only
+  tradeoff chat/friends already made), unlike party/guild's ID-discovery gap from last round.
+  Pure client wiring: Duel tab (challenge-by-name, accept/decline an incoming invite, Attack once
+  started, status updates on damage/death) and Trade tab (request-by-name, accept/decline, set an
+  offer via gold/item-slot/quantity fields, see the other side's offer update live, confirm/
+  cancel, a completion summary logged to chat). Tracked the pending challenger/requester name in
+  `World.gd` state so Accept/Decline can answer without the player re-typing a name.
+  Verified end-to-end again with two live `NetClient` instances against a real server -- and hit a
+  second real async-timing bug in the test harness itself (not the feature) while doing it: the
+  first draft attached each signal listener only right before awaiting it, but the server can
+  deliver an invite/started notification to the *other* connection before the script gets around
+  to listening for it, and Godot signals don't queue for late listeners -- a fired-but-unheard
+  signal is just gone. Fixed by attaching every listener for both sides of a flow **before**
+  triggering the action that produces them, not incrementally. Confirmed the full sequence for
+  real once fixed: Alice challenges Bob, Bob receives the invite and accepts, Alice's duel starts,
+  an attack lands real damage; then Alice requests a trade, Bob accepts, both set offers (50 gold
+  for nothing), confirming both sides executes the swap and Bob's `OpTradeCompleted` shows exactly
+  50 gold received.
+  All 19 GDScript suites still pass headless (no new files -- duel/trade reuse `Auth.decode_result`
+  and their own already-verified wire types, same as party/guild's OK/reason acks). No Go changes
+  this round.
+
 ## 2026-08-20 (cont'd 10)
 
 - Made party and guild playable from `World.tscn`, and fixed a discoverability gap affecting
