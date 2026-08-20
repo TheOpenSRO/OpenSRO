@@ -2,6 +2,26 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 40) — a real, multiply-replicated periodicity signal in `.mapm`, still not confirmed as the grid width
+
+- Went back at the `.mapm` grid-dimensions open question with a more rigorous tool than the
+  earlier retracted "97" guess: a direct DFT power-spectrum check on the height-value sequence,
+  looking for genuine periodic structure. First pass (2 samples) found both non-flat Shape A files
+  dominated by one sharp period, T=17. Re-pulled `Map.pk2` and extracted 20 more real `.m` files
+  (regions `100`-`104`) to check whether it held up at scale — it did, and got more interesting:
+  **17 of 17 Shape B "interior" region files** (`_100` through `_103` suffixes) are dominated by a
+  *different* period, T=46, with zero exceptions; the 3 files with a `_104` suffix instead match
+  Shape A's T=17, with an order-of-magnitude stronger spike than anything else seen in this whole
+  investigation. Whatever distinguishes `_104` regions from their neighbors produces a much
+  cleaner signal — a new, real, unexplained split worth its own future pass.
+- **Still not promoted to a confirmed grid width**: cross-checking the same DFT method against
+  the leading-byte (texture/type) channel on a representative T=46 file doesn't reproduce T=46 as
+  dominant there either (top period is 17, T=46 only fifth), and tile counts aren't evenly
+  divisible by the candidates. Documented as a real, now well-replicated signal with plausible
+  non-grid explanations (a natural terrain feature wavelength, an unaccounted header/trailer
+  offset) rather than claimed as solved. `docs/protocol/MAPM_FORMAT.md` updated with the full
+  per-region-class breakdown.
+
 ## 2026-08-20 (cont'd 39) — first real 3D scene: connect, log in, and walk around, verified end-to-end against the live server
 
 - New `client/scenes/World3D.tscn` + `client/scripts/World3D.gd`: a real, playable 3D scene — a

@@ -119,11 +119,37 @@ resync-scanning reader above and produce identical results across all 10 real fi
 Both sides also have synthetic unit tests for both shapes and the resync path (a single unreadable
 byte the fixed-stride walk can't skip past on its own).
 
-## What's still not confirmed
+## A real periodicity signal, but not confirmed as a grid width
 
-- Whether there's a grid width/height anywhere in the file (the `97` idea is retracted — see
-  above) — the tile count doesn't obviously factor into a clean square, and no other field looked
-  like a dimension.
+No header field encodes a grid width/height (the `97` idea is retracted — see above), so a
+direct DFT power-spectrum check was run on the height-value sequence itself, looking for
+periodic structure the way a genuine row-wrap would produce. Run first against 2 samples, then
+against 20 more (pulled fresh from `Map.pk2`, covering regions `100`-`104`), it found something
+real and now well-replicated:
+
+- **Shape B, "interior" regions** (region-name suffix `_100` through `_103`, 17 files checked):
+  overwhelmingly dominant period **T=46**, in first place for all 17 with no exceptions.
+- **Shape B, region-name suffix `_104`** (3 files checked): a *different* dominant period,
+  **T=17**, with enormous power (4-12 million — an order of magnitude stronger spike than any
+  other result in this whole investigation, `_100`-`_103` included). Whatever distinguishes a
+  `_104` region from its neighbors, it produces a much cleaner periodic signal.
+- **Shape A** (2 non-flat files checked, `0/0.m`/`0/1.m`): also **T=17**, matching the `_104`
+  group despite being a structurally different file-size class entirely.
+
+**Not confirmed as an actual grid row width**, for two reasons that held up even with the larger
+sample: cross-checking the same DFT method against the *leading-byte* channel (Shape B; plausibly
+a texture/terrain-type value) does **not** reproduce T=46 as dominant on a representative T=46
+file (`101/100.m`) — its top period there is 17, with 46 only fifth-ranked — and a genuine
+grid-aligned texture-blend byte would be expected to show the same periodicity a real row-width
+split would produce. Tile counts also aren't evenly divisible by the candidates (`101/100.m`:
+13211 tiles, `13211 mod 46 = 9`). Plausible explanations that don't require these numbers to be
+literal grid widths: a natural terrain feature wavelength (hills/valleys/coastline recurring at
+that tile spacing) that shows up strongly in a smoothly-varying height channel without being a
+structural row length at all, or a header/trailer offset this project hasn't isolated shifting
+the true division. Recorded here as a real, multiply-replicated signal — not guessed at, and
+strong enough that it's very likely telling us *something* real about how these regions are laid
+out — but not yet resolved into a confirmed grid dimension. The `_104`-vs-`_100`-`_103` split is
+itself a new, real, unexplained observation worth a future pass on its own.
 - Shape A's two `uint16`-shaped fields.
 - The exact cause of the short (sub-64-byte) resync-needed misalignments seen in most files (no
   coherent explanatory structure was found in the skipped bytes, unlike `.mapo`'s trailing block).
@@ -134,6 +160,8 @@ byte the fixed-stride walk can't skip past on its own).
 
 ## Real samples available for future verification
 
-`Map.pk2` → `<region>/<region>.m` — 10 pulled in this environment: `0/0.m`, `0/1.m`, `0/2.m`,
-`1/0.m`, `1/1.m` (Shape A) and `100/100.m`-`100/104.m` (Shape B). Extracted directly from a real
-`Map.pk2` (1.5GB) via this project's own `server/internal/pk2` reader.
+`Map.pk2` → `<region>/<region>.m` — 25 pulled in this environment across two passes: `0/0.m`,
+`0/1.m`, `0/2.m`, `1/0.m`, `1/1.m` (Shape A) and `100/100.m`-`104/100.m` (Shape B, covering
+region-name suffixes `_100` through `_104`). Extracted directly from a real `Map.pk2` (1.5GB) via
+this project's own `server/internal/pk2` reader (used and deleted twice — not kept in this
+environment between sessions, re-extract on demand rather than assuming it's still there).
