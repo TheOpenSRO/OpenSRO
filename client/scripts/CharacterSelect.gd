@@ -78,8 +78,4 @@ func _on_enter_world_result(result: WorldNet.EnterWorldResult) -> void:
 	if not result.ok:
 		status_label.text = "Enter world failed: %s" % result.reason
 		return
-	# No in-world scene exists yet (needs real map/asset rendering) --
-	# confirm success here as the current end of this vertical slice.
-	status_label.text = "Entered zone '%s' at (%.1f, %.1f, %.1f). %d other player(s) present." % [
-		result.zone, result.x, result.y, result.z, result.others.size()
-	]
+	get_tree().change_scene_to_file("res://scenes/World.tscn")

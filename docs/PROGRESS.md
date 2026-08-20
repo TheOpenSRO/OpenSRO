@@ -2,6 +2,47 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 7)
+
+- Added the first in-world client scene, closing the biggest remaining gap named in every prior
+  scope assessment this session: an enormous amount of server-side protocol (world, chat, combat,
+  quests, party, guild, duels, trade, friends) existed with **no client scene that used any of
+  it** past character select -- `CharacterSelect.gd`'s `_on_enter_world_result` literally said "No
+  in-world scene exists yet" and just printed a status line. `scenes/World.tscn` +
+  `scripts/World.gd` is that scene: a plain 2D HUD overlay (zone label, nearby-entities list, chat
+  log + input), explicitly **not** a 3D map view -- no real map/asset rendering exists yet (that's
+  a separate, unfinished piece involving the pk2 reader), and the scene's own doc comment says so
+  rather than faking one. Deliberately doesn't show character HP either: `EnterWorldResult`
+  doesn't carry it and there's no "get my current HP" query opcode yet (HP only ever appears as a
+  side effect of an attack), so there was nothing honest to display.
+  `CharacterSelect.gd` now transitions to `World.tscn` on a successful `OpEnterWorld` instead of
+  just printing a status line. Since `get_tree().change_scene_to_file` has no way to pass data to
+  the new scene, added two small pieces of state to the `NetClient` autoload (which survives scene
+  changes): `current_character_name` (set by `enter_world()`) and `last_enter_world_result`
+  (cached alongside the existing signal emission) -- `World.gd` reads both in `_ready()` to seed
+  its zone label and initial nearby-entity list.
+  Chat input supports a `/w <name> <message>` prefix for whispers, plain text otherwise for zone
+  say, reusing `NetClient.say`/`whisper` from the existing chat system. A "Log Out" button
+  disconnects and returns to the login screen.
+  Verification took real effort to get right: GDScript's `--script` headless entrypoint (used for
+  every `*_test.gd` file in this project) does **not** register project autoloads, so a script
+  written in that style can't reference the bare `NetClient` identifier at all -- confirmed this
+  with a probe script showing zero children under `root` during `_init()`. Scene *controller*
+  scripts (`Login.gd`, `CharacterSelect.gd`, and now `World.gd`) are a different case: they compile
+  and run fine referencing `NetClient` when the scene is loaded through the *normal* engine
+  bootstrap. Verified by running `godot --headless --path . scenes/World.tscn --quit-after 2`
+  directly (not through `--script`) -- confirmed a clean boot with no node-path or script errors,
+  meaning every `@onready $NodePath` reference in `World.tscn` actually resolves and `_ready()`'s
+  `NetClient` access works for real. Did the same for `CharacterSelect.tscn` to confirm the
+  transition edit didn't break its boot (it correctly errors on `list_characters()` when skipped
+  straight to that scene without a live connection -- expected, not a bug). This matches the
+  verification bar already established for `Login.gd`/`CharacterSelect.gd`, which likewise have no
+  dedicated automated tests; the `net/*.gd` wire-protocol classes are what get unit tests in this
+  project, scene controllers get a clean-boot check.
+  All 19 GDScript wire-protocol test suites still pass headless (unaffected, no new one added --
+  scene controllers aren't part of that test style, consistent with existing practice). Full Go
+  test suite unaffected (no server-side changes this round).
+
 ## 2026-08-20 (cont'd 6)
 
 - Added optional TLS support, closing the transport-security gap `docs/protocol/

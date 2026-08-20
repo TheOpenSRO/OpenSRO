@@ -203,7 +203,19 @@ func create_character(char_name: String) -> void:
 func delete_character(char_name: String) -> void:
 	_send(CharacterNet.OP_DELETE, CharacterNet.encode_name(char_name))
 
+## The character currently in the world on this connection, if any -- set
+## by enter_world(). Scenes that load after CharacterSelect (e.g. World.tscn)
+## read this instead of needing the caller to pass it through
+## change_scene_to_file, which has no way to carry scene-specific state.
+var current_character_name := ""
+
+## The most recent OpEnterWorldResult, cached alongside the
+## enter_world_result signal for the same reason as current_character_name
+## -- a scene loaded after the signal already fired still needs the data.
+var last_enter_world_result: WorldNet.EnterWorldResult
+
 func enter_world(char_name: String) -> void:
+	current_character_name = char_name
 	_send(WorldNet.OP_ENTER_WORLD, WorldNet.encode_enter_world(char_name))
 
 func move_to(x: float, y: float, z: float) -> void:
@@ -325,7 +337,9 @@ func _dispatch(p: Packet) -> void:
 			var r := Auth.decode_result(p.data)
 			character_delete_result.emit(r.ok, r.reason if r.error == "" else r.error)
 		WorldNet.OP_ENTER_WORLD_RESULT:
-			enter_world_result.emit(WorldNet.decode_enter_world_result(p.data))
+			var result := WorldNet.decode_enter_world_result(p.data)
+			last_enter_world_result = result
+			enter_world_result.emit(result)
 		WorldNet.OP_ENTITY_ENTERED:
 			entity_entered.emit(WorldNet.decode_entity_entered(p.data))
 		WorldNet.OP_ENTITY_MOVED:
