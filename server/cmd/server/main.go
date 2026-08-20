@@ -12,6 +12,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/account"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/duel"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/guild"
@@ -147,6 +148,7 @@ func main() {
 	hub := world.NewHub()
 	monsters := combat.NewHub()
 	parties := party.NewHub()
+	duels := duel.NewHub()
 	go maintainMonster(ctx, monsters, logger)
 
 	handle := gateway.Chain(
@@ -164,10 +166,12 @@ func main() {
 		session.GuildHandler(chars, guilds),
 		session.ChatHandler(hub),
 		session.QuestHandler(chars, quests),
+		session.DuelHandler(chars, eq, refItems, hub, duels),
 	)
 
 	worldDisconnect := session.WorldDisconnectHandler(hub)
 	partyDisconnect := session.PartyDisconnectHandler(parties)
+	duelDisconnect := session.DuelDisconnectHandler(hub, duels)
 
 	srv := &gateway.Server{
 		Addr:   *addr,
@@ -177,6 +181,10 @@ func main() {
 			return handle(ctx, sess, p)
 		},
 		OnDisconnect: func(sess *gateway.Session) {
+			// duelDisconnect must run before worldDisconnect: it looks the
+			// disconnecting session up in world.Hub, which worldDisconnect
+			// removes them from.
+			duelDisconnect(sess)
 			worldDisconnect(sess)
 			partyDisconnect(sess)
 		},

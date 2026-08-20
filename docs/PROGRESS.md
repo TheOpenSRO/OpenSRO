@@ -2,6 +2,43 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20
+
+- Added 1v1 PvP duels, closing the last item of the "parties/guilds/PvP: 0%" gap from the
+  earlier scope assessment -- all three are now implemented (parties/guilds/quests/PvP), though
+  content depth (real skill/monster/item data) remains the honest remaining gap.
+  `server/internal/duel`: an in-memory `Hub` (own design, live/session-scoped like `party.Hub`,
+  not persisted -- a duel outliving a server restart wouldn't make sense) tracking pending
+  challenges and active 1v1 pairings. `Challenge`/`Respond`/`OpponentOf`/`End` plus
+  `CancelPendingFor` for disconnect cleanup. Documented a deliberate simplification in
+  `CancelPendingFor`: if the *challenger* disconnects before the target responds, the target
+  isn't notified (their Member, including Session, was never recorded on that side of the map --
+  only the challenger's was) -- an accepted scope cut, not an oversight, called out inline rather
+  than silently leaving a subtle gap.
+  `server/internal/session/duel.go`: opcodes 0x00C0-0x00CA (challenge/respond/attack, each with
+  results, plus invite/started/declined/damaged/ended notifications). Target resolution reuses
+  `world.Hub.FindByName`, the same mechanism chat's whisper already established, rather than
+  inventing a second player-lookup path. PvP damage reuses `attackerDamage` from
+  `session/combat.go` (equipped weapon or unarmed) but has **no defense mitigation** yet --
+  characters have no Defense stat, only HP -- a deliberate scope cut stated in the code, not a
+  bug. A dead duel loser has their HP reset (no death penalty, consistent with PvE).
+  Disconnect handling required getting the `OnDisconnect` hook's *ordering* right in
+  `cmd/server/main.go`: `duelDisconnect` must run before `worldDisconnect`, since it looks the
+  departing session up via `world.Hub.EntityBySession`, which `worldDisconnect` immediately
+  removes them from. Caught this by reading `WorldDisconnectHandler`'s implementation before
+  wiring, not by hitting it at runtime.
+  Full flow tested end-to-end over two real TCP connections: a decline flow (challenge -> decline
+  -> challenger notified -> neither ends up dueling -> attacking without an active duel fails
+  cleanly), and a full fight flow (challenge -> accept -> both sides get `OpDuelStarted` -> three
+  non-lethal hits each deliver `OpDuelOpponentDamaged` to the defender -> the fourth, lethal hit
+  delivers `OpDuelEnded` with the correct winner to both sides and clears both from the active
+  duel set).
+  Ported to GDScript (`duel.gd` + test), wired into `NetClient`, reconfirmed byte-exact wire
+  compatibility for `DuelChallengeRequest`, `DuelAttackResult`, and `DuelRespondRequest` via
+  independent Go/GDScript hex generation. All 16 GDScript suites pass headless; wired into CI.
+  Full Go test suite green across all packages including the new `duel` package; server binary
+  smoke-tested with duels wired in.
+
 ## 2026-08-19 (cont'd 29)
 
 - Added a quest system, closing the last named 0% gap from the earlier scope assessment

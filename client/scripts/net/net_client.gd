@@ -55,6 +55,15 @@ signal quest_list_result(entries: Array, error: String)
 signal quest_accept_result(ok: bool, reason: String)
 signal quest_completed(completed: QuestNet.Completed)
 
+signal duel_challenge_result(ok: bool, reason: String)
+signal duel_invite(invite: DuelNet.Invite)
+signal duel_respond_result(ok: bool, reason: String)
+signal duel_started(started: DuelNet.Started)
+signal duel_declined(declined: DuelNet.Declined)
+signal duel_attack_result(result: DuelNet.AttackResult)
+signal duel_opponent_damaged(damaged: DuelNet.OpponentDamaged)
+signal duel_ended(ended: DuelNet.Ended)
+
 var _peer: StreamPeerTCP
 var _connecting := false
 
@@ -185,6 +194,15 @@ func list_quests(char_name: String) -> void:
 func accept_quest(char_name: String, quest_id: int) -> void:
 	_send(QuestNet.OP_ACCEPT, QuestNet.encode_accept(char_name, quest_id))
 
+func duel_challenge(char_name: String, target_name: String) -> void:
+	_send(DuelNet.OP_CHALLENGE, DuelNet.encode_challenge(char_name, target_name))
+
+func duel_respond(char_name: String, challenger_name: String, accept: bool) -> void:
+	_send(DuelNet.OP_RESPOND, DuelNet.encode_respond(char_name, challenger_name, accept))
+
+func duel_attack(char_name: String) -> void:
+	_send(DuelNet.OP_ATTACK, DuelNet.encode_attack(char_name))
+
 func _dispatch(p: Packet) -> void:
 	match p.opcode:
 		Auth.OP_LOGIN_RESULT:
@@ -261,5 +279,23 @@ func _dispatch(p: Packet) -> void:
 			quest_accept_result.emit(r.ok, r.reason if r.error == "" else r.error)
 		QuestNet.OP_COMPLETED:
 			quest_completed.emit(QuestNet.decode_completed(p.data))
+		DuelNet.OP_CHALLENGE_RESULT:
+			var r := Auth.decode_result(p.data)
+			duel_challenge_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		DuelNet.OP_INVITE:
+			duel_invite.emit(DuelNet.decode_invite(p.data))
+		DuelNet.OP_RESPOND_RESULT:
+			var r := Auth.decode_result(p.data)
+			duel_respond_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		DuelNet.OP_STARTED:
+			duel_started.emit(DuelNet.decode_started(p.data))
+		DuelNet.OP_DECLINED:
+			duel_declined.emit(DuelNet.decode_declined(p.data))
+		DuelNet.OP_ATTACK_RESULT:
+			duel_attack_result.emit(DuelNet.decode_attack_result(p.data))
+		DuelNet.OP_OPPONENT_DAMAGED:
+			duel_opponent_damaged.emit(DuelNet.decode_opponent_damaged(p.data))
+		DuelNet.OP_ENDED:
+			duel_ended.emit(DuelNet.decode_ended(p.data))
 		_:
 			push_warning("NetClient: unhandled opcode 0x%04x" % p.opcode)
