@@ -18,10 +18,33 @@ const ENTRY_TYPE_EMPTY := 0
 const ENTRY_TYPE_FOLDER := 1
 const ENTRY_TYPE_FILE := 2
 
+# Field offsets within a 128-byte directory entry. See
+# docs/protocol/PK2_FORMAT.md for how these were derived.
+const ENTRY_OFF_NAME := 0x01
+const ENTRY_NAME_LEN := 89
+const ENTRY_OFF_POSITION := 0x6A
+const ENTRY_OFF_SIZE := 0x72
+
 # See docs/protocol/PK2_FORMAT.md: long-published default key for the
 # format's directory-table obfuscation, not a secret protecting first-party
 # asset bytes.
 const DEFAULT_KEY := "169841"
+
+# Fixed, format-constant byte table the reference client XORs against the
+# raw key string before running it through the standard Blowfish key
+# schedule. Only the bytes up to the key's length are ever used; the table
+# is zero beyond what's shown here (verified against a real archive).
+const KEY_XOR_TABLE: PackedByteArray = [0x03, 0xf8, 0xe4, 0x44, 0x88, 0x99, 0x3f, 0x64, 0xfe, 0x35]
+
+static func _effective_key(key: PackedByteArray) -> PackedByteArray:
+	var eff := PackedByteArray()
+	eff.resize(key.size())
+	for i in range(key.size()):
+		var x := 0
+		if i < KEY_XOR_TABLE.size():
+			x = KEY_XOR_TABLE[i]
+		eff[i] = key[i] ^ x
+	return eff
 
 class Entry:
 	var name: String
@@ -56,7 +79,7 @@ static func open(path: String) -> Pk2Reader:
 	reader._encrypted = header[0x22] != 0
 	reader._root_offset = HEADER_SIZE
 	if reader._encrypted:
-		reader._cipher = Blowfish.new(DEFAULT_KEY.to_ascii_buffer())
+		reader._cipher = Blowfish.new(_effective_key(DEFAULT_KEY.to_ascii_buffer()))
 	return reader
 
 func close() -> void:
@@ -83,45 +106,73 @@ func read_file(file: Entry) -> PackedByteArray:
 	_file.seek(file._offset)
 	return _file.get_buffer(file.size)
 
-func _read_block_chain(start_offset: int) -> Array[Entry]:
+## Reads one directory block (ENTRIES_PER_BLOCK entries). No "next block"
+## chain-continuation mechanism was found empirically for folders with more
+## than ENTRIES_PER_BLOCK entries -- see docs/protocol/PK2_FORMAT.md -- so
+## this reads exactly one block per directory.
+func _read_block_chain(offset: int) -> Array[Entry]:
 	var out: Array[Entry] = []
-	var offset := start_offset
 
-	while offset != 0:
-		_file.seek(offset)
-		var block := _file.get_buffer(BLOCK_SIZE)
-		if _encrypted:
-			_cipher.decrypt_ecb_in_place(block)
+	_file.seek(offset)
+	var block := _file.get_buffer(BLOCK_SIZE)
+	if _encrypted:
+		_decrypt_block_pk2(block)
 
-		var next := 0
-		for i in range(ENTRIES_PER_BLOCK):
-			var raw := block.slice(i * ENTRY_SIZE, (i + 1) * ENTRY_SIZE)
-			var entry_type := raw[0]
+	for i in range(ENTRIES_PER_BLOCK):
+		var raw := block.slice(i * ENTRY_SIZE, (i + 1) * ENTRY_SIZE)
+		var entry_type := raw[0]
 
-			if entry_type == ENTRY_TYPE_FOLDER or entry_type == ENTRY_TYPE_FILE:
-				var name := raw.slice(0x01, 0x01 + 81).get_string_from_ascii().rstrip(char(0))
-				if name != "." and name != "..":
-					var e := Entry.new()
-					e.name = name
-					e.is_dir = entry_type == ENTRY_TYPE_FOLDER
-					e._offset = _le_u32(raw, 0x5A)
-					e.size = _le_u32(raw, 0x5E)
-					out.append(e)
-
-			# Last slot of the block carries the next-block pointer for this
-			# directory's chain (0 = end of chain). See
-			# docs/protocol/PK2_FORMAT.md and server/internal/pk2/pk2.go.
-			if i == ENTRIES_PER_BLOCK - 1:
-				next = _le_u64(raw, 0x62)
-
-		offset = next
+		if entry_type == ENTRY_TYPE_FOLDER or entry_type == ENTRY_TYPE_FILE:
+			var name := _null_terminated(raw.slice(ENTRY_OFF_NAME, ENTRY_OFF_NAME + ENTRY_NAME_LEN))
+			if name != "." and name != "..":
+				var e := Entry.new()
+				e.name = name
+				e.is_dir = entry_type == ENTRY_TYPE_FOLDER
+				e._offset = _le_u32(raw, ENTRY_OFF_POSITION)
+				e.size = _le_u32(raw, ENTRY_OFF_SIZE)
+				out.append(e)
 
 	return out
 
+## Returns the bytes up to (not including) the first NUL, decoded as ASCII.
+## Reused directory-entry slots can carry stale bytes after a still-valid
+## NUL terminator, so trimming only trailing NULs isn't enough.
+func _null_terminated(b: PackedByteArray) -> String:
+	var nul_at := b.find(0)
+	if nul_at >= 0:
+		b = b.slice(0, nul_at)
+	return b.get_string_from_ascii()
+
+## Decrypts one directory block in place. The reference client's Blowfish
+## usage here isn't quite textbook ECB: each 4-byte half of every 8-byte
+## block is byte-order-reversed before being handed to a standard
+## (big-endian) Blowfish block decrypt, and reversed back on the way out --
+## equivalent to the client treating each half as a little-endian, rather
+## than big-endian, 32-bit word. Verified against a real archive's
+## directory table. See docs/protocol/PK2_FORMAT.md.
+func _decrypt_block_pk2(data: PackedByteArray) -> void:
+	var off := 0
+	while off + 8 <= data.size():
+		var swapped := PackedByteArray()
+		swapped.resize(8)
+		swapped[0] = data[off + 3]
+		swapped[1] = data[off + 2]
+		swapped[2] = data[off + 1]
+		swapped[3] = data[off + 0]
+		swapped[4] = data[off + 7]
+		swapped[5] = data[off + 6]
+		swapped[6] = data[off + 5]
+		swapped[7] = data[off + 4]
+		var out := _cipher.decrypt_block(swapped)
+		data[off + 0] = out[3]
+		data[off + 1] = out[2]
+		data[off + 2] = out[1]
+		data[off + 3] = out[0]
+		data[off + 4] = out[7]
+		data[off + 5] = out[6]
+		data[off + 6] = out[5]
+		data[off + 7] = out[4]
+		off += 8
+
 func _le_u32(b: PackedByteArray, off: int) -> int:
 	return b[off] | (b[off + 1] << 8) | (b[off + 2] << 16) | (b[off + 3] << 24)
-
-func _le_u64(b: PackedByteArray, off: int) -> int:
-	var lo := _le_u32(b, off)
-	var hi := _le_u32(b, off + 4)
-	return lo | (hi << 32)

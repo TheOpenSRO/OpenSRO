@@ -17,15 +17,17 @@ func _write_entry(block: PackedByteArray, i: int, entry_type: int, name: String,
 	block[base] = entry_type
 	var name_bytes := name.to_ascii_buffer()
 	for j in range(name_bytes.size()):
-		block[base + 0x01 + j] = name_bytes[j]
-	block[base + 0x5A] = offset & 0xFF
-	block[base + 0x5B] = (offset >> 8) & 0xFF
-	block[base + 0x5C] = (offset >> 16) & 0xFF
-	block[base + 0x5D] = (offset >> 24) & 0xFF
-	block[base + 0x5E] = size & 0xFF
-	block[base + 0x5F] = (size >> 8) & 0xFF
-	block[base + 0x60] = (size >> 16) & 0xFF
-	block[base + 0x61] = (size >> 24) & 0xFF
+		block[base + Pk2Reader.ENTRY_OFF_NAME + j] = name_bytes[j]
+	var pos_base := base + Pk2Reader.ENTRY_OFF_POSITION
+	block[pos_base] = offset & 0xFF
+	block[pos_base + 1] = (offset >> 8) & 0xFF
+	block[pos_base + 2] = (offset >> 16) & 0xFF
+	block[pos_base + 3] = (offset >> 24) & 0xFF
+	var size_base := base + Pk2Reader.ENTRY_OFF_SIZE
+	block[size_base] = size & 0xFF
+	block[size_base + 1] = (size >> 8) & 0xFF
+	block[size_base + 2] = (size >> 16) & 0xFF
+	block[size_base + 3] = (size >> 24) & 0xFF
 
 func _build_simple_archive(path: String) -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)
