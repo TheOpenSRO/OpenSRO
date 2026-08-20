@@ -2,6 +2,31 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 4)
+
+- Fixed the `Packet.read_from` busy-wait limitation that's been flagged in `NetClient`'s doc
+  comment since it was first written: the old implementation consumed a frame's header off the
+  socket, then blocked the calling thread in a `while ... OS.delay_msec(1)` loop until the full
+  payload had arrived, which would stall `NetClient._process()` -- and therefore every frame of
+  the game -- against a slow or adversarial connection.
+  Replaced it with `PacketReader` (`client/scripts/net/packet_reader.gd`): a small stateful
+  reader that tracks "have we buffered a header yet, and how much payload are we still waiting
+  on" as instance state instead of a blocking loop. `poll()` returns `null` immediately if a full
+  frame isn't available yet -- no delay, no busy-wait -- and the caller (now `NetClient`, one
+  `PacketReader` per connection) just calls it again next frame. `Packet.read_from` was removed
+  entirely rather than left alongside as a second, divergence-prone implementation; it had
+  exactly one caller.
+  This is the kind of bug that's easy to fix wrong by testing only the parts that don't matter --
+  encode/decode round-trips (already covered by `packet_test.gd`) say nothing about whether
+  reading a frame that arrives in two separate TCP writes actually works. Wrote
+  `packet_reader_test.gd` against a **real loopback socket** (a `TCPServer` + `StreamPeerTCP`
+  pair, not synthetic byte arrays) specifically to exercise that: sending a frame's header and
+  payload as two separate `put_data` calls confirms `poll()` returns `null` after the header
+  alone and the completed `Packet` only once the payload lands, and a second test sends two full
+  frames back-to-back in one write to confirm both decode correctly out of a single combined
+  buffer. Both passed on the first real run.
+  All 18 GDScript suites pass headless; wired the new test into CI.
+
 ## 2026-08-20 (cont'd 3)
 
 - Expanded monster content from one placeholder species to three: `cmd/server/main.go`'s

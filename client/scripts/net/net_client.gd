@@ -5,11 +5,9 @@ extends Node
 ## signals for UI scenes to react to. Meant to be used as an autoload
 ## singleton (see project.godot) so any scene can reach it.
 ##
-## Known limitation: Packet.read_from busy-waits (in small increments) for a
-## payload to fully arrive once its header is seen, which is fine for a
-## local dev server but would stall a frame against a slow/adversarial
-## connection. Acceptable for now; worth revisiting before this talks to
-## anything over a real network.
+## Frame reads go through a PacketReader (see packet_reader.gd), which
+## tracks partial-frame state across _process() calls instead of blocking
+## the frame loop while a payload is still arriving over the wire.
 
 signal connected
 signal connection_failed
@@ -78,6 +76,7 @@ signal trade_cancelled(cancelled: TradeNet.Cancelled)
 
 var _peer: StreamPeerTCP
 var _connecting := false
+var _reader: PacketReader
 
 func _process(_delta: float) -> void:
 	if _peer == null:
@@ -97,16 +96,17 @@ func _process(_delta: float) -> void:
 	if _peer.get_status() != StreamPeerTCP.STATUS_CONNECTED:
 		return
 
-	# Drain everything currently available; Packet.read_from returns null
-	# once there's not a full header buffered yet.
+	# Drain everything currently available; PacketReader.poll returns null
+	# once there's not a full frame buffered yet (never blocks the frame).
 	while true:
-		var p := Packet.read_from(_peer)
+		var p := _reader.poll(_peer)
 		if p == null:
 			break
 		_dispatch(p)
 
 func connect_to_server(host: String, port: int) -> void:
 	_peer = StreamPeerTCP.new()
+	_reader = PacketReader.new()
 	var err := _peer.connect_to_host(host, port)
 	if err != OK:
 		push_error("NetClient: connect_to_host failed: %s" % err)
