@@ -1,0 +1,44 @@
+# Local dev/test stack: Postgres + the gateway server. No game data is
+# bundled (BYO pk2/refdata, see docs/LEGAL.md) -- this just gets a server
+# you can point a client at without hand-installing Postgres.
+#
+# Usage:
+#   docker compose up --build
+# The server listens on localhost:15779 (plain TCP; see server/README.md
+# or -tls-cert/-tls-key for TLS). Postgres data persists in the
+# `srrevamp-postgres-data` named volume across restarts; `docker compose
+# down -v` wipes it for a clean slate.
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: srrevamp
+    ports:
+      - "5432:5432"
+    volumes:
+      - srrevamp-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  server:
+    build:
+      context: ./server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "15779:15779"
+    command:
+      - "-addr=:15779"
+      - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/srrevamp?sslmode=disable"
+
+volumes:
+  srrevamp-postgres-data:

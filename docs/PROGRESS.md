@@ -2,6 +2,41 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-20 (cont'd 13)
+
+- Added Docker packaging for the server and a real client export pipeline, ahead of starting the
+  3D asset-format RE work -- both explicitly aimed at making local iteration fast once that
+  starts.
+  **Docker**: `server/Dockerfile` (multi-stage: `golang:1.25-bookworm` build stage, distroless
+  static runtime -- no game data baked in, consistent with the BYO-data policy) plus root
+  `docker-compose.yml` (Postgres + server, healthcheck-gated so the server doesn't start racing
+  Postgres). Verified everything I could verify in this sandbox: `docker build`/`docker compose
+  up` themselves can't actually run here (this LXC has no nesting enabled, so even `docker run
+  hello-world` fails on a plain `overlayfs: permission denied` at the mount step -- confirmed,
+  not assumed), but `docker compose config` validates the YAML cleanly, and building both
+  `cmd/server` and `cmd/import-refdata` with the exact `CGO_ENABLED=0` flags the Dockerfile uses
+  succeeds. Left Docker installed but disabled (`systemctl disable`) rather than pretending it's
+  a working local runtime here.
+  **Client export**: downloaded and installed the matching 4.2.2-stable export templates (854MB),
+  wrote `client/export_presets.cfg` (gitignored, like before -- each operator configures their
+  own) for Linux and Windows Desktop, and ran real exports via `godot4 --headless --export-
+  release`. Windows initially reported a warning (`rcedit` not installed, only needed for
+  embedding a custom icon/version metadata) -- disabled `application/modify_resources` since no
+  icon is configured anyway, and it exports clean.
+  Caught a real, pre-existing bug doing this, not an export artifact: running the exported Linux
+  binary printed `ERROR: Parent node is busy adding/removing children` on boot -- reproduced the
+  identical error running the *unexported* project too, confirming it wasn't export-specific.
+  Root cause: `Boot.gd` called `get_tree().change_scene_to_file(...)` directly from `_ready()`,
+  fighting the scene tree's own in-progress node-addition for that same node. Fixed with
+  `.call_deferred(...)`; reproduced the clean (error-free) boot afterward for both the raw
+  project and the re-exported binaries. All 19 GDScript suites still pass headless; full Go test
+  suite green (no server logic changed, just packaging).
+  Produced real, running artifacts: a 60MB Linux ELF and a 67MB Windows PE32+ executable, both
+  built from the current `dev` tip, both confirmed to boot cleanly and (Linux) actually connect
+  to a locally-run server binary with no errors. Added `README.md` instructions for both the
+  Docker and plain-`go run` paths. `client/build/` added to `.gitignore` (build output, not
+  source).
+
 ## 2026-08-20 (cont'd 12)
 
 - Made friends playable from `World.tscn`, completing the "close the protocol-to-UI gap 1:1" pass

@@ -6,4 +6,7 @@ extends Node
 
 func _ready() -> void:
 	print("SRRevamp boot: no bundled game data. Point PK2_DATA_DIR at your own pk2 files.")
-	get_tree().change_scene_to_file("res://scenes/Login.tscn")
+	# Deferred: calling change_scene_to_file directly from _ready() fights
+	# the scene tree's own in-progress node-addition for this node,
+	# producing "Parent node is busy adding/removing children" errors.
+	get_tree().change_scene_to_file.call_deferred("res://scenes/Login.tscn")
