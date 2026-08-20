@@ -53,6 +53,7 @@ shape = SubResource("CapsuleShape3D_player")
 
 [node name="Camera3D" type="Camera3D" parent="Player"]
 transform = Transform3D(1, 0, 0, 0, 0.857167, 0.515038, 0, -0.515038, 0.857167, 0, 6, 9)
+current = true
 
 [node name="OtherEntities" type="Node3D" parent="."]
 
