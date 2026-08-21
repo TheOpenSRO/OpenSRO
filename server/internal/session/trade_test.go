@@ -116,7 +116,7 @@ func setupTradeTest(t *testing.T) *tradeTestFixture {
 
 	hub := world.NewHub()
 	trades := trade.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, hub), TradeHandler(chars, inv, hub, trades))
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), TradeHandler(chars, inv, hub, trades))
 
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)

@@ -2,6 +2,36 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 58) — other players' armor is now real per-player too, broadcast over the network
+
+- Direct follow-on to the local-player armor gating just shipped: that change only fixed the
+  *local* player, since there was no way for the client to know any other player's real equip
+  state. This closes that gap by having the server broadcast it.
+- Added `HasArmor bool` to `EntitySnapshot` (`server/internal/session/world.go`), encoded as one
+  extra byte. A new `hasArmorEquipped(ctx, eq, characterID)` queries the real equipment store live
+  at broadcast time (both for `OpEnterWorldResult`'s initial "who's here" list and for
+  `OpEntityEntered`), so it always reflects a character's actual current equip state rather than a
+  value cached at some earlier point. `eq` is allowed to be `nil` (some handler-chain tests wire up
+  `WorldHandler` without one) and just reports "not equipped" in that case, rather than requiring
+  every caller to carry an equipment store around.
+- Mirrored the field in `WorldNet.EntitySnapshot` (`client/scripts/net/world.gd`) and wired it into
+  `World3D.gd`: `_spawn_or_update_other` now takes a real `has_armor` flag (from both the initial
+  `others` list and live `OpEntityEntered` broadcasts) and passes it straight into
+  `_build_assembled_character(include_equipment)` -- the same mechanism the local player already
+  uses, so other players now only appear armored if their own account actually has something
+  equipped.
+- Verified with a real, live end-to-end test, not just unit-level encode/decode: `TestWorldFullFlow`
+  now equips real armor on one of its two test characters (via the real `equipment.OpenSQLStore`,
+  same Postgres-backed store production uses) and asserts both real outcomes over an actual TCP
+  connection -- the unarmored character's snapshot carries `HasArmor: false`, the armored
+  character's live `OpEntityEntered` broadcast carries `HasArmor: true`.
+- Full regression: Go clean (`build`/`vet`/`test`, including the live two-client flow test), all 33
+  GDScript suites pass (added `world_test.gd` coverage for the new field, including decoding a bare
+  `OpEntityEntered` payload with each `has_armor` value).
+- Remaining honest gap, unchanged: this is still the one fixed China-man *body* for every
+  character -- only the armor is now real per-player. Real per-account race/gender selection would
+  need actual asset variety this project hasn't gone looking for yet, not just a protocol change.
+
 ## 2026-08-21 (cont'd 57) — the local player's armor is now gated on real, server-authoritative equip state
 
 - Continuing down the open-items list: the player's armor previously rendered unconditionally

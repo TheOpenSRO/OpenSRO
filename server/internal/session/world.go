@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
@@ -32,11 +33,15 @@ const spawnZone = "jangan"
 var spawnPos = world.Position{X: 0, Y: 0, Z: 0}
 
 // EntitySnapshot describes one character's presence in the world: who they
-// are and where they are.
+// are, where they are, and whether they have real armor equipped (queried
+// live from the equipment store at broadcast time -- see hasArmorEquipped
+// -- so it always reflects the character's actual current equip state, not
+// a value cached when they entered the world).
 type EntitySnapshot struct {
 	CharacterID int64
 	Name        string
 	X, Y, Z     float32
+	HasArmor    bool
 }
 
 func (e *EntitySnapshot) Encode() []byte {
@@ -45,6 +50,11 @@ func (e *EntitySnapshot) Encode() []byte {
 	out = append(out, encodeFloat32(e.X)...)
 	out = append(out, encodeFloat32(e.Y)...)
 	out = append(out, encodeFloat32(e.Z)...)
+	if e.HasArmor {
+		out = append(out, 1)
+	} else {
+		out = append(out, 0)
+	}
 	return out
 }
 
@@ -71,14 +81,45 @@ func decodeEntitySnapshot(data []byte) (*EntitySnapshot, []byte, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("z: %w", err)
 	}
-	return &EntitySnapshot{CharacterID: id, Name: names[0], X: x, Y: y, Z: z}, rest, nil
+	if len(rest) < 1 {
+		return nil, nil, fmt.Errorf("has_armor: %w", errors.New("truncated"))
+	}
+	hasArmor := rest[0] != 0
+	rest = rest[1:]
+	return &EntitySnapshot{CharacterID: id, Name: names[0], X: x, Y: y, Z: z, HasArmor: hasArmor}, rest, nil
 }
 
-func entitySnapshotFromWorld(e world.Entity) EntitySnapshot {
+// hasArmorEquipped reports whether characterID currently has anything
+// equipped in equipment.SlotArmor. eq may be nil (some handler chains --
+// tests exercising features unrelated to armor -- wire up WorldHandler
+// without an equipment store), in which case this always reports false
+// rather than requiring every caller to carry one around. Errors are
+// treated the same as "not equipped" -- an equipment lookup failure
+// shouldn't block someone from entering the world or moving, and
+// defaulting to no armor is the more honest failure mode (never claims
+// equipment that couldn't be confirmed).
+func hasArmorEquipped(ctx context.Context, eq equipment.Store, characterID int64) bool {
+	if eq == nil {
+		return false
+	}
+	items, err := eq.Get(ctx, characterID)
+	if err != nil {
+		return false
+	}
+	for _, it := range items {
+		if it.Slot == equipment.SlotArmor {
+			return true
+		}
+	}
+	return false
+}
+
+func entitySnapshotFromWorld(ctx context.Context, eq equipment.Store, e world.Entity) EntitySnapshot {
 	return EntitySnapshot{
 		CharacterID: e.CharacterID,
 		Name:        e.Name,
 		X:           float32(e.Pos.X), Y: float32(e.Pos.Y), Z: float32(e.Pos.Z),
+		HasArmor: hasArmorEquipped(ctx, eq, e.CharacterID),
 	}
 }
 
@@ -258,11 +299,11 @@ func DecodeEntityLeft(data []byte) (*EntityLeft, error) {
 // WorldHandler returns a gateway.Handler implementing OpEnterWorld and
 // OpMove against chars (to resolve character ownership) and hub (world
 // state + broadcast fan-out).
-func WorldHandler(chars character.Store, hub *world.Hub) gateway.Handler {
+func WorldHandler(chars character.Store, eq equipment.Store, hub *world.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpEnterWorld:
-			return handleEnterWorld(ctx, sess, p, chars, hub)
+			return handleEnterWorld(ctx, sess, p, chars, eq, hub)
 		case OpMove:
 			return handleMove(sess, p, hub)
 		default:
@@ -287,7 +328,7 @@ func WorldDisconnectHandler(hub *world.Hub) func(sess *gateway.Session) {
 	}
 }
 
-func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, hub *world.Hub) error {
+func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, eq equipment.Store, hub *world.Hub) error {
 	accountID, ok := AuthenticatedAccountID(sess)
 	if !ok {
 		return sess.Send(&proto.Packet{
@@ -329,7 +370,7 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 
 	otherSnapshots := make([]EntitySnapshot, len(others))
 	for i, o := range others {
-		otherSnapshots[i] = entitySnapshotFromWorld(o)
+		otherSnapshots[i] = entitySnapshotFromWorld(ctx, eq, o)
 	}
 	result := &EnterWorldResult{
 		OK: true, Zone: spawnZone,
@@ -343,6 +384,7 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	entered := &EntitySnapshot{
 		CharacterID: owned.ID, Name: owned.Name,
 		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
+		HasArmor: hasArmorEquipped(ctx, eq, owned.ID),
 	}
 	for _, other := range others {
 		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.Encode()})

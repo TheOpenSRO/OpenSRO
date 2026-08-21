@@ -62,7 +62,7 @@ func TestChatFullFlow(t *testing.T) {
 	chars.Create(ctx, 2, "Bram")
 
 	hub := world.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, hub), ChatHandler(hub))
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), ChatHandler(hub))
 
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()

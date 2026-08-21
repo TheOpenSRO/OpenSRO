@@ -93,7 +93,7 @@ func TestSkillFullFlow(t *testing.T) {
 
 	handle := gateway.Chain(
 		LoginHandler(accounts),
-		WorldHandler(chars, hub),
+		WorldHandler(chars, eq, hub),
 		LearnSkillHandler(chars, skills),
 		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv),
 	)

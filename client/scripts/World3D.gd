@@ -46,15 +46,20 @@ extends Node3D
 ## renders bare-skinned until the player actually equips real armor. Falls
 ## back to the placeholder capsule if the body itself isn't found.
 ##
-## Other connected players use this exact same fixed real character too
-## (see _build_assembled_character()) rather than a capsule, when
+## Other connected players use this exact same fixed real China-man body
+## too (see _build_assembled_character()) rather than a capsule, when
 ## SRREVAMP_PK2_PATH is set -- honestly, not because this project knows who
 ## any other player really is (it still doesn't; there's no per-character
-## loadout tracked server-side), but because every player would currently
-## resolve to the exact same fixed China-man+clothes_03 pick anyway, so
-## showing everyone that real character instead of a capsule isn't
-## overclaiming anything new. Falls back to the labeled capsule per-entity
-## if the shared character assets never loaded.
+## race/gender loadout tracked server-side), but because every player would
+## currently resolve to the exact same fixed China-man body anyway, so
+## showing everyone that real body instead of a capsule isn't overclaiming
+## anything new. Their armor, however, is now real per-player: the server
+## broadcasts each entity's actual live SLOT_ARMOR equip state as part of
+## OpEnterWorldResult/OpEntityEntered (WorldNet.EntitySnapshot.has_armor --
+## see server/internal/session/world.go's hasArmorEquipped), so other
+## players only appear armored if their own account actually equipped
+## something, same as the local player. Falls back to the labeled capsule
+## per-entity if the shared character assets never loaded.
 ##
 ## SRREVAMP_PK2_PATH + SRREVAMP_BSR_PATH also loads one real, textured
 ## static scenery object nearby via ObjectLoader, and
@@ -177,7 +182,7 @@ func _ready() -> void:
 		player.position = Vector3(result.x, result.y, result.z)
 		_last_sent_pos = player.position
 		for other in result.others:
-			_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z))
+			_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.has_armor)
 
 	NetClient.entity_entered.connect(_on_entity_entered)
 	NetClient.entity_moved.connect(_on_entity_moved)
@@ -685,7 +690,7 @@ func _physics_process(delta: float) -> void:
 		Skeleton3DBuilder.apply_ban_keyframe(_real_skeleton, _real_skeleton_track, frame_idx)
 		Skeleton3DBuilder.update_debug_visualization(_real_skeleton.get_node("DebugVisualization"), _real_skeleton)
 
-func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3) -> void:
+func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, has_armor: bool = false) -> void:
 	if _other_bodies.has(character_id):
 		_other_bodies[character_id].position = pos
 		return
@@ -694,10 +699,14 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3) 
 	body.position = pos
 
 	# Real assembled character if the shared assets loaded (see this file's
-	# top comment for the honest scope: the same fixed character every
-	# player currently resolves to, not a real per-account identity) --
-	# falls back to the labeled placeholder capsule otherwise.
-	var skeleton := _build_assembled_character()
+	# top comment for the honest scope: still the same fixed China-man body
+	# every player currently resolves to, not a real per-account race/
+	# gender identity) -- falls back to the labeled placeholder capsule
+	# otherwise. Armor is real now, though: has_armor comes straight from
+	# the server's live equipment-store lookup (see WorldNet.EntitySnapshot
+	# and server/internal/session/world.go's hasArmorEquipped), the same
+	# real signal that already gates the local player's own armor.
+	var skeleton := _build_assembled_character(has_armor)
 	if skeleton != null:
 		body.add_child(skeleton)
 	else:
@@ -722,7 +731,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3) 
 	_other_bodies[character_id] = body
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
-	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z))
+	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.has_armor)
 
 func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 	if _other_bodies.has(moved.character_id):

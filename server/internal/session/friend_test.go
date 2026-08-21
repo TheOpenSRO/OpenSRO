@@ -102,7 +102,7 @@ func TestFriendFullFlow(t *testing.T) {
 
 	friends := openTestFriendStore(t)
 	hub := world.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, hub), FriendHandler(chars, friends, hub))
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), FriendHandler(chars, friends, hub))
 
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -225,7 +225,7 @@ func TestFriendRequestOfflineTarget(t *testing.T) {
 
 	friends := openTestFriendStore(t)
 	hub := world.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, hub), FriendHandler(chars, friends, hub))
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), FriendHandler(chars, friends, hub))
 
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()

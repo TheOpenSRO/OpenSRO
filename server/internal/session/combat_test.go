@@ -137,7 +137,7 @@ func TestCombatFullFlow(t *testing.T) {
 
 	handle := gateway.Chain(
 		LoginHandler(accounts),
-		WorldHandler(chars, hub),
+		WorldHandler(chars, eq, hub),
 		CombatHandler(chars, eq, items, hub, monsters, quests, inv),
 	)
 	addr, cleanup := startTestServer(t, handle)
@@ -295,7 +295,7 @@ func TestCombatLootFlow(t *testing.T) {
 
 	handle := gateway.Chain(
 		LoginHandler(accounts),
-		WorldHandler(chars, hub),
+		WorldHandler(chars, eq, hub),
 		CombatHandler(chars, eq, items, hub, monsters, quests, inv),
 	)
 	addr, cleanup := startTestServer(t, handle)
@@ -434,7 +434,7 @@ func TestMonsterListFlow(t *testing.T) {
 
 	handle := gateway.Chain(
 		LoginHandler(accounts),
-		WorldHandler(chars, hub),
+		WorldHandler(chars, eq, hub),
 		CombatHandler(chars, eq, items, hub, monsters, quests, inv),
 	)
 	addr, cleanup := startTestServer(t, handle)

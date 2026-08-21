@@ -180,7 +180,7 @@ func main() {
 		session.LoginHandler(accounts),
 		session.RegisterHandler(accounts),
 		session.CharacterHandler(chars),
-		session.WorldHandler(chars, hub),
+		session.WorldHandler(chars, eq, hub),
 		session.InventoryHandler(chars, inv),
 		session.EquipmentHandler(chars, eq),
 		session.ShopHandler(chars, shopSvc),

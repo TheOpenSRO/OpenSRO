@@ -9,13 +9,24 @@ import (
 
 	"github.com/OpenSRO/srrevamp/server/internal/account"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
+// worldTestMaxStacks is a fixed-answer inventory.MaxStackLookup for
+// TestWorldFullFlow, so it doesn't need a real refdata item catalog just to
+// seed one armor item into an inventory.
+type worldTestMaxStacks map[int64]int
+
+func (s worldTestMaxStacks) GetMaxStack(_ context.Context, itemID int64) (int, error) {
+	return s[itemID], nil
+}
+
 func TestEntitySnapshotRoundTrip(t *testing.T) {
-	want := &EntitySnapshot{CharacterID: 42, Name: "Aria", X: 1.5, Y: -2.5, Z: 3}
+	want := &EntitySnapshot{CharacterID: 42, Name: "Aria", X: 1.5, Y: -2.5, Z: 3, HasArmor: true}
 	got, rest, err := decodeEntitySnapshot(want.Encode())
 	if err != nil {
 		t.Fatalf("decodeEntitySnapshot: %v", err)
@@ -31,7 +42,7 @@ func TestEntitySnapshotRoundTrip(t *testing.T) {
 func TestEnterWorldResultRoundTripSuccess(t *testing.T) {
 	want := &EnterWorldResult{
 		OK: true, Zone: "jangan", X: 1, Y: 2, Z: 3,
-		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6}},
+		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, HasArmor: true}},
 	}
 	got, err := DecodeEnterWorldResult(want.Encode())
 	if err != nil {
@@ -80,10 +91,36 @@ func TestWorldFullFlow(t *testing.T) {
 	accounts.Add("bob", "hunter3")
 	chars := character.NewMemStore()
 	chars.Create(ctx, 1, "Aria")
-	chars.Create(ctx, 2, "Bram")
+	bram, _ := chars.Create(ctx, 2, "Bram")
+
+	// Bram has real armor equipped; Aria doesn't -- exercises both real
+	// HasArmor outcomes through the actual EnterWorld/EntityEntered flow,
+	// not just the standalone Encode/Decode round trip above.
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), worldTestMaxStacks{200: 1})
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	if err := inv.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating inventory: %v", err)
+	}
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	if err := eq.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating equipment: %v", err)
+	}
+	if err := inv.AddItem(ctx, bram.ID, 200, 1); err != nil {
+		t.Fatalf("seeding Bram's inventory: %v", err)
+	}
+	if err := eq.Equip(ctx, bram.ID, equipment.SlotArmor, 0); err != nil {
+		t.Fatalf("equipping Bram's armor: %v", err)
+	}
 
 	hub := world.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, hub))
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, eq, hub))
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -143,8 +180,13 @@ func TestWorldFullFlow(t *testing.T) {
 	if len(ewr.Others) != 1 || ewr.Others[0].Name != "Aria" {
 		t.Fatalf("bob should see Aria, got %+v", ewr.Others)
 	}
+	if ewr.Others[0].HasArmor {
+		t.Fatalf("Aria has nothing equipped, but bob's snapshot claims HasArmor=true: %+v", ewr.Others[0])
+	}
 
-	// Alice should now receive an OpEntityEntered for Bram.
+	// Alice should now receive an OpEntityEntered for Bram, with HasArmor
+	// true -- reflecting Bram's real equipped state, queried live from the
+	// equipment store, not a hardcoded/default value.
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
 	entered, err := proto.Read(rA)
 	if err != nil {
@@ -156,6 +198,9 @@ func TestWorldFullFlow(t *testing.T) {
 	enteredSnap, _, err := decodeEntitySnapshot(entered.Data)
 	if err != nil || enteredSnap.Name != "Bram" {
 		t.Fatalf("expected EntityEntered for Bram, got %+v (err=%v)", enteredSnap, err)
+	}
+	if !enteredSnap.HasArmor {
+		t.Fatalf("Bram has real armor equipped, but EntityEntered claims HasArmor=false: %+v", enteredSnap)
 	}
 
 	// Bob moves; Alice should see OpEntityMoved.

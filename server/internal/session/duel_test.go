@@ -89,7 +89,7 @@ func TestDuelDeclineFlow(t *testing.T) {
 
 	hub := world.NewHub()
 	duels := duel.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, hub), DuelHandler(chars, eq, items, hub, duels))
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, eq, hub), DuelHandler(chars, eq, items, hub, duels))
 
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -211,7 +211,7 @@ func TestDuelFullFightFlow(t *testing.T) {
 
 	hub := world.NewHub()
 	duels := duel.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, hub), DuelHandler(chars, eq, items, hub, duels))
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, eq, hub), DuelHandler(chars, eq, items, hub, duels))
 
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()

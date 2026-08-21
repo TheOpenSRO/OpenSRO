@@ -12,13 +12,17 @@ const OP_ENTITY_ENTERED := 0x0023      # server -> client, broadcast
 const OP_ENTITY_MOVED := 0x0024        # server -> client, broadcast
 const OP_ENTITY_LEFT := 0x0025         # server -> client, broadcast
 
-## One character's presence in the world: who they are and where they are.
+## One character's presence in the world: who they are, where they are, and
+## whether they have real armor equipped (the server's actual, live
+## equipment-store answer at the moment this snapshot was sent -- see
+## server/internal/session/world.go's hasArmorEquipped).
 class EntitySnapshot:
 	var character_id: int
 	var char_name: String
 	var x: float
 	var y: float
 	var z: float
+	var has_armor: bool
 
 ## Encodes an OpEnterWorld request: just a character name.
 static func encode_enter_world(character_name: String) -> PackedByteArray:
@@ -74,6 +78,11 @@ static func _decode_entity_snapshot(data: PackedByteArray, offset: int) -> Array
 	snap.y = data.decode_float(offset + 4)
 	snap.z = data.decode_float(offset + 8)
 	offset += 12
+
+	if offset + 1 > data.size():
+		return [null, -1]
+	snap.has_armor = data[offset] != 0
+	offset += 1
 
 	return [snap, offset]
 

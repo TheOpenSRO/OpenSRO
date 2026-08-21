@@ -221,9 +221,15 @@ guess — see `docs/PROGRESS.md`. This is a fixed default armor set (one arbitra
 many found), not a real per-account equipment loadout.
 
 Other connected players are real assembled characters too now, not just labeled capsules: since
-every player currently resolves to the exact same fixed China-man+armor pick anyway (no real
-per-account loadout is tracked server-side yet), showing everyone that same real character instead
-of a capsule doesn't overclaim anything new. The character/equipment assets are parsed and cached
+every player currently resolves to the exact same fixed China-man body anyway (no real
+per-account race/gender loadout is tracked server-side yet), showing everyone that same real body
+instead of a capsule doesn't overclaim anything new. Their armor, though, is now genuinely
+per-player: the server broadcasts each entity's real, live `SLOT_ARMOR` equip state as part of
+`OpEnterWorldResult`/`OpEntityEntered` (`EntitySnapshot.HasArmor`, queried fresh from
+`server/internal/equipment` at broadcast time, not cached) — verified with a real, live two-client
+test over actual TCP (`TestWorldFullFlow`): one character with real armor equipped, one without,
+and both the initial world snapshot and the live entity-entered broadcast carry the correct real
+flag for each. The character/equipment assets are parsed and cached
 once at scene startup and reused to build one independent `Skeleton3D` per connected player — see
 `World3D.gd`'s `_build_assembled_character()`. Falls back to the labeled capsule if the shared
 assets never loaded. A bare *decoration* `Skeleton3D` (loaded separately via
@@ -280,10 +286,11 @@ Not yet done: confirmed real-world terrain/object
 positioning/scale relative to a player's actual spawn coordinate (currently placed for visibility,
 not accuracy); a newly-found, entirely unparsed real file type (`Map.pk2` region folders also
 contain a `.t` file, magic `JMXVMAPT1001`, with a real byte pattern consistent with a texture
-blend/weight map — not yet decoded, see `docs/protocol/MAPM_FORMAT.md`); no real per-account
-identity for *other* players (everyone still renders as the same fixed character — there's no
-server-side race/gender/equipment loadout tracked per character yet, so there's nothing to
-distinguish). That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
+blend/weight map — a real, previously-investigated RE gap this project couldn't fully close, see
+`docs/protocol/MAPM_FORMAT.md`); no real per-account *race/gender* identity for other players
+(armor is now real per-player — see above — but everyone still renders the same fixed China-man
+body, since there's no server-side race/gender selection tracked per character yet). That's the
+current focus (see `docs/PROGRESS.md`). The material-layer-to-
 mesh-piece pairing when a `.bmt` has multiple layers and no name match is available is still a
 documented, unconfirmed heuristic (pairs by index when counts match, used by `ObjectLoader` for
 `.bsr` scenery); `.efp`'s nested tree structure (see above). See
