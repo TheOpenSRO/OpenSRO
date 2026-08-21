@@ -216,6 +216,20 @@ anywhere in this project's available real client data — a real gap this projec
 environment couldn't close at first, not one that was given up on early. Flagged here as a real,
 promising, unresolved lead for a future pass, not a solved format.
 
+**Revisited**: searched `sro_client.exe`/`EternityLib.dll`/`GFXFileManager.dll` for a real magic
+string, class-name strings ("Terrain", "MapData", etc.), and RTTI type descriptors that might lead
+to a real `.t` loader function, the same technique that found `ResObject::Load` for `.bsr` (see
+`BSR_FORMAT.md`). No literal `.t`/`JMXVMAPT` magic string exists in any of the three binaries (the
+format likely validates its magic byte-for-byte against constructed bytes, like `.bsr` does, not
+via an embedded string literal — so this search technique can't find it this way). The one
+promising real class name found (`CMapLoader`, via a real `CSingletonT<CMapLoader>` RTTI
+descriptor, plus a real `"D:\...\navmesh\MapLoader.cpp"` string) turned out to be the **navmesh**
+(AI pathfinding) loader, a different real subsystem entirely, not the visual terrain/texture
+system — a real, confirmed-wrong lead, not a guess. No further real entry point was found in the
+time spent. This remains a genuine, currently-unsolved RE gap, same conclusion as before, now with
+one more specific dead branch (`CMapLoader`/navmesh) ruled out and recorded so a future pass
+doesn't re-check it.
+
 ## What actually shipped instead: a real per-region minimap image, via `server/cmd/pk2list`
 
 The RE environment used throughout this project turned out to also have a genuine full retail

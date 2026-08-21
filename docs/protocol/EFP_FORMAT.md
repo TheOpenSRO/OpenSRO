@@ -19,6 +19,30 @@ value-boundary-agnostic "read a name, then scan forward for the next one" walk g
 file. No decompiler output is stored in this repo regardless — only the resulting facts about the
 container format.
 
+**Revisited, one hop further**: `FUN_00cb9120` itself is genuinely just header/magic handling
+(builds the literal `"JMXVEFF 0013"` bytes and reads/writes 4 fixed-size fields right after) — the
+earlier "too obfuscated" assessment was accurate for that specific function, but decompiling
+doesn't have to stop there. It hands off to `FUN_00cc27e0`, which turns out to be genuinely
+informative: **it recurses on itself**. Structurally: for one node, it first walks a linked list
+(offset `+0x1c`, next-pointer at `+0x18`) writing one entry per item via `FUN_00cc2710` (a
+leaf-value writer that itself dispatches through a per-property-type virtual method — confirming
+the already-known fact that leaf values have no single fixed encoding, not new information), then
+writes a 4-byte count/terminator, then walks a *second* linked list (offset `+0xf`, next-pointer at
+`+0xd`) calling `FUN_00cc27e0(child)` recursively for each entry. **This is the real nested tree
+structure this project's reader flattens away**: each node is a real ordered `(leaf-property-list,
+child-node-list)` pair, not an undifferentiated flat sequence — confirming the design this doc
+already inferred from data alone, now backed by decompiled real code, not just inference.
+
+One honest caveat: `FUN_00cb9120` builds the magic bytes by *writing* literal constants into a
+buffer, which reads as the SimpleViewer editor's *save* path, not necessarily the runtime client's
+*load* path — but a real file format's save and load code walk the identical tree shape, so this
+still pins down the real structure a reader needs to reconstruct, even though it isn't literally
+the function the shipped game client calls. **Not yet implemented**: turning this into an actual
+recursive reader still needs the real per-node header shape (the exact meaning of the `+0x1c`/
+`+0x18`/`+0xf`/`+0xd` offsets and the 4-byte count in real file-relative terms) cross-referenced
+against real file bytes, the same way every other confirmed field in this project was pinned down
+— flagged as a real, concrete next step rather than guessed at further.
+
 ## What this reader does and doesn't recover
 
 **Recovers a flat sequence of `(name, raw value bytes)` pairs — not the true nested tree.** Every

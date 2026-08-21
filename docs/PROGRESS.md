@@ -2,6 +2,37 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 64) — one more RE dead end (`.t`), one real structural find (`.efp`)
+
+- Continued chasing RE leads per explicit direction to keep going and accept some dead ends.
+- **`.t` texture blend map**: searched all three client binaries for a real magic string, class
+  names, and RTTI type descriptors that might lead to a real loader, the same technique that found
+  `ResObject::Load`. No embedded magic string exists (same byte-for-byte validation pattern as
+  `.bsr`, not a literal comparison). The one promising real lead (`CMapLoader`, via a real
+  `CSingletonT<CMapLoader>` RTTI descriptor and a real `MapLoader.cpp` path string) turned out to
+  be the navmesh (AI pathfinding) loader, a different real subsystem -- a confirmed-wrong branch,
+  not a guess. Recorded in `MAPM_FORMAT.md` so a future pass doesn't re-check it. Still an
+  unsolved, honestly-flagged gap.
+- **`.efp` nested tree structure**: revisited the previously-documented `FUN_00cb9120` entry point
+  with fresh eyes. That function itself is genuinely just magic/header handling (confirmed by
+  decompiling it: builds the literal `"JMXVEFF 0013"` bytes) -- but going one hop further this
+  time (to `FUN_00cc27e0`) found something real and useful: **the function recurses on itself**,
+  walking one linked list of leaf property entries (via `FUN_00cc2710`, itself a polymorphic
+  per-type value writer -- confirms, doesn't newly reveal, that leaf values have no single fixed
+  encoding) then a second linked list of child nodes, calling itself again for each child. This is
+  the real nested tree shape this project's reader currently flattens away, now backed by
+  decompiled code rather than inferred from data alone. Honest caveat: the function constructs the
+  magic by writing it, reading as the editor's *save* path rather than the runtime *load* path --
+  structurally equivalent tree shape either way, but worth being precise about which real code path
+  this actually is.
+- **Not yet implemented** for either format -- both entries document real, concrete findings
+  (one negative, one structural) rather than code changes, consistent with this project's practice
+  of not shipping behavior built on an unconfirmed byte layout. `.efp`'s real per-node header
+  shape (the `+0x1c`/`+0x18`/`+0xf`/`+0xd` offsets and the count field, in real file-relative
+  terms) still needs a hex-dump cross-check against real files before a recursive reader can be
+  built.
+- No code changes, no regression run needed.
+
 ## 2026-08-21 (cont'd 63) — solved the common case: real sub-mesh material-layer matching, implemented
 
 - Direct follow-on to the previous entry's decompiled finding. Before implementing the deep,
