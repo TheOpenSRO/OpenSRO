@@ -29,10 +29,17 @@ extends Node3D
 ## a real .bsk skeleton plus real body-part .bms meshes rigidly attached to
 ## it via CharacterAssembler -- using the conventional real path layout
 ## found during reverse-engineering (Prim/Skel/Char/China/chinaman_skel.bsk
-## + Prim/Mesh/Char/China/man/*.bms). This is a fixed default (always the
-## China-man body), not a real per-account race/gender selection -- there's
-## no confirmed mapping to pick a different one automatically. Falls back
-## to the placeholder capsule if any of that isn't found.
+## + Prim/Mesh/Char/China/man/*.bms). It also wears a real, fixed 6-piece
+## armor set (Prim/Mesh/Item/China/man_item/clothes_03_*.bms -- arm, body,
+## foot, head, leg, shoulder), attached the same rigid way via
+## CharacterAssembler.assemble_equipment. This is a fixed default (always
+## the China-man body wearing the same armor set), not a real per-account
+## race/gender/equipment selection -- there's no confirmed mapping to pick
+## any of that automatically (this project's server doesn't track a
+## per-character loadout yet). Falls back to the placeholder capsule if any
+## of that isn't found; equipment specifically is optional even when the
+## body loads (missing armor files just mean a bare-skinned body, not a
+## failure).
 ##
 ## SRREVAMP_PK2_PATH + SRREVAMP_BSR_PATH also loads one real, textured
 ## static scenery object nearby via ObjectLoader, and
@@ -81,6 +88,17 @@ const PLAYER_BODY_PARTS := ["man_pelvis", "man_torso_lower", "man_torso_upper", 
 ## works here -- "warrior" is an arbitrary fixed pick, consistent with this
 ## file's fixed-default player character (see top comment).
 const PLAYER_MATERIAL_PATH := "Prim\\Mtrl\\Char\\China\\man\\chinaman_warrior.bmt"
+
+## Real China-man armor set found during reverse-engineering (a full
+## 6-piece real set: arm/body/foot/head/leg/shoulder, "aa"/"ba"/"fa"/"ha"/
+## "la"/"sa" -- see CharacterAssembler.EQUIPMENT_SLOT_BONES). "clothes_03"
+## is an arbitrary fixed pick among many real numbered sets found, same
+## honesty level as PLAYER_MATERIAL_PATH's class pick -- not a real
+## per-account equipment loadout, since this project's server doesn't track
+## one yet (see this file's top comment).
+const PLAYER_EQUIPMENT_MESH_DIR := "Prim\\Mesh\\Item\\China\\man_item"
+const PLAYER_EQUIPMENT_PARTS := ["clothes_03_aa", "clothes_03_ba", "clothes_03_fa", "clothes_03_ha", "clothes_03_la", "clothes_03_sa"]
+const PLAYER_EQUIPMENT_MATERIAL_PATH := "Prim\\Mtrl\\Item\\China\\man_item\\clothes_03.bmt"
 
 @onready var player: CharacterBody3D = $Player
 @onready var player_mesh: MeshInstance3D = $Player/Mesh
@@ -368,8 +386,20 @@ func _try_load_real_player_character() -> void:
 	var skeleton := Skeleton3DBuilder.build_skeleton3d(skel)
 	var fallback_mat := StandardMaterial3D.new()
 	fallback_mat.albedo_color = Color(0.85, 0.7, 0.55)
-	var materials_by_name := _load_player_materials(archive)
+	var materials_by_name := _load_real_materials(archive, PLAYER_MATERIAL_PATH)
 	CharacterAssembler.assemble(skeleton, parts, fallback_mat, materials_by_name)
+
+	var equipment_parts := {}
+	for part_name in PLAYER_EQUIPMENT_PARTS:
+		var eq_bytes := AssetSource.read_bytes(PLAYER_EQUIPMENT_MESH_DIR + "\\" + part_name + ".bms", archive)
+		if eq_bytes.is_empty():
+			continue
+		var eq_mesh := BmsReader.parse(eq_bytes)
+		if eq_mesh != null:
+			equipment_parts[part_name] = eq_mesh
+	if not equipment_parts.is_empty():
+		var equipment_materials := _load_real_materials(archive, PLAYER_EQUIPMENT_MATERIAL_PATH)
+		CharacterAssembler.assemble_equipment(skeleton, equipment_parts, null, equipment_materials)
 
 	# Real bind-pose data uses a different native scale than this scene's
 	# ~1.8-unit-tall placeholder capsule -- rescale so the assembled
@@ -389,27 +419,29 @@ func _try_load_real_player_character() -> void:
 
 	player.add_child(skeleton)
 	player_mesh.visible = false
-	print("World3D: loaded real player character (%d bones, %d body parts) from %s" % [
-		skel.bones.size(), parts.size(), OS.get_environment("SRREVAMP_PK2_PATH")])
+	print("World3D: loaded real player character (%d bones, %d body parts, %d equipment parts) from %s" % [
+		skel.bones.size(), parts.size(), equipment_parts.size(), OS.get_environment("SRREVAMP_PK2_PATH")])
 
-## Resolves PLAYER_MATERIAL_PATH's real .bmt (via ObjectLoader, the same
+## Resolves a real .bmt at bmt_path (via ObjectLoader, the same
 ## pk2 -> BmtReader -> DdjReader pipeline already verified for scenery) into
 ## a Dictionary keyed by each layer's own real layer_name -- ready to pass
-## straight into CharacterAssembler.assemble's materials_by_name, which
-## looks parts up by their own real material_name field (the two are the
-## same string in real data -- see PLAYER_MATERIAL_PATH's doc comment).
-## Returns an empty Dictionary (not an error) if the .bmt isn't found at
-## that conventional path, since CharacterAssembler falls back to a flat
-## color in that case.
-func _load_player_materials(archive: Pk2Reader) -> Dictionary:
-	var material := ObjectLoader.load_material(archive, PLAYER_MATERIAL_PATH)
+## straight into CharacterAssembler.assemble/assemble_equipment's
+## materials_by_name, which looks parts up by their own real material_name
+## field (the two are the same string in real data -- see
+## PLAYER_MATERIAL_PATH's doc comment, confirmed true for real equipment
+## materials too, e.g. clothes_03.bmt's layers name-match
+## clothes_03_*.bms's own material_name fields). Returns an empty
+## Dictionary (not an error) if the .bmt isn't found at that path, since
+## CharacterAssembler falls back to a flat/no color in that case.
+func _load_real_materials(archive: Pk2Reader, bmt_path: String) -> Dictionary:
+	var material := ObjectLoader.load_material(archive, bmt_path)
 	if material == null:
-		printerr("World3D: could not load player material at ", PLAYER_MATERIAL_PATH, " -- falling back to a flat color")
+		printerr("World3D: could not load material at ", bmt_path, " -- falling back to a flat color")
 		return {}
 
 	var by_name := {}
 	for layer in material.layers:
-		var godot_material := ObjectLoader.build_godot_material(archive, PLAYER_MATERIAL_PATH, layer)
+		var godot_material := ObjectLoader.build_godot_material(archive, bmt_path, layer)
 		if godot_material != null:
 			by_name[layer.layer_name] = godot_material
 	return by_name

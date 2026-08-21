@@ -109,6 +109,51 @@ func _init() -> void:
 			attachments2 += 1
 	_check(attachments2 == 1, "unpaired part gets exactly 1 attachment, unrecognized part skipped (got %d)" % attachments2)
 
+	# Equipment: a paired slot ("aa" -> arm, split by x-sign like a paired
+	# body part) and an unpaired slot ("ba" -> body, single bone, no split).
+	var skeleton3 := Skeleton3D.new()
+	skeleton3.add_bone("Root")
+	var root3 := skeleton3.find_bone("Root")
+	skeleton3.set_bone_rest(root3, Transform3D.IDENTITY)
+	skeleton3.add_bone("Bip01 R Forearm")
+	var r_arm := skeleton3.find_bone("Bip01 R Forearm")
+	skeleton3.set_bone_parent(r_arm, root3)
+	skeleton3.set_bone_rest(r_arm, Transform3D(Basis.IDENTITY, Vector3(2, 0, 0)))
+	skeleton3.add_bone("Bip01 L Forearm")
+	var l_arm := skeleton3.find_bone("Bip01 L Forearm")
+	skeleton3.set_bone_parent(l_arm, root3)
+	skeleton3.set_bone_rest(l_arm, Transform3D(Basis.IDENTITY, Vector3(-2, 0, 0)))
+	skeleton3.add_bone("Bip01 Spine1")
+	var spine1 := skeleton3.find_bone("Bip01 Spine1")
+	skeleton3.set_bone_parent(spine1, root3)
+	skeleton3.set_bone_rest(spine1, Transform3D(Basis.IDENTITY, Vector3(0, 10, 0)))
+	for idx in [root3, r_arm, l_arm, spine1]:
+		skeleton3.reset_bone_pose(idx)
+	skeleton3.force_update_all_bone_transforms()
+
+	var gauntlet_mesh := _build_mesh() # reuse the paired left/right fixture
+	var body_mesh := BmsReader.ParsedMesh.new()
+	for p in [Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0)]:
+		var bv := BmsReader.Vertex.new()
+		bv.position = p
+		bv.normal = Vector3.UP
+		bv.uv = Vector2.ZERO
+		body_mesh.vertices.append(bv)
+	body_mesh.indices = PackedInt32Array([0, 1, 2])
+
+	CharacterAssembler.assemble_equipment(skeleton3, {
+		"clothes_03_aa": gauntlet_mesh,
+		"clothes_03_ba": body_mesh,
+		"clothes_03_nn": body_mesh, # unrecognized slot code, should be skipped
+	})
+	var eq_attachments := {}
+	for child in skeleton3.get_children():
+		if child is BoneAttachment3D:
+			eq_attachments[child.bone_name] = child
+	_check(eq_attachments.size() == 3, "equipment: paired slot makes 2 attachments + unpaired slot makes 1, unrecognized skipped (got %d)" % eq_attachments.size())
+	_check(eq_attachments.has("Bip01 R Forearm") and eq_attachments.has("Bip01 L Forearm"), "equipment: paired 'aa' slot attaches to both forearms")
+	_check(eq_attachments.has("Bip01 Spine1"), "equipment: unpaired 'ba' slot attaches to Spine1")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

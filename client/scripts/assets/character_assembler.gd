@@ -68,6 +68,39 @@ static func _strip_prefix(part_name: String) -> String:
 		return part_name
 	return part_name.substr(us + 1)
 
+## Maps a real equipment-item mesh's trailing 2-letter slot code (e.g.
+## "clothes_03_aa" -> "aa") to the bone(s) it plausibly belongs to -- same
+## [positive-X, negative-X] convention as BODY_PART_BONES for paired slots.
+## Inferred the same way BODY_PART_BONES was (filename convention matched
+## against real .bsk bone names, not decompiled), plus a real,
+## directly-observed structural signal this project didn't have for body
+## parts: a triangle-centroid-X gap scan on 6 real clothes_03_*.bms files
+## found "aa"/"fa"/"sa" each split into two disjoint x-ranges (gap >5 units,
+## centered near x=0 -- genuinely paired L/R pieces baked into one file,
+## the same shape as a body part), while "ba"/"ha"/"la" stayed continuous
+## (gap <1 unit, off-center) -- real, unpaired single pieces. Slot-name
+## codes themselves (aa=arm, ba=body, fa=foot, ha=head, la=leg, sa=shoulder)
+## match the standard 6-piece real armor set convention this project found
+## real files for; the specific bone each maps to is still an inferred
+## guess, same honesty level as BODY_PART_BONES.
+const EQUIPMENT_SLOT_BONES := {
+	"ha": ["Bip01 Head"],
+	"ba": ["Bip01 Spine1"],
+	"la": ["Bip01 Pelvis"],
+	"sa": ["Bip01 R Clavicle", "Bip01 L Clavicle"],
+	"aa": ["Bip01 R Forearm", "Bip01 L Forearm"],
+	"fa": ["Bip01 R Foot", "Bip01 L Foot"],
+}
+
+## Extracts a real equipment mesh's trailing 2-letter slot code from its
+## name (e.g. "clothes_03_aa" -> "aa"), or "" if the name doesn't end in
+## "_XX" shape.
+static func _equipment_slot(part_name: String) -> String:
+	var us := part_name.rfind("_")
+	if us == -1 or part_name.length() - us - 1 != 2:
+		return ""
+	return part_name.substr(us + 1)
+
 ## Builds an ArrayMesh from only the triangles of mesh whose centroid x is
 ## on the requested side (>= 0 for positive, < 0 for negative). Vertices
 ## aren't compacted/remapped -- unused ones are simply never referenced by
@@ -154,6 +187,29 @@ static func assemble(skeleton: Skeleton3D, parts: Dictionary, default_material: 
 			print("CharacterAssembler: no bone mapping for body part %s (key %s) -- skipped" % [part_name, key])
 			continue
 		var bones: Array = BODY_PART_BONES[key]
+		var mesh: BmsReader.ParsedMesh = parts[part_name]
+		var material: Material = materials_by_name.get(mesh.material_name, default_material)
+
+		if bones.size() == 1:
+			_attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), bones[0], material)
+		else:
+			_attach_rigid(skeleton, _build_side_mesh(mesh, true), bones[0], material)
+			_attach_rigid(skeleton, _build_side_mesh(mesh, false), bones[1], material)
+
+## Same real mechanism as assemble() (rigid BoneAttachment3D, name-matched
+## real material resolution, X-sign split for paired pieces), applied to
+## real equipment-item meshes instead of body parts -- see
+## EQUIPMENT_SLOT_BONES for the slot-code-to-bone mapping and its real,
+## directly-observed evidence for which slots are genuinely paired.
+## Unrecognized slot codes are skipped with a printed warning, not an
+## error, same as assemble().
+static func assemble_equipment(skeleton: Skeleton3D, parts: Dictionary, default_material: Material = null, materials_by_name: Dictionary = {}) -> void:
+	for part_name in parts:
+		var slot := _equipment_slot(part_name)
+		if not EQUIPMENT_SLOT_BONES.has(slot):
+			print("CharacterAssembler: no bone mapping for equipment slot %s (part %s) -- skipped" % [slot, part_name])
+			continue
+		var bones: Array = EQUIPMENT_SLOT_BONES[slot]
 		var mesh: BmsReader.ParsedMesh = parts[part_name]
 		var material: Material = materials_by_name.get(mesh.material_name, default_material)
 

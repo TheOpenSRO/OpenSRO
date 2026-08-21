@@ -198,6 +198,15 @@ fixed default body (always the same China-man), not real per-account race/gender
 **uncompressed**, not zlib-wrapped — both `BmtReader` and `server/internal/bmt` now detect and
 handle both real variants.
 
+The player also wears real armor now: a real, full 6-piece China-man set
+(`Prim/Mesh/Item/China/man_item/clothes_03_{aa,ba,fa,ha,la,sa}.bms` — arm/body/foot/head/leg/
+shoulder, the standard real armor-slot convention) attaches via
+`CharacterAssembler.assemble_equipment`, the same rigid-attachment mechanism as the body, textured
+the same real name-matched way. Which slots are genuinely paired (mirrored L/R in one file) vs.
+single-piece was determined by a real triangle-centroid-X gap scan on the actual files, not a
+guess — see `docs/PROGRESS.md`. This is a fixed default armor set (one arbitrary real pick among
+many found), not a real per-account equipment loadout.
+
 Other connected players still render as labeled capsules, and a bare *decoration* `Skeleton3D`
 (loaded separately via `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH`, not the player's own body) still
 renders with joint/bone debug visualization, not a real mesh — see "Not yet done" below.
@@ -228,9 +237,10 @@ yet decoded, see `docs/protocol/MAPM_FORMAT.md`); no automatic asset selection f
 *other* players or map objects (nothing maps a server-side character or a `.mapo` type ID to a
 real asset path — see `docs/protocol/MAPO_FORMAT.md` — so only the local player's own body
 auto-loads; everyone/everything else still needs manual environment variables or shows a
-placeholder); and no real equipment/armor rendering (the assembled character is bare-skinned, not
-wearing the weapons/armor real screenshots show — no equipment-to-mesh mapping has been
-investigated yet). That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
+placeholder); and a real, confirmed gap in the core pk2 reader itself — any directory with more
+than 20 real entries is silently truncated (see `docs/protocol/PK2_FORMAT.md`), which doesn't
+break anything already loaded by an exact known path but does limit `server/cmd/pk2list`-style
+browsing for new ones. That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
 mesh-piece pairing when a `.bmt` has multiple layers and no name match is available is still a
 documented, unconfirmed heuristic (pairs by index when counts match, used by `ObjectLoader` for
 `.bsr` scenery); `.efp`'s nested tree structure (see above). See

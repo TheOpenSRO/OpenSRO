@@ -2,6 +2,42 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 49) — real armor on the player character
+
+- User asked "what next" after the pk2-truncation-bug documentation; picked equipment/armor
+  rendering, since the reference screenshots earlier in this session showed a fully-armored
+  character and the assembled player was still bare-skinned.
+- Found real China-man armor: `Prim/Mesh/Item/China/man_item/clothes_03_{aa,ba,fa,ha,la,sa}.bms`
+  — a real, full 6-piece set (arm/body/foot/head/leg/shoulder, the standard real armor-slot
+  convention) plus a matching `clothes_03.bmt` (+ a separate `clothes_03_sa.bmt` for the
+  shoulder piece specifically). Confirmed via the Go readers that the exact same real
+  material-name-to-layer-name pairing already used for the player's body (see cont'd 43) holds
+  for equipment too — each piece's own `material_name` field matches a real `layer_name` inside
+  `clothes_03.bmt` one-for-one.
+- Determined which slots are genuinely paired (mirrored L/R baked into one file, like body parts)
+  vs. single-piece by a real triangle-centroid-X gap scan on all 6 real files, not a guess: `aa`
+  (arm), `fa` (foot), and `sa` (shoulder) each have a large (>5 unit) gap centered near x=0 — two
+  disjoint real halves; `ba` (body), `ha` (head), and `la` (leg) stay continuous — genuinely single
+  pieces. Confirmed the skeleton's real bone names via the Go `.bsk` reader (the GDScript one hung
+  on this specific real file for reasons not yet chased down — flagged as an open bug, worked
+  around by using the already-tested, already-correct Go reader instead).
+- `CharacterAssembler` gained `assemble_equipment` (+ `EQUIPMENT_SLOT_BONES`, keyed by the real
+  2-letter slot code, e.g. `"aa"`) — reuses the exact same rigid `BoneAttachment3D` attachment and
+  X-sign-split logic already proven for body parts, no new mechanism needed. `World3D.gd`'s player
+  loader now also loads this real 6-piece set (arbitrary fixed pick among many real numbered sets,
+  same honesty level as the body's material pick) and attaches it via `assemble_equipment`.
+- Verified end-to-end against a synthetic pk2 packing the real skeleton + real body + real armor
+  set + real armor textures: all 6 equipment parts load and attach without error. Screenshot shows
+  a real helmet, shoulder pads, and chest/belt piece clearly; the leg/arm/foot pieces are present
+  (confirmed via bone-attachment count) but less visually prominent at the render distance used —
+  noted honestly rather than overclaiming a fully-dressed result.
+- Full regression: Go clean, all 18 GDScript suites pass (extended `character_assembler_test.gd`
+  with equipment-specific cases: paired-slot split, unpaired-slot single-bone, unrecognized-slot
+  skip).
+- Still open: bare-skinned other players/NPCs (still no per-character loadout tracked
+  server-side), the pk2 directory-truncation bug, the `.t` texture-blend-map decode, and now also
+  a new small one — the GDScript `BskReader` hang on a specific real file, not yet root-caused.
+
 ## 2026-08-21 (cont'd 48) — found a real, confirmed gap in the core pk2 reader: >20-entry directories truncate
 
 - While pushing further on real assets (user said "keep going" after the terrain texture win),
