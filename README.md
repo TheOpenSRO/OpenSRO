@@ -243,21 +243,23 @@ real object-index table (`object.ifo`, root level in `Data.pk2`, magic `JMXVOBJI
 plain-text table this project had previously called a confirmed dead end, found once the pk2
 directory-chain bug above was fixed) and renders it with its real `.bsr` model — see
 `server/internal/objidx`/`client/scripts/objidx/objidx_reader.gd` and
-`docs/protocol/MAPO_FORMAT.md`. Real building-category objects (`res\bldg\...`) render correctly;
-a real, separate parsing gap was found for the `res\nature\...` (tree/grass) category — see
-`docs/protocol/BSR_FORMAT.md`. Real-world placement scale/position relative to a player's actual
-spawn coordinate isn't confirmed yet (same honest caveat as terrain above).
+`docs/protocol/MAPO_FORMAT.md`. Both real building-category (`res\bldg\...`) and nature-category
+(`res\nature\...`, trees/grass) objects render correctly — the latter needed a real fix to
+`server/internal/bsr`/`client/scripts/bsr/bsr_reader.gd`, which had only ever been tested against
+building-category files: nature-category `.bsr` files genuinely order their mesh/material/
+bounding-box fields differently, not a corrupt file — see `docs/protocol/BSR_FORMAT.md`.
+Real-world placement scale/position relative to a player's actual spawn coordinate isn't confirmed
+yet (same honest caveat as terrain above).
 
 Not yet done: real terrain collision (the visual mesh is real now, but the ground's collision
 shape is still the flat placeholder box) and confirmed real-world terrain/object
 positioning/scale relative to a player's actual spawn coordinate (currently placed for visibility,
 not accuracy); a newly-found, entirely unparsed real file type (`Map.pk2` region folders also
 contain a `.t` file, magic `JMXVMAPT1001`, with a real byte pattern consistent with a texture
-blend/weight map — not yet decoded, see `docs/protocol/MAPM_FORMAT.md`); the `res\nature\...`
-`.bsr` parsing gap above; no real per-account identity for *other* players (everyone still renders
-as the same fixed character — there's no server-side race/gender/equipment loadout tracked per
-character yet, so there's nothing to distinguish). That's the current focus (see
-`docs/PROGRESS.md`). The material-layer-to-
+blend/weight map — not yet decoded, see `docs/protocol/MAPM_FORMAT.md`); no real per-account
+identity for *other* players (everyone still renders as the same fixed character — there's no
+server-side race/gender/equipment loadout tracked per character yet, so there's nothing to
+distinguish). That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
 mesh-piece pairing when a `.bmt` has multiple layers and no name match is available is still a
 documented, unconfirmed heuristic (pairs by index when counts match, used by `ObjectLoader` for
 `.bsr` scenery); `.efp`'s nested tree structure (see above). See

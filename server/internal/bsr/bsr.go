@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 )
 
 const (
@@ -57,45 +58,63 @@ func Parse(data []byte) (*Object, error) {
 		return nil, fmt.Errorf("bsr: reading name: %w", err)
 	}
 
-	// The exact byte layout between the name and the mesh path isn't fully
-	// understood (a fixed-looking header field that should point at the
-	// mesh path turned out not to, in at least one real file) — so instead
-	// of trusting an offset, scan forward for the first plausible
-	// length-prefixed path string. This is the same technique that found
-	// it correctly in every real .bsr file this was tested against.
-	meshOff, ok := scanForPathString(data, off)
-	if !ok {
+	// The exact byte layout between the name and the mesh/material paths
+	// isn't fully understood (a fixed-looking header field that should
+	// point at the mesh path turned out not to, in at least one real
+	// file) — so instead of trusting an offset, scan forward for the
+	// first plausible length-prefixed path string. Real files were also
+	// found to genuinely differ in *field order*: "building"-category
+	// files (`res\bldg\...`) put the mesh path first, then the bounding
+	// box, then the material path; "nature"-category files
+	// (`res\nature\...`, e.g. vegetation/scatter objects) put the
+	// bounding box and material path first, with the mesh path last —
+	// see docs/protocol/BSR_FORMAT.md. Scanning independently for the
+	// first string ending in ".bms" and the first ending in ".bmt" (not
+	// "whichever plausible string comes first, unconditionally called
+	// the mesh path") finds the right field either way, since it doesn't
+	// assume an order.
+	meshOff, meshFound := scanForPathStringWithSuffix(data, off, ".bms")
+	matOff, matFound := scanForPathStringWithSuffix(data, off, ".bmt")
+	if !meshFound {
 		return nil, errors.New("bsr: couldn't locate mesh path")
 	}
-	meshPath, next, err := readLenPrefixedString(data, meshOff)
+	if !matFound {
+		return nil, errors.New("bsr: couldn't locate material path")
+	}
+	meshPath, meshEnd, err := readLenPrefixedString(data, meshOff)
 	if err != nil {
 		return nil, fmt.Errorf("bsr: reading mesh path: %w", err)
 	}
-
-	obj := &Object{Name: name, MeshPath: meshPath}
-
-	matOff, ok := scanForPathString(data, next)
-	if !ok {
-		return nil, errors.New("bsr: couldn't locate material path")
+	materialPath, matEnd, err := readLenPrefixedString(data, matOff)
+	if err != nil {
+		return nil, fmt.Errorf("bsr: reading material path: %w", err)
 	}
-	// Best-effort bounding box: observed as 6 floats (min xyz, max xyz) at
-	// the very start of the gap between the mesh path and the material
-	// path, in most real files checked — but not confirmed in all of them,
-	// so this is skipped rather than guessed at when the gap is too short.
-	if gap := matOff - next; gap >= 24 {
+
+	obj := &Object{Name: name, MeshPath: meshPath, MaterialPath: materialPath}
+
+	if meshOff >= matOff {
+		// Nature-category order (material, then mesh) — confirmed real,
+		// but nothing past the mesh path is understood for this layout
+		// yet (no confirmed bounding-box position or sub-mesh-list
+		// convention), so this is where a real file's real data ends as
+		// far as this reader is concerned. Not guessed at.
+		return obj, nil
+	}
+
+	// Building-category order (mesh, then material): best-effort bounding
+	// box, observed as 6 floats (min xyz, max xyz) at the very start of
+	// the gap between the mesh path and the material path in most real
+	// files checked — but not confirmed in all of them, so this is
+	// skipped rather than guessed at when the gap is too short.
+	if gap := matOff - meshEnd; gap >= 24 {
 		for c := 0; c < 3; c++ {
-			obj.BoundsMin[c] = readFloat32(data, next+c*4)
-			obj.BoundsMax[c] = readFloat32(data, next+12+c*4)
+			obj.BoundsMin[c] = readFloat32(data, meshEnd+c*4)
+			obj.BoundsMax[c] = readFloat32(data, meshEnd+12+c*4)
 		}
 		obj.HasBounds = true
 	}
 
-	materialPath, off, err := readLenPrefixedString(data, matOff)
-	if err != nil {
-		return nil, fmt.Errorf("bsr: reading material path: %w", err)
-	}
-	obj.MaterialPath = materialPath
-
+	off = matEnd
 	if off+4 > len(data) {
 		// No sub-mesh count/list present; a single-piece object.
 		return obj, nil
@@ -119,15 +138,21 @@ func Parse(data []byte) (*Object, error) {
 	return obj, nil
 }
 
-// scanForPathString looks for the next plausible length-prefixed path
-// string starting at or after off, returning its offset.
-func scanForPathString(data []byte, off int) (int, bool) {
+// scanForPathStringWithSuffix looks for the next plausible length-prefixed
+// path string starting at or after off whose content ends with suffix
+// (case-insensitive — real paths use inconsistent casing throughout this
+// project's data), returning its offset. Filtering by suffix (rather than
+// accepting the first plausible string unconditionally) is what lets one
+// scan correctly find the mesh path or material path regardless of which
+// order a real file puts them in.
+func scanForPathStringWithSuffix(data []byte, off int, suffix string) (int, bool) {
 	for pos := off; pos+4 <= len(data); pos++ {
 		n := int(binary.LittleEndian.Uint32(data[pos:]))
 		if n <= 0 || n > maxPathLen || pos+4+n > len(data) {
 			continue
 		}
-		if isPlausiblePath(data[pos+4 : pos+4+n]) {
+		candidate := data[pos+4 : pos+4+n]
+		if isPlausiblePath(candidate) && strings.HasSuffix(strings.ToLower(string(candidate)), suffix) {
 			return pos, true
 		}
 	}

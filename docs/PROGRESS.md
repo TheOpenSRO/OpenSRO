@@ -2,6 +2,35 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 54) — fixed the real `.bsr` nature-category parsing bug
+
+- User said "go for it" after being offered a choice; picked the `.bsr` nature-category bug over
+  the bigger per-account-loadout architecture piece, since fixing it directly unlocks the
+  object-index work just shipped for real outdoor regions (which are mostly trees/grass, not
+  buildings — the one real region sample checked so far had *zero* building-category placements).
+- Root-caused it by hex-dumping a real `center_asia_plant01_01.bsr` byte-for-byte: nature-category
+  files genuinely order their fields differently from the building-category files this format was
+  originally derived against. Building order: mesh path, then bounding box, then material path,
+  then a sub-mesh list. Nature order: bounding box, then material path, then a `"1"` field, then
+  the mesh path *last* — materially different, not a corrupt/edge-case file.
+- Fixed by making the path-finding scan extension-aware: search independently for the first string
+  ending in `.bms` (mesh path) and the first ending in `.bmt` (material path), rather than
+  assuming "whichever plausible string comes first is the mesh path." This finds the right field
+  in either real order without needing to first detect which category a file belongs to. Bounding
+  box / sub-mesh-list extraction still only applies to the building order — the nature order's
+  bounding-box position isn't confirmed, so it's honestly left unclaimed rather than guessed at.
+- Fixed both readers (`server/internal/bsr`, `client/scripts/bsr/bsr_reader.gd`). Added synthetic
+  regression tests for the nature-category order to both. Verified against real data at every
+  step: confirmed the bug on 2 real nature files, confirmed the fix against the same real
+  `center_asia_plant01_01.bsr`, and verified end-to-end — pulled its real mesh/material/texture,
+  rendered it through the real scene, and got a real, visibly leafy, correctly textured plant.
+- Full regression: Go clean (new nature-order test), all 19 GDScript suites pass.
+- This resolves the last open item from the object-index work — real outdoor map objects
+  (buildings and vegetation both) now render with their real models through
+  `SRREVAMP_MAPO_PATH`. Remaining open items: real per-account character loadouts (the bigger
+  architectural piece, not started), real-world object placement scale/position (objects render,
+  but not necessarily at their true in-game size/position), and the `.t` texture-blend-map format.
+
 ## 2026-08-21 (cont'd 53) — solved the "auto select" dead end: a real object-index table exists
 
 - User asked "what's next" after the pk2 chain fix. Picked re-attempting the `.mapo`

@@ -40,39 +40,69 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 	var name: String = name_result[0]
 	off = name_result[1]
 
-	var mesh_off := _scan_for_path_string(data, off)
+	# The exact byte layout between the name and the mesh/material paths
+	# isn't fully understood (a fixed-looking header field that should
+	# point at the mesh path turned out not to, in at least one real
+	# file) -- so instead of trusting an offset, scan forward for the
+	# first plausible length-prefixed path string. Real files were also
+	# found to genuinely differ in *field order*: "building"-category
+	# files (res\bldg\...) put the mesh path first, then the bounding box,
+	# then the material path; "nature"-category files (res\nature\...,
+	# e.g. vegetation/scatter objects) put the bounding box and material
+	# path first, with the mesh path last -- see
+	# docs/protocol/BSR_FORMAT.md. Scanning independently for the first
+	# string ending in ".bms" and the first ending in ".bmt" (not
+	# "whichever plausible string comes first, unconditionally called the
+	# mesh path") finds the right field either way, since it doesn't
+	# assume an order.
+	var mesh_off := _scan_for_path_string_with_suffix(data, off, ".bms")
+	var mat_off := _scan_for_path_string_with_suffix(data, off, ".bmt")
 	if mesh_off < 0:
 		push_error("bsr: couldn't locate mesh path")
 		return null
+	if mat_off < 0:
+		push_error("bsr: couldn't locate material path")
+		return null
+
 	var mesh_result = _read_len_prefixed_string(data, mesh_off)
 	if mesh_result == null:
 		push_error("bsr: reading mesh path")
 		return null
 	var mesh_path: String = mesh_result[0]
-	var next: int = mesh_result[1]
-
-	var obj := ParsedObject.new()
-	obj.object_name = name
-	obj.mesh_path = mesh_path
-
-	var mat_off := _scan_for_path_string(data, next)
-	if mat_off < 0:
-		push_error("bsr: couldn't locate material path")
-		return null
-
-	var gap := mat_off - next
-	if gap >= 24:
-		obj.bounds_min = Vector3(_le_f32(data, next), _le_f32(data, next + 4), _le_f32(data, next + 8))
-		obj.bounds_max = Vector3(_le_f32(data, next + 12), _le_f32(data, next + 16), _le_f32(data, next + 20))
-		obj.has_bounds = true
+	var mesh_end: int = mesh_result[1]
 
 	var mat_result = _read_len_prefixed_string(data, mat_off)
 	if mat_result == null:
 		push_error("bsr: reading material path")
 		return null
-	obj.material_path = mat_result[0]
-	off = mat_result[1]
+	var material_path: String = mat_result[0]
+	var mat_end: int = mat_result[1]
 
+	var obj := ParsedObject.new()
+	obj.object_name = name
+	obj.mesh_path = mesh_path
+	obj.material_path = material_path
+
+	if mesh_off >= mat_off:
+		# Nature-category order (material, then mesh) -- confirmed real,
+		# but nothing past the mesh path is understood for this layout
+		# yet (no confirmed bounding-box position or sub-mesh-list
+		# convention), so this is where a real file's real data ends as
+		# far as this reader is concerned. Not guessed at.
+		return obj
+
+	# Building-category order (mesh, then material): best-effort bounding
+	# box, observed as 6 floats (min xyz, max xyz) at the very start of
+	# the gap between the mesh path and the material path in most real
+	# files checked -- but not confirmed in all of them, so this is
+	# skipped rather than guessed at when the gap is too short.
+	var gap := mat_off - mesh_end
+	if gap >= 24:
+		obj.bounds_min = Vector3(_le_f32(data, mesh_end), _le_f32(data, mesh_end + 4), _le_f32(data, mesh_end + 8))
+		obj.bounds_max = Vector3(_le_f32(data, mesh_end + 12), _le_f32(data, mesh_end + 16), _le_f32(data, mesh_end + 20))
+		obj.has_bounds = true
+
+	off = mat_end
 	if off + 4 > data.size():
 		return obj
 
@@ -91,12 +121,20 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 
 	return obj
 
-static func _scan_for_path_string(data: PackedByteArray, off: int) -> int:
+## Looks for the next plausible length-prefixed path string starting at or
+## after off whose content ends with suffix (case-insensitive -- real
+## paths use inconsistent casing throughout this project's data),
+## returning its offset. Filtering by suffix (rather than accepting the
+## first plausible string unconditionally) is what lets one scan
+## correctly find the mesh path or material path regardless of which
+## order a real file puts them in.
+static func _scan_for_path_string_with_suffix(data: PackedByteArray, off: int, suffix: String) -> int:
 	var pos := off
 	while pos + 4 <= data.size():
 		var n := _le_u32(data, pos)
 		if n > 0 and n <= MAX_PATH_LEN and pos + 4 + n <= data.size():
-			if _is_plausible_path(data.slice(pos + 4, pos + 4 + n)):
+			var candidate := data.slice(pos + 4, pos + 4 + n)
+			if _is_plausible_path(candidate) and candidate.get_string_from_ascii().to_lower().ends_with(suffix):
 				return pos
 		pos += 1
 	return -1

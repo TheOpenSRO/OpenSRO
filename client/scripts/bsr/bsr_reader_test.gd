@@ -73,6 +73,45 @@ func _build_synthetic_object(obj_name: String, mesh_path: String, material_path:
 
 	return buf
 
+## Builds a synthetic .bsr-shaped buffer (never real game data) matching
+## the real "nature"-category field order confirmed against a real
+## center_asia_plant01_01.bsr: name, two unconfirmed fields + padding,
+## bounding box + sentinel tail, material path, a count field, then the
+## mesh path last -- the opposite order from _build_synthetic_object's
+## "building"-category layout. See docs/protocol/BSR_FORMAT.md.
+func _build_synthetic_nature_object(obj_name: String, material_path: String, mesh_path: String) -> PackedByteArray:
+	var buf := PackedByteArray()
+	buf.resize(BsrReader.PREAMBLE_END)
+	var magic := BsrReader.MAGIC.to_ascii_buffer()
+	for i in range(magic.size()):
+		buf[i] = magic[i]
+
+	buf = _append_len_prefixed(buf, obj_name)
+
+	var pad := PackedByteArray()
+	pad.resize(52) # 2 unconfirmed u32 fields + 44 zero padding bytes
+	_put_u32(pad, 0, 11)
+	_put_u32(pad, 4, 2)
+	buf.append_array(pad)
+
+	var bbox := PackedByteArray()
+	bbox.resize(60)
+	var mins := [-1.0, 0.0, -1.0]
+	var maxs := [1.0, 2.0, 1.0]
+	for i in range(3):
+		_put_f32(bbox, i * 4, mins[i])
+		_put_f32(bbox, 12 + i * 4, maxs[i])
+	buf.append_array(bbox)
+
+	buf = _append_len_prefixed(buf, material_path)
+	var count_bytes := PackedByteArray()
+	count_bytes.resize(4)
+	_put_u32(count_bytes, 0, 1) # real files show a "1" field here
+	buf.append_array(count_bytes)
+	buf = _append_len_prefixed(buf, mesh_path)
+
+	return buf
+
 func _init() -> void:
 	var data := _build_synthetic_object(
 		"TestObj01",
@@ -99,6 +138,18 @@ func _init() -> void:
 	var bad_magic := PackedByteArray()
 	bad_magic.resize(BsrReader.PREAMBLE_END)
 	_check(BsrReader.parse(bad_magic) == null, "rejects bad magic")
+
+	var nature_data := _build_synthetic_nature_object(
+		"test_plant01",
+		"prim\\mtrl\\nature\\test_plant01.bmt",
+		"prim\\mesh\\nature\\test_plant01.bms")
+	var nature_obj := BsrReader.parse(nature_data)
+	_check(nature_obj != null, "parses synthetic nature-category object")
+	if nature_obj != null:
+		_check(nature_obj.mesh_path == "prim\\mesh\\nature\\test_plant01.bms", "nature: mesh path matches (got %s)" % nature_obj.mesh_path)
+		_check(nature_obj.material_path == "prim\\mtrl\\nature\\test_plant01.bmt", "nature: material path matches (got %s)" % nature_obj.material_path)
+		_check(not nature_obj.has_bounds, "nature: bounds not claimed (position not confirmed for this order)")
+		_check(nature_obj.sub_mesh_paths.size() == 0, "nature: no sub-mesh paths claimed")
 
 	if _failures == 0:
 		print("ALL PASS")

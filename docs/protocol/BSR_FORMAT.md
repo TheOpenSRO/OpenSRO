@@ -76,29 +76,42 @@ means the format can have a legitimately-empty mesh path that our reader doesn't
 fails with a clear error on that file rather than silently returning wrong data, which is the
 correct failure mode until this is understood better.
 
-## A real, unresolved gap: the `res\nature\...` (tree/grass) category doesn't parse correctly
+## SOLVED: `res\nature\...` (tree/grass) files use a genuinely different field order
 
 Found while wiring up real `.mapo` object rendering (see `docs/protocol/MAPO_FORMAT.md`'s object
 index section): real `res\bldg\...` (building) files — the category this format was originally
 derived against, e.g. `cj_ferry_stone01.bsr` — parse correctly, sub-meshes and all. Real
-`res\nature\...` files (e.g. `euro_esteuro_tree07_l03.bsr`, `oas_grs_weed04.bsr`) do not: the
-scanned-for "mesh path" comes out pointing at a `.bmt` (material) file instead of a `.bms`, and
-the "material path" that follows is a garbage 1-character string. Checked on two different real
-nature-category files with the same result, so this looks like a real, systematic difference in
-how this category's `.bsr` files are laid out, not a one-off bad file — but the actual layout
-difference hasn't been found yet. Not yet root-caused or fixed; `ObjectLoader`/`World3D.gd` skip
-these gracefully (a real printed reason, not a fabricated placeholder) rather than rendering wrong
-data.
+`res\nature\...` files (e.g. `center_asia_plant01_01.bsr`, `oas_grs_weed04.bsr`) initially didn't:
+the scanned-for "mesh path" came out pointing at a `.bmt` (material) file instead of a `.bms`, and
+the "material path" that followed was a garbage 1-character string.
+
+**Root cause, confirmed by hex-dumping a real `center_asia_plant01_01.bsr` byte-for-byte**:
+nature-category files genuinely put these fields in the opposite order from building-category
+ones. Building order: `[name][2 fields][padding][mesh path][bounding box + tail][material path]
+[sub-mesh count + list]`. Nature order: `[name][2 fields][padding][bounding box + tail]
+[material path][a "1" field][mesh path]` — bounding box and material path come *first*, with the
+mesh path last, and there's no confirmed sub-mesh-list convention for this order. The original
+reader assumed "whichever plausible path string is found first is the mesh path, the next one is
+the material path" — correct for buildings, silently wrong for nature files, which put the
+material path first.
+
+**Fixed** by scanning independently for the first string ending in `.bms` (the mesh path) and the
+first ending in `.bmt` (the material path), rather than assuming an order — this finds the right
+field in either layout without needing to detect which category a file belongs to first. The
+bounding box and sub-mesh list are still only attempted for the building order (mesh before
+material); the nature order's bounding-box position isn't confirmed, so it's left unclaimed
+(`HasBounds`/`has_bounds` false) rather than guessed at. Verified against a real
+`center_asia_plant01_01.bsr` end-to-end: real mesh, real material, and (via `ObjectLoader`) a real
+rendered, textured plant — see `docs/PROGRESS.md`.
 
 ## Implementation notes
 
-- `server/internal/bsr` (Go): parses name, mesh path, bounding box (best-effort — skipped rather
-  than guessed at if the gap between mesh and material paths is too short to plausibly contain
-  one), material path, and the sub-mesh path list. Rather than trust the header's offset table
-  (shown above to be unreliable), it locates the mesh and material path strings by scanning
-  forward for the first plausible length-prefixed ASCII path — the same technique used to
-  cross-check every real file during RE, and the only approach that worked correctly on all of
-  them (building-category files, at least — see the real gap above). Unit tested (`go test`)
-  against a synthetic fixture (never real game data).
+- `server/internal/bsr` (Go): parses name, mesh path, bounding box (best-effort, building-order
+  only — see above), material path, and the sub-mesh path list. Rather than trust the header's
+  offset table (shown above to be unreliable), it locates the mesh and material path strings by
+  scanning forward for the first plausible length-prefixed ASCII path ending in the expected
+  extension (`.bms`/`.bmt`) — the same technique used to cross-check every real file during RE,
+  and the only approach confirmed to work correctly on both real field orders. Unit tested
+  (`go test`) against synthetic fixtures for both orders (never real game data).
 - `client/scripts/bsr/bsr_reader.gd` (GDScript): mirrors the Go implementation field-for-field,
   used at runtime by `ObjectLoader` to build real, textured `Node3D`/`MeshInstance3D` trees.

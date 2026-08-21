@@ -89,6 +89,68 @@ func TestParse(t *testing.T) {
 	}
 }
 
+// buildSyntheticNatureObject writes a minimal, synthetic .bsr-shaped
+// buffer (never real game data) matching the real "nature"-category field
+// order confirmed against a real center_asia_plant01_01.bsr: name, two
+// unconfirmed u32 fields + padding, bounding box + sentinel tail,
+// material path, a count field, then the mesh path last -- the opposite
+// order from the "building"-category layout buildSyntheticObject models.
+// See docs/protocol/BSR_FORMAT.md.
+func buildSyntheticNatureObject(t *testing.T, name, materialPath, meshPath string) []byte {
+	t.Helper()
+
+	buf := make([]byte, preambleEnd)
+	copy(buf, magic)
+
+	appendLenPrefixed := func(b []byte, s string) []byte {
+		lp := make([]byte, 4+len(s))
+		binary.LittleEndian.PutUint32(lp, uint32(len(s)))
+		copy(lp[4:], s)
+		return append(b, lp...)
+	}
+	buf = appendLenPrefixed(buf, name)
+
+	buf = binary.LittleEndian.AppendUint32(buf, 11)
+	buf = binary.LittleEndian.AppendUint32(buf, 2)
+	buf = append(buf, make([]byte, 44)...)
+
+	// Bounding box (6 floats) + sentinel/flag tail, real-shaped but before
+	// either path this time.
+	for _, f := range []float32{-1, 0, -1, 1, 2, 1} {
+		buf = binary.LittleEndian.AppendUint32(buf, float32bits(f))
+	}
+	buf = append(buf, make([]byte, 36)...)
+
+	buf = appendLenPrefixed(buf, materialPath)
+	buf = binary.LittleEndian.AppendUint32(buf, 1) // real files show a "1" field here
+	buf = appendLenPrefixed(buf, meshPath)
+
+	return buf
+}
+
+func TestParseNatureCategoryOrder(t *testing.T) {
+	data := buildSyntheticNatureObject(t, "test_plant01",
+		`prim\mtrl\nature\test_plant01.bmt`,
+		`prim\mesh\nature\test_plant01.bms`)
+
+	obj, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if obj.MeshPath != `prim\mesh\nature\test_plant01.bms` {
+		t.Fatalf("unexpected mesh path: %q", obj.MeshPath)
+	}
+	if obj.MaterialPath != `prim\mtrl\nature\test_plant01.bmt` {
+		t.Fatalf("unexpected material path: %q", obj.MaterialPath)
+	}
+	if obj.HasBounds {
+		t.Fatal("expected HasBounds false for the nature-category order (position not confirmed)")
+	}
+	if len(obj.SubMeshPaths) != 0 {
+		t.Fatalf("expected no sub-mesh paths for the nature-category order, got %v", obj.SubMeshPaths)
+	}
+}
+
 func TestParseRejectsBadMagic(t *testing.T) {
 	if _, err := Parse(make([]byte, preambleEnd)); err == nil {
 		t.Fatal("expected error parsing buffer with bad magic, got nil")

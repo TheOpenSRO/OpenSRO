@@ -121,15 +121,13 @@ what a real outdoor region scattering 39/11/7/1 objects of those types would pla
 (`SRREVAMP_MAPO_PATH`) to render real placed objects with their real resolved `.bsr` models
 instead of a placeholder marker — see `README.md` and `docs/PROGRESS.md`.
 
-**A real, separate gap this surfaced**: real `.bsr` files in the `res\nature\...` category (trees,
-grass) don't parse correctly with this project's current `server/internal/bsr` — the parsed
-`MeshPath`/`MaterialPath` fields come out as garbage (a `.bmt` path where a `.bms` path was
-expected, and a 1-character `MaterialPath`) on every nature-category file checked, while real
-`res\bldg\...` (building) files — the category this format was originally derived against —
-parse correctly, sub-meshes and all. Not yet root-caused; flagged for a future pass rather than
-guessed at. `render_map_objects.gd`/`World3D.gd`'s real object loading degrades gracefully on
-these (skips with a real, printed reason, doesn't fabricate a placeholder), so this doesn't block
-building-category objects from rendering correctly today.
+**A real, separate gap this surfaced — now also solved**: real `.bsr` files in the
+`res\nature\...` category (trees, grass) initially didn't parse correctly with this project's
+`server/internal/bsr` (garbage `MeshPath`/`MaterialPath` fields), while `res\bldg\...` (building)
+files parsed fine. Root-caused: nature-category files genuinely order these fields differently
+(material path and bounding box before the mesh path, not after) — see
+`docs/protocol/BSR_FORMAT.md` for the full derivation and fix. Both categories now resolve and
+render correctly through `World3D.gd`'s real object loading.
 
 ## What's still not confirmed
 
