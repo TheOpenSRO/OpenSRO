@@ -11,13 +11,20 @@ class_name ObjectLoader
 ## docs/protocol/BSR_FORMAT.md, "Sub-mesh pieces need no separate
 ## transform").
 ##
-## Not yet handled:
-## - Layer-to-mesh pairing: a .bmt can define multiple material "layers",
-##   and a .bsr can reference multiple mesh pieces, but no confirmed rule
-##   ties a specific layer to a specific piece. When the counts match, this
-##   pairs them up 1:1 by index (mesh piece i <- material layer i) as a
-##   plausible but unconfirmed heuristic; otherwise every piece gets the
-##   material's first layer. See docs/protocol/BMT_FORMAT.md.
+## Layer-to-mesh pairing: a real multi-piece object's own real sub-mesh
+## .bms files each carry the same real material_name field character body
+## parts do (see BMS_FORMAT.md) -- confirmed real by pulling a real
+## 27-piece building (`bagh_city_palace.bsr`) and its real 28-layer
+## material: every one of 4 real pieces checked had a material_name
+## ("Bagh_City_Palace_04", ...) exactly matching a real layer_name in the
+## material, in the same file-name-encodes-piece-number convention visible
+## in every real layer name. So each piece is matched to its own real
+## layer by that name first, the same mechanism already used for character
+## parts -- not previously done for .bsr scenery, which only had the
+## unconfirmed index-based fallback below. That fallback (pair by index
+## when counts match, else layer 0) is now only reached for pieces without
+## a matching real layer_name, which is the honest remaining unconfirmed
+## case rather than the common one.
 
 ## Loads the .bsr at path within archive and returns a Node3D containing one
 ## MeshInstance3D per mesh piece (the primary mesh plus any sub-mesh
@@ -43,15 +50,28 @@ static func load_object(archive: Pk2Reader, bsr_path: String) -> Node3D:
 
 	var loaded_count := 0
 	for i in range(mesh_paths.size()):
-		var mesh_instance := load_mesh(archive, mesh_paths[i])
-		if mesh_instance != null:
-			if material != null and material.layers.size() > 0:
-				var layer_idx := i if material.layers.size() == mesh_paths.size() else 0
-				var godot_material := build_godot_material(archive, obj.material_path, material.layers[layer_idx])
-				if godot_material != null:
-					mesh_instance.material_override = godot_material
-			root.add_child(mesh_instance)
-			loaded_count += 1
+		var entry := find_file(archive, mesh_paths[i])
+		if entry == null:
+			push_error("ObjectLoader: %s not found in archive" % mesh_paths[i])
+			continue
+		var mesh := BmsReader.parse(archive.read_file(entry))
+		if mesh == null:
+			continue
+
+		var mesh_instance := MeshInstance3D.new()
+		mesh_instance.name = mesh.mesh_name
+		mesh_instance.mesh = BmsReader.to_array_mesh(mesh)
+
+		if material != null and material.layers.size() > 0:
+			var layer_idx := _find_layer_by_name(material.layers, mesh.material_name)
+			if layer_idx == -1:
+				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
+			var godot_material := build_godot_material(archive, obj.material_path, material.layers[layer_idx])
+			if godot_material != null:
+				mesh_instance.material_override = godot_material
+
+		root.add_child(mesh_instance)
+		loaded_count += 1
 
 	if loaded_count == 0:
 		push_error("ObjectLoader: %s: none of its %d mesh piece(s) could be loaded" % [bsr_path, mesh_paths.size()])
@@ -114,6 +134,19 @@ static func load_mesh(archive: Pk2Reader, bms_path: String) -> MeshInstance3D:
 	instance.name = mesh.mesh_name
 	instance.mesh = BmsReader.to_array_mesh(mesh)
 	return instance
+
+## Returns the index of the layer in layers whose real layer_name exactly
+## matches material_name (a real .bms mesh's own material_name field), or
+## -1 if none match (an empty material_name from a mesh with no such field
+## never matches). See this file's top comment for how this real
+## name-matching mechanism was confirmed for .bsr sub-mesh pieces.
+static func _find_layer_by_name(layers: Array[BmtReader.Layer], material_name: String) -> int:
+	if material_name == "":
+		return -1
+	for i in range(layers.size()):
+		if layers[i].layer_name == material_name:
+			return i
+	return -1
 
 ## Resolves a Windows-style backslash path (as stored in .bsr/.bms files)
 ## against an already-open pk2 archive, walking one directory level at a

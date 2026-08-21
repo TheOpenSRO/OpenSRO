@@ -104,12 +104,37 @@ material); the nature order's bounding-box position isn't confirmed, so it's lef
 `center_asia_plant01_01.bsr` end-to-end: real mesh, real material, and (via `ObjectLoader`) a real
 rendered, textured plant — see `docs/PROGRESS.md`.
 
-## Real mechanism found for multi-piece material-layer assignment (not yet implemented)
+## SOLVED (the common case): real sub-mesh pieces carry the same name-matched material_name field character parts do
 
 **Previously**: `ObjectLoader` had no confirmed way to know which `.bmt` layer belongs to which
 mesh piece when a material has multiple layers and no name match is available — it fell back to
 pairing layer `i` with mesh piece `i` only when the two counts happened to match, and layer 0
-otherwise (see `docs/README.md`'s "Not yet done").
+otherwise.
+
+**Confirmed real, directly, on 4 real sub-mesh pieces**: pulled a real 27-piece building
+(`bagh_city_palace.bsr`, `Res\Bldg\arabia\bagh_city\structure\`) and its real 28-layer material
+(`bagh_city_palace.bmt` — one extra layer than pieces; not investigated further). Every real
+layer's `layer_name` is literally a piece number (`Bagh_City_Palace_01`, `_04`, `_15`, `_27`, ...,
+in a shuffled order that does **not** match mesh-piece order in the file). Parsed 4 of those real
+piece `.bms` files directly (`_01`, `_04`, `_15`, `_27`) and found each one's own `material_name`
+field (the same real per-mesh field `.bms` already carries for character body parts, see
+`BMS_FORMAT.md`) exactly equals the matching real layer's `layer_name`, in all 4/4 checked. So the
+same name-matching mechanism `CharacterAssembler` already used for character parts also applies to
+`.bsr` sub-mesh pieces — this project's reader just wasn't using it there.
+
+**Fixed**: `ObjectLoader.load_object` (`client/scripts/assets/object_loader.gd`) now looks up each
+mesh piece's own real `material_name` against the material's real `layer_name`s first
+(`_find_layer_by_name`), falling back to the old index-based heuristic only when no name matches —
+which is now the honestly-still-unconfirmed remaining case, not the common one. Verified with a
+dedicated synthetic test (`object_loader_test.gd`) using two pieces and two layers in deliberately
+shuffled order (mirroring the real `bagh_city_palace` shape) — confirms each piece gets its real
+name-matched layer, not whatever the old positional pairing would have picked.
+
+## A deeper real mechanism also found, not yet mapped to byte offsets or implemented
+
+The name-matching fix above resolves the common case (a mesh piece's own `.bms` carries a
+`material_name`), but doesn't explain what happens when it doesn't — decompiling the real client
+surfaced a second, deeper real mechanism for that case, described below.
 
 **Investigated by decompiling the real client's actual `ResObject::Load`** (`sro_client.exe`),
 traced from the known `FUN_00bed8d0`/`FUN_00bce3b0` entry points documented above, through the

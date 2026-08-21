@@ -118,7 +118,12 @@ texture, and returns a real, renderable, **textured** Godot `Node3D`/`MeshInstan
 verified against a full synthetic pk2 archive exercising the whole pk2→bsr→bms→bmt→ddj chain, not
 just parser-level unit tests. `.bsr` sub-mesh pieces need no extra per-part transform — confirmed
 against two real sub-mesh pieces of the same object, each already carries its own absolute
-position baked into its vertex data. `.bsk` (bone hierarchy — the piece `.ban` itself lacks) is
+position baked into its vertex data. Multi-piece objects now get their real per-piece material
+correctly, too: each real sub-mesh's own `material_name` field (the same one character body parts
+carry) is matched against the material's real layer names first — confirmed by pulling a real
+27-piece building (`bagh_city_palace.bsr`) and its real 28-layer material and checking 4 real
+pieces directly, all matching — falling back to the old index-based guess only when no name
+matches. `.bsk` (bone hierarchy — the piece `.ban` itself lacks) is
 also reverse-engineered and has real, tested readers on both sides (`server/internal/bsk`,
 `client/scripts/bsk/bsk_reader.gd`) — **fully cracked**, verified against 8 real files spanning
 two structurally different skeleton styles (a mirrored-decoration rig, and the common real-world
@@ -318,12 +323,7 @@ positioning/scale relative to a player's actual spawn coordinate (currently plac
 not accuracy); a newly-found, entirely unparsed real file type (`Map.pk2` region folders also
 contain a `.t` file, magic `JMXVMAPT1001`, with a real byte pattern consistent with a texture
 blend/weight map — a real, previously-investigated RE gap this project couldn't fully close, see
-`docs/protocol/MAPM_FORMAT.md`). That's the current focus (see `docs/PROGRESS.md`). The
-material-layer-to-mesh-piece pairing when a `.bmt` has multiple layers and no name match is
-available still uses an unconfirmed index-based heuristic in `ObjectLoader` for `.bsr` scenery —
-though the real mechanism has now been found by decompiling the real client's `ResObject::Load`
-(each mesh piece carries its own explicit, file-encoded list of material-layer indices, not an
-inferred pairing), just not yet mapped to concrete byte offsets or implemented — see
-`docs/protocol/BSR_FORMAT.md`; `.efp`'s nested tree structure (see above). See
+`docs/protocol/MAPM_FORMAT.md`). That's the current focus (see `docs/PROGRESS.md`). `.efp`'s
+nested tree structure (see above). See
 `docs/protocol/{PK2,BSR,BMS,DDJ,BMT,BAN,BSK,MAPO,MAPM,EFP}_FORMAT.md` and `docs/PROGRESS.md` for
 the detailed running log.

@@ -2,6 +2,30 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 63) — solved the common case: real sub-mesh material-layer matching, implemented
+
+- Direct follow-on to the previous entry's decompiled finding. Before implementing the deep,
+  not-yet-byte-mapped index-list mechanism found there, checked a simpler real possibility first:
+  does a `.bsr` sub-mesh piece's own `.bms` file carry the same `material_name` field character
+  body parts already use for real name-matched material resolution?
+- **Yes, confirmed directly**: pulled a real 27-piece building (`bagh_city_palace.bsr`,
+  `Res\Bldg\arabia\bagh_city\structure\`) and its real 28-layer material. Every real layer's
+  `layer_name` is literally a piece number (`Bagh_City_Palace_01`, `_04`, ...), in a shuffled
+  order that does **not** match mesh-piece file order. Parsed 4 real piece `.bms` files directly
+  and found each one's own `material_name` exactly equals its matching real `layer_name`, 4/4.
+- **Implemented and verified**: `ObjectLoader.load_object` now tries this real name match first
+  (`_find_layer_by_name`), falling back to the old index-based heuristic only when no name
+  matches. Added a dedicated synthetic test with two pieces and two layers in deliberately
+  shuffled order (mirroring the real `bagh_city_palace` shape) that would give the *wrong* result
+  under the old positional pairing — confirms the fix picks the right layer for each piece by
+  name regardless of order.
+- This solves the common case flagged as an open item since early in this project. The deeper
+  decompiled index-list mechanism (previous entry) remains real and documented for the rarer case
+  where a piece genuinely has no name match, but isn't blocking anymore since most real objects
+  checked so far do have one.
+- Full regression: Go unaffected (no Go-side equivalent to this client-only rendering logic), all
+  35 GDScript suites pass (added 5 new assertions to `object_loader_test.gd`).
+
 ## 2026-08-21 (cont'd 62) — found the real material-layer-to-mesh-piece mechanism via decompilation
 
 - User explicitly asked to keep chasing RE leads, accepting some dead ends. Picked up the last
