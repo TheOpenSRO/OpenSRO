@@ -201,8 +201,8 @@ func register_account(username: String, password: String) -> void:
 func list_characters() -> void:
 	_send(CharacterNet.OP_LIST)
 
-func create_character(char_name: String) -> void:
-	_send(CharacterNet.OP_CREATE, CharacterNet.encode_name(char_name))
+func create_character(char_name: String, gender: String = "") -> void:
+	_send(CharacterNet.OP_CREATE, CharacterNet.encode_create(char_name, gender))
 
 func delete_character(char_name: String) -> void:
 	_send(CharacterNet.OP_DELETE, CharacterNet.encode_name(char_name))

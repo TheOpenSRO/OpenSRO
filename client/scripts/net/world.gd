@@ -12,10 +12,12 @@ const OP_ENTITY_ENTERED := 0x0023      # server -> client, broadcast
 const OP_ENTITY_MOVED := 0x0024        # server -> client, broadcast
 const OP_ENTITY_LEFT := 0x0025         # server -> client, broadcast
 
-## One character's presence in the world: who they are, where they are, and
+## One character's presence in the world: who they are, where they are,
 ## whether they have real armor equipped (the server's actual, live
 ## equipment-store answer at the moment this snapshot was sent -- see
-## server/internal/session/world.go's hasArmorEquipped).
+## server/internal/session/world.go's hasArmorEquipped), and their real
+## Gender (CharacterNet.GENDER_CHINA_MAN/GENDER_CHINA_WOMAN), which picks
+## which real body/skeleton assets they render with.
 class EntitySnapshot:
 	var character_id: int
 	var char_name: String
@@ -23,6 +25,7 @@ class EntitySnapshot:
 	var y: float
 	var z: float
 	var has_armor: bool
+	var gender: String
 
 ## Encodes an OpEnterWorld request: just a character name.
 static func encode_enter_world(character_name: String) -> PackedByteArray:
@@ -43,7 +46,8 @@ static func encode_move(x: float, y: float, z: float) -> PackedByteArray:
 	return out
 
 ## Result of decode_enter_world_result(): either an error, or the assigned
-## zone/position plus a snapshot of everyone else already there.
+## zone/position/own real Gender, plus a snapshot of everyone else already
+## there.
 class EnterWorldResult:
 	var ok: bool
 	var reason: String
@@ -51,6 +55,7 @@ class EnterWorldResult:
 	var x: float
 	var y: float
 	var z: float
+	var gender: String
 	var others: Array[EntitySnapshot] = []
 	var error: String # decode error, distinct from a well-formed "not ok" response
 
@@ -83,6 +88,15 @@ static func _decode_entity_snapshot(data: PackedByteArray, offset: int) -> Array
 		return [null, -1]
 	snap.has_armor = data[offset] != 0
 	offset += 1
+
+	if offset + 2 > data.size():
+		return [null, -1]
+	var gender_len := data.decode_u16(offset)
+	offset += 2
+	if offset + gender_len > data.size():
+		return [null, -1]
+	snap.gender = data.slice(offset, offset + gender_len).get_string_from_utf8()
+	offset += gender_len
 
 	return [snap, offset]
 
@@ -128,6 +142,17 @@ static func decode_enter_world_result(data: PackedByteArray) -> EnterWorldResult
 	result.y = data.decode_float(offset + 4)
 	result.z = data.decode_float(offset + 8)
 	offset += 12
+
+	if offset + 2 > data.size():
+		result.error = "truncated gender length"
+		return result
+	var gender_len := data.decode_u16(offset)
+	offset += 2
+	if offset + gender_len > data.size():
+		result.error = "truncated gender"
+		return result
+	result.gender = data.slice(offset, offset + gender_len).get_string_from_utf8()
+	offset += gender_len
 
 	if offset + 2 > data.size():
 		result.error = "truncated entity count"

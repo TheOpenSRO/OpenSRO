@@ -43,6 +43,29 @@ const StartingGold = 1000
 // choice, revisit once there's a leveling/stats system to scale it.
 const MaxHP = 100
 
+// Gender selects which real body/skeleton/equipment assets a character
+// renders with client-side (see client/scripts/World3D.gd). Real,
+// RE-confirmed asset options, not invented: this project's available real
+// client data (see docs/PROGRESS.md) has complete, parallel body/skeleton/
+// armor asset sets for China man and China woman, but not for any other
+// real race found in that data (Europe's base body meshes weren't present
+// in the available client install) -- so only these two are offered, not
+// a larger invented roster.
+const (
+	GenderChinaMan   = "china_man"
+	GenderChinaWoman = "china_woman"
+)
+
+// DefaultGender is used when a character is created without an explicit
+// (or a not-recognized) gender choice.
+const DefaultGender = GenderChinaMan
+
+// ValidGender reports whether g is one of the real, supported Gender
+// values above.
+func ValidGender(g string) bool {
+	return g == GenderChinaMan || g == GenderChinaWoman
+}
+
 // Character is one player character.
 type Character struct {
 	ID        int64
@@ -50,6 +73,7 @@ type Character struct {
 	Name      string
 	Gold      int64
 	HP        int
+	Gender    string
 }
 
 // Store is anything that can list, create, and delete characters for an
@@ -80,4 +104,18 @@ type Store interface {
 
 	// ResetHP restores characterID's HP to MaxHP (e.g. after death/respawn).
 	ResetHP(ctx context.Context, characterID int64) error
+
+	// GetByID returns the character with the given ID, regardless of which
+	// account owns it (unlike ListByAccount). Returns ErrNotFound if no
+	// such character exists. Used to resolve real per-player rendering
+	// details (e.g. Gender) for *other* players, who are only otherwise
+	// known by ID/name/position via world.Entity.
+	GetByID(ctx context.Context, characterID int64) (*Character, error)
+
+	// SetGender updates characterID's Gender. Returns ErrNotFound if no
+	// such character exists. Doesn't validate gender against ValidGender --
+	// callers (see server/internal/session/character.go) are expected to
+	// have already checked, same as this project's other Store methods
+	// trusting their caller for business-rule validation.
+	SetGender(ctx context.Context, characterID int64, gender string) error
 }

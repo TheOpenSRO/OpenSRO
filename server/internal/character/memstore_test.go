@@ -242,3 +242,46 @@ func TestResetHP(t *testing.T) {
 		t.Fatalf("got HP %d after reset, want %d", list[0].HP, MaxHP)
 	}
 }
+
+func TestNewCharacterHasDefaultGender(t *testing.T) {
+	store := NewMemStore()
+	c, err := store.Create(context.Background(), 1, "Aria")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if c.Gender != DefaultGender {
+		t.Fatalf("got gender %q, want %q", c.Gender, DefaultGender)
+	}
+}
+
+func TestSetGender(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+	c, _ := store.Create(ctx, 1, "Aria")
+
+	if err := store.SetGender(ctx, c.ID, GenderChinaWoman); err != nil {
+		t.Fatalf("SetGender: %v", err)
+	}
+
+	got, err := store.GetByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Gender != GenderChinaWoman {
+		t.Fatalf("got gender %q, want %q", got.Gender, GenderChinaWoman)
+	}
+}
+
+func TestSetGenderNonexistentCharacter(t *testing.T) {
+	store := NewMemStore()
+	if err := store.SetGender(context.Background(), 999, GenderChinaWoman); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got %v, want ErrNotFound", err)
+	}
+}
+
+func TestGetByIDNonexistentCharacter(t *testing.T) {
+	store := NewMemStore()
+	if _, err := store.GetByID(context.Background(), 999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got %v, want ErrNotFound", err)
+	}
+}

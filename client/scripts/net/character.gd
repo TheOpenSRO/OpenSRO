@@ -12,13 +12,32 @@ const OP_CREATE_RESULT := 0x0013   # server -> client
 const OP_DELETE := 0x0014          # client -> server
 const OP_DELETE_RESULT := 0x0015   # server -> client
 
-## Encodes a CharacterCreate/CharacterDelete request: just a name.
+## Real, RE-confirmed body/skeleton/armor asset options -- see
+## server/internal/character's GenderChinaMan/GenderChinaWoman doc comment
+## for why only these two (not a larger invented roster).
+const GENDER_CHINA_MAN := "china_man"
+const GENDER_CHINA_WOMAN := "china_woman"
+
+## Encodes a CharacterDelete request: just a name.
 static func encode_name(name: String) -> PackedByteArray:
 	var name_bytes := name.to_utf8_buffer()
 	var out := PackedByteArray()
 	out.resize(2)
 	out.encode_u16(0, name_bytes.size())
 	out.append_array(name_bytes)
+	return out
+
+## Encodes a CharacterCreate request: a name plus a real Gender choice (one
+## of GENDER_CHINA_MAN/GENDER_CHINA_WOMAN, or "" to take the server's
+## default). Mirrors server/internal/session's CharacterCreateRequest.
+static func encode_create(name: String, gender: String = "") -> PackedByteArray:
+	var out := encode_name(name)
+	var gender_bytes := gender.to_utf8_buffer()
+	var len_buf := PackedByteArray()
+	len_buf.resize(2)
+	len_buf.encode_u16(0, gender_bytes.size())
+	out.append_array(len_buf)
+	out.append_array(gender_bytes)
 	return out
 
 ## Result of decode_list_result(): either an error, or a list of names.

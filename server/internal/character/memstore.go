@@ -69,7 +69,7 @@ func (m *MemStore) Create(_ context.Context, accountID int64, name string) (*Cha
 	}
 
 	m.nextID++
-	c := &Character{ID: m.nextID, AccountID: accountID, Name: name, Gold: StartingGold, HP: MaxHP}
+	c := &Character{ID: m.nextID, AccountID: accountID, Name: name, Gold: StartingGold, HP: MaxHP, Gender: DefaultGender}
 	m.byID[c.ID] = c
 	m.namesTaken[key] = true
 
@@ -146,5 +146,31 @@ func (m *MemStore) ResetHP(_ context.Context, characterID int64) error {
 		return ErrNotFound
 	}
 	c.HP = MaxHP
+	return nil
+}
+
+// GetByID implements Store.
+func (m *MemStore) GetByID(_ context.Context, characterID int64) (*Character, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	c, ok := m.byID[characterID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	cp := *c
+	return &cp, nil
+}
+
+// SetGender implements Store.
+func (m *MemStore) SetGender(_ context.Context, characterID int64, gender string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.byID[characterID]
+	if !ok {
+		return ErrNotFound
+	}
+	c.Gender = gender
 	return nil
 }

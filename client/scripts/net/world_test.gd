@@ -26,7 +26,7 @@ func _test_encode_move() -> void:
 
 ## Hand-builds an OpEnterWorldResult payload matching
 ## server/internal/session's encoding.
-func _build_enter_world_result(ok: bool, reason: String, zone: String, x: float, y: float, z: float, others: Array) -> PackedByteArray:
+func _build_enter_world_result(ok: bool, reason: String, zone: String, x: float, y: float, z: float, own_gender: String, others: Array) -> PackedByteArray:
 	var out := PackedByteArray([1 if ok else 0])
 	var reason_bytes := reason.to_utf8_buffer()
 	var len_buf := PackedByteArray()
@@ -49,6 +49,11 @@ func _build_enter_world_result(ok: bool, reason: String, zone: String, x: float,
 	pos_buf.encode_float(8, z)
 	out.append_array(pos_buf)
 
+	var own_gender_bytes := own_gender.to_utf8_buffer()
+	len_buf.encode_u16(0, own_gender_bytes.size())
+	out.append_array(len_buf)
+	out.append_array(own_gender_bytes)
+
 	var count_buf := PackedByteArray()
 	count_buf.resize(2)
 	count_buf.encode_u16(0, others.size())
@@ -70,47 +75,56 @@ func _build_enter_world_result(ok: bool, reason: String, zone: String, x: float,
 		opos_buf.encode_float(8, o["z"])
 		out.append_array(opos_buf)
 		out.append(1 if o.get("has_armor", false) else 0)
+		var ogender_bytes: PackedByteArray = String(o.get("gender", "")).to_utf8_buffer()
+		len_buf.encode_u16(0, ogender_bytes.size())
+		out.append_array(len_buf)
+		out.append_array(ogender_bytes)
 
 	return out
 
 func _test_decode_enter_world_result_success() -> void:
-	var payload := _build_enter_world_result(true, "", "jangan", 1.0, 2.0, 3.0, [{"id": 42, "name": "Bram", "x": 4.0, "y": 5.0, "z": 6.0, "has_armor": true}])
+	var payload := _build_enter_world_result(true, "", "jangan", 1.0, 2.0, 3.0, CharacterNet.GENDER_CHINA_MAN, [{"id": 42, "name": "Bram", "x": 4.0, "y": 5.0, "z": 6.0, "has_armor": true, "gender": CharacterNet.GENDER_CHINA_WOMAN}])
 	var result := WorldNet.decode_enter_world_result(payload)
 	_check(result.error == "", "no decode error")
 	_check(result.ok, "ok is true")
 	_check(result.zone == "jangan", "zone round-trips")
 	_check(result.x == 1.0 and result.y == 2.0 and result.z == 3.0, "position round-trips")
+	_check(result.gender == CharacterNet.GENDER_CHINA_MAN, "own gender round-trips")
 	_check(result.others.size() == 1, "one other entity (got %d)" % result.others.size())
 	if result.others.size() == 1:
 		_check(result.others[0].character_id == 42, "other's character_id round-trips")
 		_check(result.others[0].char_name == "Bram", "other's name round-trips")
 		_check(result.others[0].x == 4.0, "other's x round-trips")
 		_check(result.others[0].has_armor, "other's has_armor round-trips")
+		_check(result.others[0].gender == CharacterNet.GENDER_CHINA_WOMAN, "other's gender round-trips")
 
 func _test_decode_enter_world_result_failure() -> void:
-	var payload := _build_enter_world_result(false, "no such character", "", 0, 0, 0, [])
+	var payload := _build_enter_world_result(false, "no such character", "", 0, 0, 0, "", [])
 	var result := WorldNet.decode_enter_world_result(payload)
 	_check(result.error == "", "no decode error")
 	_check(not result.ok, "ok is false")
 	_check(result.reason == "no such character", "reason round-trips")
 
 func _test_decode_entity_entered() -> void:
-	var payload := _build_enter_world_result(true, "", "z", 0, 0, 0, [{"id": 7, "name": "Bram", "x": 1.0, "y": 2.0, "z": 3.0, "has_armor": true}])
+	var payload := _build_enter_world_result(true, "", "z", 0, 0, 0, "", [{"id": 7, "name": "Bram", "x": 1.0, "y": 2.0, "z": 3.0, "has_armor": true, "gender": CharacterNet.GENDER_CHINA_MAN}])
 	# _build_enter_world_result wraps a single EntitySnapshot the same way
 	# OpEntityEntered's payload is just one bare EntitySnapshot -- slice off
 	# the EnterWorldResult framing in front of it (ok byte + empty reason +
-	# zone + position + count) to get just that snapshot's bytes.
-	var snapshot_start := 1 + 2 + 0 + 2 + 1 + 12 + 2
+	# zone + position + own-gender + count) to get just that snapshot's
+	# bytes.
+	var snapshot_start := 1 + 2 + 0 + 2 + 1 + 12 + 2 + 2
 	var entered := WorldNet.decode_entity_entered(payload.slice(snapshot_start))
 	_check(entered != null, "decodes successfully")
 	if entered != null:
 		_check(entered.character_id == 7, "character_id round-trips")
 		_check(entered.char_name == "Bram", "name round-trips")
 		_check(entered.has_armor, "has_armor round-trips (true)")
+		_check(entered.gender == CharacterNet.GENDER_CHINA_MAN, "gender round-trips")
 
-	var unarmored := _build_enter_world_result(true, "", "z", 0, 0, 0, [{"id": 8, "name": "Aria", "x": 0.0, "y": 0.0, "z": 0.0, "has_armor": false}])
+	var unarmored := _build_enter_world_result(true, "", "z", 0, 0, 0, "", [{"id": 8, "name": "Aria", "x": 0.0, "y": 0.0, "z": 0.0, "has_armor": false, "gender": CharacterNet.GENDER_CHINA_WOMAN}])
 	var entered2 := WorldNet.decode_entity_entered(unarmored.slice(snapshot_start))
 	_check(entered2 != null and not entered2.has_armor, "has_armor round-trips (false)")
+	_check(entered2 != null and entered2.gender == CharacterNet.GENDER_CHINA_WOMAN, "second entity's gender round-trips")
 
 func _test_decode_entity_moved() -> void:
 	var buf := PackedByteArray()

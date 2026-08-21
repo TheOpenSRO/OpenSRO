@@ -33,15 +33,18 @@ const spawnZone = "jangan"
 var spawnPos = world.Position{X: 0, Y: 0, Z: 0}
 
 // EntitySnapshot describes one character's presence in the world: who they
-// are, where they are, and whether they have real armor equipped (queried
-// live from the equipment store at broadcast time -- see hasArmorEquipped
-// -- so it always reflects the character's actual current equip state, not
-// a value cached when they entered the world).
+// are, where they are, whether they have real armor equipped (queried live
+// from the equipment store at broadcast time -- see hasArmorEquipped -- so
+// it always reflects the character's actual current equip state, not a
+// value cached when they entered the world), and their real Gender (one of
+// character.GenderChinaMan/GenderChinaWoman -- see character.go), which
+// picks which real body/skeleton assets the client renders them with.
 type EntitySnapshot struct {
 	CharacterID int64
 	Name        string
 	X, Y, Z     float32
 	HasArmor    bool
+	Gender      string
 }
 
 func (e *EntitySnapshot) Encode() []byte {
@@ -55,6 +58,7 @@ func (e *EntitySnapshot) Encode() []byte {
 	} else {
 		out = append(out, 0)
 	}
+	out = append(out, encodeStrings(e.Gender)...)
 	return out
 }
 
@@ -86,7 +90,13 @@ func decodeEntitySnapshot(data []byte) (*EntitySnapshot, []byte, error) {
 	}
 	hasArmor := rest[0] != 0
 	rest = rest[1:]
-	return &EntitySnapshot{CharacterID: id, Name: names[0], X: x, Y: y, Z: z, HasArmor: hasArmor}, rest, nil
+
+	genderFields, rest, err := decodeStringsPrefix(rest, 1)
+	if err != nil {
+		return nil, nil, fmt.Errorf("gender: %w", err)
+	}
+
+	return &EntitySnapshot{CharacterID: id, Name: names[0], X: x, Y: y, Z: z, HasArmor: hasArmor, Gender: genderFields[0]}, rest, nil
 }
 
 // hasArmorEquipped reports whether characterID currently has anything
@@ -114,12 +124,28 @@ func hasArmorEquipped(ctx context.Context, eq equipment.Store, characterID int64
 	return false
 }
 
-func entitySnapshotFromWorld(ctx context.Context, eq equipment.Store, e world.Entity) EntitySnapshot {
+// genderOf looks up characterID's real Gender via chars.GetByID, live at
+// broadcast time -- world.Entity doesn't carry it (that package deliberately
+// only tracks position/presence, not character details -- same reasoning
+// as hasArmorEquipped not living in world.Entity either). Falls back to
+// character.DefaultGender on any lookup error, the same honest-failure
+// convention as hasArmorEquipped: never block a broadcast over this, and
+// never guess at a value that couldn't be confirmed.
+func genderOf(ctx context.Context, chars character.Store, characterID int64) string {
+	c, err := chars.GetByID(ctx, characterID)
+	if err != nil {
+		return character.DefaultGender
+	}
+	return c.Gender
+}
+
+func entitySnapshotFromWorld(ctx context.Context, eq equipment.Store, chars character.Store, e world.Entity) EntitySnapshot {
 	return EntitySnapshot{
 		CharacterID: e.CharacterID,
 		Name:        e.Name,
 		X:           float32(e.Pos.X), Y: float32(e.Pos.Y), Z: float32(e.Pos.Z),
 		HasArmor: hasArmorEquipped(ctx, eq, e.CharacterID),
+		Gender:   genderOf(ctx, chars, e.CharacterID),
 	}
 }
 
@@ -139,12 +165,17 @@ func DecodeEnterWorldRequest(data []byte) (*EnterWorldRequest, error) {
 }
 
 // EnterWorldResult is the OpEnterWorldResult payload. On failure, only
-// OK/Reason are meaningful -- Zone/position/Others aren't encoded.
+// OK/Reason are meaningful -- Zone/position/Gender/Others aren't encoded.
+// Gender is the entering character's own real Gender (see
+// character.GenderChinaMan/GenderChinaWoman) -- the client needs this to
+// build its *own* real assembled character; Others already carries each
+// other player's Gender via EntitySnapshot.
 type EnterWorldResult struct {
 	OK      bool
 	Reason  string
 	Zone    string
 	X, Y, Z float32
+	Gender  string
 	Others  []EntitySnapshot
 }
 
@@ -157,6 +188,7 @@ func (r *EnterWorldResult) Encode() []byte {
 	out = append(out, encodeFloat32(r.X)...)
 	out = append(out, encodeFloat32(r.Y)...)
 	out = append(out, encodeFloat32(r.Z)...)
+	out = append(out, encodeStrings(r.Gender)...)
 	countBuf := make([]byte, 2)
 	binary.LittleEndian.PutUint16(countBuf, uint16(len(r.Others)))
 	out = append(out, countBuf...)
@@ -202,6 +234,12 @@ func DecodeEnterWorldResult(data []byte) (*EnterWorldResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding EnterWorldResult: z: %w", err)
 	}
+
+	genderFields, rest, err := decodeStringsPrefix(rest, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding EnterWorldResult: gender: %w", err)
+	}
+	r.Gender = genderFields[0]
 
 	if len(rest) < 2 {
 		return nil, errors.New("session: decoding EnterWorldResult: truncated entity count")
@@ -370,11 +408,12 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 
 	otherSnapshots := make([]EntitySnapshot, len(others))
 	for i, o := range others {
-		otherSnapshots[i] = entitySnapshotFromWorld(ctx, eq, o)
+		otherSnapshots[i] = entitySnapshotFromWorld(ctx, eq, chars, o)
 	}
 	result := &EnterWorldResult{
 		OK: true, Zone: spawnZone,
 		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
+		Gender: owned.Gender,
 		Others: otherSnapshots,
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: result.Encode()}); err != nil {
@@ -385,6 +424,7 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		CharacterID: owned.ID, Name: owned.Name,
 		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
 		HasArmor: hasArmorEquipped(ctx, eq, owned.ID),
+		Gender:   owned.Gender,
 	}
 	for _, other := range others {
 		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.Encode()})

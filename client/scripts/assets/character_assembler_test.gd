@@ -109,6 +109,24 @@ func _init() -> void:
 			attachments2 += 1
 	_check(attachments2 == 1, "unpaired part gets exactly 1 attachment, unrecognized part skipped (got %d)" % attachments2)
 
+	# China-woman's real forearm mesh is named "woman_arm_fore", not
+	# "..._arm_lower" like China-man's -- confirm it still resolves to the
+	# same real paired forearm bones (see BODY_PART_BONES's arm_fore entry).
+	var skeleton2b := Skeleton3D.new()
+	skeleton2b.add_bone("Bip01 R Forearm")
+	skeleton2b.add_bone("Bip01 L Forearm")
+	for bone_name in ["Bip01 R Forearm", "Bip01 L Forearm"]:
+		var bi := skeleton2b.find_bone(bone_name)
+		skeleton2b.set_bone_rest(bi, Transform3D(Basis.IDENTITY, Vector3.ZERO))
+		skeleton2b.reset_bone_pose(bi)
+	skeleton2b.force_update_all_bone_transforms()
+	CharacterAssembler.assemble(skeleton2b, {"woman_arm_fore": mesh})
+	var forearm_attachments := 0
+	for child in skeleton2b.get_children():
+		if child is BoneAttachment3D:
+			forearm_attachments += 1
+	_check(forearm_attachments == 2, "woman_arm_fore resolves to both real forearm bones like man_arm_lower does (got %d)" % forearm_attachments)
+
 	# Equipment: a paired slot ("aa" -> arm, split by x-sign like a paired
 	# body part) and an unpaired slot ("ba" -> body, single bone, no split).
 	var skeleton3 := Skeleton3D.new()

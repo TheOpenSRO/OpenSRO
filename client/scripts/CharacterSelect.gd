@@ -6,12 +6,21 @@ extends Control
 
 @onready var char_list: ItemList = $VBoxContainer/CharList
 @onready var new_name_edit: LineEdit = $VBoxContainer/CreateRow/NewNameEdit
+@onready var gender_option: OptionButton = $VBoxContainer/CreateRow/GenderOption
 @onready var create_button: Button = $VBoxContainer/CreateRow/CreateButton
 @onready var delete_button: Button = $VBoxContainer/ActionRow/DeleteButton
 @onready var enter_button: Button = $VBoxContainer/ActionRow/EnterButton
 @onready var status_label: Label = $VBoxContainer/StatusLabel
 
 func _ready() -> void:
+	# Real, RE-confirmed body/skeleton/armor options -- see
+	# CharacterNet.GENDER_CHINA_MAN/GENDER_CHINA_WOMAN's doc comment for why
+	# only these two.
+	gender_option.add_item("China Man", 0)
+	gender_option.set_item_metadata(0, CharacterNet.GENDER_CHINA_MAN)
+	gender_option.add_item("China Woman", 1)
+	gender_option.set_item_metadata(1, CharacterNet.GENDER_CHINA_WOMAN)
+
 	create_button.pressed.connect(_on_create_pressed)
 	delete_button.pressed.connect(_on_delete_pressed)
 	enter_button.pressed.connect(_on_enter_pressed)
@@ -34,7 +43,8 @@ func _on_create_pressed() -> void:
 	if char_name.is_empty():
 		status_label.text = "Enter a name first."
 		return
-	NetClient.create_character(char_name)
+	var gender: String = gender_option.get_selected_metadata() if gender_option.selected >= 0 else ""
+	NetClient.create_character(char_name, gender)
 
 func _on_create_result(ok: bool, reason: String) -> void:
 	if ok:

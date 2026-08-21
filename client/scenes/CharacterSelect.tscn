@@ -42,6 +42,9 @@ layout_mode = 2
 size_flags_horizontal = 3
 placeholder_text = "New character name"
 
+[node name="GenderOption" type="OptionButton" parent="VBoxContainer/CreateRow"]
+layout_mode = 2
+
 [node name="CreateButton" type="Button" parent="VBoxContainer/CreateRow"]
 layout_mode = 2
 text = "Create"

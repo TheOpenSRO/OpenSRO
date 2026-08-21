@@ -56,19 +56,29 @@ func DecodeCharacterListResult(data []byte) (*CharacterListResult, error) {
 	return &CharacterListResult{Error: fields[0], Names: names}, nil
 }
 
-// CharacterCreateRequest is the OpCharacterCreate payload.
+// CharacterCreateRequest is the OpCharacterCreate payload. Gender is one of
+// character.GenderChinaMan/GenderChinaWoman -- the real, RE-confirmed
+// options (see character.go's doc comment) -- or empty, which falls back
+// to character.DefaultGender. An unrecognized non-empty value also falls
+// back to the default rather than erroring the whole create, since it's
+// purely cosmetic and shouldn't block character creation.
 type CharacterCreateRequest struct {
-	Name string
+	Name   string
+	Gender string
 }
 
-func (r *CharacterCreateRequest) Encode() []byte { return encodeStrings(r.Name) }
+func (r *CharacterCreateRequest) Encode() []byte {
+	out := encodeStrings(r.Name)
+	out = append(out, encodeStrings(r.Gender)...)
+	return out
+}
 
 func DecodeCharacterCreateRequest(data []byte) (*CharacterCreateRequest, error) {
-	fields, err := decodeStrings(data, 1)
+	fields, err := decodeStrings(data, 2)
 	if err != nil {
 		return nil, err
 	}
-	return &CharacterCreateRequest{Name: fields[0]}, nil
+	return &CharacterCreateRequest{Name: fields[0], Gender: fields[1]}, nil
 }
 
 // CharacterDeleteRequest is the OpCharacterDelete payload.
@@ -180,7 +190,8 @@ func handleCreate(ctx context.Context, sess *gateway.Session, p *proto.Packet, s
 	}
 
 	result := &CharacterCreateResult{OK: true}
-	if _, err := store.Create(ctx, accountID, req.Name); err != nil {
+	created, err := store.Create(ctx, accountID, req.Name)
+	if err != nil {
 		result.OK = false
 		switch {
 		case errors.Is(err, character.ErrNameTaken):
@@ -188,6 +199,18 @@ func handleCreate(ctx context.Context, sess *gateway.Session, p *proto.Packet, s
 		case errors.Is(err, character.ErrAccountFull):
 			result.Reason = "account already has the maximum number of characters"
 		default:
+			result.Reason = "create failed"
+		}
+		return sess.Send(&proto.Packet{Opcode: OpCharacterCreateResult, Data: result.Encode()})
+	}
+
+	// Gender is purely cosmetic (see CharacterCreateRequest's doc comment),
+	// so an invalid/unrecognized choice just keeps the real default
+	// store.Create already applied rather than failing character creation
+	// over it.
+	if character.ValidGender(req.Gender) && req.Gender != created.Gender {
+		if err := store.SetGender(ctx, created.ID, req.Gender); err != nil {
+			result.OK = false
 			result.Reason = "create failed"
 		}
 	}

@@ -56,7 +56,12 @@ const BODY_PART_BONES := {
 	"thigh": ["Bip01 R Thigh", "Bip01 L Thigh"],
 	"calf": ["Bip01 R Calf", "Bip01 L Calf"],
 	"arm_upper": ["Bip01 R UpperArm", "Bip01 L UpperArm"],
+	# China-man's real forearm mesh is "man_arm_lower"; China-woman's real
+	# equivalent is "woman_arm_fore" -- different filename convention, same
+	# real "Bip01 R/L Forearm" bones (confirmed directly: chinawoman_skel.bsk
+	# carries those exact bone name strings, same as the man skeleton).
 	"arm_lower": ["Bip01 R Forearm", "Bip01 L Forearm"],
+	"arm_fore": ["Bip01 R Forearm", "Bip01 L Forearm"],
 }
 
 ## Strips a leading "<word>_" gender/race prefix (e.g. "man_thigh" ->

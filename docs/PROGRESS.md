@@ -2,6 +2,69 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 59) — real per-account gender selection: China man and China woman, both with confirmed real assets
+
+- Closed the last honest gap from the armor-broadcast work: every character still rendered the
+  same fixed China-man body regardless of who they really were. Checked whether real alternate
+  bodies actually exist in this project's available real client data before building anything --
+  found real, complete, parallel asset sets for China man and China woman (skeleton, 7 real
+  body-part meshes each, a real default material/texture, and a real matching `clothes_03`
+  6-piece armor set) via the RE box's real retail `Data.pk2` (rebuilt `pk2list` there first --
+  it was still running the pre-chain-fix build from earlier this session, showing 41 files
+  instead of the real 73139). Checked for a third real option (Europe) too: its skeletons exist
+  but its *base body meshes* were never found in this client's real data, so Europe stays out of
+  scope rather than being half-implemented -- only the two genders with genuinely complete real
+  asset sets are offered, not a larger invented roster.
+- Found and fixed one real naming-convention gap along the way: China-woman's real forearm mesh
+  is `woman_arm_fore`, not `..._arm_lower` like China-man's. Confirmed (not guessed) that both
+  real skeletons use the identical `Bip01 R/L Forearm` bone names by pulling and inspecting
+  `chinawoman_skel.bsk` directly, then added an `arm_fore` alias to
+  `CharacterAssembler.BODY_PART_BONES` pointing at the same real bones, with a dedicated
+  regression test.
+- Also directly confirmed (not assumed from the naming pattern) that China-woman's real
+  material-matching works the same way China-man's does: pulled a real `woman_thigh.bms` and
+  `chinawoman_warrior.bmt`, parsed both through this project's own readers, and verified
+  `woman_thigh.bms`'s real `material_name` field ("chinawoman_body") matches a real layer name
+  inside `chinawoman_warrior.bmt` -- the same name-matching mechanism `CharacterAssembler`
+  already relies on.
+- Added `character.Gender` (`GenderChinaMan`/`GenderChinaWoman`, `DefaultGender`, `ValidGender`)
+  to `server/internal/character`, plus `Store.GetByID`/`Store.SetGender` (both stores). Kept
+  `Store.Create`'s signature unchanged (no gender parameter) to avoid churning ~40 unrelated call
+  sites across the test suite -- gender is applied via a follow-up `SetGender` call from
+  `handleCreate` only when a real, valid, non-default choice was actually requested, keeping the
+  common case a single unchanged `Create` call.
+- Extended `CharacterCreateRequest` with an optional `Gender` field (empty/unrecognized falls
+  back to the default rather than failing creation, since it's purely cosmetic) and
+  `EnterWorldResult`/`EntitySnapshot` with the entering character's own real Gender and every
+  broadcast peer's real Gender respectively (`genderOf`, a live `chars.GetByID` lookup at
+  broadcast time -- same pattern as `hasArmorEquipped`, since `world.Entity` deliberately doesn't
+  carry character details).
+- Mirrored all of it in the GDScript client (`CharacterNet`, `WorldNet`) and wired real per-gender
+  asset resolution into `World3D.gd`: `GENDER_ASSET_PATHS` replaces the old single hardcoded
+  China-man path set, `_load_character_assets()` now loads and caches real assets for every real
+  gender up front, and `_build_assembled_character()`/`_spawn_or_update_other()` pick the right
+  cached set from each character's own real Gender (falling back to the default if a gender's
+  assets never loaded). Added a real gender picker (`OptionButton`) to `CharacterSelect.tscn` so
+  a player can actually choose China Woman at creation, not just via the protocol/tests.
+- Verified with real, live end-to-end tests: `TestCharacterCreateWithGender` (Go, real TCP) creates
+  a character with an explicit real gender choice and confirms it's actually applied, and that a
+  bogus choice falls back to the default without failing creation. `TestWorldFullFlow` was extended
+  so one of its two characters picks China-woman at creation, asserting the real gender propagates
+  correctly through both `EnterWorldResult` (for the entering player's own body) and the live
+  `OpEntityEntered` broadcast (for how a peer sees them) -- not just a standalone encode/decode
+  round trip.
+- Full regression: Go clean (`build`/`vet`/`test`, all packages), all 35 GDScript suites pass
+  (added gender coverage to `world_test.gd`/`character_test.gd`, plus the new `arm_fore` bone-
+  mapping test in `character_assembler_test.gd`).
+- Honest gap acknowledged, not hidden: didn't get a full rendered screenshot of the China-woman
+  body in this pass (the loose-file verification technique used elsewhere this session for
+  quick asset checks didn't resolve cleanly through Godot's relative-path handling in the time
+  available) -- verification instead rests on the live protocol round trip (Go), full encode/
+  decode unit coverage (GDScript), the direct real material-name-match check above, and the fact
+  that `World3D.gd`'s change is a straightforward parametrization of the already-proven China-man
+  path into a per-gender lookup, not new rendering logic. A follow-up pass should still get an
+  actual screenshot of an assembled China-woman character before calling this fully closed.
+
 ## 2026-08-21 (cont'd 58) — other players' armor is now real per-player too, broadcast over the network
 
 - Direct follow-on to the local-player armor gating just shipped: that change only fixed the

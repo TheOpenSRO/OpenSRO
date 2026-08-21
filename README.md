@@ -240,7 +240,8 @@ The ground is no longer just a placeholder box either: setting `SRREVAMP_MAPM_PA
 `SRREVAMP_MAP_PK2_PATH`, since `Map.pk2` is a separate archive from `Data.pk2` in a real retail
 install) loads a real `Map.pk2` region's real elevation data and builds a real triangulated
 terrain mesh via `client/scripts/assets/mapm_terrain_builder.gd` (`MapmTerrainBuilder`), replacing
-the placeholder's *visual* mesh (not yet its collision shape — see "Not yet done"). Verified
+both the placeholder's visual mesh and its collision shape (the latter built straight from the
+same real triangle data — see below). Verified
 against a real region file: 12417 real tiles in, 584 complete real rows recovered and rendered as
 genuine undulating terrain the player stands on, not a flat box. It's also texturable with real
 game art: `SRREVAMP_MAPM_TEXTURE_PATH` + `SRREVAMP_MEDIA_PK2_PATH` load a real per-region minimap
@@ -282,15 +283,31 @@ sync), replacing the flat placeholder box. Verified against a real region: the p
 rests directly on the real terrain surface with a real cast shadow, not floating above it or
 clipping through, confirmed visually via a headless render.
 
+Real per-account gender selection is now in too: at character creation, a real `OptionButton`
+(`CharacterSelect.tscn`) lets a player choose China Man or China Woman — the only two real,
+RE-confirmed options this project's available client data has *complete* parallel body/skeleton/
+armor asset sets for (China-woman's real forearm mesh is named differently, `woman_arm_fore` vs.
+China-man's `man_arm_lower`, but both real skeletons share the same real `Bip01 R/L Forearm`
+bones — confirmed directly, not assumed, and aliased in `CharacterAssembler.BODY_PART_BONES`). A
+real race check (Europe) was also done: its skeletons exist in this project's available client
+data but its base body meshes don't, so Europe stays out of scope rather than being
+half-implemented. The choice is stored server-side (`character.Gender`) and broadcast to every
+peer (`EnterWorldResult.Gender`/`EntitySnapshot.Gender`, live-looked-up per broadcast — see
+`server/internal/session/world.go`'s `genderOf`), so other players now see each character's real
+chosen body too, not just the local player. Verified with a real, live two-client TCP test
+(`TestWorldFullFlow`) asserting the real gender propagates correctly both ways. **Not yet gotten
+a rendered screenshot of an assembled China-woman character** — verification so far rests on the
+live protocol round trip, full encode/decode unit coverage, and a direct real material-name-match
+check (pulled `woman_thigh.bms`/`chinawoman_warrior.bmt`, confirmed the same name-matching
+`CharacterAssembler` already relies on works for this gender too) — see `docs/PROGRESS.md`.
+
 Not yet done: confirmed real-world terrain/object
 positioning/scale relative to a player's actual spawn coordinate (currently placed for visibility,
 not accuracy); a newly-found, entirely unparsed real file type (`Map.pk2` region folders also
 contain a `.t` file, magic `JMXVMAPT1001`, with a real byte pattern consistent with a texture
 blend/weight map — a real, previously-investigated RE gap this project couldn't fully close, see
-`docs/protocol/MAPM_FORMAT.md`); no real per-account *race/gender* identity for other players
-(armor is now real per-player — see above — but everyone still renders the same fixed China-man
-body, since there's no server-side race/gender selection tracked per character yet). That's the
-current focus (see `docs/PROGRESS.md`). The material-layer-to-
+`docs/protocol/MAPM_FORMAT.md`); an actual rendered screenshot of the China-woman character (see
+above). That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
 mesh-piece pairing when a `.bmt` has multiple layers and no name match is available is still a
 documented, unconfirmed heuristic (pairs by index when counts match, used by `ObjectLoader` for
 `.bsr` scenery); `.efp`'s nested tree structure (see above). See

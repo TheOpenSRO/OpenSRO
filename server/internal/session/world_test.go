@@ -26,7 +26,7 @@ func (s worldTestMaxStacks) GetMaxStack(_ context.Context, itemID int64) (int, e
 }
 
 func TestEntitySnapshotRoundTrip(t *testing.T) {
-	want := &EntitySnapshot{CharacterID: 42, Name: "Aria", X: 1.5, Y: -2.5, Z: 3, HasArmor: true}
+	want := &EntitySnapshot{CharacterID: 42, Name: "Aria", X: 1.5, Y: -2.5, Z: 3, HasArmor: true, Gender: character.GenderChinaWoman}
 	got, rest, err := decodeEntitySnapshot(want.Encode())
 	if err != nil {
 		t.Fatalf("decodeEntitySnapshot: %v", err)
@@ -41,14 +41,14 @@ func TestEntitySnapshotRoundTrip(t *testing.T) {
 
 func TestEnterWorldResultRoundTripSuccess(t *testing.T) {
 	want := &EnterWorldResult{
-		OK: true, Zone: "jangan", X: 1, Y: 2, Z: 3,
-		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, HasArmor: true}},
+		OK: true, Zone: "jangan", X: 1, Y: 2, Z: 3, Gender: character.GenderChinaMan,
+		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, HasArmor: true, Gender: character.GenderChinaWoman}},
 	}
 	got, err := DecodeEnterWorldResult(want.Encode())
 	if err != nil {
 		t.Fatalf("DecodeEnterWorldResult: %v", err)
 	}
-	if got.OK != want.OK || got.Zone != want.Zone || got.X != want.X || len(got.Others) != 1 {
+	if got.OK != want.OK || got.Zone != want.Zone || got.X != want.X || got.Gender != want.Gender || len(got.Others) != 1 {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 	if got.Others[0] != want.Others[0] {
@@ -90,8 +90,15 @@ func TestWorldFullFlow(t *testing.T) {
 	accounts.Add("alice", "hunter2")
 	accounts.Add("bob", "hunter3")
 	chars := character.NewMemStore()
-	chars.Create(ctx, 1, "Aria")
+	aria, _ := chars.Create(ctx, 1, "Aria")
 	bram, _ := chars.Create(ctx, 2, "Bram")
+	// Aria picks the real china_woman body at creation; Bram keeps the
+	// real default -- exercises both real Gender outcomes through the
+	// actual EnterWorld/EntityEntered flow, not just the standalone
+	// Encode/Decode round trip above.
+	if err := chars.SetGender(ctx, aria.ID, character.GenderChinaWoman); err != nil {
+		t.Fatalf("setting Aria's gender: %v", err)
+	}
 
 	// Bram has real armor equipped; Aria doesn't -- exercises both real
 	// HasArmor outcomes through the actual EnterWorld/EntityEntered flow,
@@ -166,6 +173,9 @@ func TestWorldFullFlow(t *testing.T) {
 	if len(ewr.Others) != 0 {
 		t.Fatalf("alice should see nobody else yet, got %+v", ewr.Others)
 	}
+	if ewr.Gender != character.GenderChinaWoman {
+		t.Fatalf("alice's own EnterWorldResult should carry her real gender %q, got %q", character.GenderChinaWoman, ewr.Gender)
+	}
 
 	// Bob logs in and enters the world; should see Aria as an "other".
 	resp = sendRecv(connB, rB, OpLogin, (&LoginRequest{Username: "bob", Password: "hunter3"}).Encode())
@@ -182,6 +192,12 @@ func TestWorldFullFlow(t *testing.T) {
 	}
 	if ewr.Others[0].HasArmor {
 		t.Fatalf("Aria has nothing equipped, but bob's snapshot claims HasArmor=true: %+v", ewr.Others[0])
+	}
+	if ewr.Others[0].Gender != character.GenderChinaWoman {
+		t.Fatalf("bob's snapshot of Aria should carry her real gender %q, got %q", character.GenderChinaWoman, ewr.Others[0].Gender)
+	}
+	if ewr.Gender != character.GenderChinaMan {
+		t.Fatalf("bob's own EnterWorldResult should carry his real (default) gender %q, got %q", character.GenderChinaMan, ewr.Gender)
 	}
 
 	// Alice should now receive an OpEntityEntered for Bram, with HasArmor
@@ -201,6 +217,9 @@ func TestWorldFullFlow(t *testing.T) {
 	}
 	if !enteredSnap.HasArmor {
 		t.Fatalf("Bram has real armor equipped, but EntityEntered claims HasArmor=false: %+v", enteredSnap)
+	}
+	if enteredSnap.Gender != character.GenderChinaMan {
+		t.Fatalf("Bram's real gender is the default %q, got %q", character.GenderChinaMan, enteredSnap.Gender)
 	}
 
 	// Bob moves; Alice should see OpEntityMoved.

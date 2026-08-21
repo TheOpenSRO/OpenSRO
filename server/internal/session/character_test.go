@@ -128,6 +128,70 @@ func TestCharacterFullFlow(t *testing.T) {
 	}
 }
 
+// TestCharacterCreateWithGender confirms a real, explicit gender choice at
+// creation is actually applied (not just accepted and ignored), and that
+// an empty/unrecognized choice falls back to the real default rather than
+// failing creation.
+func TestCharacterCreateWithGender(t *testing.T) {
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	handle := gateway.Chain(LoginHandler(accounts), CharacterHandler(chars))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+
+	resp = send(OpCharacterCreate, (&CharacterCreateRequest{Name: "Mei", Gender: character.GenderChinaWoman}).Encode())
+	createResult, err := DecodeCharacterCreateResult(resp.Data)
+	if err != nil || !createResult.OK {
+		t.Fatalf("create failed: err=%v result=%+v", err, createResult)
+	}
+
+	list, err := chars.ListByAccount(context.Background(), 1)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListByAccount: err=%v list=%+v", err, list)
+	}
+	if list[0].Gender != character.GenderChinaWoman {
+		t.Fatalf("got gender %q, want %q", list[0].Gender, character.GenderChinaWoman)
+	}
+
+	resp = send(OpCharacterCreate, (&CharacterCreateRequest{Name: "Bram", Gender: "not_a_real_gender"}).Encode())
+	createResult, err = DecodeCharacterCreateResult(resp.Data)
+	if err != nil || !createResult.OK {
+		t.Fatalf("create with bogus gender should still succeed: err=%v result=%+v", err, createResult)
+	}
+	list, _ = chars.ListByAccount(context.Background(), 1)
+	var bram *character.Character
+	for _, c := range list {
+		if c.Name == "Bram" {
+			bram = c
+		}
+	}
+	if bram == nil || bram.Gender != character.DefaultGender {
+		t.Fatalf("expected Bram to fall back to default gender %q, got %+v", character.DefaultGender, bram)
+	}
+}
+
 // startTestServer spins up a gateway.Server on an ephemeral port with the
 // given handler, returning its address and a cleanup func.
 func startTestServer(t *testing.T, handle gateway.Handler) (string, func()) {

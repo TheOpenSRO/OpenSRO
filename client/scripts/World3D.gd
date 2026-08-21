@@ -100,32 +100,53 @@ const MIN_SEND_DISTANCE := 0.05
 ## Plausible (unconfirmed) .ban playback rate -- see docs/protocol/BAN_FORMAT.md.
 const BAN_FPS := 30.0
 
-## Conventional real path layout found during reverse-engineering (private
-## server package data, not from any pk2 -- but real pk2 archives are
-## expected to mirror the same Prim/ tree). Not confirmed as the only
-## layout real client pk2 archives use.
-const PLAYER_SKELETON_PATH := "Prim\\Skel\\Char\\China\\chinaman_skel.bsk"
-const PLAYER_MESH_DIR := "Prim\\Mesh\\Char\\China\\man"
-const PLAYER_BODY_PARTS := ["man_pelvis", "man_torso_lower", "man_torso_upper", "man_thigh", "man_calf", "man_arm_upper", "man_arm_lower"]
-## Real material file matched to the body-part meshes above -- picked
-## because a real man_thigh.bms's own material_name field reads
-## "chinaman_body", which is also a real layer_name found inside this real
-## .bmt (confirmed by inspecting both files directly). Body-part meshes are
-## shared across every China-man class/skin choice, so any class's .bmt
-## works here -- "warrior" is an arbitrary fixed pick, consistent with this
-## file's fixed-default player character (see top comment).
-const PLAYER_MATERIAL_PATH := "Prim\\Mtrl\\Char\\China\\man\\chinaman_warrior.bmt"
-
-## Real China-man armor set found during reverse-engineering (a full
-## 6-piece real set: arm/body/foot/head/leg/shoulder, "aa"/"ba"/"fa"/"ha"/
-## "la"/"sa" -- see CharacterAssembler.EQUIPMENT_SLOT_BONES). "clothes_03"
-## is an arbitrary fixed pick among many real numbered sets found, same
-## honesty level as PLAYER_MATERIAL_PATH's class pick -- not a real
-## per-account equipment loadout, since this project's server doesn't track
-## one yet (see this file's top comment).
-const PLAYER_EQUIPMENT_MESH_DIR := "Prim\\Mesh\\Item\\China\\man_item"
-const PLAYER_EQUIPMENT_PARTS := ["clothes_03_aa", "clothes_03_ba", "clothes_03_fa", "clothes_03_ha", "clothes_03_la", "clothes_03_sa"]
-const PLAYER_EQUIPMENT_MATERIAL_PATH := "Prim\\Mtrl\\Item\\China\\man_item\\clothes_03.bmt"
+## Real, per-Gender asset path layout found during reverse-engineering
+## (private server package data plus, for the woman/gender-parity check,
+## direct confirmation against a real retail Data.pk2 -- see
+## docs/PROGRESS.md). Real client pk2 archives are expected to mirror the
+## same Prim/ tree; not confirmed as the *only* layout they use. Keyed by
+## the same real Gender strings as character.GenderChinaMan/GenderChinaWoman
+## (server/internal/character/character.go) -- only these two, since this
+## project's available real client data has complete, parallel body/
+## skeleton/armor asset sets for exactly these two and not for any other
+## real race found in that data (see character.go's doc comment).
+##
+## Body-part meshes are shared across every class/skin choice within a
+## gender, so any class's .bmt works for "material" -- "warrior" is an
+## arbitrary fixed pick per gender, confirmed real by direct inspection
+## (each gender's man_thigh/woman_thigh.bms material_name field matches a
+## real layer_name inside that gender's chinaman_warrior.bmt/
+## chinawoman_warrior.bmt). "clothes_03" is likewise an arbitrary fixed
+## pick among many real numbered armor sets found for each gender -- not a
+## real per-account equipment loadout (see this file's top comment).
+##
+## China-man's real forearm mesh is "man_arm_lower"; China-woman's real
+## equivalent is "woman_arm_fore" -- different real filename convention,
+## same real bones (see CharacterAssembler.BODY_PART_BONES).
+const GENDER_ASSET_PATHS := {
+	"china_man": {
+		"skeleton": "Prim\\Skel\\Char\\China\\chinaman_skel.bsk",
+		"mesh_dir": "Prim\\Mesh\\Char\\China\\man",
+		"body_parts": ["man_pelvis", "man_torso_lower", "man_torso_upper", "man_thigh", "man_calf", "man_arm_upper", "man_arm_lower"],
+		"material": "Prim\\Mtrl\\Char\\China\\man\\chinaman_warrior.bmt",
+		"equipment_mesh_dir": "Prim\\Mesh\\Item\\China\\man_item",
+		"equipment_parts": ["clothes_03_aa", "clothes_03_ba", "clothes_03_fa", "clothes_03_ha", "clothes_03_la", "clothes_03_sa"],
+		"equipment_material": "Prim\\Mtrl\\Item\\China\\man_item\\clothes_03.bmt",
+	},
+	"china_woman": {
+		"skeleton": "Prim\\Skel\\Char\\China\\chinawoman_skel.bsk",
+		"mesh_dir": "Prim\\Mesh\\Char\\China\\woman",
+		"body_parts": ["woman_pelvis", "woman_torso_lower", "woman_torso_upper", "woman_thigh", "woman_calf", "woman_arm_upper", "woman_arm_fore"],
+		"material": "Prim\\Mtrl\\Char\\China\\woman\\chinawoman_warrior.bmt",
+		"equipment_mesh_dir": "Prim\\Mesh\\Item\\China\\woman_item",
+		"equipment_parts": ["clothes_03_aa", "clothes_03_ba", "clothes_03_fa", "clothes_03_ha", "clothes_03_la", "clothes_03_sa"],
+		"equipment_material": "Prim\\Mtrl\\Item\\China\\woman_item\\clothes_03.bmt",
+	},
+}
+## Falls back to this real gender's assets when a requested gender's assets
+## didn't load (or a peer reports an unrecognized gender string) -- matches
+## character.DefaultGender server-side.
+const DEFAULT_GENDER := "china_man"
 
 ## Real, root-level file inside Data.pk2 (SRREVAMP_PK2_PATH) mapping a real
 ## .mapo placement's type ID to a real .bsr resource path -- see
@@ -158,18 +179,16 @@ var _real_skeleton: Skeleton3D
 var _real_skeleton_track: BanReader.Bone
 var _real_skeleton_time := 0.0
 
-## Cached, parsed real character assets (skeleton + body parts + equipment
-## + resolved materials), loaded once by _load_character_assets() and
-## reused by _build_assembled_character() to build a fresh Skeleton3D per
+## Cached, parsed real character assets, one entry per real Gender (see
+## GENDER_ASSET_PATHS), loaded once by _load_character_assets() and reused
+## by _build_assembled_character() to build a fresh Skeleton3D per
 ## character instance (player or other) -- reparsing the same .bms/.bmt
 ## files for every single connected player would be real, avoidable waste.
-## _character_skel stays null (the "not loaded" signal) if
-## SRREVAMP_PK2_PATH isn't set or any required file wasn't found.
-var _character_skel: BskReader.ParsedSkeleton
-var _character_body_parts: Dictionary
-var _character_body_materials: Dictionary
-var _character_equipment_parts: Dictionary
-var _character_equipment_materials: Dictionary
+## Keyed by gender string; a gender with no entry here means its assets
+## weren't found (or SRREVAMP_PK2_PATH isn't set at all) -- callers fall
+## back to DEFAULT_GENDER, and to the placeholder capsule if even that
+## didn't load.
+var _character_assets: Dictionary = {}
 
 func _ready() -> void:
 	character_label.text = "Character: %s" % NetClient.current_character_name
@@ -182,7 +201,7 @@ func _ready() -> void:
 		player.position = Vector3(result.x, result.y, result.z)
 		_last_sent_pos = player.position
 		for other in result.others:
-			_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.has_armor)
+			_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.has_armor, other.gender)
 
 	NetClient.entity_entered.connect(_on_entity_entered)
 	NetClient.entity_moved.connect(_on_entity_moved)
@@ -423,75 +442,87 @@ func _try_load_real_terrain() -> void:
 ## placeholder capsule visible if the conventional paths aren't found in
 ## that archive (e.g. a real archive laid out differently than the one
 ## sample this project could check against).
-## Parses and caches the real character skeleton + body-part meshes +
-## equipment meshes + resolved materials (see the member vars declared
-## above), once, at scene startup -- both _try_apply_real_player_character
-## and every _spawn_or_update_other call reuse this same parsed data
-## rather than re-reading/re-parsing the same real .bms/.bmt files per
-## character. Leaves _character_skel null (the "not loaded" signal) if
-## SRREVAMP_PK2_PATH isn't set or the conventional real paths aren't found
-## in that archive.
+## Parses and caches, once at scene startup, real character assets for
+## *every* real Gender in GENDER_ASSET_PATHS -- both _try_apply_real_
+## player_character and every _spawn_or_update_other call reuse this same
+## parsed data (keyed by gender, see _character_assets) rather than
+## re-reading/re-parsing the same real .bms/.bmt files per character. A
+## gender whose conventional real paths aren't found in the archive simply
+## gets no entry (not an error -- see _build_assembled_character's
+## DEFAULT_GENDER fallback). Leaves _character_assets empty if
+## SRREVAMP_PK2_PATH isn't set at all.
 func _load_character_assets() -> void:
 	var archive := _open_pk2_if_set()
 	if archive == null:
 		print("World3D: SRREVAMP_PK2_PATH not set -- characters stay placeholders")
 		return
 
-	var bsk_bytes := AssetSource.read_bytes(PLAYER_SKELETON_PATH, archive)
-	if bsk_bytes.is_empty():
-		printerr("World3D: could not find player skeleton at ", PLAYER_SKELETON_PATH, " in ", OS.get_environment("SRREVAMP_PK2_PATH"))
-		return
-	var skel := BskReader.parse(bsk_bytes)
-	if skel == null:
-		printerr("World3D: could not parse player skeleton at ", PLAYER_SKELETON_PATH)
-		return
+	for gender in GENDER_ASSET_PATHS:
+		var paths: Dictionary = GENDER_ASSET_PATHS[gender]
 
-	var parts := {}
-	for part_name in PLAYER_BODY_PARTS:
-		var bytes := AssetSource.read_bytes(PLAYER_MESH_DIR + "\\" + part_name + ".bms", archive)
-		if bytes.is_empty():
+		var bsk_bytes := AssetSource.read_bytes(paths["skeleton"], archive)
+		if bsk_bytes.is_empty():
+			printerr("World3D: could not find %s skeleton at %s in %s" % [gender, paths["skeleton"], OS.get_environment("SRREVAMP_PK2_PATH")])
 			continue
-		var mesh := BmsReader.parse(bytes)
-		if mesh != null:
-			parts[part_name] = mesh
-	if parts.is_empty():
-		printerr("World3D: found the player skeleton but no body-part meshes under ", PLAYER_MESH_DIR)
-		return
-
-	var equipment_parts := {}
-	for part_name in PLAYER_EQUIPMENT_PARTS:
-		var eq_bytes := AssetSource.read_bytes(PLAYER_EQUIPMENT_MESH_DIR + "\\" + part_name + ".bms", archive)
-		if eq_bytes.is_empty():
+		var skel := BskReader.parse(bsk_bytes)
+		if skel == null:
+			printerr("World3D: could not parse %s skeleton at %s" % [gender, paths["skeleton"]])
 			continue
-		var eq_mesh := BmsReader.parse(eq_bytes)
-		if eq_mesh != null:
-			equipment_parts[part_name] = eq_mesh
 
-	_character_skel = skel
-	_character_body_parts = parts
-	_character_body_materials = _load_real_materials(archive, PLAYER_MATERIAL_PATH)
-	_character_equipment_parts = equipment_parts
-	if not equipment_parts.is_empty():
-		_character_equipment_materials = _load_real_materials(archive, PLAYER_EQUIPMENT_MATERIAL_PATH)
-	print("World3D: cached real character assets (%d bones, %d body parts, %d equipment parts) from %s" % [
-		skel.bones.size(), parts.size(), equipment_parts.size(), OS.get_environment("SRREVAMP_PK2_PATH")])
+		var parts := {}
+		for part_name in paths["body_parts"]:
+			var bytes := AssetSource.read_bytes(paths["mesh_dir"] + "\\" + part_name + ".bms", archive)
+			if bytes.is_empty():
+				continue
+			var mesh := BmsReader.parse(bytes)
+			if mesh != null:
+				parts[part_name] = mesh
+		if parts.is_empty():
+			printerr("World3D: found the %s skeleton but no body-part meshes under %s" % [gender, paths["mesh_dir"]])
+			continue
+
+		var equipment_parts := {}
+		for part_name in paths["equipment_parts"]:
+			var eq_bytes := AssetSource.read_bytes(paths["equipment_mesh_dir"] + "\\" + part_name + ".bms", archive)
+			if eq_bytes.is_empty():
+				continue
+			var eq_mesh := BmsReader.parse(eq_bytes)
+			if eq_mesh != null:
+				equipment_parts[part_name] = eq_mesh
+
+		var equipment_materials := {}
+		if not equipment_parts.is_empty():
+			equipment_materials = _load_real_materials(archive, paths["equipment_material"])
+
+		_character_assets[gender] = {
+			"skel": skel,
+			"body_parts": parts,
+			"body_materials": _load_real_materials(archive, paths["material"]),
+			"equipment_parts": equipment_parts,
+			"equipment_materials": equipment_materials,
+		}
+		print("World3D: cached real %s character assets (%d bones, %d body parts, %d equipment parts) from %s" % [
+			gender, skel.bones.size(), parts.size(), equipment_parts.size(), OS.get_environment("SRREVAMP_PK2_PATH")])
 
 ## Builds one fresh, independent Skeleton3D + assembled body/equipment from
-## the cached data _load_character_assets() parsed -- each character
-## instance (player or other) needs its own Skeleton3D node, so this
-## re-runs CharacterAssembler against the shared parsed meshes rather than
-## reparsing files. Returns null if _load_character_assets() never
-## succeeded (see that function's doc comment).
-func _build_assembled_character(include_equipment: bool = true) -> Skeleton3D:
-	if _character_skel == null:
+## the cached data _load_character_assets() parsed for the requested real
+## gender -- each character instance (player or other) needs its own
+## Skeleton3D node, so this re-runs CharacterAssembler against the shared
+## parsed meshes rather than reparsing files. Falls back to DEFAULT_GENDER
+## if gender's assets never loaded (or gender is empty/unrecognized -- e.g.
+## an older peer, or the local player's own EnterWorldResult didn't carry
+## one yet). Returns null only if even the default's assets never loaded.
+func _build_assembled_character(include_equipment: bool = true, gender: String = DEFAULT_GENDER) -> Skeleton3D:
+	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
+	if assets.is_empty():
 		return null
 
-	var skeleton := Skeleton3DBuilder.build_skeleton3d(_character_skel)
+	var skeleton := Skeleton3DBuilder.build_skeleton3d(assets["skel"])
 	var fallback_mat := StandardMaterial3D.new()
 	fallback_mat.albedo_color = Color(0.85, 0.7, 0.55)
-	CharacterAssembler.assemble(skeleton, _character_body_parts, fallback_mat, _character_body_materials)
-	if include_equipment and not _character_equipment_parts.is_empty():
-		CharacterAssembler.assemble_equipment(skeleton, _character_equipment_parts, null, _character_equipment_materials)
+	CharacterAssembler.assemble(skeleton, assets["body_parts"], fallback_mat, assets["body_materials"])
+	if include_equipment and not assets["equipment_parts"].is_empty():
+		CharacterAssembler.assemble_equipment(skeleton, assets["equipment_parts"], null, assets["equipment_materials"])
 
 	# Real bind-pose data uses a different native scale than this scene's
 	# ~1.8-unit-tall placeholder capsule -- rescale so the assembled
@@ -525,7 +556,10 @@ func _build_assembled_character(include_equipment: bool = true) -> Skeleton3D:
 ## player has actually equipped something in SLOT_ARMOR.
 func _try_apply_real_player_character() -> void:
 	var has_armor := await _real_player_has_armor_equipped()
-	var skeleton := _build_assembled_character(has_armor)
+	var gender := DEFAULT_GENDER
+	if NetClient.last_enter_world_result != null and NetClient.last_enter_world_result.gender != "":
+		gender = NetClient.last_enter_world_result.gender
+	var skeleton := _build_assembled_character(has_armor, gender)
 	if skeleton == null:
 		return
 	player.add_child(skeleton)
@@ -644,7 +678,7 @@ func _try_load_real_map_objects() -> void:
 ## straight into CharacterAssembler.assemble/assemble_equipment's
 ## materials_by_name, which looks parts up by their own real material_name
 ## field (the two are the same string in real data -- see
-## PLAYER_MATERIAL_PATH's doc comment, confirmed true for real equipment
+## GENDER_ASSET_PATHS's doc comment, confirmed true for real equipment
 ## materials too, e.g. clothes_03.bmt's layers name-match
 ## clothes_03_*.bms's own material_name fields). Returns an empty
 ## Dictionary (not an error) if the .bmt isn't found at that path, since
@@ -690,7 +724,7 @@ func _physics_process(delta: float) -> void:
 		Skeleton3DBuilder.apply_ban_keyframe(_real_skeleton, _real_skeleton_track, frame_idx)
 		Skeleton3DBuilder.update_debug_visualization(_real_skeleton.get_node("DebugVisualization"), _real_skeleton)
 
-func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, has_armor: bool = false) -> void:
+func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, has_armor: bool = false, gender: String = DEFAULT_GENDER) -> void:
 	if _other_bodies.has(character_id):
 		_other_bodies[character_id].position = pos
 		return
@@ -698,15 +732,15 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	var body := Node3D.new()
 	body.position = pos
 
-	# Real assembled character if the shared assets loaded (see this file's
-	# top comment for the honest scope: still the same fixed China-man body
-	# every player currently resolves to, not a real per-account race/
-	# gender identity) -- falls back to the labeled placeholder capsule
-	# otherwise. Armor is real now, though: has_armor comes straight from
-	# the server's live equipment-store lookup (see WorldNet.EntitySnapshot
-	# and server/internal/session/world.go's hasArmorEquipped), the same
-	# real signal that already gates the local player's own armor.
-	var skeleton := _build_assembled_character(has_armor)
+	# Real assembled character if the shared assets loaded, using this
+	# player's own real Gender (WorldNet.EntitySnapshot.gender, from the
+	# server's live character-store lookup -- see genderOf in
+	# server/internal/session/world.go) -- falls back to the labeled
+	# placeholder capsule otherwise. Armor is real too: has_armor comes
+	# straight from the server's live equipment-store lookup
+	# (hasArmorEquipped), the same real signal that already gates the local
+	# player's own armor.
+	var skeleton := _build_assembled_character(has_armor, gender)
 	if skeleton != null:
 		body.add_child(skeleton)
 	else:
@@ -731,7 +765,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	_other_bodies[character_id] = body
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
-	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.has_armor)
+	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.has_armor, snapshot.gender)
 
 func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 	if _other_bodies.has(moved.character_id):

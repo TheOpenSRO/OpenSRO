@@ -18,6 +18,20 @@ func _test_encode_name() -> void:
 	_check(encoded.slice(2, 6).get_string_from_utf8() == "Aria", "name bytes follow the length prefix")
 	_check(encoded.size() == 6, "total encoded size matches (got %d)" % encoded.size())
 
+func _test_encode_create() -> void:
+	var encoded := CharacterNet.encode_create("Mei", CharacterNet.GENDER_CHINA_WOMAN)
+	_check(encoded.decode_u16(0) == 3, "name length prefix is 3")
+	_check(encoded.slice(2, 5).get_string_from_utf8() == "Mei", "name bytes follow the name length prefix")
+	var gender_len := encoded.decode_u16(5)
+	_check(gender_len == 11, "gender length prefix is 11 (got %d)" % gender_len)
+	_check(encoded.slice(7, 7 + gender_len).get_string_from_utf8() == "china_woman", "gender bytes follow the gender length prefix")
+	_check(encoded.size() == 7 + gender_len, "total encoded size matches (got %d)" % encoded.size())
+
+func _test_encode_create_default_gender() -> void:
+	var encoded := CharacterNet.encode_create("Bram")
+	var gender_len := encoded.decode_u16(2 + 4)
+	_check(gender_len == 0, "omitted gender encodes as an empty string (got len %d)" % gender_len)
+
 ## Hand-builds an OpCharacterListResult payload matching
 ## server/internal/session's encoding: empty Error, count=2, two names.
 func _build_list_result_payload(error: String, names: Array) -> PackedByteArray:
@@ -71,6 +85,8 @@ func _test_decode_list_result_truncated() -> void:
 
 func _init() -> void:
 	_test_encode_name()
+	_test_encode_create()
+	_test_encode_create_default_gender()
 	_test_decode_list_result_empty()
 	_test_decode_list_result_with_names()
 	_test_decode_list_result_error()

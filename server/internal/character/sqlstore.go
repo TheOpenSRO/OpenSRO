@@ -13,16 +13,20 @@ import (
 // schema (see docs/protocol/db_schema.md), not a port of the original. The
 // unique index on lower(name) gives case-insensitive uniqueness, matching
 // MemStore's normalizeName behavior (Postgres has no COLLATE NOCASE).
+// The 'china_man' literal below must match DefaultGender in character.go --
+// SQL can't reference the Go constant directly.
 const schema = `
 CREATE TABLE IF NOT EXISTS characters (
 	id         BIGSERIAL PRIMARY KEY,
 	account_id BIGINT NOT NULL,
 	name       TEXT NOT NULL,
 	gold       BIGINT NOT NULL DEFAULT 0,
-	hp         INTEGER NOT NULL DEFAULT 100
+	hp         INTEGER NOT NULL DEFAULT 100,
+	gender     TEXT NOT NULL DEFAULT 'china_man'
 );
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS gold BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS hp INTEGER NOT NULL DEFAULT 100;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT 'china_man';
 CREATE UNIQUE INDEX IF NOT EXISTS characters_name_lower ON characters (LOWER(name));
 CREATE INDEX IF NOT EXISTS characters_account_id ON characters(account_id);
 `
@@ -59,7 +63,7 @@ func (s *SQLStore) Close() error {
 // ListByAccount implements Store.
 func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Character, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, account_id, name, gold, hp FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
+		`SELECT id, account_id, name, gold, hp, gender FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("character: listing characters: %w", err)
 	}
@@ -68,7 +72,7 @@ func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Chara
 	var out []*Character
 	for rows.Next() {
 		var c Character
-		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP); err != nil {
+		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender); err != nil {
 			return nil, fmt.Errorf("character: scanning row: %w", err)
 		}
 		out = append(out, &c)
@@ -89,15 +93,15 @@ func (s *SQLStore) Create(ctx context.Context, accountID int64, name string) (*C
 
 	var id int64
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO characters (account_id, name, gold, hp) VALUES ($1, $2, $3, $4) RETURNING id`,
-		accountID, name, StartingGold, MaxHP).Scan(&id)
+		`INSERT INTO characters (account_id, name, gold, hp, gender) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		accountID, name, StartingGold, MaxHP, DefaultGender).Scan(&id)
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			return nil, ErrNameTaken
 		}
 		return nil, fmt.Errorf("character: inserting character: %w", err)
 	}
-	return &Character{ID: id, AccountID: accountID, Name: name, Gold: StartingGold, HP: MaxHP}, nil
+	return &Character{ID: id, AccountID: accountID, Name: name, Gold: StartingGold, HP: MaxHP, Gender: DefaultGender}, nil
 }
 
 // Delete implements Store.
@@ -181,6 +185,37 @@ func (s *SQLStore) ResetHP(ctx context.Context, characterID int64) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE characters SET hp = $1 WHERE id = $2`, MaxHP, characterID)
 	if err != nil {
 		return fmt.Errorf("character: resetting hp: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("character: checking update result: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// GetByID implements Store.
+func (s *SQLStore) GetByID(ctx context.Context, characterID int64) (*Character, error) {
+	var c Character
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, account_id, name, gold, hp, gender FROM characters WHERE id = $1`, characterID,
+	).Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("character: getting character: %w", err)
+	}
+	return &c, nil
+}
+
+// SetGender implements Store.
+func (s *SQLStore) SetGender(ctx context.Context, characterID int64, gender string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE characters SET gender = $1 WHERE id = $2`, gender, characterID)
+	if err != nil {
+		return fmt.Errorf("character: setting gender: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {

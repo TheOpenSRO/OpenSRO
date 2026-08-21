@@ -236,4 +236,59 @@ func TestSQLStoreApplyDamageNonexistentCharacter(t *testing.T) {
 	}
 }
 
+func TestSQLStoreNewCharacterHasDefaultGender(t *testing.T) {
+	store := openTestSQLStore(t)
+	c, err := store.Create(context.Background(), 1, "Aria")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if c.Gender != DefaultGender {
+		t.Fatalf("got gender %q, want %q", c.Gender, DefaultGender)
+	}
+}
+
+func TestSQLStoreSetGenderAndGetByID(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+	c, err := store.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := store.SetGender(ctx, c.ID, GenderChinaWoman); err != nil {
+		t.Fatalf("SetGender: %v", err)
+	}
+
+	got, err := store.GetByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Gender != GenderChinaWoman {
+		t.Fatalf("got gender %q, want %q", got.Gender, GenderChinaWoman)
+	}
+
+	// ListByAccount should reflect the same real update, not just GetByID.
+	list, err := store.ListByAccount(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListByAccount: %v", err)
+	}
+	if len(list) != 1 || list[0].Gender != GenderChinaWoman {
+		t.Fatalf("got %+v, want one character with gender %q", list, GenderChinaWoman)
+	}
+}
+
+func TestSQLStoreSetGenderNonexistentCharacter(t *testing.T) {
+	store := openTestSQLStore(t)
+	if err := store.SetGender(context.Background(), 999, GenderChinaWoman); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got %v, want ErrNotFound", err)
+	}
+}
+
+func TestSQLStoreGetByIDNonexistentCharacter(t *testing.T) {
+	store := openTestSQLStore(t)
+	if _, err := store.GetByID(context.Background(), 999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got %v, want ErrNotFound", err)
+	}
+}
+
 var _ Store = (*SQLStore)(nil)
