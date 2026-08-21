@@ -95,6 +95,42 @@ identical results on both sides:
 - `0/0.o`, `0/1.o`, `0/2.o`, `1/0.o`, `1/1.o` (version `"1000"`) and `100/103.o`, `100/104.o`
   (version `"1001"` but genuinely empty): 0 objects, correctly, on all 7.
 
+## SOLVED: the real type-ID-to-resource-path mapping (`.ifo` object-index tables)
+
+**Previously a confirmed dead end** — no such mapping was found anywhere in this project's
+available data. It turned up once `server/internal/pk2`'s directory-chain bug was fixed (see
+`docs/protocol/PK2_FORMAT.md`), since the file that carries it lives in a real `Data.pk2` folder
+that bug was silently dropping from every listing.
+
+**The real file**: `object.ifo` (root level in `Data.pk2`), magic `JMXVOBJI1000`. Unlike every
+other `JMXV*`-prefixed format in this project, it's not a binary container — after the magic line,
+it's a plain ASCII text table, one real object type per line, shaped exactly
+`"%05d 0x%08x \"<path>\""`: a real, sequential type ID (confirmed to always equal its own line
+position, in every real file checked), an unconfirmed flags word (observed values so far: `0` and
+`1`), and a real, resolvable `.bsr` resource path (`res\...`, a different top-level real folder
+than `Prim\...`, also confirmed to exist and resolve correctly once the pk2 chain bug was fixed).
+
+**Confirmed against real data, not just the file's own internal consistency**: pulled a real
+`100/100.o` region file, found its real type IDs (`1489`, `1748`, `669`, `1488`), looked them up in
+a real `object.ifo`, and got back genuinely sensible real scenery — trees and grass
+(`res\nature\europe\east eurpoe\tree\...`, `res\nature\oasis\hotang\oas_grs_weed04.bsr`) — exactly
+what a real outdoor region scattering 39/11/7/1 objects of those types would plausibly place.
+
+**Implemented**: `server/internal/objidx` (Go) and `client/scripts/objidx/objidx_reader.gd`
+(GDScript) parse this table and expose `Lookup(type_id)`. `World3D.gd` uses it
+(`SRREVAMP_MAPO_PATH`) to render real placed objects with their real resolved `.bsr` models
+instead of a placeholder marker — see `README.md` and `docs/PROGRESS.md`.
+
+**A real, separate gap this surfaced**: real `.bsr` files in the `res\nature\...` category (trees,
+grass) don't parse correctly with this project's current `server/internal/bsr` — the parsed
+`MeshPath`/`MaterialPath` fields come out as garbage (a `.bmt` path where a `.bms` path was
+expected, and a 1-character `MaterialPath`) on every nature-category file checked, while real
+`res\bldg\...` (building) files — the category this format was originally derived against —
+parse correctly, sub-meshes and all. Not yet root-caused; flagged for a future pass rather than
+guessed at. `render_map_objects.gd`/`World3D.gd`'s real object loading degrades gracefully on
+these (skips with a real, printed reason, doesn't fabricate a placeholder), so this doesn't block
+building-category objects from rendering correctly today.
+
 ## What's still not confirmed
 
 - What causes the header-length difference (18 vs 20 bytes).

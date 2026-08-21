@@ -76,6 +76,20 @@ means the format can have a legitimately-empty mesh path that our reader doesn't
 fails with a clear error on that file rather than silently returning wrong data, which is the
 correct failure mode until this is understood better.
 
+## A real, unresolved gap: the `res\nature\...` (tree/grass) category doesn't parse correctly
+
+Found while wiring up real `.mapo` object rendering (see `docs/protocol/MAPO_FORMAT.md`'s object
+index section): real `res\bldg\...` (building) files — the category this format was originally
+derived against, e.g. `cj_ferry_stone01.bsr` — parse correctly, sub-meshes and all. Real
+`res\nature\...` files (e.g. `euro_esteuro_tree07_l03.bsr`, `oas_grs_weed04.bsr`) do not: the
+scanned-for "mesh path" comes out pointing at a `.bmt` (material) file instead of a `.bms`, and
+the "material path" that follows is a garbage 1-character string. Checked on two different real
+nature-category files with the same result, so this looks like a real, systematic difference in
+how this category's `.bsr` files are laid out, not a one-off bad file — but the actual layout
+difference hasn't been found yet. Not yet root-caused or fixed; `ObjectLoader`/`World3D.gd` skip
+these gracefully (a real printed reason, not a fabricated placeholder) rather than rendering wrong
+data.
+
 ## Implementation notes
 
 - `server/internal/bsr` (Go): parses name, mesh path, bounding box (best-effort — skipped rather
@@ -84,6 +98,7 @@ correct failure mode until this is understood better.
   (shown above to be unreliable), it locates the mesh and material path strings by scanning
   forward for the first plausible length-prefixed ASCII path — the same technique used to
   cross-check every real file during RE, and the only approach that worked correctly on all of
-  them. Unit tested (`go test`) against a synthetic fixture (never real game data).
-- No GDScript reader yet — like `.bms`/`.ddj`, this is prep work for the eventual 3D rendering
-  pass, not wired into the client.
+  them (building-category files, at least — see the real gap above). Unit tested (`go test`)
+  against a synthetic fixture (never real game data).
+- `client/scripts/bsr/bsr_reader.gd` (GDScript): mirrors the Go implementation field-for-field,
+  used at runtime by `ObjectLoader` to build real, textured `Node3D`/`MeshInstance3D` trees.

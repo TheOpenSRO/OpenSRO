@@ -52,6 +52,9 @@ variables before launching the client to have `World3D.tscn` load and place them
   archive) and a real per-region minimap image inside it (e.g. `minimap\100x100.ddj`, matching the
   same region number as `SRREVAMP_MAPM_PATH`), textures that terrain with real, region-accurate
   art instead of the procedural per-tile color fallback.
+- `SRREVAMP_MAPO_PATH` — a real `Map.pk2` region's `.o` object-placement file (via
+  `SRREVAMP_MAP_PK2_PATH`, e.g. `0\0.o`), rendered with each placement's real resolved `.bsr`
+  model (via `SRREVAMP_PK2_PATH`'s `Data.pk2` and a real object-index table — see "Status" below).
 
 Leave any of them unset and that piece is skipped — the scene works fine with none of them set.
 
@@ -234,17 +237,27 @@ sample at runtime — but it looks like the real game instead of a flat or proce
 back to real per-tile vertex-color variation (driven by an already-decoded real per-tile byte) if
 no texture is set.
 
+Real placed objects have automatic asset selection now too: `SRREVAMP_MAPO_PATH` (a real `Map.pk2`
+region's `.o` file, via `SRREVAMP_MAP_PK2_PATH`) resolves each real placement's type ID through a
+real object-index table (`object.ifo`, root level in `Data.pk2`, magic `JMXVOBJI1000` — a real,
+plain-text table this project had previously called a confirmed dead end, found once the pk2
+directory-chain bug above was fixed) and renders it with its real `.bsr` model — see
+`server/internal/objidx`/`client/scripts/objidx/objidx_reader.gd` and
+`docs/protocol/MAPO_FORMAT.md`. Real building-category objects (`res\bldg\...`) render correctly;
+a real, separate parsing gap was found for the `res\nature\...` (tree/grass) category — see
+`docs/protocol/BSR_FORMAT.md`. Real-world placement scale/position relative to a player's actual
+spawn coordinate isn't confirmed yet (same honest caveat as terrain above).
+
 Not yet done: real terrain collision (the visual mesh is real now, but the ground's collision
-shape is still the flat placeholder box) and confirmed real-world terrain positioning/scale
-relative to a player's actual spawn coordinate (currently placed for visibility, not accuracy); a
-newly-found, entirely unparsed real file type (`Map.pk2` region folders also contain a `.t` file,
-magic `JMXVMAPT1001`, with a real byte pattern consistent with a texture blend/weight map — not
-yet decoded, see `docs/protocol/MAPM_FORMAT.md`); no real per-account identity for *other* players
-(everyone still renders as the same fixed character — there's no server-side race/gender/equipment
-loadout tracked per character yet, so there's nothing to distinguish); no automatic asset selection
-for map objects (nothing maps a `.mapo` type ID to a real asset path — see
-`docs/protocol/MAPO_FORMAT.md` — so those still need manual environment variables or show a
-placeholder). That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
+shape is still the flat placeholder box) and confirmed real-world terrain/object
+positioning/scale relative to a player's actual spawn coordinate (currently placed for visibility,
+not accuracy); a newly-found, entirely unparsed real file type (`Map.pk2` region folders also
+contain a `.t` file, magic `JMXVMAPT1001`, with a real byte pattern consistent with a texture
+blend/weight map — not yet decoded, see `docs/protocol/MAPM_FORMAT.md`); the `res\nature\...`
+`.bsr` parsing gap above; no real per-account identity for *other* players (everyone still renders
+as the same fixed character — there's no server-side race/gender/equipment loadout tracked per
+character yet, so there's nothing to distinguish). That's the current focus (see
+`docs/PROGRESS.md`). The material-layer-to-
 mesh-piece pairing when a `.bmt` has multiple layers and no name match is available is still a
 documented, unconfirmed heuristic (pairs by index when counts match, used by `ObjectLoader` for
 `.bsr` scenery); `.efp`'s nested tree structure (see above). See

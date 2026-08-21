@@ -69,7 +69,14 @@ extends Node3D
 ## per-tile vertex-color variation (see MapmTerrainBuilder) if unset -- no
 ## real-time 3D ground-texture system has been found yet (see
 ## docs/protocol/MAPM_FORMAT.md), so a region's own real minimap art is the
-## closest real, region-accurate substitute currently available. Any
+## closest real, region-accurate substitute currently available.
+## SRREVAMP_MAPO_PATH loads real placed objects (a real Map.pk2 region's
+## .o file, e.g. "0\\0.o", via SRREVAMP_MAP_PK2_PATH) and renders each with
+## its real resolved .bsr model -- not a placeholder marker -- via a real
+## type-ID-to-resource-path lookup (a real, root-level "object.ifo" file
+## inside SRREVAMP_PK2_PATH's Data.pk2, see docs/protocol/MAPO_FORMAT.md
+## for how this was found; it was a confirmed dead end earlier in this
+## project). Any
 ## variable left unset is skipped gracefully (a printed hint, not an error)
 ## -- this scene works fine with none of them set, same as always.
 
@@ -109,6 +116,20 @@ const PLAYER_MATERIAL_PATH := "Prim\\Mtrl\\Char\\China\\man\\chinaman_warrior.bm
 const PLAYER_EQUIPMENT_MESH_DIR := "Prim\\Mesh\\Item\\China\\man_item"
 const PLAYER_EQUIPMENT_PARTS := ["clothes_03_aa", "clothes_03_ba", "clothes_03_fa", "clothes_03_ha", "clothes_03_la", "clothes_03_sa"]
 const PLAYER_EQUIPMENT_MATERIAL_PATH := "Prim\\Mtrl\\Item\\China\\man_item\\clothes_03.bmt"
+
+## Real, root-level file inside Data.pk2 (SRREVAMP_PK2_PATH) mapping a real
+## .mapo placement's type ID to a real .bsr resource path -- see
+## docs/protocol/MAPO_FORMAT.md and ObjidxReader for the full derivation.
+## This was a confirmed dead end earlier in this project (no such mapping
+## had been found); it turned up once server/internal/pk2's directory-chain
+## bug was fixed, since this file lives inside a real archive folder that
+## bug was silently dropping from every listing.
+const OBJECT_INDEX_PATH := "object.ifo"
+## How many real objects from SRREVAMP_MAPO_PATH's region to load real
+## models for -- an arbitrary, honestly-scoped cap (real regions can have
+## hundreds of placements, each needing its own .bsr/.bms/.bmt/.ddj parse),
+## not a real engine limit.
+const MAX_MAP_OBJECTS := 30
 
 @onready var player: CharacterBody3D = $Player
 @onready var player_mesh: MeshInstance3D = $Player/Mesh
@@ -159,6 +180,7 @@ func _ready() -> void:
 	_try_load_real_decoration_skeleton()
 	_try_apply_real_player_character()
 	_try_load_real_terrain()
+	_try_load_real_map_objects()
 
 ## Loads real static scenery through the exact same pk2 -> BsrReader ->
 ## ObjectLoader pipeline client/tools/render_asset.gd verifies standalone,
@@ -479,6 +501,76 @@ func _try_apply_real_player_character() -> void:
 		return
 	player.add_child(skeleton)
 	player_mesh.visible = false
+
+## Loads a real Map.pk2 region's real object placements (SRREVAMP_MAPO_PATH,
+## e.g. "0\\0.o", via SRREVAMP_MAP_PK2_PATH -- same archive as
+## SRREVAMP_MAPM_PATH) and renders up to MAX_MAP_OBJECTS of them with their
+## real resolved .bsr models, via a real type-ID lookup
+## (OBJECT_INDEX_PATH, from SRREVAMP_PK2_PATH's Data.pk2) -- see
+## docs/protocol/MAPO_FORMAT.md for how this real mapping was found (it was
+## a confirmed dead end earlier in this project). Skips gracefully if
+## either env var is unset, or if a specific placement's type ID isn't in
+## the index (real, expected -- not every real object type is necessarily
+## resolvable, and this project doesn't try to hide that by falling back
+## to a placeholder marker here).
+func _try_load_real_map_objects() -> void:
+	var mapo_path := OS.get_environment("SRREVAMP_MAPO_PATH")
+	if mapo_path == "":
+		print("World3D: SRREVAMP_MAPO_PATH not set -- no real map objects loaded")
+		return
+
+	var map_archive := _open_map_pk2_if_set()
+	var mapo_bytes := AssetSource.read_bytes(mapo_path, map_archive)
+	if mapo_bytes.is_empty():
+		printerr("World3D: could not find map objects at ", mapo_path)
+		return
+	var region := MapoReader.parse(mapo_bytes)
+	if region == null or region.objects.is_empty():
+		printerr("World3D: no real objects parsed from ", mapo_path)
+		return
+
+	var data_archive := _open_pk2_if_set()
+	if data_archive == null:
+		printerr("World3D: SRREVAMP_PK2_PATH not set -- can't resolve real object type IDs")
+		return
+	var idx_bytes := AssetSource.read_bytes(OBJECT_INDEX_PATH, data_archive)
+	if idx_bytes.is_empty():
+		printerr("World3D: could not find real object index at ", OBJECT_INDEX_PATH)
+		return
+	var table := ObjidxReader.parse(idx_bytes)
+	if table == null:
+		printerr("World3D: could not parse real object index at ", OBJECT_INDEX_PATH)
+		return
+
+	var container := Node3D.new()
+	container.name = "RealMapObjects"
+	add_child(container)
+
+	# Real world-space alignment with the player's own spawn position isn't
+	# confirmed (same honest caveat as terrain/scenery elsewhere in this
+	# file) -- cluster real objects relative to the region's own first
+	# placement and offset that cluster near the player for visibility,
+	# rather than trusting the raw absolute coordinates to land near
+	# wherever the player happens to spawn.
+	var origin: Vector3 = region.objects[0].position
+	var loaded := 0
+	var skipped_unresolved := 0
+	for obj in region.objects:
+		if loaded >= MAX_MAP_OBJECTS:
+			break
+		var entry := table.lookup(obj.type_id)
+		if entry == null:
+			skipped_unresolved += 1
+			continue
+		var node := ObjectLoader.load_object(data_archive, entry.path)
+		if node == null:
+			continue
+		node.position = (obj.position - origin) + Vector3(4, 0, -4)
+		container.add_child(node)
+		loaded += 1
+
+	print("World3D: loaded %d/%d real map objects from %s (%d unresolved type IDs skipped)" % [
+		loaded, region.objects.size(), mapo_path, skipped_unresolved])
 
 ## Resolves a real .bmt at bmt_path (via ObjectLoader, the same
 ## pk2 -> BmtReader -> DdjReader pipeline already verified for scenery) into

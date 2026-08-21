@@ -2,6 +2,41 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 53) — solved the "auto select" dead end: a real object-index table exists
+
+- User asked "what's next" after the pk2 chain fix. Picked re-attempting the `.mapo`
+  type-ID-to-resource mapping — a confirmed dead end earlier this session — on the theory that the
+  pk2 truncation bug just fixed might have been silently hiding the answer the whole time.
+- It was: browsing the newly-fixed `Data.pk2` found `object.ifo` (root level, magic
+  `JMXVOBJI1000`) — a real, plain-text (not binary container, unlike every other `JMXV*` format
+  here) table of 3299 real object types, each a real sequential type ID plus a real, resolvable
+  `.bsr` resource path. Confirmed against real data, not just internal consistency: pulled a real
+  `100/100.o` region's real type IDs (`1489`, `1748`, `669`, `1488`) and looked them up, getting
+  back genuinely sensible real scenery (trees, grass) — exactly what a real outdoor region
+  scattering dozens of those types would plausibly place.
+- Implemented `server/internal/objidx` (Go) and `client/scripts/objidx/objidx_reader.gd`
+  (GDScript), both verified against the real file. Wired into `World3D.gd`
+  (`SRREVAMP_MAPO_PATH`): real `.mapo` placements now resolve through this table and render with
+  their real `.bsr` model instead of a placeholder marker.
+- Found a real, separate gap along the way: `res\nature\...` (tree/grass) `.bsr` files don't parse
+  correctly with the current reader (mesh/material path fields come out garbled), while
+  `res\bldg\...` (building) files — the category this format was originally derived against —
+  parse fine. Not root-caused; documented in `docs/protocol/BSR_FORMAT.md` rather than guessed at.
+  `World3D.gd` skips these gracefully.
+- Verified the real wiring end-to-end despite that gap: built a synthetic test using a real
+  building object (`cj_ferry_stone01.bsr` + its real mesh/material/texture) at a real object-index
+  type ID, referenced by a hand-built (but real-format-shaped) `.mapo` region — rendered
+  successfully, a real textured object appearing in the scene (very large/close at default camera
+  distance, since no real-world placement scale has been confirmed yet — same honest caveat as
+  terrain/scenery elsewhere in this project).
+- Full regression: Go clean (new `objidx` package tests), all 19 GDScript suites pass (added
+  `objidx_reader_test.gd` to CI).
+- Real, honestly-scoped remaining gaps: the nature-category `.bsr` parsing bug: real-world object
+  placement scale/position isn't confirmed (objects render, but not necessarily at their true
+  in-game position/size); and this only resolves objects whose type ID exists in the table (some
+  real placements may still not resolve — that's surfaced honestly via a printed skip count, not
+  hidden).
+
 ## 2026-08-21 (cont'd 52) — solved the pk2 truncation bug: real files went from 41 to 73139
 
 - User said "everything needs done" — after shipping other-player rendering, picked up the pk2
