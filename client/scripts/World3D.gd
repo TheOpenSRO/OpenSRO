@@ -36,14 +36,15 @@ extends Node3D
 ## + Prim/Mesh/Char/China/man/*.bms). It also wears a real, fixed 6-piece
 ## armor set (Prim/Mesh/Item/China/man_item/clothes_03_*.bms -- arm, body,
 ## foot, head, leg, shoulder), attached the same rigid way via
-## CharacterAssembler.assemble_equipment. This is a fixed default (always
-## the China-man body wearing the same armor set), not a real per-account
-## race/gender/equipment selection -- there's no confirmed mapping to pick
-## any of that automatically (this project's server doesn't track a
-## per-character loadout yet). Falls back to the placeholder capsule if any
-## of that isn't found; equipment specifically is optional even when the
-## body loads (missing armor files just mean a bare-skinned body, not a
-## failure).
+## CharacterAssembler.assemble_equipment. This is still a fixed body (always
+## the China-man), not real per-account race/gender selection -- there's no
+## confirmed mapping to pick that automatically. Whether the armor shows is
+## real now, though: it's gated on the player's actual, server-authoritative
+## SLOT_ARMOR equip state (the same EquipmentNet protocol the 2D equipment
+## HUD already uses -- see _real_player_has_armor_equipped()), not shown
+## unconditionally. A newly-created character has nothing equipped, so it
+## renders bare-skinned until the player actually equips real armor. Falls
+## back to the placeholder capsule if the body itself isn't found.
 ##
 ## Other connected players use this exact same fixed real character too
 ## (see _build_assembled_character()) rather than a capsule, when
@@ -476,7 +477,7 @@ func _load_character_assets() -> void:
 ## re-runs CharacterAssembler against the shared parsed meshes rather than
 ## reparsing files. Returns null if _load_character_assets() never
 ## succeeded (see that function's doc comment).
-func _build_assembled_character() -> Skeleton3D:
+func _build_assembled_character(include_equipment: bool = true) -> Skeleton3D:
 	if _character_skel == null:
 		return null
 
@@ -484,7 +485,7 @@ func _build_assembled_character() -> Skeleton3D:
 	var fallback_mat := StandardMaterial3D.new()
 	fallback_mat.albedo_color = Color(0.85, 0.7, 0.55)
 	CharacterAssembler.assemble(skeleton, _character_body_parts, fallback_mat, _character_body_materials)
-	if not _character_equipment_parts.is_empty():
+	if include_equipment and not _character_equipment_parts.is_empty():
 		CharacterAssembler.assemble_equipment(skeleton, _character_equipment_parts, null, _character_equipment_materials)
 
 	# Real bind-pose data uses a different native scale than this scene's
@@ -509,12 +510,39 @@ func _build_assembled_character() -> Skeleton3D:
 ## _build_assembled_character()) to the player node, hiding the
 ## placeholder capsule -- if the shared character assets loaded. Leaves
 ## the placeholder capsule visible otherwise.
+##
+## Whether the assembled character wears its armor is now driven by the
+## real, server-authoritative equip state (EquipmentNet/OP_LIST via
+## NetClient.list_equipment), not shown unconditionally -- a newly-created
+## character has nothing equipped by default, so this makes the previous
+## "everyone always wears the one fixed armor set" behavior more honest:
+## the armor mesh is real either way, but now it only appears once the
+## player has actually equipped something in SLOT_ARMOR.
 func _try_apply_real_player_character() -> void:
-	var skeleton := _build_assembled_character()
+	var has_armor := await _real_player_has_armor_equipped()
+	var skeleton := _build_assembled_character(has_armor)
 	if skeleton == null:
 		return
 	player.add_child(skeleton)
 	player_mesh.visible = false
+
+## Queries the real server for the local player's actual equipped items
+## (the same EquipmentNet protocol the 2D equipment HUD already uses) and
+## reports whether SLOT_ARMOR is occupied. Returns false without querying
+## if there's no live server connection -- e.g. the standalone dev-tool/
+## screenshot contexts used throughout this project's asset work, which
+## load World3D.tscn directly with SRREVAMP_* env vars set but no real
+## login/enter-world flow, so a query would otherwise await a signal that
+## can never fire.
+func _real_player_has_armor_equipped() -> bool:
+	if not NetClient.is_connected_to_server() or NetClient.current_character_name == "":
+		return false
+	NetClient.list_equipment(NetClient.current_character_name)
+	var items: Array = (await NetClient.equipment_result)[0]
+	for item in items:
+		if item.slot == EquipmentNet.SLOT_ARMOR:
+			return true
+	return false
 
 ## Loads a real Map.pk2 region's real object placements (SRREVAMP_MAPO_PATH,
 ## e.g. "0\\0.o", via SRREVAMP_MAP_PK2_PATH -- same archive as

@@ -2,6 +2,34 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 57) — the local player's armor is now gated on real, server-authoritative equip state
+
+- Continuing down the open-items list: the player's armor previously rendered unconditionally
+  whenever the real asset files were found, regardless of whether the character's account had
+  actually equipped anything. This project already has a real, tested, server-authoritative
+  equip system (`server/internal/equipment`, `EquipmentNet`/`NetClient.list_equipment` on the
+  client) wired into the 2D equipment HUD — it just wasn't consulted by the 3D character
+  rendering.
+- `_build_assembled_character()` now takes an `include_equipment` flag. A new
+  `_real_player_has_armor_equipped()` queries the real `OP_LIST` equipment result for the local
+  player and checks for a real `SLOT_ARMOR` entry; `_try_apply_real_player_character()` awaits
+  that before deciding whether to attach the armor. A newly-created character has nothing
+  equipped by default, so it now renders bare-skinned until the player actually equips real
+  armor through the existing, already-tested equip flow — more honest than showing the one fixed
+  armor set unconditionally on every character regardless of real state.
+- Guarded against hanging the many standalone dev-tool/screenshot contexts this project's asset
+  work relies on (`World3D.tscn` loaded directly with `SRREVAMP_*` env vars set, no real
+  login/enter-world flow): the query is skipped entirely (defaults to no armor) unless
+  `NetClient.is_connected_to_server()` is actually true, since awaiting a signal that can never
+  fire would otherwise hang the scene forever. Verified this guard directly: rendered the scene
+  headless with no server connection and confirmed it completes normally (5 frames, no hang).
+- Other connected players are unaffected by this change — still the same honestly-documented
+  fixed China-man+armor rendering, since there's no real per-character equip state broadcast for
+  *other* players yet (would need a protocol extension, not attempted here).
+- Full regression: Go clean, all 33 GDScript suites pass (no test changes needed — this composes
+  already-unit-tested primitives, `EquipmentNet`/`NetClient.list_equipment` covered by
+  `equipment_test.gd`, behind an already-established connection guard).
+
 ## 2026-08-21 (cont'd 56) — real terrain collision, built from the same real triangle data as the visual mesh
 
 - Picked up the last "Not yet done" item directly tied to the terrain work just verified: the

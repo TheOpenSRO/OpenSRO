@@ -201,6 +201,16 @@ fixed default body (always the same China-man), not real per-account race/gender
 **uncompressed**, not zlib-wrapped — both `BmtReader` and `server/internal/bmt` now detect and
 handle both real variants.
 
+Whether the player's armor actually shows is real now too, not automatic: it's gated on the
+player's actual, server-authoritative `SLOT_ARMOR` equip state via the same `EquipmentNet`
+protocol the 2D equipment HUD already uses (`World3D.gd`'s `_real_player_has_armor_equipped()`),
+queried on world entry. A newly-created character has nothing equipped, so it now renders
+bare-skinned until the player actually equips real armor through the existing equip flow — the
+armor mesh itself is still real and fixed (one arbitrary pick, see below), but it's no longer
+shown unconditionally regardless of what the character actually has equipped. Skips the query
+entirely (defaults to no armor, not a hang) when there's no live server connection — e.g. the
+standalone dev-tool/screenshot contexts used throughout this project's asset work.
+
 The player also wears real armor now: a real, full 6-piece China-man set
 (`Prim/Mesh/Item/China/man_item/clothes_03_{aa,ba,fa,ha,la,sa}.bms` — arm/body/foot/head/leg/
 shoulder, the standard real armor-slot convention) attaches via
