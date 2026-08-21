@@ -49,15 +49,56 @@ A `.pk2` file is a flat blob containing:
 | 0x76   | 10   | Reserved/unused                                              |
 
 Each block is `ENTRIES_PER_BLOCK` (20) of these 128-byte entries back to back (2560 bytes/block).
-**No "next block" chain-continuation mechanism was found** for a directory with more than 20
-entries — every real folder inspected fit in one block. If a real archive ever turns out to need
-more than one block per directory, that's a real gap to close, but do it with a cycle/bound guard;
-the previous (wrong) implementation of a "next block" field caused an infinite loop by chasing a
-garbage offset through a misidentified field.
 
 Walking the tree: read one block at the folder's offset (root folder starts right after the
 header), and for each entry with type 1 or 2 whose name isn't `.` or `..`, record it — folders
 recurse via their `Position` field, files are read via `Position`+`Size`.
+
+## CONFIRMED REAL GAP: directories with more than 20 entries are silently truncated
+
+Every real folder tested against this project's own samples until now happened to fit in one
+20-entry block, so this was never caught — **it's now confirmed real and significant** against a
+genuine full retail `Data.pk2` (3.8GB), not just this project's smaller previous samples.
+
+**Proof, not speculation**: a byte-level scan of the low-offset region of a real `Data.pk2` (where
+directory blocks cluster, before real file data starts) found 2451 real, self-referential
+directory-shaped blocks (`entry[0]` = type 1, name `"."`, `Position` equal to its own file offset)
+in just the first 16MB — of which only **6** are reachable by walking the tree from the root block
+the way this reader currently does. 2445 real directory blocks are orphaned: unreachable from root,
+despite many of them having a `..` field (confirmed to mean immediate parent, not a "back to root"
+shortcut — verified on a real 3-levels-deep folder) that correctly points *back* to a parent this
+reader also can't discover *forward* references to. Concretely: root's own single 20-entry block
+contains no `Prim` folder at all (`ahclient.dat`, `Ani`, and 19 loose `.bsr` files fill all 20
+slots) — yet a real orphaned block with a real, sane `Char`/`NPC`/`particle`/`Struct` substructure
+declares `..` = root's own offset. Root genuinely has more than 20 real children; this reader
+currently only ever sees the first 20.
+
+**What was ruled out** while looking for the real continuation mechanism (so a future pass doesn't
+re-tread this): the two "reserved" fields (`0x6E`, `0x76`) are zero on both a full block's last
+entry and the `.` entry of an under-full block — no obvious next-block pointer lives there (one
+single non-zero byte was found once in a full block's trailing reserved region, but it didn't
+resolve to any plausible offset and every other checked entry's reserved bytes were clean zero,
+consistent with this project's existing "reused-slot stale bytes" phenomenon rather than a real
+field). Blocks are not simply contiguous per-directory (the bytes immediately following a full
+root block belong to a genuinely different, unrelated real folder, confirmed by its own coherent
+subtree). `..` was checked and confirmed to mean immediate parent, not a root shortcut, ruling out
+a theory that would have otherwise explained the orphans away.
+
+**Real, unexplored next steps** for whoever picks this back up: decompile the real directory-read
+function in `sro_client.exe`/`EternityLib.dll` (both already Ghidra-analyzed for other formats in
+this project) rather than continuing to guess at the byte layout; or reconstruct affected trees
+empirically via the reliable `..` back-references (union every self-referential directory block
+found by scanning, grouped by their real `..` parent pointer) as a working, if inelegant, fallback
+that doesn't require finding the forward mechanism at all.
+
+**Practical impact today**: any directory-listing tool that walks the tree from a real archive's
+root (e.g. `server/cmd/pk2list` with no `-extract`) can silently miss real content in any folder
+with more than 20 real entries — confirmed on `Data.pk2`. This does **not** invalidate assets
+already wired into this project via an exact, known-in-advance path (e.g. every
+`SRREVAMP_*_PATH` environment variable in `README.md`) — reading one exact file by its full path
+still works correctly regardless of how many siblings it has, since no directory along a fixed
+path needs to be *enumerated*, only walked one named child at a time. It only affects *browsing*
+for real paths this project doesn't already know.
 
 ## Obfuscation (Blowfish, with two client-specific quirks)
 

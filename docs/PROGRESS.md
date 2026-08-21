@@ -2,6 +2,34 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 48) — found a real, confirmed gap in the core pk2 reader: >20-entry directories truncate
+
+- While pushing further on real assets (user said "keep going" after the terrain texture win),
+  tried `pk2list` against the real `Data.pk2` on the RE box and got a suspiciously tiny listing
+  (41 files from a 3.8GB archive). Chased it down instead of ignoring it.
+- Confirmed real and significant: every directory this project had tested before happened to fit
+  in one 20-entry block, so the "no chain mechanism found" note in `docs/protocol/PK2_FORMAT.md`
+  was never actually stress-tested against a real archive that needed one. `Data.pk2`'s root
+  directory has real children (a real `Char`/`NPC`/`particle`/`Struct` folder, among others) that
+  this reader simply never sees — proved via a low-level byte scan finding 2451 real,
+  self-referential directory blocks in the first 16MB alone, of which only 6 are reachable by
+  walking the tree from root the way this reader currently does.
+- Spent real effort looking for the actual continuation mechanism (checked every field near a full
+  block's last entry and an under-full block's `.` entry for a plausible next-block pointer,
+  checked whether blocks are just contiguous per-directory, checked whether `..` might be a
+  "back to root" shortcut instead of "immediate parent") and ruled all of them out with concrete
+  evidence rather than declaring victory on a guess. Documented the real negative findings and two
+  concrete next-step options (decompile the real client's directory-read function, or reconstruct
+  trees empirically via `..` back-references) in `docs/protocol/PK2_FORMAT.md` so a future pass
+  doesn't re-tread this.
+- Real impact, scoped honestly: this doesn't invalidate anything already shipped via an exact,
+  known-in-advance path (every `SRREVAMP_*_PATH` env var still works fine — reading one named file
+  doesn't require enumerating its siblings). It only affects *browsing* for paths this project
+  doesn't already know, which is exactly what `pk2list` (no `-extract`) is for — so that tool's
+  listings should be treated as a lower bound, not a complete inventory, until this is solved.
+- No code changes this entry — investigation and honest documentation only. Real fix deferred to a
+  future pass per the two concrete next steps recorded.
+
 ## 2026-08-21 (cont'd 47) — found the real texture: user pointed out the RE box already has real client pk2s
 
 - User pointed out (correctly) that the RE box's `/opt/sro-files/client/` already has full real

@@ -59,6 +59,10 @@ Leave any of them unset and that piece is skipped — the scene works fine with 
 `server/`) lists every real file path inside a real pk2 archive, optionally filtered by substring
 (`-filter grass`) — useful for finding real texture/mesh paths this project doesn't already have a
 sample of to reverse-engineer against, without needing to send the archive itself anywhere.
+**Known real gap**: a directory with more than 20 real entries is silently truncated (confirmed on
+a real `Data.pk2` — see `docs/protocol/PK2_FORMAT.md`), so treat a listing as a lower bound, not a
+complete inventory, until that's fixed. Reading one exact, already-known path (what every
+`SRREVAMP_*_PATH` variable above does) isn't affected.
 
 Run the test suites from `server/` (`go test ./...`, needs the same local Postgres) and `client/`
 (`godot4 --headless --path . --script res://scripts/net/<name>_test.gd` for each file, or see
