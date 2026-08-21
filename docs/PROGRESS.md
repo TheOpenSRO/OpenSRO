@@ -2,6 +2,34 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 51) — other connected players are real characters now too, not just capsules
+
+- User said "everything needs done" after being offered a choice between the pk2 truncation bug
+  and other-player rendering. Picked other-player rendering: it's fully within this project's own
+  control (no RE/decompiler uncertainty), and it directly extends today's character+armor work to
+  somewhere it's actually visible to more than one person.
+- Realized the "real per-account loadout" blocker didn't actually block this: since every player
+  already resolves to the exact same fixed China-man+clothes_03 pick (no real per-character race/
+  gender/equipment is tracked server-side), showing *every* connected player that same real
+  character instead of a capsule isn't overclaiming anything new -- it's the same honest fixed
+  default, just applied consistently instead of only to the local player.
+- Refactored `World3D.gd`: character asset parsing (skeleton + body parts + equipment + resolved
+  materials) is now loaded and cached **once** at scene startup
+  (`_load_character_assets`/`_character_skel` etc.), instead of only ever happening inline for the
+  local player. A new `_build_assembled_character()` builds one fresh, independent `Skeleton3D`
+  per character from that cached data (each connected player needs its own skeleton instance, but
+  none of them need to reparse the same real `.bms`/`.bmt` files). `_spawn_or_update_other` now
+  calls this to build a real character for every connected player, falling back to the labeled
+  placeholder capsule only if the shared assets never loaded.
+- Verified end-to-end: rendered the player alongside a second, independently-spawned character
+  using the same synthetic pk2 as the armor work -- both render as full real armored characters
+  with a name label, confirming the shared-cache approach actually works for more than one
+  simultaneous instance (not just re-verifying the single-player case again).
+- Full regression: Go clean (no server changes this entry), all 18 GDScript suites pass.
+- Real, honestly-scoped limit unchanged: this is still the same fixed character for everyone, not
+  a real per-account identity -- that still needs server-side loadout tracking, a separate, larger
+  piece of work not started. The pk2 >20-entry truncation bug is also still open.
+
 ## 2026-08-21 (cont'd 50) — verified the armor visually, found and documented one real mispositioned piece
 
 - User asked "what's next" after the armor commit; picked verifying it actually looks right over

@@ -207,9 +207,15 @@ single-piece was determined by a real triangle-centroid-X gap scan on the actual
 guess — see `docs/PROGRESS.md`. This is a fixed default armor set (one arbitrary real pick among
 many found), not a real per-account equipment loadout.
 
-Other connected players still render as labeled capsules, and a bare *decoration* `Skeleton3D`
-(loaded separately via `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH`, not the player's own body) still
-renders with joint/bone debug visualization, not a real mesh — see "Not yet done" below.
+Other connected players are real assembled characters too now, not just labeled capsules: since
+every player currently resolves to the exact same fixed China-man+armor pick anyway (no real
+per-account loadout is tracked server-side yet), showing everyone that same real character instead
+of a capsule doesn't overclaim anything new. The character/equipment assets are parsed and cached
+once at scene startup and reused to build one independent `Skeleton3D` per connected player — see
+`World3D.gd`'s `_build_assembled_character()`. Falls back to the labeled capsule if the shared
+assets never loaded. A bare *decoration* `Skeleton3D` (loaded separately via
+`SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH`, not any player's body) still renders with joint/bone debug
+visualization, not a real mesh — see "Not yet done" below.
 
 The ground is no longer just a placeholder box either: setting `SRREVAMP_MAPM_PATH` (+ its own
 `SRREVAMP_MAP_PK2_PATH`, since `Map.pk2` is a separate archive from `Data.pk2` in a real retail
@@ -233,10 +239,11 @@ shape is still the flat placeholder box) and confirmed real-world terrain positi
 relative to a player's actual spawn coordinate (currently placed for visibility, not accuracy); a
 newly-found, entirely unparsed real file type (`Map.pk2` region folders also contain a `.t` file,
 magic `JMXVMAPT1001`, with a real byte pattern consistent with a texture blend/weight map — not
-yet decoded, see `docs/protocol/MAPM_FORMAT.md`); no automatic asset selection for
-*other* players or map objects (nothing maps a server-side character or a `.mapo` type ID to a
-real asset path — see `docs/protocol/MAPO_FORMAT.md` — so only the local player's own body
-auto-loads; everyone/everything else still needs manual environment variables or shows a
+yet decoded, see `docs/protocol/MAPM_FORMAT.md`); no real per-account identity for *other* players
+(everyone still renders as the same fixed character — there's no server-side race/gender/equipment
+loadout tracked per character yet, so there's nothing to distinguish); no automatic asset selection
+for map objects (nothing maps a `.mapo` type ID to a real asset path — see
+`docs/protocol/MAPO_FORMAT.md` — so those still need manual environment variables or show a
 placeholder); and a real, confirmed gap in the core pk2 reader itself — any directory with more
 than 20 real entries is silently truncated (see `docs/protocol/PK2_FORMAT.md`), which doesn't
 break anything already loaded by an exact known path but does limit `server/cmd/pk2list`-style

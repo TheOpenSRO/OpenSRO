@@ -41,6 +41,16 @@ extends Node3D
 ## body loads (missing armor files just mean a bare-skinned body, not a
 ## failure).
 ##
+## Other connected players use this exact same fixed real character too
+## (see _build_assembled_character()) rather than a capsule, when
+## SRREVAMP_PK2_PATH is set -- honestly, not because this project knows who
+## any other player really is (it still doesn't; there's no per-character
+## loadout tracked server-side), but because every player would currently
+## resolve to the exact same fixed China-man+clothes_03 pick anyway, so
+## showing everyone that real character instead of a capsule isn't
+## overclaiming anything new. Falls back to the labeled capsule per-entity
+## if the shared character assets never loaded.
+##
 ## SRREVAMP_PK2_PATH + SRREVAMP_BSR_PATH also loads one real, textured
 ## static scenery object nearby via ObjectLoader, and
 ## SRREVAMP_BSK_PATH + SRREVAMP_BAN_PATH loads a real animated decoration
@@ -115,8 +125,23 @@ var _real_skeleton: Skeleton3D
 var _real_skeleton_track: BanReader.Bone
 var _real_skeleton_time := 0.0
 
+## Cached, parsed real character assets (skeleton + body parts + equipment
+## + resolved materials), loaded once by _load_character_assets() and
+## reused by _build_assembled_character() to build a fresh Skeleton3D per
+## character instance (player or other) -- reparsing the same .bms/.bmt
+## files for every single connected player would be real, avoidable waste.
+## _character_skel stays null (the "not loaded" signal) if
+## SRREVAMP_PK2_PATH isn't set or any required file wasn't found.
+var _character_skel: BskReader.ParsedSkeleton
+var _character_body_parts: Dictionary
+var _character_body_materials: Dictionary
+var _character_equipment_parts: Dictionary
+var _character_equipment_materials: Dictionary
+
 func _ready() -> void:
 	character_label.text = "Character: %s" % NetClient.current_character_name
+
+	_load_character_assets()
 
 	var result := NetClient.last_enter_world_result
 	if result != null and result.ok:
@@ -132,7 +157,7 @@ func _ready() -> void:
 
 	_try_load_real_scenery()
 	_try_load_real_decoration_skeleton()
-	_try_load_real_player_character()
+	_try_apply_real_player_character()
 	_try_load_real_terrain()
 
 ## Loads real static scenery through the exact same pk2 -> BsrReader ->
@@ -356,10 +381,18 @@ func _try_load_real_terrain() -> void:
 ## placeholder capsule visible if the conventional paths aren't found in
 ## that archive (e.g. a real archive laid out differently than the one
 ## sample this project could check against).
-func _try_load_real_player_character() -> void:
+## Parses and caches the real character skeleton + body-part meshes +
+## equipment meshes + resolved materials (see the member vars declared
+## above), once, at scene startup -- both _try_apply_real_player_character
+## and every _spawn_or_update_other call reuse this same parsed data
+## rather than re-reading/re-parsing the same real .bms/.bmt files per
+## character. Leaves _character_skel null (the "not loaded" signal) if
+## SRREVAMP_PK2_PATH isn't set or the conventional real paths aren't found
+## in that archive.
+func _load_character_assets() -> void:
 	var archive := _open_pk2_if_set()
 	if archive == null:
-		print("World3D: SRREVAMP_PK2_PATH not set -- player stays a placeholder capsule")
+		print("World3D: SRREVAMP_PK2_PATH not set -- characters stay placeholders")
 		return
 
 	var bsk_bytes := AssetSource.read_bytes(PLAYER_SKELETON_PATH, archive)
@@ -383,12 +416,6 @@ func _try_load_real_player_character() -> void:
 		printerr("World3D: found the player skeleton but no body-part meshes under ", PLAYER_MESH_DIR)
 		return
 
-	var skeleton := Skeleton3DBuilder.build_skeleton3d(skel)
-	var fallback_mat := StandardMaterial3D.new()
-	fallback_mat.albedo_color = Color(0.85, 0.7, 0.55)
-	var materials_by_name := _load_real_materials(archive, PLAYER_MATERIAL_PATH)
-	CharacterAssembler.assemble(skeleton, parts, fallback_mat, materials_by_name)
-
 	var equipment_parts := {}
 	for part_name in PLAYER_EQUIPMENT_PARTS:
 		var eq_bytes := AssetSource.read_bytes(PLAYER_EQUIPMENT_MESH_DIR + "\\" + part_name + ".bms", archive)
@@ -397,9 +424,32 @@ func _try_load_real_player_character() -> void:
 		var eq_mesh := BmsReader.parse(eq_bytes)
 		if eq_mesh != null:
 			equipment_parts[part_name] = eq_mesh
+
+	_character_skel = skel
+	_character_body_parts = parts
+	_character_body_materials = _load_real_materials(archive, PLAYER_MATERIAL_PATH)
+	_character_equipment_parts = equipment_parts
 	if not equipment_parts.is_empty():
-		var equipment_materials := _load_real_materials(archive, PLAYER_EQUIPMENT_MATERIAL_PATH)
-		CharacterAssembler.assemble_equipment(skeleton, equipment_parts, null, equipment_materials)
+		_character_equipment_materials = _load_real_materials(archive, PLAYER_EQUIPMENT_MATERIAL_PATH)
+	print("World3D: cached real character assets (%d bones, %d body parts, %d equipment parts) from %s" % [
+		skel.bones.size(), parts.size(), equipment_parts.size(), OS.get_environment("SRREVAMP_PK2_PATH")])
+
+## Builds one fresh, independent Skeleton3D + assembled body/equipment from
+## the cached data _load_character_assets() parsed -- each character
+## instance (player or other) needs its own Skeleton3D node, so this
+## re-runs CharacterAssembler against the shared parsed meshes rather than
+## reparsing files. Returns null if _load_character_assets() never
+## succeeded (see that function's doc comment).
+func _build_assembled_character() -> Skeleton3D:
+	if _character_skel == null:
+		return null
+
+	var skeleton := Skeleton3DBuilder.build_skeleton3d(_character_skel)
+	var fallback_mat := StandardMaterial3D.new()
+	fallback_mat.albedo_color = Color(0.85, 0.7, 0.55)
+	CharacterAssembler.assemble(skeleton, _character_body_parts, fallback_mat, _character_body_materials)
+	if not _character_equipment_parts.is_empty():
+		CharacterAssembler.assemble_equipment(skeleton, _character_equipment_parts, null, _character_equipment_materials)
 
 	# Real bind-pose data uses a different native scale than this scene's
 	# ~1.8-unit-tall placeholder capsule -- rescale so the assembled
@@ -417,10 +467,18 @@ func _try_load_real_player_character() -> void:
 	if real_height > 0.01:
 		skeleton.scale = Vector3.ONE * (1.8 / real_height)
 
+	return skeleton
+
+## Attaches a freshly-built real assembled character (see
+## _build_assembled_character()) to the player node, hiding the
+## placeholder capsule -- if the shared character assets loaded. Leaves
+## the placeholder capsule visible otherwise.
+func _try_apply_real_player_character() -> void:
+	var skeleton := _build_assembled_character()
+	if skeleton == null:
+		return
 	player.add_child(skeleton)
 	player_mesh.visible = false
-	print("World3D: loaded real player character (%d bones, %d body parts, %d equipment parts) from %s" % [
-		skel.bones.size(), parts.size(), equipment_parts.size(), OS.get_environment("SRREVAMP_PK2_PATH")])
 
 ## Resolves a real .bmt at bmt_path (via ObjectLoader, the same
 ## pk2 -> BmtReader -> DdjReader pipeline already verified for scenery) into
@@ -482,16 +540,24 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3) 
 	var body := Node3D.new()
 	body.position = pos
 
-	var mesh := MeshInstance3D.new()
-	var capsule := CapsuleMesh.new()
-	capsule.radius = 0.4
-	capsule.height = 1.8
-	mesh.mesh = capsule
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.9, 0.3, 0.3)
-	mesh.material_override = mat
-	mesh.position.y = 0.9
-	body.add_child(mesh)
+	# Real assembled character if the shared assets loaded (see this file's
+	# top comment for the honest scope: the same fixed character every
+	# player currently resolves to, not a real per-account identity) --
+	# falls back to the labeled placeholder capsule otherwise.
+	var skeleton := _build_assembled_character()
+	if skeleton != null:
+		body.add_child(skeleton)
+	else:
+		var mesh := MeshInstance3D.new()
+		var capsule := CapsuleMesh.new()
+		capsule.radius = 0.4
+		capsule.height = 1.8
+		mesh.mesh = capsule
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.9, 0.3, 0.3)
+		mesh.material_override = mat
+		mesh.position.y = 0.9
+		body.add_child(mesh)
 
 	var label := Label3D.new()
 	label.text = char_name
