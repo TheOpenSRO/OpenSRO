@@ -33,6 +33,21 @@ class_name MapmTerrainBuilder
 ## bytes have no confirmed structure yet (see MAPM_FORMAT.md), so Shape-B
 ## regions fall back to the same sequential-order column assignment as the
 ## row axis.
+##
+## Vertex color: Shape-A's first Extra byte is a real, confirmed-to-exist
+## per-tile value (200+ distinct values seen across real files -- see
+## MAPM_FORMAT.md) that plausibly encodes a texture/terrain-type index or
+## blend weight, but no confirmed mapping from that byte to an actual real
+## ground texture exists (checked: Map.pk2 carries no per-region texture
+## file, and the real terrain pixel shaders found alongside this project's
+## other RE work sample one continuous "terrain color" texture, not a
+## tile-type lookup -- so building a fabricated ID-to-texture table isn't
+## honest). Rather than leave that real per-tile byte completely unused, or
+## invent a texture system this project can't confirm, _terrain_color()
+## turns it into real, data-driven vertex-color variation (a natural
+## green/brown hue spread, not a claim about what any specific value
+## "means") -- real signal, not a texture, but real ground variation
+## instead of one flat color.
 
 const GRID_WIDTH := 17
 
@@ -64,6 +79,28 @@ static func _column_index(tile: MapmReader.Tile) -> int:
 	var raw := tile.extra.decode_u16(1)
 	var col := roundi(raw * (GRID_WIDTH - 1.0) / 65535.0)
 	return clampi(col, 0, GRID_WIDTH - 1)
+
+## Decodes Shape-A's real per-tile terrain-type/blend-weight byte (Extra[0]
+## -- see this file's top comment). Returns -1 for anything shorter (e.g. a
+## Shape-B tile), same convention as _column_index.
+static func _terrain_type(tile: MapmReader.Tile) -> int:
+	if tile.extra.size() < 7:
+		return -1
+	return tile.extra[0]
+
+## Turns a real terrain-type byte into a real-data-driven (not fabricated)
+## ground color -- a green/brown hue spread across the byte's real range,
+## not a claim about what any specific value represents (see top comment).
+## -1 (no real byte available) gets a fixed mid-tone fallback.
+static func _terrain_color(terrain_type: int) -> Color:
+	if terrain_type == -1:
+		return Color(0.45, 0.5, 0.32)
+	var t := terrain_type / 255.0
+	# Hue sweeps a natural green-to-brown arc (0.30 = green, 0.08 = brown)
+	# rather than the full rainbow, so real variation reads as ground
+	# rather than as an arbitrary rainbow gradient.
+	var hue := lerpf(0.30, 0.08, t)
+	return Color.from_hsv(hue, 0.45, 0.55)
 
 ## Groups region's tiles into GRID_WIDTH-wide rows using each tile's real
 ## decoded column index (see _column_index) rather than blindly trusting
@@ -98,7 +135,7 @@ static func _group_into_rows(tiles: Array) -> Array:
 
 		var effective_col := col if col != -1 else pos_in_row
 		if effective_col >= 0 and effective_col < GRID_WIDTH:
-			current[effective_col] = tile.height
+			current[effective_col] = [tile.height, _terrain_type(tile)]
 		prev_col = col
 		pos_in_row += 1
 
@@ -110,8 +147,8 @@ static func _group_into_rows(tiles: Array) -> Array:
 ## complete rows could be recovered (not enough to form a single triangle
 ## strip).
 static func build_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh:
-	var heights: Array = _group_into_rows(region.tiles)
-	var row_count := heights.size()
+	var cells: Array = _group_into_rows(region.tiles)
+	var row_count := cells.size()
 	if row_count < 2:
 		push_error("MapmTerrainBuilder: only %d complete row(s) of %d tiles -- need at least 2" % [row_count, GRID_WIDTH])
 		return null
@@ -120,19 +157,27 @@ static func build_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh:
 	positions.resize(row_count * GRID_WIDTH)
 	for r in range(row_count):
 		for c in range(GRID_WIDTH):
-			positions[r * GRID_WIDTH + c] = Vector3(c * TILE_SIZE, heights[r][c], r * TILE_SIZE)
+			var height: float = cells[r][c][0]
+			positions[r * GRID_WIDTH + c] = Vector3(c * TILE_SIZE, height, r * TILE_SIZE)
 
 	var normals := PackedVector3Array()
 	normals.resize(positions.size())
 	for r in range(row_count):
 		for c in range(GRID_WIDTH):
-			normals[r * GRID_WIDTH + c] = _estimate_normal(heights, row_count, r, c)
+			normals[r * GRID_WIDTH + c] = _estimate_normal(cells, row_count, r, c)
 
 	var uvs := PackedVector2Array()
 	uvs.resize(positions.size())
 	for r in range(row_count):
 		for c in range(GRID_WIDTH):
 			uvs[r * GRID_WIDTH + c] = Vector2(float(c) / (GRID_WIDTH - 1), float(r) / (row_count - 1))
+
+	var colors := PackedColorArray()
+	colors.resize(positions.size())
+	for r in range(row_count):
+		for c in range(GRID_WIDTH):
+			var terrain_type: int = cells[r][c][1]
+			colors[r * GRID_WIDTH + c] = _terrain_color(terrain_type)
 
 	var indices := PackedInt32Array()
 	for r in range(row_count - 1):
@@ -153,6 +198,7 @@ static func build_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh:
 	arrays[Mesh.ARRAY_VERTEX] = positions
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_COLOR] = colors
 	arrays[Mesh.ARRAY_INDEX] = indices
 
 	var array_mesh := ArrayMesh.new()
@@ -162,16 +208,16 @@ static func build_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh:
 ## A simple central-difference normal from neighboring real heights, same
 ## technique any heightmap renderer uses -- clamps to the grid edge rather
 ## than wrapping or fabricating an out-of-bounds neighbor.
-static func _estimate_normal(heights: Array, row_count: int, r: int, c: int) -> Vector3:
+static func _estimate_normal(cells: Array, row_count: int, r: int, c: int) -> Vector3:
 	var c0 := maxi(c - 1, 0)
 	var c1 := mini(c + 1, GRID_WIDTH - 1)
 	var r0 := maxi(r - 1, 0)
 	var r1 := mini(r + 1, row_count - 1)
 
-	var hL: float = heights[r][c0]
-	var hR: float = heights[r][c1]
-	var hD: float = heights[r0][c]
-	var hU: float = heights[r1][c]
+	var hL: float = cells[r][c0][0]
+	var hR: float = cells[r][c1][0]
+	var hD: float = cells[r0][c][0]
+	var hU: float = cells[r1][c][0]
 
 	var dx := (c1 - c0) * TILE_SIZE
 	var dz := (r1 - r0) * TILE_SIZE

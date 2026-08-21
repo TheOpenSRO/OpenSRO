@@ -2,6 +2,29 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 45) — real per-tile terrain color, since no real ground-texture system was found
+
+- User saw the terrain screenshot and pointed out it was flat green — no texture variation.
+  Investigated whether a real ground-texture system exists to wire up honestly: found real
+  terrain pixel shaders (`shader_maptool/terrainps*.psh`) sampling a single continuous
+  `TEX_TERRAIN_COLOR` texture (not a multi-layer type-index blend), and confirmed (via the
+  RE-box's own `Map.pk2` listing) that region folders carry no per-region texture file alongside
+  `.m`/`.o`/`.t` — so there's no confirmed real texture asset or lookup table this project can
+  point to without fabricating one. Declined to invent a texture system.
+- Instead used a real field this project already had but wasn't using: Shape A's first `Extra`
+  byte (200+ distinct values across real files, previously only described as "plausibly a
+  texture/terrain-type index or blend weight" in `docs/protocol/MAPM_FORMAT.md`) now drives real
+  per-vertex color variation on the terrain mesh — a green-to-brown hue spread keyed to that real
+  byte, not a claim about what any specific value represents. `MapmTerrainBuilder.build_mesh` now
+  emits a real `ARRAY_COLOR` array; `World3D.gd`'s terrain material enables
+  `vertex_color_use_as_albedo`. Verified against real `0/0.m` data and a fresh screenshot: visibly
+  mottled green/yellow-green ground instead of one flat color.
+- Extended `mapm_terrain_builder_test.gd` with real-shaped fixtures covering distinct terrain-type
+  bytes producing distinct colors. Full regression: Go clean, all 18 GDScript suites pass.
+- Real ground textures remain unimplemented — flagged honestly, not silently left looking done.
+  If the user points at a specific real texture file, wiring it in as a tiling ground texture
+  (UVs are already generated) is a much smaller follow-up than this session's blind search was.
+
 ## 2026-08-21 (cont'd 44) — real terrain, unblocked by a real per-tile field found on real data
 
 - User asked to wire up real map/terrain rendering, floating a hunch that it might be "a sort of

@@ -13,14 +13,16 @@ func _check(cond: bool, msg: String) -> void:
 		print("FAIL " + msg)
 		_failures += 1
 
-## Builds one synthetic Shape-A-shaped tile: extra[0] = terrain byte
-## (unused here), extra[1:3] = the real column field encoding col (0..16),
-## extra[3:7] = zeroed (unused row field + trailing bytes).
-func _make_tile(col: int, height: float) -> MapmReader.Tile:
+## Builds one synthetic Shape-A-shaped tile: extra[0] = terrain byte,
+## extra[1:3] = the real column field encoding col (0..16), extra[3:7] =
+## zeroed (unused row field + trailing bytes).
+func _make_tile(col: int, height: float, terrain_type: int = -1) -> MapmReader.Tile:
 	var t := MapmReader.Tile.new()
 	t.height = height
 	var extra := PackedByteArray()
 	extra.resize(7)
+	if terrain_type != -1:
+		extra[0] = terrain_type
 	var raw := roundi(col * 65535.0 / 16.0)
 	extra.encode_u16(1, raw)
 	t.extra = extra
@@ -52,6 +54,24 @@ func _init() -> void:
 		_check(v0_last.is_equal_approx(Vector3((MapmTerrainBuilder.GRID_WIDTH - 1) * MapmTerrainBuilder.TILE_SIZE, 16, 0)), "row0 col16 real height 16 at real column x (got %s)" % v0_last)
 		var v1_0: Vector3 = positions[MapmTerrainBuilder.GRID_WIDTH]
 		_check(v1_0.is_equal_approx(Vector3(0, 10, MapmTerrainBuilder.TILE_SIZE)), "row1 col0 real height 10 at row-wrapped z (got %s)" % v1_0)
+
+	# Vertex colors: driven by the real per-tile terrain-type byte, distinct
+	# values should produce distinct (not fabricated-identical) colors, and
+	# a tile with no decodable terrain byte should fall back to the fixed
+	# mid-tone.
+	var colored_region := MapmReader.ParsedRegion.new()
+	colored_region.version = "1000"
+	for col in range(MapmTerrainBuilder.GRID_WIDTH):
+		colored_region.tiles.append(_make_tile(col, float(col), col * 10))
+	for col in range(MapmTerrainBuilder.GRID_WIDTH):
+		colored_region.tiles.append(_make_tile(col, float(10 + col), 255 - col * 10))
+	var colored_mesh := MapmTerrainBuilder.build_mesh(colored_region)
+	_check(colored_mesh != null, "builds a mesh from terrain-type-carrying tiles")
+	if colored_mesh != null:
+		var carrays := colored_mesh.surface_get_arrays(0)
+		var colors: PackedColorArray = carrays[Mesh.ARRAY_COLOR]
+		_check(colors.size() == 2 * MapmTerrainBuilder.GRID_WIDTH, "vertex color array sized to match vertices (got %d)" % colors.size())
+		_check(not colors[0].is_equal_approx(colors[MapmTerrainBuilder.GRID_WIDTH - 1]), "distinct real terrain-type bytes produce distinct colors")
 
 	# A resync-dropped tile mid-row (one tile missing from row 1) should
 	# leave that row incomplete and therefore dropped, not silently

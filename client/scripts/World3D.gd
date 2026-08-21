@@ -232,7 +232,7 @@ func _try_load_real_terrain() -> void:
 	var terrain := MeshInstance3D.new()
 	terrain.mesh = terrain_mesh
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.45, 0.55, 0.35)
+	mat.vertex_color_use_as_albedo = true
 	terrain.material_override = mat
 	# Real world-space alignment with the player's own spawn position isn't
 	# confirmed (see top comment) -- centered near the player purely for
