@@ -7,9 +7,16 @@ extends Node3D
 ## docs/PROGRESS.md). Other connected characters render as simple labeled
 ## capsules at their real, server-authoritative positions.
 ##
-## The ground is still a placeholder primitive -- real terrain rendering is
-## blocked on .mapm's unconfirmed grid dimensions (see
-## docs/protocol/MAPM_FORMAT.md). Other entities are still labeled
+## The ground is a placeholder collision box, but its *visual* mesh is
+## replaced by real terrain if you set SRREVAMP_MAPM_PATH to a real
+## Map.pk2 region .m file (see below) -- .mapm's grid width (17) is now a
+## real, mechanistically confirmed constant (see
+## docs/protocol/MAPM_FORMAT.md and MapmTerrainBuilder), not the unresolved
+## blocker it used to be. Collision still uses the flat placeholder shape
+## (no HeightMapShape3D wired up yet), and the terrain's real world
+## position/scale relative to a player's actual spawn coordinate is still
+## unconfirmed -- it's placed near the player for visibility, not at a
+## confirmed real-world offset. Other entities are still labeled
 ## capsules -- there's no confirmed mapping from a server-side character to
 ## a specific real asset (this project's server doesn't track a
 ## race/gender/equipment loadout per character yet), so every *other*
@@ -32,9 +39,14 @@ extends Node3D
 ## SRREVAMP_BSK_PATH + SRREVAMP_BAN_PATH loads a real animated decoration
 ## skeleton (its own separate .bsk/.ban pair, not the player's body) via
 ## Skeleton3DBuilder -- both accept either a loose file path or a path
-## inside SRREVAMP_PK2_PATH (see AssetSource). Any variable left unset is
-## skipped gracefully (a printed hint, not an error) -- this scene works
-## fine with none of them set, same as always.
+## inside SRREVAMP_PK2_PATH (see AssetSource). SRREVAMP_MAPM_PATH loads real
+## terrain (a real Map.pk2 region's .m file, e.g. "100\\100.m") via
+## MapmTerrainBuilder -- Map.pk2 is a separate archive from Data.pk2 in a
+## real retail install, so it accepts either a loose file or a path inside
+## SRREVAMP_MAP_PK2_PATH (its own separate pk2 env var, not
+## SRREVAMP_PK2_PATH). Any variable left unset is skipped gracefully (a
+## printed hint, not an error) -- this scene works fine with none of them
+## set, same as always.
 
 const MOVE_SPEED := 6.0
 const GRAVITY := 20.0
@@ -64,6 +76,7 @@ const PLAYER_MATERIAL_PATH := "Prim\\Mtrl\\Char\\China\\man\\chinaman_warrior.bm
 
 @onready var player: CharacterBody3D = $Player
 @onready var player_mesh: MeshInstance3D = $Player/Mesh
+@onready var ground_mesh: MeshInstance3D = $Ground/Mesh
 @onready var other_entities: Node3D = $OtherEntities
 @onready var zone_label: Label = $UI/Control/ZoneLabel
 @onready var character_label: Label = $UI/Control/CharacterLabel
@@ -94,6 +107,7 @@ func _ready() -> void:
 	_try_load_real_scenery()
 	_try_load_real_decoration_skeleton()
 	_try_load_real_player_character()
+	_try_load_real_terrain()
 
 ## Loads real static scenery through the exact same pk2 -> BsrReader ->
 ## ObjectLoader pipeline client/tools/render_asset.gd verifies standalone,
@@ -174,6 +188,80 @@ func _open_pk2_if_set() -> Pk2Reader:
 	if pk2_path == "":
 		return null
 	return Pk2Reader.open(pk2_path)
+
+## Opens SRREVAMP_MAP_PK2_PATH if it's set, or returns null if it's unset or
+## fails to open. Map.pk2 is a separate archive from SRREVAMP_PK2_PATH's
+## Data.pk2 in a real retail install (confirmed from the user's own real
+## client file listing: Data.pk2, Media.pk2, Map.pk2, Particles.pk2 are all
+## separate files) -- so terrain gets its own pk2 env var rather than
+## reusing SRREVAMP_PK2_PATH.
+func _open_map_pk2_if_set() -> Pk2Reader:
+	var map_pk2_path := OS.get_environment("SRREVAMP_MAP_PK2_PATH")
+	if map_pk2_path == "":
+		return null
+	return Pk2Reader.open(map_pk2_path)
+
+## Loads real terrain from a real Map.pk2 region .m file via MapmReader +
+## MapmTerrainBuilder, replacing the placeholder ground's visual mesh (not
+## its collision shape -- see this file's top comment) -- if
+## SRREVAMP_MAPM_PATH is set. Accepts either a loose file path or a path
+## inside SRREVAMP_MAP_PK2_PATH (see AssetSource). Skips gracefully
+## otherwise.
+func _try_load_real_terrain() -> void:
+	var mapm_path := OS.get_environment("SRREVAMP_MAPM_PATH")
+	if mapm_path == "":
+		print("World3D: SRREVAMP_MAPM_PATH not set -- ground stays a placeholder")
+		return
+
+	var archive := _open_map_pk2_if_set()
+	var bytes := AssetSource.read_bytes(mapm_path, archive)
+	if bytes.is_empty():
+		printerr("World3D: could not find terrain at ", mapm_path)
+		return
+
+	var region := MapmReader.parse(bytes)
+	if region == null:
+		printerr("World3D: could not parse terrain at ", mapm_path)
+		return
+
+	var terrain_mesh := MapmTerrainBuilder.build_mesh(region)
+	if terrain_mesh == null:
+		printerr("World3D: parsed ", region.tiles.size(), " tiles from ", mapm_path, " but couldn't recover enough complete rows for a mesh")
+		return
+
+	var terrain := MeshInstance3D.new()
+	terrain.mesh = terrain_mesh
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.45, 0.55, 0.35)
+	terrain.material_override = mat
+	# Real world-space alignment with the player's own spawn position isn't
+	# confirmed (see top comment) -- centered near the player purely for
+	# visibility, same as the scenery/decoration-skeleton placement choices
+	# elsewhere in this file. The vertical offset uses the real height of
+	# the mesh's own first-row, middle-column vertex (the part of the mesh
+	# that ends up nearest the player/camera once placed) rather than the
+	# whole mesh's average -- terrain height varies enormously row to row,
+	# so a global average can land nowhere near where the player actually
+	# is; this keeps the offset tied to the specific real vertex the player
+	# spawns next to.
+	#
+	# MapmTerrainBuilder lays successive rows out along local +Z, but this
+	# scene's third-person camera looks down -Z (+Z is behind it -- see the
+	# scenery-placement comment in _try_load_real_scenery()), so an
+	# unrotated terrain mesh would extend almost entirely behind the
+	# camera. Rotating 180 degrees around Y flips both axes consistently
+	# (a pure rotation, so front-face winding/normals stay correct) so
+	# successive rows extend further *into* view instead.
+	var aabb := terrain_mesh.get_aabb()
+	var near_arrays := terrain_mesh.surface_get_arrays(0)
+	var near_positions: PackedVector3Array = near_arrays[Mesh.ARRAY_VERTEX]
+	var near_height := near_positions[MapmTerrainBuilder.GRID_WIDTH / 2].y
+	terrain.rotation.y = PI
+	terrain.position = Vector3(aabb.size.x / 2.0, -near_height, 0)
+	add_child(terrain)
+	ground_mesh.visible = false
+	print("World3D: loaded real terrain from %s (%d tiles parsed, %d complete rows rendered)" % [
+		mapm_path, region.tiles.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1])
 
 ## Auto-loads a real assembled character (real .bsk skeleton + real
 ## body-part .bms meshes via CharacterAssembler) as the player's own body,

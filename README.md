@@ -142,9 +142,13 @@ now parse to ~100% completion, including 2 that were originally thought to hit a
 unreadable section partway through — that turned out to be a wrong conclusion, corrected after
 further investigation found real tile data resumes past a wider-than-expected (up to 509-byte)
 gap; the resync bound was widened accordingly, and both files now recover their full tile counts.
-**Still flagged as lower-confidence than every other format in this project** — real per-tile
-fields remain unconfirmed (grid dimensions, Shape A's two `uint16` fields) — see
-`docs/protocol/MAPM_FORMAT.md` for the honest detail.
+**The grid width is now confirmed**: one of Shape A's two `uint16` fields was found to be a real
+per-tile column index (increments by a fixed step, wraps after exactly 17 values, in every real
+file checked) — not a statistical guess, a directly observed field. This mechanistically confirms
+a periodicity signal this project had recorded but explicitly distrusted across several earlier
+sessions. The matching row field is real and structured but doesn't decode cleanly across a whole
+file yet — still an open question. See `docs/protocol/MAPM_FORMAT.md` for the honest detail, and
+`client/scripts/assets/mapm_terrain_builder.gd` for the real terrain mesh this unblocked.
 
 `.efp` (particle-effect definitions — structurally a self-describing, nested, tagged property
 system rather than a fixed record, closer to a small serialization format than a struct) now also
@@ -180,13 +184,25 @@ Other connected players still render as labeled capsules, and a bare *decoration
 (loaded separately via `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH`, not the player's own body) still
 renders with joint/bone debug visualization, not a real mesh — see "Not yet done" below.
 
-Not yet done: no real ground/terrain (blocked on `.mapm` grid dimensions — see above), no
-automatic asset selection for *other* players or map objects (nothing maps a server-side character
-or a `.mapo` type ID to a real asset path — see `docs/protocol/MAPO_FORMAT.md` — so only the local
-player's own body auto-loads; everyone/everything else still needs manual environment variables or
-shows a placeholder), and no real equipment/armor rendering (the assembled character is bare-
-skinned, not wearing the weapons/armor real screenshots show — no equipment-to-mesh mapping has
-been investigated yet). That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
+The ground is no longer just a placeholder box either: setting `SRREVAMP_MAPM_PATH` (+ its own
+`SRREVAMP_MAP_PK2_PATH`, since `Map.pk2` is a separate archive from `Data.pk2` in a real retail
+install) loads a real `Map.pk2` region's real elevation data and builds a real triangulated
+terrain mesh via `client/scripts/assets/mapm_terrain_builder.gd` (`MapmTerrainBuilder`), replacing
+the placeholder's *visual* mesh (not yet its collision shape — see "Not yet done"). Verified
+against a real region file: 12417 real tiles in, 584 complete real rows recovered and rendered as
+genuine undulating terrain the player stands on, not a flat box.
+
+Not yet done: real terrain collision (the visual mesh is real now, but the ground's collision
+shape is still the flat placeholder box) and confirmed real-world terrain positioning/scale
+relative to a player's actual spawn coordinate (currently placed for visibility, not accuracy); a
+newly-found, entirely unparsed real file type (`Map.pk2` region folders also contain a `.t` file,
+magic `JMXVMAPT1001` — not mesh-shaped data, not yet decoded); no automatic asset selection for
+*other* players or map objects (nothing maps a server-side character or a `.mapo` type ID to a
+real asset path — see `docs/protocol/MAPO_FORMAT.md` — so only the local player's own body
+auto-loads; everyone/everything else still needs manual environment variables or shows a
+placeholder); and no real equipment/armor rendering (the assembled character is bare-skinned, not
+wearing the weapons/armor real screenshots show — no equipment-to-mesh mapping has been
+investigated yet). That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
 mesh-piece pairing when a `.bmt` has multiple layers and no name match is available is still a
 documented, unconfirmed heuristic (pairs by index when counts match, used by `ObjectLoader` for
 `.bsr` scenery); `.efp`'s nested tree structure (see above). See

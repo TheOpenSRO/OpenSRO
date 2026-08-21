@@ -2,6 +2,52 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 44) — real terrain, unblocked by a real per-tile field found on real data
+
+- User asked to wire up real map/terrain rendering, floating a hunch that it might be "a sort of
+  mesh system." Investigated on the RE box first: found a real, previously-unopened `.t` file type
+  in every `Map.pk2` region folder (magic `JMXVMAPT1001`, a brand-new never-before-parsed
+  container — not decoded yet, flagged for a future pass), but it isn't mesh-shaped data (mostly
+  long runs of `0x00`/`0xFF`) and no discrete terrain-tile mesh files exist anywhere on the box —
+  the "mesh system" hunch didn't hold literally. Real terrain is still a heightmap.
+- Directly inspecting Shape A's two previously-unconfirmed `uint16` fields on a real `0/0.m`
+  broke the actual, longstanding blocker instead: the first field increments by a fixed ~4096 step
+  and wraps back to 0 after exactly **17** distinct values, every single time — a real, directly
+  observed per-tile **column index**, not a statistical inference. This mechanistically confirms
+  the T=17 DFT periodicity signal this project had recorded (but explicitly not trusted) across
+  several earlier sessions as an actual real grid width. The second field follows the same
+  encoding but doesn't cleanly decrement across a whole file — a real, structured, but still
+  unresolved row-index candidate, left undecoded. `docs/protocol/MAPM_FORMAT.md` updated with the
+  full finding.
+- New `client/scripts/assets/mapm_terrain_builder.gd` (`MapmTerrainBuilder`, client-only —
+  building a Godot mesh is a rendering concern, not a protocol concern, so no Go mirror): decodes
+  the real confirmed column field per tile, groups tiles into real 17-wide rows by detecting where
+  that field wraps (self-correcting if the resync scan documented in MAPM_FORMAT.md ever drops a
+  tile mid-row, rather than silently shifting every later column), and builds a triangulated
+  `ArrayMesh` with real per-tile heights and estimated normals. Only rows with all 17 real tiles
+  present are kept — an incomplete row is dropped, not padded with a guess. Unit tested against
+  synthetic Shape-A-shaped fixtures (a resync-dropped-tile case included) and verified against a
+  real `0/0.m`: 12417 real tiles in, 584 complete real rows recovered (9928 vertices, 18656
+  triangles), real height range -53.8 to 598.5.
+- Wired into `World3D.gd` behind `SRREVAMP_MAPM_PATH` (+ its own separate `SRREVAMP_MAP_PK2_PATH`,
+  since `Map.pk2` is a separate archive from `Data.pk2` in a real retail install — confirmed from
+  the user's own file listing) — replaces the placeholder ground's visual mesh (not its collision
+  shape yet) when set. Found and fixed two real placement bugs verified end-to-end against a
+  synthetic pk2 packing the real `0/0.m`: the terrain's rows extended behind the camera instead of
+  into view (fixed with a 180° yaw, a proper rotation that preserves winding), and the mesh's
+  triangle winding was backwards for a downward-looking camera, making the near terrain invisible
+  under normal back-face culling until the winding order itself was corrected (not worked around
+  with double-sided rendering) — confirmed via a disable-culling sanity check before fixing the
+  actual index order. Real screenshot sent to OpenSRO: the player now stands on genuine undulating
+  real terrain, not a flat placeholder box.
+- Full regression: Go build/vet/test clean, all 18 GDScript test suites pass (1 new terrain-builder
+  test suite added).
+- Still open from the original 3-part request: the deeper "auto select" problem for other
+  players/map objects, and real equipment/armor rendering. Also newly open: the real `.t` file
+  type found this session (never parsed), and the terrain's real world-position/scale relative to
+  a player's actual spawn coordinate (currently placed for visibility, not confirmed accuracy) and
+  its collision shape (still the flat placeholder box).
+
 ## 2026-08-21 (cont'd 43) — real character texture, and a real `.bmt` parsing bug fixed along the way
 
 - User said the character should "look like the actual game" and, mid-turn, explicitly rejected

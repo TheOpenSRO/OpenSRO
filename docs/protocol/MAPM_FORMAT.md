@@ -119,7 +119,35 @@ resync-scanning reader above and produce identical results across all 10 real fi
 Both sides also have synthetic unit tests for both shapes and the resync path (a single unreadable
 byte the fixed-stride walk can't skip past on its own).
 
-## A real periodicity signal, but not confirmed as a grid width
+## Grid width confirmed: 17, decoded directly from a real per-tile field
+
+The T=17 periodicity signal below is now confirmed as a real grid dimension, not just a
+statistical signal. Directly inspecting Shape A's two `uint16`-shaped fields (offsets 1-2 and 3-4
+of the 11-byte record) on a real `0/0.m` found:
+
+- The first field (bytes 1-2) increments by a fixed ~4096 step from tile to tile and wraps back to
+  0 after exactly **17** distinct values (`0, 4095, 8191, 12287, ..., 61439, 65535`) — a real,
+  directly observed per-tile **column index**, base-65535 fixed-point (`col = round(raw * 16 /
+  65535)`), not inferred from statistics. This mechanistically confirms the T=17 DFT signal
+  recorded below as a real grid width, not a coincidental terrain-feature periodicity.
+- The second field (bytes 3-4) follows the exact same encoding *within* a run of 17 tiles (stays
+  constant while the first field cycles, then steps by the same ~4096 amount at the row boundary)
+  — plausibly a row index using the same scheme — but does **not** decrement cleanly across the
+  whole file: real files were found to reset back to a high value on an irregular schedule
+  (sometimes every 17 sub-blocks in a clean run, sometimes after much longer irregular gaps of
+  hundreds of tiles). **Not confirmed as a usable global row index** — real, structured, but not
+  yet fully understood, so it isn't decoded into anything by this project's readers.
+
+`client/scripts/assets/mapm_terrain_builder.gd` (`MapmTerrainBuilder`, client-only — this is a
+rendering concern, not a protocol concern, so it has no Go mirror) uses the real, confirmed column
+field directly, and groups tiles into rows by real file order (a new row starts whenever the
+decoded column index wraps back down) rather than guessing at the row field's full-file structure.
+This produces genuinely correct 17-wide terrain strips using 100% real per-tile data; it does not
+yet place those strips at a confirmed true relative world position across a whole region file. See
+`docs/PROGRESS.md` for the real rendered screenshot this produced, and the file's own doc comment
+for the full reasoning.
+
+## The original DFT investigation (Shape A's T=17 is now confirmed above; Shape B's T=46 is not)
 
 No header field encodes a grid width/height (the `97` idea is retracted — see above), so a
 direct DFT power-spectrum check was run on the height-value sequence itself, looking for
