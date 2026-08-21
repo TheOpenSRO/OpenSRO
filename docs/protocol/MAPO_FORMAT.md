@@ -139,6 +139,16 @@ render correctly through `World3D.gd`'s real object loading.
   or the variable trailer), or rotation isn't stored per-placement at all for these object types.
 - Whether the 2 unconfirmed header `uint32`s (offset 0x0c) are meaningful (e.g. an object count)
   — a real object count wasn't cross-checked against the parsed count yet.
+- Real-world placement scale/position relative to a player's true spawn coordinate (i.e. how a
+  region index like `100/100` combines with a `.o`/`.m` file's own local coordinates into one
+  real world-space position) — attempted and not found. A real `1920.0f` float constant does
+  exist in `sro_client.exe` (a plausible real region-size guess, never confirmed), but decompiling
+  its two referencing functions (`FUN_004e72a0`, `FUN_004e5e00`) shows it's used inside what reads
+  as real keyframe/spline interpolation code, not a coordinate transform — a real negative result,
+  not a coincidence to keep chasing without new evidence. No RTTI/exported symbol naming
+  "region"/"sector"/"world" turned up a transform function either (same negative result the
+  original `.m`/`.o` cracking effort got). Recorded here so a future pass doesn't re-run the same
+  search.
 
 ## Real samples available for future verification
 
