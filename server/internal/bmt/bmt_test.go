@@ -13,9 +13,7 @@ import (
 // against real files: see docs/protocol/BMT_FORMAT.md. Then zlib-compresses
 // it and prepends the 4-byte decompressed-size header, matching the real
 // on-disk format.
-func buildSyntheticMaterial(t *testing.T, layers []Layer) []byte {
-	t.Helper()
-
+func buildSyntheticMaterialBytes(layers []Layer) []byte {
 	var dec []byte
 	dec = append(dec, []byte(magic)...)
 	dec = appendU32(dec, uint32(len(layers)))
@@ -32,6 +30,13 @@ func buildSyntheticMaterial(t *testing.T, layers []Layer) []byte {
 		// observed between layers in real files.
 		dec = append(dec, 0x20, 0x08, 0x00)
 	}
+	return dec
+}
+
+func buildSyntheticMaterial(t *testing.T, layers []Layer) []byte {
+	t.Helper()
+
+	dec := buildSyntheticMaterialBytes(layers)
 
 	var zbuf bytes.Buffer
 	zw := zlib.NewWriter(&zbuf)
@@ -129,6 +134,32 @@ func TestParseLayerWithoutTexture(t *testing.T) {
 	}
 	if len(m.Layers) != 1 || m.Layers[0].TexturePath != "" {
 		t.Fatalf("expected 1 layer with no texture, got %+v", m.Layers)
+	}
+}
+
+// TestParseUncompressedVariant covers the real, uncompressed on-disk
+// variant found in a live client Data tree (Prim/Mtrl/Char/China/man/*.bmt)
+// -- confirmed across 3 real files (chinaman_warrior.bmt, chinaman_bogy.bmt,
+// chinaman_monk.bmt), as opposed to the zlib-wrapped variant found in a
+// patch-staging tree, which every other test in this file covers.
+func TestParseUncompressedVariant(t *testing.T) {
+	data := buildSyntheticMaterialBytes([]Layer{
+		{Name: "chinaman_body", TexturePath: "chinaman_warrior_body.ddj", Diffuse: [4]float32{1, 1, 1, 1}},
+		{Name: "chinaman_hair", TexturePath: "chinaman_warrior_hair.ddj", Diffuse: [4]float32{1, 1, 1, 1}},
+	})
+
+	m, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(m.Layers) != 2 {
+		t.Fatalf("expected 2 layers, got %d", len(m.Layers))
+	}
+	if m.Layers[0].Name != "chinaman_body" || m.Layers[0].TexturePath != "chinaman_warrior_body.ddj" {
+		t.Fatalf("unexpected first layer: %+v", m.Layers[0])
+	}
+	if m.Layers[1].Name != "chinaman_hair" || m.Layers[1].TexturePath != "chinaman_warrior_hair.ddj" {
+		t.Fatalf("unexpected second layer: %+v", m.Layers[1])
 	}
 }
 

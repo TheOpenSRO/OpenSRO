@@ -24,7 +24,7 @@ class_name ObjectLoader
 ## pieces), textured where a .bmt/.ddj could be resolved. Returns null (and
 ## pushes an error) on failure.
 static func load_object(archive: Pk2Reader, bsr_path: String) -> Node3D:
-	var bsr_entry := _find_file(archive, bsr_path)
+	var bsr_entry := find_file(archive, bsr_path)
 	if bsr_entry == null:
 		push_error("ObjectLoader: %s not found in archive" % bsr_path)
 		return null
@@ -63,7 +63,7 @@ static func load_object(archive: Pk2Reader, bsr_path: String) -> Node3D:
 ## Loads and parses the .bmt at path within archive. Returns null (and
 ## pushes an error) on failure.
 static func load_material(archive: Pk2Reader, bmt_path: String) -> BmtReader.ParsedMaterial:
-	var entry := _find_file(archive, bmt_path)
+	var entry := find_file(archive, bmt_path)
 	if entry == null:
 		push_error("ObjectLoader: %s not found in archive" % bmt_path)
 		return null
@@ -84,7 +84,7 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 
 	var dir := bmt_path.replace("\\", "/").get_base_dir()
 	var tex_path := dir + "/" + layer.texture_path if dir != "" else layer.texture_path
-	var tex_entry := _find_file(archive, tex_path)
+	var tex_entry := find_file(archive, tex_path)
 	if tex_entry == null:
 		push_error("ObjectLoader: texture %s (referenced by %s) not found in archive" % [tex_path, bmt_path])
 		return mat
@@ -101,7 +101,7 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 ## Loads a single .bms mesh at path within archive and returns a
 ## MeshInstance3D. Returns null (and pushes an error) on failure.
 static func load_mesh(archive: Pk2Reader, bms_path: String) -> MeshInstance3D:
-	var entry := _find_file(archive, bms_path)
+	var entry := find_file(archive, bms_path)
 	if entry == null:
 		push_error("ObjectLoader: %s not found in archive" % bms_path)
 		return null
@@ -118,7 +118,7 @@ static func load_mesh(archive: Pk2Reader, bms_path: String) -> MeshInstance3D:
 ## Resolves a Windows-style backslash path (as stored in .bsr/.bms files)
 ## against an already-open pk2 archive, walking one directory level at a
 ## time. Returns null if any component isn't found.
-static func _find_file(archive: Pk2Reader, path: String) -> Pk2Reader.Entry:
+static func find_file(archive: Pk2Reader, path: String) -> Pk2Reader.Entry:
 	var parts := path.replace("\\", "/").split("/")
 	var entries := archive.read_dir()
 	for i in range(parts.size()):

@@ -159,17 +159,36 @@ and what a deeper future pass would need.
 `World3D.tscn` now loads real `.bsr` scenery (via `ObjectLoader`) and a real, live-animated
 `Skeleton3D` (via `Skeleton3DBuilder`) if pointed at real game data through environment variables
 (see "Running locally" above) — the same pipelines previously only exercised by standalone
-`client/tools/` screenshots are now live in the actual playable scene. A bare `Skeleton3D` has no
-mesh of its own (no confirmed bone-weight/skinning data exists in `.bms` yet — see
-`docs/protocol/BMS_FORMAT.md`), so it renders with the same joint/bone debug visualization the dev
-tools use, not a real skinned character model.
+`client/tools/` screenshots are now live in the actual playable scene.
+
+The player's own body is no longer a bare skeleton or a placeholder capsule: setting just
+`SRREVAMP_PK2_PATH` auto-loads a real assembled character — a real `.bsk` skeleton with real
+body-part `.bms` meshes rigidly attached via `client/scripts/assets/character_assembler.gd`
+(`CharacterAssembler`), textured with the character's actual real skin texture (resolved from a
+real `.bmt`/`.ddj` pair, matched to each body part by its own `material_name` field — see
+`docs/protocol/BMT_FORMAT.md`). This settled a real open question: `.bms` was confirmed to carry
+**no per-vertex bone-weight/skinning data at all** (the entire 44-byte vertex record is fully
+accounted for), and real character meshes instead bake both left and right sides of each paired
+body part into one file as mirrored triangle ranges — see `docs/protocol/BMS_FORMAT.md`. This is a
+fixed default body (always the same China-man), not real per-account race/gender selection — see
+"Not yet done" below. Fixing the real texture also surfaced and fixed a real bug: live-client
+`.bmt` files (as opposed to the patch-staging-tree samples originally checked) are stored
+**uncompressed**, not zlib-wrapped — both `BmtReader` and `server/internal/bmt` now detect and
+handle both real variants.
+
+Other connected players still render as labeled capsules, and a bare *decoration* `Skeleton3D`
+(loaded separately via `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH`, not the player's own body) still
+renders with joint/bone debug visualization, not a real mesh — see "Not yet done" below.
 
 Not yet done: no real ground/terrain (blocked on `.mapm` grid dimensions — see above), no
-automatic asset selection (nothing maps a server-side character or a `.mapo` type ID to a real
-asset path — see `docs/protocol/MAPO_FORMAT.md` — so real assets have to be pointed at manually via
-the environment variables above, not chosen automatically), and no real mesh skinning. That's the
-current focus (see `docs/PROGRESS.md`). The material-layer-to-mesh-piece pairing when a `.bmt` has
-multiple layers is a documented, unconfirmed heuristic (pairs by index when counts match); `.efp`'s
-nested tree
-structure (see above). See `docs/protocol/{PK2,BSR,BMS,DDJ,BMT,BAN,BSK,MAPO,MAPM,EFP}_FORMAT.md` and
-`docs/PROGRESS.md` for the detailed running log.
+automatic asset selection for *other* players or map objects (nothing maps a server-side character
+or a `.mapo` type ID to a real asset path — see `docs/protocol/MAPO_FORMAT.md` — so only the local
+player's own body auto-loads; everyone/everything else still needs manual environment variables or
+shows a placeholder), and no real equipment/armor rendering (the assembled character is bare-
+skinned, not wearing the weapons/armor real screenshots show — no equipment-to-mesh mapping has
+been investigated yet). That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
+mesh-piece pairing when a `.bmt` has multiple layers and no name match is available is still a
+documented, unconfirmed heuristic (pairs by index when counts match, used by `ObjectLoader` for
+`.bsr` scenery); `.efp`'s nested tree structure (see above). See
+`docs/protocol/{PK2,BSR,BMS,DDJ,BMT,BAN,BSK,MAPO,MAPM,EFP}_FORMAT.md` and `docs/PROGRESS.md` for
+the detailed running log.

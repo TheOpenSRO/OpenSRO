@@ -2,6 +2,92 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 43) — real character texture, and a real `.bmt` parsing bug fixed along the way
+
+- User said the character should "look like the actual game" and, mid-turn, explicitly rejected
+  doing this with hand-tuned cosmetic guesses (sky colors, fog, ground tint) not backed by real
+  data — reverted those scene edits immediately and stayed on real-asset-driven work only.
+- Pulled a real character material + texture from the RE box:
+  `Prim/Mtrl/Char/China/man/chinaman_warrior.bmt` and its `chinaman_warrior_body.ddj` texture
+  (previously only hair/face `.bmt`s from a patch-staging tree had been checked). Found this
+  file's raw bytes start with `JMXVBMT 0102` **directly at byte 0** — no zlib wrapper — whereas
+  every previously-seen real `.bmt` was zlib-compressed. Confirmed across 3 real files from the
+  live client `Data` tree (`chinaman_warrior.bmt`, `chinaman_bogy.bmt`, `chinaman_monk.bmt`, all
+  same magic-at-byte-0 pattern) that this is a second real on-disk variant, not a one-off broken
+  file — so both `BmtReader` (GDScript) and `server/internal/bmt` (Go) silently failed to parse
+  any real character material until now. Fixed both to detect the magic directly before assuming
+  the compressed layout; added a real-shaped synthetic regression test for the new variant to
+  each. `docs/protocol/BMT_FORMAT.md` updated with both variants.
+- Found the actual pairing rule linking a `.bms` mesh to its real texture: a real `man_thigh.bms`'s
+  own `material_name` field reads `"chinaman_body"`, which is also the real `layer_name` of the
+  first layer inside the real `chinaman_warrior.bmt` — an exact string match, confirmed by
+  inspecting both files directly. This is a stronger, name-matched rule than `ObjectLoader`'s
+  existing index-based fallback for `.bsr` pieces (which still applies where no name match is
+  possible).
+- `CharacterAssembler.assemble` now takes an optional `materials_by_name` Dictionary and resolves
+  each part's own material by its real `material_name`, falling back to a flat default color only
+  when no match exists. `World3D.gd`'s player-character loader now resolves
+  `Prim/Mtrl/Char/China/man/chinaman_warrior.bmt` via `ObjectLoader.load_material`/
+  `build_godot_material` (the same pipeline already verified for scenery) and passes the real
+  resolved textures in. Verified end-to-end against the real skeleton + real body-part meshes +
+  real material + real texture, packed into a synthetic pk2 at the conventional path layout:
+  the player character now renders with the actual game's skin texture, not a flat tan color —
+  screenshot sent to OpenSRO.
+- Full regression: Go build/vet/test clean, all 17 GDScript test suites pass (2 new BMT-variant
+  tests added).
+- Still open from the original 3-part request: the map/terrain gap (`.mapm` grid dimensions) and
+  the deeper "auto select" problem for *other* players/map objects — next up. Also still open:
+  equipping real armor/weapons (the reference screenshots the user sent show a fully-armored
+  character, not the bare-skinned one this produces) — no equipment-to-mesh mapping has been
+  investigated yet.
+
+## 2026-08-20 (cont'd 42) — the bare-skeleton fix: real body-part meshes, no skinning data, and a real auto-loaded character
+
+- User showed their own real client file listing (`Data.pk2`, `Media.pk2`, `Map.pk2`,
+  `Particles.pk2`) and asked to fix the bare skeleton, the map/terrain gap, and the "auto select"
+  problem. Started with the bare skeleton, since it had the clearest path forward.
+- Found real character **body-part** meshes on the RE box (`man_pelvis.bms`, `man_thigh.bms`,
+  `man_calf.bms`, `man_torso_upper/lower.bms`, `man_arm_upper/lower.bms` — as opposed to the
+  hair/face attachment pieces checked previously) and a real matching human skeleton
+  (`Prim/Skel/Char/China/chinaman_skel.bsk`, 37 bones, standard Biped naming — parsed correctly
+  with zero changes needed, confirming `.bsk`'s reader is genuinely general).
+- **Settled the skinning question for good**: the full 44-byte `.bms` vertex record is now fully
+  accounted for and none of it is bone-weight data — there's no room left for one. What real files
+  do instead: each paired body part (thigh, calf, upper arm, forearm) bakes **both left and right
+  sides into one file** as two mirrored, non-overlapping triangle ranges, split only by which side
+  of `x=0` a triangle's centroid falls on (confirmed by hand on `man_thigh.bms`: vertex 0 at
+  `x=+0.872` and vertex 23 at `x=-0.872` are exact mirrors). `docs/protocol/BMS_FORMAT.md`
+  rewritten with the full finding.
+- New `client/scripts/assets/character_assembler.gd` (`CharacterAssembler`): splits paired body
+  parts by triangle-centroid x-sign, attaches each (possibly split) piece rigidly to its
+  name-matched bone via `BoneAttachment3D`, offset by that bone's own bind-pose position so the
+  mesh's real baked absolute-space coordinates land correctly and rotate rigidly around the right
+  pivot as the bone animates (derived and documented in the file's top comment — the same rigid-
+  rotation math `SkeletonPose`/`Skeleton3DBuilder` already validated, now via `BoneAttachment3D`
+  instead of manual per-frame updates). Unit tested against a synthetic mirrored-triangle fixture,
+  then **verified against all 7 real body-part files + the real skeleton**: a genuinely
+  recognizable human T-pose figure, screenshot sent to OpenSRO.
+- Fixed a real usability gap this surfaced: `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH` only accepted
+  loose files, but real client installs only ship pk2 archives (confirmed by the user's own file
+  listing — no loose files at all). New `client/scripts/assets/asset_source.gd` (`AssetSource`)
+  tries a path as a loose file first, falling back to a path inside `SRREVAMP_PK2_PATH` if set —
+  unit tested against both a real loose file and a real synthetic pk2 archive.
+- **Real "auto select" fix for the player's own character**: `World3D.gd` now auto-loads a real
+  assembled character (real skeleton + real body-part meshes via `CharacterAssembler`) as the
+  player's body whenever `SRREVAMP_PK2_PATH` is set, using the conventional real path layout found
+  during RE — no other env vars needed. Verified end-to-end by packing the real skeleton + body
+  part bytes into a real synthetic pk2 at that exact conventional layout (a throwaway packer
+  script, not committed) and running `World3D.tscn` against it: a real, correctly-scaled character
+  standing in for the placeholder capsule, screenshot sent. Renamed `ObjectLoader._find_file` to
+  the public `find_file` since `AssetSource` needed to share it. Promoted to a fixed default (not
+  real per-account race/gender selection — this project's server doesn't track that), and honestly
+  scoped as such in `World3D.gd`'s doc comment.
+- Renamed `_try_load_real_skeleton` to `_try_load_real_decoration_skeleton` to distinguish it from
+  the new player-character auto-load path.
+- Still open: the map/terrain gap (`.mapm` grid dimensions) and the deeper "auto select" problem
+  for *other* players/map objects (no server-side race/gender/equipment tracking, and the
+  `.mapo` type-ID-to-resource mapping remains a confirmed dead end) — next up.
+
 ## 2026-08-20 (cont'd 41) — real assets wired into `World3D` live, plus a real camera bug and a real screenshot-technique fix
 
 - User asked directly why none of the RE'd assets/skeletons were showing up in the 3D scene — a

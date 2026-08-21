@@ -1,0 +1,164 @@
+extends RefCounted
+class_name CharacterAssembler
+
+## Assembles a real character body from real .bms body-part meshes onto a
+## real Skeleton3D -- the piece that turns Skeleton3DBuilder's bare stick
+## figure into an actual (if rigidly-jointed, not smoothly skinned) human
+## shape.
+##
+## Confirmed from real data (server China-man body parts +
+## Prim/Skel/Char/China/chinaman_skel.bsk): there's no per-vertex bone
+## weight data anywhere in .bms (the whole 44-byte vertex record is
+## accounted for by position/normal/UV/a 12-byte field already shown to be
+## something else -- see docs/protocol/BMS_FORMAT.md), so this project
+## can't do smooth skinning. What real files actually do instead: each
+## paired body part (thigh, calf, upper arm, forearm) is ONE .bms file
+## containing BOTH left and right sides already baked in as two mirrored,
+## non-overlapping vertex/triangle ranges (confirmed by inspecting
+## man_thigh.bms directly: vertex 0 at x=+0.872 and vertex 23 at x=-0.872
+## are exact mirrors, with no per-vertex tag distinguishing them --
+## splitting by which side of x=0 a triangle's centroid falls on is the
+## only distinguishing signal found). Unpaired parts (pelvis, torso) are
+## one piece, one bone, no split needed.
+##
+## Rigid attachment math: each body-part mesh's vertex positions are baked
+## in real absolute character-space coordinates (the same "no extra
+## transform" pattern confirmed for .bsr sub-mesh pieces -- see
+## docs/protocol/BSR_FORMAT.md), not bone-local coordinates. To keep that
+## baked position correct at bind pose while still rotating rigidly with
+## the bone as it animates, each mesh piece is attached via a
+## BoneAttachment3D with the MeshInstance3D child's own position offset by
+## the *negative* of that bone's bind-pose global position (derived here,
+## not from SkeletonPose, via Skeleton3D's own get_bone_global_rest()):
+## world_position = bone_pose.origin + bone_pose.basis * (mesh_offset + vertex)
+##                = bone_rest.origin + bone_pose.basis * (vertex - bone_rest.origin)
+## which is exactly "rotate vertex around the bone's own bind position",
+## the same rigid-rotation formula SkeletonPose.apply_rotation/
+## Skeleton3DBuilder.apply_ban_keyframe already use and have verified.
+##
+## The body-part-name -> bone-name mapping below is inferred from filename
+## substrings matching real .bsk bone names (e.g. "thigh" -> "Bip01 *
+## Thigh") -- plausible, not confirmed via decompilation. No file tying a
+## specific mesh set to a specific skeleton was found (no per-character
+## .bsr or equivalent index -- see docs/protocol/MAPO_FORMAT.md for the
+## broader "no resource-ID mapping found" pattern), so this is a
+## best-effort heuristic, not a settled fact.
+
+## Maps a body-part-name substring (after stripping a "man_"/"woman_"-style
+## gender prefix) to the bone name(s) it plausibly belongs to: a
+## single-element array for an unpaired part (attached as-is), or a
+## two-element [positive-X bone, negative-X bone] array for a paired part
+## (mesh split by triangle-centroid X sign).
+const BODY_PART_BONES := {
+	"pelvis": ["Bip01 Pelvis"],
+	"torso_lower": ["Bip01 Spine"],
+	"torso_upper": ["Bip01 Spine1"],
+	"thigh": ["Bip01 R Thigh", "Bip01 L Thigh"],
+	"calf": ["Bip01 R Calf", "Bip01 L Calf"],
+	"arm_upper": ["Bip01 R UpperArm", "Bip01 L UpperArm"],
+	"arm_lower": ["Bip01 R Forearm", "Bip01 L Forearm"],
+}
+
+## Strips a leading "<word>_" gender/race prefix (e.g. "man_thigh" ->
+## "thigh", "woman_arm_upper" -> "arm_upper") so BODY_PART_BONES lookups
+## don't need one entry per character variant.
+static func _strip_prefix(part_name: String) -> String:
+	var us := part_name.find("_")
+	if us == -1:
+		return part_name
+	return part_name.substr(us + 1)
+
+## Builds an ArrayMesh from only the triangles of mesh whose centroid x is
+## on the requested side (>= 0 for positive, < 0 for negative). Vertices
+## aren't compacted/remapped -- unused ones are simply never referenced by
+## the filtered index list, which Godot handles fine.
+static func _build_side_mesh(mesh: BmsReader.ParsedMesh, positive_side: bool) -> ArrayMesh:
+	var positions := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	positions.resize(mesh.vertices.size())
+	normals.resize(mesh.vertices.size())
+	uvs.resize(mesh.vertices.size())
+	for i in range(mesh.vertices.size()):
+		positions[i] = mesh.vertices[i].position
+		normals[i] = mesh.vertices[i].normal
+		uvs[i] = mesh.vertices[i].uv
+
+	var indices := PackedInt32Array()
+	var tri_count := mesh.indices.size() / 3
+	for t in range(tri_count):
+		var i0 := mesh.indices[t * 3]
+		var i1 := mesh.indices[t * 3 + 1]
+		var i2 := mesh.indices[t * 3 + 2]
+		var centroid_x := (mesh.vertices[i0].position.x + mesh.vertices[i1].position.x + mesh.vertices[i2].position.x) / 3.0
+		var on_positive_side := centroid_x >= 0.0
+		if on_positive_side == positive_side:
+			indices.append(i0)
+			indices.append(i1)
+			indices.append(i2)
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = positions
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+
+	var array_mesh := ArrayMesh.new()
+	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return array_mesh
+
+## Attaches one real ArrayMesh rigidly to bone_name on skeleton via a
+## BoneAttachment3D, offsetting the mesh instance so the mesh's own baked
+## absolute-space vertex positions land correctly at bind pose and rotate
+## rigidly around that bone's bind position as it animates -- see this
+## file's top comment for the derivation.
+static func _attach_rigid(skeleton: Skeleton3D, array_mesh: ArrayMesh, bone_name: String, material: Material) -> void:
+	var bone_idx := skeleton.find_bone(bone_name)
+	if bone_idx == -1:
+		push_error("CharacterAssembler: skeleton has no bone named %s" % bone_name)
+		return
+
+	var attachment := BoneAttachment3D.new()
+	attachment.bone_name = bone_name
+	skeleton.add_child(attachment)
+
+	var mesh_instance := MeshInstance3D.new()
+	mesh_instance.mesh = array_mesh
+	if material != null:
+		mesh_instance.material_override = material
+	mesh_instance.position = -skeleton.get_bone_global_rest(bone_idx).origin
+	attachment.add_child(mesh_instance)
+
+## Assembles every part in parts (body-part-name -> ParsedMesh, e.g. from
+## BmsReader.parse() on "man_thigh.bms" keyed by "thigh") onto skeleton,
+## splitting paired parts by X sign and attaching each piece rigidly to its
+## matching bone per BODY_PART_BONES. Unrecognized part names are skipped
+## with a printed warning, not an error -- a real, incomplete part list
+## (e.g. missing hands/feet/head meshes) is expected, not a failure.
+##
+## Each part's real material is resolved by its own mesh.material_name (a
+## real field baked into every .bms file) against materials_by_name -- e.g.
+## a real man_thigh.bms's material_name reads "chinaman_body", which is also
+## the real layer_name found inside a real chinaman_warrior.bmt, confirmed
+## by inspecting both files directly (see docs/protocol/BMT_FORMAT.md). This
+## is a real name-matched pairing, not the index-based guess ObjectLoader
+## falls back to for .bsr pieces. Falls back to default_material (or no
+## material at all) for any part whose material_name isn't in the map, so
+## this still works with a single flat color for callers that don't have a
+## resolved .bmt (see World3D.gd for a caller that does).
+static func assemble(skeleton: Skeleton3D, parts: Dictionary, default_material: Material = null, materials_by_name: Dictionary = {}) -> void:
+	for part_name in parts:
+		var key := _strip_prefix(part_name)
+		if not BODY_PART_BONES.has(key):
+			print("CharacterAssembler: no bone mapping for body part %s (key %s) -- skipped" % [part_name, key])
+			continue
+		var bones: Array = BODY_PART_BONES[key]
+		var mesh: BmsReader.ParsedMesh = parts[part_name]
+		var material: Material = materials_by_name.get(mesh.material_name, default_material)
+
+		if bones.size() == 1:
+			_attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), bones[0], material)
+		else:
+			_attach_rigid(skeleton, _build_side_mesh(mesh, true), bones[0], material)
+			_attach_rigid(skeleton, _build_side_mesh(mesh, false), bones[1], material)

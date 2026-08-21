@@ -53,9 +53,19 @@ type Material struct {
 	Layers []Layer
 }
 
-// Parse parses a .bmt file's raw bytes: a 4-byte decompressed-size header
-// followed by a zlib stream.
+// Parse parses a .bmt file's raw bytes. Two real on-disk variants exist:
+// files from a patch-staging tree (patch_upload_temp) are a 4-byte
+// decompressed-size header followed by a zlib stream, but real files from a
+// live client Data tree (Prim/Mtrl/Char/China/man/*.bmt) are the raw
+// "JMXVBMT 0102" magic at byte 0 with no compression at all -- confirmed
+// across 3 real files (chinaman_warrior.bmt, chinaman_bogy.bmt,
+// chinaman_monk.bmt). Detect by checking for the magic directly before
+// assuming the compressed layout.
 func Parse(data []byte) (*Material, error) {
+	if len(data) >= magicLen && string(data[0:magicLen]) == magic {
+		return parseDecompressed(data)
+	}
+
 	if len(data) < 4 {
 		return nil, errors.New("bmt: file too small to contain the size header")
 	}

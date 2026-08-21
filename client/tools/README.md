@@ -27,6 +27,12 @@ loads a real `.bsk` skeleton and a real `.ban` animation, builds an actual Godot
 propagation (not manual per-bone math) — every descendant bone moves correctly through the
 engine's real hierarchy. Renders the same bind-pose/animated-pose before/after comparison.
 
+`render_character.gd` — loads a real `.bsk` skeleton and a directory of real body-part `.bms`
+meshes (loose files — see `docs/protocol/BSK_FORMAT.md`), assembles them via
+`CharacterAssembler`, and renders a screenshot. Body-part meshes bake both left/right sides into
+one file as mirrored triangle ranges (no per-vertex tag) — see `docs/protocol/BMS_FORMAT.md` for
+how that was found and confirmed there's no bone-weight skinning data anywhere in `.bms`.
+
 `render_map_objects.gd` — loads a real `.o` (`Map.pk2` object-placement) file through
 `MapoReader` and renders a top-down scatter of every placed object's real world position, colored
 by type ID, to disk. Doesn't resolve type IDs to real `.bsr` models — no mapping from a `.mapo`

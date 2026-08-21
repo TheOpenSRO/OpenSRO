@@ -99,12 +99,44 @@ to typed struct fields yet — `Vertex.Extra` stays raw bytes in both readers, p
 policy of not mislabeling a field before its semantics are nailed down (see `.bsk`'s transform
 bytes for the same policy applied elsewhere).
 
+## No per-vertex skinning data exists — real characters are rigid multi-part assemblies instead
+
+Settled definitively by finding and inspecting real **body-part** meshes (`man_pelvis.bms`,
+`man_thigh.bms`, `man_calf.bms`, `man_torso_upper.bms`, `man_torso_lower.bms`, `man_arm_upper.bms`,
+`man_arm_lower.bms` — a real China-man character, as opposed to the hair/face attachment pieces
+checked earlier) alongside a real matching human skeleton
+(`Prim/Skel/Char/China/chinaman_skel.bsk`, 37 bones, standard 3ds Max Biped naming). The entire
+44-byte vertex record is now fully accounted for (position 12 + normal 12 + UV 8 + the 12 trailing
+bytes above = 44) and none of it is bone-weight data — there simply isn't room left for a
+multi-bone weighted skin, and the 12 trailing bytes were already shown to be something else (see
+above).
+
+What real files do instead, confirmed by inspecting `man_thigh.bms` vertex-by-vertex: **each
+paired body part is one `.bms` file containing both the left and right sides already baked in as
+two mirrored, non-overlapping vertex/triangle ranges** — vertex 0 at `x=+0.872` and vertex 23 at
+`x=-0.872` are exact mirrors (same y/z, negated x), with no per-vertex tag distinguishing which
+side a vertex belongs to. The only signal splitting them is which side of `x=0` a triangle's
+centroid falls on. Unpaired parts (pelvis, torso) are one piece with no split needed. Real body
+part vertex positions are baked in absolute character-space coordinates, the same "no extra
+transform needed" pattern already confirmed for `.bsr` sub-mesh pieces (see
+[BSR_FORMAT.md](BSR_FORMAT.md)) — rigidly attaching each (possibly split) piece to its matching
+bone, offset by that bone's own bind-pose position, reproduces the real character shape exactly
+(verified visually — see `client/scripts/assets/character_assembler.gd` and
+`client/tools/render_character.gd`). No file tying a specific mesh set to a specific skeleton was
+found (same "no resource-ID mapping" gap as `.mapo` — see [MAPO_FORMAT.md](MAPO_FORMAT.md)), so
+the body-part-name-to-bone-name mapping is an inferred, unconfirmed heuristic, not a decompiled
+fact.
+
 ## Implementation notes
 
-- `server/internal/bms` (Go): reference parser, unit tested (`go test`) against a synthetic
-  fixture built to the layout above (never real game data, same policy as `server/internal/pk2`).
-- No GDScript reader yet — this is prep work for the eventual 3D rendering pass, not wired into
-  the client.
-- Open items before this is "done" for rendering purposes: confirm the 12 unconfirmed trailing
-  bytes per vertex record. `.bsr` and `.ddj` are now both solved — see
-  [BSR_FORMAT.md](BSR_FORMAT.md) and [DDJ_FORMAT.md](DDJ_FORMAT.md).
+- `server/internal/bms` (Go) and `client/scripts/bms/bms_reader.gd` (GDScript): both parse the
+  confirmed layout above, unit tested against synthetic fixtures (never real game data, same
+  policy as `server/internal/pk2`), and cross-checked against each other on real files.
+- `client/scripts/assets/character_assembler.gd` (`CharacterAssembler`) builds a real, rigidly-
+  jointed character from real body-part meshes + a real skeleton, per the finding above — not
+  smooth skinning (none exists to do), but a real recognizable human shape. See
+  `docs/PROGRESS.md` for the real screenshot this produced.
+- Each part's real texture is resolved by matching its own `material_name` field against a real
+  `.bmt`'s layer names (e.g. `"chinaman_body"` in both `man_thigh.bms` and
+  `chinaman_warrior.bmt`) — see [BMT_FORMAT.md](BMT_FORMAT.md) for the real name-matched pairing
+  this uses instead of a guessed flat color.

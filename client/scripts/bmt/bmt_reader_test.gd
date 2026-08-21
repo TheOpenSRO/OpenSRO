@@ -21,6 +21,49 @@ func _check(cond: bool, msg: String) -> void:
 		print("FAIL " + msg)
 		_failures += 1
 
+## Real files from a live client Data tree (Prim/Mtrl/Char/China/man/*.bmt)
+## are stored with no zlib wrapper at all -- the raw "JMXVBMT 0102" magic
+## sits at byte 0 -- confirmed across 3 real files (chinaman_warrior.bmt,
+## chinaman_bogy.bmt, chinaman_monk.bmt). Builds that layout directly
+## (never real game data) to cover BmtReader's uncompressed-detection path.
+func _append_u32(b: PackedByteArray, v: int) -> void:
+	b.append(v & 0xFF)
+	b.append((v >> 8) & 0xFF)
+	b.append((v >> 16) & 0xFF)
+	b.append((v >> 24) & 0xFF)
+
+func _append_len_prefixed(b: PackedByteArray, s: String) -> void:
+	var ascii := s.to_ascii_buffer()
+	_append_u32(b, ascii.size())
+	b.append_array(ascii)
+
+func _append_f32(b: PackedByteArray, v: float) -> void:
+	var tmp := PackedByteArray()
+	tmp.resize(4)
+	tmp.encode_float(0, v)
+	b.append_array(tmp)
+
+func _check_uncompressed_variant() -> void:
+	var dec := PackedByteArray()
+	dec.append_array("JMXVBMT 0102".to_ascii_buffer())
+	_append_u32(dec, 1)
+	_append_len_prefixed(dec, "chinaman_body")
+	for i in range(4): _append_f32(dec, 1.0) # ambient
+	for i in range(4): _append_f32(dec, 1.0) # diffuse
+	for i in range(4): _append_f32(dec, 1.0) # specular
+	for i in range(4): _append_f32(dec, 0.0) # emissive
+	_append_f32(dec, 0.0) # power
+	_append_u32(dec, 0) # unknown
+	_append_len_prefixed(dec, "chinaman_warrior_body.ddj")
+
+	var m := BmtReader.parse(dec)
+	_check(m != null, "parses uncompressed (no zlib wrapper) synthetic material")
+	if m != null:
+		_check(m.layers.size() == 1, "uncompressed variant: 1 layer (got %d)" % m.layers.size())
+		if m.layers.size() == 1:
+			_check(m.layers[0].layer_name == "chinaman_body", "uncompressed variant: layer name (got %s)" % m.layers[0].layer_name)
+			_check(m.layers[0].texture_path == "chinaman_warrior_body.ddj", "uncompressed variant: texture (got %s)" % m.layers[0].texture_path)
+
 func _init() -> void:
 	var data := FIXTURE_HEX.hex_decode()
 
@@ -39,6 +82,8 @@ func _init() -> void:
 	var bad := PackedByteArray()
 	bad.resize(20)
 	_check(BmtReader.parse(bad) == null, "rejects non-zlib data")
+
+	_check_uncompressed_variant()
 
 	if _failures == 0:
 		print("ALL PASS")

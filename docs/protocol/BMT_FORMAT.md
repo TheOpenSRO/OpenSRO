@@ -5,13 +5,20 @@
 "layers", each with ambient/diffuse/specular/emissive colors and (usually) a reference to a
 `.ddj` texture by bare filename.
 
-Unlike the other `JMXV*` formats, `.bmt` isn't a raw magic-prefixed binary blob at the file level
-— the whole file (after a 4-byte header) is a standard **zlib stream**, which only decompresses to
-something with a `JMXVBMT 0102` magic. Confirmed empirically (byte-level, black-box) against 4
-real files, found not in any pk2 archive available in this client build, but in a loose,
-unpacked server patch-data tree
-(`.../SMC_Independent/.../patch_upload_temp/data/Prim/mtrl/avatar/*.bmt`). No decompiler output
-is stored in this repo — only the resulting facts about the container format.
+Two real on-disk variants exist, both confirmed empirically (byte-level, black-box), and both
+decompressing to (or directly containing) something with a `JMXVBMT 0102` magic. No decompiler
+output is stored in this repo — only the resulting facts about the container format.
+
+- **Compressed variant**: the whole file (after a 4-byte header) is a standard **zlib stream**.
+  Confirmed against 4 real files found not in any pk2 archive available in this client build, but
+  in a loose, unpacked server patch-data tree
+  (`.../SMC_Independent/.../patch_upload_temp/data/Prim/mtrl/avatar/*.bmt`).
+- **Uncompressed variant**: the raw `JMXVBMT 0102` magic sits directly at byte 0, no zlib wrapper
+  at all. Confirmed across 3 real files from a live client `Data` tree, not a staging tree
+  (`Prim/Mtrl/Char/China/man/{chinaman_warrior,chinaman_bogy,chinaman_monk}.bmt`) — real
+  character body/hair material files, referenced by real `.bms` body-part meshes' own
+  `material_name` field (see [BMS_FORMAT.md](BMS_FORMAT.md)). Both readers detect this by checking
+  for the magic string directly at byte 0 before falling back to the compressed-variant parse.
 
 ## File layout
 
@@ -75,3 +82,9 @@ can't — a caller can compare the parsed layer count against the file's declare
   albedo texture on the corresponding mesh piece — verified end-to-end in
   `object_loader_test.gd` against a full synthetic pk2 archive containing a real
   pk2→bsr→bms→bmt→ddj chain.
+- A real `.bms` body-part mesh's `material_name` field (e.g. `"chinaman_body"`, baked into
+  `man_thigh.bms`) is the same string as the real `layer_name` of a layer inside a real
+  character `.bmt` (confirmed directly: `chinaman_warrior.bmt`'s first layer is named
+  `"chinaman_body"` and references `chinaman_warrior_body.ddj`) — `World3D.gd` uses this real
+  name match (not an index-based guess) to resolve each assembled body part's own real texture.
+  See `docs/PROGRESS.md` for the real screenshot this produced.

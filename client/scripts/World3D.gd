@@ -7,29 +7,34 @@ extends Node3D
 ## docs/PROGRESS.md). Other connected characters render as simple labeled
 ## capsules at their real, server-authoritative positions.
 ##
-## Player/other-entity bodies and the ground are still placeholder
-## primitives -- there's no confirmed mapping from a server-side character
-## or a .mapo type ID to a real .bsr/.bsk/.ban asset (see
-## docs/protocol/MAPO_FORMAT.md), so nothing here can *automatically* pick
-## the "correct" real asset for any given entity. What *is* wired up now:
-## if you point this project at your own real game data via environment
-## variables (this project ships with none -- BYO, see docs/LEGAL.md), it
-## loads and places real assets through the same ObjectLoader/
-## Skeleton3DBuilder pipeline already proven in client/tools/'s standalone
-## dev tools, live in this scene instead of a standalone screenshot:
+## The ground is still a placeholder primitive -- real terrain rendering is
+## blocked on .mapm's unconfirmed grid dimensions (see
+## docs/protocol/MAPM_FORMAT.md). Other entities are still labeled
+## capsules -- there's no confirmed mapping from a server-side character to
+## a specific real asset (this project's server doesn't track a
+## race/gender/equipment loadout per character yet), so every *other*
+## player shows the same placeholder regardless of who they really are.
 ##
-## - SRREVAMP_PK2_PATH + SRREVAMP_BSR_PATH: a pk2 archive and a .bsr path
-##   inside it, loaded via ObjectLoader and placed near spawn as real,
-##   textured static scenery.
-## - SRREVAMP_BSK_PATH + SRREVAMP_BAN_PATH: a real .bsk skeleton and .ban
-##   animation (loose files -- real samples so far have only been found
-##   outside any pk2, see docs/protocol/BSK_FORMAT.md), built into a real
-##   Skeleton3D via Skeleton3DBuilder and placed near spawn, animated live
-##   by cycling through the .ban track's keyframes at a plausible (but
-##   unconfirmed -- see docs/protocol/BAN_FORMAT.md) 30fps.
+## The *player's own* body is no longer a placeholder if you point this
+## project at your own real game data (this project ships with none --
+## BYO, see docs/LEGAL.md): set SRREVAMP_PK2_PATH to a real pk2 archive
+## (e.g. Data.pk2) and this scene auto-loads a real assembled character --
+## a real .bsk skeleton plus real body-part .bms meshes rigidly attached to
+## it via CharacterAssembler -- using the conventional real path layout
+## found during reverse-engineering (Prim/Skel/Char/China/chinaman_skel.bsk
+## + Prim/Mesh/Char/China/man/*.bms). This is a fixed default (always the
+## China-man body), not a real per-account race/gender selection -- there's
+## no confirmed mapping to pick a different one automatically. Falls back
+## to the placeholder capsule if any of that isn't found.
 ##
-## Any variable left unset is skipped gracefully (a printed hint, not an
-## error) -- this scene works with none of them set, same as always.
+## SRREVAMP_PK2_PATH + SRREVAMP_BSR_PATH also loads one real, textured
+## static scenery object nearby via ObjectLoader, and
+## SRREVAMP_BSK_PATH + SRREVAMP_BAN_PATH loads a real animated decoration
+## skeleton (its own separate .bsk/.ban pair, not the player's body) via
+## Skeleton3DBuilder -- both accept either a loose file path or a path
+## inside SRREVAMP_PK2_PATH (see AssetSource). Any variable left unset is
+## skipped gracefully (a printed hint, not an error) -- this scene works
+## fine with none of them set, same as always.
 
 const MOVE_SPEED := 6.0
 const GRAVITY := 20.0
@@ -41,7 +46,24 @@ const MIN_SEND_DISTANCE := 0.05
 ## Plausible (unconfirmed) .ban playback rate -- see docs/protocol/BAN_FORMAT.md.
 const BAN_FPS := 30.0
 
+## Conventional real path layout found during reverse-engineering (private
+## server package data, not from any pk2 -- but real pk2 archives are
+## expected to mirror the same Prim/ tree). Not confirmed as the only
+## layout real client pk2 archives use.
+const PLAYER_SKELETON_PATH := "Prim\\Skel\\Char\\China\\chinaman_skel.bsk"
+const PLAYER_MESH_DIR := "Prim\\Mesh\\Char\\China\\man"
+const PLAYER_BODY_PARTS := ["man_pelvis", "man_torso_lower", "man_torso_upper", "man_thigh", "man_calf", "man_arm_upper", "man_arm_lower"]
+## Real material file matched to the body-part meshes above -- picked
+## because a real man_thigh.bms's own material_name field reads
+## "chinaman_body", which is also a real layer_name found inside this real
+## .bmt (confirmed by inspecting both files directly). Body-part meshes are
+## shared across every China-man class/skin choice, so any class's .bmt
+## works here -- "warrior" is an arbitrary fixed pick, consistent with this
+## file's fixed-default player character (see top comment).
+const PLAYER_MATERIAL_PATH := "Prim\\Mtrl\\Char\\China\\man\\chinaman_warrior.bmt"
+
 @onready var player: CharacterBody3D = $Player
+@onready var player_mesh: MeshInstance3D = $Player/Mesh
 @onready var other_entities: Node3D = $OtherEntities
 @onready var zone_label: Label = $UI/Control/ZoneLabel
 @onready var character_label: Label = $UI/Control/CharacterLabel
@@ -70,7 +92,8 @@ func _ready() -> void:
 	NetClient.entity_left.connect(_on_entity_left)
 
 	_try_load_real_scenery()
-	_try_load_real_skeleton()
+	_try_load_real_decoration_skeleton()
+	_try_load_real_player_character()
 
 ## Loads real static scenery through the exact same pk2 -> BsrReader ->
 ## ObjectLoader pipeline client/tools/render_asset.gd verifies standalone,
@@ -104,24 +127,26 @@ func _try_load_real_scenery() -> void:
 ## Loads a real .bsk skeleton + .ban animation through Skeleton3DBuilder
 ## (see client/tools/render_skeleton3d_animated.gd for the standalone
 ## verification of this same pipeline), live in this scene as an animated
-## decoration -- if SRREVAMP_BSK_PATH and SRREVAMP_BAN_PATH are both set
-## and name a real file on disk (not inside a pk2 -- real samples so far
-## have only been found as loose files). Skips gracefully otherwise.
-func _try_load_real_skeleton() -> void:
+## decoration (not the player's own body -- see _try_load_real_player_character())
+## -- if SRREVAMP_BSK_PATH and SRREVAMP_BAN_PATH are both set. Each accepts
+## either a loose file path or a path inside SRREVAMP_PK2_PATH (see
+## AssetSource). Skips gracefully otherwise.
+func _try_load_real_decoration_skeleton() -> void:
 	var bsk_path := OS.get_environment("SRREVAMP_BSK_PATH")
 	var ban_path := OS.get_environment("SRREVAMP_BAN_PATH")
 	if bsk_path == "" or ban_path == "":
-		print("World3D: SRREVAMP_BSK_PATH/SRREVAMP_BAN_PATH not set -- no real skeleton loaded")
+		print("World3D: SRREVAMP_BSK_PATH/SRREVAMP_BAN_PATH not set -- no real decoration skeleton loaded")
 		return
 
-	var bsk_file := FileAccess.open(bsk_path, FileAccess.READ)
-	var ban_file := FileAccess.open(ban_path, FileAccess.READ)
-	if bsk_file == null or ban_file == null:
-		printerr("World3D: could not open .bsk/.ban files at ", bsk_path, " / ", ban_path)
+	var archive := _open_pk2_if_set()
+	var bsk_bytes := AssetSource.read_bytes(bsk_path, archive)
+	var ban_bytes := AssetSource.read_bytes(ban_path, archive)
+	if bsk_bytes.is_empty() or ban_bytes.is_empty():
+		printerr("World3D: could not find .bsk/.ban at ", bsk_path, " / ", ban_path)
 		return
 
-	var skel := BskReader.parse(bsk_file.get_buffer(bsk_file.get_length()))
-	var anim := BanReader.parse(ban_file.get_buffer(ban_file.get_length()))
+	var skel := BskReader.parse(bsk_bytes)
+	var anim := BanReader.parse(ban_bytes)
 	if skel == null or anim == null or anim.bones.is_empty():
 		printerr("World3D: could not parse .bsk/.ban at ", bsk_path, " / ", ban_path)
 		return
@@ -140,6 +165,100 @@ func _try_load_real_skeleton() -> void:
 	Skeleton3DBuilder.build_debug_visualization(_real_skeleton)
 	print("World3D: loaded real skeleton %s + animation %s (%d bones, %d keyframes on track %s)" % [
 		bsk_path, ban_path, skel.bones.size(), _real_skeleton_track.keyframes.size(), _real_skeleton_track.bone_name])
+
+## Opens SRREVAMP_PK2_PATH if it's set, or returns null if it's unset or
+## fails to open. Used so AssetSource can fall back to an in-archive path
+## for any of the loose-file-shaped environment variables.
+func _open_pk2_if_set() -> Pk2Reader:
+	var pk2_path := OS.get_environment("SRREVAMP_PK2_PATH")
+	if pk2_path == "":
+		return null
+	return Pk2Reader.open(pk2_path)
+
+## Auto-loads a real assembled character (real .bsk skeleton + real
+## body-part .bms meshes via CharacterAssembler) as the player's own body,
+## using the conventional real path layout this project found during
+## reverse-engineering -- see this file's top comment for the honest scope
+## of what "auto" means here (a fixed default, not real per-account
+## selection). Only needs SRREVAMP_PK2_PATH; falls back to leaving the
+## placeholder capsule visible if the conventional paths aren't found in
+## that archive (e.g. a real archive laid out differently than the one
+## sample this project could check against).
+func _try_load_real_player_character() -> void:
+	var archive := _open_pk2_if_set()
+	if archive == null:
+		print("World3D: SRREVAMP_PK2_PATH not set -- player stays a placeholder capsule")
+		return
+
+	var bsk_bytes := AssetSource.read_bytes(PLAYER_SKELETON_PATH, archive)
+	if bsk_bytes.is_empty():
+		printerr("World3D: could not find player skeleton at ", PLAYER_SKELETON_PATH, " in ", OS.get_environment("SRREVAMP_PK2_PATH"))
+		return
+	var skel := BskReader.parse(bsk_bytes)
+	if skel == null:
+		printerr("World3D: could not parse player skeleton at ", PLAYER_SKELETON_PATH)
+		return
+
+	var parts := {}
+	for part_name in PLAYER_BODY_PARTS:
+		var bytes := AssetSource.read_bytes(PLAYER_MESH_DIR + "\\" + part_name + ".bms", archive)
+		if bytes.is_empty():
+			continue
+		var mesh := BmsReader.parse(bytes)
+		if mesh != null:
+			parts[part_name] = mesh
+	if parts.is_empty():
+		printerr("World3D: found the player skeleton but no body-part meshes under ", PLAYER_MESH_DIR)
+		return
+
+	var skeleton := Skeleton3DBuilder.build_skeleton3d(skel)
+	var fallback_mat := StandardMaterial3D.new()
+	fallback_mat.albedo_color = Color(0.85, 0.7, 0.55)
+	var materials_by_name := _load_player_materials(archive)
+	CharacterAssembler.assemble(skeleton, parts, fallback_mat, materials_by_name)
+
+	# Real bind-pose data uses a different native scale than this scene's
+	# ~1.8-unit-tall placeholder capsule -- rescale so the assembled
+	# character's own bind-pose height matches it, rather than a fixed
+	# guessed factor (real body-part scale isn't necessarily the same
+	# across every character/skeleton pair -- see
+	# docs/protocol/BSK_FORMAT.md).
+	var min_y := INF
+	var max_y := -INF
+	for i in range(skeleton.get_bone_count()):
+		var y: float = skeleton.get_bone_global_rest(i).origin.y
+		min_y = min(min_y, y)
+		max_y = max(max_y, y)
+	var real_height := max_y - min_y
+	if real_height > 0.01:
+		skeleton.scale = Vector3.ONE * (1.8 / real_height)
+
+	player.add_child(skeleton)
+	player_mesh.visible = false
+	print("World3D: loaded real player character (%d bones, %d body parts) from %s" % [
+		skel.bones.size(), parts.size(), OS.get_environment("SRREVAMP_PK2_PATH")])
+
+## Resolves PLAYER_MATERIAL_PATH's real .bmt (via ObjectLoader, the same
+## pk2 -> BmtReader -> DdjReader pipeline already verified for scenery) into
+## a Dictionary keyed by each layer's own real layer_name -- ready to pass
+## straight into CharacterAssembler.assemble's materials_by_name, which
+## looks parts up by their own real material_name field (the two are the
+## same string in real data -- see PLAYER_MATERIAL_PATH's doc comment).
+## Returns an empty Dictionary (not an error) if the .bmt isn't found at
+## that conventional path, since CharacterAssembler falls back to a flat
+## color in that case.
+func _load_player_materials(archive: Pk2Reader) -> Dictionary:
+	var material := ObjectLoader.load_material(archive, PLAYER_MATERIAL_PATH)
+	if material == null:
+		printerr("World3D: could not load player material at ", PLAYER_MATERIAL_PATH, " -- falling back to a flat color")
+		return {}
+
+	var by_name := {}
+	for layer in material.layers:
+		var godot_material := ObjectLoader.build_godot_material(archive, PLAYER_MATERIAL_PATH, layer)
+		if godot_material != null:
+			by_name[layer.layer_name] = godot_material
+	return by_name
 
 func _physics_process(delta: float) -> void:
 	var input_dir := Vector3.ZERO
