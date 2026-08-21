@@ -186,6 +186,38 @@ itself a new, real, unexplained observation worth a future pass on its own.
 - Whether the terrain-type byte (Shape A, offset 0x00) corresponds to anything a renderer could
   use directly (a texture index into some other table not yet identified).
 
+## A real, unopened sibling file: `.t` (`JMXVMAPT1001`) — a possible ground-texture blend map
+
+Every real `Map.pk2` region folder also contains a `.t` file alongside its `.m`/`.o`/`.o2` files
+(magic `JMXVMAPT1001`) — never decoded before this project went looking for a real ground-texture
+system to answer why rendered terrain looked like flat color instead of the actual game. Real
+structural findings so far:
+
+- Every real `.t` file is **exactly 140436 bytes**, fixed across every region checked — unlike
+  `.m`/`.o`/`.o2`, which vary in size per region.
+- The 140420-byte body (after what's plausibly a 16-byte header, not yet confirmed) divides
+  cleanly by **17** — the same real column width `.m`'s Shape A confirmed above. Read as 35105
+  `uint32` (little-endian) cells, that count also divides cleanly by 17.
+- 80% of those cells are exactly `0x00000000` or `0xFFFFFFFF`; the remaining 20% spread across
+  2408 distinct intermediate values. This is a real, structural pattern — not noise — consistent
+  with a multi-channel blend/weight map (mostly "pure" single-texture cells, with blended values
+  clustering at texture-boundary transitions), the shape a real ground-texture splat map would
+  take.
+
+**Not decoded further yet**: the exact row/column layout, and whether it cross-validates against
+a matching `.m` file's tile grid, are both still open. Even if fully decoded, a blend/weight map
+by itself would only say *where* textures blend, not *which* real texture files fill each channel
+— no such texture lookup/table has been found anywhere in this project's available real data. The
+real terrain pixel shaders found alongside this investigation (`terrainps14.psh`,
+`terrainpsn10.psh`, `terrainpsp10.psh`, and their `detail` variants) all sample a single continuous
+`TEX_TERRAIN_COLOR` texture stage, not a multi-layer type-index blend, and no generic tileable
+ground texture (grass/dirt/sand/rock/snow, as opposed to a creature/prop texture) was found
+anywhere in this project's available real client data — a real gap this project's own RE
+environment couldn't close, not one that was given up on early (see `server/cmd/pk2list`, a small
+tool built specifically to let a user search their own real client pk2 archives for a real ground
+texture path this project doesn't have a sample of). Flagged here as a real, promising, unresolved
+lead for a future pass, not a solved format.
+
 ## Real samples available for future verification
 
 `Map.pk2` → `<region>/<region>.m` — 25 pulled in this environment across two passes: `0/0.m`,

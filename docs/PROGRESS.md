@@ -2,6 +2,42 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 46) — pushed harder on real ground textures; shipped a way for the user to help find one
+
+- User pushed back on the vertex-color terrain from the previous entry: it's real data, but it's
+  not a real texture and doesn't look like the game. Fair -- went back to look harder before
+  accepting "no real texture found" as final.
+- Checked the two remaining real terrain shaders (`terrainpsp10.psh`, `terrainpspdetail10.psh`,
+  the "parallax" variants) not checked last time: same result as the others, one continuous
+  `TEX_TERRAIN_COLOR` texture stage, no real multi-layer type-index blend in shader code anywhere
+  across all 4 real terrain shaders found.
+- Made real progress on the previously-unopened `.t` file type instead: every real region's `.t`
+  file is exactly 140436 bytes (fixed, unlike `.m`/`.o`/`.o2` which vary per region); its 140420-byte
+  body divides cleanly by 17 (the same real column width `.m` already confirmed); read as `uint32`
+  cells, 80% are exactly `0x00000000` or `0xFFFFFFFF` with the remaining 20% spread across 2408
+  distinct intermediate values -- a real, structural pattern consistent with a 4-channel
+  blend/weight map (mostly "pure" single-texture cells, blended at texture-boundary transitions),
+  not random noise. **Not fully decoded** -- row/column layout and cross-validation against a
+  matching `.m` file weren't nailed down this pass. Real, promising, genuinely unresolved -- not
+  claimed as solved.
+- The RE box's real client data (a private-server distribution package) was searched broadly for
+  any generic tileable ground texture (grass/dirt/sand/rock/snow, not tied to a specific
+  creature/prop) and found none -- only foliage decoration sprites and named rock props. Even a
+  fully-decoded `.t` blend map would only say *where* textures blend, not *which* real texture
+  files fill each channel -- and no such lookup exists anywhere in the RE box's data. Real
+  possibility: this private-server package may have stripped the actual terrain texture set (a
+  large asset a server distribution doesn't need), meaning it may only exist in a genuine retail
+  client -- which the user has, and this RE environment doesn't.
+- Rather than keep guessing blind, shipped `server/cmd/pk2list` -- a small, tested Go CLI
+  (`go run ./cmd/pk2list -pk2 "<path>" -filter <substring>`) that lists every real file path
+  inside a real pk2 archive the user points it at, so they can search their own real `Data.pk2`/
+  `Media.pk2` for real ground/terrain texture paths this project has no sample of, without needing
+  to transmit the archive anywhere. `README.md` updated with the full current env-var list (was
+  stale, missing the terrain/player-auto-load vars from recent entries) and the new tool.
+- Full regression: Go build/vet/test clean including a new `pk2list` test.
+- Still open: real ground textures (now genuinely blocked on the user's own real files, not
+  abandoned), the `.t` format's full decode, and everything else already tracked as open.
+
 ## 2026-08-21 (cont'd 45) — real per-tile terrain color, since no real ground-texture system was found
 
 - User saw the terrain screenshot and pointed out it was flat green — no texture variation.

@@ -38,13 +38,23 @@ Log in, pick a character, and hit "3D View" in the World HUD to walk around in 3
 see `docs/LEGAL.md`). If you have your own real Silkroad client files, set these environment
 variables before launching the client to have `World3D.tscn` load and place them live (see
 `client/scripts/World3D.gd`):
-- `SRREVAMP_PK2_PATH` + `SRREVAMP_BSR_PATH` — a pk2 archive and a `.bsr` path inside it, loaded
-  as real, textured scenery via `ObjectLoader`.
-- `SRREVAMP_BSK_PATH` + `SRREVAMP_BAN_PATH` — a real `.bsk` skeleton and `.ban` animation (loose
-  files, not inside a pk2 — see `docs/protocol/BSK_FORMAT.md`), built into a real, live-animated
-  `Skeleton3D` via `Skeleton3DBuilder`.
+- `SRREVAMP_PK2_PATH` — a real pk2 archive (e.g. `Data.pk2`). On its own, this auto-loads a real
+  assembled, textured player character (see "Status" below).
+- `SRREVAMP_PK2_PATH` + `SRREVAMP_BSR_PATH` — also loads a real, textured static scenery object
+  (a `.bsr` path inside the archive) via `ObjectLoader`.
+- `SRREVAMP_BSK_PATH` + `SRREVAMP_BAN_PATH` — a real `.bsk` skeleton and `.ban` animation (either
+  loose files or paths inside `SRREVAMP_PK2_PATH` — see `AssetSource`), built into a real,
+  live-animated decoration `Skeleton3D` via `Skeleton3DBuilder`.
+- `SRREVAMP_MAP_PK2_PATH` + `SRREVAMP_MAPM_PATH` — `Map.pk2` (a separate archive from `Data.pk2`
+  in a real retail install) and a region `.m` path inside it (e.g. `100\100.m`), loaded as real
+  terrain via `MapmTerrainBuilder`.
 
 Leave any of them unset and that piece is skipped — the scene works fine with none of them set.
+
+**Finding real asset paths in your own pk2 files**: `go run ./cmd/pk2list -pk2 "<path>"` (from
+`server/`) lists every real file path inside a real pk2 archive, optionally filtered by substring
+(`-filter grass`) — useful for finding real texture/mesh paths this project doesn't already have a
+sample of to reverse-engineer against, without needing to send the archive itself anywhere.
 
 Run the test suites from `server/` (`go test ./...`, needs the same local Postgres) and `client/`
 (`godot4 --headless --path . --script res://scripts/net/<name>_test.gd` for each file, or see
