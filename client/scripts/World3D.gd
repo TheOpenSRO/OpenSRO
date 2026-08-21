@@ -7,17 +7,21 @@ extends Node3D
 ## docs/PROGRESS.md). Other connected characters render as simple labeled
 ## capsules at their real, server-authoritative positions.
 ##
-## The ground is a placeholder collision box, but its *visual* mesh is
-## replaced by real terrain if you set SRREVAMP_MAPM_PATH to a real
-## Map.pk2 region .m file (see below) -- .mapm's grid width (17) is now a
-## real, mechanistically confirmed constant (see
-## docs/protocol/MAPM_FORMAT.md and MapmTerrainBuilder), not the unresolved
-## blocker it used to be. Collision still uses the flat placeholder shape
-## (no HeightMapShape3D wired up yet), and the terrain's real world
-## position/scale relative to a player's actual spawn coordinate is still
-## unconfirmed -- it's placed near the player for visibility, not at a
-## confirmed real-world offset. Other entities are still labeled
-## capsules -- there's no confirmed mapping from a server-side character to
+## The ground is a placeholder collision box by default, but both its
+## *visual* mesh and its *collision* shape are replaced by real terrain if
+## you set SRREVAMP_MAPM_PATH to a real Map.pk2 region .m file (see below)
+## -- .mapm's grid width (17) is now a real, mechanistically confirmed
+## constant (see docs/protocol/MAPM_FORMAT.md and MapmTerrainBuilder), not
+## the unresolved blocker it used to be. The real collision shape is a
+## ConcavePolygonShape3D built directly from the same real triangle data as
+## the visual mesh (Mesh.create_trimesh_shape() -- no separate collision
+## geometry to keep in sync), so the player physically walks on the actual
+## real terrain surface, not a flat box, whenever real terrain data loads.
+## The terrain's real world position/scale relative to a player's actual
+## spawn coordinate is still unconfirmed -- it's placed near the player for
+## visibility, not at a confirmed real-world offset. Other entities are
+## still labeled capsules -- there's no confirmed mapping from a
+## server-side character to
 ## a specific real asset (this project's server doesn't track a
 ## race/gender/equipment loadout per character yet), so every *other*
 ## player shows the same placeholder regardless of who they really are.
@@ -135,6 +139,7 @@ const MAX_MAP_OBJECTS := 300
 @onready var player: CharacterBody3D = $Player
 @onready var player_mesh: MeshInstance3D = $Player/Mesh
 @onready var ground_mesh: MeshInstance3D = $Ground/Mesh
+@onready var ground_collision: CollisionShape3D = $Ground/Collision
 @onready var other_entities: Node3D = $OtherEntities
 @onready var zone_label: Label = $UI/Control/ZoneLabel
 @onready var character_label: Label = $UI/Control/CharacterLabel
@@ -321,8 +326,8 @@ func _load_real_terrain_texture() -> Texture2D:
 	return DdjReader.to_texture(parsed)
 
 ## Loads real terrain from a real Map.pk2 region .m file via MapmReader +
-## MapmTerrainBuilder, replacing the placeholder ground's visual mesh (not
-## its collision shape -- see this file's top comment) -- if
+## MapmTerrainBuilder, replacing both the placeholder ground's visual mesh
+## and its collision shape (see this file's top comment) -- if
 ## SRREVAMP_MAPM_PATH is set. Accepts either a loose file path or a path
 ## inside SRREVAMP_MAP_PK2_PATH (see AssetSource). Skips gracefully
 ## otherwise.
@@ -392,7 +397,15 @@ func _try_load_real_terrain() -> void:
 	terrain.position = Vector3(aabb.size.x / 2.0, -near_height, 0)
 	add_child(terrain)
 	ground_mesh.visible = false
-	print("World3D: loaded real terrain from %s (%d tiles parsed, %d complete rows rendered)" % [
+	ground_collision.disabled = true
+
+	var terrain_body := StaticBody3D.new()
+	var terrain_shape := CollisionShape3D.new()
+	terrain_shape.shape = terrain_mesh.create_trimesh_shape()
+	terrain_body.add_child(terrain_shape)
+	terrain.add_child(terrain_body)
+
+	print("World3D: loaded real terrain from %s (%d tiles parsed, %d complete rows rendered, real collision shape built)" % [
 		mapm_path, region.tiles.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1])
 
 ## Auto-loads a real assembled character (real .bsk skeleton + real

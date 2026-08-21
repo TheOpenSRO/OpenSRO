@@ -2,6 +2,29 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 56) — real terrain collision, built from the same real triangle data as the visual mesh
+
+- Picked up the last "Not yet done" item directly tied to the terrain work just verified: the
+  ground's collision shape was still the flat placeholder box even after the visual mesh became
+  real.
+- `Mesh.create_trimesh_shape()` (a built-in Godot method) builds a `ConcavePolygonShape3D`
+  straight from the real `ArrayMesh` `MapmTerrainBuilder.build_mesh()` already produces — no new
+  geometry-generation logic needed, and no risk of visual/collision mesh drifting apart since
+  they're built from the exact same real triangle data.
+- `World3D.gd`'s `_try_load_real_terrain()` now disables the placeholder `Ground/Collision` shape
+  and attaches a `StaticBody3D`/`CollisionShape3D` built this way to the real terrain node
+  whenever `SRREVAMP_MAPM_PATH` loads successfully.
+- Verified against a real region (`100/100.m`, loose file, no pk2 needed for this check): rendered
+  headless and confirmed visually — the player capsule rests directly on the real terrain surface
+  with a real cast shadow, not floating above it or clipping through.
+- Full regression: Go build/vet clean, the three most relevant GDScript suites
+  (`mapm_terrain_builder_test`, `mapm_reader_test`, `net/world_test`) pass — no test changes
+  needed, this is pure runtime scene wiring with no new parsing logic to unit-test.
+- Same honest caveat as before: rows within the recovered terrain strip are real and correctly
+  shaped, but the strip's true position relative to a player's real spawn coordinate still isn't
+  confirmed — collision now matches whatever terrain is rendered, not a claim about absolute
+  real-world placement.
+
 ## 2026-08-21 (cont'd 55) — first real, assembled region: terrain + placed objects rendered together
 
 - User asked to render "a real part of the world environment... successfully mapping all those

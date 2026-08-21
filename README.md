@@ -259,8 +259,14 @@ tree with bark texture together in frame. Repeat placements of the same real mod
 `duplicate()`d rather than re-parsed (`_try_load_real_map_objects` in `World3D.gd`), since real
 regions turn out to reuse very few distinct models across many placements.
 
-Not yet done: real terrain collision (the visual mesh is real now, but the ground's collision
-shape is still the flat placeholder box) and confirmed real-world terrain/object
+Real terrain collision is wired up too: whenever `SRREVAMP_MAPM_PATH` loads real terrain, the
+ground's collision shape is rebuilt from that same real triangle data (`Mesh.create_trimesh_shape()`
+on the exact `ArrayMesh` `MapmTerrainBuilder` produced — no separate collision geometry to keep in
+sync), replacing the flat placeholder box. Verified against a real region: the player capsule
+rests directly on the real terrain surface with a real cast shadow, not floating above it or
+clipping through, confirmed visually via a headless render.
+
+Not yet done: confirmed real-world terrain/object
 positioning/scale relative to a player's actual spawn coordinate (currently placed for visibility,
 not accuracy); a newly-found, entirely unparsed real file type (`Map.pk2` region folders also
 contain a `.t` file, magic `JMXVMAPT1001`, with a real byte pattern consistent with a texture
