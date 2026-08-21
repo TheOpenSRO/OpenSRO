@@ -2,6 +2,38 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 52) — solved the pk2 truncation bug: real files went from 41 to 73139
+
+- User said "everything needs done" — after shipping other-player rendering, picked up the pk2
+  directory-truncation bug documented earlier this session as the other half.
+- Found and used the actual real client library the bug lives in: `GFXFileManager.dll` (not
+  `sro_client.exe` or `EternityLib.dll`, which is why earlier "JMXV"/"JoyMax" string searches in
+  those never found the directory-read code). Set up Ghidra headless decompilation against a
+  pre-existing analyzed project already on the RE box (installed `pyghidra`/`jpype1` first, then
+  fell back to a Java-based Ghidra script when the Python launcher path didn't cooperate) and
+  found the real directory-block-reading function by searching for literal references to the
+  archive's own "JoyMax File Manager!" magic string.
+- Decompiled it and found the real mechanism directly: the block-size (`0xa00`=2560) and
+  entry-size (`0x80`=128) constants this project already had confirmed appear exactly where
+  expected, and a real "next block" jump reads its target from what this project's docs had
+  called a "reserved" field — only on a block's **last (20th) entry slot**, not on every entry
+  (which is exactly why an earlier pass this session found what looked like meaningless noise
+  there: it checked an entry whose directory didn't need continuation, so the field was
+  legitimately near-zero, not a wrong theory).
+- Verified against real bytes before touching any code: dumped `Data.pk2`'s root block's last
+  entry, found a real nonzero next-block offset, followed it, and found real continuing root
+  entries — including, after a third chained block, the **`Prim` folder** this project has been
+  building every conventional real asset path against all session, which had never actually been
+  reachable through `pk2list` until now.
+- Fixed both readers (`server/internal/pk2`, `client/scripts/pk2/pk2_reader.gd`) to follow the
+  real chain, bounded by a cycle/corruption guard. Added real chained-block regression tests to
+  both. Verified end-to-end against the real `Data.pk2`: `pk2list`'s file count went from 41 to
+  **73139**.
+- Full regression: Go clean (including 2 new pk2 chain tests), all 18 GDScript suites pass.
+- This was the last of the two things flagged as open after the armor work. Both are now
+  addressed — other players render as real characters, and the pk2 reader is no longer silently
+  dropping most of a real archive's content.
+
 ## 2026-08-21 (cont'd 51) — other connected players are real characters now too, not just capsules
 
 - User said "everything needs done" after being offered a choice between the pk2 truncation bug

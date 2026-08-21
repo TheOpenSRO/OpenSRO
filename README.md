@@ -58,11 +58,11 @@ Leave any of them unset and that piece is skipped — the scene works fine with 
 **Finding real asset paths in your own pk2 files**: `go run ./cmd/pk2list -pk2 "<path>"` (from
 `server/`) lists every real file path inside a real pk2 archive, optionally filtered by substring
 (`-filter grass`) — useful for finding real texture/mesh paths this project doesn't already have a
-sample of to reverse-engineer against, without needing to send the archive itself anywhere.
-**Known real gap**: a directory with more than 20 real entries is silently truncated (confirmed on
-a real `Data.pk2` — see `docs/protocol/PK2_FORMAT.md`), so treat a listing as a lower bound, not a
-complete inventory, until that's fixed. Reading one exact, already-known path (what every
-`SRREVAMP_*_PATH` variable above does) isn't affected.
+sample of to reverse-engineer against, without needing to send the archive itself anywhere. A
+directory can span multiple chained blocks (a real mechanism found by decompiling the actual
+client's directory-read code, not guessed — see `docs/protocol/PK2_FORMAT.md`); both readers follow
+it, confirmed against a real 3.8GB `Data.pk2` whose file count went from 41 to 73139 once the fix
+landed.
 
 Run the test suites from `server/` (`go test ./...`, needs the same local Postgres) and `client/`
 (`godot4 --headless --path . --script res://scripts/net/<name>_test.gd` for each file, or see
@@ -244,10 +244,7 @@ yet decoded, see `docs/protocol/MAPM_FORMAT.md`); no real per-account identity f
 loadout tracked per character yet, so there's nothing to distinguish); no automatic asset selection
 for map objects (nothing maps a `.mapo` type ID to a real asset path — see
 `docs/protocol/MAPO_FORMAT.md` — so those still need manual environment variables or show a
-placeholder); and a real, confirmed gap in the core pk2 reader itself — any directory with more
-than 20 real entries is silently truncated (see `docs/protocol/PK2_FORMAT.md`), which doesn't
-break anything already loaded by an exact known path but does limit `server/cmd/pk2list`-style
-browsing for new ones. That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
+placeholder). That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
 mesh-piece pairing when a `.bmt` has multiple layers and no name match is available is still a
 documented, unconfirmed heuristic (pairs by index when counts match, used by `ObjectLoader` for
 `.bsr` scenery); `.efp`'s nested tree structure (see above). See

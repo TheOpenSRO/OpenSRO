@@ -24,6 +24,15 @@ const ENTRY_OFF_NAME := 0x01
 const ENTRY_NAME_LEN := 89
 const ENTRY_OFF_POSITION := 0x6A
 const ENTRY_OFF_SIZE := 0x72
+## Only meaningful on the last (20th) entry slot of a block: the file
+## offset of the block continuing this directory's entry list, or 0 if
+## this block holds the directory's last entries. See
+## docs/protocol/PK2_FORMAT.md for how this was found and confirmed.
+const ENTRY_OFF_NEXT_BLOCK := 0x76
+## Bounds how many continuation blocks _read_block_chain will follow for
+## one directory -- a cycle/corruption guard, not a real observed limit
+## (the largest real chain found while confirming this had 3 blocks).
+const MAX_CHAIN_BLOCKS := 100000
 
 # See docs/protocol/PK2_FORMAT.md: long-published default key for the
 # format's directory-table obfuscation, not a secret protecting first-party
@@ -106,31 +115,49 @@ func read_file(file: Entry) -> PackedByteArray:
 	_file.seek(file._offset)
 	return _file.get_buffer(file.size)
 
-## Reads one directory block (ENTRIES_PER_BLOCK entries). No "next block"
-## chain-continuation mechanism was found empirically for folders with more
-## than ENTRIES_PER_BLOCK entries -- see docs/protocol/PK2_FORMAT.md -- so
-## this reads exactly one block per directory.
+## Reads a directory's full entry list, following the real "next block"
+## continuation mechanism: only the last (20th) entry slot of a block
+## carries a next-block file offset (confirmed to be 0 on every entry
+## except a real block's final slot, which holds it whenever more entries
+## follow) -- a directory with more than ENTRIES_PER_BLOCK real entries is
+## simply a linked chain of these blocks, not one fixed-size block as this
+## reader originally (incorrectly) assumed. Confirmed by decompiling the
+## real client's own directory-read function (GFXFileManager.dll) and
+## cross-checking the exact field it reads against real block bytes in a
+## real 3.8GB Data.pk2 whose root directory turned out to need 3 chained
+## blocks -- see docs/protocol/PK2_FORMAT.md for the full derivation. No
+## decompiler output is stored in this repo, only the resulting fact about
+## the field layout. MAX_CHAIN_BLOCKS bounds the walk as a
+## cycle/corruption guard, not a real observed limit.
 func _read_block_chain(offset: int) -> Array[Entry]:
 	var out: Array[Entry] = []
 
-	_file.seek(offset)
-	var block := _file.get_buffer(BLOCK_SIZE)
-	if _encrypted:
-		_decrypt_block_pk2(block)
+	for _chain_step in range(MAX_CHAIN_BLOCKS):
+		_file.seek(offset)
+		var block := _file.get_buffer(BLOCK_SIZE)
+		if _encrypted:
+			_decrypt_block_pk2(block)
 
-	for i in range(ENTRIES_PER_BLOCK):
-		var raw := block.slice(i * ENTRY_SIZE, (i + 1) * ENTRY_SIZE)
-		var entry_type := raw[0]
+		var next_offset := 0
+		for i in range(ENTRIES_PER_BLOCK):
+			var raw := block.slice(i * ENTRY_SIZE, (i + 1) * ENTRY_SIZE)
+			var entry_type := raw[0]
 
-		if entry_type == ENTRY_TYPE_FOLDER or entry_type == ENTRY_TYPE_FILE:
-			var name := _null_terminated(raw.slice(ENTRY_OFF_NAME, ENTRY_OFF_NAME + ENTRY_NAME_LEN))
-			if name != "." and name != "..":
-				var e := Entry.new()
-				e.name = name
-				e.is_dir = entry_type == ENTRY_TYPE_FOLDER
-				e._offset = _le_u32(raw, ENTRY_OFF_POSITION)
-				e.size = _le_u32(raw, ENTRY_OFF_SIZE)
-				out.append(e)
+			if entry_type == ENTRY_TYPE_FOLDER or entry_type == ENTRY_TYPE_FILE:
+				var name := _null_terminated(raw.slice(ENTRY_OFF_NAME, ENTRY_OFF_NAME + ENTRY_NAME_LEN))
+				if name != "." and name != "..":
+					var e := Entry.new()
+					e.name = name
+					e.is_dir = entry_type == ENTRY_TYPE_FOLDER
+					e._offset = _le_u32(raw, ENTRY_OFF_POSITION)
+					e.size = _le_u32(raw, ENTRY_OFF_SIZE)
+					out.append(e)
+			if i == ENTRIES_PER_BLOCK - 1:
+				next_offset = _le_u32(raw, ENTRY_OFF_NEXT_BLOCK)
+
+		if next_offset == 0:
+			break
+		offset = next_offset
 
 	return out
 

@@ -29,6 +29,49 @@ func _write_entry(block: PackedByteArray, i: int, entry_type: int, name: String,
 	block[size_base + 2] = (size >> 16) & 0xFF
 	block[size_base + 3] = (size >> 24) & 0xFF
 
+func _write_next_block(block: PackedByteArray, i: int, next_offset: int) -> void:
+	var base := i * Pk2Reader.ENTRY_SIZE + Pk2Reader.ENTRY_OFF_NEXT_BLOCK
+	block[base] = next_offset & 0xFF
+	block[base + 1] = (next_offset >> 8) & 0xFF
+	block[base + 2] = (next_offset >> 16) & 0xFF
+	block[base + 3] = (next_offset >> 24) & 0xFF
+
+## Builds a synthetic (never real game data) directory spanning two chained
+## blocks -- the real client's own continuation mechanism (only the last
+## entry slot of a block carries a next-block offset), confirmed
+## empirically -- see docs/protocol/PK2_FORMAT.md.
+func _build_chained_archive(path: String) -> void:
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	var header := PackedByteArray()
+	header.resize(Pk2Reader.HEADER_SIZE)
+	var magic := "JoyMax File Manager!".to_ascii_buffer()
+	for i in range(magic.size()):
+		header[i] = magic[i]
+
+	var block1_offset := Pk2Reader.HEADER_SIZE
+	var block2_offset := block1_offset + Pk2Reader.BLOCK_SIZE
+	var file_offset := block2_offset + Pk2Reader.BLOCK_SIZE
+
+	var block1 := PackedByteArray()
+	block1.resize(Pk2Reader.BLOCK_SIZE)
+	_write_entry(block1, 0, Pk2Reader.ENTRY_TYPE_FOLDER, ".", block1_offset, 0)
+	for i in range(1, Pk2Reader.ENTRIES_PER_BLOCK):
+		_write_entry(block1, i, Pk2Reader.ENTRY_TYPE_FILE, "block1_file%02d.txt" % i, file_offset, 4)
+	_write_next_block(block1, Pk2Reader.ENTRIES_PER_BLOCK - 1, block2_offset)
+
+	var block2 := PackedByteArray()
+	block2.resize(Pk2Reader.BLOCK_SIZE)
+	_write_entry(block2, 0, Pk2Reader.ENTRY_TYPE_FILE, "block2_file00.txt", file_offset, 4)
+	_write_entry(block2, 1, Pk2Reader.ENTRY_TYPE_FILE, "block2_file01.txt", file_offset, 4)
+	# Remaining slots stay empty; block 2's own last slot's next-block
+	# field is left at 0, correctly signaling "no more blocks".
+
+	f.store_buffer(header)
+	f.store_buffer(block1)
+	f.store_buffer(block2)
+	f.store_buffer("data".to_ascii_buffer())
+	f.close()
+
 func _build_simple_archive(path: String) -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	var header := PackedByteArray()
@@ -67,6 +110,21 @@ func _init() -> void:
 
 	reader.close()
 	DirAccess.remove_absolute(path)
+
+	var chained_path := "user://srrevamp_chained_test.pk2"
+	_build_chained_archive(chained_path)
+	var chained_reader := Pk2Reader.open(chained_path)
+	_check(chained_reader != null, "opens synthetic chained archive")
+	if chained_reader != null:
+		var chained_entries := chained_reader.read_dir()
+		var want := Pk2Reader.ENTRIES_PER_BLOCK - 1 + 2
+		_check(chained_entries.size() == want, "root dir spans both chained blocks (want %d, got %d)" % [want, chained_entries.size()])
+		var names := {}
+		for e in chained_entries:
+			names[e.name] = true
+		_check(names.has("block1_file01.txt") and names.has("block2_file00.txt") and names.has("block2_file01.txt"), "entries from both blocks present")
+		chained_reader.close()
+	DirAccess.remove_absolute(chained_path)
 
 	if _failures == 0:
 		print("ALL PASS")

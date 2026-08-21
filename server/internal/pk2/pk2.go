@@ -38,6 +38,16 @@ const (
 	entryNameLen     = 89
 	entryOffPosition = 0x6A
 	entryOffSize     = 0x72
+	// entryOffNextBlock is only meaningful on the last (20th) entry slot of
+	// a block: the file offset of the block continuing this directory's
+	// entry list, or 0 if this block holds the directory's last entries.
+	// See docs/protocol/PK2_FORMAT.md for how this was found and confirmed.
+	entryOffNextBlock = 0x76
+	// maxChainBlocks bounds how many continuation blocks readBlockChain
+	// will follow for one directory -- a cycle/corruption guard, not a
+	// real observed limit (the largest real chain found while confirming
+	// this had 3 blocks).
+	maxChainBlocks = 100000
 )
 
 // defaultKey is the long-published default Blowfish key used by the pk2
@@ -150,43 +160,62 @@ func (a *Archive) ReadFile(file Entry) ([]byte, error) {
 	return buf, nil
 }
 
-// readBlockChain reads one directory block (entriesPerBlock entries). No
-// "next block" chain-continuation mechanism was found empirically for
-// folders with more than entriesPerBlock entries — see
-// docs/protocol/PK2_FORMAT.md — so this reads exactly one block per
-// directory. If a real archive turns out to need more, this is the place to
-// add it, with a cycle/bound guard so a wrong guess can't hang again like
-// the previous (incorrect) implementation did.
+// readBlockChain reads a directory's full entry list, following the real
+// "next block" continuation mechanism: only the last (20th) entry slot of
+// a block carries a next-block file offset (a uint32 at entryOffNextBlock,
+// confirmed to be 0 on every entry except a real block's final slot, which
+// holds it whenever more entries follow) — a directory with more than
+// entriesPerBlock real entries is simply a linked chain of these blocks,
+// not one fixed-size block as this reader originally (incorrectly)
+// assumed. Confirmed by decompiling the real client's own directory-read
+// function (GFXFileManager.dll) and cross-checking the exact field it
+// reads against real block bytes in a real 3.8GB Data.pk2 whose root
+// directory turned out to need 3 chained blocks -- see
+// docs/protocol/PK2_FORMAT.md for the full derivation. No decompiler
+// output is stored in this repo, only the resulting fact about the field
+// layout. maxChainBlocks bounds the walk as a cycle/corruption guard, not
+// a real observed limit.
 func (a *Archive) readBlockChain(offset uint32) ([]Entry, error) {
 	var out []Entry
-
 	block := make([]byte, blockSize)
-	if _, err := a.f.ReadAt(block, int64(offset)); err != nil && !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("pk2: reading block at %d: %w", offset, err)
-	}
 
-	if a.encrypted {
-		decryptECB(a.cipher, block)
-	}
+	for chainStep := 0; chainStep < maxChainBlocks; chainStep++ {
+		if _, err := a.f.ReadAt(block, int64(offset)); err != nil && !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("pk2: reading block at %d: %w", offset, err)
+		}
 
-	for i := 0; i < entriesPerBlock; i++ {
-		raw := block[i*entrySize : (i+1)*entrySize]
-		entryType := raw[0]
+		if a.encrypted {
+			decryptECB(a.cipher, block)
+		}
 
-		switch entryType {
-		case entryTypeFolder, entryTypeFile:
-			name := nullTerminated(raw[entryOffName : entryOffName+entryNameLen])
-			if name != "." && name != ".." {
-				pos := binary.LittleEndian.Uint32(raw[entryOffPosition:])
-				size := binary.LittleEndian.Uint32(raw[entryOffSize:])
-				out = append(out, Entry{
-					Name:   name,
-					IsDir:  entryType == entryTypeFolder,
-					Size:   size,
-					offset: pos,
-				})
+		var next uint32
+		for i := 0; i < entriesPerBlock; i++ {
+			raw := block[i*entrySize : (i+1)*entrySize]
+			entryType := raw[0]
+
+			switch entryType {
+			case entryTypeFolder, entryTypeFile:
+				name := nullTerminated(raw[entryOffName : entryOffName+entryNameLen])
+				if name != "." && name != ".." {
+					pos := binary.LittleEndian.Uint32(raw[entryOffPosition:])
+					size := binary.LittleEndian.Uint32(raw[entryOffSize:])
+					out = append(out, Entry{
+						Name:   name,
+						IsDir:  entryType == entryTypeFolder,
+						Size:   size,
+						offset: pos,
+					})
+				}
+			}
+			if i == entriesPerBlock-1 {
+				next = binary.LittleEndian.Uint32(raw[entryOffNextBlock:])
 			}
 		}
+
+		if next == 0 {
+			break
+		}
+		offset = next
 	}
 
 	return out, nil

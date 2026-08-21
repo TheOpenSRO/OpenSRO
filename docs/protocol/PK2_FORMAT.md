@@ -46,59 +46,63 @@ A `.pk2` file is a flat blob containing:
 | 0x6A   | 4    | Position (uint32 LE): for a folder, the byte offset of its own entry block; for a file, the byte offset of its data |
 | 0x6E   | 4    | Reserved/unused (observed as always 0)                      |
 | 0x72   | 4    | Size (uint32 LE): file size in bytes; 0 for folders          |
-| 0x76   | 10   | Reserved/unused                                              |
+| 0x76   | 4    | Next-block offset (uint32 LE) — only meaningful on a block's last (20th) entry slot: 0 if this block holds the directory's last entries, otherwise the file offset of the block continuing this directory's entry list. See "SOLVED" section below for how this was found. |
+| 0x7A   | 6    | Reserved/unused                                              |
 
 Each block is `ENTRIES_PER_BLOCK` (20) of these 128-byte entries back to back (2560 bytes/block).
 
 Walking the tree: read one block at the folder's offset (root folder starts right after the
 header), and for each entry with type 1 or 2 whose name isn't `.` or `..`, record it — folders
-recurse via their `Position` field, files are read via `Position`+`Size`.
+recurse via their `Position` field, files are read via `Position`+`Size`. If the block's last (20th)
+entry's next-block field is nonzero, read another block from that offset and continue the same way
+— a directory isn't capped at 20 real entries, it's a chain of as many 20-entry blocks as it needs
+(see "SOLVED" section below for how this was confirmed).
 
-## CONFIRMED REAL GAP: directories with more than 20 entries are silently truncated
+## SOLVED: the real "next block" chain-continuation mechanism
 
-Every real folder tested against this project's own samples until now happened to fit in one
-20-entry block, so this was never caught — **it's now confirmed real and significant** against a
-genuine full retail `Data.pk2` (3.8GB), not just this project's smaller previous samples.
+Every real folder tested against this project's own samples originally happened to fit in one
+20-entry block, so a real gap went uncaught for a long time: a directory with more than 20 real
+entries needs a second (or third...) block, and this reader used to only ever read the first one,
+silently dropping the rest. Proven decisively against a genuine full retail `Data.pk2` (3.8GB):
+root's own first block has no `Prim` folder at all (`ahclient.dat`, `Ani`, and 19 loose `.bsr`
+files fill all 20 slots), yet a real, sane `Compound`/`Dungeon`/`Prim`-containing block existed
+elsewhere in the file with its `..` field correctly pointing back at root — root genuinely had more
+than 20 real children this reader was silently missing.
 
-**Proof, not speculation**: a byte-level scan of the low-offset region of a real `Data.pk2` (where
-directory blocks cluster, before real file data starts) found 2451 real, self-referential
-directory-shaped blocks (`entry[0]` = type 1, name `"."`, `Position` equal to its own file offset)
-in just the first 16MB — of which only **6** are reachable by walking the tree from the root block
-the way this reader currently does. 2445 real directory blocks are orphaned: unreachable from root,
-despite many of them having a `..` field (confirmed to mean immediate parent, not a "back to root"
-shortcut — verified on a real 3-levels-deep folder) that correctly points *back* to a parent this
-reader also can't discover *forward* references to. Concretely: root's own single 20-entry block
-contains no `Prim` folder at all (`ahclient.dat`, `Ani`, and 19 loose `.bsr` files fill all 20
-slots) — yet a real orphaned block with a real, sane `Char`/`NPC`/`particle`/`Struct` substructure
-declares `..` = root's own offset. Root genuinely has more than 20 real children; this reader
-currently only ever sees the first 20.
+**The real mechanism, found by decompiling the real client's own directory-read function**
+(`GFXFileManager.dll`, the actual pk2-reading library — not `sro_client.exe` or
+`EternityLib.dll`, which is why earlier "JMXV"-string and "JoyMax"-string searches in those two
+never found it) and cross-checking the exact field it reads against real block bytes: **only the
+last (20th) entry slot of a block** carries a real "next block" file offset, at entry offset
+`0x76` (the first 4 bytes of what this doc used to call a 10-byte "reserved" region — a `uint32`
+in practice, though the decompiled code treats it as a 64-bit low:high pair). Every other entry's
+copy of that field is always 0; the 20th slot's is 0 too *unless* the directory needs another
+block, in which case it holds that block's real file offset. A directory with more entries than
+fit in one block is simply a linked chain of blocks — walk each one's 20 entries as normal, and
+after the last slot, check this field: 0 means done, nonzero means read another block from that
+offset and keep going. No decompiler output is stored in this repo, only this resulting fact about
+the field layout.
 
-**What was ruled out** while looking for the real continuation mechanism (so a future pass doesn't
-re-tread this): the two "reserved" fields (`0x6E`, `0x76`) are zero on both a full block's last
-entry and the `.` entry of an under-full block — no obvious next-block pointer lives there (one
-single non-zero byte was found once in a full block's trailing reserved region, but it didn't
-resolve to any plausible offset and every other checked entry's reserved bytes were clean zero,
-consistent with this project's existing "reused-slot stale bytes" phenomenon rather than a real
-field). Blocks are not simply contiguous per-directory (the bytes immediately following a full
-root block belong to a genuinely different, unrelated real folder, confirmed by its own coherent
-subtree). `..` was checked and confirmed to mean immediate parent, not a root shortcut, ruling out
-a theory that would have otherwise explained the orphans away.
+**Confirmed against real data, not just the decompiled logic**: `Data.pk2`'s root directory turned
+out to need a real 3-block chain. Block 1's last entry (`asiaminor_theater_column03_01.bsr`) has a
+nonzero next-block field pointing at block 2, which itself continues with more real root-level
+entries (more loose `.bsr` files, then real folders — `Compound`, `Dungeon`, `item`, `mesh`,
+`mtrl`, `navmesh`, `pos`, and finally **`Prim`**, the very folder this project has been building
+conventional real asset paths against all along) and whose own last entry points at a real block 3.
 
-**Real, unexplored next steps** for whoever picks this back up: decompile the real directory-read
-function in `sro_client.exe`/`EternityLib.dll` (both already Ghidra-analyzed for other formats in
-this project) rather than continuing to guess at the byte layout; or reconstruct affected trees
-empirically via the reliable `..` back-references (union every self-referential directory block
-found by scanning, grouped by their real `..` parent pointer) as a working, if inelegant, fallback
-that doesn't require finding the forward mechanism at all.
+**What was ruled out along the way** (so a future pass doesn't re-derive this): the `..` field was
+checked and confirmed to mean immediate parent, not a "back to root" shortcut (verified on a real
+3-levels-deep folder) — ruling out a theory that would have explained the orphaned blocks away
+without a real forward-chain mechanism. Blocks are not simply contiguous per-directory either (the
+bytes immediately following a full root block belong to a genuinely different, unrelated real
+folder). Earlier inspection of entry offset `0x76` on one specific real entry found what looked
+like meaningless single-byte noise — that entry's directory simply didn't need continuation, so
+its next-block field was legitimately near-zero-but-not-exactly (a real red herring, not a wrong
+theory).
 
-**Practical impact today**: any directory-listing tool that walks the tree from a real archive's
-root (e.g. `server/cmd/pk2list` with no `-extract`) can silently miss real content in any folder
-with more than 20 real entries — confirmed on `Data.pk2`. This does **not** invalidate assets
-already wired into this project via an exact, known-in-advance path (e.g. every
-`SRREVAMP_*_PATH` environment variable in `README.md`) — reading one exact file by its full path
-still works correctly regardless of how many siblings it has, since no directory along a fixed
-path needs to be *enumerated*, only walked one named child at a time. It only affects *browsing*
-for real paths this project doesn't already know.
+**Fixed in both readers**: `readBlockChain`/`_read_block_chain` now follow this real chain (bounded
+by a cycle/corruption guard, not a real observed limit — the real chain found was 3 blocks long).
+Verified against the real `Data.pk2`: `server/cmd/pk2list` went from finding 41 files to 73139.
 
 ## Obfuscation (Blowfish, with two client-specific quirks)
 

@@ -157,6 +157,94 @@ func TestReadDirHandlesFullBlock(t *testing.T) {
 	}
 }
 
+// buildChainedArchive writes a synthetic (never real game data) directory
+// with more than entriesPerBlock real entries, split across two blocks:
+// the real client's own continuation mechanism, confirmed empirically --
+// see docs/protocol/PK2_FORMAT.md. A directory needing more than one block
+// stores a second block's file offset in the LAST entry slot's real
+// entryOffNextBlock field (only meaningful there, not on every entry).
+func buildChainedArchive(t *testing.T) string {
+	t.Helper()
+
+	header := make([]byte, headerSize)
+	copy(header, []byte("JoyMax File Manager!\x00"))
+
+	writeEntry := func(block []byte, i int, entryType byte, name string, offset, size uint32) {
+		e := block[i*entrySize : (i+1)*entrySize]
+		e[0] = entryType
+		copy(e[entryOffName:entryOffName+entryNameLen], name)
+		binary.LittleEndian.PutUint32(e[entryOffPosition:], offset)
+		binary.LittleEndian.PutUint32(e[entryOffSize:], size)
+	}
+	writeNextBlock := func(block []byte, i int, next uint32) {
+		e := block[i*entrySize : (i+1)*entrySize]
+		binary.LittleEndian.PutUint32(e[entryOffNextBlock:], next)
+	}
+
+	block1Offset := uint32(headerSize)
+	block2Offset := block1Offset + blockSize
+	fileOffset := block2Offset + blockSize
+
+	block1 := make([]byte, blockSize)
+	writeEntry(block1, 0, entryTypeFolder, ".", block1Offset, 0)
+	// Fill the rest of block 1 with real (distinctly-named) file entries,
+	// leaving the last slot's next-block field pointing at block 2.
+	for i := 1; i < entriesPerBlock; i++ {
+		writeEntry(block1, i, entryTypeFile, fmt.Sprintf("block1_file%02d.txt", i), fileOffset, 4)
+	}
+	writeNextBlock(block1, entriesPerBlock-1, block2Offset)
+
+	block2 := make([]byte, blockSize)
+	writeEntry(block2, 0, entryTypeFile, "block2_file00.txt", fileOffset, 4)
+	writeEntry(block2, 1, entryTypeFile, "block2_file01.txt", fileOffset, 4)
+	// Remaining slots stay entryTypeEmpty (0) -- block 2's own last slot's
+	// next-block field is left at 0, correctly signaling "no more blocks".
+
+	path := filepath.Join(t.TempDir(), "chained.pk2")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	for _, chunk := range [][]byte{header, block1, block2, []byte("data")} {
+		if _, err := f.Write(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path
+}
+
+func TestReadDirFollowsChainedBlocks(t *testing.T) {
+	path := buildChainedArchive(t)
+
+	a, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer a.Close()
+
+	entries, err := a.ReadDir()
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+
+	// (entriesPerBlock-1) real files in block 1 (slot 0 is ".") + 2 real
+	// files in block 2.
+	want := entriesPerBlock - 1 + 2
+	if len(entries) != want {
+		t.Fatalf("expected %d entries across both chained blocks, got %d: %+v", want, len(entries), entries)
+	}
+
+	names := map[string]bool{}
+	for _, e := range entries {
+		names[e.Name] = true
+	}
+	if !names["block1_file01.txt"] || !names["block2_file00.txt"] || !names["block2_file01.txt"] {
+		t.Fatalf("expected entries from both blocks, got: %+v", entries)
+	}
+}
+
 func TestEffectiveKeyAndDecryptMatchRealArchive(t *testing.T) {
 	// Known-answer check derived from a real archive's header checksum
 	// blob: Blowfish-ECB-encrypting "Joymax Pak File\x00" (as two 8-byte,
