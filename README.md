@@ -295,19 +295,19 @@ half-implemented. The choice is stored server-side (`character.Gender`) and broa
 peer (`EnterWorldResult.Gender`/`EntitySnapshot.Gender`, live-looked-up per broadcast — see
 `server/internal/session/world.go`'s `genderOf`), so other players now see each character's real
 chosen body too, not just the local player. Verified with a real, live two-client TCP test
-(`TestWorldFullFlow`) asserting the real gender propagates correctly both ways. **Not yet gotten
-a rendered screenshot of an assembled China-woman character** — verification so far rests on the
-live protocol round trip, full encode/decode unit coverage, and a direct real material-name-match
-check (pulled `woman_thigh.bms`/`chinawoman_warrior.bmt`, confirmed the same name-matching
-`CharacterAssembler` already relies on works for this gender too) — see `docs/PROGRESS.md`.
+(`TestWorldFullFlow`) asserting the real gender propagates correctly both ways, a direct real
+material-name-match check (pulled `woman_thigh.bms`/`chinawoman_warrior.bmt`, confirmed the same
+name-matching `CharacterAssembler` already relies on works for this gender too), and an actual
+rendered screenshot: a real China-woman skeleton plus real pelvis/thigh meshes assembled and
+rendered via `client/tools/render_character.gd`, showing two correctly mirrored legs attached to
+a real 39-bone skeleton — see `docs/PROGRESS.md`.
 
 Not yet done: confirmed real-world terrain/object
 positioning/scale relative to a player's actual spawn coordinate (currently placed for visibility,
 not accuracy); a newly-found, entirely unparsed real file type (`Map.pk2` region folders also
 contain a `.t` file, magic `JMXVMAPT1001`, with a real byte pattern consistent with a texture
 blend/weight map — a real, previously-investigated RE gap this project couldn't fully close, see
-`docs/protocol/MAPM_FORMAT.md`); an actual rendered screenshot of the China-woman character (see
-above). That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
+`docs/protocol/MAPM_FORMAT.md`). That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
 mesh-piece pairing when a `.bmt` has multiple layers and no name match is available is still a
 documented, unconfirmed heuristic (pairs by index when counts match, used by `ObjectLoader` for
 `.bsr` scenery); `.efp`'s nested tree structure (see above). See

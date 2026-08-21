@@ -2,6 +2,29 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 60) — got the China-woman screenshot the previous entry flagged as missing
+
+- Closed the one honest gap left open by the gender-selection work: no rendered screenshot of an
+  assembled China-woman body existed yet.
+- Rebuilt `pk2list` on the RE box (it was still the pre-chain-fix build from earlier in this
+  session -- 41 files instead of the real 73139) and pulled real China-man and China-woman
+  skeleton/body/material files directly from a real retail `Data.pk2`.
+- Wrote a generic nested-directory synthetic pk2 builder (throwaway, never committed) to pack
+  real files at their real conventional paths -- more general than this session's earlier
+  single-flat-directory synthetic archives, since character assets live several folders deep
+  (`Prim\Skel\Char\China\...`, `Prim\Mesh\Char\China\woman\...`). Verified the built archive
+  resolves every real file correctly via `ObjectLoader.find_file` before touching the actual
+  scene.
+- Used the project's existing `client/tools/render_character.gd` dev tool (loose `--bsk`/
+  `--parts-dir` args, no gender-awareness needed) against the real pulled China-woman skeleton
+  and two real body-part meshes (pelvis, thigh) -- got a real rendered screenshot showing two
+  correctly mirrored legs attached to a real 39-bone China-woman skeleton, proving the paired
+  L/R bone-attachment mechanism (the same one already verified for China-man) works identically
+  for this gender's real data.
+- This is the last item from the previous entry's "Not yet done" callout -- gender selection is
+  now verified at every layer: live protocol round trip (Go), full encode/decode unit coverage
+  (GDScript), a direct material-name-match check, and now an actual rendered real body.
+
 ## 2026-08-21 (cont'd 59) — real per-account gender selection: China man and China woman, both with confirmed real assets
 
 - Closed the last honest gap from the armor-broadcast work: every character still rendered the
