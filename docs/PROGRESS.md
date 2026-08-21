@@ -2,6 +2,39 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 62) — found the real material-layer-to-mesh-piece mechanism via decompilation
+
+- User explicitly asked to keep chasing RE leads, accepting some dead ends. Picked up the last
+  open backlog item: `ObjectLoader`'s unconfirmed index-based heuristic for pairing a `.bmt`
+  layer to a `.bsr` mesh piece when no name match is available.
+- Traced the real client's actual object-loading code from previously-documented entry points
+  (`FUN_00bed8d0`/`FUN_00bce3b0`, `BSR_FORMAT.md`) through several more real functions: a
+  type-dispatch factory (`FUN_00be9250`) that turned out to have a wrong-branch false start (case
+  0 is real `ResChar`, confirmed via a literal `"...ResChar.cpp"` string and an `nComboNum == 0`
+  assertion — a different, related real class, not what this project needed), corrected to the
+  right branch (`FUN_00be8dc0`), down to the concrete `ResObj` vtable's real `Load` method,
+  `FUN_00be41d0` — confirmed as the right target by a literal `"...ResObject.cpp"` string and a
+  `"m_PrimMeshGroups.size() == 0"` assertion exactly where the mesh-group list is read.
+- **Real finding**: each real mesh piece (`m_PrimMeshGroups` entry) carries its own explicit,
+  file-encoded `uint32` count followed by that many further `uint32` indices into a shared
+  material/layer array — a real, per-piece index list read directly from the file, not an
+  implicit pairing inferred from matching counts (which is what this project's current fallback
+  assumes). This directly answers the open question in principle.
+- **Deliberately not implemented yet**: this pass found the real *mechanism*, not its exact byte
+  offsets in a real file — the decompiled `Load` function reads noticeably more real sections
+  than this project's currently-documented flat `.bsr` struct models, so mapping this to concrete
+  offsets needs a real hex-dump cross-check (the same technique every other field in `BSR_FORMAT.md`
+  was pinned down with) before it can be safely coded against. Recorded in `BSR_FORMAT.md` as a
+  real, promising, correctly-scoped next step rather than guessed at further or half-implemented
+  against an unconfirmed byte layout.
+- This is a genuine partial success, unlike the previous entry's `1920.0f` dead end — the same
+  "trace from a known real entry point" technique that solved `.bsr`'s nature-category field-order
+  bug worked again here, just needed a wrong-branch correction along the way (worth recording:
+  `FUN_00be9250`'s case dispatch isn't 1:1 with "static object vs. character", case 0 specifically
+  is character).
+- No code changes this entry -- documentation only, since implementing against an unconfirmed byte
+  layout would risk shipping wrong behavior. Full regression not re-run (nothing to regress).
+
 ## 2026-08-21 (cont'd 61) — real per-player weapons, and a negative RE result recorded honestly
 
 - Attempted the next open item (real-world placement scale) via decompilation: a real `1920.0f`

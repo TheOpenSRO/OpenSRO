@@ -318,9 +318,12 @@ positioning/scale relative to a player's actual spawn coordinate (currently plac
 not accuracy); a newly-found, entirely unparsed real file type (`Map.pk2` region folders also
 contain a `.t` file, magic `JMXVMAPT1001`, with a real byte pattern consistent with a texture
 blend/weight map — a real, previously-investigated RE gap this project couldn't fully close, see
-`docs/protocol/MAPM_FORMAT.md`). That's the current focus (see `docs/PROGRESS.md`). The material-layer-to-
-mesh-piece pairing when a `.bmt` has multiple layers and no name match is available is still a
-documented, unconfirmed heuristic (pairs by index when counts match, used by `ObjectLoader` for
-`.bsr` scenery); `.efp`'s nested tree structure (see above). See
+`docs/protocol/MAPM_FORMAT.md`). That's the current focus (see `docs/PROGRESS.md`). The
+material-layer-to-mesh-piece pairing when a `.bmt` has multiple layers and no name match is
+available still uses an unconfirmed index-based heuristic in `ObjectLoader` for `.bsr` scenery —
+though the real mechanism has now been found by decompiling the real client's `ResObject::Load`
+(each mesh piece carries its own explicit, file-encoded list of material-layer indices, not an
+inferred pairing), just not yet mapped to concrete byte offsets or implemented — see
+`docs/protocol/BSR_FORMAT.md`; `.efp`'s nested tree structure (see above). See
 `docs/protocol/{PK2,BSR,BMS,DDJ,BMT,BAN,BSK,MAPO,MAPM,EFP}_FORMAT.md` and `docs/PROGRESS.md` for
 the detailed running log.

@@ -104,6 +104,40 @@ material); the nature order's bounding-box position isn't confirmed, so it's lef
 `center_asia_plant01_01.bsr` end-to-end: real mesh, real material, and (via `ObjectLoader`) a real
 rendered, textured plant — see `docs/PROGRESS.md`.
 
+## Real mechanism found for multi-piece material-layer assignment (not yet implemented)
+
+**Previously**: `ObjectLoader` had no confirmed way to know which `.bmt` layer belongs to which
+mesh piece when a material has multiple layers and no name match is available — it fell back to
+pairing layer `i` with mesh piece `i` only when the two counts happened to match, and layer 0
+otherwise (see `docs/README.md`'s "Not yet done").
+
+**Investigated by decompiling the real client's actual `ResObject::Load`** (`sro_client.exe`),
+traced from the known `FUN_00bed8d0`/`FUN_00bce3b0` entry points documented above, through the
+real type-dispatch factory (`FUN_00be9250`, a switch on an object-type code — case 0 turned out to
+be `ResChar` per a real `"D:\...\ResChar.cpp"` string, a different real class; the correct branch
+for static scenery objects is one of cases 1/2/3/4/6/7, `FUN_00be8dc0`) down to the concrete
+`ResObj` vtable's `Load` method, `FUN_00be41d0` — confirmed as the real target by a literal
+`"D:\...\ResObject.cpp"` string and a `"m_PrimMeshGroups.size() == 0"` assertion message right
+where the mesh-group list is read.
+
+**The real mechanism, as decompiled**: for each of `m_PrimMeshGroups`'s real count of entries, the
+loader reads one mesh-group's own path string, then a real `uint32` count, then that many further
+`uint32` values — each one used as an index into a separate shared array (`param_1[0x5d]` in the
+decompilation, plausibly the object's material/layer list) which gets copied into that mesh
+group's *own* per-group index array. In plain terms: **each mesh piece carries an explicit,
+file-encoded list of which material-layer indices apply to it** — not an implicit pairing inferred
+from matching counts, and not always "layer 0" as this project's fallback currently assumes. This
+directly answers the open question, in principle.
+
+**Not yet done**: mapping this decompiled mechanism to concrete byte offsets in a real `.bsr` file
+(i.e. hex-dumping a real multi-layer, multi-piece object and locating this count-prefixed index
+list in the actual bytes, the same way every other field in this doc was pinned down). The
+currently-documented flat struct above doesn't have a slot for it, and the real `Load` function
+reads noticeably more real sections than that struct currently models (bounding-box-adjacent
+fields, several tagged skip/seek points) — this pass found the *mechanism*, not (yet) its exact
+place in the byte layout, so nothing here has been implemented or wired into `ObjectLoader` yet.
+Flagged as a real, promising, correctly-scoped next step rather than guessed at further.
+
 ## Implementation notes
 
 - `server/internal/bsr` (Go): parses name, mesh path, bounding box (best-effort, building-order
