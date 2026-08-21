@@ -2,6 +2,46 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 55) — first real, assembled region: terrain + placed objects rendered together
+
+- User asked to render "a real part of the world environment... successfully mapping all those
+  items from a pk2 to create the world" — every previous milestone (terrain, one scenery object,
+  one map object, other players) had been verified in isolation. This combined them: real
+  `100/100.m` terrain and real `100/100.o` object placements from the same real region, loaded
+  into the same scene at once, resolved through the real `object.ifo` index and rendered with
+  their real `.bsr` models.
+- Pulled real `Map.pk2`/`Data.pk2`/`Media.pk2` data for region 100/100 from the RE box and packed
+  it into synthetic test archives (same technique used throughout this project — real bytes at
+  conventional real paths, never fabricated). Loaded both `SRREVAMP_MAPM_PATH` and
+  `SRREVAMP_MAPO_PATH` from the same region in one `World3D` run.
+- Confirmed working end-to-end via log output: 13211 real terrain tiles parsed (777 complete rows
+  rendered), 58/58 real map objects loaded and resolved to just 4 distinct real `.bsr` models
+  (added a `templates` cache in `_try_load_real_map_objects` keyed by resolved `.bsr` path, so
+  repeat placements of the same real object type `duplicate()` an already-loaded template instead
+  of re-parsing `.bms`/`.bmt`/`.ddj` for every placement — a real region turned out to reuse very
+  few distinct models across many placements).
+- First render exposed a real placement-scale issue, not a bug: all 58 objects clustered tightly
+  around their own real relative positions (same `Vector3(4, 0, -4)` close offset used for a
+  single scenery object left the player standing in the middle of a dense tree cluster, filling
+  the frame with canopy/trunk geometry and hiding the terrain entirely). Fixed by widening the map
+  object placement offset to `Vector3(20, 0, -30)` so the cluster is framed as a recognizable
+  group instead of standing inside it — the default gameplay camera (`World3D.tscn`) was left
+  untouched.
+- Final render (default camera, corrected offset): real textured terrain (visible path/ground
+  blend matching the region's real minimap texture) and a real tree with bark texture, both in
+  frame together, player capsule standing at a sensible distance rather than buried in geometry.
+- Full regression: Go clean (`build`/`vet`/`test`, all packages), all 33 GDScript suites pass (19
+  format/protocol readers + asset builders + 17 net protocol packet suites — no test changes were
+  needed, this was pure runtime/placement behavior in `World3D.gd`).
+- `MAX_MAP_OBJECTS` raised from 30 to 300 (an honestly-scoped cap on real placements to
+  instantiate, not a real engine limit — distinct real models are cached, so this mostly bounds
+  node/instance count, not real file parsing).
+- Remaining open items unchanged: real-world object placement scale/position isn't independently
+  confirmed against in-game reference (objects render at the right *relative* positions from
+  `.mapo`, but absolute scale versus the real client isn't cross-checked), real per-account
+  character loadouts (server-side, not started), the `.t` texture-blend-map format (found, not
+  decoded).
+
 ## 2026-08-21 (cont'd 54) — fixed the real `.bsr` nature-category parsing bug
 
 - User said "go for it" after being offered a choice; picked the `.bsr` nature-category bug over

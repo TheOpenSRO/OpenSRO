@@ -251,6 +251,14 @@ bounding-box fields differently, not a corrupt file — see `docs/protocol/BSR_F
 Real-world placement scale/position relative to a player's actual spawn coordinate isn't confirmed
 yet (same honest caveat as terrain above).
 
+Terrain and placed objects have been verified rendering together, from the same real region, not
+just each in isolation: `100/100`'s real `.m` terrain (13211 tiles) and real `.o` placements
+(58 objects, resolving to 4 distinct real `.bsr` models) load into the same `World3D` scene at
+once and produce a genuinely recognizable establishing view — real textured ground and a real
+tree with bark texture together in frame. Repeat placements of the same real model are cached and
+`duplicate()`d rather than re-parsed (`_try_load_real_map_objects` in `World3D.gd`), since real
+regions turn out to reuse very few distinct models across many placements.
+
 Not yet done: real terrain collision (the visual mesh is real now, but the ground's collision
 shape is still the flat placeholder box) and confirmed real-world terrain/object
 positioning/scale relative to a player's actual spawn coordinate (currently placed for visibility,

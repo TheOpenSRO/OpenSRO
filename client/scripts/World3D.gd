@@ -125,11 +125,12 @@ const PLAYER_EQUIPMENT_MATERIAL_PATH := "Prim\\Mtrl\\Item\\China\\man_item\\clot
 ## bug was fixed, since this file lives inside a real archive folder that
 ## bug was silently dropping from every listing.
 const OBJECT_INDEX_PATH := "object.ifo"
-## How many real objects from SRREVAMP_MAPO_PATH's region to load real
-## models for -- an arbitrary, honestly-scoped cap (real regions can have
-## hundreds of placements, each needing its own .bsr/.bms/.bmt/.ddj parse),
-## not a real engine limit.
-const MAX_MAP_OBJECTS := 30
+## How many real *placements* from SRREVAMP_MAPO_PATH's region to
+## instantiate -- an arbitrary, honestly-scoped cap, not a real engine
+## limit. Distinct real .bsr models are only parsed once each and
+## duplicated for repeat placements (see _try_load_real_map_objects), so
+## this mostly bounds real node/instance count, not real file parsing.
+const MAX_MAP_OBJECTS := 300
 
 @onready var player: CharacterBody3D = $Player
 @onready var player_mesh: MeshInstance3D = $Player/Mesh
@@ -555,6 +556,12 @@ func _try_load_real_map_objects() -> void:
 	var origin: Vector3 = region.objects[0].position
 	var loaded := 0
 	var skipped_unresolved := 0
+	# A real region repeats the same handful of real object types across
+	# dozens/hundreds of placements (see docs/PROGRESS.md -- a real 58-
+	# object region had only 4 distinct types) -- load each distinct real
+	# .bsr once and duplicate the built node for repeat placements, rather
+	# than re-parsing the same real .bms/.bmt/.ddj chain per placement.
+	var templates := {} # resolved .bsr path -> loaded template Node3D
 	for obj in region.objects:
 		if loaded >= MAX_MAP_OBJECTS:
 			break
@@ -562,15 +569,28 @@ func _try_load_real_map_objects() -> void:
 		if entry == null:
 			skipped_unresolved += 1
 			continue
-		var node := ObjectLoader.load_object(data_archive, entry.path)
-		if node == null:
-			continue
-		node.position = (obj.position - origin) + Vector3(4, 0, -4)
+
+		var node: Node3D
+		if templates.has(entry.path):
+			node = templates[entry.path].duplicate()
+		else:
+			var template := ObjectLoader.load_object(data_archive, entry.path)
+			if template == null:
+				continue
+			templates[entry.path] = template
+			node = template.duplicate()
+		# Placed further out than the single-scenery-object offset above --
+		# a real region's real objects can cluster tightly around their
+		# own real relative positions (see docs/PROGRESS.md), so centering
+		# the cluster at the same close distance as one lone object left
+		# the player standing in the middle of it rather than able to see
+		# it as a recognizable cluster.
+		node.position = (obj.position - origin) + Vector3(20, 0, -30)
 		container.add_child(node)
 		loaded += 1
 
-	print("World3D: loaded %d/%d real map objects from %s (%d unresolved type IDs skipped)" % [
-		loaded, region.objects.size(), mapo_path, skipped_unresolved])
+	print("World3D: loaded %d/%d real map objects from %s (%d unresolved type IDs skipped, %d distinct real models)" % [
+		loaded, region.objects.size(), mapo_path, skipped_unresolved, templates.size()])
 
 ## Resolves a real .bmt at bmt_path (via ObjectLoader, the same
 ## pk2 -> BmtReader -> DdjReader pipeline already verified for scenery) into
