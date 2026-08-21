@@ -43,6 +43,18 @@ recursive reader still needs the real per-node header shape (the exact meaning o
 against real file bytes, the same way every other confirmed field in this project was pinned down
 — flagged as a real, concrete next step rather than guessed at further.
 
+**A concrete, testable hypothesis for that next step**: this doc already documents a top-level
+`uint32` `Count` field read right after the effect name, previously described only as "plausibly a
+section count, not cross-checked against `len(Entries)`" (correct — `Entries` is a flat walk of
+every nesting level, so it was never expected to match). Given the decompiled structure above, this
+field is very plausibly the *real root node's own child-count* — the second linked list's length
+in `FUN_00cc27e0`'s terms — rather than a generic "how many properties" count. Spot-checked on one
+real file (`sample_deco_charge_light_a.efp`): `Count` reads `3` at file offset `0x21`, right after
+the name `"counterattack"`. Not yet verified end-to-end (would need to confirm exactly 3 real
+top-level container children close cleanly using the existing flat scanner's already-correct entry
+boundaries, grouped rather than re-parsed from scratch) — but a genuinely promising, checkable
+starting point for whoever picks this up next, not a fresh guess.
+
 ## What this reader does and doesn't recover
 
 **Recovers a flat sequence of `(name, raw value bytes)` pairs — not the true nested tree.** Every
