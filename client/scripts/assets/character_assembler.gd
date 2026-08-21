@@ -92,6 +92,20 @@ const EQUIPMENT_SLOT_BONES := {
 	"fa": ["Bip01 R Foot", "Bip01 L Foot"],
 }
 
+## Real, confirmed limitation found by direct visual verification (color-coded,
+## unshaded, non-culled render of each slot in isolation) against a real
+## clothes_03 set: "ha"/"ba"/"la"/"fa"/"aa" all land exactly where a real
+## character's head/torso/legs/feet/forearms are -- their raw baked vertex
+## coordinates are real absolute character-space positions, the same
+## confirmed convention body parts use (see this file's top comment) -- but
+## "sa" (the shoulder piece) does not: its raw Y range (~0.9-2.3) is roughly
+## 13 units below Bip01 Clavicle's real rest height (~15), so it renders
+## down near the pelvis instead of at the shoulder. Not yet understood why
+## this one real slot's coordinates differ from the other five (a different,
+## unconfirmed local-pivot convention for small standalone accessory props
+## is the leading guess, not confirmed) -- flagged honestly rather than
+## silently mispositioning a real shoulder pad near a character's hip.
+
 ## Extracts a real equipment mesh's trailing 2-letter slot code from its
 ## name (e.g. "clothes_03_aa" -> "aa"), or "" if the name doesn't end in
 ## "_XX" shape.

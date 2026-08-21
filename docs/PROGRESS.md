@@ -2,6 +2,25 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 50) — verified the armor visually, found and documented one real mispositioned piece
+
+- User asked "what's next" after the armor commit; picked verifying it actually looks right over
+  starting new work, since the shipped screenshot only showed 3 of 6 pieces clearly.
+- Built a throwaway color-coded diagnostic render (one bright, unshaded, non-culled debug material
+  per slot) to see exactly where each of the 6 real pieces lands, rather than guessing from the
+  gameplay screenshot. Confirmed 5 of 6 are genuinely correct: head, body, legs, and feet were
+  already visibly right; the arm/gauntlet piece turned out to be correct too — it was just small
+  and subtle under normal shading/lighting, not actually missing (a real "looks broken but isn't"
+  case, caught before it got misreported as a bug).
+- Found one real, confirmed bug: the shoulder piece (`sa`) renders down near the character's hip,
+  not the shoulder. Traced it precisely — its raw baked Y coordinates (~0.9-2.3) sit roughly 13
+  units below `Bip01 Clavicle`'s real height (~15), unlike the other 5 slots, whose raw coordinates
+  land exactly right using the same absolute-character-space convention body parts already use.
+  Documented the real, precise mismatch in `character_assembler.gd` rather than guessing a fake
+  offset to paper over it — left it attached (harmless, just tiny and misplaced) instead of hiding
+  the real limitation.
+- No functional/test changes this entry — verification and honest documentation only.
+
 ## 2026-08-21 (cont'd 49) — real armor on the player character
 
 - User asked "what next" after the pk2-truncation-bug documentation; picked equipment/armor
