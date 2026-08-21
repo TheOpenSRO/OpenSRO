@@ -237,3 +237,21 @@ static func assemble_equipment(skeleton: Skeleton3D, parts: Dictionary, default_
 		else:
 			_attach_rigid(skeleton, _build_side_mesh(mesh, true), bones[0], material)
 			_attach_rigid(skeleton, _build_side_mesh(mesh, false), bones[1], material)
+
+## Real bone a one-handed weapon rigidly attaches to -- confirmed directly
+## (not assumed from the 3ds Max Biped naming convention alone) by pulling
+## a real chinaman_skel.bsk and finding the exact string "Bip01 R Hand"
+## among its real bone names. Unlike body parts and clothes_NN equipment,
+## real weapon meshes (Prim\Mesh\Item\China\weapon\*.bms, e.g. "blade_01")
+## carry no left/right-paired naming convention -- they're single self-
+## contained meshes, one real item per weapon, not split halves.
+const WEAPON_BONE := "Bip01 R Hand"
+
+## Attaches one real weapon mesh (already resolved to its own real
+## material via mesh.material_name, e.g. a real blade_01.bms's
+## material_name "blade1_5" matches a real layer inside a real
+## blade1_5.bmt) rigidly to WEAPON_BONE -- the same _attach_rigid
+## mechanism as body parts and clothing, just for a single unpaired mesh
+## with no slot-code parsing needed.
+static func assemble_weapon(skeleton: Skeleton3D, mesh: BmsReader.ParsedMesh, material: Material = null) -> void:
+	_attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), WEAPON_BONE, material)

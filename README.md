@@ -220,21 +220,32 @@ single-piece was determined by a real triangle-centroid-X gap scan on the actual
 guess — see `docs/PROGRESS.md`. This is a fixed default armor set (one arbitrary real pick among
 many found), not a real per-account equipment loadout.
 
-Other connected players are real assembled characters too now, not just labeled capsules: since
-every player currently resolves to the exact same fixed China-man body anyway (no real
-per-account race/gender loadout is tracked server-side yet), showing everyone that same real body
-instead of a capsule doesn't overclaim anything new. Their armor, though, is now genuinely
-per-player: the server broadcasts each entity's real, live `SLOT_ARMOR` equip state as part of
-`OpEnterWorldResult`/`OpEntityEntered` (`EntitySnapshot.HasArmor`, queried fresh from
+Other connected players are real assembled characters too now, not just labeled capsules, each
+rendering their own real per-account `Gender` (China Man or China Woman — see above), not a single
+shared fixed body. Their armor and weapon are genuinely per-player too: the server broadcasts each
+entity's real, live `SLOT_ARMOR`/`SLOT_WEAPON` equip state as part of `OpEnterWorldResult`/
+`OpEntityEntered` (`EntitySnapshot.HasArmor`/`HasWeapon`, queried fresh from
 `server/internal/equipment` at broadcast time, not cached) — verified with a real, live two-client
-test over actual TCP (`TestWorldFullFlow`): one character with real armor equipped, one without,
-and both the initial world snapshot and the live entity-entered broadcast carry the correct real
-flag for each. The character/equipment assets are parsed and cached
-once at scene startup and reused to build one independent `Skeleton3D` per connected player — see
-`World3D.gd`'s `_build_assembled_character()`. Falls back to the labeled capsule if the shared
-assets never loaded. A bare *decoration* `Skeleton3D` (loaded separately via
+test over actual TCP (`TestWorldFullFlow`): one character with real armor equipped but no weapon,
+one with a real weapon equipped but no armor, and both the initial world snapshot and the live
+entity-entered broadcast carry the correct real flags for each. The character/equipment assets are
+parsed and cached once at scene startup and reused to build one independent `Skeleton3D` per
+connected player — see `World3D.gd`'s `_build_assembled_character()`. Falls back to the labeled
+capsule if the shared assets never loaded. A bare *decoration* `Skeleton3D` (loaded separately via
 `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH`, not any player's body) still renders with joint/bone debug
 visualization, not a real mesh — see "Not yet done" below.
+
+The player also wields a real weapon now, gated the same honest way as armor: a real one-handed
+blade (`Prim/Mesh/Item/China/weapon/blade_01.bms`, an arbitrary fixed pick among many real numbered
+weapons found, faction-wide rather than per-gender — `Prim\Mesh\Item\China\weapon\` has no man/
+woman split, unlike body/armor meshes) attaches to a real, directly-confirmed hand bone
+(`CharacterAssembler.WEAPON_BONE`, "Bip01 R Hand" — found by pulling a real skeleton and locating
+that exact bone name string, not assumed from the naming convention) via the same rigid-attachment
+mechanism as body parts and armor. Textured the same real name-matched way: a real `blade_01.bms`'s
+own `material_name` field ("blade1_5") matches a real layer inside a real `blade1_5.bmt`. Only
+shows once the player's account actually has something equipped in `SLOT_WEAPON` — a newly-created
+character renders bare-handed, same as bare-skinned for armor. Rendered and verified against real
+pulled data (real 37-bone skeleton, real weapon mesh, real material layer match confirmed).
 
 The ground is no longer just a placeholder box either: setting `SRREVAMP_MAPM_PATH` (+ its own
 `SRREVAMP_MAP_PK2_PATH`, since `Map.pk2` is a separate archive from `Data.pk2` in a real retail

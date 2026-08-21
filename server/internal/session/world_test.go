@@ -26,7 +26,7 @@ func (s worldTestMaxStacks) GetMaxStack(_ context.Context, itemID int64) (int, e
 }
 
 func TestEntitySnapshotRoundTrip(t *testing.T) {
-	want := &EntitySnapshot{CharacterID: 42, Name: "Aria", X: 1.5, Y: -2.5, Z: 3, HasArmor: true, Gender: character.GenderChinaWoman}
+	want := &EntitySnapshot{CharacterID: 42, Name: "Aria", X: 1.5, Y: -2.5, Z: 3, HasArmor: true, HasWeapon: true, Gender: character.GenderChinaWoman}
 	got, rest, err := decodeEntitySnapshot(want.Encode())
 	if err != nil {
 		t.Fatalf("decodeEntitySnapshot: %v", err)
@@ -42,7 +42,7 @@ func TestEntitySnapshotRoundTrip(t *testing.T) {
 func TestEnterWorldResultRoundTripSuccess(t *testing.T) {
 	want := &EnterWorldResult{
 		OK: true, Zone: "jangan", X: 1, Y: 2, Z: 3, Gender: character.GenderChinaMan,
-		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, HasArmor: true, Gender: character.GenderChinaWoman}},
+		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, HasArmor: true, HasWeapon: false, Gender: character.GenderChinaWoman}},
 	}
 	got, err := DecodeEnterWorldResult(want.Encode())
 	if err != nil {
@@ -100,10 +100,11 @@ func TestWorldFullFlow(t *testing.T) {
 		t.Fatalf("setting Aria's gender: %v", err)
 	}
 
-	// Bram has real armor equipped; Aria doesn't -- exercises both real
-	// HasArmor outcomes through the actual EnterWorld/EntityEntered flow,
-	// not just the standalone Encode/Decode round trip above.
-	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), worldTestMaxStacks{200: 1})
+	// Bram has real armor equipped but no weapon; Aria has a real weapon
+	// equipped but no armor -- exercises both real HasArmor/HasWeapon
+	// outcomes, independently, through the actual EnterWorld/EntityEntered
+	// flow, not just the standalone Encode/Decode round trip above.
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), worldTestMaxStacks{200: 1, 201: 1})
 	if err != nil {
 		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
 	}
@@ -124,6 +125,12 @@ func TestWorldFullFlow(t *testing.T) {
 	}
 	if err := eq.Equip(ctx, bram.ID, equipment.SlotArmor, 0); err != nil {
 		t.Fatalf("equipping Bram's armor: %v", err)
+	}
+	if err := inv.AddItem(ctx, aria.ID, 201, 1); err != nil {
+		t.Fatalf("seeding Aria's inventory: %v", err)
+	}
+	if err := eq.Equip(ctx, aria.ID, equipment.SlotWeapon, 0); err != nil {
+		t.Fatalf("equipping Aria's weapon: %v", err)
 	}
 
 	hub := world.NewHub()
@@ -191,7 +198,10 @@ func TestWorldFullFlow(t *testing.T) {
 		t.Fatalf("bob should see Aria, got %+v", ewr.Others)
 	}
 	if ewr.Others[0].HasArmor {
-		t.Fatalf("Aria has nothing equipped, but bob's snapshot claims HasArmor=true: %+v", ewr.Others[0])
+		t.Fatalf("Aria has no armor equipped, but bob's snapshot claims HasArmor=true: %+v", ewr.Others[0])
+	}
+	if !ewr.Others[0].HasWeapon {
+		t.Fatalf("Aria has a real weapon equipped, but bob's snapshot claims HasWeapon=false: %+v", ewr.Others[0])
 	}
 	if ewr.Others[0].Gender != character.GenderChinaWoman {
 		t.Fatalf("bob's snapshot of Aria should carry her real gender %q, got %q", character.GenderChinaWoman, ewr.Others[0].Gender)
@@ -217,6 +227,9 @@ func TestWorldFullFlow(t *testing.T) {
 	}
 	if !enteredSnap.HasArmor {
 		t.Fatalf("Bram has real armor equipped, but EntityEntered claims HasArmor=false: %+v", enteredSnap)
+	}
+	if enteredSnap.HasWeapon {
+		t.Fatalf("Bram has no weapon equipped, but EntityEntered claims HasWeapon=true: %+v", enteredSnap)
 	}
 	if enteredSnap.Gender != character.GenderChinaMan {
 		t.Fatalf("Bram's real gender is the default %q, got %q", character.GenderChinaMan, enteredSnap.Gender)

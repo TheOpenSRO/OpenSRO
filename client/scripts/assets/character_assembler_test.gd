@@ -172,6 +172,39 @@ func _init() -> void:
 	_check(eq_attachments.has("Bip01 R Forearm") and eq_attachments.has("Bip01 L Forearm"), "equipment: paired 'aa' slot attaches to both forearms")
 	_check(eq_attachments.has("Bip01 Spine1"), "equipment: unpaired 'ba' slot attaches to Spine1")
 
+	# Weapon: a single unpaired mesh (no slot-code parsing, unlike
+	# equipment) rigidly attaches to the real WEAPON_BONE.
+	var skeleton4 := Skeleton3D.new()
+	skeleton4.add_bone("Root")
+	var root4 := skeleton4.find_bone("Root")
+	skeleton4.set_bone_rest(root4, Transform3D.IDENTITY)
+	skeleton4.add_bone(CharacterAssembler.WEAPON_BONE)
+	var hand_idx := skeleton4.find_bone(CharacterAssembler.WEAPON_BONE)
+	skeleton4.set_bone_parent(hand_idx, root4)
+	skeleton4.set_bone_rest(hand_idx, Transform3D(Basis.IDENTITY, Vector3(3, 0, 0)))
+	for idx in [root4, hand_idx]:
+		skeleton4.reset_bone_pose(idx)
+	skeleton4.force_update_all_bone_transforms()
+
+	var weapon_mesh := BmsReader.ParsedMesh.new()
+	for p in [Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0)]:
+		var wv := BmsReader.Vertex.new()
+		wv.position = p
+		wv.normal = Vector3.UP
+		wv.uv = Vector2.ZERO
+		weapon_mesh.vertices.append(wv)
+	weapon_mesh.indices = PackedInt32Array([0, 1, 2])
+
+	CharacterAssembler.assemble_weapon(skeleton4, weapon_mesh)
+	var weapon_attachments := 0
+	var weapon_mi: MeshInstance3D = null
+	for child in skeleton4.get_children():
+		if child is BoneAttachment3D and child.bone_name == CharacterAssembler.WEAPON_BONE:
+			weapon_attachments += 1
+			weapon_mi = child.get_child(0)
+	_check(weapon_attachments == 1, "weapon: exactly 1 attachment on the real hand bone (got %d)" % weapon_attachments)
+	_check(weapon_mi != null and weapon_mi.position.is_equal_approx(Vector3(-3, 0, 0)), "weapon: mesh instance offset matches -bind position")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

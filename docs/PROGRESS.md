@@ -2,6 +2,44 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 61) — real per-player weapons, and a negative RE result recorded honestly
+
+- Attempted the next open item (real-world placement scale) via decompilation: a real `1920.0f`
+  float constant exists in `sro_client.exe`, but both its referencing functions decompile as
+  keyframe/spline interpolation code, not a coordinate transform. A real negative result, not a
+  coincidence worth re-chasing without new evidence -- recorded in `docs/protocol/MAPO_FORMAT.md`
+  so a future pass doesn't repeat the same search.
+- Pivoted to a more tractable, high-value real feature instead: weapons were tracked server-side
+  (`equipment.SlotWeapon`) since early in this project but never rendered at all. Checked whether
+  real weapon assets actually exist before building anything (same discipline as the gender work):
+  found a real, faction-wide (not per-gender) `Prim\Mesh\Item\China\weapon\` folder with many real
+  numbered weapons (`blade_01`, `bow_01`, ...), picked `blade_01` as an arbitrary fixed default.
+  Confirmed its real `material_name` field ("blade1_5") matches a real layer inside a real
+  `blade1_5.bmt`, and confirmed a real "Bip01 R Hand" bone exists in the real skeleton by pulling
+  and inspecting `chinaman_skel.bsk` directly -- not assumed from the naming convention.
+- Added `CharacterAssembler.assemble_weapon` (a single-mesh rigid attach to the new confirmed
+  `WEAPON_BONE`, no slot-code parsing needed since real weapon meshes are single self-contained
+  items, not paired L/R halves like armor). Wired a shared (not per-gender) cached weapon mesh
+  into `World3D.gd`, gated on the real `SLOT_WEAPON` equip state via the same `EquipmentNet`
+  query already used for armor -- refactored that query into one combined round trip
+  (`_real_player_equipped_slots()`) returning both flags instead of querying twice.
+- Extended the armor-broadcast mechanism to weapons too: `EntitySnapshot.HasWeapon`, queried live
+  alongside `HasArmor` in one `equippedSlots` call server-side (replacing the old single-purpose
+  `hasArmorEquipped`), so other players' weapons are real per-player from the same commit, not a
+  follow-up.
+- Verified with a real, live two-client TCP test (`TestWorldFullFlow`, extended): one character
+  equips real armor but no weapon, the other equips a real weapon but no armor, and both the
+  initial snapshot and the live `OpEntityEntered` broadcast carry the correct independent flags
+  for each. Also rendered the real weapon mesh directly (real 37-bone skeleton + real `blade_01`
+  mesh + real material layer match) to confirm the attachment mechanism visually, not just via
+  unit assertions.
+- Full regression: Go clean (`build`/`vet`/`test`, all packages), all 35 GDScript suites pass
+  (added a dedicated `assemble_weapon` test to `character_assembler_test.gd`, extended
+  `world_test.gd` for the new field).
+- Remaining honest gaps unchanged: real-world placement scale (now with one investigated-and-ruled-
+  out lead on record), the `.t` texture-blend-map format, and real per-account race/gender variety
+  beyond the two confirmed China genders (Europe lacks real body meshes in this project's data).
+
 ## 2026-08-21 (cont'd 60) — got the China-woman screenshot the previous entry flagged as missing
 
 - Closed the one honest gap left open by the gender-selection work: no rendered screenshot of an
