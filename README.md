@@ -48,6 +48,10 @@ variables before launching the client to have `World3D.tscn` load and place them
 - `SRREVAMP_MAP_PK2_PATH` + `SRREVAMP_MAPM_PATH` — `Map.pk2` (a separate archive from `Data.pk2`
   in a real retail install) and a region `.m` path inside it (e.g. `100\100.m`), loaded as real
   terrain via `MapmTerrainBuilder`.
+- `SRREVAMP_MEDIA_PK2_PATH` + `SRREVAMP_MAPM_TEXTURE_PATH` — `Media.pk2` (a third separate
+  archive) and a real per-region minimap image inside it (e.g. `minimap\100x100.ddj`, matching the
+  same region number as `SRREVAMP_MAPM_PATH`), textures that terrain with real, region-accurate
+  art instead of the procedural per-tile color fallback.
 
 Leave any of them unset and that piece is skipped — the scene works fine with none of them set.
 
@@ -200,13 +204,23 @@ install) loads a real `Map.pk2` region's real elevation data and builds a real t
 terrain mesh via `client/scripts/assets/mapm_terrain_builder.gd` (`MapmTerrainBuilder`), replacing
 the placeholder's *visual* mesh (not yet its collision shape — see "Not yet done"). Verified
 against a real region file: 12417 real tiles in, 584 complete real rows recovered and rendered as
-genuine undulating terrain the player stands on, not a flat box.
+genuine undulating terrain the player stands on, not a flat box. It's also texturable with real
+game art: `SRREVAMP_MAPM_TEXTURE_PATH` + `SRREVAMP_MEDIA_PK2_PATH` load a real per-region minimap
+image (`Media.pk2\minimap\<region>.ddj`) and apply it, tiled, as the terrain's real texture —
+found via `server/cmd/pk2list` after no live 3D ground-texture system could be confirmed anywhere
+in this project's available real data (every real terrain shader found samples one continuous
+color texture, not a multi-layer type blend — see `docs/protocol/MAPM_FORMAT.md`). It's real,
+region-accurate painted art, not confirmed to be the literal thing the game's terrain shaders
+sample at runtime — but it looks like the real game instead of a flat or procedural color. Falls
+back to real per-tile vertex-color variation (driven by an already-decoded real per-tile byte) if
+no texture is set.
 
 Not yet done: real terrain collision (the visual mesh is real now, but the ground's collision
 shape is still the flat placeholder box) and confirmed real-world terrain positioning/scale
 relative to a player's actual spawn coordinate (currently placed for visibility, not accuracy); a
 newly-found, entirely unparsed real file type (`Map.pk2` region folders also contain a `.t` file,
-magic `JMXVMAPT1001` — not mesh-shaped data, not yet decoded); no automatic asset selection for
+magic `JMXVMAPT1001`, with a real byte pattern consistent with a texture blend/weight map — not
+yet decoded, see `docs/protocol/MAPM_FORMAT.md`); no automatic asset selection for
 *other* players or map objects (nothing maps a server-side character or a `.mapo` type ID to a
 real asset path — see `docs/protocol/MAPO_FORMAT.md` — so only the local player's own body
 auto-loads; everyone/everything else still needs manual environment variables or shows a

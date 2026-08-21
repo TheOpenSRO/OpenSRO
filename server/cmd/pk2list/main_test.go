@@ -90,3 +90,31 @@ func TestListsMatchingFiles(t *testing.T) {
 		t.Fatalf("expected no match for 'nomatch' filter, got:\n%s", outFiltered)
 	}
 }
+
+func TestExtractsRealFileBytes(t *testing.T) {
+	archivePath := buildSyntheticArchive(t)
+
+	bin := filepath.Join(t.TempDir(), "pk2list")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building pk2list: %v\n%s", err, out)
+	}
+
+	outPath := filepath.Join(t.TempDir(), "extracted.ddj")
+	out, err := exec.Command(bin, "-pk2", archivePath, "-extract", "grass01.ddj", "-out", outPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("running pk2list -extract: %v\n%s", err, out)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading extracted file: %v", err)
+	}
+	if string(got) != "hello silkroad" {
+		t.Fatalf("extracted bytes = %q, want %q", got, "hello silkroad")
+	}
+
+	if out, err := exec.Command(bin, "-pk2", archivePath, "-extract", "nope.ddj", "-out", outPath).CombinedOutput(); err == nil {
+		t.Fatalf("expected error extracting a nonexistent path, got success:\n%s", out)
+	}
+}

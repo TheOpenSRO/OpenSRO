@@ -2,6 +2,34 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-21 (cont'd 47) — found the real texture: user pointed out the RE box already has real client pk2s
+
+- User pointed out (correctly) that the RE box's `/opt/sro-files/client/` already has full real
+  `Data.pk2`/`Media.pk2`/`Map.pk2`/`Particles.pk2`/`Music.pk2` — a genuine retail client install,
+  not just the private-server package tree used for everything else in this project. Used
+  `pk2list` against it directly instead of asking the user to run it themselves.
+- Found the real thing: `Media.pk2\minimap\<region_x>x<region_y>.ddj` — a real, per-region
+  top-down painted texture (256×256, confirmed real grass/dirt-path/rock colors, decoded
+  successfully via this project's own `DdjReader`), keyed by the exact same region coordinates as
+  `Map.pk2`'s `<x>/<y>.m` files. Not a live 3D ground-texture asset (still not found — see below),
+  but real, region-accurate painted art.
+- Extended `server/cmd/pk2list` with `-extract <path> -out <local file>` so a real file's bytes
+  can actually be pulled out, not just listed — pulled the real `100x100.ddj` and its matching
+  real `100/100.m` (a Shape-B region) to verify the pairing end-to-end.
+- `World3D.gd`'s terrain loader now takes `SRREVAMP_MAPM_TEXTURE_PATH` (+ its own
+  `SRREVAMP_MEDIA_PK2_PATH`, since minimap images live in yet a third separate archive from
+  `Data.pk2`/`Map.pk2`) and applies it as the terrain's real texture, falling back to the previous
+  per-tile vertex-color variation if unset. First render badly streaked (one square image
+  stretched across a ~777-row-long recovered strip); fixed by tiling the texture roughly once per
+  `GRID_WIDTH` (17) rows via `uv1_scale` instead of one giant stretch — real screenshot sent to
+  OpenSRO showing real grass/path/rock texture detail, a dramatic visual improvement over both the
+  flat placeholder and the vertex-color stopgap.
+- Full regression: Go clean (including new `pk2list` extract tests), all 18 GDScript suites pass.
+- Still honestly open: this is real per-region minimap art standing in for a live 3D ground
+  texture, not confirmed to be the literal thing the real client's terrain shaders sample at
+  runtime — no such live multi-layer system has been found (see MAPM_FORMAT.md). Good enough to
+  look like the real game; not claimed as more than what it is.
+
 ## 2026-08-21 (cont'd 46) — pushed harder on real ground textures; shipped a way for the user to help find one
 
 - User pushed back on the vertex-color terrain from the previous entry: it's real data, but it's

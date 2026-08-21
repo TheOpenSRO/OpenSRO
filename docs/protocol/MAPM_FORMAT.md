@@ -213,10 +213,24 @@ real terrain pixel shaders found alongside this investigation (`terrainps14.psh`
 `TEX_TERRAIN_COLOR` texture stage, not a multi-layer type-index blend, and no generic tileable
 ground texture (grass/dirt/sand/rock/snow, as opposed to a creature/prop texture) was found
 anywhere in this project's available real client data — a real gap this project's own RE
-environment couldn't close, not one that was given up on early (see `server/cmd/pk2list`, a small
-tool built specifically to let a user search their own real client pk2 archives for a real ground
-texture path this project doesn't have a sample of). Flagged here as a real, promising, unresolved
-lead for a future pass, not a solved format.
+environment couldn't close at first, not one that was given up on early. Flagged here as a real,
+promising, unresolved lead for a future pass, not a solved format.
+
+## What actually shipped instead: a real per-region minimap image, via `server/cmd/pk2list`
+
+The RE environment used throughout this project turned out to also have a genuine full retail
+client install (`/opt/sro-files/client/*.pk2`), not just the private-server package tree every
+other real sample in this project came from. `server/cmd/pk2list` (a small Go CLI, `-filter
+<substring>` to search, `-extract <path> -out <file>` to pull one real file out) found
+`Media.pk2\minimap\<region_x>x<region_y>.ddj` — a real, per-region, painted top-down texture
+(256×256, decoded successfully with this project's own `DdjReader`) keyed by the exact same region
+coordinates as `Map.pk2`'s `<x>/<y>.m` files.
+
+This is **not** a claim that this is the live 3D ground texture the real client's terrain shaders
+sample at runtime (see the section above — that still hasn't been found or confirmed). It's real,
+region-accurate painted art standing in for it, which is why `World3D.gd` documents it the same
+way. See `README.md`'s `SRREVAMP_MAPM_TEXTURE_PATH`/`SRREVAMP_MEDIA_PK2_PATH` and
+`docs/PROGRESS.md` for the real screenshot this produced.
 
 ## Real samples available for future verification
 

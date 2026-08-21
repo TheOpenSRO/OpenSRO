@@ -44,9 +44,17 @@ extends Node3D
 ## MapmTerrainBuilder -- Map.pk2 is a separate archive from Data.pk2 in a
 ## real retail install, so it accepts either a loose file or a path inside
 ## SRREVAMP_MAP_PK2_PATH (its own separate pk2 env var, not
-## SRREVAMP_PK2_PATH). Any variable left unset is skipped gracefully (a
-## printed hint, not an error) -- this scene works fine with none of them
-## set, same as always.
+## SRREVAMP_PK2_PATH). SRREVAMP_MAPM_TEXTURE_PATH additionally textures that
+## terrain with a real per-region minimap image (e.g. "minimap\\100x100.ddj",
+## matching the same region number as SRREVAMP_MAPM_PATH) -- these live in
+## Media.pk2, a third separate archive, so it accepts either a loose file or
+## a path inside its own SRREVAMP_MEDIA_PK2_PATH. Falls back to real
+## per-tile vertex-color variation (see MapmTerrainBuilder) if unset -- no
+## real-time 3D ground-texture system has been found yet (see
+## docs/protocol/MAPM_FORMAT.md), so a region's own real minimap art is the
+## closest real, region-accurate substitute currently available. Any
+## variable left unset is skipped gracefully (a printed hint, not an error)
+## -- this scene works fine with none of them set, same as always.
 
 const MOVE_SPEED := 6.0
 const GRAVITY := 20.0
@@ -201,6 +209,51 @@ func _open_map_pk2_if_set() -> Pk2Reader:
 		return null
 	return Pk2Reader.open(map_pk2_path)
 
+## Opens SRREVAMP_MEDIA_PK2_PATH if it's set, or returns null if it's unset
+## or fails to open. A real client's per-map-region minimap image (see
+## SRREVAMP_MAPM_TEXTURE_PATH below) lives in Media.pk2, a third separate
+## archive from both Data.pk2 and Map.pk2 in a real retail install.
+func _open_media_pk2_if_set() -> Pk2Reader:
+	var media_pk2_path := OS.get_environment("SRREVAMP_MEDIA_PK2_PATH")
+	if media_pk2_path == "":
+		return null
+	return Pk2Reader.open(media_pk2_path)
+
+## Loads a real per-region minimap image (SRREVAMP_MAPM_TEXTURE_PATH, e.g.
+## "minimap\100x100.ddj") as the terrain's real ground texture, if set.
+## Accepts either a loose file path or a path inside SRREVAMP_MEDIA_PK2_PATH
+## (see AssetSource) -- a real client's minimap images live in Media.pk2,
+## confirmed via this project's own real-file search tooling
+## (server/cmd/pk2list) against a real client install.
+##
+## This is an honest substitution, not a claim that this is the literal
+## real-time 3D ground texture: no real-time multi-layer terrain-texture
+## system (nor a lookup from a per-tile byte to a specific real texture
+## file) has been found anywhere in this project's available real data --
+## see docs/protocol/MAPM_FORMAT.md for that search. A region's own real
+## minimap art is genuine, region-specific real game data (grass/dirt/rock
+## color baked from that exact region), and looks far closer to the real
+## game than the flat/procedural fallback color this function returns null
+## for -- but it's a real top-down painted image, not sampled per-tile 3D
+## terrain texture data.
+func _load_real_terrain_texture() -> Texture2D:
+	var tex_path := OS.get_environment("SRREVAMP_MAPM_TEXTURE_PATH")
+	if tex_path == "":
+		return null
+
+	var archive := _open_media_pk2_if_set()
+	var bytes := AssetSource.read_bytes(tex_path, archive)
+	if bytes.is_empty():
+		printerr("World3D: could not find terrain texture at ", tex_path)
+		return null
+
+	var parsed := DdjReader.parse(bytes)
+	if parsed == null:
+		printerr("World3D: could not parse terrain texture at ", tex_path)
+		return null
+
+	return DdjReader.to_texture(parsed)
+
 ## Loads real terrain from a real Map.pk2 region .m file via MapmReader +
 ## MapmTerrainBuilder, replacing the placeholder ground's visual mesh (not
 ## its collision shape -- see this file's top comment) -- if
@@ -232,7 +285,21 @@ func _try_load_real_terrain() -> void:
 	var terrain := MeshInstance3D.new()
 	terrain.mesh = terrain_mesh
 	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
+	var real_texture := _load_real_terrain_texture()
+	var aabb := terrain_mesh.get_aabb()
+	var row_count_estimate := aabb.size.z / MapmTerrainBuilder.TILE_SIZE + 1
+	if real_texture != null:
+		mat.albedo_texture = real_texture
+		# The mesh's own UVs (see MapmTerrainBuilder) stretch 0..1 across
+		# the whole recovered strip, which can be dozens of real rows long
+		# -- squishing one square minimap image over that whole length
+		# reads as heavy streaking rather than ground detail. Repeating it
+		# roughly once per GRID_WIDTH rows (a real, confirmed value -- see
+		# MapmTerrainBuilder) keeps each repeat closer to the image's own
+		# roughly-square real aspect ratio instead of one giant stretch.
+		mat.uv1_scale = Vector3(1.0, max(row_count_estimate / float(MapmTerrainBuilder.GRID_WIDTH), 1.0), 1.0)
+	else:
+		mat.vertex_color_use_as_albedo = true
 	terrain.material_override = mat
 	# Real world-space alignment with the player's own spawn position isn't
 	# confirmed (see top comment) -- centered near the player purely for
@@ -252,7 +319,6 @@ func _try_load_real_terrain() -> void:
 	# camera. Rotating 180 degrees around Y flips both axes consistently
 	# (a pure rotation, so front-face winding/normals stay correct) so
 	# successive rows extend further *into* view instead.
-	var aabb := terrain_mesh.get_aabb()
 	var near_arrays := terrain_mesh.surface_get_arrays(0)
 	var near_positions: PackedVector3Array = near_arrays[Mesh.ARRAY_VERTEX]
 	var near_height := near_positions[MapmTerrainBuilder.GRID_WIDTH / 2].y
