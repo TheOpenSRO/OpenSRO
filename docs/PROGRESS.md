@@ -2,6 +2,26 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 17) — found the real IOCP dispatch architecture (applies to every future opcode)
+
+- After RTTI-vtable tracing stalled on `COverlapJobManager`/`CSession`, switched technique: searched
+  for real IOCP/Winsock API imports actually used (`CreateIoCompletionPort`,
+  `GetQueuedCompletionStatus`, `WSARecv`, `WSASend`, `AcceptEx`) and traced their call sites instead
+  of chasing class identity first.
+- Confirmed `GatewayServer.exe` is a real IOCP server with two completion-processing loops: a
+  worker-thread pool loop (the real one) and a lighter main-thread/message-pump path. In the real
+  worker loop, **a completed I/O event dispatches through a virtual method call (vtable slot `+8`)
+  on the completion-key object**, passed `(bytesTransferred, lpOverlapped)` -- this is the real
+  entry point where a received packet's raw bytes first become available, and thus where Div
+  ID/wire-opcode translation should actually be findable.
+- Split this out into a new file, `docs/protocol/opcodes/dispatch.md`, since it's genuinely broader
+  than login -- every future opcode this project RE's will start from this same real dispatch path,
+  not just login's. Cross-referenced from `login.md`.
+- Did not yet confirm which real class (`CSession` is the natural candidate, a real name already
+  found) implements that vtable slot, or decompile it directly -- recorded as the shared next step
+  for all future opcode RE work in `dispatch.md`, along with an honest note on why the RTTI-based
+  technique that worked for `CUserCertifier_OverlapJob` didn't generalize to every class.
+
 ## 2026-08-22 (cont'd 16) — traced login's dispatch to a real class; found the OverlapJob architecture
 
 - Continued the login-dispatch RE thread. Used the same RTTI-chain technique that found

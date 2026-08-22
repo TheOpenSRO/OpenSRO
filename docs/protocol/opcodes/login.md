@@ -88,6 +88,14 @@ The gateway binary contains **two** separate authentication code paths:
       an abstract base class with no direct instance in this binary, or one this search technique
       didn't hit) -- a real, honest dead end for this specific pass, not pursued further right
       now. Flagged as the next concrete target for a future session.
+
+Continued the search from a different angle (real IOCP API call sites -- `GetQueuedCompletionStatus`
+et al. -- rather than more RTTI-vtable chasing) and found real, broader dispatch architecture that
+applies to every opcode, not just login: see `dispatch.md`. Short version: the real worker-thread
+completion loop invokes a virtual method (vtable slot `+8`) on the completion-key object with
+`(bytesTransferred, lpOverlapped)` -- that's the real per-received-packet entry point, and finding
+its concrete class/implementation is now the shared next step for all future opcode RE work, not
+just this one.
 - [ ] Pull the exact `_CertifyUser`/`_CertifyTB_User` result-set column meanings beyond "some
       bytes signal blocked/failed" (now two confirmed distinct encodings, see above)
 - [ ] Cross-reference the SRO_VT_ACCOUNT database backup (`db.rar` in the obtained package) against
