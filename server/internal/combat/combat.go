@@ -22,6 +22,7 @@ type Monster struct {
 	ID         int64
 	Name       string
 	Zone       string
+	X, Y, Z    float64 // own design placeholder position -- see Hub.Spawn
 	MaxHP      int
 	HP         int
 	Defense    int
@@ -43,13 +44,19 @@ func NewHub() *Hub {
 	return &Hub{byID: make(map[int64]*Monster)}
 }
 
-// Spawn creates a new monster in zone with full HP and returns it.
-func (h *Hub) Spawn(zone, name string, maxHP, defense, attack int, goldReward int64) *Monster {
+// Spawn creates a new monster in zone at (x, y, z) with full HP and returns
+// it. The position is this project's own placeholder design -- no real
+// per-monster spawn coordinate data exists (see docs/protocol/
+// refdata_schema.md); callers (server/cmd/server's monsterSpec) pick a
+// fixed anchor point per species so multiple monsters don't stack exactly
+// on top of each other, not a claim about the real game's actual spawn
+// points.
+func (h *Hub) Spawn(zone, name string, x, y, z float64, maxHP, defense, attack int, goldReward int64) *Monster {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: name, Zone: zone, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward}
+	m := &Monster{ID: id, Name: name, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward}
 	h.byID[id] = m
 	return m
 }

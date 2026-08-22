@@ -4,7 +4,7 @@ import "testing"
 
 func TestSpawnStartsAtFullHP(t *testing.T) {
 	h := NewHub()
-	m := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
+	m := h.Spawn("jangan", "Stone Golem", 0, 0, 0, 100, 10, 5, 50)
 	if m.HP != 100 || m.MaxHP != 100 {
 		t.Fatalf("got HP=%d MaxHP=%d, want both 100", m.HP, m.MaxHP)
 	}
@@ -15,8 +15,8 @@ func TestSpawnStartsAtFullHP(t *testing.T) {
 
 func TestSpawnAssignsUniqueIDs(t *testing.T) {
 	h := NewHub()
-	m1 := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
-	m2 := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
+	m1 := h.Spawn("jangan", "Stone Golem", 0, 0, 0, 100, 10, 5, 50)
+	m2 := h.Spawn("jangan", "Stone Golem", 0, 0, 0, 100, 10, 5, 50)
 	if m1.ID == m2.ID {
 		t.Fatalf("expected unique IDs, got %d and %d", m1.ID, m2.ID)
 	}
@@ -24,7 +24,7 @@ func TestSpawnAssignsUniqueIDs(t *testing.T) {
 
 func TestGetReturnsLiveMonster(t *testing.T) {
 	h := NewHub()
-	spawned := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
+	spawned := h.Spawn("jangan", "Stone Golem", 0, 0, 0, 100, 10, 5, 50)
 
 	got, ok := h.Get(spawned.ID)
 	if !ok {
@@ -44,7 +44,7 @@ func TestGetUnknownID(t *testing.T) {
 
 func TestApplyDamageReducesHP(t *testing.T) {
 	h := NewHub()
-	m := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
+	m := h.Spawn("jangan", "Stone Golem", 0, 0, 0, 100, 10, 5, 50)
 
 	updated, died, ok := h.ApplyDamage(m.ID, 30)
 	if !ok {
@@ -60,7 +60,7 @@ func TestApplyDamageReducesHP(t *testing.T) {
 
 func TestApplyDamageKillsAndRemoves(t *testing.T) {
 	h := NewHub()
-	m := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
+	m := h.Spawn("jangan", "Stone Golem", 0, 0, 0, 100, 10, 5, 50)
 
 	updated, died, ok := h.ApplyDamage(m.ID, 150)
 	if !ok || !died {
@@ -85,9 +85,9 @@ func TestApplyDamageUnknownID(t *testing.T) {
 
 func TestInZoneOnlyReturnsMatchingZone(t *testing.T) {
 	h := NewHub()
-	a := h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
-	b := h.Spawn("jangan", "Wild Boar", 80, 3, 4, 15)
-	h.Spawn("donwhang", "Sand Scorpion", 350, 18, 14, 120)
+	a := h.Spawn("jangan", "Stone Golem", 0, 0, 0, 100, 10, 5, 50)
+	b := h.Spawn("jangan", "Wild Boar", 0, 0, 0, 80, 3, 4, 15)
+	h.Spawn("donwhang", "Sand Scorpion", 0, 0, 0, 350, 18, 14, 120)
 
 	got := h.InZone("jangan")
 	if len(got) != 2 {
@@ -101,7 +101,7 @@ func TestInZoneOnlyReturnsMatchingZone(t *testing.T) {
 
 func TestInZoneEmptyForUnknownZone(t *testing.T) {
 	h := NewHub()
-	h.Spawn("jangan", "Stone Golem", 100, 10, 5, 50)
+	h.Spawn("jangan", "Stone Golem", 0, 0, 0, 100, 10, 5, 50)
 	if got := h.InZone("nowhere"); len(got) != 0 {
 		t.Fatalf("got %d monsters, want 0", len(got))
 	}
@@ -109,7 +109,7 @@ func TestInZoneEmptyForUnknownZone(t *testing.T) {
 
 func TestInZoneExcludesDeadMonsters(t *testing.T) {
 	h := NewHub()
-	m := h.Spawn("jangan", "Stone Golem", 10, 0, 0, 50)
+	m := h.Spawn("jangan", "Stone Golem", 0, 0, 0, 10, 0, 0, 50)
 	if _, died, ok := h.ApplyDamage(m.ID, 10); !ok || !died {
 		t.Fatalf("setup: got died=%v ok=%v, want both true", died, ok)
 	}

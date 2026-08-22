@@ -35,6 +35,9 @@ class MonsterDamaged:
 class MonsterSnapshot:
 	var monster_id: int
 	var monster_name: String
+	var x: float
+	var y: float
+	var z: float
 	var max_hp: int
 	var hp: int
 
@@ -148,6 +151,13 @@ static func _decode_monster_snapshot(data: PackedByteArray, offset: int) -> Arra
 		return [null, -1]
 	m.monster_name = data.slice(offset, offset + name_len).get_string_from_utf8()
 	offset += name_len
+
+	if offset + 12 > data.size():
+		return [null, -1]
+	m.x = data.decode_float(offset)
+	m.y = data.decode_float(offset + 4)
+	m.z = data.decode_float(offset + 8)
+	offset += 12
 
 	if offset + 8 > data.size():
 		return [null, -1]

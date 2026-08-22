@@ -2,6 +2,36 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 35) — "mob spawning" phase 2: monsters now have real positions and are visible in 3D
+
+- Found monsters had **no position at all** server-side (`combat.Monster` only carried a `Zone`
+  string) -- the monster-list UI panel was purely text, with zero 3D presence, not just "no visual
+  polish yet."
+- Added real `X, Y, Z` to `combat.Monster` and `Hub.Spawn`'s signature; `server/cmd/server`'s
+  `monsterSpec` now carries a fixed per-species `X, Z` spawn anchor (own placeholder design, no
+  real per-monster spawn coordinate data exists -- documented the same way other placeholder
+  positions in this project already are) so multiple species don't stack exactly on top of each
+  other.
+- Extended the wire protocol end-to-end: `session.MonsterSnapshot` (Go) and
+  `CombatNet.MonsterSnapshot` (GDScript) both gained `X, Y, Z float32`, threaded through
+  `Encode`/`decodeMonsterSnapshot` on the Go side and the matching decode on the GDScript side.
+  Updated every `Hub.Spawn` call site across `combat`/`session` package tests (mechanical
+  signature-shape change) and the client's own `combat_test.gd` snapshot-builder helper.
+- `World3D.gd`: monsters are now real 3D bodies (`_spawn_or_update_monster`/`_sync_monster_bodies`,
+  driven by the same `OpMonsterListResult` that already fed the UI list -- one authoritative
+  snapshot reconciliation, not a diff of individual damage/death events), a dark-red capsule with a
+  name+HP `Label3D`, following the same honest "placeholder until a real per-species model exists"
+  approach already used for other players before their real character loads. Reused the terrain
+  raycast-snap technique from the previous session's player-embedding fix
+  (`_terrain_height_at`) so monsters don't spawn embedded in/floating above the real terrain grid
+  either. Also fixed a real stale-body bug on zone change, the same class of bug already caught and
+  fixed for other players' bodies -- old-zone monster capsules would have kept showing forever
+  otherwise, since nothing previously re-requested the monster list after `OpChangeZoneResult`.
+- All Go (`combat`, `session`) and GDScript (`combat_test.gd`, `world_test.gd`) test suites pass,
+  plus a clean `--import --quit`.
+- Next up in the roadmap: character/animation wiring (the player's assembled body still has no
+  walk-cycle at all), then armor, then weapons/shields, then skills.
+
 ## 2026-08-22 (cont'd 34) — "build the world" phase 1: real multi-region terrain grid
 
 - User set a concrete roadmap: world → mobs → characters/animation → armor → weapons/shields →

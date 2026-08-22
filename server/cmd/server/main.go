@@ -39,6 +39,7 @@ import (
 type monsterSpec struct {
 	Zone       string
 	Name       string
+	X, Z       float64 // own design placeholder spawn anchor -- see combat.Hub.Spawn
 	MaxHP      int
 	Defense    int
 	Attack     int
@@ -46,9 +47,9 @@ type monsterSpec struct {
 }
 
 var monsterSpecs = []monsterSpec{
-	{Zone: "jangan", Name: "Stone Golem", MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
-	{Zone: "jangan", Name: "Wild Boar", MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
-	{Zone: "donwhang", Name: "Sand Scorpion", MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
+	{Zone: "jangan", Name: "Stone Golem", X: 15, Z: 10, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
+	{Zone: "jangan", Name: "Wild Boar", X: -20, Z: 25, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
+	{Zone: "donwhang", Name: "Sand Scorpion", X: 10, Z: -15, MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
 }
 
 const respawnDelay = 10 * time.Second
@@ -58,7 +59,7 @@ const respawnDelay = 10 * time.Second
 // canceled. main() runs one of these per monsterSpecs entry.
 func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Logger, spec monsterSpec) {
 	spawn := func() int64 {
-		m := monsters.Spawn(spec.Zone, spec.Name, spec.MaxHP, spec.Defense, spec.Attack, spec.GoldReward)
+		m := monsters.Spawn(spec.Zone, spec.Name, spec.X, 0, spec.Z, spec.MaxHP, spec.Defense, spec.Attack, spec.GoldReward)
 		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone)
 		return m.ID
 	}

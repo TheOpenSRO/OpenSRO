@@ -107,7 +107,7 @@ func _test_decode_loot_dropped_empty() -> void:
 	if result != null:
 		_check(result.drops.size() == 0, "no drops")
 
-func _build_monster_snapshot(id: int, name: String, max_hp: int, hp: int) -> PackedByteArray:
+func _build_monster_snapshot(id: int, name: String, x: float, y: float, z: float, max_hp: int, hp: int) -> PackedByteArray:
 	var out := PackedByteArray()
 	out.resize(8)
 	out.encode_s64(0, id)
@@ -117,6 +117,12 @@ func _build_monster_snapshot(id: int, name: String, max_hp: int, hp: int) -> Pac
 	len_buf.encode_u16(0, name_bytes.size())
 	out.append_array(len_buf)
 	out.append_array(name_bytes)
+	var pos_buf := PackedByteArray()
+	pos_buf.resize(12)
+	pos_buf.encode_float(0, x)
+	pos_buf.encode_float(4, y)
+	pos_buf.encode_float(8, z)
+	out.append_array(pos_buf)
 	var hp_buf := PackedByteArray()
 	hp_buf.resize(8)
 	hp_buf.encode_u32(0, max_hp)
@@ -139,14 +145,16 @@ func _build_monster_list_result(error: String, monsters: Array) -> PackedByteArr
 	count_buf.encode_u16(0, monsters.size())
 	out.append_array(count_buf)
 	for m in monsters:
-		out.append_array(_build_monster_snapshot(m["id"], m["name"], m["max_hp"], m["hp"]))
+		out.append_array(_build_monster_snapshot(m["id"], m["name"], m.get("x", 0.0), m.get("y", 0.0), m.get("z", 0.0), m["max_hp"], m["hp"]))
 	return out
 
 func _test_decode_monster_list_result() -> void:
-	var payload := _build_monster_list_result("", [{"id": 1, "name": "Stone Golem", "max_hp": 200, "hp": 150}])
+	var payload := _build_monster_list_result("", [{"id": 1, "name": "Stone Golem", "x": 15.0, "y": 0.0, "z": 10.0, "max_hp": 200, "hp": 150}])
 	var result := CombatNet.decode_monster_list_result(payload)
 	_check(result.error == "", "no decode error")
 	_check(result.monsters.size() == 1, "one monster decoded")
+	_check(result.monsters[0].x == 15.0, "x round-trips")
+	_check(result.monsters[0].z == 10.0, "z round-trips")
 	if result.monsters.size() == 1:
 		_check(result.monsters[0].monster_id == 1, "monster id round-trips")
 		_check(result.monsters[0].monster_name == "Stone Golem", "monster name round-trips")

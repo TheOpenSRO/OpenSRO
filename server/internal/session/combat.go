@@ -218,14 +218,18 @@ func DecodeLootDropped(data []byte) (*LootDropped, error) {
 
 // MonsterSnapshot is one live monster, as sent over the wire.
 type MonsterSnapshot struct {
-	ID    int64
-	Name  string
-	MaxHP int32
-	HP    int32
+	ID      int64
+	Name    string
+	X, Y, Z float32 // own design placeholder position -- see combat.Hub.Spawn
+	MaxHP   int32
+	HP      int32
 }
 
 func (m *MonsterSnapshot) Encode() []byte {
 	out := append(encodeInt64(m.ID), encodeStrings(m.Name)...)
+	out = append(out, encodeFloat32(m.X)...)
+	out = append(out, encodeFloat32(m.Y)...)
+	out = append(out, encodeFloat32(m.Z)...)
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(m.MaxHP))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(m.HP))
@@ -241,11 +245,23 @@ func decodeMonsterSnapshot(data []byte) (*MonsterSnapshot, []byte, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("name: %w", err)
 	}
+	x, rest, err := decodeFloat32(rest)
+	if err != nil {
+		return nil, nil, fmt.Errorf("x: %w", err)
+	}
+	y, rest, err := decodeFloat32(rest)
+	if err != nil {
+		return nil, nil, fmt.Errorf("y: %w", err)
+	}
+	z, rest, err := decodeFloat32(rest)
+	if err != nil {
+		return nil, nil, fmt.Errorf("z: %w", err)
+	}
 	if len(rest) < 8 {
 		return nil, nil, errors.New("truncated hp fields")
 	}
 	return &MonsterSnapshot{
-		ID: id, Name: names[0],
+		ID: id, Name: names[0], X: x, Y: y, Z: z,
 		MaxHP: int32(binary.LittleEndian.Uint32(rest[0:4])),
 		HP:    int32(binary.LittleEndian.Uint32(rest[4:8])),
 	}, rest[8:], nil
@@ -372,7 +388,11 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 	inZone := monsters.InZone(entity.Zone)
 	snapshots := make([]MonsterSnapshot, len(inZone))
 	for i, m := range inZone {
-		snapshots[i] = MonsterSnapshot{ID: m.ID, Name: m.Name, MaxHP: int32(m.MaxHP), HP: int32(m.HP)}
+		snapshots[i] = MonsterSnapshot{
+			ID: m.ID, Name: m.Name,
+			X: float32(m.X), Y: float32(m.Y), Z: float32(m.Z),
+			MaxHP: int32(m.MaxHP), HP: int32(m.HP),
+		}
 	}
 	return sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: (&MonsterListResult{Monsters: snapshots}).Encode()})
 }

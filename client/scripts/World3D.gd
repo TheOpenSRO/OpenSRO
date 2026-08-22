@@ -361,6 +361,7 @@ var _pending_friend_requests: Array[FriendNet.PendingRequest] = []
 var _awaiting_equip_ack := false
 
 var _other_bodies := {} # character_id -> Node3D
+var _monster_bodies := {} # monster_id -> Node3D
 var _last_sent_pos := Vector3.ZERO
 var _time_since_send := 0.0
 
@@ -801,6 +802,14 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	_other_bodies.clear()
 	for other in result.others:
 		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.armor_slots_mask, other.gender, other.has_weapon, other.has_shield)
+
+	# Same stale-body bug as _other_bodies above, for monsters -- the old
+	# zone's monster list result never gets superseded on its own, so
+	# without this their capsules would keep showing here too.
+	for monster_id in _monster_bodies.keys():
+		_monster_bodies[monster_id].queue_free()
+	_monster_bodies.clear()
+	NetClient.list_monsters()
 
 	_reload_zone_assets(result.zone)
 
@@ -1408,6 +1417,81 @@ func _on_disconnected() -> void:
 
 # --- Monsters tab ---------------------------------------------------------
 
+## Raycasts straight down (and up, to cover terrain that loaded after this
+## was called) through pos's X/Z and returns the real surface height found,
+## or pos.y unchanged if nothing was hit -- the same practical safety net
+## _snap_player_onto_terrain uses for the player, reused here so monsters
+## don't spawn embedded in or floating above the real terrain grid either.
+func _terrain_height_at(pos: Vector3) -> float:
+	var space_state := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(
+		pos + Vector3(0.0, 1000.0, 0.0),
+		pos + Vector3(0.0, -1000.0, 0.0))
+	var hit := space_state.intersect_ray(query)
+	if hit.is_empty():
+		return pos.y
+	return hit.position.y + 0.05
+
+## Creates or moves the real 3D body representing one live server-tracked
+## monster (see CombatNet.MonsterSnapshot's real X/Y/Z -- this project's own
+## placeholder spawn positions, not real per-monster coordinate data; see
+## combat.Hub.Spawn). A plain colored capsule for now, same honest
+## "placeholder until a real per-species model mapping exists" approach
+## World3D already uses for other players before a real character loads --
+## no real monster model/skeleton mapping has been found or attempted yet
+## (a real next step, not this one).
+func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
+	var pos := Vector3(monster.x, monster.y, monster.z)
+	pos.y = _terrain_height_at(pos)
+
+	if _monster_bodies.has(monster.monster_id):
+		var existing: Node3D = _monster_bodies[monster.monster_id]
+		existing.position = pos
+		var existing_label: Label3D = existing.get_node("Label")
+		existing_label.text = "%s (%d/%d)" % [monster.monster_name, monster.hp, monster.max_hp]
+		return
+
+	var body := Node3D.new()
+	body.position = pos
+
+	var mesh := MeshInstance3D.new()
+	var capsule := CapsuleMesh.new()
+	capsule.radius = 0.5
+	capsule.height = 1.6
+	mesh.mesh = capsule
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.55, 0.15, 0.1) # dark red -- visually distinct from other players' capsules
+	mesh.material_override = mat
+	mesh.position.y = 0.8
+	body.add_child(mesh)
+
+	var label := Label3D.new()
+	label.name = "Label"
+	label.text = "%s (%d/%d)" % [monster.monster_name, monster.hp, monster.max_hp]
+	label.position.y = 2.0
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	body.add_child(label)
+
+	other_entities.add_child(body)
+	_monster_bodies[monster.monster_id] = body
+
+## Reconciles _monster_bodies against live, the authoritative full monster
+## list for the player's current zone (see _on_monster_list_result) --
+## creates/updates a body for everything in live, removes any tracked body
+## no longer present (dead, or the player changed zones), the same
+## snapshot-driven approach world.Hub's own zone-change teardown uses rather
+## than trying to diff individual damaged/died events.
+func _sync_monster_bodies(live: Array) -> void:
+	var live_ids := {}
+	for m in live:
+		live_ids[m.monster_id] = true
+		_spawn_or_update_monster(m)
+
+	for monster_id in _monster_bodies.keys():
+		if not live_ids.has(monster_id):
+			_monster_bodies[monster_id].queue_free()
+			_monster_bodies.erase(monster_id)
+
 func _on_monster_list_result(monsters: Array, error: String) -> void:
 	if error != "":
 		monster_status_label.text = "Error: %s" % error
@@ -1416,6 +1500,7 @@ func _on_monster_list_result(monsters: Array, error: String) -> void:
 	monster_list.clear()
 	for m in _monsters:
 		monster_list.add_item("%s (HP %d/%d)" % [m.monster_name, m.hp, m.max_hp])
+	_sync_monster_bodies(_monsters)
 
 func _on_attack_pressed() -> void:
 	var selected := monster_list.get_selected_items()

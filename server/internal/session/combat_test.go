@@ -124,7 +124,7 @@ func TestCombatFullFlow(t *testing.T) {
 	monsters := combat.NewHub()
 	// 30 attack - 10 defense = 20 net damage/hit; 40 HP dies in 2 hits.
 	// Monster hits back for 15 whenever it survives a hit.
-	monster := monsters.Spawn("jangan", "Stone Golem", 40, 10, 15, 500)
+	monster := monsters.Spawn("jangan", "Stone Golem", 0, 0, 0, 40, 10, 15, 500)
 
 	quests, err := quest.OpenSQLStore(inventoryTestDSN())
 	if err != nil {
@@ -277,7 +277,7 @@ func TestCombatArmorMitigation(t *testing.T) {
 	monsters := combat.NewHub()
 	// Monster hits for 15; helm(4)+mail(6) = 10 defense -> 5 net damage taken.
 	// High HP so it survives both hits and keeps counterattacking.
-	monster := monsters.Spawn("jangan", "Stone Golem", 200, 10, 15, 500)
+	monster := monsters.Spawn("jangan", "Stone Golem", 0, 0, 0, 200, 10, 15, 500)
 
 	quests, err := quest.OpenSQLStore(inventoryTestDSN())
 	if err != nil {
@@ -407,7 +407,7 @@ func TestCombatLootFlow(t *testing.T) {
 	hub := world.NewHub()
 	monsters := combat.NewHub()
 	// 30 attack - 0 defense, 1 HP: dies in one hit.
-	monster := monsters.Spawn("jangan", "Stone Golem", 1, 0, 0, 10)
+	monster := monsters.Spawn("jangan", "Stone Golem", 0, 0, 0, 1, 0, 0, 10)
 
 	quests, err := quest.OpenSQLStore(inventoryTestDSN())
 	if err != nil {
@@ -545,8 +545,8 @@ func TestMonsterListFlow(t *testing.T) {
 
 	hub := world.NewHub()
 	monsters := combat.NewHub()
-	spawned := monsters.Spawn("jangan", "Stone Golem", 1, 0, 0, 10)
-	elsewhere := monsters.Spawn("donwhang", "Sand Scorpion", 100, 10, 10, 100) // different zone -- shouldn't show up
+	spawned := monsters.Spawn("jangan", "Stone Golem", 0, 0, 0, 1, 0, 0, 10)
+	elsewhere := monsters.Spawn("donwhang", "Sand Scorpion", 0, 0, 0, 100, 10, 10, 100) // different zone -- shouldn't show up
 
 	quests, err := quest.OpenSQLStore(inventoryTestDSN())
 	if err != nil {

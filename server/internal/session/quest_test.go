@@ -155,7 +155,7 @@ func TestQuestFullFlow(t *testing.T) {
 	// One-hit-kill monsters (1 HP, 0 defense, 0 attack so there's no
 	// counterattack noise): 30 weapon damage always kills in one hit.
 	for i := 0; i < 3; i++ {
-		monster := monsters.Spawn("jangan", "Stone Golem", 1, 0, 0, 10)
+		monster := monsters.Spawn("jangan", "Stone Golem", 0, 0, 0, 1, 0, 0, 10)
 		resp = send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode())
 		ar, err := DecodeAttackResult(resp.Data)
 		if err != nil || ar.Error != "" || !ar.MonsterDied {
