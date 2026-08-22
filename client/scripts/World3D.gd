@@ -804,8 +804,37 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	terrain_body.add_child(terrain_shape)
 	terrain.add_child(terrain_body)
 
+	# The vertical calibration above only guarantees one specific mesh vertex
+	# lines up near world Y=0 -- it says nothing about the height of whatever
+	# real terrain happens to sit under the player's actual server-given
+	# spawn X/Z, which can be wildly different (see this function's own doc
+	# comment on why real spawn/terrain alignment isn't confirmed yet). Left
+	# alone, the player can end up embedded in or floating above the mesh.
+	# Deferred one frame so the collision shape above is actually registered
+	# with the physics server before the raycast below queries it.
+	call_deferred("_snap_player_onto_terrain")
+
 	print("World3D: loaded real terrain from %s (%d tiles parsed, %d complete rows rendered, real collision shape built)" % [
 		mapm_path, region.tiles.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1])
+
+## Practical safety net for the real terrain-alignment gap noted where this
+## is called: raycasts straight down (and up, to cover an embedded start)
+## through the player's current X/Z and snaps them onto whatever real
+## surface it hits, so movement always starts from solid, walkable ground
+## regardless of how far off the terrain's heuristic placement is from the
+## player's real spawn point. Not a fix for the underlying alignment
+## question -- just keeps the game playable until that's reverse-engineered.
+func _snap_player_onto_terrain() -> void:
+	var space_state := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(
+		player.position + Vector3(0.0, 1000.0, 0.0),
+		player.position + Vector3(0.0, -1000.0, 0.0))
+	query.exclude = [player.get_rid()]
+	var hit := space_state.intersect_ray(query)
+	if hit.is_empty():
+		return
+	player.position.y = hit.position.y + 0.05
+	player.velocity = Vector3.ZERO
 
 ## Auto-loads a real assembled character (real .bsk skeleton + real
 ## body-part .bms meshes via CharacterAssembler) as the player's own body,

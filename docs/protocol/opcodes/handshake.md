@@ -115,6 +115,44 @@ whoever picks up the massive/split-packet reassembly item next, since it's the f
 this project has found that treats the Size field's top bit as a queuing/backpressure signal
 rather than confirming or ruling out "encrypted" as its meaning.
 
+## The real handshake state machine (2026-08-22, from decompiling `_OnMsgReceivedBeforeHandshake` in full)
+
+Real, concrete facts about the multi-step exchange this doc's opcode table already flagged as
+"not a single request/response":
+
+- `ACTIVE_SESSION` carries a real one-byte handshake-progress field at `+0x200`. `0` means
+  "not yet initialized" -- any message received in that state is rejected with a real logged error
+  (`"_OnMsgReceivedBeforeHandshake() - Initialize [MsgID: 0x%x]"`) rather than processed. Once
+  initialized, it's read as a real bitfield: three low bits (`0x2`, `0x4`, `0x8`) must *all* be set
+  for a `0x5000` to be accepted at all (else a real `"Handshake Failed:%d"` error/reject), and a
+  separate `0x10` bit marks a later stage of the exchange (see below) once reached.
+- **Real confirmed payload size for the client's first `0x5000`**: exactly 12 bytes (`0xc`) -- an
+  explicit real length check (`"Handshake Recipient Size:%d [MsgID: 0x%x]"` on mismatch) gates
+  acceptance. This is the first hard fact about `0x5000`'s actual payload beyond the security-byte
+  fields already documented above.
+- After that first `0x5000` passes a real "recipient info" validation step, the real reply is
+  **another `0x5000`** (not `0x9000`) -- confirming this is genuinely multi-step and the two
+  opcodes aren't simply a one-shot request/reply pair. That reply's real payload starts with a
+  literal flag byte `0x10` (three padding bytes follow it in the same 4-byte field), then a second
+  4-byte field. Successfully reaching this point sets the real `0x10` progress bit on `+0x200`.
+- Once the `0x10` progress bit is set, a further `0x5000` arriving is instead run through a real
+  signature-verification step (`"Handshake ServerSignature Error[MsgID: 0x%x]"` on failure); on
+  success, this is the real path that finally replies with `0x9000` (or, in a separate real
+  sub-case gated by a decoded flag bit, with yet another `0x5000` carrying a different payload) --
+  matching this doc's original observation that `0x9000` gets "checked for on a later leg", not
+  sent immediately off the first `0x5000`.
+- A completely separate real branch handles receiving `0x9000` (rather than `0x5000`) in the
+  not-yet-fully-initialized state, running it through its own real verification step
+  (`"SecurityModeCheck - Mode:%d, Handshake:%d"` on failure) -- consistent with `GatewayServer.exe`
+  playing *both* roles at different times (responder to a connecting game client, and initiator
+  toward another internal server such as `AgentServer.exe`), not just one fixed direction for this
+  opcode pair.
+- Real, not yet decoded: the exact byte-for-byte contents of the 12-byte first `0x5000` payload,
+  the two 4-byte fields in the state-machine's own `0x5000` replies, and the "recipient info"/
+  "signature" validation steps' own real input formats. Each is a distinct real function
+  (unnamed here) that would need its own decompilation pass -- real, concrete next steps, not
+  guessed at.
+
 ## Encryption
 
 The handshake object referenced during this exchange carries a same-typed member used later for
