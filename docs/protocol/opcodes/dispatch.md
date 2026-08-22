@@ -84,7 +84,17 @@ through further vtable indirection rather than directly.
       dedicated section below.
 - [ ] Enumerate what actually populates that global registry (the real registration call sites) --
       now the single highest-value next target, since it would reveal real opcode-to-handler
-      mappings in bulk rather than one at a time.
+      mappings in bulk rather than one at a time. Made a start: the map's most-referenced internal
+      operation (plausibly its real `insert`, by reference count relative to `find`/erase/ctor
+      candidates found alongside it) turned out to itself be a `CAgentMainProcess` virtual method
+      with **exactly one static reference to its address -- its own vtable slot**. That means real
+      call sites almost certainly exist as *indirect* calls through that vtable slot
+      (`this->vtable[N](...)`) scattered through startup code, which this project's current simple
+      "find direct references to a function's address" tooling can't locate -- it only finds
+      references to the function itself, not calls through whichever slot number it occupies.
+      **Real tooling gap, not a dead end**: the next step needs a script that computes the slot's
+      offset from its owning vtable's base and scans for indirect calls using that same offset
+      elsewhere in the binary, which this project doesn't have yet.
 - [ ] Confirm or refute whether `ACTIVE_SESSION` and the earlier `CSession`/`CBaseSocket` RTTI
       names refer to the same real class.
 - [ ] `CBlowFish`/`CKeyExchangeBase`/`CKeyRepicient`/`CKeySender` (found in `AgentServer.exe`) are
