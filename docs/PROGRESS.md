@@ -2,6 +2,32 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 5) — closed out the handshake CRC checklist item (reference-only, not wired in)
+
+- Went looking for the next real gap and found `server/internal/proto/security.go` already had
+  `RollingByte`/`DeriveSeed` (a fully RE-confirmed LFSR-seeded rolling byte) implemented, but the
+  handshake opcodes (`OpHandshakeRequest`/`OpHandshakeAccept`) were never wired into the gateway --
+  `docs/protocol/opcodes/handshake.md`'s Status section had an open item asking for a decision on
+  the second security field (a multi-table CRC-32-style byte) before going further, since pulling
+  the real table contents from the binary would be copying literal proprietary data.
+- Asked and got an answer: build a from-scratch equivalent table, not a bit-for-bit match to the
+  original. Before wiring anything into the gateway, found `docs/protocol/PROTOCOL_DECISION.md`
+  (dated 2026-08-19, predating this session's work) which had *already* settled the larger
+  question: this project's server and client only need to agree with each other, not with the
+  original Joymax client, so the whole handshake/rolling-byte/CRC scheme is explicitly **not**
+  meant to be wired into the real server -- it's kept only as a verified reference implementation
+  of the RE findings. Wiring it into the gateway would have contradicted an existing, deliberate
+  project decision, so didn't do that.
+- Instead implemented just the missing reference piece: `PacketChecksum` in
+  `server/internal/proto/security.go` -- a from-scratch reflected-CRC-32-style running checksum
+  with per-session table selection (`checksumTable`, derived from a folded polynomial rather than
+  storing 256 literal tables), matching the real design's *shape* without reproducing its *data*.
+  Added `TestPacketChecksumDeterministic`, `TestPacketChecksumDifferentTableIndexDiverges`,
+  `TestPacketChecksumSensitiveToInput`. Closed out `handshake.md`'s Status checklist to reflect
+  both the completed reference implementation and the explicit decision not to wire it in.
+- Full `go test ./...` suite passes; no client changes (this is a server-only reference primitive,
+  same treatment as `RollingByte` before it).
+
 ## 2026-08-22 (cont'd 4) — investigated `EXTRA` slot rendering: real system found, real dead end
 
 - Looked for what the `EXTRA` equip slot might really render, the last unimplemented item from the

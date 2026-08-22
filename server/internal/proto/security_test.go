@@ -64,6 +64,50 @@ func TestDeriveSeedDeterministic(t *testing.T) {
 	}
 }
 
+func TestPacketChecksumDeterministic(t *testing.T) {
+	a := NewPacketChecksum(7)
+	b := NewPacketChecksum(7)
+
+	msg := []byte("hello, silkroad")
+	for _, x := range msg {
+		a.Update(x)
+		b.Update(x)
+	}
+	if a.Byte() != b.Byte() {
+		t.Fatalf("two checksums with identical table index and input diverged: %v != %v", a.Byte(), b.Byte())
+	}
+}
+
+func TestPacketChecksumDifferentTableIndexDiverges(t *testing.T) {
+	msg := []byte("hello, silkroad")
+
+	seen := map[byte]bool{}
+	for index := 0; index < 256; index++ {
+		c := NewPacketChecksum(byte(index))
+		for _, x := range msg {
+			c.Update(x)
+		}
+		seen[c.Byte()] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("varying the table index produced only %d distinct checksum(s), expected the table selection to matter", len(seen))
+	}
+}
+
+func TestPacketChecksumSensitiveToInput(t *testing.T) {
+	c1 := NewPacketChecksum(1)
+	for _, x := range []byte("payload A") {
+		c1.Update(x)
+	}
+	c2 := NewPacketChecksum(1)
+	for _, x := range []byte("payload B") {
+		c2.Update(x)
+	}
+	if c1.Byte() == c2.Byte() {
+		t.Fatalf("different payloads under the same table index produced the same checksum byte: %v", c1.Byte())
+	}
+}
+
 func TestDeriveSeedNoZeroBytes(t *testing.T) {
 	// b1/b2 feed RollingByte's multiplication; a zero there would collapse
 	// the generator, which is exactly what the 0->1 substitution guards

@@ -78,14 +78,17 @@ key derivation/exchange has not been pulled apart yet; that's the next piece nee
 - [x] Confirm the two security-related bytes (LFSR-seeded rolling byte, multi-table CRC-32-style
       byte) are independent fields, not fused into one — corrects a second, earlier mistaken pass
       that had them combined via XOR (see PROGRESS.md; that version was reverted before landing)
-- [ ] The rolling-byte generator (point 2) is fully confirmed and implementable now. The CRC-style
-      byte (point 3) is understood algorithmically but its actual table contents are deliberately
-      not being pulled from the binary (see point 3's note) — needs either an independently
-      published source for the table, or a decision to derive our own equivalent-purpose table
-      instead of matching the original bit-for-bit (breaks wire compatibility with the original
-      client; fine if the whole point is a from-scratch protocol, not fine if BYO-client
-      compatibility matters — worth a decision from OpenSRO/OpenSRO)
-- [ ] Pull exact payload layout for `0x5000` / `0x9000`
-- [ ] Pull key derivation for the session cipher
-- [ ] Implement handshake state machine in `server/internal/proto` from this doc (separately,
-      as original Go code — not a transliteration of anything binary-derived)
+- [x] The rolling-byte generator (point 2) is fully confirmed and implemented
+      (`RollingByte`/`DeriveSeed`). Decided (2026-08-22, per `docs/protocol/PROTOCOL_DECISION.md`):
+      this project is a from-scratch client/server pair, not aiming for wire compatibility with the
+      original client, so the CRC-style byte (point 3) is implemented as `PacketChecksum` — same
+      shape (reflected CRC-32-style, folded to one byte, per-session table selection by index) but
+      with its own from-scratch table family (`checksumTable`), not the original's proprietary
+      table contents (which stay undocumented per point 3's note either way).
+- [ ] Pull exact payload layout for `0x5000` / `0x9000` — moot for implementation purposes now (see
+      below), but left unchecked since it was never actually pulled.
+- [ ] Pull key derivation for the session cipher — same as above, not pursued further.
+- [x] ~~Implement handshake state machine in `server/internal/proto`~~ — superseded by
+      `docs/protocol/PROTOCOL_DECISION.md`: this scheme is kept as a verified reference
+      implementation of the RE findings only and is **not** wired into the real server. The actual
+      client<->server protocol is `docs/protocol/OWN_PROTOCOL.md` / `opcodes_own.go`.
