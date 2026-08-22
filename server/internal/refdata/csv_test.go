@@ -63,8 +63,8 @@ func TestLoadItemsCSVNonNumericField(t *testing.T) {
 
 func TestLoadSkillsCSV(t *testing.T) {
 	// Synthetic data, not any real game's actual values.
-	csv := "1,10,SKILL_CH_SWORD_ATTACK_01,SN_SWORD_ATTACK_01,1,0,5,500,300,1000,3000,3000,0.0,1,0,1\n" +
-		"2,10,SKILL_CH_BOW_ATTACK_01,SN_BOW_ATTACK_01,5,1,15,700,400,1200,5000,4500,25.5,0,1,2\n"
+	csv := "1,10,SKILL_CH_SWORD_ATTACK_01,SN_SWORD_ATTACK_01,1,0,5,500,300,1000,3000,3000,0.0,1,0,1,10,0,20,100,0,Sword Slash\n" +
+		"2,10,SKILL_CH_BOW_ATTACK_01,SN_BOW_ATTACK_01,5,1,15,700,400,1200,5000,4500,25.5,0,1,2,50,5,40,500,0,Piercing Shot\n"
 
 	skills, err := LoadSkillsCSV(strings.NewReader(csv))
 	if err != nil {
@@ -83,6 +83,12 @@ func TestLoadSkillsCSV(t *testing.T) {
 	if skills[0].ReuseDelayMs != 3000 {
 		t.Fatalf("skill 0 ReuseDelayMs = %v, want 3000", skills[0].ReuseDelayMs)
 	}
+	if skills[0].Range != 10 || skills[0].ConsumeMP != 20 || skills[0].ReqLearnSP != 100 {
+		t.Fatalf("skill 0 Range/ConsumeMP/ReqLearnSP wrong: %+v", skills[0])
+	}
+	if skills[0].UISkillName != "Sword Slash" {
+		t.Fatalf("skill 0 UISkillName = %q, want %q", skills[0].UISkillName, "Sword Slash")
+	}
 
 	if skills[1].ID != 2 || skills[1].BasicChainCode != 1 {
 		t.Fatalf("skill 1 fields wrong: %+v", skills[1])
@@ -92,6 +98,9 @@ func TestLoadSkillsCSV(t *testing.T) {
 	}
 	if skills[1].FlyingSpeed != 25.5 {
 		t.Fatalf("skill 1 FlyingSpeed = %v, want 25.5", skills[1].FlyingSpeed)
+	}
+	if skills[1].ConsumeHP != 5 || skills[1].UISkillName != "Piercing Shot" {
+		t.Fatalf("skill 1 ConsumeHP/UISkillName wrong: %+v", skills[1])
 	}
 }
 

@@ -1,18 +1,22 @@
 package refdata
 
 // Skill is this project's own, deliberately curated subset of the real
-// _RefSkill table's columns -- not all ~118 (only the first ~20 have been
-// catalogued at all so far, see docs/protocol/refdata_schema.md), and of
-// those, this keeps only the ones with reasonably confirmed semantics --
-// the same curation approach refdata.Item already uses (it drops _RefObjItem
-// columns like ER_*/PAR_*/BR_* whose exact meaning isn't decoded either).
+// _RefSkill table's 118 columns (all confirmed as of 2026-08-22, see
+// docs/protocol/refdata_schema.md) -- this keeps only the ones with
+// reasonably confirmed semantics, the same curation approach refdata.Item
+// already uses (it drops _RefObjItem columns like ER_*/PAR_*/BR_* whose
+// exact meaning isn't decoded either). Real column groups not represented
+// here at all: the full targeting-rule bitset (Target_*/TargetGroup_*),
+// weapon-cast requirements, and the 50 generic Param slots -- real, but not
+// curated in yet.
 //
 // Notably absent: any damage/effect value. No confirmed _RefSkill column
-// encodes what a skill actually does in combat -- that data plausibly lives
-// in a separate, uncatalogued ability/effect system this project hasn't
-// found yet. skill.Catalog's own DamageBonus stays an own-design choice
-// layered on top of whichever real skill this identifies, not replaced by
-// real data the way refdata.Item's stats are.
+// encodes what a skill actually does in combat, even after all 118 columns
+// were catalogued -- that data plausibly lives in a separate, uncatalogued
+// ability/effect system this project hasn't found yet. skill.Catalog's own
+// DamageBonus stays an own-design choice layered on top of whichever real
+// skill this identifies, not replaced by real data the way refdata.Item's
+// stats are.
 type Skill struct {
 	ID      int64
 	GroupID int64
@@ -40,4 +44,26 @@ type Skill struct {
 	Interruptable    bool
 	Overlap          bool
 	AutoAttackType   int
+
+	// Range is the real skill range (Action_Range), same unit convention as
+	// everything else in this project's real distance fields (unconfirmed
+	// scale, see the standing real-world-scale open item in
+	// docs/protocol/MAPO_FORMAT.md).
+	Range int
+
+	// Real resource cost to use the skill (Consume_HP/Consume_MP) -- not
+	// previously known before the 2026-08-22 full-column pass.
+	ConsumeHP int
+	ConsumeMP int
+
+	// Real cost/prerequisite to learn the skill (ReqLearn_SP/ReqLearn_Race).
+	ReqLearnSP   int
+	ReqLearnRace int
+
+	// UISkillName is a real, plausible candidate for the skill's actual
+	// display name (UI_SkillName) -- distinct from BasicCode/BasicName, but
+	// still not 100% confirmed to hold literal player-facing text rather
+	// than another internal lookup key. Treat with the same caution as
+	// BasicName until confirmed either way.
+	UISkillName string
 }

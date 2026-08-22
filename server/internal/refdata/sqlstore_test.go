@@ -133,7 +133,7 @@ func TestImportAndGetSkill(t *testing.T) {
 	store := openTestSQLStore(t)
 	ctx := context.Background()
 
-	csv := "1,10,SKILL_CH_SWORD_ATTACK_01,SN_SWORD_ATTACK_01,1,0,5,500,300,1000,3000,3000,0.0,1,0,1\n"
+	csv := "1,10,SKILL_CH_SWORD_ATTACK_01,SN_SWORD_ATTACK_01,1,0,5,500,300,1000,3000,3000,0.0,1,0,1,10,0,20,100,0,Sword Slash\n"
 	skills, err := LoadSkillsCSV(strings.NewReader(csv))
 	if err != nil {
 		t.Fatalf("LoadSkillsCSV: %v", err)

@@ -36,14 +36,39 @@ all 105 columns. Extend it as gameplay needs grow rather than mirroring everythi
 
 ## `_RefSkill` (36,144 rows) + `_RefSkill_Copy` (7,388 rows) — skill data
 
-118 columns (not fully catalogued yet — this needs another pass). First 20 confirmed:
-`Service`, `ID`, `GroupID`, `Basic_Code` (an internal symbolic identifier, not display text —
-e.g. presumably something like a `SKILL_*` constant name, not a human-readable name),
-`Basic_Name`, `Basic_Group`, `Basic_Original`, `Basic_Level`, `Basic_Activity`,
-`Basic_ChainCode`, `Basic_RecycleCost`, then an `Action_*` group: `PreparingTime`, `CastingTime`,
-`ActionDuration`, `ReuseDelay`, `CoolTime`, `FlyingSpeed`, `Interruptable`, `Overlap`,
-`AutoAttackType`. Not yet imported into `refdata` — `_RefObjItem` was done first as the smaller,
-more clearly-scoped example; skills are the natural next target using the same pattern.
+**All 118 columns now confirmed (2026-08-22)**, pulled the same way as the drop tables (temporary
+SQL Server restore of `SRO_VT_SHARD.Bak`, not persisted). Real column groups, in real order:
+
+- **Identity**: `Service`, `ID`, `GroupID`, `Basic_Code` (internal symbolic identifier, e.g.
+  presumably a `SKILL_*` constant name, not confirmed display text), `Basic_Name`, `Basic_Group`
+  (both `varchar(128)`, same ambiguity as `Basic_Code` -- not confirmed to be player-facing text),
+  `Basic_Original`, `Basic_Level`, `Basic_Activity`, `Basic_ChainCode`, `Basic_RecycleCost`
+- **Action/timing**: `Action_PreparingTime`, `CastingTime`, `ActionDuration`, `ReuseDelay`,
+  `CoolTime`, `FlyingSpeed`, `Interruptable`, `Overlap`, `AutoAttackType`, `InTown`, `Range`
+  (`smallint` -- a real skill range value)
+- **Targeting**: `Target_Required`, `TargetType_Animal`/`Land`/`Building`, `TargetGroup_Self`/
+  `Ally`/`Party`/`Enemy_M`/`Enemy_P`/`Neutral`/`DontCare`, `TargetEtc_SelectDeadBody` -- a real,
+  fairly complete targeting-rule bitset
+- **Requirements**: `ReqCommon_Mastery1`/`2`/`MasteryLevel1`/`2`/`Str`/`Int`, `ReqLearn_Skill1`/
+  `2`/`3`/`SkillLevel1`/`2`/`3`/`SP` (a real SP cost to learn)/`Race`, `Req_Restriction1`/`2`,
+  `ReqCast_Weapon1`/`2` (a real required-weapon-type-to-cast pair)
+- **Resource cost**: `Consume_HP`/`MP`/`HPRatio`/`MPRatio`/`WHAN` -- real HP/MP costs, not
+  previously known
+- **UI**: `UI_SkillTab`/`Page`/`Column`/`Row`/`IconFile`/`SkillName`/`SkillToolTip`/
+  `SkillToolTip_Desc`/`SkillStudy_Desc` (all but the tab/page/column/row ints are
+  `varchar(128)`) -- `UI_SkillName` is a real, plausible candidate for where a skill's actual
+  display name lives (distinct from the ambiguous `Basic_Name`/`Basic_Code`), though still not
+  100% confirmed to hold literal text rather than another lookup key -- see the still-open
+  "where do display names live" item below
+- **AI**: `AI_AttackChance`, `AI_SkillType` (real monster-AI skill-use hints)
+- **Extension**: `Param1`-`Param50` (all `int`, type-dependent meaning -- same generic-slot
+  pattern `_RefObjItem`'s own `Param1`-`Param20` uses)
+
+Still no column here is named anything like "Damage"/"AttackPower" -- consistent with this
+project's earlier conclusion that a skill's actual combat-damage value doesn't live in
+`_RefSkill` itself. `refdata.Skill` (Go) was extended with a few of the newly-confirmed
+high-value real fields (`ConsumeHP`/`ConsumeMP`, `Range`, `ReqLevel`/`ReqSP`) -- not all 118
+columns, same curation discipline as `refdata.Item`.
 
 ## Drop tables (2026-08-22) — real schema pulled, three linked tables
 
@@ -90,7 +115,9 @@ now.
       that half-replacement felt more confusing than useful without a real damage source, so
       `skill.Catalog` stays fully own-designed for now. `refdata.Skill` is ready to use once one
       exists.
-- [ ] `_RefSkill` schema (remaining ~98 columns) + finding the real damage/effect source
+- [x] `_RefSkill` schema fully confirmed (all 118 columns, see the dedicated section above) --
+      `refdata.Skill` extended with the newly-found high-value fields. Real damage/effect source
+      still not found (still no column named for it) -- genuinely open, not this checklist item.
 - [x] `_RefDropItemAssign`/`_RefDropItemGroup`/`_RefMonster_AssignedItemRndDrop` schema confirmed
       (see the dedicated section above) — `refdata.DropGroup`/`refdata.MonsterDrop` Go types +
       importer not yet built

@@ -113,6 +113,7 @@ var skillCSVColumns = []string{
 	"ID", "GroupID", "Basic_Code", "Basic_Name", "Basic_Level", "Basic_ChainCode",
 	"Basic_RecycleCost", "PreparingTime", "CastingTime", "ActionDuration",
 	"ReuseDelay", "CoolTime", "FlyingSpeed", "Interruptable", "Overlap", "AutoAttackType",
+	"Range", "Consume_HP", "Consume_MP", "ReqLearn_SP", "ReqLearn_Race", "UI_SkillName",
 }
 
 // LoadSkillsCSV parses skill rows from r, a headerless CSV in
@@ -191,6 +192,12 @@ func parseSkillRow(f []string) (Skill, error) {
 	sk.Interruptable = parseBool(f[13])
 	sk.Overlap = parseBool(f[14])
 	sk.AutoAttackType = parseInt(f[15])
+	sk.Range = parseInt(f[16])
+	sk.ConsumeHP = parseInt(f[17])
+	sk.ConsumeMP = parseInt(f[18])
+	sk.ReqLearnSP = parseInt(f[19])
+	sk.ReqLearnRace = parseInt(f[20])
+	sk.UISkillName = f[21]
 
 	if err != nil {
 		return Skill{}, err

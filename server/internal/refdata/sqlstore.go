@@ -48,7 +48,13 @@ CREATE TABLE IF NOT EXISTS skills (
 	flying_speed        DOUBLE PRECISION NOT NULL,
 	interruptable       BOOLEAN NOT NULL,
 	overlap             BOOLEAN NOT NULL,
-	auto_attack_type    INTEGER NOT NULL
+	auto_attack_type    INTEGER NOT NULL,
+	range_              INTEGER NOT NULL,
+	consume_hp          INTEGER NOT NULL,
+	consume_mp          INTEGER NOT NULL,
+	req_learn_sp        INTEGER NOT NULL,
+	req_learn_race      INTEGER NOT NULL,
+	ui_skill_name       TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS monster_drops (
@@ -232,8 +238,9 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 		INSERT INTO skills (
 			id, group_id, basic_code, basic_name, basic_level, basic_chain_code,
 			basic_recycle_cost, preparing_time_ms, casting_time_ms, action_duration_ms,
-			reuse_delay_ms, cool_time_ms, flying_speed, interruptable, overlap, auto_attack_type
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			reuse_delay_ms, cool_time_ms, flying_speed, interruptable, overlap, auto_attack_type,
+			range_, consume_hp, consume_mp, req_learn_sp, req_learn_race, ui_skill_name
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 		ON CONFLICT (id) DO UPDATE SET
 			group_id=excluded.group_id, basic_code=excluded.basic_code, basic_name=excluded.basic_name,
 			basic_level=excluded.basic_level, basic_chain_code=excluded.basic_chain_code,
@@ -241,7 +248,10 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			casting_time_ms=excluded.casting_time_ms, action_duration_ms=excluded.action_duration_ms,
 			reuse_delay_ms=excluded.reuse_delay_ms, cool_time_ms=excluded.cool_time_ms,
 			flying_speed=excluded.flying_speed, interruptable=excluded.interruptable,
-			overlap=excluded.overlap, auto_attack_type=excluded.auto_attack_type
+			overlap=excluded.overlap, auto_attack_type=excluded.auto_attack_type,
+			range_=excluded.range_, consume_hp=excluded.consume_hp, consume_mp=excluded.consume_mp,
+			req_learn_sp=excluded.req_learn_sp, req_learn_race=excluded.req_learn_race,
+			ui_skill_name=excluded.ui_skill_name
 	`)
 	if err != nil {
 		return fmt.Errorf("refdata: preparing insert: %w", err)
@@ -253,6 +263,7 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			sk.ID, sk.GroupID, sk.BasicCode, sk.BasicName, sk.BasicLevel, sk.BasicChainCode,
 			sk.BasicRecycleCost, sk.PreparingTimeMs, sk.CastingTimeMs, sk.ActionDurationMs,
 			sk.ReuseDelayMs, sk.CoolTimeMs, sk.FlyingSpeed, sk.Interruptable, sk.Overlap, sk.AutoAttackType,
+			sk.Range, sk.ConsumeHP, sk.ConsumeMP, sk.ReqLearnSP, sk.ReqLearnRace, sk.UISkillName,
 		); err != nil {
 			return fmt.Errorf("refdata: inserting skill %d: %w", sk.ID, err)
 		}
@@ -266,12 +277,14 @@ func (s *SQLStore) GetSkill(ctx context.Context, id int64) (*Skill, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, group_id, basic_code, basic_name, basic_level, basic_chain_code,
 			basic_recycle_cost, preparing_time_ms, casting_time_ms, action_duration_ms,
-			reuse_delay_ms, cool_time_ms, flying_speed, interruptable, overlap, auto_attack_type
+			reuse_delay_ms, cool_time_ms, flying_speed, interruptable, overlap, auto_attack_type,
+			range_, consume_hp, consume_mp, req_learn_sp, req_learn_race, ui_skill_name
 		FROM skills WHERE id = $1`, id)
 	if err := row.Scan(
 		&sk.ID, &sk.GroupID, &sk.BasicCode, &sk.BasicName, &sk.BasicLevel, &sk.BasicChainCode,
 		&sk.BasicRecycleCost, &sk.PreparingTimeMs, &sk.CastingTimeMs, &sk.ActionDurationMs,
 		&sk.ReuseDelayMs, &sk.CoolTimeMs, &sk.FlyingSpeed, &sk.Interruptable, &sk.Overlap, &sk.AutoAttackType,
+		&sk.Range, &sk.ConsumeHP, &sk.ConsumeMP, &sk.ReqLearnSP, &sk.ReqLearnRace, &sk.UISkillName,
 	); err != nil {
 		return nil, fmt.Errorf("refdata: querying skill %d: %w", id, err)
 	}
@@ -284,7 +297,8 @@ func (s *SQLStore) ListAllSkills(ctx context.Context) ([]*Skill, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, group_id, basic_code, basic_name, basic_level, basic_chain_code,
 			basic_recycle_cost, preparing_time_ms, casting_time_ms, action_duration_ms,
-			reuse_delay_ms, cool_time_ms, flying_speed, interruptable, overlap, auto_attack_type
+			reuse_delay_ms, cool_time_ms, flying_speed, interruptable, overlap, auto_attack_type,
+			range_, consume_hp, consume_mp, req_learn_sp, req_learn_race, ui_skill_name
 		FROM skills ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("refdata: listing skills: %w", err)
@@ -298,6 +312,7 @@ func (s *SQLStore) ListAllSkills(ctx context.Context) ([]*Skill, error) {
 			&sk.ID, &sk.GroupID, &sk.BasicCode, &sk.BasicName, &sk.BasicLevel, &sk.BasicChainCode,
 			&sk.BasicRecycleCost, &sk.PreparingTimeMs, &sk.CastingTimeMs, &sk.ActionDurationMs,
 			&sk.ReuseDelayMs, &sk.CoolTimeMs, &sk.FlyingSpeed, &sk.Interruptable, &sk.Overlap, &sk.AutoAttackType,
+			&sk.Range, &sk.ConsumeHP, &sk.ConsumeMP, &sk.ReqLearnSP, &sk.ReqLearnRace, &sk.UISkillName,
 		); err != nil {
 			return nil, fmt.Errorf("refdata: scanning skill: %w", err)
 		}

@@ -2,10 +2,13 @@
 // catalog of a few skills a character can learn and then use in combat for
 // bonus damage on a cooldown. This catalog is entirely invented placeholder
 // content, not derived from the original -- refdata.Skill now exists as a
-// real, importable schema for the ~20 confirmed _RefSkill columns (identity,
-// level, cost, timing), but no confirmed column encodes a skill's actual
-// damage/effect, so importing real skills would only replace part of what
-// Skill needs here. See docs/protocol/refdata_schema.md's status section.
+// real, importable schema for the real _RefSkill table (all 118 columns
+// confirmed, see docs/protocol/refdata_schema.md), including real resource
+// costs (ConsumeHP/ConsumeMP) and requirements now that a full pass has been
+// done -- but even with every column catalogued, none of them encodes a
+// skill's actual damage/effect, so importing real skills would only replace
+// part of what Skill needs here (identity/cost/timing/requirements, not
+// combat behavior). See docs/protocol/refdata_schema.md's status section.
 package skill
 
 import (

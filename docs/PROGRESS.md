@@ -2,6 +2,29 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 23) — full real _RefSkill schema (all 118 columns), extended refdata.Skill
+
+- With DB-restore access proven working from the drop-table pass, immediately used it again (no
+  pause) to finish `_RefSkill`'s full column catalogue -- previously only the first 20 of 118 were
+  confirmed. All 118 now are, see `docs/protocol/refdata_schema.md`.
+- Real new groups found: a fairly complete targeting-rule bitset (`Target_Required`/
+  `TargetType_Animal`/`Land`/`Building`/`TargetGroup_*`), skill prerequisites
+  (`ReqCommon_Mastery*`/`ReqLearn_Skill1-3`/`SkillLevel1-3`/`SP`/`Race`), a required-weapon-to-cast
+  pair (`ReqCast_Weapon1`/`2`), **real HP/MP resource costs** (`Consume_HP`/`MP`/`HPRatio`/
+  `MPRatio`, not previously known), a real skill range (`Action_Range`), monster-AI hints
+  (`AI_AttackChance`/`SkillType`), and 50 generic `Param1`-`50` extension slots. Still no column
+  named for damage/effect anywhere in all 118 -- reinforces the earlier conclusion that a skill's
+  actual combat behavior lives outside this table entirely.
+- `UI_SkillName` is a real, plausible (not 100% confirmed) candidate for where a skill's actual
+  display name lives -- distinct from the already-ambiguous `Basic_Name`/`Basic_Code`. Recorded
+  honestly as "plausible, not proven."
+- Extended `refdata.Skill` with the newly-confirmed high-value fields: `Range`, `ConsumeHP`,
+  `ConsumeMP`, `ReqLearnSP`, `ReqLearnRace`, `UISkillName`. Updated CSV columns/parser and the
+  Postgres schema (additive; had to drop and let the local test DB's `skills` table recreate
+  itself, since this project has no migrations yet at this early stage -- fine, no real persisted
+  data exists). Updated existing tests' synthetic CSV rows for the new column count, all green.
+  `go test ./...` passes.
+
 ## 2026-08-22 (cont'd 22) — real drop-table schema pulled and imported (refdata.MonsterDrop/DropGroupEntry)
 
 - Pivoted from the RE dispatch-mechanism hunt (hit real, identified tooling limits) to concrete
