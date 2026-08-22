@@ -69,7 +69,14 @@ The gateway binary contains **two** separate authentication code paths:
       exact payload layout," which is still open too.
 - [ ] Find where a live incoming packet actually gets a fresh Div ID stamped onto it (the
       one write site found for this project's current lead was one-time startup config, not the
-      real per-packet path)
+      real per-packet path). Traced one level further: the real dispatch switch is called from a
+      thin wrapper that turned out to be **called only via a data (vtable) reference, not a direct
+      call** -- i.e. a C++ virtual method on some per-connection/per-request object, invoked
+      through a vtable this project hasn't identified the owning class of yet. The real per-packet
+      Div ID assignment plausibly happens in whatever code fills in that object before the virtual
+      call, or earlier in a base class's own receive/parse method. Next step: identify the vtable
+      (via RTTI, the same technique that found `ResObject::Load` for `.bsr`) and its class
+      hierarchy, not guessed at further this pass.
 - [ ] Pull the exact `_CertifyUser`/`_CertifyTB_User` result-set column meanings beyond "some
       bytes signal blocked/failed" (now two confirmed distinct encodings, see above)
 - [ ] Cross-reference the SRO_VT_ACCOUNT database backup (`db.rar` in the obtained package) against
