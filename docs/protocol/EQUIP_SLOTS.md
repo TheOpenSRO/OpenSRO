@@ -25,7 +25,11 @@ reads from its own real, fixed struct offset:
 | `SHOULDERGUARD`  | `0x50` |
 | *(gap: two unlabeled slots at `0x5c`/`0x64` — this debug function skips them, but the fixed
   12-byte stride between every other entry means real slots likely exist there too; not named by
-  any string found, so not claimed here)* | |
+  any string found, so not claimed here. Revisited once, specifically looking for a real
+  glove/gauntlet/cloak name that might explain `aa` (forearms) or these two gaps — searched
+  `sro_client.exe` for `GLOVE`, `GAUNTLET`, `GLOVES`, `CLOAK`, `CAPE`, `MANTLE`, `ARM `, `BRACER`;
+  none exist, and no other candidate label strings sit adjacent to the known 8. Real, confirmed
+  dead end, not further pursued.)* | |
 | `PANTS`          | `0x68` |
 | `BOOTS`          | `0x74` |
 | `WEAPON`         | `0x80` |
