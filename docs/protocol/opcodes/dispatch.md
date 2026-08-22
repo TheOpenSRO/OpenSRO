@@ -85,13 +85,29 @@ through further vtable indirection rather than directly.
 - [x] Found a real, concrete Gateway-to-Agent login hand-off sequence with two new real opcodes
       (`0xa103`, `0x6201`) while chasing the above -- see the dedicated section below. Real,
       valuable, just not an answer to the original question.
-- [ ] Find the *actual* general per-opcode dispatch mechanism -- still open. Two live leads: (1) a
-      vtable-indirect-call-scanning tool (a real, identified tooling gap -- literal
-      `CALL [reg+disp]` scanning found zero hits against the one candidate tried, meaning real call
-      sites likely use a precomputed-register pattern this project's current tooling can't
-      recognize) to check `CAgentMainProcess`'s other ~29 vtable slots properly; (2) anchor a fresh
-      "search for literal comparisons" pass off the two new real opcodes (`0xa103`/`0x6201`) found
-      this session, the technique that's worked best throughout.
+- [ ] Find the *actual* general per-opcode dispatch mechanism -- still open. Tried three more
+      angles this session, all real negative/tooling results rather than progress, recorded
+      honestly:
+      - Searching for direct calls against the map-insert candidate's address, and against a
+        two-instruction "load offset `+0xa8` into a register, then call that register" pattern:
+        zero hits both times. Real conclusion: either that specific vtable slot genuinely has no
+        static call site in this compiled binary, or (more likely, see next point) real call sites
+        don't fit either simple pattern this project's tooling can check for.
+      - Traced the confirmed real "SUSPECT DETECTED" anti-spoofing logger (fires when a message's
+        sender isn't a currently-registered user) back to the same connected-user-registry lookup
+        already found -- consistent, but still not the opcode-dispatch answer, just more evidence
+        this registry is a security gate that runs *before* whatever real per-opcode routing
+        happens next.
+      - Tried harvesting every real outgoing `MsgID` value wholesale, by scanning for
+        `MOV word ptr [reg+0x1050], imm16` in one instruction across the whole binary (the pattern
+        directly observed at the `0xa103`/`0x6201` write sites). Zero hits -- **a real, useful
+        negative result**: those writes are actually two separate instructions (an address
+        computation like `LEA reg, [base+0x1050]`, then a plain `MOV word ptr [reg], imm16` with no
+        visible displacement), not one fused instruction. A future wholesale-opcode-harvest attempt
+        needs to match that two-instruction shape, not a single-instruction one.
+      This sub-thread has hit real, identified tooling limits three times in a row -- worth
+      building better static-analysis tooling before continuing to push on it by hand, rather than
+      repeating manual single-function decompiles indefinitely.
 - [ ] Confirm or refute whether `ACTIVE_SESSION` and the earlier `CSession`/`CBaseSocket` RTTI
       names refer to the same real class.
 - [ ] `CBlowFish`/`CKeyExchangeBase`/`CKeyRepicient`/`CKeySender` (found in `AgentServer.exe`) are
