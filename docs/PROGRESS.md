@@ -2,6 +2,28 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 9) — fixed a real bug in the zone-change feature: stale "other" entities
+
+- Caught right after shipping the previous two entries, while considering what to work on next:
+  `ChangeZoneResult` only carried the mover's own new position, not a snapshot of who's already in
+  the new zone -- unlike `EnterWorldResult`, which always has. The server only broadcasts
+  `OpEntityLeft`/`OpEntityEntered` to people *left behind* in the old zone or *already in* the new
+  one; the mover's own client never gets told to drop the old zone's other players from its own
+  view, and never learns who's actually present in the new zone until someone happens to move.
+  Net effect: after a zone change, `World3D.gd` would keep rendering the old zone's other players
+  as stale capsules/bodies, and wouldn't show anyone actually in the new zone.
+- Fixed by giving `ChangeZoneResult` an `Others []EntitySnapshot` field, populated the same way
+  `EnterWorldResult.Others` already is (`entitySnapshotFromWorld` over `hub.ChangeZone`'s
+  `othersNew` return). Client-side, `WorldNet.ChangeZoneResult` gained a matching `others` field,
+  and `World3D.gd`'s `_on_change_zone_result` now clears every existing `_other_bodies` entry and
+  respawns fresh ones from the new zone's snapshot, mirroring exactly what `_ready()` already does
+  for the very first `OpEnterWorldResult`.
+- Updated `TestChangeZoneResultRoundTripSuccess` (now needs field-by-field comparison since a slice
+  field means the struct isn't `==`-comparable any more, same pattern `EnterWorldResult`'s test
+  already uses) and extended `TestChangeZoneFlow` to assert `Others` at both zone changes: Bram
+  arrives alone, Cyra arrives to find Bram already there. Full `go test ./...` and all 35 GDScript
+  suites still pass; no `project.godot` diff.
+
 ## 2026-08-22 (cont'd 8) — World3D.gd now actually reacts to a real zone change
 
 - Closed the gap flagged at the end of the previous entry: `World3D.gd`'s terrain/object loading

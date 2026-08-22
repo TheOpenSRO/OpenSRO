@@ -388,12 +388,16 @@ func DecodeChangeZoneRequest(data []byte) (*ChangeZoneRequest, error) {
 // between one region's local coordinates and another's (see
 // docs/protocol/MAPO_FORMAT.md's "real-world placement scale" open item), so
 // a zone change is a discrete warp to a fixed point, not a continuous
-// cross-region walk.
+// cross-region walk. Others mirrors EnterWorldResult's own field: the mover
+// needs a fresh "who's already here" snapshot of the new zone, the same as
+// entering the world the first time -- their own client has no other way to
+// learn who else is present (broadcasts only reach everyone *else*).
 type ChangeZoneResult struct {
 	OK      bool
 	Reason  string
 	Zone    string
 	X, Y, Z float32
+	Others  []EntitySnapshot
 }
 
 func (r *ChangeZoneResult) Encode() []byte {
@@ -405,6 +409,12 @@ func (r *ChangeZoneResult) Encode() []byte {
 	out = append(out, encodeFloat32(r.X)...)
 	out = append(out, encodeFloat32(r.Y)...)
 	out = append(out, encodeFloat32(r.Z)...)
+	countBuf := make([]byte, 2)
+	binary.LittleEndian.PutUint16(countBuf, uint16(len(r.Others)))
+	out = append(out, countBuf...)
+	for _, o := range r.Others {
+		out = append(out, o.Encode()...)
+	}
 	return out
 }
 
@@ -436,9 +446,23 @@ func DecodeChangeZoneResult(data []byte) (*ChangeZoneResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding ChangeZoneResult: y: %w", err)
 	}
-	r.Z, _, err = decodeFloat32(rest)
+	r.Z, rest, err = decodeFloat32(rest)
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding ChangeZoneResult: z: %w", err)
+	}
+
+	if len(rest) < 2 {
+		return nil, errors.New("session: decoding ChangeZoneResult: truncated entity count")
+	}
+	count := int(binary.LittleEndian.Uint16(rest))
+	rest = rest[2:]
+	for i := 0; i < count; i++ {
+		var snap *EntitySnapshot
+		snap, rest, err = decodeEntitySnapshot(rest)
+		if err != nil {
+			return nil, fmt.Errorf("session: decoding ChangeZoneResult: entity %d: %w", i, err)
+		}
+		r.Others = append(r.Others, *snap)
 	}
 	return r, nil
 }
@@ -588,9 +612,14 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
 	}
 
+	otherSnapshots := make([]EntitySnapshot, len(othersNew))
+	for i, o := range othersNew {
+		otherSnapshots[i] = entitySnapshotFromWorld(ctx, eq, chars, o)
+	}
 	result := &ChangeZoneResult{
 		OK: true, Zone: req.Zone,
 		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
+		Others: otherSnapshots,
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: result.Encode()}); err != nil {
 		return err

@@ -160,7 +160,7 @@ func _test_encode_change_zone() -> void:
 
 ## Hand-builds an OpChangeZoneResult payload matching
 ## server/internal/session's encoding.
-func _build_change_zone_result(ok: bool, reason: String, zone: String, x: float, y: float, z: float) -> PackedByteArray:
+func _build_change_zone_result(ok: bool, reason: String, zone: String, x: float, y: float, z: float, others: Array = []) -> PackedByteArray:
 	var out := PackedByteArray([1 if ok else 0])
 	var reason_bytes := reason.to_utf8_buffer()
 	var len_buf := PackedByteArray()
@@ -183,15 +183,47 @@ func _build_change_zone_result(ok: bool, reason: String, zone: String, x: float,
 	pos_buf.encode_float(8, z)
 	out.append_array(pos_buf)
 
+	var count_buf := PackedByteArray()
+	count_buf.resize(2)
+	count_buf.encode_u16(0, others.size())
+	out.append_array(count_buf)
+
+	for o in others:
+		var id_buf := PackedByteArray()
+		id_buf.resize(8)
+		id_buf.encode_s64(0, o["id"])
+		out.append_array(id_buf)
+		var oname_bytes: PackedByteArray = o["name"].to_utf8_buffer()
+		len_buf.encode_u16(0, oname_bytes.size())
+		out.append_array(len_buf)
+		out.append_array(oname_bytes)
+		var opos_buf := PackedByteArray()
+		opos_buf.resize(12)
+		opos_buf.encode_float(0, o["x"])
+		opos_buf.encode_float(4, o["y"])
+		opos_buf.encode_float(8, o["z"])
+		out.append_array(opos_buf)
+		out.append(int(o.get("armor_slots_mask", 0)) & 0xFF)
+		out.append(1 if o.get("has_weapon", false) else 0)
+		out.append(1 if o.get("has_shield", false) else 0)
+		var ogender_bytes: PackedByteArray = String(o.get("gender", "")).to_utf8_buffer()
+		len_buf.encode_u16(0, ogender_bytes.size())
+		out.append_array(len_buf)
+		out.append_array(ogender_bytes)
+
 	return out
 
 func _test_decode_change_zone_result_success() -> void:
-	var payload := _build_change_zone_result(true, "", "100/100", 1.0, 2.0, 3.0)
+	var payload := _build_change_zone_result(true, "", "100/100", 1.0, 2.0, 3.0, [{"id": 42, "name": "Bram", "x": 4.0, "y": 5.0, "z": 6.0, "gender": CharacterNet.GENDER_CHINA_MAN}])
 	var result := WorldNet.decode_change_zone_result(payload)
 	_check(result.error == "", "no decode error")
 	_check(result.ok, "ok is true")
 	_check(result.zone == "100/100", "zone round-trips")
 	_check(result.x == 1.0 and result.y == 2.0 and result.z == 3.0, "position round-trips")
+	_check(result.others.size() == 1, "one other entity (got %d)" % result.others.size())
+	if result.others.size() == 1:
+		_check(result.others[0].character_id == 42, "other's character_id round-trips")
+		_check(result.others[0].char_name == "Bram", "other's name round-trips")
 
 func _test_decode_change_zone_result_failure() -> void:
 	var payload := _build_change_zone_result(false, "already in that zone", "", 0, 0, 0)

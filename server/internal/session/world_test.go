@@ -103,13 +103,19 @@ func TestChangeZoneRequestRoundTrip(t *testing.T) {
 }
 
 func TestChangeZoneResultRoundTripSuccess(t *testing.T) {
-	want := &ChangeZoneResult{OK: true, Zone: "100/100", X: 1, Y: 2, Z: 3}
+	want := &ChangeZoneResult{
+		OK: true, Zone: "100/100", X: 1, Y: 2, Z: 3,
+		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, Gender: character.GenderChinaMan}},
+	}
 	got, err := DecodeChangeZoneResult(want.Encode())
 	if err != nil {
 		t.Fatalf("DecodeChangeZoneResult: %v", err)
 	}
-	if *got != *want {
+	if got.OK != want.OK || got.Zone != want.Zone || got.X != want.X || got.Y != want.Y || got.Z != want.Z || len(got.Others) != 1 {
 		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	if got.Others[0] != want.Others[0] {
+		t.Fatalf("got other %+v, want %+v", got.Others[0], want.Others[0])
 	}
 }
 
@@ -239,6 +245,9 @@ func TestChangeZoneFlow(t *testing.T) {
 	if err != nil || !czr.OK || czr.Zone != "100/100" {
 		t.Fatalf("Bram's zone change: got %+v (err=%v), want ok zone=100/100", czr, err)
 	}
+	if len(czr.Others) != 0 {
+		t.Fatalf("Bram should be alone in 100/100, got Others=%+v", czr.Others)
+	}
 	for name, r := range map[string]*bufio.Reader{"Aria": rA, "Cyra": rC} {
 		var conn net.Conn = connA
 		if name == "Cyra" {
@@ -261,6 +270,9 @@ func TestChangeZoneFlow(t *testing.T) {
 	czr, err = DecodeChangeZoneResult(resp.Data)
 	if err != nil || !czr.OK || czr.Zone != "100/100" {
 		t.Fatalf("Cyra's zone change: got %+v (err=%v), want ok zone=100/100", czr, err)
+	}
+	if len(czr.Others) != 1 || czr.Others[0].Name != "Bram" {
+		t.Fatalf("Cyra should see Bram already in 100/100, got Others=%+v", czr.Others)
 	}
 	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
 	entered, err := proto.Read(rB)

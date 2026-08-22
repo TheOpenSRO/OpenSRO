@@ -244,6 +244,7 @@ class ChangeZoneResult:
 	var x: float
 	var y: float
 	var z: float
+	var others: Array[EntitySnapshot] = []
 	var error: String # decode error, distinct from a well-formed "not ok" response
 
 ## Decodes an OpChangeZoneResult payload.
@@ -287,5 +288,20 @@ static func decode_change_zone_result(data: PackedByteArray) -> ChangeZoneResult
 	result.x = data.decode_float(offset)
 	result.y = data.decode_float(offset + 4)
 	result.z = data.decode_float(offset + 8)
+	offset += 12
+
+	if offset + 2 > data.size():
+		result.error = "truncated entity count"
+		return result
+	var count := data.decode_u16(offset)
+	offset += 2
+
+	for i in range(count):
+		var decoded := _decode_entity_snapshot(data, offset)
+		if decoded[0] == null:
+			result.error = "truncated entity %d" % i
+			return result
+		result.others.append(decoded[0])
+		offset = decoded[1]
 
 	return result

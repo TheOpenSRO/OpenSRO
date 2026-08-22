@@ -469,6 +469,21 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	if not result.ok:
 		return
 	zone_label.text = "Zone: %s" % result.zone
+	player.position = Vector3(result.x, result.y, result.z)
+	_last_sent_pos = player.position
+
+	# Whoever was rendered as an "other" belonged to the *old* zone -- the
+	# server only broadcasts OpEntityLeft to people left behind, never back
+	# to the mover, so without this their stale capsules/bodies would keep
+	# showing here even though this player can no longer interact with them
+	# (see docs/PROGRESS.md for this bug, caught right after the initial
+	# OpChangeZone implementation shipped).
+	for character_id in _other_bodies.keys():
+		_other_bodies[character_id].queue_free()
+	_other_bodies.clear()
+	for other in result.others:
+		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.armor_slots_mask, other.gender, other.has_weapon, other.has_shield)
+
 	_reload_zone_assets(result.zone)
 
 ## Loads real terrain from a real Map.pk2 region .m file via MapmReader +
