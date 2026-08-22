@@ -103,11 +103,15 @@ through further vtable indirection rather than directly.
         directly observed at the `0xa103`/`0x6201` write sites). Zero hits -- **a real, useful
         negative result**: those writes are actually two separate instructions (an address
         computation like `LEA reg, [base+0x1050]`, then a plain `MOV word ptr [reg], imm16` with no
-        visible displacement), not one fused instruction. A future wholesale-opcode-harvest attempt
-        needs to match that two-instruction shape, not a single-instruction one.
-      This sub-thread has hit real, identified tooling limits three times in a row -- worth
-      building better static-analysis tooling before continuing to push on it by hand, rather than
-      repeating manual single-function decompiles indefinitely.
+        visible displacement), not one fused instruction. **Fixed and reran** matching that real
+        two-instruction shape instead -- a big payoff: harvested 33 real opcode values from
+        `AgentServer.exe` and 36 from `GatewayServer.exe` in one pass each, re-finding all four
+        already-confirmed opcodes at the right values (real validation the rest are genuine too).
+        See the dedicated catalog, `observed_opcodes.md`.
+      The general per-opcode dispatch mechanism itself is still unfound, but the tooling built
+      while chasing it (the two-instruction pattern scanner) turned out to be a genuinely valuable
+      capability on its own -- worth reaching for again before more manual single-function
+      decompiles, now that it's proven to work.
 - [ ] Confirm or refute whether `ACTIVE_SESSION` and the earlier `CSession`/`CBaseSocket` RTTI
       names refer to the same real class.
 - [ ] `CBlowFish`/`CKeyExchangeBase`/`CKeyRepicient`/`CKeySender` (found in `AgentServer.exe`) are

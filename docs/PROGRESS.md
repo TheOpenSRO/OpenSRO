@@ -2,6 +2,29 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 25) — fixed the harvest tool, catalogued ~50 real opcodes at once
+
+- Went back to the dispatch-mechanism RE thread and fixed the tooling gap identified last pass:
+  the wholesale-opcode-harvest script was matching a single fused instruction
+  (`MOV word ptr [reg+0x1050], imm16`) that doesn't actually occur -- real writes split the address
+  computation and the store into two instructions. Rewrote the scanner to match that real
+  two-instruction shape (an `LEA`/`ADD`/`MOV` computing `reg = base+0x1050`, followed within a few
+  instructions by `MOV word ptr [reg], imm16`).
+- Big payoff: harvested **33 unique real opcode values from `AgentServer.exe`** and **36 from
+  `GatewayServer.exe`** in one pass each. All four opcodes already independently confirmed this
+  session (`0x5000`/`0x9000` handshake, `0x6201`/`0xa103` login hand-off) came back out at the
+  exact right values in the expected binaries -- strong, real validation that the rest of the
+  harvest is genuine, not noise.
+- Wrote up the full catalog in a new file, `docs/protocol/opcodes/observed_opcodes.md`, including
+  the real overlap between the two binaries (shared `ServerFramework` infrastructure messages) and
+  `GatewayServer.exe`'s own real `0x61xx`/`0x62xx`/`0x63xx` cluster, which sits in the address range
+  publicly documented by the private-server community as the real login/server-list/shard-select
+  sequence -- an independent cross-check the harvest is real, not just internally self-consistent.
+- None of these opcodes' payload layouts are pulled yet -- that's real, separate, per-opcode work.
+  But this is a genuinely large jump in known real opcode surface (roughly 50 real values now
+  confirmed to exist, up from the handful found one at a time earlier this session), and the
+  scanning technique itself is now a proven, reusable capability for future opcode RE passes.
+
 ## 2026-08-22 (cont'd 24) — real magic-option schema found; confirmed no real NPC price table exists
 
 - Kept using the now-proven DB-restore access. Followed `_RefDropItemGroup.RefMagicGroupID` to its
