@@ -115,4 +115,21 @@ grow_vertical = 0
 mouse_filter = 0
 text = "Back to 2D View"
 
+[node name="ZoneInput" type="LineEdit" parent="UI/Control"]
+layout_mode = 0
+offset_left = 8.0
+offset_top = 68.0
+offset_right = 158.0
+offset_bottom = 92.0
+placeholder_text = "zone, e.g. 100/100"
+
+[node name="ChangeZoneButton" type="Button" parent="UI/Control"]
+layout_mode = 0
+offset_left = 162.0
+offset_top = 68.0
+offset_right = 260.0
+offset_bottom = 92.0
+text = "Change Zone"
+
 [connection signal="pressed" from="UI/Control/BackButton" to="." method="_on_back_to_2d_pressed"]
+[connection signal="pressed" from="UI/Control/ChangeZoneButton" to="." method="_on_change_zone_pressed"]

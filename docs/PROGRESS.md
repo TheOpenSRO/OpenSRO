@@ -2,6 +2,38 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 8) — World3D.gd now actually reacts to a real zone change
+
+- Closed the gap flagged at the end of the previous entry: `World3D.gd`'s terrain/object loading
+  was still a one-time, env-var-driven load at scene startup, not wired to
+  `NetClient.change_zone_result`.
+- Added `_zone_paths(zone)`: splits a zone label shaped like this project's real Map.pk2 region
+  naming (`"<x>/<y>"`, e.g. `"100/100"`, `"102/101"` -- the real (x, y) folder/filename convention
+  confirmed in `MAPM_FORMAT.md`/`MAPO_FORMAT.md`) into that region's real internal paths
+  (`"100\100.m"`, `"100\100.o"`, `"minimap\100x100.ddj"`, matching the exact convention this file's
+  own `SRREVAMP_MAPM_PATH`/`SRREVAMP_MAPO_PATH` doc comments already described). Returns `{}` for
+  anything not shaped that way (e.g. the default spawn zone `"jangan"`) -- no guessed path for a
+  zone that isn't a real region coordinate.
+- `_try_load_real_terrain`/`_try_load_real_map_objects`/`_load_real_terrain_texture` now take an
+  optional path override, falling back to the original env vars when empty (unchanged behavior for
+  the initial `_ready()` load, which still reads env vars directly since the very first zone is
+  usually `"jangan"`, not a real region).
+- `_reload_zone_assets(zone)`: frees the current `"RealTerrain"`/`"RealMapObjects"` nodes, resets
+  the placeholder ground visible/collidable, then re-runs the loaders with `_zone_paths`'
+  resolved paths (or leaves the placeholder if the zone isn't region-shaped).
+  `_on_change_zone_result` (connected to `NetClient.change_zone_result`) calls it and updates the
+  zone label on a successful change.
+- Added a small dev-facing UI (`ZoneInput`/`ChangeZoneButton` in `World3D.tscn`) so a zone change
+  can actually be triggered and watched end to end, not just verified by reading code.
+- Verified: scene boots clean under `godot4 --headless --path . scenes/World3D.tscn` with no new
+  errors (confirmed the one pre-existing `_send called while not connected` line already appears
+  identically on the prior commit, unrelated to this change). All 35 GDScript test suites still
+  pass; no `project.godot` cosmetic diff. Did not add a dedicated automated test for `_zone_paths`
+  itself -- a standalone `World3D.gd` unit-test file was already tried and abandoned earlier this
+  session (hung indefinitely under `--headless --script`, root cause not fully diagnosed, likely an
+  autoload-resolution quirk); relying on the scene-boot smoke test plus manual verification of
+  `_zone_paths`' string logic instead, same documented limitation as before.
+
 ## 2026-08-22 (cont'd 7) — real multi-zone world: OpChangeZone (server) + wire support (client)
 
 - Every character has spawned at one hardcoded position (`spawnZone = "jangan"`, `(0,0,0)`) since

@@ -95,17 +95,21 @@ extends Node3D
 ## -- this scene works fine with none of them set, same as always.
 ##
 ## The server now has a real multi-zone concept: OpChangeZone/
-## OpChangeZoneResult (NetClient.change_zone/change_zone_result, see
-## docs/PROGRESS.md) let a character warp between zone labels, and
-## NetClient.current_zone tracks which one they're actually in server-side.
-## This scene doesn't react to that yet -- SRREVAMP_MAPM_PATH/
-## SRREVAMP_MAPO_PATH above are still a one-time, env-var-driven load at
-## scene startup, not re-resolved when current_zone changes. Wiring a zone
-## change to actually tear down and reload this scene's terrain/objects for
-## the new real region (by turning a zone label like "100/100" into
-## "Map\\100\\100.m"/"Map\\100\\100.o" and re-running
-## _try_load_real_terrain()/_try_load_real_map_objects()) is real, honestly
-## unfinished follow-up work, not attempted here.
+## OpChangeZoneResult (NetClient.change_zone/change_zone_result) let a
+## character warp between zone labels. This scene reacts to a successful
+## change (_on_change_zone_result): it tears down whatever real
+## terrain/map-object nodes are currently loaded ("RealTerrain"/
+## "RealMapObjects") and reloads them for the new zone, via _zone_paths --
+## a zone label shaped like this project's real Map.pk2 region naming
+## ("<x>/<y>", e.g. "100/100") resolves to that region's real internal
+## paths ("100\\100.m", "100\\100.o", "minimap\\100x100.ddj"), the same
+## convention SRREVAMP_MAPM_PATH/SRREVAMP_MAPO_PATH's doc comments above
+## already describe. A zone not shaped that way (e.g. the default spawn
+## zone, "jangan") just clears back to the placeholder ground with nothing
+## loaded -- honest "nothing to load", not a guessed path. The *initial*
+## load in _ready() still reads the raw env vars directly rather than going
+## through a zone label, since the very first EnterWorldResult doesn't
+## necessarily carry a region-shaped zone (again, "jangan" by default).
 
 const MOVE_SPEED := 6.0
 const GRAVITY := 20.0
@@ -212,6 +216,7 @@ const MAX_MAP_OBJECTS := 300
 @onready var other_entities: Node3D = $OtherEntities
 @onready var zone_label: Label = $UI/Control/ZoneLabel
 @onready var character_label: Label = $UI/Control/CharacterLabel
+@onready var zone_input: LineEdit = $UI/Control/ZoneInput
 
 var _other_bodies := {} # character_id -> Node3D
 var _last_sent_pos := Vector3.ZERO
@@ -262,6 +267,7 @@ func _ready() -> void:
 	NetClient.entity_entered.connect(_on_entity_entered)
 	NetClient.entity_moved.connect(_on_entity_moved)
 	NetClient.entity_left.connect(_on_entity_left)
+	NetClient.change_zone_result.connect(_on_change_zone_result)
 
 	_try_load_real_scenery()
 	_try_load_real_decoration_skeleton()
@@ -388,8 +394,12 @@ func _open_media_pk2_if_set() -> Pk2Reader:
 ## game than the flat/procedural fallback color this function returns null
 ## for -- but it's a real top-down painted image, not sampled per-tile 3D
 ## terrain texture data.
-func _load_real_terrain_texture() -> Texture2D:
-	var tex_path := OS.get_environment("SRREVAMP_MAPM_TEXTURE_PATH")
+## path_override lets a zone reload (see _reload_zone_assets) pass a
+## specific real path instead of reading SRREVAMP_MAPM_TEXTURE_PATH -- empty
+## string (the default) means "use the env var", same as every call site
+## before zone reloading existed.
+func _load_real_terrain_texture(path_override: String = "") -> Texture2D:
+	var tex_path := path_override if path_override != "" else OS.get_environment("SRREVAMP_MAPM_TEXTURE_PATH")
 	if tex_path == "":
 		return null
 
@@ -406,14 +416,72 @@ func _load_real_terrain_texture() -> Texture2D:
 
 	return DdjReader.to_texture(parsed)
 
+## Splits a zone label shaped like this project's real Map.pk2 region
+## naming (an (x, y) folder/filename pair -- see docs/protocol/
+## MAPM_FORMAT.md/MAPO_FORMAT.md, e.g. "100/100", "102/101") into the real
+## internal paths those regions live at. Returns {} for anything not shaped
+## "<x>/<y>" with both parts non-empty -- e.g. the default spawn zone
+## ("jangan") isn't a real region coordinate, so this deliberately doesn't
+## guess a path for it.
+static func _zone_paths(zone: String) -> Dictionary:
+	var parts := zone.split("/")
+	if parts.size() != 2 or parts[0] == "" or parts[1] == "":
+		return {}
+	var x := parts[0]
+	var y := parts[1]
+	return {
+		"m": "%s\\%s.m" % [x, y],
+		"o": "%s\\%s.o" % [x, y],
+		"minimap": "minimap\\%sx%s.ddj" % [x, y],
+	}
+
+## Tears down whatever real terrain/map-object nodes are currently loaded
+## and reloads them for zone, resolving real per-zone paths via _zone_paths
+## instead of the fixed SRREVAMP_MAPM_PATH/SRREVAMP_MAPO_PATH env vars this
+## scene's initial _ready() load still uses. If zone isn't shaped like a
+## real region coordinate (see _zone_paths), this just clears back to the
+## placeholder ground with no objects -- same honest "nothing to load"
+## behavior as an unset env var, not a guess.
+func _reload_zone_assets(zone: String) -> void:
+	var old_terrain := get_node_or_null("RealTerrain")
+	if old_terrain != null:
+		old_terrain.queue_free()
+	var old_objects := get_node_or_null("RealMapObjects")
+	if old_objects != null:
+		old_objects.queue_free()
+	ground_mesh.visible = true
+	ground_collision.disabled = false
+
+	var paths := _zone_paths(zone)
+	if paths.is_empty():
+		print("World3D: zone %s isn't shaped like a real region (x/y) -- no per-zone assets to load" % zone)
+		return
+
+	_try_load_real_terrain(paths["m"], paths["minimap"])
+	_try_load_real_map_objects(paths["o"])
+
+## Reacts to a successful real zone change (see NetClient.change_zone/
+## OpChangeZoneResult): updates the zone label and reloads this scene's
+## terrain/map objects for the new real zone. A failed zone change (bad
+## request, already in that zone, ...) is left to whatever UI triggered it
+## to report -- this scene doesn't render its own error text for that.
+func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
+	if not result.ok:
+		return
+	zone_label.text = "Zone: %s" % result.zone
+	_reload_zone_assets(result.zone)
+
 ## Loads real terrain from a real Map.pk2 region .m file via MapmReader +
 ## MapmTerrainBuilder, replacing both the placeholder ground's visual mesh
 ## and its collision shape (see this file's top comment) -- if
 ## SRREVAMP_MAPM_PATH is set. Accepts either a loose file path or a path
 ## inside SRREVAMP_MAP_PK2_PATH (see AssetSource). Skips gracefully
-## otherwise.
-func _try_load_real_terrain() -> void:
-	var mapm_path := OS.get_environment("SRREVAMP_MAPM_PATH")
+## otherwise. path_override/texture_override let _reload_zone_assets pass
+## real per-zone paths it resolved itself instead of reading the env vars --
+## empty (the default) preserves the original env-var-only behavior for
+## _ready()'s own call.
+func _try_load_real_terrain(path_override: String = "", texture_override: String = "") -> void:
+	var mapm_path := path_override if path_override != "" else OS.get_environment("SRREVAMP_MAPM_PATH")
 	if mapm_path == "":
 		print("World3D: SRREVAMP_MAPM_PATH not set -- ground stays a placeholder")
 		return
@@ -435,9 +503,10 @@ func _try_load_real_terrain() -> void:
 		return
 
 	var terrain := MeshInstance3D.new()
+	terrain.name = "RealTerrain"
 	terrain.mesh = terrain_mesh
 	var mat := StandardMaterial3D.new()
-	var real_texture := _load_real_terrain_texture()
+	var real_texture := _load_real_terrain_texture(texture_override)
 	var aabb := terrain_mesh.get_aabb()
 	var row_count_estimate := aabb.size.z / MapmTerrainBuilder.TILE_SIZE + 1
 	if real_texture != null:
@@ -718,9 +787,12 @@ func _real_player_equipped_slots() -> Array:
 ## either env var is unset, or if a specific placement's type ID isn't in
 ## the index (real, expected -- not every real object type is necessarily
 ## resolvable, and this project doesn't try to hide that by falling back
-## to a placeholder marker here).
-func _try_load_real_map_objects() -> void:
-	var mapo_path := OS.get_environment("SRREVAMP_MAPO_PATH")
+## to a placeholder marker here). path_override lets _reload_zone_assets
+## pass a real per-zone path it resolved itself instead of reading
+## SRREVAMP_MAPO_PATH -- empty (the default) preserves the original
+## env-var-only behavior for _ready()'s own call.
+func _try_load_real_map_objects(path_override: String = "") -> void:
+	var mapo_path := path_override if path_override != "" else OS.get_environment("SRREVAMP_MAPO_PATH")
 	if mapo_path == "":
 		print("World3D: SRREVAMP_MAPO_PATH not set -- no real map objects loaded")
 		return
@@ -904,3 +976,14 @@ func _on_entity_left(character_id: int) -> void:
 
 func _on_back_to_2d_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/World.tscn")
+
+## Sends a real OpChangeZone for whatever's typed in zone_input.
+## _on_change_zone_result (connected in _ready()) handles the reply --
+## success updates zone_label and reloads real terrain/objects for the new
+## zone, failure is silently ignored here (no dedicated error UI for this
+## yet, same honest scope as the rest of this scene's dev-facing controls).
+func _on_change_zone_pressed() -> void:
+	var zone := zone_input.text.strip_edges()
+	if zone == "":
+		return
+	NetClient.change_zone(zone)

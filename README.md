@@ -102,9 +102,13 @@ A zone is just an opaque string as far as the server's concerned, but this proje
 `.mapo`/`.mapm` region-file naming (`<x>/<y>.m`/`.o`, e.g. `100/100`) is the convention a client
 pointed at real map data is expected to use. Every zone change lands at the same fixed spawn point
 — there's still no confirmed real coordinate transform between one region and another (see "Not
-yet done" below), so this is a discrete warp, not a continuous cross-region walk. `World3D.gd`
-doesn't react to a zone change yet (its terrain/object loading is still a one-time,
-env-var-driven load at scene startup) — see its top comment and `docs/PROGRESS.md`.
+yet done" below), so this is a discrete warp, not a continuous cross-region walk. `World3D.gd` now
+reacts to a real zone change too: a zone label shaped like this project's real region naming
+(`"100/100"`) resolves (`_zone_paths`) to that region's real internal paths and the scene tears
+down/reloads its terrain and map objects for the new zone — a small dev UI (`ZoneInput`/
+`ChangeZoneButton`) lets you actually trigger and watch this happen. A zone not shaped that way
+(e.g. the default spawn zone, `"jangan"`) just clears back to the placeholder ground rather than
+guessing a path.
 
 3D asset formats are reverse-engineered and have real, tested readers on both sides
 (`server/internal/{pk2,bsr,bms,ddj,bmt,ban,bsk,mapo,mapm,efp}` in Go,
