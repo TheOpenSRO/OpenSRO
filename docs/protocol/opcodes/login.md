@@ -94,7 +94,12 @@ The gateway binary contains **two** separate authentication code paths:
 - [ ] Trace from `ACTIVE_SESSION`'s real per-packet path (now found, see `handshake.md`/
       `dispatch.md`) forward to wherever `CUserCertifier_OverlapJob` actually gets picked and
       populated for a login-shaped `MsgID` -- the genuine remaining link between "a raw packet
-      arrived" and "the certifier switch ran with some Div ID." Not yet traced.
+      arrived" and "the certifier switch ran with some Div ID." Not yet traced directly in
+      `GatewayServer.exe`, but `dispatch.md` found the *same* shape of mechanism (a global
+      `std::map`-based `MsgID`-keyed registry) genuinely confirmed in the sibling `AgentServer.exe`
+      binary -- both share the same `ServerFramework`/`COverlapJobManager` codebase, so this is
+      now a well-grounded hypothesis (not yet proven for this specific binary) for how
+      `COverlapJobManager` itself picks which real `OverlapJob` subclass to spawn per `MsgID`.
 - [ ] Pull the exact `_CertifyUser`/`_CertifyTB_User` result-set column meanings beyond "some
       bytes signal blocked/failed" (now two confirmed distinct encodings, see above)
 - [ ] Cross-reference the SRO_VT_ACCOUNT database backup (`db.rar` in the obtained package) against

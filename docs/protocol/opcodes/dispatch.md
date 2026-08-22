@@ -77,15 +77,18 @@ through further vtable indirection rather than directly.
       opcode value for a target message is known (from the client or elsewhere), searching for
       literal `CMP`/`MOV` instructions using that exact value directly finds real comparison sites,
       without needing to identify an owning class first.
-- [ ] Find the real **post-handshake** per-opcode dispatch path -- `_OnMsgReceivedBeforeHandshake`'s
-      own name implies it's a special case only for the handshake's own two opcodes, not the
-      general mechanism login (or any other real opcode) actually dispatches through once a
-      session is past that stage. This is the genuine remaining gap connecting "a raw packet with
-      some real `MsgID` arrived" to "some specific handler function ran" for ordinary gameplay
-      opcodes -- the real next target, findable via the same technique (search for comparisons
-      against whichever real opcode value is targeted next).
+- [x] Found the real **post-handshake** per-opcode dispatch mechanism -- not in `GatewayServer.exe`
+      (which mostly relays gameplay traffic onward, see below) but in `AgentServer.exe`: a real
+      global `std::map`-shaped registry keyed by `MsgID`, gatekept by a `CAgentMainProcess` virtual
+      method with real traffic-flood exemptions for opcodes `0x6314`-`0x6316`/`0xa314`. See the
+      dedicated section below.
+- [ ] Enumerate what actually populates that global registry (the real registration call sites) --
+      now the single highest-value next target, since it would reveal real opcode-to-handler
+      mappings in bulk rather than one at a time.
 - [ ] Confirm or refute whether `ACTIVE_SESSION` and the earlier `CSession`/`CBaseSocket` RTTI
       names refer to the same real class.
+- [ ] `CBlowFish`/`CKeyExchangeBase`/`CKeyRepicient`/`CKeySender` (found in `AgentServer.exe`) are
+      real, unexplored leads for `handshake.md`'s still-open session-cipher key-exchange question.
 
 ## A real, hand-rolled callback table (not a C++ vtable) found on the session object
 
@@ -111,14 +114,80 @@ real mechanism connecting an ordinary gameplay `MsgID` to its handler is still n
 0x2000-byte send buffer), not a dispatcher either -- also ruled out. Recorded here so a future pass
 doesn't re-decompile either slot expecting a different answer.
 
-**A real hypothesis for where the actual mechanism lives**, based on the earlier `"There is no
-certification handler!!! you must register it first!!!"` error string (`login.md`): this reads
-like a real handler-registration pattern -- various subsystems each real-register themselves
-against a numeric ID at startup (into some global table this project hasn't located), rather than
-the session object holding a small fixed callback set. If true, the real next step is finding that
-registration call (something like `RegisterHandler(id, callback)`) and its call sites across
-`GatewayServer.exe`'s startup code, not more exploration of the session object itself. Not
-confirmed -- a hypothesis to test, not a fact.
+**Superseded by a real architectural finding below**: the "registration table" hypothesis assumed
+`GatewayServer.exe` itself dispatches ordinary gameplay opcodes. Real evidence now points the
+other way -- `GatewayServer.exe` mostly just relays them elsewhere. See the next section.
+
+## Real architecture: Gateway relays to Agent -- most opcode dispatch isn't in this binary at all
+
+Only 5 real `On<MESSAGE_NAME>`-shaped handler method names exist anywhere in `GatewayServer.exe`
+(`OnMsgReceivedBeforeHandshake`, `OnFileSent`, and three `OnFRAMEWORKMSG_*` inter-server messages)
+-- far too few for a binary that's supposed to handle the full range of real gameplay opcodes.
+Real strings confirm why: `COverlapJob_RelayMsg` (already found, `ServerFramework` namespace) is a
+real message-relay job, and a real, literal debug string names its actual per-message field:
+`"unhandled relay msg error : wRealMsgID : 0x%X : dwParam : 0x%X"`. Combined with
+`"there is unfurnished shard does not have any agent server : %d - %s"` and the literal string
+`AgentServer`, this confirms the real architecture this project's own `db_schema.md`/public
+knowledge already implied: **`GatewayServer.exe` is a thin login/handshake front door that relays
+most real gameplay messages onward to a separate `AgentServer.exe` process (one per shard), by
+their real `wRealMsgID`, without itself dispatching or even necessarily parsing them.**
+
+This means the real per-opcode gameplay dispatch mechanism this project has been searching for in
+`GatewayServer.exe` mostly **isn't in this binary at all** for anything past login. `GatewayServer.exe`
+itself remains the right binary for login/handshake/account-certification specifically
+(`login.md`), since that traffic terminates here rather than relaying onward.
+
+## Found in `AgentServer.exe`: the real dispatch mechanism (a global MsgID-keyed registry)
+
+Imported and analyzed `AgentServer.exe` (same obtained package, same `Blitzkrieq_Bin_Data`
+folder, real dedicated agent-server binary). Same `ServerFramework` codebase as `GatewayServer.exe`
+(shares `COverlapJob`/`CSession`/`CBaseSocket` and adds real agent-specific classes:
+`CAgentMainProcess`, `CAgentServer`, `CUserManager`, `CBlowFish`, `CKeyExchangeBase`, and more --
+see the class list below).
+
+Searching for a real "unhandled message" fallback string (`"unhandled msg received %s : %s"`)
+traced to a real, concrete chain:
+
+1. **`CAgentMainProcess`** (confirmed via the same RTTI-chain technique used throughout this
+   project) has a real virtual method (one of ~30 vtable slots) that gatekeeps every incoming
+   message. Decompiled it directly: it reads a real 16-bit message-type field from the incoming
+   message object (a different object/offset than `GatewayServer.exe`'s `ACTIVE_SESSION::MsgID`,
+   consistent with these being separate binaries/classes) and **explicitly exempts two real opcode
+   ranges from a traffic-flood filter**: `0x6314`-`0x6316` (a contiguous 3-value range) and
+   `0xa314` (a single value) -- real opcode numbers, plausibly high-frequency messages like
+   movement/heartbeat that shouldn't trip flood protection. Everything else goes through a
+   traffic-filter lookup before being allowed through, real strings confirm
+   (`"[TrafficFilter] Heavy traffic is occured by [%s]. disconnected."`).
+2. That lookup (`FUN_0040bdc0` in this project's current addressing) is a real
+   **`std::map`-shaped lookup** (recognizable MSVC red-black-tree `find()` pattern: fetch an
+   iterator, compare against the container's own `end()` sentinel, and on a hit return a mapped
+   value from a fixed offset in the tree node) against a **global map instance**. This is almost
+   certainly the real per-MsgID handler registry the earlier `"you must register it first!!!"`
+   error (`login.md`, found in the *other* binary) was describing -- the same real architecture
+   pattern, now located concretely. When the lookup misses (message type never registered), the
+   real fallback (`FUN_004315d0`) logs `"unhandled msg received"` and does nothing further.
+
+This is a real, substantial architectural confirmation: gameplay opcodes dispatch through one
+global, populated-at-startup MsgID -> handler-descriptor map, not per-connection callback tables
+(the thing already ruled out in `GatewayServer.exe`, and now confirmed to be the wrong place to
+look for exactly that reason). **Not yet done**: enumerating what actually populates this map (the
+real registration call sites, which would reveal real opcode-to-handler-name pairs en masse) --
+this is now the single highest-value next target for expanding real opcode coverage broadly,
+rather than one opcode at a time.
+
+### Real class list found in `AgentServer.exe` (via RTTI, `.?AV` mangled prefix)
+
+`CAgentMainProcess`, `CAgentServer`, `CBase`, `CBaseSocket`, `CBlowFish`, `CEventHandler`,
+`CFileLegacy`/`CFileMM`/`CFileMem`/`CFileSystem`, `CIDPool`, `CInternalException`,
+`CKeyExchangeBase`, `CKeyRepicient`, `CKeySender`, `CMaintainer`, `CMsgException`, `CNetEngine`,
+`CPeerProcessIOCP`, `CPeerProcessOverlapped`, `CProactorEvent`, `CProactorIOCP`, `CRegistry`,
+`CServiceObject`/`CServiceObjectSock`, `CSession`, `CSimpleThread`, `CSockDatagram`/
+`CSockListener`/`CSockStream`/`CSockSystem`, `CSynchObject`, `CSystem`, `CTask`/`CTaskManager`,
+`CThreadControl`/`CThreadManager`, `CToken`/`CTokenManager`, `CUserManager`, plus the
+`ServerFramework::COverlapJob*`/`CServerProcessBase`/`CServerProcessMain`/`CServerProcessOverlap`
+family already partly known from `GatewayServer.exe`. `CBlowFish` and `CKeyExchangeBase`/
+`CKeyRepicient`/`CKeySender` are real, promising, not-yet-explored leads for the still-open session
+encryption/key-exchange question (`handshake.md`'s "Encryption" section).
 
 ## A real, unreconciled discrepancy: `+6`, not `+5`, in one real frame-size calculation
 

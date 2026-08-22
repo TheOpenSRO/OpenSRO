@@ -2,6 +2,36 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 20) — major architecture find: Gateway relays to Agent; found the real dispatch registry
+
+- Realized `GatewayServer.exe` was the wrong binary to keep searching in for a general per-opcode
+  dispatcher: only 5 real `On<MESSAGE_NAME>`-shaped handler names exist in the whole binary, and
+  real strings (`"unhandled relay msg error : wRealMsgID : 0x%X..."`, a literal `AgentServer`
+  string, `"there is unfurnished shard does not have any agent server"`) confirm the real
+  architecture -- `GatewayServer.exe` is a thin login/handshake front door that relays most
+  gameplay messages onward to a separate `AgentServer.exe` process (one per shard) by their real
+  `wRealMsgID`, without dispatching them itself.
+- Imported and analyzed `AgentServer.exe` (same package, same `ServerFramework` codebase). Found a
+  real "unhandled msg received" fallback string, traced it to a real `CAgentMainProcess` virtual
+  method (confirmed via RTTI) that: (1) exempts two real opcode values/ranges (`0x6314`-`0x6316`,
+  `0xa314`) from flood protection, then (2) looks up the message type in what is unmistakably a
+  real `std::map`-shaped registry (recognizable MSVC red-black-tree `find()` pattern against a
+  global map instance) -- a miss logs "unhandled msg", a hit returns a handler descriptor.
+- This is the real mechanism the earlier `"you must register it first!!!"` error was describing --
+  a global `MsgID`-keyed registry populated at startup, not per-connection callback tables (which
+  were already correctly ruled out in `GatewayServer.exe`). Confirms that project's earlier
+  negative results were sound; the mechanism just lives in a different binary for gameplay opcodes.
+- Cataloged `AgentServer.exe`'s real class list (30+ real names via RTTI) -- notably `CBlowFish`
+  and a `CKeyExchangeBase`/`CKeyRepicient`/`CKeySender` family, real unexplored leads for
+  `handshake.md`'s still-open session-cipher key-exchange question.
+- **Not yet done, now the single highest-value next target**: enumerating what actually populates
+  the registry (the real registration call sites) -- would reveal real opcode-to-handler mappings
+  in bulk, a much bigger jump than tracing one opcode at a time.
+- Updated `login.md` with a well-grounded hypothesis this creates: `GatewayServer.exe`'s own
+  `COverlapJobManager` (found in an earlier pass, same shared codebase) plausibly uses the same
+  registry shape internally to pick which `OverlapJob` subclass handles a given `MsgID` -- not
+  proven for that specific binary yet, but no longer an unmotivated guess either.
+
 ## 2026-08-22 (cont'd 19) — traced the session's real callback table; found a real, unresolved header-size discrepancy
 
 - Continued from `_OnMsgReceivedBeforeHandshake`: found its real constructor/init code, which turns
