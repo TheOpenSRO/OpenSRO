@@ -26,6 +26,16 @@ Each packet on the wire:
 one; that reassembly is not yet implemented (`server/internal/proto` handles single-frame packets
 only for now — see code comments).
 
+**A real, first-party data point on this (2026-08-22)**, from directly analyzing
+`GatewayServer.exe` (see `docs/protocol/opcodes/handshake.md`/`dispatch.md`) rather than the public
+documentation this whole file was otherwise written from: real code reconstructing an outgoing
+message's total frame size from its payload size uses `payload_size + 6`, not `+5`. Not yet
+reconciled with the 5-byte header above -- plausibly this is `Size(2)+Opcode(2)+Security(1)` plus
+one more real byte this project hasn't identified yet, or the `+6` reflects some other real
+per-message accounting distinct from the base wire header. Recorded here as a genuine, unresolved
+discrepancy rather than either overriding the public-documentation-derived header or ignoring real
+contradicting evidence.
+
 ## Session crypto
 
 The original protocol negotiates a per-session key exchange (documented publicly as a

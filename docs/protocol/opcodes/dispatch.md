@@ -86,3 +86,34 @@ through further vtable indirection rather than directly.
       against whichever real opcode value is targeted next).
 - [ ] Confirm or refute whether `ACTIVE_SESSION` and the earlier `CSession`/`CBaseSocket` RTTI
       names refer to the same real class.
+
+## A real, hand-rolled callback table (not a C++ vtable) found on the session object
+
+Found `_OnMsgReceivedBeforeHandshake`'s own real constructor/init code (the one function that
+stores its address into the session object). It doesn't build a standard compiler-generated C++
+vtable -- it writes real function pointers directly into a handful of fixed offsets on the object,
+mode-dependent (two real branches, plausibly a protocol-version or region switch):
+
+| Offset  | Real role (confirmed/plausible)                                                  |
+|---------|-------------------------------------------------------------------------------------|
+| `+0x22c`| `_OnMsgReceivedBeforeHandshake` (confirmed, both branches set the same function)     |
+| `+0x230`| The real "send a reply" callback -- called elsewhere with a constructed outgoing buffer, matches the two `(**(code**)(this+0x230))(...)` call sites already found in the handshake handler |
+| `+0x218`| Set unconditionally to `FUN_0046f8e0` -- decompiled, but this turned out to build an
+error-reply message (real opcode `0x1001` observed being written into a fresh outgoing buffer)
+when some queue/capacity check fails, not a general incoming-opcode dispatcher. Real, but a dead
+end for *this* question -- ruled out, not the thing we're looking for. |
+| `+0x20c`/`+0x210`| Both set to the same label address (`LAB_0046fb20`, not yet decompiled as its own function) -- plausibly a shared no-op/default handler for the two mode branches |
+| `+0x214`| Mode-dependent: a real label or `FUN_0046f770` -- not yet decompiled |
+
+None of these six slots is obviously "the general post-handshake per-opcode dispatcher" -- the
+real mechanism connecting an ordinary gameplay `MsgID` to its handler is still not found. Recorded
+here so a future pass doesn't re-decompile `+0x218` expecting it to be the answer.
+
+## A real, unreconciled discrepancy: `+6`, not `+5`, in one real frame-size calculation
+
+While tracing `+0x218`'s handler, found real code reconstructing an outgoing message's total frame
+size from its payload size as `payload_size + 6` -- see `PACKET_FORMAT.md`'s note on this. This
+project's wire-framing doc was written from public private-server documentation describing a
+5-byte header (`Size(2)+Opcode(2)+Security(1)`), not from binary analysis; this is the first real,
+first-party data point bearing on that header's actual size, and it doesn't cleanly match. Not
+resolved -- recorded as a real, open discrepancy in both docs rather than quietly picking one.

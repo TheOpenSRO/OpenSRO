@@ -2,6 +2,27 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 19) — traced the session's real callback table; found a real, unresolved header-size discrepancy
+
+- Continued from `_OnMsgReceivedBeforeHandshake`: found its real constructor/init code, which turns
+  out to build a hand-rolled per-instance callback table (real function pointers written directly
+  to fixed offsets, mode-dependent across two real branches) rather than a standard C++ vtable.
+  Mapped six real offsets (`+0x20c`/`+0x210`/`+0x214`/`+0x218`/`+0x22c`/`+0x230`); confirmed
+  `+0x22c` is the handshake receiver and `+0x230` is the real "send a reply" callback. Decompiled
+  `+0x218` fully -- it turned out to be an error-reply builder (real opcode `0x1001` observed) for
+  a queue/capacity-check failure, not the general dispatcher. A real, ruled-out dead end for the
+  specific "where's the post-handshake per-opcode dispatch" question -- written up in
+  `dispatch.md` so a future pass doesn't redo this decompile expecting a different answer.
+- Found a real, unreconciled discrepancy along the way: `PACKET_FORMAT.md`'s 5-byte header
+  (`Size(2)+Opcode(2)+Security(1)`) was written from public private-server documentation, not this
+  project's own binary analysis. Real code in `GatewayServer.exe` reconstructs a frame's total size
+  from its payload size as `+6`, not `+5` -- the first real, first-party data point on this specific
+  question, and it doesn't cleanly match. Recorded honestly in both `PACKET_FORMAT.md` and
+  `dispatch.md` as unresolved, not picked one way or the other.
+- The general post-handshake per-opcode dispatch mechanism (needed for login and every other real
+  gameplay opcode) is still not found after this pass -- narrowed down (it's not any of the six
+  callback-table slots checked), but the actual mechanism remains open for a future session.
+
 ## 2026-08-22 (cont'd 18) — big confirmation: RollingByte is bit-for-bit correct against the real server; found the real handshake receive path; corrected a mistake
 
 - Switched technique after `COverlapJobManager`/`CSession` RTTI tracing stalled: instead of
