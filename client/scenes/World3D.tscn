@@ -115,6 +115,37 @@ grow_vertical = 0
 mouse_filter = 0
 text = "Back to 2D View"
 
+[node name="ChatPanel" type="VBoxContainer" parent="UI/Control"]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = -160.0
+offset_right = -8.0
+offset_bottom = -48.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="ChatLog" type="RichTextLabel" parent="UI/Control/ChatPanel"]
+custom_minimum_size = Vector2(0, 100)
+layout_mode = 2
+size_flags_vertical = 3
+scroll_following = true
+
+[node name="ChatInputRow" type="HBoxContainer" parent="UI/Control/ChatPanel"]
+layout_mode = 2
+
+[node name="ChatInput" type="LineEdit" parent="UI/Control/ChatPanel/ChatInputRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Say something... (/w Name message to whisper)"
+
+[node name="SendButton" type="Button" parent="UI/Control/ChatPanel/ChatInputRow"]
+layout_mode = 2
+text = "Send"
+
 [node name="ZoneInput" type="LineEdit" parent="UI/Control"]
 layout_mode = 0
 offset_left = 8.0

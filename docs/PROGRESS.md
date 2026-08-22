@@ -2,6 +2,34 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 12) — direction change: full protocol rewrite + porting 2D's UI into 3D (chat first)
+
+- Two decisions from OpenSRO change this project's direction:
+  1. The actual goal is a true end-to-end rewrite of the original server *and* protocol, not just
+     an own-designed client/server pair with similar game systems. Reversed
+     `docs/protocol/PROTOCOL_DECISION.md` accordingly -- this project's own opcodes
+     (`OpLogin = 0x0001`, etc.) are now placeholder scaffolding, not the destination; the
+     already-built handshake reference code (`RollingByte`/`DeriveSeed`/`PacketChecksum`) is real
+     target work now, not just a verified-but-unused reference. Honest scope note recorded in the
+     doc: this is hundreds of real opcodes, worked through incrementally over many sessions, the
+     same way asset-format RE was.
+  2. 2D (`World.tscn`) is being dropped in favor of 3D as the one real client -- but discovered
+     first that 2D currently holds the *only* UI for chat/quests/shop/party/guild/duel/trade/
+     friends (`World3D.gd` only has movement/zone/equipment-rendering). Decided to port each panel
+     into `World3D.tscn` before deleting `World.tscn`, rather than deleting first and losing
+     functionality.
+- Ported the first panel: chat. Added a `ChatPanel` (log + input + send button) to `World3D.tscn`'s
+  UI overlay, and `_on_chat_message`/`_on_chat_whisper_message`/`_on_send_pressed`/`_log_system`
+  to `World3D.gd`, verbatim-ported from `World.gd`. Also wired `_log_system` into the existing
+  `_on_entity_entered`/`_on_entity_left` handlers ("X entered/left the zone"), matching 2D's
+  parity -- `_on_entity_left` reads the departing character's name off their `Label3D` child since
+  `World3D.gd` doesn't keep a separate name lookup the way 2D's `_nearby` dict did.
+- Verified: scene boots clean, all 35 GDScript suites still pass, no `project.godot` diff, no Go
+  changes needed (chat's server side was already complete).
+- What's left to port, in the same "verify before moving on" style: monsters/combat, inventory,
+  equipment, quests, shop, party, guild, duel, trade, friends -- then flip `CharacterSelect.gd` to
+  load `World3D.tscn` directly and delete `World.tscn`/`World.gd`.
+
 ## 2026-08-22 (cont'd 11) — real `refdata.Skill` schema + CSV importer (identity/timing, not damage)
 
 - Picked the top item off the "real work, just not built yet" list from the status report: real

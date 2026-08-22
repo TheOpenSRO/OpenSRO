@@ -217,6 +217,9 @@ const MAX_MAP_OBJECTS := 300
 @onready var zone_label: Label = $UI/Control/ZoneLabel
 @onready var character_label: Label = $UI/Control/CharacterLabel
 @onready var zone_input: LineEdit = $UI/Control/ZoneInput
+@onready var chat_log: RichTextLabel = $UI/Control/ChatPanel/ChatLog
+@onready var chat_input: LineEdit = $UI/Control/ChatPanel/ChatInputRow/ChatInput
+@onready var send_button: Button = $UI/Control/ChatPanel/ChatInputRow/SendButton
 
 var _other_bodies := {} # character_id -> Node3D
 var _last_sent_pos := Vector3.ZERO
@@ -268,6 +271,10 @@ func _ready() -> void:
 	NetClient.entity_moved.connect(_on_entity_moved)
 	NetClient.entity_left.connect(_on_entity_left)
 	NetClient.change_zone_result.connect(_on_change_zone_result)
+	NetClient.chat_message.connect(_on_chat_message)
+	NetClient.chat_whisper_message.connect(_on_chat_whisper_message)
+	send_button.pressed.connect(_on_send_pressed)
+	chat_input.text_submitted.connect(func(_text: String): _on_send_pressed())
 
 	_try_load_real_scenery()
 	_try_load_real_decoration_skeleton()
@@ -979,6 +986,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.armor_slots_mask, snapshot.gender, snapshot.has_weapon, snapshot.has_shield)
+	_log_system("%s entered the zone." % snapshot.char_name)
 
 func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 	if _other_bodies.has(moved.character_id):
@@ -986,8 +994,15 @@ func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 
 func _on_entity_left(character_id: int) -> void:
 	if _other_bodies.has(character_id):
-		_other_bodies[character_id].queue_free()
+		var body: Node3D = _other_bodies[character_id]
+		var departing_name := "Someone"
+		for child in body.get_children():
+			if child is Label3D:
+				departing_name = child.text
+				break
+		body.queue_free()
 		_other_bodies.erase(character_id)
+		_log_system("%s left the zone." % departing_name)
 
 func _on_back_to_2d_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/World.tscn")
@@ -1002,3 +1017,38 @@ func _on_change_zone_pressed() -> void:
 	if zone == "":
 		return
 	NetClient.change_zone(zone)
+
+## Chat panel, ported from the 2D World.gd HUD (see docs/PROGRESS.md) --
+## this scene is becoming the one real client, so its UI needs to cover
+## everything the 2D view used to.
+func _on_chat_message(message: ChatNet.Message) -> void:
+	if message == null:
+		return
+	chat_log.add_text("%s: %s\n" % [message.sender_name, message.message_text])
+
+func _on_chat_whisper_message(message: ChatNet.Message) -> void:
+	if message == null:
+		return
+	chat_log.add_text("[%s whispers]: %s\n" % [message.sender_name, message.message_text])
+
+func _log_system(text: String) -> void:
+	chat_log.add_text("* %s\n" % text)
+
+func _on_send_pressed() -> void:
+	var text := chat_input.text.strip_edges()
+	if text.is_empty():
+		return
+	chat_input.text = ""
+
+	if text.begins_with("/w "):
+		var rest := text.substr(3)
+		var space_index := rest.find(" ")
+		if space_index == -1:
+			_log_system("Usage: /w <name> <message>")
+			return
+		var target_name := rest.substr(0, space_index)
+		var whisper_text := rest.substr(space_index + 1)
+		NetClient.whisper(target_name, whisper_text)
+		return
+
+	NetClient.say(text)
