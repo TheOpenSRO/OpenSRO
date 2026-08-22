@@ -2,6 +2,31 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 40) — one more real attempt at the .m row-layout mystery, via the unopened .t sibling file
+
+- Continued pushing on the deeper terrain-shape problem (the real row/column layout mystery
+  blocking anything better than a capped-17-row square per region) via a fresh angle:
+  `MAPM_FORMAT.md` already flagged the real `.t` ground-texture-blend sibling file as "not decoded
+  further yet, worth a future pass" -- pulled a real `100/100.t` and actually took that pass.
+- **Confirmed**: the real 16-byte header size (12-byte `JMXVMAPT1001` magic + a real, not-yet-
+  understood 4-byte field), via direct hex dump plus cross-checking that it's the only header size
+  in a tested range that keeps both the cell count and its divisibility by 17 clean.
+- **New real negative result**: tested whether the file's 35105 cells actually form a coherent
+  row-major 2D raster at any of its own clean-divisor widths (17 included) by measuring
+  neighboring-cell similarity per byte-channel against a random-shuffle baseline -- a real 2D
+  blend map should score well below baseline at its true width. **Every candidate width scored
+  worse than random**, ruling out the simplest hypothesis (a plain row-major raster at any clean
+  divisor of the cell count) rather than confirming `.t`'s already-known clean divisibility by 17
+  as evidence of an actual row width. Most likely explanation: `.t`'s real cell order matches
+  whatever internal tile order `.m` itself uses -- meaning it's encoded in the same unresolved
+  mystery, not an independent way to crack it.
+- Recorded as a real, informative negative result (not just "still unknown") so a future pass
+  doesn't re-attempt the same raster-width scan. The row-layout mystery remains genuinely unsolved
+  after this session's now-multiple independent attempts (DFT periodicity analysis, `SR_GameServer.exe`
+  binary search, and now this). Real client pk2 data was pulled temporarily for this (not
+  committed, deleted immediately after — same standing policy as every other real-asset pull this
+  session).
+
 ## 2026-08-22 (cont'd 39) — fixed the real multi-region terrain overlap bug (found via live screenshot testing)
 
 - Testing the phase-1 multi-region grid against the real pk2 files (temporarily copied in for

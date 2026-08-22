@@ -232,14 +232,39 @@ structural findings so far:
 
 - Every real `.t` file is **exactly 140436 bytes**, fixed across every region checked — unlike
   `.m`/`.o`/`.o2`, which vary in size per region.
-- The 140420-byte body (after what's plausibly a 16-byte header, not yet confirmed) divides
-  cleanly by **17** — the same real column width `.m`'s Shape A confirmed above. Read as 35105
-  `uint32` (little-endian) cells, that count also divides cleanly by 17.
+- **Header size confirmed (2026-08-22): 16 bytes**, not just plausible -- the literal 12-byte
+  magic string `JMXVMAPT1001` (confirmed via direct hex dump of a real `100/100.t`) plus a real
+  4-byte field right after it whose value doesn't look like a small version/flags number
+  (`0xFFB2CC99`), meaning it's something else not yet identified -- but 16 is the *only* header
+  size in a small tested range (0-24 bytes) that divides the remaining body cleanly into whole
+  `uint32` cells that are *also* cleanly divisible by 17, so it's confirmed by more than one line
+  of evidence now, not just plausibility.
+- The 140420-byte body divides cleanly by **17** — the same real column width `.m`'s Shape A
+  confirmed above. Read as 35105 `uint32` (little-endian) cells, that count also divides cleanly
+  by 17. **This numeric fact holds, but see the new negative result below for why it doesn't mean
+  17 is confirmed as this file's real row-major width.**
 - 80% of those cells are exactly `0x00000000` or `0xFFFFFFFF`; the remaining 20% spread across
   2408 distinct intermediate values. This is a real, structural pattern — not noise — consistent
   with a multi-channel blend/weight map (mostly "pure" single-texture cells, with blended values
   clustering at texture-boundary transitions), the shape a real ground-texture splat map would
   take.
+
+**New real, concrete negative result (2026-08-22)**: pulled a real `100/100.t` and tested whether
+its 35105 cells actually form a coherent row-major 2D raster at any of the widths that divide the
+cell count cleanly (`5, 7, 17, 35, 59, 85, 119, 295, ...` -- the factors of `5×7×17×59`). A real
+2D blend/weight map should show real neighboring-cell similarity (low byte-value differences
+between adjacent cells) well *below* a random-shuffle baseline at its true width. Measured on each
+of the 4 individual byte channels within each `uint32` cell (not the raw 32-bit value as one unit,
+since a real multi-channel blend map would only show false incoherence if compared that way):
+**every single candidate width, 17 included, scored** ***worse*** **than randomly shuffling the
+same bytes** (~210-220 mean absolute difference vs. a ~126 random baseline). This rules out the
+simplest hypothesis (a plain row-major `W×H` raster at any of `.t`'s own clean-divisor widths,
+17 included) rather than confirming it -- a real, informative negative result, not just "still
+unknown." Most likely explanations: the file's real cell order matches whatever internal tile
+order `.m` itself uses (the very row/column mystery this file was hoped to help solve
+independently, meaning it's encoded in the same unresolved order rather than a plain raster), or
+the real layout involves tiled/swizzled memory blocks rather than simple row-major scanning.
+Recorded so a future pass doesn't re-try the same naive raster-width scan.
 
 **Not decoded further yet**: the exact row/column layout, and whether it cross-validates against
 a matching `.m` file's tile grid, are both still open. Even if fully decoded, a blend/weight map
