@@ -147,6 +147,13 @@ const BAN_FPS := 30.0
 ## China-man's real forearm mesh is "man_arm_lower"; China-woman's real
 ## equivalent is "woman_arm_fore" -- different real filename convention,
 ## same real bones (see CharacterAssembler.BODY_PART_BONES).
+## idle_anim/walk_anim: real generic (not weapon/skill-specific) locomotion
+## clips found live (2026-08-22) against a real retail Data.pk2, under each
+## gender's real "fighter" class subtree -- matching the "warrior" material
+## already picked above, so the animation and the outfit are at least from
+## the same real class family. Real, but same "one arbitrary pick among
+## many" honesty level as every other GENDER_ASSET_PATHS entry (there are
+## also merchant/monkey/tattoo/etc. variants this project didn't check).
 const GENDER_ASSET_PATHS := {
 	"china_man": {
 		"skeleton": "Prim\\Skel\\Char\\China\\chinaman_skel.bsk",
@@ -156,6 +163,8 @@ const GENDER_ASSET_PATHS := {
 		"equipment_mesh_dir": "Prim\\Mesh\\Item\\China\\man_item",
 		"equipment_parts": ["clothes_03_aa", "clothes_03_ba", "clothes_03_fa", "clothes_03_ha", "clothes_03_la", "clothes_03_sa"],
 		"equipment_material": "Prim\\Mtrl\\Item\\China\\man_item\\clothes_03.bmt",
+		"idle_anim": "Prim\\Ani\\Char\\China\\man\\chinaman_fighter_standcity.ban",
+		"walk_anim": "Prim\\Ani\\Char\\China\\man\\chinaman_fighter_walkforward.ban",
 	},
 	"china_woman": {
 		"skeleton": "Prim\\Skel\\Char\\China\\chinawoman_skel.bsk",
@@ -165,6 +174,8 @@ const GENDER_ASSET_PATHS := {
 		"equipment_mesh_dir": "Prim\\Mesh\\Item\\China\\woman_item",
 		"equipment_parts": ["clothes_03_aa", "clothes_03_ba", "clothes_03_fa", "clothes_03_ha", "clothes_03_la", "clothes_03_sa"],
 		"equipment_material": "Prim\\Mtrl\\Item\\China\\woman_item\\clothes_03.bmt",
+		"idle_anim": "Prim\\Ani\\Char\\China\\woman\\chinawoman_fighter_standcity.ban",
+		"walk_anim": "Prim\\Ani\\Char\\China\\woman\\chinawoman_fighter_walkforward.ban",
 	},
 }
 ## Falls back to this real gender's assets when a requested gender's assets
@@ -364,6 +375,10 @@ var _other_bodies := {} # character_id -> Node3D
 var _monster_bodies := {} # monster_id -> Node3D
 var _last_sent_pos := Vector3.ZERO
 var _time_since_send := 0.0
+
+var _player_skeleton: Skeleton3D
+var _player_gender := DEFAULT_GENDER
+var _player_anim_time := 0.0
 
 var _real_skeleton: Skeleton3D
 var _real_skeleton_track: BanReader.Bone
@@ -997,15 +1012,27 @@ func _load_character_assets() -> void:
 		if not equipment_parts.is_empty():
 			equipment_materials = _load_real_materials(archive, paths["equipment_material"])
 
+		var idle_anim: BanReader.ParsedAnimation = null
+		var idle_bytes := AssetSource.read_bytes(paths["idle_anim"], archive)
+		if not idle_bytes.is_empty():
+			idle_anim = BanReader.parse(idle_bytes)
+
+		var walk_anim: BanReader.ParsedAnimation = null
+		var walk_bytes := AssetSource.read_bytes(paths["walk_anim"], archive)
+		if not walk_bytes.is_empty():
+			walk_anim = BanReader.parse(walk_bytes)
+
 		_character_assets[gender] = {
 			"skel": skel,
 			"body_parts": parts,
 			"body_materials": _load_real_materials(archive, paths["material"]),
 			"equipment_parts": equipment_parts,
 			"equipment_materials": equipment_materials,
+			"idle_anim": idle_anim,
+			"walk_anim": walk_anim,
 		}
-		print("World3D: cached real %s character assets (%d bones, %d body parts, %d equipment parts) from %s" % [
-			gender, skel.bones.size(), parts.size(), equipment_parts.size(), OS.get_environment("SRREVAMP_PK2_PATH")])
+		print("World3D: cached real %s character assets (%d bones, %d body parts, %d equipment parts, idle_anim=%s, walk_anim=%s) from %s" % [
+			gender, skel.bones.size(), parts.size(), equipment_parts.size(), idle_anim != null, walk_anim != null, OS.get_environment("SRREVAMP_PK2_PATH")])
 
 	var weapon_bytes := AssetSource.read_bytes(PLAYER_WEAPON_PATH, archive)
 	if not weapon_bytes.is_empty():
@@ -1126,6 +1153,8 @@ func _try_apply_real_player_character() -> void:
 		return
 	player.add_child(skeleton)
 	player_mesh.visible = false
+	_player_skeleton = skeleton
+	_player_gender = gender
 
 ## Queries the real server for the local player's actual equipped items
 ## (the same EquipmentNet protocol the 2D equipment HUD already uses) and
@@ -1301,6 +1330,24 @@ func _physics_process(delta: float) -> void:
 		var frame_idx := int(_real_skeleton_time * BAN_FPS) % frame_count
 		Skeleton3DBuilder.apply_ban_keyframe(_real_skeleton, _real_skeleton_track, frame_idx)
 		Skeleton3DBuilder.update_debug_visualization(_real_skeleton.get_node("DebugVisualization"), _real_skeleton)
+
+	# Real per-frame walk-cycle playback for the player's own assembled body
+	# (see GENDER_ASSET_PATHS' idle_anim/walk_anim doc comment) -- picks
+	# whichever of the two real clips matches whether input_dir is
+	# non-zero this frame, and loops it by real frame count rather than a
+	# fixed guessed duration. No-op if the shared character assets never
+	# loaded (SRREVAMP_PK2_PATH unset, or this gender's animations weren't
+	# found in the archive) -- the assembled body stays in its real bind
+	# pose in that case, same as before this existed.
+	if _player_skeleton != null:
+		var assets: Dictionary = _character_assets.get(_player_gender, {})
+		var anim: BanReader.ParsedAnimation = assets.get("walk_anim") if input_dir.length() > 0.0 else assets.get("idle_anim")
+		if anim != null and not anim.bones.is_empty():
+			_player_anim_time += delta
+			var frame_count: int = anim.bones[0].keyframes.size()
+			if frame_count > 1:
+				var frame_idx := int(_player_anim_time * BAN_FPS) % frame_count
+				Skeleton3DBuilder.apply_ban_pose(_player_skeleton, anim, frame_idx)
 
 func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, armor_slots_mask: int = 0, gender: String = DEFAULT_GENDER, has_weapon: bool = false, has_shield: bool = false) -> void:
 	if _other_bodies.has(character_id):

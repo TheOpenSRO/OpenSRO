@@ -95,6 +95,32 @@ static func apply_ban_keyframe(skeleton: Skeleton3D, track: BanReader.Bone, fram
 	skeleton.set_bone_pose_rotation(bone_idx, delta)
 	skeleton.force_update_all_bone_transforms() # see build_skeleton3d()'s note on why this is needed
 
+## Applies every real bone track in a full .ban animation (BanReader.
+## ParsedAnimation.bones) at frame_idx, the same per-bone delta-rotation
+## technique as apply_ban_keyframe -- that function only ever drove one
+## single bone (used for World3D's standalone decoration-skeleton demo);
+## this is the real multi-bone player used to actually animate an assembled
+## character's whole body (e.g. a walk cycle), skipping any track whose
+## bone isn't found in skeleton (a real, expected mismatch -- not every
+## bone every .ban file names is necessarily present on every real .bsk
+## skeleton it's paired with) rather than failing the whole pose. A single
+## force_update_all_bone_transforms() at the end, not one per bone, since
+## Skeleton3D's own transform propagation already handles the parent-child
+## chain once every bone's local pose rotation is set.
+static func apply_ban_pose(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frame_idx: int) -> void:
+	for track in anim.bones:
+		if track.keyframes.is_empty():
+			continue
+		var bone_idx := skeleton.find_bone(track.bone_name)
+		if bone_idx == -1:
+			continue
+		var frame := frame_idx % track.keyframes.size()
+		var rest_rot: Quaternion = track.keyframes[0].rotation
+		var target_rot: Quaternion = track.keyframes[frame].rotation
+		var delta: Quaternion = target_rot * rest_rot.inverse()
+		skeleton.set_bone_pose_rotation(bone_idx, delta)
+	skeleton.force_update_all_bone_transforms()
+
 ## A bare Skeleton3D has no visual representation of its own -- there's no
 ## confirmed real bone-weight/skinning data in .bms yet to bind a real mesh
 ## to it (see docs/protocol/BMS_FORMAT.md), so this builds the same

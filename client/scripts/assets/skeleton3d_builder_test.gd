@@ -95,6 +95,25 @@ func _init() -> void:
 	var animated_c1: Vector3 = skeleton.get_bone_global_pose(c1_idx).origin
 	_check(animated_c1.is_equal_approx(Vector3(10, 0, 0)), "Child1 itself unmoved (it's the pivot) (got %s)" % animated_c1)
 
+	# apply_ban_pose: the real multi-bone player. Reset to bind pose first,
+	# then apply the same single-track animation via the whole-pose
+	# function and confirm it produces the identical result apply_ban_keyframe
+	# already proved correct above -- plus a second, unmatched track that
+	# should be silently skipped rather than erroring.
+	var skeleton2 := Skeleton3DBuilder.build_skeleton3d(skel)
+	var multi_anim := _make_animation()
+	var unmatched_track := BanReader.Bone.new()
+	unmatched_track.bone_name = "NoSuchBone"
+	var uk0 := BanReader.Keyframe.new()
+	uk0.rotation = Quaternion.IDENTITY
+	unmatched_track.keyframes.append(uk0)
+	multi_anim.bones.append(unmatched_track)
+
+	Skeleton3DBuilder.apply_ban_pose(skeleton2, multi_anim, 1)
+	var c2_idx2 := skeleton2.find_bone("Child2")
+	var pose_c2: Vector3 = skeleton2.get_bone_global_pose(c2_idx2).origin
+	_check(pose_c2.is_equal_approx(Vector3(10, 0, -10)), "apply_ban_pose matches apply_ban_keyframe's result (got %s)" % pose_c2)
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

@@ -2,6 +2,36 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 36) — "character/animation" phase 3: real walk-cycle playback for the player
+
+- Found the real gap live playtesting flagged: `Skeleton3DBuilder.apply_ban_keyframe` (the only
+  animation-application function that existed) only ever drove **one single bone track** -- it was
+  built for World3D's standalone decoration-skeleton demo, not a real multi-bone animation player.
+  The player's own assembled body had zero animation playback wired to it at all.
+- Added `Skeleton3DBuilder.apply_ban_pose(skeleton, anim, frame_idx)`: applies every real bone
+  track in a full `.ban` animation via the same per-bone delta-rotation technique
+  `apply_ban_keyframe` already proved correct, skipping any track whose bone isn't present on the
+  target skeleton (a real, expected mismatch, not an error) and doing one
+  `force_update_all_bone_transforms()` at the end rather than per bone.
+- Found real generic (not weapon/skill-specific) locomotion clips live against a real retail
+  `Data.pk2`, under each gender's real "fighter" class subtree (matching the "warrior" material
+  `GENDER_ASSET_PATHS` already used): `chinaman_fighter_standcity.ban`/
+  `chinaman_fighter_walkforward.ban` for men, the `chinawoman_` equivalents for women. Added as new
+  `idle_anim`/`walk_anim` entries in `GENDER_ASSET_PATHS`, loaded and parsed in
+  `_load_character_assets()` alongside the existing skeleton/mesh/material loading.
+- `World3D.gd` now tracks the player's own assembled `Skeleton3D` + gender
+  (`_player_skeleton`/`_player_gender`, set in `_try_apply_real_player_character`) and drives real
+  per-frame playback in `_physics_process`: picks `walk_anim` when movement input is non-zero this
+  frame, `idle_anim` otherwise, looping by each clip's own real frame count (no fixed guessed
+  duration). A hard cut between the two on input change, no blending -- a reasonable placeholder,
+  not claimed as final animation-system polish.
+- Added a real `apply_ban_pose` test (confirms it matches `apply_ban_keyframe`'s already-proven
+  result, plus an unmatched-bone track is silently skipped rather than erroring) and ran the full
+  CI test-suite list end to end -- every suite passes, plus a clean `--import --quit`.
+- Next up in the roadmap: armor, then weapons/shields (both already partially real via
+  `_build_assembled_character`'s equipment system -- likely means checking/extending real coverage
+  rather than starting from zero), then skills.
+
 ## 2026-08-22 (cont'd 35) — "mob spawning" phase 2: monsters now have real positions and are visible in 3D
 
 - Found monsters had **no position at all** server-side (`combat.Monster` only carried a `Zone`
