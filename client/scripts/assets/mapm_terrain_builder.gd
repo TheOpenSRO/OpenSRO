@@ -146,8 +146,23 @@ static func _group_into_rows(tiles: Array) -> Array:
 ## into real rows via _group_into_rows. Returns null if fewer than 2
 ## complete rows could be recovered (not enough to form a single triangle
 ## strip).
-static func build_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh:
+##
+## max_rows caps how many of the file's real rows get built into the mesh
+## (-1, the default, keeps every row -- the original behavior). Without a
+## cap, a real region file's rows are simply chained in raw file order (see
+## this file's top comment: the true relative layout of rows beyond the
+## confirmed 17-wide column cycling isn't known), which produces an
+## extremely elongated ribbon rather than anything resembling a real
+## region's actual footprint -- confirmed live (2026-08-22) against a real
+## 100/100.m, which parsed to 777 rows (a ~320x15,500 unit strip). Capping
+## at GRID_WIDTH rows (see World3D.gd's real usage) turns that ribbon into
+## an actual square patch using only the same real, already-confirmed
+## per-tile data -- a practical reshaping for something walkable and
+## multi-region-tileable, not a new claim about the real layout.
+static func build_mesh(region: MapmReader.ParsedRegion, max_rows: int = -1) -> ArrayMesh:
 	var cells: Array = _group_into_rows(region.tiles)
+	if max_rows > 0 and cells.size() > max_rows:
+		cells = cells.slice(0, max_rows)
 	var row_count := cells.size()
 	if row_count < 2:
 		push_error("MapmTerrainBuilder: only %d complete row(s) of %d tiles -- need at least 2" % [row_count, GRID_WIDTH])

@@ -2,6 +2,37 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 34) — "build the world" phase 1: real multi-region terrain grid
+
+- User set a concrete roadmap: world → mobs → characters/animation → armor → weapons/shields →
+  skills. Started with the world, since it's the foundation the rest stands on.
+- **First tried the real, honest path**: since a single loaded region turned out to be one giant
+  elongated ribbon (777 rows for a real `100/100.m`, ~320x15,500 units) rather than a proper
+  square — the true row-layout mystery `MAPM_FORMAT.md` already documented as unsolved — tried one
+  more fresh angle before working around it: searched `SR_GameServer.exe` (imported into this
+  project's RE environment well after `.m` was originally investigated, so a genuinely new search
+  surface) for the real `.m` magic construction site. Zero hits — most likely because the real
+  world server validates movement against the separate real `navmesh\*.ifo` files instead of `.m`
+  heightmaps. A real, concrete dead end, recorded rather than left silently untried.
+- **Practical fix given the mystery stays unsolved**: `MapmTerrainBuilder.build_mesh` now takes an
+  optional `max_rows` cap, reshaping the ribbon into an actual square using only the
+  already-confirmed real per-tile data (no new claims). `World3D.gd` uses this to build a real,
+  walkable **3x3 grid of regions** (`_load_region_neighborhood`) around whichever region
+  `SRREVAMP_MAPM_PATH`/a zone change resolves to, each region's own real `.m`/`.o` pair loaded and
+  tiled at a fixed, this-project's-own-designed spacing (`REGION_SPAN`) -- real per-region world
+  scale/adjacency still isn't confirmed, so this is honestly documented as scaffolding, not a claim
+  about the real game's true spatial layout. Missing neighbor files (very likely near a real
+  world's edge) are skipped the same honest way a missing single region already was.
+- Only the center region snaps the player onto its terrain (`_snap_player_onto_terrain` from the
+  previous entry) -- speculative neighbors don't fight over the player's position.
+- Added a `max_rows` test to `mapm_terrain_builder_test.gd`; all existing test suites
+  (`mapm_terrain_builder_test.gd`, `world_test.gd`, `objidx_reader_test.gd`, `mapo_reader_test.gd`,
+  `mapm_reader_test.gd`) still pass, plus a clean `--import --quit` with no script errors.
+- Next up in the roadmap: mob spawning (visually placing real server-tracked monsters in the 3D
+  world, not just the debug monster-list UI panel), then character/animation wiring (the "no
+  animation whatsoever" gap from live playtesting -- the player's assembled body has no walk-cycle
+  system at all yet, only a separate decoration skeleton plays its animation).
+
 ## 2026-08-22 (cont'd 33) — first real end-to-end playtest: real character/terrain load, found and fixed a real spawn/terrain collision bug
 
 - Walked the user through actually running the full stack locally for the first time this

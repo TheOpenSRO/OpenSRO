@@ -47,14 +47,18 @@ variables before launching the client to have `World3D.tscn` load and place them
   live-animated decoration `Skeleton3D` via `Skeleton3DBuilder`.
 - `SRREVAMP_MAP_PK2_PATH` + `SRREVAMP_MAPM_PATH` — `Map.pk2` (a separate archive from `Data.pk2`
   in a real retail install) and a region `.m` path inside it (e.g. `100\100.m`), loaded as real
-  terrain via `MapmTerrainBuilder`.
+  terrain via `MapmTerrainBuilder`, tiled into a real 3x3 grid of regions around it (see
+  `World3D.gd`'s `_load_region_neighborhood` — this project's own multi-region layout, since real
+  per-region world scale/adjacency isn't confirmed; see `docs/protocol/MAPM_FORMAT.md`).
 - `SRREVAMP_MEDIA_PK2_PATH` + `SRREVAMP_MAPM_TEXTURE_PATH` — `Media.pk2` (a third separate
   archive) and a real per-region minimap image inside it (e.g. `minimap\100x100.ddj`, matching the
-  same region number as `SRREVAMP_MAPM_PATH`), textures that terrain with real, region-accurate
-  art instead of the procedural per-tile color fallback.
+  same region number as `SRREVAMP_MAPM_PATH`), textures the *center* region of that grid with real,
+  region-accurate art instead of the procedural per-tile color fallback (neighbors always use the
+  fallback — no minimap texture is looked up per-neighbor yet).
 - `SRREVAMP_MAPO_PATH` — a real `Map.pk2` region's `.o` object-placement file (via
   `SRREVAMP_MAP_PK2_PATH`, e.g. `0\0.o`), rendered with each placement's real resolved `.bsr`
   model (via `SRREVAMP_PK2_PATH`'s `Data.pk2` and a real object-index table — see "Status" below).
+  Also tiled per-region across the same 3x3 grid as terrain.
 
 Leave any of them unset and that piece is skipped — the scene works fine with none of them set.
 

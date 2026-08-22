@@ -215,6 +215,27 @@ const OBJECT_INDEX_PATH := "navmesh\\object.ifo"
 ## this mostly bounds real node/instance count, not real file parsing.
 const MAX_MAP_OBJECTS := 300
 
+## How many of a region's real rows to keep when building its terrain mesh
+## (see MapmTerrainBuilder.build_mesh's doc comment on why this reshapes an
+## otherwise absurdly elongated ribbon into an actual square patch).
+## GRID_WIDTH keeps rows == columns for a true square, sized entirely from
+## already-confirmed real per-tile data -- not a new claim about the real
+## region's true footprint.
+const REGION_ROWS := MapmTerrainBuilder.GRID_WIDTH
+## World-space footprint of one reshaped region square (see REGION_ROWS),
+## used as the grid spacing between adjacent real regions in
+## _load_region_neighborhood. This project's own design choice for how
+## multiple regions tile together -- real per-region world scale/adjacency
+## isn't confirmed (see MAPM_FORMAT.md), so this is scaffolding for a
+## walkable multi-region world, not a claim about the real game's actual
+## spatial layout.
+const REGION_SPAN := (REGION_ROWS - 1) * MapmTerrainBuilder.TILE_SIZE
+## How many real regions out from the center region to try loading in each
+## direction -- radius 1 means a 3x3 grid (9 regions attempted, however many
+## actually exist as real files). Kept small since each region is a real
+## parse + mesh build; raise once real perf headroom is confirmed.
+const REGION_LOAD_RADIUS := 1
+
 @onready var player: CharacterBody3D = $Player
 @onready var player_mesh: MeshInstance3D = $Player/Mesh
 @onready var ground_mesh: MeshInstance3D = $Ground/Mesh
@@ -509,8 +530,7 @@ func _ready() -> void:
 	_try_load_real_scenery()
 	_try_load_real_decoration_skeleton()
 	_try_apply_real_player_character()
-	_try_load_real_terrain()
-	_try_load_real_map_objects()
+	_load_initial_region_neighborhood()
 
 ## Loads real static scenery through the exact same pk2 -> BsrReader ->
 ## ObjectLoader pipeline client/tools/render_asset.gd verifies standalone,
@@ -672,6 +692,72 @@ static func _zone_paths(zone: String) -> Dictionary:
 		"minimap": "minimap\\%sx%s.ddj" % [x, y],
 	}
 
+## Parses a real region coordinate pair out of either a zone label ("100/100")
+## or a loose/env-var-style file path ("100\100.m", "100/100.m") -- accepts
+## either separator and strips a trailing extension if present. Returns {}
+## for anything not shaped "<int>/<int>[.ext]", same convention as
+## _zone_paths, so a non-region path (e.g. a loose dev file with no real
+## coordinate meaning) is left alone rather than guessed at.
+static func _parse_region_coords(path: String) -> Dictionary:
+	var parts := path.replace("/", "\\").split("\\")
+	if parts.size() < 2:
+		return {}
+	var x_part := parts[-2]
+	var y_part := parts[-1].get_basename()
+	if not x_part.is_valid_int() or not y_part.is_valid_int():
+		return {}
+	return {"x": int(x_part), "y": int(y_part)}
+
+## Removes every previously-loaded region grid node (see
+## _load_region_neighborhood) so a zone change or a fresh load doesn't leave
+## stale terrain/objects from a different region behind.
+func _clear_region_grid() -> void:
+	for child in get_children():
+		if child.name.begins_with("RealTerrain") or child.name.begins_with("RealMapObjects"):
+			child.queue_free()
+
+## Loads a real (2*radius+1)x(2*radius+1) grid of regions centered on
+## (center_x, center_y), one real Map.pk2 .m/.o pair per cell, tiled using
+## REGION_SPAN as the grid spacing -- this project's own design for how
+## multiple real regions fit together (see REGION_SPAN's doc comment: real
+## per-region world scale/adjacency isn't confirmed, so this is walkable
+## scaffolding, not a claim about the real game's true spatial layout).
+## Missing neighbor files (very likely near a real world's edge, or simply
+## because this project only has a handful of real regions to test with) are
+## skipped the same honest way a single missing region already was --
+## _try_load_real_terrain/_try_load_real_map_objects print and move on
+## rather than treating it as fatal. Only the center cell (0,0) snaps the
+## player onto its terrain (see _snap_player_onto_terrain) -- that's real
+## spawn-adjacent ground, not any of the speculative neighbors.
+func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGION_LOAD_RADIUS, texture_override: String = "") -> void:
+	for dy in range(-radius, radius + 1):
+		for dx in range(-radius, radius + 1):
+			var region_x := center_x + dx
+			var region_y := center_y + dy
+			var suffix := "_%d_%d" % [region_x, region_y]
+			var offset := Vector3(dx * REGION_SPAN, 0.0, dy * REGION_SPAN)
+			var is_center := dx == 0 and dy == 0
+			_try_load_real_terrain("%d\\%d.m" % [region_x, region_y], texture_override if is_center else "", offset, suffix, is_center)
+			_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
+
+## _ready()'s own entry point into the region grid: reads SRREVAMP_MAPM_PATH
+## the same way this scene always has, but now treats it as the *center* of
+## a real multi-region neighborhood (see _load_region_neighborhood) instead
+## of the one and only region loaded. Falls back to the original
+## single-region behavior for a path that isn't shaped like a real region
+## coordinate (e.g. a loose dev file with no real (x, y) meaning).
+func _load_initial_region_neighborhood() -> void:
+	var mapm_path := OS.get_environment("SRREVAMP_MAPM_PATH")
+	if mapm_path == "":
+		print("World3D: SRREVAMP_MAPM_PATH not set -- ground stays a placeholder")
+		return
+	var coords := _parse_region_coords(mapm_path)
+	if coords.is_empty():
+		_try_load_real_terrain()
+		_try_load_real_map_objects()
+		return
+	_load_region_neighborhood(coords["x"], coords["y"], REGION_LOAD_RADIUS, OS.get_environment("SRREVAMP_MAPM_TEXTURE_PATH"))
+
 ## Tears down whatever real terrain/map-object nodes are currently loaded
 ## and reloads them for zone, resolving real per-zone paths via _zone_paths
 ## instead of the fixed SRREVAMP_MAPM_PATH/SRREVAMP_MAPO_PATH env vars this
@@ -680,22 +766,17 @@ static func _zone_paths(zone: String) -> Dictionary:
 ## placeholder ground with no objects -- same honest "nothing to load"
 ## behavior as an unset env var, not a guess.
 func _reload_zone_assets(zone: String) -> void:
-	var old_terrain := get_node_or_null("RealTerrain")
-	if old_terrain != null:
-		old_terrain.queue_free()
-	var old_objects := get_node_or_null("RealMapObjects")
-	if old_objects != null:
-		old_objects.queue_free()
+	_clear_region_grid()
 	ground_mesh.visible = true
 	ground_collision.disabled = false
 
-	var paths := _zone_paths(zone)
-	if paths.is_empty():
+	var coords := _parse_region_coords(zone)
+	if coords.is_empty():
 		print("World3D: zone %s isn't shaped like a real region (x/y) -- no per-zone assets to load" % zone)
 		return
 
-	_try_load_real_terrain(paths["m"], paths["minimap"])
-	_try_load_real_map_objects(paths["o"])
+	var paths := _zone_paths(zone)
+	_load_region_neighborhood(coords["x"], coords["y"], REGION_LOAD_RADIUS, paths.get("minimap", ""))
 
 ## Reacts to a successful real zone change (see NetClient.change_zone/
 ## OpChangeZoneResult): updates the zone label and reloads this scene's
@@ -731,8 +812,11 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 ## otherwise. path_override/texture_override let _reload_zone_assets pass
 ## real per-zone paths it resolved itself instead of reading the env vars --
 ## empty (the default) preserves the original env-var-only behavior for
-## _ready()'s own call.
-func _try_load_real_terrain(path_override: String = "", texture_override: String = "") -> void:
+## _ready()'s own call. world_offset/node_suffix/snap_player let
+## _load_region_neighborhood place multiple of these side by side as a real
+## multi-region grid instead of always the one env-var-driven region at the
+## scene origin -- defaults preserve the original single-region behavior.
+func _try_load_real_terrain(path_override: String = "", texture_override: String = "", world_offset: Vector3 = Vector3.ZERO, node_suffix: String = "", snap_player: bool = true) -> void:
 	var mapm_path := path_override if path_override != "" else OS.get_environment("SRREVAMP_MAPM_PATH")
 	if mapm_path == "":
 		print("World3D: SRREVAMP_MAPM_PATH not set -- ground stays a placeholder")
@@ -749,13 +833,13 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 		printerr("World3D: could not parse terrain at ", mapm_path)
 		return
 
-	var terrain_mesh := MapmTerrainBuilder.build_mesh(region)
+	var terrain_mesh := MapmTerrainBuilder.build_mesh(region, REGION_ROWS)
 	if terrain_mesh == null:
 		printerr("World3D: parsed ", region.tiles.size(), " tiles from ", mapm_path, " but couldn't recover enough complete rows for a mesh")
 		return
 
 	var terrain := MeshInstance3D.new()
-	terrain.name = "RealTerrain"
+	terrain.name = "RealTerrain" + node_suffix
 	terrain.mesh = terrain_mesh
 	var mat := StandardMaterial3D.new()
 	var real_texture := _load_real_terrain_texture(texture_override)
@@ -796,7 +880,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	var near_positions: PackedVector3Array = near_arrays[Mesh.ARRAY_VERTEX]
 	var near_height := near_positions[MapmTerrainBuilder.GRID_WIDTH / 2].y
 	terrain.rotation.y = PI
-	terrain.position = Vector3(aabb.size.x / 2.0, -near_height, 0)
+	terrain.position = Vector3(aabb.size.x / 2.0, -near_height, 0) + world_offset
 	add_child(terrain)
 	ground_mesh.visible = false
 	ground_collision.disabled = true
@@ -814,11 +898,15 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# comment on why real spawn/terrain alignment isn't confirmed yet). Left
 	# alone, the player can end up embedded in or floating above the mesh.
 	# Deferred one frame so the collision shape above is actually registered
-	# with the physics server before the raycast below queries it.
-	call_deferred("_snap_player_onto_terrain")
+	# with the physics server before the raycast below queries it. Only the
+	# grid's center region (see _load_region_neighborhood) does this --
+	# snapping onto every speculative neighbor as it loads would fight over
+	# the player's position for no reason.
+	if snap_player:
+		call_deferred("_snap_player_onto_terrain")
 
-	print("World3D: loaded real terrain from %s (%d tiles parsed, %d complete rows rendered, real collision shape built)" % [
-		mapm_path, region.tiles.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1])
+	print("World3D: loaded real terrain from %s (%d tiles parsed, %d rows rendered (capped at %d), real collision shape built)" % [
+		mapm_path, region.tiles.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1, REGION_ROWS])
 
 ## Practical safety net for the real terrain-alignment gap noted where this
 ## is called: raycasts straight down (and up, to cover an embedded start)
@@ -1071,8 +1159,10 @@ func _real_player_equipped_slots() -> Array:
 ## to a placeholder marker here). path_override lets _reload_zone_assets
 ## pass a real per-zone path it resolved itself instead of reading
 ## SRREVAMP_MAPO_PATH -- empty (the default) preserves the original
-## env-var-only behavior for _ready()'s own call.
-func _try_load_real_map_objects(path_override: String = "") -> void:
+## env-var-only behavior for _ready()'s own call. world_offset/node_suffix
+## let _load_region_neighborhood place multiple of these side by side --
+## defaults preserve the original single-region behavior.
+func _try_load_real_map_objects(path_override: String = "", world_offset: Vector3 = Vector3.ZERO, node_suffix: String = "") -> void:
 	var mapo_path := path_override if path_override != "" else OS.get_environment("SRREVAMP_MAPO_PATH")
 	if mapo_path == "":
 		print("World3D: SRREVAMP_MAPO_PATH not set -- no real map objects loaded")
@@ -1102,7 +1192,8 @@ func _try_load_real_map_objects(path_override: String = "") -> void:
 		return
 
 	var container := Node3D.new()
-	container.name = "RealMapObjects"
+	container.name = "RealMapObjects" + node_suffix
+	container.position = world_offset
 	add_child(container)
 
 	# Real world-space alignment with the player's own spawn position isn't

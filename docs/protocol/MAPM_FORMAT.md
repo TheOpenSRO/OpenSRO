@@ -3,6 +3,33 @@
 `.m` files inside `Map.pk2` (one per map region, alongside that region's `.o` object-placement
 file — see [MAPO_FORMAT.md](MAPO_FORMAT.md)) are the terrain/heightmap data.
 
+## Real row-layout mystery: one more attempt, still unsolved (2026-08-22)
+
+Tried a fresh angle this project didn't have available during the original investigation: `.m`'s
+magic isn't a literal embedded string in any binary (confirmed again — real magic strings in this
+codebase are built up byte-by-byte in code, same as `.bsr`; a raw string search only turns up
+truncated 4-byte fragments), so searched `SR_GameServer.exe` (the real main gameplay server,
+imported into this project's RE environment well after `.m` was first investigated) for the same
+literal `JMXV` 4-byte constant used in `CMP`/`MOV` instructions, the technique that found other
+real formats' construction sites this session. **Zero hits.** Most likely explanation: the real
+world server validates movement/collision against the separate real `navmesh\*.ifo` files (found
+live this session — `object.ifo`, `objectstring.ifo`, `objext.ifo`, `tile2d.ifo`, all under a real
+`navmesh\` folder), not `.m` heightmap data at all — visual terrain height and server-side walkable
+navigation are plausibly two entirely separate real subsystems. This closes off another real,
+concrete angle rather than leaving it untried, but doesn't move the row-layout mystery itself
+forward. Still unsolved; still empirically-derived-only, as below.
+
+**Practical engineering workaround, not a research answer**: `client/scripts/assets/
+mapm_terrain_builder.gd`'s `build_mesh` now accepts an optional `max_rows` cap. Without one, a real
+region's rows are chained in raw file order (the only order this project can confirm — see below),
+producing an extremely elongated ribbon rather than anything resembling a real region's actual
+footprint (confirmed live: a real `100/100.m` parsed to 777 rows, a ~320×15,500 unit strip).
+Capping at `GRID_WIDTH` (17) rows reshapes that ribbon into an actual square, using only the same
+already-confirmed real per-tile data — this is what let `World3D.gd` build a real, walkable
+multi-region grid (`_load_region_neighborhood`, see its doc comment and `README.md`) by tiling
+these squares at a fixed, **this project's own designed** spacing. Real per-region world scale and
+real adjacency between regions remain unconfirmed either way.
+
 No decompiled loader was found via the usual technique (searching for "JMXV" immediately followed
 by the 4-letter type suffix) in either `sro_client.exe` or `EternityLib.dll`, both given a full
 Ghidra auto-analysis pass, including an RTTI class name check (none found) — so this is confirmed

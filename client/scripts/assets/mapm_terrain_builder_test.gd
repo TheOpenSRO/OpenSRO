@@ -100,6 +100,18 @@ func _init() -> void:
 	var positional_mesh := MapmTerrainBuilder.build_mesh(positional)
 	_check(positional_mesh != null, "falls back to positional column order for Shape-B-shaped tiles")
 
+	# max_rows caps how many real rows get built -- 5 real rows capped to 3
+	# should produce exactly a 3-row mesh, not silently keep all 5.
+	var tall_region := _make_region(5, func(row, col): return float(row * 10 + col))
+	var capped_mesh := MapmTerrainBuilder.build_mesh(tall_region, 3)
+	_check(capped_mesh != null, "builds a mesh from a capped region")
+	if capped_mesh != null:
+		var capped_positions: PackedVector3Array = capped_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+		_check(capped_positions.size() == 3 * MapmTerrainBuilder.GRID_WIDTH, "max_rows=3 caps to 3 rows (got %d vertices)" % capped_positions.size())
+	var uncapped_mesh := MapmTerrainBuilder.build_mesh(tall_region)
+	var uncapped_positions: PackedVector3Array = uncapped_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	_check(uncapped_positions.size() == 5 * MapmTerrainBuilder.GRID_WIDTH, "no max_rows keeps all 5 rows (got %d vertices)" % uncapped_positions.size())
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
