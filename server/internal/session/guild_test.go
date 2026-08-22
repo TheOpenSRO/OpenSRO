@@ -115,11 +115,11 @@ func TestGuildFullFlow(t *testing.T) {
 	rB := bufio.NewReader(connB)
 
 	doSend := func(c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		c.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -186,11 +186,11 @@ func TestGuildInfoFlow(t *testing.T) {
 	r := bufio.NewReader(conn)
 
 	send := func(opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}

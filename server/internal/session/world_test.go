@@ -190,11 +190,11 @@ func TestChangeZoneFlow(t *testing.T) {
 	rC := bufio.NewReader(connC)
 
 	sendRecv := func(conn net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -215,16 +215,16 @@ func TestChangeZoneFlow(t *testing.T) {
 	login(connA, rA, "alice", "hunter2", "Aria")
 	login(connB, rB, "bob", "hunter3", "Bram")
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA); err != nil { // Aria's OpEntityEntered for Bram
+	if _, err := proto.Read(rA, nil, nil); err != nil { // Aria's OpEntityEntered for Bram
 		t.Fatalf("draining Aria's OpEntityEntered for Bram: %v", err)
 	}
 	login(connC, rC, "cara", "hunter4", "Cyra")
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA); err != nil { // Aria's OpEntityEntered for Cyra
+	if _, err := proto.Read(rA, nil, nil); err != nil { // Aria's OpEntityEntered for Cyra
 		t.Fatalf("draining Aria's OpEntityEntered for Cyra: %v", err)
 	}
 	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rB); err != nil { // Bram's OpEntityEntered for Cyra
+	if _, err := proto.Read(rB, nil, nil); err != nil { // Bram's OpEntityEntered for Cyra
 		t.Fatalf("draining Bram's OpEntityEntered for Cyra: %v", err)
 	}
 
@@ -254,7 +254,7 @@ func TestChangeZoneFlow(t *testing.T) {
 			conn = connC
 		}
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		left, err := proto.Read(r)
+		left, err := proto.Read(r, nil, nil)
 		if err != nil || left.Opcode != OpEntityLeft {
 			t.Fatalf("%s should see OpEntityLeft for Bram: opcode=%v err=%v", name, left, err)
 		}
@@ -275,7 +275,7 @@ func TestChangeZoneFlow(t *testing.T) {
 		t.Fatalf("Cyra should see Bram already in 100/100, got Others=%+v", czr.Others)
 	}
 	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	entered, err := proto.Read(rB)
+	entered, err := proto.Read(rB, nil, nil)
 	if err != nil || entered.Opcode != OpEntityEntered {
 		t.Fatalf("Bram should see OpEntityEntered for Cyra: opcode=%v err=%v", entered, err)
 	}
@@ -284,7 +284,7 @@ func TestChangeZoneFlow(t *testing.T) {
 		t.Fatalf("expected EntityEntered for Cyra, got %+v (err=%v)", enteredSnap, err)
 	}
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	left, err := proto.Read(rA)
+	left, err := proto.Read(rA, nil, nil)
 	if err != nil || left.Opcode != OpEntityLeft {
 		t.Fatalf("Aria should see OpEntityLeft for Cyra: opcode=%v err=%v", left, err)
 	}
@@ -381,11 +381,11 @@ func TestWorldFullFlow(t *testing.T) {
 	rB := bufio.NewReader(connB)
 
 	sendRecv := func(conn net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -443,7 +443,7 @@ func TestWorldFullFlow(t *testing.T) {
 	// state, queried live from the equipment store, not a hardcoded/default
 	// value.
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	entered, err := proto.Read(rA)
+	entered, err := proto.Read(rA, nil, nil)
 	if err != nil {
 		t.Fatalf("reading OpEntityEntered: %v", err)
 	}
@@ -468,11 +468,11 @@ func TestWorldFullFlow(t *testing.T) {
 	}
 
 	// Bob moves; Alice should see OpEntityMoved.
-	if err := proto.Write(connB, &proto.Packet{Opcode: OpMove, Data: (&MoveRequest{X: 10, Y: 20, Z: 30}).Encode()}); err != nil {
+	if err := proto.Write(connB, &proto.Packet{Opcode: OpMove, Data: (&MoveRequest{X: 10, Y: 20, Z: 30}).Encode()}, nil, nil); err != nil {
 		t.Fatalf("bob move write: %v", err)
 	}
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	moved, err := proto.Read(rA)
+	moved, err := proto.Read(rA, nil, nil)
 	if err != nil {
 		t.Fatalf("reading OpEntityMoved: %v", err)
 	}
@@ -487,7 +487,7 @@ func TestWorldFullFlow(t *testing.T) {
 	// Bob disconnects; Alice should see OpEntityLeft.
 	connB.Close()
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	left, err := proto.Read(rA)
+	left, err := proto.Read(rA, nil, nil)
 	if err != nil {
 		t.Fatalf("reading OpEntityLeft: %v", err)
 	}

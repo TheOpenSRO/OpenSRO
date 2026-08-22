@@ -96,7 +96,7 @@ func TestServerEchoesPackets(t *testing.T) {
 	defer conn.Close()
 
 	want := &proto.Packet{Opcode: 0x6100, Data: []byte("ping")}
-	if err := proto.Write(conn, want); err != nil {
+	if err := proto.Write(conn, want, nil, nil); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -110,7 +110,7 @@ func TestServerEchoesPackets(t *testing.T) {
 	}
 
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	reply, err := proto.Read(bufio.NewReader(conn))
+	reply, err := proto.Read(bufio.NewReader(conn), nil, nil)
 	if err != nil {
 		t.Fatalf("reading reply: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestSessionIDsAreUnique(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dial %d: %v", i, err)
 		}
-		if err := proto.Write(conn, &proto.Packet{Opcode: 1}); err != nil {
+		if err := proto.Write(conn, &proto.Packet{Opcode: 1}, nil, nil); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 		conn.Close()
@@ -314,7 +314,7 @@ func TestServerTLSEchoesPackets(t *testing.T) {
 	defer conn.Close()
 
 	want := &proto.Packet{Opcode: 0x6100, Data: []byte("ping over tls")}
-	if err := proto.Write(conn, want); err != nil {
+	if err := proto.Write(conn, want, nil, nil); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -328,7 +328,7 @@ func TestServerTLSEchoesPackets(t *testing.T) {
 	}
 
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	reply, err := proto.Read(bufio.NewReader(conn))
+	reply, err := proto.Read(bufio.NewReader(conn), nil, nil)
 	if err != nil {
 		t.Fatalf("reading reply: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestServerTLSRejectsPlainTCP(t *testing.T) {
 	}
 	defer conn.Close()
 
-	if err := proto.Write(conn, &proto.Packet{Opcode: 1}); err != nil {
+	if err := proto.Write(conn, &proto.Packet{Opcode: 1}, nil, nil); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 

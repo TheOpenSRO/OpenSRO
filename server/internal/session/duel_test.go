@@ -102,11 +102,11 @@ func TestDuelDeclineFlow(t *testing.T) {
 	rB := bufio.NewReader(connB)
 
 	doSend := func(c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		c.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -131,7 +131,7 @@ func TestDuelDeclineFlow(t *testing.T) {
 	}
 	// Aria was already in the zone; drain her EntityEntered broadcast for Bram.
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA); err != nil {
+	if _, err := proto.Read(rA, nil, nil); err != nil {
 		t.Fatalf("draining EntityEntered: %v", err)
 	}
 
@@ -141,7 +141,7 @@ func TestDuelDeclineFlow(t *testing.T) {
 	}
 
 	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	invitePkt, err := proto.Read(rB)
+	invitePkt, err := proto.Read(rB, nil, nil)
 	if err != nil {
 		t.Fatalf("reading OpDuelInvite: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestDuelDeclineFlow(t *testing.T) {
 	}
 
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	declinedPkt, err := proto.Read(rA)
+	declinedPkt, err := proto.Read(rA, nil, nil)
 	if err != nil {
 		t.Fatalf("reading OpDuelDeclined: %v", err)
 	}
@@ -224,11 +224,11 @@ func TestDuelFullFightFlow(t *testing.T) {
 	rB := bufio.NewReader(connB)
 
 	doSend := func(c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		c.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -252,7 +252,7 @@ func TestDuelFullFightFlow(t *testing.T) {
 		t.Fatalf("bram enter world failed: err=%v result=%+v", err, ewr)
 	}
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA); err != nil {
+	if _, err := proto.Read(rA, nil, nil); err != nil {
 		t.Fatalf("draining EntityEntered: %v", err)
 	}
 
@@ -261,7 +261,7 @@ func TestDuelFullFightFlow(t *testing.T) {
 		t.Fatalf("challenge failed: err=%v result=%+v", err, cr)
 	}
 	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rB); err != nil {
+	if _, err := proto.Read(rB, nil, nil); err != nil {
 		t.Fatalf("reading OpDuelInvite: %v", err)
 	}
 
@@ -271,11 +271,11 @@ func TestDuelFullFightFlow(t *testing.T) {
 	}
 	// Both sides get OpDuelStarted.
 	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if startedPkt, err := proto.Read(rB); err != nil || startedPkt.Opcode != OpDuelStarted {
+	if startedPkt, err := proto.Read(rB, nil, nil); err != nil || startedPkt.Opcode != OpDuelStarted {
 		t.Fatalf("reading Bram's OpDuelStarted: opcode=%v err=%v", startedPkt, err)
 	}
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if startedPkt, err := proto.Read(rA); err != nil || startedPkt.Opcode != OpDuelStarted {
+	if startedPkt, err := proto.Read(rA, nil, nil); err != nil || startedPkt.Opcode != OpDuelStarted {
 		t.Fatalf("reading Aria's OpDuelStarted: opcode=%v err=%v", startedPkt, err)
 	}
 
@@ -294,7 +294,7 @@ func TestDuelFullFightFlow(t *testing.T) {
 				t.Fatalf("hit %d: unexpected death", i+1)
 			}
 			connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-			damagedPkt, err := proto.Read(rB)
+			damagedPkt, err := proto.Read(rB, nil, nil)
 			if err != nil {
 				t.Fatalf("hit %d: reading OpDuelOpponentDamaged: %v", i+1, err)
 			}
@@ -308,7 +308,7 @@ func TestDuelFullFightFlow(t *testing.T) {
 			t.Fatalf("hit %d: expected death at 0 HP", i+1)
 		}
 		connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-		endedA, err := proto.Read(rA)
+		endedA, err := proto.Read(rA, nil, nil)
 		if err != nil || endedA.Opcode != OpDuelEnded {
 			t.Fatalf("reading Aria's OpDuelEnded: opcode=%v err=%v", endedA, err)
 		}
@@ -318,7 +318,7 @@ func TestDuelFullFightFlow(t *testing.T) {
 		}
 
 		connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-		endedB, err := proto.Read(rB)
+		endedB, err := proto.Read(rB, nil, nil)
 		if err != nil || endedB.Opcode != OpDuelEnded {
 			t.Fatalf("reading Bram's OpDuelEnded: opcode=%v err=%v", endedB, err)
 		}
@@ -387,11 +387,11 @@ func TestDuelArmorMitigation(t *testing.T) {
 	rB := bufio.NewReader(connB)
 
 	doSend := func(c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		c.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -415,7 +415,7 @@ func TestDuelArmorMitigation(t *testing.T) {
 		t.Fatalf("bram enter world failed: err=%v result=%+v", err, ewr)
 	}
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA); err != nil {
+	if _, err := proto.Read(rA, nil, nil); err != nil {
 		t.Fatalf("draining EntityEntered: %v", err)
 	}
 
@@ -424,7 +424,7 @@ func TestDuelArmorMitigation(t *testing.T) {
 		t.Fatalf("challenge failed: err=%v result=%+v", err, cr)
 	}
 	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rB); err != nil {
+	if _, err := proto.Read(rB, nil, nil); err != nil {
 		t.Fatalf("reading OpDuelInvite: %v", err)
 	}
 
@@ -433,11 +433,11 @@ func TestDuelArmorMitigation(t *testing.T) {
 		t.Fatalf("respond failed: err=%v result=%+v", err, rr)
 	}
 	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rB); err != nil {
+	if _, err := proto.Read(rB, nil, nil); err != nil {
 		t.Fatalf("reading Bram's OpDuelStarted: %v", err)
 	}
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA); err != nil {
+	if _, err := proto.Read(rA, nil, nil); err != nil {
 		t.Fatalf("reading Aria's OpDuelStarted: %v", err)
 	}
 

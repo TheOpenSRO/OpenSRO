@@ -81,11 +81,11 @@ func TestPartyFullFlow(t *testing.T) {
 	rB := bufio.NewReader(connB)
 
 	doSend := func(c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		c.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -122,7 +122,7 @@ func TestPartyFullFlow(t *testing.T) {
 
 	// Alice should get a PartyMemberJoined broadcast for Bram.
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	joined, err := proto.Read(rA)
+	joined, err := proto.Read(rA, nil, nil)
 	if err != nil {
 		t.Fatalf("reading PartyMemberJoined: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestPartyFullFlow(t *testing.T) {
 	}
 
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	left, err := proto.Read(rA)
+	left, err := proto.Read(rA, nil, nil)
 	if err != nil {
 		t.Fatalf("reading PartyMemberLeft: %v", err)
 	}
@@ -173,11 +173,11 @@ func TestPartyInfoFlow(t *testing.T) {
 	r := bufio.NewReader(conn)
 
 	send := func(opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}

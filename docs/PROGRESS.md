@@ -2,6 +2,42 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 29) — confirmed the real header's wire order, then rewired this project's own `proto` package to match
+
+- Resumed the header-order search by decompiling three not-yet-examined callers of the
+  `+0x105c` checksum-byte offset in `GatewayServer.exe`. The first, `FUN_0046d5d0`, turned out to
+  be exactly the function needed: given a fresh output buffer pointer, it stores four
+  byte-offset-adjusted pointers into that same buffer directly into the object's four
+  already-confirmed header fields (`+0x1050`=MsgID, `+0x1054`=Size, `+0x1058`=RollingByte,
+  `+0x105c`=ChecksumByte). The offsets it uses are real, direct proof of each field's exact byte
+  position: `Size(2) @0, Opcode/MsgID(2) @2, RollingByte(1) @4, ChecksumByte(1) @5`.
+- This resolves `PACKET_FORMAT.md`'s last open header question -- both the field *set* and the wire
+  *order* are now confirmed real facts, matching the original public documentation's `Size` then
+  `Opcode` ordering with the two real security bytes appended unconditionally after them.
+- Immediately used this to do real wire-compatibility work (not just document it): rewrote
+  `server/internal/proto/packet.go`'s `Read`/`Write` to the real confirmed 6-byte layout, replacing
+  the old 5-byte `Size+Opcode+Security`-flags-byte placeholder this package started with. The old
+  design's `secEncrypted`/`secTrailer`/`secMassive` flag byte wasn't a confirmed real field at all
+  -- dropped it. In its place: the real confirmed top bit of the Size field (masked with `0x7fff`)
+  now gates `ErrEncrypted`, and `RollingByte`/`ChecksumByte` are threaded through as **optional**
+  per-session generators (`*RollingByte`/`*PacketChecksum`, nil-safe) rather than requiring a
+  specific crypto scheme to exist first -- nil means "no session security state yet" (e.g.
+  pre-handshake), and Read/Write just skip that field's validation/generation in that case.
+- Added `gateway.Session.SetSecurity(...)` so higher-level code can install real per-direction
+  generators once a handshake derives them; `Send` and the read loop now pass those through
+  automatically instead of every caller needing to know about them.
+- Updated every direct `proto.Read`/`proto.Write` call site across `internal/gateway` and all of
+  `internal/session`'s test suites to the new signature (passing `nil, nil` where no session
+  security state is being tested) -- large mechanical diff, verified with a full build + `go vet` +
+  full test suite pass across all packages afterward, not just the changed ones.
+- Rewrote `internal/proto/packet_test.go`'s encrypted-flag test for the new Size-bit-based
+  detection (was hand-building a byte-4 security-flags byte that no longer exists) and added new
+  round-trip/mismatch tests exercising the optional RollingByte/PacketChecksum generators together.
+- `PACKET_FORMAT.md` status: header field-order item now checked off; added a new open item
+  (bringing session-level key exchange far enough along to actually populate real
+  `RollingByte`/`PacketChecksum` state on a live `gateway.Session`, since the plumbing now exists
+  but nothing populates it yet outside tests).
+
 ## 2026-08-22 (cont'd 28) — a well-supported real hypothesis for the full 6-byte header breakdown
 
 - Immediately followed up the "header is 6 bytes, not 5" confirmation with the natural next

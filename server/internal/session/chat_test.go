@@ -75,11 +75,11 @@ func TestChatFullFlow(t *testing.T) {
 	rB := bufio.NewReader(connB)
 
 	doSend := func(c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		c.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -107,16 +107,16 @@ func TestChatFullFlow(t *testing.T) {
 	// EntityEntered broadcast for him -- drain it before it interferes with
 	// the chat assertions below.
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA); err != nil {
+	if _, err := proto.Read(rA, nil, nil); err != nil {
 		t.Fatalf("draining EntityEntered: %v", err)
 	}
 
-	if err := proto.Write(connA, &proto.Packet{Opcode: OpChatSay, Data: (&ChatSayRequest{Message: "hello, jangan"}).Encode()}); err != nil {
+	if err := proto.Write(connA, &proto.Packet{Opcode: OpChatSay, Data: (&ChatSayRequest{Message: "hello, jangan"}).Encode()}, nil, nil); err != nil {
 		t.Fatalf("Write OpChatSay: %v", err)
 	}
 
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	echoed, err := proto.Read(rA)
+	echoed, err := proto.Read(rA, nil, nil)
 	if err != nil {
 		t.Fatalf("reading own ChatMessage echo: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestChatFullFlow(t *testing.T) {
 	}
 
 	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	heard, err := proto.Read(rB)
+	heard, err := proto.Read(rB, nil, nil)
 	if err != nil {
 		t.Fatalf("reading ChatMessage on B: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestChatFullFlow(t *testing.T) {
 	}
 
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	whispered, err := proto.Read(rA)
+	whispered, err := proto.Read(rA, nil, nil)
 	if err != nil {
 		t.Fatalf("reading ChatWhisperMessage on A: %v", err)
 	}

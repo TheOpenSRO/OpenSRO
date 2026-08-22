@@ -115,11 +115,11 @@ func TestFriendFullFlow(t *testing.T) {
 	rB := bufio.NewReader(connB)
 
 	doSend := func(c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		c.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -144,7 +144,7 @@ func TestFriendFullFlow(t *testing.T) {
 	}
 	// Aria was already in the zone; drain her EntityEntered broadcast for Bram.
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA); err != nil {
+	if _, err := proto.Read(rA, nil, nil); err != nil {
 		t.Fatalf("draining EntityEntered: %v", err)
 	}
 
@@ -154,7 +154,7 @@ func TestFriendFullFlow(t *testing.T) {
 	}
 
 	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	receivedPkt, err := proto.Read(rB)
+	receivedPkt, err := proto.Read(rB, nil, nil)
 	if err != nil || receivedPkt.Opcode != OpFriendRequestReceived {
 		t.Fatalf("reading OpFriendRequestReceived: opcode=%v err=%v", receivedPkt, err)
 	}
@@ -175,7 +175,7 @@ func TestFriendFullFlow(t *testing.T) {
 	}
 
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	acceptedPkt, err := proto.Read(rA)
+	acceptedPkt, err := proto.Read(rA, nil, nil)
 	if err != nil || acceptedPkt.Opcode != OpFriendAccepted {
 		t.Fatalf("reading OpFriendAccepted: opcode=%v err=%v", acceptedPkt, err)
 	}
@@ -235,11 +235,11 @@ func TestFriendRequestOfflineTarget(t *testing.T) {
 	r := bufio.NewReader(conn)
 
 	send := func(opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}

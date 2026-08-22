@@ -49,10 +49,29 @@ size field (mask `0x7fff`, top bit unconfirmed but plausibly a real flag) on the
 padding needed. If this holds, the real header's four fields are **`Opcode(2) + Size(2, high bit
 likely a real flag) + RollingByte(1) + ChecksumByte(1)`**, with both security bytes present
 unconditionally on every packet's base header, not gated behind an optional trailer the way this
-project's own `Security`-flags-byte design assumed. **The real wire *order* of these four fields
-is not confirmed** -- only that these four staged fields exist and sum to the right total size, not
-which one is serialized first. Finding the actual byte-serialization function that writes all six
-bytes in sequence (not yet located) is the real next step to confirm order, not guessed at here.
+project's own `Security`-flags-byte design assumed. **The real wire order is now confirmed (2026-08-22).** Found a real per-message buffer-setup
+function (`FUN_0046d5d0` in `GatewayServer.exe`) that, given a fresh output buffer pointer
+(`in_EAX`), stores four byte-offset-adjusted pointers into that *same* buffer directly into the
+object's already-confirmed four header fields:
+
+```
+*(this + 0x1054) = in_EAX + 0   // Size field's real storage location: buffer offset 0
+*(this + 0x1050) = in_EAX + 2   // MsgID/Opcode field's real storage location: buffer offset 2
+*(this + 0x1058) = in_EAX + 4   // RollingByte field's real storage location: buffer offset 4
+*(this + 0x105c) = in_EAX + 5   // ChecksumByte field's real storage location: buffer offset 5
+```
+
+Since `+0x1050`/`+0x1054`/`+0x1058`/`+0x105c` were already independently confirmed (see
+`handshake.md`) to be the object's staged MsgID/Size/RollingByte/ChecksumByte fields respectively,
+this function is real, direct proof of each field's exact byte offset in the serialized 6-byte
+header buffer. **Real confirmed wire order: `Size(2) @0, Opcode/MsgID(2) @2, RollingByte(1) @4,
+ChecksumByte(1) @5`** -- matching the original public documentation's `Size` then `Opcode` field
+order exactly, with the two real security bytes appended unconditionally after them rather than
+gated behind an optional trailer.
+
+(This project's own header implementation in `server/internal/proto` still uses its own,
+not-yet-updated 5-byte `Size(2)+Opcode(2)+Security(1)` layout -- bringing it in line with this real
+6-byte, four-field layout is next up now that both size and order are confirmed.)
 
 ## Session crypto
 
@@ -74,9 +93,12 @@ a couple of real opcodes are solid.
       `cmd/server`) — no opcode table yet, just logs what it sees
 - [ ] Session key exchange / encrypted packets
 - [ ] Massive-packet reassembly
-- [ ] Confirm the real wire *order* of the header's four hypothesized fields (`Opcode`/`Size`/
-      `RollingByte`/`ChecksumByte`, see above) by finding the actual byte-serialization function --
-      the field *set* and total size are confirmed, the order isn't yet
+- [x] Confirm the real wire *order* of the header's four fields -- **found** via `FUN_0046d5d0`'s
+      real per-buffer field-offset setup (see above): `Size(2) @0, Opcode/MsgID(2) @2,
+      RollingByte(1) @4, ChecksumByte(1) @5`. Both field set and order are now confirmed real facts.
+- [ ] Update this project's own `server/internal/proto` header read/write to the real confirmed
+      6-byte, 4-field layout above, replacing the placeholder 5-byte `Size+Opcode+Security` layout
+      -- real wire-compatibility work now that the target shape is fully known, not just referenced.
 - [ ] Opcode table (`docs/protocol/opcodes/`) — starts empty, grows one documented opcode at a
       time as we implement against it, not speculatively. `observed_opcodes.md` now has ~150 real
       opcode *values* across four binaries; payload layouts are the next tier of work.

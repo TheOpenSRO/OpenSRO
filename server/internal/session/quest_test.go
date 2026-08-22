@@ -121,11 +121,11 @@ func TestQuestFullFlow(t *testing.T) {
 	r := bufio.NewReader(conn)
 
 	send := func(opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -168,7 +168,7 @@ func TestQuestFullFlow(t *testing.T) {
 
 		// Third kill should trigger an OpQuestCompleted.
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		completedPkt, err := proto.Read(r)
+		completedPkt, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("reading OpQuestCompleted: %v", err)
 		}

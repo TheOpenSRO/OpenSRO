@@ -129,11 +129,11 @@ func setupTradeTest(t *testing.T) *tradeTestFixture {
 	rB := bufio.NewReader(connB)
 
 	doSend := func(c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
 		c.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r)
+		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -157,7 +157,7 @@ func setupTradeTest(t *testing.T) *tradeTestFixture {
 		t.Fatalf("bram enter world failed: err=%v result=%+v", err, ewr)
 	}
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA); err != nil {
+	if _, err := proto.Read(rA, nil, nil); err != nil {
 		t.Fatalf("draining EntityEntered: %v", err)
 	}
 
@@ -166,11 +166,11 @@ func setupTradeTest(t *testing.T) *tradeTestFixture {
 
 func doSend(t *testing.T, c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
 	t.Helper()
-	if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+	if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	resp, err := proto.Read(r)
+	resp, err := proto.Read(r, nil, nil)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestTradeFullFlow(t *testing.T) {
 		t.Fatalf("trade request failed: err=%v result=%+v", err, rr)
 	}
 	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(f.rB); err != nil {
+	if _, err := proto.Read(f.rB, nil, nil); err != nil {
 		t.Fatalf("reading OpTradeInvite: %v", err)
 	}
 
@@ -201,11 +201,11 @@ func TestTradeFullFlow(t *testing.T) {
 	}
 	// Both sides get OpTradeStarted.
 	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if startedPkt, err := proto.Read(f.rB); err != nil || startedPkt.Opcode != OpTradeStarted {
+	if startedPkt, err := proto.Read(f.rB, nil, nil); err != nil || startedPkt.Opcode != OpTradeStarted {
 		t.Fatalf("reading Bram's OpTradeStarted: opcode=%v err=%v", startedPkt, err)
 	}
 	f.connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if startedPkt, err := proto.Read(f.rA); err != nil || startedPkt.Opcode != OpTradeStarted {
+	if startedPkt, err := proto.Read(f.rA, nil, nil); err != nil || startedPkt.Opcode != OpTradeStarted {
 		t.Fatalf("reading Aria's OpTradeStarted: opcode=%v err=%v", startedPkt, err)
 	}
 
@@ -215,7 +215,7 @@ func TestTradeFullFlow(t *testing.T) {
 		t.Fatalf("Aria's offer failed: err=%v result=%+v", err, or)
 	}
 	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	updatedPkt, err := proto.Read(f.rB)
+	updatedPkt, err := proto.Read(f.rB, nil, nil)
 	if err != nil || updatedPkt.Opcode != OpTradeOfferUpdated {
 		t.Fatalf("reading Bram's OpTradeOfferUpdated: opcode=%v err=%v", updatedPkt, err)
 	}
@@ -229,7 +229,7 @@ func TestTradeFullFlow(t *testing.T) {
 		t.Fatalf("Bram's offer failed: err=%v result=%+v", err, or)
 	}
 	f.connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if updatedPkt, err := proto.Read(f.rA); err != nil || updatedPkt.Opcode != OpTradeOfferUpdated {
+	if updatedPkt, err := proto.Read(f.rA, nil, nil); err != nil || updatedPkt.Opcode != OpTradeOfferUpdated {
 		t.Fatalf("reading Aria's OpTradeOfferUpdated: opcode=%v err=%v", updatedPkt, err)
 	}
 
@@ -247,7 +247,7 @@ func TestTradeFullFlow(t *testing.T) {
 	}
 
 	f.connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	completedA, err := proto.Read(f.rA)
+	completedA, err := proto.Read(f.rA, nil, nil)
 	if err != nil || completedA.Opcode != OpTradeCompleted {
 		t.Fatalf("reading Aria's OpTradeCompleted: opcode=%v err=%v", completedA, err)
 	}
@@ -257,7 +257,7 @@ func TestTradeFullFlow(t *testing.T) {
 	}
 
 	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	completedB, err := proto.Read(f.rB)
+	completedB, err := proto.Read(f.rB, nil, nil)
 	if err != nil || completedB.Opcode != OpTradeCompleted {
 		t.Fatalf("reading Bram's OpTradeCompleted: opcode=%v err=%v", completedB, err)
 	}
@@ -328,7 +328,7 @@ func TestTradeCancelFlow(t *testing.T) {
 		t.Fatalf("trade request failed: err=%v result=%+v", err, rr)
 	}
 	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(f.rB); err != nil {
+	if _, err := proto.Read(f.rB, nil, nil); err != nil {
 		t.Fatalf("reading OpTradeInvite: %v", err)
 	}
 	resp = doSend(t, f.connB, f.rB, OpTradeRespond, (&TradeRespondRequest{CharacterName: "Bram", RequesterName: "Aria", Accept: true}).Encode())
@@ -336,21 +336,21 @@ func TestTradeCancelFlow(t *testing.T) {
 		t.Fatalf("trade respond failed: err=%v result=%+v", err, rr)
 	}
 	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	proto.Read(f.rB) // OpTradeStarted for Bram
+	proto.Read(f.rB, nil, nil) // OpTradeStarted for Bram
 	f.connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	proto.Read(f.rA) // OpTradeStarted for Aria
+	proto.Read(f.rA, nil, nil) // OpTradeStarted for Aria
 
-	if err := proto.Write(f.connB, &proto.Packet{Opcode: OpTradeCancel, Data: (&TradeCancelRequest{CharacterName: "Bram"}).Encode()}); err != nil {
+	if err := proto.Write(f.connB, &proto.Packet{Opcode: OpTradeCancel, Data: (&TradeCancelRequest{CharacterName: "Bram"}).Encode()}, nil, nil); err != nil {
 		t.Fatalf("Write OpTradeCancel: %v", err)
 	}
 
 	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	cancelledB, err := proto.Read(f.rB)
+	cancelledB, err := proto.Read(f.rB, nil, nil)
 	if err != nil || cancelledB.Opcode != OpTradeCancelled {
 		t.Fatalf("reading Bram's OpTradeCancelled: opcode=%v err=%v", cancelledB, err)
 	}
 	f.connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	cancelledA, err := proto.Read(f.rA)
+	cancelledA, err := proto.Read(f.rA, nil, nil)
 	if err != nil || cancelledA.Opcode != OpTradeCancelled {
 		t.Fatalf("reading Aria's OpTradeCancelled: opcode=%v err=%v", cancelledA, err)
 	}
@@ -375,33 +375,33 @@ func TestTradeInsufficientGold(t *testing.T) {
 
 	doSend(t, f.connA, f.rA, OpTradeRequest, (&TradeRequestRequest{CharacterName: "Aria", TargetName: "Bram"}).Encode())
 	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	proto.Read(f.rB) // invite
+	proto.Read(f.rB, nil, nil) // invite
 
 	doSend(t, f.connB, f.rB, OpTradeRespond, (&TradeRespondRequest{CharacterName: "Bram", RequesterName: "Aria", Accept: true}).Encode())
 	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	proto.Read(f.rB) // started
+	proto.Read(f.rB, nil, nil) // started
 	f.connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	proto.Read(f.rA) // started
+	proto.Read(f.rA, nil, nil) // started
 
 	// Aria offers way more gold than StartingGold.
 	doSend(t, f.connA, f.rA, OpTradeSetOffer, (&TradeSetOfferRequest{CharacterName: "Aria", Offer: TradeOffer{Gold: int64(character.StartingGold) * 100, ItemSlot: -1}}).Encode())
 	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	proto.Read(f.rB) // offer updated
+	proto.Read(f.rB, nil, nil) // offer updated
 
 	doSend(t, f.connB, f.rB, OpTradeSetOffer, (&TradeSetOfferRequest{CharacterName: "Bram", Offer: TradeOffer{Gold: 0, ItemSlot: -1}}).Encode())
 	f.connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	proto.Read(f.rA) // offer updated
+	proto.Read(f.rA, nil, nil) // offer updated
 
 	doSend(t, f.connA, f.rA, OpTradeConfirm, (&TradeConfirmRequest{CharacterName: "Aria"}).Encode())
 	doSend(t, f.connB, f.rB, OpTradeConfirm, (&TradeConfirmRequest{CharacterName: "Bram"}).Encode())
 
 	f.connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	cancelledA, err := proto.Read(f.rA)
+	cancelledA, err := proto.Read(f.rA, nil, nil)
 	if err != nil || cancelledA.Opcode != OpTradeCancelled {
 		t.Fatalf("reading Aria's OpTradeCancelled: opcode=%v err=%v", cancelledA, err)
 	}
 	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	cancelledB, err := proto.Read(f.rB)
+	cancelledB, err := proto.Read(f.rB, nil, nil)
 	if err != nil || cancelledB.Opcode != OpTradeCancelled {
 		t.Fatalf("reading Bram's OpTradeCancelled: opcode=%v err=%v", cancelledB, err)
 	}

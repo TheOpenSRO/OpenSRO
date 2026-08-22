@@ -48,6 +48,30 @@ type Session struct {
 
 	mu     sync.RWMutex
 	values map[string]any
+
+	secMu    sync.Mutex
+	sendRoll *proto.RollingByte
+	sendSum  *proto.PacketChecksum
+	recvRoll *proto.RollingByte
+	recvSum  *proto.PacketChecksum
+}
+
+// SetSecurity installs this session's real per-direction RollingByte/
+// PacketChecksum generators (see proto.Read/Write) once a handshake derives
+// them. Before this is called, Send and the read loop pass nil for both,
+// which skips those fields' validation/generation entirely -- the correct
+// behavior pre-handshake, not a workaround.
+func (s *Session) SetSecurity(sendRoll *proto.RollingByte, sendSum *proto.PacketChecksum, recvRoll *proto.RollingByte, recvSum *proto.PacketChecksum) {
+	s.secMu.Lock()
+	defer s.secMu.Unlock()
+	s.sendRoll, s.sendSum = sendRoll, sendSum
+	s.recvRoll, s.recvSum = recvRoll, recvSum
+}
+
+func (s *Session) security() (sendRoll *proto.RollingByte, sendSum *proto.PacketChecksum, recvRoll *proto.RollingByte, recvSum *proto.PacketChecksum) {
+	s.secMu.Lock()
+	defer s.secMu.Unlock()
+	return s.sendRoll, s.sendSum, s.recvRoll, s.recvSum
 }
 
 // ID uniquely identifies this session for the life of the process (not
@@ -92,7 +116,8 @@ func (s *Session) Get(key string) (any, bool) {
 
 // Send writes a packet back to this session's client.
 func (s *Session) Send(p *proto.Packet) error {
-	return proto.Write(s.conn, p)
+	sendRoll, sendSum, _, _ := s.security()
+	return proto.Write(s.conn, p, sendRoll, sendSum)
 }
 
 // Close closes the underlying connection.
@@ -189,7 +214,8 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 		default:
 		}
 
-		p, err := proto.Read(r)
+		_, _, recvRoll, recvSum := sess.security()
+		p, err := proto.Read(r, recvRoll, recvSum)
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
 				logger.Warn("session read error", "addr", sess.RemoteAddr(), "error", err)
