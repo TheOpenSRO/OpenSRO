@@ -116,12 +116,26 @@ This is the real system behind classic Silkroad "+N" magic-option item stats. **
 options, so per this file's own stated principle (pull schemas as they become relevant, don't
 front-load), this is recorded as a real, confirmed schema for a future pass, not built out now.
 
+## `_RefPricePolicyOfItem` (5,041 rows) — checked, real dead end for ordinary NPC vendor pricing
+
+`server/internal/shop.Price()`'s own doc comment said the DB backups were "never fully
+restored/mined for a real price table" -- now that restore access is proven working, checked
+directly. Real schema: `Service`, `Country`, `RefPackageItemCodeName`, `PaymentDevice`,
+`PreviousCost`, `Cost`, `Param1`-`4` (+ their own `_Desc128` columns). This is real, but it's the
+**item-mall (cash shop) package pricing table**, not an ordinary NPC vendor's gold price for
+regular weapons/armor -- `PaymentDevice`/`Country`/`RefPackageItemCodeName` are cash-shop-specific
+concepts with no meaning for a plain vendor-bought sword. Also checked `_RefObjItem` itself for any
+`Cost`/`Price`-named column -- none exists. **Real, confirmed conclusion**: no real per-item NPC
+vendor gold price table exists anywhere in this database. This is consistent with (not just an
+assumption) `shop.Price()`'s own existing formula-from-stats approach -- real Silkroad NPC prices
+were plausibly always computed from item stats client/server-side too, not looked up from a static
+table. Updated `shop.Price()`'s doc comment to state this as a checked fact, not an unexplored gap.
+
 ## Other reference tables found (not yet schema-inspected)
 
-`_RefPricePolicyOfItem` (5,041), `_RefPackageItem` (3,130), `_RefSkillGroup` (933), and ~40 more
-smaller tables — see `db_schema.md` for the fuller name-only list. Worth pulling schemas for as
-each becomes relevant to actual gameplay systems being built, rather than front-loading all of it
-now.
+`_RefPackageItem` (3,130), `_RefSkillGroup` (933), and ~40 more smaller tables — see
+`db_schema.md` for the fuller name-only list. Worth pulling schemas for as each becomes relevant
+to actual gameplay systems being built, rather than front-loading all of it now.
 
 ## Status / next steps
 

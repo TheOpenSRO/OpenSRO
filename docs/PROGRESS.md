@@ -2,6 +2,25 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 24) — real magic-option schema found; confirmed no real NPC price table exists
+
+- Kept using the now-proven DB-restore access. Followed `_RefDropItemGroup.RefMagicGroupID` to its
+  real linked tables (`_RefMagicOpt` 427 rows, `_RefMagicOptGroup` 115 rows, `_RefMagicOptAssign`
+  74 rows) -- the real system behind classic "+N" magic-option item stats. Documented the real
+  schema in `refdata_schema.md`; deliberately not implemented in Go yet, since nothing in this
+  project's current gameplay needs random item magic options -- matches this doc's own "pull
+  schemas as relevant, don't front-load" principle.
+- Checked `shop.Price()`'s own doc comment, which said the DB was "never fully restored/mined for
+  a real price table" -- no longer true, so checked directly. Real finding:
+  `_RefPricePolicyOfItem` exists but is the item-mall (cash shop) package pricing table
+  (`Country`/`PaymentDevice`/`RefPackageItemCodeName`), not an ordinary NPC vendor's gold price for
+  regular items; `_RefObjItem` itself has no `Cost`/`Price` column either. **Confirmed: no real
+  per-item NPC vendor price table exists anywhere in this database.** This validates (doesn't just
+  excuse) `shop.Price()`'s existing stats-based formula -- real Silkroad NPC prices were plausibly
+  always computed, not looked up. Updated `shop.go`'s doc comment from "never checked" to "checked,
+  confirmed necessary."
+- `go test ./...` passes (no behavior changes, doc-comment corrections only for this entry).
+
 ## 2026-08-22 (cont'd 23) — full real _RefSkill schema (all 118 columns), extended refdata.Skill
 
 - With DB-restore access proven working from the drop-table pass, immediately used it again (no

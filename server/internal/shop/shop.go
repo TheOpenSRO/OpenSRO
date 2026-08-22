@@ -1,9 +1,15 @@
 // Package shop implements a basic NPC vendor: buying items from the
-// refdata catalog with character gold. Entirely own design -- there's no
-// original pricing data to draw from (the obtained package's DB backups
-// were never fully restored/mined for a real price table), so prices are
-// computed from an item's own stats via a simple formula rather than
-// looked up.
+// refdata catalog with character gold. Entirely own design -- checked
+// (2026-08-22, restoring SRO_VT_SHARD.Bak) for a real per-item NPC vendor
+// price table and found a real, confirmed dead end: _RefPricePolicyOfItem
+// exists, but it's the item-mall (cash shop) package pricing table
+// (Country/PaymentDevice/RefPackageItemCodeName), not an ordinary vendor's
+// gold price for regular weapons/armor; _RefObjItem itself has no
+// Cost/Price-named column either. No real per-item NPC vendor price table
+// exists anywhere in this database -- see docs/protocol/refdata_schema.md.
+// So prices are computed from an item's own stats via a simple formula
+// rather than looked up, which is now a confirmed-necessary design, not
+// just an unexplored gap.
 package shop
 
 import (
