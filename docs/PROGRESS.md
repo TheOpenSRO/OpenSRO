@@ -2,6 +2,28 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 13) — ported the rest of 2D's panels into 3D: monsters, inventory, equipment, quests, shop, party, guild, duel, trade, friends
+
+- Continuing the 2D-to-3D UI port started with chat: brought the entire `ActionTabs` tab structure
+  from `World.tscn` into `World3D.tscn`'s UI overlay (10 tabs, verbatim node-for-node), and ported
+  every corresponding handler function from `World.gd` into `World3D.gd` -- roughly 500 lines,
+  unchanged in behavior, just re-hosted.
+- Also added `NetClient.disconnected` handling (redirect to `Login.tscn`), which `World3D.gd`
+  never had since it always assumed 2D was the real client people ended a session from.
+- Caught one real regression risk before it shipped: `World.gd`'s initial `_ready()` data requests
+  (`list_monsters`, `list_inventory`, etc.) assumed a live connection unconditionally, since 2D was
+  never used any other way. `World3D.gd` is deliberately also a standalone dev/asset-preview tool
+  (loaded directly with `SRREVAMP_*` env vars, no login flow) -- ported verbatim, those calls would
+  have spammed `_send called while not connected` errors in that mode. Guarded them behind
+  `NetClient.is_connected_to_server()`, matching the caution `_real_player_equipped_slots()`
+  already uses for the same reason.
+- Verified: scene boots clean (back down to the one pre-existing, unrelated `_send` error from
+  before this port started), all 35 GDScript suites still pass, no `project.godot` diff, no
+  duplicate function names introduced.
+- 2D (`World.tscn`/`World.gd`) now has full UI parity in 3D. What's left before it can actually be
+  deleted: flip `CharacterSelect.gd` to load `World3D.tscn` directly instead of `World.tscn`,
+  remove the now-pointless "Back to 2D View" button, then delete `World.tscn`/`World.gd`.
+
 ## 2026-08-22 (cont'd 12) — direction change: full protocol rewrite + porting 2D's UI into 3D (chat first)
 
 - Two decisions from OpenSRO change this project's direction:
