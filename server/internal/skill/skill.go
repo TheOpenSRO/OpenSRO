@@ -1,9 +1,11 @@
 // Package skill implements a small, own-designed skill system: a static
 // catalog of a few skills a character can learn and then use in combat for
-// bonus damage on a cooldown. No real skill data has been imported (the
-// _RefSkill table's ~118 columns are only partially catalogued so far, see
-// docs/protocol/refdata_schema.md) so this catalog is entirely invented
-// placeholder content, not derived from the original.
+// bonus damage on a cooldown. This catalog is entirely invented placeholder
+// content, not derived from the original -- refdata.Skill now exists as a
+// real, importable schema for the ~20 confirmed _RefSkill columns (identity,
+// level, cost, timing), but no confirmed column encodes a skill's actual
+// damage/effect, so importing real skills would only replace part of what
+// Skill needs here. See docs/protocol/refdata_schema.md's status section.
 package skill
 
 import (

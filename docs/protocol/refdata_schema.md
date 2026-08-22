@@ -56,7 +56,15 @@ relevant to actual gameplay systems being built, rather than front-loading all o
 
 - [x] `_RefObjItem` schema confirmed, curated own-schema (`refdata.Item`) designed, CSV importer
       built and tested against the real 24,521-row export (data itself never committed)
-- [ ] `_RefSkill` schema (remaining ~98 columns) + own `refdata.Skill` type + importer
+- [x] `refdata.Skill` type + `LoadSkillsCSV` importer built, against the ~20 confirmed `_RefSkill`
+      columns above (identity/timing/behavior only -- no damage/effect value, since no confirmed
+      column encodes one). Not wired into `skill.Catalog` yet: that package's own `DamageBonus` is
+      still an own-design number with no real column to source it from, so importing real skills
+      would only replace their identity/cost/cooldown, not their actual combat behavior -- doing
+      that half-replacement felt more confusing than useful without a real damage source, so
+      `skill.Catalog` stays fully own-designed for now. `refdata.Skill` is ready to use once one
+      exists.
+- [ ] `_RefSkill` schema (remaining ~98 columns) + finding the real damage/effect source
 - [ ] `_RefDropItemAssign`/`_RefDropItemGroup` schema (drop tables) — needed once loot matters
 - [ ] Figure out where item/skill display names actually live (not in these tables) before any
       of this data is user-facing

@@ -31,6 +31,25 @@ CREATE TABLE IF NOT EXISTS items (
 	critical_min      DOUBLE PRECISION NOT NULL,
 	critical_max      DOUBLE PRECISION NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS skills (
+	id                  BIGINT PRIMARY KEY,
+	group_id            BIGINT NOT NULL,
+	basic_code          TEXT NOT NULL,
+	basic_name          TEXT NOT NULL,
+	basic_level         INTEGER NOT NULL,
+	basic_chain_code    BIGINT NOT NULL,
+	basic_recycle_cost  INTEGER NOT NULL,
+	preparing_time_ms   INTEGER NOT NULL,
+	casting_time_ms     INTEGER NOT NULL,
+	action_duration_ms  INTEGER NOT NULL,
+	reuse_delay_ms      INTEGER NOT NULL,
+	cool_time_ms        INTEGER NOT NULL,
+	flying_speed        DOUBLE PRECISION NOT NULL,
+	interruptable       BOOLEAN NOT NULL,
+	overlap             BOOLEAN NOT NULL,
+	auto_attack_type    INTEGER NOT NULL
+);
 `
 
 // SQLStore is this project's own item reference-data store, backed by
@@ -180,4 +199,98 @@ func (s *SQLStore) GetMaxStack(ctx context.Context, itemID int64) (int, error) {
 		return 0, fmt.Errorf("refdata: querying max stack for item %d: %w", itemID, err)
 	}
 	return n, nil
+}
+
+// ImportSkills upserts every skill in skills (by ID), inside one
+// transaction.
+func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("refdata: beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO skills (
+			id, group_id, basic_code, basic_name, basic_level, basic_chain_code,
+			basic_recycle_cost, preparing_time_ms, casting_time_ms, action_duration_ms,
+			reuse_delay_ms, cool_time_ms, flying_speed, interruptable, overlap, auto_attack_type
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+		ON CONFLICT (id) DO UPDATE SET
+			group_id=excluded.group_id, basic_code=excluded.basic_code, basic_name=excluded.basic_name,
+			basic_level=excluded.basic_level, basic_chain_code=excluded.basic_chain_code,
+			basic_recycle_cost=excluded.basic_recycle_cost, preparing_time_ms=excluded.preparing_time_ms,
+			casting_time_ms=excluded.casting_time_ms, action_duration_ms=excluded.action_duration_ms,
+			reuse_delay_ms=excluded.reuse_delay_ms, cool_time_ms=excluded.cool_time_ms,
+			flying_speed=excluded.flying_speed, interruptable=excluded.interruptable,
+			overlap=excluded.overlap, auto_attack_type=excluded.auto_attack_type
+	`)
+	if err != nil {
+		return fmt.Errorf("refdata: preparing insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, sk := range skills {
+		if _, err := stmt.ExecContext(ctx,
+			sk.ID, sk.GroupID, sk.BasicCode, sk.BasicName, sk.BasicLevel, sk.BasicChainCode,
+			sk.BasicRecycleCost, sk.PreparingTimeMs, sk.CastingTimeMs, sk.ActionDurationMs,
+			sk.ReuseDelayMs, sk.CoolTimeMs, sk.FlyingSpeed, sk.Interruptable, sk.Overlap, sk.AutoAttackType,
+		); err != nil {
+			return fmt.Errorf("refdata: inserting skill %d: %w", sk.ID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// GetSkill looks up one skill by ID.
+func (s *SQLStore) GetSkill(ctx context.Context, id int64) (*Skill, error) {
+	var sk Skill
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, group_id, basic_code, basic_name, basic_level, basic_chain_code,
+			basic_recycle_cost, preparing_time_ms, casting_time_ms, action_duration_ms,
+			reuse_delay_ms, cool_time_ms, flying_speed, interruptable, overlap, auto_attack_type
+		FROM skills WHERE id = $1`, id)
+	if err := row.Scan(
+		&sk.ID, &sk.GroupID, &sk.BasicCode, &sk.BasicName, &sk.BasicLevel, &sk.BasicChainCode,
+		&sk.BasicRecycleCost, &sk.PreparingTimeMs, &sk.CastingTimeMs, &sk.ActionDurationMs,
+		&sk.ReuseDelayMs, &sk.CoolTimeMs, &sk.FlyingSpeed, &sk.Interruptable, &sk.Overlap, &sk.AutoAttackType,
+	); err != nil {
+		return nil, fmt.Errorf("refdata: querying skill %d: %w", id, err)
+	}
+	return &sk, nil
+}
+
+// ListAllSkills returns every imported skill, ordered by ID. See
+// ListAll's doc comment for the same "small enough to list in full" caveat.
+func (s *SQLStore) ListAllSkills(ctx context.Context) ([]*Skill, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, group_id, basic_code, basic_name, basic_level, basic_chain_code,
+			basic_recycle_cost, preparing_time_ms, casting_time_ms, action_duration_ms,
+			reuse_delay_ms, cool_time_ms, flying_speed, interruptable, overlap, auto_attack_type
+		FROM skills ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("refdata: listing skills: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*Skill
+	for rows.Next() {
+		var sk Skill
+		if err := rows.Scan(
+			&sk.ID, &sk.GroupID, &sk.BasicCode, &sk.BasicName, &sk.BasicLevel, &sk.BasicChainCode,
+			&sk.BasicRecycleCost, &sk.PreparingTimeMs, &sk.CastingTimeMs, &sk.ActionDurationMs,
+			&sk.ReuseDelayMs, &sk.CoolTimeMs, &sk.FlyingSpeed, &sk.Interruptable, &sk.Overlap, &sk.AutoAttackType,
+		); err != nil {
+			return nil, fmt.Errorf("refdata: scanning skill: %w", err)
+		}
+		out = append(out, &sk)
+	}
+	return out, rows.Err()
+}
+
+// CountSkills returns how many skills are stored.
+func (s *SQLStore) CountSkills(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM skills`).Scan(&n)
+	return n, err
 }

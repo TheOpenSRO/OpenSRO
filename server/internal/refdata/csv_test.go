@@ -60,3 +60,62 @@ func TestLoadItemsCSVNonNumericField(t *testing.T) {
 		t.Fatal("expected an error for a non-numeric field, got nil")
 	}
 }
+
+func TestLoadSkillsCSV(t *testing.T) {
+	// Synthetic data, not any real game's actual values.
+	csv := "1,10,SKILL_CH_SWORD_ATTACK_01,SN_SWORD_ATTACK_01,1,0,5,500,300,1000,3000,3000,0.0,1,0,1\n" +
+		"2,10,SKILL_CH_BOW_ATTACK_01,SN_BOW_ATTACK_01,5,1,15,700,400,1200,5000,4500,25.5,0,1,2\n"
+
+	skills, err := LoadSkillsCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("LoadSkillsCSV: %v", err)
+	}
+	if len(skills) != 2 {
+		t.Fatalf("got %d skills, want 2", len(skills))
+	}
+
+	if skills[0].ID != 1 || skills[0].GroupID != 10 || skills[0].BasicCode != "SKILL_CH_SWORD_ATTACK_01" {
+		t.Fatalf("skill 0 fields wrong: %+v", skills[0])
+	}
+	if !skills[0].Interruptable || skills[0].Overlap {
+		t.Fatalf("skill 0 Interruptable/Overlap wrong: %+v", skills[0])
+	}
+	if skills[0].ReuseDelayMs != 3000 {
+		t.Fatalf("skill 0 ReuseDelayMs = %v, want 3000", skills[0].ReuseDelayMs)
+	}
+
+	if skills[1].ID != 2 || skills[1].BasicChainCode != 1 {
+		t.Fatalf("skill 1 fields wrong: %+v", skills[1])
+	}
+	if skills[1].Interruptable || !skills[1].Overlap {
+		t.Fatalf("skill 1 Interruptable/Overlap wrong: %+v", skills[1])
+	}
+	if skills[1].FlyingSpeed != 25.5 {
+		t.Fatalf("skill 1 FlyingSpeed = %v, want 25.5", skills[1].FlyingSpeed)
+	}
+}
+
+func TestLoadSkillsCSVEmpty(t *testing.T) {
+	skills, err := LoadSkillsCSV(strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("LoadSkillsCSV: %v", err)
+	}
+	if len(skills) != 0 {
+		t.Fatalf("got %d skills, want 0", len(skills))
+	}
+}
+
+func TestLoadSkillsCSVMalformedRow(t *testing.T) {
+	_, err := LoadSkillsCSV(strings.NewReader("not,enough,columns\n"))
+	if err == nil {
+		t.Fatal("expected an error for a row with the wrong column count, got nil")
+	}
+}
+
+func TestLoadSkillsCSVNonNumericField(t *testing.T) {
+	csv := "1,10,SKILL_CH_SWORD_ATTACK_01,SN_SWORD_ATTACK_01,1,0,5,500,300,1000,3000,3000,0.0,1,0,notanumber\n"
+	_, err := LoadSkillsCSV(strings.NewReader(csv))
+	if err == nil {
+		t.Fatal("expected an error for a non-numeric field, got nil")
+	}
+}

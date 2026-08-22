@@ -2,6 +2,30 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 11) — real `refdata.Skill` schema + CSV importer (identity/timing, not damage)
+
+- Picked the top item off the "real work, just not built yet" list from the status report: real
+  skill data. `refdata_schema.md` had ~20 confirmed `_RefSkill` columns cataloged but no Go type or
+  importer built against them yet, unlike `_RefObjItem`/`refdata.Item`.
+- Added `refdata.Skill` (`server/internal/refdata/skill.go`): a curated subset of those ~20
+  columns, following the exact same curation discipline `refdata.Item` already established --
+  columns with confirmed-but-unclear semantics (`Service`, `Basic_Group`, `Basic_Original`,
+  `Basic_Activity`) are left out rather than guessed at, the same way `refdata.Item` already drops
+  `_RefObjItem`'s undecoded `ER_*`/`PAR_*`/`BR_*` groups.
+- Added `LoadSkillsCSV` (mirrors `LoadItemsCSV` exactly) and extended `SQLStore` with a `skills`
+  table + `ImportSkills`/`GetSkill`/`ListAllSkills`/`CountSkills`, all following the established
+  upsert-by-ID pattern.
+- **Important honest limit, not glossed over**: no confirmed `_RefSkill` column encodes a skill's
+  actual damage/effect -- that data plausibly lives in a separate, uncatalogued ability/effect
+  system this project hasn't found. So `refdata.Skill` is real and importable, but deliberately
+  **not wired into `skill.Catalog`**: importing it would only replace a skill's identity/cost/
+  timing, not the `DamageBonus` that actually matters for combat, and a half-real-half-invented
+  skill felt more confusing than useful to wire up without a real damage source. `skill.Catalog`
+  stays fully own-designed for now; `refdata.Skill` is ready to use once one exists.
+- Tests: `TestLoadSkillsCSV`/`Empty`/`MalformedRow`/`NonNumericField` (mirroring the item CSV
+  tests) and `TestImportAndGetSkill`/`TestImportSkillsUpserts`/`TestGetSkillNotFound` (mirroring
+  the item SQL store tests). Full `go test ./...` passes.
+
 ## 2026-08-22 (cont'd 10) — fixed a second zone-change fallout bug: cross-zone attacks
 
 - While looking for more fallout from the new multi-zone feature (after already catching the stale

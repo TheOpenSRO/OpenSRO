@@ -25,6 +25,9 @@ func openTestSQLStore(t *testing.T) *SQLStore {
 	if _, err := s.db.Exec(`TRUNCATE TABLE items`); err != nil {
 		t.Fatalf("truncating items table: %v", err)
 	}
+	if _, err := s.db.Exec(`TRUNCATE TABLE skills`); err != nil {
+		t.Fatalf("truncating skills table: %v", err)
+	}
 	t.Cleanup(func() { s.Close() })
 	return s
 }
@@ -117,5 +120,81 @@ func TestGetItemNotFound(t *testing.T) {
 	store := openTestSQLStore(t)
 	if _, err := store.GetItem(context.Background(), 999); err == nil {
 		t.Fatal("expected an error looking up a nonexistent item, got nil")
+	}
+}
+
+func TestImportAndGetSkill(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+
+	csv := "1,10,SKILL_CH_SWORD_ATTACK_01,SN_SWORD_ATTACK_01,1,0,5,500,300,1000,3000,3000,0.0,1,0,1\n"
+	skills, err := LoadSkillsCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("LoadSkillsCSV: %v", err)
+	}
+	if err := store.ImportSkills(ctx, skills); err != nil {
+		t.Fatalf("ImportSkills: %v", err)
+	}
+
+	got, err := store.GetSkill(ctx, 1)
+	if err != nil {
+		t.Fatalf("GetSkill: %v", err)
+	}
+	if *got != skills[0] {
+		t.Fatalf("got %+v, want %+v", got, skills[0])
+	}
+
+	count, err := store.CountSkills(ctx)
+	if err != nil {
+		t.Fatalf("CountSkills: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("got count %d, want 1", count)
+	}
+
+	all, err := store.ListAllSkills(ctx)
+	if err != nil {
+		t.Fatalf("ListAllSkills: %v", err)
+	}
+	if len(all) != 1 || *all[0] != skills[0] {
+		t.Fatalf("got %+v, want one skill matching %+v", all, skills[0])
+	}
+}
+
+func TestImportSkillsUpserts(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+
+	first := Skill{ID: 1, BasicLevel: 1}
+	if err := store.ImportSkills(ctx, []Skill{first}); err != nil {
+		t.Fatalf("first ImportSkills: %v", err)
+	}
+
+	updated := Skill{ID: 1, BasicLevel: 5}
+	if err := store.ImportSkills(ctx, []Skill{updated}); err != nil {
+		t.Fatalf("second ImportSkills: %v", err)
+	}
+
+	got, err := store.GetSkill(ctx, 1)
+	if err != nil {
+		t.Fatalf("GetSkill: %v", err)
+	}
+	if got.BasicLevel != 5 {
+		t.Fatalf("got BasicLevel %d, want 5 (upsert should have replaced the row)", got.BasicLevel)
+	}
+
+	count, err := store.CountSkills(ctx)
+	if err != nil {
+		t.Fatalf("CountSkills: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("got count %d, want 1 (upsert should not duplicate)", count)
+	}
+}
+
+func TestGetSkillNotFound(t *testing.T) {
+	store := openTestSQLStore(t)
+	if _, err := store.GetSkill(context.Background(), 999); err == nil {
+		t.Fatal("expected an error looking up a nonexistent skill, got nil")
 	}
 }

@@ -104,3 +104,96 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	return it, nil
 }
+
+// skillCSVColumns is the expected column order for LoadSkillsCSV, matching
+// the columns a player would export from their own restored reference-data
+// database. See docs/protocol/refdata_schema.md and refdata.Skill's doc
+// comment for what each real column means and why only these are kept.
+var skillCSVColumns = []string{
+	"ID", "GroupID", "Basic_Code", "Basic_Name", "Basic_Level", "Basic_ChainCode",
+	"Basic_RecycleCost", "PreparingTime", "CastingTime", "ActionDuration",
+	"ReuseDelay", "CoolTime", "FlyingSpeed", "Interruptable", "Overlap", "AutoAttackType",
+}
+
+// LoadSkillsCSV parses skill rows from r, a headerless CSV in
+// skillCSVColumns's order (i.e. exactly what a plain `SELECT <those
+// columns> FROM _RefSkill ORDER BY ID` export produces). Returns a
+// descriptive error naming the row/column on any parse failure rather than
+// silently skipping bad data.
+func LoadSkillsCSV(r io.Reader) ([]Skill, error) {
+	cr := csv.NewReader(r)
+	cr.FieldsPerRecord = len(skillCSVColumns)
+
+	var skills []Skill
+	rowNum := 0
+	for {
+		record, err := cr.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("refdata: reading row %d: %w", rowNum, err)
+		}
+		rowNum++
+
+		sk, err := parseSkillRow(record)
+		if err != nil {
+			return nil, fmt.Errorf("refdata: row %d: %w", rowNum, err)
+		}
+		skills = append(skills, sk)
+	}
+	return skills, nil
+}
+
+func parseSkillRow(f []string) (Skill, error) {
+	var (
+		sk  Skill
+		err error
+	)
+	parseInt := func(s string) int {
+		var v int64
+		if err == nil {
+			v, err = strconv.ParseInt(s, 10, 64)
+		}
+		return int(v)
+	}
+	parseInt64 := func(s string) int64 {
+		var v int64
+		if err == nil {
+			v, err = strconv.ParseInt(s, 10, 64)
+		}
+		return v
+	}
+	parseFloat := func(s string) float64 {
+		var v float64
+		if err == nil {
+			v, err = strconv.ParseFloat(s, 64)
+		}
+		return v
+	}
+	parseBool := func(s string) bool {
+		return parseInt(s) != 0
+	}
+
+	sk.ID = parseInt64(f[0])
+	sk.GroupID = parseInt64(f[1])
+	sk.BasicCode = f[2]
+	sk.BasicName = f[3]
+	sk.BasicLevel = parseInt(f[4])
+	sk.BasicChainCode = parseInt64(f[5])
+	sk.BasicRecycleCost = parseInt(f[6])
+	sk.PreparingTimeMs = parseInt(f[7])
+	sk.CastingTimeMs = parseInt(f[8])
+	sk.ActionDurationMs = parseInt(f[9])
+	sk.ReuseDelayMs = parseInt(f[10])
+	sk.CoolTimeMs = parseInt(f[11])
+	sk.FlyingSpeed = parseFloat(f[12])
+	sk.Interruptable = parseBool(f[13])
+	sk.Overlap = parseBool(f[14])
+	sk.AutoAttackType = parseInt(f[15])
+
+	if err != nil {
+		return Skill{}, err
+	}
+	return sk, nil
+}
