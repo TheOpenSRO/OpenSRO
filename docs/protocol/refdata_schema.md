@@ -45,12 +45,38 @@ e.g. presumably something like a `SKILL_*` constant name, not a human-readable n
 `AutoAttackType`. Not yet imported into `refdata` — `_RefObjItem` was done first as the smaller,
 more clearly-scoped example; skills are the natural next target using the same pattern.
 
+## Drop tables (2026-08-22) — real schema pulled, three linked tables
+
+Restored `SRO_VT_SHARD.Bak` into a temporary local SQL Server container again (same
+not-persisted approach as the `_RefObjItem`/`_RefSkill` passes) and pulled real, complete column
+schemas for all three real drop-related tables (row counts match the earlier string-scan-only
+pass exactly: 8,966 / 378 / 3,108, confirming consistency):
+
+- **`_RefMonster_AssignedItemRndDrop`** (3,108 rows) — the real per-monster drop assignment:
+  `Service`, `RefMonsterID`, `RefItemGroupID`, `ItemGroupCodeName128` (varchar(128) — a real
+  symbolic name, not display text), `Overlap`, `DropAmountMin`, `DropAmountMax`, `DropRatio`
+  (real), `param1`, `param2` (both `int`, meaning unconfirmed). This is "which monster can drop
+  from which item group, how many, and at what rate."
+- **`_RefDropItemGroup`** (378 rows) — defines each item group as a named collection of items:
+  `Service`, `RefItemGroupID`, `CodeName128` (varchar(129)), `RefItemID`, `SelectRatio` (real —
+  the item's weight within its group), `RefMagicGroupID` (a link to a real magic-option table,
+  not itself inspected yet). One row per (group, item) pair.
+- **`_RefDropItemAssign`** (8,966 rows) — a real, simpler, separate table: `Service`, `RefItemID`,
+  `Prob_Relative`, `Prob_Absolute`, `AssignedGroup`, `DropCount` (all `int`). Not yet confirmed how
+  this relates to the two tables above -- plausibly a different drop path (e.g. quest/box rewards)
+  rather than ordinary monster kills, since it has no `RefMonsterID` column at all.
+
+`server/internal/combat.LootTables` is still this project's own small, invented drop-table
+placeholder (see its own doc comment) -- these three real schemas are ready to inform a real
+importer (`refdata.DropGroup`/`refdata.MonsterDrop`, following the `refdata.Item`/`refdata.Skill`
+pattern) once one is built.
+
 ## Other reference tables found (not yet schema-inspected)
 
-`_RefDropItemAssign` (8,966 rows), `_RefPricePolicyOfItem` (5,041), `_RefPackageItem` (3,130),
-`_RefMonster_AssignedItemRndDrop` (3,108), `_RefSkillGroup` (933), and ~40 more smaller tables —
-see `db_schema.md` for the fuller name-only list. Worth pulling schemas for as each becomes
-relevant to actual gameplay systems being built, rather than front-loading all of it now.
+`_RefPricePolicyOfItem` (5,041), `_RefPackageItem` (3,130), `_RefSkillGroup` (933), and ~40 more
+smaller tables — see `db_schema.md` for the fuller name-only list. Worth pulling schemas for as
+each becomes relevant to actual gameplay systems being built, rather than front-loading all of it
+now.
 
 ## Status / next steps
 
@@ -65,6 +91,8 @@ relevant to actual gameplay systems being built, rather than front-loading all o
       `skill.Catalog` stays fully own-designed for now. `refdata.Skill` is ready to use once one
       exists.
 - [ ] `_RefSkill` schema (remaining ~98 columns) + finding the real damage/effect source
-- [ ] `_RefDropItemAssign`/`_RefDropItemGroup` schema (drop tables) — needed once loot matters
+- [x] `_RefDropItemAssign`/`_RefDropItemGroup`/`_RefMonster_AssignedItemRndDrop` schema confirmed
+      (see the dedicated section above) — `refdata.DropGroup`/`refdata.MonsterDrop` Go types +
+      importer not yet built
 - [ ] Figure out where item/skill display names actually live (not in these tables) before any
       of this data is user-facing

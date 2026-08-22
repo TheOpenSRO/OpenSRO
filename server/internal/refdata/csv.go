@@ -197,3 +197,146 @@ func parseSkillRow(f []string) (Skill, error) {
 	}
 	return sk, nil
 }
+
+// monsterDropCSVColumns is the expected column order for LoadMonsterDropsCSV.
+// See docs/protocol/refdata_schema.md and refdata.MonsterDrop's doc comment.
+var monsterDropCSVColumns = []string{
+	"RefMonsterID", "RefItemGroupID", "Overlap", "DropAmountMin", "DropAmountMax", "DropRatio",
+}
+
+// LoadMonsterDropsCSV parses monster-drop rows from r, a headerless CSV in
+// monsterDropCSVColumns's order (i.e. exactly what a plain `SELECT <those
+// columns> FROM _RefMonster_AssignedItemRndDrop` export produces).
+func LoadMonsterDropsCSV(r io.Reader) ([]MonsterDrop, error) {
+	cr := csv.NewReader(r)
+	cr.FieldsPerRecord = len(monsterDropCSVColumns)
+
+	var drops []MonsterDrop
+	rowNum := 0
+	for {
+		record, err := cr.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("refdata: reading row %d: %w", rowNum, err)
+		}
+		rowNum++
+
+		d, err := parseMonsterDropRow(record)
+		if err != nil {
+			return nil, fmt.Errorf("refdata: row %d: %w", rowNum, err)
+		}
+		drops = append(drops, d)
+	}
+	return drops, nil
+}
+
+func parseMonsterDropRow(f []string) (MonsterDrop, error) {
+	var (
+		d   MonsterDrop
+		err error
+	)
+	parseInt := func(s string) int {
+		var v int64
+		if err == nil {
+			v, err = strconv.ParseInt(s, 10, 64)
+		}
+		return int(v)
+	}
+	parseInt64 := func(s string) int64 {
+		var v int64
+		if err == nil {
+			v, err = strconv.ParseInt(s, 10, 64)
+		}
+		return v
+	}
+	parseFloat := func(s string) float64 {
+		var v float64
+		if err == nil {
+			v, err = strconv.ParseFloat(s, 64)
+		}
+		return v
+	}
+	parseBool := func(s string) bool {
+		return parseInt(s) != 0
+	}
+
+	d.MonsterID = parseInt64(f[0])
+	d.ItemGroupID = parseInt64(f[1])
+	d.Overlap = parseBool(f[2])
+	d.DropAmountMin = parseInt(f[3])
+	d.DropAmountMax = parseInt(f[4])
+	d.DropRatio = parseFloat(f[5])
+
+	if err != nil {
+		return MonsterDrop{}, err
+	}
+	return d, nil
+}
+
+// dropGroupEntryCSVColumns is the expected column order for
+// LoadDropGroupEntriesCSV. See docs/protocol/refdata_schema.md and
+// refdata.DropGroupEntry's doc comment.
+var dropGroupEntryCSVColumns = []string{
+	"RefItemGroupID", "CodeName128", "RefItemID", "SelectRatio",
+}
+
+// LoadDropGroupEntriesCSV parses drop-group-entry rows from r, a headerless
+// CSV in dropGroupEntryCSVColumns's order (i.e. exactly what a plain
+// `SELECT <those columns> FROM _RefDropItemGroup` export produces).
+func LoadDropGroupEntriesCSV(r io.Reader) ([]DropGroupEntry, error) {
+	cr := csv.NewReader(r)
+	cr.FieldsPerRecord = len(dropGroupEntryCSVColumns)
+
+	var entries []DropGroupEntry
+	rowNum := 0
+	for {
+		record, err := cr.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("refdata: reading row %d: %w", rowNum, err)
+		}
+		rowNum++
+
+		e, err := parseDropGroupEntryRow(record)
+		if err != nil {
+			return nil, fmt.Errorf("refdata: row %d: %w", rowNum, err)
+		}
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+
+func parseDropGroupEntryRow(f []string) (DropGroupEntry, error) {
+	var (
+		e   DropGroupEntry
+		err error
+	)
+	parseInt64 := func(s string) int64 {
+		var v int64
+		if err == nil {
+			v, err = strconv.ParseInt(s, 10, 64)
+		}
+		return v
+	}
+	parseFloat := func(s string) float64 {
+		var v float64
+		if err == nil {
+			v, err = strconv.ParseFloat(s, 64)
+		}
+		return v
+	}
+
+	e.GroupID = parseInt64(f[0])
+	e.CodeName = f[1]
+	e.ItemID = parseInt64(f[2])
+	e.SelectRatio = parseFloat(f[3])
+
+	if err != nil {
+		return DropGroupEntry{}, err
+	}
+	return e, nil
+}

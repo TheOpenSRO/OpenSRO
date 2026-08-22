@@ -2,6 +2,32 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 22) — real drop-table schema pulled and imported (refdata.MonsterDrop/DropGroupEntry)
+
+- Pivoted from the RE dispatch-mechanism hunt (hit real, identified tooling limits) to concrete
+  engineering work: real drop-table schema, next on the "actionable" list from the earlier status
+  report.
+- Restored `SRO_VT_SHARD.Bak` into a temporary local SQL Server Docker container on the RE box
+  (same not-persisted approach the earlier `_RefObjItem`/`_RefSkill` passes used -- **this
+  project's own server stays 100% PostgreSQL**, this was only ever about reading the *original
+  game's* schema, torn down immediately after) and pulled real, complete column schemas for all
+  three real drop-related tables: `_RefMonster_AssignedItemRndDrop` (3,108 rows),
+  `_RefDropItemGroup` (378 rows), `_RefDropItemAssign` (8,966 rows) -- row counts match the
+  earlier string-scan-only pass exactly, confirming consistency.
+- This resolves `refdata_schema.md`'s long-standing open item and reveals a real, understood
+  two-table drop-resolution path: a monster maps to an item *group* at some rate/quantity
+  (`_RefMonster_AssignedItemRndDrop`), and each group is a named weighted list of real items
+  (`_RefDropItemGroup`). `_RefDropItemAssign` is a real, separate, simpler table with no
+  `RefMonsterID` column at all -- not yet understood how it relates to the other two, honestly
+  left unimplemented rather than guessed at.
+- Built `refdata.MonsterDrop`/`refdata.DropGroupEntry` + CSV/SQL importers, following the exact
+  `refdata.Item`/`refdata.Skill` pattern (curated subset, unclear-meaning columns like `param1`/
+  `param2`/`RefMagicGroupID` left out). Full test coverage (CSV parse + SQL upsert/get/count,
+  mirroring existing tests). `go test ./...` passes.
+- `combat.LootTables` (this project's own invented drop set) not wired to the new real schema yet
+  -- it's keyed by monster *name*, the real tables key by a real numeric `RefMonsterID` with no
+  confirmed name-to-ID mapping yet. Documented honestly in `loot.go`'s doc comment.
+
 ## 2026-08-22 (cont'd 21) — corrected the registry claim; found a real login hand-off + two new opcodes
 
 - Kept pulling the registration-table thread immediately (no pause between sessions). Traced the

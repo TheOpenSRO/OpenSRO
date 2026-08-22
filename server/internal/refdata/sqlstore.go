@@ -50,6 +50,24 @@ CREATE TABLE IF NOT EXISTS skills (
 	overlap             BOOLEAN NOT NULL,
 	auto_attack_type    INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS monster_drops (
+	monster_id      BIGINT NOT NULL,
+	item_group_id   BIGINT NOT NULL,
+	overlap         BOOLEAN NOT NULL,
+	drop_amount_min INTEGER NOT NULL,
+	drop_amount_max INTEGER NOT NULL,
+	drop_ratio      DOUBLE PRECISION NOT NULL,
+	PRIMARY KEY (monster_id, item_group_id)
+);
+
+CREATE TABLE IF NOT EXISTS drop_group_entries (
+	group_id     BIGINT NOT NULL,
+	code_name    TEXT NOT NULL,
+	item_id      BIGINT NOT NULL,
+	select_ratio DOUBLE PRECISION NOT NULL,
+	PRIMARY KEY (group_id, item_id)
+);
 `
 
 // SQLStore is this project's own item reference-data store, backed by
@@ -292,5 +310,127 @@ func (s *SQLStore) ListAllSkills(ctx context.Context) ([]*Skill, error) {
 func (s *SQLStore) CountSkills(ctx context.Context) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM skills`).Scan(&n)
+	return n, err
+}
+
+// ImportMonsterDrops upserts every drop in drops (by MonsterID+ItemGroupID),
+// inside one transaction.
+func (s *SQLStore) ImportMonsterDrops(ctx context.Context, drops []MonsterDrop) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("refdata: beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO monster_drops (
+			monster_id, item_group_id, overlap, drop_amount_min, drop_amount_max, drop_ratio
+		) VALUES ($1,$2,$3,$4,$5,$6)
+		ON CONFLICT (monster_id, item_group_id) DO UPDATE SET
+			overlap=excluded.overlap, drop_amount_min=excluded.drop_amount_min,
+			drop_amount_max=excluded.drop_amount_max, drop_ratio=excluded.drop_ratio
+	`)
+	if err != nil {
+		return fmt.Errorf("refdata: preparing insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, d := range drops {
+		if _, err := stmt.ExecContext(ctx,
+			d.MonsterID, d.ItemGroupID, d.Overlap, d.DropAmountMin, d.DropAmountMax, d.DropRatio,
+		); err != nil {
+			return fmt.Errorf("refdata: inserting monster drop (%d, %d): %w", d.MonsterID, d.ItemGroupID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// GetMonsterDrops returns every real drop assignment for monsterID, ordered
+// by item group ID.
+func (s *SQLStore) GetMonsterDrops(ctx context.Context, monsterID int64) ([]*MonsterDrop, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT monster_id, item_group_id, overlap, drop_amount_min, drop_amount_max, drop_ratio
+		FROM monster_drops WHERE monster_id = $1 ORDER BY item_group_id`, monsterID)
+	if err != nil {
+		return nil, fmt.Errorf("refdata: querying monster drops for %d: %w", monsterID, err)
+	}
+	defer rows.Close()
+
+	var out []*MonsterDrop
+	for rows.Next() {
+		var d MonsterDrop
+		if err := rows.Scan(
+			&d.MonsterID, &d.ItemGroupID, &d.Overlap, &d.DropAmountMin, &d.DropAmountMax, &d.DropRatio,
+		); err != nil {
+			return nil, fmt.Errorf("refdata: scanning monster drop: %w", err)
+		}
+		out = append(out, &d)
+	}
+	return out, rows.Err()
+}
+
+// CountMonsterDrops returns how many monster-drop rows are stored.
+func (s *SQLStore) CountMonsterDrops(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM monster_drops`).Scan(&n)
+	return n, err
+}
+
+// ImportDropGroupEntries upserts every entry in entries (by GroupID+ItemID),
+// inside one transaction.
+func (s *SQLStore) ImportDropGroupEntries(ctx context.Context, entries []DropGroupEntry) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("refdata: beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO drop_group_entries (group_id, code_name, item_id, select_ratio)
+		VALUES ($1,$2,$3,$4)
+		ON CONFLICT (group_id, item_id) DO UPDATE SET
+			code_name=excluded.code_name, select_ratio=excluded.select_ratio
+	`)
+	if err != nil {
+		return fmt.Errorf("refdata: preparing insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, e := range entries {
+		if _, err := stmt.ExecContext(ctx,
+			e.GroupID, e.CodeName, e.ItemID, e.SelectRatio,
+		); err != nil {
+			return fmt.Errorf("refdata: inserting drop group entry (%d, %d): %w", e.GroupID, e.ItemID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// GetDropGroupEntries returns every real item in groupID, ordered by item
+// ID.
+func (s *SQLStore) GetDropGroupEntries(ctx context.Context, groupID int64) ([]*DropGroupEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT group_id, code_name, item_id, select_ratio
+		FROM drop_group_entries WHERE group_id = $1 ORDER BY item_id`, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("refdata: querying drop group entries for %d: %w", groupID, err)
+	}
+	defer rows.Close()
+
+	var out []*DropGroupEntry
+	for rows.Next() {
+		var e DropGroupEntry
+		if err := rows.Scan(&e.GroupID, &e.CodeName, &e.ItemID, &e.SelectRatio); err != nil {
+			return nil, fmt.Errorf("refdata: scanning drop group entry: %w", err)
+		}
+		out = append(out, &e)
+	}
+	return out, rows.Err()
+}
+
+// CountDropGroupEntries returns how many drop-group-entry rows are stored.
+func (s *SQLStore) CountDropGroupEntries(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM drop_group_entries`).Scan(&n)
 	return n, err
 }

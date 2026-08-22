@@ -28,6 +28,12 @@ func openTestSQLStore(t *testing.T) *SQLStore {
 	if _, err := s.db.Exec(`TRUNCATE TABLE skills`); err != nil {
 		t.Fatalf("truncating skills table: %v", err)
 	}
+	if _, err := s.db.Exec(`TRUNCATE TABLE monster_drops`); err != nil {
+		t.Fatalf("truncating monster_drops table: %v", err)
+	}
+	if _, err := s.db.Exec(`TRUNCATE TABLE drop_group_entries`); err != nil {
+		t.Fatalf("truncating drop_group_entries table: %v", err)
+	}
 	t.Cleanup(func() { s.Close() })
 	return s
 }
@@ -196,5 +202,122 @@ func TestGetSkillNotFound(t *testing.T) {
 	store := openTestSQLStore(t)
 	if _, err := store.GetSkill(context.Background(), 999); err == nil {
 		t.Fatal("expected an error looking up a nonexistent skill, got nil")
+	}
+}
+
+func TestImportAndGetMonsterDrops(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+
+	csv := "1001,50,1,1,3,0.15\n1001,51,0,1,1,0.05\n"
+	drops, err := LoadMonsterDropsCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("LoadMonsterDropsCSV: %v", err)
+	}
+	if err := store.ImportMonsterDrops(ctx, drops); err != nil {
+		t.Fatalf("ImportMonsterDrops: %v", err)
+	}
+
+	got, err := store.GetMonsterDrops(ctx, 1001)
+	if err != nil {
+		t.Fatalf("GetMonsterDrops: %v", err)
+	}
+	if len(got) != 2 || *got[0] != drops[0] || *got[1] != drops[1] {
+		t.Fatalf("got %+v, want %+v", got, drops)
+	}
+
+	count, err := store.CountMonsterDrops(ctx)
+	if err != nil {
+		t.Fatalf("CountMonsterDrops: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("got count %d, want 2", count)
+	}
+}
+
+func TestImportMonsterDropsUpserts(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+
+	first := MonsterDrop{MonsterID: 1001, ItemGroupID: 50, DropRatio: 0.1}
+	if err := store.ImportMonsterDrops(ctx, []MonsterDrop{first}); err != nil {
+		t.Fatalf("first ImportMonsterDrops: %v", err)
+	}
+
+	updated := MonsterDrop{MonsterID: 1001, ItemGroupID: 50, DropRatio: 0.5}
+	if err := store.ImportMonsterDrops(ctx, []MonsterDrop{updated}); err != nil {
+		t.Fatalf("second ImportMonsterDrops: %v", err)
+	}
+
+	got, err := store.GetMonsterDrops(ctx, 1001)
+	if err != nil {
+		t.Fatalf("GetMonsterDrops: %v", err)
+	}
+	if len(got) != 1 || got[0].DropRatio != 0.5 {
+		t.Fatalf("got %+v, want one drop with DropRatio 0.5 (upsert should have replaced the row)", got)
+	}
+}
+
+func TestGetMonsterDropsEmpty(t *testing.T) {
+	store := openTestSQLStore(t)
+	got, err := store.GetMonsterDrops(context.Background(), 999)
+	if err != nil {
+		t.Fatalf("GetMonsterDrops: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %+v, want none for a monster with no drops", got)
+	}
+}
+
+func TestImportAndGetDropGroupEntries(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+
+	csv := "50,GROUP_POTION_BASIC,500,0.7\n50,GROUP_POTION_BASIC,501,0.3\n"
+	entries, err := LoadDropGroupEntriesCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("LoadDropGroupEntriesCSV: %v", err)
+	}
+	if err := store.ImportDropGroupEntries(ctx, entries); err != nil {
+		t.Fatalf("ImportDropGroupEntries: %v", err)
+	}
+
+	got, err := store.GetDropGroupEntries(ctx, 50)
+	if err != nil {
+		t.Fatalf("GetDropGroupEntries: %v", err)
+	}
+	if len(got) != 2 || *got[0] != entries[0] || *got[1] != entries[1] {
+		t.Fatalf("got %+v, want %+v", got, entries)
+	}
+
+	count, err := store.CountDropGroupEntries(ctx)
+	if err != nil {
+		t.Fatalf("CountDropGroupEntries: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("got count %d, want 2", count)
+	}
+}
+
+func TestImportDropGroupEntriesUpserts(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+
+	first := DropGroupEntry{GroupID: 50, ItemID: 500, SelectRatio: 0.1}
+	if err := store.ImportDropGroupEntries(ctx, []DropGroupEntry{first}); err != nil {
+		t.Fatalf("first ImportDropGroupEntries: %v", err)
+	}
+
+	updated := DropGroupEntry{GroupID: 50, ItemID: 500, SelectRatio: 0.9}
+	if err := store.ImportDropGroupEntries(ctx, []DropGroupEntry{updated}); err != nil {
+		t.Fatalf("second ImportDropGroupEntries: %v", err)
+	}
+
+	got, err := store.GetDropGroupEntries(ctx, 50)
+	if err != nil {
+		t.Fatalf("GetDropGroupEntries: %v", err)
+	}
+	if len(got) != 1 || got[0].SelectRatio != 0.9 {
+		t.Fatalf("got %+v, want one entry with SelectRatio 0.9 (upsert should have replaced the row)", got)
 	}
 }
