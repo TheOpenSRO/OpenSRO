@@ -106,14 +106,27 @@ end for *this* question -- ruled out, not the thing we're looking for. |
 | `+0x214`| Mode-dependent: a real label or `FUN_0046f770` -- not yet decompiled |
 
 None of these six slots is obviously "the general post-handshake per-opcode dispatcher" -- the
-real mechanism connecting an ordinary gameplay `MsgID` to its handler is still not found. Recorded
-here so a future pass doesn't re-decompile `+0x218` expecting it to be the answer.
+real mechanism connecting an ordinary gameplay `MsgID` to its handler is still not found. Decompiled
+`+0x214` too: it's a real send-queue-flush function (copies pending outgoing bytes into a
+0x2000-byte send buffer), not a dispatcher either -- also ruled out. Recorded here so a future pass
+doesn't re-decompile either slot expecting a different answer.
+
+**A real hypothesis for where the actual mechanism lives**, based on the earlier `"There is no
+certification handler!!! you must register it first!!!"` error string (`login.md`): this reads
+like a real handler-registration pattern -- various subsystems each real-register themselves
+against a numeric ID at startup (into some global table this project hasn't located), rather than
+the session object holding a small fixed callback set. If true, the real next step is finding that
+registration call (something like `RegisterHandler(id, callback)`) and its call sites across
+`GatewayServer.exe`'s startup code, not more exploration of the session object itself. Not
+confirmed -- a hypothesis to test, not a fact.
 
 ## A real, unreconciled discrepancy: `+6`, not `+5`, in one real frame-size calculation
 
-While tracing `+0x218`'s handler, found real code reconstructing an outgoing message's total frame
-size from its payload size as `payload_size + 6` -- see `PACKET_FORMAT.md`'s note on this. This
-project's wire-framing doc was written from public private-server documentation describing a
-5-byte header (`Size(2)+Opcode(2)+Security(1)`), not from binary analysis; this is the first real,
-first-party data point bearing on that header's actual size, and it doesn't cleanly match. Not
-resolved -- recorded as a real, open discrepancy in both docs rather than quietly picking one.
+While tracing `+0x218`'s and `+0x214`'s handlers, found the same real `+6` frame-size
+reconstruction (payload size to total frame size) repeated across three separate real functions
+now, not a one-off -- see `PACKET_FORMAT.md`'s note on this. This project's wire-framing doc was
+written from public private-server documentation describing a 5-byte header
+(`Size(2)+Opcode(2)+Security(1)`), not from binary analysis; this is the first real, first-party
+data point bearing on that header's actual size, and it doesn't cleanly match, now reinforced by
+repetition across independent call sites. Not resolved -- recorded as a real, open discrepancy in
+both docs rather than quietly picking one.

@@ -19,9 +19,19 @@ Running log of what's been done, in reverse-chronological order. Each entry: dat
   from its payload size as `+6`, not `+5` -- the first real, first-party data point on this specific
   question, and it doesn't cleanly match. Recorded honestly in both `PACKET_FORMAT.md` and
   `dispatch.md` as unresolved, not picked one way or the other.
-- The general post-handshake per-opcode dispatch mechanism (needed for login and every other real
-  gameplay opcode) is still not found after this pass -- narrowed down (it's not any of the six
-  callback-table slots checked), but the actual mechanism remains open for a future session.
+- Decompiled the remaining undecoded slot (`+0x214`) too -- a real send-queue-flush function, also
+  ruled out. The `+6` frame-size pattern showed up a third time here, reinforcing that discrepancy
+  rather than it being a one-off. All six real callback-table slots on the session object are now
+  ruled out as "the general dispatcher" -- it must live elsewhere. Formed a real, testable
+  hypothesis from the earlier "you must register it first!!!" error string: a real handler
+  registration pattern (subsystems register against a numeric ID at startup, into a global table
+  this project hasn't located yet), not a fixed per-session callback set. Recorded as the next
+  concrete lead in `dispatch.md`, not confirmed.
+
+The general post-handshake per-opcode dispatch mechanism (needed for login and every other real
+gameplay opcode) is still not found after this session's passes -- but the search space is now
+meaningfully narrowed (ruled out: the session object's own callback table; hypothesized: a global
+registration table) rather than wide open.
 
 ## 2026-08-22 (cont'd 18) — big confirmation: RollingByte is bit-for-bit correct against the real server; found the real handshake receive path; corrected a mistake
 
