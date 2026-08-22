@@ -91,6 +91,197 @@ func TestMoveRequestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestChangeZoneRequestRoundTrip(t *testing.T) {
+	want := &ChangeZoneRequest{Zone: "100/100"}
+	got, err := DecodeChangeZoneRequest(want.Encode())
+	if err != nil {
+		t.Fatalf("DecodeChangeZoneRequest: %v", err)
+	}
+	if *got != *want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestChangeZoneResultRoundTripSuccess(t *testing.T) {
+	want := &ChangeZoneResult{OK: true, Zone: "100/100", X: 1, Y: 2, Z: 3}
+	got, err := DecodeChangeZoneResult(want.Encode())
+	if err != nil {
+		t.Fatalf("DecodeChangeZoneResult: %v", err)
+	}
+	if *got != *want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestChangeZoneResultRoundTripFailure(t *testing.T) {
+	want := &ChangeZoneResult{OK: false, Reason: "already in that zone"}
+	got, err := DecodeChangeZoneResult(want.Encode())
+	if err != nil {
+		t.Fatalf("DecodeChangeZoneResult: %v", err)
+	}
+	if got.OK || got.Reason != want.Reason {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+// TestChangeZoneFlow logs three characters in, moves one between real zone
+// labels, and confirms: the mover gets a real OpChangeZoneResult, whoever's
+// left behind in the old zone gets OpEntityLeft, whoever's already in the
+// new zone gets a fresh OpEntityEntered, and the two guard-rail error paths
+// (empty zone, changing to the zone you're already in) fail cleanly --
+// all through the real server stack over TCP.
+func TestChangeZoneFlow(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	accounts.Add("bob", "hunter3")
+	accounts.Add("cara", "hunter4")
+	chars := character.NewMemStore()
+	chars.Create(ctx, 1, "Aria")
+	chars.Create(ctx, 2, "Bram")
+	chars.Create(ctx, 3, "Cyra")
+
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), worldTestMaxStacks{})
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	if err := inv.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating inventory: %v", err)
+	}
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	if err := eq.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating equipment: %v", err)
+	}
+
+	hub := world.NewHub()
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, eq, hub))
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	srv := &gateway.Server{Addr: addr, Handle: handle, OnDisconnect: WorldDisconnectHandler(hub)}
+	srvCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.ListenAndServe(srvCtx)
+
+	connA := dialTestServer(t, addr)
+	defer connA.Close()
+	rA := bufio.NewReader(connA)
+	connB := dialTestServer(t, addr)
+	defer connB.Close()
+	rB := bufio.NewReader(connB)
+	connC := dialTestServer(t, addr)
+	defer connC.Close()
+	rC := bufio.NewReader(connC)
+
+	sendRecv := func(conn net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+	login := func(conn net.Conn, r *bufio.Reader, user, pass, charName string) {
+		resp := sendRecv(conn, r, OpLogin, (&LoginRequest{Username: user, Password: pass}).Encode())
+		if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+			t.Fatalf("%s login failed: err=%v result=%+v", user, err, lr)
+		}
+		resp = sendRecv(conn, r, OpEnterWorld, (&EnterWorldRequest{CharacterName: charName}).Encode())
+		if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+			t.Fatalf("%s enter world failed: err=%v result=%+v", charName, err, ewr)
+		}
+	}
+
+	// All three start in the default spawn zone ("jangan").
+	login(connA, rA, "alice", "hunter2", "Aria")
+	login(connB, rB, "bob", "hunter3", "Bram")
+	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := proto.Read(rA); err != nil { // Aria's OpEntityEntered for Bram
+		t.Fatalf("draining Aria's OpEntityEntered for Bram: %v", err)
+	}
+	login(connC, rC, "cara", "hunter4", "Cyra")
+	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := proto.Read(rA); err != nil { // Aria's OpEntityEntered for Cyra
+		t.Fatalf("draining Aria's OpEntityEntered for Cyra: %v", err)
+	}
+	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := proto.Read(rB); err != nil { // Bram's OpEntityEntered for Cyra
+		t.Fatalf("draining Bram's OpEntityEntered for Cyra: %v", err)
+	}
+
+	// Guard rails: empty zone and same-zone are both rejected, no state change.
+	resp := sendRecv(connB, rB, OpChangeZone, (&ChangeZoneRequest{Zone: ""}).Encode())
+	if czr, err := DecodeChangeZoneResult(resp.Data); err != nil || czr.OK || czr.Reason != "zone required" {
+		t.Fatalf("empty zone: got %+v (err=%v), want reason 'zone required'", czr, err)
+	}
+	resp = sendRecv(connB, rB, OpChangeZone, (&ChangeZoneRequest{Zone: "jangan"}).Encode())
+	if czr, err := DecodeChangeZoneResult(resp.Data); err != nil || czr.OK || czr.Reason != "already in that zone" {
+		t.Fatalf("same zone: got %+v (err=%v), want reason 'already in that zone'", czr, err)
+	}
+
+	// Bram warps to a real region-shaped zone label. Should get a real ack,
+	// and Aria/Cyra (left behind in jangan) should each see OpEntityLeft.
+	resp = sendRecv(connB, rB, OpChangeZone, (&ChangeZoneRequest{Zone: "100/100"}).Encode())
+	czr, err := DecodeChangeZoneResult(resp.Data)
+	if err != nil || !czr.OK || czr.Zone != "100/100" {
+		t.Fatalf("Bram's zone change: got %+v (err=%v), want ok zone=100/100", czr, err)
+	}
+	for name, r := range map[string]*bufio.Reader{"Aria": rA, "Cyra": rC} {
+		var conn net.Conn = connA
+		if name == "Cyra" {
+			conn = connC
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		left, err := proto.Read(r)
+		if err != nil || left.Opcode != OpEntityLeft {
+			t.Fatalf("%s should see OpEntityLeft for Bram: opcode=%v err=%v", name, left, err)
+		}
+		leftMsg, err := DecodeEntityLeft(left.Data)
+		if err != nil || leftMsg.CharacterID != 2 {
+			t.Fatalf("%s's EntityLeft should name Bram (id 2): %+v (err=%v)", name, leftMsg, err)
+		}
+	}
+
+	// Cyra follows Bram into 100/100: Bram should see her OpEntityEntered
+	// there, and Aria (left behind in jangan) should see her OpEntityLeft.
+	resp = sendRecv(connC, rC, OpChangeZone, (&ChangeZoneRequest{Zone: "100/100"}).Encode())
+	czr, err = DecodeChangeZoneResult(resp.Data)
+	if err != nil || !czr.OK || czr.Zone != "100/100" {
+		t.Fatalf("Cyra's zone change: got %+v (err=%v), want ok zone=100/100", czr, err)
+	}
+	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
+	entered, err := proto.Read(rB)
+	if err != nil || entered.Opcode != OpEntityEntered {
+		t.Fatalf("Bram should see OpEntityEntered for Cyra: opcode=%v err=%v", entered, err)
+	}
+	enteredSnap, _, err := decodeEntitySnapshot(entered.Data)
+	if err != nil || enteredSnap.Name != "Cyra" {
+		t.Fatalf("expected EntityEntered for Cyra, got %+v (err=%v)", enteredSnap, err)
+	}
+	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
+	left, err := proto.Read(rA)
+	if err != nil || left.Opcode != OpEntityLeft {
+		t.Fatalf("Aria should see OpEntityLeft for Cyra: opcode=%v err=%v", left, err)
+	}
+	leftMsg, err := DecodeEntityLeft(left.Data)
+	if err != nil || leftMsg.CharacterID != 3 {
+		t.Fatalf("Aria's EntityLeft should name Cyra (id 3): %+v (err=%v)", leftMsg, err)
+	}
+}
+
 // TestWorldFullFlow logs two accounts in on separate connections, enters
 // each into the world, and confirms: the second entrant sees the first as
 // an "other" in their EnterWorldResult, the first gets an OpEntityEntered

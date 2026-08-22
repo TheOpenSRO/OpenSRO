@@ -22,6 +22,7 @@ signal enter_world_result(result: WorldNet.EnterWorldResult)
 signal entity_entered(snapshot: WorldNet.EntitySnapshot)
 signal entity_moved(moved: WorldNet.EntityMoved)
 signal entity_left(character_id: int)
+signal change_zone_result(result: WorldNet.ChangeZoneResult)
 
 signal inventory_list_result(slots: Array, error: String)
 ## Fires for OpEquipmentList AND for equip/unequip acks -- the server uses
@@ -218,12 +219,21 @@ var current_character_name := ""
 ## -- a scene loaded after the signal already fired still needs the data.
 var last_enter_world_result: WorldNet.EnterWorldResult
 
+## The current zone label, updated from last_enter_world_result.zone on
+## entering the world and again from a successful change_zone_result --
+## scenes that need to know "which real region's assets to load" (see
+## World3D.gd) read this rather than tracking it themselves.
+var current_zone := ""
+
 func enter_world(char_name: String) -> void:
 	current_character_name = char_name
 	_send(WorldNet.OP_ENTER_WORLD, WorldNet.encode_enter_world(char_name))
 
 func move_to(x: float, y: float, z: float) -> void:
 	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z))
+
+func change_zone(zone: String) -> void:
+	_send(WorldNet.OP_CHANGE_ZONE, WorldNet.encode_change_zone(zone))
 
 func list_inventory(char_name: String) -> void:
 	_send(InventoryNet.OP_LIST, InventoryNet.encode_list_request(char_name))
@@ -355,6 +365,8 @@ func _dispatch(p: Packet) -> void:
 		WorldNet.OP_ENTER_WORLD_RESULT:
 			var result := WorldNet.decode_enter_world_result(p.data)
 			last_enter_world_result = result
+			if result.ok:
+				current_zone = result.zone
 			enter_world_result.emit(result)
 		WorldNet.OP_ENTITY_ENTERED:
 			entity_entered.emit(WorldNet.decode_entity_entered(p.data))
@@ -362,6 +374,11 @@ func _dispatch(p: Packet) -> void:
 			entity_moved.emit(WorldNet.decode_entity_moved(p.data))
 		WorldNet.OP_ENTITY_LEFT:
 			entity_left.emit(WorldNet.decode_entity_left(p.data))
+		WorldNet.OP_CHANGE_ZONE_RESULT:
+			var zone_result := WorldNet.decode_change_zone_result(p.data)
+			if zone_result.ok:
+				current_zone = zone_result.zone
+			change_zone_result.emit(zone_result)
 		InventoryNet.OP_LIST_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)
 			inventory_list_result.emit(r.slots, r.error)

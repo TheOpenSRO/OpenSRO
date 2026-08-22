@@ -93,6 +93,19 @@ extends Node3D
 ## project). Any
 ## variable left unset is skipped gracefully (a printed hint, not an error)
 ## -- this scene works fine with none of them set, same as always.
+##
+## The server now has a real multi-zone concept: OpChangeZone/
+## OpChangeZoneResult (NetClient.change_zone/change_zone_result, see
+## docs/PROGRESS.md) let a character warp between zone labels, and
+## NetClient.current_zone tracks which one they're actually in server-side.
+## This scene doesn't react to that yet -- SRREVAMP_MAPM_PATH/
+## SRREVAMP_MAPO_PATH above are still a one-time, env-var-driven load at
+## scene startup, not re-resolved when current_zone changes. Wiring a zone
+## change to actually tear down and reload this scene's terrain/objects for
+## the new real region (by turning a zone label like "100/100" into
+## "Map\\100\\100.m"/"Map\\100\\100.o" and re-running
+## _try_load_real_terrain()/_try_load_real_map_objects()) is real, honestly
+## unfinished follow-up work, not attempted here.
 
 const MOVE_SPEED := 6.0
 const GRAVITY := 20.0

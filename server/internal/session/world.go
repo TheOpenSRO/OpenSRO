@@ -22,6 +22,8 @@ const (
 	OpEntityEntered    uint16 = 0x0023 // server -> client, broadcast
 	OpEntityMoved      uint16 = 0x0024 // server -> client, broadcast
 	OpEntityLeft       uint16 = 0x0025 // server -> client, broadcast
+	OpChangeZone       uint16 = 0x0026 // client -> server
+	OpChangeZoneResult uint16 = 0x0027 // server -> client
 )
 
 // spawnZone/spawnPos are the single fixed starting point every character
@@ -356,6 +358,91 @@ func DecodeEntityMoved(data []byte) (*EntityMoved, error) {
 	return &EntityMoved{CharacterID: id, X: x, Y: y, Z: z}, nil
 }
 
+// ChangeZoneRequest is the OpChangeZone payload: a target zone identifier,
+// no reply-carrying name field needed since the session already identifies
+// exactly one in-world character (same minimalism as MoveRequest). Zone is
+// an opaque string as far as the server's concerned -- see spawnZone's doc
+// comment and docs/protocol/MAPO_FORMAT.md/MAPM_FORMAT.md: real Map.pk2
+// region files are keyed by an (x, y) folder/filename pair (e.g. "100/100",
+// "102/101"), so a client pointed at real map data is expected to pass a
+// zone string shaped that way, but the server itself never parses Map.pk2
+// and has no way to validate a zone actually exists -- it only tracks who's
+// in which zone label, the same as it always has.
+type ChangeZoneRequest struct {
+	Zone string
+}
+
+func (r *ChangeZoneRequest) Encode() []byte { return encodeStrings(r.Zone) }
+
+func DecodeChangeZoneRequest(data []byte) (*ChangeZoneRequest, error) {
+	fields, err := decodeStrings(data, 1)
+	if err != nil {
+		return nil, err
+	}
+	return &ChangeZoneRequest{Zone: fields[0]}, nil
+}
+
+// ChangeZoneResult is the OpChangeZoneResult payload, direct ack to whoever
+// requested the zone change. On failure only OK/Reason are meaningful.
+// Position is always spawnPos: this project has no confirmed real transform
+// between one region's local coordinates and another's (see
+// docs/protocol/MAPO_FORMAT.md's "real-world placement scale" open item), so
+// a zone change is a discrete warp to a fixed point, not a continuous
+// cross-region walk.
+type ChangeZoneResult struct {
+	OK      bool
+	Reason  string
+	Zone    string
+	X, Y, Z float32
+}
+
+func (r *ChangeZoneResult) Encode() []byte {
+	out := encodeOKReason(r.OK, r.Reason)
+	if !r.OK {
+		return out
+	}
+	out = append(out, encodeStrings(r.Zone)...)
+	out = append(out, encodeFloat32(r.X)...)
+	out = append(out, encodeFloat32(r.Y)...)
+	out = append(out, encodeFloat32(r.Z)...)
+	return out
+}
+
+func DecodeChangeZoneResult(data []byte) (*ChangeZoneResult, error) {
+	if len(data) < 1 {
+		return nil, errors.New("session: decoding ChangeZoneResult: empty payload")
+	}
+	ok := data[0] != 0
+	reasonFields, rest, err := decodeStringsPrefix(data[1:], 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding ChangeZoneResult: reason: %w", err)
+	}
+	r := &ChangeZoneResult{OK: ok, Reason: reasonFields[0]}
+	if !ok {
+		return r, nil
+	}
+
+	zoneFields, rest, err := decodeStringsPrefix(rest, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding ChangeZoneResult: zone: %w", err)
+	}
+	r.Zone = zoneFields[0]
+
+	r.X, rest, err = decodeFloat32(rest)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding ChangeZoneResult: x: %w", err)
+	}
+	r.Y, rest, err = decodeFloat32(rest)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding ChangeZoneResult: y: %w", err)
+	}
+	r.Z, _, err = decodeFloat32(rest)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding ChangeZoneResult: z: %w", err)
+	}
+	return r, nil
+}
+
 // EntityLeft is the OpEntityLeft broadcast payload.
 type EntityLeft struct {
 	CharacterID int64
@@ -381,6 +468,8 @@ func WorldHandler(chars character.Store, eq equipment.Store, hub *world.Hub) gat
 			return handleEnterWorld(ctx, sess, p, chars, eq, hub)
 		case OpMove:
 			return handleMove(sess, p, hub)
+		case OpChangeZone:
+			return handleChangeZone(ctx, sess, p, eq, chars, hub)
 		default:
 			return nil
 		}
@@ -467,6 +556,61 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		Gender:         owned.Gender,
 	}
 	for _, other := range others {
+		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.Encode()})
+	}
+	return nil
+}
+
+// handleChangeZone implements OpChangeZone: a discrete warp for the
+// character already in the world on sess to a new zone label, at the same
+// fixed spawnPos every OpEnterWorld uses (see ChangeZoneResult's doc
+// comment for why -- no confirmed real inter-region coordinate transform
+// exists yet).
+func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packet, eq equipment.Store, chars character.Store, hub *world.Hub) error {
+	req, err := DecodeChangeZoneRequest(p.Data)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "malformed request"}).Encode()})
+	}
+	if req.Zone == "" {
+		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "zone required"}).Encode()})
+	}
+
+	current, ok := hub.EntityBySession(sess.ID())
+	if !ok {
+		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
+	}
+	if req.Zone == current.Zone {
+		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "already in that zone"}).Encode()})
+	}
+
+	old, remainingOld, othersNew, ok := hub.ChangeZone(sess, req.Zone, spawnPos)
+	if !ok {
+		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
+	}
+
+	result := &ChangeZoneResult{
+		OK: true, Zone: req.Zone,
+		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
+	}
+	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: result.Encode()}); err != nil {
+		return err
+	}
+
+	leftMsg := &EntityLeft{CharacterID: old.CharacterID}
+	for _, other := range remainingOld {
+		other.Session.Send(&proto.Packet{Opcode: OpEntityLeft, Data: leftMsg.Encode()})
+	}
+
+	armorSlotsMask, hasWeapon, hasShield := equippedSlots(ctx, eq, old.CharacterID)
+	entered := &EntitySnapshot{
+		CharacterID: old.CharacterID, Name: old.Name,
+		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
+		ArmorSlotsMask: armorSlotsMask,
+		HasWeapon:      hasWeapon,
+		HasShield:      hasShield,
+		Gender:         genderOf(ctx, chars, old.CharacterID),
+	}
+	for _, other := range othersNew {
 		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.Encode()})
 	}
 	return nil

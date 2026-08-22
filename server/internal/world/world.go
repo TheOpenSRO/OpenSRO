@@ -98,6 +98,36 @@ func (h *Hub) Move(sess *gateway.Session, pos Position) (entity Entity, others [
 	return *e, h.othersInZoneLocked(e.Zone, sess.ID()), true
 }
 
+// ChangeZone moves sess's character to newZone at pos, the same discrete
+// "leave the old zone, appear fresh in the new one" semantics as Leave
+// followed by Enter, but as one atomic operation (no window where the
+// character is in neither zone's byZone index). Returns the character's
+// state before the move, everyone left behind in the old zone (to notify
+// they left), and everyone already present in the new zone (to notify
+// someone new arrived) -- or ok=false if the session wasn't in the world.
+func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (old Entity, remainingOld []Entity, othersNew []Entity, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	e, exists := h.bySession[sess.ID()]
+	if !exists {
+		return Entity{}, nil, nil, false
+	}
+	old = *e
+	h.removeLocked(sess.ID())
+	remainingOld = h.othersInZoneLocked(old.Zone, sess.ID())
+
+	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos}
+	h.bySession[sess.ID()] = next
+	if h.byZone[newZone] == nil {
+		h.byZone[newZone] = make(map[uint64]*Entity)
+	}
+	h.byZone[newZone][sess.ID()] = next
+	othersNew = h.othersInZoneLocked(newZone, sess.ID())
+
+	return old, remainingOld, othersNew, true
+}
+
 // EntitiesInZone returns a snapshot of every entity currently in zone.
 // Used by other systems (e.g. combat) that need to broadcast to everyone
 // present rather than "everyone except the session that triggered this".

@@ -134,3 +134,43 @@ func TestReenterMovesRatherThanDuplicates(t *testing.T) {
 		t.Fatalf("expected no lingering duplicate entity, got %+v", remaining)
 	}
 }
+
+func TestChangeZoneMovesEntityAndReturnsBothSides(t *testing.T) {
+	h := NewHub()
+	s1, s2, s3 := fakeSession(1), fakeSession(2), fakeSession(3)
+	h.Enter(s1, 100, "Aria", "jangan", Position{X: 1, Y: 2, Z: 3})
+	h.Enter(s2, 200, "Bram", "jangan", Position{})
+	h.Enter(s3, 300, "Cyra", "donwhang", Position{})
+
+	old, remainingOld, othersNew, ok := h.ChangeZone(s1, "donwhang", Position{X: 9, Y: 8, Z: 7})
+	if !ok {
+		t.Fatal("expected s1 to be found")
+	}
+	if old.Zone != "jangan" || old.Pos != (Position{X: 1, Y: 2, Z: 3}) {
+		t.Fatalf("old entity snapshot wrong: %+v", old)
+	}
+	if len(remainingOld) != 1 || remainingOld[0].Name != "Bram" {
+		t.Fatalf("expected only Bram left behind in jangan, got %+v", remainingOld)
+	}
+	if len(othersNew) != 1 || othersNew[0].Name != "Cyra" {
+		t.Fatalf("expected only Cyra already in donwhang, got %+v", othersNew)
+	}
+
+	// Aria should now genuinely be in donwhang at the new position, not
+	// duplicated in jangan.
+	entity, ok := h.EntityBySession(s1.ID())
+	if !ok || entity.Zone != "donwhang" || entity.Pos != (Position{X: 9, Y: 8, Z: 7}) {
+		t.Fatalf("expected Aria in donwhang at the new position, got %+v (ok=%v)", entity, ok)
+	}
+	if entities := h.EntitiesInZone("jangan"); len(entities) != 1 || entities[0].Name != "Bram" {
+		t.Fatalf("expected only Bram left in jangan, got %+v", entities)
+	}
+}
+
+func TestChangeZoneUnknownSessionFails(t *testing.T) {
+	h := NewHub()
+	_, _, _, ok := h.ChangeZone(fakeSession(1), "donwhang", Position{})
+	if ok {
+		t.Fatal("expected ChangeZone to fail for a session never in the world")
+	}
+}

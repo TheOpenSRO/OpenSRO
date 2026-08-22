@@ -2,6 +2,40 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 7) — real multi-zone world: OpChangeZone (server) + wire support (client)
+
+- Every character has spawned at one hardcoded position (`spawnZone = "jangan"`, `(0,0,0)`) since
+  the world system existed -- a placeholder noted in `world.go`, never revisited. Decided (with
+  OpenSRO) to build real zone-to-zone movement next, grounded in the real `.mapo`/`.mapm` region-file
+  naming this project already confirmed via RE (`<x>/<y>.m`/`.o`, e.g. `100/100`, `102/101` --
+  region folder/filename are an (x, y) coordinate pair, not always equal -- see
+  `docs/protocol/MAPM_FORMAT.md`/`MAPO_FORMAT.md`).
+- **Server**: added `world.Hub.ChangeZone` (atomic leave-old/enter-new, no window where the
+  character is in neither zone's index) and `OpChangeZone`/`OpChangeZoneResult`
+  (`server/internal/session/world.go`). A zone is an opaque string as far as the server's
+  concerned -- it never parses Map.pk2 itself, so it can't validate a zone actually exists; it just
+  tracks who's in which label, same as always. Guard rails: empty zone and "already in that zone"
+  both rejected. New zone spawn is always the same fixed `spawnPos` -- this project has no
+  confirmed real transform between one region's local coordinates and another's (see
+  `MAPO_FORMAT.md`'s "real-world placement scale" open item), so a zone change is a discrete warp,
+  not a continuous cross-region walk. Broadcasts `OpEntityLeft` to whoever's left behind in the old
+  zone and a fresh `OpEntityEntered` to whoever's already in the new one, reusing the exact same
+  messages `OpEnterWorld`/disconnect already send.
+- Tests: `world.TestChangeZoneMovesEntityAndReturnsBothSides`/`TestChangeZoneUnknownSessionFails`
+  (Hub-level), plus `session.TestChangeZoneFlow` -- a real three-character TCP flow test covering
+  both guard rails and both broadcast directions (left-behind vs. newly-arrived). Full `go test
+  ./...` passes.
+- **Client**: added matching `WorldNet.encode_change_zone`/`decode_change_zone_result` (wire
+  format mirrors `OpEnterWorld`'s shape) and `NetClient.change_zone()`/`change_zone_result`
+  signal/`current_zone` state, with GDScript tests in `world_test.gd`. All 35 GDScript suites still
+  pass.
+- **Deliberately not done this pass**: `World3D.gd`'s actual terrain/object rendering is still a
+  one-time, env-var-driven load at scene startup (`SRREVAMP_MAPM_PATH`/`SRREVAMP_MAPO_PATH`) -- it
+  doesn't yet react to `NetClient.current_zone` changing by re-resolving those into real per-zone
+  pk2 paths (`"100/100"` -> `Map\100\100.m`/`.o`) and reloading. That's real, scoped, honestly
+  unfinished follow-up work (documented in `World3D.gd`'s top comment), not attempted here to avoid
+  a risky same-session refactor of an already-large, well-tested rendering pipeline.
+
 ## 2026-08-22 (cont'd 6) — chased the `.ifo` object-index `Flags` word, real partial progress
 
 - `objidx.Entry.Flags` has been an unconfirmed raw word since the `.ifo` format was solved (values

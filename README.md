@@ -95,6 +95,17 @@ real running stack**: the full connect → register → login → create charact
 and two concurrent real client instances genuinely seeing each other enter and move in real time,
 both confirmed by actually running the Go server + client together, not just unit tests.
 
+There's also a real multi-zone concept now: `OpChangeZone`/`OpChangeZoneResult` let a character
+warp between zone labels (`server/internal/world.Hub.ChangeZone`), broadcasting a real
+`OpEntityLeft`/`OpEntityEntered` pair the same way entering the world or disconnecting already did.
+A zone is just an opaque string as far as the server's concerned, but this project's own real
+`.mapo`/`.mapm` region-file naming (`<x>/<y>.m`/`.o`, e.g. `100/100`) is the convention a client
+pointed at real map data is expected to use. Every zone change lands at the same fixed spawn point
+— there's still no confirmed real coordinate transform between one region and another (see "Not
+yet done" below), so this is a discrete warp, not a continuous cross-region walk. `World3D.gd`
+doesn't react to a zone change yet (its terrain/object loading is still a one-time,
+env-var-driven load at scene startup) — see its top comment and `docs/PROGRESS.md`.
+
 3D asset formats are reverse-engineered and have real, tested readers on both sides
 (`server/internal/{pk2,bsr,bms,ddj,bmt,ban,bsk,mapo,mapm,efp}` in Go,
 `client/scripts/{pk2,bsr,bms,ddj,bmt,ban,bsk,mapo,mapm,efp}` in GDScript) — **every container

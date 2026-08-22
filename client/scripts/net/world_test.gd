@@ -153,6 +153,53 @@ func _test_decode_entity_left() -> void:
 	buf.encode_s64(0, 99)
 	_check(WorldNet.decode_entity_left(buf) == 99, "character_id round-trips")
 
+func _test_encode_change_zone() -> void:
+	var encoded := WorldNet.encode_change_zone("100/100")
+	_check(encoded.decode_u16(0) == 7, "zone length prefix is 7")
+	_check(encoded.slice(2, 9).get_string_from_utf8() == "100/100", "zone bytes follow prefix")
+
+## Hand-builds an OpChangeZoneResult payload matching
+## server/internal/session's encoding.
+func _build_change_zone_result(ok: bool, reason: String, zone: String, x: float, y: float, z: float) -> PackedByteArray:
+	var out := PackedByteArray([1 if ok else 0])
+	var reason_bytes := reason.to_utf8_buffer()
+	var len_buf := PackedByteArray()
+	len_buf.resize(2)
+	len_buf.encode_u16(0, reason_bytes.size())
+	out.append_array(len_buf)
+	out.append_array(reason_bytes)
+	if not ok:
+		return out
+
+	var zone_bytes := zone.to_utf8_buffer()
+	len_buf.encode_u16(0, zone_bytes.size())
+	out.append_array(len_buf)
+	out.append_array(zone_bytes)
+
+	var pos_buf := PackedByteArray()
+	pos_buf.resize(12)
+	pos_buf.encode_float(0, x)
+	pos_buf.encode_float(4, y)
+	pos_buf.encode_float(8, z)
+	out.append_array(pos_buf)
+
+	return out
+
+func _test_decode_change_zone_result_success() -> void:
+	var payload := _build_change_zone_result(true, "", "100/100", 1.0, 2.0, 3.0)
+	var result := WorldNet.decode_change_zone_result(payload)
+	_check(result.error == "", "no decode error")
+	_check(result.ok, "ok is true")
+	_check(result.zone == "100/100", "zone round-trips")
+	_check(result.x == 1.0 and result.y == 2.0 and result.z == 3.0, "position round-trips")
+
+func _test_decode_change_zone_result_failure() -> void:
+	var payload := _build_change_zone_result(false, "already in that zone", "", 0, 0, 0)
+	var result := WorldNet.decode_change_zone_result(payload)
+	_check(result.error == "", "no decode error")
+	_check(not result.ok, "ok is false")
+	_check(result.reason == "already in that zone", "reason round-trips")
+
 func _init() -> void:
 	_test_encode_enter_world()
 	_test_encode_move()
@@ -161,6 +208,9 @@ func _init() -> void:
 	_test_decode_entity_entered()
 	_test_decode_entity_moved()
 	_test_decode_entity_left()
+	_test_encode_change_zone()
+	_test_decode_change_zone_result_success()
+	_test_decode_change_zone_result_failure()
 
 	if _failures == 0:
 		print("ALL PASS")
