@@ -96,6 +96,26 @@ placeholder (see its own doc comment) -- these three real schemas are ready to i
 importer (`refdata.DropGroup`/`refdata.MonsterDrop`, following the `refdata.Item`/`refdata.Skill`
 pattern) once one is built.
 
+## Real magic-option (item random-stat) system — schema pulled, not yet implemented
+
+While pulling the drop-table schema, followed `_RefDropItemGroup.RefMagicGroupID` to its real
+linked tables (found via `INFORMATION_SCHEMA` search for `%Magic%`, same restore session):
+
+- **`_RefMagicOpt`** (427 rows) — defines each real named magic option: `Service`, `ID`,
+  `MOptName128` (varchar(129) -- an internal name, not confirmed display text), `AttrType`
+  (varchar(8)), `MLevel`, `Prob` (real), `Weight`, `Param1`-`16`, `ExcFunc1`-`6`, and 10 real
+  `AvailItemGroup*`/`ReqClass*` pairs (which real item groups/classes this option can roll on).
+- **`_RefMagicOptGroup`** (115 rows) — `LinkID` (plausibly what `_RefDropItemGroup.RefMagicGroupID`
+  points at), `MagicType`, `CodeName128`, `MOptID` (real FK into `_RefMagicOpt`), `MOptLevel`,
+  `Value`, `Param1`/`2` + their own `_Desc` string columns.
+- **`_RefMagicOptAssign`** (74 rows) — `Race`, `TID3`/`TID4`, and 25 real `AvailMOpt1`-`25`
+  columns (which magic options are available per race/item-type).
+
+This is the real system behind classic Silkroad "+N" magic-option item stats. **Not implemented in
+`refdata` yet** -- nothing in this project's current gameplay systems needs random item magic
+options, so per this file's own stated principle (pull schemas as they become relevant, don't
+front-load), this is recorded as a real, confirmed schema for a future pass, not built out now.
+
 ## Other reference tables found (not yet schema-inspected)
 
 `_RefPricePolicyOfItem` (5,041), `_RefPackageItem` (3,130), `_RefSkillGroup` (933), and ~40 more
