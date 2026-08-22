@@ -3,6 +3,25 @@
 `.m` files inside `Map.pk2` (one per map region, alongside that region's `.o` object-placement
 file — see [MAPO_FORMAT.md](MAPO_FORMAT.md)) are the terrain/heightmap data.
 
+## Real per-region world size confirmed: 1920.0 units
+
+Found via a real class, `CRegionManagerBody` (`sro_client.exe`), located through the full RTTI
+chain (raw mangled name `.?AVCRegionManagerBody@@` in memory → `TypeDescriptor` →
+`RTTICompleteObjectLocator` → vtable → real constructor confirmed calling it, then a real
+constructor-only global singleton instance). Decompiling its real 32-slot vtable found a real
+cross-region movement/pathing method, confirmed via its own literal embedded source path
+(`D:\vss-od\JMX_Library\navmesh\RegionManagerBody.cpp`), which adjusts a position's local
+coordinates by a fixed constant every time it steps across a region boundary. That constant is a
+real, compile-time `double` (`FLD double ptr [addr]`, zero write-sites anywhere in the binary —
+confirmed not runtime-computed) with value **1920.0**.
+
+`client/scripts/assets/mapm_terrain_builder.gd`'s `TILE_SIZE` now derives from this real value
+(`1920.0 / (GRID_WIDTH - 1)`), assuming the already-confirmed 17-wide column field spans one whole
+real region rather than a sub-patch — not proven, but the cleanest reading available (no evidence
+of sub-patches, and the arithmetic lands on an exact round number, 120.0). This also happens to
+make real elevation changes read as far gentler slopes than the previous arbitrary spacing, purely
+as a side effect of spacing samples 6x further apart along the same real height data.
+
 ## Real row-layout mystery: one more attempt, still unsolved (2026-08-22)
 
 Tried a fresh angle this project didn't have available during the original investigation: `.m`'s

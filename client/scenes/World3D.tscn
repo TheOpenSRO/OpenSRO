@@ -51,8 +51,13 @@ surface_material_override/0 = SubResource("StandardMaterial3D_player")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
 shape = SubResource("CapsuleShape3D_player")
 
-[node name="Camera3D" type="Camera3D" parent="Player"]
-transform = Transform3D(1, 0, 0, 0, 0.857167, 0.515038, 0, -0.515038, 0.857167, 0, 6, 9)
+[node name="CameraArm" type="SpringArm3D" parent="Player"]
+transform = Transform3D(-1, 0, 0, 0, 0.939693, -0.342022, 0, -0.342022, -0.939693, 0, 1.6, 0)
+spring_length = 10.82
+margin = 0.3
+
+[node name="Camera3D" type="Camera3D" parent="Player/CameraArm"]
+transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0)
 current = true
 
 [node name="OtherEntities" type="Node3D" parent="."]

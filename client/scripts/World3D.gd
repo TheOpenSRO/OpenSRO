@@ -265,11 +265,13 @@ const MAX_MAP_OBJECTS := 300
 const REGION_ROWS := MapmTerrainBuilder.GRID_WIDTH
 ## World-space footprint of one reshaped region square (see REGION_ROWS),
 ## used as the grid spacing between adjacent real regions in
-## _load_region_neighborhood. This project's own design choice for how
-## multiple regions tile together -- real per-region world scale/adjacency
-## isn't confirmed (see MAPM_FORMAT.md), so this is scaffolding for a
-## walkable multi-region world, not a claim about the real game's actual
-## spatial layout.
+## _load_region_neighborhood. **Now a real, confirmed value (2026-08-22)**:
+## MapmTerrainBuilder.TILE_SIZE is derived directly from a real decompiled
+## per-region world size (1920.0, see its own doc comment), so this equals
+## that real value exactly (1920.0) rather than an own-designed guess --
+## real per-region *adjacency* (which neighbor is truly north/south/etc. of
+## which, and whether the real world even lays regions out on a uniform
+## grid at all) still isn't confirmed, but the *spacing* magnitude now is.
 const REGION_SPAN := (REGION_ROWS - 1) * MapmTerrainBuilder.TILE_SIZE
 ## How many real regions out from the center region to try loading in each
 ## direction -- radius 1 means a 3x3 grid (9 regions attempted, however many

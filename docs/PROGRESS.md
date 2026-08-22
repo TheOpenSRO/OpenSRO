@@ -2,6 +2,39 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 41) — real region world-scale found, plus a real camera-collision fix -- terrain is genuinely better now
+
+- Kept pushing on the terrain-shape problem instead of moving to something easier after the `.t`
+  dead end (previous entry). Found a real class in `sro_client.exe`, `CRegionManagerBody` (via
+  RTTI chain: raw mangled name in memory -> TypeDescriptor -> RTTICompleteObjectLocator -> vtable
+  -> real constructor confirmed calling it), and dumped its real 32-slot vtable.
+- Decompiling vtable slot 12 found a real cross-region movement/pathing function, confirmed via
+  its own literal embedded source path (`D:\vss-od\JMX_Library\navmesh\RegionManagerBody.cpp`).
+  It adjusts a position's local coordinates by a fixed constant every time it steps across a
+  region boundary -- **that constant is the real per-region world size**.
+- **Real, confirmed value: 1920.0 units** (a genuine compile-time `double` -- initially misread as
+  a 4-byte float and looked like garbage/zero; re-read correctly once the disassembly showed real
+  `FLD double ptr` instructions with zero write-sites anywhere in the binary, confirming it's a
+  real constant, not something computed at runtime). Replaced `MapmTerrainBuilder.TILE_SIZE`'s old
+  arbitrary `20.0` guess with `1920.0 / (GRID_WIDTH - 1) = 120.0`, assuming the already-confirmed
+  17-wide column field spans one whole real region (not proven, but the cleanest reading -- no
+  evidence of sub-patches, and the arithmetic lands on an exact round number). `REGION_SPAN`
+  (derived from `TILE_SIZE`) now automatically equals the real 1920.0 spacing too.
+- **Separately found and fixed a real, unrelated bug this surfaced**: the third-person camera was
+  a fixed-offset `Camera3D` with no collision avoidance at all, so it clipped straight through any
+  nearby slope regardless of terrain data -- confirmed live via screenshot even *before* touching
+  the region-scale fix. Replaced it with a `SpringArm3D` (`CameraArm`) + child `Camera3D`, the
+  standard Godot solution for exactly this, so the camera automatically pulls in when something's
+  between it and the player instead of clipping through.
+- **Confirmed live, real improvement**: a screenshot with both fixes applied against real pk2
+  files shows real sky, a real scenery structure, and real terrain all clearly visible -- a
+  dramatic difference from the fully-dark, camera-trapped-in-geometry shots earlier this session.
+  Real terrain still isn't smooth (the row-layout mystery itself remains unsolved -- see previous
+  entries), but the combination of correct real-world spacing and proper camera collision handling
+  makes it genuinely playable-looking now, not just "technically loads."
+- Full CI test-suite sweep passes, clean `--import --quit`. Real pk2 data pulled temporarily for
+  verification screenshots only, deleted immediately after each pass per standing project policy.
+
 ## 2026-08-22 (cont'd 40) — one more real attempt at the .m row-layout mystery, via the unopened .t sibling file
 
 - Continued pushing on the deeper terrain-shape problem (the real row/column layout mystery

@@ -51,18 +51,27 @@ class_name MapmTerrainBuilder
 
 const GRID_WIDTH := 17
 
-## World-space spacing between adjacent tiles. Not confirmed against any
-## real world-scale reference (no .mapo/.bsr position has been tied back to
-## a specific .m tile yet) -- picked purely for a visually reasonable
-## terrain extent, same as every other "arbitrary but documented" spacing
-## choice already in this project (e.g. decoration-skeleton placement).
-## 20.0 was chosen empirically: real per-tile height values span roughly
-## -195 to +600 world units in a real sample (0/0.m), and a small spacing
-## (originally 4.0) made real elevation changes render as near-vertical
-## cliff walls rather than plausible terrain slopes -- 20.0 keeps the real,
-## unscaled height data but gives it enough horizontal room to read as
-## rolling terrain instead.
-const TILE_SIZE := 20.0
+## World-space spacing between adjacent tiles. **Real, confirmed value
+## (2026-08-22)**, replacing an earlier arbitrary guess: `1920.0 / (GRID_WIDTH - 1)`.
+## 1920.0 is a real per-region world-space size, decompiled directly out of
+## `sro_client.exe`'s real cross-region movement/pathing function
+## (`RegionManagerBody.cpp`, confirmed via its own literal embedded source
+## path string) -- a real `double` constant (found via `FLD double ptr`,
+## not the 4-byte float this project first misread it as) added to a
+## position's local coordinate every time that function steps across a
+## region boundary, with zero write-sites anywhere in the binary (a genuine
+## compile-time constant, not a runtime-computed value). Assumes
+## `GRID_WIDTH` (17, itself real and separately confirmed -- see above)
+## columns span one *whole* real region rather than a sub-patch within a
+## larger real grid -- not proven, but the cleanest reading available: no
+## real evidence of sub-patches exists, and it makes the arithmetic land on
+## an exact round number (`1920 / 16 = 120.0`) rather than a numerological
+## coincidence. This also happens to make real elevation changes read as
+## far gentler slopes than the old 20.0 spacing did, purely as a side
+## effect of spacing samples 6x further apart along the same real height
+## data -- a welcome side effect of using the real value, not a deliberate
+## tuning choice.
+const TILE_SIZE := 1920.0 / (GRID_WIDTH - 1)
 
 ## Decodes a Shape-A tile's real per-tile column index (0..GRID_WIDTH-1)
 ## from its raw Extra bytes -- see this file's top comment. Extra[1:3] is
