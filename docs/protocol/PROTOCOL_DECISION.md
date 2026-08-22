@@ -1,4 +1,57 @@
-# Protocol direction: our own, not a wire-compatible clone
+# Protocol direction: full wire-level reimplementation (reversed 2026-08-22)
+
+**Decision reversed (2026-08-22, superseding the 2026-08-19 decision below):** the goal is a true
+end-to-end rewrite of the original server *and* protocol — not just an own-designed client/server
+pair that happens to implement similar game systems. That means the real wire protocol (real
+opcodes, real payload layouts, real handshake/security-byte scheme, eventually real encryption)
+needs to be reverse-engineered and reimplemented opcode by opcode, so that this server can
+ultimately speak the protocol a real (or lightly modified) client speaks — not just this project's
+own Godot client.
+
+**What this actually changes, concretely:**
+
+- The own-designed opcodes currently in `server/internal/session/{login,world,combat,...}.go`
+  (`OpLogin = 0x0001`, `OpEnterWorld = 0x0020`, etc.) are **placeholder scaffolding**, not the
+  destination. They stay functional (and tested) while the real opcode-by-opcode RE work happens
+  in parallel, but every one of them is expected to eventually be replaced by its real counterpart
+  once that opcode's real wire number and payload layout are confirmed.
+- The handshake reference implementation already sitting in `server/internal/proto`
+  (`RollingByte`, `DeriveSeed`, `PacketChecksum`, `OpHandshakeRequest`/`OpHandshakeAccept`) is no
+  longer just a "verified reference, not wired in" — it's the first real piece of the actual
+  target protocol, and should get wired into the live gateway/session layer as real work resumes.
+- `PacketChecksum`'s from-scratch table family (see `docs/protocol/opcodes/handshake.md`) was
+  built specifically to *avoid* reproducing the original's proprietary CRC table contents, under
+  the old "own protocol, no reason to match" framing. That reasoning no longer applies at the same
+  strength — real wire compatibility now needs the *real* per-session table selection behavior
+  even if the literal table bytes still shouldn't be copied verbatim from the binary (see
+  `docs/LEGAL.md` policy #2). This is an open question to revisit once handshake wiring resumes,
+  not resolved by this doc.
+- Every opcode this project hasn't RE'd yet (i.e. nearly all of them — `docs/protocol/opcodes/`
+  currently only has `handshake.md` and a still-incomplete `login.md`) is real, scoped,
+  outstanding work, not a "won't do."
+
+**Honest scope/timeline note:** this is a large undertaking. The original protocol has on the
+order of hundreds of real opcodes across login, character select, world sync, inventory,
+combat, skills, trade, party, guild, chat, and more — each needs its real payload layout pulled
+from the binary (not just confirmed to exist), the way `docs/protocol/opcodes/login.md`'s own
+status section shows is still unfinished even for the *first* real opcode looked at. This will
+span many sessions, worked through incrementally (one opcode/system at a time), the same way this
+project's asset-format RE (`.bsr`, `.bms`, `.mapm`, ...) was done one format at a time rather than
+all at once. Track progress in `docs/protocol/opcodes/` (one file per opcode group) and
+`docs/PROGRESS.md`, the same way this project already tracks everything else.
+
+**Still true and unaffected by this reversal:** RE work on game data/logic — item stats, drop
+tables, skill formulas, DB domain model (`db_schema.md`), pk2 asset container format
+(`PK2_FORMAT.md`) — was never blocked on this decision either way; it stays exactly as valuable as
+before.
+
+---
+
+## Superseded: the 2026-08-19 "own protocol" decision
+
+The text below is kept for history — it's what this doc said before the reversal above, and
+explains why the handshake reference code was originally built but not wired in. No longer the
+operative decision.
 
 Decision (2026-08-19): the new Go server and new Godot client only need to agree with **each
 other**. This project is not trying to make the new server accept connections from the original,
@@ -15,10 +68,9 @@ unmodified Joymax client — the client is being rewritten too. That changes wha
   (TLS available if wanted) has no reason to replicate it.
 
 The `RollingByte`/`DeriveSeed`/`PacketChecksum`/`OpHandshakeRequest`/`OpHandshakeAccept` code
-already written in `server/internal/proto` stays in the tree as a correctly-verified reference
+already written in `server/internal/proto` stayed in the tree as a correctly-verified reference
 implementation of what was actually found (the commit history documents real work, including two
-caught-and-fixed mistakes) — but it is **not wired into the real server**. The actual
-client<->server protocol going forward is defined fresh, opcode-by-opcode alongside each feature
-(e.g. `OpLogin`/`OpEnterWorld`/`OpAttack` in `server/internal/session/{login,world,combat}.go`,
-mirrored in `client/scripts/net/`) rather than one consolidated file — there is no single
-`opcodes_own.go` or `OWN_PROTOCOL.md`, despite this doc originally saying there would be.
+caught-and-fixed mistakes) — but was **not wired into the real server**. The actual client<->server
+protocol was defined fresh, opcode-by-opcode alongside each feature (e.g.
+`OpLogin`/`OpEnterWorld`/`OpAttack` in `server/internal/session/{login,world,combat}.go`, mirrored
+in `client/scripts/net/`) rather than one consolidated file.
