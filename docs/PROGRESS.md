@@ -2,6 +2,35 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 15) — first real opcode-RE progress toward wire compatibility: resolved login's dispatch shape
+
+- Started the actual opcode-by-opcode RE work `PROTOCOL_DECISION.md`'s reversal calls for. Found
+  the obtained package includes real, dedicated Silkroad server binaries alongside the client and
+  DB backups (`GatewayServer.exe`, `AgentServer.exe`, `SR_GameServer.exe`, `SR_ShardManager.exe`,
+  under a private-server distribution's `Blitzkrieq_Bin_Data` folder) -- `login.md`'s prior pass
+  only ever analyzed the client binary. Imported and analyzed `GatewayServer.exe` into the same
+  Ghidra project.
+- Traced the real `_CertifyUser` SQL exec string to its call site and from there to the real
+  dispatch switch (a single ~450-line function handling Div IDs `0`-`0x1a`). Confirmed real facts,
+  written up in `docs/protocol/opcodes/login.md`:
+  - The internal dispatch value login.md previously called "a small dense integer" has a real
+    name, confirmed by a literal error string: **Div ID**.
+  - It's read as one byte from the same offset (+2) this project's own wire header keeps its
+    Opcode field at -- consistent with (but not yet proven to be) the low byte of the real 16-bit
+    wire opcode.
+  - A **second** real stored procedure, `_CertifyTB_User` (no third argument, unlike
+    `_CertifyUser`'s fixed literal), handles most Div IDs -- not previously known, since it never
+    appeared in the client-only pass.
+  - Two distinct real "blocked account" encodings exist, one per stored procedure (`0x7F`/`0x7F`
+    for `_CertifyUser`, a single byte `== 3` for `_CertifyTB_User`), both routing to a real third
+    stored procedure, `_QueryBlockGuide %d`, for a block-reason lookup.
+- Did **not** yet find where a live incoming packet's Div ID actually gets set per-packet (the one
+  write site traced turned out to be one-time server-startup config loading, not the real receive
+  path) -- recorded as the next concrete step in `login.md` rather than guessed at.
+- This is one opcode group out of the real protocol's full surface -- consistent with
+  `PROTOCOL_DECISION.md`'s honest scope note that this is many-sessions work, done the same
+  incremental way as this project's asset-format RE.
+
 ## 2026-08-22 (cont'd 14) — 2D deleted: World3D.tscn is now the one real client
 
 - Finished the 2D-to-3D port: repointed `CharacterSelect.gd` to load `World3D.tscn` directly
