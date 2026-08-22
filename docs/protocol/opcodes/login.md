@@ -69,6 +69,30 @@ The gateway binary contains **two** separate authentication code paths:
    paths, confirming a third (plain failure, no result row) outcome distinct from both "success"
    and "blocked."
 
+## Real confirmed meaning for two more opcodes: `0x6111`/`0x6112`
+
+Found while decompiling `observed_opcodes.md`'s `GatewayServer.exe` cluster for actual payload
+info: the real function containing both writes is unmistakably the handler for a real, literal
+`FRAMEWORKMSG_IMAGE_BASED_USER_VALIDATE_REQ` message (name confirmed by the same real error string
+already found -- `"[OnFRAMEWORKMSG_IMAGE_BASED_USER_VALIDATE_REQ] RelayMsg Failed"`). Real logic
+traced directly:
+
+- Looks up a "CertParam" for the connection; if missing, sends `0xa103`'s neighbor `0xa102` with a
+  real logged error (`"...No Registered CertParam!!"`) and disconnects -- a real failure path, not
+  part of the normal flow.
+- Otherwise decodes some real user-supplied data and validates it (`FUN_0040a910`).
+  - **Validation fails**: sends `0xa323` (already independently harvested), then relays the
+    message onward (real `RelayMsg`, to `AgentServer.exe`) tagged with **`0x6112`**.
+  - **Validation succeeds**: relays it onward tagged with **`0x6111`**.
+
+So `0x6111`/`0x6112` are a real success/failure pair for this specific certification sub-step, sent
+gateway -> agent as part of the relay chain (`dispatch.md`), not client-facing opcodes in the
+ordinary sense. Both payloads are built via the same real generic "append raw bytes" primitive
+(`PACKET_FORMAT.md`'s real header-size confirmation came from decompiling this exact function) --
+each appends exactly one field from a stack buffer, but that buffer's own real type/size wasn't
+traced further this pass, so the payload's *exact* byte layout stays unconfirmed even though its
+*purpose* now is.
+
 ## Status / next steps
 
 - [x] ~~Map the internal dispatch index ("Div ID") back to the real wire opcode~~ -- **retracted**,

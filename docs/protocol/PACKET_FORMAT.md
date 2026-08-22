@@ -26,15 +26,21 @@ Each packet on the wire:
 one; that reassembly is not yet implemented (`server/internal/proto` handles single-frame packets
 only for now — see code comments).
 
-**A real, first-party data point on this (2026-08-22)**, from directly analyzing
-`GatewayServer.exe` (see `docs/protocol/opcodes/handshake.md`/`dispatch.md`) rather than the public
-documentation this whole file was otherwise written from: real code reconstructing an outgoing
-message's total frame size from its payload size uses `payload_size + 6`, not `+5`. Not yet
-reconciled with the 5-byte header above -- plausibly this is `Size(2)+Opcode(2)+Security(1)` plus
-one more real byte this project hasn't identified yet, or the `+6` reflects some other real
-per-message accounting distinct from the base wire header. Recorded here as a genuine, unresolved
-discrepancy rather than either overriding the public-documentation-derived header or ignoring real
-contradicting evidence.
+**Real, first-party confirmation the real header is 6 bytes, not 5 (2026-08-22)**, from directly
+analyzing `GatewayServer.exe` (see `docs/protocol/opcodes/handshake.md`/`dispatch.md`) rather than
+the public documentation this whole file was otherwise written from. Seen four independent times
+now, the last of which is about as authoritative a source as exists for this specific fact: the
+real generic "append raw bytes to an outgoing message's payload" primitive every other real
+message-building function in this binary calls through -- its own write-cursor field starts at a
+literal `6` and every appended byte simply advances it, with the running payload length always
+computed as `cursor - 6`. That's the real header size baked directly into the one shared function
+that builds every payload, not an indirect inference. **This project's own 5-byte header above
+(`Size(2)+Opcode(2)+Security(1)`), taken from public private-server documentation, is therefore
+short one real byte** -- plausibly a `Security`-adjacent flags/checksum byte this project hasn't
+identified yet, given the two real independent per-packet security bytes `handshake.md` already
+found (`RollingByte`/`PacketChecksum`) would need to live somewhere in the real header too. Not
+fully resolved into a revised field table yet -- recorded as a confirmed real header *size*, with
+the *field breakdown* still open, rather than guessing at which extra byte it is.
 
 ## Session crypto
 
@@ -47,10 +53,17 @@ a couple of real opcodes are solid.
 
 ## Status
 
-- [x] Frame header parsing/writing (`server/internal/proto`)
+- [x] Frame header parsing/writing (`server/internal/proto`) -- for this project's own,
+      admittedly-not-wire-compatible protocol. Real confirmation the *original* header is 6 bytes,
+      not the 5 this was built from, is above -- revisiting this project's own header to actually
+      match is real work for when `PROTOCOL_DECISION.md`'s wire-compatibility goal reaches this
+      layer, not done yet.
 - [x] TCP accept loop dispatching decoded packets (`server/internal/gateway`, wired into
       `cmd/server`) — no opcode table yet, just logs what it sees
 - [ ] Session key exchange / encrypted packets
 - [ ] Massive-packet reassembly
+- [ ] Identify the real header's 6th byte (see above) -- the concrete next step for actually
+      revising the field table, rather than just knowing the total size is wrong
 - [ ] Opcode table (`docs/protocol/opcodes/`) — starts empty, grows one documented opcode at a
-      time as we implement against it, not speculatively
+      time as we implement against it, not speculatively. `observed_opcodes.md` now has ~150 real
+      opcode *values* across four binaries; payload layouts are the next tier of work.

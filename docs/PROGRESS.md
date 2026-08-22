@@ -2,6 +2,27 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 27) — confirmed the real header is 6 bytes; found real meaning for 0x6111/0x6112
+
+- Picked one real, cross-validated opcode pair from the new catalog (`0x6111`/`0x6112`, part of
+  `GatewayServer.exe`'s real login cluster) and decompiled the function writing both. Confirmed:
+  this is the real `FRAMEWORKMSG_IMAGE_BASED_USER_VALIDATE_REQ` handler (name already known from a
+  real error string), and `0x6111`/`0x6112` are a real success/failure pair relayed gateway ->
+  agent for one certification sub-step -- not general client-facing opcodes. Real payload
+  structure not fully pulled (each appends one field via the generic append primitive, but that
+  field's own type wasn't traced), but the real *purpose* now is.
+- Decompiling that generic "append raw bytes to payload" primitive gave a much bigger bonus: its
+  own write-cursor field literally starts at `6` and every payload-length calculation is
+  `cursor - 6` -- the real header size baked directly into the one shared function every real
+  outgoing message goes through. This is the fourth independent observation of `+6` this session,
+  and by far the most authoritative source possible for it. **Elevated `PACKET_FORMAT.md` from "an
+  unresolved discrepancy" to "confirmed: the real header is 6 bytes, this project's own 5-byte
+  header (from public documentation) is missing one real byte"** -- the field breakdown (which
+  extra byte) is now the open item, not the total size.
+- This closes a genuinely long-running thread (the `+6` question first surfaced several entries
+  ago) with a real, solid answer, and gives login.md a second real opcode pair with confirmed
+  purpose beyond the four found earlier this session.
+
 ## 2026-08-22 (cont'd 26) — imported SR_GameServer.exe, harvested 79 more real gameplay opcodes
 
 - Extended the proven two-instruction opcode-harvest technique to a fourth real binary,
