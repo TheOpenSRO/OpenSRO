@@ -14,8 +14,11 @@ unmodified Joymax client — the client is being rewritten too. That changes wha
   theater; a from-scratch client and server talking to each other over a connection we control
   (TLS available if wanted) has no reason to replicate it.
 
-The `RollingByte`/`DeriveSeed`/`OpHandshakeRequest`/`OpHandshakeAccept` code already written in
-`server/internal/proto` stays in the tree as a correctly-verified reference implementation of what
-was actually found (the commit history documents real work, including two caught-and-fixed
-mistakes) — but it is **not wired into the real server**. The actual client<->server protocol
-going forward is defined fresh, starting with `opcodes_own.go` / `docs/protocol/OWN_PROTOCOL.md`.
+The `RollingByte`/`DeriveSeed`/`PacketChecksum`/`OpHandshakeRequest`/`OpHandshakeAccept` code
+already written in `server/internal/proto` stays in the tree as a correctly-verified reference
+implementation of what was actually found (the commit history documents real work, including two
+caught-and-fixed mistakes) — but it is **not wired into the real server**. The actual
+client<->server protocol going forward is defined fresh, opcode-by-opcode alongside each feature
+(e.g. `OpLogin`/`OpEnterWorld`/`OpAttack` in `server/internal/session/{login,world,combat}.go`,
+mirrored in `client/scripts/net/`) rather than one consolidated file — there is no single
+`opcodes_own.go` or `OWN_PROTOCOL.md`, despite this doc originally saying there would be.

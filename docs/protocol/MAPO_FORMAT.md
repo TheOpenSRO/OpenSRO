@@ -121,6 +121,15 @@ what a real outdoor region scattering 39/11/7/1 objects of those types would pla
 (`SRREVAMP_MAPO_PATH`) to render real placed objects with their real resolved `.bsr` models
 instead of a placeholder marker — see `README.md` and `docs/PROGRESS.md`.
 
+**Traced (2026-08-22) one real consumer of this table**, chasing the unconfirmed `Flags` word:
+`FUN_00a26a30` reads a placement's type ID, indexes this exact 32-byte-stride vector the same
+bounds-checked way `objidx.Parse`/`Lookup` already do, and feeds the matched entry into
+`FUN_00a15950`, a real resource-cache/refcount lookup that's part of the actual mesh-load path —
+confirming the table really drives per-placement model loading, not just naming. Did not isolate a
+specific bit-check reading `Flags` itself in this pass, so its 0-vs-1 meaning stays unconfirmed —
+a real, honest dead end for now, not blocking anything since nothing in this project's rendering
+currently depends on it.
+
 **A real, separate gap this surfaced — now also solved**: real `.bsr` files in the
 `res\nature\...` category (trees, grass) initially didn't parse correctly with this project's
 `server/internal/bsr` (garbage `MeshPath`/`MaterialPath` fields), while `res\bldg\...` (building)

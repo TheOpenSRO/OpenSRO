@@ -25,6 +25,18 @@ const magic = "JMXVOBJI1000"
 // against a real archive, same as every other real path in this project),
 // plus an unconfirmed per-entry flags word (observed values seen so far:
 // 0 and 1; not decompiled, meaning not yet promoted past "raw flags").
+//
+// Traced one real usage of this table (FUN_00a26a30, decompiled): given a
+// real placement record's type ID, it indexes this exact 32-byte-stride
+// vector (bounds-checked the same way this package's Parse builds it,
+// TypeID == slice index) and feeds the whole matched Entry into a real
+// resource-cache/refcount lookup (FUN_00a15950) that's part of the actual
+// mesh-load path -- confirming this table really does drive loading each
+// placed object's model, not just naming it. That trace did not isolate a
+// specific bit-check against Flags itself; what 0 vs. 1 changes about
+// loading/rendering remains unconfirmed. Real, honestly incomplete --
+// not guessed at further, since nothing in this project currently needs
+// Flags to render objects correctly.
 type Entry struct {
 	TypeID uint32
 	Flags  uint32

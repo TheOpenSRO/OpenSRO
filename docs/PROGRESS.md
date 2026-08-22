@@ -2,6 +2,25 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 6) — chased the `.ifo` object-index `Flags` word, real partial progress
+
+- `objidx.Entry.Flags` has been an unconfirmed raw word since the `.ifo` format was solved (values
+  seen: 0 and 1, meaning never decompiled). Went back to Ghidra to chase it, per this project's
+  standing license to keep pulling RE threads even when some dead-end.
+- Found the real loader (`FUN_00a291a0`, via the `"object.ifo"`/`CreateFile` debug string) and
+  traced one real consumer of the resulting table: `FUN_00a26a30` looks up a placement's type ID in
+  the exact same 32-byte-stride vector `objidx.Parse` builds, bounds-checked the same way, and
+  passes the matched entry into `FUN_00a15950` -- a real resource-cache/refcount function that's
+  part of the actual mesh-load path. This is a genuine, useful confirmation: the object-index table
+  really does drive per-placement model loading (not just naming), matching what this project
+  already assumes in `World3D.gd`.
+- Did not manage to isolate a specific instruction reading `Flags` on its own (as opposed to being
+  part of the whole entry pointer passed along) in this pass -- so its 0-vs-1 meaning is still
+  unconfirmed. Recorded as a real, partial finding in `docs/protocol/MAPO_FORMAT.md` and
+  `server/internal/objidx/objidx.go`'s doc comment, not pursued further right now since nothing in
+  this project's rendering depends on it.
+- No code behavior changed -- this was purely an RE/documentation pass.
+
 ## 2026-08-22 (cont'd 5) — closed out the handshake CRC checklist item (reference-only, not wired in)
 
 - Went looking for the next real gap and found `server/internal/proto/security.go` already had
