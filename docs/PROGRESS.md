@@ -2,6 +2,28 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 16) — traced login's dispatch to a real class; found the OverlapJob architecture
+
+- Continued the login-dispatch RE thread. Used the same RTTI-chain technique that found
+  `ResObject::Load` for `.bsr` (`RTTICompleteObjectLocator` -> `TypeDescriptor` -> mangled name) to
+  identify the real class the dispatch switch's vtable belongs to: **`CUserCertifier_OverlapJob`**.
+- This surfaced real architecture beyond just login: `GatewayServer.exe` has a small family of real
+  `ServerFramework::COverlapJob`-derived async job classes (`CUserCertifier_OverlapJob`,
+  `COverlapJob_InitializeLocalData`, `COverlapJob_RelayMsg`, `COverlapJob_Local`), managed by a
+  real `COverlapJobManager`. Not one job class per opcode, though -- `CUserCertifier_OverlapJob`
+  alone owns the whole Div ID `0`-`0x1a` switch internally via one big handler.
+- Traced the job's constructor to a real object-pool initializer (pre-allocates a pool of job
+  objects at server startup) -- real, useful architecture, but a dead end for the specific
+  "where does a live packet's Div ID get set" question, since pool init never touches per-packet
+  data.
+- Looked for `COverlapJobManager`'s own vtable (the natural next place to find the real
+  opcode-to-job dispatch) via the same RTTI technique; found its `TypeDescriptor` but couldn't
+  trace a directly-instantiated vtable from it this pass -- a real, honest dead end, flagged as
+  the next concrete target rather than pursued further right now.
+- All findings written up in `docs/protocol/opcodes/login.md`. This remains one opcode group's
+  worth of progress out of the real protocol's full surface -- consistent with
+  `PROTOCOL_DECISION.md`'s scope note.
+
 ## 2026-08-22 (cont'd 15) — first real opcode-RE progress toward wire compatibility: resolved login's dispatch shape
 
 - Started the actual opcode-by-opcode RE work `PROTOCOL_DECISION.md`'s reversal calls for. Found

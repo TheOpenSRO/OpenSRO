@@ -67,16 +67,27 @@ The gateway binary contains **two** separate authentication code paths:
       one byte only. Exact translation formula from the real 16-bit wire opcode to this one-byte
       Div ID is the new, more specific open question (see above) -- not yet the same as "pull the
       exact payload layout," which is still open too.
-- [ ] Find where a live incoming packet actually gets a fresh Div ID stamped onto it (the
-      one write site found for this project's current lead was one-time startup config, not the
-      real per-packet path). Traced one level further: the real dispatch switch is called from a
-      thin wrapper that turned out to be **called only via a data (vtable) reference, not a direct
-      call** -- i.e. a C++ virtual method on some per-connection/per-request object, invoked
-      through a vtable this project hasn't identified the owning class of yet. The real per-packet
-      Div ID assignment plausibly happens in whatever code fills in that object before the virtual
-      call, or earlier in a base class's own receive/parse method. Next step: identify the vtable
-      (via RTTI, the same technique that found `ResObject::Load` for `.bsr`) and its class
-      hierarchy, not guessed at further this pass.
+- [ ] Find where a live incoming packet actually gets a fresh Div ID stamped onto it. Traced
+      significantly further this pass via real RTTI data (the same technique that found
+      `ResObject::Load` for `.bsr`): the dispatch switch's virtual-method wrapper belongs to a
+      real class, **`CUserCertifier_OverlapJob`** -- confirmed by reading its
+      `RTTICompleteObjectLocator`/`TypeDescriptor` chain directly (mangled name
+      `.?AVCUserCertifier_OverlapJob@@`). This reveals real architecture beyond just login:
+      `GatewayServer.exe` has a small family of real `ServerFramework::COverlapJob`-derived async
+      job classes (`CUserCertifier_OverlapJob`, `COverlapJob_InitializeLocalData`,
+      `COverlapJob_RelayMsg`, `COverlapJob_Local`, managed by a real `COverlapJobManager`) --
+      **not** one job class per opcode, though; `CUserCertifier_OverlapJob` alone owns the entire
+      Div ID `0`-`0x1a` switch internally. Traced its constructor to a real object-pool
+      initializer (`CChunkAllocatorST`-style, pre-allocating a pool of these job objects at server
+      startup) -- a real, useful architectural fact, but a dead end for *this specific* question,
+      since pool init doesn't touch per-packet opcode data. The real code that reads an incoming
+      packet's actual wire opcode and picks/dispatches a pooled job for it is presumably in
+      `COverlapJobManager` itself. Looked for its vtable via the same RTTI-chain technique this
+      pass; found its `TypeDescriptor` but the `RTTICompleteObjectLocator`s referencing it didn't
+      lead to a directly-instantiated vtable the way `CUserCertifier_OverlapJob`'s did (plausibly
+      an abstract base class with no direct instance in this binary, or one this search technique
+      didn't hit) -- a real, honest dead end for this specific pass, not pursued further right
+      now. Flagged as the next concrete target for a future session.
 - [ ] Pull the exact `_CertifyUser`/`_CertifyTB_User` result-set column meanings beyond "some
       bytes signal blocked/failed" (now two confirmed distinct encodings, see above)
 - [ ] Cross-reference the SRO_VT_ACCOUNT database backup (`db.rar` in the obtained package) against
