@@ -2,6 +2,25 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 — verified real per-gender rendering with two actual live Godot clients, not just the automated TCP test
+
+- The `TestWorldFullFlow` Go test already verifies gender/armor/weapon broadcast correctness over
+  real TCP, but that only exercises the protocol layer -- it doesn't run the actual client-side
+  Godot rendering pipeline. Ran a real, manual, two-client check to close that gap: started the
+  real server fresh, drove two separate real Godot client processes (via a throwaway scene +
+  script, deleted after use) through the real login → register → create-character →
+  enter-world flow using `NetClient` directly, one creating the default gender and one explicitly
+  creating `china_woman`.
+- Confirmed end-to-end: the second client's own live `EnterWorldResult` correctly listed the first
+  client as a real `other` (`gender=china_man`, real position), and loading the actual
+  `World3D.tscn` scene (fed a synthetic pk2 with real pulled assets for both genders) rendered the
+  first client as a real, separately-labeled assembled body from a live game session -- not a
+  placeholder, not a unit-test assertion.
+- No bugs found, no code changes needed. Cleaned up: killed the test server and client processes,
+  deleted the throwaway scene/scripts (never committed), reverted a cosmetic `project.godot`
+  rewrite Godot made on import, deleted the two test accounts/characters from the local dev DB, and
+  removed all scratch files from both the local scratchpad and the RE box.
+
 ## 2026-08-21 (cont'd 64) — one more RE dead end (`.t`), one real structural find (`.efp`)
 
 - Continued chasing RE leads per explicit direction to keep going and accept some dead ends.
