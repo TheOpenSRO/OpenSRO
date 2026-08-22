@@ -30,6 +30,16 @@ multi-region grid (`_load_region_neighborhood`, see its doc comment and `README.
 these squares at a fixed, **this project's own designed** spacing. Real per-region world scale and
 real adjacency between regions remain unconfirmed either way.
 
+**Real bug found and fixed (2026-08-22)**: the first version of this grid had each tile
+independently force its own near-row-middle vertex to world Y=0, guaranteeing a cliff at *every*
+seam between tiles and trapping the camera in overlapping geometry (confirmed via live screenshot
+testing against real pk2 files). Fixed by anchoring the whole grid to the center tile's own
+`near_height` instead of letting every tile reset itself independently — see
+`_load_region_neighborhood`'s doc comment. This does not (and can't, without real cross-region
+data) make neighboring tiles seamlessly continuous, and does not fix the separate fact that even a
+*single* tile's real data can be steep enough on its own to enclose the camera near a given spawn
+point — both remain blocked on the row-layout mystery above.
+
 No decompiled loader was found via the usual technique (searching for "JMXV" immediately followed
 by the 4-letter type suffix) in either `sro_client.exe` or `EternityLib.dll`, both given a full
 Ghidra auto-analysis pass, including an RTTI class name check (none found) — so this is confirmed

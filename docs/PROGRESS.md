@@ -2,6 +2,35 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 39) — fixed the real multi-region terrain overlap bug (found via live screenshot testing)
+
+- Testing the phase-1 multi-region grid against the real pk2 files (temporarily copied in for
+  screenshot verification, then removed again -- see below) surfaced a real bug: the camera ended
+  up trapped inside overlapping terrain geometry. Root cause, found by reading the placement code
+  again with fresh eyes: **every tile independently forced its own near-row-middle vertex to world
+  Y=0**, which guarantees a cliff at *every single seam* between two tiles, since neighboring
+  regions' real height data has no known relationship to begin with.
+- **Fixed**: `_load_region_neighborhood` now loads the center tile first, captures the real
+  `near_height` it computed, and passes that as every other cell's `shared_vertical_anchor` (new
+  parameter on `_try_load_real_terrain`, which now returns the `near_height` it used -- `NAN` on
+  any failure path). Only the center tile still calibrates itself to Y=0; every neighbor renders at
+  whatever height its own real data implies *relative to that one shared reference* instead of each
+  also independently resetting to zero. Confirmed live: region load order in the console log now
+  shows the center region (`100/100.m`) loading before all 8 neighbors, exactly as designed.
+- **Honestly scoped**: this fixes the specific bug asked about (tiles compounding cliffs against
+  each other) but does **not** and can't fix a separate, already-documented, deeper issue -- even a
+  *single* region's real terrain data is steep enough on its own to enclose the camera near a given
+  spawn point (confirmed with zero neighbors involved at all, screenshot evidence from the previous
+  entry). That remains blocked on the real row/column layout mystery `MAPM_FORMAT.md` already
+  documents as unsolved after multiple genuine attempts (including one more this session, see the
+  world-building phase-1 entry). Not conflated with what this fix actually addresses.
+- Full CI test-suite sweep passes, clean `--import --quit`.
+- **Also this session**: did real, live screenshot testing against actual pk2 files copied
+  temporarily into this environment from the RE box (not committed, not kept -- deleted
+  immediately after each verification pass, consistent with this project's standing policy of never
+  persisting real client assets between sessions). This is how both the original overlap bug and
+  this fix were actually confirmed, not just reasoned about from code alone.
+
 ## 2026-08-22 (cont'd 38) — "skills" phase 6 (final roadmap item): real Skills tab, closing the whole roadmap
 
 - Found the server-side skill system (learn/use, cooldown tracking) was fully implemented and

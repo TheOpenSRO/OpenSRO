@@ -786,15 +786,28 @@ func _clear_region_grid() -> void:
 ## rather than treating it as fatal. Only the center cell (0,0) snaps the
 ## player onto its terrain (see _snap_player_onto_terrain) -- that's real
 ## spawn-adjacent ground, not any of the speculative neighbors.
+##
+## Loads the center cell first and reuses its own real near_height as every
+## other cell's shared_vertical_anchor (see _try_load_real_terrain's doc
+## comment on why -- without this, every tile independently resets its own
+## near edge to Y=0, guaranteeing a cliff at *every* seam and trapping the
+## camera in overlapping geometry, confirmed live 2026-08-22). If the center
+## cell itself fails to load (missing file, bad data), neighbors fall back
+## to each calibrating themselves independently (NAN anchor) -- the original
+## behavior -- since there's no real center reference to share in that case.
 func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGION_LOAD_RADIUS, texture_override: String = "") -> void:
+	var center_near_height := _try_load_real_terrain("%d\\%d.m" % [center_x, center_y], texture_override, Vector3.ZERO, "_%d_%d" % [center_x, center_y], true)
+	_try_load_real_map_objects("%d\\%d.o" % [center_x, center_y], Vector3.ZERO, "_%d_%d" % [center_x, center_y])
+
 	for dy in range(-radius, radius + 1):
 		for dx in range(-radius, radius + 1):
+			if dx == 0 and dy == 0:
+				continue # center cell already loaded above
 			var region_x := center_x + dx
 			var region_y := center_y + dy
 			var suffix := "_%d_%d" % [region_x, region_y]
 			var offset := Vector3(dx * REGION_SPAN, 0.0, dy * REGION_SPAN)
-			var is_center := dx == 0 and dy == 0
-			_try_load_real_terrain("%d\\%d.m" % [region_x, region_y], texture_override if is_center else "", offset, suffix, is_center)
+			_try_load_real_terrain("%d\\%d.m" % [region_x, region_y], "", offset, suffix, false, center_near_height)
 			_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
 
 ## _ready()'s own entry point into the region grid: reads SRREVAMP_MAPM_PATH
@@ -881,27 +894,46 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 ## _load_region_neighborhood place multiple of these side by side as a real
 ## multi-region grid instead of always the one env-var-driven region at the
 ## scene origin -- defaults preserve the original single-region behavior.
-func _try_load_real_terrain(path_override: String = "", texture_override: String = "", world_offset: Vector3 = Vector3.ZERO, node_suffix: String = "", snap_player: bool = true) -> void:
+##
+## shared_vertical_anchor (NAN by default) is the fix for a real bug found
+## live (2026-08-22): without it, *every* tile independently forces its own
+## near-row-middle vertex to world Y=0 (see the vertical-offset comment
+## below), which guarantees a cliff at *every* seam between two tiles in the
+## grid, since neighboring tiles' real height data has no known relationship
+## to begin with -- confirmed live to trap the camera inside overlapping
+## geometry. Passing the center tile's own near_height as every other
+## tile's anchor instead means only the center tile still calibrates itself
+## to Y=0; every neighbor renders at whatever height its own real data
+## implies *relative to that one shared reference* rather than each also
+## independently resetting to zero. This doesn't (and can't, without real
+## cross-region alignment data this project doesn't have) make neighboring
+## tiles seamlessly continuous -- real per-tile terrain remains genuinely
+## steep on its own (confirmed live even for a single region, see
+## MAPM_FORMAT.md) -- it just stops the grid from *compounding* that with a
+## guaranteed reset at every single seam. Returns the near_height this call
+## used (NAN on any failure path) so a caller building a grid can capture
+## the center tile's value and pass it to every other cell.
+func _try_load_real_terrain(path_override: String = "", texture_override: String = "", world_offset: Vector3 = Vector3.ZERO, node_suffix: String = "", snap_player: bool = true, shared_vertical_anchor: float = NAN) -> float:
 	var mapm_path := path_override if path_override != "" else OS.get_environment("SRREVAMP_MAPM_PATH")
 	if mapm_path == "":
 		print("World3D: SRREVAMP_MAPM_PATH not set -- ground stays a placeholder")
-		return
+		return NAN
 
 	var archive := _open_map_pk2_if_set()
 	var bytes := AssetSource.read_bytes(mapm_path, archive)
 	if bytes.is_empty():
 		printerr("World3D: could not find terrain at ", mapm_path)
-		return
+		return NAN
 
 	var region := MapmReader.parse(bytes)
 	if region == null:
 		printerr("World3D: could not parse terrain at ", mapm_path)
-		return
+		return NAN
 
 	var terrain_mesh := MapmTerrainBuilder.build_mesh(region, REGION_ROWS)
 	if terrain_mesh == null:
 		printerr("World3D: parsed ", region.tiles.size(), " tiles from ", mapm_path, " but couldn't recover enough complete rows for a mesh")
-		return
+		return NAN
 
 	var terrain := MeshInstance3D.new()
 	terrain.name = "RealTerrain" + node_suffix
@@ -944,8 +976,9 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	var near_arrays := terrain_mesh.surface_get_arrays(0)
 	var near_positions: PackedVector3Array = near_arrays[Mesh.ARRAY_VERTEX]
 	var near_height := near_positions[MapmTerrainBuilder.GRID_WIDTH / 2].y
+	var anchor_height := near_height if is_nan(shared_vertical_anchor) else shared_vertical_anchor
 	terrain.rotation.y = PI
-	terrain.position = Vector3(aabb.size.x / 2.0, -near_height, 0) + world_offset
+	terrain.position = Vector3(aabb.size.x / 2.0, -anchor_height, 0) + world_offset
 	add_child(terrain)
 	ground_mesh.visible = false
 	ground_collision.disabled = true
@@ -972,6 +1005,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 
 	print("World3D: loaded real terrain from %s (%d tiles parsed, %d rows rendered (capped at %d), real collision shape built)" % [
 		mapm_path, region.tiles.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1, REGION_ROWS])
+	return near_height
 
 ## Practical safety net for the real terrain-alignment gap noted where this
 ## is called: raycasts straight down (and up, to cover an embedded start)
