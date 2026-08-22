@@ -2,6 +2,26 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 26) — imported SR_GameServer.exe, harvested 79 more real gameplay opcodes
+
+- Extended the proven two-instruction opcode-harvest technique to a fourth real binary,
+  `SR_GameServer.exe` (same package, ~9x larger than the other two -- the real main world/gameplay
+  server, not just login/relay).
+- Re-found the shared `ServerFramework` infrastructure cluster (`0x5000`/`0x9000` handshake,
+  `0x6004`/`0x6008`/`0x6009`/`0x600d`/`0xa004`/`0xa008`/`0xa009`/`0xa300`/`0xa303`) at the same
+  values yet again -- a third independent cross-binary confirmation.
+- Harvested **79 unique values total**, most of them real, gameplay-specific opcode families never
+  seen in the login/relay binaries at all: `0x30xx`/`0x34xx`/`0x38xx`/`0x3Cxx`,
+  `0x74xx`/`0x78xx`/`0x7Cxx` (the largest cluster), and `0xB0xx`/`0xB4xx`/`0xB8xx`/`0xBCxx`. These
+  real address ranges line up with the general opcode-family layout long documented by the
+  private-server community for this MMO family (world/entity-ish `0x7xxx`, guild/social-ish
+  `0xBxxx`) -- an independent cross-check this is a genuine gameplay opcode surface, not noise.
+- Noted honestly: this larger binary produced a higher false-positive rate for small values
+  (15 hits under `0x400`, vs. 3-4 in the smaller binaries) -- flagged clearly in
+  `observed_opcodes.md` rather than silently included at the same confidence as the rest.
+- None of these have pulled payloads yet -- real, separate, per-opcode work for future passes. This
+  session's opcode catalog now spans four real binaries with real cross-validation between them.
+
 ## 2026-08-22 (cont'd 25) — fixed the harvest tool, catalogued ~50 real opcodes at once
 
 - Went back to the dispatch-mechanism RE thread and fixed the tooling gap identified last pass:
