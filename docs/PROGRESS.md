@@ -2,6 +2,25 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 30) — found the real per-packet send-finalization function: checksum covers the whole packet, not just payload
+
+- Decompiled `FUN_0046ed40` in `GatewayServer.exe` (reached while chasing the header-order question
+  the previous entry resolved) and found it's the real per-packet send-finalization routine: it
+  writes the rolling byte, then **zeroes the checksum byte field first** and runs the checksum over
+  `(Size & 0x7fff) + 6` bytes -- the whole packet including the 6-byte header, not the payload
+  alone. A real, previously-undocumented fact; `server/internal/proto`'s `PacketChecksum` currently
+  only gets fed payload bytes, so its *usage pattern* (not its table contents, which stay original
+  per `docs/LEGAL.md` policy #2) is now a known, concrete gap to close for real wire compatibility.
+- Also surfaced a second real branch in the same function, gated on a different flags-byte bit
+  together with the Size field's top bit, that checks a length against `0x1001` before either
+  queuing the packet or raising a real logged error -- ties into `dispatch.md`'s already-found
+  queue-overflow error path. Not fully traced; flagged as a real lead that argues against assuming
+  the Size top bit simply means "encrypted" (this project's current `ErrEncrypted` trigger) without
+  further checking.
+- Recorded both as real, open items in `handshake.md`/`PACKET_FORMAT.md` rather than acting on them
+  yet -- neither is confirmed enough to safely change code against without risking baking in a wrong
+  guess.
+
 ## 2026-08-22 (cont'd 29) — confirmed the real header's wire order, then rewired this project's own `proto` package to match
 
 - Resumed the header-order search by decompiling three not-yet-examined callers of the

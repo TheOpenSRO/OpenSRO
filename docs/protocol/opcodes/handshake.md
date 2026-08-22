@@ -86,6 +86,35 @@ So: two independent one-byte fields per outgoing packet header — an LFSR-seede
 (point 2) and a multi-table CRC-32-style byte (point 3) — not a single fused "security byte" as
 an earlier pass through this doc assumed.
 
+**New real fact (2026-08-22): the checksum covers the whole packet, not just the payload.** Found
+the real per-packet send-finalization function (`FUN_0046ed40` in `GatewayServer.exe`, reached
+while chasing `PACKET_FORMAT.md`'s header-order question). Real, directly observed sequence,
+gated behind a real per-session flags-byte bit (`+0x16f & 4`, only when a separate mode field
+equals `1`):
+
+1. Compute and store the rolling byte (point 2's exact formula, confirmed identical here again)
+   into the header's `+0x1058` field.
+2. **Zero the checksum byte field (`+0x105c`) first**, then run the checksum function over
+   `(Size & 0x7fff) + 6` bytes -- i.e. the *entire* packet length including the real 6-byte header,
+   not the payload alone -- and only then store the real computed result into `+0x105c`.
+
+This means the real checksum is computed over the complete on-wire packet (header, with its own
+checksum byte field zeroed out for the computation, plus the full payload), not just the payload
+bytes the way `PacketChecksum` currently gets fed in `server/internal/proto`. A real, concrete
+correction to make whenever this project's own checksum usage is brought in line with the original
+for actual wire compatibility (not done yet -- `PacketChecksum` remains this project's own
+originally-designed stand-in either way, per policy #2, but its *usage pattern* should match this
+real fact once real interop is attempted).
+
+Also observed in the same function: a second real branch gated on a different flags-byte bit
+(`+0x16f & 2`) together with the Size field's top bit (`0x8000`), which real-checks a length against
+`0x1001` (4097) before either enqueueing the packet for send or raising a real logged error and
+clearing that top bit back off -- consistent with `dispatch.md`'s already-found queue-overflow
+error path (real opcode `0x1001`). Not fully traced this pass; noted as a real, concrete lead for
+whoever picks up the massive/split-packet reassembly item next, since it's the first real code
+this project has found that treats the Size field's top bit as a queuing/backpressure signal
+rather than confirming or ruling out "encrypted" as its meaning.
+
 ## Encryption
 
 The handshake object referenced during this exchange carries a same-typed member used later for
@@ -117,6 +146,11 @@ key derivation/exchange has not been pulled apart yet; that's the next piece nee
       found (see the offset table above) -- the real next step for this specific opcode pair now
       that `docs/protocol/PROTOCOL_DECISION.md` has reversed course to target actual wire
       compatibility.
+- [x] Found the real per-packet send-finalization function (`FUN_0046ed40`) and confirmed the
+      checksum runs over the whole packet (header + payload, checksum byte zeroed during the run),
+      not the payload alone -- see the new section above. Also surfaced a real, not-yet-fully-traced
+      lead on the Size field's top-bit meaning (queue/backpressure related, not confirmed
+      encrypted-vs-something-else yet).
 - [ ] Pull key derivation for the session cipher.
 - [ ] Wire this into `server/internal/proto`/the real gateway, now that the goal is genuine wire
       compatibility rather than a reference implementation -- see

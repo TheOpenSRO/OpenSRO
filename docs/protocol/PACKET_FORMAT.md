@@ -96,9 +96,25 @@ a couple of real opcodes are solid.
 - [x] Confirm the real wire *order* of the header's four fields -- **found** via `FUN_0046d5d0`'s
       real per-buffer field-offset setup (see above): `Size(2) @0, Opcode/MsgID(2) @2,
       RollingByte(1) @4, ChecksumByte(1) @5`. Both field set and order are now confirmed real facts.
-- [ ] Update this project's own `server/internal/proto` header read/write to the real confirmed
-      6-byte, 4-field layout above, replacing the placeholder 5-byte `Size+Opcode+Security` layout
-      -- real wire-compatibility work now that the target shape is fully known, not just referenced.
+- [x] Update this project's own `server/internal/proto` header read/write to the real confirmed
+      6-byte, 4-field layout above -- **done** (2026-08-22): `Read`/`Write` now use `Size(2)@0,
+      Opcode(2)@2, RollingByte(1)@4, ChecksumByte(1)@5`, with `RollingByte`/`PacketChecksum` threaded
+      through as optional (nil-safe) per-session generators via `gateway.Session.SetSecurity` rather
+      than requiring session crypto to exist first. The old placeholder `Security`-flags byte is
+      gone; the real confirmed Size-field top bit now gates `ErrEncrypted` instead.
+- [ ] Real fact found (`handshake.md`): the original's checksum covers the *entire* packet (header,
+      with the checksum byte field itself zeroed for the run, plus payload) -- `size + 6` bytes, not
+      the payload alone. This project's own `PacketChecksum` usage in `proto.Read`/`Write` currently
+      only feeds it the payload; bringing that in line with the real usage pattern (still with our
+      own from-scratch table, per `docs/LEGAL.md` policy #2) is real, not-yet-done wire-compat work.
+- [ ] Session key exchange / encrypted packets -- the plumbing to *carry* real per-session
+      `RollingByte`/`PacketChecksum` state now exists (`SetSecurity`), but nothing populates it yet
+      outside tests; needs the handshake (`0x5000`/`0x9000`) payload layout and key derivation
+      pulled first (see `handshake.md`).
+- [ ] Massive-packet reassembly -- `handshake.md` found a real, not-yet-fully-traced lead
+      (`FUN_0046ed40`'s `+0x16f & 2` branch) tying the Size field's top bit to a queue/backpressure
+      check rather than confirming it as an "encrypted" flag; worth revisiting before assuming
+      `ErrEncrypted`'s current trigger condition is the real, final answer.
 - [ ] Opcode table (`docs/protocol/opcodes/`) — starts empty, grows one documented opcode at a
       time as we implement against it, not speculatively. `observed_opcodes.md` now has ~150 real
       opcode *values* across four binaries; payload layouts are the next tier of work.
