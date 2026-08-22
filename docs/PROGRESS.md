@@ -2,6 +2,28 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 4) — investigated `EXTRA` slot rendering: real system found, real dead end
+
+- Looked for what the `EXTRA` equip slot might really render, the last unimplemented item from the
+  real 8-slot equip system. Searched `Media.pk2` for accessory/cosmetic conventions before guessing
+  anything.
+- Found real earring/necklace accessory items (`icon\item\china\acc\`) with a dedicated real UI
+  slot icon (`interface\equipment\equip_slot_earring.ddj`) -- real Silkroad jewelry slots, but these
+  are stat-only items with no 3D mesh in retail SRO, so they don't explain a *visual* struct slot.
+- Found a real, separate cosmetic-item system instead: `resinfo\avataritemdata.txt`, a real
+  UTF-16 tab-separated registry of 4 "avatar" (mall cosmetic) items -- angel/devil wings for both
+  genders -- each with a real target mesh path (`res\item\avatar\avatar_m_angel_wing.bsr`) and a
+  dedicated real UI button (`equip_slot_avata_button.ddj`, distinct from the plain equipment
+  button). This is a real, non-armor cosmetic overlay category, plausibly what `EXTRA` is for.
+- Confirmed dead end: checked `Media.pk2` directly for the `.bsr` mesh files the registry
+  references -- **none of them ship with this client build**, only their icons do. Real system,
+  real data file, real UI slot, but no actual mesh asset to render. Recorded in
+  `docs/protocol/EQUIP_SLOTS.md` and not pursued further, per this project's standing rule against
+  building anything not grounded in real shipped data.
+- This closes out the equip-slot investigation: `EXTRA` is tracked server-side (equip/unequip work)
+  but intentionally has no rendering, same honest status as before, now backed by an actual
+  documented investigation instead of just "not looked at yet".
+
 ## 2026-08-22 (cont'd 3) — real armor now mitigates incoming combat damage
 
 - Direct follow-on to the real per-piece equipment slot work: armor `PhysDefense` was tracked per

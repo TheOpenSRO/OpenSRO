@@ -350,6 +350,9 @@ not accuracy); a newly-found, entirely unparsed real file type (`Map.pk2` region
 contain a `.t` file, magic `JMXVMAPT1001`, with a real byte pattern consistent with a texture
 blend/weight map — a real, previously-investigated RE gap this project couldn't fully close, see
 `docs/protocol/MAPM_FORMAT.md`). That's the current focus (see `docs/PROGRESS.md`). `.efp`'s
-nested tree structure (see above). See
+nested tree structure (see above). The `EXTRA` equip slot's rendering was also investigated and
+dead-ended: a real cosmetic "avatar item" system exists (`resinfo\avataritemdata.txt`, wings for
+both genders, a dedicated real UI slot button), but none of its referenced `.bsr` meshes actually
+ship with this client build — see `docs/protocol/EQUIP_SLOTS.md`. See
 `docs/protocol/{PK2,BSR,BMS,DDJ,BMT,BAN,BSK,MAPO,MAPM,EFP}_FORMAT.md` and `docs/PROGRESS.md` for
 the detailed running log.

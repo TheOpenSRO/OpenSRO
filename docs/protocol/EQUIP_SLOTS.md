@@ -78,3 +78,28 @@ mapping is confirmed.
 `EXTRA` is tracked (equip/unequip work, broadcast isn't extended to it since there's nothing to
 render) but not otherwise wired into gameplay yet — real, honestly incomplete, not guessed at
 further.
+
+## `EXTRA` rendering: investigated, real dead end (no shipped mesh)
+
+Looked for what `EXTRA` might really render before giving up on it. Found a real, genuine
+cosmetic-item system separate from armor: `Media.pk2` ships `resinfo\avataritemdata.txt`, a real
+tab-separated (UTF-16) item registry with exactly 4 real rows:
+
+```
+1  ITEM_MALL_AVATAR_M_ANGEL_WING_DRESS   avatar_wing  res\item\avatar\avatar_m_angel_wing.bsr   50
+1  ITEM_MALL_AVATAR_W_ANGEL_WING_DRESS   avatar_wing  res\item\avatar\avatar_w_angel_wing.bsr   50
+0  ITEM_MALL_AVATAR_M_DEVIL_WING_DRESS   avatar_wing  res\item\avatar\avatar_m_devil_wing.bsr   50
+0  ITEM_MALL_AVATAR_W_DEVIL_WING_DRESS   avatar_wing  res\item\avatar\avatar_w_devil_wing.bsr   50
+```
+
+Real, dedicated UI exists for it too (`interface\equipment\equip_slot_avata_button.ddj`, distinct
+from the plain `equip_slot_equipment_button.ddj`), plus real icons under `icon\item\avatar\` and
+`icon64\item\avatar\` (wings, hats, festival costumes, etc. — more items than the 4-row registry
+covers, so the full mall-avatar catalog is larger than what this client build's `resinfo` lists).
+This is a real, cosmetic, non-armor overlay item category — plausibly what `EXTRA` is for.
+
+**But the actual `.bsr` mesh files the registry points to (`res\item\avatar\avatar_*_wing.bsr`) do
+not exist anywhere in this client build's `Media.pk2`** — checked directly, only the icon files
+ship, not the meshes. Real system, real data file, real UI slot, but no asset to render. Confirmed
+dead end for this client's data — not pursued further, since there is nothing real to build
+against.
