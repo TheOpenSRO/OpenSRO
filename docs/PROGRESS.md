@@ -2,6 +2,19 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 31) — matched the real checksum usage pattern in `proto.Read`/`Write`
+
+- Acted on the previous entry's finding: `proto.Write` now builds the full 6-byte header with the
+  checksum byte field zeroed, feeds that whole header plus the payload through `PacketChecksum` (in
+  that order), then overwrites the checksum byte with the real result -- matching
+  `FUN_0046ed40`'s real confirmed behavior instead of the old payload-only usage. `proto.Read` mirrors
+  this: takes a copy of the received header with the checksum byte zeroed, feeds it plus the payload
+  through the same way, and compares against the received byte. Table contents remain this project's
+  own from-scratch design either way (`docs/LEGAL.md` policy #2) -- only the *usage pattern* changed.
+- Full build + test suite verified green after the change (no test needed updating -- the existing
+  round-trip and mismatch tests already exercise both directions symmetrically).
+- `PACKET_FORMAT.md` status: checksum-scope item now checked off.
+
 ## 2026-08-22 (cont'd 30) — found the real per-packet send-finalization function: checksum covers the whole packet, not just payload
 
 - Decompiled `FUN_0046ed40` in `GatewayServer.exe` (reached while chasing the header-order question

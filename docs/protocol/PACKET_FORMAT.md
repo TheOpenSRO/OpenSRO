@@ -102,11 +102,11 @@ a couple of real opcodes are solid.
       through as optional (nil-safe) per-session generators via `gateway.Session.SetSecurity` rather
       than requiring session crypto to exist first. The old placeholder `Security`-flags byte is
       gone; the real confirmed Size-field top bit now gates `ErrEncrypted` instead.
-- [ ] Real fact found (`handshake.md`): the original's checksum covers the *entire* packet (header,
+- [x] Real fact found (`handshake.md`): the original's checksum covers the *entire* packet (header,
       with the checksum byte field itself zeroed for the run, plus payload) -- `size + 6` bytes, not
-      the payload alone. This project's own `PacketChecksum` usage in `proto.Read`/`Write` currently
-      only feeds it the payload; bringing that in line with the real usage pattern (still with our
-      own from-scratch table, per `docs/LEGAL.md` policy #2) is real, not-yet-done wire-compat work.
+      the payload alone. **Matched** (2026-08-22): `proto.Read`/`Write` now feed the whole header
+      (checksum byte zeroed) plus payload through `PacketChecksum`, in that order, matching the real
+      usage pattern -- still with our own from-scratch table contents, per `docs/LEGAL.md` policy #2.
 - [ ] Session key exchange / encrypted packets -- the plumbing to *carry* real per-session
       `RollingByte`/`PacketChecksum` state now exists (`SetSecurity`), but nothing populates it yet
       outside tests; needs the handshake (`0x5000`/`0x9000`) payload layout and key derivation

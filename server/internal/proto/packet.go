@@ -86,6 +86,14 @@ func Read(r *bufio.Reader, roll *RollingByte, sum *PacketChecksum) (*Packet, err
 		}
 	}
 	if sum != nil {
+		// Real confirmed behavior (handshake.md): the checksum covers the whole
+		// packet -- header, with the checksum byte field itself zeroed for the
+		// run, plus the full payload -- not the payload alone.
+		zeroed := append([]byte(nil), header...)
+		zeroed[5] = 0
+		for _, b := range zeroed {
+			sum.Update(b)
+		}
 		for _, b := range data {
 			sum.Update(b)
 		}
@@ -106,22 +114,26 @@ func Write(w io.Writer, p *Packet, roll *RollingByte, sum *PacketChecksum) error
 		return fmt.Errorf("proto: payload of %d bytes too large for a single frame", len(p.Data))
 	}
 
-	var rollByte, checksumByte byte
+	var rollByte byte
 	if roll != nil {
 		rollByte = roll.Next()
-	}
-	if sum != nil {
-		for _, b := range p.Data {
-			sum.Update(b)
-		}
-		checksumByte = sum.Byte()
 	}
 
 	header := make([]byte, headerSize)
 	binary.LittleEndian.PutUint16(header[0:2], uint16(len(p.Data)))
 	binary.LittleEndian.PutUint16(header[2:4], p.Opcode)
 	header[4] = rollByte
-	header[5] = checksumByte
+	header[5] = 0 // real confirmed behavior: zeroed for the checksum run below, see Read
+
+	if sum != nil {
+		for _, b := range header {
+			sum.Update(b)
+		}
+		for _, b := range p.Data {
+			sum.Update(b)
+		}
+		header[5] = sum.Byte()
+	}
 
 	if _, err := w.Write(header); err != nil {
 		return err
