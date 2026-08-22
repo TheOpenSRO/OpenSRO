@@ -39,7 +39,7 @@ func armorBit(slot equipment.Slot) byte {
 }
 
 func TestEntitySnapshotRoundTrip(t *testing.T) {
-	want := &EntitySnapshot{CharacterID: 42, Name: "Aria", X: 1.5, Y: -2.5, Z: 3, ArmorSlotsMask: armorBit(equipment.SlotHelm) | armorBit(equipment.SlotBoots), HasWeapon: true, Gender: character.GenderChinaWoman}
+	want := &EntitySnapshot{CharacterID: 42, Name: "Aria", X: 1.5, Y: -2.5, Z: 3, ArmorSlotsMask: armorBit(equipment.SlotHelm) | armorBit(equipment.SlotBoots), HasWeapon: true, HasShield: true, Gender: character.GenderChinaWoman}
 	got, rest, err := decodeEntitySnapshot(want.Encode())
 	if err != nil {
 		t.Fatalf("decodeEntitySnapshot: %v", err)
@@ -55,7 +55,7 @@ func TestEntitySnapshotRoundTrip(t *testing.T) {
 func TestEnterWorldResultRoundTripSuccess(t *testing.T) {
 	want := &EnterWorldResult{
 		OK: true, Zone: "jangan", X: 1, Y: 2, Z: 3, Gender: character.GenderChinaMan,
-		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, ArmorSlotsMask: armorBit(equipment.SlotMail), HasWeapon: false, Gender: character.GenderChinaWoman}},
+		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, ArmorSlotsMask: armorBit(equipment.SlotMail), HasWeapon: false, HasShield: true, Gender: character.GenderChinaWoman}},
 	}
 	got, err := DecodeEnterWorldResult(want.Encode())
 	if err != nil {
@@ -113,12 +113,12 @@ func TestWorldFullFlow(t *testing.T) {
 		t.Fatalf("setting Aria's gender: %v", err)
 	}
 
-	// Bram has a real armor piece (SlotMail) equipped but no weapon; Aria
-	// has a real weapon equipped but no armor -- exercises both real
-	// ArmorSlotsMask/HasWeapon outcomes, independently, through the actual
-	// EnterWorld/EntityEntered flow, not just the standalone Encode/Decode
-	// round trip above.
-	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), worldTestMaxStacks{200: 1, 201: 1})
+	// Bram has a real armor piece (SlotMail) and a real shield equipped but
+	// no weapon; Aria has a real weapon equipped but no armor/shield --
+	// exercises all three real ArmorSlotsMask/HasWeapon/HasShield outcomes,
+	// independently, through the actual EnterWorld/EntityEntered flow, not
+	// just the standalone Encode/Decode round trip above.
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), worldTestMaxStacks{200: 1, 201: 1, 202: 1})
 	if err != nil {
 		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
 	}
@@ -139,6 +139,14 @@ func TestWorldFullFlow(t *testing.T) {
 	}
 	if err := eq.Equip(ctx, bram.ID, equipment.SlotMail, 0); err != nil {
 		t.Fatalf("equipping Bram's armor: %v", err)
+	}
+	if err := inv.AddItem(ctx, bram.ID, 202, 1); err != nil {
+		t.Fatalf("seeding Bram's inventory (shield): %v", err)
+	}
+	// Bram's inventory slot 0 freed up once the mail moved to equipment,
+	// so the shield lands there, not slot 1.
+	if err := eq.Equip(ctx, bram.ID, equipment.SlotShield, 0); err != nil {
+		t.Fatalf("equipping Bram's shield: %v", err)
 	}
 	if err := inv.AddItem(ctx, aria.ID, 201, 1); err != nil {
 		t.Fatalf("seeding Aria's inventory: %v", err)
@@ -217,6 +225,9 @@ func TestWorldFullFlow(t *testing.T) {
 	if !ewr.Others[0].HasWeapon {
 		t.Fatalf("Aria has a real weapon equipped, but bob's snapshot claims HasWeapon=false: %+v", ewr.Others[0])
 	}
+	if ewr.Others[0].HasShield {
+		t.Fatalf("Aria has no shield equipped, but bob's snapshot claims HasShield=true: %+v", ewr.Others[0])
+	}
 	if ewr.Others[0].Gender != character.GenderChinaWoman {
 		t.Fatalf("bob's snapshot of Aria should carry her real gender %q, got %q", character.GenderChinaWoman, ewr.Others[0].Gender)
 	}
@@ -245,6 +256,9 @@ func TestWorldFullFlow(t *testing.T) {
 	}
 	if enteredSnap.HasWeapon {
 		t.Fatalf("Bram has no weapon equipped, but EntityEntered claims HasWeapon=true: %+v", enteredSnap)
+	}
+	if !enteredSnap.HasShield {
+		t.Fatalf("Bram has a real shield equipped, but EntityEntered claims HasShield=false: %+v", enteredSnap)
 	}
 	if enteredSnap.Gender != character.GenderChinaMan {
 		t.Fatalf("Bram's real gender is the default %q, got %q", character.GenderChinaMan, enteredSnap.Gender)

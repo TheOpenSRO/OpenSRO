@@ -33,13 +33,13 @@ const spawnZone = "jangan"
 var spawnPos = world.Position{X: 0, Y: 0, Z: 0}
 
 // EntitySnapshot describes one character's presence in the world: who they
-// are, where they are, which real armor pieces + whether a weapon are
-// equipped (queried live from the equipment store at broadcast time -- see
-// equippedSlots -- so it always reflects the character's actual current
-// equip state, not a value cached when they entered the world), and their
-// real Gender (one of character.GenderChinaMan/GenderChinaWoman -- see
-// character.go), which picks which real body/skeleton assets the client
-// renders them with.
+// are, where they are, which real armor pieces + whether a weapon/shield
+// are equipped (queried live from the equipment store at broadcast time --
+// see equippedSlots -- so it always reflects the character's actual
+// current equip state, not a value cached when they entered the world),
+// and their real Gender (one of character.GenderChinaMan/
+// character.GenderChinaWoman -- see character.go), which picks which real
+// body/skeleton assets the client renders them with.
 //
 // ArmorSlotsMask is a real per-piece bitmask, one bit per entry in
 // equipment.ArmorSlots (bit 0 = ArmorSlots[0], etc.) -- see
@@ -52,6 +52,7 @@ type EntitySnapshot struct {
 	X, Y, Z        float32
 	ArmorSlotsMask byte
 	HasWeapon      bool
+	HasShield      bool
 	Gender         string
 }
 
@@ -63,6 +64,11 @@ func (e *EntitySnapshot) Encode() []byte {
 	out = append(out, encodeFloat32(e.Z)...)
 	out = append(out, e.ArmorSlotsMask)
 	if e.HasWeapon {
+		out = append(out, 1)
+	} else {
+		out = append(out, 0)
+	}
+	if e.HasShield {
 		out = append(out, 1)
 	} else {
 		out = append(out, 0)
@@ -106,33 +112,39 @@ func decodeEntitySnapshot(data []byte) (*EntitySnapshot, []byte, error) {
 	hasWeapon := rest[0] != 0
 	rest = rest[1:]
 
+	if len(rest) < 1 {
+		return nil, nil, fmt.Errorf("has_shield: %w", errors.New("truncated"))
+	}
+	hasShield := rest[0] != 0
+	rest = rest[1:]
+
 	genderFields, rest, err := decodeStringsPrefix(rest, 1)
 	if err != nil {
 		return nil, nil, fmt.Errorf("gender: %w", err)
 	}
 
-	return &EntitySnapshot{CharacterID: id, Name: names[0], X: x, Y: y, Z: z, ArmorSlotsMask: armorSlotsMask, HasWeapon: hasWeapon, Gender: genderFields[0]}, rest, nil
+	return &EntitySnapshot{CharacterID: id, Name: names[0], X: x, Y: y, Z: z, ArmorSlotsMask: armorSlotsMask, HasWeapon: hasWeapon, HasShield: hasShield, Gender: genderFields[0]}, rest, nil
 }
 
 // equippedSlots reports which of equipment.ArmorSlots characterID
 // currently has equipped (as a real per-piece bitmask, bit i =
-// ArmorSlots[i]) and whether equipment.SlotWeapon is occupied, in one real
-// equipment-store lookup rather than querying per-slot. eq may be nil
-// (some handler chains -- tests exercising features unrelated to
-// equipment -- wire up WorldHandler without an equipment store), in which
-// case this always reports "nothing equipped" rather than requiring every
-// caller to carry one around. Errors are treated the same as "not
-// equipped" -- an equipment lookup failure shouldn't block someone from
-// entering the world or moving, and defaulting to unequipped is the more
-// honest failure mode (never claims equipment that couldn't be
-// confirmed).
-func equippedSlots(ctx context.Context, eq equipment.Store, characterID int64) (armorSlotsMask byte, hasWeapon bool) {
+// ArmorSlots[i]) and whether equipment.SlotWeapon/SlotShield are
+// occupied, in one real equipment-store lookup rather than querying
+// per-slot. eq may be nil (some handler chains -- tests exercising
+// features unrelated to equipment -- wire up WorldHandler without an
+// equipment store), in which case this always reports "nothing equipped"
+// rather than requiring every caller to carry one around. Errors are
+// treated the same as "not equipped" -- an equipment lookup failure
+// shouldn't block someone from entering the world or moving, and
+// defaulting to unequipped is the more honest failure mode (never claims
+// equipment that couldn't be confirmed).
+func equippedSlots(ctx context.Context, eq equipment.Store, characterID int64) (armorSlotsMask byte, hasWeapon, hasShield bool) {
 	if eq == nil {
-		return 0, false
+		return 0, false, false
 	}
 	items, err := eq.Get(ctx, characterID)
 	if err != nil {
-		return 0, false
+		return 0, false, false
 	}
 	equippedSet := make(map[equipment.Slot]bool, len(items))
 	for _, it := range items {
@@ -143,7 +155,7 @@ func equippedSlots(ctx context.Context, eq equipment.Store, characterID int64) (
 			armorSlotsMask |= 1 << uint(i)
 		}
 	}
-	return armorSlotsMask, equippedSet[equipment.SlotWeapon]
+	return armorSlotsMask, equippedSet[equipment.SlotWeapon], equippedSet[equipment.SlotShield]
 }
 
 // genderOf looks up characterID's real Gender via chars.GetByID, live at
@@ -162,13 +174,14 @@ func genderOf(ctx context.Context, chars character.Store, characterID int64) str
 }
 
 func entitySnapshotFromWorld(ctx context.Context, eq equipment.Store, chars character.Store, e world.Entity) EntitySnapshot {
-	armorSlotsMask, hasWeapon := equippedSlots(ctx, eq, e.CharacterID)
+	armorSlotsMask, hasWeapon, hasShield := equippedSlots(ctx, eq, e.CharacterID)
 	return EntitySnapshot{
 		CharacterID: e.CharacterID,
 		Name:        e.Name,
 		X:           float32(e.Pos.X), Y: float32(e.Pos.Y), Z: float32(e.Pos.Z),
 		ArmorSlotsMask: armorSlotsMask,
 		HasWeapon:      hasWeapon,
+		HasShield:      hasShield,
 		Gender:         genderOf(ctx, chars, e.CharacterID),
 	}
 }
@@ -444,12 +457,13 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		return err
 	}
 
-	ownArmorSlotsMask, ownHasWeapon := equippedSlots(ctx, eq, owned.ID)
+	ownArmorSlotsMask, ownHasWeapon, ownHasShield := equippedSlots(ctx, eq, owned.ID)
 	entered := &EntitySnapshot{
 		CharacterID: owned.ID, Name: owned.Name,
 		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
 		ArmorSlotsMask: ownArmorSlotsMask,
 		HasWeapon:      ownHasWeapon,
+		HasShield:      ownHasShield,
 		Gender:         owned.Gender,
 	}
 	for _, other := range others {

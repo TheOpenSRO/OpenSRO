@@ -13,11 +13,12 @@ const OP_ENTITY_MOVED := 0x0024        # server -> client, broadcast
 const OP_ENTITY_LEFT := 0x0025         # server -> client, broadcast
 
 ## One character's presence in the world: who they are, where they are,
-## which real armor pieces + whether a weapon are equipped (the server's
-## actual, live equipment-store answer at the moment this snapshot was
-## sent -- see server/internal/session/world.go's equippedSlots), and
-## their real Gender (CharacterNet.GENDER_CHINA_MAN/GENDER_CHINA_WOMAN),
-## which picks which real body/skeleton assets they render with.
+## which real armor pieces + whether a weapon/shield are equipped (the
+## server's actual, live equipment-store answer at the moment this
+## snapshot was sent -- see server/internal/session/world.go's
+## equippedSlots), and their real Gender (CharacterNet.GENDER_CHINA_MAN/
+## GENDER_CHINA_WOMAN), which picks which real body/skeleton assets they
+## render with.
 ##
 ## armor_slots_mask is a real per-piece bitmask, one bit per entry in
 ## EquipmentNet.ARMOR_SLOTS (bit 0 = ARMOR_SLOTS[0], etc.) -- see
@@ -31,6 +32,7 @@ class EntitySnapshot:
 	var z: float
 	var armor_slots_mask: int
 	var has_weapon: bool
+	var has_shield: bool
 	var gender: String
 
 ## Encodes an OpEnterWorld request: just a character name.
@@ -98,6 +100,11 @@ static func _decode_entity_snapshot(data: PackedByteArray, offset: int) -> Array
 	if offset + 1 > data.size():
 		return [null, -1]
 	snap.has_weapon = data[offset] != 0
+	offset += 1
+
+	if offset + 1 > data.size():
+		return [null, -1]
+	snap.has_shield = data[offset] != 0
 	offset += 1
 
 	if offset + 2 > data.size():

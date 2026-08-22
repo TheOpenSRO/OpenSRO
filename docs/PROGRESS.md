@@ -2,6 +2,32 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 2) — real off-hand shield rendering, closing the last real-slot gap
+
+- Direct follow-on to the real per-piece equipment slot work: `SHIELD` was tracked (equip/unequip
+  worked) but had no rendering, unlike `WEAPON`. Checked for real shield assets before building
+  anything, same discipline as every other equipped-item addition this session.
+- Found real, faction-wide shield item meshes under the exact same real weapon folder as weapons
+  (`Prim\Mesh\Item\China\weapon\shield_11.bms` and many other real numbered shields) -- confirmed
+  real via the same material-name-to-layer-name match already used for weapons/armor
+  (`shield_11.bms`'s `material_name` "shield_11" matches a real layer in `shield_11.bmt`).
+- Confirmed a second real attach bone the same direct way `WEAPON_BONE` was: pulled a real
+  `chinaman_skel.bsk` and found the exact string `"Bip01 L Hand"` -- the real off-hand counterpart
+  to the weapon's `"Bip01 R Hand"`.
+- Added `CharacterAssembler.assemble_shield`/`SHIELD_BONE` (identical mechanism to
+  `assemble_weapon`), a cached shared (non-gender-split) shield mesh/material in `World3D.gd`, and
+  extended `EntitySnapshot`/`WorldNet.EntitySnapshot` with a real `HasShield` bool broadcast the
+  same live way as `HasWeapon`.
+- Verified: new `CharacterAssembler` test for the off-hand attachment, extended
+  `TestWorldFullFlow` to equip a real shield on one of its two characters and assert the flag
+  propagates through the live broadcast (hit one real snag: the inventory slot a previously-
+  equipped item vacates gets reused for the next `AddItem`, not the next sequential slot -- fixed
+  by equipping from the correct real slot instead of assuming index order). Full regression: Go
+  clean (`build`/`vet`/`test`, all packages), all 35 GDScript suites pass, live scene-boot smoke
+  test confirms `World3D.tscn` still renders correctly.
+- This closes the last real, renderable gap from the equip-slot work -- `EXTRA` remains tracked
+  but unrendered, since no real "extra" cosmetic-item convention has been investigated.
+
 ## 2026-08-22 (cont'd) — real per-piece equipment slots: a genuine decompiler find, not an own-design guess
 
 - Considered building real per-piece equipment slots (helm/gloves/etc, matching the aa/ba/fa/ha/

@@ -49,21 +49,28 @@ triangle-centroid-X gap scan on `clothes_03_*.bms` — see `docs/PROGRESS.md`):
 `CharacterAssembler` also has a 6th real code, `aa` (forearms, `Bip01 R/L Forearm`), that has **no
 confirmed real slot name** from this debug function — plausibly one of the two unlabeled gap slots
 above, but not confirmed, so this project doesn't claim which. `WEAPON` already matches this
-project's existing `SlotWeapon`. `SHIELD` and `EXTRA` are real, tracked slots with no rendering
-wired up yet — no real off-hand/shield mesh convention or "extra" cosmetic-item convention has
-been investigated in this project yet.
+project's existing `SlotWeapon`.
+
+`SHIELD` also now renders: real, faction-wide shield item meshes were found under the same real
+`Prim\Mesh\Item\China\weapon\` folder as weapons (e.g. `shield_11.bms`, confirmed real via a
+matching `material_name`-to-layer-name pair against `shield_11.bmt`, the same real technique used
+for weapons), and attach to a second real, directly-confirmed bone: `Bip01 L Hand` — the off-hand
+counterpart to `WEAPON`'s `Bip01 R Hand`, found the same way (pulling a real skeleton and locating
+the exact string). `EXTRA` is still a real, tracked slot with no rendering wired up yet — no real
+"extra" cosmetic-item convention has been investigated in this project.
 
 ## What changed
 
 `equipment.Slot` now has one real constant per confirmed slot (`SlotWeapon`, `SlotHelm`,
 `SlotMail`, `SlotShoulderGuard`, `SlotPants`, `SlotBoots`, `SlotShield`, `SlotExtra`) instead of a
 single `SlotArmor`. `EntitySnapshot` broadcasts a real per-slot armor bitmask (which of
-`HELM`/`MAIL`/`SHOULDERGUARD`/`PANTS`/`BOOTS` are actually equipped) instead of one flattened
-`HasArmor` bool, and `World3D.gd` renders exactly those real pieces per character rather than an
-all-or-nothing bundle. `aa` (forearm) pieces render whenever `MAIL` (body) is equipped, since
-that's the one real slot this project's fixed `clothes_03` set's `aa` piece was always bundled
-with before this change, and no more precise real mapping is confirmed.
+`HELM`/`MAIL`/`SHOULDERGUARD`/`PANTS`/`BOOTS` are actually equipped) plus separate `HasWeapon`/
+`HasShield` bools, instead of one flattened `HasArmor` bool, and `World3D.gd` renders exactly those
+real pieces per character rather than an all-or-nothing bundle. `aa` (forearm) pieces render
+whenever `MAIL` (body) is equipped, since that's the one real slot this project's fixed
+`clothes_03` set's `aa` piece was always bundled with before this change, and no more precise real
+mapping is confirmed.
 
-`SHIELD` and `EXTRA` are tracked (equip/unequip work, broadcast isn't extended to them since
-there's nothing to render) but not otherwise wired into gameplay yet — real, honestly incomplete,
-not guessed at further.
+`EXTRA` is tracked (equip/unequip work, broadcast isn't extended to it since there's nothing to
+render) but not otherwise wired into gameplay yet — real, honestly incomplete, not guessed at
+further.

@@ -205,6 +205,39 @@ func _init() -> void:
 	_check(weapon_attachments == 1, "weapon: exactly 1 attachment on the real hand bone (got %d)" % weapon_attachments)
 	_check(weapon_mi != null and weapon_mi.position.is_equal_approx(Vector3(-3, 0, 0)), "weapon: mesh instance offset matches -bind position")
 
+	# Shield: same single-unpaired-mesh mechanism as weapon, but the real
+	# off-hand bone.
+	var skeleton5 := Skeleton3D.new()
+	skeleton5.add_bone("Root")
+	var root5 := skeleton5.find_bone("Root")
+	skeleton5.set_bone_rest(root5, Transform3D.IDENTITY)
+	skeleton5.add_bone(CharacterAssembler.SHIELD_BONE)
+	var off_hand_idx := skeleton5.find_bone(CharacterAssembler.SHIELD_BONE)
+	skeleton5.set_bone_parent(off_hand_idx, root5)
+	skeleton5.set_bone_rest(off_hand_idx, Transform3D(Basis.IDENTITY, Vector3(-3, 0, 0)))
+	for idx in [root5, off_hand_idx]:
+		skeleton5.reset_bone_pose(idx)
+	skeleton5.force_update_all_bone_transforms()
+
+	var shield_mesh := BmsReader.ParsedMesh.new()
+	for p in [Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0)]:
+		var sv := BmsReader.Vertex.new()
+		sv.position = p
+		sv.normal = Vector3.UP
+		sv.uv = Vector2.ZERO
+		shield_mesh.vertices.append(sv)
+	shield_mesh.indices = PackedInt32Array([0, 1, 2])
+
+	CharacterAssembler.assemble_shield(skeleton5, shield_mesh)
+	var shield_attachments := 0
+	var shield_mi: MeshInstance3D = null
+	for child in skeleton5.get_children():
+		if child is BoneAttachment3D and child.bone_name == CharacterAssembler.SHIELD_BONE:
+			shield_attachments += 1
+			shield_mi = child.get_child(0)
+	_check(shield_attachments == 1, "shield: exactly 1 attachment on the real off-hand bone (got %d)" % shield_attachments)
+	_check(shield_mi != null and shield_mi.position.is_equal_approx(Vector3(3, 0, 0)), "shield: mesh instance offset matches -bind position")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

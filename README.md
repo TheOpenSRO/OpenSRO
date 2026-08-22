@@ -264,6 +264,14 @@ shows once the player's account actually has something equipped in `SLOT_WEAPON`
 character renders bare-handed, same as bare-skinned for armor. Rendered and verified against real
 pulled data (real 37-bone skeleton, real weapon mesh, real material layer match confirmed).
 
+A real off-hand shield renders the same way: real, faction-wide shield item meshes exist under the
+same real weapon folder (`Prim/Mesh/Item/China/weapon/shield_11.bms`, an arbitrary fixed pick among
+many real numbered shields found) and attach to a second real, directly-confirmed bone
+(`CharacterAssembler.SHIELD_BONE`, "Bip01 L Hand" — the off-hand counterpart to the weapon's "Bip01
+R Hand", found the same direct way). Textured the same real name-matched way
+(`shield_11.bms`'s `material_name` matches a real layer in `shield_11.bmt`). Gated on real
+`SLOT_SHIELD` equip state, broadcast per-player the same way as armor and weapon.
+
 The ground is no longer just a placeholder box either: setting `SRREVAMP_MAPM_PATH` (+ its own
 `SRREVAMP_MAP_PK2_PATH`, since `Map.pk2` is a separate archive from `Data.pk2` in a real retail
 install) loads a real `Map.pk2` region's real elevation data and builds a real triangulated

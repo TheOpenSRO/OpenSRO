@@ -255,3 +255,18 @@ const WEAPON_BONE := "Bip01 R Hand"
 ## with no slot-code parsing needed.
 static func assemble_weapon(skeleton: Skeleton3D, mesh: BmsReader.ParsedMesh, material: Material = null) -> void:
 	_attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), WEAPON_BONE, material)
+
+## Real bone a real shield rigidly attaches to -- the off-hand counterpart
+## to WEAPON_BONE, confirmed the same direct way: pulling a real
+## chinaman_skel.bsk and finding the exact string "Bip01 L Hand" among its
+## real bone names. Real shield meshes (Prim\Mesh\Item\China\weapon\
+## shield_*.bms, e.g. "shield_11") are, like weapons, single self-contained
+## meshes with no left/right-paired naming convention.
+const SHIELD_BONE := "Bip01 L Hand"
+
+## Attaches one real shield mesh (resolved to its own real material via
+## mesh.material_name, e.g. a real shield_11.bms's material_name
+## "shield_11" matches a real layer inside a real shield_11.bmt) rigidly
+## to SHIELD_BONE -- same mechanism as assemble_weapon.
+static func assemble_shield(skeleton: Skeleton3D, mesh: BmsReader.ParsedMesh, material: Material = null) -> void:
+	_attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), SHIELD_BONE, material)
