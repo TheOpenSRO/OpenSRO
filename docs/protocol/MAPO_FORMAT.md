@@ -102,7 +102,12 @@ available data. It turned up once `server/internal/pk2`'s directory-chain bug wa
 `docs/protocol/PK2_FORMAT.md`), since the file that carries it lives in a real `Data.pk2` folder
 that bug was silently dropping from every listing.
 
-**The real file**: `object.ifo` (root level in `Data.pk2`), magic `JMXVOBJI1000`. Unlike every
+**The real file**: `object.ifo`, magic `JMXVOBJI1000`. **Corrected (2026-08-22)**: this project
+originally believed it lived at `Data.pk2` root; a real live playtest against a real, unmodified
+retail client (via `cmd/pk2list`) found it under a real `navmesh\` folder instead
+(`navmesh\object.ifo`) — the "root level" claim below was wrong (possibly true for whatever sample
+this was first found against, but not a safe general assumption; `client/scripts/World3D.gd`'s
+`OBJECT_INDEX_PATH` now points at the real `navmesh\` path). Unlike every
 other `JMXV*`-prefixed format in this project, it's not a binary container — after the magic line,
 it's a plain ASCII text table, one real object type per line, shaped exactly
 `"%05d 0x%08x \"<path>\""`: a real, sequential type ID (confirmed to always equal its own line

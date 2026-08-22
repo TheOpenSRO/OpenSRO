@@ -197,14 +197,17 @@ const PLAYER_WEAPON_MATERIAL_PATH := "Prim\\Mtrl\\Item\\China\\weapon\\blade1_5.
 const PLAYER_SHIELD_PATH := "Prim\\Mesh\\Item\\China\\weapon\\shield_11.bms"
 const PLAYER_SHIELD_MATERIAL_PATH := "Prim\\Mtrl\\Item\\China\\weapon\\shield_11.bmt"
 
-## Real, root-level file inside Data.pk2 (SRREVAMP_PK2_PATH) mapping a real
-## .mapo placement's type ID to a real .bsr resource path -- see
+## Real file inside Data.pk2 (SRREVAMP_PK2_PATH) mapping a real .mapo
+## placement's type ID to a real .bsr resource path -- see
 ## docs/protocol/MAPO_FORMAT.md and ObjidxReader for the full derivation.
 ## This was a confirmed dead end earlier in this project (no such mapping
 ## had been found); it turned up once server/internal/pk2's directory-chain
 ## bug was fixed, since this file lives inside a real archive folder that
-## bug was silently dropping from every listing.
-const OBJECT_INDEX_PATH := "object.ifo"
+## bug was silently dropping from every listing. **Corrected (2026-08-22,
+## from a real live playtest against a real retail client)**: this is under
+## a real `navmesh\` folder, not pk2 root as this project originally
+## assumed -- MAPO_FORMAT.md's "root level" claim was wrong.
+const OBJECT_INDEX_PATH := "navmesh\\object.ifo"
 ## How many real *placements* from SRREVAMP_MAPO_PATH's region to
 ## instantiate -- an arbitrary, honestly-scoped cap, not a real engine
 ## limit. Distinct real .bsr models are only parsed once each and
