@@ -546,7 +546,7 @@ func TestMonsterListFlow(t *testing.T) {
 	hub := world.NewHub()
 	monsters := combat.NewHub()
 	spawned := monsters.Spawn("jangan", "Stone Golem", 1, 0, 0, 10)
-	monsters.Spawn("donwhang", "Sand Scorpion", 100, 10, 10, 100) // different zone -- shouldn't show up
+	elsewhere := monsters.Spawn("donwhang", "Sand Scorpion", 100, 10, 10, 100) // different zone -- shouldn't show up
 
 	quests, err := quest.OpenSQLStore(inventoryTestDSN())
 	if err != nil {
@@ -599,10 +599,22 @@ func TestMonsterListFlow(t *testing.T) {
 		t.Fatalf("got %+v, want only the jangan Stone Golem (id %d)", lr.Monsters, spawned.ID)
 	}
 
+	// A monster ID from a different zone (never listed, but a real, live ID)
+	// should be rejected the same as an unknown one -- a monster is only
+	// reachable from its own zone.
+	resp = send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: elsewhere.ID}).Encode())
+	ar, err := DecodeAttackResult(resp.Data)
+	if err != nil || ar.Error != "target not found" {
+		t.Fatalf("attack on cross-zone target: got %+v (err=%v), want error 'target not found'", ar, err)
+	}
+	if updated, ok := monsters.Get(elsewhere.ID); !ok || updated.HP != 100 {
+		t.Fatalf("cross-zone target should be untouched, got %+v (ok=%v)", updated, ok)
+	}
+
 	// The discovered ID should actually work against OpAttack -- proving
 	// this isn't just a decorative list disconnected from the real IDs.
 	resp = send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: lr.Monsters[0].ID}).Encode())
-	ar, err := DecodeAttackResult(resp.Data)
+	ar, err = DecodeAttackResult(resp.Data)
 	if err != nil || ar.Error != "" || !ar.MonsterDied {
 		t.Fatalf("attack using discovered id: err=%v result=%+v", err, ar)
 	}

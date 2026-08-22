@@ -401,6 +401,16 @@ func performAttack(
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found"}).Encode()})
 	}
 
+	// A monster is only reachable from its own zone -- MonsterListResult
+	// already only ever shows same-zone monsters (see handleMonsterList), so
+	// treat a cross-zone target ID (e.g. looked up before a real zone
+	// change, see world.Hub.ChangeZone) the same as an unknown one, rather
+	// than leaking that a target with that ID exists somewhere else.
+	attacker, ok := hub.EntityBySession(sess.ID())
+	if !ok || attacker.Zone != monster.Zone {
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found"}).Encode()})
+	}
+
 	base, err := attackerDamage(ctx, characterID, eq, items)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})

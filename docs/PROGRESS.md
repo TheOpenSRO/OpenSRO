@@ -2,6 +2,28 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 10) — fixed a second zone-change fallout bug: cross-zone attacks
+
+- While looking for more fallout from the new multi-zone feature (after already catching the stale
+  "other entities" bug), found `performAttack` (`server/internal/session/combat.go`) never checked
+  that the attacker is actually in the same zone as the monster they're targeting -- it only looked
+  the monster up by ID (`monsters.Get(targetMonsterID)`) and never compared zones. This was
+  latent and harmless before real zone changes existed (every character was always in `"jangan"`
+  together, so a monster's zone always matched), but now that a player can genuinely be in a
+  different zone than a monster ID they hold (e.g. from an `OpMonsterList` call before changing
+  zones), it's a real correctness gap -- a player could attack monsters they have no business
+  reaching.
+- Fixed by resolving the attacker's live zone via `hub.EntityBySession(sess.ID())` and rejecting
+  with the same `"target not found"` error an unknown ID gets, rather than a distinct error --
+  deliberately not leaking that a target with that ID exists somewhere else, consistent with
+  `handleMonsterList` already only ever showing same-zone monsters.
+- Extended `TestMonsterListFlow` (which already spawned a monster in a different zone to prove it
+  doesn't show up in the list) to also attempt attacking that cross-zone monster directly by ID,
+  confirming it's rejected and left untouched. Full `go test ./...` passes.
+- Duels and parties were checked too -- neither is zone-gated at all (duel resolves purely by
+  character name, party by character ID), so a zone change doesn't affect them either way; no bug
+  found there, not changed.
+
 ## 2026-08-22 (cont'd 9) — fixed a real bug in the zone-change feature: stale "other" entities
 
 - Caught right after shipping the previous two entries, while considering what to work on next:
