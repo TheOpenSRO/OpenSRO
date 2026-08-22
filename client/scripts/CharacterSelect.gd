@@ -88,4 +88,4 @@ func _on_enter_world_result(result: WorldNet.EnterWorldResult) -> void:
 	if not result.ok:
 		status_label.text = "Enter world failed: %s" % result.reason
 		return
-	get_tree().change_scene_to_file("res://scenes/World.tscn")
+	get_tree().change_scene_to_file("res://scenes/World3D.tscn")

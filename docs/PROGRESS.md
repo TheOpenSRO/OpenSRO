@@ -2,6 +2,23 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 14) — 2D deleted: World3D.tscn is now the one real client
+
+- Finished the 2D-to-3D port: repointed `CharacterSelect.gd` to load `World3D.tscn` directly
+  instead of `World.tscn`; replaced the now-pointless "Back to 2D View" button with a real "Log
+  Out" button (`_on_disconnect_pressed` -> `NetClient.disconnect_from_server()`) -- 3D never had
+  its own disconnect control since it always assumed you'd go back to 2D to log out. Deleted
+  `client/scenes/World.tscn` and `client/scripts/World.gd` outright (confirmed no other real
+  references first, only stale `.godot/` editor cache entries, which aren't tracked).
+- Updated `World3D.gd`'s top doc comment and `README.md` to describe the 3D scene as the one real
+  client rather than "the new 3D view alongside 2D."
+- Verified: `CharacterSelect.tscn`/`World3D.tscn` both boot clean standalone, all 35 GDScript
+  suites still pass, no `project.godot` diff, full `go test ./...` unaffected (this was
+  entirely client-side).
+- This closes out the "drop 2D" side of the direction change from this session. The other side
+  (full wire-protocol compatibility with the original client) is a much larger, multi-session
+  undertaking -- see `docs/protocol/PROTOCOL_DECISION.md`'s reversal for the honest scope note.
+
 ## 2026-08-22 (cont'd 13) — ported the rest of 2D's panels into 3D: monsters, inventory, equipment, quests, shop, party, guild, duel, trade, friends
 
 - Continuing the 2D-to-3D UI port started with chat: brought the entire `ActionTabs` tab structure

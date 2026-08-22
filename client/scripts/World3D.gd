@@ -1,11 +1,14 @@
 extends Node3D
 
-## First real 3D world scene: a player-controlled CharacterBody3D moving
-## over a placeholder flat ground, synced to the server over the same
-## OpMove/OpEntityEntered/OpEntityMoved/OpEntityLeft protocol the 2D
-## World.tscn already decodes but never sent or rendered anything for (see
-## docs/PROGRESS.md). Other connected characters render as simple labeled
-## capsules at their real, server-authoritative positions.
+## The one real client scene, reached directly from CharacterSelect.gd: a
+## player-controlled CharacterBody3D moving over a placeholder flat ground,
+## synced to the server over OpMove/OpEntityEntered/OpEntityMoved/
+## OpEntityLeft. Other connected characters render as simple labeled
+## capsules at their real, server-authoritative positions, or a real
+## assembled character if real game data is loaded (see below). Its full
+## UI (chat, monsters/combat, inventory, equipment, quests, shop, party,
+## guild, duel, trade, friends) was ported here from the original 2D
+## World.tscn, which has since been deleted -- see docs/PROGRESS.md.
 ##
 ## The ground is a placeholder collision box by default, but both its
 ## *visual* mesh and its *collision* shape are replaced by real terrain if
@@ -1228,8 +1231,8 @@ func _on_entity_left(character_id: int) -> void:
 		_other_bodies.erase(character_id)
 		_log_system("%s left the zone." % departing_name)
 
-func _on_back_to_2d_pressed() -> void:
-	get_tree().change_scene_to_file("res://scenes/World.tscn")
+func _on_disconnect_pressed() -> void:
+	NetClient.disconnect_from_server()
 
 ## Sends a real OpChangeZone for whatever's typed in zone_input.
 ## _on_change_zone_result (connected in _ready()) handles the reply --

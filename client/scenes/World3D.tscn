@@ -99,7 +99,7 @@ offset_right = 400.0
 offset_bottom = 68.0
 text = "Arrow keys / WASD to move"
 
-[node name="BackButton" type="Button" parent="UI/Control"]
+[node name="DisconnectButton" type="Button" parent="UI/Control"]
 layout_mode = 1
 anchors_preset = 3
 anchor_left = 1.0
@@ -113,7 +113,7 @@ offset_bottom = -8.0
 grow_horizontal = 0
 grow_vertical = 0
 mouse_filter = 0
-text = "Back to 2D View"
+text = "Log Out"
 
 [node name="ChatPanel" type="VBoxContainer" parent="UI/Control"]
 layout_mode = 1
@@ -575,5 +575,5 @@ layout_mode = 2
 text = ""
 autowrap_mode = 2
 
-[connection signal="pressed" from="UI/Control/BackButton" to="." method="_on_back_to_2d_pressed"]
+[connection signal="pressed" from="UI/Control/DisconnectButton" to="." method="_on_disconnect_pressed"]
 [connection signal="pressed" from="UI/Control/ChangeZoneButton" to="." method="_on_change_zone_pressed"]

@@ -80,18 +80,22 @@ Run the test suites from `server/` (`go test ./...`, needs the same local Postgr
 ## Status
 
 Server-side protocol (accounts, characters, world/chat, combat/loot, inventory/equipment, shop,
-quests, party/guild, duels, trade, friends) is implemented and tested end-to-end, with a matching
-2D client HUD (`client/scenes/World.tscn`) wired to all of it. This is genuinely playable today:
-`docker compose up --build` (or a local Postgres + `go run ./cmd/server`) plus opening `client/`
-in Godot gets you a real login → character select → 2D world loop against a real server.
+quests, party/guild, duels, trade, friends) is implemented and tested end-to-end, with
+`client/scenes/World3D.tscn` as the one real client, wired to all of it via a UI overlay (chat,
+monsters/combat, inventory, equipment, quests, shop, party, guild, duel, trade, friends) on top of
+a real 3D scene. This is genuinely playable today: `docker compose up --build` (or a local Postgres
++ `go run ./cmd/server`) plus opening `client/` in Godot gets you a real login → character select →
+3D world loop against a real server.
 
-There's now also a first real 3D scene (`client/scenes/World3D.tscn`, reachable from the 2D HUD
-via a "3D View" button): a `CharacterBody3D` player with WASD movement and a third-person camera,
-synced to the server over the same movement protocol the 2D client already decoded but never
-sent or rendered anything for — see `docs/PROGRESS.md` for that finding. Other connected
-characters render as labeled capsules at their real, server-authoritative positions (placeholder
-primitives on purpose — no real character/ground assets wired in yet). **Verified against the
-real running stack**: the full connect → register → login → create character → enter world flow,
+There used to be a separate 2D scene (`World.tscn`) this project's HUD lived in first; its UI was
+ported into `World3D.tscn` and the 2D scene was deleted once that port had full parity — see
+`docs/PROGRESS.md`. The 3D scene itself started as a `CharacterBody3D` player with WASD movement
+and a third-person camera, synced to the server over the same movement protocol the 2D client
+had decoded but never sent or rendered anything for — see `docs/PROGRESS.md` for that finding.
+Other connected characters render as labeled capsules at their real, server-authoritative
+positions, or a real assembled character once real game data is loaded (see below).
+**Verified against the real running stack**: the full connect → register → login → create
+character → enter world flow,
 and two concurrent real client instances genuinely seeing each other enter and move in real time,
 both confirmed by actually running the Go server + client together, not just unit tests.
 
@@ -231,13 +235,13 @@ to the bone-slot codes `CharacterAssembler` already uses for rendering (`ha`→`
 full derivation, including the one real bone code (`aa`, forearms) that has no confirmed real slot
 name of its own and renders alongside `MAIL` instead. `server/internal/equipment.Slot` now has one
 constant per real confirmed slot, and a character can genuinely mix pieces — equip just a real helm
-with nothing else, for instance — instead of the old all-or-nothing bundle. The 2D equipment HUD
-(`World.tscn`) exposes this via a real slot picker (`OptionButton`), mirroring the gender picker's
+with nothing else, for instance — instead of the old all-or-nothing bundle. `World3D.tscn`'s
+Equipment tab exposes this via a real slot picker (`OptionButton`), mirroring the gender picker's
 pattern.
 
 Whether each real armor piece actually shows is gated on the player's actual,
-server-authoritative per-slot equip state via the same `EquipmentNet` protocol the 2D equipment
-HUD uses (`World3D.gd`'s `_real_player_equipped_slots()`), queried on world entry. A newly-created
+server-authoritative per-slot equip state via the same `EquipmentNet` protocol that tab uses
+(`World3D.gd`'s `_real_player_equipped_slots()`), queried on world entry. A newly-created
 character has nothing equipped, so it renders bare-skinned until the player actually equips real
 pieces — and renders exactly the pieces actually equipped, not a fixed bundle. The armor meshes
 themselves are still a fixed set per gender (one arbitrary real pick among many found, see below),
