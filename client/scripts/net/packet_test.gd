@@ -18,8 +18,9 @@ func _test_encode_header_shape() -> void:
 	_check(encoded.size() == Packet.HEADER_SIZE + 2, "encode: total size includes header + payload")
 	_check(encoded.decode_u16(0) == 2, "encode: size field is payload length")
 	_check(encoded.decode_u16(2) == 0x1234, "encode: opcode field round-trips")
-	_check(encoded[4] == 0, "encode: flags byte is 0")
-	_check(encoded.slice(5, 7).get_string_from_utf8() == "hi", "encode: payload bytes follow header")
+	_check(encoded[4] == 0, "encode: rolling byte is 0")
+	_check(encoded[5] == 0, "encode: checksum byte is 0")
+	_check(encoded.slice(Packet.HEADER_SIZE, Packet.HEADER_SIZE + 2).get_string_from_utf8() == "hi", "encode: payload bytes follow header")
 
 func _test_encode_empty_payload() -> void:
 	var p := Packet.new(0x0001)

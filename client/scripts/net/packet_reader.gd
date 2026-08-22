@@ -30,10 +30,10 @@ func poll(peer: StreamPeer) -> Packet:
 			push_error("PacketReader: reading header: %s" % header_result[0])
 			return null
 		var header: PackedByteArray = header_result[1]
-		_pending_size = header.decode_u16(0)
+		_pending_size = header.decode_u16(0) & 0x7FFF
 		_pending_opcode = header.decode_u16(2)
-		# header[4] (flags) intentionally ignored for now -- see
-		# Packet.encode()'s note.
+		# header[4]/[5] (RollingByte/ChecksumByte) intentionally ignored for
+		# now -- see Packet.encode()'s note.
 		_have_header = true
 
 	if peer.get_available_bytes() < _pending_size:
