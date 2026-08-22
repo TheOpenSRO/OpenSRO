@@ -171,4 +171,66 @@ func TestEquipmentIsolatedPerCharacter(t *testing.T) {
 	}
 }
 
+// TestEquipMultipleArmorPiecesSimultaneously confirms the real per-piece
+// slot layout (see docs/protocol/EQUIP_SLOTS.md) actually lets a character
+// mix armor pieces -- the point of replacing the old single catch-all
+// SlotArmor -- rather than each Equip silently clobbering the others.
+func TestEquipMultipleArmorPiecesSimultaneously(t *testing.T) {
+	eq, inv := openTestStores(t)
+	ctx := context.Background()
+	inv.AddItem(ctx, 1, 100, 1) // inventory slot 0
+	inv.AddItem(ctx, 1, 200, 1) // inventory slot 1
+
+	if err := eq.Equip(ctx, 1, SlotHelm, 0); err != nil {
+		t.Fatalf("equipping helm: %v", err)
+	}
+	if err := eq.Equip(ctx, 1, SlotBoots, 1); err != nil {
+		t.Fatalf("equipping boots: %v", err)
+	}
+
+	equipped, err := eq.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	bySlot := make(map[Slot]int64)
+	for _, e := range equipped {
+		bySlot[e.Slot] = e.ItemID
+	}
+	if len(equipped) != 2 {
+		t.Fatalf("expected both pieces to coexist, got %+v", equipped)
+	}
+	if bySlot[SlotHelm] != 100 {
+		t.Fatalf("SlotHelm: got item %d, want 100", bySlot[SlotHelm])
+	}
+	if bySlot[SlotBoots] != 200 {
+		t.Fatalf("SlotBoots: got item %d, want 200", bySlot[SlotBoots])
+	}
+
+	// Unequipping one real piece leaves the other real piece untouched.
+	if err := eq.Unequip(ctx, 1, SlotHelm); err != nil {
+		t.Fatalf("unequipping helm: %v", err)
+	}
+	equipped, _ = eq.Get(ctx, 1)
+	if len(equipped) != 1 || equipped[0].Slot != SlotBoots || equipped[0].ItemID != 200 {
+		t.Fatalf("expected only SlotBoots to remain, got %+v", equipped)
+	}
+}
+
+// TestArmorSlotsRealOrder pins down ArmorSlots' real order (HELM, MAIL,
+// SHOULDERGUARD, PANTS, BOOTS) against accidental drift -- this order is a
+// real, decompiler-confirmed fact (see EQUIP_SLOTS.md), not an arbitrary
+// internal choice, and EntitySnapshot.ArmorSlotsMask's bit meaning depends
+// on it staying stable.
+func TestArmorSlotsRealOrder(t *testing.T) {
+	want := []Slot{SlotHelm, SlotMail, SlotShoulderGuard, SlotPants, SlotBoots}
+	if len(ArmorSlots) != len(want) {
+		t.Fatalf("got %d armor slots, want %d: %+v", len(ArmorSlots), len(want), ArmorSlots)
+	}
+	for i, s := range want {
+		if ArmorSlots[i] != s {
+			t.Fatalf("ArmorSlots[%d] = %v, want %v", i, ArmorSlots[i], s)
+		}
+	}
+}
+
 var _ Store = (*SQLStore)(nil)

@@ -25,8 +25,21 @@ func (s worldTestMaxStacks) GetMaxStack(_ context.Context, itemID int64) (int, e
 	return s[itemID], nil
 }
 
+// armorBit returns EntitySnapshot.ArmorSlotsMask's bit for slot, per
+// equipment.ArmorSlots' real order (see EQUIP_SLOTS.md) -- looked up
+// rather than hardcoded so this test doesn't silently drift if that order
+// ever changes.
+func armorBit(slot equipment.Slot) byte {
+	for i, s := range equipment.ArmorSlots {
+		if s == slot {
+			return 1 << uint(i)
+		}
+	}
+	return 0
+}
+
 func TestEntitySnapshotRoundTrip(t *testing.T) {
-	want := &EntitySnapshot{CharacterID: 42, Name: "Aria", X: 1.5, Y: -2.5, Z: 3, HasArmor: true, HasWeapon: true, Gender: character.GenderChinaWoman}
+	want := &EntitySnapshot{CharacterID: 42, Name: "Aria", X: 1.5, Y: -2.5, Z: 3, ArmorSlotsMask: armorBit(equipment.SlotHelm) | armorBit(equipment.SlotBoots), HasWeapon: true, Gender: character.GenderChinaWoman}
 	got, rest, err := decodeEntitySnapshot(want.Encode())
 	if err != nil {
 		t.Fatalf("decodeEntitySnapshot: %v", err)
@@ -42,7 +55,7 @@ func TestEntitySnapshotRoundTrip(t *testing.T) {
 func TestEnterWorldResultRoundTripSuccess(t *testing.T) {
 	want := &EnterWorldResult{
 		OK: true, Zone: "jangan", X: 1, Y: 2, Z: 3, Gender: character.GenderChinaMan,
-		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, HasArmor: true, HasWeapon: false, Gender: character.GenderChinaWoman}},
+		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, ArmorSlotsMask: armorBit(equipment.SlotMail), HasWeapon: false, Gender: character.GenderChinaWoman}},
 	}
 	got, err := DecodeEnterWorldResult(want.Encode())
 	if err != nil {
@@ -100,10 +113,11 @@ func TestWorldFullFlow(t *testing.T) {
 		t.Fatalf("setting Aria's gender: %v", err)
 	}
 
-	// Bram has real armor equipped but no weapon; Aria has a real weapon
-	// equipped but no armor -- exercises both real HasArmor/HasWeapon
-	// outcomes, independently, through the actual EnterWorld/EntityEntered
-	// flow, not just the standalone Encode/Decode round trip above.
+	// Bram has a real armor piece (SlotMail) equipped but no weapon; Aria
+	// has a real weapon equipped but no armor -- exercises both real
+	// ArmorSlotsMask/HasWeapon outcomes, independently, through the actual
+	// EnterWorld/EntityEntered flow, not just the standalone Encode/Decode
+	// round trip above.
 	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), worldTestMaxStacks{200: 1, 201: 1})
 	if err != nil {
 		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
@@ -123,7 +137,7 @@ func TestWorldFullFlow(t *testing.T) {
 	if err := inv.AddItem(ctx, bram.ID, 200, 1); err != nil {
 		t.Fatalf("seeding Bram's inventory: %v", err)
 	}
-	if err := eq.Equip(ctx, bram.ID, equipment.SlotArmor, 0); err != nil {
+	if err := eq.Equip(ctx, bram.ID, equipment.SlotMail, 0); err != nil {
 		t.Fatalf("equipping Bram's armor: %v", err)
 	}
 	if err := inv.AddItem(ctx, aria.ID, 201, 1); err != nil {
@@ -197,8 +211,8 @@ func TestWorldFullFlow(t *testing.T) {
 	if len(ewr.Others) != 1 || ewr.Others[0].Name != "Aria" {
 		t.Fatalf("bob should see Aria, got %+v", ewr.Others)
 	}
-	if ewr.Others[0].HasArmor {
-		t.Fatalf("Aria has no armor equipped, but bob's snapshot claims HasArmor=true: %+v", ewr.Others[0])
+	if ewr.Others[0].ArmorSlotsMask != 0 {
+		t.Fatalf("Aria has no armor equipped, but bob's snapshot claims ArmorSlotsMask=%b: %+v", ewr.Others[0].ArmorSlotsMask, ewr.Others[0])
 	}
 	if !ewr.Others[0].HasWeapon {
 		t.Fatalf("Aria has a real weapon equipped, but bob's snapshot claims HasWeapon=false: %+v", ewr.Others[0])
@@ -210,9 +224,10 @@ func TestWorldFullFlow(t *testing.T) {
 		t.Fatalf("bob's own EnterWorldResult should carry his real (default) gender %q, got %q", character.GenderChinaMan, ewr.Gender)
 	}
 
-	// Alice should now receive an OpEntityEntered for Bram, with HasArmor
-	// true -- reflecting Bram's real equipped state, queried live from the
-	// equipment store, not a hardcoded/default value.
+	// Alice should now receive an OpEntityEntered for Bram, with the real
+	// SlotMail bit set in ArmorSlotsMask -- reflecting Bram's real equipped
+	// state, queried live from the equipment store, not a hardcoded/default
+	// value.
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
 	entered, err := proto.Read(rA)
 	if err != nil {
@@ -225,8 +240,8 @@ func TestWorldFullFlow(t *testing.T) {
 	if err != nil || enteredSnap.Name != "Bram" {
 		t.Fatalf("expected EntityEntered for Bram, got %+v (err=%v)", enteredSnap, err)
 	}
-	if !enteredSnap.HasArmor {
-		t.Fatalf("Bram has real armor equipped, but EntityEntered claims HasArmor=false: %+v", enteredSnap)
+	if enteredSnap.ArmorSlotsMask&armorBit(equipment.SlotMail) == 0 {
+		t.Fatalf("Bram has real SlotMail armor equipped, but EntityEntered's ArmorSlotsMask=%b doesn't reflect it: %+v", enteredSnap.ArmorSlotsMask, enteredSnap)
 	}
 	if enteredSnap.HasWeapon {
 		t.Fatalf("Bram has no weapon equipped, but EntityEntered claims HasWeapon=true: %+v", enteredSnap)

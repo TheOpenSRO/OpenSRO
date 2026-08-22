@@ -2,6 +2,49 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd) — real per-piece equipment slots: a genuine decompiler find, not an own-design guess
+
+- Considered building real per-piece equipment slots (helm/gloves/etc, matching the aa/ba/fa/ha/
+  la/sa convention `CharacterAssembler` already renders with) as an own-design gameplay
+  improvement. Before committing to invented slot names disconnected from any real data, checked
+  whether the real client's actual equip-slot categories could be found -- and they could.
+- Searched `sro_client.exe` for equip-related strings and found a real, literal debug-print format
+  string block: `"HELM [ %d ] [ %d ]"`, `"MAIL [ %d ] [ %d ]"`, `"SHOULDERGUARD [ %d ] [ %d ]"`,
+  `"PANTS [ %d ] [ %d ]"`, `"BOOTS [ %d ] [ %d ]"`, `"WEAPON [ %d ] [ %d ]"`,
+  `"SHIELD [ %d ] [ %d ]"`, `"EXTRA [ %d ] [ %d ]"`, plus real assert strings confirming
+  `EQUIP_VISUAL_COUNT` bounds one real slot array. Decompiled the one real function referencing
+  all 8 strings (a real "Avatar" equip-visual debug dump) and confirmed both the real order and
+  that each slot reads from its own fixed real struct offset -- a genuine, decompiler-confirmed
+  fact, not a guess. See `docs/protocol/EQUIP_SLOTS.md` for the full derivation.
+- Five of the eight real slots map directly, by real-world meaning, to `CharacterAssembler`'s
+  existing real bone-slot codes (`ha`→HELM, `ba`→MAIL, `sa`→SHOULDERGUARD, `la`→PANTS,
+  `fa`→BOOTS) -- confirming this project's independently-derived rendering convention and the
+  real client's own categories agree. The sixth code (`aa`, forearms) has no confirmed real slot
+  name of its own; it renders bundled with MAIL, the same pairing the old fixed armor set always
+  used.
+- Replaced `equipment.Slot`'s single own-design `SlotArmor` with one real constant per confirmed
+  slot (`SlotHelm`, `SlotMail`, `SlotShoulderGuard`, `SlotPants`, `SlotBoots`, plus `SlotShield`/
+  `SlotExtra`, tracked but not yet rendered). No DB schema change needed -- slot was already a
+  generic `SMALLINT` column. `EntitySnapshot` now broadcasts a real per-piece `ArmorSlotsMask`
+  bitmask instead of one flattened `HasArmor` bool, and `World3D.gd`'s new
+  `_filter_equipped_parts` renders exactly the real pieces actually equipped -- mixing e.g. a real
+  helm with nothing else now renders correctly, not just "some vs. none".
+- Extended the 2D equipment HUD (`World.tscn`) with a real slot-picker `OptionButton` (mirroring
+  the gender picker's pattern) replacing the old single hardcoded "Equip as Armor" button.
+- Verified: new Go tests confirm real pieces can be equipped simultaneously without clobbering each
+  other and pin down `ArmorSlots`' real order against drift; extended `TestWorldFullFlow` to equip
+  a specific real piece (`SlotMail`) and assert the correct bit propagates through the live
+  broadcast; new GDScript wire-format assertions for the bitmask field. Full regression: Go clean
+  (`build`/`vet`/`test`, all packages, plus two new dedicated equipment tests), all 35 GDScript
+  suites pass, and a live scene-boot smoke test confirms `World3D.tscn` still renders correctly
+  with no env vars set.
+- A GDScript unit test for the new `_filter_equipped_parts` client-side logic was attempted but
+  abandoned: instantiating `World3D.gd` standalone (outside the actual scene) hung under
+  `--script` mode for reasons not fully diagnosed (likely autoload resolution quirks already seen
+  elsewhere this session). The logic itself is simple, reviewable dictionary/bitwise code with no
+  I/O, and is already exercised indirectly by the real wire-format tests plus a live scene-boot
+  smoke test -- not left completely unverified, just not unit-tested in isolation.
+
 ## 2026-08-22 — verified real per-gender rendering with two actual live Godot clients, not just the automated TCP test
 
 - The `TestWorldFullFlow` Go test already verifies gender/armor/weapon broadcast correctness over

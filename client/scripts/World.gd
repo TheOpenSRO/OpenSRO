@@ -30,14 +30,27 @@ extends Control
 @onready var inventory_list: ItemList = $ActionTabs/Inventory/InventoryList
 @onready var inventory_refresh_button: Button = $ActionTabs/Inventory/InventoryButtonRow/RefreshButton
 @onready var equip_weapon_button: Button = $ActionTabs/Inventory/InventoryButtonRow/EquipWeaponButton
+@onready var equip_armor_slot_option: OptionButton = $ActionTabs/Inventory/InventoryButtonRow/EquipArmorSlotOption
 @onready var equip_armor_button: Button = $ActionTabs/Inventory/InventoryButtonRow/EquipArmorButton
 @onready var inventory_status_label: Label = $ActionTabs/Inventory/InventoryStatusLabel
 
 @onready var equipment_list: ItemList = $ActionTabs/Equipment/EquipmentList
 @onready var equipment_refresh_button: Button = $ActionTabs/Equipment/EquipmentButtonRow/RefreshButton
 @onready var unequip_weapon_button: Button = $ActionTabs/Equipment/EquipmentButtonRow/UnequipWeaponButton
+@onready var unequip_armor_slot_option: OptionButton = $ActionTabs/Equipment/EquipmentButtonRow/UnequipArmorSlotOption
 @onready var unequip_armor_button: Button = $ActionTabs/Equipment/EquipmentButtonRow/UnequipArmorButton
 @onready var equipment_status_label: Label = $ActionTabs/Equipment/EquipmentStatusLabel
+
+## Real, decompiler-confirmed armor slot names (see
+## docs/protocol/EQUIP_SLOTS.md), shown in that same real order in both
+## armor-slot pickers.
+const ARMOR_SLOT_LABELS := {
+	EquipmentNet.SLOT_HELM: "Helm",
+	EquipmentNet.SLOT_MAIL: "Mail",
+	EquipmentNet.SLOT_SHOULDER_GUARD: "Shoulder Guard",
+	EquipmentNet.SLOT_PANTS: "Pants",
+	EquipmentNet.SLOT_BOOTS: "Boots",
+}
 
 @onready var quest_list: ItemList = $ActionTabs/Quests/QuestList
 @onready var quest_refresh_button: Button = $ActionTabs/Quests/QuestButtonRow/RefreshButton
@@ -200,11 +213,15 @@ func _ready() -> void:
 	monster_refresh_button.pressed.connect(func(): NetClient.list_monsters())
 	attack_button.pressed.connect(_on_attack_pressed)
 	inventory_refresh_button.pressed.connect(func(): NetClient.list_inventory(NetClient.current_character_name))
+	for slot in EquipmentNet.ARMOR_SLOTS:
+		equip_armor_slot_option.add_item(ARMOR_SLOT_LABELS[slot], slot)
+		unequip_armor_slot_option.add_item(ARMOR_SLOT_LABELS[slot], slot)
+
 	equip_weapon_button.pressed.connect(func(): _on_equip_pressed(EquipmentNet.SLOT_WEAPON))
-	equip_armor_button.pressed.connect(func(): _on_equip_pressed(EquipmentNet.SLOT_ARMOR))
+	equip_armor_button.pressed.connect(func(): _on_equip_pressed(equip_armor_slot_option.get_selected_id()))
 	equipment_refresh_button.pressed.connect(func(): NetClient.list_equipment(NetClient.current_character_name))
 	unequip_weapon_button.pressed.connect(func(): _on_unequip_pressed(EquipmentNet.SLOT_WEAPON))
-	unequip_armor_button.pressed.connect(func(): _on_unequip_pressed(EquipmentNet.SLOT_ARMOR))
+	unequip_armor_button.pressed.connect(func(): _on_unequip_pressed(unequip_armor_slot_option.get_selected_id()))
 	quest_refresh_button.pressed.connect(func(): NetClient.list_quests(NetClient.current_character_name))
 	quest_accept_button.pressed.connect(_on_quest_accept_pressed)
 	shop_refresh_button.pressed.connect(func(): NetClient.list_shop())
@@ -400,7 +417,7 @@ func _on_equipment_result(items: Array, error: String) -> void:
 
 	equipment_list.clear()
 	for e in items:
-		var slot_name := "Weapon" if e.slot == EquipmentNet.SLOT_WEAPON else "Armor"
+		var slot_name: String = "Weapon" if e.slot == EquipmentNet.SLOT_WEAPON else ARMOR_SLOT_LABELS.get(e.slot, "Slot %d" % e.slot)
 		equipment_list.add_item("%s: item #%d" % [slot_name, e.item_id])
 
 func _on_unequip_pressed(slot: int) -> void:

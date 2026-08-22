@@ -8,14 +8,29 @@ import (
 	"errors"
 )
 
-// Slot identifies one equipment slot. Deliberately small for now (just
-// enough to make combat math meaningful) -- extend as gameplay needs grow.
+// Slot identifies one equipment slot. Real, decompiler-confirmed slot
+// names and order (from sro_client.exe's real "Avatar" equip-visual debug
+// dump) -- see docs/protocol/EQUIP_SLOTS.md for the full derivation.
+// Replaces an earlier own-design single catch-all SlotArmor now that a
+// real per-piece layout has been found.
 type Slot int
 
 const (
 	SlotWeapon Slot = iota
-	SlotArmor
+	SlotHelm
+	SlotMail
+	SlotShoulderGuard
+	SlotPants
+	SlotBoots
+	SlotShield
+	SlotExtra
 )
+
+// ArmorSlots are the five real slots CharacterAssembler has a confirmed
+// real bone mapping for (see EQUIP_SLOTS.md) -- the ones that actually
+// render something client-side. SlotShield/SlotExtra are real and
+// trackable but have no confirmed real rendering convention yet.
+var ArmorSlots = []Slot{SlotHelm, SlotMail, SlotShoulderGuard, SlotPants, SlotBoots}
 
 // ErrInvalidSlot is returned for a Slot value outside the known set.
 var ErrInvalidSlot = errors.New("equipment: invalid slot")

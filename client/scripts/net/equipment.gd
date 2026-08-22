@@ -9,8 +9,25 @@ const OP_RESULT := 0x0041  # server -> client (list, or equip/unequip result)
 const OP_EQUIP := 0x0042   # client -> server
 const OP_UNEQUIP := 0x0043 # client -> server
 
+## Real, decompiler-confirmed slot order (see
+## docs/protocol/EQUIP_SLOTS.md), mirroring server/internal/equipment's
+## Slot enum -- replaces an earlier own-design single SLOT_ARMOR now that
+## a real per-piece layout has been found.
 const SLOT_WEAPON := 0
-const SLOT_ARMOR := 1
+const SLOT_HELM := 1
+const SLOT_MAIL := 2
+const SLOT_SHOULDER_GUARD := 3
+const SLOT_PANTS := 4
+const SLOT_BOOTS := 5
+const SLOT_SHIELD := 6
+const SLOT_EXTRA := 7
+
+## The five real slots with a confirmed real bone mapping in
+## CharacterAssembler.EQUIPMENT_SLOT_BONES (see EQUIP_SLOTS.md) -- the ones
+## that actually render something. Order matches
+## server/internal/equipment.ArmorSlots exactly: bit i of
+## WorldNet.EntitySnapshot.armor_slots_mask means ARMOR_SLOTS[i].
+const ARMOR_SLOTS := [SLOT_HELM, SLOT_MAIL, SLOT_SHOULDER_GUARD, SLOT_PANTS, SLOT_BOOTS]
 
 ## One equipped item.
 class Equipped:

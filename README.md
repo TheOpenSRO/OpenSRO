@@ -206,39 +206,51 @@ fixed default body (always the same China-man), not real per-account race/gender
 **uncompressed**, not zlib-wrapped — both `BmtReader` and `server/internal/bmt` now detect and
 handle both real variants.
 
-Whether the player's armor actually shows is real now too, not automatic: it's gated on the
-player's actual, server-authoritative `SLOT_ARMOR` equip state via the same `EquipmentNet`
-protocol the 2D equipment HUD already uses (`World3D.gd`'s `_real_player_has_armor_equipped()`),
-queried on world entry. A newly-created character has nothing equipped, so it now renders
-bare-skinned until the player actually equips real armor through the existing equip flow — the
-armor mesh itself is still real and fixed (one arbitrary pick, see below), but it's no longer
-shown unconditionally regardless of what the character actually has equipped. Skips the query
-entirely (defaults to no armor, not a hang) when there's no live server connection — e.g. the
-standalone dev-tool/screenshot contexts used throughout this project's asset work.
+Equipment now uses a real, decompiler-confirmed 8-slot layout instead of an earlier own-design
+single catch-all "armor" slot: searching `sro_client.exe` for equip-related strings turned up a
+real literal debug-print block naming 8 real slots in a real confirmed order — `HELM`, `MAIL`,
+`SHOULDERGUARD`, `PANTS`, `BOOTS`, `WEAPON`, `SHIELD`, `EXTRA` — each reading from its own real,
+fixed struct offset in the same real function. Five of those map directly, by real-world meaning,
+to the bone-slot codes `CharacterAssembler` already uses for rendering (`ha`→`HELM`, `ba`→`MAIL`,
+`sa`→`SHOULDERGUARD`, `la`→`PANTS`, `fa`→`BOOTS`) — see `docs/protocol/EQUIP_SLOTS.md` for the
+full derivation, including the one real bone code (`aa`, forearms) that has no confirmed real slot
+name of its own and renders alongside `MAIL` instead. `server/internal/equipment.Slot` now has one
+constant per real confirmed slot, and a character can genuinely mix pieces — equip just a real helm
+with nothing else, for instance — instead of the old all-or-nothing bundle. The 2D equipment HUD
+(`World.tscn`) exposes this via a real slot picker (`OptionButton`), mirroring the gender picker's
+pattern.
 
-The player also wears real armor now: a real, full 6-piece China-man set
-(`Prim/Mesh/Item/China/man_item/clothes_03_{aa,ba,fa,ha,la,sa}.bms` — arm/body/foot/head/leg/
-shoulder, the standard real armor-slot convention) attaches via
-`CharacterAssembler.assemble_equipment`, the same rigid-attachment mechanism as the body, textured
-the same real name-matched way. Which slots are genuinely paired (mirrored L/R in one file) vs.
-single-piece was determined by a real triangle-centroid-X gap scan on the actual files, not a
-guess — see `docs/PROGRESS.md`. This is a fixed default armor set (one arbitrary real pick among
-many found), not a real per-account equipment loadout.
+Whether each real armor piece actually shows is gated on the player's actual,
+server-authoritative per-slot equip state via the same `EquipmentNet` protocol the 2D equipment
+HUD uses (`World3D.gd`'s `_real_player_equipped_slots()`), queried on world entry. A newly-created
+character has nothing equipped, so it renders bare-skinned until the player actually equips real
+pieces — and renders exactly the pieces actually equipped, not a fixed bundle. The armor meshes
+themselves are still a fixed set per gender (one arbitrary real pick among many found, see below),
+not real per-account item variety. Skips the query entirely (defaults to nothing equipped, not a
+hang) when there's no live server connection — e.g. the standalone dev-tool/screenshot contexts
+used throughout this project's asset work.
+
+The player wears real armor pieces from a real, full 6-piece per-gender set
+(`Prim/Mesh/Item/China/{man,woman}_item/clothes_03_{aa,ba,fa,ha,la,sa}.bms` — arm/body/foot/head/
+leg/shoulder) that attaches via `CharacterAssembler.assemble_equipment`, the same rigid-attachment
+mechanism as the body, textured the same real name-matched way. Which slots are genuinely paired
+(mirrored L/R in one file) vs. single-piece was determined by a real triangle-centroid-X gap scan
+on the actual files, not a guess — see `docs/PROGRESS.md`.
 
 Other connected players are real assembled characters too now, not just labeled capsules, each
 rendering their own real per-account `Gender` (China Man or China Woman — see above), not a single
-shared fixed body. Their armor and weapon are genuinely per-player too: the server broadcasts each
-entity's real, live `SLOT_ARMOR`/`SLOT_WEAPON` equip state as part of `OpEnterWorldResult`/
-`OpEntityEntered` (`EntitySnapshot.HasArmor`/`HasWeapon`, queried fresh from
+shared fixed body. Their armor pieces and weapon are genuinely per-player too: the server
+broadcasts each entity's real, live per-slot equip state as part of `OpEnterWorldResult`/
+`OpEntityEntered` (`EntitySnapshot.ArmorSlotsMask`/`HasWeapon`, queried fresh from
 `server/internal/equipment` at broadcast time, not cached) — verified with a real, live two-client
-test over actual TCP (`TestWorldFullFlow`): one character with real armor equipped but no weapon,
-one with a real weapon equipped but no armor, and both the initial world snapshot and the live
-entity-entered broadcast carry the correct real flags for each. The character/equipment assets are
-parsed and cached once at scene startup and reused to build one independent `Skeleton3D` per
-connected player — see `World3D.gd`'s `_build_assembled_character()`. Falls back to the labeled
-capsule if the shared assets never loaded. A bare *decoration* `Skeleton3D` (loaded separately via
-`SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH`, not any player's body) still renders with joint/bone debug
-visualization, not a real mesh — see "Not yet done" below.
+test over actual TCP (`TestWorldFullFlow`): one character with a real armor piece equipped but no
+weapon, one with a real weapon equipped but no armor, and both the initial world snapshot and the
+live entity-entered broadcast carry the correct real per-piece flags for each. The
+character/equipment assets are parsed and cached once at scene startup and reused to build one
+independent `Skeleton3D` per connected player — see `World3D.gd`'s `_build_assembled_character()`.
+Falls back to the labeled capsule if the shared assets never loaded. A bare *decoration*
+`Skeleton3D` (loaded separately via `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH`, not any player's body)
+still renders with joint/bone debug visualization, not a real mesh — see "Not yet done" below.
 
 The player also wields a real weapon now, gated the same honest way as armor: a real one-handed
 blade (`Prim/Mesh/Item/China/weapon/blade_01.bms`, an arbitrary fixed pick among many real numbered

@@ -43,25 +43,27 @@ extends Node3D
 ## server-side and CharacterSelect.tscn's gender picker), but this is
 ## otherwise a fixed body per gender (always the same China-man or
 ## China-woman class/skin pick) -- there's no confirmed mapping to vary
-## that automatically. Whether the armor/weapon show is real, though: both
-## are gated on the player's actual, server-authoritative SLOT_ARMOR/
-## SLOT_WEAPON equip state (the same EquipmentNet protocol the 2D equipment
-## HUD already uses -- see _real_player_equipped_slots()), not shown
-## unconditionally. A newly-created character has nothing equipped, so it
-## renders bare-skinned and bare-handed until the player actually equips
-## real armor/a real weapon. Falls back to the placeholder capsule if the
-## body itself isn't found.
+## that automatically. Which armor *pieces* show, and whether the weapon
+## shows, is real, per-piece, though: gated on the player's actual,
+## server-authoritative equip state across a real, decompiler-confirmed
+## 8-slot layout (HELM/MAIL/SHOULDERGUARD/PANTS/BOOTS/WEAPON/SHIELD/EXTRA
+## -- see docs/protocol/EQUIP_SLOTS.md and _real_player_equipped_slots()),
+## not one all-or-nothing bundle. A newly-created character has nothing
+## equipped, so it renders bare-skinned and bare-handed until the player
+## actually equips real pieces -- mixing e.g. a real helm with no other
+## armor renders correctly, not just "some vs. none". Falls back to the
+## placeholder capsule if the body itself isn't found.
 ##
 ## Other connected players use their own real Gender's body too (see
 ## _build_assembled_character()) rather than a capsule, when
-## SRREVAMP_PK2_PATH is set -- their armor and weapon are real per-player
-## as well: the server broadcasts each entity's actual live SLOT_ARMOR/
-## SLOT_WEAPON equip state as part of OpEnterWorldResult/OpEntityEntered
-## (WorldNet.EntitySnapshot.has_armor/has_weapon -- see
+## SRREVAMP_PK2_PATH is set -- their armor pieces and weapon are real
+## per-player as well: the server broadcasts each entity's actual live
+## per-piece equip state as part of OpEnterWorldResult/OpEntityEntered
+## (WorldNet.EntitySnapshot.armor_slots_mask/has_weapon -- see
 ## server/internal/session/world.go's equippedSlots), so other players only
-## appear armored/armed if their own account actually equipped something,
-## same as the local player. Falls back to the labeled capsule per-entity
-## if the shared character assets never loaded.
+## show the real pieces their own account actually equipped, same as the
+## local player. Falls back to the labeled capsule per-entity if the
+## shared character assets never loaded.
 ##
 ## SRREVAMP_PK2_PATH + SRREVAMP_BSR_PATH also loads one real, textured
 ## static scenery object nearby via ObjectLoader, and
@@ -224,7 +226,7 @@ func _ready() -> void:
 		player.position = Vector3(result.x, result.y, result.z)
 		_last_sent_pos = player.position
 		for other in result.others:
-			_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.has_armor, other.gender, other.has_weapon)
+			_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.armor_slots_mask, other.gender, other.has_weapon)
 
 	NetClient.entity_entered.connect(_on_entity_entered)
 	NetClient.entity_moved.connect(_on_entity_moved)
@@ -535,6 +537,42 @@ func _load_character_assets() -> void:
 			_weapon_materials = _load_real_materials(archive, PLAYER_WEAPON_MATERIAL_PATH)
 			print("World3D: cached real weapon mesh (%d verts) from %s" % [weapon_mesh.vertices.size(), OS.get_environment("SRREVAMP_PK2_PATH")])
 
+## Maps CharacterAssembler's real 2-letter equipment-slot codes (see
+## EQUIPMENT_SLOT_BONES) to the real, decompiler-confirmed slot constants
+## in EquipmentNet (see docs/protocol/EQUIP_SLOTS.md). "aa" (arm/forearm)
+## has no confirmed real slot name of its own -- rendered together with
+## "ba" (MAIL/body) below, the same bundling this project's one fixed
+## armor set always used before per-piece slots existed.
+const EQUIPMENT_CODE_TO_SLOT := {
+	"ha": EquipmentNet.SLOT_HELM,
+	"ba": EquipmentNet.SLOT_MAIL,
+	"sa": EquipmentNet.SLOT_SHOULDER_GUARD,
+	"la": EquipmentNet.SLOT_PANTS,
+	"fa": EquipmentNet.SLOT_BOOTS,
+}
+
+## Filters parts (CharacterAssembler-shaped part_name -> ParsedMesh) down
+## to only the pieces whose real slot bit is set in armor_slots_mask (see
+## EQUIPMENT_CODE_TO_SLOT and EquipmentNet.ARMOR_SLOTS for the bit
+## meaning). A part whose code isn't in EQUIPMENT_CODE_TO_SLOT (i.e. "aa")
+## is included whenever "ba" (MAIL) is, per that const's doc comment.
+func _filter_equipped_parts(parts: Dictionary, armor_slots_mask: int) -> Dictionary:
+	var mail_bit_index := EquipmentNet.ARMOR_SLOTS.find(EquipmentNet.SLOT_MAIL)
+	var mail_equipped := mail_bit_index != -1 and (armor_slots_mask & (1 << mail_bit_index)) != 0
+
+	var out := {}
+	for part_name in parts:
+		var code: String = CharacterAssembler._equipment_slot(part_name)
+		if not EQUIPMENT_CODE_TO_SLOT.has(code):
+			if code == "aa" and mail_equipped:
+				out[part_name] = parts[part_name]
+			continue
+		var slot: int = EQUIPMENT_CODE_TO_SLOT[code]
+		var bit_index := EquipmentNet.ARMOR_SLOTS.find(slot)
+		if bit_index != -1 and (armor_slots_mask & (1 << bit_index)) != 0:
+			out[part_name] = parts[part_name]
+	return out
+
 ## Builds one fresh, independent Skeleton3D + assembled body/equipment from
 ## the cached data _load_character_assets() parsed for the requested real
 ## gender -- each character instance (player or other) needs its own
@@ -543,7 +581,7 @@ func _load_character_assets() -> void:
 ## if gender's assets never loaded (or gender is empty/unrecognized -- e.g.
 ## an older peer, or the local player's own EnterWorldResult didn't carry
 ## one yet). Returns null only if even the default's assets never loaded.
-func _build_assembled_character(include_equipment: bool = true, gender: String = DEFAULT_GENDER, include_weapon: bool = false) -> Skeleton3D:
+func _build_assembled_character(armor_slots_mask: int = 0, gender: String = DEFAULT_GENDER, include_weapon: bool = false) -> Skeleton3D:
 	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
 	if assets.is_empty():
 		return null
@@ -552,8 +590,9 @@ func _build_assembled_character(include_equipment: bool = true, gender: String =
 	var fallback_mat := StandardMaterial3D.new()
 	fallback_mat.albedo_color = Color(0.85, 0.7, 0.55)
 	CharacterAssembler.assemble(skeleton, assets["body_parts"], fallback_mat, assets["body_materials"])
-	if include_equipment and not assets["equipment_parts"].is_empty():
-		CharacterAssembler.assemble_equipment(skeleton, assets["equipment_parts"], null, assets["equipment_materials"])
+	var equipped_parts := _filter_equipped_parts(assets["equipment_parts"], armor_slots_mask)
+	if not equipped_parts.is_empty():
+		CharacterAssembler.assemble_equipment(skeleton, equipped_parts, null, assets["equipment_materials"])
 	if include_weapon and _weapon_mesh != null:
 		var weapon_material: Material = _weapon_materials.get(_weapon_mesh.material_name, null)
 		CharacterAssembler.assemble_weapon(skeleton, _weapon_mesh, weapon_material)
@@ -601,25 +640,27 @@ func _try_apply_real_player_character() -> void:
 
 ## Queries the real server for the local player's actual equipped items
 ## (the same EquipmentNet protocol the 2D equipment HUD already uses) and
-## reports [has_armor, has_weapon] -- whether SLOT_ARMOR/SLOT_WEAPON are
-## occupied. Returns [false, false] without querying if there's no live
-## server connection -- e.g. the standalone dev-tool/screenshot contexts
-## used throughout this project's asset work, which load World3D.tscn
-## directly with SRREVAMP_* env vars set but no real login/enter-world
-## flow, so a query would otherwise await a signal that can never fire.
+## reports [armor_slots_mask, has_weapon] -- a real per-piece bitmask (see
+## EquipmentNet.ARMOR_SLOTS) and whether SLOT_WEAPON is occupied. Returns
+## [0, false] without querying if there's no live server connection --
+## e.g. the standalone dev-tool/screenshot contexts used throughout this
+## project's asset work, which load World3D.tscn directly with
+## SRREVAMP_* env vars set but no real login/enter-world flow, so a query
+## would otherwise await a signal that can never fire.
 func _real_player_equipped_slots() -> Array:
 	if not NetClient.is_connected_to_server() or NetClient.current_character_name == "":
-		return [false, false]
+		return [0, false]
 	NetClient.list_equipment(NetClient.current_character_name)
 	var items: Array = (await NetClient.equipment_result)[0]
-	var has_armor := false
+	var armor_slots_mask := 0
 	var has_weapon := false
 	for item in items:
-		if item.slot == EquipmentNet.SLOT_ARMOR:
-			has_armor = true
+		var bit_index := EquipmentNet.ARMOR_SLOTS.find(item.slot)
+		if bit_index != -1:
+			armor_slots_mask |= 1 << bit_index
 		elif item.slot == EquipmentNet.SLOT_WEAPON:
 			has_weapon = true
-	return [has_armor, has_weapon]
+	return [armor_slots_mask, has_weapon]
 
 ## Loads a real Map.pk2 region's real object placements (SRREVAMP_MAPO_PATH,
 ## e.g. "0\\0.o", via SRREVAMP_MAP_PK2_PATH -- same archive as
@@ -762,7 +803,7 @@ func _physics_process(delta: float) -> void:
 		Skeleton3DBuilder.apply_ban_keyframe(_real_skeleton, _real_skeleton_track, frame_idx)
 		Skeleton3DBuilder.update_debug_visualization(_real_skeleton.get_node("DebugVisualization"), _real_skeleton)
 
-func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, has_armor: bool = false, gender: String = DEFAULT_GENDER, has_weapon: bool = false) -> void:
+func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, armor_slots_mask: int = 0, gender: String = DEFAULT_GENDER, has_weapon: bool = false) -> void:
 	if _other_bodies.has(character_id):
 		_other_bodies[character_id].position = pos
 		return
@@ -777,8 +818,10 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	# placeholder capsule otherwise. Armor and weapon are real too: both
 	# come straight from the server's live equipment-store lookup
 	# (equippedSlots), the same real signal that already gates the local
-	# player's own armor/weapon.
-	var skeleton := _build_assembled_character(has_armor, gender, has_weapon)
+	# player's own armor/weapon -- armor_slots_mask is a real per-piece
+	# bitmask now (see EquipmentNet.ARMOR_SLOTS), not one all-or-nothing
+	# flag.
+	var skeleton := _build_assembled_character(armor_slots_mask, gender, has_weapon)
 	if skeleton != null:
 		body.add_child(skeleton)
 	else:
@@ -803,7 +846,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	_other_bodies[character_id] = body
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
-	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.has_armor, snapshot.gender, snapshot.has_weapon)
+	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.armor_slots_mask, snapshot.gender, snapshot.has_weapon)
 
 func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 	if _other_bodies.has(moved.character_id):

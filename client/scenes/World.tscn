@@ -157,6 +157,9 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "Equip as Weapon"
 
+[node name="EquipArmorSlotOption" type="OptionButton" parent="ActionTabs/Inventory/InventoryButtonRow"]
+layout_mode = 2
+
 [node name="EquipArmorButton" type="Button" parent="ActionTabs/Inventory/InventoryButtonRow"]
 layout_mode = 2
 size_flags_horizontal = 3
@@ -187,6 +190,9 @@ text = "Refresh"
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Unequip Weapon"
+
+[node name="UnequipArmorSlotOption" type="OptionButton" parent="ActionTabs/Equipment/EquipmentButtonRow"]
+layout_mode = 2
 
 [node name="UnequipArmorButton" type="Button" parent="ActionTabs/Equipment/EquipmentButtonRow"]
 layout_mode = 2

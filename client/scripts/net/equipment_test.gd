@@ -17,8 +17,8 @@ func _test_encode_equip() -> void:
 	_check(encoded.decode_u32(10) == 3, "inventory slot round-trips")
 
 func _test_encode_unequip() -> void:
-	var encoded := EquipmentNet.encode_unequip("Aria", EquipmentNet.SLOT_ARMOR)
-	_check(encoded.decode_u32(6) == 1, "slot encodes as 1 (SLOT_ARMOR)")
+	var encoded := EquipmentNet.encode_unequip("Aria", EquipmentNet.SLOT_HELM)
+	_check(encoded.decode_u32(6) == 1, "slot encodes as 1 (SLOT_HELM)")
 
 func _build_result(error: String, items: Array) -> PackedByteArray:
 	var out := PackedByteArray()
