@@ -332,3 +332,119 @@ func TestDuelFullFightFlow(t *testing.T) {
 		t.Fatal("expected Bram's duel to have ended")
 	}
 }
+
+// TestDuelArmorMitigation confirms PvP damage is reduced by the defender's
+// real equipped armor, the same as PvE (see TestCombatArmorMitigation).
+func TestDuelArmorMitigation(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	accounts.Add("bob", "hunter3")
+	chars := character.NewMemStore()
+	aria, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating Aria: %v", err)
+	}
+	bram, err := chars.Create(ctx, 2, "Bram")
+	if err != nil {
+		t.Fatalf("creating Bram: %v", err)
+	}
+
+	items := stubCombatItems{
+		100: {ID: 100, PhysAttackMax: 30},
+		200: {ID: 200, PhysDefenseMax: 12},
+	}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	inv.TruncateForTest(ctx)
+	inv.AddItem(ctx, aria.ID, 100, 1)
+	inv.AddItem(ctx, bram.ID, 200, 1) // Bram's mail, not Aria's
+
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	eq.TruncateForTest(ctx)
+	eq.Equip(ctx, aria.ID, equipment.SlotWeapon, 0)
+	eq.Equip(ctx, bram.ID, equipment.SlotMail, 0)
+
+	hub := world.NewHub()
+	duels := duel.NewHub()
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, eq, hub), DuelHandler(chars, eq, items, hub, duels))
+
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	connA := dialTestServer(t, addr)
+	defer connA.Close()
+	rA := bufio.NewReader(connA)
+	connB := dialTestServer(t, addr)
+	defer connB.Close()
+	rB := bufio.NewReader(connB)
+
+	doSend := func(c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		c.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := doSend(connA, rA, OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("alice login failed: err=%v result=%+v", err, lr)
+	}
+	resp = doSend(connB, rB, OpLogin, (&LoginRequest{Username: "bob", Password: "hunter3"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("bob login failed: err=%v result=%+v", err, lr)
+	}
+	resp = doSend(connA, rA, OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("aria enter world failed: err=%v result=%+v", err, ewr)
+	}
+	resp = doSend(connB, rB, OpEnterWorld, (&EnterWorldRequest{CharacterName: "Bram"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("bram enter world failed: err=%v result=%+v", err, ewr)
+	}
+	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := proto.Read(rA); err != nil {
+		t.Fatalf("draining EntityEntered: %v", err)
+	}
+
+	resp = doSend(connA, rA, OpDuelChallenge, (&DuelChallengeRequest{CharacterName: "Aria", TargetName: "Bram"}).Encode())
+	if cr, err := DecodeDuelChallengeResult(resp.Data); err != nil || !cr.OK {
+		t.Fatalf("challenge failed: err=%v result=%+v", err, cr)
+	}
+	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := proto.Read(rB); err != nil {
+		t.Fatalf("reading OpDuelInvite: %v", err)
+	}
+
+	resp = doSend(connB, rB, OpDuelRespond, (&DuelRespondRequest{CharacterName: "Bram", ChallengerName: "Aria", Accept: true}).Encode())
+	if rr, err := DecodeDuelRespondResult(resp.Data); err != nil || !rr.OK {
+		t.Fatalf("respond failed: err=%v result=%+v", err, rr)
+	}
+	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := proto.Read(rB); err != nil {
+		t.Fatalf("reading Bram's OpDuelStarted: %v", err)
+	}
+	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := proto.Read(rA); err != nil {
+		t.Fatalf("reading Aria's OpDuelStarted: %v", err)
+	}
+
+	// 30 attack - 12 armor (Bram's real equipped mail) = 18 net, not 30.
+	resp = doSend(connA, rA, OpDuelAttack, (&DuelAttackRequest{CharacterName: "Aria"}).Encode())
+	ar, err := DecodeDuelAttackResult(resp.Data)
+	if err != nil || ar.Error != "" || ar.Damage != 18 || ar.OpponentHP != int32(character.MaxHP)-18 {
+		t.Fatalf("armored hit: err=%v result=%+v, want damage=18 hp=%d", err, ar, character.MaxHP-18)
+	}
+}

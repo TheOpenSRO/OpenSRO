@@ -428,11 +428,19 @@ func performAttack(
 		}
 		result.PlayerHP = int32(hp)
 	} else {
-		hp, playerDied, err := chars.ApplyDamage(ctx, characterID, monster.Attack)
+		armor, err := defenderArmor(ctx, characterID, eq, items)
+		if err != nil {
+			return fmt.Errorf("combat: reading armor: %w", err)
+		}
+		incoming := monster.Attack - armor
+		if incoming < 1 {
+			incoming = 1
+		}
+		hp, playerDied, err := chars.ApplyDamage(ctx, characterID, incoming)
 		if err != nil {
 			return fmt.Errorf("combat: applying counterattack: %w", err)
 		}
-		result.PlayerDamageTaken = int32(monster.Attack)
+		result.PlayerDamageTaken = int32(incoming)
 		result.PlayerDied = playerDied
 		if playerDied {
 			if err := chars.ResetHP(ctx, characterID); err != nil {
@@ -516,4 +524,32 @@ func attackerDamage(ctx context.Context, characterID int64, eq equipment.Store, 
 		return int(item.PhysAttackMax), nil
 	}
 	return unarmedDamage, nil
+}
+
+// defenderArmor sums PhysDefenseMax across every real armor piece
+// (equipment.ArmorSlots -- HELM/MAIL/SHOULDERGUARD/PANTS/BOOTS) characterID
+// currently has equipped, for mitigating a monster's counterattack.
+func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
+	equipped, err := eq.Get(ctx, characterID)
+	if err != nil {
+		return 0, fmt.Errorf("reading equipment: %w", err)
+	}
+
+	isArmorSlot := make(map[equipment.Slot]bool, len(equipment.ArmorSlots))
+	for _, s := range equipment.ArmorSlots {
+		isArmorSlot[s] = true
+	}
+
+	total := 0
+	for _, e := range equipped {
+		if !isArmorSlot[e.Slot] {
+			continue
+		}
+		item, err := items.GetItem(ctx, e.ItemID)
+		if err != nil {
+			return 0, fmt.Errorf("looking up armor stats: %w", err)
+		}
+		total += int(item.PhysDefenseMax)
+	}
+	return total, nil
 }

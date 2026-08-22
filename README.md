@@ -252,6 +252,12 @@ Falls back to the labeled capsule if the shared assets never loaded. A bare *dec
 `Skeleton3D` (loaded separately via `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH`, not any player's body)
 still renders with joint/bone debug visualization, not a real mesh — see "Not yet done" below.
 
+Equipped armor now actually matters in combat, not just cosmetically: each real piece's item-data
+`PhysDefenseMax` is summed across whatever's equipped in `equipment.ArmorSlots` and subtracted from
+incoming damage (a monster's counterattack, or an opponent's hit in a duel), floored at 1 so armor
+can reduce a hit but never negate it entirely — see `server/internal/session/combat.go`'s
+`defenderArmor` and `docs/PROGRESS.md`.
+
 The player also wields a real weapon now, gated the same honest way as armor: a real one-handed
 blade (`Prim/Mesh/Item/China/weapon/blade_01.bms`, an arbitrary fixed pick among many real numbered
 weapons found, faction-wide rather than per-gender — `Prim\Mesh\Item\China\weapon\` has no man/

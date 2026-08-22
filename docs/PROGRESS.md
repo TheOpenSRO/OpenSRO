@@ -2,6 +2,36 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 3) — real armor now mitigates incoming combat damage
+
+- Direct follow-on to the real per-piece equipment slot work: armor `PhysDefense` was tracked per
+  real equipped piece but never actually subtracted from incoming damage anywhere -- a monster's
+  counterattack in `performAttack` (`server/internal/session/combat.go`) applied `monster.Attack`
+  raw, with zero mitigation, unlike the player's own outgoing hit (which already subtracts
+  `monster.Defense`).
+- Added `defenderArmor(ctx, characterID, eq, items)`, which sums real equipped `PhysDefenseMax`
+  across every slot in `equipment.ArmorSlots` (`HELM`/`MAIL`/`SHOULDERGUARD`/`PANTS`/`BOOTS` --
+  the same real slot set `EQUIP_SLOTS.md` documents). Wired into `performAttack`'s counterattack
+  branch: `incoming := monster.Attack - armor`, floored at 1 (mirroring the existing
+  `if net < 1 { net = 1 }` pattern already used for the player's own damage).
+- Also wired the same `defenderArmor` into `handleDuelAttack` (`duel.go`), replacing a stale
+  top-of-file comment that said PvP damage had "no defense mitigation yet (character has no
+  Defense stat)" -- that was true before this session's real equipment-slot work but is no longer
+  accurate now that armor is genuinely tracked per piece, so PvP damage is now mitigated the same
+  way PvE is.
+- Added `TestCombatArmorMitigation` (helm+mail reduce a counterattack from 15 to 5, then adding a
+  deliberately oversized shoulderguard exercises the 1-damage floor) and
+  `TestDuelArmorMitigation` (Bram's real equipped mail reduces Aria's 30 attack to 18) -- both real
+  end-to-end TCP flow tests, same style as the rest of this session's server tests. Full `go test
+  ./...` suite passes.
+- Not a new RE finding -- this is wiring an already-real stat (`PhysDefenseMax`, already read from
+  the CSV item data and already used server-side for shop pricing) into a code path that hadn't
+  used it yet. No client changes needed (damage numbers already flow through the existing
+  `AttackResult`/`DuelAttackResult` wire messages).
+- What's next: `EXTRA` slot still has no rendering convention investigated (tracked, not
+  implemented). `.efp`, `.t`, and real-world placement scale remain the standing RE dead
+  ends/deferred items noted in prior entries -- nothing new to chase there right now.
+
 ## 2026-08-22 (cont'd 2) — real off-hand shield rendering, closing the last real-slot gap
 
 - Direct follow-on to the real per-piece equipment slot work: `SHIELD` was tracked (equip/unequip

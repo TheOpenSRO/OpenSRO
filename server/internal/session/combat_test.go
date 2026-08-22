@@ -222,6 +222,131 @@ func TestCombatFullFlow(t *testing.T) {
 	}
 }
 
+// TestCombatArmorMitigation confirms a monster's counterattack damage is
+// reduced by the real defender's equipped armor pieces (equipment.ArmorSlots)
+// summed via PhysDefenseMax, with a floor of 1 damage.
+func TestCombatArmorMitigation(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+
+	items := stubCombatItems{
+		100: {ID: 100, PhysAttackMax: 30},  // weapon
+		200: {ID: 200, PhysDefenseMax: 4},  // helm
+		201: {ID: 201, PhysDefenseMax: 6},  // mail
+		202: {ID: 202, PhysDefenseMax: 50}, // shoulderguard, deliberately huge to exercise the floor
+	}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	if err := inv.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating inventory: %v", err)
+	}
+	for _, id := range []int64{100, 200, 201, 202} {
+		if err := inv.AddItem(ctx, c.ID, id, 1); err != nil {
+			t.Fatalf("seeding inventory item %d: %v", id, err)
+		}
+	}
+
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	if err := eq.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating equipment: %v", err)
+	}
+	if err := eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0); err != nil {
+		t.Fatalf("equipping weapon: %v", err)
+	}
+	if err := eq.Equip(ctx, c.ID, equipment.SlotHelm, 1); err != nil {
+		t.Fatalf("equipping helm: %v", err)
+	}
+	if err := eq.Equip(ctx, c.ID, equipment.SlotMail, 2); err != nil {
+		t.Fatalf("equipping mail: %v", err)
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	// Monster hits for 15; helm(4)+mail(6) = 10 defense -> 5 net damage taken.
+	// High HP so it survives both hits and keeps counterattacking.
+	monster := monsters.Spawn("jangan", "Stone Golem", 200, 10, 15, 500)
+
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	if err := quests.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating quests: %v", err)
+	}
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+
+	resp = send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	// 15 attack - 10 armor = 5 net damage taken, not the raw 15.
+	resp = send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode())
+	ar, err := DecodeAttackResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeAttackResult: %v", err)
+	}
+	if ar.PlayerDamageTaken != 5 || ar.PlayerHP != int32(character.MaxHP)-5 || ar.PlayerDied {
+		t.Fatalf("armored hit: got %+v, want damageTaken=5 hp=%d died=false", ar, character.MaxHP-5)
+	}
+
+	// Re-equip the huge-defense shoulderguard and confirm the 1-damage floor
+	// -- armor can't reduce a hit below 1, even when it outweighs the attack.
+	if err := eq.Equip(ctx, c.ID, equipment.SlotShoulderGuard, 3); err != nil {
+		t.Fatalf("equipping shoulderguard: %v", err)
+	}
+	resp = send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode())
+	ar, err = DecodeAttackResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeAttackResult: %v", err)
+	}
+	if ar.PlayerDamageTaken != 1 || ar.PlayerHP != int32(character.MaxHP)-5-1 {
+		t.Fatalf("overarmored hit: got %+v, want damageTaken=1 (floor) hp=%d", ar, character.MaxHP-5-1)
+	}
+}
+
 func TestLootDroppedRoundTrip(t *testing.T) {
 	want := &LootDropped{
 		MonsterID: 1,

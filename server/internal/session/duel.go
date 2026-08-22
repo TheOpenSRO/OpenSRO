@@ -17,8 +17,9 @@ import (
 
 // Duel opcodes, our own protocol. All require a prior successful
 // OpEnterWorld (target resolution reuses world.Hub.FindByName, the same as
-// chat's whisper). PvP damage has no defense mitigation yet (character has
-// no Defense stat, only HP) -- a deliberate scope cut, not an oversight.
+// chat's whisper). PvP damage is mitigated by the defender's real equipped
+// armor (equipment.ArmorSlots), the same as PvE -- see defenderArmor in
+// combat.go.
 const (
 	OpDuelChallenge       uint16 = 0x00C0 // client -> server
 	OpDuelChallengeResult uint16 = 0x00C1 // server -> client, ack to the challenger
@@ -336,9 +337,17 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "not in a duel"}).Encode()})
 	}
 
-	damage, err := attackerDamage(ctx, characterID, eq, items)
+	base, err := attackerDamage(ctx, characterID, eq, items)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "damage calculation failed"}).Encode()})
+	}
+	armor, err := defenderArmor(ctx, opponent.CharacterID, eq, items)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "damage calculation failed"}).Encode()})
+	}
+	damage := base - armor
+	if damage < 1 {
+		damage = 1
 	}
 
 	hp, opponentDied, err := chars.ApplyDamage(ctx, opponent.CharacterID, damage)
