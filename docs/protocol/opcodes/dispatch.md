@@ -77,24 +77,21 @@ through further vtable indirection rather than directly.
       opcode value for a target message is known (from the client or elsewhere), searching for
       literal `CMP`/`MOV` instructions using that exact value directly finds real comparison sites,
       without needing to identify an owning class first.
-- [x] Found the real **post-handshake** per-opcode dispatch mechanism -- not in `GatewayServer.exe`
-      (which mostly relays gameplay traffic onward, see below) but in `AgentServer.exe`: a real
-      global `std::map`-shaped registry keyed by `MsgID`, gatekept by a `CAgentMainProcess` virtual
-      method with real traffic-flood exemptions for opcodes `0x6314`-`0x6316`/`0xa314`. See the
-      dedicated section below.
-- [ ] Enumerate what actually populates that global registry (the real registration call sites) --
-      now the single highest-value next target, since it would reveal real opcode-to-handler
-      mappings in bulk rather than one at a time. Made a start: the map's most-referenced internal
-      operation (plausibly its real `insert`, by reference count relative to `find`/erase/ctor
-      candidates found alongside it) turned out to itself be a `CAgentMainProcess` virtual method
-      with **exactly one static reference to its address -- its own vtable slot**. That means real
-      call sites almost certainly exist as *indirect* calls through that vtable slot
-      (`this->vtable[N](...)`) scattered through startup code, which this project's current simple
-      "find direct references to a function's address" tooling can't locate -- it only finds
-      references to the function itself, not calls through whichever slot number it occupies.
-      **Real tooling gap, not a dead end**: the next step needs a script that computes the slot's
-      offset from its owning vtable's base and scans for indirect calls using that same offset
-      elsewhere in the binary, which this project doesn't have yet.
+- [x] ~~Found the real post-handshake per-opcode dispatch mechanism: a global `MsgID`-keyed
+      registry~~ -- **retracted**, see the correction below: traced further and found this global
+      map is actually a real *connected-user* registry (duplicate-login detection), not an
+      opcode-handler table. The general per-opcode dispatch mechanism is still genuinely
+      unfound.
+- [x] Found a real, concrete Gateway-to-Agent login hand-off sequence with two new real opcodes
+      (`0xa103`, `0x6201`) while chasing the above -- see the dedicated section below. Real,
+      valuable, just not an answer to the original question.
+- [ ] Find the *actual* general per-opcode dispatch mechanism -- still open. Two live leads: (1) a
+      vtable-indirect-call-scanning tool (a real, identified tooling gap -- literal
+      `CALL [reg+disp]` scanning found zero hits against the one candidate tried, meaning real call
+      sites likely use a precomputed-register pattern this project's current tooling can't
+      recognize) to check `CAgentMainProcess`'s other ~29 vtable slots properly; (2) anchor a fresh
+      "search for literal comparisons" pass off the two new real opcodes (`0xa103`/`0x6201`) found
+      this session, the technique that's worked best throughout.
 - [ ] Confirm or refute whether `ACTIVE_SESSION` and the earlier `CSession`/`CBaseSocket` RTTI
       names refer to the same real class.
 - [ ] `CBlowFish`/`CKeyExchangeBase`/`CKeyRepicient`/`CKeySender` (found in `AgentServer.exe`) are
@@ -171,19 +168,55 @@ traced to a real, concrete chain:
 2. That lookup (`FUN_0040bdc0` in this project's current addressing) is a real
    **`std::map`-shaped lookup** (recognizable MSVC red-black-tree `find()` pattern: fetch an
    iterator, compare against the container's own `end()` sentinel, and on a hit return a mapped
-   value from a fixed offset in the tree node) against a **global map instance**. This is almost
-   certainly the real per-MsgID handler registry the earlier `"you must register it first!!!"`
-   error (`login.md`, found in the *other* binary) was describing -- the same real architecture
-   pattern, now located concretely. When the lookup misses (message type never registered), the
-   real fallback (`FUN_004315d0`) logs `"unhandled msg received"` and does nothing further.
+   value from a fixed offset in the tree node) against a **global map instance**. When the lookup
+   misses, the real fallback (`FUN_004315d0`) logs `"unhandled msg received"` and does nothing
+   further.
 
-This is a real, substantial architectural confirmation: gameplay opcodes dispatch through one
-global, populated-at-startup MsgID -> handler-descriptor map, not per-connection callback tables
-(the thing already ruled out in `GatewayServer.exe`, and now confirmed to be the wrong place to
-look for exactly that reason). **Not yet done**: enumerating what actually populates this map (the
-real registration call sites, which would reveal real opcode-to-handler-name pairs en masse) --
-this is now the single highest-value next target for expanding real opcode coverage broadly,
-rather than one opcode at a time.
+**Correction (same session, traced one step further):** the paragraph above originally called
+this "almost certainly the real per-MsgID handler registry." That was premature -- tracing the
+map's real insert function (`FUN_0040bce0`) to its one real caller showed this specific global map
+is actually a **connected-user registry**, not an opcode-handler table. Real evidence: `FUN_0040bce0`
+logs a real `"user register duplicated : %d, %d"` error on a hit (i.e. "this key is already
+registered" -- duplicate-login detection, not "opcode already has a handler"), and its one real
+caller is the Agent-side half of the login hand-off from `GatewayServer.exe` (see the next section)
+-- unmistakably about registering a newly-certified *user*, not registering a *message handler*.
+Revised understanding: `CAgentMainProcess`'s message gatekeeper (step 1 above) most plausibly uses
+this same lookup to check "is this message's associated user currently a registered/logged-in
+session" as a validity gate, not "does this opcode have a handler." The real general
+per-opcode-to-handler dispatch mechanism is therefore **still not found** -- this was a genuine,
+useful architectural finding (a real user-session registry, with real duplicate-login detection),
+just not the one originally claimed. Corrected here rather than left standing, same as `login.md`'s
+own earlier Div ID correction.
+
+## Found in `AgentServer.exe`: the real Gateway-to-Agent login hand-off, with two new real opcodes
+
+Tracing `FUN_0040bce0`'s one real caller led to real, rich, unambiguous material: the Agent-side
+function that finishes certifying a user right after `GatewayServer.exe` relays a successful
+login over. Real, literal strings confirm exactly what this is:
+`"Someone tried to login using strange client that has another content id"` (a real client-version/
+content-ID mismatch check) and `"You check the 'Cert', this problem is Cert's input sequence is
+wrong, check the Agent & GameServer Sequence"` (confirms this is specifically the real
+Agent<->GameServer certification hand-off sequence).
+
+Two new real, concrete opcode values were found here, both server -> client:
+
+| Opcode   | Real context observed                                                          |
+|----------|----------------------------------------------------------------------------------|
+| `0xa103` | Sent early in this flow, before the user-registration outcome is known -- plausibly a certification/session-info message. |
+| `0x6201` | Sent specifically on the success path, right after the user is registered into the connected-user table above -- plausibly the real "you're in" / world-entry notification. |
+
+Neither payload layout is pulled yet -- these are confirmed-real opcode *numbers* with rough
+*context*, the same level of confidence this project already treats other found-but-unparsed
+opcodes at (e.g. `handshake.md`'s `0x5000`/`0x9000` before their fields were pulled).
+
+**Not yet done**: enumerating what populates the (now correctly understood) connected-user
+registry further isn't the priority -- finding the *actual* opcode-to-handler dispatch mechanism
+still is, and this session didn't locate it. Two live leads for a future pass: (1) build the
+vtable-indirect-call-scanning tool this session identified as missing (see the tooling-gap note
+below) and retry on `CAgentMainProcess`'s other vtable slots, since the gatekeeper method (step 1
+above) is only one of ~30; (2) `0xa103`/`0x6201` are two more real, concrete opcode values to
+anchor a fresh "search for literal comparisons against this value" pass, the technique that's
+worked best all session.
 
 ### Real class list found in `AgentServer.exe` (via RTTI, `.?AV` mangled prefix)
 

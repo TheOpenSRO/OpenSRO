@@ -2,6 +2,31 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 21) — corrected the registry claim; found a real login hand-off + two new opcodes
+
+- Kept pulling the registration-table thread immediately (no pause between sessions). Traced the
+  global map's real insert function (`FUN_0040bce0`) to its one real caller to try to enumerate
+  real registration call sites.
+- **Caught and corrected another mistake**: the previous entry's claim that the global map was
+  "almost certainly the real per-MsgID handler registry" was premature. The insert function logs a
+  real `"user register duplicated : %d, %d"` error on a hit -- that's duplicate-*login* detection,
+  not "opcode already has a handler." Its one real caller is the Agent-side half of the
+  Gateway-to-Agent login hand-off. **Revised**: this global map is a real connected-user registry
+  (`CUserManager`-shaped), not an opcode-handler table. The general per-opcode dispatch mechanism
+  is genuinely still unfound in both `GatewayServer.exe` and `AgentServer.exe`. Corrected in both
+  `dispatch.md` and `login.md` rather than left standing -- this project's now caught and fixed
+  three of its own RE conclusions this session (Div ID, the registry, and this one), each recorded
+  honestly rather than quietly.
+- The trace wasn't wasted, though: found a real, concrete Gateway-to-Agent login hand-off sequence,
+  confirmed by real literal strings (`"Someone tried to login using strange client that has
+  another content id"`, `"...check the Agent & GameServer Sequence"`), and **two new real,
+  concrete opcode values**: `0xa103` (sent early in the flow) and `0x6201` (sent on successful
+  user registration -- plausibly the real "you're in" notification). Payload layouts not pulled
+  yet, same confidence level this project already treats other found-but-unparsed opcodes at.
+- Two live leads recorded for continuing this thread: build the vtable-indirect-call-scanning tool
+  already identified as missing (to properly check `CAgentMainProcess`'s other ~29 vtable slots),
+  or anchor a fresh literal-comparison search off the two new real opcodes.
+
 ## 2026-08-22 (cont'd 20) — major architecture find: Gateway relays to Agent; found the real dispatch registry
 
 - Realized `GatewayServer.exe` was the wrong binary to keep searching in for a general per-opcode
