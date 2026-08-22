@@ -36,11 +36,23 @@ literal `6` and every appended byte simply advances it, with the running payload
 computed as `cursor - 6`. That's the real header size baked directly into the one shared function
 that builds every payload, not an indirect inference. **This project's own 5-byte header above
 (`Size(2)+Opcode(2)+Security(1)`), taken from public private-server documentation, is therefore
-short one real byte** -- plausibly a `Security`-adjacent flags/checksum byte this project hasn't
-identified yet, given the two real independent per-packet security bytes `handshake.md` already
-found (`RollingByte`/`PacketChecksum`) would need to live somewhere in the real header too. Not
-fully resolved into a revised field table yet -- recorded as a confirmed real header *size*, with
-the *field breakdown* still open, rather than guessing at which extra byte it is.
+short one real byte.**
+
+**A well-supported real hypothesis for the full 6-byte breakdown**, not yet 100% confirmed by
+finding the literal header-serialization function itself, but the arithmetic lines up exactly with
+independently-confirmed real fields: `ACTIVE_SESSION` (the same real class this whole investigation
+traces through, see `handshake.md`) stages a real 2-byte `MsgID`/opcode field and a real 2-byte
+size field (mask `0x7fff`, top bit unconfirmed but plausibly a real flag) on the message object
+*before* it's serialized, and separately carries the two real per-packet security bytes
+(`RollingByte`, `PacketChecksum`) this project already reverse-engineered and implemented. `2 + 2 +
+1 + 1 = 6` -- exactly the confirmed real header size, with no field left unaccounted for and no
+padding needed. If this holds, the real header's four fields are **`Opcode(2) + Size(2, high bit
+likely a real flag) + RollingByte(1) + ChecksumByte(1)`**, with both security bytes present
+unconditionally on every packet's base header, not gated behind an optional trailer the way this
+project's own `Security`-flags-byte design assumed. **The real wire *order* of these four fields
+is not confirmed** -- only that these four staged fields exist and sum to the right total size, not
+which one is serialized first. Finding the actual byte-serialization function that writes all six
+bytes in sequence (not yet located) is the real next step to confirm order, not guessed at here.
 
 ## Session crypto
 
@@ -62,8 +74,9 @@ a couple of real opcodes are solid.
       `cmd/server`) — no opcode table yet, just logs what it sees
 - [ ] Session key exchange / encrypted packets
 - [ ] Massive-packet reassembly
-- [ ] Identify the real header's 6th byte (see above) -- the concrete next step for actually
-      revising the field table, rather than just knowing the total size is wrong
+- [ ] Confirm the real wire *order* of the header's four hypothesized fields (`Opcode`/`Size`/
+      `RollingByte`/`ChecksumByte`, see above) by finding the actual byte-serialization function --
+      the field *set* and total size are confirmed, the order isn't yet
 - [ ] Opcode table (`docs/protocol/opcodes/`) — starts empty, grows one documented opcode at a
       time as we implement against it, not speculatively. `observed_opcodes.md` now has ~150 real
       opcode *values* across four binaries; payload layouts are the next tier of work.

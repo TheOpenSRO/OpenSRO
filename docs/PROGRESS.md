@@ -2,6 +2,25 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 28) — a well-supported real hypothesis for the full 6-byte header breakdown
+
+- Immediately followed up the "header is 6 bytes, not 5" confirmation with the natural next
+  question: which 6 fields? Realized the arithmetic already lines up exactly with fields this
+  project independently confirmed earlier: a real 2-byte `MsgID`/opcode, a real 2-byte size field,
+  and the two real per-packet security bytes (`RollingByte`, `PacketChecksum`) already
+  reverse-engineered and implemented. `2 + 2 + 1 + 1 = 6` -- no field unaccounted for, no padding
+  needed.
+- Recorded this as a well-supported real hypothesis in `PACKET_FORMAT.md`: the real header is
+  `Opcode(2) + Size(2, high bit likely a flag) + RollingByte(1) + ChecksumByte(1)`, with both
+  security bytes present unconditionally on every packet rather than gated behind an optional
+  trailer (this project's own `Security`-flags-byte design had assumed the latter). Explicitly
+  **not** claiming to know the real wire *order* of these four fields yet -- only that this set,
+  summing to 6 bytes, accounts for the confirmed total with nothing left over. Finding the actual
+  byte-serialization function is the concrete next step for order.
+- This is a satisfying, well-earned capstone to a thread that ran across several entries this
+  session (first surfaced as an odd `+6` in one function, reinforced independently three more
+  times, then explained by the header-size confirmation, now given a real candidate structure).
+
 ## 2026-08-22 (cont'd 27) — confirmed the real header is 6 bytes; found real meaning for 0x6111/0x6112
 
 - Picked one real, cross-validated opcode pair from the new catalog (`0x6111`/`0x6112`, part of
