@@ -2,6 +2,50 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 33) — first real end-to-end playtest: real character/terrain load, found and fixed a real spawn/terrain collision bug
+
+- Walked the user through actually running the full stack locally for the first time this
+  session (Docker Compose + Postgres + Go server, Godot 4.2 client) against their own real,
+  legally-owned Silkroad client files -- found real, working internal paths via `cmd/pk2list`
+  (`prim\skel\char\china\chinaman_skel.bsk`, `prim\ani\char\china\man\chinaman_standbattle.ban`,
+  `res\bldg\china\jangan01\cj_streetstall.bsr`, region `100\100` for `Map.pk2`'s `.m`/`.o` files).
+  Also hit and fixed two pure setup snags (running `go` from the repo root instead of `server/`
+  where `go.mod` lives; Godot's global `class_name` script cache not existing yet on a fresh
+  clone, needing one editor-mode open+scan before `class_name`-referenced classes like
+  `AssetSource`/`CharacterAssembler` resolve).
+- **Real, live-verified success**: real character assembly (37/39 bones, 7 body parts, 6 equipment
+  parts per gender), real weapon/shield meshes, real scenery, a real skeleton+animation pair, and
+  real terrain (13,211 tiles parsed from region 100/100) all loaded correctly against real,
+  unmodified retail pk2 files -- the first time this session's (and prior sessions') asset-pipeline
+  work has been confirmed working against a real client install by an actual human running it,
+  not just this project's own unit tests.
+- **Found a real bug from that playtest**: once real terrain loaded, the player couldn't move at
+  all -- confirmed to be `_try_load_real_terrain`'s own already-documented gap (terrain's vertical
+  placement is only calibrated to one mesh vertex, not the real height under the player's actual
+  spawn X/Z), leaving the player embedded in or clipped through the mesh. Fixed with a practical
+  safety net rather than guessing at the real coordinate mapping: a deferred raycast that snaps the
+  player onto whatever real surface is directly below/above them once the terrain's collision shape
+  registers. Verified via `godot4 --headless --path . --import --quit` (clean, no script errors)
+  and the existing `world_test.gd`/`mapm_terrain_builder_test.gd` suites (`ALL PASS`).
+- Also surfaced a smaller real gap during the same playtest: `object.ifo` (real map-object index
+  path) wasn't found in the user's real `Data.pk2` at the exact conventional path this project
+  assumed -- fails gracefully (object placements just don't render, everything else unaffected),
+  not yet investigated further; a real, concrete follow-up if map-object rendering matters more
+  than it does right now.
+
+## 2026-08-22 (cont'd 32) — decompiled the full real handshake state machine
+
+- Decompiled `ACTIVE_SESSION::_OnMsgReceivedBeforeHandshake()` in full (previously only partially
+  examined) and documented the real, multi-step handshake sequence in `handshake.md`: a real
+  progress-state field (`+0x200`) gating what's accepted; a real confirmed 12-byte payload size for
+  the client's first `0x5000`; confirmation that the real second step replies with *another*
+  `0x5000` (not `0x9000`) carrying a small real payload; a real signature-verification step once a
+  progress bit is set, which finally replies `0x9000`; and a separate real branch for receiving
+  `0x9000` in the pre-initialized state, consistent with `GatewayServer.exe` playing both responder
+  and initiator roles at different times. Real, not yet decoded: the exact byte contents of the
+  12-byte payload and the state machine's own reply payloads -- flagged as concrete next steps, not
+  guessed at.
+
 ## 2026-08-22 (cont'd 31) — matched the real checksum usage pattern in `proto.Read`/`Write`
 
 - Acted on the previous entry's finding: `proto.Write` now builds the full 6-byte header with the
