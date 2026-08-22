@@ -188,6 +188,7 @@ func main() {
 		session.CombatHandler(chars, eq, refItems, hub, monsters, quests, inv),
 		session.LearnSkillHandler(chars, skills),
 		session.UseSkillHandler(chars, eq, refItems, skills, hub, monsters, quests, inv),
+		session.SkillListHandler(chars, skills),
 		session.PartyHandler(chars, parties),
 		session.GuildHandler(chars, guilds),
 		session.ChatHandler(hub),

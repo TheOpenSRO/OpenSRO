@@ -96,6 +96,7 @@ func TestSkillFullFlow(t *testing.T) {
 		WorldHandler(chars, eq, hub),
 		LearnSkillHandler(chars, skills),
 		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv),
+		SkillListHandler(chars, skills),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -136,6 +137,20 @@ func TestSkillFullFlow(t *testing.T) {
 		t.Fatalf("got %+v, want error 'skill not known'", ar)
 	}
 
+	// Before learning anything, the list should show both catalog skills,
+	// neither known.
+	resp = send(OpSkillList, (&SkillListRequest{CharacterName: "Aria"}).Encode())
+	slr, err := DecodeSkillListResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeSkillListResult: %v", err)
+	}
+	if slr.Error != "" || len(slr.Skills) != 2 {
+		t.Fatalf("got %+v, want 2 skills no error", slr)
+	}
+	if slr.Skills[0].ID != 1 || slr.Skills[0].Known || slr.Skills[0].Name != "Power Strike" {
+		t.Fatalf("got %+v, want skill 1 'Power Strike' not known", slr.Skills[0])
+	}
+
 	// Learn it.
 	resp = send(OpLearnSkill, (&LearnSkillRequest{CharacterName: "Aria", SkillID: 1}).Encode())
 	lr, err := DecodeLearnSkillResult(resp.Data)
@@ -171,5 +186,18 @@ func TestSkillFullFlow(t *testing.T) {
 	}
 	if ar.Error != "skill on cooldown" {
 		t.Fatalf("got %+v, want error 'skill on cooldown'", ar)
+	}
+
+	// The list should now show skill 1 as known and on cooldown.
+	resp = send(OpSkillList, (&SkillListRequest{CharacterName: "Aria"}).Encode())
+	slr, err = DecodeSkillListResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeSkillListResult: %v", err)
+	}
+	if !slr.Skills[0].Known {
+		t.Fatalf("got %+v, want skill 1 known", slr.Skills[0])
+	}
+	if slr.Skills[0].ReadySeconds <= 0 {
+		t.Fatalf("got %+v, want skill 1 to report a positive cooldown remaining", slr.Skills[0])
 	}
 }

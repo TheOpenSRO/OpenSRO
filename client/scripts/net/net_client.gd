@@ -38,6 +38,7 @@ signal monster_died(monster_id: int)
 signal loot_dropped(dropped: CombatNet.LootDropped)
 signal monster_list_result(monsters: Array, error: String)
 signal learn_skill_result(ok: bool, reason: String)
+signal skill_list_result(skills: Array, error: String)
 
 signal party_create_result(result: PartyNet.Result)
 signal party_join_result(result: PartyNet.Result)
@@ -267,6 +268,9 @@ func learn_skill(char_name: String, skill_id: int) -> void:
 func use_skill(char_name: String, skill_id: int, target_monster_id: int) -> void:
 	_send(SkillNet.OP_USE, SkillNet.encode_use(char_name, skill_id, target_monster_id))
 
+func list_skills(char_name: String) -> void:
+	_send(SkillNet.OP_LIST, SkillNet.encode_list(char_name))
+
 func create_party(char_name: String) -> void:
 	_send(PartyNet.OP_CREATE, PartyNet.encode_name_request(char_name))
 
@@ -405,6 +409,9 @@ func _dispatch(p: Packet) -> void:
 		SkillNet.OP_LEARN_RESULT:
 			var r := SkillNet.decode_learn_result(p.data)
 			learn_skill_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		SkillNet.OP_LIST_RESULT:
+			var r := SkillNet.decode_list_result(p.data)
+			skill_list_result.emit(r.skills, r.error)
 		PartyNet.OP_CREATE_RESULT:
 			party_create_result.emit(PartyNet.decode_result(p.data))
 		PartyNet.OP_JOIN_RESULT:

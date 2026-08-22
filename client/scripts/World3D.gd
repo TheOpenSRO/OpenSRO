@@ -327,6 +327,12 @@ const ARMOR_SLOT_LABELS := {
 @onready var quest_accept_button: Button = $UI/Control/ActionTabs/Quests/QuestButtonRow/AcceptButton
 @onready var quest_status_label: Label = $UI/Control/ActionTabs/Quests/QuestStatusLabel
 
+@onready var skill_list: ItemList = $UI/Control/ActionTabs/Skills/SkillList
+@onready var skill_refresh_button: Button = $UI/Control/ActionTabs/Skills/SkillButtonRow/SkillRefreshButton
+@onready var skill_learn_button: Button = $UI/Control/ActionTabs/Skills/SkillButtonRow/SkillLearnButton
+@onready var skill_use_button: Button = $UI/Control/ActionTabs/Skills/SkillButtonRow/SkillUseButton
+@onready var skill_status_label: Label = $UI/Control/ActionTabs/Skills/SkillStatusLabel
+
 @onready var shop_list: ItemList = $UI/Control/ActionTabs/Shop/ShopList
 @onready var shop_refresh_button: Button = $UI/Control/ActionTabs/Shop/ShopButtonRow/RefreshButton
 @onready var shop_buy_button: Button = $UI/Control/ActionTabs/Shop/ShopButtonRow/BuyButton
@@ -384,6 +390,7 @@ const ARMOR_SLOT_LABELS := {
 var _monsters: Array[CombatNet.MonsterSnapshot] = []
 var _inventory_slots: Array[InventoryNet.Slot] = []
 var _quests: Array[QuestNet.Entry] = []
+var _skills: Array[SkillNet.SkillSnapshot] = []
 var _shop_entries: Array[ShopNet.CatalogEntry] = []
 
 # Name of whoever last challenged/requested-trade-with us, so Accept/
@@ -470,6 +477,8 @@ func _ready() -> void:
 	NetClient.quest_list_result.connect(_on_quest_list_result)
 	NetClient.quest_accept_result.connect(_on_quest_accept_result)
 	NetClient.quest_completed.connect(_on_quest_completed)
+	NetClient.skill_list_result.connect(_on_skill_list_result)
+	NetClient.learn_skill_result.connect(_on_learn_skill_result)
 	NetClient.shop_list_result.connect(_on_shop_list_result)
 	NetClient.shop_buy_result.connect(_on_shop_buy_result)
 
@@ -528,6 +537,9 @@ func _ready() -> void:
 	unequip_armor_button.pressed.connect(func(): _on_unequip_pressed(unequip_armor_slot_option.get_selected_id()))
 	quest_refresh_button.pressed.connect(func(): NetClient.list_quests(NetClient.current_character_name))
 	quest_accept_button.pressed.connect(_on_quest_accept_pressed)
+	skill_refresh_button.pressed.connect(func(): NetClient.list_skills(NetClient.current_character_name))
+	skill_learn_button.pressed.connect(_on_skill_learn_pressed)
+	skill_use_button.pressed.connect(_on_skill_use_pressed)
 	shop_refresh_button.pressed.connect(func(): NetClient.list_shop())
 	shop_buy_button.pressed.connect(_on_shop_buy_pressed)
 
@@ -566,6 +578,7 @@ func _ready() -> void:
 		NetClient.list_inventory(NetClient.current_character_name)
 		NetClient.list_equipment(NetClient.current_character_name)
 		NetClient.list_quests(NetClient.current_character_name)
+		NetClient.list_skills(NetClient.current_character_name)
 		NetClient.list_shop()
 		NetClient.party_info(NetClient.current_character_name)
 		NetClient.guild_info(NetClient.current_character_name)
@@ -1658,6 +1671,12 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			result.monster_damage, result.monster_remaining_hp, result.player_damage_taken, result.player_hp
 		]
 	NetClient.list_monsters()
+	# OpUseSkill's response reuses this same OpAttackResult (see
+	# SkillNet's doc comment) -- refresh here too so a just-used skill's
+	# updated cooldown shows up in the Skills tab. Harmless no-op extra
+	# traffic for a plain (non-skill) attack, same tradeoff the quest
+	# refresh above already makes.
+	NetClient.list_skills(NetClient.current_character_name)
 
 func _on_monster_damaged(_damaged: CombatNet.MonsterDamaged) -> void:
 	NetClient.list_monsters()
@@ -1750,6 +1769,52 @@ func _on_quest_completed(completed: QuestNet.Completed) -> void:
 		return
 	_log_system("Quest complete! +%dg" % completed.gold_reward)
 	NetClient.list_quests(NetClient.current_character_name)
+
+# --- Skills tab ------------------------------------------------------------
+
+func _on_skill_list_result(skills: Array, error: String) -> void:
+	if error != "":
+		skill_status_label.text = "Error: %s" % error
+		return
+	_skills.assign(skills)
+	skill_list.clear()
+	for s in _skills:
+		var state: String
+		if not s.known:
+			state = "not learned"
+		elif s.ready_seconds > 0:
+			state = "cooldown %ds" % s.ready_seconds
+		else:
+			state = "ready"
+		skill_list.add_item("%s (+%d dmg, %ds cooldown) [%s]" % [s.skill_name, s.damage_bonus, s.cooldown_seconds, state])
+
+func _on_skill_learn_pressed() -> void:
+	var selected := skill_list.get_selected_items()
+	if selected.is_empty():
+		skill_status_label.text = "Select a skill first."
+		return
+	var chosen: SkillNet.SkillSnapshot = _skills[selected[0]]
+	NetClient.learn_skill(NetClient.current_character_name, chosen.skill_id)
+
+func _on_learn_skill_result(ok: bool, reason: String) -> void:
+	skill_status_label.text = "Skill learned." if ok else "Learn failed: %s" % reason
+	NetClient.list_skills(NetClient.current_character_name)
+
+## Uses the selected skill on whichever monster is currently selected in the
+## Monsters tab -- reuses that tab's own selection/target list rather than
+## duplicating a second monster picker just for skills.
+func _on_skill_use_pressed() -> void:
+	var selected := skill_list.get_selected_items()
+	if selected.is_empty():
+		skill_status_label.text = "Select a skill first."
+		return
+	var target_selected := monster_list.get_selected_items()
+	if target_selected.is_empty():
+		skill_status_label.text = "Select a target in the Monsters tab first."
+		return
+	var chosen: SkillNet.SkillSnapshot = _skills[selected[0]]
+	var target: CombatNet.MonsterSnapshot = _monsters[target_selected[0]]
+	NetClient.use_skill(NetClient.current_character_name, chosen.skill_id, target.monster_id)
 
 # --- Shop tab ------------------------------------------------------------
 

@@ -2,6 +2,30 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 38) — "skills" phase 6 (final roadmap item): real Skills tab, closing the whole roadmap
+
+- Found the server-side skill system (learn/use, cooldown tracking) was fully implemented and
+  tested, but there was **no way for a client to discover which skills exist or which it's
+  learned** -- no list opcode at all, and correspondingly zero UI anywhere (not even in the
+  deleted 2D client). Skills were real but functionally unreachable from any client.
+- Added `OpSkillList`/`OpSkillListResult` (server) and matching `SkillNet.encode_list`/
+  `decode_list_result` (client): returns every skill in `skill.Catalog` (sorted by ID for a
+  deterministic order), each annotated with whether the requesting character knows it and, if it's
+  on cooldown, how many seconds remain (`SkillListHandler`, wired into `main.go`'s handler chain).
+- Added a real **Skills tab** to `World3D.tscn`/`World3D.gd` (list + Refresh/Learn
+  Selected/Use-on-Selected-Monster buttons + status label, the same layout pattern every other tab
+  already uses) -- reuses the Monsters tab's own target selection for "use on monster" rather than
+  duplicating a second target picker. Refreshes automatically after learning, and after any attack
+  (skill-triggered or plain) since `OpUseSkill` reuses `OpAttackResult`, so a just-used skill's
+  updated cooldown shows up without a manual refresh.
+- Extended `skill_test.go` (Go, real end-to-end assertions: list shows 2 unlearned skills before
+  learning, then skill 1 known+on-cooldown after using it) and `skill_test.gd` (GDScript wire
+  round-trip). Full Go test suite + full client CI test-suite sweep both pass, plus a clean
+  `--import --quit`.
+- **This closes the full roadmap the user set**: world (multi-region terrain) → mobs (real
+  positions + 3D rendering) → character/animation (real walk-cycle) → armor → weapons/shields →
+  skills. All six phases shipped, tested, and pushed to `origin/dev` in this session.
+
 ## 2026-08-22 (cont'd 37) — "armor"/"weapons and shields" phases 4-5: real per-item visual variety
 
 - Checked whether real per-equipped-item visual selection data exists anywhere in this project's

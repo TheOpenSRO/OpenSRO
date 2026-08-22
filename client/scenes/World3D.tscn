@@ -294,6 +294,37 @@ layout_mode = 2
 text = ""
 autowrap_mode = 2
 
+[node name="Skills" type="VBoxContainer" parent="UI/Control/ActionTabs"]
+visible = false
+layout_mode = 2
+
+[node name="SkillList" type="ItemList" parent="UI/Control/ActionTabs/Skills"]
+custom_minimum_size = Vector2(0, 140)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="SkillButtonRow" type="HBoxContainer" parent="UI/Control/ActionTabs/Skills"]
+layout_mode = 2
+
+[node name="SkillRefreshButton" type="Button" parent="UI/Control/ActionTabs/Skills/SkillButtonRow"]
+layout_mode = 2
+text = "Refresh"
+
+[node name="SkillLearnButton" type="Button" parent="UI/Control/ActionTabs/Skills/SkillButtonRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Learn Selected"
+
+[node name="SkillUseButton" type="Button" parent="UI/Control/ActionTabs/Skills/SkillButtonRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Use on Selected Monster"
+
+[node name="SkillStatusLabel" type="Label" parent="UI/Control/ActionTabs/Skills"]
+layout_mode = 2
+text = ""
+autowrap_mode = 2
+
 [node name="Shop" type="VBoxContainer" parent="UI/Control/ActionTabs"]
 visible = false
 layout_mode = 2
