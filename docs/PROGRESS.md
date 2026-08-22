@@ -2,6 +2,41 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 18) — big confirmation: RollingByte is bit-for-bit correct against the real server; found the real handshake receive path; corrected a mistake
+
+- Switched technique after `COverlapJobManager`/`CSession` RTTI tracing stalled: instead of
+  identifying a class first, searched `GatewayServer.exe` for real `CMP`/`MOV` instructions using
+  the already-known handshake opcode values (`0x5000`, `0x9000`) directly. This immediately found
+  the real receive path: **`ACTIVE_SESSION::_OnMsgReceivedBeforeHandshake()`** (class and method
+  both real, from the binary's own embedded debug strings) -- confirming this technique
+  generalizes better than RTTI-vtable-chasing for future opcode RE work: once *any* real opcode
+  value is known, searching for literal comparisons against it finds real code directly.
+- This function decompiled to two very high-value confirmations:
+  1. **The rolling-byte security formula this project already implemented (`RollingByte.Next()`)
+     is computed live, in exactly the same shape, inside real `GatewayServer.exe` code** -- not
+     just inferred from the client. Bit-for-bit confirmed, not just plausible.
+  2. **The multi-table CRC-style byte's table-selection formula is now confirmed too**:
+     `table_offset = table_index * 256` into one shared backing array of 256-entry tables. This is
+     a fact about *method*, not the proprietary table *data* itself (which stays deliberately
+     unpulled, per `docs/LEGAL.md` policy #2, same as before) -- but closes out a real, previously
+     open question in `handshake.md`.
+  Also found the real per-object field offsets carrying all of this (`MsgID` at `+0x1050`, the two
+  security bytes at `+0x1058`/`+0x105c`, etc.) -- written up in `handshake.md`.
+- **Caught and corrected a real mistake from earlier this session**: `login.md` had concluded "Div
+  ID" (the login dispatcher's internal switch value) was read from the same header offset as the
+  real wire opcode, i.e. plausibly `wire_opcode & 0xFF`. This new find shows the real wire opcode
+  field (`MsgID`) is read as a full 16-bit value from a *different* object at a *different*
+  offset than where Div ID comes from -- meaning that earlier conclusion doesn't hold up. Revised
+  `login.md` honestly: Div ID is now believed to most plausibly mean "Division ID" (a server/channel
+  registration concept), unrelated to per-packet opcode dispatch, not the resolved fact the
+  previous entry claimed. Documented as a correction, not silently overwritten -- consistent with
+  how `handshake.md` itself already handles a past mistaken pass.
+- Updated `server/internal/proto/security.go`'s doc comments (were stale, predating
+  `PacketChecksum`'s existence) to reflect both the real confirmation and current state.
+- Net effect: `_OnMsgReceivedBeforeHandshake` answers the *pre-handshake* receive path specifically
+  (its own name says so) -- the real *post-handshake* per-opcode dispatch mechanism (login and
+  everything else) is still the open question, now much better scoped in `dispatch.md`.
+
 ## 2026-08-22 (cont'd 17) — found the real IOCP dispatch architecture (applies to every future opcode)
 
 - After RTTI-vtable tracing stalled on `COverlapJobManager`/`CSession`, switched technique: searched

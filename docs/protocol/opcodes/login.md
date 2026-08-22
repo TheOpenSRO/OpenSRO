@@ -7,21 +7,30 @@ before 2026-08-22) worked from `sro_client.exe` only; a real, dedicated server b
 been imported and analyzed too, which is what let the "Dispatch shape" section below actually get
 resolved instead of staying an open question.
 
-## Dispatch shape (resolved)
+## Dispatch shape (revised -- "Div ID" is probably not the wire opcode at all)
 
 Incoming messages get mapped to a small dense integer before being switched on -- **the real,
 internal name for this value is "Div ID"** (confirmed by a real, literal error string the
 dispatcher logs when it sees one it doesn't recognize: `"There is no certification handler!!! you
-must register it first!!! [Div ID: %d]"`). This is a single byte, read from a fixed offset
-(`+2`) into a small per-connection structure the dispatcher holds a live pointer to -- consistent
-with that offset being this project's own real, confirmed wire-header layout's Opcode field
-(`Size(2) + Opcode(2) + ...`, see `PACKET_FORMAT.md`), read as one byte rather than the full
-16-bit value. This project has **not yet confirmed** whether Div ID is simply the low byte of the
-real 16-bit wire opcode (i.e. `DivID = wire_opcode & 0xFF`) or is produced by some other real
-translation step in between -- the single write site found for the pointer this byte is read
-through turned out to be one-time server-startup config-table setup, not the actual per-packet
-receive path, so the real place a fresh Div ID gets stamped onto an incoming connection per-packet
-is still unlocated. Recorded here as the next concrete step, not guessed at further.
+must register it first!!! [Div ID: %d]"`). This is a single byte, read from offset `+2` of a small
+structure the dispatcher holds a live pointer to, and the *only* write site found for that pointer
+turned out to be one-time server-startup config-table setup, not a per-packet receive path.
+
+An earlier pass through this file guessed this offset-`+2` byte was likely the low byte of the
+real wire opcode, by analogy with this project's own header layout. **Revising that guess** now
+that `dispatch.md` has found the real per-packet receive method
+(`ACTIVE_SESSION::_OnMsgReceivedBeforeHandshake()`) and confirmed the real wire opcode field is
+called **"MsgID"**, read and compared as a *full 16-bit value* (`0x5000`, `0x9000` compared
+directly, not masked to one byte) at a completely different offset (`+0x1050` on `ACTIVE_SESSION`,
+see `handshake.md`) on a completely different object than the one Div ID comes from. Given Div
+ID's value only ever gets set once, at startup, from what looks like a config/registration-table
+traversal, **"Div ID" most plausibly means "Division ID"** -- a real, known Silkroad server concept
+(which login "division"/channel a given gateway/certifier instance is registered to serve), not a
+per-packet opcode translation at all. Not conclusively proven either way yet, but this is now the
+better-supported reading, and this project is **not** treating "Div ID = wire-opcode-derived
+dispatch index" as resolved any more -- that framing from the previous pass was a real, corrected
+mistake, not a confirmed fact. The genuine remaining question -- how a live `MsgID` actually
+selects a handler -- is `dispatch.md`'s open item, not this file's.
 
 The real dispatcher (`GatewayServer.exe`) recognizes real Div ID values `0`-`0x1a` (0-26) for the
 authentication switch specifically, each routed to one of two real stored-procedure call shapes
@@ -62,40 +71,30 @@ The gateway binary contains **two** separate authentication code paths:
 
 ## Status / next steps
 
-- [x] Map the internal dispatch index (real name: **Div ID**) back to *a* real wire concept -- it's
-      read from the same header offset this project's own wire format keeps its Opcode field at,
-      one byte only. Exact translation formula from the real 16-bit wire opcode to this one-byte
-      Div ID is the new, more specific open question (see above) -- not yet the same as "pull the
-      exact payload layout," which is still open too.
-- [ ] Find where a live incoming packet actually gets a fresh Div ID stamped onto it. Traced
-      significantly further this pass via real RTTI data (the same technique that found
-      `ResObject::Load` for `.bsr`): the dispatch switch's virtual-method wrapper belongs to a
-      real class, **`CUserCertifier_OverlapJob`** -- confirmed by reading its
-      `RTTICompleteObjectLocator`/`TypeDescriptor` chain directly (mangled name
-      `.?AVCUserCertifier_OverlapJob@@`). This reveals real architecture beyond just login:
-      `GatewayServer.exe` has a small family of real `ServerFramework::COverlapJob`-derived async
-      job classes (`CUserCertifier_OverlapJob`, `COverlapJob_InitializeLocalData`,
-      `COverlapJob_RelayMsg`, `COverlapJob_Local`, managed by a real `COverlapJobManager`) --
-      **not** one job class per opcode, though; `CUserCertifier_OverlapJob` alone owns the entire
-      Div ID `0`-`0x1a` switch internally. Traced its constructor to a real object-pool
-      initializer (`CChunkAllocatorST`-style, pre-allocating a pool of these job objects at server
-      startup) -- a real, useful architectural fact, but a dead end for *this specific* question,
-      since pool init doesn't touch per-packet opcode data. The real code that reads an incoming
-      packet's actual wire opcode and picks/dispatches a pooled job for it is presumably in
-      `COverlapJobManager` itself. Looked for its vtable via the same RTTI-chain technique this
-      pass; found its `TypeDescriptor` but the `RTTICompleteObjectLocator`s referencing it didn't
-      lead to a directly-instantiated vtable the way `CUserCertifier_OverlapJob`'s did (plausibly
-      an abstract base class with no direct instance in this binary, or one this search technique
-      didn't hit) -- a real, honest dead end for this specific pass, not pursued further right
-      now. Flagged as the next concrete target for a future session.
-
-Continued the search from a different angle (real IOCP API call sites -- `GetQueuedCompletionStatus`
-et al. -- rather than more RTTI-vtable chasing) and found real, broader dispatch architecture that
-applies to every opcode, not just login: see `dispatch.md`. Short version: the real worker-thread
-completion loop invokes a virtual method (vtable slot `+8`) on the completion-key object with
-`(bytesTransferred, lpOverlapped)` -- that's the real per-received-packet entry point, and finding
-its concrete class/implementation is now the shared next step for all future opcode RE work, not
-just this one.
+- [x] ~~Map the internal dispatch index ("Div ID") back to the real wire opcode~~ -- **retracted**,
+      see the revised "Dispatch shape" section above: Div ID is most plausibly a real
+      "Division ID" registration concept, unrelated to per-packet opcode dispatch, not a translated
+      form of the wire `MsgID`. The real earlier framing of this checklist item was a mistake, not
+      a fact -- corrected rather than left standing.
+- [x] Identified the real class owning the login-specific `_CertifyUser`/`_CertifyTB_User` switch:
+      **`CUserCertifier_OverlapJob`**, found via its real `RTTICompleteObjectLocator`/
+      `TypeDescriptor` chain (mangled name `.?AVCUserCertifier_OverlapJob@@`) -- the same technique
+      that found `ResObject::Load` for `.bsr`. This surfaced a small real family of
+      `ServerFramework::COverlapJob`-derived async job classes (`CUserCertifier_OverlapJob`,
+      `COverlapJob_InitializeLocalData`, `COverlapJob_RelayMsg`, `COverlapJob_Local`, managed by a
+      real `COverlapJobManager`) -- not one job class per opcode; `CUserCertifier_OverlapJob` alone
+      owns the whole Div ID `0`-`0x1a` switch internally.
+- [x] Found the real, broader per-packet receive path -- **`ACTIVE_SESSION::_OnMsgReceivedBeforeHandshake()`**,
+      confirmed via real embedded debug strings (see `handshake.md`), reads the real 16-bit `MsgID`
+      field directly (not Div ID -- a different object entirely from the certifier job above). This
+      is genuinely the real entry point a raw received packet's opcode is first inspected at,
+      pre-handshake-completion. Whether/how this connects onward to Div ID-based dispatch for
+      post-handshake opcodes (login included) is the open question now, not the translation
+      formula this checklist item used to ask for.
+- [ ] Trace from `ACTIVE_SESSION`'s real per-packet path (now found, see `handshake.md`/
+      `dispatch.md`) forward to wherever `CUserCertifier_OverlapJob` actually gets picked and
+      populated for a login-shaped `MsgID` -- the genuine remaining link between "a raw packet
+      arrived" and "the certifier switch ran with some Div ID." Not yet traced.
 - [ ] Pull the exact `_CertifyUser`/`_CertifyTB_User` result-set column meanings beyond "some
       bytes signal blocked/failed" (now two confirmed distinct encodings, see above)
 - [ ] Cross-reference the SRO_VT_ACCOUNT database backup (`db.rar` in the obtained package) against

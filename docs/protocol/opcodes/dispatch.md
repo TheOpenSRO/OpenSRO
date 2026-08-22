@@ -34,8 +34,19 @@ Two real completion-processing loops exist:
 
 `CSession`, `CBaseSocket`, `CGatewayServer`, `CGatewayMainProcess`, `CDBSessionMgr`,
 `CUdpPingClient`, plus the `ServerFramework::COverlapJob*`/`COverlapJobManager` family already in
-`login.md`. `CSession` is the natural candidate for the per-connection object whose vtable+8 slot
-is the real receive callback, but this project has **not yet confirmed** that link directly.
+`login.md`. `CSession` was the natural candidate for the per-connection object whose vtable+8 slot
+is the real receive callback -- **not confirmed to be `CSession` specifically**, but a different
+technique (searching for real immediate-value comparisons against the known handshake opcodes
+`0x5000`/`0x9000`, rather than more RTTI-vtable tracing) found the real pre-handshake receive path
+directly: **`ACTIVE_SESSION::_OnMsgReceivedBeforeHandshake()`** (class and method name both real,
+read from the binary's own embedded debug strings -- see `handshake.md` for the full real
+per-object field-offset table this uncovered: `+0x1050` = the real 16-bit `MsgID`, `+0x1054` = a
+size field, `+0x1058`/`+0x105c` = the two outgoing security bytes, `+0x164`/`+0x16c-0x16e` = the
+CRC/rolling-byte state). Whether `ACTIVE_SESSION` and the earlier `CSession` guess are the same
+class, related, or unrelated is not confirmed -- the method name's own "BeforeHandshake" qualifier
+suggests this is specifically a *pre-handshake* special case, and post-handshake per-opcode
+dispatch (login and everything else) may route through separate code this project hasn't found
+yet.
 
 ## Why RTTI-chain vtable tracing stalled here (a real, honest limitation)
 
@@ -59,12 +70,19 @@ through further vtable indirection rather than directly.
 - [x] Confirmed this is a real IOCP server, found the real worker-pool completion loop and its
       vtable-dispatched per-I/O callback (`+8` slot)
 - [x] Found the real class names most likely involved (`CSession`, `CBaseSocket`)
-- [ ] Confirm `CSession` (or whichever class it turns out to be) is really what implements that
-      `+8` vtable slot, and decompile that method directly -- this is where a raw receive buffer
-      should first get parsed, and thus where Div ID/wire-opcode translation should actually be
-      findable. Needs a different technique than RTTI-vtable-backward-scan (see above) -- possibly
-      searching for the real header-layout constants (`Size`/`Opcode`/`Security` field offsets)
-      directly, the same way `.bsr`'s magic bytes were used to find `ResObject::Load`, rather than
-      going through class identification first.
-- [ ] Once found, revisit `login.md`'s open Div-ID-translation question with this as the entry
-      point.
+- [x] Found the real pre-handshake per-packet receive method, `ACTIVE_SESSION::
+      _OnMsgReceivedBeforeHandshake()`, by switching technique -- searching for real immediate-value
+      comparisons against known opcodes (`0x5000`/`0x9000`) instead of more RTTI-vtable tracing.
+      This is the technique that should generalize best to future opcode RE work: once *any* real
+      opcode value for a target message is known (from the client or elsewhere), searching for
+      literal `CMP`/`MOV` instructions using that exact value directly finds real comparison sites,
+      without needing to identify an owning class first.
+- [ ] Find the real **post-handshake** per-opcode dispatch path -- `_OnMsgReceivedBeforeHandshake`'s
+      own name implies it's a special case only for the handshake's own two opcodes, not the
+      general mechanism login (or any other real opcode) actually dispatches through once a
+      session is past that stage. This is the genuine remaining gap connecting "a raw packet with
+      some real `MsgID` arrived" to "some specific handler function ran" for ordinary gameplay
+      opcodes -- the real next target, findable via the same technique (search for comparisons
+      against whichever real opcode value is targeted next).
+- [ ] Confirm or refute whether `ACTIVE_SESSION` and the earlier `CSession`/`CBaseSocket` RTTI
+      names refer to the same real class.

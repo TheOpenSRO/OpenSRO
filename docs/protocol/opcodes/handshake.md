@@ -11,9 +11,27 @@ descriptions of observed behavior, no decompiler output/pseudocode/binary-derive
 | `0x5000` | client → server | Initial handshake / hello message. Triggers the handshake state machine. |
 | `0x9000` | server → client | Handshake challenge/accept. Sent by the server as a reply to `0x5000`, and also checked for on a later leg of the exchange (the handshake appears to be multi-step, not a single request/response). |
 
-Exact payload field layouts for these two opcodes are not yet documented here — next step is to
-pull the payload structure (not just the fact that these opcodes exist) before implementing the
-handshake state machine in `server/internal/proto`.
+Confirmed directly in `GatewayServer.exe` (2026-08-22, real dedicated server binary from the same
+obtained package, not just inferred from the client): both values are checked as literal 16-bit
+comparisons against a real per-connection object's own message-opcode field, inside a real,
+named method — **`ACTIVE_SESSION::_OnMsgReceivedBeforeHandshake()`** (the class and method names
+are both real, read directly from the binary's own embedded debug/log strings, e.g.
+`"ACTIVE_SESSION::_OnMsgReceivedBeforeHandshake() - Handshake ServerSignature Error[MsgID: 0x%x]"`
+— note the real internal name for the wire opcode field itself is **"MsgID"**). Real per-object
+field offsets found (all offsets are from the start of one `ACTIVE_SESSION` instance):
+
+| Offset   | Real meaning (confirmed)                                                    |
+|----------|------------------------------------------------------------------------------|
+| `+0x1050`| The just-received message's real 16-bit `MsgID` (wire opcode)               |
+| `+0x1054`| A size/length field, masked with `0x7fff` when read — top bit plausibly a real flag (this project's own `secMassive`-style bit is a real candidate, not yet confirmed to be the same one) |
+| `+0x1058`| The outgoing rolling security byte (point 2 below), written per reply       |
+| `+0x105c`| The outgoing multi-table CRC-style byte (point 3 below), written per reply  |
+| `+0x164` | The CRC state object passed into the checksum function (see point 3)        |
+| `+0x16c..0x16e` | The three rolling-byte generator state bytes (matches `RollingByte`'s own 3-byte state exactly) |
+
+Exact full payload field layouts for these two opcodes (beyond the security-byte fields above) are
+still not documented here — real next step if wire compatibility work continues on this specific
+opcode pair.
 
 ## Per-packet security state (revised — first pass below was incomplete)
 
@@ -47,16 +65,22 @@ leaving a description we don't actually believe is right:
    set once at handshake time) — so this is a per-session keystream advancing by one step per
    packet, not something that mixes in each packet's actual contents.
 3. There's a second, genuinely independent piece — not combined with point 2, confirmed by seeing
-   both written to two different single-byte fields in the same outgoing packet header. It's a
-   classic reflected CRC-32-style running checksum: a 32-bit accumulator seeded to `0xFFFFFFFF`,
-   updated one byte at a time as `acc = (acc >> 8) XOR table[(byte XOR acc) & 0xFF]`, then folded
-   down to one byte by summing the accumulator's four constituent bytes (plain 8-bit addition, no
-   carry). The twist: `table` isn't the single standard CRC-32 table — a small per-session index
-   (1-255) selects among several candidate tables, so this is a keyed/multi-table CRC variant, not
-   plain CRC-32. We have not pulled the actual table contents; doing so from the binary and
-   hardcoding them verbatim would be exactly the kind of literal copying `docs/LEGAL.md` policy #2
-   exists to avoid, so this stays undocumented until/unless the table turns out to match something
-   independently, publicly documented.
+   both written to two different single-byte fields (`+0x1058` and `+0x105c` on `ACTIVE_SESSION`,
+   see above) in the same outgoing packet header. It's a classic reflected CRC-32-style running
+   checksum: a 32-bit accumulator seeded to `0xFFFFFFFF`, updated one byte at a time as
+   `acc = (acc >> 8) XOR table[(byte XOR acc) & 0xFF]`, then folded down to one byte by summing the
+   accumulator's four constituent bytes (plain 8-bit addition, no carry). The twist: `table` isn't
+   the single standard CRC-32 table — a small per-session index selects among several candidate
+   tables. **Confirmed directly (2026-08-22, `GatewayServer.exe`): the real selection formula is
+   `table_offset = table_index * 256`** — i.e. one big backing array holds every candidate table
+   back-to-back, 256 `uint32` entries each, and `table_index` (an int, stored at the start of the
+   same small object that carries the running accumulator) picks which 256-entry slice to use.
+   This is a fact about behavior/method (an offset-selection formula), not literal table data, so
+   documenting it doesn't run into `docs/LEGAL.md` policy #2's line the way the actual table
+   *contents* would. We still have not pulled (and still don't intend to pull) the actual table
+   values themselves — hardcoding those verbatim from the binary would be exactly the kind of
+   literal copying policy #2 exists to avoid, so the real table's byte contents stay undocumented
+   until/unless they turn out to match something independently, publicly documented.
 
 So: two independent one-byte fields per outgoing packet header — an LFSR-seeded rolling byte
 (point 2) and a multi-table CRC-32-style byte (point 3) — not a single fused "security byte" as
@@ -79,16 +103,21 @@ key derivation/exchange has not been pulled apart yet; that's the next piece nee
       byte) are independent fields, not fused into one — corrects a second, earlier mistaken pass
       that had them combined via XOR (see PROGRESS.md; that version was reverted before landing)
 - [x] The rolling-byte generator (point 2) is fully confirmed and implemented
-      (`RollingByte`/`DeriveSeed`). Decided (2026-08-22, per `docs/protocol/PROTOCOL_DECISION.md`):
-      this project is a from-scratch client/server pair, not aiming for wire compatibility with the
-      original client, so the CRC-style byte (point 3) is implemented as `PacketChecksum` — same
-      shape (reflected CRC-32-style, folded to one byte, per-session table selection by index) but
-      with its own from-scratch table family (`checksumTable`), not the original's proprietary
-      table contents (which stay undocumented per point 3's note either way).
-- [ ] Pull exact payload layout for `0x5000` / `0x9000` — moot for implementation purposes now (see
-      below), but left unchecked since it was never actually pulled.
-- [ ] Pull key derivation for the session cipher — same as above, not pursued further.
-- [x] ~~Implement handshake state machine in `server/internal/proto`~~ — superseded by
-      `docs/protocol/PROTOCOL_DECISION.md`: this scheme is kept as a verified reference
-      implementation of the RE findings only and is **not** wired into the real server. The actual
-      client<->server protocol is `docs/protocol/OWN_PROTOCOL.md` / `opcodes_own.go`.
+      (`RollingByte`/`DeriveSeed`) -- and, as of 2026-08-22, confirmed bit-for-bit correct not just
+      against the client but against real `GatewayServer.exe` code computing it live in
+      `ACTIVE_SESSION::_OnMsgReceivedBeforeHandshake()`.
+- [x] The multi-table CRC-style byte (point 3)'s table-*selection* formula (`table_index * 256`
+      into one shared backing array) is now confirmed too (2026-08-22) -- only the actual table
+      *contents* remain deliberately unpulled, per policy #2. `PacketChecksum` currently implements
+      this shape with its own from-scratch table family rather than the original's table contents
+      -- worth revisiting once real wire compatibility work reaches this opcode pair, since the
+      selection *formula* is now real and could be matched exactly even while keeping the table
+      contents original.
+- [ ] Pull exact payload layout for `0x5000` / `0x9000` beyond the security-byte fields already
+      found (see the offset table above) -- the real next step for this specific opcode pair now
+      that `docs/protocol/PROTOCOL_DECISION.md` has reversed course to target actual wire
+      compatibility.
+- [ ] Pull key derivation for the session cipher.
+- [ ] Wire this into `server/internal/proto`/the real gateway, now that the goal is genuine wire
+      compatibility rather than a reference implementation -- see
+      `docs/protocol/PROTOCOL_DECISION.md`'s 2026-08-22 reversal.

@@ -4,10 +4,11 @@ package proto
 // docs/protocol/opcodes/handshake.md: seeded once at handshake time from key
 // material, then advanced by one step for each packet sent on the session.
 // It is independent of that packet's actual contents — it's a keystream-like
-// counter, not a checksum.
-//
-// This does not (yet) implement the separate multi-table CRC-32-style byte
-// also described in that doc — see its Status section for why.
+// counter, not a checksum. Confirmed (2026-08-22) bit-for-bit correct not
+// just against the client but against a real GatewayServer.exe computing it
+// live in ACTIVE_SESSION::_OnMsgReceivedBeforeHandshake() — see handshake.md.
+// PacketChecksum below is the separate multi-table CRC-32-style byte also
+// described in that doc.
 type RollingByte struct {
 	state [3]byte // seeded at handshake time; state[0] advances each call
 }
