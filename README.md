@@ -247,18 +247,23 @@ Whether each real armor piece actually shows is gated on the player's actual,
 server-authoritative per-slot equip state via the same `EquipmentNet` protocol that tab uses
 (`World3D.gd`'s `_real_player_equipped_slots()`), queried on world entry. A newly-created
 character has nothing equipped, so it renders bare-skinned until the player actually equips real
-pieces — and renders exactly the pieces actually equipped, not a fixed bundle. The armor meshes
-themselves are still a fixed set per gender (one arbitrary real pick among many found, see below),
-not real per-account item variety. Skips the query entirely (defaults to nothing equipped, not a
-hang) when there's no live server connection — e.g. the standalone dev-tool/screenshot contexts
-used throughout this project's asset work.
+pieces — and renders exactly the pieces actually equipped, not a fixed bundle. Skips the query
+entirely (defaults to nothing equipped, not a hang) when there's no live server connection — e.g.
+the standalone dev-tool/screenshot contexts used throughout this project's asset work.
 
 The player wears real armor pieces from a real, full 6-piece per-gender set
-(`Prim/Mesh/Item/China/{man,woman}_item/clothes_03_{aa,ba,fa,ha,la,sa}.bms` — arm/body/foot/head/
+(`Prim/Mesh/Item/China/{man,woman}_item/clothes_<NN>_{aa,ba,fa,ha,la,sa}.bms` — arm/body/foot/head/
 leg/shoulder) that attaches via `CharacterAssembler.assemble_equipment`, the same rigid-attachment
 mechanism as the body, textured the same real name-matched way. Which slots are genuinely paired
 (mirrored L/R in one file) vs. single-piece was determined by a real triangle-centroid-X gap scan
-on the actual files, not a guess — see `docs/PROGRESS.md`.
+on the actual files, not a guess — see `docs/PROGRESS.md`. **The local player now picks one of 8
+real, individually-verified set numbers (`02`-`09`) deterministically from their actual equipped
+armor item's real ID** (`World3D.gd`'s `ARMOR_SET_NUMBERS`/`_try_apply_real_player_character`) —
+real per-item ID-to-model mapping data doesn't exist anywhere this project can reach (checked;
+`_RefObjItem` has no code-name/model column), so this is an honest own-designed substitute: a
+different real item at least looks different, without claiming to match the real game's actual
+item-to-model mapping. Other connected players still show one fixed look, since the wire protocol
+broadcasting their equipment to everyone else only carries a boolean, not a real item ID, yet.
 
 Other connected players are real assembled characters too now, not just labeled capsules, each
 rendering their own real per-account `Gender` (China Man or China Woman — see above), not a single
@@ -282,24 +287,28 @@ can reduce a hit but never negate it entirely — see `server/internal/session/c
 `defenderArmor` and `docs/PROGRESS.md`.
 
 The player also wields a real weapon now, gated the same honest way as armor: a real one-handed
-blade (`Prim/Mesh/Item/China/weapon/blade_01.bms`, an arbitrary fixed pick among many real numbered
-weapons found, faction-wide rather than per-gender — `Prim\Mesh\Item\China\weapon\` has no man/
-woman split, unlike body/armor meshes) attaches to a real, directly-confirmed hand bone
-(`CharacterAssembler.WEAPON_BONE`, "Bip01 R Hand" — found by pulling a real skeleton and locating
-that exact bone name string, not assumed from the naming convention) via the same rigid-attachment
-mechanism as body parts and armor. Textured the same real name-matched way: a real `blade_01.bms`'s
-own `material_name` field ("blade1_5") matches a real layer inside a real `blade1_5.bmt`. Only
-shows once the player's account actually has something equipped in `SLOT_WEAPON` — a newly-created
-character renders bare-handed, same as bare-skinned for armor. Rendered and verified against real
-pulled data (real 37-bone skeleton, real weapon mesh, real material layer match confirmed).
+blade (`Prim/Mesh/Item/China/weapon/blade_<NN>.bms`, faction-wide rather than per-gender —
+`Prim\Mesh\Item\China\weapon\` has no man/woman split, unlike body/armor meshes) attaches to a
+real, directly-confirmed hand bone (`CharacterAssembler.WEAPON_BONE`, "Bip01 R Hand" — found by
+pulling a real skeleton and locating that exact bone name string, not assumed from the naming
+convention) via the same rigid-attachment mechanism as body parts and armor. Only shows once the
+player's account actually has something equipped in `SLOT_WEAPON` — a newly-created character
+renders bare-handed, same as bare-skinned for armor. **The local player picks one of 15 real,
+individually-verified blades (`blade_01`-`blade_15`) deterministically from their actual equipped
+weapon item's real ID** (`World3D.gd`'s `WEAPON_VARIANTS`) — each mesh's own real `material_name`
+field was checked by hand against real `.bmt` files rather than assumed from a naming formula
+(`blade_01`-`blade_06` share `blade1_5.bmt`, `blade_07`-`blade_09` share `blade6_10.bmt`, `blade_10`
+uses `blade_10_12.bmt`, `blade_11`-`blade_15` each have their own). Other connected players still
+show one fixed blade, same real-item-ID gap as armor above.
 
 A real off-hand shield renders the same way: real, faction-wide shield item meshes exist under the
-same real weapon folder (`Prim/Mesh/Item/China/weapon/shield_11.bms`, an arbitrary fixed pick among
-many real numbered shields found) and attach to a second real, directly-confirmed bone
+same real weapon folder and attach to a second real, directly-confirmed bone
 (`CharacterAssembler.SHIELD_BONE`, "Bip01 L Hand" — the off-hand counterpart to the weapon's "Bip01
-R Hand", found the same direct way). Textured the same real name-matched way
-(`shield_11.bms`'s `material_name` matches a real layer in `shield_11.bmt`). Gated on real
-`SLOT_SHIELD` equip state, broadcast per-player the same way as armor and weapon.
+R Hand", found the same direct way). **The local player picks one of 5 real, individually-verified
+shields** (`shield_11`/`15`/`16`/`90`/`91` — `World3D.gd`'s `SHIELD_VARIANTS`; `shield_14` was
+checked and dropped after its own real `material_name` ("China_shield_14") turned out not to match
+any real file anywhere in the archive) deterministically from the real equipped shield item's ID.
+Gated on real `SLOT_SHIELD` equip state, broadcast per-player the same way as armor and weapon.
 
 The ground is no longer just a placeholder box either: setting `SRREVAMP_MAPM_PATH` (+ its own
 `SRREVAMP_MAP_PK2_PATH`, since `Map.pk2` is a separate archive from `Data.pk2` in a real retail

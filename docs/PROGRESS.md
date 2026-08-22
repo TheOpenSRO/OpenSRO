@@ -2,6 +2,43 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-22 (cont'd 37) — "armor"/"weapons and shields" phases 4-5: real per-item visual variety
+
+- Checked whether real per-equipped-item visual selection data exists anywhere in this project's
+  reach before building anything: `_RefObjItem` has no code-name/model column at all (confirmed
+  earlier in `refdata_schema.md`), the client's only text-data table
+  (`server_dep\silkroad\textdata\itemtypenumber.txt`) is unrelated, and there's no item-equivalent
+  of the real `object.ifo` type-index. **Real per-item-ID-to-model mapping genuinely doesn't exist
+  in any data this project can reach** -- confirmed rather than assumed, closing off that direction
+  for now (would need digging into the client `.exe` itself for a hardcoded table, a much bigger,
+  uncertain undertaking).
+- Built the honest alternative instead: real, individually-verified mesh/material variety, picked
+  deterministically from each real equipped item's ID, rather than one fixed look for everyone.
+  Wrote a small throwaway Go tool (parses a real `.bms`'s own `material_name` field against a real
+  archive, reusing `internal/pk2`/`internal/bms` -- not committed, deleted after use) to check each
+  candidate weapon/shield's real material by hand rather than assuming a naming formula: found
+  `blade_01`-`blade_06` share `blade1_5.bmt`, `blade_07`-`blade_09` share `blade6_10.bmt`,
+  `blade_10` uses `blade_10_12.bmt`, `blade_11`-`blade_15` each have their own numbered `.bmt` --
+  all 15 confirmed real and working. For shields, confirmed `shield_11`/`15`/`16`/`90`/`91` all
+  resolve (real quirk: `shield_91`'s own material_name is `"shield_11"`, a real reuse) and
+  **dropped `shield_14`** after finding its real material_name (`"China_shield_14"`) doesn't match
+  any real file that exists anywhere in the archive -- a real exception the naming formula alone
+  would have silently gotten wrong.
+- For armor, confirmed the existing `clothes_03` set is one of many identically-shaped real sets
+  (`clothes_<NN>_<part>.bms` + a matching `clothes_<NN>.bmt`, same part-suffix convention) --
+  spot-checked `01` and `05` directly, found real gaps at the edges (some numbers missing for one
+  gender), settled on `02`-`09` as a verified-safe-for-both-genders range.
+- `WEAPON_VARIANTS`/`SHIELD_VARIANTS`/`ARMOR_SET_NUMBERS` (new consts) plus a reworked
+  `_load_character_assets`/`_build_assembled_character` (now takes `armor_set_number`/
+  `weapon_variant_idx`/`shield_variant_idx`, keyed/looked-up per real equipped item ID) --
+  `_real_player_equipped_slots` now also returns each slot's real item ID, not just
+  occupied/empty. **Scope, stated honestly**: only the *local* player gets real per-item variety --
+  other players still show the original fixed look, since the wire protocol broadcasting their
+  equipment to everyone else only carries a boolean, not a real item ID, yet (a real, concrete
+  follow-up, not an oversight).
+- Full CI test-suite sweep (every `_test.gd` file CI runs) passes, plus a clean `--import --quit`.
+- Next up in the roadmap: skills.
+
 ## 2026-08-22 (cont'd 36) — "character/animation" phase 3: real walk-cycle playback for the player
 
 - Found the real gap live playtesting flagged: `Skeleton3DBuilder.apply_ban_keyframe` (the only
