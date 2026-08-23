@@ -2,6 +2,37 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 52) — solved .t too, using the same public documentation source
+
+- Immediately after solving `.m` (previous entry), checked the same public documentation source
+  (`JellyBitz/srodevs-docs`) for `.t` and found a dedicated `jmxvmapt.md` page: a 12-byte header +
+  a real 9,216-byte ShadowMap + `TextureLength`/`TextureType` + a real, complete, standard embedded
+  DDS file. This directly resolves the earlier same-day "9,340-byte unexplained gap" from the
+  reverted detail-texture attempt: `9,216 (ShadowMap) + 124 (the embedded DDS's own header) =
+  9,340`, exactly.
+- Verified byte-for-byte against a real `100/100.t` sample: parsing the real structure consumes
+  exactly `140,436` bytes -- the file's real total size, zero leftover. Extracted the real embedded
+  DDS and decoded it (both `ImageMagick` and Godot's own `Image` class) -- a genuine, plausible
+  grayscale lightmap (soft shadow-patch clusters on a white background), categorically different
+  from and far more sensible than the earlier same-day pass's garish color-noise decode (which had
+  used the wrong byte offset entirely).
+- Split `.t`'s content out of `MAPM_FORMAT.md` into its own `docs/protocol/MAPT_FORMAT.md` (matching
+  the `.o`/`.o2` precedent), keeping the full real investigation history (including the earlier
+  wrong guess and its live-test-caught revert) rather than deleting it.
+- Implemented `MapTReader` (GDScript): parses the real header/ShadowMap/DDS structure and decodes
+  the embedded DXT1 payload via `Image.create_from_data`. **Caught a real off-by-4 bug in the DDS
+  pixelformat-field offset via live testing against the real sample** (a self-consistent but wrong
+  test fixture had masked it -- the test wrote and read back the FourCC at the same wrong offset,
+  passing cleanly, while the real file's genuine offset was 4 bytes earlier). Fixed both the reader
+  and the test fixture once the real sample's decode came back null and forced a recheck. Full test
+  suite passes; the real sample now decodes correctly, cross-checked pixel-for-pixel against the
+  earlier ImageMagick-decoded reference image.
+- Not yet wired into `World3D.gd`'s rendering (the earlier direct-color-overlay attempt was
+  reverted; a real ambient-occlusion-style darkening layer is a better fit for a real grayscale
+  lightmap and is the natural next step, not attempted this pass).
+- Full CI test-suite sweep passes (both client and server), clean `--import --quit`. All real pk2
+  data pulled temporarily for verification only, deleted immediately after.
+
 ## 2026-08-23 (cont'd 51) — SOLVED the .m row-layout mystery for real, using public documentation
 
 - After the `.t` revert (previous entry), the user asked "what's next" and this continued pushing
