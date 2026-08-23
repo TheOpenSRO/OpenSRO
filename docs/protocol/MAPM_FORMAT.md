@@ -15,12 +15,15 @@ coordinates by a fixed constant every time it steps across a region boundary. Th
 real, compile-time `double` (`FLD double ptr [addr]`, zero write-sites anywhere in the binary —
 confirmed not runtime-computed) with value **1920.0**.
 
-`client/scripts/assets/mapm_terrain_builder.gd`'s `TILE_SIZE` now derives from this real value
-(`1920.0 / (GRID_WIDTH - 1)`), assuming the already-confirmed 17-wide column field spans one whole
-real region rather than a sub-patch — not proven, but the cleanest reading available (no evidence
-of sub-patches, and the arithmetic lands on an exact round number, 120.0). This also happens to
-make real elevation changes read as far gentler slopes than the previous arbitrary spacing, purely
-as a side effect of spacing samples 6x further apart along the same real height data.
+**Superseded the same day, see the loader-function section below**: this was first read as
+`client/scripts/assets/mapm_terrain_builder.gd`'s `TILE_SIZE` deriving from this value
+(`1920.0 / (GRID_WIDTH - 1) = 120.0`), assuming the confirmed 17-wide column field spans one whole
+region. Real loader-function evidence found later the same session showed that's wrong — 17
+columns is one real *sub-patch* of a 6×6 grid that makes up a whole region, and `1920.0 / 96 =
+20.0` exactly. `TILE_SIZE` is back to the real, doubly-confirmed `20.0`; this `1920.0` constant now
+only drives `World3D.gd`'s independent `REGION_SPAN` (real inter-region spacing), decoupled from
+`TILE_SIZE` entirely. Left the original (wrong) reasoning struck through in spirit rather than
+silently rewritten — see below for the real derivation and what corrected it.
 
 ## Real row-layout mystery: one more attempt, still unsolved (2026-08-22)
 
@@ -310,6 +313,20 @@ in real loader code (not just this project's own statistical/column-field analys
 concrete open question (which part of either function reads height floats into a 2D grid, and at
 what real stride) for whoever continues this. Not resolved this pass, but a real, substantial step
 closer than "no loader has ever been found," which was this doc's honest state before today.
+
+**One real, concrete fact this did resolve**: `MapLoader.cpp`'s precise loop math (a real `6 × 6`
+outer structure, a real `× 96`-scaled float stride) gives `1920.0 / 96 = 20.0` exactly, confirming
+`GRID_WIDTH` (17) spans one real *sub-patch* of a 6×6 grid, not a whole region as an earlier
+same-day fix assumed — see "Real per-region world size confirmed" above for the correction this
+drove (`TILE_SIZE` back to a real, doubly-confirmed `20.0`).
+
+**Tried and reverted the natural follow-up, recorded honestly**: since a whole region is 6×6 of
+these real sub-patches and this project can't yet map `.m`'s file order to which of the 36 a given
+row-group belongs to, tried tiling the *same* one parsed sub-patch 36 times to fill a region's real
+footprint instead of leaving most of it flat placeholder ground. Verified live against real pk2
+files: made things worse, not better — real per-patch data is already steep enough on its own that
+repeating it 36 times creates a steep boundary every 320 units instead of every 1920, boxing the
+camera in more often. Reverted to rendering just the one real sub-patch per region.
 
 ## A real, unopened sibling file: `.t` (`JMXVMAPT1001`) — a possible ground-texture blend map
 

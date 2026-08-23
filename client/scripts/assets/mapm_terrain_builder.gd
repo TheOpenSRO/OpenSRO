@@ -52,26 +52,26 @@ class_name MapmTerrainBuilder
 const GRID_WIDTH := 17
 
 ## World-space spacing between adjacent tiles. **Real, confirmed value
-## (2026-08-22)**, replacing an earlier arbitrary guess: `1920.0 / (GRID_WIDTH - 1)`.
-## 1920.0 is a real per-region world-space size, decompiled directly out of
-## `sro_client.exe`'s real cross-region movement/pathing function
-## (`RegionManagerBody.cpp`, confirmed via its own literal embedded source
-## path string) -- a real `double` constant (found via `FLD double ptr`,
-## not the 4-byte float this project first misread it as) added to a
-## position's local coordinate every time that function steps across a
-## region boundary, with zero write-sites anywhere in the binary (a genuine
-## compile-time constant, not a runtime-computed value). Assumes
-## `GRID_WIDTH` (17, itself real and separately confirmed -- see above)
-## columns span one *whole* real region rather than a sub-patch within a
-## larger real grid -- not proven, but the cleanest reading available: no
-## real evidence of sub-patches exists, and it makes the arithmetic land on
-## an exact round number (`1920 / 16 = 120.0`) rather than a numerological
-## coincidence. This also happens to make real elevation changes read as
-## far gentler slopes than the old 20.0 spacing did, purely as a side
-## effect of spacing samples 6x further apart along the same real height
-## data -- a welcome side effect of using the real value, not a deliberate
-## tuning choice.
-const TILE_SIZE := 1920.0 / (GRID_WIDTH - 1)
+## (2026-08-23), superseding an earlier same-day fix that assumed the wrong
+## structure** -- see docs/protocol/MAPM_FORMAT.md's real loader-function
+## findings for the full derivation. That earlier fix set this to
+## `1920.0 / (GRID_WIDTH - 1) = 120.0`, assuming `GRID_WIDTH` (17) columns
+## span one *whole* real region. Decompiling the real client loader
+## functions (`MapLoader.cpp`/`MapCallBack.cpp`, found the same day) showed
+## a real 6x6 outer sub-patch structure with a real 289 (17x17) inner
+## bound: **one real region is a 6x6 grid of 17-wide sub-patches sharing
+## edge vertices** (6x16+1 = 97 unique vertices per side, the classic
+## public "97x97 terrain grid" convention this project's own earlier DFT
+## investigation found real evidence for and then wrongly retracted).
+## `1920.0 / 96 = 20.0` exactly -- confirming `GRID_WIDTH` spans one
+## *sub-patch*, not a whole region, and TILE_SIZE is real, confirmed 20.0 --
+## coincidentally the exact value this project's very first, purely
+## empirical guess already used, now confirmed for a real reason instead of
+## just "looked reasonable." REGION_SPAN (World3D.gd) no longer derives
+## from this constant -- it's the independently-confirmed real 1920.0
+## region size, unrelated to how many *sub-patches* get rendered inside
+## one region (see World3D.gd's SUBPATCH_SPAN for how that gap gets filled).
+const TILE_SIZE := 20.0
 
 ## Decodes a Shape-A tile's real per-tile column index (0..GRID_WIDTH-1)
 ## from its raw Extra bytes -- see this file's top comment. Extra[1:3] is

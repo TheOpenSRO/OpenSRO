@@ -2,6 +2,32 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 43) — corrected the region-scale fix using the new loader evidence, tried and reverted a sub-patch-tiling idea
+
+- Continued straight from the previous entry's real loader-function find rather than treating it
+  as a stopping point. The real `MapLoader.cpp` function's precise loop math (`6 × 6 × 289` and a
+  real `96`-stride float computation) gives an exact `1920.0 / 96 = 20.0` -- confirming
+  `MapmTerrainBuilder.GRID_WIDTH` (17) spans one real **sub-patch**, not a whole region as
+  yesterday's fix assumed. **Corrected `TILE_SIZE` back to the real, now-doubly-confirmed 20.0**
+  (this project's very first, purely empirical guess, now confirmed for a real reason). Decoupled
+  `REGION_SPAN` in `World3D.gd` from `TILE_SIZE` entirely -- it's now its own independent real
+  1920.0 constant, since conflating "one region" with "one sub-patch" was exactly yesterday's
+  mistake.
+- **Tried a natural follow-up idea and reverted it after live testing showed it didn't help**:
+  since a real region is a 6×6 grid of these sub-patches and this project can't yet map `.m`'s
+  file order to which of the 36 real sub-patches a row-group belongs to, tried tiling the *same*
+  one parsed real sub-patch 36 times to fill a whole region's real 1920×1920 footprint instead of
+  leaving most of it flat placeholder ground. Verified live against real pk2 files: **it made
+  things worse**, not better -- real per-patch data is already steep enough on its own that
+  repeating it 36 times just creates a steep boundary every 320 units instead of every 1920,
+  boxing the camera in more often. Reverted to rendering just the one real sub-patch per region,
+  recorded as a tried-and-rejected approach rather than silently dropped.
+- Final live-verified result (real pk2 files, real terrain, real scenery, real character): a
+  legible view with real sky, a real scenery structure, and real terrain slopes clearly visible --
+  confirms the revert was the right call.
+- Full CI test-suite sweep passes throughout, clean `--import --quit`. All real pk2 data pulled
+  temporarily for verification only, deleted immediately after each pass.
+
 ## 2026-08-23 (cont'd 42) — found the real `.m` loader functions for the first time in this project's history
 
 - Kept pushing on the same terrain-shape investigation rather than stopping after the previous

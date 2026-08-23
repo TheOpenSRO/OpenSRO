@@ -260,19 +260,22 @@ const MAX_MAP_OBJECTS := 300
 ## (see MapmTerrainBuilder.build_mesh's doc comment on why this reshapes an
 ## otherwise absurdly elongated ribbon into an actual square patch).
 ## GRID_WIDTH keeps rows == columns for a true square, sized entirely from
-## already-confirmed real per-tile data -- not a new claim about the real
-## region's true footprint.
+## already-confirmed real per-tile data. **Real, confirmed meaning
+## (2026-08-23)**: this is one *sub-patch* of a real 6x6 sub-patch grid that
+## makes up one whole region (see MapmTerrainBuilder.TILE_SIZE's doc
+## comment) -- not the whole region's own footprint.
 const REGION_ROWS := MapmTerrainBuilder.GRID_WIDTH
-## World-space footprint of one reshaped region square (see REGION_ROWS),
-## used as the grid spacing between adjacent real regions in
-## _load_region_neighborhood. **Now a real, confirmed value (2026-08-22)**:
-## MapmTerrainBuilder.TILE_SIZE is derived directly from a real decompiled
-## per-region world size (1920.0, see its own doc comment), so this equals
-## that real value exactly (1920.0) rather than an own-designed guess --
-## real per-region *adjacency* (which neighbor is truly north/south/etc. of
-## which, and whether the real world even lays regions out on a uniform
-## grid at all) still isn't confirmed, but the *spacing* magnitude now is.
-const REGION_SPAN := (REGION_ROWS - 1) * MapmTerrainBuilder.TILE_SIZE
+## World-space spacing between adjacent *regions* in _load_region_neighborhood.
+## **Real, confirmed value (2026-08-22)**: a real per-region world size
+## decompiled directly out of a real cross-region movement function in
+## `sro_client.exe` (`RegionManagerBody.cpp`) -- see
+## docs/protocol/MAPM_FORMAT.md. Independent of TILE_SIZE/REGION_ROWS
+## (an earlier same-day version of this constant derived it from TILE_SIZE,
+## which conflated "one region" with "one sub-patch" -- corrected, see
+## MapmTerrainBuilder.TILE_SIZE's doc comment). Real per-region *adjacency*
+## (whether the real world even lays regions out on a uniform grid at all)
+## still isn't confirmed, but the *spacing magnitude* is.
+const REGION_SPAN := 1920.0
 ## How many real regions out from the center region to try loading in each
 ## direction -- radius 1 means a 3x3 grid (9 regions attempted, however many
 ## actually exist as real files). Kept small since each region is a real
@@ -937,9 +940,9 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 		printerr("World3D: parsed ", region.tiles.size(), " tiles from ", mapm_path, " but couldn't recover enough complete rows for a mesh")
 		return NAN
 
-	var terrain := MeshInstance3D.new()
-	terrain.name = "RealTerrain" + node_suffix
-	terrain.mesh = terrain_mesh
+	var terrain_group := Node3D.new()
+	terrain_group.name = "RealTerrain" + node_suffix
+
 	var mat := StandardMaterial3D.new()
 	var real_texture := _load_real_terrain_texture(texture_override)
 	var aabb := terrain_mesh.get_aabb()
@@ -956,7 +959,6 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 		mat.uv1_scale = Vector3(1.0, max(row_count_estimate / float(MapmTerrainBuilder.GRID_WIDTH), 1.0), 1.0)
 	else:
 		mat.vertex_color_use_as_albedo = true
-	terrain.material_override = mat
 	# Real world-space alignment with the player's own spawn position isn't
 	# confirmed (see top comment) -- centered near the player purely for
 	# visibility, same as the scenery/decoration-skeleton placement choices
@@ -979,17 +981,40 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	var near_positions: PackedVector3Array = near_arrays[Mesh.ARRAY_VERTEX]
 	var near_height := near_positions[MapmTerrainBuilder.GRID_WIDTH / 2].y
 	var anchor_height := near_height if is_nan(shared_vertical_anchor) else shared_vertical_anchor
-	terrain.rotation.y = PI
-	terrain.position = Vector3(aabb.size.x / 2.0, -anchor_height, 0) + world_offset
-	add_child(terrain)
+	terrain_group.rotation.y = PI
+	terrain_group.position = Vector3(aabb.size.x / 2.0, -anchor_height, 0) + world_offset
+	add_child(terrain_group)
 	ground_mesh.visible = false
 	ground_collision.disabled = true
 
-	var terrain_body := StaticBody3D.new()
-	var terrain_shape := CollisionShape3D.new()
-	terrain_shape.shape = terrain_mesh.create_trimesh_shape()
-	terrain_body.add_child(terrain_shape)
-	terrain.add_child(terrain_body)
+	# **Tried and reverted (2026-08-23), recorded honestly rather than
+	# silently dropped**: one whole region is a real 6x6 grid of sub-patches
+	# this size (see MapmTerrainBuilder.TILE_SIZE's doc comment), and this
+	# project can't yet map the .m file's own row/column order to which of
+	# the 36 real sub-patches a given row-group belongs to -- so an earlier
+	# version of this function tiled the *same* one real parsed patch across
+	# all 36 slots to fill the region's real footprint instead of leaving
+	# 35/36 of it as flat ground. Verified live against real pk2 files: it
+	# made things *worse*, not better -- the real per-patch data is already
+	# steep enough on its own (confirmed even for a single patch, see
+	# MAPM_FORMAT.md) that repeating it 36 times just creates a steep
+	# boundary every SUBPATCH_SPAN (320) units instead of every REGION_SPAN
+	# (1920), boxing the camera in more often, not less. Reverted to
+	# rendering just the one real confirmed sub-patch per region -- honest
+	# about most of a region's real footprint staying flat placeholder
+	# ground until the real row-layout mystery is solved enough to assemble
+	# genuinely distinct real sub-patches, rather than papering over that
+	# gap with repeated copies that measurably didn't help.
+	var patch_body := StaticBody3D.new()
+	var patch_shape := CollisionShape3D.new()
+	patch_shape.shape = terrain_mesh.create_trimesh_shape()
+	patch_body.add_child(patch_shape)
+	var single_patch := MeshInstance3D.new()
+	single_patch.name = "SubPatch"
+	single_patch.mesh = terrain_mesh
+	single_patch.material_override = mat
+	single_patch.add_child(patch_body)
+	terrain_group.add_child(single_patch)
 
 	# The vertical calibration above only guarantees one specific mesh vertex
 	# lines up near world Y=0 -- it says nothing about the height of whatever
