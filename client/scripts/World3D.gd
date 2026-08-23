@@ -726,50 +726,6 @@ func _load_real_terrain_texture(path_override: String = "") -> Texture2D:
 
 	return DdjReader.to_texture(parsed)
 
-## Real, single-mip DXT1 payload size for the .t detail-decal texture
-## below (512x512, 4x4-pixel blocks, 8 bytes/block) -- see
-## docs/protocol/MAPM_FORMAT.md's ".t loader" section for the derivation.
-const MAPT_TEXTURE_SIZE := 512
-const MAPT_PAYLOAD_LEN := (MAPT_TEXTURE_SIZE / 4) * (MAPT_TEXTURE_SIZE / 4) * 8
-## Real, confirmed byte offset where MAPT_PAYLOAD_LEN's DXT1 pixel data
-## starts: 12-byte magic+version ("JMXVMAPT1001") + a real 12-byte field
-## the decompiled loader (FUN_00a31d20) reads right after opening the file
-## -- see MAPM_FORMAT.md. The exact meaning of those 12 bytes isn't
-## confirmed, only their length.
-const MAPT_HEADER_LEN := 24
-
-## Loads a region's real .t file (the same base path as mapm_path, with
-## its extension swapped) as a detail-decal texture -- see
-## docs/protocol/MAPM_FORMAT.md's "real .t loader" section for how this
-## was found and decoded: a real decompiled loader function
-## (sro_client.exe's FUN_00a31d20) creates a 512x512, single-mip,
-## DXT1-compressed Direct3D texture from this file, and decoding a real
-## sample the same way (both via ImageMagick and Godot's own Image class,
-## cross-checked) produces a real, structured (non-random) sparse
-## blob-cluster image -- not a plausible base ground-color photo, but a
-## good match for a detail/decal blend mask, the kind of second layer the
-## real terrain shaders' own `...detail` variants would composite. Not
-## every region has a `.t` file (only newer-generation "Shape B" regions
-## do -- see the Shape A/B split), so a missing file here is the normal,
-## expected case, not an error. The real trailing ~9KB of the file beyond
-## this one DXT1 mip's payload is still unexplained (see MAPM_FORMAT.md)
-## and is simply not read here.
-func _load_real_terrain_detail_texture(mapm_path: String, archive: Pk2Reader) -> Texture2D:
-	if mapm_path == "" or not mapm_path.ends_with(".m"):
-		return null
-	var mapt_path := mapm_path.substr(0, mapm_path.length() - 1) + "t"
-	var bytes := AssetSource.read_bytes(mapt_path, archive)
-	if bytes.size() < MAPT_HEADER_LEN + MAPT_PAYLOAD_LEN:
-		return null
-
-	var payload := bytes.slice(MAPT_HEADER_LEN, MAPT_HEADER_LEN + MAPT_PAYLOAD_LEN)
-	var img := Image.create_from_data(MAPT_TEXTURE_SIZE, MAPT_TEXTURE_SIZE, false, Image.FORMAT_DXT1, payload)
-	if img == null:
-		printerr("World3D: could not decode real detail texture at ", mapt_path)
-		return null
-	img.decompress()
-	return ImageTexture.create_from_image(img)
-
 ## Splits a zone label shaped like this project's real Map.pk2 region
 ## naming (an (x, y) folder/filename pair -- see docs/protocol/
 ## MAPM_FORMAT.md/MAPO_FORMAT.md, e.g. "100/100", "102/101") into the real
@@ -1004,19 +960,22 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 		mat.uv1_scale = Vector3(1.0, max(row_count_estimate / float(MapmTerrainBuilder.GRID_WIDTH), 1.0), 1.0)
 	else:
 		mat.vertex_color_use_as_albedo = true
-	# Real .t detail-decal texture (see _load_real_terrain_detail_texture's
-	# doc comment) -- only Shape B regions have one, so a null result here
-	# (Shape A, or an archive that isn't set) is the normal, expected case.
-	# Uses Godot's built-in detail-layer blending (the same real "second
-	# compositing pass over a base texture" concept the real terrain
-	# shaders' own `...detail` variants use) rather than a custom shader,
-	# since StandardMaterial3D already has one.
-	var detail_texture := _load_real_terrain_detail_texture(mapm_path, archive)
-	if detail_texture != null:
-		mat.detail_enabled = true
-		mat.detail_albedo = detail_texture
-		mat.detail_blend_mode = BaseMaterial3D.BLEND_MODE_MIX
-		mat.detail_uv_layer = BaseMaterial3D.DETAIL_UV_1
+	# **Tried and reverted (2026-08-23), recorded honestly rather than
+	# silently dropped**: wired _load_real_terrain_detail_texture's real,
+	# decoded .t data in here as a direct StandardMaterial3D detail-albedo
+	# color overlay (`detail_enabled`/`detail_albedo`/`detail_blend_mode`).
+	# Verified live against a real Shape B region with an unobstructed
+	# top-down debug camera: the decoded blob-cluster shapes really do
+	# apply exactly where expected, but rendered as raw color they produce
+	# jarring cyan/magenta "glitch static" patches, not plausible ground
+	# detail. This is real, informative evidence against "the decoded RGB
+	# is meant to be displayed directly as color" -- consistent with .t
+	# instead being a data/weight map that merely happens to be DXT1-
+	# compressed for space (using decoded channels as blend weights or
+	# indices rather than literal color), reopening rather than closing
+	# the original "what does this data actually mean" question. See
+	# docs/protocol/MAPM_FORMAT.md for the full account. Reverted to not
+	# applying it, rather than shipping a visually-broken-looking result.
 	# Real world-space alignment with the player's own spawn position isn't
 	# confirmed (see top comment) -- centered near the player purely for
 	# visibility, same as the scenery/decoration-skeleton placement choices

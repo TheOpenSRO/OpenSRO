@@ -647,6 +647,23 @@ true header/pixel-data split isn't precisely `24`/`131,072`, or there's a small 
 non-block padding/metadata mixed in. Genuinely unresolved; flagged precisely rather than forcing a
 round number.
 
+**Tried wiring it into the renderer and reverted, recorded honestly (2026-08-23)**: implemented a
+`World3D.gd` helper decoding the real payload at the `24`-byte offset and applying it as a
+`StandardMaterial3D` detail-albedo color overlay (Godot's built-in detail-layer blending, matching
+the "second compositing pass" concept the real terrain shaders' `...detail` variants use).
+Live-verified against a real Shape B region with an unobstructed top-down debug camera: **the
+decoded blob-cluster shapes do apply exactly where expected, but rendered as literal color they
+produce jarring cyan/magenta "glitch static" patches, not plausible ground detail.** This is real,
+informative negative evidence against "the decoded RGB is meant to be displayed directly as
+color" — it doesn't disprove the DXT1 format finding itself (the structural decode is still real
+and correct), but it does mean the naive "just show it as a color overlay" usage is wrong. More
+consistent with `.t` being a genuine data/weight map that happens to be DXT1-compressed for space
+(using decoded channels as blend weights, texture-index selectors, or similar, rather than literal
+displayable color) — reopening, not closing, the original "what does this data actually mean"
+question this doc started with. Reverted the renderer wiring rather than ship a visually-broken
+result; the reader/decode logic itself was removed from `World3D.gd` too (dead code once unused),
+with this doc and PROGRESS.md kept as the record of what was tried.
+
 ## What actually shipped instead: a real per-region minimap image, via `server/cmd/pk2list`
 
 The RE environment used throughout this project turned out to also have a genuine full retail

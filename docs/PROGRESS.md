@@ -2,6 +2,28 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 50) — tried the .t detail texture live, reverted after it looked wrong
+
+- Followed through on verifying the previous entry's `.t` detail-texture wiring properly, per this
+  project's own standing discipline ("verify live, revert if it doesn't help") rather than treating
+  "no crash, no decode error" as sufficient confirmation. Added a temporary debug top-down camera
+  (not committed) to get an unobstructed view of the terrain's real texturing, live, against a real
+  Shape B region.
+- **Real negative result**: the decoded `.t` blob-cluster shapes do apply exactly where expected,
+  but rendered as literal `StandardMaterial3D` detail-albedo color they produce jarring
+  cyan/magenta "glitch static" patches on the terrain, not plausible ground detail. This doesn't
+  disprove the DXT1 format finding (still real and structurally correct), but it does disprove
+  "the decoded RGB is meant to be shown directly as color" — more consistent with `.t` being a
+  genuine data/weight map that happens to be DXT1-compressed for space, not a literal color image.
+- **Reverted** the renderer wiring rather than ship a visually-broken result, removed the
+  now-unused reader/decode helper from `World3D.gd` (dead code once reverted, matching this
+  project's own established "don't leave reverted code lying around" precedent), and recorded the
+  full account in `docs/protocol/MAPM_FORMAT.md` and here — a real, informative negative result,
+  not a wasted detour, since it rules out a plausible-looking hypothesis with concrete live
+  evidence instead of leaving it as an untested guess.
+- Full CI test-suite sweep passes (both client and server), clean `--import --quit`. All real pk2
+  data pulled temporarily for verification only, deleted immediately after.
+
 ## 2026-08-23 (cont'd 49) — wired the real .t detail texture into terrain rendering
 
 - Continued from the previous entry's `.t`-is-DXT1 finding: cross-validated the decode a second,
