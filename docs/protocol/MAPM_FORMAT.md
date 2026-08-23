@@ -444,6 +444,18 @@ exists, is still unfound). This is why `0/0.m` (5/6 real row-bands recovered) an
 (3/6 each) diverged in this session's live test — a real, reproducible symptom of exactly this
 still-unresolved Shape-A layout gap, not random resync noise.
 
+**A real negative result while looking for Shape A's loader path**: the one loader function found
+so far (`FUN_0042a6e0`) only ever reads a sub-patch at the one hardcoded `0xa0f`/2,575-byte size —
+confirmed by checking every real call site of the underlying buffered-read primitive
+(`FUN_00410f90`) inside that function; its only other calls read a fixed 30 bytes (`0x1e`),
+unrelated to sub-patch tiles. So this function's compiled code cannot be what reads Shape A's real
+3,781-byte sub-patches — a genuinely different function must exist for that path (or Shape A's
+per-sub-patch size is computed at runtime rather than a compiled-in constant). Searched
+`sro_client.exe` directly for the literal immediate `3781` (`0xec5`) in any `CMP`/`MOV`
+instruction anywhere in the binary: **zero hits**. Shape A's loader path (if a hardcoded constant
+at all) is not in this function and does not appear as a plain immediate anywhere in this binary —
+genuinely unresolved, not attempted further this pass.
+
 ## A real, unopened sibling file: `.t` (`JMXVMAPT1001`) — a possible ground-texture blend map
 
 Every real `Map.pk2` region folder also contains a `.t` file alongside its `.m`/`.o`/`.o2` files
