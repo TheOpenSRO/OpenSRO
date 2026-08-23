@@ -65,12 +65,22 @@ in this project's history to date.
 
 **What's still genuinely open**: the real 16×16 per-tile flag grid and the `Reserved` trailer bytes
 are parsed but not used for anything (their real meaning beyond "probably walkability flags," per
-the public doc's own hedge, isn't independently confirmed by this project). The 11-byte vertex
+the public doc's own hedge, isn't independently confirmed by this project). **Checked whether the
+tile-flag grid is worth surfacing (2026-08-23)**: every real per-tile flag in every real region
+sample checked (`0/1.m`, `1/0.m`, `100/100.m`, `100/101.m`, `101/99.m`) is exactly `0` — no
+"Blocked" bit or any other bit ever set in any of these real outdoor overworld regions. Plausibly a
+real flag that's only ever used in specially-crafted areas (dungeons, instanced content) this
+project has no real samples of, not a parsing gap — but a genuine, honest reason not to build any
+visualization/gameplay feature on top of it yet, since it would show nothing different from the
+mesh's own already-correct geometric collision on every real sample available. The 11-byte vertex
 variant's real Extra-byte layout beyond height isn't confirmed field-by-field (this project
 independently found a real column/row-cycling byte pattern within it during this investigation,
 but didn't need to fully decode it once the deterministic block structure made row/column
 assignment unnecessary). Real ground *texture* (as opposed to per-vertex color) remains unfound —
-see the `.t`/`JMXVMAPT` sections further down for that separate, still-open thread.
+see the `.t`/`JMXVMAPT` sections further down for that separate, still-open thread, and
+`TILE2D_FORMAT.md` for the closely related `tile2d.ifo` gap (same real client install is also
+missing `environment.ifo` and every real `.nvm` navmesh file, so this may simply be an
+incomplete/older real client build rather than three unrelated gaps).
 
 ## Real per-region world size confirmed: 1920.0 units
 

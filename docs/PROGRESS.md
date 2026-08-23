@@ -2,6 +2,26 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 57) — checked .nvm and the .m tile-flag grid; both real dead ends for now
+
+- Continued the same map-data thread: checked for real `.nvm` navmesh files (fully documented
+  publicly, see `jmxvnvm.md`, but never implemented in this project) in `Map.pk2` -- **zero real
+  `.nvm` files exist anywhere**, consistent with this real client build's navmesh data being
+  unified into `.m` itself (matching this project's own earlier finding that `.m`'s real loader
+  function lives in `navmesh/MapLoader.cpp`) rather than a separate container. Not implementable
+  against real data right now.
+- Checked whether `.m`'s own real 16×16 per-block tile-flag grid (parsed, currently unused) is
+  worth surfacing as a real walkability visualization/gameplay feature: **every real per-tile flag
+  in every real region sample checked is exactly 0** -- no "Blocked" bit set anywhere in these real
+  outdoor overworld regions. Plausibly real, but only meaningful in dungeons/instanced content this
+  project has no samples of. Recorded honestly rather than building a feature that would show
+  nothing different from the mesh's own already-correct collision.
+- This closes out today's map-data investigation cleanly: three real, confirmed data gaps in this
+  specific client install (missing ground textures, missing `environment.ifo`, missing `.nvm`
+  files, and all-zero tile flags) are now documented precisely rather than left as open questions,
+  alongside the major wins earlier today (`.m`, `.t`, `tile2d.ifo` fully solved and wired in,
+  `.o2` fixed, `objectstring.ifo`/`objext.ifo` found). Documentation-only pass, no code changes.
+
 ## 2026-08-23 (cont'd 56) — back to map stuff: confirmed the texture gap is real, found 2 sibling `.ifo` tables
 
 - User asked to return to map-specific work after the protocol/opcode detour. Widened the
