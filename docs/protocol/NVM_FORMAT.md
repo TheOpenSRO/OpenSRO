@@ -78,24 +78,20 @@ convention exactly (`dy` increasing north).
   mountainous/frontier zone). Documented as being used for real footstep sounds, not necessarily
   ground rendering, but it's independent, real, per-tile confirmation that the terrain really is
   textured with real variety at runtime, even where this project can't recover the actual texture
-  files (see "Real ground textures: partially present" below).
+  files (see `TILE2D_FORMAT.md`'s "real, but ultimately unusable, near-hit" section).
 - **Real cells/edges** — an actual walkable-area graph, useful for future real pathfinding/AI work
   this project hasn't built yet.
 
-## Real ground textures: partially present, not entirely absent
+## Real ground textures: checked further, still effectively unrecovered
 
-An earlier same-day pass concluded real ground-texture `.ddj` files referenced by `tile2d.ifo`
-were entirely absent from this client install. **Corrected**: checking the *specific* real texture
-IDs this real `.nvm` sample's `TileMap` actually uses (rather than an arbitrary early sample of
-`tile2d.ifo`'s own list) found the real files live under `Prim\Mtrl\Nature\<region>\...`, a folder
-this project hadn't checked — and **one of them, `Prim\Mtrl\Nature\asia minor\asiaminor_stone01.ddj`,
-genuinely exists**. A systematic check of all 719 real `tile2d.ifo` filenames against every real
-`.ddj` path in `Data.pk2` found **6 real matches (0.8%)** — a small but real, non-zero subset,
-not the complete absence first concluded. Given this real coverage is too sparse to build a
-complete real ground-texture system on, this project's existing `tile2d.ifo`-driven color coding
-(`MapmTerrainBuilder._vertex_color`) remains the practical approach; using the handful of real
-textures that do exist is a real, bounded, low-priority future enhancement, not attempted this
-pass.
+Checking the *specific* real texture IDs this real `.nvm` sample's `TileMap` actually uses (rather
+than an arbitrary early sample of `tile2d.ifo`'s own list) found one real filename match,
+`Prim\Mtrl\Nature\asia minor\asiaminor_stone01.ddj` — but checking *that* further (see
+`TILE2D_FORMAT.md`) found it's a complete, separate `.bsr`/`.bms`/`.bmt`/`.ddj` object-prop asset
+(a standalone rock-formation model, the same real pipeline as this project's already-placed trees
+and grass), not a flat ground texture — a real coincidental name collision, not usable ground art.
+This project's existing `tile2d.ifo`-driven color coding (`MapmTerrainBuilder._vertex_color`)
+remains the practical, honest approach.
 
 ## Implementation
 

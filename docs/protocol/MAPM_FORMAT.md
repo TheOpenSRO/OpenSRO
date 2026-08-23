@@ -76,9 +76,9 @@ mesh's own already-correct geometric collision on every real sample available. T
 variant's real Extra-byte layout beyond height isn't confirmed field-by-field (this project
 independently found a real column/row-cycling byte pattern within it during this investigation,
 but didn't need to fully decode it once the deterministic block structure made row/column
-assignment unnecessary). Real ground *texture* (as opposed to per-vertex color) is mostly, but not
-entirely, unrecovered — see `TILE2D_FORMAT.md` for the real, corrected finding (a small real
-subset of referenced `.ddj` files do exist, just under a folder this project hadn't checked) and
+assignment unnecessary). Real ground *texture* (as opposed to per-vertex color) remains
+effectively unrecovered — see `TILE2D_FORMAT.md` for a real near-hit that turned out to be a
+coincidental name collision with an unrelated object-prop asset, not usable ground art — and
 `NVM_FORMAT.md` for the real `.nvm` navmesh files that turned up in `Data.pk2` once this project
 looked there instead of `Map.pk2` (`environment.ifo` specifically is still confirmed absent).
 

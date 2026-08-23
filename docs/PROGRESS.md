@@ -2,6 +2,23 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 60) — checked the one real ground-texture near-hit before using it; it's a prop, not ground art
+
+- Followed through on the previous entry's "6/719 real matches" finding by actually checking one
+  before wiring it in: pulled and decoded the real `asiaminor_stone01.ddj` match. Visually, it's
+  clearly a baked texture atlas with distinct rock-spire silhouettes and moss patches -- not a
+  seamless tileable ground surface. Confirmed why: it's part of a complete, separate
+  `.bsr`/`.bms`/`.bmt`/`.ddj` asset (`Res\Nature\asia minor\asiaminor_stone01.bsr` + matching
+  mesh/material files) -- a standalone rock-formation *prop* object, the exact same real pipeline
+  this project already uses for `.o`/`.o2`-placed trees and grass, not a ground tile texture at
+  all. The filename match with `tile2d.ifo`'s entry is a real coincidence, not a usable resource.
+- Corrected `TILE2D_FORMAT.md`/`NVM_FORMAT.md`/`MAPM_FORMAT.md`'s "0.8% partial coverage" framing
+  to reflect this: real ground texture recovery for this client install is effectively still zero,
+  not a small usable subset, once coincidental name collisions with unrelated prop assets are
+  accounted for. Did not wire anything into the renderer -- verified it would look wrong before
+  building it, not after.
+- Documentation-only pass, no code changes, existing test suite unaffected.
+
 ## 2026-08-23 (cont'd 59) — found and solved .nvm; corrected two earlier overclaims along the way
 
 - User asked to "keep RE-ing until it's finished and looks like it's supposed to." Investigated a

@@ -63,19 +63,25 @@ references) is **entirely absent too** — not present at pk2 root or under `nav
 `Data.pk2`, unlike `object.ifo`/`objectstring.ifo`/`objext.ifo`/`tile2d.ifo`, which are all real
 and present there.
 
-**Corrected, not total absence (2026-08-23, via `NVM_FORMAT.md`)**: checking the *specific* real
-texture IDs a real `.nvm` file's `TileMap` actually uses for one real region (rather than an
-arbitrary early sample of `tile2d.ifo`'s own list) found the real files live under
-`Prim\Mtrl\Nature\<region-folder>\...` — a path this project hadn't checked — and **one of them
-genuinely exists**: `Prim\Mtrl\Nature\asia minor\asiaminor_stone01.ddj`. A systematic check of all
-719 real `tile2d.ifo` filenames against every real `.ddj` path in `Data.pk2` found **6 real
-matches (0.8%)** — small, but real and non-zero. This is most likely a real client-version/asset
-mismatch (this specific retail build may predate or postdate whatever patch shipped most of these
-files, keeping only a handful still referenced from elsewhere), not a parsing bug or a search
-miss — the `tile2d.ifo` table itself parses perfectly and its `TileType` classifications are
-internally consistent and plausible. Given the real coverage is too sparse (0.8%) to build a
-complete ground-texture system on, this project's `TileType`-driven color coding remains the
-practical approach for now.
+**A real, but ultimately unusable, near-hit (2026-08-23, via `NVM_FORMAT.md`)**: checking the
+*specific* real texture IDs a real `.nvm` file's `TileMap` actually uses for one real region
+(rather than an arbitrary early sample of `tile2d.ifo`'s own list) found the real files live under
+`Prim\Mtrl\Nature\<region-folder>\...` — a path this project hadn't checked — and one of them,
+`Prim\Mtrl\Nature\asia minor\asiaminor_stone01.ddj`, genuinely exists. **Checked further before
+using it, and it's a real coincidental name collision, not a usable flat ground texture**: this
+exact file is part of a complete, real, separate `.bsr`/`.bms`/`.bmt`/`.ddj` asset — a standalone
+3D rock-formation *prop* object (`Res\Nature\asia minor\asiaminor_stone01.bsr` + its matching
+`Prim\Mesh\...`/`Prim\Mtrl\...` files), the same real asset-placement pipeline this project
+already uses for `.o`/`.o2`-placed trees and grass. The texture itself visually confirms this: it's
+a baked texture atlas with distinct rock-spire silhouettes and moss patches, not a seamless
+tileable ground surface — tiling it flat across terrain would look like repeated rock spires, not
+correct ground. A systematic filename check of all 719 real `tile2d.ifo` entries against every
+real `.ddj` path in `Data.pk2` found 6 such matches (0.8%) — real files exist under those names,
+but (at least for this one checked) as unrelated prop assets that happen to share a name pattern
+with a `tile2d.ifo` entry, not genuine flat ground textures. This project's `TileType`-driven color
+coding remains the practical, honest approach — real ground *texture* recovery for this client
+install is effectively still at zero, not "0.8% partial," once coincidental name collisions are
+accounted for.
 
 This means the real ground *texture* files themselves remain unrecovered, same open gap
 `MAPM_FORMAT.md` already flagged. What this table *does* give, independent of the missing texture
