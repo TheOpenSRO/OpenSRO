@@ -467,6 +467,21 @@ analysis (observing a real read against an actual Shape-A file at runtime) or a 
 `sro_client.exe` than the one already-found `"%d\%d.m"` cross-reference this project's searches
 have relied on so far.
 
+**Widened the immediate search and found a real, useful structural clue instead**: re-ran the
+`3781`/`0xec5` immediate search across *every* instruction type in `sro_client.exe` (not just
+`CMP`/`MOV`) — still **zero hits**, ruling out a literal compiled-in constant anywhere in this
+binary, not just in the one already-found loader function. While ruling this out, checked what
+real companion files actually exist per region in `Map.pk2` directly (`pk2list`): `100\100` (a
+Shape B region) has all four of `.m`, `.o`, `.o2`, **and `.t`**; `0\0` (a Shape A region) has only
+`.m` and a tiny 228-byte `.o` — **no `.o2` and no `.t` at all**. Both real loader functions found
+so far unconditionally build a `.o2` path every time they run, whether or not that file exists —
+consistent with them being written for the *newer* region format (the one with `.o2`/`.t` present)
+and simply failing gracefully to open a nonexistent `.o2` for older regions, which doesn't rule
+out them also being the ones reading `.m` for both region kinds. This real `.o`-only vs.
+`.o`+`.o2`+`.t` split is itself useful, independent evidence that Shape A and Shape B really are
+two different real region format generations (not an artifact of this project's own resync
+heuristic), even though it doesn't yet reveal which function reads Shape A's `.m`.
+
 ## A real, unopened sibling file: `.t` (`JMXVMAPT1001`) — a possible ground-texture blend map
 
 Every real `Map.pk2` region folder also contains a `.t` file alongside its `.m`/`.o`/`.o2` files
