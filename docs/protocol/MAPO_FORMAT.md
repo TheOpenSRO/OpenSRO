@@ -143,6 +143,30 @@ files parsed fine. Root-caused: nature-category files genuinely order these fiel
 `docs/protocol/BSR_FORMAT.md` for the full derivation and fix. Both categories now resolve and
 render correctly through `World3D.gd`'s real object loading.
 
+## Two real sibling tables sharing the same `JMXVOBJI` magic (2026-08-23)
+
+Found while checking a real client's `navmesh\` folder for other `.ifo` files: two more real
+tables share `object.ifo`'s exact `JMXVOBJI1000` magic and general line-based text-table shape,
+confirmed present in a real `Data.pk2` at both pk2 root and `navmesh\`:
+
+- **`objectstring.ifo`** (real, 451 entries in the one sample checked) — a real
+  gate/structure-placement table, not object display names despite the "strings" name. Each line:
+  `0x%08x 0x%08x <count1> <count2> 0x%08x 0x%08x 0x%08x 0x%08x "<Name>"` — a real ID (always
+  `0xffff` in the high 16 bits + a small varying low 16 bits, e.g. `0xffff0001`), an unconfirmed
+  flags word, two small unconfirmed integers, 4 real `float32`s (plausibly position + a yaw-shaped
+  rotation — one real sample's 4th float was consistently `0xbfc90fdb` ≈ `-1.5708` ≈ `-π/2` across
+  several related entries), and a real, human-readable name. Real names seen: `GATE_DUNGEON_DH_OUT`,
+  `GATE_JINSI_02X01_03`, `STRUCTURE_POS_JA_DEFENSIVE_02` — real dungeon/zone gate identifiers and
+  real siege/fortress defensive structure position labels. This is almost certainly what
+  [`MAPM_FORMAT.md`'s sibling `.nvm` format doc](https://github.com/JellyBitz/srodevs-docs) means
+  by its real per-object `IsStruct` flag ("Use objectstring.ifo") — a real, separate lookup for
+  named/special map objects (gates, siege points), distinct from `object.ifo`'s plain numeric
+  type→model mapping. Not implemented (this project has no `.nvm` reader yet to actually consume
+  it), recorded for whoever adds one.
+- **`objext.ifo`** ("Map Object Extension") — real but tiny in the one sample checked: a single
+  entry, `0x19500009 "" "passent01"` (an ID, an empty quoted field, and a name). Structurally
+  similar to the other two but with too little real data in this one sample to say more.
+
 ## What's still not confirmed
 
 - What causes the header-length difference (18 vs 20 bytes).

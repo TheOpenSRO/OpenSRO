@@ -55,13 +55,17 @@ type `0x0000000a` = `Grass`, filename `c_grass_fld_03.ddj`).
 
 ## A real, honest gap: the referenced texture files don't exist in this project's real client
 
-**Checked directly**: none of the real `.ddj` filenames this table references (`c_dust_fld_01.ddj`,
-`c_grass_fld_03.ddj`, `wc_grass00.ddj`, `stormdesert_stone01.ddj`, and others checked) exist
-anywhere in the one real `Data.pk2` this project has access to (searched broadly by substring, not
-just exact path — zero hits). This is most likely a real client-version/asset mismatch (this
-table's real content may come from a different patch/expansion than the exact retail build this
-project's `Data.pk2` is from), not a parsing bug — the table itself parses perfectly and its
-`TileType` classifications are internally consistent and plausible.
+**Checked directly, and widened (2026-08-23)**: none of the real `.ddj` filenames this table
+references (`c_dust_fld_01.ddj`, `c_grass_fld_03.ddj`, `wc_grass00.ddj`, `stormdesert_stone01.ddj`,
+and others checked) exist anywhere across **all three** real pk2 archives this project's real
+client install has (`Data.pk2`, `Media.pk2`, `Particles.pk2` — searched broadly by substring, not
+just exact path, in each — zero hits in every one). `environment.ifo` (the other real per-block
+lookup `.m`'s `EnvironmentID` field references) is **entirely absent too** — not present at pk2
+root or under `navmesh\` in this real `Data.pk2`, unlike `object.ifo`/`objectstring.ifo`/
+`objext.ifo`/`tile2d.ifo`, which are all real and present there. This is most likely a real
+client-version/asset mismatch (this specific retail build may predate or postdate whatever patch
+shipped these particular files), not a parsing bug or a narrow search miss — the `tile2d.ifo` table
+itself parses perfectly and its `TileType` classifications are internally consistent and plausible.
 
 This means the real ground *texture* files themselves remain unrecovered, same open gap
 `MAPM_FORMAT.md` already flagged. What this table *does* give, independent of the missing texture

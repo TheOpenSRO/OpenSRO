@@ -2,6 +2,27 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 56) — back to map stuff: confirmed the texture gap is real, found 2 sibling `.ifo` tables
+
+- User asked to return to map-specific work after the protocol/opcode detour. Widened the
+  `tile2d.ifo` ground-texture search from just `Data.pk2` to all three real pk2 archives this
+  project's client install has (`Media.pk2`, `Particles.pk2` too) -- zero hits in every one,
+  confirming the referenced `.ddj` files are genuinely absent, not a narrow search miss. Also
+  checked for `environment.ifo` (the other real lookup `.m`'s `EnvironmentID` references): entirely
+  absent from this real `Data.pk2`, at both pk2 root and `navmesh\`, unlike `object.ifo`/
+  `tile2d.ifo`/etc which are all real and present -- a real, specific data gap in this client
+  install, not a parsing or search bug.
+- Found two real sibling tables sharing `object.ifo`'s exact `JMXVOBJI1000` magic:
+  `objectstring.ifo` (451 real entries -- a real gate/dungeon-entrance and siege-structure
+  placement table, e.g. `GATE_DUNGEON_DH_OUT`, `STRUCTURE_POS_JA_DEFENSIVE_02`, each with an ID, an
+  unconfirmed flags word, and 4 real floats plausibly encoding position+rotation) and `objext.ifo`
+  (real but tiny -- one entry in the sample checked). `objectstring.ifo` is almost certainly what
+  the earlier-found `.nvm` navmesh format's real `IsStruct` per-object flag references -- a real,
+  separate named-object lookup distinct from `object.ifo`'s plain numeric type→model table. Not
+  implemented (no `.nvm` reader exists in this project yet), recorded in `MAPO_FORMAT.md` for
+  whoever adds one.
+- Documentation-only pass -- no code changes, existing test suite unaffected.
+
 ## 2026-08-23 (cont'd 55) — the same public documentation source also covers real packet formats
 
 - After `tile2d.ifo`, checked the same public documentation source (`JellyBitz/srodevs-docs`) for
