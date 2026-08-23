@@ -2,6 +2,39 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 45) — corrected the full-region stitch to real 2D (both axes), found a new specific lead on the tile-count gap
+
+- Re-examined the previous entry's shipped `build_full_region_mesh` against the real decompiled
+  destination-offset formula and found it was wrong: it only stitched sub-patches along one axis
+  (a single `for sp in range(6)` loop), producing a 17-wide, 97-row-long strip, not a square.
+  Decoding the real formula precisely (`(iStack_205c*0x10 + puStack_2070*0x610 +
+  fStack_206c*0x61 + fStack_2078) * 0xc`) showed it factors as `(band_row*16+local_row)*97 +
+  (band_col*16+local_col)` — there are real **two** nested 6-iteration band loops, one per axis,
+  not one. A whole region is a real 6×6 grid of sub-patches covering both width and depth
+  (97×97 vertices, 36 sub-patches, `6×6×289 = 10,404` tiles).
+- Rewrote `build_full_region_mesh` to consume sub-patches in the real nested file order (all 6
+  column-bands of row-band 0, then row-band 1, ...) and stitch both axes, with a later sub-patch
+  winning at both row *and* column shared boundaries. Generalized `_build_mesh_from_cells` to take
+  an independent `col_count` (previously hardcoded to `GRID_WIDTH`).
+- Rewrote the test coverage for a synthetic 2×2 band grid, checking all 4 kinds of overwrite
+  (own corner, shared column, shared row, shared 4-way corner) plus a partial-row-band-dropped
+  case. All pass; all pre-existing `build_mesh` tests still pass unchanged.
+- **Live-verified against real pk2 files** (same 4 regions as the previous entry): the rendered
+  terrain now shows genuine width-wise variation (distinct ridges/valleys) instead of one
+  uniform, repeated-looking hill — a visibly different, more plausible result with no
+  corruption/misalignment artifacts.
+- **New, more specific lead on the still-open tile-count gap**: none of the 4 regions actually got
+  all 6 real row-bands — `0\0.m` got 5, the other 3 all got exactly 3 (consistently, not
+  randomly). Traced this to a likely real cause: `FUN_00410f90`'s per-sub-patch read size
+  (`0xa0f` = 2,575 bytes) is 552 bytes larger than `289 tiles × 7 bytes = 2,023`, and
+  `12 header bytes + 36 × 2,575 = 92,712` matches a real observed Shape-B file size *exactly*.
+  The existing generic resync-based tile reader likely doesn't know about this extra
+  552-byte-per-sub-patch structure and may be folding some of it into the tile stream as spurious
+  tiles, which would explain both the tile-count excess and the eventual sub-patch misalignment.
+  Not traced further this pass — a concrete, well-scoped next step for whoever continues this.
+- Full CI test-suite sweep passes, clean `--import --quit`. All real pk2 data pulled temporarily
+  for verification only, deleted immediately after.
+
 ## 2026-08-23 (cont'd 44) — implemented and live-verified the real full-region terrain stitching algorithm
 
 - Continued directly from the previous entry's precise confirmation of the real 6×6 sub-patch

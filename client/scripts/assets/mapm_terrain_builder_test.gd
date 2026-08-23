@@ -112,49 +112,64 @@ func _init() -> void:
 	var uncapped_positions: PackedVector3Array = uncapped_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
 	_check(uncapped_positions.size() == 5 * MapmTerrainBuilder.GRID_WIDTH, "no max_rows keeps all 5 rows (got %d vertices)" % uncapped_positions.size())
 
-	# build_full_region_mesh: real 2-sub-patch stitching. Sub-patch 0's 17
-	# raw rows use heights 1000+row, sub-patch 1's next 17 raw rows use
-	# heights 2000+row -- the real client's confirmed behavior is a 16-row
-	# stride (not 17) between sub-patches, so sub-patch 1's row 0 (height
-	# 2000) should *overwrite* sub-patch 0's row 16 (height 1016) at the
-	# shared destination row 16, giving 2*16+1 = 33 total output rows.
-	var two_patch := MapmReader.ParsedRegion.new()
-	two_patch.version = "1000"
-	for row in range(MapmTerrainBuilder.GRID_WIDTH):
-		for col in range(MapmTerrainBuilder.GRID_WIDTH):
-			two_patch.tiles.append(_make_tile(col, float(1000 + row)))
-	for row in range(MapmTerrainBuilder.GRID_WIDTH):
-		for col in range(MapmTerrainBuilder.GRID_WIDTH):
-			two_patch.tiles.append(_make_tile(col, float(2000 + row)))
-	var stitched_mesh := MapmTerrainBuilder.build_full_region_mesh(two_patch)
-	_check(stitched_mesh != null, "builds a full-region mesh from 2 real sub-patches")
-	if stitched_mesh != null:
-		var stitched_positions: PackedVector3Array = stitched_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-		var expected_rows := 2 * (MapmTerrainBuilder.GRID_WIDTH - 1) + 1
-		_check(stitched_positions.size() == expected_rows * MapmTerrainBuilder.GRID_WIDTH, "2 sub-patches stitch to %d rows (got %d vertices)" % [expected_rows, stitched_positions.size()])
-		var row16_height: float = stitched_positions[16 * MapmTerrainBuilder.GRID_WIDTH].y
-		_check(row16_height == 2000.0, "sub-patch 1's row overwrites the shared boundary row (got height %s, want 2000.0)" % row16_height)
-		var row0_height: float = stitched_positions[0].y
-		_check(row0_height == 1000.0, "sub-patch 0's own first row is untouched (got height %s, want 1000.0)" % row0_height)
-		var last_row_height: float = stitched_positions[(expected_rows - 1) * MapmTerrainBuilder.GRID_WIDTH].y
-		_check(last_row_height == 2016.0, "sub-patch 1's own last row is untouched (got height %s, want 2016.0)" % last_row_height)
+	# build_full_region_mesh: real 2x2-band stitching (using bands_per_side=2
+	# instead of the real 6, to keep the synthetic fixture small). Real file
+	# order is nested: band_row 0's 2 sub-patches (band_col 0, then 1),
+	# then band_row 1's 2 sub-patches -- each sub-patch's height is
+	# `band_row*100 + band_col*10 + local_row` so every band's real
+	# contribution is distinguishable at every output vertex.
+	var GW := MapmTerrainBuilder.GRID_WIDTH
+	var two_by_two := MapmReader.ParsedRegion.new()
+	two_by_two.version = "1000"
+	for band_row in range(2):
+		for band_col in range(2):
+			for row in range(GW):
+				for col in range(GW):
+					two_by_two.tiles.append(_make_tile(col, float(band_row * 100 + band_col * 10 + row)))
+	var band_mesh := MapmTerrainBuilder.build_full_region_mesh(two_by_two, 2)
+	_check(band_mesh != null, "builds a full-region mesh from a 2x2 real band grid")
+	if band_mesh != null:
+		var band_positions: PackedVector3Array = band_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+		var expected_size := 2 * (GW - 1) + 1 # 33
+		_check(band_positions.size() == expected_size * expected_size, "2x2 bands stitch to a %dx%d grid (got %d vertices)" % [expected_size, expected_size, band_positions.size()])
 
-	# A partial second sub-patch (not a full 17 rows) is dropped entirely
-	# rather than padded or guessed at -- only the first complete sub-patch
-	# should survive.
-	var partial_patch := MapmReader.ParsedRegion.new()
-	partial_patch.version = "1000"
-	for row in range(MapmTerrainBuilder.GRID_WIDTH):
-		for col in range(MapmTerrainBuilder.GRID_WIDTH):
-			partial_patch.tiles.append(_make_tile(col, float(1000 + row)))
-	for row in range(10): # fewer than GRID_WIDTH -- incomplete second sub-patch
-		for col in range(MapmTerrainBuilder.GRID_WIDTH):
-			partial_patch.tiles.append(_make_tile(col, float(2000 + row)))
-	var partial_mesh := MapmTerrainBuilder.build_full_region_mesh(partial_patch)
-	_check(partial_mesh != null, "builds from a region with one complete + one partial sub-patch")
+		# (row 0, col 0): band (0,0)'s own untouched corner -- height 0.
+		_check(band_positions[0].y == 0.0, "band (0,0)'s own first row/col is untouched (got %s, want 0.0)" % band_positions[0].y)
+		# (row 0, col 16): the shared column boundary between band_col 0 and
+		# 1 within band_row 0 -- band_col 1 (height 10) should win.
+		var shared_col_h: float = band_positions[16].y
+		_check(shared_col_h == 10.0, "band_col 1 overwrites the shared column boundary within band_row 0 (got %s, want 10.0)" % shared_col_h)
+		# (row 16, col 0): the shared row boundary between band_row 0 and 1
+		# within band_col 0 -- band_row 1 (height 100) should win.
+		var shared_row_h: float = band_positions[16 * expected_size].y
+		_check(shared_row_h == 100.0, "band_row 1 overwrites the shared row boundary within band_col 0 (got %s, want 100.0)" % shared_row_h)
+		# (row 16, col 16): the shared corner of all 4 bands -- the last one
+		# consumed in nested file order, band (1,1) (height 110), should win.
+		var shared_corner_h: float = band_positions[16 * expected_size + 16].y
+		_check(shared_corner_h == 110.0, "band (1,1) overwrites the shared 4-way corner (got %s, want 110.0)" % shared_corner_h)
+		# (row 32, col 32): band (1,1)'s own untouched far corner -- local
+		# row/col 16, height 100+10+16=126.
+		var far_corner_h: float = band_positions[32 * expected_size + 32].y
+		_check(far_corner_h == 126.0, "band (1,1)'s own far corner is untouched (got %s, want 126.0)" % far_corner_h)
+
+	# A partial trailing row-band (only 1 of its 2 sub-patches present) is
+	# dropped whole, not left with holes -- only the first, fully complete
+	# row-band's rows should survive.
+	var partial_band := MapmReader.ParsedRegion.new()
+	partial_band.version = "1000"
+	for band_col in range(2): # band_row 0: both sub-patches present
+		for row in range(GW):
+			for col in range(GW):
+				partial_band.tiles.append(_make_tile(col, float(band_col * 10 + row)))
+	for row in range(GW): # band_row 1: only 1 of its 2 sub-patches present
+		for col in range(GW):
+			partial_band.tiles.append(_make_tile(col, float(100 + row)))
+	var partial_mesh := MapmTerrainBuilder.build_full_region_mesh(partial_band, 2)
+	_check(partial_mesh != null, "builds from a region with 1 complete row-band + 1 partial row-band")
 	if partial_mesh != null:
 		var partial_positions: PackedVector3Array = partial_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-		_check(partial_positions.size() == MapmTerrainBuilder.GRID_WIDTH * MapmTerrainBuilder.GRID_WIDTH, "incomplete second sub-patch dropped, only 1 sub-patch's rows kept (got %d vertices)" % partial_positions.size())
+		var expected_size := 2 * (GW - 1) + 1 # the full 2-band-wide column count, only 1 row-band tall
+		_check(partial_positions.size() == GW * expected_size, "incomplete row-band dropped whole, only 1 row-band's rows kept (got %d vertices)" % partial_positions.size())
 
 	if _failures == 0:
 		print("ALL PASS")

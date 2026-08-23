@@ -368,11 +368,38 @@ camera-trapping geometry. A real, working improvement over both the old single-s
 render (correct but only 1/6 of a region's footprint) and the reverted 36x-tiled-copy attempt
 (steep, repeated spikes).
 
-One open thread this doesn't resolve: real per-region tile counts observed (~12,363-12,417) are
-far larger than `6 × 289 = 1,734` (the tile count the 6-sub-patch heightmap grid actually
-consumes). There's more real data in each `.m` file than this grid accounts for — additional LOD
-levels, extra data channels, or sub-patch data this investigation didn't trace. Not resolved this
-pass; `build_full_region_mesh` simply stops consuming the stream once it has its 6 sub-patches.
+**Corrected the same day, before this doc's ink even dried**: the paragraph above (and the code it
+described) only stitched sub-patches along *one* axis — a single-loop `for sp in range(6)` reading
+6 sub-patches as one 17-wide, 97-row-long strip. That was wrong. Decoding the real destination
+offset formula precisely — `(iStack_205c*0x10 + puStack_2070*0x610 + fStack_206c*0x61 +
+fStack_2078) * 0xc` from the real `MapLoader.cpp` decompilation — shows it factors exactly as
+`(band_row*16 + local_row)*97 + (band_col*16 + local_col)` for a 97-wide row-major grid. There are
+real **two** nested 6-iteration band loops (`puStack_2070` outer, `iStack_205c` inner), one per
+axis, not one — a whole region is a real 6×6 grid of sub-patches covering *both* width and depth
+(97×97 unique vertices, 36 sub-patches, `6×6×289 = 10,404` real tiles), not a 97-long single-file
+strip. `build_full_region_mesh` now consumes sub-patches in the real nested file order (all 6
+column-bands of row-band 0, then row-band 1, ...) and stitches both axes, with a later sub-patch
+winning at both row *and* column shared boundaries.
+
+**Live-verified again after the fix**: rendered terrain now shows genuine width-wise variation
+(distinct ridges/valleys across the full grid) instead of one uniform, repeated-looking rolling
+hill — a visibly different and more plausible result, with no corruption or misalignment artifacts
+in the rendered mesh.
+
+**The tile-count discrepancy is now smaller and more specific, not fully resolved**: `10,404`
+(the clean 6×6×289 count) is much closer to the observed ~12,363-12,417 than the old `1,734`
+figure, but a real gap (~2,000 tiles per region) remains. Live testing surfaced a new, concrete
+clue: none of the 4 regions tried actually got all 6 real row-bands from `build_full_region_mesh`
+— one (`0\0.m`) got 5, the other 3 (`1\0.m`, `0\1.m`, `1\1.m`) all got exactly 3, consistently, not
+randomly. That consistency across regions of slightly different tile counts suggests a *systematic*
+misalignment (a real per-sub-patch structure the resync-based tile reader doesn't yet account for
+— e.g. the raw `FUN_00410f90` read size for one sub-patch, `0xa0f` = 2,575 bytes, is larger than
+`289 tiles × 7 bytes = 2,023` by exactly 552 bytes; `12 header bytes + 36 × 2,575 = 92,712` matches
+a real observed Shape-B file size *exactly*), not random resync noise. Worth tracing what that
+extra 552 bytes per sub-patch actually is — if the existing tile reader is folding some of it into
+the tile stream as spurious extra "tiles" via its resync scan, that would explain both the
+tile-count excess *and* why clean 17-row/should-be-289-tile subpatch boundaries eventually drift
+out of alignment. Not attempted this pass.
 
 ## A real, unopened sibling file: `.t` (`JMXVMAPT1001`) — a possible ground-texture blend map
 

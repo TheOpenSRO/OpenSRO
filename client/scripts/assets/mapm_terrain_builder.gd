@@ -179,77 +179,106 @@ static func build_mesh(region: MapmReader.ParsedRegion, max_rows: int = -1) -> A
 	return _build_mesh_from_cells(cells, row_count)
 
 ## Real, precisely-confirmed (2026-08-23) full-region assembly -- see
-## docs/protocol/MAPM_FORMAT.md's loader-function findings. Traced the real
-## client's own output-buffer indexing math (not just loop bounds): a whole
-## region's real tiles arrive in exactly the same sequential file order this
-## reader already recovers them in (confirmed via the real buffered-read
-## function they pass through, a plain FIFO reader with no reordering), one
-## real 17x17 sub-patch (289 tiles) at a time, six sub-patches per axis,
-## written into the output grid at a real row stride of 16 (not 17) --
-## meaning consecutive sub-patches share their boundary row, giving exactly
-## `6x16 + 1 = 97` real unique rows, with the *later* sub-patch's copy of a
-## shared row overwriting the earlier one (matching the real client's own
-## behavior exactly, not a guess). Falls back to fewer sub-patches (and
-## fewer output rows) if a region's real data runs out before all
-## `subpatches_per_side` are available -- a real, honest partial-data case,
-## not padded or guessed at. Returns null if fewer than 2 output rows result.
-static func build_full_region_mesh(region: MapmReader.ParsedRegion, subpatches_per_side: int = 6) -> ArrayMesh:
+## docs/protocol/MAPM_FORMAT.md's loader-function findings. **Corrects a
+## same-day mistake in this function's first version**: that version only
+## stitched sub-patches along one axis (the "row-band" loop, `iStack_205c`
+## in the real decompiled code), treating a region as a single 17-wide,
+## 97-row-long strip. Decoding the real destination-buffer offset formula
+## precisely (`(iStack_205c*0x10 + puStack_2070*0x610 + fStack_206c*0x61 +
+## fStack_2078) * 0xc`, from the real `MapLoader.cpp` decompilation) showed
+## it factors exactly as `(band_row*16 + local_row)*97 + (band_col*16 +
+## local_col)` for a 97-wide row-major grid -- i.e. there are real **two**
+## nested 6-iteration band loops (`puStack_2070` outer, `iStack_205c`
+## inner), one per axis, not one. A whole region is therefore a real 6x6
+## grid of 17x17 sub-patches covering **both** width and depth (97x97
+## unique vertices total, 36 sub-patches, `6x6x289 = 10404` real tiles),
+## not a 97-long single-file strip.
+##
+## Sub-patches arrive in the real file in nested order (all 6 column-bands
+## of row-band 0, then all 6 of row-band 1, ...) -- confirmed via the same
+## real, non-reordering buffered reader (`FUN_00410f90`) as the row-only
+## version. Consecutive sub-patches share their boundary row *and* column
+## (stride 16, not 17, on both axes), so the *later* sub-patch's copy wins
+## at both kinds of shared boundary, matching the real client exactly.
+##
+## Falls back to fewer output row-bands if a region's real data runs out
+## before a row-band's own 6 sub-patches are all available -- an honest
+## partial-data case (a partially-consumed row-band is dropped whole rather
+## than left with holes). Returns null if fewer than 2 output rows result.
+static func build_full_region_mesh(region: MapmReader.ParsedRegion, bands_per_side: int = 6) -> ArrayMesh:
 	var raw_rows: Array = _group_into_rows(region.tiles)
-	var stitched: Array = []
-	for sp in range(subpatches_per_side):
-		var start := sp * GRID_WIDTH
-		if raw_rows.size() < start + GRID_WIDTH:
-			break
-		for local_r in range(GRID_WIDTH):
-			var dest_index := sp * (GRID_WIDTH - 1) + local_r
-			while stitched.size() <= dest_index:
-				stitched.append(null)
-			stitched[dest_index] = raw_rows[start + local_r]
+	var full_size := bands_per_side * (GRID_WIDTH - 1) + 1
+	var grid: Array = []
+	for _i in range(full_size):
+		var row_arr: Array = []
+		row_arr.resize(full_size)
+		grid.append(row_arr)
 
-	var row_count := stitched.size()
+	var consumed := 0
+	var completed_row_bands := 0
+	for band_row in range(bands_per_side):
+		var row_band_complete := true
+		for band_col in range(bands_per_side):
+			if raw_rows.size() < consumed + GRID_WIDTH:
+				row_band_complete = false
+				break
+			for local_r in range(GRID_WIDTH):
+				var src_row: Array = raw_rows[consumed + local_r]
+				var dest_r := band_row * (GRID_WIDTH - 1) + local_r
+				for local_c in range(GRID_WIDTH):
+					grid[dest_r][band_col * (GRID_WIDTH - 1) + local_c] = src_row[local_c]
+			consumed += GRID_WIDTH
+		if not row_band_complete:
+			break
+		completed_row_bands += 1
+
+	var row_count := 0 if completed_row_bands == 0 else completed_row_bands * (GRID_WIDTH - 1) + 1
 	if row_count < 2:
 		push_error("MapmTerrainBuilder: only %d real full-region row(s) recovered -- need at least 2" % row_count)
 		return null
-	return _build_mesh_from_cells(stitched, row_count)
+	var cells: Array = grid.slice(0, row_count)
+	return _build_mesh_from_cells(cells, row_count, full_size)
 
 ## Shared triangulation/vertex-buffer logic behind both build_mesh and
 ## build_full_region_mesh -- cells is a real per-row array (each row
-## GRID_WIDTH [height, terrain_type] pairs, see _group_into_rows), row_count
-## is cells.size() (passed separately since callers may have already
-## validated/trimmed it).
-static func _build_mesh_from_cells(cells: Array, row_count: int) -> ArrayMesh:
+## col_count [height, terrain_type] pairs, see _group_into_rows/
+## build_full_region_mesh), row_count/col_count are cells.size()/cells[0]
+## .size() (passed separately since callers may have already validated/
+## trimmed them). col_count defaults to GRID_WIDTH for build_mesh's single
+## fixed-width-strip case.
+static func _build_mesh_from_cells(cells: Array, row_count: int, col_count: int = GRID_WIDTH) -> ArrayMesh:
 	var positions := PackedVector3Array()
-	positions.resize(row_count * GRID_WIDTH)
+	positions.resize(row_count * col_count)
 	for r in range(row_count):
-		for c in range(GRID_WIDTH):
+		for c in range(col_count):
 			var height: float = cells[r][c][0]
-			positions[r * GRID_WIDTH + c] = Vector3(c * TILE_SIZE, height, r * TILE_SIZE)
+			positions[r * col_count + c] = Vector3(c * TILE_SIZE, height, r * TILE_SIZE)
 
 	var normals := PackedVector3Array()
 	normals.resize(positions.size())
 	for r in range(row_count):
-		for c in range(GRID_WIDTH):
-			normals[r * GRID_WIDTH + c] = _estimate_normal(cells, row_count, r, c)
+		for c in range(col_count):
+			normals[r * col_count + c] = _estimate_normal(cells, row_count, col_count, r, c)
 
 	var uvs := PackedVector2Array()
 	uvs.resize(positions.size())
 	for r in range(row_count):
-		for c in range(GRID_WIDTH):
-			uvs[r * GRID_WIDTH + c] = Vector2(float(c) / (GRID_WIDTH - 1), float(r) / (row_count - 1))
+		for c in range(col_count):
+			uvs[r * col_count + c] = Vector2(float(c) / (col_count - 1), float(r) / (row_count - 1))
 
 	var colors := PackedColorArray()
 	colors.resize(positions.size())
 	for r in range(row_count):
-		for c in range(GRID_WIDTH):
+		for c in range(col_count):
 			var terrain_type: int = cells[r][c][1]
-			colors[r * GRID_WIDTH + c] = _terrain_color(terrain_type)
+			colors[r * col_count + c] = _terrain_color(terrain_type)
 
 	var indices := PackedInt32Array()
 	for r in range(row_count - 1):
-		for c in range(GRID_WIDTH - 1):
-			var i00 := r * GRID_WIDTH + c
+		for c in range(col_count - 1):
+			var i00 := r * col_count + c
 			var i10 := i00 + 1
-			var i01 := i00 + GRID_WIDTH
+			var i01 := i00 + col_count
 			var i11 := i01 + 1
 			indices.append(i00)
 			indices.append(i10)
@@ -273,9 +302,9 @@ static func _build_mesh_from_cells(cells: Array, row_count: int) -> ArrayMesh:
 ## A simple central-difference normal from neighboring real heights, same
 ## technique any heightmap renderer uses -- clamps to the grid edge rather
 ## than wrapping or fabricating an out-of-bounds neighbor.
-static func _estimate_normal(cells: Array, row_count: int, r: int, c: int) -> Vector3:
+static func _estimate_normal(cells: Array, row_count: int, col_count: int, r: int, c: int) -> Vector3:
 	var c0 := maxi(c - 1, 0)
-	var c1 := mini(c + 1, GRID_WIDTH - 1)
+	var c1 := mini(c + 1, col_count - 1)
 	var r0 := maxi(r - 1, 0)
 	var r1 := mini(r + 1, row_count - 1)
 
