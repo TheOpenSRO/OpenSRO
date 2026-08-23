@@ -2,6 +2,38 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 48) — found the real .t loader: it's a DXT1 detail-decal mask, not a raw blend array
+
+- Continued the same map-data investigation into the last untouched sibling file, `.t`, using a
+  technique this project hadn't yet tried on it: searching for the literal real path-format string
+  `"%d\%d.t"` (the same technique that already found `.m`'s and `.o2`'s loaders this session).
+  Found it immediately, referenced by exactly one real function, `FUN_00a31d20` — the first-ever
+  `.t` loader found in this project's history.
+- **Major structural correction**: this doc's long-standing guess that `.t` was a raw custom
+  blend/weight `uint32` array is wrong. The real function calls a thin wrapper around
+  `IDirect3DDevice9::CreateTexture` with the exact real argument shape `Width=512, Height=512,
+  Levels=1, Format=0x31545844` — `0x31545844` read as ASCII is literally `"DXT1"`, the standard
+  compressed-texture FourCC. `.t` is built and used as a **512x512, single-mip, DXT1-compressed
+  texture**, not a mystery array. This retroactively explains the file's own earlier-documented
+  byte statistics (80% pure 0/`0xFFFFFFFF` cells) and the failed row-major raster scan at width 17
+  — both are exactly what DXT1's block compression would produce, not evidence against it.
+- **Visually verified**: wrapped a real `100/100.t` sample's body in a hand-built minimal DDS
+  header and decoded it with ImageMagick at 4 candidate byte offsets — every one decodes cleanly
+  into a real, structured (non-random) image: sparse colorful blob clusters on an otherwise blank
+  white field, with the same blob shapes at every offset (confirming it's a real property of the
+  data, not an alignment artifact). Not a plausible base ground-color photo, but an excellent match
+  for a **sparse detail/decal blend mask** feeding the real terrain shaders' already-documented
+  `detail` variants — reframes `.t` from "the missing base ground texture" to "a real second-layer
+  detail mask," a genuine, convergent finding.
+- **A real, honest gap remains**: the traced loader only reads 12 bytes before creating the (blank)
+  texture and closing the file handle — it never itself reads the bulk pixel payload in this
+  decompiled path. A single-mip 512x512 DXT1 payload should be exactly 131,072 bytes; `12 (magic) +
+  12 (this read) + 131,072 = 131,096` vs. the real confirmed `140,436`-byte file size leaves a real,
+  unexplained 9,340-byte gap. Checked both real callers of the loader for a follow-up pixel-upload
+  call: neither shows one in this decompiled path either. Not resolved this pass.
+- No renderer wiring yet — this is a structural/documentation find, not a shipped feature. Full CI
+  test-suite sweep unaffected (no code changed this entry, only `docs/protocol/MAPM_FORMAT.md`).
+
 ## 2026-08-23 (cont'd 47) — corrected a real mistake in .o2: 4 fields per sector, not 3
 
 - Immediately after shipping the `.o2` reader (previous entry), re-examined the empirical

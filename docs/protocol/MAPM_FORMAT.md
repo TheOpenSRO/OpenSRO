@@ -562,6 +562,80 @@ time spent. This remains a genuine, currently-unsolved RE gap, same conclusion a
 one more specific dead branch (`CMapLoader`/navmesh) ruled out and recorded so a future pass
 doesn't re-check it.
 
+## The real `.t` loader: found (2026-08-23), correcting the "no magic string" conclusion above
+
+**The claim above that no literal `.t`/`JMXVMAPT` magic string exists in `sro_client.exe` is
+still true, but this project hadn't yet tried the same real, literal per-region *path-format*
+string search that found `.m`'s and `.o2`'s loaders** (`"%d\%d.m"`, `"%d\%d.o2"` — see this doc's
+"real loader function" sections above). Trying the analogous `"%d\%d.t"` string found it
+immediately: it exists once in `sro_client.exe`, referenced by exactly one real function,
+`FUN_00a31d20` — a genuine, first-ever-found `.t` loader.
+
+**What it actually does, precisely** (the whole function is short and clean, no ambiguity):
+
+- Builds the path via `sprintf_s(..., "%d\\%d.t", ...)` and opens it through the same real
+  virtual file-open call `.m`/`.o2` use.
+- If the file **doesn't** exist: calls a thin wrapper (`FUN_00b8bcf0`) around a real virtual method
+  at vtable offset `+0x5c` on a device object — the exact real argument shape
+  (`Width=512, Height=512, Levels=1, Usage=0, Format=0x31545844, Pool=1, &ppTexture, pSharedHandle=
+  NULL`) is a precise, unambiguous match for **Direct3D 9's `IDirect3DDevice9::CreateTexture`**,
+  and `0x31545844` read as 4 ASCII bytes is literally **`"DXT1"`** — the standard FourCC for
+  DXT1-compressed texture data. This branch creates a blank placeholder texture when a region has
+  no real `.t` file.
+- If the file **does** exist: reads exactly **12 bytes** into a stack buffer right after opening
+  (matching the real confirmed 12-byte `"JMXVMAPT1001"` magic+version length exactly — likely a
+  validation read, not a separate header), then calls the **exact same** `CreateTexture(512, 512,
+  1, ..., DXT1, ...)` as the missing-file branch, and closes the file handle.
+
+**This is a real, major structural correction**: `.t` isn't a mysterious custom blend/weight
+array — it's built and used as a **512×512, single-mip, DXT1-compressed Direct3D texture**, the
+standard real-time ground-texture format this whole investigation was originally looking for. The
+80%-pure/20%-blended byte-value pattern found earlier in this doc, and the failed row-major raster
+scan at width 17, are both fully consistent with (and now explained by) DXT1's real block-compressed
+encoding (4×4 pixel blocks, 8 bytes each: a 2-color endpoint pair + a 2-bit-per-pixel index grid) —
+byte-level raster/neighbor-difference tests were never going to find coherence in DXT1-compressed
+bytes read as if they were a plain per-cell weight array, because that's not what they are.
+
+**A real, honest, unresolved gap remains**: the traced function only reads 12 bytes from the file
+before creating the (same, fixed-size) texture and closing the handle — it does **not** itself
+read the bulk of the file's real pixel payload anywhere in this decompiled path. A single-mip
+512×512 DXT1 payload is exactly `(512/4)×(512/4)×8 = 131,072` bytes; `12 (magic) + 12 (this read) +
+131,072 = 131,096` — but the real confirmed file size is `140,436` bytes, a real, unexplained
+`9,340`-byte gap. Checked both real callers of this function (`FUN_00a2b030`, `FUN_00a2acd0`, both
+region-streaming loops that call it once per nearby region) for a follow-up pixel-upload call:
+neither shows one in this decompiled path either — the actual mechanism that fills the created
+texture with the file's real pixel bytes (a `Lock`/`memcpy` pattern, likely reached through one of
+the still-opaque vtable calls at file-object offsets `+0x2c`/`+0x48`/`+0x44` this pass didn't
+decompile further, being generic engine/file-IO plumbing rather than `.t`-specific logic) is not
+located. **Not solved, but a real, substantial step past "no loader found" and past the wrong
+"raw blend/weight array" structural guess** — the real intended format (512×512 1-mip DXT1) is now
+known with high confidence even though the exact byte offset where pixel data begins in the file
+isn't confirmed.
+
+**Visually verified the DXT1 hypothesis (2026-08-23)**: wrapped the real `100/100.t` sample's body
+in a minimal, hand-built DDS header (512×512, 1 mip, `DXT1` FourCC) at 4 candidate start offsets
+(`0`, `12`, `16`, `24` bytes in) and decoded each with `ImageMagick` — **every offset decodes
+without error into a real, structured image**, not random static: sparse, colorful, blob-shaped
+clusters scattered across an otherwise blank white field, and — tellingly — **the same blob shapes
+and positions appear at every tested offset**, meaning the pattern isn't an artifact of guessing
+the right byte alignment; it's a real property of the data itself. This is fully consistent with
+this doc's own much earlier byte-level finding (80% of cells exactly `0x00000000`/`0xFFFFFFFF`,
+20% spread across thousands of distinct values) — DXT1 blocks with all-zero or all-`0xFFFF`
+endpoint colors decode to solid black/white regardless of their index bits, so large "pure" runs
+naturally produce solid-colored regions, while the real, varied blocks cluster exactly where the
+underlying byte statistics already said they would.
+
+**This is not a plausible base ground-color photo** (real terrain albedo wouldn't leave most of a
+512×512 texture blank/solid) **— but it's an excellent match for a sparse detail/decal blend
+mask**: patches of extra ground detail (grass tufts, rock scatter, dirt patches) painted onto an
+otherwise-clear canvas, composited on top of the real continuous `TEX_TERRAIN_COLOR` base texture
+this doc already found referenced by the real terrain pixel shaders — including their real
+`...detail` variants (`terrainps14.psh`'s and siblings' `detail` shaders, mentioned above), which
+is exactly the kind of second compositing pass a sparse decal mask like this would feed into. This
+reframes `.t` from "the missing base ground texture" to "a real, plausible second-layer detail
+mask" — a genuine, convergent, real finding, even though the base ground-color texture itself
+remains unfound.
+
 ## What actually shipped instead: a real per-region minimap image, via `server/cmd/pk2list`
 
 The RE environment used throughout this project turned out to also have a genuine full retail
