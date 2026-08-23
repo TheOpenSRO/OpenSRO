@@ -90,7 +90,19 @@ Pulled a real, populated Shape B region's `.o2` file (`100/100.o2`, 3,780 bytes)
   16-17 is `0xffff` (a likely no-link/no-parent sentinel), offset 18-19 reads zero, offset 20-21
   also reads zero, offset 22-23 is a real, confirmed **1-based sequential index** (this session's
   3-entry sample had indices `1, 2, 3` in file order there), offset 24-27 reads zero, and offset
-  28-29 is a constant `0x6464` across every entry checked so far (meaning/purpose unconfirmed).
+  28-29 was originally reported as "a constant `0x6464` across every entry checked" in
+  `100/100.o2`. **Retracted (2026-08-23), not the real region ID**: `100/100`'s packed region ID
+  (`(Y<<8)|X`, the same real scheme `.nvm` files are named by — see `NVM_FORMAT.md`) is `0x6464`
+  exactly, which looked like a real match at first. But checking a second real sample
+  (`101/99.o2`) more thoroughly (every entry, not just the first) found this field is **not
+  constant within a file at all** — real values seen: `0x6562`, `0x6563`, `0x6463`, `0x6564`, all
+  suspiciously *close to* (but not exactly) `101/99`'s own packed ID in either byte order
+  (`0x6563`/`0x6365`), varying by ±1 in one byte entry-to-entry. `100/100`'s own sample simply
+  couldn't reveal this variance, since every real neighboring-region encoding around a symmetric
+  coordinate like `(100,100)` collapses toward the same `0x64`-ish bytes. Genuinely unresolved —
+  plausibly a per-entry reference to a *specific* nearby region (not necessarily this file's own),
+  or an unrelated field that coincidentally lands in the same byte range. Not the simple "this
+  file's own packed ID" story first reported; corrected rather than left standing.
 - **All 4 distinct real type IDs seen across the whole file** (`669`, `1488`, `1489`, `1748`) all
   came from the same field (field 2) in this sample, so this project's earlier "type IDs shared
   across lists, ruling out per-list categories" observation no longer applies the same way — with

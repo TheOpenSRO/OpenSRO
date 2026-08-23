@@ -2,6 +2,47 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 59) — found and solved .nvm; corrected two earlier overclaims along the way
+
+- User asked to "keep RE-ing until it's finished and looks like it's supposed to." Investigated a
+  completely unexplored real folder on the client install, `RD\` (real `.rd` files, 130 of them) --
+  turned out to be plain Windows BMP icon files (real "BM" magic, 16x16 8bpp), likely real UI hint
+  icons, not terrain-related. Set that aside and re-checked for `.nvm` navmesh files (previously
+  concluded absent) in the *other* real archive, `Data.pk2` -- **found 6,543 real `.nvm` files**
+  under `navmesh\`, named by a real packed region-ID hex value (`nv_<hex>.nvm`), not the `<x>\<y>`
+  folder convention every other real per-region file uses. Confirmed the packing scheme directly:
+  region `100/100`'s real navmesh file is `navmesh\nv_6464.nvm` (`100 = 0x64`, packed `(Y<<8)|X`).
+- **Parsed a real sample against the public `jmxvnvm.md` structure and it matched byte-for-byte,
+  zero leftover, on the first attempt.** Independently cross-validated its real embedded 97x97
+  HeightMap against this project's own separately-parsed real `100/100.m` heightmap: **exact,
+  zero-deviation match across all 9,409 real vertices** -- an exceptionally strong confirmation of
+  both formats at once. Also confirmed a real cross-region link (a global edge at the region's
+  north boundary correctly references the real packed IDs of both this region and its real north
+  neighbor).
+- **Found real, useful data `.m` doesn't have**: real per-tile walkability `Flags` that are
+  actually populated in this sample (8/9,216 nonzero, vs. `.m`'s own always-zero grid), and real
+  per-tile `TextureID`s (13 distinct, real, resolving to sensible "Asia minor"/"East Eurpoe"
+  grass/dust/stone categories for this region via `tile2d.ifo`).
+- **Corrected an earlier overclaim while chasing real ground textures**: checked the *specific*
+  real texture IDs this `.nvm` sample actually uses (not an arbitrary early `tile2d.ifo` sample)
+  and found their real files live under `Prim\Mtrl\Nature\<region>\...`, a folder never checked --
+  one of them, `asiaminor_stone01.ddj`, genuinely exists. A systematic check of all 719 real
+  `tile2d.ifo` entries found 6 real matches (0.8%) -- small but real, correcting the earlier
+  "entirely absent" conclusion to "mostly absent."
+- **Corrected a second overclaim, caught by checking more thoroughly rather than accepting a first
+  match**: initially reported `.o2`'s previously-unexplained trailing `0x6464` constant as "solved"
+  (matching `100/100`'s own packed region ID exactly). Checking a second real sample (`101/99.o2`)
+  properly -- every entry, not just the first -- found this field **isn't constant within a file
+  at all** (real values `0x6562`/`0x6563`/`0x6463`/`0x6564` all seen), retracting the "solved"
+  claim honestly rather than leaving a plausible-sounding but wrong fact standing.
+- Implemented `NvmReader` (GDScript) with full test coverage (a real byte-exact synthetic fixture
+  covering every field), re-verified against the real sample. New `docs/protocol/NVM_FORMAT.md`.
+  No renderer/gameplay wiring yet -- reader only; the real, populated walkability flags are a
+  concrete next step for whoever wants collision/pathfinding refinement beyond the terrain mesh's
+  own already-correct geometric collision.
+- Full CI test-suite sweep passes (both client and server), clean `--import --quit`. All real pk2
+  data pulled temporarily for verification only, deleted immediately after.
+
 ## 2026-08-23 (cont'd 58) — confirmed multi-region horizontal tiling is now seamless
 
 - User asked to start "fixing the map stuff" using today's findings. Realized a real, previously-

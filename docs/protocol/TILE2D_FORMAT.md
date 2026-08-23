@@ -53,19 +53,29 @@ values actually seen in this one sample (`0, 1, 3, 6, 7, 9, 10, 11, 12` — a su
 14-value enum) all decode to plausible, sensible categories given their real filenames (e.g. ID 2,
 type `0x0000000a` = `Grass`, filename `c_grass_fld_03.ddj`).
 
-## A real, honest gap: the referenced texture files don't exist in this project's real client
+## A real gap: most referenced texture files are missing, but not all of them
 
-**Checked directly, and widened (2026-08-23)**: none of the real `.ddj` filenames this table
+**Checked directly, and widened (2026-08-23)**: most of the real `.ddj` filenames this table
 references (`c_dust_fld_01.ddj`, `c_grass_fld_03.ddj`, `wc_grass00.ddj`, `stormdesert_stone01.ddj`,
-and others checked) exist anywhere across **all three** real pk2 archives this project's real
-client install has (`Data.pk2`, `Media.pk2`, `Particles.pk2` — searched broadly by substring, not
-just exact path, in each — zero hits in every one). `environment.ifo` (the other real per-block
-lookup `.m`'s `EnvironmentID` field references) is **entirely absent too** — not present at pk2
-root or under `navmesh\` in this real `Data.pk2`, unlike `object.ifo`/`objectstring.ifo`/
-`objext.ifo`/`tile2d.ifo`, which are all real and present there. This is most likely a real
-client-version/asset mismatch (this specific retail build may predate or postdate whatever patch
-shipped these particular files), not a parsing bug or a narrow search miss — the `tile2d.ifo` table
-itself parses perfectly and its `TileType` classifications are internally consistent and plausible.
+and others checked) don't exist anywhere across the real pk2 archives this project's client
+install has. `environment.ifo` (the other real per-block lookup `.m`'s `EnvironmentID` field
+references) is **entirely absent too** — not present at pk2 root or under `navmesh\` in this real
+`Data.pk2`, unlike `object.ifo`/`objectstring.ifo`/`objext.ifo`/`tile2d.ifo`, which are all real
+and present there.
+
+**Corrected, not total absence (2026-08-23, via `NVM_FORMAT.md`)**: checking the *specific* real
+texture IDs a real `.nvm` file's `TileMap` actually uses for one real region (rather than an
+arbitrary early sample of `tile2d.ifo`'s own list) found the real files live under
+`Prim\Mtrl\Nature\<region-folder>\...` — a path this project hadn't checked — and **one of them
+genuinely exists**: `Prim\Mtrl\Nature\asia minor\asiaminor_stone01.ddj`. A systematic check of all
+719 real `tile2d.ifo` filenames against every real `.ddj` path in `Data.pk2` found **6 real
+matches (0.8%)** — small, but real and non-zero. This is most likely a real client-version/asset
+mismatch (this specific retail build may predate or postdate whatever patch shipped most of these
+files, keeping only a handful still referenced from elsewhere), not a parsing bug or a search
+miss — the `tile2d.ifo` table itself parses perfectly and its `TileType` classifications are
+internally consistent and plausible. Given the real coverage is too sparse (0.8%) to build a
+complete ground-texture system on, this project's `TileType`-driven color coding remains the
+practical approach for now.
 
 This means the real ground *texture* files themselves remain unrecovered, same open gap
 `MAPM_FORMAT.md` already flagged. What this table *does* give, independent of the missing texture
