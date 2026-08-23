@@ -2,6 +2,30 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 49) — wired the real .t detail texture into terrain rendering
+
+- Continued from the previous entry's `.t`-is-DXT1 finding: cross-validated the decode a second,
+  independent way (Godot's own `Image.create_from_data(512, 512, false, Image.FORMAT_DXT1, ...)`,
+  not just ImageMagick) against a real `100/100.t` sample -- produces the exact same structured
+  blob-cluster image, confirming Godot itself can decode this real data correctly before writing
+  any renderer code.
+- Implemented `World3D.gd`'s `_load_real_terrain_detail_texture`: derives a region's `.t` path from
+  its already-known `.m` path, reads the real confirmed 512x512 single-mip DXT1 payload at the
+  real confirmed 24-byte offset, decodes it via Godot's `Image` class, and returns an
+  `ImageTexture`. Wired into `_try_load_real_terrain`'s material setup using Godot's built-in
+  `StandardMaterial3D` detail-layer blending (`detail_enabled`/`detail_albedo`/
+  `detail_blend_mode`) -- the same "second compositing pass over a base texture" concept the real
+  terrain shaders' own `...detail` variants use, so no custom shader was needed.
+- Live-verified against a real Shape B region (`100/100.m` + its real `.t`): loads and applies with
+  no decode errors or crashes. Visual confirmation of the blend's effect is inherently hard to
+  judge from a screenshot at this scale/distance (small viewport strip, mostly-white sparse decal
+  data blended over a vertex-colored base) -- treated as a low-risk, additive, easily-reversible
+  feature (a boolean `detail_enabled` toggle) given the underlying real decoded data was already
+  cross-validated by two independent decoders before this wiring, rather than insisting on a crisp
+  visual double-confirmation that this rendering setup can't easily provide.
+- Full CI test-suite sweep passes (both client and server), clean `--import --quit`. All real pk2
+  data pulled temporarily for verification only, deleted immediately after.
+
 ## 2026-08-23 (cont'd 48) — found the real .t loader: it's a DXT1 detail-decal mask, not a raw blend array
 
 - Continued the same map-data investigation into the last untouched sibling file, `.t`, using a
