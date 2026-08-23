@@ -1348,7 +1348,12 @@ func _real_player_equipped_slots() -> Array:
 ## SRREVAMP_MAPO_PATH -- empty (the default) preserves the original
 ## env-var-only behavior for _ready()'s own call. world_offset/node_suffix
 ## let _load_region_neighborhood place multiple of these side by side --
-## defaults preserve the original single-region behavior.
+## defaults preserve the original single-region behavior. Also tries the
+## same region's real .o2 file (mapo_path + "2") and merges its real
+## placements in, if present -- .o2 only exists for newer-generation
+## ("Shape B") regions alongside .o (see docs/protocol/MAPO2_FORMAT.md and
+## MAPM_FORMAT.md's Shape A/B split), so a missing .o2 is the normal,
+## expected case for Shape A regions, not an error.
 func _try_load_real_map_objects(path_override: String = "", world_offset: Vector3 = Vector3.ZERO, node_suffix: String = "") -> void:
 	var mapo_path := path_override if path_override != "" else OS.get_environment("SRREVAMP_MAPO_PATH")
 	if mapo_path == "":
@@ -1361,7 +1366,33 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 		printerr("World3D: could not find map objects at ", mapo_path)
 		return
 	var region := MapoReader.parse(mapo_bytes)
-	if region == null or region.objects.is_empty():
+	if region == null:
+		printerr("World3D: could not parse map objects at ", mapo_path)
+		return
+
+	# Real .o2 placements are collected the same way as .o's: same type ID
+	# + world position shape (see docs/protocol/MAPO2_FORMAT.md), just
+	# indexed into a real 6x6 sector grid of 3 lists each rather than one
+	# flat resync-scanned list. .o2 only exists for newer-generation
+	# ("Shape B") regions -- see docs/protocol/MAPM_FORMAT.md's Shape A/B
+	# split -- so a missing .o2 here (Shape A, or no real objects/sectors
+	# unpopulated) is the normal, expected case, not an error.
+	var placements: Array = []
+	for obj in region.objects:
+		placements.append({"type_id": obj.type_id, "position": obj.position})
+	var mapo2_path := mapo_path + "2"
+	var mapo2_bytes := AssetSource.read_bytes(mapo2_path, map_archive)
+	var o2_count := 0
+	if not mapo2_bytes.is_empty():
+		var region2 := MapO2Reader.parse(mapo2_bytes)
+		if region2 != null:
+			for sector in region2.sectors:
+				for list in sector.lists:
+					for entry in list:
+						placements.append({"type_id": entry.type_id, "position": entry.position})
+						o2_count += 1
+
+	if placements.is_empty():
 		printerr("World3D: no real objects parsed from ", mapo_path)
 		return
 
@@ -1389,7 +1420,7 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 	# placement and offset that cluster near the player for visibility,
 	# rather than trusting the raw absolute coordinates to land near
 	# wherever the player happens to spawn.
-	var origin: Vector3 = region.objects[0].position
+	var origin: Vector3 = placements[0]["position"]
 	var loaded := 0
 	var skipped_unresolved := 0
 	# A real region repeats the same handful of real object types across
@@ -1398,10 +1429,10 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 	# .bsr once and duplicate the built node for repeat placements, rather
 	# than re-parsing the same real .bms/.bmt/.ddj chain per placement.
 	var templates := {} # resolved .bsr path -> loaded template Node3D
-	for obj in region.objects:
+	for placement in placements:
 		if loaded >= MAX_MAP_OBJECTS:
 			break
-		var entry := table.lookup(obj.type_id)
+		var entry := table.lookup(placement["type_id"])
 		if entry == null:
 			skipped_unresolved += 1
 			continue
@@ -1421,12 +1452,13 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 		# the cluster at the same close distance as one lone object left
 		# the player standing in the middle of it rather than able to see
 		# it as a recognizable cluster.
-		node.position = (obj.position - origin) + Vector3(20, 0, -30)
+		var pos: Vector3 = placement["position"]
+		node.position = (pos - origin) + Vector3(20, 0, -30)
 		container.add_child(node)
 		loaded += 1
 
-	print("World3D: loaded %d/%d real map objects from %s (%d unresolved type IDs skipped, %d distinct real models)" % [
-		loaded, region.objects.size(), mapo_path, skipped_unresolved, templates.size()])
+	print("World3D: loaded %d/%d real map objects from %s (%d real .o + %d real .o2, %d unresolved type IDs skipped, %d distinct real models)" % [
+		loaded, placements.size(), mapo_path, region.objects.size(), o2_count, skipped_unresolved, templates.size()])
 
 ## Resolves a real .bmt at bmt_path (via ObjectLoader, the same
 ## pk2 -> BmtReader -> DdjReader pipeline already verified for scenery) into

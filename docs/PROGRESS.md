@@ -2,6 +2,35 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 46) — decoded and wired up the real .o2 object/event format
+
+- After exhausting static-analysis avenues on the Shape A `.m` loader gap (recorded in the
+  previous entries), kept pushing on the same broader "real map data" investigation rather than
+  pivoting away: revisited `FUN_00a361b0` (`MapCallBack.cpp`, already found for `.m`) and fully
+  decompiled its real "3 counted lists per sub-cell" logic that this project had only partially
+  understood before.
+- **Real, confirmed structure**: `.o2`'s 12-byte header (just magic+version, no other header
+  fields) is followed by a real 6×6 grid of sectors in nested file order, each holding 3 separate
+  `uint16`-counted lists of fixed **30-byte** entries. Verified byte-for-byte against a real
+  `100/100.o2` sample (3,780 bytes) in Python: parses cleanly for all 36 sectors, and entries
+  decode as a real `type_id (uint32) + position (3x float32)` — the same record shape as the
+  older `.o` format — plus a partially-understood 14-byte trailer, including a real, confirmed
+  1-based sequential index. All 4 real type IDs seen appear in all 3 lists, weakening this doc's
+  earlier "3 lists = 3 categories" guess. Wrote up the full findings in new
+  `docs/protocol/MAPO2_FORMAT.md`.
+- Implemented `MapO2Reader` (GDScript) and `mapo.Parse2` (Go), both deterministic (no resync
+  scanning needed, unlike `.o`'s empirical reader) and both re-verified against the same real
+  sample. Full test coverage on both sides (synthetic 6x6 region matching the real sample's exact
+  values, truncation/bad-magic rejection).
+- Wired `.o2` into `World3D.gd`'s real map-object rendering: a region's `.o2` (if present — only
+  Shape B regions have one) is now parsed and its placements merged with `.o`'s before resolving
+  real `.bsr` models. **Live-verified against a real 3x3 grid of Shape B regions**: every region
+  loaded both real `.o` and `.o2` placements with 0 unresolved type IDs, roughly doubling real
+  object counts per region (e.g. `100/100`: 58 real `.o` + 100 real `.o2` = 158 total, all
+  resolved to 4 distinct real models).
+- Full CI test-suite sweep passes (both client and server), clean `--import --quit`. All real pk2
+  data pulled temporarily for verification only, deleted immediately after.
+
 ## 2026-08-23 (cont'd 45) — corrected the full-region stitch to real 2D (both axes), found a new specific lead on the tile-count gap
 
 - Re-examined the previous entry's shipped `build_full_region_mesh` against the real decompiled
