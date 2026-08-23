@@ -829,10 +829,21 @@ func _clear_region_grid() -> void:
 
 ## Loads a real (2*radius+1)x(2*radius+1) grid of regions centered on
 ## (center_x, center_y), one real Map.pk2 .m/.o pair per cell, tiled using
-## REGION_SPAN as the grid spacing -- this project's own design for how
-## multiple real regions fit together (see REGION_SPAN's doc comment: real
-## per-region world scale/adjacency isn't confirmed, so this is walkable
-## scaffolding, not a claim about the real game's true spatial layout).
+## REGION_SPAN as the grid spacing -- REGION_SPAN's own doc comment notes
+## real per-region *adjacency* (whether the real world lays regions out on
+## a uniform grid at all) isn't independently confirmed, but a real,
+## live-verified consistency check now backs it up: since MapmReader's
+## deterministic full-region parsing (2026-08-23), a region's own real
+## mesh footprint (97 vertices x TILE_SIZE = exactly 1920 world units) now
+## matches REGION_SPAN's real 1920.0 value *exactly* -- and a real 3x3
+## grid of these regions, live-rendered from a top-down debug view,
+## tiles together with zero visible gaps or overlaps between neighbors.
+## That's a real, positive signal for uniform-grid adjacency (an
+## unrelated real per-tile size and a real per-region spacing constant,
+## both independently decompiled from different functions, wouldn't
+## coincidentally match this exactly if regions weren't meant to tile
+## this way) -- still not a hard confirmation of the real game's true
+## spatial layout, but no longer just "this project's own design" either.
 ## Missing neighbor files (very likely near a real world's edge, or simply
 ## because this project only has a handful of real regions to test with) are
 ## skipped the same honest way a single missing region already was --

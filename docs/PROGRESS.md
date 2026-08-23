@@ -2,6 +2,32 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 58) — confirmed multi-region horizontal tiling is now seamless
+
+- User asked to start "fixing the map stuff" using today's findings. Realized a real, previously-
+  unverified consequence of today's `.m` fix: a region's real stitched mesh footprint (97 vertices
+  x the real `TILE_SIZE` of 20.0 = exactly 1,920 world units) now matches `REGION_SPAN`'s
+  independently-decompiled real value (1,920.0, from `CRegionManagerBody`) *exactly* -- previously
+  the mesh was much smaller (a single 17-wide sub-patch or a partial row-band), so this
+  consistency didn't hold and neighboring regions' terrain never actually spanned the full grid
+  spacing.
+- **Live-verified with a wide top-down debug camera** over a real 3x3 grid of 9 real regions: they
+  tile together **seamlessly, edge-to-edge, with zero visible gaps or overlaps** -- a genuine,
+  previously-unconfirmed fix, not just a coincidence of the math. Real objects (trees, buildings)
+  and real semantic ground coloring (from `tile2d.ifo`) render correctly across the whole
+  continuous 9-region area. Sent the screenshot to the user directly.
+- Updated `World3D.gd`'s `_load_region_neighborhood` doc comment, which previously said real
+  per-region adjacency was purely "this project's own design, not a claim about the real game's
+  spatial layout" -- now records this real, positive, live-verified consistency signal (two
+  independently-decompiled real constants matching exactly, confirmed live to tile without gaps)
+  without overclaiming full confirmation of the real game's true layout.
+- What remains real and still open, unaffected by this fix: real *vertical* (height) continuity
+  between neighboring regions is still not confirmed -- each region's real height data has no
+  known relationship to its neighbors', so visible height jumps at region seams are expected and
+  real, not a bug this fix addresses.
+- Full CI test-suite sweep passes (both client and server), clean `--import --quit`. No reader/
+  builder code changed -- this was a live-verification + doc-accuracy pass on already-shipped code.
+
 ## 2026-08-23 (cont'd 57) — checked .nvm and the .m tile-flag grid; both real dead ends for now
 
 - Continued the same map-data thread: checked for real `.nvm` navmesh files (fully documented
