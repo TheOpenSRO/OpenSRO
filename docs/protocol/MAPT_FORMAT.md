@@ -46,13 +46,23 @@ garish, implausible color noise.
 - Real ground *albedo* texture (as opposed to this lighting/shadow layer) remains unfound — see
   `MAPM_FORMAT.md`'s own note that the real terrain pixel shaders sample one continuous
   `TEX_TERRAIN_COLOR` stage this project hasn't located a source file for.
-- No reader/renderer exists in this project's own code yet — this doc's structure is confirmed,
-  but implementing a `MapTReader` (parse the 12-byte header, skip/expose the ShadowMap, extract
-  and decode the real embedded DDS via `Image.create_from_data` using the DDS's own real
-  width/height/FourCC) and wiring it into `World3D.gd` as a real ambient-occlusion-style darkening
-  layer (a much better real-world fit for a grayscale lightmap than the reverted direct-color-
-  overlay attempt below) is a well-scoped, low-risk next step now that the structure is fully
-  understood.
+## Implemented and live-verified (2026-08-23)
+
+`client/scripts/mapt/mapt_reader.gd` (`MapTReader`) parses the real structure above — the 12-byte
+header, the raw 9,216-byte ShadowMap, and the embedded DDS (decoded via `Image.create_from_data`
+using the DDS's own real width/height/FourCC). **Caught a real off-by-4 bug in the DDS pixelformat
+field offset via live testing against a real sample**: a self-consistent-but-wrong synthetic test
+fixture wrote and read back the FourCC at the same wrong offset, passing cleanly, while the real
+file's genuine `DDS_PIXELFORMAT` offset (relative to the header, after the 4-byte magic) is `72`,
+not `76` — the real sample decoded to `null` until this was found and fixed in both the reader and
+the test fixture.
+
+Wired into `World3D.gd`'s terrain material via Godot's built-in `ao_enabled`/`ao_texture`/
+`ao_light_affect` (ambient occlusion) — the real embedded texture's white-background/gray-shadow
+shape is exactly what Godot's AO darkening expects, no custom shader needed. **Live-verified with
+an unobstructed top-down debug camera against a real Shape B region**: a soft, plausible,
+subtle shadow-patch pattern visible on the terrain — categorically different from (and a real
+improvement over) the earlier, reverted direct-color-overlay attempt's jarring glitch static.
 
 ## History: the earlier same-day investigation (kept in full, corrected rather than deleted)
 

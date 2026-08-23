@@ -2,6 +2,24 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 53) — wired the real .t lightmap into rendering as ambient occlusion
+
+- Continued straight from the previous entry's `MapTReader` implementation: wired it into
+  `World3D.gd`'s terrain material via Godot's built-in `ao_enabled`/`ao_texture`/`ao_light_affect`
+  (ambient occlusion) instead of the earlier reverted direct-color-overlay approach -- the real
+  embedded texture's white-background/gray-shadow shape is exactly what Godot's AO darkening
+  expects.
+- **Live-verified with the same unobstructed top-down debug camera technique** used to catch the
+  earlier bad result: a real Shape B region now shows a soft, plausible, subtle shadow-patch
+  pattern on the terrain -- categorically different from (and a real improvement over) the earlier
+  jarring glitch-static result. This is the real payoff of finding and fixing the off-by-4 DDS
+  bug in the previous entry: the correctly-decoded grayscale lightmap, applied the right way,
+  actually looks good.
+- Full CI test-suite sweep passes (both client and server), clean `--import --quit`. All real pk2
+  data pulled temporarily for verification only, deleted immediately after. This closes out both
+  of today's central map-data threads (`.m`'s row-layout mystery and `.t`'s real structure) with
+  working, live-verified, real improvements to the rendered game -- not just documentation.
+
 ## 2026-08-23 (cont'd 52) — solved .t too, using the same public documentation source
 
 - Immediately after solving `.m` (previous entry), checked the same public documentation source

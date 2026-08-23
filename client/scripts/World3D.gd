@@ -726,6 +726,31 @@ func _load_real_terrain_texture(path_override: String = "") -> Texture2D:
 
 	return DdjReader.to_texture(parsed)
 
+## Loads a region's real .t file (the same base path as mapm_path, with
+## its extension swapped) as a real ambient-occlusion-style lightmap --
+## see docs/protocol/MAPT_FORMAT.md for the real structure and how this
+## project confirmed it (public documentation, verified byte-for-byte
+## against a real sample, cross-decoded two independent ways). The real
+## embedded texture is a genuine grayscale shadow map (white = fully lit,
+## gray = shadowed) -- a natural fit for Godot's built-in AO darkening,
+## unlike an earlier same-day attempt to show a *different*, wrongly-
+## decoded payload as literal detail-albedo color (reverted after live
+## testing looked wrong -- see MAPT_FORMAT.md's own account). Not every
+## region has a `.t` file (only newer-generation "Shape B" regions do --
+## see MAPM_FORMAT.md's Shape A/B split), so a missing file here is the
+## normal, expected case, not an error.
+func _load_real_terrain_lightmap(mapm_path: String, archive: Pk2Reader) -> Texture2D:
+	if mapm_path == "" or not mapm_path.ends_with(".m"):
+		return null
+	var mapt_path := mapm_path.substr(0, mapm_path.length() - 1) + "t"
+	var bytes := AssetSource.read_bytes(mapt_path, archive)
+	if bytes.is_empty():
+		return null
+	var region := MapTReader.parse(bytes)
+	if region == null:
+		return null
+	return region.texture
+
 ## Splits a zone label shaped like this project's real Map.pk2 region
 ## naming (an (x, y) folder/filename pair -- see docs/protocol/
 ## MAPM_FORMAT.md/MAPO_FORMAT.md, e.g. "100/100", "102/101") into the real
@@ -955,22 +980,22 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 		mat.uv1_scale = Vector3(1.0, max(row_count_estimate / float(MapmTerrainBuilder.GRID_WIDTH), 1.0), 1.0)
 	else:
 		mat.vertex_color_use_as_albedo = true
-	# **Tried and reverted (2026-08-23), recorded honestly rather than
-	# silently dropped**: wired _load_real_terrain_detail_texture's real,
-	# decoded .t data in here as a direct StandardMaterial3D detail-albedo
-	# color overlay (`detail_enabled`/`detail_albedo`/`detail_blend_mode`).
-	# Verified live against a real Shape B region with an unobstructed
-	# top-down debug camera: the decoded blob-cluster shapes really do
-	# apply exactly where expected, but rendered as raw color they produce
-	# jarring cyan/magenta "glitch static" patches, not plausible ground
-	# detail. This is real, informative evidence against "the decoded RGB
-	# is meant to be displayed directly as color" -- consistent with .t
-	# instead being a data/weight map that merely happens to be DXT1-
-	# compressed for space (using decoded channels as blend weights or
-	# indices rather than literal color), reopening rather than closing
-	# the original "what does this data actually mean" question. See
-	# docs/protocol/MAPM_FORMAT.md for the full account. Reverted to not
-	# applying it, rather than shipping a visually-broken-looking result.
+	# Real .t lightmap, applied as ambient occlusion -- see
+	# _load_real_terrain_lightmap's doc comment and
+	# docs/protocol/MAPT_FORMAT.md. Corrects an earlier same-day attempt
+	# that decoded the wrong bytes entirely (before .t's real structure --
+	# a ShadowMap plus a properly-headered embedded DDS -- was found via
+	# public documentation) and applied the result as direct detail-albedo
+	# color, which looked like broken color-noise static and was reverted.
+	# The real embedded texture is a genuine grayscale shadow map (white =
+	# fully lit), which Godot's ao_texture consumes directly with no
+	# custom shader needed. Uses the mesh's own UV1 (ao_on_uv2 defaults to
+	# false), same channel the albedo/detail textures above use.
+	var lightmap := _load_real_terrain_lightmap(mapm_path, archive)
+	if lightmap != null:
+		mat.ao_enabled = true
+		mat.ao_texture = lightmap
+		mat.ao_light_affect = 1.0
 	# Real world-space alignment with the player's own spawn position isn't
 	# confirmed (see top comment) -- centered near the player purely for
 	# visibility, same as the scenery/decoration-skeleton placement choices
