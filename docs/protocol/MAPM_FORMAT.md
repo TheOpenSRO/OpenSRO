@@ -399,7 +399,31 @@ a real observed Shape-B file size *exactly*), not random resync noise. Worth tra
 extra 552 bytes per sub-patch actually is — if the existing tile reader is folding some of it into
 the tile stream as spurious extra "tiles" via its resync scan, that would explain both the
 tile-count excess *and* why clean 17-row/should-be-289-tile subpatch boundaries eventually drift
-out of alignment. Not attempted this pass.
+out of alignment.
+
+**Traced further the same day**: decompiled the real buffered-read function itself
+(`FUN_00410f90`) and confirmed (again, independently) it's a plain generic buffered-read
+primitive — no format-specific logic, so it tells us nothing about what the extra bytes *are*,
+only that they really are read as one flat 2,575-byte block per real call
+(`FUN_00410f90(auStack_e48, 0xa0f)`, one call per sub-patch). Comparing real Ghidra stack-variable
+offsets for the buffer this read lands in (`auStack_e48`) against the pointer used for the actual
+tile-float reads (`auStack_e3b`) gives a real, precise **13-byte gap before the tile data** — i.e.
+each sub-patch's raw 2,575-byte block is a real **13-byte header, then 289×7=2,023 bytes of tile
+records, then a 539-byte trailer** (13 + 2,023 + 539 = 2,575, exact). The 13-byte header likely
+holds the small per-sub-patch flag/count fields also read in the same real code block
+(`cStack_65a`, `cStack_65b`, `uStack_659` — a byte, a byte, and a dword, 6 of the 13 bytes;
+the remaining 7 bytes not yet identified). **What the 539-byte trailer actually is remains
+genuinely unresolved** — a real `16×16` (256-entry) dword array gets copied nearby in the same
+function (`FUN_0042a6e0`) from a stack address whose offset lands suspiciously close to (but not
+exactly at) where this trailer would start, which could mean it's real per-sub-patch trailing data
+(a plausible 256-cell walkability/quad-flag grid, one entry per quad between the 17×17 vertices)
+or could just be unrelated stack-slot reuse after the tile-reading loop finished with that memory
+— genuinely ambiguous from static decompilation alone, not resolved this pass. Not attempted
+further this pass: modifying `MapmReader`'s generic resync-based tile extraction to use this exact
+13/2,023/539 real per-sub-patch layout directly (skip 13, read 2,023 as tiles, skip 539, repeat)
+instead of resync heuristics — the well-scoped next step for whoever continues this, since it
+would let a region's full 36 sub-patches be read deterministically instead of via
+`build_full_region_mesh`'s current graceful (but partial) row-band fallback.
 
 ## A real, unopened sibling file: `.t` (`JMXVMAPT1001`) — a possible ground-texture blend map
 
