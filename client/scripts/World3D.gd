@@ -249,6 +249,10 @@ const ARMOR_SET_NUMBERS := ["02", "03", "04", "05", "06", "07", "08", "09"]
 ## a real `navmesh\` folder, not pk2 root as this project originally
 ## assumed -- MAPO_FORMAT.md's "root level" claim was wrong.
 const OBJECT_INDEX_PATH := "navmesh\\object.ifo"
+## Real per-vertex ground-tile classification table -- see
+## docs/protocol/TILE2D_FORMAT.md (TileIndexReader). Confirmed present at
+## this real path (and, identically, at pk2 root) in a real Data.pk2.
+const TILE_INDEX_PATH := "navmesh\\tile2d.ifo"
 ## How many real *placements* from SRREVAMP_MAPO_PATH's region to
 ## instantiate -- an arbitrary, honestly-scoped cap, not a real engine
 ## limit. Distinct real .bsr models are only parsed once each and
@@ -665,6 +669,35 @@ func _open_pk2_if_set() -> Pk2Reader:
 		return null
 	return Pk2Reader.open(pk2_path)
 
+var _tile_index_cache: TileIndexReader.Table
+var _tile_index_load_attempted := false
+
+## Loads and caches the real tile2d.ifo table (see TILE_INDEX_PATH) from
+## SRREVAMP_PK2_PATH's Data.pk2, for MapmTerrainBuilder's real per-vertex
+## ground-tile-type coloring. Only ever parsed once per scene lifetime --
+## every real region shares the same real table. Returns null (logged
+## once) if SRREVAMP_PK2_PATH isn't set or the file can't be found/parsed;
+## callers already treat a null table as "fall back to the generic hue
+## sweep," so this isn't a hard failure.
+func _load_tile_index() -> TileIndexReader.Table:
+	if _tile_index_load_attempted:
+		return _tile_index_cache
+	_tile_index_load_attempted = true
+
+	var archive := _open_pk2_if_set()
+	if archive == null:
+		return null
+	var bytes := AssetSource.read_bytes(TILE_INDEX_PATH, archive)
+	if bytes.is_empty():
+		print("World3D: could not find real tile index at ", TILE_INDEX_PATH, " -- terrain color falls back to a generic hue sweep")
+		return null
+	_tile_index_cache = TileIndexReader.parse(bytes)
+	if _tile_index_cache == null:
+		printerr("World3D: could not parse real tile index at ", TILE_INDEX_PATH)
+	else:
+		print("World3D: loaded real tile index (%d real tile types) from %s" % [_tile_index_cache.entries.size(), TILE_INDEX_PATH])
+	return _tile_index_cache
+
 ## Opens SRREVAMP_MAP_PK2_PATH if it's set, or returns null if it's unset or
 ## fails to open. Map.pk2 is a separate archive from SRREVAMP_PK2_PATH's
 ## Data.pk2 in a real retail install (confirmed from the user's own real
@@ -956,7 +989,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# MAPM_FORMAT.md. MapmReader now parses a region's real, confirmed 6x6
 	# block grid directly (no more row/column guessing), so this always
 	# produces the complete real 97x97 mesh on a successful parse.
-	var terrain_mesh := MapmTerrainBuilder.build_full_region_mesh(region)
+	var terrain_mesh := MapmTerrainBuilder.build_full_region_mesh(region, _load_tile_index())
 	if terrain_mesh == null:
 		printerr("World3D: parsed ", region.blocks.size(), " real blocks from ", mapm_path, " but couldn't build a mesh from them")
 		return NAN

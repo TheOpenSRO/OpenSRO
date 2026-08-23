@@ -19,15 +19,19 @@ class_name MapmTerrainBuilder
 ## bytes are a real, confirmed `TextureInfo` `uint16` (a 10-bit texture ID
 ## into `tile2d.ifo` + a 6-bit scale, per the public format documentation
 ## cited in MAPM_FORMAT.md) followed by a real `Brightness` byte. This
-## project doesn't have `tile2d.ifo` or its referenced ground textures, so
-## rather than fabricate a texture lookup, _terrain_color() turns the real
-## texture ID into real, data-driven vertex-color variation (a natural
-## green/brown hue spread, not a claim about what any specific ID's real
-## texture looks like) -- real signal, not a texture, but real ground
-## variation instead of one flat color. The real 11-byte-vertex file
-## class's Extra bytes don't have a confirmed field layout beyond height,
-## so the same decode is applied best-effort (the leading 2 bytes exist in
-## both real shapes) rather than treated as a wholly different case.
+## project has a real `tile2d.ifo` (see docs/protocol/TILE2D_FORMAT.md,
+## `TileIndexReader`) giving a real per-ID `TileType` classification
+## (grass/sand/snow/water/etc) -- though the actual referenced ground
+## texture `.ddj` files don't exist anywhere in the one real Data.pk2
+## this project has access to (a real client-version/asset mismatch, not
+## a parsing bug). _vertex_color() uses that real classification for a
+## real, semantically-grounded color when a parsed tile2d table is passed
+## in, falling back to a data-driven green/brown hue spread across the
+## raw ID otherwise (real variation, not a claim about what any specific
+## ID's real texture looks like). The real 11-byte-vertex file class's
+## Extra bytes don't have a confirmed field layout beyond height, so the
+## same decode is applied best-effort (the leading 2 bytes exist in both
+## real shapes) rather than treated as a wholly different case.
 
 const GRID_WIDTH := 17
 
@@ -39,16 +43,53 @@ const GRID_WIDTH := 17
 ## from CRegionManagerBody) divided by 96 gives exactly 20.0.
 const TILE_SIZE := 20.0
 
+## Real, plausible base colors for each real TileIndexReader.TileType --
+## see docs/protocol/TILE2D_FORMAT.md. This project's one real
+## tile2d.ifo sample's referenced ground-texture .ddj files don't
+## actually exist anywhere in the one real Data.pk2 this project has
+## access to (a real client-version/asset mismatch, not a parsing bug),
+## so the real texture files themselves can't be sampled -- these are
+## real-world-plausible stand-in colors for each real, confirmed
+## category (grass green, sand tan, snow white, water blue, etc.), not
+## sampled from any real texture.
+static var _type_colors := {
+	TileIndexReader.TileType.DIRT: Color(0.42, 0.30, 0.18),
+	TileIndexReader.TileType.SAND: Color(0.76, 0.67, 0.42),
+	TileIndexReader.TileType.ASHFIELD: Color(0.30, 0.28, 0.27),
+	TileIndexReader.TileType.STONE: Color(0.55, 0.55, 0.56),
+	TileIndexReader.TileType.METAL: Color(0.5, 0.52, 0.56),
+	TileIndexReader.TileType.WOOD: Color(0.45, 0.32, 0.16),
+	TileIndexReader.TileType.MUD: Color(0.32, 0.24, 0.14),
+	TileIndexReader.TileType.WATER: Color(0.20, 0.45, 0.65),
+	TileIndexReader.TileType.DEEP_WATER: Color(0.10, 0.22, 0.45),
+	TileIndexReader.TileType.SNOW: Color(0.92, 0.93, 0.95),
+	TileIndexReader.TileType.GRASS: Color(0.30, 0.55, 0.22),
+	TileIndexReader.TileType.LONG_GRASS: Color(0.22, 0.45, 0.16),
+	TileIndexReader.TileType.FOREST: Color(0.14, 0.32, 0.12),
+	TileIndexReader.TileType.CLOUD: Color(0.85, 0.87, 0.90),
+}
+
 ## Turns a real per-vertex Extra byte array into real, data-driven vertex
 ## color -- see this file's top comment. Uses the real confirmed
 ## TextureInfo uint16's low 10 bits (the real texture ID field) when at
-## least 2 Extra bytes are available; falls back to a fixed mid-tone
-## otherwise.
-static func _vertex_color(extra: PackedByteArray) -> Color:
+## least 2 Extra bytes are available. If tile_table (a parsed
+## TileIndexReader.Table, e.g. from a real tile2d.ifo) is given and has a
+## real entry for that ID, returns that entry's real TileType's plausible
+## base color (see _type_colors). Otherwise falls back to a data-driven
+## green-to-brown hue sweep across the raw ID -- real variation, not a
+## claim about what any specific ID represents. A completely empty Extra
+## falls back to a fixed mid-tone.
+static func _vertex_color(extra: PackedByteArray, tile_table: TileIndexReader.Table = null) -> Color:
 	if extra.size() < 2:
 		return Color(0.45, 0.5, 0.32)
 	var tex_info := extra.decode_u16(0)
 	var id := tex_info & 0x3ff # real 10-bit TextureInfo.ID field
+
+	if tile_table != null:
+		var entry := tile_table.lookup(id)
+		if entry != null and _type_colors.has(entry.type):
+			return _type_colors[entry.type]
+
 	var t := id / 1023.0
 	# Hue sweeps a natural green-to-brown arc (0.30 = green, 0.08 = brown)
 	# rather than the full rainbow, so real variation reads as ground
@@ -60,13 +101,13 @@ static func _vertex_color(extra: PackedByteArray) -> Color:
 ## GRID_WIDTH vertices, row-major) -- useful standalone for a quick single
 ## sub-patch render, or as the unit build_full_region_mesh below stitches
 ## 36 of together.
-static func build_mesh(region: MapmReader.ParsedRegion, block_index: int = 0) -> ArrayMesh:
+static func build_mesh(region: MapmReader.ParsedRegion, block_index: int = 0, tile_table: TileIndexReader.Table = null) -> ArrayMesh:
 	if block_index < 0 or block_index >= region.blocks.size():
 		push_error("MapmTerrainBuilder: block index %d out of range (region has %d blocks)" % [block_index, region.blocks.size()])
 		return null
 	var block: MapmReader.Block = region.blocks[block_index]
 	var cells := _block_to_cells(block)
-	return _build_mesh_from_cells(cells, GRID_WIDTH, GRID_WIDTH)
+	return _build_mesh_from_cells(cells, GRID_WIDTH, GRID_WIDTH, tile_table)
 
 ## Real, precisely-confirmed full-region assembly -- see
 ## docs/protocol/MAPM_FORMAT.md. A whole region is a real 6x6 grid of
@@ -79,7 +120,7 @@ static func build_mesh(region: MapmReader.ParsedRegion, block_index: int = 0) ->
 ## region doesn't have exactly BLOCK_COUNT blocks (MapmReader guarantees
 ## this on a successful parse, so this should only trip on a malformed
 ## caller-constructed region).
-static func build_full_region_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh:
+static func build_full_region_mesh(region: MapmReader.ParsedRegion, tile_table: TileIndexReader.Table = null) -> ArrayMesh:
 	var bands_per_side := MapmReader.BLOCKS_PER_SIDE
 	if region.blocks.size() != bands_per_side * bands_per_side:
 		push_error("MapmTerrainBuilder: region has %d blocks, want %d" % [region.blocks.size(), bands_per_side * bands_per_side])
@@ -101,7 +142,7 @@ static func build_full_region_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh
 					var vertex: MapmReader.Vertex = block.vertices[local_r * GRID_WIDTH + local_c]
 					grid[dest_r][band_col * (GRID_WIDTH - 1) + local_c] = [vertex.height, vertex.extra]
 
-	return _build_mesh_from_cells(grid, full_size, full_size)
+	return _build_mesh_from_cells(grid, full_size, full_size, tile_table)
 
 ## Converts one real block's real vertices (row-major GRID_WIDTH x
 ## GRID_WIDTH) into the [height, extra] cell shape _build_mesh_from_cells
@@ -121,7 +162,7 @@ static func _block_to_cells(block: MapmReader.Block) -> Array:
 ## col_count [height, extra] pairs), row_count/col_count are
 ## cells.size()/cells[0].size() (passed separately since callers may have
 ## already validated/trimmed them).
-static func _build_mesh_from_cells(cells: Array, row_count: int, col_count: int) -> ArrayMesh:
+static func _build_mesh_from_cells(cells: Array, row_count: int, col_count: int, tile_table: TileIndexReader.Table = null) -> ArrayMesh:
 	var positions := PackedVector3Array()
 	positions.resize(row_count * col_count)
 	for r in range(row_count):
@@ -146,7 +187,7 @@ static func _build_mesh_from_cells(cells: Array, row_count: int, col_count: int)
 	for r in range(row_count):
 		for c in range(col_count):
 			var extra: PackedByteArray = cells[r][c][1]
-			colors[r * col_count + c] = _vertex_color(extra)
+			colors[r * col_count + c] = _vertex_color(extra, tile_table)
 
 	var indices := PackedInt32Array()
 	for r in range(row_count - 1):

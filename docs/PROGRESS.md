@@ -2,6 +2,34 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 54) — found tile2d.ifo, real semantic ground-tile coloring
+
+- The user asked "what's next" again after the `.t` lightmap win; continued the same map-data
+  investigation by checking the same public documentation source for `tile2d.ifo`, the real table
+  `.m`'s `TextureInfo.ID` field indexes into -- found a dedicated `jmxv2dti.md` page describing a
+  plain-text format (magic + count + one line per tile: ID, a real `TileType` enum, category,
+  `.ddj` filename).
+- **Confirmed present in a real Data.pk2**, at both pk2 root and `navmesh\tile2d.ifo` (identical
+  36,629-byte file) -- 719 real entries, parsed cleanly in strict sequential order, real `TileType`
+  values (`Dirt`, `Sand`, `Stone`, `Mud`, `Water`, `Snow`, `Grass`, `LongGrass`, `Forest`) all
+  present and plausible given their real referenced filenames.
+- **A real, honest gap**: none of the real `.ddj` filenames this table references actually exist
+  anywhere in the one real `Data.pk2` this project has access to (checked broadly, zero hits) --
+  most likely a real client-version/asset mismatch, not a parsing bug. The real ground *texture*
+  files remain unrecovered, but the real `TileType` classification itself is still genuinely useful
+  on its own.
+- Implemented `TileIndexReader` (GDScript), full test coverage, verified against the real 719-entry
+  sample. Wired a real per-`TileType` color table into `MapmTerrainBuilder._vertex_color()` (grass
+  green, sand tan, snow white, water blue, etc. -- real-world-plausible stand-ins, not sampled from
+  any real texture), replacing the previous arbitrary green-to-brown hue sweep when a real
+  `tile2d.ifo` table is available. `World3D.gd` loads and caches it once per scene.
+- **Live-verified against a real Shape B region** (same top-down debug-camera technique used to
+  verify the `.t` lightmap): real, distinct, semantically plausible dirt/grass patches following
+  the terrain's own real contours -- a categorical visual improvement over the previous arbitrary
+  gradient, even without the actual texture files.
+- Full CI test-suite sweep passes (both client and server), clean `--import --quit`. All real pk2
+  data pulled temporarily for verification only, deleted immediately after.
+
 ## 2026-08-23 (cont'd 53) — wired the real .t lightmap into rendering as ambient occlusion
 
 - Continued straight from the previous entry's `MapTReader` implementation: wired it into
