@@ -315,18 +315,22 @@ The ground is no longer just a placeholder box either: setting `SRREVAMP_MAPM_PA
 install) loads a real `Map.pk2` region's real elevation data and builds a real triangulated
 terrain mesh via `client/scripts/assets/mapm_terrain_builder.gd` (`MapmTerrainBuilder`), replacing
 both the placeholder's visual mesh and its collision shape (the latter built straight from the
-same real triangle data — see below). Verified
-against a real region file: 12417 real tiles in, 584 complete real rows recovered and rendered as
-genuine undulating terrain the player stands on, not a flat box. It's also texturable with real
-game art: `SRREVAMP_MAPM_TEXTURE_PATH` + `SRREVAMP_MEDIA_PK2_PATH` load a real per-region minimap
-image (`Media.pk2\minimap\<region>.ddj`) and apply it, tiled, as the terrain's real texture —
-found via `server/cmd/pk2list` after no live 3D ground-texture system could be confirmed anywhere
-in this project's available real data (every real terrain shader found samples one continuous
-color texture, not a multi-layer type blend — see `docs/protocol/MAPM_FORMAT.md`). It's real,
-region-accurate painted art, not confirmed to be the literal thing the game's terrain shaders
-sample at runtime — but it looks like the real game instead of a flat or procedural color. Falls
-back to real per-tile vertex-color variation (driven by an already-decoded real per-tile byte) if
-no texture is set.
+same real triangle data — see below). `.m`'s real structure is now fully solved and confirmed
+byte-for-byte (see `docs/protocol/MAPM_FORMAT.md`): a region is a real 6×6 grid of 36 blocks, each
+a real 17×17 vertex mesh, stitched into one real 97×97 heightmap covering the region's actual
+1920×1920-unit footprint — `MapmReader` parses this fully deterministically (no plausibility
+scanning needed), and `MapmTerrainBuilder.build_full_region_mesh` builds the full stitched mesh
+directly from it. Verified against real region files: a single, coherent, natural-looking
+mountainous terrain with correct shading and no seams, not a flat box or an elongated ribbon. It's
+also texturable with real game art: `SRREVAMP_MAPM_TEXTURE_PATH` + `SRREVAMP_MEDIA_PK2_PATH` load
+a real per-region minimap image (`Media.pk2\minimap\<region>.ddj`) and apply it, tiled, as the
+terrain's real texture — found via `server/cmd/pk2list` after no live 3D ground-texture system
+could be confirmed anywhere in this project's available real data (every real terrain shader found
+samples one continuous color texture, not a multi-layer type blend — see
+`docs/protocol/MAPM_FORMAT.md`). It's real, region-accurate painted art, not confirmed to be the
+literal thing the game's terrain shaders sample at runtime — but it looks like the real game
+instead of a flat or procedural color. Falls back to real per-vertex color variation (driven by a
+real, confirmed per-vertex texture-ID field) if no texture is set.
 
 Real placed objects have automatic asset selection now too: `SRREVAMP_MAPO_PATH` (a real `Map.pk2`
 region's `.o` file, via `SRREVAMP_MAP_PK2_PATH`) resolves each real placement's type ID through a
@@ -343,10 +347,12 @@ Real-world placement scale/position relative to a player's actual spawn coordina
 yet (same honest caveat as terrain above).
 
 Terrain and placed objects have been verified rendering together, from the same real region, not
-just each in isolation: `100/100`'s real `.m` terrain (13211 tiles) and real `.o` placements
-(58 objects, resolving to 4 distinct real `.bsr` models) load into the same `World3D` scene at
-once and produce a genuinely recognizable establishing view — real textured ground and a real
-tree with bark texture together in frame. Repeat placements of the same real model are cached and
+just each in isolation: `100/100`'s real, fully-stitched `.m` terrain (36 blocks, 97×97 vertices)
+and its real `.o` + `.o2` placements (158 total objects, resolving to 4 distinct real `.bsr`
+models — see `docs/protocol/MAPO2_FORMAT.md` for the newer-generation `.o2` object/event index)
+load into the same `World3D` scene at once and produce a genuinely recognizable establishing
+view — real textured ground and a real tree with bark texture together in frame. Repeat placements
+of the same real model are cached and
 `duplicate()`d rather than re-parsed (`_try_load_real_map_objects` in `World3D.gd`), since real
 regions turn out to reuse very few distinct models across many placements.
 

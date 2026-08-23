@@ -1,7 +1,7 @@
 extends SceneTree
 
-## Exercises MapmTerrainBuilder against synthetic tile data shaped exactly
-## like real Shape-A .m records (never real game data), run headless:
+## Exercises MapmTerrainBuilder against synthetic MapmReader.Block/Region
+## data (never real game data), run headless:
 ## `godot4 --headless --path client --script res://scripts/assets/mapm_terrain_builder_test.gd`
 
 var _failures := 0
@@ -13,163 +13,123 @@ func _check(cond: bool, msg: String) -> void:
 		print("FAIL " + msg)
 		_failures += 1
 
-## Builds one synthetic Shape-A-shaped tile: extra[0] = terrain byte,
-## extra[1:3] = the real column field encoding col (0..16), extra[3:7] =
-## zeroed (unused row field + trailing bytes).
-func _make_tile(col: int, height: float, terrain_type: int = -1) -> MapmReader.Tile:
-	var t := MapmReader.Tile.new()
-	t.height = height
-	var extra := PackedByteArray()
-	extra.resize(7)
-	if terrain_type != -1:
-		extra[0] = terrain_type
-	var raw := roundi(col * 65535.0 / 16.0)
-	extra.encode_u16(1, raw)
-	t.extra = extra
-	return t
+var GW := 17 # MapmTerrainBuilder.GRID_WIDTH, kept local for brevity
 
-func _make_region(rows: int, height_fn: Callable) -> MapmReader.ParsedRegion:
+## Builds one real-shaped Block: height_fn(local_row, local_col) for each
+## of the block's real GW x GW vertices, and an optional fixed TextureInfo
+## uint16 (real confirmed field for the 7-byte-vertex file class) embedded
+## in every vertex's Extra bytes.
+func _make_block(height_fn: Callable, tex_info: int = -1) -> MapmReader.Block:
+	var block := MapmReader.Block.new()
+	block.vertices.resize(GW * GW)
+	for r in range(GW):
+		for c in range(GW):
+			var v := MapmReader.Vertex.new()
+			v.height = height_fn.call(r, c)
+			var extra := PackedByteArray()
+			extra.resize(3) # real 7-byte-vertex Extra length (TextureInfo u16 + Brightness byte)
+			if tex_info != -1:
+				extra.encode_u16(0, tex_info)
+			v.extra = extra
+			block.vertices[r * GW + c] = v
+	return block
+
+## Builds a full, real-shaped 6x6-block region. block_fn(band_row, band_col)
+## returns the Block for that real nested-order slot.
+func _make_region(block_fn: Callable) -> MapmReader.ParsedRegion:
 	var r := MapmReader.ParsedRegion.new()
 	r.version = "1000"
-	for row in range(rows):
-		for col in range(MapmTerrainBuilder.GRID_WIDTH):
-			r.tiles.append(_make_tile(col, height_fn.call(row, col)))
+	for band_row in range(MapmReader.BLOCKS_PER_SIDE):
+		for band_col in range(MapmReader.BLOCKS_PER_SIDE):
+			r.blocks.append(block_fn.call(band_row, band_col))
 	return r
 
 func _init() -> void:
-	# Two full rows -- the minimum needed for one strip of triangles.
-	var region := _make_region(2, func(row, col): return float(row * 10 + col))
-	var mesh := MapmTerrainBuilder.build_mesh(region)
-	_check(mesh != null, "builds a mesh from 2 complete real-shaped rows")
+	# build_mesh: a single real block.
+	var region1 := MapmReader.ParsedRegion.new()
+	region1.version = "1000"
+	region1.blocks.append(_make_block(func(r, c): return float(r * 10 + c)))
+	var mesh := MapmTerrainBuilder.build_mesh(region1, 0)
+	_check(mesh != null, "builds a mesh from a single real block")
 	if mesh != null:
 		var arrays := mesh.surface_get_arrays(0)
 		var positions: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-		_check(positions.size() == 2 * MapmTerrainBuilder.GRID_WIDTH, "34 vertices (got %d)" % positions.size())
-		_check(indices.size() == 2 * 3 * (MapmTerrainBuilder.GRID_WIDTH - 1), "96 indices for a 2x17 strip (got %d)" % indices.size())
+		_check(positions.size() == GW * GW, "%d vertices (got %d)" % [GW * GW, positions.size()])
+		_check(indices.size() == 2 * 3 * (GW - 1) * (GW - 1), "correct index count (got %d)" % indices.size())
 
 		var v00: Vector3 = positions[0]
 		_check(v00.is_equal_approx(Vector3(0, 0, 0)), "row0 col0 at origin with real height 0 (got %s)" % v00)
-		var v0_last: Vector3 = positions[MapmTerrainBuilder.GRID_WIDTH - 1]
-		_check(v0_last.is_equal_approx(Vector3((MapmTerrainBuilder.GRID_WIDTH - 1) * MapmTerrainBuilder.TILE_SIZE, 16, 0)), "row0 col16 real height 16 at real column x (got %s)" % v0_last)
-		var v1_0: Vector3 = positions[MapmTerrainBuilder.GRID_WIDTH]
-		_check(v1_0.is_equal_approx(Vector3(0, 10, MapmTerrainBuilder.TILE_SIZE)), "row1 col0 real height 10 at row-wrapped z (got %s)" % v1_0)
+		var v0_last: Vector3 = positions[GW - 1]
+		_check(v0_last.is_equal_approx(Vector3((GW - 1) * MapmTerrainBuilder.TILE_SIZE, GW - 1, 0)), "row0 col16 real height at real column x (got %s)" % v0_last)
+		var v1_0: Vector3 = positions[GW]
+		_check(v1_0.is_equal_approx(Vector3(0, 10, MapmTerrainBuilder.TILE_SIZE)), "row1 col0 real height at row-wrapped z (got %s)" % v1_0)
 
-	# Vertex colors: driven by the real per-tile terrain-type byte, distinct
-	# values should produce distinct (not fabricated-identical) colors, and
-	# a tile with no decodable terrain byte should fall back to the fixed
+	_check(MapmTerrainBuilder.build_mesh(region1, 5) == null, "rejects an out-of-range block index")
+
+	# Vertex colors: driven by the real confirmed TextureInfo field,
+	# distinct values should produce distinct (not fabricated-identical)
+	# colors, and no Extra bytes at all should fall back to the fixed
 	# mid-tone.
-	var colored_region := MapmReader.ParsedRegion.new()
-	colored_region.version = "1000"
-	for col in range(MapmTerrainBuilder.GRID_WIDTH):
-		colored_region.tiles.append(_make_tile(col, float(col), col * 10))
-	for col in range(MapmTerrainBuilder.GRID_WIDTH):
-		colored_region.tiles.append(_make_tile(col, float(10 + col), 255 - col * 10))
-	var colored_mesh := MapmTerrainBuilder.build_mesh(colored_region)
-	_check(colored_mesh != null, "builds a mesh from terrain-type-carrying tiles")
-	if colored_mesh != null:
-		var carrays := colored_mesh.surface_get_arrays(0)
-		var colors: PackedColorArray = carrays[Mesh.ARRAY_COLOR]
-		_check(colors.size() == 2 * MapmTerrainBuilder.GRID_WIDTH, "vertex color array sized to match vertices (got %d)" % colors.size())
-		_check(not colors[0].is_equal_approx(colors[MapmTerrainBuilder.GRID_WIDTH - 1]), "distinct real terrain-type bytes produce distinct colors")
+	var region2 := MapmReader.ParsedRegion.new()
+	region2.version = "1000"
+	region2.blocks.append(_make_block(func(r, c): return float(c), 100))
+	var mesh_a := MapmTerrainBuilder.build_mesh(region2, 0)
+	var region3 := MapmReader.ParsedRegion.new()
+	region3.version = "1000"
+	region3.blocks.append(_make_block(func(r, c): return float(c), 900))
+	var mesh_b := MapmTerrainBuilder.build_mesh(region3, 0)
+	_check(mesh_a != null and mesh_b != null, "builds meshes from texture-info-carrying blocks")
+	if mesh_a != null and mesh_b != null:
+		var color_a: Color = mesh_a.surface_get_arrays(0)[Mesh.ARRAY_COLOR][0]
+		var color_b: Color = mesh_b.surface_get_arrays(0)[Mesh.ARRAY_COLOR][0]
+		_check(not color_a.is_equal_approx(color_b), "distinct real TextureInfo IDs produce distinct colors")
 
-	# A resync-dropped tile mid-row (one tile missing from row 1) should
-	# leave that row incomplete and therefore dropped, not silently
-	# misaligned -- only 1 complete row remains, below the 2-row minimum.
-	var broken := MapmReader.ParsedRegion.new()
-	broken.version = "1000"
-	for col in range(MapmTerrainBuilder.GRID_WIDTH):
-		broken.tiles.append(_make_tile(col, float(col)))
-	for col in range(MapmTerrainBuilder.GRID_WIDTH):
-		if col == 8:
-			continue # simulate a resync-dropped tile
-		broken.tiles.append(_make_tile(col, float(100 + col)))
-	var broken_mesh := MapmTerrainBuilder.build_mesh(broken)
-	_check(broken_mesh == null, "an incomplete row (resync-dropped tile) is dropped, not misaligned")
+	var region_empty_extra := MapmReader.ParsedRegion.new()
+	region_empty_extra.version = "1000"
+	var empty_block := MapmReader.Block.new()
+	empty_block.vertices.resize(GW * GW)
+	for i in range(GW * GW):
+		var v := MapmReader.Vertex.new()
+		v.height = 0.0
+		v.extra = PackedByteArray()
+		empty_block.vertices[i] = v
+	region_empty_extra.blocks.append(empty_block)
+	var mesh_fallback := MapmTerrainBuilder.build_mesh(region_empty_extra, 0)
+	_check(mesh_fallback != null, "builds a mesh from vertices with empty Extra")
+	if mesh_fallback != null:
+		# A generous tolerance: ArrayMesh vertex colors are stored 8-bit
+		# per channel, so a small quantization error vs. the exact literal
+		# is expected and not a real mismatch.
+		var fallback_color: Color = mesh_fallback.surface_get_arrays(0)[Mesh.ARRAY_COLOR][0]
+		var close := absf(fallback_color.r - 0.45) < 0.01 and absf(fallback_color.g - 0.5) < 0.01 and absf(fallback_color.b - 0.32) < 0.01
+		_check(close, "empty Extra falls back to the fixed mid-tone (got %s)" % fallback_color)
 
-	# Shape-B-shaped tiles (extra too short for a decoded column) fall back
-	# to positional order.
-	var positional := MapmReader.ParsedRegion.new()
-	positional.version = "1000"
-	for row in range(2):
-		for col in range(MapmTerrainBuilder.GRID_WIDTH):
-			var t := MapmReader.Tile.new()
-			t.height = float(row * 10 + col)
-			t.extra = PackedByteArray([0, 0, 0]) # Shape-B-shaped: too short for _column_index
-			positional.tiles.append(t)
-	var positional_mesh := MapmTerrainBuilder.build_mesh(positional)
-	_check(positional_mesh != null, "falls back to positional column order for Shape-B-shaped tiles")
-
-	# max_rows caps how many real rows get built -- 5 real rows capped to 3
-	# should produce exactly a 3-row mesh, not silently keep all 5.
-	var tall_region := _make_region(5, func(row, col): return float(row * 10 + col))
-	var capped_mesh := MapmTerrainBuilder.build_mesh(tall_region, 3)
-	_check(capped_mesh != null, "builds a mesh from a capped region")
-	if capped_mesh != null:
-		var capped_positions: PackedVector3Array = capped_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-		_check(capped_positions.size() == 3 * MapmTerrainBuilder.GRID_WIDTH, "max_rows=3 caps to 3 rows (got %d vertices)" % capped_positions.size())
-	var uncapped_mesh := MapmTerrainBuilder.build_mesh(tall_region)
-	var uncapped_positions: PackedVector3Array = uncapped_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-	_check(uncapped_positions.size() == 5 * MapmTerrainBuilder.GRID_WIDTH, "no max_rows keeps all 5 rows (got %d vertices)" % uncapped_positions.size())
-
-	# build_full_region_mesh: real 2x2-band stitching (using bands_per_side=2
-	# instead of the real 6, to keep the synthetic fixture small). Real file
-	# order is nested: band_row 0's 2 sub-patches (band_col 0, then 1),
-	# then band_row 1's 2 sub-patches -- each sub-patch's height is
-	# `band_row*100 + band_col*10 + local_row` so every band's real
-	# contribution is distinguishable at every output vertex.
-	var GW := MapmTerrainBuilder.GRID_WIDTH
-	var two_by_two := MapmReader.ParsedRegion.new()
-	two_by_two.version = "1000"
-	for band_row in range(2):
-		for band_col in range(2):
-			for row in range(GW):
-				for col in range(GW):
-					two_by_two.tiles.append(_make_tile(col, float(band_row * 100 + band_col * 10 + row)))
-	var band_mesh := MapmTerrainBuilder.build_full_region_mesh(two_by_two, 2)
-	_check(band_mesh != null, "builds a full-region mesh from a 2x2 real band grid")
+	# build_full_region_mesh: real 6x6-block stitching. Every block is flat
+	# (height 0) except (0,0) and (1,1), whose heights are
+	# `band_row*100 + band_col*10 + local_row` so every relevant band's
+	# real contribution is distinguishable at every output vertex.
+	var region_full := _make_region(func(band_row, band_col):
+		if (band_row == 0 and band_col == 0) or (band_row == 1 and band_col == 1):
+			return _make_block(func(r, c): return float(band_row * 100 + band_col * 10 + r))
+		return _make_block(func(r, c): return 0.0))
+	var band_mesh := MapmTerrainBuilder.build_full_region_mesh(region_full)
+	_check(band_mesh != null, "builds a full-region mesh from a real 6x6 block grid")
 	if band_mesh != null:
 		var band_positions: PackedVector3Array = band_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-		var expected_size := 2 * (GW - 1) + 1 # 33
-		_check(band_positions.size() == expected_size * expected_size, "2x2 bands stitch to a %dx%d grid (got %d vertices)" % [expected_size, expected_size, band_positions.size()])
+		var expected_size := MapmReader.BLOCKS_PER_SIDE * (GW - 1) + 1 # 97
+		_check(band_positions.size() == expected_size * expected_size, "6x6 blocks stitch to a %dx%d grid (got %d vertices)" % [expected_size, expected_size, band_positions.size()])
 
-		# (row 0, col 0): band (0,0)'s own untouched corner -- height 0.
-		_check(band_positions[0].y == 0.0, "band (0,0)'s own first row/col is untouched (got %s, want 0.0)" % band_positions[0].y)
-		# (row 0, col 16): the shared column boundary between band_col 0 and
-		# 1 within band_row 0 -- band_col 1 (height 10) should win.
-		var shared_col_h: float = band_positions[16].y
-		_check(shared_col_h == 10.0, "band_col 1 overwrites the shared column boundary within band_row 0 (got %s, want 10.0)" % shared_col_h)
-		# (row 16, col 0): the shared row boundary between band_row 0 and 1
-		# within band_col 0 -- band_row 1 (height 100) should win.
-		var shared_row_h: float = band_positions[16 * expected_size].y
-		_check(shared_row_h == 100.0, "band_row 1 overwrites the shared row boundary within band_col 0 (got %s, want 100.0)" % shared_row_h)
-		# (row 16, col 16): the shared corner of all 4 bands -- the last one
-		# consumed in nested file order, band (1,1) (height 110), should win.
-		var shared_corner_h: float = band_positions[16 * expected_size + 16].y
-		_check(shared_corner_h == 110.0, "band (1,1) overwrites the shared 4-way corner (got %s, want 110.0)" % shared_corner_h)
-		# (row 32, col 32): band (1,1)'s own untouched far corner -- local
-		# row/col 16, height 100+10+16=126.
-		var far_corner_h: float = band_positions[32 * expected_size + 32].y
-		_check(far_corner_h == 126.0, "band (1,1)'s own far corner is untouched (got %s, want 126.0)" % far_corner_h)
+		# Block (0,0)'s own untouched first row/col -- height 0.
+		_check(band_positions[0].y == 0.0, "block (0,0)'s own first row/col is untouched (got %s, want 0.0)" % band_positions[0].y)
+		# Block (1,1)'s own interior (local row/col 8, away from any shared
+		# boundary another block could overwrite) -- height 1*100+1*10+8=118.
+		var dest_r := 1 * (GW - 1) + 8
+		var dest_c := 1 * (GW - 1) + 8
+		var interior_h: float = band_positions[dest_r * expected_size + dest_c].y
+		_check(interior_h == 118.0, "block (1,1)'s own interior is untouched (got %s, want 118.0)" % interior_h)
 
-	# A partial trailing row-band (only 1 of its 2 sub-patches present) is
-	# dropped whole, not left with holes -- only the first, fully complete
-	# row-band's rows should survive.
-	var partial_band := MapmReader.ParsedRegion.new()
-	partial_band.version = "1000"
-	for band_col in range(2): # band_row 0: both sub-patches present
-		for row in range(GW):
-			for col in range(GW):
-				partial_band.tiles.append(_make_tile(col, float(band_col * 10 + row)))
-	for row in range(GW): # band_row 1: only 1 of its 2 sub-patches present
-		for col in range(GW):
-			partial_band.tiles.append(_make_tile(col, float(100 + row)))
-	var partial_mesh := MapmTerrainBuilder.build_full_region_mesh(partial_band, 2)
-	_check(partial_mesh != null, "builds from a region with 1 complete row-band + 1 partial row-band")
-	if partial_mesh != null:
-		var partial_positions: PackedVector3Array = partial_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-		var expected_size := 2 * (GW - 1) + 1 # the full 2-band-wide column count, only 1 row-band tall
-		_check(partial_positions.size() == GW * expected_size, "incomplete row-band dropped whole, only 1 row-band's rows kept (got %d vertices)" % partial_positions.size())
+	_check(MapmTerrainBuilder.build_full_region_mesh(MapmReader.ParsedRegion.new()) == null, "rejects a region without a real 6x6 block grid")
 
 	if _failures == 0:
 		print("ALL PASS")

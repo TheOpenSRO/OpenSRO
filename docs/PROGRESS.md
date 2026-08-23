@@ -2,6 +2,45 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 51) — SOLVED the .m row-layout mystery for real, using public documentation
+
+- After the `.t` revert (previous entry), the user asked "what's next" and this continued pushing
+  on the same map-data investigation rather than treating the `.t` revert as a stopping point.
+  Checked `docs/LEGAL.md`'s own policy (point 3: well-established public protocol documentation is
+  fair game as a spec, the same footing this project already used for pk2/Blowfish) and searched
+  for public Silkroad private-server community documentation of `.m` -- found
+  [`JellyBitz/srodevs-docs`](https://github.com/JellyBitz/srodevs-docs) via a plain GitHub code
+  search for the literal `JMXVMAPM` string, with a dedicated `jmxvmapm.md` page describing the
+  exact block/vertex structure.
+- **Verified byte-for-byte against real files, not just trusted**: the documented structure (6x6
+  blocks, 17x17 vertices, 7-byte vertex records) matched a real `100/100.m` exactly -- 92,712 bytes
+  predicted, 92,712 bytes real, zero leftover. But this project's own previously-named "Shape A"
+  files (the larger ~136-137KB class) didn't fit the public doc's exact numbers. Found the real gap
+  independently: an 11-byte vertex record (not 7) and a 70-byte block `Reserved` field (not 20) --
+  confirmed by testing candidate strides for height-sequence plausibility across real file bytes
+  (11 bytes was the only one giving clean heights across hundreds of real vertices) and then
+  confirming the *whole* 36-block structure parses byte-for-byte, zero leftover, against a real
+  `0/1.m` (136,128 bytes) with these corrected numbers. Also found and handled a real, rare
+  anomaly: a real `0/0.m` has an extra, exactly-1,000-byte all-zero trailer after the otherwise-
+  complete structure.
+- **Completely rewrote `MapmReader` (GDScript) and `server/internal/mapm` (Go)** to parse this
+  structure fully deterministically -- no more resync/plausibility scanning at all, since every
+  real block is a fixed size once its real vertex-record length is known (readable directly off
+  the file's own total size). Rewrote both test suites with real byte-exact synthetic fixtures.
+  Rewired `MapmTerrainBuilder.build_full_region_mesh` to consume the real block/vertex data
+  directly instead of guessing row boundaries from a decoded per-tile column field -- this whole
+  guessing mechanism (`_group_into_rows`, `_column_index`) no longer exists.
+- **Live-verified against real pk2 data**: pulled `0/0.m`, `0/1.m`, and `100/100.m` fresh from
+  `Map.pk2` -- all three parse with zero errors, including the 1,000-byte-trailer file, and all
+  load a full "36 real blocks, 97 rows stitched" (previously, files like `0/0.m` only ever managed
+  3-5 of 6 real row-bands). Rendered a real screenshot: **a single, coherent, natural-looking
+  mountainous region with a clear ridge and correct shading, no seams, no glitches -- the best real
+  terrain result in this project's history.**
+- Full CI test-suite sweep passes (both client and server), clean `--import --quit`. All real pk2
+  data pulled temporarily for verification only, deleted immediately after. This closes the
+  session's central, longest-running investigation (the `.m` row-layout mystery) that spanned
+  several prior sessions and most of today's -- a genuine milestone, not an incremental step.
+
 ## 2026-08-23 (cont'd 50) — tried the .t detail texture live, reverted after it looked wrong
 
 - Followed through on verifying the previous entry's `.t` detail-texture wiring properly, per this

@@ -12,54 +12,59 @@ func appendFloat32(b []byte, v float32) []byte {
 	return append(b, tmp[:]...)
 }
 
-// buildSyntheticRegionShapeA writes a minimal, synthetic .m-shaped buffer
-// (never real game data) using shapeA (11-byte tiles), the layout
-// confirmed against the larger (~136-137KB) real file size class: see
-// docs/protocol/MAPM_FORMAT.md. Repeats enough tiles for the shape/offset
-// detector to confidently distinguish this from shapeB or header padding.
-func buildSyntheticRegionShapeA(t *testing.T, heights []float32) []byte {
-	t.Helper()
+func appendU16(b []byte, v uint16) []byte {
+	var tmp [2]byte
+	binary.LittleEndian.PutUint16(tmp[:], v)
+	return append(b, tmp[:]...)
+}
 
-	var buf []byte
-	buf = append(buf, []byte(magic)...)
+func appendU32(b []byte, v uint32) []byte {
+	var tmp [4]byte
+	binary.LittleEndian.PutUint32(tmp[:], v)
+	return append(b, tmp[:]...)
+}
+
+// buildBlock writes one real-shaped block: header, vertexCount vertices
+// (each heightFn(v) plus vertexLen-4 filler bytes), plane info, the
+// tile-flag grid, height info, and reservedLen trailing bytes — the exact
+// real structure confirmed in docs/protocol/MAPM_FORMAT.md.
+func buildBlock(buf []byte, vertexLen, reservedLen int, heightFn func(v int) float32) []byte {
+	buf = appendU32(buf, 0) // Flag
+	buf = appendU16(buf, 0) // EnvironmentID
+	for v := 0; v < vertexCount; v++ {
+		buf = appendFloat32(buf, heightFn(v))
+		buf = append(buf, make([]byte, vertexLen-4)...)
+	}
+	buf = append(buf, 0xff)         // PlaneType = -1 (Normal)
+	buf = append(buf, 0)            // WaveID
+	buf = appendFloat32(buf, 0)     // PlaneHeight
+	buf = append(buf, make([]byte, tileFlagLen)...)
+	buf = appendFloat32(buf, 0) // HeightMax
+	buf = appendFloat32(buf, 0) // HeightMin
+	buf = append(buf, make([]byte, reservedLen)...)
+	return buf
+}
+
+// buildRegion builds a full, real-shaped region: blockCount (36) blocks in
+// real nested order, each built by buildBlock. heightFn is called with
+// (blockIndex, vertexIndex) so tests can make specific vertices
+// distinguishable.
+func buildRegion(vertexLen, reservedLen int, heightFn func(block, v int) float32) []byte {
+	buf := []byte(magic)
 	buf = append(buf, []byte("1000")...)
-	buf = append(buf, make([]byte, 12)...) // unconfirmed header bytes
-
-	for _, h := range heights {
-		buf = append(buf, 97, 0, 0, 0xff, 0xff)
-		buf = appendFloat32(buf, h)
-		buf = append(buf, 0, 0)
+	for b := 0; b < blockCount; b++ {
+		buf = buildBlock(buf, vertexLen, reservedLen, func(v int) float32 { return heightFn(b, v) })
 	}
 	return buf
 }
 
-func buildSyntheticRegionShapeB(t *testing.T, heights []float32) []byte {
-	t.Helper()
-
-	var buf []byte
-	buf = append(buf, []byte(magic)...)
-	buf = append(buf, []byte("1000")...)
-	buf = append(buf, make([]byte, 12)...) // unconfirmed header bytes
-
-	for _, h := range heights {
-		buf = append(buf, 5, 200)
-		buf = appendFloat32(buf, h)
-		buf = append(buf, 1)
-	}
-	return buf
-}
-
-func repeatHeights(v float32, n int) []float32 {
-	out := make([]float32, n)
-	for i := range out {
-		out[i] = v
-	}
-	return out
-}
-
-func TestParseShapeA(t *testing.T) {
-	heights := append(repeatHeights(11.08, detectRunLen+2), 12.61)
-	data := buildSyntheticRegionShapeA(t, heights)
+func TestParseVertexLen7(t *testing.T) {
+	data := buildRegion(vertexLen7, reservedLen7, func(block, v int) float32 {
+		if block == 0 && v == 5 {
+			return 182.67
+		}
+		return 0
+	})
 
 	r, err := Parse(data)
 	if err != nil {
@@ -68,106 +73,119 @@ func TestParseShapeA(t *testing.T) {
 	if r.Version != "1000" {
 		t.Fatalf("unexpected version: %q", r.Version)
 	}
-	// >= rather than ==: the all-zero header bytes right before the real
-	// data can themselves look like one harmless leading all-zero tile to
-	// the shape/offset detector (a zero height always passes the sanity
-	// check) -- confirmed to happen on real files too (see
-	// docs/protocol/MAPM_FORMAT.md), not a bug worth fighting in the
-	// fixture.
-	if len(r.Tiles) < len(heights) {
-		t.Fatalf("expected at least %d tiles, got %d", len(heights), len(r.Tiles))
+	if len(r.Blocks) != blockCount {
+		t.Fatalf("got %d blocks, want %d", len(r.Blocks), blockCount)
 	}
-	if extra := r.Tiles[len(r.Tiles)-2].Extra; len(extra) != 7 { // 11-byte record minus the 4-byte height field
-		t.Fatalf("unexpected shapeA extra length: %d", len(extra))
+	if h := r.Blocks[0].Vertices[5].Height; math.Abs(float64(h-182.67)) > 0.01 {
+		t.Errorf("block 0 vertex 5 height = %v, want 182.67", h)
 	}
-	last := r.Tiles[len(r.Tiles)-1]
-	if math.Abs(float64(last.Height-12.61)) > 0.01 {
-		t.Fatalf("unexpected last tile height: %v", last.Height)
+	if len(r.Blocks[0].Vertices[5].Extra) != vertexLen7-4 {
+		t.Errorf("extra length = %d, want %d", len(r.Blocks[0].Vertices[5].Extra), vertexLen7-4)
 	}
 }
 
-func TestParseShapeB(t *testing.T) {
-	heights := append(repeatHeights(19.66, detectRunLen+2), 18.28)
-	data := buildSyntheticRegionShapeB(t, heights)
+func TestParseVertexLen11(t *testing.T) {
+	data := buildRegion(vertexLen11, reservedLen11, func(block, v int) float32 {
+		if block == 35 && v == vertexCount-1 {
+			return 11.08
+		}
+		return 0
+	})
 
 	r, err := Parse(data)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	// >= rather than == -- see the matching comment in TestParseShapeA.
-	if len(r.Tiles) < len(heights) {
-		t.Fatalf("expected at least %d tiles, got %d", len(heights), len(r.Tiles))
+	if len(r.Blocks) != blockCount {
+		t.Fatalf("got %d blocks, want %d", len(r.Blocks), blockCount)
 	}
-	if extra := r.Tiles[len(r.Tiles)-2].Extra; len(extra) != 3 { // 7-byte record minus the 4-byte height field
-		t.Fatalf("unexpected shapeB extra length: %d", len(extra))
+	last := r.Blocks[35].Vertices[vertexCount-1]
+	if math.Abs(float64(last.Height-11.08)) > 0.01 {
+		t.Errorf("last vertex height = %v, want 11.08", last.Height)
 	}
-	last := r.Tiles[len(r.Tiles)-1]
-	if math.Abs(float64(last.Height-18.28)) > 0.01 {
-		t.Fatalf("unexpected last tile height: %v", last.Height)
+	if len(last.Extra) != vertexLen11-4 {
+		t.Errorf("extra length = %d, want %d", len(last.Extra), vertexLen11-4)
 	}
 }
 
-// TestParseResyncSkipsUnreadableBytes exercises the resync path in
-// isolation: a short gap of unreadable bytes that the natural fixed-stride
-// read can't pass, confirming the mechanism advances instead of erroring
-// out. The gap is deliberately short and its own value chosen (matching
-// the same technique used for server/internal/mapo's equivalent test) so
-// no candidate offset within it coincidentally looks like a plausible
-// tile — a longer or differently-chosen gap can't guarantee that, since
-// the sanity check looks ahead of each candidate offset into what may be
-// real (and possibly coincidentally sane-looking) record bytes. That
-// inherent ambiguity is real and is documented in
-// docs/protocol/MAPM_FORMAT.md, not hidden by this test.
-func TestParseResyncSkipsUnreadableBytes(t *testing.T) {
-	heights := repeatHeights(11.08, detectRunLen+2)
-	buf := buildSyntheticRegionShapeA(t, heights)
-
-	gapStart := len(buf)
-	buf = append(buf, 0x44) // one byte the fixed-stride read can't skip past on its own
-	tile2Start := len(buf)
-
-	buf = append(buf, 97, 0, 0, 0xff, 0xff)
-	buf = appendFloat32(buf, 12.61)
-	buf = append(buf, 0, 0)
-
-	for off := gapStart; off < tile2Start; off++ {
-		if looksLikeTile(buf, off, shapeA) {
-			t.Fatalf("fixture bug: offset %d unexpectedly looks like a tile before the resync target", off)
+func TestParseBlockFields(t *testing.T) {
+	buf := []byte(magic)
+	buf = append(buf, []byte("1000")...)
+	for b := 0; b < blockCount; b++ {
+		flag := uint32(0)
+		envID := uint16(0)
+		if b == 3 {
+			flag = 1
+			envID = 42
 		}
+		buf = appendU32(buf, flag)
+		buf = appendU16(buf, envID)
+		for v := 0; v < vertexCount; v++ {
+			buf = appendFloat32(buf, 0)
+			buf = append(buf, make([]byte, vertexLen7-4)...)
+		}
+		planeType := byte(0xff)
+		if b == 3 {
+			planeType = 1 // Ice
+		}
+		buf = append(buf, planeType)
+		buf = append(buf, 7) // WaveID
+		buf = appendFloat32(buf, 12.5)
+		buf = append(buf, make([]byte, tileFlagLen)...)
+		buf = appendFloat32(buf, 200.0) // HeightMax
+		buf = appendFloat32(buf, -5.0)  // HeightMin
+		buf = append(buf, make([]byte, reservedLen7)...)
 	}
 
 	r, err := Parse(buf)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	// >= rather than == -- see the matching comment in TestParseShapeA.
-	if len(r.Tiles) < len(heights)+1 {
-		t.Fatalf("expected the resync to recover at least %d tiles, got %d", len(heights)+1, len(r.Tiles))
+	block3 := r.Blocks[3]
+	if block3.Flag != 1 {
+		t.Errorf("Flag = %d, want 1", block3.Flag)
 	}
-	last := r.Tiles[len(r.Tiles)-1]
-	if math.Abs(float64(last.Height-12.61)) > 0.01 {
-		t.Fatalf("expected the resync to recover the real last tile height, got %+v", last)
+	if block3.EnvironmentID != 42 {
+		t.Errorf("EnvironmentID = %d, want 42", block3.EnvironmentID)
+	}
+	if block3.PlaneType != 1 {
+		t.Errorf("PlaneType = %d, want 1", block3.PlaneType)
+	}
+	if block3.WaveID != 7 {
+		t.Errorf("WaveID = %d, want 7", block3.WaveID)
+	}
+	if block3.HeightMax != 200.0 || block3.HeightMin != -5.0 {
+		t.Errorf("HeightMax/Min = %v/%v, want 200/-5", block3.HeightMax, block3.HeightMin)
 	}
 }
 
 func TestParseRejectsBadMagic(t *testing.T) {
-	if _, err := Parse(make([]byte, minHeaderLen+10)); err == nil {
+	if _, err := Parse(make([]byte, headerLen+10)); err == nil {
 		t.Fatal("expected error parsing buffer with bad magic, got nil")
 	}
 }
 
 func TestParseRejectsTruncated(t *testing.T) {
-	if _, err := Parse(make([]byte, minHeaderLen-1)); err == nil {
+	if _, err := Parse(make([]byte, headerLen-1)); err == nil {
 		t.Fatal("expected error parsing a buffer too small for a header, got nil")
 	}
 }
 
-func TestParseRejectsNoTiles(t *testing.T) {
-	var buf []byte
-	buf = append(buf, []byte(magic)...)
+func TestParseRejectsUnrecognizedSize(t *testing.T) {
+	buf := []byte(magic)
 	buf = append(buf, []byte("1000")...)
-	// Not even enough room for one tile record of either known shape.
+	buf = append(buf, make([]byte, 100)...) // not a multiple of blockCount, not a real block size either
 	if _, err := Parse(buf); err == nil {
-		t.Fatal("expected error parsing a region with no room for tile data, got nil")
+		t.Fatal("expected error parsing a region with an unrecognized body size, got nil")
+	}
+}
+
+func TestParseRejectsTruncatedMidBlock(t *testing.T) {
+	data := buildRegion(vertexLen7, reservedLen7, func(block, v int) float32 { return 0 })
+	// Cut off partway through the last block -- body length is no longer
+	// evenly divisible by blockCount, so this must be rejected outright.
+	truncated := data[:len(data)-5]
+	if _, err := Parse(truncated); err == nil {
+		t.Fatal("expected error parsing a region truncated mid-block, got nil")
 	}
 }

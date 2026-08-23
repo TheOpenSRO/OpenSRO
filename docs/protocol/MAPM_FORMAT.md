@@ -3,6 +3,75 @@
 `.m` files inside `Map.pk2` (one per map region, alongside that region's `.o` object-placement
 file — see [MAPO_FORMAT.md](MAPO_FORMAT.md)) are the terrain/heightmap data.
 
+## Solved (2026-08-23): the real block/vertex structure, confirmed byte-for-byte
+
+Everything below this section is the real, honest history of how this format was investigated —
+kept in full rather than deleted, per this project's own standing discipline. **The row/column
+layout mystery that history describes is now solved.** The short version, for anyone who doesn't
+need the journey:
+
+**Source**: the overall block/grid shape (a region is a 6×6 grid of blocks, each block a 17×17
+vertex mesh plus a 16×16 tile-flag grid) matches public private-server community documentation of
+this exact format — [`JellyBitz/srodevs-docs`](https://github.com/JellyBitz/srodevs-docs), a
+GitBook-style reference maintained by an established Silkroad private-server developer, found via
+a plain GitHub code search for the literal magic string `JMXVMAPM`. Per
+[`docs/LEGAL.md`](../LEGAL.md) point 3, treating well-established public protocol documentation as
+a spec to implement against is standard clean-room practice — the same footing this project
+already used the historical Blowfish key schedule and pk2 container structure on. This isn't a
+blind copy: this project independently verified the real structure byte-for-byte against real
+`Map.pk2` files pulled directly from a real client install (see below), and found and resolved a
+real gap the public doc doesn't cover (the second, larger real vertex-record variant this project
+had already named "Shape A").
+
+**The real structure**:
+
+- 12-byte header: magic `"JMXVMAPM"` + a 4-byte ASCII version (e.g. `"1000"`).
+- A real, fixed **6×6 grid of 36 blocks**, in row-major nested file order (`blocks[bandRow*6 +
+  bandCol]`) — matching this project's own independently-decompiled loader-function evidence
+  (`FUN_0042a6e0`/`MapLoader.cpp`, found earlier the same session) exactly.
+- Each block: `Flag` (`uint32`) + `EnvironmentID` (`uint16`), then a real **17×17 grid of 289
+  vertices** (row-major within the block), then `PlaneType` (`int8`) + `WaveID` (`uint8`) +
+  `PlaneHeight` (`float32`), then a real **16×16 grid of per-tile flag `uint16`s** (walkability-
+  style flags, parsed and currently discarded — not used for rendering), then `HeightMax`/
+  `HeightMin` (`float32` each), then a trailing `Reserved` byte block.
+- Each vertex: a real `float32` **Height** at relative offset 0 (confirmed directly — decoding real
+  files at this offset produces smoothly-varying, plausible terrain heights; decoding at any other
+  offset produces garbage), then either a real confirmed `uint16` **TextureInfo** (a 10-bit texture
+  ID into `tile2d.ifo` + a 6-bit scale) + a `uint8` **Brightness** (this project's previously-named
+  "Shape B", the smaller ~92KB real file-size class) — **or**, for this project's previously-named
+  "Shape A" (the larger ~136-137KB real file-size class, which the public doc doesn't cover by
+  name), a real, confirmed **11-byte** vertex record instead of 7. This project independently found
+  and confirmed the exact real difference by testing candidate strides against real file bytes for
+  plausible height-sequence coherence (11 bytes was the only one that produced clean heights across
+  hundreds of consecutive real vertices) and then confirming the *whole* block-level structure
+  parses byte-for-byte, zero leftover, against real files, once the block's real `Reserved` field
+  was also found to be 70 bytes for this variant (not 20) — the extra 4 vertex bytes and extra 50
+  reserved bytes exactly account for the real size difference between the two file classes.
+- One real, rare anomaly: a small minority of real files (e.g. a real `0/0.m`) have a real,
+  confirmed **exactly-1,000-byte all-zero trailer** after the otherwise-complete 36-block structure
+  — purpose unconfirmed, but unambiguous (all zero, exact length), so this project's readers accept
+  it as padding rather than erroring.
+
+**Live-verified**: rewrote both `MapmReader` (GDScript) and `server/internal/mapm` (Go) to parse
+this structure fully deterministically (no resync/plausibility scanning needed at all anymore —
+every real block is a fixed size once its vertex-record length is known, and that length can be
+read directly off the file's own total size). Re-verified against 3 real files pulled fresh from
+`Map.pk2` (`0/0.m`, `0/1.m`, `100/100.m`) — all three parse with zero errors, including the
+1,000-byte-trailer file. Rewired `MapmTerrainBuilder.build_full_region_mesh` to consume the real
+block/vertex data directly (no more guessing row boundaries from a decoded column field) and
+rendered a real screenshot against real pk2 data: a single, coherent, natural-looking mountainous
+region with a clear ridge and correct shading, no seams, no glitches — the best real terrain result
+in this project's history to date.
+
+**What's still genuinely open**: the real 16×16 per-tile flag grid and the `Reserved` trailer bytes
+are parsed but not used for anything (their real meaning beyond "probably walkability flags," per
+the public doc's own hedge, isn't independently confirmed by this project). The 11-byte vertex
+variant's real Extra-byte layout beyond height isn't confirmed field-by-field (this project
+independently found a real column/row-cycling byte pattern within it during this investigation,
+but didn't need to fully decode it once the deterministic block structure made row/column
+assignment unnecessary). Real ground *texture* (as opposed to per-vertex color) remains unfound —
+see the `.t`/`JMXVMAPT` sections further down for that separate, still-open thread.
+
 ## Real per-region world size confirmed: 1920.0 units
 
 Found via a real class, `CRegionManagerBody` (`sro_client.exe`), located through the full RTTI

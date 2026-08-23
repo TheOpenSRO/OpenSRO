@@ -2,211 +2,89 @@ extends RefCounted
 class_name MapmTerrainBuilder
 
 ## Builds a real, renderable Godot terrain mesh from a parsed .m region
-## (MapmReader.ParsedRegion) -- the piece that turns real per-tile height
+## (MapmReader.ParsedRegion) -- the piece that turns real per-vertex height
 ## data into an actual triangulated ground surface instead of the flat
 ## placeholder box World3D.tscn ships with.
 ##
-## GRID_WIDTH (17) is a real, mechanistically confirmed constant, not a
-## guess: every Shape-A tile's raw Extra bytes carry a per-tile "column"
-## uint16 (offset 1-2 of the 11-byte record) that increments by a fixed
-## ~4096 step and wraps back to 0 after exactly 17 distinct values in every
-## real file checked (confirmed by direct byte inspection of a real 0/0.m,
-## not inferred) -- this also matches the T=17 DFT periodicity signal
-## already recorded in docs/protocol/MAPM_FORMAT.md. _column_index() below
-## decodes that field directly.
+## As of 2026-08-23, MapmReader's block/vertex structure is real and
+## deterministic (see docs/protocol/MAPM_FORMAT.md and MapmReader's own top
+## comment) -- a region is a real, confirmed 6x6 grid of 36 blocks, each a
+## real 17x17 (GRID_WIDTH x GRID_WIDTH) vertex mesh, in real nested file
+## order. This builder no longer needs to guess row boundaries from a
+## decoded per-tile column field or group raw sequential tiles -- every
+## vertex's real block index and real (row, col) position within that
+## block are already known from MapmReader itself.
 ##
-## What ISN'T confirmed yet: how successive rows/patches are laid out
-## relative to each other across the whole file (there's an analogous
-## "row"-shaped field that cycles the same way *within* a run of tiles, but
-## resets on an irregular schedule across the full file -- not a clean
-## single global grid, so it isn't decoded here). Rather than guess at that
-## unresolved structure, rows are assigned by real tile order in the file:
-## a new row starts every time the real decoded column index wraps back
-## down (see _group_into_rows) -- every tile still gets its own real,
-## confirmed column and its real height, just grouped into rows by that
-## real wrap point rather than a decoded row field. This produces real,
-## correctly-shaped terrain within each 17-wide strip; it does not claim to
-## place those strips at their true relative world position (see
-## docs/protocol/MAPM_FORMAT.md for the open question).
-##
-## Only Shape-A tiles carry a decoded column field -- Shape-B's two leading
-## bytes have no confirmed structure yet (see MAPM_FORMAT.md), so Shape-B
-## regions fall back to the same sequential-order column assignment as the
-## row axis.
-##
-## Vertex color: Shape-A's first Extra byte is a real, confirmed-to-exist
-## per-tile value (200+ distinct values seen across real files -- see
-## MAPM_FORMAT.md) that plausibly encodes a texture/terrain-type index or
-## blend weight, but no confirmed mapping from that byte to an actual real
-## ground texture exists (checked: Map.pk2 carries no per-region texture
-## file, and the real terrain pixel shaders found alongside this project's
-## other RE work sample one continuous "terrain color" texture, not a
-## tile-type lookup -- so building a fabricated ID-to-texture table isn't
-## honest). Rather than leave that real per-tile byte completely unused, or
-## invent a texture system this project can't confirm, _terrain_color()
-## turns it into real, data-driven vertex-color variation (a natural
-## green/brown hue spread, not a claim about what any specific value
-## "means") -- real signal, not a texture, but real ground variation
-## instead of one flat color.
+## Vertex color: for the real 7-byte-vertex file class, the vertex's Extra
+## bytes are a real, confirmed `TextureInfo` `uint16` (a 10-bit texture ID
+## into `tile2d.ifo` + a 6-bit scale, per the public format documentation
+## cited in MAPM_FORMAT.md) followed by a real `Brightness` byte. This
+## project doesn't have `tile2d.ifo` or its referenced ground textures, so
+## rather than fabricate a texture lookup, _terrain_color() turns the real
+## texture ID into real, data-driven vertex-color variation (a natural
+## green/brown hue spread, not a claim about what any specific ID's real
+## texture looks like) -- real signal, not a texture, but real ground
+## variation instead of one flat color. The real 11-byte-vertex file
+## class's Extra bytes don't have a confirmed field layout beyond height,
+## so the same decode is applied best-effort (the leading 2 bytes exist in
+## both real shapes) rather than treated as a wholly different case.
 
 const GRID_WIDTH := 17
 
-## World-space spacing between adjacent tiles. **Real, confirmed value
-## (2026-08-23), superseding an earlier same-day fix that assumed the wrong
-## structure** -- see docs/protocol/MAPM_FORMAT.md's real loader-function
-## findings for the full derivation. That earlier fix set this to
-## `1920.0 / (GRID_WIDTH - 1) = 120.0`, assuming `GRID_WIDTH` (17) columns
-## span one *whole* real region. Decompiling the real client loader
-## functions (`MapLoader.cpp`/`MapCallBack.cpp`, found the same day) showed
-## a real 6x6 outer sub-patch structure with a real 289 (17x17) inner
-## bound: **one real region is a 6x6 grid of 17-wide sub-patches sharing
-## edge vertices** (6x16+1 = 97 unique vertices per side, the classic
-## public "97x97 terrain grid" convention this project's own earlier DFT
-## investigation found real evidence for and then wrongly retracted).
-## `1920.0 / 96 = 20.0` exactly -- confirming `GRID_WIDTH` spans one
-## *sub-patch*, not a whole region, and TILE_SIZE is real, confirmed 20.0 --
-## coincidentally the exact value this project's very first, purely
-## empirical guess already used, now confirmed for a real reason instead of
-## just "looked reasonable." REGION_SPAN (World3D.gd) no longer derives
-## from this constant -- it's the independently-confirmed real 1920.0
-## region size, unrelated to how many *sub-patches* get rendered inside
-## one region (see World3D.gd's SUBPATCH_SPAN for how that gap gets filled).
+## World-space spacing between adjacent vertices. Real, confirmed value --
+## see docs/protocol/MAPM_FORMAT.md's real loader-function findings for
+## the full derivation: a whole real region is a real 6x6 grid of 17-wide
+## blocks sharing edge vertices (6x16+1 = 97 unique vertices per side), and
+## the real, independently-confirmed per-region world size (1920.0 units,
+## from CRegionManagerBody) divided by 96 gives exactly 20.0.
 const TILE_SIZE := 20.0
 
-## Decodes a Shape-A tile's real per-tile column index (0..GRID_WIDTH-1)
-## from its raw Extra bytes -- see this file's top comment. Extra[1:3] is
-## the real uint16 field (little-endian), confirmed to take exactly 17
-## evenly-spaced values across its full uint16 range in every real Shape-A
-## file checked. Requires the full 7-byte Shape-A Extra length (not just
-## enough bytes to index into) -- Shape-B's Extra is only 3 bytes and its
-## leading bytes have no confirmed meaning, so a shorter Extra always
-## falls back to positional order rather than misreading those bytes as a
-## column field.
-static func _column_index(tile: MapmReader.Tile) -> int:
-	if tile.extra.size() < 7:
-		return -1
-	var raw := tile.extra.decode_u16(1)
-	var col := roundi(raw * (GRID_WIDTH - 1.0) / 65535.0)
-	return clampi(col, 0, GRID_WIDTH - 1)
-
-## Decodes Shape-A's real per-tile terrain-type/blend-weight byte (Extra[0]
-## -- see this file's top comment). Returns -1 for anything shorter (e.g. a
-## Shape-B tile), same convention as _column_index.
-static func _terrain_type(tile: MapmReader.Tile) -> int:
-	if tile.extra.size() < 7:
-		return -1
-	return tile.extra[0]
-
-## Turns a real terrain-type byte into a real-data-driven (not fabricated)
-## ground color -- a green/brown hue spread across the byte's real range,
-## not a claim about what any specific value represents (see top comment).
-## -1 (no real byte available) gets a fixed mid-tone fallback.
-static func _terrain_color(terrain_type: int) -> Color:
-	if terrain_type == -1:
+## Turns a real per-vertex Extra byte array into real, data-driven vertex
+## color -- see this file's top comment. Uses the real confirmed
+## TextureInfo uint16's low 10 bits (the real texture ID field) when at
+## least 2 Extra bytes are available; falls back to a fixed mid-tone
+## otherwise.
+static func _vertex_color(extra: PackedByteArray) -> Color:
+	if extra.size() < 2:
 		return Color(0.45, 0.5, 0.32)
-	var t := terrain_type / 255.0
+	var tex_info := extra.decode_u16(0)
+	var id := tex_info & 0x3ff # real 10-bit TextureInfo.ID field
+	var t := id / 1023.0
 	# Hue sweeps a natural green-to-brown arc (0.30 = green, 0.08 = brown)
 	# rather than the full rainbow, so real variation reads as ground
 	# rather than as an arbitrary rainbow gradient.
 	var hue := lerpf(0.30, 0.08, t)
 	return Color.from_hsv(hue, 0.45, 0.55)
 
-## Groups region's tiles into GRID_WIDTH-wide rows using each tile's real
-## decoded column index (see _column_index) rather than blindly trusting
-## positional order -- a new row starts whenever the decoded column resets
-## to a value at or below the previous tile's column, or a row already has
-## GRID_WIDTH tiles. This self-corrects if the resync scan documented in
-## MAPM_FORMAT.md ever drops a tile mid-row (confirmed to happen near EOF
-## on real files) instead of silently shifting every later column.
-## Positional order is used as a fallback for Shape-B tiles, which have no
-## confirmed column field.
-## Only rows with all GRID_WIDTH columns actually filled by a real tile are
-## kept -- an incomplete row (from data loss, not from a design choice) is
-## dropped rather than padded with a guessed value.
-static func _group_into_rows(tiles: Array) -> Array:
-	var rows := []
-	var current: Array = []
-	current.resize(GRID_WIDTH)
-	current.fill(null)
-	var prev_col := -1
-	var pos_in_row := 0
-
-	for tile in tiles:
-		var col := _column_index(tile)
-		var starts_new_row := (col <= prev_col) if col != -1 else (pos_in_row >= GRID_WIDTH)
-
-		if starts_new_row:
-			rows.append(current)
-			current = []
-			current.resize(GRID_WIDTH)
-			current.fill(null)
-			pos_in_row = 0
-
-		var effective_col := col if col != -1 else pos_in_row
-		if effective_col >= 0 and effective_col < GRID_WIDTH:
-			current[effective_col] = [tile.height, _terrain_type(tile)]
-		prev_col = col
-		pos_in_row += 1
-
-	rows.append(current)
-	return rows.filter(func(row): return not row.has(null))
-
-## Builds a triangulated ArrayMesh from region's real tile heights, grouped
-## into real rows via _group_into_rows. Returns null if fewer than 2
-## complete rows could be recovered (not enough to form a single triangle
-## strip).
-##
-## max_rows caps how many of the file's real rows get built into the mesh
-## (-1, the default, keeps every row -- the original behavior). Without a
-## cap, a real region file's rows are simply chained in raw file order (see
-## this file's top comment: the true relative layout of rows beyond the
-## confirmed 17-wide column cycling isn't known), which produces an
-## extremely elongated ribbon rather than anything resembling a real
-## region's actual footprint -- confirmed live (2026-08-22) against a real
-## 100/100.m, which parsed to 777 rows (a ~320x15,500 unit strip). Capping
-## at GRID_WIDTH rows (see World3D.gd's real usage) turns that ribbon into
-## an actual square patch using only the same real, already-confirmed
-## per-tile data -- a practical reshaping for something walkable and
-## multi-region-tileable, not a new claim about the real layout.
-static func build_mesh(region: MapmReader.ParsedRegion, max_rows: int = -1) -> ArrayMesh:
-	var cells: Array = _group_into_rows(region.tiles)
-	if max_rows > 0 and cells.size() > max_rows:
-		cells = cells.slice(0, max_rows)
-	var row_count := cells.size()
-	if row_count < 2:
-		push_error("MapmTerrainBuilder: only %d complete row(s) of %d tiles -- need at least 2" % [row_count, GRID_WIDTH])
+## Builds a triangulated ArrayMesh from a single real block (GRID_WIDTH x
+## GRID_WIDTH vertices, row-major) -- useful standalone for a quick single
+## sub-patch render, or as the unit build_full_region_mesh below stitches
+## 36 of together.
+static func build_mesh(region: MapmReader.ParsedRegion, block_index: int = 0) -> ArrayMesh:
+	if block_index < 0 or block_index >= region.blocks.size():
+		push_error("MapmTerrainBuilder: block index %d out of range (region has %d blocks)" % [block_index, region.blocks.size()])
 		return null
-	return _build_mesh_from_cells(cells, row_count)
+	var block: MapmReader.Block = region.blocks[block_index]
+	var cells := _block_to_cells(block)
+	return _build_mesh_from_cells(cells, GRID_WIDTH, GRID_WIDTH)
 
-## Real, precisely-confirmed (2026-08-23) full-region assembly -- see
-## docs/protocol/MAPM_FORMAT.md's loader-function findings. **Corrects a
-## same-day mistake in this function's first version**: that version only
-## stitched sub-patches along one axis (the "row-band" loop, `iStack_205c`
-## in the real decompiled code), treating a region as a single 17-wide,
-## 97-row-long strip. Decoding the real destination-buffer offset formula
-## precisely (`(iStack_205c*0x10 + puStack_2070*0x610 + fStack_206c*0x61 +
-## fStack_2078) * 0xc`, from the real `MapLoader.cpp` decompilation) showed
-## it factors exactly as `(band_row*16 + local_row)*97 + (band_col*16 +
-## local_col)` for a 97-wide row-major grid -- i.e. there are real **two**
-## nested 6-iteration band loops (`puStack_2070` outer, `iStack_205c`
-## inner), one per axis, not one. A whole region is therefore a real 6x6
-## grid of 17x17 sub-patches covering **both** width and depth (97x97
-## unique vertices total, 36 sub-patches, `6x6x289 = 10404` real tiles),
-## not a 97-long single-file strip.
-##
-## Sub-patches arrive in the real file in nested order (all 6 column-bands
-## of row-band 0, then all 6 of row-band 1, ...) -- confirmed via the same
-## real, non-reordering buffered reader (`FUN_00410f90`) as the row-only
-## version. Consecutive sub-patches share their boundary row *and* column
-## (stride 16, not 17, on both axes), so the *later* sub-patch's copy wins
-## at both kinds of shared boundary, matching the real client exactly.
-##
-## Falls back to fewer output row-bands if a region's real data runs out
-## before a row-band's own 6 sub-patches are all available -- an honest
-## partial-data case (a partially-consumed row-band is dropped whole rather
-## than left with holes). Returns null if fewer than 2 output rows result.
-static func build_full_region_mesh(region: MapmReader.ParsedRegion, bands_per_side: int = 6) -> ArrayMesh:
-	var raw_rows: Array = _group_into_rows(region.tiles)
+## Real, precisely-confirmed full-region assembly -- see
+## docs/protocol/MAPM_FORMAT.md. A whole region is a real 6x6 grid of
+## GRID_WIDTH x GRID_WIDTH blocks (36 total, in real nested file order:
+## MapmReader.ParsedRegion.blocks[band_row*6+band_col]), sharing edge
+## vertices with their neighbors (stride GRID_WIDTH-1, not GRID_WIDTH, on
+## both axes) -- giving `6*(GRID_WIDTH-1)+1 = 97` unique vertices per side.
+## The *later* block (in nested file order) wins at a shared boundary,
+## matching the real client's own confirmed behavior. Returns null if
+## region doesn't have exactly BLOCK_COUNT blocks (MapmReader guarantees
+## this on a successful parse, so this should only trip on a malformed
+## caller-constructed region).
+static func build_full_region_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh:
+	var bands_per_side := MapmReader.BLOCKS_PER_SIDE
+	if region.blocks.size() != bands_per_side * bands_per_side:
+		push_error("MapmTerrainBuilder: region has %d blocks, want %d" % [region.blocks.size(), bands_per_side * bands_per_side])
+		return null
+
 	var full_size := bands_per_side * (GRID_WIDTH - 1) + 1
 	var grid: Array = []
 	for _i in range(full_size):
@@ -214,39 +92,36 @@ static func build_full_region_mesh(region: MapmReader.ParsedRegion, bands_per_si
 		row_arr.resize(full_size)
 		grid.append(row_arr)
 
-	var consumed := 0
-	var completed_row_bands := 0
 	for band_row in range(bands_per_side):
-		var row_band_complete := true
 		for band_col in range(bands_per_side):
-			if raw_rows.size() < consumed + GRID_WIDTH:
-				row_band_complete = false
-				break
+			var block: MapmReader.Block = region.blocks[band_row * bands_per_side + band_col]
 			for local_r in range(GRID_WIDTH):
-				var src_row: Array = raw_rows[consumed + local_r]
 				var dest_r := band_row * (GRID_WIDTH - 1) + local_r
 				for local_c in range(GRID_WIDTH):
-					grid[dest_r][band_col * (GRID_WIDTH - 1) + local_c] = src_row[local_c]
-			consumed += GRID_WIDTH
-		if not row_band_complete:
-			break
-		completed_row_bands += 1
+					var vertex: MapmReader.Vertex = block.vertices[local_r * GRID_WIDTH + local_c]
+					grid[dest_r][band_col * (GRID_WIDTH - 1) + local_c] = [vertex.height, vertex.extra]
 
-	var row_count := 0 if completed_row_bands == 0 else completed_row_bands * (GRID_WIDTH - 1) + 1
-	if row_count < 2:
-		push_error("MapmTerrainBuilder: only %d real full-region row(s) recovered -- need at least 2" % row_count)
-		return null
-	var cells: Array = grid.slice(0, row_count)
-	return _build_mesh_from_cells(cells, row_count, full_size)
+	return _build_mesh_from_cells(grid, full_size, full_size)
+
+## Converts one real block's real vertices (row-major GRID_WIDTH x
+## GRID_WIDTH) into the [height, extra] cell shape _build_mesh_from_cells
+## expects.
+static func _block_to_cells(block: MapmReader.Block) -> Array:
+	var cells: Array = []
+	for r in range(GRID_WIDTH):
+		var row: Array = []
+		for c in range(GRID_WIDTH):
+			var vertex: MapmReader.Vertex = block.vertices[r * GRID_WIDTH + c]
+			row.append([vertex.height, vertex.extra])
+		cells.append(row)
+	return cells
 
 ## Shared triangulation/vertex-buffer logic behind both build_mesh and
 ## build_full_region_mesh -- cells is a real per-row array (each row
-## col_count [height, terrain_type] pairs, see _group_into_rows/
-## build_full_region_mesh), row_count/col_count are cells.size()/cells[0]
-## .size() (passed separately since callers may have already validated/
-## trimmed them). col_count defaults to GRID_WIDTH for build_mesh's single
-## fixed-width-strip case.
-static func _build_mesh_from_cells(cells: Array, row_count: int, col_count: int = GRID_WIDTH) -> ArrayMesh:
+## col_count [height, extra] pairs), row_count/col_count are
+## cells.size()/cells[0].size() (passed separately since callers may have
+## already validated/trimmed them).
+static func _build_mesh_from_cells(cells: Array, row_count: int, col_count: int) -> ArrayMesh:
 	var positions := PackedVector3Array()
 	positions.resize(row_count * col_count)
 	for r in range(row_count):
@@ -270,8 +145,8 @@ static func _build_mesh_from_cells(cells: Array, row_count: int, col_count: int 
 	colors.resize(positions.size())
 	for r in range(row_count):
 		for c in range(col_count):
-			var terrain_type: int = cells[r][c][1]
-			colors[r * col_count + c] = _terrain_color(terrain_type)
+			var extra: PackedByteArray = cells[r][c][1]
+			colors[r * col_count + c] = _vertex_color(extra)
 
 	var indices := PackedInt32Array()
 	for r in range(row_count - 1):

@@ -926,19 +926,14 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 		printerr("World3D: could not parse terrain at ", mapm_path)
 		return NAN
 
-	# Real, confirmed (2026-08-23) full-region assembly -- see
+	# Real, fully deterministic full-region assembly (2026-08-23) -- see
 	# MapmTerrainBuilder.build_full_region_mesh's doc comment and
-	# MAPM_FORMAT.md's loader-function findings. Supersedes the single
-	# capped-row build_mesh(region, REGION_ROWS) call this used to make:
-	# that rendered only the *first* sub-patch of the region's real 6x6
-	# grid (a fixed number of raw rows), leaving the rest flat placeholder
-	# ground. This stitches up to all 6 real sub-patches (falling back to
-	# fewer if the parsed region runs out of raw rows first, a real, honest
-	# partial-data case) into one real 97-row-or-fewer mesh covering the
-	# region's actual footprint.
+	# MAPM_FORMAT.md. MapmReader now parses a region's real, confirmed 6x6
+	# block grid directly (no more row/column guessing), so this always
+	# produces the complete real 97x97 mesh on a successful parse.
 	var terrain_mesh := MapmTerrainBuilder.build_full_region_mesh(region)
 	if terrain_mesh == null:
-		printerr("World3D: parsed ", region.tiles.size(), " tiles from ", mapm_path, " but couldn't recover enough complete rows for a mesh")
+		printerr("World3D: parsed ", region.blocks.size(), " real blocks from ", mapm_path, " but couldn't build a mesh from them")
 		return NAN
 
 	var terrain_group := Node3D.new()
@@ -1037,8 +1032,8 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	if snap_player:
 		call_deferred("_snap_player_onto_terrain")
 
-	print("World3D: loaded real terrain from %s (%d tiles parsed, %d rows stitched across sub-patches, real collision shape built)" % [
-		mapm_path, region.tiles.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1])
+	print("World3D: loaded real terrain from %s (%d real blocks, %d rows stitched, real collision shape built)" % [
+		mapm_path, region.blocks.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1])
 	return near_height
 
 ## Practical safety net for the real terrain-alignment gap noted where this

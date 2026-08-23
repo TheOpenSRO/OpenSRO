@@ -2,15 +2,25 @@
 // heightmap inside Map.pk2, alongside that region's .o object-placement
 // file (see server/internal/mapo).
 //
-// No decompiled loader was found for this format in either sro_client.exe
-// or EternityLib.dll (both fully Ghidra-analyzed, RTTI class names
-// checked). Confirmed empirically, the same brute-force byte-analysis
-// approach used for .bsk and .mapo, against 10 real files pulled directly
-// from Map.pk2 — two structurally different tile record shapes were found,
-// used by two different file-size classes of region (see
-// docs/protocol/MAPM_FORMAT.md for the full derivation, including exactly
-// how each shape was found and the small fraction of tiles this parser has
-// to resync past rather than read directly).
+// The overall block/grid structure (a region is a 6x6 grid of blocks,
+// each block a 17x17 vertex mesh plus a 16x16 tile-flag grid) matches
+// public private-server community documentation of this format (see
+// docs/protocol/MAPM_FORMAT.md for the citation) — per docs/LEGAL.md,
+// treating well-established public protocol documentation as a spec is
+// standard clean-room practice, distinct from decompiling a binary. This
+// package's own byte-for-byte verification against real files (see the
+// format doc) is independent confirmation, not a blind copy: two real
+// per-region file-size classes exist, using two different per-vertex
+// record sizes (7 and 11 bytes) the public doc doesn't distinguish by
+// name — this package calls them by their real per-vertex byte length
+// rather than inventing a "shape" label, now that the exact byte layout
+// (not just a size class) is confirmed for both.
+//
+// Parsing is fully deterministic: no resync scanning is needed, unlike
+// this package's own earlier plausibility-based implementation — every
+// real block is a fixed size once its per-vertex record length is known,
+// and that per-vertex length can be read directly off the file's own
+// total size (see detectVertexSize).
 //
 // This package never writes .m files; it only parses ones a caller already
 // has (typically extracted from Map.pk2 via server/internal/pk2).
@@ -24,185 +34,168 @@ import (
 )
 
 const (
-	magic         = "JMXVMAPM"
-	magicLen      = 8
-	versionLen    = 4
-	minHeaderLen  = 12 // magic(8) + version(4); the real header/first-tile boundary is detected, not fixed
-	maxHeaderScan = 40 // bound on how far the shape/offset detection scan looks
-	maxResync     = 600 // bound on how far the resync scan looks for the next tile -- see below
-	detectRunLen  = 50 // how many consecutive tiles a candidate (shape, offset) must produce to be trusted
-	heightMinOK   = -2000
-	heightMaxOK   = 5000
+	magic          = "JMXVMAPM"
+	magicLen       = 8
+	versionLen     = 4
+	headerLen      = magicLen + versionLen // 12
+	blocksPerSide  = 6
+	blockCount     = blocksPerSide * blocksPerSide // 36
+	gridWidth      = 17
+	vertexCount    = gridWidth * gridWidth // 289
+	blockHeaderLen = 4 + 2                 // Flag(uint32) + EnvironmentID(uint16)
+	planeInfoLen   = 1 + 1 + 4             // PlaneType(int8) + WaveID(uint8) + PlaneHeight(float32)
+	tileFlagCount  = 16 * 16
+	tileFlagLen    = tileFlagCount * 2 // 512, uint16 per tile, parsed and discarded
+	heightInfoLen  = 4 + 4             // HeightMax + HeightMin
+
+	// The two real, confirmed per-vertex record lengths. Height is a
+	// real float32 at relative offset 0 in both (confirmed by decoding
+	// real files and checking for smoothly-varying, plausible terrain
+	// height sequences — not assumed from the public doc alone).
+	vertexLen7  = 7  // real per-region file-size class ~92KB
+	vertexLen11 = 11 // real per-region file-size class ~136-137KB
+
+	// The two real, confirmed trailing "Reserved" byte counts following
+	// each block's tile-flag grid — real, confirmed exactly by checking
+	// that every one of a real file's 36 blocks parses with plausible
+	// field values and the last block ends exactly at EOF. Their content
+	// isn't used by anything here (unconfirmed meaning), only their
+	// length, needed to advance past them correctly.
+	reservedLen7  = 20 // paired with vertexLen7
+	reservedLen11 = 70 // paired with vertexLen11
 )
 
-// tileShape describes one of the two confirmed tile record layouts: total
-// byte length, and the offset of the 4-byte height float within it.
-type tileShape struct {
-	length    int
-	heightOff int
-}
-
-var (
-	// shapeA is the layout used by the larger (~136-137KB) region file
-	// class: 1 byte (plausibly a texture/terrain-type index, or a blend
-	// weight — real data shows 200+ distinct values, too many to be a
-	// small fixed catalog) + 4 unconfirmed bytes (two uint16-shaped
-	// fields that change tile-to-tile in a locally structured way) +
-	// height + 2 unconfirmed trailing bytes.
-	shapeA = tileShape{length: 11, heightOff: 5}
-	// shapeB is the layout used by the smaller (~92KB) region file class:
-	// 2 unconfirmed leading bytes + height + 1 unconfirmed trailing byte.
-	shapeB = tileShape{length: 7, heightOff: 2}
-)
-
-// Tile is one terrain tile. Height is the one field confirmed real across
-// both known record shapes — a real-looking world-scale elevation value.
-// Extra holds every other raw byte of the record (whose count and meaning
-// differ by shape — see shapeA/shapeB above), kept raw rather than
-// mislabeled.
-type Tile struct {
+// Vertex is one real terrain mesh vertex. Height is a real, confirmed
+// float32. Extra holds the vertex record's remaining raw bytes (a real
+// per-tile texture-info uint16 + brightness byte for the 7-byte record;
+// unconfirmed extra fields, including a real column/row-cycling pattern
+// this project independently found, for the 11-byte one) — kept raw
+// rather than mislabeled.
+type Vertex struct {
 	Height float32
 	Extra  []byte
 }
 
-// Region is a parsed .m file.
+// Block is one real 17x17 (gridWidth x gridWidth) vertex sub-mesh, one of
+// blockCount (36) making up a whole region in real 6x6 nested file order
+// (row-major: index = bandRow*blocksPerSide + bandCol). Vertices is
+// row-major within the block too (index = z*gridWidth + x), matching the
+// public doc's own nested-loop order.
+type Block struct {
+	Flag          uint32
+	EnvironmentID uint16
+	Vertices      [vertexCount]Vertex
+	PlaneType     int8
+	WaveID        uint8
+	PlaneHeight   float32
+	HeightMax     float32
+	HeightMin     float32
+}
+
+// Region is a parsed .m file. Blocks is always exactly blockCount (36)
+// long on success.
 type Region struct {
 	// Version is the 4-byte tag after the magic, e.g. "1000".
 	Version string
-	Tiles   []Tile
+	Blocks  []Block
 }
 
 // Parse parses a .m file's raw bytes.
-//
-// Real files use one of two tile record shapes (shapeA or shapeB above),
-// and don't hold to a fixed stride perfectly even once the right shape is
-// known — real data needed a byte-level resync (scanning forward for the
-// next position with a plausible height value) to fully recover, the same
-// technique server/internal/mapo needed for its variable-length trailers.
-// Since there's no header field declaring which shape a file uses, Parse
-// detects it: it tries every (shape, starting offset) combination in a
-// small window right after the version tag, and picks whichever produces
-// the longest unbroken run of plausible tiles — confirmed to correctly
-// pick shapeA for every real file in the larger size class and shapeB for
-// every real file in the smaller one.
-//
-// The resync bound (maxResync, 600 bytes) is wider than server/internal/mapo
-// needed for the same mechanism: some real shapeB files interleave real
-// tile data with long (up to 509 bytes observed) runs of a repeating
-// non-tile pattern — plausibly a "no data here" run-length/mask section,
-// not confirmed — between bands of real tiles. An earlier, narrower bound
-// (64 bytes, matched to .mapo's much shorter gaps) made those files look
-// like they only had a small fraction of their real tile data, stopping
-// permanently at the first such run; widening the bound recovers the real
-// tile bands on the far side and gets every real file checked to ~100%
-// consumption. See docs/protocol/MAPM_FORMAT.md for the full derivation.
 func Parse(data []byte) (*Region, error) {
-	if len(data) < minHeaderLen {
+	if len(data) < headerLen {
 		return nil, errors.New("mapm: file too small to contain a header")
 	}
 	if string(data[0:magicLen]) != magic {
 		return nil, fmt.Errorf("mapm: bad magic %q, want %q", data[0:magicLen], magic)
 	}
 
-	r := &Region{Version: string(data[magicLen : magicLen+versionLen])}
-
-	shape, start, ok := detectShape(data, magicLen+versionLen)
-	if !ok {
-		return nil, errors.New("mapm: no plausible tile data found")
+	vertexLen, reservedLen, err := detectVertexSize(data)
+	if err != nil {
+		return nil, err
 	}
 
-	off := start
-	for off+shape.length <= len(data) {
-		if !looksLikeTile(data, off, shape) {
-			resynced, ok := resync(data, off, shape)
-			if !ok {
-				break
+	r := &Region{Version: string(data[magicLen:headerLen])}
+
+	off := headerLen
+	for b := 0; b < blockCount; b++ {
+		var block Block
+		block.Flag = binary.LittleEndian.Uint32(data[off:])
+		block.EnvironmentID = binary.LittleEndian.Uint16(data[off+4:])
+		off += blockHeaderLen
+
+		for v := 0; v < vertexCount; v++ {
+			vOff := off + v*vertexLen
+			block.Vertices[v] = Vertex{
+				Height: readFloat32(data, vOff),
+				Extra:  append([]byte(nil), data[vOff+4:vOff+vertexLen]...),
 			}
-			off = resynced
 		}
+		off += vertexCount * vertexLen
 
-		height := readFloat32(data, off+shape.heightOff)
-		extra := make([]byte, 0, shape.length-4)
-		extra = append(extra, data[off:off+shape.heightOff]...)
-		extra = append(extra, data[off+shape.heightOff+4:off+shape.length]...)
-		r.Tiles = append(r.Tiles, Tile{Height: height, Extra: extra})
-		off += shape.length
+		block.PlaneType = int8(data[off])
+		block.WaveID = data[off+1]
+		block.PlaneHeight = readFloat32(data, off+2)
+		off += planeInfoLen
+
+		off += tileFlagLen // real per-tile flag grid, parsed and discarded -- not used
+
+		block.HeightMax = readFloat32(data, off)
+		block.HeightMin = readFloat32(data, off+4)
+		off += heightInfoLen
+
+		off += reservedLen // real trailing bytes, unconfirmed meaning, parsed and discarded
+
+		r.Blocks = append(r.Blocks, block)
 	}
 
-	if len(r.Tiles) == 0 {
-		return nil, errors.New("mapm: no tiles parsed")
+	if off != len(data) {
+		// A real, confirmed anomaly on a small minority of real files
+		// (e.g. a real 0/0.m): the block data ends exactly as expected,
+		// but a real all-zero trailer of unconfirmed purpose follows
+		// (observed once at exactly 1,000 bytes). Only ever accepted as
+		// all-zero padding, never guessed at as real trailing data.
+		trailer := data[off:]
+		for _, b := range trailer {
+			if b != 0 {
+				return nil, fmt.Errorf("mapm: parsed %d bytes but file is %d, and the %d leftover bytes aren't all zero", off, len(data), len(trailer))
+			}
+		}
 	}
 
 	return r, nil
 }
 
-// detectShape tries every (shape, offset) combination in a small window
-// starting at from, and returns whichever produces the longest unbroken
-// run of plausible tiles at a fixed stride (no resync) — confirmed to
-// reliably distinguish the two known real shapes from each other and from
-// header padding on every real file checked.
-func detectShape(data []byte, from int) (tileShape, int, bool) {
-	limit := from + maxHeaderScan
-	if limit > len(data) {
-		limit = len(data)
-	}
-	bestRun := -1
-	var bestShape tileShape
-	bestOff := -1
-	for _, shape := range []tileShape{shapeA, shapeB} {
-		for off := from; off < limit; off++ {
-			run := runLength(data, off, shape)
-			if run > bestRun {
-				bestRun = run
-				bestShape = shape
-				bestOff = off
-			}
-		}
-	}
-	if bestOff == -1 || bestRun == 0 {
-		return tileShape{}, 0, false
-	}
-	return bestShape, bestOff, true
-}
+// maxKnownTrailer bounds how much of a real, confirmed all-zero trailer
+// (see Parse) a file is allowed to have beyond one of the two exact real
+// totals below -- real files checked so far only ever showed exactly
+// 1,000 such bytes; this is a generous multiple of that, not a precise
+// bound, to avoid mistaking a genuinely malformed/truncated file for one
+// with a real trailer.
+const maxKnownTrailer = 8192
 
-func runLength(data []byte, off int, shape tileShape) int {
-	n := 0
-	for n < detectRunLen && looksLikeTile(data, off, shape) {
-		n++
-		off += shape.length
-	}
-	return n
-}
+// detectVertexSize reports which of the two real, confirmed per-vertex
+// record sizes (and their paired real Reserved-field length) this file's
+// own total size implies. Real files fit exactly one of the two candidate
+// exact totals, or that total plus a real, confirmed-zero-only trailer
+// (see the caller) -- picks the larger candidate whenever the file is big
+// enough to hold it (within maxKnownTrailer), since the two real totals
+// are far enough apart (92,712 vs 136,116 bytes) that a genuine size-11
+// file is never mistakable for a padded size-7 one at that bound.
+func detectVertexSize(data []byte) (vertexLen, reservedLen int, err error) {
+	fixedOverhead := blockHeaderLen + planeInfoLen + tileFlagLen + heightInfoLen
+	block7 := fixedOverhead + vertexCount*vertexLen7 + reservedLen7
+	block11 := fixedOverhead + vertexCount*vertexLen11 + reservedLen11
+	total7 := headerLen + blockCount*block7
+	total11 := headerLen + blockCount*block11
 
-func resync(data []byte, off int, shape tileShape) (int, bool) {
-	scanned := 0
-	for off < len(data) && !looksLikeTile(data, off, shape) && scanned < maxResync {
-		off++
-		scanned++
+	switch {
+	case len(data) >= total11 && len(data) <= total11+maxKnownTrailer:
+		return vertexLen11, reservedLen11, nil
+	case len(data) >= total7 && len(data) <= total7+maxKnownTrailer:
+		return vertexLen7, reservedLen7, nil
+	default:
+		return 0, 0, fmt.Errorf("mapm: file size %d bytes doesn't match either known real layout (want %d, %d, or up to %d more of real zero padding)", len(data), total7, total11, maxKnownTrailer)
 	}
-	return off, looksLikeTile(data, off, shape)
-}
-
-func looksLikeTile(data []byte, off int, shape tileShape) bool {
-	if off+shape.length > len(data) {
-		return false
-	}
-	return saneHeight(readFloat32(data, off+shape.heightOff))
-}
-
-func saneHeight(v float32) bool {
-	if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
-		return false
-	}
-	if v == 0 {
-		return true
-	}
-	// Reject suspiciously tiny magnitudes too -- misaligned binary data
-	// reads as subnormal-range float noise that a plain range check lets
-	// through (confirmed the hard way: server/internal/mapo hit the same
-	// false-positive shape with position floats).
-	abs := math.Abs(float64(v))
-	return abs > 1e-3 && float64(v) > heightMinOK && float64(v) < heightMaxOK
 }
 
 func readFloat32(data []byte, off int) float32 {
