@@ -2,6 +2,32 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 47) — corrected a real mistake in .o2: 4 fields per sector, not 3
+
+- Immediately after shipping the `.o2` reader (previous entry), re-examined the empirical
+  verification more closely rather than treating it as done: the "3 lists per sector, parses
+  cleanly" result had left a real, unexplained 552-byte gap before EOF. Investigated that gap
+  instead of dismissing it and found it decodes as more real, valid entries (type IDs `669`/`1489`,
+  matching ones already confirmed elsewhere in the file) — not padding or a separate trailing
+  structure.
+- Re-examined the decompiled `FUN_00a361b0` and found a real 4th `uint16`-counted field per sector
+  this project's first pass had missed entirely (a real, easy-to-miss `puStack_1250 = puVar11 + 1`
+  read whose value the real client never stores anywhere). **Corrected: 4 fields per sector, not
+  3** — parses all 36 real sectors with **zero errors and zero leftover bytes** against the same
+  real `100/100.o2` sample, landing exactly on the file's real 3,780-byte length. In that sample,
+  fields 0, 1, and 3 are always empty; all 116 real entries (up from the wrongly-undercounted 100)
+  come from field 2.
+- Fixed both `MapO2Reader` (GDScript) and `mapo.Parse2` (Go) to parse and discard field 0's entries
+  (matching the real client's own behavior) and expose only the 3 real, stored fields as
+  `Sector.lists`/`Sector2.Lists`. Updated both test suites' synthetic fixtures to include a
+  nonzero, discarded field-0 entry and assert it never leaks into an exposed list. Rewrote
+  `docs/protocol/MAPO2_FORMAT.md` to record the correction honestly (kept the account of the "3
+  lists" mistake rather than silently overwriting it, matching this project's standing discipline).
+- **Live-verified against the same real 3x3 grid of Shape B regions**: every region now recovers
+  more `.o2` entries than before the fix (e.g. `100/100`: 100 → 116), still 0 unresolved type IDs
+  everywhere.
+- Full CI test-suite sweep passes (both client and server), clean `--import --quit`.
+
 ## 2026-08-23 (cont'd 46) — decoded and wired up the real .o2 object/event format
 
 - After exhausting static-analysis avenues on the Shape A `.m` loader gap (recorded in the

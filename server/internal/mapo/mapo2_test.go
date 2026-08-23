@@ -43,7 +43,7 @@ func makeEntry2(buf []byte, typeID uint32, pos [3]float32, index uint16) []byte 
 }
 
 func emptySector2(buf []byte) []byte {
-	for i := 0; i < listsPerSector; i++ {
+	for i := 0; i < fieldsPerSector; i++ {
 		buf = appendU16(buf, 0)
 	}
 	return buf
@@ -51,8 +51,12 @@ func emptySector2(buf []byte) []byte {
 
 // buildRegion2 builds a full, real-shaped 6x6 region matching this
 // project's own real empirical find against 100/100.o2 exactly: every
-// sector empty except sector (0,0)'s list 3, which gets 3 real-shaped
-// entries (same type ID, positions, and sequential indices).
+// sector empty except sector (0,0), which gets a nonzero, discarded
+// field-0 entry (real, confirmed to exist in the raw file but never
+// stored by the real client) plus 3 real-shaped entries in field 3
+// (exposed as Lists[2]) — same type ID, positions, and sequential indices
+// as the real sample, and the same "only the last field is ever
+// populated" pattern that sample showed.
 func buildRegion2() []byte {
 	buf := []byte(magic2)
 	buf = append(buf, []byte("1001")...)
@@ -60,9 +64,11 @@ func buildRegion2() []byte {
 	for bandRow := 0; bandRow < sectorsPerSide; bandRow++ {
 		for bandCol := 0; bandCol < sectorsPerSide; bandCol++ {
 			if bandRow == 0 && bandCol == 0 {
-				buf = appendU16(buf, 0) // list 1: empty
-				buf = appendU16(buf, 0) // list 2: empty
-				buf = appendU16(buf, 3) // list 3: 3 entries
+				buf = appendU16(buf, 1) // field 0: 1 entry, discarded
+				buf = makeEntry2(buf, 9999, [3]float32{1, 2, 3}, 1)
+				buf = appendU16(buf, 0) // field 1 (-> Lists[0]): empty
+				buf = appendU16(buf, 0) // field 2 (-> Lists[1]): empty
+				buf = appendU16(buf, 3) // field 3 (-> Lists[2]): 3 entries
 				buf = makeEntry2(buf, 1489, [3]float32{56.81, 167.02, 22.98}, 1)
 				buf = makeEntry2(buf, 1489, [3]float32{128.47, 167.25, 179.25}, 2)
 				buf = makeEntry2(buf, 1489, [3]float32{210.54, 167.25, 119.00}, 3)
@@ -90,10 +96,17 @@ func TestParse2(t *testing.T) {
 
 	sector00 := r.Sectors[0]
 	if len(sector00.Lists[0]) != 0 || len(sector00.Lists[1]) != 0 {
-		t.Errorf("sector (0,0) lists 1/2 should be empty, got %d/%d", len(sector00.Lists[0]), len(sector00.Lists[1]))
+		t.Errorf("sector (0,0) fields 1/2 should be empty, got %d/%d", len(sector00.Lists[0]), len(sector00.Lists[1]))
 	}
 	if len(sector00.Lists[2]) != 3 {
-		t.Fatalf("sector (0,0) list 3 has %d entries, want 3", len(sector00.Lists[2]))
+		t.Fatalf("sector (0,0) field 3 has %d entries, want 3", len(sector00.Lists[2]))
+	}
+	for _, l := range sector00.Lists {
+		for _, e := range l {
+			if e.TypeID == 9999 {
+				t.Error("field 0's discarded entry (type 9999) leaked into an exposed list")
+			}
+		}
 	}
 	e0 := sector00.Lists[2][0]
 	if e0.TypeID != 1489 {
@@ -120,7 +133,10 @@ func TestParse2(t *testing.T) {
 
 func TestParse2TruncatedMidEntry(t *testing.T) {
 	data := buildRegion2()
-	truncated := data[:headerLen2+6+entryLen+5]
+	// header + field0 (count + 1 entry) + field1 count + field2 count +
+	// field3 count + 1 full entry + 5 bytes into the next.
+	truncateAt := headerLen2 + (2 + entryLen) + 2 + 2 + 2 + entryLen + 5
+	truncated := data[:truncateAt]
 	if _, err := Parse2(truncated); err == nil {
 		t.Error("Parse2 on a file truncated mid-entry should return an error")
 	}

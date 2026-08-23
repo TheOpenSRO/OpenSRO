@@ -9,8 +9,20 @@ class_name MapO2Reader
 ## byte-for-byte against a real 100/100.o2 sample, so parsing here is
 ## deterministic (no resync scanning needed): a fixed 12-byte header, then
 ## SECTORS_PER_SIDE x SECTORS_PER_SIDE real sectors in nested file order,
-## each holding LISTS_PER_SECTOR separate uint16-counted lists of
+## each holding FIELDS_PER_SECTOR separate uint16-counted fields of
 ## ENTRY_LEN-byte records.
+##
+## FIELDS_PER_SECTOR is 4, not 3 -- an initial reading of the decompiled
+## function found only 3 (see MAPO2_FORMAT.md's own account of that
+## mistake), and a first empirical check even seemed to confirm it (no
+## parse errors), but left a real 552-byte gap before EOF that turned out
+## to be more real, valid entries -- a real 4th counted field, read right
+## before what this project first labeled "list 1", whose value the real
+## client reads but never stores anywhere. That 4th field's entries are
+## parsed and discarded here (field index 0 below) rather than exposed,
+## matching the real client's own behavior -- callers only see the 3
+## fields that are actually stored (index 1-3 in the file, exposed here as
+## Sector.lists[0..2]).
 ##
 ## .o2 only exists for newer-generation ("Shape B") regions -- see
 ## docs/protocol/MAPM_FORMAT.md's Shape A/B split. Older regions have only
@@ -21,7 +33,8 @@ const MAGIC_LEN := 8
 const VERSION_LEN := 4
 const HEADER_LEN := MAGIC_LEN + VERSION_LEN
 const SECTORS_PER_SIDE := 6
-const LISTS_PER_SECTOR := 3
+const FIELDS_PER_SECTOR := 4
+const LISTS_PER_SECTOR := FIELDS_PER_SECTOR - 1 # field 0's entries are discarded, not stored
 const ENTRY_LEN := 30
 
 class Entry:
@@ -37,10 +50,12 @@ class Entry:
 	var raw: PackedByteArray
 
 class Sector:
-	## Exactly LISTS_PER_SECTOR arrays of Entry, in real file order. Which
-	## list is which is not confirmed -- see MAPO2_FORMAT.md's "3 counted
-	## lists" section (type IDs are shared across all 3 lists, ruling out a
-	## simple per-list category split).
+	## Exactly LISTS_PER_SECTOR (3) arrays of Entry, in real file order --
+	## the real file's 4th, leading per-sector field is parsed and
+	## discarded (see this file's top comment), matching the real client.
+	## Which of these 3 stored lists is which is not confirmed -- see
+	## MAPO2_FORMAT.md (only one of them held any real data in the one
+	## sample checked so far).
 	var lists: Array = [[], [], []]
 
 class ParsedRegion:
@@ -71,16 +86,16 @@ static func parse(data: PackedByteArray) -> ParsedRegion:
 	for band_row in range(SECTORS_PER_SIDE):
 		for band_col in range(SECTORS_PER_SIDE):
 			var sector := Sector.new()
-			for list_idx in range(LISTS_PER_SECTOR):
+			for field_idx in range(FIELDS_PER_SECTOR):
 				if off + 2 > data.size():
-					push_error("mapo2: truncated before sector (%d,%d) list %d count" % [band_row, band_col, list_idx])
+					push_error("mapo2: truncated before sector (%d,%d) field %d count" % [band_row, band_col, field_idx])
 					return null
 				var count := data.decode_u16(off)
 				off += 2
 				var entries: Array = []
 				for _e in range(count):
 					if off + ENTRY_LEN > data.size():
-						push_error("mapo2: truncated mid-entry in sector (%d,%d) list %d" % [band_row, band_col, list_idx])
+						push_error("mapo2: truncated mid-entry in sector (%d,%d) field %d" % [band_row, band_col, field_idx])
 						return null
 					var entry := Entry.new()
 					entry.type_id = data.decode_u32(off)
@@ -92,7 +107,8 @@ static func parse(data: PackedByteArray) -> ParsedRegion:
 					entry.raw = data.slice(off, off + ENTRY_LEN)
 					off += ENTRY_LEN
 					entries.append(entry)
-				sector.lists[list_idx] = entries
+				if field_idx > 0:
+					sector.lists[field_idx - 1] = entries
 			r.sectors.append(sector)
 
 	return r
