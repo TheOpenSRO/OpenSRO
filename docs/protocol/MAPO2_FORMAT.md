@@ -98,6 +98,23 @@ Pulled a real, populated Shape B region's `.o2` file (`100/100.o2`, 3,780 bytes)
   way. What (if anything) distinguishes fields 1/2/3 remains unconfirmed; a real sample where more
   than one field is populated would be needed to check.
 
+## Cross-checked against 3 more real samples (2026-08-23)
+
+Pulled 3 more real `.o2` files (`101/99.o2`, `100/101.o2`, `99/101.o2`) and ran the same corrected
+4-field-per-sector parse against each: **all three parse cleanly with zero errors and zero
+leftover bytes**, confirming the fix generalizes beyond the one original sample. New data points:
+
+- Fields 0 and 1 were empty (count 0) in every sector of every one of these 4 real samples now
+  checked — still no real evidence either ever holds data, though 4 samples isn't proof they
+  never do.
+- Field 2 was the primary populated field in every sample (`75`, `94`, `51` real entries
+  respectively), consistent with the original sample.
+- **New**: `101/99.o2` had **3 real entries in field 3** — the first evidence field 3 isn't always
+  empty. This is a real, useful data point for whatever eventually distinguishes fields 1-3: field
+  3 holding a small number of entries in an otherwise field-2-dominated file is at least consistent
+  with the "field 3 = portal/warp-trigger list" guess (real regions typically have few real portals
+  compared to many decorative objects), though still not confirmed.
+
 ## What this still doesn't tell us
 
 - The exact meaning of the entry's `0xffff` sentinel, the sequential index's real scope (per-list?
