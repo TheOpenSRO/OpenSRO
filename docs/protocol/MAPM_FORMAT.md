@@ -454,7 +454,18 @@ per-sub-patch size is computed at runtime rather than a compiled-in constant). S
 `sro_client.exe` directly for the literal immediate `3781` (`0xec5`) in any `CMP`/`MOV`
 instruction anywhere in the binary: **zero hits**. Shape A's loader path (if a hardcoded constant
 at all) is not in this function and does not appear as a plain immediate anywhere in this binary —
-genuinely unresolved, not attempted further this pass.
+genuinely unresolved.
+
+**Also checked, also negative**: imported and fully auto-analyzed the other real client DLL this
+project has on hand, `EternityLib.dll` (2.1 MB, not previously imported into this project's Ghidra
+database), on the chance it holds a second, DLL-side map loader. Neither the real literal
+`"%d\%d.m"` path-format string nor the bare `".m"` substring is referenced by any real function in
+this DLL (the handful of raw `".m"` byte matches found are unreferenced substrings inside
+unrelated strings, not real code paths). Shape A's loader remains genuinely unresolved after
+checking both real binaries this project has access to; finding it would need either dynamic
+analysis (observing a real read against an actual Shape-A file at runtime) or a broader audit of
+`sro_client.exe` than the one already-found `"%d\%d.m"` cross-reference this project's searches
+have relied on so far.
 
 ## A real, unopened sibling file: `.t` (`JMXVMAPT1001`) — a possible ground-texture blend map
 
