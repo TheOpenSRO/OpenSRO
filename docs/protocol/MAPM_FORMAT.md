@@ -482,6 +482,17 @@ out them also being the ones reading `.m` for both region kinds. This real `.o`-
 two different real region format generations (not an artifact of this project's own resync
 heuristic), even though it doesn't yet reveal which function reads Shape A's `.m`.
 
+**Live-verified `build_full_region_mesh` against Shape B specifically, where the byte layout is
+now fully understood**: loaded a real 3×3 grid of Shape B regions (`100/100.m` and its 8 real
+neighbors). **Every single one got the full "97 rows stitched across sub-patches"** (complete
+6×6 coverage, no partial-band fallback triggered anywhere) — unlike the Shape A regions tested
+earlier, which topped out at 3-5 of 6 real row-bands. The rendered result is a coherent, dramatic
+cliff/mountain edge, consistent with this zone's already-known extreme real height range
+(`-31.3` to `3,844.2`, from this doc's own earlier verification table) rather than corrupted or
+noisy geometry. This is strong, real confirmation that `build_full_region_mesh`'s 2D stitching
+algorithm itself is correct — the remaining gap is specifically Shape A's still-unfound loader
+path, not a bug in the stitching logic.
+
 ## A real, unopened sibling file: `.t` (`JMXVMAPT1001`) — a possible ground-texture blend map
 
 Every real `Map.pk2` region folder also contains a `.t` file alongside its `.m`/`.o`/`.o2` files
