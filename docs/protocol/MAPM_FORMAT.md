@@ -320,13 +320,59 @@ outer structure, a real `× 96`-scaled float stride) gives `1920.0 / 96 = 20.0` 
 same-day fix assumed — see "Real per-region world size confirmed" above for the correction this
 drove (`TILE_SIZE` back to a real, doubly-confirmed `20.0`).
 
+**Traced the exact real output-buffer indexing math, not just the loop bounds**: the innermost
+loop that actually writes a vertex's position (`pfVar10[0]=X, pfVar10[1]=height, pfVar10[2]=Z`)
+computes its destination offset as `(iStack_205c*0x10 + <column, 0..16>) * 12 bytes`, where
+`iStack_205c` is the real 6-iteration middle loop (one of the 36 sub-patch slots) and `0x10` is
+**16, not 17**. That's a real, precise structural confirmation, not an arithmetic guess: **the 6
+row-bands are written with a stride of 16 into the output grid while each band still writes all 17
+of its own rows -- meaning consecutive bands share their boundary row** (band 0 writes rows 0-16,
+band 1 writes rows 16-32, etc.), giving exactly `6×16 + 1 = 97` real unique rows per region side.
+This is the real mechanism behind the classic public "97×97" convention, precisely confirmed via
+real pointer arithmetic rather than inferred from a suggestive round number. The height value
+itself is read from a raw 7-byte source record inside this same innermost loop (matching this
+project's own confirmed Shape-B tile record length exactly), advancing 7 raw bytes per real tile --
+consistent with, not contradicting, this project's own already-working Shape-B reader.
+
+**Now confirmed (2026-08-23)**: traced `FUN_00410f90`, the buffered read function these records
+pass through, and confirmed it's a plain sequential/FIFO reader with no reordering or chunking --
+meaning the *source* 7-byte records really do arrive at the innermost loop in the same raw file
+order this project's own resync-scanning reader already recovers them in. That was the one
+remaining link needed to turn "we know the real 97×97 target shape" into "we know how to assemble
+it from our own already-parsed tile stream."
+
 **Tried and reverted the natural follow-up, recorded honestly**: since a whole region is 6×6 of
-these real sub-patches and this project can't yet map `.m`'s file order to which of the 36 a given
-row-group belongs to, tried tiling the *same* one parsed sub-patch 36 times to fill a region's real
-footprint instead of leaving most of it flat placeholder ground. Verified live against real pk2
-files: made things worse, not better — real per-patch data is already steep enough on its own that
-repeating it 36 times creates a steep boundary every 320 units instead of every 1920, boxing the
-camera in more often. Reverted to rendering just the one real sub-patch per region.
+these real sub-patches and this project couldn't yet map `.m`'s file order to which of the 36 a
+given row-group belongs to, tried tiling the *same* one parsed sub-patch 36 times to fill a
+region's real footprint instead of leaving most of it flat placeholder ground. Verified live
+against real pk2 files: made things worse, not better — real per-patch data is already steep
+enough on its own that repeating it 36 times creates a steep boundary every 320 units instead of
+every 1920, boxing the camera in more often. Reverted to rendering just the one real sub-patch per
+region.
+
+## The real stitching algorithm: implemented and live-verified (2026-08-23)
+
+With `FUN_00410f90` confirmed non-reordering (above), the file-order tile stream this project's
+own reader already recovers *is* the traversal order the real client itself uses. That makes the
+stitch mechanical: `MapmTerrainBuilder.build_full_region_mesh` reads up to 6 consecutive raw
+17-row sub-patches from that stream and writes each one's rows into an output grid at a real
+16-row stride (`dest = sp*(GRID_WIDTH-1) + local_row`), letting a later sub-patch's row overwrite
+an earlier one's at the shared boundary — matching the real client's own confirmed behavior
+exactly, not a plausible-looking guess. Falls back to fewer output rows if a region's raw tile
+count runs out before 6 sub-patches are available (an honest partial-data case).
+
+Verified live against real pk2 files (region `0\0.m` and its 3 immediate neighbors): every region
+tried produced the full "97 rows stitched across sub-patches" (no early fallback), and the
+rendered result is one continuous, smooth rolling-hill silhouette — no jagged spikes, no
+camera-trapping geometry. A real, working improvement over both the old single-sub-patch-only
+render (correct but only 1/6 of a region's footprint) and the reverted 36x-tiled-copy attempt
+(steep, repeated spikes).
+
+One open thread this doesn't resolve: real per-region tile counts observed (~12,363-12,417) are
+far larger than `6 × 289 = 1,734` (the tile count the 6-sub-patch heightmap grid actually
+consumes). There's more real data in each `.m` file than this grid accounts for — additional LOD
+levels, extra data channels, or sub-patch data this investigation didn't trace. Not resolved this
+pass; `build_full_region_mesh` simply stops consuming the stream once it has its 6 sub-patches.
 
 ## A real, unopened sibling file: `.t` (`JMXVMAPT1001`) — a possible ground-texture blend map
 

@@ -256,22 +256,13 @@ const OBJECT_INDEX_PATH := "navmesh\\object.ifo"
 ## this mostly bounds real node/instance count, not real file parsing.
 const MAX_MAP_OBJECTS := 300
 
-## How many of a region's real rows to keep when building its terrain mesh
-## (see MapmTerrainBuilder.build_mesh's doc comment on why this reshapes an
-## otherwise absurdly elongated ribbon into an actual square patch).
-## GRID_WIDTH keeps rows == columns for a true square, sized entirely from
-## already-confirmed real per-tile data. **Real, confirmed meaning
-## (2026-08-23)**: this is one *sub-patch* of a real 6x6 sub-patch grid that
-## makes up one whole region (see MapmTerrainBuilder.TILE_SIZE's doc
-## comment) -- not the whole region's own footprint.
-const REGION_ROWS := MapmTerrainBuilder.GRID_WIDTH
 ## World-space spacing between adjacent *regions* in _load_region_neighborhood.
 ## **Real, confirmed value (2026-08-22)**: a real per-region world size
 ## decompiled directly out of a real cross-region movement function in
 ## `sro_client.exe` (`RegionManagerBody.cpp`) -- see
-## docs/protocol/MAPM_FORMAT.md. Independent of TILE_SIZE/REGION_ROWS
-## (an earlier same-day version of this constant derived it from TILE_SIZE,
-## which conflated "one region" with "one sub-patch" -- corrected, see
+## docs/protocol/MAPM_FORMAT.md. Independent of TILE_SIZE (an earlier
+## same-day version of this constant derived it from TILE_SIZE, which
+## conflated "one region" with "one sub-patch" -- corrected, see
 ## MapmTerrainBuilder.TILE_SIZE's doc comment). Real per-region *adjacency*
 ## (whether the real world even lays regions out on a uniform grid at all)
 ## still isn't confirmed, but the *spacing magnitude* is.
@@ -935,7 +926,17 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 		printerr("World3D: could not parse terrain at ", mapm_path)
 		return NAN
 
-	var terrain_mesh := MapmTerrainBuilder.build_mesh(region, REGION_ROWS)
+	# Real, confirmed (2026-08-23) full-region assembly -- see
+	# MapmTerrainBuilder.build_full_region_mesh's doc comment and
+	# MAPM_FORMAT.md's loader-function findings. Supersedes the single
+	# capped-row build_mesh(region, REGION_ROWS) call this used to make:
+	# that rendered only the *first* sub-patch of the region's real 6x6
+	# grid (a fixed number of raw rows), leaving the rest flat placeholder
+	# ground. This stitches up to all 6 real sub-patches (falling back to
+	# fewer if the parsed region runs out of raw rows first, a real, honest
+	# partial-data case) into one real 97-row-or-fewer mesh covering the
+	# region's actual footprint.
+	var terrain_mesh := MapmTerrainBuilder.build_full_region_mesh(region)
 	if terrain_mesh == null:
 		printerr("World3D: parsed ", region.tiles.size(), " tiles from ", mapm_path, " but couldn't recover enough complete rows for a mesh")
 		return NAN
@@ -987,24 +988,14 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	ground_mesh.visible = false
 	ground_collision.disabled = true
 
-	# **Tried and reverted (2026-08-23), recorded honestly rather than
-	# silently dropped**: one whole region is a real 6x6 grid of sub-patches
-	# this size (see MapmTerrainBuilder.TILE_SIZE's doc comment), and this
-	# project can't yet map the .m file's own row/column order to which of
-	# the 36 real sub-patches a given row-group belongs to -- so an earlier
-	# version of this function tiled the *same* one real parsed patch across
-	# all 36 slots to fill the region's real footprint instead of leaving
-	# 35/36 of it as flat ground. Verified live against real pk2 files: it
-	# made things *worse*, not better -- the real per-patch data is already
-	# steep enough on its own (confirmed even for a single patch, see
-	# MAPM_FORMAT.md) that repeating it 36 times just creates a steep
-	# boundary every SUBPATCH_SPAN (320) units instead of every REGION_SPAN
-	# (1920), boxing the camera in more often, not less. Reverted to
-	# rendering just the one real confirmed sub-patch per region -- honest
-	# about most of a region's real footprint staying flat placeholder
-	# ground until the real row-layout mystery is solved enough to assemble
-	# genuinely distinct real sub-patches, rather than papering over that
-	# gap with repeated copies that measurably didn't help.
+	# History, kept for context: an earlier same-day attempt tiled a single
+	# parsed sub-patch's data across a synthetic 6x6 grid of *copies* to
+	# fill a region's real footprint (see git history / PROGRESS.md), and
+	# was reverted after live testing showed it made the camera-in-geometry
+	# problem worse (a steep boundary every 320 units instead of every
+	# 1920). That approach is now obsolete: terrain_mesh above is already
+	# the real stitched multi-sub-patch mesh (build_full_region_mesh), not
+	# one repeated patch, so there is exactly one real node to build here.
 	var patch_body := StaticBody3D.new()
 	var patch_shape := CollisionShape3D.new()
 	patch_shape.shape = terrain_mesh.create_trimesh_shape()
@@ -1030,8 +1021,8 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	if snap_player:
 		call_deferred("_snap_player_onto_terrain")
 
-	print("World3D: loaded real terrain from %s (%d tiles parsed, %d rows rendered (capped at %d), real collision shape built)" % [
-		mapm_path, region.tiles.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1, REGION_ROWS])
+	print("World3D: loaded real terrain from %s (%d tiles parsed, %d rows stitched across sub-patches, real collision shape built)" % [
+		mapm_path, region.tiles.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1])
 	return near_height
 
 ## Practical safety net for the real terrain-alignment gap noted where this

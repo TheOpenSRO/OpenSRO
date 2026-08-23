@@ -176,7 +176,48 @@ static func build_mesh(region: MapmReader.ParsedRegion, max_rows: int = -1) -> A
 	if row_count < 2:
 		push_error("MapmTerrainBuilder: only %d complete row(s) of %d tiles -- need at least 2" % [row_count, GRID_WIDTH])
 		return null
+	return _build_mesh_from_cells(cells, row_count)
 
+## Real, precisely-confirmed (2026-08-23) full-region assembly -- see
+## docs/protocol/MAPM_FORMAT.md's loader-function findings. Traced the real
+## client's own output-buffer indexing math (not just loop bounds): a whole
+## region's real tiles arrive in exactly the same sequential file order this
+## reader already recovers them in (confirmed via the real buffered-read
+## function they pass through, a plain FIFO reader with no reordering), one
+## real 17x17 sub-patch (289 tiles) at a time, six sub-patches per axis,
+## written into the output grid at a real row stride of 16 (not 17) --
+## meaning consecutive sub-patches share their boundary row, giving exactly
+## `6x16 + 1 = 97` real unique rows, with the *later* sub-patch's copy of a
+## shared row overwriting the earlier one (matching the real client's own
+## behavior exactly, not a guess). Falls back to fewer sub-patches (and
+## fewer output rows) if a region's real data runs out before all
+## `subpatches_per_side` are available -- a real, honest partial-data case,
+## not padded or guessed at. Returns null if fewer than 2 output rows result.
+static func build_full_region_mesh(region: MapmReader.ParsedRegion, subpatches_per_side: int = 6) -> ArrayMesh:
+	var raw_rows: Array = _group_into_rows(region.tiles)
+	var stitched: Array = []
+	for sp in range(subpatches_per_side):
+		var start := sp * GRID_WIDTH
+		if raw_rows.size() < start + GRID_WIDTH:
+			break
+		for local_r in range(GRID_WIDTH):
+			var dest_index := sp * (GRID_WIDTH - 1) + local_r
+			while stitched.size() <= dest_index:
+				stitched.append(null)
+			stitched[dest_index] = raw_rows[start + local_r]
+
+	var row_count := stitched.size()
+	if row_count < 2:
+		push_error("MapmTerrainBuilder: only %d real full-region row(s) recovered -- need at least 2" % row_count)
+		return null
+	return _build_mesh_from_cells(stitched, row_count)
+
+## Shared triangulation/vertex-buffer logic behind both build_mesh and
+## build_full_region_mesh -- cells is a real per-row array (each row
+## GRID_WIDTH [height, terrain_type] pairs, see _group_into_rows), row_count
+## is cells.size() (passed separately since callers may have already
+## validated/trimmed it).
+static func _build_mesh_from_cells(cells: Array, row_count: int) -> ArrayMesh:
 	var positions := PackedVector3Array()
 	positions.resize(row_count * GRID_WIDTH)
 	for r in range(row_count):

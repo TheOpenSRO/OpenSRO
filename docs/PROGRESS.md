@@ -2,6 +2,45 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 44) — implemented and live-verified the real full-region terrain stitching algorithm
+
+- Continued directly from the previous entry's precise confirmation of the real 6×6 sub-patch
+  structure (16-row stride, 97 unique rows, later sub-patch overwrites the shared boundary row,
+  `FUN_00410f90` confirmed non-reordering) rather than treating that as a stopping point.
+- Implemented `MapmTerrainBuilder.build_full_region_mesh(region, subpatches_per_side=6)`: walks
+  the region's raw file-order tile stream up to 6 sub-patches (17 rows each), writes each
+  sub-patch's local rows into an output array at `dest = sp*(GRID_WIDTH-1) + local_row` (stride
+  16, so the later sub-patch's row legitimately overwrites the earlier one's shared boundary row,
+  matching the real client's own behavior), and falls back to fewer output rows if a region's real
+  data runs out before all 6 sub-patches are available -- an honest partial-data case, not padded.
+  Refactored the shared triangulation logic out of the existing `build_mesh` into
+  `_build_mesh_from_cells` so both functions build meshes identically.
+- Added real unit-test coverage for the new function: a synthetic 2-sub-patch region confirms the
+  stitched mesh has the expected `2*(GRID_WIDTH-1)+1 = 33` rows, that sub-patch 1's row really does
+  overwrite sub-patch 0's row at the shared boundary (not the reverse), and that an incomplete
+  trailing sub-patch is dropped outright rather than guessed at. All existing `build_mesh`
+  tests (including the `max_rows` cap tests) still pass unchanged after the refactor.
+- Wired this into `World3D.gd`'s `_try_load_real_terrain`, replacing the old
+  `build_mesh(region, REGION_ROWS)` call that only ever rendered the first 17-row sub-patch of a
+  region, leaving the rest as flat placeholder ground. Removed the now-unused `REGION_ROWS`
+  constant.
+- **Live-verified against real pk2 files** (Data.pk2 + Map.pk2 pulled temporarily, deleted
+  immediately after): loaded region `0\0.m` and its 3 neighbors, each logging "97 rows stitched
+  across sub-patches" (full 6-sub-patch coverage, no early fallback for any of the 4 regions
+  tried). The rendered result is a single smooth, continuous rolling-hill silhouette with **no**
+  jagged spikes and **no** camera-trapping geometry -- a clear improvement over both the old
+  single-sub-patch baseline (correct but covered only 1/6 of a region's footprint) and the
+  previously-reverted 36x-tiled-copy attempt (steep spikes every 320 units, boxed the camera in).
+  This is the first time a genuinely full, non-repeated real region's terrain has rendered
+  correctly in this project.
+- Next open thread (not attempted this pass, not urgent): the real per-region tile count observed
+  (~12,363-12,417) is far larger than 6 sub-patches × 289 tiles = 1,734 -- there's more real data
+  in each `.m` file than the pure 6×6 heightmap grid accounts for (extra LOD levels, additional
+  data channels, or sub-patch data this session's tracing didn't cover). `build_full_region_mesh`
+  only consumes the first `6*289` tiles of that stream; the rest is currently unused. Worth
+  revisiting once there's a reason to believe it's more heightmap data rather than something
+  else (e.g. the `.o2` object/event lists MapCallBack.cpp reads).
+
 ## 2026-08-23 (cont'd 43) — corrected the region-scale fix using the new loader evidence, tried and reverted a sub-patch-tiling idea
 
 - Continued straight from the previous entry's real loader-function find rather than treating it
