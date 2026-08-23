@@ -1,5 +1,46 @@
 # Real opcodes observed being sent (harvested 2026-08-22)
 
+## Real names found via public documentation (2026-08-23)
+
+Cross-referenced every harvested opcode below against public private-server community
+documentation ([`JellyBitz/srodevs-docs`](https://github.com/JellyBitz/srodevs-docs) -- the same
+source that solved this project's `.m`/`.t`/`tile2d.ifo` formats; fair game per
+[`docs/LEGAL.md`](../../LEGAL.md) point 3). **13 real, exact matches**, each a genuine
+cross-validation (independent binary opcode-harvest agreeing with independent public
+documentation, not one source trusted blindly):
+
+| Opcode | Real name | Direction |
+|---|---|---|
+| `0x1001` | `DOWNLOAD_FILE_CHUNK` | S→C |
+| `0x2001` | `GLOBAL_MODULE_IDENTIFICATION` | S→C |
+| `0x2322` | `GATEWAY_LOGIN_IBUV_CHALLENGE` | S→C |
+| `0x3026` | `AGENT_CHAT_UPDATE` | S→C |
+| `0x5000` | `GLOBAL_HANDSHAKE_CHALLENGE` | (already confirmed, `handshake.md`) |
+| `0x6004` | `DOWNLOAD_FILE_REQ` | C→S |
+| `0x7005` | `AGENT_GAME_LOGOUT_REQ` | C→S |
+| `0xa004` | `DOWNLOAD_FILE_COMPLETE` | S→C |
+| `0xa101` | `GATEWAY_SHARD_LIST_ACK` | S→C |
+| `0xa102` | `GATEWAY_LOGIN_ACK` | S→C |
+| `0xa103` | `AGENT_LOGIN_AUTH_ACK` | S→C (already confirmed via decompilation, see `login.md`) |
+| `0xa106` | `GATEWAY_SHARD_LIST_PING_ACK` | S→C |
+| `0xa323` | `GATEWAY_LOGIN_IBUV_CONFIRM_ACK` | S→C |
+
+See `login.md`'s new "The real, complete wire sequence" section for the full real gateway login
+flow (including several more opcodes this public source names and gives real payloads for that
+weren't in this project's own harvested list at all, e.g. `0x6100`-`0x6106`/`0x6102`-`0x6103`
+being real *client-sent* requests this harvest technique — which only finds opcodes a binary
+*writes*, i.e. sends — could never have found on its own).
+
+Cross-referenced against every `packets/agent/`, `packets/gateway/`, and `packets/global/` file
+this public source has (~30 agent-side packets covering login/character-select/movement/chat/
+logout/skill-buff traffic) -- the 13 matches above are everything this source and this project's
+own harvest currently have in common. The other ~85 harvested-but-unnamed values below aren't a
+gap in this cross-check; this public source simply doesn't document that many distinct real
+gameplay opcodes yet (its own coverage is real but partial, weighted toward login/character-select
+over deep gameplay systems like inventory/trade/party/guild). Re-checking this cross-reference if
+the source ever adds more `packets/agent/` pages is a real, cheap, well-scoped future step.
+
+
 A real, concrete opcode catalog, found by a new technique that came out of `dispatch.md`'s
 "header-size discrepancy" trace: this project's own confirmed real per-message header field
 (`MsgID`, at a `+0x1050`-relative offset on the outgoing message object -- see `handshake.md`)

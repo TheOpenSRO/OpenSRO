@@ -7,6 +7,71 @@ before 2026-08-22) worked from `sro_client.exe` only; a real, dedicated server b
 been imported and analyzed too, which is what let the "Dispatch shape" section below actually get
 resolved instead of staying an open question.
 
+## The real, complete wire sequence: found via public documentation (2026-08-23)
+
+**Source**: the same public private-server community documentation
+([`JellyBitz/srodevs-docs`](https://github.com/JellyBitz/srodevs-docs)) that solved this project's
+`.m`/`.t`/`tile2d.ifo` formats — per [`docs/LEGAL.md`](../../LEGAL.md) point 3, real public
+protocol documentation (like the real opcode numbers and payload layouts below) is fair game as a
+spec to implement against, the same footing already used for the Blowfish key schedule and pk2
+container structure. This is genuinely new information for this file, not a restatement of the
+decompiled findings below — it gives full payload layouts for opcodes this project had previously
+only confirmed *exist* (`0xa103`) or found the *purpose* of without a payload (`0x6111`/`0x6112`'s
+neighbors), and fills in the surrounding sequence this project hadn't found at all yet.
+
+**Cross-validated, not blindly trusted**: every opcode below that this project had already
+independently harvested from a real binary (`observed_opcodes.md`) or decompiled (`0xa103` above)
+matches exactly — `0x6101`/`0xa101` (shard list), `0xa102` (login ack), `0xa103` (agent login
+ack, already independently confirmed via decompilation as the real Gateway→Agent login hand-off,
+now with its real payload), `0xa106` (shard ping ack), `0x2322`/`0xa323` (already-known IBUV
+opcodes — see below), and `0x1001`/`0x2001`/`0x5000`/`0x6004`/`0xa004` (shared `ServerFramework`
+infrastructure opcodes, also independently harvested). This agreement across independent RE
+methods (binary opcode-harvest, decompiled purpose-tracing, public documentation) is strong,
+convergent evidence, not three unrelated leads.
+
+**The real, complete gateway login sequence** (client ↔ gateway, then gateway hands off to agent):
+
+| Opcode | Direction | Name | Real payload |
+|---|---|---|---|
+| `0x6100` | C→S | `GATEWAY_PATCH_REQ` | `ContentID`(u8) + `Client.Name` (length-prefixed string, e.g. `"SR_Client"`) + `Client.Version`(u32, from `SV.T`) |
+| `0xA100` | S→C | `GATEWAY_PATCH_ACK` | `Result`(u8); if `2` (`Update`): download server IP/port, latest version, then a real file-list stream (ID, name, path, size, `IsPacked`) terminated by a `CanRead=false` sentinel |
+| `0x6104` | C→S | `GATEWAY_NOTICE_REQ` | `ContentID`(u8, locale) |
+| `0xA104` | S→C | `GATEWAY_NOTICE_ACK` | `NoticeCount`(u8) then that many `{Subject, Article, DateTime}` records |
+| `0x6101` | C→S | `GATEWAY_SHARD_LIST_REQ` | empty |
+| `0xA101` | S→C | `GATEWAY_SHARD_LIST_ACK` | (not fetched in this pass — real opcode confirmed via cross-validation, payload not pulled) |
+| `0x6106` | C→S | `GATEWAY_SHARD_LIST_PING_REQ` | empty |
+| `0xA106` | S→C | `GATEWAY_SHARD_LIST_PING_ACK` | `Result`(u8); if `1`: `Farm.ID`(u8) + `IPAddress`(u32, IPv4) |
+| `0x6102` | C→S | `GATEWAY_LOGIN_REQ` | `ContentID`(u8) + `Username` + `Password` (both length-prefixed strings) + `ShardID`(u16) |
+| `0xA102` | S→C | `GATEWAY_LOGIN_ACK` | `Result`(u8); if `1`: `QueueID`(u32) + `AgentServer.IP`/`Port`; if `2`: a `LoginErrorCode`(u8) |
+| `0x2322` | S→C | `GATEWAY_LOGIN_IBUV_CHALLENGE` | a real CAPTCHA-style challenge image (flags, remaining/compressed/uncompressed lengths, 200×64 dimensions, compressed image bytes) |
+| `0x6323` | C→S | `GATEWAY_LOGIN_IBUV_CONFIRM_REQ` | `Code` (length-prefixed string — the user's typed CAPTCHA answer) |
+| `0xA323` | S→C | `GATEWAY_LOGIN_IBUV_CONFIRM_ACK` | `Result`(u8); if `2`: `MaxAttempts`/`CurAttempts`(u32 each) |
+| `0x6103` | C→S | `AGENT_LOGIN_AUTH_REQ` | `QueueID`(u32, **from `GATEWAY_LOGIN_ACK`**) + `Username` + `Password` + `ContentID`(u8) + `MACAddress`(6 bytes) — sent to the `AgentServer.IP`/`Port` `GATEWAY_LOGIN_ACK` handed back, not the gateway |
+| `0xA103` | S→C | `AGENT_LOGIN_AUTH_ACK` | `Result`(u8); if `2`: an `AuthenticationErrorCode`(u8) — **this is the real payload for the opcode this file's decompiled findings below already independently confirmed as the real Gateway→Agent login hand-off response**, now fully resolved |
+
+**This directly resolves/extends several previously-open items in this file**:
+
+- `0x2322`/`0x6323`/`0xA323` are the real, named **`GATEWAY_LOGIN_IBUV_*`** (Image-Based User
+  Validation — a real CAPTCHA challenge/response) opcodes — `0x2322` and `0xA323` were already
+  independently harvested in `observed_opcodes.md`, now named and given real payloads. **These are
+  distinct from, not the same as,** the `0x6111`/`0x6112` pair the "Real confirmed meaning for two
+  more opcodes" section below found — those are a separate, internal gateway→agent relay-tag pair
+  for the *result* of this same IBUV check (confirmed by that section's own real decompiled
+  tracing: sent onward via `RelayMsg` to `AgentServer.exe`, not back to the client), not client-
+  facing opcodes themselves. The two findings compose into one real picture: client ↔ gateway does
+  the actual IBUV challenge/response over `0x2322`/`0x6323`/`0xA323`, and the gateway then tells
+  the agent server which way it went over the internal `0x6111`/`0x6112` pair.
+- `0x6103`'s real payload confirms **why** `AGENT_LOGIN_AUTH_ACK` (`0xA103`) is sent
+  *agent*→client, not gateway→client, despite being part of the "gateway login" flow this file is
+  about: the client is instructed to open a *new* connection to `AgentServer.IP`/`Port` (from
+  `GATEWAY_LOGIN_ACK`) and re-present its credentials there, carrying the real `QueueID` gateway
+  issued — a real, concrete confirmation of the "Gateway-to-Agent login hand-off" this file's own
+  decompiled tracing already found the *purpose* of but not the full context for.
+- Directly informs the still-open checklist item "Design an equivalent auth flow for the Go
+  server" — the real sequence and payload shapes above are now available as a concrete reference
+  to implement against, independent of the still-unresolved internal Div-ID dispatch mechanism
+  below (which is server-internal plumbing, not part of the real wire contract a client needs).
+
 ## Dispatch shape (revised -- "Div ID" is probably not the wire opcode at all)
 
 Incoming messages get mapped to a small dense integer before being switched on -- **the real,

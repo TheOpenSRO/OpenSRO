@@ -2,6 +2,34 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 55) — the same public documentation source also covers real packet formats
+
+- After `tile2d.ifo`, checked the same public documentation source (`JellyBitz/srodevs-docs`) for
+  its `packets/` section and found real, complete opcode + payload documentation for dozens of
+  gateway/agent/global packets -- directly relevant given `docs/protocol/PROTOCOL_DECISION.md`'s
+  2026-08-22 reversal to a full real-wire-protocol reimplementation goal.
+- **Cross-validated, not blindly trusted**: fetched all ~50 packet doc pages and cross-referenced
+  their real opcodes against this project's own independently-harvested opcode list
+  (`observed_opcodes.md`, found via binary analysis) -- **13 exact matches**, real convergent
+  evidence across two independent methods (binary harvest + public documentation), not one source
+  trusted alone. Notably `0xa103`, which this project had already independently decompiled and
+  confirmed as "the real Gateway-to-Agent login hand-off" without ever finding its payload, now has
+  a complete real payload (`Result` + `AuthenticationErrorCode`) from this cross-check.
+- **Documented the real, complete gateway login sequence** in `docs/protocol/opcodes/login.md`:
+  patch check, notice, shard list (+ ping), login, a real CAPTCHA-style IBUV challenge/response,
+  and the hand-off to `AgentServer` -- 15 real opcodes with real payload layouts, resolving several
+  of this file's own previously-open items (confirming `0x6111`/`0x6112` are a distinct *internal*
+  gateway→agent relay-tag pair for the IBUV result, not client-facing opcodes themselves; and
+  explaining *why* `AGENT_LOGIN_AUTH_ACK` comes from the agent server, not the gateway, via the
+  real `QueueID`-carrying re-authentication step).
+- Added the newly-confirmed opcodes as named Go constants in `server/internal/proto/opcodes.go`
+  (wire numbers only, matching this file's existing "verified opcodes only" convention -- payload
+  structs and actual session wiring are separate, not-yet-done work). Full CI test-suite sweep
+  passes.
+- This significantly de-risks and accelerates the large "protocol reimplementation" effort
+  `PROTOCOL_DECISION.md` flagged as spanning many sessions -- real payload layouts sourced from
+  public documentation, rather than needing binary RE for every single opcode from scratch.
+
 ## 2026-08-23 (cont'd 54) — found tile2d.ifo, real semantic ground-tile coloring
 
 - The user asked "what's next" again after the `.t` lightmap win; continued the same map-data
