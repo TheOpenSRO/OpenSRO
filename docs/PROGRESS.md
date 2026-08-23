@@ -2,6 +2,38 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-23 (cont'd 42) — found the real `.m` loader functions for the first time in this project's history
+
+- Kept pushing on the same terrain-shape investigation rather than stopping after the previous
+  entry's real wins, per explicit user direction not to pivot away from a hard problem once
+  progress is being made on it.
+- Full `CRegionManagerBody` vtable coverage completed (32/32 slots decompiled) -- confirmed the
+  class itself has no direct file I/O. One slot's real cross-region movement function
+  (`FUN_00412ba0`) turned out to compute the real inter-region world offset directly from two
+  packed region IDs using the confirmed 1920.0 constant, in a formula that **exactly matches** the
+  grid-offset formula already implemented in `_load_region_neighborhood` -- a clean, independent
+  real validation of last entry's fix.
+- Searched for the real literal path-format string `"%d\%d.m"` (untried before -- previous passes
+  only searched for the byte-constructed magic, which genuinely doesn't exist anywhere as a
+  literal). Found it referenced by two real functions, **found for the first time in this
+  project's history** (the docs previously stated flatly that no loader was ever found):
+  - `FUN_0042a6e0`, real source `D:\vss-od\JMX_Library\navmesh\MapLoader.cpp` -- **corrects an
+    earlier real mistake**: a previous pass concluded the real `CMapLoader` class (navmesh) was
+    unrelated to `.m`/visual terrain. It's now confirmed this real navmesh loader directly opens
+    and parses `.m` files itself -- retracted rather than left standing.
+  - `FUN_00a361b0`, real source `D:\vss-od\Silkroad\Client\Landscape\MapEngine\MapCallBack.cpp` --
+    the actual visual-rendering subsystem's own loader.
+- Both real functions have their own real 6×6 sub-unit loop structure over the region, and real
+  `17`/`97`-shaped numbers recur structurally (independent evidence beyond this project's own
+  statistical/column-field analysis) -- but the second function's loop body turned out to read
+  three counted object/event lists per sub-cell, not per-tile heights, so **self-corrected a
+  premature hypothesis** (recorded and then retracted within the same investigation, honestly) that
+  these numbers directly described `.m`'s row/column layout. Exactly where either function reads
+  real height floats into a 2D grid remains genuinely open.
+- Full MAPM_FORMAT.md rewrite recording all of this precisely, including the live self-correction.
+  Real, substantial progress (two never-before-found loader entry points, a validated
+  cross-region-offset formula) even though the exact row-layout algorithm isn't cracked yet.
+
 ## 2026-08-22 (cont'd 41) — real region world-scale found, plus a real camera-collision fix -- terrain is genuinely better now
 
 - Kept pushing on the terrain-shape problem instead of moving to something easier after the `.t`

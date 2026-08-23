@@ -242,6 +242,75 @@ itself a new, real, unexplained observation worth a future pass on its own.
 - Whether the terrain-type byte (Shape A, offset 0x00) corresponds to anything a renderer could
   use directly (a texture index into some other table not yet identified).
 
+## The real `.m` loader function: found (2026-08-22), correcting an earlier wrong conclusion
+
+**This project previously stated no decompiled loader was ever found for `.m` in `sro_client.exe`
+or `EternityLib.dll`. That's now wrong, and is corrected here rather than left standing.**
+
+Found by searching for the literal real path-format string this project hadn't tried yet:
+`"%d\%d.m"` (a plain ASCII string, unlike the byte-by-byte-constructed magic). It exists once in
+`sro_client.exe`, referenced by exactly one real function (`FUN_0042a6e0`), which:
+
+- Builds the path with `sprintf_s(..., "%d\\%d.m", <Y sector>, <X sector>, ...)` and opens it
+  through a real virtual file-open call — a real, concrete, first-ever-found loader entry point
+  for this format.
+- Is confirmed, via multiple literal embedded source-path/assert strings, to belong to
+  **`D:\vss-od\JMX_Library\navmesh\MapLoader.cpp`** — real member name `m_s2DTileInfo` and real
+  local variable name `w2DTile` both appear in real assert strings (`"w2DTile <
+  m_s2DTileInfo.size()"`).
+- **Corrects an earlier real mistake in this project**: a previous pass found a real class
+  `CMapLoader` via RTTI and concluded it was "the navmesh loader, a different real subsystem
+  entirely, not the visual terrain/texture system" — i.e. that navmesh and `.m` were unrelated.
+  That conclusion is now shown to be wrong: the real navmesh `MapLoader.cpp` **does** open and
+  parse `.m` files directly. Navmesh (walkability) and the real heightmap grid this project
+  already renders are evidently built from the same source file, not two independent systems —
+  retracted here rather than left standing, same discipline as this project's other corrections.
+- Later in the same function, also builds and opens `"%d\%d.o2"` (a real second, already-known
+  sibling file — see `MAPO_FORMAT.md`) for the same region.
+
+**Real structural clues found in this function, not yet fully decoded into a confirmed algorithm**
+(the function is ~300 lines of dense, heavily-optimized nested loops — recording what's solidly
+visible without rushing a guess at the full picture):
+
+- A real **6×6 outer loop structure** (two nested loops, each running exactly 6 iterations)
+  processes the loaded region in that many sub-units.
+- A real inner bound of **`0x121` (289 = 17×17)** appears in the per-sub-unit tile-assembly logic —
+  the same real `17` column width this project already confirmed independently via `.m`'s own
+  per-tile column field, now also showing up structurally in the real loader itself.
+- A real stride value **`0x61` (97 decimal)** recurs as an array/loop stride — consistent with the
+  classic public "97×97 vertex grid → 96×96 quads" terrain-patch convention long documented by the
+  private-server community for this MMO family, previously guessed at and *retracted* earlier in
+  this same file's history (misread as a common tile byte value, not a dimension) — this is new,
+  independent, structural evidence for that same number showing up for a real reason, via a
+  completely different (loader-code) signal than the original guess.
+
+**A second real loader function was then found, and it changes the reading above rather than
+confirming it** — searched for the same `"%d\%d.m"` string's other real reference (`FUN_00a361b0`)
+and found it belongs to a *different* real source file, **`D:\vss-od\Silkroad\Client\Landscape\
+MapEngine\MapCallBack.cpp`** — the actual visual-rendering "Landscape/MapEngine" subsystem, as
+opposed to the first function's navmesh subsystem. This function also opens both `.m` and `.o2` for
+the region, and has its own real 6×6 outer loop (confirmed precisely via its real loop increments:
+inner stride `0x31`=49 six times, outer stride `0x126`=294 (`= 6×49`) six times, bound `0x6e4`=1764
+`= 6×294`). **But this loop's body reads three separate real counted lists per sub-cell** (a
+16-bit count, then that many entries, three times per iteration) — the same real shape as
+placed-object/event data (matching the real `"event"`/`"EVENT"` tag handling found earlier this
+session in a related function), not a per-tile height read. **This is most likely the real spatial
+index for `.o2`'s object/event placements (a 6×6 grid of lookup sectors per region), not `.m`'s
+height grid** — a real, concrete correction to this doc's own first guess (recorded a few
+paragraphs up) that the `MapLoader.cpp` function's 6×6/289/97 numbers described `.m`'s row/column
+layout directly. They may still be related (both functions process the same region), but this
+second function's evidence points at object indexing, not heightmap dimensions, so that link isn't
+asserted here. Where either function actually reads the real per-tile *height* floats into a grid
+has not been located in either decompilation pass — genuinely still open, not guessed at.
+
+**Where this leaves the row-layout mystery**: two real, previously-never-found loader functions
+now exist to trace further (`FUN_0042a6e0` in `MapLoader.cpp`, `FUN_00a361b0` in
+`MapCallBack.cpp`), a real, independent confirmation that `17` and `97` both show up structurally
+in real loader code (not just this project's own statistical/column-field analysis), and a real,
+concrete open question (which part of either function reads height floats into a 2D grid, and at
+what real stride) for whoever continues this. Not resolved this pass, but a real, substantial step
+closer than "no loader has ever been found," which was this doc's honest state before today.
+
 ## A real, unopened sibling file: `.t` (`JMXVMAPT1001`) — a possible ground-texture blend map
 
 Every real `Map.pk2` region folder also contains a `.t` file alongside its `.m`/`.o`/`.o2` files
