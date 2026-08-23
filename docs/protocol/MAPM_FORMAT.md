@@ -425,6 +425,25 @@ instead of resync heuristics — the well-scoped next step for whoever continues
 would let a region's full 36 sub-patches be read deterministically instead of via
 `build_full_region_mesh`'s current graceful (but partial) row-band fallback.
 
+**One more precise numeric fact, found while checking whether this generalizes**: the exact
+13/2,023/539 split above comes from a Shape-B-sized file's real decompiled loader path
+(`92,712 = 12 + 36×2,575`). The 4 real regions this session's live terrain testing actually used
+(`0/0.m`, `0/1.m`, `1/0.m`, `1/1.m`) are all **Shape A**, not Shape B, and use an 11-byte tile
+record (not 7) — a different real per-sub-patch size is expected. Checked the arithmetic directly:
+`0/1.m`, `1/0.m`, and `1/1.m` are all real `136,128`-byte files, and `136,128 − 12 = 136,116`
+divides **exactly** by 36 (`= 3,781` per sub-patch, no remainder) — the same clean 36-sub-patch
+structure as Shape B, confirming this isn't a Shape-B-only coincidence. `0/0.m` (and `0/2.m`) are
+`137,128` bytes, 1,000 bytes larger than the other Shape-A files — likely an extra file-level
+trailer unrelated to the per-sub-patch structure (consistent with this project's separate,
+already-documented finding of variable-length non-tile runs elsewhere in these files), not a
+different sub-patch layout. Shape A's real header/trailer split *within* its 3,781-byte sub-patch
+(`3,781 − 289×11 = 602` combined bytes) hasn't been traced the same precise way Shape B's was —
+no Shape-A-specific loader code path has been located yet (the decompiled function above hardcodes
+`0xa0f`/2,575, a Shape-B-specific constant; Shape A's analogous loader path, if a separate one
+exists, is still unfound). This is why `0/0.m` (5/6 real row-bands recovered) and the other three
+(3/6 each) diverged in this session's live test — a real, reproducible symptom of exactly this
+still-unresolved Shape-A layout gap, not random resync noise.
+
 ## A real, unopened sibling file: `.t` (`JMXVMAPT1001`) — a possible ground-texture blend map
 
 Every real `Map.pk2` region folder also contains a `.t` file alongside its `.m`/`.o`/`.o2` files
