@@ -636,6 +636,17 @@ reframes `.t` from "the missing base ground texture" to "a real, plausible secon
 mask" — a genuine, convergent, real finding, even though the base ground-color texture itself
 remains unfound.
 
+**Checked the trailing 9,340-byte gap directly**: at the assumed `24 + 131,072` split, the
+remaining bytes are dominated by a strict alternating `00000000`/`ffffffff` 4-byte pattern (a real,
+counted majority of the trailer) — the same signature a solid-black or solid-white DXT1 block
+would produce (an 8-byte block of all-zero or all-`0xFFFF` color endpoints decodes to a flat color
+regardless of its index bits), suggesting this trailer is *more* DXT1-shaped data, not an unrelated
+structure. But `9,340` isn't evenly divisible by DXT1's fixed 8-byte block size (`9,340 ÷ 8 =
+1,167.5`), so it isn't simply "more whole blocks" at the exact offsets assumed here — either the
+true header/pixel-data split isn't precisely `24`/`131,072`, or there's a small amount of
+non-block padding/metadata mixed in. Genuinely unresolved; flagged precisely rather than forcing a
+round number.
+
 ## What actually shipped instead: a real per-region minimap image, via `server/cmd/pk2list`
 
 The RE environment used throughout this project turned out to also have a genuine full retail
