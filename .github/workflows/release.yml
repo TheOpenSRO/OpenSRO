@@ -1,0 +1,92 @@
+name: Release client
+
+# Builds downloadable client binaries (Windows + Linux) and attaches them to
+# a GitHub Release. Triggered by pushing a tag like "v0.1.0", or manually via
+# workflow_dispatch for a test build. Never bundles any real game data (see
+# docs/LEGAL.md) -- each build ships with an empty "pk2" folder next to the
+# executable, and a README telling the user to copy their own *.pk2 files
+# there themselves.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    name: Export ${{ matrix.preset }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - preset: "Windows Desktop"
+            out_dir: windows
+            exe_name: srrevamp.exe
+            archive_suffix: windows
+          - preset: "Linux"
+            out_dir: linux
+            exe_name: srrevamp.x86_64
+            archive_suffix: linux
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Godot (with export templates)
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.2.2
+          use-dotnet: false
+          include-templates: true
+
+      - name: Import project
+        working-directory: client
+        run: godot --headless --path . --import --quit
+
+      - name: Export ${{ matrix.preset }}
+        working-directory: client
+        run: |
+          mkdir -p "build/${{ matrix.out_dir }}"
+          godot --headless --path . --export-release "${{ matrix.preset }}" "build/${{ matrix.out_dir }}/${{ matrix.exe_name }}"
+
+      - name: Assemble release folder
+        working-directory: client
+        run: |
+          mkdir -p "dist/srrevamp-${{ matrix.archive_suffix }}/pk2"
+          cp -r "build/${{ matrix.out_dir }}/." "dist/srrevamp-${{ matrix.archive_suffix }}/"
+          cp "../README.md" "dist/srrevamp-${{ matrix.archive_suffix }}/README.md" || true
+          cat > "dist/srrevamp-${{ matrix.archive_suffix }}/pk2/PUT_YOUR_PK2_FILES_HERE.txt" <<'EOF'
+          Copy your own real Silkroad Online client's *.pk2 files into this
+          folder (Data.pk2, Map.pk2, Media.pk2, at minimum) before running
+          the client. This project ships with no game data of its own --
+          see docs/LEGAL.md in the source repository for why.
+          EOF
+          chmod +x "dist/srrevamp-${{ matrix.archive_suffix }}/${{ matrix.exe_name }}" || true
+
+      - name: Zip release folder
+        working-directory: client/dist
+        run: zip -r "srrevamp-${{ matrix.archive_suffix }}.zip" "srrevamp-${{ matrix.archive_suffix }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: srrevamp-${{ matrix.archive_suffix }}
+          path: client/dist/srrevamp-${{ matrix.archive_suffix }}.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/srrevamp-windows/srrevamp-windows.zip
+            artifacts/srrevamp-linux/srrevamp-linux.zip
+          generate_release_notes: true

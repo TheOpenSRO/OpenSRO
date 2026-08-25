@@ -25,7 +25,6 @@ server/bin/
 
 # Godot
 client/.godot/
-client/export_presets.cfg
 client/build/
 *.translation
 

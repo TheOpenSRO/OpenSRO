@@ -68,14 +68,21 @@ jobs:
           godot --headless --path . --script res://scripts/ban/ban_reader_test.gd
           godot --headless --path . --script res://scripts/bsk/bsk_reader_test.gd
           godot --headless --path . --script res://scripts/mapo/mapo_reader_test.gd
+          godot --headless --path . --script res://scripts/mapo/mapo2_reader_test.gd
           godot --headless --path . --script res://scripts/mapm/mapm_reader_test.gd
+          godot --headless --path . --script res://scripts/mapt/mapt_reader_test.gd
+          godot --headless --path . --script res://scripts/tile2d/tile_index_reader_test.gd
+          godot --headless --path . --script res://scripts/nvm/nvm_reader_test.gd
           godot --headless --path . --script res://scripts/efp/efp_reader_test.gd
           godot --headless --path . --script res://scripts/assets/skeleton_pose_test.gd
           godot --headless --path . --script res://scripts/assets/skeleton3d_builder_test.gd
           godot --headless --path . --script res://scripts/assets/object_loader_test.gd
           godot --headless --path . --script res://scripts/assets/character_assembler_test.gd
           godot --headless --path . --script res://scripts/assets/asset_source_test.gd
+          godot --headless --path . --script res://scripts/assets/pk2_config_test.gd
           godot --headless --path . --script res://scripts/assets/mapm_terrain_builder_test.gd
+          godot --headless --path . --script res://scripts/environment/environment_reader_test.gd
+          godot --headless --path . --script res://scripts/cpd/cpd_reader_test.gd
           godot --headless --path . --script res://scripts/objidx/objidx_reader_test.gd
           godot --headless --path . --script res://scripts/net/packet_test.gd
           godot --headless --path . --script res://scripts/net/packet_reader_test.gd
