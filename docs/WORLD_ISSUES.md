@@ -488,6 +488,32 @@ don't have real data, only a handful (91/181, 87/182, 91/182, 91/183, plus the r
 Full verification (`godot4 --headless --path . --import --quit`, all 43 GDScript `*_test.gd`
 files) swept clean.
 
+## 2026-08-26, sixteenth round — real auto-updater, and making the repo public
+
+Added a real auto-updater (OpenSRO's launcher-style request): `UpdateChecker` (pure, unit-tested
+version-compare and platform-asset-selection logic) plus `AutoUpdater` (the real network/file-
+system side -- checks this repo's real GitHub Releases API, downloads the matching real platform
+zip, extracts it, writes a real platform-native relaunch script that waits for this process to
+exit, copies the new files over the old ones without touching the user's own real `pk2` folder,
+and relaunches). Wired into `Boot.gd`: checks once at startup, offers a real opt-in
+`ConfirmationDialog` if a newer version exists, and never blocks getting to Login if the check or
+update itself fails.
+
+**A real, necessary prerequisite decision**: GitHub ties release-asset visibility to repository
+visibility -- there is no way to have private source with public release downloads. OpenSRO
+explicitly confirmed making the whole repository public (source included) to enable this, a real,
+hard-to-reverse decision surfaced and confirmed before acting, not assumed.
+
+**Honest scope**: only `UpdateChecker`'s pure logic (version parsing/comparison, platform-asset
+selection) is unit tested. The real network call, real zip extraction, and real relaunch mechanism
+in `AutoUpdater` have not been live-verified against a real published release, since none existed
+yet at the time this was written (the "push a real release tag" item from `docs/PROGRESS.md` is
+still open/deferred). Flagged per `feedback_no_unverified_assumptions` rather than claimed working
+-- needs a real tagged release and a real live test before trusting it in practice.
+
+Full verification: new `update_checker_test.gd` (added to `ci.yml`) plus all other 43 GDScript
+`*_test.gd` files swept clean; `go build`/`go vet` (Go side untouched by this change) also clean.
+
 ## 2026-08-26, fifteenth round — real cause of other-player movement stutter, fixed
 
 Asked to make the server "64 tick." Checked first rather than assume: this server has no fixed
