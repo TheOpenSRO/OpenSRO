@@ -323,3 +323,23 @@ piece) and `ROOF_ESCAPE_STEP`/`ROOF_ESCAPE_RINGS` proportionally (60.0 x 10 ring
 radius 600 units) since a building tall enough to need the new height plausibly has a footprint on
 a similar real scale. Not yet re-verified against a real live spawn -- this is a size-calibration
 fix based on real measured data, not a re-confirmed working fix; needs another real retest.
+
+## 2026-08-26, ninth round — spawn fix confirmed; real object cap was hiding grass/decoration
+
+Retested: the roof-escape fix worked -- OpenSRO spawned outside in Jangan's real courtyard (lion
+statues, gate, walls all visible) instead of inside a building. Real, confirmed progress.
+
+OpenSRO then compared it side-by-side against a real reference screenshot of the same real Jangan
+courtyard from a live server. The real gap: ground-cover grass was sparse (one small patch instead
+of dense coverage under trees/along walls) and no NPCs were present. Root cause for the grass:
+`MAX_MAP_OBJECTS` (300) hard-stops object instantiation in real placement order -- Jangan's own
+real region has 863 real placements (`.o` + `.o2` combined), so the old cap silently dropped most
+of them well before reaching most grass/decoration entries. Since parsing each *distinct* real
+`.bsr` only happens once (repeats are cheap duplicates), raising this cap is low-cost. Raised to
+2000. NPCs are a separate, larger, not-yet-implemented feature (this project currently only
+spawns players/monsters, no static NPC guards) -- not addressed this round, tracked as a real,
+known gap rather than conflated with the grass fix.
+
+Full verification (`godot4 --headless --path . --import --quit`, all 43 GDScript `*_test.gd`
+files) swept clean after the `MAX_MAP_OBJECTS` change. Not yet perf-verified against a real very
+dense region beyond Jangan's 863 placements.

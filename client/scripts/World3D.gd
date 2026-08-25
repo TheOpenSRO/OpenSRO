@@ -300,7 +300,18 @@ const TILE_INDEX_PATH := "navmesh\\tile2d.ifo"
 ## limit. Distinct real .bsr models are only parsed once each and
 ## duplicated for repeat placements (see _try_load_real_map_objects), so
 ## this mostly bounds real node/instance count, not real file parsing.
-const MAX_MAP_OBJECTS := 300
+## **Raised from 300 (2026-08-26, see docs/WORLD_ISSUES.md)**: a real
+## side-by-side comparison against a real live server screenshot of Jangan
+## showed most of the real ground-cover grass and decoration missing --
+## Jangan's own real region has 863 real placements (.o + .o2 combined),
+## so the old 300 cap was silently dropping most of them, in placement
+## order, well before reaching the grass/decoration entries. Since the
+## expensive part (parsing each *distinct* real .bsr) already happens once
+## per unique model regardless of this cap, and the rest is cheap
+## duplication, raising it is low-cost -- not perf-verified against a real
+## very dense region beyond Jangan's 863, but comfortably covers it with
+## headroom.
+const MAX_MAP_OBJECTS := 2000
 
 ## World-space spacing between adjacent *regions* in _load_region_neighborhood.
 ## **Real, confirmed value (2026-08-22)**: a real per-region world size
