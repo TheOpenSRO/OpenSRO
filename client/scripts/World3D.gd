@@ -308,10 +308,17 @@ const MAX_MAP_OBJECTS := 300
 ## still isn't confirmed, but the *spacing magnitude* is.
 const REGION_SPAN := 1920.0
 ## How many real regions out from the center region to try loading in each
-## direction -- radius 1 means a 3x3 grid (9 regions attempted, however many
-## actually exist as real files). Kept small since each region is a real
-## parse + mesh build; raise once real perf headroom is confirmed.
-const REGION_LOAD_RADIUS := 1
+## direction -- radius 2 means a 5x5 grid (25 regions attempted, however many
+## actually exist as real files). Raised from 1 (2026-08-26, see
+## docs/WORLD_ISSUES.md) now that Pk2Reader caches directory reads (this
+## session's ~3-minute-load-time fix) -- the real per-region cost was
+## dominated by redundant pk2 directory re-reads, not mesh building, so this
+## should mostly trade a larger loaded-terrain footprint (fewer real
+## "edge of loaded world" holes a player can walk to and see sky through)
+## for a smaller relative load-time increase than radius 2 would have cost
+## before that fix. Not yet perf-verified against a real large pk2 dataset
+## in this environment -- flagged honestly, not asserted as free.
+const REGION_LOAD_RADIUS := 2
 
 ## Real region streaming (2026-08-24): the original fixed 3x3 grid only
 ## ever loaded once, centered on wherever a zone's initial spawn/entry

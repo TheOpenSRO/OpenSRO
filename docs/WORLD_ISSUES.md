@@ -190,3 +190,62 @@ different way.
 Real scratch data (`chinaman_skel.bsk`, `chinaman_fighter_standcity.ban`, the throwaway
 extractor/comparison tools) deleted immediately after use, per the no-persisted-real-assets
 policy.
+
+## 2026-08-26, fourth round — confirmed the stopgap actually holds, plus two more real findings
+
+OpenSRO retested against confirmed commit `25ef432` (verified via `git log -1 --oneline` in his
+local checkout, not inferred), across two different real zones (a Jangan palace interior, then an
+open desert zone after a manual zone change). Several screenshots at first looked alarming again
+(the character appearing to float, tilt diagonally, or hold an asymmetric "diving" pose) — but a
+**top-down screenshot and the character's own real-time shadow both confirm the actual pose is a
+clean, symmetric T-stance** (arms straight out, legs together), matching what the stopgap is
+supposed to produce. Every one of the "broken-looking" shots was the same static, correct pose
+viewed from a steep/oblique orbit angle that foreshortened one arm or leg toward the camera,
+visually reading as bent/displaced even though the real 3D shape (as the shadow proves) never
+changed. **The stopgap holds** — no more exploding limbs, confirmed via a genuinely fresh,
+commit-verified retest, not just re-reading old data.
+
+Two more things came out of this round:
+
+- **A "circle that erases part of the model" while orbiting the camera**, reported specifically in
+  the tight palace-interior screenshots. "Visible Collision Shapes" was confirmed off in the
+  editor (ruling out a debug-overlay explanation), so the live theory is real near-clip-plane
+  clipping: `CameraArm` (`SpringArm3D`) shortens itself to avoid clipping through nearby walls in a
+  tight room, which can pull the camera close enough to the character's own geometry that its
+  near-clip plane starts slicing through the mesh, changing what's clipped as the camera orbits.
+  Not reproduced/re-tested in the open desert specifically before the conversation moved on — real
+  but likely narrow (tight indoor spaces only), not chased further this round.
+- **"It isn't like a complete 3D model."** This is a real, already-honestly-documented structural
+  limitation, not a new bug: `CharacterAssembler`'s own top comment confirms no real per-vertex
+  bone-weight data exists anywhere in the `.bms` format (checked directly against real files), so
+  smooth mesh skinning isn't possible with what this project has reverse-engineered so far — each
+  body part is a separate rigid chunk rigidly bolted to one bone, with real, visible seams at every
+  joint instead of continuous deformed skin. Currently more noticeable than it might otherwise be
+  since the tested character has no armor equipped (bare skin only, per real slots), which would
+  cover most of those seams. Fixing this for real would mean finding real skinning/weight data
+  this project hasn't located (or a fundamentally different approach) — a substantial, open-ended
+  research problem, not a quick patch. Tracked honestly as a known limitation, not silently
+  patched over or ignored.
+
+## 2026-08-26, fifth round — real terrain/map bug, distinguished from an already-known limitation
+
+A desert-zone screenshot showed a dramatic triangular gap tearing through the ground and distant
+mountains, sky visible through it, plus jagged/torn-looking mountain geometry nearby. Two distinct
+real things are visible in that one shot, not one bug:
+
+- **The flat sky-gap is the edge of the currently streamed terrain**, not a stitching bug —
+  `REGION_LOAD_RADIUS` only ever streamed a 3x3 grid of regions around the player, so walking far
+  enough in open terrain reaches loaded terrain's edge and looks straight through to empty sky.
+  **Raised `REGION_LOAD_RADIUS` from 1 to 2** (a 5x5 grid) now that this session's directory-cache
+  fix (see the "~3 minute load time" entry above) should have removed most of the redundant-pk2-
+  read cost that made loading more regions expensive in the first place — not perf-verified against
+  a real large dataset in this sandbox, flagged honestly rather than assumed free.
+- **The jagged/torn mountain geometry is the already-documented cross-region height-mismatch
+  limitation** (see `_load_region_cell`'s `shared_vertical_anchor` comment from 2026-08-22): no
+  real elevation data linking adjacent regions together has ever been found, so neighboring terrain
+  tiles get glued edge-to-edge without matching real heights, producing genuinely steep/jagged
+  seams at region boundaries. Not a new bug and not touched this round — a real, harder,
+  still-open research problem (would need real cross-region alignment data this project doesn't
+  have), separate from the load-radius fix above.
+- Full verification (`godot4 --headless --path . --import --quit`, all 43 GDScript `*_test.gd`
+  files) swept clean after the `REGION_LOAD_RADIUS` change.
