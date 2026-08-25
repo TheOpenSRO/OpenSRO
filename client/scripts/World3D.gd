@@ -107,15 +107,40 @@ extends Node3D
 ## ("<x>/<y>", e.g. "100/100") resolves to that region's real internal
 ## paths ("100\\100.m", "100\\100.o", "minimap\\100x100.ddj"), the same
 ## convention SRREVAMP_MAPM_PATH/SRREVAMP_MAPO_PATH's doc comments above
-## already describe. A zone not shaped that way (e.g. the default spawn
-## zone, "jangan") just clears back to the placeholder ground with nothing
-## loaded -- honest "nothing to load", not a guessed path. The *initial*
-## load in _ready() still reads the raw env vars directly rather than going
-## through a zone label, since the very first EnterWorldResult doesn't
-## necessarily carry a region-shaped zone (again, "jangan" by default).
+## already describe. The server's own default spawn zone, "jangan", is a
+## special case resolved by _resolve_zone_region to the real region this
+## project found Jangan actually lives in (JANGAN_ZONE_REGION, "98/168" --
+## see docs/PROGRESS.md's 2026-08-24 "found real Jangan" entry) rather than
+## falling through to "nothing to load" the way it used to before that was
+## found. Any other zone not shaped like a real region still clears back to
+## the placeholder ground with nothing loaded -- honest "nothing to load",
+## not a guessed path. The *initial* load in _ready() still reads the raw
+## env vars directly rather than going through a zone label, since the very
+## first EnterWorldResult's zone isn't available yet at that point.
 
 const MOVE_SPEED := 6.0
 const GRAVITY := 20.0
+
+## Real Silkroad-style mouse controls: right-drag orbits the camera around
+## the player (independent of the player's own facing), left-click on the
+## ground walks the player there, and the scroll wheel zooms. WASD/arrow
+## keys (the original, still-supported controls) immediately cancel any
+## active click-to-move target, matching the normal MMO convention that
+## manual movement input always overrides a pending destination.
+const CAMERA_ORBIT_SENSITIVITY := 0.3 # degrees of camera rotation per pixel of mouse drag
+const CAMERA_PITCH_MIN_DEGREES := -60.0
+const CAMERA_PITCH_MAX_DEGREES := 80.0
+const CAMERA_ZOOM_STEP := 1.0
+const CAMERA_ZOOM_MIN := 3.0
+const CAMERA_ZOOM_MAX := 25.0
+## How close player must get to a click-to-move target before it's
+## considered reached and cleared -- without this, the player would
+## oscillate forever trying to reach an exact point every physics frame.
+const MOVE_TARGET_STOP_DISTANCE := 0.3
+
+var _camera_orbiting := false
+var _has_move_target := false
+var _move_target := Vector3.ZERO
 ## Minimum real-world distance moved, and minimum time elapsed, before
 ## sending another OpMove -- avoids flooding the connection with a packet
 ## every single physics frame while walking.
@@ -277,13 +302,45 @@ const REGION_SPAN := 1920.0
 ## parse + mesh build; raise once real perf headroom is confirmed.
 const REGION_LOAD_RADIUS := 1
 
+## Real region streaming (2026-08-24): the original fixed 3x3 grid only
+## ever loaded once, centered on wherever a zone's initial spawn/entry
+## point was -- a player who kept walking in one direction would
+## eventually walk off the edge of loaded terrain into the placeholder
+## void, since nothing re-triggered loading as they moved. These track
+## enough state for _maybe_stream_regions() (called every
+## _physics_process) to load/unload real region cells as the player
+## actually moves, keeping a real REGION_LOAD_RADIUS window centered on
+## wherever they are, not just where they started.
+##
+## _grid_origin_region/_grid_origin_world anchor the mapping between real
+## region coordinates and Godot world space: _grid_origin_world is
+## whatever world position the real (dx=0, dy=0) cell's own terrain_group
+## ended up at (captured once, right after it loads) -- every other real
+## cell's world position is `_grid_origin_world + Vector3(dx, 0, dy) *
+## REGION_SPAN` by construction (see _load_region_cell), so this doesn't
+## need to know the exact real per-cell placement bias
+## (aabb.size.x/2 + rotation) in closed form, just that it's identical for
+## every cell. This mapping stays fixed for a zone's whole lifetime, even
+## as cells stream in/out around it, so already-placed nodes never need to
+## move.
+var _grid_origin_region := Vector2i.ZERO
+var _grid_origin_world := Vector3.ZERO
+var _grid_shared_anchor_height := NAN
+var _grid_has_origin := false
+var _loaded_cells := {} # "dx_dy" (relative to _grid_origin_region) -> true
+var _last_stream_cell := Vector2i(0x7fffffff, 0x7fffffff) # sentinel so the first real check always runs
+
 @onready var player: CharacterBody3D = $Player
 @onready var player_mesh: MeshInstance3D = $Player/Mesh
+@onready var camera_arm: SpringArm3D = $Player/CameraArm
+@onready var camera_3d: Camera3D = $Player/CameraArm/Camera3D
 @onready var ground_mesh: MeshInstance3D = $Ground/Mesh
 @onready var ground_collision: CollisionShape3D = $Ground/Collision
 @onready var other_entities: Node3D = $OtherEntities
 @onready var zone_label: Label = $UI/Control/ZoneLabel
 @onready var character_label: Label = $UI/Control/CharacterLabel
+@onready var ui_control: Control = $UI/Control
+@onready var hide_ui_button: Button = $UI/HideUIButton
 @onready var zone_input: LineEdit = $UI/Control/ZoneInput
 @onready var chat_log: RichTextLabel = $UI/Control/ChatPanel/ChatLog
 @onready var chat_input: LineEdit = $UI/Control/ChatPanel/ChatInputRow/ChatInput
@@ -466,6 +523,7 @@ func _ready() -> void:
 	NetClient.disconnected.connect(_on_disconnected)
 	send_button.pressed.connect(_on_send_pressed)
 	chat_input.text_submitted.connect(func(_text: String): _on_send_pressed())
+	hide_ui_button.pressed.connect(_toggle_ui_visibility)
 
 	NetClient.monster_list_result.connect(_on_monster_list_result)
 	NetClient.attack_result.connect(_on_attack_result)
@@ -595,10 +653,10 @@ func _ready() -> void:
 ## both set. Skips gracefully (a printed hint, not an error) otherwise,
 ## since this project ships with no game data.
 func _try_load_real_scenery() -> void:
-	var pk2_path := OS.get_environment("SRREVAMP_PK2_PATH")
+	var pk2_path := Pk2Config.data_path()
 	var bsr_path := OS.get_environment("SRREVAMP_BSR_PATH")
 	if pk2_path == "" or bsr_path == "":
-		print("World3D: SRREVAMP_PK2_PATH/SRREVAMP_BSR_PATH not set -- no real scenery loaded")
+		print("World3D: Data.pk2/SRREVAMP_BSR_PATH not set -- no real scenery loaded")
 		return
 
 	var archive := Pk2Reader.open(pk2_path)
@@ -660,11 +718,13 @@ func _try_load_real_decoration_skeleton() -> void:
 	print("World3D: loaded real skeleton %s + animation %s (%d bones, %d keyframes on track %s)" % [
 		bsk_path, ban_path, skel.bones.size(), _real_skeleton_track.keyframes.size(), _real_skeleton_track.bone_name])
 
-## Opens SRREVAMP_PK2_PATH if it's set, or returns null if it's unset or
-## fails to open. Used so AssetSource can fall back to an in-archive path
-## for any of the loose-file-shaped environment variables.
+## Opens the real Data.pk2 -- SRREVAMP_PK2_PATH if set, else a real
+## "pk2/Data.pk2" next to the running executable (see Pk2Config) -- or
+## returns null if neither resolves or the open fails. Used so AssetSource
+## can fall back to an in-archive path for any of the loose-file-shaped
+## environment variables.
 func _open_pk2_if_set() -> Pk2Reader:
-	var pk2_path := OS.get_environment("SRREVAMP_PK2_PATH")
+	var pk2_path := Pk2Config.data_path()
 	if pk2_path == "":
 		return null
 	return Pk2Reader.open(pk2_path)
@@ -698,24 +758,83 @@ func _load_tile_index() -> TileIndexReader.Table:
 		print("World3D: loaded real tile index (%d real tile types) from %s" % [_tile_index_cache.entries.size(), TILE_INDEX_PATH])
 	return _tile_index_cache
 
-## Opens SRREVAMP_MAP_PK2_PATH if it's set, or returns null if it's unset or
-## fails to open. Map.pk2 is a separate archive from SRREVAMP_PK2_PATH's
-## Data.pk2 in a real retail install (confirmed from the user's own real
-## client file listing: Data.pk2, Media.pk2, Map.pk2, Particles.pk2 are all
-## separate files) -- so terrain gets its own pk2 env var rather than
-## reusing SRREVAMP_PK2_PATH.
+## Real per-.ddj-filename texture cache, shared across every region loaded
+## this run -- most real tile2d.ifo IDs a region uses (grass/dirt/stone,
+## etc) repeat across many regions, so this avoids re-reading and
+## re-decoding the same real Tile2D\*.ddj file over and over. A null entry
+## means "already tried, no real file/decode" -- also cached, so a
+## consistently-missing ID doesn't retry every region load.
+static var _ground_texture_cache: Dictionary = {}
+
+## Loads every real per-vertex ground texture `region` actually
+## references, keyed by the real TextureInfo.ID MapmTerrainBuilder's
+## _vertex_color already decodes -- see docs/protocol/DDJ_FORMAT.md and
+## TILE2D_FORMAT.md's 2026-08-23 correction. Resolves each real ID through
+## tile_table to a real tile2d.ifo filename, then loads that file from
+## SRREVAMP_MAP_PK2_PATH's real `Tile2D\` folder (confirmed 2026-08-23 to
+## be where these actually live -- see server/cmd/pk2list's real listing
+## against a real Map.pk2). Returns {} (not an error) if tile_table is
+## null or SRREVAMP_MAP_PK2_PATH isn't set -- callers already treat an
+## empty lookup as "use the flat tile-type color instead."
+func _load_real_ground_textures(region: MapmReader.ParsedRegion, tile_table: TileIndexReader.Table) -> Dictionary:
+	var result := {}
+	if tile_table == null:
+		return result
+	var archive := _open_map_pk2_if_set()
+	if archive == null:
+		return result
+
+	var ids := {}
+	for block in region.blocks:
+		for vertex in block.vertices:
+			if vertex.extra.size() < 2:
+				continue
+			ids[vertex.extra.decode_u16(0) & 0x3ff] = true
+
+	for id in ids.keys():
+		var entry := tile_table.lookup(id)
+		if entry == null or entry.filename == "":
+			continue
+		var tex := _load_ground_texture_file(entry.filename, archive)
+		if tex != null:
+			result[id] = tex
+	return result
+
+## Loads and caches one real Tile2D\<filename>.ddj -- see
+## _load_real_ground_textures's doc comment for the cache's purpose.
+func _load_ground_texture_file(filename: String, archive: Pk2Reader) -> Texture2D:
+	if _ground_texture_cache.has(filename):
+		return _ground_texture_cache[filename]
+	var bytes := AssetSource.read_bytes("Tile2D\\%s" % filename, archive)
+	var tex: Texture2D = null
+	if not bytes.is_empty():
+		var parsed := DdjReader.parse(bytes)
+		if parsed != null:
+			tex = DdjReader.to_texture(parsed)
+	_ground_texture_cache[filename] = tex
+	return tex
+
+## Opens the real Map.pk2 -- SRREVAMP_MAP_PK2_PATH if set, else a real
+## "pk2/Map.pk2" next to the running executable (see Pk2Config) -- or
+## returns null if neither resolves or the open fails. Map.pk2 is a separate
+## archive from Data.pk2 in a real retail install (confirmed from the
+## user's own real client file listing: Data.pk2, Media.pk2, Map.pk2,
+## Particles.pk2 are all separate files) -- so terrain resolves its own real
+## pk2 path rather than reusing Data.pk2's.
 func _open_map_pk2_if_set() -> Pk2Reader:
-	var map_pk2_path := OS.get_environment("SRREVAMP_MAP_PK2_PATH")
+	var map_pk2_path := Pk2Config.map_path()
 	if map_pk2_path == "":
 		return null
 	return Pk2Reader.open(map_pk2_path)
 
-## Opens SRREVAMP_MEDIA_PK2_PATH if it's set, or returns null if it's unset
-## or fails to open. A real client's per-map-region minimap image (see
-## SRREVAMP_MAPM_TEXTURE_PATH below) lives in Media.pk2, a third separate
-## archive from both Data.pk2 and Map.pk2 in a real retail install.
+## Opens the real Media.pk2 -- SRREVAMP_MEDIA_PK2_PATH if set, else a real
+## "pk2/Media.pk2" next to the running executable (see Pk2Config) -- or
+## returns null if neither resolves or the open fails. A real client's
+## per-map-region minimap image (see SRREVAMP_MAPM_TEXTURE_PATH below) lives
+## in Media.pk2, a third separate archive from both Data.pk2 and Map.pk2 in
+## a real retail install.
 func _open_media_pk2_if_set() -> Pk2Reader:
-	var media_pk2_path := OS.get_environment("SRREVAMP_MEDIA_PK2_PATH")
+	var media_pk2_path := Pk2Config.media_path()
 	if media_pk2_path == "":
 		return null
 	return Pk2Reader.open(media_pk2_path)
@@ -784,15 +903,38 @@ func _load_real_terrain_lightmap(mapm_path: String, archive: Pk2Reader) -> Textu
 		return null
 	return region.texture
 
+## The real Jangan region cluster, found 2026-08-24 by scanning every real
+## region's placed objects for real "Res\Bldg\China\Jangan01..06\..."
+## resource paths (see server/cmd/findregionassets and docs/PROGRESS.md's
+## "found real Jangan" entry) -- a real, dense cluster at x=97-99, y=166-169.
+## `98/168` is the single densest real match found (32 real jangan-
+## referencing placements, including real palace assets like
+## `cj_pal_guard_dan`/`cj3_lion02`), used here as an honest, verified-real
+## representative point within that cluster -- not a claim that this
+## specific sub-region is the real game's exact canonical spawn tile,
+## which isn't independently confirmed.
+const JANGAN_ZONE_REGION := "98/168"
+
+## Resolves a zone label to a real region coordinate string ("<x>/<y>").
+## The server's own symbolic default spawn zone, "jangan" (case-
+## insensitive, see server/internal/session/world.go's spawnZone), maps to
+## JANGAN_ZONE_REGION -- previously this project had no known real region
+## coordinate for it at all (an honest gap, before this project had found
+## where Jangan actually is). Any other zone label is returned unchanged,
+## for _zone_paths/_parse_region_coords to interpret (or reject) as usual.
+static func _resolve_zone_region(zone: String) -> String:
+	if zone.to_lower() == "jangan":
+		return JANGAN_ZONE_REGION
+	return zone
+
 ## Splits a zone label shaped like this project's real Map.pk2 region
 ## naming (an (x, y) folder/filename pair -- see docs/protocol/
 ## MAPM_FORMAT.md/MAPO_FORMAT.md, e.g. "100/100", "102/101") into the real
-## internal paths those regions live at. Returns {} for anything not shaped
-## "<x>/<y>" with both parts non-empty -- e.g. the default spawn zone
-## ("jangan") isn't a real region coordinate, so this deliberately doesn't
-## guess a path for it.
+## internal paths those regions live at, after resolving it via
+## _resolve_zone_region. Returns {} for anything not shaped "<x>/<y>" with
+## both parts non-empty.
 static func _zone_paths(zone: String) -> Dictionary:
-	var parts := zone.split("/")
+	var parts := _resolve_zone_region(zone).split("/")
 	if parts.size() != 2 or parts[0] == "" or parts[1] == "":
 		return {}
 	var x := parts[0]
@@ -864,16 +1006,78 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	var center_near_height := _try_load_real_terrain("%d\\%d.m" % [center_x, center_y], texture_override, Vector3.ZERO, "_%d_%d" % [center_x, center_y], true)
 	_try_load_real_map_objects("%d\\%d.o" % [center_x, center_y], Vector3.ZERO, "_%d_%d" % [center_x, center_y])
 
+	_grid_origin_region = Vector2i(center_x, center_y)
+	_grid_shared_anchor_height = center_near_height
+	_grid_has_origin = true
+	_loaded_cells.clear()
+	_loaded_cells["0_0"] = true
+	_last_stream_cell = Vector2i(0x7fffffff, 0x7fffffff)
+	var center_node := get_node_or_null("RealTerrain_%d_%d" % [center_x, center_y])
+	_grid_origin_world = center_node.position if center_node != null else Vector3.ZERO
+
 	for dy in range(-radius, radius + 1):
 		for dx in range(-radius, radius + 1):
 			if dx == 0 and dy == 0:
 				continue # center cell already loaded above
-			var region_x := center_x + dx
-			var region_y := center_y + dy
-			var suffix := "_%d_%d" % [region_x, region_y]
-			var offset := Vector3(dx * REGION_SPAN, 0.0, dy * REGION_SPAN)
-			_try_load_real_terrain("%d\\%d.m" % [region_x, region_y], "", offset, suffix, false, center_near_height)
-			_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
+			_load_region_cell(center_x + dx, center_y + dy, dx, dy, center_near_height)
+
+## Loads one real region cell (terrain + objects) at grid position (dx, dy)
+## relative to _grid_origin_region, and marks it loaded in _loaded_cells.
+## Shared by the initial neighborhood load and _maybe_stream_regions --
+## dx/dy must always be relative to the fixed _grid_origin_region, never
+## to wherever the player currently is, so every cell's real world
+## position stays consistent as the player moves and more cells stream in
+## around them (see _grid_origin_world's own doc comment).
+func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_anchor: float) -> void:
+	var suffix := "_%d_%d" % [region_x, region_y]
+	var offset := Vector3(dx * REGION_SPAN, 0.0, dy * REGION_SPAN)
+	_try_load_real_terrain("%d\\%d.m" % [region_x, region_y], "", offset, suffix, false, shared_anchor)
+	_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
+	_loaded_cells["%d_%d" % [dx, dy]] = true
+
+## Streams additional real region cells in as the player moves, keeping a
+## real REGION_LOAD_RADIUS window centered on whichever real region
+## they're currently standing over rather than the fixed spot they
+## started at -- see _grid_origin_region's own doc comment for why this
+## exists. Cheap to call every physics frame: the real region-coordinate
+## check is trivial, and the expensive part (loading/unloading real
+## regions) only runs on the real cell boundary crossings that actually
+## need it, which happen roughly once per REGION_SPAN (1920 units)
+## traveled, not every frame.
+func _maybe_stream_regions() -> void:
+	if not _grid_has_origin:
+		return
+	var rel := player.position - _grid_origin_world
+	var cur := Vector2i(int(round(rel.x / REGION_SPAN)), int(round(rel.z / REGION_SPAN)))
+	if cur == _last_stream_cell:
+		return
+	_last_stream_cell = cur
+
+	for dy in range(cur.y - REGION_LOAD_RADIUS, cur.y + REGION_LOAD_RADIUS + 1):
+		for dx in range(cur.x - REGION_LOAD_RADIUS, cur.x + REGION_LOAD_RADIUS + 1):
+			var key := "%d_%d" % [dx, dy]
+			if _loaded_cells.has(key):
+				continue
+			_load_region_cell(_grid_origin_region.x + dx, _grid_origin_region.y + dy, dx, dy, _grid_shared_anchor_height)
+
+	# Unload real cells now well outside the real load radius, so a player
+	# walking through a real, large world doesn't accumulate every region
+	# they've ever passed through as permanently-loaded nodes.
+	var unload_margin := REGION_LOAD_RADIUS + 1
+	for key in _loaded_cells.keys().duplicate():
+		var parts := (key as String).split("_")
+		var kdx := int(parts[0])
+		var kdy := int(parts[1])
+		if absi(kdx - cur.x) <= unload_margin and absi(kdy - cur.y) <= unload_margin:
+			continue
+		var suffix := "_%d_%d" % [_grid_origin_region.x + kdx, _grid_origin_region.y + kdy]
+		var terrain_node := get_node_or_null("RealTerrain" + suffix)
+		if terrain_node != null:
+			terrain_node.queue_free()
+		var objects_node := get_node_or_null("RealMapObjects" + suffix)
+		if objects_node != null:
+			objects_node.queue_free()
+		_loaded_cells.erase(key)
 
 ## _ready()'s own entry point into the region grid: reads SRREVAMP_MAPM_PATH
 ## the same way this scene always has, but now treats it as the *center* of
@@ -883,15 +1087,30 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 ## coordinate (e.g. a loose dev file with no real (x, y) meaning).
 func _load_initial_region_neighborhood() -> void:
 	var mapm_path := OS.get_environment("SRREVAMP_MAPM_PATH")
-	if mapm_path == "":
-		print("World3D: SRREVAMP_MAPM_PATH not set -- ground stays a placeholder")
+	if mapm_path != "":
+		var coords := _parse_region_coords(mapm_path)
+		if coords.is_empty():
+			_try_load_real_terrain()
+			_try_load_real_map_objects()
+			return
+		_load_region_neighborhood(coords["x"], coords["y"], REGION_LOAD_RADIUS, OS.get_environment("SRREVAMP_MAPM_TEXTURE_PATH"))
 		return
-	var coords := _parse_region_coords(mapm_path)
-	if coords.is_empty():
-		_try_load_real_terrain()
-		_try_load_real_map_objects()
-		return
-	_load_region_neighborhood(coords["x"], coords["y"], REGION_LOAD_RADIUS, OS.get_environment("SRREVAMP_MAPM_TEXTURE_PATH"))
+
+	# No dev/testing env var set -- the real, normal path for an actual
+	# logged-in player: load whatever real zone the server itself already
+	# placed them in (NetClient.last_enter_world_result.zone), the exact
+	# same resolution _reload_zone_assets uses for a later zone change.
+	# Without this, a real downloaded client with real pk2 files in its
+	# local pk2/ folder (see Pk2Config) and no env vars set at all would
+	# never load any terrain/objects on a normal login -- the env-var path
+	# above was the only one ever wired to real region loading, which only
+	# ever exercised this project's own dev/testing workflow, never a real
+	# player's actual first spawn.
+	var result := NetClient.last_enter_world_result
+	if result != null and result.ok and result.zone != "":
+		_reload_zone_assets(result.zone)
+	else:
+		print("World3D: no real zone to load (no SRREVAMP_MAPM_PATH set and no real logged-in session) -- ground stays a placeholder")
 
 ## Tears down whatever real terrain/map-object nodes are currently loaded
 ## and reloads them for zone, resolving real per-zone paths via _zone_paths
@@ -905,9 +1124,16 @@ func _reload_zone_assets(zone: String) -> void:
 	ground_mesh.visible = true
 	ground_collision.disabled = false
 
-	var coords := _parse_region_coords(zone)
+	var region := _resolve_zone_region(zone)
+	var coords := _parse_region_coords(region)
 	if coords.is_empty():
 		print("World3D: zone %s isn't shaped like a real region (x/y) -- no per-zone assets to load" % zone)
+		# _clear_region_grid() above already removed every real region node
+		# -- also drop the real streaming state that referenced them, so
+		# _maybe_stream_regions doesn't keep trying to grow a grid around a
+		# real origin cell that no longer exists.
+		_grid_has_origin = false
+		_loaded_cells.clear()
 		return
 
 	var paths := _zone_paths(zone)
@@ -995,12 +1221,41 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 		printerr("World3D: could not parse terrain at ", mapm_path)
 		return NAN
 
+	# Real .t lightmap, loaded up front so it's available to whichever mesh
+	# builder runs below -- see _load_real_terrain_lightmap's doc comment
+	# and docs/protocol/MAPT_FORMAT.md. Corrects an earlier same-day
+	# attempt that decoded the wrong bytes entirely (before .t's real
+	# structure -- a ShadowMap plus a properly-headered embedded DDS --
+	# was found via public documentation) and applied the result as direct
+	# detail-albedo color, which looked like broken color-noise static and
+	# was reverted. The real embedded texture is a genuine grayscale
+	# shadow map (white = fully lit), which Godot's ao_texture consumes
+	# directly with no custom shader needed.
+	var lightmap := _load_real_terrain_lightmap(mapm_path, archive)
+	var tile_table := _load_tile_index()
+
+	# Real per-quad ground textures (2026-08-23) -- see
+	# docs/protocol/DDJ_FORMAT.md and MapmTerrainBuilder's top comment for
+	# the correction: these actually live in Map.pk2's real Tile2D\
+	# folder, an archive/folder an earlier search never checked. Only
+	# used if at least one of this region's real texture IDs actually
+	# resolved to a real file -- otherwise the flat tile-type color
+	# (build_full_region_mesh) is a strictly better fallback than a
+	# multi-surface mesh where every single surface is the color fallback
+	# anyway.
+	var ground_textures := _load_real_ground_textures(region, tile_table)
+	var textured := not ground_textures.is_empty()
+
 	# Real, fully deterministic full-region assembly (2026-08-23) -- see
 	# MapmTerrainBuilder.build_full_region_mesh's doc comment and
 	# MAPM_FORMAT.md. MapmReader now parses a region's real, confirmed 6x6
 	# block grid directly (no more row/column guessing), so this always
 	# produces the complete real 97x97 mesh on a successful parse.
-	var terrain_mesh := MapmTerrainBuilder.build_full_region_mesh(region, _load_tile_index())
+	var terrain_mesh: ArrayMesh
+	if textured:
+		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh_textured(region, tile_table, ground_textures, lightmap)
+	else:
+		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh(region, tile_table)
 	if terrain_mesh == null:
 		printerr("World3D: parsed ", region.blocks.size(), " real blocks from ", mapm_path, " but couldn't build a mesh from them")
 		return NAN
@@ -1008,38 +1263,34 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	var terrain_group := Node3D.new()
 	terrain_group.name = "RealTerrain" + node_suffix
 
-	var mat := StandardMaterial3D.new()
-	var real_texture := _load_real_terrain_texture(texture_override)
+	# Real per-quad textures (see above) already carry their own
+	# per-surface materials (including the real .t lightmap) from
+	# MapmTerrainBuilder -- material_override would apply one material to
+	# every surface uniformly and stomp that, so it's left null and the
+	# mesh's own per-surface materials show through. The single-flat-
+	# material path below is unchanged for the untextured fallback.
 	var aabb := terrain_mesh.get_aabb()
-	var row_count_estimate := aabb.size.z / MapmTerrainBuilder.TILE_SIZE + 1
-	if real_texture != null:
-		mat.albedo_texture = real_texture
-		# The mesh's own UVs (see MapmTerrainBuilder) stretch 0..1 across
-		# the whole recovered strip, which can be dozens of real rows long
-		# -- squishing one square minimap image over that whole length
-		# reads as heavy streaking rather than ground detail. Repeating it
-		# roughly once per GRID_WIDTH rows (a real, confirmed value -- see
-		# MapmTerrainBuilder) keeps each repeat closer to the image's own
-		# roughly-square real aspect ratio instead of one giant stretch.
-		mat.uv1_scale = Vector3(1.0, max(row_count_estimate / float(MapmTerrainBuilder.GRID_WIDTH), 1.0), 1.0)
-	else:
-		mat.vertex_color_use_as_albedo = true
-	# Real .t lightmap, applied as ambient occlusion -- see
-	# _load_real_terrain_lightmap's doc comment and
-	# docs/protocol/MAPT_FORMAT.md. Corrects an earlier same-day attempt
-	# that decoded the wrong bytes entirely (before .t's real structure --
-	# a ShadowMap plus a properly-headered embedded DDS -- was found via
-	# public documentation) and applied the result as direct detail-albedo
-	# color, which looked like broken color-noise static and was reverted.
-	# The real embedded texture is a genuine grayscale shadow map (white =
-	# fully lit), which Godot's ao_texture consumes directly with no
-	# custom shader needed. Uses the mesh's own UV1 (ao_on_uv2 defaults to
-	# false), same channel the albedo/detail textures above use.
-	var lightmap := _load_real_terrain_lightmap(mapm_path, archive)
-	if lightmap != null:
-		mat.ao_enabled = true
-		mat.ao_texture = lightmap
-		mat.ao_light_affect = 1.0
+	var mat: StandardMaterial3D = null
+	if not textured:
+		mat = StandardMaterial3D.new()
+		var real_texture := _load_real_terrain_texture(texture_override)
+		var row_count_estimate := aabb.size.z / MapmTerrainBuilder.TILE_SIZE + 1
+		if real_texture != null:
+			mat.albedo_texture = real_texture
+			# The mesh's own UVs (see MapmTerrainBuilder) stretch 0..1 across
+			# the whole recovered strip, which can be dozens of real rows long
+			# -- squishing one square minimap image over that whole length
+			# reads as heavy streaking rather than ground detail. Repeating it
+			# roughly once per GRID_WIDTH rows (a real, confirmed value -- see
+			# MapmTerrainBuilder) keeps each repeat closer to the image's own
+			# roughly-square real aspect ratio instead of one giant stretch.
+			mat.uv1_scale = Vector3(1.0, max(row_count_estimate / float(MapmTerrainBuilder.GRID_WIDTH), 1.0), 1.0)
+		else:
+			mat.vertex_color_use_as_albedo = true
+		if lightmap != null:
+			mat.ao_enabled = true
+			mat.ao_texture = lightmap
+			mat.ao_light_affect = 1.0
 	# Real world-space alignment with the player's own spawn position isn't
 	# confirmed (see top comment) -- centered near the player purely for
 	# visibility, same as the scenery/decoration-skeleton placement choices
@@ -1058,9 +1309,12 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# camera. Rotating 180 degrees around Y flips both axes consistently
 	# (a pure rotation, so front-face winding/normals stay correct) so
 	# successive rows extend further *into* view instead.
-	var near_arrays := terrain_mesh.surface_get_arrays(0)
-	var near_positions: PackedVector3Array = near_arrays[Mesh.ARRAY_VERTEX]
-	var near_height := near_positions[MapmTerrainBuilder.GRID_WIDTH / 2].y
+	# Read directly from the parsed region rather than the built mesh --
+	# see near_row_middle_height's doc comment: the textured mesh path
+	# above can split row 0 across several surfaces, so surface 0 alone
+	# no longer reliably holds this vertex the way the old single-surface
+	# mesh did.
+	var near_height := MapmTerrainBuilder.near_row_middle_height(region)
 	var anchor_height := near_height if is_nan(shared_vertical_anchor) else shared_vertical_anchor
 	terrain_group.rotation.y = PI
 	terrain_group.position = Vector3(aabb.size.x / 2.0, -anchor_height, 0) + world_offset
@@ -1153,7 +1407,7 @@ func _load_character_assets() -> void:
 
 		var bsk_bytes := AssetSource.read_bytes(paths["skeleton"], archive)
 		if bsk_bytes.is_empty():
-			printerr("World3D: could not find %s skeleton at %s in %s" % [gender, paths["skeleton"], OS.get_environment("SRREVAMP_PK2_PATH")])
+			printerr("World3D: could not find %s skeleton at %s in %s" % [gender, paths["skeleton"], Pk2Config.data_path()])
 			continue
 		var skel := BskReader.parse(bsk_bytes)
 		if skel == null:
@@ -1211,7 +1465,7 @@ func _load_character_assets() -> void:
 			"walk_anim": walk_anim,
 		}
 		print("World3D: cached real %s character assets (%d bones, %d body parts, %d armor sets, idle_anim=%s, walk_anim=%s) from %s" % [
-			gender, skel.bones.size(), parts.size(), equipment_sets.size(), idle_anim != null, walk_anim != null, OS.get_environment("SRREVAMP_PK2_PATH")])
+			gender, skel.bones.size(), parts.size(), equipment_sets.size(), idle_anim != null, walk_anim != null, Pk2Config.data_path()])
 
 	for variant in WEAPON_VARIANTS:
 		var weapon_bytes := AssetSource.read_bytes(variant["mesh"], archive)
@@ -1221,7 +1475,7 @@ func _load_character_assets() -> void:
 		if weapon_mesh == null:
 			continue
 		_weapon_variants.append({"mesh": weapon_mesh, "materials": _load_real_materials(archive, variant["material"])})
-	print("World3D: cached %d/%d real weapon variants from %s" % [_weapon_variants.size(), WEAPON_VARIANTS.size(), OS.get_environment("SRREVAMP_PK2_PATH")])
+	print("World3D: cached %d/%d real weapon variants from %s" % [_weapon_variants.size(), WEAPON_VARIANTS.size(), Pk2Config.data_path()])
 
 	for variant in SHIELD_VARIANTS:
 		var shield_bytes := AssetSource.read_bytes(variant["mesh"], archive)
@@ -1231,7 +1485,7 @@ func _load_character_assets() -> void:
 		if shield_mesh == null:
 			continue
 		_shield_variants.append({"mesh": shield_mesh, "materials": _load_real_materials(archive, variant["material"])})
-	print("World3D: cached %d/%d real shield variants from %s" % [_shield_variants.size(), SHIELD_VARIANTS.size(), OS.get_environment("SRREVAMP_PK2_PATH")])
+	print("World3D: cached %d/%d real shield variants from %s" % [_shield_variants.size(), SHIELD_VARIANTS.size(), Pk2Config.data_path()])
 
 ## Maps CharacterAssembler's real 2-letter equipment-slot codes (see
 ## EQUIPMENT_SLOT_BONES) to the real, decompiler-confirmed slot constants
@@ -1459,7 +1713,7 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 	# unpopulated) is the normal, expected case, not an error.
 	var placements: Array = []
 	for obj in region.objects:
-		placements.append({"type_id": obj.type_id, "position": obj.position})
+		placements.append({"type_id": obj.type_id, "position": obj.position, "rotation": obj.rotation})
 	var mapo2_path := mapo_path + "2"
 	var mapo2_bytes := AssetSource.read_bytes(mapo2_path, map_archive)
 	var o2_count := 0
@@ -1469,7 +1723,11 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 			for sector in region2.sectors:
 				for list in sector.lists:
 					for entry in list:
-						placements.append({"type_id": entry.type_id, "position": entry.position})
+						# Real yaw rotation -- see MapO2Reader.Entry.rotation's
+						# doc comment for how this was confirmed (same
+						# real-range empirical check as .o's own rotation
+						# field, against a live region).
+						placements.append({"type_id": entry.type_id, "position": entry.position, "rotation": entry.rotation})
 						o2_count += 1
 
 	if placements.is_empty():
@@ -1491,16 +1749,34 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 
 	var container := Node3D.new()
 	container.name = "RealMapObjects" + node_suffix
-	container.position = world_offset
-	add_child(container)
 
-	# Real world-space alignment with the player's own spawn position isn't
-	# confirmed (same honest caveat as terrain/scenery elsewhere in this
-	# file) -- cluster real objects relative to the region's own first
-	# placement and offset that cluster near the player for visibility,
-	# rather than trusting the raw absolute coordinates to land near
-	# wherever the player happens to spawn.
-	var origin: Vector3 = placements[0]["position"]
+	# Real world-space alignment: SOLVED (2026-08-24) via a real, public,
+	# non-reverse-engineered source -- JellyBitz's xSROMap
+	# (https://github.com/JellyBitz/xSROMap), whose own real coordinate-
+	# conversion JS confirms a region's local coordinates span exactly
+	# [0, 1920) and a region ID packs as `(ySector << 8) | xSector` --
+	# exactly the real REGION_SPAN (1920.0) and region-folder-name
+	# convention ("98\168.m" = xSector 98, ySector 168) this project's own
+	# region-streaming grid already uses for real terrain, confirming that
+	# grid's math is really correct, not just internally consistent. So a
+	# `.o` object's raw position is already real, absolute-within-its-
+	# region data needing no artificial recentering -- it only needs the
+	# exact same rotation+offset transform `_try_load_real_terrain` already
+	# applies to that region's terrain (180-degree Y rotation + the
+	# aabb.size.x/2 real-vertex anchor offset), so parenting this container
+	# under that exact terrain node (found by its real, shared node-name
+	# convention) inherits that transform automatically instead of
+	# duplicating it. Falls back to the old world_offset-only placement if
+	# that terrain node isn't loaded (e.g. a real `.o` with no matching
+	# `.m`, or this function's own standalone/env-var call path where no
+	# node_suffix was given) -- better than dropping the objects entirely.
+	var terrain_node := get_node_or_null("RealTerrain" + node_suffix) if node_suffix != "" else null
+	if terrain_node != null:
+		terrain_node.add_child(container)
+	else:
+		container.position = world_offset
+		add_child(container)
+
 	var loaded := 0
 	var skipped_unresolved := 0
 	# A real region repeats the same handful of real object types across
@@ -1526,14 +1802,14 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 				continue
 			templates[entry.path] = template
 			node = template.duplicate()
-		# Placed further out than the single-scenery-object offset above --
-		# a real region's real objects can cluster tightly around their
-		# own real relative positions (see docs/PROGRESS.md), so centering
-		# the cluster at the same close distance as one lone object left
-		# the player standing in the middle of it rather than able to see
-		# it as a recognizable cluster.
-		var pos: Vector3 = placement["position"]
-		node.position = (pos - origin) + Vector3(20, 0, -30)
+		# Real, absolute-within-its-region position -- see this function's
+		# own doc comment above (container placement) for how this is now
+		# known correct rather than an artificial recentering.
+		node.position = placement["position"]
+		# Real yaw rotation -- see MapoReader.ObjectPlacement.rotation's doc
+		# comment for how this was confirmed (decompiled cos/sin construction
+		# plus a 100%-real-range empirical check against a live region).
+		node.rotation.y = placement["rotation"]
 		container.add_child(node)
 		loaded += 1
 
@@ -1568,16 +1844,35 @@ func _physics_process(delta: float) -> void:
 	var input_dir := Vector3.ZERO
 	input_dir.x = Input.get_axis("ui_left", "ui_right")
 	input_dir.z = Input.get_axis("ui_up", "ui_down")
-	if input_dir.length() > 0.0:
+	var manual_input := input_dir.length() > 0.0
+	if manual_input:
 		input_dir = input_dir.normalized()
+		_has_move_target = false # manual movement always cancels a pending click-to-move
+		player.velocity.x = input_dir.x * MOVE_SPEED
+		player.velocity.z = input_dir.z * MOVE_SPEED
+	elif _has_move_target:
+		var to_target := _move_target - player.position
+		to_target.y = 0.0
+		if to_target.length() <= MOVE_TARGET_STOP_DISTANCE:
+			_has_move_target = false
+			player.velocity.x = 0.0
+			player.velocity.z = 0.0
+		else:
+			var dir := to_target.normalized()
+			player.velocity.x = dir.x * MOVE_SPEED
+			player.velocity.z = dir.z * MOVE_SPEED
+			player.rotation.y = atan2(dir.x, dir.z)
+	else:
+		player.velocity.x = 0.0
+		player.velocity.z = 0.0
 
-	player.velocity.x = input_dir.x * MOVE_SPEED
-	player.velocity.z = input_dir.z * MOVE_SPEED
 	if not player.is_on_floor():
 		player.velocity.y -= GRAVITY * delta
 	else:
 		player.velocity.y = 0.0
 	player.move_and_slide()
+
+	_maybe_stream_regions()
 
 	_time_since_send += delta
 	if _time_since_send >= MIN_SEND_INTERVAL and player.position.distance_to(_last_sent_pos) >= MIN_SEND_DISTANCE:
@@ -1700,6 +1995,52 @@ func _on_chat_whisper_message(message: ChatNet.Message) -> void:
 
 func _log_system(text: String) -> void:
 	chat_log.add_text("* %s\n" % text)
+
+## Toggles the whole hideable UI panel (character/zone labels, chat, action
+## tabs, etc.) -- see HideUIButton's own doc-free scene node and the
+## "toggle_ui" (F10) input action wired in _unhandled_input. HideUIButton
+## itself lives outside ui_control (a sibling under the UI CanvasLayer, not
+## a child of Control) specifically so it stays clickable to toggle the UI
+## back on even while everything else is hidden.
+func _toggle_ui_visibility() -> void:
+	ui_control.visible = not ui_control.visible
+	hide_ui_button.text = "Show UI" if not ui_control.visible else "Hide UI"
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("toggle_ui"):
+		_toggle_ui_visibility()
+
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_RIGHT:
+			_camera_orbiting = event.pressed
+		elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			_try_set_move_target(event.position)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+			camera_arm.spring_length = clampf(camera_arm.spring_length - CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+			camera_arm.spring_length = clampf(camera_arm.spring_length + CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+	elif event is InputEventMouseMotion and _camera_orbiting:
+		camera_arm.rotation_degrees.y -= event.relative.x * CAMERA_ORBIT_SENSITIVITY
+		camera_arm.rotation_degrees.x = clampf(
+			camera_arm.rotation_degrees.x - event.relative.y * CAMERA_ORBIT_SENSITIVITY,
+			CAMERA_PITCH_MIN_DEGREES, CAMERA_PITCH_MAX_DEGREES)
+
+## Real Silkroad-style click-to-move: raycasts from the camera through the
+## real clicked screen position into the 3D world (real terrain/object
+## collision -- both now real, solid bodies, see ObjectLoader's own real
+## collision fix) and, on a hit, sets that as the player's real destination
+## for _physics_process to walk toward every subsequent frame until reached
+## or cancelled by manual WASD/arrow input.
+func _try_set_move_target(screen_pos: Vector2) -> void:
+	var from := camera_3d.project_ray_origin(screen_pos)
+	var dir := camera_3d.project_ray_normal(screen_pos)
+	var space_state := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
+	var hit := space_state.intersect_ray(query)
+	if hit.is_empty():
+		return
+	_move_target = hit["position"]
+	_has_move_target = true
 
 func _on_send_pressed() -> void:
 	var text := chat_input.text.strip_edges()

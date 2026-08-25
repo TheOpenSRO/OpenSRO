@@ -55,7 +55,7 @@ func _build_bms(mesh_name: String, material_name: String) -> PackedByteArray:
 	var positions := [Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 0, 1)]
 	for i in range(3):
 		var rec := PackedByteArray()
-		rec.resize(BmsReader.VERTEX_REC_SIZE)
+		rec.resize(44)
 		_put_f32(rec, 0x00, positions[i].x)
 		_put_f32(rec, 0x04, positions[i].y)
 		_put_f32(rec, 0x08, positions[i].z)
@@ -335,6 +335,165 @@ func _build_name_match_archive(path: String) -> void:
 	f.store_buffer(bsr_data)
 	f.close()
 
+## Builds a real-shaped DXT3-compressed .ddj (4x4, 1 real 16-byte DXT3
+## block) -- see build_godot_material's own doc comment for why DXT3
+## specifically matters (a real per-pixel alpha channel Godot's decoder
+## actually preserves, unlike DXT1).
+func _build_dxt3_ddj() -> PackedByteArray:
+	var payload_len := 16 # one 4x4 DXT3 block
+	var dds := PackedByteArray()
+	dds.resize(4 + DdjReader.DDS_HEADER_SIZE + payload_len)
+	var magic_bytes := "DDS ".to_ascii_buffer()
+	for i in range(4):
+		dds[i] = magic_bytes[i]
+	_put_u32(dds, 4, DdjReader.DDS_HEADER_SIZE)
+	_put_u32(dds, 4 + 8, 4) # height
+	_put_u32(dds, 4 + 12, 4) # width
+	_put_u32(dds, 4 + 24, 1) # mip map count
+	var pf_off := 4 + 72
+	_put_u32(dds, pf_off, 32)
+	_put_u32(dds, pf_off + 4, DdjReader.DDPF_FOURCC)
+	var cc_bytes := "DXT3".to_ascii_buffer()
+	for i in range(4):
+		dds[pf_off + 8 + i] = cc_bytes[i]
+
+	var buf := PackedByteArray()
+	buf.resize(DdjReader.WRAPPER_SIZE + dds.size())
+	var magic := DdjReader.MAGIC.to_ascii_buffer()
+	for i in range(magic.size()):
+		buf[i] = magic[i]
+	_put_u32(buf, 0x0c, buf.size() - DdjReader.MAGIC_LEN)
+	_put_u32(buf, 0x10, 1)
+	for i in range(dds.size()):
+		buf[DdjReader.WRAPPER_SIZE + i] = dds[i]
+	return buf
+
+## A minimal, flat, root-level-only archive with a single real
+## DXT3-compressed texture -- just enough to exercise
+## ObjectLoader.build_godot_material's real alpha-cutout detection without
+## needing a full .bsr/.bms object around it.
+func _build_alpha_archive(path: String) -> void:
+	var header := PackedByteArray()
+	header.resize(Pk2Reader.HEADER_SIZE)
+	var magic := "JoyMax File Manager!".to_ascii_buffer()
+	for i in range(magic.size()):
+		header[i] = magic[i]
+
+	var write_entry := func(block: PackedByteArray, i: int, entry_type: int, name: String, offset: int, size: int) -> void:
+		var base := i * Pk2Reader.ENTRY_SIZE
+		block[base] = entry_type
+		var nb := name.to_ascii_buffer()
+		for j in range(nb.size()):
+			block[base + 0x01 + j] = nb[j]
+		var pos_base := base + Pk2Reader.ENTRY_OFF_POSITION
+		block[pos_base] = offset & 0xFF
+		block[pos_base + 1] = (offset >> 8) & 0xFF
+		block[pos_base + 2] = (offset >> 16) & 0xFF
+		block[pos_base + 3] = (offset >> 24) & 0xFF
+		var size_base := base + Pk2Reader.ENTRY_OFF_SIZE
+		block[size_base] = size & 0xFF
+		block[size_base + 1] = (size >> 8) & 0xFF
+		block[size_base + 2] = (size >> 16) & 0xFF
+		block[size_base + 3] = (size >> 24) & 0xFF
+
+	var block_size := Pk2Reader.BLOCK_SIZE
+	var root_off := Pk2Reader.HEADER_SIZE
+	var sub_off := root_off + block_size
+	var files_off := sub_off + block_size
+	var ddj_data := _build_dxt3_ddj()
+	var ddj_off := files_off
+	var ddj2_data := _build_dxt3_ddj()
+	var ddj2_off := ddj_off + ddj_data.size()
+
+	var root_block := PackedByteArray()
+	root_block.resize(block_size)
+	write_entry.call(root_block, 0, Pk2Reader.ENTRY_TYPE_FOLDER, ".", root_off, 0)
+	write_entry.call(root_block, 1, Pk2Reader.ENTRY_TYPE_FILE, "leaf.ddj", ddj_off, ddj_data.size())
+	write_entry.call(root_block, 2, Pk2Reader.ENTRY_TYPE_FOLDER, "sub", sub_off, 0)
+
+	var sub_block := PackedByteArray()
+	sub_block.resize(block_size)
+	write_entry.call(sub_block, 0, Pk2Reader.ENTRY_TYPE_FOLDER, ".", sub_off, 0)
+	write_entry.call(sub_block, 1, Pk2Reader.ENTRY_TYPE_FOLDER, "..", root_off, 0)
+	write_entry.call(sub_block, 2, Pk2Reader.ENTRY_TYPE_FILE, "leaf2.ddj", ddj2_off, ddj2_data.size())
+
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_buffer(header)
+	f.store_buffer(root_block)
+	f.store_buffer(sub_block)
+	f.store_buffer(ddj_data)
+	f.store_buffer(ddj2_data)
+	f.close()
+
+## Builds a minimal real-shaped .cpd (magic + name, no trailing real
+## sub-count field this reader doesn't rely on -- see CpdReader's own doc
+## comment) referencing one real .bsr sub-object by a bare root-relative
+## path.
+func _build_cpd(name: String, bsr_path: String) -> PackedByteArray:
+	var buf := PackedByteArray()
+	buf.resize(CpdReader.HEADER_LEN)
+	var magic := CpdReader.MAGIC.to_ascii_buffer()
+	for i in range(magic.size()):
+		buf[i] = magic[i]
+	buf = _append_len_prefixed(buf, name)
+	buf = _append_len_prefixed(buf, bsr_path)
+	return buf
+
+## A minimal, flat, root-level-only archive with a real synthetic
+## .bms/.bsr pair plus a real .cpd referencing that .bsr -- exercises
+## ObjectLoader's real .cpd dispatch (load_object -> _load_compound_object
+## -> load_object again for the real sub-.bsr).
+func _build_cpd_archive(path: String) -> void:
+	var header := PackedByteArray()
+	header.resize(Pk2Reader.HEADER_SIZE)
+	var magic := "JoyMax File Manager!".to_ascii_buffer()
+	for i in range(magic.size()):
+		header[i] = magic[i]
+
+	var write_entry := func(block: PackedByteArray, i: int, entry_type: int, name: String, offset: int, size: int) -> void:
+		var base := i * Pk2Reader.ENTRY_SIZE
+		block[base] = entry_type
+		var nb := name.to_ascii_buffer()
+		for j in range(nb.size()):
+			block[base + 0x01 + j] = nb[j]
+		var pos_base := base + Pk2Reader.ENTRY_OFF_POSITION
+		block[pos_base] = offset & 0xFF
+		block[pos_base + 1] = (offset >> 8) & 0xFF
+		block[pos_base + 2] = (offset >> 16) & 0xFF
+		block[pos_base + 3] = (offset >> 24) & 0xFF
+		var size_base := base + Pk2Reader.ENTRY_OFF_SIZE
+		block[size_base] = size & 0xFF
+		block[size_base + 1] = (size >> 8) & 0xFF
+		block[size_base + 2] = (size >> 16) & 0xFF
+		block[size_base + 3] = (size >> 24) & 0xFF
+
+	var block_size := Pk2Reader.BLOCK_SIZE
+	var root_off := Pk2Reader.HEADER_SIZE
+	var files_off := root_off + block_size
+
+	var bms_data := _build_bms("simple", "")
+	var bsr_data := _build_bsr("TestCompoundPiece", "simple.bms", "testpiece.bmt", [])
+	var cpd_data := _build_cpd("TestCompound", "testpiece.bsr")
+
+	var bms_off := files_off
+	var bsr_off := bms_off + bms_data.size()
+	var cpd_off := bsr_off + bsr_data.size()
+
+	var root_block := PackedByteArray()
+	root_block.resize(block_size)
+	write_entry.call(root_block, 0, Pk2Reader.ENTRY_TYPE_FOLDER, ".", root_off, 0)
+	write_entry.call(root_block, 1, Pk2Reader.ENTRY_TYPE_FILE, "simple.bms", bms_off, bms_data.size())
+	write_entry.call(root_block, 2, Pk2Reader.ENTRY_TYPE_FILE, "testpiece.bsr", bsr_off, bsr_data.size())
+	write_entry.call(root_block, 3, Pk2Reader.ENTRY_TYPE_FILE, "testcompound.cpd", cpd_off, cpd_data.size())
+
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_buffer(header)
+	f.store_buffer(root_block)
+	f.store_buffer(bms_data)
+	f.store_buffer(bsr_data)
+	f.store_buffer(cpd_data)
+	f.close()
+
 func _init() -> void:
 	var path := "user://srrevamp_objloader_test.pk2"
 	_build_archive(path)
@@ -389,6 +548,58 @@ func _init() -> void:
 			obj.free()
 		nm_archive.close()
 	DirAccess.remove_absolute(name_match_path)
+
+	var alpha_path := "user://srrevamp_objloader_alpha_test.pk2"
+	_build_alpha_archive(alpha_path)
+	var alpha_archive := Pk2Reader.open(alpha_path)
+	_check(alpha_archive != null, "opens alpha synthetic archive")
+	if alpha_archive != null:
+		var layer := BmtReader.Layer.new()
+		layer.layer_name = "leaf"
+		layer.diffuse = Color.WHITE
+		layer.texture_path = "leaf.ddj"
+		var mat := ObjectLoader.build_godot_material(alpha_archive, "", layer)
+		_check(mat.albedo_texture != null, "real DXT3 texture loads")
+		_check(mat.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR, "real DXT3 alpha triggers alpha-scissor transparency (got %s)" % mat.transparency)
+		_check(mat.cull_mode == BaseMaterial3D.CULL_DISABLED, "real DXT3 alpha disables backface culling (got %s)" % mat.cull_mode)
+
+		# Real failure mode found live-testing real Jangan palace materials
+		# (2026-08-23): a layer's texture_path is sometimes a real *full
+		# path* (pointing at a completely different real directory) rather
+		# than a bare filename. bmt_path here ("other\\place.bmt") is
+		# deliberately unrelated to "sub\\leaf2.ddj"'s real directory --
+		# prefixing it would produce a nonexistent nonsense path.
+		var full_path_layer := BmtReader.Layer.new()
+		full_path_layer.layer_name = "leaf2"
+		full_path_layer.diffuse = Color.WHITE
+		full_path_layer.texture_path = "sub\\leaf2.ddj"
+		var mat2 := ObjectLoader.build_godot_material(alpha_archive, "other\\place.bmt", full_path_layer)
+		_check(mat2.albedo_texture != null, "a real full texture_path resolves correctly, ignoring bmt_path's own directory")
+
+		alpha_archive.close()
+	DirAccess.remove_absolute(alpha_path)
+
+	# Real .cpd dispatch (2026-08-23, found live-testing real Jangan palace
+	# scenery) -- load_object() must recurse through a real compound
+	# object's real sub-.bsr reference(s), not fail outright on the real,
+	# different magic.
+	var cpd_path := "user://srrevamp_objloader_cpd_test.pk2"
+	_build_cpd_archive(cpd_path)
+	var cpd_archive := Pk2Reader.open(cpd_path)
+	_check(cpd_archive != null, "opens cpd synthetic archive")
+	if cpd_archive != null:
+		var compound_obj := ObjectLoader.load_object(cpd_archive, "testcompound.cpd")
+		_check(compound_obj != null, "loads a real .cpd end-to-end")
+		if compound_obj != null:
+			_check(compound_obj.name == "TestCompound", "root node named after the real compound (got %s)" % compound_obj.name)
+			_check(compound_obj.get_child_count() == 1, "1 real sub-object loaded (got %d)" % compound_obj.get_child_count())
+			if compound_obj.get_child_count() == 1:
+				var piece: Node3D = compound_obj.get_child(0)
+				_check(piece.name == "TestCompoundPiece", "sub-object named after its own real .bsr (got %s)" % piece.name)
+				_check(piece.get_child_count() == 1, "sub-object has its 1 real mesh piece (got %d)" % piece.get_child_count())
+			compound_obj.free()
+		cpd_archive.close()
+	DirAccess.remove_absolute(cpd_path)
 
 	if _failures == 0:
 		print("ALL PASS")

@@ -131,6 +131,55 @@ func _init() -> void:
 
 	_check(MapmTerrainBuilder.build_full_region_mesh(MapmReader.ParsedRegion.new()) == null, "rejects a region without a real 6x6 block grid")
 
+	_check(MapmTerrainBuilder.near_row_middle_height(region_full) == 0.0, "near_row_middle_height reads block (0,0)'s own real vertex")
+
+	# _quad_uv_corners: a rendering-only technique (not a real-data claim)
+	# that varies each quad's UV orientation to avoid a real repeated
+	# ground texture reading as an obviously stamped, aligned grid -- see
+	# the function's own doc comment. Must always return a real permutation
+	# of the unit square's 4 corners (never a garbage/degenerate UV set),
+	# and must be deterministic (same (r, c) always produces the same
+	# result, so a region's appearance doesn't change between loads).
+	var uv_corner_set := {}
+	for corner in MapmTerrainBuilder._quad_uv_corners(3, 5):
+		uv_corner_set[corner] = true
+	_check(uv_corner_set.size() == 4, "_quad_uv_corners returns 4 distinct real unit-square corners (got %d)" % uv_corner_set.size())
+	for corner in uv_corner_set.keys():
+		_check(corner.x in [0.0, 1.0] and corner.y in [0.0, 1.0], "_quad_uv_corners only ever returns real unit-square corners (got %s)" % corner)
+	_check(MapmTerrainBuilder._quad_uv_corners(3, 5) == MapmTerrainBuilder._quad_uv_corners(3, 5), "_quad_uv_corners is deterministic for the same (r, c)")
+
+	# build_full_region_mesh_textured: half the region's vertices carry
+	# TextureInfo ID 1 (resolved via texture_lookup to a real texture), the
+	# other half ID 2 (no entry in texture_lookup, so it must fall back to
+	# the flat-color surface) -- covers both branches with one region.
+	var fake_texture := ImageTexture.create_from_image(Image.create(2, 2, false, Image.FORMAT_RGBA8))
+	var texture_lookup := {1: fake_texture}
+	var region_textured := _make_region(func(band_row, band_col):
+		var tex_info := 1 if band_col < 3 else 2
+		return _make_block(func(r, c): return 0.0, tex_info))
+	var textured_mesh := MapmTerrainBuilder.build_full_region_mesh_textured(region_textured, null, texture_lookup)
+	_check(textured_mesh != null, "builds a textured full-region mesh")
+	if textured_mesh != null:
+		# Surface 0 is always the whole-grid smoothed-color base (see
+		# _build_textured_mesh_from_cells's doc comment on boundary
+		# blending, 2026-08-24); surfaces 1+ are one per resolved texture
+		# key layered on top (here: the resolved ID and the -1 fallback).
+		_check(textured_mesh.get_surface_count() == 3, "base surface plus one real surface for the resolved ID, one fallback surface (got %d)" % textured_mesh.get_surface_count())
+		var expected_size := MapmReader.BLOCKS_PER_SIDE * (GW - 1) + 1
+		var expected_quad_indices := 2 * 3 * (expected_size - 1) * (expected_size - 1)
+		var base_arrays := textured_mesh.surface_get_arrays(0)
+		_check(base_arrays[Mesh.ARRAY_INDEX].size() == expected_quad_indices, "base surface alone covers every real quad (got %d indices)" % base_arrays[Mesh.ARRAY_INDEX].size())
+		var total_overlay_indices := 0
+		for i in range(1, textured_mesh.get_surface_count()):
+			var mat: StandardMaterial3D = textured_mesh.surface_get_material(i)
+			var arrays := textured_mesh.surface_get_arrays(i)
+			total_overlay_indices += arrays[Mesh.ARRAY_INDEX].size()
+			_check(mat.vertex_color_use_as_albedo, "overlay surface uses vertex color as albedo (for boundary alpha blending)")
+			_check(mat.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA, "overlay surface is alpha-blended over the base")
+		_check(total_overlay_indices == expected_quad_indices, "every real quad is also covered across the overlay surfaces (got %d indices)" % total_overlay_indices)
+
+	_check(MapmTerrainBuilder.build_full_region_mesh_textured(MapmReader.ParsedRegion.new(), null, {}) == null, "build_full_region_mesh_textured rejects a region without a real 6x6 block grid")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
