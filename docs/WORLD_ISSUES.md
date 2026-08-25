@@ -138,3 +138,55 @@ run turned up a strong signal that it exercised the **old** build, not the fixed
 - Waiting on: OpenSRO redownloading `srrevamp-windows.zip` specifically from
   https://github.com/OpenSRO/srrevamp/actions/runs/32891267640 into a fresh folder and retesting,
   plus checking for a stray `SRREVAMP_*_PK2_PATH` env var on that machine.
+
+## 2026-08-26, third round — real retest via a Windows Remote Control session: MAJOR bug found
+
+OpenSRO ran the client directly from the Godot editor (env vars pointed at his local pk2 files),
+confirming this project's own committed code (not a stale build) — the boot message, log-file
+line, WASD movement, and click-to-move all matched the current source. The log itself showed a
+genuinely healthy load: both genders' character assets (`idle_anim=true, walk_anim=true`), 11
+real regions with terrain + ~2,800 real map objects, only one missing real asset
+(`w_cd_stab_buil03_wal.bsr`, an already-known content gap). This ruled out the "stale build"
+theory from the previous round for everything except the renderer line specifically (the editor's
+Play-mode viewport doesn't necessarily follow project.godot's `rendering_method` the way an
+*exported* build does, so `Forward+` showing up there isn't informative either way).
+
+**Then a real, severe, newly-found bug**: with movement confirmed working (WASD and click-to-move
+both move the character — nice, unplanned confirmation those particular fixes hold up), the
+assembled player character's limbs **fly apart wildly** the moment animation applies — hands and
+forearms flung far from the body, not a subtle glitch. Root-caused with real data (pulled
+`chinaman_skel.bsk` + `chinaman_fighter_standcity.ban` from the RE box, compared quaternions
+directly):
+
+- `Skeleton3DBuilder.build_skeleton3d` gives every bone an `IDENTITY` rest *rotation* (only real
+  bind *positions* are used — see that function's own doc comment; the real `.bsk` bind-rotation
+  quaternion is parsed but was never used, since this project hadn't confirmed it composes the way
+  Skeleton3D's rest hierarchy expects).
+- `Skeleton3DBuilder.apply_ban_pose`/`apply_ban_keyframe` compute each frame's rotation as a
+  *delta* relative to that bone's own `.ban` track `keyframe[0]` — implicitly assuming
+  `keyframe[0]` represents the same (identity) rest orientation the skeleton was built with.
+- **That assumption is false**, confirmed directly: `Bip01 R UpperArm`'s real `.bsk` bind
+  quaternion is `[0.056, -0.017, -0.062, 0.996]` (near-identity), but the same bone's `.ban`
+  `keyframe[0]` is `[0.142, -0.015, 0.534, 0.834]` — a substantially different orientation, not a
+  small idle sway. Applying a "delta" computed against the wrong reference applies an outright
+  wrong rotation, and that error compounds down the kinematic chain (upper arm → forearm → hand),
+  which is exactly why the arms/hands were the most dramatically displaced pieces in the real
+  screenshot while the spine/pelvis stayed closer to normal.
+- This was never caught earlier because it was never visually verified end-to-end before now —
+  the earlier "confirmed" validation (`SkeletonPose.apply_rotation`) only ever drove a single-bone
+  decoration skeleton, not a full multi-limb walking character. Another concrete instance of
+  `feedback_headless_verification_gaps`: this is a pre-existing architecture gap, not something
+  introduced this session, that simply had no real human playtest to surface it until now.
+
+**Stopgap shipped**: disabled the per-frame `apply_ban_pose` call for the player's assembled body
+(`World3D.gd`, `_physics_process`) rather than ship the far-worse "limbs fly apart" result. The
+body now stays in its real bind pose (a static T-stance) — not idle/walking, but at least not
+exploding. The real fix needs `Skeleton3DBuilder` to build each bone's *actual* `.bsk` bind
+rotation into its rest transform (not identity) and `apply_ban_pose` to compute deltas against
+that real rest instead of the animation's own frame 0 — a genuine rework, tracked here as a
+follow-up, not attempted as a quick patch given the risk of shipping something equally wrong in a
+different way.
+
+Real scratch data (`chinaman_skel.bsk`, `chinaman_fighter_standcity.ban`, the throwaway
+extractor/comparison tools) deleted immediately after use, per the no-persisted-real-assets
+policy.
