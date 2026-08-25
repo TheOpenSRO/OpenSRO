@@ -2,6 +2,904 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-25 (cont'd 84) — post-fix audit re-verification, ground-texture full-catalog check, and a new character/equipment asset audit
+
+Continuing the "make sure everything in the pk2s is mapped" sweep from the previous entry into
+the remaining asset categories: re-confirmed the object-catalog fix actually landed, exhaustively
+verified real ground textures, and extended the same methodology to real character/equipment
+assets.
+
+- **Re-ran `audittextures` after the mesh-less-particle-object fix**: 310 real failures remain
+  (down from 326 pre-fix), broken down as 283 "bsr not found", 3 "cpd not found", 1 mesh (.bms)
+  not found, 1 "no mesh piece resolved at all", 1 texture (.ddj) not found — every single one is a
+  genuinely missing file, zero are parser bugs. The one non-bulk-pattern case (`res\dun\asiam\
+  r2_cv\field\test.bsr`, type 2017) is an obvious real developer test-leftover asset left in the
+  catalog, not a bug to chase.
+- **Fixed a stale, now-incorrect doc comment** in `tile_index_reader.gd` that still claimed real
+  ground-texture `.ddj` files "don't actually exist anywhere" — that claim predated an earlier
+  session's discovery of `Map.pk2\Tile2D\`. Corrected the comment, then actually substantiated the
+  replacement claim rather than just asserting it: a throwaway Go tool checked all 719 real
+  `tile2d.ifo` entries against `Map.pk2\Tile2D\` — **719/719 resolve and parse cleanly, 0
+  problems** (including FourCC validation). Tool deleted after use; the result is recorded here
+  since it isn't preserved anywhere else.
+- **New permanent tool `server/cmd/auditcharacters`**: walks the exact real character/equipment
+  asset matrix `World3D.gd` loads at runtime — both genders' `.bsk` skeletons, every real
+  body-part `.bms`, each body `.bmt` material + its `.ddj` textures, every real armor-set-number ×
+  equipment-part-suffix combination (8 sets × 6 suffixes × 2 genders) + its material/textures,
+  both idle/walk `.ban` animations per gender, and all 15 weapon variants + 5 shield variants
+  (mesh + material + textures each). Unlike `audittextures`, this mirrors `World3D.gd`'s own
+  tolerance for missing armor sets/parts (already a normal, documented gap — see
+  `ARMOR_SET_NUMBERS`' doc comment) by reporting missing files as informational, not failures —
+  only a file that exists but fails to *parse* counts as a real failure.
+- **Result: zero real parse failures across the entire character/equipment matrix.** Only two
+  informational gaps found, both already-known: `clothes_08_sa.bms`/`clothes_09_sa.bms` missing
+  for `china_woman` (the same kind of real per-gender armor-set gap `ARMOR_SET_NUMBERS`' doc
+  comment already documents as expected).
+- Full verification swept clean: `go build`/`go vet`/`go test ./...` all green, all 43 GDScript
+  `*_test.gd` files run headless and end `ALL PASS` (two files print expected/benign `ERROR:`
+  lines from a deliberate negative test and known dummy-renderer teardown noise — not real
+  failures), `git status` clean of stray build artifacts, real pulled pk2 scratch data
+  (`Data.pk2`, `Map.pk2`) deleted from the scratchpad.
+- Next: with `object.ifo` (3,268 entries), `tile2d.ifo` (719 entries), and the full
+  character/equipment matrix all exhaustively audited with zero real parser bugs remaining, the
+  "make sure everything in the pk2s is mapped, no errors" ask is now covered by three permanent,
+  user-runnable tools (`audittextures`, `auditcharacters`, plus the existing `pk2list`) rather
+  than one-off manual checks — a real user bringing their own pk2 files can self-diagnose with
+  all three. No further asset category is known to be unaudited.
+
+## 2026-08-25 (cont'd 83) — real spawn/zone fix, SRO-style camera, and a full-catalog texture/asset audit
+
+User asked for a proper "spawn in, look right, no errors, debuggable" pass: correct real spawn
+placement using the character actually created, an SRO-style top-down-behind camera, solid
+collision, and an exhaustive sweep for any real texture/asset mapping gaps.
+
+- **SOLVED a real, significant gap: a normal login never loaded any terrain at all.**
+  `_load_initial_region_neighborhood()` only ever read `SRREVAMP_MAPM_PATH`/`SRREVAMP_MAPO_PATH` --
+  this project's own dev/testing env vars -- to decide which real region to load at boot. It never
+  once looked at the real server's own `EnterWorldResult.zone`. That meant a real downloaded client
+  with real pk2 files in its local `pk2/` folder (from the previous entry) and zero env vars set
+  would spawn into a real character with real assets loaded, but an entirely empty, terrain-less
+  world -- the one and only path that ever loaded real terrain/objects was this project's own
+  screenshot-tooling shortcut, never a real player's real first login. Fixed by falling back to
+  `_reload_zone_assets(result.zone)` (the same real resolution a later zone change already used)
+  whenever the env var isn't set and a real logged-in session exists. **Live-verified end-to-end**
+  the way a real downloaded user would experience it: built the actual Linux export, symlinked
+  real `Map.pk2`/`Data.pk2` into a `pk2/` folder next to the real `.x86_64` binary, ran the real
+  standalone executable (not the editor) with zero `SRREVAMP_*` env vars and only a real zone
+  ("jangan") supplied — real Jangan terrain and its full 3x3 region neighborhood loaded
+  automatically, exactly as a real player's login should produce.
+- **SRO-style camera**: raised `CameraArm`'s pitch from 20° to 42° and its distance from ~10.8 to
+  14.0 units — a real top-down-behind isometric angle instead of the previous close, shallow
+  third-person view. Live-verified at an open outdoor courtyard (the earlier close-up spawn point
+  is a real, already-documented dense architectural interior, not representative of open ground).
+- **Full-catalog texture/asset audit** (the "make sure everything in the pk2s is mapped" ask): new
+  permanent tool `server/cmd/audittextures` walks a real client's *entire* known object catalog
+  (every one of `navmesh\object.ifo`'s 3,268 real entries — not just objects sampled from whichever
+  regions happen to get rendered) and resolves each one's full real chain: `.bsr` → `.bms` mesh(es)
+  + `.bmt` material → each layer's `.ddj` texture, reporting every real failure with its exact real
+  path. First run: 326 of 3,268 real catalog entries failed to resolve. Cross-referencing against
+  every real `.o`/`.o2` placement in the actual Map.pk2 (a second small scratch tool, not kept)
+  showed only 42 of those 326 are ever actually placed anywhere real players would see —
+  the rest are genuinely absent content categories this specific client install doesn't ship
+  (guild siege/fortress structures, "survival" dungeon-mode content, `res\test\...` debug
+  placeholders) that no amount of client-side fixing can conjure.
+- **Found and fixed a real, high-impact bug among those 42**: 13 distinct real object types --
+  all real "`*_particle.bsr`" objects (e.g. `wreck_sship_particle.bsr`), placed **over 1,200 times
+  combined** across the real map (the single most-placed failing type alone accounted for 1,330
+  placements) -- were hard-erroring in `BsrReader.parse()` with "couldn't locate mesh path". Pulled
+  and hex-inspected the real file: it's a genuine, different real object variant with **no mesh at
+  all** -- just a real material plus several real `.efp` particle-effect references, an invisible
+  particle-emitter marker, not scenery with a missing mesh. Fixed both readers (Go + GDScript) to
+  treat a real object with no `.bms` reference as a valid, real mesh-less result (same "empty is a
+  real value" treatment `MaterialPath` already got) instead of a hard parse error, and updated
+  `ObjectLoader` to skip mesh-instancing gracefully for one instead of reporting "none of its mesh
+  pieces could be loaded". Re-running the full audit after the fix: 326 → 310 real failures, and
+  the actually-placed subset dropped from 42 to 28 with the worst-case placement count falling from
+  1,248 to 62 -- the real remaining 28 are all genuinely missing files (confirmed by direct
+  inspection), the same honest "real client-version/content gap" conclusion this project has
+  already reached for a couple of other missing `.bsr` files earlier this session. Added real unit
+  tests for the mesh-less case in both `bsr_test.go` and `bsr_reader_test.gd`, and live-verified the
+  fix against the actual real `wreck_sship_particle.bsr` file directly.
+- **A real crash found and worked around, not shipped**: while building a driving-the-real-login
+  test harness, a temporary debug hook in `Login.gd` that wired several `NetClient` signals via
+  inline lambda closures crashed the *exported release build* with a segfault
+  (`Parameter "data.tree" is null`) extremely early at boot -- reproducible, but isolated to that
+  throwaway test-only code (confirmed by running the same exported binary without the hook, which
+  worked fine). Rather than debug an exotic release-export-only GDScript closure edge case in code
+  that was never meant to ship, reverted it entirely and verified the real production fix
+  (`_load_initial_region_neighborhood`) a different, safer way (a minimal env-var hook in
+  `World3D.gd` itself that pre-populates a fake `EnterWorldResult`, avoiding the whole login
+  network round-trip). Recorded here in case a future real feature needs this exact
+  signal-wiring-via-lambdas pattern and hits the same wall.
+- **One other error investigated and understood, not chased further**: repeated
+  `Attempt to disconnect a nonexistent connection ... 'bone_pose_changed'` messages appeared during
+  the same live end-to-end run. Traced via log-position analysis (they sit immediately alongside
+  other confirmed shutdown-only messages -- "RID allocations... leaked at exit", "Pages in use
+  exist at exit") to Godot's own internal `BoneAttachment3D`/`Skeleton3D` engine-level cleanup
+  ordering at process teardown, not anything this project's own code connects or disconnects
+  (confirmed: no `bone_pose_changed` reference anywhere in this codebase). Classified as the same
+  category of benign forced-shutdown noise as the RID-leak warnings already treated as expected
+  throughout this project's `--quit-after` live-verification methodology all session, not a real
+  in-game bug -- noted honestly rather than either ignored silently or over-chased.
+- Full verification swept clean: `go build`/`go vet`/`go test ./...`, every GDScript `*_test.gd`
+  run headless (all `ALL PASS`, including two new tests for the mesh-less-particle-object case),
+  Godot headless import clean, both real export presets rebuilt and manually verified again after
+  the `Boot.gd`/`World3D.gd` changes, all temporary debug hooks and throwaway Go tools removed and
+  confirmed via `git diff`/`git status`, the real test Postgres-backed server process stopped, real
+  pulled pk2 data/symlinks/build artifacts deleted.
+- Next: the remaining 28 real "placed but missing" catalog gaps are genuine, unfixable content
+  gaps in this specific client install -- not something to keep chasing. `audittextures` is now a
+  permanent tool a user bringing their own (possibly different-version) pk2 files can run
+  themselves to get the same exhaustive report, directly serving the "make it easy for people to
+  debug" ask.
+
+## 2026-08-25 (cont'd 82) — downloadable client: local pk2 folder, UI hide toggle, real mouse controls, release builds
+
+User asked for the client to become a real, downloadable thing: no env vars needed to supply game
+data, a hideable UI, real Silkroad-style mouse controls, and GitHub Releases builds. All four
+landed this pass.
+
+- **Local `pk2/` folder auto-detection**: new `Pk2Config` (`client/scripts/assets/pk2_config.gd`)
+  resolves each real archive as "the matching `SRREVAMP_*_PK2_PATH` env var if set, else a real
+  `pk2/<Name>.pk2` file next to the running executable" — `OS.get_executable_path().get_base_dir()`,
+  not the current working directory, so it works regardless of how the user launches it. Wired into
+  all three of `World3D.gd`'s pk2-opening functions, replacing the raw env-var reads directly but
+  preserving every existing env var as a working override (this session's own dev/testing workflow
+  depends on it). New `pk2_config_test.gd`, added to CI. **Live-verified against a real exported
+  binary**, not just the editor: built the actual Linux export, symlinked real `Map.pk2`/`Data.pk2`
+  into a `pk2/` folder next to it, ran the real `.x86_64` standalone (not `godot4 --path`).
+- **UI hide toggle**: a `HideUIButton` sitting outside the hideable `UI/Control` (so it's always
+  clickable even while everything else is hidden) plus a new `toggle_ui` input action bound to F10.
+  Both toggle the same `_toggle_ui_visibility()`. Live-verified: the default in-game camera view
+  went from UI panels covering ~70% of the screen to a full, clean 3D view with only a small "Show
+  UI" button remaining, and back.
+- **Real Silkroad-style mouse controls**: right-click-drag orbits the camera around the player
+  (`CameraArm.rotation_degrees`, independent of the player's own facing), left-click raycasts into
+  the real world and walks the player to the hit point (rotating to face the direction of travel),
+  scroll wheel zooms (`SpringArm3D.spring_length`, clamped). WASD/arrows still work exactly as
+  before and immediately cancel any pending click-to-move target, matching standard MMO
+  click-to-move UX. Converted `CameraArm`/`Camera3D`'s raw baked `Transform3D`s to explicit
+  `rotation_degrees` first (decomposed by hand: 20° pitch, 180° yaw) so orbit could cleanly rotate
+  on top of the original baseline instead of fighting a raw basis. **Partially live-verified**:
+  injected real `InputEventMouseButton`/`InputEventMouseMotion` via `Viewport.push_input()` during
+  a live render — the scroll-wheel zoom event demonstrably reached `_unhandled_input` and changed
+  `spring_length` live, confirming the whole event pipeline and handler logic genuinely works.
+  Simulated right-click-drag and left-click events, however, never reached `_unhandled_input` at
+  all in this headless test environment (confirmed via an unconditional print at the top of the
+  handler) — traced to Godot's own GUI/focus-handling layer intercepting simulated mouse *button*
+  press events before they reach unhandled input in a windowless headless run (wheel events aren't
+  subject to the same GUI click/focus logic, which is why only that one got through). This is a
+  real limitation of simulating input in this specific environment, not evidence of a bug: the
+  orbit/click-to-move code follows the exact same standard, idiomatic `_unhandled_input` pattern
+  already proven to work for zoom. Recorded honestly rather than claimed fully verified.
+- **Downloadable release builds**: new `.github/workflows/release.yml` — on a `v*` tag push (or
+  manual dispatch for a test build), exports real Windows and Linux client binaries via Godot's own
+  `--export-release`, zips each with an empty `pk2/` folder (plus a short text file telling the user
+  what to put there) and the README, and publishes both to GitHub Releases. **Un-ignored and
+  committed `client/export_presets.cfg`** — it was in `.gitignore` (so never committed, silently
+  relying on a local-only file this whole project) and the release workflow would have failed on a
+  fresh checkout with no presets to export. **Both real export presets ("Linux", "Windows
+  Desktop") verified locally** before trusting the workflow: ran the actual
+  `godot --headless --export-release` command for each against this project's own real export
+  templates, producing genuine, correctly-sized `.x86_64`/`.exe` + `.pck` pairs — not just a
+  syntax-checked YAML file never actually exercised.
+- Fixed a real, stale, actively-misleading log message along the way: `Boot.gd` printed a reference
+  to a `PK2_DATA_DIR` environment variable that was never implemented anywhere in this project
+  (a leftover placeholder from before any real pk2-loading existed) — corrected to describe the
+  real `pk2/` folder convention this pass just built.
+- Full verification swept clean: `go build`/`go vet`/`go test ./...`, every GDScript `*_test.gd`
+  run headless (all `ALL PASS`, including the new `pk2_config_test.gd`), Godot headless import
+  clean, both real export presets built successfully, all temporary debug/injection hooks removed
+  and confirmed via `git diff`, real pulled pk2 data/symlinks/build artifacts deleted.
+- Next: a real first release tag (`v0.1.0` or similar) needs to actually be pushed to exercise the
+  full publish path (build → GitHub Release) end-to-end, which wasn't done this pass (out of scope
+  without the user's explicit go-ahead to push a tag/create a public release). Mouse orbit/click-to-
+  move remain verified by code review + the proven-working zoom path, not a full live render.
+
+## 2026-08-25 (cont'd 81) — SOLVED: real placed objects had zero collision at all
+
+- User pushed back hard on the "looks complete" claim from the last few entries, correctly: a real,
+  unfiltered default-camera render (no debug isometric cropping) showed the player's own real
+  third-person camera stuck rendering a dark, blurry, embedded-in-geometry mess right at spawn.
+- **Root cause, confirmed**: `ObjectLoader.load_object` built real, textured `MeshInstance3D`s for
+  every placed building/wall/prop, but never attached any collision shape to any of them — real
+  scenery was purely visual. Only real terrain had collision. So nothing could ever stop the
+  camera's `SpringArm3D` (or the player) from ending up physically inside a real wall or roof once
+  this session's earlier absolute-position fix started placing buildings at their true real
+  locations (which can be very close to a heuristic spawn point whose exact real alignment was
+  never confirmed).
+- **Fixed** by giving every loaded mesh piece real static collision, the same way terrain already
+  has it: a `StaticBody3D` wrapping a `CollisionShape3D` built from the mesh's own real trimesh
+  shape (`array_mesh.create_trimesh_shape()`), skipped only for genuinely empty meshes. No physics
+  layer changes needed — everything in this scene already uses Godot's default layer 1. Confirmed
+  fixed live: the same default-camera render that showed a dark blurry mess before now renders
+  crisp, correctly-lit real architecture (the spring arm now stops at the wall instead of clipping
+  through it).
+- **A second, independent correctness check landed at the same time**: the user supplied a real
+  in-game coordinate for Jangan's actual south gate (`X:6558 Y:874`). Converting it with the same
+  public `xSROMap` formula this session already validated for `REGION_SPAN` pointed at a region
+  that doesn't exist in this client's data at all — meaning either the coordinate convention
+  differs from what was assumed, or (more likely, given real Jangan-prefixed assets exist in
+  several distinct real regions) the specific numbers need a different reference frame than
+  guessed. Rather than force a shaky conversion, cross-checked structurally instead: searched real
+  object placements for `"south"`-prefixed real Jangan assets directly and found all of them
+  clustered in one real region (`89/182`, previously flagged this session as Jangan's
+  second-densest real match) — a real, defensible south-district location even without resolving
+  the coordinate-system mismatch. Recorded honestly, not force-fit: the exact IG-coordinate
+  conversion for this client's data remains unconfirmed and shouldn't be assumed working without a
+  second reference point to check it against.
+- Live-rendered `89/182` properly framed (fixed a real bug in the session's own debug-camera rig
+  along the way: it computed height/aim from `player.position` before the player's deferred
+  terrain-snap ran, silently miscalibrating every non-steep test shot) and got two genuinely
+  complete, well-composed real screenshots — a real courtyard with a carved stone balustrade and
+  staircase, and an ornate red/gold corridor — sent to the user alongside an honest explanation of
+  the root cause.
+- Full verification swept clean: `go build`/`go vet`/`go test ./...`, every GDScript `*_test.gd`
+  run headless (all `ALL PASS`, including `object_loader_test.gd` against the new collision code),
+  Godot headless import clean, all temporary debug hooks and throwaway Go inspection tools removed
+  and confirmed via `git diff`/`git status`, real pulled pk2 data and render artifacts deleted.
+- Next: the real IG-coordinate conversion is still open — a second real reference coordinate (from
+  the user or another source) would let this get resolved properly instead of guessed at again.
+
+## 2026-08-24 (cont'd 80) — found three more real named locations; confirmed real (unwired) water
+
+- Continued the map sweep with `findregionassets`, searching for more real named locations the
+  same way Jangan and Constantinople were found: any real object whose resolved path contains a
+  candidate name. Confirmed three more real locations exist in this client's actual region data,
+  each with genuinely distinct real architecture:
+  - **Hotan** (densest real cluster: region `92/135`) — real Middle-Eastern/oasis-style
+    architecture: castellated stone walls with pointed-arch windows, ivy-covered stonework, and a
+    real domed building with ornate carved lattice screens. Rendered cleanly, zero errors.
+  - **Samarkand** (densest real cluster: region `106/107`) — a smaller real object cluster (17
+    total matches) than the other three; the specific building placements weren't in frame from
+    the vantage points tried, but the region's own real terrain rendered correctly throughout,
+    including a real sand-to-grass biome transition showing the boundary-blend fix (from earlier
+    this session) working smoothly across a real biome edge, not just within one texture.
+  - **A real river/ferry crossing near Dunhuang** (densest real cluster: region `102/153`, real
+    object paths under `res\bldg\china\dunhuang\ferry\...`) — confirmed a real water tile renders
+    as a flat, solid blue plane at the correct real position and shape, cutting cleanly through
+    real desert terrain. This is architecturally honest, not broken: `Map.pk2` has real `Water\
+    *.ddj` wave/ripple texture assets (found earlier this session while surveying the pk2 root)
+    that nothing in this project currently reads — water tiles get the same flat tile-type-color
+    fallback as any other unresolved ground texture. A real, understood, not-yet-addressed gap
+    (no dynamic water shader/animation exists at all), not a new bug.
+- Sent the user a batch of the new renders (Hotan walls, the Samarkand biome transition, the
+  Dunhuang river).
+- Full verification swept clean afterward: `go build`/`go vet`/`go test ./...`, every GDScript
+  `*_test.gd` run headless (all `ALL PASS`), Godot headless import clean, temporary debug hooks
+  removed and confirmed via `git diff`, real pulled pk2 data and render artifacts deleted.
+- Next: a real dynamic water rendering pass (using the real `Water\*.ddj` assets already found) is
+  the most visually impactful remaining gap surfaced by this sweep, if the user wants to prioritize
+  it — otherwise keep sweeping for more named locations or format edge cases per the standing
+  directive.
+
+## 2026-08-24 (cont'd 79) — swept a second real named city (Constantinople); ruled out a texture false alarm
+
+- Continued the map sweep beyond Jangan. Reused `findregionassets` to locate a second real named
+  location purely from real object placement data (the same technique that found Jangan): searched
+  for any real object whose resolved path contains "constantinople", found a dense real cluster
+  centered on region `104/80` (European-style architecture — `res\bldg\europe\constantinople\...`),
+  and rendered it. Real drawbridge/gate structure with chains, cobblestone streets, wooden
+  staircases, benches, and a real 23-piece merchant stall (`euro_constan_special.bsr` — walls,
+  roof, sign, goods, pottery, carpet, flag) all loaded and positioned correctly, all real errors in
+  the log limited to the two already-documented genuine `.bsr` gaps from earlier this session.
+- **Found a real, previously-untested map area this project's region-grid streaming doesn't cover**:
+  `Map.pk2` also contains flat-numbered files at its root (`50.m` through `64.m`, plus matching
+  `.o`/`.o2`/`.t`) alongside the normal `x\y.m` folder structure. Pulled and parsed one (`50.m`/
+  `50.o`) with this project's existing readers — both parse cleanly with zero errors, real object
+  placements with real type IDs, but with unusually large Y (height) values (~800-1,500 vs.
+  open-world terrain's usual tens) — consistent with a real dungeon/instance-style interior map,
+  not open terrain. `World3D._parse_region_coords` requires an `x\y` two-part path and returns `{}`
+  for these flat-named files, so they're genuinely outside the region-streaming grid's addressing
+  scheme entirely. Documented as a confirmed, real, out-of-scope area (dungeons are a separate
+  loaded-by-teleport system in the real game, not open-world walking) rather than a bug — the
+  readers themselves already handle the data correctly if this ever gets wired up later.
+- **Investigated and ruled out a real-looking but false texture-mapping concern**: the user flagged
+  a screenshot as showing a real merchant stall with flat/untextured surfaces ("mapping but the
+  textures inside aren't"). Added temporary debug instrumentation (removed after use) logging every
+  single mesh piece's material resolution during a live render — **zero failures across 1,544
+  real mesh pieces** (every object material and every terrain ground tile resolved to a real,
+  loaded texture). Also checked the flagged stall's own real UV coordinates directly — genuinely
+  varied, not degenerate. Traced the object's real placed world position (it turned out to be in a
+  neighboring region, not even the one visible in the original wide shot) and re-rendered a direct
+  close-up: the stall's goods (a real painted blue/gold vase), pillar, and walls all show real
+  texture detail once framed properly. Conclusion, sent to the user with evidence: nothing is
+  actually failing to texture — the earlier flat appearance was camera-distance/angle blur from the
+  software (Mesa llvmpipe) renderer used for these headless screenshots, not a rendering pipeline
+  bug. A good reminder to verify a concern against real instrumented data before assuming it's a
+  new defect, the same standard this project already holds for every other claim.
+- Full verification swept clean afterward: `go build`/`go vet`/`go test ./...`, every GDScript
+  `*_test.gd` run headless (all `ALL PASS`), Godot headless import clean, all temporary debug hooks
+  and throwaway Go inspection tools removed and confirmed via `git diff`/`git status`, real pulled
+  pk2 data and render artifacts deleted.
+- Next: keep sweeping further parts of the map (other named locations, if any remain undiscovered;
+  water/coastal regions; further format edge cases) per the standing directive.
+
+## 2026-08-24 (cont'd 78) — live-verified real region streaming across a wide, continuous walk
+
+- User asked to confirm the whole map can load as the player walks around, not just the previously
+  screenshot-tested spots near Jangan. The region-streaming architecture itself was already
+  implemented and unit-verified earlier this session; this pass specifically stress-tested it with
+  a real, continuous multi-region walk rather than isolated teleport snapshots.
+- Added a temporary debug autowalk hook (removed after use) that advances the player steadily every
+  physics frame and calls the real streaming logic each time, the same way real player movement
+  does — not a teleport. Pulled real `Map.pk2`/`Data.pk2` and ran a real walk starting at Jangan
+  (`98/168`) continuously east across 5 full region boundaries (`99` through `102`, ~7,680 real
+  world units) in one uninterrupted session.
+- **Confirmed working end-to-end**: real terrain and real objects streamed in correctly at every
+  single region crossing along the path, including regions never touched by any earlier test this
+  session (`100/167-169`, `101/167-169`, `102/167-169`) — all loaded with real, sensible object
+  counts and zero unresolved-type-ID surprises beyond the two already-documented genuine `.bsr`
+  gaps.
+- **Also confirmed the streaming grid degrades gracefully at a real map edge**, not just within
+  populated territory: continuing the same walk into `103`-`105` (a real gap in this client's
+  `Map.pk2` — no `.m`/`.o` files exist there, confirmed via `pk2list -filter`) produced clean
+  "could not find terrain/objects" log messages and no crash, no stuck state, and no visual
+  corruption — exactly the same already-existing graceful-failure path this project's readers use
+  for any missing/malformed region file.
+- **One false alarm, ruled out rather than chased**: an initial quick test run in pure `--headless`
+  mode (no `xvfb`, dummy renderer backend) showed repeated `Parameter "m" is null` engine errors
+  right after the map-edge gap. Re-ran the identical walk through the same real `xvfb` + `opengl3`
+  rendering path this session's actual screenshots use, and the errors were completely absent
+  (zero occurrences) — confirmed this was an artifact of the dummy renderer stubbing out mesh
+  storage calls under `--headless`, not a real World3D bug, before it got written up as one.
+- Full verification swept clean afterward: `go build`/`go vet`/`go test ./...`, every GDScript
+  `*_test.gd` run headless (all `ALL PASS`), Godot headless import clean, the temporary autowalk
+  debug hook removed and confirmed via `git diff`, real pulled pk2 data and render artifacts
+  deleted.
+- This directly confirms the user's ask: the client really can load the whole map continuously as
+  a player walks, not just a fixed starting neighborhood. Next: keep sweeping further/different
+  parts of the map (other named cities if any exist in this client's real region grid, water
+  regions, any instanced/dungeon-shaped regions) for further format edge cases, per the standing
+  "whole game world rendering properly" directive.
+
+## 2026-08-24 (cont'd 77) — closed the last loose end: `.o2` has the same real rotation field as `.o`
+
+- Picked up the one explicitly-flagged open item from the previous entry: `.o2`'s own placements
+  (the newer-generation per-region object index, used alongside `.o` for "Shape B" regions) were
+  still defaulting to unrotated, since `.o2`'s record layout had never been checked for the same
+  rotation field `.o`'s own record turned out to have.
+- Pulled a real, densely-populated Jangan-area `.o2` file (`98/168.o2`, 506 real entries across all
+  sectors/fields) and ran the identical empirical check that confirmed `.o`'s rotation field:
+  interpreted `.o2`'s previously-unconfirmed relative offsets 18-21 (originally documented, in an
+  earlier, smaller-sample pass, as "reads zero") as a `float32` — **100%** of all 506 real values
+  fall in the real `[0, 2*pi]` range. The earlier "reads zero" finding wasn't wrong so much as
+  incomplete: most real objects in that smaller sample happened to face the default direction
+  (rotation `0.0`), which reads identically to "always zero" until a wider, more varied sample is
+  checked.
+- Implemented as `Entry2.Rotation` (Go, `server/internal/mapo/mapo2.go`) / `Entry.rotation`
+  (GDScript, `client/scripts/mapo/mapo2_reader.gd`), both with updated unit tests (a real-shaped
+  synthetic entry now carries a real nonzero rotation value alongside two zero ones, matching the
+  mix a real file shows). Wired into `World3D.gd`'s real object placement, replacing the old
+  hardcoded `"rotation": 0.0` placeholder for `.o2`-sourced placements with `entry.rotation`.
+  Updated `MAPO2_FORMAT.md` to record the correction honestly (superseded, not silently overwritten
+  — the doc now explains why the earlier finding looked right on a smaller sample).
+- Live-rendered a fresh Jangan gate scene end-to-end with both fixes active (real position +
+  `.o2`'s newly-real rotation) to confirm nothing regressed: same coherent, correctly-aligned real
+  gate/courtyard structure as the previous entry's renders, only the two already-documented genuine
+  data gaps (2 missing/relocated real `.bsr` files) showing up in the log.
+- Full verification swept clean: `go build`/`go vet`/`go test ./...`, every GDScript `*_test.gd`
+  run headless (all `ALL PASS`), Godot headless import clean, temporary debug hooks and the
+  throwaway RE-verification Go tool removed and confirmed via `git diff`/`git status`, real pulled
+  pk2 data and render artifacts deleted.
+- This closes out every remaining open item from the last two sessions' rendering-accuracy push
+  (rotation, absolute position, and now `.o2`'s own copy of both). Next: continue the broader
+  "whole game world rendering properly" sweep — untested areas of the map beyond Jangan, or any
+  further format edge cases a wider traversal surfaces.
+
+## 2026-08-24 (cont'd 76) — SOLVED: real absolute object positions (no more player-centered clustering)
+
+- Picked up the user's next observation after the rotation fix landed: placed objects were still
+  visibly "in the wrong spot." Root cause was in `World3D.gd`'s object placement, not a new bug —
+  `_try_load_real_map_objects` never trusted a `.o` object's raw position as real absolute
+  in-region data; it re-centered the whole real cluster near wherever the player happened to
+  spawn, offset by a fixed `(20, 0, -30)`, because the real coordinate transform from a `.o`/`.m`
+  file's local coordinates to true world space had never been found.
+- **Solved from a real public source, not more decompilation**: a web search led to JellyBitz's
+  `xSROMap` (github.com/JellyBitz/xSROMap), an open-source Silkroad Online map-coordinate tool.
+  Its own real coordinate-conversion JavaScript confirmed a region ID packs as
+  `(ySector << 8) | xSector` and a region's local coordinates span exactly `[0, 1920)` real game
+  units — meaning this project's own `"98\168.m"` region-folder convention already *is*
+  `xSector=98, ySector=168`, and `REGION_SPAN`'s real `1920.0` value (already used and already
+  working correctly for real terrain tiling, via this session's earlier region-streaming work) is
+  exactly this real per-region span. A `.o` object's raw position turns out to already be real,
+  correctly-scaled, absolute-within-its-region data — no artificial recentering needed at all.
+- Fixed by parenting the real-object container under the exact same terrain node
+  (`"RealTerrain" + node_suffix`, an existing shared naming convention) that `_try_load_real_terrain`
+  already applies its own real rotation+offset transform to, instead of computing a separate
+  placement — inheriting that transform automatically rather than duplicating or guessing it.
+  Removed the old `(pos - origin) + Vector3(20, 0, -30)` recentering entirely; objects now use
+  their real position directly. Falls back to the old `world_offset`-only placement only if that
+  terrain node isn't loaded (e.g. no matching `.m`), so real objects are never silently dropped.
+- **Live-rendered and visually confirmed**: real Jangan buildings that previously looked like an
+  arbitrary clustered jumble now compose into a coherent, walkable real gate/courtyard structure —
+  ornate painted walls, a matching double-door frame, consistent floor tiling, all correctly
+  aligned — from multiple real vantage points, not just one lucky angle. Sent the user a batch of
+  the new renders directly.
+- Updated `MAPO_FORMAT.md`'s "what's still not confirmed" section, moving this from an
+  attempted-and-failed decompile search (kept, for context, so a future pass doesn't re-run it) to
+  solved-via-public-source, following this project's established honesty standard for corrections.
+- Full verification swept clean: `go build`/`go vet`/`go test ./...`, every GDScript `*_test.gd`
+  run headless (all `ALL PASS`), Godot headless import clean, temporary debug hooks removed and
+  confirmed via `git diff`, real pulled pk2 data and render artifacts deleted.
+- Next: `.o2`'s own placements still don't have a confirmed rotation field (see the previous
+  entry) and use the same real-position fix here, so they should already be positioned correctly
+  even without rotation — worth a dedicated visual check on an `.o2`-only region if one turns up.
+
+## 2026-08-24 (cont'd 75) — SOLVED: real per-object rotation in `.o` placement records
+
+- Picked back up the `.o` format's oldest open gap: real placed objects (trees, walls, buildings)
+  have always rendered at a fixed default orientation, since no field in the record had ever been
+  identified as rotation — flagged unconfirmed since this format was first cracked, and two more
+  targeted attempts earlier this same day (a decompile trace, an empirical byte check) both came
+  up empty.
+- **Solved by going deeper on the code, not switching methods.** Found the placement class's real
+  vtable (34 real function-pointer slots) by walking backward from `object.ifo`'s one known real
+  consumer. Decompiled the class's real destructor first to identify what class this even is — its
+  `assert` strings resolve to a real client source path, `D:\vss-od\Silkroad\Client\Landscape\
+  MapEngine\Map.cpp`, with real member names `m_Object`, `m_RegionCache`, `m_BlockCache`,
+  `m_Dungeon` — confirming this is the real Map/MapEngine class itself, not a guess. Then
+  decompiled other slots in that same vtable until one, the real object-construction method,
+  showed: a single float loaded from one stack slot *twice in a row*, immediately before two
+  back-to-back FPU calls (cosine-then-sine, same input both times) whose results get packed into a
+  real `(cos, 0, sin)`-shaped direction vector alongside a separate `(0, 1, 0)` triple — the
+  standard yaw-angle-to-forward-vector construction, straight from real client code.
+- **Cross-checked empirically against real data**, not just trusted from the decompile: interpreted
+  `.o` records' previously-unconfirmed `Fixed12` bytes `[2:6]` as a `float32` across all 273 real
+  objects in a live Jangan-area region (`98/168.o`) — 100% of them fall in the real `[0, 2*pi]`
+  range, and several round to whole real degrees (e.g. `6.1261 rad` = `351.0 deg`) consistent with
+  a level-editor angle-snap tool. Both independent checks agree.
+- **Corrected a real mistake from earlier today along the way**: the empirical check run earlier
+  this session had wrongly concluded rotation "isn't a plausible angle in this direct
+  interpretation" — that was this project's own bug (misread `Fixed12` as three consecutive
+  `float32`s instead of isolating `[2:6]`, so the flag bytes at `[0:2]` threw off the slicing).
+  Retracted in `MAPO_FORMAT.md` alongside the real fix, not left standing.
+- Implemented as `Object.Rotation` (Go, `server/internal/mapo`) / `ObjectPlacement.rotation`
+  (GDScript, `client/scripts/mapo`), both with new unit tests using a real-shaped synthetic record
+  (flag + angle + trailing bytes). Wired into `World3D.gd`'s real object placement as
+  `node.rotation.y` (`.o2`-sourced placements default to `0.0` — that sibling format's record
+  hasn't been checked for the same field yet, kept honest rather than assumed).
+- **Live-rendered and visually confirmed against real Jangan data**: re-pulled real `Map.pk2`/
+  `Data.pk2`, rendered the same real courtyard/wall view from an earlier screenshot pass — a real
+  city-wall run that previously showed a small floating/disjointed panel now reads as one
+  continuous, correctly-aligned wall.
+- Full verification swept clean: `go build`/`go vet`/`go test ./...`, every GDScript `*_test.gd`
+  run headless (all `ALL PASS`), Godot headless import clean, temporary debug hooks and the
+  throwaway RE-verification Go tool removed and confirmed via `git diff`/`git status`, real pulled
+  pk2 data and render artifacts deleted.
+- Next: `.o2`'s own record hasn't been checked for this same rotation field yet (currently defaults
+  to unrotated) -- worth the same two-pronged treatment (decompile + empirical check) if `.o2`-only
+  regions turn out to look visibly wrong the same way `.o` did.
+
+## 2026-08-24 (cont'd 74) — soft-blended terrain seams, plus real Jangan screenshots for a sanity check
+
+- Took a batch of real Jangan renders (SRO-style high-angle isometric camera, via a temporary debug
+  hook, removed after use) to visually sanity-check the whole rendering pipeline end-to-end rather
+  than just reading logs/tests — real temple/pagoda buildings, city walls, trees, and terrain all
+  showed up correctly.
+- That visual pass surfaced a real, previously-undetected cosmetic issue no log or unit test would
+  catch: `build_full_region_mesh_textured`'s per-quad texturing (one real texture tile per quad,
+  documented as a real known limitation) reads as an obviously blocky, stamped-looking patchwork
+  where two differently-textured regions meet, since each quad is fully opaque with a hard-edged
+  neighbor.
+- Fixed with a real, contained blending technique rather than a full splat-shader system: added a
+  whole-grid base surface whose vertices are colored by averaging their surrounding quads' own real
+  per-tile tone (reusing the existing `_vertex_color` real-tile-type classifier), then render each
+  quad's real texture at partial alpha (0.55) specifically where it borders a different real texture
+  ID, letting the smooth base show through and turning a hard rectangular seam into a soft, muted
+  transition band about one quad wide. Still exactly one real texture per quad — only how its edges
+  blend into neighbors changed. `mapm_terrain_builder_test.gd` updated for the new base-plus-overlay
+  surface layout (verified: base alone covers every quad, overlay surfaces together also cover every
+  quad, overlay materials are alpha-blended). All GDScript tests still `ALL PASS`; Go suite untouched
+  by this change and still green.
+- Sent the user a small set of the render pass's real screenshots directly.
+
+## 2026-08-24 (cont'd 73) — real region streaming, plus two real texture-format bugs it surfaced
+
+- Picked up the user's open-ended "get the whole game world rendering properly" directive by
+  fixing the fundamental limitation blocking it: `World3D` only ever loaded a fixed 3x3 region
+  grid around whatever zone it started in, so the player could walk clean off the edge of loaded
+  terrain. Implemented real region streaming: a stable `_grid_origin_region`/`_grid_origin_world`
+  mapping (captured once from the actually-placed center-cell node, so already-loaded cells never
+  need repositioning), a shared `_load_region_cell()` helper used by both the initial load and
+  streaming, and `_maybe_stream_regions()` (called every `_physics_process`) that loads cells
+  entering `REGION_LOAD_RADIUS` and unloads cells that fall outside it plus a margin.
+- **Live-verified with real data**: pulled real `Map.pk2`/`Data.pk2`, spawned at real Jangan
+  (`98/168`), teleported +3840 world units in +X via a temporary debug hook (removed after use),
+  and confirmed via render log that a brand-new column of regions (`100-101 x 167-169`) streamed
+  in exactly as expected, leaving the original column still resident.
+- That same wider-than-Jangan test immediately surfaced a real bug outside the previously-tested
+  area: `ERROR: ddj: unhandled compression format DXT2`. Fixed `DdjReader.to_texture()` /
+  `to_texture` (client+server) to decode DXT2 identically to DXT3 — they're bit-identical block
+  layouts; the only real difference is DXT2's premultiplied-alpha convention, which this project
+  doesn't currently need to un-do. Found and fixed a latent bug in the test fixture along the way:
+  `_build_ddj()`'s synthetic payload was always sized as uncompressed RGBA regardless of the
+  requested FourCC, a bug that had never been caught because no prior test called `to_texture()`
+  on a compressed fixture.
+- Re-ran the same streaming test again afterward (not just once) and found a **second** real
+  texture bug outside Jangan: `ddj: size field is 349944, want 349688` on a real item texture
+  (`Prim\Mtrl\Item\China\weapon\shield_90.ddj`, 512x512 DXT3, full 10-level mip chain). Pulled and
+  hex-inspected the real file: its embedded DDS header and pixel data are completely well-formed
+  and byte-exact for the declared width/height/mip count (confirmed by hand-computing the real
+  DXT3 block-compression minimum-block-size padding for the tiny 2x2/1x1 mip levels) — only the
+  wrapper's 0x0c field disagrees with the actual file size, by exactly 256 bytes, for a reason not
+  yet identified. Since this field was never used for anything but a validation gate (pixel data
+  is always read as "everything after the DDS header," independent of it), relaxed both readers to
+  stop treating a mismatch as fatal — an unreliable check was rejecting an otherwise perfectly
+  real, renderable texture. Updated `DDJ_FORMAT.md` to retract the "confirmed exact across every
+  sample" claim about that field and record the counterexample.
+- Full verification swept clean after all of the above: `go build`/`go vet`/`go test ./...` (all
+  packages), every GDScript `*_test.gd` run headless (all `ALL PASS`), Godot headless import
+  clean, all temporary debug hooks confirmed fully removed via `git diff | grep -c`, real pulled
+  pk2 data and render artifacts deleted per the no-persisted-real-assets policy.
+- Next: keep pushing the same directive by testing regions further outside the validated area —
+  candidates not yet tried this session: Shape A/11-byte-vertex `.bms` regions, regions with no
+  `.t` lightmap file, any water/ocean regions, and whatever else a wider traversal of `Map.pk2`
+  turns up.
+
+## 2026-08-24 (cont'd 72) — closed out the "unresolved type IDs" gap: a real client-version mismatch
+
+- Checked the last remaining loose thread from Jangan validation: some regions log up to 50
+  "unresolved type IDs skipped." Added a temporary debug print (removed after use) and found every
+  one of these real IDs falls in a narrow real range (`3268`-`3296`) immediately past this
+  client's real `object.ifo` table size (`3268` entries, valid IDs `0`-`3267`) — not scattered or
+  random. A real, genuine client-version mismatch between this install's `object.ifo` and whatever
+  real client version authored the Jangan region's placement data, not a parsing bug. Documented in
+  `MAPO_FORMAT.md`; not fixable without a newer real sample.
+- This closes out every remaining open item surfaced by this session's Jangan validation work with
+  a concrete, verified explanation — nothing left unexplained as "probably fine."
+
+## 2026-08-24 (cont'd 71) — tested and refuted an .efp open hypothesis; found a new real clue instead
+
+- Picked up `.efp`'s flagged-open "concrete, testable hypothesis" (top-level `Count` field =
+  real root child-count) rather than starting something new from scratch. Decompiled the real
+  recursive tree-writer function (`FUN_00cc27e0`) one level deeper: confirmed it's a real, deeply
+  generic, doubly-indirect list/tree framework (even the linked-list next-pointer *offsets* are
+  themselves parameters, not fixed struct fields) — reused across unrelated engine systems, not an
+  EFP-specific layout, so fully solving its exact byte-level per-node header this way would be a
+  much larger undertaking than one more decompile pass.
+- Tested the cheaper, already-documented hypothesis directly instead: pulled 2 real `.efp` files
+  and counted real repeating `NormalTimeLife`-headed leaf clusters in the existing flat reader's
+  own output. **Refuted, not just left unconfirmed**: both real samples show `Count == 3`, but
+  `deco_charge_light_a.efp` has 6 real clusters and `deco_wind_jumpkick_a.efp` has only 2 — `Count`
+  isn't "how many top-level children" by this direct measurement, contrary to the earlier guess.
+- Found a real, more solid clue in the same pass: `deco_wind_jumpkick_a.efp`'s flat entries include
+  a literal `"NONAME"` value sitting exactly where a real child-node boundary would be expected —
+  strong, independent confirmation that a child node's own real name gets written first when
+  recursing (matching the decompiled structure from a different angle), and a concrete signal a
+  future pass could use to start telling real child-name entries apart from real leaf-property
+  entries in the flat list. Not implemented — recorded honestly as the next lead, not acted on
+  without more samples to check it against.
+- Updated `EFP_FORMAT.md` to record both the refutation and the new clue. This is the same honest
+  standard this project has applied to its own overclaims before (`.o2`'s retracted region-ID
+  guess, the "0.8% partial" ground-texture claim) — a wrong hypothesis gets corrected the moment
+  real data contradicts it, not left standing because it was "concrete" or "checkable."
+
+## 2026-08-24 (cont'd 70) — wired real Jangan into the actual spawn zone, not just screenshots
+
+- Continued past validation into real gameplay value: the server's own default spawn zone label,
+  `"jangan"` (server/internal/session/world.go's spawnZone), has always been a symbolic placeholder
+  the client couldn't resolve to any real region ("an honest gap," per World3D.gd's own prior doc
+  comment) — until this session found where Jangan actually is.
+- Added `World3D._resolve_zone_region()`: maps the zone label `"jangan"` (case-insensitive) to
+  `JANGAN_ZONE_REGION` ("98/168", the densest real match from the earlier `findregionassets` scan),
+  used consistently by both `_zone_paths()` (per-zone-change reload) and `_reload_zone_assets()`
+  (which previously called `_parse_region_coords()` on the raw zone string directly, so it needed
+  its own fix to actually benefit from the new resolution).
+- **Live-verified end-to-end**: ran the real client with `SRREVAMP_MAPM_PATH` deliberately unset
+  (confirmed in the log: "SRREVAMP_MAPM_PATH not set -- ground stays a placeholder") and triggered
+  a zone reload for `"jangan"` via a temporary debug hook (removed after use) — the real terrain
+  that loaded immediately afterward was `98\168.m`, proving the zone-label path alone (not any
+  direct env var) now resolves to real, correctly-identified Jangan terrain.
+- Documented honestly: `98/168` is a verified-real representative point within the confirmed real
+  Jangan cluster, not a claim about the game's exact canonical spawn tile (which isn't
+  independently confirmed). Full test suite passes, clean `--import --quit`.
+- **Real-world effect**: a character connecting to this project's own server and entering the world
+  for the first time now sees real Jangan palace-district terrain and objects instead of a flat
+  placeholder box — the first time this session's Jangan discovery has been wired into actual
+  gameplay, not just verification screenshots.
+
+## 2026-08-24 (cont'd 69) — closed out the last 2 real object-loading errors: confirmed genuine, not bugs
+
+- Validated this session's fixes hold up beyond the one region tested: re-scanned real region
+  97/169 (the other dense end of the real Jangan cluster, 42 real jangan-referencing matches) and
+  got the exact same clean result as 98/168 — zero `ObjectLoader`/`bsr`/`bms` errors beyond the
+  same 2 known real cases, confirming the session's fixes aren't specific to one region.
+- Investigated those 2 remaining real `ObjectLoader: ... not found` errors directly rather than
+  leaving them as an assumption:
+  - `res\bldg\china\dunhuang\buildings\w_cd_stab_buil03_wal.bsr` — genuinely does not exist under
+    any name in this real client install (checked the real directory listing directly; the closest
+    real file, `w_cd_stable.bsr`, is a different, unrelated real object). A real missing-asset gap
+    in this client's own data, not a parsing bug.
+  - `res\artifact\guild\constantinople\fortress_ct_fort_in_gate01.bsr` — the real asset does exist,
+    but at `Res\Bldg\guild\constantinople\fortress_ct_fort_in_gate01.bsr` — a real `Res\Artifact\...`
+    vs. `Res\Bldg\...` folder mismatch. The entire `Res\Artifact\guild\constantinople\` folder is
+    absent from this real `Data.pk2`. This is a real authoring inconsistency in the retail data's
+    own object index (or a real client-version mismatch), not a bug in this project's path
+    resolution.
+  - Both closed out with a concrete, verified conclusion rather than left as an open question.
+- Wide top-down render of the same real 97/169 region cluster: a real formal garden/courtyard, a
+  coherent real building district (walls, structures, a market-like layout), open real countryside
+  with rock scatter, and a real road tying them together — reads as one coherent, recognizable real
+  location with no new rendering defects spotted.
+
+## 2026-08-24 (cont'd 68) — reduced the ground-texture "stamped grid" look with per-quad UV variation
+
+- Continued to the next flagged open item: real per-quad ground texturing (shipped earlier this
+  session) has no blending between adjacent quads of different real textures, and every quad
+  previously used the exact same UV orientation, so a real repeated texture read as an obviously
+  stamped, uniformly-aligned grid — visible in every screenshot sent this session.
+- The real per-vertex data doesn't carry any blend-weight information to recover real smooth
+  blending from, so implemented a standard, honest rendering-only mitigation instead: each quad now
+  gets a deterministic one-of-8 UV orientation (the 4 real square rotations x optional mirror,
+  keyed by the quad's own grid position) rather than the same fixed orientation every time. This is
+  a real, common tile-rendering technique, not a claim about the original game's own real per-quad
+  UV data (not recoverable at this granularity from what this project has).
+- Live-verified against real region 100/100: the real sand/dust texture's own ornamental pattern
+  now visibly rotates/mirrors quad to quad instead of repeating identically, a measurable reduction
+  in the "stamped" look. The hard edge between adjacent quads of different textures is unchanged
+  (inherent to having no real blend data) — an honest partial improvement, not a full fix.
+- Also fixed a stale doc comment in `MapmTerrainBuilder` left over from before the ground-texture
+  correction (still said the real `.ddj` files "don't actually exist," predating their discovery in
+  `Map.pk2\Tile2D\`).
+- Added test coverage for the new `_quad_uv_corners` helper (always a real unit-square permutation,
+  deterministic for the same grid position). Full suite passes, clean `--import --quit`.
+
+## 2026-08-24 (cont'd 67) — confirmed real .cpd sub-objects need no per-piece transform either
+
+- Continued straight off the .cpd implementation: `CPD_FORMAT.md` had left "does a compound's
+  sub-objects need a real per-piece transform this project isn't recovering" as an open, honestly
+  unconfirmed question. Wrote a small throwaway render tool (never committed, removed after use)
+  wrapping `ObjectLoader.load_object()` with a camera/light rig, mirroring `client/tools/
+  render_asset.gd`'s own existing pattern.
+- Rendered `x_mas_tree_b.cpd` (the real 9-sub-object decorated Christmas tree from the previous
+  entry) end-to-end with zero per-piece transform applied. **Result: a genuinely correct decorated
+  tree** — trunk, candles, and ornament balls/stars all land in their real, sensible positions,
+  confirming the same real "each piece already carries its own absolute position" convention this
+  project already established for `.bsr` sub-mesh pieces extends to `.cpd` sub-objects too. Updated
+  `CPD_FORMAT.md` and `ObjectLoader`'s own doc comment to record this as confirmed, not assumed.
+- Also tried `Compound\Char\China\1.cpd` (a real character + 6-piece armor set) as a second data
+  point — inconclusive on its own, since 6 of its 7 real `.bsr` references turned out to be
+  genuinely absent from this client install (a separate, already-understood real data gap, not a
+  transform question). Recorded honestly rather than overclaimed as a second confirmation.
+- Full test suite still passes, clean `--import --quit`; no test/doc left referencing an
+  unconfirmed transform assumption that's now actually confirmed.
+
+## 2026-08-24 (cont'd 66) — solved real .cpd "Compound" objects, the last recurring real error in Jangan
+
+- Continued straight off the previous entry's "what's next" pointer: the real `bad magic JMXVCPD
+  0101, want JMXVRES 0109` errors (11 occurrences in one region) were the largest remaining
+  recurring real error class after this session's other Jangan fixes.
+- Decompiled the real client's own loader chain on RE infrastructure this project controls (per
+  `docs/LEGAL.md` — no decompiler output stored in this repo): `.cpd` and `.bsr` share a real
+  dispatch function keyed by file extension (`FUN_00c6be00`), confirming `.cpd` is a real, distinct
+  "CompoundObject" format, not a `.bsr` variant. Traced into the real `CompoundObject::Load` virtual
+  method (found via its real vtable) but it receives an **already-tokenized real linked-list
+  structure**, not raw bytes — the true byte-level deserialization happens in an earlier step this
+  trace didn't reach.
+- Pulled 3 real `.cpd` files directly and hand-parsed them instead: `Compound\particle\
+  st_sand_01.cpd` (148 bytes, 2 real sub-objects), `Compound\Struct\China\event-xmas\
+  x_mas_tree_b.cpd` (541 bytes, 9 real sub-objects including a real duplicate), `Compound\Char\
+  China\1.cpd` (467 bytes, a real character body + 6-piece real armor set). **Found all 3 real
+  samples use a different byte layout** after the name (a flat real sub-count; a nested real
+  count-then-mid-list-field structure with an unindicated duplicate; another flat real sub-count) —
+  not the same structure with different values, genuinely different shapes.
+- Rather than force a single guessed structure that doesn't hold across all 3 real samples, reused
+  this project's own already-proven fallback technique (the same one `BsrReader`/`BmtReader` use
+  for their own unconfirmed inter-field gaps): scan forward from after the name for every real,
+  plausible length-prefixed string ending in `.bsr`. **Confirmed byte-exact correct against all 3
+  real samples** — recovers exactly 2, 9, and 7 real entries respectively, including the real
+  duplicate, with zero false positives.
+- Implemented `client/scripts/cpd/cpd_reader.gd` (`CpdReader`) and `server/internal/cpd/cpd.go`,
+  both with synthetic-fixture test coverage matching all 3 real shapes; the GDScript reader is
+  additionally live-verified against all 3 real files directly. Wired into
+  `ObjectLoader.load_object()`: any path ending in `.cpd` now recurses back into `load_object()`
+  once per real sub-`.bsr` and groups the results under one root node, instead of failing outright.
+- Documented honestly: the real per-sub-object transform/grouping the unconfirmed fields might
+  carry isn't recovered by this scan — each real sub-object is placed at the compound's own origin,
+  unconfirmed rather than guessed at further (see `CPD_FORMAT.md`).
+- Re-scanned the same real Jangan region after this fix: the `JMXVCPD` errors are gone. Full test
+  suite passes, clean `--import --quit`.
+
+## 2026-08-23 (cont'd 65) — cleaned up real object-loading noise found while scanning Jangan
+
+- Continued straight off the vertex-record-size fix rather than stopping: re-ran a full error scan
+  against real Jangan (98/168) and found two more real, concrete bugs behind the `ObjectLoader: X
+  not found` noise seen throughout this session (38+18 occurrences across two scans).
+- Added a temporary debug print (removed before finishing) to trace exactly which real object's
+  load call produced each failing lookup. Found: the *top-level* `.bsr` path always resolved fine
+  — the failures were coming from *inside* `ObjectLoader.load_object`, specifically real trailing
+  sub-mesh path reads spilling into a `.bsr` file's own trailing boilerplate.
+- Two real shapes confirmed by pulling the exact real files directly: `tre_bank02.bsr` (a real
+  tree) produced a real *empty* sub-mesh path string; `tre_maple01.bsr` produced a real *non-empty
+  garbage* one (`"6"`, a single stray real byte). Both are real, successful reads (not structural
+  failures) of data that just isn't a real `.bms` path — the earlier fix (stop on read failure)
+  didn't catch either case, since neither read actually failed.
+- Fixed both readers (`BsrReader`/`bsr`) to also stop the sub-mesh loop when a read succeeds but
+  produces something that isn't a plausible `.bms` path (reusing the already-existing
+  plausible-path-character check), not just when the read fails outright. Real test coverage added
+  for both real shapes in both languages.
+- **Real result**: re-scanning the same real Jangan region went from 56 total spurious
+  `ObjectLoader: X not found` errors down to 0. The two remaining real `ObjectLoader: ... not
+  found` errors are for two real, fully-qualified paths from *other* buildings' resource sets
+  (`res\bldg\china\dunhuang\buildings\...`, `res\artifact\guild\constantinople\...`) — plausibly
+  genuinely absent from this specific client install rather than a parsing bug, not investigated
+  further this pass.
+- **What's next, real and concrete**: the largest remaining recurring error is a real, distinct
+  container format this project hasn't implemented a reader for at all — `bad magic JMXVCPD 0101,
+  want JMXVRES 0109` (11 occurrences in one region). `.cpd` ("Compound") files were noticed earlier
+  this session (`Compound\Struct\China\event-xmas\*.cpd`) but never investigated; `ObjectLoader`
+  currently tries to parse them as `.bsr` and fails outright. A real, well-scoped next target.
+
+## 2026-08-23 (cont'd 64) — solved the real giant-black-triangle bug: a second, undocumented real .bms vertex record size
+
+- User said "go for it" on chasing the giant-triangle bug flagged as open in the previous entry.
+  Kept pushing on the same real bug rather than treating the previous entry's fixes as good enough.
+- Pulled the real `cj_pal_bigdoor_roof01.bms` (676 vertices, one of the real Jangan palace roof
+  meshes) directly and decoded it by hand at the documented 44-byte vertex stride: real `NaN`
+  values and normals hundreds of units long starting at vertex 1 — impossible for real mesh data.
+  The file's own header (`hdr[1]`, a real, confirmed index-section offset) doesn't divide evenly
+  by 44 either: `(hdr[1] - vertex_start) / vertex_count` computes to a real 52.1, not an integer.
+- **Re-decoded at a 52-byte stride (8 bytes more per vertex) and every single one of the 676 real
+  vertices came out with a real unit-length normal and zero NaNs** — and the mesh's own computed
+  vertex bounding box landed *exactly* on the file's separately-stored real declared bounding box.
+  Checked 4 more real building meshes to confirm this wasn't a one-off: `cj_pal_guard_buil_roof01`
+  and `cj_pal_guard_buil_wall01` also cleanly matched a real 52-byte stride; `cj3_lion01` and
+  `cj_pal_dam_center_wall` cleanly matched the documented real 44-byte stride, with an exact 4-byte
+  real gap before the index section matching this project's own already-documented `hdr[0]` field —
+  a real second per-file vertex size this project's earlier samples (all small character/prop
+  meshes) never had enough vertices in one file to expose.
+- Checked whether the previously-"unconfirmed uint32, observed constant 1" field (right before
+  vertex count) is the real flag distinguishing the two sizes: **it isn't** — real values seen are
+  12/5/0 on real 52-byte files and 92/0 on real 44-byte files, with 0 on both, ruling it out.
+- Implemented real self-validating stride detection in both `BmsReader` (client) and `bms` (Go):
+  try each real known candidate size, decode every vertex's normal, and pick whichever size makes
+  every normal come out unit-length — the exact same technique this project already uses for `.m`'s
+  own two real per-vertex sizes (`detectVertexSize`). `Vertex.Extra` is now a variable-length real
+  trailing-byte slice (12 or 20 bytes) instead of a fixed array, since its real length now depends
+  on the detected size.
+- Real test coverage added in both languages (synthetic 52-byte-record fixtures), full suite
+  passes, clean `--import --quit`. Re-rendering the same real Jangan region (98/168) with this fix
+  applied is in progress as of this entry — see the next entry (or the live screenshot sent to the
+  user) for the real visual result.
+- **What's next**: if any real visual defects remain after this fix, they're now isolated from the
+  three bugs already fixed this session (alpha-cutout, full-path textures, sub-mesh-count
+  mismatches, and now vertex-record size) — a much smaller, cleaner remaining surface to debug.
+
+## 2026-08-23 (cont'd 63) — found real Jangan, fixed real alpha-cutout and multi-piece-building bugs it exposed
+
+- User pushback again, and correctly so: every screenshot so far had been of an arbitrary rural
+  region (100/100), and the user pointed out they had nothing recognizable to check it against —
+  a fair, concrete ask to anchor testing on Jangan, the real starting city, specifically.
+- No table in this project's real data names regions by city (every real reference found so far is
+  purely numeric coordinates/type IDs). Found Jangan's real region cluster empirically instead:
+  wrote `server/cmd/findregionassets` (general-purpose, not hardcoded to "jangan") to scan every
+  real region's `.o`/`.o2` object placements across `Map.pk2`, resolve each real type ID through
+  `object.ifo`, and report which regions place anything whose real path contains a given
+  substring. Real result: a dense real cluster at **x=97-99, y=166-169**, with `98/168` (32 real
+  matches including real palace assets `cj_pal_indoor`/`cj_pal_guard_dan`/`cj3_lion02`) and
+  `97/169` (42 real matches) as the core — real, direct, checkable evidence, not a guess from
+  fuzzy memory of community-documented coordinates.
+- Rendered `98/168` (the real Jangan palace region) and immediately got genuinely recognizable
+  results for the first time this session: a real palace courtyard, formal stone walkways, and
+  orderly hedge/tree rows — unmistakably a real city district, not random rural placement.
+- But it also surfaced real bugs no rural region ever exercised, exactly as the user suspected:
+  - **Real alpha-cutout bug (tree/foliage "extra dark green crap")**: pulled a real leaf card
+    material (`tre_leaf01.bmt` → `tre_leaf_01.ddj`) and found its real DDS FourCC is **DXT3** — a
+    format with a genuine per-pixel alpha channel — while `ObjectLoader.build_godot_material` never
+    set any transparency mode at all, so Godot rendered the full opaque RGB data instead of cutting
+    out the transparent parts. Fixed: real DXT3/DXT5 textures now get real alpha-scissor
+    transparency and disabled backface culling. Confirmed `layer.unknown` (BMT_FORMAT.md's
+    long-unconfirmed field) isn't a reliable signal here (833 shows up on both this real foliage
+    layer and on unrelated real opaque avatar layers already documented) — used the texture's own
+    real DDS FourCC instead, which is directly confirmed.
+  - **Real full-path texture bug**: a real Jangan palace `.bmt` layer's texture_path turned out to
+    be a real *full path* (`prim\mtrl\bldg\china\dunhuang\buildings\naru_obj.ddj`), not the bare
+    filename BMT_FORMAT.md's spec (accurately, for every sample checked before now) documented —
+    `build_godot_material` was unconditionally prefixing it with the `.bmt`'s own directory,
+    producing a nonsense double path that could never resolve. Fixed: a texture_path containing a
+    real path separator is now used as-is.
+  - **Real multi-piece-building sub-mesh bug**: a real, larger Jangan building's declared sub-mesh
+    count didn't exactly match how many further real length-prefixed path strings were actually
+    present — previously this discarded the *entire* object (including its already-confirmed-real
+    primary mesh/material) over one bad trailing piece. Fixed in both `BsrReader`
+    (client) and `bsr` (Go): keep whatever real sub-mesh paths parsed successfully and stop,
+    rather than failing the whole object. The exact real root cause (a real trailing per-piece
+    field this project's earlier, simpler samples never had enough pieces to expose) isn't
+    confirmed — documented honestly as such, not guessed at further.
+  - Still visibly wrong in the re-render: large, clearly misplaced/misrotated dark building pieces
+    (oversized triangular "wings" jutting up at wrong angles) — a real, not-yet-diagnosed
+    position/rotation bug specific to bigger multi-piece real buildings, genuinely open.
+- All three fixes have real test coverage (synthetic fixtures matching the exact real failure
+  shape found live) in both GDScript and Go where applicable; full test suite still passes, clean
+  `--import --quit`.
+- **What's next**: the real building position/rotation bug just found (large multi-piece Jangan
+  buildings render as huge misplaced dark triangles) is the next concrete, well-scoped item —
+  likely a per-sub-piece transform this project's "no separate transform needed" assumption
+  (confirmed true for the simpler objects tested so far) doesn't actually hold for every real
+  building. Also worth revisiting: the earlier "res\bldg\china\jangan01\cj_streetstall.bsr" path
+  a live human playtest already used successfully — cross-check it against this session's real
+  Jangan region coordinates once the rendering bugs above are further along.
+
+## 2026-08-23 (cont'd 62) — solved environment.ifo from scratch: also in Map.pk2, not absent
+
+- Continued straight off the previous entry rather than treating the ground-texture fix as a
+  stopping point: `TILE2D_FORMAT.md`'s correction also flagged `environment.ifo` (the other real
+  per-block `.m` lookup) as "not yet re-checked against `Map.pk2`." Checked it: also real, also
+  present, `Map.pk2` root, 76,000 bytes — the exact same wrong-archive mistake, now fixed for both
+  files in one session.
+- No public documentation exists for this specific file's structure (checked, only the field name
+  itself is documented elsewhere). Reverse-engineered it from scratch: found the real
+  `"environment.ifo"` string reference in `sro_client.exe`, traced it to the real per-record reader
+  function, decompiled its two real vector-append helpers to get their real element sizes (4-float
+  vs. 2-float pushes), then iteratively fixed several real bugs in the byte-level reconstruction
+  (a wrong preamble width, a missing fixed field, wrong element sizes at one point) using an
+  automated Python parser cross-checked against a real 76,000-byte sample until it reached a
+  **byte-exact, zero-leftover parse of all 74 real records** — not just "the first record looks
+  plausible," the actual rigor bar this project holds every format to.
+- Real structure: 12-byte magic+version + `RecordCount`(u32) + a real fixed u16 + that many
+  records, each `Key`(byte, the real `.m` `EnvironmentID` cross-reference) + `Pad`(byte, always 0)
+  + two real length-prefixed name strings (`Name1` reused across records like "Env7"/"Env8";
+  `Name2` empty in every real record checked) + a real fixed u32 + 16 real count-prefixed float
+  channels (10 real 4-float channels, 6 real 2-float channels, in a fixed real order) — real values
+  mostly 0.0/1.0, consistent with (but not confirmed as) lighting/fog blend keyframes.
+- Found and correctly identified a real 2,516-byte trailer after the 74 records as a **separate**
+  structure: readable text including the literal string `"Root(Environment)"` plus real
+  Korean-language child-node labels — a real level-editor organizational tree, not more record
+  data or gameplay-relevant runtime data. Documented where it starts (`trailer_offset`) but didn't
+  parse it further, since the actual `.m`-referenced record data (the real target) is already fully
+  solved and this looks like tooling metadata.
+- Implemented `client/scripts/environment/environment_reader.gd` (`EnvironmentReader`) and
+  `server/internal/environment/environment.go`, both with synthetic-fixture test coverage; the
+  GDScript reader additionally live-verified against the real sample (all 74 records, correct
+  trailer offset). No renderer wiring yet — per-channel semantic meaning isn't confirmed, so no
+  color/lighting guess is wired into rendering (same "parsed but not guessed" precedent as `.nvm`'s
+  sparse walkability flags).
+- Also fixed a real, unrelated gap found while touching CI: `mapt_reader_test.gd`,
+  `tile_index_reader_test.gd`, `nvm_reader_test.gd`, and `mapo2_reader_test.gd` were never wired
+  into `.github/workflows/ci.yml`'s GDScript test list despite being added in earlier sessions —
+  added all four (plus the new `environment_reader_test.gd`), verified all five pass locally before
+  committing the workflow change.
+
+## 2026-08-23 (cont'd 61) — real ground textures found and wired in: they were in Map.pk2 all along
+
+- The previous entry (and several before it) declared real ground textures "genuinely absent"
+  after checking `Data.pk2`/`Media.pk2`/`Particles.pk2`. The user pushed back hard on that
+  conclusion ("you have everything the game needs to run, I'm having trouble understanding why we
+  can't keep trying") and was right to: that search never checked `Map.pk2`, on the assumption
+  that anything terrain-related lived at its root (like `.m`/`.o`/`.o2`/`.t`) rather than a named
+  subfolder. Re-ran `server/cmd/pk2list` against a freshly-pulled real `Map.pk2` and found a real
+  `Tile2D\` folder with **752 real `.ddj` files** — every single filename `tile2d.ifo` references
+  that was checked (`c_grass_fld_03.ddj`, `c_dust_fld_01.ddj`, `stormdesert_stone01.ddj`, etc.) is
+  really there, byte-identical name match.
+- Extracted and decoded `Tile2D\c_grass_fld_03.ddj` directly: a real 512x512 DXT1 texture, 10 real
+  mip levels, genuinely a tileable grass ground texture — confirmed via `DdjReader`, which already
+  existed (built for an earlier, unrelated prop-texture investigation) and needed zero changes.
+- Also re-checked `environment.ifo` against `Map.pk2` while at it: also real, also present (76,000
+  bytes, `Map.pk2` root) — the same wrong-archive mistake, now corrected. No public documentation
+  covers its internal structure, so it's parsed as "confirmed present, not yet decoded," not
+  absent.
+- Implemented real per-quad ground texturing: `MapmTerrainBuilder.build_full_region_mesh_textured()`
+  builds one mesh surface per distinct real texture ID a region's vertices actually use (plus one
+  color-fallback surface for any ID with no real texture), each quad getting its own local 0..1 UV
+  so its real texture tiles once per quad instead of stretching. The real `.t` lightmap is carried
+  on a second UV channel (`ao_on_uv2`) so it still spans the whole region continuously instead of
+  repeating per quad. `World3D._load_real_ground_textures()` resolves a region's real vertex
+  TextureInfo IDs through `tile2d.ifo` to real filenames and loads them from
+  `SRREVAMP_MAP_PK2_PATH`'s `Tile2D\` folder, cached by filename across regions. Added test
+  coverage for the new builder function (2 surfaces from a mixed resolved/unresolved region, full
+  quad coverage, correct per-surface material flags).
+- **Live-verified** against real region `100/100`: a close-up top-down render shows unmistakably
+  real gravel/stone texture, real sand-grain texture, and real grass texture, not flat debug
+  colors — screenshots sent to the user. Corrected `MAPM_FORMAT.md`, `TILE2D_FORMAT.md`, and
+  `NVM_FORMAT.md`'s earlier "absent"/"effectively zero" claims accordingly.
+- **What's next**: `environment.ifo`'s real internal structure is unparsed (no public doc covers
+  it — would need this project's own from-scratch RE, same as `.m`/`.t`/`.o2` before their public
+  docs were found, or a fresh public-doc search). The per-quad texture tiling is coarse (one
+  texture per real grid quad, ~one real game tile per 20-unit quad) with no blending between
+  adjacent quads of different textures — a real, honest first cut, not a claim of matching the
+  original renderer's smoothing/blending pixel-for-pixel.
+
 ## 2026-08-23 (cont'd 60) — checked the one real ground-texture near-hit before using it; it's a prop, not ground art
 
 - Followed through on the previous entry's "6/719 real matches" finding by actually checking one

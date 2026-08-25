@@ -10,6 +10,23 @@ See [docs/LEGAL.md](docs/LEGAL.md) for the full policy.
 - `server/` — Go server (world/login/gateway services).
 - `docs/` — architecture, protocol notes, decomp/RE tracking log.
 
+## Downloading a pre-built client
+
+Every tagged release publishes ready-to-run Windows and Linux client builds under
+[GitHub Releases](../../releases) — no Godot install needed.
+
+1. Download and unzip `srrevamp-windows.zip` (or `srrevamp-linux.zip`).
+2. Copy your own real Silkroad Online client's `*.pk2` files (`Data.pk2`, `Map.pk2`, `Media.pk2` —
+   BYO game assets, see [docs/LEGAL.md](docs/LEGAL.md)) into the `pk2` folder sitting next to the
+   executable. No environment variables or config editing needed — the client looks in that folder
+   automatically (see `Pk2Config` in `client/scripts/assets/pk2_config.gd`).
+3. Run the executable. It connects to a server the same way the editor build does (see
+   `client/scripts/Login.gd` for the default address).
+
+**Controls**: WASD/arrow keys walk directly, or left-click a spot on the ground to walk there.
+Right-click-drag orbits the camera around your character; the scroll wheel zooms. Press **F10** (or
+the "Hide UI" button, top-right) to hide the HUD for a clean view.
+
 ## Running locally
 
 **Docker Compose** (server + Postgres, no local Go/Postgres install needed):
@@ -35,9 +52,12 @@ the login screen and connects to `127.0.0.1:15779` by default (see `client/scrip
 Log in, pick a character, and hit "3D View" in the World HUD to walk around in 3D.
 
 **Optional — see real game assets in the 3D view**: this project ships with no game data (BYO,
-see `docs/LEGAL.md`). If you have your own real Silkroad client files, set these environment
-variables before launching the client to have `World3D.tscn` load and place them live (see
-`client/scripts/World3D.gd`):
+see `docs/LEGAL.md`). Either drop your own real Silkroad client's `*.pk2` files into a `pk2` folder
+next to the editor/exported binary (see "Downloading a pre-built client" above — `Pk2Config`
+resolves them automatically), or, for development/testing a single specific file without touching
+the `pk2` folder, set any of these environment variables before launching the client (each one
+takes priority over the matching real `pk2/<Name>.pk2` file when set) to have `World3D.tscn` load
+and place them live (see `client/scripts/World3D.gd`):
 - `SRREVAMP_PK2_PATH` — a real pk2 archive (e.g. `Data.pk2`). On its own, this auto-loads a real
   assembled, textured player character (see "Status" below).
 - `SRREVAMP_PK2_PATH` + `SRREVAMP_BSR_PATH` — also loads a real, textured static scenery object
@@ -70,6 +90,24 @@ directory can span multiple chained blocks (a real mechanism found by decompilin
 client's directory-read code, not guessed — see `docs/protocol/PK2_FORMAT.md`); both readers follow
 it, confirmed against a real 3.8GB `Data.pk2` whose file count went from 41 to 73139 once the fix
 landed.
+
+**Checking whether your own pk2 files are fully mapped**: `go run ./cmd/audittextures -data "<path
+to Data.pk2>"` (from `server/`) walks every one of `navmesh\object.ifo`'s real entries — the
+client's own complete real object catalog — and resolves each one's full chain (`.bsr` mesh(es) +
+material → each texture) end to end, reporting every real failure with its exact path and reason.
+Useful for spotting real gaps (a different client version/region missing some content, a corrupted
+file) before assuming this project's own readers are at fault — a genuinely missing/renamed file in
+your own pk2s shows up the same way it would in-game (a `push_error` naming the exact path), just
+without needing to actually load the 3D view first.
+
+**Checking whether your character/equipment assets are fully mapped**: `go run
+./cmd/auditcharacters -data "<path to Data.pk2>"` (from `server/`) walks the same real
+gender/skeleton/body-part/armor-set/weapon/shield matrix the client loads at runtime (see
+`GENDER_ASSET_PATHS`/`ARMOR_SET_NUMBERS`/`WEAPON_VARIANTS`/`SHIELD_VARIANTS` in
+`client/scripts/World3D.gd`) and reports any file that exists but fails to parse. A missing armor
+set or body part is reported as informational, not a failure — the client itself already treats
+that as a normal per-version gap — so real failures here mean an actual parser/format mismatch,
+not just missing content.
 
 Run the test suites from `server/` (`go test ./...`, needs the same local Postgres) and `client/`
 (`godot4 --headless --path . --script res://scripts/net/<name>_test.gd` for each file, or see
@@ -114,21 +152,27 @@ yet done" below), so this is a discrete warp, not a continuous cross-region walk
 reacts to a real zone change too: a zone label shaped like this project's real region naming
 (`"100/100"`) resolves (`_zone_paths`) to that region's real internal paths and the scene tears
 down/reloads its terrain and map objects for the new zone — a small dev UI (`ZoneInput`/
-`ChangeZoneButton`) lets you actually trigger and watch this happen. A zone not shaped that way
-(e.g. the default spawn zone, `"jangan"`) just clears back to the placeholder ground rather than
+`ChangeZoneButton`) lets you actually trigger and watch this happen. The server's own default spawn
+zone, `"jangan"`, resolves to a real, verified region (`98/168`) rather than clearing to placeholder
+ground — see "Real ground textures" below for how this project found where Jangan actually is. Any
+other zone not shaped like a real region still clears to the placeholder honestly, rather than
 guessing a path.
 
 3D asset formats are reverse-engineered and have real, tested readers on both sides
-(`server/internal/{pk2,bsr,bms,ddj,bmt,ban,bsk,mapo,mapm,efp}` in Go,
-`client/scripts/{pk2,bsr,bms,ddj,bmt,ban,bsk,mapo,mapm,efp}` in GDScript) — **every container
-format found so far has at least a working reader**, 10 total: the pk2 archive container, `.bsr` composite "static object" descriptors, `.bms` mesh
-geometry, `.ddj` textures (a thin wrapper around standard DDS), `.bmt` materials (zlib-compressed
+(`server/internal/{pk2,bsr,bms,ddj,bmt,ban,bsk,mapo,mapm,efp,cpd,environment}` in Go,
+`client/scripts/{pk2,bsr,bms,ddj,bmt,ban,bsk,mapo,mapm,efp,cpd,environment,mapt,tile2d,nvm}` in
+GDScript) — **every container format found so far has at least a working reader**: the pk2 archive
+container, `.bsr` composite "static object" descriptors, `.bms` mesh geometry (two real per-vertex
+record sizes, 44 and 52 bytes — self-validating detection, no reliable per-file flag distinguishes
+them), `.ddj` textures (a thin wrapper around standard DDS), `.bmt` materials (zlib-compressed
 color + texture-reference layers — decompressed with a from-scratch pure-GDScript DEFLATE decoder,
 `client/scripts/bmt/inflate.gd`, after Godot's own built-in decompressor was confirmed to fail on
 real zlib streams that a standard library decodes correctly), `.ban` bone-animation data
 (quaternion + position keyframes per named bone), `.bsk` skeleton/bone-hierarchy data (the
-parent-bone references `.ban` itself lacks), and `.o` (`Map.pk2`'s per-region object-placement
-list — type ID + world position for everything placed in a map region).
+parent-bone references `.ban` itself lacks), `.o`/`.o2` (`Map.pk2`'s per-region object-placement
+lists), `.t` (per-region ambient-occlusion lightmap), `.nvm` (per-region navmesh/walkability data),
+`tile2d.ifo`/`object.ifo`/`environment.ifo` (plain-text and binary lookup tables), and `.cpd`
+("Compound" multi-object groupings, e.g. a decorated tree or a fully-armored character).
 
 All of this has been verified against real extracted game archives, not just synthetic
 fixtures — including an actual rendered screenshot (real mesh + real DXT3 texture from
@@ -315,22 +359,37 @@ The ground is no longer just a placeholder box either: setting `SRREVAMP_MAPM_PA
 install) loads a real `Map.pk2` region's real elevation data and builds a real triangulated
 terrain mesh via `client/scripts/assets/mapm_terrain_builder.gd` (`MapmTerrainBuilder`), replacing
 both the placeholder's visual mesh and its collision shape (the latter built straight from the
-same real triangle data — see below). `.m`'s real structure is now fully solved and confirmed
+same real triangle data — see below). `.m`'s real structure is fully solved and confirmed
 byte-for-byte (see `docs/protocol/MAPM_FORMAT.md`): a region is a real 6×6 grid of 36 blocks, each
 a real 17×17 vertex mesh, stitched into one real 97×97 heightmap covering the region's actual
 1920×1920-unit footprint — `MapmReader` parses this fully deterministically (no plausibility
 scanning needed), and `MapmTerrainBuilder.build_full_region_mesh` builds the full stitched mesh
 directly from it. Verified against real region files: a single, coherent, natural-looking
-mountainous terrain with correct shading and no seams, not a flat box or an elongated ribbon. It's
-also texturable with real game art: `SRREVAMP_MAPM_TEXTURE_PATH` + `SRREVAMP_MEDIA_PK2_PATH` load
-a real per-region minimap image (`Media.pk2\minimap\<region>.ddj`) and apply it, tiled, as the
-terrain's real texture — found via `server/cmd/pk2list` after no live 3D ground-texture system
-could be confirmed anywhere in this project's available real data (every real terrain shader found
-samples one continuous color texture, not a multi-layer type blend — see
-`docs/protocol/MAPM_FORMAT.md`). It's real, region-accurate painted art, not confirmed to be the
-literal thing the game's terrain shaders sample at runtime — but it looks like the real game
-instead of a flat or procedural color. Falls back to real per-vertex color variation (driven by a
-real, confirmed per-vertex texture-ID field) if no texture is set.
+mountainous terrain with correct shading and no seams, not a flat box or an elongated ribbon.
+
+**Real ground textures**: an earlier pass wrongly concluded these were absent after checking
+`Data.pk2`/`Media.pk2`/`Particles.pk2` — they actually live in `Map.pk2`'s own `Tile2D\` folder (752
+real `.ddj` files), an archive that search never checked. `MapmTerrainBuilder.
+build_full_region_mesh_textured` resolves each real vertex's confirmed `TextureInfo.ID` (via
+`tile2d.ifo`, `TileIndexReader`) to its real `.ddj` file and renders each ground quad with its own
+real texture on its own mesh surface — real gravel, sand, and grass art, not a stand-in color. Each
+quad also gets a deterministic one-of-8 UV rotation/mirror to reduce the "stamped grid" look of a
+repeated texture with no blend data (a rendering technique, not a data claim). Falls back to
+real per-vertex color variation (by real `TileType`) for any texture ID that doesn't resolve. A
+real `.t` file's embedded lightmap (`MapTReader`) is applied as ambient occlusion on top. See
+`docs/protocol/{TILE2D,DDJ,MAPT}_FORMAT.md`.
+
+**Real Jangan, found and wired into the default spawn zone**: no table in this project's real data
+names regions by city — `server/cmd/findregionassets` finds them empirically instead, by scanning
+every region's placed objects for a given real resource-path substring. Found Jangan's real region
+cluster this way (x=97-99, y=166-169; `98/168`, the real palace core, has the densest match). The
+server's own symbolic default spawn zone, `"jangan"`, now resolves to this real region
+(`World3D._resolve_zone_region`) instead of clearing to placeholder ground — live-verified with
+`SRREVAMP_MAPM_PATH` deliberately unset, confirming the zone-label path alone loads real Jangan
+terrain. A real `.nvm` navmesh format (per-region walkability/pathfinding, `docs/protocol/
+NVM_FORMAT.md`) and a real `.cpd` "Compound" object format (groups several real `.bsr` references
+under one name — a decorated tree, a fully-armored character — `docs/protocol/CPD_FORMAT.md`) were
+also solved along the way, both live-verified against real samples.
 
 Real placed objects have automatic asset selection now too: `SRREVAMP_MAPO_PATH` (a real `Map.pk2`
 region's `.o` file, via `SRREVAMP_MAP_PK2_PATH`) resolves each real placement's type ID through a
@@ -382,15 +441,20 @@ rendered screenshot: a real China-woman skeleton plus real pelvis/thigh meshes a
 rendered via `client/tools/render_character.gd`, showing two correctly mirrored legs attached to
 a real 39-bone skeleton — see `docs/PROGRESS.md`.
 
-Not yet done: confirmed real-world terrain/object
-positioning/scale relative to a player's actual spawn coordinate (currently placed for visibility,
-not accuracy); a newly-found, entirely unparsed real file type (`Map.pk2` region folders also
-contain a `.t` file, magic `JMXVMAPT1001`, with a real byte pattern consistent with a texture
-blend/weight map — a real, previously-investigated RE gap this project couldn't fully close, see
-`docs/protocol/MAPM_FORMAT.md`). That's the current focus (see `docs/PROGRESS.md`). `.efp`'s
-nested tree structure (see above). The `EXTRA` equip slot's rendering was also investigated and
-dead-ended: a real cosmetic "avatar item" system exists (`resinfo\avataritemdata.txt`, wings for
-both genders, a dedicated real UI slot button), but none of its referenced `.bsr` meshes actually
-ship with this client build — see `docs/protocol/EQUIP_SLOTS.md`. See
-`docs/protocol/{PK2,BSR,BMS,DDJ,BMT,BAN,BSK,MAPO,MAPM,EFP}_FORMAT.md` and `docs/PROGRESS.md` for
-the detailed running log.
+Not yet done: confirmed real-world terrain/object positioning/scale relative to a player's exact
+real spawn coordinate (the default `"jangan"` zone now resolves to a real, verified region, `98/168`
+— see above — but that's a representative point within the confirmed real Jangan cluster, not a
+claim about the game's exact canonical spawn tile or a real cross-region coordinate transform);
+`environment.ifo`'s real per-channel semantic meaning (the record structure is fully solved —
+`docs/protocol/ENVIRONMENT_FORMAT.md` — but no rendering uses it yet, since guessing at "channel 0
+is ambient color" without confirmation risks the same overclaiming this project has caught and
+corrected itself on before); `.cpd`'s exact real trailing field layout (3 real samples showed 3
+different byte shapes — a scanning fallback recovers the real data anyway, see
+`docs/protocol/CPD_FORMAT.md`); real per-quad ground-texture blending (each quad gets its own real
+texture with a rotation/mirror to reduce an obvious repeat pattern, but there's no real blend data
+between adjacent quads of different textures to recover); `.efp`'s nested tree structure (see
+above). The `EXTRA` equip slot's rendering was also investigated and dead-ended: a real cosmetic
+"avatar item" system exists (`resinfo\avataritemdata.txt`, wings for both genders, a dedicated real
+UI slot button), but none of its referenced `.bsr` meshes actually ship with this client build —
+see `docs/protocol/EQUIP_SLOTS.md`. See `docs/protocol/*_FORMAT.md` and `docs/PROGRESS.md` for the
+detailed running log.
