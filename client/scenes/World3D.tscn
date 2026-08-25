@@ -30,14 +30,9 @@ ambient_light_color = Color(0.7, 0.7, 0.7, 1)
 tonemap_mode = 2
 ssao_enabled = true
 glow_enabled = true
-glow_intensity = 0.6
-glow_bloom = 0.15
-glow_hdr_threshold = 1.1
-fog_enabled = true
-fog_light_color = Color(0.65, 0.72, 0.8, 1)
-fog_light_energy = 1.0
-fog_density = 0.0015
-fog_sky_affect = 0.3
+glow_intensity = 0.8
+glow_bloom = 0.2
+glow_hdr_threshold = 0.85
 
 [node name="World3D" type="Node3D"]
 script = ExtResource("1")

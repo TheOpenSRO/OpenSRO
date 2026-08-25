@@ -444,3 +444,23 @@ internal helpers) rather than leaving dead plumbing around.
 Full verification: all 43 GDScript `*_test.gd` files (including updated assertions in
 `mapm_terrain_builder_test.gd` reflecting the new honest-fallback behavior) and
 `go build`/`go vet`/`go test ./...` swept clean.
+
+## 2026-08-26, thirteenth round — the guessed fog value was genuinely wrong, removed
+
+Real, multiplayer-confirmed retest (a friend connected over LAN via the new server-address field,
+a real second player visible in-world): the fog added in the atmosphere pass was way too strong,
+washing out the whole scene to a flat white haze past a short distance. That fog density
+(`0.0015`) was an honest guess documented as "not visually verified" -- confirmed wrong. Rather
+than guess a second unverified number, **removed fog entirely** instead of re-guessing. Also
+lowered `glow_hdr_threshold` (1.1 -> 0.85) so ordinary bright surfaces (snow, lit lanterns) have a
+better chance of actually triggering visible bloom, since the friend's report was also "no bloom"
+-- not independently confirmed whether the original threshold was really the cause or whether
+bloom just wasn't obvious in that scene, so this is a reasonable adjustment, not a confirmed fix.
+
+The staircase-not-reading-as-distinct-steps question from earlier remains open and still needs a
+real close-up look at the actual geometry -- file-level checks already confirmed the mesh
+resolves and parses cleanly, so this is a rendering/geometry question, not a missing-asset one,
+same conclusion as before.
+
+Full verification (`godot4 --headless --path . --import --quit`, all 43 GDScript `*_test.gd`
+files) swept clean after the fog removal.
