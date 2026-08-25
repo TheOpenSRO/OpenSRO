@@ -18,18 +18,19 @@ class_name MapmTerrainBuilder
 ## Vertex color: for the real 7-byte-vertex file class, the vertex's Extra
 ## bytes are a real, confirmed `TextureInfo` `uint16` (a 10-bit texture ID
 ## into `tile2d.ifo` + a 6-bit scale, per the public format documentation
-## cited in MAPM_FORMAT.md) followed by a real `Brightness` byte. This
-## project has a real `tile2d.ifo` (see docs/protocol/TILE2D_FORMAT.md,
-## `TileIndexReader`) giving a real per-ID `TileType` classification
-## (grass/sand/snow/water/etc). _vertex_color() uses that real
-## classification for a real, semantically-grounded color when a parsed
-## tile2d table is passed in, falling back to a data-driven green/brown
-## hue spread across the raw ID otherwise -- used as the fallback surface
-## color in build_full_region_mesh_textured() below wherever a quad's real
-## texture isn't available. The real 11-byte-vertex file class's Extra
-## bytes don't have a confirmed field layout beyond height, so the same
-## decode is applied best-effort (the leading 2 bytes exist in both real
-## shapes) rather than treated as a wholly different case.
+## cited in MAPM_FORMAT.md) followed by a real `Brightness` byte. **This
+## project no longer guesses a per-tile appearance from that ID at all**
+## (removed 2026-08-26, see docs/WORLD_ISSUES.md -- an earlier version
+## invented a per-TileType color palette, then a green/brown hue sweep,
+## neither backed by any real appearance data): every real ground tile
+## already has a real texture in Map.pk2's `Tile2D\` folder (confirmed
+## 100%, 719/719 real tile2d.ifo entries resolve and parse cleanly), so
+## build_full_region_mesh_textured() below is what actually renders real
+## ground appearance. _vertex_color() is now only the honest "no real
+## texture resolved" fallback -- one flat UNKNOWN_TILE_COLOR, not a guess
+## dressed up as data. The real 11-byte-vertex file class's Extra bytes
+## don't have a confirmed field layout beyond height; this project doesn't
+## invent one for those either.
 ##
 ## Real ground textures: corrected 2026-08-23. An earlier, exhaustive-
 ## looking search only checked Data.pk2/Media.pk2/Particles.pk2 for the
@@ -54,72 +55,45 @@ const GRID_WIDTH := 17
 ## from CRegionManagerBody) divided by 96 gives exactly 20.0.
 const TILE_SIZE := 20.0
 
-## Real, plausible base colors for each real TileIndexReader.TileType --
-## see docs/protocol/TILE2D_FORMAT.md. Used only as the fallback surface
-## color in build_full_region_mesh_textured() (a real ID with no matching
-## real texture in texture_lookup) and by the older, flat-color
-## build_full_region_mesh() -- since the real ground texture files
-## themselves were found (2026-08-23, see TILE2D_FORMAT.md's
-## "Corrected 2026-08-23" section: they live in Map.pk2's Tile2D\ folder),
-## these are no longer this project's only real-world-plausible option,
-## just the honest fallback for whatever a given region's real texture
-## lookup doesn't cover.
-static var _type_colors := {
-	TileIndexReader.TileType.DIRT: Color(0.42, 0.30, 0.18),
-	TileIndexReader.TileType.SAND: Color(0.76, 0.67, 0.42),
-	TileIndexReader.TileType.ASHFIELD: Color(0.30, 0.28, 0.27),
-	TileIndexReader.TileType.STONE: Color(0.55, 0.55, 0.56),
-	TileIndexReader.TileType.METAL: Color(0.5, 0.52, 0.56),
-	TileIndexReader.TileType.WOOD: Color(0.45, 0.32, 0.16),
-	TileIndexReader.TileType.MUD: Color(0.32, 0.24, 0.14),
-	TileIndexReader.TileType.WATER: Color(0.20, 0.45, 0.65),
-	TileIndexReader.TileType.DEEP_WATER: Color(0.10, 0.22, 0.45),
-	TileIndexReader.TileType.SNOW: Color(0.92, 0.93, 0.95),
-	TileIndexReader.TileType.GRASS: Color(0.30, 0.55, 0.22),
-	TileIndexReader.TileType.LONG_GRASS: Color(0.22, 0.45, 0.16),
-	TileIndexReader.TileType.FOREST: Color(0.14, 0.32, 0.12),
-	TileIndexReader.TileType.CLOUD: Color(0.85, 0.87, 0.90),
-}
+## **Removed 2026-08-26** (see docs/WORLD_ISSUES.md): this used to hold an
+## invented RGB guess per real TileIndexReader.TileType (a made-up "what
+## dirt/grass/etc. plausibly looks like" palette, and before that a
+## fabricated green-to-brown hue sweep for anything not in this table) as
+## a *rendering* fallback. Flagged as unacceptable: this project has real
+## ground textures for every real tile2d.ifo entry (confirmed 100%,
+## 719/719, resolving and parsing cleanly -- see TILE2D_FORMAT.md), so
+## there is no real case where this project actually needs to invent an
+## appearance instead of using the real texture. _vertex_color now returns
+## one honest, unmistakably-neutral flat gray whenever a real texture
+## isn't available (SRREVAMP_MAP_PK2_PATH unset, or a genuinely-missing
+## real texture file) instead of pretending a color choice represents
+## anything real.
 
-## Turns a real per-vertex Extra byte array into real, data-driven vertex
-## color -- see this file's top comment. Uses the real confirmed
-## TextureInfo uint16's low 10 bits (the real texture ID field) when at
-## least 2 Extra bytes are available. If tile_table (a parsed
-## TileIndexReader.Table, e.g. from a real tile2d.ifo) is given and has a
-## real entry for that ID, returns that entry's real TileType's plausible
-## base color (see _type_colors). Otherwise falls back to a data-driven
-## green-to-brown hue sweep across the raw ID -- real variation, not a
-## claim about what any specific ID represents. A completely empty Extra
-## falls back to a fixed mid-tone.
-static func _vertex_color(extra: PackedByteArray, tile_table: TileIndexReader.Table = null) -> Color:
-	if extra.size() < 2:
-		return Color(0.45, 0.5, 0.32)
-	var tex_info := extra.decode_u16(0)
-	var id := tex_info & 0x3ff # real 10-bit TextureInfo.ID field
+## Real, honest "no real texture available" color -- see this file's
+## comment above. Deliberately flat and uniform (not per-type or
+## per-ID varied) so it reads as "unknown," not as a guess dressed up as
+## real ground variety.
+const UNKNOWN_TILE_COLOR := Color(0.5, 0.5, 0.5)
 
-	if tile_table != null:
-		var entry := tile_table.lookup(id)
-		if entry != null and _type_colors.has(entry.type):
-			return _type_colors[entry.type]
-
-	var t := id / 1023.0
-	# Hue sweeps a natural green-to-brown arc (0.30 = green, 0.08 = brown)
-	# rather than the full rainbow, so real variation reads as ground
-	# rather than as an arbitrary rainbow gradient.
-	var hue := lerpf(0.30, 0.08, t)
-	return Color.from_hsv(hue, 0.45, 0.55)
+## Fallback vertex color -- see this file's top comment. This only matters
+## when the real per-quad texture (resolved by the caller via a real
+## Tile2D\*.ddj lookup -- see build_full_region_mesh_textured) isn't
+## available; it's UNKNOWN_TILE_COLOR unconditionally rather than inventing
+## a plausible-looking per-tile value.
+static func _vertex_color() -> Color:
+	return UNKNOWN_TILE_COLOR
 
 ## Builds a triangulated ArrayMesh from a single real block (GRID_WIDTH x
 ## GRID_WIDTH vertices, row-major) -- useful standalone for a quick single
 ## sub-patch render, or as the unit build_full_region_mesh below stitches
 ## 36 of together.
-static func build_mesh(region: MapmReader.ParsedRegion, block_index: int = 0, tile_table: TileIndexReader.Table = null) -> ArrayMesh:
+static func build_mesh(region: MapmReader.ParsedRegion, block_index: int = 0) -> ArrayMesh:
 	if block_index < 0 or block_index >= region.blocks.size():
 		push_error("MapmTerrainBuilder: block index %d out of range (region has %d blocks)" % [block_index, region.blocks.size()])
 		return null
 	var block: MapmReader.Block = region.blocks[block_index]
 	var cells := _block_to_cells(block)
-	return _build_mesh_from_cells(cells, GRID_WIDTH, GRID_WIDTH, tile_table)
+	return _build_mesh_from_cells(cells, GRID_WIDTH, GRID_WIDTH)
 
 ## Real, precisely-confirmed full-region assembly -- see
 ## docs/protocol/MAPM_FORMAT.md. A whole region is a real 6x6 grid of
@@ -132,14 +106,14 @@ static func build_mesh(region: MapmReader.ParsedRegion, block_index: int = 0, ti
 ## region doesn't have exactly BLOCK_COUNT blocks (MapmReader guarantees
 ## this on a successful parse, so this should only trip on a malformed
 ## caller-constructed region).
-static func build_full_region_mesh(region: MapmReader.ParsedRegion, tile_table: TileIndexReader.Table = null) -> ArrayMesh:
+static func build_full_region_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh:
 	var bands_per_side := MapmReader.BLOCKS_PER_SIDE
 	if region.blocks.size() != bands_per_side * bands_per_side:
 		push_error("MapmTerrainBuilder: region has %d blocks, want %d" % [region.blocks.size(), bands_per_side * bands_per_side])
 		return null
 	var full_size := bands_per_side * (GRID_WIDTH - 1) + 1
 	var grid := _full_region_cells(region, bands_per_side, full_size)
-	return _build_mesh_from_cells(grid, full_size, full_size, tile_table)
+	return _build_mesh_from_cells(grid, full_size, full_size)
 
 ## Same real stitched region layout as build_full_region_mesh, but each
 ## quad is placed on its own real-textured surface instead of a single
@@ -163,14 +137,14 @@ static func build_full_region_mesh(region: MapmReader.ParsedRegion, tile_table: 
 ## is sampled from a second, whole-region-spanning UV channel
 ## (ARRAY_TEX_UV2) instead, since it needs the opposite: one continuous
 ## real shadow map stretched over the entire mesh, not repeated per quad.
-static func build_full_region_mesh_textured(region: MapmReader.ParsedRegion, tile_table: TileIndexReader.Table, texture_lookup: Dictionary, ao_texture: Texture2D = null) -> ArrayMesh:
+static func build_full_region_mesh_textured(region: MapmReader.ParsedRegion, texture_lookup: Dictionary, ao_texture: Texture2D = null) -> ArrayMesh:
 	var bands_per_side := MapmReader.BLOCKS_PER_SIDE
 	if region.blocks.size() != bands_per_side * bands_per_side:
 		push_error("MapmTerrainBuilder: region has %d blocks, want %d" % [region.blocks.size(), bands_per_side * bands_per_side])
 		return null
 	var full_size := bands_per_side * (GRID_WIDTH - 1) + 1
 	var grid := _full_region_cells(region, bands_per_side, full_size)
-	return _build_textured_mesh_from_cells(grid, full_size, full_size, tile_table, texture_lookup, ao_texture)
+	return _build_textured_mesh_from_cells(grid, full_size, full_size, texture_lookup, ao_texture)
 
 ## Shared real 6x6-block stitching behind build_full_region_mesh and
 ## build_full_region_mesh_textured -- see either's doc comment for the
@@ -212,7 +186,7 @@ static func _block_to_cells(block: MapmReader.Block) -> Array:
 ## col_count [height, extra] pairs), row_count/col_count are
 ## cells.size()/cells[0].size() (passed separately since callers may have
 ## already validated/trimmed them).
-static func _build_mesh_from_cells(cells: Array, row_count: int, col_count: int, tile_table: TileIndexReader.Table = null) -> ArrayMesh:
+static func _build_mesh_from_cells(cells: Array, row_count: int, col_count: int) -> ArrayMesh:
 	var positions := PackedVector3Array()
 	positions.resize(row_count * col_count)
 	for r in range(row_count):
@@ -236,8 +210,7 @@ static func _build_mesh_from_cells(cells: Array, row_count: int, col_count: int,
 	colors.resize(positions.size())
 	for r in range(row_count):
 		for c in range(col_count):
-			var extra: PackedByteArray = cells[r][c][1]
-			colors[r * col_count + c] = _vertex_color(extra, tile_table)
+			colors[r * col_count + c] = _vertex_color()
 
 	var indices := PackedInt32Array()
 	for r in range(row_count - 1):
@@ -320,7 +293,7 @@ static func _quad_uv_corners(r: int, c: int) -> PackedVector2Array:
 ## seam reads as a soft, muted transition band about one quad wide rather
 ## than a stamped-looking rectangle edge. Still exactly one real texture
 ## per quad -- this only changes how its edges blend into its neighbors.
-static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_count: int, tile_table: TileIndexReader.Table, texture_lookup: Dictionary, ao_texture: Texture2D) -> ArrayMesh:
+static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_count: int, texture_lookup: Dictionary, ao_texture: Texture2D) -> ArrayMesh:
 	var positions := PackedVector3Array()
 	positions.resize(row_count * col_count)
 	for r in range(row_count):
@@ -359,7 +332,7 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 		for c in range(col_count - 1):
 			var extra: PackedByteArray = cells[r][c][1]
 			quad_keys[r][c] = _resolve_texture_id(extra, texture_lookup)
-			quad_colors[r][c] = _vertex_color(extra, tile_table)
+			quad_colors[r][c] = _vertex_color()
 
 	# Base surface: one continuous mesh over the whole grid, each vertex
 	# colored by averaging the (up to 4) quads that touch it -- see this
@@ -476,6 +449,83 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 			mat.ao_on_uv2 = true
 		array_mesh.surface_set_material(array_mesh.get_surface_count() - 1, mat)
 
+	return array_mesh
+
+## Real full-region wrapper around build_water_mesh, same real 6x6-block
+## stitching as build_full_region_mesh/build_full_region_mesh_textured --
+## see either's doc comment. Returns null (no real work done) if region
+## doesn't have exactly BLOCK_COUNT blocks, same guard as those two.
+static func build_full_region_water_mesh(region: MapmReader.ParsedRegion, tile_table: TileIndexReader.Table) -> ArrayMesh:
+	var bands_per_side := MapmReader.BLOCKS_PER_SIDE
+	if region.blocks.size() != bands_per_side * bands_per_side:
+		return null
+	var full_size := bands_per_side * (GRID_WIDTH - 1) + 1
+	var grid := _full_region_cells(region, bands_per_side, full_size)
+	return build_water_mesh(grid, full_size, full_size, tile_table)
+
+## Builds a real, separate water-surface mesh covering only the quads whose
+## real TileType (via tile_table, the same real classification
+## _vertex_color already uses) is WATER or DEEP_WATER -- see
+## docs/protocol/TILE2D_FORMAT.md. Returns null if tile_table is null or no
+## real water quads are found in this region, so a caller can skip adding
+## an empty/pointless node. Positions use the same real per-vertex heights
+## as the main terrain mesh (so the water surface sits exactly at the real
+## water tile's own height, seamlessly matching the surrounding ground --
+## not an artificially flattened "lake level", which this project has no
+## real per-body-of-water reference height to compute anyway), with each
+## quad given its own repeating 0..1 UV so a real animated water texture
+## tiles naturally across it, the same per-quad-texture convention
+## build_full_region_mesh_textured already uses for ordinary ground.
+static func build_water_mesh(cells: Array, row_count: int, col_count: int, tile_table: TileIndexReader.Table) -> ArrayMesh:
+	if tile_table == null:
+		return null
+
+	var positions := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
+
+	for r in range(row_count - 1):
+		for c in range(col_count - 1):
+			var extra: PackedByteArray = cells[r][c][1]
+			if extra.size() < 2:
+				continue
+			var id: int = extra.decode_u16(0) & 0x3ff
+			var entry := tile_table.lookup(id)
+			if entry == null:
+				continue
+			if entry.type != TileIndexReader.TileType.WATER and entry.type != TileIndexReader.TileType.DEEP_WATER:
+				continue
+
+			var h00: float = cells[r][c][0]
+			var h10: float = cells[r][c + 1][0]
+			var h01: float = cells[r + 1][c][0]
+			var h11: float = cells[r + 1][c + 1][0]
+			var base := positions.size()
+			positions.append_array(PackedVector3Array([
+				Vector3(c * TILE_SIZE, h00, r * TILE_SIZE),
+				Vector3((c + 1) * TILE_SIZE, h10, r * TILE_SIZE),
+				Vector3((c + 1) * TILE_SIZE, h11, (r + 1) * TILE_SIZE),
+				Vector3(c * TILE_SIZE, h01, (r + 1) * TILE_SIZE),
+			]))
+			uvs.append_array(PackedVector2Array([Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]))
+			indices.append_array(PackedInt32Array([base, base + 1, base + 2, base, base + 2, base + 3]))
+
+	if positions.is_empty():
+		return null
+
+	var normals := PackedVector3Array()
+	normals.resize(positions.size())
+	normals.fill(Vector3.UP)
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = positions
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+
+	var array_mesh := ArrayMesh.new()
+	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return array_mesh
 
 ## The real height at row 0, column GRID_WIDTH/2 of a full stitched region

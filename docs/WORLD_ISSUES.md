@@ -413,3 +413,34 @@ a fix. Water is the clear best next candidate: bounded, already has matching til
 data, and is one of the more visually obvious gaps in an outdoor real Silkroad screenshot. Dungeons
 and Pets are real, much larger systems (separate map format / a whole companion-pet feature) that
 would need their own dedicated investigation, not a quick pass.
+
+## 2026-08-26, twelfth round — implemented water; removed invented tile-color fallback
+
+Implemented real animated water: `MapmTerrainBuilder.build_full_region_water_mesh` builds a
+separate surface covering only the real quads classified WATER/DEEP_WATER (via the real tile2d
+table, same classification `_vertex_color` already used), and `World3D._try_add_real_water` loads
+the real 30-frame flip-book animation from `Map.pk2\Water\` into an `AnimatedTexture` and applies
+it as that surface's material. Real per-quad UVs, a modest UV1 repeat so the frame texture doesn't
+stretch across a whole water body, and a small vertical lift to avoid z-fighting with the
+underlying terrain (which still renders at the water tile's own real height). Frame rate (8fps) is
+an honest guess, not reverse-engineered timing data. New test coverage in
+`mapm_terrain_builder_test.gd` for the water-mesh builder (real WATER quads produce geometry, real
+non-water regions produce none, no tile table means no water).
+
+Separately, flagged and fixed: `MapmTerrainBuilder` had an invented per-`TileType` color palette
+(`_type_colors`) and, before that, a fabricated green-to-brown hue sweep, both presented as
+"plausible" ground appearance despite not being derived from any real data -- unacceptable, since
+this project has *real* ground textures for every real tile (100%, 719/719 tile2d.ifo entries).
+Removed both; `_vertex_color` now returns one honest, unmistakably-neutral `UNKNOWN_TILE_COLOR`
+flat gray whenever a real texture isn't available, instead of a guess dressed up as ground
+variety. Also fixed the same pattern in `_try_apply_real_player_character`'s fallback material
+(was an invented skin-tone color for when a real body-part material fails to resolve by name --
+now the same honest flat gray; this path is confirmed to rarely if ever actually trigger, per
+earlier live verification of 1,500+ real name-matched mesh pieces). Removed the now-unused
+`tile_table` parameter from the flat-color mesh-building functions it no longer does anything
+useful for (`build_mesh`, `build_full_region_mesh`, `build_full_region_mesh_textured`, and their
+internal helpers) rather than leaving dead plumbing around.
+
+Full verification: all 43 GDScript `*_test.gd` files (including updated assertions in
+`mapm_terrain_builder_test.gd` reflecting the new honest-fallback behavior) and
+`go build`/`go vet`/`go test ./...` swept clean.

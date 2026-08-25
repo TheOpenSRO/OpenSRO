@@ -849,6 +849,85 @@ func _load_ground_texture_file(filename: String, archive: Pk2Reader) -> Texture2
 	_ground_texture_cache[filename] = tex
 	return tex
 
+## Real, per-run cache of the 30-frame real water animation loaded from
+## Map.pk2's own real `Water\` folder (see docs/WORLD_ISSUES.md's
+## 2026-08-26 asset-taxonomy entry) -- every region shares the same real
+## water animation, so this is only ever built once regardless of how many
+## real regions with real water tiles get loaded.
+static var _water_frames_cache: Array = []
+static var _water_frames_load_attempted := false
+
+## Loads the real 30-frame water flip-book animation
+## (Water\water101.ddj..water130.ddj -- a real numbered-frame sequence, not
+## a shader effect) into an AnimatedTexture, or null if none of the 30 real
+## frames were found (e.g. SRREVAMP_MAP_PK2_PATH unset, or a real archive
+## that doesn't ship this folder). Frame duration is an honest guess (not
+## reverse-engineered from any real client timing data) picked to read as
+## a gentle, plausible water ripple rather than a claim about the real
+## client's own exact animation speed.
+const WATER_FRAME_COUNT := 30
+const WATER_FRAME_FPS := 8.0
+
+func _load_real_water_animation(archive: Pk2Reader) -> AnimatedTexture:
+	if not _water_frames_load_attempted:
+		_water_frames_load_attempted = true
+		for i in range(WATER_FRAME_COUNT):
+			var filename := "water1%02d.ddj" % (i + 1)
+			var bytes := AssetSource.read_bytes("Water\\%s" % filename, archive)
+			if bytes.is_empty():
+				continue
+			var parsed := DdjReader.parse(bytes)
+			if parsed == null:
+				continue
+			var tex := DdjReader.to_texture(parsed)
+			if tex != null:
+				_water_frames_cache.append(tex)
+		if _water_frames_cache.is_empty():
+			print("World3D: no real water frames found under Water\\ -- water tiles render as plain ground")
+
+	if _water_frames_cache.is_empty():
+		return null
+
+	var anim := AnimatedTexture.new()
+	anim.frames = _water_frames_cache.size()
+	for i in range(_water_frames_cache.size()):
+		anim.set_frame_texture(i, _water_frames_cache[i])
+		anim.set_frame_duration(i, 1.0 / WATER_FRAME_FPS)
+	return anim
+
+## Builds and attaches a real animated water surface (see
+## MapmTerrainBuilder.build_full_region_water_mesh) to terrain_group, if
+## this region has any real WATER/DEEP_WATER tiles at all -- a no-op
+## (nothing added) otherwise, or if SRREVAMP_MAP_PK2_PATH isn't set / the
+## real water frames can't be found, so a region with no real water (most
+## of them) or a caller with no archive access isn't penalized.
+func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion, tile_table: TileIndexReader.Table) -> void:
+	var water_mesh := MapmTerrainBuilder.build_full_region_water_mesh(region, tile_table)
+	if water_mesh == null:
+		return
+	var archive := _open_map_pk2_if_set()
+	if archive == null:
+		return
+	var anim := _load_real_water_animation(archive)
+	if anim == null:
+		return
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = anim
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(1, 1, 1, 0.85)
+	mat.uv1_scale = Vector3(4.0, 4.0, 1.0) # real per-quad UV already 0..1; repeats the real frame texture a few times per quad instead of stretching one tile over it, same rationale as the ground-texture uv1_scale nearby
+
+	var water_instance := MeshInstance3D.new()
+	water_instance.name = "Water"
+	water_instance.mesh = water_mesh
+	water_instance.material_override = mat
+	# Real, slight vertical lift above the underlying terrain (which already
+	# renders at the water tile's own real height) so the water surface
+	# doesn't z-fight with the ground mesh sharing the exact same vertices.
+	water_instance.position.y = 0.1
+	terrain_group.add_child(water_instance)
+
 ## Opens the real Map.pk2 -- SRREVAMP_MAP_PK2_PATH if set, else a real
 ## "pk2/Map.pk2" next to the running executable (see Pk2Config) -- or
 ## returns null if neither resolves or the open fails. Map.pk2 is a separate
@@ -1302,9 +1381,9 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# produces the complete real 97x97 mesh on a successful parse.
 	var terrain_mesh: ArrayMesh
 	if textured:
-		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh_textured(region, tile_table, ground_textures, lightmap)
+		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh_textured(region, ground_textures, lightmap)
 	else:
-		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh(region, tile_table)
+		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh(region)
 	if terrain_mesh == null:
 		printerr("World3D: parsed ", region.blocks.size(), " real blocks from ", mapm_path, " but couldn't build a mesh from them")
 		return NAN
@@ -1389,6 +1468,8 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	single_patch.material_override = mat
 	single_patch.add_child(patch_body)
 	terrain_group.add_child(single_patch)
+
+	_try_add_real_water(terrain_group, region, tile_table)
 
 	# The vertical calibration above only guarantees one specific mesh vertex
 	# lines up near world Y=0 -- it says nothing about the height of whatever
@@ -1661,8 +1742,13 @@ func _build_assembled_character(armor_slots_mask: int = 0, gender: String = DEFA
 		return null
 
 	var skeleton := Skeleton3DBuilder.build_skeleton3d(assets["skel"])
+	# Honest "no real material resolved" fallback (2026-08-26, see
+	# docs/WORLD_ISSUES.md) -- a flat neutral gray, not an invented skin
+	# tone. Real body-part materials resolve by real name match in
+	# practice (confirmed live, zero fallback mismatches across 1,500+
+	# mesh pieces checked), so this should rarely if ever actually render.
 	var fallback_mat := StandardMaterial3D.new()
-	fallback_mat.albedo_color = Color(0.85, 0.7, 0.55)
+	fallback_mat.albedo_color = Color(0.5, 0.5, 0.5)
 	CharacterAssembler.assemble(skeleton, assets["body_parts"], fallback_mat, assets["body_materials"])
 
 	var equipment_sets: Dictionary = assets["equipment_sets"]

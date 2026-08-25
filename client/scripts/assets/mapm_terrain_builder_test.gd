@@ -15,6 +15,14 @@ func _check(cond: bool, msg: String) -> void:
 
 var GW := 17 # MapmTerrainBuilder.GRID_WIDTH, kept local for brevity
 
+## ArrayMesh vertex colors are stored 8-bit per channel, so a small
+## quantization error vs. the exact literal is expected and not a real
+## mismatch -- a generous tolerance, same rationale the original version of
+## this test file already used.
+func _close_to_unknown_color(c: Color) -> bool:
+	var u := MapmTerrainBuilder.UNKNOWN_TILE_COLOR
+	return absf(c.r - u.r) < 0.01 and absf(c.g - u.g) < 0.01 and absf(c.b - u.b) < 0.01
+
 ## Builds one real-shaped Block: height_fn(local_row, local_col) for each
 ## of the block's real GW x GW vertices, and an optional fixed TextureInfo
 ## uint16 (real confirmed field for the 7-byte-vertex file class) embedded
@@ -67,10 +75,15 @@ func _init() -> void:
 
 	_check(MapmTerrainBuilder.build_mesh(region1, 5) == null, "rejects an out-of-range block index")
 
-	# Vertex colors: driven by the real confirmed TextureInfo field,
-	# distinct values should produce distinct (not fabricated-identical)
-	# colors, and no Extra bytes at all should fall back to the fixed
-	# mid-tone.
+	# Vertex colors (2026-08-26, see docs/WORLD_ISSUES.md): this project no
+	# longer invents a per-TextureInfo-ID color guess -- build_mesh/
+	## build_full_region_mesh's flat-color path is honest "no real texture
+	# resolved here" scaffolding, not a real-looking render, so every
+	# vertex gets the same real UNKNOWN_TILE_COLOR regardless of its real
+	# TextureInfo ID (distinct IDs are NOT supposed to produce distinct
+	# colors here anymore -- the real per-quad texture path,
+	# build_full_region_mesh_textured, is what actually renders real
+	# ground appearance).
 	var region2 := MapmReader.ParsedRegion.new()
 	region2.version = "1000"
 	region2.blocks.append(_make_block(func(r, c): return float(c), 100))
@@ -83,7 +96,8 @@ func _init() -> void:
 	if mesh_a != null and mesh_b != null:
 		var color_a: Color = mesh_a.surface_get_arrays(0)[Mesh.ARRAY_COLOR][0]
 		var color_b: Color = mesh_b.surface_get_arrays(0)[Mesh.ARRAY_COLOR][0]
-		_check(not color_a.is_equal_approx(color_b), "distinct real TextureInfo IDs produce distinct colors")
+		_check(color_a.is_equal_approx(color_b), "distinct real TextureInfo IDs no longer produce an invented distinct color (got %s vs %s)" % [color_a, color_b])
+		_check(_close_to_unknown_color(color_a), "fallback color is the one honest UNKNOWN_TILE_COLOR (got %s)" % color_a)
 
 	var region_empty_extra := MapmReader.ParsedRegion.new()
 	region_empty_extra.version = "1000"
@@ -98,12 +112,8 @@ func _init() -> void:
 	var mesh_fallback := MapmTerrainBuilder.build_mesh(region_empty_extra, 0)
 	_check(mesh_fallback != null, "builds a mesh from vertices with empty Extra")
 	if mesh_fallback != null:
-		# A generous tolerance: ArrayMesh vertex colors are stored 8-bit
-		# per channel, so a small quantization error vs. the exact literal
-		# is expected and not a real mismatch.
 		var fallback_color: Color = mesh_fallback.surface_get_arrays(0)[Mesh.ARRAY_COLOR][0]
-		var close := absf(fallback_color.r - 0.45) < 0.01 and absf(fallback_color.g - 0.5) < 0.01 and absf(fallback_color.b - 0.32) < 0.01
-		_check(close, "empty Extra falls back to the fixed mid-tone (got %s)" % fallback_color)
+		_check(_close_to_unknown_color(fallback_color), "empty Extra also falls back to UNKNOWN_TILE_COLOR (got %s)" % fallback_color)
 
 	# build_full_region_mesh: real 6x6-block stitching. Every block is flat
 	# (height 0) except (0,0) and (1,1), whose heights are
@@ -157,7 +167,7 @@ func _init() -> void:
 	var region_textured := _make_region(func(band_row, band_col):
 		var tex_info := 1 if band_col < 3 else 2
 		return _make_block(func(r, c): return 0.0, tex_info))
-	var textured_mesh := MapmTerrainBuilder.build_full_region_mesh_textured(region_textured, null, texture_lookup)
+	var textured_mesh := MapmTerrainBuilder.build_full_region_mesh_textured(region_textured, texture_lookup)
 	_check(textured_mesh != null, "builds a textured full-region mesh")
 	if textured_mesh != null:
 		# Surface 0 is always the whole-grid smoothed-color base (see
@@ -178,7 +188,34 @@ func _init() -> void:
 			_check(mat.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA, "overlay surface is alpha-blended over the base")
 		_check(total_overlay_indices == expected_quad_indices, "every real quad is also covered across the overlay surfaces (got %d indices)" % total_overlay_indices)
 
-	_check(MapmTerrainBuilder.build_full_region_mesh_textured(MapmReader.ParsedRegion.new(), null, {}) == null, "build_full_region_mesh_textured rejects a region without a real 6x6 block grid")
+	_check(MapmTerrainBuilder.build_full_region_mesh_textured(MapmReader.ParsedRegion.new(), {}) == null, "build_full_region_mesh_textured rejects a region without a real 6x6 block grid")
+
+	# build_full_region_water_mesh: a synthetic tile table where ID 1 is
+	# real WATER and ID 2 is real GRASS -- only ID-1 quads should produce
+	# real water geometry.
+	var water_entry := TileIndexReader.Entry.new()
+	water_entry.id = 1
+	water_entry.type = TileIndexReader.TileType.WATER
+	var grass_entry := TileIndexReader.Entry.new()
+	grass_entry.id = 2
+	grass_entry.type = TileIndexReader.TileType.GRASS
+	var tile_table := TileIndexReader.Table.new()
+	tile_table.entries = [TileIndexReader.Entry.new(), water_entry, grass_entry] # index 0 unused, real lookup is by ID
+
+	var region_water := _make_region(func(band_row, band_col):
+		var tex_info := 1 if band_col < 3 else 2
+		return _make_block(func(r, c): return 0.0, tex_info))
+	var water_mesh := MapmTerrainBuilder.build_full_region_water_mesh(region_water, tile_table)
+	_check(water_mesh != null, "builds a real water mesh when real WATER-classified quads exist")
+	if water_mesh != null:
+		var water_indices: PackedInt32Array = water_mesh.surface_get_arrays(0)[Mesh.ARRAY_INDEX]
+		_check(water_indices.size() > 0 and water_indices.size() % 6 == 0, "water mesh has a whole number of real quads (got %d indices)" % water_indices.size())
+
+	var region_no_water := _make_region(func(band_row, band_col):
+		return _make_block(func(r, c): return 0.0, 2)) # every quad is real GRASS
+	_check(MapmTerrainBuilder.build_full_region_water_mesh(region_no_water, tile_table) == null, "returns null when a real region has no WATER/DEEP_WATER quads at all")
+	_check(MapmTerrainBuilder.build_full_region_water_mesh(region_water, null) == null, "returns null with no real tile table to classify against")
+	_check(MapmTerrainBuilder.build_full_region_water_mesh(MapmReader.ParsedRegion.new(), tile_table) == null, "rejects a region without a real 6x6 block grid")
 
 	if _failures == 0:
 		print("ALL PASS")
