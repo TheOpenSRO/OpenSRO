@@ -375,3 +375,41 @@ steps.
   better and isn't too strong/weak.
 - Full verification (`godot4 --headless --path . --import --quit`, all 43 GDScript `*_test.gd`
   files) swept clean.
+
+## 2026-08-26, eleventh round — full asset-category taxonomy: whole content systems unused
+
+Asked to comb through the pk2 archives for every *type* of asset present, not just check what
+Jangan specifically uses. Built a depth-limited directory-tree tool (scratch, run on the RE box,
+not kept) instead of a full flat file listing (tens of thousands of entries) to get a manageable
+top-level category overview of both real archives. Result: several **entire content systems** this
+client has zero code path for at all, not just individual missing files:
+
+- **Water** (`Map.pk2\Water\`, 34 files): a real 30-frame animated water texture
+  (`water101.ddj`...`water130.ddj`, classic flip-book frame animation, not a shader effect) plus
+  wave-overlay textures. `MapmTerrainBuilder`'s own `TileType` enum already has real `WATER`/
+  `DEEP_WATER` values from the tile-type data (see `TILE2D_FORMAT.md`) that this project already
+  parses but never renders specially -- water tiles currently just render as flat colored/textured
+  ground like any other tile. This is the most concrete, bounded win of everything found here: the
+  tile classification already exists, just needs an animated water surface drawn wherever those
+  tile types occur.
+- **Sky** (`Map.pk2\SkyBox\`, 5 files: `cloud1.ddj`/`cloud99.ddj`, `glow.ddj`, `shadowsphere.ddj`,
+  `waterbump3.ddj`): a simple real sky-dome texture set. This client currently uses a flat
+  `background_color` (see `World3D.tscn`'s `Environment`), not a real sky.
+- **Weather** (`Map.pk2\Weather\`, 10 files) and **Sun** (`Map.pk2\Sun\`, 38 files): real
+  lighting/weather-effect assets, not investigated further this round.
+- **Dungeons** (`Data.pk2\Dungeon\`, real per-region subfolders: `arabia`, `asiam`, `china`,
+  `demon`, `jupiter`, `wchina`, `secret_tomb_bottom/top`, `boss_dungeon`, etc.): a real, separate
+  instanced-map system entirely distinct from the open-world `.m`/`.o` regions this project
+  already handles -- likely a different real format/loading path, not investigated this round. A
+  much bigger scope item than the others here.
+- **Pets** (`Data.pk2\Res\pet2\`, 48 files): a real companion-pet asset set, a full feature this
+  project has never touched (server-side or client-side).
+- Smaller, not-yet-investigated categories also found: `Res\skill\` (9 files, skill-effect
+  assets), `Res\quest\` (10 files, quest-specific decorations beyond the one already-resolved
+  `level_up_quest.bsr`), `Compound\particle\` (34 files, particle compound definitions).
+
+None of this was implemented this round -- it's a scoped research/priority-setting deliverable, not
+a fix. Water is the clear best next candidate: bounded, already has matching tile-classification
+data, and is one of the more visually obvious gaps in an outdoor real Silkroad screenshot. Dungeons
+and Pets are real, much larger systems (separate map format / a whole companion-pet feature) that
+would need their own dedicated investigation, not a quick pass.
