@@ -30,6 +30,11 @@ layout_mode = 2
 text = "SRRevamp"
 horizontal_alignment = 1
 
+[node name="ServerAddressEdit" type="LineEdit" parent="VBoxContainer"]
+layout_mode = 2
+text = "127.0.0.1:15779"
+placeholder_text = "Server IP[:port]"
+
 [node name="UsernameEdit" type="LineEdit" parent="VBoxContainer"]
 layout_mode = 2
 placeholder_text = "Username"

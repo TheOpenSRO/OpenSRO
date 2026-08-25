@@ -2,10 +2,17 @@ extends Control
 
 ## Login screen: connects to the Go server and sends OpLogin/OpRegister via
 ## the NetClient autoload, then moves to character select on success.
+##
+## Server address is now user-entered (server_address_edit), not a fixed
+## constant -- added 2026-08-26 so a friend on the same local network can
+## type in the host's real LAN IP (e.g. "192.168.1.23:15779") instead of
+## only ever being able to reach a server on the same machine. Defaults to
+## "127.0.0.1:15779" (localhost, the same fixed value this project always
+## used before) so existing single-machine setups keep working unchanged.
 
-const SERVER_HOST := "127.0.0.1"
-const SERVER_PORT := 15779
+const DEFAULT_SERVER_PORT := 15779
 
+@onready var server_address_edit: LineEdit = $VBoxContainer/ServerAddressEdit
 @onready var username_edit: LineEdit = $VBoxContainer/UsernameEdit
 @onready var password_edit: LineEdit = $VBoxContainer/PasswordEdit
 @onready var login_button: Button = $VBoxContainer/LoginButton
@@ -34,8 +41,33 @@ func _connect_and_send() -> void:
 	if NetClient.is_connected_to_server():
 		_send_pending_action()
 		return
+	var address := _parse_server_address(server_address_edit.text)
+	if address.is_empty():
+		status_label.text = "Enter a valid server address, e.g. 192.168.1.23:15779"
+		return
 	status_label.text = "Connecting..."
-	NetClient.connect_to_server(SERVER_HOST, SERVER_PORT)
+	NetClient.connect_to_server(address["host"], address["port"])
+
+## Parses a user-entered "host" or "host:port" string into {"host", "port"}
+## (port defaults to DEFAULT_SERVER_PORT if not given). Returns {} for an
+## empty host or a non-numeric port, so the caller can show a real error
+## instead of silently trying to connect somewhere wrong.
+func _parse_server_address(text: String) -> Dictionary:
+	text = text.strip_edges()
+	if text.is_empty():
+		return {}
+	var host := text
+	var port := DEFAULT_SERVER_PORT
+	var colon := text.rfind(":")
+	if colon != -1:
+		host = text.substr(0, colon)
+		var port_str := text.substr(colon + 1)
+		if not port_str.is_valid_int():
+			return {}
+		port = port_str.to_int()
+	if host.is_empty():
+		return {}
+	return {"host": host, "port": port}
 
 func _on_connected() -> void:
 	_send_pending_action()
