@@ -103,3 +103,38 @@ real retest confirms it, not just once a plausible fix lands.
 3. If the coordinate-mismatch item is still wanted, do a deliberate side-by-side comparison against
    jellybitz.github.io/xSROMap with a known real coordinate, rather than guessing at the transform
    again.
+
+## 2026-08-26, second round — first retest attempt, likely against the stale build
+
+OpenSRO connected a Windows Remote Control session (`opensro-desktop-sequential-rocket`) so this
+project could drive the actual Windows exe directly instead of relaying through him. First test
+run turned up a strong signal that it exercised the **old** build, not the fixed one:
+
+- **The log's own startup banner said `Vulkan API 1.4.349 - Forward+`.** The fix in this file's
+  first entry explicitly switches `project.godot` to the Compatibility (OpenGL) renderer — a build
+  that actually included that change should show "Compatibility" here, not "Forward+". This is
+  strong, direct evidence the tested `.exe` predates that fix (most likely the very first
+  `workflow_dispatch` build, downloaded before the fixed one existed).
+- **It loaded pk2 data from `C:\Users\opensro\Downloads\VSRO_Client\VSRO_Client\Data.pk2` instead of
+  the local `pk2\` folder** next to the tested exe. `Pk2Config` checks an env var before the local
+  folder by design (existing dev/testing convenience) — this means a persistent
+  `SRREVAMP_*_PK2_PATH`-shaped env var is very likely still set on that Windows machine from earlier
+  dev work, silently overriding the "just drop pk2 files in the folder" flow this project is
+  supposed to support for a real downloaded user. Needs confirming/clearing before that flow can
+  actually be considered tested.
+- **New visual finding, not on the original list**: the player's own character rendered as a
+  motionless T-pose (bind pose), not standing/idling normally. Investigated by pulling the real
+  `chinaman_skel.bsk` and `chinaman_fighter_standcity.ban` from the RE box and checking bone-name
+  overlap directly (Go, `bsk`/`ban` packages) — **36 of 37 skeleton bones have a matching, valid
+  (14-keyframe) animation track** (the one non-match is the root "Bip01" bone itself, which
+  `Skeleton3DBuilder.build_skeleton3d` deliberately excludes from by-name pose application — a
+  known, minor gap, not a T-pose cause). Since the real animation data and bone matching both check
+  out, this is most likely another symptom of testing the stale build rather than a genuine new
+  animation bug — but not confirmed either way yet. **Needs a fresh screenshot from the actually-
+  fixed build before concluding anything.**
+- Real pk2/animation scratch data pulled for this check was deleted immediately after
+  (`chinaman_skel.bsk`, `chinaman_fighter_standcity.ban`, the throwaway extractor tool/binary), per
+  this project's no-persisted-real-assets policy.
+- Waiting on: OpenSRO redownloading `srrevamp-windows.zip` specifically from
+  https://github.com/OpenSRO/srrevamp/actions/runs/32891267640 into a fresh folder and retesting,
+  plus checking for a stray `SRREVAMP_*_PK2_PATH` env var on that machine.
