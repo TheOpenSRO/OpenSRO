@@ -109,10 +109,16 @@ extends Node3D
 ## convention SRREVAMP_MAPM_PATH/SRREVAMP_MAPO_PATH's doc comments above
 ## already describe. The server's own default spawn zone, "jangan", is a
 ## special case resolved by _resolve_zone_region to the real region this
-## project found Jangan actually lives in (JANGAN_ZONE_REGION, "98/168" --
-## see docs/PROGRESS.md's 2026-08-24 "found real Jangan" entry) rather than
-## falling through to "nothing to load" the way it used to before that was
-## found. Any other zone not shaped like a real region still clears back to
+## project found Jangan actually lives in (JANGAN_ZONE_REGION, "89/182" --
+## **corrected 2026-08-26**, see docs/WORLD_ISSUES.md: the original "98/168"
+## came from an earlier, smaller/incomplete scan (32 matching real
+## placements); a full re-scan across all 4,050 real regions in a real
+## Map.pk2 found "89/182" has 279 real Jangan-named placements, an order of
+## magnitude stronger real match, and it's the same region an earlier
+## session already independently found for the real south gate -- which
+## makes sense, since the south gate belongs to Jangan) rather than falling
+## through to "nothing to load" the way it used to before Jangan was found
+## at all. Any other zone not shaped like a real region still clears back to
 ## the placeholder ground with nothing loaded -- honest "nothing to load",
 ## not a guessed path. The *initial* load in _ready() still reads the raw
 ## env vars directly rather than going through a zone label, since the very
@@ -921,28 +927,42 @@ func _load_real_terrain_lightmap(mapm_path: String, archive: Pk2Reader) -> Textu
 		return null
 	return region.texture
 
-## The real Jangan region cluster, found 2026-08-24 by scanning every real
-## region's placed objects for real "Res\Bldg\China\Jangan01..06\..."
-## resource paths (see server/cmd/findregionassets and docs/PROGRESS.md's
-## "found real Jangan" entry) -- a real, dense cluster at x=97-99, y=166-169.
-## `98/168` is the single densest real match found (32 real jangan-
-## referencing placements, including real palace assets like
-## `cj_pal_guard_dan`/`cj3_lion02`), used here as an honest, verified-real
-## representative point within that cluster -- not a claim that this
-## specific sub-region is the real game's exact canonical spawn tile,
-## which isn't independently confirmed.
-const JANGAN_ZONE_REGION := "98/168"
+## The real Jangan region, found 2026-08-24 (revised 2026-08-26). The
+## original discovery scanned real region placements for
+## "Res\Bldg\China\Jangan01..06\..." resource paths (see
+## server/cmd/findregionassets) but only ever checked a small, incomplete
+## subset of real regions, landing on "98/168" (32 matching real
+## placements) -- a real match, just not the densest one. A full re-scan of
+## every real region in a real Map.pk2 (server/cmd/scanlandmarks, new this
+## session, the general multi-keyword form of findregionassets) found
+## "89/182" has 279 real Jangan-named placements -- almost 9x stronger, and
+## the same region an earlier session already independently found for the
+## real south gate (which makes sense: the south gate belongs to Jangan).
+## Corrected to this real, much better-supported match.
+const JANGAN_ZONE_REGION := "89/182"
+
+## The real Dunhuang region, found 2026-08-26 the same way as
+## JANGAN_ZONE_REGION (server/cmd/scanlandmarks scanning for real
+## "Res\Bldg\China\Dunhuang\..." resource paths across all 4,050 real
+## regions) -- "98/157" has 279 matching real placements, the densest real
+## match found.
+const DUNHUANG_ZONE_REGION := "98/157"
 
 ## Resolves a zone label to a real region coordinate string ("<x>/<y>").
 ## The server's own symbolic default spawn zone, "jangan" (case-
 ## insensitive, see server/internal/session/world.go's spawnZone), maps to
 ## JANGAN_ZONE_REGION -- previously this project had no known real region
 ## coordinate for it at all (an honest gap, before this project had found
-## where Jangan actually is). Any other zone label is returned unchanged,
-## for _zone_paths/_parse_region_coords to interpret (or reject) as usual.
+## where Jangan actually is). "dunhuang" (also case-insensitive) maps to
+## DUNHUANG_ZONE_REGION the same way, for manual zone-change testing. Any
+## other zone label is returned unchanged, for
+## _zone_paths/_parse_region_coords to interpret (or reject) as usual.
 static func _resolve_zone_region(zone: String) -> String:
-	if zone.to_lower() == "jangan":
+	var lower := zone.to_lower()
+	if lower == "jangan":
 		return JANGAN_ZONE_REGION
+	if lower == "dunhuang":
+		return DUNHUANG_ZONE_REGION
 	return zone
 
 ## Splits a zone label shaped like this project's real Map.pk2 region

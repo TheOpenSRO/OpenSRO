@@ -249,3 +249,33 @@ real things are visible in that one shot, not one bug:
   have), separate from the load-radius fix above.
 - Full verification (`godot4 --headless --path . --import --quit`, all 43 GDScript `*_test.gd`
   files) swept clean after the `REGION_LOAD_RADIUS` change.
+
+## 2026-08-26, sixth round — real coordinate-system research, and a corrected Jangan region
+
+Read the real, public [xSROMap](https://github.com/JellyBitz/xSROMap) tool's own source directly
+to get its exact real coordinate-conversion constants (192 units/sector, sector-X offset 135,
+sector-Y offset 92, 1920 local units/region — that last one is an independent, exact confirmation
+that this project's own `REGION_SPAN` constant is correct). Tested whether this project's own
+internal region-folder numbering is a simple offset/swap of that public "sector" numbering, using
+Jangan as a calibration point (public sector ≈ (135, 92), this project's own `JANGAN_ZONE_REGION`)
+and the real south-gate coordinates OpenSRO provided (X:6558, Y:874) as a second check. **The offset
+hypothesis does not hold** — the numbers don't line up as a simple additive/swapped
+transformation, meaning this project's internal region-folder numbers and the public sector
+numbering are just two different numbering domains, not the same numbers viewed differently. Raw
+coordinate math from real player positions to this project's own region files isn't viable with
+current data; matching real landmarks by their real placed asset names (already proven for Jangan)
+remains the reliable approach.
+
+**Found and fixed a real bug while investigating**: `JANGAN_ZONE_REGION` (`98/168`) came from an
+earlier, incomplete scan that only checked a small subset of real regions for Jangan-named
+placements. New tool `server/cmd/scanlandmarks` (a multi-keyword generalization of the existing
+`findregionassets`, scanning every real keyword in one pass instead of one at a time) re-scanned
+**all 4,050 real regions** in a real Map.pk2 and found `89/182` has 279 matching real Jangan
+placements — almost 9x the old region's 32, and independently the same region an earlier session
+already found for the real south gate (consistent: the south gate belongs to Jangan). Corrected
+`JANGAN_ZONE_REGION` to `89/182`. Also found and added a real Dunhuang zone (`98/157`, 279 matching
+placements) for manual zone-change testing.
+
+Real scratch tool binaries (`pk2list`, `scanlandmarks`) built for and run on the RE box, deleted
+immediately after use; no real pk2 data pulled into this sandbox for this round (the scan ran
+entirely on the RE box against its own real files).
