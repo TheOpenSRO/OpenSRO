@@ -128,8 +128,19 @@ const GRAVITY := 20.0
 ## active click-to-move target, matching the normal MMO convention that
 ## manual movement input always overrides a pending destination.
 const CAMERA_ORBIT_SENSITIVITY := 0.3 # degrees of camera rotation per pixel of mouse drag
-const CAMERA_PITCH_MIN_DEGREES := -60.0
-const CAMERA_PITCH_MAX_DEGREES := 80.0
+## Real, empirically-confirmed sign convention (2026-08-26, see
+## docs/WORLD_ISSUES.md): SpringArm3D pushes its child to local *+Z*, not
+## -Z, so a *negative* CameraArm pitch is what lifts the camera above and
+## behind the player -- the previous +42 base pitch (with a compensating
+## 180 yaw and a 180 yaw flip on Camera3D itself) actually pushed the
+## camera down and in *front* of the player, immediately collapsing
+## against the ground via the spring's own collision check. That's the
+## real root cause of the reported "FPS-like camera" bug, confirmed via a
+## headless SpringArm3D probe (spring pushes a child to local (0,0,+L)).
+## -80 (nearly straight overhead) to -10 (nearly flat behind) is the real
+## valid range for a top-down-behind view under this corrected convention.
+const CAMERA_PITCH_MIN_DEGREES := -80.0
+const CAMERA_PITCH_MAX_DEGREES := -10.0
 const CAMERA_ZOOM_STEP := 1.0
 const CAMERA_ZOOM_MIN := 3.0
 const CAMERA_ZOOM_MAX := 25.0
@@ -1842,8 +1853,15 @@ func _load_real_materials(archive: Pk2Reader, bmt_path: String) -> Dictionary:
 
 func _physics_process(delta: float) -> void:
 	var input_dir := Vector3.ZERO
-	input_dir.x = Input.get_axis("ui_left", "ui_right")
-	input_dir.z = Input.get_axis("ui_up", "ui_down")
+	# Real, dedicated move_* actions (WASD + arrow keys both bound, see
+	# project.godot) -- previously used Godot's built-in ui_left/ui_right/
+	# ui_up/ui_down actions, which only bind arrow keys by default. That
+	# silently left WASD non-functional in every real exported build (a
+	# real playtest bug, 2026-08-26 -- see docs/WORLD_ISSUES.md) despite
+	# every prior headless verification pass looking correct, since none
+	# of those ever pressed a real W/A/S/D key.
+	input_dir.x = Input.get_axis("move_left", "move_right")
+	input_dir.z = Input.get_axis("move_forward", "move_back")
 	var manual_input := input_dir.length() > 0.0
 	if manual_input:
 		input_dir = input_dir.normalized()

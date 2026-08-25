@@ -8,6 +8,7 @@ extends Node
 
 func _ready() -> void:
 	print("SRRevamp boot: no bundled game data -- put your own *.pk2 files in the 'pk2' folder next to this executable.")
+	print("SRRevamp log file: %s" % ProjectSettings.globalize_path("user://logs/srrevamp.log"))
 	# Deferred: calling change_scene_to_file directly from _ready() fights
 	# the scene tree's own in-progress node-addition for this node,
 	# producing "Parent node is busy adding/removing children" errors.

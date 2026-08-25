@@ -66,6 +66,19 @@ var _encrypted: bool
 var _cipher: Blowfish
 var _root_offset: int
 
+## Real, significant fix (2026-08-26, see docs/WORLD_ISSUES.md): caches
+## each directory's parsed entries by its chain-start file offset. Without
+## this, every single real asset lookup (ObjectLoader.find_file walks one
+## read_dir()/read_dir_at() call per path segment, from the root down) fully
+## re-reads and re-decrypts that directory's blocks from disk -- and a real
+## region load resolves the same handful of real folders (Prim\Mesh\...,
+## Prim\Mtrl\..., Tile2D\, etc.) over and over for every object/texture it
+## needs. A real playtest reported ~3 minutes to load into the game; this
+## cache is the direct fix, since a pk2 archive's directory contents never
+## change during a session (this reader is read-only, see the file's own
+## top comment) so caching them is always safe.
+var _dir_cache := {}
+
 ## Opens path for reading. Returns null (and pushes an error) on failure.
 static func open(path: String) -> Pk2Reader:
 	var f := FileAccess.open(path, FileAccess.READ)
@@ -130,6 +143,10 @@ func read_file(file: Entry) -> PackedByteArray:
 ## the field layout. MAX_CHAIN_BLOCKS bounds the walk as a
 ## cycle/corruption guard, not a real observed limit.
 func _read_block_chain(offset: int) -> Array[Entry]:
+	var cache_key := offset
+	if _dir_cache.has(cache_key):
+		return _dir_cache[cache_key]
+
 	var out: Array[Entry] = []
 
 	for _chain_step in range(MAX_CHAIN_BLOCKS):
@@ -159,6 +176,7 @@ func _read_block_chain(offset: int) -> Array[Entry]:
 			break
 		offset = next_offset
 
+	_dir_cache[cache_key] = out
 	return out
 
 ## Returns the bytes up to (not including) the first NUL, decoded as ASCII.

@@ -2,6 +2,51 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-26 — real playtest bug fixes: WASD, camera, click-blocked HUD, renderer, load time
+
+OpenSRO ran the actual downloaded exe from the previous session's release build with his own real
+pk2 files. Several things reported broken; see `docs/WORLD_ISSUES.md` (new tracker doc) for the
+full list and root-cause detail on each. Summary:
+
+- **WASD didn't move the player, only arrow keys did.** Root cause: movement used Godot's built-in
+  `ui_left/right/up/down` actions, bound to arrow keys only by default. Added dedicated
+  `move_forward/back/left/right` actions bound to both.
+- **Camera was FPS-like instead of top-down-behind.** Root cause, confirmed via a headless
+  `SpringArm3D` probe: the arm pushes its child to local *+Z*, not -Z as assumed — the previous
+  rotation actually pushed the camera down and in front of the player, where it immediately
+  collapsed against the ground via the spring's own collision check. Corrected the rotation
+  (pitch -42/yaw 0, no extra camera rotation) and re-simulated the exact scene headlessly to
+  confirm the camera now sits above-and-behind at its full configured spring length, looking down
+  and forward. Also separated the player onto its own collision layer so the spring's own
+  collision probe can never hit the player's own body.
+- **Click-to-move was almost certainly being eaten by the HUD.** The `ActionTabs` panel covered
+  nearly the entire middle of the screen with `mouse_filter=PASS` — Controls capture clicks over
+  their whole rect regardless of visible content. Re-docked it to a real bottom action-bar layout
+  instead of a full-screen panel.
+- **No HUD / generally "doesn't look right."** No renderer was explicitly set, defaulting to
+  Forward+ (Vulkan). Several unrelated-looking visual symptoms firing at once with no crash reads
+  as a GPU/driver Vulkan incompatibility, not independent content bugs — switched to the
+  Compatibility (OpenGL) renderer for much broader real-hardware support.
+- **~3 minute load time.** Root cause: `Pk2Reader`'s directory-block reader did zero caching —
+  every single real asset lookup fully re-read and re-decrypted the same handful of real folders'
+  directory blocks from scratch, repeatedly, for every object/texture a region needs. Added a
+  per-archive directory cache keyed by file offset (safe: this reader is read-only).
+- **No log file to attach to a bug report.** Enabled Godot's built-in file logging
+  (`user://logs/srrevamp.log`), with the resolved path printed once at boot and documented in
+  README for both Windows/Linux.
+- Ground textures/grass, "randomly scattered" object placement, and the real-coordinate mismatch
+  against jellybitz.github.io/xSROMap remain open — investigated by inspection (no bugs found in
+  the ground-texture or placement-math code itself), but not something to keep guessing at without
+  a real retest. See `docs/WORLD_ISSUES.md` for the honest, still-open state of each.
+- Per `feedback_headless_verification_gaps` (new project memory from this session): every fix
+  above is marked with *how* it was confirmed (headless simulation or direct code-inspection proof
+  of the bug), not just asserted — none of this has been confirmed by an actual human playing the
+  actual exported build yet. That's the explicit next step, not assumed done.
+- Full verification swept clean: `go build`/`go vet`/`go test ./...`, all 43 GDScript `*_test.gd`
+  files headless `ALL PASS`, Godot headless import clean with the new renderer setting.
+- Triggered a new `workflow_dispatch` release build with all of the above for OpenSRO/OpenSRO to
+  retest — see the Actions run linked in this session's chat.
+
 ## 2026-08-25 (cont'd 84) — post-fix audit re-verification, ground-texture full-catalog check, and a new character/equipment asset audit
 
 Continuing the "make sure everything in the pk2s is mapped" sweep from the previous entry into

@@ -27,6 +27,11 @@ Every tagged release publishes ready-to-run Windows and Linux client builds unde
 Right-click-drag orbits the camera around your character; the scroll wheel zooms. Press **F10** (or
 the "Hide UI" button, top-right) to hide the HUD for a clean view.
 
+**If something looks wrong**: the client always writes a log file, printed once at startup (look
+for a line like `SRRevamp log file: <path>`) — Windows: `%APPDATA%\Godot\app_userdata\SRRevamp\
+logs\srrevamp.log`, Linux: `~/.local/share/godot/app_userdata/SRRevamp/logs/srrevamp.log`. Attach
+that file (not just a description) when reporting a bug — no terminal needed to get it.
+
 ## Running locally
 
 **Docker Compose** (server + Postgres, no local Go/Postgres install needed):
