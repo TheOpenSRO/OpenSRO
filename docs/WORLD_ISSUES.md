@@ -343,3 +343,35 @@ known gap rather than conflated with the grass fix.
 Full verification (`godot4 --headless --path . --import --quit`, all 43 GDScript `*_test.gd`
 files) swept clean after the `MAX_MAP_OBJECTS` change. Not yet perf-verified against a real very
 dense region beyond Jangan's 863 placements.
+
+## 2026-08-26, tenth round — region-specific asset audit for Jangan, atmosphere pass
+
+Asked to look specifically for anything not mapped/used for Jangan, plus follow-ups on a closed-
+looking gate door, missing bloom, an off-looking fog/haze, and a staircase not reading as distinct
+steps.
+
+- **New region-specific audit** (scratch tool, run on the RE box, not kept): unlike
+  `audittextures` (which walks the whole 3,268-entry catalog), this checks only the object types
+  actually *placed* in one real region against the full `.bsr` -> `.bms`/`.bmt` -> `.ddj` chain.
+  Jangan (`89/182`) has 54 distinct real placed types -- **all 54 resolve cleanly, zero failures,
+  zero unresolved type IDs**, including the palace gate door (`cj_pal_bigdoor.bsr`) and both real
+  staircases (`cj_pal_center_stair.bsr`, `cj_pal_right_stair.bsr`). So none of the reported visual
+  issues are missing-asset bugs -- everything Jangan places loads successfully at the file level.
+- **Door state**: confirmed no `.ban` animation exists for this specific door (checked real
+  lightmap-adjacent file listings under `Jangan03\`) -- its geometry is a single fixed static pose,
+  whatever was baked into the mesh, since this project's `ObjectLoader` never applies animation to
+  any scenery object (only the player's own body gets that). Whether that baked pose is actually
+  "open" and just misread at a given viewing angle, or genuinely renders differently than the real
+  reference, isn't something file-level checking can answer -- would need a direct render
+  comparison at the same real spot/angle, not attempted this round.
+- **Staircase**: same conclusion -- the real mesh resolves and parses fine, so if it doesn't read
+  as distinct steps in-game, that's a geometry/material rendering question, not a missing file.
+- **Bloom and atmosphere**: concrete, safe fix -- the `WorldEnvironment` had no glow, tonemap, SSAO,
+  or fog configured at all (confirmed by reading `World3D.tscn` directly). Added Filmic tonemapping,
+  SSAO, a modest bloom/glow pass, and a subtle exponential fog for depth cueing. Fog density picked
+  conservatively (`0.0015`) to avoid washing out the whole scene at the hundreds-of-units viewing
+  distances typical here -- not visually verified against a real live screenshot yet, since this
+  sandbox has no way to render the real scene; needs a real retest to confirm it actually looks
+  better and isn't too strong/weak.
+- Full verification (`godot4 --headless --path . --import --quit`, all 43 GDScript `*_test.gd`
+  files) swept clean.
