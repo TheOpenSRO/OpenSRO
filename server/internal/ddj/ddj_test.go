@@ -80,11 +80,15 @@ func TestParseRejectsBadMagic(t *testing.T) {
 	}
 }
 
-func TestParseRejectsBadSizeField(t *testing.T) {
+func TestParseToleratesMismatchedSizeField(t *testing.T) {
+	// Real file (Prim\Mtrl\Item\China\weapon\shield_90.ddj, 2026-08-24) has
+	// a 0x0c field that doesn't equal len(data)-magicLen even though it's
+	// an otherwise well-formed, fully parseable texture -- see Parse's own
+	// comment. Parsing must succeed regardless of this field's value.
 	data := buildSyntheticDDJ(t, 4, 4, "")
 	binary.LittleEndian.PutUint32(data[0x0c:], 0xFFFFFFFF)
-	if _, err := Parse(data); err == nil {
-		t.Fatal("expected error parsing buffer with mismatched size field, got nil")
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("Parse: %v", err)
 	}
 }
 

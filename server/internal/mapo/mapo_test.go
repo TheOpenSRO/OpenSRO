@@ -29,12 +29,16 @@ func buildSyntheticRegion(t *testing.T) []byte {
 	buf = appendU32(buf, 0) // unconfirmed header field
 
 	// Object 1: no trailing bytes beyond the fixed 28, immediately
-	// followed by object 2.
+	// followed by object 2. Its fixed12 carries a real-shaped rotation
+	// (see Object.Rotation's doc comment): a 0xffff flag, a real yaw
+	// angle in [0, 2*pi], then 6 more unconfirmed bytes.
 	buf = appendU32(buf, 1805)
 	buf = appendFloat32(buf, 287.14)
 	buf = appendFloat32(buf, 219.43)
 	buf = appendFloat32(buf, 157.65)
-	buf = append(buf, make([]byte, 12)...) // unconfirmed fixed 12 bytes
+	buf = append(buf, 0xff, 0xff)
+	buf = appendFloat32(buf, 2.6704) // ~153 degrees
+	buf = append(buf, 0x0d, 0x04, 0, 0, 0, 0)
 
 	// Object 2: a real trailing block (zero padding + a small nonzero
 	// tail value, matching the shape seen in every real file checked)
@@ -75,6 +79,9 @@ func TestParse(t *testing.T) {
 	}
 	if r.Objects[0].Position != [3]float32{287.14, 219.43, 157.65} {
 		t.Fatalf("unexpected object 1 position: %+v", r.Objects[0].Position)
+	}
+	if r.Objects[0].Rotation != 2.6704 {
+		t.Fatalf("unexpected object 1 rotation: got %v, want 2.6704", r.Objects[0].Rotation)
 	}
 
 	if r.Objects[1].TypeID != 1159 || len(r.Objects[1].Extra) != 6 {

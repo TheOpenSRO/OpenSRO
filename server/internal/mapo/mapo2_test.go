@@ -25,17 +25,17 @@ func appendFloat32b(buf []byte, v float32) []byte {
 }
 
 // makeEntry2 builds one real-shaped 30-byte entry: type_id + position +
-// the real, confirmed trailer shape (0xffff sentinel, 2 zero u16s, the
-// real 1-based index at relative offset 22, a zero u32, and the constant
-// 0x6464 tail) — see docs/protocol/MAPO2_FORMAT.md.
-func makeEntry2(buf []byte, typeID uint32, pos [3]float32, index uint16) []byte {
+// the real, confirmed trailer shape (0xffff sentinel, a real rotation
+// float32, the real 1-based index at relative offset 22, a zero u32, and
+// the constant 0x6464 tail) — see docs/protocol/MAPO2_FORMAT.md and
+// Entry2.Rotation's own doc comment.
+func makeEntry2(buf []byte, typeID uint32, pos [3]float32, rotation float32, index uint16) []byte {
 	buf = appendU32b(buf, typeID)
 	buf = appendFloat32b(buf, pos[0])
 	buf = appendFloat32b(buf, pos[1])
 	buf = appendFloat32b(buf, pos[2])
 	buf = appendU16(buf, 0xffff)
-	buf = appendU16(buf, 0)
-	buf = appendU16(buf, 0)
+	buf = appendFloat32b(buf, rotation)
 	buf = appendU16(buf, index)
 	buf = appendU32b(buf, 0)
 	buf = appendU16(buf, 0x6464)
@@ -65,13 +65,13 @@ func buildRegion2() []byte {
 		for bandCol := 0; bandCol < sectorsPerSide; bandCol++ {
 			if bandRow == 0 && bandCol == 0 {
 				buf = appendU16(buf, 1) // field 0: 1 entry, discarded
-				buf = makeEntry2(buf, 9999, [3]float32{1, 2, 3}, 1)
+				buf = makeEntry2(buf, 9999, [3]float32{1, 2, 3}, 0, 1)
 				buf = appendU16(buf, 0) // field 1 (-> Lists[0]): empty
 				buf = appendU16(buf, 0) // field 2 (-> Lists[1]): empty
 				buf = appendU16(buf, 3) // field 3 (-> Lists[2]): 3 entries
-				buf = makeEntry2(buf, 1489, [3]float32{56.81, 167.02, 22.98}, 1)
-				buf = makeEntry2(buf, 1489, [3]float32{128.47, 167.25, 179.25}, 2)
-				buf = makeEntry2(buf, 1489, [3]float32{210.54, 167.25, 119.00}, 3)
+				buf = makeEntry2(buf, 1489, [3]float32{56.81, 167.02, 22.98}, 2.6704, 1)
+				buf = makeEntry2(buf, 1489, [3]float32{128.47, 167.25, 179.25}, 0, 2)
+				buf = makeEntry2(buf, 1489, [3]float32{210.54, 167.25, 119.00}, 0, 3)
 			} else {
 				buf = emptySector2(buf)
 			}
@@ -115,6 +115,9 @@ func TestParse2(t *testing.T) {
 	wantPos := [3]float32{56.81, 167.02, 22.98}
 	if e0.Position != wantPos {
 		t.Errorf("entry 0 position = %v, want %v", e0.Position, wantPos)
+	}
+	if e0.Rotation != 2.6704 {
+		t.Errorf("entry 0 rotation = %v, want 2.6704", e0.Rotation)
 	}
 	if e0.Index != 1 {
 		t.Errorf("entry 0 index = %d, want 1", e0.Index)

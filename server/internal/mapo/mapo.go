@@ -55,6 +55,27 @@ const (
 type Object struct {
 	TypeID   uint32
 	Position [3]float32
+	// Rotation is the object's real Y-axis (yaw) rotation in radians
+	// -- Fixed12[2:6] as a little-endian float32. Confirmed two ways
+	// (2026-08-24): (1) decompiled the object-construction function
+	// reached through this class's real vtable (FUN_009f2c20 in a real
+	// client build) and found it loads a single float from this same
+	// stack slot twice in a row, immediately before two back-to-back FPU
+	// calls (cos-then-sin, same input both times) whose results are
+	// packed into a (cos,0,sin)-shaped direction vector alongside a
+	// separate (0,1,0) triple -- the standard yaw-angle-to-forward-vector
+	// pattern. (2) Checked empirically against a real, densely-populated
+	// Jangan-area region: every single one of 273 real objects' values at
+	// this offset, interpreted as float32, falls in the real [0, 2*pi]
+	// range (100%, not just "mostly") -- not something a coincidental
+	// misread of unrelated bytes would produce. Several real values also
+	// round to whole real degrees (e.g. 6.1261 rad = 351.0 deg) when
+	// converted, consistent with a level-editor angle snap. Fixed12[0:2]
+	// remains an unconfirmed 2-byte flag (observed only 0x0000/0xffff);
+	// Fixed12[6:12]'s meaning is still unconfirmed (byte 6 looks like a
+	// small per-object counter, byte 7 like a block/sub-region locator --
+	// see docs/protocol/MAPO_FORMAT.md).
+	Rotation float32
 	Fixed12  []byte
 	Extra    []byte
 }
@@ -103,10 +124,12 @@ func Parse(data []byte) (*Region, error) {
 			scanned++
 		}
 
+		fixed12 := data[off+posFieldLen : trailerStart]
 		r.Objects = append(r.Objects, Object{
 			TypeID:   typeID,
 			Position: pos,
-			Fixed12:  data[off+posFieldLen : trailerStart],
+			Rotation: readFloat32(fixed12, 2),
+			Fixed12:  fixed12,
 			Extra:    data[trailerStart:next],
 		})
 		off = next

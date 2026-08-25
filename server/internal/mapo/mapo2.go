@@ -61,6 +61,17 @@ const (
 type Entry2 struct {
 	TypeID   uint32
 	Position [3]float32
+	// Rotation is the real Y-axis (yaw) rotation in radians -- Raw[18:22]
+	// as a little-endian float32. Confirmed the same way .o's own
+	// Object.Rotation was (see mapo.go): a real, densely-populated Jangan
+	// region's .o2 file (98/168.o2, 506 real entries) has 100% of its
+	// values at this offset landing in the real [0, 2*pi] range, several
+	// rounding to whole real degrees. An earlier pass of this doc
+	// (MAPO2_FORMAT.md) reported this same byte range as "reads zero" --
+	// true for the one small sample checked at the time (most real
+	// objects do have rotation 0, i.e. face the default direction), not a
+	// real contradiction, just an incomplete sample corrected here.
+	Rotation float32
 	Index    uint16
 	Raw      [entryLen]byte
 }
@@ -115,6 +126,7 @@ func Parse2(data []byte) (*Region2, error) {
 						readFloat32(data, off+8),
 						readFloat32(data, off+12),
 					}
+					entry.Rotation = readFloat32(data, off+18)
 					entry.Index = binary.LittleEndian.Uint16(data[off+22:])
 					copy(entry.Raw[:], data[off:off+entryLen])
 					off += entryLen

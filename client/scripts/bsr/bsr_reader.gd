@@ -57,19 +57,9 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 	# assume an order.
 	var mesh_off := _scan_for_path_string_with_suffix(data, off, ".bms")
 	var mat_off := _scan_for_path_string_with_suffix(data, off, ".bmt")
-	if mesh_off < 0:
-		push_error("bsr: couldn't locate mesh path")
-		return null
 	if mat_off < 0:
 		push_error("bsr: couldn't locate material path")
 		return null
-
-	var mesh_result = _read_len_prefixed_string(data, mesh_off)
-	if mesh_result == null:
-		push_error("bsr: reading mesh path")
-		return null
-	var mesh_path: String = mesh_result[0]
-	var mesh_end: int = mesh_result[1]
 
 	var mat_result = _read_len_prefixed_string(data, mat_off)
 	if mat_result == null:
@@ -77,6 +67,32 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 		return null
 	var material_path: String = mat_result[0]
 	var mat_end: int = mat_result[1]
+
+	if mesh_off < 0:
+		# A real, genuine mesh-less variant, not a parse failure: real
+		# "*_particle.bsr" files (e.g. wreck_sship_particle.bsr, placed
+		# over 1,200 times combined across a real client's map data --
+		# found auditing this project's own full real object catalog,
+		# 2026-08-25) carry a real material plus one or more real .efp
+		# particle-effect references instead of any .bms mesh at all --
+		# they're invisible particle-emitter markers, not scenery with a
+		# missing/corrupt mesh. Returning a real ParsedObject with an empty
+		# mesh_path (same "empty is a real, valid value" treatment
+		# material_path already gets) lets a caller render just the real
+		# particle effect (once this project has a real .efp renderer) or
+		# skip the object's visual entirely, instead of treating every one
+		# of these as a hard failure.
+		var particle_obj := ParsedObject.new()
+		particle_obj.object_name = name
+		particle_obj.material_path = material_path
+		return particle_obj
+
+	var mesh_result = _read_len_prefixed_string(data, mesh_off)
+	if mesh_result == null:
+		push_error("bsr: reading mesh path")
+		return null
+	var mesh_path: String = mesh_result[0]
+	var mesh_end: int = mesh_result[1]
 
 	var obj := ParsedObject.new()
 	obj.object_name = name
@@ -111,13 +127,43 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 	if sub_count > 1000:
 		return obj
 
+	# A real, larger multi-piece building (2026-08-23: found live-testing
+	# real Jangan palace buildings, the first real content this project had
+	# tested with more than a couple of sub-mesh pieces) can have its
+	# declared sub_count not exactly match how many further length-prefixed
+	# strings are actually still real path-shaped data -- the exact real
+	# cause isn't confirmed (a real trailing per-piece field this project's
+	# simpler samples never had enough pieces to expose, most likely).
+	# Previously this failed the *entire* object, discarding the already-
+	# confirmed-real primary mesh_path/material_path along with it over one
+	# bad trailing sub-piece -- a disproportionate real failure mode. Now
+	# it keeps whatever real sub-mesh paths parsed successfully and stops,
+	# same "return the real partial result rather than nothing" precedent
+	# already used elsewhere in this reader (see the nature-category
+	# early-return above).
 	for i in range(sub_count):
 		var sub_result = _read_len_prefixed_string(data, off)
 		if sub_result == null:
-			push_error("bsr: reading sub-mesh path %d/%d" % [i + 1, sub_count])
-			return null
-		obj.sub_mesh_paths.append(sub_result[0])
+			push_error("bsr: reading sub-mesh path %d/%d -- keeping the %d real sub-mesh(es) already parsed" % [i + 1, sub_count, obj.sub_mesh_paths.size()])
+			break
+		var sub_path: String = sub_result[0]
 		off = sub_result[1]
+		# A real sub-mesh path that isn't a plausible ".bms" path (2026-08-23:
+		# found live-testing real Jangan-adjacent trees) is never a real,
+		# usable sub-mesh reference -- no real file has an empty name or a
+		# single stray byte like "6" as a mesh path. It means the true real
+		# sub-mesh list already ended and this read has spilled into the
+		# file's own trailing boilerplate (the fixed 20-byte block +
+		# "default" string documented above), which can contain real byte
+		# sequences that happen to parse as a valid-looking but wrong
+		# length-prefixed string rather than failing outright (an exactly
+		# empty string from `tre_bank02.bsr`; a single real byte "6" from
+		# `tre_maple01.bsr`). Stop here, same as a real read failure,
+		# rather than recording a sub-mesh path `ObjectLoader` can never
+		# resolve.
+		if not (_is_plausible_path(sub_path.to_ascii_buffer()) and sub_path.to_lower().ends_with(".bms")):
+			break
+		obj.sub_mesh_paths.append(sub_path)
 
 	return obj
 

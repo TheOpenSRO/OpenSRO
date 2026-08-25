@@ -40,13 +40,46 @@ haven't seen (skinned meshes, multiple sub-groups, etc).
 |---|---|
 | Mesh name | `uint32` length + that many ASCII bytes |
 | Material name | `uint32` length + that many ASCII bytes |
-| (unconfirmed `uint32`, observed constant 1) | |
+| (unconfirmed `uint32`, observed values 12/92/5/0 — not a reliable per-file signal for anything, see below) | |
 | Vertex count | `uint32` |
-| Vertex array | `vertex count` × 44-byte records, immediately following |
+| Vertex array | `vertex count` × a real per-file record size (44 or 52 bytes — see "Two real vertex record sizes" below), immediately following |
 | *(gap, located via `hdr[1]`)* | |
 | Triangle count | `uint32`, at file offset `hdr[1]` |
 | Index array | `triangle count` × 6 bytes (3× `uint16`), immediately following |
 | Bounding box | 6× `float32` (min xyz, max xyz), at file offset `hdr[4]` |
+
+## Two real vertex record sizes (found 2026-08-23, live-testing real Jangan palace buildings)
+
+Every real sample this project had checked before now (small character hair/face/body-part
+meshes, real 2-3-piece scenery props) used a real 44-byte vertex record. **Live-testing real,
+larger Jangan palace buildings surfaced giant, wildly misplaced dark triangles in the rendered
+scene** — pulling one real culprit directly (`cj_pal_bigdoor_roof01.bms`, 676 vertices) and
+decoding it at the documented 44-byte stride produced real `NaN` values and normals hundreds of
+units long (impossible for a real unit normal) starting at vertex 1. The file's own header
+(`hdr[1]`, the real index-section offset) doesn't divide evenly by 44 either: `(hdr[1] - vertex
+array start) / vertex_count` computes to a real, non-integer 52.1 for this file.
+
+**Re-decoding the same real file at a 52-byte stride** (8 bytes more per vertex — position+normal+uv
+unchanged, 20 trailing bytes instead of 12) makes all 676 real vertices decode with a real
+unit-length normal and zero `NaN`s, and the resulting mesh's own computed vertex bounding box
+lands **exactly** on the file's own separately-stored, real declared bounding box (`hdr[4]`) — about
+as strong a confirmation as this project's black-box technique can produce.
+
+**No real per-file flag reliably distinguishes the two sizes.** The "unconfirmed `uint32` before
+vertex count" field (previously documented as "observed constant 1") is not constant at all once
+building meshes are checked: real values seen are 12, 5, 0 on real 52-byte files and 92, 0 on real
+44-byte files — 0 appears on both, ruling it out as a flag. Both readers (`BmsReader`/`bms`)
+instead pick whichever real candidate size (44 or 52 — the only two sizes confirmed so far) makes
+every real vertex's normal come out unit-length, the same self-validating technique this project
+already uses for `.m`'s own two real per-vertex sizes (see `MAPM_FORMAT.md`). `Vertex.Extra` is
+correspondingly now a variable-length real trailing-byte slice (12 or 20 bytes) rather than a fixed
+array, since its real length depends on the detected size.
+
+This was found precisely *because* this project's earlier real samples were all small,
+simple objects (2-4 sub-mesh pieces, character attachments) — real complex, multi-hundred-vertex
+building meshes exercise a code path those samples never did. See `docs/PROGRESS.md`'s 2026-08-23
+"found real Jangan" follow-up entry for the full account, including the giant-black-triangle
+symptom this fixes.
 
 ### Vertex record (44 bytes)
 

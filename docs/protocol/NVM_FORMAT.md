@@ -82,16 +82,19 @@ convention exactly (`dy` increasing north).
 - **Real cells/edges** — an actual walkable-area graph, useful for future real pathfinding/AI work
   this project hasn't built yet.
 
-## Real ground textures: checked further, still effectively unrecovered
+## Real ground textures: found (2026-08-23 correction) — see `TILE2D_FORMAT.md`
 
 Checking the *specific* real texture IDs this real `.nvm` sample's `TileMap` actually uses (rather
 than an arbitrary early sample of `tile2d.ifo`'s own list) found one real filename match,
-`Prim\Mtrl\Nature\asia minor\asiaminor_stone01.ddj` — but checking *that* further (see
-`TILE2D_FORMAT.md`) found it's a complete, separate `.bsr`/`.bms`/`.bmt`/`.ddj` object-prop asset
-(a standalone rock-formation model, the same real pipeline as this project's already-placed trees
-and grass), not a flat ground texture — a real coincidental name collision, not usable ground art.
-This project's existing `tile2d.ifo`-driven color coding (`MapmTerrainBuilder._vertex_color`)
-remains the practical, honest approach.
+`Prim\Mtrl\Nature\asia minor\asiaminor_stone01.ddj` inside `Data.pk2` — but checking *that* further
+(see `TILE2D_FORMAT.md`) found it's a complete, separate `.bsr`/`.bms`/`.bmt`/`.ddj` object-prop
+asset (a standalone rock-formation model, the same real pipeline as this project's already-placed
+trees and grass), not a flat ground texture — a real coincidental name collision, not usable ground
+art. That specific finding still stands. What was wrong was the broader conclusion drawn from it at
+the time (that real ground textures were absent from this client install entirely): they were
+found shortly after, in `Map.pk2`'s real `Tile2D\` folder — an archive this investigation hadn't
+checked — and are now wired into `MapmTerrainBuilder.build_full_region_mesh_textured()`. See
+`TILE2D_FORMAT.md`'s "Corrected 2026-08-23" section for the full account.
 
 ## Implementation
 

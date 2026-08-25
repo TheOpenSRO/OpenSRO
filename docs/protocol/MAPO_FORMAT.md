@@ -52,10 +52,31 @@ length.
   region).
 - 3× `float32` **position** (x, y, z) — world-scale magnitudes (hundreds to low thousands),
   consistent with the position scale seen in real `.bms`/`.bsk` files.
-- **12 more raw bytes**, present on every record — unconfirmed meaning, kept raw rather than
-  mislabeled (same policy as `.bsk`'s transform bytes). That's 28 bytes fixed per record; an
-  earlier version of this doc guessed this 28-byte figure too, but as the *whole* record size,
-  which drifted out of alignment after a couple of records on the real sample.
+- **12 more raw bytes**, present on every record. That's 28 bytes fixed per record; an earlier
+  version of this doc guessed this 28-byte figure too, but as the *whole* record size, which
+  drifted out of alignment after a couple of records on the real sample. Of these 12 bytes:
+  - Bytes `[0:2]` — an unconfirmed 2-byte flag, observed only as `0x0000` or `0xffff`.
+  - Bytes `[2:6]` — **SOLVED (2026-08-24): the object's real Y-axis (yaw) rotation**, a `float32`
+    in radians. Confirmed two independent ways: (1) decompiled the real object-construction
+    function reached through this placement class's own real vtable (a real client build's
+    `FUN_009f2c20`) and found it loads a single float from one stack slot *twice in a row*,
+    immediately before two back-to-back real FPU calls (cosine-then-sine, same input both times)
+    whose results are packed into a real `(cos, 0, sin)`-shaped direction vector alongside a
+    separate `(0, 1, 0)` triple — the standard yaw-angle-to-forward-vector construction. (2)
+    Checked empirically against a real, densely-populated Jangan-area region (`98/168.o`, 273 real
+    objects): every single value at this byte offset, read as `float32`, falls in the real
+    `[0, 2*pi]` range — 100%, not just "mostly", which a coincidental misread of unrelated bytes
+    wouldn't produce. Several real values also round to whole real degrees (e.g. `6.1261 rad` =
+    `351.0 deg`) when converted, consistent with a level-editor angle-snap tool. Implemented as
+    `Object.Rotation` (Go) / `ObjectPlacement.rotation` (GDScript) and wired into `World3D.gd`'s
+    real object placement (`node.rotation.y`) — live-rendered against real Jangan data and
+    confirmed visually: a real city-wall run that previously showed a small floating/disjointed
+    panel now reads as one continuous, correctly-aligned wall.
+  - Bytes `[6:12]` — still unconfirmed. Byte 6 looks like a small per-object counter (values like
+    `1, 2, 3...` within a same-type-ID group in the real sample checked); byte 7 climbs in a
+    stepped pattern whose values divided by 4 land in `0-35` — the same range as this format's
+    real 6x6=36 sub-block grid, suggesting a block/sub-region locator rather than more transform
+    data. Not yet cross-checked against a decompiled consumer the way rotation was.
 - **0 or more further trailing bytes** before the next record starts — real records were seen
   with 0 to 40 of these, always an even count, and every non-empty one checked was zero padding
   followed by a small nonzero 2-byte tail value (`1`, `3`, `5`, ... observed) — plausibly some
@@ -126,6 +147,18 @@ what a real outdoor region scattering 39/11/7/1 objects of those types would pla
 (`SRREVAMP_MAPO_PATH`) to render real placed objects with their real resolved `.bsr` models
 instead of a placeholder marker — see `README.md` and `docs/PROGRESS.md`.
 
+**A real client-version mismatch, confirmed 2026-08-24, not a bug**: some real Jangan-area regions
+report placements with type IDs this project's real `object.ifo` table has no entry for (up to 50
+in one real region checked). Traced directly: every one of these real unresolved IDs falls in a
+narrow real range (`3268`-`3296`) immediately past this table's own real size (`3268` real
+entries, valid IDs `0`-`3267`) — not scattered/random values. This is a real, genuine mismatch
+between this specific client install's `object.ifo` (a slightly older/smaller real build than
+whatever real client version authored the Jangan region's placement data) rather than a parsing
+bug in this project's own code — the same real "asset/version mismatch, not our bug" conclusion
+already reached for a couple of genuinely-missing `.bsr` files elsewhere this session. Not fixable
+without a newer real `object.ifo` sample; `World3D.gd` already skips these gracefully
+(`skipped_unresolved`) rather than erroring.
+
 **Traced (2026-08-22) one real consumer of this table**, chasing the unconfirmed `Flags` word:
 `FUN_00a26a30` reads a placement's type ID, indexes this exact 32-byte-stride vector the same
 bounds-checked way `objidx.Parse`/`Lookup` already do, and feeds the matched entry into
@@ -172,21 +205,60 @@ confirmed present in a real `Data.pk2` at both pk2 root and `navmesh\`:
 - What causes the header-length difference (18 vs 20 bytes).
 - The 12 fixed unconfirmed bytes per record, and the trailing variable block's exact meaning
   (kept raw on `Object.Fixed12` / `Object.Extra`).
-- Rotation: no field in this record obviously looks like a rotation (quaternion or Euler angles)
-  — either it's encoded in a way not yet recognized (e.g. inside the unconfirmed 12 fixed bytes
-  or the variable trailer), or rotation isn't stored per-placement at all for these object types.
+- ~~Rotation: no field in this record obviously looks like a rotation~~ **SOLVED, see the "Object
+  record" section above** — it's `Fixed12` bytes `[2:6]`, a `float32` yaw angle in radians. Getting
+  there took a real wrong turn worth recording honestly: an initial attempt at this same empirical
+  check interpreted `Fixed12` as *three* consecutive `float32`s (bytes `[0:4]`, `[4:8]`, `[8:12]`)
+  and concluded the values were "wildly out-of-range for any real angle" — that was this project's
+  own byte-slicing mistake (the 2-byte flag at `[0:2]` throws off a naive 3-float split, silently
+  reading two unrelated bytes from the flag and from byte 6's counter into what looked like the
+  first "float"), not a real property of the data. Isolating `[2:6]` alone and cross-checking it
+  against a decompiled real consumer (see above) resolved it correctly. Byte 6 looks like a small
+  per-object counter (values
+  like `1, 2, 3...` within a same-type group); byte 7 climbs in a stepped pattern whose values
+  divided by 4 land in `0-35` — the same range as this format's real 6x6=36 sub-block grid,
+  suggesting byte 7 is more likely a block/sub-region locator than orientation data. An earlier
+  pass this same day also tried tracing `object.ifo`'s known consumer (`FUN_00a26a30`) backward
+  for a caller and hit a vtable-indirection wall (its only real cross-reference was a data pointer
+  inside a vtable slot, not a call site) — that specific function wasn't the right thread to pull.
+  The real one was found by walking the vtable itself (`DumpVtableAt`-style) to its neighboring
+  slots, decompiling the whole-class destructor to identify the class as the real Map/MapEngine
+  object (its `Assert` strings resolve to a real `D:\vss-od\Silkroad\Client\Landscape\MapEngine\
+  Map.cpp`, with real members `m_Object`/`m_RegionCache`/`m_BlockCache`/`m_Dungeon`), then
+  decompiling *other* slots in that same vtable until the real object-construction method
+  (`FUN_009f2c20`) turned up the cos/sin construction described above.
 - Whether the 2 unconfirmed header `uint32`s (offset 0x0c) are meaningful (e.g. an object count)
   — a real object count wasn't cross-checked against the parsed count yet.
-- Real-world placement scale/position relative to a player's true spawn coordinate (i.e. how a
-  region index like `100/100` combines with a `.o`/`.m` file's own local coordinates into one
-  real world-space position) — attempted and not found. A real `1920.0f` float constant does
-  exist in `sro_client.exe` (a plausible real region-size guess, never confirmed), but decompiling
-  its two referencing functions (`FUN_004e72a0`, `FUN_004e5e00`) shows it's used inside what reads
-  as real keyframe/spline interpolation code, not a coordinate transform — a real negative result,
-  not a coincidence to keep chasing without new evidence. No RTTI/exported symbol naming
-  "region"/"sector"/"world" turned up a transform function either (same negative result the
-  original `.m`/`.o` cracking effort got). Recorded here so a future pass doesn't re-run the same
-  search.
+- ~~Real-world placement scale/position relative to a player's true spawn coordinate~~ **SOLVED
+  (2026-08-24), from a real public source, not decompilation**: an internal decompile search for
+  this (see the negative result below, kept for context) turned up nothing new, but a region's
+  folder-name convention this project already uses (`"98\168.m"`) turns out to be a real, public,
+  already-documented scheme — confirmed via JellyBitz's `xSROMap`
+  (https://github.com/JellyBitz/xSROMap), an open-source real Silkroad Online map-coordinate tool.
+  Its own real coordinate-conversion JavaScript (`assets/js/xSROMap.js`) shows a region ID packs as
+  `(ySector << 8) | xSector`, and a region's own local coordinates span exactly `[0, 1920)` real
+  game units — i.e. `"98\168"` really is `xSector=98, ySector=168`, and `REGION_SPAN`'s real
+  `1920.0` value (already used, and already confirmed correct for real terrain tiling via this
+  project's own region-streaming grid) is exactly this real per-region span. This means a `.o`
+  object's raw position is already real, correctly-scaled, absolute-within-its-region data needing
+  no artificial recentering: it only needs the same rotation+offset transform
+  `_try_load_real_terrain` already applies to that region's terrain tile. Fixed in `World3D.gd`'s
+  `_try_load_real_map_objects` by parenting the real-object container under that exact terrain
+  node (found by its shared, existing node-name convention) instead of computing a separate
+  "recenter near the player" placement — inheriting the identical transform automatically rather
+  than duplicating it. **Live-rendered and visually confirmed**: real Jangan buildings that
+  previously appeared as an arbitrary clustered jumble around the player now compose into a
+  coherent, walkable real gate/courtyard structure (ornate painted walls, a matching double-door
+  frame, consistent floor tiling) when viewed from a fixed camera, exactly as a real placed
+  structure should look.
+  - **The internal decompile search that came up empty (kept for context, so a future pass doesn't
+    re-run it)**: a real `1920.0f` float constant does exist in `sro_client.exe` (a plausible real
+    region-size guess even before this session, never confirmed that way), but decompiling its two
+    referencing functions (`FUN_004e72a0`, `FUN_004e5e00`) shows it's used inside what reads as
+    real keyframe/spline interpolation code, not a coordinate transform. No RTTI/exported symbol
+    naming "region"/"sector"/"world" turned up a transform function either. This is a case where
+    a real public, already-published community source settled something static analysis of the
+    client alone hadn't.
 
 ## Real samples available for future verification
 

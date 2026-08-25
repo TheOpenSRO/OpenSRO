@@ -40,6 +40,17 @@ const ENTRY_LEN := 30
 class Entry:
 	var type_id: int
 	var position: Vector3
+	## Real Y-axis (yaw) rotation in radians -- raw[18:22] as a
+	## little-endian float32. Confirmed the same way MapoReader's own
+	## rotation field was (see its doc comment): a real, densely-populated
+	## Jangan region's .o2 file (98/168.o2, 506 real entries) has 100% of
+	## its values at this offset landing in the real [0, 2*PI] range,
+	## several rounding to whole real degrees. An earlier pass of
+	## MAPO2_FORMAT.md reported this same byte range as "reads zero" --
+	## true for the one small sample checked at the time (most real
+	## objects do have rotation 0, i.e. face the default direction), not a
+	## real contradiction, just an incomplete sample corrected here.
+	var rotation: float
 	## Real, confirmed 1-based sequential index (relative offset 22-23 in
 	## the raw record) -- scope (per-list? per-sector? per-file?) not yet
 	## confirmed, see MAPO2_FORMAT.md.
@@ -103,6 +114,7 @@ static func parse(data: PackedByteArray) -> ParsedRegion:
 						data.decode_float(off + 4),
 						data.decode_float(off + 8),
 						data.decode_float(off + 12))
+					entry.rotation = data.decode_float(off + 18)
 					entry.index = data.decode_u16(off + 22)
 					entry.raw = data.slice(off, off + ENTRY_LEN)
 					off += ENTRY_LEN

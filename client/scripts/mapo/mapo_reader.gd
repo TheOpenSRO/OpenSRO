@@ -18,8 +18,29 @@ const MAX_TRAILER_SCAN := 128 # bound on how far the resync scan looks for the n
 class ObjectPlacement:
 	var type_id: int
 	var position: Vector3
-	## The 12 raw bytes every record has right after the position --
-	## unconfirmed meaning.
+	## The object's real Y-axis (yaw) rotation in radians -- fixed12[2:6]
+	## as a little-endian float32. Confirmed two ways (2026-08-24): (1)
+	## decompiled the object-construction function reached through this
+	## class's real vtable in a real client build and found it loads a
+	## single float from this same stack slot twice in a row, immediately
+	## before two back-to-back FPU calls (cos-then-sin, same input both
+	## times) whose results are packed into a (cos,0,sin)-shaped direction
+	## vector alongside a separate (0,1,0) triple -- the standard
+	## yaw-angle-to-forward-vector pattern. (2) Checked empirically against
+	## a real, densely-populated Jangan-area region: every single one of
+	## 273 real objects' values at this offset, interpreted as float32,
+	## falls in the real [0, 2*PI] range (100%, not just "mostly") -- not
+	## something a coincidental misread of unrelated bytes would produce.
+	## Several real values also round to whole real degrees (e.g. 6.1261
+	## rad = 351.0 deg) when converted, consistent with a level-editor
+	## angle snap. fixed12[0:2] remains an unconfirmed 2-byte flag
+	## (observed only 0x0000/0xffff); fixed12[6:12]'s meaning is still
+	## unconfirmed (byte 6 looks like a small per-object counter, byte 7
+	## like a block/sub-region locator -- see docs/protocol/MAPO_FORMAT.md).
+	var rotation: float
+	## The 12 raw bytes every record has right after the position -- see
+	## rotation's own doc comment above for what's now confirmed within
+	## these bytes.
 	var fixed12: PackedByteArray
 	## 0 or more further raw trailing bytes before the next record (or
 	## EOF) -- real files show these as zero padding plus a small
@@ -74,6 +95,7 @@ static func parse(data: PackedByteArray) -> ParsedRegion:
 		o.type_id = type_id
 		o.position = pos
 		o.fixed12 = data.slice(off + POS_FIELD_LEN, trailer_start)
+		o.rotation = _read_float32(o.fixed12, 2)
 		o.extra = data.slice(trailer_start, next)
 		r.objects.append(o)
 		off = next

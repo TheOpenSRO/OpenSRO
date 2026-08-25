@@ -47,12 +47,16 @@ func _build_region() -> PackedByteArray:
 	buf = _append_u32(buf, 0) # unconfirmed header field
 
 	# Object 1: no trailing bytes beyond the fixed 28, immediately
-	# followed by object 2.
+	# followed by object 2. Its fixed12 carries a real-shaped rotation
+	# (see ObjectPlacement.rotation's doc comment): a 0xffff flag, a real
+	# yaw angle in [0, 2*PI], then 6 more unconfirmed bytes.
 	buf = _append_u32(buf, 1805)
 	buf = _append_float32(buf, 287.14)
 	buf = _append_float32(buf, 219.43)
 	buf = _append_float32(buf, 157.65)
-	buf = _append_zeros(buf, 12) # unconfirmed fixed 12 bytes
+	buf.append_array(PackedByteArray([0xff, 0xff]))
+	buf = _append_float32(buf, 2.6704) # ~153 degrees
+	buf.append_array(PackedByteArray([0x0d, 0x04, 0, 0, 0, 0]))
 
 	# Object 2: a real trailing block (zero padding + a small nonzero
 	# tail value, matching the shape seen in every real file checked)
@@ -85,6 +89,7 @@ func _init() -> void:
 		if r.objects.size() == 3:
 			_check(r.objects[0].type_id == 1805 and r.objects[0].extra.is_empty(), "object 1 matches")
 			_check(r.objects[0].position.is_equal_approx(Vector3(287.14, 219.43, 157.65)), "object 1 position matches")
+			_check(is_equal_approx(r.objects[0].rotation, 2.6704), "object 1 rotation matches (got %f)" % r.objects[0].rotation)
 			_check(r.objects[1].type_id == 1159 and r.objects[1].extra.size() == 6, "object 2 matches (extra=%d)" % r.objects[1].extra.size())
 			_check(r.objects[2].type_id == 1798 and r.objects[2].extra.is_empty(), "object 3 matches")
 

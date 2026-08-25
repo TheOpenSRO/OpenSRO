@@ -76,11 +76,17 @@ mesh's own already-correct geometric collision on every real sample available. T
 variant's real Extra-byte layout beyond height isn't confirmed field-by-field (this project
 independently found a real column/row-cycling byte pattern within it during this investigation,
 but didn't need to fully decode it once the deterministic block structure made row/column
-assignment unnecessary). Real ground *texture* (as opposed to per-vertex color) remains
-effectively unrecovered — see `TILE2D_FORMAT.md` for a real near-hit that turned out to be a
-coincidental name collision with an unrelated object-prop asset, not usable ground art — and
-`NVM_FORMAT.md` for the real `.nvm` navmesh files that turned up in `Data.pk2` once this project
-looked there instead of `Map.pk2` (`environment.ifo` specifically is still confirmed absent).
+assignment unnecessary). Real ground *texture* (as opposed to per-vertex color) was found and
+wired in on 2026-08-23, after an initially-wrong "genuinely absent" conclusion — see
+`TILE2D_FORMAT.md`'s "Corrected 2026-08-23" section: the real `.ddj` files live in `Map.pk2`'s
+`Tile2D\` folder, not `Data.pk2` (where an earlier pass looked and wrongly declared them missing).
+See also `NVM_FORMAT.md` for the real `.nvm` navmesh files that turned up in `Data.pk2` once this
+project looked there instead of `Map.pk2`. **`environment.ifo` re-checked (2026-08-23): also a
+real file in `Map.pk2` root (76,000 bytes)**, not absent — the same wrong-archive mistake as the
+ground textures above, now corrected. No public documentation covers its internal structure (only
+the field name `EnvironmentID` itself is publicly documented, in `.m`'s own spec), so its real
+structure was reverse-engineered from scratch and is now fully solved (byte-exact, zero leftover
+across all 74 real records) — see `ENVIRONMENT_FORMAT.md`.
 
 ## Real per-region world size confirmed: 1920.0 units
 

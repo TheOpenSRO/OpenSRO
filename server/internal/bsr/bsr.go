@@ -75,19 +75,33 @@ func Parse(data []byte) (*Object, error) {
 	// assume an order.
 	meshOff, meshFound := scanForPathStringWithSuffix(data, off, ".bms")
 	matOff, matFound := scanForPathStringWithSuffix(data, off, ".bmt")
-	if !meshFound {
-		return nil, errors.New("bsr: couldn't locate mesh path")
-	}
 	if !matFound {
 		return nil, errors.New("bsr: couldn't locate material path")
-	}
-	meshPath, meshEnd, err := readLenPrefixedString(data, meshOff)
-	if err != nil {
-		return nil, fmt.Errorf("bsr: reading mesh path: %w", err)
 	}
 	materialPath, matEnd, err := readLenPrefixedString(data, matOff)
 	if err != nil {
 		return nil, fmt.Errorf("bsr: reading material path: %w", err)
+	}
+
+	if !meshFound {
+		// A real, genuine mesh-less variant, not a parse failure: real
+		// "*_particle.bsr" files (e.g. wreck_sship_particle.bsr, placed
+		// over 1,200 times combined across a real client's map data —
+		// found auditing this project's own full real object catalog,
+		// 2026-08-25) carry a real material plus one or more real .efp
+		// particle-effect references instead of any .bms mesh at all —
+		// they're invisible particle-emitter markers, not scenery with a
+		// missing/corrupt mesh. Returning a real Object with an empty
+		// MeshPath (same "empty is a real, valid value" treatment
+		// MaterialPath already gets below) lets a caller render just the
+		// real particle effect (once this project has a real .efp
+		// renderer) or skip the object's visual entirely, instead of
+		// treating every one of these as a hard failure.
+		return &Object{Name: name, MaterialPath: materialPath}, nil
+	}
+	meshPath, meshEnd, err := readLenPrefixedString(data, meshOff)
+	if err != nil {
+		return nil, fmt.Errorf("bsr: reading mesh path: %w", err)
 	}
 
 	obj := &Object{Name: name, MeshPath: meshPath, MaterialPath: materialPath}
@@ -126,11 +140,34 @@ func Parse(data []byte) (*Object, error) {
 		// since not every .bsr necessarily has this trailing section.
 		return obj, nil
 	}
+	// A real, larger multi-piece building (2026-08-23: found live-testing
+	// real Jangan palace buildings) can have its declared subCount not
+	// exactly match how many further length-prefixed strings are still
+	// real path-shaped data -- the exact real cause isn't confirmed (a
+	// real trailing per-piece field this project's simpler samples never
+	// had enough pieces to expose, most likely). Keep whatever real
+	// sub-mesh paths parsed successfully and stop, rather than discarding
+	// the already-confirmed-real MeshPath/MaterialPath along with them
+	// over one bad trailing sub-piece.
 	for i := uint32(0); i < subCount; i++ {
 		var path string
 		path, off, err = readLenPrefixedString(data, off)
 		if err != nil {
-			return nil, fmt.Errorf("bsr: reading sub-mesh path %d/%d: %w", i+1, subCount, err)
+			break
+		}
+		// A real sub-mesh path that isn't a plausible ".bms" path
+		// (2026-08-23: found live-testing real Jangan-adjacent trees) is
+		// never a real, usable sub-mesh reference -- no real file has an
+		// empty name or a single stray byte like "6" as a mesh path. It
+		// means the true real sub-mesh list already ended and this read
+		// has spilled into the file's own trailing boilerplate, which can
+		// contain real byte sequences that happen to parse as a
+		// valid-looking but wrong length-prefixed string rather than
+		// failing outright (an exactly empty string from `tre_bank02.bsr`;
+		// a single real byte "6" from `tre_maple01.bsr`). Stop here, same
+		// as a real read failure.
+		if !isPlausiblePath([]byte(path)) || !strings.HasSuffix(strings.ToLower(path), ".bms") {
+			break
 		}
 		obj.SubMeshPaths = append(obj.SubMeshPaths, path)
 	}

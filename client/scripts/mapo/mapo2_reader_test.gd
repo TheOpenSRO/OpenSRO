@@ -40,17 +40,17 @@ func _append_zeros(buf: PackedByteArray, n: int) -> PackedByteArray:
 	return out
 
 ## Builds one real-shaped 30-byte entry: type_id (u32) + position (3x
-## float32) + the real, confirmed trailer shape (0xffff sentinel, 2 zero
-## u16s, the real 1-based index at relative offset 22, a zero u32, and the
-## constant 0x6464 tail) -- see docs/protocol/MAPO2_FORMAT.md.
-func _make_entry(buf: PackedByteArray, type_id: int, pos: Vector3, index: int) -> PackedByteArray:
+## float32) + the real, confirmed trailer shape (0xffff sentinel, a real
+## rotation float32, the real 1-based index at relative offset 22, a zero
+## u32, and the constant 0x6464 tail) -- see docs/protocol/MAPO2_FORMAT.md
+## and Entry.rotation's own doc comment.
+func _make_entry(buf: PackedByteArray, type_id: int, pos: Vector3, rotation: float, index: int) -> PackedByteArray:
 	var out := _append_u32(buf, type_id)
 	out = _append_float32(out, pos.x)
 	out = _append_float32(out, pos.y)
 	out = _append_float32(out, pos.z)
 	out = _append_u16(out, 0xffff)
-	out = _append_u16(out, 0)
-	out = _append_u16(out, 0)
+	out = _append_float32(out, rotation)
 	out = _append_u16(out, index)
 	out = _append_u32(out, 0)
 	out = _append_u16(out, 0x6464)
@@ -79,13 +79,13 @@ func _init() -> void:
 		for band_col in range(MapO2Reader.SECTORS_PER_SIDE):
 			if band_row == 0 and band_col == 0:
 				buf = _append_u16(buf, 1) # field 0: 1 entry, discarded
-				buf = _make_entry(buf, 9999, Vector3(1, 2, 3), 1)
+				buf = _make_entry(buf, 9999, Vector3(1, 2, 3), 0.0, 1)
 				buf = _append_u16(buf, 0) # field 1 (-> lists[0]): empty
 				buf = _append_u16(buf, 0) # field 2 (-> lists[1]): empty
 				buf = _append_u16(buf, 3) # field 3 (-> lists[2]): 3 entries
-				buf = _make_entry(buf, 1489, Vector3(56.81, 167.02, 22.98), 1)
-				buf = _make_entry(buf, 1489, Vector3(128.47, 167.25, 179.25), 2)
-				buf = _make_entry(buf, 1489, Vector3(210.54, 167.25, 119.00), 3)
+				buf = _make_entry(buf, 1489, Vector3(56.81, 167.02, 22.98), 2.6704, 1)
+				buf = _make_entry(buf, 1489, Vector3(128.47, 167.25, 179.25), 0.0, 2)
+				buf = _make_entry(buf, 1489, Vector3(210.54, 167.25, 119.00), 0.0, 3)
 			else:
 				buf = _empty_sector(buf)
 
@@ -110,6 +110,7 @@ func _init() -> void:
 			var e0: MapO2Reader.Entry = sector00.lists[2][0]
 			_check(e0.type_id == 1489, "entry 0 type ID matches (got %d)" % e0.type_id)
 			_check(e0.position.is_equal_approx(Vector3(56.81, 167.02, 22.98)), "entry 0 position matches (got %s)" % e0.position)
+			_check(is_equal_approx(e0.rotation, 2.6704), "entry 0 rotation matches (got %f)" % e0.rotation)
 			_check(e0.index == 1, "entry 0 real sequential index is 1 (got %d)" % e0.index)
 			var e2: MapO2Reader.Entry = sector00.lists[2][2]
 			_check(e2.index == 3, "entry 2 real sequential index is 3 (got %d)" % e2.index)

@@ -54,6 +54,28 @@ block (byte-identical in every file checked: `0010000000000000000000000000000001
 by a length-prefixed string `"default"` appears at the very end of every file checked — likely a
 default material/group name — but its exact role isn't confirmed.
 
+**Correction (2026-08-23, live-tested against real Jangan palace buildings)**: the sub-mesh count
+is *not* always self-validating for a real, bigger multi-piece building — at least one real
+Jangan building's declared count didn't exactly match how many further real length-prefixed path
+strings were actually present afterward. The real cause isn't confirmed (most likely a real
+trailing per-piece field this project's earlier, simpler 2-4-piece samples never had enough real
+sub-mesh pieces to expose — see the "default"-block boilerplate above, which might not always sit
+cleanly after the *last* sub-mesh path the way every earlier sample showed). Both readers
+(`BsrReader`/`bsr`) now keep whatever real sub-mesh paths parse successfully and stop there rather
+than discarding the whole real object (including its already-confirmed-real primary
+`mesh_path`/`material_path`) over one bad trailing piece — see `docs/PROGRESS.md`'s 2026-08-23
+"found real Jangan" entry.
+
+**Further correction, same day**: a bad trailing sub-mesh read doesn't always fail outright — it
+can succeed with a real but obviously-wrong value, since the read has simply spilled into the
+file's own trailing boilerplate (the fixed 20-byte block + "default" string above) rather than
+running past the end of the file. Two real shapes confirmed live: a real empty string
+(`tre_bank02.bsr`, a real tree whose declared sub-mesh count included one more entry than real
+sub-meshes existed) and a real single stray byte, `"6"` (`tre_maple01.bsr`, same shape). Both
+readers now also stop the sub-mesh loop when a read succeeds but produces something that isn't a
+plausible `.bms` path (reusing the same plausible-path-character check already used for locating
+the mesh/material path strings), not just when the read fails structurally.
+
 ## Sub-mesh pieces need no separate transform
 
 Confirmed against two real sub-mesh pieces of the same `.bsr` object (`asiaminor_theater02_

@@ -37,7 +37,7 @@ func buildSyntheticMesh(t *testing.T) []byte {
 	buf = binary.LittleEndian.AppendUint32(buf, 3)
 
 	writeVertex := func(pos, normal [3]float32, uv [2]float32) {
-		var rec [vertexRecSize]byte
+		var rec [44]byte
 		for i, f := range pos {
 			binary.LittleEndian.PutUint32(rec[i*4:], float32bits(f))
 		}
@@ -109,6 +109,86 @@ func TestParse(t *testing.T) {
 
 	if m.BoundsMin != [3]float32{0, 0, 0} || m.BoundsMax != [3]float32{1, 0, 1} {
 		t.Fatalf("unexpected bounds: min=%v max=%v", m.BoundsMin, m.BoundsMax)
+	}
+}
+
+// buildSyntheticMeshWithRecSize is like buildSyntheticMesh but writes each
+// vertex as a real recSize-byte record (44 or 52) — exercising
+// detectVertexRecSize's real self-validating stride detection, found
+// live-testing real, larger Jangan palace building meshes (2026-08-23):
+// see vertexRecSizeCandidates's doc comment for the real evidence.
+func buildSyntheticMeshWithRecSize(t *testing.T, recSize int) []byte {
+	t.Helper()
+
+	name := "Tri01"
+	material := "Mat01"
+
+	buf := make([]byte, preambleEnd)
+	copy(buf, magic)
+	binary.LittleEndian.PutUint32(buf[0x3c:], 1)
+
+	appendLenPrefixed := func(b []byte, s string) []byte {
+		lp := make([]byte, 4+len(s))
+		binary.LittleEndian.PutUint32(lp, uint32(len(s)))
+		copy(lp[4:], s)
+		return append(b, lp...)
+	}
+	buf = appendLenPrefixed(buf, name)
+	buf = appendLenPrefixed(buf, material)
+
+	buf = binary.LittleEndian.AppendUint32(buf, 1)
+	buf = binary.LittleEndian.AppendUint32(buf, 3)
+
+	writeVertex := func(pos, normal [3]float32, uv [2]float32) {
+		rec := make([]byte, recSize)
+		for i, f := range pos {
+			binary.LittleEndian.PutUint32(rec[i*4:], float32bits(f))
+		}
+		for i, f := range normal {
+			binary.LittleEndian.PutUint32(rec[0x0c+i*4:], float32bits(f))
+		}
+		binary.LittleEndian.PutUint32(rec[0x18:], float32bits(uv[0]))
+		binary.LittleEndian.PutUint32(rec[0x1c:], float32bits(uv[1]))
+		buf = append(buf, rec...)
+	}
+	writeVertex([3]float32{0, 0, 0}, [3]float32{0, 1, 0}, [2]float32{0, 0})
+	writeVertex([3]float32{1, 0, 0}, [3]float32{0, 1, 0}, [2]float32{1, 0})
+	writeVertex([3]float32{0, 0, 1}, [3]float32{0, 1, 0}, [2]float32{0, 1})
+
+	indexOff := uint32(len(buf))
+	binary.LittleEndian.PutUint32(buf[headerPtrsBase+1*4:], indexOff)
+	buf = binary.LittleEndian.AppendUint32(buf, 1)
+	buf = binary.LittleEndian.AppendUint16(buf, 0)
+	buf = binary.LittleEndian.AppendUint16(buf, 1)
+	buf = binary.LittleEndian.AppendUint16(buf, 2)
+
+	bboxOff := uint32(len(buf))
+	binary.LittleEndian.PutUint32(buf[headerPtrsBase+4*4:], bboxOff)
+	for _, f := range []float32{0, 0, 0, 1, 0, 1} {
+		buf = binary.LittleEndian.AppendUint32(buf, float32bits(f))
+	}
+
+	return buf
+}
+
+func TestParseDetects52ByteVertexRecords(t *testing.T) {
+	data := buildSyntheticMeshWithRecSize(t, 52)
+
+	m, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(m.Vertices) != 3 {
+		t.Fatalf("expected 3 vertices, got %d", len(m.Vertices))
+	}
+	if m.Vertices[1].Position != [3]float32{1, 0, 0} {
+		t.Fatalf("unexpected v1 position: %v", m.Vertices[1].Position)
+	}
+	if len(m.Vertices[0].Extra) != 20 {
+		t.Fatalf("expected 20 real trailing Extra bytes for a 52-byte record, got %d", len(m.Vertices[0].Extra))
+	}
+	if len(m.Indices) != 3 {
+		t.Fatalf("expected 3 indices, got %d", len(m.Indices))
 	}
 }
 

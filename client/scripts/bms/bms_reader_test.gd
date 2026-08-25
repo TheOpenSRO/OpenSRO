@@ -36,7 +36,7 @@ func _append_len_prefixed(buf: PackedByteArray, s: String) -> PackedByteArray:
 	out.append_array(lp)
 	return out
 
-func _build_synthetic_mesh() -> PackedByteArray:
+func _build_synthetic_mesh(rec_size: int = 44) -> PackedByteArray:
 	var buf := PackedByteArray()
 	buf.resize(BmsReader.PREAMBLE_END)
 	var magic := BmsReader.MAGIC.to_ascii_buffer()
@@ -57,7 +57,7 @@ func _build_synthetic_mesh() -> PackedByteArray:
 	var uvs := [Vector2(0, 0), Vector2(1, 0), Vector2(0, 1)]
 	for i in range(3):
 		var rec := PackedByteArray()
-		rec.resize(BmsReader.VERTEX_REC_SIZE)
+		rec.resize(rec_size)
 		_put_f32(rec, 0x00, positions[i].x)
 		_put_f32(rec, 0x04, positions[i].y)
 		_put_f32(rec, 0x08, positions[i].z)
@@ -66,7 +66,8 @@ func _build_synthetic_mesh() -> PackedByteArray:
 		_put_f32(rec, 0x14, normal.z)
 		_put_f32(rec, 0x18, uvs[i].x)
 		_put_f32(rec, 0x1c, uvs[i].y)
-		_put_u32(rec, 0x24, 0xFFFFFFFF)
+		if rec_size > 0x24 + 4:
+			_put_u32(rec, 0x24, 0xFFFFFFFF)
 		buf.append_array(rec)
 
 	var index_off := buf.size()
@@ -116,6 +117,19 @@ func _init() -> void:
 	var bad_magic := PackedByteArray()
 	bad_magic.resize(BmsReader.PREAMBLE_END)
 	_check(BmsReader.parse(bad_magic) == null, "rejects bad magic")
+
+	# Real self-validating stride detection (2026-08-23) -- see
+	# VERTEX_REC_SIZE_CANDIDATES's doc comment: some real, larger building
+	# meshes use a real 52-byte vertex record instead of the documented
+	# 44-byte one, with no reliable per-file flag distinguishing the two.
+	var data52 := _build_synthetic_mesh(52)
+	var mesh52 := BmsReader.parse(data52)
+	_check(mesh52 != null, "parses a synthetic mesh with real 52-byte vertex records")
+	if mesh52 != null:
+		_check(mesh52.vertices.size() == 3, "52-byte: 3 vertices (got %d)" % mesh52.vertices.size())
+		if mesh52.vertices.size() == 3:
+			_check(mesh52.vertices[1].position == Vector3(1, 0, 0), "52-byte: v1 position (got %s)" % mesh52.vertices[1].position)
+			_check(mesh52.vertices[0].extra.size() == 20, "52-byte: 20 real trailing Extra bytes (got %d)" % mesh52.vertices[0].extra.size())
 
 	if _failures == 0:
 		print("ALL PASS")

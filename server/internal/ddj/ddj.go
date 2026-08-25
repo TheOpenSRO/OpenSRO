@@ -51,10 +51,13 @@ func Parse(data []byte) (*Texture, error) {
 		return nil, fmt.Errorf("ddj: bad magic %q, want %q", data[0:magicLen], magic)
 	}
 
-	sizeField := binary.LittleEndian.Uint32(data[0x0c:])
-	if want := uint32(len(data) - magicLen); sizeField != want {
-		return nil, fmt.Errorf("ddj: size field is %d, want %d (file size - magic)", sizeField, want)
-	}
+	// The 0x0c field usually equals len(data)-magicLen, but a real sample
+	// (Prim\Mtrl\Item\China\weapon\shield_90.ddj, 2026-08-24) has a value
+	// 256 bytes larger than the actual file, even though its embedded DDS
+	// header and pixel data are otherwise completely well formed and
+	// byte-exact for its declared width/height/mip count. So it's not a
+	// reliable file-size check across all real files and isn't used to
+	// gate parsing.
 
 	dds := data[ddsMagicOff:]
 	if len(dds) < 4+ddsHeaderSize {

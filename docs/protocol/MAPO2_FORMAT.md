@@ -127,10 +127,25 @@ leftover bytes**, confirming the fix generalizes beyond the one original sample.
   with the "field 3 = portal/warp-trigger list" guess (real regions typically have few real portals
   compared to many decorative objects), though still not confirmed.
 
+## SOLVED: relative offset 18-21 is a real Y-axis (yaw) rotation (2026-08-24)
+
+An earlier pass of this doc reported relative offsets 18-19 and 20-21 as "reads zero" in the one
+small real sample checked at the time. That was correct for that sample (most real objects there
+happen to face the default direction, rotation `0.0`), not a real property of the field — a wider
+real check found otherwise. This byte range is the same real per-entry rotation `.o`'s own record
+turned out to have (see `MAPO_FORMAT.md`'s "Object record" section for the full derivation:
+decompiled cos/sin construction plus an empirical range check): a single little-endian `float32`
+spanning what was previously split into "two zero u16s". Checked against a real, densely-populated
+Jangan-area `.o2` file (`98/168.o2`, 506 real entries across all fields/sectors): **100%** of the
+values at this offset, read as `float32`, fall in the real `[0, 2*pi]` range — not a coincidental
+reading of unrelated bytes. Implemented as `Entry2.Rotation` (Go) / `Entry.rotation` (GDScript),
+wired into `World3D.gd`'s real object placement the same way `.o`'s own rotation was.
+
 ## What this still doesn't tell us
 
-- The exact meaning of the entry's `0xffff` sentinel, the sequential index's real scope (per-list?
-  per-sector? per-file?), and the constant `0x6464` suffix.
+- The exact meaning of the entry's `0xffff` sentinel, and the constant `0x6464` suffix. The
+  sequential index's real scope (per-list? per-sector? per-file?) — separately confirmed to sit at
+  relative offset 22-23, unaffected by the rotation-field correction above.
 - What field 0's discarded count actually represents, and whether it's ever genuinely nonzero.
 - What (if anything) distinguishes fields 1, 2, and 3 — only one real sample has been checked, and
   it only ever populated field 2.

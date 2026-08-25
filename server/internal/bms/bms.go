@@ -22,15 +22,38 @@ const (
 	magic          = "JMXVBMS 0110"
 	magicLen       = 12
 	preambleEnd    = 0x48 // fixed header size before the name string, for version "0110"
-	vertexRecSize  = 44
-	indexRecSize   = 6 // 3x uint16 per triangle
+	indexRecSize   = 6    // 3x uint16 per triangle
 	numHeaderPtrs  = 6
 	headerPtrsBase = 0x10
 )
 
+// vertexRecSizeCandidates are the two real per-vertex record sizes found in
+// real files: 44 bytes (position+normal+uv+12 unconfirmed trailing bytes —
+// the only size this project's earlier samples, all small character
+// hair/face/body-part meshes, ever showed) and 52 bytes (found 2026-08-23,
+// live-testing real, larger Jangan palace building meshes — the same
+// leading position+normal+uv fields, but 20 trailing bytes instead of 12).
+// Real per-file evidence for 52: pulling and parsing a real
+// `cj_pal_bigdoor_roof01.bms` (676 vertices) at the documented 44-byte
+// stride produced NaN values and wildly non-unit-length normals starting
+// at vertex 1 — but at 52 bytes, all 676 real vertices decode with a
+// unit-length normal and no NaNs, and the vertex array lands almost
+// exactly on the file's own header-given index-section offset (hdr[1]),
+// with only a small (78-81 byte, varies slightly per file) real trailing
+// gap this project hasn't identified yet. No real per-file flag
+// distinguishing the two sizes has been found (an "unconfirmed uint32"
+// field right before the vertex count doesn't correlate: observed values
+// 12/5/0 on real 52-byte files and 92/0 on real 44-byte files — 0 appears
+// in both), so detectVertexRecSize picks whichever real size makes every
+// vertex's normal come out unit-length, the same self-validating technique
+// already used for .m's two real per-vertex sizes (see
+// server/internal/mapm's detectVertexSize).
+var vertexRecSizeCandidates = [2]int{44, 52}
+
 // Vertex is one mesh vertex. Position, Normal and UV are confirmed fields;
-// each 44-byte on-disk record has 12 further bytes (offsets 0x20-0x2B) not
-// yet confirmed to have consistent per-vertex meaning (a real archive shows
+// each on-disk record has further trailing bytes (12 or 20, depending on
+// the real per-file record size — see vertexRecSizeCandidates) not yet
+// confirmed to have consistent per-vertex meaning (a real archive shows
 // them varying on at least one vertex, e.g. differing from the constant
 // 0xFFFFFFFF/0 seen elsewhere), so they're kept raw rather than
 // mis-labeled.
@@ -38,7 +61,7 @@ type Vertex struct {
 	Position [3]float32
 	Normal   [3]float32
 	UV       [2]float32
-	Extra    [12]byte
+	Extra    []byte
 }
 
 // Mesh is a parsed .bms file.
@@ -79,11 +102,17 @@ func Parse(data []byte) (*Mesh, error) {
 	if off+8 > len(data) {
 		return nil, errors.New("bms: truncated before vertex count")
 	}
-	// A u32 field of unconfirmed purpose (observed value 1) precedes the
-	// vertex count.
+	// A u32 field of unconfirmed purpose (observed values 12, 92, 5, 0 — not
+	// a reliable signal for anything, see vertexRecSizeCandidates) precedes
+	// the vertex count.
 	off += 4
 	vertexCount := binary.LittleEndian.Uint32(data[off:])
 	off += 4
+
+	vertexRecSize, err := detectVertexRecSize(data, off, int(vertexCount), int(hdr[1]))
+	if err != nil {
+		return nil, err
+	}
 
 	vertexEnd := off + int(vertexCount)*vertexRecSize
 	if vertexEnd > len(data) {
@@ -99,7 +128,7 @@ func Parse(data []byte) (*Mesh, error) {
 		}
 		v.UV[0] = readFloat32(rec, 0x18)
 		v.UV[1] = readFloat32(rec, 0x1c)
-		copy(v.Extra[:], rec[0x20:0x2c])
+		v.Extra = append([]byte(nil), rec[0x20:vertexRecSize]...)
 	}
 
 	// Indices: located via the header's own pointer table (hdr[1]), not by
@@ -137,6 +166,46 @@ func Parse(data []byte) (*Mesh, error) {
 	}
 
 	return m, nil
+}
+
+// detectVertexRecSize picks whichever real candidate size in
+// vertexRecSizeCandidates makes every one of vertexCount real vertices
+// starting at off decode a real, plausible unit-length normal (see
+// vertexRecSizeCandidates's doc comment for the real evidence this is
+// based on) — the same self-validating approach server/internal/mapm's
+// detectVertexSize already uses for that format's own two real per-vertex
+// sizes. Returns an error only if vertexCount doesn't fit in the file at
+// either candidate size, or if no candidate is being tried because both
+// would run past the file/index-section bound.
+func detectVertexRecSize(data []byte, off, vertexCount, indexOff int) (int, error) {
+	bestSize := 0
+	bestBad := -1
+	for _, size := range vertexRecSizeCandidates {
+		end := off + vertexCount*size
+		if end > len(data) || (indexOff > 0 && end > indexOff) {
+			continue
+		}
+		bad := 0
+		for i := 0; i < vertexCount; i++ {
+			rec := data[off+i*size : off+(i+1)*size]
+			var n [3]float32
+			for c := 0; c < 3; c++ {
+				n[c] = readFloat32(rec, 0x0c+c*4)
+			}
+			length := math.Sqrt(float64(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]))
+			if math.IsNaN(length) || length < 0.9 || length > 1.1 {
+				bad++
+			}
+		}
+		if bestBad == -1 || bad < bestBad {
+			bestBad = bad
+			bestSize = size
+		}
+	}
+	if bestBad == -1 {
+		return 0, fmt.Errorf("bms: vertex array (count=%d) doesn't fit in the file at any known real record size", vertexCount)
+	}
+	return bestSize, nil
 }
 
 func readLenPrefixedString(data []byte, off int) (string, int, error) {

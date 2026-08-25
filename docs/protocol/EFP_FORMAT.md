@@ -43,17 +43,28 @@ recursive reader still needs the real per-node header shape (the exact meaning o
 against real file bytes, the same way every other confirmed field in this project was pinned down
 — flagged as a real, concrete next step rather than guessed at further.
 
-**A concrete, testable hypothesis for that next step**: this doc already documents a top-level
-`uint32` `Count` field read right after the effect name, previously described only as "plausibly a
-section count, not cross-checked against `len(Entries)`" (correct — `Entries` is a flat walk of
-every nesting level, so it was never expected to match). Given the decompiled structure above, this
-field is very plausibly the *real root node's own child-count* — the second linked list's length
-in `FUN_00cc27e0`'s terms — rather than a generic "how many properties" count. Spot-checked on one
-real file (`sample_deco_charge_light_a.efp`): `Count` reads `3` at file offset `0x21`, right after
-the name `"counterattack"`. Not yet verified end-to-end (would need to confirm exactly 3 real
-top-level container children close cleanly using the existing flat scanner's already-correct entry
-boundaries, grouped rather than re-parsed from scratch) — but a genuinely promising, checkable
-starting point for whoever picks this up next, not a fresh guess.
+**A hypothesis for that next step, tested 2026-08-24 and refuted**: this doc previously floated
+`Count` (the `uint32` read right after the effect name) as plausibly the *real root node's own
+child-count* — the second linked list's length in `FUN_00cc27e0`'s terms. Checked directly against
+2 real files (`deco_charge_light_a.efp`, real name `"counterattack"`; `deco_wind_jumpkick_a.efp`,
+real name `"csk_bow_afterimage"`) by counting real repeating `NormalTimeLife`-headed leaf clusters
+in the existing flat reader's own output. **Both real samples show `Count == 3`, but the real
+repeat-cluster counts don't match it either way**: `counterattack` has 6 real clusters, not 3;
+`csk_bow_afterimage` has only 2 (2 real `NormalTimeLife` occurrences, one real child). `Count`
+isn't simply "how many top-level children" by this direct measure — refuted, not just unconfirmed.
+
+**A new, more solid real clue found during that same check**: `csk_bow_afterimage`'s flat entry
+list includes a literal entry named `"NONAME"` (a real 4-byte value) sitting exactly where a real
+child node boundary would be expected — right after one full `NormalTimeLife...RenderNone` leaf
+cluster and right before the next `NormalTimeLife` starts a new one. This strongly confirms
+`FUN_00cc27e0`'s decompiled recursion shape from a different angle: **a child node's own real name
+gets written first thing when recursing into it** (a real, literal "no name" placeholder string,
+not garbage), meaning the flat reader's "next name token" boundary-finding technique is
+*already* stumbling onto real child names as ordinary-looking flat entries — it just can't yet
+tell them apart from a real leaf property's own name. A future pass could use this as a positive
+signal (a short, low-information value immediately preceding a fresh `NormalTimeLife` is
+plausibly a real child-name marker, not a leaf), but this isn't confirmed reliable enough across
+more samples to act on yet — recorded as the next concrete lead, not implemented.
 
 ## What this reader does and doesn't recover
 
@@ -127,7 +138,11 @@ parse all 30 real files without error, matching between Go and GDScript.
 - The true nested tree structure (see above).
 - Every per-key value type/layout (only the outer `name` + opaque `value` shape is confirmed).
 - The two unconfirmed `"0011"`-header `uint32` and the three unconfirmed `"0013"`-header fields.
-- The top-level `count` field's exact meaning.
+- The top-level `count` field's exact meaning — the "root child count" hypothesis is now refuted
+  (see above), not just unconfirmed.
+- Whether a short, low-information value immediately preceding a fresh `NormalTimeLife` entry
+  reliably marks a real child-node name (one real example found, `"NONAME"`, but not checked
+  across enough samples to act on).
 
 ## Real samples available for future verification
 

@@ -10,14 +10,17 @@ class_name TileIndexReader
 ##
 ## Like .ifo object-index tables (ObjidxReader), this is not a binary
 ## container: after the magic line and a count line, it's a plain ASCII
-## text table, one real tile type per line. Unlike object.ifo, this
-## project's one real sample's referenced ground-texture .ddj files
-## (Category+Filename) don't actually exist anywhere in the one real
-## Data.pk2 this project has access to (checked directly) -- likely a
-## real client-version/asset mismatch, not a parsing bug. The real,
-## confirmed `TileType` classification is still genuinely useful on its
-## own (see MapmTerrainBuilder), independent of whether the actual
-## texture files are ever recovered.
+## text table, one real tile type per line.
+##
+## **Corrected (2026-08-23), see docs/protocol/DDJ_FORMAT.md/
+## TILE2D_FORMAT.md**: an earlier version of this comment claimed the real
+## ground-texture .ddj files (Category+Filename) referenced here "don't
+## actually exist anywhere" -- that search only ever checked Data.pk2/
+## Media.pk2/Particles.pk2. They really do exist, in a real Map.pk2\Tile2D\
+## folder this project hadn't checked yet at the time. World3D.gd's
+## _load_real_ground_textures resolves them from there and, live-verified
+## multiple times this session (including a full-catalog audit,
+## 2026-08-25), gets a 100% real resolution rate.
 
 const MAGIC := "JMXV2DTI1001"
 

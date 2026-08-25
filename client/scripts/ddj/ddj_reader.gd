@@ -39,11 +39,13 @@ static func parse(data: PackedByteArray) -> ParsedTexture:
 		push_error("ddj: bad magic %s, want %s" % [magic, MAGIC])
 		return null
 
-	var size_field := _le_u32(data, 0x0c)
-	var want := data.size() - MAGIC_LEN
-	if size_field != want:
-		push_error("ddj: size field is %d, want %d (file size - magic)" % [size_field, want])
-		return null
+	# The 0x0c field usually equals data.size()-MAGIC_LEN, but a real sample
+	# (Prim\Mtrl\Item\China\weapon\shield_90.ddj, 2026-08-24) has a value
+	# 256 bytes larger than the actual file, even though its embedded DDS
+	# header and pixel data are otherwise completely well formed and
+	# byte-exact for its declared width/height/mip count. So it's not a
+	# reliable file-size check across all real files and isn't used to
+	# gate parsing.
 
 	var dds := data.slice(WRAPPER_SIZE)
 	if dds.size() < 4 + DDS_HEADER_SIZE:
@@ -82,7 +84,17 @@ static func to_texture(tex: ParsedTexture) -> ImageTexture:
 	match tex.four_cc:
 		"DXT1":
 			image = Image.create_from_data(tex.width, tex.height, tex.mip_map_count > 1, Image.FORMAT_DXT1, pixels)
-		"DXT3":
+		"DXT2", "DXT3":
+			# DXT2 and DXT3 are bit-identical block formats -- the only real
+			# difference is whether DXT2's color channels are premultiplied
+			# by alpha (a real encoding convention for certain blend modes),
+			# not the compressed block layout itself. Found live-testing a
+			# real region outside the initially-tested Jangan cluster
+			# (2026-08-24) -- decoding it as plain DXT3 is the correct real
+			# block decompression either way; this project doesn't
+			# currently do anything with alpha that would need the
+			# premultiplied distinction un-done (e.g. a custom premultiplied-
+			# alpha blend mode), so no further real correction is applied.
 			image = Image.create_from_data(tex.width, tex.height, tex.mip_map_count > 1, Image.FORMAT_DXT3, pixels)
 		"DXT5":
 			image = Image.create_from_data(tex.width, tex.height, tex.mip_map_count > 1, Image.FORMAT_DXT5, pixels)

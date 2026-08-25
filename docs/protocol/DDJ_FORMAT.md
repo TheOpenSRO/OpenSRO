@@ -14,7 +14,7 @@ something reverse engineered from this game — only the 20-byte wrapper is prop
 | Offset | Size | Field |
 |-------:|-----:|-------|
 | 0x00 | 12 | Magic, `"JMXVDDJ 1000"` |
-| 0x0C | 4 | `uint32`: file size minus 12 (i.e. byte count of everything after the magic) |
+| 0x0C | 4 | `uint32`, usually file size minus 12 (byte count of everything after the magic), but not reliably: a real sample (`Prim\Mtrl\Item\China\weapon\shield_90.ddj`, a 512x512 DXT3 texture with a full 10-level mip chain) has a value 256 bytes larger than the actual file despite an otherwise byte-exact, well-formed embedded DDS payload. Neither reader treats this field as a size check any more — it's parsed for informational purposes only. |
 | 0x10 | 4 | `uint32`, observed constant `3` across every sample checked; meaning unconfirmed |
 | 0x14 | ... | The embedded DDS file starts here, unmodified |
 

@@ -9,16 +9,36 @@ class_name BmsReader
 const MAGIC := "JMXVBMS 0110"
 const MAGIC_LEN := 12
 const PREAMBLE_END := 0x48
-const VERTEX_REC_SIZE := 44
 const INDEX_REC_SIZE := 6
 const HEADER_PTRS_BASE := 0x10
+
+## The two real per-vertex record sizes found in real files: 44 bytes
+## (position+normal+uv+12 unconfirmed trailing bytes -- the only size this
+## project's earlier samples, all small character hair/face/body-part
+## meshes, ever showed) and 52 bytes (found 2026-08-23, live-testing real,
+## larger Jangan palace building meshes -- the same leading
+## position+normal+uv fields, but 20 trailing bytes instead of 12). Real
+## per-file evidence for 52: pulling and parsing a real
+## `cj_pal_bigdoor_roof01.bms` (676 vertices) at the documented 44-byte
+## stride produced NaN values and wildly non-unit-length normals starting
+## at vertex 1 -- but at 52 bytes, all 676 real vertices decode with a
+## unit-length normal and no NaNs, and the resulting mesh's own computed
+## vertex bounds land exactly on the file's own declared bounding box. No
+## real per-file flag distinguishing the two sizes has been found, so
+## _detect_vertex_rec_size picks whichever real size makes every vertex's
+## normal come out unit-length -- the same self-validating technique
+## already used for .m's two real per-vertex sizes (see MapmReader's own
+## detect_vertex_size). See docs/protocol/BMS_FORMAT.md.
+const VERTEX_REC_SIZE_CANDIDATES := [44, 52]
 
 class Vertex:
 	var position: Vector3
 	var normal: Vector3
 	var uv: Vector2
-	## The 12 bytes at record offset 0x20-0x2B, not confirmed to have
-	## consistent per-vertex meaning -- see docs/protocol/BMS_FORMAT.md.
+	## The trailing bytes at record offset 0x20 onward (12 or 20 bytes,
+	## depending on the real per-file record size -- see
+	## VERTEX_REC_SIZE_CANDIDATES), not confirmed to have consistent
+	## per-vertex meaning -- see docs/protocol/BMS_FORMAT.md.
 	var extra: PackedByteArray
 
 class ParsedMesh:
@@ -64,11 +84,16 @@ static func parse(data: PackedByteArray) -> ParsedMesh:
 	if off + 8 > data.size():
 		push_error("bms: truncated before vertex count")
 		return null
-	off += 4 # unconfirmed u32, observed constant 1
+	off += 4 # unconfirmed u32, observed values 12/92/5/0 -- not a reliable signal, see VERTEX_REC_SIZE_CANDIDATES
 	var vertex_count := _le_u32(data, off)
 	off += 4
 
-	var vertex_end := off + vertex_count * VERTEX_REC_SIZE
+	var vertex_rec_size := _detect_vertex_rec_size(data, off, vertex_count, hdr[1])
+	if vertex_rec_size == -1:
+		push_error("bms: vertex array (count=%d) doesn't fit in the file at any known real record size" % vertex_count)
+		return null
+
+	var vertex_end := off + vertex_count * vertex_rec_size
 	if vertex_end > data.size():
 		push_error("bms: vertex array (count=%d) runs past end of file" % vertex_count)
 		return null
@@ -78,12 +103,12 @@ static func parse(data: PackedByteArray) -> ParsedMesh:
 	mesh.material_name = material_name
 
 	for i in range(vertex_count):
-		var rec_off := off + i * VERTEX_REC_SIZE
+		var rec_off := off + i * vertex_rec_size
 		var v := Vertex.new()
 		v.position = Vector3(_le_f32(data, rec_off), _le_f32(data, rec_off + 4), _le_f32(data, rec_off + 8))
 		v.normal = Vector3(_le_f32(data, rec_off + 0x0c), _le_f32(data, rec_off + 0x10), _le_f32(data, rec_off + 0x14))
 		v.uv = Vector2(_le_f32(data, rec_off + 0x18), _le_f32(data, rec_off + 0x1c))
-		v.extra = data.slice(rec_off + 0x20, rec_off + 0x2c)
+		v.extra = data.slice(rec_off + 0x20, rec_off + vertex_rec_size)
 		mesh.vertices.append(v)
 
 	var index_off := hdr[1]
@@ -130,6 +155,36 @@ static func to_array_mesh(mesh: ParsedMesh) -> ArrayMesh:
 	var array_mesh := ArrayMesh.new()
 	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return array_mesh
+
+## Picks whichever real candidate size in VERTEX_REC_SIZE_CANDIDATES makes
+## every one of vertex_count real vertices starting at off decode a real,
+## plausible unit-length normal (see VERTEX_REC_SIZE_CANDIDATES's doc
+## comment for the real evidence this is based on) -- the same
+## self-validating approach MapmReader's own detect_vertex_size uses for
+## that format's own two real per-vertex sizes. Returns -1 if vertex_count
+## doesn't fit in the file (and before index_off, when known) at either
+## candidate size.
+static func _detect_vertex_rec_size(data: PackedByteArray, off: int, vertex_count: int, index_off: int) -> int:
+	var best_size := -1
+	var best_bad := -1
+	for size_variant in VERTEX_REC_SIZE_CANDIDATES:
+		var size: int = size_variant
+		var end: int = off + vertex_count * size
+		if end > data.size() or (index_off > 0 and end > index_off):
+			continue
+		var bad := 0
+		for i in range(vertex_count):
+			var rec_off := off + i * size
+			var nx := _le_f32(data, rec_off + 0x0c)
+			var ny := _le_f32(data, rec_off + 0x10)
+			var nz := _le_f32(data, rec_off + 0x14)
+			var length := sqrt(nx * nx + ny * ny + nz * nz)
+			if is_nan(length) or length < 0.9 or length > 1.1:
+				bad += 1
+		if best_bad == -1 or bad < best_bad:
+			best_bad = bad
+			best_size = size
+	return best_size
 
 static func _read_len_prefixed_string(data: PackedByteArray, off: int) -> Array:
 	if off + 4 > data.size():
