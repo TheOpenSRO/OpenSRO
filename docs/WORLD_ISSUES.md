@@ -464,3 +464,26 @@ same conclusion as before.
 
 Full verification (`godot4 --headless --path . --import --quit`, all 43 GDScript `*_test.gd`
 files) swept clean after the fog removal.
+
+## 2026-08-26, fourteenth round — a real (not shutdown-noise) networking bug found and fixed
+
+A real playtest log included `ERROR: Condition "!is_open()" is true. Returning: -1 at:
+get_available_bytes (drivers/unix/net_socket_posix.cpp:743)`, distinct from the already-understood
+benign shutdown-time RID-leak noise elsewhere in the same log. Traced the exact, verifiable code
+path: `PacketReader.poll()` is the only real (non-test) call site for `peer.get_available_bytes()`,
+called every frame from `NetClient._process()` once `_connected` is true -- but nothing ever
+re-checked whether the underlying peer was still actually open after the initial connect. A
+dropped connection (server closes it, or the app itself tearing the socket down at shutdown)
+produced this real engine-level error repeatedly instead of a clean, one-time `disconnected`
+signal. Fixed by checking the peer's own real `get_status()` before polling each frame (both
+`StreamPeerTCP` and `StreamPeerTLS` expose this) and calling `disconnect_from_server()` the moment
+it's no longer `STATUS_CONNECTED`, rather than continuing to poll a closed peer.
+
+Separately confirmed (not a bug): the same log's "could not find terrain/objects" lines around
+Jangan's real region are the same already-understood "streaming radius hits real sparse-data
+edges" pattern documented earlier -- most of the 25 attempted regions around 89/182 genuinely
+don't have real data, only a handful (91/181, 87/182, 91/182, 91/183, plus the real 863-placement
+89/182 itself) do.
+
+Full verification (`godot4 --headless --path . --import --quit`, all 43 GDScript `*_test.gd`
+files) swept clean.

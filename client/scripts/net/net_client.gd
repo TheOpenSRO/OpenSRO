@@ -147,6 +147,27 @@ func _process(_delta: float) -> void:
 	if not _connected:
 		return
 
+	# Real bug found live (2026-08-26): once _connected is true, nothing
+	# ever re-checked whether the underlying peer was still actually open.
+	# If the connection dropped (server closed it, or the app itself is
+	# mid-shutdown and the OS already tore the socket down), the loop below
+	# called peer.get_available_bytes() on a closed peer every single
+	# frame, producing a real, repeating engine-level error
+	# ("Condition "!is_open()" is true", drivers/unix/net_socket_posix.cpp)
+	# instead of a clean one-time disconnect. Checking the peer's own real
+	# status before polling isn't a guess -- StreamPeerTCP/StreamPeerTLS
+	# both expose get_status() for exactly this, and STATUS_CONNECTED is
+	# the one real status polling should ever happen in.
+	var still_connected := false
+	if _tcp_peer != null:
+		if _peer is StreamPeerTLS:
+			still_connected = (_peer as StreamPeerTLS).get_status() == StreamPeerTLS.STATUS_CONNECTED
+		else:
+			still_connected = _tcp_peer.get_status() == StreamPeerTCP.STATUS_CONNECTED
+	if not still_connected:
+		disconnect_from_server()
+		return
+
 	# Drain everything currently available; PacketReader.poll returns null
 	# once there's not a full frame buffered yet (never blocks the frame).
 	while true:
