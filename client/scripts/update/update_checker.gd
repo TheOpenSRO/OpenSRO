@@ -8,10 +8,13 @@ class_name UpdateChecker
 ## without a real network call.
 
 ## This build's own version -- compared against a real GitHub release's
-## "tag_name". Bumped by hand per real tagged release; nothing in this
-## project auto-generates it. "v0.0.0" (older than any real "vX.Y.Z" tag)
-## is the honest default for a dev/editor run that was never built from a
-## tagged release at all.
+## "tag_name". "v0.0.0" (older than any real "vX.Y.Z" tag) is the honest
+## default for a dev/editor run, or any build not made from a real tagged
+## release. release.yml rewrites this exact line to the real pushed tag
+## (via sed) before exporting whenever the workflow is triggered by an
+## actual "v*" tag push (not a plain workflow_dispatch test build) -- so a
+## real downloaded release build always reports its own real version, and
+## never mistakes itself (or an older tag) for a newer one.
 const CLIENT_VERSION := "v0.0.0"
 
 ## Parses a "vMAJOR.MINOR.PATCH" real tag string into [major, minor, patch],
