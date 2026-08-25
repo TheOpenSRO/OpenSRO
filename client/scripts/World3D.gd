@@ -160,9 +160,23 @@ var _has_move_target := false
 var _move_target := Vector3.ZERO
 ## Minimum real-world distance moved, and minimum time elapsed, before
 ## sending another OpMove -- avoids flooding the connection with a packet
-## every single physics frame while walking.
-const MIN_SEND_INTERVAL := 0.1
+## every single physics frame while walking. **Raised 2026-08-26** (see
+## docs/WORLD_ISSUES.md) from 0.1 (10/sec) -- a real playtest found other
+## players' movement visibly stuttering, root-caused to this send rate
+## combined with zero interpolation on the receiving end (see
+## _other_body_targets). Interpolation is the real fix for the visual
+## stutter itself; this is raised too so the interpolated target updates
+## often enough to track a fast-moving real player closely, not as a claim
+## about any real client's own network rate.
+const MIN_SEND_INTERVAL := 0.05
 const MIN_SEND_DISTANCE := 0.05
+## How quickly (per real second, exponential catch-up rate) another
+## entity's visual body closes the gap to its latest known real position --
+## see _other_body_targets. A real engineering tuning choice, not
+## reverse-engineered client behavior: high enough to visually catch up
+## well within one real MIN_SEND_INTERVAL period at typical real
+## MOVE_SPEED, not a claim about real interpolation timing.
+const OTHER_BODY_INTERPOLATION_SPEED := 15.0
 ## Plausible (unconfirmed) .ban playback rate -- see docs/protocol/BAN_FORMAT.md.
 const BAN_FPS := 30.0
 
@@ -501,6 +515,17 @@ var _pending_friend_requests: Array[FriendNet.PendingRequest] = []
 var _awaiting_equip_ack := false
 
 var _other_bodies := {} # character_id -> Node3D
+## Real fix (2026-08-26, see docs/WORLD_ISSUES.md): a real playtest reported
+## other players' movement stuttering at ~5-10fps. Root-caused, not guessed
+## -- _on_entity_moved used to snap _other_bodies' position directly to
+## each real position update the instant it arrived, and those updates
+## only ever arrive as often as the sender's own MIN_SEND_INTERVAL allows
+## (10/sec) -- a visible position jump every ~100ms, not smooth motion.
+## This dict holds each real entity's latest known target position;
+## _physics_process below smoothly interpolates each body toward its own
+## target every frame instead of teleporting to it, so motion reads as
+## continuous regardless of how often real updates actually arrive.
+var _other_body_targets := {} # character_id -> Vector3
 var _monster_bodies := {} # monster_id -> Node3D
 var _last_sent_pos := Vector3.ZERO
 var _time_since_send := 0.0
@@ -2091,6 +2116,20 @@ func _physics_process(delta: float) -> void:
 		_last_sent_pos = player.position
 		_time_since_send = 0.0
 
+	# Smooths every other real entity toward its latest known position
+	# instead of teleporting the instant an update arrives -- see
+	# _other_body_targets' own doc comment for the real stutter this fixes.
+	# OTHER_BODY_INTERPOLATION_SPEED is a real engineering choice (how
+	# quickly a body catches up to its target each frame), not a claim
+	# about real client behavior -- tuned so a body visually arrives at
+	# its target well within one real MIN_SEND_INTERVAL period.
+	for character_id in _other_body_targets:
+		if not _other_bodies.has(character_id):
+			continue
+		var body: Node3D = _other_bodies[character_id]
+		var target: Vector3 = _other_body_targets[character_id]
+		body.position = body.position.lerp(target, minf(OTHER_BODY_INTERPOLATION_SPEED * delta, 1.0))
+
 	if _real_skeleton != null and _real_skeleton_track.keyframes.size() > 1:
 		_real_skeleton_time += delta
 		var frame_count := _real_skeleton_track.keyframes.size()
@@ -2129,7 +2168,10 @@ func _physics_process(delta: float) -> void:
 
 func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, armor_slots_mask: int = 0, gender: String = DEFAULT_GENDER, has_weapon: bool = false, has_shield: bool = false) -> void:
 	if _other_bodies.has(character_id):
-		_other_bodies[character_id].position = pos
+		# Sets the real interpolation *target* only -- see
+		# _other_body_targets' own doc comment for why this replaced a
+		# direct position snap.
+		_other_body_targets[character_id] = pos
 		return
 
 	var body := Node3D.new()
@@ -2167,6 +2209,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 
 	other_entities.add_child(body)
 	_other_bodies[character_id] = body
+	_other_body_targets[character_id] = pos
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.armor_slots_mask, snapshot.gender, snapshot.has_weapon, snapshot.has_shield)
@@ -2174,7 +2217,7 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 
 func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 	if _other_bodies.has(moved.character_id):
-		_other_bodies[moved.character_id].position = Vector3(moved.x, moved.y, moved.z)
+		_other_body_targets[moved.character_id] = Vector3(moved.x, moved.y, moved.z)
 
 func _on_entity_left(character_id: int) -> void:
 	if _other_bodies.has(character_id):
@@ -2186,6 +2229,7 @@ func _on_entity_left(character_id: int) -> void:
 				break
 		body.queue_free()
 		_other_bodies.erase(character_id)
+		_other_body_targets.erase(character_id)
 		_log_system("%s left the zone." % departing_name)
 
 func _on_disconnect_pressed() -> void:

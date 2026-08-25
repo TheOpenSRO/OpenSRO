@@ -487,3 +487,28 @@ don't have real data, only a handful (91/181, 87/182, 91/182, 91/183, plus the r
 
 Full verification (`godot4 --headless --path . --import --quit`, all 43 GDScript `*_test.gd`
 files) swept clean.
+
+## 2026-08-26, fifteenth round — real cause of other-player movement stutter, fixed
+
+Asked to make the server "64 tick." Checked first rather than assume: this server has no fixed
+simulation-tick concept anywhere (`Hub.Move`/combat/etc. all process immediately per received
+message) -- there's nothing to "set to 64." Clarified with OpenSRO what he actually wanted, and in
+the process found the *real* cause of a separately-reported symptom (other players' movement
+stuttering at ~5-10fps): `_on_entity_moved` snapped another entity's position directly to each
+real update the instant it arrived, and real updates only ever arrive as often as the sender's own
+`MIN_SEND_INTERVAL` allows (10/sec) -- a visible jump every ~100ms, not smooth motion, regardless
+of any server-side tick rate.
+
+Fixed the actual root cause: `_other_body_targets` now holds each real entity's latest known
+target position, and `_physics_process` smoothly interpolates every other body toward its target
+every frame (exponential catch-up, `OTHER_BODY_INTERPOLATION_SPEED`) instead of teleporting.
+Raised `MIN_SEND_INTERVAL` (0.1 -> 0.05) so the interpolation target itself updates often enough to
+track a fast-moving real player closely. Both new constants are explicitly documented as real
+engineering tuning choices, not claims about real client network behavior -- consistent with
+[[feedback_no_unverified_assumptions]].
+
+The real, separate 64Hz authoritative server simulation loop OpenSRO actually wants is still a
+follow-up item, deliberately not conflated with this fix -- tracked here, not yet built.
+
+Full verification (`godot4 --headless --path . --import --quit`, all 43 GDScript `*_test.gd`
+files) swept clean.
