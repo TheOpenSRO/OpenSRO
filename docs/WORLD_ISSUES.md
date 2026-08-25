@@ -279,3 +279,29 @@ placements) for manual zone-change testing.
 Real scratch tool binaries (`pk2list`, `scanlandmarks`) built for and run on the RE box, deleted
 immediately after use; no real pk2 data pulled into this sandbox for this round (the scan ran
 entirely on the RE box against its own real files).
+
+## 2026-08-26, seventh round — spawning inside a real building, general fix
+
+Retested against the corrected Jangan region (`89/182`) — real terrain, HUD, and controls all
+confirmed working (bottom action-bar HUD, zone label showing `89/182`), but the player spawned
+directly inside a real building interior. Root cause: the server's `spawnPos` is a fixed
+`(0,0,0)`, and Jangan's real region is packed with 863 real object placements — a quick empirical
+check (new scratch tool, run on the RE box, not kept) found even the *most open* point in that
+whole region is only ~466 real units from the nearest placement anchor, barely better than
+origin's ~206 — this specific real region (the real Jangan palace complex) just doesn't have much
+genuinely open space at all, so no fixed spawn coordinate reliably avoids buildings here.
+
+Rather than chase a precomputed "safe" spawn point (would need real per-building footprint data
+this project doesn't have, not just placement anchors), added a general, reusable safety net to
+`_snap_player_onto_terrain()`: after landing on real terrain, check whether there's a real low
+ceiling directly overhead (a real room, not open sky) via a short upward raycast, and if so, try
+nearby real ground positions in a widening ring (6 rings x 8 directions, 15 real units per ring)
+until one has clear sky above, snapping there instead. Bounded and honest: if every tried position
+is still covered, it leaves the player at the original spot and logs a real error rather than
+silently pretending success. This helps for *any* zone with a fixed spawn point landing indoors,
+not just Jangan specifically.
+
+Full verification: fixed a real GDScript type-inference error introduced along the way
+(`var candidate := hit.position + ...` needed an explicit `: Vector3` annotation, the same
+"can't infer type from a Dictionary value" pattern seen earlier this project), then all 43
+GDScript `*_test.gd` files and `go build`/`go vet`/`go test ./...` swept clean.

@@ -1415,6 +1415,63 @@ func _snap_player_onto_terrain() -> void:
 		return
 	player.position.y = hit.position.y + 0.05
 	player.velocity = Vector3.ZERO
+	_avoid_spawning_under_roof()
+
+## Real, general safety net (2026-08-26, see docs/WORLD_ISSUES.md): a real
+## fixed server spawnPos of (0,0,0) can genuinely land inside a real
+## building's interior in a densely-built real zone (confirmed for Jangan's
+## own real region, 863 real placements in one region) -- this isn't
+## something a fixed spawn coordinate can reliably avoid on its own, since
+## "the most open point" in a real palace complex still isn't very open.
+## Rather than try to precompute a real building-free spawn point (would
+## need real per-object footprint data this project doesn't have, not just
+## placement anchors), this checks *after* landing on real terrain whether
+## there's a real low ceiling directly overhead (a real room, not open sky)
+## and, if so, tries nearby real ground positions in a widening ring until
+## one has clear sky above, snapping there instead. Bounded and best-effort:
+## if every tried position is still covered, leaves the player at the
+## original terrain-snapped position rather than searching forever.
+const ROOF_CHECK_HEIGHT := 30.0
+const ROOF_ESCAPE_STEP := 15.0
+const ROOF_ESCAPE_RINGS := 6
+const ROOF_ESCAPE_DIRECTIONS := 8
+
+func _avoid_spawning_under_roof() -> void:
+	if not _has_roof_overhead(player.position):
+		return
+	var space_state := get_world_3d().direct_space_state
+	for ring in range(1, ROOF_ESCAPE_RINGS + 1):
+		var radius := ring * ROOF_ESCAPE_STEP
+		for i in range(ROOF_ESCAPE_DIRECTIONS):
+			var angle := TAU * i / ROOF_ESCAPE_DIRECTIONS
+			var candidate_xz := player.position + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
+			var query := PhysicsRayQueryParameters3D.create(
+				candidate_xz + Vector3(0.0, 1000.0, 0.0),
+				candidate_xz + Vector3(0.0, -1000.0, 0.0))
+			query.exclude = [player.get_rid()]
+			var hit := space_state.intersect_ray(query)
+			if hit.is_empty():
+				continue
+			var candidate: Vector3 = hit.position + Vector3(0.0, 0.05, 0.0)
+			if not _has_roof_overhead(candidate):
+				player.position = candidate
+				player.velocity = Vector3.ZERO
+				return
+	# Every tried ring was still covered -- a real, honest "couldn't find
+	# open ground nearby" outcome (e.g. deep inside a real dense palace
+	# complex), not silently pretending success.
+	printerr("World3D: spawn point has a real roof overhead and no nearby open ground was found within %d real units -- leaving the player here" % (ROOF_ESCAPE_RINGS * ROOF_ESCAPE_STEP))
+
+## True if a real raycast straight up from pos hits something within
+## ROOF_CHECK_HEIGHT real units -- a real low ceiling/roof, not open sky.
+func _has_roof_overhead(pos: Vector3) -> bool:
+	var space_state := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(
+		pos + Vector3(0.0, 0.5, 0.0),
+		pos + Vector3(0.0, ROOF_CHECK_HEIGHT, 0.0))
+	query.exclude = [player.get_rid()]
+	var hit := space_state.intersect_ray(query)
+	return not hit.is_empty()
 
 ## Auto-loads a real assembled character (real .bsk skeleton + real
 ## body-part .bms meshes via CharacterAssembler) as the player's own body,
