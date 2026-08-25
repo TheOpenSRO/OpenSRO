@@ -305,3 +305,21 @@ Full verification: fixed a real GDScript type-inference error introduced along t
 (`var candidate := hit.position + ...` needed an explicit `: Vector3` annotation, the same
 "can't infer type from a Dictionary value" pattern seen earlier this project), then all 43
 GDScript `*_test.gd` files and `go build`/`go vet`/`go test ./...` swept clean.
+
+## 2026-08-26, eighth round — the roof-escape fix didn't fire; wrong height scale
+
+Retested the roof-escape fix: still spawned inside the same building interior, meaning
+`_has_roof_overhead()` never detected a ceiling at all. Root cause: `ROOF_CHECK_HEIGHT` (30.0) was
+picked without checking real building scale. Real placed objects render at their own native scale
+(unlike the player's own body, deliberately rescaled to a fixed 1.8 units in
+`_build_assembled_character`) -- a direct measurement of real meshes in Jangan's own region (new
+scratch tool, run on the RE box, not kept) found a real building piece
+(`jangan03\cj_pal_dam_left02.bsr`) alone is ~44.5 real units tall, and real trees in the same
+region run up to ~140. 30.0 couldn't clear a single real wall piece, let alone a real room's
+ceiling, so the check silently always reported "open sky" and the escape search never ran.
+
+Raised `ROOF_CHECK_HEIGHT` to 200.0 (comfortable real margin above the tallest measured real
+piece) and `ROOF_ESCAPE_STEP`/`ROOF_ESCAPE_RINGS` proportionally (60.0 x 10 rings, real max search
+radius 600 units) since a building tall enough to need the new height plausibly has a footprint on
+a similar real scale. Not yet re-verified against a real live spawn -- this is a size-calibration
+fix based on real measured data, not a re-confirmed working fix; needs another real retest.

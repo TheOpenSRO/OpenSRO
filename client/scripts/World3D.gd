@@ -1431,9 +1431,21 @@ func _snap_player_onto_terrain() -> void:
 ## one has clear sky above, snapping there instead. Bounded and best-effort:
 ## if every tried position is still covered, leaves the player at the
 ## original terrain-snapped position rather than searching forever.
-const ROOF_CHECK_HEIGHT := 30.0
-const ROOF_ESCAPE_STEP := 15.0
-const ROOF_ESCAPE_RINGS := 6
+## **Corrected 2026-08-26** (see docs/WORLD_ISSUES.md): a real playtest
+## found the original 30.0 never triggered the escape search at all --
+## real placed objects render at their own native scale (unlike the
+## player's own body, deliberately rescaled to a fixed 1.8-unit height in
+## _build_assembled_character), and a direct check of real Jangan-region
+## meshes found real building pieces up to ~44.5 real units tall
+## (`jangan03\cj_pal_dam_left02.bsr`) and real trees up to ~140 -- 30.0
+## couldn't even clear a single real wall piece, let alone a real room.
+## Raised with real margin above the tallest real piece measured.
+const ROOF_CHECK_HEIGHT := 200.0
+## Also raised in proportion -- a real building tall enough to need the
+## new ROOF_CHECK_HEIGHT plausibly has a footprint on a similar real
+## scale, not the old, much smaller assumption.
+const ROOF_ESCAPE_STEP := 60.0
+const ROOF_ESCAPE_RINGS := 10
 const ROOF_ESCAPE_DIRECTIONS := 8
 
 func _avoid_spawning_under_roof() -> void:
