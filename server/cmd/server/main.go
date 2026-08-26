@@ -46,10 +46,22 @@ type monsterSpec struct {
 	GoldReward int64
 }
 
+// These anchors were originally picked back when a character was still the
+// old, uncalibrated 1.8-unit placeholder capsule (see client's
+// PLAYER_SCALE_RATIO doc comment) -- close enough together that they never
+// visibly overlapped. Now that a real assembled/placeholder character is its
+// real ~138.7-unit native height (a monster capsule is ~77 units across),
+// the old (15,10)/(-20,25) anchors sat almost on top of each other and on
+// top of the player's own (0,0,0) spawn (see session/world.go's spawnPos),
+// producing two giant overlapping red capsules filling the screen even at
+// max camera zoom. Respaced to a few hundred units apart -- consistent with
+// real measured building/wall scale (~44-300 units, see docs/WORLD_ISSUES.md)
+// rather than a blind PLAYER_SCALE_RATIO multiply, which would have pushed
+// these off the real terrain these zones actually have at those coordinates.
 var monsterSpecs = []monsterSpec{
-	{Zone: "jangan", Name: "Stone Golem", X: 15, Z: 10, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
-	{Zone: "jangan", Name: "Wild Boar", X: -20, Z: 25, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
-	{Zone: "donwhang", Name: "Sand Scorpion", X: 10, Z: -15, MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
+	{Zone: "jangan", Name: "Stone Golem", X: 250, Z: 150, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
+	{Zone: "jangan", Name: "Wild Boar", X: -300, Z: 350, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
+	{Zone: "donwhang", Name: "Sand Scorpion", X: 200, Z: -250, MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
 }
 
 const respawnDelay = 10 * time.Second

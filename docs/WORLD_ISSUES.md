@@ -649,3 +649,38 @@ been blanket-rescaled and was oversized relative to the new, much smaller zoom r
 
 Full verification (`godot4 --headless --path . --import --quit`, all GDScript `*_test.gd` files)
 swept clean. Not yet re-verified against a real live screenshot -- needs a real retest.
+
+## 2026-08-26, twenty-first round — overlapping giant red capsules at spawn, fixed
+
+Reported from a real fresh `v0.1.3` screenshot: two overlapping giant red capsule shapes filling
+almost the entire screen, with the character barely visible. Confirmed via `AskUserQuestion` this
+wasn't a broken-zoom-input issue -- scrolling did change the view distance, but even at
+`CAMERA_ZOOM_MAX` (400 units) the blob still filled the frame, ruling out the obvious
+"camera stuck too close" explanation.
+
+Grepped `World3D.gd` for `StaticBody3D`/`CollisionShape3D`/`Area3D` around the monster/other-player
+spawn code and confirmed neither `_spawn_or_update_other` nor `_spawn_or_update_monster` create any
+real collision shape for their placeholder capsules -- so the SpringArm3D's own physics-based
+collision-avoidance cannot be the cause (there's nothing solid to collide with).
+
+Traced the real spawn coordinates instead: `server/cmd/server/main.go`'s `monsterSpecs` (its own
+doc comment already flags these as "own design placeholder spawn anchor", not reverse-engineered
+data -- no real per-monster spawn table exists) placed the Jangan zone's `Stone Golem` at `(15,10)`
+and `Wild Boar` at `(-20,25)`, both close to the player's own default `(0,0,0)` spawn
+(`session/world.go`'s `spawnPos`). Those anchors were picked back when a character -- and by
+extension "how close is too close" -- was still the old, uncalibrated 1.8-unit placeholder capsule.
+After the twentieth-round scale fix, a monster capsule is `0.5 * PLAYER_SCALE_RATIO * 2` ≈ 77 units
+across -- so two monsters less than 40 units apart, both within less than one capsule-width of the
+player's own spawn point, now render as two enormous overlapping shapes the camera can never back
+away from (the "wall" it's zooming away from is closer than the zoom range itself).
+
+Fixed by respacing `monsterSpecs`' X/Z anchors to a few hundred units apart (`Stone Golem`
+`(250,150)`, `Wild Boar` `(-300,350)`, `Sand Scorpion` `(200,-250)`) -- picked directly against the
+real measured building/wall scale from the nineteenth/twentieth rounds (~44-300 units), not a blind
+`PLAYER_SCALE_RATIO` multiply of the old numbers, which would have pushed them off the real terrain
+these zones actually have at those coordinates (terrain/building geometry was never rescaled, only
+character-relative constants were).
+
+Full verification: `go build ./...` clean. Not yet re-verified against a real live screenshot --
+needs a real retest, and the server needs a real redeploy (this is server-side data, not something
+a client download alone can fix).
