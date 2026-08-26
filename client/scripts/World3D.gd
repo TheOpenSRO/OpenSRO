@@ -161,9 +161,24 @@ const CAMERA_ORBIT_SENSITIVITY := 0.3 # degrees of camera rotation per pixel of 
 ## valid range for a top-down-behind view under this corrected convention.
 const CAMERA_PITCH_MIN_DEGREES := -80.0
 const CAMERA_PITCH_MAX_DEGREES := -10.0
-const CAMERA_ZOOM_STEP := 1.0 * PLAYER_SCALE_RATIO
-const CAMERA_ZOOM_MIN := 3.0 * PLAYER_SCALE_RATIO
-const CAMERA_ZOOM_MAX := 25.0 * PLAYER_SCALE_RATIO
+## **Corrected 2026-08-26** (see docs/WORLD_ISSUES.md): these were briefly
+## rescaled by the same PLAYER_SCALE_RATIO as everything else, which was
+## wrong for this specific case and produced a real, confirmed regression
+## (a near-orbital view of the whole real Jangan complex from the default
+## zoom). Camera distance needs to be sized relative to the real
+## *environment* (buildings, courtyard features), which doesn't scale with
+## the character at all -- not relative to the character's own height. At
+## the old broken 1.8-unit character scale, a tiny 14-unit camera distance
+## only ever looked reasonable by coincidence (extreme close-up
+## foreshortening masking the real scale mismatch), not because 14 units
+## was itself a meaningful "close" distance relative to real buildings
+## (~44-140 units tall, measured earlier this session). Picked directly
+## against that real building scale instead: MIN gives a fairly tight
+## behind-the-character shot, MAX still shows a real building or two, not
+## the whole real complex.
+const CAMERA_ZOOM_STEP := 20.0
+const CAMERA_ZOOM_MIN := 60.0
+const CAMERA_ZOOM_MAX := 400.0
 ## How close player must get to a click-to-move target before it's
 ## considered reached and cleared -- without this, the player would
 ## oscillate forever trying to reach an exact point every physics frame.

@@ -626,3 +626,26 @@ than merely "no longer tiny in a new, different wrong way."
 
 Full verification: `godot4 --headless --path . --import --quit` and all GDScript `*_test.gd` files
 swept clean; `go build`/`go vet` (untouched by this client-only change) also clean.
+
+## 2026-08-26, twentieth round — camera-distance regression from the scale fix, fixed
+
+The scale fix above shipped in `v0.1.2` and got two real, contrasting data points fast: a friend's
+screenshot at a real outdoor zone (`100/100`) showed the character reasonably proportioned against
+real trees/bushes -- the scale fix itself is working. But OpenSRO's own screenshot showed a
+near-orbital bird's-eye view of the entire real Jangan complex at default zoom -- a real
+regression.
+
+Root cause: `CAMERA_ZOOM_MIN`/`MAX`/`STEP` and the scene's default `spring_length` had been rescaled
+by the same blanket `PLAYER_SCALE_RATIO` as everything else in the previous round, which was wrong
+specifically for camera distance. Camera distance needs to be sized relative to the real
+*environment* (buildings, courtyard extent), which doesn't scale with the character at all -- not
+relative to the character's own height. The old 14-unit distance only ever looked reasonable at the
+broken 1.8-unit character scale by coincidence (extreme close-up foreshortening masking the real
+mismatch), not because 14 was itself a meaningful "close" distance next to real buildings (~44-140
+units tall, measured earlier). Re-picked `CAMERA_ZOOM_MIN`/`MAX`/`STEP` (60/400/20) and the scene's
+default `spring_length` (180) directly against that real building scale instead of blanket-rescaling
+the old numbers, and reduced the SpringArm's wall-avoidance `margin` (23.1 -> 5.0, which had also
+been blanket-rescaled and was oversized relative to the new, much smaller zoom range).
+
+Full verification (`godot4 --headless --path . --import --quit`, all GDScript `*_test.gd` files)
+swept clean. Not yet re-verified against a real live screenshot -- needs a real retest.
