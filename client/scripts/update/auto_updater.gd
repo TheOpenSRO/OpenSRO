@@ -41,8 +41,21 @@ func _ready() -> void:
 	_download_request.download_file = _download_target_path()
 	_download_request.request_completed.connect(func(_r, _c, _h, _b): download_progress.emit(1.0))
 
+## Real headers for a GitHub API/asset request -- includes a real
+## Authorization header only when this build was made from a real tagged
+## release with a real embedded UpdateChecker.GITHUB_TOKEN (see that
+## constant's own doc comment); a dev/editor run or an untagged build
+## sends no Authorization header at all, which only works against a real
+## *public* repo/release.
+static func _auth_headers(extra: Array[String] = []) -> PackedStringArray:
+	var headers: Array[String] = ["User-Agent: srrevamp-client"]
+	headers.append_array(extra)
+	if UpdateChecker.GITHUB_TOKEN != "":
+		headers.append("Authorization: Bearer %s" % UpdateChecker.GITHUB_TOKEN)
+	return PackedStringArray(headers)
+
 func check_for_update() -> void:
-	var err := _check_request.request(RELEASES_API_URL, ["User-Agent: srrevamp-client"])
+	var err := _check_request.request(RELEASES_API_URL, _auth_headers())
 	if err != OK:
 		check_failed.emit("could not start request: %s" % err)
 
@@ -65,7 +78,15 @@ func _on_check_completed(result: int, response_code: int, _headers: PackedString
 	if asset_name == "":
 		check_failed.emit("no real build published for this platform (%s)" % OS.get_name())
 		return
-	var url := UpdateChecker.find_asset_url(assets, asset_name)
+	# A real private repo's plain browser_download_url doesn't work
+	# unauthenticated -- the asset's own real API "url" field (with an
+	# Authorization header + "Accept: application/octet-stream", see
+	# begin_download) is the one real endpoint that does. Prefers that
+	# whenever a real token is embedded; falls back to the plain public
+	# URL otherwise (a real public repo/release, or no token at all).
+	var url := UpdateChecker.find_asset_api_url(assets, asset_name) if UpdateChecker.GITHUB_TOKEN != "" else ""
+	if url == "":
+		url = UpdateChecker.find_asset_url(assets, asset_name)
 	if url == "":
 		check_failed.emit("release %s has no real %s asset" % [tag, asset_name])
 		return
@@ -75,9 +96,13 @@ func _on_check_completed(result: int, response_code: int, _headers: PackedString
 
 ## Downloads download_url (from a real update_available signal) to a real
 ## temp zip next to the executable, then relaunches into it once complete.
+## "Accept: application/octet-stream" is required by GitHub's own real API
+## for downloading a real release asset by its API url (as opposed to the
+## public browser_download_url) -- harmless to send even when hitting the
+## plain public URL instead.
 func begin_download(download_url: String) -> void:
 	_download_request.download_file = _download_target_path()
-	var err := _download_request.request(download_url, ["User-Agent: srrevamp-client"])
+	var err := _download_request.request(download_url, _auth_headers(["Accept: application/octet-stream"]))
 	if err != OK:
 		update_failed.emit("could not start download: %s" % err)
 

@@ -45,6 +45,20 @@ jobs:
           sed -i "s/const CLIENT_VERSION := \"v0.0.0\"/const CLIENT_VERSION := \"${{ github.ref_name }}\"/" scripts/update/update_checker.gd
           grep "CLIENT_VERSION" scripts/update/update_checker.gd
 
+      # Embeds a real, read-only, this-repo-only GitHub PAT (see
+      # UpdateChecker.GITHUB_TOKEN's own doc comment for the real tradeoff)
+      # so a downloaded client can check/download updates from this real
+      # *private* repo's Releases API. No-op (stays empty) if the real
+      # UPDATE_CHECK_TOKEN secret was never set -- an honest "no update
+      # checking against a private repo" rather than a broken build.
+      - name: Embed the real update-check token
+        if: startsWith(github.ref, 'refs/tags/v') && env.UPDATE_CHECK_TOKEN != ''
+        working-directory: client
+        env:
+          UPDATE_CHECK_TOKEN: ${{ secrets.UPDATE_CHECK_TOKEN }}
+        run: |
+          sed -i "s/const GITHUB_TOKEN := \"\"/const GITHUB_TOKEN := \"${UPDATE_CHECK_TOKEN}\"/" scripts/update/update_checker.gd
+
       - name: Import project
         working-directory: client
         run: godot --headless --path . --import --quit

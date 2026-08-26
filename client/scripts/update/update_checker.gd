@@ -17,6 +17,18 @@ class_name UpdateChecker
 ## never mistakes itself (or an older tag) for a newer one.
 const CLIENT_VERSION := "v0.0.0"
 
+## Real fine-grained GitHub PAT (contents: read-only, this one repo only --
+## see docs/WORLD_ISSUES.md's "private repo + embedded token" entry for the
+## real tradeoff this represents) letting a downloaded client read this
+## project's real, private GitHub Releases API. Empty by default (a dev/
+## editor run, or any build not made from a real tagged release, simply
+## can't check for updates against a private repo -- an honest "no access"
+## rather than a guessed/fake value). release.yml sed-replaces this exact
+## line with the real secret value at build time, the same mechanism
+## CLIENT_VERSION already uses, so the raw token is never committed to
+## this tracked source file.
+const GITHUB_TOKEN := ""
+
 ## Parses a "vMAJOR.MINOR.PATCH" real tag string into [major, minor, patch],
 ## or [] if it doesn't match that real shape (e.g. a real pre-release tag
 ## with extra suffix, or a malformed string) -- callers treat [] as "can't
@@ -67,11 +79,25 @@ static func asset_name_for_os(os_name: String) -> String:
 
 ## Finds the real download URL for asset_name within a real GitHub release
 ## API response's "assets" array (each {"name": ..., "browser_download_url":
-## ...}), or "" if no real asset with that exact name is present.
+## ...}), or "" if no real asset with that exact name is present. Only
+## works unauthenticated for a real *public* repo's release.
 static func find_asset_url(assets: Array, asset_name: String) -> String:
 	if asset_name == "":
 		return ""
 	for asset in assets:
 		if asset is Dictionary and asset.get("name", "") == asset_name:
 			return asset.get("browser_download_url", "")
+	return ""
+
+## Same real lookup as find_asset_url, but returns the asset's real API
+## "url" field instead of "browser_download_url" -- the one real endpoint
+## that supports an authenticated download (Authorization header +
+## "Accept: application/octet-stream") for a real *private* repo's
+## release, which the plain browser_download_url doesn't.
+static func find_asset_api_url(assets: Array, asset_name: String) -> String:
+	if asset_name == "":
+		return ""
+	for asset in assets:
+		if asset is Dictionary and asset.get("name", "") == asset_name:
+			return asset.get("url", "")
 	return ""

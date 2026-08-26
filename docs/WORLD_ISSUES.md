@@ -538,3 +538,28 @@ follow-up item, deliberately not conflated with this fix -- tracked here, not ye
 
 Full verification (`godot4 --headless --path . --import --quit`, all 43 GDScript `*_test.gd`
 files) swept clean.
+
+## 2026-08-26, seventeenth round — private repo + embedded token instead of public repo
+
+After a collaborator hit an unrelated real GitHub error trying to push code (`GH007`, a real
+account-level git-email-privacy setting, nothing to do with this repo's own configuration), OpenSRO
+reconsidered the earlier "make the repo public" decision and asked to make it private again while
+still letting the client check for updates -- via a real, deliberately narrow-scoped GitHub PAT
+(fine-grained, `contents: read-only`, this one repo only) embedded in release builds instead.
+
+Made the repo private again (explicit request). Added `UpdateChecker.GITHUB_TOKEN` (empty by
+default, same "no real value baked into tracked source" pattern as `CLIENT_VERSION`) and wired
+`AutoUpdater` to send it as a real `Authorization: Bearer` header on both the release-check
+request and the download request, using the asset's real API `url` field (not the plain
+`browser_download_url`, which doesn't work unauthenticated against a real private repo) whenever a
+token is present. `release.yml` sed-injects the real token from a `UPDATE_CHECK_TOKEN` repo secret
+at build time, the same mechanism `CLIENT_VERSION` already uses -- never committed to tracked
+source.
+
+**Real, explicit tradeoff OpenSRO was told and chose knowingly**: this token is extractable from any
+distributed client build the moment it ships, and should be treated as effectively public from
+that point on. Scoped as narrowly as this project's real needs allow (read-only, contents, one
+repo) specifically because of that.
+
+Full verification (`godot4 --headless --path . --import --quit`, all GDScript `*_test.gd` files
+including the new `find_asset_api_url` test coverage) swept clean.

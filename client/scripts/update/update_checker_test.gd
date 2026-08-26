@@ -35,13 +35,17 @@ func _init() -> void:
 	_check(UpdateChecker.asset_name_for_os("macOS") == "", "no real asset name for a platform this project doesn't build for")
 
 	var assets := [
-		{"name": "srrevamp-windows.zip", "browser_download_url": "https://example.com/windows.zip"},
-		{"name": "srrevamp-linux.zip", "browser_download_url": "https://example.com/linux.zip"},
+		{"name": "srrevamp-windows.zip", "browser_download_url": "https://example.com/windows.zip", "url": "https://api.example.com/assets/1"},
+		{"name": "srrevamp-linux.zip", "browser_download_url": "https://example.com/linux.zip", "url": "https://api.example.com/assets/2"},
 	]
 	_check(UpdateChecker.find_asset_url(assets, "srrevamp-windows.zip") == "https://example.com/windows.zip", "finds the real matching asset's URL")
 	_check(UpdateChecker.find_asset_url(assets, "srrevamp-macos.zip") == "", "no real URL for an asset that isn't present")
 	_check(UpdateChecker.find_asset_url(assets, "") == "", "empty asset name never matches")
 	_check(UpdateChecker.find_asset_url([], "srrevamp-windows.zip") == "", "no real assets at all -> no URL")
+
+	_check(UpdateChecker.find_asset_api_url(assets, "srrevamp-windows.zip") == "https://api.example.com/assets/1", "finds the real matching asset's API url")
+	_check(UpdateChecker.find_asset_api_url(assets, "srrevamp-macos.zip") == "", "no real API url for an asset that isn't present")
+	_check(UpdateChecker.find_asset_api_url(assets, "") == "", "empty asset name never matches (API url)")
 
 	if _failures == 0:
 		print("ALL PASS")
