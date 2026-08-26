@@ -563,3 +563,29 @@ repo) specifically because of that.
 
 Full verification (`godot4 --headless --path . --import --quit`, all GDScript `*_test.gd` files
 including the new `find_asset_api_url` test coverage) swept clean.
+
+## 2026-08-26, eighteenth round — found and fixed a real over-broad transparency heuristic
+
+Reported: from a side view a character's chest is visible, but rotating to view the front instead
+shows the back. Investigated `ObjectLoader.build_godot_material`'s real alpha-cutout heuristic and
+found a genuine bug: it enabled cutout transparency + **disabled backface culling** purely because
+a texture's real compression *format* was DXT3/DXT5 (`_ALPHA_FOURCCS`), not because that specific
+real texture's alpha channel actually varies. A real, fully-opaque DXT3/DXT5 texture (DXT3/5 is an
+ordinary format choice, not inherently a "this needs transparency" signal) would still get backface
+culling disabled -- on a real closed/solid body mesh, that lets a viewer see through to the mesh's
+own real back-facing surface. Fixed: now decodes the real pixel data and only applies cutout +
+no-culling if a real texel's alpha is genuinely below opaque (250/255 threshold, tolerating real
+DXT lossy-compression rounding), confirmed via the existing synthetic test (whose fixture has real
+alpha variance, so it still correctly triggers) plus a manual real-data check.
+
+**Honest, important caveat**: checked the real materials this specific character actually uses
+(both genders' body/hair skin materials, and the `clothes_03` equipment set) directly against real
+game data -- every one of them is DXT1 except hair (which has real, intentional alpha variance for
+strand edges, correctly still triggers cutout). **None of the checked real materials could have
+triggered the old bug at all**, so while the fix itself is real and correct, it's not confirmed to
+be the actual cause of the specific front/back-swap symptom reported. That mechanism remains
+unconfirmed -- flagged honestly per `feedback_no_unverified_assumptions` rather than claimed
+solved. Real scratch tools used to inspect this (mesh-bounds and alpha-variance checkers) were
+deleted after use, no real pk2 data persisted.
+
+Full verification: all GDScript `*_test.gd` files swept clean.

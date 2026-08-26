@@ -228,12 +228,64 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 	var godot_tex := DdjReader.to_texture(parsed_tex)
 	if godot_tex != null:
 		mat.albedo_texture = godot_tex
-		if _ALPHA_FOURCCS.has(parsed_tex.four_cc):
+		# **Corrected 2026-08-26** (see docs/WORLD_ISSUES.md): this used to
+		# trigger cutout transparency + disabled backface culling purely
+		# from the texture's real compression *format* (DXT3/DXT5) -- but
+		# that format only means the format *supports* an alpha channel,
+		# not that this specific real texture actually uses it for cutout.
+		# A real, fully-opaque DXT3/DXT5 texture (an ordinary, unremarkable
+		# format choice for plain opaque art, e.g. real character skin) was
+		# getting backface culling disabled for no real reason -- on a real
+		# closed/solid body mesh, that lets a viewer see straight through
+		# to the mesh's own real back-facing surface, showing the wrong
+		# side's real texture region (a real, reported bug: front/back
+		# appearing swapped depending on viewing angle). Now actually
+		# decodes the real pixel data and only applies cutout+no-culling if
+		# a real texel's alpha is genuinely below opaque, instead of
+		# assuming from the format alone.
+		if _ALPHA_FOURCCS.has(parsed_tex.four_cc) and _has_real_alpha_variance(godot_tex):
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
 			mat.alpha_scissor_threshold = 0.5
 			mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 
 	return mat
+
+## Decodes texture's real pixel data and returns true only if at least one
+## real texel's alpha is meaningfully below fully opaque -- see
+## build_godot_material's own doc comment for why format alone
+## (_ALPHA_FOURCCS) isn't a reliable signal that a real texture actually
+## needs cutout transparency. 250/255 (not a stricter 255) as the opaque
+## threshold tolerates real DXT compression's own lossy rounding on a
+## genuinely fully-opaque real source image.
+static func _has_real_alpha_variance(tex: Texture2D) -> bool:
+	var image := tex.get_image()
+	if image == null:
+		return false
+	if image.is_compressed():
+		image = image.duplicate()
+		if image.decompress() != OK:
+			return false
+	var data := image.get_data()
+	var format := image.get_format()
+	if format != Image.FORMAT_RGBA8 and format != Image.FORMAT_RGBAF and format != Image.FORMAT_RGBAH:
+		return false
+	# RGBA8 is the real, common case decompress() actually produces here --
+	# a bare byte-stride scan is far cheaper than per-pixel get_pixel()
+	# calls for a real texture that can be hundreds of pixels per side.
+	if format == Image.FORMAT_RGBA8:
+		var i := 3
+		while i < data.size():
+			if data[i] < 250:
+				return true
+			i += 4
+		return false
+	# A real non-RGBA8 decompressed format (uncommon here) -- fall back to
+	# the slower but always-correct per-pixel path.
+	for y in range(image.get_height()):
+		for x in range(image.get_width()):
+			if image.get_pixel(x, y).a < 250.0 / 255.0:
+				return true
+	return false
 
 ## Loads a single .bms mesh at path within archive and returns a
 ## MeshInstance3D. Returns null (and pushes an error) on failure.
