@@ -3,15 +3,15 @@
 [ext_resource type="Script" path="res://scripts/World3D.gd" id="1"]
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_player"]
-radius = 0.4
-height = 1.8
+radius = 30.822222
+height = 138.7
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_player"]
 albedo_color = Color(0.3, 0.6, 0.95, 1)
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_player"]
-radius = 0.4
-height = 1.8
+radius = 30.822222
+height = 138.7
 
 [sub_resource type="BoxMesh" id="BoxMesh_ground"]
 size = Vector3(200, 1, 200)
@@ -51,19 +51,19 @@ collision_layer = 2
 collision_mask = 1
 
 [node name="Mesh" type="MeshInstance3D" parent="Player"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 69.35, 0)
 mesh = SubResource("CapsuleMesh_player")
 surface_material_override/0 = SubResource("StandardMaterial3D_player")
 
 [node name="Collision" type="CollisionShape3D" parent="Player"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 69.35, 0)
 shape = SubResource("CapsuleShape3D_player")
 
 [node name="CameraArm" type="SpringArm3D" parent="Player"]
-position = Vector3(0, 1.8, 0)
+position = Vector3(0, 138.7, 0)
 rotation_degrees = Vector3(-42, 0, 0)
-spring_length = 14.0
-margin = 0.3
+spring_length = 1078.7778
+margin = 23.116667
 collision_mask = 1
 
 [node name="Camera3D" type="Camera3D" parent="Player/CameraArm"]

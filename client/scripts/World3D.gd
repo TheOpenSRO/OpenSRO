@@ -124,8 +124,22 @@ extends Node3D
 ## env vars directly rather than going through a zone label, since the very
 ## first EnterWorldResult's zone isn't available yet at that point.
 
-const MOVE_SPEED := 6.0
-const GRAVITY := 20.0
+## **Rescaled 2026-08-26** (see docs/WORLD_ISSUES.md's "size of ants" entry):
+## every player-relative constant below (movement, camera, click-to-move,
+## network-send thresholds, the placeholder capsule) used to be tuned
+## around a fixed, invented 1.8-unit character height that was never
+## checked against the real environment's own native scale. A real
+## measurement (forward-kinematics over a real chinaman_skel.bsk's real
+## bind-pose bones) found the real native character height is ~138.7
+## units -- the same real order of magnitude as real measured building
+## features (walls ~44.5, doors ~72-76, trees ~97-140), which all already
+## render unscaled. PLAYER_SCALE_RATIO (real 138.7 / old 1.8) rescales
+## every one of these constants by the same factor, preserving their
+## previously-tuned *feel* relative to the character's own height rather
+## than guessing new values at the new scale.
+const PLAYER_SCALE_RATIO := 138.7 / 1.8
+const MOVE_SPEED := 6.0 * PLAYER_SCALE_RATIO
+const GRAVITY := 20.0 * PLAYER_SCALE_RATIO
 
 ## Real Silkroad-style mouse controls: right-drag orbits the camera around
 ## the player (independent of the player's own facing), left-click on the
@@ -147,13 +161,13 @@ const CAMERA_ORBIT_SENSITIVITY := 0.3 # degrees of camera rotation per pixel of 
 ## valid range for a top-down-behind view under this corrected convention.
 const CAMERA_PITCH_MIN_DEGREES := -80.0
 const CAMERA_PITCH_MAX_DEGREES := -10.0
-const CAMERA_ZOOM_STEP := 1.0
-const CAMERA_ZOOM_MIN := 3.0
-const CAMERA_ZOOM_MAX := 25.0
+const CAMERA_ZOOM_STEP := 1.0 * PLAYER_SCALE_RATIO
+const CAMERA_ZOOM_MIN := 3.0 * PLAYER_SCALE_RATIO
+const CAMERA_ZOOM_MAX := 25.0 * PLAYER_SCALE_RATIO
 ## How close player must get to a click-to-move target before it's
 ## considered reached and cleared -- without this, the player would
 ## oscillate forever trying to reach an exact point every physics frame.
-const MOVE_TARGET_STOP_DISTANCE := 0.3
+const MOVE_TARGET_STOP_DISTANCE := 0.3 * PLAYER_SCALE_RATIO
 
 var _camera_orbiting := false
 var _has_move_target := false
@@ -169,7 +183,7 @@ var _move_target := Vector3.ZERO
 ## often enough to track a fast-moving real player closely, not as a claim
 ## about any real client's own network rate.
 const MIN_SEND_INTERVAL := 0.05
-const MIN_SEND_DISTANCE := 0.05
+const MIN_SEND_DISTANCE := 0.05 * PLAYER_SCALE_RATIO
 ## How quickly (per real second, exponential catch-up rate) another
 ## entity's visual body closes the gap to its latest known real position --
 ## see _other_body_targets. A real engineering tuning choice, not
@@ -1530,7 +1544,7 @@ func _snap_player_onto_terrain() -> void:
 	var hit := space_state.intersect_ray(query)
 	if hit.is_empty():
 		return
-	player.position.y = hit.position.y + 0.05
+	player.position.y = hit.position.y + 0.05 * PLAYER_SCALE_RATIO
 	player.velocity = Vector3.ZERO
 	_avoid_spawning_under_roof()
 
@@ -1581,7 +1595,7 @@ func _avoid_spawning_under_roof() -> void:
 			var hit := space_state.intersect_ray(query)
 			if hit.is_empty():
 				continue
-			var candidate: Vector3 = hit.position + Vector3(0.0, 0.05, 0.0)
+			var candidate: Vector3 = hit.position + Vector3(0.0, 0.05 * PLAYER_SCALE_RATIO, 0.0)
 			if not _has_roof_overhead(candidate):
 				player.position = candidate
 				player.velocity = Vector3.ZERO
@@ -1596,7 +1610,7 @@ func _avoid_spawning_under_roof() -> void:
 func _has_roof_overhead(pos: Vector3) -> bool:
 	var space_state := get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(
-		pos + Vector3(0.0, 0.5, 0.0),
+		pos + Vector3(0.0, 0.5 * PLAYER_SCALE_RATIO, 0.0),
 		pos + Vector3(0.0, ROOF_CHECK_HEIGHT, 0.0))
 	query.exclude = [player.get_rid()]
 	var hit := space_state.intersect_ray(query)
@@ -1794,22 +1808,26 @@ func _build_assembled_character(armor_slots_mask: int = 0, gender: String = DEFA
 		var shield_material: Material = shield["materials"].get(shield_mesh.material_name, null)
 		CharacterAssembler.assemble_shield(skeleton, shield_mesh, shield_material)
 
-	# Real bind-pose data uses a different native scale than this scene's
-	# ~1.8-unit-tall placeholder capsule -- rescale so the assembled
-	# character's own bind-pose height matches it, rather than a fixed
-	# guessed factor (real body-part scale isn't necessarily the same
-	# across every character/skeleton pair -- see
-	# docs/protocol/BSK_FORMAT.md).
-	var min_y := INF
-	var max_y := -INF
-	for i in range(skeleton.get_bone_count()):
-		var y: float = skeleton.get_bone_global_rest(i).origin.y
-		min_y = min(min_y, y)
-		max_y = max(max_y, y)
-	var real_height := max_y - min_y
-	if real_height > 0.01:
-		skeleton.scale = Vector3.ONE * (1.8 / real_height)
-
+	# **Removed 2026-08-26** (see docs/WORLD_ISSUES.md): this used to force
+	# every real assembled character down to a fixed, invented 1.8-unit
+	# height, calibrated only against this scene's own early placeholder
+	# capsule -- never checked against the real environment's own native
+	# scale at all. A real, direct measurement (forward-kinematics over a
+	# real chinaman_skel.bsk's real bind-pose bone positions) found the
+	# real native height is ~138.7 units -- already the same real order of
+	# magnitude as real measured building features (a real wall piece
+	# ~44.5 units, a real door ~72-76, real trees ~97-140 -- see
+	# docs/WORLD_ISSUES.md's "size of ants" entry). Terrain/buildings/
+	# objects all already render at their real native scale, unscaled --
+	# forcibly shrinking only the character by ~77x was what actually
+	# caused the reported "size of ants" mismatch, not a real difference
+	# in how large characters vs. buildings are supposed to be. The
+	# skeleton now renders at its own real, unscaled native height,
+	# consistent with everything else. All player-relative constants
+	# (PLAYER_HEIGHT and everything derived from it below) were rescaled
+	# by the same real ratio (~138.7/1.8) so their previously-tuned *feel*
+	# relative to the character's own height is preserved, not guessed
+	# anew at the new scale.
 	return skeleton
 
 ## Attaches a freshly-built real assembled character (see
@@ -2192,18 +2210,18 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	else:
 		var mesh := MeshInstance3D.new()
 		var capsule := CapsuleMesh.new()
-		capsule.radius = 0.4
-		capsule.height = 1.8
+		capsule.radius = 0.4 * PLAYER_SCALE_RATIO
+		capsule.height = 1.8 * PLAYER_SCALE_RATIO
 		mesh.mesh = capsule
 		var mat := StandardMaterial3D.new()
 		mat.albedo_color = Color(0.9, 0.3, 0.3)
 		mesh.material_override = mat
-		mesh.position.y = 0.9
+		mesh.position.y = 0.9 * PLAYER_SCALE_RATIO
 		body.add_child(mesh)
 
 	var label := Label3D.new()
 	label.text = char_name
-	label.position.y = 2.2
+	label.position.y = 2.2 * PLAYER_SCALE_RATIO
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	body.add_child(label)
 
@@ -2345,7 +2363,7 @@ func _terrain_height_at(pos: Vector3) -> float:
 	var hit := space_state.intersect_ray(query)
 	if hit.is_empty():
 		return pos.y
-	return hit.position.y + 0.05
+	return hit.position.y + 0.05 * PLAYER_SCALE_RATIO
 
 ## Creates or moves the real 3D body representing one live server-tracked
 ## monster (see CombatNet.MonsterSnapshot's real X/Y/Z -- this project's own
@@ -2371,19 +2389,19 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 
 	var mesh := MeshInstance3D.new()
 	var capsule := CapsuleMesh.new()
-	capsule.radius = 0.5
-	capsule.height = 1.6
+	capsule.radius = 0.5 * PLAYER_SCALE_RATIO
+	capsule.height = 1.6 * PLAYER_SCALE_RATIO
 	mesh.mesh = capsule
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.55, 0.15, 0.1) # dark red -- visually distinct from other players' capsules
 	mesh.material_override = mat
-	mesh.position.y = 0.8
+	mesh.position.y = 0.8 * PLAYER_SCALE_RATIO
 	body.add_child(mesh)
 
 	var label := Label3D.new()
 	label.name = "Label"
 	label.text = "%s (%d/%d)" % [monster.monster_name, monster.hp, monster.max_hp]
-	label.position.y = 2.0
+	label.position.y = 2.0 * PLAYER_SCALE_RATIO
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	body.add_child(label)
 

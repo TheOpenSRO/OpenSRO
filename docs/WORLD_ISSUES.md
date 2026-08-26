@@ -589,3 +589,40 @@ solved. Real scratch tools used to inspect this (mesh-bounds and alpha-variance 
 deleted after use, no real pk2 data persisted.
 
 Full verification: all GDScript `*_test.gd` files swept clean.
+
+## 2026-08-26, nineteenth round — fixed the real "size of ants" scale mismatch
+
+Reported: the player character looks tiny next to real environment features (a lion statue, gate
+walls). Investigated with real, direct measurement rather than guessing: real building features
+already measured this session render at real native scale unscaled (a wall piece ~44.5 units, a
+door ~72-76, trees ~97-140), but `_build_assembled_character` force-rescaled every real assembled
+character down to a fixed, invented 1.8 units -- calibrated only against this scene's own early
+placeholder capsule, never checked against the real environment's own native scale at all. A
+second, similarly-uncalibrated constant (`_real_skeleton.scale = 0.02` for the decoration-skeleton
+demo path) had the identical problem, by its own comment's own admission ("scale down... so the
+whole creature is visible," not derived from anything real).
+
+Measured the real, actual native height directly: forward kinematics over a real
+`chinaman_skel.bsk`'s real bind-pose bone positions (all 38 real bones resolved) gives a real
+height of **138.7 native units** -- already the same real order of magnitude as the real building
+features above. Confirmed with OpenSRO this should be fixed by growing the character to its real
+native scale (not shrinking the environment instead).
+
+Removed the invented 1.8-unit rescale entirely -- the real assembled skeleton now renders at its
+own real, unscaled native height, consistent with every other real object in the world. Since
+essentially all player-relative tuning (movement speed, gravity, camera distance/zoom range,
+click-to-move stop distance, network-send movement threshold, the placeholder capsule dimensions,
+the roof-escape ground-clearance offsets) was calibrated around the old 1.8-unit convention,
+introduced `PLAYER_SCALE_RATIO` (real 138.7 / old 1.8 ≈ 77.06) and rescaled every one of those
+constants by the same real factor, preserving their previously-tuned *feel* relative to the
+character's own height rather than guessing new values at the new scale. `ROOF_CHECK_HEIGHT`/
+`ROOF_ESCAPE_STEP` were deliberately left untouched -- they were already calibrated against real
+measured building heights directly, not the old player-height convention, so rescaling them again
+would have been wrong.
+
+Not yet live-verified visually against the real environment (no way to render this sandbox-side) --
+flagged honestly; needs a real retest to confirm the character now reads as proportionate rather
+than merely "no longer tiny in a new, different wrong way."
+
+Full verification: `godot4 --headless --path . --import --quit` and all GDScript `*_test.gd` files
+swept clean; `go build`/`go vet` (untouched by this client-only change) also clean.
