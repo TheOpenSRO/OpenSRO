@@ -684,3 +684,39 @@ character-relative constants were).
 Full verification: `go build ./...` clean. Not yet re-verified against a real live screenshot --
 needs a real retest, and the server needs a real redeploy (this is server-side data, not something
 a client download alone can fix).
+
+## 2026-08-27, twenty-second round — camera not centered / zoom range unplayable, fixed
+
+Direct real user report: at full zoom-in the character wasn't visible at all, and at full zoom-out
+the game was unplayable; separately, the camera felt like it wasn't centered on the character.
+
+Two distinct, real, checkable causes, not guesses:
+
+1. `CAMERA_ZOOM_MIN` (60) was never checked against the camera's own real vertical FOV. Camera3D's
+   default `fov` is 75 degrees, applied vertically under Godot's default `KEEP_HEIGHT` aspect mode
+   (a real, checkable engine default). Fitting the player's full real 138.7-unit height at 60 units
+   away needs a vertical half-angle of `atan((138.7/2)/60)` =~ 49 degrees -- past the real ~37.5-degree
+   half-FOV the camera actually has, so part of the character was real, verifiable geometry outside
+   the view frustum, not merely "close." Re-derived `CAMERA_ZOOM_MIN` from that same real FOV,
+   solving for the distance that keeps the full body within a 30-degree half-angle (a bit of margin
+   under the true ~37.5-degree limit): `69.35 / tan(30deg)` =~ 120. `CAMERA_ZOOM_MAX` lowered from
+   400 (confirmed unplayable by the user directly, not this project's own guess) to 240 -- still
+   shows a real building or two at that distance without shrinking the character to a speck.
+
+2. `camera_arm.rotation_degrees` (orbit yaw/pitch from right-click-drag) never had anything moving it
+   back toward the scene's authored default (`-42` pitch, `0` yaw, see `World3D.tscn`) -- so after any
+   manual orbit, the camera stayed stuck at whatever angle it was last dragged to even as the player
+   kept walking around, which is the real cause of "camera isn't centered on my character." Also
+   confirmed manual WASD movement (unlike click-to-move) never rotates `player.rotation.y` at all, so
+   nothing was ever re-aligning the view during normal movement. Fixed by recentering
+   `camera_arm.rotation_degrees` back toward the authored default at `CAMERA_RECENTER_DEGREES_PER_SECOND`
+   (120 deg/s) in `_physics_process` whenever the player is moving (manual input or an active
+   click-to-move target) and not currently orbiting -- the same auto-realign behavior most
+   third-person MMO cameras use, using `rotate_toward` for the yaw so it takes the short way around
+   rather than potentially spinning the long way through 360 degrees.
+
+Full verification: `godot4 --headless --path . --import --quit` clean, and a headless
+`--quit-after 60` boot produced no parse/runtime errors. No dedicated automated test exists for
+World3D.gd's camera code (not covered by any `*_test.gd` in `ci.yml`), consistent with every other
+World3D.gd change this session -- not yet re-verified against a real live screenshot, needs a real
+retest.

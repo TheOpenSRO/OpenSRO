@@ -161,24 +161,38 @@ const CAMERA_ORBIT_SENSITIVITY := 0.3 # degrees of camera rotation per pixel of 
 ## valid range for a top-down-behind view under this corrected convention.
 const CAMERA_PITCH_MIN_DEGREES := -80.0
 const CAMERA_PITCH_MAX_DEGREES := -10.0
-## **Corrected 2026-08-26** (see docs/WORLD_ISSUES.md): these were briefly
-## rescaled by the same PLAYER_SCALE_RATIO as everything else, which was
-## wrong for this specific case and produced a real, confirmed regression
-## (a near-orbital view of the whole real Jangan complex from the default
-## zoom). Camera distance needs to be sized relative to the real
-## *environment* (buildings, courtyard features), which doesn't scale with
-## the character at all -- not relative to the character's own height. At
-## the old broken 1.8-unit character scale, a tiny 14-unit camera distance
-## only ever looked reasonable by coincidence (extreme close-up
-## foreshortening masking the real scale mismatch), not because 14 units
-## was itself a meaningful "close" distance relative to real buildings
-## (~44-140 units tall, measured earlier this session). Picked directly
-## against that real building scale instead: MIN gives a fairly tight
-## behind-the-character shot, MAX still shows a real building or two, not
-## the whole real complex.
-const CAMERA_ZOOM_STEP := 20.0
-const CAMERA_ZOOM_MIN := 60.0
-const CAMERA_ZOOM_MAX := 400.0
+## **Corrected again 2026-08-27** (see docs/WORLD_ISSUES.md): the previous
+## 60/400 range was picked directly against real building scale, but never
+## checked against the camera's own real vertical FOV (Camera3D's default
+## fov=75, applied vertically under Godot's default KEEP_HEIGHT aspect mode
+## -- a real, checkable Godot default, not a guess). At MIN=60, fitting the
+## player's full real 138.7-unit height needs a vertical half-angle of
+## atan((138.7/2)/60) =~ 49 degrees -- past the real ~37.5-degree half-FOV
+## the default camera actually has, so part of the character (feet or head)
+## was real, verifiable geometry *outside the frustum*, not merely "close."
+## Re-derived MIN from that same real FOV instead: solving for the distance
+## that keeps the full body height within a 30-degree half-angle (a bit of
+## real margin under the true ~37.5-degree limit, so the character isn't
+## touching the frame edges) gives 138.7/2 / tan(30deg) =~ 120. MAX lowered
+## from 400 (confirmed too far to actually track the character/play, a real
+## user report, not this project's own guess) to 240 -- still shows a real
+## building or two at that distance (~44-140 units tall, measured earlier)
+## without shrinking the ~139-unit character to an unplayable speck.
+const CAMERA_ZOOM_STEP := 15.0
+const CAMERA_ZOOM_MIN := 120.0
+const CAMERA_ZOOM_MAX := 240.0
+## The scene's own authored default CameraArm.rotation_degrees (see
+## World3D.tscn) -- orbit-dragging (right-click) moves the arm's *local*
+## yaw/pitch away from this and nothing ever moved it back, so after any
+## orbit the camera stayed stuck at whatever angle it was last dragged to
+## even as the player kept walking around -- the real cause of "camera
+## isn't centered on my character" (2026-08-27 real user report). Recenters
+## back to this default automatically while the player is moving and not
+## actively orbiting, the same auto-realign behavior most third-person
+## MMO cameras use.
+const DEFAULT_CAMERA_PITCH_DEGREES := -42.0
+const DEFAULT_CAMERA_YAW_DEGREES := 0.0
+const CAMERA_RECENTER_DEGREES_PER_SECOND := 120.0
 ## How close player must get to a click-to-move target before it's
 ## considered reached and cleared -- without this, the player would
 ## oscillate forever trying to reach an exact point every physics frame.
@@ -2134,6 +2148,15 @@ func _physics_process(delta: float) -> void:
 	else:
 		player.velocity.x = 0.0
 		player.velocity.z = 0.0
+
+	var is_moving := manual_input or _has_move_target
+	if is_moving and not _camera_orbiting:
+		camera_arm.rotation_degrees.x = move_toward(
+			camera_arm.rotation_degrees.x, DEFAULT_CAMERA_PITCH_DEGREES,
+			CAMERA_RECENTER_DEGREES_PER_SECOND * delta)
+		camera_arm.rotation_degrees.y = rad_to_deg(rotate_toward(
+			deg_to_rad(camera_arm.rotation_degrees.y), deg_to_rad(DEFAULT_CAMERA_YAW_DEGREES),
+			deg_to_rad(CAMERA_RECENTER_DEGREES_PER_SECOND * delta)))
 
 	if not player.is_on_floor():
 		player.velocity.y -= GRAVITY * delta
