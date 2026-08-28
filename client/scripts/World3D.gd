@@ -264,6 +264,8 @@ const GENDER_ASSET_PATHS := {
 		"equipment_part_suffixes": ["aa", "ba", "fa", "ha", "la", "sa"],
 		"idle_anim": "Prim\\Ani\\Char\\China\\man\\chinaman_fighter_standcity.ban",
 		"walk_anim": "Prim\\Ani\\Char\\China\\man\\chinaman_fighter_walkforward.ban",
+		"hit_anim": "Prim\\Ani\\Char\\China\\man\\chinaman_a_benormalhit.ban",
+		"death_anim": "Prim\\Ani\\Char\\China\\man\\chinaman_a_diehardhit.ban",
 	},
 	"china_woman": {
 		"skeleton": "Prim\\Skel\\Char\\China\\chinawoman_skel.bsk",
@@ -275,6 +277,8 @@ const GENDER_ASSET_PATHS := {
 		"equipment_part_suffixes": ["aa", "ba", "fa", "ha", "la", "sa"],
 		"idle_anim": "Prim\\Ani\\Char\\China\\woman\\chinawoman_fighter_standcity.ban",
 		"walk_anim": "Prim\\Ani\\Char\\China\\woman\\chinawoman_fighter_walkforward.ban",
+		"hit_anim": "Prim\\Ani\\Char\\China\\woman\\chinawoman_a_benormalhit.ban",
+		"death_anim": "Prim\\Ani\\Char\\China\\woman\\chinawoman_a_diehardhit.ban",
 	},
 }
 ## Falls back to this real gender's assets when a requested gender's assets
@@ -1842,6 +1846,25 @@ func _load_character_assets() -> void:
 		if not walk_bytes.is_empty():
 			walk_anim = BanReader.parse(walk_bytes)
 
+		# Real hit-reaction/death animations (2026-08-28, see
+		# docs/WORLD_ISSUES.md's twenty-seventh round) -- "hit_anim" is
+		# deliberately the real "_benormalhit" file, not "_behardhit": both
+		# real files exist for both genders, but no real, confirmed signal
+		# (damage amount vs. player max HP, or something else) was found for
+		# which one the original client actually picks, so this always uses
+		# the plain one rather than guessing a threshold. "death_anim" uses
+		# "_diehardhit" (there's no ambiguous "_dienormalhit" counterpart to
+		# choose between).
+		var hit_anim: BanReader.ParsedAnimation = null
+		var hit_bytes := AssetSource.read_bytes(paths["hit_anim"], archive)
+		if not hit_bytes.is_empty():
+			hit_anim = BanReader.parse(hit_bytes)
+
+		var death_anim: BanReader.ParsedAnimation = null
+		var death_bytes := AssetSource.read_bytes(paths["death_anim"], archive)
+		if not death_bytes.is_empty():
+			death_anim = BanReader.parse(death_bytes)
+
 		_character_assets[gender] = {
 			"skel": skel,
 			"body_parts": parts,
@@ -1849,9 +1872,11 @@ func _load_character_assets() -> void:
 			"equipment_sets": equipment_sets,
 			"idle_anim": idle_anim,
 			"walk_anim": walk_anim,
+			"hit_anim": hit_anim,
+			"death_anim": death_anim,
 		}
-		print("World3D: cached real %s character assets (%d bones, %d body parts, %d armor sets, idle_anim=%s, walk_anim=%s) from %s" % [
-			gender, skel.bones.size(), parts.size(), equipment_sets.size(), idle_anim != null, walk_anim != null, Pk2Config.data_path()])
+		print("World3D: cached real %s character assets (%d bones, %d body parts, %d armor sets, idle_anim=%s, walk_anim=%s, hit_anim=%s, death_anim=%s) from %s" % [
+			gender, skel.bones.size(), parts.size(), equipment_sets.size(), idle_anim != null, walk_anim != null, hit_anim != null, death_anim != null, Pk2Config.data_path()])
 
 	for variant in WEAPON_VARIANTS:
 		var weapon_bytes := AssetSource.read_bytes(variant["mesh"], archive)

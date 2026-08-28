@@ -51,14 +51,21 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   correctly drives which real armor pieces attach, but there's been no recent audit of whether
   every armor/weapon/shield combination actually resolves to a real asset vs. silently rendering
   nothing for an unmapped combination.
-- **Animation coverage quantified 2026-08-28: only 2 of 337 real animation files wired up.** Only
-  idle (`standcity.ban`) and walk (`walkforward.ban`) ever load — real run/sit/hit-reaction/death
-  (`diehardhit.ban`)/attack/skill-cast animations all exist in `Data.pk2` and are unused. Most
-  concrete gap: **attacking a monster has zero animation feedback right now.** See
-  `docs/WORLD_ISSUES.md`'s twenty-seventh round. Blocked on two things before implementing: (1)
-  confirming whether the server even signals the *player* taking damage yet (for a hit-reaction
-  animation), and (2) picking the right specific attack animation among many similarly-named real
-  `skill_ch_sword_*attack*.ban` files without guessing which one a plain attack actually uses.
+- **Corrected 2026-08-28 — this is worse than "partial coverage": the real assembled player
+  character never plays any animation at all right now.** It stands in its real bind (T-)pose
+  permanently, whether idle, walking, or attacking. Root cause already diagnosed in-code (a large
+  comment in `World3D._physics_process`, 2026-08-26): `Skeleton3DBuilder.build_skeleton3d` uses
+  `Basis.IDENTITY` for every bone's rest transform instead of that bone's real `.bsk` bind
+  rotation, so applying a `.ban` track's keyframe-0 rotation as a delta against identity is wrong
+  and makes limbs fly apart — confirmed with real numbers (`Bip01 R UpperArm`'s real bind quaternion
+  vs. the walk animation's own keyframe-0 differ substantially, not just idle sway). **This is the
+  real blocking fix** — giving `Skeleton3DBuilder` each bone's actual bind rotation as rest, so
+  `.ban` deltas compose correctly — everything else (idle/walk/hit/death/attack playback) is
+  downstream of it. See `docs/WORLD_ISSUES.md`'s twenty-seventh round. Once fixed: `hit_anim`/
+  `death_anim` are already cached per gender and ready to wire to the already-decoded
+  `player_damage_taken`/`player_died` signals (`combat.gd`); picking a specific real attack
+  animation among many similarly-named `skill_ch_sword_*attack*.ban` files still needs more real
+  data than a file listing alone provides.
 
 ## Objects and world dressing
 

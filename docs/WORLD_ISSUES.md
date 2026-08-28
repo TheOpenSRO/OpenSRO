@@ -860,33 +860,53 @@ asset behind it at all, so it either needs a different real monster name (e.g. `
 have real data) or stays a labeled placeholder indefinitely; not a decision to make unilaterally
 since it changes visible game content, not just a bug fix.
 
-## 2026-08-28, twenty-seventh round — animation coverage quantified: 2 of 337 real files wired up
+## 2026-08-28, twenty-seventh round — animation coverage is worse than "partial": playback is fully disabled
 
 Fifth/last item off `docs/NEXT_STEPS_RENDERING.md`'s current list. The doc previously said
 animation coverage was "real but likely partial" without a real number -- checked directly instead
-of leaving it vague.
+of leaving it vague, and the real answer is worse than "partial."
 
-`World3D.gd` only ever loads two real `.ban` files per gender: `..._standcity.ban` (idle) and
-`..._walkforward.ban` (walk) -- confirmed by grepping every `.ban` reference in `World3D.gd`/
-`skeleton3d_builder.gd`. Listed every real animation file under `Prim\Ani\Char\China\man\` in
-`Data.pk2`: **337 real files**. Real coverage that exists but isn't wired to anything includes:
-run cycles (`chinaman_fighter_runforward.ban`, `..._runforward_sword.ban`), sit
-(`..._a_sitbreath/sitground/sitstand.ban`), hit reactions (`chinaman_a_behardhit.ban`,
-`_benormalhit.ban`), a real death-equivalent animation (`chinaman_a_diehardhit.ban` +
-`_diehardhit_loop.ban` -- named "diehardhit," not "death"), and well over a hundred real
-`skill_*`/`skill_ch_*` attack/cast animations (sword downattacks, gigong attacks, elemental skill
-casts, etc.).
+Listed every real animation file under `Prim\Ani\Char\China\man\` in `Data.pk2`: **337 real
+files**, including real run cycles, sit animations, hit reactions (`_a_behardhit.ban`/
+`_benormalhit.ban`), a real death-equivalent (`_a_diehardhit.ban`, not literally named "death"), and
+well over a hundred real `skill_*`/`skill_ch_*` attack/cast animations. `World3D.gd` only ever
+*loads* two of them per gender (`idle_anim`/`walk_anim`) into `_character_assets`.
 
-Concretely: **attacking a monster currently has zero animation feedback** -- `_on_attack_pressed`/
-`NetClient.attack` send and process a real attack, but nothing ever plays a real attack `.ban` when
-it happens, even though the exact real animation files for it exist and are already namespaced
-clearly enough to map (e.g. a sword-equipped fighter's basic attack is plausibly one of the
-`skill_ch_sword_*attack*.ban` files, though which *specific* one the real client picks for a
-plain/unskilled attack vs. an actual learned skill isn't confirmed from file names alone).
+**But re-reading `_physics_process` (around line 2339-2373) found something more significant than
+an incomplete list: those two loaded animations are never actually applied to the real assembled
+player body at all.** The only thing that calls `Skeleton3DBuilder.apply_ban_keyframe` every frame
+is `_real_skeleton`/`_real_skeleton_track` -- a completely separate, dev-only decoration-skeleton
+demo path gated behind `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH`, not the real player. The real
+assembled character's own animation playback was **deliberately disabled on 2026-08-26** (already
+documented in-code, in a large comment right above where the call would go) after a real playtest
+showed the assembled body's limbs flying apart the instant it ran -- root-caused at the time to
+`Skeleton3DBuilder.build_skeleton3d` using `Basis.IDENTITY` for every bone's rest transform instead
+of the real `.bsk` bind-pose rotation, so a `.ban` track's keyframe-0 rotation (not close to
+identity for several real bones, e.g. `Bip01 R UpperArm`'s real bind quaternion
+`[0.056,-0.017,-0.062,0.996]` vs. the walk animation's own keyframe-0
+`[0.142,-0.015,0.534,0.834]`) gets misapplied as a raw delta. That comment already correctly called
+this "a real rework, not a one-line patch" -- confirmed still true and still unfixed.
 
-Not implemented this round -- wiring up even just a hit-reaction and death animation would need a
-real signal from `_on_attack_result`/`_on_monster_damaged`/player-damage-taken (does the server
-even tell the client when the *player* takes damage yet? not confirmed) to trigger it, and picking
-the right attack animation among a real family of very-similarly-named skill files without
-guessing needs more real data than a file listing alone provides. Logged as a concrete, scoped,
-real next step rather than implemented blind.
+Concretely: **the assembled player character never animates at all right now** -- it stands in its
+real bind (T-)pose permanently, whether idle, walking, or attacking. This is a bigger real gap than
+"attacking has no animation feedback" (though that's also still true): everything is frozen.
+
+**What this round actually added**: extended the existing (already-unused-for-playback) per-gender
+animation caching to also load `hit_anim` (`_a_benormalhit.ban` -- deliberately the plain one, not
+`_behardhit`; no real, confirmed signal for which of the two the original client picks was found,
+so this doesn't guess a threshold) and `death_anim` (`_a_diehardhit.ban`) alongside the existing
+`idle_anim`/`walk_anim`, confirmed present for both genders. This is deliberately *only* caching,
+matching the exact same "loaded but not yet applied" state `idle_anim`/`walk_anim` were already in
+-- **not** wired to play on `player_damage_taken`/`player_died` this round, because doing so would
+hit the exact same already-diagnosed "limbs fly apart" bug immediately. Also confirmed the real
+server-side signal a future hit-reaction would need already exists and is already decoded
+client-side (`session/combat.go`'s `AttackResult.PlayerDamageTaken`, `combat.gd`'s
+`player_damage_taken`/`player_died`, currently only used for a status-label string) -- so once the
+real bind-pose rest-transform fix lands, wiring hit/death playback off that existing signal is real
+follow-on work, not blocked on anything else.
+
+Full verification: `godot4 --headless --path . --import --quit` and a headless `--quit-after 60`
+boot both clean. The real, load-bearing fix here -- giving `Skeleton3DBuilder` each bone's actual
+`.bsk` bind rotation as its rest transform, so `.ban` deltas compose correctly -- is real
+implementation work of its own and was not attempted this round; logged as the actual next step,
+not guessed at.
