@@ -859,3 +859,34 @@ Golem (real matched data) -- and separately, flagging to OpenSRO/OpenSRO that "W
 asset behind it at all, so it either needs a different real monster name (e.g. `Hun`, which does
 have real data) or stays a labeled placeholder indefinitely; not a decision to make unilaterally
 since it changes visible game content, not just a bug fix.
+
+## 2026-08-28, twenty-seventh round — animation coverage quantified: 2 of 337 real files wired up
+
+Fifth/last item off `docs/NEXT_STEPS_RENDERING.md`'s current list. The doc previously said
+animation coverage was "real but likely partial" without a real number -- checked directly instead
+of leaving it vague.
+
+`World3D.gd` only ever loads two real `.ban` files per gender: `..._standcity.ban` (idle) and
+`..._walkforward.ban` (walk) -- confirmed by grepping every `.ban` reference in `World3D.gd`/
+`skeleton3d_builder.gd`. Listed every real animation file under `Prim\Ani\Char\China\man\` in
+`Data.pk2`: **337 real files**. Real coverage that exists but isn't wired to anything includes:
+run cycles (`chinaman_fighter_runforward.ban`, `..._runforward_sword.ban`), sit
+(`..._a_sitbreath/sitground/sitstand.ban`), hit reactions (`chinaman_a_behardhit.ban`,
+`_benormalhit.ban`), a real death-equivalent animation (`chinaman_a_diehardhit.ban` +
+`_diehardhit_loop.ban` -- named "diehardhit," not "death"), and well over a hundred real
+`skill_*`/`skill_ch_*` attack/cast animations (sword downattacks, gigong attacks, elemental skill
+casts, etc.).
+
+Concretely: **attacking a monster currently has zero animation feedback** -- `_on_attack_pressed`/
+`NetClient.attack` send and process a real attack, but nothing ever plays a real attack `.ban` when
+it happens, even though the exact real animation files for it exist and are already namespaced
+clearly enough to map (e.g. a sword-equipped fighter's basic attack is plausibly one of the
+`skill_ch_sword_*attack*.ban` files, though which *specific* one the real client picks for a
+plain/unskilled attack vs. an actual learned skill isn't confirmed from file names alone).
+
+Not implemented this round -- wiring up even just a hit-reaction and death animation would need a
+real signal from `_on_attack_result`/`_on_monster_damaged`/player-damage-taken (does the server
+even tell the client when the *player* takes damage yet? not confirmed) to trigger it, and picking
+the right attack animation among a real family of very-similarly-named skill files without
+guessing needs more real data than a file listing alone provides. Logged as a concrete, scoped,
+real next step rather than implemented blind.

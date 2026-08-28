@@ -51,12 +51,14 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   correctly drives which real armor pieces attach, but there's been no recent audit of whether
   every armor/weapon/shield combination actually resolves to a real asset vs. silently rendering
   nothing for an unmapped combination.
-- **Animation coverage is real but likely partial** — walk-cycle playback exists
-  (2026-08-22, "character/animation phase 3"), but idle/attack/cast/death and other real `.ban`
-  animation states haven't been confirmed wired up since the scale fix changed the skeleton's own
-  transform scale (animations are keyed against bind-pose bone positions, not the removed
-  `skeleton.scale` hack — worth a real check that this didn't subtly break any animation that
-  depended on the old scale being applied at the skeleton level rather than per-bone).
+- **Animation coverage quantified 2026-08-28: only 2 of 337 real animation files wired up.** Only
+  idle (`standcity.ban`) and walk (`walkforward.ban`) ever load — real run/sit/hit-reaction/death
+  (`diehardhit.ban`)/attack/skill-cast animations all exist in `Data.pk2` and are unused. Most
+  concrete gap: **attacking a monster has zero animation feedback right now.** See
+  `docs/WORLD_ISSUES.md`'s twenty-seventh round. Blocked on two things before implementing: (1)
+  confirming whether the server even signals the *player* taking damage yet (for a hit-reaction
+  animation), and (2) picking the right specific attack animation among many similarly-named real
+  `skill_ch_sword_*attack*.ban` files without guessing which one a plain attack actually uses.
 
 ## Objects and world dressing
 
