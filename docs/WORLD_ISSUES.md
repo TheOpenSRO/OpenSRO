@@ -720,3 +720,43 @@ Full verification: `godot4 --headless --path . --import --quit` clean, and a hea
 World3D.gd's camera code (not covered by any `*_test.gd` in `ci.yml`), consistent with every other
 World3D.gd change this session -- not yet re-verified against a real live screenshot, needs a real
 retest.
+
+## 2026-08-28, twenty-third round — real sky, first item off the rendering-fidelity roadmap
+
+First real work item off `docs/NEXT_STEPS_RENDERING.md`: the sky was a flat `background_color`,
+the single biggest "doesn't look like the real game" cue in every screenshot taken this session.
+
+Pulled real data before touching anything: `Map.pk2`'s own `SkyBox\` folder has exactly 5 files
+(confirmed via the RE-box pk2list/ddjinspect scratch-tool workflow, then deleted along with the
+extracted samples per the no-persisted-real-assets policy) -- `cloud1.ddj` (512x512, DXT3, real
+alpha channel), `cloud99.ddj` (512x512, uncompressed), `glow.ddj` (128x128, uncompressed),
+`shadowsphere.ddj` (64x64, DXT3), `waterbump3.ddj` (512x512, uncompressed). None of these is a
+single large panoramic/equirectangular image, so the real client is evidently not using a standard
+six-face or panorama skybox here -- it's built from several small layered/blended textures instead.
+Checked for a config file or mesh describing exactly how they combine (`.ifo`/`.cfg`/`.bsr`
+alongside `SkyBox\`) -- none exists. The currently available decompiled binary on the RE box is the
+game *server* (confirmed via its imports -- `PostQueuedCompletionStatus`/IOCP, no D3D), not the
+client renderer, so the real exact blending algorithm isn't determinable from data alone without
+further client-side RE -- an honest, flagged gap, not something to guess at.
+
+What shipped instead is an explicit engineering approximation using the *real* textures, not
+fabricated ones: `world_environment.environment` switched from a flat `background_color` to
+`Environment.BG_SKY` with a `ProceduralSkyMaterial` (a real Godot feature) whose horizon color
+reuses the same real flat color the scene already had (not a new invented color) and whose top/
+ground tones are derived from it. A large inverted-hemisphere dome (`SKY_DOME_RADIUS := 3000`,
+comfortably inside the camera's far plane) follows the player and is textured with the real
+`cloud1.ddj` (its own real alpha channel gives real soft edges), unshaded, `CULL_FRONT` (viewed
+from inside), slowly UV-drifting (`CLOUD_DRIFT_UV_PER_SECOND := 0.008`, an explicit engineering
+guess, not reverse-engineered timing, same honest flag as the water animation's frame rate). A
+simple `Sprite3D` glow billboard using the real `glow.ddj` stands in for a sun, positioned along the
+scene's real `DirectionalLight3D` direction (computed from its actual transform, not guessed).
+`cloud99`/`shadowsphere`/`waterbump3` are deliberately left unused -- their real role in the actual
+sky system is still unconfirmed; `shadowsphere`'s tiny 64x64 size in particular reads more like a
+soft ambient-shadow blob than a sky asset, but that's a guess, not a finding, so it wasn't used for
+anything.
+
+Full verification: `godot4 --headless --path . --import --quit` and a headless `--quit-after 60`
+boot both clean, no parse/runtime errors. Gated entirely behind `SRREVAMP_MAP_PK2_PATH`/a real
+`pk2/Map.pk2`, same as every other real-asset loader in this file -- falls back to the original flat
+color with no clouds/sun if unset or the real files aren't found. Not yet visually verified against
+a real playtest screenshot -- needs a real retest.

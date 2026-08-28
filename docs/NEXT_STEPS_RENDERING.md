@@ -19,11 +19,13 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   worth a side-by-side comparison against a real client screenshot once one is available.
 - **Terrain seam blending exists (2026-08-24) but hasn't been re-verified since the scale fix** —
   the blend radius/strength was tuned against the old world scale.
-- **Water, sky, weather, and dungeon systems are entirely unimplemented** (found in the full
-  asset-taxonomy scan, `docs/PROGRESS.md`'s 2026-08-19–27 entry): water itself now renders, but
-  `SkyBox\`, `Weather\` (rain/snow/smog), and `Sun\` are real, confirmed, untouched content. A real
-  client's sky is not a flat `background_color` — it's a real skybox texture set. This is probably
-  one of the single biggest visual gaps between the current client and the real game.
+- **Water and a first-pass sky now render** (water: 2026-08-26; sky: 2026-08-28, see
+  `docs/WORLD_ISSUES.md`'s twenty-third round). The sky is an honest engineering approximation
+  using the real `cloud1.ddj`/`glow.ddj` textures on a procedural gradient + cloud dome, not a
+  reverse-engineered reproduction of the original blending algorithm (no config file describes it,
+  and the only decompiled binary available is the server, not the client renderer). `Weather\`
+  (rain/snow/smog) and `Sun\` (real moon-phase textures) are still real, confirmed, untouched
+  content — worth revisiting once the sky's base look is confirmed against a real screenshot.
 
 ## Character rendering
 
@@ -76,8 +78,8 @@ colors, skin tone, character scale) came from exactly that shortcut.
 Roughly highest-visual-impact-per-effort first, based on how large each gap looks in every real
 playtest screenshot so far:
 
-1. Sky (skybox instead of flat color) — likely the single most noticeable "doesn't look like the
-   real game" cue in every screenshot taken this session.
+1. ~~Sky (skybox instead of flat color)~~ — done 2026-08-28, first-pass approximation using real
+   textures; needs a real screenshot check and revisit once one's available.
 2. Ground-texture completeness audit — confirm real texture coverage vs. flat-color fallback rate
    across a real zone.
 3. Front/back texture-swap root cause — a real, reported visual bug with no explanation yet.

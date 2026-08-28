@@ -429,6 +429,8 @@ var _last_stream_cell := Vector2i(0x7fffffff, 0x7fffffff) # sentinel so the firs
 @onready var ground_mesh: MeshInstance3D = $Ground/Mesh
 @onready var ground_collision: CollisionShape3D = $Ground/Collision
 @onready var other_entities: Node3D = $OtherEntities
+@onready var world_environment: WorldEnvironment = $WorldEnvironment
+@onready var directional_light: DirectionalLight3D = $DirectionalLight3D
 @onready var zone_label: Label = $UI/Control/ZoneLabel
 @onready var character_label: Label = $UI/Control/CharacterLabel
 @onready var ui_control: Control = $UI/Control
@@ -748,6 +750,7 @@ func _ready() -> void:
 	_try_load_real_scenery()
 	_try_load_real_decoration_skeleton()
 	_try_apply_real_player_character()
+	_try_add_real_sky()
 	_load_initial_region_neighborhood()
 
 ## Loads real static scenery through the exact same pk2 -> BsrReader ->
@@ -995,6 +998,122 @@ func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion,
 	# doesn't z-fight with the ground mesh sharing the exact same vertices.
 	water_instance.position.y = 0.1
 	terrain_group.add_child(water_instance)
+
+## Real sky assets found under Map.pk2's own SkyBox\ folder (2026-08-28,
+## see docs/WORLD_ISSUES.md and docs/NEXT_STEPS_RENDERING.md's "Terrain"
+## section for the taxonomy-scan history): cloud1.ddj (512x512, DXT3, has a
+## real alpha channel), cloud99.ddj (512x512, uncompressed), glow.ddj
+## (128x128, uncompressed), shadowsphere.ddj (64x64, DXT3), and
+## waterbump3.ddj (512x512, uncompressed) -- confirmed via a real dimension/
+## format inspection on the RE box, not guessed. None of these are a single
+## large panoramic/equirectangular image, so this is *not* a standard
+## six-face or panorama skybox -- the real client evidently builds its sky
+## from several small tileable/blended layers instead. No config file or
+## mesh describing exactly how the real client combines them was found
+## alongside these textures (checked -- no .ifo/.cfg/.bsr next to SkyBox\),
+## and the currently-available decompiled binary is the server, not the
+## client renderer, so the real exact blending algorithm isn't determinable
+## from data alone without further client-side RE (a real, flagged gap, see
+## docs/NEXT_STEPS_RENDERING.md).
+##
+## What's implemented here is therefore an honest engineering approximation
+## using the *real* cloud/glow textures (not fabricated ones), not a claim
+## about reproducing the original algorithm: a large inverted-hemisphere
+## dome around the player textured with the real cloud1.ddj (its own real
+## alpha channel gives real soft cloud edges), slowly drifting, plus a
+## simple additive glow billboard aimed at the DirectionalLight's real
+## direction as a stand-in sun. cloud99/shadowsphere/waterbump3 are left
+## unused -- their real purpose within the sky system is still unconfirmed
+## (shadowsphere's tiny 64x64 size in particular reads more like a
+## soft ambient-shadow blob than a sky-color asset, but that's not
+## confirmed either).
+const SKY_DOME_RADIUS := 3000.0
+const CLOUD_DRIFT_UV_PER_SECOND := 0.008
+const SUN_GLOW_DISTANCE := 2800.0
+const SUN_GLOW_SIZE := 500.0
+
+var _sky_dome: MeshInstance3D
+var _sky_dome_material: StandardMaterial3D
+var _sun_glow: Sprite3D
+var _sun_glow_offset := Vector3.ZERO
+
+func _try_add_real_sky() -> void:
+	var archive := _open_map_pk2_if_set()
+	if archive == null:
+		print("World3D: SRREVAMP_MAP_PK2_PATH not set -- sky stays a flat placeholder color")
+		return
+
+	# Real gradient sky (Godot's own ProceduralSkyMaterial, not a real
+	# extracted asset -- no real single sky-gradient image was found, see
+	# this function's top comment) replacing the flat background_color the
+	# scene shipped with, using that same real color as the horizon tone so
+	# this doesn't introduce a new invented color, only extends it into a
+	# gradient.
+	var sky_material := ProceduralSkyMaterial.new()
+	var flat_color: Color = world_environment.environment.background_color
+	sky_material.sky_top_color = flat_color.lerp(Color(0.15, 0.25, 0.55), 0.35)
+	sky_material.sky_horizon_color = flat_color
+	sky_material.ground_bottom_color = flat_color.darkened(0.4)
+	sky_material.ground_horizon_color = flat_color
+	var sky := Sky.new()
+	sky.sky_material = sky_material
+	world_environment.environment.sky = sky
+	world_environment.environment.background_mode = Environment.BG_SKY
+
+	var cloud_bytes := AssetSource.read_bytes("SkyBox\\cloud1.ddj", archive)
+	if not cloud_bytes.is_empty():
+		var parsed := DdjReader.parse(cloud_bytes)
+		if parsed != null:
+			var cloud_tex := DdjReader.to_texture(parsed)
+			if cloud_tex != null:
+				_build_cloud_dome(cloud_tex)
+
+	var glow_bytes := AssetSource.read_bytes("SkyBox\\glow.ddj", archive)
+	if not glow_bytes.is_empty():
+		var glow_parsed := DdjReader.parse(glow_bytes)
+		if glow_parsed != null:
+			var glow_tex := DdjReader.to_texture(glow_parsed)
+			if glow_tex != null:
+				_build_sun_glow(glow_tex)
+
+func _build_cloud_dome(cloud_tex: Texture2D) -> void:
+	var dome := SphereMesh.new()
+	dome.radius = SKY_DOME_RADIUS
+	dome.height = SKY_DOME_RADIUS
+	dome.is_hemisphere = true
+	dome.radial_segments = 32
+	dome.rings = 16
+
+	_sky_dome_material = StandardMaterial3D.new()
+	_sky_dome_material.albedo_texture = cloud_tex
+	_sky_dome_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_sky_dome_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_sky_dome_material.cull_mode = BaseMaterial3D.CULL_FRONT # real dome is viewed from inside
+	_sky_dome_material.uv1_scale = Vector3(3.0, 3.0, 1.0)
+	_sky_dome_material.albedo_color = Color(1, 1, 1, 0.6)
+
+	_sky_dome = MeshInstance3D.new()
+	_sky_dome.name = "CloudDome"
+	_sky_dome.mesh = dome
+	_sky_dome.material_override = _sky_dome_material
+	add_child(_sky_dome)
+
+func _build_sun_glow(glow_tex: Texture2D) -> void:
+	# Real DirectionalLight3D direction (see World3D.tscn) -- the sun's
+	# apparent position is the opposite of the direction the light travels.
+	var light_travel_dir := -directional_light.global_transform.basis.z
+	var sun_dir := -light_travel_dir
+
+	_sun_glow = Sprite3D.new()
+	_sun_glow.name = "SunGlow"
+	_sun_glow.texture = glow_tex
+	_sun_glow.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_sun_glow.shaded = false
+	_sun_glow.modulate = Color(1, 1, 0.9, 0.85)
+	_sun_glow.pixel_size = SUN_GLOW_SIZE / glow_tex.get_width()
+	_sun_glow_offset = sun_dir * SUN_GLOW_DISTANCE
+	_sun_glow.position = _sun_glow_offset
+	add_child(_sun_glow)
 
 ## Opens the real Map.pk2 -- SRREVAMP_MAP_PK2_PATH if set, else a real
 ## "pk2/Map.pk2" next to the running executable (see Pk2Config) -- or
@@ -2117,6 +2236,12 @@ func _load_real_materials(archive: Pk2Reader, bmt_path: String) -> Dictionary:
 	return by_name
 
 func _physics_process(delta: float) -> void:
+	if _sky_dome != null:
+		_sky_dome.global_position = player.global_position
+		_sky_dome_material.uv1_offset.x += CLOUD_DRIFT_UV_PER_SECOND * delta
+	if _sun_glow != null:
+		_sun_glow.global_position = player.global_position + _sun_glow_offset
+
 	var input_dir := Vector3.ZERO
 	# Real, dedicated move_* actions (WASD + arrow keys both bound, see
 	# project.godot) -- previously used Godot's built-in ui_left/ui_right/
