@@ -38,11 +38,15 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   misalignment in `BmsReader`'s stride/offset handling that wouldn't trigger its existing
   NaN/unit-length self-check but could still silently swap which UV pairs with which position for
   some vertices — the next thing to check with real data before guessing further.
-- **No real per-species monster models** — monsters are still a plain colored capsule
-  (`_spawn_or_update_monster`), explicitly flagged in its own doc comment as "no real monster
-  model/skeleton mapping has been found or attempted yet." Real monster `.bsk`/`.ban`/`.bmt` data
-  presumably exists in `Data.pk2` the same way player character data does; this hasn't been
-  attempted.
+- **No real per-species monster models — scoped 2026-08-28, not yet implemented.** Confirmed real
+  `.bsr`/`.bsk`/`.bmt` data exists for Stone Golem and Sand Scorpion (the two of this project's
+  three spawned monsters that map to a real creature at all — "Wild Boar" has no real match, see
+  `docs/WORLD_ISSUES.md`'s twenty-sixth round). Not implemented yet because a monster's real
+  pipeline (`.bsr` compound mesh + separate `.bsk` skeleton) is materially different from both
+  existing pipelines (static `ObjectLoader`, no skeleton; player `CharacterAssembler`, raw `.bms`
+  parts rigidly bone-attached) and whether the `.bsr` sub-mesh coordinate space matches
+  `CharacterAssembler`'s rigid-attach assumption is unconfirmed — real implementation work, ideally
+  with a live playtest available to verify against, not something to guess through blind.
 - **Equipment/weapon/shield visuals are real but not verified complete** — `armor_slots_mask`
   correctly drives which real armor pieces attach, but there's been no recent audit of whether
   every armor/weapon/shield combination actually resolves to a real asset vs. silently rendering

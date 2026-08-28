@@ -821,3 +821,41 @@ attaches mirrored paired body parts (though the reported symptom was on the tors
 part, per its own doc comment -- worth double-checking that claim against real data too, since real
 `Data.pk2` actually splits torso into `_upper`/`_lower` pieces, not the single unpaired piece the
 existing top-of-file comment describes). Left open rather than guessed at further.
+
+## 2026-08-28, twenty-sixth round — real monster asset availability scoped (not yet implemented)
+
+Fourth item off `docs/NEXT_STEPS_RENDERING.md`: whether real per-species monster models even exist
+to replace the placeholder capsule (`_spawn_or_update_monster`'s own doc comment already says this
+was never attempted). Checked real asset availability for the three monsters this project's own
+server actually spawns (`server/cmd/server/main.go`'s `monsterSpecs`) before writing any
+implementation:
+
+- **Stone Golem**: real match. `Res\mob\casia\golem.bsr` (compound mesh), `Prim\Skel\mob\casia\
+  golem.bsk` (real skeleton), `Prim\Mtrl\mob\casia\golem.bmt`/`golem.ddj` (real material/texture).
+- **Sand Scorpion**: real match, and a stronger one -- `Res\mob\oasis\scorpion.bsr`, `Prim\Skel\
+  mob\oasis\scorpion.BSK`, `Prim\Mtrl\mob\oasis\scorpion.BMT`/`.ddj`, plus real multi-part meshes
+  (`scorpion_part2_part1.bms`/`_part2.bms` -- a segmented creature, consistent with a real
+  scorpion's body plan).
+- **Wild Boar**: **no real match.** Searching `Data.pk2` for "boar" only turns up unrelated
+  building furniture (`oas_hot_board.bms`, a real notice-board prop, a coincidental substring
+  hit -- same category of false-positive `docs/protocol/TILE2D_FORMAT.md` already documented once
+  for `asiaminor_stone01.ddj`). The real China-continent (`casia`) monster skeleton folder has
+  exactly 3 real files: `golem.bsk`, `hun.bsk`, `peryton.bsk` -- no boar-like creature. "Wild Boar"
+  is this project's own invented placeholder name (from `server/cmd/server/main.go`'s original
+  scaffolding) with no corresponding real Silkroad monster asset at all.
+
+**Not implemented yet, and deliberately so.** Rendering a real animated monster is a materially
+different pipeline from both existing ones: unlike static scenery (`ObjectLoader`, no skeleton) and
+unlike the player character (`CharacterAssembler`, raw `.bms` body parts rigidly attached to a
+`.bsk` skeleton with baked absolute positions), a monster's real mesh data lives inside a `.bsr`
+compound object alongside a separate real `.bsk` skeleton -- whether that `.bsr`'s sub-mesh vertex
+positions are already in the same bind-pose coordinate space `CharacterAssembler`'s rigid-attach
+math assumes, or need a different transform, is unconfirmed and hasn't been checked against real
+data yet. Building this blind, in an autonomous pass with no way to get a real screenshot back
+before shipping it, risks exactly the kind of guessed-and-wrong result the standing "no
+assumptions" rule exists to prevent. Recommend scoping this as its own real implementation pass
+(ideally with a live playtest available to verify against), starting with Sand Scorpion or Stone
+Golem (real matched data) -- and separately, flagging to OpenSRO/OpenSRO that "Wild Boar" has no real
+asset behind it at all, so it either needs a different real monster name (e.g. `Hun`, which does
+have real data) or stays a labeled placeholder indefinitely; not a decision to make unilaterally
+since it changes visible game content, not just a bug fix.
