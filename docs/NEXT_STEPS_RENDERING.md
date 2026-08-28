@@ -51,21 +51,22 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   correctly drives which real armor pieces attach, but there's been no recent audit of whether
   every armor/weapon/shield combination actually resolves to a real asset vs. silently rendering
   nothing for an unmapped combination.
-- **Corrected 2026-08-28 — this is worse than "partial coverage": the real assembled player
-  character never plays any animation at all right now.** It stands in its real bind (T-)pose
-  permanently, whether idle, walking, or attacking. Root cause already diagnosed in-code (a large
-  comment in `World3D._physics_process`, 2026-08-26): `Skeleton3DBuilder.build_skeleton3d` uses
-  `Basis.IDENTITY` for every bone's rest transform instead of that bone's real `.bsk` bind
-  rotation, so applying a `.ban` track's keyframe-0 rotation as a delta against identity is wrong
-  and makes limbs fly apart — confirmed with real numbers (`Bip01 R UpperArm`'s real bind quaternion
-  vs. the walk animation's own keyframe-0 differ substantially, not just idle sway). **This is the
-  real blocking fix** — giving `Skeleton3DBuilder` each bone's actual bind rotation as rest, so
-  `.ban` deltas compose correctly — everything else (idle/walk/hit/death/attack playback) is
-  downstream of it. See `docs/WORLD_ISSUES.md`'s twenty-seventh round. Once fixed: `hit_anim`/
-  `death_anim` are already cached per gender and ready to wire to the already-decoded
-  `player_damage_taken`/`player_died` signals (`combat.gd`); picking a specific real attack
-  animation among many similarly-named `skill_ch_sword_*attack*.ban` files still needs more real
-  data than a file listing alone provides.
+- ~~Root-cause fix: assembled player character never animated at all~~ — **fixed 2026-08-28**, same
+  day as the correction above. `Skeleton3DBuilder.build_skeleton3d` now uses each bone's real
+  `.bsk` world-space bind rotation (converted to a parent-relative rest transform) instead of
+  `Basis.IDENTITY`, verified via real rendered screenshots showing a coherent walking stride
+  instead of the previous exploded T-pose (see `docs/WORLD_ISSUES.md`'s twenty-eighth round for the
+  full verification process). Player idle/walk animation playback is re-enabled in
+  `World3D._physics_process`. **Not yet seen in an actual live playtest** — the isolated bare-skeleton
+  test was real and visually confirmed, but the in-game result (with real equipment/weapon
+  attachments layered on) hasn't been checked yet, needs a real retest. Arms showed little motion
+  in the one real animation checked (`chinaman_fighter_walkforward.ban`) — unconfirmed whether
+  that's correct animation content or a remaining gap.
+- `hit_anim`/`death_anim` are cached per gender and now genuinely ready to wire to the
+  already-decoded `player_damage_taken`/`player_died` signals (`combat.gd`) now that playback
+  itself works. Picking a specific real attack animation among many similarly-named
+  `skill_ch_sword_*attack*.ban` files still needs more real data than a file listing alone
+  provides.
 
 ## Objects and world dressing
 

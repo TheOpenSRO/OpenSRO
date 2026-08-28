@@ -23,6 +23,14 @@ func _put_f32(b: PackedByteArray, off: int, v: float) -> void:
 func _bone_transform(pos: Vector3) -> PackedByteArray:
 	var t := PackedByteArray()
 	t.resize(BskReader.BONE_TRANSFORM_LEN)
+	# Identity rotation quaternion at 0x00 (x,y,z,w) -- SkeletonPose.
+	# bone_rotation() reads this offset for an ordinary (88-byte) bone;
+	# leaving it all-zero would be a degenerate, non-unit quaternion once
+	# build_skeleton3d started using real bind rotations (2026-08-28).
+	_put_f32(t, 0x00, 0.0)
+	_put_f32(t, 0x04, 0.0)
+	_put_f32(t, 0x08, 0.0)
+	_put_f32(t, 0x0c, 1.0)
 	_put_f32(t, 0x2c, pos.x)
 	_put_f32(t, 0x30, pos.y)
 	_put_f32(t, 0x34, pos.z)

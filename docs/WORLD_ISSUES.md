@@ -910,3 +910,54 @@ boot both clean. The real, load-bearing fix here -- giving `Skeleton3DBuilder` e
 `.bsk` bind rotation as its rest transform, so `.ban` deltas compose correctly -- is real
 implementation work of its own and was not attempted this round; logged as the actual next step,
 not guessed at.
+
+## 2026-08-28, twenty-eighth round — the real rest-pose fix: player character animation re-enabled
+
+Immediate follow-up to the round above, same day. The blocking fix flagged as "real implementation
+work, not guessed at" was concrete and scoped enough to actually attempt -- with a real way to
+verify it before touching production code, using this project's own established headless-screenshot
+technique (`client/tools/render_skeleton3d_animated.gd`'s pattern).
+
+**Tested the fix in isolation first, against real data.** Pulled a real `chinaman_skel.bsk` +
+`chinaman_fighter_walkforward.ban` (extracted to a scratchpad outside the repo, deleted after use).
+Wrote a one-off comparison tool (`client/tools/rest_pose_fix_test.gd`, not kept) that built the
+skeleton two ways -- the shipped `Basis.IDENTITY`-rest approach, and a candidate fix using each
+bone's real world-space bind rotation (`SkeletonPose.bone_rotation()`, already implemented and
+already used by the separately-validated manual `SkeletonPose.apply_rotation` path, just never
+wired into `Skeleton3DBuilder.build_skeleton3d`) -- and rendered both posed at the same real
+animation frame. First attempt showed *no difference at all*, which turned out to be a bug in the
+**test script itself**, not evidence against the hypothesis: it computed each bone's local rest
+*position* as a raw world-space delta from its parent, which is only correct when the parent's rest
+rotation is identity -- once the parent has a real (non-identity) rest rotation, the child's local
+position must be expressed in the parent's own rotated local frame
+(`parent_world_rot.inverse() * (child_world - parent_world)`), or Skeleton3D's own transform
+composition places it wrong. Fixed the test, re-rendered: the candidate fix produced a real,
+coherent walking stride in the legs at multiple animation frames (clearly separated forward/back
+leg positions), a qualitative, screenshot-visible improvement over the identity-rest version's
+frozen/exploded T-pose. Arms stayed close to bind pose in this same real animation at every frame
+checked -- left honestly unresolved whether that's the real animation's own content (a
+weapon-ready stance that doesn't swing much) or a separate, still-unconfirmed gap, rather than
+claiming full correctness beyond what was actually visually confirmed.
+
+**Applied the confirmed fix for real** to `Skeleton3DBuilder.build_skeleton3d`: rest transforms now
+use each bone's real `.bsk` world-space bind rotation and a parent-frame-relative bind position
+(the exact same math validated in the isolated test), instead of `Basis.IDENTITY` position-only
+rest. Updated `skeleton3d_builder_test.gd`'s synthetic bone fixture to include a valid identity
+quaternion in its raw transform bytes (it previously left that field all-zero, a degenerate
+non-unit quaternion that only mattered once real rotations started being read from it).
+
+**Re-enabled real animation playback for the assembled player character** in `World3D._physics_process`
+(`Skeleton3DBuilder.apply_ban_pose`, previously disabled entirely on 2026-08-26 pending this exact
+fix) -- picks `walk_anim`/`idle_anim` (already cached per gender, see the twenty-seventh round)
+based on the same `is_moving` signal already computed for camera recentering, using the same
+`BAN_FPS` playback-rate engineering guess the separate decoration-skeleton demo path already used
+(not reverse-engineered real timing). `hit_anim`/`death_anim` (cached last round) remain unwired --
+still real, scoped follow-on work, now genuinely unblocked rather than blocked on a broken
+foundation.
+
+Full verification: all 43 real GDScript `*_test.gd` suites in `ci.yml` pass (including the updated
+`skeleton3d_builder_test.gd`), plus a clean `godot4 --headless --path . --import --quit` and a clean
+headless `--quit-after 60` boot. The isolated-test screenshots that justified this change were real
+and inspected directly, not assumed -- but the fix's effect on the *live, in-game* assembled
+character (with real equipment/weapon attachments layered on top, not just a bare skeleton) hasn't
+been seen in an actual playtest yet. Needs a real retest.

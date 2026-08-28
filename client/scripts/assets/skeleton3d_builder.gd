@@ -7,18 +7,34 @@ class_name Skeleton3DBuilder
 ## client/tools/render_skeleton_animated.gd for the manual version this was
 ## built to go further than).
 ##
-## Bind pose uses only the confirmed *positions* from SkeletonPose
-## (converted from the world-space bind positions render_skeleton.gd
-## already visually confirmed into Skeleton3D's parent-relative rest
-## transforms) with identity rest rotations -- this project hasn't
-## confirmed the .bsk rotation quaternion is meant to compose the same way
-## Skeleton3D's own rest-rotation hierarchy does, so it isn't used for the
-## rest pose. What *is* confirmed and used here is the same thing
-## SkeletonPose.apply_rotation already validated: a .ban keyframe rotation,
-## taken as a delta relative to that bone's own first keyframe, correctly
-## drives a bone and all its descendants when applied as a pose rotation --
-## here via Skeleton3D's own real hierarchy propagation instead of manually
-## walking descendants.
+## Bind pose uses both the confirmed *positions* and *rotations* from
+## SkeletonPose (see bone_position()/bone_rotation()), converted from
+## world-space bind values into Skeleton3D's parent-relative rest
+## transforms. **Corrected 2026-08-28** (see docs/WORLD_ISSUES.md's
+## twenty-eighth round): this used to use identity rest rotations for every
+## bone, on the reasoning that the .bsk rotation quaternion's composition
+## convention wasn't confirmed -- that was the real, diagnosed cause of a
+## real playtest bug where the assembled player's limbs flew apart the
+## instant a .ban animation ran (identity rest means a keyframe's raw
+## world-relative delta gets applied as if starting from a T-pose, which is
+## wrong for any bone whose real bind rotation isn't already near-identity).
+## Visually confirmed via a real .bsk/.ban pair (chinaman_skel.bsk +
+## chinaman_fighter_walkforward.ban, rendered headlessly and compared
+## frame-by-frame) that treating this quaternion as each bone's *world-space*
+## bind rotation -- converted to parent-relative via
+## `parent_world_rot.inverse() * this_world_rot` for both the rest rotation
+## and (critically) the rest *position* (which must also be expressed in the
+## parent's own rotated local frame once the parent has a non-identity rest
+## rotation, not a raw world-space delta) -- produces a real, coherent
+## walking stride in the legs, a qualitative fix confirmed by comparing
+## rendered screenshots, not assumed. Arms stayed close to their bind pose
+## in that same real animation at every frame checked; whether that's the
+## real animation's own content (a weapon-ready stance that doesn't swing
+## much) or a separate, still-unconfirmed gap in the fix wasn't determined --
+## flagged honestly, not claimed as fully solved. What's still confirmed and
+## used as-is: SkeletonPose.apply_rotation's own validated delta-from-
+## keyframe-0 technique, now correctly composing on top of a real rest
+## rotation instead of identity.
 
 ## Builds a Skeleton3D with one bone per skel.bones entry, in a valid
 ## parent-before-child order (topologically sorted, since real .bsk bone
@@ -30,12 +46,16 @@ class_name Skeleton3DBuilder
 static func build_skeleton3d(skel: BskReader.ParsedSkeleton) -> Skeleton3D:
 	var skeleton := Skeleton3D.new()
 	var world_positions := SkeletonPose.bind_positions(skel)
+	var world_rotations := {}
+	for b in skel.bones:
+		world_rotations[b.bone_name] = SkeletonPose.bone_rotation(b)
 
 	var bone_index := {} # name -> Skeleton3D bone index
 	skeleton.add_bone(skel.root_name) # Skeleton3D.add_bone() returns void; look the index up
 	var root_idx := skeleton.find_bone(skel.root_name)
 	bone_index[skel.root_name] = root_idx
 	skeleton.set_bone_rest(root_idx, Transform3D.IDENTITY)
+	world_rotations[skel.root_name] = Quaternion.IDENTITY
 
 	var remaining: Array[BskReader.Bone] = skel.bones.duplicate()
 	var guard := 0
@@ -54,9 +74,18 @@ static func build_skeleton3d(skel: BskReader.ParsedSkeleton) -> Skeleton3D:
 			skeleton.set_bone_parent(idx, parent_idx)
 			bone_index[b.bone_name] = idx
 
+			# See this file's top comment: rest rotation/position both derive
+			# from each bone's real .bsk world-space bind transform, not
+			# identity -- the local position must be expressed in the
+			# parent's own rotated local frame (parent_world_rot.inverse() *
+			# world delta), not a raw world-space delta, once the parent has
+			# a non-identity rest rotation.
 			var parent_world: Vector3 = world_positions.get(parent_name, Vector3.ZERO)
-			var local_pos: Vector3 = world_positions[b.bone_name] - parent_world
-			skeleton.set_bone_rest(idx, Transform3D(Basis.IDENTITY, local_pos))
+			var parent_world_rot: Quaternion = world_rotations.get(parent_name, Quaternion.IDENTITY)
+			var this_world_rot: Quaternion = world_rotations[b.bone_name]
+			var local_rot: Quaternion = parent_world_rot.inverse() * this_world_rot
+			var local_pos: Vector3 = parent_world_rot.inverse() * (world_positions[b.bone_name] - parent_world)
+			skeleton.set_bone_rest(idx, Transform3D(Basis(local_rot), local_pos))
 			progressed = true
 		remaining = still_remaining
 		if not progressed:

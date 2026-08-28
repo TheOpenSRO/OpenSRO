@@ -2343,34 +2343,28 @@ func _physics_process(delta: float) -> void:
 		Skeleton3DBuilder.apply_ban_keyframe(_real_skeleton, _real_skeleton_track, frame_idx)
 		Skeleton3DBuilder.update_debug_visualization(_real_skeleton.get_node("DebugVisualization"), _real_skeleton)
 
-	# DISABLED (2026-08-26, see docs/WORLD_ISSUES.md) -- a real playtest found
-	# the assembled player body's limbs fly wildly apart the instant this
-	# runs, instead of playing a walk/idle cycle. Root-caused with real data:
-	# apply_ban_pose (via Skeleton3DBuilder.apply_ban_pose) treats a .ban
-	# track's own keyframe[0] rotation as if it equals the bone's rest
-	# rotation the skeleton was built with (Skeleton3DBuilder.build_skeleton3d
-	# uses Basis.IDENTITY for every bone's rest, per that function's own doc
-	# comment -- a real .bsk file's own bind-pose rotation quaternion is
-	# parsed but deliberately not used, since this project never confirmed it
-	# composes the way Skeleton3D's rest hierarchy expects). Pulling a real
-	# chinaman_skel.bsk and chinaman_fighter_standcity.ban and comparing the
-	# two directly confirms they're NOT the same orientation for several real
-	# bones -- e.g. "Bip01 R UpperArm"'s real .bsk bind quaternion is
-	# [0.056,-0.017,-0.062,0.996] (near-identity) but the .ban's own
-	# keyframe[0] for that same bone is [0.142,-0.015,0.534,0.834] (a
-	# substantially different orientation, not a small idle sway). Treating
-	# that mismatched keyframe[0] as the reference for a *delta* rotation
-	# applies a wrong rotation outright, and that error compounds down the
-	# kinematic chain (upper arm -> forearm -> hand), which is exactly why
-	# the arms/hands were the most dramatically displaced in the real
-	# screenshot, not the spine/pelvis. Properly fixing this needs
-	# Skeleton3DBuilder to build each bone's *real* .bsk bind rotation into
-	# its rest transform (not identity) and apply_ban_pose to compute deltas
-	# against that real rest, not against the anim's own frame 0 -- a real
-	# rework, not a one-line patch, so left disabled rather than shipping the
-	# even-more-broken "limbs fly apart" result. The assembled body now stays
-	# in its real (bind-pose, T-stance) pose, the same honest fallback this
-	# code already used whenever idle_anim/walk_anim failed to load.
+	# RE-ENABLED (2026-08-28, see docs/WORLD_ISSUES.md's twenty-eighth round)
+	# -- was disabled 2026-08-26 after a real playtest found the assembled
+	# player body's limbs flying apart the instant this ran, root-caused to
+	# Skeleton3DBuilder.build_skeleton3d using Basis.IDENTITY for every
+	# bone's rest instead of its real .bsk bind rotation. That's now fixed
+	# (see Skeleton3DBuilder's own top comment) and visually re-verified via
+	# real rendered screenshots showing a coherent walking stride, not
+	# exploded limbs -- safe to re-enable. Picks walk_anim/idle_anim (see
+	# is_moving, computed above) the same way _real_skeleton's separate
+	# dev-only demo path already picks its one fixed animation, using the
+	# same BAN_FPS playback-rate engineering guess (not reverse-engineered
+	# real timing).
+	if _player_skeleton != null and _character_assets.has(_player_gender):
+		var assets: Dictionary = _character_assets[_player_gender]
+		var anim: BanReader.ParsedAnimation = assets["walk_anim"] if is_moving else assets["idle_anim"]
+		if anim != null and not anim.bones.is_empty():
+			_player_anim_time += delta
+			var ref_track: BanReader.Bone = anim.bones[0]
+			if not ref_track.keyframes.is_empty():
+				var frame_count := ref_track.keyframes.size()
+				var frame_idx := int(_player_anim_time * BAN_FPS) % frame_count
+				Skeleton3DBuilder.apply_ban_pose(_player_skeleton, anim, frame_idx)
 
 func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, armor_slots_mask: int = 0, gender: String = DEFAULT_GENDER, has_weapon: bool = false, has_shield: bool = false) -> void:
 	if _other_bodies.has(character_id):
