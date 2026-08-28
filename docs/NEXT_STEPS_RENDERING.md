@@ -28,14 +28,16 @@ speculation, it's a consolidation of gaps already found and flagged as open.
 
 ## Character rendering
 
-- **The front/back texture-swap bug (reported, not resolved).** A real user report described
-  seeing the front of a texture through the back and vice versa. The alpha-cutout/backface-culling
-  fix made this session was real and correct on its own terms, but checking the actual materials in
-  use (`chinaman_warrior.bmt`, `clothes_03.bmt`, etc.) showed they're DXT1 with no alpha channel at
-  all — so that fix cannot be the explanation for this specific symptom. The real mechanism is
-  still unknown. Likely candidates worth checking against real data before guessing further:
-  winding order / normal direction on the real `.bms` mesh data, and whether `ObjectLoader`'s
-  UV or normal transform matches the real coordinate convention Joymax's own format uses.
+- **The front/back texture-swap bug (reported, still not resolved).** A real user report described
+  seeing the front of a texture through the back and vice versa. Three real causes checked and
+  ruled out so far (2026-08-28, see `docs/WORLD_ISSUES.md`'s twenty-fifth round for detail): the
+  alpha-cutout/backface-culling fix (materials in use are DXT1, no alpha channel); reversed
+  triangle winding vs. stored normals (checked directly against a real `woman_torso_upper.bms`
+  sample — 156/156 triangles consistent, avg dot 0.97); a negative-scale mirror transform anywhere
+  in the character pipeline (none exists in code). Not yet checked: a subtle per-vertex field
+  misalignment in `BmsReader`'s stride/offset handling that wouldn't trigger its existing
+  NaN/unit-length self-check but could still silently swap which UV pairs with which position for
+  some vertices — the next thing to check with real data before guessing further.
 - **No real per-species monster models** — monsters are still a plain colored capsule
   (`_spawn_or_update_monster`), explicitly flagged in its own doc comment as "no real monster
   model/skeleton mapping has been found or attempted yet." Real monster `.bsk`/`.ban`/`.bmt` data

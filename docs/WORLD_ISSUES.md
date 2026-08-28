@@ -789,3 +789,35 @@ zone's real texture set is possible in principle, and the fallback is honest, no
 `feedback_no_unverified_assumptions`), but it isn't currently firing anywhere in either real zone.
 No code change made -- this item is closed as "checked, confirmed fine," not fixed, since there was
 nothing real to fix.
+
+## 2026-08-28, twenty-fifth round — front/back texture-swap: two more causes ruled out, still unsolved
+
+Third item off `docs/NEXT_STEPS_RENDERING.md`. The alpha-cutout/backface-culling fix earlier this
+session was already confirmed not to explain this (the real materials in use are DXT1, no alpha).
+Investigated two more concrete, checkable hypotheses this round, both real code-level checks, not
+guesses:
+
+1. **Reversed triangle winding order.** Pulled a real sample (`Prim\Mesh\Char\China\woman\
+   woman_torso_upper.bms`, the actual body part matching the reported symptom, extracted
+   temporarily to a scratchpad outside the repo and deleted immediately after use) and wrote a
+   one-off headless GDScript check using the existing, already-tested `BmsReader`: for every real
+   triangle, compute the geometric face normal from its winding order (`(p1-p0).cross(p2-p0)`) and
+   compare it against the real stored per-vertex normal average. **Result: 156/156 triangles
+   consistent, average dot product 0.97** -- the real winding order already matches Godot's CCW
+   front-face convention almost exactly. Ruled out.
+2. **A negative-scale "mirror" transform somewhere in the character pipeline** (a common technique
+   that flips effective winding globally even when local mesh data is internally consistent, e.g. a
+   `Vector3(-1,1,1)` scale used instead of a proper 180-degree rotation). Grepped
+   `character_assembler.gd`, `skeleton3d_builder.gd`, `object_loader.gd`, and `World3D.gd`'s
+   character-attach code for any such pattern -- none exists. The player's own facing rotation
+   (`atan2` in click-to-move) is a real rotation, not a scale, so it can't flip winding either.
+   Ruled out.
+
+Real mechanism still unconfirmed. Two candidates not yet checked: a subtle per-vertex field
+misalignment in `BmsReader`'s stride/offset handling that doesn't produce NaN (so wasn't caught by
+the existing self-validating unit-length-normal check) but silently swaps which UV/normal pairs
+with which position for some vertices; or something specific to how `CharacterAssembler` splits and
+attaches mirrored paired body parts (though the reported symptom was on the torso, an unpaired
+part, per its own doc comment -- worth double-checking that claim against real data too, since real
+`Data.pk2` actually splits torso into `_upper`/`_lower` pieces, not the single unpaired piece the
+existing top-of-file comment describes). Left open rather than guessed at further.

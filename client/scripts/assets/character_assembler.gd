@@ -18,8 +18,13 @@ class_name CharacterAssembler
 ## man_thigh.bms directly: vertex 0 at x=+0.872 and vertex 23 at x=-0.872
 ## are exact mirrors, with no per-vertex tag distinguishing them --
 ## splitting by which side of x=0 a triangle's centroid falls on is the
-## only distinguishing signal found). Unpaired parts (pelvis, torso) are
-## one piece, one bone, no split needed.
+## only distinguishing signal found). Unpaired parts (pelvis) are one
+## piece, one bone, no split needed -- **corrected 2026-08-28**: this used
+## to also claim torso was a single unpaired piece, but a real check of
+## `Data.pk2` (`Prim\Mesh\Char\China\<gender>\<gender>_torso_upper.bms` /
+## `_torso_lower.bms`) found it's actually two unpaired pieces, each its
+## own single bone (`Bip01 Spine`/`Bip01 Spine1` -- see the map below,
+## which already handled this correctly; only this comment was stale).
 ##
 ## Rigid attachment math: each body-part mesh's vertex positions are baked
 ## in real absolute character-space coordinates (the same "no extra
