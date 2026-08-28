@@ -9,11 +9,10 @@ speculation, it's a consolidation of gaps already found and flagged as open.
 
 ## Terrain
 
-- **Ground textures are real but not confirmed complete.** `_load_real_ground_textures` pulls per-
-  quad textures from `Map.pk2`'s `Tile2D\` folder when at least one real texture ID resolves — but
-  the fallback for any tile whose ID *doesn't* resolve is still a flat color, not a texture. No
-  audit has been done recently on what fraction of a real zone's tiles actually get real texture
-  vs. fallback color after all the scale/spawn fixes landed.
+- ~~Ground-texture completeness audit~~ — done 2026-08-28: both real zones this project renders
+  (Jangan `89/182`, Dunhuang `98/157`) resolve **100%** of their real per-vertex texture IDs to a
+  real `Tile2D\` file. The flat-color fallback path is correct to keep but isn't currently firing
+  anywhere real. Not a rendering gap after all.
 - **The `.t` lightmap is wired in as ambient occlusion**, which is directionally correct but is a
   real engineering approximation, not a faithful reproduction of how the original client uses it —
   worth a side-by-side comparison against a real client screenshot once one is available.
@@ -80,8 +79,8 @@ playtest screenshot so far:
 
 1. ~~Sky (skybox instead of flat color)~~ — done 2026-08-28, first-pass approximation using real
    textures; needs a real screenshot check and revisit once one's available.
-2. Ground-texture completeness audit — confirm real texture coverage vs. flat-color fallback rate
-   across a real zone.
+2. ~~Ground-texture completeness audit~~ — done 2026-08-28, both real zones are 100% covered,
+   nothing to fix.
 3. Front/back texture-swap root cause — a real, reported visual bug with no explanation yet.
 4. Real monster models (replacing the placeholder capsule).
 5. Weather/water polish, per-zone lighting, remaining animation states.

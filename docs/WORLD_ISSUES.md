@@ -760,3 +760,32 @@ boot both clean, no parse/runtime errors. Gated entirely behind `SRREVAMP_MAP_PK
 `pk2/Map.pk2`, same as every other real-asset loader in this file -- falls back to the original flat
 color with no clouds/sun if unset or the real files aren't found. Not yet visually verified against
 a real playtest screenshot -- needs a real retest.
+
+## 2026-08-28, twenty-fourth round — ground-texture coverage audited, confirmed 100%, no fix needed
+
+Second item off `docs/NEXT_STEPS_RENDERING.md`: an open question, not a reported bug --
+`_load_real_ground_textures` falls back to a flat `TileType` color for any real per-vertex texture
+ID that doesn't resolve to a real `Tile2D\` file, and no one had checked how often that fallback
+actually fires in a real zone since the scale/spawn fixes landed.
+
+Built a real one-off Go audit tool (`server/cmd/audittile2d_scratch`, deleted after use per the
+no-persisted-real-assets policy) reusing the existing, already-tested `internal/mapm` and
+`internal/pk2` packages plus a small new `tile2d.ifo` text parser (the format is plain ASCII per
+`docs/protocol/TILE2D_FORMAT.md`, not binary, so no new binary-parsing risk). For each real
+per-vertex `TextureInfo.ID` in a region, it checks (a) whether `tile2d.ifo` has an entry for that ID
+at all, and (b) whether the resolved filename is an actual real file inside `Map.pk2\Tile2D\`.
+
+Ran against both real zones this project has wired up:
+
+- Jangan (region `89/182`): 10,404 vertices, 22 distinct real texture IDs used -- **22/22 (100%)**
+  resolve to a real `tile2d.ifo` name, and **22/22 (100%)** of those real files actually exist in
+  `Map.pk2\Tile2D\`.
+- Dunhuang (region `98/157`): 10,404 vertices, 8 distinct real texture IDs used -- same result,
+  **8/8 (100%)** resolved and present.
+
+Real conclusion: ground-texture coverage for both zones this project actually renders is complete.
+The flat-color fallback path exists and is correct to keep (a texture ID genuinely outside a real
+zone's real texture set is possible in principle, and the fallback is honest, not fabricated -- see
+`feedback_no_unverified_assumptions`), but it isn't currently firing anywhere in either real zone.
+No code change made -- this item is closed as "checked, confirmed fine," not fixed, since there was
+nothing real to fix.
