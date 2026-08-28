@@ -2,6 +2,83 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-08-19 to 2026-08-27 (this session) — real-scale fix, camera/spawn bugs, downloadable-client infra
+
+A long playtest-driven session covering both real content bugs found from OpenSRO/OpenSRO's own
+downloaded builds and new release/distribution infrastructure. Full root-cause detail for every
+bug lives in `docs/WORLD_ISSUES.md` (rounds "twelfth" through "twenty-second"); this entry is the
+index/summary.
+
+**Content and asset work:**
+- Full asset-taxonomy scan of `Data.pk2`/`Map.pk2` found several entire unused real content
+  systems: `Water\` (30-frame animated flip-book), `SkyBox\`, `Weather\` (rain/snow/smog), `Sun\`,
+  `Dungeon\` (a separate instanced-map system), `Res\pet2\` (companion pets) — only water has been
+  implemented so far (see below); the rest remain real, confirmed, unimplemented content.
+- Implemented real animated water (`MapmTerrainBuilder.build_water_mesh`/`build_full_region_water_mesh`
+  + `World3D._load_real_water_animation`) for WATER/DEEP_WATER tiles.
+- Removed every hand-invented visual-tuning constant found in the codebase per an explicit
+  standing directive (see `feedback_no_unverified_assumptions` project memory): fabricated
+  per-`TileType` terrain colors, a fabricated character skin-tone fallback, and (after a live
+  playtest showed it washing out the whole scene) a guessed fog density — all replaced with either
+  a single honest neutral-gray placeholder or removed outright, never re-guessed.
+- Fixed a real over-broad alpha-cutout/backface-culling heuristic (`ObjectLoader`) that used DXT3/
+  DXT5 compression format alone as a proxy for "has real alpha" — now decodes actual pixel data.
+  Real materials checked directly (`chinaman_warrior.bmt` etc.) are DXT1 with no alpha channel at
+  all, so this fix, while real, was **not** confirmed to explain the reported front/back
+  texture-swap symptom — that mechanism remains unexplained.
+- **"Size of ants" character scale, fixed with real measurement:** the player/monster/other-player
+  scale had been a hand-picked `1.8` units, never checked against the environment. Measured the
+  real native character height directly via forward-kinematics over a real `.bsk`'s bind pose:
+  **138.7 units** — the same order of magnitude as real measured buildings (~44-140 units).
+  Introduced `PLAYER_SCALE_RATIO` (138.7/1.8 ≈ 77.06) and rescaled every player-relative constant
+  (movement speed, gravity, placeholder capsule sizes, click-to-move thresholds, etc.) by it.
+- **Camera-distance regression, fixed:** blanket-rescaling camera-zoom constants by
+  `PLAYER_SCALE_RATIO` was wrong (camera distance is about environment scale, not character
+  height) and produced a real, screenshot-confirmed near-orbital view of all of Jangan. Re-derived
+  zoom constants directly against real building scale instead.
+- **Overlapping giant monster capsules at spawn, fixed:** the server's own placeholder monster
+  spawn coordinates (`server/cmd/server/main.go`'s `monsterSpecs`, explicitly its own design
+  anchors, not real per-monster data) were never rescaled after the character-scale fix — two
+  Jangan monsters ended up within one capsule-width of each other and of the player's own
+  `(0,0,0)` spawn. Respaced them to real distances consistent with measured building scale. This
+  fix is **server-side** and needs a real server redeploy to take effect (not shipped by a client
+  release alone — **still outstanding as of the end of this session**).
+- **Camera not centered / unplayable zoom range, fixed:** `CAMERA_ZOOM_MIN` (60) was geometrically
+  too close for the camera's own real vertical FOV (Godot's default 75°) to frame the full 138.7-unit
+  character — verified via real trigonometry, not a guess. Re-derived to 120. `CAMERA_ZOOM_MAX`
+  lowered from a confirmed-unplayable 400 to 240. Also fixed orbit-drag permanently leaving the
+  camera off-center by adding auto-recenter toward the scene's authored default angle whenever the
+  player moves and isn't actively orbiting.
+
+**Release/distribution infrastructure (new this session):**
+- Built a real auto-updater (`client/scripts/update/update_checker.gd` + `auto_updater.gd`):
+  checks GitHub Releases on boot, prompts (never silently applies) if a newer tag exists,
+  downloads/extracts/relaunches while preserving the player's own `pk2/` folder. Supports a
+  private repo via an embedded read-only PAT, injected at release-build time from a real
+  `UPDATE_CHECK_TOKEN` GitHub Actions secret (never committed). **Not yet live-verified
+  end-to-end against a real published release** — flagged honestly, still a real gap.
+  `CLIENT_VERSION` is also injected at release-build time from the pushed tag.
+- Added LAN play support: a server-address field on the login screen (`Login.gd`/`Login.tscn`)
+  so a friend on the same network can type an IP:port instead of a hardcoded `127.0.0.1`.
+  Confirmed the Go server/Docker setup already bind to all interfaces; Windows Firewall is the
+  likely remaining blocker for LAN peers, not app config.
+- Repo visibility: went public briefly then back to private after a collaborator hit a real
+  GitHub `GH007` push-email-privacy error; settled on staying private with the embedded
+  read-only PAT approach above instead.
+- Cut and published real version tags `v0.1.0` through `v0.1.5`, each via the `Release client`
+  GitHub Actions workflow (`.github/workflows/release.yml`), producing
+  `srrevamp-windows.zip`/`srrevamp-linux.zip` release assets.
+- Fixed a real dropped-connection bug (`NetClient` polling a closed socket forever) and real
+  other-player movement stutter (added client-side interpolation instead of an unscoped "64 tick
+  server" ask — see `OPENSROS-THOUGHTS.md`, still not started).
+
+**Explicitly still open at the end of this session** (see the new "Next steps" doc,
+`docs/NEXT_STEPS_RENDERING.md`, for the big one): getting the map and character to actually look
+like the real game, not just be correctly scaled/positioned. Also open: server redeploy for the
+monster-spawn fix; live end-to-end auto-updater verification; OpenSRO's two architecture asks
+(connection-state-gated input, horizontally-scalable server); the Jangan gate open/closed question;
+the front/back texture-swap mechanism.
+
 ## 2026-08-26 — real playtest bug fixes: WASD, camera, click-blocked HUD, renderer, load time
 
 OpenSRO ran the actual downloaded exe from the previous session's release build with his own real

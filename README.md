@@ -20,8 +20,11 @@ Every tagged release publishes ready-to-run Windows and Linux client builds unde
    BYO game assets, see [docs/LEGAL.md](docs/LEGAL.md)) into the `pk2` folder sitting next to the
    executable. No environment variables or config editing needed — the client looks in that folder
    automatically (see `Pk2Config` in `client/scripts/assets/pk2_config.gd`).
-3. Run the executable. It connects to a server the same way the editor build does (see
-   `client/scripts/Login.gd` for the default address).
+3. Run the executable. On boot it checks GitHub Releases for a newer tagged build and offers an
+   opt-in update (never applied silently) before continuing to the login screen — see
+   `client/scripts/update/auto_updater.gd`. At login, type the server's address (`host` or
+   `host:port`, defaults to `127.0.0.1:15779`) into the "Server IP[:port]" field — useful for
+   connecting to a friend's server on the same LAN instead of your own machine.
 
 **Controls**: WASD/arrow keys walk directly, or left-click a spot on the ground to walk there.
 Right-click-drag orbits the camera around your character; the scroll wheel zooms. Press **F10** (or
