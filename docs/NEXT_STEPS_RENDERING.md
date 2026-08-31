@@ -28,16 +28,15 @@ speculation, it's a consolidation of gaps already found and flagged as open.
 
 ## Character rendering
 
-- **The front/back texture-swap bug (reported, still not resolved).** A real user report described
-  seeing the front of a texture through the back and vice versa. Three real causes checked and
-  ruled out so far (2026-08-28, see `docs/WORLD_ISSUES.md`'s twenty-fifth round for detail): the
-  alpha-cutout/backface-culling fix (materials in use are DXT1, no alpha channel); reversed
-  triangle winding vs. stored normals (checked directly against a real `woman_torso_upper.bms`
-  sample — 156/156 triangles consistent, avg dot 0.97); a negative-scale mirror transform anywhere
-  in the character pipeline (none exists in code). Not yet checked: a subtle per-vertex field
-  misalignment in `BmsReader`'s stride/offset handling that wouldn't trigger its existing
-  NaN/unit-length self-check but could still silently swap which UV pairs with which position for
-  some vertices — the next thing to check with real data before guessing further.
+- ~~The front/back texture-swap bug~~ — **SOLVED 2026-08-31** (see `docs/WORLD_ISSUES.md`'s
+  thirty-first round). Not a mesh/data bug at all — proved the real mesh/UV data is 100% correct
+  via a real textured render (+Z shows real abs/chest texture, -Z shows real spine/shoulder-blade
+  texture, exactly where each belongs). The actual cause: the default (non-orbited) camera sat on
+  the character's *front* side instead of behind them, because `CameraArm`'s baseline yaw (0) put
+  it on the same side `atan2(dir.x, dir.z)` faces the character's real front toward. Fixed by
+  changing `CameraArm.rotation_degrees` to `(-42, 180, 0)` and updating `DEFAULT_CAMERA_YAW_DEGREES`
+  to match. Live-verified: re-rendering from the exact fixed camera direction shows the real back,
+  confirming standard third-person framing.
 - **No real per-species monster models — scoped 2026-08-28, not yet implemented.** Confirmed real
   `.bsr`/`.bsk`/`.bmt` data exists for Stone Golem and Sand Scorpion (the two of this project's
   three spawned monsters that map to a real creature at all — "Wild Boar" has no real match, see
@@ -111,6 +110,6 @@ playtest screenshot so far:
 3. ~~Object-placement completeness audit~~ — done 2026-08-31, both zones 100% covered.
 4. ~~Real day/night environment-lighting~~ — done 2026-08-31, real public channel names found and
    wired into the sky's top/bottom colors. Not yet visually verified in a live render.
-5. Front/back texture-swap root cause — a real, reported visual bug with no explanation yet.
+5. ~~Front/back texture-swap root cause~~ — SOLVED 2026-08-31, a camera yaw bug, not a mesh bug.
 6. Real monster models (replacing the placeholder capsule).
 7. Weather polish, remaining animation states.

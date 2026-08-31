@@ -191,7 +191,20 @@ const CAMERA_ZOOM_MAX := 240.0
 ## actively orbiting, the same auto-realign behavior most third-person
 ## MMO cameras use.
 const DEFAULT_CAMERA_PITCH_DEGREES := -42.0
-const DEFAULT_CAMERA_YAW_DEGREES := 0.0
+## **Corrected 2026-08-31** (see docs/WORLD_ISSUES.md's thirty-first round):
+## was 0.0, matching the scene's old CameraArm yaw -- both were real,
+## confirmed wrong. rotation.y = atan2(dir.x, dir.z) (this file's own
+## movement code) makes the player's local *+Z* face the movement
+## direction, confirmed via a real textured render of the assembled
+## character to be the character's real anatomical *front* (chest/abs
+## texture, not spine). The old CameraArm pushed to that same local +Z with
+## zero added yaw, meaning the default (non-orbited) camera sat on the
+## character's *front* side, not behind them -- backwards from the
+## intended over-the-shoulder third-person convention, and the real root
+## cause of the "front/back texture swap" report (the user was already
+## looking at the real front by default; rotating further showed the real
+## back). 180.0 puts the camera on the correct side.
+const DEFAULT_CAMERA_YAW_DEGREES := 180.0
 const CAMERA_RECENTER_DEGREES_PER_SECOND := 120.0
 ## How close player must get to a click-to-move target before it's
 ## considered reached and cleared -- without this, the player would

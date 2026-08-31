@@ -1053,3 +1053,57 @@ and unit-tested, and the real color values were independently validated via the 
 (twenty-ninth round) before this was wired in, but no screenshot comparing before/after has been
 taken. Same honest scope as the original sky implementation itself when it shipped -- needs a real
 playtest.
+
+## 2026-08-31, thirty-first round — SOLVED: the real front/back texture-swap root cause
+
+Picked back up the last item on the character-rendering list: the reported "front shows the back
+texture and vice versa" bug, previously narrowed down (twenty-fifth round) by ruling out the
+alpha-cutout fix, reversed triangle winding, and a negative-scale mirror transform -- all real
+checks, none of them the cause. This round found and fixed the actual cause, and it turned out to
+be a camera bug, not a mesh/data bug at all.
+
+**Step 1 -- proved the mesh data itself is 100% correct.** Pulled real `chinaman_skel.bsk`, all 7
+real body-part `.bms` files, and the real `chinaman_warrior_body.ddj` texture (matched via the real
+`material_name` "chinaman_body", per `BMT_FORMAT.md`). Built a one-off headless render tool (not
+kept) that assembles the real character with the real texture applied and renders it from four
+straight-on directions (+Z/-Z/+X/-X). The real texture makes this unambiguous: **+Z shows real abs/
+pecs/belly-button texture (the front); -Z shows a real spine groove and shoulder-blade X-pattern
+(the back)** -- exactly where each belongs, no swap, no duplication. This conclusively rules out any
+`BmsReader`/UV-mapping bug, closing the "subtle field misalignment" hypothesis flagged as
+unchecked in the twenty-fifth round.
+
+**Step 2 -- found the real bug: the default camera sits on the character's front side, not
+behind them.** Traced the actual chain with real derived math (verified via a small headless
+Godot check, not hand-waved): `player.rotation.y = atan2(dir.x, dir.z)` (this project's own
+click-to-move code) rotates the player so local **+Z** points toward the movement direction --
+confirmed via step 1 to be the character's real anatomical *front*. Meanwhile `CameraArm`'s
+authored baseline (`rotation_degrees = Vector3(-42, 0, 0)`, no yaw component) pushes the camera to
+that *same* local +Z direction with zero added yaw. Since `CameraArm` is a child of `Player` and
+inherits its yaw, the camera and the character's front end up on the *same* side: the default,
+non-orbited camera was showing the character's face, not their back -- backwards from the intended
+over-the-shoulder third-person convention this project has been building toward all session. The
+earlier "FPS-like camera" fix (2026-08-26) correctly validated the *pitch* sign (above vs. below,
+confirmed via a real SpringArm3D probe) but never checked the *yaw* baseline against the character's
+own real facing convention, since that data didn't exist yet at the time.
+
+This exactly explains the original report: the user was already looking at the real front by
+default (a static idle character doesn't obviously scream "you're staring at a face" from a
+distance), and rotating the camera further away from that starting point revealed the real back --
+matching "when I rotate to the front, I just see the back" precisely, with no mesh bug involved at
+all.
+
+**Fix**: `World3D.tscn`'s `CameraArm.rotation_degrees` changed from `(-42, 0, 0)` to `(-42, 180, 0)`.
+`World3D.gd`'s `DEFAULT_CAMERA_YAW_DEGREES` (the auto-recenter target added 2026-08-27) updated from
+`0.0` to `180.0` to match, so recentering-after-orbit converges to the corrected side instead of
+fighting it back to the old wrong one.
+
+**Live-verified, not just derived.** Re-rendered the real textured character from the exact fixed
+camera offset direction (`(0, 0.669, -0.743)`, computed the same way `World3D.gd` computes it) --
+the resulting image shows the real back (spine/shoulder-blade texture), confirming the fix produces
+the intended standard third-person view. Both this render and the two straight-on reference renders
+were inspected directly, not assumed.
+
+Full verification: all 43 real GDScript test suites pass, `godot4 --headless --path . --import
+--quit` and a headless `--quit-after 60` boot both clean. All pulled real samples (skeleton, body
+parts, texture) and the one-off render tool deleted after use, per the no-persisted-real-assets
+policy.
