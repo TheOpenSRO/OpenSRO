@@ -961,3 +961,43 @@ headless `--quit-after 60` boot. The isolated-test screenshots that justified th
 and inspected directly, not assumed -- but the fix's effect on the *live, in-game* assembled
 character (with real equipment/weapon attachments layered on top, not just a bare skeleton) hasn't
 been seen in an actual playtest yet. Needs a real retest.
+
+## 2026-08-31, twenty-ninth round — map-focused pass: object-placement audit (clean) + a real day/night cycle table found
+
+Refocused on map rendering specifically per request. Two real findings:
+
+**Object-placement completeness audit** (same method as the twenty-fourth round's ground-texture
+audit): built a real Go tool mirroring `World3D.gd`'s exact real placement pipeline (`.o` file's
+`TypeID` → `navmesh\object.ifo` real path lookup → real file existence in `Data.pk2`), run against
+both real zones. Jangan (`89/182`): 294 real placements, 54 distinct type IDs, **100%** resolve to a
+real path and a real existing file. Dunhuang (`98/157`): 91 real placements, 6 distinct type IDs,
+**100%** resolved. Neither zone comes remotely close to the client's `MAX_MAP_OBJECTS := 2000` cap.
+Object placement is not a source of missing map content -- closed as "checked, confirmed fine," same
+outcome as the ground-texture audit. (Scope note: this checks that the referenced `.bsr` file
+*exists*, not that `ObjectLoader.load_object()` fully succeeds parsing it and every sub-resource it
+references -- a deeper check than this round attempted, similar in spirit to how the ground-texture
+audit only checked file existence, not full DDS decode success.)
+
+**`environment.ifo` re-examined with real per-zone data** -- see `docs/protocol/ENVIRONMENT_FORMAT.md`'s
+2026-08-31 update for full detail. This format was already fully parsed (both a GDScript and Go
+reader exist, tested) but never wired into rendering because its 16 channels' semantic meaning was
+marked entirely unconfirmed. Checked which real `EnvironmentID` each zone's `.m` blocks actually
+reference: Jangan (`89/182`, all 36 blocks) → `Key=15`/`"Env7"`; Dunhuang (`98/157`, all 36 blocks) →
+`Key=1`/`"Env1"` -- confirming this really is per-zone data, not a single unused global constant.
+Within each record, the channel data shows an unmistakable pattern: every 4-float channel's groups
+have a 4th value that's a real, monotonically increasing 0→1 sequence (a clean time-of-day axis),
+and the RGB values at each point trace a real day arc -- dark/near-black at `t=0` (night), warm and
+saturated near `t=0.25` (sunrise), bright/white near `t=0.5` (midday), warm again near `t=0.75`
+(sunset), back to the identical `t=0` value at `t=1` (a real seamless loop). The two zones' actual
+colors differ in a real, biome-appropriate way (Jangan peaks near pure white at midday; Dunhuang's
+equivalent peaks warmer/dustier, consistent with a desert zone) while sharing the exact same
+structural shape. Strong enough to call this a real day/night lighting-cycle table with real
+per-zone palettes -- **not** wired into rendering, though, since which specific channel maps to
+which specific Godot rendering concept (sky color vs. horizon vs. fog vs. directional-light tint)
+is still genuinely ambiguous from the data shape alone, and guessing that specific mapping is
+exactly the kind of unfounded logic this project's standing rule exists to prevent. Logged as a
+real, much-higher-confidence future win (likely the single most impactful real map-rendering
+feature left, more so than the current sky approximation), not implemented on a guess.
+
+No code changed this round -- both findings are audit/research results (one confirms no bug exists,
+the other raises confidence on a real future feature without acting on unconfirmed specifics).

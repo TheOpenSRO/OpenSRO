@@ -92,6 +92,47 @@ holds), but **no per-channel semantic meaning is confirmed** (e.g. "channel 0 is
 color") — this project does not assign channel names or wire this data into rendering, to avoid
 overclaiming a specific interpretation this project can't verify.
 
+### Update 2026-08-31: strong evidence this is a real day/night color-keyframe cycle
+
+Checked the real records the two zones this project actually renders reference (via each zone's
+real `.m` per-block `EnvironmentID`, cross-referenced against `environment.ifo`'s real `Key` field):
+Jangan (`89/182`, all 36 blocks) uses `Key=15` (`Name1="Env7"`); Dunhuang (`98/157`, all 36 blocks)
+uses `Key=1` (`Name1="Env1"`) — **confirming different zones really do reference different real
+records**, i.e. this genuinely is per-zone (not a single global constant), settling
+`TILE2D_FORMAT.md`'s and this file's own earlier "per-block/per-zone lighting, unconfirmed whether
+it's used" question.
+
+Within each of those two real records, the pattern across the 4-float channels (0-6, 9, 13-14) is
+unmistakable, not a coincidence:
+
+- Every group's 4th value is a real, monotonically increasing number from `0.0` to `1.0` (Jangan's
+  channel 0: `0, 0.25, 0.50, 0.667, 0.75, 0.88, 1.0`) — consistent with a normalized time-of-day
+  axis, not an arbitrary index.
+- The first 3 values at each of those points trace a real, recognizable daily color arc: dark
+  blue/near-black at `t=0` (night) → a warm, saturated tint around `t=0.25` (sunrise) → white/bright
+  around `t=0.5` (midday) → warm again around `t=0.75` (sunset) → back to the same dark value at
+  `t=1` (a real seamless loop back to night — the `t=0` and `t=1` groups are identical in every
+  channel checked).
+- The two zones' actual RGB values differ in exactly the way two different real biomes would (Jangan
+  channel 4 peaks near pure white at midday; Dunhuang's equivalent peaks warmer/dustier, consistent
+  with a desert zone), while sharing the identical structural shape (same keyframe count, same `t`
+  progression) — real per-zone *palette*, shared *mechanism*.
+
+This is strong enough to call it a real day/night lighting-cycle table with real per-zone color
+palettes, not just "consistent with" one. **Still not confirmed**, and deliberately not escalated
+further than that: which specific channel maps to which specific Godot-side concept (sky top vs.
+horizon vs. fog tint vs. directional-light color vs. ambient) is genuinely ambiguous from the data
+shape alone — several channels have very similar day-arc shapes, and assigning "channel 1 = sky
+color" vs. "channel 4 = sun color" without a stronger real signal (the original renderer's own
+source, or a decompiled fact about which channel index a specific rendering call reads) would be
+exactly the kind of unfounded, guessed-channel-mapping this project's own standing rule exists to
+prevent. The 2-float channels (7-8, 10-12, 15) plausibly hold non-color scalar tracks over the same
+real time axis (e.g. channel 7's `[-1..-0.3]` range across the day, channel 11's flat `1.0`
+throughout) but are even less determinable without more real evidence.
+
+Not wired into rendering this round for that reason — logged as a real, much higher-confidence
+future win than before, not implemented on a guess.
+
 ## Unparsed trailer: a real "Root(Environment)" tree
 
 The real per-record data (74 records) ends at byte offset 73,484 of the one real 76,000-byte sample

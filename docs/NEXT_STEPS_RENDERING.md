@@ -70,13 +70,24 @@ speculation, it's a consolidation of gaps already found and flagged as open.
 
 ## Objects and world dressing
 
-- **Object placement (`.o`/`.o2`) is real and positioned correctly** (absolute coordinates, real
-  per-object rotation, `.cpd` compound sub-objects, all solved in the 2026-08-24 rounds) — but no
-  recent audit has checked how many of a real zone's placed objects actually resolve to a real
-  model vs. being silently skipped for an unmapped `type_id`.
-- **Lighting is a single global `DirectionalLight3D` with a hand-set angle** — real Silkroad zones
-  likely have per-zone lighting/time-of-day data (this hasn't been investigated at all; unknown
-  whether it exists in the real data or whether the original client hardcodes it too).
+- ~~Object-placement completeness audit~~ — done 2026-08-31: both real zones resolve **100%** of
+  their real placements to a real, existing model file. Not a rendering gap (see
+  `docs/WORLD_ISSUES.md`'s twenty-ninth round). Caveat: only checked that the referenced file
+  *exists*, not that it fully parses through every sub-resource — a deeper check nobody's done yet.
+- **Lighting is a single global `DirectionalLight3D` with a hand-set angle — and there's now strong
+  real evidence this is the single biggest remaining map-rendering gap.** `environment.ifo` (fully
+  parsed, readers already exist in both GDScript and Go, just never wired into rendering) is real
+  per-zone data: Jangan and Dunhuang reference different real records, and each record's channel
+  data traces an unmistakable real day/night color-keyframe cycle (dark at night, warm at sunrise/
+  sunset, bright at midday, real per-zone color palettes — desert-appropriate for Dunhuang, brighter
+  for Jangan). See `docs/protocol/ENVIRONMENT_FORMAT.md`'s 2026-08-31 update and
+  `docs/WORLD_ISSUES.md`'s twenty-ninth round for the full evidence. **Not implemented**: which of
+  the 16 channels maps to which specific rendering concept (sky/horizon/fog/sun tint) is still
+  genuinely ambiguous from the data alone — wiring this in without more real evidence (ideally a
+  decompiled fact about which channel index the original renderer actually reads for which purpose)
+  would be exactly the kind of guessed mapping this project avoids. This is now the highest-real-
+  confidence, highest-visual-impact item left on this whole list — worth prioritizing RE effort on
+  the channel-semantics question specifically if the sky/lighting look needs to improve further.
 
 ## How to make progress here without violating the "no assumptions" rule
 
@@ -97,6 +108,11 @@ playtest screenshot so far:
    textures; needs a real screenshot check and revisit once one's available.
 2. ~~Ground-texture completeness audit~~ — done 2026-08-28, both real zones are 100% covered,
    nothing to fix.
-3. Front/back texture-swap root cause — a real, reported visual bug with no explanation yet.
-4. Real monster models (replacing the placeholder capsule).
-5. Weather/water polish, per-zone lighting, remaining animation states.
+3. ~~Object-placement completeness audit~~ — done 2026-08-31, both zones 100% covered.
+4. **Real day/night environment-lighting channel semantics** — new top map-rendering priority as of
+   2026-08-31. High real confidence a day/night cycle table exists and is per-zone; needs more RE
+   work (ideally a decompiled fact, not more pattern-matching) on which channel means what before
+   it can be wired in without guessing.
+5. Front/back texture-swap root cause — a real, reported visual bug with no explanation yet.
+6. Real monster models (replacing the placeholder capsule).
+7. Weather polish, remaining animation states.
