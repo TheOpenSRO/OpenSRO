@@ -89,6 +89,47 @@ func _init() -> void:
 		_check(r1.name2 == "Second", "record 1 name2 matches (got %s)" % r1.name2)
 		_check(r1.channels[0].size() == 3, "record 1 channel 0 has 3 real groups (got %d)" % r1.channels[0].size())
 
+	# sample_color_channel: a real-shaped record where channel 0 (SunColor)
+	# has 3 real keyframes at t=0 (red), t=0.5 (green), t=1 (blue) -- every
+	# other channel gets 1 dummy group so parse() has something to read.
+	var sample_buf := PackedByteArray()
+	sample_buf.append_array("JMXVENVI1003".to_ascii_buffer())
+	_append_u32(sample_buf, 1)
+	_append_u16(sample_buf, 0)
+	sample_buf.append(1) # key
+	sample_buf.append(0) # pad
+	_append_str(sample_buf, "TestEnv")
+	_append_str(sample_buf, "")
+	_append_u32(sample_buf, 0) # reserved
+	for ch_idx in range(EnvironmentReader.CHANNEL_GROUP_FLOATS.size()):
+		var group_floats: int = EnvironmentReader.CHANNEL_GROUP_FLOATS[ch_idx]
+		if ch_idx == EnvironmentReader.CHANNEL_SUN_COLOR:
+			_append_u32(sample_buf, 3)
+			for group in [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.5], [0.0, 0.0, 1.0, 1.0]]:
+				for v in group:
+					_append_float(sample_buf, v)
+		else:
+			_append_u32(sample_buf, 1)
+			for _k in range(group_floats):
+				_append_float(sample_buf, 0.0)
+	var sample_parsed := EnvironmentReader.parse(sample_buf)
+	_check(sample_parsed != null, "parses the sample_color_channel test file")
+	if sample_parsed != null:
+		var rec: EnvironmentReader.Record = sample_parsed.records[0]
+		var c_start := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_SUN_COLOR, 0.0)
+		_check(c_start.is_equal_approx(Color(1, 0, 0)), "t=0 samples the first real keyframe exactly (got %s)" % c_start)
+		var c_mid := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_SUN_COLOR, 0.25)
+		_check(c_mid.is_equal_approx(Color(0.5, 0.5, 0, 1)), "t=0.25 lerps halfway between the t=0/t=0.5 keyframes (got %s)" % c_mid)
+		# t=1.0 wraps to t=0.0 via fposmod (correct: a real day cycle loops,
+		# and real data confirms the t=0/t=1 keyframes are identical) --
+		# sample just under 1.0 instead to check the last real segment.
+		var c_near_end := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_SUN_COLOR, 0.75)
+		_check(c_near_end.is_equal_approx(Color(0, 0.5, 0.5, 1)), "t=0.75 lerps halfway between the t=0.5/t=1 keyframes (got %s)" % c_near_end)
+		var c_wrap := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_SUN_COLOR, 1.25)
+		_check(c_wrap.is_equal_approx(Color(0.5, 0.5, 0, 1)), "t=1.25 wraps to the same result as t=0.25 (got %s)" % c_wrap)
+		var c_empty := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_SKY_TOP_COLOR, 0.5)
+		_check(c_empty.is_equal_approx(Color(1, 1, 1)), "a channel with only 1 group falls back to a neutral color, not a guess (got %s)" % c_empty)
+
 	_check(EnvironmentReader.parse(PackedByteArray([1, 2, 3])) == null, "rejects a buffer too small for a header")
 
 	var bad_magic := data.duplicate()

@@ -1001,3 +1001,55 @@ feature left, more so than the current sky approximation), not implemented on a 
 
 No code changed this round -- both findings are audit/research results (one confirms no bug exists,
 the other raises confidence on a real future feature without acting on unconfirmed specifics).
+
+## 2026-08-31, thirtieth round — real environment.ifo channel names found publicly, wired into the sky
+
+Direct follow-up to the round above, same session. Found real public documentation
+([`DummkopfOfHachtenduden/SilkroadDoc`](https://github.com/DummkopfOfHachtenduden/SilkroadDoc/wiki/JMXVENVI),
+fair game per `docs/LEGAL.md` point 3) that names every one of `environment.ifo`'s 16 channels --
+`SunColor`, `SkyTopColor`, `DiffuseColor`, `ObjectAmbientColor`, `TerrainAmbientColor`,
+`TerrainShadowColor`, `FogNearPlane`, `FogFarPlane`, `FogColor`, `SkyBottomColor`, `WaterColor`,
+plus 5 unnamed ones. This independently matches this project's own decompiled real per-channel
+group-float-count sequence (`[4,4,4,4,4,4,4,2,2,4,2,2,2,4,4,2]`) exactly, in the same order --
+strong corroborating evidence the public source is accurate for this project's own real files, not
+just plausible. Full detail in `docs/protocol/ENVIRONMENT_FORMAT.md`'s "Channel names" section.
+
+This resolves exactly the ambiguity that blocked wiring this in during the twenty-ninth round.
+Implemented:
+
+- `EnvironmentReader` (GDScript) and `environment` (Go) both gained named channel-index constants
+  (`CHANNEL_SKY_TOP_COLOR` etc.) matching the public names, plus a new
+  `EnvironmentReader.sample_color_channel(record, channel_idx, t)` that linearly interpolates
+  between a channel's real keyframes at normalized time `t` (0..1, wrapping) -- real, unit-tested
+  logic (4 new test cases: exact-keyframe sampling, mid-interpolation, wrap-around, and an honest
+  `Color(1,1,1)` fallback for a channel with fewer than 2 real groups, not a guess).
+- `World3D._apply_real_environment_lighting()`, called from `_try_load_real_terrain` right after a
+  region parses, looks up the *player's own* region's real `EnvironmentID` (block 0's -- real data
+  confirmed every block in both checked zones shares one ID, so this is representative, not a
+  guess) against the cached real `environment.ifo` table and applies `SkyTopColor`/`SkyBottomColor`
+  to the sky gradient built in the twenty-third round, replacing the old flat-color-derived guess.
+  Gated to the *center* streamed region only (a new `apply_environment_lighting` parameter,
+  `false` for neighbor cells in `_load_region_cell`) -- otherwise whichever neighboring region
+  streamed in last would silently overwrite the player's own zone's color, since neighboring
+  regions' EnvironmentID uniformity with each other hasn't been checked.
+- `ENVIRONMENT_REFERENCE_TIME := 0.5` (midday) is an explicitly flagged simplification, not a
+  guess about the real data: the real table is a full day/night cycle, but this project has no
+  real day/night clock system (no confirmed time-compression ratio, no server-side game-time
+  signal) -- building one is separate, real future work. Sampling a fixed midday snapshot gives a
+  real, per-zone-accurate color instead of the old guess, without pretending to reproduce the real
+  dynamic cycle.
+- `FogColor`/`FogNearPlane`/`FogFarPlane` deliberately **not** wired into actual fog this round --
+  fog was removed earlier this session after a real playtest showed a guessed density value washing
+  out the whole scene (see the "fog is gone, you're good" entry), and `FogNearPlane`/`FogFarPlane`'s
+  real values (e.g. one real channel-7 group range of `-1..-0.3`) don't read like literal
+  world-space distances at face value -- reintroducing fog with an unconfirmed density mapping
+  would repeat that exact mistake, so it's left alone pending more real evidence.
+
+Full verification: all 43 real GDScript `*_test.gd` suites pass (including 5 new
+`environment_reader_test.gd` cases), `godot4 --headless --path . --import --quit` and a headless
+`--quit-after 60` boot both clean, `go build`/`go vet`/`go test ./internal/environment/...` clean.
+**Not yet visually verified against a real live render** -- the underlying data traversal is real
+and unit-tested, and the real color values were independently validated via the Go audit tooling
+(twenty-ninth round) before this was wired in, but no screenshot comparing before/after has been
+taken. Same honest scope as the original sky implementation itself when it shipped -- needs a real
+playtest.

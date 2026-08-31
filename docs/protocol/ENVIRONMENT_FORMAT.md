@@ -82,7 +82,50 @@ independently confirmed by successfully parsing all 74 real records with zero le
 reader implies older format versions ("1000"/"1001"/"1002") have fewer real channels than "1003",
 but only a "1003" sample has been checked, so the shorter variants aren't confirmed here.)
 
-## Real values, and what they probably mean (not confirmed)
+## Channel names: found via public documentation (2026-08-31)
+
+A public wiki, [`DummkopfOfHachtenduden/SilkroadDoc`](https://github.com/DummkopfOfHachtenduden/SilkroadDoc/wiki/JMXVENVI)
+(fair game per `docs/LEGAL.md` point 3 — public, long-published community documentation, not
+decompiled from a binary in this repo's own history), documents this exact format under the same
+`JMXVENVI1003` magic and gives each channel a real name, in file order:
+
+```
+0  SunColor              (4-float ColorGraph: RGB + time)
+1  SkyTopColor           (4-float ColorGraph)
+2  DiffuseColor          (4-float ColorGraph)
+3  ObjectAmbientColor    (4-float ColorGraph)
+4  (unnamed -- "Graph4" in the public doc)
+5  TerrainAmbientColor   (4-float ColorGraph)
+6  TerrainShadowColor    (4-float ColorGraph, added v1003)
+7  FogNearPlane          (2-float FloatGraph: value + time)
+8  FogFarPlane           (2-float FloatGraph)
+9  FogColor              (4-float ColorGraph)
+10 (unnamed -- "Graph10")
+11 (unnamed -- "Graph11")
+12 (unnamed -- "Graph12", added v1001)
+13 SkyBottomColor        (4-float ColorGraph, added v1002)
+14 WaterColor            (4-float ColorGraph, added v1002)
+15 (unnamed -- "Graph15", added v1002)
+```
+
+**This matches this project's own independently-confirmed real per-channel group-float-count
+sequence exactly** (`[4,4,4,4,4,4,4,2,2,4,2,2,2,4,4,2]`, derived from decompiling the real reader's
+vector-append helpers, see above) — the same channel count, in the same order, with 4-float
+channels landing exactly where the public doc names a `ColorGraph` and 2-float channels landing
+exactly where it names a `FloatGraph`. That structural agreement, arrived at independently and only
+compared afterward, is strong corroborating evidence this public source is accurate for this
+project's own real files, not just plausible.
+
+Also confirms the public wiki's broader scene-command list includes `S_SetWorldTime` — a real,
+separate confirmation that a genuine dynamic time-of-day system exists in the original client, not
+just a per-zone static "look."
+
+The "Real values" section below (written before this public source was found) already independently
+guessed at several of these same semantics purely from the data's shape (e.g. calling channel 1 a
+real day-color sky track) — kept as-is below since it shows the pattern-matching held up, not
+rewritten to pretend the names were known from the start.
+
+## Real values, and what they probably mean
 
 In the one real sample checked (74 records), channel values are overwhelmingly `0.0`/`1.0`, with
 some records showing small non-0/1 fractional values (e.g. `0.58`, `0.1`, `0.9`, `0.5`) in specific
@@ -119,19 +162,13 @@ unmistakable, not a coincidence:
   progression) — real per-zone *palette*, shared *mechanism*.
 
 This is strong enough to call it a real day/night lighting-cycle table with real per-zone color
-palettes, not just "consistent with" one. **Still not confirmed**, and deliberately not escalated
-further than that: which specific channel maps to which specific Godot-side concept (sky top vs.
-horizon vs. fog tint vs. directional-light color vs. ambient) is genuinely ambiguous from the data
-shape alone — several channels have very similar day-arc shapes, and assigning "channel 1 = sky
-color" vs. "channel 4 = sun color" without a stronger real signal (the original renderer's own
-source, or a decompiled fact about which channel index a specific rendering call reads) would be
-exactly the kind of unfounded, guessed-channel-mapping this project's own standing rule exists to
-prevent. The 2-float channels (7-8, 10-12, 15) plausibly hold non-color scalar tracks over the same
-real time axis (e.g. channel 7's `[-1..-0.3]` range across the day, channel 11's flat `1.0`
-throughout) but are even less determinable without more real evidence.
-
-Not wired into rendering this round for that reason — logged as a real, much higher-confidence
-future win than before, not implemented on a guess.
+palettes. **Superseded by the public-documentation channel names found later the same day** (see
+"Channel names" above) — channel 1 really is `SkyTopColor`, channel 9 really is `FogColor`, channel
+13 really is `SkyBottomColor`, each independently matching the day-arc shape this section already
+described before the names were known. The 2-float channels 7/8 are `FogNearPlane`/`FogFarPlane`
+per the public doc, though their real values (e.g. channel 7's `[-1..-0.3]` range) don't read like
+literal world-space distances at face value — possibly a normalized or otherwise-transformed
+parameter; not re-verified further this round.
 
 ## Unparsed trailer: a real "Root(Environment)" tree
 
@@ -155,8 +192,8 @@ synthetic fixture; the GDScript reader is additionally live-verified against the
 sample (all 74 records parse, `trailer_offset` lands exactly at the real
 `"Root(Environment)"` boundary).
 
-No renderer/gameplay wiring yet — this is the reader only, since the real per-channel semantic
-meaning isn't confirmed (see above). A future pass with more confidence in what each channel
-represents (or a public documentation source, if one turns up) could wire a block's real
-`EnvironmentID` lookup into an ambient-light/fog tint, similar to how `.t`'s real lightmap is
-already wired in as ambient occlusion.
+**Update 2026-08-31**: the real per-channel semantic meaning is now confirmed (see "Channel names"
+above) via public documentation whose structure independently matches this project's own
+decompiled channel-size sequence exactly. Renderer wiring using `SkyTopColor`/`SkyBottomColor`/
+`FogColor` is now real, justified work (not a guess) — see `docs/WORLD_ISSUES.md`'s next round for
+whether/how it was implemented.

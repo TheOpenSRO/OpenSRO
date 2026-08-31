@@ -1040,6 +1040,31 @@ var _sky_dome: MeshInstance3D
 var _sky_dome_material: StandardMaterial3D
 var _sun_glow: Sprite3D
 var _sun_glow_offset := Vector3.ZERO
+var _sky_material: ProceduralSkyMaterial
+
+## Real per-zone day/night lighting data (2026-08-31, see
+## docs/protocol/ENVIRONMENT_FORMAT.md and docs/WORLD_ISSUES.md's
+## twenty-ninth round): environment.ifo's real SkyTopColor/SkyBottomColor
+## channels replace the flat-color-derived gradient _try_add_real_sky()
+## builds as a fallback, once a real zone's terrain (and therefore its real
+## per-block EnvironmentID) has loaded. Real per-zone checks (Jangan,
+## Dunhuang) found every block in a zone shares the same EnvironmentID, so
+## reading the first block's is representative, not a guess -- but that
+## uniformity hasn't been checked for every zone, so a zone with mixed
+## per-block IDs would still only get the first block's color (an honest
+## simplification, not wrong for any zone checked so far).
+##
+## ENVIRONMENT_REFERENCE_TIME is a deliberate, flagged simplification: the
+## real data is a full day/night color-keyframe cycle (see the format doc),
+## but this project has no real day/night clock system (no confirmed real
+## time-compression ratio, no server-side game-time signal) -- implementing
+## one is real, separate future work. Sampling a fixed midday time gives a
+## real, per-zone-accurate *snapshot* color instead of the old
+## flat-color-derived guess, without pretending to reproduce the real
+## dynamic cycle.
+const ENVIRONMENT_REFERENCE_TIME := 0.5
+static var _environment_table: EnvironmentReader.ParsedFile = null
+static var _environment_load_attempted := false
 
 func _try_add_real_sky() -> void:
 	var archive := _open_map_pk2_if_set()
@@ -1063,6 +1088,7 @@ func _try_add_real_sky() -> void:
 	sky.sky_material = sky_material
 	world_environment.environment.sky = sky
 	world_environment.environment.background_mode = Environment.BG_SKY
+	_sky_material = sky_material
 
 	var cloud_bytes := AssetSource.read_bytes("SkyBox\\cloud1.ddj", archive)
 	if not cloud_bytes.is_empty():
@@ -1118,6 +1144,48 @@ func _build_sun_glow(glow_tex: Texture2D) -> void:
 	_sun_glow_offset = sun_dir * SUN_GLOW_DISTANCE
 	_sun_glow.position = _sun_glow_offset
 	add_child(_sun_glow)
+
+## Loads and caches the real environment.ifo (Map.pk2's root) once per run --
+## every real zone shares the same table, only the looked-up Key differs.
+func _load_environment_table(archive: Pk2Reader) -> EnvironmentReader.ParsedFile:
+	if not _environment_load_attempted:
+		_environment_load_attempted = true
+		var bytes := AssetSource.read_bytes("environment.ifo", archive)
+		if not bytes.is_empty():
+			_environment_table = EnvironmentReader.parse(bytes)
+		if _environment_table == null:
+			print("World3D: no real environment.ifo found -- sky keeps its flat-color-derived gradient")
+	return _environment_table
+
+## Real per-zone sky color, from a real region's own EnvironmentID (see this
+## file's _sky_material doc comment for the real-data justification and
+## ENVIRONMENT_REFERENCE_TIME's honest scope). No-op if _sky_material was
+## never built (e.g. no SRREVAMP_MAP_PK2_PATH) or no matching real record is
+## found -- leaves the existing flat-color-derived gradient rather than
+## guessing.
+func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: Pk2Reader) -> void:
+	if _sky_material == null or region.blocks.is_empty():
+		return
+	var table := _load_environment_table(archive)
+	if table == null:
+		return
+	var env_id := region.blocks[0].environment_id
+	var record: EnvironmentReader.Record = null
+	for rec in table.records:
+		if rec.key == env_id:
+			record = rec
+			break
+	if record == null:
+		print("World3D: region's EnvironmentID %d has no matching environment.ifo record" % env_id)
+		return
+
+	var top := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_SKY_TOP_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	var bottom := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_SKY_BOTTOM_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	_sky_material.sky_top_color = top
+	_sky_material.sky_horizon_color = bottom
+	_sky_material.ground_horizon_color = bottom
+	_sky_material.ground_bottom_color = bottom.darkened(0.4)
+	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) -- sky_top=%s sky_bottom=%s" % [record.name1, env_id, top, bottom])
 
 ## Opens the real Map.pk2 -- SRREVAMP_MAP_PK2_PATH if set, else a real
 ## "pk2/Map.pk2" next to the running executable (see Pk2Config) -- or
@@ -1350,7 +1418,7 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_anchor: float) -> void:
 	var suffix := "_%d_%d" % [region_x, region_y]
 	var offset := Vector3(dx * REGION_SPAN, 0.0, dy * REGION_SPAN)
-	_try_load_real_terrain("%d\\%d.m" % [region_x, region_y], "", offset, suffix, false, shared_anchor)
+	_try_load_real_terrain("%d\\%d.m" % [region_x, region_y], "", offset, suffix, false, shared_anchor, false)
 	_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
 	_loaded_cells["%d_%d" % [dx, dy]] = true
 
@@ -1523,7 +1591,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 ## guaranteed reset at every single seam. Returns the near_height this call
 ## used (NAN on any failure path) so a caller building a grid can capture
 ## the center tile's value and pass it to every other cell.
-func _try_load_real_terrain(path_override: String = "", texture_override: String = "", world_offset: Vector3 = Vector3.ZERO, node_suffix: String = "", snap_player: bool = true, shared_vertical_anchor: float = NAN) -> float:
+func _try_load_real_terrain(path_override: String = "", texture_override: String = "", world_offset: Vector3 = Vector3.ZERO, node_suffix: String = "", snap_player: bool = true, shared_vertical_anchor: float = NAN, apply_environment_lighting: bool = true) -> float:
 	var mapm_path := path_override if path_override != "" else OS.get_environment("SRREVAMP_MAPM_PATH")
 	if mapm_path == "":
 		print("World3D: SRREVAMP_MAPM_PATH not set -- ground stays a placeholder")
@@ -1539,6 +1607,14 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	if region == null:
 		printerr("World3D: could not parse terrain at ", mapm_path)
 		return NAN
+
+	# Only the player's own (center) region drives the real sky color -- a
+	# neighboring streamed-in region's own EnvironmentID (which hasn't been
+	# confirmed to always match its neighbors') would otherwise overwrite it
+	# with whichever cell happened to load last, unrelated to where the
+	# player actually is. See _load_region_cell's call below.
+	if apply_environment_lighting:
+		_apply_real_environment_lighting(region, archive)
 
 	# Real .t lightmap, loaded up front so it's available to whichever mesh
 	# builder runs below -- see _load_real_terrain_lightmap's doc comment

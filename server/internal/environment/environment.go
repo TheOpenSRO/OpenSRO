@@ -41,6 +41,27 @@ const (
 // groups (0 or more).
 var channelGroupFloats = [16]int{4, 4, 4, 4, 4, 4, 4, 2, 2, 4, 2, 2, 2, 4, 4, 2}
 
+// Real channel names (2026-08-31), from public documentation
+// (github.com/DummkopfOfHachtenduden/SilkroadDoc/wiki/JMXVENVI — fair game
+// per docs/LEGAL.md point 3) whose channel order/size-per-channel
+// independently matches channelGroupFloats exactly — see
+// docs/protocol/ENVIRONMENT_FORMAT.md for the full derivation. Channels
+// 4/10/11/12/15 are unnamed in that public source too, so they're left
+// unnamed here rather than inventing labels.
+const (
+	ChannelSunColor            = 0
+	ChannelSkyTopColor         = 1
+	ChannelDiffuseColor        = 2
+	ChannelObjectAmbientColor  = 3
+	ChannelTerrainAmbientColor = 5
+	ChannelTerrainShadowColor  = 6
+	ChannelFogNearPlane        = 7
+	ChannelFogFarPlane         = 8
+	ChannelFogColor            = 9
+	ChannelSkyBottomColor      = 13
+	ChannelWaterColor          = 14
+)
+
 // Record is one real environment/lighting preset.
 type Record struct {
 	// Key is the real single-byte ID .m's per-block EnvironmentID field

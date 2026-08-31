@@ -74,20 +74,20 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   their real placements to a real, existing model file. Not a rendering gap (see
   `docs/WORLD_ISSUES.md`'s twenty-ninth round). Caveat: only checked that the referenced file
   *exists*, not that it fully parses through every sub-resource — a deeper check nobody's done yet.
-- **Lighting is a single global `DirectionalLight3D` with a hand-set angle — and there's now strong
-  real evidence this is the single biggest remaining map-rendering gap.** `environment.ifo` (fully
-  parsed, readers already exist in both GDScript and Go, just never wired into rendering) is real
-  per-zone data: Jangan and Dunhuang reference different real records, and each record's channel
-  data traces an unmistakable real day/night color-keyframe cycle (dark at night, warm at sunrise/
-  sunset, bright at midday, real per-zone color palettes — desert-appropriate for Dunhuang, brighter
-  for Jangan). See `docs/protocol/ENVIRONMENT_FORMAT.md`'s 2026-08-31 update and
-  `docs/WORLD_ISSUES.md`'s twenty-ninth round for the full evidence. **Not implemented**: which of
-  the 16 channels maps to which specific rendering concept (sky/horizon/fog/sun tint) is still
-  genuinely ambiguous from the data alone — wiring this in without more real evidence (ideally a
-  decompiled fact about which channel index the original renderer actually reads for which purpose)
-  would be exactly the kind of guessed mapping this project avoids. This is now the highest-real-
-  confidence, highest-visual-impact item left on this whole list — worth prioritizing RE effort on
-  the channel-semantics question specifically if the sky/lighting look needs to improve further.
+- ~~Real per-zone day/night lighting~~ — **wired in 2026-08-31.** Public documentation
+  ([`DummkopfOfHachtenduden/SilkroadDoc`](https://github.com/DummkopfOfHachtenduden/SilkroadDoc/wiki/JMXVENVI))
+  named all 16 `environment.ifo` channels, matching this project's own independently-decompiled
+  channel-size sequence exactly — resolving the channel-mapping ambiguity that blocked this in the
+  twenty-ninth round. `World3D` now applies the player's own zone's real `SkyTopColor`/
+  `SkyBottomColor` (sampled at a fixed midday snapshot — no real day/night clock system exists yet,
+  see `docs/WORLD_ISSUES.md`'s thirtieth round for that honest scope note) to the sky gradient,
+  replacing the old flat-color-derived guess. `DirectionalLight3D`'s angle is still a hand-set
+  constant, not real per-zone data — `SunColor`/`DiffuseColor` channels exist and could drive it,
+  not attempted this round. `FogColor`/`FogNearPlane`/`FogFarPlane` deliberately left unwired (fog
+  was already removed once this session after a guessed density looked bad; the real near/far
+  values don't read like literal distances at face value, so wiring them needs more real evidence
+  first). **Not yet visually verified in a live render** — real data, unit-tested logic, clean
+  headless checks, but no actual screenshot comparison yet.
 
 ## How to make progress here without violating the "no assumptions" rule
 
@@ -109,10 +109,8 @@ playtest screenshot so far:
 2. ~~Ground-texture completeness audit~~ — done 2026-08-28, both real zones are 100% covered,
    nothing to fix.
 3. ~~Object-placement completeness audit~~ — done 2026-08-31, both zones 100% covered.
-4. **Real day/night environment-lighting channel semantics** — new top map-rendering priority as of
-   2026-08-31. High real confidence a day/night cycle table exists and is per-zone; needs more RE
-   work (ideally a decompiled fact, not more pattern-matching) on which channel means what before
-   it can be wired in without guessing.
+4. ~~Real day/night environment-lighting~~ — done 2026-08-31, real public channel names found and
+   wired into the sky's top/bottom colors. Not yet visually verified in a live render.
 5. Front/back texture-swap root cause — a real, reported visual bug with no explanation yet.
 6. Real monster models (replacing the placeholder capsule).
 7. Weather polish, remaining animation states.

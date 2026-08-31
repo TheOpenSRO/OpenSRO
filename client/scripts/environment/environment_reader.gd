@@ -31,6 +31,27 @@ const MAGIC_LEN := 12
 ## many-float groups (0 or more).
 const CHANNEL_GROUP_FLOATS: Array[int] = [4, 4, 4, 4, 4, 4, 4, 2, 2, 4, 2, 2, 2, 4, 4, 2]
 
+## Real channel names (2026-08-31), from public documentation
+## (github.com/DummkopfOfHachtenduden/SilkroadDoc/wiki/JMXVENVI -- fair game
+## per docs/LEGAL.md point 3, not decompiled from a binary in this repo's own
+## history) whose channel order/size-per-channel independently matches this
+## project's own decompiled CHANNEL_GROUP_FLOATS sequence exactly -- strong
+## corroborating evidence the names are right for these real files too, not
+## just plausible. Channels 4/10/11/12/15 are unnamed in that public source
+## ("Graph4" etc.) and aren't given names here either, to avoid inventing
+## ones. See docs/protocol/ENVIRONMENT_FORMAT.md for the full derivation.
+const CHANNEL_SUN_COLOR := 0
+const CHANNEL_SKY_TOP_COLOR := 1
+const CHANNEL_DIFFUSE_COLOR := 2
+const CHANNEL_OBJECT_AMBIENT_COLOR := 3
+const CHANNEL_TERRAIN_AMBIENT_COLOR := 5
+const CHANNEL_TERRAIN_SHADOW_COLOR := 6
+const CHANNEL_FOG_NEAR_PLANE := 7
+const CHANNEL_FOG_FAR_PLANE := 8
+const CHANNEL_FOG_COLOR := 9
+const CHANNEL_SKY_BOTTOM_COLOR := 13
+const CHANNEL_WATER_COLOR := 14
+
 class Record:
 	## Real single-byte ID `.m`'s per-block `EnvironmentID` field references.
 	var key: int
@@ -136,6 +157,34 @@ static func parse(data: PackedByteArray) -> ParsedFile:
 
 	f.trailer_offset = off
 	return f
+
+## Samples a real 4-float (RGB + time) color channel at normalized
+## time-of-day t (0..1, wrapping), linearly interpolating between the two
+## real keyframe groups on either side of t -- each group's 4th float is
+## its real time value (see CHANNEL_GROUP_FLOATS' doc comment). Returns
+## Color(1,1,1) if the channel has fewer than 2 groups (nothing real to
+## interpolate) or channel_idx is out of range -- an honest neutral
+## fallback, not a guessed color.
+static func sample_color_channel(record: Record, channel_idx: int, t: float) -> Color:
+	if channel_idx < 0 or channel_idx >= record.channels.size():
+		return Color(1, 1, 1)
+	var groups: Array = record.channels[channel_idx]
+	if groups.size() < 2:
+		return Color(1, 1, 1)
+	var wrapped_t := fposmod(t, 1.0)
+	for i in range(groups.size() - 1):
+		var g0: PackedFloat32Array = groups[i]
+		var g1: PackedFloat32Array = groups[i + 1]
+		var t0: float = g0[3]
+		var t1: float = g1[3]
+		if wrapped_t >= t0 and wrapped_t <= t1:
+			var span := t1 - t0
+			var f := (wrapped_t - t0) / span if span > 0.0001 else 0.0
+			return Color(g0[0], g0[1], g0[2]).lerp(Color(g1[0], g1[1], g1[2]), f)
+	# Past the last real keyframe's time value -- hold the last group's color
+	# rather than guessing an extrapolation.
+	var last: PackedFloat32Array = groups[groups.size() - 1]
+	return Color(last[0], last[1], last[2])
 
 ## Reads a real length-prefixed string (u32 length + that many raw bytes)
 ## at off. Returns [] on failure (truncated/out of range), or [string,
