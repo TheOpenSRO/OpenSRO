@@ -85,8 +85,10 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   not attempted this round. `FogColor`/`FogNearPlane`/`FogFarPlane` deliberately left unwired (fog
   was already removed once this session after a guessed density looked bad; the real near/far
   values don't read like literal distances at face value, so wiring them needs more real evidence
-  first). **Not yet visually verified in a live render** — real data, unit-tested logic, clean
-  headless checks, but no actual screenshot comparison yet.
+  first). **Visually verified 2026-08-31** — ran the actual `v0.1.10` release binary against real
+  pulled `Data.pk2`/`Map.pk2` for Jangan (`89/182`); the real environment-lighting code path was
+  exercised live (same terrain-load call that also fixed the sunburst artifact) and produced a
+  reasonable-looking sky, not a broken one.
 
 ## How to make progress here without violating the "no assumptions" rule
 
@@ -111,7 +113,7 @@ playtest screenshot so far:
    nothing to fix.
 3. ~~Object-placement completeness audit~~ — done 2026-08-31, both zones 100% covered.
 4. ~~Real day/night environment-lighting~~ — done 2026-08-31, real public channel names found and
-   wired into the sky's top/bottom colors. Not yet visually verified in a live render.
+   wired into the sky's top/bottom colors. Visually verified 2026-08-31 against a real live render.
 5. ~~Front/back texture-swap root cause~~ — SOLVED 2026-08-31, a camera yaw bug, not a mesh bug.
 6. Real monster models (replacing the placeholder capsule).
 7. Weather polish, remaining animation states.
