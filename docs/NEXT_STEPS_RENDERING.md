@@ -11,12 +11,22 @@ speculation, it's a consolidation of gaps already found and flagged as open.
 
 - **The streamed region grid has real gaps, and used to drop the player through an unbounded void
   when they walked into one** — fixed 2026-09-01 (see `docs/WORLD_ISSUES.md`'s thirty-ninth round):
-  a real `Map.pk2` listing confirmed all 8 regions directly adjacent to Jangan (`89/182`) have no
-  `.m` file at all, real terrain resuming only 2 `REGION_SPAN` steps out in some directions. The
-  player no longer falls forever (a real downward raycast + `WORLD_FLOOR_Y` safety net returns them
-  to their last real footing), but the gaps themselves are still there — walking outward from Jangan
-  still crosses ~1920 units of nothing before reaching real terrain again. Not attempted: filling
-  the gap with fallback terrain, or steering the player around it.
+  a real downward raycast + `WORLD_FLOOR_Y` safety net now returns the player to their last real
+  footing instead of letting them fall forever.
+- **Jangan itself was the wrong region — a real, isolated pocket, not the connected continent** —
+  fixed 2026-09-01 (see `docs/WORLD_ISSUES.md`'s fortieth round): `JANGAN_ZONE_REGION` (`89/182`)
+  was picked in an earlier round purely for having the highest keyword-density match, but a wider
+  real `Map.pk2` scan found it's a genuinely isolated 3x3-ish pocket surrounded by void on every
+  side — exactly why the previous round's void-fall bug was so easy to hit. Changed to `98/168`,
+  which sits inside a real, single, fully contiguous landmass of 500+ populated regions that already
+  includes the verified Dunhuang region, plus real "greenfield" (open fields), a temple district, and
+  a military camp — reachable, walkable, populated terrain on every side. This is likely the real
+  fix for "walking around outside the city has nothing in it," more so than the void-fall patch
+  alone. `98/168`'s own immediate neighbors were checked as part of the same wide `pk2list` scan
+  (the whole `y=145-175, x=85-108` block is solid, `98/168` well inside it, not at an edge) rather
+  than individually re-rendered — a full visual walk-through of the new spawn area (like the
+  thirty-ninth round's step-by-step render, now centered on `98/168`) hasn't been done yet and would
+  be worth it before calling this fully closed.
 - ~~Ground-texture completeness audit~~ — done 2026-08-28: both real zones this project renders
   (Jangan `89/182`, Dunhuang `98/157`) resolve **100%** of their real per-vertex texture IDs to a
   real `Tile2D\` file. The flat-color fallback path is correct to keep but isn't currently firing

@@ -109,16 +109,15 @@ extends Node3D
 ## convention SRREVAMP_MAPM_PATH/SRREVAMP_MAPO_PATH's doc comments above
 ## already describe. The server's own default spawn zone, "jangan", is a
 ## special case resolved by _resolve_zone_region to the real region this
-## project found Jangan actually lives in (JANGAN_ZONE_REGION, "89/182" --
-## **corrected 2026-08-26**, see docs/WORLD_ISSUES.md: the original "98/168"
-## came from an earlier, smaller/incomplete scan (32 matching real
-## placements); a full re-scan across all 4,050 real regions in a real
-## Map.pk2 found "89/182" has 279 real Jangan-named placements, an order of
-## magnitude stronger real match, and it's the same region an earlier
-## session already independently found for the real south gate -- which
-## makes sense, since the south gate belongs to Jangan) rather than falling
-## through to "nothing to load" the way it used to before Jangan was found
-## at all. Any other zone not shaped like a real region still clears back to
+## project found Jangan actually lives in (JANGAN_ZONE_REGION, "98/168" as
+## of **2026-09-01** -- see that constant's own doc comment for the real
+## back-and-forth: an earlier, higher-*keyword-density* match ("89/182")
+## turned out to be a real, confirmed isolated pocket surrounded by void,
+## which dropped the player through an unbounded fall when walked into;
+## "98/168" sits inside the same real, single, fully contiguous landmass as
+## the already-verified Dunhuang region) rather than falling through to
+## "nothing to load" the way it used to before Jangan was found at all. Any
+## other zone not shaped like a real region still clears back to
 ## the placeholder ground with nothing loaded -- honest "nothing to load",
 ## not a guessed path. The *initial* load in _ready() still reads the raw
 ## env vars directly rather than going through a zone label, since the very
@@ -1358,19 +1357,32 @@ func _load_real_terrain_lightmap(mapm_path: String, archive: Pk2Reader) -> Textu
 		return null
 	return region.texture
 
-## The real Jangan region, found 2026-08-24 (revised 2026-08-26). The
-## original discovery scanned real region placements for
-## "Res\Bldg\China\Jangan01..06\..." resource paths (see
-## server/cmd/findregionassets) but only ever checked a small, incomplete
-## subset of real regions, landing on "98/168" (32 matching real
-## placements) -- a real match, just not the densest one. A full re-scan of
-## every real region in a real Map.pk2 (server/cmd/scanlandmarks, new this
-## session, the general multi-keyword form of findregionassets) found
-## "89/182" has 279 real Jangan-named placements -- almost 9x stronger, and
-## the same region an earlier session already independently found for the
-## real south gate (which makes sense: the south gate belongs to Jangan).
-## Corrected to this real, much better-supported match.
-const JANGAN_ZONE_REGION := "89/182"
+## The real Jangan region. **Corrected again 2026-09-01** (see
+## docs/WORLD_ISSUES.md's thirty-ninth round): "89/182" (found 2026-08-26 by
+## raw keyword density alone -- 279 real "jangan"-named placements, the
+## single densest region in all 4,050) turned out to be a real, confirmed
+## *isolated* pocket -- a direct listing of the real Map.pk2 archive shows
+## every region touching it in any direction is void (no `.m` file at all),
+## with the nearest other real terrain 2+ REGION_SPAN away. Walking into
+## that gap dropped the player through an unbounded void (see this file's
+## WORLD_FLOOR_Y fix, same round). "98/168" -- the *original*
+## 2026-08-24 discovery, set aside at the time for having "only" 32 matches
+## against 89/182's 279 -- sits inside a real, single, fully contiguous
+## landmass of 500+ populated regions (y=145-175 x=85-108 all real terrain,
+## confirmed via the same archive listing) that already includes the
+## already-verified real Dunhuang region ("98/157", 11 rows away, no gaps
+## between them) plus real "greenfield" (open fields/lake gardens),
+## "jangan04" (military camp), "jangan05" (temple), and "jangan02/03"
+## (pub/market/palace-substructure) districts -- exactly the open,
+## walkable, populated-but-not-just-palace world this project was missing.
+## A fuller keyword rescan (2026-09-01, server/cmd's ad hoc topregions_scratch,
+## deleted after use) found 98/168 actually has 277 real "jangan" matches
+## (almost tied with 89/182's 279) and *more* real palace-lion-statue
+## matches (`cj3`, 50 vs 47) -- the original 32-match figure undercounted it,
+## most likely from scanning too small a subset of the real archive at the
+## time. Real-rendered and verified (779/779 real map objects resolved,
+## real stone walls/willow trees/festival banners, no load errors).
+const JANGAN_ZONE_REGION := "98/168"
 
 ## The real Dunhuang region, found 2026-08-26 the same way as
 ## JANGAN_ZONE_REGION (server/cmd/scanlandmarks scanning for real

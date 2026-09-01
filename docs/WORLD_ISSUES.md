@@ -1477,3 +1477,61 @@ deleted during investigation, not part of the final diff), `go build`/`go vet`/`
 inspection) confirmed the fix: the player fell into the real `90/182` gap and was returned to
 `(2.89, 4.56, -99.43)` -- their last real grounded position -- instead of continuing to fall. All
 pulled real data (`Data.pk2`, `Map.pk2`) and scratch tools (`pk2list` binary) deleted after use.
+
+## 2026-09-01, fortieth round — Jangan itself was the wrong region: a real, isolated pocket, not
+## the connected continent
+
+Direct continuation of the thirty-ninth round's investigation ("keep going"). The void-fall fix
+stopped the player from falling through the map, but didn't explain why real terrain was so sparse
+around Jangan in the first place. Mapped a much wider area of the real `Map.pk2` (`pk2list`,
+re-pulled and deleted after use, same as last round) to see the true shape of the real landmass
+around `89/182`.
+
+**Real finding**: `89/182` (this project's `JANGAN_ZONE_REGION` since 2026-08-26) is a genuinely
+isolated 3x3-ish pocket -- every region touching it in any direction is void, and the nearest other
+real terrain is 2+ `REGION_SPAN` away in only some directions (confirmed via the wide `pk2list`
+scan, not guessed). Separately, `98/157` (this project's already-verified `DUNHUANG_ZONE_REGION`)
+sits inside a real, single, **fully contiguous landmass of 500+ populated regions** (`y=145-175,
+x=85-108` all real terrain, zero gaps -- checked directly against the real archive). `98/168` --
+this project's *original* 2026-08-24 Jangan discovery, set aside at the time in favor of `89/182`
+for having "only" 32 keyword matches against 279 -- sits **inside that same contiguous landmass**,
+11 rows from Dunhuang.
+
+A fuller keyword rescan (ad hoc `topregions_scratch`, a top-N variant of `scanlandmarks`, deleted
+after use) found the earlier 32-match figure for `98/168` undercounted it: it actually has 277 real
+"jangan"-named placements (almost tied with `89/182`'s 279) and *more* real palace-lion-statue
+matches (`cj3` prefix, 50 vs 47). Dumping its real resolved object paths directly (`dumpregion_scratch`,
+deleted after use) found genuine city-district content: `jangan02` (pub/market lighting, tables/
+chairs), `jangan03` (palace substructures, lion statues), plus neighboring regions in the same
+landmass with `jangan04` (military camp), `jangan05` (temple), and `greenfield` (lake gardens/open
+fields) -- real, connected, walkable content on every side, not an isolated palace box. Real-rendered
+`98/168` directly: 779/779 real map objects resolved, real stone walls, willow trees, festival
+banners, zero load errors.
+
+**Conclusion**: `89/182`'s high keyword density was real but misleading -- it measured how
+*concentrated* Jangan content was in one region, not whether that region was actually part of the
+reachable world. `98/168` is both real (comparable density) and reachable (same landmass as
+Dunhuang, no void gaps). **Changed `JANGAN_ZONE_REGION` from `89/182` to `98/168`** -- effectively
+reverting to this project's original discovery, now backed by better evidence than the density
+metric that moved away from it.
+
+This directly addresses the user's "walking around and the grass and field shit outside the city"
+complaint at its root: the previous Jangan pick genuinely had almost nothing walkable around it in
+the real data. The new one sits in a huge, real, populated, contiguous continent.
+
+**What this doesn't fix**: `98/168`'s own immediate neighbors haven't been individually gap-checked
+the way `89/182`'s were -- the landmass-level scan (y=145-175 all populated) makes isolated gaps
+right at `98/168` itself unlikely, but not impossible; the `WORLD_FLOOR_Y` safety net from the
+thirty-ninth round still applies as a backstop either way. Also not fixed: `89/182`'s own real
+content (a real, dense Jangan palace, independently confirmed against the real south-gate
+coordinates in an earlier session) isn't reachable from `98/168` by walking at all, since it's a
+real isolated pocket -- it's just no longer where players spawn by default. It remains reachable
+directly by typing `89/182` into the zone-change box (any raw region coordinate still works, per
+`_zone_paths`), just not under the "jangan" name anymore. Whether it's a legitimate separate
+in-game instance/interior or genuinely disconnected content wasn't determined this round.
+
+Full verification: all 45 real GDScript test suites pass (none reference `JANGAN_ZONE_REGION`'s
+literal value), `godot4 --headless --path . --import --quit` clean, a real headless render of
+`98/168` directly (not just the constant change) confirmed real content loads with zero errors. All
+pulled real data (`Data.pk2`, `Map.pk2`) and scratch tools (`pk2list`, `dumpregion_scratch`,
+`topregions_scratch`) deleted after use.
