@@ -22,6 +22,9 @@ albedo_color = Color(0.25, 0.4, 0.25, 1)
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(200, 1, 200)
 
+[sub_resource type="BoxShape3D" id="BoxShape3D_voidcatch"]
+size = Vector3(200000, 10, 200000)
+
 [sub_resource type="Environment" id="Environment_world3d"]
 background_mode = 1
 background_color = Color(0.55, 0.7, 0.9, 1)
@@ -46,6 +49,13 @@ surface_material_override/0 = SubResource("StandardMaterial3D_ground")
 
 [node name="Collision" type="CollisionShape3D" parent="Ground"]
 shape = SubResource("BoxShape3D_ground")
+
+[node name="VoidCatchFloor" type="StaticBody3D" parent="."]
+collision_layer = 9
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2000, 0)
+
+[node name="Collision" type="CollisionShape3D" parent="VoidCatchFloor"]
+shape = SubResource("BoxShape3D_voidcatch")
 
 [node name="Player" type="CharacterBody3D" parent="."]
 collision_layer = 2

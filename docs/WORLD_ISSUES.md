@@ -1410,3 +1410,70 @@ to using it directly) -- the real limitation was never "only two regions are rea
 Full verification: all 43 real GDScript test suites pass, `godot4 --headless --path . --import
 --quit` and a headless `--quit-after 60` boot both clean. No new RE work this round -- both changes
 used data/derivations already established and verified in earlier sessions, just not yet connected.
+
+## 2026-09-01, thirty-ninth round — real root cause found for "nothing outside the city": the
+## streamed region grid has real, confirmed gaps, and walking into one dropped the player through
+## an unbounded void
+
+Direct follow-up: "what about walking around and the grass and field shit outside the city."
+Rather than guess, pulled real `Data.pk2`/`Map.pk2` (RE box workflow, deleted after use) and ran the
+actual exported scene headlessly (`xvfb-run` + `--write-movie`, the established real-screenshot
+technique) with the player teleported step-by-step away from Jangan (`89/182`) along +X, re-snapping
+onto real terrain each step.
+
+**Real finding #1 -- the region grid this client streams has genuine holes.** `_load_region_neighborhood`/
+`_maybe_stream_regions` assume every adjacent region coordinate (`center ± 1, ± 2, ...`) has a real
+`.m` file. A direct listing of the real `Map.pk2` archive (`server/cmd/pk2list`, run locally against
+the pulled archive, no guessing) shows that's false immediately around Jangan: all 8 regions directly
+adjacent to `89/182` (one `REGION_SPAN` step in any direction) have **no `.m` file at all** --
+`90/182`, `88/182`, `89/181`, `89/183`, etc. are all real gaps. Real terrain does exist two steps out
+in some directions (`91/181`, `91/182`, `91/183` -- real desert terrain, confirmed by a real render;
+`87/182` -- also real). This isn't a bug in this project's coordinate math (a broader scan found
+long, fully contiguous stretches of regions elsewhere in the same archive, e.g. `100-125/182`), it's
+a real, uneven population density in the retail data specifically around Jangan's own tile.
+
+**Real finding #2 -- walking into one of these gaps dropped the player through an unbounded void
+forever.** Confirmed via real physics simulation (teleported the player one `REGION_SPAN` into the
+gap at `90/182`, let real gravity run for 60+ physics frames): no terrain, no collision, nothing to
+land on -- the player just kept falling. This is almost certainly what "nothing outside the city"
+looks like in a real playtest: walk far enough in the wrong direction and you fall through the floor
+into empty sky with nothing rendered.
+
+**Fix**: `World3D._physics_process` now runs a real downward raycast every physics frame
+(`TERRAIN_ONLY_COLLISION_MASK`, matching `_snap_player_onto_terrain`'s own check) to tell "resting on
+real ground" from "still falling," and records `_last_grounded_position` whenever real ground is
+found close beneath the player. If the player's Y ever drops below `WORLD_FLOOR_Y` (-500, a generous
+margin below every real per-region height measured so far, ~0-250) with no ground found, they're
+snapped back to `_last_grounded_position` instead of continuing to fall -- confirmed via the same
+real physics simulation: falling into the `90/182` gap now correctly returns the player to their
+last real footing instead of falling indefinitely. Also added a deep `VoidCatchFloor` StaticBody3D
+(`World3D.tscn`, Y=-2000, matching `TERRAIN_ONLY_COLLISION_MASK`) as a pure backstop in case
+`_last_grounded_position` was never set (e.g. spawning directly into a void) -- not expected to
+normally trigger, since the Y-threshold check above should always catch it first.
+
+**What this doesn't fix**: the region gaps themselves are still there -- walking east from Jangan
+still hits ~1920 units of nothing before reaching real desert terrain at `91/182`, it just no longer
+falls through the floor when it happens. A real fix for the gap itself (e.g. a flat fallback terrain
+patch instead of nothing, or teleporting the player around the gap) wasn't attempted this round.
+Also confirmed, but not fixed: once real terrain resumes past a gap, it exhibits the **already-
+documented cross-region height-mismatch limitation** (see the fifth round) more severely than
+previously seen -- neighboring real regions render as disconnected floating plates with a visible
+vertical cliff at the seam, not blended terrain. And a new, real, distinct visual artifact was found
+in the desert regions past the gap: a bright, overexposed white/yellow patch bleeding across part of
+the ground in two of the real renders -- not investigated this round, flagged as a new open item.
+
+**Separately found and worth flagging, not fixed**: the real click-to-move path
+(`_move_target`/`_has_move_target`) has no obstacle avoidance -- a straight-line target aimed
+directly at real courtyard geometry near spawn left the player completely stuck (zero net velocity
+for 100+ physics frames, confirmed via real position/velocity logging) rather than sliding around
+it. This forced the verification above to use direct teleportation instead of simulated walking.
+Real previous playtests moved fine (WASD lets a player route around obstacles interactively), so
+this specifically affects straight-line automated/click-to-move testing, not necessarily normal
+play -- but it's a real, reproducible gap in click-to-move worth a closer look later.
+
+Full verification: all 45 real GDScript test suites pass (up from 43 -- two new files created and
+deleted during investigation, not part of the final diff), `go build`/`go vet`/`go test ./...` clean,
+`godot4 --headless --path . --import --quit` clean. Real physics simulation (not just visual
+inspection) confirmed the fix: the player fell into the real `90/182` gap and was returned to
+`(2.89, 4.56, -99.43)` -- their last real grounded position -- instead of continuing to fall. All
+pulled real data (`Data.pk2`, `Map.pk2`) and scratch tools (`pk2list` binary) deleted after use.

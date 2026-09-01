@@ -236,6 +236,29 @@ const MOVE_TARGET_STOP_DISTANCE := 0.3 * PLAYER_SCALE_RATIO
 var _camera_orbiting := false
 var _has_move_target := false
 var _move_target := Vector3.ZERO
+## Last position the player was standing at real, sane terrain height (see
+## WORLD_FLOOR_Y's doc comment) -- updated every physics frame the player
+## isn't already mid-void-fall, so it always reflects the most recent solid
+## ground they were actually on, regardless of CharacterBody3D's own
+## is_on_floor() (observed real, separate quirk: stays false indefinitely
+## for a character that's stationary since spawn and never yet received
+## real velocity, unrelated to this fix -- worth its own investigation, not
+## chased here).
+var _last_grounded_position := Vector3.ZERO
+## Real, confirmed finding (2026-09-01): the region grid this client
+## streams (_load_region_neighborhood/_maybe_stream_regions) assumes every
+## adjacent region coordinate has a real Map.pk2 .m file, but a direct
+## listing of the real archive (server/cmd/pk2list against a real Map.pk2)
+## shows that's false even immediately around Jangan (89/182) -- e.g.
+## 90/182, one REGION_SPAN east, has no .m file at all, while 91/182 two
+## REGION_SPAN east does (real desert terrain). Walking into one of these
+## real gaps previously dropped the player through an unbounded void
+## forever (no terrain, no collision, nothing to land on) -- confirmed via
+## a real physics simulation that fell for over 60 real physics frames with
+## no floor found. Every real per-region height measured so far falls in
+## roughly 0-250 units, so -500 is a generous floor no legitimate terrain
+## should ever cross; anything below it can only be a real gap.
+const WORLD_FLOOR_Y := -500.0
 ## Minimum real-world distance moved, and minimum time elapsed, before
 ## sending another OpMove -- avoids flooding the connection with a packet
 ## every single physics frame while walking. **Raised 2026-08-26** (see
@@ -2485,6 +2508,27 @@ func _physics_process(delta: float) -> void:
 	else:
 		player.velocity.y = 0.0
 	player.move_and_slide()
+
+	# CharacterBody3D.is_on_floor() was observed real, unreliable here (stays
+	# false indefinitely for a character resting motionless since spawn, a
+	# separate quirk not chased this round) -- a direct raycast is used
+	# instead to tell "resting on real ground" from "still falling" for
+	# _last_grounded_position's purposes.
+	var ground_check := PhysicsRayQueryParameters3D.create(
+		player.position + Vector3(0.0, 10.0, 0.0), player.position + Vector3(0.0, -3000.0, 0.0))
+	ground_check.exclude = [player.get_rid()]
+	ground_check.collision_mask = TERRAIN_ONLY_COLLISION_MASK
+	var ground_hit := get_world_3d().direct_space_state.intersect_ray(ground_check)
+	if not ground_hit.is_empty() and player.position.y - ground_hit.position.y < 20.0:
+		_last_grounded_position = player.position
+	elif player.position.y < WORLD_FLOOR_Y:
+		# Fell into a real gap in the streamed region grid (see
+		# WORLD_FLOOR_Y's doc comment) -- no terrain exists here at all, so
+		# rather than let the player fall through an unbounded void, return
+		# them to the last real ground they stood on.
+		player.position = _last_grounded_position
+		player.velocity = Vector3.ZERO
+		_has_move_target = false
 
 	_maybe_stream_regions()
 

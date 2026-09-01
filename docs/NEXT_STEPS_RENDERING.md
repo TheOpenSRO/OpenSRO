@@ -9,6 +9,14 @@ speculation, it's a consolidation of gaps already found and flagged as open.
 
 ## Terrain
 
+- **The streamed region grid has real gaps, and used to drop the player through an unbounded void
+  when they walked into one** — fixed 2026-09-01 (see `docs/WORLD_ISSUES.md`'s thirty-ninth round):
+  a real `Map.pk2` listing confirmed all 8 regions directly adjacent to Jangan (`89/182`) have no
+  `.m` file at all, real terrain resuming only 2 `REGION_SPAN` steps out in some directions. The
+  player no longer falls forever (a real downward raycast + `WORLD_FLOOR_Y` safety net returns them
+  to their last real footing), but the gaps themselves are still there — walking outward from Jangan
+  still crosses ~1920 units of nothing before reaching real terrain again. Not attempted: filling
+  the gap with fallback terrain, or steering the player around it.
 - ~~Ground-texture completeness audit~~ — done 2026-08-28: both real zones this project renders
   (Jangan `89/182`, Dunhuang `98/157`) resolve **100%** of their real per-vertex texture IDs to a
   real `Tile2D\` file. The flat-color fallback path is correct to keep but isn't currently firing
