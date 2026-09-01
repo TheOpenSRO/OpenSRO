@@ -46,6 +46,9 @@ func _build_skeleton() -> Skeleton3D:
 	return skeleton
 
 func _init() -> void:
+	_check(MonsterAssembler.GOLEM_PIECE_BONES.size() == 7, "GOLEM_PIECE_BONES has all 7 real golem pieces (got %d)" % MonsterAssembler.GOLEM_PIECE_BONES.size())
+	_check(MonsterAssembler.SCORPION_PIECE_BONES.size() == 3, "SCORPION_PIECE_BONES has all 3 real scorpion pieces (got %d)" % MonsterAssembler.SCORPION_PIECE_BONES.size())
+
 	var skeleton := _build_skeleton()
 	var parts := {
 		"piece_core": _build_mesh(Vector3(0, 5, 0)),

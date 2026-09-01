@@ -1340,3 +1340,40 @@ Full verification: `godot4 --headless --path . --import --quit` clean (no produc
 this round -- this was pure investigation). The temporary debug hook was again fully removed before
 finishing. Real `Data.pk2`/`Map.pk2` pulled and deleted a second time this session for this
 specific re-test.
+
+## 2026-09-01, thirty-seventh round — real Sand Scorpion model implemented, same as Stone Golem
+
+Second real monster species, using the exact real pipeline the thirty-third round's Stone Golem
+work established. Extracted a real `scorpion.bsr` directly and grepped it (same technique) --
+confirms only **3** real mesh pieces this time (`scorpion_part1`, `scorpion_part2_part1`,
+`scorpion_part2_part2`, vs. golem's 7), a real matching skeleton (`Prim\Skel\mob\oasis\
+scorpion.bsk`, 55 real bones -- the same standard Biped names, plus a real `Bip01 Tail`/
+`Tail1`..`Tail4` chain unique to this creature, plus the same kind of extra `BoneNN` nodes golem
+has), and the same real 14-animation-file set (walk/run/attack01-03/damage01-02/die/etc.).
+
+**Real piece-to-bone correspondence, computed from data, tighter than golem's**: the same real
+vertex-centroid-to-nearest-bone-position technique (one-off Go tool, not kept) found
+`scorpion_part1`/`scorpion_part2_part1` (228 verts each -- the two front claws/pincers) land within
+**~0.86 units** of `Bip01 R Forearm`/`Bip01 L Forearm` respectively, and `scorpion_part2_part2`
+(248 verts, the largest piece -- the main body/tail) lands within **2.12 units** of `Bip01 Spine`.
+Sub-1-unit matches for 2 of 3 pieces -- a real, strong geometric correspondence, not a coincidence.
+
+**Visually verified before shipping**, same as golem: built a one-off render tool (not kept,
+generalized to take either species' piece-bone map), assembled the real scorpion with its real
+`scorpion.bmt`/`scorpion.ddj` texture, rendered from three angles. Unmistakably a real scorpion
+silhouette -- two claws, a real segmented tail arching up over the body, a real mottled tan/brown
+carapace texture -- confirming the same real coordinate-space convention holds again.
+
+**Implemented**: refactored `World3D.gd`'s golem-specific asset loading (`_load_golem_assets`/
+`_build_assembled_golem`) into generic, species-parameterized `_load_monster_assets`/
+`_build_assembled_monster` (cached per-species in a shared dict, same real "load once per run"
+policy), so adding Sand Scorpion didn't require duplicating ~50 lines of loading logic. Added
+`MonsterAssembler.SCORPION_PIECE_BONES`. `_spawn_or_update_monster` now matches on
+`monster.monster_name` for both `"Stone Golem"` and `"Sand Scorpion"`; `"Wild Boar"` (no real asset
+at all, twenty-sixth round) still falls back to the placeholder capsule.
+
+Full verification: all 43 real GDScript test suites pass (a new sanity check confirming
+`GOLEM_PIECE_BONES`/`SCORPION_PIECE_BONES` have their real 7/3 entries added to
+`monster_assembler_test.gd`), `godot4 --headless --path . --import --quit` and a headless
+`--quit-after 60` boot both clean. All pulled real samples (skeleton, 3 mesh pieces, material,
+texture) and the one-off Go/GDScript tools deleted after use.

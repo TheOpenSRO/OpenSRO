@@ -51,6 +51,25 @@ const GOLEM_PIECE_BONES := {
 	"golem07": "Bone18",
 }
 
+## Same real derivation as GOLEM_PIECE_BONES (2026-09-01), for
+## Res\mob\oasis\scorpion.bsr -- confirmed via `Prim\Skel\mob\oasis\
+## scorpion.bsk` (55 real bones: the same standard Biped names, a real
+## "Bip01 Tail"/"Tail1".."Tail4" chain unique to this creature, plus the
+## same kind of extra "BoneNN" nodes golem has). Only 3 real mesh pieces
+## this time (vs. golem's 7), and the real nearest-bone match is much
+## tighter: `scorpion_part1`/`scorpion_part2_part1` (228 verts each, the
+## two front claws/pincers) land within ~0.86 units of
+## "Bip01 R Forearm"/"Bip01 L Forearm" respectively; `scorpion_part2_part2`
+## (248 verts, the largest piece -- the main body/tail) lands within 2.12
+## units of "Bip01 Spine". Visually verified via a real headless render
+## (see docs/WORLD_ISSUES.md's thirty-seventh round) using the real
+## scorpion.bmt/ddj texture -- a coherent, recognizable scorpion silhouette.
+const SCORPION_PIECE_BONES := {
+	"scorpion_part1": "Bip01 R Forearm",
+	"scorpion_part2_part1": "Bip01 L Forearm",
+	"scorpion_part2_part2": "Bip01 Spine",
+}
+
 ## Assembles parts (piece-name -> BmsReader.ParsedMesh, e.g. "golem01" ->
 ## parsed golem01.bms) onto skeleton using piece_bones (a
 ## GOLEM_PIECE_BONES-shaped map). Unrecognized piece names are skipped with

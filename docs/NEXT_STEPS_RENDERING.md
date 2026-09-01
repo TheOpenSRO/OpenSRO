@@ -37,16 +37,16 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   changing `CameraArm.rotation_degrees` to `(-42, 180, 0)` and updating `DEFAULT_CAMERA_YAW_DEGREES`
   to match. Live-verified: re-rendering from the exact fixed camera direction shows the real back,
   confirming standard third-person framing.
-- ~~Real per-species monster models~~ — **Stone Golem implemented and visually verified 2026-09-01**
-  (see `docs/WORLD_ISSUES.md`'s thirty-third round). A monster's real `.bsr` turned out to embed its
-  own matching `.bsk` skeleton path directly, confirming the coordinate-space question: real mesh
-  piece positions are in the same absolute bind-pose space `CharacterAssembler` already assumes for
-  humans, no extra transform needed. Piece-to-bone correspondence was computed from real vertex/bone
-  position data (no body-part-hinting names exist for monster mesh pieces) and confirmed via a real
-  rendered screenshot — a recognizable rock-golem silhouette, not guessed. **Sand Scorpion not done
-  yet** — real data confirmed to exist, same derivation process not yet run. **Wild Boar still has no
-  real asset at all.** Animation playback (14 real `.ban` files known, e.g. walk/attack/die) not
-  wired up — the golem currently renders in a static bind pose.
+- ~~Real per-species monster models~~ — **Stone Golem and Sand Scorpion both implemented and
+  visually verified 2026-09-01** (see `docs/WORLD_ISSUES.md`'s thirty-third and thirty-seventh
+  rounds). A monster's real `.bsr` turned out to embed its own matching `.bsk` skeleton path
+  directly, confirming the coordinate-space question: real mesh piece positions are in the same
+  absolute bind-pose space `CharacterAssembler` already assumes for humans, no extra transform
+  needed. Piece-to-bone correspondence was computed from real vertex/bone position data (no
+  body-part-hinting names exist for monster mesh pieces) and confirmed via real rendered
+  screenshots for both species. **Wild Boar still has no real asset at all** (still a labeled
+  placeholder capsule). Animation playback (14 real `.ban` files known per species, e.g. walk/
+  attack/die) not wired up for either — both currently render in a static bind pose.
 - **Equipment/weapon/shield visuals are real but not verified complete** — `armor_slots_mask`
   correctly drives which real armor pieces attach, but there's been no recent audit of whether
   every armor/weapon/shield combination actually resolves to a real asset vs. silently rendering
