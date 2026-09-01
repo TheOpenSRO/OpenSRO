@@ -22,11 +22,11 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   includes the verified Dunhuang region, plus real "greenfield" (open fields), a temple district, and
   a military camp — reachable, walkable, populated terrain on every side. This is likely the real
   fix for "walking around outside the city has nothing in it," more so than the void-fall patch
-  alone. `98/168`'s own immediate neighbors were checked as part of the same wide `pk2list` scan
-  (the whole `y=145-175, x=85-108` block is solid, `98/168` well inside it, not at an edge) rather
-  than individually re-rendered — a full visual walk-through of the new spawn area (like the
-  thirty-ninth round's step-by-step render, now centered on `98/168`) hasn't been done yet and would
-  be worth it before calling this fully closed.
+  alone. **Visually confirmed 2026-09-01**: a real 6-direction teleport tour around `98/168` (real
+  pk2 data, deleted after use) found real city districts (stone walls, willow trees, festival
+  banners), a real open grass field with a dirt/stone road and rock outcrops, a real fortified wall
+  next to a moat, and a real elevated stone walkway along a mountainside — genuine, varied, populated
+  terrain in every direction checked, not gaps or repeats.
 - ~~Ground-texture completeness audit~~ — done 2026-08-28: both real zones this project renders
   (Jangan `89/182`, Dunhuang `98/157`) resolve **100%** of their real per-vertex texture IDs to a
   real `Tile2D\` file. The flat-color fallback path is correct to keep but isn't currently firing
