@@ -1377,3 +1377,36 @@ Full verification: all 43 real GDScript test suites pass (a new sanity check con
 `monster_assembler_test.gd`), `godot4 --headless --path . --import --quit` and a headless
 `--quit-after 60` boot both clean. All pulled real samples (skeleton, 3 mesh pieces, material,
 texture) and the one-off Go/GDScript tools deleted after use.
+
+## 2026-09-01, thirty-eighth round — default camera zoomed closer; three more real cities wired in
+
+Direct user pushback on the thirty-sixth round's "not a bug" conclusion, plus a request to expand
+the world beyond two cities. Both real, both actioned this round.
+
+**Camera default zoom**: the thirty-fifth round's `CAMERA_ZOOM_MIN := 120` was already the closest
+real distance the camera's own vertical FOV supports without clipping the character's head/feet
+outside the frame (derived from real FOV math, not a guess). The scene's default `spring_length`
+was `180` -- a middling value between that closest-full-body distance and the max, not the closest
+one. Changed the default to `120`, matching `CAMERA_ZOOM_MIN` exactly, so the default view is the
+closest the real FOV constraint allows rather than an arbitrary midpoint. `CAMERA_ZOOM_MAX` (240)
+and the FOV-derived MIN value itself are unchanged. This doesn't change the still-open, separately
+documented "very close to a large building" framing issue (thirty-sixth round) -- that's a real,
+distinct gap in the roof-avoidance system, not something a default-zoom change fixes.
+
+**Three more real cities wired in**: `docs/PROGRESS.md`'s 2026-08-24 entries already had real,
+render-verified region coordinates for Constantinople (`104/80`), Hotan (`92/135`), and Samarkand
+(`106/107`) -- found the same way Jangan/Dunhuang were (scanning every real object placement across
+all 4,050 real regions for a path containing the candidate name, picking the densest real cluster),
+each already confirmed with a real render at the time (Constantinople: a real drawbridge/gate,
+cobblestone streets, a 23-piece merchant stall; Hotan: real castellated stone walls and a domed
+building with carved lattice screens; Samarkand: a real sand-to-grass biome transition). This real
+data simply never got wired into `_resolve_zone_region` until now -- added as three more named-zone
+shortcuts, the same pattern Jangan/Dunhuang already use, so typing "Constantinople"/"Hotan"/
+"Samarkand" into the zone-change box now works. Also worth noting for scope: any real `"<x>/<y>"`
+region coordinate already worked as a zone label before this round too (`_zone_paths` falls through
+to using it directly) -- the real limitation was never "only two regions are reachable," it was
+"only two regions have a human-readable name," which this round partly addresses.
+
+Full verification: all 43 real GDScript test suites pass, `godot4 --headless --path . --import
+--quit` and a headless `--quit-after 60` boot both clean. No new RE work this round -- both changes
+used data/derivations already established and verified in earlier sessions, just not yet connected.

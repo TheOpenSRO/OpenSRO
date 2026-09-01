@@ -1356,21 +1356,46 @@ const JANGAN_ZONE_REGION := "89/182"
 ## match found.
 const DUNHUANG_ZONE_REGION := "98/157"
 
+## Three more real named regions, found 2026-08-24 by the same real
+## technique as Jangan/Dunhuang (server/cmd/findregionassets, scanning every
+## real object placement across all 4,050 real regions for a path
+## containing the candidate name, then picking the densest real cluster --
+## see docs/PROGRESS.md's 2026-08-24 "cont'd 79"/"cont'd 80" entries for the
+## full real render verification each one already got). Confirmed real,
+## distinct architecture for each at the time: Constantinople (European
+## drawbridge/gate, cobblestone streets, a real 23-piece merchant stall),
+## Hotan (Middle-Eastern/oasis castellated stone walls, a real domed
+## building with carved lattice screens), Samarkand (smaller real cluster,
+## real sand-to-grass biome transition terrain). These were real, confirmed
+## finds that simply never got wired into this lookup table until now --
+## not new RE work, just real data that existed and wasn't connected yet.
+const CONSTANTINOPLE_ZONE_REGION := "104/80"
+const HOTAN_ZONE_REGION := "92/135"
+const SAMARKAND_ZONE_REGION := "106/107"
+
 ## Resolves a zone label to a real region coordinate string ("<x>/<y>").
 ## The server's own symbolic default spawn zone, "jangan" (case-
 ## insensitive, see server/internal/session/world.go's spawnZone), maps to
 ## JANGAN_ZONE_REGION -- previously this project had no known real region
 ## coordinate for it at all (an honest gap, before this project had found
-## where Jangan actually is). "dunhuang" (also case-insensitive) maps to
-## DUNHUANG_ZONE_REGION the same way, for manual zone-change testing. Any
-## other zone label is returned unchanged, for
-## _zone_paths/_parse_region_coords to interpret (or reject) as usual.
+## where Jangan actually is). The other real named zones below map the same
+## way, for manual zone-change testing (typing the name into the zone-change
+## box, see ZoneInput/ChangeZoneButton). Any other zone label is returned
+## unchanged, for _zone_paths/_parse_region_coords to interpret (a raw
+## "<x>/<y>" coordinate, matching any of this client's real 4,050 regions,
+## already works today without a name -- see _zone_paths) or reject as usual.
 static func _resolve_zone_region(zone: String) -> String:
 	var lower := zone.to_lower()
 	if lower == "jangan":
 		return JANGAN_ZONE_REGION
 	if lower == "dunhuang":
 		return DUNHUANG_ZONE_REGION
+	if lower == "constantinople":
+		return CONSTANTINOPLE_ZONE_REGION
+	if lower == "hotan":
+		return HOTAN_ZONE_REGION
+	if lower == "samarkand":
+		return SAMARKAND_ZONE_REGION
 	return zone
 
 ## Splits a zone label shaped like this project's real Map.pk2 region
