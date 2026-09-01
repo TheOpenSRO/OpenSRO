@@ -1292,3 +1292,51 @@ Full verification: all 43 real GDScript test suites pass, `godot4 --headless --p
 --quit` and a headless `--quit-after 60` boot both clean. The temporary debug hook (env-var-gated
 UI-hide/zoom/yaw control, added only to capture these real screenshots) was fully removed before
 committing -- not shipped. Real pulled `Data.pk2`/`Map.pk2` deleted after use.
+
+## 2026-09-01, thirty-sixth round — investigated "impossible to see the character," found real reference images, ruled out a camera-distance bug
+
+Direct follow-up, same day: a real user complaint that the character is basically impossible to see,
+with an explicit ask to look up real Silkroad Online gameplay images for reference. Investigated with
+real external reference images and a real precision re-test, not by guessing at new zoom constants.
+
+**Found real reference screenshots** (public, long-published gameplay images -- a YouTube thumbnail
+for a real PC Silkroad Online gameplay clip, and a real character-customization-screen capture,
+both fetched directly, not decompiled or scraped from this project's own real client files): in
+actual real Silkroad gameplay, player characters read as small-but-legible humanoid figures with
+floating nameplates, clearly not filling most of the screen -- consistent with a moderate-distance,
+angled-down camera, not an intimate over-the-shoulder shooter-style view. This is real, if
+low-precision (thumbnail-resolution) evidence that "the character looks small on screen" is not
+automatically a bug by itself -- the real game does this too.
+
+**Re-verified the actual zoom mechanism with a precision fix to the earlier debug technique**: the
+thirty-fifth round's debug prints showed `camera_3d` distance stuck at the same value regardless of
+the requested `spring_length` -- re-tested with several real physics-frame waits inserted before
+measuring (`SpringArm3D`'s own collision-adjusted length updates during physics steps, not
+synchronously when the property is set, so the earlier prints were reading a stale pre-update
+value, not a real bug). With real settle time: requesting `spring_length=60` produced a real,
+exact `dist_pivot_to_camera=60`, and `240` produced exactly `240` -- **the zoom mechanism itself
+works correctly.** The thirty-fifth round's "distance stuck at 291 regardless of zoom" finding is
+retracted as a measurement artifact, not a real bug.
+
+**The real cause of "impossible to see" in this specific test**: at close zoom (60 units) from the
+default camera angle, a large real gate/pavilion structure standing immediately next to this
+specific spawn point filled almost the entire frame, with the character reduced to a small speck at
+the very bottom. A wide overhead render confirmed the player is standing right next to this real
+structure. From other camera angles (already captured in the thirty-fifth round's side-view shot),
+the same character is clearly visible near real trees/statues, small but readable -- matching the
+real reference screenshots' proportions. This is a real, still-open limitation of the roof-avoidance
+system (`_avoid_spawning_under_roof` only checks for a real ceiling *directly overhead*, not
+"how much of a nearby large structure will dominate the default camera view") rather than a
+fundamental camera-distance or rendering bug -- and, per this project's own already-documented
+constraint, isn't solvable without real per-object footprint data this project doesn't have (see
+that function's own doc comment).
+
+**Not implemented this round**: no camera-distance constants were changed, since the confirmed
+mechanism works correctly and the low-precision reference-image proportions aren't reliable enough
+to derive a new numeric target from. No fix was made to the "too close to a large structure" gap
+either -- flagged honestly as a real, distinct, unsolved limitation rather than papered over.
+
+Full verification: `godot4 --headless --path . --import --quit` clean (no production code changed
+this round -- this was pure investigation). The temporary debug hook was again fully removed before
+finishing. Real `Data.pk2`/`Map.pk2` pulled and deleted a second time this session for this
+specific re-test.
