@@ -1125,13 +1125,27 @@ func _try_add_real_sky() -> void:
 	world_environment.environment.background_mode = Environment.BG_SKY
 	_sky_material = sky_material
 
-	var cloud_bytes := AssetSource.read_bytes("SkyBox\\cloud1.ddj", archive)
-	if not cloud_bytes.is_empty():
-		var parsed := DdjReader.parse(cloud_bytes)
-		if parsed != null:
-			var cloud_tex := DdjReader.to_texture(parsed)
-			if cloud_tex != null:
-				_build_cloud_dome(cloud_tex)
+	# DISABLED (2026-09-01, see docs/WORLD_ISSUES.md's thirty-fifth round) --
+	# the twenty-third round's cloud dome, and the thirty-second round's fix
+	# to it (removing 3x UV tiling), were both real but incomplete: a real
+	# user request to look around confirmed a visible sunburst/fan artifact
+	# still radiates from the dome even with tiling removed. Isolated with
+	# real before/after renders: disabling just the sun-glow sprite left it
+	# unchanged (not that); disabling just the cloud dome removed it
+	# entirely (confirmed it); re-enabling the dome with a flat, untextured
+	# material produced zero artifact (confirmed it's the real cloud1.ddj
+	# texture's own content, not the dome geometry alone). Root cause:
+	# SphereMesh's polar UV projection compresses an entire circle of U
+	# coordinates to a single point at the pole -- a real projection
+	# singularity, not a resolution/tiling problem, so more radial_segments
+	# would only shrink the artifact, not remove it, and neither would
+	# further uv1_scale changes. A real fix needs either a custom shader
+	# that fades the texture out near the pole, or capping the dome's
+	# elevation so the pole is never in view -- both real, separate
+	# implementation work, not attempted here. Disabled rather than shipped
+	# still visibly broken; the procedural gradient sky above stands alone
+	# until this is properly fixed.
+	pass
 
 	var glow_bytes := AssetSource.read_bytes("SkyBox\\glow.ddj", archive)
 	if not glow_bytes.is_empty():
@@ -1871,6 +1885,12 @@ func _avoid_spawning_under_roof() -> void:
 				candidate_xz + Vector3(0.0, 1000.0, 0.0),
 				candidate_xz + Vector3(0.0, -1000.0, 0.0))
 			query.exclude = [player.get_rid()]
+			# Terrain-only (see TERRAIN_ONLY_COLLISION_MASK's doc comment) --
+			# without this, a candidate ring position could land on a
+			# *different* real building's roof, which also has clear sky
+			# above it, so _has_roof_overhead(candidate) below would wrongly
+			# accept it as "escaped" -- moved off one roof, onto another.
+			query.collision_mask = TERRAIN_ONLY_COLLISION_MASK
 			var hit := space_state.intersect_ray(query)
 			if hit.is_empty():
 				continue

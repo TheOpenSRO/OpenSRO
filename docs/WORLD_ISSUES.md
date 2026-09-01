@@ -1249,3 +1249,46 @@ Full verification: all 43 real GDScript test suites pass, `godot4 --headless --p
 comparison using `git stash` to test the exact pre-fix code against the same real data, not just
 reasoning about the mechanism. Debug print removed before committing; `Data.pk2`/`Map.pk2` deleted
 after use.
+
+## 2026-09-01, thirty-fifth round — roof-escape ring search had the same real bug; sky fan still not solved
+
+Direct real follow-up to the thirty-fourth round, same day: a real user request to hide the UI and
+look around (using a temporary debug hook, real pulled `Data.pk2`/`Map.pk2`, and a fresh
+`--write-movie` capture -- all deleted/removed after use) surfaced two more real findings.
+
+**The roof-escape ring search had the exact same real bug the initial ground-snap ray did.**
+`_avoid_spawning_under_roof`'s per-candidate raycast (checking each ring position for real ground)
+also never restricted its `collision_mask`, so a candidate landing on a *different* real building's
+roof -- which also has clear sky directly above it -- passed `_has_roof_overhead`'s check and was
+wrongly accepted as "escaped." Confirmed with real before/after position data: before this fix, the
+player consistently ended up at `y=247.79` (a second real rooftop); after restricting this ray to
+`TERRAIN_ONLY_COLLISION_MASK` too, the player lands at `y=1.04` (real ground) and stays there. This
+was found *because* the thirty-fourth round's fix only addressed the first raycast, not this
+second, structurally identical one -- a real gap in that round's own fix, not a new bug introduced
+by it.
+
+**The character does not read as "ant-sized"** in the resulting real screenshots (the user's
+original question) -- visible and roughly proportionate next to real nearby statues/trees along a
+real courtyard walkway. It looks small specifically next to one very large real palace gate
+structure in the same shots, which is consistent with a real grand gate legitimately dwarfing a
+person, not a scale bug (the character height fix from earlier this session, 138.7 real native
+units, is still in effect and not implicated here).
+
+**Real regression found and honestly corrected, not swept under**: while capturing these shots, the
+sky sunburst/fan artifact the thirty-second round claimed "fixed" turned out to still be present --
+that round's fix (removing 3x UV tiling) reduced but did not eliminate it. Isolated with three real
+before/after renders: disabling the sun-glow sprite alone left the fan unchanged (ruled out); 
+disabling the cloud dome alone removed it entirely (confirmed the dome); re-enabling the dome with a
+flat untextured material produced zero artifact (confirmed it's the real `cloud1.ddj` texture's own
+content interacting with the dome's polar UV projection, not the geometry alone or a resolution
+issue more `radial_segments` could fix). This is a real projection singularity -- an entire circle
+of U coordinates compresses to one point at the pole -- not something `uv1_scale` alone can solve.
+**Disabled the textured cloud dome entirely** rather than ship something still visibly broken; the
+procedural gradient sky (still real per-zone `SkyTopColor`/`SkyBottomColor`, thirtieth round) stands
+alone until a real fix (a custom shader fading the texture near the pole, or capping the dome's
+elevation so the pole is never in view) gets implemented.
+
+Full verification: all 43 real GDScript test suites pass, `godot4 --headless --path . --import
+--quit` and a headless `--quit-after 60` boot both clean. The temporary debug hook (env-var-gated
+UI-hide/zoom/yaw control, added only to capture these real screenshots) was fully removed before
+committing -- not shipped. Real pulled `Data.pk2`/`Map.pk2` deleted after use.
