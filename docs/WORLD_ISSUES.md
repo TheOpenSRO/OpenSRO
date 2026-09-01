@@ -1107,3 +1107,35 @@ Full verification: all 43 real GDScript test suites pass, `godot4 --headless --p
 --quit` and a headless `--quit-after 60` boot both clean. All pulled real samples (skeleton, body
 parts, texture) and the one-off render tool deleted after use, per the no-persisted-real-assets
 policy.
+
+## 2026-08-31, thirty-second round — fixed a real sunburst/fan artifact in the sky, reproduced live
+
+Real playtest screenshot from a fresh `v0.1.9` download showed a large fan of light/dark triangular
+rays radiating across the sky and down over the ground. Rather than guess from the screenshot alone,
+reproduced it directly: pulled the real `Data.pk2` (3.86GB) and `Map.pk2` (1.57GB) from the RE box to
+this sandbox (user-authorized, temporary, deleted immediately after use per the
+no-persisted-real-assets policy -- this project's disk only had ~9.6GB free, so `Media.pk2`/
+`Particles.pk2` weren't pulled, not needed for this bug), then ran the actual `World3D.tscn` scene
+headlessly against real Jangan (`89/182`) terrain using Godot's `--write-movie` screenshot technique
+(the same one already used for skeleton/character verification this session). The real screenshot
+reproduced the exact same fan artifact the user saw.
+
+**Root cause, confirmed by a real before/after comparison, not guessed**: the cloud dome
+(`_build_cloud_dome`, added in the twenty-third round) uses a `SphereMesh`, whose auto-generated UVs
+use a polar projection that compresses toward a single point at the dome's pole. `uv1_scale =
+Vector3(3, 3, 1)` tiled the real `cloud1.ddj` texture 3x around that projection, and tiling a
+texture across a UV set that already compresses toward a point multiplies the distortion into a
+visible multi-spoke sunburst radiating from the pole. Re-rendered the identical real scene with only
+`uv1_scale` changed to `(1, 1, 1)` (no tiling) -- the fan disappeared completely, confirming the
+cause before changing the shipped code.
+
+Fix: `_sky_dome_material.uv1_scale` changed from `(3, 3, 1)` to `(1, 1, 1)` in `World3D.gd`. The
+residual sky haziness visible in both the before and after real screenshots looks like a reasonable
+soft cloud layer, not a separate bug -- left alone rather than guessing at further brightness/opacity
+tuning (this project already got burned once this session on a guessed fog value).
+
+Full verification: all 43 real GDScript test suites pass, `godot4 --headless --path . --import
+--quit` and a headless `--quit-after 60` boot both clean. This is the first fix this session
+verified against a **live render using real pulled pk2 data** rather than a synthetic/isolated test
+-- both `Data.pk2` and `Map.pk2` deleted from this sandbox immediately after the real screenshots
+were captured and inspected.

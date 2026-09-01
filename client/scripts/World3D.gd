@@ -1132,7 +1132,17 @@ func _build_cloud_dome(cloud_tex: Texture2D) -> void:
 	_sky_dome_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_sky_dome_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_sky_dome_material.cull_mode = BaseMaterial3D.CULL_FRONT # real dome is viewed from inside
-	_sky_dome_material.uv1_scale = Vector3(3.0, 3.0, 1.0)
+	# **Fixed 2026-08-31** (real playtest screenshot from a fresh v0.1.9 build,
+	# see docs/WORLD_ISSUES.md's thirty-second round): was Vector3(3,3,1).
+	# SphereMesh's auto-generated UVs use a polar projection that compresses
+	# toward a single point at the dome's pole -- repeating (tiling) the
+	# cloud texture 3x around that projection multiplies the compression
+	# into a visible multi-spoke fan/sunburst artifact radiating from the
+	# pole, confirmed by reproducing the real bug locally (real pk2 data,
+	# real Jangan region) and then confirming a real re-render with uv1_scale
+	# reset to 1 (no tiling) removes it entirely -- a real before/after
+	# comparison, not a guess.
+	_sky_dome_material.uv1_scale = Vector3(1.0, 1.0, 1.0)
 	_sky_dome_material.albedo_color = Color(1, 1, 1, 0.6)
 
 	_sky_dome = MeshInstance3D.new()

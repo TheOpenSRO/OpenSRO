@@ -104,7 +104,9 @@ Roughly highest-visual-impact-per-effort first, based on how large each gap look
 playtest screenshot so far:
 
 1. ~~Sky (skybox instead of flat color)~~ — done 2026-08-28, first-pass approximation using real
-   textures; needs a real screenshot check and revisit once one's available.
+   textures; a real screenshot check (2026-08-31) found and fixed a sunburst/fan UV artifact in the
+   cloud dome (see `docs/WORLD_ISSUES.md`'s thirty-second round) — reproduced live using real pulled
+   pk2 data, not guessed at.
 2. ~~Ground-texture completeness audit~~ — done 2026-08-28, both real zones are 100% covered,
    nothing to fix.
 3. ~~Object-placement completeness audit~~ — done 2026-08-31, both zones 100% covered.
