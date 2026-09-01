@@ -2654,6 +2654,75 @@ func _terrain_height_at(pos: Vector3) -> float:
 ## World3D already uses for other players before a real character loads --
 ## no real monster model/skeleton mapping has been found or attempted yet
 ## (a real next step, not this one).
+## Real Stone Golem assets (2026-09-01, see docs/WORLD_ISSUES.md's
+## thirty-third round and MonsterAssembler's own top comment for the full
+## derivation) -- loaded and cached once per run, the same pattern
+## _load_character_assets already uses. Real paths, confirmed by extracting
+## and grepping a real golem.bsr directly: the skeleton and all 7 mesh
+## pieces share the "Prim\...\mob\casia\" real path prefix, and the
+## material is a single shared "golem" layer for every piece (unlike a
+## player character's per-part clothing).
+const GOLEM_SKELETON_PATH := "Prim\\Skel\\mob\\casia\\golem.bsk"
+const GOLEM_MESH_DIR := "Prim\\Mesh\\mob\\casia"
+const GOLEM_PIECE_NAMES := ["golem01", "golem02", "golem03", "golem04", "golem05", "golem06", "golem07"]
+const GOLEM_MATERIAL_PATH := "Prim\\Mtrl\\mob\\casia\\golem.bmt"
+
+static var _golem_assets: Dictionary = {}
+static var _golem_load_attempted := false
+
+## Loads and caches real Stone Golem assets from Data.pk2 -- returns {}
+## (and only ever tries once per run) if SRREVAMP_PK2_PATH isn't set or any
+## real file is missing, so a caller can fall back to the placeholder
+## capsule the same honest way every other "real asset not available" path
+## in this file already does.
+func _load_golem_assets() -> Dictionary:
+	if _golem_load_attempted:
+		return _golem_assets
+	_golem_load_attempted = true
+
+	var archive := _open_pk2_if_set()
+	if archive == null:
+		return {}
+
+	var skel_bytes := AssetSource.read_bytes(GOLEM_SKELETON_PATH, archive)
+	if skel_bytes.is_empty():
+		return {}
+	var skel := BskReader.parse(skel_bytes)
+	if skel == null:
+		return {}
+
+	var parts := {}
+	for piece_name in GOLEM_PIECE_NAMES:
+		var bytes := AssetSource.read_bytes(GOLEM_MESH_DIR + "\\" + piece_name + ".bms", archive)
+		if bytes.is_empty():
+			continue
+		var mesh := BmsReader.parse(bytes)
+		if mesh != null:
+			parts[piece_name] = mesh
+	if parts.is_empty():
+		return {}
+
+	_golem_assets = {
+		"skel": skel,
+		"parts": parts,
+		"materials": _load_real_materials(archive, GOLEM_MATERIAL_PATH),
+	}
+	print("World3D: cached real Stone Golem assets (%d bones, %d/%d pieces) from %s" % [
+		skel.bones.size(), parts.size(), GOLEM_PIECE_NAMES.size(), Pk2Config.data_path()])
+	return _golem_assets
+
+## Builds a real assembled Stone Golem Skeleton3D, or null if the real
+## assets aren't available (caller falls back to the placeholder capsule).
+func _build_assembled_golem() -> Skeleton3D:
+	var assets := _load_golem_assets()
+	if assets.is_empty():
+		return null
+	var skeleton := Skeleton3DBuilder.build_skeleton3d(assets["skel"])
+	var materials: Dictionary = assets["materials"]
+	var material: Material = materials.get("golem")
+	MonsterAssembler.assemble(skeleton, assets["parts"], MonsterAssembler.GOLEM_PIECE_BONES, material)
+	return skeleton
+
 func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	var pos := Vector3(monster.x, monster.y, monster.z)
 	pos.y = _terrain_height_at(pos)
@@ -2668,21 +2737,43 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	var body := Node3D.new()
 	body.position = pos
 
-	var mesh := MeshInstance3D.new()
-	var capsule := CapsuleMesh.new()
-	capsule.radius = 0.5 * PLAYER_SCALE_RATIO
-	capsule.height = 1.6 * PLAYER_SCALE_RATIO
-	mesh.mesh = capsule
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.55, 0.15, 0.1) # dark red -- visually distinct from other players' capsules
-	mesh.material_override = mat
-	mesh.position.y = 0.8 * PLAYER_SCALE_RATIO
-	body.add_child(mesh)
+	# Real assembled model for species with real, confirmed asset data (see
+	# MonsterAssembler's top comment) -- falls back to the placeholder
+	# capsule for every other real species (Wild Boar has no real matching
+	# asset at all; Sand Scorpion's real data exists but hasn't had the
+	# same real piece-to-bone derivation done yet), the same honest
+	# "real asset if we have it, labeled placeholder otherwise" pattern
+	# _spawn_or_update_other already uses for players.
+	var golem_skeleton: Skeleton3D = _build_assembled_golem() if monster.monster_name == "Stone Golem" else null
+	# Real model height varies a lot by species/asset (the real golem
+	# skeleton is nowhere near the human PLAYER_SCALE_RATIO-derived height,
+	# unscaled real native units) -- computed directly from the real
+	# assembled skeleton's own bone bounds rather than reusing the
+	# capsule-calibrated label offset, which would float the label wildly
+	# too high above a real, much shorter model.
+	var label_height := 2.0 * PLAYER_SCALE_RATIO
+	if golem_skeleton != null:
+		body.add_child(golem_skeleton)
+		var max_y := 0.0
+		for i in range(golem_skeleton.get_bone_count()):
+			max_y = max(max_y, golem_skeleton.get_bone_global_pose(i).origin.y)
+		label_height = max_y + max_y * 0.15
+	else:
+		var mesh := MeshInstance3D.new()
+		var capsule := CapsuleMesh.new()
+		capsule.radius = 0.5 * PLAYER_SCALE_RATIO
+		capsule.height = 1.6 * PLAYER_SCALE_RATIO
+		mesh.mesh = capsule
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.55, 0.15, 0.1) # dark red -- visually distinct from other players' capsules
+		mesh.material_override = mat
+		mesh.position.y = 0.8 * PLAYER_SCALE_RATIO
+		body.add_child(mesh)
 
 	var label := Label3D.new()
 	label.name = "Label"
 	label.text = "%s (%d/%d)" % [monster.monster_name, monster.hp, monster.max_hp]
-	label.position.y = 2.0 * PLAYER_SCALE_RATIO
+	label.position.y = label_height
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	body.add_child(label)
 

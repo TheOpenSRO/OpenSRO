@@ -1139,3 +1139,65 @@ Full verification: all 43 real GDScript test suites pass, `godot4 --headless --p
 verified against a **live render using real pulled pk2 data** rather than a synthetic/isolated test
 -- both `Data.pk2` and `Map.pk2` deleted from this sandbox immediately after the real screenshots
 were captured and inspected.
+
+## 2026-09-01, thirty-third round — real Stone Golem model implemented, replacing the placeholder capsule
+
+Picked up the roadmap's last unimplemented character-rendering item: real monster models. Previously
+scoped (twenty-sixth round) but not attempted, since a monster's real pipeline was unconfirmed
+territory. This round did the real work.
+
+**New real data found**: extracted a real `golem.bsr` directly and grepped its strings -- it carries
+more than `docs/protocol/BSR_FORMAT.md` documents for static objects. Alongside the already-known
+mesh/material/sub-mesh fields, a real `.bsr` for a monster also embeds a real matching skeleton path
+(`Prim\Skel\mob\casia\golem.bsk`) and a real list of 14 `.ban` animation paths (stand/walk/run/
+attack01-03/damage01/die/die_rm/down/down_rm/down_damage/downup/downdie) right in the file. Golem's
+7 real mesh pieces (`golem01.bms`..`golem07.bms`) carry no body-part-hinting names or per-piece
+`material_name` values the way human body parts do (every piece just says `"golem"`) -- the
+name-matching heuristic `CharacterAssembler` uses for humans doesn't apply here.
+
+**Real piece-to-bone correspondence, computed from data, not guessed**: golem's real skeleton
+(`golem.bsk`) has 48 real bones -- the same standard Biped names the player skeleton uses
+(`Bip01 Spine`, `Bip01 L Thigh`, etc.), plus 22 extra `BoneNN` nodes with no confirmed real role
+(plausibly per-rock-cluster attachment points for this specific creature). Built a one-off Go tool
+(not kept) that computed each real mesh piece's real vertex centroid and matched it to its nearest
+real bone by bind-pose position. `golem01` (743 of ~1229 total real vertices -- clearly the main
+body) landed within 1.64 units of `Bip01 Spine`; the 6 smaller pieces (45-108 verts each) landed
+2.4-4.1 units from their own nearest bone. Real geometric correspondence, not a naming guess, though
+not a perfect zero-distance match the way human body parts were.
+
+**Visually verified before shipping**: built a one-off render tool (not kept) that assembled the
+real golem using this computed mapping, with the real `golem.bmt`/`golem.ddj` texture, and rendered
+it from three angles. The result reads as an unmistakable, coherent rock-golem silhouette -- a
+mossy-stone torso, two large boulder-mass arms, short legs, spiky rock shards around the
+head/shoulders -- not a scattered mess. This confirms the same "absolute bind-pose-space vertex
+positions, no extra per-piece transform" convention already relied on for characters and static
+objects holds for monster meshes too.
+
+**Implemented**: `client/scripts/assets/monster_assembler.gd` (`MonsterAssembler`), a small,
+generic `assemble(skeleton, parts, piece_bones, material)` that reuses
+`CharacterAssembler.attach_rigid` (promoted from private to a shared public helper -- no logic
+changed, just made callable from outside `CharacterAssembler`) plus a `GOLEM_PIECE_BONES` constant
+holding the computed real mapping. `World3D.gd` gained `_load_golem_assets()`/
+`_build_assembled_golem()` (cached-once-per-run real asset loading, the same pattern
+`_load_character_assets` already uses) and wires it into `_spawn_or_update_monster`: a monster named
+`"Stone Golem"` now gets the real assembled model; every other real species (Wild Boar has no real
+matching asset at all; Sand Scorpion has real data but no piece-to-bone derivation done yet) still
+falls back to the labeled placeholder capsule, the same honest pattern already used for other
+players' unresolved assets. The placeholder's label-height offset (calibrated for the capsule) is
+now computed from the real assembled skeleton's own bone bounds when a real model is used, instead
+of floating at the wrong height above a real model with a very different real native scale (the
+golem's own raw skeleton data is nowhere near `PLAYER_SCALE_RATIO`-scaled human height -- left
+unscaled, per this project's standing policy of not inventing scale multipliers without real
+evidence).
+
+**Not attempted this round**: animation playback for the golem (14 real `.ban` files are known but
+unused -- the model is currently a static bind pose, same starting point the player character was
+at before the twenty-eighth round's animation fix); Sand Scorpion (real data confirmed to exist,
+same derivation process not yet done); promoting the newly-found `.bsr` skeleton/animation-path
+fields into `BsrReader`/`bsr`'s general parser (read ad hoc here instead, since only one real file
+has been inspected this way).
+
+Full verification: all 43 real GDScript test suites pass (including a new
+`monster_assembler_test.gd`, added to `ci.yml`), `godot4 --headless --path . --import --quit` and a
+headless `--quit-after 60` boot both clean. All pulled real samples (skeleton, 7 mesh pieces,
+material, texture) and both one-off tools (Go matcher, GDScript render tool) deleted after use.

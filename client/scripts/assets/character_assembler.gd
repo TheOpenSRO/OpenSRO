@@ -169,8 +169,11 @@ static func _build_side_mesh(mesh: BmsReader.ParsedMesh, positive_side: bool) ->
 ## BoneAttachment3D, offsetting the mesh instance so the mesh's own baked
 ## absolute-space vertex positions land correctly at bind pose and rotate
 ## rigidly around that bone's bind position as it animates -- see this
-## file's top comment for the derivation.
-static func _attach_rigid(skeleton: Skeleton3D, array_mesh: ArrayMesh, bone_name: String, material: Material) -> void:
+## file's top comment for the derivation. Public (2026-09-01) -- also used
+## by MonsterAssembler; see monster_assembler.gd's own top comment for
+## whether the same real convention was confirmed to hold for monster
+## meshes too.
+static func attach_rigid(skeleton: Skeleton3D, array_mesh: ArrayMesh, bone_name: String, material: Material) -> void:
 	var bone_idx := skeleton.find_bone(bone_name)
 	if bone_idx == -1:
 		push_error("CharacterAssembler: skeleton has no bone named %s" % bone_name)
@@ -215,10 +218,10 @@ static func assemble(skeleton: Skeleton3D, parts: Dictionary, default_material: 
 		var material: Material = materials_by_name.get(mesh.material_name, default_material)
 
 		if bones.size() == 1:
-			_attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), bones[0], material)
+			attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), bones[0], material)
 		else:
-			_attach_rigid(skeleton, _build_side_mesh(mesh, true), bones[0], material)
-			_attach_rigid(skeleton, _build_side_mesh(mesh, false), bones[1], material)
+			attach_rigid(skeleton, _build_side_mesh(mesh, true), bones[0], material)
+			attach_rigid(skeleton, _build_side_mesh(mesh, false), bones[1], material)
 
 ## Same real mechanism as assemble() (rigid BoneAttachment3D, name-matched
 ## real material resolution, X-sign split for paired pieces), applied to
@@ -238,10 +241,10 @@ static func assemble_equipment(skeleton: Skeleton3D, parts: Dictionary, default_
 		var material: Material = materials_by_name.get(mesh.material_name, default_material)
 
 		if bones.size() == 1:
-			_attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), bones[0], material)
+			attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), bones[0], material)
 		else:
-			_attach_rigid(skeleton, _build_side_mesh(mesh, true), bones[0], material)
-			_attach_rigid(skeleton, _build_side_mesh(mesh, false), bones[1], material)
+			attach_rigid(skeleton, _build_side_mesh(mesh, true), bones[0], material)
+			attach_rigid(skeleton, _build_side_mesh(mesh, false), bones[1], material)
 
 ## Real bone a one-handed weapon rigidly attaches to -- confirmed directly
 ## (not assumed from the 3ds Max Biped naming convention alone) by pulling
@@ -255,11 +258,11 @@ const WEAPON_BONE := "Bip01 R Hand"
 ## Attaches one real weapon mesh (already resolved to its own real
 ## material via mesh.material_name, e.g. a real blade_01.bms's
 ## material_name "blade1_5" matches a real layer inside a real
-## blade1_5.bmt) rigidly to WEAPON_BONE -- the same _attach_rigid
+## blade1_5.bmt) rigidly to WEAPON_BONE -- the same attach_rigid
 ## mechanism as body parts and clothing, just for a single unpaired mesh
 ## with no slot-code parsing needed.
 static func assemble_weapon(skeleton: Skeleton3D, mesh: BmsReader.ParsedMesh, material: Material = null) -> void:
-	_attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), WEAPON_BONE, material)
+	attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), WEAPON_BONE, material)
 
 ## Real bone a real shield rigidly attaches to -- the off-hand counterpart
 ## to WEAPON_BONE, confirmed the same direct way: pulling a real
@@ -274,4 +277,4 @@ const SHIELD_BONE := "Bip01 L Hand"
 ## "shield_11" matches a real layer inside a real shield_11.bmt) rigidly
 ## to SHIELD_BONE -- same mechanism as assemble_weapon.
 static func assemble_shield(skeleton: Skeleton3D, mesh: BmsReader.ParsedMesh, material: Material = null) -> void:
-	_attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), SHIELD_BONE, material)
+	attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), SHIELD_BONE, material)

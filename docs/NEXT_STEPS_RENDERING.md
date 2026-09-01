@@ -37,15 +37,16 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   changing `CameraArm.rotation_degrees` to `(-42, 180, 0)` and updating `DEFAULT_CAMERA_YAW_DEGREES`
   to match. Live-verified: re-rendering from the exact fixed camera direction shows the real back,
   confirming standard third-person framing.
-- **No real per-species monster models — scoped 2026-08-28, not yet implemented.** Confirmed real
-  `.bsr`/`.bsk`/`.bmt` data exists for Stone Golem and Sand Scorpion (the two of this project's
-  three spawned monsters that map to a real creature at all — "Wild Boar" has no real match, see
-  `docs/WORLD_ISSUES.md`'s twenty-sixth round). Not implemented yet because a monster's real
-  pipeline (`.bsr` compound mesh + separate `.bsk` skeleton) is materially different from both
-  existing pipelines (static `ObjectLoader`, no skeleton; player `CharacterAssembler`, raw `.bms`
-  parts rigidly bone-attached) and whether the `.bsr` sub-mesh coordinate space matches
-  `CharacterAssembler`'s rigid-attach assumption is unconfirmed — real implementation work, ideally
-  with a live playtest available to verify against, not something to guess through blind.
+- ~~Real per-species monster models~~ — **Stone Golem implemented and visually verified 2026-09-01**
+  (see `docs/WORLD_ISSUES.md`'s thirty-third round). A monster's real `.bsr` turned out to embed its
+  own matching `.bsk` skeleton path directly, confirming the coordinate-space question: real mesh
+  piece positions are in the same absolute bind-pose space `CharacterAssembler` already assumes for
+  humans, no extra transform needed. Piece-to-bone correspondence was computed from real vertex/bone
+  position data (no body-part-hinting names exist for monster mesh pieces) and confirmed via a real
+  rendered screenshot — a recognizable rock-golem silhouette, not guessed. **Sand Scorpion not done
+  yet** — real data confirmed to exist, same derivation process not yet run. **Wild Boar still has no
+  real asset at all.** Animation playback (14 real `.ban` files known, e.g. walk/attack/die) not
+  wired up — the golem currently renders in a static bind pose.
 - **Equipment/weapon/shield visuals are real but not verified complete** — `armor_slots_mask`
   correctly drives which real armor pieces attach, but there's been no recent audit of whether
   every armor/weapon/shield combination actually resolves to a real asset vs. silently rendering
@@ -115,5 +116,6 @@ playtest screenshot so far:
 4. ~~Real day/night environment-lighting~~ — done 2026-08-31, real public channel names found and
    wired into the sky's top/bottom colors. Visually verified 2026-08-31 against a real live render.
 5. ~~Front/back texture-swap root cause~~ — SOLVED 2026-08-31, a camera yaw bug, not a mesh bug.
-6. Real monster models (replacing the placeholder capsule).
+6. ~~Real monster models~~ — Stone Golem done 2026-09-01, visually verified. Sand Scorpion and
+   monster animation playback still open.
 7. Weather polish, remaining animation states.
