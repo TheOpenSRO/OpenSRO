@@ -137,6 +137,28 @@ extends Node3D
 ## every one of these constants by the same factor, preserving their
 ## previously-tuned *feel* relative to the character's own height rather
 ## than guessing new values at the new scale.
+## Real, confirmed bug (2026-09-01, see docs/WORLD_ISSUES.md): the placeholder
+## Ground body and every real terrain patch's collision both defaulted to
+## Godot's default collision_layer (bit 1), the same layer every real
+## placed-object (.bsr building) collision body also defaults to in
+## ObjectLoader -- nothing distinguished "the actual ground" from "the roof
+## of a tall building standing on that ground" to a raycast that just takes
+## whichever surface it hits first from high above. Since the real fixed
+## server spawnPos (0,0,0) can land under/inside a real building (already
+## known, see _avoid_spawning_under_roof's own doc comment), a tall real
+## structure sitting exactly at the spawn X/Z meant the very first
+## ground-snap raycast in _snap_player_onto_terrain hit that building's
+## real roof, not the real ground beneath it -- spawning the player on top
+## of a tower instead of on the ground, a real bug _avoid_spawning_under_roof
+## can't catch (it only checks for a real ceiling *above* an
+## already-landed position, not whether "landed" means "on a roof" in the
+## first place). Fixed by giving terrain collision its own dedicated layer
+## bit (kept alongside the default layer 1, so every other real collision
+## check -- movement, click-to-move, camera collision -- is unaffected) and
+## having the initial ground-snap ray target only that bit.
+const TERRAIN_COLLISION_LAYER := 0b1001 # layer 1 (default) + layer 4 (terrain-only)
+const TERRAIN_ONLY_COLLISION_MASK := 0b1000 # layer 4 only
+
 const PLAYER_SCALE_RATIO := 138.7 / 1.8
 const MOVE_SPEED := 6.0 * PLAYER_SCALE_RATIO
 const GRAVITY := 20.0 * PLAYER_SCALE_RATIO
@@ -1749,6 +1771,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# the real stitched multi-sub-patch mesh (build_full_region_mesh), not
 	# one repeated patch, so there is exactly one real node to build here.
 	var patch_body := StaticBody3D.new()
+	patch_body.collision_layer = TERRAIN_COLLISION_LAYER
 	var patch_shape := CollisionShape3D.new()
 	patch_shape.shape = terrain_mesh.create_trimesh_shape()
 	patch_body.add_child(patch_shape)
@@ -1792,6 +1815,11 @@ func _snap_player_onto_terrain() -> void:
 		player.position + Vector3(0.0, 1000.0, 0.0),
 		player.position + Vector3(0.0, -1000.0, 0.0))
 	query.exclude = [player.get_rid()]
+	# Terrain-only (see TERRAIN_ONLY_COLLISION_MASK's doc comment) -- without
+	# this, a real building standing at the spawn X/Z (its collision defaults
+	# to the same layer terrain used to) is whatever this ray hits first from
+	# 1000 units up, landing the player on its roof instead of the ground.
+	query.collision_mask = TERRAIN_ONLY_COLLISION_MASK
 	var hit := space_state.intersect_ray(query)
 	if hit.is_empty():
 		return
@@ -2641,6 +2669,7 @@ func _terrain_height_at(pos: Vector3) -> float:
 	var query := PhysicsRayQueryParameters3D.create(
 		pos + Vector3(0.0, 1000.0, 0.0),
 		pos + Vector3(0.0, -1000.0, 0.0))
+	query.collision_mask = TERRAIN_ONLY_COLLISION_MASK # see its own doc comment -- same "landed on a roof" bug applies to monster placement
 	var hit := space_state.intersect_ray(query)
 	if hit.is_empty():
 		return pos.y

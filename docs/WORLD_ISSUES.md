@@ -1201,3 +1201,51 @@ Full verification: all 43 real GDScript test suites pass (including a new
 `monster_assembler_test.gd`, added to `ci.yml`), `godot4 --headless --path . --import --quit` and a
 headless `--quit-after 60` boot both clean. All pulled real samples (skeleton, 7 mesh pieces,
 material, texture) and both one-off tools (Go matcher, GDScript render tool) deleted after use.
+
+## 2026-09-01, thirty-fourth round — SOLVED: real spawn-on-a-tower-roof bug (and likely "broken collision" too)
+
+Real user report: spawning lands the player on top of a tower instead of on the ground, and
+collision feels broken. Root-caused and fixed with a real before/after numeric comparison, not
+guessed at.
+
+**Root cause**: `_snap_player_onto_terrain`'s initial ground-snap raycast (from 1000 units above the
+spawn point straight down) never set a `collision_mask`, so it defaults to hitting *every* physics
+layer -- and both real terrain patches and every real placed-object (`.bsr` building) collision body
+default to the same Godot collision layer (bit 1), nothing distinguishing "the ground" from "the
+roof of a building standing on that ground." Since the real fixed server `spawnPos` is `(0,0,0)`
+(already known to be able to land inside/under a real building, see `_avoid_spawning_under_roof`'s
+own doc comment), if a real tall structure happens to stand at that exact spawn X/Z, the very first
+raycast hits its roof (the topmost surface along that column) before it ever reaches the real
+ground underneath. `_avoid_spawning_under_roof`'s existing escape logic didn't catch this because it
+only checks for a real *ceiling above* an already-landed position -- it has no way to know "landed"
+here actually means "landed on top of something," not on the ground.
+
+**Reproduced and confirmed with real numbers, not a screenshot alone** (camera framing looks nearly
+identical whether standing on a roof or the ground, since the third-person camera is always the same
+relative distance from the player -- a screenshot alone doesn't prove the fix): pulled real
+`Data.pk2`/`Map.pk2` again, ran the real spawn logic against real Jangan (`89/182`) at the real
+`(0,0,0)` spawn point with a temporary debug print. Before the fix: `hit.position.y = 76.98` --
+comparable to real measured door/wall heights (~72-76 units, see earlier rounds), not ground level.
+After the fix: `hit.position.y = 1.04` -- real ground level. An 80-unit real difference, exactly
+consistent with "was landing on a roof, now lands on the ground."
+
+**Fix**: gave terrain collision (both the placeholder `Ground` body and every real streamed terrain
+patch) a second, dedicated collision-layer bit (`TERRAIN_COLLISION_LAYER := 0b1001`, keeping the
+default layer 1 too so every other existing collision check -- movement, click-to-move, camera
+collision -- is unaffected) and set `_snap_player_onto_terrain`'s (and, for the same reason,
+`_terrain_height_at`'s, used for monster placement) initial ray's `collision_mask` to
+`TERRAIN_ONLY_COLLISION_MASK := 0b1000` (that bit only), so the very first ground-snap always finds
+the real ground, never a building roof, regardless of what's directly overhead at the spawn point.
+
+**On "collision is broken"**: not separately reproduced or root-caused this round -- but standing on
+a small real rooftop instead of open ground would itself produce exactly this kind of symptom (an
+edge to walk off, different real floor geometry underneath than expected, `move_and_slide`
+interacting with a small isolated real roof surface instead of continuous terrain). Flagged as
+likely the same root cause, not confirmed as a fully separate bug -- if collision still looks wrong
+after this fix in a real playtest, that needs its own fresh real report.
+
+Full verification: all 43 real GDScript test suites pass, `godot4 --headless --path . --import
+--quit` and a headless `--quit-after 60` boot both clean. Verified with a real before/after
+comparison using `git stash` to test the exact pre-fix code against the same real data, not just
+reasoning about the mechanism. Debug print removed before committing; `Data.pk2`/`Map.pk2` deleted
+after use.
