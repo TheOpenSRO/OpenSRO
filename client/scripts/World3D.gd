@@ -1138,6 +1138,19 @@ func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion,
 ## soft ambient-shadow blob than a sky-color asset, but that's not
 ## confirmed either).
 const SKY_DOME_RADIUS := 3000.0
+## How far above the player the real cloud dome's centre is placed.
+##
+## **Added 2026-09-02** (see docs/WORLD_ISSUES.md's fifty-first round): the
+## dome is a hemisphere, so centring it exactly on the player put its base
+## plane at the player's own feet, where it sliced straight through real
+## terrain. That intersection rendered as translucent shards fanning across
+## the ground away from the player -- a real, confirmed artifact (disabling
+## the sky removed it completely and left clean ground, while everything
+## else was unchanged). Lifting the centre well above head height keeps the
+## whole dome above real terrain, which is also where a real cloud layer
+## belongs. Chosen relative to the dome's own radius rather than as a loose
+## constant so the two stay in proportion if the radius is ever retuned.
+const SKY_DOME_HEIGHT_ABOVE_PLAYER := SKY_DOME_RADIUS * 0.5
 const CLOUD_DRIFT_UV_PER_SECOND := 0.008
 const SUN_GLOW_DISTANCE := 2800.0
 const SUN_GLOW_SIZE := 500.0
@@ -2540,7 +2553,7 @@ func _load_real_materials(archive: Pk2Reader, bmt_path: String) -> Dictionary:
 
 func _physics_process(delta: float) -> void:
 	if _sky_dome != null:
-		_sky_dome.global_position = player.global_position
+		_sky_dome.global_position = player.global_position + Vector3(0.0, SKY_DOME_HEIGHT_ABOVE_PLAYER, 0.0)
 		_cloud_uv_offset.x += CLOUD_DRIFT_UV_PER_SECOND * delta
 		_sky_dome_material.set_shader_parameter("uv_offset", _cloud_uv_offset)
 	if _sun_glow != null:

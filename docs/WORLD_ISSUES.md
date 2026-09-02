@@ -1949,3 +1949,49 @@ Full verification: all 45 real GDScript test suites pass, `godot4 --headless --p
 --quit` clean, and a real headless scene boot against real `Data.pk2` runs with zero script errors.
 All pulled real data and the temporary `render_bsr_probe.gd`/`measure_probe.gd` diagnostics deleted
 after use; every debug hook removed before commit (verified via `git diff`).
+
+## 2026-09-02, fifty-first round — back on the map: cloud dome was slicing the ground, and real
+## buildings render unlit
+
+Direct correction from the user: I had drifted off the map onto character animation and stayed
+there. Refocused on the map, with real renders of the real Jangan region (`98/168`) against real
+pulled `Data.pk2`/`Map.pk2`.
+
+**Real bug found and fixed: the cloud dome was cutting through the terrain.** A ground-level render
+showed large translucent shards fanning across the ground away from the player. Isolated it by
+disabling the sky entirely: the shards vanished completely and the ground came back clean, with
+nothing else changed. Cause: `_sky_dome` is a **hemisphere** whose position was set to
+`player.global_position` every frame, so its flat base plane sat exactly at the player's feet and
+intersected real terrain wherever the ground rose above that. Fixed by lifting the dome's centre to
+`SKY_DOME_RADIUS * 0.5` above the player, which keeps the whole dome clear of real terrain and is
+also simply where a real cloud layer belongs. Re-rendered: shards gone, sky intact, clean grass.
+This is the third distinct real bug this one dome has produced (see the thirty-second, thirty-fifth
+and forty-second rounds) -- worth remembering if it misbehaves again.
+
+**Real bug found, NOT yet fixed: real buildings render as unlit dark silhouettes.** The same render
+shows the real Jangan palace walls as flat dark navy slabs against the sky. Ruled out by
+measurement, in order:
+
+- **Not missing assets** -- the whole region loads with only 2 unresolved `.bsr` files out of
+  hundreds.
+- **Not lighting level** -- forcing the directional light to 1.5 and ambient to pure white at
+  energy 2.0 lit the ground and character right up while the slabs stayed exactly as dark.
+- **Not the material's own colour** -- dumping the real `.bmt` layers for real palace/lion/house/tree
+  materials shows ordinary mid-grey diffuse values (~0.588), no black or near-black.
+- **Not the sky dome** -- with the sky disabled the slabs are still there (and render pure black).
+
+**What it is**: the surfaces are unlit, i.e. their normals face away from the light. Negating every
+`.bms` vertex normal makes the real palace walls render correctly, with visible stone texture --
+**but simultaneously turns the real willow foliage into black silhouettes**, which had been rendering
+correctly. So walls and foliage currently need *opposite* normal orientations, which cannot both be
+right and points at something more fundamental than a stray sign.
+
+The leading explanation, not yet confirmed, is a **handedness mismatch**: if real `.bms` data is
+authored in a left-handed space and this project imports positions without mirroring, then both the
+triangle winding *and* the normals need flipping together, and the forty-seventh round's
+winding-only flip left the two inconsistent. That would also explain why the winding flip visibly
+fixed one real building (`cj_sugi_house_01`, verified three ways at the time) while leaving these
+walls wrong. The foliage may then be a separate, real interaction with the alpha-cutout materials
+that already disable back-face culling. **Not guessed at further** -- the next step is a controlled
+isolated render of one real wall and one real foliage asset across all four winding/normal
+combinations, rather than more changes to the live scene.
