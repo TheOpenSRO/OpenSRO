@@ -94,3 +94,41 @@ differ, rather than trying further application strategies blind.
 
 Animation playback stays disabled meanwhile (see `World3D._physics_process`), so the real character
 renders correctly in its real bind pose instead of visibly broken.
+
+### The rest-vs-keyframe-0 comparison, actually run (2026-09-02)
+
+Ran the comparison the section above named as the next step: for the real `chinaman_skel.bsk` and
+the real `chinaman_fighter_standcity.ban` (37 shared bones, 14 keyframes), dumped each bone's
+`.bsk`-derived rest transform beside its `.ban` keyframe-0 transform. Result, all against real data:
+
+- **They do not match**: only **2 of 37** rotations agree (dot > 0.999) and **1 of 37** positions
+  (within 0.01 units).
+- **Translations look axis-permuted, not merely different.** Magnitudes correspond closely while
+  landing on different axes -- e.g. `Bip01 Neck` rest `(-0.029, 2.281, 0.257)` vs keyframe-0
+  `(2.296, 0, -0.0004)`; `Bip01 Neck1` rest `(-0.0002, 0.4468, -0.0017)` vs `(0.4468, 0, -0.0004)`;
+  `Bip01 L UpperArm` rest `(-0.260, 1.133, -0.122)` vs `(1.169, 0, 0)`. Nearly every real `.ban`
+  translation is "a length along **local X**, other axes ~0", which is the classic 3ds Max Biped
+  convention (bones extend down their own +X). This project's rest positions instead express the
+  offset in the *parent's* world-rotation frame, so the length lands on a different axis.
+  `Bip01 L Clavicle` swaps the other way (rest `(0.332, 0, -0.039)` vs keyframe-0 `(0, 0.334, 0.0004)`),
+  so it is not one uniform axis relabel either.
+- **The body's height offset sits at a different level of the hierarchy.** Real `.ban` keyframe 0
+  puts `(0, 9.978, -0.067)` on the root `Bip01` and exactly `(0, 0, 0)` on `Bip01 Pelvis`. This
+  project's rest does the reverse: `build_skeleton3d` *forces* the root to identity and puts
+  `(-0.0007, 9.869, -0.067)` on Pelvis.
+- **Chaining keyframe 0 down the hierarchy does not reproduce the `.bsk` bind pose.** Global bone
+  positions come out a mean **9.26** / max **18.43** units away from the `.bsk`-derived global rest,
+  on a character only ~15 units tall. Ignoring the root's own keyframe (to test whether the
+  difference is purely the forced-identity root) makes it *worse*: mean **16.17** / max **23.33**.
+
+**Conclusion**: real `.ban` keyframe 0 is genuinely **not** the same pose as the real `.bsk` bind
+pose, in any simple re-expression of it -- so the fix is not "rebuild rest from keyframe 0", and it
+is not a single axis swap. The two files really do use different per-bone frames, and reconciling
+them needs the real client's own animation/skinning code (this project has the server decompiled,
+not the renderer) or a substantially deeper derivation than trial application strategies can reach.
+Four strategies have now been tried and measured against real data; recording this so a fifth blind
+attempt isn't made.
+
+**Genuinely actionable without solving the above**: the real per-file `FPS` and per-keyframe `Time`
+table documented in the section above are unread, and would replace this project's hand-picked
+`BAN_FPS` playback-rate guess with real values -- independent of the pose-space problem.
