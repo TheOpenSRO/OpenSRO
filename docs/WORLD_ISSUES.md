@@ -2025,3 +2025,47 @@ it is negating `.bms` normals, which the analytic check says would be wrong -- s
 find why correct outward normals still light incorrectly there (candidate: the Compatibility
 renderer's handling of `CULL_DISABLED` alpha-scissor materials, which is exactly the set that
 flipped appearance in that experiment).
+
+## 2026-09-02, fifty-second round — the dark slabs were willow foliage rendering opaque
+
+Followed the plan from the previous round (isolate rather than keep changing the live scene), and
+this time identified the culprit exactly rather than by elimination: **raycast into the dark slabs
+from the camera and print what was hit.** Every single ray, across six horizontal and three vertical
+screen positions, hit the same thing -- `tre_willow03_leaf01`, a real willow tree's own leaf mesh.
+The slabs were never walls or buildings at all; they were real foliage cards rendering as solid
+rectangles.
+
+**Root cause**: `_ALPHA_FOURCCS` listed only `DXT3`/`DXT5`, so a real DXT1 texture never even reached
+the alpha check. BC1/DXT1 carries a real 1-bit alpha channel and real foliage uses it heavily.
+Measured the real textures directly:
+
+```
+tre_willow02_leaf01   DXT1  256x256   79% of texels below opaque
+tre_willow02_leaf02   DXT1  128x512   77%
+tre_willow02_will01   DXT1   64x256    0%   (the real trunk -- genuinely solid)
+CJ_pal_sub_buil01_wall02  DXT1 128x256  0%  (real masonry -- genuinely solid)
+CJ_pal_sub_buil01_roof01  DXT1  64x256  0%
+```
+
+The separation is total: real foliage 77-79%, real solid surfaces exactly 0%, nothing in between.
+
+**Fix**: added `DXT1` to `_ALPHA_FOURCCS`, with a **fraction** test rather than the existing
+"any texel below opaque" rule for that format specifically (`_DXT1_CUTOUT_MIN_ALPHA_FRACTION`, 5%,
+via a new `_real_alpha_fraction()`). DXT3/DXT5 keep their original behaviour untouched, because their
+alpha is graded and small amounts are meaningful there; DXT1's is 1-bit, so a real texture either
+uses it clearly or not at all, and requiring a real fraction keeps genuinely solid real masonry solid
+even if a block decodes with one imperfect texel. A first attempt that simply added DXT1 without the
+fraction test was reverted in the previous round precisely because it flipped real palace walls to
+cutout.
+
+**Verified**: re-rendered the same real Jangan view. The dark slabs are gone entirely, replaced by
+real willow trees with visible trunks and hanging foliage, the real palace wall and its red trim
+readable behind them, and real sky through the canopy. Every real palace/wall texture measured
+stayed opaque, confirming the guard works in both directions.
+
+This also closes the previous round's open question honestly: the leading hypothesis there was a
+handedness/normal problem, on the strength of negating `.bms` normals appearing to "fix the walls".
+That was a red herring -- the walls were never broken; they were **occluded** by opaque foliage
+cards, and negating normals merely darkened the foliage enough to stop hiding them. The analytic
+winding-vs-normals check from that round (99-100% agreement) was right, and no normal change was
+needed.

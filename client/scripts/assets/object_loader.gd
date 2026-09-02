@@ -191,7 +191,27 @@ static func load_material(archive: Pk2Reader, bmt_path: String) -> BmtReader.Par
 ## decoder even though the format nominally supports 1-bit punch-through
 ## alpha, so it's deliberately not included here -- see this function's
 ## own doc comment for how this was confirmed, and DDJ_FORMAT.md).
-const _ALPHA_FOURCCS := ["DXT3", "DXT5"]
+## **DXT1 added 2026-09-02** (see docs/WORLD_ISSUES.md's fifty-second
+## round). BC1/DXT1 carries a real 1-bit alpha channel and real foliage uses
+## it: a real willow's own leaf textures (`tre_willow02_leaf01`/`_leaf02`)
+## are DXT1 with **79%** of their texels below opaque, but DXT1 being absent
+## here meant they never got cutout and rendered as huge solid rectangles --
+## the real dark slabs standing behind real trees in a live render, traced
+## to `tre_willow03_leaf01` by raycasting into them.
+const _ALPHA_FOURCCS := ["DXT1", "DXT3", "DXT5"]
+
+## Minimum fraction of a real texture's texels that must be below opaque
+## before a real **DXT1** texture is treated as a cutout.
+##
+## DXT3/DXT5 carry graded alpha, where even a small amount is meaningful, so
+## they keep the original "any texel below opaque" rule. DXT1's alpha is
+## 1-bit -- a real texture either uses it clearly or not at all -- and real
+## measurements separate the two cases cleanly, with no middle ground: real
+## willow leaves 79%, real grass 79%, against real palace wall and roof
+## DXT1 textures at exactly **0%**. Requiring a real fraction rather than a
+## single stray texel keeps genuinely solid real masonry solid even if a
+## block decodes with one imperfect texel.
+const _DXT1_CUTOUT_MIN_ALPHA_FRACTION := 0.05
 
 ## Builds a Godot StandardMaterial3D from a parsed material layer, resolving
 ## its texture (a bare filename) against the same directory bmt_path lives
@@ -264,7 +284,13 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 		# decodes the real pixel data and only applies cutout+no-culling if
 		# a real texel's alpha is genuinely below opaque, instead of
 		# assuming from the format alone.
-		if _ALPHA_FOURCCS.has(parsed_tex.four_cc) and _has_real_alpha_variance(godot_tex):
+		var needs_cutout := false
+		if _ALPHA_FOURCCS.has(parsed_tex.four_cc):
+			if parsed_tex.four_cc == "DXT1":
+				needs_cutout = _real_alpha_fraction(godot_tex) >= _DXT1_CUTOUT_MIN_ALPHA_FRACTION
+			else:
+				needs_cutout = _has_real_alpha_variance(godot_tex)
+		if needs_cutout:
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
 			mat.alpha_scissor_threshold = 0.5
 			mat.cull_mode = BaseMaterial3D.CULL_DISABLED
@@ -307,6 +333,33 @@ static func _has_real_alpha_variance(tex: Texture2D) -> bool:
 			if image.get_pixel(x, y).a < 250.0 / 255.0:
 				return true
 	return false
+
+## Fraction of a real texture's texels whose alpha is below opaque -- the
+## real signal _DXT1_CUTOUT_MIN_ALPHA_FRACTION is compared against. Same
+## real 250/255 opaque threshold _has_real_alpha_variance uses (tolerating
+## real DXT block-compression rounding), just counted rather than
+## short-circuited on the first hit. Returns 0.0 for a texture that can't be
+## decoded, so an undecodable real texture is never treated as a cutout.
+static func _real_alpha_fraction(texture: Texture2D) -> float:
+	if texture == null:
+		return 0.0
+	var image := texture.get_image()
+	if image == null:
+		return 0.0
+	image = image.duplicate()
+	image.decompress()
+	if image.get_format() != Image.FORMAT_RGBA8:
+		return 0.0
+	var data := image.get_data()
+	var below := 0
+	var total := 0
+	var i := 3
+	while i < data.size():
+		if data[i] < 250:
+			below += 1
+		total += 1
+		i += 4
+	return float(below) / float(maxi(total, 1))
 
 ## Loads a single .bms mesh at path within archive and returns a
 ## MeshInstance3D. Returns null (and pushes an error) on failure.
