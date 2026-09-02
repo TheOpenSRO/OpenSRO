@@ -2214,3 +2214,33 @@ expanse fills the lower screen at close range. Ruled out, each by direct test:
 Its colour matches the sky's own lower-hemisphere tone, and a real height profile through that area
 shows ordinary terrain (-1 to +40 units) with a real 40-unit rise immediately in front of the
 spawn. Recorded as still-open rather than explained away a second time.
+
+### Same round, continued: the `97/167` pale band is not culling either
+
+Kept going on the one artifact the far-plane fix did not explain. Painted every real terrain mesh
+bright magenta and re-rendered: real terrain draws in a strip at the character's feet **and** on the
+far bank, but **not in the wide band between them**, where the background shows through instead. The
+band's colour tracks the environment background exactly -- it renders pale cyan with the real sky
+enabled and flat blue with the sky disabled -- confirming it is genuinely "nothing drawn here", not a
+surface with a bad material.
+
+Additional causes ruled out this round, each by direct test:
+
+- **Not water.** Water meshes were painted magenta too (they are children of the same `RealTerrain_*`
+  nodes) and the band stayed background-coloured. Separately, disabling water rendering entirely
+  leaves the frame unchanged.
+- **Not the cloud dome**, despite it being by far the largest mesh in the scene
+  (`5974 x 3000 x 5974`, centred at y=1499, so its AABB bottom does sit near ground level -- worth
+  remembering). Disabling the sky leaves the band present.
+- **Not frustum culling.** Setting `extra_cull_margin = 16384` on every real terrain mesh changes
+  nothing.
+- **Not the far plane** (still present at 11520), **not missing collision** (2,401 raycasts found
+  real terrain at every sample), and **not the camera being below the surface** (measured 15-30 units
+  above).
+
+That is seven eliminated causes across two rounds. What is left is narrow: real terrain that has
+collision, is inside the frustum, is not culled, and still does not draw, in one band at
+middle distance. Recorded as genuinely open. The next thing to try is dumping the actual surface
+count and index totals of the specific `RealTerrain_*` nodes covering that band and comparing them
+against a region that renders correctly -- i.e. asking whether those meshes were built with geometry
+at all, rather than asking why they are not visible.
