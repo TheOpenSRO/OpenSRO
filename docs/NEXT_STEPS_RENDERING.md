@@ -43,6 +43,15 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   worth a side-by-side comparison against a real client screenshot once one is available.
 - **Terrain seam blending exists (2026-08-24) but hasn't been re-verified since the scale fix** —
   the blend radius/strength was tuned against the old world scale.
+- **Cross-region height mismatch, now rigorously measured — still genuinely open** (see
+  `docs/WORLD_ISSUES.md`'s forty-fourth round): a direct real-data diff of adjacent regions' shared
+  boundary heights (not just a visual look) found mean mismatches of 25-55 units and maxes of
+  75-115+ units, even in a cluster earlier cited as looking seamless. Tested and ruled out one
+  hypothesis (reversed row/column correspondence between neighbors) — helped some pairs a lot, hurt
+  or did nothing for others, too inconsistent to be a real fix. Still needs either real decompiled
+  client region-loading code (this project only has the server decompiled) or a better public
+  reference for the real region/sector layout — not something to guess or blend past, given the
+  measured mismatch is large enough that any blend would visibly warp real terrain.
 - ~~Water renders; sky cloud texture disabled~~ — **cloud dome re-enabled 2026-09-02** (see
   `docs/WORLD_ISSUES.md`'s forty-second round): the real sunburst/fan artifact at the dome's pole
   (a genuine `SphereMesh` polar-UV projection singularity) is now fixed with a custom shader

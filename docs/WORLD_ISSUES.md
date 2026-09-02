@@ -1675,3 +1675,47 @@ Full verification: all 45 real GDScript test suites pass, `godot4 --headless --p
 clean. All pulled real data (`Data.pk2`, `Map.pk2`) and the scratch tool (`envprobe_scratch`) deleted
 after use; the temporary `SRREVAMP_DEBUG_UNLIT`/`SRREVAMP_DEBUG_HIDE_UI` diagnostic hooks used to
 isolate the bug were fully removed before commit (verified via `git diff`).
+
+## 2026-09-02, forty-fourth round — cross-region height-mismatch, rigorously measured for the first
+## time; no reliable fix found, still genuinely open
+
+Continuing "make it finished." The cross-region height-mismatch limitation has been flagged since the
+fifth round, but always qualitatively ("real, genuinely steep seams") -- never actually measured. Built
+a real, no-persisted-data tool (`server/cmd/seamcheck_scratch`, deleted after use) that stitches two
+real adjacent regions' full 97x97 height grids (the exact same real logic
+`MapmTerrainBuilder._full_region_cells` uses) and directly diffs their real shared-boundary vertex
+heights -- no rendering involved, pure real data comparison.
+
+**Real, quantitative result**: even in the region cluster this project's own earlier docs cited as
+proof of "zero visible gaps" (`100/100`'s neighborhood -- see `_load_region_neighborhood`'s own doc
+comment, which cites a real 3x3 top-down debug render of this exact area as positive evidence for
+grid adjacency), real adjacent-region edge heights differ by a
+mean of 25-55 units and a max of 75-115 units at the shared boundary -- large, real numbers relative
+to this project's own measured real building heights (~44 units for a wall piece, ~140 for a tree).
+The earlier "no visible gaps" finding was evidently a shallow visual read (a top-down or middle-
+distance debug render), not a check of actual vertex continuity -- this rigorous check contradicts it.
+
+**One real, tested hypothesis, and its real result**: tried reversing the compared row/column order
+(in case this project's assumed north/south or column direction between neighboring region files is
+mirrored relative to reality) at several real region-pairs. Result was **inconsistent, not a real
+fix**: some pairs improved dramatically with reversal (`101/100`<->`101/101`: mean diff 26.5 -> 7.8;
+`100/100`<->`100/101`: 24.5 -> 3.7), others got worse or stayed the same (`102/100`<->`102/101`: 57.5
+-> 58.8; `98/168`<->`99/168`, x-axis: 22.9 -> 31.7). A real fix that only works for some pairs isn't a
+real fix -- it's noise, and shipping it as one would be exactly the kind of unverified pattern-match
+this project's own standing rule exists to prevent. Not applied.
+
+**Honest conclusion**: this project still does not have a real, confirmed way to determine true
+region-to-region physical adjacency or a real per-region height datum that would let two real
+neighboring regions' terrain align without a fabricated blend. This is consistent with (and now
+backed by harder evidence than) the existing "offset hypothesis does not hold" finding from the
+sixth round (this project's internal region-folder numbers don't match the public xSROMap sector
+numbering via any simple transform either). A real fix needs one of: (a) real decompiled client
+region-loading/world-coordinate code (this project only has the server decompiled, not the renderer),
+(b) a public reference for the real region/sector layout more detailed than what's been found so far,
+or (c) accepting a fabricated, disclosed-as-fabricated blend across the seam (not attempted -- the
+measured mismatch is large enough, tens to 100+ units over a handful of quads, that a blend would
+visibly warp real terrain features rather than just soften a seam, and this project has a standing
+preference for an honest sharp seam over a disguised fabrication).
+
+Full verification: no rendering-affecting code changed this round (investigation only). Real pulled
+data (`Map.pk2`) and the scratch tool (`seamcheck_scratch`) deleted after use.
