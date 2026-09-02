@@ -2660,22 +2660,27 @@ func _physics_process(delta: float) -> void:
 	# assembled character render correctly for the first time -- but only
 	# in its real bind pose. With this real .ban playback driving the
 	# skeleton it still comes out distorted (arms and legs splayed
-	# outward), so `apply_ban_pose` has its own separate real bug:
-	# it computes each keyframe rotation as a delta against keyframe 0 and
-	# applies it as a *local* pose rotation, but real .ban rotations look to
-	# be in the same global/world space this project already had to convert
-	# out of for .bsk bind rotations (see Skeleton3DBuilder.build_skeleton3d)
-	# -- applying a global-space rotation as a local one compounds error
-	# down the bone chain, which matches the symptom exactly. That earlier
-	# "coherent walking stride" check only ever looked at a bare skeleton's
-	# bone positions, never at real attached body meshes, which is why it
-	# read as fine.
+	# outward), so `apply_ban_pose` has its own separate real bug. That
+	# earlier "coherent walking stride" check only ever looked at a bare
+	# skeleton's bone positions, never at real attached body meshes, which
+	# is why it read as fine.
 	#
-	# Correcting it needs converting each animated global rotation to a
-	# parent-relative local one and re-verifying against real renders --
-	# real work, not attempted here. Left disabled rather than shipped
-	# visibly broken (same call this project already made for the sky cloud
-	# dome), so the real character renders correctly, just statically.
+	# **One hypothesis tested and disproven (2026-09-02)**: that real .ban
+	# rotations are in the same global/world space this project already had
+	# to convert out of for .bsk bind rotations (see
+	# Skeleton3DBuilder.build_skeleton3d), and that applying them as *local*
+	# pose rotations compounds error down the bone chain. Implemented the
+	# global-to-parent-relative conversion and rendered it against real
+	# data: the result is dramatically *worse* (the character scatters
+	# completely, rather than merely splaying), so real .ban rotations are
+	# not global-space and that is not the bug. The existing delta-against-
+	# keyframe-0 approach is closer to correct than that alternative.
+	# What the real encoding actually is remains genuinely unknown -- it
+	# needs real evidence, not another guess.
+	#
+	# Left disabled rather than shipped visibly broken (same call this
+	# project already made for the sky cloud dome), so the real character
+	# renders correctly, just statically.
 	if false and _player_skeleton != null and _character_assets.has(_player_gender):
 		var assets: Dictionary = _character_assets[_player_gender]
 		var anim: BanReader.ParsedAnimation = assets["walk_anim"] if is_moving else assets["idle_anim"]

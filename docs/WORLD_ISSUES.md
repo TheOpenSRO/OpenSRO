@@ -1917,20 +1917,26 @@ bind-pose coordinates its own vertices are already in -- while still moving rigi
 under animation. **Real render confirms it**: the character now assembles into a correct, complete
 humanoid T-pose (torso, both arms, both legs, hands, feet all connected and correctly placed).
 
-**Real bug #3, found but deliberately NOT fixed this round: `.ban` animation playback is wrong.**
-With the above fixed, the character is correct in its real bind pose but still distorts once real
-animation drives the skeleton. `Skeleton3DBuilder.apply_ban_pose` computes each keyframe's rotation
-as a delta against keyframe 0 and applies it as a **local** pose rotation, but real `.ban` rotations
-appear to be in the same global/world space this project already had to convert out of for real
-`.bsk` bind rotations -- applying a global-space rotation as a local one compounds error down the
-bone chain, which matches the symptom exactly. Note this also corrects an earlier over-claim: the
-2026-08-28 "coherent walking stride" verification only ever looked at a bare skeleton's bone
-positions, never at real attached body meshes, which is why it read as fine.
+**Real bug #3, found but NOT fixed this round: `.ban` animation playback is wrong.** With the above
+fixed, the character is correct in its real bind pose but still distorts once real animation drives
+the skeleton. Note this also corrects an earlier over-claim: the 2026-08-28 "coherent walking stride"
+verification only ever looked at a bare skeleton's bone positions, never at real attached body
+meshes, which is why it read as fine.
 
-Animation playback is **disabled** for now rather than shipped visibly broken -- the same call this
+**One hypothesis was tested and disproven.** `Skeleton3DBuilder.apply_ban_pose` computes each
+keyframe's rotation as a delta against keyframe 0 and applies it as a **local** pose rotation, so the
+obvious guess was that real `.ban` rotations are in the same global/world space this project already
+had to convert out of for real `.bsk` bind rotations, and that applying a global rotation as a local
+one compounds error down the bone chain. Implemented that conversion (global -> parent-relative) and
+rendered it against real data: the result is dramatically **worse** -- the character scatters
+completely rather than merely splaying. So real `.ban` rotations are *not* global-space, and that is
+not the bug; the existing delta-against-keyframe-0 approach is closer to correct than the
+alternative. Reverted. What the real encoding actually is remains genuinely unknown and needs real
+evidence rather than another guess -- recorded here so the same dead end isn't re-walked.
+
+Animation playback is **disabled** meanwhile rather than shipped visibly broken -- the same call this
 project already made for the sky cloud dome -- so the real character renders correctly, just
-statically. Fixing it properly means converting each animated global rotation to a parent-relative
-local one and re-verifying against real renders.
+statically.
 
 **Also still open, deliberately not guessed at**: real map objects measured alongside the character
 (a real chair 12.5 units, table 10.8, standing lamp 19.9, guardian lion statue 29.0) are
