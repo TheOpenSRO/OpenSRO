@@ -145,12 +145,35 @@ static func to_array_mesh(mesh: ParsedMesh) -> ArrayMesh:
 		normals[i] = mesh.vertices[i].normal
 		uvs[i] = mesh.vertices[i].uv
 
+	# **Winding reversed 2026-09-02** (see docs/WORLD_ISSUES.md's
+	# forty-seventh round). The real .bms index buffer lists each triangle's
+	# three vertices in the opposite order from the front-face winding Godot
+	# expects, so feeding it through unchanged made every real object render
+	# inside-out: with normal back-face culling on, a real building's
+	# outward-facing surfaces were culled and only its interior showed,
+	# which is what made real buildings and creatures look broken. Proved
+	# with a real controlled render of a real building (`cj_sugi_house_01`):
+	# unchanged it renders as a sparse skeleton of poles with no walls or
+	# roof; with culling forced off it renders as a complete, correct
+	# thatched hut; and with the winding reversed it renders as that same
+	# correct hut *with normal culling still enabled* -- i.e. the geometry
+	# was always right and only the winding was wrong. Reversing here rather
+	# than disabling culling keeps real back-face culling doing its job.
+	# Per-vertex normals come from the real file, not from winding, so
+	# lighting is unaffected by this.
+	var indices := PackedInt32Array()
+	indices.resize(mesh.indices.size())
+	for i in range(0, mesh.indices.size() - 2, 3):
+		indices[i] = mesh.indices[i]
+		indices[i + 1] = mesh.indices[i + 2]
+		indices[i + 2] = mesh.indices[i + 1]
+
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = positions
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
-	arrays[Mesh.ARRAY_INDEX] = mesh.indices
+	arrays[Mesh.ARRAY_INDEX] = indices
 
 	var array_mesh := ArrayMesh.new()
 	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)

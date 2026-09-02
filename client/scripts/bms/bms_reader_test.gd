@@ -114,6 +114,22 @@ func _init() -> void:
 		_check(array_mesh != null, "builds a Godot ArrayMesh")
 		_check(array_mesh.get_surface_count() == 1, "ArrayMesh has 1 surface")
 
+		# Real winding reversal (see to_array_mesh's own doc comment): the
+		# real .bms index buffer winds each triangle opposite to Godot's
+		# front-face convention, so feeding it through unchanged renders
+		# every real object inside-out. Each triangle must come back with
+		# its 2nd and 3rd indices swapped, and nothing else changed --
+		# proved against real data, so it's worth pinning here.
+		if array_mesh != null and array_mesh.get_surface_count() == 1:
+			var out_idx: PackedInt32Array = array_mesh.surface_get_arrays(0)[Mesh.ARRAY_INDEX]
+			_check(out_idx.size() == mesh.indices.size(), "winding reversal keeps the real triangle count (got %d, want %d)" % [out_idx.size(), mesh.indices.size()])
+			var reversed_ok := out_idx.size() == mesh.indices.size()
+			for t in range(0, mesh.indices.size() - 2, 3):
+				if out_idx[t] != mesh.indices[t] or out_idx[t + 1] != mesh.indices[t + 2] or out_idx[t + 2] != mesh.indices[t + 1]:
+					reversed_ok = false
+					break
+			_check(reversed_ok, "each real triangle's 2nd/3rd indices are swapped (parsed=%s built=%s)" % [mesh.indices, out_idx])
+
 	var bad_magic := PackedByteArray()
 	bad_magic.resize(BmsReader.PREAMBLE_END)
 	_check(BmsReader.parse(bad_magic) == null, "rejects bad magic")

@@ -61,8 +61,29 @@ static func load_object(archive: Pk2Reader, path: String) -> Node3D:
 	# over 1,200 times combined across a real client's map). Filtered out
 	# here rather than passed to find_file, which would otherwise report a
 	# real, spurious "" not found error.
-	var mesh_paths := ([obj.mesh_path] if obj.mesh_path != "" else [])
-	mesh_paths.append_array(obj.sub_mesh_paths)
+	#
+	# **De-duplicated 2026-09-02** (see docs/WORLD_ISSUES.md's forty-seventh
+	# round). A real .bsr's own sub-mesh list normally *begins with the very
+	# same path* as its primary mesh_path -- confirmed against real data
+	# (e.g. `cj_sugi_house_01.bsr` declares mesh_path
+	# `...\cj_sugi_house_01.bms` and then lists that identical path again as
+	# its first sub-mesh, followed by `_02`/`_03`). Prepending mesh_path
+	# unconditionally therefore built the same real mesh twice at the exact
+	# same transform, so every such object rendered its main piece as two
+	# perfectly coplanar copies -- real z-fighting, which is what made real
+	# buildings look visibly wrong. Since this loader applies no per-mesh
+	# transform, drawing one real mesh path twice is never meaningful, so
+	# de-duplicating while preserving real declaration order is always
+	# correct here.
+	var mesh_paths: Array = []
+	for candidate in ([obj.mesh_path] if obj.mesh_path != "" else []) + obj.sub_mesh_paths:
+		var already := false
+		for existing in mesh_paths:
+			if (existing as String).to_lower() == (candidate as String).to_lower():
+				already = true
+				break
+		if not already:
+			mesh_paths.append(candidate)
 
 	var material := load_material(archive, obj.material_path) if obj.material_path != "" else null
 

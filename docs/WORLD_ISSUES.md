@@ -1829,3 +1829,53 @@ feathered blend surface, with a real check that blend alphas only ever ramp betw
 `BOUNDARY_BLEND_ALPHA`). `godot4 --headless --path . --import --quit` clean. All pulled real data
 (`Data.pk2`, `Map.pk2`) and scratch tools (`blockedge_scratch`, `findneighbor_scratch`) deleted after
 use; every temporary debug hook removed before commit (verified via `git diff`).
+
+## 2026-09-02, forty-seventh round — buildings and creatures were rendering inside-out
+
+Real playtest report: terrain now reads correctly ("the dirt road actually looks like sro, so does
+the grass") but "the buildings are fucked and so is the dog", with a direction to **do what the
+original code does** rather than approximate. Two real bugs found, both in object loading rather
+than placement.
+
+**Real bug #1: every real object rendered inside-out.** `BmsReader.to_array_mesh` fed the real
+`.bms` index buffer straight into Godot, but the real file winds each triangle in the opposite
+order from Godot's front-face convention. With normal back-face culling, that culls a real
+object's *outward* surfaces and leaves only its interior visible.
+
+Proved with a real controlled render of a real building (`cj_sugi_house_01`), three ways: as-is it
+renders as a sparse skeleton of poles with no walls or roof; with culling forced off it renders as
+a complete, correct thatched hut; with the winding reversed it renders as that same correct hut
+**with normal culling still enabled** -- i.e. the real geometry was always right and only the
+winding was wrong. Confirmed again on a real Jangan palace roof (`cj_pal_sub_buil01`): before, a
+hollow shell you could see straight through to its far inside edges; after, a solid, correctly-tiled
+roof. Note this also corrects an earlier misread in the forty-second round, where a Jangan gate was
+called "real and correct" -- it was actually showing interior faces.
+
+**Fix**: reverse each triangle's 2nd/3rd index in `to_array_mesh`. Per-vertex normals come from the
+real file rather than from winding, so lighting is unaffected. Chose this over disabling culling
+because it keeps real back-face culling doing its job, and because the evidence says the winding
+(not the culling) is what was wrong. Checked the alternative first: the public
+[`JellyBitz/JMX-File-Editor`](https://github.com/JellyBitz/JMX-File-Editor) `PrimMtrlFlag` enum
+documents the real `.bmt` material flags field this project parses as `unknown`, but it names no
+two-sided/culling bit (only tentative guesses for tint/diffuse/alpha/bump), so wiring a culling
+flag from it would have been a guess -- deliberately not done.
+
+**Real bug #2: a real object's primary mesh was drawn twice.** A real `.bsr`'s own sub-mesh list
+normally *begins with the very same path* as its primary `mesh_path` (confirmed against real data:
+`cj_sugi_house_01.bsr` declares `mesh_path .../cj_sugi_house_01.bms` and then lists that identical
+path again as its first sub-mesh, before `_02`/`_03`). `ObjectLoader` prepended `mesh_path`
+unconditionally, so the main piece was built twice at the exact same transform -- real z-fighting on
+every such object. Fixed by de-duplicating the mesh path list while preserving real declaration
+order; since this loader applies no per-mesh transform, drawing one real mesh path twice is never
+meaningful.
+
+**Not addressed**: "the dog" specifically wasn't isolated to a named real asset this round. Real
+creature models go through the same `BmsReader` path as buildings, so the winding fix applies to
+them too, but that hasn't been confirmed against a specific real dog/creature asset -- flagged
+honestly rather than claimed.
+
+Full verification: all 45 real GDScript test suites pass, including a **new** real assertion in
+`bms_reader_test.gd` pinning the winding reversal (previously `to_array_mesh`'s index output had no
+test coverage at all, which is why this shipped broken for so long). `godot4 --headless --path .
+--import --quit` clean. All pulled real data (`Data.pk2`, `Map.pk2`) and the temporary
+`render_bsr_probe.gd` diagnostic deleted after use; debug hooks removed before commit.
