@@ -1535,3 +1535,61 @@ literal value), `godot4 --headless --path . --import --quit` clean, a real headl
 `98/168` directly (not just the constant change) confirmed real content loads with zero errors. All
 pulled real data (`Data.pk2`, `Map.pk2`) and scratch tools (`pk2list`, `dumpregion_scratch`,
 `topregions_scratch`) deleted after use.
+
+## 2026-09-02, forty-first round — ground looked "like Minecraft": real fix for flat, blocky per-quad
+## terrain textures
+
+Direct follow-up ("see how it looks like minecraft. it doesn't look like that in jangan. shit is
+missing everywhere"). Real, visible bug, root-caused rather than guessed at.
+
+**Root cause**: `MapmTerrainBuilder._build_textured_mesh_from_cells` gives every real 20-unit ground
+quad exactly one full `0..1` UV stretch of its real texture (`_quad_uv_corners`, previously only
+varying a quad's rotation/mirror, never its tiling). Real ground textures (`Tile2D\*.ddj`, grass/
+dirt/stone) are small, high-frequency, repeating patterns, not single artwork-sized images meant to
+fill 20 world units on their own -- stretching one non-repeated copy across a whole quad produces
+exactly the flat, solid-colored, hard-edged block look reported: real, visible per-quad texture
+detail (grass blades, brick grain) gets stretched into near-invisibility, leaving what's left reading
+as one flat-colored square per tile, i.e. Minecraft.
+
+**Real data found while investigating**: `docs/protocol/MAPM_FORMAT.md` already noted each real
+vertex's `TextureInfo` field packs a 10-bit texture ID *plus a 6-bit "Scale"* -- present in the real
+file format, decoded as raw bytes, but never actually used for anything. Fetched the real public
+source directly ([`JellyBitz/srodevs-docs`](https://github.com/JellyBitz/srodevs-docs)'s
+`jmxvmapm.md`, the same already-approved public reference this format's block/vertex layout came
+from) to confirm the field's real name and bit position (confirmed: bits 10-15, named "Scale"), then
+sampled real per-vertex values across several real regions (`server/cmd/scaleprobe_scratch`, ad hoc,
+deleted after use): every real value observed is an exact multiple of 8 (0, 8, 16, 24, 32) -- e.g.
+`98/168` (this project's own Jangan spawn) is scale=0 on all 10,404 real vertices, while `98/157`
+(Dunhuang) is mostly scale=8 with some 16/24/32, and `91/182` mixes 0/8/16. Never an arbitrary 0-63
+value. This is real, confirmed, non-random per-region and per-vertex real data -- not guessed --
+though its *exact* numeric meaning (what "scale=8" specifically means in world units) isn't
+independently confirmed beyond the field's real name and the fact that it's always a clean multiple
+of 8.
+
+**Fix**: `_resolve_texture_scale()` now decodes the real Scale bits, interpreted as a discrete tiling
+*level* (`level = scale >> 3`, i.e. exactly recovering the observed 0/1/2/3/4 steps) driving a real
+texture-repeat multiplier of `2^level`. Layered on top of a new `BASE_TILE_REPEAT := 4.0` constant --
+**explicitly an honest engineering choice, not a claim about real per-quad tiling data** (same
+disclosed category as the existing quad-rotation trick right above it in the same file) -- since even
+regions where every real vertex has scale=0 (like the new Jangan spawn itself) still looked flat and
+blocky without *some* baseline repeat. `_quad_uv_corners` now takes a `repeat` parameter (default
+`1.0`, so every existing caller/test is unaffected) and scales its corner UVs by it instead of always
+producing a unit square.
+
+**Real-verified, not just theorized**: rendered the same real region (`96/169`, a real "greenfield"
+area) before and after -- before, grass/dirt/road quads were flat, solid-colored blocks with a hard
+grid edge at every quad boundary; after, the same real textures show actual internal detail (visible
+grass blades, brick/paving grain) repeating within each quad, with soft color-block transitions
+instead of a hard checkerboard. A real substantial visual improvement, confirmed by direct
+side-by-side render, not assumed from the code change alone.
+
+**What this doesn't fix**: the exact real meaning of the Scale field's numeric value is still not
+independently confirmed (only its name, bit position, and the real discrete-multiples-of-8 pattern
+are) -- if a more authoritative source or a decompiled reference turns up a different formula, revisit
+this. `BASE_TILE_REPEAT`'s value (4.0) is a judgment call, not measured from anything real -- flagged
+honestly as such, same as this file's other disclosed rendering choices.
+
+Full verification: all 45 real GDScript test suites pass (existing `_quad_uv_corners` unit-square
+assertions still hold via the new parameter's default), `godot4 --headless --path . --import --quit`
+clean. All pulled real data (`Data.pk2`, `Map.pk2`) and the scratch tool (`scaleprobe_scratch`)
+deleted after use.

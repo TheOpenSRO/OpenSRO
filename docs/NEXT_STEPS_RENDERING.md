@@ -27,6 +27,13 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   banners), a real open grass field with a dirt/stone road and rock outcrops, a real fortified wall
   next to a moat, and a real elevated stone walkway along a mountainside — genuine, varied, populated
   terrain in every direction checked, not gaps or repeats.
+- **Ground textures rendered as flat, blocky, "Minecraft"-looking squares** — fixed 2026-09-02 (see
+  `docs/WORLD_ISSUES.md`'s forty-first round): every ground quad got exactly one non-repeated `0..1`
+  texture stretch, so a real texture's own internal detail (grass blades, brick grain) was stretched
+  into invisibility, leaving a flat-colored block per quad. Now tiles each real texture within its
+  quad — a real, previously-unused `Scale` field from `MAPM_FORMAT.md`'s `TextureInfo` drives part of
+  the repeat rate, plus a disclosed baseline repeat constant. Real before/after render confirmed
+  visible texture detail and softer transitions replacing the hard checkerboard look.
 - ~~Ground-texture completeness audit~~ — done 2026-08-28: both real zones this project renders
   (Jangan `89/182`, Dunhuang `98/157`) resolve **100%** of their real per-vertex texture IDs to a
   real `Tile2D\` file. The flat-color fallback path is correct to keep but isn't currently firing

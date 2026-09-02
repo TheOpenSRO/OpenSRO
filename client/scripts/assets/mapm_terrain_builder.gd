@@ -249,6 +249,42 @@ static func _resolve_texture_id(extra: PackedByteArray, texture_lookup: Dictiona
 		return id
 	return -1
 
+## The real, confirmed-present 6-bit "Scale" field packed into the same
+## TextureInfo u16 as the texture ID (see docs/protocol/MAPM_FORMAT.md and
+## the public JellyBitz/srodevs-docs jmxvmapm.md ImHex pattern, which names
+## this exact field "Scale" at bits 10-15). This project doesn't have an
+## independently-confirmed formula for what a given real Scale value means
+## in world units, but real sampled data (2026-09-02, server/cmd's ad hoc
+## scaleprobe_scratch, deleted after use) found every real value observed
+## across several real regions is an exact multiple of 8 (0, 8, 16, 24, 32)
+## -- never an arbitrary 0-63 value -- strongly suggesting only the top 3
+## bits actually vary and the field is a discrete tiling *level*, not a raw
+## multiplier. Interpreted here as a real per-quad texture-repeat doubling:
+## level = scale >> 3, repeat multiplier = 2^level. A quad with scale=0
+## (repeat x1) plus this file's own BASE_TILE_REPEAT baseline still tiles
+## its real texture more than once -- see BASE_TILE_REPEAT's own comment
+## for why that baseline exists independently of this field.
+static func _resolve_texture_scale(extra: PackedByteArray) -> int:
+	if extra.size() < 2:
+		return 0
+	return extra.decode_u16(0) >> 10
+
+## Real ground textures (grass/dirt/stone .ddj files in Map.pk2's Tile2D\
+## folder) are small, high-frequency, repeating patterns -- not one
+## artwork-sized image meant to be seen once per real 20-unit quad. Before
+## this constant existed, every quad got exactly one full 0..1 stretch of
+## its real texture regardless of TextureInfo.Scale (see that field's own
+## comment) -- most real regions have scale=0 everywhere, so quads still
+## showed one giant flat-looking stretch, an obviously blocky/"Minecraft"
+## look reported directly from a real playtest (2026-09-02). This baseline
+## repeat is a rendering choice, not a claim about the real game's own
+## per-quad tiling rate (that rate isn't recoverable from what this project
+## has found so far) -- the same honest category _quad_uv_corners' rotation
+## trick below already uses. Picked as a modest middle value: high enough
+## that a real texture's own internal detail actually shows more than once
+## per quad, low enough not to read as obviously over-tiled up close.
+const BASE_TILE_REPEAT := 4.0
+
 ## Deterministically picks one of the 8 real square symmetries (4
 ## rotations x optional mirror) for a quad's own UV corners, keyed by its
 ## own (r, c) grid position. Purely a rendering choice, not a claim about
@@ -259,8 +295,8 @@ static func _resolve_texture_id(extra: PackedByteArray, texture_lookup: Dictiona
 ## flagged as a known limitation when per-quad texturing first shipped
 ## (see docs/PROGRESS.md). Every quad still gets exactly one real texture
 ## tile, unchanged -- this only varies its orientation.
-static func _quad_uv_corners(r: int, c: int) -> PackedVector2Array:
-	var base: Array[Vector2] = [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]
+static func _quad_uv_corners(r: int, c: int, repeat: float = 1.0) -> PackedVector2Array:
+	var base: Array[Vector2] = [Vector2(0, 0), Vector2(repeat, 0), Vector2(repeat, repeat), Vector2(0, repeat)]
 	var h: int = absi((r * 73856093) ^ (c * 19349663))
 	var variant := h % 8
 	var rot := variant % 4
@@ -322,17 +358,23 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 	# can look up any quad's neighbors.
 	var quad_keys := []
 	var quad_colors := []
+	var quad_repeats := []
 	quad_keys.resize(row_count - 1)
 	quad_colors.resize(row_count - 1)
+	quad_repeats.resize(row_count - 1)
 	for r in range(row_count - 1):
 		quad_keys[r] = []
 		quad_colors[r] = []
+		quad_repeats[r] = []
 		quad_keys[r].resize(col_count - 1)
 		quad_colors[r].resize(col_count - 1)
+		quad_repeats[r].resize(col_count - 1)
 		for c in range(col_count - 1):
 			var extra: PackedByteArray = cells[r][c][1]
 			quad_keys[r][c] = _resolve_texture_id(extra, texture_lookup)
 			quad_colors[r][c] = _vertex_color()
+			var scale_level: int = _resolve_texture_scale(extra) >> 3
+			quad_repeats[r][c] = BASE_TILE_REPEAT * pow(2.0, float(scale_level))
 
 	# Base surface: one continuous mesh over the whole grid, each vertex
 	# colored by averaging the (up to 4) quads that touch it -- see this
@@ -418,7 +460,7 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 			var quad_uv2s: PackedVector2Array = [uv2s[i00], uv2s[i10], uv2s[i11], uv2s[i01]]
 			buf["positions"].append_array(quad_positions)
 			buf["normals"].append_array(quad_normals)
-			buf["uvs"].append_array(_quad_uv_corners(r, c))
+			buf["uvs"].append_array(_quad_uv_corners(r, c, quad_repeats[r][c]))
 			buf["uv2s"].append_array(quad_uv2s)
 			buf["colors"].append_array(PackedColorArray([color, color, color, color]))
 			buf["indices"].append_array(PackedInt32Array([base, base + 1, base + 2, base, base + 2, base + 3]))
