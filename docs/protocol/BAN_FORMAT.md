@@ -132,3 +132,44 @@ attempt isn't made.
 **Genuinely actionable without solving the above**: the real per-file `FPS` and per-keyframe `Time`
 table documented in the section above are unread, and would replace this project's hand-picked
 `BAN_FPS` playback-rate guess with real values -- independent of the pose-space problem.
+
+## Verified against the real client binary (2026-09-02)
+
+Everything above came from public documentation plus this project's own parsing. The real
+`sro_client.exe` is imported and analysed in a separate Ghidra project on the RE box
+(`/home/ghidra/re_client`, alongside `GFXFileManager.dll`), which the MCP session does **not** have
+open — it has the Agent/Gateway server project instead (confirmed: its class list is entirely
+`CAgentServer`/`CNetEngine`/socket/thread types, with no graphics, skeleton or animation classes at
+all). The client project can be driven with `analyzeHeadless -process sro_client.exe -noanalysis
+-postScript <script>.java`, which is how the following was obtained. Function numbering matches this
+project's existing notes (e.g. `FUN_0042a6e0`, already cited in `MAPM_FORMAT.md` as the real `.m`
+loader, appears here as a `JMXV` magic site), so these addresses line up with earlier rounds.
+
+**The real `.ban` loader is `FUN_00c01e20`.** It builds the expected signature inline as three
+dwords -- `0x56584d4a` `0x204e4142` `0x32303130`, i.e. **`"JMXV" "BAN " "0102"`** -- validates it via
+`FUN_00bfcfb0`, then calls `FUN_00c01ca0` to parse.
+
+**`FUN_00c01ca0` (the parser) confirms the header exactly as publicly documented**: three
+consecutive dwords (Duration, FPS, IsCyclic) stored at object offsets `0x20`/`0x24`/`0x28`, then a
+`uint` count followed by that many keyframe-time dwords bulk-copied into the object's `0x40`/`0x44`
+vector, then a `uint` animated-bone count followed by that many per-bone records, each **44 bytes
+(`0x2c`)** in memory, parsed by `FUN_00c00630`.
+
+**`FUN_00c00630` (per-bone track) is the important one**: it reads the transformation count, then
+bulk-copies `count * 0x1c` bytes -- **28 bytes per keyframe** -- straight into the track's own
+buffer via `memcpy` (`FUN_00410f90`). 28 bytes is exactly a 16-byte quaternion plus a 12-byte
+`Vector3`, matching the public documentation, and the copy is **verbatim: the client applies no
+conversion, normalisation, or reordering at load time**. It also pre-initialises a quaternion to
+`(0, 0, 0, 1.0f)` (the `0x3f800000` immediate) before filling.
+
+So this project's `BanReader` is reading the real format correctly, and the real per-keyframe values
+it holds are byte-identical to what the real client holds. **Whatever the remaining pose problem is,
+it is not in the reader and not a load-time transformation** -- it is in how the values are combined
+with the skeleton at evaluation time, which lives elsewhere in the client and has not been located
+yet.
+
+Incidental, from enumerating every `JMXV` magic site in the client: the formats it validates inline
+are `OBJI`, `CPD`, `RES`, `BMS`, `DOF`, `NVM`, `DDJ`, `BMT`, `BAN`, and `EFF`. Notably **no `BSK`
+magic appears**, even though real `.bsk` skeleton files clearly exist and load — so the skeleton is
+either validated differently or reached through one of the other loaders. Worth following up, since
+the bind-pose side is exactly where the remaining problem is.
