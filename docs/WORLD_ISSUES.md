@@ -1719,3 +1719,47 @@ preference for an honest sharp seam over a disguised fabrication).
 
 Full verification: no rendering-affecting code changed this round (investigation only). Real pulled
 data (`Map.pk2`) and the scratch tool (`seamcheck_scratch`) deleted after use.
+
+## 2026-09-02, forty-fifth round — keep pushing: a real Ghidra dead end, a real stride-2 test, and a
+## real tiling-blend improvement
+
+Direct follow-up ("keep pushing on the region stuff and fixing the map and tiling").
+
+**Checked whether the loaded Ghidra project could resolve the region-adjacency question directly**:
+it can't -- the currently-open program is the real Agent/Gateway server binary (`CAgentServer`,
+`CNetEngine`, `CBaseSocket` classes; no `CRegion`/`CObject`/`CTerrain`-style classes, no `.pk2`
+strings at all), not the world/zone server or the client renderer. Earlier `CRegionManagerBody`
+references in this project's own docs must come from a different binary analyzed in an earlier
+session that isn't currently loaded, and this project's tools have no way to open a different binary
+into Ghidra from here. Real dead end, not pursued further.
+
+**Tested one more real hypothesis on the height-mismatch data**: a stride-2 adjacency (comparing
+`98/168` directly against `100/168`, skipping the file numbered in between) instead of stride-1.
+Real result: `16.2` mean / `62.0` max diff, vs `22.9`/`131.2` and `22.4`/`97.8` for the two stride-1
+pairs spanning the same distance -- somewhat smaller, but still a large real mismatch (for scale: a
+real measured building wall is ~44 units tall), and "somewhat smaller over a wider gap" is weak,
+ambiguous evidence at best, not a confirmed fix. Not applied -- still an open problem, same
+conclusion as the forty-fourth round.
+
+**Real, shipped improvement to ground-texture tiling**: a closer real render (96/169, greenfield)
+showed the forty-first round's per-quad tiling fix hadn't fully solved the "blocky" look -- the
+boundary alpha-blend between differently-textured quads was applied as one flat value across an
+*entire* quad, so a quad still either "faded" or didn't as a whole block, just semi-transparently
+instead of opaquely. Changed `_build_textured_mesh_from_cells` to compute **per-corner** alpha
+instead (each of a quad's 4 corners checks only the 1-2 neighbor sides nearest to it), letting
+Godot's own vertex-color interpolation produce a real smooth gradient fading toward each boundary
+edge rather than a uniform block-wide fade -- same real neighbor-differs signal already computed,
+applied at finer granularity, no new data or invented values. Real before/after render of the same
+region confirms visibly softer, less blocky transitions at texture-ID boundaries. (Also tried raising
+`BASE_TILE_REPEAT` from 4 to 8 to see if finer tiling alone would help further -- real render showed
+no visible difference at this render resolution, reverted back to 4, not worth the change.)
+
+**Also confirmed, not a bug**: a real fan/sunburst-shaped ground texture pattern visible in one
+close-up render (a real raked-sand/garden-medallion-style tile, consistent with the "greenfield"
+lake-garden district it sits in) is real texture content resolving correctly, not a rendering
+artifact -- left alone.
+
+Full verification: all 45 real GDScript test suites pass, `godot4 --headless --path . --import --quit`
+clean. All pulled real data (`Data.pk2`, `Map.pk2`) and the scratch tool (`seamcheck_scratch`)
+deleted after use; temporary `SRREVAMP_DEBUG_HIDE_UI`/`SRREVAMP_DEBUG_LOOKDOWN` hooks fully removed
+before commit (verified via `git diff`).

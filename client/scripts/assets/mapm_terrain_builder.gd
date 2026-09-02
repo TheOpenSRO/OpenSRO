@@ -447,13 +447,33 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 			var base: int = buf["positions"].size()
 
 			var color: Color = Color.WHITE if key != -1 else quad_colors[r][c]
-			var is_boundary: bool = (
-				(r > 0 and quad_keys[r - 1][c] != key)
-				or (r < row_count - 2 and quad_keys[r + 1][c] != key)
-				or (c > 0 and quad_keys[r][c - 1] != key)
-				or (c < col_count - 2 and quad_keys[r][c + 1] != key)
-			)
-			color.a = 0.55 if is_boundary else 1.0
+
+			# Real per-*corner* alpha (2026-09-02, see docs/WORLD_ISSUES.md's
+			# forty-fifth round), not the flat per-quad alpha this used to
+			# be: a whole quad fading uniformly still reads as a hard-edged
+			# block switching state, just semi-transparent instead of
+			# opaque -- a real playtest confirmed the checkerboard pattern
+			# was still clearly visible after the per-quad-tiling fix.
+			# Godot interpolates ARRAY_COLOR smoothly across a triangle, so
+			# giving each of the 4 corners its own alpha (low only on the
+			# side(s) actually touching a differently-textured neighbor)
+			# produces a real gradient fading toward each boundary instead
+			# of a uniform block-wide fade -- same real texture data, same
+			# neighbor-differs signal already computed, just applied at
+			# finer granularity.
+			var left_differs: bool = c > 0 and quad_keys[r][c - 1] != key
+			var right_differs: bool = c < col_count - 2 and quad_keys[r][c + 1] != key
+			var top_differs: bool = r > 0 and quad_keys[r - 1][c] != key
+			var bottom_differs: bool = r < row_count - 2 and quad_keys[r + 1][c] != key
+
+			var color00 := color
+			color00.a = 0.55 if (left_differs or top_differs) else 1.0
+			var color10 := color
+			color10.a = 0.55 if (right_differs or top_differs) else 1.0
+			var color11 := color
+			color11.a = 0.55 if (right_differs or bottom_differs) else 1.0
+			var color01 := color
+			color01.a = 0.55 if (left_differs or bottom_differs) else 1.0
 
 			var quad_positions: PackedVector3Array = [positions[i00], positions[i10], positions[i11], positions[i01]]
 			var quad_normals: PackedVector3Array = [normals[i00], normals[i10], normals[i11], normals[i01]]
@@ -462,7 +482,7 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 			buf["normals"].append_array(quad_normals)
 			buf["uvs"].append_array(_quad_uv_corners(r, c, quad_repeats[r][c]))
 			buf["uv2s"].append_array(quad_uv2s)
-			buf["colors"].append_array(PackedColorArray([color, color, color, color]))
+			buf["colors"].append_array(PackedColorArray([color00, color10, color11, color01]))
 			buf["indices"].append_array(PackedInt32Array([base, base + 1, base + 2, base, base + 2, base + 3]))
 
 	var keys := buffers.keys()
