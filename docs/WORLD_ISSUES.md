@@ -1593,3 +1593,50 @@ Full verification: all 45 real GDScript test suites pass (existing `_quad_uv_cor
 assertions still hold via the new parameter's default), `godot4 --headless --path . --import --quit`
 clean. All pulled real data (`Data.pk2`, `Map.pk2`) and the scratch tool (`scaleprobe_scratch`)
 deleted after use.
+
+## 2026-09-02, forty-second round — "figure out what's wrong with the map and make it finished":
+## real audit, sky dome re-enabled with a real shader fix
+
+Direct response to an open-ended "make it finished" request. Did a real, broad audit rather than
+guessing what to fix next: pulled real `Data.pk2`/`Map.pk2` (deleted after use) and added a temporary
+top-down orthographic debug camera mode (`SRREVAMP_DEBUG_TOPDOWN`, removed before commit) to survey
+large areas of the new Jangan continent (`98/168`, see the fortieth round) at once, plus normal
+ground-level renders.
+
+**Real, positive finding**: the top-down survey looks like an actual city -- real streets, plazas,
+walled compounds, market stalls, farmland plots, and forest, all genuinely connected with no visible
+gaps or dramatic region-boundary tearing in this new continent (unlike the old isolated `89/182`
+pocket's desert extension, where dramatic cliffs were seen in the thirty-ninth round). The
+already-documented cross-region height-mismatch limitation (fifth round) is a real, separate, still-
+open research problem, but doesn't appear to be a dominant visual issue in this specific, densely-
+populated real landmass -- not proven fixed, just not currently the loudest problem here.
+
+**One artifact found and set aside as out of scope**: at an extreme top-down (near-90°) camera pitch,
+one real object rendered as a solid black rectangle (a real object, likely water or a shadow-caster,
+losing all shading at a viewing angle no real player's camera ever reaches -- this project's own
+camera pitch is clamped well short of vertical). Not investigated further since real gameplay can't
+reach that angle; flagged here rather than silently dropped.
+
+**Real fix shipped**: the sky cloud dome, disabled since 2026-09-01 (thirty-fifth round) after a real
+sunburst/fan artifact was found at the dome's pole (a genuine `SphereMesh` polar-UV projection
+singularity, not fixable by UV tiling alone), is **re-enabled** with the shader-based fix that round
+flagged as the real path forward but didn't attempt. New `client/scripts/assets/cloud_dome.gdshader`
+fades the real `cloud1.ddj` texture's alpha to zero as a vertex approaches the dome's true pole
+(computed from the real object-space vertex normal, not an approximation), so the compressed/
+sunburst pixels never render at all -- the rest of the dome shows the real texture completely
+unmodified. `_sky_dome_material` changed from `StandardMaterial3D` to `ShaderMaterial` accordingly
+(the cloud-drift animation in `_physics_process` now sets a `uv_offset` shader param instead of
+`uv1_offset`).
+
+**Real-verified, not just theorized**: rendered real `98/168` with the camera pitched to 85° and then
+89.5° (near-true-zenith, using a temporary `SRREVAMP_DEBUG_LOOKUP` debug mode, removed before commit)
+-- both show soft, real, wispy cloud texture with **zero sunburst artifact**, a clean transition to
+the plain sky gradient exactly where the fade completes. This is the real dome's pole, not a
+convenient sub-maximum angle -- the previous bug was confirmed reproducible at exactly this kind of
+extreme look-up angle.
+
+Full verification: all 45 real GDScript test suites pass, `godot4 --headless --path . --import --quit`
+clean, real shader compiles cleanly (checked via the real headless render's own log -- no shader
+compile errors, only the same benign shutdown-leak warnings every headless run already produces). All
+pulled real data (`Data.pk2`, `Map.pk2`) deleted after use; both temporary debug camera modes fully
+removed before commit (verified via `git diff` showing zero trace).

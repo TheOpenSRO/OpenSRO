@@ -1094,7 +1094,9 @@ const SUN_GLOW_DISTANCE := 2800.0
 const SUN_GLOW_SIZE := 500.0
 
 var _sky_dome: MeshInstance3D
-var _sky_dome_material: StandardMaterial3D
+var _sky_dome_material: ShaderMaterial
+var _cloud_dome_shader: Shader = preload("res://scripts/assets/cloud_dome.gdshader")
+var _cloud_uv_offset := Vector2.ZERO
 var _sun_glow: Sprite3D
 var _sun_glow_offset := Vector3.ZERO
 var _sky_material: ProceduralSkyMaterial
@@ -1147,27 +1149,21 @@ func _try_add_real_sky() -> void:
 	world_environment.environment.background_mode = Environment.BG_SKY
 	_sky_material = sky_material
 
-	# DISABLED (2026-09-01, see docs/WORLD_ISSUES.md's thirty-fifth round) --
-	# the twenty-third round's cloud dome, and the thirty-second round's fix
-	# to it (removing 3x UV tiling), were both real but incomplete: a real
-	# user request to look around confirmed a visible sunburst/fan artifact
-	# still radiates from the dome even with tiling removed. Isolated with
-	# real before/after renders: disabling just the sun-glow sprite left it
-	# unchanged (not that); disabling just the cloud dome removed it
-	# entirely (confirmed it); re-enabling the dome with a flat, untextured
-	# material produced zero artifact (confirmed it's the real cloud1.ddj
-	# texture's own content, not the dome geometry alone). Root cause:
-	# SphereMesh's polar UV projection compresses an entire circle of U
-	# coordinates to a single point at the pole -- a real projection
-	# singularity, not a resolution/tiling problem, so more radial_segments
-	# would only shrink the artifact, not remove it, and neither would
-	# further uv1_scale changes. A real fix needs either a custom shader
-	# that fades the texture out near the pole, or capping the dome's
-	# elevation so the pole is never in view -- both real, separate
-	# implementation work, not attempted here. Disabled rather than shipped
-	# still visibly broken; the procedural gradient sky above stands alone
-	# until this is properly fixed.
-	pass
+	# **Re-enabled 2026-09-02** (see docs/WORLD_ISSUES.md's forty-second
+	# round) -- was disabled 2026-09-01 after a real sunburst/fan artifact
+	# was confirmed at the dome's pole (SphereMesh's polar UV projection
+	# compresses a whole ring of the mesh to one point there). Rather than
+	# fix the projection itself (no real per-pixel dome UV data to build a
+	# better one from), cloud_dome.gdshader fades the real cloud texture's
+	# alpha to zero before the singularity comes into view, so the
+	# compressed pixels never render -- see that shader file's own comment.
+	var cloud_bytes := AssetSource.read_bytes("SkyBox\\cloud1.ddj", archive)
+	if not cloud_bytes.is_empty():
+		var parsed := DdjReader.parse(cloud_bytes)
+		if parsed != null:
+			var cloud_tex := DdjReader.to_texture(parsed)
+			if cloud_tex != null:
+				_build_cloud_dome(cloud_tex)
 
 	var glow_bytes := AssetSource.read_bytes("SkyBox\\glow.ddj", archive)
 	if not glow_bytes.is_empty():
@@ -1185,23 +1181,13 @@ func _build_cloud_dome(cloud_tex: Texture2D) -> void:
 	dome.radial_segments = 32
 	dome.rings = 16
 
-	_sky_dome_material = StandardMaterial3D.new()
-	_sky_dome_material.albedo_texture = cloud_tex
-	_sky_dome_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_sky_dome_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_sky_dome_material.cull_mode = BaseMaterial3D.CULL_FRONT # real dome is viewed from inside
-	# **Fixed 2026-08-31** (real playtest screenshot from a fresh v0.1.9 build,
-	# see docs/WORLD_ISSUES.md's thirty-second round): was Vector3(3,3,1).
-	# SphereMesh's auto-generated UVs use a polar projection that compresses
-	# toward a single point at the dome's pole -- repeating (tiling) the
-	# cloud texture 3x around that projection multiplies the compression
-	# into a visible multi-spoke fan/sunburst artifact radiating from the
-	# pole, confirmed by reproducing the real bug locally (real pk2 data,
-	# real Jangan region) and then confirming a real re-render with uv1_scale
-	# reset to 1 (no tiling) removes it entirely -- a real before/after
-	# comparison, not a guess.
-	_sky_dome_material.uv1_scale = Vector3(1.0, 1.0, 1.0)
-	_sky_dome_material.albedo_color = Color(1, 1, 1, 0.6)
+	# ShaderMaterial, not StandardMaterial3D -- see cloud_dome.gdshader's own
+	# comment for why a custom shader is needed (fading the real texture out
+	# before the dome's real polar-UV singularity comes into view).
+	_sky_dome_material = ShaderMaterial.new()
+	_sky_dome_material.shader = _cloud_dome_shader
+	_sky_dome_material.set_shader_parameter("cloud_tex", cloud_tex)
+	_sky_dome_material.set_shader_parameter("uv_offset", Vector2.ZERO)
 
 	_sky_dome = MeshInstance3D.new()
 	_sky_dome.name = "CloudDome"
@@ -2470,7 +2456,8 @@ func _load_real_materials(archive: Pk2Reader, bmt_path: String) -> Dictionary:
 func _physics_process(delta: float) -> void:
 	if _sky_dome != null:
 		_sky_dome.global_position = player.global_position
-		_sky_dome_material.uv1_offset.x += CLOUD_DRIFT_UV_PER_SECOND * delta
+		_cloud_uv_offset.x += CLOUD_DRIFT_UV_PER_SECOND * delta
+		_sky_dome_material.set_shader_parameter("uv_offset", _cloud_uv_offset)
 	if _sun_glow != null:
 		_sun_glow.global_position = player.global_position + _sun_glow_offset
 

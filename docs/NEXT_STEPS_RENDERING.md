@@ -43,13 +43,14 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   worth a side-by-side comparison against a real client screenshot once one is available.
 - **Terrain seam blending exists (2026-08-24) but hasn't been re-verified since the scale fix** —
   the blend radius/strength was tuned against the old world scale.
-- **Water renders (2026-08-26); the sky's cloud texture is disabled again (2026-09-01).** The
-  procedural gradient sky (real per-zone `SkyTopColor`/`SkyBottomColor`, thirtieth round) still
-  ships. The real `cloud1.ddj` texture on a dome produced a real sunburst/fan artifact at the
-  dome's pole that turned out not to be fixable by adjusting UV tiling alone (a real projection
-  singularity, see `docs/WORLD_ISSUES.md`'s thirty-fifth round) — disabled rather than shipped
-  broken. `glow.ddj` (sun billboard) is unaffected and still renders. `Weather\` (rain/snow/smog)
-  and `Sun\` (real moon-phase textures) are still real, confirmed, untouched content.
+- ~~Water renders; sky cloud texture disabled~~ — **cloud dome re-enabled 2026-09-02** (see
+  `docs/WORLD_ISSUES.md`'s forty-second round): the real sunburst/fan artifact at the dome's pole
+  (a genuine `SphereMesh` polar-UV projection singularity) is now fixed with a custom shader
+  (`cloud_dome.gdshader`) that fades the real `cloud1.ddj` texture to transparent before the
+  singularity comes into view, rather than trying to fix the projection itself. Real-verified at
+  both 85° and 89.5° camera pitch (near true zenith) — zero sunburst, clean real cloud texture.
+  `glow.ddj` (sun billboard) still renders, unaffected. `Weather\` (rain/snow/smog) and `Sun\` (real
+  moon-phase textures) are still real, confirmed, untouched content, not wired in.
 
 ## Character rendering
 
@@ -131,14 +132,13 @@ colors, skin tone, character scale) came from exactly that shortcut.
 Roughly highest-visual-impact-per-effort first, based on how large each gap looks in every real
 playtest screenshot so far:
 
-1. **Sky (skybox instead of flat color) — partially reverted 2026-09-01.** First-pass approximation
+1. ~~Sky (skybox instead of flat color)~~ — **done 2026-09-02.** First-pass approximation
    (2026-08-28) used real `cloud1.ddj`/`glow.ddj` textures on a dome; a sunburst/fan UV artifact
-   found 2026-08-31 turned out to only be partially fixed by removing texture tiling — a real
-   follow-up render (thirty-fifth round) found it's a genuine projection singularity at the dome's
-   pole, not fixable by `uv1_scale` or segment count alone. **The textured cloud dome is now
-   disabled** — only the procedural gradient sky (still using real per-zone `SkyTopColor`/
-   `SkyBottomColor`) ships. A real fix needs a custom shader that fades the texture near the pole,
-   or capping the dome so the pole is never in view — not attempted yet.
+   found 2026-08-31 turned out to be a genuine `SphereMesh` polar-UV projection singularity at the
+   dome's pole, not fixable by `uv1_scale` or segment count alone (thirty-fifth round), so the
+   textured dome was disabled rather than shipped broken. Re-enabled with a custom shader
+   (`cloud_dome.gdshader`) that fades the real texture to transparent before the singularity comes
+   into view — real-verified at up to 89.5° camera pitch (near true zenith), zero artifact.
 2. ~~Ground-texture completeness audit~~ — done 2026-08-28, both real zones are 100% covered,
    nothing to fix.
 3. ~~Object-placement completeness audit~~ — done 2026-08-31, both zones 100% covered.
