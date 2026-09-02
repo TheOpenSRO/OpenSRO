@@ -208,31 +208,38 @@ const CAMERA_ORBIT_SENSITIVITY := 0.3 # degrees of camera rotation per pixel of 
 ## valid range for a top-down-behind view under this corrected convention.
 const CAMERA_PITCH_MIN_DEGREES := -80.0
 const CAMERA_PITCH_MAX_DEGREES := -10.0
-## **Corrected again 2026-08-27** (see docs/WORLD_ISSUES.md): the previous
-## 60/400 range was picked directly against real building scale, but never
-## checked against the camera's own real vertical FOV (Camera3D's default
-## fov=75, applied vertically under Godot's default KEEP_HEIGHT aspect mode
-## -- a real, checkable Godot default, not a guess). At MIN=60, fitting the
-## player's full real 138.7-unit height needs a vertical half-angle of
-## atan((138.7/2)/60) =~ 49 degrees -- past the real ~37.5-degree half-FOV
-## the default camera actually has, so part of the character (feet or head)
-## was real, verifiable geometry *outside the frustum*, not merely "close."
-## Re-derived MIN from that same real FOV instead: solving for the distance
-## that keeps the full body height within a 30-degree half-angle (a bit of
-## real margin under the true ~37.5-degree limit, so the character isn't
-## touching the frame edges) gives 138.7/2 / tan(30deg) =~ 120. MAX lowered
-## from 400 (confirmed too far to actually track the character/play, a real
-## user report, not this project's own guess) to 240 -- still shows a real
-## building or two at that distance (~44-140 units tall, measured earlier)
-## without shrinking the ~139-unit character to an unplayable speck.
+## How far one scroll notch moves the camera, in world units. Sized against
+## the CAMERA_ZOOM_MIN..MAX range below (20..90) so the full range takes a
+## handful of notches rather than one flick or twenty. **Doc corrected
+## 2026-09-02**: the previous comment here derived this from a ~139-unit
+## character height, which REAL_CHARACTER_NATIVE_HEIGHT has since shown to
+## be wrong by roughly 10x (the real assembled character measures ~14.3
+## units), so that reasoning no longer applies.
 const CAMERA_ZOOM_STEP := 15.0
-## Scaled with REAL_CHARACTER_NATIVE_HEIGHT (2026-09-02). These were
-## derived from real vertical-FOV math against the old, wrong 138.7-unit
-## character height -- 120 was "the closest distance that still fits the
-## whole character in frame". Re-derived against the real measured height
-## by the same ratio, so the framing they were chosen for is preserved.
-const CAMERA_ZOOM_MIN := 12.4
-const CAMERA_ZOOM_MAX := 24.8
+## Third-person camera distance range, in world units.
+##
+## **Widened 2026-09-02** (see docs/WORLD_ISSUES.md's fifty-fifth round).
+## These were previously derived from vertical-FOV math -- "the closest
+## distance that still fits the whole character in frame" -- which answers
+## a different question than "where should a third-person MMO camera sit".
+## After REAL_CHARACTER_NATIVE_HEIGHT corrected the character to ~14.3
+## units, that math gave a 12.4-24.8 range, i.e. under two character
+## heights, so the character filled the frame and almost no world was
+## visible around them.
+##
+## Chosen instead from real side-by-side renders of the real Dunhuang ferry
+## region at several distances: ~45 units (about 3 character heights) frames
+## like a real third-person MMO -- the character reads clearly while the
+## surrounding real terrain, buildings and horizon stay visible. The range
+## brackets that so a player can pull in close to inspect their character or
+## pull back for situational awareness.
+##
+## Unlike the terrain and skeleton constants elsewhere in this project, this
+## is an openly-declared **framing choice**, not a value recovered from real
+## game data -- no real camera-distance data has been found. It is stated
+## that way rather than dressed up as a measurement.
+const CAMERA_ZOOM_MIN := 20.0
+const CAMERA_ZOOM_MAX := 90.0
 ## The scene's own authored default CameraArm.rotation_degrees (see
 ## World3D.tscn) -- orbit-dragging (right-click) moves the arm's *local*
 ## yaw/pitch away from this and nothing ever moved it back, so after any

@@ -2142,3 +2142,41 @@ of view. Not confirmed, and deliberately not "fixed" on a guess.
 The honest summary: the map's *texturing* problems are resolved (see the fifty-first through
 fifty-third rounds), and most real regions now render like the real game. What remains unexplained is
 localised and camera-shaped rather than world-shaped.
+
+## 2026-09-02, fifty-fifth round — camera investigation, and a third-person distance that actually frames the world
+
+Chasing the previous round's leftover "sky where ground should be" spots. **The camera hypothesis was
+wrong** -- measured directly, the camera is comfortably above real terrain in every region checked
+(`97/167`, `96/169`, `98/168`), with the terrain surface 15-30 units below it each time. Ruled out.
+
+**Also tested and ruled out**: that the spring arm was colliding with the player's own body. A raycast
+along the arm hits `World3D/Player` at distance 0 when the player isn't excluded, which looked like a
+smoking gun -- but explicitly adding the player to the arm's exclusions changed `get_hit_length()` by
+exactly nothing (11.35 before and after in `97/167`, 19.69 in `98/168`). Not applied. Worth noting the
+arm's own `collision_mask` is 1 while the player body is on layer 2, so it should never have matched
+in the first place; the raycast only hit it because a bare query defaults to every layer.
+
+**What the arm is doing is in fact correct**: in `98/168` it pulls in to 19.7 units because there is a
+real palace wall (`cj_pal_dam_center`) 19.8 units behind the player. That is the spring arm doing its
+job.
+
+**Real problem found and fixed: the zoom range was far too tight.** `CAMERA_ZOOM_MIN`/`MAX` were
+derived from vertical-FOV math answering "the closest distance that still fits the whole character in
+frame", then rescaled when `REAL_CHARACTER_NATIVE_HEIGHT` corrected the character to ~14.3 units.
+That left a **12.4-24.8** range -- under two character heights -- so the character filled the frame
+with almost no world visible around them, which is nothing like a real third-person MMO view.
+
+Re-chose from real side-by-side renders of the real Dunhuang ferry region at several distances:
+**~45 units (about 3 character heights)** frames like the real game -- the character reads clearly
+while real terrain, the real pagoda and the horizon all stay visible. Range widened to **20-90** to
+bracket it, and the scene's default `spring_length` set to 45. The stale `CAMERA_ZOOM_STEP` comment,
+which still derived its value from the disproved ~139-unit character height, was corrected too.
+
+Flagged honestly: unlike this project's terrain and skeleton constants, these are an **openly-declared
+framing choice**, not values recovered from real game data -- no real camera-distance data has been
+found. Stated that way rather than dressed up as a measurement.
+
+**Noticed while verifying, not fixed**: with the HUD visible the `ActionTabs` panel sits from roughly
+y=260 to y=480 on a 648px-tall viewport -- the middle third of the screen -- and covers the character
+at the new camera distance. That is a real HUD layout problem for playability, separate from the
+camera itself.
