@@ -183,3 +183,51 @@ That reasoning was doubly flawed: it compared against a rest pose that had alrea
 the bad world-to-local conversion, and it assumed a bind pose must appear as a frame of some
 animation, which is not true in general. See `docs/protocol/BAN_FORMAT.md` for the four application
 strategies that were tried and measured before the actual cause was found.
+
+## The remaining blocker, precisely located (2026-09-02): meshes and bones live in two different spaces
+
+Measured directly from real data (real `Data.pk2`, real China-man body parts against the real
+`chinaman_skel.bsk`), by dumping each part's raw vertex extents beside the skeleton's own rest
+extents:
+
+```
+mesh man_arm_lower    x = -9.128 .. +9.128     y = 14.510 .. 15.356    z = -0.497 .. +0.833
+mesh man_calf         x = -3.183 .. +3.183     y = -0.005 ..  4.263    z = -1.970 .. +0.862
+mesh man_torso_upper  x = -1.725 .. +1.725     y = 13.294 .. 15.609    z = -1.401 .. +1.199
+bone rest (all)       x = -0.547 .. +1.055     y = -9.868 ..  6.076    z = -8.525 .. +8.525
+```
+
+Two independent differences, both unambiguous:
+
+- **The left/right axis is different.** Real mesh vertices mirror across **X** (the arms span
+  ±9.13 in X and only ±0.8 in Z), while the rest skeleton built from the stored *local* transforms
+  spreads its arms across **Z** (±8.52, with X only ~1.6 wide). This also settles an axis question
+  raised the same day: `CharacterAssembler._build_side_mesh` splitting paired limbs on triangle
+  centroid **X** is **correct** — an attempt to "fix" it to Z was made on the strength of the bone
+  positions above and is wrong, because those bones are not in mesh space. Reverted; the original
+  X split stands, and this file's long-standing note about `man_thigh.bms` mirroring at x=±0.872 is
+  confirmed rather than superseded.
+- **The origin is different.** Real meshes are authored with the **feet at y≈0** (calf bottom
+  -0.005, head top 15.609). The rest skeleton has its **origin at the hips** (feet at y=-9.868, head
+  at +6.076). Note the two heights agree — 15.61 versus 15.94 — so this is a pure offset of about
+  9.87, not a scale difference. That offset is exactly what the real `.ban` root track supplies:
+  `Bip01`'s keyframe-0 translation is `(0, 9.978, -0.067)`.
+
+So the stored **local** rotation/translation chain (offsets `0x00`/`0x10`) and the stored **bind
+world** position (offset `0x2c`) are two different, both-real representations in two different
+frames, and the meshes are authored in the *latter*. Rigid attachment cancels exactly at rest, which
+is why the bind pose renders as a correct T-pose either way and why this went unnoticed for so long
+— but under animation the mismatch is no longer cancelled, and limbs fly apart.
+
+**The concrete fix this implies** (specified, not yet implemented): keep rest as the bind pose in
+mesh space, and map each animated pose into that same space per bone —
+
+```
+G_mesh[b] = R_mesh[b] · B_local[b]⁻¹ · A_local[b]
+```
+
+where `R_mesh[b]` is the bind global from the `0x2c` world positions, `B_local[b]` is the global
+obtained by chaining the stored `.bsk` local transforms, and `A_local[b]` is the global obtained by
+chaining the real `.ban` keyframes. Every term is real data this project already parses; nothing
+needs to be invented. `G_mesh` then converts to a Godot bone pose as
+`pose_local[b] = G_mesh[parent]⁻¹ · G_mesh[b]`.
