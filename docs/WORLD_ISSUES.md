@@ -1640,3 +1640,38 @@ clean, real shader compiles cleanly (checked via the real headless render's own 
 compile errors, only the same benign shutdown-leak warnings every headless run already produces). All
 pulled real data (`Data.pk2`, `Map.pk2`) deleted after use; both temporary debug camera modes fully
 removed before commit (verified via `git diff` showing zero trace).
+
+## 2026-09-02, forty-third round — real per-zone sun/ambient color wired in; root-caused and fixed
+## the overexposed desert wash
+
+Continuing the same "make it finished" audit. `docs/protocol/ENVIRONMENT_FORMAT.md`'s real
+`SunColor`/`DiffuseColor` channels were decoded from day one but never wired to anything (only
+`SkyTopColor`/`SkyBottomColor` were). Sampled real values for both zones this project renders
+(`server/cmd/envprobe_scratch`, ad hoc, deleted after use): genuinely different per zone at midday --
+Jangan's `SunColor` is ~white, Dunhuang's `DiffuseColor` is a warm tan -- confirming this is real,
+meaningful per-zone data, not a no-op. Wired `SunColor` into `DirectionalLight3D.light_color` and
+`DiffuseColor` into `WorldEnvironment.environment.ambient_light_color`, sampled at the same fixed
+`ENVIRONMENT_REFERENCE_TIME` the sky colors already use.
+
+**While verifying this, reproduced and root-caused a real, pre-existing bug**: a real render of
+Dunhuang (`98/157`) came back almost entirely flat, overexposed cream/white -- matching the
+"overexposed white/yellow patch" artifact flagged as unexplained in the thirty-ninth round. Confirmed
+this predates the new sun/ambient wiring (identical result with the new code temporarily disabled).
+Root-caused with a real controlled render: disabling the directional light entirely and setting flat
+white ambient showed the real sand ground texture is a perfectly normal tan color -- not a broken
+texture. The wash only appears once the directional light's own diffuse contribution stacks on top of
+ambient light; real bright albedo values (sand is naturally pale) push past 1.0 per channel, and this
+project's GL Compatibility renderer doesn't apply an effective HDR/filmic rolloff in front of that
+(the `Environment` resource's `tonemap_mode` is a real no-op here, consistent with Compatibility's own
+already-logged limitations elsewhere in this codebase -- glow and SSAO are also silently no-ops on
+this renderer), so the overflow hard-clips to flat white instead of compressing smoothly.
+
+**Fix**: lowered `DirectionalLight3D.light_energy` from Godot's default `1.0` to `0.3` in
+`World3D.tscn`. Real before/after render of the same Dunhuang region confirms real dune/terrain detail
+is now visible instead of a flat wash. Jangan (a darker real palette that was never clipping) still
+looks correct at the lower energy too -- tested both zones, not just the one that was broken.
+
+Full verification: all 45 real GDScript test suites pass, `godot4 --headless --path . --import --quit`
+clean. All pulled real data (`Data.pk2`, `Map.pk2`) and the scratch tool (`envprobe_scratch`) deleted
+after use; the temporary `SRREVAMP_DEBUG_UNLIT`/`SRREVAMP_DEBUG_HIDE_UI` diagnostic hooks used to
+isolate the bug were fully removed before commit (verified via `git diff`).

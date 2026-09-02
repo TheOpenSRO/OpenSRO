@@ -107,15 +107,22 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   twenty-ninth round. `World3D` now applies the player's own zone's real `SkyTopColor`/
   `SkyBottomColor` (sampled at a fixed midday snapshot — no real day/night clock system exists yet,
   see `docs/WORLD_ISSUES.md`'s thirtieth round for that honest scope note) to the sky gradient,
-  replacing the old flat-color-derived guess. `DirectionalLight3D`'s angle is still a hand-set
-  constant, not real per-zone data — `SunColor`/`DiffuseColor` channels exist and could drive it,
-  not attempted this round. `FogColor`/`FogNearPlane`/`FogFarPlane` deliberately left unwired (fog
-  was already removed once this session after a guessed density looked bad; the real near/far
-  values don't read like literal distances at face value, so wiring them needs more real evidence
-  first). **Visually verified 2026-08-31** — ran the actual `v0.1.10` release binary against real
-  pulled `Data.pk2`/`Map.pk2` for Jangan (`89/182`); the real environment-lighting code path was
-  exercised live (same terrain-load call that also fixed the sunburst artifact) and produced a
-  reasonable-looking sky, not a broken one.
+  replacing the old flat-color-derived guess. ~~`SunColor`/`DiffuseColor` channels exist and could
+  drive it, not attempted~~ — **wired in 2026-09-02** (see `docs/WORLD_ISSUES.md`'s forty-third
+  round): real `SunColor` now drives `DirectionalLight3D.light_color`, real `DiffuseColor` drives
+  the scene's ambient light color. `DirectionalLight3D`'s real per-zone *angle* still has no
+  confirmed real source (only color channels exist in this format) and stays a hand-set constant.
+  `FogColor`/`FogNearPlane`/`FogFarPlane` deliberately left unwired (fog was already removed once
+  this session after a guessed density looked bad; the real near/far values don't read like literal
+  distances at face value, so wiring them needs more real evidence first). **Visually verified
+  2026-08-31** — ran the actual `v0.1.10` release binary against real pulled `Data.pk2`/`Map.pk2`
+  for Jangan (`89/182`); the real environment-lighting code path was exercised live (same
+  terrain-load call that also fixed the sunburst artifact) and produced a reasonable-looking sky,
+  not a broken one. **The forty-third round's sun/ambient wiring also uncovered and fixed a real,
+  separate bug**: `DirectionalLight3D.light_energy` (Godot's default `1.0`) combined with a bright
+  real desert albedo to hard-clip to a flat white/cream wash on this project's Compatibility
+  renderer (no effective HDR/filmic rolloff) — lowered to `0.3`, real-verified against both Jangan
+  and Dunhuang.
 
 ## How to make progress here without violating the "no assumptions" rule
 

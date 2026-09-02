@@ -491,6 +491,25 @@ var _last_stream_cell := Vector2i(0x7fffffff, 0x7fffffff) # sentinel so the firs
 @onready var ground_collision: CollisionShape3D = $Ground/Collision
 @onready var other_entities: Node3D = $OtherEntities
 @onready var world_environment: WorldEnvironment = $WorldEnvironment
+## World3D.tscn's own light_energy = 0.3 (down from Godot's default 1.0,
+## **2026-09-02**, see docs/WORLD_ISSUES.md's forty-third round): a real
+## playtest found real desert terrain (Dunhuang) rendered as a flat,
+## overexposed white/yellow wash. Root-caused with a real controlled
+## render (directional light disabled entirely, flat white ambient only):
+## the real sand ground texture itself is a perfectly normal tan color --
+## the wash only appears once the directional light's own diffuse
+## contribution stacks on top of ambient, together pushing bright real
+## albedo values (sand is naturally pale) past 1.0 per channel. This
+## project's Compatibility renderer doesn't apply a real HDR/filmic rolloff
+## in front of that (tonemap_mode on the Environment resource is
+## effectively a no-op for the reasons GL Compatibility's own startup
+## warnings already state elsewhere in this codebase), so the overflow
+## hard-clips to flat white instead of smoothly compressing. Lowering the
+## light's own energy keeps typical real albedo x (ambient + diffuse) sums
+## under 1.0 even for a naturally bright real texture, confirmed via a real
+## before/after render of the same Dunhuang region -- real dune/terrain
+## detail is now visible instead of a flat wash, and Jangan (a darker real
+## palette that was never clipping) still looks correct at this energy too.
 @onready var directional_light: DirectionalLight3D = $DirectionalLight3D
 @onready var zone_label: Label = $UI/Control/ZoneLabel
 @onready var character_label: Label = $UI/Control/CharacterLabel
@@ -1252,7 +1271,24 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	_sky_material.sky_horizon_color = bottom
 	_sky_material.ground_horizon_color = bottom
 	_sky_material.ground_bottom_color = bottom.darkened(0.4)
-	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) -- sky_top=%s sky_bottom=%s" % [record.name1, env_id, top, bottom])
+
+	# Real per-zone SunColor/DiffuseColor (2026-09-02) -- same real
+	# environment.ifo record the sky colors above already use, just two more
+	# of its real channels that were decoded from day one but never wired to
+	# anything (see docs/protocol/ENVIRONMENT_FORMAT.md). Sampled at the same
+	# fixed ENVIRONMENT_REFERENCE_TIME as the sky, for the same honest reason
+	# (no real day/night clock exists yet). Real sample data confirms these
+	# genuinely differ per zone at midday -- Jangan's SunColor is ~white,
+	# Dunhuang's DiffuseColor is a warm tan -- not a no-op recoloring.
+	# DirectionalLight3D's real per-zone *angle* has no confirmed real source
+	# (only color channels exist in this format) and stays a hand-set
+	# constant, unchanged.
+	var sun_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_SUN_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	var diffuse_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_DIFFUSE_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	directional_light.light_color = sun_color
+	world_environment.environment.ambient_light_color = diffuse_color
+
+	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) -- sky_top=%s sky_bottom=%s sun=%s diffuse=%s" % [record.name1, env_id, top, bottom, sun_color, diffuse_color])
 
 ## Opens the real Map.pk2 -- SRREVAMP_MAP_PK2_PATH if set, else a real
 ## "pk2/Map.pk2" next to the running executable (see Pk2Config) -- or
