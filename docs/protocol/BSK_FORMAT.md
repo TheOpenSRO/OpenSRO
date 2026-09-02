@@ -259,3 +259,36 @@ repeated: delta-against-keyframe-0 as a local rotation (the long-standing origin
 keyframe rotations as global and converting to parent-relative; applying the documented local
 rotation and translation directly as the bone pose; applying only the rotation; and the frame
 mapping above. All five are worse than a static bind pose, which is what currently ships.
+
+### The bind WORLD rotation is at 0x1c, and the two frames differ by one constant (2026-09-02)
+
+Two further real measurements, both useful regardless of the failed attempt they were made for:
+
+- **Floats `[7..10]` (offset `0x1c`, `0x20` on a 92-byte bone) are the bone's bind-pose WORLD
+  rotation** -- the quaternion immediately preceding the bind world position `bone_position()`
+  already reads at `0x2c`. Confirmed by building a bind pose from that pair across a real skeleton:
+  it gives **feet at y=0, head at 15.95, and arms spanning +/-8.5 in X**, which matches real body-mesh
+  vertex extents exactly (real meshes measure feet at ~0, head 15.61, arms +/-9.13 in X). The local
+  chain, by contrast, puts the origin at the hips with limbs spread in Z. So the 88-byte record is
+  now fully accounted for as **two complete copies of the same bone**: local pair at `0x00`/`0x10`,
+  world pair at `0x1c`/`0x2c`, plus the conjugate/negated inverse-bind pair after it.
+- **The two frames differ by very nearly a single constant transform.** Computing
+  `R_world[b] * B_local[b]^-1` per bone gives an origin of `(-0.0007, 9.8687, -0.0667)` for the
+  pelvis, spine, spine1, neck and neck1 alike -- i.e. exactly the hips-origin-to-feet-origin offset,
+  the same ~9.87 that shows up as the root track's keyframe-0 translation.
+
+**A sixth animation attempt built on this still fails.** Setting rest from the world pair, computing
+`correction[b] = R_world[b] * B_local[b]^-1`, chaining real `.ban` keyframes and mapping them through
+that correction renders a **vertically stretched** character -- torso and one leg on the ground with
+the arms and hands floating roughly a body-height above. Reverted. Since the mapping is exact at the
+bind frame by construction, the failure means the per-bone correction is *not* uniform enough for the
+limb chains even though it is dead constant along the spine, so the two frames are not related by a
+single rigid transform for every bone after all.
+
+Running tally of real `.ban` playback strategies tried and measured, none of which beat a static bind
+pose: delta-against-keyframe-0 as a local rotation; keyframe rotations treated as global and
+converted to parent-relative; documented local rotation *and* translation applied directly as the
+pose; rotation only; frame mapping using the local rotation misread as a world rotation; and this
+one, frame mapping using the genuine world rotation. The remaining unknown is narrow and specific --
+why the local-to-world relationship holds constant along the spine but not the limbs -- and that is
+what to measure next, rather than trying a seventh application strategy.
