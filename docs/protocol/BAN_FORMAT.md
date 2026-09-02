@@ -49,3 +49,48 @@ container format.
   `Skeleton3D`/`AnimationPlayer` needs the bone hierarchy (parent/child relationships) from
   wherever that's defined — not yet located; `.ban` itself has no parent-bone field, only a flat
   list of named bone tracks.
+
+## Public format documentation found (2026-09-02) — keyframes are parent-relative, and carry translation
+
+Found the same public reference this project already used for `.m` terrain and `.bmt` material flags:
+[`JellyBitz/srodevs-docs`](https://github.com/JellyBitz/srodevs-docs)'s `file-formats/jmxvban.md`
+(fair game per [`docs/LEGAL.md`](../LEGAL.md) point 3 — long-published public community
+documentation). It documents this exact format under the same `JMXVBAN` magic, and resolves two
+things this project had not confirmed:
+
+- The header carries a real `Duration` (ms), a real **`FPS`**, and a real `IsCyclic` flag, followed
+  by a real per-keyframe `Time` (ms) table. This project currently plays every real animation back
+  at a hand-picked `BAN_FPS` engineering guess — **the real per-file FPS and per-keyframe timings
+  are right there in the file and simply aren't being read**. Wiring them would remove that guess
+  entirely.
+- Each animated bone's per-keyframe record is documented as a *"transformation matrix **relative to
+  the parent bone/joint**"*, holding a `Quaternion Rotation` **and** a `Vector3 Translation`.
+  `BanReader` already parses both fields correctly; the consumer
+  (`Skeleton3DBuilder.apply_ban_pose`) discards the translation entirely and treats the rotation as
+  a delta against keyframe 0.
+
+**Three application strategies were tried against real data and all render worse than the current
+one** (2026-09-02, real headless renders of a real assembled character, see
+`docs/WORLD_ISSUES.md`'s forty-eighth/forty-ninth rounds):
+
+1. Treating keyframe rotations as **global/world-space** and converting them to parent-relative:
+   character scatters completely. Also independently contradicted by the public doc above, which
+   says parent-relative.
+2. Applying the documented parent-relative rotation **and** translation directly as the Godot bone
+   pose (pose being the bone's live local transform): character scatters, with limbs flung far
+   apart — the translations in particular do not land where this project's skeleton expects.
+3. Applying the documented parent-relative rotation directly, keeping `.bsk`-derived rest positions:
+   still scatters.
+
+That all three fail while the documented semantics are clear points at a mismatch **between this
+project's own `.bsk`-derived rest pose and the space `.ban` keyframes are expressed in**, rather
+than at the `.ban` reader or the public documentation. `Skeleton3DBuilder.build_skeleton3d` derives
+each bone's rest transform by converting real `.bsk` world-space bind rotations into parent-relative
+form; if that derivation's convention (axis order, parent chain, or whether rest translations are
+parent-relative or absolute) doesn't match what `.ban` assumes, every strategy above inherits the
+same error. **That comparison is the next real step** — dump, for the same real skeleton, each
+bone's `.bsk`-derived rest transform beside its `.ban` keyframe-0 transform and see exactly how they
+differ, rather than trying further application strategies blind.
+
+Animation playback stays disabled meanwhile (see `World3D._physics_process`), so the real character
+renders correctly in its real bind pose instead of visibly broken.
