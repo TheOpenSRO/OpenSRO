@@ -80,11 +80,26 @@ static func build_skeleton3d(skel: BskReader.ParsedSkeleton) -> Skeleton3D:
 			# parent's own rotated local frame (parent_world_rot.inverse() *
 			# world delta), not a raw world-space delta, once the parent has
 			# a non-identity rest rotation.
-			var parent_world: Vector3 = world_positions.get(parent_name, Vector3.ZERO)
-			var parent_world_rot: Quaternion = world_rotations.get(parent_name, Quaternion.IDENTITY)
-			var this_world_rot: Quaternion = world_rotations[b.bone_name]
-			var local_rot: Quaternion = parent_world_rot.inverse() * this_world_rot
-			var local_pos: Vector3 = parent_world_rot.inverse() * (world_positions[b.bone_name] - parent_world)
+			# **Corrected 2026-09-02** (see docs/WORLD_ISSUES.md's fiftieth
+			# round). This used to treat SkeletonPose.bone_rotation() as a
+			# *world* rotation and convert it to parent-relative
+			# (`parent_world_rot.inverse() * this_world_rot`, with the
+			# position derived the same way from world positions). That was
+			# wrong: a real .bsk already stores each bone's
+			# **parent-relative local** rotation and translation directly,
+			# in exactly the same convention real .ban keyframes use.
+			# Proved by dumping a real .bsk bone's raw transform floats
+			# beside the matching real .ban keyframe -- for `Bip01 Neck`,
+			# .bsk floats [0..3] are exactly the .ban keyframe rotation and
+			# floats [4..6] are exactly its translation, to 4 decimals.
+			# Converting an already-local rotation as if it were global
+			# produced a rest pose in a mangled frame, which is why real
+			# .ban playback (correctly in the file's own convention) never
+			# composed with it and rendered as splayed, scattered limbs.
+			# Using the stored local transform directly puts rest and
+			# animation in one shared, real convention.
+			var local_rot: Quaternion = world_rotations[b.bone_name]
+			var local_pos: Vector3 = SkeletonPose.bone_local_position(b)
 			skeleton.set_bone_rest(idx, Transform3D(Basis(local_rot), local_pos))
 			progressed = true
 		remaining = still_remaining
@@ -118,10 +133,13 @@ static func apply_ban_keyframe(skeleton: Skeleton3D, track: BanReader.Bone, fram
 	var bone_idx := skeleton.find_bone(track.bone_name)
 	if bone_idx == -1:
 		return
-	var rest_rot: Quaternion = track.keyframes[0].rotation
-	var target_rot: Quaternion = track.keyframes[frame_idx].rotation
-	var delta: Quaternion = target_rot * rest_rot.inverse()
-	skeleton.set_bone_pose_rotation(bone_idx, delta)
+	# Same real semantics as apply_ban_pose (see its comment): a real
+	# keyframe already *is* the bone's parent-relative local transform, in
+	# the same real convention build_skeleton3d now uses for rest, so it
+	# applies directly -- rotation and translation, no delta.
+	var kf: BanReader.Keyframe = track.keyframes[frame_idx % track.keyframes.size()]
+	skeleton.set_bone_pose_rotation(bone_idx, kf.rotation)
+	skeleton.set_bone_pose_position(bone_idx, kf.position)
 	skeleton.force_update_all_bone_transforms() # see build_skeleton3d()'s note on why this is needed
 
 ## Applies every real bone track in a full .ban animation (BanReader.
@@ -143,11 +161,13 @@ static func apply_ban_pose(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation
 		var bone_idx := skeleton.find_bone(track.bone_name)
 		if bone_idx == -1:
 			continue
-		var frame := frame_idx % track.keyframes.size()
-		var rest_rot: Quaternion = track.keyframes[0].rotation
-		var target_rot: Quaternion = track.keyframes[frame].rotation
-		var delta: Quaternion = target_rot * rest_rot.inverse()
-		skeleton.set_bone_pose_rotation(bone_idx, delta)
+		# A real keyframe is already the bone's parent-relative local
+		# transform, in the same real convention build_skeleton3d now uses
+		# for rest -- so it applies directly as the bone's pose, with no
+		# delta and no space conversion, translation included.
+		var kf: BanReader.Keyframe = track.keyframes[frame_idx % track.keyframes.size()]
+		skeleton.set_bone_pose_rotation(bone_idx, kf.rotation)
+		skeleton.set_bone_pose_position(bone_idx, kf.position)
 	skeleton.force_update_all_bone_transforms()
 
 ## A bare Skeleton3D has no visual representation of its own -- there's no

@@ -136,3 +136,50 @@ leading field's own content (4 bytes) isn't identified.
   skeleton's own shortest real bone length rather than a fixed size — a fixed radius tuned for
   one skeleton's bone spacing fused into an unrecognizable blob on a different skeleton with much
   tighter bone spacing (face/hand/finger bones).
+
+## Solved (2026-09-02): the transform block holds the bone's parent-relative LOCAL transform
+
+The 88-byte bone transform's leading fields were previously read as a bind-pose *world* rotation
+(`SkeletonPose.bone_rotation`, offset `0x00`) with the bind *world* position taken from `0x2c`
+(`bone_position`). `Skeleton3DBuilder.build_skeleton3d` then converted those world values into
+parent-relative rest transforms. **That was wrong**, and it was the root cause of real `.ban`
+animation never composing with the rest pose.
+
+Proved by dumping a real bone's raw transform floats beside the matching real `.ban` keyframe (real
+`chinaman_skel.bsk` against real `chinaman_fighter_standcity.ban`):
+
+```
+Bip01 Neck   .bsk floats [0..3] = (-0.0000, -0.0586, 0.0000, 0.9983)
+             .ban keyframe rot  = (-0.0000, -0.0586, 0.0000, 0.9983)   <- identical
+             .bsk floats [4..6] = ( 2.2956, -0.0000, -0.0004)
+             .ban keyframe pos  = ( 2.2956,  0.0000, -0.0004)          <- identical
+```
+
+So:
+
+- **floats `[0..3]` (offset `0x00`) are the bone's parent-relative LOCAL rotation**, not a world
+  rotation.
+- **floats `[4..6]` (offset `0x10`) are the bone's parent-relative LOCAL translation** — a distinct
+  field from the bind world position at `0x2c` that this project was already reading.
+- Both are in **exactly the same convention real `.ban` keyframes use**, which is what makes bind
+  pose and animation composable at all.
+
+Corroborated across the whole skeleton: of 37 shared bones, **33 of 36** non-root local translations
+match the corresponding `.ban` keyframe translation to within 0.02 units (the three that differ are
+one finger bone and the two thighs, which the animation genuinely translates slightly). Chaining the
+`.ban` keyframes through the hierarchy also produces a coherent humanoid — extent
+`(15.65, 16.05, 6.05)` against the bind pose's `(17.05, 15.95, 1.60)`, i.e. same height and width,
+with more depth exactly as a relaxed idle pose should have versus a flat T-pose.
+
+`SkeletonPose.bone_local_position()` now exposes the local translation, and `build_skeleton3d` uses
+the stored local rotation and translation **directly** as each bone's rest transform, with no
+world-to-local conversion. `bone_position()` (the `0x2c` bind world position) is kept, since it is
+still the right field for anything that genuinely wants world bind positions.
+
+**This also retires an earlier wrong conclusion.** A previous round compared `.bsk` rest against
+`.ban` keyframe 0, found they disagreed, and concluded the two files were "genuinely different poses
+in different per-bone frames" that could not be reconciled without the client's own animation code.
+That reasoning was doubly flawed: it compared against a rest pose that had already been mangled by
+the bad world-to-local conversion, and it assumed a bind pose must appear as a frame of some
+animation, which is not true in general. See `docs/protocol/BAN_FORMAT.md` for the four application
+strategies that were tried and measured before the actual cause was found.

@@ -27,6 +27,26 @@ static func bone_position(b: BskReader.Bone) -> Vector3:
 		b.transform.slice(off + 4, off + 8).decode_float(0),
 		b.transform.slice(off + 8, off + 12).decode_float(0))
 
+## Extracts one bone's **parent-relative local** translation from its raw
+## transform bytes -- floats [4..6], i.e. offset 0x10 (0x14 for a
+## root-attached 92-byte bone, same +4 shift as bone_position()).
+##
+## **Found 2026-09-02** (see docs/protocol/BSK_FORMAT.md and
+## docs/WORLD_ISSUES.md's fiftieth round): this is a different, and for
+## posing purposes the *correct*, position from the one bone_position()
+## reads at 0x2c. Proved by dumping a real .bsk bone's raw floats beside the
+## matching real .ban keyframe: for `Bip01 Neck`, .bsk floats [0..3] are
+## exactly the .ban keyframe rotation and floats [4..6] are exactly its
+## translation, to 4 decimal places. So a real .bsk already stores each
+## bone's parent-relative local transform in the *same* convention real .ban
+## keyframes use -- which is what makes animation and bind pose composable.
+static func bone_local_position(b: BskReader.Bone) -> Vector3:
+	var off := 0x14 if b.transform.size() > BskReader.BONE_TRANSFORM_LEN else 0x10
+	return Vector3(
+		b.transform.slice(off, off + 4).decode_float(0),
+		b.transform.slice(off + 4, off + 8).decode_float(0),
+		b.transform.slice(off + 8, off + 12).decode_float(0))
+
 ## Extracts one bone's local rotation from its raw transform bytes. Offset
 ## is 0x04 for a root-attached (92-byte) bone, 0x00 for an ordinary
 ## (88-byte) bone -- same +4 shift as bone_position(). See
