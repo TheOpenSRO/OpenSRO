@@ -231,3 +231,31 @@ obtained by chaining the stored `.bsk` local transforms, and `A_local[b]` is the
 chaining the real `.ban` keyframes. Every term is real data this project already parses; nothing
 needs to be invented. `G_mesh` then converts to a Godot bone pose as
 `pose_local[b] = G_mesh[parent]⁻¹ · G_mesh[b]`.
+
+### The frame-mapping fix was implemented and it does not work (2026-09-02)
+
+The mapping specified above was implemented and measured, not left as theory. It builds, per bone,
+`correction[b] = R_world[b] * B_local_global[b]^-1` (cached on the Skeleton3D), chains each real
+`.ban` frame's locals to `A_global[b]`, forms `G_mesh[b] = correction[b] * A_global[b]`, and converts
+back to Godot bone poses via `pose_local[b] = G_mesh[parent]^-1 * G_mesh[b]`.
+
+It is algebraically sound at the bind frame — where `A_global == B_local_global`, it collapses
+exactly to `R_world`, the rest pose — but a real render against real data comes out **worse than any
+previous attempt**: the character disperses completely, limbs scattered across the ground and sky.
+Reverted.
+
+That outcome is itself evidence. Since the algebra is exact at the bind frame, the failure means one
+of its inputs is not what it is assumed to be — most likely that `SkeletonPose.bone_rotation()`
+(offset `0x00`) is **not** the parent-relative local rotation for *every* bone, even though it
+demonstrably is for the ones spot-checked (`Bip01 Neck` matches its `.ban` keyframe exactly). The
+88-byte record holds four quaternion-or-vector-shaped fields (two quaternions, one the conjugate of
+the other, plus two position vectors); this project has confidently identified only two of them.
+**The next real step is to identify all four fields**, by chaining each candidate pairing across the
+whole skeleton and testing which one reproduces the known-good bind pose — a measurement, not
+another application strategy.
+
+Running tally of what has been tried and measured for real `.ban` playback, so none of it is
+repeated: delta-against-keyframe-0 as a local rotation (the long-standing original); treating
+keyframe rotations as global and converting to parent-relative; applying the documented local
+rotation and translation directly as the bone pose; applying only the rotation; and the frame
+mapping above. All five are worse than a static bind pose, which is what currently ships.
