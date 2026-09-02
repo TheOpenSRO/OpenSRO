@@ -2103,3 +2103,42 @@ This retires the forty-first round's reasoning. That round correctly identified 
 non-repeated stretch per quad looked flat, but the conclusion drawn -- that a fixed extra multiplier
 was needed -- overshot; the real `Scale` field was already the mechanism, and the invented constant
 on top of it was the problem.
+
+## 2026-09-02, fifty-fourth round — map survey after the texture fixes
+
+Surveyed several real regions at eye level to find what is still wrong, rather than guessing. Real
+renders against real pulled `Data.pk2`/`Map.pk2`.
+
+**Rendering correctly, and genuinely game-like now:**
+
+- Real Jangan (`98/168`): clean grass, a readable grey rock outcrop, willow trees with visible
+  trunks and hanging foliage, the real palace wall and its red trim behind, sky through the canopy.
+  Top-down it reads as a real city -- courtyards, formal gardens, water features, paved plazas.
+- Real Dunhuang (`98/157`): a genuine desert -- sand with visible grain, sandstone formations,
+  cypresses.
+- Real Dunhuang ferry area (`100/160`): sand dunes, a real Chinese pagoda, sandstone cliffs, trees
+  and driftwood. This one in particular looks like the real game.
+
+**Two real spots show sky where ground is expected, bounded but not root-caused:**
+
+- `97/167`: a large pale expanse fills the lower screen. Raycasting into it hits **nothing** inside
+  the loaded world (the few hits that land at all are the `VoidCatchFloor` at z=5384 / x=3457, well
+  outside the 5x5 streamed grid), so it is the sky's own lower hemisphere showing through, not an
+  untextured surface. Ruled out water as the cause: all 30 real `Water\` animation frames load
+  cleanly, and `build_full_region_water_mesh` returns **no water quads at all** for any of
+  `97/167`, `98/168`, `99/168`, `100/168`, `98/157`.
+- `96/169`: a horizontal band of sky cuts across at roughly the character's feet, with a real plowed
+  field in the foreground and a real courtyard and wall beyond it.
+
+Terrain itself loads fine in both cases (every region in the neighbourhood reports a successful
+parse and collision build), and the region grid's own geometry tiles exactly by construction: with
+the corrected axes each region mesh spans `[-960, 960]` in world X and `[-1920, 0]` in world Z for
+the centre cell, with neighbours offset by exactly `REGION_SPAN`, so adjacent meshes meet at a shared
+edge with no gap. That makes a missing-terrain explanation unlikely and points instead at the
+**camera** -- the debug survey camera is a fixed spring-arm distance behind the character with no
+regard for whether that puts it inside or below real terrain, which would produce exactly this kind
+of view. Not confirmed, and deliberately not "fixed" on a guess.
+
+The honest summary: the map's *texturing* problems are resolved (see the fifty-first through
+fifty-third rounds), and most real regions now render like the real game. What remains unexplained is
+localised and camera-shaped rather than world-shaped.
