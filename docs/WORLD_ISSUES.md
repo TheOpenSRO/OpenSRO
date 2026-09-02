@@ -2180,3 +2180,37 @@ found. Stated that way rather than dressed up as a measurement.
 y=260 to y=480 on a 648px-tall viewport -- the middle third of the screen -- and covers the character
 at the new camera distance. That is a real HUD layout problem for playability, separate from the
 camera itself.
+
+## 2026-09-02, fifty-sixth round — "holes in the map": camera far plane was clipping real terrain
+
+Real user report: holes in the map. My previous round had waved a similar symptom away as a
+camera-position artifact, which was wrong.
+
+**Established first, by measurement, that the terrain itself is not holed.** A grid of downward
+raycasts over the loaded world -- 961 samples at 60-unit spacing, then 2,401 samples at 200-unit
+spacing covering a 9600x9600 real area -- found real terrain at **every single sample**, in two
+different real regions (`98/168` and `97/167`). Terrain collision is complete. So any hole is
+**visual only**, over solid ground, which is a very different bug.
+
+**Found and fixed: the camera's far clipping plane.** `Camera3D` never set `far`, so it used Godot's
+default of **4000**. The real streamed grid is `(2 * REGION_LOAD_RADIUS + 1)` = 5 regions across,
+9600 real units wide, reaching ~5400 units to a corner from the player. A real height profile
+confirms real terrain out at z=+3200 with the void only beyond z=+4000 -- so real ground genuinely
+existed past where the far plane was cutting it, and the sky showed through. Physics ignores the far
+plane, which is exactly why collision probes found no holes while the view had them. Now derived from
+`REGION_SPAN * (REGION_LOAD_RADIUS + 1) * 2` (11520) so it tracks the streaming settings.
+
+**One symptom remains unexplained, and is NOT the above.** In real region `97/167` a large pale
+expanse fills the lower screen at close range. Ruled out, each by direct test:
+
+- **Not water** -- disabling water rendering entirely leaves the image pixel-identical, and separately
+  all 30 real `Water\` frames decode fine to real teal water colours (RGB ~0.23-0.73), so the water
+  texture pipeline is healthy. Six real regions in that neighbourhood do carry real water, so water
+  is being built there; it just isn't what this is.
+- **Not the far plane** -- still present with `far` at 11520.
+- **Not the sky dome** -- present with the sky disabled.
+- **Not the camera being under the terrain** -- measured 15-30 units above the surface.
+
+Its colour matches the sky's own lower-hemisphere tone, and a real height profile through that area
+shows ordinary terrain (-1 to +40 units) with a real 40-unit rise immediately in front of the
+spawn. Recorded as still-open rather than explained away a second time.

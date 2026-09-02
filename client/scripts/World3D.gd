@@ -869,7 +869,28 @@ func _ready() -> void:
 	_try_load_real_decoration_skeleton()
 	_try_apply_real_player_character()
 	_try_add_real_sky()
+	_apply_camera_far_plane()
 	_load_initial_region_neighborhood()
+## Pushes the camera's far clipping plane out far enough to actually see
+## the real terrain this scene streams in.
+##
+## **Added 2026-09-02** (see docs/WORLD_ISSUES.md's fifty-sixth round). The
+## Camera3D never set `far`, so it used Godot's default of **4000** -- but
+## the real streamed region grid is `(2 * REGION_LOAD_RADIUS + 1)` regions
+## across, i.e. 9600 real units wide, reaching about 5400 units to a corner
+## from the player at its centre. Real terrain past 4000 units was therefore
+## clipped away with sky showing through it. Confirmed by measurement rather
+## than inference: a real downward-raycast profile finds real terrain out to
+## z=+3200 and the void beyond z=+4000, i.e. real ground genuinely exists
+## well past where the default far plane was cutting it off.
+##
+## Derived from the same real constants that decide how much world is
+## loaded, so it stays correct if the streaming radius or region size ever
+## change, with margin to also clear the real sky dome (which sits
+## SKY_DOME_HEIGHT_ABOVE_PLAYER up with SKY_DOME_RADIUS reach).
+func _apply_camera_far_plane() -> void:
+	camera_3d.far = REGION_SPAN * (REGION_LOAD_RADIUS + 1) * 2.0
+
 ## Loads real static scenery through the exact same pk2 -> BsrReader ->
 ## ObjectLoader pipeline client/tools/render_asset.gd verifies standalone,
 ## live in this scene -- if SRREVAMP_PK2_PATH and SRREVAMP_BSR_PATH are
