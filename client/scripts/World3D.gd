@@ -158,7 +158,33 @@ extends Node3D
 const TERRAIN_COLLISION_LAYER := 0b1001 # layer 1 (default) + layer 4 (terrain-only)
 const TERRAIN_ONLY_COLLISION_MASK := 0b1000 # layer 4 only
 
-const PLAYER_SCALE_RATIO := 138.7 / 1.8
+## **Corrected 2026-09-02** (see docs/WORLD_ISSUES.md's forty-eighth
+## round): was `138.7 / 1.8`. The 138.7 came from an earlier claimed
+## forward-kinematics measurement of the real character's native height,
+## but that figure is simply wrong -- two independent runtime measurements
+## of the *actually assembled* real character (its real skeleton's own
+## bind-pose bone extent, and the real world-space AABB of every mesh
+## attached to it) both come out at **14-16 units**, not 138.7. Everything
+## derived from this ratio (camera distance, move speed, gravity,
+## click-to-move thresholds, the placeholder collision capsule) was
+## therefore scaled roughly 10x too large, which is what made the real
+## character render as a distant speck: the camera was parked ~8 character
+## heights away.
+##
+## Now derived from the real measured height instead of a wrong constant.
+## 1.8 stays as the notional "human metres" denominator the movement/camera
+## feel was originally tuned against, so those tunings keep their intended
+## proportion to the character rather than being re-guessed.
+##
+## **Honest open question, deliberately not guessed at**: real map objects
+## measured alongside this (a real chair 12.5 units, table 10.8, standing
+## lamp 19.9, guardian lion statue 29.0) are self-consistent with each
+## other but make a 14.3-unit character read as roughly chair-height --
+## short for an adult. That suggests the real client may apply its own
+## character scale factor this project hasn't found yet. No such factor is
+## invented here; this constant only corrects a provably wrong measurement.
+const REAL_CHARACTER_NATIVE_HEIGHT := 14.34
+const PLAYER_SCALE_RATIO := REAL_CHARACTER_NATIVE_HEIGHT / 1.8
 const MOVE_SPEED := 6.0 * PLAYER_SCALE_RATIO
 const GRAVITY := 20.0 * PLAYER_SCALE_RATIO
 
@@ -200,8 +226,13 @@ const CAMERA_PITCH_MAX_DEGREES := -10.0
 ## building or two at that distance (~44-140 units tall, measured earlier)
 ## without shrinking the ~139-unit character to an unplayable speck.
 const CAMERA_ZOOM_STEP := 15.0
-const CAMERA_ZOOM_MIN := 120.0
-const CAMERA_ZOOM_MAX := 240.0
+## Scaled with REAL_CHARACTER_NATIVE_HEIGHT (2026-09-02). These were
+## derived from real vertical-FOV math against the old, wrong 138.7-unit
+## character height -- 120 was "the closest distance that still fits the
+## whole character in frame". Re-derived against the real measured height
+## by the same ratio, so the framing they were chosen for is preserved.
+const CAMERA_ZOOM_MIN := 12.4
+const CAMERA_ZOOM_MAX := 24.8
 ## The scene's own authored default CameraArm.rotation_degrees (see
 ## World3D.tscn) -- orbit-dragging (right-click) moves the arm's *local*
 ## yaw/pitch away from this and nothing ever moved it back, so after any
@@ -832,7 +863,6 @@ func _ready() -> void:
 	_try_apply_real_player_character()
 	_try_add_real_sky()
 	_load_initial_region_neighborhood()
-
 ## Loads real static scenery through the exact same pk2 -> BsrReader ->
 ## ObjectLoader pipeline client/tools/render_asset.gd verifies standalone,
 ## live in this scene -- if SRREVAMP_PK2_PATH and SRREVAMP_BSR_PATH are
@@ -2625,7 +2655,28 @@ func _physics_process(delta: float) -> void:
 	# dev-only demo path already picks its one fixed animation, using the
 	# same BAN_FPS playback-rate engineering guess (not reverse-engineered
 	# real timing).
-	if _player_skeleton != null and _character_assets.has(_player_gender):
+	# **Disabled 2026-09-02** (see docs/WORLD_ISSUES.md's forty-eighth
+	# round). Fixing CharacterAssembler.attach_rigid made the real
+	# assembled character render correctly for the first time -- but only
+	# in its real bind pose. With this real .ban playback driving the
+	# skeleton it still comes out distorted (arms and legs splayed
+	# outward), so `apply_ban_pose` has its own separate real bug:
+	# it computes each keyframe rotation as a delta against keyframe 0 and
+	# applies it as a *local* pose rotation, but real .ban rotations look to
+	# be in the same global/world space this project already had to convert
+	# out of for .bsk bind rotations (see Skeleton3DBuilder.build_skeleton3d)
+	# -- applying a global-space rotation as a local one compounds error
+	# down the bone chain, which matches the symptom exactly. That earlier
+	# "coherent walking stride" check only ever looked at a bare skeleton's
+	# bone positions, never at real attached body meshes, which is why it
+	# read as fine.
+	#
+	# Correcting it needs converting each animated global rotation to a
+	# parent-relative local one and re-verifying against real renders --
+	# real work, not attempted here. Left disabled rather than shipped
+	# visibly broken (same call this project already made for the sky cloud
+	# dome), so the real character renders correctly, just statically.
+	if false and _player_skeleton != null and _character_assets.has(_player_gender):
 		var assets: Dictionary = _character_assets[_player_gender]
 		var anim: BanReader.ParsedAnimation = assets["walk_anim"] if is_moving else assets["idle_anim"]
 		if anim != null and not anim.bones.is_empty():

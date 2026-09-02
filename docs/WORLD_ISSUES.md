@@ -1879,3 +1879,67 @@ Full verification: all 45 real GDScript test suites pass, including a **new** re
 test coverage at all, which is why this shipped broken for so long). `godot4 --headless --path .
 --import --quit` clean. All pulled real data (`Data.pk2`, `Map.pk2`) and the temporary
 `render_bsr_probe.gd` diagnostic deleted after use; debug hooks removed before commit.
+
+## 2026-09-02, forty-eighth round — "the dog": the character was ~10x too small to see, and
+## assembled wrong underneath
+
+Follow-up to the same real playtest report ("the buildings are fucked and so is the dog"). The
+buildings were the forty-seventh round's winding bug. "The dog" turned out to be the real player
+character, and it took two stacked real bugs to make it look like one.
+
+**Real bug #1: every player-relative constant was ~10x too large.** `PLAYER_SCALE_RATIO` was
+`138.7 / 1.8`, where 138.7 was a previously-claimed forward-kinematics measurement of the real
+character's native height. That figure is simply wrong. Two independent runtime measurements of the
+*actually assembled* real character -- its real skeleton's own bind-pose bone extent, and the real
+world-space AABB of every mesh attached to it -- both come out at **14-16 units**, not 138.7. So the
+camera sat roughly 8 character-heights away, move speed was ~33 body-heights/second, and the
+placeholder collision capsule was ~10x oversized. On screen the real character was a ~20-pixel
+speck, which is exactly what reads as "a dog".
+
+Corrected to a `REAL_CHARACTER_NATIVE_HEIGHT` constant taken from the real measurement, with the
+scene's placeholder capsule, camera arm height, and `CAMERA_ZOOM_MIN`/`MAX` re-derived by the same
+real ratio so their previously-tuned framing is preserved rather than re-guessed.
+
+**Real bug #2, revealed once the character was big enough to see: it was assembled wrong.**
+`CharacterAssembler.attach_rigid` cancelled only the bone's rest *translation*
+(`position = -get_bone_global_rest(idx).origin`). A `BoneAttachment3D` contributes the bone's full
+global pose including **rotation**, so every piece was left spuriously rotated by its own bone's rest
+rotation. That was harmless while all bone rest rotations were identity, but stopped being harmless
+on 2026-08-28 when `Skeleton3DBuilder` began using each bone's real `.bsk` bind rotation. From then
+on the real character rendered as detached, splayed limbs -- measured **21.1 units wide against only
+12.8 tall**, when a real humanoid is far taller than wide. It went unnoticed only because bug #1 was
+simultaneously drawing it too small to see.
+
+Fixed by cancelling the *whole* rest transform (`transform = get_bone_global_rest(idx).affine_inverse()`),
+which is the correct inverse: the attachment contributes `bone_global_pose`, this contributes
+`inverse(bone_global_rest)`, so at rest they cancel exactly and each real mesh sits at the absolute
+bind-pose coordinates its own vertices are already in -- while still moving rigidly with the bone
+under animation. **Real render confirms it**: the character now assembles into a correct, complete
+humanoid T-pose (torso, both arms, both legs, hands, feet all connected and correctly placed).
+
+**Real bug #3, found but deliberately NOT fixed this round: `.ban` animation playback is wrong.**
+With the above fixed, the character is correct in its real bind pose but still distorts once real
+animation drives the skeleton. `Skeleton3DBuilder.apply_ban_pose` computes each keyframe's rotation
+as a delta against keyframe 0 and applies it as a **local** pose rotation, but real `.ban` rotations
+appear to be in the same global/world space this project already had to convert out of for real
+`.bsk` bind rotations -- applying a global-space rotation as a local one compounds error down the
+bone chain, which matches the symptom exactly. Note this also corrects an earlier over-claim: the
+2026-08-28 "coherent walking stride" verification only ever looked at a bare skeleton's bone
+positions, never at real attached body meshes, which is why it read as fine.
+
+Animation playback is **disabled** for now rather than shipped visibly broken -- the same call this
+project already made for the sky cloud dome -- so the real character renders correctly, just
+statically. Fixing it properly means converting each animated global rotation to a parent-relative
+local one and re-verifying against real renders.
+
+**Also still open, deliberately not guessed at**: real map objects measured alongside the character
+(a real chair 12.5 units, table 10.8, standing lamp 19.9, guardian lion statue 29.0) are
+self-consistent with each other but make a ~14.3-unit character read as roughly chair-height --
+short for an adult. That suggests the real client may apply its own character scale factor this
+project hasn't found. No such factor was invented; this round only corrected a provably wrong
+measurement.
+
+Full verification: all 45 real GDScript test suites pass, `godot4 --headless --path . --import
+--quit` clean, and a real headless scene boot against real `Data.pk2` runs with zero script errors.
+All pulled real data and the temporary `render_bsr_probe.gd`/`measure_probe.gd` diagnostics deleted
+after use; every debug hook removed before commit (verified via `git diff`).

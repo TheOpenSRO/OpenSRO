@@ -187,7 +187,27 @@ static func attach_rigid(skeleton: Skeleton3D, array_mesh: ArrayMesh, bone_name:
 	mesh_instance.mesh = array_mesh
 	if material != null:
 		mesh_instance.material_override = material
-	mesh_instance.position = -skeleton.get_bone_global_rest(bone_idx).origin
+	# **Corrected 2026-09-02** (see docs/WORLD_ISSUES.md's forty-eighth
+	# round): was `mesh_instance.position = -get_bone_global_rest(idx).origin`,
+	# which cancels only the bone's rest *translation*. A BoneAttachment3D
+	# applies the bone's full global pose -- rotation included -- so
+	# cancelling just the translation left every piece spuriously rotated by
+	# its own bone's rest rotation. That was harmless while bone rest
+	# rotations were all identity, but stopped being harmless on 2026-08-28
+	# when Skeleton3DBuilder began using each bone's real .bsk bind rotation:
+	# from then on the real assembled character rendered as detached limbs
+	# splayed outward (measured 21.1 units wide against only 12.8 tall -- a
+	# real humanoid is far taller than wide). It went unnoticed because the
+	# character was simultaneously being drawn ~10x too small to see, for the
+	# unrelated reason corrected in World3D's REAL_CHARACTER_NATIVE_HEIGHT.
+	#
+	# Cancelling the *whole* rest transform is the correct inverse: the
+	# attachment contributes bone_global_pose, this contributes
+	# inverse(bone_global_rest), so at rest the two cancel exactly and each
+	# real mesh stays at the absolute bind-pose coordinates its own vertices
+	# are already expressed in -- while still moving rigidly with the bone
+	# once a real animation drives the pose away from rest.
+	mesh_instance.transform = skeleton.get_bone_global_rest(bone_idx).affine_inverse()
 	attachment.add_child(mesh_instance)
 
 ## Assembles every part in parts (body-part-name -> ParsedMesh, e.g. from
