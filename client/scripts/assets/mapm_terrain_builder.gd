@@ -285,6 +285,16 @@ static func _resolve_texture_scale(extra: PackedByteArray) -> int:
 ## per quad, low enough not to read as obviously over-tiled up close.
 const BASE_TILE_REPEAT := 4.0
 
+## How strongly a real neighbouring texture bleeds across a shared edge in
+## the feathered blend pass (see _build_textured_mesh_from_cells' doc
+## comment) -- the alpha it reaches exactly at the shared edge, ramping to
+## 0 at the quad's far edge. A disclosed rendering choice, not real data:
+## the real format carries no per-vertex blend weights this project has
+## found, so *how much* two real textures should mix isn't recoverable.
+## Picked just under half so a real boundary reads as a genuine two-way
+## transition without either real texture disappearing into the other.
+const BOUNDARY_BLEND_ALPHA := 0.45
+
 ## Deterministically picks one of the 8 real square symmetries (4
 ## rotations x optional mirror) for a quad's own UV corners, keyed by its
 ## own (r, c) grid position. Purely a rendering choice, not a claim about
@@ -318,17 +328,28 @@ static func _quad_uv_corners(r: int, c: int, repeat: float = 1.0) -> PackedVecto
 ## Since each quad only ever carries one real texture ID (the format has no
 ## real per-vertex blend weights this project has found), a naive render
 ## shows a hard, obviously rectangular edge everywhere two differently-
-## textured quads meet. To soften that (2026-08-24, flagged as looking
-## "inconsistent" from a live screenshot pass), this also builds a base
-## surface spanning the whole grid with each vertex colored by averaging
-## its surrounding quads' own real per-tile tone (_vertex_color) --
-## Godot's normal vertex-color interpolation then gives a smooth gradient
-## between differently-toned areas everywhere, not just at a hard line.
-## Quads adjacent to a different real texture ID are then rendered with
-## partial alpha over that smooth base instead of full opacity, so the
-## seam reads as a soft, muted transition band about one quad wide rather
-## than a stamped-looking rectangle edge. Still exactly one real texture
-## per quad -- this only changes how its edges blend into its neighbors.
+## textured quads meet.
+##
+## **Reworked 2026-09-02** (see docs/WORLD_ISSUES.md's forty-sixth round).
+## The previous approach drew every quad *semi-transparently* near a
+## texture boundary over a flat gray base surface. That was a real,
+## measurable bug, not just a stylistic choice: fading toward flat gray
+## desaturates the real texture instead of blending it into its neighbour,
+## and because regions differ in how fragmented their tile layout is, it
+## desaturated some regions far more than others -- producing exactly the
+## uneven, washed-out, per-region tinting a real playtest reported.
+## Confirmed by a real controlled render (forcing every quad opaque made
+## the whole map dramatically more saturated).
+##
+## Now each quad is drawn **fully opaque** in its own texture's surface,
+## and blending happens the way real terrain splatting does: for every
+## edge where a quad's neighbour uses a *different* real texture, the
+## neighbour's own texture is drawn again over this quad as a separate
+## feathered pass, its alpha ramping from BOUNDARY_BLEND_ALPHA at the
+## shared edge down to 0 at the far edge. So texture A genuinely fades
+## into texture B across the seam, with no invented middle color and no
+## loss of saturation anywhere. Still exactly one real texture ID per real
+## quad -- this only adds a real neighbour's real texture as an overlay.
 static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_count: int, texture_lookup: Dictionary, ao_texture: Texture2D) -> ArrayMesh:
 	var positions := PackedVector3Array()
 	positions.resize(row_count * col_count)
@@ -421,74 +442,93 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 		base_mat.ao_on_uv2 = true
 	array_mesh.surface_set_material(0, base_mat)
 
-	# One growable vertex/index buffer per real texture ID (or -1 for the
-	# color-fallback surface), layered on top of the base surface above,
-	# built up quad by quad.
+	# Two growable vertex/index buffers per real texture ID: `buffers` holds
+	# each quad's own real texture drawn fully opaque, and `blend_buffers`
+	# holds the feathered neighbour-texture overlays described in this
+	# function's doc comment. Key -1 is the shared "no real texture
+	# available" color fallback, which never contributes a blend overlay
+	# (there's no real texture to bleed).
 	var buffers := {}
+	var blend_buffers := {}
+
+	var new_buffer := func() -> Dictionary:
+		return {
+			"positions": PackedVector3Array(),
+			"normals": PackedVector3Array(),
+			"uvs": PackedVector2Array(),
+			"uv2s": PackedVector2Array(),
+			"colors": PackedColorArray(),
+			"indices": PackedInt32Array(),
+		}
 
 	for r in range(row_count - 1):
 		for c in range(col_count - 1):
 			var key: int = quad_keys[r][c]
 			if not buffers.has(key):
-				buffers[key] = {
-					"positions": PackedVector3Array(),
-					"normals": PackedVector3Array(),
-					"uvs": PackedVector2Array(),
-					"uv2s": PackedVector2Array(),
-					"colors": PackedColorArray(),
-					"indices": PackedInt32Array(),
-				}
+				buffers[key] = new_buffer.call()
 			var buf: Dictionary = buffers[key]
 
 			var i00 := r * col_count + c
 			var i10 := i00 + 1
 			var i01 := i00 + col_count
 			var i11 := i01 + 1
-			var base: int = buf["positions"].size()
-
-			var color: Color = Color.WHITE if key != -1 else quad_colors[r][c]
-
-			# Real per-*corner* alpha (2026-09-02, see docs/WORLD_ISSUES.md's
-			# forty-fifth round), not the flat per-quad alpha this used to
-			# be: a whole quad fading uniformly still reads as a hard-edged
-			# block switching state, just semi-transparent instead of
-			# opaque -- a real playtest confirmed the checkerboard pattern
-			# was still clearly visible after the per-quad-tiling fix.
-			# Godot interpolates ARRAY_COLOR smoothly across a triangle, so
-			# giving each of the 4 corners its own alpha (low only on the
-			# side(s) actually touching a differently-textured neighbor)
-			# produces a real gradient fading toward each boundary instead
-			# of a uniform block-wide fade -- same real texture data, same
-			# neighbor-differs signal already computed, just applied at
-			# finer granularity.
-			var left_differs: bool = c > 0 and quad_keys[r][c - 1] != key
-			var right_differs: bool = c < col_count - 2 and quad_keys[r][c + 1] != key
-			var top_differs: bool = r > 0 and quad_keys[r - 1][c] != key
-			var bottom_differs: bool = r < row_count - 2 and quad_keys[r + 1][c] != key
-
-			var color00 := color
-			color00.a = 0.55 if (left_differs or top_differs) else 1.0
-			var color10 := color
-			color10.a = 0.55 if (right_differs or top_differs) else 1.0
-			var color11 := color
-			color11.a = 0.55 if (right_differs or bottom_differs) else 1.0
-			var color01 := color
-			color01.a = 0.55 if (left_differs or bottom_differs) else 1.0
 
 			var quad_positions: PackedVector3Array = [positions[i00], positions[i10], positions[i11], positions[i01]]
 			var quad_normals: PackedVector3Array = [normals[i00], normals[i10], normals[i11], normals[i01]]
 			var quad_uv2s: PackedVector2Array = [uv2s[i00], uv2s[i10], uv2s[i11], uv2s[i01]]
+
+			# This quad's own real texture, fully opaque -- no fade, no
+			# desaturation (see this function's doc comment).
+			var color: Color = Color.WHITE if key != -1 else quad_colors[r][c]
+			var base: int = buf["positions"].size()
 			buf["positions"].append_array(quad_positions)
 			buf["normals"].append_array(quad_normals)
 			buf["uvs"].append_array(_quad_uv_corners(r, c, quad_repeats[r][c]))
 			buf["uv2s"].append_array(quad_uv2s)
-			buf["colors"].append_array(PackedColorArray([color00, color10, color11, color01]))
+			buf["colors"].append_array(PackedColorArray([color, color, color, color]))
 			buf["indices"].append_array(PackedInt32Array([base, base + 1, base + 2, base, base + 2, base + 3]))
 
-	var keys := buffers.keys()
-	keys.sort()
-	for key in keys:
-		var buf: Dictionary = buffers[key]
+			# Feathered neighbour overlays. Corner order throughout this
+			# function is [ (r,c), (r,c+1), (r+1,c+1), (r+1,c) ], so each
+			# neighbour direction below lists the two corners that sit on
+			# the shared edge (full blend alpha) -- the other two get 0.
+			var neighbours := [
+				[r, c - 1, 0, 3], # west  -- corners (r,c) and (r+1,c)
+				[r, c + 1, 1, 2], # east  -- corners (r,c+1) and (r+1,c+1)
+				[r - 1, c, 0, 1], # north -- corners (r,c) and (r,c+1)
+				[r + 1, c, 3, 2], # south -- corners (r+1,c) and (r+1,c+1)
+			]
+			for n in neighbours:
+				var nr: int = n[0]
+				var nc: int = n[1]
+				if nr < 0 or nr > row_count - 2 or nc < 0 or nc > col_count - 2:
+					continue
+				var nkey: int = quad_keys[nr][nc]
+				if nkey == key or nkey == -1:
+					continue
+				if not blend_buffers.has(nkey):
+					blend_buffers[nkey] = new_buffer.call()
+				var nbuf: Dictionary = blend_buffers[nkey]
+
+				var alphas := [0.0, 0.0, 0.0, 0.0]
+				alphas[n[2]] = BOUNDARY_BLEND_ALPHA
+				alphas[n[3]] = BOUNDARY_BLEND_ALPHA
+				var blend_colors := PackedColorArray()
+				for a in alphas:
+					blend_colors.append(Color(1.0, 1.0, 1.0, a))
+
+				var nbase: int = nbuf["positions"].size()
+				nbuf["positions"].append_array(quad_positions)
+				nbuf["normals"].append_array(quad_normals)
+				# The neighbour's own real tiling rate, so its texture keeps
+				# the same real scale where it bleeds across as it has in
+				# its own quad.
+				nbuf["uvs"].append_array(_quad_uv_corners(r, c, quad_repeats[nr][nc]))
+				nbuf["uv2s"].append_array(quad_uv2s)
+				nbuf["colors"].append_array(blend_colors)
+				nbuf["indices"].append_array(PackedInt32Array([nbase, nbase + 1, nbase + 2, nbase, nbase + 2, nbase + 3]))
+
+	var add_surface := func(key: int, buf: Dictionary, is_blend: bool) -> void:
 		var arrays := []
 		arrays.resize(Mesh.ARRAY_MAX)
 		arrays[Mesh.ARRAY_VERTEX] = buf["positions"]
@@ -503,13 +543,30 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 		if key != -1:
 			mat.albedo_texture = texture_lookup[key]
 		mat.vertex_color_use_as_albedo = true
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		if is_blend:
+			# Only the feathered neighbour overlays are transparent; a
+			# quad's own texture is opaque (see this function's doc
+			# comment). depth_draw_disabled keeps these coplanar overlays
+			# from fighting the opaque pass they sit exactly on top of.
+			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 		if ao_texture != null:
 			mat.ao_enabled = true
 			mat.ao_texture = ao_texture
 			mat.ao_light_affect = 1.0
 			mat.ao_on_uv2 = true
 		array_mesh.surface_set_material(array_mesh.get_surface_count() - 1, mat)
+
+	var keys := buffers.keys()
+	keys.sort()
+	for key in keys:
+		add_surface.call(key, buffers[key], false)
+
+	# Blend overlays last, so they render over every opaque surface above.
+	var blend_keys := blend_buffers.keys()
+	blend_keys.sort()
+	for key in blend_keys:
+		add_surface.call(key, blend_buffers[key], true)
 
 	return array_mesh
 

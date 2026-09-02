@@ -1763,3 +1763,69 @@ Full verification: all 45 real GDScript test suites pass, `godot4 --headless --p
 clean. All pulled real data (`Data.pk2`, `Map.pk2`) and the scratch tool (`seamcheck_scratch`)
 deleted after use; temporary `SRREVAMP_DEBUG_HIDE_UI`/`SRREVAMP_DEBUG_LOOKDOWN` hooks fully removed
 before commit (verified via `git diff`).
+
+## 2026-09-02, forty-sixth round — THE region bug found and fixed: the region grid's axes were
+## swapped, and boundary blending faded to gray instead of into the neighbour
+
+Real playtest report: "that map doesn't look like silkroad at all, the brown is a straight line next
+to the green." Investigated properly instead of guessing, and found **two real bugs**, one of them
+the root cause of every cross-region problem this project has been documenting as "open" since the
+fifth round.
+
+**Ruled out first, with real controlled renders**: the `.t` lightmap (disabled it -- seams
+unchanged), and unresolved ground textures (instrumented every streamed region: 100% of real
+texture IDs resolve in all 25, nothing falling back to gray).
+
+**Real bug #1, the big one: the region grid's two axes were swapped.** `_load_region_cell` placed a
+region at `Vector3(dx * REGION_SPAN, 0, dy * REGION_SPAN)` where `dx` is a region_x (folder) delta
+and `dy` a region_y (file) delta -- i.e. it assumed region_x runs east/west and region_y runs
+north/south. That is backwards, and it meant every "neighbour" this client streamed in was an
+entirely unrelated part of the real world, so terrain never lined up in height *or* texture -- hence
+the hard straight lines at every region boundary.
+
+Found it by first establishing a real ground truth: within a single real region, adjacent blocks
+share their edge vertices with a mean absolute height difference of **exactly 0.000000** (checked
+across three unrelated real regions). So the real data *is* perfectly continuous where it's meant to
+be adjacent -- which meant the 22-55 unit region-to-region mismatches measured in the forty-fourth
+round couldn't be "just how the real data is," they had to be this project comparing the wrong
+edges. A brute-force scan of all 4,050 real regions (ad hoc `findneighbor_scratch`, deleted after
+use) then matched a target region's four edges against every other region's four edges: each target
+edge matches **exactly one** real region's opposite edge at **exactly 0.000000** mean difference,
+and the partners are `region_x ± 1` on the north/south axis and `region_y ± 1` on the east/west
+axis. Verified on two unrelated real regions (`96/169`, `98/157`) -- identical rule both times.
+
+**Fix**: swapped the axes in `_load_region_cell` (`region_x` → world Z, `region_y` → world X), and
+correspondingly in `_maybe_stream_regions`' player-position-to-cell math so streaming stays
+consistent. **This closes the cross-region height-mismatch problem outright** -- it was never a
+missing-data problem needing a fabricated blend (as the forty-fourth round concluded), it was this
+bug. Real render confirms it: a real road now runs continuously straight across a region boundary,
+and terrain features flow across seams instead of stopping dead at them.
+
+**Real bug #2: boundary blending faded toward flat gray instead of into the neighbouring texture.**
+Every quad near a texture boundary was drawn semi-transparently over a flat gray base surface. That
+desaturates the real texture rather than blending it, and because real regions differ in how
+fragmented their tile layout is, it desaturated some regions far more than others -- producing real,
+uneven, per-region washed-out tinting. Confirmed with a real controlled render (forcing every quad
+opaque made the whole map dramatically more saturated).
+
+**Fix**: reworked `_build_textured_mesh_from_cells` to do real terrain splatting instead. Each quad
+now draws its own real texture **fully opaque**, and for every edge where a neighbour uses a
+different real texture, that neighbour's own real texture is drawn again over this quad as a
+separate feathered pass, alpha ramping from `BOUNDARY_BLEND_ALPHA` at the shared edge to 0 at the
+far edge. Real texture A genuinely fades into real texture B, with no invented middle color and no
+loss of saturation. Real render confirms visibly smooth, organic grass/sand/dirt transitions
+replacing the blocky checkerboard.
+
+**What this doesn't fix**: texture blending still happens only *within* a region, since each region's
+mesh is built independently and has no access to its neighbours' tile data -- so a texture change
+that falls exactly on a region boundary is still a hard edge (heights are now perfectly continuous
+there regardless). Passing neighbour edge tile data into the builder would close this; not attempted
+this round. `BOUNDARY_BLEND_ALPHA` (0.45) is a disclosed rendering choice, not real data -- the real
+format carries no per-vertex blend weights this project has found.
+
+Full verification: all 45 real GDScript test suites pass, including `mapm_terrain_builder_test.gd`'s
+assertions rewritten for the new architecture (opaque per-texture surfaces plus a transparent
+feathered blend surface, with a real check that blend alphas only ever ramp between 0 and
+`BOUNDARY_BLEND_ALPHA`). `godot4 --headless --path . --import --quit` clean. All pulled real data
+(`Data.pk2`, `Map.pk2`) and scratch tools (`blockedge_scratch`, `findneighbor_scratch`) deleted after
+use; every temporary debug hook removed before commit (verified via `git diff`).

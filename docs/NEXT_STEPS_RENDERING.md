@@ -43,15 +43,18 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   worth a side-by-side comparison against a real client screenshot once one is available.
 - **Terrain seam blending exists (2026-08-24) but hasn't been re-verified since the scale fix** —
   the blend radius/strength was tuned against the old world scale.
-- **Cross-region height mismatch, now rigorously measured — still genuinely open** (see
-  `docs/WORLD_ISSUES.md`'s forty-fourth round): a direct real-data diff of adjacent regions' shared
-  boundary heights (not just a visual look) found mean mismatches of 25-55 units and maxes of
-  75-115+ units, even in a cluster earlier cited as looking seamless. Tested and ruled out one
-  hypothesis (reversed row/column correspondence between neighbors) — helped some pairs a lot, hurt
-  or did nothing for others, too inconsistent to be a real fix. Still needs either real decompiled
-  client region-loading code (this project only has the server decompiled) or a better public
-  reference for the real region/sector layout — not something to guess or blend past, given the
-  measured mismatch is large enough that any blend would visibly warp real terrain.
+- ~~Cross-region height mismatch~~ — **SOLVED 2026-09-02** (see `docs/WORLD_ISSUES.md`'s forty-sixth
+  round). It was never a missing-data problem: the region grid's two axes were simply **swapped**
+  (`region_x` was placed along world X when it actually runs along world Z, and vice versa), so every
+  streamed "neighbour" was an unrelated part of the real world. Proved by brute-force matching every
+  region's four edges against all 4,050 real regions: each edge matches exactly one real region's
+  opposite edge at **exactly 0.000000** mean difference, with `region_x ± 1` on the north/south axis
+  and `region_y ± 1` on the east/west axis. With the axes corrected, adjacent regions are now
+  perfectly continuous — real roads run straight across region boundaries.
+- **Texture blending stops at region boundaries** — real, remaining limitation (forty-sixth round):
+  each region's mesh is built independently with no access to its neighbours' tile data, so a
+  texture change landing exactly on a region boundary is still a hard edge. Heights are perfectly
+  continuous there regardless. Passing neighbour edge tile data into the builder would close it.
 - ~~Water renders; sky cloud texture disabled~~ — **cloud dome re-enabled 2026-09-02** (see
   `docs/WORLD_ISSUES.md`'s forty-second round): the real sunburst/fan artifact at the dome's pole
   (a genuine `SphereMesh` polar-UV projection singularity) is now fixed with a custom shader

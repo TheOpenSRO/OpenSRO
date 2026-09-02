@@ -1558,7 +1558,22 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 ## around them (see _grid_origin_world's own doc comment).
 func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_anchor: float) -> void:
 	var suffix := "_%d_%d" % [region_x, region_y]
-	var offset := Vector3(dx * REGION_SPAN, 0.0, dy * REGION_SPAN)
+	# **Axes corrected 2026-09-02** (see docs/WORLD_ISSUES.md's forty-sixth
+	# round) -- this was Vector3(dx * REGION_SPAN, 0.0, dy * REGION_SPAN),
+	# i.e. region_x -> world X and region_y -> world Z. That was wrong, and
+	# it was the real root cause of the hard straight-line seams at every
+	# region boundary: it placed entirely unrelated real regions next to
+	# each other, so neighbouring terrain never lined up in height *or*
+	# texture. Real, exact proof (server/cmd's ad hoc findneighbor_scratch,
+	# deleted after use): for a target region, every one of its four real
+	# edge vertex rows matches exactly one other real region's opposite
+	# edge with a mean absolute difference of **exactly 0.000000** -- and
+	# the matching partners are region_x±1 on the north/south (world Z)
+	# axis and region_y±1 on the west/east (world X) axis, the opposite of
+	# what this code assumed. Verified on two unrelated real regions
+	# (96/169 and 98/157), same rule both times. So: region_x -> world Z,
+	# region_y -> world X.
+	var offset := Vector3(dy * REGION_SPAN, 0.0, dx * REGION_SPAN)
 	_try_load_real_terrain("%d\\%d.m" % [region_x, region_y], "", offset, suffix, false, shared_anchor, false)
 	_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
 	_loaded_cells["%d_%d" % [dx, dy]] = true
@@ -1576,7 +1591,11 @@ func _maybe_stream_regions() -> void:
 	if not _grid_has_origin:
 		return
 	var rel := player.position - _grid_origin_world
-	var cur := Vector2i(int(round(rel.x / REGION_SPAN)), int(round(rel.z / REGION_SPAN)))
+	# cur.x is a region_x (folder) delta and cur.y a region_y (file) delta --
+	# and region_x maps to world Z while region_y maps to world X, so these
+	# read from the opposite world axes (see _load_region_cell's own comment
+	# for the real, exactly-verified adjacency rule this follows).
+	var cur := Vector2i(int(round(rel.z / REGION_SPAN)), int(round(rel.x / REGION_SPAN)))
 	if cur == _last_stream_cell:
 		return
 	_last_stream_cell = cur

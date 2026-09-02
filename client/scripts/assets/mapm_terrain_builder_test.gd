@@ -170,23 +170,58 @@ func _init() -> void:
 	var textured_mesh := MapmTerrainBuilder.build_full_region_mesh_textured(region_textured, texture_lookup)
 	_check(textured_mesh != null, "builds a textured full-region mesh")
 	if textured_mesh != null:
-		# Surface 0 is always the whole-grid smoothed-color base (see
-		# _build_textured_mesh_from_cells's doc comment on boundary
-		# blending, 2026-08-24); surfaces 1+ are one per resolved texture
-		# key layered on top (here: the resolved ID and the -1 fallback).
-		_check(textured_mesh.get_surface_count() == 3, "base surface plus one real surface for the resolved ID, one fallback surface (got %d)" % textured_mesh.get_surface_count())
+		# Surface 0 is always the whole-grid smoothed-color base; then one
+		# **opaque** surface per resolved texture key (here: the resolved ID
+		# and the -1 fallback), and finally one **transparent** feathered
+		# blend surface per texture that bleeds across a boundary (see
+		# _build_textured_mesh_from_cells' doc comment, reworked 2026-09-02).
+		# This region has exactly one real texture boundary (ID 1 meets the
+		# unresolved ID at band_col 3), and only resolved textures bleed, so
+		# exactly one blend surface is expected: 1 base + 2 opaque + 1 blend.
+		_check(textured_mesh.get_surface_count() == 4, "base + 2 opaque texture surfaces + 1 feathered blend surface (got %d)" % textured_mesh.get_surface_count())
 		var expected_size := MapmReader.BLOCKS_PER_SIDE * (GW - 1) + 1
 		var expected_quad_indices := 2 * 3 * (expected_size - 1) * (expected_size - 1)
 		var base_arrays := textured_mesh.surface_get_arrays(0)
 		_check(base_arrays[Mesh.ARRAY_INDEX].size() == expected_quad_indices, "base surface alone covers every real quad (got %d indices)" % base_arrays[Mesh.ARRAY_INDEX].size())
-		var total_overlay_indices := 0
-		for i in range(1, textured_mesh.get_surface_count()):
+
+		# The opaque surfaces (1..2) must between them still cover every real
+		# quad exactly once -- every quad gets its own real texture at full
+		# opacity now, rather than fading toward the gray base.
+		var total_opaque_indices := 0
+		for i in range(1, 3):
 			var mat: StandardMaterial3D = textured_mesh.surface_get_material(i)
 			var arrays := textured_mesh.surface_get_arrays(i)
-			total_overlay_indices += arrays[Mesh.ARRAY_INDEX].size()
-			_check(mat.vertex_color_use_as_albedo, "overlay surface uses vertex color as albedo (for boundary alpha blending)")
-			_check(mat.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA, "overlay surface is alpha-blended over the base")
-		_check(total_overlay_indices == expected_quad_indices, "every real quad is also covered across the overlay surfaces (got %d indices)" % total_overlay_indices)
+			total_opaque_indices += arrays[Mesh.ARRAY_INDEX].size()
+			_check(mat.vertex_color_use_as_albedo, "opaque texture surface uses vertex color as albedo")
+			_check(mat.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED, "a quad's own real texture is drawn fully opaque, not faded toward the base")
+		_check(total_opaque_indices == expected_quad_indices, "every real quad is covered exactly once across the opaque surfaces (got %d indices)" % total_opaque_indices)
+
+		# The blend surface is transparent, and covers only the real quads
+		# that actually touch a differently-textured neighbour -- strictly
+		# fewer than the whole grid, and more than none.
+		var blend_mat: StandardMaterial3D = textured_mesh.surface_get_material(3)
+		var blend_arrays := textured_mesh.surface_get_arrays(3)
+		_check(blend_mat.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA, "the feathered neighbour-blend surface is alpha-blended")
+		_check(blend_mat.depth_draw_mode == BaseMaterial3D.DEPTH_DRAW_DISABLED, "the blend overlay does not write depth (it is coplanar with the opaque pass)")
+		var blend_indices: int = blend_arrays[Mesh.ARRAY_INDEX].size()
+		_check(blend_indices > 0 and blend_indices < expected_quad_indices, "blend surface covers only real boundary quads, not the whole grid (got %d of %d indices)" % [blend_indices, expected_quad_indices])
+
+		# Every blend vertex alpha must be either 0 (far edge) or exactly
+		# BOUNDARY_BLEND_ALPHA (shared edge) -- a real ramp, never a flat
+		# whole-quad fade.
+		# Tolerance rather than is_equal_approx: Godot stores ARRAY_COLOR as
+		# 8-bit per channel, so 0.45 comes back as 115/255 = 0.45098.
+		var seen_zero := false
+		var seen_full := false
+		var bad_alpha := false
+		for col in blend_arrays[Mesh.ARRAY_COLOR]:
+			if absf(col.a) < 0.01:
+				seen_zero = true
+			elif absf(col.a - MapmTerrainBuilder.BOUNDARY_BLEND_ALPHA) < 0.01:
+				seen_full = true
+			else:
+				bad_alpha = true
+		_check(seen_zero and seen_full and not bad_alpha, "blend vertices ramp between 0 and BOUNDARY_BLEND_ALPHA only (zero=%s full=%s bad=%s)" % [seen_zero, seen_full, bad_alpha])
 
 	_check(MapmTerrainBuilder.build_full_region_mesh_textured(MapmReader.ParsedRegion.new(), {}) == null, "build_full_region_mesh_textured rejects a region without a real 6x6 block grid")
 
