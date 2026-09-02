@@ -1995,3 +1995,33 @@ walls wrong. The foliage may then be a separate, real interaction with the alpha
 that already disable back-face culling. **Not guessed at further** -- the next step is a controlled
 isolated render of one real wall and one real foliage asset across all four winding/normal
 combinations, rather than more changes to the live scene.
+
+### Same round, continued: what the dark surfaces are NOT
+
+Kept measuring rather than guessing. Additional causes ruled out for the unlit-looking geometry, each
+with real evidence:
+
+- **Not inconsistent winding vs normals.** Wrote an analytic check (no rendering) comparing, per
+  triangle, the face normal implied by the file's own winding against the file's own vertex normals,
+  across real palace, house, tree and statue meshes. They **agree on 99-100% of triangles** in every
+  asset, and both point outward from the mesh centroid on the majority. So real `.bms` winding and
+  normals are self-consistent as authored, and the same-day idea of negating normals to "match" the
+  forty-seventh round's winding flip is wrong -- it would *introduce* the inconsistency, not remove
+  it. Not applied.
+- **Not the `.t` lightmap.** Rendered the same view with the lightmap disabled: essentially identical.
+- **Not the placed objects.** With object loading genuinely disabled (an earlier attempt at this test
+  was invalid -- objects load from region coordinates regardless of `SRREVAMP_MAPO_PATH`), the dark
+  areas in the courtyard are simply real dark paving texture, which is plausibly correct.
+- **Not DXT1 foliage cutout.** `_ALPHA_FOURCCS` excludes DXT1, and real tree branch/trunk cards are
+  DXT1, so the theory was that they render as opaque rectangles. Adding DXT1 and letting the existing
+  `_has_real_alpha_variance` pixel check decide showed the real branch texture is **genuinely opaque**
+  (correctly rejected, unchanged), while several real *palace wall* DXT1 textures flipped to cutout --
+  risk to solid walls for no gain on the actual symptom. Reverted.
+
+Still open, and now much better bounded: some real geometry in the Jangan courtyard view renders far
+darker than it should. It is not the lightmap, not the objects' material colours, not the light
+level, not the sky, and not a winding/normal inconsistency. The one thing that demonstrably changes
+it is negating `.bms` normals, which the analytic check says would be wrong -- so the next step is to
+find why correct outward normals still light incorrectly there (candidate: the Compatibility
+renderer's handling of `CULL_DISABLED` alpha-scissor materials, which is exactly the set that
+flipped appearance in that experiment).
