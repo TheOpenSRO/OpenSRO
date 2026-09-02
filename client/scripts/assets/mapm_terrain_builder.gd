@@ -261,29 +261,30 @@ static func _resolve_texture_id(extra: PackedByteArray, texture_lookup: Dictiona
 ## bits actually vary and the field is a discrete tiling *level*, not a raw
 ## multiplier. Interpreted here as a real per-quad texture-repeat doubling:
 ## level = scale >> 3, repeat multiplier = 2^level. A quad with scale=0
-## (repeat x1) plus this file's own BASE_TILE_REPEAT baseline still tiles
-## its real texture more than once -- see BASE_TILE_REPEAT's own comment
-## for why that baseline exists independently of this field.
+## (repeat x1) therefore tiles its real texture exactly once across the
+## quad, which is what real textures appear to be authored for -- see
+## BASE_TILE_REPEAT's own comment.
 static func _resolve_texture_scale(extra: PackedByteArray) -> int:
 	if extra.size() < 2:
 		return 0
 	return extra.decode_u16(0) >> 10
 
-## Real ground textures (grass/dirt/stone .ddj files in Map.pk2's Tile2D\
-## folder) are small, high-frequency, repeating patterns -- not one
-## artwork-sized image meant to be seen once per real 20-unit quad. Before
-## this constant existed, every quad got exactly one full 0..1 stretch of
-## its real texture regardless of TextureInfo.Scale (see that field's own
-## comment) -- most real regions have scale=0 everywhere, so quads still
-## showed one giant flat-looking stretch, an obviously blocky/"Minecraft"
-## look reported directly from a real playtest (2026-09-02). This baseline
-## repeat is a rendering choice, not a claim about the real game's own
-## per-quad tiling rate (that rate isn't recoverable from what this project
-## has found so far) -- the same honest category _quad_uv_corners' rotation
-## trick below already uses. Picked as a modest middle value: high enough
-## that a real texture's own internal detail actually shows more than once
-## per quad, low enough not to read as obviously over-tiled up close.
-const BASE_TILE_REPEAT := 4.0
+## Real ground textures tile per quad according to the real `Scale` field
+## packed alongside the texture ID (see _resolve_texture_scale).
+##
+## **Corrected 2026-09-02** (see docs/WORLD_ISSUES.md's fifty-third round).
+## This used to be `BASE_TILE_REPEAT (4.0) * 2^level`, where the 4.0 was an
+## openly-invented constant added on the theory that real ground textures
+## are small high-frequency patterns needing extra repeats. A real
+## side-by-side render disproved that: with the multiplier in place a real
+## rock formation rendered as a pale crosshatched moire blur and the grass
+## carried visible interference patterning, while dropping it resolved the
+## same rock into clean, readable stone and smoothed the grass. Real
+## textures are authored for roughly one repeat per real quad, so the real
+## Scale field alone drives tiling now and no invented factor remains:
+## a real scale level of 0 (which is every vertex in real region 98/168)
+## means exactly one repeat.
+const BASE_TILE_REPEAT := 1.0
 
 ## How strongly a real neighbouring texture bleeds across a shared edge in
 ## the feathered blend pass (see _build_textured_mesh_from_cells' doc

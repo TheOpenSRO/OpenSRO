@@ -2069,3 +2069,37 @@ That was a red herring -- the walls were never broken; they were **occluded** by
 cards, and negating normals merely darkened the foliage enough to stop hiding them. The analytic
 winding-vs-normals check from that round (99-100% agreement) was right, and no normal change was
 needed.
+
+## 2026-09-02, fifty-third round — removed an invented tiling constant that was destroying real
+## ground textures
+
+Continuing the map pass. A pale, crosshatched mound kept appearing near the real Jangan spawn.
+Raycast into it (same technique that identified the willow foliage): it is **terrain**, not an
+object -- `RealTerrain_99_168/SubPatch`. So a real ground texture was rendering as moire mush.
+
+**Root cause: `BASE_TILE_REPEAT`, an openly-invented constant.** The forty-first round added
+per-quad texture tiling of `BASE_TILE_REPEAT (4.0) * 2^scale_level`, where the real `Scale` field
+supplies the exponent but the `4.0` was disclosed at the time as an engineering guess, on the theory
+that real ground textures are small high-frequency patterns needing extra repeats. Two real
+measurements show that guess was wrong and actively harmful:
+
+- Real `Scale` values are not uniformly zero. Real region `98/157` (Dunhuang) carries scale levels up
+  to 32, which under the old formula meant `4 * 2^4 = 64` texture repeats across a single real
+  20-unit quad -- guaranteed moire.
+- A real side-by-side render with the multiplier removed resolved the crosshatched mound into a
+  clean, readable grey **rock formation**, and visibly smoothed the surrounding grass.
+
+**Fix**: `BASE_TILE_REPEAT` is now `1.0`, so the real `Scale` field alone drives tiling and no
+invented factor remains. A real scale level of 0 -- which is every vertex of real region `98/168` --
+now means exactly one repeat per quad, which is what real textures appear to be authored for.
+
+**Verified against two real regions with different real scale distributions**: Jangan (`98/168`, all
+scale 0) renders clean grass, a readable rock outcrop, willow trees with visible trunks and the
+palace wall behind; Dunhuang (`98/157`, mostly scale 8 with some 16/24/32) renders as a genuine
+desert -- sand with visible grain, sandstone formations, cypresses, distant haze. Both look like the
+real game rather than like moire.
+
+This retires the forty-first round's reasoning. That round correctly identified that a single
+non-repeated stretch per quad looked flat, but the conclusion drawn -- that a fixed extra multiplier
+was needed -- overshot; the real `Scale` field was already the mechanism, and the invented constant
+on top of it was the problem.
