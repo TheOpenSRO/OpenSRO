@@ -296,6 +296,32 @@ var _last_grounded_position := Vector3.ZERO
 ## roughly 0-250 units, so -500 is a generous floor no legitimate terrain
 ## should ever cross; anything below it can only be a real gap.
 const WORLD_FLOOR_Y := -500.0
+
+## Aerial-perspective haze strength. See _apply_real_environment_lighting for
+## the real recovered model this feeds (real per-channel extinction
+## `exp(-(beta_1+beta_2) * s)` plus additive inscattering, from the real client
+## terrain shaders shipped in Data.pk2's `Shader\` folder).
+##
+## **A disclosed rendering choice, not real data**, the same as
+## BOUNDARY_BLEND_ALPHA: the real scattering coefficients are runtime shader
+## constants, and environment.ifo's own two real scalar fog channels hold
+## normalized [-1, +1] values rather than world distances, so the real density
+## isn't recoverable from the asset data. Picked so that haze is negligible on
+## the player's own region and builds across the streamed neighborhood: with
+## Godot's `1 - exp(-density * depth)`, 0.00015 leaves one region span away
+## (1920 units) about a quarter hazed and the far edge of the 5x5 grid (5760
+## units) about three-fifths hazed.
+const FOG_DENSITY := 0.00015
+
+## How much the haze brightens toward the sun -- Godot's approximation of the
+## real Henyey-Greenstein phase term in the real terrain vertex shader. Also a
+## disclosed choice, not real data (see FOG_DENSITY).
+const FOG_SUN_SCATTER := 0.1
+
+## How strongly the haze takes its color from the sky behind it rather than
+## from fog_light_color alone. Also a disclosed choice (see FOG_DENSITY); kept
+## partial so the real per-zone FogColor still reads as itself.
+const FOG_AERIAL_PERSPECTIVE := 0.5
 ## Minimum real-world distance moved, and minimum time elapsed, before
 ## sending another OpMove -- avoids flooding the connection with a packet
 ## every single physics frame while walking. **Raised 2026-08-26** (see
@@ -1382,7 +1408,41 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	directional_light.light_color = sun_color
 	world_environment.environment.ambient_light_color = diffuse_color
 
-	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) -- sky_top=%s sky_bottom=%s sun=%s diffuse=%s" % [record.name1, env_id, top, bottom, sun_color, diffuse_color])
+	# Real per-zone aerial-perspective haze (2026-09-03). The real client's
+	# own terrain shaders were found shipped as readable source inside
+	# Data.pk2's `Shader\` folder (see docs/protocol/SHADER_FINDINGS.md), and
+	# they show the real distance model is not a simple linear near/far fog at
+	# all -- it's atmospheric scattering. `scattervsdetail10.vsh` computes a
+	# per-channel extinction `E = exp(-(beta_1 + beta_2) * s)` over view-space
+	# distance s, and `terrainps14.psh` combines it as
+	# `final = surf_color * extinction + inscattering`.
+	#
+	# That is structurally the same operation as Godot's own exponential fog
+	# (surface blended toward a fog color by `1 - exp(-density * depth)`), so
+	# the model here is real and recovered, not invented -- and the *color* is
+	# real per-zone data: environment.ifo's own FogColor channel, sampled at
+	# the same fixed ENVIRONMENT_REFERENCE_TIME as the sky and sun above.
+	#
+	# The density is NOT real data and is not presented as such. The real
+	# beta_1/beta_2 scattering coefficients are runtime shader constants the
+	# client computes; environment.ifo's two real scalar fog channels
+	# (CHANNEL_FOG_NEAR_PLANE/CHANNEL_FOG_FAR_PLANE) hold normalized values in
+	# [-1, +1] in every real record checked -- not world distances -- so how
+	# they map onto real scattering coefficients isn't recoverable from the
+	# asset data alone. FOG_DENSITY is therefore a disclosed rendering choice,
+	# the same way BOUNDARY_BLEND_ALPHA is.
+	var fog_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_FOG_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	var env := world_environment.environment
+	env.fog_enabled = true
+	env.fog_light_color = fog_color
+	env.fog_density = FOG_DENSITY
+	# The real model's inscattering is strongest looking toward the sun (the
+	# Henyey-Greenstein phase term in the real vertex shader), which is exactly
+	# what Godot's fog_sun_scatter approximates.
+	env.fog_sun_scatter = FOG_SUN_SCATTER
+	env.fog_aerial_perspective = FOG_AERIAL_PERSPECTIVE
+
+	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) -- sky_top=%s sky_bottom=%s sun=%s diffuse=%s fog=%s" % [record.name1, env_id, top, bottom, sun_color, diffuse_color, fog_color])
 
 ## Opens the real Map.pk2 -- SRREVAMP_MAP_PK2_PATH if set, else a real
 ## "pk2/Map.pk2" next to the running executable (see Pk2Config) -- or

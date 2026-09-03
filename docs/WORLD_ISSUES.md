@@ -2379,3 +2379,94 @@ than its radius. The radius is a disclosed choice, not real data: just under the
 player capsule's own 3.19, so anywhere the player fits, the camera can follow.
 After the fix the same spawn renders the character on open ground with a correct
 shadow, hills and rock formations visible, and no wall in the view.
+
+## 2026-09-03, fifty-ninth round — full archive survey: what real map/texture data is still unused
+
+Asked directly: what else is in the pk2 archives, or already in this repo, that
+hasn't been implemented for textures or maps. Answered by enumerating both real
+archives file-by-file and cross-checking every reader against its callers,
+rather than by recollection.
+
+### What the archives actually hold
+
+`Map.pk2` — 19,411 files. `.t` 5,198 (696 MB, the single largest thing in it),
+`.m` 4,719, `.o2` 4,574, `.o` 4,065, `.ddj` 839, plus 8 `.ifo`, 2 `.mfo` and
+three `.txt`. Top-level folders never touched before this round: `Sun\` (38),
+`Water\` (34), `Weather\` (10), `SkyBox\` (5).
+
+`Data.pk2` — 68,839 files. `.bms` 22,444, `.ddj` 16,298, `.bsr` 8,539,
+`.nvm` 6,543 (805 MB), `.ban` 5,129, `.bmt` 4,861, `.wav` 2,961, `.bsk` 1,249,
+plus a `Shader\` folder of 76 files.
+
+### Readers that exist but nothing calls
+
+Cross-checking each `class_name` against its callers found three:
+`NvmReader`, `MapO2Reader`, `EfpReader`. (`MapTReader` looked unused too, but
+that was a grep artifact — the class is `MapTReader`, capital T, and it is wired
+in as the terrain lightmap.)
+
+### Two apparent gaps that turned out not to be gaps
+
+Both were measured rather than assumed, and both closed negative:
+
+- **`.o2` is not missing map content.** It is a spatial re-index of the objects
+  already in `.o`. For real region 98/168, 343 of its 390 list-1 entries and 113
+  of its 116 list-2 entries have positions matching a real `.o` object's position
+  exactly. Nothing new to place.
+- **`.t`'s unused 9,216-byte ShadowMap is redundant with what's already used.**
+  It is 96x96 bytes with exactly five distinct values across every region checked
+  — 153, 178, 204, 229, 255, i.e. 0.6 to 1.0 — and the embedded 512x512 DDS this
+  project already applies as the terrain lightmap carries those same values. The
+  byte grid is the low-resolution source of the texture already in use.
+
+### A real gap that stayed open, honestly
+
+`.nvm` walkability. The obvious reading — tile flag bit 0 means "blocked" — was
+tested by correlating blocked tiles against where real objects actually stand,
+and **it failed**: in Jangan 57.6% of blocked tiles had an object above them
+versus 49.1% of free tiles, and in 97/167 the correlation inverted outright
+(35.9% versus 46.7%). Whatever bit 0 means, it is not "a building is here."
+Searching the real client binary for flag-naming strings found the real source
+filenames (`RTNavMeshTerrain.cpp`, `NavCell.cpp`, `RTNavEdge.cpp`, and
+`navmesh\nv_%04x.nvm`, which confirms the real filename packing is `(x << 8) | y`)
+but no flag names. Recovering the semantics needs the movement code decompiled;
+no collision was built on a guessed bit.
+
+### The find of the round: the client ships its own shaders
+
+`Data.pk2\Shader\` holds the real client's terrain shaders, several as readable
+`.c` source with comments intact. See `docs/protocol/SHADER_FINDINGS.md`. The
+headline results:
+
+- The real terrain equation is stated outright in `terrainps14.psh`:
+  `Surf = (N.L) * terrain_tex * cloud_covering * self_shadow_term`, then
+  `Final = Surf * extinction + inscattering`.
+- The real distance haze is **atmospheric scattering, not linear fog** —
+  `scattervsdetail10.vsh` carries named Rayleigh/Mie coefficients and a
+  Henyey-Greenstein phase term, and computes `E = exp(-(beta_1+beta_2) * s)`.
+- Terrain is darkened by a **moving cloud layer** projected as
+  `uv = world.xz * scale + offset` — something this project does not render.
+
+### Implemented this round: real per-zone aerial-perspective haze
+
+The recovered model is structurally the same as Godot's exponential fog, so fog
+is now enabled with the **real per-zone `FogColor`** from `environment.ifo`
+(Jangan's is a soft blue-grey, `(0.357, 0.580, 0.677)`), sampled at the same
+fixed reference time as the sky and sun.
+
+The density is explicitly *not* presented as real: the real scattering
+coefficients are runtime shader constants, and environment.ifo's own two scalar
+fog channels hold normalized [-1, +1] values in every real record checked rather
+than world distances. `FOG_DENSITY` is a disclosed rendering choice, flagged in
+its own doc comment the same way `BOUNDARY_BLEND_ALPHA` is.
+
+### Still unimplemented after this round
+
+`.nvm` walkability (blocked on flag semantics), `.efp` particle effects (the
+reader only recovers a flat name/value list, not the format's nested tree),
+the cloud-shadow layer on terrain (projection scale and scroll are runtime
+constants), `Sun\moon01-30` and `Sun\lens1-8` (no day/night clock exists yet),
+`Weather\` rain/snow/smog, and the seven map `.ifo`/`.mfo`/`.txt` files with no
+reader at all (`tile3d.ifo`, `objext.ifo`, `objectstring.ifo`,
+`layerobjectlist.ifo`, `config.ifo`, `mapinfo.mfo`, `regioninfo.txt` — the last
+of which is a real region-to-zone-name table, in EUC-KR).
