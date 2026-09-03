@@ -25,6 +25,9 @@ size = Vector3(200, 1, 200)
 [sub_resource type="BoxShape3D" id="BoxShape3D_voidcatch"]
 size = Vector3(200000, 10, 200000)
 
+[sub_resource type="SphereShape3D" id="SphereShape3D_cameraarm"]
+radius = 3.0
+
 [sub_resource type="Environment" id="Environment_world3d"]
 background_mode = 1
 background_color = Color(0.55, 0.7, 0.9, 1)
@@ -76,6 +79,7 @@ rotation_degrees = Vector3(-42, 180, 0)
 spring_length = 45.0
 margin = 5.0
 collision_mask = 1
+shape = SubResource("SphereShape3D_cameraarm")
 
 [node name="Camera3D" type="Camera3D" parent="Player/CameraArm"]
 current = true
@@ -134,7 +138,8 @@ offset_left = 8.0
 offset_top = 48.0
 offset_right = 460.0
 offset_bottom = 88.0
-text = "WASD/arrows or left-click to move. Right-drag to look around, scroll to zoom. F10 hides UI."
+text = "WASD/arrows or left-click to move. Right-drag to look around, scroll to zoom.
+Tab opens inventory/skills/shop panels. F10 hides UI."
 
 [node name="DisconnectButton" type="Button" parent="UI/Control"]
 layout_mode = 1
@@ -154,15 +159,14 @@ text = "Log Out"
 
 [node name="ChatPanel" type="VBoxContainer" parent="UI/Control"]
 layout_mode = 1
-anchors_preset = 12
+anchors_preset = 2
 anchor_top = 1.0
-anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 8.0
-offset_top = -160.0
-offset_right = -8.0
-offset_bottom = -48.0
-grow_horizontal = 2
+offset_top = -132.0
+offset_right = 528.0
+offset_bottom = -8.0
+grow_horizontal = 1
 grow_vertical = 0
 
 [node name="ChatLog" type="RichTextLabel" parent="UI/Control/ChatPanel"]
@@ -200,16 +204,18 @@ offset_bottom = 116.0
 text = "Change Zone"
 
 [node name="ActionTabs" type="TabContainer" parent="UI/Control"]
+visible = false
 layout_mode = 1
-anchors_preset = 12
+anchors_preset = 3
+anchor_left = 1.0
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 8.0
-offset_top = -388.0
+offset_left = -560.0
+offset_top = -448.0
 offset_right = -8.0
-offset_bottom = -168.0
-grow_horizontal = 2
+offset_bottom = -140.0
+grow_horizontal = 0
 grow_vertical = 0
 mouse_filter = 1
 

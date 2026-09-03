@@ -523,6 +523,28 @@ var _last_stream_cell := Vector2i(0x7fffffff, 0x7fffffff) # sentinel so the firs
 
 @onready var player: CharacterBody3D = $Player
 @onready var player_mesh: MeshInstance3D = $Player/Mesh
+## The third-person camera arm. It carries a real SphereShape3D in
+## World3D.tscn rather than being left as a bare ray.
+##
+## **Added 2026-09-03.** With no shape, SpringArm3D sweeps a single infinitely
+## thin ray from the player outward, which slips straight through any gap
+## narrower than the camera's own near plane -- and the real Jangan spawn sits
+## directly at the real palace gate (`cj_pal_bigdoor`), so the arm threaded the
+## gate structure and parked the camera *inside* `CJ_pal_bigdoor_wall01`. A real
+## headless render of the real spawn showed the bottom half of the window filled
+## with an enormous blurry brick texture meeting the grass along a hard,
+## perfectly straight horizontal line, which had been read for several rounds as
+## a terrain texture-blending problem. It was not: raycasting from the camera
+## through six widely-spread screen points returned that same wall collider at
+## essentially one 3D point every time, meaning the surface was roughly a unit
+## in front of the camera. Pulling the camera back to 400 units showed the real
+## gate, roof, red walls, willows and stone plaza all rendering correctly the
+## whole time -- the view was simply buried in a wall.
+##
+## Sweeping a real sphere instead cannot thread gaps narrower than its radius.
+## The radius is a disclosed choice, not real data: just under the player
+## capsule's own 3.19 radius, so anywhere the player themselves fits, the camera
+## can follow.
 @onready var camera_arm: SpringArm3D = $Player/CameraArm
 @onready var camera_3d: Camera3D = $Player/CameraArm/Camera3D
 @onready var ground_mesh: MeshInstance3D = $Ground/Mesh
@@ -553,6 +575,7 @@ var _last_stream_cell := Vector2i(0x7fffffff, 0x7fffffff) # sentinel so the firs
 @onready var character_label: Label = $UI/Control/CharacterLabel
 @onready var ui_control: Control = $UI/Control
 @onready var hide_ui_button: Button = $UI/HideUIButton
+@onready var action_tabs: TabContainer = $UI/Control/ActionTabs
 @onready var zone_input: LineEdit = $UI/Control/ZoneInput
 @onready var chat_log: RichTextLabel = $UI/Control/ChatPanel/ChatLog
 @onready var chat_input: LineEdit = $UI/Control/ChatPanel/ChatInputRow/ChatInput
@@ -2898,9 +2921,27 @@ func _toggle_ui_visibility() -> void:
 	ui_control.visible = not ui_control.visible
 	hide_ui_button.text = "Show UI" if not ui_control.visible else "Hide UI"
 
+## Toggles the tabbed panel holding inventory, equipment, skills, shop, party
+## and the rest.
+##
+## It used to be a permanently visible strip spanning the full window width and
+## 220 pixels tall, sitting directly above an equally full-width chat panel. A
+## real headless render of the real Jangan spawn measured the two of them, plus
+## the log-out row beneath, covering roughly 70% of the window -- the world was
+## reduced to a letterbox strip along the top. Real Silkroad keeps inventory,
+## skills and shop in windows the player opens and closes, and leaves the view
+## itself clear, so the panel is now hidden until asked for. Chat stays visible
+## (it is, as in the real client, a running log rather than a window) but is
+## narrowed to the bottom-left corner instead of spanning the full width.
+func _toggle_action_panels() -> void:
+	action_tabs.visible = not action_tabs.visible
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_ui"):
 		_toggle_ui_visibility()
+
+	if event.is_action_pressed("toggle_panels"):
+		_toggle_action_panels()
 
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT:

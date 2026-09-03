@@ -2319,3 +2319,63 @@ map**, except one single transient frame in 100/168 (2.44 units, corrected on th
 next frame). Before the fix, 97/167 held the player 41 units under. In that same
 region the player now ends up at y=39.998 — standing on top of the very terrain
 that had been over their head.
+
+## 2026-09-03, fifty-eighth round — the "straight brown line next to the green" was a wall in front of the camera
+
+With the player no longer buried under the map (fifty-seventh round), a real
+headless render of the real Jangan spawn finally showed what the player actually
+sees. Two things were wrong, and neither was what had been assumed.
+
+### The debug HUD was covering most of the window
+
+The tabbed panel (inventory, equipment, skills, shop, party, and the rest) was a
+permanently visible strip spanning the full window width and 220 pixels tall,
+sitting directly above an equally full-width chat panel, with the log-out row
+below that. Measured on a real 1152x648 render, the three together covered
+roughly 70% of the window — the world was a letterbox strip along the top.
+
+Real Silkroad keeps inventory, skills and shop in windows the player opens and
+closes, and leaves the view itself clear. The panel is now hidden until asked
+for (Tab), and chat — a running log in the real client, not a window — stays
+visible but is narrowed to the bottom-left corner instead of spanning the full
+width.
+
+### The hard brown/green line was the palace gate, not a texture boundary
+
+With the HUD out of the way, the bottom half of the window was an enormous
+blurry brick texture meeting the grass along a hard, perfectly straight
+horizontal line — matching the long-standing report that "the brown is a
+straight line next to the green," which had been read for several rounds as a
+terrain texture-blending problem.
+
+It was not a terrain boundary at all. Two measurements settled it:
+
+1. **The blend overlays really are being drawn.** A real render with the
+   feathered overlay material forced to opaque red showed red appearing out in
+   the grass — but nowhere along the brown/green line. Whatever that line was,
+   it was not a boundary between two terrain textures. (An attempt to fix it by
+   lifting the coplanar overlays off the base surface was made first, on the
+   theory that an exact depth tie was discarding them; the red test disproved
+   that theory, and the change was reverted rather than kept with a wrong
+   explanation attached.)
+2. **Raycasting identified it directly.** Casting from the camera through six
+   widely-spread screen points returned
+   `cj_pal_bigdoor/CJ_pal_bigdoor_wall01` — the real Jangan palace gate — every
+   single time, at essentially one 3D point, meaning the surface was about a
+   unit in front of the camera.
+
+The camera was inside the gate wall. `SpringArm3D` with no shape assigned sweeps
+one infinitely thin ray, which slips through any gap narrower than the camera's
+near plane; the real Jangan spawn sits directly at the gate, so the arm threaded
+the structure and parked the camera inside the wall.
+
+Pulling the camera back to 400 units confirmed the world had been rendering
+correctly the entire time: the real gate with its tiled roof, red walls, gold
+door panels, willow trees, stone plaza and surrounding grass all in place, and
+plainly recognizable as Jangan.
+
+The fix is a real SphereShape3D on the arm, which cannot thread a gap narrower
+than its radius. The radius is a disclosed choice, not real data: just under the
+player capsule's own 3.19, so anywhere the player fits, the camera can follow.
+After the fix the same spawn renders the character on open ground with a correct
+shadow, hills and rock formations visible, and no wall in the view.
