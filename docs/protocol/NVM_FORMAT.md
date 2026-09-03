@@ -104,3 +104,48 @@ with a real byte-exact synthetic fixture, re-verified against the real `nv_6464.
 No renderer/gameplay wiring yet (this is the reader only) — the real, non-zero walkability flags
 found above are a concrete, well-scoped next step for anyone adding real collision/pathfinding
 refinement beyond the terrain mesh's own already-correct geometric collision.
+
+## Real per-tile record layout, recovered from the client (2026-09-03)
+
+Decompiling the real client's navmesh load path pinned down what a tile record
+actually is, and — importantly — what its fields are *for*.
+
+The loader chain is `FUN_00429780` (builds the filename) → `FUN_00403450` (parses
+the file). The filename format string is literally `navmesh\nv_%04x.nvm` and is
+called as `sprintf_s(buf, 0x400, "navmesh\\nv_%04x.nvm", regionId & 0xffff)`,
+which independently confirms the real packing this project uses:
+**`(x << 8) | y`** (e.g. real region 98/168 is `nv_62a8.nvm`).
+
+The tile array is read as a single `0x12000`-byte block. That is 9,216 tiles of
+**8 bytes each**, matching the real 96x96 grid.
+
+After reading it, the client runs a 96x96 double loop that rewrites every tile:
+
+```
+uVar1 = tile.u16 at offset 6;            // the tile's TextureID
+tile.u16 at offset 6 = 0;
+tile.dword at offset 4 |= tile2d_entry[uVar1].field_0x1c << 16;
+```
+
+`tile2d_entry` is a table of 0x20-byte in-memory records — the loaded
+`tile2d.ifo` (see `TILE2D_FORMAT.md`). So at runtime the upper half of each
+tile's second dword stops being a texture ID and becomes **the ground material
+value that texture maps to** (`tile2d.ifo`'s `0x%08X` field: DIRT, SAND, STONE,
+WATER, GRASS, and so on).
+
+### What this means for walkability
+
+The per-tile data is a **ground material lookup**, not a collision mask — which
+matches the public documentation's note that the TextureID is used for footstep
+sounds. It also independently explains a real measured negative result (see
+`docs/WORLD_ISSUES.md`'s fifty-ninth round): reading tile flag bit 0 as
+"blocked" and correlating it against where real objects stand found no
+relationship at all (57.6% of blocked tiles had an object above them versus
+49.1% of free tiles in Jangan, and the correlation inverted in 97/167).
+
+Real walkability therefore lives in the **cell/edge graph**, not the tile grid.
+Real observed edge flags are narrow: global edges are all flag 8, and internal
+edges are only ever flag 2 or flag 4 (Jangan: 259 flag-4, 411 flag-2). Which of
+those means "blocking" is not yet established, and no collision has been built
+on a guess about it. Establishing it needs the client's movement code
+decompiled, not just the loader.
