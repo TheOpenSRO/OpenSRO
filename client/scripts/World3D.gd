@@ -1995,6 +1995,63 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 ## regardless of how far off the terrain's heuristic placement is from the
 ## player's real spawn point. Not a fix for the underlying alignment
 ## question -- just keeps the game playable until that's reverse-engineered.
+## Distance above the player's feet the buried-player probe in
+## _recover_if_below_terrain starts from. One full region span, so the probe
+## reaches any terrain plausibly overhead: real measured region meshes in the
+## Jangan neighborhood span at most ~1350 units vertically end to end (see
+## docs/WORLD_ISSUES.md), and a player buried by more than a whole region span
+## is the WORLD_FLOOR_Y case, which the void-fall recovery already handles.
+const BURIED_PROBE_HEIGHT := REGION_SPAN
+
+## Lifts the player back onto the surface when they end up *underneath* the
+## terrain rather than on top of it.
+##
+## Measured 2026-09-03: the initial _snap_player_onto_terrain runs once, while
+## the 5x5 region neighborhood is still streaming in, so it can only snap the
+## player onto whichever regions happen to have finished loading. Instrumenting
+## a real headless run of the real Jangan spawn region (98/168) showed the
+## player at y=0.00 on physics frame 0 with the terrain surface beneath them at
+## y=1.04 -- i.e. a metre *below* the map -- with 25 region nodes loaded; by
+## frame 1, with 30 loaded, the snap had put them at y=64.70. Walking from a
+## spawn during that same streaming window measured the player 41 units below
+## the terrain surface. Nothing re-checked the player's placement once the
+## remaining regions arrived, so a player who was under a region's terrain when
+## it streamed in simply stayed under it, seeing the world from below (where
+## back-face culling makes the ground invisible and the sky shows straight
+## through it).
+##
+## The existing ground/void check above cannot catch this: its probe starts
+## only 10 units above the player, below a 14.34-unit character's own head, so
+## terrain overhead is out of its reach entirely.
+##
+## Safe to apply unconditionally because real .m terrain is a heightmap -- one
+## height per grid vertex (see MapmReader) -- so it cannot overhang itself, and
+## any terrain strictly above the player's feet therefore means the feet are
+## below the surface. Terrain-only (see TERRAIN_ONLY_COLLISION_MASK) keeps real
+## objects the player can legitimately stand under -- bridges, building
+## interiors, arches -- from being mistaken for ground overhead.
+func _recover_if_below_terrain() -> void:
+	var feet := player.position
+	var query := PhysicsRayQueryParameters3D.create(
+		feet + Vector3(0.0, BURIED_PROBE_HEIGHT, 0.0), feet)
+	query.exclude = [player.get_rid()]
+	query.collision_mask = TERRAIN_ONLY_COLLISION_MASK
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return
+	# A player standing correctly *on* the ground still registers a hit here,
+	# at their own feet -- only a hit meaningfully above them means buried.
+	var surface_y: float = hit.position.y
+	if surface_y <= feet.y + BURIED_EPSILON * PLAYER_SCALE_RATIO:
+		return
+	player.position.y = surface_y + 0.05 * PLAYER_SCALE_RATIO
+	player.velocity.y = 0.0
+
+## Slack, in unscaled (1.8-unit-tall-character) units, allowed between the
+## player's feet and terrain found overhead before they count as buried --
+## absorbs the ordinary sub-unit jitter of resting on a collision surface.
+const BURIED_EPSILON := 0.25
+
 func _snap_player_onto_terrain() -> void:
 	var space_state := get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(
@@ -2654,6 +2711,8 @@ func _physics_process(delta: float) -> void:
 		player.position = _last_grounded_position
 		player.velocity = Vector3.ZERO
 		_has_move_target = false
+
+	_recover_if_below_terrain()
 
 	_maybe_stream_regions()
 

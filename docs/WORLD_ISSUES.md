@@ -2244,3 +2244,78 @@ middle distance. Recorded as genuinely open. The next thing to try is dumping th
 count and index totals of the specific `RealTerrain_*` nodes covering that band and comparing them
 against a region that renders correctly -- i.e. asking whether those meshes were built with geometry
 at all, rather than asking why they are not visible.
+
+## 2026-09-03, fifty-seventh round — "the player is below the map": the spawn snap ran before the world finished streaming
+
+Reported: "the player is below the map, continue building the world. things
+are still not right."
+
+That report reframed the long-running pale-band mystery. Seen from *underneath*,
+terrain is back-face culled, so the ground is invisible and the background shows
+straight through it — which matches every earlier observation of the band at
+once: collision complete where nothing was drawn, terrain visible near and far
+but not in the middle, and the band's color tracking the environment background.
+
+### What was measured
+
+Four things were ruled out before the cause was found, each with a real headless
+measurement rather than an assumption:
+
+1. **Spawn placement is correct.** Spawning in ten different real regions and
+   comparing the player's y against a terrain-only downward ray put the player on
+   the surface in all ten (worst delta 3.5 units, on a slope).
+2. **Regions are not overlapping or misplaced.** Dumping the world-space AABB of
+   every loaded region's terrain surface mesh gave 30 nodes occupying 30 distinct
+   cells, each exactly 1920x1920, tiled contiguously with no gaps and no
+   duplicate footprints. (A first attempt at this measurement merged *all*
+   MeshInstance3D descendants and produced alarming 5560-unit spans — that was
+   objects, trees and buildings parented under the terrain node, not terrain.
+   Restricting to the terrain surface meshes gave the clean result above.)
+3. **Region adjacency is right, and not mirrored.** Comparing all four edges of
+   one region's stitched height grid against all four of a neighbor's, in both
+   index orders, over four real region pairs: `region_x+1` matches rowN-to-row0
+   and `region_y+1` matches colN-to-col0, both **forward, at mean difference
+   exactly 0.0000**. The axis mapping fixed in the fifty-first round is correct
+   and the regions are not transposed or flipped relative to each other.
+4. **The terrain itself has no cliffs or gaps.** Sampling a 300-unit height
+   profile by raycast found no jump over 5 units and no missing terrain.
+
+### The actual cause
+
+`_snap_player_onto_terrain` runs **once**, while the 5x5 region neighborhood is
+still streaming in, so it can only place the player on whichever regions have
+finished loading. Instrumenting the real Jangan spawn region (98/168) caught it
+directly: on physics frame 0 the player is at y=0.00 with the terrain surface
+beneath them at y=1.04 — a metre *below* the map — with 25 region nodes loaded;
+by frame 1, with 30 loaded, the snap had moved them to y=64.70. Walking from a
+spawn during that same window measured the player a sustained **41 units below
+the terrain surface**.
+
+Nothing re-checked the player's placement after the remaining regions arrived, so
+a player who happened to be under a region's terrain when it streamed in simply
+stayed under it.
+
+The existing ground/void-fall check could never catch this: its probe starts only
+10 units above the player, which is below a 14.34-unit character's own head, so
+terrain overhead was out of its reach entirely.
+
+### The fix
+
+`_recover_if_below_terrain`, run every physics frame: probe downward from one
+region span above the player's feet to the feet themselves, and if terrain is
+found meaningfully above them, lift them onto that surface.
+
+Applying this unconditionally is safe because real `.m` terrain is a heightmap —
+one height per grid vertex — so it cannot overhang itself, and any terrain
+strictly above the player's feet therefore means the feet are below the surface.
+Restricting the probe to the terrain collision layer keeps real objects the
+player can legitimately stand under (bridges, arches, building interiors) from
+being mistaken for ground overhead.
+
+### Result
+
+Across five real regions, walking for 400 frames from spawn: **0 frames below the
+map**, except one single transient frame in 100/168 (2.44 units, corrected on the
+next frame). Before the fix, 97/167 held the player 41 units under. In that same
+region the player now ends up at y=39.998 — standing on top of the very terrain
+that had been over their head.
