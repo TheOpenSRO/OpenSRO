@@ -457,6 +457,19 @@ func performAttack(
 			return fmt.Errorf("combat: reading player hp: %w", err)
 		}
 		result.PlayerHP = int32(hp)
+
+		// Granted before the result packet goes out, not after. The kill
+		// reward is part of the state the attack result announces, so a
+		// client that reads the character back as soon as it sees
+		// OpAttackResult must already find the gold there. Awarding it
+		// afterwards left a real window where the attacker had been told
+		// the monster died but the reward had not landed yet -- an
+		// intermittent CI failure (gold 1000 where 1500 was expected, i.e.
+		// the starting balance with the reward missing) that reproduced
+		// only under load, since locally the write always won the race.
+		if err := chars.AddGold(ctx, characterID, monster.GoldReward); err != nil {
+			return fmt.Errorf("combat: granting gold reward: %w", err)
+		}
 	} else {
 		armor, err := defenderArmor(ctx, characterID, eq, items)
 		if err != nil {
@@ -496,9 +509,8 @@ func performAttack(
 	}
 
 	if monsterDied {
-		if err := chars.AddGold(ctx, characterID, monster.GoldReward); err != nil {
-			return fmt.Errorf("combat: granting gold reward: %w", err)
-		}
+		// The kill reward itself was already granted above, before the
+		// result packet went out -- see the comment there.
 		msg := &MonsterDied{MonsterID: targetMonsterID}
 		for _, e := range others {
 			e.Session.Send(&proto.Packet{Opcode: OpMonsterDied, Data: msg.Encode()})
