@@ -238,6 +238,38 @@ walkable cells. This also explains the client's own real assertions
 `edge.GetLinkedCellCount() == 1` and `== 2`: the 1-cell case is exactly the
 flag-2 wall, the 2-cell case exactly the flag-4 connection.
 
+### Real local-axis orientation, measured (2026-09-05)
+
+Wiring edges into the world needs one more real fact that must not be assumed,
+because `World3D` corrected its own region axes on 2026-09-02 (`region_x` ->
+world Z, `region_y` -> world X — see `docs/WORLD_ISSUES.md`'s forty-sixth
+round): do a `.nvm`'s own local coordinates follow that same swap, or not?
+
+Real global edges answer it directly and without guessing. A boundary edge is
+perpendicular to the direction you cross it in, so its constant coordinate
+identifies the axis, and its `AssocRegionIdTo` identifies the neighbour. Across
+the same 264 real files (all 10,636 real global edges, no unclassified cases):
+
+| real neighbour direction | real edge geometry | count |
+|---|---|---:|
+| differs in the **low** byte (packed `y`) | line has constant local **X** | 5,327 |
+| differs in the **high** byte (packed `x`) | line has constant local **Y** | 5,309 |
+
+So local **X** corresponds to the region-`y` axis and local **Y** to the
+region-`x` axis. Composing that with `World3D`'s corrected mapping
+(`region_y` -> world X, `region_x` -> world Z) gives the useful result:
+
+> **A `.nvm`'s local X is world X and its local Y is world Z — no swap.**
+
+which is the same convention `MapmTerrainBuilder` already uses for the heightmap
+it shares (`Vector3(col * TILE_SIZE, height, row * TILE_SIZE)`), exactly as the
+byte-identical heightmap cross-check above would require.
+
+The same run also found **zero** real global edges whose stored
+`AssocRegionIdFrom` disagreed with its own file's name, re-confirming the
+`(x << 8) | y` filename packing across all 264 real files rather than the single
+sample and single `sprintf_s` format string it rested on before.
+
 ### What this unblocks
 
 Real edge-graph collision can now be built without guessing: treat an internal

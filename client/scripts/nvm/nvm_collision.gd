@@ -51,6 +51,11 @@ static func blocking_edges(region: NvmReader.ParsedRegion) -> Array[NvmReader.Ed
 ## X/Z position (both in [0, 1920]). Uses the same axis convention as
 ## MapmTerrainBuilder -- column maps to X, row maps to Z -- which is what
 ## lets this share the terrain's own coordinate space.
+##
+## That a `.nvm`'s own local X is world X and its local Y is world Z (no
+## swap, despite World3D's region *grid* axes being swapped) is measured,
+## not assumed: see NVM_FORMAT.md's "Real local-axis orientation" section,
+## which reads it off every real global edge's boundary geometry.
 static func sample_height(region: NvmReader.ParsedRegion, x: float, z: float) -> float:
 	var side := NvmReader.HEIGHT_MAP_SIDE
 	if region.heights.size() < side * side:
