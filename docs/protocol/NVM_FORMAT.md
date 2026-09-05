@@ -146,6 +146,102 @@ relationship at all (57.6% of blocked tiles had an object above them versus
 Real walkability therefore lives in the **cell/edge graph**, not the tile grid.
 Real observed edge flags are narrow: global edges are all flag 8, and internal
 edges are only ever flag 2 or flag 4 (Jangan: 259 flag-4, 411 flag-2). Which of
-those means "blocking" is not yet established, and no collision has been built
-on a guess about it. Establishing it needs the client's movement code
-decompiled, not just the loader.
+those means "blocking" was not established at the time of that round, and no
+collision was built on a guess about it — see the next section, which settles it
+from the client's movement code.
+
+## Edge flag semantics: solved (2026-09-05)
+
+**`(m_nFlag & 3) != 0` means the edge blocks movement.** Given the only real
+values observed, that resolves to **flag 2 = blocking (a wall), flag 4 =
+passable, flag 8 (global) = passable region hand-off**. Established three
+independent ways, all agreeing.
+
+### 1. The real in-memory edge layout, from the deserializers
+
+The client's real edge classes are `CRTNavEdge` (base), `CRTNavEdgeInternal`
+and `CRTNavEdgeGlobal` — real names, recovered from the client's own RTTI, along
+with the real source paths `JMX_Library\navmesh\RTNavEdge.cpp` and
+`NavMeshBuilder.cpp`.
+
+Each edge is an outer object holding the real `NavEdge` data sub-object at
+`+0x10`. The base deserializer (`FUN_0040f040`) reads, in order:
+
+```
+16 bytes -> sub +0x04   the line
+ 1 byte  -> sub +0x20   Flags
+ 1 byte  -> sub +0x21   dir 0
+ 1 byte  -> sub +0x22   dir 1
+ 2 bytes -> sub +0x24   cell index 0
+ 2 bytes -> sub +0x26   cell index 1
+                        = 23 bytes, exactly the documented InternalEdge size
+```
+
+`CRTNavEdgeGlobal`'s deserializer (`FUN_0040efd0`) calls that base, then reads
+two more `u16` into `+0x28`/`+0x2a` (the two region IDs) — **27 bytes, exactly
+the documented GlobalEdge size**. The Serialize mirrors (`FUN_0040eda0` /
+`FUN_0040ed40`) write the identical field set back out. So `Flags` is at sub
+`+0x20`, i.e. **`+0x30` in the outer object** — independently confirmed by the
+real one-line accessors `GetFlag` (`0x40f570`: `mov al,[ecx+0x30]; ret`) and
+`SetFlag` (`0x40f590`: `mov [ecx+0x30],al; ret`).
+
+### 2. The real blocking test in the movement walk
+
+`CRTNavMeshTerrain`'s real collision traversal (`FUN_004047a0`) walks the
+movement segment cell by cell. When it reaches an edge it calls two real virtual
+predicates on that edge:
+
+```
+outer vtable +0x10  ->  0x40f5c0 (internal) / 0x40f500 (global):
+                        testb $0x3, 0x30(%ecx)   ; return (Flags & 3) != 0
+outer vtable +0x14  ->  IsGlobalEdge()
+```
+
+`IsGlobalEdge` is a real compile-time constant per class — `return 0` for
+internal (`0x40f1c0`), `return 1` for global (`0x40ed20`) — and its sibling slot
+is `IsLocalLinker`, constant the other way round (`1` internal / `0` global).
+That pairing is confirmed by the client's own real assertions in
+`NavMeshBuilder.cpp`, which require `!pEdgeData->IsLocalLinker()` for the global
+edge list and `pEdgeData->IsLocalLinker()` for the internal one.
+
+The real control flow is therefore:
+
+```
+on reaching an edge:
+    if (Flags & 3)      -> stop / slide along it        (BLOCKING)
+    else if IsGlobalEdge -> hand off to the neighbouring region's navmesh
+    else                 -> pass through into the adjacent cell
+```
+
+The polarity is not a guess. Every real global edge carries flag 8, and
+`8 & 3 == 0`, so global edges are never blocking — which is *required*, since
+they are the only way to leave a region. Had the mask meant "passable" instead,
+every region would be a sealed 1920-unit box.
+
+### 3. Independent confirmation from the real data
+
+Checked against **264 real `.nvm` files** (a separate, already-extracted set from
+the server-side files, not the Jangan sample used in earlier rounds); every one
+parsed with **zero leftover bytes**, which re-validates this document's format
+against real files far beyond the original single sample:
+
+| internal edge flag | count | both cells valid & walkable | one side `0xFFFF` (no cell) |
+|---|---:|---:|---:|
+| 2 (`&3` set → blocking) | 75,739 | 0 | **75,739** |
+| 4 (`&3` clear → passable) | 58,999 | **58,999** | 0 |
+
+All 10,636 real global edges carried flag 8 and none had `&3` set.
+
+The separation is total, with zero counterexamples: **every** flag-2 edge has no
+cell on one side — structurally a wall — and **every** flag-4 edge joins two real
+walkable cells. This also explains the client's own real assertions
+`edge.GetLinkedCellCount() == 1` and `== 2`: the 1-cell case is exactly the
+flag-2 wall, the 2-cell case exactly the flag-4 connection.
+
+### What this unblocks
+
+Real edge-graph collision can now be built without guessing: treat an internal
+edge as solid when `(flags & 3) != 0`, treat flag-4 internal edges as open
+connections between the two cells it names, and treat global edges as the
+region-boundary hand-off. No reader change is needed — `NvmReader` already
+recovers `flags` and both cell indices.
