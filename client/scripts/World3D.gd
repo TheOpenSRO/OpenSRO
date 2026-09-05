@@ -217,17 +217,26 @@ const GRAVITY := 20.0 * PLAYER_SCALE_RATIO
 
 ## How high a step the player can walk up, as a fraction of their own real
 ## capsule height (so it scales with the character rather than being a bare
-## number). 0.22 is roughly the proportion of their own height an adult
-## human steps.
+## number). 0.22 of the real 14.34 capsule is 3.15 units.
 ##
-## **A disclosed choice, not real data.** The real client has no step height
-## at all, because it never collides with stair geometry: it walks the real
-## navmesh cell/edge graph and takes its height from there (see
-## docs/protocol/NVM_FORMAT.md). Real stairs and raised platforms are
-## carried by the real `.nvm`'s own `MapObject` entries -- per-object
-## walkable surfaces `NvmReader` already parses but nothing uses yet.
-## Reproducing that is the faithful fix; until it exists, a physics
-## character needs *some* step height or real stairs are simply unclimbable.
+## **Sized against the real architecture, measured, not picked.** Three real
+## staircase assets were loaded and their own tread heights read off:
+## `guil_jang_stair01_01` (median riser 3.05), `jang_guild_buil01_stair01`
+## and `cj_mili_horstair` (3.00 each, with real tread levels at 2.75, 5.75,
+## 8.8, 11.8, 14.75, 17.75, 20.75...). So a **real riser is 3.0 units**, and
+## this clears it with a little margin while staying well under anything
+## wall-shaped. That the real risers are a fifth of the real character's own
+## height also says the character is not mis-scaled against the world, which
+## had been a live suspicion.
+##
+## That there is a step height *at all* is still a disclosed approximation.
+## The real client has none, because it never collides with stair geometry:
+## it walks the real navmesh cell/edge graph and takes its height from there
+## (see docs/protocol/NVM_FORMAT.md). Real raised surfaces are carried by
+## the real `.nvm`'s own `MapObject` entries -- per-object walkable meshes
+## `NvmReader` already parses but nothing uses yet. Reproducing that is the
+## faithful fix; until it exists, a physics character needs some step height
+## or real stairs are simply unclimbable.
 const STEP_HEIGHT_FRACTION := 0.22
 
 ## Real Silkroad-style mouse controls: right-drag orbits the camera around
