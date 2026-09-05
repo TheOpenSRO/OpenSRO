@@ -215,6 +215,21 @@ const PLAYER_SCALE_RATIO := REAL_CHARACTER_NATIVE_HEIGHT / 1.8
 const MOVE_SPEED := 6.0 * PLAYER_SCALE_RATIO
 const GRAVITY := 20.0 * PLAYER_SCALE_RATIO
 
+## How high a step the player can walk up, as a fraction of their own real
+## capsule height (so it scales with the character rather than being a bare
+## number). 0.22 is roughly the proportion of their own height an adult
+## human steps.
+##
+## **A disclosed choice, not real data.** The real client has no step height
+## at all, because it never collides with stair geometry: it walks the real
+## navmesh cell/edge graph and takes its height from there (see
+## docs/protocol/NVM_FORMAT.md). Real stairs and raised platforms are
+## carried by the real `.nvm`'s own `MapObject` entries -- per-object
+## walkable surfaces `NvmReader` already parses but nothing uses yet.
+## Reproducing that is the faithful fix; until it exists, a physics
+## character needs *some* step height or real stairs are simply unclimbable.
+const STEP_HEIGHT_FRACTION := 0.22
+
 ## Real Silkroad-style mouse controls: right-drag orbits the camera around
 ## the player (independent of the player's own facing), left-click on the
 ## ground walks the player there, and the scroll wheel zooms. WASD/arrow
@@ -2897,6 +2912,43 @@ func _load_real_materials(archive: Pk2Reader, bmt_path: String) -> Dictionary:
 			by_name[layer.layer_name] = godot_material
 	return by_name
 
+## The real player capsule's own height, read from the real shape rather
+## than duplicated as a number here, so rescaling the character in the
+## scene keeps the step height (see STEP_HEIGHT_FRACTION) in proportion.
+func _player_capsule_height() -> float:
+	var collision := player.get_node_or_null("Collision") as CollisionShape3D
+	if collision != null and collision.shape is CapsuleShape3D:
+		return (collision.shape as CapsuleShape3D).height
+	return 0.0
+
+## Lifts the player over a real step they would otherwise walk straight
+## into.
+##
+## Godot's CharacterBody3D does not climb ledges at all -- a vertical riser
+## stops it outright -- so every real staircase in the world was
+## unclimbable. Found in a real playtest at the real Jangan temple: the
+## steps blocked movement outright while the sloped edges beside them could
+## be finagled up, which is exactly this failure's signature.
+##
+## Only lifts when the move is genuinely blocked at foot level, there is
+## headroom to rise, *and* the same move is clear one step higher -- so a
+## real wall still stops the player rather than being walked up.
+func _try_step_up(delta: float) -> void:
+	if not player.is_on_floor():
+		return
+	var horizontal := Vector3(player.velocity.x, 0.0, player.velocity.z)
+	if horizontal.length_squared() < 0.01:
+		return
+	var motion := horizontal * delta
+	if not player.test_move(player.global_transform, motion):
+		return # not blocked -- nothing to climb
+	var step := Vector3.UP * (_player_capsule_height() * STEP_HEIGHT_FRACTION)
+	if step.y <= 0.0 or player.test_move(player.global_transform, step):
+		return # no headroom to rise
+	if player.test_move(player.global_transform.translated(step), motion):
+		return # still blocked a step up -- a real wall, not a step
+	player.global_position += step
+
 func _physics_process(delta: float) -> void:
 	if _sky_dome != null:
 		_sky_dome.global_position = player.global_position + Vector3(0.0, SKY_DOME_HEIGHT_ABOVE_PLAYER, 0.0)
@@ -2950,6 +3002,7 @@ func _physics_process(delta: float) -> void:
 		player.velocity.y -= GRAVITY * delta
 	else:
 		player.velocity.y = 0.0
+	_try_step_up(delta)
 	player.move_and_slide()
 
 	# CharacterBody3D.is_on_floor() was observed real, unreliable here (stays
