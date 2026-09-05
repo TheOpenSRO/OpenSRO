@@ -180,6 +180,11 @@ const NAVMESH_WALL_HEIGHT := 40.0
 ## the real packing is `(x << 8) | y`. See docs/protocol/NVM_FORMAT.md.
 const NAVMESH_PATH_FORMAT := "navmesh\\nv_%04x.nvm"
 
+## Real region-to-zone name table. Really does live in Data.pk2's shader
+## folder rather than anywhere map-shaped -- see
+## docs/protocol/REGIONINFO_FORMAT.md.
+const REGIONINFO_PATH := "Shader\\regioninfo.txt"
+
 ## **Corrected 2026-09-02** (see docs/WORLD_ISSUES.md's forty-eighth
 ## round): was `138.7 / 1.8`. The 138.7 came from an earlier claimed
 ## forward-kinematics measurement of the real character's native height,
@@ -1054,6 +1059,49 @@ var _tile_index_load_attempted := false
 ## once) if SRREVAMP_PK2_PATH isn't set or the file can't be found/parsed;
 ## callers already treat a null table as "fall back to the generic hue
 ## sweep," so this isn't a hard failure.
+## Real parsed region-zone table, loaded once per run (it covers the whole
+## real world, not one region). Null means "already tried, nothing usable".
+var _regioninfo_cache: RegioninfoReader.ParsedTable = null
+var _regioninfo_load_attempted := false
+
+func _load_regioninfo() -> RegioninfoReader.ParsedTable:
+	if _regioninfo_load_attempted:
+		return _regioninfo_cache
+	_regioninfo_load_attempted = true
+
+	var archive := _open_pk2_if_set()
+	if archive == null:
+		return null
+	var bytes := AssetSource.read_bytes(REGIONINFO_PATH, archive)
+	if bytes.is_empty():
+		print("World3D: no real region-zone table at ", REGIONINFO_PATH, " -- the zone label keeps whatever it already had")
+		return null
+	_regioninfo_cache = RegioninfoReader.parse(bytes)
+	if _regioninfo_cache == null:
+		printerr("World3D: could not parse real region-zone table at ", REGIONINFO_PATH)
+	else:
+		print("World3D: loaded real region-zone table (%d real zones) from %s" % [_regioninfo_cache.zones.size(), REGIONINFO_PATH])
+	return _regioninfo_cache
+
+## Names the real zone a region belongs to, in the label that has read
+## "Zone: -" for want of anything real to put there.
+##
+## Only ever *replaces* the label when the real table names the region
+## unambiguously. A region two real zones split between them resolves to
+## nothing (see RegioninfoReader.sole_zone_for -- which side of the split a
+## point falls on can't be decided until `RECT`'s real coordinates are
+## understood), and so does a region the table never mentions. In both
+## cases whatever the label already said is left alone rather than
+## overwritten with a guess.
+func _update_zone_label_for_region(region_x: int, region_y: int) -> void:
+	var table := _load_regioninfo()
+	if table == null:
+		return
+	var zone_name := RegioninfoNames.display_for_region(table, region_x, region_y)
+	if zone_name == "":
+		return
+	zone_label.text = "Zone: %s" % zone_name
+
 func _load_tile_index() -> TileIndexReader.Table:
 	if _tile_index_load_attempted:
 		return _tile_index_cache
@@ -1788,6 +1836,7 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	var center_near_height := _try_load_real_terrain("%d\\%d.m" % [center_x, center_y], texture_override, Vector3.ZERO, "_%d_%d" % [center_x, center_y], true)
 	_try_load_real_map_objects("%d\\%d.o" % [center_x, center_y], Vector3.ZERO, "_%d_%d" % [center_x, center_y])
 
+	_update_zone_label_for_region(center_x, center_y)
 	_grid_origin_region = Vector2i(center_x, center_y)
 	_grid_shared_anchor_height = center_near_height
 	_grid_has_origin = true
@@ -1853,6 +1902,7 @@ func _maybe_stream_regions() -> void:
 	if cur == _last_stream_cell:
 		return
 	_last_stream_cell = cur
+	_update_zone_label_for_region(_grid_origin_region.x + cur.x, _grid_origin_region.y + cur.y)
 
 	for dy in range(cur.y - REGION_LOAD_RADIUS, cur.y + REGION_LOAD_RADIUS + 1):
 		for dx in range(cur.x - REGION_LOAD_RADIUS, cur.x + REGION_LOAD_RADIUS + 1):
