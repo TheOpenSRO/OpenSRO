@@ -19,12 +19,29 @@ const KIND_FIELD := "FIELD"
 class Claim:
 	var region_x: int
 	var region_y: int
-	## True for a real `ALL` row (the whole region is this zone's). False
-	## for a real `RECT` row, which claims only part of the region -- see
-	## the format doc: `RECT`'s four numbers are real but their exact
-	## meaning is not established, so they are carried through unread.
+	## Index into ParsedTable.zones of the zone making this claim.
+	var zone_index: int
+	## True for a real `ALL` row (the region's default zone). False for a
+	## real `RECT` row, which claims only the box in `rect` and overrides
+	## that default for positions inside it.
 	var whole_region: bool
+	## For a `RECT` claim: `[x_min, z_min, x_max, z_max]`, real
+	## region-local and inclusive on all four sides. Recovered from the
+	## client's own test, not guessed -- see the format doc.
 	var rect: PackedInt32Array
+
+	## The real client's own containment test, reproduced exactly:
+	## `rect[0] <= x <= rect[2] && rect[1] <= z <= rect[3]`.
+	##
+	## Note this is inclusive, so the real degenerate rows in the real
+	## table (zero-thickness boxes, and one inverted one) match only an
+	## exact coordinate or nothing at all. That is faithfully what the
+	## real client does with them, and deliberately not "corrected" here.
+	func contains(local_x: float, local_z: float) -> bool:
+		if whole_region or rect.size() < 4:
+			return false
+		return (float(rect[0]) <= local_x and local_x <= float(rect[2])
+			and float(rect[1]) <= local_z and local_z <= float(rect[3]))
 
 ## One real `#TOWN`/`#FIELD` section.
 class Zone:
@@ -38,34 +55,67 @@ class Zone:
 
 class ParsedTable:
 	var zones: Array[Zone] = []
-	## Real packed region id -> the indices into `zones` that claim it.
+	## Real packed region id -> the Claims against it, in file order.
 	var _by_region: Dictionary = {}
 
-	## Every zone index claiming this real region, in file order.
-	func zone_indices_for(region_x: int, region_y: int) -> Array:
+	## Every real claim against this region, in file order.
+	func claims_for(region_x: int, region_y: int) -> Array:
 		var key := (region_x << 8) | region_y
 		if not _by_region.has(key):
 			return []
 		return _by_region[key]
 
-	## The single zone that unambiguously owns this real region, or -1.
+	## Every zone index claiming this real region, in file order.
+	func zone_indices_for(region_x: int, region_y: int) -> Array:
+		var out: Array = []
+		for claim in claims_for(region_x, region_y):
+			if not out.has(claim.zone_index):
+				out.append(claim.zone_index)
+		return out
+
+	## The zone whose real `ALL` row makes it this region's default, or -1.
 	##
-	## Deliberately strict: it answers only when exactly one real zone
-	## claims the region *and* claims the whole of it. A region split
-	## between two zones by real `RECT` rows returns -1 rather than a
-	## guess, because which side a given point falls on cannot be decided
-	## until `RECT`'s coordinates are understood (see the format doc).
-	## In the one real file checked this still resolves 1,572 of 1,619
-	## real regions.
+	## **The last `ALL` row wins, not the first.** Nine real regions are
+	## claimed `ALL` by two sections (one pair is even the same zone listed
+	## twice), and the client's own loader overwrites the region's existing
+	## record when it meets a later `ALL` rather than keeping the first, so
+	## this matches it. See the format doc.
+	func default_zone_for(region_x: int, region_y: int) -> int:
+		var found := -1
+		for claim in claims_for(region_x, region_y):
+			if claim.whole_region:
+				found = claim.zone_index
+		return found
+
+	## The real zone a position falls in, or -1 -- the client's own
+	## resolution order, reproduced exactly: the first real `RECT` claim
+	## containing the point wins, and otherwise the region's real `ALL`
+	## default applies.
+	##
+	## `local_x`/`local_z` are real region-local coordinates (the same
+	## 0-1920 space `.nvm` uses), not world coordinates.
+	func zone_for_position(region_x: int, region_y: int, local_x: float, local_z: float) -> int:
+		for claim in claims_for(region_x, region_y):
+			if claim.contains(local_x, local_z):
+				return claim.zone_index
+		return default_zone_for(region_x, region_y)
+
+	## The single zone that owns this whole real region, or -1.
+	##
+	## Answers only when the region has a real `ALL` default and no real
+	## `RECT` exception carved out of it, so the answer cannot depend on
+	## where in the region you are standing. A region with any `RECT`
+	## returns -1 and the caller should ask zone_for_position instead.
+	## In the one real file checked this alone resolves 1,516 of the 1,563
+	## real regions; the other 47 all carry a real `RECT`.
 	func sole_zone_for(region_x: int, region_y: int) -> int:
-		var indices := zone_indices_for(region_x, region_y)
-		if indices.size() != 1:
+		var claims := claims_for(region_x, region_y)
+		if claims.is_empty():
 			return -1
-		var zone: Zone = zones[indices[0]]
-		for claim in zone.claims:
-			if claim.region_x == region_x and claim.region_y == region_y:
-				return indices[0] if claim.whole_region else -1
-		return -1
+		for claim in claims:
+			if not claim.whole_region:
+				return -1
+		return default_zone_for(region_x, region_y)
 
 static func _split_on(data: PackedByteArray, sep: int) -> Array:
 	var parts: Array = []
@@ -119,6 +169,7 @@ static func parse(data: PackedByteArray) -> ParsedTable:
 		# <x>\<y>.m region naming used everywhere else. See the format doc.
 		claim.region_y = int(y_text)
 		claim.region_x = int(x_text)
+		claim.zone_index = current
 		if token == "ALL":
 			claim.whole_region = true
 		elif token == "RECT":
@@ -133,7 +184,7 @@ static func parse(data: PackedByteArray) -> ParsedTable:
 		var key := (claim.region_x << 8) | claim.region_y
 		if not table._by_region.has(key):
 			table._by_region[key] = []
-		table._by_region[key].append(current)
+		table._by_region[key].append(claim)
 	if table.zones.is_empty():
 		push_error("regioninfo: no real #TOWN/#FIELD section found")
 		return null

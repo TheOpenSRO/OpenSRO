@@ -39,25 +39,75 @@ this project uses everywhere else. Confirmed two ways: real Jangan is region `98
 range across the file is 96–99 while the first column's is 165–169, matching this
 project's own independently-derived Jangan cluster (README: "x=97-99, y=166-169").
 
-Real totals in the one real file checked: **15 sections, 1,619 region rows** — 1,572 `ALL`
-and 47 `RECT`.
+Real totals in the one real file checked: **15 sections and 1,619 region rows** — 1,572
+`ALL` and 47 `RECT` — covering **1,563 distinct real regions**. Rows and regions are not
+the same count, because 56 real regions are listed twice.
 
-## Real `ALL` vs `RECT`, confirmed by counting
+## Real `ALL` vs `RECT`, and the real duplicates
 
-`RECT` is used exactly where a real region is **split between two zones**. Counting how
-often each real region appears across all sections: **56 regions appear in exactly two
-sections and every other region appears in exactly one**, which lines up with the 47 real
-`RECT` rows. So `ALL` claims a whole region and `RECT` claims a sub-area of one, with the
-region's two claimants partitioning it between them.
+Of the **56 real regions listed twice**, the split is not uniform:
 
-The four `RECT` numbers are region-local coordinates in the usual real 0–1920 space, but
-**their exact semantics are not established** and no reader should guess: many real rows
-are degenerate as a rectangle (`167 99 RECT 0 220 1920 220` has equal second and fourth
-values; `169 97 RECT 1720 0 1720 1920` has equal first and third), which reads more like a
-dividing line than an area. Establishing this needs the client's own consumer decompiled,
-the same way the `.nvm` edge flags were — see `NVM_FORMAT.md`. Until then a reader can
-honestly resolve every `ALL` region (1,572 of 1,619, over 97%) and report a `RECT` region
-as ambiguous rather than picking a side.
+| shape | regions | meaning |
+|---|---:|---|
+| `ALL` + `RECT` | 47 | one zone owns the region, the other carves a box out of it |
+| `ALL` + `ALL` | 9 | two sections both claim the whole region |
+
+The 47 are the interesting case and are covered in the next section. The 9 are a genuine
+quirk of the real data rather than a second mechanism: two sections claim the same whole
+region outright, and in one pair (`y=154 x=102` and `y=154 x=103`) it is *the same zone*
+(`돈황필드`) listed twice. The rest pair a town with its own field, e.g. `y=153 x=102` is
+claimed `ALL` by both `돈황` and `돈황필드`.
+
+**The later row wins.** That is not a tie-break this project chose — the client's own loader
+looks up the region's existing record and, when it finds one, overwrites its kind and zone
+index rather than keeping what was there. So a reader that takes the first `ALL` names
+those 9 regions differently from the real client.
+
+## Real `RECT` semantics, recovered from the client (2026-09-05)
+
+The four numbers are `[x_min, z_min, x_max, z_max]` in the usual real region-local 0–1920
+space, and the test is **inclusive on all four sides**. That is not inferred from the
+numbers; it is the client's own test, which decompiles to exactly:
+
+```c
+rect[0] <= pos.x && pos.x <= rect[2] && rect[1] <= pos.z && pos.z <= rect[3]
+```
+
+The real parser is `CRegionManager`'s (`JMX_Library\navmesh\RegionManagerBody.cpp`), and it
+also settles the column order independently of the counting argument above: it reads the
+first number, then the second, and packs them as `(second << 8) | first` — the same real
+`(x << 8) | y` region id `.nvm` filenames use, so the second column really is `x`.
+
+Real resolution order, likewise straight from the client:
+
+```
+for each RECT claim on this region, in file order:
+    if the point is inside -> that zone
+otherwise                  -> the region's ALL zone   (-1 if it has none)
+```
+
+`#TOWN` and `#FIELD` are not just labels either: the real parser tags a claim with kind
+**2 for TOWN and 1 for FIELD**, and a separate real query uses that tag alone to answer
+"is this position in a town?".
+
+### What the real rows actually look like under that test
+
+Measured over all 47 real `RECT` rows: **37 are proper boxes, 4 are zero-width in x, 6 are
+zero-depth in z, and 1 is inverted** (`x_min > x_max`). Under the client's own inclusive
+test a zero-thickness box matches only an exact coordinate and an inverted one matches
+nothing, so those 11 rows are effectively no-ops and their regions resolve to their `ALL`
+default in practice. That is faithfully what the real client does, and a reader should
+reproduce it rather than "correct" the data.
+
+Every one of the 47 real regions carrying a `RECT` **also has an `ALL` row from another
+zone**, which is what makes the fallback meaningful: the `ALL` zone owns the region and the
+`RECT` carves an exception out of it for its neighbour. Real example, region `y=169 x=98`:
+`#TOWN 장안` claims it `ALL`, and `#FIELD 장안필드` claims the box `1720 0 1720 1920` — a
+zero-width sliver on its eastern edge.
+
+So a reader with a real position resolves **all 1,563 real regions** exactly. A reader with
+only a region and no position can still answer for the **1,516** that carry no `RECT`, and
+should decline the other 47 rather than pick a side.
 
 ## The real zones
 
@@ -91,6 +141,12 @@ vocabulary.
 
 ## Status
 
-Documented only — no reader yet. The structure above is parsed and counted directly from
-the real file; what is deliberately left unresolved is `RECT`'s coordinate meaning and the
-EUC-KR name decoding.
+Implemented: `client/scripts/regioninfo/regioninfo_reader.gd` parses the structure from raw
+bytes (so the EUC-KR names survive intact) and reproduces the client's own resolution order,
+including the degenerate rows. `regioninfo_names.gd` maps a name to a display string with
+per-key overrides. `World3D` resolves the player's region through it to fill the zone label.
+
+What remains open is only the **EUC-KR name decoding**: Godot has no built-in decoder, so
+the shipped display names are this project's own transliterations, supplied as an
+overridable default rather than as a claim about real client text. The file itself carries
+no English at all.

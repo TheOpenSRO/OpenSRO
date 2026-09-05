@@ -416,12 +416,18 @@ The "Zone:" label is real now too, and the table behind it turned up somewhere u
 `regioninfo.txt` ships inside `Data.pk2`'s **`Shader\`** folder, not anywhere map-shaped
 (`docs/protocol/REGIONINFO_FORMAT.md`). It is EUC-KR, its rows are `<y> <x>` — the opposite column
 order to the `<x>\<y>.m` naming used everywhere else — and it names 15 real zones (장안/Jangan,
-돈황, 호탄, 콘스탄티노플, 사마르칸트 and so on) across 1,619 region rows. `RegioninfoReader` parses
-it from raw bytes so the Korean survives, and `RegioninfoNames` maps each name to a display string
-with per-key overrides; the shipped English names are this project's own transliterations, since
-the file carries no English at all. A region that two zones split between them resolves to nothing
-rather than to a guess — `RECT`'s coordinates aren't understood yet — which still leaves 1,572 of
-1,619 regions named. Live against a real install, real Jangan (`98/168`) reads "Zone: Jangan".
+돈황, 호탄, 콘스탄티노플, 사마르칸트 and so on) across 1,619 rows covering 1,563 regions.
+`RegioninfoReader` parses it from raw bytes so the Korean survives, and `RegioninfoNames` maps each
+name to a display string with per-key overrides; the shipped English names are this project's own
+transliterations, since the file carries no English at all.
+
+`RECT`'s meaning came out of the client too, so nothing here is guessed: it is an inclusive
+`[x_min, z_min, x_max, z_max]` box in region-local space, the first matching box wins, and a region
+otherwise falls back to its `ALL` zone — with the *later* `ALL` winning where two sections claim the
+same region, exactly as the client's loader overwrites. Given a position that resolves all 1,563
+regions; the region-only query still answers for the 1,516 carrying no `RECT` and declines the rest
+rather than picking a side. Live against a real install, real Jangan (`98/168`) reads
+"Zone: Jangan".
 
 Real placed objects have automatic asset selection now too: `SRREVAMP_MAPO_PATH` (a real `Map.pk2`
 region's `.o` file, via `SRREVAMP_MAP_PK2_PATH`) resolves each real placement's type ID through a

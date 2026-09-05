@@ -67,14 +67,27 @@ static func display_for(name_key: String) -> String:
 		return DEFAULT_NAMES[name_key]
 	return ""
 
-## Convenience for the common case: the display name of whichever real
-## zone unambiguously owns this real region, or "" when none does (which
-## includes every region two zones split between them -- see
-## RegioninfoReader.sole_zone_for).
+## The display name of whichever real zone owns this whole real region, or
+## "" when the answer depends on where in the region you stand (see
+## RegioninfoReader.sole_zone_for) or when nothing claims it.
 static func display_for_region(table: RegioninfoReader.ParsedTable, region_x: int, region_y: int) -> String:
 	if table == null:
 		return ""
-	var index := table.sole_zone_for(region_x, region_y)
-	if index < 0:
+	return _name_of(table, table.sole_zone_for(region_x, region_y))
+
+## The display name of the real zone a position falls in, resolved the way
+## the real client resolves it. Prefer this wherever real region-local
+## coordinates are available -- it is exact, and it names the 47 real
+## regions display_for_region has to decline.
+static func display_for_position(
+	table: RegioninfoReader.ParsedTable, region_x: int, region_y: int,
+	local_x: float, local_z: float
+) -> String:
+	if table == null:
 		return ""
-	return display_for(table.zones[index].name_key)
+	return _name_of(table, table.zone_for_position(region_x, region_y, local_x, local_z))
+
+static func _name_of(table: RegioninfoReader.ParsedTable, zone_index: int) -> String:
+	if zone_index < 0 or zone_index >= table.zones.size():
+		return ""
+	return display_for(table.zones[zone_index].name_key)

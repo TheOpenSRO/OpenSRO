@@ -78,13 +78,69 @@ func _initialize() -> void:
 		_check(table.sole_zone_for(97, 169) == -1, "a region split between two zones stays ambiguous")
 		_check(table.sole_zone_for(1, 1) == -1, "an unclaimed region stays ambiguous")
 
-		# A region claimed once but only partially is still ambiguous --
-		# the rest of it belongs to nobody we can name.
+		# A region claimed once but only partially still depends on where
+		# you stand, so the region-only answer declines.
 		var partial := PackedByteArray()
 		partial.append_array(_line(["#TOWN", name_a]))
 		partial.append_array(_line(["50", "60", "RECT", "0", "0", "10", "10"]))
 		var partial_table := RegioninfoReader.parse(partial)
-		_check(partial_table != null and partial_table.sole_zone_for(60, 50) == -1, "a lone RECT claim stays ambiguous")
+		_check(partial_table != null and partial_table.sole_zone_for(60, 50) == -1, "a lone RECT claim declines a region-only answer")
+
+	# --- the real client's own resolution order ---
+	# Region y=169 x=98 is shaped like the real table's own rows: a whole
+	# region belonging to one zone, with a box carved out for another.
+	var split := PackedByteArray()
+	split.append_array(_line(["#TOWN", name_a]))
+	split.append_array(_line(["169", "98", "ALL"]))
+	split.append_array(_line(["#FIELD", name_b]))
+	split.append_array(_line(["169", "98", "RECT", "100", "200", "300", "400"]))
+	var split_table := RegioninfoReader.parse(split)
+	_check(split_table != null, "parses a split region")
+	if split_table != null:
+		_check(split_table.default_zone_for(98, 169) == 0, "the ALL row is the region's default")
+		_check(split_table.sole_zone_for(98, 169) == -1, "a region with a RECT has no region-only answer")
+		_check(split_table.zone_for_position(98, 169, 200.0, 300.0) == 1, "a point inside the box takes the box's zone")
+		_check(split_table.zone_for_position(98, 169, 50.0, 300.0) == 0, "a point outside falls back to the default")
+		_check(split_table.zone_for_position(98, 169, 200.0, 500.0) == 0, "outside on the z axis falls back too")
+		# The real test is inclusive on all four sides.
+		_check(split_table.zone_for_position(98, 169, 100.0, 200.0) == 1, "the box's min corner is inside")
+		_check(split_table.zone_for_position(98, 169, 300.0, 400.0) == 1, "the box's max corner is inside")
+		_check(split_table.zone_for_position(98, 169, 99.99, 300.0) == 0, "just outside the min edge is out")
+		_check(split_table.zone_for_position(98, 169, 300.01, 400.0) == 0, "just outside the max edge is out")
+		_check(split_table.zone_for_position(1, 1, 0.0, 0.0) == -1, "an unclaimed region has no zone at any position")
+
+		# The real table really does contain zero-thickness and inverted
+		# boxes; under the client's own inclusive test they match only an
+		# exact coordinate, or nothing. Reproduced rather than corrected.
+		var degenerate := PackedByteArray()
+		degenerate.append_array(_line(["#TOWN", name_a]))
+		degenerate.append_array(_line(["167", "99", "RECT", "0", "220", "1920", "220"]))
+		degenerate.append_array(_line(["#FIELD", name_b]))
+		degenerate.append_array(_line(["167", "99", "ALL"]))
+		var deg_table := RegioninfoReader.parse(degenerate)
+		_check(deg_table != null and deg_table.zone_for_position(99, 167, 500.0, 220.0) == 0, "a zero-thickness box still matches its exact line")
+		_check(deg_table != null and deg_table.zone_for_position(99, 167, 500.0, 221.0) == 1, "one unit off that line falls back to the default")
+
+		var inverted := PackedByteArray()
+		inverted.append_array(_line(["#TOWN", name_a]))
+		inverted.append_array(_line(["10", "20", "RECT", "300", "0", "100", "1920"]))
+		inverted.append_array(_line(["#FIELD", name_b]))
+		inverted.append_array(_line(["10", "20", "ALL"]))
+		var inv_table := RegioninfoReader.parse(inverted)
+		_check(inv_table != null and inv_table.zone_for_position(20, 10, 200.0, 500.0) == 1, "an inverted box matches nothing and the default stands")
+
+		# Nine real regions carry two ALL rows from different sections. The
+		# client's loader overwrites the region's record each time, so the
+		# later row wins -- taking the first would name them wrongly.
+		var twice := PackedByteArray()
+		twice.append_array(_line(["#TOWN", name_a]))
+		twice.append_array(_line(["153", "102", "ALL"]))
+		twice.append_array(_line(["#FIELD", name_b]))
+		twice.append_array(_line(["153", "102", "ALL"]))
+		var twice_table := RegioninfoReader.parse(twice)
+		_check(twice_table != null and twice_table.default_zone_for(102, 153) == 1, "the last ALL row wins, not the first")
+		_check(twice_table != null and twice_table.sole_zone_for(102, 153) == 1, "a doubly-claimed region still answers, with the later zone")
+		_check(twice_table != null and twice_table.zone_for_position(102, 153, 5.0, 5.0) == 1, "position lookup uses the same later default")
 
 	_check(RegioninfoReader.parse(PackedByteArray()) == null, "rejects an empty buffer")
 	_check(RegioninfoReader.parse(_bytes("no sections here\r\n")) == null, "rejects a buffer with no real section")
@@ -106,8 +162,14 @@ func _initialize() -> void:
 	if table != null:
 		RegioninfoNames.set_override("c0e5", "Test Town")
 		_check(RegioninfoNames.display_for_region(table, 98, 168) == "Test Town", "resolves a region straight to a display name")
-		_check(RegioninfoNames.display_for_region(table, 97, 169) == "", "a split region resolves to nothing")
+		_check(RegioninfoNames.display_for_region(table, 97, 169) == "", "a split region has no region-only name")
 		RegioninfoNames.clear_overrides()
+	if split_table != null:
+		RegioninfoNames.set_overrides({"c0e5": "Town", "b5b7c8b2": "Field"})
+		_check(RegioninfoNames.display_for_position(split_table, 98, 169, 200.0, 300.0) == "Field", "a position inside the box names the box's zone")
+		_check(RegioninfoNames.display_for_position(split_table, 98, 169, 50.0, 50.0) == "Town", "a position outside names the default zone")
+		RegioninfoNames.clear_overrides()
+	_check(RegioninfoNames.display_for_position(null, 0, 0, 0.0, 0.0) == "", "position lookup tolerates a null table")
 	_check(RegioninfoNames.display_for_region(null, 0, 0) == "", "tolerates a null table")
 
 	_check(RegioninfoNames.DEFAULT_NAMES.size() == 15, "ships a name for each of the 15 real zones (got %d)" % RegioninfoNames.DEFAULT_NAMES.size())
