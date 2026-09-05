@@ -234,7 +234,27 @@ const _DXT1_CUTOUT_MIN_ALPHA_FRACTION := 0.05
 ## meaning remains unconfirmed and isn't used here -- the real DDS FourCC
 ## the texture file itself already carries is a directly confirmed, more
 ## reliable signal.
-static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer) -> StandardMaterial3D:
+## Real cutout foliage shader -- see foliage.gdshader's own top comment for
+## why a real double-sided leaf card cannot be a StandardMaterial3D and
+## still light the way the real client lights it.
+const FOLIAGE_SHADER := preload("res://scripts/assets/foliage.gdshader")
+
+## Real alpha-cutout threshold. A real leaf card's alpha is used fully in
+## or fully out, so the exact midpoint is the natural cut.
+const FOLIAGE_ALPHA_SCISSOR := 0.5
+
+## Builds the real cutout-foliage material for a real texture that carries
+## real alpha, in place of the StandardMaterial3D used for everything else.
+static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D) -> ShaderMaterial:
+	var mat := ShaderMaterial.new()
+	mat.resource_name = layer.layer_name
+	mat.shader = FOLIAGE_SHADER
+	mat.set_shader_parameter("albedo", layer.diffuse)
+	mat.set_shader_parameter("albedo_texture", tex)
+	mat.set_shader_parameter("alpha_scissor", FOLIAGE_ALPHA_SCISSOR)
+	return mat
+
+static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer) -> Material:
 	var mat := StandardMaterial3D.new()
 	mat.resource_name = layer.layer_name
 	mat.albedo_color = layer.diffuse
@@ -291,9 +311,11 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 			else:
 				needs_cutout = _has_real_alpha_variance(godot_tex)
 		if needs_cutout:
-			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-			mat.alpha_scissor_threshold = 0.5
-			mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+			# Not a StandardMaterial3D: a real double-sided card has to keep
+			# its authored normal on both faces to light the way the real
+			# client lights it, which StandardMaterial3D cannot express.
+			# See foliage.gdshader.
+			return _build_foliage_material(layer, godot_tex)
 
 	return mat
 

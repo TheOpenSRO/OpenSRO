@@ -559,9 +559,15 @@ func _init() -> void:
 		layer.diffuse = Color.WHITE
 		layer.texture_path = "leaf.ddj"
 		var mat := ObjectLoader.build_godot_material(alpha_archive, "", layer)
-		_check(mat.albedo_texture != null, "real DXT3 texture loads")
-		_check(mat.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR, "real DXT3 alpha triggers alpha-scissor transparency (got %s)" % mat.transparency)
-		_check(mat.cull_mode == BaseMaterial3D.CULL_DISABLED, "real DXT3 alpha disables backface culling (got %s)" % mat.cull_mode)
+		# A real texture carrying real alpha now yields the real cutout
+		# foliage material, not a StandardMaterial3D -- see
+		# foliage.gdshader for why a real double-sided card cannot be one.
+		_check(mat is ShaderMaterial, "real DXT3 alpha yields the real cutout foliage material (got %s)" % mat.get_class())
+		if mat is ShaderMaterial:
+			var foliage := mat as ShaderMaterial
+			_check(foliage.shader == ObjectLoader.FOLIAGE_SHADER, "uses the real foliage shader")
+			_check(foliage.get_shader_parameter("albedo_texture") != null, "real DXT3 texture loads")
+			_check(foliage.get_shader_parameter("alpha_scissor") == ObjectLoader.FOLIAGE_ALPHA_SCISSOR, "real alpha cutout threshold is set")
 
 		# Real failure mode found live-testing real Jangan palace materials
 		# (2026-08-23): a layer's texture_path is sometimes a real *full
@@ -574,7 +580,12 @@ func _init() -> void:
 		full_path_layer.diffuse = Color.WHITE
 		full_path_layer.texture_path = "sub\\leaf2.ddj"
 		var mat2 := ObjectLoader.build_godot_material(alpha_archive, "other\\place.bmt", full_path_layer)
-		_check(mat2.albedo_texture != null, "a real full texture_path resolves correctly, ignoring bmt_path's own directory")
+		var mat2_tex: Texture2D = null
+		if mat2 is ShaderMaterial:
+			mat2_tex = (mat2 as ShaderMaterial).get_shader_parameter("albedo_texture")
+		elif mat2 is StandardMaterial3D:
+			mat2_tex = (mat2 as StandardMaterial3D).albedo_texture
+		_check(mat2_tex != null, "a real full texture_path resolves correctly, ignoring bmt_path's own directory")
 
 		alpha_archive.close()
 	DirAccess.remove_absolute(alpha_path)
