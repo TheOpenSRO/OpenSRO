@@ -2540,3 +2540,70 @@ everything stays self-consistent — so it cannot be settled from geometry. The
 tell is signage: real Chinese/Korean lettering on the real Jangan buildings will
 read backwards if a flip is needed. Left deliberately unresolved rather than
 guessed at.
+
+## 2026-09-05, sixty-first round — the world was a mirror image of the real one
+
+The sixtieth round fixed how real regions were assembled against each other. This
+one is about the whole world being flipped.
+
+The real client is Direct3D and left-handed; Godot is right-handed. Feeding real
+coordinates straight through mirrors everything. The tell had been sitting in the
+tree since the forty-seventh round: `BmsReader` reverses every real triangle's
+winding, because otherwise real objects render inside-out. Reversed winding is
+exactly what a mirror does, and reversing the indices makes faces visible again
+**without addressing the cause**.
+
+### Why the obvious checks could never catch it
+
+A mirror is invisible to every self-consistency test. Real region seams still
+match, real adjacency still holds, real objects still sit correctly on real
+terrain, and this session's own real navmesh walls still wrap real buildings —
+because all of it is mirrored together. Chirality cannot be detected from
+geometry that is only ever compared against itself.
+
+Two indirect tests were tried and both turned out worthless, which is worth
+recording so they are not repeated:
+
+- **`.bms` winding against stored normals.** Computing the geometric normal uses
+  a cross product, which is itself handedness-dependent, so the test just
+  restates its own assumption. It "proved" the winding already matched Godot.
+- **UV handedness.** Real assets contain mirrored UVs freely — the real willow
+  meshes come out 86-100% "mirrored" for ordinary art reasons, and the real
+  restaurant sign is exactly 50/50 because that is a board's front and back.
+
+### What did settle it: real signage
+
+Text is chiral, so it cannot hide a mirror. The real Jangan restaurant
+(`res\bldg\china\jangan01\cj_resta01.bsr`) carries **長安酒** on two
+*perpendicular exterior faces* of its tower — both outward-facing on a closed
+structure, so both must read correctly. Rendered against the real source texture
+(`cj_resta01_roof.ddj`), both faces had **酒**'s water radical on the wrong side.
+Applying a mirror put it back where the real texture has it, on both faces.
+
+### The fix, and what it did *not* need
+
+A single global `z -> -z` about the world origin: `terrain_group.scale.z = -1`
+together with the group's world Z negated. The scale alone would mirror each real
+region about its own origin, which is precisely the per-region mistake the
+sixtieth round fixed.
+
+Nothing else changed, and a good deal was expected to. Real placed objects, this
+session's real navmesh walls and real water surfaces are all children of the
+terrain group, so the transform carries them, orientation included — no
+per-object position or yaw fixing. And **Godot flips face culling itself for a
+negative-determinant transform** (verified: the real building renders solid, not
+inside-out, under the mirror), so `BmsReader`'s winding reversal stays exactly as
+it is and no real mesh data is rewritten.
+
+Verified in the real client: real signage now reads correctly, real region seams
+stay continuous from above, the real player still stands on real terrain
+(collision behaves under the mirrored transform — the risk that would have sunk
+this approach), and no script errors across 243 frames.
+
+### Noted, not fixed
+
+`_maybe_stream_regions`' own cell test carries a half-region bias:
+`_grid_origin_world` is the group's corner rather than a cell centre, so
+`rel / REGION_SPAN` lands on `dx + 0.5` and rounds up. It predates this round and
+this change preserves it exactly rather than making it worse. Folding it into a
+mirror fix would have muddied the verification.

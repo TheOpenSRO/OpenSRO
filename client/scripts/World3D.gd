@@ -1968,7 +1968,11 @@ func _maybe_stream_regions() -> void:
 	# and region_x maps to world Z while region_y maps to world X, so these
 	# read from the opposite world axes (see _load_region_cell's own comment
 	# for the real, exactly-verified adjacency rule this follows).
-	var cur := Vector2i(int(round(rel.z / REGION_SPAN)), int(round(rel.x / REGION_SPAN)))
+	# The real world is mirrored in Z (see _try_load_real_terrain's own
+	# **Un-mirrored** comment), so region_x now grows toward -Z and the
+	# cell test has to follow it. Getting this wrong streams the
+	# neighbouring regions in on the wrong side of the player.
+	var cur := Vector2i(int(round(-rel.z / REGION_SPAN)), int(round(rel.x / REGION_SPAN)))
 	if cur == _last_stream_cell:
 		return
 	_last_stream_cell = cur
@@ -2271,8 +2275,30 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# The half-span shift keeps each real region *centred* on its own grid
 	# offset, exactly as the old transform did on X, so _maybe_stream_regions'
 	# own `round(rel / REGION_SPAN)` cell test still names the right cell.
-	terrain_group.position = Vector3(
+	# **Un-mirrored 2026-09-05** (see docs/WORLD_ISSUES.md's sixty-first
+	# round). The real client is Direct3D and left-handed; Godot is
+	# right-handed. Feeding real coordinates straight through mirrors the
+	# whole world, which is why `BmsReader` had to reverse every real
+	# triangle's winding to stop objects rendering inside-out -- that made
+	# faces visible again without addressing the cause. Proved with real
+	# signage: the real Jangan restaurant carries 長安酒 on two
+	# perpendicular *exterior* tower faces, and both rendered with 酒's
+	# water radical on the wrong side until this mirror was applied.
+	#
+	# `scale.z = -1` alone would mirror each real region about its *own*
+	# origin, which is the same per-region mistake the sixtieth round fixed.
+	# Negating the group's world Z as well composes the two into a single
+	# global `z -> -z` about the world origin, so every region stays in the
+	# right place relative to its neighbours.
+	#
+	# Godot flips face culling itself for a negative-determinant transform
+	# (verified: the real building renders solid, not inside-out, under this
+	# mirror), so `BmsReader`'s existing winding reversal stays exactly as
+	# it is and no mesh data needs rewriting.
+	var placement := Vector3(
 		-REGION_SPAN / 2.0, -anchor_height, -REGION_SPAN / 2.0) + world_offset
+	terrain_group.position = Vector3(placement.x, placement.y, -placement.z)
+	terrain_group.scale.z = -1.0
 	add_child(terrain_group)
 	ground_mesh.visible = false
 	ground_collision.disabled = true
