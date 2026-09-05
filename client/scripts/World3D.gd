@@ -357,12 +357,24 @@ const WORLD_FLOOR_Y := -500.0
 ## BOUNDARY_BLEND_ALPHA: the real scattering coefficients are runtime shader
 ## constants, and environment.ifo's own two real scalar fog channels hold
 ## normalized [-1, +1] values rather than world distances, so the real density
-## isn't recoverable from the asset data. Picked so that haze is negligible on
-## the player's own region and builds across the streamed neighborhood: with
-## Godot's `1 - exp(-density * depth)`, 0.00015 leaves one region span away
-## (1920 units) about a quarter hazed and the far edge of the 5x5 grid (5760
-## units) about three-fifths hazed.
-const FOG_DENSITY := 0.00015
+## isn't recoverable from the asset data.
+##
+## **Lowered 2026-09-05** from 0.00015, which was chosen to leave one region
+## span (1920 units) about a quarter hazed and the far edge of the 5x5 grid
+## (5760 units) about three-fifths hazed. That turned out to hide real data:
+## reported from a real playtest of real Asia Minor as a "white floor", and
+## confirmed by rendering the same frame with fog on and off -- the real
+## ground textures are correct and richly coloured (real green grass, real
+## tan sand, real brown dirt) and the haze was washing all of it out. A
+## setting that erases real recovered detail at ordinary walking distance is
+## the wrong disclosed choice regardless of taste.
+##
+## At 0.00005, with Godot's `1 - exp(-density * depth)`, the player's own
+## region span is about a tenth hazed, the far edge of the streamed 5x5 grid
+## about a quarter, and distant terrain still fades -- so real aerial
+## perspective stays, and real ground detail survives. Still a disclosed
+## choice, only now one bounded by real evidence rather than by feel.
+const FOG_DENSITY := 0.00005
 
 ## How much the haze brightens toward the sun -- Godot's approximation of the
 ## real Henyey-Greenstein phase term in the real terrain vertex shader. Also a
