@@ -158,6 +158,28 @@ extends Node3D
 const TERRAIN_COLLISION_LAYER := 0b1001 # layer 1 (default) + layer 4 (terrain-only)
 const TERRAIN_ONLY_COLLISION_MASK := 0b1000 # layer 4 only
 
+## Real navmesh walls (see _try_add_navmesh_walls) get their own layer bit,
+## deliberately *not* the default layer 1, because they are invisible
+## gameplay boundaries rather than visible geometry. The player's own body
+## masks this bit in (World3D.tscn), so they are stopped by them; the camera
+## spring arm does not, because a camera shoved aside by geometry nobody can
+## see reads as a bug, and it is the same class of mistake the terrain layer
+## above was added to fix.
+const NAVMESH_WALL_COLLISION_LAYER := 0b10000 # layer 5 only
+
+## How tall a real blocking navmesh edge is extruded. **A disclosed choice,
+## not real data**: the real client tests an edge as an infinite 2D line
+## (see docs/protocol/NVM_FORMAT.md's "Edge flag semantics" section), so
+## nothing in the game gives a wall a height at all. Comfortably above the
+## player capsule's own 3.19 radius so it cannot be stepped over.
+const NAVMESH_WALL_HEIGHT := 40.0
+
+## Real per-region navmesh inside Data.pk2, named by the real packed region
+## ID -- this is the client's own real format string, recovered from its
+## loader (`sprintf_s(buf, 0x400, "navmesh\\nv_%04x.nvm", regionId)`), and
+## the real packing is `(x << 8) | y`. See docs/protocol/NVM_FORMAT.md.
+const NAVMESH_PATH_FORMAT := "navmesh\\nv_%04x.nvm"
+
 ## **Corrected 2026-09-02** (see docs/WORLD_ISSUES.md's forty-eighth
 ## round): was `138.7 / 1.8`. The 138.7 came from an earlier claimed
 ## forward-kinematics measurement of the real character's native height,
@@ -1159,6 +1181,84 @@ func _load_real_water_animation(archive: Pk2Reader) -> AnimatedTexture:
 ## (nothing added) otherwise, or if SRREVAMP_MAP_PK2_PATH isn't set / the
 ## real water frames can't be found, so a region with no real water (most
 ## of them) or a caller with no archive access isn't penalized.
+## Adds this region's real navmesh walls: every real blocking edge in its
+## `.nvm` cell/edge graph, extruded into a vertical quad by NvmCollision.
+##
+## This is real *walkability*, which the terrain mesh's own geometric
+## collision does not reproduce -- it is the boundary the real game
+## actually enforces, and it exists in places no geometry does.
+##
+## Parented to terrain_group rather than positioned itself, so it inherits
+## that node's own rotation and vertical anchoring exactly. The wall
+## triangles are built in the same region-local space the terrain mesh uses
+## (MapmTerrainBuilder's col -> X, row -> Z): the two formats share a
+## byte-identical heightmap, and the local-axis correspondence is measured
+## rather than assumed -- see docs/protocol/NVM_FORMAT.md's "Real
+## local-axis orientation" section.
+##
+## Does nothing (and says so) when Data.pk2 isn't set or the region has no
+## real navmesh file -- the same honest "nothing to load" behavior as the
+## rest of this scene, never a guess.
+func _try_add_navmesh_walls(terrain_group: Node3D, mapm_path: String) -> void:
+	var coords := _parse_region_coords(mapm_path)
+	if coords.is_empty():
+		return
+	var archive := _open_pk2_if_set()
+	if archive == null:
+		return
+	var nvm_path: String = NAVMESH_PATH_FORMAT % ((int(coords["x"]) << 8) | int(coords["y"]))
+	var bytes := AssetSource.read_bytes(nvm_path, archive)
+	if bytes.is_empty():
+		print("World3D: no real navmesh at %s -- this region gets no real walkability walls" % nvm_path)
+		return
+	var region := NvmReader.parse(bytes)
+	if region == null:
+		printerr("World3D: could not parse real navmesh at ", nvm_path)
+		return
+	var faces := NvmCollision.build_wall_triangles(region, NAVMESH_WALL_HEIGHT)
+	if faces.is_empty():
+		return
+	var shape := ConcavePolygonShape3D.new()
+	shape.set_faces(faces)
+	var body := StaticBody3D.new()
+	body.name = "NavmeshWalls"
+	body.collision_layer = NAVMESH_WALL_COLLISION_LAYER
+	var body_shape := CollisionShape3D.new()
+	body_shape.shape = shape
+	body.add_child(body_shape)
+	terrain_group.add_child(body)
+	if OS.get_environment("SRREVAMP_DEBUG_NAVMESH_WALLS") != "":
+		_add_navmesh_wall_debug_mesh(terrain_group, faces)
+	print("World3D: loaded real navmesh walls from %s (%d real blocking of %d internal + %d global edges)" % [
+		nvm_path, NvmCollision.blocking_edges(region).size(), region.internal_edges.size(), region.global_edges.size()])
+
+## Draws the walls _try_add_navmesh_walls just built, so they can actually
+## be looked at. They are deliberately invisible in normal play -- they are
+## walkability, not scenery -- which also means a misplaced one is
+## impossible to see, and misplacement is exactly the failure this
+## project's own headless checks have repeatedly missed. Gated behind
+## SRREVAMP_DEBUG_NAVMESH_WALLS so it costs a normal run nothing.
+func _add_navmesh_wall_debug_mesh(terrain_group: Node3D, faces: PackedVector3Array) -> void:
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = faces
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 0.1, 0.1, 1.0)
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	# Walls are single-sided quads, so without this each one vanishes when
+	# viewed from the far side -- which would read as a missing wall.
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var debug_mesh := MeshInstance3D.new()
+	debug_mesh.name = "NavmeshWallsDebug"
+	debug_mesh.mesh = mesh
+	debug_mesh.material_override = mat
+	terrain_group.add_child(debug_mesh)
+	var local_aabb := mesh.get_aabb()
+	print("World3D: navmesh wall debug mesh local aabb %s .. %s, global origin %s" % [
+		local_aabb.position, local_aabb.end, debug_mesh.to_global(local_aabb.position)])
+
 func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion, tile_table: TileIndexReader.Table) -> void:
 	var water_mesh := MapmTerrainBuilder.build_full_region_water_mesh(region, tile_table)
 	if water_mesh == null:
@@ -2051,6 +2151,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	single_patch.add_child(patch_body)
 	terrain_group.add_child(single_patch)
 
+	_try_add_navmesh_walls(terrain_group, mapm_path)
 	_try_add_real_water(terrain_group, region, tile_table)
 
 	# The vertical calibration above only guarantees one specific mesh vertex

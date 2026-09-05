@@ -62,7 +62,7 @@ shape = SubResource("BoxShape3D_voidcatch")
 
 [node name="Player" type="CharacterBody3D" parent="."]
 collision_layer = 2
-collision_mask = 1
+collision_mask = 17
 
 [node name="Mesh" type="MeshInstance3D" parent="Player"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.17, 0)
