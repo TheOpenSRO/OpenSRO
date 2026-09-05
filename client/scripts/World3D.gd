@@ -1271,21 +1271,39 @@ func _load_real_water_animation(archive: Pk2Reader) -> AnimatedTexture:
 ## Does nothing (and says so) when Data.pk2 isn't set or the region has no
 ## real navmesh file -- the same honest "nothing to load" behavior as the
 ## rest of this scene, never a guess.
-func _try_add_navmesh_walls(terrain_group: Node3D, mapm_path: String) -> void:
+## Real per-region parsed navmesh, loaded once and shared by everything
+## that needs it -- real walkability walls and real water surfaces both come
+## out of the same real file, so it is not worth reading twice. A null entry
+## means "already tried, nothing usable", and is cached too.
+var _navmesh_cache: Dictionary = {}
+
+func _load_region_navmesh(mapm_path: String) -> NvmReader.ParsedRegion:
 	var coords := _parse_region_coords(mapm_path)
 	if coords.is_empty():
-		return
+		return null
+	var key: int = (int(coords["x"]) << 8) | int(coords["y"])
+	if _navmesh_cache.has(key):
+		return _navmesh_cache[key]
+	_navmesh_cache[key] = null
+
 	var archive := _open_pk2_if_set()
 	if archive == null:
-		return
-	var nvm_path: String = NAVMESH_PATH_FORMAT % ((int(coords["x"]) << 8) | int(coords["y"]))
+		return null
+	var nvm_path: String = NAVMESH_PATH_FORMAT % key
 	var bytes := AssetSource.read_bytes(nvm_path, archive)
 	if bytes.is_empty():
-		print("World3D: no real navmesh at %s -- this region gets no real walkability walls" % nvm_path)
-		return
-	var region := NvmReader.parse(bytes)
-	if region == null:
+		print("World3D: no real navmesh at %s -- this region gets no real walkability or water" % nvm_path)
+		return null
+	var parsed := NvmReader.parse(bytes)
+	if parsed == null:
 		printerr("World3D: could not parse real navmesh at ", nvm_path)
+		return null
+	_navmesh_cache[key] = parsed
+	return parsed
+
+func _try_add_navmesh_walls(terrain_group: Node3D, mapm_path: String) -> void:
+	var region := _load_region_navmesh(mapm_path)
+	if region == null:
 		return
 	var faces := NvmCollision.build_wall_triangles(region, NAVMESH_WALL_HEIGHT)
 	if faces.is_empty():
@@ -1301,8 +1319,8 @@ func _try_add_navmesh_walls(terrain_group: Node3D, mapm_path: String) -> void:
 	terrain_group.add_child(body)
 	if OS.get_environment("SRREVAMP_DEBUG_NAVMESH_WALLS") != "":
 		_add_navmesh_wall_debug_mesh(terrain_group, faces)
-	print("World3D: loaded real navmesh walls from %s (%d real blocking of %d internal + %d global edges)" % [
-		nvm_path, NvmCollision.blocking_edges(region).size(), region.internal_edges.size(), region.global_edges.size()])
+	print("World3D: loaded real navmesh walls for %s (%d real blocking of %d internal + %d global edges)" % [
+		mapm_path, NvmCollision.blocking_edges(region).size(), region.internal_edges.size(), region.global_edges.size()])
 
 ## Draws the walls _try_add_navmesh_walls just built, so they can actually
 ## be looked at. They are deliberately invisible in normal play -- they are
@@ -1331,8 +1349,28 @@ func _add_navmesh_wall_debug_mesh(terrain_group: Node3D, faces: PackedVector3Arr
 	print("World3D: navmesh wall debug mesh local aabb %s .. %s, global origin %s" % [
 		local_aabb.position, local_aabb.end, debug_mesh.to_global(local_aabb.position)])
 
-func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion, tile_table: TileIndexReader.Table) -> void:
-	var water_mesh := MapmTerrainBuilder.build_full_region_water_mesh(region, tile_table)
+## **Rebuilt 2026-09-05** (see docs/WORLD_ISSUES.md): real water used to be
+## classified per *terrain tile* and each quad placed at that tile's own
+## terrain height, because this project had no real reference height for a
+## body of water. It therefore followed the ground instead of lying flat,
+## and real ponds rendered as jagged tile-shaped sheets cutting through the
+## terrain -- reported from a real playtest of the real Jangan temple
+## garden.
+##
+## The real `.nvm`'s own 6x6 `PlaneTypeMap`/`PlaneHeightMap` is that missing
+## reference: where the real plane type is water, the real plane height is
+## that body of water's own flat surface level. See NvmWater, which measured
+## the type across 264 real files rather than assuming it.
+##
+## No artificial vertical lift is applied any more either. The old one
+## existed because water shared the ground's exact vertices; a real water
+## plane sits at its own real level and is simply occluded by whatever
+## terrain stands above it, which is what makes a real shoreline.
+func _try_add_real_water(terrain_group: Node3D, mapm_path: String) -> void:
+	var region := _load_region_navmesh(mapm_path)
+	if region == null:
+		return
+	var water_mesh := NvmWater.build_water_mesh(region)
 	if water_mesh == null:
 		return
 	var archive := _open_map_pk2_if_set()
@@ -1352,10 +1390,6 @@ func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion,
 	water_instance.name = "Water"
 	water_instance.mesh = water_mesh
 	water_instance.material_override = mat
-	# Real, slight vertical lift above the underlying terrain (which already
-	# renders at the water tile's own real height) so the water surface
-	# doesn't z-fight with the ground mesh sharing the exact same vertices.
-	water_instance.position.y = 0.1
 	terrain_group.add_child(water_instance)
 
 ## Real sky assets found under Map.pk2's own SkyBox\ folder (2026-08-28,
@@ -2252,7 +2286,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	terrain_group.add_child(single_patch)
 
 	_try_add_navmesh_walls(terrain_group, mapm_path)
-	_try_add_real_water(terrain_group, region, tile_table)
+	_try_add_real_water(terrain_group, mapm_path)
 
 	# The vertical calibration above only guarantees one specific mesh vertex
 	# lines up near world Y=0 -- it says nothing about the height of whatever
