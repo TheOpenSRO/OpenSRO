@@ -399,6 +399,19 @@ NVM_FORMAT.md`) and a real `.cpd` "Compound" object format (groups several real 
 under one name — a decorated tree, a fully-armored character — `docs/protocol/CPD_FORMAT.md`) were
 also solved along the way, both live-verified against real samples.
 
+`.nvm`'s real walkability is wired in now, not just parsed. Which edge flag actually blocks was the
+long-standing blocker, and it was settled by decompiling the client's own collision traversal
+rather than guessed: it tests `(m_nFlag & 3)`, so flag 2 blocks, flag 4 is passable, and flag 8
+(every real global edge) is the region hand-off — see `docs/protocol/NVM_FORMAT.md`'s "Edge flag
+semantics: solved". Cross-checked three more ways: 264 real files split with zero counterexamples
+(every flag-2 edge has no cell on one side, every flag-4 edge joins two walkable cells), the
+polarity is forced because global edges must stay passable or no region could ever be left, and the
+blocking set forms closed contours. Each streamed region now loads its own
+`navmesh\nv_%04x.nvm` and adds those edges as real collision on their own layer — the player is
+stopped by them, the camera deliberately is not. `SRREVAMP_DEBUG_NAVMESH_WALLS=1` draws them, which
+is how the placement was checked: over real Jangan they wrap each building and leave the streets
+open.
+
 Real placed objects have automatic asset selection now too: `SRREVAMP_MAPO_PATH` (a real `Map.pk2`
 region's `.o` file, via `SRREVAMP_MAP_PK2_PATH`) resolves each real placement's type ID through a
 real object-index table (`object.ifo`, root level in `Data.pk2`, magic `JMXVOBJI1000` — a real,
