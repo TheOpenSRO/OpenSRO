@@ -73,6 +73,7 @@ jobs:
           godot --headless --path . --script res://scripts/mapt/mapt_reader_test.gd
           godot --headless --path . --script res://scripts/tile2d/tile_index_reader_test.gd
           godot --headless --path . --script res://scripts/nvm/nvm_reader_test.gd
+          godot --headless --path . --script res://scripts/nvm/nvm_collision_test.gd
           godot --headless --path . --script res://scripts/efp/efp_reader_test.gd
           godot --headless --path . --script res://scripts/assets/skeleton_pose_test.gd
           godot --headless --path . --script res://scripts/assets/skeleton3d_builder_test.gd
