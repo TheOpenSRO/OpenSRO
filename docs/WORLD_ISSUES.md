@@ -2470,3 +2470,73 @@ constants), `Sun\moon01-30` and `Sun\lens1-8` (no day/night clock exists yet),
 reader at all (`tile3d.ifo`, `objext.ifo`, `objectstring.ifo`,
 `layerobjectlist.ifo`, `config.ifo`, `mapinfo.mfo`, `regioninfo.txt` — the last
 of which is a real region-to-zone-name table, in EUC-KR).
+
+## 2026-09-05, sixtieth round — the world was assembled from correctly-shaped regions placed backwards
+
+Reported from a real playtest, and correctly, against my own first explanation:
+*"I have never seen this place... it's like we are building the map in the wrong
+way."* I had put it down to the spawn point sitting at a region edge. That was
+true and irrelevant; the assembly itself was wrong.
+
+`_try_load_real_terrain` placed every real region with `rotation.y = PI` plus an
+`aabb.size.x / 2.0` X offset, which measures out to `world X = 960 - local_x`
+and `world Z = -local_z` — local coordinates running **backwards** in world
+space. The region *grid* offsets ran forwards (`region_y -> +world X`,
+`region_x -> +world Z`). So each region was individually rotated 180 degrees
+inside a grid laid out the other way.
+
+### Why it hid for so long
+
+Everything downstream inherits that transform, so everything agreed with
+everything else. Real placed objects are parented to the terrain node
+(`_try_load_real_map_objects`), and this session's own real navmesh walls are
+built in the same region-local space, so buildings sat correctly on terrain and
+walls wrapped the buildings — all three consistently wrong together. The earlier
+adjacency verification that "confirmed" the grid ran against the raw `.m` files,
+never against the assembled scene, so it could not have caught this.
+
+### The real ground truth
+
+Crossing a region's local `x = 1920` edge continues at local `x = 0` of
+`region_y + 1` — the real global edges' own `AssocRegionIdTo` says so (see
+`protocol/NVM_FORMAT.md`). So real world space is contiguous:
+`world X = region_y * 1920 + local_x`, `world Z = region_x * 1920 + local_z`.
+
+Measured on the real heightmaps (`.nvm`'s copy is byte-identical to `.m`'s), a
+region's own **high** edge abuts its neighbour's **low** edge:
+
+| pairing | mean difference |
+|---|---:|
+| 98/168 col 96 vs 98/169 col 0 (`region_y + 1`) | **0.000000** |
+| 98/168 col 0 vs 98/169 col 96 (what the old transform paired) | 18.211597 |
+| 98/168 row 96 vs 99/168 row 0 (`region_x + 1`) | **0.000000** |
+| 98/168 row 0 vs 99/168 row 96 | 71.761607 |
+
+Assembling a real 3x3 neighbourhood both ways, the mean height step across every
+region seam is **2.40** in data order against **34.28** as the renderer built it.
+
+### The fix
+
+The rotation and the asymmetric X offset are gone; a region now sits at
+`(-REGION_SPAN/2, -anchor, -REGION_SPAN/2) + world_offset` with local
+coordinates running forwards. The half-span shift keeps each region *centred* on
+its own grid offset exactly as the old transform did on X, so
+`_maybe_stream_regions`' own `round(rel / REGION_SPAN)` cell test stays valid —
+that was the one piece of existing logic a corner-aligned placement would have
+broken silently.
+
+Verified in the real client: from above, the walls and street grid now run
+continuously across region boundaries and the palace compound reads as one
+coherent structure. The same spawn that used to land on grass outside a wall now
+lands on the real paved plaza inside the city.
+
+### Still open — handedness
+
+This corrects the *assembly*, not a possible global mirror. The real client is
+Direct3D (left-handed) and Godot is right-handed, so mapping real `(x, y, z)`
+straight through may mirror the whole world. **Every check available here
+survives a mirror unchanged** — seams still match, adjacency still holds,
+everything stays self-consistent — so it cannot be settled from geometry. The
+tell is signage: real Chinese/Korean lettering on the real Jangan buildings will
+read backwards if a flip is needed. Left deliberately unresolved rather than
+guessed at.

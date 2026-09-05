@@ -562,8 +562,8 @@ const REGION_LOAD_RADIUS := 2
 ## ended up at (captured once, right after it loads) -- every other real
 ## cell's world position is `_grid_origin_world + Vector3(dx, 0, dy) *
 ## REGION_SPAN` by construction (see _load_region_cell), so this doesn't
-## need to know the exact real per-cell placement bias
-## (aabb.size.x/2 + rotation) in closed form, just that it's identical for
+## need to know the exact real per-cell placement bias (the half-REGION_SPAN
+## centring offset) in closed form, just that it's identical for
 ## every cell. This mapping stays fixed for a zone's whole lifetime, even
 ## as cells stream in/out around it, so already-placed nodes never need to
 ## move.
@@ -2175,8 +2175,34 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# mesh did.
 	var near_height := MapmTerrainBuilder.near_row_middle_height(region)
 	var anchor_height := near_height if is_nan(shared_vertical_anchor) else shared_vertical_anchor
-	terrain_group.rotation.y = PI
-	terrain_group.position = Vector3(aabb.size.x / 2.0, -anchor_height, 0) + world_offset
+	# **Corrected 2026-09-05** (see docs/WORLD_ISSUES.md): this was
+	# `rotation.y = PI` plus an `aabb.size.x / 2.0` X offset, which placed
+	# every real region *individually rotated 180 degrees* inside a grid
+	# whose own offsets ran the other way. Each real region was internally
+	# fine -- and objects (parented here) and navmesh walls inherited the
+	# same transform, so everything agreed with everything else -- but the
+	# regions were assembled against each other backwards, building a world
+	# that is not a real place. Reported from a real playtest ("I have never
+	# seen this place"), which self-consistency had hidden.
+	#
+	# The real world space is contiguous: crossing a region's local
+	# x = 1920 edge continues at local x = 0 of region_y + 1 (the real
+	# global edges' own AssocRegionIdTo says so, see NVM_FORMAT.md), so
+	# real world X is `region_y * 1920 + local_x` and real world Z is
+	# `region_x * 1920 + local_z`. Local coordinates therefore have to run
+	# *forwards*, with no per-region rotation at all.
+	#
+	# Measured directly on the real heightmaps: a region's own high edge
+	# matches its neighbour's low edge exactly (98/168's col 96 against
+	# 98/169's col 0: mean difference 0.000000; the reversed pairing the old
+	# transform produced: 18.2). Across a real 3x3 neighbourhood the mean
+	# height step over every region seam falls from 34.28 to 2.40.
+	#
+	# The half-span shift keeps each real region *centred* on its own grid
+	# offset, exactly as the old transform did on X, so _maybe_stream_regions'
+	# own `round(rel / REGION_SPAN)` cell test still names the right cell.
+	terrain_group.position = Vector3(
+		-REGION_SPAN / 2.0, -anchor_height, -REGION_SPAN / 2.0) + world_offset
 	add_child(terrain_group)
 	ground_mesh.visible = false
 	ground_collision.disabled = true
@@ -2791,9 +2817,10 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 	# grid's math is really correct, not just internally consistent. So a
 	# `.o` object's raw position is already real, absolute-within-its-
 	# region data needing no artificial recentering -- it only needs the
-	# exact same rotation+offset transform `_try_load_real_terrain` already
-	# applies to that region's terrain (180-degree Y rotation + the
-	# aabb.size.x/2 real-vertex anchor offset), so parenting this container
+	# exact same offset transform `_try_load_real_terrain` already
+	# applies to that region's terrain (the half-REGION_SPAN centring
+	# offset, and no rotation -- see its own **Corrected 2026-09-05**
+	# comment for why there used to be one), so parenting this container
 	# under that exact terrain node (found by its real, shared node-name
 	# convention) inherits that transform automatically instead of
 	# duplicating it. Falls back to the old world_offset-only placement if
