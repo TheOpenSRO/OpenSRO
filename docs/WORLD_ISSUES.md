@@ -2902,3 +2902,66 @@ made ponds look like jagged sheets.
 (134/134 contained), so the pairing needs no invented fallback. On the real region the
 result goes from a `1920 x 35 x 1920` box spanning four different levels to a
 **380 x 380 pond, flat, at a single level (−3)** built from 134 real tile quads.
+
+## Sixty-sixth round: ground was textured per quad, but the real data is per vertex
+
+**2026-09-06.** A playtest of v0.1.42 reported open ground reading as "a weird mix of
+brown squares", with a real reference screenshot of what a real field should look
+like. The region grid, object placement and object heights had all just been verified
+correct, so this was rendering, not layout.
+
+### What the real client does
+
+Two facts settle it, and neither was being used:
+
+- The real `.m` vertex record carries a real texture ID **per vertex**, not per quad
+  (see [MAPM_FORMAT.md](protocol/MAPM_FORMAT.md)'s `TextureInfo`: a 10-bit ID plus a
+  6-bit scale, inside each vertex).
+- The real client's own terrain pixel shader samples exactly **one** terrain texture
+  per pass. A real `Data.pk2`'s `Shader\terrainps14.psh` reads
+  `texld r1, TEX_TERRAIN_COLOR`, and `terrainpsn10.psh` does the same. There is no
+  multi-texture blend anywhere in the shader.
+
+One texture per pass, plus a per-vertex ID, **is** vertex splatting: each pass draws
+the triangles that touch one real texture, faded out at the vertices using a different
+one. (`terrainpsndetail10.psh` also carries a detail stage, `tex t3 ; Detail`, whose
+multiply is commented out in the shipped shader — noted, not acted on.)
+
+### What we were doing instead
+
+`_build_textured_mesh_from_cells` read the per-vertex ID (`cells[r][c][1]`) and then
+applied it to the **whole quad**, hiding the resulting seam by feathering a fixed
+alpha (`BOUNDARY_BLEND_ALPHA = 0.45`) along quad edges. The blend could never be
+smoother than the quad grid it was defined on, which is exactly what a plaid of
+hard-edged squares looks like.
+
+### The change
+
+Per quad now: its **dominant** real texture — the one most of its four corners use —
+is drawn fully opaque, so ground is never see-through; then every *other* texture its
+corners use is drawn over it with each vertex's alpha 1 where that vertex really uses
+that texture and 0 where it does not. The blend spans the whole quad and follows the
+real per-vertex data.
+
+`BOUNDARY_BLEND_ALPHA` is deleted: it was a disclosed invented constant standing in
+for blend weights the format was thought not to carry. The per-vertex IDs are those
+weights, so nothing is invented any more.
+
+The 2026-09-02 fix is kept — a quad's own texture stays opaque rather than fading
+toward flat gray, which had desaturated real textures unevenly per region.
+
+### Verified
+
+A real render of real region 100/100, the one the playtest reported, shows grass and
+dirt meeting in soft organic gradients rather than hard squares. The test now builds a
+region where **two resolved textures meet** (the real case; an unresolved ID has no
+texture to fade) and asserts the property that matters: blend vertex alpha is per-vertex
+0 or 1, never a fixed edge feather — and that every real quad is still covered exactly
+once by an opaque pass.
+
+### Noted, not fixed
+
+Real objects in region 100/100 sit a median **17.15 units below** the real terrain
+under them (only 26% within ±2 units), where real Jangan regions measure a median of
+**0.00**. That is a separate real placement bug, found while checking heights this
+round.

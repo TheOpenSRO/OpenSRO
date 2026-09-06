@@ -286,15 +286,6 @@ static func _resolve_texture_scale(extra: PackedByteArray) -> int:
 ## means exactly one repeat.
 const BASE_TILE_REPEAT := 1.0
 
-## How strongly a real neighbouring texture bleeds across a shared edge in
-## the feathered blend pass (see _build_textured_mesh_from_cells' doc
-## comment) -- the alpha it reaches exactly at the shared edge, ramping to
-## 0 at the quad's far edge. A disclosed rendering choice, not real data:
-## the real format carries no per-vertex blend weights this project has
-## found, so *how much* two real textures should mix isn't recoverable.
-## Picked just under half so a real boundary reads as a genuine two-way
-## transition without either real texture disappearing into the other.
-const BOUNDARY_BLEND_ALPHA := 0.45
 
 ## Deterministically picks one of the 8 real square symmetries (4
 ## rotations x optional mirror) for a quad's own UV corners, keyed by its
@@ -326,31 +317,36 @@ static func _quad_uv_corners(r: int, c: int, repeat: float = 1.0) -> PackedVecto
 ## with no real texture available) -- see build_full_region_mesh_textured's
 ## doc comment.
 ##
-## Since each quad only ever carries one real texture ID (the format has no
-## real per-vertex blend weights this project has found), a naive render
-## shows a hard, obviously rectangular edge everywhere two differently-
-## textured quads meet.
+## **Reworked 2026-09-06 to real per-vertex splatting** (see
+## docs/WORLD_ISSUES.md's sixty-sixth round). Two facts settle how real
+## ground is meant to be textured, and neither was being used:
 ##
-## **Reworked 2026-09-02** (see docs/WORLD_ISSUES.md's forty-sixth round).
-## The previous approach drew every quad *semi-transparently* near a
-## texture boundary over a flat gray base surface. That was a real,
-## measurable bug, not just a stylistic choice: fading toward flat gray
-## desaturates the real texture instead of blending it into its neighbour,
-## and because regions differ in how fragmented their tile layout is, it
-## desaturated some regions far more than others -- producing exactly the
-## uneven, washed-out, per-region tinting a real playtest reported.
-## Confirmed by a real controlled render (forcing every quad opaque made
-## the whole map dramatically more saturated).
+##   * the real `.m` vertex record carries a real texture ID **per vertex**,
+##     not per quad (see MAPM_FORMAT.md's TextureInfo);
+##   * the real client's own terrain pixel shader samples exactly **one**
+##     terrain texture per pass -- a real `Data.pk2`'s
+##     `Shader\terrainps14.psh` reads `texld r1, TEX_TERRAIN_COLOR`, and
+##     `terrainpsn10.psh` does the same, with no multi-texture blend
+##     anywhere in the shader.
 ##
-## Now each quad is drawn **fully opaque** in its own texture's surface,
-## and blending happens the way real terrain splatting does: for every
-## edge where a quad's neighbour uses a *different* real texture, the
-## neighbour's own texture is drawn again over this quad as a separate
-## feathered pass, its alpha ramping from BOUNDARY_BLEND_ALPHA at the
-## shared edge down to 0 at the far edge. So texture A genuinely fades
-## into texture B across the seam, with no invented middle color and no
-## loss of saturation anywhere. Still exactly one real texture ID per real
-## quad -- this only adds a real neighbour's real texture as an overlay.
+## One texture per pass plus a real per-vertex ID *is* vertex splatting.
+## This code previously collapsed the per-vertex ID down to one texture per
+## quad and then feathered a fixed alpha along quad edges to hide the seam.
+## That is why real open ground read as a plaid of hard-edged squares in a
+## real playtest -- the blend could never be smoother than the quad grid it
+## was defined on.
+##
+## Now, per quad: its **dominant** real texture (the one most of its corners
+## use) is drawn fully opaque, so real ground is never see-through; then
+## every *other* real texture its corners use is drawn again over it, with
+## each vertex's alpha 1 where that vertex really uses that texture and 0
+## where it does not. The blend therefore spans the whole quad and follows
+## the real per-vertex data, instead of being a fixed fade pinned to an edge.
+##
+## Kept from the 2026-09-02 rework, which fixed a real earlier bug: a quad's
+## own texture is opaque rather than faded toward a flat gray base. Fading
+## toward gray desaturated real textures unevenly per region, producing the
+## washed-out per-region tinting a real playtest reported.
 static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_count: int, texture_lookup: Dictionary, ao_texture: Texture2D) -> ArrayMesh:
 	var positions := PackedVector3Array()
 	positions.resize(row_count * col_count)
@@ -378,43 +374,44 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 	# up front (rather than inline in the buffer-building loop below) so
 	# both the base surface's per-vertex averaging and the boundary check
 	# can look up any quad's neighbors.
-	var quad_keys := []
-	var quad_colors := []
-	var quad_repeats := []
-	quad_keys.resize(row_count - 1)
-	quad_colors.resize(row_count - 1)
-	quad_repeats.resize(row_count - 1)
-	for r in range(row_count - 1):
-		quad_keys[r] = []
-		quad_colors[r] = []
-		quad_repeats[r] = []
-		quad_keys[r].resize(col_count - 1)
-		quad_colors[r].resize(col_count - 1)
-		quad_repeats[r].resize(col_count - 1)
-		for c in range(col_count - 1):
-			var extra: PackedByteArray = cells[r][c][1]
-			quad_keys[r][c] = _resolve_texture_id(extra, texture_lookup)
-			quad_colors[r][c] = _vertex_color()
-			var scale_level: int = _resolve_texture_scale(extra) >> 3
-			quad_repeats[r][c] = BASE_TILE_REPEAT * pow(2.0, float(scale_level))
+	# Real per-VERTEX texture assignment.
+	#
+	# **Changed 2026-09-06 from per-quad** (see docs/WORLD_ISSUES.md's
+	# sixty-sixth round). The real `.m` vertex record carries its own real
+	# texture ID and scale -- per *vertex*, not per quad (MAPM_FORMAT.md) --
+	# and the real client's own terrain pixel shader samples exactly one
+	# terrain texture per pass: a real `Data.pk2`'s `Shader\terrainps14.psh`
+	# reads `texld r1, TEX_TERRAIN_COLOR` and its `terrainpsn10.psh`
+	# equivalent does the same, with no multi-texture blend anywhere in the
+	# shader. One texture per pass plus a real per-vertex ID is vertex
+	# splatting: each pass draws the triangles touching one real texture,
+	# faded out at the vertices that use a different one.
+	#
+	# This code previously collapsed that real per-vertex ID to one texture
+	# per quad and feathered a fixed alpha along quad edges, which is what
+	# made real open ground read as a plaid of hard-edged squares in a real
+	# playtest.
+	var vertex_keys := []
+	var vertex_repeats := []
+	vertex_keys.resize(row_count)
+	vertex_repeats.resize(row_count)
+	for r in range(row_count):
+		vertex_keys[r] = []
+		vertex_repeats[r] = []
+		vertex_keys[r].resize(col_count)
+		vertex_repeats[r].resize(col_count)
+		for c in range(col_count):
+			var vextra: PackedByteArray = cells[r][c][1]
+			vertex_keys[r][c] = _resolve_texture_id(vextra, texture_lookup)
+			var vlevel: int = _resolve_texture_scale(vextra) >> 3
+			vertex_repeats[r][c] = BASE_TILE_REPEAT * pow(2.0, float(vlevel))
 
-	# Base surface: one continuous mesh over the whole grid, each vertex
-	# colored by averaging the (up to 4) quads that touch it -- see this
-	# function's own doc comment.
+	# Base surface: one continuous mesh over the whole grid, colored by the
+	# real flat-color fallback. Real textured passes are drawn over it.
 	var base_colors := PackedColorArray()
 	base_colors.resize(positions.size())
-	for r in range(row_count):
-		for c in range(col_count):
-			var sum := Color(0, 0, 0, 0)
-			var n := 0
-			for dr in [-1, 0]:
-				for dc in [-1, 0]:
-					var qr: int = r + dr
-					var qc: int = c + dc
-					if qr >= 0 and qr < row_count - 1 and qc >= 0 and qc < col_count - 1:
-						sum += quad_colors[qr][qc]
-						n += 1
-			base_colors[r * col_count + c] = (sum / n) if n > 0 else Color(0.45, 0.5, 0.32)
+	for i in range(base_colors.size()):
+		base_colors[i] = _vertex_color()
 
 	var base_indices := PackedInt32Array()
 	for r in range(row_count - 1):
@@ -443,12 +440,10 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 		base_mat.ao_on_uv2 = true
 	array_mesh.surface_set_material(0, base_mat)
 
-	# Two growable vertex/index buffers per real texture ID: `buffers` holds
-	# each quad's own real texture drawn fully opaque, and `blend_buffers`
-	# holds the feathered neighbour-texture overlays described in this
-	# function's doc comment. Key -1 is the shared "no real texture
-	# available" color fallback, which never contributes a blend overlay
-	# (there's no real texture to bleed).
+	# `buffers` holds each quad's own dominant real texture, drawn fully
+	# opaque so the ground is never see-through; `blend_buffers` holds every
+	# other real texture the quad's corners use, faded per vertex. Together
+	# they reproduce the real client's own multi-pass blend.
 	var buffers := {}
 	var blend_buffers := {}
 
@@ -462,72 +457,67 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 			"indices": PackedInt32Array(),
 		}
 
+	var emit := func(buf: Dictionary, r: int, c: int, idx: PackedInt32Array,
+			alphas: PackedFloat32Array, repeat: float, tint: Color) -> void:
+		var base: int = buf["positions"].size()
+		for i in range(4):
+			buf["positions"].append(positions[idx[i]])
+			buf["normals"].append(normals[idx[i]])
+			buf["uv2s"].append(uv2s[idx[i]])
+			buf["colors"].append(Color(tint.r, tint.g, tint.b, alphas[i]))
+		buf["uvs"].append_array(_quad_uv_corners(r, c, repeat))
+		buf["indices"].append_array(PackedInt32Array([base, base + 1, base + 2, base, base + 2, base + 3]))
+
 	for r in range(row_count - 1):
 		for c in range(col_count - 1):
-			var key: int = quad_keys[r][c]
-			if not buffers.has(key):
-				buffers[key] = new_buffer.call()
-			var buf: Dictionary = buffers[key]
+			var corner_r := [r, r, r + 1, r + 1]
+			var corner_c := [c, c + 1, c + 1, c]
+			var idx := PackedInt32Array([
+				r * col_count + c, r * col_count + c + 1,
+				(r + 1) * col_count + c + 1, (r + 1) * col_count + c])
 
-			var i00 := r * col_count + c
-			var i10 := i00 + 1
-			var i01 := i00 + col_count
-			var i11 := i01 + 1
+			var counts := {}
+			for i in range(4):
+				var k: int = vertex_keys[corner_r[i]][corner_c[i]]
+				counts[k] = int(counts.get(k, 0)) + 1
 
-			var quad_positions: PackedVector3Array = [positions[i00], positions[i10], positions[i11], positions[i01]]
-			var quad_normals: PackedVector3Array = [normals[i00], normals[i10], normals[i11], normals[i01]]
-			var quad_uv2s: PackedVector2Array = [uv2s[i00], uv2s[i10], uv2s[i11], uv2s[i01]]
-
-			# This quad's own real texture, fully opaque -- no fade, no
-			# desaturation (see this function's doc comment).
-			var color: Color = Color.WHITE if key != -1 else quad_colors[r][c]
-			var base: int = buf["positions"].size()
-			buf["positions"].append_array(quad_positions)
-			buf["normals"].append_array(quad_normals)
-			buf["uvs"].append_array(_quad_uv_corners(r, c, quad_repeats[r][c]))
-			buf["uv2s"].append_array(quad_uv2s)
-			buf["colors"].append_array(PackedColorArray([color, color, color, color]))
-			buf["indices"].append_array(PackedInt32Array([base, base + 1, base + 2, base, base + 2, base + 3]))
-
-			# Feathered neighbour overlays. Corner order throughout this
-			# function is [ (r,c), (r,c+1), (r+1,c+1), (r+1,c) ], so each
-			# neighbour direction below lists the two corners that sit on
-			# the shared edge (full blend alpha) -- the other two get 0.
-			var neighbours := [
-				[r, c - 1, 0, 3], # west  -- corners (r,c) and (r+1,c)
-				[r, c + 1, 1, 2], # east  -- corners (r,c+1) and (r+1,c+1)
-				[r - 1, c, 0, 1], # north -- corners (r,c) and (r,c+1)
-				[r + 1, c, 3, 2], # south -- corners (r+1,c) and (r+1,c+1)
-			]
-			for n in neighbours:
-				var nr: int = n[0]
-				var nc: int = n[1]
-				if nr < 0 or nr > row_count - 2 or nc < 0 or nc > col_count - 2:
+			# The quad's dominant real texture carries the opaque pass.
+			var dominant := -1
+			var best := 0
+			for k in counts:
+				if k == -1:
 					continue
-				var nkey: int = quad_keys[nr][nc]
-				if nkey == key or nkey == -1:
+				if int(counts[k]) > best:
+					best = int(counts[k])
+					dominant = k
+
+			var dom_repeat := BASE_TILE_REPEAT
+			for i in range(4):
+				if vertex_keys[corner_r[i]][corner_c[i]] == dominant:
+					dom_repeat = vertex_repeats[corner_r[i]][corner_c[i]]
+					break
+			if not buffers.has(dominant):
+				buffers[dominant] = new_buffer.call()
+			var opaque_alphas := PackedFloat32Array([1.0, 1.0, 1.0, 1.0])
+			var tint: Color = Color.WHITE if dominant != -1 else _vertex_color()
+			emit.call(buffers[dominant], r, c, idx, opaque_alphas, dom_repeat, tint)
+
+			# Every other real texture this quad's own corners use, faded to
+			# nothing at the vertices that use a different one. This is the
+			# real blend: it spans the whole quad rather than feathering a
+			# fixed amount along its edge.
+			for k in counts:
+				if k == dominant or k == -1:
 					continue
-				if not blend_buffers.has(nkey):
-					blend_buffers[nkey] = new_buffer.call()
-				var nbuf: Dictionary = blend_buffers[nkey]
-
-				var alphas := [0.0, 0.0, 0.0, 0.0]
-				alphas[n[2]] = BOUNDARY_BLEND_ALPHA
-				alphas[n[3]] = BOUNDARY_BLEND_ALPHA
-				var blend_colors := PackedColorArray()
-				for a in alphas:
-					blend_colors.append(Color(1.0, 1.0, 1.0, a))
-
-				var nbase: int = nbuf["positions"].size()
-				nbuf["positions"].append_array(quad_positions)
-				nbuf["normals"].append_array(quad_normals)
-				# The neighbour's own real tiling rate, so its texture keeps
-				# the same real scale where it bleeds across as it has in
-				# its own quad.
-				nbuf["uvs"].append_array(_quad_uv_corners(r, c, quad_repeats[nr][nc]))
-				nbuf["uv2s"].append_array(quad_uv2s)
-				nbuf["colors"].append_array(blend_colors)
-				nbuf["indices"].append_array(PackedInt32Array([nbase, nbase + 1, nbase + 2, nbase, nbase + 2, nbase + 3]))
+				var alphas := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
+				var repeat := BASE_TILE_REPEAT
+				for i in range(4):
+					if vertex_keys[corner_r[i]][corner_c[i]] == k:
+						alphas[i] = 1.0
+						repeat = vertex_repeats[corner_r[i]][corner_c[i]]
+				if not blend_buffers.has(k):
+					blend_buffers[k] = new_buffer.call()
+				emit.call(blend_buffers[k], r, c, idx, alphas, repeat, Color.WHITE)
 
 	var add_surface := func(key: int, buf: Dictionary, is_blend: bool) -> void:
 		var arrays := []
