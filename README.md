@@ -428,16 +428,27 @@ The format was validated the same way `.nvm` was — read every section in order
 lands exactly on the file's end. **507 of 507 do**, with zero leftover bytes and no special cases;
 see `docs/protocol/BMS_FORMAT.md`.
 
-**Driving Godot collision from it was tried and reverted** (v0.1.38, reverted the same day). In
-isolation a capsule climbs the full ramp; in the world the player lands on the surface and then
-cannot move along it at all. Real placed objects sit under the world's mirrored transform, which
-flips which face is front and so forces two-sided collision, and a two-sided single-thickness
-surface pins the capsule against the very ramp it is standing on. Those two requirements conflict,
-so the approach cannot be tuned into working — see `docs/WORLD_ISSUES.md`'s sixty-third round. The
-real client never hands this data to a collision solver: it walks the cell/edge graph and takes
-height from the cell underfoot, which is a movement-model change rather than a collision-shape one.
-The parsing and geometry helpers are kept and tested, ready for that; objects meanwhile keep
-colliding against their render geometry, with `_try_step_up` still carrying staircases.
+**Driving Godot collision from it was tried and reverted** (v0.1.38, reverted the same day):
+in isolation a capsule climbs the ramp, but in the world the player lands on the surface and cannot
+move along it, because real placed objects sit under the world's mirrored transform, which flips
+which face is front and so forces two-sided collision — and a two-sided single-thickness surface
+pins the capsule against the very ramp it stands on.
+
+**The player now moves on the navmesh instead**, which is what the real client does: `NavGraph`
+unifies a region's terrain `.nvm` with every placed object's own navigation mesh, the character's
+height comes from the cell underfoot, and an edge is tested as a 2D line. No capsule, no gravity,
+no collision shape — so none of the problems above exist. Verified in a real running world against
+the exact failure it was built to fix: dropped at the foot of the real Jangan palace stairs (a
+22.1-unit ramp) with the step-up assist disabled, the player walks y=2.12 → 10.74 → 19.64 → 21.94,
+arriving at the ramp's own top height and holding it for 450 further frames while still moving —
+where the collision-shape approach produced *zero* displacement. Set
+`SRREVAMP_NO_NAVMESH_MOVEMENT=1` to compare against the old physics movement.
+
+How objects attach to a region was measured rather than assumed, and one measurement saved a wrong
+design: `MapObject.linked_edges` looks like the object-to-terrain link but is not — only 4 of 122
+objects carry any, all pointing at *other objects* in symmetric pairs (bridge spans stitched
+together). The real link is spatial, via each cell's own object list. See
+`docs/WORLD_ISSUES.md`'s sixty-fourth round.
 
 The "Zone:" label is real now too, and the table behind it turned up somewhere unexpected:
 `regioninfo.txt` ships inside `Data.pk2`'s **`Shader\`** folder, not anywhere map-shaped

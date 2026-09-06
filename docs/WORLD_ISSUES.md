@@ -2760,3 +2760,79 @@ evidence — 507 of 507 real sections parsing exactly to EOF, cross-checked by t
 independent implementations — and is what the graph walker will be built on.
 `ObjectLoader._add_object_navmesh_collision` is kept too, uncalled, as the record of
 exactly what was tried.
+
+## Sixty-fourth round: the player now walks the real navmesh, and real stairs work
+
+**2026-09-06.** The sixty-third round established what the real fix had to be — walk
+the cell/edge graph rather than hand it to a collision solver — and this is it,
+built and verified.
+
+### The model
+
+`NavGraph` unifies a region's terrain `.nvm` with every placed object's own `.bms`
+navigation mesh in one region-local space, and answers two questions: how high is
+the ground here, and does moving from here to there cross a real blocking edge. The
+player's height comes from the cell underfoot; an edge is tested as a 2D line. There
+is no capsule, no gravity and no collision shape, which is exactly why none of the
+sixty-third round's problems apply — nothing can pin a body against a two-sided
+surface when there is no body and no surface.
+
+### How objects attach to a region, measured
+
+Real Jangan region `nv_62a8`, 122 real objects:
+
+- **Every object a region's `.nvm` lists has a navigation mesh** — 122/122 resolve to
+  a real `.bsr` whose mesh carries a collision section. That list *is* the set of real
+  placed objects a character can stand on.
+- **`MapObject.linked_edges` is not the object-to-terrain link.** Only 4 objects carry
+  any, 6 links total, every one pointing at another *object* in symmetric pairs — real
+  bridge spans stitched to each other (`cj_pal_south_brid02` ↔ `brid03` ↔ `brid04`).
+  It joins the parts of a multi-part structure and nothing else. Designing around it
+  would have been wrong.
+- **The real link is spatial**: 300 of the region's 334 real cells list the objects
+  overlapping them. Standing in a cell, that cell names the candidates underfoot.
+- A region's `.nvm` carries the same real placements as its `.o`, in the same space
+  and yaw convention (103 of 115 agree on position within 0.01, 111 on yaw within
+  0.001 rad; the rest are artifacts of matching by nearest instance where several
+  placements share one type id).
+
+Those per-cell lists are **not** complete coverage, so correctness does not rest on
+them: 98 of 122 objects have their whole footprint covered by the cells listing them,
+13 partly, 11 by no cell at all. The file's own list is consulted first and a
+footprint index fills the gaps. With it, coverage inside a region is total — all 109
+objects actually within the region's own extent are found, and the 13 that are not
+lie *wholly* outside it, placed in a neighbour whose graph carries them.
+
+### Verified, with the control that failed before
+
+Dropped at the foot of the real Jangan palace stairs (a real 22.1-unit ramp) with
+`_try_step_up` disabled, so nothing but the navmesh could do the work:
+
+| frame | region-local y |
+|---|---|
+| settled | 2.12 |
+| 30 | 10.74 |
+| 60 | 19.64 |
+| 90 | **21.94** — the ramp's own top |
+| 120–540 | 21.94 held, while X/Z keep changing |
+
+It climbs the whole ramp, arrives at exactly the ramp's real height, and stays on the
+surface for 450 further frames rather than falling through. Partway along, X freezes
+while Z keeps rising — a real blocking edge being slid along rather than stuck to.
+Zero script errors across 700 frames. **The same harness, on the same stairs, with the
+reverted collision-shape approach produced zero displacement.**
+
+### The movement model is now unit-testable
+
+The decision lives in `NavGraph.step`, a pure function, not inside a `World3D` method.
+Both movement bugs this project shipped needed a live test box to find, and one
+reached a release because of it. They are now headless tests: the player moves on
+every one of 78 steps up a ramp (the pinning failure), and walking off the top lands
+on terrain (the fall-through failure), plus blocking edges never being crossed and
+diagonal moves sliding rather than sticking.
+
+### What this does not change
+
+Objects still render exactly as before, and meshes with no navigation section still
+carry render-mesh collision for the camera. `_try_step_up` stays for terrain.
+`SRREVAMP_NO_NAVMESH_MOVEMENT=1` restores the old physics movement for comparison.

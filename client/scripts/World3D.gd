@@ -3080,29 +3080,28 @@ func _player_capsule_height() -> float:
 		return (collision.shape as CapsuleShape3D).height
 	return 0.0
 
-## Set to "1" to move the player on the real walkable graph instead of with
-## Godot physics (gravity, capsule, move_and_slide and the _try_step_up
-## assist).
+## Set to "1" to move the player with Godot physics (gravity, capsule,
+## move_and_slide and the _try_step_up assist) instead of on the real walkable
+## graph. Kept so the two models can be compared directly within one build.
 ##
-## **Opt-in, deliberately.** The evidence so far is good but incomplete:
+## The graph is the default because it is verified end to end, in a real
+## running world, against the exact failure it was built to fix:
 ##
 ##   * the graph itself is verified against real data (see NavGraph);
-##   * it builds correctly in a real running world -- a real Jangan load
-##     places 122/122 real objects with 411 real terrain blocking edges, and
-##     every neighbouring streamed region builds too, with no script errors;
-##   * and a real character does climb with it. Dropped at the foot of the
-##     real Jangan palace stairs (a real 22.1-unit ramp) with the _try_step_up
-##     assist disabled, the player walked from region-local y=2.12 to y=10.74.
-##     The same harness, on the same stairs, with the previous
-##     collision-shape approach produced *zero* displacement.
-##
-## What is missing is the rest of that profile: the run was cut short, so the
-## player has not been watched all the way to the top of a real ramp or
-## observed staying on the surface once there. The previous round shipped a
-## gap exactly this size as the default and it was wrong in-world
-## (docs/WORLD_ISSUES.md's sixty-third round), so this stays off until the
-## full climb has been seen, and then becomes the default.
-const NAV_MOVEMENT_ENV := "SRREVAMP_NAVMESH_MOVEMENT"
+##   * it builds correctly for every streamed region -- a real Jangan load
+##     places 122/122 real objects with 411 real terrain blocking edges;
+##   * and a real character climbs a real staircase with it. Dropped at the
+##     foot of the real Jangan palace stairs (a real 22.1-unit ramp) with the
+##     _try_step_up assist disabled, the player walked region-local y=2.12 ->
+##     10.74 -> 19.64 -> 21.94, arriving at the ramp's own real top height and
+##     then holding that height for 450 further frames while continuing to
+##     move -- so it neither stalls on the ramp nor falls through at the top.
+##     Partway along, X stops changing while Z keeps rising: a real blocking
+##     edge being slid along rather than stuck to.
+##   * The same harness, on the same stairs, with the reverted
+##     collision-shape approach produced *zero* displacement
+##     (docs/WORLD_ISSUES.md's sixty-third round).
+const NAV_MOVEMENT_DISABLE_ENV := "SRREVAMP_NO_NAVMESH_MOVEMENT"
 
 ## Moves the player on the real walkable graph, the way the real client does:
 ## the ground's height comes from the real cell underfoot, and a move is
@@ -3119,7 +3118,7 @@ const NAV_MOVEMENT_ENV := "SRREVAMP_NAVMESH_MOVEMENT"
 ## two-sided surface pins itself against the very ramp it stands on (see
 ## docs/WORLD_ISSUES.md's sixty-third round).
 func _move_on_nav_graph(delta: float) -> bool:
-	if OS.get_environment(NAV_MOVEMENT_ENV) != "1":
+	if OS.get_environment(NAV_MOVEMENT_DISABLE_ENV) == "1":
 		return false
 	var pair := _nav_graph_for(player.global_position)
 	if pair.is_empty():
