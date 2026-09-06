@@ -3071,3 +3071,47 @@ right is a **rendering** problem, not a data one, and the one number still not r
 from the real client is how many times a real ground texture repeats across a real quad.
 That lives in client code (see the vertex shader finding above), not in the shaders or
 the map files.
+
+## Sixty-ninth round: the ground lattice was an invented reading of the Scale field
+
+**2026-09-06.** Told the ground still did not look like the game and that this should be
+solvable by decompiling rather than approximating — which was the right push — this round
+went to the client binary and found the actual cause.
+
+### Recovered from the real client
+
+`FUN_00a361b0` is the real region loader. It builds `"%d\%d.m"` / `"%d\%d.o2"` and checks
+the magic as an **integer** (`0x56584d4a` = `"JMXV"`), which is why no string search in any
+shipped binary ever finds `JMXVMAPM`. It places each region at
+`regionByte * _DAT_00e1b908 * _DAT_00d99a68`, and those constants are **doubles** — 4-byte
+reads show zeros because their low dwords are zero. Read as 8 bytes: **320.0** and **6.0**.
+
+So a region is 320 × 6 = **1920** units, expressed by the client itself as **6 blocks of
+320**, making each block's 16 tiles **20 units**. `REGION_SPAN` and `TILE_SIZE` are now
+confirmed from client code rather than inferred from mesh footprints. Both were right.
+
+### The actual bug
+
+The per-vertex `TextureInfo` packing was checked against the client too. A tile-texture
+loader (`FUN_00a27880`) derives an ID as `(raw >> 6) & 0x3ff`, which would mean the ID is
+the *high* 10 bits — the opposite of this project's reading. Tested against real data, that
+is not the `.m` vertex path: our reading is the one that yields **thematically correct**
+textures (real Jangan's most-used tile resolves to `c_marble_jang_07`), and it makes `Scale`
+a sane field — `[0]` in Jangan, `[0, 8]` and `[0, 16]` elsewhere — where the alternative
+makes it 25 scattered values. So the packing was already right.
+
+**`Scale` was the problem.** It was being applied as `repeat = 2 ^ (scale >> 3)`, this
+project's own invented reading of a field whose real meaning was never recovered. Real
+region 100/100 carries `scale = 16`, which that reading turns into **four** repeats per quad
+— a 512×512 texture repeating every 5 world units — and it renders as a regular diagonal
+lattice across the whole region. That is exactly what the playtest reported there. Real
+Jangan carries only `scale = 0`, which is why the artifact never appeared in town, and why
+the previous two rounds (per-vertex splatting, then continuous UVs) both fixed real defects
+without touching the reported one.
+
+Disabling the scale term removes the lattice entirely and leaves soft, organic ground. The
+field is therefore left unused until its real meaning is recovered, rather than kept as an
+invented reading that demonstrably produces an artifact.
+
+One repeat per quad is independently confirmed by the artwork: `c_marble_jang_07` is a 4×4
+grid of paving slabs, so at one repeat per 20-unit quad each slab is 5 units ≈ 0.6m.

@@ -269,21 +269,30 @@ static func _resolve_texture_scale(extra: PackedByteArray) -> int:
 		return 0
 	return extra.decode_u16(0) >> 10
 
-## Real ground textures tile per quad according to the real `Scale` field
-## packed alongside the texture ID (see _resolve_texture_scale).
+## How many times a real ground texture repeats across one real quad.
 ##
-## **Corrected 2026-09-02** (see docs/WORLD_ISSUES.md's fifty-third round).
-## This used to be `BASE_TILE_REPEAT (4.0) * 2^level`, where the 4.0 was an
-## openly-invented constant added on the theory that real ground textures
-## are small high-frequency patterns needing extra repeats. A real
-## side-by-side render disproved that: with the multiplier in place a real
-## rock formation rendered as a pale crosshatched moire blur and the grass
-## carried visible interference patterning, while dropping it resolved the
-## same rock into clean, readable stone and smoothed the grass. Real
-## textures are authored for roughly one repeat per real quad, so the real
-## Scale field alone drives tiling now and no invented factor remains:
-## a real scale level of 0 (which is every vertex in real region 98/168)
-## means exactly one repeat.
+## **One repeat per quad, confirmed from the real artwork** (2026-09-06). A
+## real `Tile2D\` texture is 512x512, and `c_marble_jang_07` depicts a 4x4
+## grid of paving slabs. At one repeat per 20-unit quad each slab is 5 world
+## units, and with the real player capsule at 14.34 units for roughly 1.7m
+## that is about 0.6m per slab -- a real paving stone. Any other rate makes
+## that artwork the wrong size for the world it is laid on.
+##
+## **The real per-vertex `Scale` field no longer drives this** (see
+## docs/WORLD_ISSUES.md's sixty-ninth round). It used to, as
+## `2 ^ (scale >> 3)`, which was this project's own reading of a field whose
+## real meaning has never been recovered. Real region 100/100 carries
+## `scale = 16`, which that reading turned into **four** repeats per quad --
+## a texture repeating every 5 units -- and it rendered as a regular diagonal
+## lattice across the whole region, which is exactly what a real playtest
+## reported there. Real Jangan carries only `scale = 0`, which is why the
+## same artifact never appeared there and why two earlier rounds looked in
+## the wrong place for it.
+##
+## Disabling the scale term removes the lattice and leaves soft, organic
+## ground. So the field is left unused until its real meaning is actually
+## recovered from the real client, rather than kept as an invented reading
+## that is known to produce a real artifact.
 const BASE_TILE_REPEAT := 1.0
 
 
@@ -412,8 +421,10 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 		for c in range(col_count):
 			var vextra: PackedByteArray = cells[r][c][1]
 			vertex_keys[r][c] = _resolve_texture_id(vextra, texture_lookup)
-			var vlevel: int = _resolve_texture_scale(vextra) >> 3
-			vertex_repeats[r][c] = BASE_TILE_REPEAT * pow(2.0, float(vlevel))
+			# The real Scale field is deliberately not applied -- see
+			# BASE_TILE_REPEAT's own comment for the real artifact its
+			# previous, invented reading produced.
+			vertex_repeats[r][c] = BASE_TILE_REPEAT
 
 	# Base surface: one continuous mesh over the whole grid, colored by the
 	# real flat-color fallback. Real textured passes are drawn over it.
