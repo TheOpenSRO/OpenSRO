@@ -161,6 +161,64 @@ func _initialize() -> void:
 	_check(g6.objects_at(110.0, 210.0).is_empty(), "an unplaced object is not resolved")
 	_check(absf(g6.height_at(110.0, 240.0, 0.0)) < 0.001, "and contributes no height")
 
+	# --- movement, the part that broke twice in a running world ----------
+	# Walking up a real ramp must actually arrive at the top. The previous
+	# approach put the player on the surface and then refused to move them
+	# along it at all, which is exactly this test failing at step 1.
+	var walk := _region(0.0)
+	walk.cells[0].object_indices = [0]
+	var walk_ramp: Array[NavGraph.PlacedObject] = [
+		NavGraph.place(_ramp(20.0, 40.0, 30.0), 0, Vector3(100.0, 0.0, 200.0), 0.0)
+	]
+	var gw := NavGraph.build(walk, walk_ramp)
+	var pos := Vector3(115.0, 0.0, 201.0)
+	pos.y = gw.height_at(pos.x, pos.z, 0.0)
+	var start_y := pos.y
+	# The ramp runs z 200..240, so 78 steps of 0.5 walks it foot to head.
+	var moved := 0
+	var monotonic_walk := true
+	var last_y := start_y
+	for _i in range(78):
+		var before := pos
+		pos = gw.step(pos, Vector2(0.0, 0.5))
+		if not before.is_equal_approx(pos):
+			moved += 1
+		if pos.y < last_y - 0.001:
+			monotonic_walk = false
+		last_y = pos.y
+	_check(moved == 78, "the player moves on every step (moved %d of 78)" % moved)
+	_check(monotonic_walk, "and never loses height on the way up")
+	_check(pos.y > start_y + 15.0,
+		"walking up a real ramp arrives at the top (y %s -> %s)" % [start_y, pos.y])
+	_check(absf(pos.y - 20.0) < 0.5, "and arrives at the ramp's real height (got %s)" % pos.y)
+
+	# Continuing past the top must land on terrain, not drop through the world.
+	for _i in range(60):
+		pos = gw.step(pos, Vector2(0.0, 0.5))
+	_check(absf(pos.y) < 0.001, "walking off the top lands on terrain (got %s)" % pos.y)
+
+	# A real blocking edge stops a move rather than being walked through.
+	var wall := _region(0.0)
+	wall.internal_edges = [_edge(2, Vector2(200.0, 0.0), Vector2(200.0, 400.0))]
+	var gwall := NavGraph.build(wall, [] as Array[NavGraph.PlacedObject])
+	var at := Vector3(190.0, 0.0, 100.0)
+	for _i in range(60):
+		at = gwall.step(at, Vector2(1.0, 0.0))
+	_check(at.x < 200.0, "a real blocking edge is never crossed (stopped at x=%s)" % at.x)
+
+	# ...but the player slides along it instead of sticking to it. Sticking is
+	# what the reverted collision-shape approach did.
+	var slide := Vector3(190.0, 0.0, 100.0)
+	for _i in range(60):
+		slide = gwall.step(slide, Vector2(1.0, 1.0))
+	_check(slide.x < 200.0, "sliding still never crosses the edge (x=%s)" % slide.x)
+	_check(slide.z > 130.0, "and the move slides along the wall rather than sticking (z=%s)" % slide.z)
+
+	# A move that starts and ends on the same spot must not fall through.
+	var still := Vector3(500.0, 0.0, 500.0)
+	var still_after := gwall.step(still, Vector2.ZERO)
+	_check(absf(still_after.y - still.y) < 0.001, "standing still keeps its height")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

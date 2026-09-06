@@ -3127,24 +3127,13 @@ func _move_on_nav_graph(delta: float) -> bool:
 	var graph: NavGraph = pair[0]
 	var group: Node3D = pair[1]
 
-	var step := Vector3(player.velocity.x, 0.0, player.velocity.z) * delta
+	# The move is expressed in the region's own space, via the terrain group's
+	# own transform, so the world mirror cannot skew it -- and the decision
+	# itself lives in NavGraph.step, where it can be unit tested.
+	var world_step := Vector3(player.velocity.x, 0.0, player.velocity.z) * delta
 	var local := group.to_local(player.global_position)
-	if step.length_squared() > 0.0:
-		var target := group.to_local(player.global_position + step)
-		var from2 := Vector2(local.x, local.z)
-		var to2 := Vector2(target.x, target.z)
-		if not graph.blocked(from2, to2):
-			local = target
-		else:
-			# Slide along whichever single axis of the move is still allowed,
-			# so a real wall is followed rather than becoming flypaper.
-			var along_x := Vector2(to2.x, from2.y)
-			var along_z := Vector2(from2.x, to2.y)
-			if not graph.blocked(from2, along_x):
-				local = Vector3(along_x.x, local.y, along_x.y)
-			elif not graph.blocked(from2, along_z):
-				local = Vector3(along_z.x, local.y, along_z.y)
-	local.y = graph.height_at(local.x, local.z, local.y)
+	var target := group.to_local(player.global_position + world_step)
+	local = graph.step(local, Vector2(target.x - local.x, target.z - local.z))
 	player.global_position = group.to_global(local)
 	player.velocity.y = 0.0
 	return true

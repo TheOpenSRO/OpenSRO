@@ -276,6 +276,38 @@ func surface_at(x: float, z: float, reference_y: float) -> Surface:
 func height_at(x: float, z: float, reference_y: float) -> float:
 	return surface_at(x, z, reference_y).height
 
+## Advances a position on the graph by one horizontal motion, the way the real
+## client moves a character: a move that crosses a real blocking edge is
+## refused, and the height then comes from whatever real cell is underfoot.
+##
+## This is the whole movement model, deliberately kept here rather than in
+## World3D so it can be exercised headless. The two bugs that cost this
+## project a bad release were both movement bugs that only showed up in a
+## running world -- a character that stood on a surface and could not move
+## along it, and one that fell through. Both are expressible against a
+## synthetic ramp in a unit test, and now are.
+##
+## `from` and the result are region-local; `motion` is a region-local X/Z
+## displacement, already scaled by the frame's own delta.
+func step(from: Vector3, motion: Vector2) -> Vector3:
+	var pos := from
+	if motion.length_squared() > 0.0:
+		var from2 := Vector2(from.x, from.z)
+		var to2 := from2 + motion
+		if not blocked(from2, to2):
+			pos = Vector3(to2.x, from.y, to2.y)
+		else:
+			# Slide: keep whichever single axis of the move is still allowed,
+			# so a real wall is followed rather than becoming flypaper.
+			var along_x := Vector2(to2.x, from2.y)
+			var along_z := Vector2(from2.x, to2.y)
+			if not blocked(from2, along_x):
+				pos = Vector3(along_x.x, from.y, along_x.y)
+			elif not blocked(from2, along_z):
+				pos = Vector3(along_z.x, from.y, along_z.y)
+	pos.y = height_at(pos.x, pos.z, pos.y)
+	return pos
+
 ## Does moving from `from` to `to` (both region-local X/Z) cross a real
 ## blocking edge? This is the real client's own test: an edge is a 2D line,
 ## not geometry, so nothing here depends on heights, winding or shape
