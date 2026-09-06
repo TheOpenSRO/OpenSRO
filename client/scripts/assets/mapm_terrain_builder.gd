@@ -287,30 +287,39 @@ static func _resolve_texture_scale(extra: PackedByteArray) -> int:
 const BASE_TILE_REPEAT := 1.0
 
 
-## Deterministically picks one of the 8 real square symmetries (4
-## rotations x optional mirror) for a quad's own UV corners, keyed by its
-## own (r, c) grid position. Purely a rendering choice, not a claim about
-## the original game's own real per-quad UV data (not recoverable at this
-## granularity from what this project has) -- a standard, honest technique
-## for keeping a real, repeated ground texture from reading as an
-## obviously stamped, uniformly-aligned grid, the same real visual problem
-## flagged as a known limitation when per-quad texturing first shipped
-## (see docs/PROGRESS.md). Every quad still gets exactly one real texture
-## tile, unchanged -- this only varies its orientation.
+## The four corner UVs of the quad at grid position (r, c), laid out
+## **continuously across the whole region** so a real ground texture flows
+## from one quad into the next.
+##
+## **Rewritten 2026-09-06** (see docs/WORLD_ISSUES.md's sixty-seventh round).
+## This used to give every quad its own UV set starting at 0 and running to
+## `repeat`, then rotate or mirror it by one of 8 square symmetries chosen
+## from a hash of (r, c). Both halves of that were wrong, and together they
+## are what made real open ground read as a grid of squares:
+##
+##   * starting every quad's UVs at 0 stamps the texture once per quad and
+##     hard-cuts it at every 20-unit quad edge, so a seam is guaranteed on
+##     every boundary no matter how the textures themselves blend;
+##   * re-orienting each quad independently then makes neighbouring quads
+##     disagree about which way the texture runs, turning those seams into
+##     visible tiles.
+##
+## It was introduced as a disclosed rendering-only technique (never a claim
+## about real data) to stop a repeated texture reading as an obviously
+## stamped, aligned grid. It produced exactly the artifact it was meant to
+## avoid.
+##
+## UVs now come from the vertex's own absolute position in the region grid,
+## so they are continuous everywhere two quads share the real per-vertex
+## `Scale` that drives `repeat` -- which is what makes a real texture tile
+## across the ground instead of being stamped into it.
 static func _quad_uv_corners(r: int, c: int, repeat: float = 1.0) -> PackedVector2Array:
-	var base: Array[Vector2] = [Vector2(0, 0), Vector2(repeat, 0), Vector2(repeat, repeat), Vector2(0, repeat)]
-	var h: int = absi((r * 73856093) ^ (c * 19349663))
-	var variant := h % 8
-	var rot := variant % 4
-	var mirror := variant >= 4
-	var corners := PackedVector2Array()
-	corners.resize(4)
-	for i in range(4):
-		var uv: Vector2 = base[(i + rot) % 4]
-		if mirror:
-			uv = Vector2(uv.y, uv.x)
-		corners[i] = uv
-	return corners
+	var u0 := float(c) * repeat
+	var u1 := float(c + 1) * repeat
+	var v0 := float(r) * repeat
+	var v1 := float(r + 1) * repeat
+	return PackedVector2Array([
+		Vector2(u0, v0), Vector2(u1, v0), Vector2(u1, v1), Vector2(u0, v1)])
 
 ## Builds a real multi-surface ArrayMesh, one surface per distinct real
 ## texture ID actually used (plus one shared "-1" surface for any quad

@@ -143,20 +143,28 @@ func _init() -> void:
 
 	_check(MapmTerrainBuilder.near_row_middle_height(region_full) == 0.0, "near_row_middle_height reads block (0,0)'s own real vertex")
 
-	# _quad_uv_corners: a rendering-only technique (not a real-data claim)
-	# that varies each quad's UV orientation to avoid a real repeated
-	# ground texture reading as an obviously stamped, aligned grid -- see
-	# the function's own doc comment. Must always return a real permutation
-	# of the unit square's 4 corners (never a garbage/degenerate UV set),
-	# and must be deterministic (same (r, c) always produces the same
-	# result, so a region's appearance doesn't change between loads).
-	var uv_corner_set := {}
-	for corner in MapmTerrainBuilder._quad_uv_corners(3, 5):
-		uv_corner_set[corner] = true
-	_check(uv_corner_set.size() == 4, "_quad_uv_corners returns 4 distinct real unit-square corners (got %d)" % uv_corner_set.size())
-	for corner in uv_corner_set.keys():
-		_check(corner.x in [0.0, 1.0] and corner.y in [0.0, 1.0], "_quad_uv_corners only ever returns real unit-square corners (got %s)" % corner)
-	_check(MapmTerrainBuilder._quad_uv_corners(3, 5) == MapmTerrainBuilder._quad_uv_corners(3, 5), "_quad_uv_corners is deterministic for the same (r, c)")
+	# _quad_uv_corners lays a real ground texture out continuously across the
+	# region, so it flows from one quad into the next instead of being
+	# stamped once per quad. The property that matters is that adjacent quads
+	# agree on the UV along the edge they share -- without that, every quad
+	# boundary is a visible seam, which is what made real ground read as a
+	# grid of squares (see the function's own doc comment).
+	var uv_here := MapmTerrainBuilder._quad_uv_corners(3, 5, 1.0)
+	var uv_east := MapmTerrainBuilder._quad_uv_corners(3, 6, 1.0)
+	var uv_south := MapmTerrainBuilder._quad_uv_corners(4, 5, 1.0)
+	# Corner order is [ (r,c), (r,c+1), (r+1,c+1), (r+1,c) ].
+	_check(uv_here[1].is_equal_approx(uv_east[0]) and uv_here[2].is_equal_approx(uv_east[3]),
+		"UVs are continuous across the shared edge with the quad to the east")
+	_check(uv_here[3].is_equal_approx(uv_south[0]) and uv_here[2].is_equal_approx(uv_south[1]),
+		"UVs are continuous across the shared edge with the quad to the south")
+	_check(uv_here[0] == Vector2(5.0, 3.0),
+		"a quad's UV origin is its own real position in the region grid (got %s)" % uv_here[0])
+	_check(MapmTerrainBuilder._quad_uv_corners(3, 5, 1.0) == MapmTerrainBuilder._quad_uv_corners(3, 5, 1.0),
+		"_quad_uv_corners is deterministic for the same (r, c)")
+	# A larger real repeat tiles the texture more times across the same quad.
+	var uv_rep2 := MapmTerrainBuilder._quad_uv_corners(3, 5, 2.0)
+	_check(absf((uv_rep2[1].x - uv_rep2[0].x) - 2.0) < 0.001,
+		"the real per-vertex Scale drives how many times a texture repeats per quad")
 
 	# build_full_region_mesh_textured: half the region's vertices carry
 	# TextureInfo ID 1 (resolved via texture_lookup to a real texture), the

@@ -2982,3 +2982,41 @@ terrain at a single point also ignores the slope a real tree is standing on. The
 would need to compare a model's own real base against the terrain beneath its footprint
 before it could support any claim, and the trees in question look correct in a real
 playtest screenshot of that region.
+
+## Sixty-seventh round: the ground squares were the UVs, not the blending
+
+**2026-09-06.** The sixty-sixth round rewrote ground texturing from per-quad to real
+per-vertex splatting, which was correct and grounded in the real client's own shader —
+and it did **not** fix what the playtest was actually reporting. Shown a render of the
+result, the tester said it "looks like exactly the same problem". They were right: the
+blend changed, the squares did not.
+
+The squares were never the blending. They were the UVs.
+
+`_quad_uv_corners` gave **every quad its own UV set starting at 0** and running to
+`repeat`, then rotated or mirrored it by one of 8 square symmetries chosen from a hash
+of `(r, c)`. Both halves are wrong, and together they guarantee the artifact:
+
+- starting every quad's UVs at 0 stamps the texture once per quad and hard-cuts it at
+  every 20-unit quad edge, so there is a seam on every boundary no matter how well the
+  textures blend across it;
+- re-orienting each quad independently then makes neighbouring quads disagree about
+  which way the texture runs, turning those seams into visible tiles.
+
+It had been introduced as a disclosed rendering-only technique — never a claim about
+real data — to stop a repeated texture reading as an obviously stamped, aligned grid.
+It produced precisely the artifact it was meant to avoid.
+
+UVs now come from the vertex's own absolute position in the region grid, so a real
+texture flows continuously from one quad into the next, and the real per-vertex `Scale`
+field decides how many times it repeats. The test asserts the property that matters:
+adjacent quads agree on the UV along the edge they share, east and south.
+
+### The lesson worth keeping
+
+Two rounds were spent fixing a real defect that was not the reported one. The
+per-vertex splatting work stands on its own evidence and is still right, but it was
+chosen because it was the interesting problem, not because anything tied it to the
+symptom. The symptom was a hard seam on a fixed 20-unit grid — which points at
+per-quad UVs, not at how two textures mix. Matching the artifact's own geometry to the
+code that produces that geometry would have found this first.
