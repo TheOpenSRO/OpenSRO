@@ -3020,3 +3020,54 @@ chosen because it was the interesting problem, not because anything tied it to t
 symptom. The symptom was a hard seam on a fixed 20-unit grid — which points at
 per-quad UVs, not at how two textures mix. Matching the artifact's own geometry to the
 code that produces that geometry would have found this first.
+
+## Sixty-eighth round: a whole-world terrain audit, and what it rules out
+
+**2026-09-06.** Asked to focus on accurately rebuilding terrain and map for the whole
+game rather than object placement in one town, and with ground still not looking right,
+this round is about knowing *where* we are wrong rather than guessing.
+
+### What the real client does with terrain textures, from its own shaders
+
+Going back to the real shader source in a real `Data.pk2` (the RE box, not decompiled
+guesswork) settled the model and ruled out two theories:
+
+- `terrainps14.psh` / `terrainpsn10.psh` sample exactly **one** `TEX_TERRAIN_COLOR` per
+  pass. No in-shader multi-texture blend.
+- `scattervsdetail10.vsh` shows terrain UVs come **per-vertex from the vertex buffer**
+  (`dcl_texcoord0 v1` … `mov oT0.xy, v1`). The alternative — projecting world position
+  by a constant, `mad oT0.xy, VPOSITION.xz, c[CV_BASE_TEX_PROJECTION]…` — is present but
+  **commented out**. So the client fills terrain UVs itself when it builds the mesh; the
+  repeat rate is client code, not shader constants.
+
+### Ruled out as causes of the "squares"
+
+- **`.t` is not the terrain colour.** Its embedded 512×512 DXT1 texture measures a mean
+  saturation of **0.014** — genuinely greyscale, a lightmap, as MAPT_FORMAT.md says.
+- **Missing mipmaps are not the cause.** Real `Tile2D\` ground textures are 512×512
+  DXT1 with a full 10-level mip chain, and they survive to the texture we render with
+  (`image_has_mipmaps=true`).
+- **Unresolved tile IDs are not the cause** — see the audit below.
+
+### The audit
+
+`client/tools/audit_terrain_fidelity.gd` paints each region from **our own** per-vertex
+tile assignments (each tile ID coloured by its real texture's average colour) and
+compares it against that region's own real authored minimap art from `Media.pk2`.
+
+Over a real 240-region sample spanning the whole world (213 with real minimap art):
+
+- **zero** unresolved tile IDs, in every region;
+- a smooth diff spread — median 0.096, p10 0.065, p90 0.150, min 0.024, max 0.278 —
+  with **no outliers**.
+
+A wrong region orientation, a wrong tile mapping or missing data would put a region far
+above that pack, and nothing is. Together with the sixty-fifth round's `.nvm` global-edge
+adjacency proof and the object-placement overlay, the terrain and map **data** pipeline
+is now positively verified across the whole world, not just where a playtest went.
+
+That is worth stating plainly because it narrows what is left: the ground not looking
+right is a **rendering** problem, not a data one, and the one number still not recovered
+from the real client is how many times a real ground texture repeats across a real quad.
+That lives in client code (see the vertex shader finding above), not in the shaders or
+the map files.
