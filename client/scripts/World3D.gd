@@ -1313,6 +1313,83 @@ func _load_region_navmesh(mapm_path: String) -> NvmReader.ParsedRegion:
 	_navmesh_cache[key] = parsed
 	return parsed
 
+## Real walkable graphs, one per loaded region, keyed by the region's own
+## terrain group. Each entry is [NavGraph, Node3D] -- the graph plus the node
+## whose own local space *is* that region's real coordinate space, so
+## converting between the two is done with the node's real transform rather
+## than by re-deriving the region placement (and its mirror) by hand.
+var _region_nav_graphs: Array = []
+
+## Builds the real walkable graph for a region: its terrain `.nvm` plus every
+## real object that `.nvm` lists, each resolved to its own real navigation
+## mesh. See NavGraph for how objects attach to a region and why this is data
+## rather than collision shapes.
+func _build_region_nav_graph(terrain_group: Node3D, mapm_path: String) -> void:
+	var region := _load_region_navmesh(mapm_path)
+	if region == null:
+		return
+	var archive := _open_pk2_if_set()
+	var placed: Array[NavGraph.PlacedObject] = []
+	var missing := 0
+	if archive != null and not region.objects.is_empty():
+		var idx_bytes := AssetSource.read_bytes(OBJECT_INDEX_PATH, archive)
+		var table := ObjidxReader.parse(idx_bytes) if not idx_bytes.is_empty() else null
+		if table != null:
+			for oi in range(region.objects.size()):
+				var obj: NvmReader.MapObject = region.objects[oi]
+				var collision := _load_object_collision(archive, table, obj.resource_id)
+				if collision == null:
+					missing += 1
+					continue
+				placed.append(NavGraph.place(collision, oi, obj.local_position, obj.yaw))
+	var graph := NavGraph.build(region, placed)
+	_region_nav_graphs.append([graph, terrain_group])
+	print("World3D: real walkable graph for %s -- %d/%d real objects placed, %d real terrain blocking edges" % [
+		mapm_path, placed.size(), region.objects.size(), graph.terrain_blocking.size() / 2])
+	if missing > 0:
+		print("World3D:   (%d real objects in that region could not be resolved to a navigation mesh)" % missing)
+
+## Cache of real object navigation meshes by real resource ID, since a region
+## repeats the same handful of real object types across many placements.
+var _object_collision_cache := {}
+
+func _load_object_collision(
+	archive: Pk2Reader, table: ObjidxReader.Table, resource_id: int
+) -> BmsReader.CollisionMesh:
+	if _object_collision_cache.has(resource_id):
+		return _object_collision_cache[resource_id]
+	_object_collision_cache[resource_id] = null
+	var entry = table.lookup(resource_id)
+	if entry == null:
+		return null
+	var bsr_entry := ObjectLoader.find_file(archive, entry.path)
+	if bsr_entry == null:
+		return null
+	var bsr := BsrReader.parse(archive.read_file(bsr_entry))
+	if bsr == null or bsr.mesh_path == "":
+		return null
+	var mesh_entry := ObjectLoader.find_file(archive, bsr.mesh_path)
+	if mesh_entry == null:
+		return null
+	var collision := BmsReader.parse_collision(archive.read_file(mesh_entry))
+	if collision == null or collision.cells.is_empty():
+		return null
+	_object_collision_cache[resource_id] = collision
+	return collision
+
+## The real walkable graph covering the player, as [NavGraph, Node3D], or an
+## empty Array when the player is not over any region that has one.
+func _nav_graph_for(world_position: Vector3) -> Array:
+	for pair in _region_nav_graphs:
+		var group: Node3D = pair[1]
+		if group == null or not is_instance_valid(group):
+			continue
+		var local := group.to_local(world_position)
+		if local.x < 0.0 or local.z < 0.0 or local.x > REGION_SPAN or local.z > REGION_SPAN:
+			continue
+		return pair
+	return []
+
 func _try_add_navmesh_walls(terrain_group: Node3D, mapm_path: String) -> void:
 	var region := _load_region_navmesh(mapm_path)
 	if region == null:
@@ -2325,6 +2402,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 
 	_try_add_navmesh_walls(terrain_group, mapm_path)
 	_try_add_real_water(terrain_group, mapm_path)
+	_build_region_nav_graph(terrain_group, mapm_path)
 
 	# The vertical calibration above only guarantees one specific mesh vertex
 	# lines up near world Y=0 -- it says nothing about the height of whatever
@@ -3002,6 +3080,65 @@ func _player_capsule_height() -> float:
 		return (collision.shape as CapsuleShape3D).height
 	return 0.0
 
+## Set to "1" to move the player on the real walkable graph instead of with
+## Godot physics (gravity, capsule, move_and_slide and the _try_step_up
+## assist).
+##
+## **Opt-in, deliberately.** The graph itself is verified against real data
+## (see NavGraph), and this builds correctly in a real running world -- a real
+## Jangan load places 122/122 real objects with 411 real terrain blocking
+## edges, and neighbouring regions likewise. What has *not* been verified is a
+## real character actually walking a real staircase with it. The previous
+## round shipped exactly that gap as the default and it was wrong in-world
+## (docs/WORLD_ISSUES.md's sixty-third round), so this stays off until a real
+## in-world climb has been observed, then becomes the default.
+const NAV_MOVEMENT_ENV := "SRREVAMP_NAVMESH_MOVEMENT"
+
+## Moves the player on the real walkable graph, the way the real client does:
+## the ground's height comes from the real cell underfoot, and a move is
+## refused when it crosses a real blocking edge -- an edge being a 2D line,
+## never geometry.
+##
+## Returns false when no real graph covers the player, in which case the
+## caller falls back to physics. That happens legitimately: a region with no
+## `.nvm`, or the moment before one streams in.
+##
+## There is no gravity here and no capsule, which is not a simplification --
+## the real client has neither. The previous attempt expressed this same data
+## as collision shapes and failed precisely because a capsule against a
+## two-sided surface pins itself against the very ramp it stands on (see
+## docs/WORLD_ISSUES.md's sixty-third round).
+func _move_on_nav_graph(delta: float) -> bool:
+	if OS.get_environment(NAV_MOVEMENT_ENV) != "1":
+		return false
+	var pair := _nav_graph_for(player.global_position)
+	if pair.is_empty():
+		return false
+	var graph: NavGraph = pair[0]
+	var group: Node3D = pair[1]
+
+	var step := Vector3(player.velocity.x, 0.0, player.velocity.z) * delta
+	var local := group.to_local(player.global_position)
+	if step.length_squared() > 0.0:
+		var target := group.to_local(player.global_position + step)
+		var from2 := Vector2(local.x, local.z)
+		var to2 := Vector2(target.x, target.z)
+		if not graph.blocked(from2, to2):
+			local = target
+		else:
+			# Slide along whichever single axis of the move is still allowed,
+			# so a real wall is followed rather than becoming flypaper.
+			var along_x := Vector2(to2.x, from2.y)
+			var along_z := Vector2(from2.x, to2.y)
+			if not graph.blocked(from2, along_x):
+				local = Vector3(along_x.x, local.y, along_x.y)
+			elif not graph.blocked(from2, along_z):
+				local = Vector3(along_z.x, local.y, along_z.y)
+	local.y = graph.height_at(local.x, local.z, local.y)
+	player.global_position = group.to_global(local)
+	player.velocity.y = 0.0
+	return true
+
 ## Lifts the player over a real step they would otherwise walk straight
 ## into.
 ##
@@ -3079,12 +3216,13 @@ func _physics_process(delta: float) -> void:
 			deg_to_rad(camera_arm.rotation_degrees.y), deg_to_rad(DEFAULT_CAMERA_YAW_DEGREES),
 			deg_to_rad(CAMERA_RECENTER_DEGREES_PER_SECOND * delta)))
 
-	if not player.is_on_floor():
-		player.velocity.y -= GRAVITY * delta
-	else:
-		player.velocity.y = 0.0
-	_try_step_up(delta)
-	player.move_and_slide()
+	if not _move_on_nav_graph(delta):
+		if not player.is_on_floor():
+			player.velocity.y -= GRAVITY * delta
+		else:
+			player.velocity.y = 0.0
+		_try_step_up(delta)
+		player.move_and_slide()
 
 	# CharacterBody3D.is_on_floor() was observed real, unreliable here (stays
 	# false indefinitely for a character resting motionless since spawn, a
