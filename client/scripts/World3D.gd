@@ -1129,6 +1129,43 @@ func _load_regioninfo() -> RegioninfoReader.ParsedTable:
 ## understood), and so does a region the table never mentions. In both
 ## cases whatever the label already said is left alone rather than
 ## overwritten with a guess.
+
+## Appends the player's real region and region-local position to the zone
+## label, so a screenshot from a playtest says exactly *where* it was taken.
+##
+## Added 2026-09-06 after a real playtest reported parts of the world being
+## "not where they should be" -- a real, credible report that could not be
+## acted on, because neither a screenshot nor a description pins down which
+## real region and which part of it is being looked at. The region and local
+## coordinates are directly checkable against that region's own real authored
+## minimap art (`Media.pk2`'s `minimap\\<y>x<x>.ddj`), which is what makes a
+## report like that actionable rather than anecdotal.
+## The last real zone name resolved for the player's region, kept so the
+## label's position part can be refreshed as they walk without re-resolving
+## the zone every frame.
+var _current_zone_name := "-"
+var _zone_label_tick := 0
+
+## Refreshes the position shown in the zone label as the player moves.
+## Throttled: the text only has to be readable, not per-frame accurate.
+func _refresh_zone_label_position() -> void:
+	_zone_label_tick += 1
+	if _zone_label_tick % 10 != 0:
+		return
+	if zone_label == null:
+		return
+	zone_label.text = "Zone: %s%s" % [_current_zone_name, _zone_label_position_suffix()]
+
+func _zone_label_position_suffix() -> String:
+	var pair := _nav_graph_for(player.global_position)
+	if pair.is_empty():
+		return " @ %d, %d, %d (no region)" % [
+			player.global_position.x, player.global_position.y, player.global_position.z]
+	var group: Node3D = pair[1]
+	var local := group.to_local(player.global_position)
+	var suffix := String(group.name).replace("RealTerrain_", "")
+	return " [%s] local %d, %d, %d" % [suffix, local.x, local.y, local.z]
+
 func _update_zone_label_for_region(region_x: int, region_y: int) -> void:
 	var table := _load_regioninfo()
 	if table == null:
@@ -1136,7 +1173,8 @@ func _update_zone_label_for_region(region_x: int, region_y: int) -> void:
 	var zone_name := RegioninfoNames.display_for_region(table, region_x, region_y)
 	if zone_name == "":
 		return
-	zone_label.text = "Zone: %s" % zone_name
+	_current_zone_name = zone_name
+	zone_label.text = "Zone: %s%s" % [zone_name, _zone_label_position_suffix()]
 
 func _load_tile_index() -> TileIndexReader.Table:
 	if _tile_index_load_attempted:
@@ -3262,6 +3300,7 @@ func _physics_process(delta: float) -> void:
 	_recover_if_below_terrain()
 
 	_maybe_stream_regions()
+	_refresh_zone_label_position()
 
 	_time_since_send += delta
 	if _time_since_send >= MIN_SEND_INTERVAL and player.position.distance_to(_last_sent_pos) >= MIN_SEND_DISTANCE:
