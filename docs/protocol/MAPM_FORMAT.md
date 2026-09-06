@@ -612,3 +612,48 @@ way. See `README.md`'s `SRREVAMP_MAPM_TEXTURE_PATH`/`SRREVAMP_MEDIA_PK2_PATH` an
 region-name suffixes `_100` through `_104`). Extracted directly from a real `Map.pk2` (1.5GB) via
 this project's own `server/internal/pk2` reader (used and deleted twice — not kept in this
 environment between sessions, re-extract on demand rather than assuming it's still there).
+
+## Recovered from the real client binary (2026-09-06)
+
+Earlier work established this format from the public community reference plus byte-level
+validation against real files. These facts come from the real `sro_client.exe` itself, via
+Ghidra, and are the first *client-code* confirmations of the constants this project renders with.
+
+**The region loader is `FUN_00a361b0`.** It is what builds a region's file paths:
+
+```c
+_sprintf_s(acStack_22c, 0x200, "%d\\%d.m",  regionY, regionX);
+_sprintf_s(acStack_238, 0x200, "%d\\%d.o2", regionY, regionX);
+```
+
+and it checks the magic as an **integer**, not a string — `local_137c = (int *)0x56584d4a`,
+which is `"JMXV"` little-endian. That is why no string search across any shipped binary finds
+`JMXVMAPM`: it is never stored as text.
+
+**Region world size, straight from the client.** The same function places a region's origin:
+
+```c
+*(float *)(*param_3 + 7)   = (float)regionX * _DAT_00e1b908 * _DAT_00d99a68;  // world X
+*(float *)(*param_3 + 0xf) = (float)regionY * _DAT_00e1b908 * _DAT_00d99a68;  // world Z
+```
+
+Both constants are doubles in `.rdata` (the decompiler's `(float)` is a narrowing cast, and
+each one's low dword is zero, which is why a 4-byte read shows `00000000`):
+
+| address | bytes | value |
+|---|---|---|
+| `00e1b908` | `00 00 00 00 00 00 74 40` | **320.0** |
+| `00d99a68` | `00 00 00 00 00 00 18 40` | **6.0** |
+
+So a region is `320.0 × 6.0` = **1920.0** world units across, and the client itself expresses
+that as **6 blocks of 320 units** — exactly the 6×6 block grid this format documents, with each
+block's 16 tiles therefore 20 units each.
+
+This independently confirms `World3D.REGION_SPAN = 1920.0` and `MapmTerrainBuilder.TILE_SIZE =
+20.0`, which until now rested on the mesh footprint matching and on neighbouring regions'
+heightmap edges lining up exactly. Both were right.
+
+**Still not recovered:** how the client fills a terrain vertex's texture coordinates. The real
+terrain vertex shader takes them straight from the vertex buffer (`mov oT0.xy, v1` in
+`Shader\scattervsdetail10.vsh`, with the world-position projection alternative commented out), so
+the repeat rate is decided in client code that has not been located yet.
