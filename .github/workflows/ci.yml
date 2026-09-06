@@ -76,6 +76,7 @@ jobs:
           godot --headless --path . --script res://scripts/nvm/nvm_reader_test.gd
           godot --headless --path . --script res://scripts/nvm/nvm_collision_test.gd
           godot --headless --path . --script res://scripts/nvm/nvm_water_test.gd
+          godot --headless --path . --script res://scripts/nav/nav_graph_test.gd
           godot --headless --path . --script res://scripts/regioninfo/regioninfo_reader_test.gd
           godot --headless --path . --script res://scripts/efp/efp_reader_test.gd
           godot --headless --path . --script res://scripts/assets/skeleton_pose_test.gd
