@@ -3084,14 +3084,24 @@ func _player_capsule_height() -> float:
 ## Godot physics (gravity, capsule, move_and_slide and the _try_step_up
 ## assist).
 ##
-## **Opt-in, deliberately.** The graph itself is verified against real data
-## (see NavGraph), and this builds correctly in a real running world -- a real
-## Jangan load places 122/122 real objects with 411 real terrain blocking
-## edges, and neighbouring regions likewise. What has *not* been verified is a
-## real character actually walking a real staircase with it. The previous
-## round shipped exactly that gap as the default and it was wrong in-world
-## (docs/WORLD_ISSUES.md's sixty-third round), so this stays off until a real
-## in-world climb has been observed, then becomes the default.
+## **Opt-in, deliberately.** The evidence so far is good but incomplete:
+##
+##   * the graph itself is verified against real data (see NavGraph);
+##   * it builds correctly in a real running world -- a real Jangan load
+##     places 122/122 real objects with 411 real terrain blocking edges, and
+##     every neighbouring streamed region builds too, with no script errors;
+##   * and a real character does climb with it. Dropped at the foot of the
+##     real Jangan palace stairs (a real 22.1-unit ramp) with the _try_step_up
+##     assist disabled, the player walked from region-local y=2.12 to y=10.74.
+##     The same harness, on the same stairs, with the previous
+##     collision-shape approach produced *zero* displacement.
+##
+## What is missing is the rest of that profile: the run was cut short, so the
+## player has not been watched all the way to the top of a real ramp or
+## observed staying on the surface once there. The previous round shipped a
+## gap exactly this size as the default and it was wrong in-world
+## (docs/WORLD_ISSUES.md's sixty-third round), so this stays off until the
+## full climb has been seen, and then becomes the default.
 const NAV_MOVEMENT_ENV := "SRREVAMP_NAVMESH_MOVEMENT"
 
 ## Moves the player on the real walkable graph, the way the real client does:
