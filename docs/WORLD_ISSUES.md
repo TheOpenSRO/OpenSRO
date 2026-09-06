@@ -2959,9 +2959,26 @@ texture to fade) and asserts the property that matters: blend vertex alpha is pe
 0 or 1, never a fixed edge feather — and that every real quad is still covered exactly
 once by an opaque pass.
 
-### Noted, not fixed
+### Investigated and dismissed: "objects sit below the terrain in 100/100"
 
-Real objects in region 100/100 sit a median **17.15 units below** the real terrain
-under them (only 26% within ±2 units), where real Jangan regions measure a median of
-**0.00**. That is a separate real placement bug, found while checking heights this
-round.
+While checking heights this round, real objects in region 100/100 measured a median
+**17.15 units below** the real terrain under them (26% within ±2), where real Jangan
+regions measure **0.00**. That looked like a placement bug. It is not, and the check
+that suggested it was too naive to support the claim:
+
+- The region's two independent real height sources agree **exactly** — a real
+  `100\100.m` mesh and the real `nv_6464.nvm` heightmap differ by a median, minimum
+  and maximum of **0.00** across every vertex. Same for Jangan. So terrain height is
+  not in question.
+- The offset is entirely **trees**: 46 of the region's 58 real objects are
+  `euro_esteuro_tree07_l02/l03`, and every other object type measures ~0.00.
+- A real model's origin is **not** at its base. Those trees' own mesh spans local Y
+  −5.98 to 95.08, and a real `oas_grs_weed04` spans −10.13 to 69.43 — ground clutter is
+  authored sunk into the ground on purpose.
+
+So "object Y minus terrain Y" only reads as 0 for models whose origin happens to sit at
+their base (Jangan's buildings), and says nothing useful for anything else. Sampling
+terrain at a single point also ignores the slope a real tree is standing on. The metric
+would need to compare a model's own real base against the terrain beneath its footprint
+before it could support any claim, and the trees in question look correct in a real
+playtest screenshot of that region.
