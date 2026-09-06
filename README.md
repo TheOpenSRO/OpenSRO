@@ -426,12 +426,18 @@ finangle up the edges" a real playtest hit.
 
 The format was validated the same way `.nvm` was — read every section in order and see whether it
 lands exactly on the file's end. **507 of 507 do**, with zero leftover bytes and no special cases;
-see `docs/protocol/BMS_FORMAT.md`. Verified with a control rather than an anecdote: walked up the
-real palace stairs with no step-up assist, the object's own navmesh carries the capsule up the full
-20.4-unit climb, while its render mesh provides no surface there at all. Worth knowing about the
-change: an object with a navigation mesh is now solid only where the real game says it is, so a
-roof overhead no longer blocks anything, including the camera — that is what the real client does,
-not a free win.
+see `docs/protocol/BMS_FORMAT.md`.
+
+**Driving Godot collision from it was tried and reverted** (v0.1.38, reverted the same day). In
+isolation a capsule climbs the full ramp; in the world the player lands on the surface and then
+cannot move along it at all. Real placed objects sit under the world's mirrored transform, which
+flips which face is front and so forces two-sided collision, and a two-sided single-thickness
+surface pins the capsule against the very ramp it is standing on. Those two requirements conflict,
+so the approach cannot be tuned into working — see `docs/WORLD_ISSUES.md`'s sixty-third round. The
+real client never hands this data to a collision solver: it walks the cell/edge graph and takes
+height from the cell underfoot, which is a movement-model change rather than a collision-shape one.
+The parsing and geometry helpers are kept and tested, ready for that; objects meanwhile keep
+colliding against their render geometry, with `_try_step_up` still carrying staircases.
 
 The "Zone:" label is real now too, and the table behind it turned up somewhere unexpected:
 `regioninfo.txt` ships inside `Data.pk2`'s **`Shader\`** folder, not anywhere map-shaped

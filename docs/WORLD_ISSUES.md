@@ -2693,3 +2693,70 @@ geometry exactly as before.
 
 `_try_step_up` is left in place: it still does real work on terrain, which has no
 per-object navigation mesh to walk.
+
+## Sixty-third round: the object navmesh was right, feeding it to the physics engine was not
+
+**2026-09-06.** The sixty-second round shipped (v0.1.38) with object collision driven
+by each `.bms`'s own navigation mesh. **In-world it does not work, and this reverts
+that integration.** The format work, the geometry helpers and their tests stay: what
+was wrong is the last step, handing the data to Godot's physics engine.
+
+### What the in-world test showed
+
+The player was teleported onto the real Jangan palace right-hand stairs
+(`cj_pal_right_stair`, a real 20.4-unit climb) with the step-up assist disabled:
+
+| | result |
+|---|---|
+| lands on the navmesh, `floor = true`, rests stably | yes |
+| then walks uphill | **no — zero displacement** |
+| with the extruded walls disabled | identical, so not the walls |
+| with the winding reversed and `backface_collision` off | falls through instead |
+
+At the moment of failure the player has full uphill velocity, `floor = true`,
+`is_on_wall() = false`, and **six simultaneous slide collisions against the ramp's own
+face** with a correct slope normal `(0, 0.92, 0.40)`. It is pinned against the surface
+it is standing on.
+
+### Why the isolated test passed and this did not
+
+The sixty-second round's control walked a capsule up the same kind of ramp in
+isolation and it climbed the full height. That test was real but not representative,
+in two ways it took this round to see:
+
+- **No world mirror.** Real placed objects are children of the terrain group, which
+  carries `scale.z = -1` (sixty-first round). A negative-determinant transform flips
+  which face is front, so a fixed winding that holds the player up in isolation drops
+  them through in-world, and vice versa. This also retrospectively explains the
+  sixty-second round's unresolved contradiction — 99.8% of real cells measure
+  up-facing as stored, yet the stored winding fell through — the two tests were on
+  opposite sides of the mirror.
+- **No adjoining geometry.** In isolation the capsule was dropped mid-ramp onto clean
+  surface. In the world the ramp meets a flat quad of the same navmesh at its foot,
+  and that seam is where the capsule pins.
+
+The mirror forces `backface_collision = true` (a fixed winding cannot be right on both
+sides of it), and a two-sided single-thickness surface is what pins the capsule. Those
+two requirements are in direct conflict, which is why this approach cannot simply be
+tuned into working.
+
+### What the real client does instead, and why that is the actual fix
+
+It never hands this data to a collision solver at all. It walks the cell/edge graph:
+find the cell under the character, move within it, cross an edge into the neighbouring
+cell if the edge is passable, and take height from the cell. There is no capsule, no
+depenetration and no winding, so none of the three problems above exist.
+
+That is the real fix and it is a movement-model change, not a collision-shape change.
+Until it is built, real objects keep colliding against their real render geometry and
+`World3D._try_step_up` keeps carrying real staircases — an approximation, and now a
+knowingly retained one.
+
+### What is kept
+
+`BmsReader.parse_collision`, `BmsCollision` and their 69 tests, plus
+[BMS_FORMAT.md](protocol/BMS_FORMAT.md)'s section. That work stands on its own
+evidence — 507 of 507 real sections parsing exactly to EOF, cross-checked by two
+independent implementations — and is what the graph walker will be built on.
+`ObjectLoader._add_object_navmesh_collision` is kept too, uncalled, as the record of
+exactly what was tried.
