@@ -62,6 +62,7 @@ jobs:
           godot --headless --path . --script res://scripts/pk2/pk2_reader_test.gd
           godot --headless --path . --script res://scripts/ddj/ddj_reader_test.gd
           godot --headless --path . --script res://scripts/bms/bms_reader_test.gd
+          godot --headless --path . --script res://scripts/bms/bms_collision_test.gd
           godot --headless --path . --script res://scripts/bsr/bsr_reader_test.gd
           godot --headless --path . --script res://scripts/bmt/inflate_test.gd
           godot --headless --path . --script res://scripts/bmt/bmt_reader_test.gd

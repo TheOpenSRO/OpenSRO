@@ -2607,3 +2607,89 @@ this approach), and no script errors across 243 frames.
 `rel / REGION_SPAN` lands on `dx + 0.5` and rounds up. It predates this round and
 this change preserves it exactly rather than making it worse. Folding it into a
 mirror fix would have muddied the verification.
+
+## Sixty-second round: objects were collided against their render geometry, not their navmesh
+
+**2026-09-05.** A real playtest reported not being able to climb the Jangan temple
+stairs — "I can climb the edges if I finangle it". That signature (steps block
+outright, the sloped ramp beside them works) is a body colliding with the vertical
+riser of every single step. The interim fix was `World3D._try_step_up`, an assist
+that lifts the player over a blocked step. It worked, and it was an approximation.
+
+### What the real client does instead
+
+It never collides a character against a building's render geometry at all. A real
+`.bms` can carry **its own navigation mesh**, at the offset in header field `0x28`
+— vertices, convex navigable cells, and edges that either bound the mesh or join
+two cells, structurally the same thing a region's terrain `.nvm` carries. The
+client walks that cell/edge graph and takes the character's height from the cell
+underfoot.
+
+The difference is stark on a real staircase. `cj_pal_center_stair01.bms`, the real
+Jangan palace centre stairs:
+
+| | vertices | triangles/cells | distinct Y levels |
+|---|---:|---:|---:|
+| render mesh | 36 | 16 | 5 (the treads) |
+| navigation mesh | 8 | 6 | **2** (a ramp) |
+
+The real game walks a ramp. Nothing ever collides with a riser, so nothing ever
+needs lifting over one.
+
+### Recovering the format
+
+Header field `0x28` was documented in this project as "reserved, observed 0" —
+which it genuinely was in the only samples then to hand, particle and character
+meshes, neither of which a character stands on. Across a 4,395-file real sample of
+a real `Data.pk2`, 507 real meshes carry a section there.
+
+The layout was derived structurally and then validated the way `.nvm` was: read in
+order, does it land exactly on the file's end? **507 of 507 do**, with zero
+leftover bytes and no special cases. Three bits of a real bitfield at header
+offset `0x38` select record sizes, and each was isolated by finding real files
+that set it *without* the others rather than inferred from a correlation. See
+[BMS_FORMAT.md](protocol/BMS_FORMAT.md) for the full layout and evidence.
+
+Real edge semantics match the terrain `.nvm` exactly: across 78,130 real edges,
+all 20,892 outline edges carry `0xFFFF` on their far side and all 57,238 internal
+edges join two real cells. The adjacency split is total; the flag split is not
+(0.9% of internal edges block), which is why the code tests the real flags rather
+than trusting which list an edge came from.
+
+### Verified with a control, not an anecdote
+
+A capsule was walked up the real Jangan palace stairs twice, identical apart from
+the collision source and **with no step-up assist in either run**:
+
+| collision source | result |
+|---|---|
+| the object's own navigation mesh | climbs the full 20.4-unit ramp, y 8.2 → 27.1, then walks off the far end |
+| its render mesh (the previous behaviour) | no surface at that spot at all — falls straight through |
+
+### One bug this nearly shipped with
+
+Godot's `ConcavePolygonShape3D` is **one-sided by default**, and with that default
+a capsule dropped onto a real staircase's navigation mesh falls straight through
+it. An earlier draft of this change carried a comment asserting the shape was
+solid from both sides; it is not, and the physics test is what caught it. The
+shape now sets `backface_collision = true`, which is also what the data means — a
+real blocking edge has to stop a character approaching from either side — and a
+test guards the default from creeping back.
+
+Measured across 41,762 real cells, 99.8% have a geometric normal pointing upward
+as stored, which would suggest the stored winding already faces the right way for
+Godot. The physics behaviour disagrees, and that disagreement is **unresolved**.
+Two-sided collision is correct either way, so nothing depends on settling it.
+
+### What this changes that is not an improvement
+
+An object with a navigation mesh is now solid only where the real game says it is
+solid. Parts a character can neither stand on nor be stopped by — a roof overhead,
+most obviously — no longer block anything, **including the camera spring arm**.
+That is what the real client does and it is the point of using this data, but it
+is a real, visible difference rather than a free win. Meshes with no navigation
+section (3,534 of 4,000 real meshes sampled) keep colliding against their render
+geometry exactly as before.
+
+`_try_step_up` is left in place: it still does real work on terrain, which has no
+per-object navigation mesh to walk.

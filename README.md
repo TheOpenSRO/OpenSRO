@@ -412,6 +412,27 @@ stopped by them, the camera deliberately is not. `SRREVAMP_DEBUG_NAVMESH_WALLS=1
 is how the placement was checked: over real Jangan they wrap each building and leave the streets
 open.
 
+Individual objects turn out to carry navmeshes of their own, and that is what makes real stairs
+climbable. A real `.bms` can hold a complete per-object navigation mesh at the offset in header
+field `0x28` — this project previously documented that field as "reserved, observed 0", which it
+genuinely was in the only samples then to hand (particle and character meshes, neither of which a
+character stands on). 507 of a 4,395-file real sample carry one. The real client never collides a
+character against a building's *render* geometry: it walks that cell/edge graph and takes the
+character's height from the cell underfoot, which is why a real staircase is walked as a **ramp**.
+The real Jangan palace centre stairs render as 16 triangles across 5 tread levels; their navigation
+mesh is 6 cells across **2**. Colliding against the render mesh instead put a vertical riser in
+front of the player at every step, which is exactly the "can't climb the temple stairs, but can
+finangle up the edges" a real playtest hit.
+
+The format was validated the same way `.nvm` was — read every section in order and see whether it
+lands exactly on the file's end. **507 of 507 do**, with zero leftover bytes and no special cases;
+see `docs/protocol/BMS_FORMAT.md`. Verified with a control rather than an anecdote: walked up the
+real palace stairs with no step-up assist, the object's own navmesh carries the capsule up the full
+20.4-unit climb, while its render mesh provides no surface there at all. Worth knowing about the
+change: an object with a navigation mesh is now solid only where the real game says it is, so a
+roof overhead no longer blocks anything, including the camera — that is what the real client does,
+not a free win.
+
 The "Zone:" label is real now too, and the table behind it turned up somewhere unexpected:
 `regioninfo.txt` ships inside `Data.pk2`'s **`Shader\`** folder, not anywhere map-shaped
 (`docs/protocol/REGIONINFO_FORMAT.md`). It is EUC-KR, its rows are `<y> <x>` — the opposite column

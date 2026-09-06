@@ -31,6 +31,83 @@ const HEADER_PTRS_BASE := 0x10
 ## detect_vertex_size). See docs/protocol/BMS_FORMAT.md.
 const VERTEX_REC_SIZE_CANDIDATES := [44, 52]
 
+## Header offset of the real pointer to the object's own navigation/collision
+## mesh -- the real walkable surface the client's own navmesh code uses for
+## a placed object (stairs, floors, bridges), as opposed to the render
+## geometry the rest of this parser reads. Recovered 2026-09-05; see
+## docs/protocol/BMS_FORMAT.md's "Collision section" for the derivation.
+## Zero in the great majority of real files (character parts, decoration and
+## anything the player can't stand on): 507 of 4,395 real meshes sampled
+## across a real Data.pk2 carry one.
+const COLLISION_PTR_OFFSET := 0x28
+## Header offset of the real per-file bitfield that selects the collision
+## section's real record sizes. Each bit was isolated independently, by
+## finding real files that set it without the others (see the mask
+## constants below).
+const COLLISION_FLAGS_OFFSET := 0x38
+## Real bit 0: each real edge record carries one extra trailing byte
+## (10 bytes instead of 9).
+const COLLISION_FLAG_WIDE_EDGE := 0x1
+## Real bit 1: each real cell record carries one extra trailing byte
+## (9 bytes instead of 8).
+const COLLISION_FLAG_WIDE_CELL := 0x2
+## Real bit 2: a real list of length-prefixed event names follows the edge
+## lists, before the lookup grid.
+const COLLISION_FLAG_HAS_EVENTS := 0x4
+const COLLISION_VERTEX_REC_SIZE := 13
+
+## One real vertex of an object's own navigation mesh. The real flag byte's
+## meaning is not established -- it is carried through unparsed rather than
+## guessed at.
+class CollisionVertex:
+	var position: Vector3
+	var flags: int
+
+## One real navigable triangle of an object's own navigation mesh, as three
+## real indices into CollisionMesh.vertices.
+class CollisionCell:
+	var a: int
+	var b: int
+	var c: int
+
+## One real navigation edge bounding a CollisionCell. Real semantics are
+## identical to the terrain .nvm's own edges (see NvmReader.Edge and
+## docs/protocol/NVM_FORMAT.md): an edge in outline_edges always has
+## cell_to == NO_CELL and blocks, an edge in internal_edges always joins two
+## real cells and is passable.
+class CollisionEdge:
+	var v0: int
+	var v1: int
+	var cell_from: int
+	var cell_to: int
+	var flags: int
+
+## One real object-local navigation mesh, read from the real section at
+## COLLISION_PTR_OFFSET.
+class CollisionMesh:
+	var vertices: Array[CollisionVertex] = []
+	var cells: Array[CollisionCell] = []
+	## Real boundary edges: every one carries NO_CELL on its far side.
+	var outline_edges: Array[CollisionEdge] = []
+	## Real interior edges: every one joins two real cells.
+	var internal_edges: Array[CollisionEdge] = []
+	## Real length-prefixed event names, present only when
+	## COLLISION_FLAG_HAS_EVENTS is set (empty otherwise). Carried through
+	## unparsed -- what the client does with them isn't established.
+	var events: Array[String] = []
+	## Real origin (x, z) of the lookup grid below.
+	var grid_origin: Vector2
+	var grid_width: int
+	var grid_height: int
+	## Real row-major grid_width * grid_height lists of real indices into
+	## cells -- a real spatial lookup acceleration structure. Read (rather
+	## than skipped) because it is what makes the section's real length
+	## self-checking: the parse lands exactly on the file's end.
+	var grid_cells: Array[PackedInt32Array] = []
+
+## The real "no cell on this side" sentinel, shared with the terrain .nvm.
+const NO_CELL := 0xFFFF
+
 class Vertex:
 	var position: Vector3
 	var normal: Vector3
@@ -131,6 +208,140 @@ static func parse(data: PackedByteArray) -> ParsedMesh:
 		mesh.bounds_max = Vector3(_le_f32(data, bbox_off + 12), _le_f32(data, bbox_off + 16), _le_f32(data, bbox_off + 20))
 
 	return mesh
+
+## Parses the real object navigation/collision mesh a .bms may carry (see
+## COLLISION_PTR_OFFSET). Returns null when the real file has no such
+## section -- the common case, and not an error. Returns null and pushes an
+## error when a section is present but doesn't decode.
+##
+## Like NvmReader.parse, this is fully deterministic and self-checking: every
+## count is real and self-describing, and the whole section, read in order,
+## lands exactly on the real end of the file. Verified against 507 real
+## collision sections found in a 4,395-file real sample of a real Data.pk2 --
+## all 507 land exactly on the end with zero leftover bytes, at the record
+## sizes COLLISION_FLAGS_OFFSET's real bitfield selects.
+static func parse_collision(data: PackedByteArray) -> CollisionMesh:
+	if data.size() < PREAMBLE_END:
+		return null
+	var magic := data.slice(0, MAGIC_LEN).get_string_from_ascii()
+	if magic != MAGIC:
+		return null
+	var start := _le_u32(data, COLLISION_PTR_OFFSET)
+	if start == 0:
+		return null # real, valid: this mesh has no navigation data
+	if start < PREAMBLE_END or start >= data.size():
+		push_error("bms: collision section offset %d out of range" % start)
+		return null
+
+	var flags := _le_u32(data, COLLISION_FLAGS_OFFSET)
+	var cell_rec_size := 9 if (flags & COLLISION_FLAG_WIDE_CELL) != 0 else 8
+	var edge_rec_size := 10 if (flags & COLLISION_FLAG_WIDE_EDGE) != 0 else 9
+
+	var cm := CollisionMesh.new()
+	var off := start
+
+	var vertex_count := _le_u32(data, off)
+	off += 4
+	if off + vertex_count * COLLISION_VERTEX_REC_SIZE > data.size():
+		push_error("bms: collision vertex array (count=%d) runs past end of file" % vertex_count)
+		return null
+	for i in range(vertex_count):
+		var rec := off + i * COLLISION_VERTEX_REC_SIZE
+		var v := CollisionVertex.new()
+		v.position = Vector3(_le_f32(data, rec), _le_f32(data, rec + 4), _le_f32(data, rec + 8))
+		v.flags = data[rec + 12]
+		cm.vertices.append(v)
+	off += vertex_count * COLLISION_VERTEX_REC_SIZE
+
+	if off + 4 > data.size():
+		push_error("bms: truncated before collision cell count")
+		return null
+	var cell_count := _le_u32(data, off)
+	off += 4
+	if off + cell_count * cell_rec_size > data.size():
+		push_error("bms: collision cell array (count=%d) runs past end of file" % cell_count)
+		return null
+	for i in range(cell_count):
+		var rec := off + i * cell_rec_size
+		var cell := CollisionCell.new()
+		cell.a = _le_u16(data, rec)
+		cell.b = _le_u16(data, rec + 2)
+		cell.c = _le_u16(data, rec + 4)
+		if cell.a >= vertex_count or cell.b >= vertex_count or cell.c >= vertex_count:
+			push_error("bms: collision cell %d indexes a vertex outside the real array" % i)
+			return null
+		cm.cells.append(cell)
+	off += cell_count * cell_rec_size
+
+	for list_index in range(2):
+		if off + 4 > data.size():
+			push_error("bms: truncated before a collision edge count")
+			return null
+		var edge_count := _le_u32(data, off)
+		off += 4
+		if off + edge_count * edge_rec_size > data.size():
+			push_error("bms: collision edge array (count=%d) runs past end of file" % edge_count)
+			return null
+		for i in range(edge_count):
+			var rec := off + i * edge_rec_size
+			var edge := CollisionEdge.new()
+			edge.v0 = _le_u16(data, rec)
+			edge.v1 = _le_u16(data, rec + 2)
+			edge.cell_from = _le_u16(data, rec + 4)
+			edge.cell_to = _le_u16(data, rec + 6)
+			edge.flags = data[rec + 8]
+			if list_index == 0:
+				cm.outline_edges.append(edge)
+			else:
+				cm.internal_edges.append(edge)
+		off += edge_count * edge_rec_size
+
+	if (flags & COLLISION_FLAG_HAS_EVENTS) != 0:
+		if off + 4 > data.size():
+			push_error("bms: truncated before collision event count")
+			return null
+		var event_count := _le_u32(data, off)
+		off += 4
+		for _i in range(event_count):
+			var name_result := _read_len_prefixed_string(data, off)
+			if name_result == null:
+				push_error("bms: reading a collision event name")
+				return null
+			cm.events.append(name_result[0])
+			off = name_result[1]
+
+	if off + 20 > data.size():
+		push_error("bms: truncated before the collision lookup grid")
+		return null
+	cm.grid_origin = Vector2(_le_f32(data, off), _le_f32(data, off + 4))
+	cm.grid_width = _le_u32(data, off + 8)
+	cm.grid_height = _le_u32(data, off + 12)
+	var grid_total := _le_u32(data, off + 16)
+	off += 20
+	if grid_total != cm.grid_width * cm.grid_height:
+		push_error("bms: collision grid says %d cells but is %dx%d" % [grid_total, cm.grid_width, cm.grid_height])
+		return null
+	for _i in range(grid_total):
+		if off + 4 > data.size():
+			push_error("bms: truncated reading a collision grid list")
+			return null
+		var n := _le_u32(data, off)
+		off += 4
+		if off + n * 2 > data.size():
+			push_error("bms: a collision grid list runs past end of file")
+			return null
+		var list := PackedInt32Array()
+		list.resize(n)
+		for j in range(n):
+			list[j] = _le_u16(data, off + j * 2)
+		off += n * 2
+		cm.grid_cells.append(list)
+
+	if off != data.size():
+		push_error("bms: collision section parsed %d bytes but file is %d" % [off, data.size()])
+		return null
+
+	return cm
 
 ## Builds a renderable Godot ArrayMesh from a parsed Mesh.
 static func to_array_mesh(mesh: ParsedMesh) -> ArrayMesh:

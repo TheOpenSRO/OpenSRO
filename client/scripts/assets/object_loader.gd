@@ -93,7 +93,8 @@ static func load_object(archive: Pk2Reader, path: String) -> Node3D:
 		if entry == null:
 			push_error("ObjectLoader: %s not found in archive" % mesh_paths[i])
 			continue
-		var mesh := BmsReader.parse(archive.read_file(entry))
+		var bms_data := archive.read_file(entry)
+		var mesh := BmsReader.parse(bms_data)
 		if mesh == null:
 			continue
 
@@ -102,17 +103,33 @@ static func load_object(archive: Pk2Reader, path: String) -> Node3D:
 		var array_mesh := BmsReader.to_array_mesh(mesh)
 		mesh_instance.mesh = array_mesh
 
-		# Real static collision, built the same way World3D's own real
-		# terrain collision already is (a StaticBody3D wrapping a trimesh
-		# shape derived directly from the real mesh data) -- added
-		# 2026-08-25 after a live render showed the default player camera
-		# embedded inside a real building's geometry at spawn: real placed
-		# scenery previously had no collision at all, so nothing (camera
-		# spring arm, player movement) could ever be blocked by a wall,
-		# roof, or any other real object. Skipped for meshes with no real
-		# geometry (create_trimesh_shape on an empty ArrayMesh is a
-		# needless real physics-body cost for nothing).
-		if array_mesh.get_surface_count() > 0:
+		# Real static collision. A real .bms may carry its own real
+		# navigation mesh (see BmsReader.parse_collision) -- the real
+		# walkable surface the client itself uses for the object. When it
+		# does, that is what the real game collides against, so it is used
+		# here in place of the render geometry; see
+		# _add_object_navmesh_collision for what that fixes and what it
+		# changes.
+		#
+		# Otherwise, fall back to a trimesh shape derived directly from the
+		# real render mesh, the way World3D's own real terrain collision is
+		# built -- added 2026-08-25 after a live render showed the default
+		# player camera embedded inside a real building's geometry at spawn:
+		# real placed scenery previously had no collision at all, so nothing
+		# (camera spring arm, player movement) could ever be blocked by a
+		# wall, roof, or any other real object. This is the right fallback
+		# rather than "no collision": the great majority of real meshes
+		# carry no navigation section at all (465 of 4,000 real meshes
+		# sampled do), because the real client only needs one for surfaces a
+		# character can stand on or be stopped by.
+		#
+		# Skipped for meshes with no real geometry (create_trimesh_shape on
+		# an empty ArrayMesh is a needless real physics-body cost for
+		# nothing).
+		var collision := BmsReader.parse_collision(bms_data)
+		if collision != null and not collision.cells.is_empty():
+			_add_object_navmesh_collision(mesh_instance, collision)
+		elif array_mesh.get_surface_count() > 0:
 			var body := StaticBody3D.new()
 			var shape := CollisionShape3D.new()
 			shape.shape = array_mesh.create_trimesh_shape()
@@ -136,6 +153,61 @@ static func load_object(archive: Pk2Reader, path: String) -> Node3D:
 		return null
 
 	return root
+
+## How far a real object navigation mesh's own blocking edges are extruded
+## upward into wall collision.
+##
+## This is a project choice, not recovered data, for the same real reason
+## World3D.NAVMESH_WALL_HEIGHT is: the real client tests a navigation edge as
+## a 2D line rather than as geometry, so nothing in the real format gives a
+## wall a height. Matches NAVMESH_WALL_HEIGHT so terrain and object walls
+## behave alike.
+const OBJECT_NAVMESH_WALL_HEIGHT := 40.0
+
+## Attaches collision built from a real object navigation mesh: the real
+## navigable cells as the walkable surface, plus the real blocking edges
+## extruded into walls.
+##
+## This is what makes real staircases, bridges and raised floors climbable.
+## The real client never collides a character against a building's render
+## geometry -- it walks this real cell/edge graph and takes the character's
+## height from the cell underfoot -- so colliding against the render mesh
+## instead put a real vertical riser in front of the player at every step,
+## which is exactly the "can't climb the temple stairs, but can finagle up
+## the sloped edges beside them" failure a real playtest hit.
+##
+## Both parts go in one shape: the cells alone would let the player walk off
+## the object's edge into space, and the walls alone would leave nothing to
+## stand on.
+##
+## Worth knowing about the change in behaviour: an object with a navigation
+## mesh is now solid only where the real game says it is solid, so parts a
+## character can neither stand on nor be stopped by -- a roof overhead, most
+## obviously -- no longer block anything, including the camera spring arm.
+## That is what the real client does, and it is the point of using this data,
+## but it is a real, visible difference from colliding against render
+## geometry rather than a free improvement.
+static func _add_object_navmesh_collision(
+	mesh_instance: MeshInstance3D, collision: BmsReader.CollisionMesh
+) -> void:
+	var faces := BmsCollision.surface_triangles(collision)
+	faces.append_array(BmsCollision.build_wall_triangles(collision, OBJECT_NAVMESH_WALL_HEIGHT))
+	if faces.is_empty():
+		return
+	var shape := ConcavePolygonShape3D.new()
+	shape.set_faces(faces)
+	# Required, not a tweak: Godot's ConcavePolygonShape3D is one-sided by
+	# default, and with it left off a capsule dropped onto a real staircase's
+	# navigation mesh falls straight through. Two-sided is also what this
+	# data means -- a real blocking edge stops a character approaching from
+	# either side. See BmsCollision.surface_triangles.
+	shape.backface_collision = true
+	var collision_shape := CollisionShape3D.new()
+	collision_shape.shape = shape
+	var body := StaticBody3D.new()
+	body.name = "NavmeshCollision"
+	body.add_child(collision_shape)
+	mesh_instance.add_child(body)
 
 ## Loads a real .cpd "Compound" object -- see load_object's doc comment
 ## and docs/protocol/CPD_FORMAT.md. Recurses into load_object once per

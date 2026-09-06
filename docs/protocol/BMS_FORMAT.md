@@ -23,9 +23,11 @@ matching field-for-field; the GDScript side also builds a real Godot `ArrayMesh`
 | 0x1C   | 4    | `hdr[3]`: offset of a single unconfirmed float (observed 0) |
 | 0x20   | 4    | `hdr[4]`: **offset of the bounding box** (6 floats: min xyz, max xyz) |
 | 0x24   | 4    | `hdr[5]`: offset of 2 trailing unconfirmed floats (observed 0, 0) at/near EOF |
-| 0x28   | 8    | Reserved (observed 0 across all 18 real meshes checked in `Particles.pk2`, **and** across 4 real character meshes checked from `Prim/Mesh/Char/Europe/man/` — `europeman_devil_hair.bms`, `europeman_devil_face.bms`, `europeman_barbarian_face.bms`, `europeman_knight_hair.bms` — so whatever distinguishes a skinned/character mesh from a static one, it isn't here; see the vertex-record note below for where a real per-vertex difference *was* found) |
+| 0x28   | 4    | **Offset of the collision section** — the mesh's own navigation mesh (see [Collision section](#collision-section-the-objects-own-navigation-mesh) below). `0` when the mesh has none, which is the common case (3,534 of 4,000 real meshes sampled). Previously documented here as "reserved, observed 0", which it was in the only samples then to hand — particle and character meshes, neither of which a character stands on |
+| 0x2C   | 4    | Reserved (observed 0 in all 507 real meshes with a collision section) |
 | 0x30   | 4    | Unconfirmed offset-shaped field (observed pointing near EOF; not used by our reader) |
-| 0x34   | 8    | Reserved (observed 0) |
+| 0x34   | 4    | Reserved (observed 0) |
+| 0x38   | 4    | **Collision section record-size bitfield** (see below). `0` in 449 of 507 real meshes with a collision section; observed values `0, 4, 5, 6, 7, 8, 14` |
 | 0x3C   | 4    | Flag/count of unconfirmed meaning (observed constant 1) |
 | 0x40   | 8    | Reserved (observed 0) |
 
@@ -160,11 +162,99 @@ found (same "no resource-ID mapping" gap as `.mapo` — see [MAPO_FORMAT.md](MAP
 the body-part-name-to-bone-name mapping is an inferred, unconfirmed heuristic, not a decompiled
 fact.
 
+## Collision section: the object's own navigation mesh
+
+**Recovered 2026-09-05.** A `.bms` may carry, at the offset in header field `0x28`, a complete
+per-object navigation mesh — the real walkable surface the client uses for a placed object. It is
+structurally the same thing a region's terrain `.nvm` carries (see [NVM_FORMAT.md](NVM_FORMAT.md)):
+vertices, convex navigable cells, and edges that either bound the mesh or join two cells.
+
+This matters because **the real client never collides a character against a building's render
+geometry.** It walks this cell/edge graph and takes the character's height from the cell underfoot.
+A staircase is climbed by walking up its navigation triangles, not by stepping onto its render
+mesh — which is why colliding against render geometry made every real staircase unclimbable.
+
+### Layout
+
+Read in order from the offset in `0x28`. Every count is self-describing, and the section runs to
+**exactly** the end of the file — the same self-checking property `.nvm` has, and the property that
+made the record-size bitfield recoverable at all.
+
+| Field | Encoding |
+|---|---|
+| Vertex count | `uint32` |
+| Vertices | count × 13 bytes: `float32 x, y, z` then one flag byte (meaning not established; carried through unparsed) |
+| Cell count | `uint32` |
+| Cells | count × 8 bytes (9 if bit 1 set): `uint16 a, b, c` indices into the vertex array, then a `uint16` that is **0 in all 45,123 real cells measured**, then one padding byte when bit 1 is set |
+| Outline edge count | `uint32` |
+| Outline edges | count × 9 bytes (10 if bit 0 set) — see the edge record below |
+| Internal edge count | `uint32` |
+| Internal edges | count × 9 bytes (10 if bit 0 set) |
+| Event count | `uint32`, **present only when bit 2 is set** |
+| Events | count × (`uint32` length + that many bytes of name). Only real value seen: `"EVENT"`. What the client does with them isn't established |
+| Grid origin | `float32 x, z` |
+| Grid width, height | `uint32`, `uint32` |
+| Grid total | `uint32`, always equal to width × height |
+| Grid lists | width × height × (`uint32` count + that many `uint16` cell indices) — a spatial lookup acceleration structure |
+
+An **edge record** is `uint16 v0, v1` (vertex indices), `uint16 cell_from`, `uint16 cell_to`, then
+one flag byte, plus one padding byte when bit 0 is set. `cell_to` is `0xFFFF` for "no cell on this
+side" — the same sentinel the terrain `.nvm` uses.
+
+### The record-size bitfield at `0x38`
+
+Three bits independently change the section's record sizes. Each was isolated by finding real files
+that set it *without* the others, so these are separated meanings rather than a correlation:
+
+| Bit | Value | Meaning |
+|----:|------:|---|
+| 0 | `0x1` | Edge records carry one extra trailing byte (10 instead of 9) |
+| 1 | `0x2` | Cell records carry one extra trailing byte (9 instead of 8) |
+| 2 | `0x4` | An event-name list follows the edge lists |
+
+Bit 3 (`0x8`) occurs (in `flags` values 8 and 14) but changes none of the three record sizes; its
+meaning is not established. Bits 1 and 2 appear together in the commonest non-zero value, `6`, and
+`flags = 4` (bit 2 alone) and `flags = 5` (bits 0+2) are what prove they are independent.
+
+### How this was confirmed
+
+The layout was derived from real data by structural walk, then validated the way `.nvm` was: read
+in order, does it land exactly on the file's end?
+
+- **507 of 507** real collision sections found in a 4,395-file real sample of a real `Data.pk2`
+  parse to **exactly** the end of the file, with zero leftover bytes, at the record sizes the
+  bitfield selects. No file needed a special case.
+- Zero of 45,123 real cells index a vertex outside their own vertex array.
+- The independent GDScript implementation agrees with the analysis exactly (465/465 real
+  `"0110"` meshes in a 4,000-file sample; the one file it declines is a real older
+  `"JMXVBMS 0109"`, whose layout is not verified).
+
+### Edge semantics
+
+The blocking rule is the same real `(flags & 3)` test the client's own terrain traversal applies —
+see [NVM_FORMAT.md](NVM_FORMAT.md)'s "Edge flag semantics: solved". That it holds for object
+navigation meshes too is measured, across 78,130 real edges:
+
+- All **20,892** outline edges carry `0xFFFF` on their far side; 93.5% carry flag 3 (blocking).
+- All **57,238** internal edges join two real cells; 99.1% carry flag 4 (passable).
+
+The **adjacency split is total; the flag split is not**. A real internal edge may block (0.9% do,
+mostly flag 7 — a passable bit set alongside the blocking bits), and a real outline edge may not.
+That is why `BmsCollision` tests the flags rather than trusting which list an edge came from.
+
 ## Implementation notes
 
 - `server/internal/bms` (Go) and `client/scripts/bms/bms_reader.gd` (GDScript): both parse the
   confirmed layout above, unit tested against synthetic fixtures (never real game data, same
-  policy as `server/internal/pk2`), and cross-checked against each other on real files.
+  policy as `server/internal/pk2`), and cross-checked against each other on real files. The
+  collision section is parsed by the GDScript reader only (`BmsReader.parse_collision`) — it is
+  client-side movement data, and the Go reader has no caller that needs it.
+- `client/scripts/bms/bms_collision.gd` (`BmsCollision`) turns a parsed collision section into the
+  object's walkable surface triangles and its blocking walls, and
+  `ObjectLoader._add_object_navmesh_collision` attaches both as a single `ConcavePolygonShape3D`.
+  An object that has a collision section uses it *instead of* a trimesh of its render geometry, so
+  it is solid only where the real game says it is solid — a consequence worth knowing about is
+  that a roof overhead no longer blocks anything, including the camera spring arm.
 - `client/scripts/assets/character_assembler.gd` (`CharacterAssembler`) builds a real, rigidly-
   jointed character from real body-part meshes + a real skeleton, per the finding above — not
   smooth skinning (none exists to do), but a real recognizable human shape. See
