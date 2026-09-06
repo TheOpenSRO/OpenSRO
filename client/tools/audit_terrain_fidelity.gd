@@ -36,6 +36,14 @@ extends SceneTree
 ## second cluster far above that, so this is real positive evidence that the
 ## terrain *data* pipeline is correct across the whole world, not just the
 ## regions a playtest happens to visit.
+##
+## Dumping a region's two images (`AUDIT_DUMP=<dir>`) also showed *why* real
+## ground is hard to render faithfully: our painted region and the real map
+## agree on structure -- the same paths, the same green/brown distribution --
+## but real per-vertex tile IDs alternate at high frequency, so painting each
+## one flat gives a speckle the real authored map does not have. Real ground
+## is therefore meant to be blended heavily across neighbouring vertices,
+## which is what `MapmTerrainBuilder`'s real per-vertex splatting does.
 
 const GRID := 48
 
@@ -142,4 +150,12 @@ func _initialize() -> void:
 				sum += absf(a.r - b.r) + absf(a.g - b.g) + absf(a.b - b.b)
 				n += 1
 		print("R %d %d diff %.4f unresolved %d/%d" % [rx, ry, sum / float(n * 3), unresolved, total])
+		# AUDIT_DUMP writes both images side by side for eyeballing, which is
+		# how the speckle finding below was made.
+		if OS.get_environment("AUDIT_DUMP") != "":
+			var out := OS.get_environment("AUDIT_DUMP")
+			mine.resize(256, 256, Image.INTERPOLATE_NEAREST)
+			mm.resize(256, 256, Image.INTERPOLATE_NEAREST)
+			mine.save_png("%s/audit_%d_%d_ours.png" % [out, rx, ry])
+			mm.save_png("%s/audit_%d_%d_map.png" % [out, rx, ry])
 	quit(0)
