@@ -21,6 +21,29 @@ class_name NvmWater
 ## standing above it simply occludes it, which is what produces a real
 ## shoreline. No clipping against the ground is needed or wanted.
 
+## ## Why both sources, measured
+##
+## The plane map alone is far too coarse to be the water's *shape*: one cell
+## covers 320x320 units, which is bigger than most real ponds. Measured on
+## real Jangan region `nv_62a8`: the plane map marks **17 of its 36 cells**
+## as water, but only **134 of its 9,216 real tiles** actually carry a real
+## WATER/DEEP_WATER type -- the plane cells cover roughly thirty times more
+## ground than there is real water. Emitting a plane per cell therefore
+## flooded whole blocks, nearly all of it buried under terrain and invisible,
+## while real garden ponds sat dry. That is what a real playtest saw on
+## 2026-09-06: a real pond bed with real lotus-flower props floating over
+## bare ground.
+##
+## The per-tile flags alone are no better, for the opposite reason: they say
+## exactly where water is at 20-unit resolution but carry no level, which is
+## why the earlier per-tile approach draped water over the terrain and made
+## ponds look like jagged sheets.
+##
+## So: **shape from the real tiles, level from the real plane cell**. The two
+## nest cleanly -- all 134 of those real water tiles fall inside a real water
+## plane cell, and none outside -- so the pairing is unambiguous and needs no
+## invented fallback.
+
 ## Real plane type meaning water.
 ##
 ## Established by measurement across **264 real `.nvm` files**, not
@@ -43,8 +66,12 @@ const PLANE_CELL_SPAN := 1920.0 / float(NvmReader.PLANE_MAP_SIDE)
 ## Each quad gets its own 0..1 UV so a real animated water texture tiles
 ## per block rather than being stretched across the whole region, matching
 ## the per-quad convention the ground meshes already use.
-static func build_water_mesh(region: NvmReader.ParsedRegion) -> ArrayMesh:
-	if region == null:
+static func build_water_mesh(
+	region: NvmReader.ParsedRegion, tile_table: TileIndexReader.Table
+) -> ArrayMesh:
+	if region == null or tile_table == null:
+		return null
+	if region.tiles.size() < NvmReader.TILE_COUNT:
 		return null
 	var side := NvmReader.PLANE_MAP_SIDE
 	if region.plane_types.size() < side * side or region.plane_heights.size() < side * side:
@@ -54,15 +81,32 @@ static func build_water_mesh(region: NvmReader.ParsedRegion) -> ArrayMesh:
 	var uvs := PackedVector2Array()
 	var indices := PackedInt32Array()
 
-	for row in range(side):
-		for col in range(side):
-			if region.plane_types[row * side + col] != PLANE_TYPE_WATER:
+	# Shape comes from the real per-tile water flags, level from the real
+	# plane map. Neither alone is right, and this is measured rather than
+	# assumed -- see this file's own "Why both sources" comment.
+	var tside := NvmReader.TILE_MAP_SIDE
+	var tile_span := 1920.0 / float(tside)
+	for row in range(tside):
+		for col in range(tside):
+			var tile: NvmReader.Tile = region.tiles[row * tside + col]
+			var entry = tile_table.lookup(tile.texture_id)
+			if entry == null:
 				continue
-			var height := region.plane_heights[row * side + col]
-			var x0 := float(col) * PLANE_CELL_SPAN
-			var x1 := x0 + PLANE_CELL_SPAN
-			var z0 := float(row) * PLANE_CELL_SPAN
-			var z1 := z0 + PLANE_CELL_SPAN
+			if entry.type != TileIndexReader.TileType.WATER and entry.type != TileIndexReader.TileType.DEEP_WATER:
+				continue
+			var pcol := int(float(col) / float(tside) * float(side))
+			var prow := int(float(row) / float(tside) * float(side))
+			if region.plane_types[prow * side + pcol] != PLANE_TYPE_WATER:
+				# No real level to place this tile at. Measured never to
+				# happen in real data (134 of 134 real water tiles in real
+				# Jangan fall inside a real water plane cell), so this skips
+				# rather than inventing a height.
+				continue
+			var height := region.plane_heights[prow * side + pcol]
+			var x0 := float(col) * tile_span
+			var x1 := x0 + tile_span
+			var z0 := float(row) * tile_span
+			var z1 := z0 + tile_span
 			var base := positions.size()
 			positions.append_array([
 				Vector3(x0, height, z0),

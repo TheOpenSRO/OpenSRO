@@ -2836,3 +2836,69 @@ diagonal moves sliding rather than sticking.
 Objects still render exactly as before, and meshes with no navigation section still
 carry render-mesh collision for the camera. `_try_step_up` stays for terrain.
 `SRREVAMP_NO_NAVMESH_MOVEMENT=1` restores the old physics movement for comparison.
+
+## Sixty-fifth round: region streaming was a half-region early, and ponds were dry
+
+**2026-09-06.** A playtest of v0.1.40 reported movement "much smoother" (the navmesh
+movement landing), but two real problems: chunks of the world feeling cobbled
+together, and a real pond bed with real lotus-flower props floating over bare ground.
+
+### The region grid itself is correct — proved, not assumed
+
+Before chasing the layout, it was checked against ground truth. A region's `.nvm`
+global edges record `assoc_region_id_from`/`assoc_region_id_to`: "this boundary
+connects me to *that* region". Extracted across 20 real regions around Jangan, **724
+boundary edges, zero contradictions**:
+
+| region-local boundary | neighbour |
+|---|---|
+| −X | `region_y − 1` |
+| +X | `region_y + 1` |
+| −Z | `region_x − 1` |
+| +Z | `region_x + 1` |
+
+Worked through our own placement — including the world mirror (`scale.z = −1`) and the
+group offsets — region A's local `z=1920` edge lands at world −960 and region
+`x+1`'s local `z=0` edge lands at world −960 too. They meet exactly, and X likewise.
+So the axes *and* the directions are right. This independently confirms the
+forty-sixth round's heightmap-edge result and extends it, since edge matching could
+never establish direction.
+
+### What was actually wrong: streaming, off by half a region
+
+`_maybe_stream_regions` computed its cell with `round(rel / REGION_SPAN)`, but
+`_grid_origin_world` is the origin region's **corner**, not its centre — so `rel` runs
+`0 → REGION_SPAN` across the region the player is standing in, and rounding flipped to
+the next cell at the **halfway point**.
+
+From the middle of their own region onward, the player was treated as being in the
+neighbouring one. The loaded block was shifted a full region: terrain ahead never
+streamed in, terrain still underfoot behind them was unloaded, and the zone label
+changed half a region early. Regions that *did* load were placed correctly, which is
+why the grid looked right in isolation — it was the *set* that was wrong, and that is
+exactly what "randomly cobbling together chunks of the world" looks like from inside.
+`floor` puts the boundary where the real region boundary is. This bug was noted in the
+sixty-first round as "noted, not fixed"; it is now fixed.
+
+### Water: the plane map is a bound, not a shape
+
+The sixty-first round took water levels from the `.nvm`'s 6x6 `PlaneTypeMap` and
+emitted one flat plane per water cell. A plane cell is **320x320 units** — bigger than
+most real ponds. Measured on real Jangan region `nv_62a8`:
+
+- the plane map marks **17 of 36 cells** as water;
+- but only **134 of 9,216 real tiles** carry a real WATER/DEEP_WATER type;
+- and **all 134 of those tiles fall inside a water plane cell, none outside**.
+
+So the plane cells cover about thirty times more ground than there is water. Emitting
+one plane per cell flooded whole blocks — nearly all of it buried under terrain and
+invisible — while real ponds sat dry, props and all.
+
+Per-tile flags alone are no better: they give the shape at 20-unit resolution but no
+level, which is why the *original* per-tile approach draped water over the ground and
+made ponds look like jagged sheets.
+
+**Shape from the real tiles, level from the real plane cell.** The two nest cleanly
+(134/134 contained), so the pairing needs no invented fallback. On the real region the
+result goes from a `1920 x 35 x 1920` box spanning four different levels to a
+**380 x 380 pond, flat, at a single level (−3)** built from 134 real tile quads.

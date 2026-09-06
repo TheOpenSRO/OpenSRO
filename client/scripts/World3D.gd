@@ -1459,7 +1459,13 @@ func _try_add_real_water(terrain_group: Node3D, mapm_path: String) -> void:
 	var region := _load_region_navmesh(mapm_path)
 	if region == null:
 		return
-	var water_mesh := NvmWater.build_water_mesh(region)
+	# The real per-tile water flags decide the water's shape and the real
+	# plane map its level -- see NvmWater's own "Why both sources" comment.
+	var tile_table := _load_tile_index()
+	if tile_table == null:
+		print("World3D: no real tile2d.ifo -- real water shape can't be resolved, skipping water")
+		return
+	var water_mesh := NvmWater.build_water_mesh(region, tile_table)
 	if water_mesh == null:
 		return
 	var archive := _open_map_pk2_if_set()
@@ -2049,7 +2055,17 @@ func _maybe_stream_regions() -> void:
 	# **Un-mirrored** comment), so region_x now grows toward -Z and the
 	# cell test has to follow it. Getting this wrong streams the
 	# neighbouring regions in on the wrong side of the player.
-	var cur := Vector2i(int(round(-rel.z / REGION_SPAN)), int(round(rel.x / REGION_SPAN)))
+	# **floor, not round** (fixed 2026-09-06, see docs/WORLD_ISSUES.md's
+	# sixty-fifth round). `_grid_origin_world` is the origin region's own
+	# *corner*, not its centre, so `rel` runs 0 -> REGION_SPAN across the
+	# region the player is standing in. Rounding therefore flipped to the
+	# next cell at the halfway point: from the middle of their own region
+	# onward the player was treated as being in the neighbouring one, so the
+	# loaded block was shifted a full region -- terrain ahead never streamed
+	# in, terrain still underfoot behind them was unloaded, and the zone
+	# label changed a half-region early. Flooring puts the boundary where the
+	# real region boundary actually is.
+	var cur := Vector2i(int(floorf(-rel.z / REGION_SPAN)), int(floorf(rel.x / REGION_SPAN)))
 	if cur == _last_stream_cell:
 		return
 	_last_stream_cell = cur
