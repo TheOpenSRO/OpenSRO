@@ -234,3 +234,36 @@ the scan works and that fog is genuinely configured somewhere else.
 what produced the `Scale`-field lattice (see WORLD_ISSUES.md's sixty-ninth round): a
 plausible reading of an unrecovered field that rendered a visible artifact across whole
 regions. The fog values stay unused until the conversion is actually found.
+
+## Terrain shadows are computed, not read from `.t` (2026-09-07)
+
+Worth recording because this project briefly shipped the opposite (see
+WORLD_ISSUES.md's seventy-third and seventy-fourth rounds).
+
+`FUN_009efc60` is the real `DynamicShadow.cpp` code, identified by its own assert:
+
+```
+FUN_0049e490(0x13d, "D:\vss-od\Silkroad\Client\Landscape\MapEngine\DynamicShadow.cpp",
+             "ity*lnx + itx < MAX_TILE_ASSSUM")
+```
+
+`ity * lnx + itx` is ordinary tile indexing (row * width + column), so this walks the tile
+grid. Inside that loop it allocates buffers with
+
+```
+(**(code **)(*piVar17 + 0x44))(0x200, 0x10, 0x121)
+```
+
+where **`0x121` = 289 = 17 x 17** — exactly a real terrain block's own vertex grid (a block
+is 16 tiles across, so 17 vertices per side). It then locks and fills them (`0x800` = 2048
+bytes).
+
+So the real client **builds terrain shadow geometry per block at runtime**. It does not read
+a precomputed per-tile shadow term out of `.t` and multiply it into terrain colour, which is
+what this project tried and reverted.
+
+That leaves the `.t` ShadowMap most plausibly what the public documentation actually says it
+is — "a simplified map used to check if an **object** is inside shadow", a query structure
+rather than a terrain lighting input. Its real values (five levels, `255 * 0.6 .. 1.0`, with
+the *lit* tiles sitting on real building footprints) are consistent with that: an object
+standing on a building's own footprint is not in the terrain's shadow.
