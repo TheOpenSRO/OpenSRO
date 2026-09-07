@@ -197,3 +197,40 @@ Three facts follow, all of which matter for rendering terrain faithfully:
 2. **Terrain lighting is per-vertex**, a single directional `N·L` into the diffuse colour,
    not per-pixel.
 3. Fog on terrain is `min(EXP2 distance fog, height fog)`.
+
+## Fog: how far the trail goes (2026-09-07)
+
+The fog *maths* is fully recovered (see above). What is still missing is where
+`environment.ifo`'s **normalized** near/far (`-1.000 .. 1.000` measured across all 74 real
+records) become world distances. This is how far that trail has been followed, so it does
+not have to be re-walked:
+
+**The D3D fog state setter is `FUN_00bf2360`.** It is identified by the render states it
+sets through the device vtable's `SetRenderState` slot (`0xe4`):
+
+| render state | value | meaning |
+|---|---:|---|
+| `0x22` | 34 | `D3DRS_FOGCOLOR` |
+| `0x24` | 36 | `D3DRS_FOGSTART` |
+| `0x25` | 37 | `D3DRS_FOGEND` |
+
+It takes start, end and colour **as parameters** and caches them in globals — fog start at
+`_DAT_011124bc`, fog end at `_DAT_011124c0`, fog colour at `_DAT_011124b4`. So it applies
+values, it does not compute them.
+
+**Its callers** are `FUN_00bf46b0`, `FUN_00bf4fb0` and `FUN_00bf5370`. Each passes a fog
+record it already holds (e.g. `FUN_00bf46b0` passes `*(param_1 + 0xdc)`), gated on a flag
+bit, so these are per-material/per-effect appliers — also not the conversion.
+
+`FUN_00bf29a0` also writes the same fog globals and is worth checking next.
+
+**What has been ruled out:** vertex-shader constant register 16 (`VSC_FOG`) and register 22
+(`VSC_HEIGHTFOG`) are set in **neither** the map-engine range (246 functions scanned) nor
+the graphics range (573 functions scanned). The registers that *are* set there — 0, 4, 9,
+10, 11, 12, 14, 15, 17, 21 — match the shader's own `VSC_` defines exactly, which confirms
+the scan works and that fog is genuinely configured somewhere else.
+
+**Why this is not being guessed at.** Wiring real fog on an invented conversion is exactly
+what produced the `Scale`-field lattice (see WORLD_ISSUES.md's sixty-ninth round): a
+plausible reading of an unrecovered field that rendered a visible artifact across whole
+regions. The fog values stay unused until the conversion is actually found.
