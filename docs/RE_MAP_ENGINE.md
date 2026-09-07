@@ -97,56 +97,88 @@ Other constants seen while reading: `_DAT_00e1b7d0` = `0.5`, `_DAT_00e1b8d8` = `
   the code that turns its `FogNearPlane`/`FogFarPlane` into real distances, and that sets
   the Rayleigh/Mie coefficients, is elsewhere.
 
-## A caution about the shader source
+## The shader system (recovered 2026-09-07)
 
-`Data.pk2`'s `Shader\` folder holds readable `.psh`/`.vsh` source and is genuinely useful
-for structure. But **no shipped binary references any of those filenames**, and the
-archive also ships a `shader_maptool\` duplicate of the same files, so it may be tooling
-source rather than what the shipped client loads. Treat it as evidence about the intended
-design, not proof of the runtime path.
+**Correction to an earlier note here.** This document previously cautioned that the
+`Shader\` tree might be tooling source rather than the runtime path, because no binary
+referenced any of its filenames. That was based on searching only for `.psh`/`.vsh` names.
+The client *does* load from `Shader\`, just not those: `FUN_00bf67c0` references
+**`"shader\vss0.c"`** and **`"shader\vss2.c"`** directly.
 
-## Terrain appearance: what the real client composes, and what we do not
+`FUN_00bf67c0` is a **runtime shader generator**. It loads one of those `.c` templates,
+prepends generated `#define`s, and assembles the result with the statically-linked D3DX9
+assembler (its error strings are in the binary). Shaders are cached by a generated id, not
+by filename — `m_VShaders.find(dwShaderID) == m_VShaders.end()`. The switches it emits are:
 
-The real terrain pixel shader (`Shader\terrainps14.psh`, and `terrainpsn10.psh`) states the
-whole equation in its own comment:
+| group | values |
+|---|---|
+| skinning | `SKIN0`, `SKIN2` |
+| lighting | `DIRECT`, `PLIGHT`, `NOLIGHT` |
+| texture | `TEXTURE0`, `MULTITEX`, `TEXANI0`, `TEXANI1`, `TEXANI1R` |
+| **fog** | **`LINEAR`, `LINEAR+HEIGHT`, `EXP+HEIGHT`** |
+| version | `VS_VER_1_1`, `VS_VER_2_SW` |
+
+So the `Shader\*.c` files are real, live shader source. (Whether the `terrain*.psh` files
+are loaded the same way is still unconfirmed — they are the only pixel shaders shipped, and
+they pair with the terrain vertex shader below.)
+
+## Fog, exactly as the client computes it
+
+From `Shader\vss0.c`, which is one of the two templates the generator actually loads.
+
+**Linear** — plain D3D linear fog in world units:
 
 ```
-Surf_color  = (N.L) * terrain_tex * cloud_covering * self_shadow_term
-Final_color = Surf_color * extinction + inscattering
+add r0.x, -r5.z, c[VSC_FOG].y     ; (fogEnd - viewZ)
+mul r0.x, r0.x, c[VSC_FOG].z      ; * 1/(fogEnd - fogStart)
+max/min -> clamp to [0,1]
 ```
 
-with three sampled textures: `TEX_NORMAL_HORIZON_MAP` (RGB unpacked `_bx2`, i.e. a normal
-map; its **alpha** carries a horizon angle used as the self-shadow term),
-`TEX_TERRAIN_COLOR`, and `TEX_CLOUD_LAYER`.
+**Exponential** — EXP2, i.e. `1 / exp((viewZ * density)^2)`:
 
-Against that, this project currently composes: the tile texture, Godot's own lighting from
-mesh normals, the `.t` lightmap as ambient occlusion, and Godot fog. So four things in the
-real equation have no equivalent here:
+```
+mul r0.x, r5.z, c[VSC_FOG].w      ; viewZ * density
+mul r0.y, r0.x, r0.x              ; squared
+exp r0.z, r0.y
+rcp r0.x, r0.z
+```
 
-1. a **normal + horizon map** — the real client lights terrain per *texel* and gets
-   self-shadowing from a stored horizon angle, not from mesh normals;
-2. a **cloud shadow layer** multiplied over the surface;
-3. **extinction / inscattering** — real aerial perspective, computed per vertex in
-   `scattervs10.vsh` from Rayleigh/Mie coefficients, rather than a distance fog;
-4. the `.t` texture is used here as ambient occlusion, which is *not* the role the real
-   equation gives any of its three textures.
+**Height fog** adds a second term from `c[VSC_HEIGHTFOG]` — distance of the vertex's world
+Y from a centre Y (`.x`), offset by `.y`, scaled by `.w` and `.z` — and the two are combined
+with `min`, so the denser of distance fog and height fog wins.
 
-`.t` cannot be the normal/horizon map: it is DXT1 (no alpha, so no horizon term) and
-measures a mean saturation of 0.014, i.e. genuinely greyscale. Where the real normal/horizon
-map comes from is not yet known — most likely generated at load from the heightmap.
+Constant layout: `VSC_FOG.y` = fog end, `.z` = `1/(end-start)`, `.w` = density.
+`VSC_HEIGHTFOG.x` = centre Y.
 
-This is the most likely remaining reason real ground does not look like the real game, now
-that tile identity, tiling rate and UV layout are all confirmed correct.
+**This settles a long-standing open question.** Fog near/far are ordinary world-space
+distances feeding standard linear fog — there is no `[-1,+1]`-to-distance mapping to
+recover. What this project has *not* implemented is height fog, which the real client
+combines with distance fog on terrain.
 
-## A correction about the UV change
+## Terrain vertex shader
 
-The 2026-09-06 "continuous UVs" change is worth stating precisely, because it was described
-at the time as fixing the ground squares and it was not.
+`Shader\vertexshader0splatting.c` is the terrain splatting vertex shader:
 
-Old UVs ran `(0,0)…(1,1)` within each quad; new ones run `(c,r)…(c+1,r+1)` across the
-region. **With REPEAT wrapping these sample identically** — `frac(c … c+1) = 0 … 1`. The
-change therefore removed only the hash-driven per-quad rotation/mirror, which was an
-invented technique, and altered nothing else about how a texture lands on the ground.
+```
+dcl_position v0;
+dcl_normal   v3;
+dcl_texcoord0 v4;
+...
+dp3 r1.x, v3, c[VSC_DLIGHT_DIRECTION]     ; N.L
+max r1.x, r1.x, 0
+mov r6, c[VSC_DLIGHT_AMBIENT]
+mad oD0, r1.x, c[VSC_DLIGHT_DIFFUSE], r6  ; vertex colour = N.L * diffuse + ambient
+mov oT0.xy, v4.xy
+mov oT1.xy, v4.zw
+```
 
-The artifact actually reported was caused by the `Scale` field reading (sixty-ninth round),
-which multiplied the repeat rate by four in the regions that carry `scale = 16`.
+Three facts follow, all of which matter for rendering terrain faithfully:
+
+1. **A terrain vertex carries one 4-component texcoord holding *two* UV sets** — `v4.xy`
+   feeds texture stage 0 and `v4.zw` feeds stage 1. Pairing that with the terrain pixel
+   shaders (`t0` = normal/horizon map, `t1` = terrain colour) means one set is region-wide
+   and the other is the tiled ground texture. This project already uses two sets — UV for
+   the tile texture and UV2 for the `.t` lightmap — so the structure matches.
+2. **Terrain lighting is per-vertex**, a single directional `N·L` into the diffuse colour,
+   not per-pixel.
+3. Fog on terrain is `min(EXP2 distance fog, height fog)`.
