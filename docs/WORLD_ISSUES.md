@@ -3446,3 +3446,59 @@ Still open from the same session, not yet chased down: the arched
 openings in the town's north wall render solid rather than as passages,
 and objects can be walked underneath -- their navmesh is placed but
 something about it is not standing the player on top.
+
+## Seventy-eighth round: five cities' worth of city wall in one place
+
+A real playtest asked why the town's gateway arches were bricked up. They
+should not have been, and the reason they were is not in the wall.
+
+The wall is `res\bldg\china\jangan_enter\cj_s.bsr` -- the real Jangan
+city gate: five wall meshes, a door, a roof, stairs. Its arches are real.
+Reading `cj_s_wall01.bms`'s own 328 triangles and firing a ray straight
+through the wall at head height finds **three clear openings**, at object
+x -60..-20, 80..160 and 260..300, exactly where the arches are. Standing
+a player in one of them confirms it from the inside: they end up in a
+dirt-floored passage between two studded door leaves with daylight and
+the palace gate visible out the far end.
+
+What was closing them was **the same object placed five times**. Real
+regions 96/167, 96/168, 96/169, 97/167 and 97/168 *each* place `cj_s.bsr`
+at the identical local position (860.64, -1.76, 1764.43). Every region's
+objects are placed relative to that region, so this built five copies of
+a 5,559-unit-long wall at five different world positions -- and since the
+wall is nearly three regions long, the copies from the regions to the
+west laid solid wall straight across this region's gateways.
+
+The three per-sector lists in a real `.o2` are what separate a region's
+own objects from these cross-references. A `.o2` files entries into a 6x6
+sector grid, so an entry's own position implies which sector it belongs
+in, and measuring that against the sector it is actually filed in
+separates the lists cleanly: **list 2's entries are in their implied
+sector about 91% of the time, against list 1's 46%** (real 97/168:
+145/159 vs 129/273; real 98/168: 106/116 vs 180/390; real 96/168:
+102/149 vs 4/16). The gate falls out the same way -- of the five regions
+placing it, only 97/167 and 97/168, the two the arches actually line up
+with, file it in list 2.
+
+Taking only list 2 (plus the region's own `.o`, unchanged) drops the
+copies from the regions to the west: six `cj_s` objects in the loaded
+grid become three, and the ones that were lying across the arches are
+gone. What it gives up is the entries that only lists 0/1 carry and the
+region's own `.o` does not repeat -- 22 in real 97/168, 47 in real
+98/168, nearly all edge vegetation, which is the same cross-reference
+pattern in miniature.
+
+Not finished: two `cj_s` copies still survive, one from 97/167 and one
+from 97/168, 1920 units apart. They do not overlap, so they read as two
+walls rather than one broken one, but whether the real city has a wall at
+both latitudes is unverified.
+
+Three tools came out of this and are worth keeping:
+`server/cmd/whatishere` lists what a region places near a spot,
+`server/cmd/o2sectors` measures the sector/list structure above, and the
+client's own `SRREVAMP_QA_LOOK` / `SRREVAMP_QA_HIDE` hooks report what
+the camera is pointing at and switch individual meshes off in the built
+world -- which is what identified the wall in the first place, since a
+piece of a big model only means anything in the place the other pieces
+put it. Placed objects are now named after their real model
+(`Obj_<model>_<n>`) so those reports say what they are looking at.

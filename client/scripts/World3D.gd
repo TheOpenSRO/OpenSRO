@@ -3190,15 +3190,52 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 	if not mapo2_bytes.is_empty():
 		var region2 := MapO2Reader.parse(mapo2_bytes)
 		if region2 != null:
+			# Only the third of each sector's three stored lists is treated
+			# as this region's own objects.
+			#
+			# A real playtest found the town's gateway arches bricked up.
+			# The arches are real -- reading `cj_s_wall01.bms`'s own
+			# triangles and firing a ray through the wall at head height
+			# finds three clear openings, exactly where the gate's arches
+			# are -- but five different real regions (96/167, 96/168,
+			# 97/167, 97/168, 97/169) each place that same real
+			# `cj_s.bsr` at the *identical* local position
+			# (860.64, -1.76, 1764.43). Since each region's objects are
+			# placed relative to that region, this drew five copies of a
+			# 5,559-unit-long city wall at five different world positions,
+			# and a neighbour's solid section landed across this region's
+			# archways.
+			#
+			# The three lists are not interchangeable, and which one an
+			# entry sits in is the signal that separates a region's own
+			# objects from these cross-references. A real `.o2` files its
+			# entries into a 6x6 sector grid, so an entry's position
+			# implies which sector it should be in -- and measured across
+			# real regions, **list 2's entries are in their implied sector
+			# about 91% of the time against list 1's 46%** (real 97/168:
+			# 145/159 vs 129/273; real 98/168: 106/116 vs 180/390). List 2
+			# is where a region's own objects live; the others are
+			# references to objects that belong somewhere else. That is
+			# also exactly how the gate falls out: 97/168, the region the
+			# arches actually line up with, is the only one of the five
+			# that lists it in list 2.
+			#
+			# What this gives up: the entries only lists 0/1 carry and the
+			# region's own `.o` does not repeat -- 22 in real 97/168, 47
+			# in real 98/168, nearly all edge vegetation, which is the
+			# same cross-reference pattern in miniature. Drawing a
+			# neighbour's tree in the wrong place is the same bug as
+			# drawing its wall in the wrong place.
 			for sector in region2.sectors:
-				for list in sector.lists:
-					for entry in list:
-						# Real yaw rotation -- see MapO2Reader.Entry.rotation's
-						# doc comment for how this was confirmed (same
-						# real-range empirical check as .o's own rotation
-						# field, against a live region).
-						placements.append({"type_id": entry.type_id, "position": entry.position, "rotation": entry.rotation})
-						o2_count += 1
+				if sector.lists.size() < 3:
+					continue
+				for entry in sector.lists[2]:
+					# Real yaw rotation -- see MapO2Reader.Entry.rotation's
+					# doc comment for how this was confirmed (same
+					# real-range empirical check as .o's own rotation
+					# field, against a live region).
+					placements.append({"type_id": entry.type_id, "position": entry.position, "rotation": entry.rotation})
+					o2_count += 1
 
 	# **De-duplicated 2026-09-07** (see docs/WORLD_ISSUES.md's seventy-fifth
 	# round). A real `.o2` is organised into *sectors*, and a real object
@@ -3307,6 +3344,13 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 		# comment for how this was confirmed (decompiled cos/sin construction
 		# plus a 100%-real-range empirical check against a live region).
 		node.rotation.y = placement["rotation"]
+		# Named after the real model it came from, so that a node in the
+		# scene tree says *which* real object it is. Without this every
+		# placed object was an anonymous Node3D and the only way to work
+		# out what a piece of geometry in front of the camera was, was to
+		# match it against placement coordinates by hand -- see
+		# _qa_look_report, which reads these names straight back.
+		node.name = "Obj_%s_%d" % [entry.path.get_file().get_basename(), loaded]
 		container.add_child(node)
 		loaded += 1
 
@@ -3493,6 +3537,10 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_WALK=deg   walk continuously on that heading
 ##   SRREVAMP_QA_FREE=1     let the camera pass through geometry
 ##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
+##   SRREVAMP_QA_HIDE=a,b    hide every mesh whose own real mesh name
+##                          contains one of these fragments
+##   SRREVAMP_QA_LOOK=1     print which real placed objects the camera is
+##                          pointing at (model name, distance, placement)
 ##   SRREVAMP_QA_ZONE=z     after the first region loads, reload assets for
 ##                          this zone -- accepts the zone box's own
 ##                          `x/y@localX,localZ` form. Reproduces a real
@@ -3539,6 +3587,9 @@ func _qa_step() -> void:
 			if world_environment != null and world_environment.environment != null:
 				world_environment.environment.fog_enabled = false
 			camera_3d.far = 40000.0
+		var hide := OS.get_environment("SRREVAMP_QA_HIDE")
+		if hide != "":
+			_qa_hide_meshes(hide.split(","))
 		var qa_zone := OS.get_environment("SRREVAMP_QA_ZONE")
 		if qa_zone != "":
 			var target := _split_zone_target(qa_zone)
@@ -3549,6 +3600,9 @@ func _qa_step() -> void:
 				var spot: Vector2 = target["local"]
 				_place_at_region_local(coords["x"], coords["y"], spot.x, spot.y)
 			_refresh_zone_label_position()
+
+	if OS.get_environment("SRREVAMP_QA_LOOK") != "" and (_qa_tick == 60 or _qa_tick == 120):
+		_qa_look_report()
 
 	var walk := OS.get_environment("SRREVAMP_QA_WALK")
 	if walk != "":
@@ -3564,6 +3618,142 @@ func _qa_step() -> void:
 			var l := (pair[1] as Node3D).to_local(player.global_position)
 			where = "%d, %d, %d" % [l.x, l.y, l.z]
 		print("QA %4d local %s" % [_qa_tick, where])
+
+## Hides every mesh under a placed object whose own real mesh name
+## contains one of the given fragments, and reports what it hid.
+##
+## A real object is assembled from several real .bms pieces (a gate is its
+## walls, its roof, its stairs, its door), and when the assembled result
+## looks wrong the question is always *which piece*. Rendering the pieces
+## separately does not answer it, because a piece only means anything in
+## the place the others put it. Switching one off in the built world does.
+func _qa_hide_meshes(fragments: PackedStringArray) -> void:
+	var hidden := 0
+	var names := {}
+	for group in get_children():
+		if not String(group.name).begins_with("RealTerrain"):
+			continue
+		for container in (group as Node3D).get_children():
+			if not String(container.name).begins_with("RealMapObjects"):
+				continue
+			for node in container.get_children():
+				var stack: Array[Node] = [node]
+				while not stack.is_empty():
+					var current: Node = stack.pop_back()
+					if current is MeshInstance3D:
+						var lower := String(current.name).to_lower()
+						for fragment in fragments:
+							if fragment != "" and lower.contains(fragment.strip_edges().to_lower()):
+								(current as MeshInstance3D).visible = false
+								names[String(current.name)] = true
+								hidden += 1
+								break
+					for child in current.get_children():
+						stack.append(child)
+	print("QA HIDE: hid %d real mesh instance(s), %d distinct name(s): %s" % [
+		hidden, names.size(), names.keys()])
+
+## Prints which real placed objects the camera is actually pointing at,
+## nearest first: their real model name, how far away they are, and where
+## they are placed in region-local coordinates.
+##
+## Exists because "what is that wall in front of me?" had no cheap answer.
+## Placed objects carry no physics collision of their own -- movement uses
+## the navigation graph, not the meshes -- so a physics raycast finds
+## nothing, and a big model like a city gate has its origin hundreds of
+## units from the piece of it you are standing in front of, which makes
+## matching by placement coordinate alone actively misleading. This walks
+## the real placed nodes instead and intersects the ray against each
+## one's own visual bounds.
+func _qa_look_report() -> void:
+	var origin := camera_3d.global_position
+	var direction := -camera_3d.global_transform.basis.z
+	var pair := _nav_graph_for(player.global_position)
+	if pair.is_empty():
+		print("QA LOOK: not standing in any loaded region")
+		return
+	var group: Node3D = pair[1]
+
+	# Only the region the player is standing in. Walking all 25 loaded
+	# regions' object trees allocated enough to take the process down.
+	var hits: Array = []
+	for container in group.get_children():
+		if not String(container.name).begins_with("RealMapObjects"):
+			continue
+		for node in container.get_children():
+			var bounds := _visual_bounds(node as Node3D)
+			if not bounds.has_volume():
+				continue
+			var hit = bounds.intersects_ray(origin, direction)
+			if hit == null:
+				continue
+			hits.append([origin.distance_to(hit), String(node.name), (node as Node3D).position])
+	hits.sort_custom(func(a, b): return a[0] < b[0])
+	print("QA LOOK from %s facing %s -- %d real object(s) under the crosshair" % [
+		origin.round(), direction.round(), hits.size()])
+	for i in range(mini(hits.size(), 10)):
+		print("QA LOOK   %7.1f away  %s  placed at local %s" % [
+			hits[i][0], hits[i][1], (hits[i][2] as Vector3).round()])
+
+	# Everything standing near the camera, whichever region it belongs to,
+	# with the size of the geometry actually built for it. A ray answers
+	# "what is directly ahead"; this answers "is there anything tall here
+	# at all", which is the question when the thing in front of you turns
+	# out not to be a placed object.
+	var near: Array = []
+	for other in get_children():
+		if not String(other.name).begins_with("RealTerrain"):
+			continue
+		for container in (other as Node3D).get_children():
+			if not String(container.name).begins_with("RealMapObjects"):
+				continue
+			for node in container.get_children():
+				var node3d := node as Node3D
+				var d := origin.distance_to(node3d.global_position)
+				if d > 2500.0:
+					continue
+				var b := _visual_bounds(node3d)
+				if not b.has_volume():
+					continue
+				near.append([d, String(node.name), String(other.name), b])
+	# Tallest first: the thing being looked for is usually the big piece of
+	# architecture, and sorting by distance buries it under scenery.
+	near.sort_custom(func(a, b): return (a[3] as AABB).size.y > (b[3] as AABB).size.y)
+	print("QA LOOK nearby: %d real object(s) within 2500, tallest first" % near.size())
+	for i in range(mini(near.size(), 14)):
+		var box: AABB = near[i][3]
+		var group_node := get_node_or_null(NodePath(near[i][2])) as Node3D
+		var lo := box.position
+		var hi := box.position + box.size
+		if group_node != null:
+			lo = group_node.to_local(box.position)
+			hi = group_node.to_local(box.position + box.size)
+		print("QA LOOK   %7.1f  %-30s %-20s size %s  local %s .. %s" % [
+			near[i][0], near[i][1], near[i][2], box.size.round(),
+			lo.round(), hi.round()])
+
+## One placed object's visual bounds in world space, merged over every
+## mesh under it -- a real placed object is a tree of MeshInstance3Ds, not
+## one mesh. Walks the tree with an explicit stack and merges in place, so
+## reporting on a dense region does not allocate an array per object.
+func _visual_bounds(node: Node3D) -> AABB:
+	var merged := AABB()
+	var seeded := false
+	var stack: Array[Node] = [node]
+	while not stack.is_empty():
+		var current: Node = stack.pop_back()
+		if current is MeshInstance3D:
+			var mesh_node := current as MeshInstance3D
+			if mesh_node.mesh != null:
+				var box: AABB = mesh_node.global_transform * mesh_node.get_aabb()
+				if seeded:
+					merged = merged.merge(box)
+				else:
+					merged = box
+					seeded = true
+		for child in current.get_children():
+			stack.append(child)
+	return merged
 
 ## Lifts the player over a real step they would otherwise walk straight
 ## into.
