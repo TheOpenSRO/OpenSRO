@@ -150,10 +150,25 @@ with `min`, so the denser of distance fog and height fog wins.
 Constant layout: `VSC_FOG.y` = fog end, `.z` = `1/(end-start)`, `.w` = density.
 `VSC_HEIGHTFOG.x` = centre Y.
 
-**This settles a long-standing open question.** Fog near/far are ordinary world-space
-distances feeding standard linear fog — there is no `[-1,+1]`-to-distance mapping to
-recover. What this project has *not* implemented is height fog, which the real client
-combines with distance fog on terrain.
+**Correction (2026-09-07).** This section first concluded that fog near/far are ordinary
+world-space distances and that there was no `[-1,+1]`-to-distance mapping left to recover.
+That was wrong, and checking the asset data disproved it the same day: across **all 74 real
+records** in a real `environment.ifo`, `CHANNEL_FOG_NEAR_PLANE` spans **-1.000 .. 1.000**
+and `CHANNEL_FOG_FAR_PLANE` **-1.000 .. 0.947** — normalized values, exactly as this
+project's existing note said.
+
+Both things are true and do not conflict: the *shader* consumes ordinary world distances
+through `VSC_FOG`, and the *client* converts the normalized asset values into them somewhere
+in between. That conversion is the open question, and it is what blocks using the real fog
+values instead of a disclosed density constant.
+
+The next lead is a **`FogParameter` struct**, visible through its memory pool's RTTI
+(`CMemPool<FogParameter,...>` at `00eda568`). Ghidra has not linked xrefs to that string, so
+reaching it needs the type descriptor, or the code that fills vertex shader constant
+register 16 (`VSC_FOG`).
+
+What this project has *not* implemented either way is height fog, which the real client
+combines with distance fog on terrain via `min`.
 
 ## Terrain vertex shader
 
