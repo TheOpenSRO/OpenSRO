@@ -3115,3 +3115,46 @@ invented reading that demonstrably produces an artifact.
 
 One repeat per quad is independently confirmed by the artwork: `c_marble_jang_07` is a 4×4
 grid of paving slabs, so at one repeat per 20-unit quad each slab is 5 units ≈ 0.6m.
+
+## Seventieth round: environment channels were wired to the wrong lights
+
+**2026-09-07.** Recovered from the real client's own terrain vertex shader
+(`Shader\vertexshader0splatting.c`, which `FUN_00bf67c0`'s runtime shader generator
+actually loads — see [RE_MAP_ENGINE.md](RE_MAP_ENGINE.md)):
+
+```
+mad oD0, N.L, c[VSC_DLIGHT_DIFFUSE], c[VSC_DLIGHT_AMBIENT]
+```
+
+The real **diffuse** channel is the directional light's own colour — the term multiplied
+by `N·L` — and the real **ambient** channels are the additive term. This project had those
+two the other way round: `SunColor` drove the directional light and `DiffuseColor` was
+poured into ambient, while the two real ambient channels (`ObjectAmbientColor`,
+`TerrainAmbientColor`) were decoded and never used at all.
+
+The real data shows why that mattered. Across real records, `SunColor` is `(1,1,1)` in most
+of them — it is the sun *disc's* colour — while `DiffuseColor` carries the actual per-zone
+tint (a real warm `0.70/0.60/0.50`, a real cold `0.70/0.53/0.93`). So the directional light
+was lighting every zone plain white and throwing that character away, and the tint was
+landing in ambient, where it flattens shading instead of directing it.
+
+Now: the directional light takes `DiffuseColor`, ambient takes `ObjectAmbientColor`, and
+`SunColor` tints the real sun-glow sprite — which until now used a hard-coded
+`Color(1, 1, 0.9)`, an invented value, so that is one fewer.
+
+### Known divergence, stated rather than hidden
+
+The real client keeps **separate ambient colours for terrain and objects**, and they really
+do differ (`TerrainAmbientColor` is often `(1,1,1)` where `ObjectAmbientColor` is `0.58`).
+Godot has one global ambient, so this uses the object one. Reproducing both needs terrain
+lit by the real per-vertex equation rather than by Godot's lighting, which is the next step
+on that thread.
+
+### Not implemented, and why
+
+The same shader work recovered the real fog maths exactly — linear `(end-d)/(end-start)`,
+EXP2 `1/exp((d*density)^2)`, and a height-fog term combined with `min`. None of it is wired
+up, because `environment.ifo`'s fog near/far channels are **normalized** (measured across
+all 74 real records: `-1.000 .. 1.000` and `-1.000 .. 0.947`), and the client-side
+conversion into world distances has not been found yet. Wiring real fog on a guessed
+conversion is what produced the `Scale`-field lattice two rounds ago.

@@ -1744,8 +1744,29 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# constant, unchanged.
 	var sun_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_SUN_COLOR, ENVIRONMENT_REFERENCE_TIME)
 	var diffuse_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_DIFFUSE_COLOR, ENVIRONMENT_REFERENCE_TIME)
-	directional_light.light_color = sun_color
-	world_environment.environment.ambient_light_color = diffuse_color
+	var ambient_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_OBJECT_AMBIENT_COLOR, ENVIRONMENT_REFERENCE_TIME)
+
+	# **Channel roles corrected 2026-09-07 from the real client's own shader**
+	# (see docs/RE_MAP_ENGINE.md). The real terrain vertex shader
+	# (`Shader\vertexshader0splatting.c`) lights a vertex as
+	#
+	#     mad oD0, N.L, c[VSC_DLIGHT_DIFFUSE], c[VSC_DLIGHT_AMBIENT]
+	#
+	# so the real *diffuse* channel is the directional light's own colour --
+	# the term multiplied by N.L -- and the real *ambient* channels are the
+	# additive ambient term. This code had those two the other way round: it
+	# put SunColor on the directional light and DiffuseColor into ambient.
+	#
+	# That mattered, and the real data shows why: real SunColor is (1,1,1) in
+	# most real records -- it is the sun *disc's* own colour, which is why it
+	# now tints the real sun glow sprite below instead -- while real
+	# DiffuseColor carries the actual per-zone tint (a real warm
+	# 0.70/0.60/0.50, a real cold 0.70/0.53/0.93). Driving the directional
+	# light from SunColor therefore threw that per-zone character away and
+	# lit every zone with plain white, while pushing the tint into ambient,
+	# where it flattened shading instead of directing it.
+	directional_light.light_color = diffuse_color
+	world_environment.environment.ambient_light_color = ambient_color
 
 	# Real per-zone aerial-perspective haze (2026-09-03). The real client's
 	# own terrain shaders were found shipped as readable source inside
@@ -1781,7 +1802,13 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	env.fog_sun_scatter = FOG_SUN_SCATTER
 	env.fog_aerial_perspective = FOG_AERIAL_PERSPECTIVE
 
-	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) -- sky_top=%s sky_bottom=%s sun=%s diffuse=%s fog=%s" % [record.name1, env_id, top, bottom, sun_color, diffuse_color, fog_color])
+	# The real sun-disc colour belongs on the real sun sprite. Its alpha stays
+	# a disclosed rendering choice (see _build_sun_glow); only the real colour
+	# is taken from real data.
+	if _sun_glow != null:
+		_sun_glow.modulate = Color(sun_color.r, sun_color.g, sun_color.b, _sun_glow.modulate.a)
+
+	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) -- sky_top=%s sky_bottom=%s sun_disc=%s light_diffuse=%s ambient=%s fog=%s" % [record.name1, env_id, top, bottom, sun_color, diffuse_color, ambient_color, fog_color])
 
 ## Opens the real Map.pk2 -- SRREVAMP_MAP_PK2_PATH if set, else a real
 ## "pk2/Map.pk2" next to the running executable (see Pk2Config) -- or
