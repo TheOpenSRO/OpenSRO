@@ -3544,3 +3544,32 @@ footprint under its floor.
 `SRREVAMP_QA_SCAN=n` is the sweep, kept: it reports every spot in the
 player's region where the graph sits below the geometry, worst first,
 naming the model responsible.
+
+## Eightieth round: the arches were never blind
+
+The seventy-eighth round left one thing unproven: from the square, the
+gate's arches still read as brick recesses, and this document called them
+"decorative blind arches" on the strength of a screenshot. That was
+wrong, and worth recording as wrong -- reading a rendered image is how
+this project has repeatedly talked itself into the wrong answer.
+
+`SRREVAMP_QA_THROUGH="z0,z1,y[,step];..."` settles it by measurement:
+it fires horizontal rays through a band of the region at a given height
+and reports which X spans come out the other side. Reading a mesh file's
+own triangles answers this for one mesh; this answers it for what was
+actually built, every overlapping copy included, which is what the
+player walks into.
+
+Fired through the wall band (real local z 1650..1900) at head height,
+the real region has clear spans at **local x 805..840, 950..1010 and
+1120..1160**. The three gateways `cj_s_wall01.bms`'s own triangles
+predict are at 801..841, 941..1021 and 1121..1161. They agree to within
+the 5-unit sampling step. All three arches are open passages, and the
+brick seen from the square is the passage interior at a glancing angle.
+
+One trap this round: the first sweep, fired at height 10, reported zero
+clear spans anywhere across the whole 1920-unit width -- not because the
+wall is solid but because the ground north of it rises, so every ray was
+in the dirt. A negative result from a probe is only worth as much as the
+probe's placement, and the hook now takes several bands in one run
+because each run costs minutes.

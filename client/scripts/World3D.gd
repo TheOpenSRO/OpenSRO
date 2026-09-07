@@ -3550,6 +3550,9 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_WALK=deg   walk continuously on that heading
 ##   SRREVAMP_QA_FREE=1     let the camera pass through geometry
 ##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
+##   SRREVAMP_QA_THROUGH=z0,z1,y[,step]
+##                          fire horizontal rays through that band and
+##                          report which X spans are clear through it
 ##   SRREVAMP_QA_SCAN=n     sweep the region on an n x n grid and report
 ##                          where the walkable graph sits below the solid
 ##                          geometry (i.e. where a player walks underneath)
@@ -3606,6 +3609,13 @@ func _qa_step() -> void:
 		var hide := OS.get_environment("SRREVAMP_QA_HIDE")
 		if hide != "":
 			_qa_hide_meshes(hide.split(","))
+		var through := OS.get_environment("SRREVAMP_QA_THROUGH")
+		if through != "":
+			# Several bands in one run: the useful height is rarely known
+			# in advance, and each run costs minutes.
+			for spec in through.split(";"):
+				if spec.strip_edges() != "":
+					_qa_through_report(spec.strip_edges())
 		var scan := OS.get_environment("SRREVAMP_QA_SCAN")
 		if scan != "":
 			_qa_scan_report(maxi(int(scan), 2))
@@ -3651,6 +3661,54 @@ func _qa_step() -> void:
 					what = "object %s" % placed.get_meta("model")
 			standing = "  on %s at %.1f (%.1f below feet)" % [what, surface.height, l.y - surface.height]
 		print("QA %4d local %s%s" % [_qa_tick, where, standing])
+
+## Fires horizontal rays through a band of the region and reports which
+## X positions are clear through it -- "is this arch a way through, or a
+## recess in a solid wall?"
+##
+## Argument is "z0,z1,y[,step]", all region-local: the band to shoot
+## through, the height to shoot at, and the sampling step. Reading a
+## mesh file's own triangles answers this for one mesh; this answers it
+## for what was actually built there, every overlapping copy included,
+## which is the thing the player walks into.
+func _qa_through_report(spec: String) -> void:
+	var parts := spec.split(",")
+	if parts.size() < 3:
+		print("QA THROUGH: expected \"z0,z1,y[,step]\", got \"%s\"" % spec)
+		return
+	var pair := _nav_graph_for(player.global_position)
+	if pair.is_empty():
+		print("QA THROUGH: not standing in any loaded region")
+		return
+	var group: Node3D = pair[1]
+	var z0 := float(parts[0])
+	var z1 := float(parts[1])
+	var y := float(parts[2])
+	var step_span := float(parts[3]) if parts.size() > 3 else 10.0
+	var space := get_viewport().world_3d.direct_space_state
+
+	var open_from := NAN
+	var runs: Array = []
+	var x := 0.0
+	while x <= REGION_SPAN:
+		var query := PhysicsRayQueryParameters3D.create(
+			group.to_global(Vector3(x, y, z0)), group.to_global(Vector3(x, y, z1)))
+		query.collision_mask = 0xFFFFFFFF
+		query.exclude = [player.get_rid()]
+		var clear := space.intersect_ray(query).is_empty()
+		if clear and is_nan(open_from):
+			open_from = x
+		elif not clear and not is_nan(open_from):
+			runs.append([open_from, x - step_span])
+			open_from = NAN
+		x += step_span
+	if not is_nan(open_from):
+		runs.append([open_from, REGION_SPAN])
+
+	print("QA THROUGH z %.0f..%.0f at height %.0f: %d clear span(s) across the region" % [
+		z0, z1, y, runs.size()])
+	for r in runs:
+		print("QA THROUGH   local x %.0f .. %.0f  (%.0f wide)" % [r[0], r[1], r[1] - r[0]])
 
 ## Sweeps the player's region on a grid and reports every spot where the
 ## walkable graph disagrees with the solid geometry actually built there.
