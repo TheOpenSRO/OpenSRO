@@ -3193,3 +3193,35 @@ is simply no shadow on the ground. That is a real, visible loss and is not being
 as an improvement.
 
 Objects are untouched and still lit and shadowed by the engine as before.
+
+## Seventy-second round: the real character shadow
+
+**2026-09-07.** The previous round baked real terrain lighting and made terrain unshaded,
+which removed the engine's dynamic shadow from the ground. This restores a shadow the way
+the real client draws one rather than putting the engine's back.
+
+The real client ships its character shadow as an asset: `SkyBox\shadowsphere.ddj` in a real
+`Map.pk2`, a real 64x64 DXT3 texture. It is drawn as a flat quad under the character, placed
+at the height the real walkable graph reports — so it lands on whatever is actually
+underfoot, terrain or an object's own navigation mesh such as a staircase or a bridge.
+
+### Two wrong attempts, and what they cost
+
+The texture was first read from a converted PNG preview, which showed a black centre fading
+to white edges. That looks exactly like a *multiply* map, so it was drawn multiplicatively —
+twice, once with alpha blending and once without. Both rendered a hard black square.
+
+Measuring the actual channels settled it: the texture's **RGB is solid black** (mean 0,
+standard deviation 0) and its **alpha** carries the radial gradient (mean 0.33, standard
+deviation 0.34). The preview had composited that alpha over white. It is an ordinary
+alpha-blended black disc, and drawing it that way is correct immediately.
+
+The lesson is narrow and worth keeping: a converted preview of a texture with an alpha
+channel shows alpha *composited*, not the channels themselves. Measure the channels.
+
+### Disclosed choices
+
+The blob's world size (9.0 units) and its lift above the ground (0.15) are rendering
+choices, not real data — the texture is a plain gradient with no scale baked in, and nothing
+found so far says how large the real client draws it. Its opacity is the texture's own real
+alpha, not a chosen value.

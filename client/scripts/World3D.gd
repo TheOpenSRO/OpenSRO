@@ -1649,6 +1649,16 @@ func _try_add_real_sky() -> void:
 			if cloud_tex != null:
 				_build_cloud_dome(cloud_tex)
 
+	# The real character shadow: a real soft radial blob shipped as
+	# SkyBox\shadowsphere.ddj. See _build_blob_shadow.
+	var blob_bytes := AssetSource.read_bytes("SkyBox\\shadowsphere.ddj", archive)
+	if not blob_bytes.is_empty():
+		var blob_parsed := DdjReader.parse(blob_bytes)
+		if blob_parsed != null:
+			var blob_tex := DdjReader.to_texture(blob_parsed)
+			if blob_tex != null:
+				_build_blob_shadow(blob_tex)
+
 	var glow_bytes := AssetSource.read_bytes("SkyBox\\glow.ddj", archive)
 	if not glow_bytes.is_empty():
 		var glow_parsed := DdjReader.parse(glow_bytes)
@@ -3244,6 +3254,81 @@ func _move_on_nav_graph(delta: float) -> bool:
 	player.velocity.y = 0.0
 	return true
 
+## How wide the real character shadow blob is drawn, in world units.
+##
+## A disclosed rendering choice, not real data: the real texture is a plain
+## radial gradient with no scale baked into it, and nothing found so far says
+## how large the real client draws it. Sized here a little wider than the real
+## player capsule (radius 2) so it reads as a shadow under the feet.
+const BLOB_SHADOW_SIZE := 9.0
+
+## How far above the real ground the blob sits, to keep it from z-fighting the
+## terrain it lies on. Also a disclosed choice.
+const BLOB_SHADOW_LIFT := 0.15
+
+var _blob_shadow: MeshInstance3D
+
+## Builds the real character shadow.
+##
+## The real client does not shadow-map its terrain -- it lights terrain per
+## vertex (see MapmTerrainBuilder._lit_vertex_color) and draws a character's
+## shadow as a real soft radial blob, shipped as `SkyBox\shadowsphere.ddj` in
+## a real Map.pk2: a real 64x64 DXT3 gradient, black at the centre fading to
+## a real 64x64 DXT3 texture whose RGB is solid black and whose **alpha** is the
+## radial gradient, so it draws as a soft alpha-blended black disc.
+##
+## Added 2026-09-07 because baking real terrain lighting made terrain unshaded,
+## which removed the engine's own dynamic shadow from the ground. This restores
+## a shadow the way the real client actually draws one, rather than putting the
+## engine's back.
+func _build_blob_shadow(blob_tex: Texture2D) -> void:
+	var quad := QuadMesh.new()
+	quad.size = Vector2(BLOB_SHADOW_SIZE, BLOB_SHADOW_SIZE)
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = blob_tex
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	# The real texture's shape lives entirely in its **alpha**: measured, its
+	# RGB is solid black (mean 0, standard deviation 0) while its alpha is the
+	# radial gradient (mean 0.33, standard deviation 0.34). So it is drawn as
+	# an ordinary alpha-blended black quad, and the gradient does the shaping.
+	#
+	# Two earlier attempts got this wrong by trusting a converted preview of
+	# the texture, which composited that alpha over white and so *looked* like
+	# a black-centre-to-white-edge multiply map. Both drew a hard black square.
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+
+	_blob_shadow = MeshInstance3D.new()
+	_blob_shadow.name = "CharacterShadow"
+	_blob_shadow.mesh = quad
+	_blob_shadow.material_override = mat
+	# A QuadMesh faces +Z; lay it flat on the ground.
+	_blob_shadow.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+	_blob_shadow.visible = false
+	add_child(_blob_shadow)
+
+## Keeps the real character shadow under the player, on the real ground.
+##
+## The height comes from the real walkable graph rather than a raycast, so the
+## shadow lands on whatever the player is actually standing on -- real terrain,
+## or a real object's own navigation mesh such as a staircase or bridge.
+func _update_blob_shadow() -> void:
+	if _blob_shadow == null:
+		return
+	var pair := _nav_graph_for(player.global_position)
+	if pair.is_empty():
+		_blob_shadow.visible = false
+		return
+	var graph: NavGraph = pair[0]
+	var group: Node3D = pair[1]
+	var local := group.to_local(player.global_position)
+	local.y = graph.height_at(local.x, local.z, local.y) + BLOB_SHADOW_LIFT
+	_blob_shadow.global_position = group.to_global(local)
+	_blob_shadow.visible = true
+
 ## Lifts the player over a real step they would otherwise walk straight
 ## into.
 ##
@@ -3354,6 +3439,7 @@ func _physics_process(delta: float) -> void:
 
 	_maybe_stream_regions()
 	_refresh_zone_label_position()
+	_update_blob_shadow()
 
 	_time_since_send += delta
 	if _time_since_send >= MIN_SEND_INTERVAL and player.position.distance_to(_last_sent_pos) >= MIN_SEND_DISTANCE:
