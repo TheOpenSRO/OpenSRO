@@ -3158,3 +3158,38 @@ up, because `environment.ifo`'s fog near/far channels are **normalized** (measur
 all 74 real records: `-1.000 .. 1.000` and `-1.000 .. 0.947`), and the client-side
 conversion into world distances has not been found yet. Wiring real fog on a guessed
 conversion is what produced the `Scale`-field lattice two rounds ago.
+
+## Seventy-first round: terrain lit by the real client's own equation
+
+**2026-09-07.** Implements the terrain lighting recovered from
+`Shader\vertexshader0splatting.c` (the template the real runtime shader generator loads):
+
+```
+mad oD0, N.L, c[VSC_DLIGHT_DIFFUSE], c[VSC_DLIGHT_AMBIENT]
+```
+
+Terrain vertex colour is now `clamp(N·L, 0) * DiffuseColor + TerrainAmbientColor`, baked per
+vertex and multiplied into the texture — which is exactly what the real terrain pixel shader
+does with `oD0`. Terrain materials are set unshaded so the engine does not light it a second
+time.
+
+This is also what finally lets **`TerrainAmbientColor`** be used. It is a separate real
+channel from the object ambient and genuinely differs — often `(1,1,1)` where the object
+ambient is `0.58` — and a single global engine ambient cannot express both. Baking terrain
+lighting honours the real split.
+
+The light direction is converted into the region's own local space, where the mesh is built:
+a terrain group carries `scale.z = -1` for the world mirror and no rotation, so a world
+direction's Z simply flips.
+
+### What this costs, stated plainly
+
+Unshaded terrain **does not receive the engine's dynamic shadows**, so a character no longer
+casts a shadow onto the ground. That is closer to the real client, not further from it — the
+real client lights terrain per vertex and draws character shadows as a blob sprite (a real
+`shadowsphere.ddj` ships in `Map.pk2`'s `SkyBox\` folder) rather than shadow-mapping the
+terrain. But this project has no blob shadow yet, so between this round and that one there
+is simply no shadow on the ground. That is a real, visible loss and is not being presented
+as an improvement.
+
+Objects are untouched and still lit and shadowed by the engine as before.

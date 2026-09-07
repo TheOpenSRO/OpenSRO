@@ -1086,6 +1086,12 @@ func _open_pk2_if_set() -> Pk2Reader:
 	return Pk2Reader.open(pk2_path)
 
 var _tile_index_cache: TileIndexReader.Table
+
+## The real terrain lighting terms from environment.ifo, remembered when a
+## region's environment is applied so the terrain mesh can bake them in.
+var _env_light_diffuse := Color.WHITE
+var _env_terrain_ambient := Color.BLACK
+var _env_light_ready := false
 var _tile_index_load_attempted := false
 
 ## Loads and caches the real tile2d.ifo table (see TILE_INDEX_PATH) from
@@ -1768,6 +1774,16 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	directional_light.light_color = diffuse_color
 	world_environment.environment.ambient_light_color = ambient_color
 
+	# Kept so the terrain mesh built moments later can bake the real client's
+	# own per-vertex terrain lighting -- see MapmTerrainBuilder's
+	# _lit_vertex_color. TerrainAmbientColor is a *separate* real channel from
+	# the object ambient above, and genuinely differs (often (1,1,1) against
+	# the object ambient's 0.58), which is exactly why baking terrain lighting
+	# lets both be honoured where one global ambient cannot.
+	_env_light_diffuse = diffuse_color
+	_env_terrain_ambient = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_TERRAIN_AMBIENT_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	_env_light_ready = true
+
 	# Real per-zone aerial-perspective haze (2026-09-03). The real client's
 	# own terrain shaders were found shipped as readable source inside
 	# Data.pk2's `Shader\` folder (see docs/protocol/SHADER_FINDINGS.md), and
@@ -2344,7 +2360,17 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# produces the complete real 97x97 mesh on a successful parse.
 	var terrain_mesh: ArrayMesh
 	if textured:
-		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh_textured(region, ground_textures, lightmap)
+		# Real per-vertex terrain lighting, baked the way the real client does
+		# (see MapmTerrainBuilder._lit_vertex_color). The light direction is
+		# converted into the region's own local space, where the mesh is built:
+		# a terrain group carries scale.z = -1 for the world mirror and no
+		# rotation, so a world direction's Z simply flips.
+		var light_dir := Vector3.ZERO
+		if _env_light_ready and directional_light != null:
+			var to_light := directional_light.global_transform.basis.z.normalized()
+			light_dir = Vector3(to_light.x, to_light.y, -to_light.z)
+		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh_textured(
+			region, ground_textures, lightmap, light_dir, _env_light_diffuse, _env_terrain_ambient)
 	else:
 		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh(region)
 	if terrain_mesh == null:

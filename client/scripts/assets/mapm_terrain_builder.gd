@@ -137,14 +137,18 @@ static func build_full_region_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh
 ## is sampled from a second, whole-region-spanning UV channel
 ## (ARRAY_TEX_UV2) instead, since it needs the opposite: one continuous
 ## real shadow map stretched over the entire mesh, not repeated per quad.
-static func build_full_region_mesh_textured(region: MapmReader.ParsedRegion, texture_lookup: Dictionary, ao_texture: Texture2D = null) -> ArrayMesh:
+## `light_dir`, `light_diffuse` and `light_ambient` bake the real client's own
+## terrain lighting into vertex colour (see _build_textured_mesh_from_cells).
+## Leave `light_dir` at Vector3.ZERO to skip it and let the engine light the
+## terrain instead, which is what every caller did before 2026-09-07.
+static func build_full_region_mesh_textured(region: MapmReader.ParsedRegion, texture_lookup: Dictionary, ao_texture: Texture2D = null, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK) -> ArrayMesh:
 	var bands_per_side := MapmReader.BLOCKS_PER_SIDE
 	if region.blocks.size() != bands_per_side * bands_per_side:
 		push_error("MapmTerrainBuilder: region has %d blocks, want %d" % [region.blocks.size(), bands_per_side * bands_per_side])
 		return null
 	var full_size := bands_per_side * (GRID_WIDTH - 1) + 1
 	var grid := _full_region_cells(region, bands_per_side, full_size)
-	return _build_textured_mesh_from_cells(grid, full_size, full_size, texture_lookup, ao_texture)
+	return _build_textured_mesh_from_cells(grid, full_size, full_size, texture_lookup, ao_texture, light_dir, light_diffuse, light_ambient)
 
 ## Shared real 6x6-block stitching behind build_full_region_mesh and
 ## build_full_region_mesh_textured -- see either's doc comment for the
@@ -296,6 +300,27 @@ static func _resolve_texture_scale(extra: PackedByteArray) -> int:
 const BASE_TILE_REPEAT := 1.0
 
 
+
+## The real client's own terrain lighting, per vertex:
+##
+##     mad oD0, N.L, c[VSC_DLIGHT_DIFFUSE], c[VSC_DLIGHT_AMBIENT]
+##
+## from `Shader\vertexshader0splatting.c`, which the real runtime shader
+## generator loads (see docs/RE_MAP_ENGINE.md). `N.L` is clamped at 0 by the
+## shader's own `max r1.x, r1.x, c[VSC_UTIL].z`.
+##
+## Baked into vertex colour rather than left to the engine because that is what
+## the real client does -- terrain lighting there is per *vertex*, from a single
+## directional term, not per pixel. Doing it here also lets the real
+## `TerrainAmbientColor` channel be used, which the engine's single global
+## ambient cannot express alongside the object ambient.
+static func _lit_vertex_color(normal: Vector3, light_dir: Vector3, diffuse: Color, ambient: Color) -> Color:
+	var ndotl := maxf(normal.normalized().dot(light_dir), 0.0)
+	return Color(
+		clampf(ndotl * diffuse.r + ambient.r, 0.0, 1.0),
+		clampf(ndotl * diffuse.g + ambient.g, 0.0, 1.0),
+		clampf(ndotl * diffuse.b + ambient.b, 0.0, 1.0))
+
 ## The four corner UVs of the quad at grid position (r, c), laid out
 ## **continuously across the whole region** so a real ground texture flows
 ## from one quad into the next.
@@ -365,7 +390,7 @@ static func _quad_uv_corners(r: int, c: int, repeat: float = 1.0) -> PackedVecto
 ## own texture is opaque rather than faded toward a flat gray base. Fading
 ## toward gray desaturated real textures unevenly per region, producing the
 ## washed-out per-region tinting a real playtest reported.
-static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_count: int, texture_lookup: Dictionary, ao_texture: Texture2D) -> ArrayMesh:
+static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_count: int, texture_lookup: Dictionary, ao_texture: Texture2D, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK) -> ArrayMesh:
 	var positions := PackedVector3Array()
 	positions.resize(row_count * col_count)
 	for r in range(row_count):
@@ -426,12 +451,23 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 			# previous, invented reading produced.
 			vertex_repeats[r][c] = BASE_TILE_REPEAT
 
+	# Real per-vertex terrain lighting (see _lit_vertex_color). With no real
+	# light direction supplied this stays white, i.e. the engine lights the
+	# terrain, which is what every caller did before 2026-09-07.
+	var lit := PackedColorArray()
+	lit.resize(positions.size())
+	var bake_light := light_dir.length_squared() > 0.0
+	var light_n := light_dir.normalized() if bake_light else Vector3.UP
+	for i in range(lit.size()):
+		lit[i] = _lit_vertex_color(normals[i], light_n, light_diffuse, light_ambient) if bake_light else Color.WHITE
+
 	# Base surface: one continuous mesh over the whole grid, colored by the
 	# real flat-color fallback. Real textured passes are drawn over it.
 	var base_colors := PackedColorArray()
 	base_colors.resize(positions.size())
 	for i in range(base_colors.size()):
-		base_colors[i] = _vertex_color()
+		var fallback := _vertex_color()
+		base_colors[i] = Color(fallback.r * lit[i].r, fallback.g * lit[i].g, fallback.b * lit[i].b) if bake_light else fallback
 
 	var base_indices := PackedInt32Array()
 	for r in range(row_count - 1):
@@ -453,6 +489,10 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, base_arrays)
 	var base_mat := StandardMaterial3D.new()
 	base_mat.vertex_color_use_as_albedo = true
+	# Real lighting is already in the vertex colour, so the engine must not
+	# light it a second time.
+	if bake_light:
+		base_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	if ao_texture != null:
 		base_mat.ao_enabled = true
 		base_mat.ao_texture = ao_texture
@@ -484,7 +524,11 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 			buf["positions"].append(positions[idx[i]])
 			buf["normals"].append(normals[idx[i]])
 			buf["uv2s"].append(uv2s[idx[i]])
-			buf["colors"].append(Color(tint.r, tint.g, tint.b, alphas[i]))
+			# Real per-vertex lighting modulates the tint, so a real texture is
+			# drawn as tex * (N.L * diffuse + ambient) exactly as the real
+			# terrain pixel shader does.
+			var l: Color = lit[idx[i]]
+			buf["colors"].append(Color(tint.r * l.r, tint.g * l.g, tint.b * l.b, alphas[i]))
 		buf["uvs"].append_array(_quad_uv_corners(r, c, repeat))
 		buf["indices"].append_array(PackedInt32Array([base, base + 1, base + 2, base, base + 2, base + 3]))
 
@@ -554,6 +598,8 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 		if key != -1:
 			mat.albedo_texture = texture_lookup[key]
 		mat.vertex_color_use_as_albedo = true
+		if bake_light:
+			mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		if is_blend:
 			# Only the feathered neighbour overlays are transparent; a
 			# quad's own texture is opaque (see this function's doc
