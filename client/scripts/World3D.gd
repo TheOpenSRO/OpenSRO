@@ -3369,6 +3369,76 @@ func _update_blob_shadow() -> void:
 	_blob_shadow.global_position = group.to_global(local)
 	_blob_shadow.visible = true
 
+## ---------------------------------------------------------------------------
+## QA screenshot harness
+##
+## Lets a run be pointed at a specific place and framed a specific way, without
+## anyone driving the client by hand. Every hook below is off unless its
+## environment variable is set, so a normal run is untouched.
+##
+##   SRREVAMP_QA_AT="x,z"   teleport to that region-local spot, standing on
+##                          whatever the real walkable graph says is there
+##   SRREVAMP_QA_YAW=deg    camera yaw (0 looks along +Z)
+##   SRREVAMP_QA_PITCH=deg  camera pitch (-90 is straight down)
+##   SRREVAMP_QA_DIST=n     camera distance from the player
+##   SRREVAMP_QA_WALK=deg   walk continuously on that heading
+##   SRREVAMP_QA_FREE=1     let the camera pass through geometry
+##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
+##
+## Position is reported every 60 physics frames as `QA <tick> local x, y, z`,
+## so a run's log says exactly where each frame was taken. See
+## `client/tools/qa_shot.sh` for the runner that drives this and collects the
+## frames.
+var _qa_done := false
+var _qa_tick := 0
+
+func _qa_step() -> void:
+	var pair := _nav_graph_for(player.global_position)
+	if not _qa_done:
+		var at := OS.get_environment("SRREVAMP_QA_AT")
+		if at != "" and pair.is_empty():
+			return # region not streamed in yet; try again next frame
+		_qa_done = true
+		if at != "":
+			var parts := at.split(",")
+			if parts.size() >= 2:
+				var graph: NavGraph = pair[0]
+				var group: Node3D = pair[1]
+				var lx := float(parts[0])
+				var lz := float(parts[1])
+				var ly := graph.height_at(lx, lz, 0.0)
+				player.global_position = group.to_global(Vector3(lx, ly, lz))
+				player.velocity = Vector3.ZERO
+		if OS.get_environment("SRREVAMP_QA_FREE") != "":
+			camera_arm.collision_mask = 0
+		if OS.get_environment("SRREVAMP_QA_DIST") != "":
+			camera_arm.spring_length = float(OS.get_environment("SRREVAMP_QA_DIST"))
+		var yaw := OS.get_environment("SRREVAMP_QA_YAW")
+		var pitch := OS.get_environment("SRREVAMP_QA_PITCH")
+		if yaw != "" or pitch != "":
+			camera_arm.rotation_degrees = Vector3(
+				float(pitch) if pitch != "" else camera_arm.rotation_degrees.x,
+				float(yaw) if yaw != "" else camera_arm.rotation_degrees.y, 0.0)
+		if OS.get_environment("SRREVAMP_QA_NOFOG") != "":
+			if world_environment != null and world_environment.environment != null:
+				world_environment.environment.fog_enabled = false
+			camera_3d.far = 40000.0
+
+	var walk := OS.get_environment("SRREVAMP_QA_WALK")
+	if walk != "":
+		var ang := deg_to_rad(float(walk))
+		player.velocity.x = sin(ang) * MOVE_SPEED
+		player.velocity.z = cos(ang) * MOVE_SPEED
+		player.rotation.y = ang
+
+	_qa_tick += 1
+	if _qa_tick % 60 == 0:
+		var where := "off-region"
+		if not pair.is_empty():
+			var l := (pair[1] as Node3D).to_local(player.global_position)
+			where = "%d, %d, %d" % [l.x, l.y, l.z]
+		print("QA %4d local %s" % [_qa_tick, where])
+
 ## Lifts the player over a real step they would otherwise walk straight
 ## into.
 ##
@@ -3446,6 +3516,7 @@ func _physics_process(delta: float) -> void:
 			deg_to_rad(camera_arm.rotation_degrees.y), deg_to_rad(DEFAULT_CAMERA_YAW_DEGREES),
 			deg_to_rad(CAMERA_RECENTER_DEGREES_PER_SECOND * delta)))
 
+	_qa_step()
 	if not _move_on_nav_graph(delta):
 		if not player.is_on_floor():
 			player.velocity.y -= GRAVITY * delta

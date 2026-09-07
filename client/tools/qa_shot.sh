@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Runs the client against real pk2 archives, frames a specific place, and
+# leaves the captured frames in an output directory.
+#
+# It exists so that checking how the world looks does not need anyone to load
+# the game and walk there by hand -- see the QA screenshot harness in
+# client/scripts/World3D.gd for the hooks it drives.
+#
+# Usage:
+#   qa_shot.sh --region 98\\168.m --at 960,830 --yaw 180 --frames 120 --out /var/tmp/shot
+#
+# Options (all optional except --out):
+#   --region <path>   region .m to load, e.g. '98\168.m'   (default 98\168.m)
+#   --at x,z          region-local spot to stand at
+#   --yaw deg         camera yaw, 0 looks along +Z
+#   --pitch deg       camera pitch, -90 straight down
+#   --dist n          camera distance
+#   --walk deg        walk continuously on this heading
+#   --frames n        frames to render (default 120)
+#   --size WxH        render size (default 1280x720)
+#   --nofog           disable fog, for high overview shots
+#   --free            let the camera pass through geometry
+#   --out <dir>       where to write frames (required)
+#
+# Environment: CLIENT_DIR and PK2_DIR default to the RE box's own layout.
+set -euo pipefail
+
+CLIENT_DIR="${CLIENT_DIR:-/opt/srrevamp-client}"
+PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
+GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
+
+REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""
+AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --region) REGION="$2"; shift 2 ;;
+    --at)     AT="$2";     shift 2 ;;
+    --yaw)    YAW="$2";    shift 2 ;;
+    --pitch)  PITCH="$2";  shift 2 ;;
+    --dist)   DIST="$2";   shift 2 ;;
+    --walk)   WALK="$2";   shift 2 ;;
+    --frames) FRAMES="$2"; shift 2 ;;
+    --size)   SIZE="$2";   shift 2 ;;
+    --out)    OUT="$2";    shift 2 ;;
+    --nofog)  NOFOG=1;     shift ;;
+    --free)   FREE=1;      shift ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+[ -n "$OUT" ] || { echo "--out is required" >&2; exit 2; }
+
+# Never leave a previous run behind: two clients at once exhausted the RE box's
+# memory once already.
+pkill -9 -f "Godot_v4.2.2-stable_linux" 2>/dev/null || true
+sleep 1
+rm -rf "$OUT"; mkdir -p "$OUT"
+
+cd "$CLIENT_DIR"
+export LIBGL_ALWAYS_SOFTWARE=1
+export SRREVAMP_PK2_PATH="$PK2_DIR/Data.pk2"
+export SRREVAMP_MAP_PK2_PATH="$PK2_DIR/Map.pk2"
+export SRREVAMP_MEDIA_PK2_PATH="$PK2_DIR/Media.pk2"
+export SRREVAMP_MAPM_PATH="$REGION"
+[ -n "$AT" ]    && export SRREVAMP_QA_AT="$AT"
+[ -n "$YAW" ]   && export SRREVAMP_QA_YAW="$YAW"
+[ -n "$PITCH" ] && export SRREVAMP_QA_PITCH="$PITCH"
+[ -n "$DIST" ]  && export SRREVAMP_QA_DIST="$DIST"
+[ -n "$WALK" ]  && export SRREVAMP_QA_WALK="$WALK"
+[ -n "$NOFOG" ] && export SRREVAMP_QA_NOFOG=1
+[ -n "$FREE" ]  && export SRREVAMP_QA_FREE=1
+
+exec xvfb-run -a -s "-screen 0 ${SIZE}x24" "$GODOT" \
+  --rendering-driver opengl3 --path . res://scenes/World3D.tscn \
+  --write-movie "$OUT/f.png" --quit-after "$FRAMES"
