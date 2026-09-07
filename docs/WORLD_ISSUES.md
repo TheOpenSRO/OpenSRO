@@ -3345,3 +3345,49 @@ cause is now precisely located: the real `cj_pal_indoor` navmesh has a **gap at 
 threshold** — its walkable surface sits at height 47.83 on both sides of `z = 830`, with
 terrain 7.8 units lower showing through between them — and its own outline edge refuses the
 step off. How the real client crosses that gap is not yet known, so nothing is guessed at.
+
+## Seventy-sixth round: looking at the world stopped needing anyone to play it
+
+Every round up to here was checked the same way: load the client, walk to the
+place in question, take a screenshot by hand. That cost is why visual problems
+kept surviving several rounds before anyone noticed them -- the object
+duplication in the seventy-fifth round had been in every screenshot since the
+world first rendered.
+
+The client now carries a QA screenshot harness (see the block above
+`_try_step_up` in `client/scripts/World3D.gd`). Environment hooks put the
+player at a region-local spot -- standing on whatever the real walkable graph
+reports, not a guessed height -- frame the camera, optionally walk a heading,
+and disable fog for overview shots. Position is logged every 60 physics frames,
+so a run's log says where each frame was taken. Nothing is active unless its
+variable is set, so an ordinary run is untouched.
+
+`client/tools/qa_shot.sh` drives it against the real `Data.pk2`/`Map.pk2`/
+`Media.pk2` under Xvfb and collects the frames. It writes outside `/tmp` on
+purpose: `/tmp` on the RE box is a tmpfs, and a previous run's leftover frames
+took the whole box out of memory.
+
+Four shots of Jangan on the first tour, and what they showed:
+
+- **Palace district from above** (960,960, pitch -50, no fog): correct. The
+  four-quadrant courtyard layout, walls, and roof lines match the authored
+  minimap, and with the duplicate placements gone the roofs no longer z-fight.
+- **Main gate looking south** (960,700): correct. Lion statues, the gate house,
+  and the flanking pavilions all sit where the minimap puts them.
+- **The willow pond and stone bridge** (300,300): geometry correct, but the
+  **water surface is missing** -- lotus decorations sit directly on grass, and
+  the bridge spans dry ground. `NvmWater` only builds a surface where the real
+  tile ids under a plane cell are water tiles, so either this pond's tiles are
+  not the water type or the pond is a placed object's own water, not terrain
+  water. Not yet chased down.
+- **The gate at local (960, 830)**: still broken, and now visibly so rather
+  than only as a movement complaint. The teleport lands inside the gate's
+  solid body and physics ejects the player sideways to x=1020, leaving the
+  camera inside the wall. This is the same `cj_pal_indoor` navmesh gap
+  diagnosed earlier -- surface height 47.83 on both sides of z=830 with
+  terrain at 40.00 between -- so the threshold has no walkable cell to stand
+  on. Open.
+
+One thing the harness makes unmissable rather than new: the player renders in
+its bind pose in every shot. That is the known `apply_ban_pose` bug from the
+forty-eighth round, still deliberately disabled rather than shipped distorted.
