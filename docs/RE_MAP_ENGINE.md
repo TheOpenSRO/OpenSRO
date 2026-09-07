@@ -104,3 +104,49 @@ for structure. But **no shipped binary references any of those filenames**, and 
 archive also ships a `shader_maptool\` duplicate of the same files, so it may be tooling
 source rather than what the shipped client loads. Treat it as evidence about the intended
 design, not proof of the runtime path.
+
+## Terrain appearance: what the real client composes, and what we do not
+
+The real terrain pixel shader (`Shader\terrainps14.psh`, and `terrainpsn10.psh`) states the
+whole equation in its own comment:
+
+```
+Surf_color  = (N.L) * terrain_tex * cloud_covering * self_shadow_term
+Final_color = Surf_color * extinction + inscattering
+```
+
+with three sampled textures: `TEX_NORMAL_HORIZON_MAP` (RGB unpacked `_bx2`, i.e. a normal
+map; its **alpha** carries a horizon angle used as the self-shadow term),
+`TEX_TERRAIN_COLOR`, and `TEX_CLOUD_LAYER`.
+
+Against that, this project currently composes: the tile texture, Godot's own lighting from
+mesh normals, the `.t` lightmap as ambient occlusion, and Godot fog. So four things in the
+real equation have no equivalent here:
+
+1. a **normal + horizon map** — the real client lights terrain per *texel* and gets
+   self-shadowing from a stored horizon angle, not from mesh normals;
+2. a **cloud shadow layer** multiplied over the surface;
+3. **extinction / inscattering** — real aerial perspective, computed per vertex in
+   `scattervs10.vsh` from Rayleigh/Mie coefficients, rather than a distance fog;
+4. the `.t` texture is used here as ambient occlusion, which is *not* the role the real
+   equation gives any of its three textures.
+
+`.t` cannot be the normal/horizon map: it is DXT1 (no alpha, so no horizon term) and
+measures a mean saturation of 0.014, i.e. genuinely greyscale. Where the real normal/horizon
+map comes from is not yet known — most likely generated at load from the heightmap.
+
+This is the most likely remaining reason real ground does not look like the real game, now
+that tile identity, tiling rate and UV layout are all confirmed correct.
+
+## A correction about the UV change
+
+The 2026-09-06 "continuous UVs" change is worth stating precisely, because it was described
+at the time as fixing the ground squares and it was not.
+
+Old UVs ran `(0,0)…(1,1)` within each quad; new ones run `(c,r)…(c+1,r+1)` across the
+region. **With REPEAT wrapping these sample identically** — `frac(c … c+1) = 0 … 1`. The
+change therefore removed only the hash-driven per-quad rotation/mirror, which was an
+invented technique, and altered nothing else about how a texture lands on the ground.
+
+The artifact actually reported was caused by the `Scale` field reading (sixty-ninth round),
+which multiplied the repeat rate by four in the regions that carry `scale = 16`.
