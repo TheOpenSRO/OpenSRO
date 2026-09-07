@@ -3259,3 +3259,38 @@ yields untyped values, so `var tr := r + dr` will not compile. It is always
 `var tr: int = r + dr`. Worse, a local `--import` reported **zero** errors while serving
 cached scripts, and the failure only appeared as 492 errors in a real run on the RE box.
 An import that reports clean is not proof the scripts compile.
+
+## Seventy-fourth round: the ShadowMap reading did not survive checking
+
+**2026-09-07.** The previous round applied the real `.t` ShadowMap as the terrain
+equation's `self_shadow_term`. Verifying it immediately afterwards showed the reading is
+not safe, so the application is reverted the same night. The measurement stands; the
+interpretation does not.
+
+**Orientation is right.** Rendering the map as an image and laying it beside real Jangan's
+own authored minimap art lines the two up exactly — the features sit in the same places, so
+row/col match the tile grid.
+
+**Polarity is wrong for a sun shadow.** The **fully lit** (255) tiles are the real *building
+footprints*, and the **darkest** (0.6) tiles are the open courtyards and streets. Real
+buildings cast shadow onto nearby ground; they are not the only lit thing in a walled town.
+That is backwards for a self-shadow term, and it fits the public documentation's own wording
+much better — "a simplified map used to check if an **object** is inside shadow", i.e. a
+query structure for deciding whether an object standing on a tile is shadowed, not a
+multiplier for the terrain's own colour.
+
+Applying it darkens **56% of real Jangan's ground by 40%** — a large, world-wide change
+resting on an unsettled reading, shipped while the tester was asleep and unable to catch it.
+That is the same shape of mistake as this project's own `2 ^ (scale >> 3)` reading of the
+`.m` `Scale` field, which rendered a lattice across whole regions before being caught.
+
+So it is unapplied until its meaning is confirmed. `_shadow_at` and the measurement are kept
+in place, documented, because both are real and correct — it is only the claim about what
+the values *mean* that failed.
+
+### Worth stating
+
+v0.1.49 shipped this as a finished feature and it should not have. The finding was good and
+the data is real, but "parsed since day one and never used" is a reason to look closer, not
+evidence that a particular use is right. Checking it took one render and one comparison, and
+that should have come before the release rather than after it.

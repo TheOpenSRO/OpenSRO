@@ -321,6 +321,27 @@ const SHADOW_MAP_SIDE := 96
 ## A vertex sits on a corner shared by up to four real tiles, so the four are
 ## averaged -- the same treatment the flat-colour base surface already gives
 ## per-quad colour, and what keeps the five levels from reading as hard steps.
+##
+## ## Why this is not currently applied
+##
+## Rendering the real map as an image and comparing it against real Jangan's own
+## authored minimap art lines the two up **exactly** in position, so the row/col
+## orientation above is right. But the polarity is not what a sun shadow would
+## give: the **fully lit** (255) tiles are the real building footprints, and the
+## **darkest** (0.6) tiles are the open courtyards and streets. Real buildings
+## should cast shadow *onto* nearby ground, not be the only lit thing in a town.
+##
+## That fits the public documentation's own wording better -- "a simplified map
+## used to check if an object is inside shadow" -- i.e. a *query* structure for
+## deciding whether an **object** standing on a tile is shadowed, rather than a
+## multiplier for the terrain's own colour.
+##
+## Applying it as a terrain multiplier darkens **56%** of real Jangan's ground
+## by 40%, which is a large, world-wide change resting on an unsettled reading.
+## That is the same shape of mistake as this project's own `2 ^ (scale >> 3)`
+## reading of the `.m` Scale field (see docs/WORLD_ISSUES.md's sixty-ninth
+## round), so it stays unapplied until its real meaning is confirmed. The
+## measurement and the helper are kept because both are real and correct.
 static func _shadow_at(shadow_map: PackedByteArray, r: int, c: int) -> float:
 	if shadow_map.size() < SHADOW_MAP_SIDE * SHADOW_MAP_SIDE:
 		return 1.0
@@ -493,15 +514,10 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 	lit.resize(positions.size())
 	var bake_light := light_dir.length_squared() > 0.0
 	var light_n := light_dir.normalized() if bake_light else Vector3.UP
-	var has_shadow := shadow_map.size() >= SHADOW_MAP_SIDE * SHADOW_MAP_SIDE
+	# **The real `.t` ShadowMap is deliberately NOT applied** -- see _shadow_at
+	# for the measurement and for why its meaning is not settled.
 	for i in range(lit.size()):
-		var col := _lit_vertex_color(normals[i], light_n, light_diffuse, light_ambient) if bake_light else Color.WHITE
-		if has_shadow:
-			# The real self-shadow term multiplies the lit surface -- see
-			# _shadow_at.
-			var sh := _shadow_at(shadow_map, i / col_count, i % col_count)
-			col = Color(col.r * sh, col.g * sh, col.b * sh)
-		lit[i] = col
+		lit[i] = _lit_vertex_color(normals[i], light_n, light_diffuse, light_ambient) if bake_light else Color.WHITE
 
 	# Base surface: one continuous mesh over the whole grid, colored by the
 	# real flat-color fallback. Real textured passes are drawn over it.
