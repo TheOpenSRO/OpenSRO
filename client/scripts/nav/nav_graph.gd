@@ -294,16 +294,18 @@ func step(from: Vector3, motion: Vector2) -> Vector3:
 	if motion.length_squared() > 0.0:
 		var from2 := Vector2(from.x, from.z)
 		var to2 := from2 + motion
-		if not blocked(from2, to2):
+		# Which real surface the mover is on decides whose edges can stop it.
+		var on := surface_at(from.x, from.z, from.y).object_index
+		if not blocked(from2, to2, on):
 			pos = Vector3(to2.x, from.y, to2.y)
 		else:
 			# Slide: keep whichever single axis of the move is still allowed,
 			# so a real wall is followed rather than becoming flypaper.
 			var along_x := Vector2(to2.x, from2.y)
 			var along_z := Vector2(from2.x, to2.y)
-			if not blocked(from2, along_x):
+			if not blocked(from2, along_x, on):
 				pos = Vector3(along_x.x, from.y, along_x.y)
-			elif not blocked(from2, along_z):
+			elif not blocked(from2, along_z, on):
 				pos = Vector3(along_z.x, from.y, along_z.y)
 	pos.y = height_at(pos.x, pos.z, pos.y)
 	return pos
@@ -312,10 +314,27 @@ func step(from: Vector3, motion: Vector2) -> Vector3:
 ## blocking edge? This is the real client's own test: an edge is a 2D line,
 ## not geometry, so nothing here depends on heights, winding or shape
 ## thickness.
-func blocked(from: Vector2, to: Vector2) -> bool:
+## `standing_on` is the real object whose surface the mover is currently on
+## (-1 for the region's own terrain), as `surface_at` reports it.
+##
+## **Why that matters** (fixed 2026-09-07, see docs/WORLD_ISSUES.md's
+## seventy-fifth round): the real client moves a character *within a cell* and
+## only ever tests the edges of the cell it is in. This tested every blocking
+## edge of every nearby object at once, so a character standing in a real gateway
+## was stopped by the walls of a *different* object it was not standing on --
+## real `cj_pal_indoor`'s own walls closed the real Jangan palace gate, and a
+## walk south out of the plaza stopped dead in the open doorway.
+##
+## A region's own terrain edges are always tested: the real terrain navmesh
+## carries the walls around real buildings (411 of them in real Jangan), which is
+## what stops someone walking into a building from outside. An object's own edges
+## only apply to whoever is standing on that object.
+func blocked(from: Vector2, to: Vector2, standing_on: int = -1) -> bool:
 	if _crosses_any(terrain_blocking, from, to):
 		return true
-	for oi in _candidate_objects(from, to):
+	if standing_on < 0 or not objects.has(standing_on):
+		return false
+	for oi in [standing_on]:
 		var placed: PlacedObject = objects[oi]
 		if maxf(from.x, to.x) < placed.bounds_min.x or minf(from.x, to.x) > placed.bounds_max.x:
 			continue

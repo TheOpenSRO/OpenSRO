@@ -135,11 +135,32 @@ func _initialize() -> void:
 	_check(absf(g4.height_at(110.0, 239.0, 0.0)) < 0.001,
 		"a surface far overhead is not mistaken for the ground (got %s)" % g4.height_at(110.0, 239.0, 0.0))
 
-	# The object's own real blocking edges stop movement, in region space.
-	_check(g3.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0)),
-		"the object's own real blocking edge stops a move")
-	_check(not g3.blocked(Vector2(110.0, 205.0), Vector2(110.0, 235.0)),
+	# An object's own real blocking edges stop movement **for whoever is
+	# standing on that object**, in region space.
+	_check(g3.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), 0),
+		"the object's own real blocking edge stops someone standing on it")
+	_check(not g3.blocked(Vector2(110.0, 205.0), Vector2(110.0, 235.0), 0),
 		"moving up the ramp between its sides is not blocked")
+
+	# ...and only for them. A real object's walls must not stop someone who is
+	# not on it: that is what closed the real Jangan palace gate, where the
+	# real palace interior's own walls blocked a player standing in the open
+	# gateway (see docs/WORLD_ISSUES.md's seventy-fifth round). Terrain edges
+	# are what stop someone approaching a real building from outside, and the
+	# real terrain navmesh carries them.
+	_check(not g3.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), -1),
+		"the same edge does not stop someone standing on terrain")
+	_check(not g3.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), 99),
+		"nor someone standing on a different object")
+
+	# Terrain's own blocking edges always apply, whatever you are standing on.
+	var tw := _region(0.0)
+	tw.internal_edges = [_edge(2, Vector2(200.0, 0.0), Vector2(200.0, 400.0))]
+	var gtw := NavGraph.build(tw, [] as Array[NavGraph.PlacedObject])
+	_check(gtw.blocked(Vector2(190.0, 100.0), Vector2(210.0, 100.0), -1),
+		"a real terrain blocking edge stops someone on terrain")
+	_check(gtw.blocked(Vector2(190.0, 100.0), Vector2(210.0, 100.0), 0),
+		"and still stops someone standing on an object")
 
 	# Yaw must actually rotate the placement, or every object would be axis
 	# aligned and only the unrotated ones would work.

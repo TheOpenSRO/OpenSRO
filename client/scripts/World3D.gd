@@ -3086,6 +3086,37 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 						placements.append({"type_id": entry.type_id, "position": entry.position, "rotation": entry.rotation})
 						o2_count += 1
 
+	# **De-duplicated 2026-09-07** (see docs/WORLD_ISSUES.md's seventy-fifth
+	# round). A real `.o2` is organised into *sectors*, and a real object
+	# overlapping more than one sector is listed **in each of them**. Reading
+	# every sector and appending them all therefore places big structures --
+	# real gates, real walls, real grass groups -- several times over.
+	#
+	# Measured on real Jangan: real `98\168.o2` holds 506 entries of which 456
+	# exactly repeat (position and yaw to 4dp) one of the real 273 entries in
+	# its own `.o`, so the same object is listed up to several times; real
+	# `97\168.o2` repeats a real `cj_jang_gate` 24 times. A real playtest saw
+	# exactly that: far more gates along the walls than the real city has, and
+	# a wall standing a little past a gate the player had just walked through.
+	#
+	# Both files genuinely carry unique placements too (a real `97\168.o` has
+	# 128 entries absent from its `.o2`), so neither can simply be dropped in
+	# favour of the other -- they are merged, and exact repeats removed.
+	var deduped: Array = []
+	var seen_placements := {}
+	for p in placements:
+		var pos: Vector3 = p["position"]
+		var k := "%d@%.4f,%.4f,%.4f,%.5f" % [p["type_id"], pos.x, pos.y, pos.z, p["rotation"]]
+		if seen_placements.has(k):
+			continue
+		seen_placements[k] = true
+		deduped.append(p)
+	var dropped := placements.size() - deduped.size()
+	if dropped > 0:
+		print("World3D: %s -- dropped %d duplicate real placements (%d -> %d)" % [
+			mapo_path, dropped, placements.size(), deduped.size()])
+	placements = deduped
+
 	if placements.is_empty():
 		printerr("World3D: no real objects parsed from ", mapo_path)
 		return

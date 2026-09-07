@@ -3294,3 +3294,54 @@ v0.1.49 shipped this as a finished feature and it should not have. The finding w
 the data is real, but "parsed since day one and never used" is a reason to look closer, not
 evidence that a particular use is right. Checking it took one render and one comparison, and
 that should have come before the release rather than after it.
+
+## Seventy-fifth round: every region was drawing its objects two or three times
+
+**2026-09-07.** A playtest looked at a top-down render of Jangan and said there were far
+more gates along the walls than the real city has — "there should only be 3 or 4, not this
+many" — and that walking through one gate led to a wall a little further on. Both are the
+same bug.
+
+### `.o2` is sector-partitioned, and objects repeat across sectors
+
+A region's `.o2` is organised into sectors, and **an object overlapping more than one sector
+is listed in each of them**. `World3D` read every sector and appended them all onto the
+`.o` placements, so any structure spanning a sector boundary — gates, walls, grass groups —
+was placed several times over.
+
+Measured with exact float matching on position and yaw:
+
+| region | `.o` | `.o2` | `.o2` entries exactly repeating an `.o` entry |
+|---|---:|---:|---:|
+| 98/168 | 273 | 506 | 456 |
+| 97/168 | 385 | 432 | 393 |
+| 98/167 | 219 | 331 | 284 |
+
+456 matches against only 273 distinct `.o` entries means `.o2` repeats the *same* object
+several times. Real `97\168.o2` lists a real `cj_jang_gate` **24 times**.
+
+Both files also carry genuinely unique placements (a real `97\168.o` has 128 entries absent
+from its `.o2`), so neither can be dropped in favour of the other. They are merged and exact
+repeats removed.
+
+The effect is large: real Jangan `98\168` goes from **779 placements to 303**, so **61%** of
+what was being drawn there was a duplicate.
+
+### Also fixed: an object's walls stopping people who are not on it
+
+`NavGraph.blocked` tested the blocking edges of every nearby object at once. The real client
+moves a character *within a cell* and only tests the edges of the cell it is in, so a player
+standing in a real gateway was being stopped by the walls of a *different* object — real
+`cj_pal_indoor`'s own walls closed the real palace gate. Blocking now takes the surface the
+mover is standing on, and an object's edges apply only to whoever is on that object. A
+region's terrain edges always apply, because the real terrain navmesh is what carries the
+walls around real buildings (411 of them in real Jangan, previously confirmed by rendering
+them).
+
+### Still broken, diagnosed but not fixed
+
+Walking south out of the palace plaza **still stops** at region-local `(960, 830)`. The
+cause is now precisely located: the real `cj_pal_indoor` navmesh has a **gap at the gate
+threshold** — its walkable surface sits at height 47.83 on both sides of `z = 830`, with
+terrain 7.8 units lower showing through between them — and its own outline edge refuses the
+step off. How the real client crosses that gap is not yet known, so nothing is guessed at.
