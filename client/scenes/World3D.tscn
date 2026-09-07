@@ -193,7 +193,7 @@ offset_left = 8.0
 offset_top = 92.0
 offset_right = 158.0
 offset_bottom = 116.0
-placeholder_text = "zone, e.g. 100/100"
+placeholder_text = "zone, e.g. 97/168 or 97/168@1002,917"
 
 [node name="ChangeZoneButton" type="Button" parent="UI/Control"]
 layout_mode = 0

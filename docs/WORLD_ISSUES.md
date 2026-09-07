@@ -3391,3 +3391,58 @@ Four shots of Jangan on the first tour, and what they showed:
 One thing the harness makes unmissable rather than new: the player renders in
 its bind pose in every shot. That is the known `apply_ban_pose` bug from the
 forty-eighth round, still deliberately disabled rather than shipped distorted.
+
+## Seventy-seventh round: the town was never the place we spawned into
+
+A real playtest walked out of the starting area expecting the city of
+Jangan -- the town square with the dragon statue -- and found a walled
+compound with no shops in it, then a gate passage that dead-ends in
+brick. Four separate real bugs came out of that one session.
+
+**We were spawning into the palace, not the town.** Every building placed
+in region 98/168 is a `cj_pal_*` model from `Res\Bldg\China\Jangan03\`:
+the big door, the main and guard buildings, the lion statues, the stairs.
+Not one shop. Scanning every region's placements for the town's own
+models (`cj_acce.bsr`, the accessory shop, and `cj_jang_gate_dragon.bsr`)
+returns exactly one region, and it is **97/168**, one region west. Its
+square holds the dragon gate at local (1004, 845) with the dragon itself
+beside it. JANGAN_ZONE_REGION now points there, and ZONE_SPAWN_LOCAL
+lands an arriving player in the square looking at the statue -- the
+server has no map data at all and spawns everyone at (0, 0, 0), which is
+merely the geometric centre of whatever region a zone resolves to.
+
+**A zone change deleted the arrived-at region's objects.** The player
+teleported to 97/168 and stood on a bare plaza with nothing on it; the
+buildings appeared minutes later, once streaming happened to reload the
+cell. `_clear_region_grid` called `queue_free()`, which does not remove a
+node until the end of the frame, and a REGION_LOAD_RADIUS window around
+98/168 already contains 97/168 -- so the new `RealTerrain_97_168` was
+added while the old node of that name was still in the tree. Godot
+renames the newcomer, and `_try_load_real_map_objects` parents a region's
+objects to its terrain node *found by name*: every object in the region
+being entered was parented to the outgoing node and destroyed with it.
+The mangled name was visible all along in the zone label, which read
+`[@Node3D@4862]` instead of `[97_168]`. Fixed by removing the nodes from
+the tree immediately, and clearing `_region_nav_graphs`, which held
+references to them.
+
+**We were resolving placements against the wrong object index.** Map.pk2
+carries its own `object.ifo` and Data.pk2 carries one at
+`navmesh\object.ifo`, and they are not the same table: 3307 entries
+against 3268. Placements come out of Map.pk2, and the 39 ids only the map
+table has are exactly the ones real regions were referencing and this
+project was skipping -- 59 dropped placements in the town region alone
+(OBT/halloween/new-year event decorations, and a few NPCs). Every region
+now resolves **0 unresolved type IDs**, where the town previously loaded
+346 of 405 objects.
+
+**The zone box now takes a position.** `97/168` still works; `97/168@1002,917`
+additionally stands the player on that region-local spot, at whatever
+height the real walkable graph reports. Without it, checking a specific
+place meant arriving at the region's centre and walking, because the
+server can only ever offer one fixed position per zone.
+
+Still open from the same session, not yet chased down: the arched
+openings in the town's north wall render solid rather than as passages,
+and objects can be walked underneath -- their navmesh is placed but
+something about it is not standing the player on top.

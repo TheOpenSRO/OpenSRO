@@ -536,6 +536,17 @@ const ARMOR_SET_NUMBERS := ["02", "03", "04", "05", "06", "07", "08", "09"]
 ## a real `navmesh\` folder, not pk2 root as this project originally
 ## assumed -- MAPO_FORMAT.md's "root level" claim was wrong.
 const OBJECT_INDEX_PATH := "navmesh\\object.ifo"
+## Map.pk2's own object index, which is *not* the same table as Data.pk2's
+## OBJECT_INDEX_PATH above. In a real client the map's has 3307 entries
+## against the data one's 3268, and those extra 39 ids are exactly the ones
+## real region placements were referencing and this project was silently
+## dropping -- 59 skipped placements in real Jangan's town region alone
+## (OBT/halloween/new-year event decorations, plus a few NPCs). Placements
+## are read out of Map.pk2, so Map.pk2's table is the one that indexes
+## them; Data.pk2's stays a fallback for a client that only has that
+## archive. Found 2026-09-07 after a real playtest reported objects
+## missing from the town.
+const MAP_OBJECT_INDEX_PATH := "object.ifo"
 ## Real per-vertex ground-tile classification table -- see
 ## docs/protocol/TILE2D_FORMAT.md (TileIndexReader). Confirmed present at
 ## this real path (and, identically, at pk2 root) in a real Data.pk2.
@@ -1380,8 +1391,7 @@ func _build_region_nav_graph(terrain_group: Node3D, mapm_path: String) -> void:
 	var placed: Array[NavGraph.PlacedObject] = []
 	var missing := 0
 	if archive != null and not region.objects.is_empty():
-		var idx_bytes := AssetSource.read_bytes(OBJECT_INDEX_PATH, archive)
-		var table := ObjidxReader.parse(idx_bytes) if not idx_bytes.is_empty() else null
+		var table := _load_object_index()
 		if table != null:
 			for oi in range(region.objects.size()):
 				var obj: NvmReader.MapObject = region.objects[oi]
@@ -1427,6 +1437,41 @@ func _load_object_collision(
 
 ## The real walkable graph covering the player, as [NavGraph, Node3D], or an
 ## empty Array when the player is not over any region that has one.
+## The real object index that resolves a placement's type ID to its real
+## .bsr path, preferring Map.pk2's own table over Data.pk2's -- see
+## MAP_OBJECT_INDEX_PATH for why they differ and why the map's wins.
+## Cached: every region load needs it, and it is a quarter-megabyte parse.
+var _object_index_cache: ObjidxReader.Table = null
+var _object_index_load_attempted := false
+
+func _load_object_index() -> ObjidxReader.Table:
+	if _object_index_load_attempted:
+		return _object_index_cache
+	_object_index_load_attempted = true
+
+	var bytes := PackedByteArray()
+	var source := MAP_OBJECT_INDEX_PATH
+	var map_archive := _open_map_pk2_if_set()
+	if map_archive != null:
+		bytes = AssetSource.read_bytes(MAP_OBJECT_INDEX_PATH, map_archive)
+	if bytes.is_empty():
+		var data_archive := _open_pk2_if_set()
+		if data_archive != null:
+			bytes = AssetSource.read_bytes(OBJECT_INDEX_PATH, data_archive)
+			source = OBJECT_INDEX_PATH
+	if bytes.is_empty():
+		printerr("World3D: could not find a real object index (tried Map.pk2's %s and Data.pk2's %s)" % [
+			MAP_OBJECT_INDEX_PATH, OBJECT_INDEX_PATH])
+		return null
+
+	_object_index_cache = ObjidxReader.parse(bytes)
+	if _object_index_cache == null:
+		printerr("World3D: could not parse the real object index at ", source)
+	else:
+		print("World3D: loaded real object index (%d real entries) from %s" % [
+			_object_index_cache.entries.size(), source])
+	return _object_index_cache
+
 func _nav_graph_for(world_position: Vector3) -> Array:
 	for pair in _region_nav_graphs:
 		var group: Node3D = pair[1]
@@ -1958,7 +2003,37 @@ func _load_real_terrain_lightmap(mapm_path: String, archive: Pk2Reader) -> Textu
 ## most likely from scanning too small a subset of the real archive at the
 ## time. Real-rendered and verified (779/779 real map objects resolved,
 ## real stone walls/willow trees/festival banners, no load errors).
-const JANGAN_ZONE_REGION := "98/168"
+## **Corrected 2026-09-07**, in a real playtest. 98/168 is real Jangan
+## architecture, but it is specifically the *palace*: every building placed
+## in it is a `cj_pal_*` model from `Res\Bldg\China\Jangan03\` -- the big
+## door, the main and guard buildings, the lion statues, the stairs -- and
+## it contains no shop at all. Spawning there meant a player walked around
+## a walled palace compound looking for the town they remembered.
+##
+## The town is one region west, 97/168: scanning every real region's
+## placements for the town's own shop and gate models (server/cmd's
+## findregionassets) puts `cj_acce.bsr` (accessory shop) and
+## `cj_jang_gate_dragon.bsr` in exactly one region, and that region is
+## 97/168. Its centre is the real town square with the dragon statue, at
+## local (1002, 917) -- see ZONE_SPAWN_LOCAL.
+const JANGAN_ZONE_REGION := "97/168"
+
+## Where a named zone's own real landing spot is, in that region's local
+## coordinates, keyed by the resolved region string.
+##
+## The server has no map data whatsoever -- every character enters the
+## world at a single fixed spawnPos of (0, 0, 0) (see
+## server/internal/session/world.go), which is the geometric centre of
+## whatever region the zone resolves to, and is a recognisable place only
+## by accident. Jangan's real entrance is its town square, so that is
+## where a real login lands.
+## The square's own centre is the dragon statue's plinth, so the landing
+## spot sits a little north of it -- the scene's camera looks along -Z, so
+## this puts the statue straight ahead on arrival instead of inside the
+## balustrade around it.
+const ZONE_SPAWN_LOCAL := {
+	"97/168": Vector2(1002.0, 1020.0),
+}
 
 ## The real Dunhuang region, found 2026-08-26 the same way as
 ## JANGAN_ZONE_REGION (server/cmd/scanlandmarks scanning for real
@@ -2046,9 +2121,32 @@ static func _parse_region_coords(path: String) -> Dictionary:
 ## Removes every previously-loaded region grid node (see
 ## _load_region_neighborhood) so a zone change or a fresh load doesn't leave
 ## stale terrain/objects from a different region behind.
+##
+## Takes the nodes out of the tree *immediately* rather than only calling
+## queue_free(), which defers the removal to the end of the frame. That
+## deferral was a real bug, found in a real playtest (2026-09-07): changing
+## zone from 98/168 to 97/168 rebuilds a grid that overlaps the old one --
+## a REGION_LOAD_RADIUS window around 98/168 already contains 97/168 --
+## so the new `RealTerrain_97_168` was added while the old node of that
+## exact name was still in the tree. Godot resolves the collision by
+## renaming the newcomer, which broke everything that finds a region by
+## node name. The visible symptom was a city with no buildings in it:
+## _try_load_real_map_objects parents a region's objects to its terrain
+## node found by name, so every object in the arrived-at region was
+## parented to the *outgoing* node and was deleted along with it at the
+## end of that same frame. The zone label read `[@Node3D@4862]` instead of
+## `[97_168]` for the same reason, and both _load_region_neighborhood's
+## grid-origin lookup and _maybe_stream_regions' per-cell lookup resolved
+## to the stale node too.
+##
+## _region_nav_graphs is cleared here too -- it holds a reference to every
+## terrain group, so leaving it populated kept the old regions' walkable
+## graphs answering position queries for regions that no longer exist.
 func _clear_region_grid() -> void:
+	_region_nav_graphs.clear()
 	for child in get_children():
 		if child.name.begins_with("RealTerrain") or child.name.begins_with("RealMapObjects"):
+			remove_child(child)
 			child.queue_free()
 
 ## Loads a real (2*radius+1)x(2*radius+1) grid of regions centered on
@@ -2226,6 +2324,7 @@ func _load_initial_region_neighborhood() -> void:
 	var result := NetClient.last_enter_world_result
 	if result != null and result.ok and result.zone != "":
 		_reload_zone_assets(result.zone)
+		_place_at_zone_spawn(result.zone)
 	else:
 		print("World3D: no real zone to load (no SRREVAMP_MAPM_PATH set and no real logged-in session) -- ground stays a placeholder")
 
@@ -2289,6 +2388,21 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	NetClient.list_monsters()
 
 	_reload_zone_assets(result.zone)
+
+	# Only now, with the new region's terrain and walkable graph actually
+	# built, can an `@x,z` from the zone box be honoured -- see
+	# _split_zone_target.
+	if _pending_zone_local != null:
+		var spot: Vector2 = _pending_zone_local
+		_pending_zone_local = null
+		var coords := _parse_region_coords(_resolve_zone_region(result.zone))
+		if not coords.is_empty() and _place_at_region_local(coords["x"], coords["y"], spot.x, spot.y):
+			_refresh_zone_label_position()
+		else:
+			print("World3D: zone %s has no loaded region to stand at local %s, %s -- left at the server's own landing spot" % [
+				result.zone, spot.x, spot.y])
+	else:
+		_place_at_zone_spawn(result.zone)
 
 ## Loads real terrain from a real Map.pk2 region .m file via MapmReader +
 ## MapmTerrainBuilder, replacing both the placeholder ground's visual mesh
@@ -3125,13 +3239,8 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 	if data_archive == null:
 		printerr("World3D: SRREVAMP_PK2_PATH not set -- can't resolve real object type IDs")
 		return
-	var idx_bytes := AssetSource.read_bytes(OBJECT_INDEX_PATH, data_archive)
-	if idx_bytes.is_empty():
-		printerr("World3D: could not find real object index at ", OBJECT_INDEX_PATH)
-		return
-	var table := ObjidxReader.parse(idx_bytes)
+	var table := _load_object_index()
 	if table == null:
-		printerr("World3D: could not parse real object index at ", OBJECT_INDEX_PATH)
 		return
 
 	var container := Node3D.new()
@@ -3384,6 +3493,13 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_WALK=deg   walk continuously on that heading
 ##   SRREVAMP_QA_FREE=1     let the camera pass through geometry
 ##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
+##   SRREVAMP_QA_ZONE=z     after the first region loads, reload assets for
+##                          this zone -- accepts the zone box's own
+##                          `x/y@localX,localZ` form. Reproduces a real
+##                          zone change's *sequence* (build a grid, then
+##                          rebuild it for somewhere else) with no server
+##                          in the loop, which is how the stale-node bug
+##                          in _clear_region_grid was caught and checked.
 ##
 ## Position is reported every 60 physics frames as `QA <tick> local x, y, z`,
 ## so a run's log says exactly where each frame was taken. See
@@ -3423,6 +3539,16 @@ func _qa_step() -> void:
 			if world_environment != null and world_environment.environment != null:
 				world_environment.environment.fog_enabled = false
 			camera_3d.far = 40000.0
+		var qa_zone := OS.get_environment("SRREVAMP_QA_ZONE")
+		if qa_zone != "":
+			var target := _split_zone_target(qa_zone)
+			var zone: String = target["zone"]
+			_reload_zone_assets(zone)
+			var coords := _parse_region_coords(_resolve_zone_region(zone))
+			if target.has("local") and not coords.is_empty():
+				var spot: Vector2 = target["local"]
+				_place_at_region_local(coords["x"], coords["y"], spot.x, spot.y)
+			_refresh_zone_label_position()
 
 	var walk := OS.get_environment("SRREVAMP_QA_WALK")
 	if walk != "":
@@ -3702,10 +3828,81 @@ func _on_disconnect_pressed() -> void:
 ## success updates zone_label and reloads real terrain/objects for the new
 ## zone, failure is silently ignored here (no dedicated error UI for this
 ## yet, same honest scope as the rest of this scene's dev-facing controls).
+## The region-local spot a zone change should land on, parsed out of the
+## zone box's optional `@x,z` suffix and consumed by
+## _on_change_zone_result once the new region has actually loaded. null
+## means "wherever the server puts us", the original behavior.
+var _pending_zone_local: Variant = null
+
+## Splits what was typed into the zone box into the zone the server is
+## asked for and an optional region-local spot to stand on afterwards:
+## `97/168` keeps the server's own landing position, `97/168@1002,917`
+## additionally walks the player to that spot in the new region.
+##
+## The suffix exists because the server has no map data at all (see
+## ChangeZoneRequest in server/internal/session/world.go) -- it can only
+## put an arriving player at one fixed position per zone, which in a
+## region 1920 units across is rarely anywhere near what someone wanted to
+## look at. Typing the coordinates the zone label already prints is the
+## shortest path from "I want to see that" to standing there.
+static func _split_zone_target(text: String) -> Dictionary:
+	var at := text.find("@")
+	if at < 0:
+		return {"zone": text}
+	var zone := text.substr(0, at).strip_edges()
+	var parts := text.substr(at + 1).split(",")
+	if parts.size() != 2:
+		return {"zone": zone}
+	var lx := parts[0].strip_edges()
+	var lz := parts[1].strip_edges()
+	if not lx.is_valid_float() or not lz.is_valid_float():
+		return {"zone": zone}
+	return {"zone": zone, "local": Vector2(float(lx), float(lz))}
+
+## Stands the player at a region-local (x, z) in one loaded region cell,
+## at whatever height the real walkable graph reports there -- the same
+## real signal ordinary movement stands on, so this lands on a staircase
+## or a bridge deck rather than in the terrain under it.
+func _place_at_region_local(region_x: int, region_y: int, local_x: float, local_z: float) -> bool:
+	var group := get_node_or_null("RealTerrain_%d_%d" % [region_x, region_y]) as Node3D
+	if group == null:
+		return false
+	for pair in _region_nav_graphs:
+		if pair[1] != group:
+			continue
+		var graph: NavGraph = pair[0]
+		player.global_position = group.to_global(
+			Vector3(local_x, graph.height_at(local_x, local_z, 0.0), local_z))
+		player.velocity = Vector3.ZERO
+		_last_sent_pos = player.position
+		return true
+	return false
+
+## Moves the player to a zone's own landing spot (see ZONE_SPAWN_LOCAL) if
+## one is known, once that zone's region has actually loaded. Zones with
+## no entry keep the server's fixed spawn position.
+func _place_at_zone_spawn(zone: String) -> bool:
+	var region := _resolve_zone_region(zone)
+	if not ZONE_SPAWN_LOCAL.has(region):
+		return false
+	var coords := _parse_region_coords(region)
+	if coords.is_empty():
+		return false
+	var spot: Vector2 = ZONE_SPAWN_LOCAL[region]
+	if not _place_at_region_local(coords["x"], coords["y"], spot.x, spot.y):
+		return false
+	_refresh_zone_label_position()
+	return true
+
 func _on_change_zone_pressed() -> void:
-	var zone := zone_input.text.strip_edges()
+	var typed := zone_input.text.strip_edges()
+	if typed == "":
+		return
+	var target := _split_zone_target(typed)
+	var zone: String = target["zone"]
 	if zone == "":
 		return
+	_pending_zone_local = target.get("local", null)
 	NetClient.change_zone(zone)
 
 ## Chat panel, ported from the 2D World.gd HUD (see docs/PROGRESS.md) --
