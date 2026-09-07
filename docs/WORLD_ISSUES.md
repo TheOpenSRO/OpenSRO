@@ -3502,3 +3502,45 @@ world -- which is what identified the wall in the first place, since a
 piece of a big model only means anything in the place the other pieces
 put it. Placed objects are now named after their real model
 (`Obj_<model>_<n>`) so those reports say what they are looking at.
+
+## Seventy-ninth round: an object's walls only stopped whoever was already on it
+
+The same playtest reported walking underneath things. It is true, and the
+scan built to measure it says how often: sweeping real region 97/168 on a
+40-unit grid and, at each sample, dropping a physics ray from just over
+head height above wherever the walkable graph would stand a player,
+**109 of 2,304 sampled spots put the player under solid geometry** -- by
+up to 28 units, twice the player's own height. The named offenders are
+buildings: `cj_armo`, the armour shop, stands a player at 7.2 with its
+floor at 35.5.
+
+The cause is the shape of the seventy-fifth round's fix. That round
+established, correctly, that an object's own blocking edges must only
+stop whoever is standing on that object -- testing every nearby object's
+edges at once had closed the palace gate, because a neighbouring
+interior's walls reached across the open gateway. But "only the object
+you are standing on" also means an object you are *not* standing on can
+never stop you, and a shop's walls are its own object edges. Walking at
+a building from outside, nothing said no.
+
+Now an object the mover is not standing on gets to stop them in exactly
+one case: when the move would put them **underneath** it -- that object
+has a walkable surface over the destination, and that surface is out of
+reach above. A surface within reach is something to step onto, not
+something to be stopped by, which is what keeps the gateway open: a
+mover in a real gateway stands on the gateway's own floor cell. Leaving
+is always allowed, since the place being moved *to* is not under
+anything, so nobody who starts underneath is trapped there.
+
+Checked both ways. Four new assertions in `nav_graph_test.gd` pin it
+against a synthetic platform placed 100 units overhead -- walking in
+underneath is refused, walking back out is not, a surface within reach
+still is not blocking, and a caller that does not pass the mover's height
+gets the old behaviour unchanged. And in the real world, a player walked
+west at that same real armour shop steps up onto its terrace and stops
+against its wall, where before they would have carried on into the
+footprint under its floor.
+
+`SRREVAMP_QA_SCAN=n` is the sweep, kept: it reports every spot in the
+player's region where the graph sits below the geometry, worst first,
+naming the model responsible.

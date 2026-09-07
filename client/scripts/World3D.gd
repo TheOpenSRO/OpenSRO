@@ -592,6 +592,12 @@ const REGION_SPAN := 1920.0
 ## before that fix. Not yet perf-verified against a real large pk2 dataset
 ## in this environment -- flagged honestly, not asserted as free.
 const REGION_LOAD_RADIUS := 2
+## How far below the solid geometry the walkable graph may sit before a
+## spot counts as one the player would walk underneath. A real surface and
+## the real navigation mesh built for it are not the same surface -- the
+## navigation mesh is authored a little above or below the visible floor --
+## so a small disagreement is normal. Half the player's own height is not.
+const STAND_UNDER_TOLERANCE := 7.0
 
 ## Real region streaming (2026-08-24): the original fixed 3x3 grid only
 ## ever loaded once, centered on wherever a zone's initial spawn/entry
@@ -1399,7 +1405,14 @@ func _build_region_nav_graph(terrain_group: Node3D, mapm_path: String) -> void:
 				if collision == null:
 					missing += 1
 					continue
-				placed.append(NavGraph.place(collision, oi, obj.local_position, obj.yaw))
+				var placed_object := NavGraph.place(collision, oi, obj.local_position, obj.yaw)
+				# Tagged with the real model it came from purely so that a
+				# report of what the player is standing on can name it --
+				# see _qa_step's position line.
+				var entry := table.lookup(obj.resource_id)
+				if entry != null and entry.path != "":
+					placed_object.set_meta("model", entry.path.get_file().get_basename())
+				placed.append(placed_object)
 	var graph := NavGraph.build(region, placed)
 	_region_nav_graphs.append([graph, terrain_group])
 	print("World3D: real walkable graph for %s -- %d/%d real objects placed, %d real terrain blocking edges" % [
@@ -3537,6 +3550,9 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_WALK=deg   walk continuously on that heading
 ##   SRREVAMP_QA_FREE=1     let the camera pass through geometry
 ##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
+##   SRREVAMP_QA_SCAN=n     sweep the region on an n x n grid and report
+##                          where the walkable graph sits below the solid
+##                          geometry (i.e. where a player walks underneath)
 ##   SRREVAMP_QA_HIDE=a,b    hide every mesh whose own real mesh name
 ##                          contains one of these fragments
 ##   SRREVAMP_QA_LOOK=1     print which real placed objects the camera is
@@ -3590,6 +3606,9 @@ func _qa_step() -> void:
 		var hide := OS.get_environment("SRREVAMP_QA_HIDE")
 		if hide != "":
 			_qa_hide_meshes(hide.split(","))
+		var scan := OS.get_environment("SRREVAMP_QA_SCAN")
+		if scan != "":
+			_qa_scan_report(maxi(int(scan), 2))
 		var qa_zone := OS.get_environment("SRREVAMP_QA_ZONE")
 		if qa_zone != "":
 			var target := _split_zone_target(qa_zone)
@@ -3614,10 +3633,88 @@ func _qa_step() -> void:
 	_qa_tick += 1
 	if _qa_tick % 60 == 0:
 		var where := "off-region"
+		var standing := ""
 		if not pair.is_empty():
 			var l := (pair[1] as Node3D).to_local(player.global_position)
 			where = "%d, %d, %d" % [l.x, l.y, l.z]
-		print("QA %4d local %s" % [_qa_tick, where])
+			# What the walkable graph thinks is underfoot, and how far the
+			# player actually is from it -- the question when someone
+			# reports walking *underneath* something they should be on top
+			# of.
+			var graph: NavGraph = pair[0]
+			var surface := graph.surface_at(l.x, l.z, l.y)
+			var what := "terrain"
+			if not surface.is_terrain:
+				what = "object %d" % surface.object_index
+				var placed: NavGraph.PlacedObject = graph.objects[surface.object_index]
+				if placed != null and placed.has_meta("model"):
+					what = "object %s" % placed.get_meta("model")
+			standing = "  on %s at %.1f (%.1f below feet)" % [what, surface.height, l.y - surface.height]
+		print("QA %4d local %s%s" % [_qa_tick, where, standing])
+
+## Sweeps the player's region on a grid and reports every spot where the
+## walkable graph disagrees with the solid geometry actually built there.
+##
+## "You can walk underneath things" is a whole-region property, and
+## walking around looking for it finds one instance an hour. For each
+## sample this drops a physics ray from high above and compares what it
+## lands on with the height the graph would stand a player at. The graph
+## being *below* the geometry is the reported failure: it means a player
+## walking there ends up under a floor they should be on top of. The
+## graph being above is normal and not reported -- that is a bridge, a
+## roof, or an upper storey with the ray having hit the ground beneath it.
+func _qa_scan_report(samples: int) -> void:
+	var pair := _nav_graph_for(player.global_position)
+	if pair.is_empty():
+		print("QA SCAN: not standing in any loaded region")
+		return
+	var graph: NavGraph = pair[0]
+	var group: Node3D = pair[1]
+	var space := get_viewport().world_3d.direct_space_state
+
+	var step_span := REGION_SPAN / float(samples)
+	var worst: Array = []
+	var checked := 0
+	var under := 0
+	for iz in range(samples):
+		for ix in range(samples):
+			var lx := (ix + 0.5) * step_span
+			var lz := (iz + 0.5) * step_span
+			# Probe from a little over head height above where the graph
+			# would stand a player, not from the sky: a ray dropped from
+			# far above lands on a tree canopy or a roof, neither of which
+			# says anything about the floor underfoot.
+			var walkable := graph.height_at(lx, lz, 0.0)
+			var head := walkable + _player_capsule_height() * 2.0
+			var top := group.to_global(Vector3(lx, head, lz))
+			var bottom := group.to_global(Vector3(lx, walkable - 1.0, lz))
+			var query := PhysicsRayQueryParameters3D.create(top, bottom)
+			query.collision_mask = 0xFFFFFFFF
+			query.exclude = [player.get_rid()]
+			var hit := space.intersect_ray(query)
+			if hit.is_empty():
+				continue
+			checked += 1
+			var solid_local := group.to_local(hit["position"] as Vector3)
+			var drop := solid_local.y - walkable
+			if drop <= STAND_UNDER_TOLERANCE:
+				continue
+			under += 1
+			var collider = hit["collider"]
+			var what := "?"
+			if collider != null:
+				var owner_node: Node = (collider as Node)
+				while owner_node != null and not String(owner_node.name).begins_with("Obj_"):
+					owner_node = owner_node.get_parent()
+				what = String(owner_node.name) if owner_node != null else String((collider as Node).name)
+			worst.append([drop, lx, lz, walkable, solid_local.y, what])
+
+	worst.sort_custom(func(a, b): return a[0] > b[0])
+	print("QA SCAN: %d of %d sampled spots put the player under the solid geometry there (%.0f-unit grid)" % [
+		under, checked, step_span])
+	for i in range(mini(worst.size(), 15)):
+		print("QA SCAN   %6.1f under  local (%.0f, %.0f)  graph stands at %.1f, geometry at %.1f  %s" % [
+			worst[i][0], worst[i][1], worst[i][2], worst[i][3], worst[i][4], worst[i][5]])
 
 ## Hides every mesh under a placed object whose own real mesh name
 ## contains one of the given fragments, and reports what it hid.

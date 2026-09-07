@@ -296,16 +296,16 @@ func step(from: Vector3, motion: Vector2) -> Vector3:
 		var to2 := from2 + motion
 		# Which real surface the mover is on decides whose edges can stop it.
 		var on := surface_at(from.x, from.z, from.y).object_index
-		if not blocked(from2, to2, on):
+		if not blocked(from2, to2, on, from.y):
 			pos = Vector3(to2.x, from.y, to2.y)
 		else:
 			# Slide: keep whichever single axis of the move is still allowed,
 			# so a real wall is followed rather than becoming flypaper.
 			var along_x := Vector2(to2.x, from2.y)
 			var along_z := Vector2(from2.x, to2.y)
-			if not blocked(from2, along_x, on):
+			if not blocked(from2, along_x, on, from.y):
 				pos = Vector3(along_x.x, from.y, along_x.y)
-			elif not blocked(from2, along_z, on):
+			elif not blocked(from2, along_z, on, from.y):
 				pos = Vector3(along_z.x, from.y, along_z.y)
 	pos.y = height_at(pos.x, pos.z, pos.y)
 	return pos
@@ -329,20 +329,55 @@ func step(from: Vector3, motion: Vector2) -> Vector3:
 ## carries the walls around real buildings (411 of them in real Jangan), which is
 ## what stops someone walking into a building from outside. An object's own edges
 ## only apply to whoever is standing on that object.
-func blocked(from: Vector2, to: Vector2, standing_on: int = -1) -> bool:
+func blocked(from: Vector2, to: Vector2, standing_on: int = -1, mover_y: float = INF) -> bool:
 	if _crosses_any(terrain_blocking, from, to):
 		return true
-	if standing_on < 0 or not objects.has(standing_on):
-		return false
-	for oi in [standing_on]:
+	for oi in _candidate_objects(from, to):
+		if not objects.has(oi):
+			continue
 		var placed: PlacedObject = objects[oi]
 		if maxf(from.x, to.x) < placed.bounds_min.x or minf(from.x, to.x) > placed.bounds_max.x:
 			continue
 		if maxf(from.y, to.y) < placed.bounds_min.y or minf(from.y, to.y) > placed.bounds_max.y:
 			continue
+		if oi != standing_on:
+			# An object the mover is not standing on only gets to stop them
+			# when the move would put them *underneath* it. Without this a
+			# real playtest could walk in under a shop's floor and stand
+			# inside the building's footprint below it: the shop's own
+			# walls are its object edges, and those were only ever tested
+			# for whoever was already standing on the shop. Restricting it
+			# to "would end up under" keeps the seventy-fifth round's fix
+			# intact -- a mover in a real gateway is standing on the
+			# gateway's own floor cell, so the gate is still not closed by
+			# a neighbouring object's walls -- and leaves a real bridge
+			# walkable underneath unless its own navigation mesh actually
+			# says otherwise.
+			if mover_y == INF:
+				continue
+			var above := surface_height_of(placed, to.x, to.y)
+			if is_nan(above) or above <= mover_y + SURFACE_REACH_UP:
+				continue
 		if _crosses_any(placed.blocking, from, to):
 			return true
 	return false
+
+## The highest point of one placed object's own walkable surface at (x, z),
+## or NAN where that object has no surface there.
+static func surface_height_of(placed: PlacedObject, x: float, z: float) -> float:
+	var best := NAN
+	var i := 0
+	while i + 2 <= placed.cells.size() - 1:
+		var a: Vector3 = placed.vertices[placed.cells[i]]
+		var b: Vector3 = placed.vertices[placed.cells[i + 1]]
+		var c: Vector3 = placed.vertices[placed.cells[i + 2]]
+		i += 3
+		var h := _triangle_height(a, b, c, x, z)
+		if is_nan(h):
+			continue
+		if is_nan(best) or h > best:
+			best = h
+	return best
 
 ## Real objects worth testing for a move: those listed by the real cells the
 ## move passes through, sampled along its length so a move spanning several

@@ -153,6 +153,25 @@ func _initialize() -> void:
 	_check(not g3.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), 99),
 		"nor someone standing on a different object")
 
+	# An object *above* the mover does get to stop them walking in
+	# underneath it. A real playtest reported being able to walk in under a
+	# shop's floor and stand inside the building's footprint below it: the
+	# shop's walls are its own object edges, and those had only ever been
+	# tested for whoever was already standing on the shop. `high` is placed
+	# with its surface 100 units overhead, well out of reach.
+	_check(g4.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), -1, 0.0),
+		"an object overhead stops someone walking in underneath it")
+	_check(not g4.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), -1),
+		"...only when the mover's own height is known -- without it, unchanged")
+	# ...and never traps whoever is already under: leaving is always allowed,
+	# because the place being moved *to* is not under anything.
+	_check(not g4.blocked(Vector2(105.0, 220.0), Vector2(95.0, 220.0), -1, 0.0),
+		"someone already underneath can still walk back out")
+	# An object whose surface is within reach is something to stand *on*, not
+	# something to be stopped by -- this is what keeps a real gateway open.
+	_check(not g3.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), -1, 12.0),
+		"a surface within reach is stepped onto, not walked into")
+
 	# Terrain's own blocking edges always apply, whatever you are standing on.
 	var tw := _region(0.0)
 	tw.internal_edges = [_edge(2, Vector2(200.0, 0.0), Vector2(200.0, 400.0))]
