@@ -141,14 +141,14 @@ static func build_full_region_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh
 ## terrain lighting into vertex colour (see _build_textured_mesh_from_cells).
 ## Leave `light_dir` at Vector3.ZERO to skip it and let the engine light the
 ## terrain instead, which is what every caller did before 2026-09-07.
-static func build_full_region_mesh_textured(region: MapmReader.ParsedRegion, texture_lookup: Dictionary, ao_texture: Texture2D = null, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK) -> ArrayMesh:
+static func build_full_region_mesh_textured(region: MapmReader.ParsedRegion, texture_lookup: Dictionary, ao_texture: Texture2D = null, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK, shadow_map: PackedByteArray = PackedByteArray()) -> ArrayMesh:
 	var bands_per_side := MapmReader.BLOCKS_PER_SIDE
 	if region.blocks.size() != bands_per_side * bands_per_side:
 		push_error("MapmTerrainBuilder: region has %d blocks, want %d" % [region.blocks.size(), bands_per_side * bands_per_side])
 		return null
 	var full_size := bands_per_side * (GRID_WIDTH - 1) + 1
 	var grid := _full_region_cells(region, bands_per_side, full_size)
-	return _build_textured_mesh_from_cells(grid, full_size, full_size, texture_lookup, ao_texture, light_dir, light_diffuse, light_ambient)
+	return _build_textured_mesh_from_cells(grid, full_size, full_size, texture_lookup, ao_texture, light_dir, light_diffuse, light_ambient, shadow_map)
 
 ## Shared real 6x6-block stitching behind build_full_region_mesh and
 ## build_full_region_mesh_textured -- see either's doc comment for the
@@ -301,6 +301,41 @@ const BASE_TILE_REPEAT := 1.0
 
 
 
+## Side of the real `.t` ShadowMap: 96x96 bytes, one per real terrain tile.
+const SHADOW_MAP_SIDE := 96
+
+## The real self-shadow term for the vertex at (r, c), from a region's own real
+## `.t` ShadowMap.
+##
+## This is the `self_shadow_term` of the real terrain equation
+## (`Surf_color = (N.L) * terrain_tex * cloud_covering * self_shadow_term`), and
+## it is real per-tile data this project parsed from day one and never used.
+##
+## Measured across real regions, the map holds exactly **five** distinct byte
+## values, always the same set: 153, 178, 204, 229, 255 -- which is
+## `255 * (0.6, 0.7, 0.8, 0.9, 1.0)`. So it is a real five-level shadow
+## multiplier bottoming out at 0.6, not a boolean mask. It matters: in real
+## Jangan **56%** of tiles carry the darkest level, ground this project was
+## drawing fully lit.
+##
+## A vertex sits on a corner shared by up to four real tiles, so the four are
+## averaged -- the same treatment the flat-colour base surface already gives
+## per-quad colour, and what keeps the five levels from reading as hard steps.
+static func _shadow_at(shadow_map: PackedByteArray, r: int, c: int) -> float:
+	if shadow_map.size() < SHADOW_MAP_SIDE * SHADOW_MAP_SIDE:
+		return 1.0
+	var total := 0.0
+	var n := 0
+	for dr in [-1, 0]:
+		for dc in [-1, 0]:
+			var tr: int = r + dr
+			var tc: int = c + dc
+			if tr < 0 or tc < 0 or tr >= SHADOW_MAP_SIDE or tc >= SHADOW_MAP_SIDE:
+				continue
+			total += float(shadow_map[tr * SHADOW_MAP_SIDE + tc]) / 255.0
+			n += 1
+	return total / float(n) if n > 0 else 1.0
+
 ## The real client's own terrain lighting, per vertex:
 ##
 ##     mad oD0, N.L, c[VSC_DLIGHT_DIFFUSE], c[VSC_DLIGHT_AMBIENT]
@@ -390,7 +425,7 @@ static func _quad_uv_corners(r: int, c: int, repeat: float = 1.0) -> PackedVecto
 ## own texture is opaque rather than faded toward a flat gray base. Fading
 ## toward gray desaturated real textures unevenly per region, producing the
 ## washed-out per-region tinting a real playtest reported.
-static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_count: int, texture_lookup: Dictionary, ao_texture: Texture2D, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK) -> ArrayMesh:
+static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_count: int, texture_lookup: Dictionary, ao_texture: Texture2D, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK, shadow_map: PackedByteArray = PackedByteArray()) -> ArrayMesh:
 	var positions := PackedVector3Array()
 	positions.resize(row_count * col_count)
 	for r in range(row_count):
@@ -458,8 +493,15 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 	lit.resize(positions.size())
 	var bake_light := light_dir.length_squared() > 0.0
 	var light_n := light_dir.normalized() if bake_light else Vector3.UP
+	var has_shadow := shadow_map.size() >= SHADOW_MAP_SIDE * SHADOW_MAP_SIDE
 	for i in range(lit.size()):
-		lit[i] = _lit_vertex_color(normals[i], light_n, light_diffuse, light_ambient) if bake_light else Color.WHITE
+		var col := _lit_vertex_color(normals[i], light_n, light_diffuse, light_ambient) if bake_light else Color.WHITE
+		if has_shadow:
+			# The real self-shadow term multiplies the lit surface -- see
+			# _shadow_at.
+			var sh := _shadow_at(shadow_map, i / col_count, i % col_count)
+			col = Color(col.r * sh, col.g * sh, col.b * sh)
+		lit[i] = col
 
 	# Base surface: one continuous mesh over the whole grid, colored by the
 	# real flat-color fallback. Real textured passes are drawn over it.

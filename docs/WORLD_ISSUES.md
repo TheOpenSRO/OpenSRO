@@ -3225,3 +3225,37 @@ The blob's world size (9.0 units) and its lift above the ground (0.15) are rende
 choices, not real data — the texture is a plain gradient with no scale baked in, and nothing
 found so far says how large the real client draws it. Its opacity is the texture's own real
 alpha, not a chosen value.
+
+## Seventy-third round: the terrain self-shadow term, parsed since day one and never used
+
+**2026-09-07.** The real terrain equation is
+`Surf_color = (N.L) * terrain_tex * cloud_covering * self_shadow_term`. The previous round
+implemented `(N.L) * terrain_tex`. This implements `self_shadow_term`, and it turned out to
+be real data this project had already been parsing and throwing away.
+
+A region's `.t` file carries a **96x96 ShadowMap** — one byte per real terrain tile, the same
+grid the tiles themselves use. `MapTReader` has parsed it since the format was solved and
+described it, from the public documentation, as "a simplified map used to check if an object
+is inside shadow". Nothing ever read it.
+
+Measured across real regions it holds exactly **five** distinct byte values, always the same
+set — **153, 178, 204, 229, 255**, which is `255 * (0.6, 0.7, 0.8, 0.9, 1.0)`. So it is not a
+boolean mask at all: it is a real five-level shadow multiplier bottoming out at 0.6.
+
+It matters more than it sounds. In real Jangan **5,195 of 9,216 tiles (56%)** carry the
+darkest level — more than half the town's ground is authored as shadowed, and every bit of
+it was being drawn fully lit. Region 100/100 is the reverse (84% fully lit), which is
+consistent with open country against a dense walled town.
+
+Terrain vertex colour is now multiplied by that term. A vertex sits on a corner shared by up
+to four tiles, so the four are averaged — the same treatment the flat-colour base surface
+already gives per-quad colour, and what keeps five discrete levels from reading as hard
+steps.
+
+### A process note
+
+The GDScript typed-inference trap bit for the fourth time in this project: `for dr in [-1, 0]`
+yields untyped values, so `var tr := r + dr` will not compile. It is always
+`var tr: int = r + dr`. Worse, a local `--import` reported **zero** errors while serving
+cached scripts, and the failure only appeared as 492 errors in a real run on the RE box.
+An import that reports clean is not proof the scripts compile.

@@ -1092,6 +1092,10 @@ var _tile_index_cache: TileIndexReader.Table
 var _env_light_diffuse := Color.WHITE
 var _env_terrain_ambient := Color.BLACK
 var _env_light_ready := false
+
+## The real per-tile ShadowMap from the region's own `.t`, stashed by
+## _load_real_terrain_lightmap for the mesh builder.
+var _last_terrain_shadow_map := PackedByteArray()
 var _tile_index_load_attempted := false
 
 ## Loads and caches the real tile2d.ifo table (see TILE_INDEX_PATH) from
@@ -1923,6 +1927,10 @@ func _load_real_terrain_lightmap(mapm_path: String, archive: Pk2Reader) -> Textu
 	var region := MapTReader.parse(bytes)
 	if region == null:
 		return null
+	# The same real `.t` also carries the real per-tile ShadowMap, which is the
+	# self-shadow term of the real terrain equation. Kept here so the terrain
+	# mesh built moments later can apply it without re-reading the file.
+	_last_terrain_shadow_map = region.shadow_map
 	return region.texture
 
 ## The real Jangan region. **Corrected again 2026-09-01** (see
@@ -2380,7 +2388,8 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 			var to_light := directional_light.global_transform.basis.z.normalized()
 			light_dir = Vector3(to_light.x, to_light.y, -to_light.z)
 		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh_textured(
-			region, ground_textures, lightmap, light_dir, _env_light_diffuse, _env_terrain_ambient)
+			region, ground_textures, lightmap, light_dir, _env_light_diffuse, _env_terrain_ambient,
+			_last_terrain_shadow_map)
 	else:
 		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh(region)
 	if terrain_mesh == null:
