@@ -23,6 +23,7 @@ file is what an agent needs before touching anything. It is tool-neutral; `CLAUD
 | `server/` | Go server. `cmd/` holds analysis tools as well as the server itself. |
 | `docs/WORLD_ISSUES.md` | The running log. Every non-obvious finding is a numbered "round" with the evidence. **Read the last few rounds before starting; append one when you finish.** |
 | `docs/protocol/` | Recovered file-format specs (`.bms`, `.bsr`, `.o`, `.o2`, `.m`, `.nvm`, …). |
+| `docs/RENDER_BOX.md` | The machine renders and reverse-engineering run on: what lives where, how the GPU is wired, how to check it, how to revert it. |
 
 ## Looking at the world
 
