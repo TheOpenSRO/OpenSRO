@@ -93,6 +93,9 @@ func _initialize() -> void:
 		# level rather than only where a tile is classified as water.
 		var submerged := 0
 		var sampled := 0
+		var real_submerged := 0
+		var real_sampled := 0
+		var levels := {}
 		if heightmap != null:
 			var cell := 1920.0 / float(side)
 			for prow in range(side):
@@ -100,6 +103,7 @@ func _initialize() -> void:
 					if region.plane_types[prow * side + pcol] != NvmWater.PLANE_TYPE_WATER:
 						continue
 					var level := region.plane_heights[prow * side + pcol]
+					levels[level] = levels.get(level, 0) + 1
 					for i in range(16):
 						for j in range(16):
 							var x := (float(pcol) + (float(i) + 0.5) / 16.0) * cell
@@ -110,8 +114,36 @@ func _initialize() -> void:
 							sampled += 1
 							if h < level:
 								submerged += 1
+							# The same figure, ignoring cells whose level is
+							# exactly 100 -- a suspiciously round value that
+							# sits far above its own ground.
+							if level != 100.0:
+								real_sampled += 1
+								if h < level:
+									real_submerged += 1
+		# Where the water cells actually are, and at what level, so a render
+		# can be aimed at one.
+		if heightmap != null:
+			var cell := 1920.0 / float(side)
+			print("    water cells (local x, z of centre -> level, mean ground):")
+			var shown := 0
+			for prow in range(side):
+				for pcol in range(side):
+					if region.plane_types[prow * side + pcol] != NvmWater.PLANE_TYPE_WATER:
+						continue
+					if shown >= 8:
+						continue
+					shown += 1
+					var cx := (float(pcol) + 0.5) * cell
+					var cz := (float(prow) + 0.5) * cell
+					var g := MapmTerrainBuilder.height_at(heightmap, cx, cz)
+					print("      (%6.0f, %6.0f) -> level %8.2f, ground %8.2f" % [
+						cx, cz, region.plane_heights[prow * side + pcol], g])
 		var keys := counts.keys()
 		keys.sort_custom(func(a, b): return counts[a] > counts[b])
+		var real_share := (100.0 * float(real_submerged) / float(real_sampled)) if real_sampled > 0 else NAN
+		print("    distinct plane levels: %s" % [levels])
+		print("    ignoring level==100 cells: %.1f%% of the rest is below its own level" % real_share)
 		var share := (100.0 * float(submerged) / float(sampled)) if sampled > 0 else NAN
 		print("%s: %d water plane cell(s), %d water tile(s) under them, %.1f%% of their ground is below water level" % [
 			spec, water_cells, water_tiles, share])

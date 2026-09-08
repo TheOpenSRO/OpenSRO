@@ -4258,3 +4258,49 @@ the forty-eighth round.
 
 Still missing, and unrelated: there is no `head` entry in
 `BODY_PART_BONES`, so the head mesh is not attached at all.
+
+## Ninety-fifth round: what the water plane levels actually contain
+
+A reference screenshot of a live server standing at the moat outside
+Jangan's wall (`X:6485 Y:915`, zone "Grassland") proves the water this
+project draws nothing for is real. Dumping every water plane cell's own
+level beside the ground under it, rather than only the aggregate, shows
+what the plane map holds:
+
+| region | distinct levels | cells |
+|---|---|---|
+| 97/168 (town) | -33, **100**, 8, -3 | 2, **6**, 1, 1 |
+| 96/168 (farmland) | -20 | 30 |
+| 98/167 | -20, 2 | 12, 2 |
+
+Two things stand out.
+
+**Some cells carry a level of exactly `100.00`**, which is 133 units above
+their own ground and would flood everything beneath them. A round number
+that far out of range reads like a sentinel rather than a surface height,
+and six of the town's ten water cells carry it. Excluding them is not
+enough on its own, though -- the rest of the town's cells still sit above
+86.8% of their own ground.
+
+**Every water cell in real 96/168 carries the same level, -20**, over
+ground measured between -40 and -66, which would put a lake over roughly
+two thirds of the region. That region's own authored minimap shows dry
+farmland with tilled plots and two narrow channels. The plane map and the
+minimap disagree about the same ground, and one of them is being read
+wrong.
+
+The most likely candidate is the pairing itself. The
+`(x << 8) | y` navmesh key was confirmed only negatively -- the transposed
+name does not exist as a file -- and `check_navmesh_pairing.gd` also
+reported the paired navmesh's plane heights disagreeing with the region's
+own heightmap by 15 to 52 units on average, which was written off at the
+time as "plane cells are coarse". A region whose navmesh belongs to
+somewhere else would look exactly like this: plausible internally,
+disagreeing with the terrain, and claiming water where the art shows
+fields.
+
+**Next step**: stop assuming the key. Take a region that is unmistakably
+water in its own minimap art and one that is unmistakably dry, and check
+whether their paired navmeshes agree. If a dry region's navmesh claims a
+third of its cells are water, the pairing is wrong and every conclusion
+drawn from `.nvm` data -- walkability included -- needs revisiting.
