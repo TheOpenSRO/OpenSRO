@@ -173,3 +173,35 @@ are `OBJI`, `CPD`, `RES`, `BMS`, `DOF`, `NVM`, `DDJ`, `BMT`, `BAN`, and `EFF`. N
 magic appears**, even though real `.bsk` skeleton files clearly exist and load — so the skeleton is
 either validated differently or reached through one of the other loaders. Worth following up, since
 the bind-pose side is exactly where the remaining problem is.
+
+## The loader, read out of the client (2026-09-08)
+
+Found by the same route as the `.bmt` writer -- cross-referencing the source-path string the
+assert handler carries. The chain is:
+
+| Function | What it does |
+|---|---|
+| `FUN_00c01e20` | Opens the file and drives the load. Builds the expected magic inline as three integers `0x56584d4a` `0x204e4142` `0x32303130` — `JMXV`, `BAN `, `0102`. |
+| `FUN_00bfcfb0` | The header check, asserting against `…\objengine\PrimAnimation.cpp` with "File Version Error". Rejects a file under 0x14 bytes, then compares the magic and version words. |
+| `FUN_00c01ca0` | Reads three dwords into the animation object (+0x20, +0x24, +0x28), then a count, then a second count, then loops over per-bone tracks at a **0x2c-byte in-memory stride** calling… |
+| `FUN_00c00630` | …the per-bone reader: reads the bone's **keyframe count**, sizes the keyframe vector to it with `FUN_00bff9d0(count, 0, 0, 0, 0x3f800000)`, then reads `count * 0x1c` bytes into it. |
+| `FUN_00bff9d0` | A `std::vector::resize` over an element size of **0x1c**, filling new elements with the default passed in. |
+
+Two things this confirms independently of the file-shape work above:
+
+- **A keyframe is 0x1c = 28 bytes**, and the array is read as one contiguous block of
+  `count * 0x1c` — exactly the record documented above.
+- **The default keyframe rotation is `(0, 0, 0, 1.0f)`** — `0x3f800000` is 1.0f, passed last.
+  That is an identity quaternion with **w last**, which is the component order this project's
+  reader already uses.
+
+So the parsing is right, and the remaining problem is entirely **how the keyframes are applied**
+(see `Skeleton3DBuilder.apply_ban_pose`, currently disabled, and `docs/WORLD_ISSUES.md`'s
+forty-eighth round).
+
+**Where to continue.** The application lives in `…\objengine\RTSkeleton.cpp`.
+`FUN_00c51ef0` is skeleton *creation*, not animation. `FUN_00c4a180` is more interesting: it
+copies a 16-dword (4x4) matrix out of `*(this+0x80) + 0x40`, multiplies elements 4/5/6 and 8/9/10
+— the second and third basis rows — by a float at `this+0x88`, and hands the result on. A
+per-bone scale applied to two basis rows is worth understanding before assuming a keyframe
+rotation can be dropped straight into a bone's local pose.
