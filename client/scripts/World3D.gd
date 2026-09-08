@@ -2112,7 +2112,19 @@ static func _zone_paths(zone: String) -> Dictionary:
 	return {
 		"m": "%s\\%s.m" % [x, y],
 		"o": "%s\\%s.o" % [x, y],
-		"minimap": "minimap\\%sx%s.ddj" % [x, y],
+		# **Corrected 2026-09-08.** The real minimap filename is
+		# `<y>x<x>.ddj`, not `<x>x<y>.ddj`: real Jangan is region x=97,
+		# y=168, real `minimap\\97x168.ddj` does not exist in a real
+		# Media.pk2 at all, and real `minimap\\168x97.ddj` does -- and
+		# decoding it shows the real Jangan town square, octagonal plaza
+		# and dragon statue included. This was latent rather than visible
+		# because the minimap is only used to texture terrain in the
+		# fallback path taken when real per-tile textures are
+		# unavailable; where it does bite, both spellings can name real
+		# files, so a region could be painted with a *different*
+		# region's minimap. `client/tools/audit_terrain_fidelity.gd` had
+		# the order right all along.
+		"minimap": "minimap\\%sx%s.ddj" % [y, x],
 	}
 
 ## Parses a real region coordinate pair out of either a zone label ("100/100")
@@ -3550,6 +3562,7 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_WALK=deg   walk continuously on that heading
 ##   SRREVAMP_QA_FREE=1     let the camera pass through geometry
 ##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
+##   SRREVAMP_QA_NOUI=1     hide the HUD (for comparison shots)
 ##   SRREVAMP_QA_THROUGH=z0,z1,y[,step]
 ##                          fire horizontal rays through that band and
 ##                          report which X spans are clear through it
@@ -3602,6 +3615,11 @@ func _qa_step() -> void:
 			camera_arm.rotation_degrees = Vector3(
 				float(pitch) if pitch != "" else camera_arm.rotation_degrees.x,
 				float(yaw) if yaw != "" else camera_arm.rotation_degrees.y, 0.0)
+		if OS.get_environment("SRREVAMP_QA_NOUI") != "":
+			# Comparing a render against the authored minimap is a lot
+			# easier without a chat box across the bottom of it.
+			for node in [$UI/Control, $UI/HideUIButton]:
+				(node as CanvasItem).visible = false
 		if OS.get_environment("SRREVAMP_QA_NOFOG") != "":
 			if world_environment != null and world_environment.environment != null:
 				world_environment.environment.fog_enabled = false

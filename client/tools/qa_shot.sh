@@ -70,6 +70,10 @@ export SRREVAMP_MAPM_PATH="$REGION"
 [ -n "$NOFOG" ] && export SRREVAMP_QA_NOFOG=1
 [ -n "$FREE" ]  && export SRREVAMP_QA_FREE=1
 
+# --resolution as well as the X screen: Godot renders at the project's own
+# window size otherwise, so asking for a square screen alone still produced
+# 16:9 frames -- which quietly ruins any comparison against square authored
+# art like a region minimap.
 exec xvfb-run -a -s "-screen 0 ${SIZE}x24" "$GODOT" \
-  --rendering-driver opengl3 --path . res://scenes/World3D.tscn \
+  --rendering-driver opengl3 --resolution "$SIZE" --path . res://scenes/World3D.tscn \
   --write-movie "$OUT/f.png" --quit-after "$FRAMES"
