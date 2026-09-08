@@ -14,6 +14,18 @@ Status is kept honest: **done** means verified in a render, not merely implement
   prefix, and both hang off `Bip01 Head`. Now loaded and attached — the character renders with a
   face and hair. `fighter` is the same real style this project's animations already use.
 
+## Checked and **not** a gap
+
+- **Wall and roof colour.** Listed here as a gap first, on the impression that the reference's
+  vivid red palace rendered grey in this project. It does not: rendering the palace gate at ground
+  level gives red walls, gold ornament, red lanterns and an open gateway, matching the reference
+  closely. The grey walls behind that impression are Jangan's **city** wall (`cj_s.bsr`), which is
+  genuinely grey stone in both. The textures were checked directly too -- `cj_pal_sdoor.ddj` and
+  `cj_pal_roof.ddj` decode to vivid red and gold.
+
+  Kept as an entry because the correction cost one render, and acting on the impression would have
+  cost a day chasing a material bug that does not exist.
+
 ## Open, in the order worth doing
 
 1. **Water in the moat beside the city wall.** The reference clearly shows a narrow blue channel
@@ -23,23 +35,17 @@ Status is kept honest: **done** means verified in a render, not merely implement
    ground lies below a cell's level would flood 65% of that region and 94.7% of the town. So the
    shape comes from somewhere this project has not found yet, and the reference proves it exists.
 
-2. **Wall and roof colour.** The reference palace is vivid **red** with gold-tan tiled roofs. This
-   project renders the same buildings grey and desaturated. Worth checking whether the right
-   texture is being selected at all, and whether per-layer material colour is being applied —
-   `build_godot_material` sets `albedo_color` from the layer's diffuse, and a wrong or ignored
-   diffuse would look exactly like this.
-
-3. **NPCs.** The reference has named NPCs standing in the town (`Grocery Trader Jinjin`,
+2. **NPCs.** The reference has named NPCs standing in the town (`Grocery Trader Jinjin`,
    `Magic POP Guide Gori`, the arena managers). This project renders none.
 
-4. **Monsters as real models.** The reference shows `Mangyang` mobs in the grassland. This project
+3. **Monsters as real models.** The reference shows `Mangyang` mobs in the grassland. This project
    has a live monster list from its own server but draws placeholder capsules.
 
-5. **Equipment on the character.** The reference character wears armour. This project caches 8
+4. **Equipment on the character.** The reference character wears armour. This project caches 8
    real armour sets and assembles them only when the server says a slot is equipped, so a fresh
    character renders bare.
 
-6. **A minimap.** The reference has a live minimap with the region's own art, the player's
+5. **A minimap.** The reference has a live minimap with the region's own art, the player's
    heading, and an X/Y readout. This project has a zone label. The authored per-region minimap art
    is already decoded (`client/tools/dump_ddj.gd`, and the region minimaps this project already
    compares terrain against), so the art side is solved.
