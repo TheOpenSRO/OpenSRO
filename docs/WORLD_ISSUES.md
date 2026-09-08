@@ -4462,25 +4462,133 @@ its `.bsk`/`.ban` references, then assemble NPCs through
 and easier: the table is readable, and this project's own server already
 streams a monster list to the client that NPCs can follow.
 
-## Ninety-ninth round: .bsr section table and character typing
+## Ninety-ninth round: the `.bsr` header table was right all along
 
-An NPC `.bsr` lists three mesh pieces, a `.bsk` skeleton and two `.ban`
-animations. `BsrReader` found one mesh and no skeleton, so the priest came
-back as a 25-vertex fragment -- which blocked NPCs.
+The ninety-eighth round ended pointing at `BsrReader`: an NPC `.bsr` lists
+three meshes and it found one, and it exposed no skeleton. Fixing that
+meant learning the layout, and the layout turned out to already be
+documented — incorrectly.
 
-The cause was a documented wrong conclusion. `BSR_FORMAT.md` said the
-header's offset table was untrustworthy, because a field that looked like a
-pointer "did not hold for one real file". The table starts at 0x0C, not
-0x10; read one field off, every entry landed on the wrong thing. Read
-correctly it is exact in every file checked, across all three categories,
-and the `uint16` at 0x40 is an authored object type -- 1 character, 2
-building, 4 nature.
+**The instrument first.** `client/tools/dump_bsr.gd` walks a `.bsr`
+printing every plausible length-prefixed string with its offset *and the
+raw 32-bit words in the gaps between them*. The gaps are the whole point:
+a list count sitting in front of a run of strings is invisible if you only
+print the strings. `chinaquest_priest.bsr` came back as
 
-Type 1 no longer needs scanning: material, mesh, animation and skeleton
-sections are each count-prefixed at the offset the header names, and their
-entries abut. Measured against the real archive: `chinaquest_priest` 1 piece /
-25 vertices -> 3 / 665, `chinasystem_bookmakergirl` -> 4 / 747, `mangnyang` ->
-2 / 440 with 15 animations.
+```
+  off 0x00c9 len  41  prim\mtrl\npc\china\chinaquest_priest.bmt
+    gap 0x00f6..0x00fa  words: 3
+  off 0x00fa len  44  ..._al.bms
+  off 0x012a len  47  ..._part1.bms
+  off 0x015d len  47  ..._part2.bms
+    gap 0x0190..0x019c  words: 4096, 0, 2
+  off 0x019c len  46  ..._basic.ban
+  off 0x01ce len  45  ..._time.ban
+    gap 0x01ff..0x0203  words: 1
+  off 0x0203 len  41  prim\skel\npc\china\chinaquest_priest.bsk
+```
+
+Counted lists, plainly. But the better find was in the header words this
+tool also prints: `193, 246, 511, 400` = `0xC1, 0xF6, 0x1FF, 0x190` — the
+material, mesh, skeleton and animation offsets exactly.
+
+**The recorded conclusion was wrong, and this is why.** BSR_FORMAT.md said
+the `hdr[]` offset table's semantics "aren't confirmed", that a field
+which "looked exactly like a byte offset to the mesh path in most of them
+did **not** hold for one real file", and that the reader therefore doesn't
+rely on it. The table starts at **0x0C, not 0x10**. Read one field off,
+every entry lands on the neighbouring section and the whole table looks
+like noise with one coincidence in it. Read correctly it is exact in every
+file checked, in all three categories:
+
+| File | 0x0C material | 0x10 mesh | 0x14 skeleton | 0x18 animation |
+|---|---|---|---|---|
+| `chinaquest_priest` (character) | 193 = 0xC1 | 246 = 0xF6 | 511 = 0x1FF | 400 = 0x190 |
+| `mangnyang` (character) | 249 = 0xF9 | 341 = 0x155 | 1097 = 0x449 | 431 = 0x1AF |
+| `cj_monstad_door01` (building) | 262 = 0x106 | 340 = 0x154 | 1524 | 1512 |
+| `tre_bank02` (nature) | 235 = 0xEB | 290 = 0x122 | 465 = 0x1D1 | 407 = 0x197 |
+
+The same doc called the field at 0x28 "an observed constant `152`". It is
+not a constant either: it is `name_end + 48`, tracking name length exactly
+(17-char name → 137, 9 → 129, 10 → 130).
+
+**And the file says what it is.** The `uint16` at 0x40 is an authored
+object type: **1 character, 2 building, 4 nature**. The field-*order*
+differences this project attributed to a path-prefix convention
+(`res\bldg\` vs `res\nature\`) were really this type all along. That
+matters because it is the game's own classification — no heuristic, no
+guessing from the path.
+
+**Result**, measured against the real archive, not inferred:
+
+| model | before | after |
+|---|---|---|
+| `chinaquest_priest` | 1 piece / 25 verts, no skeleton | 3 / 665, skeleton, 2 animations |
+| `chinasystem_bookmakergirl` | 1 / 77 | 4 / 747, skeleton, 2 animations |
+| `mangnyang` | — | 2 / 440, skeleton, 15 animations |
+
+Both readers assert the chaining — every section must end exactly where
+the header says the next begins — and fall back to the old scan if it
+fails, so a misunderstood file produces the old answer rather than a
+confidently wrong one. A character with no skeleton is refused outright:
+its pieces are skin, and returning them would render as limbs at the
+origin.
+
+### The bone mapping was a cached computation
+
+`MonsterAssembler` carried `GOLEM_PIECE_BONES` and `SCORPION_PIECE_BONES`
+as hand-derived dictionaries — a real obstacle, because the game has
+hundreds of NPCs and monsters and nobody is deriving a dictionary for each.
+Both had been produced by matching each mesh piece's vertex centroid to
+the nearest bone bind position. `client/tools/check_piece_bones.gd`
+recomputes that at runtime and prints it against what was written down:
+
+```
+golem.bsr    -- 48 bones, 7 mesh pieces  (checking against the hand-derived map)
+    golem01     743 verts -> Bip01 Spine       d=1.64  == hand-derived
+    ...
+    7/7 pieces agree with the hand-derived map
+scorpion.bsr -- 55 bones, 3 mesh pieces
+    3/3 pieces agree with the hand-derived map
+```
+
+10/10. The tables were only ever a cache, so `SkinnedBsrAssembler` does the
+computation instead, and any character-category `.bsr` now assembles with
+nothing supplied from outside. That also closes the gap BMS_FORMAT.md
+recorded as "no file tying a specific mesh set to a specific skeleton was
+found" — the `.bsr` is that file.
+
+**Stated honestly**: the bone choice affects nothing in the bind pose,
+because `attach_rigid` cancels the bone's rest transform and each piece
+lands at the absolute coordinates baked into its vertices. It only matters
+once the skeleton animates, and there it is an approximation — a humanoid
+whose lower body is one 400-vertex piece hangs off whichever single bone
+that piece's centroid sits nearest, so animating that bone swings the whole
+piece. Adequate for NPCs standing in a town. Not a skinning model.
+
+### A scenery bug found and deliberately not fixed
+
+Measured, not suspected: `cj_monstad_door01.bsr` yields **17 mesh
+references for 16 distinct meshes** — `..._door01_01.bms` comes back as
+both `mesh_path` and `sub_mesh_paths[0]`. A building carries a duplicate
+reference to its first piece *ahead of* its header-declared mesh section,
+and the scan takes that as the primary while also reading the real section
+as sub-meshes. Every multi-piece building in the world draws one piece
+twice.
+
+The fix is known — type 2 chains exactly the way type 1 does
+(door01: count 16 at 0x154, 16 × 73 bytes from 0x158, ending at 0x5E8 =
+the animation pointer) — and was left out on purpose, to keep a
+scenery-wide regression away from the NPC work. It wants a sweep over
+every `.bsr` in `Data.pk2` comparing old and new results first. Type 4
+should stay on the scanner meanwhile: its mesh entries carry a trailing
+`uint32` per piece that types 1 and 2 don't, and its animation section
+doesn't chain consistently (`tre_bank02`'s ends exactly at its skeleton
+pointer, `tre_maple01`'s ends 4 bytes short).
+
+**Next**: render one. `SkinnedBsrAssembler` is written and compiles but has
+never been drawn — a picture of the priest standing up is the next thing
+that should happen, before any spawning work.
 
 ## One-hundredth round: UI layout architecture recovered from Media.pk2
 
@@ -4514,4 +4622,3 @@ archives across three structured layers:
   formulas.
 - `HudUnderbar` (`scripts/ui/hud/hud_underbar.gd`): drives `resinfo\ifunderbar.txt`
   for quickslots, gauges, and page controls.
-
