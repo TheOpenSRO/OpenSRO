@@ -4146,6 +4146,24 @@ does not. Candidates, in the order worth testing:
 - **The skeleton's own transform.** The in-world character is scaled to
   `REAL_CHARACTER_NATIVE_HEIGHT`; the tool's is not.
 
-The second is the most suggestive, and it is cheap to test: apply the
-pose to a skeleton reset to rest first, and see whether the arms stay
-down.
+Both of the first two were then tested, and **both are refuted**:
+
+- **Repeated application.** Resetting the skeleton to rest at the top of
+  `apply_ban_pose`, exactly as the offline tool does, produces numbers
+  **identical to the digit** -- so the pose is idempotent and nothing
+  accumulates.
+- **The frame index.** Applying every frame of the animation offline
+  (0, 1, 2, 3, 5, 7, 9, 11, 13) puts the left hand **6.26 to 6.35 below
+  the head every time**. No frame of this animation raises the arms.
+
+So the same skeleton, built by the same builder from the same `.bsk`,
+running the same `apply_ban_pose` over the same `.ban`, produces arms
+down offline and arms up in the world, at every frame, with pose
+accumulation ruled out. The remaining untested difference is the
+in-world skeleton's own transform -- the character is scaled to
+`REAL_CHARACTER_NATIVE_HEIGHT`, the offline one is not.
+
+The next step is not another hypothesis. It is to make the two paths
+report the *same numbers*: have the in-world code dump the same bone
+global positions `check_ban_pose.gd` prints, in the same units, on the
+same frame, and find the first bone at which they diverge.
