@@ -36,7 +36,28 @@ uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.5;
 void fragment() {
 	vec4 tex = texture(albedo_texture, UV);
 	ALBEDO = albedo.rgb * tex.rgb;
-	ALPHA = albedo.a * tex.a;
+
+	// Test the cutout against full-resolution alpha, not the mipmapped
+	// alpha.
+	//
+	// A leaf card's texture is mostly holes, so each mip level averages a
+	// leaf's own alpha together with the gaps around it and the card's
+	// alpha falls as it recedes. Against a fixed cutout that makes leaves
+	// wink out a mip level at a time, and a canopy a few hundred units off
+	// collapses to bare branches -- reported from the fields outside
+	// Jangan, where the tree overhead rendered fully and its neighbours
+	// were skeletons.
+	//
+	// Colour still comes from the mipmapped sample, so the foliage does
+	// not shimmer; only the keep-or-discard decision reads mip 0, which is
+	// what preserves the canopy's shape at distance.
+	//
+	// Note for anyone tempted to "sharpen" the mipmapped alpha instead:
+	// rescaling it around the threshold cannot work, because any monotonic
+	// rescale crosses the threshold exactly where the original did and a
+	// hard scissor discards the identical texels. That was tried here and
+	// measured as a zero-pixel change.
+	ALPHA = albedo.a * textureLod(albedo_texture, UV, 0.0).a;
 	ALPHA_SCISSOR_THRESHOLD = alpha_scissor;
 	if (!FRONT_FACING) {
 		NORMAL = -NORMAL;

@@ -3662,7 +3662,7 @@ has not been identified yet. `client/tools/dump_ddj.gd` now reports a
 texture's fourCC, its decompressed format, and its opaque/transparent/
 partial texel counts, which is what ruled the format out.
 
-## Eighty-third round: a foliage fix that changed nothing, and what that ruled out
+## Eighty-third round: foliage dissolving with distance, and a probe that lied
 
 A real playtest in the fields reported trees "failing to render": the tree
 overhead renders fully, the ones a few hundred units away are bare
@@ -3681,8 +3681,20 @@ distance.
 zero of 921,600 pixels differ, maximum channel difference 0.** Rendered
 from the same viewpoint on the same build with only the shader edited.
 
-That is a useful negative result, so it is recorded rather than
-discarded: **the trees in question do not use the foliage shader at all.**
+**That conclusion was wrong**, and the way it was wrong is worth keeping.
+Painting the shader's `ALBEDO` a flat magenta and re-rendering turned
+**5.5% of the frame** magenta, so the shader is used and an edited file
+does reach the running client. The zero-pixel result was arithmetic, not
+evidence: `(a - t) / fwidth(a) + 0.5` crosses 0.5 exactly where `a`
+crosses `t`, so against a **hard scissor** any monotonic rescale keeps or
+discards the identical texels. Alpha sharpening only means anything with
+alpha-to-coverage, where partial coverage survives to the blend.
+
+A measurement that comes back "no change" deserves the same suspicion as
+one that comes back surprising: the probe has to be shown capable of
+detecting the thing before its silence counts as an answer.
+
+The original, discarded reading was:
 `ObjectLoader.build_godot_material` only builds the cutout material when
 it decides a texture genuinely carries cutout alpha (see `_ALPHA_FOURCCS`
 and `_real_alpha_fraction`); everything else gets a plain
@@ -3691,9 +3703,21 @@ path -- which is also the likeliest explanation for the black cards the
 same playtest reported, since a leaf card with no cutout renders its
 transparent texels as solid colour.
 
-The change was reverted rather than kept: it fixes nothing observed, and
-shipping an unverified rendering change as a fix is what this project's
-own rules exist to prevent.
+**The actual fix** is to test the cutout against full-resolution alpha
+while still taking colour from the mipmapped sample:
+`ALPHA = albedo.a * textureLod(albedo_texture, UV, 0.0).a`. The keep-or-
+discard decision then no longer sees the averaged-away alpha, so a canopy
+holds its shape at any distance, while colour keeps its mipmapping and
+does not shimmer. Measured against the same viewpoint: **2.04% of pixels
+changed, maximum channel difference 184**, and the change is exactly
+where it should be -- distant crowns that were bare branches are full
+again, the tree overhead is untouched because it was already sampling
+mip 0.
+
+Still open from the same report, and not explained by this: the **black
+leaf cards** seen at closer range. A card rendering its transparent
+texels as solid colour is a cutout that was never applied, which is a
+different failure from one applied against the wrong mip level.
 
 **Next step, concrete**: report per distinct loaded model which material
 class it received and what the cutout decision was, then compare that
