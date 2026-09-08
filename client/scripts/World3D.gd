@@ -3699,6 +3699,11 @@ func _update_blob_shadow() -> void:
 ##                          `name@x,z:yaw,pitch,dist` separated by `;` --
 ##                          each prints the movie frame it landed on
 ##   SRREVAMP_QA_RADIUS=n   load an n-region radius instead of the default
+##   SRREVAMP_QA_ANIM=1     play the real character animation (off by
+##                          default -- it still renders wrongly, see
+##                          docs/WORLD_ISSUES.md's ninetieth round)
+##   SRREVAMP_QA_RIG=1      report where each assembled character piece is
+##                          against where its own bone is
 ##   SRREVAMP_QA_SCAN=n     sweep the region on an n x n grid and report
 ##                          where the walkable graph sits below the solid
 ##                          geometry (i.e. where a player walks underneath)
@@ -3811,6 +3816,14 @@ func _qa_step() -> void:
 
 	if OS.get_environment("SRREVAMP_QA_LOOK") != "" and (_qa_tick == 60 or _qa_tick == 120):
 		_qa_look_report()
+
+	# Reported from a later tick, not the one-time setup block: the
+	# animation is applied during the movement update, so a report taken on
+	# the first frame measures the character before it has been posed at
+	# all -- which it did, and produced identical output with playback on
+	# and off.
+	if OS.get_environment("SRREVAMP_QA_RIG") != "" and _qa_tick == 60:
+		_qa_rig_report()
 
 	if not _qa_shots.is_empty():
 		_qa_advance_shots()
@@ -3925,6 +3938,46 @@ func _qa_advance_shots() -> void:
 			shot.get("pitch", camera_arm.rotation_degrees.x),
 			shot.get("yaw", camera_arm.rotation_degrees.y), 0.0)
 	_qa_shot_frames = QA_SHOT_SETTLE + QA_SHOT_HOLD
+
+## Reports where each piece of the assembled character actually is,
+## against where its own bone is.
+##
+## The skeleton itself is known to pose correctly -- see
+## client/tools/check_ban_pose.gd, which puts the hands below the head
+## after a frame -- while the assembled character renders with its arms
+## overhead. That can only be the attachment, and the attachment's
+## arithmetic looks right on paper, so this measures it instead of
+## reasoning about it: for every piece, where the bone is, where the piece
+## ended up, and how far apart they are.
+func _qa_rig_report() -> void:
+	if _player_skeleton == null:
+		print("QA RIG: no assembled player skeleton")
+		return
+	var skeleton := _player_skeleton
+	print("QA RIG: %d bone(s), skeleton at %s" % [
+		skeleton.get_bone_count(), skeleton.global_position.round()])
+	var rows: Array = []
+	for child in skeleton.get_children():
+		if not (child is BoneAttachment3D):
+			continue
+		var attachment := child as BoneAttachment3D
+		var bone_idx := skeleton.find_bone(attachment.bone_name)
+		if bone_idx == -1:
+			continue
+		var bone_world: Vector3 = skeleton.global_transform \
+			* skeleton.get_bone_global_pose(bone_idx).origin
+		for piece in attachment.get_children():
+			if not (piece is MeshInstance3D):
+				continue
+			var mesh_node := piece as MeshInstance3D
+			var centre: Vector3 = mesh_node.global_transform * mesh_node.get_aabb().get_center()
+			rows.append([bone_world.distance_to(centre), attachment.bone_name, bone_world, centre])
+	rows.sort_custom(func(a, b): return a[0] > b[0])
+	print("QA RIG   %-22s %-26s %-26s %8s" % ["bone", "bone is at", "its mesh is at", "apart"])
+	for i in range(mini(rows.size(), 14)):
+		print("QA RIG   %-22s %-26s %-26s %8.2f" % [
+			rows[i][1], str((rows[i][2] as Vector3).round()),
+			str((rows[i][3] as Vector3).round()), rows[i][0]])
 
 ## Reports placed objects standing clear of the ground under them, worst
 ## first -- scenery hanging in mid-air.
@@ -4439,7 +4492,8 @@ func _physics_process(delta: float) -> void:
 	# rather than unfinished. A bind pose reads as "not implemented yet";
 	# arms over the head reads as a bug. See docs/WORLD_ISSUES.md's
 	# eighty-ninth round for the two explanations already ruled out.
-	if false and _player_skeleton != null and _character_assets.has(_player_gender):
+	if OS.get_environment("SRREVAMP_QA_ANIM") != "" and _player_skeleton != null \
+		and _character_assets.has(_player_gender):
 		var assets: Dictionary = _character_assets[_player_gender]
 		var anim: BanReader.ParsedAnimation = assets["walk_anim"] if is_moving else assets["idle_anim"]
 		if anim != null and not anim.bones.is_empty():

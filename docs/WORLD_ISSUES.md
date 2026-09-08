@@ -4063,3 +4063,45 @@ the assumptions behind that arithmetic is wrong: most likely what
 mesh piece's own world position against its bone's posed position, rather
 than reasoning about what the composition ought to be. Playback stays
 disabled until it holds together.
+
+## Ninety-first round: measuring the rig, and an instrument that measured too early
+
+Two hooks were added to measure the assembled character rather than
+reason about it: `SRREVAMP_QA_ANIM` plays the animation (off by default,
+so the wrong-looking result is never shipped) and `SRREVAMP_QA_RIG`
+reports, for every piece, where its bone is and where the piece ended up.
+
+**The first run of it was worthless, in an instructive way.** It reported
+every mesh sitting at the skeleton's own origin, far from its bone, and
+reported **exactly the same numbers with playback on and off** -- which
+should have been impossible, since the two render differently. The report
+was running from the harness's one-time setup block, on the first frame,
+before the animation had been applied at all. Identical output for two
+different configurations is the signature of an instrument that is not
+measuring what it claims, and it is the fourth time in this session that
+the measurement rather than the world turned out to be the broken part.
+
+Moved to a later tick, it says the attachment is working: pieces sit
+**1.5 to 4.4 units** from their bones, which is what a mesh centre should
+be relative to the joint it hangs off, and the bone heights read as arms
+hanging down (upper arm -29, forearm -32, in a space where +Y is up).
+
+**And yet the render still shows the arms overhead.** So one of the two
+disagrees with what is actually drawn, and the likely culprit is the
+measurement again: this file's own `build_skeleton3d` already warns that
+`get_bone_global_pose()` "reflects only the pose side, which starts
+uninitialized/identity rather than defaulting to rest", and both
+`check_ban_pose.gd` and the rig report are built on it. A number read
+from an API whose semantics the codebase has already flagged as subtle is
+not evidence.
+
+**Where this stands.** The root bind transform fix is real and kept -- it
+took the character from scattered pieces to a coherent body. Everything
+after that is unresolved, and the honest summary is that the pose
+pipeline has been measured with an instrument that may not report what
+the renderer uses. The next step is to stop using `get_bone_global_pose`
+and measure the only thing that cannot lie: the world-space position of
+an actual attached mesh, sampled across several frames, with playback on
+and off. If those differ, the character is being posed and the arms are
+genuinely up; if they do not, nothing is moving and the render difference
+comes from somewhere else entirely.
