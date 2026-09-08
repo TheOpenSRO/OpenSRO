@@ -3661,3 +3661,45 @@ alpha channel, so this is not a blanket format bug. The specific model
 has not been identified yet. `client/tools/dump_ddj.gd` now reports a
 texture's fourCC, its decompressed format, and its opaque/transparent/
 partial texel counts, which is what ruled the format out.
+
+## Eighty-third round: a foliage fix that changed nothing, and what that ruled out
+
+A real playtest in the fields reported trees "failing to render": the tree
+overhead renders fully, the ones a few hundred units away are bare
+branches with a few leaf specks, and it gets worse with distance.
+
+That is the textbook signature of alpha testing against mipmaps, and this
+project's `foliage.gdshader` is exactly that setup --
+`filter_linear_mipmap` with a fixed `ALPHA_SCISSOR_THRESHOLD` of 0.5.
+Every mip level averages a leaf's alpha with the holes around it, the
+average crosses below the threshold, and the canopy dissolves a mip level
+at a time. So the shader was changed to rescale alpha by its own
+screen-space derivative, which restores the cutout's coverage at any
+distance.
+
+**It changed nothing. The before and after frames are byte-identical --
+zero of 921,600 pixels differ, maximum channel difference 0.** Rendered
+from the same viewpoint on the same build with only the shader edited.
+
+That is a useful negative result, so it is recorded rather than
+discarded: **the trees in question do not use the foliage shader at all.**
+`ObjectLoader.build_godot_material` only builds the cutout material when
+it decides a texture genuinely carries cutout alpha (see `_ALPHA_FOURCCS`
+and `_real_alpha_fraction`); everything else gets a plain
+`StandardMaterial3D`. Whatever these trees are getting, it is that other
+path -- which is also the likeliest explanation for the black cards the
+same playtest reported, since a leaf card with no cutout renders its
+transparent texels as solid colour.
+
+The change was reverted rather than kept: it fixes nothing observed, and
+shipping an unverified rendering change as a fix is what this project's
+own rules exist to prevent.
+
+**Next step, concrete**: report per distinct loaded model which material
+class it received and what the cutout decision was, then compare that
+against the model's own texture alpha (which `client/tools/dump_ddj.gd`
+already measures). Three tree textures were checked by hand and all
+decode with alpha intact -- `tre_dry02` DXT3 with 39,749 fully
+transparent texels, `tre_tree02_01` DXT3 with 68,299, `tre_tree02_02`
+DXT1 essentially opaque and correctly not cut out -- so the decode is not
+the problem and the decision or its application is.
