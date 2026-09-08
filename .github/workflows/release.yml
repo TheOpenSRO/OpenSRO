@@ -92,6 +92,7 @@ jobs:
           name: srrevamp-${{ matrix.archive_suffix }}
           path: client/dist/srrevamp-${{ matrix.archive_suffix }}.zip
           if-no-files-found: error
+          retention-days: 1
 
   publish:
     name: Publish GitHub Release
