@@ -14,20 +14,11 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  build:
-    name: Export ${{ matrix.preset }}
+  release:
+    name: Build & Release Client
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - preset: "Windows Desktop"
-            out_dir: windows
-            exe_name: srrevamp.exe
-            archive_suffix: windows
-          - preset: "Linux"
-            out_dir: linux
-            exe_name: srrevamp.x86_64
-            archive_suffix: linux
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
 
@@ -63,52 +54,42 @@ jobs:
         working-directory: client
         run: godot --headless --path . --import --quit
 
-      - name: Export ${{ matrix.preset }}
+      - name: Export Windows Desktop
         working-directory: client
         run: |
-          mkdir -p "build/${{ matrix.out_dir }}"
-          godot --headless --path . --export-release "${{ matrix.preset }}" "build/${{ matrix.out_dir }}/${{ matrix.exe_name }}"
-
-      - name: Assemble release folder
-        working-directory: client
-        run: |
-          mkdir -p "dist/srrevamp-${{ matrix.archive_suffix }}/pk2"
-          cp -r "build/${{ matrix.out_dir }}/." "dist/srrevamp-${{ matrix.archive_suffix }}/"
-          cp "../README.md" "dist/srrevamp-${{ matrix.archive_suffix }}/README.md" || true
-          cat > "dist/srrevamp-${{ matrix.archive_suffix }}/pk2/PUT_YOUR_PK2_FILES_HERE.txt" <<'EOF'
+          mkdir -p build/windows dist/srrevamp-windows/pk2
+          godot --headless --path . --export-release "Windows Desktop" build/windows/srrevamp.exe
+          cp -r build/windows/. dist/srrevamp-windows/
+          cp ../README.md dist/srrevamp-windows/README.md || true
+          cat > dist/srrevamp-windows/pk2/PUT_YOUR_PK2_FILES_HERE.txt <<'EOF'
           Copy your own real Silkroad Online client's *.pk2 files into this
           folder (Data.pk2, Map.pk2, Media.pk2, at minimum) before running
           the client. This project ships with no game data of its own --
           see docs/LEGAL.md in the source repository for why.
           EOF
-          chmod +x "dist/srrevamp-${{ matrix.archive_suffix }}/${{ matrix.exe_name }}" || true
+          cd dist && zip -r srrevamp-windows.zip srrevamp-windows
 
-      - name: Zip release folder
-        working-directory: client/dist
-        run: zip -r "srrevamp-${{ matrix.archive_suffix }}.zip" "srrevamp-${{ matrix.archive_suffix }}"
+      - name: Export Linux
+        working-directory: client
+        run: |
+          mkdir -p build/linux dist/srrevamp-linux/pk2
+          godot --headless --path . --export-release "Linux" build/linux/srrevamp.x86_64
+          cp -r build/linux/. dist/srrevamp-linux/
+          cp ../README.md dist/srrevamp-linux/README.md || true
+          cat > dist/srrevamp-linux/pk2/PUT_YOUR_PK2_FILES_HERE.txt <<'EOF'
+          Copy your own real Silkroad Online client's *.pk2 files into this
+          folder (Data.pk2, Map.pk2, Media.pk2, at minimum) before running
+          the client. This project ships with no game data of its own --
+          see docs/LEGAL.md in the source repository for why.
+          EOF
+          chmod +x dist/srrevamp-linux/srrevamp.x86_64 || true
+          cd dist && zip -r srrevamp-linux.zip srrevamp-linux
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: srrevamp-${{ matrix.archive_suffix }}
-          path: client/dist/srrevamp-${{ matrix.archive_suffix }}.zip
-          if-no-files-found: error
-          retention-days: 1
-
-  publish:
-    name: Publish GitHub Release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-      - name: Create release
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/srrevamp-windows/srrevamp-windows.zip
-            artifacts/srrevamp-linux/srrevamp-linux.zip
+            client/dist/srrevamp-windows.zip
+            client/dist/srrevamp-linux.zip
           generate_release_notes: true
