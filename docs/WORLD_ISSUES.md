@@ -4622,3 +4622,83 @@ archives across three structured layers:
   formulas.
 - `HudUnderbar` (`scripts/ui/hud/hud_underbar.gd`): drives `resinfo\ifunderbar.txt`
   for quickslots, gauges, and page controls.
+
+## Hundred-and-first round: repairing the UI landing
+
+The UI lane's first landing (`9162de4`, `89bd174`) took the client down. Four
+faults, in descending order of damage.
+
+**1. `World3D.gd` did not parse at all.** `Control.PRESET_BOTTOM_CENTER`
+does not exist in Godot 4 — it is `PRESET_CENTER_BOTTOM`. One wrong enum
+name, and the entire world script failed to compile, so nothing loaded.
+`godot4 --headless --path client --import --quit` reports this in one
+line and in under a minute; it had not been run. Everything else here was
+found downstream of fixing it.
+
+**2. Every piece of UI chrome silently failed to build.** The log filled
+with `Expected Image data size of 140x184x4 (RGBA8 without mipmaps) =
+103040 bytes, got 68692 bytes instead`. The arithmetic gives it away:
+`DdjReader` had been handed 51,520 bytes of payload for that texture,
+which is exactly `140 × 184 × 2`. Every failing size checked out the same
+way — 32×32→2048, 24×24→1152, 20×20→800 — so the files are **2 bytes a
+pixel**.
+
+Reading the DDS_PIXELFORMAT confirmed it from the file's own header rather
+than from the ratio: `bpp=16`, flags `0x41` (RGB | ALPHAPIXELS), masks
+`R=0x7C00 G=0x03E0 B=0x001F A=0x8000`. All of `interface\` is **ARGB1555**.
+The region minimap art beside it is DXT1 and was always fine, which is why
+this never surfaced before — no `interface\` texture had ever been loaded.
+
+`DdjReader`'s uncompressed branch assumed 24- or 32-bit BGR(A), choosing
+between them by whether the payload was big enough for 4 bytes a pixel.
+It now decodes through the file's own `dwRGBBitCount` and channel masks,
+which handles any width and is what the format specifies; the standard
+32-bit BGRA masks take the same path and produce identical bytes. The
+5-bit-to-8-bit scaling matters as much as the layout: a channel's 31 has
+to become 255, not 31, or every 16-bit texture renders nearly black.
+Regression test added with a synthetic ARGB1555 fixture checking both
+extremes of every channel and the 1-bit alpha. Go's `ddj` mirror exposes
+the same fields.
+
+**3. The minimap was a black disc.** With the chrome finally decoding, the
+map vanished behind an opaque black circle that also spilled over the
+frame's own artwork. `GDR_MINIMAP_ALPHA` in the authored
+`resinfo\ifminimap.txt` sits at exactly the map rect (14,57,105,105)
+carrying `mm_alpha.ddj` — 7,999 opaque texels inside 2,817 transparent
+ones, i.e. a **mask**, which the real client uses to clip the map to a
+circle. Rendered as ordinary art it is precisely a black disc over the
+map. Hidden for now; the map is clipped to a square instead, so it fills
+corners the real client leaves empty. The real circular clip needs the
+texture applied as a mask and is left to the UI lane.
+
+**4. Both HUD panels ate every click over their rectangle.** Neither root
+`Control` set `mouse_filter`, and Godot's default is `MOUSE_FILTER_STOP`.
+`World3D` drives click-to-move from `_unhandled_input`, which a consumed
+event never reaches — so an 864×54 strip across the bottom of the screen
+and a 136×175 box in the top-right were dead to clicks, over the chat box
+among other things. Both roots are now `MOUSE_FILTER_IGNORE`, which
+applies to that node alone; the buttons and slots inside keep their own
+filters.
+
+**Verified in a render**: world loads, minimap shows the region art with a
+heading arrow inside the real frame, zero image errors in the log.
+
+### Still open, and left to the UI lane
+
+The **underbar is largely not rendering**. The authored
+`resinfo\ifunderbar.txt` has 75 elements with a real `Rect`, spanning
+x ∈ [-64, 864] and y ∈ [-34, 52] — 928×86, with content extending left of
+and above the origin. `HudUnderbar` sizes itself 864×54 and anchors
+bottom-centre, so the authored coordinate space and the container do not
+correspond, and only a handful of pieces appear, bunched to the right. Not
+fixed here: which authored coordinate is meant to land at the screen
+centre is a design question owned by the lane that wrote it, and guessing
+at it would be exactly the failure mode this project keeps recording.
+
+### The lesson, again
+
+Two of these four are caught by commands already written down in
+`AGENTS.md` — the import check, and "a clean import is not proof, run
+something that executes the code". The other two needed a render, which
+`qa_shot.sh` produces in under two minutes on the GPU. The whole repair
+took one import, one suite run and three renders.

@@ -24,6 +24,16 @@ class ParsedTexture:
 	var height: int
 	var mip_map_count: int
 	var four_cc: String
+	## Bits per pixel and the channel masks, for an uncompressed texture
+	## (all zero when four_cc is set). Read from the file's own
+	## DDS_PIXELFORMAT rather than assumed: real interface art is 16-bit
+	## ARGB1555 while real world textures are 32-bit BGRA, and only these
+	## fields distinguish them. See to_texture.
+	var rgb_bit_count: int
+	var r_mask: int
+	var g_mask: int
+	var b_mask: int
+	var a_mask: int
 	## Raw bytes of the embedded DDS file (starting at its own "DDS " magic).
 	var dds: PackedByteArray
 
@@ -71,6 +81,14 @@ static func parse(data: PackedByteArray) -> ParsedTexture:
 		var pf_flags := _le_u32(dds, pf_off + 4)
 		if pf_flags & DDPF_FOURCC != 0:
 			tex.four_cc = dds.slice(pf_off + 8, pf_off + 12).get_string_from_ascii()
+		elif dds.size() >= pf_off + 32:
+			# DDS_PIXELFORMAT continues with dwRGBBitCount and the four
+			# channel masks. Only meaningful for an uncompressed texture.
+			tex.rgb_bit_count = _le_u32(dds, pf_off + 12)
+			tex.r_mask = _le_u32(dds, pf_off + 16)
+			tex.g_mask = _le_u32(dds, pf_off + 20)
+			tex.b_mask = _le_u32(dds, pf_off + 24)
+			tex.a_mask = _le_u32(dds, pf_off + 28) if pf_flags & DDPF_ALPHAPIXELS != 0 else 0
 
 	return tex
 
@@ -99,26 +117,75 @@ static func to_texture(tex: ParsedTexture) -> ImageTexture:
 		"DXT5":
 			image = Image.create_from_data(tex.width, tex.height, tex.mip_map_count > 1, Image.FORMAT_DXT5, pixels)
 		"":
-			# Uncompressed. DDS stores pixels as BGR(A) for the standard
-			# 0x00ff0000/0x0000ff00/0x000000ff/0xff000000 masks our real
-			# samples used; swizzle to Godot's RGBA8.
+			# Uncompressed, decoded through the file's own channel masks.
+			#
+			# **Corrected 2026-09-08.** This branch used to assume 24- or
+			# 32-bit BGR(A), picking between them by whether the payload was
+			# big enough for 4 bytes a pixel. That held for every world
+			# texture this project had loaded, and broke the moment real
+			# interface art was loaded: `interface\` .ddj files are **16-bit
+			# ARGB1555** (`bpp=16`, masks R=0x7C00 G=0x03E0 B=0x001F
+			# A=0x8000, verified by reading the DDS_PIXELFORMAT of
+			# mm_window, mm_alpha, mm_sign_npc and ub_deco_left directly).
+			# The old code read them as 3 bytes a pixel and handed Godot a
+			# buffer two-thirds the required size -- "Expected Image data
+			# size of 140x184x4 = 103040 bytes, got 68692 instead", and
+			# every piece of UI chrome silently failed to build.
+			#
+			# Driving the decode from dwRGBBitCount and the masks handles
+			# both, and is what the format actually specifies rather than
+			# what our sample set happened to contain. The standard 32-bit
+			# BGRA masks go down exactly the same path and produce the same
+			# bytes as before.
+			var bpp := tex.rgb_bit_count
+			if bpp == 0:
+				# No masks recorded (an older parse, or a file that declares
+				# neither a fourCC nor a pixel layout): fall back to the
+				# historical 24/32-bit BGR(A) assumption rather than failing.
+				bpp = 32 if pixels.size() >= tex.width * tex.height * 4 else 24
+			if bpp % 8 != 0:
+				push_error("ddj: uncompressed texture with %d bits per pixel" % bpp)
+				return null
+			var stride := bpp / 8
+			var px_count: int = tex.width * tex.height
+			if pixels.size() < px_count * stride:
+				push_error("ddj: uncompressed payload is %d bytes, need %d for %dx%d at %d bpp" % [
+					pixels.size(), px_count * stride, tex.width, tex.height, bpp
+				])
+				return null
+
+			var r_mask := tex.r_mask
+			var g_mask := tex.g_mask
+			var b_mask := tex.b_mask
+			var a_mask := tex.a_mask
+			if r_mask == 0 and g_mask == 0 and b_mask == 0:
+				# The historical assumption, written as masks.
+				r_mask = 0x00FF0000
+				g_mask = 0x0000FF00
+				b_mask = 0x000000FF
+				a_mask = 0xFF000000 if stride == 4 else 0
+
+			var r_shift := _mask_shift(r_mask)
+			var g_shift := _mask_shift(g_mask)
+			var b_shift := _mask_shift(b_mask)
+			var a_shift := _mask_shift(a_mask)
+			var r_max := r_mask >> r_shift
+			var g_max := g_mask >> g_shift
+			var b_max := b_mask >> b_shift
+			var a_max := a_mask >> a_shift
+
 			var rgba := PackedByteArray()
-			rgba.resize(pixels.size())
-			var has_alpha := pixels.size() >= tex.width * tex.height * 4
-			var stride := 4 if has_alpha else 3
-			var px_count := pixels.size() / stride
 			rgba.resize(px_count * 4)
 			for i in range(px_count):
 				var o := i * stride
-				var b := pixels[o]
-				var g := pixels[o + 1]
-				var r := pixels[o + 2]
-				var a := pixels[o + 3] if has_alpha else 255
+				var px := 0
+				for byte in range(stride):
+					px |= pixels[o + byte] << (byte * 8)
 				var d := i * 4
-				rgba[d] = r
-				rgba[d + 1] = g
-				rgba[d + 2] = b
-				rgba[d + 3] = a
+				rgba[d] = _scale_channel(px & r_mask, r_shift, r_max)
+				rgba[d + 1] = _scale_channel(px & g_mask, g_shift, g_max)
+				rgba[d + 2] = _scale_channel(px & b_mask, b_shift, b_max)
+				rgba[d + 3] = _scale_channel(px & a_mask, a_shift, a_max) if a_mask != 0 else 255
 			image = Image.create_from_data(tex.width, tex.height, false, Image.FORMAT_RGBA8, rgba)
 		_:
 			push_error("ddj: unhandled compression format %s" % tex.four_cc)
@@ -128,6 +195,26 @@ static func to_texture(tex: ParsedTexture) -> ImageTexture:
 		push_error("ddj: failed to build Image from decoded pixel data")
 		return null
 	return ImageTexture.create_from_image(image)
+
+## Number of trailing zero bits in a channel mask -- how far right to shift
+## the masked value to get the raw channel. 0 for an empty mask.
+static func _mask_shift(mask: int) -> int:
+	if mask == 0:
+		return 0
+	var shift := 0
+	while mask & 1 == 0:
+		mask >>= 1
+		shift += 1
+	return shift
+
+## Scales a masked channel value up to the full 0-255 range. A 5-bit
+## channel's 31 has to become 255, not 31, or every 16-bit texture comes out
+## almost black; dividing by the channel's own maximum does that for any
+## width, including a 1-bit alpha.
+static func _scale_channel(masked: int, shift: int, channel_max: int) -> int:
+	if channel_max <= 0:
+		return 255
+	return ((masked >> shift) * 255) / channel_max
 
 static func _le_u32(b: PackedByteArray, off: int) -> int:
 	return b[off] | (b[off + 1] << 8) | (b[off + 2] << 16) | (b[off + 3] << 24)

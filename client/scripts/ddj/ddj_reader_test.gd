@@ -66,6 +66,51 @@ func _build_ddj(width: int, height: int, four_cc: String) -> PackedByteArray:
 		buf[DdjReader.WRAPPER_SIZE + i] = dds[i]
 	return buf
 
+## Builds a 16-bit ARGB1555 .ddj -- the real layout of every file under
+## `interface\\` in a real Media.pk2 (verified 2026-09-08 by reading the
+## DDS_PIXELFORMAT of mm_window, mm_alpha, mm_sign_npc and ub_deco_left:
+## bpp=16, R=0x7C00 G=0x03E0 B=0x001F A=0x8000). The reader used to assume
+## 24- or 32-bit BGR(A) here and handed Godot a buffer two-thirds the size
+## it needed, so every piece of UI chrome silently failed to build.
+##
+## pixels are 16-bit values written little-endian, one per texel.
+func _build_ddj_argb1555(width: int, height: int, pixels: Array) -> PackedByteArray:
+	var payload_size := width * height * 2
+	var dds := PackedByteArray()
+	dds.resize(4 + DdjReader.DDS_HEADER_SIZE + payload_size)
+	var magic_bytes := "DDS ".to_ascii_buffer()
+	for i in range(4):
+		dds[i] = magic_bytes[i]
+	_put_u32(dds, 4, DdjReader.DDS_HEADER_SIZE)
+	_put_u32(dds, 4 + 8, height)
+	_put_u32(dds, 4 + 12, width)
+	_put_u32(dds, 4 + 24, 1)
+
+	var pf_off := 4 + 72
+	_put_u32(dds, pf_off, 32)
+	_put_u32(dds, pf_off + 4, DdjReader.DDPF_RGB | DdjReader.DDPF_ALPHAPIXELS)
+	_put_u32(dds, pf_off + 12, 16)
+	_put_u32(dds, pf_off + 16, 0x7C00)
+	_put_u32(dds, pf_off + 20, 0x03E0)
+	_put_u32(dds, pf_off + 24, 0x001F)
+	_put_u32(dds, pf_off + 28, 0x8000)
+
+	var payload_off := 4 + DdjReader.DDS_HEADER_SIZE
+	for i in range(pixels.size()):
+		dds[payload_off + i * 2] = pixels[i] & 0xFF
+		dds[payload_off + i * 2 + 1] = (pixels[i] >> 8) & 0xFF
+
+	var buf := PackedByteArray()
+	buf.resize(DdjReader.WRAPPER_SIZE + dds.size())
+	var magic := DdjReader.MAGIC.to_ascii_buffer()
+	for i in range(magic.size()):
+		buf[i] = magic[i]
+	_put_u32(buf, 0x0c, buf.size() - DdjReader.MAGIC_LEN)
+	_put_u32(buf, 0x10, 3)
+	for i in range(dds.size()):
+		buf[DdjReader.WRAPPER_SIZE + i] = dds[i]
+	return buf
+
 func _init() -> void:
 	var data := _build_ddj(4, 4, "")
 	var tex := DdjReader.parse(data)
@@ -103,6 +148,36 @@ func _init() -> void:
 	var mismatched_size := _build_ddj(4, 4, "")
 	_put_u32(mismatched_size, 0x0c, 0xFFFFFFFF)
 	_check(DdjReader.parse(mismatched_size) != null, "tolerates mismatched size field")
+
+	# 16-bit ARGB1555, the real interface-art layout. Four texels chosen so
+	# every channel and the 1-bit alpha are each checked at both extremes:
+	# opaque red, opaque green, opaque blue, transparent white.
+	var argb1555 := _build_ddj_argb1555(2, 2, [
+		0x8000 | (31 << 10),          # opaque red
+		0x8000 | (31 << 5),           # opaque green
+		0x8000 | 31,                  # opaque blue
+		(31 << 10) | (31 << 5) | 31,  # white, alpha bit clear
+	])
+	var argb_tex := DdjReader.parse(argb1555)
+	_check(argb_tex != null, "parses a 16-bit ARGB1555 texture")
+	if argb_tex != null:
+		_check(argb_tex.rgb_bit_count == 16, "ARGB1555: reads 16 bits per pixel (got %d)" % argb_tex.rgb_bit_count)
+		_check(argb_tex.r_mask == 0x7C00 and argb_tex.a_mask == 0x8000,
+			"ARGB1555: reads the channel masks (got R=%x A=%x)" % [argb_tex.r_mask, argb_tex.a_mask])
+		var argb_image_tex := DdjReader.to_texture(argb_tex)
+		_check(argb_image_tex != null, "builds a Godot texture from 16-bit data")
+		if argb_image_tex != null:
+			var img := argb_image_tex.get_image()
+			# A 5-bit 31 must scale to a full 255, not to 31 -- otherwise
+			# every 16-bit texture renders nearly black.
+			_check(img.get_pixel(0, 0) == Color8(255, 0, 0, 255),
+				"ARGB1555: opaque red scales to full range (got %s)" % img.get_pixel(0, 0))
+			_check(img.get_pixel(1, 0) == Color8(0, 255, 0, 255),
+				"ARGB1555: opaque green (got %s)" % img.get_pixel(1, 0))
+			_check(img.get_pixel(0, 1) == Color8(0, 0, 255, 255),
+				"ARGB1555: opaque blue (got %s)" % img.get_pixel(0, 1))
+			_check(img.get_pixel(1, 1).a == 0.0,
+				"ARGB1555: the 1-bit alpha reads as transparent (got a=%f)" % img.get_pixel(1, 1).a)
 
 	if _failures == 0:
 		print("ALL PASS")

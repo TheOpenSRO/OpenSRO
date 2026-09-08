@@ -1056,7 +1056,7 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_underbar = HudUnderbar.new(_ui_builder, _media_pk2, _ui_text_table)
 	_hud_underbar.name = "HudUnderbar"
 	ui_control.add_child(_hud_underbar)
-	_hud_underbar.anchors_preset = Control.PRESET_BOTTOM_CENTER
+	_hud_underbar.anchors_preset = Control.PRESET_CENTER_BOTTOM
 	_hud_underbar.anchor_left = 0.5
 	_hud_underbar.anchor_right = 0.5
 	_hud_underbar.anchor_top = 1.0

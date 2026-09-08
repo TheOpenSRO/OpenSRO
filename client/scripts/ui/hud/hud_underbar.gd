@@ -41,6 +41,13 @@ func _ready() -> void:
 func setup(layout_data: Variant = null) -> void:
 	custom_minimum_size = Vector2(864, 54)
 	size = Vector2(864, 54)
+	# The root is a transparent container, so it must not swallow mouse
+	# input: Godot's default MOUSE_FILTER_STOP made this panel eat every
+	# click over its whole rectangle, and World3D drives click-to-move from
+	# _unhandled_input, which a consumed event never reaches. IGNORE applies
+	# to this node only -- the buttons and slots inside keep their own
+	# filters and still receive clicks.
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var layout: UiLayoutParser.LayoutDef = null
 	if layout_data != null:

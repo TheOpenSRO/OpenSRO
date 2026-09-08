@@ -37,6 +37,16 @@ type Texture struct {
 	// FourCC is the compression format tag from the DDS pixel format, e.g.
 	// "DXT1", "DXT5". Empty if the pixel format isn't FourCC-based.
 	FourCC string
+	// RGBBitCount and the channel masks describe an uncompressed texture's
+	// pixel layout (all zero when FourCC is set). Read from the file's own
+	// DDS_PIXELFORMAT rather than assumed: real interface art is 16-bit
+	// ARGB1555 (masks 0x7C00/0x03E0/0x001F/0x8000) while real world
+	// textures are 32-bit BGRA, and only these fields tell them apart.
+	RGBBitCount uint32
+	RMask       uint32
+	GMask       uint32
+	BMask       uint32
+	AMask       uint32
 	// DDS is the embedded file's bytes starting at its own "DDS " magic —
 	// a complete, standard DDS file on its own.
 	DDS []byte
@@ -82,9 +92,20 @@ func Parse(data []byte) (*Texture, error) {
 	pf := dds[4+72:]
 	if len(pf) >= 12 {
 		pfFlags := binary.LittleEndian.Uint32(pf[4:])
-		const ddpfFourCC = 0x4
+		const (
+			ddpfAlphaPixels = 0x1
+			ddpfFourCC      = 0x4
+		)
 		if pfFlags&ddpfFourCC != 0 {
 			t.FourCC = string(pf[8:12])
+		} else if len(pf) >= 32 {
+			t.RGBBitCount = binary.LittleEndian.Uint32(pf[12:])
+			t.RMask = binary.LittleEndian.Uint32(pf[16:])
+			t.GMask = binary.LittleEndian.Uint32(pf[20:])
+			t.BMask = binary.LittleEndian.Uint32(pf[24:])
+			if pfFlags&ddpfAlphaPixels != 0 {
+				t.AMask = binary.LittleEndian.Uint32(pf[28:])
+			}
 		}
 	}
 

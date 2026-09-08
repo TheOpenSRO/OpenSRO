@@ -75,6 +75,22 @@ The QA harness at the bottom is a separate ~600 lines of pure diagnostics with n
 coupling; it belongs to the world lane and moves out on its own. Region loading and streaming is
 the next cohesive piece after that.
 
+### The minimap's circular clip, and the underbar's layout
+Both left from repairing the UI landing (hundred-and-first round), both owned by the UI lane.
+
+**The map is clipped to a square, not a circle.** `GDR_MINIMAP_ALPHA` carries `mm_alpha.ddj`, a
+mask the real client uses to clip the region art to a circle. It was being drawn as ordinary art —
+a black disc over the whole map — and is currently just hidden, so the map fills corners the real
+client leaves empty. Doing it properly means applying the texture as a mask (a `CanvasGroup` or a
+shader).
+
+**The underbar largely does not render.** `resinfo\ifunderbar.txt` has 75 elements with a real
+`Rect`, spanning x ∈ [-64, 864] and y ∈ [-34, 52] — 928×86, with content extending left of and
+above the origin. `HudUnderbar` sizes itself 864×54 and anchors bottom-centre, so the authored
+coordinate space and the container don't correspond and only a few pieces appear, bunched right.
+Which authored coordinate should land at the screen centre is a design question, so it was not
+guessed at during the repair.
+
 ## Parked, with the state written down
 
 ### Moat water

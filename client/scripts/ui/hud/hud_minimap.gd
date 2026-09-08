@@ -44,6 +44,13 @@ func _ready() -> void:
 func setup(layout_data: Variant = null) -> void:
 	custom_minimum_size = Vector2(136, 175)
 	size = Vector2(136, 175)
+	# The root is a transparent container, so it must not swallow mouse
+	# input: Godot's default MOUSE_FILTER_STOP made this panel eat every
+	# click over its whole rectangle, and World3D drives click-to-move from
+	# _unhandled_input, which a consumed event never reaches. IGNORE applies
+	# to this node only -- the buttons and slots inside keep their own
+	# filters and still receive clicks.
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	# 1. Circular map clipping viewport (authored rect is 14, 57, 105, 105)
 	_map_clip = Control.new()
@@ -103,6 +110,27 @@ func setup(layout_data: Variant = null) -> void:
 
 	if layout_root != null:
 		add_child(layout_root)
+
+		# `GDR_MINIMAP_ALPHA` is a **mask**, not art. The authored layout
+		# places it at exactly the map rect (14,57,105,105) carrying
+		# `mm_alpha.ddj`, which is an opaque circle inside a transparent
+		# square (7,999 opaque / 2,817 transparent texels, measured with
+		# dump_ddj.gd) -- the real client uses it to clip the region map to
+		# a circle. Drawn as an ordinary texture it is a solid black disc
+		# that covers the map completely and spills over the frame's own
+		# artwork, which is exactly what the first render of this HUD
+		# showed.
+		#
+		# Hiding it restores the map. It does **not** implement the real
+		# circular clip -- the map is currently clipped to the square
+		# `_map_clip` instead, so it fills the corners the real client
+		# leaves empty. Doing it properly needs the texture applied as a
+		# mask (a CanvasGroup or a shader), which is left to the UI lane;
+		# see docs/TODO.md.
+		var alpha_mask := layout_root.get_node_or_null("GDR_MINIMAP_ALPHA") as CanvasItem
+		if alpha_mask != null:
+			alpha_mask.visible = false
+
 		_lbl_pos_x = layout_root.get_node_or_null("GDR_MINIMAP_TEXT_POS_X") as Label
 		_lbl_pos_y = layout_root.get_node_or_null("GDR_MINIMAP_TEXT_POS_Y") as Label
 		_lbl_area = layout_root.get_node_or_null("GDR_MINIMAP_TEXT_AREANAME") as Label
