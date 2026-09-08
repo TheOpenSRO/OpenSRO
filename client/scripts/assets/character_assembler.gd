@@ -67,6 +67,13 @@ const BODY_PART_BONES := {
 	# carries those exact bone name strings, same as the man skeleton).
 	"arm_lower": ["Bip01 R Forearm", "Bip01 L Forearm"],
 	"arm_fore": ["Bip01 R Forearm", "Bip01 L Forearm"],
+	# A real face and hair are separate meshes from the body, named for the
+	# character's style ("chinaman_fighter_face") rather than with the
+	# "man_" prefix the body parts use, and both hang off the head bone.
+	# Keyed on the suffix alone so one entry covers every style -- see
+	# _strip_prefix's own note.
+	"face": ["Bip01 Head"],
+	"hair": ["Bip01 Head"],
 }
 
 ## Strips a leading "<word>_" gender/race prefix (e.g. "man_thigh" ->
@@ -259,6 +266,13 @@ static func attach_rigid(skeleton: Skeleton3D, array_mesh: ArrayMesh, bone_name:
 static func assemble(skeleton: Skeleton3D, parts: Dictionary, default_material: Material = null, materials_by_name: Dictionary = {}) -> void:
 	for part_name in parts:
 		var key := _strip_prefix(part_name)
+		# A style-named head mesh ("chinaman_fighter_face") reduces to
+		# "fighter_face" here, which no mapping can list for every style;
+		# its suffix is what identifies it.
+		if key.ends_with("face"):
+			key = "face"
+		elif key.ends_with("hair"):
+			key = "hair"
 		if not BODY_PART_BONES.has(key):
 			print("CharacterAssembler: no bone mapping for body part %s (key %s) -- skipped" % [part_name, key])
 			continue

@@ -441,7 +441,11 @@ const GENDER_ASSET_PATHS := {
 	"china_man": {
 		"skeleton": "Prim\\Skel\\Char\\China\\chinaman_skel.bsk",
 		"mesh_dir": "Prim\\Mesh\\Char\\China\\man",
-		"body_parts": ["man_pelvis", "man_torso_lower", "man_torso_upper", "man_thigh", "man_calf", "man_arm_upper", "man_arm_lower"],
+		# The face and hair are separate real meshes, named for the
+		# character's style rather than "man_*" like the body parts, and
+		# both hang off the head bone. "fighter" is the same real style
+		# this entry's own animations use.
+		"body_parts": ["man_pelvis", "man_torso_lower", "man_torso_upper", "man_thigh", "man_calf", "man_arm_upper", "man_arm_lower", "chinaman_fighter_face", "chinaman_fighter_hair"],
 		"material": "Prim\\Mtrl\\Char\\China\\man\\chinaman_warrior.bmt",
 		"equipment_mesh_dir": "Prim\\Mesh\\Item\\China\\man_item",
 		"equipment_material_dir": "Prim\\Mtrl\\Item\\China\\man_item",
@@ -454,7 +458,7 @@ const GENDER_ASSET_PATHS := {
 	"china_woman": {
 		"skeleton": "Prim\\Skel\\Char\\China\\chinawoman_skel.bsk",
 		"mesh_dir": "Prim\\Mesh\\Char\\China\\woman",
-		"body_parts": ["woman_pelvis", "woman_torso_lower", "woman_torso_upper", "woman_thigh", "woman_calf", "woman_arm_upper", "woman_arm_fore"],
+		"body_parts": ["woman_pelvis", "woman_torso_lower", "woman_torso_upper", "woman_thigh", "woman_calf", "woman_arm_upper", "woman_arm_fore", "chinawoman_fighter_face", "chinawoman_fighter_hair"],
 		"material": "Prim\\Mtrl\\Char\\China\\woman\\chinawoman_warrior.bmt",
 		"equipment_mesh_dir": "Prim\\Mesh\\Item\\China\\woman_item",
 		"equipment_material_dir": "Prim\\Mtrl\\Item\\China\\woman_item",
