@@ -3783,3 +3783,52 @@ local space, so the shared anchor cannot explain it. Two candidates worth
 testing: a per-region height field in the `.m` header this project does
 not read, or the real client snapping scenery to the terrain rather than
 trusting the placement's own Y.
+
+## Eighty-fifth round: the heightmap says which region an object belongs to
+
+The 83 objects the corrected float report found are not floating because
+of anything this project builds. **They are being drawn in the wrong
+region**, and the authored data says so exactly.
+
+Every one of the worst offenders in real region 96/167 sits at local
+x 1866-1912 -- against that region's east edge. Their placement heights
+and that region's own terrain disagree by 60-odd units, so the first
+question was which of the two this project had got wrong. Neither:
+sampling the raw `.m` heightmap directly (`server/cmd/heightat`) gives
+**-52.98** at local (1912, 377), and the built terrain reports **-53.0**
+there. The terrain is right to a hundredth of a unit.
+
+Sampling the *neighbouring* region's heightmap at the same local
+coordinates settles it:
+
+| local (x, z) | placed y | 96/167 (drawn in) | **96/166** |
+|---|---|---|---|
+| 1912, 377 | 14.5 | -52.98 | **14.49** |
+| 1898, 284 | 7.8 | -59.24 | **8.09** |
+| 1900, 437 | 16.1 | -50.13 | **16.13** |
+| 1866, 479 | 16.2 | -49.09 | **16.17** |
+
+Every one lands on 96/166's ground to within a few hundredths. These are
+that region's objects, cross-referenced into its neighbour's `.o2` and
+drawn there.
+
+**That is a far better ownership test than the one this project is
+using.** The seventy-eighth round separated a region's own `.o2` entries
+from cross-references by which of the three per-sector lists they sit in,
+which measured 91% against 46% on the sector check. Asking instead
+whether an entry sits on the region's own ground is weaker as a filter on
+its own -- list 2 lands on its own ground 84.5% of the time in real
+96/167 and 85.5% in real 97/168, against list 1's 72.3% and 74.4%, and in
+real 98/168 the two are indistinguishable because that region is full of
+legitimately elevated things -- but it is far stronger as an *assignment*
+rule, because it compares a candidate against every neighbour rather than
+judging it alone.
+
+**Proposed rule, not yet implemented**: assign each `.o2` entry to
+whichever loaded region's heightmap best matches its own placement Y, and
+draw it only there. Hanging decorations survive it -- a real
+`x_mas_wreath02` authored 167 units above the ground in real 96/168 still
+matches 96/168 better than any neighbour -- because the test is
+comparative rather than a tolerance. What it needs is a region's
+heightmap to be samplable while its neighbours load, which the loader
+does not currently arrange.

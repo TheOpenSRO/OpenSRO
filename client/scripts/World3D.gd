@@ -3897,8 +3897,9 @@ func _qa_float_report(radius: float) -> void:
 	print("QA FLOAT: %d placed object(s) within %.0f sit more than %.0f off their own region's ground" % [
 		found.size(), radius, FLOATING_TOLERANCE])
 	for i in range(mini(found.size(), QA_FLOAT_MAX_ROWS)):
-		print("QA FLOAT   %+7.1f  %-30s %-20s placed y %.1f, ground %.1f" % [
-			found[i][0], found[i][1], found[i][2], (found[i][3] as Vector3).y, found[i][4]])
+		var where: Vector3 = found[i][3]
+		print("QA FLOAT   %+7.1f  %-30s %-20s local (%.0f, %.0f) placed y %.1f, ground %.1f" % [
+			found[i][0], found[i][1], found[i][2], where.x, where.z, where.y, found[i][4]])
 
 ## Fires horizontal rays through a band of the region and reports which
 ## X positions are clear through it -- "is this arch a way through, or a
