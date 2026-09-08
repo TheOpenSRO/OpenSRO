@@ -1,10 +1,16 @@
 # Handoff: current state of the work
 
-For an agent picking this up cold. It says what is being worked on right now, exactly where the
-last session stopped, and what to do next. It is a snapshot, not a spec — when it disagrees with
-`docs/TODO.md` or `docs/WORLD_ISSUES.md`, those are newer and win.
+For an agent picking up the **world lane** cold — NPCs, format readers, terrain, object placement.
+A second agent is working the **UI lane** in parallel (`docs/HANDOFF_UI.md`); the file split that
+keeps the two apart is in that document's "Do not collide" section, and the short version is that
+the UI is moving out of `World3D.gd` into `client/scripts/ui/`. Expect that file to shrink under
+you, and rebase rather than fight it.
 
-**Last updated**: 2026-09-08, at commit `7c7d533` on `dev`.
+This document says what the world lane is working on, exactly where the last session stopped, and
+what to do next. It is a snapshot, not a spec — when it disagrees with `docs/TODO.md` or
+`docs/WORLD_ISSUES.md`, those are newer and win.
+
+**Last updated**: 2026-09-08, at commit `c475885` on `dev`.
 
 ## Read these first, in this order
 

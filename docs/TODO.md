@@ -6,8 +6,9 @@ for every item live in `docs/WORLD_ISSUES.md`; this file is the index.
 
 Ordered by value per unit of effort, not by how interesting the problem is.
 
-New to the project? [HANDOFF.md](HANDOFF.md) covers the current task in depth — where the last
-session stopped, the tools for it, and the traps — and points back here for everything else.
+Two lanes are running in parallel: the **world** lane ([HANDOFF.md](HANDOFF.md)) has items 1-3,
+the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff covers its own lane —
+where it stopped, the tools for it, the traps — and points back here for everything else.
 
 ## Next up
 
@@ -60,9 +61,19 @@ in the eighty-first round), and the client's own coordinate readout is now recov
 (`server/cmd/wherecoord`, ninety-seventh round). This is UI work on solved data.
 
 ### 5. Break up `client/scripts/World3D.gd`
-5,200 lines, against 800 for the next largest file. Not urgent and not worth a big-bang refactor,
-but the QA harness at the bottom is ~600 lines of pure diagnostics with no gameplay coupling and
-would move out safely. Region loading and streaming is the next cohesive piece after that.
+5,259 lines, against 800 for the next largest file — and now the file both lanes would edit at
+once, which makes this deconfliction as well as tidying.
+
+**The UI is the big piece and goes first**: 79 of the file's `@onready` node references and 75 of
+its 162 functions are UI handlers, wired by 96 `.connect(` calls in code (the scene has only 2
+`[connection]` entries). Moving them into `client/scripts/ui/` plus its own scene leaves the two
+lanes touching disjoint files. Do it incrementally — one tab, run the suite, commit — since a
+big-bang refactor of a file another agent is editing will not merge. See
+[HANDOFF_UI.md](HANDOFF_UI.md)'s "Do not collide".
+
+The QA harness at the bottom is a separate ~600 lines of pure diagnostics with no gameplay
+coupling; it belongs to the world lane and moves out on its own. Region loading and streaming is
+the next cohesive piece after that.
 
 ## Parked, with the state written down
 
