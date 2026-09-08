@@ -1022,7 +1022,7 @@ func _ready() -> void:
 ## change, with margin to also clear the real sky dome (which sits
 ## SKY_DOME_HEIGHT_ABOVE_PLAYER up with SKY_DOME_RADIUS reach).
 func _apply_camera_far_plane() -> void:
-	camera_3d.far = REGION_SPAN * (REGION_LOAD_RADIUS + 1) * 2.0
+	camera_3d.far = REGION_SPAN * (_region_load_radius() + 1) * 2.0
 
 ## Loads real static scenery through the exact same pk2 -> BsrReader ->
 ## ObjectLoader pipeline client/tools/render_asset.gd verifies standalone,
@@ -2297,8 +2297,9 @@ func _maybe_stream_regions() -> void:
 	_last_stream_cell = cur
 	_update_zone_label_for_region(_grid_origin_region.x + cur.x, _grid_origin_region.y + cur.y)
 
-	for dy in range(cur.y - REGION_LOAD_RADIUS, cur.y + REGION_LOAD_RADIUS + 1):
-		for dx in range(cur.x - REGION_LOAD_RADIUS, cur.x + REGION_LOAD_RADIUS + 1):
+	var radius := _region_load_radius()
+	for dy in range(cur.y - radius, cur.y + radius + 1):
+		for dx in range(cur.x - radius, cur.x + radius + 1):
 			var key := "%d_%d" % [dx, dy]
 			if _loaded_cells.has(key):
 				continue
@@ -2307,7 +2308,7 @@ func _maybe_stream_regions() -> void:
 	# Unload real cells now well outside the real load radius, so a player
 	# walking through a real, large world doesn't accumulate every region
 	# they've ever passed through as permanently-loaded nodes.
-	var unload_margin := REGION_LOAD_RADIUS + 1
+	var unload_margin := _region_load_radius() + 1
 	for key in _loaded_cells.keys().duplicate():
 		var parts := (key as String).split("_")
 		var kdx := int(parts[0])
@@ -2329,6 +2330,20 @@ func _maybe_stream_regions() -> void:
 ## of the one and only region loaded. Falls back to the original
 ## single-region behavior for a path that isn't shaped like a real region
 ## coordinate (e.g. a loose dev file with no real (x, y) meaning).
+## How many regions out from the player to load, as an override of
+## REGION_LOAD_RADIUS.
+##
+## The default 2 means a 5x5 grid -- 25 regions of terrain and objects
+## parsed on every start. Measured on the render box, that fixed cost is
+## about 65 seconds of a 94-second screenshot run, against 0.33 seconds a
+## frame once it is up. Most checks only ever look at one region, so being
+## able to ask for fewer is most of the wait.
+func _region_load_radius() -> int:
+	var override := OS.get_environment("SRREVAMP_QA_RADIUS")
+	if override != "" and override.is_valid_int():
+		return maxi(int(override), 0)
+	return REGION_LOAD_RADIUS
+
 func _load_initial_region_neighborhood() -> void:
 	var mapm_path := OS.get_environment("SRREVAMP_MAPM_PATH")
 	if mapm_path != "":
@@ -2337,7 +2352,7 @@ func _load_initial_region_neighborhood() -> void:
 			_try_load_real_terrain()
 			_try_load_real_map_objects()
 			return
-		_load_region_neighborhood(coords["x"], coords["y"], REGION_LOAD_RADIUS, OS.get_environment("SRREVAMP_MAPM_TEXTURE_PATH"))
+		_load_region_neighborhood(coords["x"], coords["y"], _region_load_radius(), OS.get_environment("SRREVAMP_MAPM_TEXTURE_PATH"))
 		return
 
 	# No dev/testing env var set -- the real, normal path for an actual
@@ -2382,7 +2397,7 @@ func _reload_zone_assets(zone: String) -> void:
 		return
 
 	var paths := _zone_paths(zone)
-	_load_region_neighborhood(coords["x"], coords["y"], REGION_LOAD_RADIUS, paths.get("minimap", ""))
+	_load_region_neighborhood(coords["x"], coords["y"], _region_load_radius(), paths.get("minimap", ""))
 
 ## Reacts to a successful real zone change (see NetClient.change_zone/
 ## OpChangeZoneResult): updates the zone label and reloads this scene's
@@ -3572,6 +3587,10 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_THROUGH=z0,z1,y[,step]
 ##                          fire horizontal rays through that band and
 ##                          report which X spans are clear through it
+##   SRREVAMP_QA_SHOTS=...   visit several viewpoints in one run, as
+##                          `name@x,z:yaw,pitch,dist` separated by `;` --
+##                          each prints the movie frame it landed on
+##   SRREVAMP_QA_RADIUS=n   load an n-region radius instead of the default
 ##   SRREVAMP_QA_SCAN=n     sweep the region on an n x n grid and report
 ##                          where the walkable graph sits below the solid
 ##                          geometry (i.e. where a player walks underneath)
@@ -3650,6 +3669,12 @@ func _qa_step() -> void:
 			for spec in through.split(";"):
 				if spec.strip_edges() != "":
 					_qa_through_report(spec.strip_edges())
+		var shots := OS.get_environment("SRREVAMP_QA_SHOTS")
+		if shots != "":
+			for spec in shots.split(";"):
+				var parsed := _parse_shot(spec.strip_edges())
+				if not parsed.is_empty():
+					_qa_shots.append(parsed)
 		var scan := OS.get_environment("SRREVAMP_QA_SCAN")
 		if scan != "":
 			_qa_scan_report(maxi(int(scan), 2))
@@ -3666,6 +3691,9 @@ func _qa_step() -> void:
 
 	if OS.get_environment("SRREVAMP_QA_LOOK") != "" and (_qa_tick == 60 or _qa_tick == 120):
 		_qa_look_report()
+
+	if not _qa_shots.is_empty():
+		_qa_advance_shots()
 
 	var walk := OS.get_environment("SRREVAMP_QA_WALK")
 	if walk != "":
@@ -3695,6 +3723,88 @@ func _qa_step() -> void:
 					what = "object %s" % placed.get_meta("model")
 			standing = "  on %s at %.1f (%.1f below feet)" % [what, surface.height, l.y - surface.height]
 		print("QA %4d local %s%s" % [_qa_tick, where, standing])
+
+## Viewpoints still to visit this run, and where the current one is up to.
+## See _qa_advance_shots.
+var _qa_shots: Array = []
+var _qa_shot_index := -1
+var _qa_shot_frames := 0
+
+## How many frames a viewpoint is held before and after its frame is
+## announced -- enough for streaming and the camera arm to settle.
+const QA_SHOT_SETTLE := 12
+const QA_SHOT_HOLD := 16
+
+## Parses one `name@x,z:yaw,pitch,dist` viewpoint. Everything after the
+## position is optional.
+static func _parse_shot(spec: String) -> Dictionary:
+	if spec == "":
+		return {}
+	var name := "shot"
+	var rest := spec
+	var at := spec.find("@")
+	if at >= 0:
+		name = spec.substr(0, at).strip_edges()
+		rest = spec.substr(at + 1)
+	var camera := ""
+	var colon := rest.find(":")
+	if colon >= 0:
+		camera = rest.substr(colon + 1)
+		rest = rest.substr(0, colon)
+	var pos := rest.split(",")
+	if pos.size() < 2 or not pos[0].strip_edges().is_valid_float() or not pos[1].strip_edges().is_valid_float():
+		return {}
+	var out := {"name": name, "x": float(pos[0]), "z": float(pos[1])}
+	var cam := camera.split(",") if camera != "" else PackedStringArray()
+	var keys := ["yaw", "pitch", "dist"]
+	for i in range(mini(cam.size(), keys.size())):
+		if cam[i].strip_edges().is_valid_float():
+			out[keys[i]] = float(cam[i])
+	return out
+
+## Walks a run through several viewpoints, announcing the movie frame each
+## one lands on.
+##
+## Startup dominates a screenshot run -- about 65 seconds of loading
+## against 0.33 seconds a frame -- so taking six pictures as six runs pays
+## that cost six times. This pays it once: the run visits each viewpoint in
+## turn, holds it long enough to settle, and prints
+## `QA SHOT <name> frame <n>`, so the caller pulls frame n from the movie
+## sequence for each. No separate capture path is needed, which matters
+## because manual viewport capture has its own history of returning blank
+## images in this project.
+func _qa_advance_shots() -> void:
+	# Announce once the camera has had QA_SHOT_SETTLE frames to arrive, so
+	# the frame named is one worth pulling.
+	if _qa_shot_index >= 0 and _qa_shot_frames == QA_SHOT_HOLD:
+		print("QA SHOT %s frame %d" % [
+			_qa_shots[_qa_shot_index]["name"], Engine.get_frames_drawn()])
+	_qa_shot_frames -= 1
+	if _qa_shot_frames > 0:
+		return
+
+	_qa_shot_index += 1
+	if _qa_shot_index >= _qa_shots.size():
+		print("QA SHOT: all %d viewpoints visited" % _qa_shots.size())
+		_qa_shots.clear()
+		return
+
+	var shot: Dictionary = _qa_shots[_qa_shot_index]
+	var pair := _nav_graph_for(player.global_position)
+	if not pair.is_empty():
+		var graph: NavGraph = pair[0]
+		var group: Node3D = pair[1]
+		var lx: float = shot["x"]
+		var lz: float = shot["z"]
+		player.global_position = group.to_global(Vector3(lx, graph.height_at(lx, lz, 0.0), lz))
+		player.velocity = Vector3.ZERO
+	if shot.has("dist"):
+		camera_arm.spring_length = shot["dist"]
+	if shot.has("yaw") or shot.has("pitch"):
+		camera_arm.rotation_degrees = Vector3(
+			shot.get("pitch", camera_arm.rotation_degrees.x),
+			shot.get("yaw", camera_arm.rotation_degrees.y), 0.0)
+	_qa_shot_frames = QA_SHOT_SETTLE + QA_SHOT_HOLD
 
 ## Reports placed objects standing clear of the ground under them, worst
 ## first -- scenery hanging in mid-air.

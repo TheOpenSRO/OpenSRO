@@ -18,9 +18,20 @@
 #   --walk deg        walk continuously on this heading
 #   --frames n        frames to render (default 120)
 #   --size WxH        render size (default 1280x720)
+#   --radius n        load an n-region radius instead of the default 2
+#   --shots "..."     visit several viewpoints in one run (see below)
 #   --nofog           disable fog, for high overview shots
 #   --free            let the camera pass through geometry
 #   --out <dir>       where to write frames (required)
+#
+# Startup dominates a run -- roughly 65 seconds of loading against 0.33
+# seconds a frame -- so six pictures as six runs pays that six times.
+# --shots pays it once, visiting each viewpoint in one boot:
+#
+#   --shots "square@1002,1020:0,-25,700;gate@1062,1600:0,0,40"
+#
+# Each viewpoint prints "QA SHOT <name> frame <n>" in the log; pull that
+# numbered frame out of the output directory.
 #
 # Environment: CLIENT_DIR and PK2_DIR default to the RE box's own layout.
 set -euo pipefail
@@ -30,7 +41,7 @@ PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
 GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 
 REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""
-AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""
+AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -43,6 +54,8 @@ while [ $# -gt 0 ]; do
     --frames) FRAMES="$2"; shift 2 ;;
     --size)   SIZE="$2";   shift 2 ;;
     --out)    OUT="$2";    shift 2 ;;
+    --radius) RADIUS="$2"; shift 2 ;;
+    --shots)  SHOTS="$2";  shift 2 ;;
     --nofog)  NOFOG=1;     shift ;;
     --free)   FREE=1;      shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -68,8 +81,10 @@ cd "$CLIENT_DIR"
 VGL=""
 if command -v vglrun >/dev/null && [ -e /dev/dri/renderD128 ] && [ -r /dev/dri/renderD128 ]; then
   VGL="vglrun -d egl0"
+  echo "qa_shot: hardware GL via VirtualGL on /dev/dri/renderD128" >&2
 else
   export LIBGL_ALWAYS_SOFTWARE=1
+  echo "qa_shot: no usable render node -- falling back to software GL (slow)" >&2
 fi
 export SRREVAMP_PK2_PATH="$PK2_DIR/Data.pk2"
 export SRREVAMP_MAP_PK2_PATH="$PK2_DIR/Map.pk2"
@@ -82,6 +97,8 @@ export SRREVAMP_MAPM_PATH="$REGION"
 [ -n "$WALK" ]  && export SRREVAMP_QA_WALK="$WALK"
 [ -n "$NOFOG" ] && export SRREVAMP_QA_NOFOG=1
 [ -n "$FREE" ]  && export SRREVAMP_QA_FREE=1
+[ -n "$RADIUS" ] && export SRREVAMP_QA_RADIUS="$RADIUS"
+[ -n "$SHOTS" ]  && export SRREVAMP_QA_SHOTS="$SHOTS"
 
 # --resolution as well as the X screen: Godot renders at the project's own
 # window size otherwise, so asking for a square screen alone still produced

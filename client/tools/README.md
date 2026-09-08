@@ -5,6 +5,41 @@ real (even if software/offscreen) GL context — run them under `xvfb-run` with
 `LIBGL_ALWAYS_SOFTWARE=1` on a machine without a display, or drop `xvfb-run` if you're already on
 a machine with a display. See each script's header comment for full usage.
 
+`qa_shot.sh` — **the way to look at the world.** Runs the client against real pk2 archives, puts
+the player at a given region-local spot, frames the camera, and collects the rendered frames. It
+drives the QA hooks documented at the top of `client/scripts/World3D.gd` (`SRREVAMP_QA_*`), which
+also cover walking a heading, hiding meshes by name, reporting what the camera is pointing at,
+sweeping a region for spots where a player would stand under the geometry, and firing rays through
+a wall to see which arches are actually open.
+
+Two things about it are worth knowing before you wait on a run:
+
+**It uses the GPU when there is one.** Godot's Linux GL backend draws through GLX on X11 and Xvfb
+has no DRI, so without help every frame is rasterised on the CPU and a screenshot costs minutes.
+When `vglrun` and a readable `/dev/dri/renderD128` are both present the script routes GLX through
+EGL on the render node instead, and says which path it took on stderr. If a log ever says
+"falling back to software GL", something about the render node changed — that is worth fixing
+before waiting on anything else.
+
+**Startup dominates, so batch the pictures.** Loading the region grid costs roughly 65 seconds
+against 0.33 seconds a frame, so six pictures taken as six runs pays that cost six times. Use
+`--shots` to visit several viewpoints in one boot, and `--radius` to load fewer regions when the
+check only looks at one:
+
+```
+qa_shot.sh --out /var/tmp/tour --frames 220 --region '97\168.m' --radius 1 \
+  --shots "square@1002,1020:0,-25,700;gate@1062,1560:0,2,45;shops@300,1100:270,-8,60"
+```
+
+Each viewpoint prints `QA SHOT <name> frame <n>` in the log; pull that numbered frame from the
+output directory. Six viewpoints this way took 116 seconds against about nine and a half minutes
+as six separate runs.
+
+`dump_ddj.gd` — writes any real `.ddj` texture out as a PNG, and reports its fourCC, the format it
+decompresses to, and how many texels are opaque, transparent or partial. Written to settle which
+spelling of the region minimap filename was real (`<y>x<x>.ddj`), and useful whenever a texture
+renders wrong and the question is whether its alpha survived decoding.
+
 `render_asset.gd` — loads a real mesh + real texture from a real pk2 archive through this
 project's own readers (`Pk2Reader`, `BmsReader`, `DdjReader`) and renders a screenshot to disk.
 
