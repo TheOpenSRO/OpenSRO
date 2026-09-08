@@ -3622,7 +3622,14 @@ func _qa_step() -> void:
 				(node as CanvasItem).visible = false
 		if OS.get_environment("SRREVAMP_QA_NOFOG") != "":
 			if world_environment != null and world_environment.environment != null:
-				world_environment.environment.fog_enabled = false
+				var env := world_environment.environment
+				env.fog_enabled = false
+				# The aerial-perspective haze is a separate term from the
+				# fog toggle, and at the altitude an overview shot needs it
+				# washes the whole city out -- which defeats the point of
+				# taking one to compare against authored art.
+				env.fog_aerial_perspective = 0.0
+				env.fog_density = 0.0
 			camera_3d.far = 40000.0
 		var hide := OS.get_environment("SRREVAMP_QA_HIDE")
 		if hide != "":

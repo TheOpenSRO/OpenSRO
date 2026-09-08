@@ -3573,3 +3573,53 @@ wall is solid but because the ground north of it rises, so every ray was
 in the dirt. A negative result from a probe is only worth as much as the
 probe's placement, and the hook now takes several bands in one run
 because each run costs minutes.
+
+## Eighty-first round: holding the built world against the authored map
+
+Until now "is the map right?" had no cheap answer beyond walking around
+in it. The client ships an authored minimap per region -- real stylised
+top-down art of exactly what that region contains -- and stitching a
+block of those gives a ground truth to hold a render against.
+
+Two things had to be fixed before that worked at all:
+
+**The minimap filename was backwards.** The real name is
+`minimap\<y>x<x>.ddj`. Real Jangan is region x=97, y=168; real
+`minimap\97x168.ddj` does not exist in a real Media.pk2, and real
+`minimap\168x97.ddj` does -- and decoding it shows the Jangan town
+square, octagonal plaza and dragon statue included. `_zone_paths` had
+`<x>x<y>`; `audit_terrain_fidelity.gd` had it right. Latent, because the
+minimap only textures terrain in the fallback used when per-tile
+textures are unavailable -- but where it bites, both spellings can name
+real files, so a region could be painted with a *different* region's art.
+
+**Renders were not square.** `qa_shot.sh` sized the X screen but Godot
+renders at the project's own window size, so a square screen still
+produced 16:9 frames. It now passes `--resolution` too.
+
+With `client/tools/dump_ddj.gd` writing any real `.ddj` out as a PNG, a
+3x3 block of real minimaps around Jangan can be laid out and compared.
+**Which arrangement is correct is itself a check**, and it settles a
+question this project answered once before by a different route: laying
+region *x* across and *y* up produces walls and roads that do not meet at
+the seams, while laying *y* across and *x* up produces one continuous
+city wall around the whole city, gate structures aligned across every
+seam, and the road from the town square running south through the wall
+and out into the fields. So **region y -> world X, region x -> world Z**,
+which is exactly what `_load_region_cell` already does -- independent
+confirmation of the forty-sixth round's terrain-edge-matching proof, from
+authored art rather than vertex data.
+
+Held against that ground truth, the built world matches tile for tile:
+the town square with its octagonal plaza in the centre, the palace
+compound directly **north** of it (98/168 -- not west, as an earlier note
+in this project claimed), the pond garden north-east, the walled
+districts either side, and the farmland outside the south wall with the
+south road running out into it. The fields are regions 96/167-96/169.
+
+Open, and separate from map accuracy: at overview altitude (~4,200
+units) the whole city washes out under a pale haze that a single-region
+top-down at 1,450 units does not show. It is not the fog or the
+aerial-perspective term -- disabling both changes nothing -- and it is
+not the event decorations, which hide cleanly without affecting it.
+Unidentified.
