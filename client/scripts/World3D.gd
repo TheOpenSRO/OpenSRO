@@ -3822,7 +3822,9 @@ func _qa_step() -> void:
 	# the first frame measures the character before it has been posed at
 	# all -- which it did, and produced identical output with playback on
 	# and off.
-	if OS.get_environment("SRREVAMP_QA_RIG") != "" and _qa_tick == 60:
+	# Sampled at several ticks, so "is anything moving at all" can be read
+	# off the numbers rather than inferred from a still image.
+	if OS.get_environment("SRREVAMP_QA_RIG") != "" and _qa_tick in [30, 60, 90]:
 		_qa_rig_report()
 
 	if not _qa_shots.is_empty():
@@ -3954,8 +3956,8 @@ func _qa_rig_report() -> void:
 		print("QA RIG: no assembled player skeleton")
 		return
 	var skeleton := _player_skeleton
-	print("QA RIG: %d bone(s), skeleton at %s" % [
-		skeleton.get_bone_count(), skeleton.global_position.round()])
+	print("QA RIG tick %d: %d bone(s), skeleton at %s" % [
+		_qa_tick, skeleton.get_bone_count(), skeleton.global_position.round()])
 	var rows: Array = []
 	for child in skeleton.get_children():
 		if not (child is BoneAttachment3D):
@@ -3973,11 +3975,14 @@ func _qa_rig_report() -> void:
 			var centre: Vector3 = mesh_node.global_transform * mesh_node.get_aabb().get_center()
 			rows.append([bone_world.distance_to(centre), attachment.bone_name, bone_world, centre])
 	rows.sort_custom(func(a, b): return a[0] > b[0])
-	print("QA RIG   %-22s %-26s %-26s %8s" % ["bone", "bone is at", "its mesh is at", "apart"])
-	for i in range(mini(rows.size(), 14)):
-		print("QA RIG   %-22s %-26s %-26s %8.2f" % [
-			rows[i][1], str((rows[i][2] as Vector3).round()),
-			str((rows[i][3] as Vector3).round()), rows[i][0]])
+	# Printed to two decimals in the skeleton's own space, not rounded to
+	# whole units in world space: the question is whether a piece moves
+	# between frames at all, and rounding hid that.
+	for row in rows:
+		if String(row[1]) in ["Bip01 L Forearm", "Bip01 L UpperArm", "Bip01 L Calf"]:
+			var local_centre: Vector3 = skeleton.global_transform.affine_inverse() * (row[3] as Vector3)
+			print("QA RIG   %-18s mesh at %8.3f, %8.3f, %8.3f" % [
+				row[1], local_centre.x, local_centre.y, local_centre.z])
 
 ## Reports placed objects standing clear of the ground under them, worst
 ## first -- scenery hanging in mid-air.

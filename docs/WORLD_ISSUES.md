@@ -4105,3 +4105,47 @@ an actual attached mesh, sampled across several frames, with playback on
 and off. If those differ, the character is being posed and the arms are
 genuinely up; if they do not, nothing is moving and the render difference
 comes from somewhere else entirely.
+
+## Ninety-second round: the in-world pose disagrees with the same animation applied offline
+
+Measuring an actual attached mesh's world position -- the one thing in
+this chain that cannot misreport -- across several frames, with playback
+on and off:
+
+| | playback off | playback on |
+|---|---|---|
+| `Bip01 L Forearm` mesh | x 0.000, y 14.933, unchanging | x 1.96 -> 1.73, y 16.38 -> 16.53 |
+| `Bip01 L UpperArm` mesh | x 0.000, y 14.622, unchanging | x 0.66, y 16.19 -> 16.33 |
+| `Bip01 L Calf` mesh | x 0.000, y 2.129, unchanging | x -0.55, y 2.35 -> 2.38 |
+
+Two things follow. The pieces **do** move between frames, so the
+character is genuinely being animated and the attachment does carry the
+pose. And the arms genuinely **rise**, from 14.93 to 16.5 on a figure
+about 17 units tall -- they end up at head height. The render is telling
+the truth and the earlier reading of the bone heights was not.
+
+**That contradicts the same animation applied offline.**
+`check_ban_pose.gd` builds the same skeleton with the same builder, loads
+the same `chinaman_fighter_standcity.ban`, applies frame 0, and gets the
+hands **down** at y 9.74 -- a correct standing pose. Same skeleton, same
+file, same code path into `apply_ban_pose`, opposite results.
+
+So the fault is in something the in-world path does and the offline tool
+does not. Candidates, in the order worth testing:
+
+- **The frame index.** The tool applies frame 0; in-world the frame comes
+  from elapsed time modulo the keyframe count. If some frames of this
+  animation genuinely raise the arms, every screenshot has simply caught
+  one -- though a standing-idle animation should not have any.
+- **Repeated application.** In-world `apply_ban_pose` runs every physics
+  frame against a skeleton that already carries the previous frame's
+  pose; the tool applies it once to a freshly reset skeleton. If
+  anything in the path composes rather than replaces, the error would
+  accumulate -- and arms creeping upward frame after frame is exactly
+  what accumulation looks like.
+- **The skeleton's own transform.** The in-world character is scaled to
+  `REAL_CHARACTER_NATIVE_HEIGHT`; the tool's is not.
+
+The second is the most suggestive, and it is cheap to test: apply the
+pose to a skeleton reset to rest first, and see whether the arms stay
+down.
