@@ -3917,3 +3917,50 @@ the real plane cell** -- survives, and what those water plane cells with
 no water tiles mean is still open. `client/tools/dump_nvm_water.gd`
 reports the numbers above for any region, which is what a next attempt
 should start from.
+
+## Eighty-eighth round: the animated character has no root bone
+
+The player has stood in its bind pose since the forty-eighth round, with
+playback disabled because enabling it made the assembled character come
+apart. The reason is now identified, and it is not the animation data.
+
+**The client's own loader settles the semantics.** Following the assert
+handler's source paths (see `docs/protocol/BAN_FORMAT.md`) to
+`FUN_00c4bcb0` in `RTSkeleton.cpp`: when a bone's animation weight is
+zero it copies the bone's **bind** matrix; otherwise it builds the matrix
+from the keyframe quaternion via `FUN_00bf9cc0` -- a textbook
+quaternion-to-matrix -- and writes the keyframe's position straight into
+the matrix's translation. The keyframe **replaces** the bone's local
+transform. It is not a delta against rest, and not a delta against
+keyframe 0. `Skeleton3DBuilder.apply_ban_pose` already does exactly that,
+so the application semantics were right all along.
+
+Enabling playback anyway still explodes the character, and comparing the
+real skeleton against the real animation says why:
+
+```
+skeleton chinaman_skel.bsk: 37 bone(s)
+animation chinaman_fighter_standcity.ban: 37 track(s)
+tracks matching a real bone: 36 of 37
+  tracks with no such bone: ["Bip01"]
+bones with no track:        ["Spine_Base"]
+```
+
+`Bip01` is the 3ds Max Biped root, and the real skeleton's own
+`Bip01 Pelvis` names it as its parent. It **is** in the real file --
+`strings` finds it, and `BskReader.parse` reads it -- but it is kept as
+`ParsedSkeleton.root_name` and never becomes a bone. So the built
+`Skeleton3D` has no root: every bone parented to `Bip01` becomes a root
+of its own, and the animation's first track has nothing to drive.
+
+Animating a hierarchy whose root is missing while every child is posed
+absolutely is precisely what scatters a rigidly-attached character, and
+it explains why the rigid attachment looked correct at rest (rest and
+pose cancel) and only failed under animation.
+
+**The fix is to give the skeleton its root**: build a bone for
+`root_name`, read the root transform that `parse` currently skips
+(`ROOT_TRANSFORM_LEN` bytes), and parent to it every bone naming it as
+parent. `client/tools/check_ban_bones.gd` is the check -- it should
+report 37 of 37 tracks matched and no untracked bone but `Spine_Base`,
+which the animation genuinely does not drive.
