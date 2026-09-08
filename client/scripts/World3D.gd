@@ -4431,6 +4431,14 @@ func _physics_process(delta: float) -> void:
 	# Left disabled rather than shipped visibly broken (same call this
 	# project already made for the sky cloud dome), so the real character
 	# renders correctly, just statically.
+	# Still disabled, but for a smaller reason than before. Giving the root
+	# bone its real bind transform (see Skeleton3DBuilder) took the
+	# assembled character from scattered pieces to a single coherent body,
+	# upright and correctly proportioned -- but its arms hold straight
+	# overhead rather than at its sides, so playback would look broken
+	# rather than unfinished. A bind pose reads as "not implemented yet";
+	# arms over the head reads as a bug. See docs/WORLD_ISSUES.md's
+	# eighty-ninth round for the two explanations already ruled out.
 	if false and _player_skeleton != null and _character_assets.has(_player_gender):
 		var assets: Dictionary = _character_assets[_player_gender]
 		var anim: BanReader.ParsedAnimation = assets["walk_anim"] if is_moving else assets["idle_anim"]

@@ -3968,3 +3968,41 @@ root bone, and see whether the character holds together.
 
 `client/tools/check_ban_bones.gd` is the check, and it now compares
 against the built skeleton rather than the parsed list.
+
+## Eighty-ninth round: the root's bind transform, and two more refuted guesses
+
+`BskReader.parse` read the root bone's name and then **skipped its 92
+transform bytes**, and `build_skeleton3d` gave that root
+`Transform3D.IDENTITY` for rest. At rest that cannot be seen: the rigid
+character attachment contributes `inverse(bone_global_rest)`, so whatever
+rest a bone is given cancels exactly. Under animation it can be seen,
+because a real `.ban` keyframe is an absolute local transform authored
+against the root's **real** bind (confirmed from the client's own
+`RTSkeleton.cpp`, see `BAN_FORMAT.md`), and applying it over an identity
+rest displaces everything hanging off the root.
+
+Keeping those bytes and giving the root its own bind transform is a large
+improvement: the assembled character goes from **scattered pieces** -- a
+lone leg on the ground, a hand floating in the air -- to **a single
+coherent body**, upright, correctly proportioned, limbs attached.
+
+It is still not right. The arms hold **straight overhead** instead of at
+the sides, and the head is hidden behind them, while the pelvis and legs
+look correct. Two explanations were tested and both are wrong:
+
+- **`Spine_Base`.** It is the one bone the animation does not drive, and
+  it sits directly under the whole upper body (`Spine -> Spine_Base ->
+  Spine1 -> neck, arms, head`), so an untracked bone there would rotate
+  exactly the part that is wrong. Collapsing every untracked bone to an
+  identity local pose changed the render **not at all**.
+- **The world mirror.** The world applies `z -> -z`, and arms up instead
+  of down is the kind of thing a handedness error produces. Mirroring
+  each keyframe quaternion about the XY plane (`x, y -> -x, -y`) also
+  changed the render **not at all**.
+
+Playback stays disabled, deliberately. A bind pose reads as "not
+implemented yet"; a character holding its arms over its head reads as a
+bug, and shipping the second in place of the first is not an improvement
+even though the skeleton underneath is far better. The root transform fix
+is kept, because it is correct independently of whether animation is
+switched on.

@@ -54,8 +54,27 @@ static func build_skeleton3d(skel: BskReader.ParsedSkeleton) -> Skeleton3D:
 	skeleton.add_bone(skel.root_name) # Skeleton3D.add_bone() returns void; look the index up
 	var root_idx := skeleton.find_bone(skel.root_name)
 	bone_index[skel.root_name] = root_idx
-	skeleton.set_bone_rest(root_idx, Transform3D.IDENTITY)
-	world_rotations[skel.root_name] = Quaternion.IDENTITY
+
+	# The root gets its own real bind transform, not an identity one.
+	#
+	# It was identity because BskReader read past the root's 92 transform
+	# bytes without keeping them. At rest that cannot be seen -- the rigid
+	# character attachment contributes inverse(bone_global_rest), so
+	# whatever rest a bone is given cancels exactly. Under animation it
+	# can: a real `.ban` keyframe is an absolute local transform authored
+	# against the root's real bind (confirmed from the client's own
+	# RTSkeleton.cpp, see docs/protocol/BAN_FORMAT.md), so posing it over
+	# an identity rest displaces everything hanging off the root.
+	var root_rotation := Quaternion.IDENTITY
+	var root_rest := Transform3D.IDENTITY
+	if not skel.root_transform.is_empty():
+		var root_bone := BskReader.Bone.new()
+		root_bone.bone_name = skel.root_name
+		root_bone.transform = skel.root_transform
+		root_rotation = SkeletonPose.bone_rotation(root_bone)
+		root_rest = Transform3D(Basis(root_rotation), SkeletonPose.bone_local_position(root_bone))
+	skeleton.set_bone_rest(root_idx, root_rest)
+	world_rotations[skel.root_name] = root_rotation
 
 	var remaining: Array[BskReader.Bone] = skel.bones.duplicate()
 	var guard := 0

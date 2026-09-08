@@ -31,6 +31,17 @@ class Bone:
 
 class ParsedSkeleton:
 	var root_name: String
+	## The root's own 92 raw transform bytes, in the same shape and at the
+	## same offsets as a parent-less ("Type A") bone's -- so
+	## SkeletonPose.bone_rotation/bone_local_position read it the same way.
+	##
+	## Kept because it was previously read past and thrown away, which left
+	## the root bone with an identity rest. At rest that is invisible: the
+	## rigid character attachment cancels whatever rest a bone is given. It
+	## stops being invisible the moment an animation drives the root, since
+	## a real `.ban` keyframe is an absolute local transform authored
+	## against the root's *real* bind, not against identity.
+	var root_transform: PackedByteArray = PackedByteArray()
 	var bones: Array[Bone] = []
 
 ## Parses a .bsk file's raw bytes. Returns null (and pushes an error) on
@@ -76,10 +87,12 @@ static func parse(data: PackedByteArray) -> ParsedSkeleton:
 	if off + ROOT_TRANSFORM_LEN > data.size():
 		push_error("bsk: truncated before root transform")
 		return null
+	var root_transform_off := off
 	off += ROOT_TRANSFORM_LEN
 
 	var s := ParsedSkeleton.new()
 	s.root_name = root_result[0]
+	s.root_transform = data.slice(root_transform_off, root_transform_off + ROOT_TRANSFORM_LEN)
 	var pending := {}
 
 	while off < data.size():
