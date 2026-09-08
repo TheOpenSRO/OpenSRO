@@ -10,6 +10,10 @@ See [docs/LEGAL.md](docs/LEGAL.md) for the full policy.
 - `server/` — Go server (world/login/gateway services).
 - `docs/` — architecture, protocol notes, decomp/RE tracking log.
 
+Working on this with an AI agent? Start at [AGENTS.md](AGENTS.md) — it covers how to look at the
+world without waiting ten minutes for a screenshot, which claims need measuring rather than
+eyeballing, and the traps that have each cost this project hours.
+
 ## Downloading a pre-built client
 
 Every tagged release publishes ready-to-run Windows and Linux client builds under
