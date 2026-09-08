@@ -57,6 +57,19 @@ const PLANE_TYPE_WATER := 1
 ## the plane map is PLANE_MAP_SIDE cells per axis.
 const PLANE_CELL_SPAN := 1920.0 / float(NvmReader.PLANE_MAP_SIDE)
 
+## How many of a region's real plane cells are marked as water, regardless
+## of whether any tile under them resolved to a water tile. Reported
+## alongside a failure to build water, so "no water here" can be told apart
+## from "water here that did not build".
+static func water_plane_cell_count(region: NvmReader.ParsedRegion) -> int:
+	if region == null:
+		return 0
+	var n := 0
+	for t in region.plane_types:
+		if t == PLANE_TYPE_WATER:
+			n += 1
+	return n
+
 ## Builds a flat water surface mesh in region-local space (the same space
 ## NvmCollision uses -- local X is world X, local Y is world Z; see
 ## NVM_FORMAT.md's "Real local-axis orientation"). Returns null when the

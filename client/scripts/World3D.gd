@@ -1581,7 +1581,15 @@ func _try_add_real_water(terrain_group: Node3D, mapm_path: String) -> void:
 		return
 	var water_mesh := NvmWater.build_water_mesh(region, tile_table)
 	if water_mesh == null:
+		# Says so, because "this region has no water" and "this region's
+		# water failed to build" look identical in a screenshot -- a real
+		# playtest found a willow pond with a stone bridge over dry ground
+		# and there was nothing in the log either way.
+		print("World3D: %s -- no real water surface built (%d real water plane cell(s) in its navmesh)" % [
+			mapm_path, NvmWater.water_plane_cell_count(region)])
 		return
+	print("World3D: %s -- built real water from %d real quad(s)" % [
+		mapm_path, water_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size() / 4])
 	var archive := _open_map_pk2_if_set()
 	if archive == null:
 		return

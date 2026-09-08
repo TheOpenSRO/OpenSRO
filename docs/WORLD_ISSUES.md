@@ -3876,3 +3876,44 @@ mistake it for a working rule.
 `has_real_ground_at` is kept, unused, for the fact it records: a region's
 heightmap can be absent in places, and anything comparing regions by
 height has to know that.
+
+## Eighty-seventh round: water, and a hypothesis refuted before it was built
+
+The seventy-sixth round left a willow pond rendering dry. It does not:
+real 98/168 builds **134 real water quads**. What that round actually saw
+is unresolved, but the loader now says what it did either way -- "built
+real water from N real quad(s)" or "no real water surface built (N real
+water plane cell(s) in its navmesh)" -- because a region with water and a
+region whose water failed to build look identical in a screenshot.
+
+With that logging, a real gap is visible: several regions carry water
+plane cells and build **nothing**. Real 96/168 has 30, real 98/167 has
+14, real 97/168 has 10, and none of them has a single tile classified as
+`WATER` or `DEEP_WATER` underneath. The authored minimap for real 96/168
+shows two pale channels running east-west under the city wall, so
+something is there.
+
+The obvious fix is to take the water's *shape* from the terrain instead
+of the tiles: draw the surface wherever the ground under a water plane
+cell lies below that cell's own level. It is more precise than the plane
+cell and carries a level, which is what the per-tile flags lack.
+
+**Measured first, and it is wrong.** The share of each water cell's own
+ground lying below its own water level is **65.1%** in real 96/168,
+**14.3%** in real 98/167, **10.6%** in real 98/168 -- and **94.7%** in
+real 97/168, which is the town. Building water that way would put a lake
+over Jangan's market square. The seventy-fifth-round measurement behind
+the current design (plane cells cover roughly thirty times more ground
+than there is real water) is the same fact from the other direction, and
+it stands.
+
+The channels are not objects either: the only things placed along them
+are real `halloween_display03`/`04` props in a lattice at y about 40,
+which are the same event decorations the float report flags as sitting
+high.
+
+So the current design -- **shape from the real water tiles, level from
+the real plane cell** -- survives, and what those water plane cells with
+no water tiles mean is still open. `client/tools/dump_nvm_water.gd`
+reports the numbers above for any region, which is what a next attempt
+should start from.
