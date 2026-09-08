@@ -4461,3 +4461,57 @@ its `.bsk`/`.ban` references, then assemble NPCs through
 `CharacterAssembler` rather than `ObjectLoader`. Spawning them is separate
 and easier: the table is readable, and this project's own server already
 streams a monster list to the client that NPCs can follow.
+
+## Ninety-ninth round: .bsr section table and character typing
+
+An NPC `.bsr` lists three mesh pieces, a `.bsk` skeleton and two `.ban`
+animations. `BsrReader` found one mesh and no skeleton, so the priest came
+back as a 25-vertex fragment -- which blocked NPCs.
+
+The cause was a documented wrong conclusion. `BSR_FORMAT.md` said the
+header's offset table was untrustworthy, because a field that looked like a
+pointer "did not hold for one real file". The table starts at 0x0C, not
+0x10; read one field off, every entry landed on the wrong thing. Read
+correctly it is exact in every file checked, across all three categories,
+and the `uint16` at 0x40 is an authored object type -- 1 character, 2
+building, 4 nature.
+
+Type 1 no longer needs scanning: material, mesh, animation and skeleton
+sections are each count-prefixed at the offset the header names, and their
+entries abut. Measured against the real archive: `chinaquest_priest` 1 piece /
+25 vertices -> 3 / 665, `chinasystem_bookmakergirl` -> 4 / 747, `mangnyang` ->
+2 / 440 with 15 animations.
+
+## One-hundredth round: UI layout architecture recovered from Media.pk2
+
+The UI system is not hardcoded in the client binary; it is authored in real
+archives across three structured layers:
+
+1. **Layout definitions (`Media.pk2\resinfo\*.txt`)**: 247 files in an
+   `Interface Text` DSL defining sections and controls (`CIFStatic`,
+   `CIFButton`, `CIFGauge`, `CIFFrame`, `CIFStretchWnd`, `CIFSlotWithHelp`,
+   `CIFLattice`, `CIFEdit`). Every element specifies exact native pixel
+   `Rect="X,Y,W,H"`, client clipping `ClientRect`, texture path `DDJ`,
+   color tint, text/font attributes, and text tokens.
+2. **Graphics assets (`Media.pk2\interface\*.ddj`)**: 7,785 textures.
+   Buttons follow state suffix conventions (`_focus.ddj`, `_press.ddj`,
+   `_disable.ddj`). Frames and panels ending with `_` expand into 8 slices
+   (`left_up`, `mid_up`, `right_up`, `left_side`, `right_side`, `left_down`,
+   `mid_down`, `right_down`).
+3. **Localization catalog (`Media.pk2\server_dep\silkroad\textdata\textuisystem.txt`)**:
+   A UTF-16LE tab-separated table mapping tokens (e.g. `UIIT_STT_GOLD`) to
+   strings across languages (Column 8 is English).
+
+**Implementation added**:
+- `UiTextTable` (`scripts/ui/ui_text_table.gd`): decodes `textuisystem.txt`.
+- `UiLayoutParser` (`scripts/ui/ui_layout_parser.gd`): parses `resinfo\*.txt`.
+- `UiBuilder` (`scripts/ui/ui_builder.gd`): constructs Godot `Control` trees
+  and resolves `.ddj` textures via `DdjReader`.
+- `HudMinimap` (`scripts/ui/hud/hud_minimap.gd`): drives `resinfo\ifminimap.txt`,
+  displays real per-region minimap art (`minimap\<y>x<x>.ddj`) with player
+  aperture clipping, rotating heading arrow (`mm_sign_character.ddj`), and
+  displays real client X/Y coordinates via the ninety-seventh round's recovered
+  formulas.
+- `HudUnderbar` (`scripts/ui/hud/hud_underbar.gd`): drives `resinfo\ifunderbar.txt`
+  for quickslots, gauges, and page controls.
+

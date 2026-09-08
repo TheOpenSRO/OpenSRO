@@ -108,6 +108,11 @@ jobs:
           godot --headless --path . --script res://scripts/net/duel_test.gd
           godot --headless --path . --script res://scripts/net/trade_test.gd
           godot --headless --path . --script res://scripts/net/friend_test.gd
+          godot --headless --path . --script res://scripts/ui/ui_text_table_test.gd
+          godot --headless --path . --script res://scripts/ui/ui_layout_parser_test.gd
+          godot --headless --path . --script res://scripts/ui/ui_builder_test.gd
+          godot --headless --path . --script res://scripts/ui/hud/hud_minimap_test.gd
+          godot --headless --path . --script res://scripts/ui/hud/hud_underbar_test.gd
 
   no-assets-check:
     name: Guard against committed pk2/game assets

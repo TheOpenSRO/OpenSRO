@@ -865,6 +865,12 @@ var _weapon_variants: Array = []
 ## Same as _weapon_variants, for SHIELD_VARIANTS.
 var _shield_variants: Array = []
 
+var _media_pk2: Pk2Reader
+var _ui_text_table: UiTextTable
+var _ui_builder: UiBuilder
+var _hud_minimap: HudMinimap
+var _hud_underbar: HudUnderbar
+
 func _ready() -> void:
 	character_label.text = "Character: %s" % NetClient.current_character_name
 
@@ -1012,6 +1018,36 @@ func _ready() -> void:
 	_try_add_real_sky()
 	_apply_camera_far_plane()
 	_load_initial_region_neighborhood()
+	_try_initialize_pk2_ui()
+
+## Initializes authentic Silkroad UI components (minimap, underbar) from Media.pk2 if available.
+func _try_initialize_pk2_ui() -> void:
+	_media_pk2 = _open_media_pk2_if_set()
+	if _media_pk2 == null:
+		return
+
+	# Load UI localization strings from Media.pk2
+	var text_entry := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\textuisystem.txt")
+	if text_entry != null:
+		var text_bytes := _media_pk2.read_file(text_entry)
+		_ui_text_table = UiTextTable.parse(text_bytes)
+
+	_ui_builder = UiBuilder.new(_media_pk2, _ui_text_table)
+
+	# Setup authentic Minimap
+	_hud_minimap = HudMinimap.new(_ui_builder, _media_pk2, _ui_text_table)
+	_hud_minimap.name = "HudMinimap"
+	_hud_minimap.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_hud_minimap.position = Vector2(-150, 10)
+	ui_control.add_child(_hud_minimap)
+
+	# Setup authentic Underbar (bottom bar)
+	_hud_underbar = HudUnderbar.new(_ui_builder, _media_pk2, _ui_text_table)
+	_hud_underbar.name = "HudUnderbar"
+	_hud_underbar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_hud_underbar.position = Vector2(0, -65)
+	ui_control.add_child(_hud_underbar)
+
 ## Pushes the camera's far clipping plane out far enough to actually see
 ## the real terrain this scene streams in.
 ##
@@ -1191,9 +1227,20 @@ func _refresh_zone_label_position() -> void:
 	_zone_label_tick += 1
 	if _zone_label_tick % 10 != 0:
 		return
-	if zone_label == null:
-		return
-	zone_label.text = "Zone: %s%s" % [_current_zone_name, _zone_label_position_suffix()]
+	if zone_label != null:
+		zone_label.text = "Zone: %s%s" % [_current_zone_name, _zone_label_position_suffix()]
+
+	if _hud_minimap != null and is_instance_valid(_hud_minimap):
+		var pair := _nav_graph_for(player.global_position)
+		if not pair.is_empty():
+			var group: Node3D = pair[1]
+			var local: Vector3 = group.to_local(player.global_position)
+			var parts := String(group.name).replace("RealTerrain_", "").split("_")
+			if parts.size() >= 2:
+				var rx: int = parts[0].to_int()
+				var ry: int = parts[1].to_int()
+				_hud_minimap.update_player(rx, ry, local, player.rotation_degrees.y)
+				_hud_minimap.set_area_name(_current_zone_name)
 
 func _zone_label_position_suffix() -> String:
 	var pair := _nav_graph_for(player.global_position)

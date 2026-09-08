@@ -43,11 +43,11 @@ works; it only runs for slots the server reports as equipped, and a fresh charac
 **Next**: give a new character a starting set server-side, or render the default set when no
 equipment is reported — decide which, then verify in a render.
 
-### 4. A minimap
-The reference has a live minimap with the region's own art, a heading arrow and an X/Y readout.
-Every piece already exists: the per-region art decodes (`dump_ddj.gd`, and the minimap comparisons
-in the eighty-first round), and the client's own coordinate readout is now recovered
-(`server/cmd/wherecoord`, ninety-seventh round). This is UI work on solved data.
+### 4. A minimap (Implemented — one-hundredth round)
+The live minimap is now wired through the authentic PK2 UI pipeline (`scripts/ui/hud/hud_minimap.gd`
+loading `resinfo/ifminimap.txt`): displays the region's own art (`minimap\<y>x<x>.ddj`), aperture
+clipping, rotating heading arrow (`mm_sign_character.ddj`), and real-time X/Y coordinate readout
+derived from the ninety-seventh round's recovered coordinate math.
 
 ### 5. Break up `client/scripts/World3D.gd`
 5,200 lines, against 800 for the next largest file. Not urgent and not worth a big-bang refactor,
