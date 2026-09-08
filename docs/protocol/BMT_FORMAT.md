@@ -118,3 +118,25 @@ cutout mask, and no threshold on "how transparent is this texture" can tell thos
 **Not yet confirmed against the client binary.** The evidence is a perfect correlation across ~25
 real layers in four unrelated real materials, plus the naming convention. Reading the flag out of
 the real material loader would settle it, and is worth doing.
+
+### What the client binary confirms
+
+The material **writer** was located in `sro_client.exe` and settles the record layout from the
+engine's own side. `FUN_00bf8ad0` (asserting against
+`D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\PrimMtrlSet.cpp`) writes the
+magic as three integers — `0x56584d4a` `0x20544d42` `0x32303130`, i.e. `JMXV`, `BMT `, `0102`,
+the usual never-stored-as-text convention — then the layer count, then calls `FUN_00bf8970` once
+per layer.
+
+That per-layer serializer writes, in order: the length-prefixed name, four 16-byte colour blocks
+(from struct dwords 4–7, then 0–3, then 8–11, then 12–15), then **one dword from struct offset
+0x40** (Power), then **one dword from struct offset 0x60** (the flag word), then the texture path.
+
+So the flag word is confirmed to be **a real, distinct field of its own** — not padding, not a
+length, and not part of the neighbouring float — and it sits at a fixed place in the runtime
+material structure. That is what the binary establishes.
+
+**Bit 0's meaning is still inferred**, from the correlation and naming convention above rather
+than from code. The runtime render path sets its states numerically, with no alpha-test strings
+anywhere in the binary to anchor a search, so confirming it means finding where the dword at
+material+0x60 is tested. Not yet done.
