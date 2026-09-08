@@ -11,6 +11,27 @@ const MAGIC_LEN := 12
 const PREAMBLE_END := 0x44
 const MAX_PATH_LEN := 512
 
+# Section offset table in the header. Every real file checked (characters,
+# buildings and nature objects alike) has these four pointing at the
+# count word that starts each list -- see docs/protocol/BSR_FORMAT.md.
+const OFF_PTR_MATERIAL := 0x0C
+const OFF_PTR_MESH := 0x10
+const OFF_PTR_SKELETON := 0x14
+const OFF_PTR_ANIMATION := 0x18
+
+## Object type, the low uint16 of the word at 0x40. Authored in the file --
+## this is the game's own classification, not a guess from the path or from
+## which order the fields happen to appear in.
+const OFF_TYPE := 0x40
+const TYPE_CHARACTER := 1
+const TYPE_BUILDING := 2
+const TYPE_NATURE := 4
+
+## The two words between the animation section pointer and its count. Both
+## observed identical (4096, then 0) in every real file checked; their
+## meaning isn't confirmed, so they're skipped rather than interpreted.
+const ANIMATION_HEADER_WORDS := 2
+
 class ParsedObject:
 	var object_name: String
 	var mesh_path: String
@@ -19,6 +40,25 @@ class ParsedObject:
 	var has_bounds: bool = false
 	var bounds_min: Vector3
 	var bounds_max: Vector3
+
+	## Set for TYPE_CHARACTER files -- NPCs, monsters and the player's own
+	## body. These are skinned models: the mesh pieces mean nothing without
+	## the skeleton, so a caller that sees this set should assemble them
+	## through CharacterAssembler rather than dropping the pieces into the
+	## world as rigid scenery.
+	var is_character: bool = false
+	var skeleton_path: String
+	var animation_paths: Array[String] = []
+
+	## Every mesh piece, primary included -- the same paths as
+	## mesh_path + sub_mesh_paths, in file order, for callers that don't
+	## care which one the file happened to list first.
+	func all_mesh_paths() -> Array[String]:
+		var out: Array[String] = []
+		if mesh_path != "":
+			out.append(mesh_path)
+		out.append_array(sub_mesh_paths)
+		return out
 
 ## Parses a .bsr file's raw bytes. Returns null (and pushes an error) on
 ## failure -- including the known edge case of a file with an empty mesh
@@ -39,6 +79,18 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 		return null
 	var name: String = name_result[0]
 	off = name_result[1]
+
+	# Characters are a genuinely different layout, not a reordering of the
+	# scenery one: several mesh pieces plus a skeleton and an animation
+	# list, all reachable from the header's section table. Take that path
+	# when the file says so. It validates as it goes and returns null if
+	# anything doesn't line up, so a character file this reader has
+	# misunderstood falls back to the scan below rather than producing
+	# confidently wrong paths.
+	if (_le_u32(data, OFF_TYPE) & 0xFFFF) == TYPE_CHARACTER:
+		var character := _parse_character(data, name)
+		if character != null:
+			return character
 
 	# The exact byte layout between the name and the mesh/material paths
 	# isn't fully understood (a fixed-looking header field that should
@@ -166,6 +218,101 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 		obj.sub_mesh_paths.append(sub_path)
 
 	return obj
+
+## Parses a TYPE_CHARACTER file through the header's section offset table.
+##
+## Unlike the scan-based scenery path below, nothing here is searched for:
+## each of the four sections starts with a count word at the offset the
+## header names, and the entries that follow abut one another exactly, so
+## reading one section leaves the cursor on the next section's first byte.
+## That chaining is what makes the layout checkable rather than guessed --
+## every section is verified to end exactly where the header says the next
+## one begins, and any mismatch aborts back to the caller.
+##
+## Returns null if the file doesn't match, so the caller can fall back.
+static func _parse_character(data: PackedByteArray, name: String) -> ParsedObject:
+	var ptr_material := _le_u32(data, OFF_PTR_MATERIAL)
+	var ptr_mesh := _le_u32(data, OFF_PTR_MESH)
+	var ptr_skeleton := _le_u32(data, OFF_PTR_SKELETON)
+	var ptr_animation := _le_u32(data, OFF_PTR_ANIMATION)
+	for ptr in [ptr_material, ptr_mesh, ptr_skeleton, ptr_animation]:
+		if ptr < PREAMBLE_END or ptr + 4 > data.size():
+			return null
+
+	# Materials: a count, then one uint32 (unconfirmed -- an index or flag,
+	# always small) in front of each path.
+	var materials = _read_string_list(data, ptr_material, ".bmt", 4)
+	if materials == null or materials[0].is_empty():
+		return null
+	# The material section must run right up to the mesh section.
+	if materials[1] != ptr_mesh:
+		return null
+
+	# Meshes: a count, then the paths back to back with no per-entry field.
+	var meshes = _read_string_list(data, ptr_mesh, ".bms", 0)
+	if meshes == null or meshes[0].is_empty():
+		return null
+	if meshes[1] != ptr_animation:
+		return null
+
+	var obj := ParsedObject.new()
+	obj.object_name = name
+	obj.is_character = true
+	obj.material_path = materials[0][0]
+	var mesh_paths: Array = meshes[0]
+	obj.mesh_path = mesh_paths[0]
+	for i in range(1, mesh_paths.size()):
+		obj.sub_mesh_paths.append(mesh_paths[i])
+
+	# Animations sit behind two unconfirmed words, then the usual count.
+	var animations = _read_string_list(
+		data, ptr_animation + ANIMATION_HEADER_WORDS * 4, ".ban", 0
+	)
+	if animations != null and animations[1] == ptr_skeleton:
+		for path in animations[0]:
+			obj.animation_paths.append(path)
+
+	# The skeleton list is count-prefixed like the rest, but a character
+	# has exactly one in every real file checked, so only the first is
+	# kept -- a second would need a reason to exist before it's used.
+	var skeletons = _read_string_list(data, ptr_skeleton, ".bsk", 0)
+	if skeletons != null and not skeletons[0].is_empty():
+		obj.skeleton_path = skeletons[0][0]
+
+	# A character without a skeleton is a contradiction: the mesh pieces
+	# are skin, and posing them needs bones. Rather than hand back
+	# something that would render as a heap of disconnected limbs at the
+	# origin, fail and let the caller fall back to the scenery path.
+	if obj.skeleton_path == "":
+		return null
+	return obj
+
+## Reads a count-prefixed list of length-prefixed path strings at off, each
+## entry preceded by lead_bytes of unread per-entry data. Every path must
+## end with suffix, which is what turns "these bytes parsed" into "these
+## bytes are the list the header promised". Returns [paths, end_offset], or
+## null if the list doesn't parse or a path fails the suffix check.
+static func _read_string_list(
+	data: PackedByteArray, off: int, suffix: String, lead_bytes: int
+):
+	if off + 4 > data.size():
+		return null
+	var count := _le_u32(data, off)
+	off += 4
+	if count <= 0 or count > 1000:
+		return null
+	var paths: Array[String] = []
+	for _i in range(count):
+		off += lead_bytes
+		var result = _read_len_prefixed_string(data, off)
+		if result == null:
+			return null
+		var path: String = result[0]
+		if not (_is_plausible_path(path.to_ascii_buffer()) and path.to_lower().ends_with(suffix)):
+			return null
+		paths.append(path)
+		off = result[1]
+	return [paths, off]
 
 ## Looks for the next plausible length-prefixed path string starting at or
 ## after off whose content ends with suffix (case-insensitive -- real

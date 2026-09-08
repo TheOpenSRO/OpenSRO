@@ -14,27 +14,104 @@ ResourceMgr.cpp`, error message `"ResObj Data Loading Failed [%s]"`) down to `FU
 
 ## Header (fixed 0x44 = 68 bytes before the name string's length field)
 
-Same general shape as `.bms`'s header (magic + an unconfirmed `uint32` + a `hdr[0..5]` offset
-table + reserved fields), but 4 bytes shorter before the name string. The `hdr[]` offset table's
-exact semantics aren't confirmed for `.bsr` — one field that looked like a pointer to the mesh
-path in several real files turned out to be a fixed constant that didn't hold for every file
-checked, so our reader doesn't rely on it (see "Implementation notes" below).
+Same general shape as `.bms`'s header (magic + an offset table + reserved fields), but 4 bytes
+shorter before the name string.
+
+**Correction (2026-09-08).** This document previously called the offset table "unconfirmed" and
+said the field at 0x28 was a constant `152` that "did not hold for one real file", so neither
+reader used it. Both statements were wrong, and for the same reason: **the table starts at 0x0C,
+not 0x10.** Read off by one field, every entry lands on the wrong thing. Read correctly, all four
+of the first entries are exact byte offsets to the count word that begins a section, in every
+real file checked across all three categories — the table was trustworthy all along:
+
+| File | 0x0C material | 0x10 mesh | 0x14 skeleton | 0x18 animation |
+|---|---|---|---|---|
+| `chinaquest_priest.bsr` (character) | 193 = 0xC1 | 246 = 0xF6 | 511 = 0x1FF | 400 = 0x190 |
+| `mangnyang.bsr` (character) | 249 = 0xF9 | 341 = 0x155 | 1097 = 0x449 | 431 = 0x1AF |
+| `cj_monstad_door01.bsr` (building) | 262 = 0x106 | 340 = 0x154 | 1524 | 1512 |
+| `tre_bank02.bsr` (nature) | 235 = 0xEB | 290 = 0x122 | 465 = 0x1D1 | 407 = 0x197 |
+
+The 0x28 field isn't a constant either: it is `name_end + 48`, tracking the name's length exactly
+(`chinaquest_priest`, 17 chars → 137; `mangnyang`, 9 → 129; `tre_bank02`, 10 → 130). It points 4
+bytes ahead of the bounding-box floats.
 
 | Offset | Size | Field |
 |-------:|-----:|-------|
 | 0x00 | 12 | Magic, `"JMXVRES 0109"` — confirmed via the real client's validator |
-| 0x0C | 4 | Unconfirmed |
-| 0x10 | 4 | `hdr[0]`, unconfirmed |
-| 0x14 | 4 | `hdr[1]`, unconfirmed |
-| 0x18 | 4 | `hdr[2]`, unconfirmed |
-| 0x1C | 4 | `hdr[3]`, unconfirmed |
-| 0x20 | 4 | `hdr[4]`, unconfirmed |
-| 0x24 | 4 | `hdr[5]`, unconfirmed |
-| 0x28 | 4 | Observed constant `152` across every real file checked — despite looking exactly like a byte offset to the mesh path string in most of them, it did **not** hold for one real file, so it isn't trustworthy as a pointer |
-| 0x2C-0x40 | 20 | Reserved (observed 0) |
-| 0x40 | 4 | Two `uint16` fields, both observed as `2` |
+| 0x0C | 4 | Offset of the **material** section |
+| 0x10 | 4 | Offset of the **mesh** section |
+| 0x14 | 4 | Offset of the **skeleton** section |
+| 0x18 | 4 | Offset of the **animation** section |
+| 0x1C | 4 | Offset of a further section, contents unconfirmed (a count + `"default"` string) |
+| 0x20 | 4 | Offset of a further section, contents unconfirmed (a count + `"default"` string) |
+| 0x24 | 4 | Offset of a further section, contents unconfirmed (reaches the `"ambient"` / `.efp` effect block) |
+| 0x28 | 4 | Offset of the bounding-box block; equals `name_end + 48` in every file checked |
+| 0x2C-0x3C | 16 | Reserved (observed 0) |
+| 0x40 | 2 | **Object type** — `1` character, `2` building, `4` nature (see below) |
+| 0x42 | 2 | Observed `2` in every file checked |
 | 0x44 | 4 | Name length (`uint32`) |
 | 0x48 | ... | Name string (ASCII, not null-terminated — length-prefixed) |
+
+## Object type (0x40)
+
+The low `uint16` at 0x40 is the game's own classification of the object, authored in the file.
+It is what distinguishes the layouts below — the field order differences this document previously
+attributed to a path-prefix convention (`res\bldg\...` vs `res\nature\...`) are really a
+consequence of type:
+
+| Value | Meaning | Observed in |
+|---|---|---|
+| 1 | Character — skinned, has a skeleton | `chinaquest_priest`, `chinasystem_bookmakergirl`, `mangnyang` |
+| 2 | Building / static scenery | `cj_monstad_door01`, `cj_monstad_status_l` |
+| 4 | Nature | `tre_maple01`, `tre_bank02` |
+
+## Character layout (type 1)
+
+NPCs, monsters and the player's own body are all type 1, and they are a genuinely different
+layout rather than a reordering of the scenery one. Every section is reached through the header
+table above; nothing needs to be scanned for. Each section begins with a `uint32` count, and its
+entries abut one another exactly, so a section ends precisely where the header says the next one
+begins — which is what makes this checkable rather than guessed, and is asserted by both readers.
+
+| Section | Layout |
+|---|---|
+| Material (0x0C) | `uint32` count, then per entry: one `uint32` (unconfirmed — an index or flag, always small) followed by a length-prefixed `.bmt` path |
+| Mesh (0x10) | `uint32` count, then that many length-prefixed `.bms` paths back to back, no per-entry field |
+| Animation (0x18) | two `uint32`s (observed `4096` then `0` in every file checked, meaning unconfirmed), then a `uint32` count, then that many length-prefixed `.ban` paths |
+| Skeleton (0x14) | `uint32` count, then that many length-prefixed `.bsk` paths — always exactly 1 in every real file checked |
+
+Worked example, `chinaquest_priest.bsr` (717 bytes), every offset verified to chain:
+
+```
+0xC1  count 1                            material section
+0xC5  uint32 0
+0xC9  prim\mtrl\npc\china\chinaquest_priest.bmt      ends 0xF6
+0xF6  count 3                            mesh section (== header 0x10)
+0xFA  ..._al.bms      ends 0x12A
+0x12A ..._part1.bms   ends 0x15D
+0x15D ..._part2.bms   ends 0x190
+0x190 4096, 0, count 2                   animation section (== header 0x18)
+0x19C ..._basic.ban   ends 0x1CE
+0x1CE ..._time.ban    ends 0x1FF
+0x1FF count 1                            skeleton section (== header 0x14)
+0x203 prim\skel\npc\china\chinaquest_priest.bsk
+```
+
+**Why this mattered.** The scan-based reader below finds only the *first* `.bms` in a type-1 file,
+so it reported the priest as one 25-vertex piece — a fragment, not a person — and exposed no
+skeleton at all, which is what blocked NPCs from being built. With the section table read
+correctly the priest is 3 pieces / 665 vertices, `chinasystem_bookmakergirl` is 4 / 747, and
+`mangnyang` is 2 / 440 with 15 animations. Because these models are skinned, the mesh pieces are
+meaningless without the skeleton: a type-1 object should be assembled through `CharacterAssembler`,
+not placed as rigid scenery. Both readers therefore refuse to report a character with no skeleton
+path, falling back to the scan instead of returning something that would render as disconnected
+limbs at the origin.
+
+Nature files (type 4) also carry a skeleton and animations — that is how trees sway — but their
+mesh entries appear to carry a trailing `uint32` per piece that type 1 and type 2 do not
+(`tre_bank02`: mesh 1 ends 0x15A, a `0` word, mesh 2 begins 0x15E). That extra field is observed,
+not confirmed, so the readers still take the scan path for types 2 and 4 and this remains open —
+see [../TODO.md](../TODO.md).
 
 ## After the name
 

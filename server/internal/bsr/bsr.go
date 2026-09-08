@@ -25,6 +25,29 @@ const (
 	magicLen    = 12
 	preambleEnd = 0x44 // fixed header size before the name string's length field (4 bytes shorter than .bms's own preamble)
 	maxPathLen  = 512  // sanity bound for scanning; real paths are well under this
+
+	// Section offset table in the header. Every real file checked
+	// (characters, buildings and nature objects alike) has these four
+	// pointing at the count word that starts each list.
+	offPtrMaterial  = 0x0C
+	offPtrMesh      = 0x10
+	offPtrSkeleton  = 0x14
+	offPtrAnimation = 0x18
+
+	// offType holds the object type in its low uint16 — the game's own
+	// classification, authored in the file, not inferred from the path or
+	// from which order the fields happen to appear in.
+	offType = 0x40
+
+	TypeCharacter = 1
+	TypeBuilding  = 2
+	TypeNature    = 4
+
+	// animationHeaderWords is the two words between the animation section
+	// pointer and its count. Both observed identical (4096, then 0) in
+	// every real file checked; their meaning isn't confirmed, so they are
+	// skipped rather than interpreted.
+	animationHeaderWords = 2
 )
 
 // Object is a parsed .bsr file.
@@ -41,6 +64,24 @@ type Object struct {
 	HasBounds bool
 	BoundsMin [3]float32
 	BoundsMax [3]float32
+
+	// IsCharacter is set for TypeCharacter files — NPCs, monsters and the
+	// player's own body. These are skinned models: the mesh pieces mean
+	// nothing without the skeleton, so a caller should assemble them as a
+	// character rather than placing them as rigid scenery.
+	IsCharacter    bool
+	SkeletonPath   string
+	AnimationPaths []string
+}
+
+// AllMeshPaths returns every mesh piece, primary included, in file order —
+// for callers that don't care which one the file happened to list first.
+func (o *Object) AllMeshPaths() []string {
+	out := make([]string, 0, 1+len(o.SubMeshPaths))
+	if o.MeshPath != "" {
+		out = append(out, o.MeshPath)
+	}
+	return append(out, o.SubMeshPaths...)
 }
 
 // Parse parses a .bsr file's raw bytes.
@@ -56,6 +97,19 @@ func Parse(data []byte) (*Object, error) {
 	name, off, err := readLenPrefixedString(data, off)
 	if err != nil {
 		return nil, fmt.Errorf("bsr: reading name: %w", err)
+	}
+
+	// Characters are a genuinely different layout, not a reordering of the
+	// scenery one: several mesh pieces plus a skeleton and an animation
+	// list, all reachable from the header's section table. Take that path
+	// when the file says so. parseCharacter validates as it goes and
+	// reports false if anything doesn't line up, so a character file this
+	// parser has misunderstood falls back to the scan below rather than
+	// producing confidently wrong paths.
+	if int(binary.LittleEndian.Uint32(data[offType:])&0xFFFF) == TypeCharacter {
+		if obj, ok := parseCharacter(data, name); ok {
+			return obj, nil
+		}
 	}
 
 	// The exact byte layout between the name and the mesh/material paths
@@ -225,4 +279,96 @@ func readLenPrefixedString(data []byte, off int) (string, int, error) {
 
 func readFloat32(b []byte, off int) float32 {
 	return math.Float32frombits(binary.LittleEndian.Uint32(b[off:]))
+}
+
+// parseCharacter parses a TypeCharacter file through the header's section
+// offset table.
+//
+// Unlike the scan-based scenery path, nothing here is searched for: each of
+// the four sections starts with a count word at the offset the header
+// names, and the entries that follow abut one another exactly, so reading
+// one section leaves the cursor on the next section's first byte. That
+// chaining is what makes the layout checkable rather than guessed — every
+// section is verified to end exactly where the header says the next one
+// begins, and any mismatch reports false so the caller can fall back.
+func parseCharacter(data []byte, name string) (*Object, bool) {
+	ptrMaterial := int(binary.LittleEndian.Uint32(data[offPtrMaterial:]))
+	ptrMesh := int(binary.LittleEndian.Uint32(data[offPtrMesh:]))
+	ptrSkeleton := int(binary.LittleEndian.Uint32(data[offPtrSkeleton:]))
+	ptrAnimation := int(binary.LittleEndian.Uint32(data[offPtrAnimation:]))
+	for _, ptr := range []int{ptrMaterial, ptrMesh, ptrSkeleton, ptrAnimation} {
+		if ptr < preambleEnd || ptr+4 > len(data) {
+			return nil, false
+		}
+	}
+
+	// Materials: a count, then one uint32 (unconfirmed — an index or flag,
+	// always small) in front of each path.
+	materials, end, ok := readStringList(data, ptrMaterial, ".bmt", 4)
+	if !ok || len(materials) == 0 || end != ptrMesh {
+		return nil, false
+	}
+
+	// Meshes: a count, then the paths back to back with no per-entry field.
+	meshes, end, ok := readStringList(data, ptrMesh, ".bms", 0)
+	if !ok || len(meshes) == 0 || end != ptrAnimation {
+		return nil, false
+	}
+
+	obj := &Object{
+		Name:         name,
+		IsCharacter:  true,
+		MaterialPath: materials[0],
+		MeshPath:     meshes[0],
+		SubMeshPaths: meshes[1:],
+	}
+
+	// Animations sit behind two unconfirmed words, then the usual count.
+	if anims, end, ok := readStringList(data, ptrAnimation+animationHeaderWords*4, ".ban", 0); ok && end == ptrSkeleton {
+		obj.AnimationPaths = anims
+	}
+
+	// The skeleton list is count-prefixed like the rest, but a character
+	// has exactly one in every real file checked, so only the first is
+	// kept — a second would need a reason to exist before it's used.
+	skeletons, _, ok := readStringList(data, ptrSkeleton, ".bsk", 0)
+	if !ok || len(skeletons) == 0 {
+		// A character without a skeleton is a contradiction: the mesh
+		// pieces are skin, and posing them needs bones. Rather than hand
+		// back something that would render as a heap of disconnected limbs
+		// at the origin, fail and let the caller fall back.
+		return nil, false
+	}
+	obj.SkeletonPath = skeletons[0]
+	return obj, true
+}
+
+// readStringList reads a count-prefixed list of length-prefixed path
+// strings at off, each entry preceded by leadBytes of unread per-entry
+// data. Every path must end with suffix, which is what turns "these bytes
+// parsed" into "these bytes are the list the header promised". It returns
+// the paths and the offset just past the list.
+func readStringList(data []byte, off int, suffix string, leadBytes int) ([]string, int, bool) {
+	if off+4 > len(data) {
+		return nil, 0, false
+	}
+	count := int(binary.LittleEndian.Uint32(data[off:]))
+	off += 4
+	if count <= 0 || count > 1000 {
+		return nil, 0, false
+	}
+	paths := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		off += leadBytes
+		path, next, err := readLenPrefixedString(data, off)
+		if err != nil {
+			return nil, 0, false
+		}
+		if !isPlausiblePath([]byte(path)) || !strings.HasSuffix(strings.ToLower(path), suffix) {
+			return nil, 0, false
+		}
+		paths = append(paths, path)
+		off = next
+	}
+	return paths, off, true
 }

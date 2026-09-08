@@ -289,3 +289,135 @@ func TestParseNoSubMeshes(t *testing.T) {
 		t.Fatalf("expected no sub-mesh paths, got %v", obj.SubMeshPaths)
 	}
 }
+
+// buildSyntheticCharacter writes a synthetic .bsr-shaped buffer (never real
+// game data) matching the real "character"-category layout confirmed
+// against real chinaquest_priest.bsr, chinasystem_bookmakergirl.bsr and
+// mangnyang.bsr: the word at 0x40 says type 1, and the four section
+// pointers at 0x0c-0x18 address a material, mesh, skeleton and animation
+// list, each starting with its own count. Unlike the scenery layouts,
+// nothing here has to be scanned for. See docs/protocol/BSR_FORMAT.md.
+func buildSyntheticCharacter(t *testing.T, name string, materialPaths, meshPaths, animationPaths, skeletonPaths []string) []byte {
+	t.Helper()
+
+	buf := make([]byte, preambleEnd)
+	copy(buf, magic)
+	// High half is 2 in every real file; the low half is the object type.
+	binary.LittleEndian.PutUint32(buf[offType:], (2<<16)|TypeCharacter)
+
+	appendLenPrefixed := func(b []byte, s string) []byte {
+		lp := make([]byte, 4+len(s))
+		binary.LittleEndian.PutUint32(lp, uint32(len(s)))
+		copy(lp[4:], s)
+		return append(b, lp...)
+	}
+	buf = appendLenPrefixed(buf, name)
+
+	// The block between the name and the material section: real files put
+	// some small fields and the twice-repeated bounding box here. Its
+	// contents don't matter to the character path, which reaches every
+	// section through the header pointers rather than by scanning past it.
+	buf = append(buf, make([]byte, 112)...)
+
+	// Materials: a count, then one uint32 in front of each path.
+	binary.LittleEndian.PutUint32(buf[offPtrMaterial:], uint32(len(buf)))
+	buf = binary.LittleEndian.AppendUint32(buf, uint32(len(materialPaths)))
+	for i, p := range materialPaths {
+		buf = binary.LittleEndian.AppendUint32(buf, uint32(i))
+		buf = appendLenPrefixed(buf, p)
+	}
+
+	// Meshes: a count, then the paths back to back.
+	binary.LittleEndian.PutUint32(buf[offPtrMesh:], uint32(len(buf)))
+	buf = binary.LittleEndian.AppendUint32(buf, uint32(len(meshPaths)))
+	for _, p := range meshPaths {
+		buf = appendLenPrefixed(buf, p)
+	}
+
+	// Animations: two unconfirmed words, then the usual count.
+	binary.LittleEndian.PutUint32(buf[offPtrAnimation:], uint32(len(buf)))
+	buf = binary.LittleEndian.AppendUint32(buf, 4096)
+	buf = binary.LittleEndian.AppendUint32(buf, 0)
+	buf = binary.LittleEndian.AppendUint32(buf, uint32(len(animationPaths)))
+	for _, p := range animationPaths {
+		buf = appendLenPrefixed(buf, p)
+	}
+
+	binary.LittleEndian.PutUint32(buf[offPtrSkeleton:], uint32(len(buf)))
+	buf = binary.LittleEndian.AppendUint32(buf, uint32(len(skeletonPaths)))
+	for _, p := range skeletonPaths {
+		buf = appendLenPrefixed(buf, p)
+	}
+
+	// Real files carry more sections after the skeleton; a trailing word
+	// is enough to prove the parser stops where it should.
+	return binary.LittleEndian.AppendUint32(buf, 0)
+}
+
+func syntheticPriest(t *testing.T) []byte {
+	t.Helper()
+	return buildSyntheticCharacter(t, "chinaquest_priest",
+		[]string{`prim\mtrl\npc\china\chinaquest_priest.bmt`},
+		[]string{
+			`prim\mesh\npc\china\chinaquest_priest_al.bms`,
+			`prim\mesh\npc\china\chinaquest_priest_part1.bms`,
+			`prim\mesh\npc\china\chinaquest_priest_part2.bms`,
+		},
+		[]string{
+			`prim\ani\npc\china\chinaquest_priest_basic.ban`,
+			`prim\ani\npc\china\chinaquest_priest_time.ban`,
+		},
+		[]string{`prim\skel\npc\china\chinaquest_priest.bsk`})
+}
+
+// TestParseCharacterCategory covers the layout the scan-based scenery path
+// got wrong: it found only the first ".bms" and reported a real NPC as a
+// 25-vertex fragment instead of a whole person.
+func TestParseCharacterCategory(t *testing.T) {
+	obj, err := Parse(syntheticPriest(t))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !obj.IsCharacter {
+		t.Error("IsCharacter = false, want true")
+	}
+	if obj.Name != "chinaquest_priest" {
+		t.Errorf("Name = %q", obj.Name)
+	}
+	if got := obj.AllMeshPaths(); len(got) != 3 {
+		t.Errorf("AllMeshPaths() = %d paths (%v), want all 3 pieces", len(got), got)
+	}
+	if want := `prim\mesh\npc\china\chinaquest_priest_al.bms`; obj.MeshPath != want {
+		t.Errorf("MeshPath = %q, want %q", obj.MeshPath, want)
+	}
+	if want := `prim\mtrl\npc\china\chinaquest_priest.bmt`; obj.MaterialPath != want {
+		t.Errorf("MaterialPath = %q, want %q", obj.MaterialPath, want)
+	}
+	if want := `prim\skel\npc\china\chinaquest_priest.bsk`; obj.SkeletonPath != want {
+		t.Errorf("SkeletonPath = %q, want %q", obj.SkeletonPath, want)
+	}
+	if len(obj.AnimationPaths) != 2 {
+		t.Errorf("AnimationPaths = %v, want 2", obj.AnimationPaths)
+	}
+}
+
+// TestParseCharacterFallsBackWhenSectionsDontChain checks that a file
+// claiming to be a character, but whose sections don't line up, falls back
+// to the scenery scan rather than emitting confidently wrong paths.
+func TestParseCharacterFallsBackWhenSectionsDontChain(t *testing.T) {
+	data := syntheticPriest(t)
+	// The sharpest version of "doesn't chain": the mesh section no longer
+	// ends where the animation section starts.
+	binary.LittleEndian.PutUint32(data[offPtrMesh:], 0x30)
+
+	obj, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if obj.IsCharacter {
+		t.Error("IsCharacter = true, want false (should have fallen back)")
+	}
+	if obj.SkeletonPath != "" {
+		t.Errorf("SkeletonPath = %q, want empty -- no path should be invented", obj.SkeletonPath)
+	}
+}

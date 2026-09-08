@@ -112,6 +112,81 @@ func _build_synthetic_nature_object(obj_name: String, material_path: String, mes
 
 	return buf
 
+## Builds a synthetic .bsr-shaped buffer (never real game data) matching
+## the real "character"-category layout confirmed against a real
+## chinaquest_priest.bsr, chinasystem_bookmakergirl.bsr and mangnyang.bsr:
+## the word at 0x40 says type 1, and the four section pointers at 0x0c-0x18
+## address a material, mesh, skeleton and animation list, each starting
+## with its own count. Unlike the scenery layouts above, nothing here has
+## to be scanned for. See docs/protocol/BSR_FORMAT.md.
+func _build_synthetic_character(
+	obj_name: String,
+	material_paths: Array,
+	mesh_paths: Array,
+	animation_paths: Array,
+	skeleton_paths: Array
+) -> PackedByteArray:
+	var buf := PackedByteArray()
+	buf.resize(BsrReader.PREAMBLE_END)
+	var magic := BsrReader.MAGIC.to_ascii_buffer()
+	for i in range(magic.size()):
+		buf[i] = magic[i]
+	# High half is 2 in every real file; the low half is the object type.
+	_put_u32(buf, BsrReader.OFF_TYPE, (2 << 16) | BsrReader.TYPE_CHARACTER)
+
+	buf = _append_len_prefixed(buf, obj_name)
+
+	# The block between the name and the material section: real files put
+	# some small fields and the twice-repeated bounding box here. Its
+	# contents don't matter to the character path, which reaches every
+	# section through the header pointers rather than by scanning past it.
+	var pad := PackedByteArray()
+	pad.resize(112)
+	buf.append_array(pad)
+
+	var count_bytes := PackedByteArray()
+	count_bytes.resize(4)
+
+	# Materials: a count, then one uint32 in front of each path.
+	_put_u32(buf, BsrReader.OFF_PTR_MATERIAL, buf.size())
+	_put_u32(count_bytes, 0, material_paths.size())
+	buf.append_array(count_bytes)
+	for i in range(material_paths.size()):
+		var index_bytes := PackedByteArray()
+		index_bytes.resize(4)
+		_put_u32(index_bytes, 0, i)
+		buf.append_array(index_bytes)
+		buf = _append_len_prefixed(buf, material_paths[i])
+
+	# Meshes: a count, then the paths back to back.
+	_put_u32(buf, BsrReader.OFF_PTR_MESH, buf.size())
+	_put_u32(count_bytes, 0, mesh_paths.size())
+	buf.append_array(count_bytes)
+	for p in mesh_paths:
+		buf = _append_len_prefixed(buf, p)
+
+	# Animations: two unconfirmed words, then the usual count.
+	_put_u32(buf, BsrReader.OFF_PTR_ANIMATION, buf.size())
+	var anim_header := PackedByteArray()
+	anim_header.resize(BsrReader.ANIMATION_HEADER_WORDS * 4)
+	_put_u32(anim_header, 0, 4096)
+	buf.append_array(anim_header)
+	_put_u32(count_bytes, 0, animation_paths.size())
+	buf.append_array(count_bytes)
+	for p in animation_paths:
+		buf = _append_len_prefixed(buf, p)
+
+	_put_u32(buf, BsrReader.OFF_PTR_SKELETON, buf.size())
+	_put_u32(count_bytes, 0, skeleton_paths.size())
+	buf.append_array(count_bytes)
+	for p in skeleton_paths:
+		buf = _append_len_prefixed(buf, p)
+
+	# Real files carry more sections after the skeleton; a trailing word is
+	# enough to prove the reader stops where it should.
+	buf.append_array(count_bytes)
+	return buf
+
 func _init() -> void:
 	var data := _build_synthetic_object(
 		"TestObj01",
@@ -227,6 +302,47 @@ func _init() -> void:
 		_check(nature_obj.material_path == "prim\\mtrl\\nature\\test_plant01.bmt", "nature: material path matches (got %s)" % nature_obj.material_path)
 		_check(not nature_obj.has_bounds, "nature: bounds not claimed (position not confirmed for this order)")
 		_check(nature_obj.sub_mesh_paths.size() == 0, "nature: no sub-mesh paths claimed")
+
+	# Character-category: several mesh pieces plus the skeleton and
+	# animations that make them poseable. This is the layout the scanner
+	# above got wrong -- it found only the first ".bms" and reported a real
+	# NPC as a 25-vertex fragment.
+	var character_data := _build_synthetic_character(
+		"chinaquest_priest",
+		["prim\\mtrl\\npc\\china\\chinaquest_priest.bmt"],
+		[
+			"prim\\mesh\\npc\\china\\chinaquest_priest_al.bms",
+			"prim\\mesh\\npc\\china\\chinaquest_priest_part1.bms",
+			"prim\\mesh\\npc\\china\\chinaquest_priest_part2.bms",
+		],
+		[
+			"prim\\ani\\npc\\china\\chinaquest_priest_basic.ban",
+			"prim\\ani\\npc\\china\\chinaquest_priest_time.ban",
+		],
+		["prim\\skel\\npc\\china\\chinaquest_priest.bsk"])
+	var character := BsrReader.parse(character_data)
+	_check(character != null, "parses synthetic character-category object")
+	if character != null:
+		_check(character.is_character, "character: flagged as a character")
+		_check(character.object_name == "chinaquest_priest", "character: name matches (got %s)" % character.object_name)
+		_check(character.all_mesh_paths().size() == 3, "character: all 3 mesh pieces found, not just the first (got %d)" % character.all_mesh_paths().size())
+		_check(character.mesh_path == "prim\\mesh\\npc\\china\\chinaquest_priest_al.bms", "character: primary mesh matches (got %s)" % character.mesh_path)
+		_check(character.sub_mesh_paths.size() == 2, "character: 2 further mesh pieces (got %d)" % character.sub_mesh_paths.size())
+		_check(character.material_path == "prim\\mtrl\\npc\\china\\chinaquest_priest.bmt", "character: material matches (got %s)" % character.material_path)
+		_check(character.skeleton_path == "prim\\skel\\npc\\china\\chinaquest_priest.bsk", "character: skeleton matches (got %s)" % character.skeleton_path)
+		_check(character.animation_paths.size() == 2, "character: 2 animations (got %d)" % character.animation_paths.size())
+
+	# A file that claims to be a character but whose sections don't chain
+	# must fall back to the scenery scan rather than emit wrong paths. A
+	# bogus mesh pointer is the sharpest version of that: the mesh section
+	# no longer ends where the animation section starts.
+	var broken := character_data.duplicate()
+	_put_u32(broken, BsrReader.OFF_PTR_MESH, 0x30)
+	var broken_obj := BsrReader.parse(broken)
+	_check(broken_obj != null, "character with an unusable section table still parses via the scenery fallback")
+	if broken_obj != null:
+		_check(not broken_obj.is_character, "fallback: not claimed as a character")
+		_check(broken_obj.skeleton_path == "", "fallback: no skeleton path invented (got %s)" % broken_obj.skeleton_path)
 
 	if _failures == 0:
 		print("ALL PASS")

@@ -82,4 +82,26 @@ func _initialize() -> void:
 		var box := _bounds(node)
 		print("%-44s %6d %9d  %s" % [path.get_file(), pieces, verts, box.size.round()])
 		node.free()
+
+		# What the loader built is only half the answer -- the other half is
+		# whether the .bsr itself gave up its skeleton and animations, which
+		# is what decides if this model can be posed at all.
+		var entry: Pk2Reader.Entry = null
+		for candidate in candidates:
+			entry = ObjectLoader.find_file(archive, candidate)
+			if entry != null:
+				break
+		if entry == null:
+			continue
+		var parsed := BsrReader.parse(archive.read_file(entry))
+		if parsed == null:
+			print("%-44s  (bsr did not parse)" % "")
+			continue
+		print("%-44s  character=%s meshes=%d skeleton=%s animations=%d" % [
+			"",
+			parsed.is_character,
+			parsed.all_mesh_paths().size(),
+			"yes" if parsed.skeleton_path != "" else "no",
+			parsed.animation_paths.size(),
+		])
 	quit(0)
