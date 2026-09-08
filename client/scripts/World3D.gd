@@ -4489,16 +4489,14 @@ func _physics_process(delta: float) -> void:
 	# Left disabled rather than shipped visibly broken (same call this
 	# project already made for the sky cloud dome), so the real character
 	# renders correctly, just statically.
-	# Still disabled, but for a smaller reason than before. Giving the root
-	# bone its real bind transform (see Skeleton3DBuilder) took the
-	# assembled character from scattered pieces to a single coherent body,
-	# upright and correctly proportioned -- but its arms hold straight
-	# overhead rather than at its sides, so playback would look broken
-	# rather than unfinished. A bind pose reads as "not implemented yet";
-	# arms over the head reads as a bug. See docs/WORLD_ISSUES.md's
-	# eighty-ninth round for the two explanations already ruled out.
-	if OS.get_environment("SRREVAMP_QA_ANIM") != "" and _player_skeleton != null \
-		and _character_assets.has(_player_gender):
+	# **Enabled 2026-09-08.** Two real bugs stood between this and a correct
+	# character, and both were invisible in the bind pose: the skeleton's
+	# root bone was given an identity rest instead of its own (see
+	# Skeleton3DBuilder), and every paired body part was attached to the
+	# wrong side's bone (see CharacterAssembler._attach_paired). With both
+	# fixed the character stands correctly, arms at its sides, and moves
+	# with the real animation.
+	if _player_skeleton != null and _character_assets.has(_player_gender):
 		var assets: Dictionary = _character_assets[_player_gender]
 		var anim: BanReader.ParsedAnimation = assets["walk_anim"] if is_moving else assets["idle_anim"]
 		if anim != null and not anim.bones.is_empty():

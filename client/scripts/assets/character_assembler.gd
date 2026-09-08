@@ -125,6 +125,35 @@ static func _equipment_slot(part_name: String) -> String:
 		return ""
 	return part_name.substr(us + 1)
 
+## Attaches one real paired mesh to its two real bones, positive-X half to
+## the **left** bone and negative-X half to the right.
+##
+## That looks backwards against BODY_PART_BONES / EQUIPMENT_SLOT_BONES,
+## which list the right bone first, and it was written the other way round
+## for exactly that reason. It is wrong: in a real body part's own bind
+## space, **+X is the character's left**.
+##
+## The mistake is invisible in the bind pose, because a real bind pose is
+## symmetric -- each half lands where the other would have, so the
+## character assembles correctly and nothing looks amiss. It only shows
+## once something drives the two bones differently, which is why it
+## survived until animation playback was attempted: with the halves
+## crossed, each arm is pulled toward the other's bone and the character
+## renders with both arms swung up over its head. Swapping the pairing
+## gives a correct standing pose, arms at the sides, on the very frame
+## that previously showed arms overhead.
+##
+## Every link either side of this had already been measured and found
+## correct -- posed bone globals matching the same animation applied
+## offline exactly, each BoneAttachment3D sitting on its own bone, each
+## piece's transform equal to inverse(bone_global_rest) to the last digit
+## -- see docs/WORLD_ISSUES.md's ninety-third and ninety-fourth rounds.
+static func _attach_paired(
+	skeleton: Skeleton3D, mesh: BmsReader.ParsedMesh, bones: Array, material: Material
+) -> void:
+	attach_rigid(skeleton, _build_side_mesh(mesh, true), bones[1], material)
+	attach_rigid(skeleton, _build_side_mesh(mesh, false), bones[0], material)
+
 ## Builds an ArrayMesh from only the triangles of mesh whose centroid x is
 ## on the requested side (>= 0 for positive, < 0 for negative). Vertices
 ## aren't compacted/remapped -- unused ones are simply never referenced by
@@ -240,8 +269,7 @@ static func assemble(skeleton: Skeleton3D, parts: Dictionary, default_material: 
 		if bones.size() == 1:
 			attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), bones[0], material)
 		else:
-			attach_rigid(skeleton, _build_side_mesh(mesh, true), bones[0], material)
-			attach_rigid(skeleton, _build_side_mesh(mesh, false), bones[1], material)
+			_attach_paired(skeleton, mesh, bones, material)
 
 ## Same real mechanism as assemble() (rigid BoneAttachment3D, name-matched
 ## real material resolution, X-sign split for paired pieces), applied to
@@ -263,8 +291,7 @@ static func assemble_equipment(skeleton: Skeleton3D, parts: Dictionary, default_
 		if bones.size() == 1:
 			attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), bones[0], material)
 		else:
-			attach_rigid(skeleton, _build_side_mesh(mesh, true), bones[0], material)
-			attach_rigid(skeleton, _build_side_mesh(mesh, false), bones[1], material)
+			_attach_paired(skeleton, mesh, bones, material)
 
 ## Real bone a one-handed weapon rigidly attaches to -- confirmed directly
 ## (not assumed from the 3ds Max Biped naming convention alone) by pulling

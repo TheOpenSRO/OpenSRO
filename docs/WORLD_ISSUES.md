@@ -4216,3 +4216,45 @@ character with **one body part at a time** and render each. That says
 directly which piece is drawn where, with no derived quantity in between,
 and will identify what the shapes above the head actually are -- they
 have been assumed to be the arms, and nothing has confirmed that.
+
+## Ninety-fourth round: the halves were attached to each other's bones
+
+The character animates correctly now. The last bug was in one line, and
+it is a good example of a defect that no amount of checking the
+surrounding code would have found.
+
+A real paired body part -- both arms in one `.bms`, both legs in another
+-- is split by the sign of each triangle's centroid X and each half
+attached to its own bone. The positive-X half was being attached to
+`bones[0]`, which `BODY_PART_BONES` and `EQUIPMENT_SLOT_BONES` both list
+as the **right** bone. That is backwards: in a real body part's own bind
+space **+X is the character's left**.
+
+**Why it survived so long is the interesting part.** A bind pose is
+symmetric, so each half lands exactly where the other half would have,
+and the assembled character looks perfect. The error only exists once
+something drives the two bones *differently* -- which nothing did until
+animation playback was attempted. Then each arm is pulled toward the
+other's bone, and the character renders with both arms swung up over its
+head.
+
+That is what every earlier round in this thread was chasing. It is also
+why every measurement came back clean: the posed bone globals matched the
+same animation applied offline **exactly**, each `BoneAttachment3D` sat
+on its own bone's posed position, and each piece's transform equalled
+`inverse(bone_global_rest)` to the last digit. All of that was true. The
+pieces were simply hung on the wrong bones, which none of those checks
+looked at.
+
+Swapping the pairing gives a correct standing pose -- arms at the sides,
+legs straight -- on the very frame that previously showed arms overhead.
+
+**Both bugs in this thread were invisible at rest**, which is worth
+stating plainly: the root bone's missing bind transform (eighty-ninth
+round) and this. A bind pose is a poor test of a rig, because it is
+exactly the configuration in which a symmetric mistake cancels itself
+out. Animation playback is now **enabled**, having been disabled since
+the forty-eighth round.
+
+Still missing, and unrelated: there is no `head` entry in
+`BODY_PART_BONES`, so the head mesh is not attached at all.
