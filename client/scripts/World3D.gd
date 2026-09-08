@@ -3282,7 +3282,9 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 					# doc comment for how this was confirmed (same
 					# real-range empirical check as .o's own rotation
 					# field, against a live region).
-					placements.append({"type_id": entry.type_id, "position": entry.position, "rotation": entry.rotation})
+					placements.append({
+						"type_id": entry.type_id, "position": entry.position,
+						"rotation": entry.rotation, "from_o2": true})
 					o2_count += 1
 
 	# **De-duplicated 2026-09-07** (see docs/WORLD_ISSUES.md's seventy-fifth
@@ -3314,7 +3316,7 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 	if dropped > 0:
 		print("World3D: %s -- dropped %d duplicate real placements (%d -> %d)" % [
 			mapo_path, dropped, placements.size(), deduped.size()])
-	placements = deduped
+	placements = _placements_belonging_here(deduped, mapo_path)
 
 	if placements.is_empty():
 		printerr("World3D: no real objects parsed from ", mapo_path)
@@ -3404,6 +3406,100 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 
 	print("World3D: loaded %d/%d real map objects from %s (%d real .o + %d real .o2, %d unresolved type IDs skipped, %d distinct real models)" % [
 		loaded, placements.size(), mapo_path, region.objects.size(), o2_count, skipped_unresolved, templates.size()])
+
+## Keeps only the `.o2` placements that belong to this region, by asking
+## which region's ground each one actually stands on.
+##
+## A real `.o2` cross-references objects belonging to neighbouring regions,
+## and drawing those here puts them at the wrong place and the wrong
+## height. The seventy-eighth round filtered them by which per-sector list
+## they sit in, which helps but is not decisive. The heightmap is: an
+## object's own placement Y and its region's own terrain are two
+## independently authored numbers, and they agree only for the region the
+## object really belongs to.
+##
+## Measured on real data (see docs/WORLD_ISSUES.md's eighty-fifth round):
+## four real objects drawn against real 96/167's east edge sit 60-odd
+## units above that region's ground at -52.98, -59.24, -50.13 and -49.09,
+## and land on real **96/166**'s ground at 14.49, 8.09, 16.13 and 16.17 --
+## against their own placement heights of 14.5, 7.8, 16.1 and 16.2.
+##
+## The test is *comparative*, not a tolerance, which is what keeps
+## genuinely elevated scenery: a real `x_mas_wreath02` authored 167 units
+## over real 96/168's ground still matches 96/168 better than any
+## neighbour, so it stays. Only an entry that some neighbour explains
+## better is dropped. `.o` placements are never filtered -- that file is
+## the region's own list.
+func _placements_belonging_here(placements: Array, mapo_path: String) -> Array:
+	var coords := _parse_region_coords(mapo_path)
+	if coords.is_empty():
+		return placements
+	var here := _parsed_region_heightmap(coords["x"], coords["y"])
+	if here == null:
+		return placements
+
+	var kept: Array = []
+	var moved := 0
+	for p in placements:
+		if not p.get("from_o2", false):
+			kept.append(p)
+			continue
+		var pos: Vector3 = p["position"]
+		var own := MapmTerrainBuilder.height_at(here, pos.x, pos.z)
+		if is_nan(own):
+			kept.append(p)
+			continue
+		var own_error := absf(pos.y - own)
+		var better := false
+		for dy in [-1, 0, 1]:
+			for dx in [-1, 0, 1]:
+				if dx == 0 and dy == 0:
+					continue
+				var neighbour := _parsed_region_heightmap(
+					coords["x"] + (dx as int), coords["y"] + (dy as int))
+				if neighbour == null:
+					continue
+				var h := MapmTerrainBuilder.height_at(neighbour, pos.x, pos.z)
+				if is_nan(h):
+					continue
+				if absf(pos.y - h) < own_error - PLACEMENT_OWNERSHIP_MARGIN:
+					better = true
+					break
+			if better:
+				break
+		if better:
+			moved += 1
+		else:
+			kept.append(p)
+	if moved > 0:
+		print("World3D: %s -- dropped %d real .o2 placement(s) that stand on a neighbouring region's ground" % [
+			mapo_path, moved])
+	return kept
+
+## How much better a neighbouring region has to explain a placement's own
+## height before the placement is treated as that neighbour's rather than
+## this region's. Small, because the real matches are exact to a few
+## hundredths while the mismatches run to tens of units -- it only guards
+## against handing an object away on rounding.
+const PLACEMENT_OWNERSHIP_MARGIN := 1.0
+
+## Parsed `.m` heightmaps by region, so the ownership test above can sample
+## a neighbour's terrain without rebuilding it. Parsing is the expensive
+## part and every region in the grid gets parsed for its own terrain
+## anyway, so this is a second reference rather than a second parse of
+## anything new.
+var _parsed_region_heightmaps := {}
+
+func _parsed_region_heightmap(region_x: int, region_y: int) -> MapmReader.ParsedRegion:
+	var key := "%d_%d" % [region_x, region_y]
+	if _parsed_region_heightmaps.has(key):
+		return _parsed_region_heightmaps[key]
+	var bytes := AssetSource.read_bytes("%d\\%d.m" % [region_x, region_y], _open_map_pk2_if_set())
+	var parsed: MapmReader.ParsedRegion = null
+	if not bytes.is_empty():
+		parsed = MapmReader.parse(bytes)
+	_parsed_region_heightmaps[key] = parsed
+	return parsed
 
 ## Resolves a real .bmt at bmt_path (via ObjectLoader, the same
 ## pk2 -> BmtReader -> DdjReader pipeline already verified for scenery) into

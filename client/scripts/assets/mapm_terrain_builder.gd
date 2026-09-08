@@ -773,6 +773,61 @@ static func near_row_middle_height(region: MapmReader.ParsedRegion) -> float:
 	var block: MapmReader.Block = region.blocks[0]
 	return block.vertices[GRID_WIDTH / 2].height
 
+## The real terrain height at a region-local (x, z), read straight from a
+## region's own heightmap and interpolated between the four surrounding
+## real vertices.
+##
+## Independent of any mesh this builder produces, so it can answer "what
+## does this region's data say the ground is here" for a region that is
+## not, or not yet, built -- which is what deciding **which** region an
+## object belongs to needs (see World3D's own use of it). Returns NAN for
+## a position outside the region or a region that did not parse.
+static func height_at(region: MapmReader.ParsedRegion, x: float, z: float) -> float:
+	if region == null or region.blocks.size() < MapmReader.BLOCK_COUNT:
+		return NAN
+	var span := float(MapmReader.BLOCKS_PER_SIDE) * float(GRID_WIDTH - 1) * TILE_SIZE
+	if x < 0.0 or z < 0.0 or x >= span or z >= span:
+		return NAN
+
+	var fx := x / TILE_SIZE
+	var fz := z / TILE_SIZE
+	var x0 := int(floor(fx))
+	var z0 := int(floor(fz))
+	var tx := fx - float(x0)
+	var tz := fz - float(z0)
+	var h00 := _vertex_height(region, x0, z0)
+	var h10 := _vertex_height(region, x0 + 1, z0)
+	var h01 := _vertex_height(region, x0, z0 + 1)
+	var h11 := _vertex_height(region, x0 + 1, z0 + 1)
+	if is_nan(h00) or is_nan(h10) or is_nan(h01) or is_nan(h11):
+		return NAN
+	return (h00 * (1.0 - tx) + h10 * tx) * (1.0 - tz) + (h01 * (1.0 - tx) + h11 * tx) * tz
+
+## One vertex of the stitched region grid, addressed the same way
+## _full_region_cells stitches it: block edges are shared with the
+## neighbouring block at stride GRID_WIDTH - 1.
+static func _vertex_height(region: MapmReader.ParsedRegion, vx: int, vz: int) -> float:
+	var stride := GRID_WIDTH - 1
+	var last := MapmReader.BLOCKS_PER_SIDE - 1
+	var bx := vx / stride
+	var bz := vz / stride
+	var ix := vx % stride
+	var iz := vz % stride
+	if bx > last:
+		bx = last
+		ix = stride
+	if bz > last:
+		bz = last
+		iz = stride
+	var block_index := bz * MapmReader.BLOCKS_PER_SIDE + bx
+	if block_index < 0 or block_index >= region.blocks.size():
+		return NAN
+	var block: MapmReader.Block = region.blocks[block_index]
+	var vi := iz * GRID_WIDTH + ix
+	if vi < 0 or vi >= block.vertices.size():
+		return NAN
+	return block.vertices[vi].height
+
 ## A simple central-difference normal from neighboring real heights, same
 ## technique any heightmap renderer uses -- clamps to the grid edge rather
 ## than wrapping or fabricating an out-of-bounds neighbor.
