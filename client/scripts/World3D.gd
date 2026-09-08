@@ -602,6 +602,10 @@ const STAND_UNDER_TOLERANCE := 7.0
 ## as floating. Real scenery is authored a little into or above the terrain
 ## and a small gap is normal; a player-height gap is not.
 const FLOATING_TOLERANCE := 12.0
+## How many offending objects the float report lists. Enough to group them
+## by model and see whether an offset is a property of the model, of the
+## region, or of neither.
+const QA_FLOAT_MAX_ROWS := 200
 
 ## Real region streaming (2026-08-24): the original fixed 3x3 grid only
 ## ever loaded once, centered on wherever a zone's initial spawn/entry
@@ -3859,6 +3863,31 @@ func _qa_float_report(radius: float) -> void:
 				var hit := space.intersect_ray(query)
 				if hit.is_empty():
 					continue
+				# Only the object's *own* region counts. Each region node
+				# carries its own vertical anchor, so measuring an object
+				# against a neighbour's terrain and then expressing that in
+				# this region's local space reports the difference between
+				# two anchors as if it were scenery floating -- which is
+				# what an earlier version of this report did, producing
+				# gaps of hundreds of units that clustered by region and
+				# meant nothing.
+				# Only the object's own region's *terrain* counts, and
+				# terrain is specifically the body under this region's
+				# SubPatch. Two ways this went wrong before: measuring
+				# against a neighbouring region reports the difference
+				# between two vertical anchors as if it were floating
+				# scenery, and placed objects carry collision on the
+				# default layer -- which TERRAIN_COLLISION_LAYER includes --
+				# so a ray dropped near a tree lands on its canopy 350
+				# units up and calls everything beneath it buried.
+				var hit_collider = hit["collider"]
+				if hit_collider == null:
+					continue
+				var collider_parent := (hit_collider as Node).get_parent()
+				if collider_parent == null or String(collider_parent.name) != "SubPatch":
+					continue
+				if not region_group.is_ancestor_of(hit_collider as Node):
+					continue
 				var ground := region_group.to_local(hit["position"] as Vector3).y
 				var gap := local.y - ground
 				if absf(gap) < FLOATING_TOLERANCE:
@@ -3867,7 +3896,7 @@ func _qa_float_report(radius: float) -> void:
 	found.sort_custom(func(a, b): return absf(a[0]) > absf(b[0]))
 	print("QA FLOAT: %d placed object(s) within %.0f sit more than %.0f off their own region's ground" % [
 		found.size(), radius, FLOATING_TOLERANCE])
-	for i in range(mini(found.size(), 14)):
+	for i in range(mini(found.size(), QA_FLOAT_MAX_ROWS)):
 		print("QA FLOAT   %+7.1f  %-30s %-20s placed y %.1f, ground %.1f" % [
 			found[i][0], found[i][1], found[i][2], (found[i][3] as Vector3).y, found[i][4]])
 

@@ -3737,3 +3737,49 @@ decode with alpha intact -- `tre_dry02` DXT3 with 39,749 fully
 transparent texels, `tre_tree02_01` DXT3 with 68,299, `tre_tree02_02`
 DXT1 essentially opaque and correctly not cut out -- so the decode is not
 the problem and the decision or its application is.
+
+## Eighty-fourth round: three wrong answers from one instrument
+
+Scenery standing off the ground was reported from the fields, and
+`SRREVAMP_QA_FLOAT` was built to measure it. It took three corrections
+before it measured the thing it claimed to.
+
+**First version** compared an object against the *navigation mesh* height
+under it. That is a different surface from the one being rendered, so the
+number answered a question nobody asked.
+
+**Second version** dropped a physics ray onto the rendered terrain, and
+reported gaps of up to 182 units clustering by region. That was the ray
+landing on a **neighbouring region's** terrain: each region node carries
+its own vertical anchor (`shared_vertical_anchor`, see
+`_try_load_real_terrain`), so expressing a hit on region B in region A's
+local space reports the difference between two anchors as if it were
+floating scenery.
+
+**Third version** restricted the hit to the object's own region and
+reported 429 objects buried by up to 389 units, with terrain apparently
+350 units *above* objects inside a single region. That was the ray
+landing on **other objects**: `ObjectLoader` leaves placed scenery's
+collision on the default layer, `TERRAIN_COLLISION_LAYER` includes that
+layer, and a real `tre_tree02` is 483 units tall -- so a ray dropped
+beside a tree hits its canopy and calls everything beneath it buried.
+
+**Fourth version** requires the hit to be the body under this region's own
+`SubPatch`, which is terrain and nothing else. It reports **83 objects
+out of the whole loaded neighbourhood, none worse than ±68 units** --
+field vegetation sitting above or below the ground it belongs on, which
+is the size and character of what the playtest actually saw.
+
+Each wrong version was internally plausible and produced confident,
+specific numbers. What exposed each was the numbers being too large to
+believe rather than any error surfacing, which is the argument for
+sanity-checking an instrument's *magnitude* before trusting its detail.
+
+The remaining 83 are a real open question, and the shape of it is a hint:
+the sign is systematic per region. Every `cj_barley_02` in real 96/167
+floats (+58 to +67); every one in real 96/168 and 96/169 sinks (about
+-61). Objects and terrain are being compared in the same region's own
+local space, so the shared anchor cannot explain it. Two candidates worth
+testing: a per-region height field in the `.m` header this project does
+not read, or the real client snapping scenery to the terrain rather than
+trusting the placement's own Y.
