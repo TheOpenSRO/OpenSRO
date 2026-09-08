@@ -6,6 +6,9 @@ for every item live in `docs/WORLD_ISSUES.md`; this file is the index.
 
 Ordered by value per unit of effort, not by how interesting the problem is.
 
+New to the project? [HANDOFF.md](HANDOFF.md) covers the current task in depth — where the last
+session stopped, the tools for it, and the traps — and points back here for everything else.
+
 ## Next up
 
 ### 1. NPCs
@@ -27,10 +30,17 @@ bookmaker girl to 4 / 747; `mangnyang` to 2 / 440 with 15 animations. See
 [protocol/BSR_FORMAT.md](protocol/BSR_FORMAT.md), which also corrects this document's earlier
 claim that the offset table was untrustworthy — it was being read one field off.
 
-**Next**: assemble a type-1 `.bsr` through `CharacterAssembler` (the pipeline the ninety-fourth
-round got working) rather than `ObjectLoader`, and render one to confirm it stands up as a person.
-Spawning is the easy half afterwards: the table is readable and the server already streams a
-monster list the client renders.
+**Assembly is written too.** `client/scripts/assets/skinned_bsr_assembler.gd` takes an open
+archive and a `.bsr` path and returns a `Skeleton3D` with every piece attached and materials
+applied, needing nothing from outside — the `.bsr` names its own skeleton, and the piece-to-bone
+mapping is computed rather than tabulated (it reproduces `MonsterAssembler`'s two hand-derived
+dictionaries 10/10).
+
+**Next**: it has never been drawn. Write `client/tools/render_npc.gd` on the model of
+`render_character.gd` and render the priest, to confirm he stands up as a person rather than
+scattered pieces. Then spawning, which is the easy half: the table is readable and the server
+already streams a monster list the client renders. See [HANDOFF.md](HANDOFF.md) for the exact
+command and what the render does and does not prove.
 
 ### 2. Monsters as real models
 The server already sends a live monster list and the client draws labelled capsules for them. The

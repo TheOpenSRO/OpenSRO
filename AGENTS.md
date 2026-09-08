@@ -21,6 +21,7 @@ file is what an agent needs before touching anything. It is tool-neutral; `CLAUD
 | `client/` | Godot 4 client. `scripts/World3D.gd` is the world; format readers live under `scripts/<format>/`. |
 | `client/tools/` | Dev tools. **Read `client/tools/README.md` before waiting on any render.** |
 | `server/` | Go server. `cmd/` holds analysis tools as well as the server itself. |
+| `docs/HANDOFF.md` | **Picking this up cold? Start here.** What is being worked on right now and exactly where the last session stopped. |
 | `docs/TODO.md` | **The ordered list of what is left**, with the state of each parked item and the facts not to re-derive. Start here. |
 | `docs/WORLD_ISSUES.md` | The running log. Every non-obvious finding is a numbered "round" with the evidence. **Read the last few rounds before starting; append one when you finish.** |
 | `docs/protocol/` | Recovered file-format specs (`.bms`, `.bsr`, `.o`, `.o2`, `.m`, `.nvm`, …). |
