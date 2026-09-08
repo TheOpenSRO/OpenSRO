@@ -46,9 +46,14 @@ func _initialize() -> void:
 		quit(1)
 		return
 
+	# Against the *built* skeleton, not the parsed bone list: the builder
+	# adds a bone for the file's root name on top of the bones the reader
+	# returns, so comparing against the reader's list alone understates the
+	# match and invents a missing root.
+	var skeleton := Skeleton3DBuilder.build_skeleton3d(skel)
 	var bone_names := {}
-	for bone in skel.bones:
-		bone_names[bone.bone_name] = true
+	for i in range(skeleton.get_bone_count()):
+		bone_names[skeleton.get_bone_name(i)] = true
 	var matched := 0
 	var unmatched: Array = []
 	for track in anim.bones:
@@ -61,18 +66,19 @@ func _initialize() -> void:
 	for track in anim.bones:
 		track_names[track.bone_name] = true
 	var untracked: Array = []
-	for bone in skel.bones:
-		if not track_names.has(bone.bone_name):
-			untracked.append(bone.bone_name)
+	for i in range(skeleton.get_bone_count()):
+		if not track_names.has(skeleton.get_bone_name(i)):
+			untracked.append(skeleton.get_bone_name(i))
 
-	print("skeleton %s: %d bone(s)" % [bsk_path.get_file(), skel.bones.size()])
+	print("skeleton %s: %d parsed bone(s), %d in the built Skeleton3D (root %s)" % [
+		bsk_path.get_file(), skel.bones.size(), skeleton.get_bone_count(), skel.root_name])
 	print("animation %s: %d track(s), %d keyframe(s) on track 0" % [
 		ban_path.get_file(), anim.bones.size(),
 		anim.bones[0].keyframes.size() if not anim.bones.is_empty() else 0])
 	print("tracks matching a real bone: %d of %d" % [matched, anim.bones.size()])
 	if not unmatched.is_empty():
 		print("  tracks with no such bone (%d): %s" % [unmatched.size(), unmatched.slice(0, 8)])
-	print("bones with no track: %d of %d" % [untracked.size(), skel.bones.size()])
+	print("bones with no track: %d of %d" % [untracked.size(), skeleton.get_bone_count()])
 	if not untracked.is_empty():
 		print("  %s" % [untracked.slice(0, 12)])
 	print("\nskeleton bones, in file order (name <- parent):")

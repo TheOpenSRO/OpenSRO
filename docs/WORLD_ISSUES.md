@@ -3918,7 +3918,7 @@ no water tiles mean is still open. `client/tools/dump_nvm_water.gd`
 reports the numbers above for any region, which is what a next attempt
 should start from.
 
-## Eighty-eighth round: the animated character has no root bone
+## Eighty-eighth round: chasing the bind-pose character, and measuring the wrong thing
 
 The player has stood in its bind pose since the forty-eighth round, with
 playback disabled because enabling it made the assembled character come
@@ -3935,32 +3935,36 @@ transform. It is not a delta against rest, and not a delta against
 keyframe 0. `Skeleton3DBuilder.apply_ban_pose` already does exactly that,
 so the application semantics were right all along.
 
-Enabling playback anyway still explodes the character, and comparing the
-real skeleton against the real animation says why:
+Enabling playback anyway still explodes the character. The first
+measurement of why was **wrong, and worth keeping as a lesson about what
+to measure against.** Comparing the animation's tracks to
+`BskReader.parse`'s own bone list says 36 of 37 match, with the
+animation driving a `Bip01` no bone has -- which reads like a missing
+root. But the reader's list is not the skeleton: `Skeleton3DBuilder`
+adds a bone for `ParsedSkeleton.root_name` on top of it. Measured
+against the **built** skeleton instead:
 
 ```
-skeleton chinaman_skel.bsk: 37 bone(s)
+skeleton chinaman_skel.bsk: 37 parsed bone(s), 38 in the built Skeleton3D (root Bip01)
 animation chinaman_fighter_standcity.ban: 37 track(s)
-tracks matching a real bone: 36 of 37
-  tracks with no such bone: ["Bip01"]
-bones with no track:        ["Spine_Base"]
+tracks matching a real bone: 37 of 37
+bones with no track: 1 of 38  ["Spine_Base"]
 ```
 
-`Bip01` is the 3ds Max Biped root, and the real skeleton's own
-`Bip01 Pelvis` names it as its parent. It **is** in the real file --
-`strings` finds it, and `BskReader.parse` reads it -- but it is kept as
-`ParsedSkeleton.root_name` and never becomes a bone. So the built
-`Skeleton3D` has no root: every bone parented to `Bip01` becomes a root
-of its own, and the animation's first track has nothing to drive.
+**Every track matches a bone.** The root is there and is driven, and
+`Spine_Base` -- a real bone the animation genuinely does not touch -- is
+the only one left at rest. So the hierarchy is not the problem either.
 
-Animating a hierarchy whose root is missing while every child is posed
-absolutely is precisely what scatters a rigidly-attached character, and
-it explains why the rigid attachment looked correct at rest (rest and
-pose cancel) and only failed under animation.
+What is left is narrower and specific. `BskReader.parse` reads the root's
+name and then **skips its 92-byte transform**, and `build_skeleton3d`
+gives that root `Transform3D.IDENTITY` for rest and `Quaternion.IDENTITY`
+for its bind rotation. At rest that is invisible, because the rigid
+attachment cancels whatever rest it is given. Under animation it is not:
+the root's keyframes are absolute local transforms authored against the
+root's *real* bind, and applying them on top of an identity rest moves
+the whole character by the difference. That is the next thing to test --
+read the root transform the reader currently discards, give it to the
+root bone, and see whether the character holds together.
 
-**The fix is to give the skeleton its root**: build a bone for
-`root_name`, read the root transform that `parse` currently skips
-(`ROOT_TRANSFORM_LEN` bytes), and parent to it every bone naming it as
-parent. `client/tools/check_ban_bones.gd` is the check -- it should
-report 37 of 37 tracks matched and no untracked bone but `Spine_Base`,
-which the animation genuinely does not drive.
+`client/tools/check_ban_bones.gd` is the check, and it now compares
+against the built skeleton rather than the parsed list.
