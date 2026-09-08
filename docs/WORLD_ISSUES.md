@@ -3832,3 +3832,47 @@ matches 96/168 better than any neighbour -- because the test is
 comparative rather than a tolerance. What it needs is a region's
 heightmap to be samplable while its neighbours load, which the loader
 does not currently arrange.
+
+## Eighty-sixth round: a correct fix that made the result worse
+
+The eighty-fifth round's ownership rule -- assign each `.o2` entry to
+whichever region's heightmap best explains its placement height -- has a
+degenerate case, and finding it did not improve anything.
+
+**Real regions contain unauthored bands of exact zeroes.** Real 96/168
+reads exactly `0.00` at every point sampled across its z 1700-1850 band,
+while reading -38.42 and -60.02 elsewhere. That is missing data, not flat
+ground at sea level. Because it is *exactly* zero it out-explains real
+terrain for any object authored near zero, so a zero band quietly claims
+its neighbours' objects.
+
+The real city gate `cj_s.bsr` is exactly such an object: placed at
+y = -1.76, against real 96/168's zero band (error 1.76), real 97/168's
+-7.01 (5.25) and real 97/167's -6.46 (4.70). The rule therefore assigns
+it to **96/168**, and drops the copies from both regions whose data is
+real -- which is how the loaded grid went from three copies of that wall
+to one.
+
+`MapmTerrainBuilder.has_real_ground_at` was added to stop that: four
+surrounding vertices at exactly 0.0 is absence of data, so a region
+offering only zeroes cannot claim an object, and a region with no ground
+of its own keeps what it lists. It is correct, and **it made the world
+worse**: two copies of the wall come back, and the second one's solid
+section lands across the town's gateway again -- the exact defect the
+seventy-eighth round fixed and the playtest celebrated getting through.
+Reverted, and the frames confirm the revert restored the good state
+byte-for-byte.
+
+What this exposes is a limit of the rule rather than a bug in it. Height
+matching resolves **small scenery that sits on the ground** reliably --
+the barley and weeds of the previous round matched their true region to
+within hundredths -- and cannot resolve **a large structure standing on
+its own platform**, whose base has no reason to touch the terrain under
+it at all. The gate currently comes out right for the wrong reason: an
+unauthored zero band happens to beat the regions with real data. That is
+luck, and it is written down here as luck so the next person does not
+mistake it for a working rule.
+
+`has_real_ground_at` is kept, unused, for the fact it records: a region's
+heightmap can be absent in places, and anything comparing regions by
+height has to know that.

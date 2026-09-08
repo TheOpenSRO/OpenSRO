@@ -803,6 +803,39 @@ static func height_at(region: MapmReader.ParsedRegion, x: float, z: float) -> fl
 		return NAN
 	return (h00 * (1.0 - tx) + h10 * tx) * (1.0 - tz) + (h01 * (1.0 - tx) + h11 * tx) * tz
 
+## Does a region's heightmap actually carry ground at (x, z), as opposed to
+## an unauthored patch of zeroes?
+##
+## **Not currently used to decide anything.** It was written to stop
+## zero-filled bands winning World3D's region-ownership comparison, and it
+## does -- but wiring it in made the visible result worse rather than
+## better (see docs/WORLD_ISSUES.md's eighty-sixth round), so it is kept
+## for the fact it records rather than for a decision it drives.
+##
+## Real regions contain bands where every vertex height is exactly 0.0 --
+## real 96/168 reads 0.00 across its whole z 1700-1850 band while reading
+## -38.42 and -60.02 elsewhere. That is absence of data, not flat ground at
+## sea level, and it matters because anything comparing regions by "whose
+## ground best matches this height" would otherwise let a zero-filled patch
+## win every object authored near zero. A real heightmap varies; four
+## surrounding vertices all at exactly 0.0 do not happen by accident.
+static func has_real_ground_at(region: MapmReader.ParsedRegion, x: float, z: float) -> bool:
+	if region == null:
+		return false
+	var span := float(MapmReader.BLOCKS_PER_SIDE) * float(GRID_WIDTH - 1) * TILE_SIZE
+	if x < 0.0 or z < 0.0 or x >= span or z >= span:
+		return false
+	var x0 := int(floor(x / TILE_SIZE))
+	var z0 := int(floor(z / TILE_SIZE))
+	for dz in [0, 1]:
+		for dx in [0, 1]:
+			var h := _vertex_height(region, x0 + (dx as int), z0 + (dz as int))
+			if is_nan(h):
+				return false
+			if h != 0.0:
+				return true
+	return false
+
 ## One vertex of the stitched region grid, addressed the same way
 ## _full_region_cells stitches it: block edges are shared with the
 ## neighbouring block at stride GRID_WIDTH - 1.
