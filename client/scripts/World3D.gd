@@ -1024,6 +1024,7 @@ func _ready() -> void:
 func _try_initialize_pk2_ui() -> void:
 	_media_pk2 = _open_media_pk2_if_set()
 	if _media_pk2 == null:
+		print("World3D: Media.pk2 not found (path='%s') -- authentic UI skipped" % Pk2Config.media_path())
 		return
 
 	# Load UI localization strings from Media.pk2
@@ -1037,16 +1038,38 @@ func _try_initialize_pk2_ui() -> void:
 	# Setup authentic Minimap
 	_hud_minimap = HudMinimap.new(_ui_builder, _media_pk2, _ui_text_table)
 	_hud_minimap.name = "HudMinimap"
-	_hud_minimap.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_hud_minimap.position = Vector2(-150, 10)
 	ui_control.add_child(_hud_minimap)
+	_hud_minimap.anchors_preset = Control.PRESET_TOP_RIGHT
+	_hud_minimap.anchor_left = 1.0
+	_hud_minimap.anchor_right = 1.0
+	_hud_minimap.anchor_top = 0.0
+	_hud_minimap.anchor_bottom = 0.0
+	_hud_minimap.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_hud_minimap.grow_vertical = Control.GROW_DIRECTION_END
+	_hud_minimap.offset_left = -150.0
+	_hud_minimap.offset_right = -14.0
+	_hud_minimap.offset_top = 10.0
+	_hud_minimap.offset_bottom = 185.0
+	_hud_minimap.setup()
 
 	# Setup authentic Underbar (bottom bar)
 	_hud_underbar = HudUnderbar.new(_ui_builder, _media_pk2, _ui_text_table)
 	_hud_underbar.name = "HudUnderbar"
-	_hud_underbar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	_hud_underbar.position = Vector2(0, -65)
 	ui_control.add_child(_hud_underbar)
+	_hud_underbar.anchors_preset = Control.PRESET_BOTTOM_CENTER
+	_hud_underbar.anchor_left = 0.5
+	_hud_underbar.anchor_right = 0.5
+	_hud_underbar.anchor_top = 1.0
+	_hud_underbar.anchor_bottom = 1.0
+	_hud_underbar.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_hud_underbar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_hud_underbar.offset_left = -432.0
+	_hud_underbar.offset_right = 432.0
+	_hud_underbar.offset_top = -54.0
+	_hud_underbar.offset_bottom = 0.0
+	_hud_underbar.setup()
+
+	print("World3D: authentic Silkroad UI initialized from Media.pk2 (Minimap + Underbar)")
 
 ## Pushes the camera's far clipping plane out far enough to actually see
 ## the real terrain this scene streams in.

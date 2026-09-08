@@ -52,4 +52,10 @@ static func _resolve(env_var: String, filename: String) -> String:
 	var local_path := pk2_dir().path_join(filename)
 	if FileAccess.file_exists(local_path):
 		return local_path
+	var res_path := ProjectSettings.globalize_path("res://pk2").path_join(filename)
+	if FileAccess.file_exists(res_path):
+		return res_path
+	var res_nested := ProjectSettings.globalize_path("res://pk2/pk2").path_join(filename)
+	if FileAccess.file_exists(res_nested):
+		return res_nested
 	return ""

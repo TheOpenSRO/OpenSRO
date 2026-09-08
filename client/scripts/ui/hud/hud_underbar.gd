@@ -34,7 +34,14 @@ func _init(builder: UiBuilder = null, media_pk2: Pk2Reader = null, text_table: U
 	_media_pk2 = media_pk2
 	_text_table = text_table
 
+func _ready() -> void:
+	if get_child_count() == 0:
+		setup()
+
 func setup(layout_data: Variant = null) -> void:
+	custom_minimum_size = Vector2(864, 54)
+	size = Vector2(864, 54)
+
 	var layout: UiLayoutParser.LayoutDef = null
 	if layout_data != null:
 		layout = UiLayoutParser.parse(layout_data)

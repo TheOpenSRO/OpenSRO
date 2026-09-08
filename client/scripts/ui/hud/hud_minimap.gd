@@ -37,8 +37,57 @@ func _init(builder: UiBuilder = null, media_pk2: Pk2Reader = null, text_table: U
 	_media_pk2 = media_pk2
 	_text_table = text_table
 
+func _ready() -> void:
+	if get_child_count() == 0:
+		setup()
+
 func setup(layout_data: Variant = null) -> void:
-	# Default layout path in Media.pk2 is resinfo\ifminimap.txt
+	custom_minimum_size = Vector2(136, 175)
+	size = Vector2(136, 175)
+
+	# 1. Circular map clipping viewport (authored rect is 14, 57, 105, 105)
+	_map_clip = Control.new()
+	_map_clip.name = "MapClip"
+	_map_clip.position = Vector2(14, 57)
+	_map_clip.size = Vector2(105, 105)
+	_map_clip.clip_contents = true
+	_map_clip.mouse_filter = MOUSE_FILTER_IGNORE
+	add_child(_map_clip)
+
+	# Region map image
+	_map_rect = TextureRect.new()
+	_map_rect.name = "RegionMap"
+	_map_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_map_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	_map_rect.mouse_filter = MOUSE_FILTER_IGNORE
+	_map_clip.add_child(_map_rect)
+
+	# Player heading marker (mm_sign_character.ddj)
+	_player_arrow = TextureRect.new()
+	_player_arrow.name = "PlayerArrow"
+	_player_arrow.size = Vector2(16, 16)
+	_player_arrow.pivot_offset = Vector2(8, 8)
+	_player_arrow.position = Vector2(105 / 2.0 - 8, 105 / 2.0 - 8)
+	_player_arrow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_player_arrow.stretch_mode = TextureRect.STRETCH_SCALE
+	_player_arrow.mouse_filter = MOUSE_FILTER_IGNORE
+	if _ui_builder != null:
+		_player_arrow.texture = _ui_builder.load_texture("interface\\minimap\\mm_sign_character.ddj")
+	_map_clip.add_child(_player_arrow)
+
+	# 2. Outer decorative frame (mm_window.ddj)
+	_frame_rect = TextureRect.new()
+	_frame_rect.name = "MinimapFrame"
+	_frame_rect.position = Vector2(0, 0)
+	_frame_rect.size = Vector2(136, 175)
+	_frame_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_frame_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	_frame_rect.mouse_filter = MOUSE_FILTER_IGNORE
+	if _ui_builder != null:
+		_frame_rect.texture = _ui_builder.load_texture("interface\\minimap\\mm_window.ddj")
+	add_child(_frame_rect)
+
+	# 3. Layout root (buttons and text labels authored in resinfo\ifminimap.txt)
 	var layout: UiLayoutParser.LayoutDef = null
 	if layout_data != null:
 		layout = UiLayoutParser.parse(layout_data)
@@ -60,48 +109,6 @@ func setup(layout_data: Variant = null) -> void:
 		_btn_zoom_in = layout_root.get_node_or_null("GDR_MINIMAP_ZOOMIN") as TextureButton
 		_btn_zoom_out = layout_root.get_node_or_null("GDR_MINIMAP_ZOOMOUT") as TextureButton
 		_btn_toggle_map = layout_root.get_node_or_null("GDR_MINIMAP_BTN_TOG_MAP") as TextureButton
-
-	# Circular map clipping viewport (authored rect is 14, 57, 105, 105)
-	_map_clip = Control.new()
-	_map_clip.name = "MapClip"
-	_map_clip.position = Vector2(14, 57)
-	_map_clip.size = Vector2(105, 105)
-	_map_clip.clip_contents = true
-	_map_clip.mouse_filter = MOUSE_FILTER_IGNORE
-	add_child(_map_clip)
-
-	# Region map image
-	_map_rect = TextureRect.new()
-	_map_rect.name = "RegionMap"
-	_map_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_map_rect.stretch_mode = TextureRect.STRETCH_SCALE
-	_map_rect.mouse_filter = MOUSE_FILTER_IGNORE
-	_map_clip.add_child(_map_rect)
-
-	# Outer decorative frame (mm_window.ddj)
-	_frame_rect = TextureRect.new()
-	_frame_rect.name = "MinimapFrame"
-	_frame_rect.position = Vector2(0, 0)
-	_frame_rect.size = Vector2(136, 175)
-	_frame_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_frame_rect.stretch_mode = TextureRect.STRETCH_SCALE
-	_frame_rect.mouse_filter = MOUSE_FILTER_IGNORE
-	if _ui_builder != null:
-		_frame_rect.texture = _ui_builder.load_texture("interface\\minimap\\mm_window.ddj")
-	add_child(_frame_rect)
-
-	# Player heading marker (mm_sign_character.ddj)
-	_player_arrow = TextureRect.new()
-	_player_arrow.name = "PlayerArrow"
-	_player_arrow.size = Vector2(16, 16)
-	_player_arrow.pivot_offset = Vector2(8, 8)
-	_player_arrow.position = Vector2(105 / 2.0 - 8, 105 / 2.0 - 8)
-	_player_arrow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_player_arrow.stretch_mode = TextureRect.STRETCH_SCALE
-	_player_arrow.mouse_filter = MOUSE_FILTER_IGNORE
-	if _ui_builder != null:
-		_player_arrow.texture = _ui_builder.load_texture("interface\\minimap\\mm_sign_character.ddj")
-	_map_clip.add_child(_player_arrow)
 
 	# Connect zoom buttons if present
 	if _btn_zoom_in != null:
