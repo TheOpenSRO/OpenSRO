@@ -4410,3 +4410,54 @@ region's art shows farmland there. A rule of "water wherever terrain is
 below the plane level" fills the moat correctly and drowns the farm. The
 plane map cannot separate them -- 30 of the region's 36 cells are type 1
 -- and there are no water tiles anywhere in the region to localise it.
+
+## Ninety-eighth round: NPCs are characters, not scenery
+
+Chasing the first item on the list turned up the whole chain, and one
+surprise about what an NPC actually is.
+
+**The spawn data exists and decodes.** A real server pack's
+`SR_GameRefData\npcpos.txt` is UTF-16 with tab-separated rows of
+**NPC id, region id, X, Y, Z** — and the region id is the same
+`(x << 8) | y` key this project already uses for navmesh filenames, so
+`25257` reads as region 98/169 directly. A real `CharacterData*.txt` row
+maps the id to a code name and a model: id `2023` is `NPC_CH_PRIEST`
+carrying `npc\npc\chinaquest_priest.bsr`. Nothing here needs reverse
+engineering; it is a table this project can read.
+
+**The models are not static objects.** Loading those `.bsr` files through
+`ObjectLoader` -- the loader this project uses for scenery -- succeeds but
+returns almost nothing: 25 vertices for the priest, 77 for a bookmaker,
+566 for `arabia_fouad`. A person is not 25 vertices. Reading the files
+directly says why:
+
+```
+chinaquest_priest.bsr    prim\mtrl\npc\china\chinaquest_priest.bmt
+                         prim\mesh\npc\china\chinaquest_priest_al.bms
+                         prim\mesh\npc\china\chinaquest_priest_part1.bms
+                         prim\mesh\npc\china\chinaquest_priest_part2.bms
+                         prim\ani\npc\china\chinaquest_priest_basic.ban
+                         prim\ani\npc\china\chinaquest_priest_time.ban
+arabia_fouad.bsr         ... _part1.bms, _part2.bms, _rol.bms
+                         prim\ani\npc\sd\sd_m_area_ahha_stand.ban
+                         prim\skel\npc\sd\sd_m_area_ahha.bsk
+```
+
+An NPC `.bsr` carries **body parts, a skeleton and animations** — it is a
+character, assembled the same way the player is. That is good news,
+because the character pipeline is the part this project just finished
+fixing: the root bind transform, the paired-part sides, and `.ban`
+playback all landed in the ninety-fourth round.
+
+**What is missing is in `BsrReader`.** It found one mesh where the file
+lists three, and it exposes no skeleton or animation path at all -- its
+`ParsedObject` has `mesh_path`, `sub_mesh_paths` and `material_path` and
+nothing else. Building scenery never needed more. The sub-mesh scan works
+on buildings (a real `cj_s.bsr` yields ten), so what an NPC `.bsr` puts
+around those fields is different and not yet read.
+
+**Next**: extend `BsrReader` to read an NPC `.bsr`'s full mesh list and
+its `.bsk`/`.ban` references, then assemble NPCs through
+`CharacterAssembler` rather than `ObjectLoader`. Spawning them is separate
+and easier: the table is readable, and this project's own server already
+streams a monster list to the client that NPCs can follow.

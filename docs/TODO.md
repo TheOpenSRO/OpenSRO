@@ -13,11 +13,19 @@ The reference server has named NPCs standing in the town (`Grocery Trader Jinjin
 `Magic POP Guide Gori`, arena managers). This project renders none, and they are most of what
 makes a town look inhabited.
 
-**Known**: NPC models live under `Res\NPC\...` and resolve through the same `.bsr` path this
-project already loads scenery with — `arabia_fouad.bsr` and friends appear in Map.pk2's object
-index. **Not known**: where a region's NPC spawns are listed. **Next**: find the spawn table —
-`Media.pk2`'s `server_dep\silkroad\textdata\` holds the character/NPC text tables, and
-`npcpos`-shaped data is the thing to look for.
+**The spawn data is solved** (ninety-eighth round). A server pack's `SR_GameRefData\npcpos.txt`
+gives *NPC id, region id, X, Y, Z*, with the region id in the same `(x << 8) | y` key this project
+already uses; `CharacterData*.txt` maps the id to its model. Both are plain tables.
+
+**The blocker is the model loader.** An NPC `.bsr` is not scenery — it carries body parts, a
+`.bsk` skeleton and `.ban` animations, i.e. it is a character. `BsrReader` reads one mesh where
+the file lists three and exposes no skeleton or animation path, because building scenery never
+needed them.
+
+**Next**: extend `BsrReader` to read an NPC `.bsr`'s full mesh list and its `.bsk`/`.ban`
+references, then assemble NPCs through `CharacterAssembler` — the pipeline the ninety-fourth round
+just got working — rather than `ObjectLoader`. Spawning is the easy half afterwards: the table is
+readable and the server already streams a monster list the client renders.
 
 ### 2. Monsters as real models
 The server already sends a live monster list and the client draws labelled capsules for them. The
