@@ -4507,6 +4507,12 @@ func _physics_process(delta: float) -> void:
 			if not ref_track.keyframes.is_empty():
 				var frame_count := ref_track.keyframes.size()
 				var frame_idx := int(_player_anim_time * BAN_FPS) % frame_count
+				# Pinnable, so the in-world pose can be held against the same
+				# frame applied offline by check_ban_pose.gd -- which is how
+				# the two were shown to agree exactly.
+				var pinned := OS.get_environment("SRREVAMP_QA_ANIM_FRAME")
+				if pinned != "" and pinned.is_valid_int():
+					frame_idx = int(pinned) % frame_count
 				Skeleton3DBuilder.apply_ban_pose(_player_skeleton, anim, frame_idx)
 
 func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, armor_slots_mask: int = 0, gender: String = DEFAULT_GENDER, has_weapon: bool = false, has_shield: bool = false) -> void:

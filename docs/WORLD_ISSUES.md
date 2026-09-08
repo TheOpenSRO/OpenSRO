@@ -4167,3 +4167,52 @@ The next step is not another hypothesis. It is to make the two paths
 report the *same numbers*: have the in-world code dump the same bone
 global positions `check_ban_pose.gd` prints, in the same units, on the
 same frame, and find the first bone at which they diverge.
+
+## Ninety-third round: every part of the rig verified correct, and the render still disagrees
+
+Pinning the in-world animation to a chosen frame
+(`SRREVAMP_QA_ANIM_FRAME`) makes the two paths directly comparable, and
+on frame 0 they agree **exactly**:
+
+```
+                     in-world                offline (check_ban_pose.gd)
+Bip01 Head       ( -0.05, 16.05, -0.27)     ( -0.05, 16.05, -0.27)
+Bip01 L Forearm  (  2.42, 12.18, -0.10)     (  2.42, 12.18, -0.10)
+Bip01 L Hand     (  2.73,  9.74, -0.83)     (  2.73,  9.74, -0.83)
+```
+
+So the bones are posed identically in both, hands well below the head.
+Everything downstream then checked out too:
+
+- **The attachment tracks its bone.** `BoneAttachment3D` for
+  `Bip01 L Forearm` sits at (2, 12, 0), which is the bone's own posed
+  position, with a resolved bone index.
+- **The mesh offset is exact.** Each piece's own transform equals
+  `inverse(bone_global_rest)` to the last digit -- printed beside what it
+  should be, and identical.
+- **The offset is necessary.** Removing it entirely throws the pieces to
+  (15.1, 15.8, -7.0), far worse, so the vertices really are in bind space
+  and the inverse really is the right correction.
+- **The left/right split works.** It looked broken -- every paired part's
+  `get_aabb()` spans both signs of X -- but `_build_side_mesh` keeps the
+  full vertex array and filters only the *indices*, so the AABB spans
+  both sides while the drawn triangles are one side. Correct code,
+  misleading measurement.
+
+**And the character still renders with its arms overhead**, on the same
+build, on the pinned frame whose numbers say the hands are down.
+
+Every link in the chain has now been measured and every one is right,
+which means the fault is in something not yet on the list, or one of
+these measurements is lying the way three others in this session already
+did. Note in particular that the mesh AABB centre -- which several
+readings in the ninety-first and ninety-second rounds were built on -- is
+**meaningless for these meshes**, since a two-sided vertex array puts it
+on the centreline regardless of which side is drawn. Those numbers should
+not be trusted, including the ones that appeared to show pieces moving.
+
+**Next step, and deliberately not another hypothesis**: assemble the
+character with **one body part at a time** and render each. That says
+directly which piece is drawn where, with no derived quantity in between,
+and will identify what the shapes above the head actually are -- they
+have been assumed to be the arms, and nothing has confirmed that.
