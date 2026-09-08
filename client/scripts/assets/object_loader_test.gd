@@ -517,7 +517,16 @@ func _init() -> void:
 				_check(child is MeshInstance3D, "child %s is a MeshInstance3D" % child.name)
 				var mi := child as MeshInstance3D
 				_check(mi.mesh != null, "child %s has a mesh assigned" % child.name)
-				_check(mi.material_override is StandardMaterial3D, "child %s has a material applied" % child.name)
+				# TEST_BMT_HEX's own layer carries flag word 0x0341, i.e.
+				# bit 0 set -- a real alpha layer (see
+				# ObjectLoader.LAYER_FLAG_ALPHA). The fixture was taken
+				# from real data, so it exercises the cutout path, and the
+				# material it yields is the foliage ShaderMaterial rather
+				# than a StandardMaterial3D.
+				_check(mi.material_override != null, "child %s has a material applied" % child.name)
+				_check(mi.material_override is ShaderMaterial,
+					"child %s takes the cutout path its layer's alpha flag asks for (got %s)" % [
+						child.name, mi.material_override])
 				if mi.material_override is StandardMaterial3D:
 					var mat := mi.material_override as StandardMaterial3D
 					_check(mat.albedo_texture is ImageTexture, "child %s's material has a texture (got %s)" % [child.name, mat.albedo_texture])

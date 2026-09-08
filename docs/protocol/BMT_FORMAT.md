@@ -45,7 +45,7 @@ output is stored in this repo — only the resulting facts about the container f
 | Specular | 4× `float32` (RGBA) |
 | Emissive | 4× `float32` (RGBA) |
 | Power | `float32`, unconfirmed meaning (observed constant `0.0` in every real layer checked — plausibly specular power/shininess, never actually populated in these samples) |
-| Unknown | `uint32`, unconfirmed meaning (observed values 64, 321, 832, 833 — not obviously a flags bitmask or a length) |
+| Flags | `uint32` bitmask. Recorded here until 2026-09-08 as "unconfirmed meaning (observed values 64, 321, 832, 833 — not obviously a flags bitmask or a length)". Written in hex those are `0x040`, `0x141`, `0x340`, `0x341`, which is plainly a mask: bit 6 set in every real value seen, bits 8/9 varying, and **bit 0 varying independently of both**. See "Bit 0: the alpha layer flag" below. Bits 6, 8 and 9 remain unidentified |
 | Texture path | `uint32` length + ASCII bytes — **usually a bare filename** (e.g. `"avatar_m_zombie.ddj"`), resolved against whatever directory the `.bmt` itself lives in. **Correction (2026-08-23, live-tested against real Jangan palace materials)**: at least one real layer carries a real **full path** instead (`"prim\mtrl\bldg\china\dunhuang\buildings\naru_obj.ddj"`, pointing at a real directory completely unrelated to the `.bmt` referencing it) — a bare-filename texture path never contains a `\` or `/`, so that's the real, reliable way to tell the two cases apart before resolving. Some layers have no texture (`length` reads as a small value pointing at unrelated data, or the layer is otherwise a pure color/tint layer) — treat a texture-read failure on validation as "no texture" rather than a hard error only when it's clearly not a real string |
 
 Real layers were seen to share the exact same default color set (`ambient=diffuse=(0.588, 0.588,
@@ -88,3 +88,33 @@ can't — a caller can compare the parsed layer count against the file's declare
   `"chinaman_body"` and references `chinaman_warrior_body.ddj`) — `World3D.gd` uses this real
   name match (not an index-based guess) to resolve each assembled body part's own real texture.
   See `docs/PROGRESS.md` for the real screenshot this produced.
+
+## Bit 0: the alpha layer flag
+
+**Bit 0 of a layer's flag word means the layer's texture alpha is a cutout mask to be honoured.**
+
+It separates real alpha layers from real solid ones with no exceptions across every real material
+checked:
+
+| Layer | Flags | Measured alpha |
+|---|---|---|
+| `tre_willow02_leaf01` / `_leaf02` | `0x341` | 79% of texels below opaque |
+| `c_swamp_tree02_01` / `_02` | `0x341` | 75.5% |
+| `tre_tree02_01` (leaf card) | `0x341` | 68,299 texels fully transparent |
+| `tre_dry02` | `0x341` | 39,749 fully transparent |
+| `CJ_w_alpha` (a city gate's alpha mesh) | `0x341` | — |
+| `CJ_pal_bigdoor_roof02_al` / `roof03_al` | `0x341` | — |
+| `tre_willow02_will01` (branches) | `0x340` | solid |
+| `tre_tree02_02` / `_03` (bark) | `0x140` | solid |
+| `blade_14` | `0x340` | 97.8% non-opaque, but **all graded** — a gloss ramp, not a mask |
+| `CJ_w_wall01`..`05`, `CJ_w_stair`, `CJ_pal_bigdoor_wall01` | `0x140` | solid |
+
+Two things corroborate it independently of the pixels. The **authored naming convention**: every
+real layer whose name ends in `_al` — the artists' own abbreviation for alpha — has bit 0 set, and
+no solid layer does. And the flag **draws a line the pixels cannot**: `blade_14` is 97.8%
+non-opaque yet is not an alpha layer, because that alpha is a graded gloss ramp rather than a
+cutout mask, and no threshold on "how transparent is this texture" can tell those apart.
+
+**Not yet confirmed against the client binary.** The evidence is a perfect correlation across ~25
+real layers in four unrelated real materials, plus the naming convention. Reading the flag out of
+the real material loader would settle it, and is worth doing.

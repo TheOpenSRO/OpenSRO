@@ -257,7 +257,16 @@ static func load_material(archive: Pk2Reader, bmt_path: String) -> BmtReader.Par
 ## here meant they never got cutout and rendered as huge solid rectangles --
 ## the real dark slabs standing behind real trees in a live render, traced
 ## to `tre_willow03_leaf01` by raycasting into them.
-const _ALPHA_FOURCCS := ["DXT1", "DXT3", "DXT5"]
+## **DXT2 added 2026-09-08.** DdjReader decodes DXT2 as DXT3 -- the two are
+## bit-identical block formats, differing only in whether colour is
+## premultiplied by alpha -- but this list did not say so, so any texture
+## whose real fourCC is literally `DXT2` was drawn opaque no matter what its
+## alpha held. Found by reporting every texture about to be drawn opaque
+## despite carrying transparency (SRREVAMP_QA_MATS): real
+## `c_swamp_tree02_01.ddj` is DXT2 with **75.5%** of its texels below
+## opaque, which is a leaf card rendered as a solid slab -- exactly the
+## black cards a real playtest reported standing in the fields.
+const _ALPHA_FOURCCS := ["DXT1", "DXT2", "DXT3", "DXT5"]
 
 ## Minimum fraction of a real texture's texels that must be below opaque
 ## before a real **DXT1** texture is treated as a cutout.
@@ -363,12 +372,36 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 		# decodes the real pixel data and only applies cutout+no-culling if
 		# a real texel's alpha is genuinely below opaque, instead of
 		# assuming from the format alone.
+		# The material itself says whether this layer is an alpha layer --
+		# see LAYER_FLAG_ALPHA. Everything below it is the older
+		# guess-from-the-pixels path, kept only for layers whose flag word
+		# does not look like a real flag word.
 		var needs_cutout := false
-		if _ALPHA_FOURCCS.has(parsed_tex.four_cc):
+		if layer.unknown & LAYER_FLAG_MASK != 0:
+			needs_cutout = layer.unknown & LAYER_FLAG_ALPHA != 0
+		elif _ALPHA_FOURCCS.has(parsed_tex.four_cc):
 			if parsed_tex.four_cc == "DXT1":
 				needs_cutout = _real_alpha_fraction(godot_tex) >= _DXT1_CUTOUT_MIN_ALPHA_FRACTION
 			else:
 				needs_cutout = _has_real_alpha_variance(godot_tex)
+		elif parsed_tex.four_cc == "":
+			needs_cutout = _alpha_is_binary_cutout(godot_tex)
+		# Says so whenever a texture that plainly carries transparency is
+		# nonetheless about to be drawn opaque, which is what a leaf card
+		# rendering as a solid black rectangle looks like from here.
+		# Gated so an ordinary run costs nothing.
+		# Surfaces the case worth a human look: a texture that is heavily
+		# transparent while its own layer flag says the layer is solid.
+		# Some disagreement is expected and correct -- a gloss ramp is
+		# mostly non-opaque and rightly not a cutout -- so the bar is set
+		# well above that. Gated, so an ordinary run costs nothing.
+		if not needs_cutout and OS.get_environment("SRREVAMP_QA_MATS") != "":
+			var fraction := _real_alpha_fraction(godot_tex)
+			if fraction > _QA_MATS_REPORT_MIN_ALPHA_FRACTION:
+				print("QA MAT: %s (%s, %s) is %.1f%% non-opaque, flags 0x%04x, no cutout" % [
+					layer.layer_name, tex_path.get_file(), parsed_tex.four_cc,
+					fraction * 100.0, layer.unknown])
+
 		if needs_cutout:
 			# Not a StandardMaterial3D: a real double-sided card has to keep
 			# its authored normal on both faces to light the way the real
@@ -377,6 +410,127 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 			return _build_foliage_material(layer, godot_tex)
 
 	return mat
+
+## Bit 0 of a real .bmt layer's own flag word: **this layer is an alpha
+## layer**, i.e. its texture's alpha is a cutout mask to be honoured rather
+## than ignored.
+##
+## The field was recorded in BMT_FORMAT.md as "unconfirmed meaning
+## (observed values 64, 321, 832, 833 -- not obviously a flags bitmask)".
+## Written in hex those are 0x040, 0x141, 0x340, 0x341, which is plainly a
+## bitmask: bit 6 always set, bits 8/9 varying, and bit 0 varying
+## independently of both.
+##
+## Bit 0 separates real alpha layers from real solid ones with no
+## exceptions across every real material checked:
+##
+## | layer | flag | measured alpha |
+## |---|---|---|
+## | `tre_willow02_leaf01`/`_leaf02` | 0x341 | 79% below opaque |
+## | `c_swamp_tree02_01`/`_02` | 0x341 | 75.5% |
+## | `tre_tree02_01` (leaf card) | 0x341 | 68,299 texels transparent |
+## | `tre_dry02` | 0x341 | 39,749 transparent |
+## | `CJ_w_alpha` (a gate's alpha mesh) | 0x341 | -- |
+## | `CJ_pal_bigdoor_roof02_al`/`roof03_al` | 0x341 | -- |
+## | `tre_willow02_will01` (branches) | 0x340 | solid |
+## | `tre_tree02_02`/`_03` (bark) | 0x140 | solid |
+## | `blade_14` (a graded gloss ramp, **not** a cutout) | 0x340 | 97.8% *partial* |
+## | `CJ_w_wall01`..`05`, `CJ_w_stair`, `cj_pal_bigdoor_wall01` | 0x140 | solid |
+##
+## The authored naming corroborates it independently: every real layer
+## whose name ends in `_al` -- the artists' own abbreviation for alpha --
+## has bit 0 set, and no solid layer does. It also draws the line the
+## pixels cannot: `blade_14` is 97.8% non-opaque yet is not an alpha
+## layer, because that alpha is a gloss ramp rather than a mask.
+##
+## **Not yet confirmed against the client binary.** The correlation is
+## across ~25 real layers in four unrelated real materials with zero
+## contradictions, plus the naming convention, which is why it is used --
+## but reading the flag out of the real material loader would settle it,
+## and that is worth doing.
+const LAYER_FLAG_ALPHA := 0x1
+
+## Bit 6 is set in every real flag word observed, so a layer whose word has
+## it is one this project knows how to read. A layer whose word does not
+## look like a real flag word at all falls back to inspecting the texture,
+## rather than being silently treated as solid.
+const LAYER_FLAG_MASK := 0x40
+
+## How transparent a texture has to be before SRREVAMP_QA_MATS bothers
+## reporting that it is being drawn solid.
+const _QA_MATS_REPORT_MIN_ALPHA_FRACTION := 0.20
+
+## Is an **uncompressed** texture's alpha a cutout mask rather than a
+## graded blend?
+##
+## Uncompressed real textures carry a full 8-bit alpha channel, so unlike
+## the block formats their fourCC says nothing at all about intent -- the
+## same channel holds a leaf card's punch-out mask and a blade's gloss
+## ramp. Treating every one of them as cutout would chop up real weapons;
+## treating none of them as cutout is what this project was doing, and it
+## drew real foliage cards as solid slabs.
+##
+## Real measurements separate the two with no overlap. A real
+## `grs_weed07.ddj` is **7,600 opaque, 57,936 fully transparent, 0
+## partial** -- a perfectly binary mask. A real `blade_14.ddj` is **1,459
+## opaque, 0 fully transparent, 64,077 partial** -- entirely graded, with
+## no punched-out texels at all. A real `shield_16.ddj` sits at 27,984 /
+## 5,116 / 32,436, graded despite having some transparent texels. So a
+## cutout is recognised by having a real share of *fully* transparent
+## texels **and** essentially no partial ones, which admits the weed and
+## rejects both the blade and the shield by wide margins.
+static func _alpha_is_binary_cutout(texture: Texture2D) -> bool:
+	if texture == null:
+		return false
+	var image := texture.get_image()
+	if image == null:
+		return false
+	image = image.duplicate()
+	if image.is_compressed() and image.decompress() != OK:
+		return false
+	if image.get_format() != Image.FORMAT_RGBA8:
+		return false
+	var data := image.get_data()
+	var transparent := 0
+	var partial := 0
+	var total := 0
+	var i := 3
+	while i < data.size():
+		if data[i] <= _ALPHA_TRANSPARENT_MAX:
+			transparent += 1
+		elif data[i] < _ALPHA_OPAQUE_MIN:
+			partial += 1
+		total += 1
+		i += 4
+	if total == 0:
+		return false
+	var opaque := total - transparent - partial
+	var transparent_fraction := float(transparent) / float(total)
+	var partial_fraction := float(partial) / float(total)
+	var opaque_fraction := float(opaque) / float(total)
+	# A cutout has to leave something behind once it is cut. A texture with
+	# no opaque texels at all is either degenerate or a fully-blended
+	# effect -- a real waterfall's own textures are 100% non-opaque -- and
+	# neither is a card to punch holes in.
+	return transparent_fraction >= _UNCOMPRESSED_CUTOUT_MIN_TRANSPARENT \
+		and partial_fraction <= _UNCOMPRESSED_CUTOUT_MAX_PARTIAL \
+		and opaque_fraction >= _UNCOMPRESSED_CUTOUT_MIN_OPAQUE
+
+## Alpha byte at or below which a texel counts as fully punched out, and at
+## or above which it counts as fully opaque. Anything between the two is a
+## graded texel, which is what distinguishes a blend map from a cutout mask.
+const _ALPHA_TRANSPARENT_MAX := 5
+const _ALPHA_OPAQUE_MIN := 250
+
+## Thresholds for _alpha_is_binary_cutout. The measured real textures are
+## nowhere near either boundary -- the weed is 88.4% transparent with 0%
+## partial, the blade 0% transparent with 97.8% partial -- so these sit in
+## a wide empty gap rather than being tuned to a sample.
+const _UNCOMPRESSED_CUTOUT_MIN_TRANSPARENT := 0.05
+const _UNCOMPRESSED_CUTOUT_MAX_PARTIAL := 0.01
+## ...and it must keep a real share of solid texels: the measured weed card
+## is 11.6% opaque, while a fully-blended effect texture is 0%.
+const _UNCOMPRESSED_CUTOUT_MIN_OPAQUE := 0.01
 
 ## Decodes texture's real pixel data and returns true only if at least one
 ## real texel's alpha is meaningfully below fully opaque -- see
