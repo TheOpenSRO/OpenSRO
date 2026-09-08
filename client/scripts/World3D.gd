@@ -3656,6 +3656,18 @@ func _qa_step() -> void:
 				env.fog_aerial_perspective = 0.0
 				env.fog_density = 0.0
 			camera_3d.far = 40000.0
+			# So is the cloud layer, and for a more interesting reason: the
+			# dome is a hemisphere of SKY_DOME_RADIUS centred
+			# SKY_DOME_HEIGHT_ABOVE_PLAYER overhead, so a camera far enough
+			# up to frame a region ends up *above* the clouds looking down
+			# through them. That is the pale veil over the city in every
+			# overview shot this project has taken -- correct rendering of
+			# a real cloud layer, mistaken for a defect in the world for
+			# long enough to be written up as one.
+			if _sky_dome != null:
+				_sky_dome.visible = false
+			if _sun_glow != null:
+				_sun_glow.visible = false
 		var hide := OS.get_environment("SRREVAMP_QA_HIDE")
 		if hide != "":
 			_qa_hide_meshes(hide.split(","))

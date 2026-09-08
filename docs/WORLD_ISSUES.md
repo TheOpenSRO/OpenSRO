@@ -3617,12 +3617,22 @@ in this project claimed), the pond garden north-east, the walled
 districts either side, and the farmland outside the south wall with the
 south road running out into it. The fields are regions 96/167-96/169.
 
-Open, and separate from map accuracy: at overview altitude (~4,200
-units) the whole city washes out under a pale haze that a single-region
-top-down at 1,450 units does not show. It is not the fog or the
-aerial-perspective term -- disabling both changes nothing -- and it is
-not the event decorations, which hide cleanly without affecting it.
-Unidentified.
+At overview altitude (~4,200 units) the whole city washed out under a
+pale haze that a single-region top-down at 1,450 units did not show, and
+this document called it unidentified. **It is the cloud layer, rendering
+correctly.** `_sky_dome` is a hemisphere of `SKY_DOME_RADIUS` (3,000)
+centred `SKY_DOME_HEIGHT_ABOVE_PLAYER` (1,500) over the player, so a
+camera far enough up to frame a region sits *above the clouds and looks
+down through them*. Nothing was wrong with the world; the shot was taken
+from the wrong side of the weather.
+
+Two guesses were wrong on the way, and both were cheap to test and should
+have been tested sooner: that it was the fog or the aerial-perspective
+term (disabling both changed nothing), and that it was an llvmpipe
+artifact that hardware rendering would clear (it survived the move to the
+GPU unchanged). `SRREVAMP_QA_NOFOG` now hides the dome and the sun glow
+along with the fog, since a shot framing a whole region is by definition
+taken from above the cloud layer.
 
 ## Eighty-second round: scenery standing off the ground, measured
 
