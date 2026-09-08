@@ -48,8 +48,32 @@ func _init() -> void:
 		quit(1)
 		return
 	var image := texture.get_image()
+	var compressed_format := image.get_format()
 	image.decompress()
-	print("%s: %dx%d" % [file_path, image.get_width(), image.get_height()])
+	# What the alpha actually survives as matters more than the file's own
+	# fourCC: a cutout texture whose alpha is dropped in decoding renders
+	# its transparent texels as solid black.
+	var opaque := 0
+	var transparent := 0
+	var partial := 0
+	if image.get_format() == Image.FORMAT_RGBA8:
+		var data := image.get_data()
+		var i := 3
+		while i < data.size():
+			if data[i] >= 250:
+				opaque += 1
+			elif data[i] <= 5:
+				transparent += 1
+			else:
+				partial += 1
+			i += 4
+	print("%s: %dx%d  fourCC=%s  stored=%d  decompressed=%d" % [
+		file_path, image.get_width(), image.get_height(),
+		parsed.four_cc if parsed.four_cc != "" else "(uncompressed)",
+		compressed_format, image.get_format()])
+	print("  alpha: %d opaque, %d fully transparent, %d partial%s" % [
+		opaque, transparent, partial,
+		"  (no alpha channel survived decoding)" if image.get_format() != Image.FORMAT_RGBA8 else ""])
 	if image.save_png(out_path) != OK:
 		printerr("could not write ", out_path)
 		quit(1)

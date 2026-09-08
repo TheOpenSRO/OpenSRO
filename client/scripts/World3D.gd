@@ -598,6 +598,10 @@ const REGION_LOAD_RADIUS := 2
 ## navigation mesh is authored a little above or below the visible floor --
 ## so a small disagreement is normal. Half the player's own height is not.
 const STAND_UNDER_TOLERANCE := 7.0
+## How far a placed object may sit off the ground under it before it counts
+## as floating. Real scenery is authored a little into or above the terrain
+## and a small gap is normal; a player-height gap is not.
+const FLOATING_TOLERANCE := 12.0
 
 ## Real region streaming (2026-08-24): the original fixed 3x3 grid only
 ## ever loaded once, centered on wherever a zone's initial spawn/entry
@@ -3563,6 +3567,8 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_FREE=1     let the camera pass through geometry
 ##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
 ##   SRREVAMP_QA_NOUI=1     hide the HUD (for comparison shots)
+##   SRREVAMP_QA_FLOAT=r     report placed objects within r that sit clear
+##                          of their own region's ground
 ##   SRREVAMP_QA_THROUGH=z0,z1,y[,step]
 ##                          fire horizontal rays through that band and
 ##                          report which X spans are clear through it
@@ -3634,6 +3640,9 @@ func _qa_step() -> void:
 		var hide := OS.get_environment("SRREVAMP_QA_HIDE")
 		if hide != "":
 			_qa_hide_meshes(hide.split(","))
+		var floating := OS.get_environment("SRREVAMP_QA_FLOAT")
+		if floating != "":
+			_qa_float_report(float(floating))
 		var through := OS.get_environment("SRREVAMP_QA_THROUGH")
 		if through != "":
 			# Several bands in one run: the useful height is rarely known
@@ -3686,6 +3695,59 @@ func _qa_step() -> void:
 					what = "object %s" % placed.get_meta("model")
 			standing = "  on %s at %.1f (%.1f below feet)" % [what, surface.height, l.y - surface.height]
 		print("QA %4d local %s%s" % [_qa_tick, where, standing])
+
+## Reports placed objects standing clear of the ground under them, worst
+## first -- scenery hanging in mid-air.
+##
+## Each object is measured against the terrain of the region it is
+## actually parented to, so a neighbouring region's own vertical placement
+## is judged on its own terms rather than against the region the player
+## happens to be standing in.
+func _qa_float_report(radius: float) -> void:
+	var origin := player.global_position
+	var found: Array = []
+	for group in get_children():
+		if not String(group.name).begins_with("RealTerrain"):
+			continue
+		var region_group := group as Node3D
+		var graph: NavGraph = null
+		for entry in _region_nav_graphs:
+			if entry[1] == region_group:
+				graph = entry[0]
+				break
+		if graph == null:
+			continue
+		for container in region_group.get_children():
+			if not String(container.name).begins_with("RealMapObjects"):
+				continue
+			for node in container.get_children():
+				var node3d := node as Node3D
+				if origin.distance_to(node3d.global_position) > radius:
+					continue
+				var local := node3d.position
+				# Against the *rendered* ground, not the navigation mesh:
+				# the two are different surfaces, and what a player sees
+				# scenery hanging over is the rendered one.
+				var space := get_viewport().world_3d.direct_space_state
+				var from_above := node3d.global_position + Vector3.UP * 400.0
+				var to_below := node3d.global_position - Vector3.UP * 400.0
+				var query := PhysicsRayQueryParameters3D.create(from_above, to_below)
+				query.collision_mask = TERRAIN_COLLISION_LAYER
+				query.exclude = [player.get_rid()]
+				var hit := space.intersect_ray(query)
+				if hit.is_empty():
+					continue
+				var ground := region_group.to_local(hit["position"] as Vector3).y
+				var gap := local.y - ground
+				if absf(gap) < FLOATING_TOLERANCE:
+					continue
+				found.append([gap, String(node.name), String(region_group.name), local, ground])
+	found.sort_custom(func(a, b): return absf(a[0]) > absf(b[0]))
+	print("QA FLOAT: %d placed object(s) within %.0f sit more than %.0f off their own region's ground" % [
+		found.size(), radius, FLOATING_TOLERANCE])
+	for i in range(mini(found.size(), 14)):
+		print("QA FLOAT   %+7.1f  %-30s %-20s placed y %.1f, ground %.1f" % [
+			found[i][0], found[i][1], found[i][2], (found[i][3] as Vector3).y, found[i][4]])
 
 ## Fires horizontal rays through a band of the region and reports which
 ## X positions are clear through it -- "is this arch a way through, or a

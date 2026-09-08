@@ -3623,3 +3623,41 @@ top-down at 1,450 units does not show. It is not the fog or the
 aerial-perspective term -- disabling both changes nothing -- and it is
 not the event decorations, which hide cleanly without affecting it.
 Unidentified.
+
+## Eighty-second round: scenery standing off the ground, measured
+
+A real playtest walked out of the town gate into the fields and found
+grass clumps hanging in mid-air. `SRREVAMP_QA_FLOAT=<radius>` measures
+it: for every placed object within the radius it drops a physics ray onto
+the *rendered* terrain of the region that object is actually parented to
+(not the navigation mesh, and not the region the player happens to be
+standing in) and reports the gap, worst first.
+
+At the spot the playtest reported, real region 96/168 local
+(1788, -37, 1040), **17 objects within 900 units sit more than 12 off
+their own region's ground** -- both hanging above it and sunk into it,
+the worst by 182 units. The placement data itself is not obviously wrong:
+the barley around that spot is authored at y -37 to -42 and the player
+stands at -37, so those sit correctly.
+
+The strong signal is that **the gap is constant per model**: three real
+`grs_weed09_2` clumps are each -49.7, three real `cj_dummy_01` each
+-19.7, two real `cj_graveyard_grass01` each -31.4 -- while their
+individual placement heights and the ground beneath them both vary by a
+few units between instances. Placements following the terrain's shape but
+offset from it by a fixed amount is not a per-object authoring error; it
+points at the region's own vertical placement, which is where
+`_load_region_cell`'s shared vertical anchor comes in (every neighbour is
+placed against the centre region's anchor height rather than its own).
+Not yet proven, and not yet fixed.
+
+Separately, the same playtest reported trees rendering as black cards
+with the tree painted on them -- alpha not being cut out. Three real tree
+textures were checked and all decode with their alpha intact
+(`tre_dry02` DXT3, 39,749 fully transparent texels; `tre_tree02_01`
+DXT3, 68,299; `tre_tree02_02` DXT1, essentially opaque and correctly not
+cut out), and `.ddj` DXT1 does decompress to RGBA8 rather than losing its
+alpha channel, so this is not a blanket format bug. The specific model
+has not been identified yet. `client/tools/dump_ddj.gd` now reports a
+texture's fourCC, its decompressed format, and its opaque/transparent/
+partial texel counts, which is what ruled the format out.
