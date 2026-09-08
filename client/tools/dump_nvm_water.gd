@@ -139,6 +139,26 @@ func _initialize() -> void:
 					var g := MapmTerrainBuilder.height_at(heightmap, cx, cz)
 					print("      (%6.0f, %6.0f) -> level %8.2f, ground %8.2f" % [
 						cx, cz, region.plane_heights[prow * side + pcol], g])
+		# Water tiles anywhere in the region, not only under a water plane
+		# cell -- NvmWater requires both, and a real tile outside one is
+		# silently dropped.
+		var tiles_total := 0
+		var tiles_outside := 0
+		for row in range(tside):
+			for col in range(tside):
+				var t: NvmReader.Tile = region.tiles[row * tside + col]
+				var e = table.lookup(t.texture_id)
+				if e == null:
+					continue
+				if e.type != TileIndexReader.TileType.WATER and e.type != TileIndexReader.TileType.DEEP_WATER:
+					continue
+				tiles_total += 1
+				var pc := int(float(col) / float(tside) * float(side))
+				var pr := int(float(row) / float(tside) * float(side))
+				if region.plane_types[pr * side + pc] != NvmWater.PLANE_TYPE_WATER:
+					tiles_outside += 1
+		print("    real water tiles in the whole region: %d, of which %d fall outside a water plane cell" % [
+			tiles_total, tiles_outside])
 		var keys := counts.keys()
 		keys.sort_custom(func(a, b): return counts[a] > counts[b])
 		var real_share := (100.0 * float(real_submerged) / float(real_sampled)) if real_sampled > 0 else NAN

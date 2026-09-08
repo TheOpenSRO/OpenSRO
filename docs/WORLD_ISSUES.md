@@ -4304,3 +4304,62 @@ water in its own minimap art and one that is unmistakably dry, and check
 whether their paired navmeshes agree. If a dry region's navmesh claims a
 third of its cells are water, the pairing is wrong and every conclusion
 drawn from `.nvm` data -- walkability included -- needs revisiting.
+
+## Ninety-sixth round: plane type 1 is not water
+
+The plane map's type 1 has been treated as "this cell is water" since the
+seventy-fifth round, on a measurement that type 1 cells have 92.4% of
+their terrain below their own plane height against type 0's 39.9%. An
+independent check says that reading is wrong.
+
+The navmesh marks water; a region's own authored minimap *paints* water
+blue. Two pipelines, one ground truth, so across regions they should rise
+and fall together. They do not:
+
+| region | navmesh cells of type 1 | minimap pixels reading as water |
+|---|---|---|
+| 97/168 (town) | 27.8% | 2.7% |
+| 96/168 (farmland) | **83.3%** | 1.7% |
+| 98/168 (**the palace**) | **47.2%** | 0.6% |
+| 100/166 | **100.0%** | 1.4% |
+| 99/166 | 55.6% | 0.3% |
+| 100/100 | 0.0% | 0.0% |
+
+A quarter to all of every region is type 1 while its art is essentially
+dry, and the palace is not half underwater. **Type 1 is far too common to
+mean water.** The 92.4% figure it rested on says only that a type 1
+cell's plane height tends to sit above its own ground -- which is true of
+a great many things that are not a water surface.
+
+The pairing is not the problem: these navmeshes' own blocking edges and
+object lists match the buildings they are paired with, which is why
+walking around Jangan works and why the city gate's arches line up.
+
+**What this does and does not break.** `NvmWater` takes water's *shape*
+from real WATER-typed tiles and only its *level* from the plane cell, so
+the water that actually renders -- 134 quads in real 98/168 -- is
+unaffected: those tiles are water by their own tile2d.ifo type, and the
+plane cell only told them how high to sit. What breaks is every
+inference of the form "this region has N water cells, so there should be
+water here", including the previous two rounds' reasoning about the moat.
+
+And the moat is not in the tile map at all: real 96/168 has **zero**
+WATER-typed tiles anywhere in the region, none dropped for falling
+outside a plane cell, and no water-like object in its placements either
+-- only farmland props, the city wall, and event decorations. Wherever
+the reference's moat comes from, it is not that region's terrain.
+
+**What is needed next is the coordinate mapping.** The reference client
+displays a position (the moat is `X:6485 Y:915`), and being able to
+convert that into a region and local position would turn every reference
+screenshot into an exact place to look. Half of it is already recovered:
+matching the dragon fountain (`X:6434`) and the palace gate (`X:6432`)
+against their known local X gives
+
+    displayed X = (region_y - 135) * 192 + local_x / 10
+
+which reproduces both to within a unit. The Y axis does not yet fall out
+the same way -- neither region_x nor its mirror gives a whole number of
+regions against the two known points -- so one more reference position at
+a landmark whose local coordinates this project already knows would
+settle it.
