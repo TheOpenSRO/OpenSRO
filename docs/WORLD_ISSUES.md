@@ -4363,3 +4363,50 @@ the same way -- neither region_x nor its mirror gives a whole number of
 regions against the two known points -- so one more reference position at
 a landmark whose local coordinates this project already knows would
 settle it.
+
+## Ninety-seventh round: reading the client's own position readout
+
+A reference screenshot is only as useful as one's ability to find the same
+spot, and until now that meant guessing. The running client displays a
+position, and the conversion into this project's own coordinates is now
+recovered:
+
+    displayed X = (region_y - 135) * 192 + local_x / 10
+    displayed Y = (region_x -  92) * 192 + local_z / 10
+
+192 is a region's 1920 units at the client's ten-units-per-displayed-unit
+scale; 135 and 92 are the two axes' origins. Note which is which: region
+**y** drives displayed X and region **x** drives displayed Y, matching the
+region-to-world mapping the eighty-first round established.
+
+Recovered from three landmarks whose local coordinates this project
+already knew, and each one checks:
+
+| landmark | client shows | converts to | what is really there |
+|---|---|---|---|
+| dragon fountain | X:6437 Y:1029 | 97/168 (1010, 690) | the fountain axis is local x 1008 |
+| palace gate | X:6432 Y:1184 | 98/168 (960, 320) | the lion statues stand at local z 270 |
+| moat | X:6485 Y:915 | **96/168 (1490, 1470)** | -- |
+
+Run backwards, this project's own dragon at 97/168 (1008, 845) predicts
+**X:6437 Y:1044** against the screenshot's X:6437 Y:1029 -- the X exact,
+the Y fifteen displayed units south, which is where the character was
+standing relative to the statue. `server/cmd/wherecoord` does the
+conversion both ways.
+
+**Rendering the moat's converted position immediately paid for it.** At
+96/168 local (1490, 1470) this project draws the same grass with white
+flowers, the same paved strip and the same stone wall as the reference --
+and no channel. The terrain says there should be one: sampling across
+that spot gives +0.65 either side and **-40.00** in a narrow band at
+z 1540, which is the moat's trench, and the plane cell covering it carries
+a level of **-20**, which would fill that trench twenty units deep without
+touching the ground beside it.
+
+So the moat is real in the data and this project is not drawing it. What
+still blocks a fix is that the same region drops to about **-45 across its
+whole southern third**, which the same -20 level would flood, and the
+region's art shows farmland there. A rule of "water wherever terrain is
+below the plane level" fills the moat correctly and drowns the farm. The
+plane map cannot separate them -- 30 of the region's 36 cells are type 1
+-- and there are no water tiles anywhere in the region to localise it.
