@@ -57,7 +57,20 @@ sleep 1
 rm -rf "$OUT"; mkdir -p "$OUT"
 
 cd "$CLIENT_DIR"
-export LIBGL_ALWAYS_SOFTWARE=1
+
+# Hardware GL when the machine can offer it, software when it cannot.
+#
+# Godot's Linux OpenGL backend draws through GLX on X11, and Xvfb has no
+# DRI, so a GPU sitting in the machine goes unused and every frame is
+# rasterised on the CPU -- which is why a screenshot used to cost minutes.
+# VirtualGL bridges the two: it services GLX through EGL on the render
+# node, and glxinfo then reports the real card instead of llvmpipe.
+VGL=""
+if command -v vglrun >/dev/null && [ -e /dev/dri/renderD128 ] && [ -r /dev/dri/renderD128 ]; then
+  VGL="vglrun -d egl0"
+else
+  export LIBGL_ALWAYS_SOFTWARE=1
+fi
 export SRREVAMP_PK2_PATH="$PK2_DIR/Data.pk2"
 export SRREVAMP_MAP_PK2_PATH="$PK2_DIR/Map.pk2"
 export SRREVAMP_MEDIA_PK2_PATH="$PK2_DIR/Media.pk2"
@@ -74,6 +87,6 @@ export SRREVAMP_MAPM_PATH="$REGION"
 # window size otherwise, so asking for a square screen alone still produced
 # 16:9 frames -- which quietly ruins any comparison against square authored
 # art like a region minimap.
-exec xvfb-run -a -s "-screen 0 ${SIZE}x24" "$GODOT" \
+exec xvfb-run -a -s "-screen 0 ${SIZE}x24" $VGL "$GODOT" \
   --rendering-driver opengl3 --resolution "$SIZE" --path . res://scenes/World3D.tscn \
   --write-movie "$OUT/f.png" --quit-after "$FRAMES"
