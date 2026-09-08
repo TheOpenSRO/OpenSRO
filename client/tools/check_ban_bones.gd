@@ -81,6 +81,41 @@ func _initialize() -> void:
 	print("bones with no track: %d of %d" % [untracked.size(), skeleton.get_bone_count()])
 	if not untracked.is_empty():
 		print("  %s" % [untracked.slice(0, 12)])
+	# The fiftieth round found that a real `.bsk` stores each bone's
+	# parent-relative local transform in the *same* convention real `.ban`
+	# keyframes use -- for `Bip01 Neck`, the .bsk's own floats [0..3] are
+	# exactly the .ban keyframe rotation to four decimal places. If that
+	# holds for some bones and not others, the ones where it breaks are
+	# where the rest this project builds disagrees with what the animation
+	# was authored against.
+	var by_bone := {}
+	for track in anim.bones:
+		by_bone[track.bone_name] = track
+	var rows: Array = []
+	for bone in skel.bones:
+		var track = by_bone.get(bone.bone_name)
+		if track == null or track.keyframes.is_empty():
+			continue
+		var rest_rot: Quaternion = SkeletonPose.bone_rotation(bone)
+		var kf_rot: Quaternion = track.keyframes[0].rotation
+		var rest_pos: Vector3 = SkeletonPose.bone_local_position(bone)
+		var kf_pos: Vector3 = track.keyframes[0].position
+		# Angle between the two rotations, in degrees, sign-insensitive
+		# (q and -q are the same rotation).
+		var d: float = absf(rest_rot.dot(kf_rot))
+		var angle := rad_to_deg(2.0 * acos(clampf(d, -1.0, 1.0)))
+		rows.append([angle, bone.bone_name, rest_pos.distance_to(kf_pos)])
+	rows.sort_custom(func(a, b): return a[0] > b[0])
+	var agreeing := 0
+	for r in rows:
+		if r[0] < 1.0:
+			agreeing += 1
+	print("\n.bsk rest vs .ban keyframe 0, over %d bone(s) with tracks:" % rows.size())
+	print("  %d agree to within 1 degree" % agreeing)
+	print("  %-24s %10s %12s" % ["bone", "angle deg", "pos delta"])
+	for i in range(mini(rows.size(), 10)):
+		print("  %-24s %10.2f %12.3f" % [rows[i][1], rows[i][0], rows[i][2]])
+
 	print("\nskeleton bones, in file order (name <- parent):")
 	for i in range(mini(skel.bones.size(), 10)):
 		var b = skel.bones[i]

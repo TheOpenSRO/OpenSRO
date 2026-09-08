@@ -4006,3 +4006,60 @@ bug, and shipping the second in place of the first is not an improvement
 even though the skeleton underneath is far better. The root transform fix
 is kept, because it is correct independently of whether animation is
 switched on.
+
+## Ninetieth round: the pose maths is right, the attachment is not
+
+The eighty-ninth round left the animated character coherent but holding
+its arms overhead, with two explanations already refuted. Three more were
+tried and refuted, and then the problem was bisected properly.
+
+**Refuted, each changing the render not at all or making it worse:**
+
+- Applying the **inverse** of each keyframe rotation. The body collapses
+  and scatters -- far worse, so the direct application is the closer of
+  the two.
+- Giving bones the animation does not drive their **bind** pose rather
+  than an identity one, which is what the client does at zero weight.
+  No change: `Spine_Base` is the only such bone here and it makes no
+  visible difference either way.
+- Comparing every bone's `.bsk` rest against its `.ban` keyframe 0. Only
+  6 of 36 rotations agree within a degree -- but **the positions agree
+  exactly**, to 0.000 on every bone but one. Bones do not stretch, so
+  matching translations is what a correct convention looks like, and
+  differing rotations is just the animation doing its job. This says the
+  translation convention is right and says nothing against the rotations.
+
+**The bisection.** `client/tools/check_ban_pose.gd` builds the real
+skeleton, applies a real frame, and reports where the bones actually
+land:
+
+```
+bind pose:              after frame 0:
+Bip01 Head    y 15.95   Bip01 Head    y 16.05
+Bip01 L Hand  y 14.93   Bip01 L Hand  y  9.74     x 6.96 -> 2.73
+Bip01 R Hand  y 14.93   Bip01 R Hand  y  9.63    x -6.96 -> -2.43
+```
+
+The bind pose is a T-pose, arms straight out. After the frame the hands
+drop to **6.32 below the head** and pull in toward the body. **That is a
+correct standing pose.** The skeleton is right; `apply_ban_pose` is
+right; the animation data is right.
+
+So the fault is entirely in **how the meshes are attached to the bones**,
+and the arms-overhead render is an attachment artifact rather than an
+animation one.
+
+What makes it interesting is that the attachment's arithmetic also looks
+right: `BoneAttachment3D` contributes `bone_global_pose`, the mesh's own
+transform contributes `inverse(bone_global_rest)`, and their product
+applied to a bind-space vertex is exactly rigid skinning. Working it
+through for the hand gives back the hand bone's posed position -- which
+the numbers above say is correct. The two cannot both be true, so one of
+the assumptions behind that arithmetic is wrong: most likely what
+`BoneAttachment3D` actually applies, or when it applies it relative to
+`force_update_all_bone_transforms`.
+
+**Next step**: instrument the assembled character in-world -- compare a
+mesh piece's own world position against its bone's posed position, rather
+than reasoning about what the composition ought to be. Playback stays
+disabled until it holds together.
