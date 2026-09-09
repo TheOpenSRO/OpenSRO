@@ -36,7 +36,7 @@ func _append_len_prefixed(buf: PackedByteArray, s: String) -> PackedByteArray:
 	out.append_array(lp)
 	return out
 
-func _build_synthetic_mesh(rec_size: int = 44) -> PackedByteArray:
+func _build_synthetic_mesh(rec_size: int = 44, skinned: bool = false) -> PackedByteArray:
 	var buf := PackedByteArray()
 	buf.resize(BmsReader.PREAMBLE_END)
 	var magic := BmsReader.MAGIC.to_ascii_buffer()
@@ -69,6 +69,45 @@ func _build_synthetic_mesh(rec_size: int = 44) -> PackedByteArray:
 		if rec_size > 0x24 + 4:
 			_put_u32(rec, 0x24, 0xFFFFFFFF)
 		buf.append_array(rec)
+
+	# Optional skin section, between the vertices and the indices, exactly
+	# where a real character mesh puts it: header word 0 points at a bone
+	# palette, then one 6-byte weight record per vertex, ending precisely
+	# where header word 1 (the index section) begins.
+	if skinned:
+		var skin_off := buf.size()
+		_put_u32(buf, BmsReader.HEADER_PTRS_BASE + 0 * 4, skin_off)
+		var palette := PackedByteArray()
+		palette.resize(4)
+		_put_u32(palette, 0, 2) # two bones
+		buf.append_array(palette)
+		buf = _append_len_prefixed(buf, "Bip01 Spine")
+		buf = _append_len_prefixed(buf, "Bip01 L Hand")
+		var skin := PackedByteArray()
+		skin.resize(3 * BmsReader.SKIN_REC_SIZE)
+		# v0: entirely on bone 0.
+		skin[0] = 0
+		skin[1] = 0xFF
+		skin[2] = 0xFF
+		skin[3] = BmsReader.NO_BONE
+		skin[4] = 0
+		skin[5] = 0
+		# v1: an even split between bone 0 and bone 1, as a real 50/50
+		# vertex is written -- 32765 twice, which is not quite full scale.
+		skin[6] = 0
+		skin[7] = 253
+		skin[8] = 127
+		skin[9] = 1
+		skin[10] = 253
+		skin[11] = 127
+		# v2: entirely on bone 1.
+		skin[12] = 1
+		skin[13] = 0xFF
+		skin[14] = 0xFF
+		skin[15] = BmsReader.NO_BONE
+		skin[16] = 0
+		skin[17] = 0
+		buf.append_array(skin)
 
 	var index_off := buf.size()
 	_put_u32(buf, BmsReader.HEADER_PTRS_BASE + 1 * 4, index_off)
@@ -146,6 +185,45 @@ func _init() -> void:
 		if mesh52.vertices.size() == 3:
 			_check(mesh52.vertices[1].position == Vector3(1, 0, 0), "52-byte: v1 position (got %s)" % mesh52.vertices[1].position)
 			_check(mesh52.vertices[0].extra.size() == 20, "52-byte: 20 real trailing Extra bytes (got %d)" % mesh52.vertices[0].extra.size())
+
+	# Skinning. This project recorded that ".bms carries no per-vertex
+	# skinning data", from accounting for the 44-byte vertex record and
+	# finding no room in it. That is true and beside the point: the weights
+	# live in their own section, pointed at by header word 0.
+	var skinned_mesh := BmsReader.parse(_build_synthetic_mesh(44, true))
+	_check(skinned_mesh != null, "a mesh with a skin section parses")
+	if skinned_mesh != null:
+		_check(skinned_mesh.is_skinned(), "the mesh reports itself skinned")
+		_check(skinned_mesh.bone_names.size() == 2,
+			"both palette bones read (got %d)" % skinned_mesh.bone_names.size())
+		_check(skinned_mesh.bone_names[0] == "Bip01 Spine",
+			"palette names round-trip (got %s)" % skinned_mesh.bone_names[0])
+		var v0: BmsReader.Vertex = skinned_mesh.vertices[0]
+		_check(v0.bone0 == 0 and v0.bone1 == -1,
+			"a single-influence vertex has no second bone (got %d/%d)" % [v0.bone0, v0.bone1])
+		_check(is_equal_approx(v0.weight0, 1.0),
+			"a single-influence vertex weighs 1.0 (got %f)" % v0.weight0)
+		var v1: BmsReader.Vertex = skinned_mesh.vertices[1]
+		_check(v1.bone0 == 0 and v1.bone1 == 1,
+			"a two-influence vertex names both bones (got %d/%d)" % [v1.bone0, v1.bone1])
+		# 32765 + 32765 is 65530, not 65535, so the weights are normalised
+		# rather than trusted -- an unnormalised weight stretches its vertex.
+		_check(is_equal_approx(v1.weight0, 0.5) and is_equal_approx(v1.weight1, 0.5),
+			"a 50/50 vertex normalises to 0.5/0.5 (got %f/%f)" % [v1.weight0, v1.weight1])
+		_check(is_equal_approx(v1.weight0 + v1.weight1, 1.0), "weights sum to 1")
+
+		var skinned_arrays := BmsReader.to_array_mesh(skinned_mesh).surface_get_arrays(0)
+		_check(skinned_arrays[Mesh.ARRAY_BONES] != null and skinned_arrays[Mesh.ARRAY_WEIGHTS] != null,
+			"the ArrayMesh carries bone and weight arrays")
+
+	# And a mesh with no skin section stays unskinned rather than inventing
+	# one -- scenery is the common case.
+	var plain := BmsReader.parse(_build_synthetic_mesh(44, false))
+	_check(plain != null and not plain.is_skinned(), "a mesh with no skin section is not skinned")
+	if plain != null:
+		var plain_arrays := BmsReader.to_array_mesh(plain).surface_get_arrays(0)
+		_check(plain_arrays[Mesh.ARRAY_BONES] == null,
+			"an unskinned mesh gets no bone array")
 
 	if _failures == 0:
 		print("ALL PASS")

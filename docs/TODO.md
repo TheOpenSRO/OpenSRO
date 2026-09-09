@@ -19,14 +19,10 @@ where it stopped, the tools for it, the traps — and points back here for every
 **What is left**: they do not face anywhere, have names, or block movement. `npcpos.txt` carries no
 facing, so which way they turn is an open question rather than a wiring job.
 
-**Animation is written, measured, and deliberately off** (hundred-and-ninth round). It runs -- 49
-characters, bones moving 1.0 to 12.0 units between samples -- and it looks worse than standing
-still, because `.bms` has no per-vertex skinning so a humanoid's whole dress is one piece attached
-to one bone. A controlled pair of renders shows the same NPC torn into a spike with it on and
-correct with it off. `SRREVAMP_IDLE_ANIM=1` enables it.
-
-**So moving NPCs is a skinning problem, not an animation one.** It needs a way to weight vertices
-to bones, and `.bms` does not appear to carry one. That is the real open question here.
+**Animated, and properly skinned** (hundred-and-tenth round). `.bms` does carry per-vertex
+skinning after all -- a bone palette and two weighted influences per vertex, in their own section
+pointed at by header word `0x10`, which is why an audit of the 44-byte vertex record found none.
+NPCs now deform correctly and animate; `SRREVAMP_NO_IDLE_ANIM=1` turns animation off.
 
 ### 2. Monsters as real models — **the next thing to do**
 The server already sends a live monster list and the client draws labelled capsules for them.

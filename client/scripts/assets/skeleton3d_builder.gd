@@ -173,6 +173,29 @@ static func apply_ban_keyframe(skeleton: Skeleton3D, track: BanReader.Bone, fram
 ## force_update_all_bone_transforms() at the end, not one per bone, since
 ## Skeleton3D's own transform propagation already handles the parent-child
 ## chain once every bone's local pose rotation is set.
+## Builds the Skin that maps a mesh's own bone palette onto skeleton, so a
+## skinned .bms can be attached to it.
+##
+## Each palette entry is bound by name. The bind pose is the inverse of the
+## bone's global rest, because .bms vertex positions are baked in absolute
+## bind-pose space -- the same convention every other part of this project
+## relies on (see BMS_FORMAT.md's "no extra per-piece transform").
+##
+## Returns null if any palette bone is missing from the skeleton: a skin
+## with a wrong binding silently drags geometry to the origin, which is far
+## harder to diagnose than a mesh that declines to attach.
+static func build_skin(skeleton: Skeleton3D, bone_names: PackedStringArray) -> Skin:
+	if skeleton == null or bone_names.is_empty():
+		return null
+	var skin := Skin.new()
+	for i in range(bone_names.size()):
+		var bone_idx := skeleton.find_bone(bone_names[i])
+		if bone_idx == -1:
+			push_warning("Skeleton3DBuilder: skeleton has no bone named %s" % bone_names[i])
+			return null
+		skin.add_bind(bone_idx, skeleton.get_bone_global_rest(bone_idx).affine_inverse())
+	return skin
+
 static func apply_ban_pose(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frame_idx: int) -> void:
 	for track in anim.bones:
 		if track.keyframes.is_empty():

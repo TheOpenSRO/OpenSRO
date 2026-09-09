@@ -134,7 +134,74 @@ to typed struct fields yet — `Vertex.Extra` stays raw bytes in both readers, p
 policy of not mislabeling a field before its semantics are nailed down (see `.bsk`'s transform
 bytes for the same policy applied elsewhere).
 
-## No per-vertex skinning data exists — real characters are rigid multi-part assemblies instead
+## Per-vertex skinning: a bone palette and two weighted influences
+
+**Corrected 2026-09-09.** The section below concluded that `.bms` carries no skinning and that
+characters are rigid multi-part assemblies. **That is wrong**, and the reasoning shows exactly how:
+it accounted for every byte of the 44-byte vertex record, found no room for weights, and stopped.
+The weights are real — they are simply **not in the vertex record**. They are in their own section,
+and header word 0 (`0x10`) points at it.
+
+That header word was being read (`hdr[0]`) and never used.
+
+### Layout
+
+At `hdr[0]`: a `uint32` bone count, then that many length-prefixed bone names — the **palette**.
+Immediately after it, one 6-byte record per vertex, running up to the index section at `hdr[1]`:
+
+| Size | Field |
+|---|---|
+| `uint8` | bone 0 — index into the palette |
+| `uint16` | weight 0 — `65535` is full weight |
+| `uint8` | bone 1 — `0xFF` means "no second influence" |
+| `uint16` | weight 1 |
+
+Two influences per vertex, maximum.
+
+### How it was confirmed
+
+Not by pattern-matching a plausible layout — by measuring every byte position across a real file's
+vertices. In `chinaquest_priest_part1.bms` (280 vertices, a 20-bone palette):
+
+```
+byte 0: range 0..19   in-palette 280/280   <- always a valid bone index
+byte 1: range 83..255  0xFF in 209
+byte 2: range 85..255  0xFF in 209
+byte 3: range 0..255   in-palette 71       <- the second bone, when there is one
+byte 4: range 0..253   zero in 209
+byte 5: range 0..127   zero in 209
+```
+
+Byte 0 is a valid palette index for **every** vertex, with a palette of exactly 20. And decoding
+the pairs as 16-bit weights gives the property nothing else would: **they sum to full scale**. A
+vertex bound to one bone reads `65535 + 0`; a 50/50 blend reads `32765 + 32765`. Across
+`mangnyang_part1.bms`, **0 of 263** vertices have an out-of-palette index and **0 of 263** have
+weights that miss full scale, worst error `0.00056`.
+
+The semantics are right too, which is the check that no accident passes:
+
+```
+Bip01 L Forearm 0.579  +  Bip01 L Hand      0.420     (a wrist)
+Bip01 R Clavicle 0.500 +  Bip01 R UpperArm  0.500     (a shoulder)
+```
+
+A few percent of vertices are **not** normalised on disk — 8 of 280 in the priest, worst 33% off —
+so both readers normalise rather than trust, because an unnormalised weight stretches its vertex.
+
+### What this changes
+
+Characters are properly skinned, not rigid assemblies. The consequence was visible: with rigid
+attachment, every mesh piece hangs off a single bone, so animating a humanoid swung its whole dress
+or torso and tore the model apart — measured as a pair of renders, the same NPC a spike with
+animation on and correct with it off. With real skinning the same NPC stands in her red dress
+holding a fan, animated.
+
+`SkinnedBsrAssembler` now builds a real `Skin` (bound by name, bind pose = the inverse of each
+bone's global rest, since `.bms` vertices are baked in absolute bind-pose space) and falls back to
+rigid attachment only for meshes that genuinely carry no skin — scenery, which is most of the
+archive.
+
+## Superseded: "no per-vertex skinning data exists" (kept for the reasoning)
 
 Settled definitively by finding and inspecting real **body-part** meshes (`man_pelvis.bms`,
 `man_thigh.bms`, `man_calf.bms`, `man_torso_upper.bms`, `man_torso_lower.bms`, `man_arm_upper.bms`,

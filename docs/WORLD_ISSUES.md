@@ -5260,3 +5260,71 @@ humanoid. Making NPCs move is therefore not an animation task -- it is a
 skinning task, and it needs a way to weight vertices to bones that the
 `.bms` format does not appear to carry. That is a real open question and
 sits in TODO.md rather than being papered over with a partial fix.
+
+## Hundred-and-tenth round: .bms is skinned after all
+
+The last round concluded that moving NPCs was a skinning problem, not an
+animation one, and that `.bms` does not carry vertex weights. The second
+half was wrong. It does, and finding them makes animated NPCs work.
+
+**Why the earlier conclusion looked solid.** BMS_FORMAT.md accounted for
+every byte of the 44-byte vertex record -- position 12 + normal 12 + UV 8 +
+12 trailing -- showed the trailing bytes were something else, and concluded
+there was no room for weights. All of that is true. The weights are simply
+**not in the vertex record**: they are in their own section, and header word
+0 (`0x10`) points at it. That word was being read into `hdr[0]` and never
+used.
+
+**What gave it away.** A character `.bms` contains *bone names*. Dumping the
+strings in `chinaquest_priest_part1.bms` turned up "Bip01 L Hand",
+"Bip01 L Forearm", "Bip01 Spine", "Bip01 Pelvis" -- twenty of them, right
+after `hdr[0]`. A bone palette is only meaningful if something indexes into
+it, so something had to.
+
+**The layout**, measured rather than guessed. The palette ends at 0x3201 and
+the index section begins at 0x3891: 1,680 bytes for 280 vertices, exactly
+**6 per vertex**. Then, per byte position across all 280:
+
+```
+byte 0: range 0..19   in-palette 280/280    <- always a valid bone index
+byte 3: range 0..255  in-palette 71         <- a second bone, when there is one
+bytes 1,2 and 4,5: 0xFF/0x0000 in 209 of 280
+```
+
+So: `u8 bone0, u16 weight0, u8 bone1 (0xFF = none), u16 weight1`. The
+property that settles it is that the weights **sum to full scale** --
+`65535 + 0` for one influence, `32765 + 32765` for a 50/50 blend. Across
+`mangnyang_part1.bms`, 0 of 263 vertices have a bad index and 0 of 263 miss
+full scale, worst error 0.00056. And the semantics are anatomically right:
+`Bip01 L Forearm 0.579 + Bip01 L Hand 0.420` at a wrist,
+`R Clavicle 0.500 + R UpperArm 0.500` at a shoulder.
+
+A few percent are not normalised on disk (8 of 280 in the priest, worst 33%
+off), so both readers normalise rather than trust -- an unnormalised weight
+stretches its vertex.
+
+**The result.** `BmsReader` reads the palette and weights, `to_array_mesh`
+emits `ARRAY_BONES`/`ARRAY_WEIGHTS`, `Skeleton3DBuilder.build_skin` binds
+the palette to the skeleton by name with bind poses from each bone's
+inverse global rest, and `SkinnedBsrAssembler` uses a real `MeshInstance3D`
+skin where the mesh has one, falling back to rigid attachment only for
+scenery. The priest reports **3 pieces, 3 skinned**.
+
+Verified the same way the problem was found -- one NPC, one camera, one
+variable:
+
+- rigid + animated: torn into a spike
+- rigid, no animation: correct but frozen
+- **skinned + animated: a woman in a red dress holding a fan, standing
+  naturally**
+
+Idle animation is on by default again.
+
+**The lesson is the same one this log keeps recording.** Three conclusions
+have now been overturned by re-reading data rather than by new evidence: the
+`.bsr` offset table was "untrustworthy" (read one field off), the UV fields
+were "always 0,0-1,1" (three files sampled), and now `.bms` has "no
+skinning" (audited the wrong structure). Each was written up with real
+reasoning and each was wrong in the same way -- a complete argument about an
+incomplete look. The tell in all three was a header word being parsed and
+never used.

@@ -48,6 +48,10 @@ class AssembledCharacter:
 	## or a dev tool can report it rather than having to recompute it.
 	var piece_bones: Dictionary = {}
 	var piece_distances: Dictionary = {}
+	## How many pieces were attached with real per-vertex skinning rather
+	## than rigidly. A model with all of its pieces skinned can be animated;
+	## one with none cannot.
+	var skinned_pieces: int = 0
 
 ## Substrings that name a standing-still animation, most specific first.
 ##
@@ -142,6 +146,28 @@ static func assemble_from_archive(
 				archive, parsed.material_path, material.layers[layer_idx]
 			)
 
+		# Real skinning when the mesh carries weights, rigid attachment when
+		# it does not.
+		#
+		# `.bms` **does** carry per-vertex skinning -- a bone palette plus
+		# two weighted influences per vertex, in its own section rather than
+		# in the vertex record, which is why an audit of the 44-byte vertex
+		# layout concluded there was none. With it, a humanoid deforms
+		# properly and can be animated; without it, every piece hangs
+		# rigidly off one bone and animating tears the model apart.
+		if mesh.is_skinned():
+			var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names)
+			if skin != null:
+				var mi := MeshInstance3D.new()
+				mi.mesh = BmsReader.to_array_mesh(mesh)
+				if godot_material != null:
+					mi.material_override = godot_material
+				skeleton.add_child(mi)
+				mi.skin = skin
+				mi.skeleton = mi.get_path_to(skeleton)
+				result.skinned_pieces += 1
+				attached += 1
+				continue
 		CharacterAssembler.attach_rigid(
 			skeleton, BmsReader.to_array_mesh(mesh), bone_name, godot_material
 		)

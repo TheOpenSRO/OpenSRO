@@ -35,16 +35,24 @@ func _initialize() -> void:
 		quit(1)
 		return
 
-	var assembled := SkinnedBsrAssembler.assemble_from_archive(archive, model)
+	var assembled := SkinnedBsrAssembler.assemble_from_archive(archive, model, true)
 	if assembled == null:
 		printerr("could not assemble ", model)
 		quit(1)
 		return
 
 	var skeleton := assembled.skeleton
-	print("%s: %d bones, %d piece(s), %d animation(s)" % [
+	print("%s: %d bones, %d piece(s) (%d skinned), %d animation(s)" % [
 		model.get_file(), skeleton.get_bone_count(),
-		assembled.piece_bones.size(), assembled.animation_paths.size()])
+		assembled.piece_bones.size(), assembled.skinned_pieces,
+		assembled.animation_paths.size()])
+
+	# Pose it, so the picture shows the skin actually deforming rather than
+	# the bind pose it would sit in regardless.
+	var frame := int(_arg("--frame", "0"))
+	if assembled.idle_animation != null and frame > 0:
+		Skeleton3DBuilder.apply_ban_pose(skeleton, assembled.idle_animation, frame)
+		print("   posed at animation frame %d" % frame)
 	for piece in assembled.piece_bones:
 		print("   %-34s -> %-18s d=%.2f" % [
 			piece, assembled.piece_bones[piece], assembled.piece_distances[piece]])

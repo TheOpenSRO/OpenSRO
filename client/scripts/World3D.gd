@@ -2799,28 +2799,24 @@ var _animated: Array = []
 
 ## Registers an assembled character for idle animation, if it has one.
 ##
-## **Off by default, and that is a finding rather than a stub.** The
-## plumbing works: 49 characters animate, and their bones really move (the
-## QA ANIM report measured 1.0 to 12.0 units of travel between samples).
-## What it looks like is the problem. `.bms` carries no per-vertex skinning
-## (BMS_FORMAT.md), so every mesh piece is attached rigidly to one bone, and
-## a humanoid NPC's whole dress or torso is a single 400-vertex piece.
-## Rotating that piece's one bone swings all of it.
+## **Enabled by default since real skinning landed.** This was off for one
+## round, because animating a rigidly-attached model tore it apart: with
+## every mesh piece bound to a single bone, rotating that bone swung a whole
+## dress or torso, and a measured pair of renders showed the same NPC as a
+## stretched spike with animation on and correct with it off.
 ##
-## Measured as a controlled pair of renders of the same NPC from the same
-## camera, which is the only way to attribute it: with animation she is torn
-## into a spike, upper body stretched away from her legs; without it she is
-## a complete, correct woman in an embroidered red dress. A distorted NPC is
-## worse than a still one, so still is the default.
+## The cause was not animation. `.bms` carries real per-vertex skinning --
+## a bone palette and two weighted influences per vertex, in its own section
+## rather than in the vertex record -- and reading it makes these models
+## deform properly. The same NPC in the same spot now stands in a red dress
+## holding a fan, animated.
 ##
-## `SRREVAMP_IDLE_ANIM=1` turns it on. It is kept, rather than deleted,
-## because the pipeline is right and only the skinning model is missing --
-## whatever eventually replaces rigid attachment can switch this on and use
-## the same measurement to show it is better.
+## `SRREVAMP_NO_IDLE_ANIM=1` turns it off again, which is how that A/B was
+## run and how the next one can be.
 func _animate(assembled: SkinnedBsrAssembler.AssembledCharacter) -> void:
 	if assembled == null or assembled.idle_animation == null:
 		return
-	if OS.get_environment("SRREVAMP_IDLE_ANIM") == "":
+	if OS.get_environment("SRREVAMP_NO_IDLE_ANIM") != "":
 		return
 	var anim: BanReader.ParsedAnimation = assembled.idle_animation
 	var frames := 0

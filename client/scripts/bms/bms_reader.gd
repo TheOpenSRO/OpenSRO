@@ -108,10 +108,26 @@ class CollisionMesh:
 ## The real "no cell on this side" sentinel, shared with the terrain .nvm.
 const NO_CELL := 0xFFFF
 
+## Full weight in the on-disk 16-bit weight fields. A vertex bound entirely
+## to one bone reads 65535; a 50/50 blend reads 32765 twice.
+const WEIGHT_FULL_SCALE := 65535.0
+## Sentinel in the second bone slot meaning "only one influence".
+const NO_BONE := 255
+## Size of one per-vertex skin record: u8 bone0, u16 weight0, u8 bone1,
+## u16 weight1.
+const SKIN_REC_SIZE := 6
+
 class Vertex:
 	var position: Vector3
 	var normal: Vector3
 	var uv: Vector2
+	## Palette indices into ParsedMesh.bone_names, and their weights,
+	## normalised to sum to 1. bone1 is -1 when the vertex has a single
+	## influence.
+	var bone0: int = -1
+	var bone1: int = -1
+	var weight0: float = 0.0
+	var weight1: float = 0.0
 	## The trailing bytes at record offset 0x20 onward (12 or 20 bytes,
 	## depending on the real per-file record size -- see
 	## VERTEX_REC_SIZE_CANDIDATES), not confirmed to have consistent
@@ -121,6 +137,13 @@ class Vertex:
 class ParsedMesh:
 	var mesh_name: String
 	var material_name: String
+	## The skeleton bones this mesh is weighted to, in the order its vertex
+	## bone indices refer to. Empty for scenery, which carries no skin.
+	var bone_names: PackedStringArray = PackedStringArray()
+
+	## True when every vertex carries a usable bone weight.
+	func is_skinned() -> bool:
+		return not bone_names.is_empty()
 	var vertices: Array[Vertex] = []
 	## Flat triangle list; size is always a multiple of 3.
 	var indices: PackedInt32Array = PackedInt32Array()
@@ -188,6 +211,16 @@ static func parse(data: PackedByteArray) -> ParsedMesh:
 		v.extra = data.slice(rec_off + 0x20, rec_off + vertex_rec_size)
 		mesh.vertices.append(v)
 
+	# The skin section: a bone palette followed by one weight record per
+	# vertex, running from hdr[0] up to the index section at hdr[1].
+	#
+	# **This is what "no per-vertex skinning data exists" missed.** That
+	# conclusion came from accounting for the 44-byte vertex record and
+	# finding no room left in it -- which is true, and irrelevant, because
+	# the weights are not in the vertex record. They are in their own
+	# section, and hdr[0] points at it. See docs/protocol/BMS_FORMAT.md.
+	_parse_skin(data, hdr[0], hdr[1], vertex_count, mesh)
+
 	var index_off := hdr[1]
 	if index_off + 4 > data.size():
 		push_error("bms: index section offset (hdr[1]) out of range")
@@ -208,6 +241,61 @@ static func parse(data: PackedByteArray) -> ParsedMesh:
 		mesh.bounds_max = Vector3(_le_f32(data, bbox_off + 12), _le_f32(data, bbox_off + 16), _le_f32(data, bbox_off + 20))
 
 	return mesh
+
+## Reads the bone palette and per-vertex weights between section_start and
+## section_end. Leaves the mesh unskinned, without erroring, whenever the
+## section is absent or does not fit -- scenery has no skin, and that is the
+## common case rather than a fault.
+static func _parse_skin(
+	data: PackedByteArray, section_start: int, section_end: int,
+	vertex_count: int, mesh: ParsedMesh
+) -> void:
+	if section_start <= 0 or section_start + 4 > data.size() or section_end > data.size():
+		return
+	var bone_count := _le_u32(data, section_start)
+	if bone_count <= 0 or bone_count > 512:
+		return
+	var off := section_start + 4
+	var names := PackedStringArray()
+	for i in range(bone_count):
+		if off + 4 > data.size():
+			return
+		var n := _le_u32(data, off)
+		off += 4
+		if n <= 0 or n > 128 or off + n > data.size():
+			return
+		names.append(data.slice(off, off + n).get_string_from_ascii())
+		off += n
+
+	# The weights must exactly fill what is left of the section. Requiring
+	# that, rather than reading hopefully from wherever the names ended, is
+	# what stops a misread palette producing plausible-looking nonsense.
+	if section_end - off != vertex_count * SKIN_REC_SIZE:
+		return
+
+	for i in range(vertex_count):
+		var rec := off + i * SKIN_REC_SIZE
+		var b0 := data[rec]
+		var w0 := float(data[rec + 1] | (data[rec + 2] << 8))
+		var b1 := data[rec + 3]
+		var w1 := float(data[rec + 4] | (data[rec + 5] << 8))
+		if b0 >= names.size():
+			return # a bad index means this isn't the palette we think it is
+		var v: Vertex = mesh.vertices[i]
+		v.bone0 = b0
+		v.bone1 = b1 if b1 != NO_BONE and b1 < names.size() else -1
+		# Normalised rather than trusted: most vertices sum to full scale
+		# exactly, but a few percent of a real file's do not (measured: 8 of
+		# 280 in chinaquest_priest_part1, worst 33% off), and an
+		# unnormalised weight stretches the vertex it belongs to.
+		var total := w0 + (w1 if v.bone1 != -1 else 0.0)
+		if total <= 0.0:
+			v.bone0 = -1
+			v.bone1 = -1
+			continue
+		v.weight0 = w0 / total
+		v.weight1 = (w1 / total) if v.bone1 != -1 else 0.0
+	mesh.bone_names = names
 
 ## Parses the real object navigation/collision mesh a .bms may carry (see
 ## COLLISION_PTR_OFFSET). Returns null when the real file has no such
@@ -385,6 +473,32 @@ static func to_array_mesh(mesh: ParsedMesh) -> ArrayMesh:
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_INDEX] = indices
+
+	# Skin weights, when the file carries them. Godot wants four influences
+	# per vertex; the format supplies at most two, so the spare pair is
+	# weighted zero. The bone indices are palette indices -- a Skin resource
+	# maps them onto the actual skeleton (see Skeleton3DBuilder.build_skin).
+	if mesh.is_skinned():
+		var bones := PackedInt32Array()
+		var weights := PackedFloat32Array()
+		bones.resize(mesh.vertices.size() * 4)
+		weights.resize(mesh.vertices.size() * 4)
+		for i in range(mesh.vertices.size()):
+			var v: Vertex = mesh.vertices[i]
+			var base := i * 4
+			# A vertex the skin parser rejected falls back to the first
+			# palette bone at full weight: better a piece that follows one
+			# bone than one that collapses to the origin.
+			bones[base] = maxi(v.bone0, 0)
+			weights[base] = v.weight0 if v.bone0 >= 0 else 1.0
+			bones[base + 1] = maxi(v.bone1, 0)
+			weights[base + 1] = v.weight1 if v.bone1 >= 0 else 0.0
+			bones[base + 2] = 0
+			weights[base + 2] = 0.0
+			bones[base + 3] = 0
+			weights[base + 3] = 0.0
+		arrays[Mesh.ARRAY_BONES] = bones
+		arrays[Mesh.ARRAY_WEIGHTS] = weights
 
 	var array_mesh := ArrayMesh.new()
 	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
