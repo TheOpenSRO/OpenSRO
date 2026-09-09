@@ -62,9 +62,20 @@ const PANELS := {
 ## The same tool run on ifskill puts MainSkillWnd and Withdrawal at 100%,
 ## which is the answer the binary gives independently -- which is what makes
 ## the measurement worth trusting on ifguild, where the binary is silent.
+## - **partymatch, academy, autopotion**: the same measurement. Party
+##   matching composes SearchInfo, SlotListButton and SlotList -- the search
+##   bar, the column headers and the list -- leaving JoinProgress,
+##   PartyRegister and AutoMatch, which overlap each other 86-100%.
+##
+## A layout with only *one* extra tells the tool nothing, since there is
+## nothing to compare against: ifinventory's ConfirmBuy is its only one and
+## is a dialog (`CItemMallConfirmBuy`), so it is not listed here.
 const EXTRA_SECTIONS := {
 	"skill": ["MainSkillWnd"],
 	"guild": ["GuildInfo", "NotifySubBox", "SortBtn", "MemberView", "Command"],
+	"partymatch": ["SearchInfo", "SlotListButton", "SlotList"],
+	"academy": ["NotifySubBox", "NotifyContents"],
+	"autopotion": ["AbnormalSlot", "PotionDelaySlot"],
 }
 
 ## Order and labels for the MENU popup, mirroring the reference's list.

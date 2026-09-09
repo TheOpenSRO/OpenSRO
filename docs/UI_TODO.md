@@ -70,7 +70,19 @@ Every window in the real client is authored data, and building one is now mechan
    exactly like the missing rule for filling a window body. It is not: the string `base.txt`
    appears nowhere in the client binary, and every section header in the archive ends in the same
    `"0"`, so nothing selects a recipe. Checked so nobody chases it twice.
-17. **Godot clamps `Control.size` up to the minimum size, and will fight the layout.** A
+17. **A list row draws itself as a horizontal bar.** The client sets
+   `interface\ifcommon\com_bar01_` on an unselected row and `com_bar01select_` on the selected
+   one — six classes do — and that is what fills a list body. ifpartymatch draws a
+   `com_blacksquare_` border around its list with **no** fill behind it while declaring
+   `com_bg_tile_e` behind each small input box in the same section: the big one is empty because
+   the rows fill it.
+18. **Not every base ending in `_` is an 8-slice.** `com_bar01_`, `com_bar01select_` and
+   `com_bar02_` expand to `left` / `mid` / `right` — a horizontal 3-slice, 4×24 caps around a
+   24×24 middle. Ask the archive for `left_up.ddj`; its absence is the signal.
+19. **A slot's shape says whether it is an item square or a list row**, and the archive is
+   unambiguous: every slot naming no artwork is either exactly 1.0 wide-to-tall (335 of them) or
+   at least 3.5 (58 of them), with nothing in between. `sweep_slot_shapes.gd` prints it.
+20. **Godot clamps `Control.size` up to the minimum size, and will fight the layout.** A
    `TextureRect`'s minimum is its texture (use `EXPAND_IGNORE_SIZE`); a `Label`'s is computed from
    the theme's *default* font until its theme cache refreshes a frame later (re-apply the rect);
    a `Button` with text has one from its own label (use a `TextureButton`). `UiBuilder` records

@@ -178,7 +178,10 @@ func build_control(def: UiLayoutParser.ControlDef) -> Control:
 				node = _build_tile(def)
 			"CIFEdit", "CIFEInputChatBox":
 				node = _build_edit(def)
-			"CIFSlotWithHelp", "CIFSlot", "CIFExtQuickSlotSlot", "CIFPartySlot":
+			_ when def.type.contains("Slot"):
+				# Matched on the name rather than listed: the archive has
+				# fifteen slot types and the four that were listed reached
+				# neither the party-match rows nor the stall network's.
 				node = _build_slot(def)
 			_:
 				# Generic container for unhandled or compound control types
@@ -388,6 +391,16 @@ func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 	container.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	if def.ddj != "" and def.ddj.ends_with("_"):
+		# **Not every base is an 8-slice.** `com_bar01_`, `com_bar01select_`
+		# and `com_bar02_` expand to `left`, `mid` and `right` -- a
+		# horizontal 3-slice, 4x24 caps around a 24x24 middle -- and looking
+		# for `left_up.ddj` under them finds nothing, which left every list
+		# row and every CIFBarWnd drawing an empty box. Which scheme a base
+		# uses is a question the archive answers: ask it for the corner.
+		if load_texture(def.ddj + "left_up.ddj") == null:
+			_add_row_bar_from(container, def.ddj, Vector2(def.rect.size))
+			return container
+
 		# 8-slice border: left_up, mid_up, right_up, left_side, right_side, left_down, mid_down, right_down
 		var lu := load_texture(def.ddj + "left_up.ddj")
 		var mu := load_texture(def.ddj + "mid_up.ddj")
@@ -451,6 +464,38 @@ func _build_edit(def: UiLayoutParser.ControlDef) -> LineEdit:
 		edit.placeholder_text = _resolve_text(def.text)
 	return edit
 
+## The artwork a list row draws itself with, and the one it uses when it is
+## the selected row.
+##
+## Straight out of the client: one method on a row slot sets
+## `interface\\ifcommon\\com_bar01_` when the row is unselected and
+## `com_bar01select_` when it is, and six classes carry the same pair. It is
+## a horizontal 3-slice -- `_left` and `_right` are 4x24, `_mid` is 24x24,
+## all fully opaque.
+##
+## This is what fills a list body. ifpartymatch draws a `com_blacksquare_`
+## border around its list and declares **no** fill behind it, while
+## declaring `com_bg_tile_e` behind each of its three small black input
+## boxes in the same section -- the big one is left empty because the rows
+## fill it.
+const ROW_BAR_DDJ := "interface\\ifcommon\\com_bar01_"
+const ROW_BAR_SELECTED_DDJ := "interface\\ifcommon\\com_bar01select_"
+
+## Where a slot stops being an item square and starts being a list row.
+##
+## Measured, not chosen: across the archive every slot control that names no
+## artwork is either exactly 1.0 wide-to-tall (335 of them -- CIFSlotWithHelp,
+## CIFExtQuickSlotSlot, CIFSlotWithHelpForPackage, CIFSkillSlot) or at least
+## 3.5 (58 of them -- CIFPartyMatchSlot and CIFMentorMatchSlot at 29.8,
+## CIFStallNetworkSlot at 20.3, down to CIFEquipSkillSlotWnd at 3.5). There
+## is nothing in between, so this sits in an empty gap rather than on a
+## judgement call. See tools/sweep_slot_shapes.gd.
+const ROW_SLOT_ASPECT := 3.0
+
+## Whether a slot's authored rect is a list row rather than an item square.
+static func is_row_slot(rect: Rect2i) -> bool:
+	return rect.size.y > 0 and float(rect.size.x) / float(rect.size.y) >= ROW_SLOT_ASPECT
+
 ## One item cell. `background` overrides the control's own `ddj`, which is
 ## how a lattice hands each cell the piece its position calls for -- a
 ## lattice's `ddj` is an 8-slice-style base and is not loadable as a single
@@ -467,8 +512,11 @@ func _build_slot(def: UiLayoutParser.ControlDef, background: Texture2D = null,
 	var inner: Vector2 = cell_size if cell_size != Vector2.ZERO else Vector2(def.rect.size)
 
 	var art: Texture2D = background
-	if art == null and def.ddj != "" and not def.ddj.ends_with("_"):
+	if art == null and def.ddj != "" and not is_slice_base(def.ddj):
 		art = load_texture_region(def.ddj, def.uv_lt, def.uv_rb)
+	# A list row with no artwork of its own draws the client's own row bar.
+	if art == null and background == null and def.ddj == "" and is_row_slot(def.rect):
+		_add_row_bar(slot, inner)
 	if art != null:
 		var bg := TextureRect.new()
 		bg.name = "SlotBg"
@@ -590,6 +638,31 @@ func _build_tile(def: UiLayoutParser.ControlDef) -> TextureRect:
 	tile.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	tile.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return tile
+
+## Lays the three pieces of a row bar across `size`: a left cap, the middle
+## tiled, and a right cap, each at its own authored width.
+func _add_row_bar(parent: Control, bar_size: Vector2) -> void:
+	_add_row_bar_from(parent, ROW_BAR_DDJ, bar_size)
+
+## The same, from any horizontal 3-slice base.
+func _add_row_bar_from(parent: Control, base: String, bar_size: Vector2) -> void:
+	if bar_size.x <= 0.0 or bar_size.y <= 0.0:
+		return
+	var left := load_texture(base + "left.ddj")
+	var mid := load_texture(base + "mid.ddj")
+	var right := load_texture(base + "right.ddj")
+	if mid == null:
+		return
+	var cap_w := float(left.get_width()) if left != null else 0.0
+	var cap_r := float(right.get_width()) if right != null else 0.0
+	var bar := Control.new()
+	bar.name = "RowBar"
+	bar.size = bar_size
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_add_slice(bar, left, Rect2(0.0, 0.0, cap_w, bar_size.y))
+	_add_slice(bar, mid, Rect2(cap_w, 0.0, bar_size.x - cap_w - cap_r, bar_size.y), true)
+	_add_slice(bar, right, Rect2(bar_size.x - cap_r, 0.0, cap_r, bar_size.y))
+	parent.add_child(bar)
 
 func _build_generic(def: UiLayoutParser.ControlDef) -> Control:
 	var ctrl := Control.new()

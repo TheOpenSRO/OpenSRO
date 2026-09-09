@@ -33,6 +33,14 @@ extends SceneTree
 ## spare and stays a dozen lines instead of a hundred.
 const SAMPLE_STEP := 2
 
+## How much overlap still counts as "these sit side by side".
+##
+## The real answers cluster at either end -- ifguild's five composing
+## sections are pairwise 0% and its alternates are 78-100% -- so anything
+## in between is a header row sitting on the list it labels, which is
+## composition. ifpartymatch's SlotListButton over SlotList is 8%.
+const INDEPENDENT_THRESHOLD := 0.15
+
 func _arg(flag: String) -> String:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with(flag + "="):
@@ -85,18 +93,67 @@ func _init() -> void:
 		print(row)
 
 	print("")
-	print("sections that never touch another (candidates to build together):")
-	for a in names:
-		var independent := true
-		for b in names:
+	# **Ignore "Create".** It holds the window's own frame, which spans the
+	# whole window, so every other section is nearly 100% "under" it by
+	# construction -- containment, not conflict. What separates a part of
+	# the window from an alternate view is whether it overlaps the *other*
+	# extras.
+	#
+	# And the question is not "does this section overlap anything", because
+	# a part of the window is overlapped by every dialog that opens over it
+	# -- ifguild's MemberView is 85% under NotifyContents and 95% under
+	# GrantPower, and is still part of the window. It is "what is the
+	# largest set of extras that are pairwise clear of each other", which
+	# is one composed window; everything left out is a mode or a dialog.
+	var extras: Array[String] = []
+	for n in names:
+		if n != "Create":
+			extras.append(n)
+	var compatible := {}
+	for a in extras:
+		for b in extras:
 			if a == b:
 				continue
-			if _covered(rects[a], rects[b]) > 0.0 or _covered(rects[b], rects[a]) > 0.0:
-				independent = false
-				break
-		if independent:
-			print("  ", a)
+			var both: float = maxf(_covered(rects[a], rects[b]), _covered(rects[b], rects[a]))
+			compatible[a + "|" + b] = both <= INDEPENDENT_THRESHOLD
+
+	var best: Array[String] = []
+	_largest_clique(extras, [], compatible, 0, best)
+	print("the largest set of extras that are pairwise clear of each other:")
+	if best.is_empty():
+		print("  (none -- every extra overlaps every other, so they are all modes)")
+	for n in best:
+		print("  ", n)
+	if extras.size() < 2:
+		print("  (one extra, so there is nothing to compare it against -- this says")
+		print("   nothing about whether it is part of the window. ifinventory's")
+		print("   ConfirmBuy is its only extra and is a dialog: CItemMallConfirmBuy.)")
+	var left_out: Array[String] = []
+	for n in extras:
+		if not (n in best):
+			left_out.append(n)
+	if not left_out.is_empty():
+		print("left out (modes or dialogs over the window): %s" % ", ".join(left_out))
 	quit(0)
+
+## Brute-force largest pairwise-compatible set. A layout has at most ten
+## sections, so there is nothing to be clever about.
+func _largest_clique(pool: Array[String], chosen: Array[String], compatible: Dictionary,
+		start: int, best: Array[String]) -> void:
+	if chosen.size() > best.size():
+		best.assign(chosen)
+	for i in range(start, pool.size()):
+		var candidate := pool[i]
+		var fits := true
+		for already in chosen:
+			if not compatible.get(candidate + "|" + already, false):
+				fits = false
+				break
+		if not fits:
+			continue
+		var next: Array[String] = chosen.duplicate()
+		next.append(candidate)
+		_largest_clique(pool, next, compatible, i + 1, best)
 
 ## The fraction of `a`'s total control area that lies under any of `b`'s.
 func _covered(a: Array, b: Array) -> float:

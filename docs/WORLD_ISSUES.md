@@ -5866,3 +5866,45 @@ Godot on the developer's machine. `check`, `tests` and `script` ship the
 working copy to the render box and run there. Its own trap: the test loop
 ran one suite out of fifty-nine and reported success, because `ssh` without
 `-n` reads the caller's stdin and ate the rest of the file list.
+
+## Hundred-and-nineteenth round: what fills a list
+
+The party-match and guild windows had their structure but their list bodies
+were see-through. The layout looked like it was missing a fill:
+`GDR_PARTYMATCH_SLOTLIST_BLACKSQUARE` is a `com_blacksquare_` border around
+735x305 of list with nothing declared behind it.
+
+It is not missing. The same section declares `com_bg_tile_e` -- a 4x4 fully
+opaque black tile -- behind each of its **three small** black input boxes,
+and nothing behind the big one. An author who wanted a fill there would have
+written one; the rows are the fill.
+
+The client says what a row is. One method on a row slot sets
+`interface\ifcommon\com_bar01_` when the row is unselected and
+`com_bar01select_` when it is, and six classes carry the same pair. Those
+expand to `left`, `mid` and `right` -- 4x24 caps around a 24x24 middle, all
+opaque. A **horizontal** 3-slice.
+
+Which turned up two more things:
+
+- **Not every base ending in `_` is an 8-slice.** `_build_frame` looked for
+  `left_up.ddj` under `com_bar01_` and `com_bar02_`, found nothing, and drew
+  an empty box -- for every `CIFBarWnd` (57), every `CIFWnd` (31) and the
+  rank and store slots that name a bar explicitly. Asking the archive for
+  the corner and falling back to the horizontal scheme covers all of them.
+- **A slot's shape says whether it is an item square or a list row.** A bar
+  under `CIFSlotWithHelp` would be wrong for all 259 of them. The archive
+  separates the two with no ambiguity at all: every slot naming no artwork
+  is either **exactly 1.0** wide-to-tall (335 -- CIFSlotWithHelp,
+  CIFExtQuickSlotSlot, CIFSlotWithHelpForPackage, CIFSkillSlot) or **at
+  least 3.5** (58 -- CIFPartyMatchSlot and CIFMentorMatchSlot at 29.8,
+  CIFStallNetworkSlot at 20.3, CIFEquipSkillSlotWnd at 3.5). The threshold
+  sits in an empty gap. `sweep_slot_shapes.gd` prints the table.
+
+The slot dispatch is matched on the type name containing "Slot" rather than
+listed, for the same reason the 8-slice dispatch is: the four types that
+were listed reached neither the party-match rows nor the stall network's,
+and the archive has fifteen.
+
+Both lists now render the way the reference screenshots show them -- a dark
+body of separated rows under the column headers.
