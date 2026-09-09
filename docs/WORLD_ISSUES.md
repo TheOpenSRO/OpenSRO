@@ -5908,3 +5908,34 @@ and the archive has fifteen.
 
 Both lists now render the way the reference screenshots show them -- a dark
 body of separated rows under the column headers.
+
+## Hundred-and-twentieth round: rows on the layout's own grid, and the client's own captions
+
+Two more things the panels were being given by this project when the
+archive already had them.
+
+### The list rows
+
+`_fill_list` dropped an `ItemList` over the window, sized by hand from the
+title bar down. Every one of these windows already says where its list goes
+and how tall a row is: ifquest's `GDR_QUEST_SCROLLMGR` is `4,27,356,323`
+with eleven 2-pixel divider tiles at y = 52, 79, 106 ... 322 -- a **27-pixel
+pitch**, measured from the spacing of the dividers rather than chosen. The
+rows now go inside the scroll manager at that pitch, inset 12 pixels to
+match where the dividers start.
+
+A window with no scroll manager keeps the overlay, because there is nothing
+authored to put the rows on -- ifskill is one.
+
+### The captions
+
+`HudWindow` took its title from the caller. A window's own frame -- the one
+at the origin -- sometimes carries a `Text`, and that is the client's own
+wording: **5 of the archive's 17 origin frames have one**, the other 12 do
+not. ifparty's is `UIIT_STT_PARTY_INFO`, which the text table resolves to
+"Party informaiton" -- the game's own typo, which is a good sign the string
+is coming from the right place. ifquest's is `UIIT_STT_QUEST_LIST`,
+ifaction's `UIIT_STT_CHARACTER_CONTROL`, ifapprenticeship's
+`UIIT_CTL_TC_MEMBER`, ifitemmallmyinfo's `UIIT_STT_SILKMALL_MY_INFO`.
+
+The other twelve keep the caller's title, because there is nothing to use.

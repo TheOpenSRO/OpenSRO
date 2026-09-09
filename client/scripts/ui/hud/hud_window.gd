@@ -116,9 +116,31 @@ func build(builder: UiBuilder, layout_path: String, title: String,
 	# already blocks, and the children keep their own filters.
 	add_child(panel_root)
 
-	_add_title_bar(title)
+	_add_title_bar(_authored_title(builder, sec, title))
 	set_process(true)
 	return true
+
+## The caption the layout asks for, or the caller's.
+##
+## A window's own frame -- the one at the origin -- sometimes carries a
+## `Text`, and that is the client's own wording for the window: ifquest's
+## GDR_QUEST_FRAME is `UIIT_STT_QUEST_LIST`, ifparty's is
+## `UIIT_STT_PARTY_INFO`. Five of the archive's seventeen origin frames have
+## one; the other twelve are titled by the caller, because there is nothing
+## authored to use.
+static func _authored_title(builder: UiBuilder, sec: UiLayoutParser.SectionDef,
+		fallback: String) -> String:
+	for def in sec.controls:
+		if def.rect.position != Vector2i.ZERO or def.text == "":
+			continue
+		if not (def.type in FRAME_TYPES):
+			continue
+		var resolved := builder.resolve_text(def.text)
+		if resolved != "" and resolved != def.text:
+			return resolved
+	return fallback
+
+const FRAME_TYPES := ["CIFFrame", "CIFSubFrame", "CIFStretchWnd"]
 
 ## Puts every control back on the rect its layout asked for.
 ##

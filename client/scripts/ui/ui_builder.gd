@@ -788,6 +788,12 @@ func font_count() -> int:
 func media_archive() -> Pk2Reader:
 	return _media_pk2
 
+## Resolves a `UIIT_*` key through the client's own text table, or returns
+## the string unchanged when it is not a key. Public because a window's
+## caption comes from its frame's `Text` and is resolved the same way.
+func resolve_text(key_or_text: String) -> String:
+	return _resolve_text(key_or_text)
+
 func _resolve_text(key_or_text: String) -> String:
 	if _text_table != null:
 		return _text_table.get_text(key_or_text)

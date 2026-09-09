@@ -426,17 +426,120 @@ func _populate(panel_id: String) -> void:
 ## art, and wiring each one properly is per-panel work. A readable list in
 ## the right window is the honest intermediate -- it shows real server data
 ## in the real frame, and says plainly that the slot rendering is not done.
+## Lays a panel's entries out on the layout's own list geometry.
+##
+## This used to drop an `ItemList` over the window, sized by hand from the
+## title bar down. Every one of these windows already says where its list
+## goes and how tall a row is:
+##
+##   ifquest   GDR_QUEST_SCROLLMGR at 4,27,356,323, with eleven 2-pixel
+##             divider tiles at y = 52, 79, 106 ... 322 -- a 27-pixel pitch
+##   ifguild   GDR_GUILD_USERVIEW_SCROLLMGR at 17,163,328,139
+##
+## So the rows go inside the scroll manager, at the pitch its own dividers
+## give. A window with no scroll manager keeps the overlay, because there is
+## nothing authored to put the rows on.
 func _fill_list(panel_id: String, lines: Array) -> void:
 	var window: HudWindow = _windows.get(panel_id)
 	if window == null:
 		return
+	var area := _list_area(window)
+	if area == null:
+		_fill_list_overlay(panel_id, window, lines)
+		return
+
+	var host := area.get_node_or_null("Rows") as Control
+	if host == null:
+		host = Control.new()
+		host.name = "Rows"
+		host.set_anchors_preset(Control.PRESET_FULL_RECT)
+		host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		area.add_child(host)
+	for child in host.get_children():
+		child.queue_free()
+
+	var pitch := _row_pitch(window, area)
+	var rows: int = maxi(1, int(area.size.y / pitch))
+	for i in range(mini(lines.size(), rows)):
+		var label := Label.new()
+		label.text = str(lines[i])
+		label.position = Vector2(ROW_TEXT_INSET, i * pitch)
+		label.size = Vector2(area.size.x - ROW_TEXT_INSET * 2.0, pitch)
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.clip_text = true
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		label.add_theme_color_override("font_color", ROW_TEXT_COLOUR)
+		if _builder != null:
+			var font := _builder.font_at(0)
+			if font != null:
+				label.add_theme_font_override("font", font)
+			label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+		host.add_child(label)
+
+## Text inset inside a row, and the colour of it. The inset matches the
+## authored dividers, which start 12 pixels inside their scroll manager
+## (ifquest's are at x=16 against a manager at x=4). The colour is the one
+## every other label in these windows already uses.
+const ROW_TEXT_INSET := 12.0
+const ROW_TEXT_COLOUR := Color(0.92, 0.88, 0.76)
+
+## Fallback row height when a window declares no dividers to measure.
+const ROW_PITCH_FALLBACK := 18.0
+
+## The panel's authored list area: its scroll manager, by name.
+func _list_area(window: HudWindow) -> Control:
+	if window.panel_root == null:
+		return null
+	for node in _walk(window.panel_root):
+		if node is Control and node.name.to_upper().contains("SCROLLMGR"):
+			return node as Control
+	return null
+
+## The row pitch, taken from the spacing of the window's own divider tiles
+## where it has them.
+func _row_pitch(window: HudWindow, area: Control) -> float:
+	var ys: Array[float] = []
+	for node in _walk(window.panel_root):
+		if not (node is Control) or not node.name.to_upper().contains("BG_"):
+			continue
+		var c := node as Control
+		# Only the horizontal dividers: the vertical edge line in ifquest is
+		# 1x303 and would otherwise be counted as a row boundary.
+		if c.size.x > c.size.y and c.size.y <= DIVIDER_MAX_THICKNESS:
+			ys.append(c.position.y)
+	if ys.size() < 2:
+		return ROW_PITCH_FALLBACK
+	ys.sort()
+	var gaps: Array[float] = []
+	for i in range(1, ys.size()):
+		var gap := ys[i] - ys[i - 1]
+		if gap > 0.0:
+			gaps.append(gap)
+	if gaps.is_empty():
+		return ROW_PITCH_FALLBACK
+	gaps.sort()
+	return gaps[gaps.size() / 2]
+
+## How thin a control has to be to count as a divider rather than content.
+const DIVIDER_MAX_THICKNESS := 4.0
+
+func _walk(root: Node) -> Array[Node]:
+	var out: Array[Node] = []
+	for child in root.get_children():
+		out.append(child)
+		out.append_array(_walk(child))
+	return out
+
+## For a window with no authored list area. Kept because several panels do
+## not have one, and an unreadable list is worse than a plain one.
+func _fill_list_overlay(panel_id: String, window: HudWindow, lines: Array) -> void:
 	var list := window.get_node_or_null("ContentList") as ItemList
 	if list == null:
 		list = ItemList.new()
 		list.name = "ContentList"
 		list.position = Vector2(12, HudWindow.TITLE_BAR_HEIGHT + 8.0)
 		list.size = window.size - Vector2(24, HudWindow.TITLE_BAR_HEIGHT + 20.0)
-		list.add_theme_color_override("font_color", Color(0.92, 0.88, 0.76))
+		list.add_theme_color_override("font_color", ROW_TEXT_COLOUR)
 		if _builder != null:
 			var font := _builder.font_at(0)
 			if font != null:
