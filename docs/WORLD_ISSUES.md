@@ -5145,3 +5145,62 @@ walkable graph offers and every solid object covering it. That pairing is
 what settles "am I standing in something" without a screenshot, and it is
 what caught both the real bug and the bad name-matching in the first
 version of itself.
+
+## Hundred-and-eighth round: monsters and characters get their models
+
+Two model gaps closed, and a fair amount of hand-written data deleted.
+
+### Monsters: 642 species, none of them hardcoded
+
+Two species were wired by hand -- a golem and a scorpion -- each carrying
+its own skeleton path, mesh directory, piece list, material path, material
+layer and a hand-derived piece-to-bone table in `MonsterAssembler`. Seven
+constants and a table per creature, and every other species drew a capsule.
+
+All of it is superseded. A monster is a character-category `.bsr` that names
+its own skeleton and meshes, `SkinnedBsrAssembler` builds it, and the
+piece-to-bone mapping is computed. What remained was resolving a species to
+its model, and the real tables answer that by **joining two of them**:
+`characterdata*.txt` carries each row's `SN_` name key next to its `.bsr`,
+and `textdata_object.txt` resolves that key to a display name
+(`SN_MOB_CH_MANGNYANG` -> "Mangyang"). Joined, that is **642 species
+resolvable by the name the server calls them**, out of the player's own
+Media.pk2.
+
+**The server's three monsters were named things that do not exist.** "Stone
+Golem", "Wild Boar" and "Sand Scorpion" appear nowhere in the real data, so
+they could only ever have drawn the placeholder capsule. They are now
+Mangyang, Weasel and Earth Ghost, which do -- and `combat.LootTables`,
+`quest.Catalog` and the tests were renamed with them, since a rename that
+missed the loot table would have silently dropped every monster's drops.
+
+Verified for exactly the three the server spawns:
+
+```
+Mangyang     -> mob\china\mangnyang.bsr    26 bones, 2 pieces,  440 verts, 15 anims
+Weasel       -> mob\china\gyo.bsr          37 bones, 2 pieces,  694 verts, 15 anims
+Earth Ghost  -> mob\wchina\earthghost.bsr  43 bones, 3 pieces,  582 verts, 14 anims
+```
+
+Each link is verified on its own -- the table join, the assembly, and
+`render_npc.gd` drawing `mangnyang` as the straw-man. **Not** verified end
+to end against a running server, which needs a live monster broadcast.
+
+### Characters: dressed by the server, not by the client
+
+The player renders bare because the server reports nothing equipped. The
+tempting fix is to have the client draw a default set anyway, and it is the
+wrong one: the character would look dressed while the equipment window, the
+inventory and the server all disagreed -- "looks finished, lies about what
+is behind it", which is the failure this log keeps recording.
+
+So new characters are given the items instead.
+`equipment.GiveStartingKit` adds one armour item per wearable slot and
+equips it, run from a hook on character creation. Best effort by design: a
+character that cannot be given its kit is still a usable character, so the
+failure is logged rather than failing the creation -- reporting "create
+failed" because someone is underdressed would be worse than the problem.
+
+`StartingArmorItemID` is a placeholder item id like the rest of
+cmd/server's ref items, and says so: this project ships no real item table,
+and an operator importing real refdata should point it at a real one.

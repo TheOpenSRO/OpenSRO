@@ -124,7 +124,7 @@ func TestCombatFullFlow(t *testing.T) {
 	monsters := combat.NewHub()
 	// 30 attack - 10 defense = 20 net damage/hit; 40 HP dies in 2 hits.
 	// Monster hits back for 15 whenever it survives a hit.
-	monster := monsters.Spawn("jangan", "Stone Golem", 0, 0, 0, 40, 10, 15, 500)
+	monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 40, 10, 15, 500)
 
 	quests, err := quest.OpenSQLStore(inventoryTestDSN())
 	if err != nil {
@@ -277,7 +277,7 @@ func TestCombatArmorMitigation(t *testing.T) {
 	monsters := combat.NewHub()
 	// Monster hits for 15; helm(4)+mail(6) = 10 defense -> 5 net damage taken.
 	// High HP so it survives both hits and keeps counterattacking.
-	monster := monsters.Spawn("jangan", "Stone Golem", 0, 0, 0, 200, 10, 15, 500)
+	monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 200, 10, 15, 500)
 
 	quests, err := quest.OpenSQLStore(inventoryTestDSN())
 	if err != nil {
@@ -364,7 +364,7 @@ func TestLootDroppedRoundTrip(t *testing.T) {
 	}
 }
 
-// TestCombatLootFlow kills a one-hit monster whose species ("Stone Golem")
+// TestCombatLootFlow kills a one-hit monster whose species ("Mangyang")
 // has a 100% guaranteed loot entry in combat.LootTables, confirming both
 // the OpLootDropped message and the actual inventory.Store state -- not
 // just the wire message.
@@ -378,7 +378,7 @@ func TestCombatLootFlow(t *testing.T) {
 		t.Fatalf("creating character: %v", err)
 	}
 
-	// Item 500 matches combat.LootTables["Stone Golem"]'s guaranteed drop.
+	// Item 500 matches combat.LootTables["Mangyang"]'s guaranteed drop.
 	items := stubCombatItems{100: {ID: 100, PhysAttackMax: 30}, 500: {ID: 500}}
 	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
 	if err != nil {
@@ -407,7 +407,7 @@ func TestCombatLootFlow(t *testing.T) {
 	hub := world.NewHub()
 	monsters := combat.NewHub()
 	// 30 attack - 0 defense, 1 HP: dies in one hit.
-	monster := monsters.Spawn("jangan", "Stone Golem", 0, 0, 0, 1, 0, 0, 10)
+	monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 1, 0, 0, 10)
 
 	quests, err := quest.OpenSQLStore(inventoryTestDSN())
 	if err != nil {
@@ -488,8 +488,8 @@ func TestCombatLootFlow(t *testing.T) {
 func TestMonsterListResultRoundTrip(t *testing.T) {
 	want := &MonsterListResult{
 		Monsters: []MonsterSnapshot{
-			{ID: 1, Name: "Stone Golem", MaxHP: 200, HP: 150},
-			{ID: 2, Name: "Wild Boar", MaxHP: 80, HP: 80},
+			{ID: 1, Name: "Mangyang", MaxHP: 200, HP: 150},
+			{ID: 2, Name: "Weasel", MaxHP: 80, HP: 80},
 		},
 	}
 	got, err := DecodeMonsterListResult(want.Encode())
@@ -545,8 +545,8 @@ func TestMonsterListFlow(t *testing.T) {
 
 	hub := world.NewHub()
 	monsters := combat.NewHub()
-	spawned := monsters.Spawn("jangan", "Stone Golem", 0, 0, 0, 1, 0, 0, 10)
-	elsewhere := monsters.Spawn("donwhang", "Sand Scorpion", 0, 0, 0, 100, 10, 10, 100) // different zone -- shouldn't show up
+	spawned := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 1, 0, 0, 10)
+	elsewhere := monsters.Spawn("donwhang", "Earth Ghost", 0, 0, 0, 100, 10, 10, 100) // different zone -- shouldn't show up
 
 	quests, err := quest.OpenSQLStore(inventoryTestDSN())
 	if err != nil {
@@ -595,8 +595,8 @@ func TestMonsterListFlow(t *testing.T) {
 	if err != nil || lr.Error != "" {
 		t.Fatalf("monster list failed: err=%v result=%+v", err, lr)
 	}
-	if len(lr.Monsters) != 1 || lr.Monsters[0].ID != spawned.ID || lr.Monsters[0].Name != "Stone Golem" {
-		t.Fatalf("got %+v, want only the jangan Stone Golem (id %d)", lr.Monsters, spawned.ID)
+	if len(lr.Monsters) != 1 || lr.Monsters[0].ID != spawned.ID || lr.Monsters[0].Name != "Mangyang" {
+		t.Fatalf("got %+v, want only the jangan Mangyang (id %d)", lr.Monsters, spawned.ID)
 	}
 
 	// A monster ID from a different zone (never listed, but a real, live ID)

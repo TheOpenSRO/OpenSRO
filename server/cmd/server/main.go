@@ -59,9 +59,16 @@ type monsterSpec struct {
 // rather than a blind PLAYER_SCALE_RATIO multiply, which would have pushed
 // these off the real terrain these zones actually have at those coordinates.
 var monsterSpecs = []monsterSpec{
-	{Zone: "jangan", Name: "Stone Golem", X: 250, Z: 150, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
-	{Zone: "jangan", Name: "Wild Boar", X: -300, Z: 350, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
-	{Zone: "donwhang", Name: "Sand Scorpion", X: 200, Z: -250, MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
+	// Species names are the ones the game's own tables use, so the client
+	// can resolve each to its model: characterdata carries every row's SN_
+	// name key and its .bsr, textdata_object resolves that key to a display
+	// name, and joining the two covers 642 species. The three invented
+	// names these replaced ("Stone Golem", "Wild Boar", "Sand Scorpion")
+	// appear nowhere in the real data, so they could only ever draw the
+	// placeholder capsule.
+	{Zone: "jangan", Name: "Mangyang", X: 250, Z: 150, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
+	{Zone: "jangan", Name: "Weasel", X: -300, Z: 350, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
+	{Zone: "donwhang", Name: "Earth Ghost", X: 200, Z: -250, MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
 }
 
 const respawnDelay = 10 * time.Second
@@ -192,7 +199,13 @@ func main() {
 	handle := gateway.Chain(
 		session.LoginHandler(accounts),
 		session.RegisterHandler(accounts),
-		session.CharacterHandler(chars),
+		// New characters are dressed server-side rather than the client
+		// drawing a default set: that keeps the rendered character, the
+		// equipment window, the inventory and the server all agreeing about
+		// what is actually equipped.
+		session.CharacterHandlerWithHook(chars, func(ctx context.Context, characterID int64) error {
+			return equipment.GiveStartingKit(ctx, inv, eq, characterID)
+		}),
 		session.WorldHandler(chars, eq, hub),
 		session.InventoryHandler(chars, inv),
 		session.EquipmentHandler(chars, eq),

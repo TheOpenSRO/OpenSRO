@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
@@ -130,16 +131,32 @@ func DecodeCharacterDeleteResult(data []byte) (*CharacterDeleteResult, error) {
 	return &CharacterDeleteResult{OK: ok, Reason: reason}, nil
 }
 
+// OnCharacterCreated is called after a character is successfully created,
+// for whatever a new character needs beyond its row -- currently its
+// starting equipment. Optional: a nil hook means "just create the
+// character", which is what the tests and any caller that has not wired
+// inventory/equipment yet want.
+//
+// Errors are logged by the caller and do not fail the creation: a character
+// that could not be given its kit is still a usable character.
+type OnCharacterCreated func(ctx context.Context, characterID int64) error
+
 // CharacterHandler returns a gateway.Handler implementing character
 // list/create/delete against store, scoped to whichever account
 // authenticated on the connection (see AuthenticatedAccountID).
 func CharacterHandler(store character.Store) gateway.Handler {
+	return CharacterHandlerWithHook(store, nil)
+}
+
+// CharacterHandlerWithHook is CharacterHandler plus a hook run after a
+// successful create.
+func CharacterHandlerWithHook(store character.Store, created OnCharacterCreated) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpCharacterList:
 			return handleList(ctx, sess, store)
 		case OpCharacterCreate:
-			return handleCreate(ctx, sess, p, store)
+			return handleCreate(ctx, sess, p, store, created)
 		case OpCharacterDelete:
 			return handleDelete(ctx, sess, p, store)
 		default:
@@ -172,7 +189,7 @@ func handleList(ctx context.Context, sess *gateway.Session, store character.Stor
 	return sess.Send(&proto.Packet{Opcode: OpCharacterListResult, Data: (&CharacterListResult{Names: names}).Encode()})
 }
 
-func handleCreate(ctx context.Context, sess *gateway.Session, p *proto.Packet, store character.Store) error {
+func handleCreate(ctx context.Context, sess *gateway.Session, p *proto.Packet, store character.Store, onCreated OnCharacterCreated) error {
 	accountID, ok := AuthenticatedAccountID(sess)
 	if !ok {
 		return sess.Send(&proto.Packet{
@@ -212,6 +229,16 @@ func handleCreate(ctx context.Context, sess *gateway.Session, p *proto.Packet, s
 		if err := store.SetGender(ctx, created.ID, req.Gender); err != nil {
 			result.OK = false
 			result.Reason = "create failed"
+		}
+	}
+
+	// Starting equipment and anything else a new character needs. Failing
+	// this does not fail the creation -- a character without its kit is
+	// still a usable character, and reporting "create failed" for one would
+	// be worse than being underdressed.
+	if onCreated != nil {
+		if err := onCreated(ctx, created.ID); err != nil {
+			slog.Warn("character created without its starting kit", "character_id", created.ID, "err", err)
 		}
 	}
 	return sess.Send(&proto.Packet{Opcode: OpCharacterCreateResult, Data: result.Encode()})

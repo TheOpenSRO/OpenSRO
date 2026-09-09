@@ -73,9 +73,9 @@ func TestRecordKillProgressesAndCompletes(t *testing.T) {
 		t.Fatalf("Accept: %v", err)
 	}
 
-	// Quest 1 targets 3 kills of "Stone Golem".
+	// Quest 1 targets 3 kills of "Mangyang".
 	for i := 0; i < 2; i++ {
-		completed, err := store.RecordKill(ctx, 1, "Stone Golem")
+		completed, err := store.RecordKill(ctx, 1, "Mangyang")
 		if err != nil {
 			t.Fatalf("RecordKill: %v", err)
 		}
@@ -84,7 +84,7 @@ func TestRecordKillProgressesAndCompletes(t *testing.T) {
 		}
 	}
 
-	completed, err := store.RecordKill(ctx, 1, "Stone Golem")
+	completed, err := store.RecordKill(ctx, 1, "Mangyang")
 	if err != nil {
 		t.Fatalf("RecordKill: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestRecordKillProgressesAndCompletes(t *testing.T) {
 	}
 
 	// A kill after completion shouldn't increment further or re-complete.
-	completed, err = store.RecordKill(ctx, 1, "Stone Golem")
+	completed, err = store.RecordKill(ctx, 1, "Mangyang")
 	if err != nil {
 		t.Fatalf("RecordKill after completion: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestRecordKillIgnoresUnacceptedQuests(t *testing.T) {
 	store := openTestSQLStore(t)
 	ctx := context.Background()
 
-	completed, err := store.RecordKill(ctx, 1, "Stone Golem")
+	completed, err := store.RecordKill(ctx, 1, "Mangyang")
 	if err != nil {
 		t.Fatalf("RecordKill: %v", err)
 	}

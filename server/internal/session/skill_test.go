@@ -82,7 +82,7 @@ func TestSkillFullFlow(t *testing.T) {
 	monsters := combat.NewHub()
 	// Skill 1 ("Power Strike") is +15 damage. 30 (weapon) + 15 (skill) - 10
 	// (defense) = 35 net damage.
-	monster := monsters.Spawn("jangan", "Stone Golem", 0, 0, 0, 100, 10, 5, 500)
+	monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 100, 10, 5, 500)
 
 	quests, err := quest.OpenSQLStore(inventoryTestDSN())
 	if err != nil {

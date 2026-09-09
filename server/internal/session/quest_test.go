@@ -20,7 +20,7 @@ import (
 func TestQuestListResultRoundTrip(t *testing.T) {
 	want := &QuestListResult{
 		Entries: []QuestCatalogEntry{
-			{QuestID: 1, Name: "Golem Cull", MonsterName: "Stone Golem", TargetKills: 3, GoldReward: 200, Kills: 1, Accepted: true},
+			{QuestID: 1, Name: "Mangyang Cull", MonsterName: "Mangyang", TargetKills: 3, GoldReward: 200, Kills: 1, Accepted: true},
 		},
 	}
 	got, err := DecodeQuestListResult(want.Encode())
@@ -65,8 +65,8 @@ func TestQuestCompletedRoundTrip(t *testing.T) {
 	}
 }
 
-// TestQuestFullFlow logs in, enters the world, accepts "Golem Cull" (kill 3
-// Stone Golems), kills three one-hit-kill monsters via OpAttack, and
+// TestQuestFullFlow logs in, enters the world, accepts "Mangyang Cull" (kill 3
+// Mangyangs), kills three one-hit-kill monsters via OpAttack, and
 // confirms an OpQuestCompleted arrives with the right gold reward exactly
 // on the third kill (not before) -- all through the real server stack,
 // exercising the hook from combat's monster-death path into quest.Store.
@@ -155,7 +155,7 @@ func TestQuestFullFlow(t *testing.T) {
 	// One-hit-kill monsters (1 HP, 0 defense, 0 attack so there's no
 	// counterattack noise): 30 weapon damage always kills in one hit.
 	for i := 0; i < 3; i++ {
-		monster := monsters.Spawn("jangan", "Stone Golem", 0, 0, 0, 1, 0, 0, 10)
+		monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 1, 0, 0, 10)
 		resp = send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode())
 		ar, err := DecodeAttackResult(resp.Data)
 		if err != nil || ar.Error != "" || !ar.MonsterDied {

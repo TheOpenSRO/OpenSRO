@@ -5290,94 +5290,38 @@ func _terrain_height_at(pos: Vector3) -> float:
 ## World3D already uses for other players before a real character loads --
 ## no real monster model/skeleton mapping has been found or attempted yet
 ## (a real next step, not this one).
-## Real Stone Golem assets (2026-09-01, see docs/WORLD_ISSUES.md's
-## thirty-third round and MonsterAssembler's own top comment for the full
-## derivation) -- loaded and cached once per run, the same pattern
-## _load_character_assets already uses. Real paths, confirmed by extracting
-## and grepping a real golem.bsr directly: the skeleton and all 7 mesh
-## pieces share the "Prim\...\mob\casia\" real path prefix, and the
-## material is a single shared "golem" layer for every piece (unlike a
-## player character's per-part clothing).
-const GOLEM_SKELETON_PATH := "Prim\\Skel\\mob\\casia\\golem.bsk"
-const GOLEM_MESH_DIR := "Prim\\Mesh\\mob\\casia"
-const GOLEM_PIECE_NAMES := ["golem01", "golem02", "golem03", "golem04", "golem05", "golem06", "golem07"]
-const GOLEM_MATERIAL_PATH := "Prim\\Mtrl\\mob\\casia\\golem.bmt"
-const GOLEM_MATERIAL_LAYER := "golem"
-
-## Real Sand Scorpion assets (2026-09-01, see docs/WORLD_ISSUES.md's
-## thirty-seventh round) -- same real derivation as Stone Golem's, from a
-## real extracted Res\mob\oasis\scorpion.bsr. Only 3 real mesh pieces (vs.
-## golem's 7); MonsterAssembler.SCORPION_PIECE_BONES has the full real
-## piece-to-bone derivation and its own visual verification note.
-const SCORPION_SKELETON_PATH := "Prim\\Skel\\mob\\oasis\\scorpion.bsk"
-const SCORPION_MESH_DIR := "Prim\\Mesh\\mob\\oasis"
-const SCORPION_PIECE_NAMES := ["scorpion_part1", "scorpion_part2_part1", "scorpion_part2_part2"]
-const SCORPION_MATERIAL_PATH := "Prim\\Mtrl\\mob\\oasis\\scorpion.BMT"
-const SCORPION_MATERIAL_LAYER := "scorpion"
+## Superseded 2026-09-09. Two species were hand-wired here -- a golem and a
+## scorpion -- each with its own skeleton path, mesh directory, piece list,
+## material path, material layer and a hand-derived piece-to-bone table in
+## MonsterAssembler. All of it is replaced by reading the species' own .bsr:
+## it names its skeleton and mesh pieces, and the bone mapping is computed
+## (SkinnedBsrAssembler). What was seven constants and a table per creature
+## is now a name lookup that covers 642 species.
 
 ## Per-run cache of loaded real monster assets, keyed by species (matching
 ## CombatNet.MonsterSnapshot.monster_name) -- shared by every species using
 ## this same real pipeline (a .bsr-referenced .bsk skeleton + several .bms
-## pieces + one shared material layer), so adding a new real species (see
-## _load_monster_assets' callers) doesn't need its own copy of this
-## caching/loading logic.
-static var _monster_assets_cache: Dictionary = {}
-static var _monster_load_attempted: Dictionary = {}
+## {lowercased species display name -> .bsr path}, built once from the
+## player's own Media.pk2. See NpcTableReader.parse_models_by_name.
+var _monster_models_by_name: Dictionary = {}
+var _monster_models_loaded := false
 
-## Loads and caches one real species' assets from Data.pk2 -- returns {}
-## (and only ever tries once per run per species) if SRREVAMP_PK2_PATH isn't
-## set or any real file is missing, so a caller can fall back to the
-## placeholder capsule the same honest way every other "real asset not
-## available" path in this file already does.
-func _load_monster_assets(species: String, skeleton_path: String, mesh_dir: String, piece_names: Array, material_path: String) -> Dictionary:
-	if _monster_load_attempted.get(species, false):
-		return _monster_assets_cache.get(species, {})
-	_monster_load_attempted[species] = true
-
-	var archive := _open_pk2_if_set()
-	if archive == null:
-		return {}
-
-	var skel_bytes := AssetSource.read_bytes(skeleton_path, archive)
-	if skel_bytes.is_empty():
-		return {}
-	var skel := BskReader.parse(skel_bytes)
-	if skel == null:
-		return {}
-
-	var parts := {}
-	for piece_name in piece_names:
-		var bytes := AssetSource.read_bytes(mesh_dir + "\\" + piece_name + ".bms", archive)
-		if bytes.is_empty():
-			continue
-		var mesh := BmsReader.parse(bytes)
-		if mesh != null:
-			parts[piece_name] = mesh
-	if parts.is_empty():
-		return {}
-
-	var assets := {
-		"skel": skel,
-		"parts": parts,
-		"materials": _load_real_materials(archive, material_path),
-	}
-	_monster_assets_cache[species] = assets
-	print("World3D: cached real %s assets (%d bones, %d/%d pieces) from %s" % [
-		species, skel.bones.size(), parts.size(), piece_names.size(), Pk2Config.data_path()])
-	return assets
-
-## Builds a real assembled Skeleton3D for one real monster species, or null
-## if the real assets aren't available (caller falls back to the
-## placeholder capsule).
-func _build_assembled_monster(species: String, skeleton_path: String, mesh_dir: String, piece_names: Array, material_path: String, material_layer: String, piece_bones: Dictionary) -> Skeleton3D:
-	var assets := _load_monster_assets(species, skeleton_path, mesh_dir, piece_names, material_path)
-	if assets.is_empty():
-		return null
-	var skeleton := Skeleton3DBuilder.build_skeleton3d(assets["skel"])
-	var materials: Dictionary = assets["materials"]
-	var material: Material = materials.get(material_layer)
-	MonsterAssembler.assemble(skeleton, assets["parts"], piece_bones, material)
-	return skeleton
+func _monster_model_path(species_name: String) -> String:
+	if not _monster_models_loaded:
+		_monster_models_loaded = true
+		if _media_pk2 == null:
+			_media_pk2 = _open_media_pk2_if_set()
+		if _media_pk2 != null:
+			var names_entry := ObjectLoader.find_file(_media_pk2, NpcTableReader.OBJECT_NAME_TABLE_PATH)
+			if names_entry != null:
+				var names := UiTextTable.parse(_media_pk2.read_file(names_entry))
+				for path in NpcTableReader.MODEL_TABLE_PATHS:
+					var entry := ObjectLoader.find_file(_media_pk2, path)
+					if entry != null:
+						_monster_models_by_name = NpcTableReader.parse_models_by_name(
+							_media_pk2.read_file(entry), names, _monster_models_by_name)
+			print("World3D: %d species resolvable by name" % _monster_models_by_name.size())
+	return _monster_models_by_name.get(species_name.to_lower(), "")
 
 func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	var pos := Vector3(monster.x, monster.y, monster.z)
@@ -5393,18 +5337,26 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	var body := Node3D.new()
 	body.position = pos
 
-	# Real assembled model for species with real, confirmed asset data (see
-	# MonsterAssembler's top comment) -- falls back to the placeholder
-	# capsule for every other real species (Wild Boar has no real matching
-	# asset at all), the same honest "real asset if we have it, labeled
-	# placeholder otherwise" pattern _spawn_or_update_other already uses
-	# for players.
+	# The species' own model, resolved from the real tables by the name the
+	# server calls it. Nothing is hardcoded per creature: characterdata
+	# carries each row's SN_ name key and its .bsr, textdata_object resolves
+	# that key to a display name, and joining the two gives 642 species by
+	# name. A species the tables do not know still gets the labelled capsule.
+	#
+	# This replaces two hand-built species (a golem and a scorpion), each
+	# with its own skeleton path, mesh directory, piece list, material and a
+	# hand-derived piece-to-bone table. All of that is superseded:
+	# SkinnedBsrAssembler reads the .bsr's own skeleton and meshes, and
+	# computes the bone mapping.
 	var monster_skeleton: Skeleton3D = null
-	match monster.monster_name:
-		"Stone Golem":
-			monster_skeleton = _build_assembled_monster("Stone Golem", GOLEM_SKELETON_PATH, GOLEM_MESH_DIR, GOLEM_PIECE_NAMES, GOLEM_MATERIAL_PATH, GOLEM_MATERIAL_LAYER, MonsterAssembler.GOLEM_PIECE_BONES)
-		"Sand Scorpion":
-			monster_skeleton = _build_assembled_monster("Sand Scorpion", SCORPION_SKELETON_PATH, SCORPION_MESH_DIR, SCORPION_PIECE_NAMES, SCORPION_MATERIAL_PATH, SCORPION_MATERIAL_LAYER, MonsterAssembler.SCORPION_PIECE_BONES)
+	var monster_model := _monster_model_path(monster.monster_name)
+	if monster_model != "":
+		var monster_archive := _open_pk2_if_set()
+		if monster_archive != null:
+			var assembled := SkinnedBsrAssembler.assemble_from_archive(monster_archive, monster_model)
+			if assembled != null:
+				monster_skeleton = assembled.skeleton
+
 	# Real model height varies a lot by species/asset (real monster
 	# skeletons are nowhere near the human PLAYER_SCALE_RATIO-derived
 	# height, unscaled real native units) -- computed directly from the

@@ -31,6 +31,10 @@ const MODEL_TABLE_PATHS := [
 	"server_dep\\silkroad\\textdata\\characterdata_30000.txt",
 ]
 const POSITION_TABLE_PATH := "server_dep\\silkroad\\textdata\\npcpos.txt"
+## Maps the `SN_` name key a characterdata row carries to a display name --
+## `SN_MOB_CH_MANGNYANG` to "Mangyang". Same shape as the UI string table,
+## so UiTextTable parses it.
+const OBJECT_NAME_TABLE_PATH := "server_dep\\silkroad\\textdata\\textdata_object.txt"
 
 const COL_POS_NPC_ID := 0
 const COL_POS_REGION := 1
@@ -86,6 +90,47 @@ static func parse_models(data: PackedByteArray, into: Dictionary = {}) -> Dictio
 		if model != "":
 			into[int(id_text)] = model
 	return into
+
+## Parses one characterdata part into {lowercased display name -> .bsr
+## path}, merging into `into`.
+##
+## This is what lets a caller ask for a model by the name a creature is
+## known by rather than by id. A characterdata row carries an `SN_` key
+## (`SN_MOB_CH_MANGNYANG`) and a model path; `names` resolves that key to a
+## display name ("Mangyang"). Joining the two gives name -> model without
+## anything hardcoded per species.
+##
+## Lowercased on both sides because the tables and the server do not agree
+## on capitalisation.
+static func parse_models_by_name(
+	data: PackedByteArray, names: UiTextTable, into: Dictionary = {}
+) -> Dictionary:
+	if names == null:
+		return into
+	for line in _lines(data):
+		var cols := line.split("\t")
+		var model := _find_model_path(cols)
+		if model == "":
+			continue
+		var key := _find_name_key(cols)
+		if key == "":
+			continue
+		var display := names.get_text(key)
+		# get_text falls back to the key itself when it isn't in the table;
+		# that is not a name anyone would search for.
+		if display == "" or display == key:
+			continue
+		into[display.to_lower()] = model
+	return into
+
+## The `SN_`-prefixed name key in a characterdata row, found by content for
+## the same reason the model path is.
+static func _find_name_key(cols: PackedStringArray) -> String:
+	for col in cols:
+		var trimmed := col.strip_edges()
+		if trimmed.begins_with("SN_"):
+			return trimmed
+	return ""
 
 ## The `.bsr` field in a characterdata row. Found by looking rather than by
 ## index: the parts are ~104 columns wide and there is no guarantee the
