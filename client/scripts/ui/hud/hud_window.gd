@@ -62,20 +62,24 @@ func build(builder: UiBuilder, layout_path: String, title: String) -> bool:
 	# not steal them from its own children, so PASS rather than STOP.
 	mouse_filter = Control.MOUSE_FILTER_PASS
 
-	# Interior fill, behind everything.
+	# Interior fill, behind everything, in the window's own frame colour.
 	#
-	# **This colour is ours, not authored.** Every 8-slice frame set in the
-	# archive -- mframe_wnd_, int_window_, game_window_, event_sub_wnd_ and
-	# the rest, thirty-odd of them -- contains exactly eight pieces: four
-	# corners and four edges, and **no centre**. A window's interior is
-	# therefore not painted by its frame art, and nothing found so far says
-	# what the real client fills it with. Left unfilled the windows are
-	# see-through, which is worse than a stand-in, so this is a flat dark
-	# fill matching what the reference screenshots show. Replace it the
-	# moment the real fill is identified.
+	# No frame set in the archive has a centre piece, so the body is not
+	# painted by the frame art and has to be filled. The colour is taken
+	# from the frame's own edge tile rather than chosen by eye -- see
+	# UiBuilder.frame_interior_colour. A window whose frame cannot be read
+	# falls back to opaque black, which is wrong but never see-through.
+	var frame_base := ""
+	for def in sec.controls:
+		if def.ddj.ends_with("_") and def.rect.position == Vector2i.ZERO:
+			frame_base = def.ddj
+			break
+	var interior := builder.frame_interior_colour(frame_base)
+	if interior.a <= 0.0:
+		interior = Color(0, 0, 0, 1)
 	var fill := ColorRect.new()
 	fill.name = "InteriorFill"
-	fill.color = Color(0.055, 0.055, 0.07, 0.94)
+	fill.color = interior
 	fill.size = window_size
 	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(fill)

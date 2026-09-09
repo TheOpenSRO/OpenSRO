@@ -115,24 +115,40 @@ func setup() -> void:
 	_mp_text = root.find_child("GDR_PMI_TXT_MP", true, false) as Label
 	_hp_gauge = root.find_child("GDR_PMI_GAUGE_HP", true, false) as TextureProgressBar
 	_mp_gauge = root.find_child("GDR_PMI_GAUGE_MP", true, false) as TextureProgressBar
-	_tint(_hp_gauge, Color(0.78, 0.15, 0.15))
-	_tint(_mp_gauge, Color(0.16, 0.36, 0.86))
+	# The client's own bar fills, not a colour of ours. See GAUGE_FILL_HP.
+	_set_gauge_fill(_hp_gauge, GAUGE_FILL_HP)
+	_set_gauge_fill(_mp_gauge, GAUGE_FILL_MP)
 
-## Neither gauge names any artwork: `GDR_PMI_GAUGE_HP` and `_MP` have an
-## empty `DDJ`, and the atlas slice above supplies the *slot* they sit in,
-## not a fill. So the client draws the fill itself, and these two colours
-## are read off the reference screenshots -- a red HP bar over a blue MP
-## bar -- rather than out of the data. Searched for and not found: nothing
-## under `pmi_`, `com_bar0N` (those are list-row bars, near-black) or any
-## `gauge` name is an HP/MP fill; the only `gauge.dat` files are the
-## launcher's. Flagged as the invented values they are.
-func _tint(gauge: TextureProgressBar, colour: Color) -> void:
+## Fills a gauge with the client's own bar artwork.
+##
+## `GDR_PMI_GAUGE_HP` and `_MP` name no `DDJ`, and the frame atlas supplies
+## the *slot* they sit in rather than a fill -- so an earlier version of
+## this file invented a red and a blue and said so. It did not need to: the
+## client hardcodes these two textures rather than declaring them in the
+## layout, which is why searching the layouts for them found nothing. They
+## are 4x4 solid swatches meant to be stretched along the bar, and their
+## colours are the game's, not ours:
+##
+##   interface\\ifcommon\\quick_hp.ddj   4x4   RGB(230, 0, 0)
+##   interface\\ifcommon\\quick_mp.ddj   4x4   RGB(0, 80, 230)
+##
+## Loading them rather than copying the numbers keeps this correct if the
+## player's archive differs.
+const GAUGE_FILL_HP := "interface\\ifcommon\\quick_hp.ddj"
+const GAUGE_FILL_MP := "interface\\ifcommon\\quick_mp.ddj"
+
+func _set_gauge_fill(gauge: TextureProgressBar, texture_path: String) -> void:
 	if gauge == null:
 		return
-	gauge.tint_progress = colour
 	gauge.min_value = 0
 	gauge.max_value = 100
 	gauge.value = 100
+	gauge.nine_patch_stretch = true
+	if _builder != null:
+		var fill := _builder.load_texture(texture_path)
+		if fill != null:
+			gauge.texture_progress = fill
+			gauge.tint_progress = Color.WHITE
 
 func set_character(character_name: String, level: int) -> void:
 	if _name_label != null:

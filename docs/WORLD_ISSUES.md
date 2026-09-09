@@ -5370,3 +5370,74 @@ with a named `ItemIcon` child -- placing each carried item's icon in its own
 slot index, with a stack count where the quantity is above one and the
 item's real name as the tooltip. The plain list stays underneath for the
 fields the grid has no room for.
+
+## Hundred-and-twelfth round: reading the client instead of guessing
+
+Instruction, verbatim: *"never invent. always go back to ghidra and find."*
+Fair. Several UI constants had been shipped as guesses with honest comments
+saying so, and a comment saying "this is invented" is not a substitute for
+looking. The client binary is on the RE box and it had the answers.
+
+**Note on tooling**: the `mcp__ghidra__*` wrappers return "Invalid request
+parameters" for every call right now. The GhidraMCP HTTP API behind them is
+fine -- `curl http://192.168.5.78:8080/strings?...`, and `decompile` takes
+the function name as a **POST body**. Worth knowing before concluding
+Ghidra is unavailable.
+
+### The layout field table, from the binary
+
+`FUN_0082c1d0` is the resinfo parser -- it is the only function referencing
+both the `FontIndex` and `UV_LT` string constants. Decompiling it gives the
+control struct's own field offsets, and the string table around `UV_LT` in
+`.rdata` gives the complete set of field names the client reads:
+
+```
+StretchType  HelpString  CommandID  UV_LB  UV_RB  UV_RT  UV_LT
+DDJ  FontColor  VAlign  HAlign  Text  FontIndex  ClientRect  Rect  Style  ADDID
+```
+
+**There is no `Color` field.** The parser reads `FontColor` and never
+`Color`, which settles from the code what the hundred-and-second round had
+argued from a value distribution: the `Color=COLOR,...` line in every
+resinfo control is editor metadata the client ignores. Two independent
+routes, same answer -- but only this one is proof.
+
+Field offsets, for later work: `Rect` +0x48, `ClientRect` +0x58,
+`FontIndex` +0x68, `HAlign` +0x88, `VAlign` +0x8a, `FontColor` +0x90,
+`UV_LT` +0xd0, `UV_RT` +0xd8, `UV_RB` +0xe0, `UV_LB` +0xe8,
+`CommandID` +0xb0.
+
+Also newly named: **`StretchType`** and **`ADDID`**, neither of which this
+project reads.
+
+### The HP and MP bars
+
+The gauges name no `DDJ`, so an earlier round invented a red and a blue and
+flagged them. The client hardcodes the textures in code instead of
+declaring them in the layout, which is exactly why searching the layouts
+found nothing. Pulled straight out of the binary's `.ddj` string constants:
+
+```
+interface\ifcommon\quick_hp.ddj   4x4 solid   RGB(230, 0, 0)
+interface\ifcommon\quick_mp.ddj   4x4 solid   RGB(0, 80, 230)
+```
+
+4x4 swatches, meant to be stretched along the bar. The invented values were
+RGB(199,38,38) and RGB(41,92,219) -- close enough to look plausible and
+wrong. `HudPlayerInfo` now loads the textures rather than copying the
+numbers, so it stays right against a different archive.
+
+(`interface\party\pt_hp.ddj` and `pt_mp.ddj` are the party window's
+equivalents, 136x4, RGB(164,8,32) and RGB(49,57,180).)
+
+### The window interior
+
+Also invented: a flat `Color(0.055, 0.055, 0.07, 0.94)` for window bodies,
+because no frame set has a centre piece and no fill texture is hardcoded --
+both of which are true, and checked again here.
+
+But the frame's own edge tiles are opaque and carry the colour the body
+continues: `mframe_wnd_mid_up`'s bottom row is RGB(16,20,16). So the fill is
+now **sampled from the window's own frame artwork** rather than chosen,
+which is both correct and adapts to whichever of the thirty-odd frame sets a
+window uses.

@@ -504,6 +504,35 @@ func font_count() -> int:
 	_load_fonts()
 	return _fonts.size()
 
+## The colour a window's interior should be, taken from its own frame
+## artwork rather than chosen.
+##
+## No frame set in the archive has a centre piece -- all thirty-odd are
+## exactly eight tiles, four corners and four edges -- so a window's body is
+## not painted by its frame, and nothing hardcodes a fill texture either. An
+## earlier version of this project picked a dark colour by eye and said so
+## in a comment. It did not need to: the frame's own edge tiles are opaque
+## and carry the colour the body continues, so reading a pixel out of them
+## gives the real answer and adapts to whichever frame set a window uses.
+##
+## Sampled from the bottom row of `<base>mid_up.ddj`, which is the edge the
+## body runs down from. Returns a transparent colour when the piece cannot
+## be read, so a caller can tell "unknown" from "black".
+func frame_interior_colour(ddj_base: String) -> Color:
+	if ddj_base == "" or not ddj_base.ends_with("_"):
+		return Color(0, 0, 0, 0)
+	var tex := load_texture(ddj_base + "mid_up.ddj")
+	if tex == null:
+		return Color(0, 0, 0, 0)
+	var image := tex.get_image()
+	if image == null:
+		return Color(0, 0, 0, 0)
+	if image.is_compressed():
+		image.decompress()
+	if image.get_width() == 0 or image.get_height() == 0:
+		return Color(0, 0, 0, 0)
+	return image.get_pixel(image.get_width() / 2, image.get_height() - 1)
+
 ## The archive this builder reads from, for callers that need to pull data
 ## files out of it rather than textures.
 func media_archive() -> Pk2Reader:
