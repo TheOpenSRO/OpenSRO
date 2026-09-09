@@ -86,11 +86,13 @@ func _init() -> void:
 		_check((gauge as TextureProgressBar).texture_progress != null,
 			"a gauge with no DDJ still gets a fill texture, so it is visible")
 
-	# A lattice is a grid of slots derived from its pixel rect: 144x288 at a
-	# 32-pixel pitch is 4 columns by 9 rows.
+	# A lattice is a grid of slots derived from its pixel rect and the size of
+	# its own cell artwork: 144x288 at the 36-pixel pitch of `com_lattice_`
+	# is 4 columns by 8 rows. Every one of the archive's 14 lattices divides
+	# by 36 exactly and none divides by 32, which is what this once assumed.
 	var lattice := builder.build_control(sec.control_by_name["TEST_LATTICE"])
-	_check(lattice != null and lattice.get_child_count() == 36,
-		"a 144x288 lattice builds 4x9 = 36 cells (got %d)" % (lattice.get_child_count() if lattice != null else -1))
+	_check(lattice != null and lattice.get_child_count() == 32,
+		"a 144x288 lattice builds 4x8 = 32 cells (got %d)" % (lattice.get_child_count() if lattice != null else -1))
 
 	# Colour is a per-control editor id, not a tint -- see docs/UI_TODO.md.
 	# Every control above carries a different one; none may reach modulate.

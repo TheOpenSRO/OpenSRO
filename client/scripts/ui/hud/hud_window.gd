@@ -13,21 +13,38 @@ class_name HudWindow
 ## into its eight pieces, so building a window is: read the layout, build
 ## the section, size to the frame.
 ##
-## What the layout does *not* carry is the title bar text or the close
-## button -- the real client draws those itself over the frame's top edge.
-## Those are added here, and their placement is this project's own choice,
-## not recovered data.
+## Most layouts do not carry the title text or the close button -- the real
+## client's window base draws those itself over the frame's top edge. A few
+## do, though, and those are what the chrome added here is measured from:
+## see TITLE_BAR_HEIGHT.
 
 const UiBuilder = preload("res://scripts/ui/ui_builder.gd")
 const UiLayoutParser = preload("res://scripts/ui/ui_layout_parser.gd")
 
 signal closed
 
-## Height of the frame's own title strip. The 8-slice bases used by real
-## panels have a tall top piece (`mframe_wnd_left_up.ddj` is 40x68,
-## `mid_up` 128x68), and the title sits inside it.
-const TITLE_BAR_HEIGHT := 22.0
+## Window chrome, taken from the layouts that spell theirs out.
+##
+## ifalchemybox.txt is the one that gives the whole convention at once, in a
+## 376-wide window:
+##
+##   GDR_ALCHEMYBOX_DRAG   CIFDragableArea  10,  0, 355, 42
+##   GDR_ALCHEMYBOX_TITLE  CIFStatic        10, 18, 355, 12   HAlign=1
+##   GDR_ALCHEMYBOX_CLOSE  CIFCloseButton  350, 12,  16, 16
+##
+## -- a 42-pixel title strip inset 10 from each side, a centred caption 12
+## tall sitting 18 down, and a 16x16 close button 26 in from the right edge.
+## Every other close button in the archive is 16x16 too (iftargetwindow,
+## ifteleportboard, ifnewalchemybox), so the size at least is not one
+## window's habit.
+const TITLE_BAR_HEIGHT := 42.0
+const TITLE_INSET := 10.0
+const TITLE_TEXT_Y := 18.0
+const TITLE_TEXT_HEIGHT := 12.0
 const CLOSE_BUTTON_SIZE := 16.0
+const CLOSE_BUTTON_Y := 12.0
+## Distance from the window's right edge to the close button's left edge.
+const CLOSE_BUTTON_INSET := 26.0
 
 var _builder: UiBuilder
 var _dragging := false
@@ -62,27 +79,11 @@ func build(builder: UiBuilder, layout_path: String, title: String) -> bool:
 	# not steal them from its own children, so PASS rather than STOP.
 	mouse_filter = Control.MOUSE_FILTER_PASS
 
-	# Interior fill, behind everything, in the window's own frame colour.
-	#
-	# No frame set in the archive has a centre piece, so the body is not
-	# painted by the frame art and has to be filled. The colour is taken
-	# from the frame's own edge tile rather than chosen by eye -- see
-	# UiBuilder.frame_interior_colour. A window whose frame cannot be read
-	# falls back to opaque black, which is wrong but never see-through.
-	var frame_base := ""
-	for def in sec.controls:
-		if def.ddj.ends_with("_") and def.rect.position == Vector2i.ZERO:
-			frame_base = def.ddj
-			break
-	var interior := builder.frame_interior_colour(frame_base)
-	if interior.a <= 0.0:
-		interior = Color(0, 0, 0, 1)
-	var fill := ColorRect.new()
-	fill.name = "InteriorFill"
-	fill.color = interior
-	fill.size = window_size
-	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(fill)
+	# No interior fill is added here any more. A window's body is filled by
+	# its own `CIFNormalTile` controls, which the layout declares and
+	# UiBuilder now builds -- see _build_tile. Two earlier attempts (a flat
+	# colour chosen by eye, then one sampled from the frame's edge pixels)
+	# were both working around a control type that simply was not handled.
 
 	panel_root = builder.build_section(layout, "Create")
 	if panel_root == null:
@@ -93,7 +94,37 @@ func build(builder: UiBuilder, layout_path: String, title: String) -> bool:
 	add_child(panel_root)
 
 	_add_title_bar(title)
+	set_process(true)
 	return true
+
+## Puts every control back on the rect its layout asked for.
+##
+## Godot clamps a Control's size up to its minimum, and a Label's minimum is
+## computed from the theme's default font until the theme cache refreshes --
+## which takes a frame in the tree. Until then every authored row is forced
+## to the height of Godot's own 16px face: ifplayerinfo's 12-pixel exp rows
+## came out 23 tall, and so did every window's close button. So the rects
+## are applied once more after a frame has passed.
+## Frames left in the settling pass. A Label's minimum size is computed
+## from the theme's *default* font until its theme cache refreshes, and
+## Godot clamps `size` up to that minimum, so a rect applied too early is
+## silently inflated -- ifplayerinfo's 12-pixel exp rows came out 23 tall,
+## the height of Godot's own 16px face. One frame is normally enough; a
+## few are cheap and remove the guesswork about exactly which one.
+const SETTLE_FRAMES := 3
+var _settle_frames_left := SETTLE_FRAMES
+
+func _process(_delta: float) -> void:
+	_settle_frames_left -= 1
+	if _settle_frames_left <= 0:
+		set_process(false)
+	if panel_root != null and is_instance_valid(panel_root):
+		UiBuilder.apply_authored_rects(panel_root)
+	var bar := get_node_or_null("TitleBar")
+	if bar is Control:
+		var label := bar as Control
+		label.custom_minimum_size = Vector2.ZERO
+		label.size = Vector2(size.x - TITLE_INSET * 2.0, TITLE_TEXT_HEIGHT)
 
 func _add_title_bar(title: String) -> void:
 	var bar := Label.new()
@@ -101,8 +132,8 @@ func _add_title_bar(title: String) -> void:
 	bar.text = title
 	bar.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bar.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	bar.position = Vector2(0, 2)
-	bar.size = Vector2(size.x, TITLE_BAR_HEIGHT)
+	bar.position = Vector2(TITLE_INSET, TITLE_TEXT_Y)
+	bar.size = Vector2(size.x - TITLE_INSET * 2.0, TITLE_TEXT_HEIGHT)
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar.add_theme_color_override("font_color", Color(0.93, 0.87, 0.70))
 	# The client's own UI font, so a window title doesn't sit in Godot's
@@ -115,16 +146,43 @@ func _add_title_bar(title: String) -> void:
 		bar.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
 	add_child(bar)
 
-	var close := Button.new()
+	# A layout that declares its own close button already built one, and
+	# putting a second over it would be wrong in both look and behaviour.
+	var own_close := _find_close_button()
+	if own_close != null:
+		own_close.pressed.connect(_on_close_pressed)
+		return
+
+	var close := TextureButton.new()
 	close.name = "CloseButton"
-	close.text = "x"
-	close.position = Vector2(size.x - CLOSE_BUTTON_SIZE - 6.0, 4.0)
+	close.ignore_texture_size = true
+	close.stretch_mode = TextureButton.STRETCH_SCALE
+	close.position = Vector2(size.x - CLOSE_BUTTON_INSET, CLOSE_BUTTON_Y)
 	close.size = Vector2(CLOSE_BUTTON_SIZE, CLOSE_BUTTON_SIZE)
 	close.focus_mode = Control.FOCUS_NONE
-	close.pressed.connect(func() -> void:
-		hide()
-		closed.emit())
+	if _builder != null:
+		close.texture_normal = _builder.load_texture(UiBuilder.CLOSE_BUTTON_DDJ)
+		close.texture_hover = _builder.load_texture(
+			UiBuilder.CLOSE_BUTTON_DDJ.replace(".ddj", "_focus.ddj"))
+		close.texture_pressed = _builder.load_texture(
+			UiBuilder.CLOSE_BUTTON_DDJ.replace(".ddj", "_press.ddj"))
+	close.pressed.connect(_on_close_pressed)
 	add_child(close)
+
+## The close button the layout declared, if it declared one. Four of the six
+## CIFCloseButtons in the archive name no artwork of their own, which is why
+## UiBuilder gives that type the client's hardcoded default.
+func _find_close_button() -> BaseButton:
+	if panel_root == null:
+		return null
+	for child in panel_root.get_children():
+		if child is BaseButton and (child as Node).name.to_upper().contains("CLOSE"):
+			return child as BaseButton
+	return null
+
+func _on_close_pressed() -> void:
+	hide()
+	closed.emit()
 
 ## Drag by the title strip, and raise on any click so a click brings the
 ## window to the front the way every other window manager behaves.

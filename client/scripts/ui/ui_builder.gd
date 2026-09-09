@@ -38,21 +38,40 @@ func load_layout(layout_path: String) -> UiLayoutParser.LayoutDef:
 	_layout_cache[layout_path] = layout
 	return layout
 
-## The size a window built from this section should be: the largest rect
-## among its controls that starts at the origin -- which in every real
-## layout read is the window's own CIFFrame (ifinventory's
-## GDR_INVENTORY_FRAME is 0,0,176,308). Falls back to the bounding box of
-## everything, so a layout with no frame still gets a sensible size rather
-## than zero.
+## The size a window built from this section should be: its frame's rect,
+## extended by any **artwork** that reaches past it.
+##
+## The frame is the rect that starts at the origin -- ifinventory's
+## GDR_INVENTORY_FRAME is `0,0,176,308` -- and a layout with no frame falls
+## back to the bounding box so it does not come out zero.
+##
+## The frame is not always the whole window, though. ifinventory's gold row
+## (GDR_INVENTORY_STA_MONEY, `0,305,176,28`, carrying
+## `int_window_downbox.ddj`) hangs 25 pixels below the frame's bottom edge
+## and is plainly part of the window; sized to the frame alone it fell
+## outside both the window and its hit area.
+##
+## Only artwork extends a window, not every control. Text fields are
+## authored as generous boxes and overrun: ifplayerinfo's GDR_PI_TEXT_HP_DAT
+## is 228 wide starting at x=153 in a 364-wide window, so counting it made
+## the character panel 381 wide for a field the client clips. Across the
+## archive's 140 framed sections, artwork stays inside the frame in 103 and
+## every control in only 92 -- and the sections where artwork does overrun
+## are the ones, like the inventory, where it is meant to.
 static func section_size(sec: UiLayoutParser.SectionDef) -> Vector2:
 	var framed := Vector2.ZERO
+	var art := Vector2.ZERO
 	var bounds := Vector2.ZERO
 	for def in sec.controls:
 		var far := Vector2(def.rect.position + def.rect.size)
 		bounds = Vector2(maxf(bounds.x, far.x), maxf(bounds.y, far.y))
+		if def.ddj != "":
+			art = Vector2(maxf(art.x, far.x), maxf(art.y, far.y))
 		if def.rect.position == Vector2i.ZERO and def.rect.size.x > framed.x:
 			framed = Vector2(def.rect.size)
-	return framed if framed != Vector2.ZERO else bounds
+	if framed == Vector2.ZERO:
+		return bounds
+	return Vector2(maxf(framed.x, art.x), maxf(framed.y, art.y))
 
 func _init(media_pk2: Pk2Reader = null, text_table: UiTextTable = null) -> void:
 	_media_pk2 = media_pk2
@@ -99,8 +118,18 @@ func build_section(layout: UiLayoutParser.LayoutDef, section_name: String = "Cre
 		root.size = Vector2(sec.rect.size)
 		root.custom_minimum_size = Vector2(sec.rect.size)
 
-	for ctrl_def in sec.controls:
-		var node := build_control(ctrl_def)
+	# **Back to front.** A resinfo section lists its controls in front-to-
+	# back order: the window's own frame is always the *last* entry
+	# (`GDR_PI_SUBFRAME` in ifplayerinfo, `GDR_INVENTORY_FRAME` in
+	# ifinventory), and a frame has to be behind everything it frames.
+	# Godot draws children in tree order, so the list is added reversed.
+	#
+	# Adding them in file order put every window's frame and background
+	# tiles on top of its own contents -- which is why the inventory looked
+	# like an empty bordered box, and why the character panel's labels
+	# vanished the moment its background tiles started being built.
+	for i in range(sec.controls.size() - 1, -1, -1):
+		var node := build_control(sec.controls[i])
 		if node != null:
 			root.add_child(node)
 
@@ -111,14 +140,18 @@ func build_control(def: UiLayoutParser.ControlDef) -> Control:
 	var node: Control = null
 
 	match def.type:
-		"CIFButton":
+		"CIFButton", "CIFCloseButton":
 			node = _build_button(def)
 		"CIFStatic":
 			node = _build_static(def)
 		"CIFGauge":
 			node = _build_gauge(def)
-		"CIFFrame", "CIFStretchWnd":
+		"CIFFrame", "CIFStretchWnd", "CIFSubFrame":
 			node = _build_frame(def)
+		"CIFNormalTile":
+			node = _build_tile(def)
+		"CIFDecoratedStatic", "CIFBarWnd":
+			node = _build_static(def)
 		"CIFEdit", "CIFEInputChatBox":
 			node = _build_edit(def)
 		"CIFSlotWithHelp", "CIFSlot", "CIFExtQuickSlotSlot", "CIFPartySlot":
@@ -133,6 +166,11 @@ func build_control(def: UiLayoutParser.ControlDef) -> Control:
 		node.name = def.name
 		node.position = Vector2(def.rect.position)
 		if def.rect.size.x > 0 and def.rect.size.y > 0:
+			# The meta records what the layout *asked for*, not `node.size`:
+			# the assignment on the next line is clamped up to the node's
+			# minimum, so reading it back stores the inflated size and the
+			# settling pass then re-applies the very number it exists to fix.
+			node.set_meta(AUTHORED_RECT_META, Rect2(Vector2(def.rect.position), Vector2(def.rect.size)))
 			node.size = Vector2(def.rect.size)
 			node.custom_minimum_size = Vector2(def.rect.size)
 		else:
@@ -147,32 +185,74 @@ func build_control(def: UiLayoutParser.ControlDef) -> Control:
 			# fallback.
 			var natural := _natural_size(def)
 			if natural != Vector2.ZERO:
+				node.set_meta(AUTHORED_RECT_META, Rect2(Vector2(def.rect.position), natural))
 				node.size = natural
 				node.custom_minimum_size = natural
 
 	return node
 
+## Where build_control stashes the rect the layout asked for.
+const AUTHORED_RECT_META := "srrevamp_authored_rect"
+
+## Re-applies every authored rect, after the tree has settled.
+##
+## Godot clamps `Control.size` up to the node's combined minimum size, and
+## for a Label that minimum is computed from the theme's *default* font
+## until the theme cache refreshes -- which does not happen until the node
+## has been in the tree for a frame. Assigning the rect at build time
+## therefore silently inflated every authored row: ifplayerinfo's
+## GDR_PI_TEXT_CURXP is `65x12` and came out `65x23`, the height of Godot's
+## own 16px face, and the close button of every window came out twice as
+## tall as it was asked to be.
+##
+## The same clamp caught the background tiles for a different reason -- a
+## TextureRect's minimum is its texture -- which is why GDR_PI_BG_TILE_D,
+## authored `332x37` over a 128x128 tile, covered 332x128 and buried the
+## rows under it. That one is fixed at the source (EXPAND_IGNORE_SIZE);
+## this pass is for the rest.
+static func apply_authored_rects(root: Node) -> void:
+	if root is Control and root.has_meta(AUTHORED_RECT_META):
+		var rect: Rect2 = root.get_meta(AUTHORED_RECT_META)
+		var ctrl := root as Control
+		ctrl.custom_minimum_size = Vector2.ZERO
+		ctrl.position = rect.position
+		ctrl.size = rect.size
+	for child in root.get_children():
+		apply_authored_rects(child)
+
 ## The size of a control's own artwork, or zero if it has none.
 func _natural_size(def: UiLayoutParser.ControlDef) -> Vector2:
-	if def.ddj == "":
+	var art := def.ddj
+	if art == "" and def.type == "CIFCloseButton":
+		art = CLOSE_BUTTON_DDJ
+	if art == "":
 		return Vector2.ZERO
-	var tex := load_texture(def.ddj)
+	var tex := load_texture(art)
 	if tex == null:
 		return Vector2.ZERO
 	return tex.get_size()
+
+## The close button's artwork when its layout names none, which four of the
+## archive's six CIFCloseButtons do not. The client's own close-button class
+## hardcodes this path and builds its focus and press states from the usual
+## suffixes.
+const CLOSE_BUTTON_DDJ := "interface\\ifcommon\\com_windowclose.ddj"
 
 func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 	var btn := TextureButton.new()
 	btn.ignore_texture_size = true
 	btn.stretch_mode = TextureButton.STRETCH_SCALE
 
-	if def.ddj != "":
-		btn.texture_normal = load_texture_region(def.ddj, def.uv_lt, def.uv_rb)
+	var art := def.ddj
+	if art == "" and def.type == "CIFCloseButton":
+		art = CLOSE_BUTTON_DDJ
+	if art != "":
+		btn.texture_normal = load_texture_region(art, def.uv_lt, def.uv_rb)
 
 		# State textures convention: _focus, _press, _disable
-		var focus_path := _insert_suffix(def.ddj, "_focus")
-		var press_path := _insert_suffix(def.ddj, "_press")
-		var disable_path := _insert_suffix(def.ddj, "_disable")
+		var focus_path := _insert_suffix(art, "_focus")
+		var press_path := _insert_suffix(art, "_press")
+		var disable_path := _insert_suffix(art, "_disable")
 
 		btn.texture_hover = load_texture(focus_path)
 		btn.texture_focused = btn.texture_hover
@@ -216,6 +296,7 @@ func _build_static(def: UiLayoutParser.ControlDef) -> Control:
 			label.set_anchors_preset(Control.PRESET_FULL_RECT)
 			if def.font_color != Color.WHITE:
 				label.add_theme_color_override("font_color", def.font_color)
+			_apply_font(label, def)
 			rect.add_child(label)
 
 		return rect
@@ -266,19 +347,6 @@ func _build_gauge(def: UiLayoutParser.ControlDef) -> TextureProgressBar:
 
 	return gauge
 
-## Interior fill for a framed window.
-##
-## **This colour is ours, not authored.** Every 8-slice frame set in the
-## archive -- `mframe_wnd_`, `int_window_`, `game_window_`, `event_sub_wnd_`
-## and the rest, 30-odd of them -- contains exactly eight pieces: four
-## corners and four edges, and **no centre**. So the interior of a window is
-## not painted by the frame art, and nothing found so far says what the real
-## client fills it with. Left unfilled the windows are see-through, which is
-## worse than a stand-in, so this is a flat dark fill chosen to match what
-## the reference screenshots show. Replace it the moment the real fill is
-## identified.
-const FRAME_FILL := Color(0.055, 0.055, 0.07, 0.94)
-
 func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 	var container := Control.new()
 	container.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -293,6 +361,25 @@ func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 		var ld := load_texture(def.ddj + "left_down.ddj")
 		var md := load_texture(def.ddj + "mid_down.ddj")
 		var rd := load_texture(def.ddj + "right_down.ddj")
+
+		# A six-piece set has no horizontal edge art of its own, and the
+		# client reuses the vertical pieces for the top and bottom.
+		#
+		# `com_lattice_outline_` is the one in play here -- the border the
+		# inventory draws around its item grid -- and it ships four corners
+		# and two sides, all 4x4. Its loader in the client fills four edge
+		# slots from those two textures, taking `left_side` twice and then
+		# `right_side` twice; the corner loader beside it fills its four from
+		# left_up, right_up, right_down, left_down, a clockwise walk from the
+		# top-left. Reading the edge slots the same way as left, top, right,
+		# bottom is the only assignment that leaves the piece named
+		# `right_side` on the right, and it puts the darker tile (peak 0x39)
+		# on the top and left and the brighter one (peak 0x6a) on the bottom
+		# and right, which is the way the corner art is lit.
+		if mu == null and ls != null:
+			mu = ls
+		if md == null and rs != null:
+			md = rs
 
 		var corner_w := lu.get_width() if lu != null else 10
 		var corner_h := lu.get_height() if lu != null else 10
@@ -328,15 +415,30 @@ func _build_edit(def: UiLayoutParser.ControlDef) -> LineEdit:
 		edit.placeholder_text = _resolve_text(def.text)
 	return edit
 
-func _build_slot(def: UiLayoutParser.ControlDef) -> Control:
+## One item cell. `background` overrides the control's own `ddj`, which is
+## how a lattice hands each cell the piece its position calls for -- a
+## lattice's `ddj` is an 8-slice-style base and is not loadable as a single
+## texture, so a cell built from it came out empty. That is why the
+## inventory was a bordered hole with the world showing through it.
+func _build_slot(def: UiLayoutParser.ControlDef, background: Texture2D = null,
+		cell_size: Vector2 = Vector2.ZERO) -> Control:
 	var slot := Control.new()
 	slot.mouse_filter = Control.MOUSE_FILTER_PASS
+	# The three layers are anchored to fill the slot, but they are also sized
+	# outright: a Control does not lay its children out until it has been in
+	# the tree and resized, and a lattice cell is built, filled and measured
+	# before any of that happens.
+	var inner: Vector2 = cell_size if cell_size != Vector2.ZERO else Vector2(def.rect.size)
 
-	if def.ddj != "":
+	var art: Texture2D = background
+	if art == null and def.ddj != "" and not def.ddj.ends_with("_"):
+		art = load_texture_region(def.ddj, def.uv_lt, def.uv_rb)
+	if art != null:
 		var bg := TextureRect.new()
 		bg.name = "SlotBg"
-		bg.texture = load_texture_region(def.ddj, def.uv_lt, def.uv_rb)
+		bg.texture = art
 		bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+		bg.size = inner
 		bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		slot.add_child(bg)
@@ -344,6 +446,7 @@ func _build_slot(def: UiLayoutParser.ControlDef) -> Control:
 	var icon := TextureRect.new()
 	icon.name = "ItemIcon"
 	icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+	icon.size = inner
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	slot.add_child(icon)
@@ -353,37 +456,104 @@ func _build_slot(def: UiLayoutParser.ControlDef) -> Control:
 	count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	count_lbl.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	count_lbl.set_anchors_preset(Control.PRESET_FULL_RECT)
+	count_lbl.size = inner
 	count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_font(count_lbl, def)
 	slot.add_child(count_lbl)
 
 	return slot
 
-## The cell pitch of a lattice, in pixels. Real inventory art is a 32x32
-## slot on a 32-pixel grid; ifinventory's GDR_INVENTORY_LATTICE is 144x288,
-## which is not a whole number of 32s (4.5 x 9). The 4-pixel shortfall is
-## the outline the layout draws around it (GDR_INVENTORY_LATTICE_OUTLINE is
-## 146x290 at 15,10 against the lattice's 144x288 at 18,13), so the usable
-## grid is 4 columns and the remainder is border. Rounding down is what
-## keeps a partial cell from being drawn.
-const LATTICE_CELL := 32
+## Cell pitch when a lattice names no artwork, in pixels. Every lattice in
+## the archive does name artwork, so this is only a floor.
+const LATTICE_CELL_FALLBACK := 36
 
-## Builds a slot grid. A CIFLattice is the item-grid control -- the
-## inventory's 5x9 of item slots, and the same control in storage and
-## stall windows. The layout gives its pixel rect, not a row/column count,
-## so the grid is derived from the cell pitch.
+## The four cell pieces of a lattice, in the order the client loads them.
+##
+## `CIFLattice`'s ddj is an 8-slice-style base with a trailing underscore --
+## every one of them is `interface\\ifcommon\\lattice_window\\com_lattice_`,
+## which is also hardcoded in the client as the default -- but unlike a
+## frame it expands to only **four** names. The client's loader for it takes
+## exactly `left_up`, `right_up`, `right_down`, `left_down` and nothing else,
+## against the eight a frame takes and the six a stretch window takes.
+##
+## The four are not corners. They are one cell each, differing only in which
+## separators they carry, because a grid's cells share their dividers:
+##
+##   left_up     opaque to its edges -- draws the divider on its right and
+##               the bar under it, so it serves every interior cell
+##   right_up    right 4 columns transparent -- last column, no divider
+##   left_down   bottom 4 rows transparent -- last row, no bar
+##   right_down  both transparent -- the bottom-right cell
+##
+## (Measured from the art's alpha: 0, 144, 144 and 272 fully transparent
+## pixels respectively, out of 36x36.)
+const LATTICE_PIECES := ["left_up.ddj", "right_up.ddj", "left_down.ddj", "right_down.ddj"]
+
+## Builds a slot grid: the inventory's item cells, and the same control in
+## storage, stalls, exchange and the action bar.
+##
+## **The grid comes from the artwork, not from a count.** The layout gives a
+## lattice a pixel rect and nothing else, and the cell is one piece of its
+## own art -- 36x36 for `com_lattice_`. Every one of the 14 lattices in the
+## archive divides by that exactly, in both axes and with no remainder:
+## inventory 4x8, storage and stalls 6x5, exchange 6x2, the action bar 9x2
+## and 4x2, the pet bag 7x4. Not one of them divides by 32, which is what
+## this used to assume.
 func _build_lattice(def: UiLayoutParser.ControlDef) -> Control:
 	var grid := Control.new()
 	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var cols: int = maxi(1, def.rect.size.x / LATTICE_CELL)
-	var rows: int = maxi(1, def.rect.size.y / LATTICE_CELL)
-	for i in range(cols * rows):
-		var slot := _build_slot(def)
-		slot.name = "Cell%d" % i
-		slot.position = Vector2((i % cols) * LATTICE_CELL, (i / cols) * LATTICE_CELL)
-		slot.size = Vector2(LATTICE_CELL, LATTICE_CELL)
-		slot.custom_minimum_size = slot.size
-		grid.add_child(slot)
+
+	var pieces: Array[Texture2D] = []
+	for suffix in LATTICE_PIECES:
+		pieces.append(load_texture(def.ddj + suffix) if def.ddj.ends_with("_") else null)
+
+	var cell := LATTICE_CELL_FALLBACK
+	if pieces[0] != null:
+		cell = maxi(1, int(pieces[0].get_width()))
+
+	var cols: int = maxi(1, def.rect.size.x / cell)
+	var rows: int = maxi(1, def.rect.size.y / cell)
+	for row in range(rows):
+		for col in range(cols):
+			var last_col := col == cols - 1
+			var last_row := row == rows - 1
+			var piece: Texture2D = pieces[(2 if last_row else 0) + (1 if last_col else 0)]
+			var slot := _build_slot(def, piece, Vector2(cell, cell))
+			slot.name = "Cell%d" % (row * cols + col)
+			slot.position = Vector2(col * cell, row * cell)
+			slot.size = Vector2(cell, cell)
+			slot.custom_minimum_size = slot.size
+			grid.add_child(slot)
 	return grid
+
+## Builds a tiled background panel.
+##
+## **This is what fills a window's body.** No 8-slice frame set in the
+## archive has a centre piece -- confirmed twice, and confirmed a third time
+## in the client itself, where `CNIFFrame` loads exactly eight suffixes
+## (`left_up`, `mid_up`, `right_up`, `left_side`, `right_side`, `left_down`,
+## `mid_down`, `right_down`) and no ninth. The interior is not the frame's
+## job at all: the layout declares `CIFNormalTile` controls over the body,
+## carrying textures from `interface\\ifcommon\\bg_tile\\`, and those tile to
+## fill it. ifplayerinfo.txt has three, covering the panel between its
+## decorative dividers.
+##
+## `CIFNormalTile` is the fourth most common control type in the archive --
+## **253** across the layouts -- and building it as a plain Control, which
+## is what happened before, is why every window came out hollow. Two rounds
+## were spent inventing an interior colour and then deriving one from the
+## frame's edge pixels; neither was necessary.
+func _build_tile(def: UiLayoutParser.ControlDef) -> TextureRect:
+	var tile := TextureRect.new()
+	tile.texture = load_texture_region(def.ddj, def.uv_lt, def.uv_rb)
+	tile.stretch_mode = TextureRect.STRETCH_TILE
+	# Without this the node's minimum size is the tile's own -- 128x128 --
+	# and an authored strip smaller than that grows to fit it. That is what
+	# made GDR_PI_BG_TILE_D, a 37-pixel band, cover 128 pixels of the
+	# character panel and hide the rows beneath.
+	tile.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tile.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return tile
 
 func _build_generic(def: UiLayoutParser.ControlDef) -> Control:
 	var ctrl := Control.new()
@@ -503,35 +673,6 @@ func font_at(index: int) -> FontFile:
 func font_count() -> int:
 	_load_fonts()
 	return _fonts.size()
-
-## The colour a window's interior should be, taken from its own frame
-## artwork rather than chosen.
-##
-## No frame set in the archive has a centre piece -- all thirty-odd are
-## exactly eight tiles, four corners and four edges -- so a window's body is
-## not painted by its frame, and nothing hardcodes a fill texture either. An
-## earlier version of this project picked a dark colour by eye and said so
-## in a comment. It did not need to: the frame's own edge tiles are opaque
-## and carry the colour the body continues, so reading a pixel out of them
-## gives the real answer and adapts to whichever frame set a window uses.
-##
-## Sampled from the bottom row of `<base>mid_up.ddj`, which is the edge the
-## body runs down from. Returns a transparent colour when the piece cannot
-## be read, so a caller can tell "unknown" from "black".
-func frame_interior_colour(ddj_base: String) -> Color:
-	if ddj_base == "" or not ddj_base.ends_with("_"):
-		return Color(0, 0, 0, 0)
-	var tex := load_texture(ddj_base + "mid_up.ddj")
-	if tex == null:
-		return Color(0, 0, 0, 0)
-	var image := tex.get_image()
-	if image == null:
-		return Color(0, 0, 0, 0)
-	if image.is_compressed():
-		image.decompress()
-	if image.get_width() == 0 or image.get_height() == 0:
-		return Color(0, 0, 0, 0)
-	return image.get_pixel(image.get_width() / 2, image.get_height() - 1)
 
 ## The archive this builder reads from, for callers that need to pull data
 ## files out of it rather than textures.

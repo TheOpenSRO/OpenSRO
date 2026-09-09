@@ -5468,3 +5468,119 @@ which is both correct and adapts to whichever of the thirty-odd frame sets a
 window uses -- and they genuinely differ: `mframe_wnd_` gives RGB(24,20,24)
 while `int_window_` gives RGB(41,41,41). One constant could not have been
 right for both.
+
+## Hundred-and-thirteenth round: the windows were fighting Godot's minimum sizes
+
+Four separate window defects, all measured rather than looked at, and three
+of them turned out to be the same defect wearing different clothes.
+
+### Draw order runs the other way
+
+A resinfo section lists its controls **front to back**. `ifplayerinfo.txt`
+opens with `GDR_PI_ARRANGE_DATA` and ends, 73 controls later, with
+`GDR_PI_SUBFRAME`; `ifinventory.txt` ends with `GDR_INVENTORY_FRAME`. A
+frame is behind everything it frames, so the last entry is the backmost.
+
+Godot draws children in tree order, so the list has to be added reversed.
+Adding it in file order is why the inventory was an empty bordered box and
+why the character panel's labels disappeared the moment its background tiles
+started being built.
+
+### `CIFNormalTile` is what fills a window
+
+Confirmed for the third time that no 8-slice frame set has a centre piece --
+`CNIFFrame` in the client loads exactly eight suffixes and no ninth -- and
+this time the answer was in the authored data rather than the binary:
+ifplayerinfo declares three `CIFNormalTile` controls
+(`GDR_PI_BG_TILE_D`, `_B`, `_B2`) carrying
+`interface\ifcommon\bg_tile\com_bg_tile_*.ddj` over the window's body.
+`CIFNormalTile` is the fourth most common control type in the archive, 253
+instances, and `UiBuilder` was building it as an empty `Control`. That is
+why every window was hollow, and why two earlier rounds went looking for a
+fill colour that was never needed. The sampled-from-the-frame colour and the
+flat `Color(0.055, 0.055, 0.07, 0.94)` before it are both gone.
+
+### An item grid's cell is 36 pixels, and comes from the art
+
+`CIFLattice`'s `ddj` is an 8-slice-style base with a trailing underscore,
+but unlike a frame it expands to only **four** names: the client's loader
+takes `left_up`, `right_up`, `right_down`, `left_down` and stops. They are
+not corners -- they are one cell each, differing in which shared separators
+they carry. Measured from the alpha of the 36x36 art: `left_up` is opaque to
+its edges (interior cell, draws the divider on its right and the bar below),
+`right_up` has 144 transparent pixels in a 4-wide column (last column),
+`left_down` has 144 in a 4-tall row (last row), `right_down` has 272 (the
+bottom-right cell).
+
+So the grid comes from the artwork. **All 14 lattices in the archive divide
+by 36 exactly, in both axes; not one divides by 32.** The inventory is 4x8,
+storage and stalls are 6x5, exchange is 6x2, the action bar is 9x2 and 4x2,
+the pet bag is 7x4. The old `LATTICE_CELL := 32` -- and its comment
+explaining away the 4.5-column remainder as border -- was a guess dressed as
+a finding, and it also meant every cell tried to load the 8-slice base as a
+single texture, got nothing, and drew an empty hole.
+
+### Godot's minimum size was silently inflating every authored rect
+
+`Control.set_size()` clamps up to the combined minimum size, and three
+different minimums were winning against the layout:
+
+- a `TextureRect`'s minimum is its texture, so `GDR_PI_BG_TILE_D`, authored
+  `332x37` over a 128x128 tile, came out `332x128` and buried the rows under
+  it. Fixed with `EXPAND_IGNORE_SIZE`.
+- a `Label`'s minimum is computed from the theme's **default** font until
+  its theme cache refreshes, which takes a frame in the tree. Measured: a
+  Label with a 9px override reports minimum height 23 immediately and 13
+  after one `process_frame`. So every authored 12-pixel row was built 23
+  tall.
+- a `Button` with text has a minimum from its text and stylebox, so a
+  16x16 close button came out 17x31.
+
+The labels are fixed by re-applying the authored rects over the first few
+frames. The trap inside the trap: the first version stored
+`Rect2(node.position, node.size)` as the rect to restore -- reading back the
+value that had just been clamped, so the pass re-applied the very number it
+existed to remove.
+
+### Window chrome, from the layouts that spell theirs out
+
+The close button and title were this project's own invention. They no longer
+are. `ifalchemybox.txt` declares the whole convention in a 376-wide window:
+
+```
+GDR_ALCHEMYBOX_DRAG   CIFDragableArea  10,  0, 355, 42
+GDR_ALCHEMYBOX_TITLE  CIFStatic        10, 18, 355, 12   HAlign=1
+GDR_ALCHEMYBOX_CLOSE  CIFCloseButton  350, 12,  16, 16
+```
+
+A 42-pixel title strip inset 10 a side, a centred caption 12 tall at y=18,
+and a 16x16 close button 26 in from the right edge. Every other close button
+in the archive is 16x16 too. Four of the six name no artwork, because the
+client's close-button class hardcodes
+`interface\ifcommon\com_windowclose.ddj` and builds its focus and press
+states from the usual suffixes -- so `CIFCloseButton` is now a control type
+`UiBuilder` knows, with that default.
+
+### A window is its frame plus its artwork
+
+`section_size` used to return the frame's rect. ifinventory's gold row
+(`GDR_INVENTORY_STA_MONEY`, `0,305,176,28`, carrying
+`int_window_downbox.ddj`) hangs 25 pixels below it and was falling outside
+the window and its hit area. Taking the bounding box of *everything* instead
+over-corrected: ifplayerinfo's `GDR_PI_TEXT_HP_DAT` is a 228-wide text field
+starting at x=153 in a 364-wide window, which made the character panel 381
+wide for a field the client clips. Counting only controls that carry
+artwork gets both right -- and across the archive's 140 framed sections
+artwork stays inside the frame in 103 against 92 for every control.
+
+### And a reminder about screenshots
+
+The inventory grid looked like it overflowed the frame on the right. It does
+not. A scanline across the rendered image puts the cell dividers at x=487,
+523 and 559 -- 36 apart -- with the grid ending at 595 and the frame at 609,
+which is the authored layout exactly. The overflow was in the eye.
+
+New tools: `client/tools/dump_layout.gd` (one layout, in declaration order),
+`dump_window_tree.gd` (a built window with every rect, texture and minimum),
+`grep_layouts.gd` (search all 248 layouts by name, type or artwork),
+`sweep_lattice.gd`, `sweep_window_size.gd`.

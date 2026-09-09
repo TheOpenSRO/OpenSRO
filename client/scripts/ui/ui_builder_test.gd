@@ -37,6 +37,14 @@ Section = Create,"0,0,200,100","0"
 	{
 		Rect=RECT,"10,60,180,10"
 	}
+	GDR_TILE:CIFNormalTile
+	{
+		Rect=RECT,"0,0,200,24"
+	}
+	GDR_FRAME:CIFFrame
+	{
+		Rect=RECT,"0,0,200,100"
+	}
 }
 """
 	var layout := UiLayoutParser.parse(layout_text)
@@ -45,7 +53,16 @@ Section = Create,"0,0,200,100","0"
 
 	_check(root != null, "root is non-null")
 	_check(root.name == "Create", "root name is Create")
-	_check(root.get_child_count() == 3, "root has 3 children")
+	_check(root.get_child_count() == 5, "root has 5 children")
+
+	# **Draw order.** A section lists its controls front to back -- the frame
+	# is always last -- and Godot draws children in tree order, so they go in
+	# reversed. Built the other way round, a window's frame and background
+	# tiles cover its own contents.
+	_check(root.get_child(0).name == "GDR_FRAME",
+		"the last-declared control is the first child, i.e. the backmost")
+	_check(root.get_child(root.get_child_count() - 1).name == "GDR_BTN",
+		"the first-declared control is the last child, i.e. the frontmost")
 
 	var btn := root.get_node_or_null("GDR_BTN") as TextureButton
 	_check(btn != null, "found GDR_BTN as TextureButton")
@@ -67,9 +84,77 @@ Section = Create,"0,0,200,100","0"
 
 	root.free()
 
+	_check_section_size()
+	_check_lattice()
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
 	else:
 		push_error("%d failure(s)" % _failures)
 		quit(1)
+
+## A window is its frame *plus* anything hanging off it. ifinventory's gold
+## row sits below the frame's bottom edge, and sizing to the frame alone
+## left it outside the window.
+func _check_section_size() -> void:
+	var layout := UiLayoutParser.parse("""
+Interface Text
+
+Section = Create,"0,0,0,0","0"
+{
+	GDR_MONEY:CIFStatic
+	{
+		Rect=RECT,"0,305,176,28"
+		DDJ=STRING,"interface\\inventory\\int_window_downbox.ddj"
+	}
+	GDR_TEXT_OVERRUN:CIFStatic
+	{
+		Rect=RECT,"153,144,228,11"
+	}
+	GDR_FRAME:CIFFrame
+	{
+		Rect=RECT,"0,0,176,308"
+	}
+}
+""")
+	var sec := layout.get_section("Create")
+	_check(sec != null, "section parsed for the size check")
+	if sec == null:
+		return
+	_check(UiBuilder.section_size(sec) == Vector2(176, 333),
+		"window size covers the frame and the art below it, and is not widened by a text field that overruns (got %s)" % str(UiBuilder.section_size(sec)))
+
+## A lattice's grid comes from its artwork, not from a fixed cell size.
+## With no archive to read art from the fallback pitch applies, which is the
+## real one: every lattice in the archive divides by 36 exactly, and none
+## divides by 32.
+func _check_lattice() -> void:
+	var layout := UiLayoutParser.parse("""
+Interface Text
+
+Section = Create,"0,0,0,0","0"
+{
+	GDR_LAT:CIFLattice
+	{
+		Rect=RECT,"18,13,144,288"
+		DDJ=STRING,"interface\\ifcommon\\lattice_window\\com_lattice_"
+	}
+}
+""")
+	var builder := UiBuilder.new(null, null)
+	var root := builder.build_section(layout, "Create")
+	var grid := root.get_node_or_null("GDR_LAT")
+	_check(grid != null, "lattice built")
+	if grid == null:
+		root.free()
+		return
+	_check(grid.get_child_count() == 32,
+		"the inventory lattice is 4x8 = 32 cells, not 4x9 (got %d)" % grid.get_child_count())
+	var cell := grid.get_node_or_null("Cell0") as Control
+	_check(cell != null and cell.size == Vector2(36, 36),
+		"a cell is 36x36 (got %s)" % (str(cell.size) if cell != null else "-"))
+	var last := grid.get_node_or_null("Cell31") as Control
+	_check(last != null and last.position == Vector2(3 * 36, 7 * 36),
+		"the last cell sits at the far corner of the grid (got %s)" % (str(last.position) if last != null else "-"))
+	root.free()
