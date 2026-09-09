@@ -55,6 +55,7 @@ func TestEntitySnapshotRoundTrip(t *testing.T) {
 func TestEnterWorldResultRoundTripSuccess(t *testing.T) {
 	want := &EnterWorldResult{
 		OK: true, Zone: "jangan", X: 1, Y: 2, Z: 3, Gender: character.GenderChinaMan,
+		HP: 73, MaxHP: character.MaxHP,
 		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, ArmorSlotsMask: armorBit(equipment.SlotMail), HasWeapon: false, HasShield: true, Gender: character.GenderChinaWoman}},
 	}
 	got, err := DecodeEnterWorldResult(want.Encode())
@@ -66,6 +67,12 @@ func TestEnterWorldResultRoundTripSuccess(t *testing.T) {
 	}
 	if got.Others[0] != want.Others[0] {
 		t.Fatalf("got other %+v, want %+v", got.Others[0], want.Others[0])
+	}
+	// Vitals ride between Gender and the entity list, so a mistake here
+	// would also desync everything after it -- which is why the entity
+	// check above is part of this test rather than a separate one.
+	if got.HP != want.HP || got.MaxHP != want.MaxHP {
+		t.Fatalf("got HP %d/%d, want %d/%d", got.HP, got.MaxHP, want.HP, want.MaxHP)
 	}
 }
 

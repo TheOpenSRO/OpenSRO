@@ -80,17 +80,45 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 	var name: String = name_result[0]
 	off = name_result[1]
 
-	# Characters are a genuinely different layout, not a reordering of the
-	# scenery one: several mesh pieces plus a skeleton and an animation
-	# list, all reachable from the header's section table. Take that path
-	# when the file says so. It validates as it goes and returns null if
-	# anything doesn't line up, so a character file this reader has
-	# misunderstood falls back to the scan below rather than producing
-	# confidently wrong paths.
-	if (_le_u32(data, OFF_TYPE) & 0xFFFF) == TYPE_CHARACTER:
-		var character := _parse_character(data, name)
-		if character != null:
-			return character
+	# The header's section table is the authored answer, and it is used for
+	# every object type -- not just characters, as it was at first.
+	#
+	# **Measured across a real Data.pk2's 8,539 .bsr files** with
+	# client/tools/sweep_bsr.gd: the table parses and chains for 7,978 of
+	# them (93%), and on a 1,500-file verified sample **every mesh path it
+	# produces resolves to a real file in the archive** -- zero unresolved.
+	# The forward scan below, by contrast, returned a duplicated mesh for
+	# 2,787 files (a third of the archive drawing one piece twice) and a
+	# different mesh count for 3,770, including objects where it found one
+	# piece and the table found six. Those were rendering with most of
+	# their geometry missing.
+	#
+	# The table validates as it goes and returns null if anything doesn't
+	# line up, so the 7% it can't read fall back to the scan rather than
+	# producing confidently wrong paths.
+	var sections = parse_sections(data)
+	if sections != null and not (sections["meshes"] as Array).is_empty():
+		var obj_type := _le_u32(data, OFF_TYPE) & 0xFFFF
+		var skeletons: Array = sections["skeletons"]
+		# A character with no skeleton is a contradiction -- its pieces are
+		# skin, and posing them needs bones -- so let it fall through to the
+		# scan rather than returning limbs at the origin.
+		if obj_type != TYPE_CHARACTER or not skeletons.is_empty():
+			var built := ParsedObject.new()
+			built.object_name = name
+			var materials: Array = sections["materials"]
+			if not materials.is_empty():
+				built.material_path = materials[0]
+			var meshes: Array = sections["meshes"]
+			built.mesh_path = meshes[0]
+			for i in range(1, meshes.size()):
+				built.sub_mesh_paths.append(meshes[i])
+			for path in sections["animations"]:
+				built.animation_paths.append(path)
+			if not skeletons.is_empty():
+				built.skeleton_path = skeletons[0]
+			built.is_character = obj_type == TYPE_CHARACTER and built.skeleton_path != ""
+			return built
 
 	# The exact byte layout between the name and the mesh/material paths
 	# isn't fully understood (a fixed-looking header field that should
@@ -218,6 +246,51 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 		obj.sub_mesh_paths.append(sub_path)
 
 	return obj
+
+## Reads a file's four sections through the header's offset table, without
+## deciding what to do with them. Returns a dictionary of
+## {materials, meshes, animations, skeletons} (each an Array[String]), or
+## null if the sections don't chain.
+##
+## Exposed separately from _parse_character so a caller can compare the
+## header table against the forward scan on the same real file -- which is
+## how the building-category behaviour was checked across the whole archive
+## before being changed (client/tools/sweep_bsr.gd).
+static func parse_sections(data: PackedByteArray):
+	if data.size() < PREAMBLE_END:
+		return null
+	if data.slice(0, MAGIC_LEN).get_string_from_ascii() != MAGIC:
+		return null
+	var ptr_material := _le_u32(data, OFF_PTR_MATERIAL)
+	var ptr_mesh := _le_u32(data, OFF_PTR_MESH)
+	var ptr_skeleton := _le_u32(data, OFF_PTR_SKELETON)
+	var ptr_animation := _le_u32(data, OFF_PTR_ANIMATION)
+	for ptr in [ptr_material, ptr_mesh, ptr_skeleton, ptr_animation]:
+		if ptr < PREAMBLE_END or ptr + 4 > data.size():
+			return null
+
+	var materials = _read_string_list(data, ptr_material, ".bmt", 4)
+	if materials == null or materials[1] != ptr_mesh:
+		return null
+	var meshes = _read_string_list(data, ptr_mesh, ".bms", 0)
+	if meshes == null or meshes[1] != ptr_animation:
+		return null
+
+	var animations: Array[String] = []
+	var anims = _read_string_list(data, ptr_animation + ANIMATION_HEADER_WORDS * 4, ".ban", 0)
+	if anims != null and anims[1] == ptr_skeleton:
+		animations = anims[0]
+	var skeletons: Array[String] = []
+	var skels = _read_string_list(data, ptr_skeleton, ".bsk", 0)
+	if skels != null:
+		skeletons = skels[0]
+
+	return {
+		"materials": materials[0],
+		"meshes": meshes[0],
+		"animations": animations,
+		"skeletons": skeletons,
+	}
 
 ## Parses a TYPE_CHARACTER file through the header's section offset table.
 ##

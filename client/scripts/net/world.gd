@@ -66,6 +66,10 @@ class EnterWorldResult:
 	var y: float
 	var z: float
 	var gender: String
+	## Vitals as of entering the world, so the HUD can draw a real health
+	## bar immediately. Combat reports player_hp on every attack after that.
+	var hp: int
+	var max_hp: int
 	var others: Array[EntitySnapshot] = []
 	var error: String # decode error, distinct from a well-formed "not ok" response
 
@@ -173,6 +177,13 @@ static func decode_enter_world_result(data: PackedByteArray) -> EnterWorldResult
 		return result
 	result.gender = data.slice(offset, offset + gender_len).get_string_from_utf8()
 	offset += gender_len
+
+	if offset + 8 > data.size():
+		result.error = "truncated vitals"
+		return result
+	result.hp = data.decode_s32(offset)
+	result.max_hp = data.decode_s32(offset + 4)
+	offset += 8
 
 	if offset + 2 > data.size():
 		result.error = "truncated entity count"

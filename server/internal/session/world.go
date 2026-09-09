@@ -215,7 +215,12 @@ type EnterWorldResult struct {
 	Zone    string
 	X, Y, Z float32
 	Gender  string
-	Others  []EntitySnapshot
+	// HP and MaxHP let the client draw a real health bar from the moment it
+	// enters the world. Combat already reports PlayerHP on every attack, so
+	// this is the missing initial value rather than a new channel.
+	HP     int32
+	MaxHP  int32
+	Others []EntitySnapshot
 }
 
 func (r *EnterWorldResult) Encode() []byte {
@@ -228,6 +233,10 @@ func (r *EnterWorldResult) Encode() []byte {
 	out = append(out, encodeFloat32(r.Y)...)
 	out = append(out, encodeFloat32(r.Z)...)
 	out = append(out, encodeStrings(r.Gender)...)
+	vitals := make([]byte, 8)
+	binary.LittleEndian.PutUint32(vitals[0:4], uint32(r.HP))
+	binary.LittleEndian.PutUint32(vitals[4:8], uint32(r.MaxHP))
+	out = append(out, vitals...)
 	countBuf := make([]byte, 2)
 	binary.LittleEndian.PutUint16(countBuf, uint16(len(r.Others)))
 	out = append(out, countBuf...)
@@ -279,6 +288,13 @@ func DecodeEnterWorldResult(data []byte) (*EnterWorldResult, error) {
 		return nil, fmt.Errorf("session: decoding EnterWorldResult: gender: %w", err)
 	}
 	r.Gender = genderFields[0]
+
+	if len(rest) < 8 {
+		return nil, errors.New("session: decoding EnterWorldResult: truncated vitals")
+	}
+	r.HP = int32(binary.LittleEndian.Uint32(rest[0:4]))
+	r.MaxHP = int32(binary.LittleEndian.Uint32(rest[4:8]))
+	rest = rest[8:]
 
 	if len(rest) < 2 {
 		return nil, errors.New("session: decoding EnterWorldResult: truncated entity count")
@@ -564,6 +580,8 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		OK: true, Zone: spawnZone,
 		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
 		Gender: owned.Gender,
+		HP:     int32(owned.HP),
+		MaxHP:  int32(character.MaxHP),
 		Others: otherSnapshots,
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: result.Encode()}); err != nil {

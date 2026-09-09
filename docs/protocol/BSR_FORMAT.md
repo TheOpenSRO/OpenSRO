@@ -47,7 +47,7 @@ bytes ahead of the bounding-box floats.
 | 0x24 | 4 | Offset of a further section, contents unconfirmed (reaches the `"ambient"` / `.efp` effect block) |
 | 0x28 | 4 | Offset of the bounding-box block; equals `name_end + 48` in every file checked |
 | 0x2C-0x3C | 16 | Reserved (observed 0) |
-| 0x40 | 2 | **Object type** — `1` character, `2` building, `4` nature (see below) |
+| 0x40 | 2 | **Object type** — eight values across the archive; `1` is character (see below) |
 | 0x42 | 2 | Observed `2` in every file checked |
 | 0x44 | 4 | Name length (`uint32`) |
 | 0x48 | ... | Name string (ASCII, not null-terminated — length-prefixed) |
@@ -57,13 +57,24 @@ bytes ahead of the bounding-box floats.
 The low `uint16` at 0x40 is the game's own classification of the object, authored in the file.
 It is what distinguishes the layouts below — the field order differences this document previously
 attributed to a path-prefix convention (`res\bldg\...` vs `res\nature\...`) are really a
-consequence of type:
+consequence of type.
 
-| Value | Meaning | Observed in |
-|---|---|---|
-| 1 | Character — skinned, has a skeleton | `chinaquest_priest`, `chinasystem_bookmakergirl`, `mangnyang` |
-| 2 | Building / static scenery | `cj_monstad_door01`, `cj_monstad_status_l` |
-| 4 | Nature | `tre_maple01`, `tre_bank02` |
+**Corrected 2026-09-09.** An earlier version of this table listed only 1, 2 and 4, from five
+sampled files. Sweeping a real `Data.pk2`'s 8,539 `.bsr` files finds **eight** distinct values:
+
+| Value | Files | Meaning |
+|---|---:|---|
+| 5 | 3,421 | unconfirmed — the most common value in the archive |
+| 2 | 2,592 | Building / static scenery (`cj_monstad_door01`, `cj_monstad_status_l`) |
+| 4 | 946 | Nature (`tre_maple01`, `tre_bank02`) |
+| 1 | 838 | Character — skinned, has a skeleton (`chinaquest_priest`, `mangnyang`) |
+| 3 | 357 | unconfirmed |
+| 6 | 205 | unconfirmed |
+| 0 | 174 | unconfirmed |
+| 8193 | 6 | unconfirmed (`0x2001` — the only value above 8 bits) |
+
+Only type 1 is load-bearing: it selects the character path, and everything else is read the same
+way.
 
 ## Character layout (type 1)
 
@@ -109,9 +120,18 @@ limbs at the origin.
 
 Nature files (type 4) also carry a skeleton and animations — that is how trees sway — but their
 mesh entries appear to carry a trailing `uint32` per piece that type 1 and type 2 do not
-(`tre_bank02`: mesh 1 ends 0x15A, a `0` word, mesh 2 begins 0x15E). That extra field is observed,
-not confirmed, so the readers still take the scan path for types 2 and 4 and this remains open —
-see [../TODO.md](../TODO.md).
+(`tre_bank02`: mesh 1 ends 0x15A, a `0` word, mesh 2 begins 0x15E). Those files simply fail the
+chaining check and fall back to the forward scan, which is why no special case is needed for them.
+
+## Every type is read through the table
+
+**Since 2026-09-09**, both readers take the section table for *every* object type and fall back to
+the forward scan only when it doesn't chain. Measured with `client/tools/sweep_bsr.gd` over a real
+`Data.pk2`'s 8,539 files: the table parses 7,978 (93%), and on a verified 1,500-file sample every
+mesh path it produces resolves to a real file — **zero unresolved**. The scan it replaced returned
+a **duplicated mesh for 2,787 files** (a third of the archive drawing a piece twice) and a
+different mesh count for 3,770, including `W_CD_boat.bsr`, where the scan found one mesh and the
+table finds six — geometry that was simply not being drawn.
 
 ## After the name
 

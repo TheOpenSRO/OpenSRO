@@ -871,6 +871,10 @@ var _ui_builder: UiBuilder
 var _hud_minimap: HudMinimap
 var _hud_underbar: HudUnderbar
 var _hud_player_info: HudPlayerInfo
+## Vitals from the last EnterWorldResult. Kept because AttackResult reports
+## only the player's current HP, not their maximum.
+var _last_enter_world_hp := 0
+var _last_enter_world_max_hp := 0
 var _hud_panels: HudPanels
 
 func _ready() -> void:
@@ -1092,12 +1096,27 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_player_info.position = Vector2(4, 7)
 	_hud_player_info.setup()
 	_hud_player_info.set_character(NetClient.current_character_name, 1)
-	# Until the server reports vitals, show a full bar rather than an empty
-	# one -- an empty HP bar reads as "you are dead", which is worse than
-	# showing the placeholder maximum. Replaced the moment real values
-	# arrive; see docs/UI_TODO.md.
-	_hud_player_info.set_hp(200, 200)
-	_hud_player_info.set_mp(200, 200)
+
+	# Real vitals. The server reports them twice: once on entering the world
+	# (EnterWorldResult carries HP and MaxHP) and again on every attack
+	# (AttackResult's player_hp), so the bar is right on login and stays
+	# right through combat.
+	if _last_enter_world_max_hp > 0:
+		_hud_player_info.set_hp(_last_enter_world_hp, _last_enter_world_max_hp)
+	NetClient.enter_world_result.connect(func(result) -> void:
+		if result != null and result.ok and result.max_hp > 0:
+			_last_enter_world_hp = result.hp
+			_last_enter_world_max_hp = result.max_hp
+			if _hud_player_info != null:
+				_hud_player_info.set_hp(result.hp, result.max_hp))
+	NetClient.attack_result.connect(func(result) -> void:
+		if result != null and _hud_player_info != null and _last_enter_world_max_hp > 0:
+			_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp))
+	# MP has no server side at all yet -- nothing tracks or reports it, so
+	# the bar is drawn full rather than empty (an empty bar reads as a real
+	# state) and is flagged in docs/UI_TODO.md rather than faked with a
+	# number that looks live.
+	_hud_player_info.set_mp(1, 1)
 
 	# Every floating game window, created on demand.
 	_hud_panels = HudPanels.new(_ui_builder)

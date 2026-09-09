@@ -99,15 +99,34 @@ func Parse(data []byte) (*Object, error) {
 		return nil, fmt.Errorf("bsr: reading name: %w", err)
 	}
 
-	// Characters are a genuinely different layout, not a reordering of the
-	// scenery one: several mesh pieces plus a skeleton and an animation
-	// list, all reachable from the header's section table. Take that path
-	// when the file says so. parseCharacter validates as it goes and
-	// reports false if anything doesn't line up, so a character file this
-	// parser has misunderstood falls back to the scan below rather than
-	// producing confidently wrong paths.
-	if int(binary.LittleEndian.Uint32(data[offType:])&0xFFFF) == TypeCharacter {
-		if obj, ok := parseCharacter(data, name); ok {
+	// The header's section table is the authored answer, and it is used for
+	// every object type — not just characters, as it was at first.
+	//
+	// Measured across a real Data.pk2's 8,539 .bsr files
+	// (client/tools/sweep_bsr.gd): the table parses and chains for 7,978 of
+	// them, and on a verified 1,500-file sample every mesh path it produces
+	// resolves to a real file — zero unresolved. The forward scan below
+	// returned a duplicated mesh for 2,787 files and a different mesh count
+	// for 3,770, including objects where it found one piece and the table
+	// found six. The 7% the table cannot read fall back to the scan.
+	if sections, ok := parseSections(data); ok && len(sections.Meshes) > 0 {
+		objType := int(binary.LittleEndian.Uint32(data[offType:]) & 0xFFFF)
+		// A character with no skeleton is a contradiction — its pieces are
+		// skin — so let it fall through to the scan instead.
+		if objType != TypeCharacter || len(sections.Skeletons) > 0 {
+			obj := &Object{
+				Name:           name,
+				MeshPath:       sections.Meshes[0],
+				SubMeshPaths:   sections.Meshes[1:],
+				AnimationPaths: sections.Animations,
+			}
+			if len(sections.Materials) > 0 {
+				obj.MaterialPath = sections.Materials[0]
+			}
+			if len(sections.Skeletons) > 0 {
+				obj.SkeletonPath = sections.Skeletons[0]
+			}
+			obj.IsCharacter = objType == TypeCharacter && obj.SkeletonPath != ""
 			return obj, nil
 		}
 	}
@@ -281,17 +300,26 @@ func readFloat32(b []byte, off int) float32 {
 	return math.Float32frombits(binary.LittleEndian.Uint32(b[off:]))
 }
 
-// parseCharacter parses a TypeCharacter file through the header's section
-// offset table.
+// Sections are the four count-prefixed lists the header's offset table
+// addresses.
+type Sections struct {
+	Materials  []string
+	Meshes     []string
+	Animations []string
+	Skeletons  []string
+}
+
+// parseSections reads a file's four sections through the header's offset
+// table, without deciding what to do with them.
 //
-// Unlike the scan-based scenery path, nothing here is searched for: each of
-// the four sections starts with a count word at the offset the header
-// names, and the entries that follow abut one another exactly, so reading
-// one section leaves the cursor on the next section's first byte. That
-// chaining is what makes the layout checkable rather than guessed — every
-// section is verified to end exactly where the header says the next one
-// begins, and any mismatch reports false so the caller can fall back.
-func parseCharacter(data []byte, name string) (*Object, bool) {
+// Nothing here is searched for: each section starts with a count word at
+// the offset the header names, and the entries that follow abut one
+// another exactly, so reading one section leaves the cursor on the next
+// section's first byte. That chaining is what makes the layout checkable
+// rather than guessed — every section is verified to end exactly where the
+// header says the next one begins, and any mismatch reports false so the
+// caller can fall back to the forward scan.
+func parseSections(data []byte) (*Sections, bool) {
 	ptrMaterial := int(binary.LittleEndian.Uint32(data[offPtrMaterial:]))
 	ptrMesh := int(binary.LittleEndian.Uint32(data[offPtrMesh:]))
 	ptrSkeleton := int(binary.LittleEndian.Uint32(data[offPtrSkeleton:]))
@@ -315,32 +343,16 @@ func parseCharacter(data []byte, name string) (*Object, bool) {
 		return nil, false
 	}
 
-	obj := &Object{
-		Name:         name,
-		IsCharacter:  true,
-		MaterialPath: materials[0],
-		MeshPath:     meshes[0],
-		SubMeshPaths: meshes[1:],
-	}
+	out := &Sections{Materials: materials, Meshes: meshes}
 
 	// Animations sit behind two unconfirmed words, then the usual count.
 	if anims, end, ok := readStringList(data, ptrAnimation+animationHeaderWords*4, ".ban", 0); ok && end == ptrSkeleton {
-		obj.AnimationPaths = anims
+		out.Animations = anims
 	}
-
-	// The skeleton list is count-prefixed like the rest, but a character
-	// has exactly one in every real file checked, so only the first is
-	// kept — a second would need a reason to exist before it's used.
-	skeletons, _, ok := readStringList(data, ptrSkeleton, ".bsk", 0)
-	if !ok || len(skeletons) == 0 {
-		// A character without a skeleton is a contradiction: the mesh
-		// pieces are skin, and posing them needs bones. Rather than hand
-		// back something that would render as a heap of disconnected limbs
-		// at the origin, fail and let the caller fall back.
-		return nil, false
+	if skeletons, _, ok := readStringList(data, ptrSkeleton, ".bsk", 0); ok {
+		out.Skeletons = skeletons
 	}
-	obj.SkeletonPath = skeletons[0]
-	return obj, true
+	return out, true
 }
 
 // readStringList reads a count-prefixed list of length-prefixed path

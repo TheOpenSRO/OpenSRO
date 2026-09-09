@@ -4790,3 +4790,82 @@ script answers because it cannot be swapped out from under itself.
 Checked both ways: clean project 137 scripts + 4 scenes, exit 0; the same
 project with `PRESET_BOTTOM_CENTER` reintroduced, exit 1 naming
 `res://scripts/World3D.gd`.
+
+## Hundred-and-third round: a third of the world was drawn wrong
+
+The hundred-and-first round recorded a scenery bug and deliberately did not
+fix it: `cj_monstad_door01.bsr` returned 17 mesh references for 16 distinct
+meshes, because a building carries a duplicate reference to its first piece
+ahead of its header-declared mesh section. It wanted a sweep over the whole
+archive first. This is that sweep, and the bug was much larger than one
+doubled piece.
+
+`client/tools/sweep_bsr.gd` parses every `.bsr` in a real `Data.pk2` both
+ways -- through the header's section table and through the forward scan the
+shipping reader used -- and reports where they disagree. Across **8,539
+files**:
+
+| | |
+|---|---|
+| header table parses and chains | **7,978** (93%) |
+| header table fails, falls back to the scan | 491 (7%) |
+| **scan returned a duplicated mesh** | **2,787** (33%) |
+| scan and table disagree on mesh count | 3,770 (44%) |
+
+A third of every object in the game was drawing one of its pieces twice.
+And the disagreements run the other way too: `W_CD_boat.bsr` and
+`W_CD_ani_boat.bsr` gave the scan **one** mesh where the table gives
+**six** -- those were rendering with most of their geometry missing, which
+is not a subtle defect and had never been noticed.
+
+**The decisive check was resolution, not chaining.** Chaining proves the
+bytes were read in the right place; it does not prove they mean anything.
+So the sweep also looks every header-derived mesh path up in the archive.
+Across a 1,500-file verified sample: **zero unresolved**. Every path the
+table produces names a real file.
+
+Both readers now take the header table for **every** object type, not just
+characters, falling back to the scan for the 7% that don't chain. Verified
+in a render afterwards -- the Jangan palace compound, its courtyards, walls,
+gates and trees all draw correctly, and the object counts per region are
+unchanged (276/276, 355/355, 226/226).
+
+**A correction to the hundred-and-first round.** That round said the type
+word at 0x40 is "1 character, 2 building, 4 nature". That was three values
+sampled from five files. The archive actually carries **eight**: type 5 is
+the most common at 3,421 files, then 2 (2,592), 4 (946), 1 (838), 3 (357),
+6 (205), 0 (174) and 8193 (6). Only type 1 is load-bearing in the readers
+(it selects the character path), so nothing was wrong in the code -- but
+the documented enumeration was under-sampled and is now stated as such.
+
+### The minimap's orientation is still not measured
+
+`client/tools/check_minimap_orientation.gd` tries to settle which way a
+region's minimap art faces by correlating its blue pixels against the
+navmesh's own per-tile water flags, across all eight orientations. It does
+not work on the regions available: Jangan's minimap has **0** blue cells of
+576 and 97/167 has **3**, so every orientation scores zero and the "best"
+answer is meaningless. Recorded as a failed probe rather than a result --
+this is exactly the "check the probe before believing a negative" case, and
+a tool that returns 0.000 for all eight options is reporting its own
+inability, not a finding.
+
+No change was made to the minimap. The axis convention it relies on is
+already established by the eighty-first round from how the authored
+minimaps tile (region *y* across, *x* up, giving one continuous city wall),
+and `HudMinimap`'s panning matches it. The tool is kept for a water-heavy
+region to be tried against later.
+
+### Vitals, end to end
+
+The HUD's health bar was drawing a hardcoded 200/200 because the server
+never told the client its HP. It does now: `EnterWorldResult` carries `HP`
+and `MaxHP`, wired through both the Go encoder and the GDScript decoder
+with round-trip tests on each side, and `World3D` binds it. Combat already
+reported `PlayerHP` on every attack, so that half needed no protocol
+change -- this was the missing initial value.
+
+**MP has no server side at all** -- nothing tracks or reports it. Its bar
+is drawn full rather than empty, because an empty bar reads as a real
+state, and it is flagged here and in UI_TODO.md rather than filled with a
+number that looks live.

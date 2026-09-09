@@ -109,26 +109,6 @@ Down from six to two or three. The surviving one currently lands correctly becau
 band of zeroes beats the regions with real data — luck, recorded as luck in the eighty-sixth
 round, not a working rule.
 
-### Every multi-piece building loads its first mesh twice
-Found while recovering the character layout (ninety-ninth round), and **measured, not suspected**:
-`cj_monstad_door01.bsr` yields **17 mesh references, 16 distinct** — `..._door01_01.bms` is
-returned as both `mesh_path` and `sub_mesh_paths[0]`. The cause is now understood. A building
-(type 2) carries a duplicate reference to its first piece *before* the header-declared mesh
-section, and the scan-based reader takes that one as the primary while also reading the whole real
-section as sub-meshes. So every such building is drawn with one piece doubled.
-
-**The fix is known and deliberately not taken yet**: type 2 uses the *same* count-prefixed
-material and mesh sections as type 1, and chains exactly (door01's mesh section: count 16 at
-0x154, 16 × 73 bytes from 0x158, ending at 0x5E8 = the header's animation pointer). Routing type 2
-through the header table removes the duplicate. It was left out of the character change to keep a
-scenery-wide regression away from the NPC work; it wants a sweep over every `.bsr` in `Data.pk2`
-comparing old and new results before it lands.
-
-**Type 4 (nature) is not pinned down** and should stay on the scanner meanwhile: its mesh entries
-carry a trailing `uint32` per piece that types 1 and 2 don't, and its animation section doesn't
-chain consistently — `tre_bank02`'s ends exactly at its skeleton pointer, `tre_maple01`'s ends 4
-bytes short.
-
 ### `.o2` list semantics
 List 2 is a region's own objects and the others are cross-references, measured at 91% against 46%
 on the sector check. What the three lists *are* is still unknown.
