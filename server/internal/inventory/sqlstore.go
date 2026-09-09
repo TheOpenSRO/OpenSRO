@@ -48,6 +48,14 @@ func OpenSQLStore(dsn string, maxStacks MaxStackLookup) (*SQLStore, error) {
 // packages' tests (which share this Postgres instance and can't reach the
 // unexported db field directly) can isolate themselves between runs; not
 // for production use.
+//
+// **Isolation between runs, not between packages.** Twenty-one test files
+// truncate these shared tables, so two packages testing at once clear each
+// other's rows mid-test -- which showed up in CI as internal/shop failing
+// with a duplicate key on inventory slot 0, its insert racing another
+// package's after both had been told the slot was free. The Go tests
+// therefore run one package at a time (`go test -p 1`); see the CI
+// workflow.
 func (s *SQLStore) TruncateForTest(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE inventory_slots`)
 	return err

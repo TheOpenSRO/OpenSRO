@@ -40,7 +40,14 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test
-        run: go test ./... -v
+        # -p 1 runs one package at a time. Twenty-one test files truncate
+        # shared tables (inventory_slots, equipment_slots, characters and
+        # the rest) in the one test database, so packages running in
+        # parallel clear each other's rows mid-test. It surfaced as
+        # internal/shop failing with a duplicate key on inventory slot 0:
+        # its insert raced another package's, both having just been told
+        # the slot was free.
+        run: go test ./... -v -p 1
 
   client:
     name: Validate client (Godot)
