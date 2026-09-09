@@ -75,6 +75,10 @@ The QA harness at the bottom is a separate ~600 lines of pure diagnostics with n
 coupling; it belongs to the world lane and moves out on its own. Region loading and streaming is
 the next cohesive piece after that.
 
+### The UI lane's own list is [UI_TODO.md](UI_TODO.md)
+Panels, the window recipe, and the reference screenshots. The item below is the part of it that
+touches this file.
+
 ### Retire the debug UI now the real HUD is in
 The developer UI (chat box, Log Out, Change Zone, the corner labels, and the ten-tab `ActionTabs`)
 still sits on top of the authentic HUD and overlaps the underbar. Its ten tabs are the only way to
