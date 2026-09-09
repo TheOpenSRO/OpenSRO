@@ -217,7 +217,7 @@ func GuildHandler(chars character.Store, guilds guild.Store) gateway.Handler {
 // getting ErrAlreadyInGuild back. Reuses GuildResult's shape: GuildID == 0
 // and no members means "not in a guild" (real guild IDs start at 1).
 func handleGuildInfo(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store) error {
-	req, err := DecodeCharacterCreateRequest(p.Data) // reuse: {Name string}
+	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildInfoResult, Data: (&GuildResult{Error: "malformed request"}).Encode()})
 	}
@@ -282,7 +282,7 @@ func handleGuildJoin(ctx context.Context, sess *gateway.Session, p *proto.Packet
 }
 
 func handleGuildLeave(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store) error {
-	req, err := DecodeCharacterCreateRequest(p.Data) // reuse: {Name string}
+	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildLeaveResult, Data: (&GuildLeaveResult{Reason: "malformed request"}).Encode()})
 	}

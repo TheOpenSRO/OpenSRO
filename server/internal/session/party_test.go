@@ -101,7 +101,7 @@ func TestPartyFullFlow(t *testing.T) {
 		t.Fatalf("bob login failed: err=%v result=%+v", err, lr)
 	}
 
-	resp = doSend(connA, rA, OpPartyCreate, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	resp = doSend(connA, rA, OpPartyCreate, (&CharacterNameRequest{Name: "Aria"}).Encode())
 	pr, err := DecodePartyResult(resp.Data)
 	if err != nil || pr.Error != "" {
 		t.Fatalf("create party failed: err=%v result=%+v", err, pr)
@@ -135,7 +135,7 @@ func TestPartyFullFlow(t *testing.T) {
 	}
 
 	// Bob leaves; Alice should get a PartyMemberLeft broadcast.
-	resp = doSend(connB, rB, OpPartyLeave, (&CharacterCreateRequest{Name: "Bram"}).Encode())
+	resp = doSend(connB, rB, OpPartyLeave, (&CharacterNameRequest{Name: "Bram"}).Encode())
 	lr, err := DecodePartyLeaveResult(resp.Data)
 	if err != nil || !lr.OK {
 		t.Fatalf("leave party failed: err=%v result=%+v", err, lr)
@@ -189,19 +189,19 @@ func TestPartyInfoFlow(t *testing.T) {
 		t.Fatalf("login failed: err=%v result=%+v", err, lr)
 	}
 
-	resp = send(OpPartyInfo, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	resp = send(OpPartyInfo, (&CharacterNameRequest{Name: "Aria"}).Encode())
 	pr, err := DecodePartyResult(resp.Data)
 	if err != nil || pr.Error != "" || pr.PartyID != 0 || len(pr.Members) != 0 {
 		t.Fatalf("expected 'not in a party', got err=%v result=%+v", err, pr)
 	}
 
-	resp = send(OpPartyCreate, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	resp = send(OpPartyCreate, (&CharacterNameRequest{Name: "Aria"}).Encode())
 	pr, err = DecodePartyResult(resp.Data)
 	if err != nil || pr.Error != "" {
 		t.Fatalf("create party failed: err=%v result=%+v", err, pr)
 	}
 
-	resp = send(OpPartyInfo, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	resp = send(OpPartyInfo, (&CharacterNameRequest{Name: "Aria"}).Encode())
 	pr, err = DecodePartyResult(resp.Data)
 	if err != nil || pr.Error != "" || pr.PartyID == 0 || len(pr.Members) != 1 {
 		t.Fatalf("expected the real party after creating one, got err=%v result=%+v", err, pr)

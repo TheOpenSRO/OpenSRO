@@ -162,7 +162,7 @@ func TestFriendFullFlow(t *testing.T) {
 		t.Fatalf("unexpected FriendRequestReceived: %+v (err=%v)", rr, err)
 	}
 
-	resp = doSend(connB, rB, OpFriendPendingList, (&CharacterCreateRequest{Name: "Bram"}).Encode())
+	resp = doSend(connB, rB, OpFriendPendingList, (&CharacterNameRequest{Name: "Bram"}).Encode())
 	pending, err := DecodeFriendPendingListResult(resp.Data)
 	if err != nil || pending.Error != "" || len(pending.Requests) != 1 || pending.Requests[0].RequesterName != "Aria" {
 		t.Fatalf("unexpected pending list: err=%v result=%+v", err, pending)
@@ -183,14 +183,14 @@ func TestFriendFullFlow(t *testing.T) {
 		t.Fatalf("unexpected FriendAccepted: %+v (err=%v)", fa, err)
 	}
 
-	resp = doSend(connA, rA, OpFriendList, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	resp = doSend(connA, rA, OpFriendList, (&CharacterNameRequest{Name: "Aria"}).Encode())
 	listA, err := DecodeFriendListResult(resp.Data)
 	if err != nil || listA.Error != "" || len(listA.Friends) != 1 || listA.Friends[0].Name != "Bram" || !listA.Friends[0].Online {
 		t.Fatalf("unexpected friend list for Aria: err=%v result=%+v", err, listA)
 	}
 	bramID := listA.Friends[0].CharacterID
 
-	resp = doSend(connB, rB, OpFriendList, (&CharacterCreateRequest{Name: "Bram"}).Encode())
+	resp = doSend(connB, rB, OpFriendList, (&CharacterNameRequest{Name: "Bram"}).Encode())
 	listB, err := DecodeFriendListResult(resp.Data)
 	if err != nil || listB.Error != "" || len(listB.Friends) != 1 || listB.Friends[0].Name != "Aria" || !listB.Friends[0].Online {
 		t.Fatalf("unexpected friend list for Bram: err=%v result=%+v", err, listB)
@@ -201,12 +201,12 @@ func TestFriendFullFlow(t *testing.T) {
 		t.Fatalf("remove failed: err=%v result=%+v", err, rr)
 	}
 
-	resp = doSend(connA, rA, OpFriendList, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	resp = doSend(connA, rA, OpFriendList, (&CharacterNameRequest{Name: "Aria"}).Encode())
 	listA, err = DecodeFriendListResult(resp.Data)
 	if err != nil || len(listA.Friends) != 0 {
 		t.Fatalf("expected empty friend list after remove: err=%v result=%+v", err, listA)
 	}
-	resp = doSend(connB, rB, OpFriendList, (&CharacterCreateRequest{Name: "Bram"}).Encode())
+	resp = doSend(connB, rB, OpFriendList, (&CharacterNameRequest{Name: "Bram"}).Encode())
 	listB, err = DecodeFriendListResult(resp.Data)
 	if err != nil || len(listB.Friends) != 0 {
 		t.Fatalf("expected empty friend list after remove (Bram's side): err=%v result=%+v", err, listB)

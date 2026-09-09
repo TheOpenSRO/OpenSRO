@@ -40,6 +40,13 @@ type Slot struct {
 // MaxStackLookup resolves an item's max stack size, so Store.AddItem knows
 // how many can go in one slot before it needs a new one. Satisfied by
 // refdata.SQLStore in production; tests can use a trivial stub.
+//
+// Zero (or less) means "no configured limit", which AddItem reads as an
+// item that does not stack -- one to a slot. An item the lookup has never
+// heard of must answer zero rather than an error: an error makes the item
+// impossible to hold at all, and a deployment that has not imported
+// reference data for a given item should still be able to store it.
+// Errors are for a lookup that actually failed.
 type MaxStackLookup interface {
 	GetMaxStack(ctx context.Context, itemID int64) (int, error)
 }

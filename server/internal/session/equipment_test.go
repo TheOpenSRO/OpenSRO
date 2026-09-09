@@ -102,7 +102,7 @@ func TestEquipmentFullFlow(t *testing.T) {
 		t.Fatalf("equip failed: err=%v result=%+v", err, eqResult)
 	}
 
-	resp = send(OpEquipmentList, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	resp = send(OpEquipmentList, (&CharacterNameRequest{Name: "Aria"}).Encode())
 	listResult, err := DecodeEquipmentResult(resp.Data)
 	if err != nil {
 		t.Fatalf("DecodeEquipmentResult: %v", err)

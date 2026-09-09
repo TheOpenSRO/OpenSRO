@@ -212,7 +212,7 @@ func QuestHandler(chars character.Store, quests quest.Store) gateway.Handler {
 }
 
 func handleQuestList(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, quests quest.Store) error {
-	req, err := DecodeCharacterCreateRequest(p.Data) // reuse: {Name string}
+	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpQuestListResult, Data: (&QuestListResult{Error: "malformed request"}).Encode()})
 	}

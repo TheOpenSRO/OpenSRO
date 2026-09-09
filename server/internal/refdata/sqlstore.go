@@ -219,6 +219,17 @@ func (s *SQLStore) Count(ctx context.Context) (int, error) {
 func (s *SQLStore) GetMaxStack(ctx context.Context, itemID int64) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT max_stack FROM items WHERE id = $1`, itemID).Scan(&n)
+	if err == sql.ErrNoRows {
+		// No row means no configured stack limit, which the inventory
+		// already reads as "this does not stack" -- same as a row that
+		// says zero. Returning an error instead made an item with no
+		// reference data impossible to *hold*, which cost a new character
+		// their starting kit on any deployment that had not imported those
+		// five items: "adding item 4734 for slot 1: querying max stack:
+		// not found". Refusing to store an item because its stack size is
+		// unknown loses the item; storing it one to a slot does not.
+		return 0, nil
+	}
 	if err != nil {
 		return 0, fmt.Errorf("refdata: querying max stack for item %d: %w", itemID, err)
 	}

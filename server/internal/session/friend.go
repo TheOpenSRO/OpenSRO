@@ -455,7 +455,7 @@ func handleFriendDecline(ctx context.Context, sess *gateway.Session, p *proto.Pa
 }
 
 func handleFriendList(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, friends friend.Store, hub *world.Hub) error {
-	req, err := DecodeCharacterCreateRequest(p.Data) // reuse: {Name string}
+	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpFriendListResult, Data: (&FriendListResult{Error: "malformed request"}).Encode()})
 	}
@@ -494,7 +494,7 @@ func handleFriendRemove(ctx context.Context, sess *gateway.Session, p *proto.Pac
 }
 
 func handleFriendPendingList(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, friends friend.Store) error {
-	req, err := DecodeCharacterCreateRequest(p.Data) // reuse: {Name string}
+	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpFriendPendingListResult, Data: (&FriendPendingListResult{Error: "malformed request"}).Encode()})
 	}

@@ -82,6 +82,33 @@ func DecodeCharacterCreateRequest(data []byte) (*CharacterCreateRequest, error) 
 	return &CharacterCreateRequest{Name: fields[0], Gender: fields[1]}, nil
 }
 
+// CharacterNameRequest is the payload of every request that identifies a
+// character and asks for nothing else: the inventory, equipment, quest,
+// skill, party, guild and friend listings all take exactly this.
+//
+// It exists because those ten handlers used to decode a
+// CharacterCreateRequest instead, each with a comment saying "reuse: it's
+// just {Name string}". That was true when it was written. Character
+// creation later gained a Gender field, so the shared decoder began
+// demanding *two* length-prefixed strings, and every one of those requests
+// -- which the client sends with one -- started failing as "malformed
+// request". The client showed it as an undressed character, an empty
+// inventory and empty panels, with the server answering every listing with
+// nothing.
+type CharacterNameRequest struct {
+	Name string
+}
+
+func (r *CharacterNameRequest) Encode() []byte { return encodeStrings(r.Name) }
+
+func DecodeCharacterNameRequest(data []byte) (*CharacterNameRequest, error) {
+	fields, err := decodeStrings(data, 1)
+	if err != nil {
+		return nil, err
+	}
+	return &CharacterNameRequest{Name: fields[0]}, nil
+}
+
 // CharacterDeleteRequest is the OpCharacterDelete payload.
 type CharacterDeleteRequest struct {
 	Name string

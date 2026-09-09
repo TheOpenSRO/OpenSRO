@@ -30,6 +30,32 @@ Every window in the real client is authored data, and building one is now mechan
    msgbox2_window_`), expanded as `_left_up`, `_mid_up`, `_right_up`, `_left_side`, `_right_side`,
    `_left_down`, `_mid_down`, `_right_down`. `UiBuilder._build_frame` already does this.
 8. **Interface art is 16-bit ARGB1555**, decoded by `DdjReader` since the hundred-and-first round.
+9. **A section lists its controls front to back.** The window's own frame is always the *last*
+   entry (`GDR_PI_SUBFRAME`, `GDR_INVENTORY_FRAME`), so children go into the Godot tree
+   **reversed**. Built in file order, every window covers its own contents.
+10. **`CIFNormalTile` is what fills a window's body** — 253 across the archive, the fourth most
+   common control type. No 8-slice frame set has a centre piece (checked three times, and
+   `CNIFFrame` in the client loads exactly eight suffixes), so a window with no tiles is meant to
+   be see-through. Do not invent a fill colour; two rounds were spent on that.
+11. **A `CIFLattice` cell is one piece of its own artwork, 36×36 for `com_lattice_`.** Its `ddj`
+   is a base with a trailing underscore that expands to only **four** names — `left_up`,
+   `right_up`, `left_down`, `right_down` — which are not corners but one cell each, differing in
+   which shared separators they carry. All 14 lattices in the archive divide by 36 exactly and
+   none divides by 32: inventory 4×8, storage and stalls 6×5, exchange 6×2, action bar 9×2 and
+   4×2, pet bag 7×4.
+12. **Window chrome comes from `ifalchemybox.txt`**, the one layout that spells it all out: a
+   42-pixel title strip inset 10 a side (`CIFDragableArea 10,0,355,42`), a centred 12-tall caption
+   at y=18, and a 16×16 `CIFCloseButton` 26 in from the right edge. A `CIFCloseButton` with no
+   artwork uses `interface\ifcommon\com_windowclose.ddj`, which the client hardcodes.
+13. **A window is its frame plus any artwork hanging off it**, not the bounding box of every
+   control. ifinventory's gold row sits 25 pixels below the frame; ifplayerinfo's `TEXT_HP_DAT` is
+   a text field that overruns the right edge by 17 and must not widen the window.
+14. **Godot clamps `Control.size` up to the minimum size, and will fight the layout.** A
+   `TextureRect`'s minimum is its texture (use `EXPAND_IGNORE_SIZE`); a `Label`'s is computed from
+   the theme's *default* font until its theme cache refreshes a frame later (re-apply the rect);
+   a `Button` with text has one from its own label (use a `TextureButton`). `UiBuilder` records
+   each authored rect in metadata and `apply_authored_rects` restores it — and it must record what
+   the layout asked for, never `node.size`, which is already clamped.
 
 The network layer behind all of this is already implemented and unit-tested — `client/scripts/net/`
 has `party`, `guild`, `quest`, `inventory`, `skill`, `shop`, `trade`, `friend`, `chat`, `combat`,
@@ -51,8 +77,17 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   medallion, both end decorations. Verified in a render.
 - **Minimap** — region art clipped to the frame's circular aperture with the client's own
   `mm_alpha.ddj` mask, compass frame, player heading arrow. Verified in a render.
-- **`UiBuilder`** — buttons, statics, gauges, slots, 8-slice frames, text-table lookup, texture
-  cache, and `window_def()` for the registry.
+- **`UiBuilder`** — buttons, statics, gauges, slots, tiles, lattices, close buttons, 8-slice and
+  6-piece frames, text-table lookup, texture cache, and `window_def()` for the registry.
+- **Window interiors and item grids** (hundred-and-thirteenth round) — panels are no longer
+  hollow and the inventory draws its real 4×8 grid of authored slots.
+
+### Tools for this lane
+`client/tools/dump_layout.gd` prints one layout in declaration order with every rect, alignment
+and font index. `dump_window_tree.gd` builds a real `HudWindow` and prints the resulting nodes
+with their rects, textures and minimum sizes — use it instead of squinting at a render.
+`grep_layouts.gd` searches all 248 layouts by control name, type or artwork path, which is how
+the lattice pitch, the close-button convention and the tile fill were each settled.
 
 ## Next up
 
@@ -61,8 +96,9 @@ The windows are real; their *contents* are a plain list laid over the frame. Eac
 authored presentation instead:
 
 - **Inventory** — *icons done* (hundred-and-eleventh round): the authored slot grid is filled from
-  `itemdata*.txt`, 11,772 items resolvable by id, 32×32 icons matching the grid pitch exactly.
-  Still wanted: the gold readout, and drag between slots.
+  `itemdata*.txt`, 11,772 items resolvable by id. Note the grid is **4×8 at a 36-pixel pitch**,
+  not 32, so a 32×32 icon sits inside a 36-pixel cell. Still wanted: the gold readout, and drag
+  between slots.
 - **Character** — bind the `GDR_PMI_TXT_*DAT` stat rows in `ifplayerinfo.txt` to the character
   data the server already sends.
 - **Party / Community / Guild** — the row controls exist (`CIFPartySlot` builds as a slot); they

@@ -20,12 +20,11 @@ func testDSN() string {
 // need a real refdata store.
 type stubMaxStacks map[int64]int
 
+// An item that is not in the stub is one with no reference data, which the
+// MaxStackLookup contract says answers zero -- "no configured limit" --
+// rather than an error.
 func (s stubMaxStacks) GetMaxStack(_ context.Context, itemID int64) (int, error) {
-	v, ok := s[itemID]
-	if !ok {
-		return 0, errors.New("no such item")
-	}
-	return v, nil
+	return s[itemID], nil
 }
 
 func openTestSQLStore(t *testing.T, maxStacks MaxStackLookup) *SQLStore {

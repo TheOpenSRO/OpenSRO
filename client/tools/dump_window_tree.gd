@@ -23,7 +23,7 @@ func _args(flag: String) -> PackedStringArray:
 func _init() -> void:
 	var pk2 := _args("--pk2")
 	var layouts := _args("--layout")
-	if pk2.is_empty() or layouts.is_empty():
+	if pk2.is_empty() or (layouts.is_empty() and not ("--miniinfo" in OS.get_cmdline_user_args())):
 		printerr("usage: --pk2=<Media.pk2> --layout=<resinfo name>")
 		quit(2)
 		return
@@ -35,6 +35,17 @@ func _init() -> void:
 		return
 
 	var builder := UiBuilder.new(archive, null)
+
+	if "--miniinfo" in OS.get_cmdline_user_args():
+		var pmi := HudPlayerInfo.new(builder)
+		get_root().add_child(pmi)
+		pmi.setup()
+		await process_frame
+		await process_frame
+		print("=== player mini info size=%s" % str(pmi.size))
+		_describe(pmi, 0)
+		get_root().remove_child(pmi)
+		pmi.queue_free()
 
 	for name in layouts:
 		var win := HudWindow.new()

@@ -156,7 +156,7 @@ func TestGuildFullFlow(t *testing.T) {
 
 	// Alice (the founder) leaves; leadership should pass to Bram rather
 	// than disbanding the guild, since he's the only member left.
-	resp = doSend(connA, rA, OpGuildLeave, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	resp = doSend(connA, rA, OpGuildLeave, (&CharacterNameRequest{Name: "Aria"}).Encode())
 	lr, err := DecodeGuildLeaveResult(resp.Data)
 	if err != nil || !lr.OK {
 		t.Fatalf("leave guild failed: err=%v result=%+v", err, lr)
@@ -202,7 +202,7 @@ func TestGuildInfoFlow(t *testing.T) {
 		t.Fatalf("login failed: err=%v result=%+v", err, lr)
 	}
 
-	resp = send(OpGuildInfo, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	resp = send(OpGuildInfo, (&CharacterNameRequest{Name: "Aria"}).Encode())
 	gr, err := DecodeGuildResult(resp.Data)
 	if err != nil || gr.Error != "" || gr.GuildID != 0 || len(gr.Members) != 0 {
 		t.Fatalf("expected 'not in a guild', got err=%v result=%+v", err, gr)
@@ -214,7 +214,7 @@ func TestGuildInfoFlow(t *testing.T) {
 		t.Fatalf("create guild failed: err=%v result=%+v", err, gr)
 	}
 
-	resp = send(OpGuildInfo, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	resp = send(OpGuildInfo, (&CharacterNameRequest{Name: "Aria"}).Encode())
 	gr, err = DecodeGuildResult(resp.Data)
 	if err != nil || gr.Error != "" || gr.GuildID == 0 || gr.Name != "Silk Legion" || len(gr.Members) != 1 {
 		t.Fatalf("expected the real guild after creating one, got err=%v result=%+v", err, gr)

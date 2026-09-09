@@ -108,12 +108,27 @@ func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Log
 	}
 }
 
+// refItemStore is the slice of reference data the running server needs:
+// the shop's catalog listing plus the per-item lookup combat uses for
+// attack and defence. Both the PostgreSQL and the in-memory store satisfy
+// it, which is what lets -in-memory be a wiring choice rather than a fork.
+type refItemStore interface {
+	GetItem(ctx context.Context, id int64) (*refdata.Item, error)
+	ListAll(ctx context.Context) ([]*refdata.Item, error)
+	GetMaxStack(ctx context.Context, itemID int64) (int, error)
+}
+
 func main() {
 	addr := flag.String("addr", ":15779", "listen address for the gateway service")
 	postgresDSN := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
 		"PostgreSQL connection string for account/character storage")
 	tlsCert := flag.String("tls-cert", "", "path to a TLS certificate (PEM); if set with -tls-key, the gateway serves TLS instead of plain TCP")
 	tlsKey := flag.String("tls-key", "", "path to a TLS private key (PEM); see -tls-cert")
+	inMemory := flag.Bool("in-memory", false,
+		"run with in-memory storage instead of PostgreSQL: nothing is persisted, and every "+
+			"account, character, guild and friendship is gone when the process exits. For "+
+			"development, for end-to-end client runs, and for anyone who wants to try the "+
+			"server without setting up a database.")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -121,69 +136,108 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	accounts, err := account.OpenSQLStore(*postgresDSN)
-	if err != nil {
-		logger.Error("opening account store", "error", err)
-		os.Exit(1)
-	}
-	defer accounts.Close()
+	// The stores are held as interfaces so the in-memory and PostgreSQL
+	// wirings below are interchangeable. account is split in two because
+	// login and registration take different halves of it.
+	var (
+		accounts   account.Store
+		registerer account.Registerer
+		chars      character.Store
+		refItems   refItemStore
+		inv        inventory.Store
+		eq         equipment.Store
+		skills     skill.Store
+		guilds     guild.Store
+		quests     quest.Store
+		friends    friend.Store
+	)
 
-	chars, err := character.OpenSQLStore(*postgresDSN)
-	if err != nil {
-		logger.Error("opening character store", "error", err)
-		os.Exit(1)
-	}
-	defer chars.Close()
+	if *inMemory {
+		// One shared refdata store feeds inventory's stack limits and the
+		// combat/shop item lookups, exactly as the SQL wiring below does.
+		memRef := refdata.NewMemStore()
+		memInv := inventory.NewMemStore(memRef)
+		memAccounts := account.NewMemStore()
+		accounts, registerer = memAccounts, memAccounts
+		chars = character.NewMemStore()
+		refItems = memRef
+		inv = memInv
+		eq = equipment.NewMemStore(memInv)
+		skills = skill.NewMemStore()
+		guilds = guild.NewMemStore()
+		quests = quest.NewMemStore()
+		friends = friend.NewMemStore()
+		logger.Warn("in-memory storage ready -- nothing will be persisted")
+	} else {
+		sqlAccounts, err := account.OpenSQLStore(*postgresDSN)
+		if err != nil {
+			logger.Error("opening account store", "error", err)
+			os.Exit(1)
+		}
+		defer sqlAccounts.Close()
 
-	refItems, err := refdata.OpenSQLStore(*postgresDSN)
-	if err != nil {
-		logger.Error("opening refdata store", "error", err)
-		os.Exit(1)
-	}
-	defer refItems.Close()
+		sqlChars, err := character.OpenSQLStore(*postgresDSN)
+		if err != nil {
+			logger.Error("opening character store", "error", err)
+			os.Exit(1)
+		}
+		defer sqlChars.Close()
 
-	inv, err := inventory.OpenSQLStore(*postgresDSN, refItems)
-	if err != nil {
-		logger.Error("opening inventory store", "error", err)
-		os.Exit(1)
-	}
-	defer inv.Close()
+		sqlRef, err := refdata.OpenSQLStore(*postgresDSN)
+		if err != nil {
+			logger.Error("opening refdata store", "error", err)
+			os.Exit(1)
+		}
+		defer sqlRef.Close()
 
-	eq, err := equipment.OpenSQLStore(*postgresDSN, inv)
-	if err != nil {
-		logger.Error("opening equipment store", "error", err)
-		os.Exit(1)
-	}
-	defer eq.Close()
+		sqlInv, err := inventory.OpenSQLStore(*postgresDSN, sqlRef)
+		if err != nil {
+			logger.Error("opening inventory store", "error", err)
+			os.Exit(1)
+		}
+		defer sqlInv.Close()
 
-	skills, err := skill.OpenSQLStore(*postgresDSN)
-	if err != nil {
-		logger.Error("opening skill store", "error", err)
-		os.Exit(1)
-	}
-	defer skills.Close()
+		sqlEq, err := equipment.OpenSQLStore(*postgresDSN, sqlInv)
+		if err != nil {
+			logger.Error("opening equipment store", "error", err)
+			os.Exit(1)
+		}
+		defer sqlEq.Close()
 
-	guilds, err := guild.OpenSQLStore(*postgresDSN)
-	if err != nil {
-		logger.Error("opening guild store", "error", err)
-		os.Exit(1)
-	}
-	defer guilds.Close()
+		sqlSkills, err := skill.OpenSQLStore(*postgresDSN)
+		if err != nil {
+			logger.Error("opening skill store", "error", err)
+			os.Exit(1)
+		}
+		defer sqlSkills.Close()
 
-	quests, err := quest.OpenSQLStore(*postgresDSN)
-	if err != nil {
-		logger.Error("opening quest store", "error", err)
-		os.Exit(1)
-	}
-	defer quests.Close()
+		sqlGuilds, err := guild.OpenSQLStore(*postgresDSN)
+		if err != nil {
+			logger.Error("opening guild store", "error", err)
+			os.Exit(1)
+		}
+		defer sqlGuilds.Close()
 
-	friends, err := friend.OpenSQLStore(*postgresDSN)
-	if err != nil {
-		logger.Error("opening friend store", "error", err)
-		os.Exit(1)
+		sqlQuests, err := quest.OpenSQLStore(*postgresDSN)
+		if err != nil {
+			logger.Error("opening quest store", "error", err)
+			os.Exit(1)
+		}
+		defer sqlQuests.Close()
+
+		sqlFriends, err := friend.OpenSQLStore(*postgresDSN)
+		if err != nil {
+			logger.Error("opening friend store", "error", err)
+			os.Exit(1)
+		}
+		defer sqlFriends.Close()
+
+		accounts, registerer = sqlAccounts, sqlAccounts
+		chars, refItems = sqlChars, sqlRef
+		inv, eq, skills = sqlInv, sqlEq, sqlSkills
+		guilds, quests, friends = sqlGuilds, sqlQuests, sqlFriends
+		logger.Info("postgres storage ready")
 	}
-	defer friends.Close()
-	logger.Info("postgres storage ready")
 
 	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
 
@@ -198,7 +252,7 @@ func main() {
 
 	handle := gateway.Chain(
 		session.LoginHandler(accounts),
-		session.RegisterHandler(accounts),
+		session.RegisterHandler(registerer),
 		// New characters are dressed server-side rather than the client
 		// drawing a default set: that keeps the rendered character, the
 		// equipment window, the inventory and the server all agreeing about

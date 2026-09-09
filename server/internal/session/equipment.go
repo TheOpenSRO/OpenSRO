@@ -177,7 +177,7 @@ func resolveCharacterID(ctx context.Context, sess *gateway.Session, chars charac
 }
 
 func handleEquipmentList(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store) error {
-	req, err := DecodeCharacterCreateRequest(p.Data) // reuse: {Name string}
+	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "malformed request"}).Encode()})
 	}

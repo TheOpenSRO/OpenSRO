@@ -878,6 +878,13 @@ var _last_enter_world_max_hp := 0
 var _hud_panels: HudPanels
 
 func _ready() -> void:
+	# A QA run boots this scene directly, so there is no Login or character
+	# select behind it. With SRREVAMP_QA_SERVER set, sign in first -- that
+	# is what makes a render show real equipment, real vitals and the
+	# server's own monsters rather than a client talking to nothing.
+	if OS.get_environment("SRREVAMP_QA_SERVER") != "":
+		await QaSignIn.run(get_tree())
+
 	character_label.text = "Character: %s" % NetClient.current_character_name
 
 	_load_character_assets()
@@ -3648,6 +3655,12 @@ func _try_apply_real_player_character() -> void:
 	var weapon_variant_idx: int = weapon_item_id % max(_weapon_variants.size(), 1)
 	var shield_variant_idx: int = shield_item_id % max(_shield_variants.size(), 1)
 
+	# Worth a log line: "the character renders bare" has had two different
+	# causes so far -- the server not dressing them, and the client not
+	# asking -- and this says which side to look at.
+	print("World3D: player equipment mask=%d weapon=%s shield=%s (armor item %d)" % [
+		equipped[0], str(equipped[1]), str(equipped[2]), armor_item_id])
+
 	var skeleton := _build_assembled_character(equipped[0], gender, equipped[1], equipped[2], armor_set_number, weapon_variant_idx, shield_variant_idx)
 	if skeleton == null:
 		return
@@ -3678,7 +3691,12 @@ func _real_player_equipped_slots() -> Array:
 	if not NetClient.is_connected_to_server() or NetClient.current_character_name == "":
 		return [0, false, false, 0, 0, 0]
 	NetClient.list_equipment(NetClient.current_character_name)
-	var items: Array = (await NetClient.equipment_result)[0]
+	var answer: Array = await NetClient.equipment_result
+	var items: Array = answer[0]
+	print("World3D: server reports %d equipped item(s) for %s (error: %s)" % [
+		items.size(), NetClient.current_character_name, str(answer[1])])
+	for item in items:
+		print("  slot %d item %d" % [item.slot, item.item_id])
 	var armor_slots_mask := 0
 	var has_weapon := false
 	var has_shield := false

@@ -43,7 +43,7 @@ GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 
 REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""
 AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
-PANELS=""
+PANELS=""; SERVER=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -59,6 +59,11 @@ while [ $# -gt 0 ]; do
     --radius) RADIUS="$2"; shift 2 ;;
     --shots)  SHOTS="$2";  shift 2 ;;
     --panels) PANELS="$2"; shift 2 ;;
+    # --server with no value starts SERVER_BIN in-memory on a spare port and
+    # signs in to it; --server host:port uses one that is already running.
+    --server)
+      if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then SERVER="$2"; shift 2
+      else SERVER="start"; shift; fi ;;
     --nofog)  NOFOG=1;     shift ;;
     --free)   FREE=1;      shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -104,10 +109,35 @@ export SRREVAMP_MAPM_PATH="$REGION"
 [ -n "$SHOTS" ]  && export SRREVAMP_QA_SHOTS="$SHOTS"
 [ -n "$PANELS" ] && export SRREVAMP_QA_PANELS="$PANELS"
 
+# A render with a server behind it. Without one the client shows an
+# undressed character, a blank HP bar and an empty inventory, because none
+# of that is the client's to know.
+if [ "$SERVER" = "start" ]; then
+  if [ ! -x "$SERVER_BIN" ]; then
+    echo "qa_shot: no server binary at $SERVER_BIN (set SERVER_BIN)" >&2
+    exit 1
+  fi
+  SERVER_PORT="${SERVER_PORT:-15899}"
+  "$SERVER_BIN" -in-memory -addr "127.0.0.1:$SERVER_PORT" >"$OUT/server.log" 2>&1 &
+  SERVER_PID=$!
+  trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+  for _ in $(seq 1 50); do
+    grep -q "gateway listening" "$OUT/server.log" 2>/dev/null && break
+    sleep 0.2
+  done
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "qa_shot: the server exited at once -- see $OUT/server.log" >&2
+    exit 1
+  fi
+  echo "qa_shot: in-memory server on 127.0.0.1:$SERVER_PORT (pid $SERVER_PID)" >&2
+  SERVER="127.0.0.1:$SERVER_PORT"
+fi
+[ -n "$SERVER" ] && export SRREVAMP_QA_SERVER="$SERVER"
+
 # --resolution as well as the X screen: Godot renders at the project's own
 # window size otherwise, so asking for a square screen alone still produced
 # 16:9 frames -- which quietly ruins any comparison against square authored
 # art like a region minimap.
-exec xvfb-run -a -s "-screen 0 ${SIZE}x24" $VGL "$GODOT" \
+xvfb-run -a -s "-screen 0 ${SIZE}x24" $VGL "$GODOT" \
   --rendering-driver opengl3 --resolution "$SIZE" --path . res://scenes/World3D.tscn \
   --write-movie "$OUT/f.png" --quit-after "$FRAMES"

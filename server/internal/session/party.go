@@ -205,7 +205,7 @@ func PartyHandler(chars character.Store, parties *party.Hub) gateway.Handler {
 // and no members means "not in a party" (real party IDs start at 1, so
 // there's no ambiguity).
 func handlePartyInfo(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, parties *party.Hub) error {
-	req, err := DecodeCharacterCreateRequest(p.Data) // reuse: {Name string}
+	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpPartyInfoResult, Data: (&PartyResult{Error: "malformed request"}).Encode()})
 	}
@@ -240,7 +240,7 @@ func broadcastToPartyExcept(members []party.Member, exceptSessionID uint64, opco
 }
 
 func handlePartyCreate(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, parties *party.Hub) error {
-	req, err := DecodeCharacterCreateRequest(p.Data) // reuse: {Name string}
+	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpPartyCreateResult, Data: (&PartyResult{Error: "malformed request"}).Encode()})
 	}
@@ -283,7 +283,7 @@ func handlePartyJoin(ctx context.Context, sess *gateway.Session, p *proto.Packet
 }
 
 func handlePartyLeave(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, parties *party.Hub) error {
-	req, err := DecodeCharacterCreateRequest(p.Data) // reuse: {Name string}
+	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpPartyLeaveResult, Data: (&PartyLeaveResult{Reason: "malformed request"}).Encode()})
 	}

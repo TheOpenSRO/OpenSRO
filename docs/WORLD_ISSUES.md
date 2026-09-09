@@ -5584,3 +5584,86 @@ New tools: `client/tools/dump_layout.gd` (one layout, in declaration order),
 `dump_window_tree.gd` (a built window with every rect, texture and minimum),
 `grep_layouts.gd` (search all 248 layouts by name, type or artwork),
 `sweep_lattice.gd`, `sweep_window_size.gd`.
+
+## Hundred-and-fourteenth round: every listing the client asked for was refused
+
+The first render with a real server behind it showed a character in nothing
+but shorts, an empty inventory and empty panels. Two causes, one of them
+large, and the reason neither had been caught is the interesting part.
+
+### Rendering against a server at all
+
+`qa_shot.sh` boots `World3D.tscn` directly, so every render this project has
+ever taken was of a client with no server. That is fine for terrain and
+scenery and useless for anything the server owns -- equipment, vitals, the
+inventory, the real monster list. Two things fix it:
+
+- **`cmd/server -in-memory`**: the server runs with no database at all.
+  Seven packages gained a `MemStore` alongside their `SQLStore`
+  (`inventory`, `equipment`, `skill`, `quest`, `guild`, `friend`,
+  `refdata`), each with its own tests, and `main` picks a wiring rather
+  than a fork. Worth having on its own: the server is now a single binary
+  anyone can run without setting a database up.
+- **`SRREVAMP_QA_SERVER`** plus `qa_shot.sh --server`: the QA run performs
+  the same sequence a player does -- connect, register, log in, create a
+  character, enter the world -- and hands over to World3D, which reads
+  `NetClient.last_enter_world_result` exactly as it does after a real
+  character select. `--server` with no argument starts the in-memory server
+  on a spare port and signs in to it.
+
+### The starting kit could not be given
+
+The server said so itself, in one line nobody had read:
+
+```
+character created without its starting kit character_id=1
+  err="adding item 4734 for slot 1: querying max stack for item 4734: not found"
+```
+
+`refdata`'s `GetMaxStack` returned an error for an item with no row, so
+`inventory.AddItem` refused to store it -- and the five kit items have no
+rows on a deployment that has imported nothing, which is every fresh
+deployment. Refusing to store an item because its stack size is unknown
+loses the item; storing it one to a slot does not. `GetMaxStack` now
+answers zero -- "no configured limit" -- which the inventory already reads
+as "does not stack". Errors are kept for a lookup that actually failed.
+
+### Ten handlers rejected the client's requests as malformed
+
+With the kit given, the character still rendered bare, and the client's own
+log said why once asked:
+
+```
+World3D: server reports 0 equipped item(s) for QaTester (error: malformed request)
+```
+
+Every request that names a character and asks for nothing else -- the
+inventory, equipment, quest, party, guild and friend listings, ten handlers
+in all -- decoded its payload with `DecodeCharacterCreateRequest`, each
+under a comment reading *"reuse: it's just {Name string}"*. That was true
+when it was written. Character creation later gained a `Gender` field, so
+the shared decoder began requiring **two** length-prefixed strings while the
+client kept sending one, and every listing started failing. The client
+showed it as an undressed character and empty panels.
+
+They now decode a `CharacterNameRequest`, which is exactly one string and
+cannot drift with character creation again.
+
+### Why the tests all passed
+
+Each of those handlers had a full-flow test over real TCP. Every one of them
+sent `CharacterCreateRequest{Name: "Aria"}.Encode()` -- the server's own
+encoder, putting the second empty string on the wire that only the server
+expected. **A round-trip test that uses one side's encoder on both sides
+cannot tell whether the two sides agree.** Nine of them failed the moment
+the decoder was corrected, which is the clearest possible statement of what
+they had been testing.
+
+The guard is `wire_shape_test.go`: it builds the payload the way the client
+does, by hand, from a `u16` length and the UTF-8 name and nothing after it,
+and decodes *that*. Reverting one handler makes it fail, which was checked
+rather than assumed.
+
+Also fixed here: `TestNewCharacterIsDressedAndHasVitals` walks the whole
+sequence a client performs on a fresh install against an empty refdata
+store, so "a new character is dressed" is now a test rather than a render.

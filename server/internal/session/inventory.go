@@ -116,7 +116,7 @@ func InventoryHandler(chars character.Store, store inventory.Store) gateway.Hand
 			})
 		}
 
-		req, err := DecodeCharacterCreateRequest(p.Data) // reuse: it's just {Name string}
+		req, err := DecodeCharacterNameRequest(p.Data)
 		if err != nil {
 			return sess.Send(&proto.Packet{
 				Opcode: OpInventoryListResult,

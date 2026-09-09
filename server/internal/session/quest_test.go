@@ -181,7 +181,7 @@ func TestQuestFullFlow(t *testing.T) {
 		}
 	}
 
-	resp = send(OpQuestList, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	resp = send(OpQuestList, (&CharacterNameRequest{Name: "Aria"}).Encode())
 	lr, err := DecodeQuestListResult(resp.Data)
 	if err != nil || lr.Error != "" {
 		t.Fatalf("listing quests failed: err=%v result=%+v", err, lr)

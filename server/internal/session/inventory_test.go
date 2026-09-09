@@ -127,7 +127,7 @@ func TestInventoryFullFlow(t *testing.T) {
 		t.Fatalf("login failed: err=%v result=%+v", err, lr)
 	}
 
-	resp = send(OpInventoryList, (&CharacterCreateRequest{Name: "Aria"}).Encode())
+	resp = send(OpInventoryList, (&CharacterNameRequest{Name: "Aria"}).Encode())
 	result, err := DecodeInventoryListResult(resp.Data)
 	if err != nil {
 		t.Fatalf("DecodeInventoryListResult: %v", err)
