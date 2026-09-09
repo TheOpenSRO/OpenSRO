@@ -58,7 +58,21 @@ var panel_root: Control
 ## "resinfo\\ifinventory.txt"). Returns false, having built nothing, if the
 ## layout is missing or empty -- a caller should treat that as "this panel
 ## isn't available" rather than showing an empty box.
-func build(builder: UiBuilder, layout_path: String, title: String) -> bool:
+## `extra_sections` names sections beyond "Create" to build into the same
+## window.
+##
+## A layout is not always one section. ifskill has three -- Create,
+## MainSkillWnd and Withdrawal -- and ifguild has ten. "Create" is the
+## window's chrome; the rest are its content and its modes, and building
+## only Create is why the skill and guild windows came out nearly empty.
+##
+## Which ones compose is per window and has to be established rather than
+## assumed: the skill window's two are **alternates**, picked by
+## `m_bySkillWndType` in the client (type 1 loads Withdrawal, types 2 and 3
+## load MainSkillWnd -- one function, one branch, confirmed in the binary),
+## so building both would draw two layouts over each other.
+func build(builder: UiBuilder, layout_path: String, title: String,
+		extra_sections: PackedStringArray = PackedStringArray()) -> bool:
 	_builder = builder
 	if builder == null:
 		return false
@@ -88,6 +102,15 @@ func build(builder: UiBuilder, layout_path: String, title: String) -> bool:
 	panel_root = builder.build_section(layout, "Create")
 	if panel_root == null:
 		return false
+	# Sections are declared front-to-back like controls, and "Create" holds
+	# the frame, so the content sections go behind nothing and in front of
+	# it -- added after, which is on top.
+	for extra in extra_sections:
+		var extra_root := builder.build_section(layout, extra)
+		if extra_root == null:
+			push_warning("HudWindow: %s has no section %s" % [layout_path, extra])
+			continue
+		panel_root.add_child(extra_root)
 	# The section root is IGNORE so it doesn't eat world clicks when used
 	# for a transparent HUD overlay; inside a window the window itself
 	# already blocks, and the children keep their own filters.

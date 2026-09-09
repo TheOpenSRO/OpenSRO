@@ -5667,3 +5667,73 @@ rather than assumed.
 Also fixed here: `TestNewCharacterIsDressedAndHasVitals` walks the whole
 sequence a client performs on a fresh install against an empty refdata
 store, so "a new character is dressed" is now a test rather than a render.
+
+## Hundred-and-fifteenth round: a window is more than its Create section
+
+Three more reasons the panels looked hollow, and one negative result worth
+keeping.
+
+### The artwork decides, not the type name
+
+`UiBuilder` matched control types by name and built anything else as an
+empty `Control`. **496 controls across the archive name an 8-slice base** --
+a `ddj` ending in an underscore -- and they are spread over **220 different
+type names**, most appearing once or twice: `CIFSkillBoard`, `CIFCommunity`,
+`CIFGuild`, `CIFBarWnd`, `CIFWnd`, `CIFJobRankSlot`, `CIFTradeInfoWndStoreSlot`
+and so on. Four were handled.
+
+That is why the skill window was see-through: `GDR_SKILL_BOARD` is a
+`CIFSkillBoard` carrying `interface\inventory\int_window_` over 351x270 of a
+364x333 window. Dispatching on the suffix instead covers all 496 in one
+branch and cannot go stale as type names appear.
+
+### "Create" is the chrome, not the window
+
+A layout is not one section. ifskill has three and ifguild has ten, and
+`HudWindow` built only `Create` -- which for ifguild is three controls, and
+for ifskill is the frame and one strip. All the content is in the others.
+
+Which sections compose is per window and had to be established rather than
+assumed. For the skill window the binary settles it: one function sets
+`m_bySkillWndType` and branches, loading `Withdrawal` for type 1 and
+`MainSkillWnd` for types 2 and 3. They are **alternates**, so the normal
+window is Create plus MainSkillWnd, and building both would draw two
+layouts over each other. ifguild's nine are not settled and are recorded as
+open rather than guessed at.
+
+### A tile is a tile wherever it is used
+
+ifguild's `GDR_GUILD_BG` is a `CIFStatic` -- not a `CIFNormalTile` --
+carrying `com_bg_tile_b.ddj` over 403x58. Stretching a 128x128 damask over
+that smears the pattern; artwork from `bg_tile\` now tiles whatever control
+names it.
+
+### The negative result: `resinfo\base.txt`
+
+`base.txt` holds five window recipes named Type1..Type5, and each is exactly
+the rule that has been missing: a `CIFFrame` on `int_window_` with a
+`CIFNormalTile` of `com_bg_tile_b.ddj` inset **16 pixels inside it on every
+side**, optionally with `com_blacksquare_` panels over their own
+`com_bg_tile_e` backing. It looks like the answer to "what fills a window
+body".
+
+It is not, and both halves of that were checked:
+
+- **The client never reads it.** `resinfo\ifbattery.txt`,
+  `resinfo\ifworldmap.txt` and thirty more layout paths are string literals
+  in the binary. `base.txt` is not among them, and no string containing it
+  exists at all.
+- **Nothing could select a recipe.** A section header carries one field
+  after its rect -- `Section = Create,"0,0,0,0","0"` -- which nothing had
+  ever read, and which was the only candidate. It is `0` on **all 480
+  sections in the archive**.
+
+So `base.txt` is a designer's prototype. Recorded here because it is a
+convincing false lead and the next person to open it will think the same
+thing.
+
+Also settled while looking: the control factory carries a default artwork
+path per control class, in the same string block as `CNIFLattice`'s. A
+`CIFNormalTile` with no `ddj` defaults to `com_bg_tile_b.ddj`, a `CNIFrame`
+to `interface\inventory\int_window_`, a `CNIFStretch` to `com_button.ddj`,
+and a close button to `interface\ifcommon\com_windowclose.ddj`.

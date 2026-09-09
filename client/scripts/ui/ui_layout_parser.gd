@@ -30,6 +30,10 @@ class ControlDef:
 class SectionDef:
 	var name: String = ""
 	var rect: Rect2i = Rect2i()
+	## The trailing field of the section header, kept because it is the
+	## only thing in a layout that could select one of `resinfo\base.txt`'s
+	## window recipes. -1 when the header does not carry one.
+	var base_type: int = -1
 	var controls: Array[ControlDef] = []
 	var control_by_name: Dictionary = {} # String -> ControlDef
 	var control_by_id: Dictionary = {}   # int -> ControlDef
@@ -132,6 +136,10 @@ static func _parse_section_header(line: String) -> SectionDef:
 		var w: int = parts[3].to_int()
 		var h: int = parts[4].trim_suffix("\"").to_int()
 		sec.rect = Rect2i(x, y, w, h)
+	if parts.size() >= 6:
+		var tail := parts[5].strip_edges().trim_prefix("\"").trim_suffix("\"")
+		if tail.is_valid_int():
+			sec.base_type = tail.to_int()
 	return sec
 
 static func _parse_property(line: String, ctrl: ControlDef) -> void:

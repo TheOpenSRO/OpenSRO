@@ -50,7 +50,23 @@ Every window in the real client is authored data, and building one is now mechan
 13. **A window is its frame plus any artwork hanging off it**, not the bounding box of every
    control. ifinventory's gold row sits 25 pixels below the frame; ifplayerinfo's `TEXT_HP_DAT` is
    a text field that overruns the right edge by 17 and must not widen the window.
-14. **Godot clamps `Control.size` up to the minimum size, and will fight the layout.** A
+14. **A `ddj` ending in `_` is an 8-slice base, whatever the control type is called.** 496
+   controls across the archive name one, spread over 220 type names -- `CIFSkillBoard`,
+   `CIFCommunity`, `CIFBarWnd`, `CIFJobRankSlot` and two hundred more. Dispatch on the suffix,
+   not on a list of type names. `CIFLattice` is the exception: its base expands to four *cell*
+   pieces, not eight frame ones.
+15. **A layout can hold several sections, and "Create" is only the chrome.** ifskill has three,
+   ifguild has ten. Which compose is per window: the skill window's `MainSkillWnd` and
+   `Withdrawal` are **alternates**, picked by `m_bySkillWndType` in the client (type 1 loads
+   Withdrawal, types 2 and 3 load MainSkillWnd -- one function, one branch). `HudPanels`'
+   `EXTRA_SECTIONS` lists only the ones that have been established.
+16. **`resinfo\base.txt` is a designer's prototype, not a runtime file.** It holds five window
+   recipes (Type1..Type5) -- a `CIFFrame` plus a `CIFNormalTile` inset exactly 16 pixels inside
+   it, optionally with `com_blacksquare_` panels over a `com_bg_tile_e` backing -- and it looks
+   exactly like the missing rule for filling a window body. It is not: the string `base.txt`
+   appears nowhere in the client binary, and every section header in the archive ends in the same
+   `"0"`, so nothing selects a recipe. Checked so nobody chases it twice.
+17. **Godot clamps `Control.size` up to the minimum size, and will fight the layout.** A
    `TextureRect`'s minimum is its texture (use `EXPAND_IGNORE_SIZE`); a `Label`'s is computed from
    the theme's *default* font until its theme cache refreshes a frame later (re-apply the rect);
    a `Button` with text has one from its own label (use a `TextureButton`). `UiBuilder` records

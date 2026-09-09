@@ -86,6 +86,7 @@ Section = Create,"0,0,200,100","0"
 
 	_check_section_size()
 	_check_lattice()
+	_check_slice_base_beats_the_type_name()
 
 	if _failures == 0:
 		print("ALL PASS")
@@ -158,3 +159,44 @@ Section = Create,"0,0,0,0","0"
 	_check(last != null and last.position == Vector2(3 * 36, 7 * 36),
 		"the last cell sits at the far corner of the grid (got %s)" % (str(last.position) if last != null else "-"))
 	root.free()
+
+## A control whose `ddj` ends in an underscore names an 8-slice base and is
+## built as a frame whatever its type is called. 496 controls across the
+## archive do, spread over 220 type names -- matching on the name reached
+## four of them and left the rest as empty Controls, which is what made the
+## skill, quest and guild windows see-through.
+func _check_slice_base_beats_the_type_name() -> void:
+	var layout := UiLayoutParser.parse("""
+Interface Text
+
+Section = Create,"0,0,0,0","0"
+{
+	GDR_BOARD:CIFSkillBoard
+	{
+		Rect=RECT,"6,29,351,270"
+		DDJ=STRING,"interface\\inventory\\int_window_"
+	}
+	GDR_PLAIN:CIFSomethingElse
+	{
+		Rect=RECT,"0,0,10,10"
+	}
+}
+""")
+	var builder := UiBuilder.new(null, null)
+	var root := builder.build_section(layout, "Create")
+	var board := root.get_node_or_null("GDR_BOARD")
+	_check(board != null and board.get_class() == "Control",
+		"an unknown type with an 8-slice base still builds (got %s)" % (board.get_class() if board != null else "-"))
+	_check(board != null and board.position == Vector2(6, 29) and board.size == Vector2(351, 270),
+		"it keeps its authored rect (got %s)" % (str(board.size) if board != null else "-"))
+	var plain := root.get_node_or_null("GDR_PLAIN")
+	_check(plain != null, "an unknown type with no artwork still builds")
+	root.free()
+
+	# The decision itself, which is what routes those 496 controls.
+	_check(UiBuilder.is_slice_base("interface\\inventory\\int_window_"),
+		"a trailing underscore marks an 8-slice base")
+	_check(not UiBuilder.is_slice_base("interface\\ifcommon\\com_windowclose.ddj"),
+		"a .ddj path is a texture, not a base")
+	_check(not UiBuilder.is_slice_base(""),
+		"no artwork is not a base")

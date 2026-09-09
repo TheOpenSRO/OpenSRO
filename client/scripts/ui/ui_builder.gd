@@ -135,32 +135,54 @@ func build_section(layout: UiLayoutParser.LayoutDef, section_name: String = "Cre
 
 	return root
 
+## Whether a `ddj` names an 8-slice base rather than a texture: the
+## convention is a trailing underscore, and the pieces are that path plus
+## `left_up.ddj`, `mid_up.ddj` and the rest.
+static func is_slice_base(ddj: String) -> bool:
+	return ddj != "" and ddj.ends_with("_")
+
 ## Builds a single Godot node corresponding to a ControlDef.
+##
+## **The artwork decides before the type does**, for one case. A `ddj`
+## ending in an underscore is not a texture: it is an 8-slice base that
+## expands into corners and edges. 496 controls across the archive name
+## one, spread over 220 different type names -- `CIFSkillBoard`,
+## `CIFCommunity`, `CIFGuild`, `CIFBarWnd`, `CIFJobRankSlot` and two
+## hundred more, most of them appearing once. Matching on the type name
+## reached four of them and built the rest as empty Controls, which is why
+## the skill, quest and guild windows came out see-through: ifskill's
+## `GDR_SKILL_BOARD` is a `CIFSkillBoard` carrying
+## `interface\inventory\int_window_` over 351x270 of a 364x333 window.
+##
+## Reading the suffix instead covers all 496 and cannot go stale as new
+## type names turn up. `CIFLattice` is the one exception and is matched
+## first: its base expands into four *cell* pieces, not eight frame ones.
 func build_control(def: UiLayoutParser.ControlDef) -> Control:
 	var node: Control = null
 
-	match def.type:
-		"CIFButton", "CIFCloseButton":
-			node = _build_button(def)
-		"CIFStatic":
-			node = _build_static(def)
-		"CIFGauge":
-			node = _build_gauge(def)
-		"CIFFrame", "CIFStretchWnd", "CIFSubFrame":
-			node = _build_frame(def)
-		"CIFNormalTile":
-			node = _build_tile(def)
-		"CIFDecoratedStatic", "CIFBarWnd":
-			node = _build_static(def)
-		"CIFEdit", "CIFEInputChatBox":
-			node = _build_edit(def)
-		"CIFSlotWithHelp", "CIFSlot", "CIFExtQuickSlotSlot", "CIFPartySlot":
-			node = _build_slot(def)
-		"CIFLattice":
-			node = _build_lattice(def)
-		_:
-			# Generic container for unhandled or compound control types
-			node = _build_generic(def)
+	if def.type == "CIFLattice":
+		node = _build_lattice(def)
+	elif is_slice_base(def.ddj):
+		node = _build_frame(def)
+	else:
+		match def.type:
+			"CIFButton", "CIFCloseButton":
+				node = _build_button(def)
+			"CIFStatic", "CIFDecoratedStatic", "CIFBarWnd":
+				node = _build_static(def)
+			"CIFGauge":
+				node = _build_gauge(def)
+			"CIFFrame", "CIFStretchWnd", "CIFSubFrame":
+				node = _build_frame(def)
+			"CIFNormalTile":
+				node = _build_tile(def)
+			"CIFEdit", "CIFEInputChatBox":
+				node = _build_edit(def)
+			"CIFSlotWithHelp", "CIFSlot", "CIFExtQuickSlotSlot", "CIFPartySlot":
+				node = _build_slot(def)
+			_:
+				# Generic container for unhandled or compound control types
+				node = _build_generic(def)
 
 	if node != null:
 		node.name = def.name
@@ -273,12 +295,19 @@ func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 
 	return btn
 
+## Artwork from this directory is a repeating pattern, whatever control
+## names it. A `CIFStatic` carrying one -- ifguild's `GDR_GUILD_BG` is
+## `com_bg_tile_b.ddj` over 403x58 -- means the author used the tile art as
+## a plain image, and stretching a 128x128 damask across it smears the
+## pattern instead of repeating it.
+const TILE_DIR := "bg_tile\\"
+
 func _build_static(def: UiLayoutParser.ControlDef) -> Control:
 	if def.ddj != "":
 		var rect := TextureRect.new()
 		rect.texture = load_texture_region(def.ddj, def.uv_lt, def.uv_rb)
 		rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		rect.stretch_mode = TextureRect.STRETCH_SCALE
+		rect.stretch_mode = TextureRect.STRETCH_TILE if def.ddj.contains(TILE_DIR) else TextureRect.STRETCH_SCALE
 		# `Color` is deliberately NOT applied as a tint. It looks like one,
 		# but it is a per-control editor id: across ifunderbar.txt's 76
 		# controls there are 64 distinct values, scattered

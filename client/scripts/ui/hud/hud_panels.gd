@@ -36,6 +36,26 @@ const PANELS := {
 	"exchange": ["resinfo\\ifexchange.txt", "Exchange", 0],
 }
 
+## Sections beyond "Create" that a panel's window builds.
+##
+## A layout can hold several sections; "Create" is the chrome and the rest
+## are content and modes. Which of them compose has to be established per
+## window rather than assumed, so this table only lists the ones that are:
+##
+## - **skill**: ifskill has Create, MainSkillWnd and Withdrawal. The last two
+##   are alternates -- the client picks between them on `m_bySkillWndType`,
+##   one function with type 1 loading Withdrawal and types 2 and 3 loading
+##   MainSkillWnd -- so the normal window is Create plus MainSkillWnd.
+##
+## ifguild's nine extra sections (GuildInfo, NotifySubBox, MemberView,
+## Command, SortBtn, NotifyContents, GrantPower, GuildPointUp,
+## PositionGrant) are not here yet: some are plainly parts of the one
+## window and some are plainly dialogs, and which is which has not been
+## established. See docs/UI_TODO.md.
+const EXTRA_SECTIONS := {
+	"skill": ["MainSkillWnd"],
+}
+
 ## Order and labels for the MENU popup, mirroring the reference's list.
 const MENU_ITEMS := [
 	["party", "Party (P)"],
@@ -103,7 +123,8 @@ func open(panel_id: String) -> HudWindow:
 		window = HudWindow.new()
 		window.name = "Window_" + panel_id
 		add_child(window)
-		if not window.build(_builder, spec[0], spec[1]):
+		var extra := PackedStringArray(EXTRA_SECTIONS.get(panel_id, []))
+		if not window.build(_builder, spec[0], spec[1], extra):
 			print("HudPanels: %s unavailable (layout %s did not build)" % [panel_id, spec[0]])
 			window.queue_free()
 			_unavailable[panel_id] = true
