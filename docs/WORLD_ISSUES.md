@@ -5813,3 +5813,56 @@ nobody has stats for hits as a bare fist. Real lookup failures still fail.
 This is the same shape as the max-stack fix two rounds ago -- an absent
 reference row is a normal answer, not an error -- and it is now tested with
 an empty store rather than assumed.
+
+## Hundred-and-eighteenth round: which of a window's sections are drawn together
+
+`ifguild.txt` has ten sections and `HudWindow` was building one of them --
+"Create", which for that file is three controls. Everything a guild window
+shows is in the other nine, and a layout does not say which of them are
+parts of the same window and which are modes or dialogs. Building them all
+draws two layouts over each other.
+
+**The binary is silent here.** `resinfo\ifguild.txt` appears nowhere in the
+client's strings, and neither do `MemberView`, `SortBtn` or `GrantPower`.
+(`NotifySubBox` and `NotifyContents` do -- both belong to the
+apprenticeship window's loader, which is a different file with sections of
+the same name.) So the usual method does not reach this one.
+
+The authored geometry does. `sweep_section_overlap.gd` measures how much of
+each section's own control area sits under every other section's controls:
+
+```
+                        Create   GuildInfo NotifySubBo  MemberView     Command     SortBtn NotifyConte
+GuildInfo                   0%           -          0%          0%          0%          0%          0%
+NotifySubBox              100%          0%           -          0%          0%          0%          0%
+MemberView                100%          0%          0%           -          0%          0%        100%
+Command                     0%          0%          0%          0%           -          0%          0%
+SortBtn                     0%          0%          0%          0%          0%           -          0%
+NotifyContents             99%          0%          0%         85%          0%          0%           -
+```
+
+**GuildInfo, NotifySubBox, SortBtn, MemberView and Command are pairwise
+0%.** They tile the window without touching: the guild header at the top,
+the notice under it, the column headers, the member list, and the buttons
+down the right. NotifyContents covers 85% of MemberView and MemberView
+covers 100% of NotifyContents -- the notice text and the member list are
+the same box shown one at a time. GrantPower covers 95% of MemberView;
+GuildPointUp and PositionGrant overlap each other 79% and sit across the
+window: dialogs.
+
+The rendered window bears it out -- guild master and member count, the GP
+gauge with its donation button, the notice with its edit button, the
+Member / Level / Level / Donate GP column headers with a sort toggle, and
+Join, Grant authority, Withdraw, Leave and Position allocating down the
+right.
+
+**Why the measurement is trustworthy**: run on ifskill it puts MainSkillWnd
+and Withdrawal at 100%, which is the answer the client gives independently
+-- one function, branching on `m_bySkillWndType`. A method that agrees with
+the binary where the binary speaks is worth using where it does not.
+
+Also this round: `remote_godot.sh`, because AGENTS.md now forbids running
+Godot on the developer's machine. `check`, `tests` and `script` ship the
+working copy to the render box and run there. Its own trap: the test loop
+ran one suite out of fifty-nine and reported success, because `ssh` without
+`-n` reads the caller's stdin and ate the rest of the file list.

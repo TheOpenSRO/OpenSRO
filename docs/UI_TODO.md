@@ -59,7 +59,11 @@ Every window in the real client is authored data, and building one is now mechan
    ifguild has ten. Which compose is per window: the skill window's `MainSkillWnd` and
    `Withdrawal` are **alternates**, picked by `m_bySkillWndType` in the client (type 1 loads
    Withdrawal, types 2 and 3 load MainSkillWnd -- one function, one branch). `HudPanels`'
-   `EXTRA_SECTIONS` lists only the ones that have been established.
+   `EXTRA_SECTIONS` lists only the ones that have been established. When the binary is silent --
+   it has no string for any of ifguild's -- `sweep_section_overlap.gd` settles it from the
+   geometry: sections that compose have controls that are **pairwise 0%** overlapping, and a
+   section covering another's controls is an alternate. Validated against ifskill, where the
+   binary gives the answer independently.
 16. **`resinfo\base.txt` is a designer's prototype, not a runtime file.** It holds five window
    recipes (Type1..Type5) -- a `CIFFrame` plus a `CIFNormalTile` inset exactly 16 pixels inside
    it, optionally with `com_blacksquare_` panels over a `com_bg_tile_e` backing -- and it looks

@@ -47,13 +47,24 @@ const PANELS := {
 ##   one function with type 1 loading Withdrawal and types 2 and 3 loading
 ##   MainSkillWnd -- so the normal window is Create plus MainSkillWnd.
 ##
-## ifguild's nine extra sections (GuildInfo, NotifySubBox, MemberView,
-## Command, SortBtn, NotifyContents, GrantPower, GuildPointUp,
-## PositionGrant) are not here yet: some are plainly parts of the one
-## window and some are plainly dialogs, and which is which has not been
-## established. See docs/UI_TODO.md.
+## - **guild**: ifguild has nine extra sections and the client binary this
+##   project reverse-engineers has no string for any of them, so the answer
+##   came from the authored geometry instead. `sweep_section_overlap.gd`
+##   measures how much of each section's control area sits under every
+##   other's, and GuildInfo, NotifySubBox, SortBtn, MemberView and Command
+##   are **pairwise 0%** -- they tile the window, the guild header at the
+##   top, the notice under it, the column headers, the member list, and the
+##   buttons down the right. NotifyContents covers 85% of MemberView (and
+##   MemberView 100% of it), GrantPower covers 95% of it, and GuildPointUp
+##   and PositionGrant overlap each other 79%: those four are the same box
+##   shown one at a time, and dialogs over the window.
+##
+## The same tool run on ifskill puts MainSkillWnd and Withdrawal at 100%,
+## which is the answer the binary gives independently -- which is what makes
+## the measurement worth trusting on ifguild, where the binary is silent.
 const EXTRA_SECTIONS := {
 	"skill": ["MainSkillWnd"],
+	"guild": ["GuildInfo", "NotifySubBox", "SortBtn", "MemberView", "Command"],
 }
 
 ## Order and labels for the MENU popup, mirroring the reference's list.
