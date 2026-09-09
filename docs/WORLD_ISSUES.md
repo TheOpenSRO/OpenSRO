@@ -5087,3 +5087,61 @@ single observation while making every overhead bridge a hazard.
 This does not move the player at Jangan's gate, because the surface there
 is not in the graph at all. It does put NPCs and players on every deck that
 *is*.
+
+## Hundred-and-seventh round: the snap was dragging the player down
+
+The last round measured the Jangan sinking exactly and concluded the gate's
+navigation mesh did not reach the spot. **That conclusion was wrong**, and
+the instrument that produced it was wrong in a way worth recording.
+
+Asked properly, the graph *does* offer that surface:
+
+```
+QA NAVGAP at local 985, 1000
+   graph offers 2 surface(s): [-46.408618927002, -32.6088829040527]
+   graph objects covering this point: [4, 28]
+   solid Obj_cj_jang_gate_126   y -46.2..1.0
+```
+
+The earlier report said "NO walkable mesh" because it matched render nodes
+to graph objects **by the trailing number in the node's name**. Those are
+different counters: the loader numbers nodes by how many have loaded from
+the `.o`/`.o2` placement files, while the graph keys objects by their index
+in the `.nvm`'s own object list. The lookup missed and the miss was read as
+absence. The report now asks the graph directly (`heights_at`,
+`objects_at`) and never tries to bridge the two numbering schemes.
+
+**What it actually was.** `_snap_player_onto_terrain` is a safety net for a
+player the region stream buried, and it fires deferred as the centre region
+finishes loading -- *after* the zone placement has already put the player
+correctly on the gate's deck at -32.6. Because it looks at terrain alone,
+it then dragged them 13.8 units down to the bare terrain inside the gate's
+stonework. Every "the player sinks into the town square" render was that
+one line.
+
+It is now **lift-only**. Lifting a buried player is what it was written for;
+dropping one off a surface they are legitimately standing on never was. The
+result, measured:
+
+```
+QA 120 local 985, -32, 1000  on object cj_jang_gate at -32.6 (-0.0 below feet)
+                             drawn Obj_cj_jang_gate_126 at -32.6 (-0.0 above the graph's)
+```
+
+Graph and drawn surface now agree to 0.0, and the player stands on the gate
+rather than in it.
+
+### Landing is still not walking
+
+The `NavGraph.landing_height_at` work from the previous round stands and is
+still right -- placement asks a different question from walking -- and the
+remaining QA placement paths (`--at` and `--shots`) were moved onto it here
+too, since a viewpoint jump is an arrival like any other.
+
+### The instrument
+
+`SRREVAMP_QA_NAVGAP` reports, for the player's exact spot, every surface the
+walkable graph offers and every solid object covering it. That pairing is
+what settles "am I standing in something" without a screenshot, and it is
+what caught both the real bug and the bad name-matching in the first
+version of itself.

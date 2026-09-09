@@ -1358,6 +1358,85 @@ func _refresh_zone_label_position() -> void:
 				_hud_minimap.update_player(rx, ry, local, player.rotation_degrees.y)
 				_hud_minimap.set_area_name(_current_zone_name)
 
+## Reports, for every placed object near the player, how its rendered
+## footprint compares with the walkable footprint in the navigation graph.
+##
+## The gap is what lets a player stand inside a structure: the graph only
+## knows the walkable part, so where the solid mesh reaches further, the
+## graph reports the terrain underneath and puts the player there. Jangan's
+## gate is the case that prompted this.
+func _qa_navgap_report() -> void:
+	var pair := _nav_graph_for(player.global_position)
+	if pair.is_empty():
+		print("QA NAVGAP: off-region")
+		return
+	var graph: NavGraph = pair[0]
+	var group: Node3D = pair[1]
+	var here := group.to_local(player.global_position)
+
+	# Rendered footprints, from the region's own object nodes.
+	# Objects hang off a container under the terrain group, not off the
+	# group itself -- the same two-level walk _qa_look_report does.
+	var object_nodes: Array[Node] = []
+	for container in group.get_children():
+		for node in container.get_children():
+			if node is Node3D and String(node.name).begins_with("Obj_"):
+				object_nodes.append(node)
+
+	var rendered := {}
+	for child in object_nodes:
+		var box := AABB()
+		var seeded := false
+		var stack: Array[Node] = [child]
+		while not stack.is_empty():
+			var cur: Node = stack.pop_back()
+			if cur is MeshInstance3D and (cur as MeshInstance3D).mesh != null:
+				var mi := cur as MeshInstance3D
+				var world_box: AABB = mi.global_transform * mi.get_aabb()
+				if seeded:
+					box = box.merge(world_box)
+				else:
+					box = world_box
+					seeded = true
+			for c in cur.get_children():
+				stack.append(c)
+		if seeded:
+			rendered[String(child.name)] = box
+
+	# Two independent questions, asked separately, because tying them
+	# together needs a name-to-index mapping that does not exist: the render
+	# nodes are numbered by a running "how many loaded" counter over the
+	# .o/.o2 placement files, while the graph keys objects by their index in
+	# the .nvm's own object list. An earlier version of this report matched
+	# them by the node name's trailing number and confidently reported "NO
+	# walkable mesh" for an object that may well have one.
+	#
+	# So: what does the graph offer to stand on here, and what solid
+	# geometry actually covers the spot.
+	print("QA NAVGAP at local %d, %d" % [here.x, here.z])
+
+	# heights_at is every surface the graph knows here: the terrain first,
+	# then any object cell covering the point.
+	var offered := graph.heights_at(here.x, here.z)
+	print("   graph offers %d surface(s): %s" % [offered.size(), offered])
+	print("   graph objects covering this point: %s" % [graph.objects_at(here.x, here.z)])
+
+	var covering := 0
+	for name in rendered:
+		var box: AABB = rendered[name]
+		var lo := group.to_local(box.position)
+		var hi := group.to_local(box.end)
+		var x0: float = minf(lo.x, hi.x)
+		var x1: float = maxf(lo.x, hi.x)
+		var z0: float = minf(lo.z, hi.z)
+		var z1: float = maxf(lo.z, hi.z)
+		if here.x < x0 or here.x > x1 or here.z < z0 or here.z > z1:
+			continue
+		covering += 1
+		print("   solid %-34s y %.1f..%.1f" % [name, minf(lo.y, hi.y), maxf(lo.y, hi.y)])
+	if covering == 0:
+		print("   nothing solid covers this spot")
+
 ## Opens the named HUD panels and tiles them across the screen, so one
 ## render can show several at once. Reports what opened and what didn't --
 ## a panel whose authored layout is missing prints rather than failing.
@@ -3112,7 +3191,22 @@ func _snap_player_onto_terrain() -> void:
 	var hit := space_state.intersect_ray(query)
 	if hit.is_empty():
 		return
-	player.position.y = hit.position.y + 0.05 * PLAYER_SCALE_RATIO
+	var surface: float = hit.position.y + 0.05 * PLAYER_SCALE_RATIO
+	# **Lift only.** This is a safety net for a player the region stream
+	# buried, which is what it was written for -- but because it looks at
+	# terrain alone, dropping the player to whatever it finds also pulls
+	# them off anything they are legitimately standing *on*.
+	#
+	# Measured in Jangan: a zone change places the player correctly on the
+	# gate's deck at local y -32.6, and this snap -- running deferred as the
+	# centre region finishes loading -- then dragged them down to the bare
+	# terrain 13.8 below, inside the gate's own stonework. Every "the player
+	# sinks into the town square" render was this line.
+	#
+	# Lifting still does its job; dropping never was its job.
+	if surface <= player.position.y:
+		return
+	player.position.y = surface
 	player.velocity = Vector3.ZERO
 	_avoid_spawning_under_roof()
 
@@ -4056,7 +4150,8 @@ func _qa_step() -> void:
 				var group: Node3D = pair[1]
 				var lx := float(parts[0])
 				var lz := float(parts[1])
-				var ly := graph.height_at(lx, lz, 0.0)
+				# An arrival, not a step: land on the highest surface here.
+				var ly := graph.landing_height_at(lx, lz)
 				player.global_position = group.to_global(Vector3(lx, ly, lz))
 				player.velocity = Vector3.ZERO
 		if OS.get_environment("SRREVAMP_QA_FREE") != "":
@@ -4136,6 +4231,13 @@ func _qa_step() -> void:
 	# tiled rather than centred so several are visible in one shot.
 	if OS.get_environment("SRREVAMP_QA_PANELS") != "" and _qa_tick == 30:
 		_qa_open_panels(OS.get_environment("SRREVAMP_QA_PANELS"))
+
+	# SRREVAMP_QA_NAVGAP compares each nearby object's *solid* footprint
+	# against its *walkable* one. A player can stand inside anything where
+	# the first is bigger than the second, so this says which objects those
+	# are rather than leaving it to be discovered by falling into one.
+	if OS.get_environment("SRREVAMP_QA_NAVGAP") != "" and _qa_tick == 60:
+		_qa_navgap_report()
 
 	if OS.get_environment("SRREVAMP_QA_LOOK") != "" and (_qa_tick == 60 or _qa_tick == 120):
 		_qa_look_report()
@@ -4285,7 +4387,8 @@ func _qa_advance_shots() -> void:
 		var group: Node3D = pair[1]
 		var lx: float = shot["x"]
 		var lz: float = shot["z"]
-		player.global_position = group.to_global(Vector3(lx, graph.height_at(lx, lz, 0.0), lz))
+		# Same as the initial placement: a viewpoint jump is an arrival.
+		player.global_position = group.to_global(Vector3(lx, graph.landing_height_at(lx, lz), lz))
 		player.velocity = Vector3.ZERO
 	if shot.has("dist"):
 		camera_arm.spring_length = shot["dist"]
