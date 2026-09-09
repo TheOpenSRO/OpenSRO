@@ -6,6 +6,16 @@
 // ever committed to this repo; only the schema/format is.
 package refdata
 
+import "errors"
+
+// ErrItemNotFound means the store has no row for that item id. It is a
+// normal answer, not a failure: reference data is brought by the operator
+// (see docs/LEGAL.md), so a deployment that has imported nothing -- or has
+// imported a partial export -- has items nobody has stats for. Callers
+// treat those as contributing nothing rather than refusing to work, and
+// keep real errors for a lookup that actually broke.
+var ErrItemNotFound = errors.New("refdata: no such item")
+
 // Item is this project's own, deliberately curated subset of item stats —
 // not a 1:1 mirror of the original's ~105-column layout (documented
 // structurally in docs/protocol/refdata_schema.md), just the fields that

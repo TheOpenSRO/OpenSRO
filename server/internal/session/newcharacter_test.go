@@ -46,6 +46,7 @@ func TestNewCharacterIsDressedAndHasVitals(t *testing.T) {
 		WorldHandler(chars, eq, hub),
 		EquipmentHandler(chars, eq),
 		InventoryHandler(chars, inv),
+		CharacterStatsHandler(chars, eq, refItems),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -135,5 +136,79 @@ func TestNewCharacterIsDressedAndHasVitals(t *testing.T) {
 	}
 	if len(bag.Slots) != 0 {
 		t.Errorf("a new character is carrying %d loose item(s), want them all worn", len(bag.Slots))
+	}
+
+	// And what the character panel and the inventory's gold readout show.
+	// With no reference data the worn armour contributes nothing, which is
+	// the point: it must answer rather than fail.
+	resp = send(OpCharacterStats, (&CharacterNameRequest{Name: "QaTester"}).Encode())
+	stats, err := DecodeCharacterStatsResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeCharacterStatsResult: %v", err)
+	}
+	if stats.Error != "" {
+		t.Fatalf("character stats: %s", stats.Error)
+	}
+	if stats.Gold != character.StartingGold {
+		t.Errorf("gold = %d, want the starting %d", stats.Gold, character.StartingGold)
+	}
+	if stats.MaxHP != int32(character.MaxHP) || stats.HP != stats.MaxHP {
+		t.Errorf("stats report %d/%d hp", stats.HP, stats.MaxHP)
+	}
+	if stats.PhysAttack <= 0 {
+		t.Errorf("physical attack is %d; an unarmed character still hits", stats.PhysAttack)
+	}
+	if stats.PhysDefense != 0 {
+		t.Errorf("physical defence is %d, want 0 from armour with no reference data", stats.PhysDefense)
+	}
+}
+
+// TestCombatWorksWithoutReferenceData is the other half of the same
+// problem. `attackerDamage` and `defenderArmor` looked every equipped item
+// up in refdata and returned an error when it was missing -- so on a
+// deployment that has imported none of it, a character wearing the starting
+// kit could not be attacked at all: all five armour pieces failed the
+// lookup. An item nobody has stats for now contributes nothing, and a
+// weapon nobody has stats for hits as a bare fist.
+func TestCombatWorksWithoutReferenceData(t *testing.T) {
+	ctx := context.Background()
+	refItems := refdata.NewMemStore()
+	inv := inventory.NewMemStore(refItems)
+	eq := equipment.NewMemStore(inv)
+
+	if err := equipment.GiveStartingKit(ctx, inv, eq, 1); err != nil {
+		t.Fatalf("GiveStartingKit: %v", err)
+	}
+
+	armor, err := defenderArmor(ctx, 1, eq, refItems)
+	if err != nil {
+		t.Fatalf("defenderArmor with no reference data: %v", err)
+	}
+	if armor != 0 {
+		t.Errorf("armour with no stats contributed %d", armor)
+	}
+
+	damage, err := attackerDamage(ctx, 1, eq, refItems)
+	if err != nil {
+		t.Fatalf("attackerDamage with no reference data: %v", err)
+	}
+	if damage != unarmedDamage {
+		t.Errorf("unarmed damage = %d, want %d", damage, unarmedDamage)
+	}
+
+	// A weapon with no row is the case that used to fail outright.
+	if err := inv.AddItem(ctx, 1, 12345, 1); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	slots, _ := inv.List(ctx, 1)
+	if err := eq.Equip(ctx, 1, equipment.SlotWeapon, slots[0].Index); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	damage, err = attackerDamage(ctx, 1, eq, refItems)
+	if err != nil {
+		t.Fatalf("attackerDamage with an unknown weapon: %v", err)
+	}
+	if damage != unarmedDamage {
+		t.Errorf("an unknown weapon deals %d, want the unarmed %d", damage, unarmedDamage)
 	}
 }

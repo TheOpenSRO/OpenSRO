@@ -115,8 +115,14 @@ authored presentation instead:
   `itemdata*.txt`, 11,772 items resolvable by id. Note the grid is **4×8 at a 36-pixel pitch**,
   not 32, so a 32×32 icon sits inside a 36-pixel cell. Still wanted: the gold readout, and drag
   between slots.
-- **Character** — bind the `GDR_PMI_TXT_*DAT` stat rows in `ifplayerinfo.txt` to the character
-  data the server already sends.
+- **Character** — *partly done*: `Phy. atk` and `Phy. def.` carry the numbers combat itself
+  resolves from equipment, and the HP row its real value, over a new `OpCharacterStats`. The
+  other thirteen rows (strength, intelligence, the magical and balance and hit-rate figures,
+  the three job grades, current and next experience) stay blank because **nothing on this server
+  computes them** — filling them would be indistinguishable from real data. They need a stat and
+  levelling system first; `server_dep\silkroad\textdata\leveldata.txt` in the archive is the
+  real exp curve when that happens (140 rows, column 1 is the experience to advance from that
+  level: 118 at level 1, 470 at 2, 1058 at 3).
 - **Party / Community / Guild** — the row controls exist (`CIFPartySlot` builds as a slot); they
   need one row per member with name, level and HP.
 - **Skill / Quest** — mastery tabs and quest rows.

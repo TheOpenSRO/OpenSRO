@@ -5776,3 +5776,40 @@ Three things it fixed on the way:
 
 The developer chat panel is retired with it -- the last piece of the old
 HUD that overlapped the real one.
+
+## Hundred-and-seventeenth round: the numbers the server actually has
+
+The character panel and the inventory's gold row are filled from a new
+`OpCharacterStats`, which carries gold, vitals, and physical attack and
+defence. Those last two are not new arithmetic: they are exactly what
+`attackerDamage` and `defenderArmor` resolve from equipment when this
+character swings at something and when something swings back.
+
+**Only what the server really computes.** The panel has thirteen more rows
+-- strength, intelligence, magical attack and defence, balance, hit rate,
+parry, three job grades, current and next experience -- and nothing here
+produces any of them, so they are not on the wire and stay as the layout
+drew them. A plausible number in those boxes would be indistinguishable
+from a real one.
+
+When there is a levelling system, the exp curve is already in the archive
+rather than something to invent: `server_dep\silkroad\textdata\leveldata.txt`
+is UTF-16LE, tab separated, 140 rows for levels 1 to 140, and column 1 is
+the experience needed to advance from that level -- 118, 470, 1058, 1880,
+2938 up to 103,622,218,294 at level 140. Its other columns are not read and
+are not guessed at here.
+
+### The same refdata bug again, in combat
+
+`attackerDamage` and `defenderArmor` looked every equipped item up in
+refdata and returned an error when the row was missing. Reference data is
+brought by the operator, so on a deployment that has imported none of it a
+character wearing the starting kit **could not be attacked at all** -- all
+five armour pieces failed the lookup and the whole attack errored.
+
+`refdata` now has a real `ErrItemNotFound` sentinel, and combat treats it as
+what it is: armour nobody has stats for protects nothing, and a weapon
+nobody has stats for hits as a bare fist. Real lookup failures still fail.
+This is the same shape as the max-stack fix two rounds ago -- an absent
+reference row is a normal answer, not an error -- and it is now tested with
+an empty store rather than assumed.

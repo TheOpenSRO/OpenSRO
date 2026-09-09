@@ -168,6 +168,9 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 		&it.MagAttackMin, &it.MagAttackMax, &it.HitRateMin, &it.HitRateMax,
 		&it.CriticalMin, &it.CriticalMax,
 	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("refdata: querying item %d: %w", id, ErrItemNotFound)
+		}
 		return nil, fmt.Errorf("refdata: querying item %d: %w", id, err)
 	}
 	return &it, nil

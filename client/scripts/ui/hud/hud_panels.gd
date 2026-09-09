@@ -279,6 +279,7 @@ func connect_net() -> void:
 		_fill_list("quest", entries.map(_describe_named)))
 	NetClient.friend_list_result.connect(func(friends: Array, _e: String) -> void:
 		_fill_list("community", friends.map(_describe_named)))
+	NetClient.character_stats_result.connect(_apply_stats)
 
 ## The character panel's own control names, from resinfo\\ifplayerinfo.txt.
 ## Every value field is a `_DAT` sibling of its label.
@@ -323,6 +324,51 @@ func _apply_character_fields() -> void:
 		if label != null:
 			label.text = values[control_name]
 
+## Fills every field the server actually has a number for.
+##
+## The character panel has thirteen more rows -- strength, intelligence, the
+## magical and balance and hit-rate figures, the three job grades -- and
+## nothing computes them, so they stay as the layout drew them. Filling them
+## with a plausible number would be indistinguishable from a real one.
+func _apply_stats(stats: StatsNet.Stats) -> void:
+	if stats == null or stats.error != "":
+		if stats != null and stats.error != "":
+			push_warning("HudPanels: character stats refused: %s" % stats.error)
+		return
+	_stats = stats
+
+	var inventory: HudWindow = _windows.get("inventory")
+	if inventory != null:
+		var gold := inventory.node("GDR_INVENTORY_STA_GOLD") as Label
+		if gold != null:
+			gold.text = _grouped(stats.gold)
+
+	var character: HudWindow = _windows.get("character")
+	if character != null:
+		_set_label(character, "GDR_PI_TEXT_PHYATT_DAT", str(stats.phys_attack))
+		_set_label(character, "GDR_PI_TEXT_PHYDEF_DAT", str(stats.phys_defense))
+		if stats.max_hp > 0:
+			_set_label(character, "GDR_PI_TEXT_HP_DAT", "%d / %d" % [stats.hp, stats.max_hp])
+
+var _stats: StatsNet.Stats = null
+
+func _set_label(window: HudWindow, control_name: String, text: String) -> void:
+	var label := window.node(control_name) as Label
+	if label != null:
+		label.text = text
+
+## Thousands separators, which is how the client's own gold readout reads.
+static func _grouped(value: int) -> String:
+	var digits := str(absi(value))
+	var out := ""
+	var count := 0
+	for i in range(digits.length() - 1, -1, -1):
+		out = digits[i] + out
+		count += 1
+		if count % 3 == 0 and i > 0:
+			out = "," + out
+	return ("-" + out) if value < 0 else out
+
 func _populate(panel_id: String) -> void:
 	# Every one of these requests is addressed by character name, which is
 	# also what identifies the session server-side, so there is nothing to
@@ -330,6 +376,10 @@ func _populate(panel_id: String) -> void:
 	var who := NetClient.current_character_name
 	if who == "" or not NetClient.is_connected_to_server():
 		return
+	# Gold and the combat numbers feed both the inventory's gold readout and
+	# the character panel's attack and defence rows, so either opening asks.
+	if panel_id == "inventory" or panel_id == "character":
+		NetClient.character_stats(who)
 	match panel_id:
 		"inventory":
 			NetClient.list_inventory(who)

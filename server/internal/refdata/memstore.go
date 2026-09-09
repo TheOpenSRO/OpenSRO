@@ -50,7 +50,7 @@ func (m *MemStore) GetItem(_ context.Context, id int64) (*Item, error) {
 	defer m.mu.RUnlock()
 	it, ok := m.items[id]
 	if !ok {
-		return nil, fmt.Errorf("refdata: querying item %d: not found", id)
+		return nil, fmt.Errorf("refdata: querying item %d: %w", id, ErrItemNotFound)
 	}
 	cp := it
 	return &cp, nil

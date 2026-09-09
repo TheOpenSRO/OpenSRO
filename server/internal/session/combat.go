@@ -15,6 +15,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
@@ -560,6 +561,14 @@ func attackerDamage(ctx context.Context, characterID int64, eq equipment.Store, 
 			continue
 		}
 		item, err := items.GetItem(ctx, e.ItemID)
+		if errors.Is(err, refdata.ErrItemNotFound) {
+			// A weapon nobody has stats for hits as a bare fist rather
+			// than making the attack fail. Reference data is brought by
+			// the operator, so on a deployment that has imported none of
+			// it -- which is every fresh one -- refusing here would mean
+			// nobody could fight at all.
+			return unarmedDamage, nil
+		}
 		if err != nil {
 			return 0, fmt.Errorf("looking up weapon stats: %w", err)
 		}
@@ -588,6 +597,13 @@ func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, i
 			continue
 		}
 		item, err := items.GetItem(ctx, e.ItemID)
+		if errors.Is(err, refdata.ErrItemNotFound) {
+			// Armour nobody has stats for protects nothing. Without this,
+			// a character wearing the starting kit could not be attacked
+			// at all on a deployment with no reference data: every one of
+			// the five pieces failed the lookup.
+			continue
+		}
 		if err != nil {
 			return 0, fmt.Errorf("looking up armor stats: %w", err)
 		}

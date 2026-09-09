@@ -25,6 +25,8 @@ signal entity_left(character_id: int)
 signal change_zone_result(result: WorldNet.ChangeZoneResult)
 
 signal inventory_list_result(slots: Array, error: String)
+## The character's own gold, vitals and equipment-derived combat numbers.
+signal character_stats_result(stats: StatsNet.Stats)
 ## Fires for OpEquipmentList AND for equip/unequip acks -- the server uses
 ## one opcode/shape for all three (a successful equip/unequip ack just has
 ## an empty items array). Callers that need to react to "my equip request
@@ -260,6 +262,10 @@ func change_zone(zone: String) -> void:
 func list_inventory(char_name: String) -> void:
 	_send(InventoryNet.OP_LIST, InventoryNet.encode_list_request(char_name))
 
+## Asks for the character's own gold, vitals and combat numbers.
+func character_stats(char_name: String) -> void:
+	_send(StatsNet.OP_STATS, StatsNet.encode_request(char_name))
+
 func list_equipment(char_name: String) -> void:
 	_send(EquipmentNet.OP_LIST, EquipmentNet.encode_list_request(char_name))
 
@@ -407,6 +413,8 @@ func _dispatch(p: Packet) -> void:
 		InventoryNet.OP_LIST_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)
 			inventory_list_result.emit(r.slots, r.error)
+		StatsNet.OP_STATS_RESULT:
+			character_stats_result.emit(StatsNet.decode_result(p.data))
 		EquipmentNet.OP_RESULT:
 			var r := EquipmentNet.decode_result(p.data)
 			equipment_result.emit(r.items, r.error)
