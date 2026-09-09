@@ -1056,16 +1056,28 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_underbar = HudUnderbar.new(_ui_builder, _media_pk2, _ui_text_table)
 	_hud_underbar.name = "HudUnderbar"
 	ui_control.add_child(_hud_underbar)
-	_hud_underbar.anchors_preset = Control.PRESET_CENTER_BOTTOM
+	# 800x52, centred horizontally and sitting on the bottom edge. The size
+	# is the bar body's authored rect (GDR_UNDERBAR in ginterface.txt), and
+	# the artwork is exactly that size, so it must not be stretched.
+	# Horizontal centring is authored too: the registry places the bar at
+	# x=112 in the client's 1024-wide default layout, and (1024-800)/2 is
+	# 112 exactly.
+	#
+	# The vertical anchor is a choice, not a recovered fact. The registry's
+	# y=684 would leave a 32px gap under the bar at 768 tall, but the same
+	# file places GDR_CHAT_BOARD's bottom at 944, past the bottom of a
+	# 768-tall screen -- so those defaults are not all screen-relative and
+	# can't be read as anchoring rules. Flush to the bottom is what the game
+	# looks like.
 	_hud_underbar.anchor_left = 0.5
 	_hud_underbar.anchor_right = 0.5
 	_hud_underbar.anchor_top = 1.0
 	_hud_underbar.anchor_bottom = 1.0
 	_hud_underbar.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	_hud_underbar.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_hud_underbar.offset_left = -432.0
-	_hud_underbar.offset_right = 432.0
-	_hud_underbar.offset_top = -54.0
+	_hud_underbar.offset_left = -HudUnderbar.BODY_WIDTH / 2.0
+	_hud_underbar.offset_right = HudUnderbar.BODY_WIDTH / 2.0
+	_hud_underbar.offset_top = -float(HudUnderbar.BODY_HEIGHT)
 	_hud_underbar.offset_bottom = 0.0
 	_hud_underbar.setup()
 

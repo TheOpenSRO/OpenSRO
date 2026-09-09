@@ -9,13 +9,46 @@ const ObjectLoader = preload("res://scripts/assets/object_loader.gd")
 const UiLayoutParser = preload("res://scripts/ui/ui_layout_parser.gd")
 const UiTextTable = preload("res://scripts/ui/ui_text_table.gd")
 
+## The client's top-level window registry. Each HUD window is declared here
+## with its background artwork and its screen rect -- information that is
+## *not* in the per-window layout files. `resinfo\\ifunderbar.txt` lists the
+## bar's 76 child controls but never names the bar's own background;
+## `GDR_UNDERBAR` in this file does (`ub_window_01.ddj`, 800x52 at 112,684).
+const WINDOW_REGISTRY_PATH := "resinfo\\ginterface.txt"
+
 var _media_pk2: Pk2Reader
 var _text_table: UiTextTable
 var _texture_cache: Dictionary = {} # String -> Texture2D
+var _window_registry: UiLayoutParser.LayoutDef = null
+var _window_registry_loaded: bool = false
 
 func _init(media_pk2: Pk2Reader = null, text_table: UiTextTable = null) -> void:
 	_media_pk2 = media_pk2
 	_text_table = text_table
+
+## Returns the top-level declaration of a HUD window (e.g. "GDR_UNDERBAR",
+## "GDR_MINIMAP") from the client's own window registry, or null if the
+## registry or the entry is missing. The returned def carries the window's
+## background `ddj` and its authored `rect`.
+##
+## The registry's rect is `x, y, width, height` -- confirmed by every
+## authored size matching its artwork's real dimensions exactly
+## (ub_window_01 800x52, ub_deco_left 64x52, ub_menu_button 60x56,
+## ub_sp_bar 144x8, mm_window 140x184), which also shows the art is drawn
+## 1:1 rather than stretched.
+func window_def(window_name: String) -> UiLayoutParser.ControlDef:
+	if not _window_registry_loaded:
+		_window_registry_loaded = true
+		if _media_pk2 != null:
+			var entry := ObjectLoader.find_file(_media_pk2, WINDOW_REGISTRY_PATH)
+			if entry != null:
+				_window_registry = UiLayoutParser.parse(_media_pk2.read_file(entry))
+	if _window_registry == null:
+		return null
+	var sec := _window_registry.get_section("Create")
+	if sec == null:
+		return null
+	return sec.control_by_name.get(window_name)
 
 ## Builds a Godot Control containing all controls defined in the specified section.
 func build_section(layout: UiLayoutParser.LayoutDef, section_name: String = "Create") -> Control:
@@ -25,6 +58,10 @@ func build_section(layout: UiLayoutParser.LayoutDef, section_name: String = "Cre
 
 	var root := Control.new()
 	root.name = sec.name
+	# Transparent container: it must not eat mouse input meant for the world
+	# behind it. IGNORE applies to this node alone, so the controls inside
+	# keep their own filters.
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if sec.rect.size.x > 0 and sec.rect.size.y > 0:
 		root.position = Vector2(sec.rect.position)
 		root.size = Vector2(sec.rect.size)
@@ -64,8 +101,31 @@ func build_control(def: UiLayoutParser.ControlDef) -> Control:
 		if def.rect.size.x > 0 and def.rect.size.y > 0:
 			node.size = Vector2(def.rect.size)
 			node.custom_minimum_size = Vector2(def.rect.size)
+		else:
+			# A zero-size rect means "use the artwork's own size". Real
+			# layouts do this (`GDR_DECORATE_3` in ifunderbar.txt is
+			# `Rect=RECT,"677,-40,0,0"` carrying ub_window_02.ddj), and
+			# leaving the node at zero size made it invisible. Every authored
+			# rect that *does* carry a size matches its texture's dimensions
+			# exactly -- ub_window_01 800x52, ub_deco_left 64x52,
+			# ub_menu_button 60x56, ub_sp_bar 144x8, mm_window 140x184 --
+			# so the art is authored 1:1 and its own size is the right
+			# fallback.
+			var natural := _natural_size(def)
+			if natural != Vector2.ZERO:
+				node.size = natural
+				node.custom_minimum_size = natural
 
 	return node
+
+## The size of a control's own artwork, or zero if it has none.
+func _natural_size(def: UiLayoutParser.ControlDef) -> Vector2:
+	if def.ddj == "":
+		return Vector2.ZERO
+	var tex := load_texture(def.ddj)
+	if tex == null:
+		return Vector2.ZERO
+	return tex.get_size()
 
 func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 	var btn := TextureButton.new()
@@ -104,8 +164,13 @@ func _build_static(def: UiLayoutParser.ControlDef) -> Control:
 		rect.texture = load_texture(def.ddj)
 		rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		rect.stretch_mode = TextureRect.STRETCH_SCALE
-		if def.color != Color.WHITE:
-			rect.modulate = def.color
+		# `Color` is deliberately NOT applied as a tint. It looks like one,
+		# but it is a per-control editor id: across ifunderbar.txt's 76
+		# controls there are 64 distinct values, scattered
+		# (255,51,191,68 / 255,91,102,218 / 255,64,213,106 ...), whereas
+		# `FontColor` -- a field that really is a colour -- is pure white on
+		# 74 of those same 76. Modulating by it tinted every piece of
+		# artwork a different random colour.
 
 		if def.text != "":
 			var label := Label.new()

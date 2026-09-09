@@ -52,7 +52,12 @@ jobs:
 
       - name: Import project
         working-directory: client
-        run: godot --headless --path . --import --quit
+        run: |
+          godot --headless --path . --import --quit
+
+      - name: Check every script and scene compiles
+        working-directory: client
+        run: godot --headless --path . --script res://tools/check_scripts.gd
 
       - name: Export Windows Desktop
         working-directory: client

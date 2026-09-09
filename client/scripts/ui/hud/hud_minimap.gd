@@ -12,6 +12,13 @@ const UiTextTable = preload("res://scripts/ui/ui_text_table.gd")
 
 const REGION_SPAN := 1920.0
 
+## The circular aperture in the minimap frame, and the mask that shapes it.
+## Both come from resinfo\\ifminimap.txt's GDR_MINIMAP_ALPHA, whose rect is
+## 14,57,105,105 and whose artwork is mm_alpha.ddj.
+const APERTURE_RECT := Rect2(14, 57, 105, 105)
+const MASK_TEXTURE_PATH := "interface\\minimap\\mm_alpha.ddj"
+const MASK_SHADER := preload("res://scripts/ui/minimap_mask.gdshader")
+
 var _ui_builder: UiBuilder
 var _media_pk2: Pk2Reader
 var _text_table: UiTextTable
@@ -55,8 +62,8 @@ func setup(layout_data: Variant = null) -> void:
 	# 1. Circular map clipping viewport (authored rect is 14, 57, 105, 105)
 	_map_clip = Control.new()
 	_map_clip.name = "MapClip"
-	_map_clip.position = Vector2(14, 57)
-	_map_clip.size = Vector2(105, 105)
+	_map_clip.position = APERTURE_RECT.position
+	_map_clip.size = APERTURE_RECT.size
 	_map_clip.clip_contents = true
 	_map_clip.mouse_filter = MOUSE_FILTER_IGNORE
 	add_child(_map_clip)
@@ -67,6 +74,17 @@ func setup(layout_data: Variant = null) -> void:
 	_map_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_map_rect.stretch_mode = TextureRect.STRETCH_SCALE
 	_map_rect.mouse_filter = MOUSE_FILTER_IGNORE
+	# Round the map off to the frame's circular aperture, using the client's
+	# own mask artwork. Without this the square clip above leaves the map
+	# filling corners the real frame does not cover.
+	if _ui_builder != null:
+		var mask := _ui_builder.load_texture(MASK_TEXTURE_PATH)
+		if mask != null:
+			var mat := ShaderMaterial.new()
+			mat.shader = MASK_SHADER
+			mat.set_shader_parameter("mask_texture", mask)
+			mat.set_shader_parameter("aperture_size", APERTURE_RECT.size)
+			_map_rect.material = mat
 	_map_clip.add_child(_map_rect)
 
 	# Player heading marker (mm_sign_character.ddj)
@@ -111,22 +129,11 @@ func setup(layout_data: Variant = null) -> void:
 	if layout_root != null:
 		add_child(layout_root)
 
-		# `GDR_MINIMAP_ALPHA` is a **mask**, not art. The authored layout
-		# places it at exactly the map rect (14,57,105,105) carrying
-		# `mm_alpha.ddj`, which is an opaque circle inside a transparent
-		# square (7,999 opaque / 2,817 transparent texels, measured with
-		# dump_ddj.gd) -- the real client uses it to clip the region map to
-		# a circle. Drawn as an ordinary texture it is a solid black disc
-		# that covers the map completely and spills over the frame's own
-		# artwork, which is exactly what the first render of this HUD
-		# showed.
-		#
-		# Hiding it restores the map. It does **not** implement the real
-		# circular clip -- the map is currently clipped to the square
-		# `_map_clip` instead, so it fills the corners the real client
-		# leaves empty. Doing it properly needs the texture applied as a
-		# mask (a CanvasGroup or a shader), which is left to the UI lane;
-		# see docs/TODO.md.
+		# `GDR_MINIMAP_ALPHA` is a **mask**, not art: its mm_alpha.ddj is
+		# black everywhere with alpha 255 inside a circle and 0 outside.
+		# Drawn as an ordinary texture it is a solid black disc covering the
+		# whole map. It is consumed above as the map's clip shader instead,
+		# so the layout's own copy of it must not be drawn.
 		var alpha_mask := layout_root.get_node_or_null("GDR_MINIMAP_ALPHA") as CanvasItem
 		if alpha_mask != null:
 			alpha_mask.visible = false
@@ -164,16 +171,22 @@ func update_player(region_x: int, region_y: int, local_pos: Vector3, yaw_degrees
 		_current_region_y = region_y
 		_load_region_map(region_x, region_y)
 
-	# Position the map texture so player position is centered inside aperture (52.5, 52.5)
+	# Position the map texture so the player sits at the aperture's centre.
 	var map_size: float = 256.0 * _zoom_level
 	_map_rect.size = Vector2(map_size, map_size)
 
 	var norm_x := clampf(local_pos.x / REGION_SPAN, 0.0, 1.0)
 	var norm_y := clampf(local_pos.z / REGION_SPAN, 0.0, 1.0)
 
-	var center_x := 105.0 / 2.0
-	var center_y := 105.0 / 2.0
-	_map_rect.position = Vector2(center_x - norm_x * map_size, center_y - norm_y * map_size)
+	var centre := APERTURE_RECT.size / 2.0
+	_map_rect.position = Vector2(centre.x - norm_x * map_size, centre.y - norm_y * map_size)
+
+	# The clip shader samples the mask in aperture space, so it needs the
+	# map quad's rect every time the quad moves.
+	if _map_rect.material is ShaderMaterial:
+		var mat := _map_rect.material as ShaderMaterial
+		mat.set_shader_parameter("map_offset", _map_rect.position)
+		mat.set_shader_parameter("map_size", _map_rect.size)
 
 	# Heading arrow
 	if _player_arrow != null:

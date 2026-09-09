@@ -23,6 +23,11 @@ var _lbl_page: Label
 var _btn_page_up: TextureButton
 var _btn_page_down: TextureButton
 
+## The bar body's authored size, used only if the window registry can't be
+## read. Both numbers come from `GDR_UNDERBAR` in resinfo\\ginterface.txt.
+const BODY_WIDTH: int = 800
+const BODY_HEIGHT: int = 52
+
 var _current_page: int = 1
 const MAX_PAGES: int = 4
 const SLOTS_PER_PAGE: int = 10
@@ -39,8 +44,26 @@ func _ready() -> void:
 		setup()
 
 func setup(layout_data: Variant = null) -> void:
-	custom_minimum_size = Vector2(864, 54)
-	size = Vector2(864, 54)
+	# The bar's own size and background come from the client's window
+	# registry, not from ifunderbar.txt: that file lists the bar's 76 child
+	# controls but never names the bar itself. `GDR_UNDERBAR` in
+	# resinfo\\ginterface.txt does -- ub_window_01.ddj, 800x52 -- and
+	# ub_window_01.ddj really is 800x52, so it is drawn 1:1.
+	#
+	# The child coordinates in ifunderbar.txt are relative to this 800x52
+	# body, and some are deliberately outside it: ub_deco_left sits at
+	# x=-64 and the menu/community/option buttons run up to y=-34. So this
+	# control must not clip its children, and its own rect is the bar body
+	# rather than the full extent of the artwork.
+	var body_size := Vector2(BODY_WIDTH, BODY_HEIGHT)
+	var registry_def: UiLayoutParser.ControlDef = null
+	if _ui_builder != null:
+		registry_def = _ui_builder.window_def("GDR_UNDERBAR")
+	if registry_def != null and registry_def.rect.size.x > 0:
+		body_size = Vector2(registry_def.rect.size)
+
+	custom_minimum_size = body_size
+	size = body_size
 	# The root is a transparent container, so it must not swallow mouse
 	# input: Godot's default MOUSE_FILTER_STOP made this panel eat every
 	# click over its whole rectangle, and World3D drives click-to-move from
@@ -48,6 +71,18 @@ func setup(layout_data: Variant = null) -> void:
 	# to this node only -- the buttons and slots inside keep their own
 	# filters and still receive clicks.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	# The bar background, behind every child.
+	if registry_def != null and registry_def.ddj != "" and _ui_builder != null:
+		var bg := TextureRect.new()
+		bg.name = "BarBackground"
+		bg.texture = _ui_builder.load_texture(registry_def.ddj)
+		bg.position = Vector2.ZERO
+		bg.size = body_size
+		bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		bg.stretch_mode = TextureRect.STRETCH_SCALE
+		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(bg)
 
 	var layout: UiLayoutParser.LayoutDef = null
 	if layout_data != null:

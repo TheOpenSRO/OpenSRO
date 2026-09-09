@@ -4702,3 +4702,91 @@ Two of these four are caught by commands already written down in
 something that executes the code". The other two needed a render, which
 `qa_shot.sh` produces in under two minutes on the GPU. The whole repair
 took one import, one suite run and three renders.
+
+## Hundred-and-second round: the client's own window registry
+
+Finishing the two items the UI repair left open turned on finding a file
+nobody had read: **`resinfo\ginterface.txt`**.
+
+`resinfo\ifunderbar.txt` describes the bar's 76 child controls and never
+names the bar itself — no background, no size, no screen position. That is
+why the underbar rendered as a handful of pieces bunched to the right: the
+only children with artwork of their own were the buttons and the two end
+decorations, and everything else had nothing to draw. `ginterface.txt` is
+the missing half, a **top-level window registry** giving each HUD window
+its background and its rect:
+
+```
+GDR_UNDERBAR:CIFUnderBar   DDJ=ub_window_01.ddj   Rect=112,684,800,52
+GDR_MINIMAP:CIFMinimap     DDJ=mm_window.ddj      Rect=892,6,140,184
+```
+
+**`Rect` is `x, y, width, height`**, confirmed five times over by every
+authored size matching its artwork's real dimensions exactly:
+ub_window_01 800×52, ub_deco_left 64×52, ub_menu_button 60×56, ub_sp_bar
+144×8, mm_window 140×184. The same fact says the art is drawn **1:1** and
+must not be stretched.
+
+The bar's horizontal placement is authored, not chosen: 112 is exactly
+`(1024 - 800) / 2` in the client's 1024-wide default layout. The vertical
+anchor is *not* recoverable the same way and is recorded as a choice —
+`y=684` would leave a 32px gap under the bar at 768 tall, but the same file
+puts `GDR_CHAT_BOARD`'s bottom at 944, past the bottom of a 768-tall
+screen, so these defaults are not all screen-relative and cannot be read as
+anchoring rules.
+
+Two builder bugs fell out of the same reading:
+
+**`Color` is not a tint.** `UiBuilder` applied it as `modulate`. It is a
+per-control editor id: ifunderbar.txt's 76 controls carry **64 distinct**
+scattered values (255,51,191,68 / 255,91,102,218 / 255,64,213,106 …),
+while `FontColor` — a field that really is a colour — is pure white on 74
+of those same 76. Modulating by it tinted every piece of artwork a
+different random colour.
+
+**A zero-size rect means "use the artwork's own size".** Real layouts do
+this (`GDR_DECORATE_3` is `Rect=RECT,"677,-40,0,0"` carrying
+ub_window_02.ddj); the node was left at zero size and never appeared.
+
+### The minimap's circular clip
+
+`mm_alpha.ddj` is 104×104, black in RGB everywhere, alpha 255 inside a
+circle and 0 outside — a pure alpha mask, which is why drawing it as
+artwork produced the black disc of the previous round. It is now the map's
+clip, via a small `canvas_item` shader. The map quad is larger than the
+aperture and slides inside it as the player moves, so the mask cannot be
+sampled at the quad's own UV; the shader samples in **aperture space**,
+taking the quad's offset and size as uniforms and discarding outside the
+aperture rather than clamping, which would smear the mask's edge texels
+over the frame.
+
+**Verified in a render**: the bar draws its full 800×52 background with the
+SP gauge, numbered quickslots, page arrows, menu medallion and both end
+decorations; the minimap's region art fills the frame's circle exactly.
+
+### Why a broken build shipped, and what now catches it
+
+v0.1.71 published green from the commit whose `World3D.gd` could not parse.
+The release workflow ran `--import --quit` and trusted it. **That check
+cannot work**, in either direction, and both were measured here:
+
+- On a **cold** cache a clean checkout of this project prints **283**
+  "Could not find type" parse errors while `class_name` symbols are still
+  being registered — all spurious. Failing on that output would block every
+  release.
+- On a **warm** cache a genuinely broken project prints **nothing**,
+  because the cached script is served instead of re-parsed.
+- And `--import --quit` exits **0** in every one of those cases.
+
+So the guard is `client/tools/check_scripts.gd`, which *loads* every script
+and scene — loading really does compile — and is run by both CI and the
+release workflow. `load()` alone is still not enough: Godot hands back a
+GDScript object for a script that failed to parse, having only logged the
+error. The tool calls `reload()` and reads the error code, failing on
+`ERR_PARSE_ERROR` (43) and `ERR_COMPILATION_FAILED` while ignoring
+`ERR_ALREADY_IN_USE` (22), which is what an autoload or the tool's own
+script answers because it cannot be swapped out from under itself.
+
+Checked both ways: clean project 137 scripts + 4 scenes, exit 0; the same
+project with `PRESET_BOTTOM_CENTER` reintroduced, exit 1 naming
+`res://scripts/World3D.gd`.
