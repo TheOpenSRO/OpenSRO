@@ -4869,3 +4869,87 @@ change -- this was the missing initial value.
 is drawn full rather than empty, because an empty bar reads as a real
 state, and it is flagged here and in UI_TODO.md rather than filled with a
 number that looks live.
+
+## Hundred-and-fourth round: the interface was never drawing its own artwork
+
+The HUD looked wrong because three separate pieces of authored data were
+being ignored, and each had been written off in this project's own notes.
+
+**1. The `UV_*` fields are atlas sub-rects, and they are real.** An earlier
+round recorded them as "parsed, unused; all `0,0`-`1,1` in the files read
+so far" -- read off *three* files. Across the 229 real `resinfo\if*.txt`
+layouts there are **18 distinct `UV_LT` values** and **45 controls whose
+`UV_RB` is not 1,1**.
+
+They are texture coordinates, and the arithmetic is exact.
+`interface\ifcommon\window_all.ddj` is 1024x512, and:
+
+```
+GDR_PLAYER_MINI_INFO  UV 0.723633,0        -> 0.930664,0.136719
+   x  0.723633*1024 = 741 .. 0.930664*1024 = 953   -> 212 wide
+   y  0            =   0 .. 0.136719*512   =  70   ->  70 tall
+   authored Rect: 212x70                            exact match
+
+GDR_PMI_STA_CINFOBG   UV 0.391602,0.300781 -> 0.523438,0.669922
+   -> 135x189, authored Rect 135x189                exact match
+```
+
+So the slice is 1:1 with the control, the same "art is authored at its real
+size" rule the rest of this format follows. That slice is the SRO player
+block -- gold-ringed portrait socket, Hwan circles, and the two bar slots --
+and drawing it is the difference between the HUD looking like the game and
+looking like coloured rectangles.
+
+**2. The UI font ships in the archive.** `fonts\` holds three `.ttf` files
+(the first is **TaeUtum**), loaded now from the player's own Media.pk2 at
+runtime, the same way textures are, so nothing is committed. Godot's default
+face over authored artwork was a large part of why the windows read as
+placeholder.
+
+The authored rects assume the client's own metrics and Godot renders the
+same TrueType slightly wider, so a fixed size clipped labels mid-word --
+"Phy. balance" became "Phy. balan", "Trader Grade" became "Trader Gra".
+Each label now measures its string and steps down from 12px until it fits
+the box the layout drew, which keeps the layout authoritative and still
+shows the whole string.
+
+**3. The string table's English column is not at a fixed index.**
+`UiTextTable` took column 8 always. Real rows for the *same* token differ in
+width and in which column holds the English, and column 8 is frequently the
+literal filler `"0"`:
+
+```
+16 cols  UIIT_STT_PHYSICAL_ATTACK  [8]="Phy. Atk:"  [9]="Phy. Atk:"
+19 cols  UIIT_STT_PHYSICAL_ATTACK  [8]="0"          [9]="Phy. atk"
+```
+
+Later rows overwrite earlier ones, so **every stat label in the character
+panel was rendering as the digit `0`** -- which is exactly what a screenshot
+showed. The column is now chosen by content: scan right to left, take the
+first field that is non-empty, is not the `"0"` filler, and contains a Latin
+letter. Against the real 3.5 MB table that resolves **6,937 tokens**, and
+the character panel now reads "Phy. atk", "Mag. def.", "Hit rate", "Parry
+ratio", "Trader Grade" -- matching the reference screenshots word for word.
+
+### A panel bug the same screenshots exposed
+
+The skill list rendered `<RefCounted#-9223348498956899638>`. The binding
+looked for a field called `name`; the net snapshots call it `item_name`,
+`skill_name`, `char_name` and so on, so every lookup missed and Godot's
+default object description went to the player. It now tries the real field
+names, and when a snapshot has none it prints that snapshot's actual fields
+rather than an object id -- a missing binding should look like a missing
+binding.
+
+### Still open
+
+- **Values, not labels.** The character panel's labels are right; its
+  numbers are empty because nothing binds them yet.
+- **The portrait socket is empty** -- `GDR_PMI_PICTURE` names no artwork,
+  and what the client draws there has not been identified.
+- **The HP and MP fills are still invented colours.** Neither gauge names a
+  `DDJ`, the atlas slice supplies the slot rather than a fill, and nothing
+  under `pmi_`, `com_bar0N` (list-row bars, near-black) or any `gauge` name
+  is an HP/MP fill -- the only `gauge.dat` files belong to the launcher. Red
+  and blue are read off the reference screenshots and are flagged in the
+  code as the only invented values there.

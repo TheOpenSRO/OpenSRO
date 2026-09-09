@@ -167,7 +167,7 @@ func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 	btn.stretch_mode = TextureButton.STRETCH_SCALE
 
 	if def.ddj != "":
-		btn.texture_normal = load_texture(def.ddj)
+		btn.texture_normal = load_texture_region(def.ddj, def.uv_lt, def.uv_rb)
 
 		# State textures convention: _focus, _press, _disable
 		var focus_path := _insert_suffix(def.ddj, "_focus")
@@ -188,6 +188,7 @@ func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 		label.set_anchors_preset(Control.PRESET_FULL_RECT)
 		if def.font_color != Color.WHITE:
 			label.add_theme_color_override("font_color", def.font_color)
+		_apply_font(label, def)
 		btn.add_child(label)
 
 	return btn
@@ -195,7 +196,7 @@ func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 func _build_static(def: UiLayoutParser.ControlDef) -> Control:
 	if def.ddj != "":
 		var rect := TextureRect.new()
-		rect.texture = load_texture(def.ddj)
+		rect.texture = load_texture_region(def.ddj, def.uv_lt, def.uv_rb)
 		rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		rect.stretch_mode = TextureRect.STRETCH_SCALE
 		# `Color` is deliberately NOT applied as a tint. It looks like one,
@@ -230,6 +231,7 @@ func _build_static(def: UiLayoutParser.ControlDef) -> Control:
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if def.font_color != Color.WHITE:
 		label.add_theme_color_override("font_color", def.font_color)
+	_apply_font(label, def)
 	return label
 
 ## A 1x1 white texture, so a gauge with no artwork of its own can still be
@@ -252,7 +254,7 @@ func _build_gauge(def: UiLayoutParser.ControlDef) -> TextureProgressBar:
 	gauge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	if def.ddj != "":
-		gauge.texture_progress = load_texture(def.ddj)
+		gauge.texture_progress = load_texture_region(def.ddj, def.uv_lt, def.uv_rb)
 	# Several real gauges name no artwork at all -- the player block's
 	# GDR_PMI_GAUGE_HP and _MP among them, which the client colours itself.
 	# Without a texture a TextureProgressBar draws nothing, so fall back to
@@ -333,7 +335,7 @@ func _build_slot(def: UiLayoutParser.ControlDef) -> Control:
 	if def.ddj != "":
 		var bg := TextureRect.new()
 		bg.name = "SlotBg"
-		bg.texture = load_texture(def.ddj)
+		bg.texture = load_texture_region(def.ddj, def.uv_lt, def.uv_rb)
 		bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 		bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -413,10 +415,135 @@ func load_texture(ddj_path: String) -> Texture2D:
 		_texture_cache[key] = tex
 	return tex
 
+## Loads a texture, cropped to the sub-rect a control's UV fields name.
+##
+## Several interface textures are **atlases**, not single images:
+## `interface\\ifcommon\\window_all.ddj` is 1024x512 and holds many panel
+## backgrounds side by side. A control that uses one names its slice with
+## `UV_LT`/`UV_RB`, and those really are texture coordinates -- verified
+## against the artwork's own pixel size:
+##
+##   GDR_PLAYER_MINI_INFO  UV 0.723633,0 -> 0.930664,0.136719
+##     x: 0.723633*1024 = 741, 0.930664*1024 = 953  -> 212 wide
+##     y: 0            = 0,   0.136719*512  =  70   ->  70 tall
+##   and its authored Rect is exactly 212x70.
+##
+##   GDR_PMI_STA_CINFOBG   UV 0.391602,0.300781 -> 0.523438,0.669922
+##     -> 135x189, and its Rect is exactly 135x189.
+##
+## So the slice is 1:1 with the control, which is the same "art is authored
+## at its real size" rule the rest of this format follows.
+##
+## An earlier version of this project's notes claimed these fields were
+## always 0,0-1,1 and therefore unused. That came from reading three files.
+## Across the 229 real `resinfo\\if*.txt` layouts there are 18 distinct
+## `UV_LT` values and 45 controls whose `UV_RB` is not 1,1.
+func load_texture_region(ddj_path: String, uv_lt: Vector2, uv_rb: Vector2) -> Texture2D:
+	var tex := load_texture(ddj_path)
+	if tex == null:
+		return null
+	if is_zero_approx(uv_lt.x) and is_zero_approx(uv_lt.y) \
+			and is_equal_approx(uv_rb.x, 1.0) and is_equal_approx(uv_rb.y, 1.0):
+		return tex
+	var full := tex.get_size()
+	var region := Rect2(
+		Vector2(uv_lt.x * full.x, uv_lt.y * full.y),
+		Vector2((uv_rb.x - uv_lt.x) * full.x, (uv_rb.y - uv_lt.y) * full.y)).abs()
+	if region.size.x < 1.0 or region.size.y < 1.0:
+		return tex
+	var atlas := AtlasTexture.new()
+	atlas.atlas = tex
+	atlas.region = region
+	return atlas
+
+## The client's own UI fonts, loaded from the player's Media.pk2 at runtime.
+##
+## `fonts\\` in a real Media.pk2 holds three `.ttf` files (plus `vplus\\
+## vfont.ttf`). Their names are Korean and survive the archive as mangled
+## bytes, so they are found by extension rather than named -- which is also
+## why this walks the directory instead of hardcoding a path.
+##
+## Nothing is committed: the font is read out of the user's own archive the
+## same way every texture is, per docs/LEGAL.md.
+const FONT_DIR := "fonts"
+
+var _fonts: Array[FontFile] = []
+var _fonts_loaded := false
+
+func _load_fonts() -> void:
+	if _fonts_loaded:
+		return
+	_fonts_loaded = true
+	if _media_pk2 == null:
+		return
+	var dir_entry := ObjectLoader.find_file(_media_pk2, FONT_DIR)
+	if dir_entry == null or not dir_entry.is_dir:
+		return
+	for entry in _media_pk2.read_dir_at(dir_entry):
+		if entry.is_dir or not entry.name.to_lower().ends_with(".ttf"):
+			continue
+		var data := _media_pk2.read_file(entry)
+		if data.is_empty():
+			continue
+		var font := FontFile.new()
+		font.data = data
+		if font.get_face_count() > 0:
+			_fonts.append(font)
+
+## The UI font at index (a control's `FontIndex`), or null if the archive
+## has none. Out-of-range indices fall back to the first font rather than
+## to Godot's default, which looks nothing like the client's.
+func font_at(index: int) -> FontFile:
+	_load_fonts()
+	if _fonts.is_empty():
+		return null
+	return _fonts[index] if index >= 0 and index < _fonts.size() else _fonts[0]
+
+## How many UI fonts the archive supplied.
+func font_count() -> int:
+	_load_fonts()
+	return _fonts.size()
+
 func _resolve_text(key_or_text: String) -> String:
 	if _text_table != null:
 		return _text_table.get_text(key_or_text)
 	return key_or_text
+
+## The interface is authored at 1:1 pixel size against short text rows
+## (`GDR_PMI_TXT_HP` is 124x12, the character panel's stat labels 58x15), so
+## text has to be sized to those rows or it overflows -- which is what put
+## "Hit rate" through the bottom of the character panel.
+const UI_FONT_SIZE := 12
+## Small enough to stay legible; below this, shrinking is worse than
+## clipping.
+const UI_FONT_SIZE_MIN := 9
+
+func _apply_font(label: Label, def: UiLayoutParser.ControlDef) -> void:
+	var font := font_at(def.font_index)
+	if font != null:
+		label.add_theme_font_override("font", font)
+	label.add_theme_font_size_override("font_size", _fitting_font_size(font, label.text, def.rect.size))
+	# Authored rows are tight, and a value longer than anything anticipated
+	# would still push into the row under it.
+	label.clip_text = true
+
+## The largest size at or below UI_FONT_SIZE at which text fits the control
+## the layout drew for it.
+##
+## The authored rects assume the client's own font metrics, and Godot
+## renders the same TrueType slightly wider, so a fixed size clipped real
+## labels mid-word -- "Phy. balance" became "Phy. balan", "Trader Grade"
+## became "Trader Gra". Measuring and stepping down keeps the layout's
+## dimensions authoritative while still showing the whole string.
+func _fitting_font_size(font: FontFile, text: String, box: Vector2i) -> int:
+	if font == null or text == "" or box.x <= 0:
+		return UI_FONT_SIZE
+	var size := UI_FONT_SIZE
+	while size > UI_FONT_SIZE_MIN:
+		if font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x <= float(box.x):
+			return size
+		size -= 1
+	return size
 
 func _insert_suffix(path: String, suffix: String) -> String:
 	var dot := path.rfind(".")

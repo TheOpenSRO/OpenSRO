@@ -225,24 +225,59 @@ func _fill_list(panel_id: String, lines: Array) -> void:
 		list.position = Vector2(12, HudWindow.TITLE_BAR_HEIGHT + 8.0)
 		list.size = window.size - Vector2(24, HudWindow.TITLE_BAR_HEIGHT + 20.0)
 		list.add_theme_color_override("font_color", Color(0.92, 0.88, 0.76))
+		if _builder != null:
+			var font := _builder.font_at(0)
+			if font != null:
+				list.add_theme_font_override("font", font)
+			list.add_theme_font_size_override("font_size", 12)
 		window.add_child(list)
 	list.clear()
 	for line in lines:
 		list.add_item(str(line))
 
+## Names for the fields these snapshots actually use. `get("name")` was
+## wrong: the net snapshots call it `item_name`, `skill_name` and so on, so
+## every lookup missed and the panels listed Godot's default object
+## description -- "<RefCounted#-9223348498956899638>" -- straight to the
+## player.
+const NAME_FIELDS := ["item_name", "skill_name", "quest_name", "char_name", "friend_name", "name", "title"]
+const COUNT_FIELDS := ["count", "quantity", "stack_count", "amount"]
+
+## The first of field_names that entry actually has, or "".
+static func _first_field(entry: Variant, field_names: Array) -> Variant:
+	if not (entry is Object):
+		return null
+	var obj := entry as Object
+	for field in field_names:
+		if field in obj:
+			var value = obj.get(field)
+			if value != null and str(value) != "":
+				return value
+	return null
+
 func _describe_item(slot: Variant) -> String:
-	if slot is Object and (slot as Object).has_method("get"):
-		var name_value = slot.get("name")
-		var count_value = slot.get("count")
-		if name_value != null:
-			if count_value != null and int(count_value) > 1:
-				return "%s x%d" % [name_value, int(count_value)]
-			return str(name_value)
-	return str(slot)
+	var item_name = _first_field(slot, NAME_FIELDS)
+	if item_name == null:
+		return _describe_unknown(slot)
+	var count = _first_field(slot, COUNT_FIELDS)
+	if count != null and int(count) > 1:
+		return "%s x%d" % [item_name, int(count)]
+	return str(item_name)
 
 func _describe_named(entry: Variant) -> String:
-	if entry is Object and (entry as Object).has_method("get"):
-		var name_value = entry.get("name")
-		if name_value != null:
-			return str(name_value)
+	var entry_name = _first_field(entry, NAME_FIELDS)
+	return str(entry_name) if entry_name != null else _describe_unknown(entry)
+
+## A snapshot with no field this code knows about. Says so, rather than
+## printing Godot's object description, which is meaningless to a player
+## and hides the fact that the binding is incomplete.
+func _describe_unknown(entry: Variant) -> String:
+	if entry is Object:
+		var fields := PackedStringArray()
+		for prop in (entry as Object).get_property_list():
+			var field_name: String = prop["name"]
+			if prop["usage"] & PROPERTY_USAGE_SCRIPT_VARIABLE:
+				fields.append("%s=%s" % [field_name, (entry as Object).get(field_name)])
+		if not fields.is_empty():
+			return ", ".join(fields)
 	return str(entry)

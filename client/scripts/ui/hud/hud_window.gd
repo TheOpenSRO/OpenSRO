@@ -101,6 +101,13 @@ func _add_title_bar(title: String) -> void:
 	bar.size = Vector2(size.x, TITLE_BAR_HEIGHT)
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar.add_theme_color_override("font_color", Color(0.93, 0.87, 0.70))
+	# The client's own UI font, so a window title doesn't sit in Godot's
+	# default face over authored artwork.
+	if _builder != null:
+		var font := _builder.font_at(0)
+		if font != null:
+			bar.add_theme_font_override("font", font)
+		bar.add_theme_font_size_override("font_size", 12)
 	add_child(bar)
 
 	var close := Button.new()

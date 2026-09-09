@@ -13,14 +13,17 @@ class_name HudPlayerInfo
 ## stat rows) and the Hwan decorations, which the Character window covers
 ## instead.
 ##
-## **window_all.ddj is 1024x512 and the window is 212x70**, so it is an
-## atlas, not a background to stretch across the frame. Which sub-rect
-## belongs to this window is not recorded anywhere found so far -- the
-## `UV_LT`/`UV_RT`/`UV_LB`/`UV_RB` fields on every control look like they
-## should say, but they are `0,0`-`1,1` in every file read. So the
-## background is left undrawn rather than stretched from an atlas at a
-## guessed offset; the gauges and text are what carry the information, and
-## they come from the layout directly.
+## **window_all.ddj is a 1024x512 atlas**, and the registry entry's own
+## `UV_LT`/`UV_RB` name this window's slice of it: `0.723633,0` to
+## `0.930664,0.136719`, which is atlas pixels (741,0)-(953,70) -- exactly
+## the 212x70 the rect declares. That slice is the SRO player block: a
+## circular portrait socket on the left and two horizontal bar slots for HP
+## and MP on the right.
+##
+## An earlier version of this file said those UV fields were always
+## `0,0`-`1,1` and so the background could not be placed. That was read off
+## three layout files; across the 229 real `resinfo` layouts there are 18
+## distinct `UV_LT` values.
 
 const UiBuilder = preload("res://scripts/ui/ui_builder.gd")
 const UiLayoutParser = preload("res://scripts/ui/ui_layout_parser.gd")
@@ -70,6 +73,20 @@ func setup() -> void:
 
 	if _builder == null:
 		return
+
+	# The frame, from the registry's own atlas slice, behind everything.
+	var reg_def := _builder.window_def(REGISTRY_NAME)
+	if reg_def != null and reg_def.ddj != "":
+		var frame := TextureRect.new()
+		frame.name = "Frame"
+		frame.texture = _builder.load_texture_region(reg_def.ddj, reg_def.uv_lt, reg_def.uv_rb)
+		frame.position = Vector2.ZERO
+		frame.size = panel_size
+		frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		frame.stretch_mode = TextureRect.STRETCH_SCALE
+		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(frame)
+
 	var layout := _builder.load_layout(LAYOUT_PATH)
 	if layout == null:
 		return
@@ -101,11 +118,14 @@ func setup() -> void:
 	_tint(_hp_gauge, Color(0.78, 0.15, 0.15))
 	_tint(_mp_gauge, Color(0.16, 0.36, 0.86))
 
-## The HP and MP gauges share one `ub_sp_bar`-style texture and are told
-## apart by colour in the real client. The two colours here are read off
-## the reference screenshots (a red HP bar over a blue MP bar), not out of
-## the data -- they are a stand-in until the real per-gauge artwork is
-## identified, and are the only invented values in this file.
+## Neither gauge names any artwork: `GDR_PMI_GAUGE_HP` and `_MP` have an
+## empty `DDJ`, and the atlas slice above supplies the *slot* they sit in,
+## not a fill. So the client draws the fill itself, and these two colours
+## are read off the reference screenshots -- a red HP bar over a blue MP
+## bar -- rather than out of the data. Searched for and not found: nothing
+## under `pmi_`, `com_bar0N` (those are list-row bars, near-black) or any
+## `gauge` name is an HP/MP fill; the only `gauge.dat` files are the
+## launcher's. Flagged as the invented values they are.
 func _tint(gauge: TextureProgressBar, colour: Color) -> void:
 	if gauge == null:
 		return

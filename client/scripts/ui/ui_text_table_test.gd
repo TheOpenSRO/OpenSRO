@@ -24,6 +24,21 @@ func _init() -> void:
 	_check(table.get_text("NON_EXISTENT") == "NON_EXISTENT", "fallback to token itself")
 	_check(table.get_text("NON_EXISTENT", "Default") == "Default", "fallback to custom default")
 
+	# The real file's shape, which the fixed-column reader got wrong. Two
+	# rows for the same token, of different widths, where the conventional
+	# English column holds the "0" filler in the wider one -- taken
+	# verbatim from a real textuisystem.txt.
+	var varying := PackedStringArray([
+		"1\tUIIT_STT_PHYSICAL_ATTACK\t\u1355\t0\t0\t0\t0\t0\tPhy. Atk:\tPhy. Atk:\t0\t0\t0\t0\t0\t0",
+		"1\tUIIT_STT_PHYSICAL_ATTACK\t\u1355\t0\t0\t0\t0\t0\t0\tPhy. atk\t0\t0\t0\t0\t0\t0\t0\t0\t0",
+		"1\tUIIT_STT_HIT_RATIO\t\u1355\t0\t0\t0\t0\t0\t0\tHit rate\t0\t0\t0\t0\t0\t0\t0\t0\t0",
+	])
+	var varying_table := UiTextTable.parse(("\n".join(varying)).to_utf16_buffer())
+	_check(varying_table.get_text("UIIT_STT_PHYSICAL_ATTACK") == "Phy. atk",
+		"picks the English column even when it moves (got %s)" % varying_table.get_text("UIIT_STT_PHYSICAL_ATTACK"))
+	_check(varying_table.get_text("UIIT_STT_HIT_RATIO") == "Hit rate",
+		"a row whose column 8 is the \"0\" filler still resolves (got %s)" % varying_table.get_text("UIIT_STT_HIT_RATIO"))
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
