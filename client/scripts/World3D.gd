@@ -1598,6 +1598,7 @@ func _build_region_nav_graph(terrain_group: Node3D, mapm_path: String) -> void:
 	var archive := _open_pk2_if_set()
 	var placed: Array[NavGraph.PlacedObject] = []
 	var missing := 0
+	var missing_names := {}
 	if archive != null and not region.objects.is_empty():
 		var table := _load_object_index()
 		if table != null:
@@ -1606,6 +1607,14 @@ func _build_region_nav_graph(terrain_group: Node3D, mapm_path: String) -> void:
 				var collision := _load_object_collision(archive, table, obj.resource_id)
 				if collision == null:
 					missing += 1
+					# Naming them matters: an object with no navigation mesh
+					# is one the player can stand *inside*, and "8 objects
+					# unresolved" gives no way to tell whether those eight
+					# are decorative shrubs or the plaza the town square is
+					# built on.
+					var missing_entry := table.lookup(obj.resource_id)
+					if missing_entry != null and missing_entry.path != "":
+						missing_names[missing_entry.path.get_file().get_basename()] = true
 					continue
 				var placed_object := NavGraph.place(collision, oi, obj.local_position, obj.yaw)
 				# Tagged with the real model it came from purely so that a
@@ -1620,7 +1629,8 @@ func _build_region_nav_graph(terrain_group: Node3D, mapm_path: String) -> void:
 	print("World3D: real walkable graph for %s -- %d/%d real objects placed, %d real terrain blocking edges" % [
 		mapm_path, placed.size(), region.objects.size(), graph.terrain_blocking.size() / 2])
 	if missing > 0:
-		print("World3D:   (%d real objects in that region could not be resolved to a navigation mesh)" % missing)
+		print("World3D:   (%d real objects in that region could not be resolved to a navigation mesh: %s)" % [
+			missing, ", ".join(PackedStringArray(missing_names.keys()))])
 
 ## Cache of real object navigation meshes by real resource ID, since a region
 ## repeats the same handful of real object types across many placements.
@@ -2757,7 +2767,7 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 				# from 0 puts anyone standing on a raised deck underneath it.
 				# Jangan's octagonal plaza is a placed object, so every NPC
 				# on the town square came out buried in it.
-				height = (pair[0] as NavGraph).height_at(local.x, local.z, local.y)
+				height = (pair[0] as NavGraph).landing_height_at(local.x, local.z)
 				break
 		holder.position = Vector3(local.x, height, local.z)
 		holder.add_child(assembled.skeleton)
@@ -4170,6 +4180,37 @@ func _qa_step() -> void:
 				if placed != null and placed.has_meta("model"):
 					what = "object %s" % placed.get_meta("model")
 			standing = "  on %s at %.1f (%.1f below feet)" % [what, surface.height, l.y - surface.height]
+
+			# What the walkable graph says and what is actually *drawn*
+			# there are two different questions, and this project has been
+			# caught by that before -- an earlier float report measured the
+			# navmesh and called it the terrain. A ray straight down through
+			# the real collision answers the second one, so a disagreement
+			# between them shows up as a number instead of as a player
+			# standing waist-deep in a plaza.
+			var space := get_world_3d().direct_space_state
+			var from := player.global_position + Vector3(0, 200, 0)
+			var query := PhysicsRayQueryParameters3D.create(from, from + Vector3(0, -800, 0))
+			query.collision_mask = TERRAIN_COLLISION_LAYER
+			query.exclude = [player.get_rid()]
+			var hit := space.intersect_ray(query)
+			if hit.is_empty():
+				standing += "  drawn surface: none found"
+			else:
+				var drawn_local: float = (pair[1] as Node3D).to_local(hit.position).y
+				# Name what was hit. "Something is 13.8 above the graph" is
+				# not actionable; "cj_jang_square is 13.8 above the graph"
+				# says whether the walkable graph is missing that object's
+				# navigation mesh or the object is simply overhead.
+				var what_drawn := "?"
+				var collider = hit.get("collider")
+				if collider is Node:
+					var n: Node = collider
+					while n != null and not (n.name as String).begins_with("Obj_"):
+						n = n.get_parent()
+					what_drawn = String(n.name) if n != null else String((collider as Node).name)
+				standing += "  drawn %s at %.1f (%.1f above the graph's)" % [
+					what_drawn, drawn_local, drawn_local - surface.height]
 		print("QA %4d local %s%s" % [_qa_tick, where, standing])
 
 ## Viewpoints still to visit this run, and where the current one is up to.
@@ -4931,6 +4972,45 @@ static func _split_zone_target(text: String) -> Dictionary:
 		return {"zone": zone}
 	return {"zone": zone, "local": Vector2(float(lx), float(lz))}
 
+## How far above the walkable graph's answer to look for a surface that is
+## actually drawn there.
+##
+## The graph and the rendered world do not always agree: measured in Jangan
+## town at local 985,1000, the graph reports terrain at -46.4 while the
+## drawn surface is at -32.6, because the octagonal plaza is a placed object
+## whose navigation mesh was never resolved into the graph. Standing on the
+## graph's answer puts the player 13.8 units inside the plaza, which is what
+## a zone change looked like.
+##
+## Bounded deliberately. An earlier probe cast from 200 units up and came
+## back with 119.9 at one spot -- it had hit a gate roof, because
+## TERRAIN_COLLISION_LAYER includes the default layer that map objects also
+## use. Casting from just above the graph's answer finds the deck underfoot
+## without finding the building over it.
+const DRAWN_SURFACE_CLEARANCE := 30.0
+
+## The height actually drawn at a region-local (x, z), if something is drawn
+## within DRAWN_SURFACE_CLEARANCE of graph_height. Returns graph_height
+## unchanged when nothing is, so a region whose graph and geometry agree is
+## untouched.
+func _drawn_surface_height(group: Node3D, local_x: float, local_z: float, graph_height: float) -> float:
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return graph_height
+	var top := group.to_global(Vector3(local_x, graph_height + DRAWN_SURFACE_CLEARANCE, local_z))
+	var bottom := group.to_global(Vector3(local_x, graph_height - DRAWN_SURFACE_CLEARANCE, local_z))
+	var query := PhysicsRayQueryParameters3D.create(top, bottom)
+	query.collision_mask = TERRAIN_COLLISION_LAYER
+	query.exclude = [player.get_rid()]
+	var hit := space.intersect_ray(query)
+	if hit.is_empty():
+		return graph_height
+	var drawn: float = group.to_local(hit.position).y
+	# Only ever lift, never drop: dropping would undo the graph's own answer
+	# in the cases it gets right, and the failure being fixed is always
+	# "standing inside something".
+	return maxf(graph_height, drawn)
+
 ## Stands the player at a region-local (x, z) in one loaded region cell,
 ## at whatever height the real walkable graph reports there -- the same
 ## real signal ordinary movement stands on, so this lands on a staircase
@@ -4943,8 +5023,10 @@ func _place_at_region_local(region_x: int, region_y: int, local_x: float, local_
 		if pair[1] != group:
 			continue
 		var graph: NavGraph = pair[0]
+		# Landing, not walking: someone placed into the world arrives from
+		# above and comes to rest on the highest surface here.
 		player.global_position = group.to_global(
-			Vector3(local_x, graph.height_at(local_x, local_z, 0.0), local_z))
+			Vector3(local_x, graph.landing_height_at(local_x, local_z), local_z))
 		player.velocity = Vector3.ZERO
 		_last_sent_pos = player.position
 		return true

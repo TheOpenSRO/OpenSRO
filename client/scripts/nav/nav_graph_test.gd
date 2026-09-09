@@ -259,6 +259,25 @@ func _initialize() -> void:
 	var still_after := gwall.step(still, Vector2.ZERO)
 	_check(absf(still_after.y - still.y) < 0.001, "standing still keeps its height")
 
+	# Landing is a different question from walking. A deck just over
+	# SURFACE_REACH_UP above the terrain is correctly refused by height_at
+	# -- you cannot step up onto it -- but something placed into the world
+	# arrives from above and must come to rest on top of it. Jangan's
+	# octagonal plaza sits 13.8 units above the terrain against a reach of
+	# 12.0, which put the player and every NPC on the town square inside it.
+	var deck_rise := NavGraph.SURFACE_REACH_UP + 1.8
+	var deck := _ramp(0.0, 40.0, 30.0)
+	var deck_placed: Array[NavGraph.PlacedObject] = [
+		NavGraph.place(deck, 0, Vector3(100.0, deck_rise, 200.0), 0.0)]
+	var g_deck := NavGraph.build(region, deck_placed)
+	var walking := g_deck.height_at(110.0, 239.0, 0.0)
+	_check(absf(walking) < 0.001,
+		"height_at refuses a deck %.1f up against a reach of %.1f (got %.2f)" % [
+			deck_rise, NavGraph.SURFACE_REACH_UP, walking])
+	var landing := g_deck.landing_height_at(110.0, 239.0)
+	_check(landing > NavGraph.SURFACE_REACH_UP,
+		"landing_height_at comes to rest on top of it instead (got %.2f)" % landing)
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

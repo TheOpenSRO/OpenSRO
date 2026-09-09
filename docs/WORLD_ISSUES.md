@@ -5017,3 +5017,73 @@ bookkeeping cleared with the region.**
 - **NPCs do not animate or face anywhere.** Their `.ban` files are read and
   their paths kept; nothing plays them, and `npcpos.txt` carries no facing.
 - **NPCs have no names, no dialogue and no collision.**
+
+## Hundred-and-sixth round: standing inside the Jangan gate, measured
+
+The last round recorded "the player sinks into the plaza on a zone change"
+and left it. Chasing it produced one fix, one instrument, and one
+correction of a wrong diagnosis I made on the way.
+
+**The instrument first.** The QA position line said only what the *walkable
+graph* thought was underfoot. It now also fires a ray through the real
+collision and names what it hits, so a disagreement between the graph and
+the drawn world is a number instead of a screenshot:
+
+```
+QA 120 local 985, -46, 1000  on terrain at -46.4 (0.0 below feet)
+                             drawn Obj_cj_jang_gate_126 at -32.6 (13.8 above the graph's)
+```
+
+That is the whole bug in one line, and it took three wrong guesses to get
+there.
+
+**Wrong guess 1: a per-region vertical offset.** Sampling more points
+killed it -- the gap is 0.0 at local 200,1700 and 13.8 at 985,1000 in the
+same region, so it is not a constant bias.
+
+**Wrong guess 2: the navmesh heightmap disagrees with the drawn terrain.**
+Plausible -- the navigation mesh carries its own coarser heightmap -- and
+wrong. Asked directly, `MapmTerrainBuilder.height_at` and
+`NvmCollision.sample_height` return **-46.41 and -46.41** at that point,
+and agree at every other point sampled. A `NavGraph.terrain_heightmap`
+field written on the strength of that guess was reverted rather than left
+in with a comment that had become false.
+
+**Wrong guess 3: the object's navigation mesh was never resolved.** The
+build log says "8 real objects in that region could not be resolved", which
+looked like the answer. It now names them -- `cj_s, cj_luxury, cj_armo,
+cj_acce, cj_weapon, cj_portal, cj_etc, cj_pal_bigdoor` -- and
+`cj_jang_gate` is not among them. Naming them is worth keeping regardless:
+an unresolved object is one the player can stand inside, and a bare count
+gives no way to tell decorative shrubs from the structure the town square
+is built on.
+
+**What it actually is.** `Obj_cj_jang_gate_126`'s *collision and render*
+mesh covers local 985,1000 at -32.6, while its *navigation* mesh does not
+reach that far, so the graph correctly reports bare terrain at -46.4 and
+puts the player there -- 13.8 units inside the gate's own stonework. The
+object's walkable footprint is smaller than its solid one. That is the same
+family as the walk-under-buildings work and is **not fixed here**.
+
+### What was fixed: landing is not walking
+
+`height_at` refuses a surface more than `SURFACE_REACH_UP` (12.0) above the
+mover, which is right for walking -- you cannot step up an arbitrary ledge.
+But something *placed* into the world has no height to step from; it
+arrives from above and comes to rest on top. Conflating the two is why a
+deck 13.8 up was rejected by 1.8 units.
+
+`NavGraph.landing_height_at` answers the placement question instead, and
+both the player's zone placement and every NPC spawn now use it. The test
+reproduces the exact geometry: a deck at `SURFACE_REACH_UP + 1.8` is
+refused by `height_at` and landed on by `landing_height_at`.
+
+Deliberately **not** fixed by raising `SURFACE_REACH_UP`: that constant is a
+considered choice -- "generous enough to step onto a stair tread, small
+enough not to teleport the player onto a bridge passing overhead" -- and
+widening it to clear one measured plaza would be fitting a threshold to a
+single observation while making every overhead bridge a hazard.
+
+This does not move the player at Jangan's gate, because the surface there
+is not in the graph at all. It does put NPCs and players on every deck that
+*is*.

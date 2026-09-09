@@ -80,6 +80,7 @@ class Surface:
 	var is_terrain: bool = true
 
 var region: NvmReader.ParsedRegion
+
 ## Keyed by real object index, so a caller can place only the objects it has
 ## actually resolved without disturbing the region's own indexing.
 var objects: Dictionary = {}
@@ -275,6 +276,46 @@ func surface_at(x: float, z: float, reference_y: float) -> Surface:
 ## Convenience wrapper around surface_at.
 func height_at(x: float, z: float, reference_y: float) -> float:
 	return surface_at(x, z, reference_y).height
+
+## The height something arriving from above comes to rest at: the highest
+## walkable surface over this point, whatever it is.
+##
+## This is a different question from height_at, and conflating them is a
+## real bug rather than a nicety. height_at answers "what is under me now",
+## so it refuses a surface more than SURFACE_REACH_UP above the mover --
+## correct for walking, since you cannot step up an arbitrary ledge. But
+## someone being *placed* into the world has no current height to step from;
+## they land on top.
+##
+## Measured in Jangan town: the octagonal plaza's deck sits **13.8** units
+## above the terrain at local 985,1000, and SURFACE_REACH_UP is 12.0, so
+## height_at rejected the deck by 1.8 units and every zone change into the
+## town square put the player -- and later every NPC on it -- inside the
+## plaza rather than on it.
+##
+## Deliberately not fixed by raising SURFACE_REACH_UP: that constant is a
+## considered choice ("generous enough to step onto a stair tread, small
+## enough not to teleport the player onto a bridge passing overhead"), and
+## widening it to clear one measured plaza would be fitting a threshold to a
+## single observation while making every overhead bridge a hazard.
+func landing_height_at(x: float, z: float) -> float:
+	var best := NvmCollision.sample_height(region, x, z)
+	for oi in objects_at(x, z):
+		var placed: PlacedObject = objects[oi]
+		if x < placed.bounds_min.x or x > placed.bounds_max.x:
+			continue
+		if z < placed.bounds_min.y or z > placed.bounds_max.y:
+			continue
+		var i := 0
+		while i + 2 <= placed.cells.size() - 1:
+			var a: Vector3 = placed.vertices[placed.cells[i]]
+			var b: Vector3 = placed.vertices[placed.cells[i + 1]]
+			var c: Vector3 = placed.vertices[placed.cells[i + 2]]
+			i += 3
+			var h := _triangle_height(a, b, c, x, z)
+			if not is_nan(h) and h > best:
+				best = h
+	return best
 
 ## Advances a position on the graph by one horizontal motion, the way the real
 ## client moves a character: a move that crosses a real blocking edge is
