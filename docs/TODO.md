@@ -16,8 +16,16 @@ where it stopped, the tools for it, the traps — and points back here for every
 12,367 spawns and 5,423 models read from the player's own Media.pk2, each assembled from its own
 `.bsr` by `SkinnedBsrAssembler`. 18 of 19 placed in Jangan town, 45 across the loaded grid.
 
-**What is left**: they do not face anywhere, have names, or block movement. `npcpos.txt` carries no
-facing, so which way they turn is an open question rather than a wiring job.
+**Names are done** (hundred-and-twenty-first round): 13,169 resolve from `characterdata*.txt`'s
+`SN_` key through `textdata_object.txt`, and every placed NPC carries one. The plates are drawn
+screen-space, which is why they are visible at all — and why the monster labels became visible at
+the same time.
+
+**Facing is settled as a negative**: `npcpos.txt` is 12,367 rows of exactly five columns (id,
+region, x, y, z) and the archive has no other NPC table, so there is no authored facing anywhere.
+Any direction this project turns an NPC would be invented. Not an open question.
+
+**What is left**: they do not block movement.
 
 **Animated, and properly skinned** (hundred-and-tenth round). `.bms` does carry per-vertex
 skinning after all -- a bone palette and two weighted influences per vertex, in their own section
