@@ -123,6 +123,37 @@ static func parse_models_by_name(
 		into[display.to_lower()] = model
 	return into
 
+## Parses one characterdata part into {id -> display name}, merging into
+## `into`.
+##
+## The other half of the same join `parse_models_by_name` does, from the
+## other side: a row carries its id, its `SN_` key and its model, so
+## resolving the key through `names` gives id -> name as readily as it gives
+## name -> model. This is what lets an NPC placed from npcpos.txt (which
+## carries an id and nothing else) be labelled with what the game calls it.
+static func parse_names(
+	data: PackedByteArray, names: UiTextTable, into: Dictionary = {}
+) -> Dictionary:
+	if names == null:
+		return into
+	for line in _lines(data):
+		var cols := line.split("\t")
+		if cols.size() <= COL_MODEL_ID:
+			continue
+		var id_text := cols[COL_MODEL_ID].strip_edges()
+		if not id_text.is_valid_int():
+			continue
+		var key := _find_name_key(cols)
+		if key == "":
+			continue
+		var display := names.get_text(key)
+		# get_text hands back the key when it is not in the table, and
+		# "SN_NPC_CH_POTION" over an NPC's head is worse than nothing.
+		if display == "" or display == key:
+			continue
+		into[int(id_text)] = display
+	return into
+
 ## The `SN_`-prefixed name key in a characterdata row, found by content for
 ## the same reason the model path is.
 static func _find_name_key(cols: PackedStringArray) -> String:

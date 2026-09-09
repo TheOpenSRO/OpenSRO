@@ -71,6 +71,40 @@ func _init() -> void:
 	var none := NpcTableReader.parse_models(("\t".join(modelless) + "\n").to_utf16_buffer())
 	_check(none.is_empty(), "a row with no .bsr yields no entry (got %d)" % none.size())
 
+	# id -> display name, the other half of the same join. An NPC placed
+	# from npcpos.txt carries an id and nothing else, so this is what lets
+	# it be labelled with what the game calls it.
+	#
+	# The text table is UTF-16, tab separated, with the key in column 1 and
+	# the English name in a later column -- UiTextTable picks that column by
+	# content, so the row here is shaped like a real one.
+	var names_text := "1\tSN_NPC_CH_PRIEST\t\uc2b9\ub824\t\t\t\t\t\tPriest\n" \
+		+ "1\tSN_NPC_CH_TICKET\t\ud45c\t\t\t\t\t\tTicket Seller\n"
+	var names := UiTextTable.parse(names_text.to_utf16_buffer())
+
+	var keyed := PackedStringArray()
+	keyed.resize(104)
+	keyed.fill("0")
+	keyed[1] = "2023"
+	keyed[2] = "SN_NPC_CH_PRIEST"
+	keyed[52] = "npc\\npc\\chinaquest_priest.bsr"
+	var unknown := PackedStringArray()
+	unknown.resize(104)
+	unknown.fill("0")
+	unknown[1] = "2099"
+	unknown[2] = "SN_NPC_CH_NOT_IN_THE_TABLE"
+	unknown[52] = "npc\\npc\\whoever.bsr"
+
+	var named := NpcTableReader.parse_names(
+		("\t".join(keyed) + "\n" + "\t".join(unknown) + "\n").to_utf16_buffer(), names)
+	_check(named.get(2023, "") == "Priest",
+		"an id resolves to its display name (got %s)" % str(named.get(2023, "-")))
+	_check(not named.has(2099),
+		"a key the text table does not know is left out, not labelled SN_... (got %s)"
+			% str(named.get(2099, "-")))
+	_check(NpcTableReader.parse_names(("\t".join(keyed) + "\n").to_utf16_buffer(), null).is_empty(),
+		"no text table means no names rather than a crash")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

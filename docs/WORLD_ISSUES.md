@@ -4580,7 +4580,15 @@ The fix is known — type 2 chains exactly the way type 1 does
 (door01: count 16 at 0x154, 16 × 73 bytes from 0x158, ending at 0x5E8 =
 the animation pointer) — and was left out on purpose, to keep a
 scenery-wide regression away from the NPC work. It wants a sweep over
-every `.bsr` in `Data.pk2` comparing old and new results first. Type 4
+every `.bsr` in `Data.pk2` comparing old and new results first.
+
+> **Done since.** `BsrReader.parse` now routes *every* object type through
+> the header section table, with the scan kept only as a fallback for the
+> 7% of files the table cannot read. The sweep this asked for was run:
+> 7,978 of 8,539 files parse and chain (93%), every mesh path on a
+> 1,500-file sample resolves to a real archive file, and the scan's 2,787
+> duplicated meshes are gone. Left here rather than edited away because the
+> measurement above is what made the fix safe to make. Type 4
 should stay on the scanner meanwhile: its mesh entries carry a trailing
 `uint32` per piece that types 1 and 2 don't, and its animation section
 doesn't chain consistently (`tre_bank02`'s ends exactly at its skeleton
@@ -5939,3 +5947,54 @@ ifaction's `UIIT_STT_CHARACTER_CONTROL`, ifapprenticeship's
 `UIIT_CTL_TC_MEMBER`, ifitemmallmyinfo's `UIIT_STT_SILKMALL_MY_INFO`.
 
 The other twelve keep the caller's title, because there is nothing to use.
+
+## Hundred-and-twenty-first round: NPCs get their names, and the plates get seen
+
+### There is no authored NPC facing, and now that is settled
+
+`npcpos.txt` is **12,367 rows, every one exactly five columns** -- id,
+region, x, y, z. No angle. And the archive has no other NPC table:
+`server_dep\silkroad\textdata\` holds `npcpos.txt` and `npcchat.txt` and
+nothing else NPC-shaped. So there is nothing to read, and any facing this
+project gives an NPC would be invented. Recorded as a closed negative
+result rather than an open question, which is what the TODO called it.
+
+### The names were one join away
+
+The same `characterdata*.txt` parts that give an NPC its model give it its
+name: a row carries an id, an `SN_` key and a `.bsr`, and
+`textdata_object.txt` turns the key into what the game calls it.
+`parse_models_by_name` already did that join from one side (name -> model,
+for monsters); `parse_names` does it from the other (id -> name), which is
+what an NPC placed from npcpos.txt needs, because npcpos carries an id and
+nothing else.
+
+**13,169 names** resolve, and all 18 NPCs placed in Jangan town are
+labelled -- "Merchant Associate Hong Ing", "Soldier Donzzadodler Jiqwe
+[Teleport]", "Fairy Amelia". A key the text table does not know is left out
+rather than drawn as `SN_NPC_CH_...`.
+
+### Why no name plate has ever been visible
+
+Including the monster labels, which have existed for many rounds. A
+`Label3D` is scene geometry by default, so it shrinks with distance -- and
+at this world's scale a character is `REAL_CHARACTER_NATIVE_HEIGHT` units
+tall rather than 1.8, so Godot's default 0.005 pixel size drew every plate
+a few pixels high and it read as nothing at all.
+
+The real client draws a name plate in **screen space** from the entity's
+position, which is what `fixed_size` is. With that and a pixel size scaled
+for it, the plates read the same at any distance -- and the monster labels
+appeared for the first time as a side effect.
+
+The clearance above a model is a fraction of the model's own height rather
+than a fixed offset, for the same reason the monster labels measure their
+skeleton: NPC models vary enormously in size, and one number puts a plate
+through a tall NPC's face and far above a short one.
+
+### A note on hunting with renders
+
+Four renders were spent looking for NPCs that were placed correctly the
+whole time. The camera was in region 98/168 -- `qa_shot.sh`'s default
+`--region` -- while the coordinates being aimed at were region-local to
+97/168. The fix was reading the runner's own default, not another picture.

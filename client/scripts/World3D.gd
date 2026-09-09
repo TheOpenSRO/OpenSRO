@@ -2911,6 +2911,9 @@ var _idle_anim_time := 0.0
 ## to supply them. Loaded once, on the first region that asks.
 var _npc_spawns_by_region: Dictionary = {}
 var _npc_models: Dictionary = {}
+## npc id -> the name the game calls it, from characterdata joined with
+## textdata_object.
+var _npc_names: Dictionary = {}
 var _npc_tables_loaded := false
 ## Regions whose NPCs have already been placed, so streaming back into a
 ## region doesn't stack a second copy of everyone in it.
@@ -2936,12 +2939,71 @@ func _load_npc_tables() -> void:
 		if not _npc_spawns_by_region.has(key):
 			_npc_spawns_by_region[key] = []
 		_npc_spawns_by_region[key].append(spawn)
+	# The same characterdata parts give the model and the name: a row
+	# carries an id, an `SN_` key and a `.bsr`, and textdata_object turns
+	# the key into what the game calls the NPC. Read once, joined twice.
+	var names_entry := ObjectLoader.find_file(_media_pk2, NpcTableReader.OBJECT_NAME_TABLE_PATH)
+	var names: UiTextTable = null
+	if names_entry != null:
+		names = UiTextTable.parse(_media_pk2.read_file(names_entry))
 	for path in NpcTableReader.MODEL_TABLE_PATHS:
 		var entry := ObjectLoader.find_file(_media_pk2, path)
 		if entry != null:
-			_npc_models = NpcTableReader.parse_models(_media_pk2.read_file(entry), _npc_models)
-	print("World3D: NPC tables -- %d spawn(s) across %d region(s), %d model(s)" % [
-		_npc_spawn_total(), _npc_spawns_by_region.size(), _npc_models.size()])
+			var bytes := _media_pk2.read_file(entry)
+			_npc_models = NpcTableReader.parse_models(bytes, _npc_models)
+			if names != null:
+				_npc_names = NpcTableReader.parse_names(bytes, names, _npc_names)
+	print("World3D: NPC tables -- %d spawn(s) across %d region(s), %d model(s), %d name(s)" % [
+		_npc_spawn_total(), _npc_spawns_by_region.size(), _npc_models.size(), _npc_names.size()])
+
+## A floating name over an NPC's head.
+##
+## Height comes from the assembled skeleton's own bones rather than a fixed
+## offset: NPC models vary a great deal in size (the same reason the monster
+## labels measure their skeleton), and one number puts a label through a
+## tall NPC's face and far above a short one.
+func _name_plate(text: String, above: float) -> Label3D:
+	var label := Label3D.new()
+	label.name = "Name"
+	label.text = text
+	label.position = Vector3(0.0, above * (1.0 + NAME_PLATE_CLEARANCE_FRACTION), 0.0)
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	# **Fixed size, not world size.** The real client draws a name plate in
+	# screen space from the entity's position, so it reads the same however
+	# far away the entity is. A world-scaled Label3D instead shrinks with
+	# distance, and at this world's scale -- a character is
+	# REAL_CHARACTER_NATIVE_HEIGHT units tall, not 1.8 -- the default 0.005
+	# pixel size made every plate a smear a few pixels high. That is why the
+	# monster labels have never shown up in a render either.
+	label.fixed_size = true
+	label.pixel_size = NAME_PLATE_PIXEL_SIZE
+	label.modulate = NAME_PLATE_COLOUR
+	label.outline_size = NAME_PLATE_OUTLINE
+	label.outline_modulate = NAME_PLATE_OUTLINE_COLOUR
+	# Names read over whatever they stand in front of, which is what makes a
+	# crowd of NPCs legible.
+	label.no_depth_test = true
+	label.render_priority = 1
+	return label
+
+## Where a name sits over a model, how large it draws, and in what colour.
+##
+## Ours, not recovered: nothing in the archive places a name plate, because
+## the client draws them in screen space rather than as scene geometry.
+## The clearance is a fraction of the model's own height, so it works for a
+## creature of any size rather than only for a human-sized one.
+const NAME_PLATE_CLEARANCE_FRACTION := 0.12
+const NAME_PLATE_PIXEL_SIZE := 0.0004
+const NAME_PLATE_COLOUR := Color(1.0, 0.94, 0.72)
+const NAME_PLATE_OUTLINE := 8
+const NAME_PLATE_OUTLINE_COLOUR := Color(0.0, 0.0, 0.0, 0.85)
+
+## The top of an assembled skeleton, in its own local space.
+func _skeleton_top(skeleton: Skeleton3D) -> float:
+	var top := 0.0
+	for i in range(skeleton.get_bone_count()):
+		top = maxf(top, skeleton.get_bone_global_pose(i).origin.y)
+	return top * skeleton.scale.y
 
 func _npc_spawn_total() -> int:
 	var n := 0
@@ -2977,6 +3039,7 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 		return
 	var placed := 0
 	var skipped := 0
+	var named := 0
 	for spawn in spawns:
 		var model: String = _npc_models.get(spawn.npc_id, "")
 		if model == "":
@@ -3002,11 +3065,15 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 				break
 		holder.position = Vector3(local.x, height, local.z)
 		holder.add_child(assembled.skeleton)
+		var npc_name: String = _npc_names.get(spawn.npc_id, "")
+		if npc_name != "":
+			holder.add_child(_name_plate(npc_name, _skeleton_top(assembled.skeleton)))
+			named += 1
 		group.add_child(holder)
 		_animate(assembled)
 		placed += 1
-	print("World3D: %d/%d NPC(s) placed in %d/%d (%d had no model)" % [
-		placed, spawns.size(), region_x, region_y, skipped])
+	print("World3D: %d/%d NPC(s) placed in %d/%d (%d had no model, %d named)" % [
+		placed, spawns.size(), region_x, region_y, skipped, named])
 
 ## Loads real terrain from a real Map.pk2 region .m file via MapmReader +
 ## MapmTerrainBuilder, replacing both the placeholder ground's visual mesh
@@ -5587,11 +5654,9 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		mesh.position.y = 0.8 * PLAYER_SCALE_RATIO
 		body.add_child(mesh)
 
-	var label := Label3D.new()
+	var label := _name_plate("%s (%d/%d)" % [monster.monster_name, monster.hp, monster.max_hp],
+		label_height / (1.0 + NAME_PLATE_CLEARANCE_FRACTION))
 	label.name = "Label"
-	label.text = "%s (%d/%d)" % [monster.monster_name, monster.hp, monster.max_hp]
-	label.position.y = label_height
-	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	body.add_child(label)
 
 	other_entities.add_child(body)
