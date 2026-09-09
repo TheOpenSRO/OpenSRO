@@ -12,41 +12,25 @@ where it stopped, the tools for it, the traps — and points back here for every
 
 ## Next up
 
-### 1. NPCs
-The reference server has named NPCs standing in the town (`Grocery Trader Jinjin`,
-`Magic POP Guide Gori`, arena managers). This project renders none, and they are most of what
-makes a town look inhabited.
+### 1. NPCs — **done, except that they are statues** (hundred-and-fifth round)
+12,367 spawns and 5,423 models read from the player's own Media.pk2, each assembled from its own
+`.bsr` by `SkinnedBsrAssembler`. 18 of 19 placed in Jangan town, 45 across the loaded grid.
 
-**The spawn data is solved** (ninety-eighth round). A server pack's `SR_GameRefData\npcpos.txt`
-gives *NPC id, region id, X, Y, Z*, with the region id in the same `(x << 8) | y` key this project
-already uses; `CharacterData*.txt` maps the id to its model. Both are plain tables.
+**What is left**: they do not animate, face anywhere, have names, or block movement. Their `.ban`
+paths are parsed and kept on `SkinnedBsrAssembler.AssembledCharacter.animation_paths`; nothing
+plays them. `npcpos.txt` carries no facing, so which way they turn is an open question rather than
+a wiring job.
 
-**The model loader is now solved too** (ninety-ninth round). An NPC `.bsr` is not scenery — it is
-a character, and the file says so: the `uint16` at 0x40 is an authored object type (1 character,
-2 building, 4 nature), and the header's offset table at 0x0C addresses a material, mesh, skeleton
-and animation section, each count-prefixed. Both readers now take that path for type 1, validating
-that every section ends exactly where the header says the next begins. The priest went from 1
-piece / 25 vertices to **3 pieces / 665 vertices** with its skeleton and 2 animations; the
-bookmaker girl to 4 / 747; `mangnyang` to 2 / 440 with 15 animations. See
-[protocol/BSR_FORMAT.md](protocol/BSR_FORMAT.md), which also corrects this document's earlier
-claim that the offset table was untrustworthy — it was being read one field off.
+### 2. Monsters as real models — **the next thing to do**
+The server already sends a live monster list and the client draws labelled capsules for them.
+Everything else now exists: monsters are character-category `.bsr` files (`mangnyang` is 2 pieces,
+26 bones, 15 animations, and renders correctly through `render_npc.gd`), and
+`SkinnedBsrAssembler` builds one from its path alone. The id -> model mapping is the same
+`characterdata*.txt` table the NPCs use, already parsed by `NpcTableReader`.
 
-**Assembly is written too.** `client/scripts/assets/skinned_bsr_assembler.gd` takes an open
-archive and a `.bsr` path and returns a `Skeleton3D` with every piece attached and materials
-applied, needing nothing from outside — the `.bsr` names its own skeleton, and the piece-to-bone
-mapping is computed rather than tabulated (it reproduces `MonsterAssembler`'s two hand-derived
-dictionaries 10/10).
-
-**Next**: it has never been drawn. Write `client/tools/render_npc.gd` on the model of
-`render_character.gd` and render the priest, to confirm he stands up as a person rather than
-scattered pieces. Then spawning, which is the easy half: the table is readable and the server
-already streams a monster list the client renders. See [HANDOFF.md](HANDOFF.md) for the exact
-command and what the render does and does not prove.
-
-### 2. Monsters as real models
-The server already sends a live monster list and the client draws labelled capsules for them. The
-models are real `.bsr` files this project can already load, so this is wiring rather than
-research: resolve a monster's own model path and assemble it the way characters are assembled.
+So this is wiring, not research: resolve the monster's model path from its id and assemble it
+where the capsule goes. `MonsterAssembler`'s hand-derived per-creature bone tables are superseded
+and can go.
 
 ### 3. Equipment on the character
 The character renders bare. Eight real armour sets are already cached and `assemble_equipment`
@@ -108,6 +92,14 @@ large structure standing on its own platform, whose base has no reason to touch 
 Down from six to two or three. The surviving one currently lands correctly because an unauthored
 band of zeroes beats the regions with real data — luck, recorded as luck in the eighty-sixth
 round, not a working rule.
+
+### Eight objects in Jangan have no navigation mesh
+Named by the build log since the hundred-and-sixth round: `cj_s` (the city wall), `cj_luxury`,
+`cj_armo`, `cj_acce`, `cj_weapon`, `cj_portal`, `cj_etc`, `cj_pal_bigdoor`. An object with no
+walkable mesh is one the player can stand *inside* — the graph reports the terrain beneath it and
+puts them there. This is the same symptom the hundred-and-seventh round fixed for the Jangan gate,
+but from missing data rather than from the ground snap, so it needs a different answer.
+`SRREVAMP_QA_NAVGAP` names the culprit at any given spot.
 
 ### `.o2` list semantics
 List 2 is a region's own objects and the others are cross-references, measured at 91% against 46%
