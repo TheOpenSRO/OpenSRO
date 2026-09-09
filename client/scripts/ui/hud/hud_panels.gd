@@ -185,6 +185,49 @@ func connect_net() -> void:
 	NetClient.friend_list_result.connect(func(friends: Array, _e: String) -> void:
 		_fill_list("community", friends.map(_describe_named)))
 
+## The character panel's own control names, from resinfo\\ifplayerinfo.txt.
+## Every value field is a `_DAT` sibling of its label.
+const CHARACTER_FIELDS := {
+	"GDR_PI_TEXT_LEVEL": "level",
+	"GDR_PI_TEXT_HP_DAT": "hp",
+	"GDR_PI_TEXT_MP_DAT": "mp",
+	"GDR_PI_TEXT_STRENGTH_DAT": "strength",
+	"GDR_PI_TEXT_INTELLECT_DAT": "intellect",
+	"GDR_PI_TEXT_CURXP": "current_exp",
+}
+
+## Fills the character panel from what the client actually knows.
+##
+## Only some of these have a server behind them: HP and MaxHP arrive with
+## EnterWorldResult and on every attack, and the character's name and level
+## come from the character list. Strength, intellect, the attack/defence
+## rows and the job grades are **not sent by this project's server at all**,
+## so their fields are left as the layout drew them rather than filled with
+## invented numbers. See docs/UI_TODO.md.
+func set_character_vitals(hp: int, max_hp: int, level: int) -> void:
+	_character_hp = hp
+	_character_max_hp = max_hp
+	_character_level = level
+	_apply_character_fields()
+
+var _character_hp := 0
+var _character_max_hp := 0
+var _character_level := 1
+
+func _apply_character_fields() -> void:
+	var window: HudWindow = _windows.get("character")
+	if window == null:
+		return
+	var values := {}
+	if _character_max_hp > 0:
+		values["GDR_PI_TEXT_HP_DAT"] = "%d / %d" % [_character_hp, _character_max_hp]
+	if _character_level > 0:
+		values["GDR_PI_TEXT_LEVEL"] = "Lv %d" % _character_level
+	for control_name in values:
+		var label := window.node(control_name) as Label
+		if label != null:
+			label.text = values[control_name]
+
 func _populate(panel_id: String) -> void:
 	# Every one of these requests is addressed by character name, which is
 	# also what identifies the session server-side, so there is nothing to
@@ -205,6 +248,8 @@ func _populate(panel_id: String) -> void:
 			NetClient.party_info(who)
 		"guild":
 			NetClient.guild_info(who)
+		"character":
+			_apply_character_fields()
 
 ## Renders a list of strings into a panel, as a plain scrolling list laid
 ## over the authored frame.

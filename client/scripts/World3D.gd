@@ -1108,10 +1108,15 @@ func _try_initialize_pk2_ui() -> void:
 			_last_enter_world_hp = result.hp
 			_last_enter_world_max_hp = result.max_hp
 			if _hud_player_info != null:
-				_hud_player_info.set_hp(result.hp, result.max_hp))
+				_hud_player_info.set_hp(result.hp, result.max_hp)
+			if _hud_panels != null:
+				_hud_panels.set_character_vitals(result.hp, result.max_hp, 1))
 	NetClient.attack_result.connect(func(result) -> void:
-		if result != null and _hud_player_info != null and _last_enter_world_max_hp > 0:
-			_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp))
+		if result != null and _last_enter_world_max_hp > 0:
+			if _hud_player_info != null:
+				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
+			if _hud_panels != null:
+				_hud_panels.set_character_vitals(result.player_hp, _last_enter_world_max_hp, 1))
 	# MP has no server side at all yet -- nothing tracks or reports it, so
 	# the bar is drawn full rather than empty (an empty bar reads as a real
 	# state) and is flagged in docs/UI_TODO.md rather than faked with a
