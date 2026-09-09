@@ -24,22 +24,24 @@ skinning after all -- a bone palette and two weighted influences per vertex, in 
 pointed at by header word `0x10`, which is why an audit of the 44-byte vertex record found none.
 NPCs now deform correctly and animate; `SRREVAMP_NO_IDLE_ANIM=1` turns animation off.
 
-### 2. Monsters as real models — **the next thing to do**
-The server already sends a live monster list and the client draws labelled capsules for them.
-Everything else now exists: monsters are character-category `.bsr` files (`mangnyang` is 2 pieces,
-26 bones, 15 animations, and renders correctly through `render_npc.gd`), and
-`SkinnedBsrAssembler` builds one from its path alone. The id -> model mapping is the same
-`characterdata*.txt` table the NPCs use, already parsed by `NpcTableReader`.
+### 2. Monsters as real models — **done** (hundred-and-fourteenth round)
+Verified against a live server rather than asserted: `Mangyang -> mob\china\mangnyang.bsr` and
+`Weasel -> mob\china\gyo.bsr`, both assembling a real skeleton, both standing in Jangan beside
+the player. The client logs what it resolved for each, so the three ways this can go wrong —
+species not in the tables, model not assembling, model placed out of reach — tell themselves
+apart in a playtest log. They used to be the third: 292 and 461 units from spawn.
 
-So this is wiring, not research: resolve the monster's model path from its id and assemble it
-where the capsule goes. `MonsterAssembler`'s hand-derived per-creature bone tables are superseded
-and can go.
+### 3. Equipment on the character — **done** (hundred-and-fourteenth round)
+A new character is dressed by the server and the client renders it. Two bugs were in the way and
+neither was on the client: the starting kit could not be given at all (an item with no reference
+row could not be *held*), and ten request handlers were rejecting the client's listings as
+malformed. Both are fixed and tested end to end.
 
-### 3. Equipment on the character
-The character renders bare. Eight real armour sets are already cached and `assemble_equipment`
-works; it only runs for slots the server reports as equipped, and a fresh character has none.
-**Next**: give a new character a starting set server-side, or render the default set when no
-equipment is reported — decide which, then verify in a render.
+### Rendering against a real server
+`qa_shot.sh --server` starts the server in memory on a spare port and signs the client in
+(`SRREVAMP_QA_SERVER`, `--say` to send a chat message). Every render before this was of a client
+with no server, which is why the character was bare, the health bar blank and the panels empty in
+all of them. Use it for anything the server owns.
 
 ### 4. A minimap (Implemented — one-hundredth round)
 The live minimap is now wired through the authentic PK2 UI pipeline (`scripts/ui/hud/hud_minimap.gd`
@@ -66,12 +68,14 @@ the next cohesive piece after that.
 Panels, the window recipe, and the reference screenshots. The item below is the part of it that
 touches this file.
 
-### Retire the debug UI now the real HUD is in
-The developer UI (chat box, Log Out, Change Zone, the corner labels, and the ten-tab `ActionTabs`)
-still sits on top of the authentic HUD and overlaps the underbar. Its ten tabs are the only way to
-reach inventory, skills, shop, party, guild, trade and friends, so it can't just be deleted —
-each needs its authored window (`resinfo\if*.txt`, one file per panel) built the way the underbar
-and minimap now are. Do it one panel at a time, and drop each tab as its real window lands.
+### Retire the debug UI now the real HUD is in — **nearly done**
+Gone: the ten-tab `ActionTabs`, the corner labels, and (hundred-and-sixteenth round) the chat
+panel, which `HudChat` replaces with `ifchatviewer.txt`'s own window. Thirteen authored panels
+are built and reachable from the underbar's MENU and from hotkeys.
+
+**What is left**: the Change Zone box and the Log Out button. The zone box has to stay until
+there is another way to travel — it is the only one — so this finishes with a real travel
+mechanism rather than with a deletion.
 
 ## Parked, with the state written down
 
