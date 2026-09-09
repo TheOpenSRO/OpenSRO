@@ -543,41 +543,39 @@ func _resolve_text(key_or_text: String) -> String:
 		return _text_table.get_text(key_or_text)
 	return key_or_text
 
-## The interface is authored at 1:1 pixel size against short text rows
-## (`GDR_PMI_TXT_HP` is 124x12, the character panel's stat labels 58x15), so
-## text has to be sized to those rows or it overflows -- which is what put
-## "Hit rate" through the bottom of the character panel.
-const UI_FONT_SIZE := 12
-## Small enough to stay legible; below this, shrinking is worse than
-## clipping.
-const UI_FONT_SIZE_MIN := 9
+## Pixel size for each `FontIndex`, read out of the client.
+##
+## `FUN_00469350` builds the font table with five consecutive calls, each
+## pushing a size and an index:
+##
+##   PUSH 0x9  PUSH 0x0   -> index 0, 9px
+##   PUSH 0x8  PUSH 0x1   -> index 1, 8px
+##   PUSH 0xc  PUSH 0x2   -> index 2, 12px
+##   PUSH 0xb  PUSH 0x3   -> index 3, 11px
+##   PUSH 0xf  PUSH 0x4   -> index 4, 15px
+##
+## (The two branches there pick different typefaces -- a Korean set and a
+## western one -- but assign the same sizes to the same indices.)
+##
+## This replaces a fitted size. An earlier version of this file started at
+## 12px and stepped down until each string fitted its control, because the
+## layouts were clipping. They were clipping because 12px is the size of
+## *index 2*, and almost every control uses index 0, which is **9**. The
+## layout was always right about its box; the guess was wrong about the
+## text.
+const FONT_SIZES := [9, 8, 12, 11, 15]
+## Used only for a FontIndex outside the table, which no real layout has.
+const FONT_SIZE_FALLBACK := 9
 
 func _apply_font(label: Label, def: UiLayoutParser.ControlDef) -> void:
 	var font := font_at(def.font_index)
 	if font != null:
 		label.add_theme_font_override("font", font)
-	label.add_theme_font_size_override("font_size", _fitting_font_size(font, label.text, def.rect.size))
-	# Authored rows are tight, and a value longer than anything anticipated
-	# would still push into the row under it.
+	var size: int = FONT_SIZES[def.font_index] if def.font_index >= 0 and def.font_index < FONT_SIZES.size() else FONT_SIZE_FALLBACK
+	label.add_theme_font_size_override("font_size", size)
+	# Authored rows are tight, and a runtime value longer than anything the
+	# layout anticipated would still push into the row under it.
 	label.clip_text = true
-
-## The largest size at or below UI_FONT_SIZE at which text fits the control
-## the layout drew for it.
-##
-## The authored rects assume the client's own font metrics, and Godot
-## renders the same TrueType slightly wider, so a fixed size clipped real
-## labels mid-word -- "Phy. balance" became "Phy. balan", "Trader Grade"
-## became "Trader Gra". Measuring and stepping down keeps the layout's
-## dimensions authoritative while still showing the whole string.
-func _fitting_font_size(font: FontFile, text: String, box: Vector2i) -> int:
-	if font == null or text == "" or box.x <= 0:
-		return UI_FONT_SIZE
-	var size := UI_FONT_SIZE
-	while size > UI_FONT_SIZE_MIN:
-		if font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x <= float(box.x):
-			return size
-		size -= 1
-	return size
 
 func _insert_suffix(path: String, suffix: String) -> String:
 	var dot := path.rfind(".")

@@ -111,7 +111,8 @@ func _add_title_bar(title: String) -> void:
 		var font := _builder.font_at(0)
 		if font != null:
 			bar.add_theme_font_override("font", font)
-		bar.add_theme_font_size_override("font_size", 12)
+		# Index 0's size, which is what the client's own controls use.
+		bar.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
 	add_child(bar)
 
 	var close := Button.new()

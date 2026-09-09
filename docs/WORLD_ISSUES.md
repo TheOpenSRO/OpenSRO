@@ -5430,6 +5430,31 @@ numbers, so it stays right against a different archive.
 (`interface\party\pt_hp.ddj` and `pt_mp.ddj` are the party window's
 equivalents, 136x4, RGB(164,8,32) and RGB(49,57,180).)
 
+### The font sizes
+
+`FontIndex` was being honoured as a *font* but not as a *size*: this
+project started at 12px and stepped each label down until its string fitted
+its control, because the layouts were clipping. That fitted number is gone.
+
+`FUN_00469350` builds the client's font table with five consecutive calls,
+each pushing a size then an index:
+
+```
+PUSH 0x9  PUSH 0x0   -> FontIndex 0,  9px
+PUSH 0x8  PUSH 0x1   -> FontIndex 1,  8px
+PUSH 0xc  PUSH 0x2   -> FontIndex 2, 12px
+PUSH 0xb  PUSH 0x3   -> FontIndex 3, 11px
+PUSH 0xf  PUSH 0x4   -> FontIndex 4, 15px
+```
+
+(Two branches pick different typefaces -- a Korean set and a western one --
+and assign the same sizes to the same indices.)
+
+The layouts were clipping because **12 is the size of index 2, and almost
+every control uses index 0, which is 9**. The layout was always right about
+its box; the guess was wrong about the text. Auto-fitting was a workaround
+for a wrong constant.
+
 ### The window interior
 
 Also invented: a flat `Color(0.055, 0.055, 0.07, 0.94)` for window bodies,
@@ -5440,4 +5465,6 @@ But the frame's own edge tiles are opaque and carry the colour the body
 continues: `mframe_wnd_mid_up`'s bottom row is RGB(16,20,16). So the fill is
 now **sampled from the window's own frame artwork** rather than chosen,
 which is both correct and adapts to whichever of the thirty-odd frame sets a
-window uses.
+window uses -- and they genuinely differ: `mframe_wnd_` gives RGB(24,20,24)
+while `int_window_` gives RGB(41,41,41). One constant could not have been
+right for both.

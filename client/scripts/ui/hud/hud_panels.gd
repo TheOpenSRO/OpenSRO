@@ -348,7 +348,7 @@ func _fill_list(panel_id: String, lines: Array) -> void:
 			var font := _builder.font_at(0)
 			if font != null:
 				list.add_theme_font_override("font", font)
-			list.add_theme_font_size_override("font_size", 12)
+			list.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
 		window.add_child(list)
 	list.clear()
 	for line in lines:
