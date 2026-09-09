@@ -2379,6 +2379,11 @@ static func _parse_region_coords(path: String) -> Dictionary:
 ## graphs answering position queries for regions that no longer exist.
 func _clear_region_grid() -> void:
 	_region_nav_graphs.clear()
+	# NPCs are parented to their region's terrain group, so tearing the grid
+	# down takes them with it. Without clearing this, every region still
+	# counts as "already populated" and a zone change leaves a world with
+	# nobody in it -- which is exactly what a zone-changed render showed.
+	_npc_regions_done.clear()
 	for child in get_children():
 		if child.name.begins_with("RealTerrain") or child.name.begins_with("RealMapObjects"):
 			remove_child(child)
@@ -2420,6 +2425,10 @@ func _clear_region_grid() -> void:
 func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGION_LOAD_RADIUS, texture_override: String = "") -> void:
 	var center_near_height := _try_load_real_terrain("%d\\%d.m" % [center_x, center_y], texture_override, Vector3.ZERO, "_%d_%d" % [center_x, center_y], true)
 	_try_load_real_map_objects("%d\\%d.o" % [center_x, center_y], Vector3.ZERO, "_%d_%d" % [center_x, center_y])
+	# The centre cell is loaded here rather than through _load_region_cell,
+	# so it needs its own NPC pass -- without this the one region the player
+	# is actually standing in is the only one with nobody in it.
+	_try_spawn_region_npcs(center_x, center_y)
 
 	_update_zone_label_for_region(center_x, center_y)
 	_grid_origin_region = Vector2i(center_x, center_y)
@@ -2464,6 +2473,7 @@ func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_an
 	var offset := Vector3(dy * REGION_SPAN, 0.0, dx * REGION_SPAN)
 	_try_load_real_terrain("%d\\%d.m" % [region_x, region_y], "", offset, suffix, false, shared_anchor, false)
 	_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
+	_try_spawn_region_npcs(region_x, region_y)
 	_loaded_cells["%d_%d" % [dx, dy]] = true
 
 ## Streams additional real region cells in as the player moves, keeping a
@@ -2653,6 +2663,108 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 				result.zone, spot.x, spot.y])
 	else:
 		_place_at_zone_spawn(result.zone)
+
+## Every NPC the client knows how to place, grouped by region, and the
+## id -> model table that goes with them. Both come out of the player's own
+## Media.pk2 (see NpcTableReader), so nothing is shipped and no server has
+## to supply them. Loaded once, on the first region that asks.
+var _npc_spawns_by_region: Dictionary = {}
+var _npc_models: Dictionary = {}
+var _npc_tables_loaded := false
+## Regions whose NPCs have already been placed, so streaming back into a
+## region doesn't stack a second copy of everyone in it.
+var _npc_regions_done: Dictionary = {}
+
+func _load_npc_tables() -> void:
+	if _npc_tables_loaded:
+		return
+	_npc_tables_loaded = true
+	# Opened here rather than reusing _media_pk2: region streaming starts
+	# before _try_initialize_pk2_ui() runs, so that handle is still null the
+	# first time a region asks for its NPCs.
+	if _media_pk2 == null:
+		_media_pk2 = _open_media_pk2_if_set()
+	if _media_pk2 == null:
+		return
+	var pos_entry := ObjectLoader.find_file(_media_pk2, NpcTableReader.POSITION_TABLE_PATH)
+	if pos_entry == null:
+		print("World3D: no npcpos.txt in Media.pk2 -- no NPCs")
+		return
+	for spawn in NpcTableReader.parse_positions(_media_pk2.read_file(pos_entry)):
+		var key := "%d_%d" % [spawn.region_x, spawn.region_y]
+		if not _npc_spawns_by_region.has(key):
+			_npc_spawns_by_region[key] = []
+		_npc_spawns_by_region[key].append(spawn)
+	for path in NpcTableReader.MODEL_TABLE_PATHS:
+		var entry := ObjectLoader.find_file(_media_pk2, path)
+		if entry != null:
+			_npc_models = NpcTableReader.parse_models(_media_pk2.read_file(entry), _npc_models)
+	print("World3D: NPC tables -- %d spawn(s) across %d region(s), %d model(s)" % [
+		_npc_spawn_total(), _npc_spawns_by_region.size(), _npc_models.size()])
+
+func _npc_spawn_total() -> int:
+	var n := 0
+	for key in _npc_spawns_by_region:
+		n += (_npc_spawns_by_region[key] as Array).size()
+	return n
+
+## Places every NPC that stands in one region, assembling each from its own
+## .bsr the way the player's body is assembled.
+##
+## Height comes from the walkable graph rather than from npcpos.txt's own Y:
+## that column is authored against the real client's terrain, and this
+## project's terrain is rebuilt from the same heightmaps but anchored per
+## region, so standing them on the graph is what actually puts their feet on
+## this ground. The authored Y is kept as the fallback when a region has no
+## graph.
+func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
+	if _npc_regions_done.has("%d_%d" % [region_x, region_y]):
+		return
+	_load_npc_tables()
+	if _npc_spawns_by_region.is_empty():
+		return
+	var archive := _open_pk2_if_set()
+	if archive == null:
+		return
+	var group := get_node_or_null("RealTerrain_%d_%d" % [region_x, region_y]) as Node3D
+	if group == null:
+		return
+	_npc_regions_done["%d_%d" % [region_x, region_y]] = true
+
+	var spawns: Array = _npc_spawns_by_region.get("%d_%d" % [region_x, region_y], [])
+	if spawns.is_empty():
+		return
+	var placed := 0
+	var skipped := 0
+	for spawn in spawns:
+		var model: String = _npc_models.get(spawn.npc_id, "")
+		if model == "":
+			skipped += 1
+			continue
+		var assembled := SkinnedBsrAssembler.assemble_from_archive(archive, model)
+		if assembled == null:
+			skipped += 1
+			continue
+		var holder := Node3D.new()
+		holder.name = "Npc_%d_%d" % [spawn.npc_id, placed]
+		var local: Vector3 = spawn.local_position
+		var height: float = local.y
+		for pair in _region_nav_graphs:
+			if pair[1] == group:
+				# The authored Y is passed as the mover's height, not
+				# discarded: height_at resolves several stacked walkable
+				# surfaces by picking the one nearest the mover, and asking
+				# from 0 puts anyone standing on a raised deck underneath it.
+				# Jangan's octagonal plaza is a placed object, so every NPC
+				# on the town square came out buried in it.
+				height = (pair[0] as NavGraph).height_at(local.x, local.z, local.y)
+				break
+		holder.position = Vector3(local.x, height, local.z)
+		holder.add_child(assembled.skeleton)
+		group.add_child(holder)
+		placed += 1
+	print("World3D: %d/%d NPC(s) placed in %d/%d (%d had no model)" % [
+		placed, spawns.size(), region_x, region_y, skipped])
 
 ## Loads real terrain from a real Map.pk2 region .m file via MapmReader +
 ## MapmTerrainBuilder, replacing both the placeholder ground's visual mesh

@@ -4953,3 +4953,67 @@ binding.
   is an HP/MP fill -- the only `gauge.dat` files belong to the launcher. Red
   and blue are read off the reference screenshots and are flagged in the
   code as the only invented values there.
+
+## Hundred-and-fifth round: the town is inhabited
+
+NPCs are in the world. The whole chain runs off the player's own Media.pk2,
+so nothing is shipped and no server has to supply it.
+
+**Both tables are in the client archive**, which is what makes this
+possible without server data: `server_dep\silkroad\textdata\npcpos.txt`
+(12,367 rows of *npc id, region id, X, Y, Z*) and the
+`characterdata*.txt` parts (5,423 id → `.bsr` mappings). The region id is
+the same `(x << 8) | y` key used everywhere else -- `25000` is 97/168.
+
+The model path is found in a characterdata row **by looking for the field
+that ends in `.bsr`**, not by index: the parts are ~104 columns wide and
+the path sits at column 52 in one and elsewhere in others.
+
+From there each NPC is assembled by `SkinnedBsrAssembler` -- the same
+pipeline the player's body uses, reading the `.bsr`'s own skeleton, mesh
+pieces and materials through the header's section table. `render_npc.gd`
+confirms it standalone: `chinaquest_priest` comes out a complete textured
+monk, saffron robe and maroon sash; `mangnyang` comes out the straw-man
+with its red bindings.
+
+In Jangan: **18 of 19 NPCs placed in 97/168**, and 45 across the loaded
+nine-region grid.
+
+### Three bugs between "placed" and "visible"
+
+Each of these reported success while nothing appeared, which is the failure
+mode worth recording.
+
+**The centre region was never populated.** `_load_region_cell` handles the
+eight surrounding cells; the centre is loaded separately by
+`_load_region_neighborhood`. So the one region the player actually stands
+in was the only one with nobody in it -- and the logs looked healthy,
+listing eight regions and never mentioning the ninth.
+
+**Everyone was buried.** Height came from `height_at(x, z, 0.0)`, and that
+function resolves stacked walkable surfaces by picking the one nearest the
+mover. Asking from 0 puts anyone standing on a raised deck underneath it,
+and Jangan's octagonal plaza is a placed object, so the whole town square's
+NPCs were inside it. Passing `npcpos`'s own authored Y as the mover height
+is what disambiguates -- that column is not decoration, it is the answer to
+"which of these surfaces".
+
+**A zone change emptied the world.** NPCs are parented to their region's
+terrain group, so `_clear_region_grid()` takes them with it -- but
+`_npc_regions_done` still marked every region populated, so they never came
+back. Every render after a zone change showed an empty town while the log
+insisted 18 NPCs were placed. This is the same shape as the region-cache
+bug the eighty-eighth round fixed for objects, and worth remembering as a
+class: **anything parented to a streamed region needs its "already done"
+bookkeeping cleared with the region.**
+
+### Still open
+
+- **The player sinks into the plaza on a zone change.** Measured, not
+  guessed: `QA 120 local 985, -46, 1000 on terrain at -46.4` -- the player
+  is standing on *terrain* at -46 while the plaza deck above is a placed
+  object. Same `height_at` mover-height question as the NPCs, in the
+  placement path rather than the spawn path.
+- **NPCs do not animate or face anywhere.** Their `.ban` files are read and
+  their paths kept; nothing plays them, and `npcpos.txt` carries no facing.
+- **NPCs have no names, no dialogue and no collision.**
