@@ -66,9 +66,14 @@ var monsterSpecs = []monsterSpec{
 	// names these replaced ("Stone Golem", "Wild Boar", "Sand Scorpion")
 	// appear nowhere in the real data, so they could only ever draw the
 	// placeholder capsule.
-	{Zone: "jangan", Name: "Mangyang", X: 250, Z: 150, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
-	{Zone: "jangan", Name: "Weasel", X: -300, Z: 350, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
-	{Zone: "donwhang", Name: "Earth Ghost", X: 200, Z: -250, MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
+	// Positions are within sight of the spawn point, which is at the
+	// origin. They used to be 250-350 units out, which measured as 292 and
+	// 461 units from a new character -- both were really there, with real
+	// resolved models, and neither was ever going to be seen. Placeholder
+	// content either way, but placeholder content a player meets.
+	{Zone: "jangan", Name: "Mangyang", X: 62, Z: 44, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
+	{Zone: "jangan", Name: "Weasel", X: -55, Z: 58, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
+	{Zone: "donwhang", Name: "Earth Ghost", X: 70, Z: -50, MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
 }
 
 const respawnDelay = 10 * time.Second

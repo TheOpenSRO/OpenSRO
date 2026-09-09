@@ -159,6 +159,19 @@ func set_character(character_name: String, level: int) -> void:
 func set_hp(current: int, maximum: int) -> void:
 	_set_bar(_hp_gauge, _hp_text, current, maximum)
 
+## Draws the MP bar full with no readout.
+##
+## Nothing on the server tracks MP yet, so there is no number to show. An
+## empty bar reads as a real state ("you are out of mana") and a made-up
+## number reads as live data -- this used to print "1 / 1" over the bar,
+## which looked exactly like a real value. Full and silent is the honest
+## shape until the server has one. See docs/UI_TODO.md.
+func set_mp_unknown() -> void:
+	if _mp_gauge != null:
+		_mp_gauge.value = _mp_gauge.max_value
+	if _mp_text != null:
+		_mp_text.text = ""
+
 func set_mp(current: int, maximum: int) -> void:
 	_set_bar(_mp_gauge, _mp_text, current, maximum)
 

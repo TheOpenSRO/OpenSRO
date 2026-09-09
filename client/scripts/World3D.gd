@@ -873,8 +873,20 @@ var _hud_underbar: HudUnderbar
 var _hud_player_info: HudPlayerInfo
 ## Vitals from the last EnterWorldResult. Kept because AttackResult reports
 ## only the player's current HP, not their maximum.
+##
+## Seeded from NetClient's own cached result rather than left at zero until
+## the signal fires again. Entering the world happens in character select,
+## before this scene exists, so the signal has already been and gone by the
+## time the HUD subscribes -- which left the health bar blank on every real
+## login, and on every QA run that signs in before building the world.
 var _last_enter_world_hp := 0
 var _last_enter_world_max_hp := 0
+
+func _seed_vitals_from_last_enter_world() -> void:
+	var entered = NetClient.last_enter_world_result
+	if entered != null and entered.ok and entered.max_hp > 0:
+		_last_enter_world_hp = entered.hp
+		_last_enter_world_max_hp = entered.max_hp
 var _hud_panels: HudPanels
 
 func _ready() -> void:
@@ -1108,6 +1120,7 @@ func _try_initialize_pk2_ui() -> void:
 	# (EnterWorldResult carries HP and MaxHP) and again on every attack
 	# (AttackResult's player_hp), so the bar is right on login and stays
 	# right through combat.
+	_seed_vitals_from_last_enter_world()
 	if _last_enter_world_max_hp > 0:
 		_hud_player_info.set_hp(_last_enter_world_hp, _last_enter_world_max_hp)
 	NetClient.enter_world_result.connect(func(result) -> void:
@@ -1124,17 +1137,20 @@ func _try_initialize_pk2_ui() -> void:
 				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
 			if _hud_panels != null:
 				_hud_panels.set_character_vitals(result.player_hp, _last_enter_world_max_hp, 1))
-	# MP has no server side at all yet -- nothing tracks or reports it, so
-	# the bar is drawn full rather than empty (an empty bar reads as a real
-	# state) and is flagged in docs/UI_TODO.md rather than faked with a
-	# number that looks live.
-	_hud_player_info.set_mp(1, 1)
+	# MP has no server side at all yet -- nothing tracks or reports it -- so
+	# the bar is drawn full and carries no readout. See set_mp_unknown.
+	_hud_player_info.set_mp_unknown()
 
 	# Every floating game window, created on demand.
 	_hud_panels = HudPanels.new(_ui_builder)
 	_hud_panels.name = "HudPanels"
 	ui_control.add_child(_hud_panels)
 	_hud_panels.connect_net()
+	# The panels are built after the vitals arrive, so they are seeded from
+	# the same cached result rather than waiting for a signal that already
+	# fired.
+	if _last_enter_world_max_hp > 0:
+		_hud_panels.set_character_vitals(_last_enter_world_hp, _last_enter_world_max_hp, 1)
 	_hud_underbar.menu_action.connect(_on_underbar_menu_action)
 
 	# The authentic HUD replaces the developer UI it would otherwise draw
@@ -5482,6 +5498,12 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 			if assembled != null:
 				monster_skeleton = assembled.skeleton
 				_animate(assembled)
+	# Says which of the three ways a monster can come out wrong happened:
+	# the species not in the tables, the model not assembling, or a real
+	# model placed somewhere the player will never be.
+	print("World3D: monster %s -> model '%s' skeleton=%s at %.0f,%.0f,%.0f (%.0f from the player)" % [
+		monster.monster_name, monster_model, "yes" if monster_skeleton != null else "NO",
+		pos.x, pos.y, pos.z, pos.distance_to(player.global_position)])
 
 	# Real model height varies a lot by species/asset (real monster
 	# skeletons are nowhere near the human PLAYER_SCALE_RATIO-derived
@@ -5538,7 +5560,12 @@ func _sync_monster_bodies(live: Array) -> void:
 func _on_monster_list_result(monsters: Array, error: String) -> void:
 	if error != "":
 		monster_status_label.text = "Error: %s" % error
+		push_warning("World3D: monster list refused: %s" % error)
 		return
+	print("World3D: server reports %d monster(s)" % monsters.size())
+	for m in monsters:
+		print("  %s at %.0f, %.0f, %.0f (%d/%d hp)" % [
+			m.monster_name, m.x, m.y, m.z, m.hp, m.max_hp])
 	_monsters.assign(monsters)
 	monster_list.clear()
 	for m in _monsters:
