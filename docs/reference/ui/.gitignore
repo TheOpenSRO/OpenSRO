@@ -1,0 +1,13 @@
+# The screenshots stay local to a checkout rather than being committed.
+#
+# docs/LEGAL.md rule 1 is "no original assets in-repo", and a screenshot of
+# the running client embeds its UI artwork and its server's branding. The
+# project's existing precedent agrees: REFERENCE_GAPS.md describes reference
+# screenshots in prose and commits none of them.
+#
+# README.md in this directory is the catalogue and IS committed, so the
+# filenames below are stable and can be referenced from the docs. Drop the
+# PNGs in here and they line up.
+*.png
+*.jpg
+*.jpeg
