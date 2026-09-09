@@ -70,8 +70,16 @@ func TestGiveStartingKitDressesEveryWearableSlot(t *testing.T) {
 			t.Errorf("slot %v was left empty", slot)
 			continue
 		}
-		if itemID != StartingArmorItemID {
-			t.Errorf("slot %v holds item %d, want %d", slot, itemID, StartingArmorItemID)
+		if want := StartingKitItems[slot]; itemID != want {
+			t.Errorf("slot %v holds item %d, want %d", slot, itemID, want)
+		}
+	}
+
+	// Every wearable slot has an item defined for it, or the kit silently
+	// leaves someone half-dressed.
+	for _, slot := range ArmorSlots {
+		if _, ok := StartingKitItems[slot]; !ok {
+			t.Errorf("no starting item defined for slot %v", slot)
 		}
 	}
 

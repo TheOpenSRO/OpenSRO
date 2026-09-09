@@ -60,8 +60,9 @@ is presentation work on solved data; if you find yourself editing the protocol, 
 The windows are real; their *contents* are a plain list laid over the frame. Each one wants its
 authored presentation instead:
 
-- **Inventory** — `GDR_INVENTORY_LATTICE` builds as a 4×9 grid of slots already; it needs item
-  icons in the cells, the gold readout, and drag between slots.
+- **Inventory** — *icons done* (hundred-and-eleventh round): the authored slot grid is filled from
+  `itemdata*.txt`, 11,772 items resolvable by id, 32×32 icons matching the grid pitch exactly.
+  Still wanted: the gold readout, and drag between slots.
 - **Character** — bind the `GDR_PMI_TXT_*DAT` stat rows in `ifplayerinfo.txt` to the character
   data the server already sends.
 - **Party / Community / Guild** — the row controls exist (`CIFPartySlot` builds as a slot); they

@@ -5,15 +5,28 @@ import (
 	"fmt"
 )
 
-// StartingArmorItemID is the item every new character is dressed in.
+// StartingKitItems is the item a new character gets in each wearable slot.
 //
-// Own design, and a placeholder like the rest of cmd/server's ref items:
-// this project ships no real item table (see docs/protocol/refdata_schema.md),
-// so operators importing real refdata should point this at a real starting
-// armour item. What matters is that it is *a* real inventory item, so the
-// equipment the client renders is equipment the character genuinely has,
-// rather than something the client draws because a slot looked empty.
-const StartingArmorItemID int64 = 510
+// These are the game's own item ids for the China "Cotton" starter set --
+// the same table the client reads to find an item's name and inventory
+// icon, so a character created here shows "Cotton Hat", "Cotton Suit" and
+// the rest with their real artwork rather than an unnamed placeholder:
+//
+//	4734 Cotton Hat        icon item\china\man_item\clothes_01_ha.ddj
+//	4842 Cotton Suit                                    clothes_01_ba.ddj
+//	4806 Cotton Talisman                                clothes_01_sa.ddj
+//	4878 Cotton Trousers                                clothes_01_la.ddj
+//	4950 Cotton Shoes                                   clothes_01_fa.ddj
+//
+// An operator running with different refdata can change these; an id the
+// client's tables do not know still equips, it just has no name or icon.
+var StartingKitItems = map[Slot]int64{
+	SlotHelm:          4734,
+	SlotMail:          4842,
+	SlotShoulderGuard: 4806,
+	SlotPants:         4878,
+	SlotBoots:         4950,
+}
 
 // InventoryAdder is the slice of the inventory store a starting kit needs.
 // Declared here rather than importing the inventory package so equipment
@@ -41,8 +54,12 @@ func GiveStartingKit(ctx context.Context, inv InventoryAdder, equip Store, chara
 		return nil
 	}
 	for _, slot := range ArmorSlots {
-		if err := inv.AddItem(ctx, characterID, StartingArmorItemID, 1); err != nil {
-			return fmt.Errorf("equipment: starting kit: adding item for slot %v: %w", slot, err)
+		itemID, ok := StartingKitItems[slot]
+		if !ok {
+			continue
+		}
+		if err := inv.AddItem(ctx, characterID, itemID, 1); err != nil {
+			return fmt.Errorf("equipment: starting kit: adding item %d for slot %v: %w", itemID, slot, err)
 		}
 		// AddItem fills the first free slot, and each item is equipped
 		// straight out of it before the next is added, so slot 0 is always

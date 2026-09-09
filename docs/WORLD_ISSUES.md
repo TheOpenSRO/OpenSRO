@@ -5328,3 +5328,45 @@ skinning" (audited the wrong structure). Each was written up with real
 reasoning and each was wrong in the same way -- a complete argument about an
 incomplete look. The tell in all three was a header word being parsed and
 never used.
+
+## Hundred-and-eleventh round: items get their names and icons
+
+The inventory window was real chrome around a plain list of whatever the
+snapshot's fields stringified to. It now shows what the game shows.
+
+**The tables.** `server_dep\silkroad\textdata\itemdata*.txt` is ~160 columns
+across several parts, of which three fields matter: the id (column 1), the
+display name (column 3), and the icon. The icon is found **by extension**,
+not by index -- a row carries three resource paths, two `.bsr` models and
+one `.ddj`, and the parts do not agree on where the `.ddj` sits. Paths are
+relative to `icon\`, and a real archive holds **5,370** of them.
+
+Measured against a real Media.pk2: **11,772 items resolvable by id**, and
+every icon is 32x32 -- exactly the pitch of the inventory's own slot grid,
+which is a pleasant confirmation that `LATTICE_CELL` was right.
+
+**The server's items were invented, so nothing could resolve.** The
+starting kit handed out five copies of item `510`, a placeholder id that
+appears in no table, so the inventory could only ever show an unnamed row
+with no icon. It now gives the game's own China "Cotton" starter set, one
+item per wearable slot:
+
+```
+SlotHelm          4734  Cotton Hat        clothes_01_ha.ddj
+SlotMail          4842  Cotton Suit       clothes_01_ba.ddj
+SlotShoulderGuard 4806  Cotton Talisman   clothes_01_sa.ddj
+SlotPants         4878  Cotton Trousers   clothes_01_la.ddj
+SlotBoots         4950  Cotton Shoes      clothes_01_fa.ddj
+```
+
+This is the same shape as the monster fix two rounds ago, and the same
+lesson: **the client cannot render what the server names if the server
+names something that does not exist.** Both times the fix was on the server,
+not in the renderer.
+
+**The presentation.** `_fill_inventory_grid` fills `GDR_INVENTORY_LATTICE`
+-- the authored slot grid `UiBuilder` already builds as one Control per cell
+with a named `ItemIcon` child -- placing each carried item's icon in its own
+slot index, with a stack count where the quantity is above one and the
+item's real name as the tooltip. The plain list stays underneath for the
+fields the grid has no room for.

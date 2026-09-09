@@ -172,11 +172,85 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 var _net_connected := false
 
+## {item id -> ItemTableReader.Item}, read once from the player's own
+## Media.pk2. Lets a slot show an item's real name and icon from the id the
+## server sends, instead of the id itself.
+var _items: Dictionary = {}
+var _items_loaded := false
+
+func _load_items() -> void:
+	if _items_loaded:
+		return
+	_items_loaded = true
+	if _builder == null:
+		return
+	var archive := _builder.media_archive()
+	if archive == null:
+		return
+	for path in ItemTableReader.TABLE_PATHS:
+		var entry := ObjectLoader.find_file(archive, path)
+		if entry != null:
+			_items = ItemTableReader.parse(archive.read_file(entry), _items)
+	print("HudPanels: %d item(s) resolvable by id" % _items.size())
+
+## The icon for an item id, or null. Icons are ordinary .ddj textures, so
+## the builder's own cache serves them.
+func _item_icon(item_id: int) -> Texture2D:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	if item == null or item.icon_path == "" or _builder == null:
+		return null
+	return _builder.load_texture(item.icon_path)
+
+func _item_name(item_id: int) -> String:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	return item.item_name if item != null else ""
+
+## Fills the inventory window's authored slot grid with the icons of what
+## the character is carrying.
+##
+## This is the authored presentation rather than the plain list: the grid is
+## GDR_INVENTORY_LATTICE, which UiBuilder already builds as one Control per
+## cell, each with a named "ItemIcon" child.
+func _fill_inventory_grid(slots: Array) -> void:
+	var window: HudWindow = _windows.get("inventory")
+	if window == null:
+		return
+	var grid := window.node("GDR_INVENTORY_LATTICE") as Control
+	if grid == null:
+		return
+	for cell in grid.get_children():
+		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
+		if icon != null:
+			icon.texture = null
+		var count := cell.get_node_or_null("CountLabel") as Label
+		if count != null:
+			count.text = ""
+	var cells := grid.get_child_count()
+	for entry in slots:
+		var index := int(_first_field(entry, ["slot", "slot_index", "index"]) if _first_field(entry, ["slot", "slot_index", "index"]) != null else -1)
+		if index < 0 or index >= cells:
+			continue
+		var cell := grid.get_child(index)
+		var item_id = _first_field(entry, ["item_id", "id"])
+		if item_id == null:
+			continue
+		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
+		if icon != null:
+			icon.texture = _item_icon(int(item_id))
+			icon.tooltip_text = _item_name(int(item_id))
+		var quantity = _first_field(entry, COUNT_FIELDS)
+		var count_label := cell.get_node_or_null("CountLabel") as Label
+		if count_label != null and quantity != null and int(quantity) > 1:
+			count_label.text = str(int(quantity))
+
 func connect_net() -> void:
 	if _net_connected:
 		return
 	_net_connected = true
 	NetClient.inventory_list_result.connect(func(slots: Array, _e: String) -> void:
+		_fill_inventory_grid(slots)
 		_fill_list("inventory", slots.map(_describe_item)))
 	NetClient.skill_list_result.connect(func(skills: Array, _e: String) -> void:
 		_fill_list("skill", skills.map(_describe_named)))
@@ -301,6 +375,13 @@ static func _first_field(entry: Variant, field_names: Array) -> Variant:
 	return null
 
 func _describe_item(slot: Variant) -> String:
+	# The tables know the name even when the snapshot only carries an id.
+	var by_id = _first_field(slot, ["item_id", "id"])
+	if by_id != null:
+		var resolved := _item_name(int(by_id))
+		if resolved != "":
+			var n = _first_field(slot, COUNT_FIELDS)
+			return "%s x%d" % [resolved, int(n)] if n != null and int(n) > 1 else resolved
 	var item_name = _first_field(slot, NAME_FIELDS)
 	if item_name == null:
 		return _describe_unknown(slot)

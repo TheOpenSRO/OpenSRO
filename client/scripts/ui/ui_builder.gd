@@ -504,6 +504,11 @@ func font_count() -> int:
 	_load_fonts()
 	return _fonts.size()
 
+## The archive this builder reads from, for callers that need to pull data
+## files out of it rather than textures.
+func media_archive() -> Pk2Reader:
+	return _media_pk2
+
 func _resolve_text(key_or_text: String) -> String:
 	if _text_table != null:
 		return _text_table.get_text(key_or_text)
