@@ -73,3 +73,19 @@ how that was found and confirmed there's no bone-weight skinning data anywhere i
 by type ID, to disk. Doesn't resolve type IDs to real `.bsr` models — no mapping from a `.mapo`
 type ID to a resource path has been found anywhere in this project's data (see
 `docs/protocol/MAPO_FORMAT.md`), so this renders simple colored markers, not the actual scenery.
+
+## Godot runs on the render box, never here
+
+AGENTS.md's hard rule. `remote_godot.sh` ships the working copy to
+`192.168.5.78` and runs the command there, so following it is one line:
+
+```
+client/tools/remote_godot.sh check     # every script and scene compiles
+client/tools/remote_godot.sh tests     # all 59 *_test.gd suites
+client/tools/remote_godot.sh script '--script res://tools/dump_layout.gd -- --pk2=... --file=ifinventory'
+client/tools/remote_godot.sh sync      # ship the working copy, run nothing
+```
+
+`check` and `tests` run the import first, because `check_scripts.gd` cannot
+tell a broken script from an unregistered `class_name` on a cold cache.
+
