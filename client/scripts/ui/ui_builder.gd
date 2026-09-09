@@ -21,6 +21,38 @@ var _text_table: UiTextTable
 var _texture_cache: Dictionary = {} # String -> Texture2D
 var _window_registry: UiLayoutParser.LayoutDef = null
 var _window_registry_loaded: bool = false
+var _layout_cache: Dictionary = {} # String -> UiLayoutParser.LayoutDef
+
+## Loads and caches a layout file from Media.pk2 by its archive path
+## (e.g. "resinfo\\ifinventory.txt"). Returns null if it isn't there.
+func load_layout(layout_path: String) -> UiLayoutParser.LayoutDef:
+	if _layout_cache.has(layout_path):
+		return _layout_cache[layout_path]
+	if _media_pk2 == null:
+		return null
+	var entry := ObjectLoader.find_file(_media_pk2, layout_path)
+	if entry == null:
+		push_warning("UiBuilder: layout %s not in Media.pk2" % layout_path)
+		return null
+	var layout := UiLayoutParser.parse(_media_pk2.read_file(entry))
+	_layout_cache[layout_path] = layout
+	return layout
+
+## The size a window built from this section should be: the largest rect
+## among its controls that starts at the origin -- which in every real
+## layout read is the window's own CIFFrame (ifinventory's
+## GDR_INVENTORY_FRAME is 0,0,176,308). Falls back to the bounding box of
+## everything, so a layout with no frame still gets a sensible size rather
+## than zero.
+static func section_size(sec: UiLayoutParser.SectionDef) -> Vector2:
+	var framed := Vector2.ZERO
+	var bounds := Vector2.ZERO
+	for def in sec.controls:
+		var far := Vector2(def.rect.position + def.rect.size)
+		bounds = Vector2(maxf(bounds.x, far.x), maxf(bounds.y, far.y))
+		if def.rect.position == Vector2i.ZERO and def.rect.size.x > framed.x:
+			framed = Vector2(def.rect.size)
+	return framed if framed != Vector2.ZERO else bounds
 
 func _init(media_pk2: Pk2Reader = null, text_table: UiTextTable = null) -> void:
 	_media_pk2 = media_pk2
@@ -89,8 +121,10 @@ func build_control(def: UiLayoutParser.ControlDef) -> Control:
 			node = _build_frame(def)
 		"CIFEdit", "CIFEInputChatBox":
 			node = _build_edit(def)
-		"CIFSlotWithHelp", "CIFSlot", "CIFExtQuickSlotSlot":
+		"CIFSlotWithHelp", "CIFSlot", "CIFExtQuickSlotSlot", "CIFPartySlot":
 			node = _build_slot(def)
+		"CIFLattice":
+			node = _build_lattice(def)
 		_:
 			# Generic container for unhandled or compound control types
 			node = _build_generic(def)
@@ -184,16 +218,30 @@ func _build_static(def: UiLayoutParser.ControlDef) -> Control:
 			rect.add_child(label)
 
 		return rect
-	elif def.text != "":
-		var label := Label.new()
-		label.text = _resolve_text(def.text)
-		label.horizontal_alignment = _map_halign(def.halign)
-		label.vertical_alignment = _map_valign(def.valign)
-		if def.font_color != Color.WHITE:
-			label.add_theme_color_override("font_color", def.font_color)
-		return label
-	else:
-		return _build_generic(def)
+	# No artwork means this is a text field, and it stays one even when its
+	# text starts empty -- the client fills those at runtime. Returning a
+	# plain Control for the empty case (as this used to) meant every live
+	# data field in a window, GDR_PMI_TXT_ID and the HP/MP readouts
+	# included, was built as something that can never show text.
+	var label := Label.new()
+	label.text = _resolve_text(def.text)
+	label.horizontal_alignment = _map_halign(def.halign)
+	label.vertical_alignment = _map_valign(def.valign)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if def.font_color != Color.WHITE:
+		label.add_theme_color_override("font_color", def.font_color)
+	return label
+
+## A 1x1 white texture, so a gauge with no artwork of its own can still be
+## drawn and tinted. Built once and shared.
+static var _flat_texture: ImageTexture = null
+
+static func flat_texture() -> ImageTexture:
+	if _flat_texture == null:
+		var image := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+		image.set_pixel(0, 0, Color.WHITE)
+		_flat_texture = ImageTexture.create_from_image(image)
+	return _flat_texture
 
 func _build_gauge(def: UiLayoutParser.ControlDef) -> TextureProgressBar:
 	var gauge := TextureProgressBar.new()
@@ -201,11 +249,33 @@ func _build_gauge(def: UiLayoutParser.ControlDef) -> TextureProgressBar:
 	gauge.max_value = 100
 	gauge.value = 100
 	gauge.nine_patch_stretch = true
+	gauge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	if def.ddj != "":
 		gauge.texture_progress = load_texture(def.ddj)
+	# Several real gauges name no artwork at all -- the player block's
+	# GDR_PMI_GAUGE_HP and _MP among them, which the client colours itself.
+	# Without a texture a TextureProgressBar draws nothing, so fall back to
+	# a flat fill the caller can tint, rather than leaving the bar invisible.
+	if gauge.texture_progress == null:
+		gauge.texture_progress = flat_texture()
+		gauge.texture_under = flat_texture()
+		gauge.tint_under = Color(0.10, 0.10, 0.12, 0.85)
 
 	return gauge
+
+## Interior fill for a framed window.
+##
+## **This colour is ours, not authored.** Every 8-slice frame set in the
+## archive -- `mframe_wnd_`, `int_window_`, `game_window_`, `event_sub_wnd_`
+## and the rest, 30-odd of them -- contains exactly eight pieces: four
+## corners and four edges, and **no centre**. So the interior of a window is
+## not painted by the frame art, and nothing found so far says what the real
+## client fills it with. Left unfilled the windows are see-through, which is
+## worse than a stand-in, so this is a flat dark fill chosen to match what
+## the reference screenshots show. Replace it the moment the real fill is
+## identified.
+const FRAME_FILL := Color(0.055, 0.055, 0.07, 0.94)
 
 func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 	var container := Control.new()
@@ -285,6 +355,33 @@ func _build_slot(def: UiLayoutParser.ControlDef) -> Control:
 	slot.add_child(count_lbl)
 
 	return slot
+
+## The cell pitch of a lattice, in pixels. Real inventory art is a 32x32
+## slot on a 32-pixel grid; ifinventory's GDR_INVENTORY_LATTICE is 144x288,
+## which is not a whole number of 32s (4.5 x 9). The 4-pixel shortfall is
+## the outline the layout draws around it (GDR_INVENTORY_LATTICE_OUTLINE is
+## 146x290 at 15,10 against the lattice's 144x288 at 18,13), so the usable
+## grid is 4 columns and the remainder is border. Rounding down is what
+## keeps a partial cell from being drawn.
+const LATTICE_CELL := 32
+
+## Builds a slot grid. A CIFLattice is the item-grid control -- the
+## inventory's 5x9 of item slots, and the same control in storage and
+## stall windows. The layout gives its pixel rect, not a row/column count,
+## so the grid is derived from the cell pitch.
+func _build_lattice(def: UiLayoutParser.ControlDef) -> Control:
+	var grid := Control.new()
+	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var cols: int = maxi(1, def.rect.size.x / LATTICE_CELL)
+	var rows: int = maxi(1, def.rect.size.y / LATTICE_CELL)
+	for i in range(cols * rows):
+		var slot := _build_slot(def)
+		slot.name = "Cell%d" % i
+		slot.position = Vector2((i % cols) * LATTICE_CELL, (i / cols) * LATTICE_CELL)
+		slot.size = Vector2(LATTICE_CELL, LATTICE_CELL)
+		slot.custom_minimum_size = slot.size
+		grid.add_child(slot)
+	return grid
 
 func _build_generic(def: UiLayoutParser.ControlDef) -> Control:
 	var ctrl := Control.new()

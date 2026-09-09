@@ -870,6 +870,8 @@ var _ui_text_table: UiTextTable
 var _ui_builder: UiBuilder
 var _hud_minimap: HudMinimap
 var _hud_underbar: HudUnderbar
+var _hud_player_info: HudPlayerInfo
+var _hud_panels: HudPanels
 
 func _ready() -> void:
 	character_label.text = "Character: %s" % NetClient.current_character_name
@@ -1081,7 +1083,62 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_underbar.offset_bottom = 0.0
 	_hud_underbar.setup()
 
-	print("World3D: authentic Silkroad UI initialized from Media.pk2 (Minimap + Underbar)")
+	# The always-on block at the top left: portrait, name, level, HP and MP.
+	# Its own registry entry places it at 4,7 in the client's default
+	# layout, which is a plain top-left inset and translates directly.
+	_hud_player_info = HudPlayerInfo.new(_ui_builder)
+	_hud_player_info.name = "HudPlayerInfo"
+	ui_control.add_child(_hud_player_info)
+	_hud_player_info.position = Vector2(4, 7)
+	_hud_player_info.setup()
+	_hud_player_info.set_character(NetClient.current_character_name, 1)
+	# Until the server reports vitals, show a full bar rather than an empty
+	# one -- an empty HP bar reads as "you are dead", which is worse than
+	# showing the placeholder maximum. Replaced the moment real values
+	# arrive; see docs/UI_TODO.md.
+	_hud_player_info.set_hp(200, 200)
+	_hud_player_info.set_mp(200, 200)
+
+	# Every floating game window, created on demand.
+	_hud_panels = HudPanels.new(_ui_builder)
+	_hud_panels.name = "HudPanels"
+	ui_control.add_child(_hud_panels)
+	_hud_panels.connect_net()
+	_hud_underbar.menu_action.connect(_on_underbar_menu_action)
+
+	# The authentic HUD replaces the developer UI it would otherwise draw
+	# on top of: the ten-tab panel is the same systems these windows now
+	# show, and the corner labels duplicate the minimap's own readout. The
+	# chat box and zone box stay -- chat has no authored window built yet,
+	# and the zone box is still the only way to travel. See docs/UI_TODO.md.
+	_hide_debug_ui_replaced_by_hud()
+
+	print("World3D: authentic Silkroad UI initialized from Media.pk2 (minimap, underbar, player info, %d panels)" % HudPanels.PANELS.size())
+
+## Routes the underbar's buttons to the panels. "menu" opens the popup list
+## above the bar, where the reference puts it.
+func _on_underbar_menu_action(action_name: String) -> void:
+	if _hud_panels == null:
+		return
+	if action_name == "menu":
+		_hud_panels.show_menu(_hud_underbar.global_position + Vector2(_hud_underbar.size.x * 0.86, 0.0))
+		return
+	if action_name == "option":
+		return
+	_hud_panels.toggle(action_name)
+
+## Hides the parts of the developer UI the authentic HUD now covers.
+## Hidden rather than deleted: the scene still owns those nodes and
+## World3D's own handlers still reference them, so removing them is a
+## separate change (docs/TODO.md item 5).
+func _hide_debug_ui_replaced_by_hud() -> void:
+	# ZoneLabel goes too: the minimap now shows the zone name and the
+	# client's own X/Y readout, which is what that label was standing in
+	# for, and it was drawing straight across the player block.
+	for path in ["ActionTabs", "CharacterLabel", "HelpLabel", "ZoneLabel"]:
+		var node := ui_control.get_node_or_null(path)
+		if node is CanvasItem:
+			(node as CanvasItem).visible = false
 
 ## Pushes the camera's far clipping plane out far enough to actually see
 ## the real terrain this scene streams in.
@@ -1276,6 +1333,33 @@ func _refresh_zone_label_position() -> void:
 				var ry: int = parts[1].to_int()
 				_hud_minimap.update_player(rx, ry, local, player.rotation_degrees.y)
 				_hud_minimap.set_area_name(_current_zone_name)
+
+## Opens the named HUD panels and tiles them across the screen, so one
+## render can show several at once. Reports what opened and what didn't --
+## a panel whose authored layout is missing prints rather than failing.
+func _qa_open_panels(spec: String) -> void:
+	if _hud_panels == null:
+		print("QA PANELS: no HUD (Media.pk2 not loaded)")
+		return
+	var placed := 0
+	for raw in spec.split(","):
+		var panel_id := raw.strip_edges()
+		if panel_id == "":
+			continue
+		var window := _hud_panels.open(panel_id)
+		if window == null:
+			print("QA PANELS: %s did not open" % panel_id)
+			continue
+		var view := get_viewport().get_visible_rect().size
+		var column := placed % 3
+		var row: int = placed / 3
+		window.position = Vector2(
+			20.0 + column * (view.x - 40.0) / 3.0,
+			90.0 + row * 200.0)
+		print("QA PANELS: %s opened %dx%d at %s" % [
+			panel_id, int(window.size.x), int(window.size.y), window.position])
+		placed += 1
+	print("QA PANELS: %d of %d opened" % [placed, spec.split(",").size()])
 
 func _zone_label_position_suffix() -> String:
 	var pair := _nav_graph_for(player.global_position)
@@ -3899,6 +3983,13 @@ func _qa_step() -> void:
 				var spot: Vector2 = target["local"]
 				_place_at_region_local(coords["x"], coords["y"], spot.x, spot.y)
 			_refresh_zone_label_position()
+
+	# SRREVAMP_QA_PANELS opens named HUD windows so a render can show them.
+	# Comma-separated panel ids from HudPanels.PANELS, e.g.
+	# "inventory,character,skill". Opened once the world has settled, and
+	# tiled rather than centred so several are visible in one shot.
+	if OS.get_environment("SRREVAMP_QA_PANELS") != "" and _qa_tick == 30:
+		_qa_open_panels(OS.get_environment("SRREVAMP_QA_PANELS"))
 
 	if OS.get_environment("SRREVAMP_QA_LOOK") != "" and (_qa_tick == 60 or _qa_tick == 120):
 		_qa_look_report()

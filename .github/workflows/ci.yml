@@ -64,61 +64,26 @@ jobs:
       - name: Run GDScript tests
         working-directory: client
         run: |
-          godot --headless --path . --script res://scripts/pk2/blowfish_test.gd
-          godot --headless --path . --script res://scripts/pk2/pk2_reader_test.gd
-          godot --headless --path . --script res://scripts/ddj/ddj_reader_test.gd
-          godot --headless --path . --script res://scripts/bms/bms_reader_test.gd
-          godot --headless --path . --script res://scripts/bms/bms_collision_test.gd
-          godot --headless --path . --script res://scripts/bsr/bsr_reader_test.gd
-          godot --headless --path . --script res://scripts/bmt/inflate_test.gd
-          godot --headless --path . --script res://scripts/bmt/bmt_reader_test.gd
-          godot --headless --path . --script res://scripts/ban/ban_reader_test.gd
-          godot --headless --path . --script res://scripts/bsk/bsk_reader_test.gd
-          godot --headless --path . --script res://scripts/mapo/mapo_reader_test.gd
-          godot --headless --path . --script res://scripts/mapo/mapo2_reader_test.gd
-          godot --headless --path . --script res://scripts/mapm/mapm_reader_test.gd
-          godot --headless --path . --script res://scripts/mapt/mapt_reader_test.gd
-          godot --headless --path . --script res://scripts/tile2d/tile_index_reader_test.gd
-          godot --headless --path . --script res://scripts/nvm/nvm_reader_test.gd
-          godot --headless --path . --script res://scripts/nvm/nvm_collision_test.gd
-          godot --headless --path . --script res://scripts/nvm/nvm_water_test.gd
-          godot --headless --path . --script res://scripts/nav/nav_graph_test.gd
-          godot --headless --path . --script res://scripts/regioninfo/regioninfo_reader_test.gd
-          godot --headless --path . --script res://scripts/efp/efp_reader_test.gd
-          godot --headless --path . --script res://scripts/assets/skeleton_pose_test.gd
-          godot --headless --path . --script res://scripts/assets/skeleton3d_builder_test.gd
-          godot --headless --path . --script res://scripts/assets/object_loader_test.gd
-          godot --headless --path . --script res://scripts/assets/character_assembler_test.gd
-          godot --headless --path . --script res://scripts/assets/monster_assembler_test.gd
-          godot --headless --path . --script res://scripts/assets/asset_source_test.gd
-          godot --headless --path . --script res://scripts/assets/pk2_config_test.gd
-          godot --headless --path . --script res://scripts/update/update_checker_test.gd
-          godot --headless --path . --script res://scripts/assets/mapm_terrain_builder_test.gd
-          godot --headless --path . --script res://scripts/environment/environment_reader_test.gd
-          godot --headless --path . --script res://scripts/cpd/cpd_reader_test.gd
-          godot --headless --path . --script res://scripts/objidx/objidx_reader_test.gd
-          godot --headless --path . --script res://scripts/net/packet_test.gd
-          godot --headless --path . --script res://scripts/net/packet_reader_test.gd
-          godot --headless --path . --script res://scripts/net/auth_test.gd
-          godot --headless --path . --script res://scripts/net/character_test.gd
-          godot --headless --path . --script res://scripts/net/world_test.gd
-          godot --headless --path . --script res://scripts/net/inventory_test.gd
-          godot --headless --path . --script res://scripts/net/equipment_test.gd
-          godot --headless --path . --script res://scripts/net/shop_test.gd
-          godot --headless --path . --script res://scripts/net/combat_test.gd
-          godot --headless --path . --script res://scripts/net/skill_test.gd
-          godot --headless --path . --script res://scripts/net/party_test.gd
-          godot --headless --path . --script res://scripts/net/guild_test.gd
-          godot --headless --path . --script res://scripts/net/chat_test.gd
-          godot --headless --path . --script res://scripts/net/quest_test.gd
-          godot --headless --path . --script res://scripts/net/duel_test.gd
-          godot --headless --path . --script res://scripts/net/trade_test.gd
-          godot --headless --path . --script res://scripts/net/friend_test.gd
-          godot --headless --path . --script res://scripts/ui/ui_text_table_test.gd
-          godot --headless --path . --script res://scripts/ui/ui_layout_parser_test.gd
-          godot --headless --path . --script res://scripts/ui/ui_builder_test.gd
-          godot --headless --path . --script res://scripts/ui/hud/hud_minimap_test.gd
-          godot --headless --path . --script res://scripts/ui/hud/hud_underbar_test.gd
+          # Discovered, not listed. The list this replaced had drifted to 55
+          # entries against 56 test files in the repo, so a test could be
+          # added and silently never run -- the failure mode a test suite
+          # exists to prevent.
+          set -o pipefail
+          failed=0
+          count=0
+          for t in $(find scripts -name '*_test.gd' | sort); do
+            count=$((count + 1))
+            if ! godot --headless --path . --script "res://$t"; then
+              echo "::error file=client/$t::GDScript test failed"
+              failed=1
+            fi
+          done
+          echo "ran $count GDScript test(s)"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::no GDScript tests were discovered"
+            exit 1
+          fi
+          exit $failed
 
   no-assets-check:
     name: Guard against committed pk2/game assets
