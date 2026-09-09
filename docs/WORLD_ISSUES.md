@@ -5204,3 +5204,59 @@ failed" because someone is underdressed would be worse than the problem.
 `StartingArmorItemID` is a placeholder item id like the rest of
 cmd/server's ref items, and says so: this project ships no real item table,
 and an operator importing real refdata should point it at a real one.
+
+## Hundred-and-ninth round: animating the NPCs made them worse
+
+The town was inhabited but frozen, so the obvious next step was to play the
+idle animations every model already carries. The plumbing works and the
+result is worse than statues, so it ships off. The measurement is the
+point.
+
+**It works.** `SkinnedBsrAssembler` now parses a model's idle animation
+alongside its geometry, picking it by name -- the archive is inconsistent
+(`mangnyang_stand01.ban`, `chinaquest_priest_basic.ban`, some models carry
+only `_time`), so the hints are tried in order and fall back to whatever is
+listed first. `World3D` ticks them all, each phase-offset so a field of
+Mangyang does not step in unison.
+
+**It runs.** 49 animated characters in Jangan, and their bones really move:
+
+```
+QA ANIM 49 animated character(s)
+   Npc_2003_2   38 bones,  8 frames, at frame 2  -- bones moved 1.047
+   Npc_2004_3   36 bones, 29 frames, at frame 15 -- bones moved 12.036
+   Npc_2013_4   36 bones,  8 frames, at frame 0  -- bones moved 1.134
+```
+
+The report prints the current frame next to the movement on purpose: two of
+five read 0.000, and without the frame number that is indistinguishable
+from a dead animation. They are five-frame loops whose keyframes barely
+differ -- a merchant standing still.
+
+**And it looks wrong.** Attributed with a controlled pair of renders, the
+same NPC from the same camera, one flag apart:
+
+- *animated*: torn into a spike, upper body stretched away from the legs
+- *not animated*: a complete, correct woman in an embroidered red dress,
+  sash, sandals and hair
+
+The cause is already written down in `SkinnedBsrAssembler`'s own header and
+is not fixable here. `.bms` carries **no per-vertex skinning**
+(BMS_FORMAT.md settled that), so every mesh piece attaches rigidly to a
+single bone, and a humanoid NPC's entire dress or torso is one 400-vertex
+piece. Rotating that piece's one bone swings all of it. The comment
+predicted exactly this ("adequate for NPCs standing in a town... not a
+solved skinning model"); this round is that prediction being tested and
+holding.
+
+So idle animation is **off by default**, behind `SRREVAMP_IDLE_ANIM=1`. Kept
+rather than deleted: the pipeline is right and only the skinning model is
+missing, so whatever replaces rigid attachment can switch it on and use the
+same two renders to show it is better.
+
+**What this says about the rigid-attachment approach.** It is fine for
+scenery-like models and for standing still, and it cannot animate a
+humanoid. Making NPCs move is therefore not an animation task -- it is a
+skinning task, and it needs a way to weight vertices to bones that the
+`.bms` format does not appear to carry. That is a real open question and
+sits in TODO.md rather than being papered over with a partial fix.

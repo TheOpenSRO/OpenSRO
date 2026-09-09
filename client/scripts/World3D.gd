@@ -1358,6 +1358,41 @@ func _refresh_zone_label_position() -> void:
 				_hud_minimap.update_player(rx, ry, local, player.rotation_degrees.y)
 				_hud_minimap.set_area_name(_current_zone_name)
 
+## Bone positions of the first few animated characters, so two calls can be
+## differenced. Keyed by skeleton instance id.
+var _qa_anim_sample: Dictionary = {}
+
+func _qa_animation_report() -> void:
+	print("QA ANIM %d animated character(s)" % _animated.size())
+	var checked := 0
+	for entry in _animated:
+		var skeleton: Skeleton3D = entry[0]
+		if not is_instance_valid(skeleton):
+			continue
+		var sum := Vector3.ZERO
+		for i in range(skeleton.get_bone_count()):
+			sum += skeleton.get_bone_global_pose(i).origin
+		# The frame this character is posed at, reported alongside the
+		# movement: a short loop sampled a whole number of cycles apart is
+		# genuinely on the same frame, and "moved 0.000" then says the probe
+		# aliased rather than that the animation is dead.
+		var frames: int = entry[2]
+		var phase: float = entry[3]
+		var frame_idx := int((_idle_anim_time + phase) * BAN_FPS) % frames
+		var key := skeleton.get_instance_id()
+		var previous = _qa_anim_sample.get(key)
+		if previous == null:
+			print("   %-22s %2d bones, %2d frames, at frame %d -- first sample" % [
+				skeleton.get_parent().name, skeleton.get_bone_count(), frames, frame_idx])
+		else:
+			var moved: float = (sum - (previous as Vector3)).length()
+			print("   %-22s %2d bones, %2d frames, at frame %d -- bones moved %.3f" % [
+				skeleton.get_parent().name, skeleton.get_bone_count(), frames, frame_idx, moved])
+		_qa_anim_sample[key] = sum
+		checked += 1
+		if checked >= 5:
+			break
+
 ## Reports, for every placed object near the player, how its rendered
 ## footprint compares with the walkable footprint in the navigation graph.
 ##
@@ -2753,6 +2788,70 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	else:
 		_place_at_zone_spawn(result.zone)
 
+## Everything in the world that plays a standing animation -- NPCs and
+## monsters. Each entry is [Skeleton3D, ParsedAnimation, frame count, phase].
+##
+## Phase matters: without it every Mangyang in a field steps in perfect
+## unison, which reads as a bug rather than as a crowd. Each character gets
+## a fixed offset from its own instance count, so it is stable across frames
+## rather than jittering.
+var _animated: Array = []
+
+## Registers an assembled character for idle animation, if it has one.
+##
+## **Off by default, and that is a finding rather than a stub.** The
+## plumbing works: 49 characters animate, and their bones really move (the
+## QA ANIM report measured 1.0 to 12.0 units of travel between samples).
+## What it looks like is the problem. `.bms` carries no per-vertex skinning
+## (BMS_FORMAT.md), so every mesh piece is attached rigidly to one bone, and
+## a humanoid NPC's whole dress or torso is a single 400-vertex piece.
+## Rotating that piece's one bone swings all of it.
+##
+## Measured as a controlled pair of renders of the same NPC from the same
+## camera, which is the only way to attribute it: with animation she is torn
+## into a spike, upper body stretched away from her legs; without it she is
+## a complete, correct woman in an embroidered red dress. A distorted NPC is
+## worse than a still one, so still is the default.
+##
+## `SRREVAMP_IDLE_ANIM=1` turns it on. It is kept, rather than deleted,
+## because the pipeline is right and only the skinning model is missing --
+## whatever eventually replaces rigid attachment can switch this on and use
+## the same measurement to show it is better.
+func _animate(assembled: SkinnedBsrAssembler.AssembledCharacter) -> void:
+	if assembled == null or assembled.idle_animation == null:
+		return
+	if OS.get_environment("SRREVAMP_IDLE_ANIM") == "":
+		return
+	var anim: BanReader.ParsedAnimation = assembled.idle_animation
+	var frames := 0
+	for track in anim.bones:
+		frames = maxi(frames, track.keyframes.size())
+	if frames <= 1:
+		return
+	_animated.append([assembled.skeleton, anim, frames, float(_animated.size()) * 0.37])
+
+## Advances every idle animation. Entries whose skeleton has gone (a region
+## streamed out, a monster died) are dropped as they are found, which keeps
+## this from holding freed nodes alive.
+func _tick_idle_animations(delta: float) -> void:
+	if _animated.is_empty():
+		return
+	_idle_anim_time += delta
+	var alive: Array = []
+	for entry in _animated:
+		var skeleton: Skeleton3D = entry[0]
+		if not is_instance_valid(skeleton) or not skeleton.is_inside_tree():
+			continue
+		alive.append(entry)
+		var frames: int = entry[2]
+		var phase: float = entry[3]
+		var frame_idx := int((_idle_anim_time + phase) * BAN_FPS) % frames
+		Skeleton3DBuilder.apply_ban_pose(skeleton, entry[1], frame_idx)
+	if alive.size() != _animated.size():
+		_animated = alive
+
+var _idle_anim_time := 0.0
+
 ## Every NPC the client knows how to place, grouped by region, and the
 ## id -> model table that goes with them. Both come out of the player's own
 ## Media.pk2 (see NpcTableReader), so nothing is shipped and no server has
@@ -2830,7 +2929,7 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 		if model == "":
 			skipped += 1
 			continue
-		var assembled := SkinnedBsrAssembler.assemble_from_archive(archive, model)
+		var assembled := SkinnedBsrAssembler.assemble_from_archive(archive, model, true)
 		if assembled == null:
 			skipped += 1
 			continue
@@ -2851,6 +2950,7 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 		holder.position = Vector3(local.x, height, local.z)
 		holder.add_child(assembled.skeleton)
 		group.add_child(holder)
+		_animate(assembled)
 		placed += 1
 	print("World3D: %d/%d NPC(s) placed in %d/%d (%d had no model)" % [
 		placed, spawns.size(), region_x, region_y, skipped])
@@ -4239,6 +4339,14 @@ func _qa_step() -> void:
 	if OS.get_environment("SRREVAMP_QA_NAVGAP") != "" and _qa_tick == 60:
 		_qa_navgap_report()
 
+	# Whether the idle animations are actually moving anything. A still
+	# frame cannot answer that, so this samples the same skeletons at two
+	# ticks and prints how far their bones travelled between them: zero
+	# means the pose is being applied but nothing is changing, which is what
+	# a broken animation looks like from the outside.
+	if OS.get_environment("SRREVAMP_QA_ANIM") != "" and (_qa_tick == 60 or _qa_tick == 130):
+		_qa_animation_report()
+
 	if OS.get_environment("SRREVAMP_QA_LOOK") != "" and (_qa_tick == 60 or _qa_tick == 120):
 		_qa_look_report()
 
@@ -4953,6 +5061,9 @@ func _physics_process(delta: float) -> void:
 	# wrong side's bone (see CharacterAssembler._attach_paired). With both
 	# fixed the character stands correctly, arms at its sides, and moves
 	# with the real animation.
+	# NPCs and monsters, playing their own standing animations.
+	_tick_idle_animations(delta)
+
 	if _player_skeleton != null and _character_assets.has(_player_gender):
 		var assets: Dictionary = _character_assets[_player_gender]
 		var anim: BanReader.ParsedAnimation = assets["walk_anim"] if is_moving else assets["idle_anim"]
@@ -5353,9 +5464,10 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	if monster_model != "":
 		var monster_archive := _open_pk2_if_set()
 		if monster_archive != null:
-			var assembled := SkinnedBsrAssembler.assemble_from_archive(monster_archive, monster_model)
+			var assembled := SkinnedBsrAssembler.assemble_from_archive(monster_archive, monster_model, true)
 			if assembled != null:
 				monster_skeleton = assembled.skeleton
+				_animate(assembled)
 
 	# Real model height varies a lot by species/asset (real monster
 	# skeletons are nowhere near the human PLAYER_SCALE_RATIO-derived

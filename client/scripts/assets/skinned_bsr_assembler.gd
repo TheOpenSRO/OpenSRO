@@ -39,18 +39,43 @@ class_name SkinnedBsrAssembler
 class AssembledCharacter:
 	var skeleton: Skeleton3D
 	var animation_paths: Array[String] = []
+	## The animation to play when this character is just standing there,
+	## parsed and ready for Skeleton3DBuilder.apply_ban_pose. Null when the
+	## model names no animations, or none of them loaded.
+	var idle_animation: BanReader.ParsedAnimation = null
 	## Which bone each mesh piece was attached to, and how far its centroid
 	## sat from that bone -- the evidence for the mapping, kept so a caller
 	## or a dev tool can report it rather than having to recompute it.
 	var piece_bones: Dictionary = {}
 	var piece_distances: Dictionary = {}
 
+## Substrings that name a standing-still animation, most specific first.
+##
+## Animation names are not consistent across the archive: a monster calls it
+## `mangnyang_stand01.ban`, an NPC calls it `chinaquest_priest_basic.ban`,
+## and some carry only `_time` (an idle fidget). Matching in this order and
+## falling back to whatever is listed first is what keeps a model animating
+## at all rather than only the ones that happen to use one convention.
+const IDLE_ANIMATION_HINTS := ["stand01", "stand", "basic", "idle", "wait"]
+
+## Picks the idle animation from a model's own list, or "" if it has none.
+static func idle_animation_path(paths: Array) -> String:
+	for hint in IDLE_ANIMATION_HINTS:
+		for path in paths:
+			if (path as String).to_lower().contains(hint):
+				return path
+	return paths[0] if not paths.is_empty() else ""
+
 ## Assembles the model at bsr_path. Returns null if the file isn't a
 ## character, if its skeleton is missing, or if no mesh piece could be
 ## loaded -- a partially-loaded body is still returned, with the pieces that
 ## did load, since a missing accessory shouldn't discard the whole NPC.
+##
+## with_animation parses the model's idle animation too. Off by default
+## because a caller that only wants to look at geometry should not pay for
+## it, and because a .ban that fails to parse should not cost a whole model.
 static func assemble_from_archive(
-	archive: Pk2Reader, bsr_path: String
+	archive: Pk2Reader, bsr_path: String, with_animation: bool = false
 ) -> AssembledCharacter:
 	var bsr_data := _read(archive, bsr_path)
 	if bsr_data.is_empty():
@@ -126,6 +151,17 @@ static func assemble_from_archive(
 		push_error("SkinnedBsrAssembler: %s: none of its %d mesh piece(s) loaded" % [bsr_path, mesh_paths.size()])
 		skeleton.free()
 		return null
+
+	if with_animation:
+		var idle_path := idle_animation_path(result.animation_paths)
+		if idle_path != "":
+			var ban_bytes := _read(archive, idle_path)
+			if not ban_bytes.is_empty():
+				var parsed_anim := BanReader.parse(ban_bytes)
+				# An animation with no bone tracks would pose nothing; treat
+				# it as absent rather than ticking it every frame for free.
+				if parsed_anim != null and not parsed_anim.bones.is_empty():
+					result.idle_animation = parsed_anim
 	return result
 
 ## The bone whose bind position is nearest the mesh's own vertex centroid.

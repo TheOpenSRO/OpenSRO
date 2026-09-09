@@ -16,10 +16,17 @@ where it stopped, the tools for it, the traps — and points back here for every
 12,367 spawns and 5,423 models read from the player's own Media.pk2, each assembled from its own
 `.bsr` by `SkinnedBsrAssembler`. 18 of 19 placed in Jangan town, 45 across the loaded grid.
 
-**What is left**: they do not animate, face anywhere, have names, or block movement. Their `.ban`
-paths are parsed and kept on `SkinnedBsrAssembler.AssembledCharacter.animation_paths`; nothing
-plays them. `npcpos.txt` carries no facing, so which way they turn is an open question rather than
-a wiring job.
+**What is left**: they do not face anywhere, have names, or block movement. `npcpos.txt` carries no
+facing, so which way they turn is an open question rather than a wiring job.
+
+**Animation is written, measured, and deliberately off** (hundred-and-ninth round). It runs -- 49
+characters, bones moving 1.0 to 12.0 units between samples -- and it looks worse than standing
+still, because `.bms` has no per-vertex skinning so a humanoid's whole dress is one piece attached
+to one bone. A controlled pair of renders shows the same NPC torn into a spike with it on and
+correct with it off. `SRREVAMP_IDLE_ANIM=1` enables it.
+
+**So moving NPCs is a skinning problem, not an animation one.** It needs a way to weight vertices
+to bones, and `.bms` does not appear to carry one. That is the real open question here.
 
 ### 2. Monsters as real models — **the next thing to do**
 The server already sends a live monster list and the client draws labelled capsules for them.
