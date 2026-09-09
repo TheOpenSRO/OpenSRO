@@ -202,3 +202,22 @@ largest interface directory — so the art is all there. Landmark names come fro
 - **`FontIndex`** — an index into something not yet found.
 - **`UV_LT`/`UV_RT`/`UV_LB`/`UV_RB`** on every control. Parsed, unused; presumably atlas
   sub-rects, all `0,0`–`1,1` in the files read so far.
+
+### The world map — parked, with the tile set established
+`GDR_WORLDMAP` is a `CIFWorldMap` at `100,100,652,424` on `mframe_wnd_`, and `ifworldmap.txt`
+carries only three buttons: the map itself is the control's own drawing. Its tiles are
+`interface\worldmap\map\`, 829 files, of which **632 are `map_world_<a>x<b>.ddj`** at 8,340
+bytes each — 64×64 ARGB1555 plus the usual header, against the minimap's 128×128. The rest are
+city plates (`city_jangan.ddj` and friends, with `_focus`/`_press` variants) and per-dungeon sets
+under `map/`, `dungeon/` and `monster/`.
+
+**What is not established** is the tile naming. `a` runs 46..216 over 72 distinct values and `b`
+runs 72..113 over 20 — the same shape as the minimap's `<y>x<x>`, so the axes are probably the
+same. But `a` is not a regular grid: it takes 165, 166, 169, 170, 173, 174 …, two interleaved
+series each stepping by 4, and Jangan's own y=168 is in neither. Until that is explained, a tile
+cannot be placed against a region with any confidence, and placing it wrongly would put the
+player's marker in the wrong country.
+
+**Next step**: find the client's own tile-name construction rather than inferring it — the
+minimap's spelling was settled that way after the reverse spelling turned out to name real but
+wrong regions.
