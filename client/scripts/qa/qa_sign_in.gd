@@ -97,6 +97,13 @@ static func run(tree: SceneTree) -> bool:
 
 	NetClient.current_character_name = who
 	print("QA sign-in: %s is in the world at %s" % [who, entered[1].zone])
+
+	# Says something, so a render can show the chat window carrying a real
+	# message that went to the server and came back rather than a line the
+	# client wrote to itself.
+	var say := OS.get_environment("SRREVAMP_QA_SAY")
+	if say != "":
+		NetClient.say(say)
 	return true
 
 static func _reason(result: Array, index: int) -> String:

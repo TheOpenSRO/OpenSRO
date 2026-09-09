@@ -127,9 +127,15 @@ server does not report vitals to the client yet. Wire it once it does — and un
 placeholder is a full bar rather than an empty one, since an empty HP bar reads as "you are dead".
 
 ### 3. What is left of the old debug UI
-The chat box and the Change Zone box are still on screen. Chat needs its authored window
-(`ifchatmodule.txt`, `ifchatviewer.txt`); the zone box has to stay until there is another way to
-travel.
+*Chat is done.* `HudChat` builds `ifchatviewer.txt` bottom-left where `GDR_CHAT_BOARD` puts it --
+the three-band `chat_window.ddj` background sliced by UV, the channel lamps, the whisper and hide
+buttons, a scrollback over `GDR_LIST_CHATTING` and a real input line over `GDR_CHAT_INPUTBOX` --
+and the developer ChatPanel is retired. Verified end to end: a message typed by the QA run went to
+the server and came back into the window.
+
+Still there: the Change Zone box, which has to stay until there is another way to travel. The
+four other chat channels (party, guild, alliance, apprentice) are built but not fed -- the server
+has one chat stream, so filtering them would only produce four empty tabs.
 
 ### 4. Panels with no server behind them
 `action`, `partymatch`, `academy`, `autopotion` and `alchemy` open and draw, but there is nothing

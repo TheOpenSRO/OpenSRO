@@ -888,6 +888,13 @@ func _seed_vitals_from_last_enter_world() -> void:
 		_last_enter_world_hp = entered.hp
 		_last_enter_world_max_hp = entered.max_hp
 var _hud_panels: HudPanels
+var _hud_chat: HudChat
+
+## Where the chat window sits relative to the bottom-left corner. The
+## registry gives its size (399x398) and its corner; clearing the underbar
+## is this project's own choice, as the underbar's own vertical anchor is.
+const CHAT_MARGIN_X := 8.0
+const CHAT_MARGIN_Y := 6.0
 
 func _ready() -> void:
 	# A QA run boots this scene directly, so there is no Login or character
@@ -1146,6 +1153,30 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.name = "HudPanels"
 	ui_control.add_child(_hud_panels)
 	_hud_panels.connect_net()
+
+	# The chat window, bottom-left where its registry entry puts it. This
+	# retires the developer chat box: the authored window is the same two
+	# jobs -- a scrollback and an input line -- in the client's own art.
+	_hud_chat = HudChat.new(_ui_builder)
+	_hud_chat.name = "HudChat"
+	ui_control.add_child(_hud_chat)
+	_hud_chat.setup()
+	# Anchored to the bottom-left corner with explicit offsets, the same way
+	# the underbar is: setting `position` on an anchored Control places it
+	# relative to the *parent's* top-left, not the anchor, which put the
+	# whole window 456 pixels above the top of the screen.
+	_hud_chat.anchor_left = 0.0
+	_hud_chat.anchor_right = 0.0
+	_hud_chat.anchor_top = 1.0
+	_hud_chat.anchor_bottom = 1.0
+	_hud_chat.grow_horizontal = Control.GROW_DIRECTION_END
+	_hud_chat.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_hud_chat.offset_left = CHAT_MARGIN_X
+	_hud_chat.offset_right = CHAT_MARGIN_X + _hud_chat.size.x
+	# Clear of the underbar, which is flush to the bottom edge.
+	_hud_chat.offset_bottom = -float(HudUnderbar.BODY_HEIGHT) - CHAT_MARGIN_Y
+	_hud_chat.offset_top = _hud_chat.offset_bottom - _hud_chat.size.y
+	_hud_chat.message_submitted.connect(_on_chat_submitted)
 	# The panels are built after the vitals arrive, so they are seeded from
 	# the same cached result rather than waiting for a signal that already
 	# fired.
@@ -1182,7 +1213,10 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 	# ZoneLabel goes too: the minimap now shows the zone name and the
 	# client's own X/Y readout, which is what that label was standing in
 	# for, and it was drawing straight across the player block.
-	for path in ["ActionTabs", "CharacterLabel", "HelpLabel", "ZoneLabel"]:
+	# ChatPanel goes now that the authored chat window is built: it was the
+	# last of the developer HUD that overlapped the real one, sitting across
+	# the bottom-left corner where ifchatviewer's own window belongs.
+	for path in ["ActionTabs", "CharacterLabel", "HelpLabel", "ZoneLabel", "ChatPanel"]:
 		var node := ui_control.get_node_or_null(path)
 		if node is CanvasItem:
 			(node as CanvasItem).visible = false
@@ -4950,8 +4984,18 @@ func _physics_process(delta: float) -> void:
 	# real playtest bug, 2026-08-26 -- see docs/WORLD_ISSUES.md) despite
 	# every prior headless verification pass looking correct, since none
 	# of those ever pressed a real W/A/S/D key.
-	input_dir.x = Input.get_axis("move_left", "move_right")
-	input_dir.z = Input.get_axis("move_forward", "move_back")
+	#
+	# Not read at all while the player is typing: `Input.get_axis` polls the
+	# raw key state, which a focused LineEdit does not affect, so every "w"
+	# in a chat message also walked the character. Only the input is
+	# suppressed -- gravity, region streaming and the position updates below
+	# all still run, which an early return here would have skipped.
+	var typing := _hud_chat != null and _hud_chat.is_typing()
+	if typing:
+		_has_move_target = false
+	else:
+		input_dir.x = Input.get_axis("move_left", "move_right")
+		input_dir.z = Input.get_axis("move_forward", "move_back")
 	var manual_input := input_dir.length() > 0.0
 	if manual_input:
 		input_dir = input_dir.normalized()
@@ -5309,14 +5353,20 @@ func _on_change_zone_pressed() -> void:
 func _on_chat_message(message: ChatNet.Message) -> void:
 	if message == null:
 		return
+	if _hud_chat != null:
+		_hud_chat.add_message(message.sender_name, message.message_text)
 	chat_log.add_text("%s: %s\n" % [message.sender_name, message.message_text])
 
 func _on_chat_whisper_message(message: ChatNet.Message) -> void:
 	if message == null:
 		return
+	if _hud_chat != null:
+		_hud_chat.add_whisper(message.sender_name, message.message_text)
 	chat_log.add_text("[%s whispers]: %s\n" % [message.sender_name, message.message_text])
 
 func _log_system(text: String) -> void:
+	if _hud_chat != null:
+		_hud_chat.add_message("", "* " + text)
 	chat_log.add_text("* %s\n" % text)
 
 ## Toggles the whole hideable UI panel (character/zone labels, chat, action
@@ -5385,9 +5435,16 @@ func _try_set_move_target(screen_pos: Vector2) -> void:
 
 func _on_send_pressed() -> void:
 	var text := chat_input.text.strip_edges()
+	chat_input.text = ""
+	_send_chat(text)
+
+## The authored chat window's input line, which does the same thing.
+func _on_chat_submitted(text: String) -> void:
+	_send_chat(text)
+
+func _send_chat(text: String) -> void:
 	if text.is_empty():
 		return
-	chat_input.text = ""
 
 	if text.begins_with("/w "):
 		var rest := text.substr(3)

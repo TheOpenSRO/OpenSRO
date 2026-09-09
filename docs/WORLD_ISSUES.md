@@ -5737,3 +5737,42 @@ path per control class, in the same string block as `CNIFLattice`'s. A
 `CIFNormalTile` with no `ddj` defaults to `com_bg_tile_b.ddj`, a `CNIFrame`
 to `interface\inventory\int_window_`, a `CNIFStretch` to `com_button.ddj`,
 and a close button to `interface\ifcommon\com_windowclose.ddj`.
+
+## Hundred-and-sixteenth round: chat, in the client's own window
+
+`HudChat` builds `resinfo\ifchatviewer.txt` where the registry puts it --
+`GDR_CHAT_BOARD` is a `CIFChatViewer` at `0,546,399,398`. The whole window
+is authored: `chat_window.ddj` sliced by UV into three horizontal bands and
+stretched (top and bottom 4 pixels, the middle over 348), the five channel
+lamps, the whisper and hide buttons, the zoom and channel buttons, and the
+input line at `18,378`. A scrollback goes over `GDR_LIST_CHATTING` and an
+editable line over `GDR_CHAT_INPUTBOX`, both at exactly the authored rects,
+because a `CIFTextBox` and a `CIFEInputChatBox` have no Godot equivalent to
+build directly.
+
+Verified end to end rather than by looking: `qa_shot.sh --say` makes the QA
+run send a message after entering the world, and the render shows
+"QaTester: the windows are built from the client own layouts now" in the
+window -- a line that went to the server and came back, not one the client
+wrote to itself.
+
+Three things it fixed on the way:
+
+- **Typing walked the character.** Movement reads `Input.get_axis`, which
+  polls the raw key state and is not affected by a focused LineEdit, so
+  every "w" in a chat message also moved the player. It always had. Only
+  the input is suppressed while typing -- an early return there would have
+  skipped gravity, region streaming and the position updates below it.
+- **Statics were eating clicks.** A `TextureRect` stops mouse input by
+  default, so a window's own decorative artwork swallowed clicks meant for
+  the window -- which is what makes a window draggable by its frame. The
+  frame slices and the tiles already ignored input; statics were the
+  outlier.
+- **`position` on an anchored Control is not relative to the anchor.** It
+  is relative to the parent's top-left, so setting `position.y` to a
+  negative number against a bottom anchor put the whole window off the top
+  of the screen. Explicit `offset_*` with `grow_*`, the way the underbar
+  does it.
+
+The developer chat panel is retired with it -- the last piece of the old
+HUD that overlapped the real one.

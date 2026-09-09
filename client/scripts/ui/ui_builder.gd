@@ -308,6 +308,13 @@ func _build_static(def: UiLayoutParser.ControlDef) -> Control:
 		rect.texture = load_texture_region(def.ddj, def.uv_lt, def.uv_rb)
 		rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		rect.stretch_mode = TextureRect.STRETCH_TILE if def.ddj.contains(TILE_DIR) else TextureRect.STRETCH_SCALE
+		# A static is decorative and must not take the click itself: a
+		# TextureRect stops mouse input by default, so a window's own
+		# artwork was swallowing clicks meant for the window -- which is
+		# what makes a window draggable by its frame, and what lets it
+		# block the world behind it. The frame slices and tiles already do
+		# this; statics were the outlier.
+		rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		# `Color` is deliberately NOT applied as a tint. It looks like one,
 		# but it is a per-control editor id: across ifunderbar.txt's 76
 		# controls there are 64 distinct values, scattered
