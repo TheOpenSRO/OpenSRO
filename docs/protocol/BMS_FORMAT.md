@@ -330,3 +330,33 @@ That is why `BmsCollision` tests the flags rather than trusting which list an ed
   `.bmt`'s layer names (e.g. `"chinaman_body"` in both `man_thigh.bms` and
   `chinaman_warrior.bmt`) — see [BMT_FORMAT.md](BMT_FORMAT.md) for the real name-matched pairing
   this uses instead of a guessed flat color.
+
+## Two header sections still unread (hdr[2], hdr[3]), and one that is empty
+
+**Audited 2026-09-09**, directly because of how the skinning was found: the tell there was *a
+header word parsed into a variable and never used*. `BmsReader` reads `hdr[0..5]` and uses 0
+(skin), 1 (indices) and 4 (bounding box). `client/tools/audit_unused_header_words.gd` reports what
+the other three point at, over 1,200 real `.bms` files:
+
+| Word | Offset | Finding |
+|---|---|---|
+| `hdr[2]` | 0x18 | Points into the file in all 1,200. **First word non-zero in 63** (5%). |
+| `hdr[3]` | 0x1C | Same 63 files carry data here too. |
+| `hdr[5]` | 0x24 | First word is **0 in all 1,200** — an empty section everywhere. Nothing is being missed. |
+
+`hdr[2]` is a count-prefixed list of **8-byte records**, from the arithmetic on three unrelated
+files:
+
+```
+cj_table_01.bms              0x0c48 count  60, 480 bytes to hdr[3]  = 8.0 each
+euro_esteuro_wood_bridge03   0x039c count  16, 128 bytes            = 8.0 each
+euro_esteuro_ship01_01       0x2653 count 199, 1592 bytes           = 8.0 each
+```
+
+`hdr[3]`'s record size is not established.
+
+**What they are is unknown.** The files that carry them — tables, bridges, ships — are scenery
+that renders correctly without them, so nothing visible is broken. This is recorded as a known
+gap, with the tool to reproduce it, rather than guessed at: the last three times this project
+guessed at a structure's meaning from its shape it was wrong, and the times it measured first it
+was right.

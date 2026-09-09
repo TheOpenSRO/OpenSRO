@@ -104,6 +104,19 @@ puts them there. This is the same symptom the hundred-and-seventh round fixed fo
 but from missing data rather than from the ground snap, so it needs a different answer.
 `SRREVAMP_QA_NAVGAP` names the culprit at any given spot.
 
+### Two `.bms` header sections nobody reads
+`hdr[2]` and `hdr[3]` carry data in 63 of 1,200 real meshes (tables, bridges, ships);
+`hdr[2]` is a count-prefixed list of 8-byte records, confirmed on three unrelated files.
+`hdr[5]` was checked at the same time and is empty in all 1,200, so nothing is missed there.
+What the two carry is unknown, and the meshes render correctly without them.
+`client/tools/audit_unused_header_words.gd` reproduces it. See
+[protocol/BMS_FORMAT.md](protocol/BMS_FORMAT.md).
+
+This audit exists because of a pattern worth reusing: **three settled conclusions in this project
+were overturned by re-reading data, and the tell in every one was a header word parsed and never
+used** — the `.bsr` offset table, the `UV_*` fields, and `.bms` skinning. Grepping the other
+readers for the same shape found none, so this is the last of it for now.
+
 ### `.o2` list semantics
 List 2 is a region's own objects and the others are cross-references, measured at 91% against 46%
 on the sector check. What the three lists *are* is still unknown.
