@@ -159,11 +159,25 @@ class ParsedMesh:
 	## the 316,452 records measured.
 	var vertex_pinned: PackedByteArray = PackedByteArray()
 
+	## Pairs of vertex indices from the `hdr[3]` section, flattened: link i
+	## joins `vertex_links[i * 2]` to `vertex_links[i * 2 + 1]`.
+	var vertex_links: PackedInt32Array = PackedInt32Array()
+	## Parallel to the pairs above, one distance per link.
+	var vertex_link_lengths: PackedFloat32Array = PackedFloat32Array()
+
 ## Header offset of the per-vertex section decoded in
 ## docs/protocol/BMS_FORMAT.md: a count followed by one `float32` +
 ## `uint32` per vertex.
 const VERTEX_MOTION_PTR_OFFSET := HEADER_PTRS_BASE + 2 * 4
 const VERTEX_MOTION_REC_SIZE := 8
+
+## Header offset of the link section: a count followed by that many
+## 12-byte records, each two vertex indices and a `float32` distance.
+## Verified across 801 real meshes and 58,433 records -- every index inside
+## the mesh's own vertex count and every distance positive. See
+## docs/protocol/BMS_FORMAT.md.
+const VERTEX_LINK_PTR_OFFSET := HEADER_PTRS_BASE + 3 * 4
+const VERTEX_LINK_REC_SIZE := 12
 
 ## Parses a .bms file's raw bytes. Returns null (and pushes an error) on
 ## failure.
@@ -256,7 +270,47 @@ static func parse(data: PackedByteArray) -> ParsedMesh:
 		mesh.bounds_max = Vector3(_le_f32(data, bbox_off + 12), _le_f32(data, bbox_off + 16), _le_f32(data, bbox_off + 20))
 
 	_parse_vertex_motion(data, mesh)
+	_parse_vertex_links(data, mesh)
 	return mesh
+
+## Reads the `hdr[3]` section: a count, then that many (vertex, vertex,
+## distance) records.
+##
+## Read for the same reason as the section above, and validated the same
+## way: both indices must be inside the mesh's own vertex count and the
+## distance must be positive, which is what says the 12-byte split is in
+## the right place. Across 801 real meshes and 58,433 records not one
+## violates either, so a file that does is a file this reader has
+## misunderstood, and it is left alone rather than half-read.
+##
+## The section does not end where the records do -- every one of the 801
+## carries a trailer of small integers, all below the link count, whose
+## length is not a whole multiple of it. That part is not decoded; see
+## docs/protocol/BMS_FORMAT.md.
+static func _parse_vertex_links(data: PackedByteArray, mesh: ParsedMesh) -> void:
+	var start := _le_u32(data, VERTEX_LINK_PTR_OFFSET)
+	if start == 0 or start + 4 > data.size():
+		return
+	var count := _le_u32(data, start)
+	if count == 0 or start + 4 + count * VERTEX_LINK_REC_SIZE > data.size():
+		return
+	var vertex_count := mesh.vertices.size()
+	var links := PackedInt32Array()
+	var lengths := PackedFloat32Array()
+	links.resize(count * 2)
+	lengths.resize(count)
+	for i in range(count):
+		var rec := start + 4 + i * VERTEX_LINK_REC_SIZE
+		var a := _le_u32(data, rec)
+		var b := _le_u32(data, rec + 4)
+		var d := _le_f32(data, rec + 8)
+		if a >= vertex_count or b >= vertex_count or not (d > 0.0):
+			return # not the structure this reader thinks it is
+		links[i * 2] = a
+		links[i * 2 + 1] = b
+		lengths[i] = d
+	mesh.vertex_links = links
+	mesh.vertex_link_lengths = lengths
 
 ## Reads the `hdr[2]` section: one `float32` + `uint32` per vertex.
 ##

@@ -6174,3 +6174,30 @@ the data is a reader whose understanding can be tested.
 count to anything whole. And 450 meshes have an `hdr[2]` pointer whose
 declared count does not fit the file -- one claims four billion records,
 which took the audit tool out of memory before the bound was added.
+
+### hdr[3] too: a list of links between vertices
+
+Same round, same method. A `uint32` count, then that many **12-byte records** of
+`(uint32 vertex, uint32 vertex, float32 distance)`.
+
+The count matches nothing — not the vertex count, the index count, the
+triangle count or `hdr[2]`'s — so the arithmetic that cracked the other
+sections could not find this one. What found it was reading the bytes: at
+`avatar_m_angel_powers_dress_part2.bms` the words go 78, then 1194, 1199,
+1.20348, then 1194, 81, 1.55728, then 1199, 81, 0.95313. A count and then
+triples, where the first two of each are plainly indices into a
+1,210-vertex mesh and the third is plainly a length.
+
+**Then verified rather than assumed**: across the same 801 files and 58,433
+records, every index is inside its own mesh's vertex count and every
+distance is positive. Not one violation. Two independent bounds holding
+across fifty-eight thousand records is what makes a 12-byte split a
+finding rather than a reading.
+
+**Not decoded**: the section does not end where the records do. All 801
+carry a trailer -- 380 bytes in that dress, 167 distinct lengths across the
+archive -- of small integers all below that file's own link count (4, 36, 0,
+33, 6, 39, 75, 34 … against 78 links). That reads as an ordering over the
+links, but its length is not a whole multiple of the link count and it does
+not parse as another count-prefixed block. The reader takes the records and
+stops.

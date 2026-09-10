@@ -125,7 +125,10 @@ finds is tree canopies and balloons, which is what walking under a canopy looks 
 `float32` on a 0.05 ladder and a `uint32` that is 1 in exactly the records whose float is zero.
 801 of all 24,984 meshes carry it, and they are garments, banners and cobwebs. `BmsReader` reads
 it into `vertex_motion` / `vertex_pinned`; what it is *for* is an inference, recorded as one.
-`hdr[3]` is still unread.
+**`hdr[3]` is decoded too**: a count and that many 12-byte links, each two vertex indices and a
+distance — verified across 58,433 records with every index inside the mesh and every distance
+positive. What is *still* open is the trailer after those records, small integers all below the
+link count, in every one of the 801 files.
 `hdr[5]` was checked at the same time and is empty in all 1,200, so nothing is missed there.
 What the two carry is unknown, and the meshes render correctly without them.
 `client/tools/audit_unused_header_words.gd` reproduces it. See

@@ -341,7 +341,7 @@ the other three point at, over 1,200 real `.bms` files:
 | Word | Offset | Finding |
 |---|---|---|
 | `hdr[2]` | 0x18 | Points into the file in all 1,200. **First word non-zero in 63** (5%). Decoded below: one 8-byte record per vertex. |
-| `hdr[3]` | 0x1C | Same files carry data here too. Still unread. |
+| `hdr[3]` | 0x1C | Same files carry data here too. Decoded below: a list of 12-byte links between vertices. |
 | `hdr[5]` | 0x24 | First word is **0 in all 1,200** — an empty section everywhere. Nothing is being missed. |
 
 `hdr[2]` is a count-prefixed list of **8-byte records**, from the arithmetic on three unrelated
@@ -400,6 +400,37 @@ It is **not** confirmed, and two attempts to confirm it failed:
 file at 8 bytes a record. They are skipped rather than read — one of them declares four billion
 records, which exhausts memory if taken at face value.
 
-`hdr[3]`'s record size is still not established: its count differs from `hdr[2]`'s in 793 of the
-801, and the bytes between it and the end of the file do not divide by its count to anything
-whole.
+### hdr[3] decoded: a list of links between vertices
+
+A `uint32` count, then that many **12-byte records**:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0x00 | 4 | `uint32` vertex index |
+| 0x04 | 4 | `uint32` vertex index |
+| 0x08 | 4 | `float32` distance |
+
+**Verified across the same 801 files and 58,433 records: every index is inside the mesh's own
+vertex count and every distance is positive** — not one violation. Two independent bounds checks
+holding across fifty-eight thousand records is what says the 12-byte split is in the right place;
+the count itself matches nothing (not the vertex, index, triangle or `hdr[2]` count), so the
+arithmetic alone could not have found it.
+
+The values read as one would expect a link list to: `avatar_m_angel_powers_dress_part2.bms` has
+1,210 vertices and 78 links, joining vertices like (1194, 1199) at 1.20 apart and (1194, 81) at
+1.56 — high indices near the hem paired with each other and with lower ones.
+
+**The section does not end where the records do.** Every one of the 801 carries a trailer after
+them: 380 bytes in the dress above, and 167 distinct lengths across the archive. Its contents are
+small integers, all below that file's own link count (4, 36, 0, 33, 6, 39, 75, 34 … against 78
+links), which reads as an ordering over the links rather than as more link data — but the length
+is not a whole multiple of the link count and it does not parse as another count-prefixed block,
+so **it is not decoded**. `BmsReader` reads the records and stops.
+
+### Reading them
+
+`BmsReader.ParsedMesh` carries `vertex_motion`, `vertex_pinned`, `vertex_links` and
+`vertex_link_lengths`. Nothing renders with any of it. It is read because it is decoded: leaving a
+known section unparsed is how this format's skinning stayed hidden for months, and a reader that
+carries the data is a reader whose understanding can be tested. Both sections validate before they
+are kept — a bad index leaves the whole list empty rather than half-read.

@@ -18,6 +18,9 @@ func _put_u32(b: PackedByteArray, off: int, v: int) -> void:
 	b[off + 2] = (v >> 16) & 0xFF
 	b[off + 3] = (v >> 24) & 0xFF
 
+func _read_u32(b: PackedByteArray, off: int) -> int:
+	return b.decode_u32(off)
+
 func _put_f32(b: PackedByteArray, off: int, v: float) -> void:
 	var enc := PackedByteArray()
 	enc.resize(4)
@@ -140,6 +143,27 @@ func _build_synthetic_mesh(rec_size: int = 44, skinned: bool = false, motion: bo
 			_put_f32(section, 4 + i * 8, amounts[i])
 			_put_u32(section, 4 + i * 8 + 4, flags[i])
 		buf.append_array(section)
+
+	# Optional link section (header word 3): a count, then two vertex
+	# indices and a distance for each. A real file follows the records with
+	# a trailer this reader does not decode, so one is included here to
+	# prove the reader does not depend on the section ending at the records.
+	if motion:
+		var link_off := buf.size()
+		_put_u32(buf, BmsReader.HEADER_PTRS_BASE + 3 * 4, link_off)
+		var links := PackedByteArray()
+		links.resize(4 + 2 * BmsReader.VERTEX_LINK_REC_SIZE + 8)
+		_put_u32(links, 0, 2)
+		_put_u32(links, 4, 0)
+		_put_u32(links, 8, 1)
+		_put_f32(links, 12, 1.5)
+		_put_u32(links, 16, 1)
+		_put_u32(links, 20, 2)
+		_put_f32(links, 24, 0.75)
+		# Trailer, as a real file has.
+		_put_u32(links, 28, 1)
+		_put_u32(links, 32, 0)
+		buf.append_array(links)
 
 	var bbox_off := buf.size()
 	_put_u32(buf, BmsReader.HEADER_PTRS_BASE + 4 * 4, bbox_off)
@@ -266,6 +290,33 @@ func _init() -> void:
 		# either.
 		_check(with_motion.indices.size() == 3 and with_motion.bounds_max.x == 1.0,
 			"the rest of the mesh reads the same with the section present")
+
+	# The hdr[3] link section.
+	_check(motionless != null and motionless.vertex_links.is_empty(),
+		"a mesh with no hdr[3] section carries no links")
+	if with_motion != null:
+		_check(with_motion.vertex_links.size() == 4,
+			"two links, flattened into four indices (got %d)" % with_motion.vertex_links.size())
+		_check(with_motion.vertex_links[0] == 0 and with_motion.vertex_links[1] == 1
+			and with_motion.vertex_links[2] == 1 and with_motion.vertex_links[3] == 2,
+			"the pairs decode in order")
+		# The trailer after the records must not be read as another link.
+		_check(with_motion.vertex_link_lengths.size() == 2,
+			"the trailer after the records is not mistaken for a link (got %d)"
+				% with_motion.vertex_link_lengths.size())
+		_check(is_equal_approx(with_motion.vertex_link_lengths[0], 1.5)
+			and is_equal_approx(with_motion.vertex_link_lengths[1], 0.75),
+			"each link carries its own distance")
+
+	# An index outside the mesh means the 12-byte split is wrong, and a
+	# half-read link list is worse than none: the reader must leave it empty
+	# rather than carry indices that point at nothing.
+	var bad := _build_synthetic_mesh(44, false, true)
+	var bad_link_off := _read_u32(bad, BmsReader.HEADER_PTRS_BASE + 3 * 4)
+	_put_u32(bad, bad_link_off + 4, 99) # a vertex index the mesh does not have
+	var bad_mesh := BmsReader.parse(bad)
+	_check(bad_mesh != null and bad_mesh.vertex_links.is_empty(),
+		"a link pointing outside the mesh leaves the whole list unread")
 
 	if _failures == 0:
 		print("ALL PASS")
