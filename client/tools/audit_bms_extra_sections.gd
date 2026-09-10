@@ -32,6 +32,10 @@ const RECORD_SIZE := 8
 ## hdr[3]'s record size, read off the bytes: two uint32s and a float32.
 const LINK_REC_SIZE := 12
 
+## The fixed footer after hdr[3]'s per-link words: nine 4-byte words in
+## every one of the 801 real meshes that carry the section.
+const FOOTER_BYTES := 36
+
 const HDR2 := 2
 const HDR3 := 3
 
@@ -89,6 +93,13 @@ func _initialize() -> void:
 	var leftovers := {}
 	var tail_sizes := {}
 	var tail_counts := {}
+	var trailer_kinds := {}
+	var trailer_deltas := {}
+	var closes := {}
+	var order_valid := {}
+	var footer_first := {}
+	var footer_last := {}
+	var footer_box := {}
 	var oversized := 0
 	var first_floats := {}
 	var second_words := {}
@@ -226,6 +237,63 @@ func _initialize() -> void:
 					var after := ptr3b + 4 + count3 * LINK_REC_SIZE
 					var leftover := section_end - after
 					leftovers[leftover] = int(leftovers.get(leftover, 0)) + 1
+
+					# What the trailer's length, in 4-byte words, equals.
+					# The candidates are everything already counted in this
+					# file: its links, its vertices, and the vertices its
+					# hdr[2] section leaves unpinned.
+					var words := leftover / 4
+					var unpinned := 0
+					var linked := {}
+					for v in range(count):
+						if data.decode_float(ptr2 + 4 + v * RECORD_SIZE) != 0.0:
+							unpinned += 1
+					for k in range(count3):
+						var lo2 := ptr3b + 4 + k * LINK_REC_SIZE
+						linked[data.decode_u32(lo2)] = true
+						linked[data.decode_u32(lo2 + 4)] = true
+					var trailer_is := "other"
+					if words - count3 == 17:
+						trailer_is = "= links + 17 words"
+					elif words == unpinned:
+						trailer_is = "= unpinned vertices"
+					elif words == count3:
+						trailer_is = "= links"
+					elif words == linked.size():
+						trailer_is = "= distinct linked vertices"
+					elif words == count:
+						trailer_is = "= vertices"
+					elif leftover % 4 != 0:
+						trailer_is = "not a whole number of words"
+					trailer_kinds[trailer_is] = int(trailer_kinds.get(trailer_is, 0)) + 1
+					trailer_deltas[words - count3] = int(
+						trailer_deltas.get(words - count3, 0)) + 1
+					# The whole section, as 4 + count*(12 + 4) + 36.
+					var predicted := 4 + count3 * (LINK_REC_SIZE + 4) + FOOTER_BYTES
+					closes[section_end - ptr3b == predicted] = int(
+						closes.get(section_end - ptr3b == predicted, 0)) + 1
+					# And the per-link words: are they all valid link indices?
+					var order_ok := true
+					for k2 in range(count3):
+						var w := data.decode_u32(after + k2 * 4)
+						if w >= count3:
+							order_ok = false
+							break
+					order_valid[order_ok] = int(order_valid.get(order_ok, 0)) + 1
+					# The nine-word footer: a leading integer, six floats
+					# that look like an axis-aligned box, then two words.
+					var f0 := after + count3 * 4
+					footer_first[data.decode_u32(f0)] = int(
+						footer_first.get(data.decode_u32(f0), 0)) + 1
+					footer_last["%d,%d" % [data.decode_u32(f0 + 28), data.decode_u32(f0 + 32)]] = int(
+						footer_last.get("%d,%d" % [data.decode_u32(f0 + 28), data.decode_u32(f0 + 32)], 0)) + 1
+					var ordered := true
+					for axis in range(3):
+						var lo3 := data.decode_float(f0 + 4 + axis * 4)
+						var hi3 := data.decode_float(f0 + 16 + axis * 4)
+						if is_nan(lo3) or is_nan(hi3) or lo3 > hi3:
+							ordered = false
+					footer_box[ordered] = int(footer_box.get(ordered, 0)) + 1
 					if after + 4 <= data.size():
 						var count4 := data.decode_u32(after)
 						var tail := section_end - after - 4
@@ -248,6 +316,28 @@ func _initialize() -> void:
 			var tail_at := ptr3 + 4 + links * LINK_REC_SIZE
 			print("   hdr[3] at 0x%04x: %d link(s), records end at 0x%04x, file ends at 0x%04x (%d bytes of trailer)" % [
 				ptr3, links, tail_at, data.size(), data.size() - tail_at])
+			var tw := (data.size() - tail_at) / 4
+			var vals: Array[int] = []
+			for j in range(tw):
+				var o2 := tail_at + j * 4
+				if o2 + 4 <= data.size():
+					vals.append(data.decode_u32(o2))
+			var uniq := {}
+			var vmax := 0
+			for v in vals:
+				uniq[v] = int(uniq.get(v, 0)) + 1
+				vmax = maxi(vmax, v)
+			print("   trailer: %d word(s), %d distinct, max %d, is a permutation of 0..%d: %s" % [
+				vals.size(), uniq.size(), vmax, vals.size() - 1,
+				str(uniq.size() == vals.size() and vmax == vals.size() - 1)])
+			print("   trailer values: %s" % str(vals.slice(0, 40)))
+			print("   footer (last 9 words): %s" % str(vals.slice(vals.size() - 9)))
+			var foot := ""
+			for j in range(9):
+				var fo := data.size() - 36 + j * 4
+				if fo + 4 <= data.size():
+					foot += "%.4f " % data.decode_float(fo)
+			print("   footer as floats: %s" % foot)
 			print("   trailer, first 16 words:")
 			for j in range(16):
 				var t := tail_at + j * 4
@@ -316,6 +406,18 @@ func _initialize() -> void:
 	for k in lo_keys.slice(0, 6):
 		print("      %-8s in %d file(s)" % [str(k), int(leftovers[k])])
 	print("      (%d distinct leftover size(s))" % lo_keys.size())
+	print("   what the trailer's length in words equals: %s" % str(trailer_kinds))
+	print("   trailer words minus link count, most common values:")
+	var td := trailer_deltas.keys()
+	td.sort_custom(func(a, b): return int(trailer_deltas[a]) > int(trailer_deltas[b]))
+	for k in td.slice(0, 8):
+		print("      %-8s in %d file(s)" % [str(k), int(trailer_deltas[k])])
+	print("      (%d distinct difference(s))" % td.size())
+	print("   section length equals 4 + count*(12+4) + 36: %s" % str(closes))
+	print("   every per-link word is a valid link index: %s" % str(order_valid))
+	print("   footer word 0: %s" % str(footer_first))
+	print("   footer words 7 and 8: %s" % str(footer_last))
+	print("   footer words 1-6 read as a box with min <= max on every axis: %s" % str(footer_box))
 	print("   reading the leftover as another count + records:")
 	var ts := tail_sizes.keys()
 	ts.sort_custom(func(a, b): return int(tail_sizes[a]) > int(tail_sizes[b]))

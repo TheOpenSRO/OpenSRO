@@ -164,6 +164,11 @@ class ParsedMesh:
 	var vertex_links: PackedInt32Array = PackedInt32Array()
 	## Parallel to the pairs above, one distance per link.
 	var vertex_link_lengths: PackedFloat32Array = PackedFloat32Array()
+	## One link index per link, following the records. Every value is a
+	## valid index into the links themselves, in all 801 real meshes that
+	## carry the section -- an ordering over them. What the order is *for*
+	## is not established.
+	var vertex_link_order: PackedInt32Array = PackedInt32Array()
 
 ## Header offset of the per-vertex section decoded in
 ## docs/protocol/BMS_FORMAT.md: a count followed by one `float32` +
@@ -283,10 +288,10 @@ static func parse(data: PackedByteArray) -> ParsedMesh:
 ## violates either, so a file that does is a file this reader has
 ## misunderstood, and it is left alone rather than half-read.
 ##
-## The section does not end where the records do -- every one of the 801
-## carries a trailer of small integers, all below the link count, whose
-## length is not a whole multiple of it. That part is not decoded; see
-## docs/protocol/BMS_FORMAT.md.
+## The section is `4 + count * 16 + 36` bytes long -- the count, the
+## records, one index word per link, and 36 bytes whose contents are not
+## established. That arithmetic lands exactly on the next section in all
+## 801 real meshes that carry one. See docs/protocol/BMS_FORMAT.md.
 static func _parse_vertex_links(data: PackedByteArray, mesh: ParsedMesh) -> void:
 	var start := _le_u32(data, VERTEX_LINK_PTR_OFFSET)
 	if start == 0 or start + 4 > data.size():
@@ -311,6 +316,19 @@ static func _parse_vertex_links(data: PackedByteArray, mesh: ParsedMesh) -> void
 		lengths[i] = d
 	mesh.vertex_links = links
 	mesh.vertex_link_lengths = lengths
+
+	# One word per link follows the records, each a valid link index.
+	var order_at := start + 4 + count * VERTEX_LINK_REC_SIZE
+	if order_at + count * 4 > data.size():
+		return
+	var order := PackedInt32Array()
+	order.resize(count)
+	for i in range(count):
+		var v := _le_u32(data, order_at + i * 4)
+		if v >= count:
+			return # leaves the order empty; the links themselves stand
+		order[i] = v
+	mesh.vertex_link_order = order
 
 ## Reads the `hdr[2]` section: one `float32` + `uint32` per vertex.
 ##

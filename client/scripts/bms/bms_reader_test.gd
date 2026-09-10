@@ -151,8 +151,10 @@ func _build_synthetic_mesh(rec_size: int = 44, skinned: bool = false, motion: bo
 	if motion:
 		var link_off := buf.size()
 		_put_u32(buf, BmsReader.HEADER_PTRS_BASE + 3 * 4, link_off)
+		# Shaped like a real section: a count, the 12-byte records, one
+		# index word per link, then 36 bytes this reader does not decode.
 		var links := PackedByteArray()
-		links.resize(4 + 2 * BmsReader.VERTEX_LINK_REC_SIZE + 8)
+		links.resize(4 + 2 * BmsReader.VERTEX_LINK_REC_SIZE + 2 * 4 + 36)
 		_put_u32(links, 0, 2)
 		_put_u32(links, 4, 0)
 		_put_u32(links, 8, 1)
@@ -160,9 +162,8 @@ func _build_synthetic_mesh(rec_size: int = 44, skinned: bool = false, motion: bo
 		_put_u32(links, 16, 1)
 		_put_u32(links, 20, 2)
 		_put_f32(links, 24, 0.75)
-		# Trailer, as a real file has.
-		_put_u32(links, 28, 1)
-		_put_u32(links, 32, 0)
+		_put_u32(links, 28, 1) # order: link 1 first
+		_put_u32(links, 32, 0) # then link 0
 		buf.append_array(links)
 
 	var bbox_off := buf.size()
@@ -307,6 +308,10 @@ func _init() -> void:
 		_check(is_equal_approx(with_motion.vertex_link_lengths[0], 1.5)
 			and is_equal_approx(with_motion.vertex_link_lengths[1], 0.75),
 			"each link carries its own distance")
+		_check(with_motion.vertex_link_order.size() == 2
+			and with_motion.vertex_link_order[0] == 1
+			and with_motion.vertex_link_order[1] == 0,
+			"the index word after each record decodes as an order over the links")
 
 	# An index outside the mesh means the 12-byte split is wrong, and a
 	# half-read link list is worse than none: the reader must leave it empty

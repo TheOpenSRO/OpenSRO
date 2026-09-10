@@ -428,17 +428,32 @@ The values read as one would expect a link list to: `avatar_m_angel_powers_dress
 1,210 vertices and 78 links, joining vertices like (1194, 1199) at 1.20 apart and (1194, 81) at
 1.56 — high indices near the hem paired with each other and with lower ones.
 
-**The section does not end where the records do.** Every one of the 801 carries a trailer after
-them: 380 bytes in the dress above, and 167 distinct lengths across the archive. Its contents are
-small integers, all below that file's own link count (4, 36, 0, 33, 6, 39, 75, 34 … against 78
-links), which reads as an ordering over the links rather than as more link data — but the length
-is not a whole multiple of the link count and it does not parse as another count-prefixed block,
-so **it is not decoded**. `BmsReader` reads the records and stops.
+**The section does not end where the records do**, and the rest of it closes exactly:
+
+```
+uint32 count
+count x { uint32 vertex, uint32 vertex, float32 distance }    the links
+count x   uint32                                              one index per link
+36 bytes                                                      not established
+```
+
+`4 + count * 16 + 36` **equals the distance to the next section in all 801 files** — the same
+self-checking arithmetic that validated the collision section. And **every one of those
+per-link index words is a valid index into the links themselves**, in all 801: an ordering over
+them, whose purpose is not established.
+
+The last 36 bytes are not decoded. A first reading of them as a leading integer plus an
+axis-aligned box looked convincing on three files — the numbers came out as sensible model-space
+extents, a hat's y running 13.6 to 18.2 and a dress's 0 to 16.1 — and **did not survive the
+sweep**: taken at the section-relative offset rather than at the end of the file, the leading word
+is 1 in 706 files and 0 in 95, and the six floats order as a box in only 325 of 801. Recorded
+here because it is exactly the shape of mistake this format has produced before: three files
+agreeing is a hypothesis, not a finding.
 
 ### Reading them
 
-`BmsReader.ParsedMesh` carries `vertex_motion`, `vertex_pinned`, `vertex_links` and
-`vertex_link_lengths`. Nothing renders with any of it. It is read because it is decoded: leaving a
+`BmsReader.ParsedMesh` carries `vertex_motion`, `vertex_pinned`, `vertex_links`,
+`vertex_link_lengths` and `vertex_link_order`. Nothing renders with any of it. It is read because it is decoded: leaving a
 known section unparsed is how this format's skinning stayed hidden for months, and a reader that
 carries the data is a reader whose understanding can be tested. Both sections validate before they
 are kept — a bad index leaves the whole list empty rather than half-read.

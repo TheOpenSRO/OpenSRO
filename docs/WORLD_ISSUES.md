@@ -6217,3 +6217,27 @@ be reached by string search, and the one feature that looked like the consumer
 (`SetOptimizeCloth`) turned out to be a `CharacterVisualChange` option about
 which clothing is drawn. So whether the client simulates with this or merely
 sways along it is not established, and is not claimed.
+
+### And the rest of hdr[3] closes exactly
+
+The trailer after the link records is not one thing but two. The section is:
+
+```
+uint32 count
+count x { uint32 vertex, uint32 vertex, float32 distance }
+count x   uint32                    one index per link
+36 bytes                            not established
+```
+
+`4 + count * 16 + 36` **equals the distance to the next section in all 801
+files**, and **every one of those per-link words is a valid index into the
+links themselves** — an ordering over them.
+
+The last 36 bytes are not decoded, and the way that was established is worth
+keeping. Read at the *end of the file* they looked like a leading integer
+and an axis-aligned box, and the numbers were persuasive: a hat's y running
+13.6 to 18.2, a dress's 0 to 16.1, exactly the extents those garments have.
+Read at the section-relative offset — which is the same place only when
+hdr[3] happens to be last — the leading word is 1 in 706 files and 0 in 95,
+and the six floats order as a box in **325 of 801**. Three files agreeing is
+a hypothesis. The sweep is the finding.
