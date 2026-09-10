@@ -6796,3 +6796,16 @@ last frame -- the body stays where it fell until the animation has run,
 then the next monster list removes it -- and the player's own type-3 hit
 reaction plays over stand or run. `qa_shot.sh --attack` swings at the
 nearest monster every second so these can be rendered.
+
+### Other players stop being statues
+
+Another player's body was built, dressed and then left in its bind pose --
+arms out, which no character in the game ever does -- because only the
+local player's tick applied a pose. Every other body now plays the town
+idle of the group its weapon selects, and switches to that group's run
+while its body is still catching up to a position update (a tenth of the
+body's height from its target counts as moving, so the tail of the
+interpolation reads as standing). Same table, same fallback, same phase
+offset that keeps a crowd out of step. Not rendered: it takes two clients,
+which the harness does not have; the path is the local player's with the
+gait chosen from movement rather than from input.

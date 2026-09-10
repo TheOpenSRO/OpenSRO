@@ -764,6 +764,13 @@ var _other_bodies := {} # character_id -> Node3D
 ## target every frame instead of teleporting to it, so motion reads as
 ## continuous regardless of how often real updates actually arrive.
 var _other_body_targets := {} # character_id -> Vector3
+## character_id -> {skeleton, gender, group, moving}: what another player's
+## body is playing, so its gait can follow its movement.
+var _other_gaits := {}
+## How far a body may still be from its target before it counts as moving:
+## a tenth of the body's height (REAL_CHARACTER_NATIVE_HEIGHT), so the tail
+## of the interpolation reads as standing.
+const OTHER_GAIT_THRESHOLD := 1.4
 var _monster_bodies := {} # monster_id -> Node3D
 var _last_sent_pos := Vector3.ZERO
 var _time_since_send := 0.0
@@ -2801,6 +2808,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	for character_id in _other_bodies.keys():
 		_other_bodies[character_id].queue_free()
 	_other_bodies.clear()
+	_other_gaits.clear()
 	for other in result.others:
 		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped, other.gender)
 
@@ -3826,6 +3834,27 @@ func _try_apply_real_player_character() -> void:
 		_player_weapon_group,
 		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_STAND, _player_weapon_group),
 		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_RUN, _player_weapon_group)])
+
+## Switches another player's looping animation between stand and run as
+## their body starts and stops moving. The entry keeps its phase so a
+## crowd stays out of step.
+func _set_other_gait(character_id: int, moving: bool) -> void:
+	var gait: Dictionary = _other_gaits.get(character_id, {})
+	if gait.is_empty() or bool(gait["moving"]) == moving:
+		return
+	gait["moving"] = moving
+	var action := BsrReader.AnimationEntry.TYPE_RUN if moving else BsrReader.AnimationEntry.TYPE_STAND
+	var anim := _body_animation_for(gait["gender"], action, gait["group"])
+	var frames := _frame_count(anim)
+	if frames <= 1:
+		return
+	var skeleton: Skeleton3D = gait["skeleton"]
+	for entry in _animated:
+		if entry[0] == skeleton and entry[4]:
+			entry[1] = anim
+			entry[2] = frames
+			return
+	_animated.append([skeleton, anim, frames, float(_animated.size()) * 0.37, true, _idle_anim_time, null])
 
 ## Plays anim once on the player's body, over stand or run, and returns
 ## how long it runs.
@@ -5264,6 +5293,11 @@ func _physics_process(delta: float) -> void:
 			continue
 		var body: Node3D = _other_bodies[character_id]
 		var target: Vector3 = _other_body_targets[character_id]
+		# Still catching up to the last update means the player is on the
+		# move; arrived means standing. The threshold is a fraction of the
+		# body's own height, so a settled body does not flicker between the
+		# two on the last inch of the lerp.
+		_set_other_gait(character_id, body.position.distance_to(target) > OTHER_GAIT_THRESHOLD)
 		body.position = body.position.lerp(target, minf(OTHER_BODY_INTERPOLATION_SPEED * delta, 1.0))
 
 	if _real_skeleton != null and _real_skeleton_track.keyframes.size() > 1:
@@ -5368,6 +5402,16 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	var skeleton := _build_assembled_character(equipped, gender)
 	if skeleton != null:
 		body.add_child(skeleton)
+		# Another player stands in the town idle of the group their weapon
+		# selects, and runs while their body is still catching up to a
+		# position update (see _set_other_gait). Without this they stood
+		# in the bind pose, arms out, which no character in the game does.
+		var group := _weapon_group_for(equipped)
+		_other_gaits[character_id] = {"skeleton": skeleton, "gender": gender, "group": group, "moving": false}
+		var idle := _body_animation_for(gender, BsrReader.AnimationEntry.TYPE_STAND, group)
+		var frames := _frame_count(idle)
+		if frames > 1:
+			_animated.append([skeleton, idle, frames, float(_animated.size()) * 0.37, true, _idle_anim_time, null])
 	else:
 		var mesh := MeshInstance3D.new()
 		var capsule := CapsuleMesh.new()
@@ -5399,6 +5443,7 @@ func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 		_other_body_targets[moved.character_id] = Vector3(moved.x, moved.y, moved.z)
 
 func _on_entity_left(character_id: int) -> void:
+	_other_gaits.erase(character_id)
 	if _other_bodies.has(character_id):
 		var body: Node3D = _other_bodies[character_id]
 		var departing_name := "Someone"
