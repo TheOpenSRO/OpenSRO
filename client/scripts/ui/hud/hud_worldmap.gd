@@ -33,6 +33,17 @@ const MARKER_DDJ := "interface\\minimap\\mm_sign_character.ddj"
 ## The button that switches from a city's own map to the whole world.
 const BTN_TO_WORLD := "GDR_WM_BTN_TO_WMAP"
 
+## The name plate the world map draws a label on: a horizontal three-slice,
+## an 8x24 cap each side of a 4x24 middle that tiles. Measured from the
+## artwork, the same scheme as `com_bar01_`.
+const PLATE_SIDE_DDJ := "interface\\worldmap\\wmap_name_side.ddj"
+const PLATE_MIDDLE_DDJ := "interface\\worldmap\\wmap_name_middle.ddj"
+const PLATE_HEIGHT := 24.0
+## Padding inside the plate, each side of the text. **Ours, not authored**:
+## the artwork gives the plate's height and its three pieces, and nothing
+## found says how much room a caption gets.
+const PLATE_TEXT_PAD := 8.0
+
 ## How far beyond the visible rect to keep tiles loaded, so a drag does not
 ## reveal an empty column before the next frame fills it.
 const TILE_MARGIN := 128.0
@@ -190,12 +201,117 @@ func _show_map(info: WorldmapInfoReader.MapInfo) -> void:
 			_canvas.move_child(whole, 0)
 			_tiles[info.addr] = whole
 
+	_build_place_labels(info)
 	var bar := get_node_or_null("TitleBar")
 	if bar is Label:
 		(bar as Label).text = _builder.resolve_text(info.name_key)
 	_centre_on_player()
 	_refresh_tiles()
 	_place_marker()
+
+## On the whole-world view, a clickable name plate for every local map the
+## table carries that falls inside it -- the cities, the fortresses, the
+## arenas. Where each one goes is not fitted: `world_min`/`world_max` give
+## the box that map covers, and the plate sits at the middle of it, which
+## the world map's own transform turns into a pixel.
+##
+## **The choice of the box's middle is ours.** The client draws its own
+## location signs from `wmap_sign_location.ddj` and nothing found says
+## where it puts them; what is authored is the box, and the box's middle is
+## the one point in it that needs no further number.
+func _build_place_labels(info: WorldmapInfoReader.MapInfo) -> void:
+	var old := _canvas.get_node_or_null("PlaceLabels")
+	if old != null:
+		old.free()
+	if _table == null or info != _table.world():
+		return
+	var layer := Control.new()
+	layer.name = "PlaceLabels"
+	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_canvas.add_child(layer)
+	for other in _table.maps:
+		if other.type != WorldmapInfoReader.TYPE_LOCAL:
+			continue
+		var text := _builder.resolve_text(other.name_key)
+		if text == "" or text == other.name_key:
+			# No resolvable name: better nothing than a raw `SN_ZONE_*`.
+			continue
+		var lo := other.world_min()
+		var hi := other.world_max()
+		if lo == hi:
+			# A placeholder row with every region bound zero -- three of
+			# the archive's do that.
+			continue
+		var middle := Vector2(lo + hi) / 2.0
+		var at := info.pixel_for_world(middle)
+		if at.x < 0.0 or at.y < 0.0 or at.x > info.draw_size.x or at.y > info.draw_size.y:
+			# Somewhere the world map does not reach -- Jupiter and the
+			# arenas are off its east edge.
+			continue
+		var plate := _name_plate(text)
+		plate.position = at - plate.size / 2.0
+		plate.gui_input.connect(_on_plate_input.bind(other))
+		layer.add_child(plate)
+	# The player's own marker belongs over the labels, not under them.
+	if _marker != null:
+		_canvas.move_child(_marker, -1)
+
+## One name plate: `wmap_name_side` capped each end of a tiled
+## `wmap_name_middle`, with the caption over it.
+func _name_plate(text: String) -> Control:
+	var side := _builder.load_texture(PLATE_SIDE_DDJ)
+	var middle := _builder.load_texture(PLATE_MIDDLE_DDJ)
+	var cap := float(side.get_width()) if side != null else 0.0
+	var font := _builder.font_at(0)
+	var text_width := 0.0
+	if font != null:
+		text_width = font.get_string_size(
+			text, HORIZONTAL_ALIGNMENT_LEFT, -1, UiBuilder.FONT_SIZES[0]).x
+
+	var plate := Control.new()
+	plate.name = "Plate"
+	plate.size = Vector2(cap * 2.0 + text_width + PLATE_TEXT_PAD * 2.0, PLATE_HEIGHT)
+	plate.mouse_filter = Control.MOUSE_FILTER_STOP
+
+	if middle != null:
+		var body := TextureRect.new()
+		body.texture = middle
+		body.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		body.stretch_mode = TextureRect.STRETCH_TILE
+		body.position = Vector2(cap, 0.0)
+		body.size = Vector2(plate.size.x - cap * 2.0, PLATE_HEIGHT)
+		body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		plate.add_child(body)
+	if side != null:
+		for i in 2:
+			var end := TextureRect.new()
+			end.texture = side
+			end.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			end.position = Vector2(0.0 if i == 0 else plate.size.x - cap, 0.0)
+			end.size = Vector2(cap, PLATE_HEIGHT)
+			# The right cap is the left one turned round; the archive has
+			# one piece, not two.
+			end.flip_h = i == 1
+			end.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			plate.add_child(end)
+
+	var label := Label.new()
+	label.text = text
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.size = plate.size
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if font != null:
+		label.add_theme_font_override("font", font)
+		label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+	plate.add_child(label)
+	return plate
+
+func _on_plate_input(event: InputEvent, info: WorldmapInfoReader.MapInfo) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
+			and (event as InputEventMouseButton).pressed:
+		_pinned_to_world = false
+		_show_map(info)
 
 ## Builds the tiles that overlap what can be seen, and no others. The world
 ## map is 363 tiles; at 128x128 apiece that is a lot of texture to hold for
@@ -299,12 +415,19 @@ func update_player(region_x: int, region_y: int, local_pos: Vector3) -> void:
 		(region_x - WorldmapInfoReader.REGION_X_ORIGIN) * WorldmapInfoReader.REGION_SPAN
 			+ local_pos.z / 10.0)
 	var moved_region := Vector2i(region_x, region_y) != _player_region
+	var first_fix := _player_region.x < 0
 	_player_region = Vector2i(region_x, region_y)
 	if _table != null and moved_region and not _pinned_to_world:
 		# Walking into a city puts you on that city's own map, which is
 		# what the "to world map" button exists to undo.
 		var local := _table.local_for_region(region_x, region_y)
 		_show_map(local if local != null else _table.world())
+	if first_fix:
+		# The window can be built and even opened before the first position
+		# arrives, and centring on a player who is nowhere yet leaves the
+		# view parked in the middle of the map. Centre once it is known.
+		_centre_on_player()
+		_refresh_tiles()
 	_place_marker()
 
 func _place_marker() -> void:

@@ -255,4 +255,8 @@ the seven textures the client's own world map loads. Tiles are built only as the
   player marker, and each wants a list the client already receives.
 - The four `wmap_window_edge_N` pieces, 4x4 apiece, which the client loads for the map area.
   Whether they are four corners or four tiled edges is **not established**, so they are not drawn.
-- `wmap_sign_location.ddj` (432x36) and the `city_*.ddj` plates, for named landmarks.
+- `wmap_sign_location.ddj` (432x36) and the `city_*.ddj` plates. The window draws its own town
+  labels now -- one per local map, on the client's `wmap_name_side` + `wmap_name_middle`
+  three-slice (8x24 caps, a 4x24 tiling middle), at the middle of the box that map's row gives,
+  and clicking one opens that map. **The middle of the box is ours**; what is authored is the box.
+  Where the client puts its own location signs is not established.

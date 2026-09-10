@@ -6572,3 +6572,28 @@ things and disagrees on the twelfth is worth more than a table that agrees
 on everything, because the twelfth is where the history is. Two rounds ago
 it was `Pic Area` against `Texture Size`; here it is a stale pixel column
 against a live region one.
+
+### Town labels, same round
+
+The world map draws a name plate for every local map the table carries that
+falls inside it. Two of the three things that needs are authored:
+
+- the **plate** is `wmap_name_side` + `wmap_name_middle`, 8x24 caps around
+  a 4x24 middle that tiles -- a horizontal three-slice, the same scheme as
+  `com_bar01_`, and measured from the art rather than assumed
+- the **name** is the row's own `UIIT_`/`SN_` key through the text table --
+  a column the client's parser reads and throws away, so it is there to be
+  used
+- the **position** is ours: `world_min`/`world_max` give the box that map
+  covers and the plate sits at its middle, which the world map's own
+  transform turns into a pixel. Where the client puts its own signs
+  (`wmap_sign_location.ddj`, 432x36) is not established, and the code says
+  so.
+
+A row whose name does not resolve draws nothing rather than a raw
+`SN_ZONE_*`, and the three placeholder rows with zero region bounds fall
+out on their own -- their box is a point.
+
+Also fixed while rendering it: the window could be opened before the first
+position arrived, and centring on a player who is nowhere yet parks the
+view in the middle of the map. It now centres on the first fix.
