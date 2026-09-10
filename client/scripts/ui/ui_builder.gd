@@ -412,19 +412,23 @@ func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 		var rd := load_texture(def.ddj + "right_down.ddj")
 
 		# A six-piece set has no horizontal edge art of its own, and the
-		# client reuses the vertical pieces for the top and bottom.
+		# client reuses the vertical pieces for the top and bottom:
+		# **left_side draws the left and the top, right_side the right and
+		# the bottom.**
 		#
-		# `com_lattice_outline_` is the one in play here -- the border the
-		# inventory draws around its item grid -- and it ships four corners
-		# and two sides, all 4x4. Its loader in the client fills four edge
-		# slots from those two textures, taking `left_side` twice and then
-		# `right_side` twice; the corner loader beside it fills its four from
-		# left_up, right_up, right_down, left_down, a clockwise walk from the
-		# top-left. Reading the edge slots the same way as left, top, right,
-		# bottom is the only assignment that leaves the piece named
-		# `right_side` on the right, and it puts the darker tile (peak 0x39)
-		# on the top and left and the brighter one (peak 0x6a) on the bottom
-		# and right, which is the way the corner art is lit.
+		# Read out of the client rather than reasoned about. Its loader for
+		# these sets fills four edge slots from the two textures, taking
+		# `left_side` twice and then `right_side` twice, and the function
+		# that lays the quads out writes each slot's four vertices in turn:
+		# the first spans the full height at x = right - w (the left edge),
+		# the second the full width at y = bottom - h (the top), the third
+		# is the opposite vertical and the fourth the opposite horizontal.
+		# So the slot order is left, top, right, bottom, and the pairing
+		# follows.
+		#
+		# `com_lattice_outline_` is the set in play here -- the border the
+		# inventory draws around its item grid -- four corners and two
+		# sides, all 4x4.
 		if mu == null and ls != null:
 			mu = ls
 		if md == null and rs != null:

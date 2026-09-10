@@ -6241,3 +6241,32 @@ Read at the section-relative offset — which is the same place only when
 hdr[3] happens to be last — the leading word is 1 in 706 files and 0 in 95,
 and the six floats order as a box in **325 of 801**. Three files agreeing is
 a hypothesis. The sweep is the finding.
+
+## Hundred-and-twenty-sixth round: reading the one thing that had been reasoned
+
+The six-piece stretch window -- `com_lattice_outline_`, `com_blacksquare_` --
+was the one place this stretch of work argued instead of reading. Its loader
+fills four edge slots from two textures, `left_side` twice then `right_side`
+twice, and which edge got which was settled by a bevel argument: the darker
+tile (peak 0x39) on the top and left, the brighter (peak 0x6a) on the bottom
+and right, because that is how the corner art is lit.
+
+The argument was right, and it is now read. `FUN_00499e10` lays out the four
+edge quads at object offsets `0x5e0`, `0x640`, `0x6a0` and `0x700`, each
+0x60 bytes -- four vertices of 24 with x at +0 and y at +4:
+
+| slot | geometry | edge |
+|---|---|---|
+| `0x5e0` | x spans `right - w` to `right`, y the full height | left |
+| `0x640` | y spans `bottom - h` to `bottom`, x the full width | top |
+| `0x6a0` | x spans `fVar1` to `fVar1 + w` | right |
+| `0x700` | y at `fVar3`, across the width | bottom |
+
+and `FUN_00499980` stores its four arguments into `0x370`, `0x374`, `0x378`,
+`0x37c` in argument order -- which the caller fills, lowest stack address
+first, with left_side, left_side, right_side, right_side.
+
+So **left_side draws the left and the top; right_side draws the right and
+the bottom**, and `UiBuilder`'s fallback already did exactly that. The
+comment now says it was read rather than inferred, which is the part that
+matters: an argument that happens to be right is still an argument.
