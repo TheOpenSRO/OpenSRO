@@ -6496,3 +6496,28 @@ that waits should be expressed in frames over 60, not in seconds.
 Left undrawn on purpose: the four `wmap_window_edge_N` pieces are 4x4
 apiece and whether they are four corners or four tiled edges is not
 established, so the map area has no inner border rather than a guessed one.
+
+### Closing out the 269 tiles, same round
+
+The parked note said the archive's other 269 `map_world_*` tiles were
+"presumably a second zoom level", because the file set holds two
+interleaved families of the first name component. **It is not.** All four
+functions that reference `interface\worldmap\map\map_world_%dx%d.ddj` --
+two loaders and two destructors, belonging to two classes -- write the
+identical bounds longhand: 46 to 177 and 113 down to 69, by 4. There is no
+second loop.
+
+So the extra tiles are asked for by nothing. They are not junk either:
+every one is 8,340 bytes, the same 128x128 DXT1 as the tiles in use, and
+they fall into exactly three more step-4 lattices at their own origins --
+224 on a lattice offset three regions from the main one, a full 5x5, and a
+full 5x4.
+
+The 5x5 is **the Jupiter field, tiled**. `map_jupiter1_1` covers world
+X 12288..16128 by Y -1728..2112 drawn 640x640, which is 6.0 units a pixel,
+the world map's own scale -- and 5 x 5 tiles of 128 is 640x640 over that
+same box. The table names a single image for it instead. The other two
+lattices match no row.
+
+A guess ("second zoom level") replaced by a measurement, and the measurement
+was one grep of the format string's xrefs plus a set difference.

@@ -96,8 +96,7 @@ A = 46;  do { B = 113;  do { load(A, B);  B -= 4; } while (B > 69);  A += 4; } w
 
 **All 363 are present in a real Media.pk2**, as are all 25 dungeon floors' tiles — several
 thousand files, no misses. (The `map\` directory holds 632 `map_world_*` tiles in all; the other
-269 are referenced by nothing in the table. They are the ones whose A is odd mod 4, so they
-belong to a grid this table does not describe.)
+269 are on three further lattices that nothing asks for — see the last section.)
 
 ## Where a position lands on the map
 
@@ -146,10 +145,26 @@ interface\worldmap\map\map_world_166x97.ddj
 
 which exists.
 
-## What is left
+## Loose ends, and one that is closed
 
-- **The other 269 `map_world_*` tiles**, on the odd-mod-4 grid. Four functions reference the
-  format string; two are the loader and destructor above, and the other two have not been read.
+- **The other 269 `map_world_*` tiles** are asked for by **nothing**. All four functions that
+  reference the format string — two loaders and two destructors, belonging to two classes — write
+  out the identical bounds, 46 to 177 and 113 down to 69 by 4. So there is no second loop and no
+  second zoom level; the archive simply carries tiles this build never requests.
+
+  They are not junk, though. Every one is 8,340 bytes (128 × 128 DXT1, the same as the tiles in
+  use) and they fall into exactly **three more step-4 lattices**, each at its own origin:
+
+  | Lattice | Tiles | Covers |
+  |---|---|---|
+  | A 65…177, B 85…113 | 224 of 232 — the bottom row from A 149 is absent | a sub-box of the main map, on a lattice offset three regions from it |
+  | A 199…215, B 87…103 | 25, a full 5 × 5 | 640 × 640 pixels |
+  | A 200…216, B 72…84 | 20, a full 5 × 4 | 640 × 512 pixels |
+
+  The middle one is **the Jupiter field, tiled**: `map_jupiter1_1`'s row covers world
+  X 12288…16128 by Y −1728…2112 drawn at 640 × 640, which is 6.0 units a pixel — the world map's
+  own scale — and 5 × 5 tiles of 128 is exactly 640 × 640 over the same box. The table names a
+  single image for it instead. The other two lattices match no row in the table.
 - **Three rows with no artwork**: `map_survival_colosseum`, `_desert` and `_palace` (ids 23–25).
   All three have **every region bound set to 0** — degenerate boxes, zero units per pixel — so
   they are unfinished placeholder rows rather than shipped content this archive is missing.
@@ -157,6 +172,5 @@ which exists.
 - **Three rows are type 0**, not one: the main world plus `map_jupiter_a` and `map_jupiter1_1`,
   which are worlds of their own you switch to. Type alone does not identify the world map; the
   main one is the only type-0 row drawn from a grid.
-- **The window itself.** `GDR_WORLDMAP` is a `CIFWorldMap` at `100,100,652,424` on
-  `mframe_wnd_`, and `ifworldmap.txt` carries only three buttons, so the map is the control's own
-  drawing. Everything it needs to draw is now readable.
+- **The window is built** — `client/scripts/ui/hud/hud_worldmap.gd`. What is left on it is in
+  `docs/UI_TODO.md`.
