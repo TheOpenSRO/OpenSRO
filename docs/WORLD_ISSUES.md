@@ -6028,3 +6028,56 @@ the check's fault rather than the collider's -- two NPCs stand within half a
 unit of each other on the square (npcpos has 2013 at 980.79, 989.13 and
 2014 at 980.34, 989.19), so a ray aimed at one is legitimately stopped by
 the other.
+
+## Hundred-and-twenty-third round: 232 objects you could walk inside, not eight
+
+The parked item said eight objects in Jangan have no navigation mesh. The
+count was right for Jangan and wrong for the world, and the cause was one
+line.
+
+`_load_object_collision` resolved an object by reading `bsr.mesh_path` --
+the object's **first** mesh, and only that one. A building's walkable
+surface is one piece among many, and the pieces are in alphabetical order,
+so whether the graph found it was chance:
+
+```
+cj_acce.bsr    6 meshes   navigation data in [1] cj_acce_wall.bms
+cj_armo.bsr    7 meshes   navigation data in [3] cj_armo_floor.bms
+cj_etc.bsr    12 meshes   navigation data in [10] cj_etc_wall02.bms
+cj_luxury.bsr 12 meshes   navigation data in [4] cj_luxu_floor.bms
+cj_portal.bsr  6 meshes   navigation data in [2] cj_por_floor.bms
+cj_weapon.bsr  6 meshes   navigation data in [5] cj_weap_floor.bms
+cj_pal_bigdoor 5 meshes   navigation data in [4] cj_pal_bigdoor_wall01.bms
+```
+
+Every one of them has it in exactly one mesh, and in none of them is it the
+first. `dump_object_collision.gd` prints that table for any object.
+
+**Swept over the whole object index** (`sweep_object_collision.gd`), 2,858
+distinct objects:
+
+| | |
+|---|---|
+| carry navigation data in no mesh | 815 |
+| in exactly one mesh | 1,926 |
+| in more than one | **117** |
+| of the 2,043 that carry it: found by the first mesh | 1,811 |
+| **not found — reported as having none** | **232** |
+
+So it was 232 objects world-wide, not eight, and the 117 that carry it in
+more than one mesh (every tree does) mean taking the *first piece that has
+any* would still have lost half of those. The parts are merged:
+`BmsCollision.merge` concatenates vertices and shifts every cell and edge
+index by the running count, leaving `NO_CELL` alone -- shifting that marker
+would turn the far side of a wall into a reference to a real cell.
+
+**Verified two ways.** Every region around Jangan now places 100% of its
+objects (62/62, 90/90, 114/114, 122/122 …) with no "could not be resolved"
+line at all, where the town used to report eight. And `SRREVAMP_QA_SCAN=40`,
+which is the measure of this exact symptom, finds **none of the eight** among
+the spots where a player stands under solid geometry -- the 82 that remain
+are Christmas trees, balloons, lion statues and water, which is what walking
+under a canopy looks like and is not a bug.
+
+`bms_collision_merge_test.gd` covers the index arithmetic, because a cell
+pointing at the wrong vertex still builds a triangle, just somewhere else.

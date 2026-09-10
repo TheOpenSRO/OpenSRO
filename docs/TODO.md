@@ -112,13 +112,13 @@ Down from six to two or three. The surviving one currently lands correctly becau
 band of zeroes beats the regions with real data — luck, recorded as luck in the eighty-sixth
 round, not a working rule.
 
-### Eight objects in Jangan have no navigation mesh
-Named by the build log since the hundred-and-sixth round: `cj_s` (the city wall), `cj_luxury`,
-`cj_armo`, `cj_acce`, `cj_weapon`, `cj_portal`, `cj_etc`, `cj_pal_bigdoor`. An object with no
-walkable mesh is one the player can stand *inside* — the graph reports the terrain beneath it and
-puts them there. This is the same symptom the hundred-and-seventh round fixed for the Jangan gate,
-but from missing data rather than from the ground snap, so it needs a different answer.
-`SRREVAMP_QA_NAVGAP` names the culprit at any given spot.
+### Objects you could walk inside — **fixed** (hundred-and-twenty-third round)
+It was 232 objects world-wide, not the eight Jangan ones the count named. The graph resolved an
+object by its **first** mesh only, and a building's walkable surface is one piece among many in
+alphabetical order — `cj_luxu_floor.bms` is the fourth of twelve. All of an object's meshes are
+read and merged now. Every region around Jangan places 100% of its objects, and `SRREVAMP_QA_SCAN`
+finds none of the eight among the spots that put a player under solid geometry; what it still
+finds is tree canopies and balloons, which is what walking under a canopy looks like.
 
 ### Two `.bms` header sections nobody reads
 `hdr[2]` and `hdr[3]` carry data in 63 of 1,200 real meshes (tables, bridges, ships);

@@ -41,6 +41,61 @@ const BLOCKING_FLAG_MASK := 0x3
 static func is_blocking(edge: BmsReader.CollisionEdge) -> bool:
 	return (edge.flags & BLOCKING_FLAG_MASK) != 0
 
+## Merges several of an object's meshes into one navigation mesh.
+##
+## An object's walkable surface is not necessarily its first piece, and is
+## not necessarily only one piece. Measured over the 2,858 objects the
+## object index names: 1,926 carry navigation data in exactly one mesh,
+## **117 carry it in more than one** (every tree does -- `tre_bamboo01` has
+## it in both of its two), and 815 carry none at all. Of the 2,043 that
+## carry it anywhere, **232 do not have it in the first mesh**, which is the
+## only one the walkable graph used to read: Jangan's six shops, its city
+## wall, the palace door, `cj_ferry_buil` with its nineteen pieces.
+##
+## Merging is index arithmetic and nothing else -- vertices concatenate, and
+## every cell and edge index shifts by the running vertex count. The grid
+## fields are a lookup accelerator the graph does not use, so the merged
+## mesh leaves them empty rather than rebuilding something nothing reads.
+static func merge(meshes: Array) -> BmsReader.CollisionMesh:
+	var out := BmsReader.CollisionMesh.new()
+	var vertex_base := 0
+	var cell_base := 0
+	for entry in meshes:
+		var mesh: BmsReader.CollisionMesh = entry
+		if mesh == null:
+			continue
+		for vertex in mesh.vertices:
+			out.vertices.append(vertex)
+		for cell in mesh.cells:
+			var shifted := BmsReader.CollisionCell.new()
+			shifted.a = cell.a + vertex_base
+			shifted.b = cell.b + vertex_base
+			shifted.c = cell.c + vertex_base
+			out.cells.append(shifted)
+		for edge in mesh.outline_edges:
+			out.outline_edges.append(_shift_edge(edge, vertex_base, cell_base))
+		for edge in mesh.internal_edges:
+			out.internal_edges.append(_shift_edge(edge, vertex_base, cell_base))
+		for name in mesh.events:
+			out.events.append(name)
+		vertex_base += mesh.vertices.size()
+		cell_base += mesh.cells.size()
+	return out
+
+## An edge with its vertex and cell references moved into the merged mesh's
+## own numbering. NO_CELL stays NO_CELL: it is a marker, not an index, and
+## shifting it would turn a boundary edge into a reference to a real cell.
+static func _shift_edge(
+	edge: BmsReader.CollisionEdge, vertex_base: int, cell_base: int
+) -> BmsReader.CollisionEdge:
+	var out := BmsReader.CollisionEdge.new()
+	out.v0 = edge.v0 + vertex_base
+	out.v1 = edge.v1 + vertex_base
+	out.cell_from = edge.cell_from + cell_base if edge.cell_from != BmsReader.NO_CELL else BmsReader.NO_CELL
+	out.cell_to = edge.cell_to + cell_base if edge.cell_to != BmsReader.NO_CELL else BmsReader.NO_CELL
+	out.flags = edge.flags
+	return out
+
 ## Every real edge of the object that blocks movement. Both real lists are
 ## checked rather than either being assumed: the mask is what decides, not
 ## which list an edge happens to live in.

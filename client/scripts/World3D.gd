@@ -1843,12 +1843,33 @@ func _load_object_collision(
 	var bsr := BsrReader.parse(archive.read_file(bsr_entry))
 	if bsr == null or bsr.mesh_path == "":
 		return null
-	var mesh_entry := ObjectLoader.find_file(archive, bsr.mesh_path)
-	if mesh_entry == null:
+
+	# **Every mesh, not just the first.** An object's walkable surface is
+	# one piece among many and the pieces are in alphabetical order, so
+	# whether reading `mesh_path` alone found it was chance: of the 2,043
+	# objects in the index that carry navigation data anywhere, **232 do not
+	# carry it in their first mesh** and were reported as having none --
+	# Jangan's six shops, its city wall, the palace door,
+	# `cj_ferry_buil.bsr` with nineteen pieces. A player walks inside every
+	# one of those. And 117 objects carry it in more than one mesh (every
+	# tree does), so taking the first piece that has any would still lose
+	# half of those.
+	var meshes: Array[String] = [bsr.mesh_path]
+	for path in bsr.sub_mesh_paths:
+		meshes.append(path)
+	var parts: Array = []
+	for path in meshes:
+		if path == "":
+			continue
+		var mesh_entry := ObjectLoader.find_file(archive, path)
+		if mesh_entry == null:
+			continue
+		var part := BmsReader.parse_collision(archive.read_file(mesh_entry))
+		if part != null and not part.cells.is_empty():
+			parts.append(part)
+	if parts.is_empty():
 		return null
-	var collision := BmsReader.parse_collision(archive.read_file(mesh_entry))
-	if collision == null or collision.cells.is_empty():
-		return null
+	var collision: BmsReader.CollisionMesh = parts[0] if parts.size() == 1 else BmsCollision.merge(parts)
 	_object_collision_cache[resource_id] = collision
 	return collision
 
