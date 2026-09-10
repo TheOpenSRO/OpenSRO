@@ -121,8 +121,11 @@ finds none of the eight among the spots that put a player under solid geometry; 
 finds is tree canopies and balloons, which is what walking under a canopy looks like.
 
 ### Two `.bms` header sections nobody reads
-`hdr[2]` and `hdr[3]` carry data in 63 of 1,200 real meshes (tables, bridges, ships);
-`hdr[2]` is a count-prefixed list of 8-byte records, confirmed on three unrelated files.
+**`hdr[2]` is decoded** (hundred-and-twenty-fifth round): one 8-byte record per vertex — a
+`float32` on a 0.05 ladder and a `uint32` that is 1 in exactly the records whose float is zero.
+801 of all 24,984 meshes carry it, and they are garments, banners and cobwebs. `BmsReader` reads
+it into `vertex_motion` / `vertex_pinned`; what it is *for* is an inference, recorded as one.
+`hdr[3]` is still unread.
 `hdr[5]` was checked at the same time and is empty in all 1,200, so nothing is missed there.
 What the two carry is unknown, and the meshes render correctly without them.
 `client/tools/audit_unused_header_words.gd` reproduces it. See

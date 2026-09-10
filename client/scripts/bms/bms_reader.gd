@@ -150,6 +150,21 @@ class ParsedMesh:
 	var bounds_min: Vector3
 	var bounds_max: Vector3
 
+	## Per-vertex free-movement amounts from the `hdr[2]` section, parallel
+	## to `vertices` and empty in the 24,183 of 24,984 real meshes that
+	## carry no such section. See parse_vertex_motion.
+	var vertex_motion: PackedFloat32Array = PackedFloat32Array()
+	## Parallel to vertex_motion: true where the file marks the vertex
+	## pinned. Exactly the vertices whose amount is zero, in every one of
+	## the 316,452 records measured.
+	var vertex_pinned: PackedByteArray = PackedByteArray()
+
+## Header offset of the per-vertex section decoded in
+## docs/protocol/BMS_FORMAT.md: a count followed by one `float32` +
+## `uint32` per vertex.
+const VERTEX_MOTION_PTR_OFFSET := HEADER_PTRS_BASE + 2 * 4
+const VERTEX_MOTION_REC_SIZE := 8
+
 ## Parses a .bms file's raw bytes. Returns null (and pushes an error) on
 ## failure.
 static func parse(data: PackedByteArray) -> ParsedMesh:
@@ -240,7 +255,39 @@ static func parse(data: PackedByteArray) -> ParsedMesh:
 		mesh.bounds_min = Vector3(_le_f32(data, bbox_off), _le_f32(data, bbox_off + 4), _le_f32(data, bbox_off + 8))
 		mesh.bounds_max = Vector3(_le_f32(data, bbox_off + 12), _le_f32(data, bbox_off + 16), _le_f32(data, bbox_off + 20))
 
+	_parse_vertex_motion(data, mesh)
 	return mesh
+
+## Reads the `hdr[2]` section: one `float32` + `uint32` per vertex.
+##
+## Nothing renders with this yet. It is read because it is decoded --
+## leaving a known section unparsed is how this format's skinning stayed
+## hidden for months, and a reader that carries the data is a reader whose
+## understanding can be tested. See docs/protocol/BMS_FORMAT.md for the
+## measurement: over all 24,984 real meshes in a Data.pk2, 801 carry this
+## section, the count equals the vertex count in every one of them, the
+## float takes 16 values on a 0.05 ladder, and the integer is 1 in exactly
+## the records whose float is zero.
+##
+## Leaves both arrays empty, without erroring, whenever the section is
+## absent or does not fit: 24,183 meshes carry none at all, and 450 have a
+## pointer whose declared count runs past the end of the file -- one of them
+## claims four billion records, which exhausts memory if believed.
+static func _parse_vertex_motion(data: PackedByteArray, mesh: ParsedMesh) -> void:
+	var start := _le_u32(data, VERTEX_MOTION_PTR_OFFSET)
+	if start == 0 or start + 4 > data.size():
+		return
+	var count := _le_u32(data, start)
+	if count != mesh.vertices.size():
+		return
+	if start + 4 + count * VERTEX_MOTION_REC_SIZE > data.size():
+		return
+	mesh.vertex_motion.resize(count)
+	mesh.vertex_pinned.resize(count)
+	for i in range(count):
+		var rec := start + 4 + i * VERTEX_MOTION_REC_SIZE
+		mesh.vertex_motion[i] = _le_f32(data, rec)
+		mesh.vertex_pinned[i] = 1 if _le_u32(data, rec + 4) != 0 else 0
 
 ## Reads the bone palette and per-vertex weights between section_start and
 ## section_end. Leaves the mesh unskinned, without erroring, whenever the

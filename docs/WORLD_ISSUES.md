@@ -6122,3 +6122,55 @@ units of Jangan town, `SRREVAMP_QA_FLOAT` finds **four** objects clear of
 their own ground -- two event doors 14 above and two grass clumps 12 below --
 and none of them is the "large structure standing on its own platform" the
 note describes as the unresolvable case.
+
+## Hundred-and-twenty-fifth round: hdr[2] decoded — one record per vertex
+
+The last two header words this project read and never used. The same shape
+-- a header word parsed into a variable and ignored -- is what the `.bsr`
+offset table, the `UV_*` fields and `.bms` skinning each turned out to be
+hiding, and `hdr[2]` is now the fourth.
+
+**Swept over all 24,984 `.bms` files in a real Data.pk2.** 801 carry an
+`hdr[2]` section, and in **every one of the 801 the record count equals the
+mesh's own vertex count** -- never the index count, the triangle count, the
+bone count or the collision-cell count. Asking what the count is a count
+*of* was the whole method; it needed no guessing from the byte pattern.
+
+A record is a `float32` and a `uint32`:
+
+- the float takes **16 distinct values** across the archive: 0.0, then 0.05
+  to 0.50 in steps of 0.05, plus 1.0
+- the integer is **only ever 0 or 1**
+
+And the two agree exactly. Across 316,452 records the integer is **1 in
+precisely the 292,980 whose float is 0.0** and **0 in precisely the 23,472
+whose float is not**. Two fields agreeing perfectly across three hundred
+thousand records is the check that the record has been split in the right
+place.
+
+**What carries it**: `avatar` 245, `clothes` 69, Jangan scenery 36, armour
+sets (`heavy` 28, `light` 17, `thief` 17), `spear` 11 and **`cobweb` 10**.
+Garments, banners and cobwebs -- things that hang.
+
+**What it means is an inference and is labelled as one.** A per-vertex
+amount that is zero for most vertices, rises through a hand-authored 0.05
+ladder for the rest, and carries a flag saying which -- on dresses, robes
+and cobwebs -- has the shape of *how far each vertex is free to move, with
+the attached ones pinned*. Two attempts to confirm that failed and are
+recorded in `docs/protocol/BMS_FORMAT.md`: `SetOptimizeCloth` turns out to
+be `CObjOptimizeCloth@CharacterVisualChange`, driven by
+`resinfo\optimize_clothes.txt` -- a visual-quality option about *which*
+clothing is drawn, not how it moves. And the `.bms` loader cannot be found
+by string search at all: neither `JMXVBMS`, `JMXV` nor `.bms` appears in the
+client, so the magic is compared inline and there is no anchor.
+
+`BmsReader` carries the data now (`vertex_motion`, `vertex_pinned`) even
+though nothing renders with it. Leaving a decoded section unparsed is how
+this format's skinning stayed hidden for months, and a reader that carries
+the data is a reader whose understanding can be tested.
+
+**Still open**: `hdr[3]`. Its count differs from `hdr[2]`'s in 793 of the
+801, and the bytes between it and the end of the file do not divide by its
+count to anything whole. And 450 meshes have an `hdr[2]` pointer whose
+declared count does not fit the file -- one claims four billion records,
+which took the audit tool out of memory before the bound was added.

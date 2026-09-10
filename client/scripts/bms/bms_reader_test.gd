@@ -36,7 +36,7 @@ func _append_len_prefixed(buf: PackedByteArray, s: String) -> PackedByteArray:
 	out.append_array(lp)
 	return out
 
-func _build_synthetic_mesh(rec_size: int = 44, skinned: bool = false) -> PackedByteArray:
+func _build_synthetic_mesh(rec_size: int = 44, skinned: bool = false, motion: bool = false) -> PackedByteArray:
 	var buf := PackedByteArray()
 	buf.resize(BmsReader.PREAMBLE_END)
 	var magic := BmsReader.MAGIC.to_ascii_buffer()
@@ -121,6 +121,25 @@ func _build_synthetic_mesh(rec_size: int = 44, skinned: bool = false) -> PackedB
 	idx[8] = 2
 	idx[9] = 0
 	buf.append_array(idx)
+
+	# Optional per-vertex motion section (header word 2): a count that must
+	# equal the vertex count, then a float32 + uint32 for each. See
+	# docs/protocol/BMS_FORMAT.md.
+	if motion:
+		var motion_off := buf.size()
+		_put_u32(buf, BmsReader.HEADER_PTRS_BASE + 2 * 4, motion_off)
+		var section := PackedByteArray()
+		section.resize(4 + 3 * BmsReader.VERTEX_MOTION_REC_SIZE)
+		_put_u32(section, 0, 3)
+		# Two pinned vertices (amount 0, flag 1) and one free one, which is
+		# how every real file is shaped: the flag is 1 exactly where the
+		# amount is zero.
+		var amounts := [0.0, 0.15, 0.0]
+		var flags := [1, 0, 1]
+		for i in range(3):
+			_put_f32(section, 4 + i * 8, amounts[i])
+			_put_u32(section, 4 + i * 8 + 4, flags[i])
+		buf.append_array(section)
 
 	var bbox_off := buf.size()
 	_put_u32(buf, BmsReader.HEADER_PTRS_BASE + 4 * 4, bbox_off)
@@ -224,6 +243,29 @@ func _init() -> void:
 		var plain_arrays := BmsReader.to_array_mesh(plain).surface_get_arrays(0)
 		_check(plain_arrays[Mesh.ARRAY_BONES] == null,
 			"an unskinned mesh gets no bone array")
+
+	# The hdr[2] per-vertex section. Absent from most meshes, so a reader
+	# that carries it must also cope with it not being there.
+	var motionless := BmsReader.parse(_build_synthetic_mesh())
+	_check(motionless != null and motionless.vertex_motion.is_empty(),
+		"a mesh with no hdr[2] section carries no motion data")
+
+	var with_motion := BmsReader.parse(_build_synthetic_mesh(44, false, true))
+	_check(with_motion != null, "a mesh with an hdr[2] section still parses")
+	if with_motion != null:
+		_check(with_motion.vertex_motion.size() == with_motion.vertices.size(),
+			"one motion record per vertex (got %d for %d vertices)"
+				% [with_motion.vertex_motion.size(), with_motion.vertices.size()])
+		_check(is_equal_approx(with_motion.vertex_motion[1], 0.15),
+			"the amount decodes as a float (got %f)" % with_motion.vertex_motion[1])
+		_check(with_motion.vertex_pinned[0] == 1 and with_motion.vertex_pinned[2] == 1
+			and with_motion.vertex_pinned[1] == 0,
+			"the flag marks exactly the vertices whose amount is zero")
+		# The geometry must be unaffected: the section sits between the
+		# indices and the bounding box, and reading it must not disturb
+		# either.
+		_check(with_motion.indices.size() == 3 and with_motion.bounds_max.x == 1.0,
+			"the rest of the mesh reads the same with the section present")
 
 	if _failures == 0:
 		print("ALL PASS")

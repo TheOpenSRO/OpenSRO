@@ -340,8 +340,8 @@ the other three point at, over 1,200 real `.bms` files:
 
 | Word | Offset | Finding |
 |---|---|---|
-| `hdr[2]` | 0x18 | Points into the file in all 1,200. **First word non-zero in 63** (5%). |
-| `hdr[3]` | 0x1C | Same 63 files carry data here too. |
+| `hdr[2]` | 0x18 | Points into the file in all 1,200. **First word non-zero in 63** (5%). Decoded below: one 8-byte record per vertex. |
+| `hdr[3]` | 0x1C | Same files carry data here too. Still unread. |
 | `hdr[5]` | 0x24 | First word is **0 in all 1,200** — an empty section everywhere. Nothing is being missed. |
 
 `hdr[2]` is a count-prefixed list of **8-byte records**, from the arithmetic on three unrelated
@@ -353,10 +353,53 @@ euro_esteuro_wood_bridge03   0x039c count  16, 128 bytes            = 8.0 each
 euro_esteuro_ship01_01       0x2653 count 199, 1592 bytes           = 8.0 each
 ```
 
-`hdr[3]`'s record size is not established.
+### hdr[2] decoded: one record per vertex, a float and a flag
 
-**What they are is unknown.** The files that carry them — tables, bridges, ships — are scenery
-that renders correctly without them, so nothing visible is broken. This is recorded as a known
-gap, with the tool to reproduce it, rather than guessed at: the last three times this project
-guessed at a structure's meaning from its shape it was wrong, and the times it measured first it
-was right.
+**Swept over all 24,984 `.bms` files in a real Data.pk2**
+(`client/tools/audit_bms_extra_sections.gd`). 801 carry an `hdr[2]` section, and in **every one
+of the 801 the record count equals the mesh's own vertex count** — never the index count, the
+triangle count, the bone count or the collision-cell count. So it is per-vertex data.
+
+A record is a `float32` followed by a `uint32`:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0x00 | 4 | `float32`, 16 distinct values across the archive: **0.0, then 0.05 to 0.50 in steps of 0.05**, plus 1.0 |
+| 0x04 | 4 | `uint32`, **only ever 0 or 1** |
+
+The two agree exactly. Across 316,452 records, the flag is **1 in precisely the 292,980 records
+whose float is 0.0** and **0 in precisely the 23,472 whose float is not**. That perfect
+complementarity is the check that the record has been split in the right place: two fields
+agreeing across three hundred thousand records is not an accident of alignment.
+
+### What carries it
+
+801 files, by leading name fragment: `avatar` 245, `clothes` 69, `cj` (Jangan scenery) 36,
+`heavy` 28, `oas` 21, `thief` 17, `light` 17, `chinaetc` 14, `sd` 13, `spear` 11, **`cobweb` 10**.
+Garments, armour, banners and cobwebs — things that hang.
+
+### What it means: an inference, not a finding
+
+A per-vertex amount that is zero for most vertices, rises through a hand-authored 0.05 ladder for
+the rest, and carries a companion flag that says *which* — on dresses, robes, cobwebs and
+banners — has the shape of **how far each vertex is free to move, with the attached ones pinned**.
+That is the reading, and it is labelled as a reading.
+
+It is **not** confirmed, and two attempts to confirm it failed:
+
+- The client has a `SetOptimizeCloth` and a `UIIT_STT_OPTIMIZE_A_E_CLOTHES` option, which looks
+  like the feature that would read this. It is not: its own classes are
+  `CObjOptimizeCloth@CharacterVisualChange` and `Condition_OptimizeCloth@CharacterVisualChange`,
+  and it is driven by `resinfo\optimize_clothes.txt` — a visual-quality option about *which*
+  clothing is drawn, not about how it moves.
+- The `.bms` loader itself cannot be found by string search: neither `JMXVBMS`, `JMXV` nor `.bms`
+  appears as a string in the client, so the magic is compared inline and there is no anchor to
+  start from.
+
+**Also not decoded**: 450 files have an `hdr[2]` pointer whose declared count does not fit the
+file at 8 bytes a record. They are skipped rather than read — one of them declares four billion
+records, which exhausts memory if taken at face value.
+
+`hdr[3]`'s record size is still not established: its count differs from `hdr[2]`'s in 793 of the
+801, and the bytes between it and the end of the file do not divide by its count to anything
+whole.
