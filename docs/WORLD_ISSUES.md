@@ -6780,3 +6780,19 @@ for a held weapon. It resolves names by string compare
 path, which takes the name from a text table. The China pairing above is
 read off the tables and the groups a body actually carries; Europe's is
 not mapped yet.
+
+### Both bodies, and the one-shots
+
+The woman renders in her own default kit -- 3652/3653/3654 and the sword
+-- on `chinawoman_fighter.bsr`, whose `sword` group hands the run to
+`chinaman_fighter_runforward_sword` (a man's file, listed in the woman's
+own group: the game's data, not a mix-up here). `qa_shot.sh --gender
+china_woman` creates her.
+
+The action types also cover what happens in a fight, and those now play
+by type rather than not at all: a monster hit plays its type-3 entry once
+and returns to its idle, a monster death plays type 4 once and holds the
+last frame -- the body stays where it fell until the animation has run,
+then the next monster list removes it -- and the player's own type-3 hit
+reaction plays over stand or run. `qa_shot.sh --attack` swings at the
+nearest monster every second so these can be rendered.

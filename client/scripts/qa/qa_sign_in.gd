@@ -20,6 +20,9 @@ class_name QaSignIn
 ##   SRREVAMP_QA_SERVER=host[:port]   the server to sign in to
 ##   SRREVAMP_QA_ACCOUNT=user:pass    defaults to ACCOUNT_DEFAULT
 ##   SRREVAMP_QA_CHARACTER=name       defaults to CHARACTER_DEFAULT
+##   SRREVAMP_QA_GENDER=china_woman   the gender a character created by
+##                                    this run is given (default: the
+##                                    server's own default, a China man)
 ##
 ## Every step is bounded by STEP_TIMEOUT, so a server that is down or slow
 ## costs one timeout rather than a render that never finishes.
@@ -83,7 +86,7 @@ static func run(tree: SceneTree) -> bool:
 		return false
 	var names: Array = listed[1]
 	if not (who in names):
-		NetClient.create_character(who)
+		NetClient.create_character(who, OS.get_environment("SRREVAMP_QA_GENDER"))
 		var created: Array = await _first_of(tree, [NetClient.character_create_result])
 		if created.is_empty() or not created[1]:
 			printerr("QA sign-in: could not create %s (%s) -- rendering offline" % [who, _reason(created, 2)])

@@ -771,6 +771,12 @@ var _time_since_send := 0.0
 var _player_skeleton: Skeleton3D
 var _player_gender := DEFAULT_GENDER
 var _player_anim_time := 0.0
+## A one-shot the player's body is in the middle of -- a hit reaction --
+## and when it started; the tick plays it instead of stand or run until it
+## has run its frames.
+var _player_one_shot: BanReader.ParsedAnimation = null
+var _player_one_shot_start := 0.0
+var _player_one_shot_until := 0.0
 
 var _real_skeleton: Skeleton3D
 var _real_skeleton_track: BanReader.Bone
@@ -2823,8 +2829,11 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	else:
 		_place_at_zone_spawn(result.zone)
 
-## Everything in the world that plays a standing animation -- NPCs and
-## monsters. Each entry is [Skeleton3D, ParsedAnimation, frame count, phase].
+## Everything in the world that plays an animation -- NPCs and monsters.
+## Each entry is [Skeleton3D, ParsedAnimation, frame count, phase, loops,
+## started at, resume]: a looping idle, or a one-shot (a hit, a death) that
+## holds its last frame and then goes back to `resume` -- an idle entry, or
+## null to stay on the last frame, which is what a corpse does.
 ##
 ## Phase matters: without it every Mangyang in a field steps in perfect
 ## unison, which reads as a bug rather than as a crowd. Each character gets
@@ -2854,12 +2863,38 @@ func _animate(assembled: SkinnedBsrAssembler.AssembledCharacter) -> void:
 	if OS.get_environment("SRREVAMP_NO_IDLE_ANIM") != "":
 		return
 	var anim: BanReader.ParsedAnimation = assembled.idle_animation
-	var frames := 0
-	for track in anim.bones:
-		frames = maxi(frames, track.keyframes.size())
+	var frames := _frame_count(anim)
 	if frames <= 1:
 		return
-	_animated.append([assembled.skeleton, anim, frames, float(_animated.size()) * 0.37])
+	_animated.append([assembled.skeleton, anim, frames, float(_animated.size()) * 0.37, true, _idle_anim_time, null])
+
+static func _frame_count(anim: BanReader.ParsedAnimation) -> int:
+	var frames := 0
+	if anim == null:
+		return 0
+	for track in anim.bones:
+		frames = maxi(frames, track.keyframes.size())
+	return frames
+
+## Plays anim once on skeleton -- a hit reaction, a death -- in place of
+## whatever it was playing, and afterwards returns to that (or holds the
+## last frame if `hold` is set, which a death does). Returns how long the
+## one-shot runs, in seconds, so a caller can wait for it.
+func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: bool = false) -> float:
+	var frames := _frame_count(anim)
+	if skeleton == null or frames <= 1:
+		return 0.0
+	var resume = null
+	for i in range(_animated.size()):
+		var entry: Array = _animated[i]
+		if entry[0] == skeleton:
+			# Resume the idle it was on, not a one-shot it was in the
+			# middle of.
+			resume = entry if entry[4] else entry[6]
+			_animated.remove_at(i)
+			break
+	_animated.append([skeleton, anim, frames, 0.0, false, _idle_anim_time, null if hold else resume])
+	return float(frames) / BAN_FPS
 
 ## Advances every idle animation. Entries whose skeleton has gone (a region
 ## streamed out, a monster died) are dropped as they are found, which keeps
@@ -2873,15 +2908,33 @@ func _tick_idle_animations(delta: float) -> void:
 		var skeleton: Skeleton3D = entry[0]
 		if not is_instance_valid(skeleton) or not skeleton.is_inside_tree():
 			continue
-		alive.append(entry)
 		var frames: int = entry[2]
 		var phase: float = entry[3]
-		var frame_idx := int((_idle_anim_time + phase) * BAN_FPS) % frames
+		var loops: bool = entry[4]
+		var frame_idx: int
+		if loops:
+			frame_idx = int((_idle_anim_time + phase) * BAN_FPS) % frames
+		else:
+			# A one-shot runs from when it started and holds its last
+			# frame; once there, hand back to what it interrupted.
+			frame_idx = mini(frames - 1, int((_idle_anim_time - float(entry[5])) * BAN_FPS))
+			if frame_idx >= frames - 1 and entry[6] != null:
+				var resume: Array = entry[6]
+				resume[5] = _idle_anim_time
+				alive.append(resume)
+				Skeleton3DBuilder.apply_ban_pose(skeleton, resume[1], int((_idle_anim_time + resume[3]) * BAN_FPS) % int(resume[2]))
+				continue
+		alive.append(entry)
 		Skeleton3DBuilder.apply_ban_pose(skeleton, entry[1], frame_idx)
 	if alive.size() != _animated.size():
 		_animated = alive
 
 var _idle_anim_time := 0.0
+## monster id -> the assembled character behind its body, for playing its
+## own hit and death animations by type.
+var _monster_assembled: Dictionary = {}
+## monster id -> the _idle_anim_time until which its death animation runs.
+var _dying_until: Dictionary = {}
 
 ## Every NPC the client knows how to place, grouped by region, and the
 ## id -> model table that goes with them. Both come out of the player's own
@@ -3774,6 +3827,16 @@ func _try_apply_real_player_character() -> void:
 		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_STAND, _player_weapon_group),
 		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_RUN, _player_weapon_group)])
 
+## Plays anim once on the player's body, over stand or run, and returns
+## how long it runs.
+func _play_player_once(anim: BanReader.ParsedAnimation) -> float:
+	var frames := _frame_count(anim)
+	if frames <= 1:
+		return 0.0
+	_player_one_shot = anim
+	_player_one_shot_start = _player_anim_time
+	return float(frames) / BAN_FPS
+
 ## The path _body_animation_for would parse, for a log line.
 func _body_animation_path(gender: String, action_type: int, group: String) -> String:
 	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
@@ -4275,6 +4338,8 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
 ##   SRREVAMP_QA_NOUI=1     hide the HUD (for comparison shots)
 ##   SRREVAMP_QA_WORLDMAP=1 open the world map window over the world
+##   SRREVAMP_QA_ATTACK=1   attack the nearest monster every second, so a
+##                          hit reaction and a death can be rendered
 ##   SRREVAMP_QA_FLOAT=r     report placed objects within r that sit clear
 ##                          of their own region's ground
 ##   SRREVAMP_QA_THROUGH=z0,z1,y[,step]
@@ -4344,6 +4409,8 @@ func _qa_step() -> void:
 			# easier without a chat box across the bottom of it.
 			for node in [$UI/Control, $UI/HideUIButton]:
 				(node as CanvasItem).visible = false
+		if OS.get_environment("SRREVAMP_QA_ATTACK") != "" and NetClient.is_connected_to_server():
+			_qa_attacking = true
 		var qa_worldmap := OS.get_environment("SRREVAMP_QA_WORLDMAP")
 		if qa_worldmap != "" and _hud_worldmap != null:
 			# The window only builds its tiles for what can be seen, so it
@@ -4460,6 +4527,8 @@ func _qa_step() -> void:
 	# off the numbers rather than inferred from a still image.
 	if OS.get_environment("SRREVAMP_QA_RIG") != "" and _qa_tick in [30, 60, 90]:
 		_qa_rig_report()
+	if _qa_attacking and _qa_tick % 10 == 0:
+		_qa_attack_nearest()
 
 	if not _qa_shots.is_empty():
 		_qa_advance_shots()
@@ -4617,6 +4686,29 @@ func _qa_advance_shots() -> void:
 ## arithmetic looks right on paper, so this measures it instead of
 ## reasoning about it: for every piece, where the bone is, where the piece
 ## ended up, and how far apart they are.
+var _qa_attacking := false
+
+## Attacks whichever live monster is nearest the player -- the same
+## request the Attack button sends -- so the combat animations can be
+## rendered without a hand on the mouse.
+func _qa_attack_nearest() -> void:
+	var nearest_id := -1
+	var nearest := INF
+	for monster_id in _monster_bodies:
+		if _dying_until.has(monster_id):
+			continue
+		var body: Node3D = _monster_bodies[monster_id]
+		if not is_instance_valid(body):
+			continue
+		var d := body.global_position.distance_to(player.global_position)
+		if d < nearest:
+			nearest = d
+			nearest_id = monster_id
+	if nearest_id == -1:
+		return
+	print("QA ATTACK: monster %d at %.0f" % [nearest_id, nearest])
+	NetClient.attack(NetClient.current_character_name, nearest_id)
+
 func _qa_rig_report() -> void:
 	if _player_skeleton == null:
 		print("QA RIG: no assembled player skeleton")
@@ -5236,8 +5328,15 @@ func _physics_process(delta: float) -> void:
 		# weapon's group and standing plays its town idle.
 		var action := BsrReader.AnimationEntry.TYPE_RUN if is_moving else BsrReader.AnimationEntry.TYPE_STAND
 		var anim := _body_animation_for(_player_gender, action, _player_weapon_group)
-		if anim != null and not anim.bones.is_empty():
-			_player_anim_time += delta
+		_player_anim_time += delta
+		if _player_one_shot != null:
+			var frames := _frame_count(_player_one_shot)
+			var idx := int((_player_anim_time - _player_one_shot_start) * BAN_FPS)
+			if idx >= frames:
+				_player_one_shot = null
+			else:
+				Skeleton3DBuilder.apply_ban_pose(_player_skeleton, _player_one_shot, idx)
+		if _player_one_shot == null and anim != null and not anim.bones.is_empty():
 			var ref_track: BanReader.Bone = anim.bones[0]
 			if not ref_track.keyframes.is_empty():
 				var frame_count := ref_track.keyframes.size()
@@ -5666,11 +5765,13 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	var monster_skeleton: Skeleton3D = null
 	var monster_model := _monster_model_path(monster.monster_name)
 	if monster_model != "":
-		var monster_archive := _open_pk2_if_set()
-		if monster_archive != null:
-			var assembled := SkinnedBsrAssembler.assemble_from_archive(monster_archive, monster_model, true)
+		if _data_pk2 == null:
+			_data_pk2 = _open_pk2_if_set()
+		if _data_pk2 != null:
+			var assembled := SkinnedBsrAssembler.assemble_from_archive(_data_pk2, monster_model, true)
 			if assembled != null:
 				monster_skeleton = assembled.skeleton
+				_monster_assembled[monster.monster_id] = assembled
 				_animate(assembled)
 	# Says which of the three ways a monster can come out wrong happened:
 	# the species not in the tables, the model not assembling, or a real
@@ -5726,8 +5827,15 @@ func _sync_monster_bodies(live: Array) -> void:
 
 	for monster_id in _monster_bodies.keys():
 		if not live_ids.has(monster_id):
+			# A monster still playing its death is left where it fell
+			# until the animation has run; the timer _on_monster_died set
+			# asks for another list then, and this removes it.
+			if _dying_until.has(monster_id) and _idle_anim_time < float(_dying_until[monster_id]):
+				continue
 			_monster_bodies[monster_id].queue_free()
 			_monster_bodies.erase(monster_id)
+			_monster_assembled.erase(monster_id)
+			_dying_until.erase(monster_id)
 
 func _on_monster_list_result(monsters: Array, error: String) -> void:
 	if error != "":
@@ -5757,7 +5865,19 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		return
 	if result.error != "":
 		monster_status_label.text = "Attack failed: %s" % result.error
+		print("World3D: attack refused: %s" % result.error)
 		return
+	# One line per exchange, so a render's log says what the fight did
+	# without reading it off a label.
+	print("World3D: attack hit for %d (%d left%s), took %d (HP %d)" % [
+		result.monster_damage, result.monster_remaining_hp,
+		", died" if result.monster_died else "", result.player_damage_taken, result.player_hp])
+	if result.player_damage_taken > 0 and _player_skeleton != null:
+		# The body's own hit reaction, type 3, once; the tick returns to
+		# stand or run afterwards on its own.
+		var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
+		if hit != null:
+			_player_one_shot_until = _player_anim_time + _play_player_once(hit)
 	if result.monster_died:
 		monster_status_label.text = "Hit for %d -- it died!" % result.monster_damage
 		# A kill may have progressed a quest's kill count even without
@@ -5776,11 +5896,31 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	# refresh above already makes.
 	NetClient.list_skills(NetClient.current_character_name)
 
-func _on_monster_damaged(_damaged: CombatNet.MonsterDamaged) -> void:
+func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
+	if damaged != null:
+		_play_monster_action(damaged.monster_id, BsrReader.AnimationEntry.TYPE_HIT)
 	NetClient.list_monsters()
 
-func _on_monster_died(_monster_id: int) -> void:
+## A monster's death plays its own die animation (type 4 of its `default`
+## group) and the body stays on its last frame until that has run; only
+## then is the list refreshed and the body removed.
+func _on_monster_died(monster_id: int) -> void:
+	var seconds := _play_monster_action(monster_id, BsrReader.AnimationEntry.TYPE_DIE, true)
+	if seconds > 0.0:
+		_dying_until[monster_id] = _idle_anim_time + seconds
+		get_tree().create_timer(seconds).timeout.connect(NetClient.list_monsters)
 	NetClient.list_monsters()
+
+## Plays one of a monster's own animations by action type, once. Returns
+## its length in seconds, 0 if the monster has no such animation.
+func _play_monster_action(monster_id: int, action_type: int, hold: bool = false) -> float:
+	var assembled: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(monster_id)
+	if assembled == null or _data_pk2 == null:
+		return 0.0
+	var anim := SkinnedBsrAssembler.animation_for(_data_pk2, assembled, action_type)
+	if anim == null:
+		return 0.0
+	return _play_once(assembled.skeleton, anim, hold)
 
 func _on_loot_dropped(dropped: CombatNet.LootDropped) -> void:
 	if dropped == null:

@@ -22,6 +22,9 @@
 #   --shots "..."     visit several viewpoints in one run (see below)
 #   --panels "a,b,c"  open these HUD windows (ids from HudPanels.PANELS)
 #   --worldmap [mode] open the world map window; mode "world" or "both"
+#   --gender g        the gender a character created for --server is given
+#                     (china_man or china_woman)
+#   --attack          attack the nearest monster every second (needs --server)
 #   --nofog           disable fog, for high overview shots
 #   --free            let the camera pass through geometry
 #   --out <dir>       where to write frames (required)
@@ -44,7 +47,7 @@ GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 
 REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""
 AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
-PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
+PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; GENDER=""; ATTACK=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -68,6 +71,8 @@ while [ $# -gt 0 ]; do
     # --server with no value starts SERVER_BIN in-memory on a spare port and
     # signs in to it; --server host:port uses one that is already running.
     --say)    SAY="$2";    shift 2 ;;
+    --gender) GENDER="$2"; shift 2 ;;
+    --attack) ATTACK=1;    shift ;;
     --server)
       if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then SERVER="$2"; shift 2
       else SERVER="start"; shift; fi ;;
@@ -142,6 +147,8 @@ if [ "$SERVER" = "start" ]; then
 fi
 [ -n "$SERVER" ] && export SRREVAMP_QA_SERVER="$SERVER"
 [ -n "$SAY" ] && export SRREVAMP_QA_SAY="$SAY"
+[ -n "$GENDER" ] && export SRREVAMP_QA_GENDER="$GENDER"
+[ -n "$ATTACK" ] && export SRREVAMP_QA_ATTACK=1
 
 # --resolution as well as the X screen: Godot renders at the project's own
 # window size otherwise, so asking for a square screen alone still produced

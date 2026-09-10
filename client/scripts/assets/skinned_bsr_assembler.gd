@@ -47,6 +47,11 @@ class_name SkinnedBsrAssembler
 class AssembledCharacter:
 	var skeleton: Skeleton3D
 	var animation_paths: Array[String] = []
+	## The parsed `.bsr`, kept for its animation groups: which animation
+	## plays for which action (BsrReader.AnimationEntry).
+	var parsed: BsrReader.ParsedObject = null
+	## Animations parsed so far, by path.
+	var animation_cache: Dictionary = {}
 	## The animation to play when this character is just standing there,
 	## parsed and ready for Skeleton3DBuilder.apply_ban_pose. Null when the
 	## model names no animations, or none of them loaded.
@@ -124,6 +129,7 @@ static func assemble_from_archive(
 	var result := AssembledCharacter.new()
 	result.skeleton = skeleton
 	result.animation_paths = parsed.animation_paths
+	result.parsed = parsed
 
 	var mesh_paths := parsed.all_mesh_paths()
 	var attached := 0
@@ -367,6 +373,26 @@ static func _skinned_instance(
 	# The caller sets `mi.skeleton` once the instance is in the tree; a
 	# NodePath cannot be taken to a node the instance has no parent under.
 	return mi
+
+## The animation an assembled character plays for one action type in one
+## group -- the file's own table (BsrReader.ParsedObject.animation_for),
+## parsed on first use. Null when the file lists none for it.
+static func animation_for(
+	archive: Pk2Reader, assembled: AssembledCharacter, action_type: int, group: String = "default"
+) -> BanReader.ParsedAnimation:
+	if assembled == null or assembled.parsed == null:
+		return null
+	var path := assembled.parsed.animation_for(action_type, group)
+	if path == "":
+		return null
+	if assembled.animation_cache.has(path):
+		return assembled.animation_cache[path]
+	var bytes := _read(archive, path)
+	var anim: BanReader.ParsedAnimation = BanReader.parse(bytes) if not bytes.is_empty() else null
+	if anim != null and anim.bones.is_empty():
+		anim = null
+	assembled.animation_cache[path] = anim
+	return anim
 
 ## The bone whose bind position is nearest the mesh's own vertex centroid.
 static func _nearest_bone(mesh: BmsReader.ParsedMesh, bone_positions: Dictionary) -> String:
