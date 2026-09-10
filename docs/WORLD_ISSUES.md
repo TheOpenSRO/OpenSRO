@@ -6201,3 +6201,19 @@ archive -- of small integers all below that file's own link count (4, 36, 0,
 links, but its length is not a whole multiple of the link count and it does
 not parse as another count-prefixed block. The reader takes the records and
 stops.
+
+### What the two together say
+
+Separately, each is a structure. Together they are recognisable: **per-particle
+mobility with a pinned set, and a list of pairs of those particles with a rest
+distance for each**. That is the whole input to a mass-spring solve, and it is
+hard to read as anything else -- a mesh wanting per-vertex tinting or a second
+UV set would not also ship a table of distances between vertex pairs. On
+dresses, robes, banners and cobwebs.
+
+The gap that keeps this an inference rather than a finding: no code, here or in
+the client, has been *seen* consuming either section. The `.bms` loader cannot
+be reached by string search, and the one feature that looked like the consumer
+(`SetOptimizeCloth`) turned out to be a `CharacterVisualChange` option about
+which clothing is drawn. So whether the client simulates with this or merely
+sways along it is not established, and is not claimed.

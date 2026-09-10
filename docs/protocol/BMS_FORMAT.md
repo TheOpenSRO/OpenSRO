@@ -385,6 +385,14 @@ the rest, and carries a companion flag that says *which* — on dresses, robes, 
 banners — has the shape of **how far each vertex is free to move, with the attached ones pinned**.
 That is the reading, and it is labelled as a reading.
 
+**`hdr[3]` makes it a much stronger one.** The two sections always appear together, and what they
+hold between them is: per-particle mobility with a pinned set, plus a list of pairs of those
+particles with a rest distance for each. That is the whole input to a mass-spring solve, and it is
+hard to read as anything else — a mesh that wanted per-vertex tinting or a second UV set would not
+also ship a table of distances between vertex pairs. The remaining honest gap is that no code in
+this project or in the client has been *seen* consuming either, so what the client does with them
+— and whether it simulates or merely sways — is still not established.
+
 It is **not** confirmed, and two attempts to confirm it failed:
 
 - The client has a `SetOptimizeCloth` and a `UIIT_STT_OPTIMIZE_A_E_CLOTHES` option, which looks
