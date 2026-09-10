@@ -21,6 +21,7 @@
 #   --radius n        load an n-region radius instead of the default 2
 #   --shots "..."     visit several viewpoints in one run (see below)
 #   --panels "a,b,c"  open these HUD windows (ids from HudPanels.PANELS)
+#   --worldmap [mode] open the world map window; mode "world" or "both"
 #   --nofog           disable fog, for high overview shots
 #   --free            let the camera pass through geometry
 #   --out <dir>       where to write frames (required)
@@ -43,7 +44,7 @@ GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 
 REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""
 AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
-PANELS=""; SAY=""; SERVER=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
+PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -59,6 +60,11 @@ while [ $# -gt 0 ]; do
     --radius) RADIUS="$2"; shift 2 ;;
     --shots)  SHOTS="$2";  shift 2 ;;
     --panels) PANELS="$2"; shift 2 ;;
+    # bare: the map for wherever the player is; "world": the whole world;
+    # "both": the city map, then the world part way through the run.
+    --worldmap)
+      if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then WORLDMAP="$2"; shift 2
+      else WORLDMAP=1; shift; fi ;;
     # --server with no value starts SERVER_BIN in-memory on a spare port and
     # signs in to it; --server host:port uses one that is already running.
     --say)    SAY="$2";    shift 2 ;;
@@ -109,6 +115,7 @@ export SRREVAMP_MAPM_PATH="$REGION"
 [ -n "$RADIUS" ] && export SRREVAMP_QA_RADIUS="$RADIUS"
 [ -n "$SHOTS" ]  && export SRREVAMP_QA_SHOTS="$SHOTS"
 [ -n "$PANELS" ] && export SRREVAMP_QA_PANELS="$PANELS"
+[ -n "$WORLDMAP" ] && export SRREVAMP_QA_WORLDMAP="$WORLDMAP"
 
 # A render with a server behind it. Without one the client shows an
 # undressed character, a blank HP bar and an empty inventory, because none

@@ -890,6 +890,7 @@ var _media_pk2: Pk2Reader
 var _ui_text_table: UiTextTable
 var _ui_builder: UiBuilder
 var _hud_minimap: HudMinimap
+var _hud_worldmap: HudWorldmap
 var _hud_underbar: HudUnderbar
 var _hud_player_info: HudPlayerInfo
 ## Vitals from the last EnterWorldResult. Kept because AttackResult reports
@@ -1104,6 +1105,21 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_minimap.offset_top = 10.0
 	_hud_minimap.offset_bottom = 185.0
 	_hud_minimap.setup()
+
+	# The world map, opened from the minimap's own map button. It is built
+	# once and kept hidden: the frame and the map table are read at build
+	# time, the 363 tiles only as they come into view.
+	_hud_worldmap = HudWorldmap.new(_ui_builder)
+	_hud_worldmap.name = "HudWorldmap"
+	ui_control.add_child(_hud_worldmap)
+	if _hud_worldmap.build_worldmap():
+		_hud_worldmap.centre()
+		_hud_worldmap.hide()
+		_hud_minimap.world_map_requested.connect(_hud_worldmap.toggle)
+	else:
+		# No registry entry or no map table -- this archive cannot show one.
+		_hud_worldmap.queue_free()
+		_hud_worldmap = null
 
 	# Setup authentic Underbar (bottom bar)
 	_hud_underbar = HudUnderbar.new(_ui_builder, _media_pk2, _ui_text_table)
@@ -1443,6 +1459,8 @@ func _refresh_zone_label_position() -> void:
 				var ry: int = parts[1].to_int()
 				_hud_minimap.update_player(rx, ry, local, player.rotation_degrees.y)
 				_hud_minimap.set_area_name(_current_zone_name)
+				if _hud_worldmap != null and is_instance_valid(_hud_worldmap):
+					_hud_worldmap.update_player(rx, ry, local)
 
 ## Bone positions of the first few animated characters, so two calls can be
 ## differenced. Keyed by skeleton instance id.
@@ -4486,6 +4504,7 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_FREE=1     let the camera pass through geometry
 ##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
 ##   SRREVAMP_QA_NOUI=1     hide the HUD (for comparison shots)
+##   SRREVAMP_QA_WORLDMAP=1 open the world map window over the world
 ##   SRREVAMP_QA_FLOAT=r     report placed objects within r that sit clear
 ##                          of their own region's ground
 ##   SRREVAMP_QA_THROUGH=z0,z1,y[,step]
@@ -4555,6 +4574,24 @@ func _qa_step() -> void:
 			# easier without a chat box across the bottom of it.
 			for node in [$UI/Control, $UI/HideUIButton]:
 				(node as CanvasItem).visible = false
+		var qa_worldmap := OS.get_environment("SRREVAMP_QA_WORLDMAP")
+		if qa_worldmap != "" and _hud_worldmap != null:
+			# The window only builds its tiles for what can be seen, so it
+			# has to be opened *after* the player is in place -- otherwise
+			# it centres on nowhere and loads the map's top-left corner.
+			_hud_worldmap.open()
+			if qa_worldmap == "world":
+				_hud_worldmap.show_world()
+			elif qa_worldmap == "both":
+				# One boot, both of the window's modes: the city map first
+				# and the whole world part way through the run.
+				#
+				# In seconds, not frames, but movie-writing mode advances
+				# scene time by a fixed 1/60 a frame regardless of how long
+				# the frame really took -- so a six-second timer needs 360
+				# rendered frames and a 60-frame run never reaches it. A
+				# third of a second is frame 20.
+				get_tree().create_timer(20.0 / 60.0).timeout.connect(_hud_worldmap.show_world)
 		if OS.get_environment("SRREVAMP_QA_NOFOG") != "":
 			if world_environment != null and world_environment.environment != null:
 				var env := world_environment.environment

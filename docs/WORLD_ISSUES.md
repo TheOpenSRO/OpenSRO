@@ -6430,3 +6430,69 @@ that depends on it says so.
 Still open: the other 269 `map_world_*` tiles in the archive, whose A is odd
 mod 4 and which no row in this table describes. Two of the four functions
 referencing the tile format string have not been read.
+
+## Hundred-and-twenty-ninth round: the world map window, and Pic Area
+
+With the table decoded the window is mechanical, and it went up in one
+pass. `GDR_WORLDMAP` is registry-framed rather than self-framed like the
+panels -- `CIFWorldMap` at `100,100,652,424` on `interface\frame\
+mframe_wnd_`, and `ifworldmap.txt` holds three buttons and nothing else --
+so the frame comes from resinfo\ginterface.txt, the interior is ours, and
+the buttons go on top.
+
+Three things did not have to be guessed:
+
+- **The interior's insets are the frame's own art.** `mframe_wnd_left_up`
+  is 40x68 and `mframe_wnd_left_down` is 40x48, so the window is 40 down
+  the sides, 68 across the top and 48 across the bottom, leaving 572x308.
+  Read at runtime from the loaded pieces, so a window on another frame set
+  gets it right too. (`dump_ddj_sizes.gd` is the tool; it is four lines and
+  it settles a class of question that otherwise gets eyeballed.)
+- **The player marker is `interface\minimap\mm_sign_character.ddj`.** The
+  client's world map destructor releases exactly the textures the map
+  loads, and it names them one by one: four `wmap_window_edge_N` pieces,
+  `mm_sign_character`, `wmap_sign_party`, `wmap_sign_apprenticeship`,
+  `wmap_sign_questnpc`, `wmap_sign_huntingpoint`, then the 363 tiles and
+  the current dungeon's. That list is the whole texture set, stated.
+- **The way in is `GDR_MINIMAP_BTN_TOG_MAP`**, on `mm_map_button.ddj`, an
+  authored button the minimap was already finding and not connecting. No
+  hotkey had to be invented.
+
+### The bug the render caught: Pic Area is not decoration
+
+Jangan's map came out squashed with a blank band across the bottom of the
+window. `map_jangan.ddj` is stored **1024x1024** but its row says texture
+1024x1024, **pic area 1024x768**, draw 1024x768: only the top three
+quarters of the image is map, and the rest is padding. Stretching the whole
+texture into the draw size squeezes the map and shows the padding. Drawing
+`Pic Area` as the source region fixes it, and costs the world map's own
+tiles nothing -- theirs is equal to their texture size.
+
+Two columns that read the same on eleven of the archive's rows and
+differently on the twelfth. Worth remembering next time a pair of columns
+looks redundant.
+
+### What the picture is evidence of
+
+Nothing here was concluded from a render -- the marker's position is
+`pixel_for_world()` and no part of it was fitted. But the render is a
+strong independent check, because two things had to land and did:
+
+- On **Jangan's own map**, the marker sits on the **dragon statue** in the
+  town square. The player is at region 97/168 local (1002, 917), which this
+  project established as the square and dragon long ago and by other means.
+- On the **world map**, the marker sits **inside the walled rectangle**
+  that is Jangan drawn at 6 units a pixel.
+
+One transform, two maps at scales eight times apart, both right.
+
+### Also this round
+
+`--write-movie` advances scene time by a fixed 1/60 a frame regardless of
+how long the frame really took, so `create_timer(6.0)` needs **360**
+rendered frames and never fires in a 60-frame run. Anything in a QA hook
+that waits should be expressed in frames over 60, not in seconds.
+
+Left undrawn on purpose: the four `wmap_window_edge_N` pieces are 4x4
+apiece and whether they are four corners or four tiled edges is not
+established, so the map area has no inner border rather than a guessed one.

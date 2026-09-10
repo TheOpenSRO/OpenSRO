@@ -19,6 +19,9 @@ const APERTURE_RECT := Rect2(14, 57, 105, 105)
 const MASK_TEXTURE_PATH := "interface\\minimap\\mm_alpha.ddj"
 const MASK_SHADER := preload("res://scripts/ui/minimap_mask.gdshader")
 
+## Emitted when the layout's own map button is pressed.
+signal world_map_requested
+
 var _ui_builder: UiBuilder
 var _media_pk2: Pk2Reader
 var _text_table: UiTextTable
@@ -150,6 +153,10 @@ func setup(layout_data: Variant = null) -> void:
 		_btn_zoom_in.pressed.connect(_on_zoom_in_pressed)
 	if _btn_zoom_out != null:
 		_btn_zoom_out.pressed.connect(_on_zoom_out_pressed)
+	# GDR_MINIMAP_BTN_TOG_MAP, on mm_map_button.ddj, is the authored way in
+	# to the world map -- no hotkey had to be invented for it.
+	if _btn_toggle_map != null:
+		_btn_toggle_map.pressed.connect(func() -> void: world_map_requested.emit())
 
 ## Updates the minimap with the player's current region, local coordinates, and yaw.
 ## Uses the exact recovered coordinate formulas:

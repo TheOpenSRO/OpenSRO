@@ -237,7 +237,22 @@ rather than off the header — see `docs/protocol/WORLDMAP_FORMAT.md` and
 - 33 local maps besides — cities, fortresses, the arenas, Jupiter — each with its own box, and
   25 dungeon floors, every tile of every one of them present
 
-**Next**: build it. `CIFWorldMap` draws the grid itself, so the window is the frame plus a
-control that lays 363 `TextureRect`s (or one atlas) at 128-pixel pitch inside a scroll view,
-with the three authored buttons on top. The player marker is `wmap_sign_location.ddj`;
-`city_jangan.ddj` and friends are the clickable city plates, with `_focus`/`_press` variants.
+**The window is built** -- `client/scripts/ui/hud/hud_worldmap.gd`, opened from the minimap's
+own `GDR_MINIMAP_BTN_TOG_MAP`, so no hotkey had to be invented for it. It shows the map for
+wherever the player is standing and switches to the whole world on the layout's own
+`GDR_WM_BTN_TO_WMAP`; the marker is `interface\minimap\mm_sign_character.ddj`, which is one of
+the seven textures the client's own world map loads. Tiles are built only as they come into view.
+`client/tools/qa_shot.sh --worldmap [world|both]` renders it.
+
+**Still to do on it**:
+
+- `GDR_WM_BTN_WNDSIZE`, left inert. The archive has a 268-wide and a 652-wide window bottom
+  (`wmap_window_small_bottom` / `wmap_window_big_bottom`), so it plainly toggles two widths, but
+  nothing authored says the small window's height or which controls move.
+- `GDR_WM_BTN_AUTO_MOVE`, left inert: it needs a path to an arbitrary world point.
+- The **other signs**. The client's world map loads `wmap_sign_party`,
+  `wmap_sign_apprenticeship`, `wmap_sign_questnpc` and `wmap_sign_huntingpoint` beside the
+  player marker, and each wants a list the client already receives.
+- The four `wmap_window_edge_N` pieces, 4x4 apiece, which the client loads for the map area.
+  Whether they are four corners or four tiled edges is **not established**, so they are not drawn.
+- `wmap_sign_location.ddj` (432x36) and the `city_*.ddj` plates, for named landmarks.
