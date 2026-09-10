@@ -1242,6 +1242,14 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 		if node is CanvasItem:
 			(node as CanvasItem).visible = false
 
+	# The rest of the developer chrome is *hidden*, not retired: the zone
+	# box is still the only way to travel and Log Out is still the only way
+	# out. They sat over the player block and across the bottom-right corner
+	# in every screenshot of this game, which is not what it should look
+	# like when someone plays it.
+	_set_dev_ui_visible(false)
+	_log_system("Developer tools (zone travel, log out): F1")
+
 ## Pushes the camera's far clipping plane out far enough to actually see
 ## the real terrain this scene streams in.
 ##
@@ -5597,6 +5605,24 @@ func _log_system(text: String) -> void:
 ## itself lives outside ui_control (a sibling under the UI CanvasLayer, not
 ## a child of Control) specifically so it stays clickable to toggle the UI
 ## back on even while everything else is hidden.
+## The developer chrome that has no authored equivalent yet: the zone travel
+## box, Log Out, and the Hide UI button. Shown with F1.
+const DEV_UI_NODES := ["ZoneInput", "ChangeZoneButton", "DisconnectButton"]
+var _dev_ui_visible := true
+
+func _set_dev_ui_visible(shown: bool) -> void:
+	_dev_ui_visible = shown
+	for path in DEV_UI_NODES:
+		var node := ui_control.get_node_or_null(path)
+		if node is CanvasItem:
+			(node as CanvasItem).visible = shown
+	if hide_ui_button != null:
+		hide_ui_button.visible = shown
+
+func _toggle_dev_ui() -> void:
+	_set_dev_ui_visible(not _dev_ui_visible)
+	_log_system("Developer tools %s" % ("shown" if _dev_ui_visible else "hidden"))
+
 func _toggle_ui_visibility() -> void:
 	ui_control.visible = not ui_control.visible
 	hide_ui_button.text = "Show UI" if not ui_control.visible else "Hide UI"
@@ -5617,6 +5643,14 @@ func _toggle_action_panels() -> void:
 	action_tabs.visible = not action_tabs.visible
 
 func _unhandled_input(event: InputEvent) -> void:
+	# A direct keycode rather than an input action: this is a developer
+	# toggle, not a control anyone plays with, and adding it to
+	# project.godot would put it in the exported key list.
+	if event is InputEventKey and (event as InputEventKey).pressed \
+			and (event as InputEventKey).keycode == KEY_F1:
+		_toggle_dev_ui()
+		get_viewport().set_input_as_handled()
+		return
 	if event.is_action_pressed("toggle_ui"):
 		_toggle_ui_visibility()
 

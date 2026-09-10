@@ -6097,3 +6097,28 @@ one a canopy or a decoration** -- Christmas trees, dry trees, a water plane,
 event balloons and pillars, a Halloween pumpkin, a lion's pedestal. Not one
 palace building and not one shop. Standing under a tree is what that
 measurement is supposed to look like.
+
+## Hundred-and-twenty-fourth round: the HUD with nothing of ours on it
+
+The zone travel box sat across the player block and Log Out across the
+bottom-right corner in every screenshot this project has ever taken. Both
+are developer chrome with no authored equivalent yet -- the zone box is
+still the only way to travel and Log Out is still the only way out -- so
+they are **hidden rather than retired**, behind F1.
+
+Discoverability is the catch with a hidden control, and the chat window
+solves it: `_log_system` writes into the authored chat viewer now, so the
+line "Developer tools (zone travel, log out): F1" is on screen where a
+player will read it, in the client's own window and font.
+
+The result is the first render of this project that shows the game and
+nothing else: the player block with a real name and 100/100, the minimap
+with the zone and coordinates, the chat window carrying a message that went
+through the server, the underbar, and NPCs with the names the game calls
+them.
+
+Also measured this round, and better than the parked note says: within 1,400
+units of Jangan town, `SRREVAMP_QA_FLOAT` finds **four** objects clear of
+their own ground -- two event doors 14 above and two grass clumps 12 below --
+and none of them is the "large structure standing on its own platform" the
+note describes as the unresolvable case.
