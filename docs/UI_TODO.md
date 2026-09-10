@@ -33,11 +33,22 @@ Every window in the real client is authored data, and building one is now mechan
 9. **A section lists its controls front to back.** The window's own frame is always the *last*
    entry (`GDR_PI_SUBFRAME`, `GDR_INVENTORY_FRAME`), so children go into the Godot tree
    **reversed**. Built in file order, every window covers its own contents.
+
+   *How far this is verified*: the behaviour is — built in file order the frames and background
+   tiles covered their own windows, and reversed the result matches the reference screenshots.
+   The data agrees: the frame is last in every layout that has one. The client-side mechanism is
+   **deduced, not read**: the control the factory builds is appended to its list with a
+   `_Buynode(head, head->prev, value)`, which is a push_back in parse order, so for a
+   last-declared frame to end up behind everything the renderer must walk that list backwards.
+   The iteration itself has not been found.
 10. **`CIFNormalTile` is what fills a window's body** — 253 across the archive, the fourth most
    common control type. No 8-slice frame set has a centre piece (checked three times, and
    `CNIFFrame` in the client loads exactly eight suffixes), so a window with no tiles is meant to
    be see-through. Do not invent a fill colour; two rounds were spent on that.
-11. **A `CIFLattice` cell is one piece of its own artwork, 36×36 for `com_lattice_`.** Its `ddj`
+11. **A `CIFLattice` cell is one piece of its own artwork, 36×36 for `com_lattice_`.** Supported
+   by a negative check in the client as well as by the data: **no `36`/`0x24` appears anywhere in
+   the lattice class's own functions**, which is what you would expect if the pitch comes from the
+   piece at runtime and not what you would expect if it were a constant. Its `ddj`
    is a base with a trailing underscore that expands to only **four** names — `left_up`,
    `right_up`, `left_down`, `right_down` — which are not corners but one cell each, differing in
    which shared separators they carry. All 14 lattices in the archive divide by 36 exactly and
@@ -50,7 +61,10 @@ Every window in the real client is authored data, and building one is now mechan
 13. **A window is its frame plus any artwork hanging off it**, not the bounding box of every
    control. ifinventory's gold row sits 25 pixels below the frame; ifplayerinfo's `TEXT_HP_DAT` is
    a text field that overruns the right edge by 17 and must not widen the window.
-14. **A `ddj` ending in `_` is an 8-slice base, whatever the control type is called.** 496
+14. **A `ddj` ending in `_` is an 8-slice base, whatever the control type is called.** (This is
+   *our* dispatch strategy, not a claim about the client — there, each class calls its own piece
+   loader. What is read from the client is how many pieces each of those loaders takes: eight for
+   a frame, six for a stretch window, four for a lattice.) 496
    controls across the archive name one, spread over 220 type names -- `CIFSkillBoard`,
    `CIFCommunity`, `CIFBarWnd`, `CIFJobRankSlot` and two hundred more. Dispatch on the suffix,
    not on a list of type names. `CIFLattice` is the exception: its base expands to four *cell*

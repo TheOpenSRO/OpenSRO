@@ -124,6 +124,15 @@ func build_section(layout: UiLayoutParser.LayoutDef, section_name: String = "Cre
 	# ifinventory), and a frame has to be behind everything it frames.
 	# Godot draws children in tree order, so the list is added reversed.
 	#
+	# Verified as behaviour rather than traced in the client: in file order
+	# every window covered its own contents, and reversed it matches the
+	# reference screenshots. On the client side the factory appends each
+	# control to a list with a `_Buynode(head, head->prev, value)` -- a
+	# push_back in parse order -- so for a last-declared frame to end up
+	# behind everything, the renderer has to walk that list backwards. That
+	# iteration has not been found, so the ordering here rests on the data
+	# and the pictures, not on reading the draw loop.
+	#
 	# Adding them in file order put every window's frame and background
 	# tiles on top of its own contents -- which is why the inventory looked
 	# like an empty bordered box, and why the character panel's labels

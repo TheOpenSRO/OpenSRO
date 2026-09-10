@@ -6314,3 +6314,24 @@ brightness rather than read. It is now read -- `FUN_00499e10` lays the four
 edge quads out in the order left, top, right, bottom, and the loader fills
 those four slots with `left_side` twice then `right_side` twice -- and the
 argument was right. The comment says which it is now.
+
+### The rest of the audit pass
+
+Everything else this stretch of work asserted, checked against the client
+where the client can answer:
+
+| Claim | Status |
+|---|---|
+| `hdr[2]` 8-byte and `hdr[3]` 12-byte records, +1 word per link, +36 bytes | **read** — `CPrimGeometry`'s own allocations and vector element sizes |
+| the two record layouts, `(float, uint)` and `(uint, uint, float)` | **read** — the defaults the client resizes those vectors with, `(1.0, 0)` and `(-1, -1, 0)` |
+| six-piece stretch window: left_side → left and top, right_side → right and bottom | **read** — the edge quads are laid out left, top, right, bottom and the loader fills those slots in that order |
+| a lattice cell is one piece of its artwork, not a constant | **negative check** — no `36`/`0x24` anywhere in the lattice class |
+| controls are declared front to back | **behaviour verified, mechanism deduced** — the list is push_back in parse order, so the renderer must walk it backwards; that loop was not found |
+| window chrome geometry (42-pixel strip, caption at y=18, 16x16 close 26 in) | **authored data**, from ifalchemybox — not a client claim |
+| the 8-slice dispatch by `_` suffix | **ours, not the client's** — there each class calls its own loader; what is read is how many pieces each takes |
+| guild/party-match section composition | **geometry**, validated against the one case (ifskill) the client settles independently |
+| slot row-vs-square threshold | **ours**, from a measured distribution with an empty gap between 1.0 and 3.5 |
+
+The two that are neither read nor reducible to authored data -- the draw
+order's mechanism and what the `.bms` sections are *for* -- are the two that
+say so in the code that depends on them.
