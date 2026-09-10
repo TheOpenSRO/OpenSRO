@@ -167,6 +167,27 @@ const TERRAIN_ONLY_COLLISION_MASK := 0b1000 # layer 4 only
 ## above was added to fix.
 const NAVMESH_WALL_COLLISION_LAYER := 0b10000 # layer 5 only
 
+## An NPC's own body.
+##
+## Standing NPCs were walk-through: they are a Skeleton3D under a Node3D and
+## nothing else, so a player crossing Jangan's square passed straight
+## through the merchants. The capsule below is sized from the model's own
+## geometry -- these models differ enormously, and one radius that suits a
+## merchant swallows a horse.
+##
+## **Layer 5, the same bit the navmesh walls use**, because the player's
+## body masks it (`collision_mask = 17` in World3D.tscn) and the camera arm
+## does not (`collision_mask = 1`). That is precisely what an NPC wants: it
+## stops you walking into it, and it does not shove the camera around every
+## time you stand in a crowd of them. Putting them on the default layer 1
+## instead would have made Jangan's square unusable to look at.
+const NPC_COLLISION_LAYER := NAVMESH_WALL_COLLISION_LAYER
+
+## Smallest capsule an NPC gets, in world units, so a model whose bones all
+## sit near the origin still stops someone.
+const NPC_MIN_RADIUS := 0.25
+const NPC_MIN_HEIGHT := 1.0
+
 ## How tall a real blocking navmesh edge is extruded. **A disclosed choice,
 ## not real data**: the real client tests an edge as an infinite 2D line
 ## (see docs/protocol/NVM_FORMAT.md's "Edge flag semantics" section), so
@@ -3000,10 +3021,113 @@ const NAME_PLATE_OUTLINE_COLOUR := Color(0.0, 0.0, 0.0, 0.85)
 
 ## The top of an assembled skeleton, in its own local space.
 func _skeleton_top(skeleton: Skeleton3D) -> float:
-	var top := 0.0
-	for i in range(skeleton.get_bone_count()):
-		top = maxf(top, skeleton.get_bone_global_pose(i).origin.y)
-	return top * skeleton.scale.y
+	return _skeleton_bounds(skeleton).y
+
+## An assembled skeleton's own extent, as (horizontal radius, height).
+##
+## Height is the highest bone. **Radius is half the model's shallower
+## horizontal axis**, not its wider one and not the furthest bone: these
+## models stand in a bind pose with their arms out, so the widest bone is a
+## hand and the furthest-bone radius came out 5 to 9 units on NPCs 10 to 17
+## units tall -- a capsule as wide as the NPC is tall, which stops a player
+## well short of touching one. The shallower axis is the model's own
+## front-to-back thickness, which is what a body is.
+##
+## Measured from the mesh AABBs rather than the bones for the same reason:
+## the bones say where the arms reach, the geometry says how thick the
+## torso is.
+func _skeleton_bounds(skeleton: Skeleton3D) -> Vector2:
+	var aabb := AABB()
+	var have := false
+	for child in skeleton.get_children():
+		if not (child is VisualInstance3D):
+			continue
+		var box := (child as VisualInstance3D).get_aabb()
+		aabb = box if not have else aabb.merge(box)
+		have = true
+	if not have:
+		# No geometry to measure -- fall back to the bones, which at least
+		# say how tall the thing is.
+		var top := 0.0
+		for i in range(skeleton.get_bone_count()):
+			top = maxf(top, skeleton.get_bone_global_pose(i).origin.y)
+		return Vector2(NPC_MIN_RADIUS, top * skeleton.scale.y)
+	var depth: float = minf(aabb.size.x, aabb.size.z) * skeleton.scale.x
+	return Vector2(depth * 0.5, aabb.end.y * skeleton.scale.y)
+
+## A body that stops the player walking through an NPC.
+func _npc_collider(bounds: Vector2) -> StaticBody3D:
+	var shape := CapsuleShape3D.new()
+	shape.radius = maxf(bounds.x, NPC_MIN_RADIUS)
+	shape.height = maxf(bounds.y, NPC_MIN_HEIGHT)
+	var body := StaticBody3D.new()
+	body.name = "Body"
+	body.collision_layer = NPC_COLLISION_LAYER
+	# An NPC is something to walk into, not something to stand on or to
+	# aim the ground-snap ray at, so it stays off the terrain layer.
+	body.collision_mask = 0
+	var collider := CollisionShape3D.new()
+	collider.shape = shape
+	# A capsule is centred on its own origin; the NPC's is at its feet.
+	collider.position = Vector3(0.0, shape.height * 0.5, 0.0)
+	body.add_child(collider)
+	return body
+
+## Reports, for every placed NPC within QA_NPCBODY_RANGE, the capsule it
+## was given and whether a ray aimed at its middle actually hits it.
+const QA_NPCBODY_RANGE := 400.0
+
+func _qa_npc_body_report() -> void:
+	var space := get_world_3d().direct_space_state
+	var checked := 0
+	var blocked := 0
+	for group in get_children():
+		if not (group is Node3D) or not group.name.begins_with("RealTerrain_"):
+			continue
+		for holder in group.get_children():
+			if not holder.name.begins_with("Npc_"):
+				continue
+			var origin: Vector3 = (holder as Node3D).global_position
+			if origin.distance_to(player.global_position) > QA_NPCBODY_RANGE:
+				continue
+			var body := holder.get_node_or_null("Body") as StaticBody3D
+			var shape: CapsuleShape3D = null
+			if body != null:
+				var cs := body.get_node_or_null("CollisionShape3D") as CollisionShape3D
+				if cs == null:
+					for child in body.get_children():
+						if child is CollisionShape3D:
+							cs = child as CollisionShape3D
+							break
+				if cs != null:
+					shape = cs.shape as CapsuleShape3D
+			checked += 1
+			if shape == null:
+				print("QA NPCBODY %s: no collider" % holder.name)
+				continue
+			# From just outside the capsule, aimed at its middle.
+			var mid := origin + Vector3(0.0, shape.height * 0.5, 0.0)
+			var from := mid + Vector3(shape.radius * 4.0, 0.0, 0.0)
+			var query := PhysicsRayQueryParameters3D.create(from, mid)
+			query.exclude = [player.get_rid()]
+			var hit := space.intersect_ray(query)
+			# Any NPC's body counts: two NPCs stand within half a unit of
+			# each other on Jangan's square, so a ray aimed at one is
+			# legitimately stopped by the other.
+			var stopped := false
+			if not hit.is_empty():
+				var collider: Object = hit["collider"]
+				stopped = collider == body or (collider is Node
+					and (collider as Node).get_parent() != null
+					and (collider as Node).get_parent().name.begins_with("Npc_"))
+			if stopped:
+				blocked += 1
+			print("QA NPCBODY %s: capsule r=%.2f h=%.2f -> %s" % [
+				holder.name, shape.radius, shape.height,
+				"blocks" if stopped else "ray passed through (hit %s)" % (
+					str(hit.get("collider", "nothing")))])
+	print("QA NPCBODY: %d of %d NPC(s) within %.0f units stop a ray" % [
+		blocked, checked, QA_NPCBODY_RANGE])
 
 func _npc_spawn_total() -> int:
 	var n := 0
@@ -3065,9 +3189,11 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 				break
 		holder.position = Vector3(local.x, height, local.z)
 		holder.add_child(assembled.skeleton)
+		var bounds := _skeleton_bounds(assembled.skeleton)
+		holder.add_child(_npc_collider(bounds))
 		var npc_name: String = _npc_names.get(spawn.npc_id, "")
 		if npc_name != "":
-			holder.add_child(_name_plate(npc_name, _skeleton_top(assembled.skeleton)))
+			holder.add_child(_name_plate(npc_name, bounds.y))
 			named += 1
 		group.add_child(holder)
 		_animate(assembled)
@@ -4469,6 +4595,14 @@ func _qa_step() -> void:
 	# are rather than leaving it to be discovered by falling into one.
 	if OS.get_environment("SRREVAMP_QA_NAVGAP") != "" and _qa_tick == 60:
 		_qa_navgap_report()
+
+	# SRREVAMP_QA_NPCBODY fires a short horizontal ray at each nearby NPC
+	# and reports whether anything stops it. "The player walks through the
+	# merchants" is not something a still frame can answer, and walking into
+	# one on camera to find out is exactly the kind of check this project
+	# has been wrong with before.
+	if OS.get_environment("SRREVAMP_QA_NPCBODY") != "" and _qa_tick == 60:
+		_qa_npc_body_report()
 
 	# Whether the idle animations are actually moving anything. A still
 	# frame cannot answer that, so this samples the same skeletons at two

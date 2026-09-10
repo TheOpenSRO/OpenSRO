@@ -5998,3 +5998,33 @@ Four renders were spent looking for NPCs that were placed correctly the
 whole time. The camera was in region 98/168 -- `qa_shot.sh`'s default
 `--region` -- while the coordinates being aimed at were region-local to
 97/168. The fix was reading the runner's own default, not another picture.
+
+## Hundred-and-twenty-second round: NPCs stop being walk-through
+
+An NPC was a Skeleton3D under a Node3D and nothing else, so a player
+crossing Jangan's square walked straight through the merchants. They get a
+capsule now, and two things about it were got wrong first and measured
+right after.
+
+**Radius from the model's depth, not its width.** Taking the furthest bone
+from the origin gave radii of 4.95 to 8.87 on NPCs 9.9 to 17.7 units tall
+-- a capsule as wide as the NPC is tall. These models stand in a bind pose
+with their arms out, so the furthest bone is a hand. Half the model's
+*shallower* horizontal AABB axis is its front-to-back thickness, which is
+what a body is: 1.70 to 4.62 against heights of 12.7 to 40.6.
+
+**Layer 5, not layer 1.** The player's body masks bits 1 and 5
+(`collision_mask = 17`) and the camera arm masks only bit 1. Layer 5 is
+therefore exactly "stops the player, ignored by the camera", which is what
+the navmesh walls already use it for and what an NPC wants: on the default
+layer, standing in a crowd would have the camera shoved about by every
+merchant in it.
+
+Verified by measurement rather than by walking into one on camera:
+`SRREVAMP_QA_NPCBODY=1` fires a short horizontal ray at each nearby NPC's
+middle and reports the capsule it was given and whether anything stops the
+ray. **5 of 5** in Jangan town. The first run said 4 of 5, and the miss was
+the check's fault rather than the collider's -- two NPCs stand within half a
+unit of each other on the square (npcpos has 2013 at 980.79, 989.13 and
+2014 at 980.34, 989.19), so a ray aimed at one is legitimately stopped by
+the other.

@@ -25,7 +25,11 @@ the same time.
 region, x, y, z) and the archive has no other NPC table, so there is no authored facing anywhere.
 Any direction this project turns an NPC would be invented. Not an open question.
 
-**What is left**: they do not block movement.
+**Blocking is done** (hundred-and-twenty-second round): each NPC carries a capsule sized from its
+own geometry, on the layer the player masks and the camera does not. `SRREVAMP_QA_NPCBODY=1`
+reports the capsule and whether a ray is actually stopped — 5 of 5 in Jangan town.
+
+**What is left**: nothing on this item. NPCs stand, animate, are named, and are solid.
 
 **Animated, and properly skinned** (hundred-and-tenth round). `.bms` does carry per-vertex
 skinning after all -- a bone palette and two weighted influences per vertex, in their own section
