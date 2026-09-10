@@ -6081,3 +6081,19 @@ under a canopy looks like and is not a bug.
 
 `bms_collision_merge_test.gd` covers the index arithmetic, because a cell
 pointing at the wrong vertex still builds a triangle, just somewhere else.
+
+### And 238 buildings with no navigation mesh at all are *not* a bug
+
+The same sweep says 815 objects carry navigation data in no mesh anywhere,
+238 of them under `res\bldg` -- including Jangan's palace halls
+(`cj_pal_main_buil`, `cj_pal_south_buil02`, `cj_pal_sub_buil01`,
+`cj_pal_guard_buil`). That looks like the same hole one layer down, and it
+is not: the region's own `.nvm` terrain edges enclose the palace, so the
+buildings inside it need no walkable mesh of their own.
+
+Checked rather than argued. `SRREVAMP_QA_SCAN=40` over 1,566 sampled spots
+flags 82, and the objects behind them are **fifteen distinct models, every
+one a canopy or a decoration** -- Christmas trees, dry trees, a water plane,
+event balloons and pillars, a Halloween pumpkin, a lion's pedestal. Not one
+palace building and not one shop. Standing under a tree is what that
+measurement is supposed to look like.

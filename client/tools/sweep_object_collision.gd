@@ -73,6 +73,11 @@ func _init() -> void:
 	var first_lacks_it := 0
 	var examples: Array[String] = []
 	var multi_examples: Array[String] = []
+	## Where the objects that carry no navigation data at all come from.
+	## A shrub having none is expected; a building having none is a hole a
+	## player can walk into.
+	var none_by_area := {}
+	var none_buildings: Array[String] = []
 
 	for entry in table.entries:
 		var path: String = entry.path
@@ -104,6 +109,12 @@ func _init() -> void:
 				first = true
 		if carrying == 0:
 			none += 1
+			var area := path.get_base_dir().to_lower()
+			var head := area.split("\\")
+			var bucket: String = "%s\\%s" % [head[0], head[1]] if head.size() > 1 else area
+			none_by_area[bucket] = int(none_by_area.get(bucket, 0)) + 1
+			if area.contains("bldg") and none_buildings.size() < 20:
+				none_buildings.append(path.get_file())
 		elif carrying == 1:
 			one += 1
 		else:
@@ -131,4 +142,12 @@ func _init() -> void:
 	print("      %d do not (the graph reports these as having none)" % first_lacks_it)
 	if not examples.is_empty():
 		print("      e.g. %s" % ", ".join(PackedStringArray(examples)))
+	print("")
+	print("    where the %d with no navigation data at all come from:" % none)
+	var areas := none_by_area.keys()
+	areas.sort_custom(func(a, b): return int(none_by_area[a]) > int(none_by_area[b]))
+	for a in areas:
+		print("      %-40s %d" % [a, int(none_by_area[a])])
+	if not none_buildings.is_empty():
+		print("    buildings among them: %s" % ", ".join(PackedStringArray(none_buildings)))
 	quit(0)
