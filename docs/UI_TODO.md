@@ -211,13 +211,26 @@ bytes each — 64×64 ARGB1555 plus the usual header, against the minimap's 128�
 city plates (`city_jangan.ddj` and friends, with `_focus`/`_press` variants) and per-dungeon sets
 under `map/`, `dungeon/` and `monster/`.
 
-**What is not established** is the tile naming. `a` runs 46..216 over 72 distinct values and `b`
-runs 72..113 over 20 — the same shape as the minimap's `<y>x<x>`, so the axes are probably the
-same. But `a` is not a regular grid: it takes 165, 166, 169, 170, 173, 174 …, two interleaved
-series each stepping by 4, and Jangan's own y=168 is in neither. Until that is explained, a tile
-cannot be placed against a region with any confidence, and placing it wrongly would put the
-player's marker in the wrong country.
+**The client's own construction is now recovered** (`NIFWorldMap.cpp`): the path is built with
+`interface\worldmap\map\map_world_%dx%d.ddj`, and `FUN_006160d0` fills its tile array with
 
-**Next step**: find the client's own tile-name construction rather than inferring it — the
-minimap's spelling was settled that way after the reverse spelling turned out to name real but
-wrong regions.
+```
+A = 46;  do { B = 113;  do { load(A, B);  B -= 4; } while (B > 69);  A += 4; } while (A <= 177);
+```
+
+so this loop asks for **A ∈ 46,50…174 and B ∈ 73,77…113**. Tiles are 128×128 DXT1, and three
+other functions reference the same format string — which is why the file set holds two
+interleaved families of `A` (≡1 and ≡2 mod 4, e.g. both 65 and 66): more than one loop populates
+it, presumably a second zoom level.
+
+**What is still not established** is what A and B *mean*. They are not the minimap's `<y>x<x>`:
+Jangan is region x=97, y=168, and the archive has `map_world_97x85` … `97x113` but nothing at
+`168x…` at all. Nor does the imagery settle it — correlating Jangan's own minimap tile against
+all eight `map_world_97x*` tiles at every 16, 32 and 64-pixel cell position gives a best of 0.48
+with no clear winner, because the world-map art is stylised (roads and labels drawn in) rather
+than a downscale of the minimap.
+
+**Next step**: read the placement side rather than the loading side — the function that puts the
+player's marker on the map converts region + local position into a map pixel, and that is the
+mapping stated outright. `wmap_sign_location.ddj` and `xy_returnicon.ddj` are the icons to trace
+back from.
