@@ -216,13 +216,16 @@ func TestEquipMultipleArmorPiecesSimultaneously(t *testing.T) {
 	}
 }
 
-// TestArmorSlotsRealOrder pins down ArmorSlots' real order (HELM, MAIL,
-// SHOULDERGUARD, PANTS, BOOTS) against accidental drift -- this order is a
-// real, decompiler-confirmed fact (see EQUIP_SLOTS.md), not an arbitrary
-// internal choice, and EntitySnapshot.ArmorSlotsMask's bit meaning depends
-// on it staying stable.
+// TestArmorSlotsRealOrder pins the slot numbering to the game's own order
+// -- helm, mail, shoulder guard, gauntlet, pants, boots, weapon, shield --
+// against accidental drift. The numbers are on the wire and in the
+// equipment table, and the client's constants mirror them.
 func TestArmorSlotsRealOrder(t *testing.T) {
-	want := []Slot{SlotHelm, SlotMail, SlotShoulderGuard, SlotPants, SlotBoots}
+	if SlotHelm != 0 || SlotMail != 1 || SlotShoulderGuard != 2 || SlotGauntlet != 3 || SlotPants != 4 || SlotBoots != 5 || SlotWeapon != 6 || SlotShield != 7 || SlotExtra != 8 {
+		t.Fatalf("slot numbers drifted from the game's order: helm %d mail %d shoulder %d gauntlet %d pants %d boots %d weapon %d shield %d extra %d",
+			SlotHelm, SlotMail, SlotShoulderGuard, SlotGauntlet, SlotPants, SlotBoots, SlotWeapon, SlotShield, SlotExtra)
+	}
+	want := []Slot{SlotHelm, SlotMail, SlotShoulderGuard, SlotGauntlet, SlotPants, SlotBoots}
 	if len(ArmorSlots) != len(want) {
 		t.Fatalf("got %d armor slots, want %d: %+v", len(ArmorSlots), len(want), ArmorSlots)
 	}

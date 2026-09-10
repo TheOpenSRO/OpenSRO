@@ -1,17 +1,20 @@
 extends RefCounted
 class_name CharacterAssembler
 
-## Assembles a real character body from real .bms body-part meshes onto a
-## real Skeleton3D -- the piece that turns Skeleton3DBuilder's bare stick
-## figure into an actual (if rigidly-jointed, not smoothly skinned) human
-## shape.
+## Rigid assembly of a character body from .bms body-part meshes onto a
+## Skeleton3D: each piece hung off one bone, paired pieces split down the
+## middle. **This is no longer how the player is drawn.** `.bms` carries
+## real per-vertex skinning (BMS_FORMAT.md, hundred-and-tenth round), and
+## SkinnedBsrAssembler binds every piece -- body and worn items alike -- by
+## its own bone palette. What remains here is `attach_rigid`, the fallback
+## for a mesh with no weights, and `assemble`, which the render_character
+## dev tool still drives.
 ##
-## Confirmed from real data (server China-man body parts +
-## Prim/Skel/Char/China/chinaman_skel.bsk): there's no per-vertex bone
-## weight data anywhere in .bms (the whole 44-byte vertex record is
-## accounted for by position/normal/UV/a 12-byte field already shown to be
-## something else -- see docs/protocol/BMS_FORMAT.md), so this project
-## can't do smooth skinning. What real files actually do instead: each
+## The paragraphs below are the reasoning this file was built on, kept
+## because the X-sign split and the rigid offset arithmetic are still what
+## attach_rigid does. The claim they open with -- that .bms has no bone
+## weights -- was wrong: the weights sit in their own section, not in the
+## 44-byte vertex record that was audited. What real files do with each
 ## paired body part (thigh, calf, upper arm, forearm) is ONE .bms file
 ## containing BOTH left and right sides already baked in as two mirrored,
 ## non-overlapping vertex/triangle ranges (confirmed by inspecting
@@ -85,57 +88,10 @@ static func _strip_prefix(part_name: String) -> String:
 		return part_name
 	return part_name.substr(us + 1)
 
-## Maps a real equipment-item mesh's trailing 2-letter slot code (e.g.
-## "clothes_03_aa" -> "aa") to the bone(s) it plausibly belongs to -- same
-## [positive-X, negative-X] convention as BODY_PART_BONES for paired slots.
-## Inferred the same way BODY_PART_BONES was (filename convention matched
-## against real .bsk bone names, not decompiled), plus a real,
-## directly-observed structural signal this project didn't have for body
-## parts: a triangle-centroid-X gap scan on 6 real clothes_03_*.bms files
-## found "aa"/"fa"/"sa" each split into two disjoint x-ranges (gap >5 units,
-## centered near x=0 -- genuinely paired L/R pieces baked into one file,
-## the same shape as a body part), while "ba"/"ha"/"la" stayed continuous
-## (gap <1 unit, off-center) -- real, unpaired single pieces. Slot-name
-## codes themselves (aa=arm, ba=body, fa=foot, ha=head, la=leg, sa=shoulder)
-## match the standard 6-piece real armor set convention this project found
-## real files for; the specific bone each maps to is still an inferred
-## guess, same honesty level as BODY_PART_BONES.
-const EQUIPMENT_SLOT_BONES := {
-	"ha": ["Bip01 Head"],
-	"ba": ["Bip01 Spine1"],
-	"la": ["Bip01 Pelvis"],
-	"sa": ["Bip01 R Clavicle", "Bip01 L Clavicle"],
-	"aa": ["Bip01 R Forearm", "Bip01 L Forearm"],
-	"fa": ["Bip01 R Foot", "Bip01 L Foot"],
-}
-
-## Real, confirmed limitation found by direct visual verification (color-coded,
-## unshaded, non-culled render of each slot in isolation) against a real
-## clothes_03 set: "ha"/"ba"/"la"/"fa"/"aa" all land exactly where a real
-## character's head/torso/legs/feet/forearms are -- their raw baked vertex
-## coordinates are real absolute character-space positions, the same
-## confirmed convention body parts use (see this file's top comment) -- but
-## "sa" (the shoulder piece) does not: its raw Y range (~0.9-2.3) is roughly
-## 13 units below Bip01 Clavicle's real rest height (~15), so it renders
-## down near the pelvis instead of at the shoulder. Not yet understood why
-## this one real slot's coordinates differ from the other five (a different,
-## unconfirmed local-pivot convention for small standalone accessory props
-## is the leading guess, not confirmed) -- flagged honestly rather than
-## silently mispositioning a real shoulder pad near a character's hip.
-
-## Extracts a real equipment mesh's trailing 2-letter slot code from its
-## name (e.g. "clothes_03_aa" -> "aa"), or "" if the name doesn't end in
-## "_XX" shape.
-static func _equipment_slot(part_name: String) -> String:
-	var us := part_name.rfind("_")
-	if us == -1 or part_name.length() - us - 1 != 2:
-		return ""
-	return part_name.substr(us + 1)
-
 ## Attaches one real paired mesh to its two real bones, positive-X half to
 ## the **left** bone and negative-X half to the right.
 ##
-## That looks backwards against BODY_PART_BONES / EQUIPMENT_SLOT_BONES,
+## That looks backwards against BODY_PART_BONES,
 ## which list the right bone first, and it was written the other way round
 ## for exactly that reason. It is wrong: in a real body part's own bind
 ## space, **+X is the character's left**.
@@ -284,58 +240,3 @@ static func assemble(skeleton: Skeleton3D, parts: Dictionary, default_material: 
 			attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), bones[0], material)
 		else:
 			_attach_paired(skeleton, mesh, bones, material)
-
-## Same real mechanism as assemble() (rigid BoneAttachment3D, name-matched
-## real material resolution, X-sign split for paired pieces), applied to
-## real equipment-item meshes instead of body parts -- see
-## EQUIPMENT_SLOT_BONES for the slot-code-to-bone mapping and its real,
-## directly-observed evidence for which slots are genuinely paired.
-## Unrecognized slot codes are skipped with a printed warning, not an
-## error, same as assemble().
-static func assemble_equipment(skeleton: Skeleton3D, parts: Dictionary, default_material: Material = null, materials_by_name: Dictionary = {}) -> void:
-	for part_name in parts:
-		var slot := _equipment_slot(part_name)
-		if not EQUIPMENT_SLOT_BONES.has(slot):
-			print("CharacterAssembler: no bone mapping for equipment slot %s (part %s) -- skipped" % [slot, part_name])
-			continue
-		var bones: Array = EQUIPMENT_SLOT_BONES[slot]
-		var mesh: BmsReader.ParsedMesh = parts[part_name]
-		var material: Material = materials_by_name.get(mesh.material_name, default_material)
-
-		if bones.size() == 1:
-			attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), bones[0], material)
-		else:
-			_attach_paired(skeleton, mesh, bones, material)
-
-## Real bone a one-handed weapon rigidly attaches to -- confirmed directly
-## (not assumed from the 3ds Max Biped naming convention alone) by pulling
-## a real chinaman_skel.bsk and finding the exact string "Bip01 R Hand"
-## among its real bone names. Unlike body parts and clothes_NN equipment,
-## real weapon meshes (Prim\Mesh\Item\China\weapon\*.bms, e.g. "blade_01")
-## carry no left/right-paired naming convention -- they're single self-
-## contained meshes, one real item per weapon, not split halves.
-const WEAPON_BONE := "Bip01 R Hand"
-
-## Attaches one real weapon mesh (already resolved to its own real
-## material via mesh.material_name, e.g. a real blade_01.bms's
-## material_name "blade1_5" matches a real layer inside a real
-## blade1_5.bmt) rigidly to WEAPON_BONE -- the same attach_rigid
-## mechanism as body parts and clothing, just for a single unpaired mesh
-## with no slot-code parsing needed.
-static func assemble_weapon(skeleton: Skeleton3D, mesh: BmsReader.ParsedMesh, material: Material = null) -> void:
-	attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), WEAPON_BONE, material)
-
-## Real bone a real shield rigidly attaches to -- the off-hand counterpart
-## to WEAPON_BONE, confirmed the same direct way: pulling a real
-## chinaman_skel.bsk and finding the exact string "Bip01 L Hand" among its
-## real bone names. Real shield meshes (Prim\Mesh\Item\China\weapon\
-## shield_*.bms, e.g. "shield_11") are, like weapons, single self-contained
-## meshes with no left/right-paired naming convention.
-const SHIELD_BONE := "Bip01 L Hand"
-
-## Attaches one real shield mesh (resolved to its own real material via
-## mesh.material_name, e.g. a real shield_11.bms's material_name
-## "shield_11" matches a real layer inside a real shield_11.bmt) rigidly
-## to SHIELD_BONE -- same mechanism as assemble_weapon.
-static func assemble_shield(skeleton: Skeleton3D, mesh: BmsReader.ParsedMesh, material: Material = null) -> void:
-	attach_rigid(skeleton, BmsReader.to_array_mesh(mesh), SHIELD_BONE, material)

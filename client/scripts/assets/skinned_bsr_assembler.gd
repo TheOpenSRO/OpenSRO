@@ -1,9 +1,18 @@
 extends RefCounted
 class_name SkinnedBsrAssembler
 
-## Assembles any character-category (`.bsr` type 1) model -- NPC, monster or
-## player body -- from an open pk2 archive: skeleton, mesh pieces and
-## materials, ready to place in the world.
+## Assembles any character model -- NPC, monster or the player's own body
+## -- from an open pk2 archive: skeleton, mesh pieces and materials, ready
+## to place in the world. And dresses it: `attach_item_from_archive` hangs
+## an equippable item's `.bsr` on an assembled skeleton the way the item
+## file itself says to.
+##
+## The player's body is a `.bsr` like an NPC's -- `char\china\
+## chinaman_fighter.bsr`, named by characterdata's rows 1907-1932 -- of
+## type 0 rather than 1 (see BsrReader.TYPE_PLAYER_CHARACTER). It lists the
+## body's skeleton, its nine skinned pieces, its material and 217
+## animations, which is everything the character needs and nothing the old
+## per-gender path table had to guess.
 ##
 ## Two pieces of prior work make this general where it used to be per-model.
 ##
@@ -14,15 +23,14 @@ class_name SkinnedBsrAssembler
 ## skeleton list together (see BSR_FORMAT.md). Nothing here has to be told
 ## which skeleton a model uses.
 ##
-## **The piece-to-bone mapping is computed, not tabulated.** `.bms` carries
-## no per-vertex skinning (BMS_FORMAT.md), so each piece attaches rigidly to
-## one bone. MonsterAssembler held that mapping as a hand-derived dictionary
-## per creature, which does not scale past the two creatures in it. The
-## dictionaries were derived by matching each piece's vertex centroid to the
-## nearest bone bind position, and recomputing that at runtime reproduces
-## both of them exactly -- 7/7 pieces for golem, 3/3 for scorpion,
-## `client/tools/check_piece_bones.gd`. So the tables were only ever a cache
-## of this computation, and it is done here directly.
+## **Pieces are skinned by their own weights; the rigid path is the
+## fallback.** `.bms` carries per-vertex skinning -- a bone palette and two
+## weighted influences per vertex (BMS_FORMAT.md, hundred-and-tenth round)
+## -- and a piece that has it is bound to the skeleton by name. A piece
+## without it attaches rigidly to the bone nearest its vertex centroid,
+## which is the computation MonsterAssembler once held as a hand-derived
+## dictionary per creature (7/7 pieces for golem, 3/3 for scorpion,
+## `client/tools/check_piece_bones.gd`).
 ##
 ## **What the bone choice does and does not affect.** In the bind pose it
 ## affects nothing: `CharacterAssembler.attach_rigid` cancels the bone's own
@@ -89,7 +97,7 @@ static func assemble_from_archive(
 	if parsed == null:
 		return null
 	if not parsed.is_character:
-		push_error("SkinnedBsrAssembler: %s is not a character-category .bsr" % bsr_path)
+		push_error("SkinnedBsrAssembler: %s is not a character .bsr (type %d)" % [bsr_path, parsed.object_type])
 		return null
 
 	var bsk_data := _read(archive, parsed.skeleton_path)
@@ -189,6 +197,169 @@ static func assemble_from_archive(
 				if parsed_anim != null and not parsed_anim.bones.is_empty():
 					result.idle_animation = parsed_anim
 	return result
+
+## What attaching one item produced, for a caller that wants to report it.
+class AttachedItem:
+	## The node that was added under the body's skeleton: a skinned
+	## MeshInstance3D for an item weighted onto the body, or a
+	## BoneAttachment3D carrying the item's own skeleton otherwise.
+	var node: Node3D
+	## The body bone an item with its own skeleton hangs from, "" for one
+	## weighted onto the body.
+	var attach_bone: String = ""
+	var skinned: bool = false
+
+## Hangs one equippable item on skeleton, the way its own `.bsr` says.
+##
+## Two conventions, and the file states which applies:
+##
+## - **Weighted onto the body.** A suit, trousers, a hat, boots or
+##   wristlets name no skeleton; their mesh's bone palette names the body's
+##   own bones (`clothes_01_ba.bms` lists nine, `Bip01 Neck1` first), so the
+##   mesh is skinned to the body's skeleton exactly as a body piece is and
+##   deforms with it.
+## - **A skeleton of its own, hung from one body bone.** A weapon names
+##   `blade_01.bsk` and `Bip01 R HandMid`; a shoulder piece `clothes_sa.bsk`
+##   and `Bip01 Neck1`. Its mesh is weighted onto *that* skeleton
+##   (`blade_01.bms`'s palette is `Bone01`), so the item's skeleton is built,
+##   the mesh skinned to it, and the whole thing put under a
+##   BoneAttachment3D on the named body bone at identity -- the item's own
+##   root sits where the body bone is.
+##
+## The second convention is what the shoulder piece needed all along. Its
+## vertices are in its own skeleton's space, not the body's, which is why
+## reading them as body-space geometry put it near the pelvis.
+##
+## Returns null, having attached nothing, if the file is missing, is not an
+## item, or none of its meshes could be loaded.
+static func attach_item_from_archive(
+	archive: Pk2Reader, skeleton: Skeleton3D, bsr_path: String
+) -> AttachedItem:
+	var bsr_data := _read(archive, bsr_path)
+	if bsr_data.is_empty():
+		push_error("SkinnedBsrAssembler: item %s not found in archive" % bsr_path)
+		return null
+	var parsed := BsrReader.parse(bsr_data)
+	if parsed == null:
+		return null
+	if not parsed.is_item():
+		push_error("SkinnedBsrAssembler: %s is not an item .bsr (type %d)" % [bsr_path, parsed.object_type])
+		return null
+
+	var material := ObjectLoader.load_material(archive, parsed.material_path) if parsed.material_path != "" else null
+	var mesh_paths := parsed.all_mesh_paths()
+	var meshes: Array = []
+	for i in range(mesh_paths.size()):
+		var bms_data := _read(archive, mesh_paths[i])
+		if bms_data.is_empty():
+			push_error("SkinnedBsrAssembler: item mesh %s not found in archive" % mesh_paths[i])
+			continue
+		var mesh := BmsReader.parse(bms_data)
+		if mesh == null:
+			continue
+		var godot_material: Material = null
+		if material != null and material.layers.size() > 0:
+			var layer_idx := ObjectLoader._find_layer_by_name(material.layers, mesh.material_name)
+			if layer_idx == -1:
+				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
+			godot_material = ObjectLoader.build_godot_material(
+				archive, parsed.material_path, material.layers[layer_idx]
+			)
+		meshes.append([mesh, godot_material])
+	if meshes.is_empty():
+		push_error("SkinnedBsrAssembler: %s: none of its %d mesh piece(s) loaded" % [bsr_path, mesh_paths.size()])
+		return null
+
+	var result := AttachedItem.new()
+	if parsed.skeleton_path == "":
+		# Weighted onto the body: one skinned instance per mesh, bound to
+		# the body's own bones by name.
+		var holder := Node3D.new()
+		holder.name = bsr_path.get_file().get_basename()
+		skeleton.add_child(holder)
+		var any_skinned := false
+		for pair in meshes:
+			var mesh: BmsReader.ParsedMesh = pair[0]
+			var mi := _skinned_instance(skeleton, mesh, pair[1])
+			if mi == null:
+				continue
+			holder.add_child(mi)
+			mi.skeleton = mi.get_path_to(skeleton)
+			any_skinned = true
+		if not any_skinned:
+			holder.free()
+			push_error("SkinnedBsrAssembler: %s names no skeleton and its mesh is not weighted onto the body" % bsr_path)
+			return null
+		result.node = holder
+		result.skinned = true
+		return result
+
+	# A skeleton of its own, hung from a body bone.
+	var bone_idx := skeleton.find_bone(parsed.attach_bone)
+	if bone_idx == -1:
+		push_error("SkinnedBsrAssembler: %s hangs from %s, which the body has no bone by" % [bsr_path, parsed.attach_bone])
+		return null
+	var bsk_data := _read(archive, parsed.skeleton_path)
+	if bsk_data.is_empty():
+		push_error("SkinnedBsrAssembler: item skeleton %s not found in archive" % parsed.skeleton_path)
+		return null
+	var parsed_skeleton := BskReader.parse(bsk_data)
+	if parsed_skeleton == null:
+		return null
+	var item_skeleton := Skeleton3DBuilder.build_skeleton3d(parsed_skeleton)
+	if item_skeleton == null or item_skeleton.get_bone_count() == 0:
+		return null
+	item_skeleton.name = bsr_path.get_file().get_basename()
+
+	var attachment := BoneAttachment3D.new()
+	attachment.name = "%s@%s" % [item_skeleton.name, parsed.attach_bone]
+	attachment.bone_name = parsed.attach_bone
+	skeleton.add_child(attachment)
+	attachment.add_child(item_skeleton)
+	var any_attached := false
+	for pair in meshes:
+		var mesh: BmsReader.ParsedMesh = pair[0]
+		var mi := _skinned_instance(item_skeleton, mesh, pair[1])
+		if mi == null:
+			# An item mesh with no weights renders at its own origin, which
+			# is the item skeleton's root -- rigid, but in the right place.
+			mi = MeshInstance3D.new()
+			mi.mesh = BmsReader.to_array_mesh(mesh)
+			if pair[1] != null:
+				mi.material_override = pair[1]
+			item_skeleton.add_child(mi)
+		else:
+			item_skeleton.add_child(mi)
+			mi.skeleton = mi.get_path_to(item_skeleton)
+		any_attached = true
+	if not any_attached:
+		attachment.free()
+		return null
+	result.node = attachment
+	result.attach_bone = parsed.attach_bone
+	result.skinned = true
+	return result
+
+## A MeshInstance3D skinned to skeleton by the mesh's own bone palette, or
+## null when the mesh carries no weights or names a bone the skeleton
+## does not have.
+static func _skinned_instance(
+	skeleton: Skeleton3D, mesh: BmsReader.ParsedMesh, material: Material
+) -> MeshInstance3D:
+	if not mesh.is_skinned():
+		return null
+	var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names)
+	if skin == null:
+		return null
+	var mi := MeshInstance3D.new()
+	mi.name = mesh.mesh_name if mesh.mesh_name != "" else "piece"
+	mi.mesh = BmsReader.to_array_mesh(mesh)
+	if material != null:
+		mi.material_override = material
+	mi.skin = skin
+	# The caller sets `mi.skeleton` once the instance is in the tree; a
+	# NodePath cannot be taken to a node the instance has no parent under.
+	return mi
 
 ## The bone whose bind position is nearest the mesh's own vertex centroid.
 static func _nearest_bone(mesh: BmsReader.ParsedMesh, bone_positions: Dictionary) -> String:

@@ -124,7 +124,9 @@ func _build_synthetic_character(
 	material_paths: Array,
 	mesh_paths: Array,
 	animation_paths: Array,
-	skeleton_paths: Array
+	skeleton_paths: Array,
+	object_type: int = BsrReader.TYPE_CHARACTER,
+	attach_bones: Array = []
 ) -> PackedByteArray:
 	var buf := PackedByteArray()
 	buf.resize(BsrReader.PREAMBLE_END)
@@ -132,7 +134,7 @@ func _build_synthetic_character(
 	for i in range(magic.size()):
 		buf[i] = magic[i]
 	# High half is 2 in every real file; the low half is the object type.
-	_put_u32(buf, BsrReader.OFF_TYPE, (2 << 16) | BsrReader.TYPE_CHARACTER)
+	_put_u32(buf, BsrReader.OFF_TYPE, (2 << 16) | object_type)
 
 	buf = _append_len_prefixed(buf, obj_name)
 
@@ -176,11 +178,14 @@ func _build_synthetic_character(
 	for p in animation_paths:
 		buf = _append_len_prefixed(buf, p)
 
+	# Skeletons: a count, then per entry the path and the bone it hangs
+	# from -- an empty string for a body, a real bone name for an item.
 	_put_u32(buf, BsrReader.OFF_PTR_SKELETON, buf.size())
 	_put_u32(count_bytes, 0, skeleton_paths.size())
 	buf.append_array(count_bytes)
-	for p in skeleton_paths:
-		buf = _append_len_prefixed(buf, p)
+	for i in range(skeleton_paths.size()):
+		buf = _append_len_prefixed(buf, skeleton_paths[i])
+		buf = _append_len_prefixed(buf, attach_bones[i] if i < attach_bones.size() else "")
 
 	# Real files carry more sections after the skeleton; a trailing word is
 	# enough to prove the reader stops where it should.
@@ -331,6 +336,52 @@ func _init() -> void:
 		_check(character.material_path == "prim\\mtrl\\npc\\china\\chinaquest_priest.bmt", "character: material matches (got %s)" % character.material_path)
 		_check(character.skeleton_path == "prim\\skel\\npc\\china\\chinaquest_priest.bsk", "character: skeleton matches (got %s)" % character.skeleton_path)
 		_check(character.animation_paths.size() == 2, "character: 2 animations (got %d)" % character.animation_paths.size())
+
+	# The player's own body is type 0, not 1 -- `chinaman_fighter.bsr`
+	# writes 0x20000 at 0x40 -- and it is a character all the same: the
+	# client's factory builds a ResChar for case 0.
+	var body := BsrReader.parse(_build_synthetic_character(
+		"chinaman_fighter",
+		["prim\\mtrl\\char\\china\\man\\chinaman_fighter.bmt"],
+		["prim\\mesh\\char\\china\\man\\man_pelvis.bms", "prim\\mesh\\char\\china\\man\\man_thigh.bms"],
+		["prim\\ani\\char\\china\\man\\chinaman_fighter_standcity.ban"],
+		["prim\\skel\\char\\china\\chinaman_skel.bsk"],
+		BsrReader.TYPE_PLAYER_CHARACTER))
+	_check(body != null and body.is_character, "a type-0 player body is a character")
+	if body != null:
+		_check(body.object_type == BsrReader.TYPE_PLAYER_CHARACTER, "and reports its type (got %d)" % body.object_type)
+		_check(body.attach_bone == "", "a body's skeleton hangs from nothing (got %s)" % body.attach_bone)
+		_check(body.all_mesh_paths().size() == 2, "both body pieces are listed (got %d)" % body.all_mesh_paths().size())
+
+	# An item with a skeleton of its own says which body bone it hangs
+	# from, right after the skeleton path: blade_01.bsr names
+	# `blade_01.bsk` and `Bip01 R HandMid`.
+	var weapon := BsrReader.parse(_build_synthetic_character(
+		"blade_01",
+		["prim\\mtrl\\item\\china\\weapon\\blade1_5.bmt"],
+		["prim\\mesh\\item\\china\\weapon\\blade_01.bms"],
+		[],
+		["prim\\skel\\item\\china\\weapon\\blade_01.bsk"],
+		BsrReader.TYPE_ITEM, ["Bip01 R HandMid"]))
+	_check(weapon != null and weapon.is_item(), "a type-5 file is an item")
+	if weapon != null:
+		_check(not weapon.is_character, "and not a character, skeleton or no skeleton")
+		_check(weapon.skeleton_path == "prim\\skel\\item\\china\\weapon\\blade_01.bsk",
+			"its own skeleton is kept (got %s)" % weapon.skeleton_path)
+		_check(weapon.attach_bone == "Bip01 R HandMid", "and the bone it hangs from (got %s)" % weapon.attach_bone)
+		_check(weapon.mesh_path == "prim\\mesh\\item\\china\\weapon\\blade_01.bms", "with its mesh (got %s)" % weapon.mesh_path)
+
+	# A suit names no skeleton at all: its mesh is weighted onto the body.
+	var suit := BsrReader.parse(_build_synthetic_character(
+		"clothes_01_ba",
+		["prim\\mtrl\\item\\china\\man_item\\clothes_01.bmt"],
+		["prim\\mesh\\item\\china\\man_item\\clothes_01_ba.bms"],
+		[], [], BsrReader.TYPE_ITEM))
+	_check(suit != null and suit.is_item() and suit.skeleton_path == "" and suit.attach_bone == "",
+		"an item with no skeleton parses with none, rather than failing like a character would")
+	if suit != null:
+		_check(suit.material_path == "prim\\mtrl\\item\\china\\man_item\\clothes_01.bmt",
+			"and keeps its material (got %s)" % suit.material_path)
 
 	# A file that claims to be a character but whose sections don't chain
 	# must fall back to the scenery scan rather than emit wrong paths. A

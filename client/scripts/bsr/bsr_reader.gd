@@ -23,9 +23,25 @@ const OFF_PTR_ANIMATION := 0x18
 ## this is the game's own classification, not a guess from the path or from
 ## which order the fields happen to appear in.
 const OFF_TYPE := 0x40
+## The player's own body -- `char\china\chinaman_fighter.bsr` and the other
+## 25 rows characterdata gives ids 1907-1932. Written 0, not 1: the
+## client's object factory (`FUN_00be9250`, a switch on this value) builds
+## a `ResChar` for case 0 -- see docs/protocol/BSR_FORMAT.md -- and every
+## one of the archive's 174 type-0 files is a playable character class.
+## Same layout as TYPE_CHARACTER: a skeleton, skinned mesh pieces, and
+## the animation list that drives them.
+const TYPE_PLAYER_CHARACTER := 0
 const TYPE_CHARACTER := 1
 const TYPE_BUILDING := 2
 const TYPE_NATURE := 4
+## An equippable item: `item\china\man_item\clothes_01_ba.bsr` and the
+## rest of the 3,421 files the archive holds under this value. One mesh,
+## its material, and **optionally a skeleton of its own plus the body bone
+## it hangs from** -- a weapon carries `blade_01.bsk` and `Bip01 R HandMid`,
+## a shoulder piece `clothes_sa.bsk` and `Bip01 Neck1`, while a suit or a
+## pair of boots names no skeleton because its mesh is weighted straight
+## onto the body's bones.
+const TYPE_ITEM := 5
 
 ## The two words between the animation section pointer and its count. Both
 ## observed identical (4096, then 0) in every real file checked; their
@@ -49,6 +65,16 @@ class ParsedObject:
 	var is_character: bool = false
 	var skeleton_path: String
 	var animation_paths: Array[String] = []
+	## The low uint16 at OFF_TYPE, as the file states it. -1 when the file
+	## was read through the scenery scan and the header was not trusted.
+	var object_type: int = -1
+	## For an item with a skeleton of its own: the body bone that skeleton
+	## hangs from, authored right after the skeleton path. Empty for a
+	## body, whose skeleton hangs from nothing.
+	var attach_bone: String = ""
+
+	func is_item() -> bool:
+		return object_type == TYPE_ITEM
 
 	## Every mesh piece, primary included -- the same paths as
 	## mesh_path + sub_mesh_paths, in file order, for callers that don't
@@ -100,12 +126,14 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 	if sections != null and not (sections["meshes"] as Array).is_empty():
 		var obj_type := _le_u32(data, OFF_TYPE) & 0xFFFF
 		var skeletons: Array = sections["skeletons"]
+		var is_character_type := obj_type == TYPE_CHARACTER or obj_type == TYPE_PLAYER_CHARACTER
 		# A character with no skeleton is a contradiction -- its pieces are
 		# skin, and posing them needs bones -- so let it fall through to the
 		# scan rather than returning limbs at the origin.
-		if obj_type != TYPE_CHARACTER or not skeletons.is_empty():
+		if not is_character_type or not skeletons.is_empty():
 			var built := ParsedObject.new()
 			built.object_name = name
+			built.object_type = obj_type
 			var materials: Array = sections["materials"]
 			if not materials.is_empty():
 				built.material_path = materials[0]
@@ -117,7 +145,10 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 				built.animation_paths.append(path)
 			if not skeletons.is_empty():
 				built.skeleton_path = skeletons[0]
-			built.is_character = obj_type == TYPE_CHARACTER and built.skeleton_path != ""
+				var attach_bones: Array = sections["attach_bones"]
+				if not attach_bones.is_empty():
+					built.attach_bone = attach_bones[0]
+			built.is_character = is_character_type and built.skeleton_path != ""
 			return built
 
 	# The exact byte layout between the name and the mesh/material paths
@@ -281,15 +312,18 @@ static func parse_sections(data: PackedByteArray):
 	if anims != null and anims[1] == ptr_skeleton:
 		animations = anims[0]
 	var skeletons: Array[String] = []
-	var skels = _read_string_list(data, ptr_skeleton, ".bsk", 0)
+	var attach_bones: Array[String] = []
+	var skels = _read_skeleton_list(data, ptr_skeleton)
 	if skels != null:
 		skeletons = skels[0]
+		attach_bones = skels[1]
 
 	return {
 		"materials": materials[0],
 		"meshes": meshes[0],
 		"animations": animations,
 		"skeletons": skeletons,
+		"attach_bones": attach_bones,
 	}
 
 ## Parses a TYPE_CHARACTER file through the header's section offset table.
@@ -348,9 +382,11 @@ static func _parse_character(data: PackedByteArray, name: String) -> ParsedObjec
 	# The skeleton list is count-prefixed like the rest, but a character
 	# has exactly one in every real file checked, so only the first is
 	# kept -- a second would need a reason to exist before it's used.
-	var skeletons = _read_string_list(data, ptr_skeleton, ".bsk", 0)
+	var skeletons = _read_skeleton_list(data, ptr_skeleton)
 	if skeletons != null and not skeletons[0].is_empty():
 		obj.skeleton_path = skeletons[0][0]
+		obj.attach_bone = skeletons[1][0]
+	obj.object_type = _le_u32(data, OFF_TYPE) & 0xFFFF
 
 	# A character without a skeleton is a contradiction: the mesh pieces
 	# are skin, and posing them needs bones. Rather than hand back
@@ -359,6 +395,46 @@ static func _parse_character(data: PackedByteArray, name: String) -> ParsedObjec
 	if obj.skeleton_path == "":
 		return null
 	return obj
+
+## Reads the skeleton section: a count, then per entry a length-prefixed
+## `.bsk` path **followed by a length-prefixed bone name** -- the body bone
+## the skeleton hangs from. A body's own skeleton hangs from nothing and
+## writes an empty string there (`chinaman_fighter.bsr` carries a zero
+## length word after its skeleton path); an item's says which bone,
+## `Bip01 R HandMid` for `blade_01.bsr`, `Bip01 Neck1` for a shoulder piece.
+## Reading the list as bare paths worked only because nothing looked past
+## the first entry's end.
+##
+## Returns [paths, attach_bones, end_offset] -- both arrays empty for a
+## count of zero, which is what an item weighted straight onto the body
+## writes -- or null if the list does not parse.
+static func _read_skeleton_list(data: PackedByteArray, off: int):
+	if off + 4 > data.size():
+		return null
+	var count := _le_u32(data, off)
+	off += 4
+	if count < 0 or count > 1000:
+		return null
+	var paths: Array[String] = []
+	var bones: Array[String] = []
+	for _i in range(count):
+		var path_result = _read_len_prefixed_string(data, off)
+		if path_result == null:
+			return null
+		var path: String = path_result[0]
+		if not (_is_plausible_path(path.to_ascii_buffer()) and path.to_lower().ends_with(".bsk")):
+			return null
+		off = path_result[1]
+		var bone_result = _read_len_prefixed_string(data, off)
+		if bone_result == null:
+			return null
+		var bone: String = bone_result[0]
+		if bone != "" and not _is_plausible_path(bone.to_ascii_buffer()):
+			return null
+		off = bone_result[1]
+		paths.append(path)
+		bones.append(bone)
+	return [paths, bones, off]
 
 ## Reads a count-prefixed list of length-prefixed path strings at off, each
 ## entry preceded by lead_bytes of unread per-entry data. Every path must

@@ -64,17 +64,17 @@ sampled files. Sweeping a real `Data.pk2`'s 8,539 `.bsr` files finds **eight** d
 
 | Value | Files | Meaning |
 |---|---:|---|
-| 5 | 3,421 | unconfirmed — the most common value in the archive |
+| 5 | 3,421 | **Item** — a piece of equipment as it is worn: one mesh, its material, and sometimes a skeleton of its own plus the body bone it hangs from (`clothes_01_ba`, `blade_01`; see ITEM_FORMAT.md) |
 | 2 | 2,592 | Building / static scenery (`cj_monstad_door01`, `cj_monstad_status_l`) |
 | 4 | 946 | Nature (`tre_maple01`, `tre_bank02`) |
 | 1 | 838 | Character — skinned, has a skeleton (`chinaquest_priest`, `mangnyang`) |
-| 3 | 357 | unconfirmed |
+| 3 | 357 | unconfirmed (`npc\npc\gacha_machine` is one) |
 | 6 | 205 | unconfirmed |
-| 0 | 174 | unconfirmed |
+| 0 | 174 | **Player character** — the 26 playable classes `characterdata` names at ids 1907–1932 (`char\china\chinaman_fighter`), same layout as type 1. The client's factory (`FUN_00be9250`) builds a `ResChar` for case 0 |
 | 8193 | 6 | unconfirmed (`0x2001` — the only value above 8 bits) |
 
-Only type 1 is load-bearing: it selects the character path, and everything else is read the same
-way.
+Types 0 and 1 select the character path; type 5 is read through the section table like the rest
+and its skeleton entry, when it has one, carries the attach bone described below.
 
 ## Character layout (type 1)
 
@@ -89,7 +89,7 @@ begins — which is what makes this checkable rather than guessed, and is assert
 | Material (0x0C) | `uint32` count, then per entry: one `uint32` (unconfirmed — an index or flag, always small) followed by a length-prefixed `.bmt` path |
 | Mesh (0x10) | `uint32` count, then that many length-prefixed `.bms` paths back to back, no per-entry field |
 | Animation (0x18) | two `uint32`s (observed `4096` then `0` in every file checked, meaning unconfirmed), then a `uint32` count, then that many length-prefixed `.ban` paths |
-| Skeleton (0x14) | `uint32` count, then that many length-prefixed `.bsk` paths — always exactly 1 in every real file checked |
+| Skeleton (0x14) | `uint32` count, then per entry a length-prefixed `.bsk` path **and a length-prefixed bone name** — the body bone this skeleton hangs from. A body writes an empty string there (`chinaman_fighter.bsr`: a zero length word after the path); an item with a skeleton of its own names the bone, `Bip01 R HandMid` for `blade_01`, `Bip01 Neck1` for `clothes_01_sa`. At most 1 entry in every real file checked; 0 for an item weighted straight onto the body |
 
 Worked example, `chinaquest_priest.bsr` (717 bytes), every offset verified to chain:
 

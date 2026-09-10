@@ -63,10 +63,23 @@ propagation (not manual per-bone math) — every descendant bone moves correctly
 engine's real hierarchy. Renders the same bind-pose/animated-pose before/after comparison.
 
 `render_character.gd` — loads a real `.bsk` skeleton and a directory of real body-part `.bms`
-meshes (loose files — see `docs/protocol/BSK_FORMAT.md`), assembles them via
-`CharacterAssembler`, and renders a screenshot. Body-part meshes bake both left/right sides into
-one file as mirrored triangle ranges (no per-vertex tag) — see `docs/protocol/BMS_FORMAT.md` for
-how that was found and confirmed there's no bone-weight skinning data anywhere in `.bms`.
+meshes (loose files — see `docs/protocol/BSK_FORMAT.md`), assembles them rigidly via
+`CharacterAssembler`, and renders a screenshot. Rigid, because it predates the finding that
+`.bms` carries per-vertex skinning after all (`docs/protocol/BMS_FORMAT.md`); the game itself
+assembles a character through `SkinnedBsrAssembler` from its `.bsr`.
+
+`check_item_requirements.gd` — characterises the item table's equipment rows against a real
+archive: that column 52's worn model exists in Data.pk2 for every row (7,264 of 7,264), that the
+code name's race/gender/piece letters agree with `Country`/`ReqGender`/`TypeID4`, and which
+requirement types occur (1, and the six European mastery ids). The measurements behind
+`docs/protocol/ITEM_FORMAT.md`.
+
+`dump_text_table.gd` — prints any `server_dep\silkroad\textdata\*.txt` table with every column
+numbered, so a column index can be read off rather than counted; several of those tables carry
+their own header row naming the columns. `dump_ddj_sizes.gd` prints the pixel size and
+compression of named `.ddj` textures — a frame's insets, a name plate's cap width — so those
+numbers are measured rather than eyeballed. Both take forward slashes in archive paths, because
+backslashes do not survive ssh and su to the render box.
 
 `render_map_objects.gd` — loads a real `.o` (`Map.pk2` object-placement) file through
 `MapoReader` and renders a top-down scatter of every placed object's real world position, colored

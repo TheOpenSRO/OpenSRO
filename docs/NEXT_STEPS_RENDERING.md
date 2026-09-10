@@ -85,10 +85,10 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   screenshots for both species. **Wild Boar still has no real asset at all** (still a labeled
   placeholder capsule). Animation playback (14 real `.ban` files known per species, e.g. walk/
   attack/die) not wired up for either — both currently render in a static bind pose.
-- **Equipment/weapon/shield visuals are real but not verified complete** — `armor_slots_mask`
-  correctly drives which real armor pieces attach, but there's been no recent audit of whether
-  every armor/weapon/shield combination actually resolves to a real asset vs. silently rendering
-  nothing for an unmapped combination.
+- ~~Equipment/weapon/shield visuals are real but not verified complete~~ — **settled
+  2026-09-10**: every worn item is drawn from the model its own item-table row names, and
+  `client/tools/check_item_requirements.gd` finds all 7,264 of those models in a real Data.pk2.
+  See `docs/protocol/ITEM_FORMAT.md`.
 - ~~Root-cause fix: assembled player character never animated at all~~ — **fixed 2026-08-28**, same
   day as the correction above. `Skeleton3DBuilder.build_skeleton3d` now uses each bone's real
   `.bsk` world-space bind rotation (converted to a parent-relative rest transform) instead of

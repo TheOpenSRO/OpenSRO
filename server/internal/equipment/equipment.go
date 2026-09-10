@@ -8,29 +8,37 @@ import (
 	"errors"
 )
 
-// Slot identifies one equipment slot. Real, decompiler-confirmed slot
-// names and order (from sro_client.exe's real "Avatar" equip-visual debug
-// dump) -- see docs/protocol/EQUIP_SLOTS.md for the full derivation.
-// Replaces an earlier own-design single catch-all SlotArmor now that a
-// real per-piece layout has been found.
+// Slot identifies one equipment slot, numbered in the game's own order.
+//
+// The order is the one the client's equipment window loads its slot
+// artwork in -- helm, mail, shoulderguard, gauntlet, pants, boots, weapon,
+// shield, then the accessories -- and the one its avatar's equip-visual
+// struct keeps the first eight in, twelve bytes apart (see
+// docs/protocol/EQUIP_SLOTS.md). Gauntlet is the slot that struct's debug
+// dump skipped and this project once could not name: the wristlet worn on
+// the forearms, `clothes_NN_aa` in the model files.
 type Slot int
 
 const (
-	SlotWeapon Slot = iota
-	SlotHelm
+	SlotHelm Slot = iota
 	SlotMail
 	SlotShoulderGuard
+	SlotGauntlet
 	SlotPants
 	SlotBoots
+	SlotWeapon
 	SlotShield
 	SlotExtra
 )
 
-// ArmorSlots are the five real slots CharacterAssembler has a confirmed
-// real bone mapping for (see EQUIP_SLOTS.md) -- the ones that actually
-// render something client-side. SlotShield/SlotExtra are real and
-// trackable but have no confirmed real rendering convention yet.
-var ArmorSlots = []Slot{SlotHelm, SlotMail, SlotShoulderGuard, SlotPants, SlotBoots}
+// ArmorSlots are the six wearable armour slots -- the ones that add to a
+// character's defence and are drawn on the body. SlotWeapon and SlotShield
+// are held, not worn; SlotExtra is tracked but has no gameplay yet.
+var ArmorSlots = []Slot{SlotHelm, SlotMail, SlotShoulderGuard, SlotGauntlet, SlotPants, SlotBoots}
+
+// WearableSlots is every slot that carries a model the client draws on
+// the character: the armour, plus the weapon and shield.
+var WearableSlots = []Slot{SlotHelm, SlotMail, SlotShoulderGuard, SlotGauntlet, SlotPants, SlotBoots, SlotWeapon, SlotShield}
 
 // ErrInvalidSlot is returned for a Slot value outside the known set.
 var ErrInvalidSlot = errors.New("equipment: invalid slot")

@@ -22,20 +22,22 @@ const OP_CHANGE_ZONE_RESULT := 0x0027  # server -> client
 ## GENDER_CHINA_WOMAN), which picks which real body/skeleton assets they
 ## render with.
 ##
-## armor_slots_mask is a real per-piece bitmask, one bit per entry in
-## EquipmentNet.ARMOR_SLOTS (bit 0 = ARMOR_SLOTS[0], etc.) -- see
-## docs/protocol/EQUIP_SLOTS.md for the real slot names/order this
-## reflects (HELM, MAIL, SHOULDERGUARD, PANTS, BOOTS).
+## `equipped` maps each worn slot (EquipmentNet.SLOT_*) to the item id in
+## it. The id is what dressing needs: the client's own item table names the
+## model every item is worn as, so "slot 1 holds 4842" draws a Cotton Suit
+## and nothing else.
 class EntitySnapshot:
 	var character_id: int
 	var char_name: String
 	var x: float
 	var y: float
 	var z: float
-	var armor_slots_mask: int
-	var has_weapon: bool
-	var has_shield: bool
+	## slot -> item id, for every slot with something in it.
+	var equipped: Dictionary = {}
 	var gender: String
+
+	func item_in(slot: int) -> int:
+		return int(equipped.get(slot, 0))
 
 ## Encodes an OpEnterWorld request: just a character name.
 static func encode_enter_world(character_name: String) -> PackedByteArray:
@@ -98,20 +100,18 @@ static func _decode_entity_snapshot(data: PackedByteArray, offset: int) -> Array
 	snap.z = data.decode_float(offset + 8)
 	offset += 12
 
+	# One byte of count, then a slot byte and an item id per worn slot.
 	if offset + 1 > data.size():
 		return [null, -1]
-	snap.armor_slots_mask = data[offset]
+	var worn_count := data[offset]
 	offset += 1
-
-	if offset + 1 > data.size():
-		return [null, -1]
-	snap.has_weapon = data[offset] != 0
-	offset += 1
-
-	if offset + 1 > data.size():
-		return [null, -1]
-	snap.has_shield = data[offset] != 0
-	offset += 1
+	for _i in range(worn_count):
+		if offset + 9 > data.size():
+			return [null, -1]
+		var slot := data[offset]
+		var item_id := data.decode_s64(offset + 1)
+		offset += 9
+		snap.equipped[slot] = item_id
 
 	if offset + 2 > data.size():
 		return [null, -1]

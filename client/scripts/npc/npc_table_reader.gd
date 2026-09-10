@@ -42,8 +42,10 @@ const COL_POS_X := 2
 const COL_POS_Y := 3
 const COL_POS_Z := 4
 
-## Column 1 is the id in every characterdata part checked.
+## Column 1 is the id in every characterdata part checked, and column 2
+## the code name (`CHAR_CH_MAN_FIGHTER`, `MOB_CH_MANGNYANG`).
 const COL_MODEL_ID := 1
+const COL_CODE_NAME := 2
 
 class Spawn:
 	var npc_id: int
@@ -121,6 +123,27 @@ static func parse_models_by_name(
 		if display == "" or display == key:
 			continue
 		into[display.to_lower()] = model
+	return into
+
+## Parses one characterdata part into {code name -> model path}, merging
+## into `into`: `CHAR_CH_MAN_FIGHTER` -> `char\\china\\chinaman_fighter.bsr`.
+##
+## The player's own body is a row in this table like any NPC's -- ids
+## 1907-1932 are the 26 playable China classes, 13 to a gender -- and the
+## code name is the stable way to name one of them: it is the same string
+## in every part and every archive, where an id is only a number.
+static func parse_models_by_code(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+	for line in _lines(data):
+		var cols := line.split("\t")
+		if cols.size() <= COL_CODE_NAME:
+			continue
+		var model := _find_model_path(cols)
+		if model == "":
+			continue
+		var code := cols[COL_CODE_NAME].strip_edges()
+		if code == "" or not code.begins_with("CHAR_"):
+			continue
+		into[code] = model
 	return into
 
 ## Parses one characterdata part into {id -> display name}, merging into

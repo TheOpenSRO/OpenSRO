@@ -82,9 +82,14 @@ func _build_enter_world_result(ok: bool, reason: String, zone: String, x: float,
 		opos_buf.encode_float(4, o["y"])
 		opos_buf.encode_float(8, o["z"])
 		out.append_array(opos_buf)
-		out.append(int(o.get("armor_slots_mask", 0)) & 0xFF)
-		out.append(1 if o.get("has_weapon", false) else 0)
-		out.append(1 if o.get("has_shield", false) else 0)
+		var worn: Dictionary = o.get("equipped", {})
+		out.append(worn.size())
+		for slot in worn:
+			out.append(int(slot))
+			var item_buf := PackedByteArray()
+			item_buf.resize(8)
+			item_buf.encode_s64(0, int(worn[slot]))
+			out.append_array(item_buf)
 		var ogender_bytes: PackedByteArray = String(o.get("gender", "")).to_utf8_buffer()
 		len_buf.encode_u16(0, ogender_bytes.size())
 		out.append_array(len_buf)
@@ -93,7 +98,7 @@ func _build_enter_world_result(ok: bool, reason: String, zone: String, x: float,
 	return out
 
 func _test_decode_enter_world_result_success() -> void:
-	var payload := _build_enter_world_result(true, "", "jangan", 1.0, 2.0, 3.0, CharacterNet.GENDER_CHINA_MAN, [{"id": 42, "name": "Bram", "x": 4.0, "y": 5.0, "z": 6.0, "armor_slots_mask": 0b10101, "has_weapon": true, "has_shield": true, "gender": CharacterNet.GENDER_CHINA_WOMAN}], 73, 100)
+	var payload := _build_enter_world_result(true, "", "jangan", 1.0, 2.0, 3.0, CharacterNet.GENDER_CHINA_MAN, [{"id": 42, "name": "Bram", "x": 4.0, "y": 5.0, "z": 6.0, "equipped": {EquipmentNet.SLOT_HELM: 4734, EquipmentNet.SLOT_BOOTS: 4950, EquipmentNet.SLOT_WEAPON: 3632, EquipmentNet.SLOT_SHIELD: 3639}, "gender": CharacterNet.GENDER_CHINA_WOMAN}], 73, 100)
 	var result := WorldNet.decode_enter_world_result(payload)
 	_check(result.error == "", "no decode error")
 	_check(result.ok, "ok is true")
@@ -106,9 +111,10 @@ func _test_decode_enter_world_result_success() -> void:
 		_check(result.others[0].character_id == 42, "other's character_id round-trips")
 		_check(result.others[0].char_name == "Bram", "other's name round-trips")
 		_check(result.others[0].x == 4.0, "other's x round-trips")
-		_check(result.others[0].armor_slots_mask == 0b10101, "other's armor_slots_mask round-trips (got %d)" % result.others[0].armor_slots_mask)
-		_check(result.others[0].has_weapon, "other's has_weapon round-trips")
-		_check(result.others[0].has_shield, "other's has_shield round-trips")
+		_check(result.others[0].equipped.size() == 4, "other's four worn slots round-trip (got %d)" % result.others[0].equipped.size())
+		_check(result.others[0].item_in(EquipmentNet.SLOT_HELM) == 4734, "the helm's item id round-trips (got %d)" % result.others[0].item_in(EquipmentNet.SLOT_HELM))
+		_check(result.others[0].item_in(EquipmentNet.SLOT_WEAPON) == 3632, "the weapon's item id round-trips")
+		_check(result.others[0].item_in(EquipmentNet.SLOT_MAIL) == 0, "an empty slot reads as item 0")
 		_check(result.others[0].gender == CharacterNet.GENDER_CHINA_WOMAN, "other's gender round-trips")
 
 func _test_decode_enter_world_result_failure() -> void:
@@ -119,7 +125,7 @@ func _test_decode_enter_world_result_failure() -> void:
 	_check(result.reason == "no such character", "reason round-trips")
 
 func _test_decode_entity_entered() -> void:
-	var payload := _build_enter_world_result(true, "", "z", 0, 0, 0, "", [{"id": 7, "name": "Bram", "x": 1.0, "y": 2.0, "z": 3.0, "armor_slots_mask": 0b00010, "has_weapon": false, "has_shield": true, "gender": CharacterNet.GENDER_CHINA_MAN}])
+	var payload := _build_enter_world_result(true, "", "z", 0, 0, 0, "", [{"id": 7, "name": "Bram", "x": 1.0, "y": 2.0, "z": 3.0, "equipped": {EquipmentNet.SLOT_MAIL: 4842, EquipmentNet.SLOT_SHIELD: 3639}, "gender": CharacterNet.GENDER_CHINA_MAN}])
 	# _build_enter_world_result wraps a single EntitySnapshot the same way
 	# OpEntityEntered's payload is just one bare EntitySnapshot -- slice off
 	# the EnterWorldResult framing in front of it (ok byte + empty reason +
@@ -131,16 +137,16 @@ func _test_decode_entity_entered() -> void:
 	if entered != null:
 		_check(entered.character_id == 7, "character_id round-trips")
 		_check(entered.char_name == "Bram", "name round-trips")
-		_check(entered.armor_slots_mask == 0b00010, "armor_slots_mask round-trips (got %d)" % entered.armor_slots_mask)
-		_check(not entered.has_weapon, "has_weapon round-trips (false)")
-		_check(entered.has_shield, "has_shield round-trips (true)")
+		_check(entered.item_in(EquipmentNet.SLOT_MAIL) == 4842, "the mail's item id round-trips (got %d)" % entered.item_in(EquipmentNet.SLOT_MAIL))
+		_check(entered.item_in(EquipmentNet.SLOT_WEAPON) == 0, "no weapon reads as item 0")
+		_check(entered.item_in(EquipmentNet.SLOT_SHIELD) == 3639, "the shield's item id round-trips")
 		_check(entered.gender == CharacterNet.GENDER_CHINA_MAN, "gender round-trips")
 
-	var unarmored := _build_enter_world_result(true, "", "z", 0, 0, 0, "", [{"id": 8, "name": "Aria", "x": 0.0, "y": 0.0, "z": 0.0, "armor_slots_mask": 0, "has_weapon": true, "has_shield": false, "gender": CharacterNet.GENDER_CHINA_WOMAN}])
+	var unarmored := _build_enter_world_result(true, "", "z", 0, 0, 0, "", [{"id": 8, "name": "Aria", "x": 0.0, "y": 0.0, "z": 0.0, "equipped": {EquipmentNet.SLOT_WEAPON: 3632}, "gender": CharacterNet.GENDER_CHINA_WOMAN}])
 	var entered2 := WorldNet.decode_entity_entered(unarmored.slice(snapshot_start))
-	_check(entered2 != null and entered2.armor_slots_mask == 0, "armor_slots_mask round-trips (0)")
-	_check(entered2 != null and entered2.has_weapon, "second entity's has_weapon round-trips (true)")
-	_check(entered2 != null and not entered2.has_shield, "second entity's has_shield round-trips (false)")
+	_check(entered2 != null and entered2.equipped.size() == 1, "second entity wears one thing")
+	_check(entered2 != null and entered2.item_in(EquipmentNet.SLOT_WEAPON) == 3632, "second entity's weapon round-trips")
+	_check(entered2 != null and entered2.item_in(EquipmentNet.SLOT_SHIELD) == 0, "second entity's empty shield slot reads 0")
 	_check(entered2 != null and entered2.gender == CharacterNet.GENDER_CHINA_WOMAN, "second entity's gender round-trips")
 
 func _test_decode_entity_moved() -> void:
@@ -212,9 +218,14 @@ func _build_change_zone_result(ok: bool, reason: String, zone: String, x: float,
 		opos_buf.encode_float(4, o["y"])
 		opos_buf.encode_float(8, o["z"])
 		out.append_array(opos_buf)
-		out.append(int(o.get("armor_slots_mask", 0)) & 0xFF)
-		out.append(1 if o.get("has_weapon", false) else 0)
-		out.append(1 if o.get("has_shield", false) else 0)
+		var worn: Dictionary = o.get("equipped", {})
+		out.append(worn.size())
+		for slot in worn:
+			out.append(int(slot))
+			var item_buf := PackedByteArray()
+			item_buf.resize(8)
+			item_buf.encode_s64(0, int(worn[slot]))
+			out.append_array(item_buf)
 		var ogender_bytes: PackedByteArray = String(o.get("gender", "")).to_utf8_buffer()
 		len_buf.encode_u16(0, ogender_bytes.size())
 		out.append_array(len_buf)

@@ -113,13 +113,12 @@ your own pk2s shows up the same way it would in-game (a `push_error` naming the 
 without needing to actually load the 3D view first.
 
 **Checking whether your character/equipment assets are fully mapped**: `go run
-./cmd/auditcharacters -data "<path to Data.pk2>"` (from `server/`) walks the same real
-gender/skeleton/body-part/armor-set/weapon/shield matrix the client loads at runtime (see
-`GENDER_ASSET_PATHS`/`ARMOR_SET_NUMBERS`/`WEAPON_VARIANTS`/`SHIELD_VARIANTS` in
-`client/scripts/World3D.gd`) and reports any file that exists but fails to parse. A missing armor
-set or body part is reported as informational, not a failure — the client itself already treats
-that as a normal per-version gap — so real failures here mean an actual parser/format mismatch,
-not just missing content.
+./cmd/auditcharacters -data "<path to Data.pk2>"` (from `server/`) walks a
+gender/skeleton/body-part/armor-set/weapon/shield matrix of conventional paths and reports any
+file that exists but fails to parse. The client itself no longer uses that matrix -- it dresses a
+character from the item table's own model column (see `docs/protocol/ITEM_FORMAT.md`) -- and
+`client/tools/check_item_requirements.gd` is the check for that: it resolves every worn model the
+table names against Data.pk2 and reports the ones that are missing.
 
 Run the test suites from `server/` (`go test ./...`, needs the same local Postgres) and `client/`
 (`godot4 --headless --path . --script res://scripts/net/<name>_test.gd` for each file, or see
@@ -299,63 +298,26 @@ with nothing else, for instance — instead of the old all-or-nothing bundle. `W
 Equipment tab exposes this via a real slot picker (`OptionButton`), mirroring the gender picker's
 pattern.
 
-Whether each real armor piece actually shows is gated on the player's actual,
-server-authoritative per-slot equip state via the same `EquipmentNet` protocol that tab uses
-(`World3D.gd`'s `_real_player_equipped_slots()`), queried on world entry. A newly-created
-character has nothing equipped, so it renders bare-skinned until the player actually equips real
-pieces — and renders exactly the pieces actually equipped, not a fixed bundle. Skips the query
-entirely (defaults to nothing equipped, not a hang) when there's no live server connection — e.g.
-the standalone dev-tool/screenshot contexts used throughout this project's asset work.
+What the character wears is the server's word, and each piece is drawn from its own model. The
+equipment list (`EquipmentNet`) says which item id is in which slot; the client's own item table
+(`Media.pk2`'s `itemdata*.txt`) names, in column 52, the `.bsr` every item is worn as --
+`4842 Cotton Suit` reads `item\china\man_item\clothes_01_ba.bsr` -- and that file says how the
+piece hangs: weighted onto the body's own bones (a suit, trousers, a hat, boots, wristlets) or on
+a skeleton of its own under one named body bone (a blade on `Bip01 R HandMid`, a shoulder piece on
+`Bip01 Neck1`). The body itself is a row of `characterdata` like any NPC's
+(`CHAR_CH_MAN_FIGHTER` -> `char\china\chinaman_fighter.bsr`), skinned by its own per-vertex
+weights. See `docs/protocol/ITEM_FORMAT.md` and `client/scripts/assets/skinned_bsr_assembler.gd`.
 
-The player wears real armor pieces from a real, full 6-piece per-gender set
-(`Prim/Mesh/Item/China/{man,woman}_item/clothes_<NN>_{aa,ba,fa,ha,la,sa}.bms` — arm/body/foot/head/
-leg/shoulder) that attaches via `CharacterAssembler.assemble_equipment`, the same rigid-attachment
-mechanism as the body, textured the same real name-matched way. Which slots are genuinely paired
-(mirrored L/R in one file) vs. single-piece was determined by a real triangle-centroid-X gap scan
-on the actual files, not a guess — see `docs/PROGRESS.md`. **The local player now picks one of 8
-real, individually-verified set numbers (`02`-`09`) deterministically from their actual equipped
-armor item's real ID** (`World3D.gd`'s `ARMOR_SET_NUMBERS`/`_try_apply_real_player_character`) —
-real per-item ID-to-model mapping data doesn't exist anywhere this project can reach (checked;
-`_RefObjItem` has no code-name/model column), so this is an honest own-designed substitute: a
-different real item at least looks different, without claiming to match the real game's actual
-item-to-model mapping. Other connected players still show one fixed look, since the wire protocol
-broadcasting their equipment to everyone else only carries a boolean, not a real item ID, yet.
+An earlier version of this README said a per-item model mapping "doesn't exist anywhere this
+project can reach"; it is column 52 of the item table, and everything that followed from its
+absence -- a look picked by `item_id % 8`, guessed bone tables, a shoulder piece at the pelvis --
+is gone. Other connected players are dressed the same way: every entity snapshot carries slot and
+item id for each worn slot.
 
-Other connected players are real assembled characters too now, not just labeled capsules, each
-rendering their own real per-account `Gender` (China Man or China Woman — see above), not a single
-shared fixed body. Their armor pieces and weapon are genuinely per-player too: the server
-broadcasts each entity's real, live per-slot equip state as part of `OpEnterWorldResult`/
-`OpEntityEntered` (`EntitySnapshot.ArmorSlotsMask`/`HasWeapon`, queried fresh from
-`server/internal/equipment` at broadcast time, not cached) — verified with a real, live two-client
-test over actual TCP (`TestWorldFullFlow`): one character with a real armor piece equipped but no
-weapon, one with a real weapon equipped but no armor, and both the initial world snapshot and the
-live entity-entered broadcast carry the correct real per-piece flags for each. The
-character/equipment assets are parsed and cached once at scene startup and reused to build one
-independent `Skeleton3D` per connected player — see `World3D.gd`'s `_build_assembled_character()`.
-Falls back to the labeled capsule if the shared assets never loaded. A bare *decoration*
-`Skeleton3D` (loaded separately via `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH`, not any player's body)
-still renders with joint/bone debug visualization, not a real mesh — see "Not yet done" below.
-
-Equipped armor now actually matters in combat, not just cosmetically: each real piece's item-data
-`PhysDefenseMax` is summed across whatever's equipped in `equipment.ArmorSlots` and subtracted from
-incoming damage (a monster's counterattack, or an opponent's hit in a duel), floored at 1 so armor
-can reduce a hit but never negate it entirely — see `server/internal/session/combat.go`'s
-`defenderArmor` and `docs/PROGRESS.md`.
-
-The player also wields a real weapon now, gated the same honest way as armor: a real one-handed
-blade (`Prim/Mesh/Item/China/weapon/blade_<NN>.bms`, faction-wide rather than per-gender —
-`Prim\Mesh\Item\China\weapon\` has no man/woman split, unlike body/armor meshes) attaches to a
-real, directly-confirmed hand bone (`CharacterAssembler.WEAPON_BONE`, "Bip01 R Hand" — found by
-pulling a real skeleton and locating that exact bone name string, not assumed from the naming
-convention) via the same rigid-attachment mechanism as body parts and armor. Only shows once the
-player's account actually has something equipped in `SLOT_WEAPON` — a newly-created character
-renders bare-handed, same as bare-skinned for armor. **The local player picks one of 15 real,
-individually-verified blades (`blade_01`-`blade_15`) deterministically from their actual equipped
-weapon item's real ID** (`World3D.gd`'s `WEAPON_VARIANTS`) — each mesh's own real `material_name`
-field was checked by hand against real `.bmt` files rather than assumed from a naming formula
-(`blade_01`-`blade_06` share `blade1_5.bmt`, `blade_07`-`blade_09` share `blade6_10.bmt`, `blade_10`
-uses `blade_10_12.bmt`, `blade_11`-`blade_15` each have their own). Other connected players still
-show one fixed blade, same real-item-ID gap as armor above.
+Who may wear what is the item table's rule too, enforced server-side (`equipment.Refusal`): the
+slot from the item's type ids, its race, its gender, and its required level where the requirement
+is by character level. Requirements by mastery level (the European items) and by strength or
+intellect are read and kept but not enforced yet -- nothing tracks those numbers.
 
 A real off-hand shield renders the same way: real, faction-wide shield item meshes exist under the
 same real weapon folder and attach to a second real, directly-confirmed bone

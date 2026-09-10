@@ -31,42 +31,28 @@ extends Node3D
 ##
 ## The *player's own* body is no longer a placeholder if you point this
 ## project at your own real game data (this project ships with none --
-## BYO, see docs/LEGAL.md): set SRREVAMP_PK2_PATH to a real pk2 archive
-## (e.g. Data.pk2) and this scene auto-loads a real assembled character --
-## a real .bsk skeleton plus real body-part .bms meshes rigidly attached to
-## it via CharacterAssembler -- using the conventional real path layout
-## found during reverse-engineering (Prim/Skel/Char/China/chinaman_skel.bsk
-## + Prim/Mesh/Char/China/man/*.bms). It also wears a real, fixed 6-piece
-## armor set (Prim/Mesh/Item/China/man_item/clothes_03_*.bms -- arm, body,
-## foot, head, leg, shoulder), attached the same rigid way via
-## CharacterAssembler.assemble_equipment, plus a real, fixed one-handed
-## weapon (Prim/Mesh/Item/China/weapon/blade_01.bms) attached to the real
-## confirmed hand bone via CharacterAssembler.assemble_weapon. Real
-## per-account race/gender selection now exists (see character.Gender
-## server-side and CharacterSelect.tscn's gender picker), but this is
-## otherwise a fixed body per gender (always the same China-man or
-## China-woman class/skin pick) -- there's no confirmed mapping to vary
-## that automatically. Which armor *pieces* show, and whether the weapon
-## shows, is real, per-piece, though: gated on the player's actual,
-## server-authoritative equip state across a real, decompiler-confirmed
-## 8-slot layout (HELM/MAIL/SHOULDERGUARD/PANTS/BOOTS/WEAPON/SHIELD/EXTRA
-## -- see docs/protocol/EQUIP_SLOTS.md and _real_player_equipped_slots()),
-## not one all-or-nothing bundle. A newly-created character has nothing
-## equipped, so it renders bare-skinned and bare-handed until the player
-## actually equips real pieces -- mixing e.g. a real helm with no other
-## armor renders correctly, not just "some vs. none". Falls back to the
-## placeholder capsule if the body itself isn't found.
+## BYO, see docs/LEGAL.md): set SRREVAMP_PK2_PATH to a real Data.pk2 and
+## SRREVAMP_MEDIA_PK2_PATH to a real Media.pk2, and the character is
+## assembled the way the game assembles it. The body is a row of
+## characterdata (`CHAR_CH_MAN_FIGHTER` -> `char\china\chinaman_fighter.bsr`,
+## see GENDER_BODY_CODE), a `.bsr` naming the skeleton, nine skinned body
+## pieces, the material and 217 animations. What it wears is the server's
+## word: each equipped slot's item id is looked up in the item table for the
+## model that item is worn as (column 52, `item\china\man_item\
+## clothes_01_ba.bsr` for the Cotton Suit), and that `.bsr` says how it
+## hangs -- weighted onto the body's bones, or on a skeleton of its own
+## under one named body bone (a blade on `Bip01 R HandMid`, a shoulder
+## piece on `Bip01 Neck1`). See docs/protocol/ITEM_FORMAT.md.
 ##
-## Other connected players use their own real Gender's body too (see
-## _build_assembled_character()) rather than a capsule, when
-## SRREVAMP_PK2_PATH is set -- their armor pieces, weapon, and shield are
-## real per-player as well: the server broadcasts each entity's actual
-## live per-piece equip state as part of OpEnterWorldResult/
-## OpEntityEntered (WorldNet.EntitySnapshot.armor_slots_mask/has_weapon/
-## has_shield -- see server/internal/session/world.go's equippedSlots), so
-## other players only show the real pieces their own account actually
-## equipped, same as the local player. Falls back to the labeled capsule
-## per-entity if the shared character assets never loaded.
+## A newly-created character wears the starting kit the server gave it;
+## an item whose id the table does not know is left undrawn rather than
+## stood in for. Falls back to the placeholder capsule if the body itself
+## cannot be built.
+##
+## Other connected players are dressed the same way from the same data:
+## their gender and every worn item's id come in each EntitySnapshot
+## (OpEnterWorldResult/OpEntityEntered, queried live from the equipment
+## store -- see equippedItems in server/internal/session/world.go).
 ##
 ## SRREVAMP_PK2_PATH + SRREVAMP_BSR_PATH also loads one real, textured
 ## static scenery object nearby via ObjectLoader, and
@@ -428,127 +414,40 @@ const OTHER_BODY_INTERPOLATION_SPEED := 15.0
 ## Plausible (unconfirmed) .ban playback rate -- see docs/protocol/BAN_FORMAT.md.
 const BAN_FPS := 30.0
 
-## Real, per-Gender asset path layout found during reverse-engineering
-## (private server package data plus, for the woman/gender-parity check,
-## direct confirmation against a real retail Data.pk2 -- see
-## docs/PROGRESS.md). Real client pk2 archives are expected to mirror the
-## same Prim/ tree; not confirmed as the *only* layout they use. Keyed by
-## the same real Gender strings as character.GenderChinaMan/GenderChinaWoman
-## (server/internal/character/character.go) -- only these two, since this
-## project's available real client data has complete, parallel body/
-## skeleton/armor asset sets for exactly these two and not for any other
-## real race found in that data (see character.go's doc comment).
+## The body each gender is drawn with: a row of characterdata, the same
+## table that names every NPC's model, by its code name. Ids 1907-1932 of
+## that table are the 26 playable China classes -- adventurer, bogy,
+## fighter, merchant, monk and the rest, 13 to a gender -- and each row's
+## `.bsr` lists the body's skeleton, its nine skinned pieces, its material
+## and its animations. Nothing about the body is guessed from a path
+## layout any more.
 ##
-## Body-part meshes are shared across every class/skin choice within a
-## gender, so any class's .bmt works for "material" -- "warrior" is an
-## arbitrary fixed pick per gender, confirmed real by direct inspection
-## (each gender's man_thigh/woman_thigh.bms material_name field matches a
-## real layer_name inside that gender's chinaman_warrior.bmt/
-## chinawoman_warrior.bmt). "clothes_03" is likewise an arbitrary fixed
-## pick among many real numbered armor sets found for each gender -- not a
-## real per-account equipment loadout (see this file's top comment).
-##
-## China-man's real forearm mesh is "man_arm_lower"; China-woman's real
-## equivalent is "woman_arm_fore" -- different real filename convention,
-## same real bones (see CharacterAssembler.BODY_PART_BONES).
-## idle_anim/walk_anim: real generic (not weapon/skill-specific) locomotion
-## clips found live (2026-08-22) against a real retail Data.pk2, under each
-## gender's real "fighter" class subtree -- matching the "warrior" material
-## already picked above, so the animation and the outfit are at least from
-## the same real class family. Real, but same "one arbitrary pick among
-## many" honesty level as every other GENDER_ASSET_PATHS entry (there are
-## also merchant/monkey/tattoo/etc. variants this project didn't check).
-const GENDER_ASSET_PATHS := {
-	"china_man": {
-		"skeleton": "Prim\\Skel\\Char\\China\\chinaman_skel.bsk",
-		"mesh_dir": "Prim\\Mesh\\Char\\China\\man",
-		# The face and hair are separate real meshes, named for the
-		# character's style rather than "man_*" like the body parts, and
-		# both hang off the head bone. "fighter" is the same real style
-		# this entry's own animations use.
-		"body_parts": ["man_pelvis", "man_torso_lower", "man_torso_upper", "man_thigh", "man_calf", "man_arm_upper", "man_arm_lower", "chinaman_fighter_face", "chinaman_fighter_hair"],
-		"material": "Prim\\Mtrl\\Char\\China\\man\\chinaman_warrior.bmt",
-		"equipment_mesh_dir": "Prim\\Mesh\\Item\\China\\man_item",
-		"equipment_material_dir": "Prim\\Mtrl\\Item\\China\\man_item",
-		"equipment_part_suffixes": ["aa", "ba", "fa", "ha", "la", "sa"],
-		"idle_anim": "Prim\\Ani\\Char\\China\\man\\chinaman_fighter_standcity.ban",
-		"walk_anim": "Prim\\Ani\\Char\\China\\man\\chinaman_fighter_walkforward.ban",
-		"hit_anim": "Prim\\Ani\\Char\\China\\man\\chinaman_a_benormalhit.ban",
-		"death_anim": "Prim\\Ani\\Char\\China\\man\\chinaman_a_diehardhit.ban",
-	},
-	"china_woman": {
-		"skeleton": "Prim\\Skel\\Char\\China\\chinawoman_skel.bsk",
-		"mesh_dir": "Prim\\Mesh\\Char\\China\\woman",
-		"body_parts": ["woman_pelvis", "woman_torso_lower", "woman_torso_upper", "woman_thigh", "woman_calf", "woman_arm_upper", "woman_arm_fore", "chinawoman_fighter_face", "chinawoman_fighter_hair"],
-		"material": "Prim\\Mtrl\\Char\\China\\woman\\chinawoman_warrior.bmt",
-		"equipment_mesh_dir": "Prim\\Mesh\\Item\\China\\woman_item",
-		"equipment_material_dir": "Prim\\Mtrl\\Item\\China\\woman_item",
-		"equipment_part_suffixes": ["aa", "ba", "fa", "ha", "la", "sa"],
-		"idle_anim": "Prim\\Ani\\Char\\China\\woman\\chinawoman_fighter_standcity.ban",
-		"walk_anim": "Prim\\Ani\\Char\\China\\woman\\chinawoman_fighter_walkforward.ban",
-		"hit_anim": "Prim\\Ani\\Char\\China\\woman\\chinawoman_a_benormalhit.ban",
-		"death_anim": "Prim\\Ani\\Char\\China\\woman\\chinawoman_a_diehardhit.ban",
-	},
+## **Which class is a fixed pick.** The server stores a gender and nothing
+## finer, so "fighter" is chosen here for both -- the same style the earlier
+## per-gender path table already used for the face and hair. A class
+## choice at character creation would replace this table, not this code.
+const GENDER_BODY_CODE := {
+	"china_man": "CHAR_CH_MAN_FIGHTER",
+	"china_woman": "CHAR_CH_WOMAN_FIGHTER",
 }
 ## Falls back to this real gender's assets when a requested gender's assets
 ## didn't load (or a peer reports an unrecognized gender string) -- matches
 ## character.DefaultGender server-side.
 const DEFAULT_GENDER := "china_man"
 
-## Real, individually-verified weapon mesh/material pairs (2026-08-22),
-## found under a faction-wide (not per-gender) real folder --
-## Prim\Mesh\Item\China\weapon\ has no man/woman split, unlike body/armor
-## meshes. Each mesh's own real material_name field was directly checked
-## against real .bmt files in the same folder (not assumed from a naming
-## formula -- e.g. blade_14's material_name didn't match its own number the
-## way most others do, and shield_14 was dropped entirely because its
-## material_name ("China_shield_14") didn't match any real file at all).
-## The local player picks one of these per real equipped weapon item ID
-## (see _real_player_equipped_slots/_try_apply_real_player_character) so
-## different real weapons actually look different; other players still
-## always show WEAPON_VARIANTS[0]/SHIELD_VARIANTS[0], since the wire
-## protocol broadcasting their equipment to everyone else only carries a
-## has_weapon/has_shield boolean, not a real item ID, yet -- a real,
-## honestly-scoped follow-up, not an oversight.
-const WEAPON_VARIANTS := [
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_01.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade1_5.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_02.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade1_5.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_03.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade1_5.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_04.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade1_5.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_05.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade1_5.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_06.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade1_5.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_07.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade6_10.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_08.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade6_10.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_09.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade6_10.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_10.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade_10_12.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_11.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade_11.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_12.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade_12.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_13.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade_13.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_14.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade_14.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\blade_15.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\blade_15.bmt"},
-]
-
-## Real, individually-verified shield mesh/material pairs -- see
-## WEAPON_VARIANTS' doc comment for the same real per-item verification
-## process and its honest scope. shield_91's own real material_name field
-## is "shield_11" (a real, confirmed reuse, not a mistake here).
-const SHIELD_VARIANTS := [
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\shield_11.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\shield_11.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\shield_15.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\shield_15.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\shield_16.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\shield_16.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\shield_90.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\shield_90.bmt"},
-	{"mesh": "Prim\\Mesh\\Item\\China\\weapon\\shield_91.bms", "material": "Prim\\Mtrl\\Item\\China\\weapon\\shield_11.bmt"},
-]
-
-## Real armor "look" numbers -- confirmed live (2026-08-22) that the
-## clothes_03 set GENDER_ASSET_PATHS already used is one of many identically
-## real-shaped sets (clothes_<NN>_<part>.bms + a matching clothes_<NN>.bmt in
-## the same folder, same real part-suffix convention). 02-09 is the range
-## confirmed to exist for *both* real genders in the sample checked (00/01
-## have real gaps for one gender or the other) -- not every possible real
-## number, just a verified-safe subset. The local player picks one per real
-## equipped armor item ID, same honest scope as WEAPON_VARIANTS.
-const ARMOR_SET_NUMBERS := ["02", "03", "04", "05", "06", "07", "08", "09"]
+## The animations the player's body plays, picked from the body's own
+## animation list by name: `chinaman_fighter_standcity`,
+## `chinaman_fighter_walkforward`, `chinaman_a_benormalhit` and
+## `chinaman_a_diehardhit` for the man, the same names with `chinawoman`
+## for the woman -- the exact files the earlier path table named, now read
+## out of the `.bsr` rather than spelled here. Matched most specific first,
+## so `_diehardhit.ban` is not mistaken for `_diehardhit_loop.ban`.
+const BODY_ANIMATION_HINTS := {
+	"idle_anim": ["_fighter_standcity.ban", "_standcity.ban", "stand"],
+	"walk_anim": ["_fighter_walkforward.ban", "_walkforward.ban", "walk"],
+	"hit_anim": ["_a_benormalhit.ban", "benormalhit"],
+	"death_anim": ["_a_diehardhit.ban", "diehardhit.ban"],
+}
 
 ## Real file inside Data.pk2 (SRREVAMP_PK2_PATH) mapping a real .mapo
 ## placement's type ID to a real .bsr resource path -- see
@@ -749,6 +648,7 @@ const ARMOR_SLOT_LABELS := {
 	EquipmentNet.SLOT_HELM: "Helm",
 	EquipmentNet.SLOT_MAIL: "Mail",
 	EquipmentNet.SLOT_SHOULDER_GUARD: "Shoulder Guard",
+	EquipmentNet.SLOT_GAUNTLET: "Gauntlet",
 	EquipmentNet.SLOT_PANTS: "Pants",
 	EquipmentNet.SLOT_BOOTS: "Boots",
 }
@@ -863,28 +763,18 @@ var _real_skeleton: Skeleton3D
 var _real_skeleton_track: BanReader.Bone
 var _real_skeleton_time := 0.0
 
-## Cached, parsed real character assets, one entry per real Gender (see
-## GENDER_ASSET_PATHS), loaded once by _load_character_assets() and reused
-## by _build_assembled_character() to build a fresh Skeleton3D per
-## character instance (player or other) -- reparsing the same .bms/.bmt
-## files for every single connected player would be real, avoidable waste.
-## Keyed by gender string; a gender with no entry here means its assets
-## weren't found (or SRREVAMP_PK2_PATH isn't set at all) -- callers fall
-## back to DEFAULT_GENDER, and to the placeholder capsule if even that
-## didn't load.
+## Per gender: the body's `.bsr` path and its parsed animations
+## ("bsr_path", "idle_anim", "walk_anim", "hit_anim", "death_anim"), read
+## once by _load_character_assets(). A gender with no entry here means its
+## body row was not found (or SRREVAMP_PK2_PATH isn't set at all) --
+## callers fall back to DEFAULT_GENDER, and to the placeholder capsule if
+## even that didn't load.
 var _character_assets: Dictionary = {}
-
-## Cached, parsed real weapon mesh+material pairs, one entry per
-## WEAPON_VARIANTS, shared across every gender/character instance -- real
-## weapon meshes aren't gender-split, unlike body/armor. Each entry is
-## {"mesh": BmsReader.ParsedMesh, "materials": Dictionary}; a variant whose
-## real files weren't found in the archive is simply absent (shorter than
-## WEAPON_VARIANTS), not a null placeholder -- see _build_assembled_character
-## for the resulting index-wrapping behavior.
-var _weapon_variants: Array = []
-
-## Same as _weapon_variants, for SHIELD_VARIANTS.
-var _shield_variants: Array = []
+## Data.pk2, held open for dressing: every character and every item on one
+## is assembled out of it.
+var _data_pk2: Pk2Reader
+## item id -> the `.bsr` it is worn as, from the player's own item table.
+var _item_models: Dictionary = {}
 
 var _media_pk2: Pk2Reader
 var _ui_text_table: UiTextTable
@@ -936,7 +826,7 @@ func _ready() -> void:
 		player.position = Vector3(result.x, result.y, result.z)
 		_last_sent_pos = player.position
 		for other in result.others:
-			_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.armor_slots_mask, other.gender, other.has_weapon, other.has_shield)
+			_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped, other.gender)
 
 	NetClient.entity_entered.connect(_on_entity_entered)
 	NetClient.entity_moved.connect(_on_entity_moved)
@@ -1053,7 +943,7 @@ func _ready() -> void:
 
 	# Guarded, unlike 2D World.gd's equivalent block: this scene doubles as a
 	# standalone dev/asset-preview tool loaded with no live server connection
-	# (see _real_player_equipped_slots' doc comment) -- these would just
+	# (see _real_player_equipped_items' doc comment) -- these would just
 	# spam "_send called while not connected" errors otherwise.
 	if NetClient.is_connected_to_server():
 		NetClient.list_monsters()
@@ -2886,7 +2776,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		_other_bodies[character_id].queue_free()
 	_other_bodies.clear()
 	for other in result.others:
-		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.armor_slots_mask, other.gender, other.has_weapon, other.has_shield)
+		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped, other.gender)
 
 	# Same stale-body bug as _other_bodies above, for monsters -- the old
 	# zone's monster list result never gets superseded on its own, so
@@ -3677,281 +3567,134 @@ func _has_roof_overhead(pos: Vector3) -> bool:
 	var hit := space_state.intersect_ray(query)
 	return not hit.is_empty()
 
-## Auto-loads a real assembled character (real .bsk skeleton + real
-## body-part .bms meshes via CharacterAssembler) as the player's own body,
-## using the conventional real path layout this project found during
-## reverse-engineering -- see this file's top comment for the honest scope
-## of what "auto" means here (a fixed default, not real per-account
-## selection). Only needs SRREVAMP_PK2_PATH; falls back to leaving the
-## placeholder capsule visible if the conventional paths aren't found in
-## that archive (e.g. a real archive laid out differently than the one
-## sample this project could check against).
-## Parses and caches, once at scene startup, real character assets for
-## *every* real Gender in GENDER_ASSET_PATHS -- both _try_apply_real_
-## player_character and every _spawn_or_update_other call reuse this same
-## parsed data (keyed by gender, see _character_assets) rather than
-## re-reading/re-parsing the same real .bms/.bmt files per character. A
-## gender whose conventional real paths aren't found in the archive simply
-## gets no entry (not an error -- see _build_assembled_character's
-## DEFAULT_GENDER fallback). Leaves _character_assets empty if
-## SRREVAMP_PK2_PATH isn't set at all.
+## Reads, once, everything dressing needs and nothing it does not:
+## Data.pk2 stays open, each gender's body row is looked up in
+## characterdata by code name and its animations parsed, and the item
+## table is read for id -> worn model. Leaves _character_assets empty if
+## SRREVAMP_PK2_PATH isn't set at all, and a gender whose row is missing
+## simply gets no entry.
 func _load_character_assets() -> void:
-	var archive := _open_pk2_if_set()
-	if archive == null:
+	_data_pk2 = _open_pk2_if_set()
+	if _data_pk2 == null:
 		print("World3D: SRREVAMP_PK2_PATH not set -- characters stay placeholders")
 		return
+	if _media_pk2 == null:
+		_media_pk2 = _open_media_pk2_if_set()
+	if _media_pk2 == null:
+		print("World3D: no Media.pk2 -- no character or item tables, characters stay placeholders")
+		return
 
-	for gender in GENDER_ASSET_PATHS:
-		var paths: Dictionary = GENDER_ASSET_PATHS[gender]
-
-		var bsk_bytes := AssetSource.read_bytes(paths["skeleton"], archive)
-		if bsk_bytes.is_empty():
-			printerr("World3D: could not find %s skeleton at %s in %s" % [gender, paths["skeleton"], Pk2Config.data_path()])
+	var bodies := {}
+	for path in NpcTableReader.MODEL_TABLE_PATHS:
+		var entry := ObjectLoader.find_file(_media_pk2, path)
+		if entry != null:
+			bodies = NpcTableReader.parse_models_by_code(_media_pk2.read_file(entry), bodies)
+	for path in ItemTableReader.TABLE_PATHS:
+		var entry := ObjectLoader.find_file(_media_pk2, path)
+		if entry == null:
 			continue
-		var skel := BskReader.parse(bsk_bytes)
-		if skel == null:
-			printerr("World3D: could not parse %s skeleton at %s" % [gender, paths["skeleton"]])
-			continue
+		for item in ItemTableReader.parse(_media_pk2.read_file(entry)).values():
+			if item.model_path != "":
+				_item_models[item.id] = item.model_path
 
-		var parts := {}
-		for part_name in paths["body_parts"]:
-			var bytes := AssetSource.read_bytes(paths["mesh_dir"] + "\\" + part_name + ".bms", archive)
+	for gender in GENDER_BODY_CODE:
+		var code: String = GENDER_BODY_CODE[gender]
+		var bsr_path: String = bodies.get(code, "")
+		if bsr_path == "":
+			printerr("World3D: characterdata has no %s row for the %s body" % [code, gender])
+			continue
+		var bsr_data := AssetSource.read_bytes(bsr_path, _data_pk2)
+		if bsr_data.is_empty():
+			bsr_data = AssetSource.read_bytes("res\\" + bsr_path, _data_pk2)
+		var parsed := BsrReader.parse(bsr_data) if not bsr_data.is_empty() else null
+		if parsed == null or not parsed.is_character:
+			printerr("World3D: %s body %s is not a character .bsr" % [gender, bsr_path])
+			continue
+		var assets := {"bsr_path": bsr_path}
+		for key in BODY_ANIMATION_HINTS:
+			assets[key] = _body_animation(parsed.animation_paths, BODY_ANIMATION_HINTS[key])
+		_character_assets[gender] = assets
+		print("World3D: %s body is %s (%d pieces, %d animations; idle=%s walk=%s hit=%s death=%s)" % [
+			gender, bsr_path, parsed.all_mesh_paths().size(), parsed.animation_paths.size(),
+			assets["idle_anim"] != null, assets["walk_anim"] != null,
+			assets["hit_anim"] != null, assets["death_anim"] != null])
+	print("World3D: %d item model(s) known from the item table" % _item_models.size())
+
+## The first of a body's animations matching the earliest hint, parsed --
+## or null when it lists none, which a caller treats as "stand still".
+func _body_animation(paths: Array, hints: Array) -> BanReader.ParsedAnimation:
+	for hint in hints:
+		for path in paths:
+			if not (path as String).to_lower().ends_with(hint) and not (path as String).to_lower().contains(hint):
+				continue
+			var bytes := AssetSource.read_bytes(path, _data_pk2)
+			if bytes.is_empty():
+				bytes = AssetSource.read_bytes("res\\" + path, _data_pk2)
 			if bytes.is_empty():
 				continue
-			var mesh := BmsReader.parse(bytes)
-			if mesh != null:
-				parts[part_name] = mesh
-		if parts.is_empty():
-			printerr("World3D: found the %s skeleton but no body-part meshes under %s" % [gender, paths["mesh_dir"]])
-			continue
+			var anim := BanReader.parse(bytes)
+			if anim != null and not anim.bones.is_empty():
+				return anim
+	return null
 
-		# One equipment_sets entry per real armor "look" number (see
-		# ARMOR_SET_NUMBERS) -- a set missing from this specific archive
-		# (real gaps do exist, see ARMOR_SET_NUMBERS' doc comment) is simply
-		# absent from the dict rather than a null placeholder.
-		var equipment_sets := {}
-		for set_number in ARMOR_SET_NUMBERS:
-			var equipment_parts := {}
-			for suffix in paths["equipment_part_suffixes"]:
-				var part_name := "clothes_%s_%s" % [set_number, suffix]
-				var eq_bytes := AssetSource.read_bytes(paths["equipment_mesh_dir"] + "\\" + part_name + ".bms", archive)
-				if eq_bytes.is_empty():
-					continue
-				var eq_mesh := BmsReader.parse(eq_bytes)
-				if eq_mesh != null:
-					equipment_parts[part_name] = eq_mesh
-			if equipment_parts.is_empty():
-				continue
-			var equipment_materials := _load_real_materials(archive, paths["equipment_material_dir"] + "\\clothes_" + set_number + ".bmt")
-			equipment_sets[set_number] = {"parts": equipment_parts, "materials": equipment_materials}
-
-		var idle_anim: BanReader.ParsedAnimation = null
-		var idle_bytes := AssetSource.read_bytes(paths["idle_anim"], archive)
-		if not idle_bytes.is_empty():
-			idle_anim = BanReader.parse(idle_bytes)
-
-		var walk_anim: BanReader.ParsedAnimation = null
-		var walk_bytes := AssetSource.read_bytes(paths["walk_anim"], archive)
-		if not walk_bytes.is_empty():
-			walk_anim = BanReader.parse(walk_bytes)
-
-		# Real hit-reaction/death animations (2026-08-28, see
-		# docs/WORLD_ISSUES.md's twenty-seventh round) -- "hit_anim" is
-		# deliberately the real "_benormalhit" file, not "_behardhit": both
-		# real files exist for both genders, but no real, confirmed signal
-		# (damage amount vs. player max HP, or something else) was found for
-		# which one the original client actually picks, so this always uses
-		# the plain one rather than guessing a threshold. "death_anim" uses
-		# "_diehardhit" (there's no ambiguous "_dienormalhit" counterpart to
-		# choose between).
-		var hit_anim: BanReader.ParsedAnimation = null
-		var hit_bytes := AssetSource.read_bytes(paths["hit_anim"], archive)
-		if not hit_bytes.is_empty():
-			hit_anim = BanReader.parse(hit_bytes)
-
-		var death_anim: BanReader.ParsedAnimation = null
-		var death_bytes := AssetSource.read_bytes(paths["death_anim"], archive)
-		if not death_bytes.is_empty():
-			death_anim = BanReader.parse(death_bytes)
-
-		_character_assets[gender] = {
-			"skel": skel,
-			"body_parts": parts,
-			"body_materials": _load_real_materials(archive, paths["material"]),
-			"equipment_sets": equipment_sets,
-			"idle_anim": idle_anim,
-			"walk_anim": walk_anim,
-			"hit_anim": hit_anim,
-			"death_anim": death_anim,
-		}
-		print("World3D: cached real %s character assets (%d bones, %d body parts, %d armor sets, idle_anim=%s, walk_anim=%s, hit_anim=%s, death_anim=%s) from %s" % [
-			gender, skel.bones.size(), parts.size(), equipment_sets.size(), idle_anim != null, walk_anim != null, hit_anim != null, death_anim != null, Pk2Config.data_path()])
-
-	for variant in WEAPON_VARIANTS:
-		var weapon_bytes := AssetSource.read_bytes(variant["mesh"], archive)
-		if weapon_bytes.is_empty():
-			continue
-		var weapon_mesh := BmsReader.parse(weapon_bytes)
-		if weapon_mesh == null:
-			continue
-		_weapon_variants.append({"mesh": weapon_mesh, "materials": _load_real_materials(archive, variant["material"])})
-	print("World3D: cached %d/%d real weapon variants from %s" % [_weapon_variants.size(), WEAPON_VARIANTS.size(), Pk2Config.data_path()])
-
-	for variant in SHIELD_VARIANTS:
-		var shield_bytes := AssetSource.read_bytes(variant["mesh"], archive)
-		if shield_bytes.is_empty():
-			continue
-		var shield_mesh := BmsReader.parse(shield_bytes)
-		if shield_mesh == null:
-			continue
-		_shield_variants.append({"mesh": shield_mesh, "materials": _load_real_materials(archive, variant["material"])})
-	print("World3D: cached %d/%d real shield variants from %s" % [_shield_variants.size(), SHIELD_VARIANTS.size(), Pk2Config.data_path()])
-
-## Maps CharacterAssembler's real 2-letter equipment-slot codes (see
-## EQUIPMENT_SLOT_BONES) to the real, decompiler-confirmed slot constants
-## in EquipmentNet (see docs/protocol/EQUIP_SLOTS.md). "aa" (arm/forearm)
-## has no confirmed real slot name of its own -- rendered together with
-## "ba" (MAIL/body) below, the same bundling this project's one fixed
-## armor set always used before per-piece slots existed.
-const EQUIPMENT_CODE_TO_SLOT := {
-	"ha": EquipmentNet.SLOT_HELM,
-	"ba": EquipmentNet.SLOT_MAIL,
-	"sa": EquipmentNet.SLOT_SHOULDER_GUARD,
-	"la": EquipmentNet.SLOT_PANTS,
-	"fa": EquipmentNet.SLOT_BOOTS,
-}
-
-## Filters parts (CharacterAssembler-shaped part_name -> ParsedMesh) down
-## to only the pieces whose real slot bit is set in armor_slots_mask (see
-## EQUIPMENT_CODE_TO_SLOT and EquipmentNet.ARMOR_SLOTS for the bit
-## meaning). A part whose code isn't in EQUIPMENT_CODE_TO_SLOT (i.e. "aa")
-## is included whenever "ba" (MAIL) is, per that const's doc comment.
-func _filter_equipped_parts(parts: Dictionary, armor_slots_mask: int) -> Dictionary:
-	var mail_bit_index := EquipmentNet.ARMOR_SLOTS.find(EquipmentNet.SLOT_MAIL)
-	var mail_equipped := mail_bit_index != -1 and (armor_slots_mask & (1 << mail_bit_index)) != 0
-
-	var out := {}
-	for part_name in parts:
-		var code: String = CharacterAssembler._equipment_slot(part_name)
-		if not EQUIPMENT_CODE_TO_SLOT.has(code):
-			if code == "aa" and mail_equipped:
-				out[part_name] = parts[part_name]
-			continue
-		var slot: int = EQUIPMENT_CODE_TO_SLOT[code]
-		var bit_index := EquipmentNet.ARMOR_SLOTS.find(slot)
-		if bit_index != -1 and (armor_slots_mask & (1 << bit_index)) != 0:
-			out[part_name] = parts[part_name]
-	return out
-
-## Builds one fresh, independent Skeleton3D + assembled body/equipment from
-## the cached data _load_character_assets() parsed for the requested real
-## gender -- each character instance (player or other) needs its own
-## Skeleton3D node, so this re-runs CharacterAssembler against the shared
-## parsed meshes rather than reparsing files. Falls back to DEFAULT_GENDER
-## if gender's assets never loaded (or gender is empty/unrecognized -- e.g.
-## an older peer, or the local player's own EnterWorldResult didn't carry
-## one yet). Returns null only if even the default's assets never loaded.
-## armor_set_number/weapon_variant_idx/shield_variant_idx select which real
-## look to render (see ARMOR_SET_NUMBERS/WEAPON_VARIANTS/SHIELD_VARIANTS) --
-## defaults ("03"/0/0) reproduce this project's original single-fixed-look
-## behavior, which is what every caller except _try_apply_real_player_character
-## still uses (see WEAPON_VARIANTS' doc comment on why other players don't
-## get real per-item variety yet).
-func _build_assembled_character(armor_slots_mask: int = 0, gender: String = DEFAULT_GENDER, include_weapon: bool = false, include_shield: bool = false, armor_set_number: String = "03", weapon_variant_idx: int = 0, shield_variant_idx: int = 0) -> Skeleton3D:
+## Builds one fresh character: the gender's body assembled from its own
+## `.bsr` with real skinning, then every worn item hung on it the way its
+## own `.bsr` says (see SkinnedBsrAssembler.attach_item_from_archive).
+##
+## `equipped` is slot -> item id, straight from the server. Each id is
+## looked up in the item table for the model it is worn as, so the
+## character wears exactly what the server says it does -- the Cotton Suit
+## when the server says 4842, not a suit of this client's choosing. An id
+## the table does not know is skipped with a line in the log, and the
+## character is drawn without it rather than with a stand-in.
+##
+## Falls back to DEFAULT_GENDER if gender's assets never loaded (or gender
+## is empty/unrecognized -- an older peer, or an EnterWorldResult without
+## one). Returns null only if even the default's body could not be built.
+func _build_assembled_character(equipped: Dictionary = {}, gender: String = DEFAULT_GENDER) -> Skeleton3D:
 	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
-	if assets.is_empty():
+	if assets.is_empty() or _data_pk2 == null:
 		return null
+	var assembled := SkinnedBsrAssembler.assemble_from_archive(_data_pk2, assets["bsr_path"], false)
+	if assembled == null:
+		return null
+	var worn := 0
+	for slot in equipped:
+		var item_id: int = int(equipped[slot])
+		if item_id == 0:
+			continue
+		var model: String = _item_models.get(item_id, "")
+		if model == "":
+			print("World3D: item %d in slot %d has no worn model in the item table -- not drawn" % [item_id, slot])
+			continue
+		var attached := SkinnedBsrAssembler.attach_item_from_archive(_data_pk2, assembled.skeleton, model)
+		if attached != null:
+			worn += 1
+	if not equipped.is_empty():
+		print("World3D: %s wears %d/%d item(s)" % [gender, worn, equipped.size()])
+	return assembled.skeleton
 
-	var skeleton := Skeleton3DBuilder.build_skeleton3d(assets["skel"])
-	# Honest "no real material resolved" fallback (2026-08-26, see
-	# docs/WORLD_ISSUES.md) -- a flat neutral gray, not an invented skin
-	# tone. Real body-part materials resolve by real name match in
-	# practice (confirmed live, zero fallback mismatches across 1,500+
-	# mesh pieces checked), so this should rarely if ever actually render.
-	var fallback_mat := StandardMaterial3D.new()
-	fallback_mat.albedo_color = Color(0.5, 0.5, 0.5)
-	CharacterAssembler.assemble(skeleton, assets["body_parts"], fallback_mat, assets["body_materials"])
-
-	var equipment_sets: Dictionary = assets["equipment_sets"]
-	var chosen_set: Dictionary = equipment_sets.get(armor_set_number, equipment_sets.get("03", {}))
-	if not chosen_set.is_empty():
-		var equipped_parts := _filter_equipped_parts(chosen_set["parts"], armor_slots_mask)
-		if not equipped_parts.is_empty():
-			CharacterAssembler.assemble_equipment(skeleton, equipped_parts, null, chosen_set["materials"])
-
-	if include_weapon and not _weapon_variants.is_empty():
-		var weapon: Dictionary = _weapon_variants[weapon_variant_idx % _weapon_variants.size()]
-		var weapon_mesh: BmsReader.ParsedMesh = weapon["mesh"]
-		var weapon_material: Material = weapon["materials"].get(weapon_mesh.material_name, null)
-		CharacterAssembler.assemble_weapon(skeleton, weapon_mesh, weapon_material)
-	if include_shield and not _shield_variants.is_empty():
-		var shield: Dictionary = _shield_variants[shield_variant_idx % _shield_variants.size()]
-		var shield_mesh: BmsReader.ParsedMesh = shield["mesh"]
-		var shield_material: Material = shield["materials"].get(shield_mesh.material_name, null)
-		CharacterAssembler.assemble_shield(skeleton, shield_mesh, shield_material)
-
-	# **Removed 2026-08-26** (see docs/WORLD_ISSUES.md): this used to force
-	# every real assembled character down to a fixed, invented 1.8-unit
-	# height, calibrated only against this scene's own early placeholder
-	# capsule -- never checked against the real environment's own native
-	# scale at all. A real, direct measurement (forward-kinematics over a
-	# real chinaman_skel.bsk's real bind-pose bone positions) found the
-	# real native height is ~138.7 units -- already the same real order of
-	# magnitude as real measured building features (a real wall piece
-	# ~44.5 units, a real door ~72-76, real trees ~97-140 -- see
-	# docs/WORLD_ISSUES.md's "size of ants" entry). Terrain/buildings/
-	# objects all already render at their real native scale, unscaled --
-	# forcibly shrinking only the character by ~77x was what actually
-	# caused the reported "size of ants" mismatch, not a real difference
-	# in how large characters vs. buildings are supposed to be. The
-	# skeleton now renders at its own real, unscaled native height,
-	# consistent with everything else. All player-relative constants
-	# (PLAYER_HEIGHT and everything derived from it below) were rescaled
-	# by the same real ratio (~138.7/1.8) so their previously-tuned *feel*
-	# relative to the character's own height is preserved, not guessed
-	# anew at the new scale.
-	return skeleton
-
-## Attaches a freshly-built real assembled character (see
+## Attaches a freshly-built assembled character (see
 ## _build_assembled_character()) to the player node, hiding the
 ## placeholder capsule -- if the shared character assets loaded. Leaves
 ## the placeholder capsule visible otherwise.
 ##
-## Whether the assembled character wears its armor/weapon is now driven by
-## the real, server-authoritative equip state (EquipmentNet/OP_LIST via
-## NetClient.list_equipment), not shown unconditionally -- a newly-created
-## character has nothing equipped by default, so this makes the previous
-## "everyone always wears the one fixed armor set" behavior more honest:
-## the armor/weapon meshes are real either way, but now they only appear
-## once the player has actually equipped something in that real slot.
+## What the character wears is the server's word: the equipment list
+## (EquipmentNet/OP_LIST via NetClient.list_equipment) says which item is
+## in which slot, and each is drawn from its own model. A newly-created
+## character wears the starting kit the server gave it.
 func _try_apply_real_player_character() -> void:
-	var equipped := await _real_player_equipped_slots()
+	var equipped := await _real_player_equipped_items()
 	var gender := DEFAULT_GENDER
 	if NetClient.last_enter_world_result != null and NetClient.last_enter_world_result.gender != "":
 		gender = NetClient.last_enter_world_result.gender
 
-	# Real per-item visual variety (see ARMOR_SET_NUMBERS/WEAPON_VARIANTS/
-	# SHIELD_VARIANTS): a deterministic pick from the real equipped item ID,
-	# so a different real item actually looks different, without needing a
-	# real item-to-model mapping this project couldn't find (see those
-	# consts' doc comments). Item ID 0 (nothing equipped in that slot)
-	# harmlessly picks index 0 -- moot either way, since
-	# _build_assembled_character only renders a slot that's actually
-	# equipped/included.
-	var armor_item_id: int = equipped[3]
-	var weapon_item_id: int = equipped[4]
-	var shield_item_id: int = equipped[5]
-	var armor_set_number: String = ARMOR_SET_NUMBERS[armor_item_id % ARMOR_SET_NUMBERS.size()] if not ARMOR_SET_NUMBERS.is_empty() else "03"
-	var weapon_variant_idx: int = weapon_item_id % max(_weapon_variants.size(), 1)
-	var shield_variant_idx: int = shield_item_id % max(_shield_variants.size(), 1)
-
 	# Worth a log line: "the character renders bare" has had two different
 	# causes so far -- the server not dressing them, and the client not
 	# asking -- and this says which side to look at.
-	print("World3D: player equipment mask=%d weapon=%s shield=%s (armor item %d)" % [
-		equipped[0], str(equipped[1]), str(equipped[2]), armor_item_id])
+	print("World3D: player equipment %s" % str(equipped))
 
-	var skeleton := _build_assembled_character(equipped[0], gender, equipped[1], equipped[2], armor_set_number, weapon_variant_idx, shield_variant_idx)
+	var skeleton := _build_assembled_character(equipped, gender)
 	if skeleton == null:
 		return
 	player.add_child(skeleton)
@@ -3959,53 +3702,25 @@ func _try_apply_real_player_character() -> void:
 	_player_skeleton = skeleton
 	_player_gender = gender
 
-## Queries the real server for the local player's actual equipped items
-## (the same EquipmentNet protocol the 2D equipment HUD already uses) and
-## reports [armor_slots_mask, has_weapon, has_shield, armor_item_id,
-## weapon_item_id, shield_item_id] -- a real per-piece bitmask (see
-## EquipmentNet.ARMOR_SLOTS), whether SLOT_WEAPON/SLOT_SHIELD are occupied,
-## and the real equipped item ID for each (0 if none) -- used to pick a real
-## per-item visual (see ARMOR_SET_NUMBERS/WEAPON_VARIANTS/SHIELD_VARIANTS).
-## armor_item_id is just one representative real ID (the first armor slot
-## found, MAIL preferred) rather than one per slot -- this project's own
-## armor "look" system only supports one visual set for the whole body at
-## once (see ARMOR_SET_NUMBERS), not fully composable per-slot outfits, so
-## picking one real ID to represent the whole look is consistent with that
-## existing scope, not a new simplification. Returns all-zero/false without
-## querying if there's no live server connection -- e.g. the standalone
-## dev-tool/screenshot contexts used throughout this project's asset work,
-## which load World3D.tscn directly with SRREVAMP_* env vars set but no real
-## login/enter-world flow, so a query would otherwise await a signal that
-## can never fire.
-func _real_player_equipped_slots() -> Array:
+## Queries the real server for the local player's equipped items (the same
+## EquipmentNet protocol the equipment HUD uses) and reports them as
+## slot -> item id. Returns nothing without querying if there's no live
+## server connection -- the standalone dev-tool/screenshot contexts used
+## throughout this project's asset work, which load World3D.tscn directly
+## with SRREVAMP_* env vars set but no real login/enter-world flow, so a
+## query would otherwise await a signal that can never fire.
+func _real_player_equipped_items() -> Dictionary:
 	if not NetClient.is_connected_to_server() or NetClient.current_character_name == "":
-		return [0, false, false, 0, 0, 0]
+		return {}
 	NetClient.list_equipment(NetClient.current_character_name)
 	var answer: Array = await NetClient.equipment_result
 	var items: Array = answer[0]
 	print("World3D: server reports %d equipped item(s) for %s (error: %s)" % [
 		items.size(), NetClient.current_character_name, str(answer[1])])
+	var equipped := {}
 	for item in items:
-		print("  slot %d item %d" % [item.slot, item.item_id])
-	var armor_slots_mask := 0
-	var has_weapon := false
-	var has_shield := false
-	var armor_item_id := 0
-	var weapon_item_id := 0
-	var shield_item_id := 0
-	for item in items:
-		var bit_index := EquipmentNet.ARMOR_SLOTS.find(item.slot)
-		if bit_index != -1:
-			armor_slots_mask |= 1 << bit_index
-			if armor_item_id == 0 or item.slot == EquipmentNet.SLOT_MAIL:
-				armor_item_id = item.item_id
-		elif item.slot == EquipmentNet.SLOT_WEAPON:
-			has_weapon = true
-			weapon_item_id = item.item_id
-		elif item.slot == EquipmentNet.SLOT_SHIELD:
-			has_shield = true
-			shield_item_id = item.item_id
-	return [armor_slots_mask, has_weapon, has_shield, armor_item_id, weapon_item_id, shield_item_id]
+		equipped[item.slot] = item.item_id
+	return equipped
 
 ## Loads a real Map.pk2 region's real object placements (SRREVAMP_MAPO_PATH,
 ## e.g. "0\\0.o", via SRREVAMP_MAP_PK2_PATH -- same archive as
@@ -4322,30 +4037,6 @@ func _parsed_region_heightmap(region_x: int, region_y: int) -> MapmReader.Parsed
 		parsed = MapmReader.parse(bytes)
 	_parsed_region_heightmaps[key] = parsed
 	return parsed
-
-## Resolves a real .bmt at bmt_path (via ObjectLoader, the same
-## pk2 -> BmtReader -> DdjReader pipeline already verified for scenery) into
-## a Dictionary keyed by each layer's own real layer_name -- ready to pass
-## straight into CharacterAssembler.assemble/assemble_equipment's
-## materials_by_name, which looks parts up by their own real material_name
-## field (the two are the same string in real data -- see
-## GENDER_ASSET_PATHS's doc comment, confirmed true for real equipment
-## materials too, e.g. clothes_03.bmt's layers name-match
-## clothes_03_*.bms's own material_name fields). Returns an empty
-## Dictionary (not an error) if the .bmt isn't found at that path, since
-## CharacterAssembler falls back to a flat/no color in that case.
-func _load_real_materials(archive: Pk2Reader, bmt_path: String) -> Dictionary:
-	var material := ObjectLoader.load_material(archive, bmt_path)
-	if material == null:
-		printerr("World3D: could not load material at ", bmt_path, " -- falling back to a flat color")
-		return {}
-
-	var by_name := {}
-	for layer in material.layers:
-		var godot_material := ObjectLoader.build_godot_material(archive, bmt_path, layer)
-		if godot_material != null:
-			by_name[layer.layer_name] = godot_material
-	return by_name
 
 ## The real player capsule's own height, read from the real shape rather
 ## than duplicated as a number here, so rescaling the character in the
@@ -4854,6 +4545,60 @@ func _qa_rig_report() -> void:
 	var skeleton := _player_skeleton
 	print("QA RIG tick %d: %d bone(s), skeleton at %s" % [
 		_qa_tick, skeleton.get_bone_count(), skeleton.global_position.round()])
+	# Where the body stands against the ground: the player node, the
+	# lowest and highest bone, every drawn mesh's world-space box, and the
+	# walkable height under the player. A character buried to the waist
+	# shows here as feet well below the landing height.
+	var lowest := INF
+	var highest := -INF
+	var lowest_bone := ""
+	var highest_bone := ""
+	for i in range(skeleton.get_bone_count()):
+		var y: float = (skeleton.global_transform * skeleton.get_bone_global_pose(i).origin).y
+		if y < lowest:
+			lowest = y
+			lowest_bone = skeleton.get_bone_name(i)
+		if y > highest:
+			highest = y
+			highest_bone = skeleton.get_bone_name(i)
+	var mesh_min := INF
+	var mesh_max := -INF
+	for node in skeleton.find_children("*", "MeshInstance3D", true, false):
+		var mi := node as MeshInstance3D
+		var box: AABB = mi.global_transform * mi.get_aabb()
+		mesh_min = minf(mesh_min, box.position.y)
+		mesh_max = maxf(mesh_max, box.end.y)
+	var ground := NAN
+	var pair := _nav_graph_for(player.global_position)
+	if not pair.is_empty():
+		var group: Node3D = pair[1]
+		var local: Vector3 = group.to_local(player.global_position)
+		ground = group.global_position.y + (pair[0] as NavGraph).landing_height_at(local.x, local.z)
+	print("QA RIG   player at y %.2f; bones %.2f (%s) .. %.2f (%s); meshes %.2f .. %.2f; ground %.2f" % [
+		player.global_position.y, lowest, lowest_bone, highest, highest_bone, mesh_min, mesh_max, ground])
+	# What is physically above and below the feet: a ray straight down from
+	# well overhead says which collider is the first surface under this
+	# column, and whether it sits above the feet -- which is the difference
+	# between standing on the plaza and standing inside it.
+	var space_state := get_world_3d().direct_space_state
+	var from := player.global_position + Vector3(0.0, 60.0, 0.0)
+	var query := PhysicsRayQueryParameters3D.create(from, player.global_position - Vector3(0.0, 20.0, 0.0))
+	query.exclude = [player.get_rid()]
+	var hit := space_state.intersect_ray(query)
+	if hit.is_empty():
+		print("QA RIG   nothing under the column from %.1f above the feet" % 60.0)
+	else:
+		var who: Node = hit.collider
+		print("QA RIG   first surface down from overhead: y %.2f (%.2f from the feet) on %s" % [
+			hit.position.y, hit.position.y - player.global_position.y, who.get_path() if who != null else "?"])
+	var every := PackedFloat32Array()
+	if not pair.is_empty():
+		var group: Node3D = pair[1]
+		var local: Vector3 = group.to_local(player.global_position)
+		every = (pair[0] as NavGraph).heights_at(local.x, local.z)
+		for i in range(every.size()):
+			every[i] += group.global_position.y
+	print("QA RIG   walkable heights in this column: %s" % str(every))
 	var rows: Array = []
 	for child in skeleton.get_children():
 		if not (child is BoneAttachment3D):
@@ -5422,7 +5167,7 @@ func _physics_process(delta: float) -> void:
 					frame_idx = int(pinned) % frame_count
 				Skeleton3DBuilder.apply_ban_pose(_player_skeleton, anim, frame_idx)
 
-func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, armor_slots_mask: int = 0, gender: String = DEFAULT_GENDER, has_weapon: bool = false, has_shield: bool = false) -> void:
+func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, gender: String = DEFAULT_GENDER) -> void:
 	if _other_bodies.has(character_id):
 		# Sets the real interpolation *target* only -- see
 		# _other_body_targets' own doc comment for why this replaced a
@@ -5433,16 +5178,12 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	var body := Node3D.new()
 	body.position = pos
 
-	# Real assembled character if the shared assets loaded, using this
-	# player's own real Gender (WorldNet.EntitySnapshot.gender, from the
-	# server's live character-store lookup -- see genderOf in
-	# server/internal/session/world.go) -- falls back to the labeled
-	# placeholder capsule otherwise. Armor, weapon, and shield are real
-	# too: all come straight from the server's live equipment-store lookup
-	# (equippedSlots), the same real signal that already gates the local
-	# player's own equipment -- armor_slots_mask is a real per-piece
-	# bitmask (see EquipmentNet.ARMOR_SLOTS), not one all-or-nothing flag.
-	var skeleton := _build_assembled_character(armor_slots_mask, gender, has_weapon, has_shield)
+	# The same body and the same dressing as the local player: their
+	# Gender and every worn item's id come in the snapshot (see genderOf
+	# and equippedItems in server/internal/session/world.go, both queried
+	# live), and each item is drawn from its own model. Falls back to the
+	# labeled placeholder capsule if the bodies never loaded.
+	var skeleton := _build_assembled_character(equipped, gender)
 	if skeleton != null:
 		body.add_child(skeleton)
 	else:
@@ -5468,7 +5209,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	_other_body_targets[character_id] = pos
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
-	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.armor_slots_mask, snapshot.gender, snapshot.has_weapon, snapshot.has_shield)
+	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped, snapshot.gender)
 	_log_system("%s entered the zone." % snapshot.char_name)
 
 func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:

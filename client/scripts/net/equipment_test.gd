@@ -13,12 +13,12 @@ func _test_encode_equip() -> void:
 	var encoded := EquipmentNet.encode_equip("Aria", EquipmentNet.SLOT_WEAPON, 3)
 	_check(encoded.decode_u16(0) == 4, "name length prefix is 4")
 	_check(encoded.slice(2, 6).get_string_from_utf8() == "Aria", "name bytes follow prefix")
-	_check(encoded.decode_u32(6) == 0, "slot encodes as 0 (SLOT_WEAPON)")
+	_check(encoded.decode_u32(6) == 6, "slot encodes as 6 (SLOT_WEAPON, seventh in the game's order)")
 	_check(encoded.decode_u32(10) == 3, "inventory slot round-trips")
 
 func _test_encode_unequip() -> void:
 	var encoded := EquipmentNet.encode_unequip("Aria", EquipmentNet.SLOT_HELM)
-	_check(encoded.decode_u32(6) == 1, "slot encodes as 1 (SLOT_HELM)")
+	_check(encoded.decode_u32(6) == 0, "slot encodes as 0 (SLOT_HELM, first in the game's order)")
 
 func _build_result(error: String, items: Array) -> PackedByteArray:
 	var out := PackedByteArray()

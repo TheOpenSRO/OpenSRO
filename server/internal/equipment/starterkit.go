@@ -15,8 +15,15 @@ import (
 //	4734 Cotton Hat        icon item\china\man_item\clothes_01_ha.ddj
 //	4842 Cotton Suit                                    clothes_01_ba.ddj
 //	4806 Cotton Talisman                                clothes_01_sa.ddj
+//	4914 Cotton Wristlet                                clothes_01_aa.ddj
 //	4878 Cotton Trousers                                clothes_01_la.ddj
 //	4950 Cotton Shoes                                   clothes_01_fa.ddj
+//
+// The same rows carry the model each is worn as (column 52 of the item
+// table, `item\china\man_item\clothes_01_ba.bsr` and so on), which is how
+// the client dresses the character in exactly these and not a look of its
+// own choosing. All six are China, man, character level 1 -- what a new
+// China-man character can wear.
 //
 // An operator running with different refdata can change these; an id the
 // client's tables do not know still equips, it just has no name or icon.
@@ -24,6 +31,7 @@ var StartingKitItems = map[Slot]int64{
 	SlotHelm:          4734,
 	SlotMail:          4842,
 	SlotShoulderGuard: 4806,
+	SlotGauntlet:      4914,
 	SlotPants:         4878,
 	SlotBoots:         4950,
 }
