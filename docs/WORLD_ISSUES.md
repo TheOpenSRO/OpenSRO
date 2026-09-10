@@ -6270,3 +6270,47 @@ So **left_side draws the left and the top; right_side draws the right and
 the bottom**, and `UiBuilder`'s fallback already did exactly that. The
 comment now says it was read rather than inferred, which is the part that
 matters: an argument that happens to be right is still an argument.
+
+## Hundred-and-twenty-seventh round: the .bms loader found, and everything checks
+
+The two decoded sections were measured from the archive because the loader
+could not be reached: `JMXVBMS`, `JMXV` and `.bms` appear nowhere in the
+client's strings. That was true and it was not the end of it -- **the magic
+is constructed in code rather than stored**, and the engine's own assert
+strings name its source files. `PrimGeometry.cpp` is the one (`.bms` files
+live under `prim\mesh\`; the engine calls them Prim resources), its
+version check is the function comparing against `0x30313130` and
+`0x424d5320`, and the reader is two calls along from it.
+
+Every measured claim holds:
+
+| Measured from 24,984 archive files | Found in the client |
+|---|---|
+| `hdr[2]` is 8-byte records | `read(vec, count * 8)`, vector element size `>> 3` |
+| `hdr[3]` is 12-byte records | `read(vec, count * 0xc)`, element size `/ 0xc` |
+| one 4-byte word per link, same count | `read(vec, count * 4)` under the **same** count |
+| a 36-byte tail | `read(this + 0x31, 0x24)` |
+
+And the loader gives one thing the sweep could not. It resizes those
+vectors with default values first, and the defaults *are* the field layout:
+the 8-byte vector fills with `(0x3f800000, 0)` -- a `float32` of **1.0** and
+a `uint32` -- and the 12-byte one with `(0xffffffff, 0xffffffff, 0)` --
+**two `uint32`s of −1** and a `float32`. Two index fields defaulting to −1
+is what a pair of "no vertex yet" sentinels looks like, and it is exactly
+the split the byte-pattern reading produced.
+
+The 36-byte tail is read **inline into the object**, not into a heap array,
+which is why its length never varies -- a fixed struct rather than a list.
+That is new; the sweep could only say it was always 36 bytes.
+
+**What the data is for is still not established.** The loader reads it and
+this trail says nothing about what consumes it, so "a mass-spring cloth
+setup" stays an inference. The structure is now a finding.
+
+### Also re-checked this round
+
+The six-piece stretch window's edge pairing, which was argued from bevel
+brightness rather than read. It is now read -- `FUN_00499e10` lays the four
+edge quads out in the order left, top, right, bottom, and the loader fills
+those four slots with `left_side` twice then `right_side` twice -- and the
+argument was right. The comment says which it is now.

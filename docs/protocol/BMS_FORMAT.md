@@ -393,16 +393,64 @@ also ship a table of distances between vertex pairs. The remaining honest gap is
 this project or in the client has been *seen* consuming either, so what the client does with them
 — and whether it simulates or merely sways — is still not established.
 
-It is **not** confirmed, and two attempts to confirm it failed:
+### Confirmed against the client
+
+**The loader was found after all**, and every measured claim above holds. The `.bms` magic is
+constructed in code rather than stored, which is why searching for `JMXVBMS` finds nothing — but
+the engine's own assert strings name its source files, and
+`…\SimpleViewer\objengine\PrimGeometry.cpp` leads straight to it (`.bms` files live under
+`prim\mesh\`; the engine calls them Prim resources).
+
+`CPrimGeometry`'s reader streams the file, and its allocations are the record sizes:
+
+```
+count = read_u32();
+if (count > 0)  read(vec26, count * 8);          // hdr[2]
+
+count = read_u32();
+if (count > 0) {
+    read(vec2a, count * 0xc);                     // hdr[3] links
+    read(vec2e, count * 4);                       // one word per link
+    read(this + 0x31, 0x24);                      // 36 bytes, inline
+}
+```
+
+Point by point against what the sweeps said:
+
+| Measured | In the client |
+|---|---|
+| 8-byte records | `count * 8`, and its vector divides its byte span by `>> 3` |
+| 12-byte records | `count * 0xc`, and its vector divides by `/ 0xc` |
+| one 4-byte word per link, same count | `count * 4` under the **same** `count`, divides by `>> 2` |
+| a 36-byte tail | `0x24` bytes exactly |
+
+And the **default values** the client fills those vectors with settle the field layout
+independently of any byte-pattern reading:
+
+- the 8-byte vector is resized with `(0x3f800000, 0)` — a `float32` of **1.0** and a `uint32` of 0
+- the 12-byte vector with `(0xffffffff, 0xffffffff, 0)` — **two `uint32`s of −1** and a `float32`
+  of 0
+
+Two index fields defaulting to −1 is what a pair of "no vertex yet" sentinels looks like, and it
+is the same split the archive sweep found. The 36-byte tail is read **inline into the object**
+(`this + 0x31`), not into a heap array — so it is a fixed-size struct, which is why its length
+never varies.
+
+The two counts are read separately, so the format does not require `hdr[2]`'s to equal the vertex
+count; it simply does, in all 801 files.
+
+### What it is *for* is still an inference
+
+The structure is confirmed. The purpose is not: nothing above says what the client does with
+these vectors, and two attempts to find the consumer failed:
 
 - The client has a `SetOptimizeCloth` and a `UIIT_STT_OPTIMIZE_A_E_CLOTHES` option, which looks
   like the feature that would read this. It is not: its own classes are
   `CObjOptimizeCloth@CharacterVisualChange` and `Condition_OptimizeCloth@CharacterVisualChange`,
   and it is driven by `resinfo\optimize_clothes.txt` — a visual-quality option about *which*
   clothing is drawn, not about how it moves.
-- The `.bms` loader itself cannot be found by string search: neither `JMXVBMS`, `JMXV` nor `.bms`
-  appears as a string in the client, so the magic is compared inline and there is no anchor to
-  start from.
+- (The loader itself *was* found in the end, via the engine's assert strings — see above. It
+  confirms the layout and does not say what the data is used for.)
 
 **Also not decoded**: 450 files have an `hdr[2]` pointer whose declared count does not fit the
 file at 8 bytes a record. They are skipped rather than read — one of them declares four billion

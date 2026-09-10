@@ -173,13 +173,20 @@ class ParsedMesh:
 ## Header offset of the per-vertex section decoded in
 ## docs/protocol/BMS_FORMAT.md: a count followed by one `float32` +
 ## `uint32` per vertex.
+##
+## Confirmed in the client: `CPrimGeometry`'s reader takes a count and reads
+## `count * 8` bytes, and resizes the vector it reads into with a default of
+## `(1.0f, 0)` -- which is the field split, from the client rather than from
+## the byte pattern.
 const VERTEX_MOTION_PTR_OFFSET := HEADER_PTRS_BASE + 2 * 4
 const VERTEX_MOTION_REC_SIZE := 8
 
 ## Header offset of the link section: a count followed by that many
 ## 12-byte records, each two vertex indices and a `float32` distance.
 ## Verified across 801 real meshes and 58,433 records -- every index inside
-## the mesh's own vertex count and every distance positive. See
+## the mesh's own vertex count and every distance positive -- and confirmed
+## in the client, which reads `count * 0xc` bytes and resizes with a default
+## of `(-1, -1, 0.0f)`: two index fields whose "unset" value is -1. See
 ## docs/protocol/BMS_FORMAT.md.
 const VERTEX_LINK_PTR_OFFSET := HEADER_PTRS_BASE + 3 * 4
 const VERTEX_LINK_REC_SIZE := 12
@@ -291,7 +298,9 @@ static func parse(data: PackedByteArray) -> ParsedMesh:
 ## The section is `4 + count * 16 + 36` bytes long -- the count, the
 ## records, one index word per link, and 36 bytes whose contents are not
 ## established. That arithmetic lands exactly on the next section in all
-## 801 real meshes that carry one. See docs/protocol/BMS_FORMAT.md.
+## 801 real meshes that carry one, and the client reads it in the same
+## three pieces: `count * 0xc`, then `count * 4`, then `0x24` bytes taken
+## inline rather than into an array, which is why the tail never varies.
 static func _parse_vertex_links(data: PackedByteArray, mesh: ParsedMesh) -> void:
 	var start := _le_u32(data, VERTEX_LINK_PTR_OFFSET)
 	if start == 0 or start + 4 > data.size():
