@@ -43,11 +43,21 @@ the player. The client logs what it resolved for each, so the three ways this ca
 species not in the tables, model not assembling, model placed out of reach — tell themselves
 apart in a playtest log. They used to be the third: 292 and 461 units from spawn.
 
-### 3. Equipment on the character — **done** (hundred-and-fourteenth round)
+### 3. Equipment on the character — **done, and now drawn from the game's own data** (hundred-and-thirty-first round)
 A new character is dressed by the server and the client renders it. Two bugs were in the way and
 neither was on the client: the starting kit could not be given at all (an item with no reference
 row could not be *held*), and ten request handlers were rejecting the client's listings as
 malformed. Both are fixed and tested end to end.
+
+**What each item looks like is no longer chosen by the client.** The item table's column 52 names
+the model every item is worn as, the model's own `.bsr` says how it hangs on the body, and the
+body is a `characterdata` row like any NPC's -- see `docs/protocol/ITEM_FORMAT.md`. The wearing
+rules (slot, race, gender, level) are the table's too, enforced by `equipment.Refusal`.
+
+**Open on this**: requirements by mastery level and by stat are read but not enforced (nothing
+tracks them); characters have a level but no way to gain one; accessories (slots 9-16) are not
+modelled; the item `.bsr`'s effect attachments (`.efp` on `Bone04`/`Bone06` of a shoulder piece)
+are not drawn.
 
 ### Rendering against a real server
 `qa_shot.sh --server` starts the server in memory on a spare port and signs the client in

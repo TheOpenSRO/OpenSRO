@@ -16,6 +16,11 @@ var itemCSVColumns = []string{
 	"Dur_L", "Dur_U", "PD_L", "PD_U", "MD_L", "MD_U",
 	"PAttackMin_L", "PAttackMax_U", "MAttackMin_L", "MAttackMax_U",
 	"HR_L", "HR_U", "CHR_L", "CHR_U",
+	// Appended rather than slotted in by the original's column order, so
+	// an export made for the earlier twenty columns is still a prefix of
+	// this one.
+	"TypeID1", "TypeID2", "TypeID3", "TypeID4", "Country", "ReqGender",
+	"ReqLevelType1", "ReqLevel1",
 }
 
 // LoadItemsCSV parses item rows from r, a headerless CSV in
@@ -98,6 +103,14 @@ func parseItemRow(f []string) (Item, error) {
 	it.HitRateMax = parseFloat(f[17])
 	it.CriticalMin = parseFloat(f[18])
 	it.CriticalMax = parseFloat(f[19])
+	it.TypeID1 = parseInt(f[20])
+	it.TypeID2 = parseInt(f[21])
+	it.TypeID3 = parseInt(f[22])
+	it.TypeID4 = parseInt(f[23])
+	it.Country = parseInt(f[24])
+	it.ReqGender = parseInt(f[25])
+	it.ReqLevelType1 = parseInt(f[26])
+	it.ReqLevel1 = parseInt(f[27])
 
 	if err != nil {
 		return Item{}, err

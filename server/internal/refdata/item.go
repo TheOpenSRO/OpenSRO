@@ -21,8 +21,24 @@ var ErrItemNotFound = errors.New("refdata: no such item")
 // structurally in docs/protocol/refdata_schema.md), just the fields that
 // matter for combat/equipment math. Extend as gameplay needs grow.
 type Item struct {
-	ID                             int64
-	MaxStack                       int
+	ID       int64
+	MaxStack int
+	// TypeID1..4 are the game's own four-level classification of the item:
+	// 3/1/x/y is equipment, where TypeID3 says which family (China's
+	// garment/protector/armour are 1/2/3, Europe's robe/light/heavy are
+	// 9/10/11, weapons 6, shields 4, accessories 7) and TypeID4 which
+	// piece -- for armour 1 helm, 2 shoulder guard, 3 mail, 4 pants,
+	// 5 gauntlet, 6 boots, which is what decides the slot an item may go
+	// in. See docs/protocol/ITEM_FORMAT.md.
+	TypeID1, TypeID2, TypeID3, TypeID4 int
+	// Country is the race the item belongs to: 0 China, 1 Europe, 3 either.
+	Country int
+	// ReqGender is who may wear it: 1 a man, 0 a woman, 2 either.
+	ReqGender int
+	// ReqLevelType1/ReqLevel1 are the first of the table's four requirement
+	// pairs. Type 1 is the character's own level -- what every ordinary
+	// armour and weapon row carries.
+	ReqLevelType1, ReqLevel1       int
 	ReqStr                         int
 	ReqInt                         int
 	ItemClass                      int

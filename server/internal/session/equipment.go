@@ -9,7 +9,9 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 )
 
 // Equipment opcodes, our own protocol. All take a character name (like
@@ -143,19 +145,93 @@ func DecodeUnequipRequest(data []byte) (*UnequipRequest, error) {
 
 // EquipmentHandler returns a gateway.Handler implementing
 // OpEquipmentList/OpEquip/OpUnequip against store, resolving character
-// names against whichever account authenticated on the connection.
+// names against whichever account authenticated on the connection. With
+// no inventory or item reference data it applies no wearing rules -- what
+// the tests that only care about the slot mechanics want.
 func EquipmentHandler(chars character.Store, store equipment.Store) gateway.Handler {
+	return EquipmentHandlerWithRules(chars, store, nil, nil)
+}
+
+// EquipmentHandlerWithRules is EquipmentHandler plus the item table's own
+// rules for who may wear what (see equipment.Refusal): before an item is
+// moved into a slot, the item in the named inventory slot is looked up in
+// items, and refused if it is not something that goes in that slot, or is
+// for another race, the other gender, or a level the character has not
+// reached. inv and items may both be nil, which disables the rules.
+func EquipmentHandlerWithRules(chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpEquipmentList:
 			return handleEquipmentList(ctx, sess, p, chars, store)
 		case OpEquip:
-			return handleEquip(ctx, sess, p, chars, store)
+			return handleEquip(ctx, sess, p, chars, store, inv, items)
 		case OpUnequip:
 			return handleUnequip(ctx, sess, p, chars, store)
 		default:
 			return nil
 		}
+	}
+}
+
+// ItemLookup is the slice of reference data the wearing rules need.
+type ItemLookup interface {
+	GetItem(ctx context.Context, id int64) (*refdata.Item, error)
+}
+
+// equipRefusal applies equipment.Refusal to the item sitting in
+// characterID's inventorySlot. Returns "" when the item may be worn -- or
+// when there is no way to tell: no inventory or item data wired, no
+// reference row for the item, or a character that cannot be read.
+func equipRefusal(ctx context.Context, chars character.Store, inv inventory.Store, items ItemLookup, characterID int64, slot equipment.Slot, inventorySlot int) string {
+	if inv == nil || items == nil {
+		return ""
+	}
+	slots, err := inv.List(ctx, characterID)
+	if err != nil {
+		return ""
+	}
+	var itemID int64 = -1
+	for _, sl := range slots {
+		if sl.Index == inventorySlot {
+			itemID = sl.ItemID
+			break
+		}
+	}
+	if itemID == -1 {
+		// The store reports the empty slot itself.
+		return ""
+	}
+	item, err := items.GetItem(ctx, itemID)
+	if err != nil {
+		// No reference row is "nothing known", not a refusal.
+		return ""
+	}
+	c, err := chars.GetByID(ctx, characterID)
+	if err != nil {
+		c = nil
+	}
+	if err := equipment.Refusal(c, item, slot); err != nil {
+		return refusalMessage(err)
+	}
+	return ""
+}
+
+// refusalMessage turns an equipment.Refusal error into the text the client
+// shows.
+func refusalMessage(err error) string {
+	switch {
+	case errors.Is(err, equipment.ErrNotEquippable):
+		return "that cannot be equipped"
+	case errors.Is(err, equipment.ErrWrongSlot):
+		return "that does not go in that slot"
+	case errors.Is(err, equipment.ErrWrongRace):
+		return "that is for another race"
+	case errors.Is(err, equipment.ErrWrongGender):
+		return "that is for the other gender"
+	case errors.Is(err, equipment.ErrLevelTooLow):
+		return "your level is too low"
+	default:
+		return "operation failed"
 	}
 }
 
@@ -197,7 +273,7 @@ func handleEquipmentList(ctx context.Context, sess *gateway.Session, p *proto.Pa
 	return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Items: snaps}).Encode()})
 }
 
-func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store) error {
+func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup) error {
 	req, err := DecodeEquipRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "malformed request"}).Encode()})
@@ -207,6 +283,9 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: errStr}).Encode()})
 	}
 
+	if refusal := equipRefusal(ctx, chars, inv, items, characterID, req.Slot, req.InventorySlot); refusal != "" {
+		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: refusal}).Encode()})
+	}
 	if err := store.Equip(ctx, characterID, req.Slot, req.InventorySlot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}

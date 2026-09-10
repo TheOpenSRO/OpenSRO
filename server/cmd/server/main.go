@@ -267,7 +267,7 @@ func main() {
 		}),
 		session.WorldHandler(chars, eq, hub),
 		session.InventoryHandler(chars, inv),
-		session.EquipmentHandler(chars, eq),
+		session.EquipmentHandlerWithRules(chars, eq, inv, refItems),
 		session.CharacterStatsHandler(chars, eq, refItems),
 		session.ShopHandler(chars, shopSvc),
 		session.CombatHandler(chars, eq, refItems, hub, monsters, quests, inv),

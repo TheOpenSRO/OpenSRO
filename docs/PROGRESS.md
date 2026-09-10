@@ -2,6 +2,32 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-09-10 — the character dressed from the game's own tables
+
+"Fix the player models and armor": the server equipped the Cotton starter set and the client drew
+an ornate gold one, because it believed no item-to-model mapping existed and chose a look by
+`item_id % 8`. Round "hundred-and-thirty-first" in `docs/WORLD_ISSUES.md` and
+`docs/protocol/ITEM_FORMAT.md` have the detail; this is the index.
+
+- **Column 52 of the item table names the model every item is worn as**, and all 7,264 such
+  models exist in a real Data.pk2. Each item's `.bsr` (type 5) says how it hangs: skinned onto
+  the body's bones, or on a skeleton of its own under a named body bone (`Bip01 R HandMid` for a
+  blade, `Bip01 Neck1` for the shoulder piece -- the pelvis mystery, solved by two strings).
+- **The player body is a `characterdata` row** (`CHAR_CH_MAN_FIGHTER` -> `chinaman_fighter.bsr`,
+  type 0), assembled with real skinning like every NPC. The per-gender path table, the
+  `clothes_NN` sets, the weapon/shield variant lists and the guessed bone tables are gone.
+- **Who may wear what is the table's rule**: race (`Country`), gender (`ReqGender`), the piece
+  and so the slot (`TypeID4`), and level -- where `ReqLevelType` 1 is the character and 513-518
+  are the six European masteries, per `skillmasterydata.txt`. Enforced server-side by
+  `equipment.Refusal` for slot/race/gender/character level; mastery and stat requirements are
+  read but not enforced. Characters have a level now (1).
+- **Slots renumbered to the game's order** (helm, mail, shoulder guard, gauntlet, pants, boots,
+  weapon, shield); gauntlet is the `AA` piece nobody could name; the starting kit dresses all six.
+- **The wire carries slot + item id per worn slot** instead of a mask and two booleans.
+
+Measured and left for the world lane: at the QA spot (1002, 917) the character stands on the
+only walkable height under a placed object's collider 11.45 units up -- placement, not the model.
+
 ## 2026-09-10 — the world map, end to end
 
 The world map had been parked for a long time with the tile *set* known and the tile *names*

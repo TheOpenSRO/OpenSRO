@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS characters (
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS gold BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS hp INTEGER NOT NULL DEFAULT 100;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT 'china_man';
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS level INTEGER NOT NULL DEFAULT 1;
 CREATE UNIQUE INDEX IF NOT EXISTS characters_name_lower ON characters (LOWER(name));
 CREATE INDEX IF NOT EXISTS characters_account_id ON characters(account_id);
 `
@@ -63,7 +64,7 @@ func (s *SQLStore) Close() error {
 // ListByAccount implements Store.
 func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Character, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, account_id, name, gold, hp, gender FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
+		`SELECT id, account_id, name, gold, hp, gender, level FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("character: listing characters: %w", err)
 	}
@@ -72,7 +73,7 @@ func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Chara
 	var out []*Character
 	for rows.Next() {
 		var c Character
-		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender); err != nil {
+		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level); err != nil {
 			return nil, fmt.Errorf("character: scanning row: %w", err)
 		}
 		out = append(out, &c)
@@ -93,15 +94,15 @@ func (s *SQLStore) Create(ctx context.Context, accountID int64, name string) (*C
 
 	var id int64
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO characters (account_id, name, gold, hp, gender) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		accountID, name, StartingGold, MaxHP, DefaultGender).Scan(&id)
+		`INSERT INTO characters (account_id, name, gold, hp, gender, level) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		accountID, name, StartingGold, MaxHP, DefaultGender, StartingLevel).Scan(&id)
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			return nil, ErrNameTaken
 		}
 		return nil, fmt.Errorf("character: inserting character: %w", err)
 	}
-	return &Character{ID: id, AccountID: accountID, Name: name, Gold: StartingGold, HP: MaxHP, Gender: DefaultGender}, nil
+	return &Character{ID: id, AccountID: accountID, Name: name, Gold: StartingGold, HP: MaxHP, Gender: DefaultGender, Level: StartingLevel}, nil
 }
 
 // Delete implements Store.
@@ -200,8 +201,8 @@ func (s *SQLStore) ResetHP(ctx context.Context, characterID int64) error {
 func (s *SQLStore) GetByID(ctx context.Context, characterID int64) (*Character, error) {
 	var c Character
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, account_id, name, gold, hp, gender FROM characters WHERE id = $1`, characterID,
-	).Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender)
+		`SELECT id, account_id, name, gold, hp, gender, level FROM characters WHERE id = $1`, characterID,
+	).Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}

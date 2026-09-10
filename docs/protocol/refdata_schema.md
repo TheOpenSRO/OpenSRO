@@ -31,8 +31,13 @@ game-balance data. Columns fall into a few groups:
   else on another)
 - **Magic options**: `MaxMagicOptCount`, `ChildItemCount`, `Link`
 
-`refdata.Item` (our own schema) keeps a curated subset of this — the combat-relevant stats — not
-all 105 columns. Extend it as gameplay needs grow rather than mirroring everything up front.
+`refdata.Item` (our own schema) keeps a curated subset of this — the combat-relevant stats, and
+since 2026-09-10 the classification and wearing-requirement columns (`TypeID1`-`4`, `Country`,
+`ReqGender`, `ReqLevelType1`, `ReqLevel1`) that `equipment.Refusal` checks — not all 105 columns.
+Extend it as gameplay needs grow rather than mirroring everything up front. The CSV importer's
+column list appends the new eight after the original twenty, so an export made for the earlier
+layout is a prefix of the current one. What each of those columns means, and how that was
+established against the client's own tables, is in `ITEM_FORMAT.md`.
 
 ## `_RefSkill` (36,144 rows) + `_RefSkill_Copy` (7,388 rows) — skill data
 

@@ -43,6 +43,12 @@ const StartingGold = 1000
 // choice, revisit once there's a leveling/stats system to scale it.
 const MaxHP = 100
 
+// StartingLevel is the level a newly-created character is. There is no
+// way to gain a level yet -- experience is not tracked -- so every
+// character stays at it; what the level is *for* today is the item table's
+// own "required level" column, which equipment checks against it.
+const StartingLevel = 1
+
 // Gender selects which real body/skeleton/equipment assets a character
 // renders with client-side (see client/scripts/World3D.gd). Real,
 // RE-confirmed asset options, not invented: this project's available real
@@ -74,6 +80,7 @@ type Character struct {
 	Gold      int64
 	HP        int
 	Gender    string
+	Level     int
 }
 
 // Store is anything that can list, create, and delete characters for an

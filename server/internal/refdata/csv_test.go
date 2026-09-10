@@ -7,8 +7,8 @@ import (
 
 func TestLoadItemsCSV(t *testing.T) {
 	// Synthetic data, not any real game's actual values.
-	csv := "1,5000,10,0,1,0,0.5,1.0,10.0,20.0,5.0,15.0,50.0,80.0,20.0,40.0,0.5,0.9,0.1,0.3\n" +
-		"2,1,0,20,3,1,1.0,1.0,0.0,0.0,30.0,60.0,0.0,0.0,100.0,150.0,0.6,0.95,0.05,0.2\n"
+	csv := "1,5000,10,0,1,0,0.5,1.0,10.0,20.0,5.0,15.0,50.0,80.0,20.0,40.0,0.5,0.9,0.1,0.3,3,1,6,2,0,1,1,1\n" +
+		"2,1,0,20,3,1,1.0,1.0,0.0,0.0,30.0,60.0,0.0,0.0,100.0,150.0,0.6,0.95,0.05,0.2,3,1,3,3,0,0,1,12\n"
 
 	items, err := LoadItemsCSV(strings.NewReader(csv))
 	if err != nil {
@@ -30,6 +30,13 @@ func TestLoadItemsCSV(t *testing.T) {
 
 	if items[1].ID != 2 || !items[1].TwoHanded {
 		t.Fatalf("item 1 fields wrong: %+v", items[1])
+	}
+	// The classification and requirement columns ride at the end.
+	if items[0].TypeID1 != 3 || items[0].TypeID3 != 6 || items[0].Country != 0 || items[0].ReqGender != 1 || items[0].ReqLevelType1 != 1 || items[0].ReqLevel1 != 1 {
+		t.Fatalf("item 0 classification/requirement fields wrong: %+v", items[0])
+	}
+	if items[1].TypeID3 != 3 || items[1].TypeID4 != 3 || items[1].ReqGender != 0 || items[1].ReqLevel1 != 12 {
+		t.Fatalf("item 1 classification/requirement fields wrong: %+v", items[1])
 	}
 	if items[1].MagAttackMax != 150.0 {
 		t.Fatalf("item 1 MagAttackMax = %v, want 150.0", items[1].MagAttackMax)
@@ -54,7 +61,7 @@ func TestLoadItemsCSVMalformedRow(t *testing.T) {
 }
 
 func TestLoadItemsCSVNonNumericField(t *testing.T) {
-	csv := "1,5000,10,0,1,0,0.5,1.0,10.0,20.0,5.0,15.0,50.0,80.0,20.0,40.0,0.5,0.9,0.1,notanumber\n"
+	csv := "1,5000,10,0,1,0,0.5,1.0,10.0,20.0,5.0,15.0,50.0,80.0,20.0,40.0,0.5,0.9,0.1,notanumber,3,1,6,2,0,1,1,1\n"
 	_, err := LoadItemsCSV(strings.NewReader(csv))
 	if err == nil {
 		t.Fatal("expected an error for a non-numeric field, got nil")

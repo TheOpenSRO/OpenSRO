@@ -42,7 +42,7 @@ func TestImportAndGetItem(t *testing.T) {
 	store := openTestSQLStore(t)
 	ctx := context.Background()
 
-	csv := "1,5000,10,0,1,0,0.5,1.0,10.0,20.0,5.0,15.0,50.0,80.0,20.0,40.0,0.5,0.9,0.1,0.3\n"
+	csv := "1,5000,10,0,1,0,0.5,1.0,10.0,20.0,5.0,15.0,50.0,80.0,20.0,40.0,0.5,0.9,0.1,0.3,3,1,6,2,0,1,1,1\n"
 	items, err := LoadItemsCSV(strings.NewReader(csv))
 	if err != nil {
 		t.Fatalf("LoadItemsCSV: %v", err)
@@ -72,8 +72,8 @@ func TestListAll(t *testing.T) {
 	store := openTestSQLStore(t)
 	ctx := context.Background()
 
-	csv := "1,5000,10,0,1,0,0.5,1.0,10.0,20.0,5.0,15.0,50.0,80.0,20.0,40.0,0.5,0.9,0.1,0.3\n" +
-		"2,5000,10,0,1,0,0.5,1.0,10.0,20.0,5.0,15.0,50.0,80.0,20.0,40.0,0.5,0.9,0.1,0.3\n"
+	csv := "1,5000,10,0,1,0,0.5,1.0,10.0,20.0,5.0,15.0,50.0,80.0,20.0,40.0,0.5,0.9,0.1,0.3,3,1,6,2,0,1,1,1\n" +
+		"2,5000,10,0,1,0,0.5,1.0,10.0,20.0,5.0,15.0,50.0,80.0,20.0,40.0,0.5,0.9,0.1,0.3,3,1,6,2,0,1,1,1\n"
 	items, err := LoadItemsCSV(strings.NewReader(csv))
 	if err != nil {
 		t.Fatalf("LoadItemsCSV: %v", err)

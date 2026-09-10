@@ -69,7 +69,7 @@ func (m *MemStore) Create(_ context.Context, accountID int64, name string) (*Cha
 	}
 
 	m.nextID++
-	c := &Character{ID: m.nextID, AccountID: accountID, Name: name, Gold: StartingGold, HP: MaxHP, Gender: DefaultGender}
+	c := &Character{ID: m.nextID, AccountID: accountID, Name: name, Gold: StartingGold, HP: MaxHP, Gender: DefaultGender, Level: StartingLevel}
 	m.byID[c.ID] = c
 	m.namesTaken[key] = true
 

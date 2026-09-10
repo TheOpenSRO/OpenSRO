@@ -6597,3 +6597,123 @@ out on their own -- their box is a point.
 Also fixed while rendering it: the window could be opened before the first
 position arrived, and centring on a player who is nowhere yet parks the
 view in the middle of the map. It now centres on the first fix.
+
+## Hundred-and-thirty-first round: the character dressed from the game's own tables
+
+"Fix the player models and armor" -- and the first render against a live
+server showed what was wrong with them: the server had equipped the six
+Cotton starter items, and the client drew an ornate gold set. Not a bug in
+the drawing; a bug in what was being drawn. The client had no idea what
+item 4842 *looks like*, so it picked a look by `item_id % 8` from eight
+`clothes_NN` sets it had found by convention, hung each piece off a bone
+it had guessed from the file's two-letter suffix, and had one piece -- the
+shoulder guard -- sitting at the pelvis for a reason nobody had found.
+
+All of that rested on one recorded belief: "real per-item ID-to-model
+mapping data doesn't exist anywhere this project can reach (checked;
+`_RefObjItem` has no code-name/model column)". It is column 52 of the item
+table. `4842 Cotton Suit` reads `item\china\man_item\clothes_01_ba.bsr`,
+and every one of the 7,264 rows that names a model names a file that is
+really in Data.pk2 (`client/tools/check_item_requirements.gd`).
+
+### What the files say, read rather than guessed
+
+- **The body is a `.bsr` like an NPC's.** `characterdata`'s rows 1907-1932
+  are the 26 playable China classes: `CHAR_CH_MAN_FIGHTER` ->
+  `char\china\chinaman_fighter.bsr`, type **0** in its header (the client's
+  factory builds a `ResChar` for case 0 -- BSR_FORMAT.md already had that
+  and called the type "unconfirmed"), naming the skeleton, nine skinned
+  pieces, the material and 217 animations. `SkinnedBsrAssembler` builds it
+  with real weights, the same path every NPC already took; the player was
+  the last character still rigidly assembled from a hand-kept path table.
+- **An item is a `.bsr` of type 5**, and it says how it hangs. A suit,
+  trousers, a hat, boots or wristlets name no skeleton: their mesh's bone
+  palette names the body's own bones (`clothes_01_ba.bms` lists nine,
+  `Bip01 Neck1` first), so they are skinned onto the body like a body
+  piece. A weapon or a shoulder piece names **a skeleton of its own and
+  the body bone it hangs from** -- `blade_01.bsk` under `Bip01 R HandMid`,
+  `clothes_sa.bsk` under `Bip01 Neck1` -- authored right after the skeleton
+  path, where this project's reader had been reading a bare path list and
+  stopping. That second string is the whole shoulder-guard mystery: its
+  vertices are in its own skeleton's space, and reading them as body space
+  put them by the hip.
+- **The weapon bone is per item** (`Bip01 R HandMid`, not the
+  `Bip01 R Hand` this project chose), and comes from the file.
+
+### Who may wear what, from the tables
+
+The code name is a summary of the row -- `ITEM_CH_M_CLOTHES_01_BA_A_RARE`
+is race, gender, family, degree, piece, variant, rarity -- and every part
+agrees with a column, measured over every equipment row in a real table:
+`CH`/`EU` against Country 0/1 with no exceptions, `M`/`W` against
+ReqGender 1/0, and the six piece letters against TypeID4 (HA 1, SA 2, BA 3,
+LA 4, AA 5, FA 6; 136-140 rows each). **AA is the gauntlet**: the equipment
+window's own slot artwork is `equip_slot_gauntlet.ddj`, the one slot the
+avatar struct's debug dump skipped and EQUIP_SLOTS.md could not name.
+
+The level requirement is four `(type, level)` pairs, and only seven type
+values occur in the whole table: 1, and 513 through 518.
+`skillmasterydata.txt` names them -- row 1 is `캐릭터`, *character*, and
+513-518 are Warrior, Wizard, Rogue, Warlock, Bard, Cleric, the six European
+masteries. **`ReqLevelType` is a mastery id, and 1 is the character
+itself.** A China item asks for a character level; a European item asks for
+a mastery level. That is the "sometimes skill level" of the original,
+stated by its own tables.
+
+The server now enforces the slot (from the type ids), the race, the gender
+and the level where the requirement is by character level
+(`equipment.Refusal`); mastery-level and stat requirements are read and
+kept but not enforced, because nothing tracks those numbers yet and
+refusing on one the server does not have would be inventing it. Characters
+have a level (1, no way to gain one) so that the most common requirement
+can be checked at all. Slots are renumbered to the game's own order --
+helm, mail, shoulder guard, gauntlet, pants, boots, weapon, shield -- and
+the starting kit dresses all six armour slots.
+
+### On the wire
+
+The snapshot other players receive carried a five-bit armour mask and two
+booleans; it now carries slot and item id per worn slot, because the id is
+what dressing needs and the mask could only ever draw one look.
+
+### What the picture is evidence of
+
+The marker of this round is not a measurement but the thing measured for:
+a new character, dressed by the server, draws with the Cotton Hat on its
+head, the Cotton Talisman at its collar, the Cotton Wristlet on its forearm
+and the Cotton Suit on its back -- the white set the table names, smoothly
+skinned, where two hours earlier it wore gold.
+
+### Corrections to the record
+
+- `docs/protocol/EQUIP_SLOTS.md` guessed two unlabeled gap slots in the
+  avatar struct; the twelve-byte stride allows one, and it is the gauntlet.
+- `CharacterAssembler`'s header claimed `.bms` has no bone weights; the
+  hundred-and-tenth round had already shown otherwise, and the header now
+  says so.
+- The README's "no item-to-model mapping exists" is replaced by where it is.
+
+### Measured, and not a model problem: the character stands under a placed object at the QA spot
+
+The full-body render at the long-standing QA spot, local (1002, 917) in
+97/168, showed the character buried to the waist. Before touching the model
+the rig report was extended to measure it, and the answer is placement:
+
+```
+player at y -51.90; bones -51.89 (Bip01 R Toe0) .. -35.85 (Bip01 Head); meshes -52.00 .. -32.67; ground -51.90
+first surface down from overhead: y -40.45 (11.45 from the feet) on .../Obj_cj_jang_gate_126/cj_jang_gate07
+walkable heights in this column: [-51.90]
+```
+
+The body is the right size -- 16 units from toe to head, and both
+`chinaman_skel.bsk` and the `europeman_skel.bsk` the fighter's `.bsr`
+happens to name stand 15.95 tall with the same bone names, so the swap is
+harmless -- and the feet are exactly on the one walkable height the nav
+graph knows in that column. What sits 11.45 units above the feet is a
+placed object's collider (`cj_jang_gate07`), which the nav graph does not
+list as a surface here. The earlier render at the same spot, before any of
+this round's changes, shows the same waist-level cut. A world-lane item,
+recorded rather than papered over with a spawn offset: either that object's
+deck should be a walkable surface here, or the spot is under something a
+player was never meant to stand beneath. The QA tour's own square spot,
+(1002, 1020), is on the plaza deck the nav graph knows.
