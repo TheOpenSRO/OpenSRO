@@ -6521,3 +6521,54 @@ lattices match no row.
 
 A guess ("second zoom level") replaced by a measurement, and the measurement
 was one grep of the format string's xrefs plus a set difference.
+
+## Hundred-and-thirtieth round: a second table, and its stale column
+
+`worldmapguidedata.txt` turned up while looking for where the world map's
+landmark and monster signs get their positions. It is the world map guide's
+own data, four `#section`s, authored separately from
+`worldmap_mapinfo.txt` -- and it says a lot of the same things, which makes
+each a check on the other.
+
+`client/tools/check_worldmap_guide.gd` runs the join, on `맵ID`. Against a
+real archive **nothing disagrees**. The world map's row reads start region
+`46x113`, one picture `128x128`, one region size `4x4`, map id 0 -- the same
+grid, from a table with no code path in common with the one it was read
+from. `시작 리전` being written `<left>x<top>` also states the tile naming
+convention outright.
+
+It closed one of last round's loose ends. The archive's spare 5x5 tile
+lattice at A 199..215, B 87..103 is named here: `jupiter_field`, map id 17,
+start region **`199x103`**, 128x128, four regions a tile. `worldmap_mapinfo`
+gives that same map as a single image, which is why its loader never asks
+for the tiles. (`jupiter1_1` likewise names the `map_jupiter_a_<A>x<B>` set
+at start `235x126`, 256x256.) The 5x4 lattice still matches nothing.
+
+### The column not to read
+
+MONSTER and QUEST both carry `x | y | 리전x | 리전y | pos_x | pos_y` -- at
+different indices, MONSTER's `x` being column 8 and QUEST's column 5, so a
+reader has to track the section here too. The `x`/`y` pair is a world-map
+pixel, and it is **stale**:
+
+| | rows on the world map's grid | stated minus derived |
+|---|---|---|
+| MONSTER | 142 | **5 tiles out horizontally**, 0 vertically -- every one a `MOB_CH_*` |
+| MONSTER | 31 | exact -- the newer `MOB_TK_*`/`MOB_SD_*` western rows |
+| QUEST | 89 | exact |
+
+The pitch is a whole 128 on both axes for all 262, and the **row** index is
+exact for all 262 -- a third independent confirmation that `top` is 113, the
+step is 4, and B descends. The column index is out by exactly five tiles,
+twenty regions, and only on the older Chinese monsters. The map was re-cut
+westward at some point and those rows were never re-based.
+
+So the region and `pos_` columns are the ones to use.
+`WorldmapGuideReader` keeps `x`/`y` as `stated_pixel` -- dropping data is
+its own kind of dishonesty -- and derives the position with `pixel_in()`.
+
+**The general shape of this**: a table that agrees with another on eleven
+things and disagrees on the twelfth is worth more than a table that agrees
+on everything, because the twelfth is where the history is. Two rounds ago
+it was `Pic Area` against `Texture Size`; here it is a stale pixel column
+against a live region one.

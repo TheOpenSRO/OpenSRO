@@ -145,6 +145,53 @@ interface\worldmap\map\map_world_166x97.ddj
 
 which exists.
 
+## A second table says the same things: `worldmapguidedata.txt`
+
+`server_dep\silkroad\textdata\worldmapguidedata.txt` is the world map guide's own data, and it
+was authored separately. Four `#section`s, each with its own columns and its own header row:
+
+| Section | Rows | What |
+|---|---|---|
+| `MAP_MANAGER` | 18 | 항목 (name) \| 시작 리전 \| 끝 리전 \| 그림 한장의 사이즈 \| 한 리전크기 \| 맵ID |
+| `AREA` | 39 | town and area names, their `SN_ZONE_*`/`UIIT_` string keys, and a link id |
+| `MONSTER` | 339 | 코드네임 \| 지역 \| … \| x \| y \| 리전x \| 리전y \| pos_x \| pos_y \| 색상값 |
+| `QUEST` | 492 | quest code \| 지역 \| x \| y \| 리전x \| 리전y \| pos_x \| pos_y \| 몬스터 코드네임 |
+
+MONSTER and QUEST carry the **same six geometry columns at different indices** — MONSTER's `x` is
+column 8 and QUEST's is column 5 — so a reader has to track the section here too.
+
+`MAP_MANAGER` joins to `worldmap_mapinfo.txt` by 맵ID, and `client/tools/check_worldmap_guide.gd`
+runs the join. Against a real archive **nothing disagrees**. The world map's row reads start
+region `46x113`, one picture `128x128`, one region size `4x4`, map id `0` — the same grid the
+other table gives, from a table with no code path in common.
+
+It also names two maps `worldmap_mapinfo.txt` has as single images:
+
+- **`jupiter_field`, map id 17, start `199x103`, 128 × 128, four regions a tile.** That is exactly
+  the archive's spare 5 × 5 lattice (A 199…215, B 87…103) — so the tiles nothing asks for are the
+  tiled form of the Jupiter field, and this table is what names them.
+- **`jupiter1_1`, map id 16, start `235x126`, 256 × 256, one region a tile**, which is the
+  `map_jupiter_a_<A>x<B>.ddj` set (`map_jupiter_a_237x126.ddj` is 32,916 bytes = 256 × 256 DXT1).
+
+### Do not read its `x`/`y` columns
+
+They are world-map pixels, and they are **stale**. Measured over every MONSTER and QUEST row on
+the world map's own grid:
+
+| | rows | stated − derived |
+|---|---|---|
+| MONSTER | 142 | **5 tiles out horizontally**, 0 vertically — every one a `MOB_CH_*` |
+| MONSTER | 31 | exact — the newer `MOB_TK_*` / `MOB_SD_*` western rows |
+| QUEST | 89 | exact |
+
+The pitch is a whole 128 on both axes for **all 262**, and the **row** index is exact for all 262
+— which is a third independent confirmation that `top` is 113, the step is 4, and B descends. The
+column index is the only thing out, by exactly five tiles (twenty regions), and only on the older
+Chinese monsters: the map was re-cut westward at some point and those rows were never re-based.
+
+So the region and `pos_` columns are the ones to use. `WorldmapGuideReader` keeps `x`/`y` as
+`stated_pixel` and derives the real position with `pixel_in()`.
+
 ## Loose ends, and one that is closed
 
 - **The other 269 `map_world_*` tiles** are asked for by **nothing**. All four functions that
@@ -161,10 +208,14 @@ which exists.
   | A 199…215, B 87…103 | 25, a full 5 × 5 | 640 × 640 pixels |
   | A 200…216, B 72…84 | 20, a full 5 × 4 | 640 × 512 pixels |
 
-  The middle one is **the Jupiter field, tiled**: `map_jupiter1_1`'s row covers world
-  X 12288…16128 by Y −1728…2112 drawn at 640 × 640, which is 6.0 units a pixel — the world map's
-  own scale — and 5 × 5 tiles of 128 is exactly 640 × 640 over the same box. The table names a
-  single image for it instead. The other two lattices match no row in the table.
+  The middle one is **the Jupiter field, tiled**, and two separate things say so.
+  `worldmapguidedata.txt` names a map `jupiter_field` at start region **`199x103`**, 128 × 128,
+  four regions a tile — the lattice exactly. And the geometry agrees: `map_jupiter1_1`'s row
+  covers world X 12288…16128 by Y −1728…2112 drawn at 640 × 640, which is 6.0 units a pixel — the
+  world map's own scale — and 5 × 5 tiles of 128 is exactly 640 × 640 over the same box.
+  `worldmap_mapinfo.txt` gives that map as a single image instead, which is why its loader never
+  asks for the tiles. **The 5 × 4 lattice at A 200…216, B 72…84 still matches nothing** in either
+  table.
 - **Three rows with no artwork**: `map_survival_colosseum`, `_desert` and `_palace` (ids 23–25).
   All three have **every region bound set to 0** — degenerate boxes, zero units per pixel — so
   they are unfinished placeholder rows rather than shipped content this archive is missing.
