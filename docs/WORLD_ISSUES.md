@@ -6335,3 +6335,98 @@ where the client can answer:
 The two that are neither read nor reducible to authored data -- the draw
 order's mechanism and what the `.bms` sections are *for* -- are the two that
 say so in the code that depends on them.
+
+## Hundred-and-twenty-eighth round: the world map, read off the client's own two row parsers
+
+The world map had been parked with the tile *set* established and the tile
+*meaning* not. The last note said what to do next: "read the placement side
+rather than the loading side -- the function that puts the player's marker
+on the map converts region + local position into a map pixel, and that is
+the mapping stated outright."
+
+That is what happened, and it went further than the marker.
+
+### Finding the placement side
+
+The same technique that found the `.bms` loader last round: the engine's own
+assert strings name its source files. `NIFWorldMap.cpp` appears in
+`FUN_00622b60` ("Illigal Map Index"), which computes the map's world-space
+box:
+
+```
+minX = (left   - 135) * 192 + LT_x        maxX = (right  - 135) * 192 + RB_x
+maxY = (top    -  92) * 192 + LT_y        minY = (bottom -  92) * 192 + RB_y
+units per pixel = |maxX - minX| / draw_x ,  |maxY - minY| / draw_y
+```
+
+135, 92 and 192 are **the three constants this project's position readout
+already used**, arrived at independently and long before. It multiplies
+`left`/`right` by the *y* constant and `top`/`bottom` by the *x* one, which
+is exactly the question that had been open: **`left`/`right` are region y,
+`top`/`bottom` are region x.**
+
+The bounds come from `server_dep\silkroad\textdata\worldmap_mapinfo.txt`,
+whose world-map row reads left 46, top 113, right 177, bottom 70, tiles
+128x128, draw 4224x1408, "one region size" 4x4. That is exactly the loop
+already read from `FUN_006160d0`: A from 46 by 4, B from 113 down by 4,
+33 x 11 = 363 tiles, 4224 x 1408 to the pixel. Jangan (region x 97, y 168)
+is `map_world_166x97.ddj`, and the file exists.
+
+### Then the parsers, rather than the header
+
+The header row names every column, and reading columns off a header is
+reading, not recovery. The binary has the RTTI names `CWorldMap_MapInfo` and
+`CWorldMap_DungeonMapInfo`; each section's rows go through its own parser
+(`FUN_0096f680`, `FUN_0062c170`), and each is a straight run of read-int /
+read-float / read-string calls into fixed member offsets. Those give the
+column layout exactly, and two things the header cannot:
+
+- **The `WLocalmap` parser stops after column 19.** Columns 20
+  (`전체맵버튼타입`) and 21 (`한 리젼 크기`) are authored and never read --
+  the "4 regions to a tile" the tile loop uses is a **literal 4** in the
+  code, not the table's `4x4`. Our reader still uses the column, because it
+  is authored data and it agrees, but the test now asserts the grid it
+  produces is the size the draw size implies.
+- **The `Dungeonmap` parser** decodes the section that had been written off
+  as "a different shape, not decoded": path in column 15, grid from the
+  texture counts in 6 and 7, and one **float** in column 14 whose header
+  states its own unit -- "1.0 = 256", a scale of 1.0 draws a region 256
+  pixels wide. It stops after column 16, leaving six more authored columns
+  unread.
+
+### Why this is a finding and not a reading
+
+Three independent things agree, and they would not if the axes were swapped:
+
+| | |
+|---|---|
+| the world map's box over its draw size | **exactly 6.0** units per pixel, both axes -- and 6.0 is 192/32, i.e. 32 pixels a region, i.e. 128 per 4-region tile |
+| Jangan's own local-map row | left 166, top 99, right 170, bottom 96 -- region y 168 inside 166..170, region x 97 inside 96..99, from the data alone |
+| Jangan's box over 1024x768 | **0.75** both axes, and the town square (97/168 local 1002,917) lands at pixel (517.6, 517.7), inside its own map |
+
+Against a real archive: **363/363 world tiles present, 25/25 dungeon floors
+complete** -- several thousand files, no misses.
+
+### Two things the check caught that reading would not have
+
+- **`world()` was wrong.** It returned "the row whose type is 0", and the
+  table has **three**: the main world plus `map_jupiter_a` and
+  `map_jupiter1_1`, which are worlds of their own you switch to. The main
+  one is the only type-0 row drawn from a grid.
+- **The three `map_survival_*` rows have no artwork** -- and every one of
+  their four region bounds is **0**, so their world box is degenerate and
+  their scale is zero. They are unfinished placeholder rows, not shipped
+  content this archive happens to lack. That is a different answer from
+  "missing files", and only the bounds show it.
+
+### Recorded as a caution
+
+The vertical **flip** -- image y growing as world Y shrinks -- is *not* read
+from the client, which takes an absolute value and so says nothing either
+way. It follows from the table's own naming, `좌표 LT_y` being the offset
+paired with `top`, the larger region x and so the larger world Y. The code
+that depends on it says so.
+
+Still open: the other 269 `map_world_*` tiles in the archive, whose A is odd
+mod 4 and which no row in this table describes. Two of the four functions
+referencing the tile format string have not been read.

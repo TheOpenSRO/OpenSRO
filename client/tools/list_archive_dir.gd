@@ -29,6 +29,11 @@ func _init() -> void:
 		quit(2)
 		return
 
+	# Archive paths use backslashes, which do not survive being passed
+	# through ssh and su to the render box -- each layer eats one. Forward
+	# slashes are accepted so the caller need not count them.
+	dir_path = dir_path.replace("/", "\\")
+
 	var archive := Pk2Reader.open(pk2_path)
 	if archive == null:
 		printerr("could not open ", pk2_path)

@@ -189,7 +189,9 @@ client already receives. Zoom in/out buttons are wired but untested.
 `GDR_WORLDMAP`, `ifworldmap.txt`, 652×424. The reference shows both a regional view with named
 landmark icons and a continent view. `interface\worldmap\` holds **5,320** tiles — by far the
 largest interface directory — so the art is all there. Landmark names come from
-`textzonename.txt`, already parsed for the city coordinate work.
+`textzonename.txt`, already parsed for the city coordinate work. **Which tile goes where, and
+where a position lands on it, is now recovered** — see the end of this file and
+`docs/protocol/WORLDMAP_FORMAT.md`.
 
 ## Cross-cutting, worth doing early
 
@@ -217,34 +219,25 @@ largest interface directory — so the art is all there. Landmark names come fro
 - **`UV_LT`/`UV_RT`/`UV_LB`/`UV_RB`** on every control. Parsed, unused; presumably atlas
   sub-rects, all `0,0`–`1,1` in the files read so far.
 
-### The world map — parked, with the tile set established
+### The world map — the table is decoded, the window is not built
 `GDR_WORLDMAP` is a `CIFWorldMap` at `100,100,652,424` on `mframe_wnd_`, and `ifworldmap.txt`
-carries only three buttons: the map itself is the control's own drawing. Its tiles are
-`interface\worldmap\map\`, 829 files, of which **632 are `map_world_<a>x<b>.ddj`** at 8,340
-bytes each — 64×64 ARGB1555 plus the usual header, against the minimap's 128×128. The rest are
-city plates (`city_jangan.ddj` and friends, with `_focus`/`_press` variants) and per-dungeon sets
-under `map/`, `dungeon/` and `monster/`.
+carries only three buttons: the map itself is the control's own drawing.
 
-**The client's own construction is now recovered** (`NIFWorldMap.cpp`): the path is built with
-`interface\worldmap\map\map_world_%dx%d.ddj`, and `FUN_006160d0` fills its tile array with
+**`worldmap_mapinfo.txt` is now read, both sections**, from the client's own two row parsers
+rather than off the header — see `docs/protocol/WORLDMAP_FORMAT.md` and
+`client/scripts/worldmap/worldmap_info_reader.gd`. What that gives:
 
-```
-A = 46;  do { B = 113;  do { load(A, B);  B -= 4; } while (B > 69);  A += 4; } while (A <= 177);
-```
+- the world map is `interface\worldmap\map\map_world_<A>x<B>.ddj`, A ascending 46…174 by 4 and
+  B descending 113…73 by 4 — **363 tiles, all present in a real archive**, 33 × 128 by 11 × 128
+  = the 4224 × 1408 the table declares
+- `left`/`right` are region **y** and `top`/`bottom` are region **x**, settled three ways over
+  (the client's transform, Jangan's own row, and the scale coming out round)
+- the world-space box and the scale: **6.0 units per pixel** on the world map, **0.75** on a
+  city map, so a player marker is `pixel_for_world()` and nothing more
+- 33 local maps besides — cities, fortresses, the arenas, Jupiter — each with its own box, and
+  25 dungeon floors, every tile of every one of them present
 
-so this loop asks for **A ∈ 46,50…174 and B ∈ 73,77…113**. Tiles are 128×128 DXT1, and three
-other functions reference the same format string — which is why the file set holds two
-interleaved families of `A` (≡1 and ≡2 mod 4, e.g. both 65 and 66): more than one loop populates
-it, presumably a second zoom level.
-
-**What is still not established** is what A and B *mean*. They are not the minimap's `<y>x<x>`:
-Jangan is region x=97, y=168, and the archive has `map_world_97x85` … `97x113` but nothing at
-`168x…` at all. Nor does the imagery settle it — correlating Jangan's own minimap tile against
-all eight `map_world_97x*` tiles at every 16, 32 and 64-pixel cell position gives a best of 0.48
-with no clear winner, because the world-map art is stylised (roads and labels drawn in) rather
-than a downscale of the minimap.
-
-**Next step**: read the placement side rather than the loading side — the function that puts the
-player's marker on the map converts region + local position into a map pixel, and that is the
-mapping stated outright. `wmap_sign_location.ddj` and `xy_returnicon.ddj` are the icons to trace
-back from.
+**Next**: build it. `CIFWorldMap` draws the grid itself, so the window is the frame plus a
+control that lays 363 `TextureRect`s (or one atlas) at 128-pixel pitch inside a scroll view,
+with the three authored buttons on top. The player marker is `wmap_sign_location.ddj`;
+`city_jangan.ddj` and friends are the clickable city plates, with `_focus`/`_press` variants.
