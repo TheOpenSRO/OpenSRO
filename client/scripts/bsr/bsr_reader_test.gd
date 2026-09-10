@@ -187,8 +187,61 @@ func _build_synthetic_character(
 		buf = _append_len_prefixed(buf, skeleton_paths[i])
 		buf = _append_len_prefixed(buf, attach_bones[i] if i < attach_bones.size() else "")
 
-	# Real files carry more sections after the skeleton; a trailing word is
-	# enough to prove the reader stops where it should.
+	# Mesh groups: one, `default`, listing every mesh -- what a real body
+	# carries.
+	_put_u32(buf, BsrReader.OFF_PTR_MESH_GROUP, buf.size())
+	_put_u32(count_bytes, 0, 1)
+	buf.append_array(count_bytes)
+	buf = _append_len_prefixed(buf, "default")
+	_put_u32(count_bytes, 0, mesh_paths.size())
+	buf.append_array(count_bytes)
+	for i in range(mesh_paths.size()):
+		_put_u32(count_bytes, 0, i)
+		buf.append_array(count_bytes)
+
+	# Animation groups: `default` with a stand (type 0) and a walk (type
+	# 1) when the file lists animations, plus a `sword` group with only a
+	# run (type 7) -- the shape the real China man's body has, where a
+	# sword has a run of its own but falls back to the default walk.
+	_put_u32(buf, BsrReader.OFF_PTR_ANIMATION_GROUP, buf.size())
+	var groups: Array = []
+	if animation_paths.size() >= 1:
+		groups.append(["default", [[BsrReader.AnimationEntry.TYPE_STAND, 0, 0], [BsrReader.AnimationEntry.TYPE_WALK, mini(1, animation_paths.size() - 1), 2]]])
+		groups.append(["sword", [[BsrReader.AnimationEntry.TYPE_RUN, animation_paths.size() - 1, 0]]])
+	_put_u32(count_bytes, 0, groups.size())
+	buf.append_array(count_bytes)
+	for g in groups:
+		buf = _append_len_prefixed(buf, g[0])
+		_put_u32(count_bytes, 0, (g[1] as Array).size())
+		buf.append_array(count_bytes)
+		for e in g[1]:
+			var entry := PackedByteArray()
+			entry.resize(12)
+			_put_u32(entry, 0, e[0])
+			_put_u32(entry, 4, e[1])
+			_put_u32(entry, 8, e[2])
+			buf.append_array(entry)
+			for _k in range(e[2]):
+				var event := PackedByteArray()
+				event.resize(16)
+				_put_u32(event, 0, 421)
+				_put_u32(event, 4, 2)
+				buf.append_array(event)
+			# Two walk points and the trailing 1.0, as every real entry has.
+			var walk := PackedByteArray()
+			walk.resize(4 + 16 + 4)
+			_put_u32(walk, 0, 2)
+			_put_f32(walk, 4, 0.0)
+			_put_f32(walk, 8, 0.0)
+			_put_f32(walk, 12, 0.0)
+			_put_f32(walk, 16, 1.0)
+			_put_f32(walk, 20, 1.0)
+			buf.append_array(walk)
+
+	# The sound section is where the animation groups end; a count of
+	# zero is enough to prove the reader lands on it.
+	_put_u32(buf, BsrReader.OFF_PTR_SOUND, buf.size())
+	_put_u32(count_bytes, 0, 0)
 	buf.append_array(count_bytes)
 	return buf
 
@@ -336,6 +389,36 @@ func _init() -> void:
 		_check(character.material_path == "prim\\mtrl\\npc\\china\\chinaquest_priest.bmt", "character: material matches (got %s)" % character.material_path)
 		_check(character.skeleton_path == "prim\\skel\\npc\\china\\chinaquest_priest.bsk", "character: skeleton matches (got %s)" % character.skeleton_path)
 		_check(character.animation_paths.size() == 2, "character: 2 animations (got %d)" % character.animation_paths.size())
+
+	# The sections after the skeleton: mesh groups and animation groups,
+	# each read up to exactly where the next section's pointer says.
+	var grouped := BsrReader.parse(_build_synthetic_character(
+		"chinaman_fighter",
+		["prim\\mtrl\\char\\china\\man\\chinaman_fighter.bmt"],
+		["prim\\mesh\\char\\china\\man\\man_pelvis.bms", "prim\\mesh\\char\\china\\man\\man_thigh.bms"],
+		["prim\\ani\\char\\china\\man\\chinaman_fighter_standcity.ban",
+			"prim\\ani\\char\\china\\man\\chinaman_fighter_walkforward.ban",
+			"prim\\ani\\char\\china\\man\\chinaman_fighter_runforward_sword.ban"],
+		["prim\\skel\\char\\china\\chinaman_skel.bsk"],
+		BsrReader.TYPE_PLAYER_CHARACTER))
+	_check(grouped != null and grouped.mesh_groups.has("default")
+		and grouped.mesh_groups["default"] == PackedInt32Array([0, 1]),
+		"the default mesh group lists every piece (got %s)" % (str(grouped.mesh_groups) if grouped != null else "-"))
+	if grouped != null:
+		_check(grouped.animation_groups.size() == 2 and grouped.animation_groups.has("sword"),
+			"two animation groups, default and sword (got %s)" % str(grouped.animation_groups.keys()))
+		_check(grouped.animation_for(BsrReader.AnimationEntry.TYPE_STAND).ends_with("chinaman_fighter_standcity.ban"),
+			"type 0 in the default group is the town idle (got %s)" % grouped.animation_for(BsrReader.AnimationEntry.TYPE_STAND))
+		_check(grouped.animation_for(BsrReader.AnimationEntry.TYPE_RUN, "sword").ends_with("_runforward_sword.ban"),
+			"a sword has a run of its own (got %s)" % grouped.animation_for(BsrReader.AnimationEntry.TYPE_RUN, "sword"))
+		_check(grouped.animation_for(BsrReader.AnimationEntry.TYPE_WALK, "sword").ends_with("chinaman_fighter_walkforward.ban"),
+			"but no walk, so the default walk plays (got %s)" % grouped.animation_for(BsrReader.AnimationEntry.TYPE_WALK, "sword"))
+		_check(grouped.animation_for(BsrReader.AnimationEntry.TYPE_DIE) == "",
+			"an action no group lists is empty, not invented")
+		var walk_entry: BsrReader.AnimationEntry = grouped.animation_groups["default"][1]
+		_check(walk_entry.events.size() == 2 and walk_entry.walk_points.size() == 2 and is_equal_approx(walk_entry.trail, 1.0),
+			"an entry keeps its events, walk points and trailing float (got %d events, %d points, %.1f)"
+				% [walk_entry.events.size(), walk_entry.walk_points.size(), walk_entry.trail])
 
 	# The player's own body is type 0, not 1 -- `chinaman_fighter.bsr`
 	# writes 0x20000 at 0x40 -- and it is a character all the same: the

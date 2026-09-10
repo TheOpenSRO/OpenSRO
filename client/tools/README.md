@@ -74,6 +74,10 @@ code name's race/gender/piece letters agree with `Country`/`ReqGender`/`TypeID4`
 requirement types occur (1, and the six European mastery ids). The measurements behind
 `docs/protocol/ITEM_FORMAT.md`.
 
+`extract_pk2_file.gd` — copies one file out of a pk2 archive to disk, for picking a format apart
+offline against several files at once (how the `.bsr` animation-group layout was settled). What
+comes out is game data: keep it in a scratch directory, never in the repo.
+
 `dump_text_table.gd` — prints any `server_dep\silkroad\textdata\*.txt` table with every column
 numbered, so a column index can be read off rather than counted; several of those tables carry
 their own header row naming the columns. `dump_ddj_sizes.gd` prints the pixel size and

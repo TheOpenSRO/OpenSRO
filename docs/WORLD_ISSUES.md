@@ -6730,3 +6730,53 @@ no shoulder guard, no gauntlet. `StartingKitFor` now gives the garment set
 for the character's gender and the Copper Sword; the family and the weapon
 are this project's picks (the original chooses by the class picked at
 creation, which this server does not record), the rows are the game's.
+
+## Hundred-and-thirty-second round: the animation table inside the `.bsr`
+
+The body's animations had been chosen by matching file names against hints
+-- `_standcity`, `_walkforward` -- which worked for the two China fighters
+and would have worked for nothing else. The `.bsr` header has eight
+section pointers and this project read four. The next two are **mesh
+groups** and **animation groups**, and the animation groups are the
+game's own answer to "which animation plays for what".
+
+Parsed offline from seven real files -- the two China fighters, the
+warrior, a monster, an NPC, a sword and a shoulder piece -- with one entry
+layout (`type, file index, event count, events of four words, walk-point
+count, points, a trailing float`), and in every one the parse ends
+**exactly** on the sound-effect pointer, which is what makes it a reading.
+
+The groups are keyed by weapon kind: a China body carries `spear`, `bow`,
+`sword`, `default`, `cart` and four avatar groups; the client's own table
+of seventeen names (`FUN_00d77650`, beside the `nDefaultWearNum <
+DEFAULT_WEAR_NUM` assert) adds Europe's `onehand_sword`, `twohand_sword`,
+`dagger`, `dual_axe`, `onehand_staff`, `twohand_staff`. Within a group,
+each entry's **action type** is a number paired, in the `default` group,
+with a self-describing file: 0 `chinaman_fighter_standcity`, 1
+`_walkforward`, 2 a plain attack, 3 `_benormalhit`, 4 `_diehardhit`, 6
+`chinaman_standbattle`, 7 `_runforward`, 13-15 sitting, 22 blocking, 23
+walking backward, 36 the death loop, 38 pickup, 50-57 emotes, 26 and up
+skills. A monster's group reads the same way (`mangnyang`: 0 stand01, 1
+walk, 2 attack01, 3 damage01, 4 die, 7 run); an NPC's has 0 `_basic` and
+122 `_time`, the fidget.
+
+A weapon group lists only what differs -- `sword` has its own attacks and
+run but **no stand or walk** -- so lookup is "the weapon's group, then
+`default`", and that is now what `BsrReader.animation_for` does, what the
+player uses (with the held weapon's TypeID4 choosing the group: sword and
+blade share `sword`, spear and glaive share `spear`, bow is `bow` -- the
+three China masteries' own pairs), and what every NPC and monster uses for
+its idle instead of a name hint.
+
+Two things the table settled on the way past. The game's default gait is
+the run -- type 7 is what a sword replaces, type 1 is not -- so moving now
+plays the run. And a warrior-class body has an entry whose file index is
+`0xFFFFFFFF`, "no file": the reader leaves that path empty rather than
+indexing off the end.
+
+**Not read from the binary**: how the client composes the group *name*
+for a held weapon. It resolves names by string compare
+(`FUN_00a5b300`) and the one caller found is the avatar visual-change
+path, which takes the name from a text table. The China pairing above is
+read off the tables and the groups a body actually carries; Europe's is
+not mapped yet.

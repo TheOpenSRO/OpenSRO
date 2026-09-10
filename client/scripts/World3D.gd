@@ -435,16 +435,29 @@ const GENDER_BODY_CODE := {
 ## character.DefaultGender server-side.
 const DEFAULT_GENDER := "china_man"
 
-## The animations the player's body plays, picked from the body's own
-## animation list by name: `chinaman_fighter_standcity`,
-## `chinaman_fighter_walkforward`, `chinaman_a_benormalhit` and
-## `chinaman_a_diehardhit` for the man, the same names with `chinawoman`
-## for the woman -- the exact files the earlier path table named, now read
-## out of the `.bsr` rather than spelled here. Matched most specific first,
-## so `_diehardhit.ban` is not mistaken for `_diehardhit_loop.ban`.
+## Which animation group a held weapon selects, by the weapon's TypeID4
+## in the item table (2 sword, 3 blade, 4 spear, 5 glaive, 6 bow -- see
+## ITEM_FORMAT.md). A China body carries three weapon groups, `sword`,
+## `spear` and `bow` (BSR_FORMAT.md), and the three China masteries each
+## cover one pair: Bicheon is sword and blade, Heuksal is spear and glaive,
+## Pacheon is bow. The pairing is read off that, not off a function in the
+## client: the client resolves a group by *name* (`FUN_00a5b300`, a string
+## compare against its table of seventeen), and where the name for a held
+## weapon is composed was not found. Europe's kinds are not mapped yet.
+const WEAPON_ANIMATION_GROUP := {
+	2: "sword",
+	3: "sword",
+	4: "spear",
+	5: "spear",
+	6: "bow",
+}
+
+## The fallback for a body whose `.bsr` carries no animation groups: the
+## exact files the China fighters' `default` group names, matched by name.
 const BODY_ANIMATION_HINTS := {
 	"idle_anim": ["_fighter_standcity.ban", "_standcity.ban", "stand"],
 	"walk_anim": ["_fighter_walkforward.ban", "_walkforward.ban", "walk"],
+	"run_anim": ["_fighter_runforward.ban", "_runforward.ban", "run"],
 	"hit_anim": ["_a_benormalhit.ban", "benormalhit"],
 	"death_anim": ["_a_diehardhit.ban", "diehardhit.ban"],
 }
@@ -763,18 +776,25 @@ var _real_skeleton: Skeleton3D
 var _real_skeleton_track: BanReader.Bone
 var _real_skeleton_time := 0.0
 
-## Per gender: the body's `.bsr` path and its parsed animations
-## ("bsr_path", "idle_anim", "walk_anim", "hit_anim", "death_anim"), read
-## once by _load_character_assets(). A gender with no entry here means its
-## body row was not found (or SRREVAMP_PK2_PATH isn't set at all) --
-## callers fall back to DEFAULT_GENDER, and to the placeholder capsule if
-## even that didn't load.
+## Per gender: the body's `.bsr` path, its animation groups (from the
+## `.bsr` itself -- see BsrReader.AnimationEntry) and a cache of the
+## animations parsed so far, keyed by path -- read once by
+## _load_character_assets(). A gender with no entry here means its body
+## row was not found (or SRREVAMP_PK2_PATH isn't set at all) -- callers
+## fall back to DEFAULT_GENDER, and to the placeholder capsule if even that
+## didn't load.
 var _character_assets: Dictionary = {}
 ## Data.pk2, held open for dressing: every character and every item on one
 ## is assembled out of it.
 var _data_pk2: Pk2Reader
 ## item id -> the `.bsr` it is worn as, from the player's own item table.
 var _item_models: Dictionary = {}
+## item id -> its TypeID4, for the weapons: which animation group a held
+## weapon selects.
+var _item_kinds: Dictionary = {}
+## The animation group the player's held weapon selects, "default" when the
+## hands are empty or the weapon's kind is not mapped.
+var _player_weapon_group := "default"
 
 var _media_pk2: Pk2Reader
 var _ui_text_table: UiTextTable
@@ -3596,6 +3616,8 @@ func _load_character_assets() -> void:
 		for item in ItemTableReader.parse(_media_pk2.read_file(entry)).values():
 			if item.model_path != "":
 				_item_models[item.id] = item.model_path
+				if item.type_ids.size() >= 4:
+					_item_kinds[item.id] = item.type_ids[3]
 
 	for gender in GENDER_BODY_CODE:
 		var code: String = GENDER_BODY_CODE[gender]
@@ -3610,32 +3632,77 @@ func _load_character_assets() -> void:
 		if parsed == null or not parsed.is_character:
 			printerr("World3D: %s body %s is not a character .bsr" % [gender, bsr_path])
 			continue
-		var assets := {"bsr_path": bsr_path}
-		for key in BODY_ANIMATION_HINTS:
-			assets[key] = _body_animation(parsed.animation_paths, BODY_ANIMATION_HINTS[key])
+		var assets := {
+			"bsr_path": bsr_path,
+			"parsed": parsed,
+			"animations": {},
+		}
 		_character_assets[gender] = assets
-		print("World3D: %s body is %s (%d pieces, %d animations; idle=%s walk=%s hit=%s death=%s)" % [
-			gender, bsr_path, parsed.all_mesh_paths().size(), parsed.animation_paths.size(),
-			assets["idle_anim"] != null, assets["walk_anim"] != null,
-			assets["hit_anim"] != null, assets["death_anim"] != null])
+		var groups: Array = parsed.animation_groups.keys()
+		print("World3D: %s body is %s (%d pieces, %d animations, groups %s)" % [
+			gender, bsr_path, parsed.all_mesh_paths().size(), parsed.animation_paths.size(), str(groups)])
 	print("World3D: %d item model(s) known from the item table" % _item_models.size())
 
-## The first of a body's animations matching the earliest hint, parsed --
-## or null when it lists none, which a caller treats as "stand still".
-func _body_animation(paths: Array, hints: Array) -> BanReader.ParsedAnimation:
-	for hint in hints:
+## The animation a gender's body plays for one action, in the animation
+## group a held weapon selects -- the file's own table, with its own
+## fallback to `default` (see BsrReader.ParsedObject.animation_for). Parsed
+## on first use and cached per gender. Null when the body has no animation
+## for it, which the caller treats as "hold the pose".
+##
+## A body whose `.bsr` carries no groups at all falls back to matching the
+## animation file names against BODY_ANIMATION_HINTS.
+func _body_animation_for(gender: String, action_type: int, group: String = "default") -> BanReader.ParsedAnimation:
+	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
+	if assets.is_empty():
+		return null
+	var parsed: BsrReader.ParsedObject = assets["parsed"]
+	var path := parsed.animation_for(action_type, group)
+	if path == "" and parsed.animation_groups.is_empty():
+		path = _hinted_animation_path(parsed.animation_paths, action_type)
+	if path == "":
+		return null
+	var cache: Dictionary = assets["animations"]
+	if cache.has(path):
+		return cache[path]
+	var bytes := AssetSource.read_bytes(path, _data_pk2)
+	if bytes.is_empty():
+		bytes = AssetSource.read_bytes("res\\" + path, _data_pk2)
+	var anim: BanReader.ParsedAnimation = BanReader.parse(bytes) if not bytes.is_empty() else null
+	if anim != null and anim.bones.is_empty():
+		anim = null
+	cache[path] = anim
+	return anim
+
+## The name-hint fallback: the first animation path matching the earliest
+## hint for an action, or "".
+func _hinted_animation_path(paths: Array, action_type: int) -> String:
+	var key := ""
+	match action_type:
+		BsrReader.AnimationEntry.TYPE_STAND:
+			key = "idle_anim"
+		BsrReader.AnimationEntry.TYPE_WALK:
+			key = "walk_anim"
+		BsrReader.AnimationEntry.TYPE_RUN:
+			key = "run_anim"
+		BsrReader.AnimationEntry.TYPE_HIT:
+			key = "hit_anim"
+		BsrReader.AnimationEntry.TYPE_DIE:
+			key = "death_anim"
+	if key == "":
+		return ""
+	for hint in BODY_ANIMATION_HINTS[key]:
 		for path in paths:
-			if not (path as String).to_lower().ends_with(hint) and not (path as String).to_lower().contains(hint):
-				continue
-			var bytes := AssetSource.read_bytes(path, _data_pk2)
-			if bytes.is_empty():
-				bytes = AssetSource.read_bytes("res\\" + path, _data_pk2)
-			if bytes.is_empty():
-				continue
-			var anim := BanReader.parse(bytes)
-			if anim != null and not anim.bones.is_empty():
-				return anim
-	return null
+			var lower := (path as String).to_lower()
+			if lower.ends_with(hint) or lower.contains(hint):
+				return path
+	return ""
+
+## The animation group the weapon in a set of equipped items selects.
+func _weapon_group_for(equipped: Dictionary) -> String:
+	var weapon_id: int = int(equipped.get(EquipmentNet.SLOT_WEAPON, 0))
+	if weapon_id == 0:
+		return "default"
+	return WEAPON_ANIMATION_GROUP.get(int(_item_kinds.get(weapon_id, 0)), "default")
 
 ## Builds one fresh character: the gender's body assembled from its own
 ## `.bsr` with real skinning, then every worn item hung on it the way its
@@ -3701,6 +3768,18 @@ func _try_apply_real_player_character() -> void:
 	player_mesh.visible = false
 	_player_skeleton = skeleton
 	_player_gender = gender
+	_player_weapon_group = _weapon_group_for(equipped)
+	print("World3D: player animation group %s (stand %s, run %s)" % [
+		_player_weapon_group,
+		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_STAND, _player_weapon_group),
+		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_RUN, _player_weapon_group)])
+
+## The path _body_animation_for would parse, for a log line.
+func _body_animation_path(gender: String, action_type: int, group: String) -> String:
+	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
+	if assets.is_empty():
+		return ""
+	return (assets["parsed"] as BsrReader.ParsedObject).animation_for(action_type, group).get_file()
 
 ## Queries the real server for the local player's equipped items (the same
 ## EquipmentNet protocol the equipment HUD uses) and reports them as
@@ -5151,8 +5230,12 @@ func _physics_process(delta: float) -> void:
 	_tick_idle_animations(delta)
 
 	if _player_skeleton != null and _character_assets.has(_player_gender):
-		var assets: Dictionary = _character_assets[_player_gender]
-		var anim: BanReader.ParsedAnimation = assets["walk_anim"] if is_moving else assets["idle_anim"]
+		# The game's default gait is a run -- `chinaman_fighter_runforward`
+		# is the type-7 entry, and it is the one a held sword replaces with
+		# its own (`_runforward_sword`) -- so moving plays the run of the
+		# weapon's group and standing plays its town idle.
+		var action := BsrReader.AnimationEntry.TYPE_RUN if is_moving else BsrReader.AnimationEntry.TYPE_STAND
+		var anim := _body_animation_for(_player_gender, action, _player_weapon_group)
 		if anim != null and not anim.bones.is_empty():
 			_player_anim_time += delta
 			var ref_track: BanReader.Bone = anim.bones[0]

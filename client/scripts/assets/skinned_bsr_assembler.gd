@@ -63,11 +63,12 @@ class AssembledCharacter:
 
 ## Substrings that name a standing-still animation, most specific first.
 ##
-## Animation names are not consistent across the archive: a monster calls it
-## `mangnyang_stand01.ban`, an NPC calls it `chinaquest_priest_basic.ban`,
-## and some carry only `_time` (an idle fidget). Matching in this order and
-## falling back to whatever is listed first is what keeps a model animating
-## at all rather than only the ones that happen to use one convention.
+## The fallback for a file with no animation groups. Real files say which
+## animation stands still -- the type-0 entry of their `default` group,
+## `mangnyang_stand01` for the monster and `chinaquest_priest_basic` for
+## the NPC -- and that is read first; these hints are what kept models
+## animating before the groups were read, and still cover a file this
+## reader cannot parse the groups of.
 const IDLE_ANIMATION_HINTS := ["stand01", "stand", "basic", "idle", "wait"]
 
 ## Picks the idle animation from a model's own list, or "" if it has none.
@@ -187,7 +188,13 @@ static func assemble_from_archive(
 		return null
 
 	if with_animation:
-		var idle_path := idle_animation_path(result.animation_paths)
+		# The file says which of its animations is the standing one: the
+		# type-0 entry of its `default` animation group (BsrReader
+		# .AnimationEntry). The name hints below are the fallback for a
+		# file with no groups.
+		var idle_path := parsed.animation_for(BsrReader.AnimationEntry.TYPE_STAND)
+		if idle_path == "":
+			idle_path = idle_animation_path(result.animation_paths)
 		if idle_path != "":
 			var ban_bytes := _read(archive, idle_path)
 			if not ban_bytes.is_empty():

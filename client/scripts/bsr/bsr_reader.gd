@@ -18,6 +18,15 @@ const OFF_PTR_MATERIAL := 0x0C
 const OFF_PTR_MESH := 0x10
 const OFF_PTR_SKELETON := 0x14
 const OFF_PTR_ANIMATION := 0x18
+## The next three pointers in the same table, read since the
+## hundred-and-thirty-second round: mesh groups (which meshes draw
+## together), animation groups (which animation plays for what, per weapon
+## kind), and the sound-effect list. Each section's parse ends exactly on
+## the next pointer in every real file checked, which is what shows the
+## entry layouts below are right.
+const OFF_PTR_MESH_GROUP := 0x1C
+const OFF_PTR_ANIMATION_GROUP := 0x20
+const OFF_PTR_SOUND := 0x24
 
 ## Object type, the low uint16 of the word at 0x40. Authored in the file --
 ## this is the game's own classification, not a guess from the path or from
@@ -48,6 +57,42 @@ const TYPE_ITEM := 5
 ## meaning isn't confirmed, so they're skipped rather than interpreted.
 const ANIMATION_HEADER_WORDS := 2
 
+## One entry of an animation group: which animation plays for one action
+## type, with the key events and the walk graph the client attaches to it.
+##
+## The type codes are the game's own, read off the `default` group of the
+## China man's body -- each is a number paired with a self-describing file
+## name: 0 `chinaman_fighter_standcity`, 1 `_walkforward`, 2 `_handstraightl`
+## (a plain attack), 3 `_benormalhit`, 4 `_diehardhit`, 5 `_handstraightr`,
+## 6 `chinaman_standbattle`, 7 `_runforward`, 9 `_behardhit`, 13-15 sit
+## down / sit / stand up, 22 `_blocking`, 23 `_walkbackward`, 36 the death
+## loop, 38 `_pickup`, 50-57 emotes, 61 a second town idle. Types 26 and up
+## are skills.
+class AnimationEntry:
+	const TYPE_STAND := 0
+	const TYPE_WALK := 1
+	const TYPE_ATTACK := 2
+	const TYPE_HIT := 3
+	const TYPE_DIE := 4
+	const TYPE_ATTACK_2 := 5
+	const TYPE_STAND_BATTLE := 6
+	const TYPE_RUN := 7
+	const TYPE_HIT_HARD := 9
+	const TYPE_WALK_BACKWARD := 23
+	const TYPE_DIE_LOOP := 36
+
+	var action_type: int
+	## Index into the file's animation list, and the path it names.
+	var file_index: int
+	var path: String
+	## Key events: four words each -- a key time and a type, then two
+	## parameters -- not interpreted here.
+	var events: Array = []
+	## The walk graph: (x, y) points, two in every entry checked.
+	var walk_points: PackedVector2Array = PackedVector2Array()
+	## A trailing float, 1.0 in every entry checked.
+	var trail: float = 1.0
+
 class ParsedObject:
 	var object_name: String
 	var mesh_path: String
@@ -72,9 +117,31 @@ class ParsedObject:
 	## hangs from, authored right after the skeleton path. Empty for a
 	## body, whose skeleton hangs from nothing.
 	var attach_bone: String = ""
+	## Mesh groups: a name and the indices (into all_mesh_paths()) of the
+	## meshes drawn together under it. A body has one, `default`, listing
+	## every piece.
+	var mesh_groups: Dictionary = {}
+	## Animation groups, keyed by name -- `default`, and one per weapon
+	## kind the body can hold (`sword`, `spear`, `bow`, ...) -- each an
+	## Array of AnimationEntry. What plays for a given action is looked up
+	## by entry type in the group for the weapon in hand, falling back to
+	## `default`; see animation_for().
+	var animation_groups: Dictionary = {}
 
 	func is_item() -> bool:
 		return object_type == TYPE_ITEM
+
+	## The animation path for an action (an AnimationEntry.TYPE_* code) in
+	## group_name, falling back to the `default` group when that group has
+	## no entry for it -- a sword has its own run but no walk of its own,
+	## and the body's default walk is what plays then. "" if neither has
+	## one.
+	func animation_for(action_type: int, group_name: String = "default") -> String:
+		for name in [group_name, "default"]:
+			for entry in animation_groups.get(name, []):
+				if (entry as AnimationEntry).action_type == action_type:
+					return (entry as AnimationEntry).path
+		return ""
 
 	## Every mesh piece, primary included -- the same paths as
 	## mesh_path + sub_mesh_paths, in file order, for callers that don't
@@ -148,6 +215,8 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 				var attach_bones: Array = sections["attach_bones"]
 				if not attach_bones.is_empty():
 					built.attach_bone = attach_bones[0]
+			built.mesh_groups = sections["mesh_groups"]
+			built.animation_groups = _animation_groups(sections["animation_groups"], built.animation_paths)
 			built.is_character = is_character_type and built.skeleton_path != ""
 			return built
 
@@ -318,13 +387,139 @@ static func parse_sections(data: PackedByteArray):
 		skeletons = skels[0]
 		attach_bones = skels[1]
 
+	# The three sections after the skeleton. Each is read only if the
+	# header points inside the file, and a section that does not parse
+	# comes back empty rather than failing the object: an older file, or
+	# one this reader has not seen the shape of, still yields its meshes.
+	var ptr_mesh_group := _le_u32(data, OFF_PTR_MESH_GROUP)
+	var ptr_animation_group := _le_u32(data, OFF_PTR_ANIMATION_GROUP)
+	var ptr_sound := _le_u32(data, OFF_PTR_SOUND)
+	var mesh_groups := {}
+	var mg = _read_mesh_groups(data, ptr_mesh_group)
+	if mg != null and mg[1] == ptr_animation_group:
+		mesh_groups = mg[0]
+	var animation_groups := {}
+	var ag = _read_animation_groups(data, ptr_animation_group)
+	if ag != null and ag[1] == ptr_sound:
+		animation_groups = ag[0]
+
 	return {
 		"materials": materials[0],
 		"meshes": meshes[0],
 		"animations": animations,
 		"skeletons": skeletons,
 		"attach_bones": attach_bones,
+		"mesh_groups": mesh_groups,
+		"animation_groups": animation_groups,
 	}
+
+## Mesh groups: a count, then per group a length-prefixed name, a count and
+## that many uint32 mesh indices. Returns [{name: PackedInt32Array}, end].
+static func _read_mesh_groups(data: PackedByteArray, off: int):
+	if off < PREAMBLE_END or off + 4 > data.size():
+		return null
+	var count := _le_u32(data, off)
+	off += 4
+	if count > 1000:
+		return null
+	var groups := {}
+	for _i in range(count):
+		var name_result = _read_len_prefixed_string(data, off)
+		if name_result == null:
+			return null
+		off = name_result[1]
+		if off + 4 > data.size():
+			return null
+		var n := _le_u32(data, off)
+		off += 4
+		if n > 10000 or off + n * 4 > data.size():
+			return null
+		var indices := PackedInt32Array()
+		for j in range(n):
+			indices.append(_le_u32(data, off + j * 4))
+		off += n * 4
+		groups[name_result[0]] = indices
+	return [groups, off]
+
+## Animation groups: a count, then per group a length-prefixed name, a
+## count and that many entries -- each `type, file index, event count,
+## events (four words apiece), walk-point count, points (two floats
+## apiece), and a trailing float`. Returns [{name: Array of raw entries},
+## end]; the entries are resolved against the animation list by
+## _animation_groups.
+static func _read_animation_groups(data: PackedByteArray, off: int):
+	if off < PREAMBLE_END or off + 4 > data.size():
+		return null
+	var count := _le_u32(data, off)
+	off += 4
+	if count > 1000:
+		return null
+	var groups := {}
+	for _i in range(count):
+		var name_result = _read_len_prefixed_string(data, off)
+		if name_result == null:
+			return null
+		off = name_result[1]
+		if off + 4 > data.size():
+			return null
+		var n := _le_u32(data, off)
+		off += 4
+		if n > 10000:
+			return null
+		var entries: Array = []
+		for _j in range(n):
+			if off + 12 > data.size():
+				return null
+			var raw := {
+				"type": _le_u32(data, off),
+				"file_index": _le_u32(data, off + 4),
+			}
+			var event_count := _le_u32(data, off + 8)
+			off += 12
+			if event_count > 10000 or off + event_count * 16 > data.size():
+				return null
+			var events: Array = []
+			for k in range(event_count):
+				events.append(PackedInt32Array([
+					_le_u32(data, off), _le_u32(data, off + 4),
+					_le_u32(data, off + 8), _le_u32(data, off + 12)]))
+				off += 16
+			raw["events"] = events
+			if off + 4 > data.size():
+				return null
+			var point_count := _le_u32(data, off)
+			off += 4
+			if point_count > 10000 or off + point_count * 8 + 4 > data.size():
+				return null
+			var points := PackedVector2Array()
+			for k in range(point_count):
+				points.append(Vector2(_le_f32(data, off), _le_f32(data, off + 4)))
+				off += 8
+			raw["walk_points"] = points
+			raw["trail"] = _le_f32(data, off)
+			off += 4
+			entries.append(raw)
+		groups[name_result[0]] = entries
+	return [groups, off]
+
+## Turns raw group entries into AnimationEntry objects with their paths
+## resolved against the file's own animation list.
+static func _animation_groups(raw_groups: Dictionary, animation_paths: Array) -> Dictionary:
+	var out := {}
+	for name in raw_groups:
+		var entries: Array = []
+		for raw in raw_groups[name]:
+			var entry := AnimationEntry.new()
+			entry.action_type = raw["type"]
+			entry.file_index = raw["file_index"]
+			if entry.file_index >= 0 and entry.file_index < animation_paths.size():
+				entry.path = animation_paths[entry.file_index]
+			entry.events = raw["events"]
+			entry.walk_points = raw["walk_points"]
+			entry.trail = raw["trail"]
+			entries.append(entry)
+		out[name] = entries
+	return out
 
 ## Parses a TYPE_CHARACTER file through the header's section offset table.
 ##
@@ -387,6 +582,12 @@ static func _parse_character(data: PackedByteArray, name: String) -> ParsedObjec
 		obj.skeleton_path = skeletons[0][0]
 		obj.attach_bone = skeletons[1][0]
 	obj.object_type = _le_u32(data, OFF_TYPE) & 0xFFFF
+	var mg = _read_mesh_groups(data, _le_u32(data, OFF_PTR_MESH_GROUP))
+	if mg != null and mg[1] == _le_u32(data, OFF_PTR_ANIMATION_GROUP):
+		obj.mesh_groups = mg[0]
+	var ag = _read_animation_groups(data, _le_u32(data, OFF_PTR_ANIMATION_GROUP))
+	if ag != null and ag[1] == _le_u32(data, OFF_PTR_SOUND):
+		obj.animation_groups = _animation_groups(ag[0], obj.animation_paths)
 
 	# A character without a skeleton is a contradiction: the mesh pieces
 	# are skin, and posing them needs bones. Rather than hand back

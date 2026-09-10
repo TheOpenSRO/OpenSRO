@@ -28,6 +28,12 @@ an ornate gold one, because it believed no item-to-model mapping existed and cho
 Measured and left for the world lane: at the QA spot (1002, 917) the character stands on the
 only walkable height under a placed object's collider 11.45 units up -- placement, not the model.
 
+Follow-ups the same day: the starting kit is the table's own `_A_DEF` rows (suit, trousers,
+shoes and a Copper Sword -- no hat, shoulder guard or gauntlet by default); and the `.bsr`'s
+**animation groups** are read -- the game's own table of which animation plays for which action,
+per weapon kind -- so the player's stand and run follow the weapon in hand, and every NPC and
+monster picks its idle by type rather than by name hint (round "hundred-and-thirty-second").
+
 ## 2026-09-10 — the world map, end to end
 
 The world map had been parked for a long time with the tile *set* known and the tile *names*

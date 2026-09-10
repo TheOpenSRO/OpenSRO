@@ -42,9 +42,9 @@ bytes ahead of the bounding-box floats.
 | 0x10 | 4 | Offset of the **mesh** section |
 | 0x14 | 4 | Offset of the **skeleton** section |
 | 0x18 | 4 | Offset of the **animation** section |
-| 0x1C | 4 | Offset of a further section, contents unconfirmed (a count + `"default"` string) |
-| 0x20 | 4 | Offset of a further section, contents unconfirmed (a count + `"default"` string) |
-| 0x24 | 4 | Offset of a further section, contents unconfirmed (reaches the `"ambient"` / `.efp` effect block) |
+| 0x1C | 4 | Offset of the **mesh group** section (2026-09-10; see below) |
+| 0x20 | 4 | Offset of the **animation group** section (2026-09-10; see below) |
+| 0x24 | 4 | Offset of the **sound effect** section: a count, then entries this reader does not parse (the `"ambient"` / `.efp` effect block lives here) |
 | 0x28 | 4 | Offset of the bounding-box block; equals `name_end + 48` in every file checked |
 | 0x2C-0x3C | 16 | Reserved (observed 0) |
 | 0x40 | 2 | **Object type** — eight values across the archive; `1` is character (see below) |
@@ -90,6 +90,44 @@ begins — which is what makes this checkable rather than guessed, and is assert
 | Mesh (0x10) | `uint32` count, then that many length-prefixed `.bms` paths back to back, no per-entry field |
 | Animation (0x18) | two `uint32`s (observed `4096` then `0` in every file checked, meaning unconfirmed), then a `uint32` count, then that many length-prefixed `.ban` paths |
 | Skeleton (0x14) | `uint32` count, then per entry a length-prefixed `.bsk` path **and a length-prefixed bone name** — the body bone this skeleton hangs from. A body writes an empty string there (`chinaman_fighter.bsr`: a zero length word after the path); an item with a skeleton of its own names the bone, `Bip01 R HandMid` for `blade_01`, `Bip01 Neck1` for `clothes_01_sa`. At most 1 entry in every real file checked; 0 for an item weighted straight onto the body |
+| Mesh group (0x1C) | `uint32` count, then per group a length-prefixed name, a `uint32` count and that many `uint32` indices into the mesh list. A body has one, `default`, listing every piece |
+| Animation group (0x20) | `uint32` count, then per group a length-prefixed name and a `uint32` count of entries. Each entry: `uint32` **action type**, `uint32` index into the animation list (`0xFFFFFFFF` for none), `uint32` event count, that many events of four `uint32`s (a key time, an event type, two parameters), `uint32` walk-point count, that many `(float, float)` points (two in every entry checked), and a trailing `float` (1.0 in every entry checked) |
+
+The animation-group parse ends exactly on the sound-effect pointer in every file checked —
+`chinaman_fighter`, `chinawoman_fighter`, `chinaman_warrior`, `mangnyang`, `chinaquest_priest`,
+`sword_01`, `clothes_01_sa` — which is what makes the entry layout a reading rather than a guess.
+
+### Animation groups: which animation plays for what
+
+The groups are keyed by **weapon kind**, and the client's own table of the names is built by one
+static initialiser (`FUN_00d77650`): index 0 `default`, 1 `sword`, 2 `spear`, 3 `bow`, then
+Europe's `onehand_staff`, `onehand_sword`, `twohand_sword`, `dagger`, `dual_axe`, `twohand_staff`
+and the `avatar_wing` / `avatar_nasrun1-3` avatar groups, seventeen in all — the
+`nDefaultWearNum < DEFAULT_WEAR_NUM` assert beside it names the index. A China body carries
+`spear`, `bow`, `sword`, `default`, `cart` and the four avatar groups.
+
+Within a group, each entry's **action type** says what the animation is for. Read off the China
+man's `default` group, where every number is paired with a self-describing file name:
+
+| Type | File | Type | File |
+|---|---|---|---|
+| 0 | `chinaman_fighter_standcity` (town idle) | 9 | `chinaman_a_behardhit` |
+| 1 | `chinaman_fighter_walkforward` | 13 / 14 / 15 | sit down / sit / stand up |
+| 2 | `chinaman_a_handstraightl` (plain attack) | 16 / 17 | `_handhookl` / `_handhookr` |
+| 3 | `chinaman_a_benormalhit` | 22 | `chinaman_a_blocking` |
+| 4 | `chinaman_a_diehardhit` | 23 | `chinaman_walkbackward` |
+| 5 | `chinaman_a_handstraightr` | 36 | `chinaman_a_diehardhit_loop` |
+| 6 | `chinaman_standbattle` | 38 | `chinaman_pickup` |
+| 7 | `chinaman_fighter_runforward` | 50–57 | emotes; 26 and up are skills |
+
+A monster's `default` group reads the same way — `mangnyang`: 0 `stand01`, 1 `walk`, 2 `attack01`,
+3 `damage01`, 4 `die`, 5 `attack02`, 7 `run`, 8 `stand02`, 9 `damage02` — and an NPC's has 0
+`chinaquest_priest_basic` and 122 `_time`, the idle fidget.
+
+A weapon group only lists what differs: `sword` has its own attacks and run
+(`chinaman_fighter_runforward_sword`) but **no stand or walk**, so those fall back to `default`;
+`spear` has its own stand, walk and run. `BsrReader.ParsedObject.animation_for(type, group)` does
+exactly that lookup with that fallback.
 
 Worked example, `chinaquest_priest.bsr` (717 bytes), every offset verified to chain:
 

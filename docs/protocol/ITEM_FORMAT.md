@@ -110,6 +110,22 @@ reading them as body-space geometry put them there. The `.bsr` says so in two st
 The weapon bone is likewise authored per item — `Bip01 R HandMid` for `blade_01`, not the
 `Bip01 R Hand` this project had chosen — and read from the file.
 
+## What a held weapon does to the animations
+
+The body's `.bsr` carries its animations in **groups keyed by weapon kind** — `default`, `sword`,
+`spear`, `bow` and the avatar groups on a China body — each entry tagged with an action type
+(0 stand, 1 walk, 2 attack, 3 hit, 4 die, 6 battle stance, 7 run …; BSR_FORMAT.md has the
+table). A held weapon selects its group and the action selects the entry, falling back to
+`default` for anything the group does not list: a sword has attacks and a run of its own
+(`chinaman_fighter_runforward_sword`) but no stand or walk, a spear has all three.
+
+Which group a weapon selects is by its `TypeID4`, paired through the three China masteries that
+each cover two weapon kinds: sword 2 and blade 3 → `sword` (Bicheon), spear 4 and glaive 5 →
+`spear` (Heuksal), bow 6 → `bow` (Pacheon). The client resolves groups by name (`FUN_00a5b300`,
+a string compare against its table of seventeen names) and where it composes the name for a held
+weapon was not found, so that pairing is read off the tables rather than the binary. Europe's
+kinds are not mapped yet.
+
 ## The body itself
 
 The player's body is a row of `characterdata` like any NPC's: ids 1907–1932 are the 26 playable
