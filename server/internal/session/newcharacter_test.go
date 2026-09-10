@@ -41,7 +41,7 @@ func TestNewCharacterIsDressedAndHasVitals(t *testing.T) {
 		LoginHandler(accounts),
 		RegisterHandler(accounts),
 		CharacterHandlerWithHook(chars, func(ctx context.Context, characterID int64) error {
-			return equipment.GiveStartingKit(ctx, inv, eq, characterID)
+			return equipment.GiveStartingKit(ctx, inv, eq, characterID, character.DefaultGender)
 		}),
 		WorldHandler(chars, eq, hub),
 		EquipmentHandler(chars, eq),
@@ -107,16 +107,17 @@ func TestNewCharacterIsDressedAndHasVitals(t *testing.T) {
 	if worn.Error != "" {
 		t.Fatalf("equipment list: %s", worn.Error)
 	}
-	if len(worn.Items) != len(equipment.ArmorSlots) {
+	kit := equipment.StartingKitFor(character.DefaultGender)
+	if len(worn.Items) != len(kit) {
 		t.Fatalf("a new character is wearing %d item(s), want %d -- the client renders bare without them",
-			len(worn.Items), len(equipment.ArmorSlots))
+			len(worn.Items), len(kit))
 	}
-	for _, slot := range equipment.ArmorSlots {
+	for slot, want := range kit {
 		found := false
 		for _, it := range worn.Items {
 			if it.Slot == int(slot) {
 				found = true
-				if want := equipment.StartingKitItems[slot]; it.ItemID != want {
+				if it.ItemID != want {
 					t.Errorf("slot %v holds item %d, want %d", slot, it.ItemID, want)
 				}
 			}
@@ -176,7 +177,7 @@ func TestCombatWorksWithoutReferenceData(t *testing.T) {
 	inv := inventory.NewMemStore(refItems)
 	eq := equipment.NewMemStore(inv)
 
-	if err := equipment.GiveStartingKit(ctx, inv, eq, 1); err != nil {
+	if err := equipment.GiveStartingKit(ctx, inv, eq, 1, character.DefaultGender); err != nil {
 		t.Fatalf("GiveStartingKit: %v", err)
 	}
 

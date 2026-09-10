@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/OpenSRO/srrevamp/server/internal/character"
 )
 
 // fakeStores stands in for the inventory and equipment stores. Small enough
@@ -56,38 +58,51 @@ func (f *fakeStores) Unequip(_ context.Context, _ int64, _ Slot) error { return 
 // and the fix has to be that the character genuinely owns and wears the
 // items -- not that the client draws a default set over an empty server.
 func TestGiveStartingKitDressesEveryWearableSlot(t *testing.T) {
-	f := newFakeStores()
-	if err := GiveStartingKit(context.Background(), f, f, 7); err != nil {
-		t.Fatalf("GiveStartingKit: %v", err)
-	}
-
-	if len(f.worn) != len(ArmorSlots) {
-		t.Fatalf("equipped %d slot(s), want %d", len(f.worn), len(ArmorSlots))
-	}
-	for _, slot := range ArmorSlots {
-		itemID, ok := f.worn[slot]
-		if !ok {
-			t.Errorf("slot %v was left empty", slot)
-			continue
+	for _, gender := range []string{character.GenderChinaMan, character.GenderChinaWoman} {
+		f := newFakeStores()
+		if err := GiveStartingKit(context.Background(), f, f, 7, gender); err != nil {
+			t.Fatalf("GiveStartingKit(%s): %v", gender, err)
 		}
-		if want := StartingKitItems[slot]; itemID != want {
-			t.Errorf("slot %v holds item %d, want %d", slot, itemID, want)
+		kit := StartingKitFor(gender)
+		if len(f.worn) != len(kit) {
+			t.Fatalf("%s: equipped %d slot(s), want %d", gender, len(f.worn), len(kit))
+		}
+		for slot, want := range kit {
+			itemID, ok := f.worn[slot]
+			if !ok {
+				t.Errorf("%s: slot %v was left empty", gender, slot)
+				continue
+			}
+			if itemID != want {
+				t.Errorf("%s: slot %v holds item %d, want %d", gender, slot, itemID, want)
+			}
+		}
+		// The game's defaults: a suit, trousers, shoes and a weapon, and
+		// nothing on the head, shoulders or forearms.
+		for _, slot := range []Slot{SlotMail, SlotPants, SlotBoots, SlotWeapon} {
+			if _, ok := kit[slot]; !ok {
+				t.Errorf("%s: no starting item for slot %v", gender, slot)
+			}
+		}
+		for _, slot := range []Slot{SlotHelm, SlotShoulderGuard, SlotGauntlet, SlotShield} {
+			if _, ok := kit[slot]; ok {
+				t.Errorf("%s: the game starts nobody with something in slot %v", gender, slot)
+			}
+		}
+		// Everything added was equipped, so nothing is left loose in the
+		// bag. A kit that dressed the character *and* left copies in the
+		// inventory would be a duplication bug.
+		if len(f.bag) != 0 {
+			t.Errorf("%s: inventory holds %d leftover item(s), want 0", gender, len(f.bag))
 		}
 	}
-
-	// Every wearable slot has an item defined for it, or the kit silently
-	// leaves someone half-dressed.
-	for _, slot := range ArmorSlots {
-		if _, ok := StartingKitItems[slot]; !ok {
-			t.Errorf("no starting item defined for slot %v", slot)
-		}
+	// A man's and a woman's kits are the same shape with different rows:
+	// the suit is a man's or a woman's, the sword is anyone's.
+	if StartingKitFor(character.GenderChinaMan)[SlotMail] == StartingKitFor(character.GenderChinaWoman)[SlotMail] {
+		t.Error("a man and a woman are given the same suit")
 	}
-
-	// Everything added was equipped, so nothing is left loose in the bag.
-	// A kit that dressed the character *and* left five copies in the
-	// inventory would be a duplication bug.
-	if len(f.bag) != 0 {
-		t.Errorf("inventory holds %d leftover item(s), want 0", len(f.bag))
+	if StartingKitFor(character.GenderChinaMan)[SlotWeapon] != StartingKitFor(character.GenderChinaWoman)[SlotWeapon] {
+		t.Error("the default sword is for either gender")
 	}
 }
 
@@ -97,9 +112,9 @@ func TestGiveStartingKitDressesEveryWearableSlot(t *testing.T) {
 func TestGiveStartingKitReportsAFailedSlot(t *testing.T) {
 	f := newFakeStores()
 	f.failEnabled = true
-	f.failEquipOn = ArmorSlots[2]
+	f.failEquipOn = SlotBoots
 
-	err := GiveStartingKit(context.Background(), f, f, 7)
+	err := GiveStartingKit(context.Background(), f, f, 7, character.GenderChinaMan)
 	if err == nil {
 		t.Fatal("GiveStartingKit succeeded, want the refused slot reported")
 	}
@@ -111,7 +126,7 @@ func TestGiveStartingKitReportsAFailedSlot(t *testing.T) {
 // A nil store is how a caller says "no kit" -- any deployment that has not
 // wired inventory and equipment. It must not panic.
 func TestGiveStartingKitWithoutStoresIsANoOp(t *testing.T) {
-	if err := GiveStartingKit(context.Background(), nil, nil, 1); err != nil {
+	if err := GiveStartingKit(context.Background(), nil, nil, 1, character.GenderChinaMan); err != nil {
 		t.Fatalf("GiveStartingKit with no stores: %v", err)
 	}
 }

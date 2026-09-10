@@ -263,7 +263,11 @@ func main() {
 		// equipment window, the inventory and the server all agreeing about
 		// what is actually equipped.
 		session.CharacterHandlerWithHook(chars, func(ctx context.Context, characterID int64) error {
-			return equipment.GiveStartingKit(ctx, inv, eq, characterID)
+			gender := character.DefaultGender
+			if c, err := chars.GetByID(ctx, characterID); err == nil {
+				gender = c.Gender
+			}
+			return equipment.GiveStartingKit(ctx, inv, eq, characterID, gender)
 		}),
 		session.WorldHandler(chars, eq, hub),
 		session.InventoryHandler(chars, inv),

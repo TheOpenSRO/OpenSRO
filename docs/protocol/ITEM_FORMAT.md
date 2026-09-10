@@ -129,13 +129,23 @@ equip-visual struct keeps the first eight twelve bytes apart in the same order (
 ```
 
 This project's `equipment.Slot` and `EquipmentNet.SLOT_*` now use that numbering for the first
-eight plus `SlotExtra` at 8; the starting kit dresses all six armour slots, gauntlet included
-(`4914 Cotton Wristlet`).
+eight plus `SlotExtra` at 8.
+
+## What a new character starts with
+
+The table marks its own defaults: every row whose code name ends in `_A_DEF`. For a China
+character that is three armour pieces per family — Cotton (garment) suit / trousers / shoes at
+3643–3645 for a man and 3652–3654 for a woman, Cloth (protector) at 3640–3642 / 3649–3651,
+Copper (armour) at 3637–3639 / 3646–3648 — plus one weapon of each kind: 3632 Copper Sword,
+3633 blade, 3634 Crescent (spear), 3635 Glaive, 3636 Copper Bow, and 3655 arrows for the bow.
+No hat, shoulder guard or gauntlet is a default. `equipment.StartingKitFor` gives the garment
+set and the sword; the family and the weapon are this project's picks (the original chooses by
+the class picked at creation, which this server does not record), the rows are the game's.
 
 ## What the picture is evidence of
 
 None of the above was concluded from a render, but the render is a check on all of it at once: a
-new character, dressed by the server in the six Cotton items, draws with the Cotton Hat on its
-head, the talisman at its collar, the wristlet on its forearm and the suit on its back — the
-white cotton set the table names, where the earlier code had chosen an ornate gold set by
-`item_id % 8`.
+new character, dressed by the server, draws in the white Cotton set the table names — where the
+earlier code had chosen an ornate gold set by `item_id % 8` — and the first render of the six
+`_RARE` Cotton pieces put the hat on the head, the talisman at the collar and the wristlet on
+the forearm, each from its own file.

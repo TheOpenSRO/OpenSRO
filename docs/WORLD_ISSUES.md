@@ -6717,3 +6717,16 @@ recorded rather than papered over with a spawn offset: either that object's
 deck should be a walkable surface here, or the spot is under something a
 player was never meant to stand beneath. The QA tour's own square spot,
 (1002, 1020), is on the plaza deck the nav graph knows.
+
+### The starting kit is the table's own defaults now
+
+The kit had given the six `_RARE` Cotton rows -- hat, suit, talisman,
+wristlet, trousers, shoes -- because those were the rows found first. The
+table marks what a new character actually starts with: every code name
+ending in `_A_DEF`, and for a China character that is a suit, trousers and
+shoes in one of three families (Cotton garment, Cloth protector, Copper
+armour), one weapon of each of five kinds, and arrows for the bow. No hat,
+no shoulder guard, no gauntlet. `StartingKitFor` now gives the garment set
+for the character's gender and the Copper Sword; the family and the weapon
+are this project's picks (the original chooses by the class picked at
+creation, which this server does not record), the rows are the game's.

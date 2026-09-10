@@ -3,37 +3,47 @@ package equipment
 import (
 	"context"
 	"fmt"
+
+	"github.com/OpenSRO/srrevamp/server/internal/character"
 )
 
-// StartingKitItems is the item a new character gets in each wearable slot.
+// StartingKitFor is what a new character of the given gender is given and
+// wears: the game's own default starter items.
 //
-// These are the game's own item ids for the China "Cotton" starter set --
-// the same table the client reads to find an item's name and inventory
-// icon, so a character created here shows "Cotton Hat", "Cotton Suit" and
-// the rest with their real artwork rather than an unnamed placeholder:
+// The item table marks them itself. Every row whose code name ends in
+// `_A_DEF` is a starter item, and for a China character there are exactly
+// three armour pieces per family plus one weapon of each kind:
 //
-//	4734 Cotton Hat        icon item\china\man_item\clothes_01_ha.ddj
-//	4842 Cotton Suit                                    clothes_01_ba.ddj
-//	4806 Cotton Talisman                                clothes_01_sa.ddj
-//	4914 Cotton Wristlet                                clothes_01_aa.ddj
-//	4878 Cotton Trousers                                clothes_01_la.ddj
-//	4950 Cotton Shoes                                   clothes_01_fa.ddj
+//	3643 ITEM_CH_M_CLOTHES_01_BA_A_DEF  Cotton Suit       3652 (woman)
+//	3644 ITEM_CH_M_CLOTHES_01_LA_A_DEF  Cotton Trousers   3653
+//	3645 ITEM_CH_M_CLOTHES_01_FA_A_DEF  Cotton Shoes      3654
+//	3632 ITEM_CH_SWORD_01_A_DEF         Copper Sword      (either gender)
 //
-// The same rows carry the model each is worn as (column 52 of the item
-// table, `item\china\man_item\clothes_01_ba.bsr` and so on), which is how
-// the client dresses the character in exactly these and not a look of its
-// own choosing. All six are China, man, character level 1 -- what a new
-// China-man character can wear.
+// No hat, shoulder guard or gauntlet: the game does not start anyone in
+// those, and the Cotton Hat/Talisman/Wristlet this kit once gave were the
+// table's `_RARE` rows, not its defaults. **Two choices are this project's**:
+// the garment family (the table also carries Cloth protector and Copper
+// armour defaults, and the original picks by the class chosen at creation,
+// which this server does not record), and the sword among the five default
+// weapons. Each row's model, name and icon then follow from the id.
 //
 // An operator running with different refdata can change these; an id the
 // client's tables do not know still equips, it just has no name or icon.
-var StartingKitItems = map[Slot]int64{
-	SlotHelm:          4734,
-	SlotMail:          4842,
-	SlotShoulderGuard: 4806,
-	SlotGauntlet:      4914,
-	SlotPants:         4878,
-	SlotBoots:         4950,
+func StartingKitFor(gender string) map[Slot]int64 {
+	if gender == character.GenderChinaWoman {
+		return map[Slot]int64{
+			SlotMail:   3652,
+			SlotPants:  3653,
+			SlotBoots:  3654,
+			SlotWeapon: 3632,
+		}
+	}
+	return map[Slot]int64{
+		SlotMail:   3643,
+		SlotPants:  3644,
+		SlotBoots:  3645,
+		SlotWeapon: 3632,
+	}
 }
 
 // InventoryAdder is the slice of the inventory store a starting kit needs.
@@ -57,12 +67,13 @@ type InventoryAdder interface {
 // Best effort by design: a character that cannot be given its kit is still
 // a usable character, so failures are returned for logging rather than
 // unwinding the creation.
-func GiveStartingKit(ctx context.Context, inv InventoryAdder, equip Store, characterID int64) error {
+func GiveStartingKit(ctx context.Context, inv InventoryAdder, equip Store, characterID int64, gender string) error {
 	if inv == nil || equip == nil {
 		return nil
 	}
-	for _, slot := range ArmorSlots {
-		itemID, ok := StartingKitItems[slot]
+	kit := StartingKitFor(gender)
+	for _, slot := range WearableSlots {
+		itemID, ok := kit[slot]
 		if !ok {
 			continue
 		}

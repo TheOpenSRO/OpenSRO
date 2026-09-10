@@ -2,6 +2,7 @@ package equipment
 
 import (
 	"context"
+	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"testing"
 
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
@@ -100,12 +101,12 @@ func TestMemStoreTakesTheStartingKit(t *testing.T) {
 	inv, eq := memPair()
 	ctx := context.Background()
 
-	if err := GiveStartingKit(ctx, inv, eq, 7); err != nil {
+	if err := GiveStartingKit(ctx, inv, eq, 7, character.DefaultGender); err != nil {
 		t.Fatalf("GiveStartingKit: %v", err)
 	}
 	worn, _ := eq.Get(ctx, 7)
-	if len(worn) != len(ArmorSlots) {
-		t.Fatalf("dressed %d slot(s), want %d", len(worn), len(ArmorSlots))
+	if kit := StartingKitFor(character.DefaultGender); len(worn) != len(kit) {
+		t.Fatalf("dressed %d slot(s), want %d", len(worn), len(kit))
 	}
 	if bag, _ := inv.List(ctx, 7); len(bag) != 0 {
 		t.Errorf("bag holds %+v, want the kit worn rather than carried", bag)

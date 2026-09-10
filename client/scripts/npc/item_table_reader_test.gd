@@ -69,14 +69,14 @@ func _init() -> void:
 	_check(hat != null and not hat.icon_path.ends_with(".bsr"),
 		"a model path is not mistaken for the icon")
 
-	# The server's own starting kit ids must be resolvable, or a new
-	# character's inventory shows five unnamed rows.
+	# The server's own starting kit ids -- the table's `_A_DEF` rows -- must
+	# be resolvable, or a new character's inventory shows unnamed rows.
 	var kit_rows := PackedStringArray()
-	for pair in [["4734", "Cotton Hat"], ["4842", "Cotton Suit"], ["4806", "Cotton Talisman"],
-			["4878", "Cotton Trousers"], ["4950", "Cotton Shoes"]]:
+	for pair in [["3643", "Cotton Suit"], ["3644", "Cotton Trousers"], ["3645", "Cotton Shoes"],
+			["3632", "Copper Sword"]]:
 		kit_rows.append(_row(pair[0], pair[1], "item\\china\\man_item\\x.ddj", 54))
 	var kit_items := ItemTableReader.parse(("\n".join(kit_rows) + "\n").to_utf16_buffer())
-	_check(kit_items.size() == 5, "the five starting-kit ids all parse (got %d)" % kit_items.size())
+	_check(kit_items.size() == 4, "the four starting-kit ids all parse (got %d)" % kit_items.size())
 
 	# The worn model and who may wear it, by column -- the game's own
 	# _RefObjCommon layout, checked against real rows.

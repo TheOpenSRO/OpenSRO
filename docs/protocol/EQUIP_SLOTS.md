@@ -53,7 +53,8 @@ version of this document guessed at two gaps there; the stride allows only one.
 | Extra | 8 | — | tracked, nothing rendered |
 
 `ArmorSlots` is the six worn slots; `WearableSlots` adds the two held ones. The accessories
-(slots 9–16 in the client) are not modelled yet.
+(slots 9–16 in the client) are not modelled yet. The starting kit fills mail, pants, boots and
+weapon — the table's own `_A_DEF` rows (ITEM_FORMAT.md).
 
 The numbers are on the wire (`EntitySnapshot` carries slot + item id per worn slot) and in the
 `equipment_slots` table, and the client's constants mirror them; `TestArmorSlotsRealOrder` pins
