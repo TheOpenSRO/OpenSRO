@@ -2,6 +2,37 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-09-10 — the world map, end to end
+
+The world map had been parked for a long time with the tile *set* known and the tile *names*
+meaningless. It is now decoded, built and drawn. Detail is in `docs/WORLD_ISSUES.md` rounds
+"hundred-and-twenty-eighth" through "hundred-and-thirtieth" and in
+`docs/protocol/WORLDMAP_FORMAT.md`; this is the index.
+
+- **Both sections of `worldmap_mapinfo.txt` decoded** — not off its header row but off the
+  client's own two row parsers, which give the column order exactly and say where each stops
+  reading. The `Dungeonmap` section, previously written off as undecoded, came out whole.
+- **The axes settled**: `left`/`right` are region y and `top`/`bottom` region x, from
+  `NIFWorldMap.cpp`'s transform, which uses the same 135/92/192 constants this project's position
+  readout already had. Three independent things then agree — the world map is exactly 6.0 world
+  units per pixel on both axes, Jangan's own row brackets Jangan's region the same way round, and
+  Jangan's map is 0.75 on both axes.
+- **363/363 world tiles and 25/25 dungeon floors** present in a real archive, checked by
+  `client/tools/check_worldmap_tiles.gd`.
+- **The window is built** (`client/scripts/ui/hud/hud_worldmap.gd`), opened from the minimap's own
+  map button, showing the city map you are standing in or the whole world, with the player marker
+  and clickable town labels. `qa_shot.sh --worldmap [world|both]` renders it.
+- **A second table**, `worldmapguidedata.txt`, read and cross-checked: nothing disagrees, and its
+  monster/quest rows carry a *stale* pixel column that the reader deliberately derives around.
+
+Two mistakes worth keeping: `Pic Area` against `Texture Size` is not redundant (a city map is
+stored 1024x1024 and only its top 1024x768 is map), and a parked guess about "a second zoom level"
+was wrong — all four functions referencing the tile name use the identical grid.
+
+**Next on this**: the world map's other signs (party, quest NPC, hunting point) now have their
+data; the window-size and auto-move buttons and the four `wmap_window_edge_N` pieces are left
+alone because nothing authored says what they do. See `docs/UI_TODO.md`.
+
 ## 2026-08-19 to 2026-08-27 (this session) — real-scale fix, camera/spawn bugs, downloadable-client infra
 
 A long playtest-driven session covering both real content bugs found from OpenSRO/OpenSRO's own
