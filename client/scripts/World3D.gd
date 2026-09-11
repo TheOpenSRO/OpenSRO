@@ -1188,6 +1188,20 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.name = "HudPanels"
 	ui_control.add_child(_hud_panels)
 	_hud_panels.connect_net()
+	# The Escape / System menu (see HudPanels): its Option button opens the
+	# settings panel (the same F3 debug panel that carries the working UI
+	# scale, chat font, name range and camera view), Restart returns to the
+	# login screen, Exit quits, and Help prints where to look.
+	_hud_panels.system_option_requested.connect(func():
+		_hud_panels.close("system")
+		if _debug_panel != null:
+			_debug_panel.visible = true)
+	_hud_panels.system_restart_requested.connect(func():
+		NetClient.disconnect_from_server()
+		get_tree().change_scene_to_file("res://scenes/Login.tscn"))
+	_hud_panels.system_exit_requested.connect(func(): get_tree().quit())
+	_hud_panels.system_help_requested.connect(func():
+		_log_system("Controls: click to move, right-drag or left-drag to orbit, mouse wheel to zoom. F1 dev tools, F3 debug panel, I inventory, K skill, M map."))
 
 	# The chat window, bottom-left where its registry entry puts it. This
 	# retires the developer chat box: the authored window is the same two

@@ -26,9 +26,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       the fountain. The real game keeps Mangyang and the Weasel in the fields outside the walls;
       move them to a measured walkable spot in the farmland region south of town (96/168), and
       point `qa_shot.sh --attack` runs there.
-- [ ] **ESC -> System window** (`ifsystemwnd`: Option / Help / Restart / Exit) and the **Option
-      window** (`ifoption` + `ifoption_video` with the View radios, our UI scale / chat font / name
-      range under Setting). Restart = back to the login screen, Exit = quit.
+- [x] **ESC -> System window** (`ifsystemwnd`: Option / Help / Restart / Exit) -- round 138.
+      Restart = login screen, Exit = quit, Option = the F3 settings panel. Still open: the
+      **authored Option window** (`ifoption` + `ifoption_video`, its View radios and our UI scale /
+      chat font / name range as its Setting tab) in place of the F3 panel.
 - [ ] **NPC talk.** A click on an NPC opens `if_npctalk` titled with the NPC's name and numbered
       choices; every NPC gets "End conversation", merchants get the shop.
 - [ ] **Inventory:** the paper doll (the dressed character in a SubViewport in the equipment half)

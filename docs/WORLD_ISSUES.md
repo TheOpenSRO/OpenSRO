@@ -7075,6 +7075,21 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-thirty-eighth round: the Escape menu
+
+"There exist options when you hit Escape." There are now. Escape closes
+the topmost open window, and with nothing open raises the authored System
+window (`ifsystemwnd.txt`, built by `HudPanels` like every other window):
+Option, Help, Help Request, Restart, Exit -- the operator's own layout,
+so the user's four-button DuckRoad build and the stock five-button one
+both come out right, each button wired by the name the layout gives it
+(`GDR_SYSTEM_BTN_*`). Restart returns to the login screen, Exit quits,
+Help prints the controls, and Option opens the settings panel (the F3
+debug panel, which already carries the working UI scale, chat font, name
+range and the three camera views). The authored Option window
+(`ifoption.txt` with its Video/Audio/Camera/Game/Input sub-windows) is a
+later item; its View radios are the camera views this project already has.
+
 ## Hundred-and-thirty-seventh round: the camera off the body, the sword on the hand, gear on the way in
 
 Three from the second playtest.

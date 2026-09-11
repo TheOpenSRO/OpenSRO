@@ -34,7 +34,18 @@ const PANELS := {
 	"autopotion": ["resinfo\\ifautopotion.txt", "Auto Potion", KEY_T],
 	"alchemy": ["resinfo\\ifalchemyprocess.txt", "Alchemy", KEY_Y],
 	"exchange": ["resinfo\\ifexchange.txt", "Exchange", 0],
+	# Opened by Escape, not a hotkey (see _unhandled_key_input). The system
+	# menu the original raises over everything: Option, Help, Restart, Exit.
+	"system": ["resinfo\\ifsystemwnd.txt", "System", 0],
 }
+
+## Emitted by the System window's buttons, wired in _wire_system. World3D
+## connects them: Option opens the settings panel, Restart returns to the
+## login screen, Exit quits.
+signal system_option_requested
+signal system_restart_requested
+signal system_exit_requested
+signal system_help_requested
 
 ## Sections beyond "Create" that a panel's window builds.
 ##
@@ -153,11 +164,31 @@ func open(panel_id: String) -> HudWindow:
 			return null
 		window.centre()
 		_windows[panel_id] = window
+		if panel_id == "system":
+			_wire_system(window)
 		_populate(panel_id)
 	window.show()
 	window.move_to_front()
 	_populate(panel_id)
 	return window
+
+## Connects the System window's buttons to the signals World3D acts on.
+## Each button is looked up by the name the authored layout gives it
+## (ifsystemwnd.txt); a button the operator's own layout does not carry --
+## the user's DuckRoad build shows four, the stock layout five -- is simply
+## skipped, so this works against either.
+func _wire_system(window: HudWindow) -> void:
+	var wiring := {
+		"GDR_SYSTEM_BTN_OPTION": func(): system_option_requested.emit(),
+		"GDR_SYSTEM_BTN_HELP": func(): system_help_requested.emit(),
+		"GDR_SYSTEM_BTN_CAS_HELP": func(): system_help_requested.emit(),
+		"GDR_SYSTEM_BTN_RESTART": func(): close("system"); system_restart_requested.emit(),
+		"GDR_SYSTEM_BTN_QUIT": func(): system_exit_requested.emit(),
+	}
+	for control_name in wiring:
+		var button := window.node(control_name) as BaseButton
+		if button != null:
+			button.pressed.connect(wiring[control_name])
 
 func close(panel_id: String) -> void:
 	var window: HudWindow = _windows.get(panel_id)
@@ -197,8 +228,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if not key.pressed or key.echo or key.ctrl_pressed or key.alt_pressed:
 		return
 	if key.keycode == KEY_ESCAPE:
-		if close_topmost():
-			get_viewport().set_input_as_handled()
+		# Escape closes the topmost open window; with nothing open it raises
+		# the System menu, the way the original does.
+		if not close_topmost():
+			open("system")
+		get_viewport().set_input_as_handled()
 		return
 	for panel_id in PANELS:
 		var spec: Array = PANELS[panel_id]
