@@ -101,6 +101,50 @@ func _init() -> void:
 	_check(hood != null and hood.model_path == "" and not hood.is_equipment(),
 		"a row with xxx for a model has no model (got %s)" % (hood.model_path if hood != null else "-"))
 
+	# A weapon's stat columns, with the real Copper Sword's own values in
+	# the verified positions: base physical attack 15~16, magical 25~28,
+	# durability 62, attack rate 24, critical 3, phys reinforce 306/342,
+	# mag reinforce 519/591. These are the exact figures its real +5
+	# tooltip showed (growth backed out), so the tooltip lines must read
+	# them out unchanged.
+	var w := PackedStringArray()
+	w.resize(160)
+	w.fill("0")
+	w[ItemTableReader.COL_ID] = "3632"
+	w[ItemTableReader.COL_CODE_NAME] = "ITEM_CH_SWORD_01_A_DEF"
+	w[ItemTableReader.COL_NAME] = "Copper Sword"
+	w[ItemTableReader.COL_TYPE_ID1] = "3"
+	w[11] = "6" # TypeID3 = weapon family
+	w[ItemTableReader.COL_TYPE_ID4] = "2" # sword
+	w[ItemTableReader.COL_COUNTRY] = "0"
+	w[ItemTableReader.COL_REQ_LEVEL_TYPE1] = "1"
+	w[ItemTableReader.COL_REQ_LEVEL1] = "1"
+	w[ItemTableReader.COL_REQ_GENDER] = "2"
+	w[54] = "item\\china\\weapon\\sword_01.ddj"
+	w[ItemTableReader.COL_DURABILITY] = "62"
+	w[ItemTableReader.COL_PHYS_ATK_MIN] = "15"
+	w[ItemTableReader.COL_PHYS_ATK_MAX] = "16"
+	w[ItemTableReader.COL_MAG_ATK_MIN] = "25"
+	w[ItemTableReader.COL_MAG_ATK_MAX] = "28"
+	w[ItemTableReader.COL_PHYS_REINFORCE_MIN] = "306"
+	w[ItemTableReader.COL_PHYS_REINFORCE_MAX] = "342"
+	w[ItemTableReader.COL_MAG_REINFORCE_MIN] = "519"
+	w[ItemTableReader.COL_MAG_REINFORCE_MAX] = "591"
+	w[ItemTableReader.COL_ATTACK_RATE] = "24"
+	w[ItemTableReader.COL_CRITICAL] = "3"
+	var sword: ItemTableReader.Item = ItemTableReader.parse(("\t".join(w) + "\n").to_utf16_buffer()).get(3632)
+	_check(sword != null and sword.is_weapon(), "the sword parses and is a weapon")
+	if sword != null:
+		_check(sword.phys_atk == Vector2i(15, 16), "physical attack 15~16 (got %s)" % str(sword.phys_atk))
+		_check(sword.mag_atk == Vector2i(25, 28), "magical attack 25~28 (got %s)" % str(sword.mag_atk))
+		_check(sword.durability == 62 and sword.attack_rate == 24 and sword.critical == 3, "durability, rate, critical")
+		_check(sword.phys_reinforce == Vector2i(306, 342), "phys reinforce tenths (got %s)" % str(sword.phys_reinforce))
+		var lines := sword.tooltip_lines()
+		var joined := "\n".join(PackedStringArray(lines))
+		_check(joined.contains("Phy. atk. pwr. 15 ~ 16"), "tooltip shows physical attack (got: %s)" % joined)
+		_check(joined.contains("Mag. reinforce 51.9 % ~ 59.1 %"), "tooltip shows mag reinforce as a percent (got: %s)" % joined)
+		_check(joined.contains("Sort of item: Sword") and joined.contains("Required level 1"), "tooltip shows sort and required level")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

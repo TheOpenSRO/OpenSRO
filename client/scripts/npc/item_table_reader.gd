@@ -58,6 +58,40 @@ const COL_DROP_MODEL := 53
 ## `ReqGender`: 1 for a man's item, 0 for a woman's, 2 for either.
 const COL_REQ_GENDER := 58
 
+## Weapon stat columns, each read as a group of four where the item's own
+## value is [0] and its upper bound [2] -- the display is `[0] ~ [2]`.
+## Anchored against a real Copper Sword (+5) tooltip: its physical attack
+## base is 15~16 (columns below) and grows 2.4 a plus, so +5 shows 27~28;
+## its magical attack base 25~28 grows 4.1, so +5 shows 45~48; and the
+## reinforce, rate and critical columns read 306/342 (30.6~34.2%),
+## 519/591 (51.9~59.1%), 24 and 3 -- every figure the tooltip showed, in
+## these columns, with no fudge. See ITEM_FORMAT.md and WORLD_ISSUES.md.
+## Durability is common to every equippable item; the rest are weapons.
+const COL_DURABILITY := 63
+const COL_PHYS_ATK_MIN := 95
+const COL_PHYS_ATK_MAX := 97
+const COL_MAG_ATK_MIN := 100
+const COL_MAG_ATK_MAX := 102
+const COL_PHYS_REINFORCE_MIN := 105
+const COL_PHYS_REINFORCE_MAX := 107
+const COL_MAG_REINFORCE_MIN := 109
+const COL_MAG_REINFORCE_MAX := 111
+const COL_ATTACK_RATE := 113
+const COL_CRITICAL := 116
+
+## TypeID3 (the item family) values, index 2 of type_ids.
+const FAMILY_WEAPON := 6
+const CHINA_ARMOUR_FAMILIES := [1, 2, 3]
+const EUROPE_ARMOUR_FAMILIES := [9, 10, 11]
+## Weapon TypeID4 -> the "Sort of item" name the original prints, for the
+## China kinds (the only bodies this project draws). ITEM_FORMAT.md's
+## switch has the rest.
+const WEAPON_SORT := {
+	2: "Sword", 3: "Blade", 4: "Spear", 5: "Glaive", 6: "Bow",
+	7: "Sword", 8: "Two-handed Sword", 9: "Axe", 10: "Dark Staff",
+	11: "Two-handed Staff", 12: "Crossbow", 13: "Dagger", 14: "Harp", 15: "Staff",
+}
+
 const REQ_LEVEL_PAIRS := 4
 
 class Item:
@@ -80,9 +114,61 @@ class Item:
 	## is -1 or 0 is unused; type 1 is the character's own level.
 	var req_level_types: PackedInt32Array = PackedInt32Array()
 	var req_levels: PackedInt32Array = PackedInt32Array()
+	## Weapon stats, base (+0). Reinforce is in tenths of a percent, as the
+	## table stores it (306 = 30.6%). Zero for a non-weapon.
+	var durability: int = 0
+	var phys_atk := Vector2i.ZERO
+	var mag_atk := Vector2i.ZERO
+	var phys_reinforce := Vector2i.ZERO
+	var mag_reinforce := Vector2i.ZERO
+	var attack_rate: int = 0
+	var critical: int = 0
 
 	func is_equipment() -> bool:
 		return model_path != ""
+
+	func family() -> int:
+		return type_ids[2] if type_ids.size() > 2 else 0
+
+	func is_weapon() -> bool:
+		return family() == FAMILY_WEAPON
+
+	func is_armour() -> bool:
+		return CHINA_ARMOUR_FAMILIES.has(family()) or EUROPE_ARMOUR_FAMILIES.has(family())
+
+	## The lines a hover tooltip shows, top to bottom -- the item's own real
+	## figures, none invented. A weapon shows its attack block; every
+	## equippable shows durability, requirement, race and gender. Kept to
+	## what is measured: attack distance and the armour defence block are
+	## not among these columns yet, so they are simply absent rather than
+	## guessed at.
+	func tooltip_lines() -> Array:
+		var lines: Array = [item_name]
+		var type_id4: int = type_ids[3] if type_ids.size() > 3 else 0
+		var sort: String = str(WEAPON_SORT.get(type_id4, "")) if is_weapon() else ""
+		if sort != "":
+			lines.append("Sort of item: %s" % sort)
+		lines.append("")
+		if is_weapon():
+			lines.append("Phy. atk. pwr. %d ~ %d" % [phys_atk.x, phys_atk.y])
+			lines.append("Mag. atk. pwr. %d ~ %d" % [mag_atk.x, mag_atk.y])
+		if durability > 0:
+			lines.append("Durability %d / %d" % [durability, durability])
+		if is_weapon():
+			lines.append("Attack rate %d" % attack_rate)
+			lines.append("Critical %d" % critical)
+			lines.append("Phy. reinforce %.1f %% ~ %.1f %%" % [phys_reinforce.x / 10.0, phys_reinforce.y / 10.0])
+			lines.append("Mag. reinforce %.1f %% ~ %.1f %%" % [mag_reinforce.x / 10.0, mag_reinforce.y / 10.0])
+		lines.append("")
+		var level := required_character_level()
+		if level > 0:
+			lines.append("Required level %d" % level)
+		lines.append("China" if country == 0 else "Europe")
+		if req_gender == REQ_GENDER_MAN:
+			lines.append("Man only")
+		elif req_gender == REQ_GENDER_WOMAN:
+			lines.append("Woman only")
+		return lines
 
 	## The character level the item asks for, or 0 when it asks by
 	## something other than character level (or nothing at all).
@@ -126,6 +212,13 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		for pair in range(REQ_LEVEL_PAIRS):
 			item.req_level_types.append(_int_at(cols, COL_REQ_LEVEL_TYPE1 + pair * 2))
 			item.req_levels.append(_int_at(cols, COL_REQ_LEVEL1 + pair * 2))
+		item.durability = _int_at(cols, COL_DURABILITY)
+		item.phys_atk = Vector2i(_int_at(cols, COL_PHYS_ATK_MIN), _int_at(cols, COL_PHYS_ATK_MAX))
+		item.mag_atk = Vector2i(_int_at(cols, COL_MAG_ATK_MIN), _int_at(cols, COL_MAG_ATK_MAX))
+		item.phys_reinforce = Vector2i(_int_at(cols, COL_PHYS_REINFORCE_MIN), _int_at(cols, COL_PHYS_REINFORCE_MAX))
+		item.mag_reinforce = Vector2i(_int_at(cols, COL_MAG_REINFORCE_MIN), _int_at(cols, COL_MAG_REINFORCE_MAX))
+		item.attack_rate = _int_at(cols, COL_ATTACK_RATE)
+		item.critical = _int_at(cols, COL_CRITICAL)
 		# A row with neither a name nor an icon tells the player nothing.
 		if item.item_name == "" and item.icon_path == "":
 			continue

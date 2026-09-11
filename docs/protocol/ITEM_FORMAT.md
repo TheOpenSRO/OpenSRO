@@ -180,6 +180,33 @@ No hat, shoulder guard or gauntlet is a default. `equipment.StartingKitFor` give
 set and the sword; the family and the weapon are this project's picks (the original chooses by
 the class picked at creation, which this server does not record), the rows are the game's.
 
+## A weapon's stats, and where they live in the row
+
+A hover tooltip shows an item's stats, and those are columns of the same
+row (0-indexed, as `ItemTableReader` counts them). They were pinned
+against a real **Copper Sword (+5)** tooltip a player sent, every figure
+of which is reproduced by reading these columns and backing the `+5` out
+through the per-plus growth floats beside each attack:
+
+| Stat | Columns | Copper Sword reads | The +5 tooltip showed |
+|---|---|---|---|
+| Physical attack | 95 (min), 97 (max), 99 (growth 2.4) | 15 ~ 16 | 15+5×2.4 ~ 16+5×2.4 = **27 ~ 28** |
+| Magical attack | 100 (min), 102 (max), 104 (growth 4.1) | 25 ~ 28 | 25+5×4.1 ~ 28+5×4.1 = **45 ~ 48** |
+| Durability | 63 | 62 | **62 / 62** |
+| Attack rate | 113 | 24 | **24** |
+| Critical | 116 | 3 | **3** |
+| Phys. reinforce | 105 (min), 107 (max), tenths of a % | 306 / 342 | **30.6 % ~ 34.2 %** |
+| Mag. reinforce | 109 (min), 111 (max) | 519 / 591 | **51.9 % ~ 59.1 %** |
+| Required level | 33 (the ReqLevel1 pair) | 1 | **1** |
+
+Each stat is a four-int group whose displayed range is element [0] ~ [2];
+the attack groups carry a fifth `float` growth-per-plus. **Not** in this
+set, and so absent from the tooltip rather than guessed: the attack
+distance (0.6 m on the sword, not located in these columns) and the
+armour defence block (armour reuses these columns for different stats,
+not yet measured). The server gives `+0` items, so the tooltip shows the
+base range; nothing tracks an enhancement level yet.
+
 ## What the picture is evidence of
 
 None of the above was concluded from a render, but the render is a check on all of it at once: a

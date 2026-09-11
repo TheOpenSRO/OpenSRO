@@ -324,6 +324,15 @@ func _item_icon(item_id: int) -> Texture2D:
 		return null
 	return _builder.load_texture(item.icon_path)
 
+## The multi-line hover tooltip for an item id -- its real stats -- or just
+## the id when the item table does not know it.
+func _item_tooltip(item_id: int) -> String:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	if item == null:
+		return "Item %d" % item_id
+	return "\n".join(PackedStringArray(item.tooltip_lines()))
+
 func _item_name(item_id: int) -> String:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)
@@ -361,7 +370,12 @@ func _fill_inventory_grid(slots: Array) -> void:
 		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
 		if icon != null:
 			icon.texture = _item_icon(int(item_id))
-			icon.tooltip_text = _item_name(int(item_id))
+			# A hover tooltip with the item's real stats -- name, attack,
+			# durability, reinforce, requirement -- read straight off the
+			# item table (ItemTableReader.Item.tooltip_lines). STOP so the
+			# hover registers; the cell behind it still takes clicks.
+			icon.tooltip_text = _item_tooltip(int(item_id))
+			icon.mouse_filter = Control.MOUSE_FILTER_STOP
 		var quantity = _first_field(entry, COUNT_FIELDS)
 		var count_label := cell.get_node_or_null("CountLabel") as Label
 		if count_label != null and quantity != null and int(quantity) > 1:

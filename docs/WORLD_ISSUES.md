@@ -7075,6 +7075,24 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-fortieth round: a weapon's stats on hover, measured off a real tooltip
+
+"If I hover over an item it shows me the stats." Hovering an inventory
+slot now shows the item's real stats, and every figure was pinned against
+a Copper Sword (+5) tooltip a player sent -- the one measurement that
+turns a plausible column into a certain one. The reinforce columns gave
+themselves away first: 306, 342, 519, 591 in the row are 30.6 %, 34.2 %,
+51.9 %, 59.1 % on screen, exactly. Attack rate 24 and critical 3 sit in
+the row unchanged. The attack power took backing the +5 out through the
+per-plus growth floats next to each attack: base physical 15~16 at
++5×2.4 is 27~28, base magical 25~28 at +5×4.1 is 45~48 -- both the
+tooltip's numbers. ITEM_FORMAT.md has the column table; the reader parses
+them and `Item.tooltip_lines` formats them, tested against these exact
+values. Left out rather than guessed: the attack distance (not in these
+columns) and the armour defence block (armour reuses the columns for
+other stats, not yet measured), so an armour tooltip shows durability,
+requirement, race and gender and no invented defence number.
+
 ## Hundred-and-thirty-ninth round: clicking an NPC talks to it
 
 "When you click on an NPC it brings up a dialogue box." It does now. A
