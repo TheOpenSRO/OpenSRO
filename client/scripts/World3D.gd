@@ -868,10 +868,14 @@ var _player_one_shot_until := 0.0
 ## The monster the last attack was sent at, so its swing and the player's
 ## reaction to it can be played when the result comes back.
 var _last_attack_target := -1
-## Which of the four plain attacks plays next: the groups list them as
-## types 2, 5, 16, 17 -- `sword_base_01` to `_04`, or the bare-handed
-## straight-left, straight-right, hook-left, hook-right -- and the game
-## chains them in that order.
+## Which of the four plain attacks plays next. The four animation *types*
+## are real -- the `.bsr` groups list them as types 2, 5, 16, 17
+## (`sword_base_01` to `_04`, or the bare-handed straight-left,
+## straight-right, hook-left, hook-right). **The order they cycle in is this
+## project's own sequencing of those real types, not confirmed real client
+## behaviour** -- it just plays each in turn so repeated attacks vary. If the
+## real combo order is ever recovered from the client, correct it here (see
+## docs/GROUNDING_AUDIT.md).
 const ATTACK_SEQUENCE := [
 	BsrReader.AnimationEntry.TYPE_ATTACK, BsrReader.AnimationEntry.TYPE_ATTACK_2, 16, 17]
 var _attack_step := 0

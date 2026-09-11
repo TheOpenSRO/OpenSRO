@@ -56,6 +56,11 @@ func (t *Table) Loaded() bool { return t != nil && len(t.expToNext) > 0 }
 // done here -- the caller decides; this simply stops advancing). A nil/empty
 // table gains no levels and accumulates exp unbounded, so a server with no
 // curve still tracks raw progress.
+//
+// The EXP *curve* is recovered (leveldata.txt), but this carry model -- excess
+// EXP rolling into the next level, and being zeroed at the cap -- is the
+// standard MMO assumption, NOT confirmed against the real client. See
+// docs/GROUNDING_AUDIT.md; correct here if the real behaviour is recovered.
 func (t *Table) Advance(level int, exp int64, gained int64) (newLevel int, newExp int64, levelsGained int) {
 	newLevel = level
 	newExp = exp + gained
