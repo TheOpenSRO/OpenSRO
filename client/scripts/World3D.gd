@@ -5125,9 +5125,10 @@ func _qa_columns_report(spec: String) -> void:
 			continue
 		var x := float(parts[0])
 		var z := float(parts[1])
-		print("QA COLUMN (%d, %d): terrain %.1f, surfaces %s, landing %.1f" % [
+		var world_here := (pair[1] as Node3D).to_global(Vector3(x, 0.0, z))
+		print("QA COLUMN (%d, %d): terrain %.1f, surfaces %s, landing %.1f | world (%.0f, %.0f) -- the server's coordinates for this spot" % [
 			int(x), int(z), NvmCollision.sample_height(graph.region, x, z),
-			str(graph.heights_at(x, z)), graph.landing_height_at(x, z)])
+			str(graph.heights_at(x, z)), graph.landing_height_at(x, z), world_here.x, world_here.z])
 		# The real file's own answer first: which objects the navmesh cell
 		# under this column lists, whether or not the graph could place them.
 		var ci := graph.cell_index_at(x, z)

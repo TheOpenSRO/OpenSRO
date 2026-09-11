@@ -79,8 +79,14 @@ var monsterSpecs = []monsterSpec{
 	// whatever language column a player's archive carries -- one archive
 	// labelled these in Arabic and Spanish -- where the code is the same
 	// string in every archive.
-	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", X: 62, Z: 44, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
-	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", X: -55, Z: 58, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
+	// In the farmland south of the walls, not on the fountain: these two
+	// used to sit 44 and 58 units from the (0,0,0) town spawn -- right under
+	// the plaza's centrepiece. The real game keeps them in the fields. Both
+	// spots are measured flat, walkable and clear of objects and blocking
+	// edges (client/tools qa_shot --columns in region 96/168; world (0,-840)
+	// is region-local 960,1800 and (340,-340) is 1300,1300).
+	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", X: 0, Z: -840, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
+	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", X: 340, Z: -340, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
 	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", X: 70, Z: -50, MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
 }
 
