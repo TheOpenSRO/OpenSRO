@@ -21,20 +21,15 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
   over the region load; the initial neighbourhood is now queued and pumped a batch a frame behind
   it. QA renders keep the synchronous load (verified). Real entry now has feedback instead of a
   black freeze.
-- [~] **Optimize the world load itself** — profiled per phase across 24 cells: **terrain ~37s,
-  objects ~17s, NPCs ~2.4s**. So NPCs were NOT the cost (though caching+duplicating repeated NPC
-  models still helped, v0.1.109). The real bottleneck is **terrain**, and within it
-  `terrain_mesh.create_trimesh_shape()` — a concave BVH built from the full-region mesh per cell.
-  **Next (the real speed-up):** replace terrain collision with a `HeightMapShape3D` built from the
-  region's height grid (terrain is a heightfield, no overhangs), which is far cheaper to build and
-  collide — needs careful alignment with the visual mesh's rotation/offset/scale and a render
-  confirming click-to-move + camera still hit terrain. Then defer objects (~17s) to stream after
-  entry. Both are focused, verified follow-ups, not to be rushed.
-- [~] **Per-chunk freeze crossing into a new region** — streaming now queues the new leading-edge
-  cells and builds one per frame instead of the whole row at once (v0.1.107, round 154), turning
-  the ~1s freeze into brief per-frame hitches. **Needs in-game confirmation**; if still felt, next
-  step is threading the region build off the main thread. (No low-processor setting found, so the
-  "refocus to render" was likely the freeze itself.)
+- [x] **Optimize the world load itself** — **done (v0.1.113): 65s → 18s.** Deeper profiling showed
+  it was not terrain mesh/collision at all but the pk2 archives being re-opened per region (~1s to
+  read the 2GB index each time). Holding the handles open (`_data_pk2` / `_map_pk2` / `_media_pk2`)
+  removed ~47s. Further gains if wanted later: defer objects to stream after entry, or a smaller
+  initial radius — but the load is now tolerable and the crossing smooth.
+- [x] **Per-chunk freeze crossing into a new region** — root cause found and fixed (v0.1.113, round
+  160): the pk2 archives were re-opened per region (~1s to read a 2GB index each time). Holding the
+  handles open cut the per-cell cost from ~2.2s to ~0.5s and the whole region load from 65s to 18s.
+  Streaming still queues cells one per frame (v0.1.107). **Confirm in-game it's now smooth.**
 - [ ] Gold-dragon + class-silhouettes default screen (`loading_default.ddj`)
 - [ ] Shown on the other transitions too (login→select, select→customize)
 - [ ] Pick the region-appropriate loading image where known

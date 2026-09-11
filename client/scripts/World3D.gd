@@ -890,8 +890,11 @@ var _real_skeleton_time := 0.0
 ## didn't load.
 var _character_assets: Dictionary = {}
 ## Data.pk2, held open for dressing: every character and every item on one
-## is assembled out of it.
+## is assembled out of it. All three archives are opened once and reused --
+## re-opening a 2GB pk2 per region (as the open helpers used to) cost ~1s each
+## and was ~25s of the ~65s world load / the region-crossing freeze.
 var _data_pk2: Pk2Reader
+var _map_pk2: Pk2Reader
 ## item id -> the `.bsr` it is worn as, from the player's own item table.
 var _item_models: Dictionary = {}
 ## item id -> its TypeID4, for the weapons: which animation group a held
@@ -1423,10 +1426,13 @@ func _try_load_real_decoration_skeleton() -> void:
 ## can fall back to an in-archive path for any of the loose-file-shaped
 ## environment variables.
 func _open_pk2_if_set() -> Pk2Reader:
+	if _data_pk2 != null:
+		return _data_pk2
 	var pk2_path := Pk2Config.data_path()
 	if pk2_path == "":
 		return null
-	return Pk2Reader.open(pk2_path)
+	_data_pk2 = Pk2Reader.open(pk2_path)
+	return _data_pk2
 
 var _tile_index_cache: TileIndexReader.Table
 
@@ -2426,10 +2432,13 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 ## Particles.pk2 are all separate files) -- so terrain resolves its own real
 ## pk2 path rather than reusing Data.pk2's.
 func _open_map_pk2_if_set() -> Pk2Reader:
+	if _map_pk2 != null:
+		return _map_pk2
 	var map_pk2_path := Pk2Config.map_path()
 	if map_pk2_path == "":
 		return null
-	return Pk2Reader.open(map_pk2_path)
+	_map_pk2 = Pk2Reader.open(map_pk2_path)
+	return _map_pk2
 
 ## Opens the real Media.pk2 -- SRREVAMP_MEDIA_PK2_PATH if set, else a real
 ## "pk2/Media.pk2" next to the running executable (see Pk2Config) -- or
@@ -2438,10 +2447,13 @@ func _open_map_pk2_if_set() -> Pk2Reader:
 ## in Media.pk2, a third separate archive from both Data.pk2 and Map.pk2 in
 ## a real retail install.
 func _open_media_pk2_if_set() -> Pk2Reader:
+	if _media_pk2 != null:
+		return _media_pk2
 	var media_pk2_path := Pk2Config.media_path()
 	if media_pk2_path == "":
 		return null
-	return Pk2Reader.open(media_pk2_path)
+	_media_pk2 = Pk2Reader.open(media_pk2_path)
+	return _media_pk2
 
 ## Loads a real per-region minimap image (SRREVAMP_MAPM_TEXTURE_PATH, e.g.
 ## "minimap\100x100.ddj") as the terrain's real ground texture, if set.

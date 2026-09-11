@@ -7075,6 +7075,32 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-sixtieth round: the world loaded 3.7x faster -- a re-opened archive
+
+The ~65s world entry and the 2-6s region-crossing freeze had one dominant
+cause, found by profiling each phase of a region load: the pk2 archives were
+being **re-opened from scratch on every region**. `_open_pk2_if_set` (and the
+map/media equivalents) called `Pk2Reader.open` every time -- and opening the
+2 GB Data.pk2 reads its whole directory index, ~1s each. `_load_region_navmesh`
+opened it once per region, so across a 25-region grid that was ~25s of pure
+re-opening, dwarfing the actual work (the navmesh read fell from 24.8s to
+52ms once the handle was reused; the parse was only 0.4s, the wall triangles
+and collision shape ~0ms). Objects and NPC loading paid the same tax.
+
+The fix is three lines: hold each archive open (`_data_pk2`, `_map_pk2`,
+`_media_pk2`) and reuse it. A region load's own report went from **65s to
+17.7s** on the box (terrain 37.4s -> 6.4s, objects 16.8s -> 5.3s, npcs 2.4s
+-> 0.5s), and the per-cell streaming cost that causes a crossing hitch fell
+from ~2.2s to ~0.5s. The earlier re-open was a null-timing workaround (a
+handle not yet set when streaming began, see the comment at the NPC pass),
+not a thread-safety need -- reads are all sequential on the main thread, so a
+single reused handle is correct. Rendered the Jangan spawn after: same world,
+loaded in a quarter of the time, the player's back to the camera (round 157's
+facing fix holding). Tests 64/0.
+
+The profiling instrumentation added to find this was removed; the load print
+keeps a terrain/objects/npcs breakdown.
+
 ## Hundred-and-fifty-ninth round: the target window on its own frame
 
 The current-target window at the top of the screen now uses the client's own
