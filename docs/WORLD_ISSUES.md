@@ -7075,6 +7075,26 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-fifty-second round: creating a character, with a live 3D body
+
+The "Create" button now opens a real create screen instead of a name-and-
+gender popup: a name field, a Man / Woman choice, and a live 3D preview of
+the body you are about to make, over the gold-dragon `loading_charactercustom`
+backdrop. The preview is the genuine assembled body -- a new `CharacterPreview`
+reuses the world's own pieces (the characterdata code->`.bsr` resolution,
+`SkinnedBsrAssembler`, and `PaperDoll`'s framed SubViewport) and plays the
+body's own idle so it stands and breathes rather than holding the bind
+(T-)pose. Loaded from the player's Data.pk2 / Media.pk2 at runtime, nothing
+shipped; with no archives it says so instead of showing an empty box.
+
+Two honest omissions, both disclosed on the screen and in
+`FRONTEND_CHECKLIST.md`: the appearance sliders the original shows (figure,
+height, weapon, cloth) are absent because the server stores only the gender
+and the client renders from that alone -- a slider would change nothing --
+and the race is Chinese only, because there are no European body assets, so
+a two-statue race pick would offer an uncreatable choice. The race/region
+screen is deferred for that reason, not forgotten.
+
 ## Hundred-and-fifty-first round: character select, with an honest stat panel
 
 The bare character list becomes the original's select screen: the account's

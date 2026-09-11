@@ -31,18 +31,21 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
 - [?] PIN / security — not in our data; omitted (screenshot shows Clear PIN, but we have no PIN system)
 
 ## 4. Character create — race / region select
-- [ ] Build from authored `resinfo\ifregionview.txt`
-- [ ] Two statues (European knight+horse / Chinese lion) on the map, click to pick race
-- [ ] Hover tooltips describing each race
-- [ ] The cute lizard that crawls up onto the box (polish)
-- [ ] "Create" from select animates over to this screen
+- [?] **Deferred by design:** the server supports only the Chinese race (man/woman) — there are
+  no European body assets — so a two-statue race pick would offer an uncreatable choice. Create
+  goes straight to customize (Chinese) for now. Revisit if/when a European race is added.
+- [ ] (If revisited) build from authored `resinfo\ifregionview.txt`: the two statues, tooltips, lizard
 
-## 5. Character customize
-- [ ] Panel: Name + Unique check, Sex (Male/Female), Figure / Height / Volume / Weapon / Cloth sliders
-- [ ] 3D character preview reflecting the choices, rotatable
-- [ ] Per-race backdrop (European town vs Chinese Jangan), differs by race picked
-- [ ] Confirm → creates the character (`NetClient.create_character`) and returns to select
-- [ ] Cancel → back to race select
+## 5. Character customize / create — **done** (v0.1.105, round 152)
+- [x] Panel: Name + Sex (Man / Woman) — the two bodies the server supports
+- [x] Live 3D character preview reflecting the sex choice, with the body's own idle animation
+- [x] Confirm → creates the character (`NetClient.create_character`) and returns to select
+- [x] Cancel → back to select
+- [x] `Create` on the select screen opens this screen (temporary inline popup removed)
+- [ ] Appearance sliders (figure/height/weapon/cloth) — omitted until there is a system behind them
+- [ ] Unique-check button — no name-availability RPC yet; name is validated on create
+- [ ] Dress the preview in the starting outfit (currently the bare base body)
+- [ ] Rotatable / per-race backdrop polish (using the gold-dragon `loading_charactercustom` for now)
 
 ## 6. 3D backdrops (pass 2, the expensive one)
 - [ ] Shared town backdrop streamed behind the screens (reuse the world loader)

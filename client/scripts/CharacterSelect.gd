@@ -25,14 +25,10 @@ var _hp_text: Label
 var _status: Label
 var _start_button: Button
 var _delete_button: Button
-var _create_popup: Control
-var _create_name: LineEdit
-var _create_gender: OptionButton
 
 func _ready() -> void:
 	_build_ui()
 	NetClient.character_list_result.connect(_on_list_result)
-	NetClient.character_create_result.connect(_on_create_result)
 	NetClient.character_delete_result.connect(_on_delete_result)
 	NetClient.enter_world_result.connect(_on_enter_world_result)
 	# QA render hook: with no logged-in session this screen would list
@@ -131,7 +127,7 @@ func _build_ui() -> void:
 	_start_button.pressed.connect(_on_enter_pressed)
 	buttons.add_child(_start_button)
 	var create_button := FrontEndUi.button("Create", Vector2(110, 40))
-	create_button.pressed.connect(func(): _create_popup.visible = true)
+	create_button.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/CharacterCreate.tscn"))
 	buttons.add_child(create_button)
 	_delete_button = FrontEndUi.button("Delete", Vector2(110, 40))
 	_delete_button.pressed.connect(_on_delete_pressed)
@@ -143,45 +139,6 @@ func _build_ui() -> void:
 	_status = FrontEndUi.label("", 14, Color(0.6, 1.0, 0.6))
 	_status.position = Vector2(28, screen.y - 30)
 	add_child(_status)
-
-	_build_create_popup()
-
-## A compact create dialog (name + gender). Temporary: the full race-select
-## and character-customize flow will replace it -- see FRONTEND_CHECKLIST.
-func _build_create_popup() -> void:
-	_create_popup = FrontEndUi.ground(Color(0, 0, 0, 0.6))
-	_create_popup.mouse_filter = Control.MOUSE_FILTER_STOP
-	_create_popup.visible = false
-	add_child(_create_popup)
-	var dialog := FrontEndUi.plate()
-	dialog.set_anchors_preset(Control.PRESET_CENTER)
-	dialog.position = Vector2(-170, -110)
-	dialog.custom_minimum_size = Vector2(340, 220)
-	dialog.size = Vector2(340, 220)
-	_create_popup.add_child(dialog)
-	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 10)
-	dialog.add_child(col)
-	col.add_child(FrontEndUi.label("Create a character", 18))
-	_create_name = LineEdit.new()
-	_create_name.placeholder_text = "Name"
-	col.add_child(_create_name)
-	_create_gender = OptionButton.new()
-	_create_gender.add_item("China Man", 0)
-	_create_gender.set_item_metadata(0, CharacterNet.GENDER_CHINA_MAN)
-	_create_gender.add_item("China Woman", 1)
-	_create_gender.set_item_metadata(1, CharacterNet.GENDER_CHINA_WOMAN)
-	col.add_child(_create_gender)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	col.add_child(row)
-	var ok := FrontEndUi.button("Create", Vector2(120, 36))
-	ok.pressed.connect(_on_create_pressed)
-	row.add_child(ok)
-	var cancel := FrontEndUi.button("Cancel", Vector2(120, 36))
-	cancel.pressed.connect(func(): _create_popup.visible = false)
-	row.add_child(cancel)
 
 # --- Data ------------------------------------------------------------------
 
@@ -237,23 +194,6 @@ func _selected_name() -> String:
 	return _summaries[_selected].char_name
 
 # --- Actions (NetClient wiring unchanged) ----------------------------------
-
-func _on_create_pressed() -> void:
-	var char_name := _create_name.text
-	if char_name.is_empty():
-		_status.text = "Enter a name first."
-		return
-	var gender: String = _create_gender.get_selected_metadata() if _create_gender.selected >= 0 else ""
-	NetClient.create_character(char_name, gender)
-
-func _on_create_result(ok: bool, reason: String) -> void:
-	if ok:
-		_status.text = "Character created."
-		_create_name.text = ""
-		_create_popup.visible = false
-		NetClient.list_characters()
-	else:
-		_status.text = "Create failed: %s" % reason
 
 func _on_delete_pressed() -> void:
 	var char_name := _selected_name()
