@@ -118,11 +118,14 @@ data:** the EXP curve is recovered (leveldata.txt); the stat and skill formulas 
   no clean catchable hook, so likely watch the log file / the missing-asset + `push_error` paths.
 
 ## 8. World / collision bugs (dumped 2026-09-11)
-- [ ] **Stuck/barriered inside a building** after teleporting into its corner. Repro (F3 on
-  client v0.1.104): zone Alexandria, region node `RealTerrain_90_48`, local ~`769.9, 205.1`
-  (world `-190.1, 754.9`, ground `-80.5`), near the palace/building corner by the potion stall.
-  The player can circle the building but on touching it gets trapped inside. Likely a concave/
-  inside-out object collider. Investigate with `QA_SCAN` / `QA_COLUMNS` / `QA_FLOAT` at that spot.
+- [~] **Stuck/barriered inside a building** — **diagnosed (round 162).** `QA_COLUMNS` at the spot
+  (90/48 local 769,205) shows a raised building-floor surface (868.5) above terrain (863), and a
+  teleport lands the player on it, inside the walls. The trap is the object mesh collision:
+  `ObjectLoader` puts a concave `create_trimesh_shape` building collider on layer 1, the player's
+  mask includes layer 1, and a concave collider can't push a penetrating capsule back out. **Fix
+  (deferred for a live movement test):** move object colliders to a scenery layer the camera sees
+  but the player doesn't, leaving the navmesh walls (the intended blocker) to block the player.
+  Risk: a building the navmesh doesn't fully enclose becoming walk-through — not headless-verifiable.
 - [ ] Missing model in that session's log: `res\bldg\china\dunhuang\buildings\w_cd_stab_buil03_wal.bsr
   not found in archive` — a Dunhuang wall; check whether a collider is left without its mesh.
 

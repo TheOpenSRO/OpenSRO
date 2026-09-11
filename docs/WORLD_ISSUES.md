@@ -7075,6 +7075,34 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-sixty-second round: why a building traps the player (diagnosis)
+
+Chased the playtest "stuck inside a building in Alexandria" report to a root
+cause. Probed the reported spot (region 90/48, local 769,205) with
+`QA_COLUMNS`: two walkable surfaces there, the terrain at 863 and a raised
+one at 868.5 (~5 units up, a building floor), and the landing height picks
+the raised one -- so a teleport there lands the player *on the building
+floor, inside its walls*.
+
+The trap itself is the object mesh collision. `ObjectLoader` builds a
+`StaticBody3D` with `create_trimesh_shape()` from each building mesh and
+leaves it on the default collision layer 1; the player's mask is 17 (layers
+1 + 5), so the player physically collides with building meshes. A concave
+building collider cannot depenetrate a capsule that started inside it, so
+move_and_slide pushes the player *further in* and barriers them. The loader's
+own comment already says this physics surface "is wrong, and the real client
+does not do that either -- it walks the cell/edge graph directly": the
+navmesh walls (layer 5) are the intended and sufficient blocker.
+
+**The fix, deferred until it can be verified in-game:** put the object
+colliders on a scenery layer the camera collides with but the player does not
+(so the camera still does not clip through buildings and clicks still target
+terrain), leaving the navmesh walls as the sole player blocker. The risk is a
+building the navmesh walls do not fully enclose becoming walk-through, and
+that cannot be checked in a headless render (the standing verification-gap
+rule) -- so it wants a live movement test, not a blind ship. Recorded in
+`docs/FRONTEND_CHECKLIST.md`.
+
 ## Hundred-and-sixty-first round: the MENU wears its own icons
 
 The underbar's MENU popup was a plain grey system list. It is now the game's:
