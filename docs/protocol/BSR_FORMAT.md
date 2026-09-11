@@ -129,6 +129,26 @@ A weapon group only lists what differs: `sword` has its own attacks and run
 `spear` has its own stand, walk and run. `BsrReader.ParsedObject.animation_for(type, group)` does
 exactly that lookup with that fallback.
 
+The four plain attacks are types 2, 5, 16, 17 — `sword_base_01` to `_04` in the sword group, and
+bare-handed straight-left, straight-right, hook-left, hook-right in `default` — the chain the game
+plays on successive hits.
+
+### Events and walk points
+
+Each entry's events are four words: a key time, a type, two parameters. Two event types occur:
+**1 on every attack** (once or twice per swing — the moment the blow lands: `sword_base_01` at
+200 and 566, `mangnyang_attack01` at 651) and **2 on every walk and run** (twice per cycle, with
+parameters `(0, 1)` then `(1, 0)` — one per foot). The key time reads as milliseconds — a run's
+footsteps at 305 and 633 of a cycle about 950 long, a walk's at 445 and 973 of one about 1,300 —
+consistently across every entry checked, but that unit is inferred from the numbers, not read
+from the client's use of them.
+
+The walk points are two `(float, float)` pairs on every player entry — `(33.3, 0)` and `(0, 1)`
+on a run, `(17, 0)` and `(0, 1)` on a walk, `(0, 0)` and `(0, 1)` on everything that stands
+still — and up to four on a monster's walk. The first value looks like the speed the animation
+was authored for (a run's 33.3 to a walk's 17, a monster's 10); **what the pairs mean is not
+established** and nothing uses them.
+
 Worked example, `chinaquest_priest.bsr` (717 bytes), every offset verified to chain:
 
 ```

@@ -6809,3 +6809,25 @@ interpolation reads as standing). Same table, same fallback, same phase
 offset that keeps a crowd out of step. Not rendered: it takes two clients,
 which the harness does not have; the path is the local player's with the
 gait chosen from movement rather than from input.
+
+### The swing, the blow and the reply, on the table's own clock
+
+An attack now plays the weapon group's next plain attack -- types 2, 5,
+16, 17 in turn, `sword_base_01` to `_04`, or the bare-handed straight-left
+/ straight-right / hook-left / hook-right -- and the target's hit reaction
+plays when that swing's **hit event** falls, not when the packet lands.
+Every attack entry carries one or two type-1 events (`sword_base_01` at
+200 and 566, `mangnyang_attack01` at 651) and every walk and run two
+type-2 events with `(0, 1)` then `(1, 0)` -- footsteps, one per foot, at
+305 and 633 of a run about 950 long. Those numbers read as milliseconds in
+every entry checked; the unit is inferred from them, not read from the
+client's use of them, and the code says so.
+
+When the monster strikes back, it plays its own type-2 attack and the
+player's type-3 reaction lands at *its* hit event. The QA harness attacks
+about once a second now (`--attack`), which is roughly a swing's length.
+
+Not done, and not guessed: how long the character stays in the battle
+stance (type 6, `chinaman_standbattle`, or a weapon group's own) after a
+fight. Nothing found says, so the body returns to the town idle when its
+swing ends.

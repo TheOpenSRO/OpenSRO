@@ -784,6 +784,16 @@ var _player_anim_time := 0.0
 var _player_one_shot: BanReader.ParsedAnimation = null
 var _player_one_shot_start := 0.0
 var _player_one_shot_until := 0.0
+## The monster the last attack was sent at, so its swing and the player's
+## reaction to it can be played when the result comes back.
+var _last_attack_target := -1
+## Which of the four plain attacks plays next: the groups list them as
+## types 2, 5, 16, 17 -- `sword_base_01` to `_04`, or the bare-handed
+## straight-left, straight-right, hook-left, hook-right -- and the game
+## chains them in that order.
+const ATTACK_SEQUENCE := [
+	BsrReader.AnimationEntry.TYPE_ATTACK, BsrReader.AnimationEntry.TYPE_ATTACK_2, 16, 17]
+var _attack_step := 0
 
 var _real_skeleton: Skeleton3D
 var _real_skeleton_track: BanReader.Bone
@@ -3866,6 +3876,13 @@ func _play_player_once(anim: BanReader.ParsedAnimation) -> float:
 	_player_one_shot_start = _player_anim_time
 	return float(frames) / BAN_FPS
 
+## The group entry behind _body_animation_for, for its events.
+func _body_animation_entry(gender: String, action_type: int, group: String) -> BsrReader.AnimationEntry:
+	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
+	if assets.is_empty():
+		return null
+	return (assets["parsed"] as BsrReader.ParsedObject).animation_entry_for(action_type, group)
+
 ## The path _body_animation_for would parse, for a log line.
 func _body_animation_path(gender: String, action_type: int, group: String) -> String:
 	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
@@ -4556,7 +4573,7 @@ func _qa_step() -> void:
 	# off the numbers rather than inferred from a still image.
 	if OS.get_environment("SRREVAMP_QA_RIG") != "" and _qa_tick in [30, 60, 90]:
 		_qa_rig_report()
-	if _qa_attacking and _qa_tick % 10 == 0:
+	if _qa_attacking and _qa_tick % 60 == 0:
 		_qa_attack_nearest()
 
 	if not _qa_shots.is_empty():
@@ -4736,6 +4753,7 @@ func _qa_attack_nearest() -> void:
 	if nearest_id == -1:
 		return
 	print("QA ATTACK: monster %d at %.0f" % [nearest_id, nearest])
+	_last_attack_target = nearest_id
 	NetClient.attack(NetClient.current_character_name, nearest_id)
 
 func _qa_rig_report() -> void:
@@ -5903,6 +5921,7 @@ func _on_attack_pressed() -> void:
 		monster_status_label.text = "Select a monster first."
 		return
 	var target: CombatNet.MonsterSnapshot = _monsters[selected[0]]
+	_last_attack_target = target.monster_id
 	NetClient.attack(NetClient.current_character_name, target.monster_id)
 
 func _on_attack_result(result: CombatNet.AttackResult) -> void:
@@ -5917,12 +5936,41 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	print("World3D: attack hit for %d (%d left%s), took %d (HP %d)" % [
 		result.monster_damage, result.monster_remaining_hp,
 		", died" if result.monster_died else "", result.player_damage_taken, result.player_hp])
+	# The player's swing: the next plain attack in the weapon group's
+	# chain, once. Its hit event says when the blow lands, and that is
+	# when the monster's own hit reaction plays.
+	var swing_type: int = ATTACK_SEQUENCE[_attack_step % ATTACK_SEQUENCE.size()]
+	_attack_step += 1
+	var swing_entry := _body_animation_entry(_player_gender, swing_type, _player_weapon_group)
+	if swing_entry == null:
+		swing_entry = _body_animation_entry(_player_gender, BsrReader.AnimationEntry.TYPE_ATTACK, _player_weapon_group)
+	var lands_after := 0.0
+	if swing_entry != null:
+		var swing := _body_animation_for(_player_gender, swing_entry.action_type, _player_weapon_group)
+		if swing != null:
+			_play_player_once(swing)
+		var hit_ms := swing_entry.first_event_time(BsrReader.AnimationEntry.EVENT_HIT)
+		lands_after = float(hit_ms) / 1000.0 if hit_ms > 0 else 0.0
+	if _last_attack_target != -1:
+		_after(lands_after, func() -> void:
+			_play_monster_action(_last_attack_target, BsrReader.AnimationEntry.TYPE_HIT))
 	if result.player_damage_taken > 0 and _player_skeleton != null:
-		# The body's own hit reaction, type 3, once; the tick returns to
-		# stand or run afterwards on its own.
-		var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
-		if hit != null:
-			_player_one_shot_until = _player_anim_time + _play_player_once(hit)
+		# The monster strikes back: its own attack, and the player's hit
+		# reaction (type 3) when that swing's hit event falls.
+		var strike_after := 0.0
+		if _last_attack_target != -1:
+			var assembled: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(_last_attack_target)
+			if assembled != null and assembled.parsed != null:
+				var strike := assembled.parsed.animation_entry_for(BsrReader.AnimationEntry.TYPE_ATTACK)
+				if strike != null:
+					var ms := strike.first_event_time(BsrReader.AnimationEntry.EVENT_HIT)
+					strike_after = float(ms) / 1000.0 if ms > 0 else 0.0
+			_after(lands_after, func() -> void:
+				_play_monster_action(_last_attack_target, BsrReader.AnimationEntry.TYPE_ATTACK))
+		_after(lands_after + strike_after, func() -> void:
+			var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
+			if hit != null:
+				_player_one_shot_until = _player_anim_time + _play_player_once(hit))
 	if result.monster_died:
 		monster_status_label.text = "Hit for %d -- it died!" % result.monster_damage
 		# A kill may have progressed a quest's kill count even without
@@ -5942,9 +5990,18 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	NetClient.list_skills(NetClient.current_character_name)
 
 func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
-	if damaged != null:
+	# Someone else's hit on a monster: play its reaction now. The local
+	# player's own hits are timed to the swing in _on_attack_result.
+	if damaged != null and damaged.monster_id != _last_attack_target:
 		_play_monster_action(damaged.monster_id, BsrReader.AnimationEntry.TYPE_HIT)
 	NetClient.list_monsters()
+
+## Runs `what` after `seconds` of scene time -- at once when zero.
+func _after(seconds: float, what: Callable) -> void:
+	if seconds <= 0.0:
+		what.call()
+		return
+	get_tree().create_timer(seconds).timeout.connect(what)
 
 ## A monster's death plays its own die animation (type 4 of its `default`
 ## group) and the body stays on its last frame until that has run; only

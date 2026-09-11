@@ -81,13 +81,31 @@ class AnimationEntry:
 	const TYPE_WALK_BACKWARD := 23
 	const TYPE_DIE_LOOP := 36
 
+	## Event types seen in real entries: 1 on every attack (once or twice
+	## per swing -- the moment the blow lands), 2 on every walk and run
+	## (twice per cycle, parameters (0, 1) then (1, 0) -- one per foot).
+	const EVENT_HIT := 1
+	const EVENT_FOOTSTEP := 2
+
 	var action_type: int
 	## Index into the file's animation list, and the path it names.
 	var file_index: int
 	var path: String
-	## Key events: four words each -- a key time and a type, then two
-	## parameters -- not interpreted here.
+	## Key events: four words each -- a key time, a type, two parameters.
+	## The key time reads as **milliseconds**: a run's two footsteps fall at
+	## 305 and 633 of a cycle about 950 long, a walk's at 445 and 973 of
+	## one about 1,300 long, and every attack's hit lands between 128 and
+	## 651. That is consistent across every entry checked, not confirmed
+	## against the client's own use of the value.
 	var events: Array = []
+
+	## The key time of the first event of a type, in the units above, or
+	## -1 when the entry has none.
+	func first_event_time(event_type: int) -> int:
+		for e in events:
+			if (e as PackedInt32Array)[1] == event_type:
+				return (e as PackedInt32Array)[0]
+		return -1
 	## The walk graph: (x, y) points, two in every entry checked.
 	var walk_points: PackedVector2Array = PackedVector2Array()
 	## A trailing float, 1.0 in every entry checked.
@@ -137,11 +155,16 @@ class ParsedObject:
 	## and the body's default walk is what plays then. "" if neither has
 	## one.
 	func animation_for(action_type: int, group_name: String = "default") -> String:
+		var entry := animation_entry_for(action_type, group_name)
+		return entry.path if entry != null else ""
+
+	## The entry itself, with its events, for the same lookup.
+	func animation_entry_for(action_type: int, group_name: String = "default") -> AnimationEntry:
 		for name in [group_name, "default"]:
 			for entry in animation_groups.get(name, []):
 				if (entry as AnimationEntry).action_type == action_type:
-					return (entry as AnimationEntry).path
-		return ""
+					return entry
+		return null
 
 	## Every mesh piece, primary included -- the same paths as
 	## mesh_path + sub_mesh_paths, in file order, for callers that don't
