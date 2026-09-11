@@ -332,7 +332,8 @@ static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D) -> S
 	var mat := ShaderMaterial.new()
 	mat.resource_name = layer.layer_name
 	mat.shader = FOLIAGE_SHADER
-	mat.set_shader_parameter("albedo", layer.diffuse)
+	# The ambient colour, for the reason build_godot_material gives.
+	mat.set_shader_parameter("albedo", layer.ambient)
 	mat.set_shader_parameter("albedo_texture", tex)
 	mat.set_shader_parameter("alpha_scissor", FOLIAGE_ALPHA_SCISSOR)
 	return mat
@@ -340,7 +341,19 @@ static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D) -> S
 static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer) -> Material:
 	var mat := StandardMaterial3D.new()
 	mat.resource_name = layer.layer_name
-	mat.albedo_color = layer.diffuse
+	# The layer's colours are a D3DMATERIAL9 -- ambient, diffuse, specular,
+	# emissive, power, in that order -- and the fixed-function pipeline
+	# multiplies the *ambient* light by the ambient colour and only the
+	# directional light by the diffuse. This used to set the albedo from
+	# the diffuse, which is the same 0.59 as the ambient on every Jangan
+	# layer measured and so never showed -- until Alexandria, where 24 of
+	# the houses' 40 layers carry diffuse 0.14 against ambient 0.59 and
+	# every wall came out black (docs/WORLD_ISSUES.md, round 136). The
+	# ambient is the term a mostly-ambient scene is lit by. What this still
+	# gets wrong: a StandardMaterial3D scales the sun by the same colour, so
+	# a sunlit face of such a layer draws brighter here than in the original
+	# by diffuse/ambient; an exact split needs a shader's light() function.
+	mat.albedo_color = layer.ambient
 
 	if layer.texture_path == "":
 		return mat

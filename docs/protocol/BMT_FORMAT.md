@@ -53,6 +53,19 @@ Real layers were seen to share the exact same default color set (`ambient=diffus
 — evidently a shared engine default rather than per-layer authored data, at least for these
 particular avatar/flag materials.
 
+**They are not always equal, and which one lights the surface matters** (2026-09-11). The five
+fields are a `D3DMATERIAL9` in its own order — ambient, diffuse, specular, emissive, power — and
+the fixed-function pipeline multiplies the ambient light by the ambient colour and only the
+directional light by the diffuse. Measured with `client/tools/dump_bmt.gd`: every layer of
+Jangan's `cj_armo.bmt` has ambient 0.59 and diffuse 0.59, 0.47 or 0.50, while **24 of the 40
+layers of Alexandria's `alex_minga02.bmt` have diffuse `(0.14, 0.14, 0.14)` against ambient
+`(0.59, 0.59, 0.59)`** (specular 0.39). The client used to set a material's albedo from the
+diffuse, which never showed on Jangan's near-equal layers and drew every Alexandria house black; it
+now uses the ambient, which is the term a mostly-ambient scene is lit by. The remaining
+approximation is stated in `ObjectLoader.build_godot_material`: a `StandardMaterial3D` scales the
+sun by the same colour, so a sunlit face of such a layer is brighter here than in the original by
+diffuse/ambient until a shader splits the two terms.
+
 **The exact byte length of the gap between one layer's texture filename and the next layer's name
 length isn't confirmed.** It doesn't appear to be a fixed, 4-byte-aligned count in every real file
 checked. One real file's last declared layer also had a texture-length field pointing past the

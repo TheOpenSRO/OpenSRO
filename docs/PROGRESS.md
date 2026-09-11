@@ -31,7 +31,14 @@ as unknown). Measured over the fighter's clips with `client/tools/dump_ban_times
 is 14 keys over 2333 ms, the battle stance 5 over 2000. Playback is on the files' own clock now,
 blended between keys. Same round: the camera no longer recenters when the character moves, WASD
 is camera-relative, the click ray no longer hits the player's capsule or the invisible navmesh
-walls, a left drag orbits, and the debug panel has town buttons. Open: "stuck in a building".
+walls, a left drag orbits, and the debug panel has town buttons.
+
+**Alexandria's black houses** (round 136): 24 of their material's 40 layers have diffuse 0.14
+against ambient 0.59, and the loader set the albedo from the diffuse -- the fixed-function
+pipeline lights ambient by ambient and only the sun by diffuse. Albedo is the ambient now; the
+houses render. "Stuck in a building" is not reproduced (the armour shop's porch edge blocks as it
+should; the old QA spot was under a bridge deck the navmesh does not carry) -- a panel Copy at the
+moment it happens is the next measurement.
 
 ## 2026-09-10 — the character dressed from the game's own tables
 

@@ -44,4 +44,11 @@ func _init() -> void:
 			print("   unknown=0x%04x (%6d)  power=%.2f  %-28s %s" % [
 				layer.unknown, layer.unknown, layer.power,
 				layer.layer_name, layer.texture_path])
+			# The colours matter as much as the texture: the loader multiplies
+			# the texture by the diffuse, so a dark diffuse is a dark wall.
+			print("      ambient %s  diffuse %s  specular %s  emissive %s" % [
+				_rgba(layer.ambient), _rgba(layer.diffuse), _rgba(layer.specular), _rgba(layer.emissive)])
 	quit(0)
+
+func _rgba(c: Color) -> String:
+	return "(%.2f, %.2f, %.2f, %.2f)" % [c.r, c.g, c.b, c.a]

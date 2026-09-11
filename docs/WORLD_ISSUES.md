@@ -7062,3 +7062,27 @@ happens -- position, camera, and what the graph says underfoot -- is
 the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
+
+## Hundred-and-thirty-sixth round: the black houses of Alexandria
+
+Every `alex_minga` house drew solid black, on the player's archive and on
+the box's, with the ground, stalls, walls and trees beside them textured.
+Ruled out in order: the textures (every one found; `alex_minga01_wall01`
+decodes as a 256x512 DXT1 sandstone panel), the mesh (`alex_minga02_arch01`
+parses with its material name matching a layer), the material flags (the
+same `0x0140` / `0x0341` as Jangan's). Then the colours, which
+`dump_bmt.gd` did not print until tonight: **24 of the 40 layers of
+`alex_minga02.bmt` carry diffuse `(0.14, 0.14, 0.14)` against ambient
+`(0.59, 0.59, 0.59)`**, where every Jangan layer measured has ambient
+0.59 and diffuse 0.59, 0.47 or 0.50.
+
+The five colour fields are a `D3DMATERIAL9` in its own order, and the
+fixed-function pipeline multiplies the ambient light by the ambient
+colour and only the directional light by the diffuse. `ObjectLoader`
+set the albedo from the diffuse -- invisible where the two are equal,
+black where they are not. It now uses the ambient, and the houses
+render (BMT_FORMAT.md has the measurement). Stated, not hidden: a
+`StandardMaterial3D` scales the sun by the same colour, so a sunlit face
+of such a layer is brighter here than in the original by
+diffuse/ambient; the exact split is a shader's `light()` function, a
+later round.
