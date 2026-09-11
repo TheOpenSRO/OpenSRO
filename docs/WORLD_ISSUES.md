@@ -7075,6 +7075,21 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-forty-sixth round: monsters get an HP bar
+
+Monsters showed their health as text -- `Weasel (80/80)`. The original
+shows a name above the monster and a red HP bar below it, so that is what
+they show now: the name plate is name-only, and under it a billboarded,
+fixed-size Sprite3D whose texture is drawn per HP fraction (a dark frame,
+a red fill), the same fixed-size trick the name plate uses so it reads at
+any distance. It shrinks the moment a hit lands (`_on_monster_damaged`
+sets the fill from `remaining_hp` before the list round-trip) and is in
+the same "name_plates" group, so the range slider fades it with the name.
+Colours and size are a disclosed choice; nothing recovered gives the
+original's. Rendered over a field Mangyang: the framed red bar sits under
+the name. (The same render shows the player hitting for 1 -- combat is
+still the placeholder damage until the refdata of round 145 is imported.)
+
 ## Hundred-and-forty-fifth round: the item reference data the server was missing
 
 The server had no item reference data on the test VM -- `SELECT count(*)

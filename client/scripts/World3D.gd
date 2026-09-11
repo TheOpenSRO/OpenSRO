@@ -3158,14 +3158,63 @@ const NAME_PLATE_OUTLINE_COLOUR := Color(0.0, 0.0, 0.0, 0.85)
 const NAME_PLATE_RANGE := 80.0
 var _name_plate_range := NAME_PLATE_RANGE
 
+## A monster's HP bar, the way the original shows one over its head: a name
+## above and a red bar below it. The bar is a single fixed-size billboarded
+## Sprite3D whose texture is drawn per fraction (a dark frame, a red fill),
+## so there is no two-sprite alignment to get wrong and it reads the same at
+## any distance -- the same reason the name plate is fixed-size. Colours and
+## size are a disclosed choice; nothing recovered gives the original's.
+const HP_BAR_TEX_W := 64
+const HP_BAR_TEX_H := 8
+const HP_BAR_PIXEL_SIZE := 0.006
+const HP_BAR_FILL := Color(0.78, 0.12, 0.10)
+const HP_BAR_BG := Color(0.05, 0.05, 0.05, 0.85)
+const HP_BAR_FRAME := Color(0.0, 0.0, 0.0, 0.95)
+
+func _hp_bar_texture(fraction: float) -> ImageTexture:
+	var img := Image.create(HP_BAR_TEX_W, HP_BAR_TEX_H, false, Image.FORMAT_RGBA8)
+	img.fill(HP_BAR_FRAME)
+	var frac := clampf(fraction, 0.0, 1.0)
+	var inner_w := HP_BAR_TEX_W - 2
+	var filled := int(round(inner_w * frac))
+	for y in range(1, HP_BAR_TEX_H - 1):
+		for x in range(1, HP_BAR_TEX_W - 1):
+			img.set_pixel(x, y, HP_BAR_FILL if (x - 1) < filled else HP_BAR_BG)
+	return ImageTexture.create_from_image(img)
+
+## A billboarded HP bar sitting `above` the model's feet, fixed screen size,
+## in the name-plate group so it fades in over the same range.
+func _hp_bar(above: float) -> Sprite3D:
+	var bar := Sprite3D.new()
+	bar.name = "HpBar"
+	bar.texture = _hp_bar_texture(1.0)
+	bar.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	bar.fixed_size = true
+	bar.pixel_size = HP_BAR_PIXEL_SIZE
+	bar.no_depth_test = true
+	bar.render_priority = 2
+	bar.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	bar.position = Vector3(0.0, above, 0.0)
+	bar.add_to_group("name_plates")
+	_apply_name_plate_range(bar)
+	return bar
+
+func _set_hp_bar(body: Node3D, hp: int, max_hp: int) -> void:
+	var bar := body.get_node_or_null("HpBar") as Sprite3D
+	if bar != null and max_hp > 0:
+		bar.texture = _hp_bar_texture(float(hp) / float(max_hp))
+
 ## Changes how near an entity has to be before its name shows, for every
 ## plate already in the scene and every one made from now on.
 func set_name_plate_range(distance: float) -> void:
 	_name_plate_range = maxf(distance, 0.0)
 	for node in get_tree().get_nodes_in_group("name_plates"):
-		_apply_name_plate_range(node as Label3D)
+		_apply_name_plate_range(node as GeometryInstance3D)
 
-func _apply_name_plate_range(label: Label3D) -> void:
+## Takes a GeometryInstance3D so it works for both the Label3D name plates
+## and the Sprite3D HP bars, which share the "name_plates" group and fade
+## over the same range.
+func _apply_name_plate_range(label: GeometryInstance3D) -> void:
 	if label == null:
 		return
 	label.visibility_range_end = _name_plate_range
@@ -6193,7 +6242,8 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		var existing: Node3D = _monster_bodies[monster.monster_id]
 		existing.position = pos
 		var existing_label: Label3D = existing.get_node("Label")
-		existing_label.text = "%s (%d/%d)" % [monster.monster_name, monster.hp, monster.max_hp]
+		existing_label.text = monster.monster_name
+		_set_hp_bar(existing, monster.hp, monster.max_hp)
 		return
 
 	var body := Node3D.new()
@@ -6254,10 +6304,14 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		mesh.position.y = 0.8 * PLAYER_SCALE_RATIO
 		body.add_child(mesh)
 
-	var label := _name_plate("%s (%d/%d)" % [monster.monster_name, monster.hp, monster.max_hp],
+	var label := _name_plate(monster.monster_name,
 		label_height / (1.0 + NAME_PLATE_CLEARANCE_FRACTION))
 	label.name = "Label"
 	body.add_child(label)
+	# The HP bar sits just under the name, at the model's own top.
+	var bar := _hp_bar(label_height * 0.9)
+	body.add_child(bar)
+	_set_hp_bar(body, monster.hp, monster.max_hp)
 
 	other_entities.add_child(body)
 	_monster_bodies[monster.monster_id] = body
@@ -6380,6 +6434,12 @@ func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
 	# player's own hits are timed to the swing in _on_attack_result.
 	if damaged != null and damaged.monster_id != _last_attack_target:
 		_play_monster_action(damaged.monster_id, BsrReader.AnimationEntry.TYPE_HIT)
+	# Shrink the HP bar at once, before the list round-trip, so it tracks
+	# each hit. The max comes from the last snapshot of this monster.
+	if damaged != null and _monster_bodies.has(damaged.monster_id):
+		var snap = _monster_snapshots.get(damaged.monster_id)
+		var max_hp: int = snap.max_hp if snap != null else damaged.remaining_hp
+		_set_hp_bar(_monster_bodies[damaged.monster_id], damaged.remaining_hp, max_hp)
 	NetClient.list_monsters()
 
 ## Runs `what` after `seconds` of scene time -- at once when zero.

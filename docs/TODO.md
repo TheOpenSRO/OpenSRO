@@ -59,6 +59,10 @@ In order. Each is checked off here when it ships in a release, with its round in
 
 ## Next up
 
+### 0. Monster HP bars — **done** (round 146)
+Monsters show a name plate and a billboarded red HP bar that shrinks on each hit, in place of the
+old "(hp/max)" text.
+
 ### 1. NPCs — **done, except that they are statues** (hundred-and-fifth round)
 12,367 spawns and 5,423 models read from the player's own Media.pk2, each assembled from its own
 `.bsr` by `SkinnedBsrAssembler`. 18 of 19 placed in Jangan town, 45 across the loaded grid.
