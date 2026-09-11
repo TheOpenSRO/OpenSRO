@@ -3378,11 +3378,24 @@ func _set_hp_bar(body: Node3D, hp: int, max_hp: int) -> void:
 ## name/HP/level are client-drawn over it, so this shows the same
 ## information honestly); shown on click/attack, updated on damage, hidden
 ## on death or when nothing is targeted.
-const TARGET_WINDOW_WIDTH := 236.0
-const TARGET_HP_INSET := 10.0
+# The current-target window at the top of the screen, built on the client's
+# own frame art (interface\targetwindow\tw_type1.ddj, 200x72). Name and an HP
+# bar with its percent -- the monster data the server actually sends; the
+# real window's rank gem and level are left off because that data is not on
+# the wire (the monster snapshot carries no level or rank), and inventing
+# them is against the rules. See docs/WORLD_ISSUES.md.
+const TARGET_FRAME_DDJ := "interface\\targetwindow\\tw_type1.ddj"
+const TARGET_WINDOW_WIDTH := 320.0
+const TARGET_WINDOW_HEIGHT := 115.0
+# Slot rects [x, y, w, h] as fractions of the frame, eyeballed from the real
+# 200x72 art and tuned by rendering -- a disclosed layout choice.
+const TARGET_NAME_RECT := [0.15, 0.10, 0.80, 0.26]
+const TARGET_HP_RECT := [0.08, 0.56, 0.85, 0.18]
 var _target_window: Control = null
 var _target_name_label: Label = null
 var _target_hp_fill: ColorRect = null
+var _target_hp_pct: Label = null
+var _target_hp_full := 0.0
 
 func _build_target_window() -> void:
 	_target_window = Control.new()
@@ -3393,20 +3406,34 @@ func _build_target_window() -> void:
 	_target_window.offset_left = -TARGET_WINDOW_WIDTH / 2.0
 	_target_window.offset_right = TARGET_WINDOW_WIDTH / 2.0
 	_target_window.offset_top = 12.0
-	_target_window.offset_bottom = 52.0
+	_target_window.offset_bottom = 12.0 + TARGET_WINDOW_HEIGHT
 	_target_window.visible = false
 
-	var bg := ColorRect.new()
-	bg.color = Color(0.0, 0.0, 0.0, 0.55)
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_target_window.add_child(bg)
+	# The authored frame, or a plain box if no archive is loaded.
+	var frame_tex: Texture2D = _ui_builder.load_texture(TARGET_FRAME_DDJ) if _ui_builder != null else null
+	if frame_tex != null:
+		var frame := TextureRect.new()
+		frame.texture = frame_tex
+		frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		frame.stretch_mode = TextureRect.STRETCH_SCALE
+		frame.set_anchors_preset(Control.PRESET_FULL_RECT)
+		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_target_window.add_child(frame)
+	else:
+		var bg := ColorRect.new()
+		bg.color = Color(0.0, 0.0, 0.0, 0.55)
+		bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_target_window.add_child(bg)
 
 	_target_name_label = Label.new()
 	_target_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_target_name_label.position = Vector2(0.0, 3.0)
-	_target_name_label.size = Vector2(TARGET_WINDOW_WIDTH, 16.0)
+	_target_name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_target_name_label.position = Vector2(TARGET_WINDOW_WIDTH * TARGET_NAME_RECT[0], TARGET_WINDOW_HEIGHT * TARGET_NAME_RECT[1])
+	_target_name_label.size = Vector2(TARGET_WINDOW_WIDTH * TARGET_NAME_RECT[2], TARGET_WINDOW_HEIGHT * TARGET_NAME_RECT[3])
 	_target_name_label.add_theme_color_override("font_color", NAME_PLATE_COLOUR)
+	_target_name_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_target_name_label.add_theme_constant_override("outline_size", 3)
 	if _ui_builder != null:
 		var font := _ui_builder.font_at(0)
 		if font != null:
@@ -3414,19 +3441,36 @@ func _build_target_window() -> void:
 		_target_name_label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
 	_target_window.add_child(_target_name_label)
 
+	var hp_x := TARGET_WINDOW_WIDTH * TARGET_HP_RECT[0]
+	var hp_y := TARGET_WINDOW_HEIGHT * TARGET_HP_RECT[1]
+	_target_hp_full = TARGET_WINDOW_WIDTH * TARGET_HP_RECT[2]
+	var hp_h := TARGET_WINDOW_HEIGHT * TARGET_HP_RECT[3]
+
 	var hp_bg := ColorRect.new()
 	hp_bg.color = HP_BAR_BG
-	hp_bg.position = Vector2(TARGET_HP_INSET, 22.0)
-	hp_bg.size = Vector2(TARGET_WINDOW_WIDTH - TARGET_HP_INSET * 2.0, 12.0)
+	hp_bg.position = Vector2(hp_x, hp_y)
+	hp_bg.size = Vector2(_target_hp_full, hp_h)
 	hp_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_target_window.add_child(hp_bg)
 
 	_target_hp_fill = ColorRect.new()
 	_target_hp_fill.color = HP_BAR_FILL
-	_target_hp_fill.position = Vector2(TARGET_HP_INSET, 22.0)
-	_target_hp_fill.size = Vector2(TARGET_WINDOW_WIDTH - TARGET_HP_INSET * 2.0, 12.0)
+	_target_hp_fill.position = Vector2(hp_x, hp_y)
+	_target_hp_fill.size = Vector2(_target_hp_full, hp_h)
 	_target_hp_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_target_window.add_child(_target_hp_fill)
+
+	_target_hp_pct = Label.new()
+	_target_hp_pct.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_target_hp_pct.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_target_hp_pct.position = Vector2(hp_x, hp_y - 1.0)
+	_target_hp_pct.size = Vector2(_target_hp_full, hp_h + 2.0)
+	_target_hp_pct.add_theme_color_override("font_color", Color(1, 1, 1))
+	_target_hp_pct.add_theme_color_override("font_outline_color", Color.BLACK)
+	_target_hp_pct.add_theme_constant_override("outline_size", 3)
+	_target_hp_pct.add_theme_font_size_override("font_size", 11)
+	_target_hp_pct.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_target_window.add_child(_target_hp_pct)
 
 	ui_control.add_child(_target_window)
 
@@ -3446,8 +3490,10 @@ func _show_target(monster_id: int) -> void:
 func _set_target_hp(hp: int, max_hp: int) -> void:
 	if _target_hp_fill == null or max_hp <= 0:
 		return
-	var full := TARGET_WINDOW_WIDTH - TARGET_HP_INSET * 2.0
-	_target_hp_fill.size.x = full * clampf(float(hp) / float(max_hp), 0.0, 1.0)
+	var fraction := clampf(float(hp) / float(max_hp), 0.0, 1.0)
+	_target_hp_fill.size.x = _target_hp_full * fraction
+	if _target_hp_pct != null:
+		_target_hp_pct.text = "%d%%" % roundi(fraction * 100.0)
 
 func _clear_target() -> void:
 	if _target_window != null:

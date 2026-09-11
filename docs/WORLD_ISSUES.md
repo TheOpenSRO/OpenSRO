@@ -7075,6 +7075,21 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-fifty-ninth round: the target window on its own frame
+
+The current-target window at the top of the screen now uses the client's own
+frame art -- `interface\targetwindow\tw_type1.ddj` (200x72), the same dark
+frame with the gem slot and the recessed HP bar the original draws -- instead
+of a plain black box. The monster's name sits in the top bar and a red HP bar
+with its percent below, positioned on the frame's own slots (fractions
+eyeballed from the art, tuned by a render). The real window's rank gem and
+level are deliberately left off: the monster snapshot on the wire carries
+neither (`CombatNet.MonsterSnapshot` is name, code, position, hp/max only), so
+showing them would be inventing data. Rendered against a field Mangyang: the
+framed window reads "Mangyang" over a full red bar and "100%", with the
+floating damage number and the over-head bar all working together. A
+plain-box fallback stays for a run with no archive.
+
 ## Hundred-and-fifty-eighth round: the loading screen covers teleports too
 
 The playtester's call: the "NOW LOADING" screen belongs on a teleport. A zone
