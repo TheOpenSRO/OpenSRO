@@ -219,15 +219,18 @@ func DecodeLootDropped(data []byte) (*LootDropped, error) {
 
 // MonsterSnapshot is one live monster, as sent over the wire.
 type MonsterSnapshot struct {
-	ID      int64
-	Name    string
-	X, Y, Z float32 // own design placeholder position -- see combat.Hub.Spawn
-	MaxHP   int32
-	HP      int32
+	ID   int64
+	Name string
+	// CodeName is the species' characterdata key (MOB_CH_MANGNYANG); the
+	// client resolves the model by it and only falls back to Name.
+	CodeName string
+	X, Y, Z  float32 // own design placeholder position -- see combat.Hub.Spawn
+	MaxHP    int32
+	HP       int32
 }
 
 func (m *MonsterSnapshot) Encode() []byte {
-	out := append(encodeInt64(m.ID), encodeStrings(m.Name)...)
+	out := append(encodeInt64(m.ID), encodeStrings(m.Name, m.CodeName)...)
 	out = append(out, encodeFloat32(m.X)...)
 	out = append(out, encodeFloat32(m.Y)...)
 	out = append(out, encodeFloat32(m.Z)...)
@@ -242,7 +245,7 @@ func decodeMonsterSnapshot(data []byte) (*MonsterSnapshot, []byte, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("monster id: %w", err)
 	}
-	names, rest, err := decodeStringsPrefix(rest, 1)
+	names, rest, err := decodeStringsPrefix(rest, 2)
 	if err != nil {
 		return nil, nil, fmt.Errorf("name: %w", err)
 	}
@@ -262,7 +265,7 @@ func decodeMonsterSnapshot(data []byte) (*MonsterSnapshot, []byte, error) {
 		return nil, nil, errors.New("truncated hp fields")
 	}
 	return &MonsterSnapshot{
-		ID: id, Name: names[0], X: x, Y: y, Z: z,
+		ID: id, Name: names[0], CodeName: names[1], X: x, Y: y, Z: z,
 		MaxHP: int32(binary.LittleEndian.Uint32(rest[0:4])),
 		HP:    int32(binary.LittleEndian.Uint32(rest[4:8])),
 	}, rest[8:], nil
@@ -390,7 +393,7 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 	snapshots := make([]MonsterSnapshot, len(inZone))
 	for i, m := range inZone {
 		snapshots[i] = MonsterSnapshot{
-			ID: m.ID, Name: m.Name,
+			ID: m.ID, Name: m.Name, CodeName: m.CodeName,
 			X: float32(m.X), Y: float32(m.Y), Z: float32(m.Z),
 			MaxHP: int32(m.MaxHP), HP: int32(m.HP),
 		}

@@ -39,6 +39,7 @@ import (
 type monsterSpec struct {
 	Zone       string
 	Name       string
+	CodeName   string  // the species' characterdata key; what the client draws it by
 	X, Z       float64 // own design placeholder spawn anchor -- see combat.Hub.Spawn
 	MaxHP      int
 	Defense    int
@@ -71,9 +72,16 @@ var monsterSpecs = []monsterSpec{
 	// 461 units from a new character -- both were really there, with real
 	// resolved models, and neither was ever going to be seen. Placeholder
 	// content either way, but placeholder content a player meets.
-	{Zone: "jangan", Name: "Mangyang", X: 62, Z: 44, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
-	{Zone: "jangan", Name: "Weasel", X: -55, Z: 58, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
-	{Zone: "donwhang", Name: "Earth Ghost", X: 70, Z: -50, MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
+	//
+	// The code names are the rows' own keys in characterdata (Mangyang is
+	// row 1933, the Weasel row 1937 `MOB_CH_GYO`, the Earth Ghost 1963), and
+	// they are what the client resolves the model by: a display name is
+	// whatever language column a player's archive carries -- one archive
+	// labelled these in Arabic and Spanish -- where the code is the same
+	// string in every archive.
+	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", X: 62, Z: 44, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
+	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", X: -55, Z: 58, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
+	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", X: 70, Z: -50, MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
 }
 
 const respawnDelay = 10 * time.Second
@@ -83,7 +91,7 @@ const respawnDelay = 10 * time.Second
 // canceled. main() runs one of these per monsterSpecs entry.
 func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Logger, spec monsterSpec) {
 	spawn := func() int64 {
-		m := monsters.Spawn(spec.Zone, spec.Name, spec.X, 0, spec.Z, spec.MaxHP, spec.Defense, spec.Attack, spec.GoldReward)
+		m := monsters.SpawnSpecies(spec.Zone, combat.Species{Name: spec.Name, CodeName: spec.CodeName}, spec.X, 0, spec.Z, spec.MaxHP, spec.Defense, spec.Attack, spec.GoldReward)
 		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone)
 		return m.ID
 	}

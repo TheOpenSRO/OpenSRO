@@ -105,6 +105,30 @@ func _init() -> void:
 	_check(NpcTableReader.parse_names(("\t".join(keyed) + "\n").to_utf16_buffer(), null).is_empty(),
 		"no text table means no names rather than a crash")
 
+	# code name -> model: the join that does not go through a display name
+	# at all, so it comes out the same whatever language columns an archive
+	# carries. The default prefix keeps it to player bodies; "" takes every
+	# row that has a code and a model.
+	var body := PackedStringArray()
+	body.resize(104)
+	body.fill("0")
+	body[1] = "1907"
+	body[2] = "CHAR_CH_MAN_FIGHTER"
+	body[52] = "char\\china\\chinaman_fighter.bsr"
+	var mob := PackedStringArray()
+	mob.resize(104)
+	mob.fill("0")
+	mob[1] = "1933"
+	mob[2] = "MOB_CH_MANGNYANG"
+	mob[52] = "mob\\china\\mangnyang.bsr"
+	var coded_rows := ("\t".join(body) + "\n" + "\t".join(mob) + "\n" + "\t".join(modelless) + "\n").to_utf16_buffer()
+	var bodies := NpcTableReader.parse_models_by_code(coded_rows)
+	_check(bodies.size() == 1 and bodies.get("CHAR_CH_MAN_FIGHTER", "") == "char\\china\\chinaman_fighter.bsr",
+		"the default prefix takes the CHAR_ row only (got %s)" % str(bodies))
+	var everything := NpcTableReader.parse_models_by_code(coded_rows, {}, "")
+	_check(everything.size() == 2 and everything.get("MOB_CH_MANGNYANG", "") == "mob\\china\\mangnyang.bsr",
+		"an empty prefix takes the MOB_ row too, and a row with no model is left out (got %s)" % str(everything))
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

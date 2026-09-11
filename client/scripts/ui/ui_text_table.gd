@@ -20,14 +20,26 @@ class_name UiTextTable
 ## later rows overwrite earlier ones, every stat label in the character
 ## panel rendered as the digit 0.
 ##
-## So the column is chosen by content instead: scan right to left and take
-## the first field that is not empty, is not the "0" filler, and contains a
-## Latin letter. That picks the English text in both shapes above without
-## depending on the row's width.
+## So the column is chosen by content: column 8 when it holds real Latin
+## text, and otherwise the first usable Latin field to its right, then the
+## first from column 3 up. That picks the English text in both shapes above
+## without depending on the row's width.
+##
+## It used to scan right to left, preferring the *rightmost* Latin field,
+## on the theory that a later column held a more recently authored string.
+## Measured against a real archive's three tables (2026-09-11) the two
+## rules disagree on 93 of 13,059 object rows, 243 of 12,570 UI rows and 2
+## of 8,395 item rows, and in every one of those the rightmost Latin field
+## was a *Vietnamese* column (Latin letters in Windows-1258 mojibake) --
+## "Hép b¸u vËt" where column 9 said "Jewel Box". On a multi-language
+## archive it is worse: the rightmost Latin field is Spanish
+## ("Administrador de Arena") or an Arabic column carrying a Latin name, and
+## every NPC in Jangan was labelled that way. Column-8-first gives the same
+## 19 Jangan NPC names on the single-language archive and English on the
+## other.
 
 const COL_TOKEN := 1
-## Kept as the starting point for the search, and as the documented
-## conventional position.
+## The conventional position of the English column, and the first one tried.
 const COL_ENGLISH := 8
 ## Fields at or before this index are the token, its id and the Korean
 ## original; the search never reaches into them.
@@ -93,25 +105,23 @@ static func _has_latin_letter(field: String) -> bool:
 	return false
 
 ## The English text in a row, chosen by content rather than by a fixed
-## index. Searches right to left from the end of the row down to
-## FIRST_LANGUAGE_COL, preferring the rightmost usable Latin field --
-## which is the English column in every real row shape checked.
+## index: the preferred column when it holds usable Latin text, otherwise
+## the first usable Latin field after it, otherwise the first from
+## FIRST_LANGUAGE_COL up. Left to right, because the other Latin-script
+## languages an archive may carry (Vietnamese, Spanish, Turkish, German)
+## sit to the *right* of the English column in every real file checked.
 static func _pick_language_column(cols: PackedStringArray, preferred: int) -> String:
 	if preferred < cols.size() and _is_usable(cols[preferred]) and _has_latin_letter(cols[preferred]):
-		var direct := cols[preferred].strip_edges()
-		# The preferred column is right whenever it holds real text, but a
-		# later column may hold a better (more recently authored) string, so
-		# keep looking and prefer the rightmost.
-		var better := _scan_right_to_left(cols, preferred + 1)
-		return better if better != "" else direct
-	return _scan_right_to_left(cols, FIRST_LANGUAGE_COL)
+		return cols[preferred].strip_edges()
+	var after := _scan_left_to_right(cols, preferred + 1)
+	if after != "":
+		return after
+	return _scan_left_to_right(cols, FIRST_LANGUAGE_COL)
 
-static func _scan_right_to_left(cols: PackedStringArray, lowest: int) -> String:
-	var i := cols.size() - 1
-	while i >= lowest:
+static func _scan_left_to_right(cols: PackedStringArray, lowest: int) -> String:
+	for i in range(lowest, cols.size()):
 		if _is_usable(cols[i]) and _has_latin_letter(cols[i]):
 			return cols[i].strip_edges()
-		i -= 1
 	return ""
 
 ## Returns the translated text for token. If not found, returns default_val

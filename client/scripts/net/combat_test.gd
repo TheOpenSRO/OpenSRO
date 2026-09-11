@@ -107,16 +107,17 @@ func _test_decode_loot_dropped_empty() -> void:
 	if result != null:
 		_check(result.drops.size() == 0, "no drops")
 
-func _build_monster_snapshot(id: int, name: String, x: float, y: float, z: float, max_hp: int, hp: int) -> PackedByteArray:
+func _build_monster_snapshot(id: int, name: String, x: float, y: float, z: float, max_hp: int, hp: int, code: String = "") -> PackedByteArray:
 	var out := PackedByteArray()
 	out.resize(8)
 	out.encode_s64(0, id)
-	var name_bytes := name.to_utf8_buffer()
-	var len_buf := PackedByteArray()
-	len_buf.resize(2)
-	len_buf.encode_u16(0, name_bytes.size())
-	out.append_array(len_buf)
-	out.append_array(name_bytes)
+	for text in [name, code]:
+		var text_bytes: PackedByteArray = text.to_utf8_buffer()
+		var len_buf := PackedByteArray()
+		len_buf.resize(2)
+		len_buf.encode_u16(0, text_bytes.size())
+		out.append_array(len_buf)
+		out.append_array(text_bytes)
 	var pos_buf := PackedByteArray()
 	pos_buf.resize(12)
 	pos_buf.encode_float(0, x)
@@ -145,21 +146,27 @@ func _build_monster_list_result(error: String, monsters: Array) -> PackedByteArr
 	count_buf.encode_u16(0, monsters.size())
 	out.append_array(count_buf)
 	for m in monsters:
-		out.append_array(_build_monster_snapshot(m["id"], m["name"], m.get("x", 0.0), m.get("y", 0.0), m.get("z", 0.0), m["max_hp"], m["hp"]))
+		out.append_array(_build_monster_snapshot(m["id"], m["name"], m.get("x", 0.0), m.get("y", 0.0), m.get("z", 0.0), m["max_hp"], m["hp"], m.get("code", "")))
 	return out
 
 func _test_decode_monster_list_result() -> void:
-	var payload := _build_monster_list_result("", [{"id": 1, "name": "Stone Golem", "x": 15.0, "y": 0.0, "z": 10.0, "max_hp": 200, "hp": 150}])
+	var payload := _build_monster_list_result("", [
+		{"id": 1, "name": "Stone Golem", "code": "MOB_TEST_GOLEM", "x": 15.0, "y": 0.0, "z": 10.0, "max_hp": 200, "hp": 150},
+		{"id": 2, "name": "Weasel", "x": -55.0, "y": 0.0, "z": 58.0, "max_hp": 80, "hp": 80},
+	])
 	var result := CombatNet.decode_monster_list_result(payload)
 	_check(result.error == "", "no decode error")
-	_check(result.monsters.size() == 1, "one monster decoded")
-	_check(result.monsters[0].x == 15.0, "x round-trips")
-	_check(result.monsters[0].z == 10.0, "z round-trips")
-	if result.monsters.size() == 1:
+	_check(result.monsters.size() == 2, "two monsters decoded")
+	if result.monsters.size() == 2:
+		_check(result.monsters[0].x == 15.0, "x round-trips")
+		_check(result.monsters[0].z == 10.0, "z round-trips")
 		_check(result.monsters[0].monster_id == 1, "monster id round-trips")
 		_check(result.monsters[0].monster_name == "Stone Golem", "monster name round-trips")
+		_check(result.monsters[0].code_name == "MOB_TEST_GOLEM", "the species' code name round-trips")
 		_check(result.monsters[0].max_hp == 200, "max hp round-trips")
 		_check(result.monsters[0].hp == 150, "hp round-trips")
+		_check(result.monsters[1].code_name == "" and result.monsters[1].monster_name == "Weasel",
+			"a monster without a code name decodes, and the next one after it is intact")
 
 func _test_decode_monster_list_result_error() -> void:
 	var payload := _build_monster_list_result("not in the world", [])

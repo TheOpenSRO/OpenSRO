@@ -488,8 +488,8 @@ func TestCombatLootFlow(t *testing.T) {
 func TestMonsterListResultRoundTrip(t *testing.T) {
 	want := &MonsterListResult{
 		Monsters: []MonsterSnapshot{
-			{ID: 1, Name: "Mangyang", MaxHP: 200, HP: 150},
-			{ID: 2, Name: "Weasel", MaxHP: 80, HP: 80},
+			{ID: 1, Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", MaxHP: 200, HP: 150},
+			{ID: 2, Name: "Weasel", MaxHP: 80, HP: 80}, // no code name: an empty string rides along
 		},
 	}
 	got, err := DecodeMonsterListResult(want.Encode())

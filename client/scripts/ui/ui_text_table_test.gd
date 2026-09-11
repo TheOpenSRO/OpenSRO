@@ -39,6 +39,25 @@ func _init() -> void:
 	_check(varying_table.get_text("UIIT_STT_HIT_RATIO") == "Hit rate",
 		"a row whose column 8 is the \"0\" filler still resolves (got %s)" % varying_table.get_text("UIIT_STT_HIT_RATIO"))
 
+	# A multi-language archive: English in column 8 with Spanish and Arabic
+	# to its right, a row whose column 8 is the filler and whose English
+	# sits at 9 ahead of a Vietnamese column, and a name whose Arabic column
+	# also carries the Latin name. Each must come out English -- the old
+	# rightmost-first rule labelled every NPC in Jangan in Arabic or Spanish
+	# on such an archive.
+	var multi := PackedStringArray([
+		"1\tSN_NPC_ARENA\tፕ\t0\t0\t0\t0\t0\tArena Manager\t0\tAdministrador de Arena\tمدير\t0",
+		"1\tSN_ITEM_BOX\tፕ\t0\t0\t0\t0\t0\t0\tJewel Box\t0\tHép b¸u vËt\t0",
+		"1\tSN_NPC_DANGSAM\tፕ\t0\t0\t0\t0\t0\tSoldier Dangsam\t0\t0\tDangsam الجندي\t0",
+	])
+	var multi_table := UiTextTable.parse(("\n".join(multi)).to_utf16_buffer())
+	_check(multi_table.get_text("SN_NPC_ARENA") == "Arena Manager",
+		"column 8 wins over a Spanish column to its right (got %s)" % multi_table.get_text("SN_NPC_ARENA"))
+	_check(multi_table.get_text("SN_ITEM_BOX") == "Jewel Box",
+		"the first Latin field after a filler column 8 wins over a later Vietnamese one (got %s)" % multi_table.get_text("SN_ITEM_BOX"))
+	_check(multi_table.get_text("SN_NPC_DANGSAM") == "Soldier Dangsam",
+		"an Arabic column carrying the Latin name does not beat column 8 (got %s)" % multi_table.get_text("SN_NPC_DANGSAM"))
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

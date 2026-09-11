@@ -126,13 +126,16 @@ static func parse_models_by_name(
 	return into
 
 ## Parses one characterdata part into {code name -> model path}, merging
-## into `into`: `CHAR_CH_MAN_FIGHTER` -> `char\\china\\chinaman_fighter.bsr`.
+## into `into`: `CHAR_CH_MAN_FIGHTER` -> `char\\china\\chinaman_fighter.bsr`,
+## `MOB_CH_MANGNYANG` -> `mob\\china\\mangnyang.bsr`. `prefix` narrows it
+## to one kind of row; "" takes every row that has a code and a model.
 ##
 ## The player's own body is a row in this table like any NPC's -- ids
 ## 1907-1932 are the 26 playable China classes, 13 to a gender -- and the
 ## code name is the stable way to name one of them: it is the same string
-## in every part and every archive, where an id is only a number.
-static func parse_models_by_code(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+## in every part and every archive, where an id is only a number and a
+## display name is whatever language column the archive happens to carry.
+static func parse_models_by_code(data: PackedByteArray, into: Dictionary = {}, prefix: String = "CHAR_") -> Dictionary:
 	for line in _lines(data):
 		var cols := line.split("\t")
 		if cols.size() <= COL_CODE_NAME:
@@ -141,7 +144,7 @@ static func parse_models_by_code(data: PackedByteArray, into: Dictionary = {}) -
 		if model == "":
 			continue
 		var code := cols[COL_CODE_NAME].strip_edges()
-		if code == "" or not code.begins_with("CHAR_"):
+		if code == "" or not code.begins_with(prefix):
 			continue
 		into[code] = model
 	return into

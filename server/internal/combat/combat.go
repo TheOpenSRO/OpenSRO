@@ -19,8 +19,12 @@ type ItemLookup interface {
 
 // Monster is one attackable NPC.
 type Monster struct {
-	ID         int64
-	Name       string
+	ID   int64
+	Name string
+	// CodeName is the characterdata key of the species (MOB_CH_MANGNYANG),
+	// the same string in every client archive where Name is whatever
+	// language column an archive carries. The client draws the model by it.
+	CodeName   string
 	Zone       string
 	X, Y, Z    float64 // own design placeholder position -- see Hub.Spawn
 	MaxHP      int
@@ -52,11 +56,24 @@ func NewHub() *Hub {
 // on top of each other, not a claim about the real game's actual spawn
 // points.
 func (h *Hub) Spawn(zone, name string, x, y, z float64, maxHP, defense, attack int, goldReward int64) *Monster {
+	return h.SpawnSpecies(zone, Species{Name: name}, x, y, z, maxHP, defense, attack, goldReward)
+}
+
+// Species names a kind of monster both ways the game's tables do: the
+// display name and the code name characterdata keys the row by.
+type Species struct {
+	Name     string
+	CodeName string
+}
+
+// SpawnSpecies is Spawn with the species' code name carried along, so the
+// client can resolve the model without depending on the display name.
+func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP, defense, attack int, goldReward int64) *Monster {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: name, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward}
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward}
 	h.byID[id] = m
 	return m
 }

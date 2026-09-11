@@ -35,6 +35,10 @@ class MonsterDamaged:
 class MonsterSnapshot:
 	var monster_id: int
 	var monster_name: String
+	## The species' characterdata key (`MOB_CH_MANGNYANG`) -- what the model
+	## is resolved by, since the display name depends on which language
+	## column the player's archive carries. May be empty.
+	var code_name: String
 	var x: float
 	var y: float
 	var z: float
@@ -151,6 +155,15 @@ static func _decode_monster_snapshot(data: PackedByteArray, offset: int) -> Arra
 		return [null, -1]
 	m.monster_name = data.slice(offset, offset + name_len).get_string_from_utf8()
 	offset += name_len
+
+	if offset + 2 > data.size():
+		return [null, -1]
+	var code_len := data.decode_u16(offset)
+	offset += 2
+	if offset + code_len > data.size():
+		return [null, -1]
+	m.code_name = data.slice(offset, offset + code_len).get_string_from_utf8()
+	offset += code_len
 
 	if offset + 12 > data.size():
 		return [null, -1]
