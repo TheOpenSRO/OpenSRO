@@ -7075,6 +7075,33 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-fifty-first round: character select, with an honest stat panel
+
+The bare character list becomes the original's select screen: the account's
+characters down the left, a stat panel on the right, Start / Create / Delete
+/ Cancel below, over the real `loading_constantinople.ddj` backdrop, with a
+shared `FrontEndUi` helper carrying the gold-on-dark styling and the
+Media.pk2 art loading the other front-end screens will reuse.
+
+The interesting part is the stat panel. It shows what the server actually
+tracks -- name, level, and an HP bar (cur / max) -- and nothing it does
+not. There is no experience, MP or stat-point system yet, so the panel
+shows none rather than an invented bar; the same rule as everywhere else
+here. Making even that much honest needed a protocol change: the character
+list carried only names, so it now carries a per-character summary (name,
+gender, level, HP, max HP). `session.CharacterListResult` gained a
+`CharacterSummary` slice in place of `Names`, encoded as name+gender
+strings then three uint16s; the client's `CharacterNet.decode_list_result`
+and the `character_list_result` signal carry `Summary` objects; both sides'
+tests updated, all green (server) and 64/0 (client). **The client must be
+v0.1.104+ to read this server's character list.**
+
+The 3D character on the dock is a later pass; the backdrop is the
+letterboxed Constantinople loading art for now. Rendered with a QA-only
+`SRREVAMP_QA_FAKECHARS` hook (clearly `QA_`-named sample characters, never
+shipped) since a booted-in-isolation select screen has no logged-in session
+to list.
+
 ## Hundred-and-fiftieth round: the connect screen over its own art
 
 The front-end (launcher, login, character select, create, loading) is the

@@ -20,7 +20,7 @@ var server_port := 0
 
 signal login_result(ok: bool, reason: String)
 signal register_result(ok: bool, reason: String)
-signal character_list_result(names: Array, error: String)
+signal character_list_result(characters: Array, error: String)
 signal character_create_result(ok: bool, reason: String)
 signal character_delete_result(ok: bool, reason: String)
 signal enter_world_result(result: WorldNet.EnterWorldResult)
@@ -393,7 +393,7 @@ func _dispatch(p: Packet) -> void:
 			register_result.emit(r.ok, r.reason if r.error == "" else r.error)
 		CharacterNet.OP_LIST_RESULT:
 			var r := CharacterNet.decode_list_result(p.data)
-			character_list_result.emit(r.names, r.error)
+			character_list_result.emit(r.characters, r.error)
 		CharacterNet.OP_CREATE_RESULT:
 			var r := Auth.decode_result(p.data)
 			character_create_result.emit(r.ok, r.reason if r.error == "" else r.error)

@@ -21,11 +21,14 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
 - [ ] Pick the region-appropriate loading image where known
 
 ## 3. Character select
-- [ ] Reskin `CharacterSelect.tscn`: list the account's characters
-- [ ] Stat panel: name, HP/MP bars, EXP %, Stat points, Level
-- [ ] Buttons: Start, Delete, Create, Cancel (+ Clear PIN placeholder)
+- [x] Reskin `CharacterSelect.tscn`: list the account's characters (v0.1.104, round 151)
+- [x] Stat panel: name, Level, real HP bar (v0.1.104) — MP / EXP / Stat are not tracked server-side, so honestly omitted, not faked
+- [x] Buttons: Start, Delete, Create, Cancel (v0.1.104)
+- [x] Extend the char-list protocol to carry gender/level/HP so the panel is real (v0.1.104)
 - [ ] 3D character standing on the dock backdrop (pass 2)
-- [?] PIN / security — likely not in our data; confirm and stub out
+- [ ] Full-bleed backdrop (Constantinople loading art is letterboxed; fine for now, 3D dock replaces it)
+- [ ] Add MP / EXP / stat-point systems, then show them here
+- [?] PIN / security — not in our data; omitted (screenshot shows Clear PIN, but we have no PIN system)
 
 ## 4. Character create — race / region select
 - [ ] Build from authored `resinfo\ifregionview.txt`

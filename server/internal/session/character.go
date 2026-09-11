@@ -26,18 +26,39 @@ const (
 
 const errNotAuthenticated = "not authenticated"
 
-// CharacterListResult is the OpCharacterListResult payload.
+// CharacterSummary is one character as the select screen needs it: enough
+// to show a name and an honest stat panel (level and an HP bar) and to know
+// which body to preview. Only fields the server actually tracks are here --
+// there is no experience, MP or stat-point system yet, so the client shows
+// none rather than an invented value.
+type CharacterSummary struct {
+	Name   string
+	Gender string
+	Level  int
+	HP     int
+	MaxHP  int
+}
+
+// CharacterListResult is the OpCharacterListResult payload. On failure Error
+// is non-empty and Characters is empty.
 type CharacterListResult struct {
-	Error string // non-empty on failure; Names is empty in that case
-	Names []string
+	Error      string
+	Characters []CharacterSummary
 }
 
 func (r *CharacterListResult) Encode() []byte {
 	out := encodeStrings(r.Error)
 	countBuf := make([]byte, 2)
-	binary.LittleEndian.PutUint16(countBuf, uint16(len(r.Names)))
+	binary.LittleEndian.PutUint16(countBuf, uint16(len(r.Characters)))
 	out = append(out, countBuf...)
-	out = append(out, encodeStrings(r.Names...)...)
+	for _, c := range r.Characters {
+		out = append(out, encodeStrings(c.Name, c.Gender)...)
+		stat := make([]byte, 6)
+		binary.LittleEndian.PutUint16(stat[0:], uint16(c.Level))
+		binary.LittleEndian.PutUint16(stat[2:], uint16(c.HP))
+		binary.LittleEndian.PutUint16(stat[4:], uint16(c.MaxHP))
+		out = append(out, stat...)
+	}
 	return out
 }
 
@@ -47,14 +68,29 @@ func DecodeCharacterListResult(data []byte) (*CharacterListResult, error) {
 		return nil, fmt.Errorf("session: decoding CharacterListResult: %w", err)
 	}
 	if len(rest) < 2 {
-		return nil, errors.New("session: decoding CharacterListResult: truncated name count")
+		return nil, errors.New("session: decoding CharacterListResult: truncated character count")
 	}
 	count := int(binary.LittleEndian.Uint16(rest))
-	names, err := decodeStrings(rest[2:], count)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding CharacterListResult: %w", err)
+	rest = rest[2:]
+	result := &CharacterListResult{Error: fields[0]}
+	for i := 0; i < count; i++ {
+		strs, r2, err := decodeStringsPrefix(rest, 2)
+		if err != nil {
+			return nil, fmt.Errorf("session: decoding CharacterListResult character %d: %w", i, err)
+		}
+		if len(r2) < 6 {
+			return nil, fmt.Errorf("session: decoding CharacterListResult character %d: truncated stats", i)
+		}
+		result.Characters = append(result.Characters, CharacterSummary{
+			Name:   strs[0],
+			Gender: strs[1],
+			Level:  int(binary.LittleEndian.Uint16(r2[0:])),
+			HP:     int(binary.LittleEndian.Uint16(r2[2:])),
+			MaxHP:  int(binary.LittleEndian.Uint16(r2[4:])),
+		})
+		rest = r2[6:]
 	}
-	return &CharacterListResult{Error: fields[0], Names: names}, nil
+	return result, nil
 }
 
 // CharacterCreateRequest is the OpCharacterCreate payload. Gender is one of
@@ -209,11 +245,17 @@ func handleList(ctx context.Context, sess *gateway.Session, store character.Stor
 		})
 	}
 
-	names := make([]string, len(chars))
+	summaries := make([]CharacterSummary, len(chars))
 	for i, c := range chars {
-		names[i] = c.Name
+		summaries[i] = CharacterSummary{
+			Name:   c.Name,
+			Gender: c.Gender,
+			Level:  c.Level,
+			HP:     c.HP,
+			MaxHP:  character.MaxHP,
+		}
 	}
-	return sess.Send(&proto.Packet{Opcode: OpCharacterListResult, Data: (&CharacterListResult{Names: names}).Encode()})
+	return sess.Send(&proto.Packet{Opcode: OpCharacterListResult, Data: (&CharacterListResult{Characters: summaries}).Encode()})
 }
 
 func handleCreate(ctx context.Context, sess *gateway.Session, p *proto.Packet, store character.Store, onCreated OnCharacterCreated) error {

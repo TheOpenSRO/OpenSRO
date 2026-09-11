@@ -40,13 +40,25 @@ static func encode_create(name: String, gender: String = "") -> PackedByteArray:
 	out.append_array(gender_bytes)
 	return out
 
-## Result of decode_list_result(): either an error, or a list of names.
+## One character as the select screen needs it. Only the fields the server
+## actually tracks -- there is no experience/MP/stat-point system yet, so
+## those are honestly absent rather than invented (see the server's
+## CharacterSummary).
+class Summary:
+	var char_name: String
+	var gender: String
+	var level: int
+	var hp: int
+	var max_hp: int
+
+## Result of decode_list_result(): either an error, or a list of Summary.
 class ListResult:
 	var error: String
-	var names: Array[String] = []
+	var characters: Array = [] # of Summary
 
 ## Decodes an OpCharacterListResult payload: a length-prefixed Error string,
-## then a uint16 name count, then that many length-prefixed names.
+## a uint16 count, then per character a name and gender (both length-prefixed)
+## and three uint16s -- level, hp, max hp.
 static func decode_list_result(data: PackedByteArray) -> ListResult:
 	var result := ListResult.new()
 	if data.size() < 2:
@@ -63,15 +75,37 @@ static func decode_list_result(data: PackedByteArray) -> ListResult:
 	var count := data.decode_u16(offset)
 	offset += 2
 	for i in range(count):
-		if offset + 2 > data.size():
-			result.error = "malformed response (truncated name count)"
-			return result
-		var name_len := data.decode_u16(offset)
-		offset += 2
-		if offset + name_len > data.size():
+		var name_res := _read_string(data, offset)
+		if name_res.is_empty():
 			result.error = "malformed response (truncated name)"
 			return result
-		result.names.append(data.slice(offset, offset + name_len).get_string_from_utf8())
-		offset += name_len
+		offset = name_res["offset"]
+		var gender_res := _read_string(data, offset)
+		if gender_res.is_empty():
+			result.error = "malformed response (truncated gender)"
+			return result
+		offset = gender_res["offset"]
+		if offset + 6 > data.size():
+			result.error = "malformed response (truncated stats)"
+			return result
+		var s := Summary.new()
+		s.char_name = name_res["value"]
+		s.gender = gender_res["value"]
+		s.level = data.decode_u16(offset)
+		s.hp = data.decode_u16(offset + 2)
+		s.max_hp = data.decode_u16(offset + 4)
+		offset += 6
+		result.characters.append(s)
 
 	return result
+
+## Reads a uint16-length-prefixed string at `offset`. Returns
+## {"value": String, "offset": int past it}, or {} if truncated.
+static func _read_string(data: PackedByteArray, offset: int) -> Dictionary:
+	if offset + 2 > data.size():
+		return {}
+	var length := data.decode_u16(offset)
+	offset += 2
+	if offset + length > data.size():
+		return {}
+	return {"value": data.slice(offset, offset + length).get_string_from_utf8(), "offset": offset + length}

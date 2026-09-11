@@ -83,7 +83,7 @@ func TestCharacterFullFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeCharacterListResult: %v", err)
 	}
-	if listResult.Error != "" || len(listResult.Names) != 0 {
+	if listResult.Error != "" || len(listResult.Characters) != 0 {
 		t.Fatalf("expected empty character list, got %+v", listResult)
 	}
 
@@ -103,8 +103,12 @@ func TestCharacterFullFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeCharacterListResult: %v", err)
 	}
-	if len(listResult.Names) != 1 || listResult.Names[0] != "Aria" {
-		t.Fatalf("expected [Aria], got %+v", listResult.Names)
+	if len(listResult.Characters) != 1 || listResult.Characters[0].Name != "Aria" {
+		t.Fatalf("expected [Aria], got %+v", listResult.Characters)
+	}
+	// The summary carries the honest starting stats the server tracks.
+	if got := listResult.Characters[0]; got.Level != character.StartingLevel || got.HP != character.MaxHP || got.MaxHP != character.MaxHP {
+		t.Fatalf("expected level %d, HP %d/%d, got %+v", character.StartingLevel, character.MaxHP, character.MaxHP, got)
 	}
 
 	// Delete it.
@@ -123,8 +127,8 @@ func TestCharacterFullFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeCharacterListResult: %v", err)
 	}
-	if len(listResult.Names) != 0 {
-		t.Fatalf("expected empty list after delete, got %+v", listResult.Names)
+	if len(listResult.Characters) != 0 {
+		t.Fatalf("expected empty list after delete, got %+v", listResult.Characters)
 	}
 }
 
