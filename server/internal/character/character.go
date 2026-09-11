@@ -81,6 +81,12 @@ type Character struct {
 	HP        int
 	Gender    string
 	Level     int
+	// Exp is progress accumulated at the current level (it resets on a
+	// level-up), against leveldata's exp-to-next for Level. StatPoints is the
+	// unspent points earned by leveling (leveldata.StatPointsPerLevel each).
+	// Spending them into Str/Int is the separate stat system, still to come.
+	Exp        int64
+	StatPoints int
 }
 
 // Store is anything that can list, create, and delete characters for an
@@ -111,6 +117,11 @@ type Store interface {
 
 	// ResetHP restores characterID's HP to MaxHP (e.g. after death/respawn).
 	ResetHP(ctx context.Context, characterID int64) error
+
+	// SetLeveling writes characterID's level, current-level exp progress and
+	// unspent stat points -- the result the caller computed from a kill's exp
+	// against the leveldata curve. Returns ErrNotFound if no such character.
+	SetLeveling(ctx context.Context, characterID int64, level int, exp int64, statPoints int) error
 
 	// GetByID returns the character with the given ID, regardless of which
 	// account owns it (unlike ListByAccount). Returns ErrNotFound if no

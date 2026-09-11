@@ -30,18 +30,22 @@ A real character window showed **Stat Point 24 at level 9**, and (9 − 1) × 3 
 gets **3 stat points per level**, spent into Str or Int (the character window's "+" buttons). This
 is a rule, not a table value. A new character is level 1 with 0 spent points.
 
-## What the server would need (not yet built)
+## Server work — status
 
-1. **Load the EXP curve at runtime.** `leveldata.txt` is game data, so it cannot be committed — it
-   is imported like the item refdata (a `leveldata.csv` the operator generates + an importer, or the
-   server reading the table from a BYO path). Until then, no leveling.
-2. **Track EXP and grant it on a kill.** The kill reward path already grants gold; add EXP.
-3. **Level up** when EXP crosses the row's threshold: raise level, carry the remainder, grant 3 stat
-   points, refill HP/MP, broadcast so the client can play the level-up effect.
-4. **Store Str/Int + unspent stat points**, and a "spend a point" request.
-5. **Derive the combat stats** (HP from Str, MP from Int, phys/mag atk·def, etc.) — those formulas
-   still need recovering from the client (Ghidra) before the character window's derived numbers are
-   real; the character window shows level/EXP/stat-points/HP first, the derived stats once recovered.
+1. **Load the EXP curve at runtime.** ✅ **Built.** `leveldata.txt` is game data, so it is not
+   committed: `cmd/export-leveldata` turns a client's own `leveldata.txt` (UTF-16LE) into a small
+   `level,exp` CSV, and `internal/leveldata` parses it into a `Table` with the level-up math
+   (`Advance`). An operator points the server at the CSV (`SRREVAMP_LEVELDATA_CSV`); without it,
+   characters do not level. Both are tested (level 9 = 17978 pinned).
+2. **Character fields.** ✅ **Built.** `character.Character` gained `Exp` (progress at the current
+   level) and `StatPoints` (unspent, `leveldata.StatPointsPerLevel` = 3 per level), with a
+   `SetLeveling` store method (memstore + sqlstore, migrated).
+3. **Grant EXP on a kill + level up + broadcast.** ⏳ next — the kill path grants gold; add EXP,
+   run `Table.Advance`, grant stat points, refill HP, and send an `OpLevelUp`.
+4. **Str/Int + spending the points.** later — the stat system; needs the derived-stat formulas.
+5. **Derive the combat stats** (HP from Str, MP from Int, phys/mag atk·def) — recover from the
+   client (Ghidra) before the character window's derived numbers are real. The window can show
+   level / EXP / stat-points / HP first, the derived stats once recovered.
 
 ## Client
 
