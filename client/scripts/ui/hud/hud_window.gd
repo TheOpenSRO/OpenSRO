@@ -259,6 +259,14 @@ func centre() -> void:
 	var view := get_viewport_rect().size
 	position = ((view - size) / 2.0).round()
 
+## Sets the title-bar caption after the window is built -- for a window
+## whose title is not fixed, like the NPC talk box named for whoever is
+## being talked to.
+func set_title(title: String) -> void:
+	var bar := get_node_or_null("TitleBar") as Label
+	if bar != null:
+		bar.text = title
+
 ## Finds a control the authored layout named, or null.
 func node(control_name: String) -> Node:
 	if panel_root == null:

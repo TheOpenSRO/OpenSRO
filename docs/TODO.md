@@ -30,8 +30,9 @@ In order. Each is checked off here when it ships in a release, with its round in
       Restart = login screen, Exit = quit, Option = the F3 settings panel. Still open: the
       **authored Option window** (`ifoption` + `ifoption_video`, its View radios and our UI scale /
       chat font / name range as its Setting tab) in place of the F3 panel.
-- [ ] **NPC talk.** A click on an NPC opens `if_npctalk` titled with the NPC's name and numbered
-      choices; every NPC gets "End conversation", merchants get the shop.
+- [x] **NPC talk.** A click on an NPC opens `if_npctalk` titled with its name -- round 139. Still
+      open: the service lines behind the greeting (storage deposit, merchant shop, honour rank),
+      each its own backend; only "End conversation" acts so far.
 - [ ] **Inventory:** the paper doll (the dressed character in a SubViewport in the equipment half)
       and **item tooltips** with the real stats -- measure the item table's stat columns against
       the Copper Sword row (phy/mag attack, durability, range, attack rate, critical, reinforce,

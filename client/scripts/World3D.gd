@@ -3345,6 +3345,10 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 		var bounds := _skeleton_bounds(assembled.skeleton)
 		holder.add_child(_npc_collider(bounds))
 		var npc_name: String = _npc_names.get(spawn.npc_id, "")
+		# Tagged so a click on the collider can name the NPC it talks to
+		# (see _try_talk_to_npc) -- the plate is a Label3D, no use for that.
+		holder.set_meta("npc_id", spawn.npc_id)
+		holder.set_meta("npc_name", npc_name if npc_name != "" else "")
 		if npc_name != "":
 			holder.add_child(_name_plate(npc_name, bounds.y))
 			named += 1
@@ -4686,6 +4690,11 @@ func _qa_step() -> void:
 	if OS.get_environment("SRREVAMP_QA_PANELS") != "" and _qa_tick == 30:
 		_qa_open_panels(OS.get_environment("SRREVAMP_QA_PANELS"))
 
+	# SRREVAMP_QA_TALK="<name>" opens the NPC dialogue for a render, standing
+	# in for a click on an NPC (which a render cannot make).
+	if OS.get_environment("SRREVAMP_QA_TALK") != "" and _qa_tick == 30 and _hud_panels != null:
+		_hud_panels.open_npc_talk(OS.get_environment("SRREVAMP_QA_TALK"))
+
 	# SRREVAMP_QA_NAVGAP compares each nearby object's *solid* footprint
 	# against its *walkable* one. A player can stand inside anything where
 	# the first is bigger than the second, so this says which objects those
@@ -5973,7 +5982,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				_left_press_position = event.position
 				_left_dragging = false
 			elif not _left_dragging:
-				_try_set_move_target(_left_press_position)
+				# A click on an NPC talks to it; anywhere else walks there.
+				if not _try_talk_to_npc(_left_press_position):
+					_try_set_move_target(_left_press_position)
 			_left_button_held = event.pressed
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			camera_arm.spring_length = clampf(camera_arm.spring_length - CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
@@ -5997,6 +6008,33 @@ func _unhandled_input(event: InputEvent) -> void:
 ## collision fix) and, on a hit, sets that as the player's real destination
 ## for _physics_process to walk toward every subsequent frame until reached
 ## or cancelled by manual WASD/arrow input.
+## A click on an NPC opens the authored talk window titled with its name,
+## the way the original does. Ray-tests the NPC layer only (the colliders
+## _npc_collider puts on NAVMESH_WALL_COLLISION_LAYER); returns true when it
+## opened a dialogue, so the caller does not also walk there. The holder the
+## collider hangs under carries the NPC's name (set where it is placed).
+func _try_talk_to_npc(screen_pos: Vector2) -> bool:
+	if _hud_panels == null:
+		return false
+	var from := camera_3d.project_ray_origin(screen_pos)
+	var dir := camera_3d.project_ray_normal(screen_pos)
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
+	query.exclude = [player.get_rid()]
+	query.collision_mask = NPC_COLLISION_LAYER
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return false
+	var node := hit["collider"] as Node
+	while node != null and not node.has_meta("npc_name"):
+		node = node.get_parent()
+	if node == null:
+		return false
+	var npc_name := str(node.get_meta("npc_name"))
+	if npc_name == "":
+		npc_name = "..."
+	_hud_panels.open_npc_talk(npc_name)
+	return true
+
 func _try_set_move_target(screen_pos: Vector2) -> void:
 	var from := camera_3d.project_ray_origin(screen_pos)
 	var dir := camera_3d.project_ray_normal(screen_pos)

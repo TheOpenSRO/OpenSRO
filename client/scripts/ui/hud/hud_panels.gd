@@ -37,6 +37,9 @@ const PANELS := {
 	# Opened by Escape, not a hotkey (see _unhandled_key_input). The system
 	# menu the original raises over everything: Option, Help, Restart, Exit.
 	"system": ["resinfo\\ifsystemwnd.txt", "System", 0],
+	# Opened by clicking an NPC (World3D._try_talk_to_npc), titled with the
+	# NPC's name. The authored paper dialogue the original raises.
+	"npctalk": ["resinfo\\if_npctalk.txt", "", 0],
 }
 
 ## Emitted by the System window's buttons, wired in _wire_system. World3D
@@ -171,6 +174,48 @@ func open(panel_id: String) -> HudWindow:
 	window.move_to_front()
 	_populate(panel_id)
 	return window
+
+## Opens the NPC dialogue for an NPC of the given name: the authored paper
+## window (if_npctalk) titled with the name, greeting and the choices the
+## NPC offers. Only "End conversation" acts (it closes) -- the services
+## behind the other lines (storage, shop, honour) are their own systems,
+## still to come -- so the window greets and lets you leave, which is the
+## skeleton the rest hangs on.
+func open_npc_talk(npc_name: String) -> void:
+	var window := open("npctalk")
+	if window == null:
+		return
+	window.set_title(npc_name)
+	# The layout carries two backgrounds one over the other: a quest
+	# parchment (GDR_NPCTALK_QUESTBG, `gd_paper_02`) in front of a plain
+	# dark tile (GDR_NPCTALK_BGTILE, `com_bg_tile_d`). The parchment is for
+	# quest text; a plain talk shows the dark tile, as the user's own client
+	# does -- so the quest paper and its title strip are hidden here.
+	for hidden in ["GDR_NPCTALK_QUESTBG", "GDR_NPCTALK_QUESTBG_TITLE"]:
+		var q := window.node(hidden) as CanvasItem
+		if q != null:
+			q.visible = false
+	var body := window.get_node_or_null("TalkText") as RichTextLabel
+	if body == null:
+		body = RichTextLabel.new()
+		body.name = "TalkText"
+		body.bbcode_enabled = true
+		body.scroll_active = false
+		body.position = Vector2(28, HudWindow.TITLE_BAR_HEIGHT + 8.0)
+		body.size = window.size - Vector2(52, HudWindow.TITLE_BAR_HEIGHT + 20.0)
+		body.add_theme_color_override("default_color", ROW_TEXT_COLOUR)
+		if _builder != null:
+			var font := _builder.font_at(0)
+			if font != null:
+				body.add_theme_font_override("normal_font", font)
+			body.add_theme_font_size_override("normal_font_size", UiBuilder.FONT_SIZES[0])
+		body.meta_clicked.connect(_on_npc_talk_choice)
+		window.add_child(body)
+	body.text = "...\n\n[url=end]1. End conversation.[/url]"
+
+func _on_npc_talk_choice(meta: Variant) -> void:
+	if str(meta) == "end":
+		close("npctalk")
 
 ## Connects the System window's buttons to the signals World3D acts on.
 ## Each button is looked up by the name the authored layout gives it

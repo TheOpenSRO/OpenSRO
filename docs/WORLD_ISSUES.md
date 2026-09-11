@@ -7075,6 +7075,24 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-thirty-ninth round: clicking an NPC talks to it
+
+"When you click on an NPC it brings up a dialogue box." It does now. A
+left click ray-tests the NPC layer first (the capsules `_npc_collider`
+puts on `NAVMESH_WALL_COLLISION_LAYER`); a hit opens the authored
+`if_npctalk` window titled with the NPC's name -- read off the holder,
+which now carries `npc_name` as metadata -- and anything else walks
+there as before. Two things the layout needed. It carries two backgrounds
+one over the other, a quest parchment (`gd_paper_02`) in front of a plain
+dark tile (`com_bg_tile_d`); the parchment is for quest text, and a plain
+talk shows the dark tile, so the quest paper and its orange title strip
+are hidden -- which is what makes it match the user's own dark dialogue
+rather than the scroll the stock layout draws first. The body is a
+greeting and `1. End conversation`, a link that closes; the services
+behind a real NPC's other lines (storage, shop, honour) are their own
+systems and come later, so this greets and lets you leave, the skeleton
+the rest hangs on. `SRREVAMP_QA_TALK="<name>"` opens it for a render.
+
 ## Hundred-and-thirty-eighth round: the Escape menu
 
 "There exist options when you hit Escape." There are now. Escape closes
