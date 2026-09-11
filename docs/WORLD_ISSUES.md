@@ -7075,6 +7075,16 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-forty-fourth round: the paper doll breathes
+
+A small one: the equipment window's paper doll was a still pose. It now
+plays the town idle -- registered in `_animated` like every other body,
+posed each physics frame by `_tick_idle_animations` on the `.ban` file's
+own clock, and shown through the doll's `UPDATE_ALWAYS` SubViewport. A
+stale entry from a previous equipment change is dropped there when its
+skeleton is freed. Confirmed by rendering the window over 160 frames:
+the pose shifts between them, in step with the body in the world.
+
 ## Hundred-and-forty-third round: the skill window's masteries
 
 The user showed the skill window as something to represent, and it now

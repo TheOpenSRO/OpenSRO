@@ -3992,11 +3992,16 @@ func _refresh_paper_doll(equipped: Dictionary, gender: String) -> void:
 	var doll_skeleton := _build_assembled_character(equipped, gender)
 	if doll_skeleton == null:
 		return
-	# The doll stands in the town idle, the same as the body in the world.
+	_paper_doll.set_character(doll_skeleton)
+	# The doll breathes in the town idle, the same animation and the same
+	# clock the body in the world runs on: registered in _animated, it is
+	# posed every physics frame by _tick_idle_animations, and the doll's
+	# SubViewport (UPDATE_ALWAYS) shows it. A stale entry from a previous
+	# equipment change is dropped there when its skeleton is freed.
 	var idle := _body_animation_for(gender, BsrReader.AnimationEntry.TYPE_STAND, _weapon_group_for(equipped))
 	if idle != null and _frame_count(idle) > 1:
 		Skeleton3DBuilder.apply_ban_pose_at(doll_skeleton, idle, 0.0, true)
-	_paper_doll.set_character(doll_skeleton)
+		_animated.append([doll_skeleton, idle, _frame_count(idle), 0.0, true, _idle_anim_time, null])
 	_hud_panels.set_paper_doll_texture(_paper_doll.get_texture())
 
 ## Switches another player's looping animation between stand and run as
