@@ -4311,6 +4311,13 @@ func _try_apply_real_player_character() -> void:
 	var skeleton := _build_assembled_character(equipped, gender)
 	if skeleton == null:
 		return
+	# The assembled body's visual front is its own local -Z, but the player
+	# node points its local +Z at the movement/target direction (rotation.y =
+	# atan2(dir.x, dir.z)). Without correcting for that the body faced away
+	# from wherever it was walking -- the "runs backwards on click" playtest
+	# bug. Turning the body 180deg aligns its front with the node's forward,
+	# so every facing (movement, click, combat) now points the right way.
+	skeleton.rotation.y = PI
 	player.add_child(skeleton)
 	player_mesh.visible = false
 	_player_skeleton = skeleton
@@ -6084,6 +6091,10 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	# labeled placeholder capsule if the bodies never loaded.
 	var skeleton := _build_assembled_character(equipped, gender)
 	if skeleton != null:
+		# Same 180deg front correction as the local player (see
+		# _try_apply_real_player_character) -- the body's own front is -Z, and
+		# the node points +Z where it moves/faces.
+		skeleton.rotation.y = PI
 		body.add_child(skeleton)
 		# Another player stands in the town idle of the group their weapon
 		# selects, and runs while their body is still catching up to a

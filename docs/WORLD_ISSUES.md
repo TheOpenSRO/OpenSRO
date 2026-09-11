@@ -7075,6 +7075,22 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-fifty-seventh round: the body walked backwards
+
+A playtester reported, and confirmed, that the character faced the opposite
+of where it was told to move -- it moonwalked to every click. The cause: the
+assembled body's own visual front is its local **-Z**, but the player node
+points its local **+Z** at the movement/target direction (`rotation.y =
+atan2(dir.x, dir.z)`), so the body faced 180 degrees away from its heading.
+The create screen corroborates the axis -- `PaperDoll` frames its camera on
+the body's -Z side and shows the body's front, so front = -Z. The fix turns
+the assembled body 180 degrees when it is parented (`skeleton.rotation.y =
+PI`), for both the local player and other players, aligning the visual front
+with the node's forward so every facing (movement, click, combat) points the
+right way. Input/facing is hard to catch in a headless render (the player
+kept hiding behind Jangan's festival clutter), so this is reasoned from the
+report plus the create-screen axis, to confirm in-game.
+
 ## Hundred-and-fifty-sixth round: where the load minute really goes
 
 Chased the ~65s region load down to phases (timing added to `_load_region_cell`,
