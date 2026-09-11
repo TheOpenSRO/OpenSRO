@@ -91,15 +91,25 @@ built on recovered data, mostly disclosed, plus **one client comment that overst
    the max-level cap but presented "overflow carries to the next level" as fact. Note added that
    the carry is the assumed model, not RE-confirmed.
 
+## Grounded since the first pass (2026-09-11)
+
+- **EXP overflow carry + max level + max-level bar** — recovered from `sro_client.exe`
+  `FUN_008a97c0`; `leveldata.Advance`/`MaxCharacterLevel` corrected. See the leveling rows above.
+
 ## What is genuinely still assumed (summary for the next pass)
 
-None of these is a value dressed as real; each is a behaviour rule on top of recovered data, worth
-confirming against the client when the relevant system is next opened in Ghidra:
+None of these is a value dressed as real; each is a behaviour rule on top of recovered data, or a
+disclosed placeholder, to confirm against the client when the relevant system is next opened:
 
-- EXP overflow carry + max-level handling (`Advance`).
-- Level-up refills HP; stat points granted at level-up.
-- Monster always counterattacks; no dodge/crit/evade (disclosed open item).
-- Attack-combo order (types are real, order is ours).
-- The whole own-design economy/combat layer (damage, HP, monster stats, prices, quests, loot
-  values, gold) — real by intent as *placeholder*, to be replaced from `refdata` as the real
-  tables are imported and the derived-stat formulas are recovered from the client.
+- **Level-up refills HP; derived stats (maxHP/maxMP from level+Str/Int, phys/mag atk·def).** The
+  biggest remaining ground, and the same recovery the character window needs. Entry points found:
+  the client's `CIFPlayerInfo` player-info window (RTTI `.?AVCIFPlayerInfo@@`) and the character
+  struct at `DAT_00eef5ec` (level@0x868, EXP@0x870). The local player's maxHP is largely
+  server-set in the client, so this may need cross-checking against the authoritative server logic
+  — note the on-disk `SR_GameServer.exe` is a third-party emulator bundle (y0gi), *not*
+  authoritative; the official client stays the ground truth.
+- Attack-combo order (the four animation types are real; the order is ours).
+- Monster always counterattacks; no dodge/crit/evade (disclosed own-design combat).
+- The rest of the own-design economy/combat layer (damage, flat HP, monster stats, prices, quests,
+  loot values, gold) — placeholder by intent, to be replaced from `refdata` + the recovered
+  derived-stat formulas.
