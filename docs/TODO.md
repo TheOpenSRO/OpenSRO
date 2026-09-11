@@ -22,10 +22,8 @@ In order. Each is checked off here when it ships in a release, with its round in
 - [x] Alexandria's black houses (v0.1.89, round 136); text whole at fractional UI scales (v0.1.90)
 - [x] Camera on its own pivot with the three views; sword hangs tip-down; gear for a character that
       has none (round 137)
-- [ ] **Monsters out of town.** The QA spawns sit 62 and 55 units from the plaza origin -- under
-      the fountain. The real game keeps Mangyang and the Weasel in the fields outside the walls;
-      move them to a measured walkable spot in the farmland region south of town (96/168), and
-      point `qa_shot.sh --attack` runs there.
+- [x] **Monsters out of town** (v0.1.92). Mangyang and the Weasel moved from the fountain (62/44,
+      -55/58) to measured flat farmland at world (0,-840) and (340,-340), south of the walls.
 - [x] **ESC -> System window** (`ifsystemwnd`: Option / Help / Restart / Exit) -- round 138.
       Restart = login screen, Exit = quit, Option = the F3 settings panel. Still open: the
       **authored Option window** (`ifoption` + `ifoption_video`, its View radios and our UI scale /
