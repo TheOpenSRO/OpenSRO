@@ -7075,6 +7075,20 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-forty-eighth round: the target window
+
+The current target now shows at the top of the screen, the way the
+original does: the monster's name and an HP bar, centred at the top,
+appearing the moment one is clicked or attacked and shrinking as it takes
+damage. It is a name-plus-bar Control rather than the authored
+`iftargetwindow` frame -- that layout's name, HP and level are client-drawn
+over custom control types, so this shows the same information honestly and
+leaves the frame art for later. Wired to every path that sets the target
+(the world click, the action-tab Attack button, and the QA attack hook, so
+a render shows it), updated from `_on_monster_damaged`, and cleared when
+the target dies. Rendered over a field Mangyang: the top bar reads
+"Mangyang" with the over-head bar of round 146 below it.
+
 ## Hundred-and-forty-seventh round: click a monster to attack it
 
 The left-click scheme is now the original's whole set: a click on an NPC

@@ -1287,6 +1287,7 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 	_debug_panel = DebugPanel.new(self)
 	$UI.add_child(_debug_panel)
 	_log_system("Debug panel (build, position, entities, loading, performance): F3")
+	_build_target_window()
 	set_name_plate_range(ClientSettings.name_plate_range(NAME_PLATE_RANGE))
 	var chat_font_size := ClientSettings.chat_font_size()
 	if chat_font_size > 0:
@@ -3207,6 +3208,87 @@ func _set_hp_bar(body: Node3D, hp: int, max_hp: int) -> void:
 	if bar != null and max_hp > 0:
 		bar.texture = _hp_bar_texture(float(hp) / float(max_hp))
 
+## The target window: the current target's name and HP bar at the top of
+## the screen, the way the original shows whatever the player has clicked.
+## A name-plus-bar rather than the authored iftargetwindow frame (whose
+## name/HP/level are client-drawn over it, so this shows the same
+## information honestly); shown on click/attack, updated on damage, hidden
+## on death or when nothing is targeted.
+const TARGET_WINDOW_WIDTH := 236.0
+const TARGET_HP_INSET := 10.0
+var _target_window: Control = null
+var _target_name_label: Label = null
+var _target_hp_fill: ColorRect = null
+
+func _build_target_window() -> void:
+	_target_window = Control.new()
+	_target_window.name = "TargetWindow"
+	_target_window.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_target_window.anchor_left = 0.5
+	_target_window.anchor_right = 0.5
+	_target_window.offset_left = -TARGET_WINDOW_WIDTH / 2.0
+	_target_window.offset_right = TARGET_WINDOW_WIDTH / 2.0
+	_target_window.offset_top = 12.0
+	_target_window.offset_bottom = 52.0
+	_target_window.visible = false
+
+	var bg := ColorRect.new()
+	bg.color = Color(0.0, 0.0, 0.0, 0.55)
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_target_window.add_child(bg)
+
+	_target_name_label = Label.new()
+	_target_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_target_name_label.position = Vector2(0.0, 3.0)
+	_target_name_label.size = Vector2(TARGET_WINDOW_WIDTH, 16.0)
+	_target_name_label.add_theme_color_override("font_color", NAME_PLATE_COLOUR)
+	if _ui_builder != null:
+		var font := _ui_builder.font_at(0)
+		if font != null:
+			_target_name_label.add_theme_font_override("font", font)
+		_target_name_label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+	_target_window.add_child(_target_name_label)
+
+	var hp_bg := ColorRect.new()
+	hp_bg.color = HP_BAR_BG
+	hp_bg.position = Vector2(TARGET_HP_INSET, 22.0)
+	hp_bg.size = Vector2(TARGET_WINDOW_WIDTH - TARGET_HP_INSET * 2.0, 12.0)
+	hp_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_target_window.add_child(hp_bg)
+
+	_target_hp_fill = ColorRect.new()
+	_target_hp_fill.color = HP_BAR_FILL
+	_target_hp_fill.position = Vector2(TARGET_HP_INSET, 22.0)
+	_target_hp_fill.size = Vector2(TARGET_WINDOW_WIDTH - TARGET_HP_INSET * 2.0, 12.0)
+	_target_hp_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_target_window.add_child(_target_hp_fill)
+
+	ui_control.add_child(_target_window)
+
+## Shows the target window for a monster id, or hides it if the id is not a
+## known live monster.
+func _show_target(monster_id: int) -> void:
+	if _target_window == null:
+		return
+	var snap = _monster_snapshots.get(monster_id)
+	if snap == null:
+		_target_window.visible = false
+		return
+	_target_name_label.text = snap.monster_name
+	_set_target_hp(snap.hp, snap.max_hp)
+	_target_window.visible = true
+
+func _set_target_hp(hp: int, max_hp: int) -> void:
+	if _target_hp_fill == null or max_hp <= 0:
+		return
+	var full := TARGET_WINDOW_WIDTH - TARGET_HP_INSET * 2.0
+	_target_hp_fill.size.x = full * clampf(float(hp) / float(max_hp), 0.0, 1.0)
+
+func _clear_target() -> void:
+	if _target_window != null:
+		_target_window.visible = false
+
 ## Changes how near an entity has to be before its name shows, for every
 ## plate already in the scene and every one made from now on.
 func set_name_plate_range(distance: float) -> void:
@@ -4985,6 +5067,7 @@ func _qa_attack_nearest() -> void:
 		return
 	print("QA ATTACK: monster %d at %.0f" % [nearest_id, nearest])
 	_last_attack_target = nearest_id
+	_show_target(nearest_id)
 	NetClient.attack(NetClient.current_character_name, nearest_id)
 
 func _qa_rig_report() -> void:
@@ -6363,6 +6446,7 @@ func _try_attack_monster(screen_pos: Vector2) -> bool:
 	if node == null:
 		return false
 	_last_attack_target = int(node.get_meta("monster_id"))
+	_show_target(_last_attack_target)
 	NetClient.attack(NetClient.current_character_name, _last_attack_target)
 	return true
 
@@ -6412,6 +6496,7 @@ func _on_attack_pressed() -> void:
 		return
 	var target: CombatNet.MonsterSnapshot = _monsters[selected[0]]
 	_last_attack_target = target.monster_id
+	_show_target(target.monster_id)
 	NetClient.attack(NetClient.current_character_name, target.monster_id)
 
 func _on_attack_result(result: CombatNet.AttackResult) -> void:
@@ -6490,6 +6575,8 @@ func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
 		var snap = _monster_snapshots.get(damaged.monster_id)
 		var max_hp: int = snap.max_hp if snap != null else damaged.remaining_hp
 		_set_hp_bar(_monster_bodies[damaged.monster_id], damaged.remaining_hp, max_hp)
+		if damaged.monster_id == _last_attack_target:
+			_set_target_hp(damaged.remaining_hp, max_hp)
 	NetClient.list_monsters()
 
 ## Runs `what` after `seconds` of scene time -- at once when zero.
@@ -6503,6 +6590,9 @@ func _after(seconds: float, what: Callable) -> void:
 ## group) and the body stays on its last frame until that has run; only
 ## then is the list refreshed and the body removed.
 func _on_monster_died(monster_id: int) -> void:
+	if monster_id == _last_attack_target:
+		_clear_target()
+		_last_attack_target = -1
 	var seconds := _play_monster_action(monster_id, BsrReader.AnimationEntry.TYPE_DIE, true)
 	if seconds > 0.0:
 		_dying_until[monster_id] = _idle_anim_time + seconds
