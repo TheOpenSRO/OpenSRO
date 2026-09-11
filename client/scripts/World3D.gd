@@ -4459,6 +4459,9 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_SCAN=n     sweep the region on an n x n grid and report
 ##                          where the walkable graph sits below the solid
 ##                          geometry (i.e. where a player walks underneath)
+##   SRREVAMP_QA_COLUMNS="x,z;x,z"  what the walkable graph knows at these
+##                          region-local columns: every surface, the
+##                          objects it considers, and any it does not index
 ##   SRREVAMP_QA_HIDE=a,b    hide every mesh whose own real mesh name
 ##                          contains one of these fragments
 ##   SRREVAMP_QA_LOOK=1     print which real placed objects the camera is
@@ -4592,6 +4595,9 @@ func _qa_step() -> void:
 		var scan := OS.get_environment("SRREVAMP_QA_SCAN")
 		if scan != "":
 			_qa_scan_report(maxi(int(scan), 2))
+		var columns := OS.get_environment("SRREVAMP_QA_COLUMNS")
+		if columns != "":
+			_qa_columns_report(columns)
 		var qa_zone := OS.get_environment("SRREVAMP_QA_ZONE")
 		if qa_zone != "":
 			var target := _split_zone_target(qa_zone)
@@ -5046,6 +5052,125 @@ func _qa_through_report(spec: String) -> void:
 ## walking there ends up under a floor they should be on top of. The
 ## graph being above is normal and not reported -- that is a bridge, a
 ## roof, or an upper storey with the ray having hit the ground beneath it.
+## SRREVAMP_QA_COLUMNS="x,z;x,z": for each region-local column, every
+## surface the walkable graph knows there, which placed objects it
+## considers and their footprints, and any object whose footprint holds
+## the column but which the graph's index does not return there -- so
+## "under the deck here, on it 85 units away" can be read off the graph.
+func _qa_columns_report(spec: String) -> void:
+	var pair := _nav_graph_for(player.global_position)
+	if pair.is_empty():
+		print("QA COLUMNS: not standing in any loaded region")
+		return
+	var graph: NavGraph = pair[0]
+	for item in spec.split(";"):
+		var parts := item.split(",")
+		if parts.size() < 2:
+			continue
+		var x := float(parts[0])
+		var z := float(parts[1])
+		print("QA COLUMN (%d, %d): terrain %.1f, surfaces %s, landing %.1f" % [
+			int(x), int(z), NvmCollision.sample_height(graph.region, x, z),
+			str(graph.heights_at(x, z)), graph.landing_height_at(x, z)])
+		# The real file's own answer first: which objects the navmesh cell
+		# under this column lists, whether or not the graph could place them.
+		var ci := graph.cell_index_at(x, z)
+		if ci >= 0 and ci < graph.region.cells.size():
+			var listed := PackedStringArray()
+			for oi in graph.region.cells[ci].object_indices:
+				var model := "?"
+				if graph.objects.has(oi) and (graph.objects[oi] as Object).has_meta("model"):
+					model = str((graph.objects[oi] as Object).get_meta("model"))
+				elif oi < graph.region.objects.size():
+					model = "resource %d, NOT placed" % (graph.region.objects[oi] as NvmReader.MapObject).resource_id
+				listed.append("%d (%s)" % [oi, model])
+			print("   the navmesh cell here lists objects: %s" % (", ".join(listed) if not listed.is_empty() else "none"))
+		var considered: Array[int] = graph.objects_at(x, z)
+		for oi in considered:
+			var placed: NavGraph.PlacedObject = graph.objects[oi]
+			var h := NavGraph.surface_height_of(placed, x, z)
+			var model := str(placed.get_meta("model", "?"))
+			print("   considers object %d (%s): footprint (%.0f, %.0f)-(%.0f, %.0f), %d cells, surface here %s" % [
+				oi, model, placed.bounds_min.x, placed.bounds_min.y, placed.bounds_max.x, placed.bounds_max.y,
+				placed.cells.size() / 3, "none" if is_nan(h) else "%.1f" % h])
+			# Its navigation cells against its drawn pieces, both in region
+			# space: if the two footprints disagree the placement is wrong;
+			# if they agree, the navigation mesh has a hole the drawn deck
+			# does not.
+			var cell_lo := Vector3.INF
+			var cell_hi := -Vector3.INF
+			for v in placed.vertices:
+				cell_lo = _vec_min(cell_lo, v)
+				cell_hi = _vec_max(cell_hi, v)
+			print("      cells span (%.0f, %.0f, %.0f)-(%.0f, %.0f, %.0f)" % [cell_lo.x, cell_lo.y, cell_lo.z, cell_hi.x, cell_hi.y, cell_hi.z])
+			var nearest := []
+			var i := 0
+			while i + 2 <= placed.cells.size() - 1:
+				var a: Vector3 = placed.vertices[placed.cells[i]]
+				var b: Vector3 = placed.vertices[placed.cells[i + 1]]
+				var c: Vector3 = placed.vertices[placed.cells[i + 2]]
+				i += 3
+				var centre := (a + b + c) / 3.0
+				nearest.append([Vector2(centre.x - x, centre.z - z).length(), a, b, c])
+			nearest.sort_custom(func(p, q): return p[0] < q[0])
+			for k in range(mini(3, nearest.size())):
+				var tri: Array = nearest[k]
+				print("      cell %.0f away: (%.0f, %.0f, %.0f) (%.0f, %.0f, %.0f) (%.0f, %.0f, %.0f)" % [
+					tri[0], tri[1].x, tri[1].y, tri[1].z, tri[2].x, tri[2].y, tri[2].z, tri[3].x, tri[3].y, tri[3].z])
+			var drawn_lo := Vector3.INF
+			var drawn_hi := -Vector3.INF
+			var pieces := 0
+			for node in (pair[1] as Node3D).find_children("Obj_%s_*" % model, "Node3D", true, false):
+				for mesh_node in (node as Node).find_children("*", "MeshInstance3D", true, false):
+					var mi := mesh_node as MeshInstance3D
+					if mi.mesh == null:
+						continue
+					pieces += 1
+					var aabb := mi.global_transform * mi.mesh.get_aabb()
+					for corner in range(8):
+						var p := (pair[1] as Node3D).to_local(aabb.get_endpoint(corner))
+						drawn_lo = _vec_min(drawn_lo, p)
+						drawn_hi = _vec_max(drawn_hi, p)
+			if pieces > 0:
+				print("      drawn as %d piece(s) spanning (%.0f, %.0f, %.0f)-(%.0f, %.0f, %.0f)" % [
+					pieces, drawn_lo.x, drawn_lo.y, drawn_lo.z, drawn_hi.x, drawn_hi.y, drawn_hi.z])
+			# Its blocking edges within 40 units: what would stop a walk here.
+			var near_edges := PackedStringArray()
+			var e := 0
+			while e + 1 < placed.blocking.size():
+				var p0: Vector2 = placed.blocking[e]
+				var p1: Vector2 = placed.blocking[e + 1]
+				e += 2
+				if Geometry2D.get_closest_point_to_segment(Vector2(x, z), p0, p1).distance_to(Vector2(x, z)) <= 40.0:
+					near_edges.append("(%.0f, %.0f)-(%.0f, %.0f)" % [p0.x, p0.y, p1.x, p1.y])
+			print("      %d blocking edge(s), %d within 40: %s" % [placed.blocking.size() / 2, near_edges.size(), " ".join(near_edges)])
+		var near_terrain := PackedStringArray()
+		var t := 0
+		while t + 1 < graph.terrain_blocking.size():
+			var p0: Vector2 = graph.terrain_blocking[t]
+			var p1: Vector2 = graph.terrain_blocking[t + 1]
+			t += 2
+			if Geometry2D.get_closest_point_to_segment(Vector2(x, z), p0, p1).distance_to(Vector2(x, z)) <= 40.0:
+				near_terrain.append("(%.0f, %.0f)-(%.0f, %.0f)" % [p0.x, p0.y, p1.x, p1.y])
+		print("   terrain blocking edges within 40: %s" % (" ".join(near_terrain) if not near_terrain.is_empty() else "none"))
+		for oi in graph.objects:
+			if considered.has(oi):
+				continue
+			var placed: NavGraph.PlacedObject = graph.objects[oi]
+			if x < placed.bounds_min.x or x > placed.bounds_max.x or z < placed.bounds_min.y or z > placed.bounds_max.y:
+				continue
+			var h := NavGraph.surface_height_of(placed, x, z)
+			print("   NOT indexed here, footprint holds it: object %d (%.0f, %.0f)-(%.0f, %.0f), surface here %s" % [
+				oi, placed.bounds_min.x, placed.bounds_min.y, placed.bounds_max.x, placed.bounds_max.y,
+				"none" if is_nan(h) else "%.1f" % h])
+
+## Component-wise min and max; Godot 4.2's Vector3 has neither.
+static func _vec_min(a: Vector3, b: Vector3) -> Vector3:
+	return Vector3(minf(a.x, b.x), minf(a.y, b.y), minf(a.z, b.z))
+
+static func _vec_max(a: Vector3, b: Vector3) -> Vector3:
+	return Vector3(maxf(a.x, b.x), maxf(a.y, b.y), maxf(a.z, b.z))
+
 func _qa_scan_report(samples: int) -> void:
 	var pair := _nav_graph_for(player.global_position)
 	if pair.is_empty():

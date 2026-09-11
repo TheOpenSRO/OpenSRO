@@ -6967,9 +6967,14 @@ and black buildings on that archive. The panel's loading section will
 say which files were missing; the box's archive has to be rendered there
 first to know whether it is the archive or the client.
 
-*Later the same night*: on v0.1.87 Alexandria rendered textured, and the
-panel's Copy showed one load failure (a Dunhuang building, unrelated) --
-the white and black were the old client too.
+*Later the same night*: on v0.1.87 Alexandria's ground rendered textured
+and the panel's Copy showed one load failure (a Dunhuang building,
+unrelated) -- the white ground was the old client. **The black buildings
+are not**: a render on the box at 90/48 (663, 526) draws the large
+structure behind the spawn solid black too, with the ground, stalls,
+trees and walls beside it textured. Every texture it asks for is found
+(no loading failure names it), so it is a material or texture-format
+question, not a missing file; measured next.
 
 ## Hundred-and-thirty-fifth round: the `.ban` files carry their own clock
 
@@ -7027,15 +7032,33 @@ The debug panel gained a row of town buttons -- Jangan, Donwhang, Hotan,
 Constantinople, Samarkand, Alexandria -- each the zone box's own
 `x/y@localX,localZ` target that was being typed by hand.
 
-Reported and not yet fixed: "when I touch a building I get stuck in
-it". `NavGraph.step` refuses a move across a blocking edge and slides
-along one axis instead, so the way in has to be an edge the graph does
-not carry, or a surface `height_at` lifted the mover onto. One measured
-lead from tonight's renders: a walk north from (1002, 917) logs `on
-terrain at -54.4` with `Obj_cj_jang_gate_126` drawn 21.8 above the
-graph's height -- the mover is under the plaza deck, inside its geometry,
-and the frames show the deck's top surface cutting the character at the
-chest -- while 85 units west, at (915, 940), the same walk logs `on
-object cj_jang_gate at -32.6`, on the deck. The deck's walkable cells
-cover one column and not the other, in the same run. Where the graph's
-object coverage ends is the next thing to measure.
+Reported and not reproduced: "when I touch a building I get stuck in
+it". Two measurements with the new `SRREVAMP_QA_COLUMNS` probe (what the
+walkable graph knows at a column: the navmesh cell's own object list, each
+placed object's cells, footprint and drawn extent, and the blocking edges
+within 40 units), plus a walk:
+
+- **The armour shop is walled.** `cj_armo` carries navigation in one of
+  its seven meshes, `cj_armo_floor` (73 cells at 7.2 above the ground),
+  and a walk west into it from (240, 1100) steps onto the porch strip at
+  x 245 and stops dead at x 231 for the rest of the run, `on object
+  cj_armo at 7.2` -- the porch's inner edge blocks, as it should. Inside
+  the footprint (x 126-230) the graph has terrain only, but nothing walks
+  there.
+- **The QA spot (1002, 917) is under a bridge deck the navmesh does not
+  carry.** `cj_jang_gate` (object 4 of region 97/168, footprint 444-1505 x
+  295-1617) has navigation in one of its five meshes, `cj_jang_gate06`,
+  180 cells spanning y -33 to 1; the piece drawn over that column,
+  `cj_jang_gate07`, has none, and gate06's nearest cells to (1002, 917)
+  are 240 units away. So `landing_height_at` puts a QA arrival there on
+  the terrain 22 units below the deck, inside it, and 85 units west at
+  (915, 940) on the deck. Not a placement bug: the real navigation data
+  has no surface there. Whether the real client keeps a character off
+  that column (a pond, per the plane grid?) is not established; QA
+  arrivals should use (915, 940).
+
+So the report is not this. A Copy from the panel at the moment it
+happens -- position, camera, and what the graph says underfoot -- is
+the next measurement. Alexandria's "things floating in the air":
+`SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
+placed object more than 12 off its region's ground on the box's archive.

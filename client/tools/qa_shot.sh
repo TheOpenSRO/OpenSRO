@@ -26,6 +26,7 @@
 #                     (china_man or china_woman)
 #   --attack          attack the nearest monster every second (needs --server)
 #   --debug           open the debug panel (F3) once the first region loads
+#   --columns "x,z;.." report what the walkable graph knows at these columns
 #   --nofog           disable fog, for high overview shots
 #   --free            let the camera pass through geometry
 #   --out <dir>       where to write frames (required)
@@ -48,7 +49,7 @@ GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 
 REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""
 AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
-PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; GENDER=""; ATTACK=""; DEBUG=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
+PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; GENDER=""; ATTACK=""; DEBUG=""; COLUMNS=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -75,6 +76,7 @@ while [ $# -gt 0 ]; do
     --gender) GENDER="$2"; shift 2 ;;
     --attack) ATTACK=1;    shift ;;
     --debug)  DEBUG=1;     shift ;;
+    --columns) COLUMNS="$2"; shift 2 ;;
     --server)
       if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then SERVER="$2"; shift 2
       else SERVER="start"; shift; fi ;;
@@ -162,6 +164,7 @@ fi
 [ -n "$GENDER" ] && export SRREVAMP_QA_GENDER="$GENDER"
 [ -n "$ATTACK" ] && export SRREVAMP_QA_ATTACK=1
 [ -n "$DEBUG" ] && export SRREVAMP_QA_DEBUG=1
+[ -n "$COLUMNS" ] && export SRREVAMP_QA_COLUMNS="$COLUMNS"
 
 # --resolution as well as the X screen: Godot renders at the project's own
 # window size otherwise, so asking for a square screen alone still produced
