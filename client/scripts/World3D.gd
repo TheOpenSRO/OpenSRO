@@ -382,6 +382,9 @@ var _right_button_held := false
 var _left_button_held := false
 var _left_dragging := false
 var _left_press_position := Vector2.ZERO
+# Holding the left button and dragging steers the character toward the
+# cursor (the original's left-drag-to-walk); it never orbits the camera.
+var _left_steering := false
 ## How far the mouse has to travel with the left button down before the
 ## press counts as an orbit rather than a click. Ours.
 const LEFT_DRAG_THRESHOLD_PIXELS := 6.0
@@ -5718,6 +5721,10 @@ func _physics_process(delta: float) -> void:
 		input_dir.x = Input.get_axis("move_left", "move_right")
 		input_dir.z = Input.get_axis("move_forward", "move_back")
 	var manual_input := input_dir.length() > 0.0
+	# Holding the left button walks the character toward the cursor, refreshed
+	# every frame so it follows the pointer while held. WASD still overrides.
+	if _left_steering and not typing and not manual_input:
+		_try_set_move_target(get_viewport().get_mouse_position())
 	if manual_input:
 		input_dir = input_dir.normalized()
 		_has_move_target = false # manual movement always cancels a pending click-to-move
@@ -6213,11 +6220,16 @@ func _unhandled_input(event: InputEvent) -> void:
 			camera_arm.spring_length = clampf(camera_arm.spring_length - CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			camera_arm.spring_length = clampf(camera_arm.spring_length + CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
-		_camera_orbiting = _right_button_held or (_left_button_held and _left_dragging)
+		# Only the right button orbits the camera. A held left button steers
+		# the character toward the cursor instead (see _physics_process) --
+		# the original never orbits on a left drag.
+		_camera_orbiting = _right_button_held
+		if not _left_button_held:
+			_left_steering = false
 	elif event is InputEventMouseMotion and _left_button_held and not _left_dragging \
 			and (event as InputEventMouseMotion).position.distance_to(_left_press_position) > LEFT_DRAG_THRESHOLD_PIXELS:
 		_left_dragging = true
-		_camera_orbiting = true
+		_left_steering = true
 	elif event is InputEventMouseMotion and _camera_orbiting and _camera_view != CAMERA_VIEW_THIRD_PERSON:
 		camera_arm.rotation_degrees.y -= event.relative.x * CAMERA_ORBIT_SENSITIVITY
 		if _camera_view == CAMERA_VIEW_FREE:

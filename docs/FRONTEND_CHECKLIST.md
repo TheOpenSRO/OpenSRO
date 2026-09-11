@@ -1,8 +1,9 @@
-# Front-end epic — running checklist
+# Front-end + in-game — running checklist
 
-The live to-do for the launcher / front-end flow. I own this file and keep it current as work
-lands and as new requests come in. Design rationale and the real art paths live in
-`docs/FRONTEND.md`; this is just the checklist. Newest dumps go under "Inbox" until triaged.
+The live to-do for the front-end flow **and** the in-game HUD/gameplay feedback the user keeps
+dumping. I own this file and keep it current as work lands and as new requests come in. Design
+rationale and the real art paths live in `docs/FRONTEND.md`; this is just the checklist. Newest
+dumps go under "Inbox" until triaged.
 
 Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[?]` needs a decision or data.
 
@@ -14,10 +15,22 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
 - [x] Plain-panel fallback when no Media.pk2 is present, so login always works (v0.1.103)
 - [ ] "MaxiGuard verification success"-style status line area (cosmetic)
 
-## 2. Loading screens
-- [ ] Reusable loading overlay: `loading_<region>.ddj` + `gauge_loading.ddj` gauge + "NOW LOADING"
+## 2. Loading screens + world-entry speed  ← **HIGH PRIORITY (user: 60-90s, no feedback)**
+- [ ] **Loading screen with feedback during world entry** — the ~60-90s Start→in-world wait shows
+  nothing. Put up `loading_<region>.ddj` + `gauge_loading.ddj` + "NOW LOADING" and a real progress
+  signal. Needs World3D's initial load to yield frames (it blocks in `_ready` today) so the screen
+  can paint and update; the loader already awaits (QaSignIn), so stage it and await between stages.
+- [ ] **Optimize the world load itself** — profile Start→playable: region streaming, `.bsr`/`.bms`
+  mesh parsing, `.ddj` texture decode, navmesh build. Cut or defer the worst offenders; consider
+  loading fewer regions before "playable" and streaming the rest after.
+- [ ] **Per-chunk freeze crossing into a new region** ← **HIGH PRIORITY** — walking into a new
+  region/tile freezes the game for ~1s (and the user sometimes has to refocus the window to get it
+  rendering again). Same root cause as the slow load: `_maybe_stream_regions` loads a region
+  synchronously on the main thread. Move streaming off the main thread (Godot threaded resource
+  load) or spread it across frames so crossings are seamless. Also check the window stops
+  rendering when unfocused (low-processor/focus-pause), which makes the hitch feel worse.
 - [ ] Gold-dragon + class-silhouettes default screen (`loading_default.ddj`)
-- [ ] Shown on every transition (login→select, select→customize, →world)
+- [ ] Shown on the other transitions too (login→select, select→customize)
 - [ ] Pick the region-appropriate loading image where known
 
 ## 3. Character select
@@ -51,6 +64,43 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
 - [ ] Shared town backdrop streamed behind the screens (reuse the world loader)
 - [ ] Slow flowing camera path through town
 - [ ] Swap the pass-1 2D backdrops for it without touching the UI layer
+
+## 7. In-game HUD & gameplay (dumped 2026-09-11, with reference screenshots)
+Ordered roughly quick-fix → needs-a-server-system.
+- [x] **Left-click drag must not orbit the camera** — only right-drag orbits; a held left button now
+  steers the character toward the cursor (v0.1.106; input isn't headless-verifiable, needs in-game
+  confirmation).
+- [ ] **Character runs backwards on click-to-move** — the body faces away from the movement
+  direction. Both move branches set `rotation.y = atan2(dir.x, dir.z)`; diagnose with a `QA_WALK`
+  render (body facing vs. heading) — likely a 180° model-forward offset in the click path.
+- [ ] **Target window like the reference** (pic 2): the authored frame with the monster's name, HP
+  bar, level and rank ("General") and HP %, not the plain bar we draw now. (client-only)
+- [ ] **Storage-keeper (and NPCs) face the wrong way in Jangan** — use the placement heading so NPCs
+  face as they should. (needs the .ifo placement yaw)
+- [ ] **NPC talk dialogue with options** (pic 1): the talk box lists the NPC's services
+  (e.g. "1. Deposit into storage / 2. Honor Rank / 3. End conversation"). Needs per-NPC service
+  data (which NPC offers storage/shop/etc.); today we only show greeting text.
+- [ ] **Level-up animation** (pic 3): the golden burst + "You have advanced to level [N]" on
+  gaining a level. **Needs an EXP + leveling system server-side** (not tracked today).
+- [ ] **Skills menu redone** (pic 4): Weapon / Force tabs, mastery tabs (Bicheon / Heuksal /
+  Pacheon), Max Mastery / Max Skill, LEVEL UP, the skill grid with per-skill level arrows, Mastery
+  level total. **Needs a real skill/mastery system** (ours is a flat list — wrong).
+- [ ] **Character menu redone** (pic 5): Current/Next Exp, Stat Point, Honor Point, Str/Int with
+  "+" buttons (**3 stat points per level, into Str or Int**), HP/MP, derived stats (phys/mag
+  atk·def·balance, hit rate, parry), job alias/level/exp. **Needs the Str/Int stat system + EXP.**
+
+**The big three (level-up, skills, character stats) share prerequisites the server lacks today:**
+EXP/leveling, stat points (Str/Int, 3/level), and a mastery/skill tree. Those systems come first,
+then the UIs become real rather than mock.
+
+## 8. World / collision bugs (dumped 2026-09-11)
+- [ ] **Stuck/barriered inside a building** after teleporting into its corner. Repro (F3 on
+  client v0.1.104): zone Alexandria, region node `RealTerrain_90_48`, local ~`769.9, 205.1`
+  (world `-190.1, 754.9`, ground `-80.5`), near the palace/building corner by the potion stall.
+  The player can circle the building but on touching it gets trapped inside. Likely a concave/
+  inside-out object collider. Investigate with `QA_SCAN` / `QA_COLUMNS` / `QA_FLOAT` at that spot.
+- [ ] Missing model in that session's log: `res\bldg\china\dunhuang\buildings\w_cd_stab_buil03_wal.bsr
+  not found in archive` — a Dunhuang wall; check whether a collider is left without its mesh.
 
 ## Tooling
 - [x] `qa_shot.sh --scene <res://...>` to render an arbitrary front-end scene for verification (v0.1.103)

@@ -7075,6 +7075,27 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-fifty-third round: the left button walks, it does not orbit
+
+Playtest feedback: holding the left button dragged the camera, which the
+original never does -- a left drag walks the character. Only the right
+button orbits the camera now; a held left button, once dragged past the
+tap threshold, steers the character toward the cursor every physics frame
+(`_left_steering`, refreshed from the mouse's world point via the existing
+`_try_set_move_target`), and WASD still overrides it. A plain left click
+(no drag) still talks to an NPC, attacks a monster, or walks to the point,
+as before. Input is not headless-verifiable (the standing caveat about the
+render harness never pressing real keys), so this is compiled and reasoned,
+to be confirmed in-game.
+
+Logged the same session and not yet fixed (see `docs/FRONTEND_CHECKLIST.md`):
+the character runs backwards on click-to-move (a facing/model-forward
+question, needs a `QA_WALK` render), the ~1s freeze crossing into a new
+region (synchronous streaming on the main thread -- the same root as the
+60-90s initial load), NPC facing/dialogue-options, the target window's
+frame, and the EXP/level/skill/stat systems the character and skill windows
+need.
+
 ## Hundred-and-fifty-second round: creating a character, with a live 3D body
 
 The "Create" button now opens a real create screen instead of a name-and-
