@@ -7075,6 +7075,32 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-fifty-fourth round: region cells stream a few per frame
+
+Playtest complaint: crossing into a new region froze the game for about a
+second, every time, everywhere. The cause was `_maybe_stream_regions`
+building the whole leading row of new cells (five, at radius 2) synchronously
+in the one frame the boundary was crossed. The cell underfoot is always
+already loaded -- it was a neighbour before the crossing -- so the new cells
+are ahead of the player and can arrive over the next frames instead. They
+are now queued nearest-first and built `STREAM_CELLS_PER_FRAME` (1) at a
+time in `_process_stream_queue`, with a stale-cell guard so a cell the
+player has since turned away from is dropped rather than built. This turns
+the one long freeze into a few short per-frame hitches while the player
+keeps moving; it does not thread the build, so a very heavy cell can still
+hitch -- threading the region build off the main thread is the next step if
+it is still felt. Rendered a 400-frame walk: no script error, regions
+stream, the body faces its heading (bearing on the separate "runs backwards
+on click" report -- QA_WALK's facing is correct and click uses the same
+math, so that one is still unreproduced; see `opensropleasereview.md`). The
+initial neighbourhood load is still synchronous -- that is the 60-90s
+entry, to be covered by a loading screen and its own optimisation next.
+
+Also this round: a shared `FrontEndUi.vignette` over the login / select /
+create backdrops (a dark radial gradient) so the panels read and a
+letterboxed backdrop's bands frame intentionally, and the login's register
+link picked up the gold. A look-better pass the user asked for.
+
 ## Hundred-and-fifty-third round: the left button walks, it does not orbit
 
 Playtest feedback: holding the left button dragged the camera, which the

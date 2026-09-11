@@ -633,6 +633,14 @@ var _grid_shared_anchor_height := NAN
 var _grid_has_origin := false
 var _loaded_cells := {} # "dx_dy" (relative to _grid_origin_region) -> true
 var _last_stream_cell := Vector2i(0x7fffffff, 0x7fffffff) # sentinel so the first real check always runs
+# Region cells waiting to be built, streamed a few per frame instead of a
+# whole leading row in one frame -- that synchronous row was the ~1s freeze
+# on every boundary crossing (a playtest complaint). The cell underfoot is
+# always already loaded (it was a neighbour before the crossing), so the
+# queued cells are ahead of the player and can arrive over the next frames.
+var _load_queue: Array = [] # of {rx, ry, dx, dy, anchor, key}
+var _queued_cells := {} # key -> true, so a cell is not queued twice
+const STREAM_CELLS_PER_FRAME := 1
 
 @onready var player: CharacterBody3D = $Player
 @onready var player_mesh: MeshInstance3D = $Player/Mesh
@@ -2805,12 +2813,23 @@ func _maybe_stream_regions() -> void:
 	_update_zone_label_for_region(_grid_origin_region.x + cur.x, _grid_origin_region.y + cur.y)
 
 	var radius := _region_load_radius()
+	# Nearest-first, so the cells the player is about to reach build before the
+	# far corners of the window.
+	var new_cells: Array = []
 	for dy in range(cur.y - radius, cur.y + radius + 1):
 		for dx in range(cur.x - radius, cur.x + radius + 1):
 			var key := "%d_%d" % [dx, dy]
-			if _loaded_cells.has(key):
+			if _loaded_cells.has(key) or _queued_cells.has(key):
 				continue
-			_load_region_cell(_grid_origin_region.x + dx, _grid_origin_region.y + dy, dx, dy, _grid_shared_anchor_height)
+			new_cells.append({
+				"rx": _grid_origin_region.x + dx, "ry": _grid_origin_region.y + dy,
+				"dx": dx, "dy": dy, "key": key,
+				"dist": absi(dx - cur.x) + absi(dy - cur.y),
+			})
+	new_cells.sort_custom(func(a, b): return a["dist"] < b["dist"])
+	for cell in new_cells:
+		_queued_cells[cell["key"]] = true
+		_load_queue.append(cell)
 
 	# Unload real cells now well outside the real load radius, so a player
 	# walking through a real, large world doesn't accumulate every region
@@ -2830,6 +2849,24 @@ func _maybe_stream_regions() -> void:
 		if objects_node != null:
 			objects_node.queue_free()
 		_loaded_cells.erase(key)
+
+## Builds up to STREAM_CELLS_PER_FRAME queued cells a frame, so a boundary
+## crossing streams over several frames rather than freezing for one long
+## one. A cell the player has since moved away from is dropped, not built.
+func _process_stream_queue() -> void:
+	if _load_queue.is_empty() or not _grid_has_origin:
+		return
+	var margin := _region_load_radius() + 1
+	var built := 0
+	while built < STREAM_CELLS_PER_FRAME and not _load_queue.is_empty():
+		var cell: Dictionary = _load_queue.pop_front()
+		_queued_cells.erase(cell["key"])
+		if _loaded_cells.has(cell["key"]):
+			continue
+		if absi(cell["dx"] - _last_stream_cell.x) > margin or absi(cell["dy"] - _last_stream_cell.y) > margin:
+			continue # the player left this cell's window before it built
+		_load_region_cell(cell["rx"], cell["ry"], cell["dx"], cell["dy"], _grid_shared_anchor_height)
+		built += 1
 
 ## _ready()'s own entry point into the region grid: reads SRREVAMP_MAPM_PATH
 ## the same way this scene always has, but now treats it as the *center* of
@@ -5799,6 +5836,7 @@ func _physics_process(delta: float) -> void:
 	_recover_if_below_terrain()
 
 	_maybe_stream_regions()
+	_process_stream_queue()
 	_refresh_zone_label_position()
 	_update_blob_shadow()
 

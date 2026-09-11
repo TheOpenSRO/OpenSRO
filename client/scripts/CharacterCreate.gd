@@ -31,6 +31,7 @@ func _build_ui() -> void:
 	var bg := FrontEndUi.backdrop(media, BACKDROP_DDJ)
 	if bg != null:
 		add_child(bg)
+	add_child(FrontEndUi.vignette())
 	add_child(FrontEndUi.header("CREATE A CHARACTER"))
 	var screen := get_viewport_rect().size
 

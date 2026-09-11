@@ -59,6 +59,7 @@ func _build_ui() -> void:
 	var bg := FrontEndUi.backdrop(media, BACKDROP_DDJ)
 	if bg != null:
 		add_child(bg)
+	add_child(FrontEndUi.vignette())
 	add_child(FrontEndUi.header("CHARACTER SELECT"))
 
 	# Left: the character list, in a plate below the header.

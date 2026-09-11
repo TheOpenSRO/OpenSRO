@@ -23,12 +23,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
 - [ ] **Optimize the world load itself** — profile Start→playable: region streaming, `.bsr`/`.bms`
   mesh parsing, `.ddj` texture decode, navmesh build. Cut or defer the worst offenders; consider
   loading fewer regions before "playable" and streaming the rest after.
-- [ ] **Per-chunk freeze crossing into a new region** ← **HIGH PRIORITY** — walking into a new
-  region/tile freezes the game for ~1s (and the user sometimes has to refocus the window to get it
-  rendering again). Same root cause as the slow load: `_maybe_stream_regions` loads a region
-  synchronously on the main thread. Move streaming off the main thread (Godot threaded resource
-  load) or spread it across frames so crossings are seamless. Also check the window stops
-  rendering when unfocused (low-processor/focus-pause), which makes the hitch feel worse.
+- [~] **Per-chunk freeze crossing into a new region** — streaming now queues the new leading-edge
+  cells and builds one per frame instead of the whole row at once (v0.1.107, round 154), turning
+  the ~1s freeze into brief per-frame hitches. **Needs in-game confirmation**; if still felt, next
+  step is threading the region build off the main thread. (No low-processor setting found, so the
+  "refocus to render" was likely the freeze itself.)
 - [ ] Gold-dragon + class-silhouettes default screen (`loading_default.ddj`)
 - [ ] Shown on the other transitions too (login→select, select→customize)
 - [ ] Pick the region-appropriate loading image where known
@@ -59,6 +58,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
 - [ ] Unique-check button — no name-availability RPC yet; name is validated on create
 - [ ] Dress the preview in the starting outfit (currently the bare base body)
 - [ ] Rotatable / per-race backdrop polish (using the gold-dragon `loading_charactercustom` for now)
+
+## 5b. Look-better pass (user asked)
+- [x] Vignette over login / select / create backdrops so panels pop and letterboxing frames well (v0.1.107)
+- [x] Login register link picks up the gold (v0.1.107)
+- [ ] Load the client's own UI font for the front-end (authenticity)
+- [ ] Char-select: fill the empty centre with the 3D character (pass 2)
 
 ## 6. 3D backdrops (pass 2, the expensive one)
 - [ ] Shared town backdrop streamed behind the screens (reuse the world loader)

@@ -48,6 +48,29 @@ static func backdrop(media: Pk2Reader, ddj_path: String) -> TextureRect:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return bg
 
+## A dark radial vignette laid over the backdrop, so the panels pop and a
+## letterboxed backdrop's black bands read as intentional framing rather than
+## an accident. Ignores the mouse.
+static func vignette() -> TextureRect:
+	var grad := Gradient.new()
+	grad.set_color(0, Color(0, 0, 0, 0))
+	grad.set_color(1, Color(0, 0, 0, 0.62))
+	grad.add_point(0.55, Color(0, 0, 0, 0))
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(1.0, 1.05)
+	tex.width = 320
+	tex.height = 240
+	var tr := TextureRect.new()
+	tr.texture = tex
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_SCALE
+	tr.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return tr
+
 ## A dark ground so a missing backdrop is black, not the host theme.
 static func ground(colour: Color = Color(0.03, 0.03, 0.04)) -> ColorRect:
 	var g := ColorRect.new()

@@ -86,6 +86,7 @@ func _build_ui() -> void:
 		bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(bg)
+	add_child(FrontEndUi.vignette())
 
 	# The login panel, centred a little below the middle so the backdrop art
 	# reads above it.
@@ -137,6 +138,10 @@ func _build_ui() -> void:
 	register_button = _text_button("Register a new account", Vector2(220.0, 30.0))
 	register_button.flat = true
 	register_button.add_theme_font_size_override("font_size", 13)
+	register_button.add_theme_color_override("font_color", Color(0.86, 0.78, 0.5))
+	register_button.add_theme_color_override("font_hover_color", Color(1.0, 0.95, 0.72))
+	register_button.add_theme_color_override("font_outline_color", Color.BLACK)
+	register_button.add_theme_constant_override("outline_size", 3)
 	register_button.position = Vector2(panel_size.x * 0.5 - 110.0, panel_size.y + 62.0)
 	register_button.pressed.connect(_on_register_pressed)
 	panel.add_child(register_button)
