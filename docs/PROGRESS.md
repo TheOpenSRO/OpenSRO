@@ -15,6 +15,16 @@ Also read out of the client today: the weapon-to-animation-group switch (`FUN_00
 133), so `WEAPON_ANIMATION_GROUP` covers Europe's kinds and the crossbow, rod, dark-staff and
 harp cases the tables could not have given.
 
+**First two players on the public server** (round 134): their screenshots were an old release
+against the new server, plus three real things now fixed -- monsters are resolved by the species'
+**code name** (on the wire now) rather than a display name that depends on the archive's language
+columns; `UiTextTable` takes column 8 first instead of the rightmost Latin column (which was
+Vietnamese, Spanish or Arabic depending on the archive -- measured); and name plates show only
+within 80 units (a choice, adjustable). The login screen remembers the server and account name,
+there is a UI scale and a chat font size for TVs, and **F3 opens a debug panel** whose Copy button
+is what to ask a tester for from now on: build and commit, position, every entity's resolution,
+load failures, frame times. Open: Alexandria's untextured ground and buildings on that archive.
+
 ## 2026-09-10 — the character dressed from the game's own tables
 
 "Fix the player models and armor": the server equipped the Cotton starter set and the client drew

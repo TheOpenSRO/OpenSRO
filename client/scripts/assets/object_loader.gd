@@ -26,6 +26,21 @@ class_name ObjectLoader
 ## a matching real layer_name, which is the honest remaining unconfirmed
 ## case rather than the common one.
 
+## What could not be loaded this run -- a count and the last few messages
+## -- for the debug panel, which is how a tester on their own archive can
+## say "the buildings are black" and read off which textures were missing.
+## Static because every loader function is; nothing resets it.
+static var missing_count := 0
+static var missing_recent: Array[String] = []
+const MISSING_RECENT_KEPT := 12
+
+static func _missing(what: String) -> void:
+	missing_count += 1
+	missing_recent.append(what)
+	if missing_recent.size() > MISSING_RECENT_KEPT:
+		missing_recent.pop_front()
+	push_error("ObjectLoader: %s" % what)
+
 ## Loads the real object at path within archive and returns a Node3D.
 ## path is usually a real .bsr (a MeshInstance3D per mesh piece, textured
 ## where a .bmt/.ddj could be resolved) -- but real object.ifo entries can
@@ -44,7 +59,7 @@ static func load_object(archive: Pk2Reader, path: String) -> Node3D:
 	var bsr_path := path
 	var bsr_entry := find_file(archive, bsr_path)
 	if bsr_entry == null:
-		push_error("ObjectLoader: %s not found in archive" % bsr_path)
+		_missing("%s not found in archive" % bsr_path)
 		return null
 	var bsr_data := archive.read_file(bsr_entry)
 	var obj := BsrReader.parse(bsr_data)
@@ -91,7 +106,7 @@ static func load_object(archive: Pk2Reader, path: String) -> Node3D:
 	for i in range(mesh_paths.size()):
 		var entry := find_file(archive, mesh_paths[i])
 		if entry == null:
-			push_error("ObjectLoader: %s not found in archive" % mesh_paths[i])
+			_missing("%s not found in archive" % mesh_paths[i])
 			continue
 		var bms_data := archive.read_file(entry)
 		var mesh := BmsReader.parse(bms_data)
@@ -146,7 +161,7 @@ static func load_object(archive: Pk2Reader, path: String) -> Node3D:
 		loaded_count += 1
 
 	if loaded_count == 0 and not mesh_paths.is_empty():
-		push_error("ObjectLoader: %s: none of its %d mesh piece(s) could be loaded" % [bsr_path, mesh_paths.size()])
+		_missing("%s: none of its %d mesh piece(s) could be loaded" % [bsr_path, mesh_paths.size()])
 		root.free()
 		return null
 
@@ -212,7 +227,7 @@ static func _add_object_navmesh_collision(
 static func _load_compound_object(archive: Pk2Reader, cpd_path: String) -> Node3D:
 	var cpd_entry := find_file(archive, cpd_path)
 	if cpd_entry == null:
-		push_error("ObjectLoader: %s not found in archive" % cpd_path)
+		_missing("%s not found in archive" % cpd_path)
 		return null
 	var compound := CpdReader.parse(archive.read_file(cpd_entry))
 	if compound == null:
@@ -230,7 +245,7 @@ static func _load_compound_object(archive: Pk2Reader, cpd_path: String) -> Node3
 		loaded_count += 1
 
 	if loaded_count == 0:
-		push_error("ObjectLoader: %s: none of its %d real compound piece(s) could be loaded" % [cpd_path, compound.bsr_paths.size()])
+		_missing("%s: none of its %d real compound piece(s) could be loaded" % [cpd_path, compound.bsr_paths.size()])
 		root.free()
 		return null
 
@@ -241,7 +256,7 @@ static func _load_compound_object(archive: Pk2Reader, cpd_path: String) -> Node3
 static func load_material(archive: Pk2Reader, bmt_path: String) -> BmtReader.ParsedMaterial:
 	var entry := find_file(archive, bmt_path)
 	if entry == null:
-		push_error("ObjectLoader: %s not found in archive" % bmt_path)
+		_missing("%s not found in archive" % bmt_path)
 		return null
 	return BmtReader.parse(archive.read_file(entry))
 
@@ -348,7 +363,7 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 		tex_path = dir + "/" + layer.texture_path if dir != "" else layer.texture_path
 	var tex_entry := find_file(archive, tex_path)
 	if tex_entry == null:
-		push_error("ObjectLoader: texture %s (referenced by %s) not found in archive" % [tex_path, bmt_path])
+		_missing("texture %s (referenced by %s) not found in archive" % [tex_path, bmt_path])
 		return mat
 
 	var parsed_tex := DdjReader.parse(archive.read_file(tex_entry))
@@ -601,7 +616,7 @@ static func _real_alpha_fraction(texture: Texture2D) -> float:
 static func load_mesh(archive: Pk2Reader, bms_path: String) -> MeshInstance3D:
 	var entry := find_file(archive, bms_path)
 	if entry == null:
-		push_error("ObjectLoader: %s not found in archive" % bms_path)
+		_missing("%s not found in archive" % bms_path)
 		return null
 	var data := archive.read_file(entry)
 	var mesh := BmsReader.parse(data)

@@ -28,6 +28,15 @@ func _ready() -> void:
 	NetClient.connection_failed.connect(_on_connection_failed)
 	NetClient.login_result.connect(_on_login_result)
 	NetClient.register_result.connect(_on_register_result)
+	# The server that last answered, and the account name, come back from
+	# the previous run (ClientSettings) so a tester on someone else's server
+	# is not retyping "host:port" every launch. The password never does.
+	var remembered_address := ClientSettings.server_address()
+	if remembered_address != "":
+		server_address_edit.text = remembered_address
+	var remembered_username := ClientSettings.username()
+	if remembered_username != "":
+		username_edit.text = remembered_username
 
 func _on_login_pressed() -> void:
 	_pending_action = "login"
@@ -70,6 +79,10 @@ func _parse_server_address(text: String) -> Dictionary:
 	return {"host": host, "port": port}
 
 func _on_connected() -> void:
+	# Remembered only once the server has actually answered, so a typo is
+	# not what greets the next launch.
+	ClientSettings.set_value(ClientSettings.SECTION_SERVER, ClientSettings.KEY_ADDRESS, server_address_edit.text.strip_edges())
+	ClientSettings.set_value(ClientSettings.SECTION_SERVER, ClientSettings.KEY_USERNAME, username_edit.text)
 	_send_pending_action()
 
 func _send_pending_action() -> void:

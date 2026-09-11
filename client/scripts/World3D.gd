@@ -772,11 +772,15 @@ var _other_body_targets := {} # character_id -> Vector3
 ## character_id -> {skeleton, gender, group, moving}: what another player's
 ## body is playing, so its gait can follow its movement.
 var _other_gaits := {}
+## character_id -> {slot: item id}, as last reported: what the debug panel
+## lists for another player.
+var _other_equipped := {}
 ## How far a body may still be from its target before it counts as moving:
 ## a tenth of the body's height (REAL_CHARACTER_NATIVE_HEIGHT), so the tail
 ## of the interpolation reads as standing.
 const OTHER_GAIT_THRESHOLD := 1.4
 var _monster_bodies := {} # monster_id -> Node3D
+var _monster_snapshots := {} # monster_id -> CombatNet.MonsterSnapshot, as last listed
 var _last_sent_pos := Vector3.ZERO
 var _time_since_send := 0.0
 
@@ -823,6 +827,10 @@ var _item_kinds: Dictionary = {}
 ## The animation group the player's held weapon selects, "default" when the
 ## hands are empty or the weapon's kind is not mapped.
 var _player_weapon_group := "default"
+## slot -> item id as last fetched from the server, for the debug panel:
+## _real_player_equipped_items() is a coroutine that asks the server, and
+## a panel refreshing twice a second must not.
+var _player_equipped_last: Dictionary = {}
 
 var _media_pk2: Pk2Reader
 var _ui_text_table: UiTextTable
@@ -1203,6 +1211,17 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 	# like when someone plays it.
 	_set_dev_ui_visible(false)
 	_log_system("Developer tools (zone travel, log out): F1")
+
+	# The debug panel, and the three things a player asked to be able to
+	# change from a couch: name range, UI scale (applied at boot) and chat
+	# font, all remembered by ClientSettings.
+	_debug_panel = DebugPanel.new(self)
+	$UI.add_child(_debug_panel)
+	_log_system("Debug panel (build, position, entities, loading, performance): F3")
+	set_name_plate_range(ClientSettings.name_plate_range(NAME_PLATE_RANGE))
+	var chat_font_size := ClientSettings.chat_font_size()
+	if chat_font_size > 0:
+		chat_log.add_theme_font_size_override("normal_font_size", chat_font_size)
 
 ## Pushes the camera's far clipping plane out far enough to actually see
 ## the real terrain this scene streams in.
@@ -3038,6 +3057,8 @@ func _name_plate(text: String, above: float) -> Label3D:
 	# crowd of NPCs legible.
 	label.no_depth_test = true
 	label.render_priority = 1
+	label.add_to_group("name_plates")
+	_apply_name_plate_range(label)
 	return label
 
 ## Where a name sits over a model, how large it draws, and in what colour.
@@ -3051,6 +3072,27 @@ const NAME_PLATE_PIXEL_SIZE := 0.0004
 const NAME_PLATE_COLOUR := Color(1.0, 0.94, 0.72)
 const NAME_PLATE_OUTLINE := 8
 const NAME_PLATE_OUTLINE_COLOUR := Color(0.0, 0.0, 0.0, 0.85)
+## How near an entity has to be before its name shows, in world units (a
+## character is about 16 tall), with the plate fading in over the last
+## tenth of that. A project choice, not a recovered value: nothing found
+## says where the original starts drawing names. Every plate is in the
+## "name_plates" group so set_name_plate_range can change it live.
+const NAME_PLATE_RANGE := 80.0
+var _name_plate_range := NAME_PLATE_RANGE
+
+## Changes how near an entity has to be before its name shows, for every
+## plate already in the scene and every one made from now on.
+func set_name_plate_range(distance: float) -> void:
+	_name_plate_range = maxf(distance, 0.0)
+	for node in get_tree().get_nodes_in_group("name_plates"):
+		_apply_name_plate_range(node as Label3D)
+
+func _apply_name_plate_range(label: Label3D) -> void:
+	if label == null:
+		return
+	label.visibility_range_end = _name_plate_range
+	label.visibility_range_end_margin = _name_plate_range * 0.1
+	label.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 
 ## The top of an assembled skeleton, in its own local space.
 func _skeleton_top(skeleton: Skeleton3D) -> float:
@@ -3828,6 +3870,7 @@ func _build_assembled_character(equipped: Dictionary = {}, gender: String = DEFA
 ## character wears the starting kit the server gave it.
 func _try_apply_real_player_character() -> void:
 	var equipped := await _real_player_equipped_items()
+	_player_equipped_last = equipped
 	var gender := DEFAULT_GENDER
 	if NetClient.last_enter_world_result != null and NetClient.last_enter_world_result.gender != "":
 		gender = NetClient.last_enter_world_result.gender
@@ -4412,6 +4455,8 @@ func _update_blob_shadow() -> void:
 ##                          contains one of these fragments
 ##   SRREVAMP_QA_LOOK=1     print which real placed objects the camera is
 ##                          pointing at (model name, distance, placement)
+##   SRREVAMP_QA_DEBUG=1    open the debug panel (F3) as soon as the first
+##                          region has loaded, so a render shows it
 ##   SRREVAMP_QA_ZONE=z     after the first region loads, reload assets for
 ##                          this zone -- accepts the zone box's own
 ##                          `x/y@localX,localZ` form. Reproduces a real
@@ -4427,6 +4472,22 @@ func _update_blob_shadow() -> void:
 var _qa_done := false
 var _qa_tick := 0
 
+## Puts the player at a region-local spot in the region they stand in,
+## landing on the highest walkable surface there -- what SRREVAMP_QA_AT
+## and the debug panel's teleport both do. False when no region has
+## streamed in yet.
+func _teleport_local(lx: float, lz: float) -> bool:
+	var pair := _nav_graph_for(player.global_position)
+	if pair.is_empty():
+		return false
+	var graph: NavGraph = pair[0]
+	var group: Node3D = pair[1]
+	# An arrival, not a step: land on the highest surface here.
+	var ly := graph.landing_height_at(lx, lz)
+	player.global_position = group.to_global(Vector3(lx, ly, lz))
+	player.velocity = Vector3.ZERO
+	return true
+
 func _qa_step() -> void:
 	var pair := _nav_graph_for(player.global_position)
 	if not _qa_done:
@@ -4437,14 +4498,9 @@ func _qa_step() -> void:
 		if at != "":
 			var parts := at.split(",")
 			if parts.size() >= 2:
-				var graph: NavGraph = pair[0]
-				var group: Node3D = pair[1]
-				var lx := float(parts[0])
-				var lz := float(parts[1])
-				# An arrival, not a step: land on the highest surface here.
-				var ly := graph.landing_height_at(lx, lz)
-				player.global_position = group.to_global(Vector3(lx, ly, lz))
-				player.velocity = Vector3.ZERO
+				_teleport_local(float(parts[0]), float(parts[1]))
+		if OS.get_environment("SRREVAMP_QA_DEBUG") != "" and _debug_panel != null:
+			_debug_panel.toggle()
 		if OS.get_environment("SRREVAMP_QA_FREE") != "":
 			camera_arm.collision_mask = 0
 		if OS.get_environment("SRREVAMP_QA_DIST") != "":
@@ -5407,6 +5463,8 @@ func _physics_process(delta: float) -> void:
 				Skeleton3DBuilder.apply_ban_pose(_player_skeleton, anim, frame_idx)
 
 func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, gender: String = DEFAULT_GENDER) -> void:
+	if not equipped.is_empty():
+		_other_equipped[character_id] = equipped
 	if _other_bodies.has(character_id):
 		# Sets the real interpolation *target* only -- see
 		# _other_body_targets' own doc comment for why this replaced a
@@ -5447,11 +5505,10 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		mesh.position.y = 0.9 * PLAYER_SCALE_RATIO
 		body.add_child(mesh)
 
-	var label := Label3D.new()
-	label.text = char_name
-	label.position.y = 2.2 * PLAYER_SCALE_RATIO
-	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	body.add_child(label)
+	# The same plate as an NPC's -- fixed screen size, outlined, shown only
+	# within range -- over the assembled body's own height.
+	var top := _skeleton_top(skeleton) if skeleton != null else 1.8 * PLAYER_SCALE_RATIO
+	body.add_child(_name_plate(char_name, top))
 
 	other_entities.add_child(body)
 	_other_bodies[character_id] = body
@@ -5637,6 +5694,9 @@ func _log_system(text: String) -> void:
 ## box, Log Out, and the Hide UI button. Shown with F1.
 const DEV_UI_NODES := ["ZoneInput", "ChangeZoneButton", "DisconnectButton"]
 var _dev_ui_visible := true
+## The F3 panel: build, server, position, entities, loading failures,
+## frame times, and the sliders for UI scale, chat font and name range.
+var _debug_panel: DebugPanel = null
 
 func _set_dev_ui_visible(shown: bool) -> void:
 	_dev_ui_visible = shown
@@ -5677,6 +5737,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and (event as InputEventKey).pressed \
 			and (event as InputEventKey).keycode == KEY_F1:
 		_toggle_dev_ui()
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventKey and (event as InputEventKey).pressed \
+			and (event as InputEventKey).keycode == KEY_F3 and _debug_panel != null:
+		_debug_panel.toggle()
 		get_viewport().set_input_as_handled()
 		return
 	if event.is_action_pressed("toggle_ui"):
@@ -5780,32 +5845,47 @@ func _terrain_height_at(pos: Vector3) -> float:
 ## (SkinnedBsrAssembler). What was seven constants and a table per creature
 ## is now a name lookup that covers 642 species.
 
-## Per-run cache of loaded real monster assets, keyed by species (matching
-## CombatNet.MonsterSnapshot.monster_name) -- shared by every species using
-## this same real pipeline (a .bsr-referenced .bsk skeleton + several .bms
-## {lowercased species display name -> .bsr path}, built once from the
-## player's own Media.pk2. See NpcTableReader.parse_models_by_name.
+## Species -> model, built once from the player's own Media.pk2, two ways:
+## {code name -> .bsr path} (`MOB_CH_MANGNYANG`, the row's own key, the same
+## in every archive) and {lowercased display name -> .bsr path} for a
+## server that sends no code. The code comes first: a display name is
+## whatever language column an archive carries, and on one archive the
+## name join drew a Mangyang as a treasure chest and a Weasel as nothing.
+## See NpcTableReader.parse_models_by_code / parse_models_by_name.
+var _monster_models_by_code: Dictionary = {}
 var _monster_models_by_name: Dictionary = {}
 var _monster_models_loaded := false
+## The object name table as parsed from the player's archive, kept so the
+## debug panel can show what language its columns yield.
+var _object_name_table: UiTextTable = null
 
-func _monster_model_path(species_name: String) -> String:
+func _monster_model_path(code_name: String, species_name: String) -> String:
 	if not _monster_models_loaded:
 		_monster_models_loaded = true
 		if _media_pk2 == null:
 			_media_pk2 = _open_media_pk2_if_set()
 		if _media_pk2 != null:
 			var names_entry := ObjectLoader.find_file(_media_pk2, NpcTableReader.OBJECT_NAME_TABLE_PATH)
+			var names: UiTextTable = null
 			if names_entry != null:
-				var names := UiTextTable.parse(_media_pk2.read_file(names_entry))
-				for path in NpcTableReader.MODEL_TABLE_PATHS:
-					var entry := ObjectLoader.find_file(_media_pk2, path)
-					if entry != null:
-						_monster_models_by_name = NpcTableReader.parse_models_by_name(
-							_media_pk2.read_file(entry), names, _monster_models_by_name)
-			print("World3D: %d species resolvable by name" % _monster_models_by_name.size())
+				names = UiTextTable.parse(_media_pk2.read_file(names_entry))
+			_object_name_table = names
+			for path in NpcTableReader.MODEL_TABLE_PATHS:
+				var entry := ObjectLoader.find_file(_media_pk2, path)
+				if entry == null:
+					continue
+				var bytes := _media_pk2.read_file(entry)
+				_monster_models_by_code = NpcTableReader.parse_models_by_code(bytes, _monster_models_by_code, "")
+				if names != null:
+					_monster_models_by_name = NpcTableReader.parse_models_by_name(bytes, names, _monster_models_by_name)
+			print("World3D: %d species resolvable by code, %d by name" % [
+				_monster_models_by_code.size(), _monster_models_by_name.size()])
+	if code_name != "" and _monster_models_by_code.has(code_name):
+		return _monster_models_by_code[code_name]
 	return _monster_models_by_name.get(species_name.to_lower(), "")
 
 func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
+	_monster_snapshots[monster.monster_id] = monster
 	var pos := Vector3(monster.x, monster.y, monster.z)
 	pos.y = _terrain_height_at(pos)
 
@@ -5831,7 +5911,7 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	# SkinnedBsrAssembler reads the .bsr's own skeleton and meshes, and
 	# computes the bone mapping.
 	var monster_skeleton: Skeleton3D = null
-	var monster_model := _monster_model_path(monster.monster_name)
+	var monster_model := _monster_model_path(monster.code_name, monster.monster_name)
 	if monster_model != "":
 		if _data_pk2 == null:
 			_data_pk2 = _open_pk2_if_set()
@@ -5844,8 +5924,9 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	# Says which of the three ways a monster can come out wrong happened:
 	# the species not in the tables, the model not assembling, or a real
 	# model placed somewhere the player will never be.
-	print("World3D: monster %s -> model '%s' skeleton=%s at %.0f,%.0f,%.0f (%.0f from the player)" % [
-		monster.monster_name, monster_model, "yes" if monster_skeleton != null else "NO",
+	print("World3D: monster %s (%s) -> model '%s' skeleton=%s at %.0f,%.0f,%.0f (%.0f from the player)" % [
+		monster.monster_name, monster.code_name if monster.code_name != "" else "no code",
+		monster_model, "yes" if monster_skeleton != null else "NO",
 		pos.x, pos.y, pos.z, pos.distance_to(player.global_position)])
 
 	# Real model height varies a lot by species/asset (real monster

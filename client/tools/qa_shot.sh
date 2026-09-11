@@ -25,6 +25,7 @@
 #   --gender g        the gender a character created for --server is given
 #                     (china_man or china_woman)
 #   --attack          attack the nearest monster every second (needs --server)
+#   --debug           open the debug panel (F3) once the first region loads
 #   --nofog           disable fog, for high overview shots
 #   --free            let the camera pass through geometry
 #   --out <dir>       where to write frames (required)
@@ -73,6 +74,7 @@ while [ $# -gt 0 ]; do
     --say)    SAY="$2";    shift 2 ;;
     --gender) GENDER="$2"; shift 2 ;;
     --attack) ATTACK=1;    shift ;;
+    --debug)  DEBUG=1;     shift ;;
     --server)
       if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then SERVER="$2"; shift 2
       else SERVER="start"; shift; fi ;;
@@ -159,6 +161,7 @@ fi
 [ -n "$SAY" ] && export SRREVAMP_QA_SAY="$SAY"
 [ -n "$GENDER" ] && export SRREVAMP_QA_GENDER="$GENDER"
 [ -n "$ATTACK" ] && export SRREVAMP_QA_ATTACK=1
+[ -n "$DEBUG" ] && export SRREVAMP_QA_DEBUG=1
 
 # --resolution as well as the X screen: Godot renders at the project's own
 # window size otherwise, so asking for a square screen alone still produced

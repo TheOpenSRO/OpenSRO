@@ -18,6 +18,9 @@ func _ready() -> void:
 	print("SRRevamp boot: no bundled game data -- put your own *.pk2 files in the 'pk2' folder next to this executable.")
 	print("SRRevamp log file: %s" % ProjectSettings.globalize_path("user://logs/srrevamp.log"))
 	print("SRRevamp version: %s" % UpdateChecker.CLIENT_VERSION)
+	# Before any screen draws, so the login screen is already the size the
+	# player asked for last time (the debug panel changes it live).
+	ClientSettings.apply_ui_scale(get_window(), ClientSettings.ui_scale())
 
 	_updater = AutoUpdater.new()
 	add_child(_updater)

@@ -6890,3 +6890,79 @@ a snowman decoration from that camera, so its reaction is on the log, not
 in a picture.
 
 Still not read: how long the battle stance lasts.
+
+## Hundred-and-thirty-fourth round: two players on the public server, and what "mad wack" was
+
+The first two people to log into the public test server (a VM that follows
+`dev`, `deploy/README.md`) sent screenshots: one of them T-posed in
+underwear, both in a red set nobody was given, a Mangyang drawn as a
+treasure chest, a Weasel with a label and no body, a huge ornate disc at
+each player's feet or side, NPC names in Arabic and Spanish, and name
+plates readable across the whole plaza. Six things, four causes.
+
+**The client was v0.1.86.** That release is nineteen commits behind `dev`,
+from before the character was dressed from the tables (round 131), before
+other players were animated (round 132), and before the equipment wire
+changed from a mask and two booleans to slot-and-item pairs. Against the
+new server the old client reads the count byte as the mask and the first
+slot byte as "has a shield", and draws a shield from its old variant list
+at its old bone: the disc. The T-pose and the red set are round 131 and
+132's bugs, already fixed. Nothing to change but the release -- and the
+debug panel below now prints the build, because a screenshot of an old
+client against a new server looks like six unrelated bugs.
+
+**The chest and the missing Weasel were the display-name join.** The
+client resolved a monster's model by joining characterdata's `SN_` key
+through `textdata_object.txt` to a display name and matching the name the
+server sent. That name is whatever language column the archive yields,
+and this archive's yielded Arabic and Spanish -- so "Mangyang" matched a
+different row and "Weasel" matched none. The server now sends each
+species' **code name** (`MOB_CH_MANGNYANG`, `MOB_CH_GYO` for the Weasel,
+`MOB_WC_EARTHGHOST`; the rows' own keys, read off the box's table) in the
+monster snapshot, and the client resolves the model by code first,
+`NpcTableReader.parse_models_by_code` over every row. Measured on the
+box's archive first: the name join already had two rows named "Mangyang"
+(the event `MOB_EVE_STRONG_TQ_MANGNYANG` and the real one, same model by
+luck) and kept whichever came last.
+
+**The Arabic and Spanish were the language-column rule.** `UiTextTable`
+took column 8 when it held Latin text but then preferred the *rightmost*
+Latin field after it, on the theory that a later column was more recently
+authored. Measured against the box's three text tables the two rules
+disagree on 93 of 13,059 object rows, 243 of 12,570 UI rows and 2 of
+8,395 item rows, and in every one of them the rightmost field was a
+Vietnamese column ("Hép b¸u vËt" where column 9 said "Jewel Box"). On a
+multi-language archive the rightmost Latin field is Spanish, or an Arabic
+column carrying a Latin name. Column 8 first, then left to right, labels
+Jangan's nineteen town NPCs identically on the box's archive and English
+on the other; the test has both shapes.
+
+**Name plates now show within a range** -- `NAME_PLATE_RANGE`, 80 units, a
+project choice (nothing found says where the original starts drawing
+names), fading over the last tenth, adjustable live from the panel and
+remembered. Other players' plates are now the same plate NPCs get, over
+the body's own height, instead of a world-sized default label.
+
+Two more things from the same evening. The login screen remembers the
+server that last answered and the account name (`ClientSettings`,
+`user://settings.cfg`, no password), because the public server's address
+is not `127.0.0.1`. And "my chat box is too tiny on this TV": a UI scale
+and a chat font size, both remembered, both on the panel.
+
+**The debug panel** (F3, `DebugPanel`) is the answer to the next such
+report: the build and, from source, the branch and commit; the server and
+zone; world and region-local position, camera, gender, weapon group; every
+worn slot's item and model; every other player with gender, group and worn
+ids; every monster with code, model, hp and distance; NPC counts; the ten
+nearest name plates; the three archives with sizes, the species counts,
+and what `SN_MOB_CH_MANGNYANG` reads in this archive (the language column,
+in one line); `ObjectLoader`'s load failures with the last twelve paths;
+frame times, draw calls, memory. Copy puts it on the clipboard, Save
+writes `user://logs/diag-<time>.txt`, and there is a draw-mode switch
+(wireframe, unshaded, overdraw, lighting), a camera-through-walls toggle,
+an attack-nearest button and a region-local teleport.
+
+Not settled from the pictures, and not guessed: Alexandria's white ground
+and black buildings on that archive. The panel's loading section will
+say which files were missing; the box's archive has to be rendered there
+first to know whether it is the archive or the client.

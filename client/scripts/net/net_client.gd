@@ -13,6 +13,11 @@ signal connected
 signal connection_failed
 signal disconnected
 
+## Where the last connect_to_server call went, for the login screen to
+## remember and the debug panel to show. Empty until the first attempt.
+var server_host := ""
+var server_port := 0
+
 signal login_result(ok: bool, reason: String)
 signal register_result(ok: bool, reason: String)
 signal character_list_result(names: Array, error: String)
@@ -188,6 +193,8 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	_reader = PacketReader.new()
 	_use_tls = use_tls
 	_tls_host = host
+	server_host = host
+	server_port = port
 	_tls_handshaking = false
 	_connected = false
 	var err := _tcp_peer.connect_to_host(host, port)

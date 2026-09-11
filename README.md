@@ -32,7 +32,12 @@ Every tagged release publishes ready-to-run Windows and Linux client builds unde
 
 **Controls**: WASD/arrow keys walk directly, or left-click a spot on the ground to walk there.
 Right-click-drag orbits the camera around your character; the scroll wheel zooms. Press **F10** (or
-the "Hide UI" button, top-right) to hide the HUD for a clean view.
+the "Hide UI" button, top-right) to hide the HUD for a clean view, **F1** for the developer chrome
+(zone travel, log out), and **F3** for the debug panel: build and commit, server, position and
+region, what every nearby entity resolved to, what failed to load from your archives, frame
+times — with "Copy" and "Save" buttons so a report is one paste. The same panel has the sliders
+for UI scale, chat font size and how near a name plate shows; they are remembered in
+`settings.cfg` next to the log.
 
 **If something looks wrong**: the client always writes a log file, printed once at startup (look
 for a line like `SRRevamp log file: <path>`) — Windows: `%APPDATA%\Godot\app_userdata\SRRevamp\
