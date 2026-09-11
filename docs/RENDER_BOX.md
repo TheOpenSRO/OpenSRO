@@ -109,6 +109,11 @@ constants are often doubles**, so a 4-byte read shows zeros — always read 8.
 - **`/tmp` is tmpfs — RAM, not disk.** Rendered frames written there once filled 6.9 GB of the
   container's memory and wedged it so hard that sshd could not complete a handshake while still
   answering ping. Write frames to `/var/tmp` and delete them afterwards.
+- **The root disk is 40 GB and `/var/tmp` is on it.** Frame dumps accumulate fast — a couple of
+  days of QA runs left 8 GB of them — and a full disk does not fail a render: the movie writer
+  keeps going and writes 0-byte PNGs, and nothing complains until they are opened. Every frame
+  directory under `/var/tmp` is regenerable; delete them freely (`du -sh /var/tmp/*`), and keep
+  `/opt` (the archives, Ghidra, Godot) alone. `qa_shot.sh` warns below 2 GB free.
 - **One client at a time.** `qa_shot.sh` kills any running client before starting, so overlapping
   runs silently truncate each other. Wait for a run's own "done" marker *and* for no live process.
 - If the container stops answering SSH, reach it from the host with `pct exec 103 -- <cmd>`;

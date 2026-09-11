@@ -99,6 +99,10 @@ git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z            # builds and pub
   memory. Use `/var/tmp`, and clean up.
 - **Runs kill each other.** `qa_shot.sh` stops any running client before it starts. Wait for a run
   to finish — a "done" file plus no live process — before launching the next.
+- **A full disk renders empty frames, silently.** The movie writer keeps producing 0-byte PNGs
+  and the run reports success; 97 of one run's 169 frames came out empty that way. Frame dumps
+  under `/var/tmp` are the usual cause and are all regenerable — delete old ones rather than
+  keeping them. `qa_shot.sh` now warns below 2 GB free.
 
 ## Facts that were expensive to establish
 

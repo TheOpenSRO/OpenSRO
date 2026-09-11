@@ -89,6 +89,16 @@ pkill -9 -f "Godot_v4.2.2-stable_linux" 2>/dev/null || true
 sleep 1
 rm -rf "$OUT"; mkdir -p "$OUT"
 
+# A full disk does not fail a render: the movie writer keeps going and
+# writes 0-byte frames, and nothing says so until they are opened. Frame
+# dumps are the usual culprit -- a day's QA runs left 8 GB of them here --
+# so say it up front, and say what to delete.
+free_kb=$(df -Pk "$OUT" | awk 'NR==2 {print $4}')
+if [ "${free_kb:-0}" -lt 2000000 ]; then
+  echo "qa_shot: only $((free_kb / 1024)) MB free under $OUT -- frames will come out EMPTY on a full disk." >&2
+  echo "qa_shot: old frame directories under $(dirname "$OUT") are regenerable; delete them first." >&2
+fi
+
 cd "$CLIENT_DIR"
 
 # Hardware GL when the machine can offer it, software when it cannot.
