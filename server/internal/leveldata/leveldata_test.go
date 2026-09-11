@@ -1,6 +1,7 @@
 package leveldata
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -49,11 +50,13 @@ func TestAdvanceOneLevelCarriesRemainder(t *testing.T) {
 
 func TestAdvanceMultipleLevels(t *testing.T) {
 	tbl := mustParse(t)
-	// From level 1, gain 100+200+... = 310: crosses level 1 and 2 and reaches
-	// level 3, the cap here, so the overflow is dropped (maxed = no progress).
+	// From level 1, gain 310: crosses level 1 (100) and level 2 (200) and
+	// reaches level 3, the cap here, with 10 left over. 10 is below level 3's
+	// own requirement (300), so it is kept as partial progress -- the client
+	// only clamps the max-level bar when the gain would actually overflow it.
 	level, exp, gained := tbl.Advance(1, 0, 310)
-	if level != 3 || exp != 0 || gained != 2 {
-		t.Errorf("Advance(1,0,310) = (%d,%d,%d); want (3,0,2)", level, exp, gained)
+	if level != 3 || exp != 10 || gained != 2 {
+		t.Errorf("Advance(1,0,310) = (%d,%d,%d); want (3,10,2)", level, exp, gained)
 	}
 }
 
@@ -73,12 +76,42 @@ func TestAdvanceBelowMaxKeepsRemainder(t *testing.T) {
 func TestAdvanceStopsAtMaxLevel(t *testing.T) {
 	tbl := mustParse(t)
 	// Level 3 is the max: gaining exp there does not overflow into a level 4.
+	// A gain that would overflow is held at the level's requirement minus one
+	// (300-1 = 299), the way the client does it (FUN_008a97c0) -- a
+	// full-but-not-overflowing bar, not a zeroed one.
 	level, exp, gained := tbl.Advance(3, 0, 99999)
 	if level != 3 || gained != 0 {
 		t.Errorf("Advance at max = (%d,exp,%d); want level 3, 0 gained", level, gained)
 	}
-	if exp != 0 {
-		t.Errorf("max-level progress = %d, want 0 (held)", exp)
+	if exp != 299 {
+		t.Errorf("max-level progress = %d, want 299 (held at requirement-1)", exp)
+	}
+}
+
+// The character cap is MaxCharacterLevel (110), recovered from the client, even
+// when the curve table defines more levels than that.
+func TestAdvanceHonoursCharacterCapBelowTableEnd(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("level,exp\n")
+	// A curve out to level 200, every level needing 100.
+	for lvl := 1; lvl <= 200; lvl++ {
+		fmt.Fprintf(&b, "%d,100\n", lvl)
+	}
+	tbl, err := ParseCSV(strings.NewReader(b.String()))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	if tbl.MaxLevel() != 200 {
+		t.Fatalf("table MaxLevel = %d, want 200", tbl.MaxLevel())
+	}
+	// From level 1 with a huge gain, the character stops at 110, not 200, and
+	// the bar is held at that level's requirement minus one (100-1 = 99).
+	level, exp, _ := tbl.Advance(1, 0, 1_000_000)
+	if level != MaxCharacterLevel {
+		t.Errorf("Advance capped at level %d, want %d", level, MaxCharacterLevel)
+	}
+	if exp != 99 {
+		t.Errorf("capped progress = %d, want 99 (requirement-1)", exp)
 	}
 }
 

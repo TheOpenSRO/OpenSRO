@@ -21,8 +21,18 @@ is `17978`, which is exactly the "Next Exp" a level-9 character showed. Sample:
 | 10 | 23500 |
 | 11 | 34898 |
 
-Other columns (durability/gold/job-exp-looking values) are not needed for basic leveling and are
-left unread until a use for them is pinned.
+Other columns (10 total; cols 2/5/6-8 look job/cost/gold-related) are not needed for basic
+leveling and are left unread until a use for them is pinned. **leveldata.txt carries no per-level
+HP/MP** — those come from a derived-stat formula not yet recovered.
+
+### The carry/cap behaviour is recovered too (not assumed)
+
+From `sro_client.exe`'s EXP handler `FUN_008a97c0` (2026-09-11, see `docs/GROUNDING_AUDIT.md`):
+on a gain, each level's requirement is subtracted from the running EXP and the level incremented
+in a loop — **excess EXP carries into the next level**. The loop caps `while (level != 'n')`,
+where `'n'` is 0x6E = **110**, so the character cap is level 110 regardless of the table having 139
+rows. At the cap the bar is **held at that level's requirement minus one**, not zeroed.
+`leveldata.Advance` and `MaxCharacterLevel` now match this.
 
 ## Stat points — 3 per level
 

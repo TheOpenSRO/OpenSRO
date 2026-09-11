@@ -54,8 +54,10 @@ built on recovered data, mostly disclosed, plus **one client comment that overst
 | Loot table values | **OWN-DESIGN (disclosed)** | Placeholder item IDs 500–502; keyed by name (real tables key by `RefMonsterID`, mapping not yet confirmed). |
 | Shop prices | **OWN-DESIGN (disclosed)** | Formula from item stats; documents the real price-table dead-end (`_RefPricePolicyOfItem` empty). |
 | Quest catalog / gold rewards | **OWN-DESIGN (disclosed)** | "own design"; references the placeholder monster content. |
-| EXP overflow carries to next level; max-level exp held at 0 | **BEHAVIOUR ASSUMPTION** | `leveldata.Advance`. Standard MMO model; the max-level cap is disclosed, the carry is presented matter-of-factly, neither is RE-confirmed. |
-| Level-up refills HP; stat points granted at level-up | **BEHAVIOUR ASSUMPTION** | Within the flat own-design HP. Reasonable, not RE-confirmed. |
+| EXP overflow carries to next level | **RECOVERED (2026-09-11)** | Grounded in `sro_client.exe` `FUN_008a97c0`: the level-up loop subtracts each level's requirement from the running EXP and increments the level, carrying the remainder. `leveldata.Advance` matches. |
+| Max character level = 110 | **RECOVERED (2026-09-11)** | Same handler caps its loop `while (level != 'n')` (0x6E = 110), independent of the 139-row table. `leveldata.MaxCharacterLevel`. |
+| Max-level EXP held at requirement−1 (not zeroed) | **RECOVERED (2026-09-11)** | Same handler, cap branch: `exp = requirement - 1`. `Advance` corrected from its earlier zeroing assumption. |
+| Level-up refills HP; stat points granted at level-up | **BEHAVIOUR ASSUMPTION** | Server-authoritative (not in the client EXP handler), and sits inside the flat own-design `MaxHP=100`. Grounding it needs the real max-HP/derived-stat formula — the same recovery the character window needs. Tracked as the next target. |
 | PvP (duel) damage | **OWN-DESIGN (disclosed)** | Reuses the same combat model, mitigated by the defender's real equipped armour; no separate formula. |
 | Inventory size = 50 slots | **OWN-DESIGN (disclosed)** | Labelled "our [own design]"; not claimed as the real client's slot count. |
 

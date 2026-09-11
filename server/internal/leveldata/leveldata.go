@@ -20,6 +20,15 @@ import (
 // character window showed 24 stat points, and (9-1)*3 = 24. See docs/LEVELING.md.
 const StatPointsPerLevel = 3
 
+// MaxCharacterLevel is the hard level cap this client enforces, recovered from
+// the client's own EXP handler: sro_client.exe FUN_008a97c0 runs its level-up
+// carry loop `while (level != 'n')` -- 'n' is 0x6E = 110 -- and force-stops at
+// that level. It is independent of the leveldata.txt row count (that table has
+// 139 rows; a character still stops at 110). This is this specific client's
+// base-game cap; a later expansion's client would raise it. See
+// docs/GROUNDING_AUDIT.md.
+const MaxCharacterLevel = 110
+
 // Table is the level -> EXP-to-advance curve. expToNext[L] is the experience a
 // character must accumulate at level L to reach level L+1.
 type Table struct {
@@ -51,28 +60,38 @@ func (t *Table) Loaded() bool { return t != nil && len(t.expToNext) > 0 }
 
 // Advance applies gained EXP to a character at (level, exp), where exp is the
 // progress already accumulated at level. It returns the new level, the new
-// progress, and how many levels were gained. Progress that would carry past the
-// max level is dropped (capped at that level's requirement minus one is not
-// done here -- the caller decides; this simply stops advancing). A nil/empty
-// table gains no levels and accumulates exp unbounded, so a server with no
-// curve still tracks raw progress.
+// progress, and how many levels were gained. A nil/empty table gains no levels
+// and accumulates exp unbounded, so a server with no curve still tracks raw
+// progress.
 //
-// The EXP *curve* is recovered (leveldata.txt), but this carry model -- excess
-// EXP rolling into the next level, and being zeroed at the cap -- is the
-// standard MMO assumption, NOT confirmed against the real client. See
-// docs/GROUNDING_AUDIT.md; correct here if the real behaviour is recovered.
+// The carry model is RECOVERED from the client, not assumed: sro_client.exe's
+// EXP handler FUN_008a97c0 does exactly this -- on each level it subtracts that
+// level's requirement from the running EXP and increments the level in a loop
+// (excess EXP rolls into the next level), stopping when the EXP is below the
+// next level's requirement OR the level reaches the cap 'n' (110,
+// MaxCharacterLevel). At the cap it does NOT zero the bar: it holds EXP at that
+// level's requirement minus one (a full-but-not-overflowing bar). See
+// docs/GROUNDING_AUDIT.md.
 func (t *Table) Advance(level int, exp int64, gained int64) (newLevel int, newExp int64, levelsGained int) {
 	newLevel = level
 	newExp = exp + gained
 	if !t.Loaded() {
 		return newLevel, newExp, 0
 	}
+	// The effective cap is the client's hard cap or the last level the table
+	// actually defines, whichever comes first (a shorter table can't advance
+	// past its last row).
+	levelCap := t.maxLevel
+	if MaxCharacterLevel < levelCap {
+		levelCap = MaxCharacterLevel
+	}
 	for {
 		need, ok := t.expToNext[newLevel]
-		if !ok || newLevel >= t.maxLevel {
-			// At (or past) the max level: hold progress, do not overflow.
-			if newLevel >= t.maxLevel {
-				newExp = 0
+		if !ok || newLevel >= levelCap {
+			// At the cap, hold EXP just below this level's requirement, the
+			// way the client does (FUN_008a97c0) -- not zeroed.
+			if newLevel >= levelCap && ok && newExp >= need {
+				newExp = need - 1
 			}
 			break
 		}
