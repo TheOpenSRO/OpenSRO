@@ -7075,6 +7075,23 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-forty-first round: the paper doll
+
+"Notice how in the inventory menu my character is rendered here." The
+equipment window (`ifequipment`, its own window on `O`) now renders the
+dressed character live, the way the original does. `PaperDoll` is a
+`SubViewport` with its own world -- an orthographic camera framed on the
+model's own bone bounds, a key light and grey ambient, so the game
+world's camera and lighting do not leak in -- and World3D builds a second
+copy of the assembled body (the same `_build_assembled_character` the
+world uses, dressed from the same equipment) into it, posed in the town
+idle, whenever the equipment changes. The equipment window shows the
+viewport's texture in the central column between the two rows of worn
+slots. Rendered on the box: the white Cotton set and the sword, head to
+foot. The worn slots around it are still empty frames -- filling them
+with the equipped icons, and the item table's armour defence block, are
+the follow-ups.
+
 ## Hundred-and-fortieth round: a weapon's stats on hover, measured off a real tooltip
 
 "If I hover over an item it shows me the stats." Hovering an inventory

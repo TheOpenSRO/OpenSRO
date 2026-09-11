@@ -3974,6 +3974,30 @@ func _try_apply_real_player_character() -> void:
 		_player_weapon_group,
 		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_STAND, _player_weapon_group),
 		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_RUN, _player_weapon_group)])
+	_refresh_paper_doll(equipped, gender)
+
+## Builds a fresh dressed character (a second copy, not the one on the
+## player) into the PaperDoll so the equipment window can show it, the way
+## the original renders the character in that window. Rebuilt whenever the
+## equipment changes.
+var _paper_doll: PaperDoll = null
+
+func _refresh_paper_doll(equipped: Dictionary, gender: String) -> void:
+	if _hud_panels == null:
+		return
+	if _paper_doll == null:
+		_paper_doll = PaperDoll.new()
+		_paper_doll.name = "PaperDoll"
+		add_child(_paper_doll)
+	var doll_skeleton := _build_assembled_character(equipped, gender)
+	if doll_skeleton == null:
+		return
+	# The doll stands in the town idle, the same as the body in the world.
+	var idle := _body_animation_for(gender, BsrReader.AnimationEntry.TYPE_STAND, _weapon_group_for(equipped))
+	if idle != null and _frame_count(idle) > 1:
+		Skeleton3DBuilder.apply_ban_pose_at(doll_skeleton, idle, 0.0, true)
+	_paper_doll.set_character(doll_skeleton)
+	_hud_panels.set_paper_doll_texture(_paper_doll.get_texture())
 
 ## Switches another player's looping animation between stand and run as
 ## their body starts and stops moving. The entry keeps its phase so a

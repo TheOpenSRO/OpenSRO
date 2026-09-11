@@ -22,6 +22,9 @@ const HudWindow = preload("res://scripts/ui/hud/hud_window.gd")
 ## Each entry is [layout path, window title, hotkey action name or ""].
 const PANELS := {
 	"inventory": ["resinfo\\ifinventory.txt", "Inventory", KEY_I],
+	# The equipment window: the dressed character (the paper doll) with the
+	# worn slots around it. Its own window rather than fused to the bag.
+	"equipment": ["resinfo\\ifequipment.txt", "Equipment", KEY_O],
 	"character": ["resinfo\\ifplayerinfo.txt", "Character", KEY_C],
 	"skill": ["resinfo\\ifskill.txt", "Skill", KEY_K],
 	"quest": ["resinfo\\ifquest.txt", "Quest list", KEY_Q],
@@ -169,6 +172,8 @@ func open(panel_id: String) -> HudWindow:
 		_windows[panel_id] = window
 		if panel_id == "system":
 			_wire_system(window)
+		if panel_id == "equipment":
+			_place_paper_doll(window)
 		_populate(panel_id)
 	window.show()
 	window.move_to_front()
@@ -216,6 +221,36 @@ func open_npc_talk(npc_name: String) -> void:
 func _on_npc_talk_choice(meta: Variant) -> void:
 	if str(meta) == "end":
 		close("npctalk")
+
+## The live paper-doll texture (a SubViewport's), set by World3D whenever
+## the dressed character changes. Shown in the equipment window's central
+## column, between the two rows of worn slots.
+var _paper_doll_texture: Texture2D = null
+
+func set_paper_doll_texture(texture: Texture2D) -> void:
+	_paper_doll_texture = texture
+	var window: HudWindow = _windows.get("equipment")
+	if window != null:
+		_place_paper_doll(window)
+
+func _place_paper_doll(window: HudWindow) -> void:
+	if _paper_doll_texture == null:
+		return
+	var doll := window.get_node_or_null("PaperDoll") as TextureRect
+	if doll == null:
+		doll = TextureRect.new()
+		doll.name = "PaperDoll"
+		doll.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		doll.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		doll.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# The gap between the equipment window's two slot columns (slots sit
+		# at x 5 and x 141, 32 wide, over a 177-wide window): the central
+		# column from x 40 to x 138, below the title bar to just above the
+		# avatar-skill strip. The character renders here.
+		doll.position = Vector2(40, HudWindow.TITLE_BAR_HEIGHT + 4.0)
+		doll.size = Vector2(98, 236)
+		window.add_child(doll)
+	doll.texture = _paper_doll_texture
 
 ## Connects the System window's buttons to the signals World3D acts on.
 ## Each button is looked up by the name the authored layout gives it

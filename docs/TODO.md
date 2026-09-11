@@ -34,9 +34,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       open: the service lines behind the greeting (storage deposit, merchant shop, honour rank),
       each its own backend; only "End conversation" acts so far.
 - [x] **Item tooltips** with the real stats -- round 140, columns pinned against the Copper Sword
-      (+5) the user sent. Still open in inventory: the **paper doll** (the dressed character in a
-      SubViewport in the equipment half), and the armour defence block (armour reuses the weapon
-      stat columns for other stats, not yet measured -- an armour tooltip shows no defence number).
+      (+5) the user sent.
+- [x] **Paper doll** -- round 141: the equipment window (`O`) renders the dressed character live in
+      a SubViewport. Follow-ups: fill the worn slots around it with the equipped icons, and measure
+      the item table's armour defence block (armour reuses the weapon stat columns for other stats).
 - [ ] **Skill window** per `ifskill` / `ifskill_mastery` / `ifskill_slot`: Weapon / Force tabs,
       the three China masteries, mastery level, skill icons from `skilldata`, Level Up.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
