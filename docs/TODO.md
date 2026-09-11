@@ -33,14 +33,13 @@ In order. Each is checked off here when it ships in a release, with its round in
 - [x] **NPC talk.** A click on an NPC opens `if_npctalk` titled with its name -- round 139. Still
       open: the service lines behind the greeting (storage deposit, merchant shop, honour rank),
       each its own backend; only "End conversation" acts so far.
-      - **Merchant shop, investigated 2026-09-11 and NOT shipped.** The server's `shop.Service`
-        Buy/Catalog works, but its catalog is the whole refdata `items` table, which is **empty on
-        the test VM** (no `import-refdata` was run -- verified `SELECT count(*) FROM items` = 0), so
-        NPC->shop would open a blank window. Two gates: (a) importing refdata to fill the catalog --
-        but that also changes the live server's combat damage and pricing, a balance change to make
-        *with the user*, not silently; (b) per-NPC curation (a weapon merchant sells weapons), which
-        the whole-catalog service does not model. The client already resolves item names/icons from
-        an id, so the nameless wire entry is not itself a blocker. **Needs the user.**
+      - **Merchant shop.** The server's `shop.Service` Buy/Catalog works, but its catalog is the
+        whole refdata `items` table. `export-refdata` (round 145) now generates the CSV to fill it
+        from the client's own itemdata, verified import-ready. Running `import-refdata` against a
+        live server is the operator's call (it also turns on real weapon damage and enforces equip
+        requirements -- `deploy/README.md`). Once imported, still open: per-NPC curation (a weapon
+        merchant sells weapons), which the whole-catalog service does not model, before wiring
+        NPC talk -> shop.
 - [x] **Item tooltips** with the real stats -- round 140, columns pinned against the Copper Sword
       (+5) the user sent.
 - [x] **Paper doll** -- round 141: the equipment window (`O`) renders the dressed character live.

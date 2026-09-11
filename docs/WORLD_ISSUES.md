@@ -7075,6 +7075,36 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-forty-fifth round: the item reference data the server was missing
+
+The server had no item reference data on the test VM -- `SELECT count(*)
+FROM items` was 0 -- so its shop catalogue was empty and combat gave every
+weapon a flat unarmed damage of 5 (a copper sword hitting for 5 against a
+200-HP monster is why "the player dies before killing anything"). The
+data to fill it is the client's own itemdata tables, and `export-refdata`
+(new, `server/cmd`) turns them into the CSV `import-refdata` loads.
+
+The column mapping is the same measurement as round 140, extended and
+pinned by a test that round-trips a synthetic row through the importer's
+own parser. Verified against the real Copper Sword (+5) tooltip: physical
+attack at fields 96/98 (base 15/16), magical at 101/103 (25/28),
+durability 64/65 (62/76), attack rate 114 (24), critical 117 (3); the
+attack columns are the same for the bow and spear. What is **not** mapped,
+and left as an honest default rather than a guess: `MaxStack` = 1 (the
+server already treats every item as one-to-a-slot with no refdata, so this
+is no change), and **armour defence = 0** -- measuring the Cotton Suit
+showed armour keeps its stats in different columns (66-86) than a weapon's
+attack (93-118), and with no ground-truth armour tooltip those columns
+cannot be labelled phys- vs mag-defence with confidence, so they are left
+empty; combat does not read defence, so the only effect is the shop
+pricing armour at base.
+
+Importing it is left to the operator (`deploy/README.md`), not the deploy
+loop: it changes live gameplay (real weapon damage; the equipment rules
+begin enforcing the real race/gender/level requirements) and is reversible
+(`TRUNCATE items`). The exporter and its verification are shipped; whether
+to apply it to a live server is a call for whoever runs it.
+
 ## Hundred-and-forty-fourth round: the paper doll breathes
 
 A small one: the equipment window's paper doll was a still pose. It now
