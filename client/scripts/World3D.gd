@@ -168,6 +168,9 @@ const NAVMESH_WALL_COLLISION_LAYER := 0b10000 # layer 5 only
 ## time you stand in a crowd of them. Putting them on the default layer 1
 ## instead would have made Jangan's square unusable to look at.
 const NPC_COLLISION_LAYER := NAVMESH_WALL_COLLISION_LAYER
+## Monsters sit on their own layer so a click can pick one out to attack it
+## without a monster blocking movement or catching the ground-snap ray.
+const MONSTER_COLLISION_LAYER := 0b100000 # layer 6 only
 
 ## Smallest capsule an NPC gets, in world units, so a model whose bones all
 ## sit near the origin still stops someone.
@@ -6060,8 +6063,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				_left_press_position = event.position
 				_left_dragging = false
 			elif not _left_dragging:
-				# A click on an NPC talks to it; anywhere else walks there.
-				if not _try_talk_to_npc(_left_press_position):
+				# A click on an NPC talks to it, on a monster attacks it, and
+				# anywhere else walks there -- the original's left-click scheme.
+				if not _try_talk_to_npc(_left_press_position) \
+						and not _try_attack_monster(_left_press_position):
 					_try_set_move_target(_left_press_position)
 			_left_button_held = event.pressed
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
@@ -6312,9 +6317,54 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	var bar := _hp_bar(label_height * 0.9)
 	body.add_child(bar)
 	_set_hp_bar(body, monster.hp, monster.max_hp)
+	# A clickable collider so a left click on the monster attacks it (see
+	# _try_attack_monster), tagged with the id the attack is sent for.
+	body.set_meta("monster_id", monster.monster_id)
+	body.add_child(_monster_collider(label_height))
 
 	other_entities.add_child(body)
 	_monster_bodies[monster.monster_id] = body
+
+## A click-target collider for a monster: a capsule as tall as the model,
+## on the monster layer only, so a ray can pick it out for an attack while
+## it neither blocks movement nor catches the ground-snap ray.
+func _monster_collider(height: float) -> StaticBody3D:
+	var shape := CapsuleShape3D.new()
+	shape.height = maxf(height, 1.0)
+	shape.radius = maxf(height * 0.3, 1.0)
+	var sb := StaticBody3D.new()
+	sb.name = "ClickBody"
+	sb.collision_layer = MONSTER_COLLISION_LAYER
+	sb.collision_mask = 0
+	var cs := CollisionShape3D.new()
+	cs.shape = shape
+	cs.position = Vector3(0.0, shape.height * 0.5, 0.0)
+	sb.add_child(cs)
+	return sb
+
+## A left click on a monster attacks it, the way clicking one does in the
+## original. Ray-tests the monster layer only; on a hit, targets that
+## monster and sends the attack, returning true so the click does not also
+## walk there.
+func _try_attack_monster(screen_pos: Vector2) -> bool:
+	if not NetClient.is_connected_to_server():
+		return false
+	var from := camera_3d.project_ray_origin(screen_pos)
+	var dir := camera_3d.project_ray_normal(screen_pos)
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
+	query.exclude = [player.get_rid()]
+	query.collision_mask = MONSTER_COLLISION_LAYER
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return false
+	var node := hit["collider"] as Node
+	while node != null and not node.has_meta("monster_id"):
+		node = node.get_parent()
+	if node == null:
+		return false
+	_last_attack_target = int(node.get_meta("monster_id"))
+	NetClient.attack(NetClient.current_character_name, _last_attack_target)
+	return true
 
 ## Reconciles _monster_bodies against live, the authoritative full monster
 ## list for the player's current zone (see _on_monster_list_result) --

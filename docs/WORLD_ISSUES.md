@@ -7075,6 +7075,20 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-forty-seventh round: click a monster to attack it
+
+The left-click scheme is now the original's whole set: a click on an NPC
+talks to it, a click on a monster attacks it, a click on the ground walks
+there. Each monster carries a click collider on its own layer (bit 6, so
+it neither blocks movement nor catches the ground-snap ray) tagged with
+its id; `_try_attack_monster` ray-tests that layer and, on a hit, targets
+the monster and sends the attack down the same path the action-tab's
+Attack button uses. It sits between the NPC-talk and ground-move checks in
+the click handler. The combat behind it is still the placeholder damage
+until the round-145 refdata is imported -- but the interaction is the
+faithful one, and reads well with the round-146 HP bar shrinking on each
+hit.
+
 ## Hundred-and-forty-sixth round: monsters get an HP bar
 
 Monsters showed their health as text -- `Weasel (80/80)`. The original
