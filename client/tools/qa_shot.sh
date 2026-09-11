@@ -48,7 +48,7 @@ GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 
 REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""
 AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
-PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; GENDER=""; ATTACK=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
+PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; GENDER=""; ATTACK=""; DEBUG=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
 
 while [ $# -gt 0 ]; do
   case "$1" in

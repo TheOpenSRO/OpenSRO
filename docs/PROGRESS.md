@@ -23,7 +23,15 @@ Vietnamese, Spanish or Arabic depending on the archive -- measured); and name pl
 within 80 units (a choice, adjustable). The login screen remembers the server and account name,
 there is a UI scale and a chat font size for TVs, and **F3 opens a debug panel** whose Copy button
 is what to ask a tester for from now on: build and commit, position, every entity's resolution,
-load failures, frame times. Open: Alexandria's untextured ground and buildings on that archive.
+load failures, frame times. (Alexandria's untextured look was the old client too.)
+
+**"Animations at 5x speed"** (round 135): they were -- a hand-picked 30 keyframes a second where
+the `.ban` files carry a duration, a cyclic flag and a per-key time table (the header words filed
+as unknown). Measured over the fighter's clips with `client/tools/dump_ban_times.gd`: the town idle
+is 14 keys over 2333 ms, the battle stance 5 over 2000. Playback is on the files' own clock now,
+blended between keys. Same round: the camera no longer recenters when the character moves, WASD
+is camera-relative, the click ray no longer hits the player's capsule or the invisible navmesh
+walls, a left drag orbits, and the debug panel has town buttons. Open: "stuck in a building".
 
 ## 2026-09-10 — the character dressed from the game's own tables
 

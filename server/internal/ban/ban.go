@@ -44,12 +44,16 @@ type Bone struct {
 // Animation is a parsed .ban file.
 type Animation struct {
 	Name string
-	// Unconfirmed fields observed directly after the name in every real
-	// file checked (values 666/30/1 and 100/? in the two samples
-	// checked) — kept raw rather than mislabeled. See
+	// DurationMS is how long the clip runs; the last key time in every
+	// real file checked. AuthoredFPS is 30 in every file checked -- the
+	// grid the key times sit on, not a playback rate. Cyclic is 1 for
+	// stands, walks and runs, 0 for skills, sitting and dying. See
 	// docs/protocol/BAN_FORMAT.md.
-	Unknown1, Unknown2, Unknown3 uint32
-	Bones                        []Bone
+	DurationMS, AuthoredFPS, Cyclic uint32
+	// KeyTimes says when each keyframe falls, in milliseconds from the
+	// start: one entry per keyframe of every bone, ascending from 0.
+	KeyTimes []uint32
+	Bones    []Bone
 }
 
 // Parse parses a .ban file's raw bytes.
@@ -74,26 +78,28 @@ func Parse(data []byte) (*Animation, error) {
 	if off+12 > len(data) {
 		return nil, errors.New("ban: truncated before header fields")
 	}
-	a.Unknown1 = binary.LittleEndian.Uint32(data[off:])
-	a.Unknown2 = binary.LittleEndian.Uint32(data[off+4:])
-	a.Unknown3 = binary.LittleEndian.Uint32(data[off+8:])
+	a.DurationMS = binary.LittleEndian.Uint32(data[off:])
+	a.AuthoredFPS = binary.LittleEndian.Uint32(data[off+4:])
+	a.Cyclic = binary.LittleEndian.Uint32(data[off+8:])
 	off += 12
 
-	// A count-prefixed table of unconfirmed purpose (possibly per-frame
-	// timing/offset data) — its exact semantics aren't needed to parse
-	// past it, only its count.
+	// The key time table: when each keyframe falls, in milliseconds.
 	if off+4 > len(data) {
-		return nil, errors.New("ban: truncated before offset table count")
+		return nil, errors.New("ban: truncated before the key time table")
 	}
 	tableCount := binary.LittleEndian.Uint32(data[off:])
 	off += 4
 	if tableCount > maxTableCount {
-		return nil, fmt.Errorf("ban: implausible offset table count %d", tableCount)
+		return nil, fmt.Errorf("ban: implausible key time count %d", tableCount)
+	}
+	if off+int(tableCount)*4 > len(data) {
+		return nil, errors.New("ban: key time table runs past end of file")
+	}
+	a.KeyTimes = make([]uint32, tableCount)
+	for i := range a.KeyTimes {
+		a.KeyTimes[i] = binary.LittleEndian.Uint32(data[off+i*4:])
 	}
 	off += int(tableCount) * 4
-	if off > len(data) {
-		return nil, errors.New("ban: offset table runs past end of file")
-	}
 
 	if off+4 > len(data) {
 		return nil, errors.New("ban: truncated before bone count")

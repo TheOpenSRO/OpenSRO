@@ -63,10 +63,10 @@ func _build_animation(name: String, bones: Array) -> PackedByteArray:
 	buf = _append_u32(buf, 30)
 	buf = _append_u32(buf, 1)
 
-	# Offset table: 2 entries of unconfirmed content.
+	# The key time table: when each keyframe falls, in milliseconds.
 	buf = _append_u32(buf, 2)
 	buf = _append_u32(buf, 0)
-	buf = _append_u32(buf, 0)
+	buf = _append_u32(buf, 666)
 
 	buf = _append_u32(buf, bones.size())
 	for bone in bones:
@@ -90,7 +90,15 @@ func _init() -> void:
 	_check(a != null, "parses synthetic animation")
 	if a != null:
 		_check(a.animation_name == "test_spin", "name matches (got %s)" % a.animation_name)
-		_check(a.unknown1 == 666 and a.unknown2 == 30 and a.unknown3 == 1, "header fields match")
+		_check(a.duration_ms == 666 and a.authored_fps == 30 and a.cyclic, "header fields match")
+		_check(a.key_times == PackedInt32Array([0, 666]), "the key time table is read (got %s)" % str(a.key_times))
+		_check(is_equal_approx(a.duration_seconds(), 0.666), "duration in seconds")
+		# Which keyframe is in force at a time: the second from 666 ms on, a
+		# loop wrapping back to the first, a one-shot holding the last.
+		_check(a.key_index_at(0.3, true) == 0 and a.key_index_at(0.666, false) == 1,
+			"key index by time (got %d, %d)" % [a.key_index_at(0.3, true), a.key_index_at(0.666, false)])
+		_check(a.key_index_at(0.7, true) == 0, "a looping clip wraps at its duration (got %d)" % a.key_index_at(0.7, true))
+		_check(a.key_index_at(5.0, false) == 1, "a one-shot holds its last keyframe (got %d)" % a.key_index_at(5.0, false))
 		_check(a.bones.size() == 1, "1 bone (got %d)" % a.bones.size())
 		if a.bones.size() == 1:
 			var b := a.bones[0]

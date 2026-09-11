@@ -212,6 +212,48 @@ static func apply_ban_pose(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation
 		skeleton.set_bone_pose_position(bone_idx, kf.position)
 	skeleton.force_update_all_bone_transforms()
 
+## Poses skeleton at `seconds` into anim on the clip's own clock: the two
+## keyframes bracketing that moment in the file's key time table, blended
+## by where between them it falls (rotation slerp, position lerp). A
+## looping clip wraps at its duration and blends its last keyframe back
+## into its first; a one-shot holds the last. Keyframes are sparse -- a
+## 2000 ms battle stance has five -- so stepping between them without the
+## blend would be a slideshow, and playing them at a fixed rate ran every
+## idle several times too fast.
+static func apply_ban_pose_at(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, seconds: float, loop: bool) -> void:
+	var count := anim.key_times.size()
+	if count == 0:
+		return
+	var duration := float(anim.duration_ms)
+	var ms := seconds * 1000.0
+	if loop and duration > 0.0:
+		ms = fposmod(ms, duration)
+	elif ms >= duration or count == 1:
+		apply_ban_pose(skeleton, anim, count - 1)
+		return
+	var i := anim.key_index_at(ms / 1000.0, false)
+	var j := i + 1
+	var t0 := float(anim.key_times[i])
+	var t1: float
+	if j < count:
+		t1 = float(anim.key_times[j])
+	else:
+		# Past the last key of a loop: blend back into the first.
+		j = 0
+		t1 = duration
+	var frac := 0.0 if t1 <= t0 else clampf((ms - t0) / (t1 - t0), 0.0, 1.0)
+	for track in anim.bones:
+		if track.keyframes.is_empty():
+			continue
+		var bone_idx := skeleton.find_bone(track.bone_name)
+		if bone_idx == -1:
+			continue
+		var a: BanReader.Keyframe = track.keyframes[i % track.keyframes.size()]
+		var b: BanReader.Keyframe = track.keyframes[j % track.keyframes.size()]
+		skeleton.set_bone_pose_rotation(bone_idx, a.rotation.slerp(b.rotation, frac))
+		skeleton.set_bone_pose_position(bone_idx, a.position.lerp(b.position, frac))
+	skeleton.force_update_all_bone_transforms()
+
 ## A bare Skeleton3D has no visual representation of its own -- there's no
 ## confirmed real bone-weight/skinning data in .bms yet to bind a real mesh
 ## to it (see docs/protocol/BMS_FORMAT.md), so this builds the same

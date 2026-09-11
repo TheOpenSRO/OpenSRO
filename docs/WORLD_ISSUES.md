@@ -6966,3 +6966,76 @@ Not settled from the pictures, and not guessed: Alexandria's white ground
 and black buildings on that archive. The panel's loading section will
 say which files were missing; the box's archive has to be rendered there
 first to know whether it is the archive or the client.
+
+*Later the same night*: on v0.1.87 Alexandria rendered textured, and the
+panel's Copy showed one load failure (a Dunhuang building, unrelated) --
+the white and black were the old client too.
+
+## Hundred-and-thirty-fifth round: the `.ban` files carry their own clock
+
+"The animations are happening at 5x speed for everything." They were.
+Every animation played at `BAN_FPS`, a hand-picked 30 keyframes a second
+that the code itself called an engineering guess, and the `.ban` header
+words this project had filed as unknown -- observed `(666, 30, 1)` --
+were the clip's duration in milliseconds, the grid its keys were
+authored on, and whether it loops. The "offset table" the reader skipped
+is the key time table: when each keyframe falls, in milliseconds.
+
+Measured with `client/tools/dump_ban_times.gd` over the China fighter's
+animations, every file parsing to exactly its own length:
+
+| Clip | Duration | Keys | At 30 keys a second it took |
+|---|---|---|---|
+| `chinaman_fighter_standcity` (town idle) | 2333 ms | 14 | 466 ms -- five times too fast |
+| `chinaman_standbattle` | 2000 ms | 5 | 166 ms -- twelve times |
+| `spear_stand` / `bow_stand` | 2000 ms | 5 | 166 ms |
+| `spear_run_fighter` / `bow_run_fighter` | 666 ms | 17-18 | 566-600 ms -- about right, which is why the run looked plausible in renders |
+| `spear_walk_fighter` | 1166 ms | 24 | 800 ms |
+| `skill_ch_sword_geomgi_c` | 2000 ms | 50 | 1666 ms |
+
+The keys are not evenly spaced (`[0, 466, 500, 583, 933, 1166 .. 2333]`
+for the idle), every time is a multiple of 33.3 ms -- the 30 in the
+header is the authoring grid, not a playback rate -- and the cyclic flag
+is 1 for stands, walks and runs and 0 for skills, sitting and dying.
+
+So `BanReader` reads `duration_ms`, `authored_fps`, `cyclic` and
+`key_times`, and `Skeleton3DBuilder.apply_ban_pose_at` poses a skeleton
+at a time on the clip's own clock, blending rotation (slerp) and position
+between the two keys that bracket it -- a 2000 ms stance with five keys
+would otherwise be a slideshow. Every player of an animation in World3D
+(the player's stand/run and one-shots, every NPC's and monster's idle,
+hit and death, other players' gaits, the QA animation report) runs on
+that, and `BAN_FPS` is gone. The `.bsr` event times of round 132, read
+as milliseconds by inference, sit on the same 33 ms grid as these key
+times, which is as close to confirmation as the data gives.
+
+### The camera and the click, from the same evening
+
+Three controls complaints, all real. The camera swung back to its default
+yaw and pitch whenever the character moved -- `CAMERA_RECENTER_DEGREES_PER_SECOND`,
+120 a second -- so every view a player set up was thrown away the moment
+they walked; it now stays where it was put, and W/A/S/D are relative to
+it (W walks away from the camera whichever way it has been orbited)
+with the character facing the way it walks. The click ray used the default
+collision mask, so it hit the player's own capsule, the invisible navmesh
+wall bodies and NPC capsules before the ground -- "the character does not
+move to the direction you click"; it now hits terrain and placed objects
+only. And a left drag orbits like a right drag, becoming a destination
+only if released within six pixels of where it was pressed.
+
+The debug panel gained a row of town buttons -- Jangan, Donwhang, Hotan,
+Constantinople, Samarkand, Alexandria -- each the zone box's own
+`x/y@localX,localZ` target that was being typed by hand.
+
+Reported and not yet fixed: "when I touch a building I get stuck in
+it". `NavGraph.step` refuses a move across a blocking edge and slides
+along one axis instead, so the way in has to be an edge the graph does
+not carry, or a surface `height_at` lifted the mover onto. One measured
+lead from tonight's renders: a walk north from (1002, 917) logs `on
+terrain at -54.4` with `Obj_cj_jang_gate_126` drawn 21.8 above the
+graph's height -- the mover is under the plaza deck, inside its geometry,
+and the frames show the deck's top surface cutting the character at the
+chest -- while 85 units west, at (915, 940), the same walk logs `on
+object cj_jang_gate at -32.6`, on the deck. The deck's walkable cells
+cover one column and not the other, in the same run. Where the graph's
+object coverage ends is the next thing to measure.

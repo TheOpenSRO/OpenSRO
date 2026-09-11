@@ -18,15 +18,15 @@ func buildSyntheticAnimation(t *testing.T, name string, bones []Bone) []byte {
 	buf = appendU32(buf, 0) // unconfirmed, observed 0
 	buf = appendU32(buf, 0) // unconfirmed, observed 0
 	buf = appendLenPrefixed(buf, name)
-	buf = appendU32(buf, 666) // Unknown1
-	buf = appendU32(buf, 30)  // Unknown2
-	buf = appendU32(buf, 1)   // Unknown3
+	buf = appendU32(buf, 666) // duration, ms
+	buf = appendU32(buf, 30)  // the grid the key times sit on
+	buf = appendU32(buf, 1)   // cyclic
 
-	// Offset table: 3 entries of unconfirmed content.
+	// The key time table: when each keyframe falls, in milliseconds.
 	buf = appendU32(buf, 3)
 	buf = appendU32(buf, 0)
-	buf = appendU32(buf, 0)
-	buf = appendU32(buf, 0)
+	buf = appendU32(buf, 333)
+	buf = appendU32(buf, 666)
 
 	buf = appendU32(buf, uint32(len(bones)))
 	for _, b := range bones {
@@ -77,8 +77,11 @@ func TestParseSingleBone(t *testing.T) {
 	if a.Name != "test_spin" {
 		t.Fatalf("unexpected name: %q", a.Name)
 	}
-	if a.Unknown1 != 666 || a.Unknown2 != 30 || a.Unknown3 != 1 {
+	if a.DurationMS != 666 || a.AuthoredFPS != 30 || a.Cyclic != 1 {
 		t.Fatalf("unexpected header fields: %+v", a)
+	}
+	if len(a.KeyTimes) != 3 || a.KeyTimes[1] != 333 || a.KeyTimes[2] != 666 {
+		t.Fatalf("unexpected key times: %v", a.KeyTimes)
 	}
 	if len(a.Bones) != 1 {
 		t.Fatalf("expected 1 bone, got %d", len(a.Bones))

@@ -329,6 +329,13 @@ const CAMERA_RECENTER_DEGREES_PER_SECOND := 120.0
 const MOVE_TARGET_STOP_DISTANCE := 0.3 * PLAYER_SCALE_RATIO
 
 var _camera_orbiting := false
+var _right_button_held := false
+var _left_button_held := false
+var _left_dragging := false
+var _left_press_position := Vector2.ZERO
+## How far the mouse has to travel with the left button down before the
+## press counts as an orbit rather than a click. Ours.
+const LEFT_DRAG_THRESHOLD_PIXELS := 6.0
 var _has_move_target := false
 var _move_target := Vector3.ZERO
 ## Last position the player was standing at real, sane terrain height (see
@@ -411,8 +418,6 @@ const MIN_SEND_DISTANCE := 0.05 * PLAYER_SCALE_RATIO
 ## well within one real MIN_SEND_INTERVAL period at typical real
 ## MOVE_SPEED, not a claim about real interpolation timing.
 const OTHER_BODY_INTERPOLATION_SPEED := 15.0
-## Plausible (unconfirmed) .ban playback rate -- see docs/protocol/BAN_FORMAT.md.
-const BAN_FPS := 30.0
 
 ## The body each gender is drawn with: a row of characterdata, the same
 ## table that names every NPC's model, by its code name. Ids 1907-1932 of
@@ -806,6 +811,7 @@ var _attack_step := 0
 
 var _real_skeleton: Skeleton3D
 var _real_skeleton_track: BanReader.Bone
+var _real_skeleton_anim: BanReader.ParsedAnimation
 var _real_skeleton_time := 0.0
 
 ## Per gender: the body's `.bsr` path, its animation groups (from the
@@ -1301,6 +1307,7 @@ func _try_load_real_decoration_skeleton() -> void:
 
 	_real_skeleton = Skeleton3DBuilder.build_skeleton3d(skel)
 	_real_skeleton_track = anim.bones[0]
+	_real_skeleton_anim = anim
 	_real_skeleton.position = Vector3(-6, 0, -6)
 	# Real .bsk bind-pose data uses a much larger native scale than this
 	# scene's ~2-unit-tall player capsule (position values in the hundreds
@@ -1439,7 +1446,8 @@ func _qa_animation_report() -> void:
 		# aliased rather than that the animation is dead.
 		var frames: int = entry[2]
 		var phase: float = entry[3]
-		var frame_idx := int((_idle_anim_time + phase) * BAN_FPS) % frames
+		var anim: BanReader.ParsedAnimation = entry[1]
+		var frame_idx := anim.key_index_at(_idle_anim_time + phase, true)
 		var key := skeleton.get_instance_id()
 		var previous = _qa_anim_sample.get(key)
 		if previous == null:
@@ -2936,7 +2944,7 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 			_animated.remove_at(i)
 			break
 	_animated.append([skeleton, anim, frames, 0.0, false, _idle_anim_time, null if hold else resume])
-	return float(frames) / BAN_FPS
+	return anim.duration_seconds()
 
 ## Advances every idle animation. Entries whose skeleton has gone (a region
 ## streamed out, a monster died) are dropped as they are found, which keeps
@@ -2950,24 +2958,24 @@ func _tick_idle_animations(delta: float) -> void:
 		var skeleton: Skeleton3D = entry[0]
 		if not is_instance_valid(skeleton) or not skeleton.is_inside_tree():
 			continue
-		var frames: int = entry[2]
+		var anim: BanReader.ParsedAnimation = entry[1]
 		var phase: float = entry[3]
 		var loops: bool = entry[4]
-		var frame_idx: int
 		if loops:
-			frame_idx = int((_idle_anim_time + phase) * BAN_FPS) % frames
+			Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, _idle_anim_time + phase, true)
 		else:
-			# A one-shot runs from when it started and holds its last
-			# frame; once there, hand back to what it interrupted.
-			frame_idx = mini(frames - 1, int((_idle_anim_time - float(entry[5])) * BAN_FPS))
-			if frame_idx >= frames - 1 and entry[6] != null:
+			# A one-shot runs from when it started, on the clip's own clock,
+			# and holds its last keyframe; once there, hand back to what it
+			# interrupted.
+			var elapsed := _idle_anim_time - float(entry[5])
+			if elapsed >= anim.duration_seconds() and entry[6] != null:
 				var resume: Array = entry[6]
 				resume[5] = _idle_anim_time
 				alive.append(resume)
-				Skeleton3DBuilder.apply_ban_pose(skeleton, resume[1], int((_idle_anim_time + resume[3]) * BAN_FPS) % int(resume[2]))
+				Skeleton3DBuilder.apply_ban_pose_at(skeleton, resume[1], _idle_anim_time + float(resume[3]), true)
 				continue
+			Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, elapsed, false)
 		alive.append(entry)
-		Skeleton3DBuilder.apply_ban_pose(skeleton, entry[1], frame_idx)
 	if alive.size() != _animated.size():
 		_animated = alive
 
@@ -3922,7 +3930,7 @@ func _play_player_once(anim: BanReader.ParsedAnimation) -> float:
 		return 0.0
 	_player_one_shot = anim
 	_player_one_shot_start = _player_anim_time
-	return float(frames) / BAN_FPS
+	return anim.duration_seconds()
 
 ## The group entry behind _body_animation_for, for its events.
 func _body_animation_entry(gender: String, action_type: int, group: String) -> BsrReader.AnimationEntry:
@@ -4471,6 +4479,9 @@ func _update_blob_shadow() -> void:
 ## frames.
 var _qa_done := false
 var _qa_tick := 0
+## SRREVAMP_QA_WALK, read once: a heading in degrees to keep walking on,
+## driven from _physics_process like a held key so the run plays.
+var _qa_walk := OS.get_environment("SRREVAMP_QA_WALK")
 
 ## Puts the player at a region-local spot in the region they stand in,
 ## landing on the highest walkable surface there -- what SRREVAMP_QA_AT
@@ -4639,13 +4650,6 @@ func _qa_step() -> void:
 
 	if not _qa_shots.is_empty():
 		_qa_advance_shots()
-
-	var walk := OS.get_environment("SRREVAMP_QA_WALK")
-	if walk != "":
-		var ang := deg_to_rad(float(walk))
-		player.velocity.x = sin(ang) * MOVE_SPEED
-		player.velocity.z = cos(ang) * MOVE_SPEED
-		player.rotation.y = ang
 
 	_qa_tick += 1
 	if _qa_tick % 60 == 0:
@@ -5291,8 +5295,15 @@ func _physics_process(delta: float) -> void:
 	if manual_input:
 		input_dir = input_dir.normalized()
 		_has_move_target = false # manual movement always cancels a pending click-to-move
-		player.velocity.x = input_dir.x * MOVE_SPEED
-		player.velocity.z = input_dir.z * MOVE_SPEED
+		# Relative to the camera, as in the original: W walks away from the
+		# camera whichever way it has been orbited, not along a world axis.
+		var yaw := deg_to_rad(camera_arm.rotation_degrees.y)
+		var forward := Vector3(0.0, 0.0, 1.0).rotated(Vector3.UP, yaw)
+		var right := forward.cross(Vector3.UP)
+		var dir := (forward * -input_dir.z + right * input_dir.x).normalized()
+		player.velocity.x = dir.x * MOVE_SPEED
+		player.velocity.z = dir.z * MOVE_SPEED
+		player.rotation.y = atan2(dir.x, dir.z)
 	elif _has_move_target:
 		var to_target := _move_target - player.position
 		to_target.y = 0.0
@@ -5305,18 +5316,22 @@ func _physics_process(delta: float) -> void:
 			player.velocity.x = dir.x * MOVE_SPEED
 			player.velocity.z = dir.z * MOVE_SPEED
 			player.rotation.y = atan2(dir.x, dir.z)
+	elif _qa_walk != "":
+		# SRREVAMP_QA_WALK: walk on a fixed world heading, as a held key
+		# would, so a render shows the run and the log the path.
+		var ang := deg_to_rad(float(_qa_walk))
+		player.velocity.x = sin(ang) * MOVE_SPEED
+		player.velocity.z = cos(ang) * MOVE_SPEED
+		player.rotation.y = ang
 	else:
 		player.velocity.x = 0.0
 		player.velocity.z = 0.0
 
-	var is_moving := manual_input or _has_move_target
-	if is_moving and not _camera_orbiting:
-		camera_arm.rotation_degrees.x = move_toward(
-			camera_arm.rotation_degrees.x, DEFAULT_CAMERA_PITCH_DEGREES,
-			CAMERA_RECENTER_DEGREES_PER_SECOND * delta)
-		camera_arm.rotation_degrees.y = rad_to_deg(rotate_toward(
-			deg_to_rad(camera_arm.rotation_degrees.y), deg_to_rad(DEFAULT_CAMERA_YAW_DEGREES),
-			deg_to_rad(CAMERA_RECENTER_DEGREES_PER_SECOND * delta)))
+	var is_moving := manual_input or _has_move_target or _qa_walk != ""
+	# The camera keeps whatever orbit it was given. It used to swing back to
+	# the default yaw and pitch whenever the character moved, which threw
+	# away every view a player had just set up -- the original never moves
+	# the camera on its own.
 
 	_qa_step()
 	if not _move_on_nav_graph(delta):
@@ -5381,8 +5396,7 @@ func _physics_process(delta: float) -> void:
 
 	if _real_skeleton != null and _real_skeleton_track.keyframes.size() > 1:
 		_real_skeleton_time += delta
-		var frame_count := _real_skeleton_track.keyframes.size()
-		var frame_idx := int(_real_skeleton_time * BAN_FPS) % frame_count
+		var frame_idx := _real_skeleton_anim.key_index_at(_real_skeleton_time, true)
 		Skeleton3DBuilder.apply_ban_keyframe(_real_skeleton, _real_skeleton_track, frame_idx)
 		Skeleton3DBuilder.update_debug_visualization(_real_skeleton.get_node("DebugVisualization"), _real_skeleton)
 
@@ -5443,24 +5457,26 @@ func _physics_process(delta: float) -> void:
 		var anim := _body_animation_for(_player_gender, action, _player_weapon_group)
 		_player_anim_time += delta
 		if _player_one_shot != null:
-			var frames := _frame_count(_player_one_shot)
-			var idx := int((_player_anim_time - _player_one_shot_start) * BAN_FPS)
-			if idx >= frames:
+			var elapsed := _player_anim_time - _player_one_shot_start
+			if elapsed >= _player_one_shot.duration_seconds():
 				_player_one_shot = null
 			else:
-				Skeleton3DBuilder.apply_ban_pose(_player_skeleton, _player_one_shot, idx)
+				Skeleton3DBuilder.apply_ban_pose_at(_player_skeleton, _player_one_shot, elapsed, false)
 		if _player_one_shot == null and anim != null and not anim.bones.is_empty():
 			var ref_track: BanReader.Bone = anim.bones[0]
 			if not ref_track.keyframes.is_empty():
-				var frame_count := ref_track.keyframes.size()
-				var frame_idx := int(_player_anim_time * BAN_FPS) % frame_count
 				# Pinnable, so the in-world pose can be held against the same
 				# frame applied offline by check_ban_pose.gd -- which is how
 				# the two were shown to agree exactly.
 				var pinned := OS.get_environment("SRREVAMP_QA_ANIM_FRAME")
 				if pinned != "" and pinned.is_valid_int():
-					frame_idx = int(pinned) % frame_count
-				Skeleton3DBuilder.apply_ban_pose(_player_skeleton, anim, frame_idx)
+					Skeleton3DBuilder.apply_ban_pose(_player_skeleton, anim, int(pinned) % ref_track.keyframes.size())
+				else:
+					# On the clip's own clock: every keyframe at the time the
+					# file gives it, blended in between. See BAN_FORMAT.md --
+					# a fixed 30 keyframes a second ran the idle five times
+					# too fast.
+					Skeleton3DBuilder.apply_ban_pose_at(_player_skeleton, anim, _player_anim_time, true)
 
 func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, gender: String = DEFAULT_GENDER) -> void:
 	if not equipped.is_empty():
@@ -5752,13 +5768,26 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT:
-			_camera_orbiting = event.pressed
-		elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			_try_set_move_target(event.position)
+			_right_button_held = event.pressed
+		elif event.button_index == MOUSE_BUTTON_LEFT:
+			# Either button orbits when dragged. A left press only becomes a
+			# destination if it is released without having dragged, so a
+			# look around does not also send the character somewhere.
+			if event.pressed:
+				_left_press_position = event.position
+				_left_dragging = false
+			elif not _left_dragging:
+				_try_set_move_target(_left_press_position)
+			_left_button_held = event.pressed
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			camera_arm.spring_length = clampf(camera_arm.spring_length - CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			camera_arm.spring_length = clampf(camera_arm.spring_length + CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+		_camera_orbiting = _right_button_held or (_left_button_held and _left_dragging)
+	elif event is InputEventMouseMotion and _left_button_held and not _left_dragging \
+			and (event as InputEventMouseMotion).position.distance_to(_left_press_position) > LEFT_DRAG_THRESHOLD_PIXELS:
+		_left_dragging = true
+		_camera_orbiting = true
 	elif event is InputEventMouseMotion and _camera_orbiting:
 		camera_arm.rotation_degrees.y -= event.relative.x * CAMERA_ORBIT_SENSITIVITY
 		camera_arm.rotation_degrees.x = clampf(
@@ -5776,6 +5805,13 @@ func _try_set_move_target(screen_pos: Vector2) -> void:
 	var dir := camera_3d.project_ray_normal(screen_pos)
 	var space_state := get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
+	# Only the ground and placed objects can be a destination. Left to the
+	# default mask the ray also hit the player's own capsule, the invisible
+	# navmesh walls (NAVMESH_WALL_COLLISION_LAYER) and NPC capsules, and a
+	# click across the plaza landed on the nearest of those instead -- "the
+	# character does not move to the direction you click".
+	query.exclude = [player.get_rid()]
+	query.collision_mask = TERRAIN_COLLISION_LAYER
 	var hit := space_state.intersect_ray(query)
 	if hit.is_empty():
 		return

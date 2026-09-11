@@ -18,9 +18,11 @@ container format.
 | Magic | `"JMXVBAN 0102"` (12 bytes) |
 | (2 unconfirmed `uint32` fields, observed `0` in every real file checked) | |
 | Animation name | `uint32` length + ASCII bytes |
-| Unknown1, Unknown2, Unknown3 | 3× `uint32`, unconfirmed meaning (observed `(666, 30, 1)` in two samples, `(6666, 30, 1)` in a third — `Unknown2=30` and `Unknown3=1` were constant across all three; `Unknown1` varied, plausibly a duration/size field of some kind) |
-| Offset table count | `uint32` |
-| Offset table | that many `uint32`s, unconfirmed purpose (possibly per-frame timing or byte offsets — not needed to parse past it, only its count) |
+| Duration | `uint32`, milliseconds — equal to the last key time in every file checked (`chinaman_fighter_standcity` 2333, `spear_run_fighter` 666, `skill_ch_bow_power_a` 3000) |
+| Authored FPS | `uint32`, 30 in every file checked: the grid the key times sit on (each is a multiple of 33.3 ms). Not a playback rate — a 2333 ms idle holds 14 keys, a 2000 ms stance 5 |
+| Cyclic | `uint32`, 1 for stands, walks and runs, 0 for skills, sitting down and dying |
+| Key time count | `uint32` — the same as every bone's keyframe count in every file checked |
+| Key times | that many `uint32` milliseconds, ascending from 0: when each keyframe falls. **This is the clock.** Playing keyframes at a fixed 30 a second ran the idle five times too fast (measured 2026-09-11 over the China fighter's animations with `client/tools/dump_ban_times.gd`, every file parsing to exactly its own length); the client now poses between the two keys bracketing the elapsed time |
 | Bone count | `uint32` |
 | Bones | that many bone records, back-to-back (see below) |
 
@@ -59,10 +61,10 @@ documentation). It documents this exact format under the same `JMXVBAN` magic, a
 things this project had not confirmed:
 
 - The header carries a real `Duration` (ms), a real **`FPS`**, and a real `IsCyclic` flag, followed
-  by a real per-keyframe `Time` (ms) table. This project currently plays every real animation back
-  at a hand-picked `BAN_FPS` engineering guess — **the real per-file FPS and per-keyframe timings
-  are right there in the file and simply aren't being read**. Wiring them would remove that guess
-  entirely.
+  by a real per-keyframe `Time` (ms) table. Measured and wired 2026-09-11 (the header table above):
+  `BanReader` reads `duration_ms`, `authored_fps`, `cyclic` and `key_times`, and
+  `Skeleton3DBuilder.apply_ban_pose_at` poses on that clock, blending between the bracketing keys.
+  The `BAN_FPS` guess this project played everything at is gone.
 - Each animated bone's per-keyframe record is documented as a *"transformation matrix **relative to
   the parent bone/joint**"*, holding a `Quaternion Rotation` **and** a `Vector3 Translation`.
   `BanReader` already parses both fields correctly; the consumer

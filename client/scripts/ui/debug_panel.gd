@@ -62,6 +62,7 @@ func _init(world: Node3D) -> void:
 	column.add_child(_build_button_row())
 	column.add_child(_build_slider_row())
 	column.add_child(_build_tools_row())
+	column.add_child(_build_town_row())
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(scroll)
@@ -140,6 +141,29 @@ func _build_tools_row() -> HBoxContainer:
 	_teleport_edit.text_submitted.connect(func(_t): _teleport())
 	row.add_child(_teleport_edit)
 	row.add_child(_button("Go", _teleport))
+	return row
+
+## The towns, as the zone box's own `x/y@localX,localZ` targets -- the
+## same strings that were being typed by hand, each a spot on the town's
+## walkable graph. Travel goes through the server like any zone change.
+const TOWNS := [
+	["Jangan", "97/168@969,1369"],
+	["Donwhang", "102/153@957,1508"],
+	["Hotan", "92/135@1138,153"],
+	["Constantinople", "105/79@950,1070"],
+	["Samarkand", "106/108@270,1421"],
+	["Alexandria", "90/48@663,526"],
+]
+
+func _build_town_row() -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_child(_label("Go to"))
+	for town in TOWNS:
+		var target: String = town[1]
+		row.add_child(_button(town[0], func() -> void:
+			_world.zone_input.text = target
+			_world._on_change_zone_pressed()
+			_world._log_system("Travelling to %s (%s)" % [town[0], target])))
 	return row
 
 func _button(text: String, on_pressed: Callable) -> Button:

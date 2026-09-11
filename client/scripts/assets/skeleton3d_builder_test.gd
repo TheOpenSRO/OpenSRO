@@ -140,6 +140,25 @@ func _init() -> void:
 	var pose_c2: Vector3 = skeleton2.get_bone_global_pose(c2_idx2).origin
 	_check(pose_c2.is_equal_approx(Vector3(10, 0, -10)), "apply_ban_pose matches apply_ban_keyframe's result (got %s)" % pose_c2)
 
+	# apply_ban_pose_at: the clip's own clock. Two keys a second apart;
+	# halfway between them Child1 is rotated 45 degrees, so Child2 sits at
+	# (10 + 10 cos 45, 0, -10 sin 45). Past the end a one-shot holds the
+	# last key, and a loop is back on the first at exactly one duration.
+	multi_anim.duration_ms = 1000
+	multi_anim.key_times = PackedInt32Array([0, 1000])
+	var skeleton3 := Skeleton3DBuilder.build_skeleton3d(skel)
+	var c2_idx3 := skeleton3.find_bone("Child2")
+	Skeleton3DBuilder.apply_ban_pose_at(skeleton3, multi_anim, 0.5, false)
+	var half: Vector3 = skeleton3.get_bone_global_pose(c2_idx3).origin
+	_check(half.is_equal_approx(Vector3(10.0 + 10.0 * cos(deg_to_rad(45)), 0, -10.0 * sin(deg_to_rad(45)))),
+		"halfway between two keys blends the rotation (got %s)" % half)
+	Skeleton3DBuilder.apply_ban_pose_at(skeleton3, multi_anim, 3.0, false)
+	var held: Vector3 = skeleton3.get_bone_global_pose(c2_idx3).origin
+	_check(held.is_equal_approx(Vector3(10, 0, -10)), "a one-shot past its end holds the last key (got %s)" % held)
+	Skeleton3DBuilder.apply_ban_pose_at(skeleton3, multi_anim, 1.0, true)
+	var wrapped: Vector3 = skeleton3.get_bone_global_pose(c2_idx3).origin
+	_check(wrapped.is_equal_approx(Vector3(20, 0, 0)), "a loop at one duration is back on its first key (got %s)" % wrapped)
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
