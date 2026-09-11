@@ -13,6 +13,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
@@ -29,7 +30,43 @@ const (
 	OpLootDropped       uint16 = 0x0064 // server -> client, direct to the killer (only sent if there's loot)
 	OpMonsterList       uint16 = 0x0065 // client -> server
 	OpMonsterListResult uint16 = 0x0066 // server -> client
+	OpLevelUp           uint16 = 0x0067 // server -> client, direct to the character that levelled
 )
+
+// levelTable is the EXP curve the server was started with, or nil if the
+// operator provided none (then characters accumulate raw exp but never level).
+// It is server-wide static config, loaded once at startup by SetLevelTable and
+// read-only after -- not per-request state.
+var levelTable *leveldata.Table
+
+// SetLevelTable installs the EXP curve the combat code levels characters
+// against. Called once from cmd/server at startup.
+func SetLevelTable(t *leveldata.Table) { levelTable = t }
+
+// LevelUp is the OpLevelUp payload: the character's new level and how many
+// unspent stat points it now has, so the client can announce the level-up and
+// refresh the character window.
+type LevelUp struct {
+	NewLevel   int32
+	StatPoints int32
+}
+
+func (r *LevelUp) Encode() []byte {
+	out := make([]byte, 8)
+	binary.LittleEndian.PutUint32(out[0:], uint32(r.NewLevel))
+	binary.LittleEndian.PutUint32(out[4:], uint32(r.StatPoints))
+	return out
+}
+
+func DecodeLevelUp(data []byte) (*LevelUp, error) {
+	if len(data) < 8 {
+		return nil, fmt.Errorf("session: decoding LevelUp: want 8 bytes, got %d", len(data))
+	}
+	return &LevelUp{
+		NewLevel:   int32(binary.LittleEndian.Uint32(data[0:])),
+		StatPoints: int32(binary.LittleEndian.Uint32(data[4:])),
+	}, nil
+}
 
 // unarmedDamage is the base damage dealt with no weapon equipped. Own
 // design choice.
@@ -451,6 +488,7 @@ func performAttack(
 	}
 
 	result := &AttackResult{MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP), MonsterDied: monsterDied}
+	var levelUp *LevelUp // set on a kill that crosses the exp curve, sent below
 
 	// A dead monster can't counterattack. A surviving one always hits
 	// back -- there's no dodge/evade system yet, see docs' open items.
@@ -473,6 +511,30 @@ func performAttack(
 		// only under load, since locally the write always won the race.
 		if err := chars.AddGold(ctx, characterID, monster.GoldReward); err != nil {
 			return fmt.Errorf("combat: granting gold reward: %w", err)
+		}
+
+		// Experience, and a level-up if it crosses the curve -- only when the
+		// server has a leveldata curve loaded (SetLevelTable). Without one, no
+		// exp is tracked, the same way an empty item table means flat damage.
+		// A level-up refills HP (MaxHP is flat for now) and is announced with
+		// OpLevelUp after the attack result below.
+		if levelTable.Loaded() {
+			char, err := chars.GetByID(ctx, characterID)
+			if err != nil {
+				return fmt.Errorf("combat: reading character for exp: %w", err)
+			}
+			newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, monster.ExpReward)
+			newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
+			if err := chars.SetLeveling(ctx, characterID, newLevel, newExp, newStatPoints); err != nil {
+				return fmt.Errorf("combat: applying experience: %w", err)
+			}
+			if gained > 0 {
+				if err := chars.ResetHP(ctx, characterID); err != nil {
+					return fmt.Errorf("combat: refilling hp on level up: %w", err)
+				}
+				result.PlayerHP = int32(character.MaxHP)
+				levelUp = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
+			}
 		}
 	} else {
 		armor, err := defenderArmor(ctx, characterID, eq, items)
@@ -501,6 +563,15 @@ func performAttack(
 
 	if err := sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: result.Encode()}); err != nil {
 		return err
+	}
+
+	// The level-up (if any) rides just behind the attack result, direct to the
+	// attacker, so the client can play the effect and refresh the character
+	// window.
+	if levelUp != nil {
+		if err := sess.Send(&proto.Packet{Opcode: OpLevelUp, Data: levelUp.Encode()}); err != nil {
+			return err
+		}
 	}
 
 	// The attacker already got the richer OpAttackResult above; only

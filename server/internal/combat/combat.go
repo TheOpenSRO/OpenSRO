@@ -32,6 +32,22 @@ type Monster struct {
 	Defense    int
 	Attack     int // counter-damage dealt to whoever attacks it, before their own defense (none exists yet)
 	GoldReward int64
+	// ExpReward is the experience a kill grants. Derived from the monster's
+	// toughness for now (a disclosed default, ExpFor) -- the real per-species
+	// experience lives in mob data this project does not load yet; recovering
+	// it (like the item refdata) is a follow-up.
+	ExpReward int64
+}
+
+// ExpFor is the placeholder experience a monster of the given toughness
+// grants on death: its max HP. A disclosed design choice, not recovered --
+// the real value is in the client's mob data (RefObjChar's ExpToGive), which
+// is not loaded yet.
+func ExpFor(maxHP int) int64 {
+	if maxHP < 1 {
+		return 1
+	}
+	return int64(maxHP)
 }
 
 // Hub tracks all live monsters, grouped by zone. Safe for concurrent use.
@@ -73,7 +89,7 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward}
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward, ExpReward: ExpFor(maxHP)}
 	h.byID[id] = m
 	return m
 }
