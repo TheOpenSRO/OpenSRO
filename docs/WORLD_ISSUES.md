@@ -6949,6 +6949,18 @@ server that last answered and the account name (`ClientSettings`,
 is not `127.0.0.1`. And "my chat box is too tiny on this TV": a UI scale
 and a chat font size, both remembered, both on the panel.
 
+*Addendum, same night -- "my scaling is fucking up the text"*: at UI
+scale 2.35 the login screen's Register button read "Registe". Reproduced
+on the box in a 1160x700 window, then varied: at 2.0 the word draws
+whole, at 2.5 the last glyph is missing again, and at 2.35 with the
+project's font oversampling switched off it draws whole. So Godot 4.2
+loses a string's last glyph under *fractional* font oversampling (the
+window sets oversampling to its content scale factor). The project
+setting that lets the window drive it is now off and `ClientSettings`
+sets it by hand: the scale itself when it is a whole number, 1.0
+otherwise -- whole-number scales stay crisp, fractional ones are
+rasterised at base size and scaled, slightly soft, complete.
+
 **The debug panel** (F3, `DebugPanel`) is the answer to the next such
 report: the build and, from source, the branch and commit; the server and
 zone; world and region-local position, camera, gender, weapon group; every

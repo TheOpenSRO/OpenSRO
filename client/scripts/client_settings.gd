@@ -60,6 +60,29 @@ static func name_plate_range(default_val: float) -> float:
 ## with the project's stretch mode left at "disabled": the window then
 ## divides its size by this factor for the canvas, which is the whole
 ## effect wanted.
+##
+## Font oversampling -- rasterising glyphs at the scaled size so they stay
+## crisp -- is applied only at a whole-number scale. Measured on the render
+## box in a 1160x700 window (2026-09-11): at 2.0 "Register" draws whole, at
+## 2.35 and 2.5 its last glyph is missing, and at 2.35 with oversampling off
+## it draws whole again. So Godot 4.2 loses the last glyph of a string under
+## fractional oversampling; the project setting that lets the window drive
+## oversampling is off, and this sets it by hand -- the scale itself when it
+## is an integer, 1.0 (glyphs rasterised at their base size and scaled)
+## otherwise, and again after every resize, which resets it.
 static func apply_ui_scale(window: Window, scale: float) -> void:
-	if window != null:
-		window.content_scale_factor = clampf(scale, 0.5, 3.0)
+	if window == null:
+		return
+	var factor := clampf(scale, 0.5, 3.0)
+	window.content_scale_factor = factor
+	_apply_oversampling(factor)
+	if not window.has_meta("ui_scale_oversampling_hooked"):
+		window.set_meta("ui_scale_oversampling_hooked", true)
+		window.size_changed.connect(func() -> void: _apply_oversampling(window.content_scale_factor))
+
+static func _apply_oversampling(factor: float) -> void:
+	var text_server := TextServerManager.get_primary_interface()
+	if text_server == null:
+		return
+	var whole := is_equal_approx(factor, roundf(factor))
+	text_server.font_set_global_oversampling(roundf(factor) if whole else 1.0)

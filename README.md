@@ -37,7 +37,9 @@ the "Hide UI" button, top-right) to hide the HUD for a clean view, **F1** for th
 region, what every nearby entity resolved to, what failed to load from your archives, frame
 times — with "Copy" and "Save" buttons so a report is one paste. The same panel has the sliders
 for UI scale, chat font size and how near a name plate shows; they are remembered in
-`settings.cfg` next to the log.
+`settings.cfg` next to the log. Whole-number UI scales (1, 2, 3) stay crisp; in-between values
+render text slightly softer (Godot 4.2 drops glyphs under fractional font oversampling, so it is
+off there).
 
 **If something looks wrong**: the client always writes a log file, printed once at startup (look
 for a line like `SRRevamp log file: <path>`) — Windows: `%APPDATA%\Godot\app_userdata\SRRevamp\

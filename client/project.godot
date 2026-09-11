@@ -41,6 +41,15 @@ file_logging/max_log_files=10
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 
+[gui]
+
+# Off so the window does not tie font oversampling to its content scale
+# factor: Godot 4.2 loses a string's last glyph under fractional
+# oversampling (measured, docs/WORLD_ISSUES.md round 134's addendum).
+# ClientSettings.apply_ui_scale sets oversampling itself, at whole-number
+# UI scales only.
+fonts/dynamic_fonts/use_oversampling=false
+
 [input]
 
 toggle_ui={
