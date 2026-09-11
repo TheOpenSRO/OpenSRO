@@ -435,21 +435,26 @@ const GENDER_BODY_CODE := {
 ## character.DefaultGender server-side.
 const DEFAULT_GENDER := "china_man"
 
-## Which animation group a held weapon selects, by the weapon's TypeID4
-## in the item table (2 sword, 3 blade, 4 spear, 5 glaive, 6 bow -- see
-## ITEM_FORMAT.md). A China body carries three weapon groups, `sword`,
-## `spear` and `bow` (BSR_FORMAT.md), and the three China masteries each
-## cover one pair: Bicheon is sword and blade, Heuksal is spear and glaive,
-## Pacheon is bow. The pairing is read off that, not off a function in the
-## client: the client resolves a group by *name* (`FUN_00a5b300`, a string
-## compare against its table of seventeen), and where the name for a held
-## weapon is composed was not found. Europe's kinds are not mapped yet.
+## Which animation group a held weapon selects, by the weapon's TypeID4 in
+## the item table: the client's own switch (`FUN_00a5a7d0`, reached from
+## the equip-visual refresh with the item in the weapon slot), checked
+## against the real table's weapon rows -- 215-251 rows behind every case
+## (ITEM_FORMAT.md). Two of the client's rules are not in this table: while
+## pulling a transport the group is `cart` whatever the weapon, and the
+## fortress weapon (16) is `sword` for a China character and
+## `onehand_sword` for a European one -- every body here is China.
 const WEAPON_ANIMATION_GROUP := {
-	2: "sword",
-	3: "sword",
-	4: "spear",
-	5: "spear",
-	6: "bow",
+	2: "sword", 3: "sword",  # sword, blade
+	4: "spear", 5: "spear",  # spear, glaive
+	6: "bow", 12: "bow",  # bow, crossbow
+	7: "onehand_sword",
+	8: "twohand_sword",
+	9: "dual_axe",
+	10: "onehand_staff", 15: "onehand_staff",  # dark staff, cleric rod
+	11: "twohand_staff",
+	13: "dagger",
+	14: "harf",  # the harp, as the client spells it
+	16: "sword",  # fortress weapon, China
 }
 
 ## The fallback for a body whose `.bsr` carries no animation groups: the

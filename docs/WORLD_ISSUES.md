@@ -6831,3 +6831,62 @@ Not done, and not guessed: how long the character stays in the battle
 stance (type 6, `chinaman_standbattle`, or a weapon group's own) after a
 fight. Nothing found says, so the body returns to the town idle when its
 swing ends.
+
+## Hundred-and-thirty-third round: the weapon picks its group in a switch
+
+The last round left one thing unread: how the client turns a held weapon
+into the name of an animation group. It resolves names by string compare
+(`FUN_00a5b300`), and the one caller found then was the avatar path. The
+answer was one step from the table itself.
+
+The name table (`FUN_00d77650`) is an array of twenty `std::string`s at
+`0xec6280`, 28 bytes apart, seventeen of them set: 0 `default`, 1 `sword`,
+2 `spear`, 3 `bow`, 4 `cart`, 5 `onehand_staff`, 6 `onehand_sword`, 7
+`twohand_sword`, 8 `dagger`, 9 `dual_axe`, 10 `harf`, 11 `twohand_staff`,
+12 `onehand_staff`, 13 `avatar_wing`, 14-16 `avatar_nasrun1`-`3`. The
+three short names are under Ghidra's five-character minimum for its
+string list and were read out of the exe's `.rdata` with objdump -- `bow`,
+`cart` and `harf`, the harp with an f. `FUN_00a5b300` walks that array,
+and the functions that index it directly are the interesting ones.
+
+**`FUN_00a5a7d0`** is the switch: a 16-bit packed type id shifted down by
+eleven -- `TypeID4` -- and a race byte. 2 and 3 return entry 1 (`sword`),
+4 and 5 entry 2 (`spear`), 6 and 12 entry 3 (`bow`), 7 `onehand_sword`,
+8 `twohand_sword`, 9 `dual_axe`, 10 entry 12 and 15 entry 5 (both
+`onehand_staff`), 11 `twohand_staff`, 13 `dagger`, 14 `harf`, and 16
+`sword` for race 0 and `onehand_sword` for race 1; anything else is null,
+and the caller (`FUN_00a5bd10`, `CObjCharacter.cpp`) asserts `pStrAniNew`
+on it. That caller reads the item in equip-visual slot 6 -- the weapon, in
+the slot order EQUIP_SLOTS.md records -- and, before any of that, answers
+`cart` (entry 4) while the character is pulling a transport. The race byte
+is `+0x9c` of the character's data, the same byte `FUN_009dd040` tests to
+load `cj_store.bsr` or `euro_streetstall01.bsr` for a stall.
+
+Checked against the real item table on the box: the weapon rows (TypeID3
+6) tallied by TypeID4 and code-name family give exactly one family per
+case -- 216 `CH_SWORD` at 2, 215 `CH_BLADE` at 3, 216 `CH_SPEAR` at 4,
+216 `CH_TBLADE` at 5, 215 `CH_BOW` at 6, and 250-251 each of `EU_SWORD` 7,
+`EU_TSWORD` 8, `EU_AXE` 9, `EU_DARKSTAFF` 10, `EU_TSTAFF` 11, `EU_CROSSBOW`
+12, `EU_DAGGER` 13, `EU_HARP` 14, `EU_STAFF` 15 -- plus 15 `FORT_FORTRESS`
+at 16 and 17 `ETC_FIREWORK` at 1, the null case. So the crossbow shares the
+bow's animations and the cleric rod and the dark staff share
+`onehand_staff`, neither of which the tables alone could have said.
+`WEAPON_ANIMATION_GROUP` is now that switch, and `FUN_00a5b550` confirms
+the lookup order this project had read off the data: the action in the
+weapon's group, then in `default`.
+
+The avatar groups turned out not to be weapon-driven. `FUN_004ea570` is
+`CharacterVisualChangeManager.cpp` parsing
+`textdata\charactervisualchange.txt` -- a row is five numbers, a group name
+and two model paths, and the header of the real file names them
+`... MaterialID, AnimationName, BsrName(M), BsrName(F)`. About forty rows
+name `avatar_nasrun1`-`3`, all of them Nasrun and Amalrun mall-hat skills.
+
+The fight from last round, re-rendered after the disk was cleared: the log
+shows the exchange as designed -- swing after swing at the weasel, each
+answered, 2 off it and 4 off the player a round -- and the frames show the
+sword-base swings with the blade overhead. The weasel itself stands behind
+a snowman decoration from that camera, so its reaction is on the log, not
+in a picture.
+
+Still not read: how long the battle stance lasts.

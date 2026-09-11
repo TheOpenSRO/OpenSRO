@@ -100,11 +100,14 @@ The animation-group parse ends exactly on the sound-effect pointer in every file
 ### Animation groups: which animation plays for what
 
 The groups are keyed by **weapon kind**, and the client's own table of the names is built by one
-static initialiser (`FUN_00d77650`): index 0 `default`, 1 `sword`, 2 `spear`, 3 `bow`, then
-Europe's `onehand_staff`, `onehand_sword`, `twohand_sword`, `dagger`, `dual_axe`, `twohand_staff`
-and the `avatar_wing` / `avatar_nasrun1-3` avatar groups, seventeen in all — the
-`nDefaultWearNum < DEFAULT_WEAR_NUM` assert beside it names the index. A China body carries
-`spear`, `bow`, `sword`, `default`, `cart` and the four avatar groups.
+static initialiser (`FUN_00d77650`) into an array of twenty `std::string`s at `0xec6280`, 28 bytes
+apart, seventeen of them named: index 0 `default`, 1 `sword`, 2 `spear`, 3 `bow`, 4 `cart`,
+5 `onehand_staff`, 6 `onehand_sword`, 7 `twohand_sword`, 8 `dagger`, 9 `dual_axe`, 10 `harf` (the
+harp, spelt so in the binary), 11 `twohand_staff`, 12 `onehand_staff` again, 13 `avatar_wing`,
+14–16 `avatar_nasrun1`–`3`, and 17–19 empty — the `nDefaultWearNum < DEFAULT_WEAR_NUM` assert
+beside it names the index. A group is resolved by name (`FUN_00a5b300` walks the array comparing
+strings), and a held weapon picks its index by `TypeID4` (`FUN_00a5a7d0`; ITEM_FORMAT.md has the
+table). A China body carries `spear`, `bow`, `sword`, `default`, `cart` and the four avatar groups.
 
 Within a group, each entry's **action type** says what the animation is for. Read off the China
 man's `default` group, where every number is paired with a self-describing file name:

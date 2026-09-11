@@ -113,18 +113,40 @@ The weapon bone is likewise authored per item — `Bip01 R HandMid` for `blade_0
 ## What a held weapon does to the animations
 
 The body's `.bsr` carries its animations in **groups keyed by weapon kind** — `default`, `sword`,
-`spear`, `bow` and the avatar groups on a China body — each entry tagged with an action type
-(0 stand, 1 walk, 2 attack, 3 hit, 4 die, 6 battle stance, 7 run …; BSR_FORMAT.md has the
+`spear`, `bow`, `cart` and the avatar groups on a China body — each entry tagged with an action
+type (0 stand, 1 walk, 2 attack, 3 hit, 4 die, 6 battle stance, 7 run …; BSR_FORMAT.md has the
 table). A held weapon selects its group and the action selects the entry, falling back to
-`default` for anything the group does not list: a sword has attacks and a run of its own
+`default` for anything the group does not list (`FUN_00a5b550` looks the action up in the
+weapon's group and then in `default`): a sword has attacks and a run of its own
 (`chinaman_fighter_runforward_sword`) but no stand or walk, a spear has all three.
 
-Which group a weapon selects is by its `TypeID4`, paired through the three China masteries that
-each cover two weapon kinds: sword 2 and blade 3 → `sword` (Bicheon), spear 4 and glaive 5 →
-`spear` (Heuksal), bow 6 → `bow` (Pacheon). The client resolves groups by name (`FUN_00a5b300`,
-a string compare against its table of seventeen names) and where it composes the name for a held
-weapon was not found, so that pairing is read off the tables rather than the binary. Europe's
-kinds are not mapped yet.
+Which group a weapon selects is a **switch on its `TypeID4`** in the client — `FUN_00a5a7d0` in
+`CObjCharacter.cpp`, reached from the equip-visual refresh `FUN_00a5bd10` with the item in visual
+slot 6 (the weapon), whose 16-bit packed type id it shifts down by 11 — and the real table's
+weapon rows (`TypeID3` 6) agree with every case, 215–251 rows each:
+
+| TypeID4 | The rows are | Group |
+|---|---|---|
+| 2, 3 | `CH_SWORD`, `CH_BLADE` | `sword` |
+| 4, 5 | `CH_SPEAR`, `CH_TBLADE` (glaive) | `spear` |
+| 6, 12 | `CH_BOW`, `EU_CROSSBOW` | `bow` |
+| 7 | `EU_SWORD` | `onehand_sword` |
+| 8 | `EU_TSWORD` | `twohand_sword` |
+| 9 | `EU_AXE` | `dual_axe` |
+| 10, 15 | `EU_DARKSTAFF`, `EU_STAFF` (the cleric rod) | `onehand_staff` — table entries 12 and 5, the same name twice |
+| 11 | `EU_TSTAFF` | `twohand_staff` |
+| 13 | `EU_DAGGER` | `dagger` |
+| 14 | `EU_HARP` | `harf` |
+| 16 | `FORT_FORTRESS` | `sword` for a China character, `onehand_sword` for a European one |
+| 1 | `ETC_FIREWORK` | none — the switch returns null and the caller asserts `pStrAniNew` |
+
+The race byte is the same `+0x9c` of the character's data that picks the China or the Europe
+stall model in `FUN_009dd040`. Two rules sit beside the switch: while the character is pulling a
+transport the group is `cart` whatever the weapon (`FUN_00a5bd10`, index 4), and the avatar groups
+are not weapon-driven at all — `charactervisualchange.txt`'s `AnimationName` column names one
+(`avatar_nasrun1`–`3` on the Nasrun and Amalrun mall-hat rows, about forty of them) and
+`CharacterVisualChangeManager` (`FUN_004ea570`) resolves it through the same name table.
+`WEAPON_ANIMATION_GROUP` in World3D is this switch.
 
 ## The body itself
 
