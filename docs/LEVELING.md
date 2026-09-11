@@ -40,8 +40,12 @@ is a rule, not a table value. A new character is level 1 with 0 spent points.
 2. **Character fields.** ✅ **Built.** `character.Character` gained `Exp` (progress at the current
    level) and `StatPoints` (unspent, `leveldata.StatPointsPerLevel` = 3 per level), with a
    `SetLeveling` store method (memstore + sqlstore, migrated).
-3. **Grant EXP on a kill + level up + broadcast.** ⏳ next — the kill path grants gold; add EXP,
-   run `Table.Advance`, grant stat points, refill HP, and send an `OpLevelUp`.
+3. **Grant EXP on a kill + level up + broadcast.** ✅ **Built.** The kill path (`performAttack`)
+   now, when a curve is loaded, reads the character, runs `Table.Advance`, grants
+   `StatPointsPerLevel` per level gained, and on a level-up refills HP and sends an `OpLevelUp`
+   (`0x0067`, payload `NewLevel:int32, StatPoints:int32` LE) right behind the `OpAttackResult`,
+   direct to the attacker. Without a curve loaded, no exp is tracked (like flat damage with no
+   item table).
 4. **Str/Int + spending the points.** later — the stat system; needs the derived-stat formulas.
 5. **Derive the combat stats** (HP from Str, MP from Int, phys/mag atk·def) — recover from the
    client (Ghidra) before the character window's derived numbers are real. The window can show
@@ -49,10 +53,26 @@ is a rule, not a table value. A new character is level 1 with 0 spent points.
 
 ## Client
 
-- **Character window** rebuilt to the real layout (Current/Next Exp, Stat Point, Str/Int with "+"
-  buttons, HP/MP, derived stats) — recover the layout from the client, per the answer.
-- **Level-up animation**: the golden burst + "You have advanced to level [N]" on the level-up
-  broadcast.
+- **Level-up animation** ✅ **Built** — `client/scripts/effects/level_up_effect.gd`. On `OpLevelUp`
+  (decoded in `net/combat.gd`, surfaced as `NetClient.level_up`), `World3D._on_level_up` logs the
+  **real** recovered message and plays the burst on the player.
+  - **Real (recovered from the client):** the meshes and textures. The four core primitives from
+    `system\system_levelup.efp` (Particles.pk2) — `levelup01.bms`→`won-light-up-i.ddj`,
+    `levelup02`→`won-light-up-sb`, `levelup03`→`hoon-out-light-02`, `levelup04`→`sdamage-wb-01` —
+    with the mesh↔texture pairings read straight off that effect's RenderMesh node stream (see
+    `docs/WORLD_ISSUES.md`). Loaded at runtime from the player's own Particles.pk2, never committed.
+    The message is `UIIT_MSG_STRGERR_LEVEL` "You have advanced to level [%d]." from
+    `textuisystem.txt`, looked up at runtime and the level substituted into its own `[%d]`.
+  - **Designed (disclosed, not recovered):** the animation itself — timing (`LIFE`), per-layer
+    grow/overshoot/spin and the additive fade. The `.efp`'s real `ScaleGraph`/`DiffuseGraph`
+    keyframe layout is **not** reliably recovered (the reader flattens the tagged tree to
+    `(name, raw-bytes)`, and a float decode of the graph block fits cleanly on only ~a third of
+    this file's ScaleGraph nodes — see `docs/protocol/EFP_FORMAT.md`), so the exact curves are not
+    driven from it. Only the burst's *size* is data-driven: each layer is normalized to the
+    player's own rendered height.
+- **Character window**: rebuild to the real layout (Current/Next Exp, Stat Point, Str/Int with "+"
+  buttons, HP/MP, derived stats) — recover the layout from the client, per the answer. Still to do;
+  the stat-point count the window shows is already carried on `OpLevelUp`.
 
 ## Skills / mastery
 

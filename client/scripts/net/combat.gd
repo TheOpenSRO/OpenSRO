@@ -12,6 +12,20 @@ const OP_MONSTER_DIED := 0x0063     # server -> client, broadcast to the zone
 const OP_LOOT_DROPPED := 0x0064     # server -> client, direct to the killer (only sent if there's loot)
 const OP_MONSTER_LIST := 0x0065     # client -> server
 const OP_MONSTER_LIST_RESULT := 0x0066 # server -> client
+const OP_LEVEL_UP := 0x0067         # server -> client, direct to the character that levelled
+
+## Result of decode_level_up(): the character's new level and its unspent
+## stat points, so the client can play the level-up effect and announce it.
+class LevelUp:
+	var new_level: int
+	var stat_points: int
+
+static func decode_level_up(data: PackedByteArray) -> LevelUp:
+	var r := LevelUp.new()
+	if data.size() >= 8:
+		r.new_level = data.decode_u32(0)
+		r.stat_points = data.decode_u32(4)
+	return r
 
 ## Result of decode_attack_result(): both sides of the exchange -- what
 ## happened to the monster, and what happened to the attacker in the

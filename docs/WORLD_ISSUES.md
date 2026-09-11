@@ -7075,6 +7075,48 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-sixty-third round: the level-up burst, end to end from the real effect
+
+The playtest asked for the level-up animation, recovered from the client, wired end to end. Done —
+server trigger through to the on-screen burst, verified in a render (the chat reads the real "You
+have advanced to level 10." and a golden burst envelops the character).
+
+**What the real effect is.** `system\system_levelup.efp` in Particles.pk2 (JMXVEFF 0011) is a
+~19-emitter layered effect. Its `RenderMesh` nodes each pair a mesh with a texture; walking the
+node stream on the RE box (`pk2list` extract + a token walk) recovered the real pairings for the
+four core primitives:
+
+    levelup01.bms -> won-light-up-i.ddj      (vertical light shaft)
+    levelup02.bms -> won-light-up-sb.ddj     (soft bloom)
+    levelup03.bms -> hoon-out-light-02.ddj   (ground ring)
+    levelup04.bms -> sdamage-wb-01.ddj       (rising sparkle/lotus)
+
+plus more emitters (`cho-won-001/002`, `light-up2`, `wind-won-01`, a `nasun-line.ban`) not used yet.
+The message is `UIIT_MSG_STRGERR_LEVEL` "You have advanced to level [%d]." (textuisystem.txt,
+English column), looked up at runtime with the level substituted into its own `[%d]`.
+
+**What could NOT be recovered, and the honest call made.** The `.efp`'s per-emitter `ScaleGraph`/
+`DiffuseGraph` keyframe curves. The reader flattens the tagged tree to `(name, raw-bytes)`
+(EFP_FORMAT.md), so the graph block has no confirmed schema. A float32 decode of the ScaleGraph
+block *looked* like a 4-float header then `(value, time)` pairs with a monotonic time axis to ~1.0
+— and it fit cleanly on the first few nodes — but held on only ~a third of this file's 30 ScaleGraph
+nodes when checked across all of them. That is a guessed structure, not a recovered one, and using
+it would both dress a guess as real and hardcode game-data values. So the curves are **not** driven
+from the file. The effect (`client/scripts/effects/level_up_effect.gd`) instead loads the **real
+meshes and textures at runtime** from the player's own Particles.pk2 (never committed, BYO like all
+real assets) and drives them with a **disclosed designed** grow→overshoot→fade additive animation
+that matches the effect's recovered *character*. Only the burst's *size* is data-driven: each layer
+is normalized to the player's own rendered height, no magic per-mesh scale. Every designed constant
+is labelled as such in the file header.
+
+**Wiring.** Server was already done (162nd-round-era leveling): `OpLevelUp 0x0067`, payload
+`NewLevel:int32, StatPoints:int32` LE, sent right behind `OpAttackResult` on a kill that crosses the
+curve. Client: `CombatNet.decode_level_up` (matching 2×u32 LE) -> `NetClient.level_up` signal ->
+`World3D._on_level_up`, which logs the real message and plays the burst on the player. A
+`SRREVAMP_QA_LEVELUP=<level>` hook fires it a moment after spawn for renders (a real level-up needs
+a leveldata CSV and enough kills). First render at HEIGHT_MULTIPLE 2.2 whited the frame out; tuned
+down to 1.5 with per-layer additive intensity caps and XZ centring.
+
 ## Hundred-and-sixty-second round: why a building traps the player (diagnosis)
 
 Chased the playtest "stuck inside a building in Alexandria" report to a root

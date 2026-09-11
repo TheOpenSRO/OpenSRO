@@ -87,12 +87,16 @@ Ordered roughly quick-fix → needs-a-server-system.
 - [ ] **NPC talk dialogue with options** (pic 1): the talk box lists the NPC's services
   (e.g. "1. Deposit into storage / 2. Honor Rank / 3. End conversation"). Needs per-NPC service
   data (which NPC offers storage/shop/etc.); today we only show greeting text.
-- [~] **EXP curve recovered** — `leveldata.txt` col 1 is exp-to-next-level (139 levels; level 9 =
-  17978, matches the screenshot), and stat points are **3/level** (Stat Point 24 at level 9). See
-  `docs/LEVELING.md`. **Next:** import the curve (game data, like refdata) + server exp/level/stat
-  tracking + a level-up broadcast.
-- [ ] **Level-up animation** (pic 3): golden burst + "You have advanced to level [N]" on the level-up
-  broadcast (needs the EXP/leveling above).
+- [x] **EXP curve recovered + server leveling** — `leveldata.txt` col 1 is exp-to-next-level (139
+  levels; level 9 = 17978, matches the screenshot), stat points **3/level** (Stat Point 24 at level
+  9). Curve imported at runtime (`cmd/export-leveldata` → CSV → `internal/leveldata`); the kill path
+  grants exp, runs `Table.Advance`, grants stat points, refills HP on a level-up, and sends
+  `OpLevelUp` (`0x0067`). See `docs/LEVELING.md`.
+- [x] **Level-up animation** (pic 3): golden burst + "You have advanced to level [N]" on the
+  level-up broadcast. Built (`client/scripts/effects/level_up_effect.gd`): the **real** `levelup01–04`
+  meshes + their paired textures from `system_levelup.efp` (Particles.pk2), loaded at runtime, with
+  the **real** `UIIT_MSG_STRGERR_LEVEL` message; animation is a disclosed designed grow→fade (the
+  .efp's graph curves are not reliably recovered — see WORLD_ISSUES round 163). Verified in a render.
 - [ ] **Skills menu redone** (pic 4): Weapon / Force tabs, mastery tabs (Bicheon / Heuksal /
   Pacheon), Max Mastery / Max Skill, LEVEL UP, the skill grid with per-skill level arrows, Mastery
   level total. **Recover from `skilldata` / `skillmasterydata` / the Ghidra server** (not designed).

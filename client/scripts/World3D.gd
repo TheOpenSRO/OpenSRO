@@ -895,6 +895,9 @@ var _character_assets: Dictionary = {}
 ## and was ~25s of the ~65s world load / the region-crossing freeze.
 var _data_pk2: Pk2Reader
 var _map_pk2: Pk2Reader
+## The player's own Particles.pk2 -- the level-up burst's real meshes and
+## textures live here. Opened lazily the first time a level-up plays.
+var _particles_pk2: Pk2Reader
 ## item id -> the `.bsr` it is worn as, from the player's own item table.
 var _item_models: Dictionary = {}
 ## item id -> its TypeID4, for the weapons: which animation group a held
@@ -977,6 +980,7 @@ func _ready() -> void:
 	NetClient.attack_result.connect(_on_attack_result)
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
+	NetClient.level_up.connect(_on_level_up)
 	NetClient.loot_dropped.connect(_on_loot_dropped)
 	NetClient.inventory_list_result.connect(_on_inventory_list_result)
 	NetClient.equipment_result.connect(_on_equipment_result)
@@ -2460,6 +2464,18 @@ func _open_media_pk2_if_set() -> Pk2Reader:
 		return null
 	_media_pk2 = Pk2Reader.open(media_pk2_path)
 	return _media_pk2
+
+## The player's Particles.pk2, cached (same lazy-open pattern as the others).
+## Returns null when no Particles.pk2 is configured -- the level-up effect
+## then plays no visual rather than a fabricated one.
+func _open_particles_pk2_if_set() -> Pk2Reader:
+	if _particles_pk2 != null:
+		return _particles_pk2
+	var particles_pk2_path := Pk2Config.particles_path()
+	if particles_pk2_path == "":
+		return null
+	_particles_pk2 = Pk2Reader.open(particles_pk2_path)
+	return _particles_pk2
 
 ## Loads a real per-region minimap image (SRREVAMP_MAPM_TEXTURE_PATH, e.g.
 ## "minimap\100x100.ddj") as the terrain's real ground texture, if set.
@@ -5072,6 +5088,14 @@ func _qa_step() -> void:
 				(node as CanvasItem).visible = false
 		if OS.get_environment("SRREVAMP_QA_ATTACK") != "" and NetClient.is_connected_to_server():
 			_qa_attacking = true
+		# SRREVAMP_QA_LEVELUP=<level> fires the real level-up burst a moment
+		# after the player is placed, so a movie render catches it mid-play
+		# (it lasts LevelUpEffect.LIFE). Movie mode advances 1/60 a frame, so
+		# 15 frames is a quarter second -- enough for the camera to settle.
+		var qa_levelup := OS.get_environment("SRREVAMP_QA_LEVELUP")
+		if qa_levelup != "":
+			var lvl: int = int(qa_levelup) if qa_levelup.is_valid_int() else 10
+			get_tree().create_timer(15.0 / 60.0).timeout.connect(_on_level_up.bind(lvl, 0))
 		var qa_worldmap := OS.get_environment("SRREVAMP_QA_WORLDMAP")
 		if qa_worldmap != "" and _hud_worldmap != null:
 			# The window only builds its tiles for what can be seen, so it
@@ -6930,6 +6954,51 @@ func _on_monster_died(monster_id: int) -> void:
 		_dying_until[monster_id] = _idle_anim_time + seconds
 		get_tree().create_timer(seconds).timeout.connect(NetClient.list_monsters)
 	NetClient.list_monsters()
+
+## The player has advanced a level (server's OpLevelUp, only ever sent to
+## the character that levelled). Announces it with the client's own recovered
+## message and plays the real level-up burst on the player.
+##
+## stat_points is the character's total unspent points now (3 per level, see
+## docs/LEVELING.md); the character window reads it when opened, so this
+## handler does not need to push it anywhere -- it is here so the signal's
+## full payload is on record at the call site.
+func _on_level_up(new_level: int, _stat_points: int) -> void:
+	var msg := "You have advanced to level %d." % new_level
+	if _ui_text_table != null:
+		# The real string is UIIT_MSG_STRGERR_LEVEL "You have advanced to
+		# level [%d]." -- recovered from textuisystem.txt. Substitute the
+		# level into its own placeholder rather than hardcoding the English.
+		var template := _ui_text_table.get_text("UIIT_MSG_STRGERR_LEVEL", "")
+		if template != "":
+			msg = template.replace("[%d]", str(new_level))
+	_log_system(msg)
+	_play_level_up_effect()
+
+## Spawns the real level-up burst on the player, sized to the player's own
+## rendered height. Does nothing (beyond the message already logged) when the
+## player has no Particles.pk2 -- no fabricated stand-in.
+func _play_level_up_effect() -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	var particles := _open_particles_pk2_if_set()
+	if particles == null:
+		return
+	var fx := LevelUpEffect.create(particles, _player_world_height())
+	if fx == null:
+		return
+	player.add_child(fx)
+
+## The player's rendered height in world units -- measured from the assembled
+## skeleton when one is up, else the file's standing yardstick (a character is
+## about 2 * PLAYER_SCALE_RATIO tall, the same one the floating-text heights
+## use).
+func _player_world_height() -> float:
+	if _player_skeleton != null and is_instance_valid(_player_skeleton):
+		var h := _skeleton_top(_player_skeleton) * _player_skeleton.scale.y
+		if h > 0.1:
+			return h
+	return 2.0 * PLAYER_SCALE_RATIO
 
 ## Plays one of a monster's own animations by action type, once. Returns
 ## its length in seconds, 0 if the monster has no such animation.

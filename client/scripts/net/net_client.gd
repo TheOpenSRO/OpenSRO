@@ -44,6 +44,9 @@ signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
 signal loot_dropped(dropped: CombatNet.LootDropped)
 signal monster_list_result(monsters: Array, error: String)
+## The player's character just advanced a level: its new level and its total
+## unspent stat points. Sent only to the character that levelled.
+signal level_up(new_level: int, stat_points: int)
 signal learn_skill_result(ok: bool, reason: String)
 signal skill_list_result(skills: Array, error: String)
 
@@ -442,6 +445,9 @@ func _dispatch(p: Packet) -> void:
 		CombatNet.OP_MONSTER_LIST_RESULT:
 			var r := CombatNet.decode_monster_list_result(p.data)
 			monster_list_result.emit(r.monsters, r.error)
+		CombatNet.OP_LEVEL_UP:
+			var lu := CombatNet.decode_level_up(p.data)
+			level_up.emit(lu.new_level, lu.stat_points)
 		SkillNet.OP_LEARN_RESULT:
 			var r := SkillNet.decode_learn_result(p.data)
 			learn_skill_result.emit(r.ok, r.reason if r.error == "" else r.error)
