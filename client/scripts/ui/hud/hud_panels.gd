@@ -557,9 +557,14 @@ func connect_net() -> void:
 	if _net_connected:
 		return
 	_net_connected = true
+	# The inventory's authored presentation is its lattice grid
+	# (GDR_INVENTORY_LATTICE), filled with item icons -- the same as the real
+	# client. It has no authored list area (no scroll manager in
+	# ifinventory.txt), so the old _fill_list fallback dropped a full-window
+	# ItemList of "slot_index=.., Item_id=.." debug text *over* the grid,
+	# hiding it. That debug overlay is gone: the grid is the window.
 	NetClient.inventory_list_result.connect(func(slots: Array, _e: String) -> void:
-		_fill_inventory_grid(slots)
-		_fill_list("inventory", slots.map(_describe_item)))
+		_fill_inventory_grid(slots))
 	NetClient.equipment_result.connect(func(items: Array, _e: String) -> void:
 		_equipped_items = items
 		_fill_equipment_slots(items))

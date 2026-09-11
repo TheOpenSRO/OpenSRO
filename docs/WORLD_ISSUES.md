@@ -7075,6 +7075,36 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-sixty-fourth round: the inventory was a debug list over the real grid
+
+Playtest: the inventory looked nothing like the game -- a plain list of
+`slot_index=0, Item_id=501` text rows, not a grid of item slots. It reads as
+pure "assumed" UI.
+
+The cause was a leftover debug fallback, not a missing window. `ifinventory.txt`
+*does* define the real bag -- `GDR_INVENTORY_FRAME` (chrome),
+`GDR_INVENTORY_LATTICE:CIFLattice` (the slot grid, Rect 18,13,144,288, built by
+UiBuilder into one icon cell each), `GDR_INVENTORY_LATTICE_OUTLINE`, and
+`GDR_INVENTORY_STA_GOLD` -- and `_fill_inventory_grid` already fills that grid
+with item icons. But the same handler *also* called `_fill_list("inventory",
+...)`, and because ifinventory.txt has no scroll-manager control, that fell
+through to `_fill_list_overlay`, which drops a full-window `ItemList` of debug
+text **on top of** the grid. The authored grid was there the whole time, hidden
+under the overlay. Removed the `_fill_list` call for the inventory; the lattice
+grid is the presentation, the same as the real client.
+
+A render (`--server --panels inventory,equipment`) confirms it: the inventory is
+now the real framed slot grid with its gold readout, and the equipment paper
+doll shows the starter kit's real gear icons (sword/shirt/pants/boots) on the 3D
+character. Empty bag cells are only because the test server's drops are the
+placeholder item IDs 500-502 (no icon art); real item ids render their icons,
+as the equipped slots prove.
+
+Note on client versions: this archive's `ifinventory.txt` is bag-only (the paper
+doll is the separate `ifequipment.txt`). A newer client fuses them into one
+window; since the build is data-driven off whatever `ifinventory.txt` the
+player's own pk2 carries, it renders whichever layout that version defines.
+
 ## Hundred-and-sixty-third round: the level-up burst, end to end from the real effect
 
 The playtest asked for the level-up animation, recovered from the client, wired end to end. Done —
