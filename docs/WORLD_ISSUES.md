@@ -7075,6 +7075,28 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-fifty-fifth round: a "NOW LOADING" screen, and where the minute goes
+
+World entry took 60-90s with no feedback -- a black, frozen window. Two
+parts. First, the profile: `character/item/NPC tables` load in ~1.2s, but
+the 25-region grid takes **~68s, about 2.75s a region** -- that is the whole
+wait. Second, the feedback: the initial neighbourhood is now *queued* like
+the streaming cells (round 154) and pumped a batch a frame behind a "NOW
+LOADING" screen -- the real `loading_default.ddj` art with a gold gauge that
+fills as cells build -- so entry animates instead of freezing. A QA render
+(`SRREVAMP_MAPM_PATH` set) still drains the queue synchronously so a
+screenshot sees the whole world; `SRREVAMP_QA_FORCE_LOADING` renders the
+screen itself, which is how it was verified. The screen is added as the HUD
+Control's top child (a CanvasLayer of its own did not composite in movie
+mode) after the HUD is built, so the ~1s of table loading before it is a
+negligible placeholder flash.
+
+Not yet done, and the actual speed-up: 2.75s a region is almost certainly
+the skinned NPC assembly in `_try_spawn_region_npcs` (a `.bsr` per NPC).
+Reducing the initial radius alone just moves the per-cell hitches to
+post-entry, so the lever is the per-cell cost -- defer or thread the NPC
+spawns. Recorded in `docs/FRONTEND_CHECKLIST.md`.
+
 ## Hundred-and-fifty-fourth round: region cells stream a few per frame
 
 Playtest complaint: crossing into a new region froze the game for about a

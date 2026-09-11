@@ -16,13 +16,17 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
 - [ ] "MaxiGuard verification success"-style status line area (cosmetic)
 
 ## 2. Loading screens + world-entry speed  ← **HIGH PRIORITY (user: 60-90s, no feedback)**
-- [ ] **Loading screen with feedback during world entry** — the ~60-90s Start→in-world wait shows
-  nothing. Put up `loading_<region>.ddj` + `gauge_loading.ddj` + "NOW LOADING" and a real progress
-  signal. Needs World3D's initial load to yield frames (it blocks in `_ready` today) so the screen
-  can paint and update; the loader already awaits (QaSignIn), so stage it and await between stages.
-- [ ] **Optimize the world load itself** — profile Start→playable: region streaming, `.bsr`/`.bms`
-  mesh parsing, `.ddj` texture decode, navmesh build. Cut or defer the worst offenders; consider
-  loading fewer regions before "playable" and streaming the rest after.
+- [x] **Loading screen with feedback during world entry** (v0.1.108, round 155) — a "NOW LOADING"
+  screen (real `loading_default.ddj` art + a gold gauge that fills as region cells stream in) is up
+  over the region load; the initial neighbourhood is now queued and pumped a batch a frame behind
+  it. QA renders keep the synchronous load (verified). Real entry now has feedback instead of a
+  black freeze.
+- [ ] **Optimize the world load itself** — profiled: character/item/NPC tables ~1.2s, but the 25-region
+  grid is **~68s (~2.75s per region)** — that is the whole wait. Reducing the initial radius just
+  moves the per-cell hitches to post-entry, so the real lever is the per-cell cost: almost certainly
+  the NPC assembly in `_try_spawn_region_npcs` (skinned `.bsr` per NPC). Defer/most likely thread
+  NPC spawns, or spawn them lazily after entry; then a smaller initial radius + background streaming
+  becomes a win too.
 - [~] **Per-chunk freeze crossing into a new region** — streaming now queues the new leading-edge
   cells and builds one per frame instead of the whole row at once (v0.1.107, round 154), turning
   the ~1s freeze into brief per-frame hitches. **Needs in-game confirmation**; if still felt, next

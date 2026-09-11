@@ -641,6 +641,9 @@ var _last_stream_cell := Vector2i(0x7fffffff, 0x7fffffff) # sentinel so the firs
 var _load_queue: Array = [] # of {rx, ry, dx, dy, anchor, key}
 var _queued_cells := {} # key -> true, so a cell is not queued twice
 const STREAM_CELLS_PER_FRAME := 1
+# The "NOW LOADING" screen shown to a real player during world entry (never a
+# QA render, whose synchronous load a screenshot depends on).
+var _loading_screen: LoadingScreen
 
 @onready var player: CharacterBody3D = $Player
 @onready var player_mesh: MeshInstance3D = $Player/Mesh
@@ -940,7 +943,9 @@ func _ready() -> void:
 
 	character_label.text = "Character: %s" % NetClient.current_character_name
 
+	var _t_assets := Time.get_ticks_msec()
 	_load_character_assets()
+	print("World3D: character/item/NPC tables loaded in %d ms" % (Time.get_ticks_msec() - _t_assets))
 
 	var result := NetClient.last_enter_world_result
 	if result != null and result.ok:
@@ -1083,8 +1088,10 @@ func _ready() -> void:
 	_try_apply_real_player_character()
 	_try_add_real_sky()
 	_apply_camera_far_plane()
+	var _t_region := Time.get_ticks_msec()
 	_load_initial_region_neighborhood()
 	_try_initialize_pk2_ui()
+	await _drain_initial_load(_t_region)
 
 ## Initializes authentic Silkroad UI components (minimap, underbar) from Media.pk2 if available.
 func _try_initialize_pk2_ui() -> void:
@@ -2735,15 +2742,33 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	_grid_has_origin = true
 	_loaded_cells.clear()
 	_loaded_cells["0_0"] = true
-	_last_stream_cell = Vector2i(0x7fffffff, 0x7fffffff)
+	# The centre cell is (0,0); the neighbours stream in from here. Set the
+	# stream cell to it (not the sentinel) so the queue's stale-guard keeps
+	# the neighbours we are about to enqueue, and so a later _maybe_stream_regions
+	# does not redundantly re-scan the same centre.
+	_last_stream_cell = Vector2i(0, 0)
 	var center_node := get_node_or_null("RealTerrain_%d_%d" % [center_x, center_y])
 	_grid_origin_world = center_node.position if center_node != null else Vector3.ZERO
 
+	# The neighbours are queued nearest-first and built a few per frame (see
+	# _process_stream_queue and, at world entry, the loading screen's pump),
+	# instead of all at once here -- that synchronous grid was most of the
+	# minute-long, no-feedback entry.
+	_load_queue.clear()
+	_queued_cells.clear()
+	var neighbours: Array = []
 	for dy in range(-radius, radius + 1):
 		for dx in range(-radius, radius + 1):
 			if dx == 0 and dy == 0:
 				continue # center cell already loaded above
-			_load_region_cell(center_x + dx, center_y + dy, dx, dy, center_near_height)
+			neighbours.append({
+				"rx": center_x + dx, "ry": center_y + dy, "dx": dx, "dy": dy,
+				"key": "%d_%d" % [dx, dy], "dist": absi(dx) + absi(dy),
+			})
+	neighbours.sort_custom(func(a, b): return a["dist"] < b["dist"])
+	for cell in neighbours:
+		_queued_cells[cell["key"]] = true
+		_load_queue.append(cell)
 
 ## Loads one real region cell (terrain + objects) at grid position (dx, dy)
 ## relative to _grid_origin_region, and marks it loaded in _loaded_cells.
@@ -2867,6 +2892,60 @@ func _process_stream_queue() -> void:
 			continue # the player left this cell's window before it built
 		_load_region_cell(cell["rx"], cell["ry"], cell["dx"], cell["dy"], _grid_shared_anchor_height)
 		built += 1
+
+## Whether world entry shows the "NOW LOADING" screen: a real player does; a
+## QA/dev render (SRREVAMP_MAPM_PATH set) does not, because its synchronous
+## load is what the screenshot depends on -- unless SRREVAMP_QA_FORCE_LOADING
+## asks for it, to render the screen itself.
+func _should_show_loading_screen() -> bool:
+	return OS.get_environment("SRREVAMP_MAPM_PATH") == "" or OS.get_environment("SRREVAMP_QA_FORCE_LOADING") != ""
+
+# Cells built per frame while the loading screen is up: the player is not
+# moving yet, so a bigger batch than the in-play stream is fine.
+const LOADING_CELLS_PER_FRAME := 2
+
+## Finishes the initial region load that `_load_region_neighborhood` queued.
+## With no loading screen (a QA render) the queue is drained at once, so the
+## first frames show the whole world. With one, the queue is pumped a batch a
+## frame and the gauge filled, so a real entry has feedback instead of a black
+## freeze.
+func _drain_initial_load(region_started_ms: int) -> void:
+	if not _should_show_loading_screen():
+		while not _load_queue.is_empty():
+			_build_one_queued_cell()
+		print("World3D: region grid loaded in %d ms" % (Time.get_ticks_msec() - region_started_ms))
+		return
+	# The screen goes into the HUD Control as its top child, so it renders over
+	# everything, and is freed once the queue drains. Added now (after the HUD
+	# is built) rather than at _ready's start so it is genuinely on top; the
+	# ~1s of table loading before this is a negligible flash of placeholder.
+	_loading_screen = LoadingScreen.new()
+	ui_control.add_child(_loading_screen)
+	await get_tree().process_frame
+	var total := maxi(_load_queue.size(), 1)
+	while not _load_queue.is_empty():
+		for _i in range(LOADING_CELLS_PER_FRAME):
+			if _load_queue.is_empty():
+				break
+			_build_one_queued_cell()
+		_loading_screen.set_progress(1.0 - float(_load_queue.size()) / float(total))
+		await get_tree().process_frame
+	print("World3D: region grid loaded in %d ms" % (Time.get_ticks_msec() - region_started_ms))
+	_loading_screen.set_progress(1.0)
+	_loading_screen.set_caption("Entering the world...")
+	await get_tree().process_frame
+	_loading_screen.queue_free()
+	_loading_screen = null
+
+## Builds the next queued cell, if it is still wanted. Shared by the in-play
+## stream and the entry-time drain.
+func _build_one_queued_cell() -> void:
+	if _load_queue.is_empty():
+		return
+	var cell: Dictionary = _load_queue.pop_front()
+	_queued_cells.erase(cell["key"])
+	if not _loaded_cells.has(cell["key"]):
+		_load_region_cell(cell["rx"], cell["ry"], cell["dx"], cell["dy"], _grid_shared_anchor_height)
 
 ## _ready()'s own entry point into the region grid: reads SRREVAMP_MAPM_PATH
 ## the same way this scene always has, but now treats it as the *center* of
