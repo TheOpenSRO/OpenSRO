@@ -7075,6 +7075,28 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-forty-ninth round: floating damage numbers
+
+Every blow now shows its damage the way the original does: a number that
+rises and fades over the thing it was dealt to. The damage the player
+deals floats up over the monster in white, from its HP bar's height; the
+damage the player takes floats up over the player in a warm red. Both are
+fixed-size billboarded `Label3D`s -- the same trick the name plates and HP
+bars use so they read at any distance and in this world's real scale (a
+character is about `2 * PLAYER_SCALE_RATIO` tall, so the rise and the
+fallback height are scaled by it, not left in 1.8-unit terms, or the climb
+would be imperceptible). Each tweens its position up and its fill *and*
+outline alpha to zero over 1.1s, then frees itself. They are on the same
+clock the hit reactions already use: the dealt number lands with the
+swing's hit event, the taken number with the monster's counter-swing
+(round 132's `lands_after` / `strike_after`). The colours, size and rise
+are a disclosed choice; nothing recovered gives the original's. Rendered
+over a field Mangyang with `QA_ATTACK`: the white "1" (placeholder damage
+until the round-145 refdata is imported) drifts up off the monster and the
+red "8" off the player. `_floating_damage` logs each number's unprojected
+screen position under the QA hook, so the frame crop was aimed at 640,347
+rather than hunted for.
+
 ## Hundred-and-forty-eighth round: the target window
 
 The current target now shows at the top of the screen, the way the

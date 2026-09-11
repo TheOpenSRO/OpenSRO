@@ -57,9 +57,11 @@ In order. Each is checked off here when it ships in a release, with its round in
 
 ## Next up
 
-### 0. Monster HP bars, click-to-attack, target window — **done** (rounds 146-148)
-Monsters show a name plate and a billboarded red HP bar that shrinks on each hit, and a left click
-on a monster attacks it (NPC->talk, monster->attack, ground->move). Combat behind it is still the
+### 0. Monster HP bars, click-to-attack, target window, damage numbers — **done** (rounds 146-149)
+Monsters show a name plate and a billboarded red HP bar that shrinks on each hit, a left click
+on a monster attacks it (NPC->talk, monster->attack, ground->move), the current target shows at
+the top of the screen, and every blow floats a damage number that rises and fades -- white for
+damage the player deals, red for damage taken (round 149). Combat behind it is still the
 placeholder damage until the round-145 refdata is imported (operator's call, `deploy/README.md`).
 
 ### 1. NPCs — **done, except that they are statues** (hundred-and-fifth round)

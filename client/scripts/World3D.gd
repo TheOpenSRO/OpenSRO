@@ -3289,6 +3289,63 @@ func _clear_target() -> void:
 	if _target_window != null:
 		_target_window.visible = false
 
+# How far the number climbs while it fades, in world units. Scaled by
+# PLAYER_SCALE_RATIO like every other height here (a character is about
+# 2 * PLAYER_SCALE_RATIO tall, not 1.8), or the rise would be imperceptible
+# in this world's real scale. About three-quarters of a character height.
+const FLOAT_TEXT_RISE := 1.5 * PLAYER_SCALE_RATIO
+const FLOAT_TEXT_SECONDS := 1.1
+const DAMAGE_DEALT_COLOUR := Color(1.0, 1.0, 0.95)
+const DAMAGE_TAKEN_COLOUR := Color(1.0, 0.45, 0.35)
+
+## A damage number that rises and fades over the thing it was dealt to, the
+## way the original shows combat damage. White for damage the player deals,
+## a warm red for damage the player takes. Fixed-size and billboarded like
+## the name plates so it reads at any distance; it frees itself when done.
+func _floating_damage(anchor: Node3D, height: float, amount: int, colour: Color) -> void:
+	if anchor == null or not is_instance_valid(anchor):
+		return
+	var label := Label3D.new()
+	label.text = str(amount)
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.fixed_size = true
+	label.pixel_size = NAME_PLATE_PIXEL_SIZE * 1.8
+	label.modulate = colour
+	label.outline_size = NAME_PLATE_OUTLINE
+	label.outline_modulate = NAME_PLATE_OUTLINE_COLOUR
+	label.no_depth_test = true
+	label.render_priority = 3
+	label.position = Vector3(0.0, height, 0.0)
+	anchor.add_child(label)
+	# During a QA attack render, log where the number landed on screen, so a
+	# frame crop can be aimed at it rather than hunted for. Off in real play.
+	if _qa_attacking:
+		var cam := get_viewport().get_camera_3d()
+		if cam != null:
+			var sp := cam.unproject_position(anchor.global_position + Vector3(0.0, height, 0.0))
+			print("World3D: FLOAT %d over %s at screen %.0f,%.0f" % [amount, anchor.name, sp.x, sp.y])
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(label, "position:y", height + FLOAT_TEXT_RISE, FLOAT_TEXT_SECONDS)
+	tween.tween_property(label, "modulate:a", 0.0, FLOAT_TEXT_SECONDS)
+	# The outline carries its own alpha, so fade it with the fill or a black
+	# ghost of the number lingers after the text has gone.
+	tween.tween_property(label, "outline_modulate:a", 0.0, FLOAT_TEXT_SECONDS)
+	tween.finished.connect(label.queue_free)
+
+## The height a floating number starts at over a monster -- its HP bar's,
+## or a default when it has no bar.
+func _monster_text_height(monster_id: int) -> float:
+	var body = _monster_bodies.get(monster_id)
+	if body != null and is_instance_valid(body):
+		var bar := (body as Node3D).get_node_or_null("HpBar") as Sprite3D
+		if bar != null:
+			return bar.position.y
+	# Every spawned monster gets an HP bar, so this fallback is rare; human
+	# head height (same PLAYER_SCALE_RATIO calibration) beats an unscaled
+	# constant that would sit at the monster's feet in this world's scale.
+	return 2.0 * PLAYER_SCALE_RATIO
+
 ## Changes how near an entity has to be before its name shows, for every
 ## plate already in the scene and every one made from now on.
 func set_name_plate_range(distance: float) -> void:
@@ -6526,9 +6583,20 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			_play_player_once(swing)
 		var hit_ms := swing_entry.first_event_time(BsrReader.AnimationEntry.EVENT_HIT)
 		lands_after = float(hit_ms) / 1000.0 if hit_ms > 0 else 0.0
+	# The monster this result is about: attack results carry no monster id,
+	# so it is the target the attack was sent for. Captured now because a
+	# killing blow may clear _last_attack_target before the blow lands, and
+	# the floating damage number still has to appear over the dying body.
+	var damage_target := _last_attack_target
 	if _last_attack_target != -1:
+		var dealt := result.monster_damage
 		_after(lands_after, func() -> void:
-			_play_monster_action(_last_attack_target, BsrReader.AnimationEntry.TYPE_HIT))
+			# _last_attack_target (not the captured id) so a monster that died
+			# in the meantime keeps its die animation instead of a hit reaction.
+			_play_monster_action(_last_attack_target, BsrReader.AnimationEntry.TYPE_HIT)
+			var hit_body = _monster_bodies.get(damage_target)
+			if hit_body != null and is_instance_valid(hit_body):
+				_floating_damage(hit_body, _monster_text_height(damage_target), dealt, DAMAGE_DEALT_COLOUR))
 	if result.player_damage_taken > 0 and _player_skeleton != null:
 		# The monster strikes back: its own attack, and the player's hit
 		# reaction (type 3) when that swing's hit event falls.
@@ -6545,7 +6613,11 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		_after(lands_after + strike_after, func() -> void:
 			var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
 			if hit != null:
-				_player_one_shot_until = _player_anim_time + _play_player_once(hit))
+				_player_one_shot_until = _player_anim_time + _play_player_once(hit)
+			# The damage the player took, over the player's own head (human
+			# head height from the same PLAYER_SCALE_RATIO calibration the
+			# monster fallback uses), timed to when the counter-blow lands.
+			_floating_damage(player, 2.0 * PLAYER_SCALE_RATIO, result.player_damage_taken, DAMAGE_TAKEN_COLOUR))
 	if result.monster_died:
 		monster_status_label.text = "Hit for %d -- it died!" % result.monster_damage
 		# A kill may have progressed a quest's kill count even without
