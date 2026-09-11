@@ -2921,18 +2921,19 @@ const LOADING_CELLS_PER_FRAME := 2
 ## frame and the gauge filled, so a real entry has feedback instead of a black
 ## freeze.
 func _drain_initial_load(region_started_ms: int) -> void:
-	if not _should_show_loading_screen():
+	# No screen wanted (a QA render): build the queue at once so the first
+	# frames show the whole world.
+	if _loading_screen == null and not _should_show_loading_screen():
 		while not _load_queue.is_empty():
 			_build_one_queued_cell()
 		print("World3D: region grid loaded in %d ms (terrain %.0f, objects %.0f, npcs %.0f)" % [Time.get_ticks_msec() - region_started_ms, _load_ms_terrain, _load_ms_objects, _load_ms_npcs])
 		return
-	# The screen goes into the HUD Control as its top child, so it renders over
-	# everything, and is freed once the queue drains. Added now (after the HUD
-	# is built) rather than at _ready's start so it is genuinely on top; the
-	# ~1s of table loading before this is a negligible flash of placeholder.
-	_loading_screen = LoadingScreen.new()
-	ui_control.add_child(_loading_screen)
-	await get_tree().process_frame
+	# Reuse a screen a caller already put up (a teleport does, so even its
+	# centre-cell load is covered), else make one now.
+	if _loading_screen == null:
+		_loading_screen = LoadingScreen.new()
+		ui_control.add_child(_loading_screen)
+		await get_tree().process_frame
 	var total := maxi(_load_queue.size(), 1)
 	while not _load_queue.is_empty():
 		for _i in range(LOADING_CELLS_PER_FRAME):
@@ -2947,6 +2948,16 @@ func _drain_initial_load(region_started_ms: int) -> void:
 	await get_tree().process_frame
 	_loading_screen.queue_free()
 	_loading_screen = null
+
+## Puts the "NOW LOADING" screen up (a real player only), so a caller can
+## cover a load whose first, synchronous part runs before the drain -- a
+## teleport's centre cell. A no-op under QA or if one is already up.
+func _show_loading_screen() -> void:
+	if _loading_screen != null or not _should_show_loading_screen():
+		return
+	_loading_screen = LoadingScreen.new()
+	ui_control.add_child(_loading_screen)
+	await get_tree().process_frame
 
 ## Builds the next queued cell, if it is still wanted. Shared by the in-play
 ## stream and the entry-time drain.
@@ -3041,6 +3052,11 @@ func _reload_zone_assets(zone: String) -> void:
 func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	if not result.ok:
 		return
+	# A teleport shows the "NOW LOADING" screen (the playtester's call: the
+	# loading screen belongs on a teleport). Up before the zone assets load so
+	# even the synchronous centre-cell build is behind it; the queued
+	# neighbours then pump behind it in _drain_initial_load below.
+	await _show_loading_screen()
 	zone_label.text = "Zone: %s" % result.zone
 	player.position = Vector3(result.x, result.y, result.z)
 	_last_sent_pos = player.position
@@ -3082,6 +3098,10 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 				result.zone, spot.x, spot.y])
 	else:
 		_place_at_zone_spawn(result.zone)
+
+	# Pump the new zone's queued neighbour cells behind the loading screen (if
+	# one is up), then drop it -- the same drain the first entry uses.
+	await _drain_initial_load(Time.get_ticks_msec())
 
 ## Everything in the world that plays an animation -- NPCs and monsters.
 ## Each entry is [Skeleton3D, ParsedAnimation, frame count, phase, loops,

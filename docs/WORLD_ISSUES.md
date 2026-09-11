@@ -7075,6 +7075,18 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-fifty-eighth round: the loading screen covers teleports too
+
+The playtester's call: the "NOW LOADING" screen belongs on a teleport. A zone
+change (`_on_change_zone_result`) now raises the same screen before it reloads
+the zone -- so even the synchronous centre-cell build is behind it -- and
+drains the new zone's queued neighbour cells behind it (the shared
+`_drain_initial_load`, which now reuses a screen a caller already put up). It
+still shows on first world entry, which is itself a teleport into the saved
+position, so "only when teleporting" holds; a QA render still loads
+synchronously with no screen. Whether first entry should skip it is left as a
+question in `opensropleasereview.md`.
+
 ## Hundred-and-fifty-seventh round: the body walked backwards
 
 A playtester reported, and confirmed, that the character faced the opposite
