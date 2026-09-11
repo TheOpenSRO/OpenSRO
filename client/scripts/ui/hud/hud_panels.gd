@@ -416,6 +416,43 @@ func _fill_inventory_grid(slots: Array) -> void:
 		if count_label != null and quantity != null and int(quantity) > 1:
 			count_label.text = str(int(quantity))
 
+## The worn items as last reported, so opening the equipment window fills
+## its slots even if the list arrived while it was closed.
+var _equipped_items: Array = []
+
+## The base of the equipment window's slot control names: a worn slot's
+## index i is drawn in GDR_EQUIPMENT_SLOT_(100 + i). Anchored to the user's
+## own equipment window -- the weapon (slot 6) sits in SLOT_106 at the
+## top-left and the shield (slot 7) in SLOT_107 at the top-right, exactly
+## where the screenshot shows them -- so the rest of the +index run
+## (helm 0, mail 1, shoulderguard 2, gauntlet 3, pants 4, boots 5) follows.
+const EQUIPMENT_SLOT_BASE := 100
+
+func _fill_equipment_slots(items: Array) -> void:
+	var window: HudWindow = _windows.get("equipment")
+	if window == null:
+		return
+	# Clear first, so an unequip empties its slot.
+	for i in range(17):
+		var slot := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + i)) as Control
+		if slot != null:
+			var icon := slot.get_node_or_null("ItemIcon") as TextureRect
+			if icon != null:
+				icon.texture = null
+	for entry in items:
+		var slot_index = _first_field(entry, ["slot", "slot_index", "index"])
+		var item_id = _first_field(entry, ["item_id", "id"])
+		if slot_index == null or item_id == null:
+			continue
+		var slot := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + int(slot_index))) as Control
+		if slot == null:
+			continue
+		var icon := slot.get_node_or_null("ItemIcon") as TextureRect
+		if icon != null:
+			icon.texture = _item_icon(int(item_id))
+			icon.tooltip_text = _item_tooltip(int(item_id))
+			icon.mouse_filter = Control.MOUSE_FILTER_STOP
+
 func connect_net() -> void:
 	if _net_connected:
 		return
@@ -423,6 +460,9 @@ func connect_net() -> void:
 	NetClient.inventory_list_result.connect(func(slots: Array, _e: String) -> void:
 		_fill_inventory_grid(slots)
 		_fill_list("inventory", slots.map(_describe_item)))
+	NetClient.equipment_result.connect(func(items: Array, _e: String) -> void:
+		_equipped_items = items
+		_fill_equipment_slots(items))
 	NetClient.skill_list_result.connect(func(skills: Array, _e: String) -> void:
 		_fill_list("skill", skills.map(_describe_named)))
 	NetClient.quest_list_result.connect(func(entries: Array, _e: String) -> void:
@@ -545,6 +585,10 @@ func _populate(panel_id: String) -> void:
 			NetClient.guild_info(who)
 		"character":
 			_apply_character_fields()
+		"equipment":
+			# Fill from what we already have, then ask the server for fresh.
+			_fill_equipment_slots(_equipped_items)
+			NetClient.list_equipment(who)
 
 ## Renders a list of strings into a panel, as a plain scrolling list laid
 ## over the authored frame.

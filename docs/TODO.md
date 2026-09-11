@@ -35,9 +35,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       each its own backend; only "End conversation" acts so far.
 - [x] **Item tooltips** with the real stats -- round 140, columns pinned against the Copper Sword
       (+5) the user sent.
-- [x] **Paper doll** -- round 141: the equipment window (`O`) renders the dressed character live in
-      a SubViewport. Follow-ups: fill the worn slots around it with the equipped icons, and measure
-      the item table's armour defence block (armour reuses the weapon stat columns for other stats).
+- [x] **Paper doll** -- round 141: the equipment window (`O`) renders the dressed character live.
+- [x] **Equipment slot icons** -- round 142: the worn slots show the equipped icons, slot i in
+      GDR_EQUIPMENT_SLOT_(100+i), anchored to the user's screenshot. Open: the armour defence block
+      (armour reuses the weapon stat columns for other stats -- needs an armour ground-truth).
 - [ ] **Skill window** per `ifskill` / `ifskill_mastery` / `ifskill_slot`: Weapon / Force tabs,
       the three China masteries, mastery level, skill icons from `skilldata`, Level Up.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the

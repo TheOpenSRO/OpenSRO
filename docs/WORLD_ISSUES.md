@@ -7075,6 +7075,23 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-forty-second round: the worn slots filled
+
+The equipment window's worn slots now show the equipped items' icons
+around the paper doll. Each `CIFSlotWithHelp` the layout builds already
+carries an `ItemIcon` child (the same one the inventory cells use), so
+filling one is the inventory grid's own trick: the item's icon from the
+table, and the hover tooltip. The slot mapping -- which
+`GDR_EQUIPMENT_SLOT_10x` is which worn slot -- was **not** guessed: it is
+`100 + slot index`, anchored to the user's own equipment screenshot,
+where the weapon (slot 6) sits in `SLOT_106` at the top-left and the
+shield (slot 7) in `SLOT_107` at the top-right, exactly where the layout
+puts those two controls. Rendered with the starter kit: the sword
+top-left, the mail on the left, pants and boots along the bottom, every
+icon in the slot the +index run predicts. Still empty rather than
+invented: the armour defence numbers a slot's tooltip would add (armour
+reuses the weapon stat columns, unmeasured).
+
 ## Hundred-and-forty-first round: the paper doll
 
 "Notice how in the inventory menu my character is rendered here." The
