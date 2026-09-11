@@ -2,6 +2,19 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-09-11 — a public test server that follows `dev`
+
+A VM of OpenSRO's now runs the compose stack for outside testers, and `deploy/` keeps it current:
+`update.sh` on a five-minute systemd timer fetches, fast-forwards `dev`, rebuilds, and checks the
+gateway answers twice ten seconds apart -- a build that fails or never listens is rolled back to
+the commit that was running and that origin commit is held until `dev` moves past it. Local edits
+on the box stop the update rather than being discarded. `deploy/README.md` has the commands;
+`docs/HANDOFF_OPENSRO.md` tells the server lane that pushing to `dev` is deploying.
+
+Also read out of the client today: the weapon-to-animation-group switch (`FUN_00a5a7d0`, round
+133), so `WEAPON_ANIMATION_GROUP` covers Europe's kinds and the crossbow, rod, dark-staff and
+harp cases the tables could not have given.
+
 ## 2026-09-10 — the character dressed from the game's own tables
 
 "Fix the player models and armor": the server equipped the Cotton starter set and the client drew

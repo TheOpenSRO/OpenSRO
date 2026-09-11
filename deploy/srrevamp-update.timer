@@ -1,0 +1,12 @@
+# Installed by deploy/install.sh.
+[Unit]
+Description=srrevamp: check origin/dev every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

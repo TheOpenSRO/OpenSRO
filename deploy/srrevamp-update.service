@@ -1,0 +1,11 @@
+# Installed by deploy/install.sh, which fills in @REPO@ and @USER@.
+[Unit]
+Description=srrevamp: update the server from origin/dev
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@USER@
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/deploy/update.sh
