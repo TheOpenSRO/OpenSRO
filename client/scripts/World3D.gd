@@ -1655,6 +1655,12 @@ func _qa_open_panels(spec: String) -> void:
 		var panel_id := raw.strip_edges()
 		if panel_id == "":
 			continue
+		# The MENU popup is not a panel -- open it where the underbar would.
+		if panel_id == "menu":
+			var view2 := get_viewport().get_visible_rect().size
+			_hud_panels.show_menu(Vector2(view2.x * 0.62, view2.y - 40.0))
+			placed += 1
+			continue
 		var window := _hud_panels.open(panel_id)
 		if window == null:
 			print("QA PANELS: %s did not open" % panel_id)

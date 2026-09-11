@@ -95,20 +95,24 @@ const EXTRA_SECTIONS := {
 	"autopotion": ["AbnormalSlot", "PotionDelaySlot"],
 }
 
-## Order and labels for the MENU popup, mirroring the reference's list.
+## Order, labels and the client's own menu icon for each MENU popup item,
+## mirroring the reference's list. The icon is one of interface\underbar's
+## own `ub_new_icon_*` (20x20); the three panels that are underbar buttons in
+## this archive (inventory/character/skill) have no such icon here, so they
+## show text-only rather than a mismatched one.
 const MENU_ITEMS := [
-	["party", "Party (P)"],
-	["partymatch", "Party Match (E)"],
-	["guild", "Guild (G)"],
-	["academy", "Academy (L)"],
-	["action", "Action (A)"],
-	["community", "Community (U)"],
-	["quest", "Quest (Q)"],
-	["alchemy", "Alchemy (Y)"],
-	["inventory", "Inventory (I)"],
-	["character", "Character (C)"],
-	["skill", "Skill (K)"],
-	["autopotion", "Auto Potion (T)"],
+	["party", "Party (P)", "ub_new_icon_pt"],
+	["partymatch", "Party Match (E)", "ub_new_icon_ptm"],
+	["guild", "Guild (G)", "ub_new_icon_guild"],
+	["academy", "Academy (L)", "ub_new_icon_apprenticeship"],
+	["action", "Action (A)", "ub_new_icon_action"],
+	["community", "Community (U)", "ub_new_icon_commu"],
+	["quest", "Quest (Q)", "ub_new_icon_quest"],
+	["alchemy", "Alchemy (Y)", "ub_new_icon_alchemy"],
+	["inventory", "Inventory (I)", ""],
+	["character", "Character (C)", ""],
+	["skill", "Skill (K)", ""],
+	["autopotion", "Auto Potion (T)", "ub_new_icon_recovery"],
 ]
 
 var _builder: UiBuilder
@@ -129,14 +133,41 @@ func _ready() -> void:
 func _build_menu() -> void:
 	_menu = PopupMenu.new()
 	_menu.name = "Menu"
+	_style_menu(_menu)
 	for i in range(MENU_ITEMS.size()):
 		var item: Array = MENU_ITEMS[i]
-		_menu.add_item(item[1], i)
+		var icon: Texture2D = null
+		if item.size() > 2 and item[2] != "" and _builder != null:
+			icon = _builder.load_texture("interface\\underbar\\%s.ddj" % item[2])
+		if icon != null:
+			_menu.add_icon_item(icon, item[1], i)
+		else:
+			_menu.add_item(item[1], i)
 		_menu_ids.append(item[0])
 	_menu.id_pressed.connect(func(id: int) -> void:
 		if id >= 0 and id < _menu_ids.size():
 			toggle(_menu_ids[id]))
 	add_child(_menu)
+
+## Dark, gold-edged styling so the menu reads as the game's rather than a grey
+## system popup. A disclosed choice; the ornate authored frame is a later
+## polish. The icon size is bumped so the 20x20 art is legible.
+func _style_menu(menu: PopupMenu) -> void:
+	var panel := StyleBoxFlat.new()
+	panel.bg_color = Color(0.06, 0.06, 0.07, 0.97)
+	panel.border_color = Color(0.55, 0.45, 0.22)
+	panel.set_border_width_all(2)
+	panel.set_corner_radius_all(4)
+	panel.set_content_margin_all(6)
+	menu.add_theme_stylebox_override("panel", panel)
+	var hover := StyleBoxFlat.new()
+	hover.bg_color = Color(0.20, 0.17, 0.09, 0.98)
+	hover.set_corner_radius_all(3)
+	menu.add_theme_stylebox_override("hover", hover)
+	menu.add_theme_color_override("font_color", Color(0.90, 0.84, 0.60))
+	menu.add_theme_color_override("font_hover_color", Color(1.0, 0.96, 0.74))
+	menu.add_theme_constant_override("icon_max_width", 22)
+	menu.add_theme_constant_override("v_separation", 6)
 
 ## Opens the MENU popup above the underbar, where the reference puts it.
 func show_menu(near: Vector2) -> void:

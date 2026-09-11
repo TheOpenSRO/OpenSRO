@@ -105,11 +105,10 @@ data:** the EXP curve is recovered (leveldata.txt); the stat and skill formulas 
 / the Ghidra server next; then the server systems, then the UIs become real.
 
 ## 7b. HUD styling (dumped 2026-09-11)
-- [ ] **MENU popup** (the underbar MENU button) is a plain text list; the original is an authored
-  framed menu with a per-item icon, dividers, and "System (Esc)" at the bottom. Build it from the
-  authored menu art / `resinfo` if there is one, or at least add icons + the frame. (The user's
-  reference has slightly different items/wording — likely a different client version; match the
-  structure, use our own item set.)
+- [x] **MENU popup** — now a dark, gold-edged menu with each item's real authored icon
+  (`interface\underbar\ub_new_icon_*`) and gold text (v0.1.114, round 161), matching the original's
+  structure. Inventory/Character/Skill have no menu icon in this archive, so they are text-only
+  rather than a mismatched icon. The ornate authored frame is a later polish.
 
 ## 7c. Auto error reporting (dumped 2026-09-11)
 - [ ] **Client auto-reports errors to the server** and shows a chat line: "Your client experienced

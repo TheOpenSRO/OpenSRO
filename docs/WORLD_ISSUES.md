@@ -7075,6 +7075,20 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-sixty-first round: the MENU wears its own icons
+
+The underbar's MENU popup was a plain grey system list. It is now the game's:
+a dark, gold-edged panel with gold text and each item's own authored icon --
+the client's `interface\underbar\ub_new_icon_*` (20x20), one per function
+(`ub_new_icon_pt` for Party, `_guild`, `_quest`, `_recovery` for Auto Potion,
+and so on), added with `PopupMenu.add_icon_item`. Three items
+(Inventory / Character / Skill) have no `ub_new_icon` in this archive -- they
+are underbar buttons in the version it came from -- so they show text-only
+rather than a mismatched icon, the honest choice. Rendered with a QA
+`--panels menu` hook (the MENU is a popup, not a panel, so `_qa_open_panels`
+grew a case for it): the framed menu reads with its icons. The ornate authored
+frame around it is a later polish; the styling here is a disclosed choice.
+
 ## Hundred-and-sixtieth round: the world loaded 3.7x faster -- a re-opened archive
 
 The ~65s world entry and the 2-6s region-crossing freeze had one dominant
