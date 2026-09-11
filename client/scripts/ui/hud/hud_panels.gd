@@ -174,6 +174,8 @@ func open(panel_id: String) -> HudWindow:
 			_wire_system(window)
 		if panel_id == "equipment":
 			_place_paper_doll(window)
+		if panel_id == "skill":
+			_fill_skill_masteries(window)
 		_populate(panel_id)
 	window.show()
 	window.move_to_front()
@@ -420,6 +422,73 @@ func _fill_inventory_grid(slots: Array) -> void:
 ## its slots even if the list arrived while it was closed.
 var _equipped_items: Array = []
 
+## China's masteries, read once from the player's own Media.pk2.
+var _masteries: Array = []
+var _masteries_loaded := false
+
+func _load_masteries() -> void:
+	if _masteries_loaded:
+		return
+	_masteries_loaded = true
+	if _builder == null:
+		return
+	var archive := _builder.media_archive()
+	if archive == null:
+		return
+	var entry := ObjectLoader.find_file(archive, MasteryReader.TABLE_PATH)
+	if entry != null:
+		_masteries = MasteryReader.parse_china(archive.read_file(entry))
+	print("HudPanels: %d China mastery(ies) read" % _masteries.size())
+
+## Fills the skill window with the real China masteries -- icon and name --
+## the way the original organises it, and its bottom labels honestly. The
+## per-mastery skill grid and the trained levels are not here: this project's
+## server tracks no mastery level or skill point, so the window shows the
+## masteries at level 0 and says "not trained" rather than a made-up number.
+func _fill_skill_masteries(window: HudWindow) -> void:
+	_load_masteries()
+	var board := window.node("GDR_SKILL_BOARD") as Control
+	var host: Control = board if board != null else window
+	var list := host.get_node_or_null("MasteryList") as VBoxContainer
+	if list == null:
+		list = VBoxContainer.new()
+		list.name = "MasteryList"
+		list.position = Vector2(10, 10)
+		list.add_theme_constant_override("separation", 6)
+		host.add_child(list)
+	for child in list.get_children():
+		child.queue_free()
+	for entry in _masteries:
+		var mastery: MasteryReader.Mastery = entry
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var icon := TextureRect.new()
+		icon.custom_minimum_size = Vector2(28, 28)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		if _builder != null:
+			icon.texture = _builder.load_texture(mastery.icon_path)
+		row.add_child(icon)
+		var label := Label.new()
+		label.text = "%s  —  Lv 0 (not trained)" % mastery.display_name(_text_table())
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.add_theme_color_override("font_color", ROW_TEXT_COLOUR)
+		if _builder != null:
+			var font := _builder.font_at(0)
+			if font != null:
+				label.add_theme_font_override("font", font)
+			label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+		row.add_child(label)
+		list.add_child(row)
+	# The bottom labels: this server tracks neither, so 0, plainly.
+	_set_label(window, "GDR_SKILL_TEXT_SP_NUM", "0")
+	_set_label(window, "GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM", "0")
+
+## The UI text table, for resolving a mastery's own name where the archive
+## has it. The builder holds it.
+func _text_table() -> UiTextTable:
+	return _builder.text_table() if _builder != null else null
+
 ## The base of the equipment window's slot control names: a worn slot's
 ## index i is drawn in GDR_EQUIPMENT_SLOT_(100 + i). Anchored to the user's
 ## own equipment window -- the weapon (slot 6) sits in SLOT_106 at the
@@ -463,8 +532,9 @@ func connect_net() -> void:
 	NetClient.equipment_result.connect(func(items: Array, _e: String) -> void:
 		_equipped_items = items
 		_fill_equipment_slots(items))
-	NetClient.skill_list_result.connect(func(skills: Array, _e: String) -> void:
-		_fill_list("skill", skills.map(_describe_named)))
+	# The skill window shows the masteries (client data, _fill_skill_masteries),
+	# not the server's small skill catalogue, so its list result is not drawn
+	# here -- it would overlap the mastery rows.
 	NetClient.quest_list_result.connect(func(entries: Array, _e: String) -> void:
 		_fill_list("quest", entries.map(_describe_named)))
 	NetClient.friend_list_result.connect(func(friends: Array, _e: String) -> void:
@@ -573,8 +643,6 @@ func _populate(panel_id: String) -> void:
 	match panel_id:
 		"inventory":
 			NetClient.list_inventory(who)
-		"skill":
-			NetClient.list_skills(who)
 		"quest":
 			NetClient.list_quests(who)
 		"community":

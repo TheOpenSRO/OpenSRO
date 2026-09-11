@@ -801,6 +801,11 @@ func font_count() -> int:
 func media_archive() -> Pk2Reader:
 	return _media_pk2
 
+## The UI text table this builder resolves keys through, for a caller that
+## needs to resolve names itself (a mastery's own name, say).
+func text_table() -> UiTextTable:
+	return _text_table
+
 ## Resolves a `UIIT_*` key through the client's own text table, or returns
 ## the string unchanged when it is not a key. Public because a window's
 ## caption comes from its frame's `Text` and is resolved the same way.

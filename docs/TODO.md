@@ -39,8 +39,11 @@ In order. Each is checked off here when it ships in a release, with its round in
 - [x] **Equipment slot icons** -- round 142: the worn slots show the equipped icons, slot i in
       GDR_EQUIPMENT_SLOT_(100+i), anchored to the user's screenshot. Open: the armour defence block
       (armour reuses the weapon stat columns for other stats -- needs an armour ground-truth).
-- [ ] **Skill window** per `ifskill` / `ifskill_mastery` / `ifskill_slot`: Weapon / Force tabs,
-      the three China masteries, mastery level, skill icons from `skilldata`, Level Up.
+- [x] **Skill window** -- round 143: the real China masteries (icons + names from
+      `skillmasterydata` / the UI text table) at Lv 0, with the authored skill-point and
+      mastery-total labels at an honest 0. Open: the per-mastery skill grid (a client-drawn
+      `CIFSkillBoard`) and Level Up, both of which need the server to track mastery levels and skill
+      points (it tracks neither yet).
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
 - [ ] "Stuck in a building" and "floating things in Alexandria": not reproduced (round 134's

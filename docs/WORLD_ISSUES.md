@@ -7075,6 +7075,28 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-forty-third round: the skill window's masteries
+
+The user showed the skill window as something to represent, and it now
+shows China's real masteries. `skillmasterydata.txt` names them (measured:
+257 Bicheon over sword and blade, 258 Heuksal over spear and glaive, 259
+Pacheon over bow, and the four force masteries 273-276), each with a
+`UIIT_` name token and an icon under `icon\skillmastery\china\`.
+`MasteryReader` reads them, weapon tab first, and the skill window lays
+each as its real icon plus the name -- resolved through the UI text table
+where the archive has it (the box's does: Bicheon, Heuksal, Pacheon,
+Sorcery, Lightning, Fire, Force), and labelled by the weapon it trains
+otherwise. Rendered on the box: the seven masteries with their sword,
+spear, bow and elemental icons.
+
+What it does **not** show, because this project's server tracks neither:
+a mastery's trained level or a skill point total. So every mastery reads
+`Lv 0 (not trained)` and the window's own bottom labels read `Skill
+point 0` and `Mastery level total 0` -- the authored fields, filled with
+the honest zero rather than the 5,000,000 a populated private server puts
+there. The authored per-mastery skill grid (a client-drawn `CIFSkillBoard`,
+not layout slots) and Level Up wait on that server side.
+
 ## Hundred-and-forty-second round: the worn slots filled
 
 The equipment window's worn slots now show the equipped items' icons
