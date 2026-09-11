@@ -322,7 +322,53 @@ const DEFAULT_CAMERA_PITCH_DEGREES := -42.0
 ## looking at the real front by default; rotating further showed the real
 ## back). 180.0 puts the camera on the correct side.
 const DEFAULT_CAMERA_YAW_DEGREES := 180.0
-const CAMERA_RECENTER_DEGREES_PER_SECOND := 120.0
+
+## The three views the original's Option window offers, by the names it
+## gives them. The camera arm hangs from a pivot that follows the player's
+## *position* only (not the body's turn -- as a child of the body it swung
+## round every time a click turned the character), and the view decides
+## what else the pivot and the arm do:
+##   free          -- follows position; yaw and pitch are the player's to
+##                    drag, and nothing moves them otherwise (the default)
+##   third_person  -- the pivot turns with the character, so the camera
+##                    sits behind whichever way they face; drags do nothing
+##   quarter       -- pitch locked, yaw free to drag
+## The quarter view's pitch and how fast the third-person view turns are
+## this project's choices; nothing found gives the original's numbers.
+const CAMERA_VIEW_FREE := "free"
+const CAMERA_VIEW_THIRD_PERSON := "third_person"
+const CAMERA_VIEW_QUARTER := "quarter"
+const CAMERA_VIEWS := [CAMERA_VIEW_FREE, CAMERA_VIEW_THIRD_PERSON, CAMERA_VIEW_QUARTER]
+const QUARTER_VIEW_PITCH_DEGREES := -55.0
+const THIRD_PERSON_TURN_DEGREES_PER_SECOND := 360.0
+var _camera_view := CAMERA_VIEW_FREE
+var _camera_pivot: Node3D = null
+
+func set_camera_view(view: String) -> void:
+	if not CAMERA_VIEWS.has(view):
+		view = CAMERA_VIEW_FREE
+	_camera_view = view
+	match view:
+		CAMERA_VIEW_THIRD_PERSON:
+			camera_arm.rotation_degrees = Vector3(DEFAULT_CAMERA_PITCH_DEGREES, DEFAULT_CAMERA_YAW_DEGREES, 0.0)
+		CAMERA_VIEW_QUARTER:
+			camera_arm.rotation_degrees.x = QUARTER_VIEW_PITCH_DEGREES
+			if _camera_pivot != null:
+				_camera_pivot.rotation.y = 0.0
+		_:
+			if _camera_pivot != null:
+				_camera_pivot.rotation.y = 0.0
+
+## Keeps the pivot on the player and, in the third-person view, turned the
+## way they face.
+func _follow_with_camera(delta: float) -> void:
+	if _camera_pivot == null:
+		return
+	_camera_pivot.global_position = player.global_position
+	if _camera_view == CAMERA_VIEW_THIRD_PERSON:
+		_camera_pivot.rotation.y = rotate_toward(
+			_camera_pivot.rotation.y, player.rotation.y,
+			deg_to_rad(THIRD_PERSON_TURN_DEGREES_PER_SECOND) * delta)
 ## How close player must get to a click-to-move target before it's
 ## considered reached and cleared -- without this, the player would
 ## oscillate forever trying to reach an exact point every physics frame.
@@ -1228,6 +1274,16 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 	var chat_font_size := ClientSettings.chat_font_size()
 	if chat_font_size > 0:
 		chat_log.add_theme_font_size_override("normal_font_size", chat_font_size)
+
+	# The camera arm leaves the player's body for a pivot of its own (see
+	# CAMERA_VIEW_FREE): the arm keeps its local offset and angles, the
+	# pivot takes the body's position each physics tick.
+	_camera_pivot = Node3D.new()
+	_camera_pivot.name = "CameraPivot"
+	add_child(_camera_pivot)
+	_camera_pivot.global_position = player.global_position
+	camera_arm.reparent(_camera_pivot, false)
+	set_camera_view(ClientSettings.camera_view())
 
 ## Pushes the camera's far clipping plane out far enough to actually see
 ## the real terrain this scene streams in.
@@ -5453,10 +5509,10 @@ func _physics_process(delta: float) -> void:
 		player.velocity.z = 0.0
 
 	var is_moving := manual_input or _has_move_target or _qa_walk != ""
-	# The camera keeps whatever orbit it was given. It used to swing back to
-	# the default yaw and pitch whenever the character moved, which threw
-	# away every view a player had just set up -- the original never moves
-	# the camera on its own.
+	# The camera keeps whatever orbit it was given (see CAMERA_VIEW_FREE).
+	# It used to swing back to the default yaw and pitch whenever the
+	# character moved, and, hanging from the body, turned with every click.
+	_follow_with_camera(delta)
 
 	_qa_step()
 	if not _move_on_nav_graph(delta):
@@ -5913,11 +5969,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			and (event as InputEventMouseMotion).position.distance_to(_left_press_position) > LEFT_DRAG_THRESHOLD_PIXELS:
 		_left_dragging = true
 		_camera_orbiting = true
-	elif event is InputEventMouseMotion and _camera_orbiting:
+	elif event is InputEventMouseMotion and _camera_orbiting and _camera_view != CAMERA_VIEW_THIRD_PERSON:
 		camera_arm.rotation_degrees.y -= event.relative.x * CAMERA_ORBIT_SENSITIVITY
-		camera_arm.rotation_degrees.x = clampf(
-			camera_arm.rotation_degrees.x - event.relative.y * CAMERA_ORBIT_SENSITIVITY,
-			CAMERA_PITCH_MIN_DEGREES, CAMERA_PITCH_MAX_DEGREES)
+		if _camera_view == CAMERA_VIEW_FREE:
+			camera_arm.rotation_degrees.x = clampf(
+				camera_arm.rotation_degrees.x - event.relative.y * CAMERA_ORBIT_SENSITIVITY,
+				CAMERA_PITCH_MIN_DEGREES, CAMERA_PITCH_MAX_DEGREES)
 
 ## Real Silkroad-style click-to-move: raycasts from the camera through the
 ## real clicked screen position into the 3D world (real terrain/object

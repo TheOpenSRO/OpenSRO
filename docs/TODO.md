@@ -10,6 +10,39 @@ Two lanes are running in parallel: the **world** lane ([HANDOFF.md](HANDOFF.md))
 the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff covers its own lane —
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
+## The playtest list (2026-09-11, from the first two evenings on the public server)
+
+In order. Each is checked off here when it ships in a release, with its round in
+`docs/WORLD_ISSUES.md`.
+
+- [x] Old release against new server; monsters by code name; English column first; name plates in
+      range; remembered server; debug panel (v0.1.87, round 134)
+- [x] Animations on the `.ban` files' own clock; camera keeps its orbit; click targets the ground;
+      town buttons (v0.1.88, round 135)
+- [x] Alexandria's black houses (v0.1.89, round 136); text whole at fractional UI scales (v0.1.90)
+- [x] Camera on its own pivot with the three views; sword hangs tip-down; gear for a character that
+      has none (round 137)
+- [ ] **Monsters out of town.** The QA spawns sit 62 and 55 units from the plaza origin -- under
+      the fountain. The real game keeps Mangyang and the Weasel in the fields outside the walls;
+      move them to a measured walkable spot in the farmland region south of town (96/168), and
+      point `qa_shot.sh --attack` runs there.
+- [ ] **ESC -> System window** (`ifsystemwnd`: Option / Help / Restart / Exit) and the **Option
+      window** (`ifoption` + `ifoption_video` with the View radios, our UI scale / chat font / name
+      range under Setting). Restart = back to the login screen, Exit = quit.
+- [ ] **NPC talk.** A click on an NPC opens `if_npctalk` titled with the NPC's name and numbered
+      choices; every NPC gets "End conversation", merchants get the shop.
+- [ ] **Inventory:** the paper doll (the dressed character in a SubViewport in the equipment half)
+      and **item tooltips** with the real stats -- measure the item table's stat columns against
+      the Copper Sword row (phy/mag attack, durability, range, attack rate, critical, reinforce,
+      required level) before showing a number.
+- [ ] **Skill window** per `ifskill` / `ifskill_mastery` / `ifskill_slot`: Weapon / Force tabs,
+      the three China masteries, mastery level, skill icons from `skilldata`, Level Up.
+- [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
+      material's diffuse and the ambient by its ambient (round 136's stated approximation).
+- [ ] "Stuck in a building" and "floating things in Alexandria": not reproduced (round 134's
+      addendum); wait for an F3 -> Copy from the spot.
+- [ ] How long the battle stance lasts (round 132); still not read from the client.
+
 ## Next up
 
 ### 1. NPCs — **done, except that they are statues** (hundred-and-fifth round)

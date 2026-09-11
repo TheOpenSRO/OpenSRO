@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
@@ -497,10 +498,22 @@ func DecodeEntityLeft(data []byte) (*EntityLeft, error) {
 // OpMove against chars (to resolve character ownership) and hub (world
 // state + broadcast fan-out).
 func WorldHandler(chars character.Store, eq equipment.Store, hub *world.Hub) gateway.Handler {
+	return WorldHandlerWithHook(chars, eq, hub, nil)
+}
+
+// EnterHook runs when a character is about to enter the world, after it
+// has been resolved to the session's account and before its snapshot is
+// built -- so what it changes (a character dressed for the first time, say)
+// is what everyone then sees. An error is logged by the caller, not sent:
+// entering the world must not fail over a courtesy.
+type EnterHook func(ctx context.Context, c *character.Character) error
+
+// WorldHandlerWithHook is WorldHandler with an EnterHook.
+func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.Hub, onEnter EnterHook) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpEnterWorld:
-			return handleEnterWorld(ctx, sess, p, chars, eq, hub)
+			return handleEnterWorld(ctx, sess, p, chars, eq, hub, onEnter)
 		case OpMove:
 			return handleMove(sess, p, hub)
 		case OpChangeZone:
@@ -527,7 +540,7 @@ func WorldDisconnectHandler(hub *world.Hub) func(sess *gateway.Session) {
 	}
 }
 
-func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, eq equipment.Store, hub *world.Hub) error {
+func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, eq equipment.Store, hub *world.Hub, onEnter EnterHook) error {
 	accountID, ok := AuthenticatedAccountID(sess)
 	if !ok {
 		return sess.Send(&proto.Packet{
@@ -563,6 +576,11 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 			Opcode: OpEnterWorldResult,
 			Data:   (&EnterWorldResult{Reason: "no such character on this account"}).Encode(),
 		})
+	}
+	if onEnter != nil {
+		if err := onEnter(ctx, owned); err != nil {
+			log.Printf("session: enter hook for %q: %v", owned.Name, err)
+		}
 	}
 
 	others := hub.Enter(sess, owned.ID, owned.Name, spawnZone, spawnPos)

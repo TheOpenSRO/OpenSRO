@@ -7075,6 +7075,40 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-thirty-seventh round: the camera off the body, the sword on the hand, gear on the way in
+
+Three from the second playtest.
+
+**"When I click it moves the camera, jarringly."** The SpringArm3D hung
+from the player's CharacterBody3D, and a click turns the body to face the
+way it walks -- so the camera turned with it, every click. It now hangs
+from a `CameraPivot` of its own that takes the body's position each
+physics tick and nothing else, and the original's three views (the names
+its Option window uses) decide the rest: *Free Movement View* (default)
+-- follows position, yaw and pitch are the player's to drag and nothing
+else moves them; *Third Person View* -- the pivot turns with the
+character, drags do nothing; *Quarter Angle View* -- pitch locked, yaw
+free. The quarter pitch (-55) and the third-person turn rate (360 a
+second) are choices. Rendered: a walk east with the camera at yaw 200
+keeps the camera at yaw 200.
+
+**"He is holding the sword wrong."** The item hung from the hand with its
+model origin on the bone, which let the item skeleton's own root rest
+cancel out of the picture. `dump_bsk.gd` reads that rest: `sword_01.bsk`'s
+Bone01 is a near-180-degree turn, `blade_01.bsk`'s exactly 180 about Y --
+a rest that only means something if the root bone is what lands on the
+hand. Undoing it under the attachment puts the root bone on the hand, and
+the sword hangs tip-down at the side (rendered) instead of flat and
+forward. The composition was chosen by rendering both, not read from the
+client.
+
+**"My pre-existing character doesn't have any gear."** The starting kit is
+given at creation, and this character predates it. An enter-world hook
+(`session.WorldHandlerWithHook`) now dresses a character that enters
+wearing nothing with nothing in the bag -- stated: a character who took
+everything off and emptied the bag is dressed again too, the cheaper
+mistake on a test server.
+
 ## Hundred-and-thirty-sixth round: the black houses of Alexandria
 
 Every `alex_minga` house drew solid black, on the player's archive and on

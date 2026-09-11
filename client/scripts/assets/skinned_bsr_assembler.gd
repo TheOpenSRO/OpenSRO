@@ -329,6 +329,18 @@ static func attach_item_from_archive(
 	attachment.bone_name = parsed.attach_bone
 	skeleton.add_child(attachment)
 	attachment.add_child(item_skeleton)
+	# The item's own root bone is put *onto* the body bone -- not the item's
+	# model origin. An item skeleton's root carries a real rest of its own
+	# (`sword_01.bsk`'s Bone01 is a near-180-degree turn, `blade_01.bsk`'s
+	# exactly 180 about Y, both read with dump_bsk.gd), and hanging the
+	# model origin at the hand let that rest cancel out of the picture: the
+	# sword drew held blade-forward, flat, which is not how the game holds
+	# one. Undoing the root's rest under the attachment makes the root bone
+	# coincide with the hand, and the sword hangs as it does in the game.
+	# The composition was chosen by rendering both, not read from the
+	# client; the data says only that the root's rest is not identity.
+	if item_skeleton.get_bone_count() > 0:
+		item_skeleton.transform = item_skeleton.get_bone_rest(0).affine_inverse()
 	var any_attached := false
 	for pair in meshes:
 		var mesh: BmsReader.ParsedMesh = pair[0]

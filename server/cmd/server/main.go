@@ -277,7 +277,23 @@ func main() {
 			}
 			return equipment.GiveStartingKit(ctx, inv, eq, characterID, gender)
 		}),
-		session.WorldHandler(chars, eq, hub),
+		// A character made before the starting kit existed enters the world
+		// with nothing on and nothing in the bag; it is dressed on the way
+		// in. Only that case: a character who has taken everything off and
+		// emptied the bag looks the same, and gets a kit too, which is the
+		// cheaper mistake on a test server.
+		session.WorldHandlerWithHook(chars, eq, hub, func(ctx context.Context, c *character.Character) error {
+			worn, err := eq.Get(ctx, c.ID)
+			if err != nil || len(worn) > 0 {
+				return err
+			}
+			bag, err := inv.List(ctx, c.ID)
+			if err != nil || len(bag) > 0 {
+				return err
+			}
+			logger.Info("dressing a character that had nothing", "character", c.Name)
+			return equipment.GiveStartingKit(ctx, inv, eq, c.ID, c.Gender)
+		}),
 		session.InventoryHandler(chars, inv),
 		session.EquipmentHandlerWithRules(chars, eq, inv, refItems),
 		session.CharacterStatsHandler(chars, eq, refItems),

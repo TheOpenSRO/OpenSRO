@@ -25,6 +25,9 @@ const KEY_CHAT_FONT_SIZE := "chat_font_size"
 ## How near an entity has to be before its name shows, in world units;
 ## World3D.NAME_PLATE_RANGE when unset.
 const KEY_NAME_PLATE_RANGE := "name_plate_range"
+## Which of the original's three views the camera uses: "free" (the
+## default), "third_person" or "quarter" -- World3D.CAMERA_VIEW_*.
+const KEY_CAMERA_VIEW := "camera_view"
 
 static func get_value(section: String, key: String, default_val: Variant) -> Variant:
 	var file := ConfigFile.new()
@@ -55,6 +58,9 @@ static func chat_font_size() -> int:
 
 static func name_plate_range(default_val: float) -> float:
 	return float(get_value(SECTION_UI, KEY_NAME_PLATE_RANGE, default_val))
+
+static func camera_view() -> String:
+	return str(get_value(SECTION_UI, KEY_CAMERA_VIEW, "free"))
 
 ## Applies the UI scale to the window that everything is drawn in. Works
 ## with the project's stretch mode left at "disabled": the window then

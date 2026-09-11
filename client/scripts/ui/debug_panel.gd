@@ -26,6 +26,12 @@ const DRAW_MODES := [
 	["Lighting", Viewport.DEBUG_DRAW_LIGHTING],
 ]
 const NEAREST_PLATES_SHOWN := 10
+## The original's three views, by the names its Option window uses.
+const CAMERA_VIEWS := [
+	["Free Movement View", "free"],
+	["Third Person View", "third_person"],
+	["Quarter Angle View", "quarter"],
+]
 ## The token probed in the object name table, to show which language
 ## column the player's archive yields: "Mangyang" on an English column.
 const NAME_PROBE_TOKEN := "SN_MOB_CH_MANGNYANG"
@@ -39,6 +45,7 @@ var _scale_slider: HSlider
 var _scale_value: Label
 var _chat_font: SpinBox
 var _draw_mode: OptionButton
+var _view_mode: OptionButton
 var _teleport_edit: LineEdit
 var _free_camera: CheckButton
 var _camera_mask := 0
@@ -124,7 +131,15 @@ func _build_slider_row() -> HBoxContainer:
 
 func _build_tools_row() -> HBoxContainer:
 	var row := HBoxContainer.new()
-	row.add_child(_label("Draw"))
+	row.add_child(_label("View"))
+	_view_mode = OptionButton.new()
+	for view in CAMERA_VIEWS:
+		_view_mode.add_item(view[0])
+		if view[1] == _world._camera_view:
+			_view_mode.select(_view_mode.item_count - 1)
+	_view_mode.item_selected.connect(_on_view_selected)
+	row.add_child(_view_mode)
+	row.add_child(_label("  Draw"))
 	_draw_mode = OptionButton.new()
 	for mode in DRAW_MODES:
 		_draw_mode.add_item(mode[0])
@@ -378,6 +393,11 @@ func _on_chat_font_changed(value: float) -> void:
 	else:
 		chat.remove_theme_font_size_override("normal_font_size")
 	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_CHAT_FONT_SIZE, size)
+
+func _on_view_selected(index: int) -> void:
+	var view: String = CAMERA_VIEWS[index][1]
+	_world.set_camera_view(view)
+	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_CAMERA_VIEW, view)
 
 func _on_draw_mode_selected(index: int) -> void:
 	var mode: int = DRAW_MODES[index][1]

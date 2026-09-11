@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -96,6 +97,77 @@ func TestEnterWorldResultRoundTripSuccess(t *testing.T) {
 	// check above is part of this test rather than a separate one.
 	if got.HP != want.HP || got.MaxHP != want.MaxHP {
 		t.Fatalf("got HP %d/%d, want %d/%d", got.HP, got.MaxHP, want.HP, want.MaxHP)
+	}
+}
+
+// The enter hook sees the character before its snapshot is built, so what
+// it changes -- a character dressed on the way in -- is what the world
+// then sees. A hook error is logged, never sent: the character still
+// enters.
+func TestWorldHandlerRunsTheEnterHookFirst(t *testing.T) {
+	accounts := account.NewMemStore()
+	chars := character.NewMemStore()
+	eq := equipment.NewMemStore(inventory.NewMemStore(nil))
+	ctx := context.Background()
+	if _, err := accounts.Register(ctx, "alice", "pw"); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	acct, err := accounts.Authenticate(ctx, "alice", "pw")
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	c, err := chars.Create(ctx, acct.ID, "Aria")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var seen []string
+	hook := func(ctx context.Context, got *character.Character) error {
+		seen = append(seen, got.Name)
+		if got.ID != c.ID {
+			t.Errorf("hook saw character %d, want %d", got.ID, c.ID)
+		}
+		return errors.New("a courtesy that failed")
+	}
+	hub := world.NewHub()
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandlerWithHook(chars, eq, hub, hook))
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	srv := &gateway.Server{Addr: addr, Handle: handle, OnDisconnect: WorldDisconnectHandler(hub)}
+	srvCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.ListenAndServe(srvCtx)
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	sendRecv := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+	resp := sendRecv(OpLogin, (&LoginRequest{Username: "alice", Password: "pw"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	resp = sendRecv(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	ewr, err := DecodeEnterWorldResult(resp.Data)
+	if err != nil || !ewr.OK {
+		t.Fatalf("enter world failed despite the hook's error: err=%v result=%+v", err, ewr)
+	}
+	if len(seen) != 1 || seen[0] != "Aria" {
+		t.Fatalf("hook ran for %v, want once for Aria", seen)
 	}
 }
 

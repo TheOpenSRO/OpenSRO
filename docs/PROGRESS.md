@@ -33,6 +33,13 @@ blended between keys. Same round: the camera no longer recenters when the charac
 is camera-relative, the click ray no longer hits the player's capsule or the invisible navmesh
 walls, a left drag orbits, and the debug panel has town buttons.
 
+**Second playtest** (round 137): the camera hangs from its own pivot now (it turned with the body
+on every click), with the original's three views -- Free Movement (default), Third Person, Quarter
+Angle -- as a remembered setting; the sword hangs tip-down because the item skeleton's root bone is
+what lands on the hand (its rest is a 180-degree turn, read with `dump_bsk.gd`); a character that
+enters the world with nothing on and nothing carried is dressed on the way in. The night's list of
+what comes next is at the top of `docs/TODO.md`.
+
 **Alexandria's black houses** (round 136): 24 of their material's 40 layers have diffuse 0.14
 against ambient 0.59, and the loader set the albedo from the diffuse -- the fixed-function
 pipeline lights ambient by ambient and only the sun by diffuse. Albedo is the ambient now; the
