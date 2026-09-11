@@ -10,6 +10,9 @@
 #   qa_shot.sh --region 98\\168.m --at 960,830 --yaw 180 --frames 120 --out /var/tmp/shot
 #
 # Options (all optional except --out):
+#   --scene <res://>  boot this scene instead of the world -- a front-end
+#                     screen like res://scenes/Login.tscn (region/camera
+#                     hooks are ignored; Media.pk2 is still available)
 #   --region <path>   region .m to load, e.g. '98\168.m'   (default 98\168.m)
 #   --at x,z          region-local spot to stand at
 #   --yaw deg         camera yaw, 0 looks along +Z
@@ -47,12 +50,16 @@ CLIENT_DIR="${CLIENT_DIR:-/opt/srrevamp-client}"
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
 GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 
-REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""
+REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""; SCENE="res://scenes/World3D.tscn"
 AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
 PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; GENDER=""; ATTACK=""; DEBUG=""; COLUMNS=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    # Boot a scene other than the world -- a front-end screen (Login,
+    # CharacterSelect). The region/AT/camera hooks are then ignored; the
+    # Media.pk2 env is still exported so the screen loads its real art.
+    --scene)  SCENE="$2";  shift 2 ;;
     --region) REGION="$2"; shift 2 ;;
     --at)     AT="$2";     shift 2 ;;
     --yaw)    YAW="$2";    shift 2 ;;
@@ -171,5 +178,5 @@ fi
 # 16:9 frames -- which quietly ruins any comparison against square authored
 # art like a region minimap.
 xvfb-run -a -s "-screen 0 ${SIZE}x24" $VGL "$GODOT" \
-  --rendering-driver opengl3 --resolution "$SIZE" --path . res://scenes/World3D.tscn \
+  --rendering-driver opengl3 --resolution "$SIZE" --path . "$SCENE" \
   --write-movie "$OUT/f.png" --quit-after "$FRAMES"

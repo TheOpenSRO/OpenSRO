@@ -7075,6 +7075,38 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-fiftieth round: the connect screen over its own art
+
+The front-end (launcher, login, character select, create, loading) is the
+next big piece -- see `docs/FRONTEND.md` for the plan and
+`docs/FRONTEND_CHECKLIST.md` for the running list. First finding: unlike
+the in-game HUD, the front-end has almost no authored layout. Listing a
+real `Media.pk2` for `resinfo` front-end windows turns up only
+`ifregionview.txt` (the race/region select), `pstitle(_europe).txt` and
+`regionname.txt`; the login and character screens the retail client draws
+hardcoded in C++ against textures. So those layouts are ours, disclosed,
+grounded in the reference screenshots -- the same standing as the name
+plates and HP bars.
+
+The art, though, is all real and in the archive (found with
+`server/cmd/pk2list`): `interface\outer\login_window.ddj` (288x140, the
+gold frame with three input slots) and its europe variant,
+`interface\loading\loading_login_01_2011.ddj` (1024x768, the knight-over-
+Constantinople backdrop), `loading_default.ddj` (the gold-dragon loading
+screen), `gauge_loading.ddj` (the progress fill), per-region loading
+images, and the channel window. All loaded at runtime from the player's
+own Media.pk2 through the same `UiBuilder.load_texture` /`DdjReader` path
+the HUD uses -- nothing extracted into the repo.
+
+`Login.gd` is rebuilt on that: the real frame centred over the backdrop,
+ID / PW / Server laid on the frame's own slots (positions eyeballed from
+the 288x140 art, tuned by rendering, disclosed as ours), gold Connect /
+Exit below, and a plain-panel fallback when no Media.pk2 is present so a
+dev run without game data can still log in. Every `NetClient` wiring is
+unchanged. Rendered with the new `qa_shot.sh --scene res://scenes/Login.tscn`
+(which boots any scene, not just the world), the fields sit on their slots
+and the screen reads as the original's.
+
 ## Hundred-and-forty-ninth round: floating damage numbers
 
 Every blow now shows its damage the way the original does: a number that
