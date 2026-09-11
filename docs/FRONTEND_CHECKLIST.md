@@ -111,6 +111,13 @@ data:** the EXP curve is recovered (leveldata.txt); the stat and skill formulas 
   reference has slightly different items/wording — likely a different client version; match the
   structure, use our own item set.)
 
+## 7c. Auto error reporting (dumped 2026-09-11)
+- [ ] **Client auto-reports errors to the server** and shows a chat line: "Your client experienced
+  an error, this has been auto reported. Please let an admin know." Needs: a client error hook (or
+  watch the log for ERROR lines) → send the recent log to the server over a new opcode → server
+  stores it (a file per session) → the chat notice. Scope carefully: GDScript runtime errors have
+  no clean catchable hook, so likely watch the log file / the missing-asset + `push_error` paths.
+
 ## 8. World / collision bugs (dumped 2026-09-11)
 - [ ] **Stuck/barriered inside a building** after teleporting into its corner. Repro (F3 on
   client v0.1.104): zone Alexandria, region node `RealTerrain_90_48`, local ~`769.9, 205.1`
