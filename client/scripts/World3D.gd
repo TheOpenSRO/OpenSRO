@@ -644,6 +644,10 @@ const STREAM_CELLS_PER_FRAME := 1
 # The "NOW LOADING" screen shown to a real player during world entry (never a
 # QA render, whose synchronous load a screenshot depends on).
 var _loading_screen: LoadingScreen
+# Per-phase load timing accumulators (ms), for the entry profile.
+var _load_ms_terrain := 0.0
+var _load_ms_objects := 0.0
+var _load_ms_npcs := 0.0
 
 @onready var player: CharacterBody3D = $Player
 @onready var player_mesh: MeshInstance3D = $Player/Mesh
@@ -2795,9 +2799,16 @@ func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_an
 	# (96/169 and 98/157), same rule both times. So: region_x -> world Z,
 	# region_y -> world X.
 	var offset := Vector3(dy * REGION_SPAN, 0.0, dx * REGION_SPAN)
+	var t0 := Time.get_ticks_usec()
 	_try_load_real_terrain("%d\\%d.m" % [region_x, region_y], "", offset, suffix, false, shared_anchor, false)
+	var t1 := Time.get_ticks_usec()
 	_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
+	var t2 := Time.get_ticks_usec()
 	_try_spawn_region_npcs(region_x, region_y)
+	var t3 := Time.get_ticks_usec()
+	_load_ms_terrain += (t1 - t0) / 1000.0
+	_load_ms_objects += (t2 - t1) / 1000.0
+	_load_ms_npcs += (t3 - t2) / 1000.0
 	_loaded_cells["%d_%d" % [dx, dy]] = true
 
 ## Streams additional real region cells in as the player moves, keeping a
@@ -2913,7 +2924,7 @@ func _drain_initial_load(region_started_ms: int) -> void:
 	if not _should_show_loading_screen():
 		while not _load_queue.is_empty():
 			_build_one_queued_cell()
-		print("World3D: region grid loaded in %d ms" % (Time.get_ticks_msec() - region_started_ms))
+		print("World3D: region grid loaded in %d ms (terrain %.0f, objects %.0f, npcs %.0f)" % [Time.get_ticks_msec() - region_started_ms, _load_ms_terrain, _load_ms_objects, _load_ms_npcs])
 		return
 	# The screen goes into the HUD Control as its top child, so it renders over
 	# everything, and is freed once the queue drains. Added now (after the HUD
@@ -3083,6 +3094,13 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 ## a fixed offset from its own instance count, so it is stable across frames
 ## rather than jittering.
 var _animated: Array = []
+# Assembled NPC bodies kept as detached templates, one per model path, and
+# duplicated per spawn. Assembling a skinned .bsr is what made each region
+# take seconds; most NPCs in a region share a model, and duplicating a node
+# (sharing its mesh/texture resources) is far cheaper than re-assembling. The
+# template is never parented, so unloading a region frees the duplicates, not
+# it. See _try_spawn_region_npcs.
+var _npc_model_cache := {} # model path -> SkinnedBsrAssembler.AssembledCharacter
 
 ## Registers an assembled character for idle animation, if it has one.
 ##
@@ -3101,15 +3119,22 @@ var _animated: Array = []
 ## `SRREVAMP_NO_IDLE_ANIM=1` turns it off again, which is how that A/B was
 ## run and how the next one can be.
 func _animate(assembled: SkinnedBsrAssembler.AssembledCharacter) -> void:
-	if assembled == null or assembled.idle_animation == null:
+	if assembled == null:
+		return
+	_animate_skeleton(assembled.skeleton, assembled.idle_animation)
+
+## Registers a skeleton to play `anim` as its looping idle. Split from
+## _animate so a duplicated NPC body (which is not the cached template's own
+## skeleton) can be registered with the template's animation.
+func _animate_skeleton(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation) -> void:
+	if skeleton == null or anim == null:
 		return
 	if OS.get_environment("SRREVAMP_NO_IDLE_ANIM") != "":
 		return
-	var anim: BanReader.ParsedAnimation = assembled.idle_animation
 	var frames := _frame_count(anim)
 	if frames <= 1:
 		return
-	_animated.append([assembled.skeleton, anim, frames, float(_animated.size()) * 0.37, true, _idle_anim_time, null])
+	_animated.append([skeleton, anim, frames, float(_animated.size()) * 0.37, true, _idle_anim_time, null])
 
 static func _frame_count(anim: BanReader.ParsedAnimation) -> int:
 	var frames := 0
@@ -3632,10 +3657,21 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 		if model == "":
 			skipped += 1
 			continue
-		var assembled := SkinnedBsrAssembler.assemble_from_archive(archive, model, true)
-		if assembled == null:
+		# Assemble a model once into a detached template, then duplicate it for
+		# each NPC that uses it -- the repeat spawns skip the expensive .bsr
+		# assembly and just copy a node (sharing its mesh/texture resources).
+		var template: SkinnedBsrAssembler.AssembledCharacter = _npc_model_cache.get(model)
+		if template == null:
+			template = SkinnedBsrAssembler.assemble_from_archive(archive, model, true)
+			if template == null:
+				skipped += 1
+				continue
+			_npc_model_cache[model] = template
+		var skeleton := template.skeleton.duplicate() as Skeleton3D
+		if skeleton == null:
 			skipped += 1
 			continue
+		var idle_anim: BanReader.ParsedAnimation = template.idle_animation
 		var holder := Node3D.new()
 		holder.name = "Npc_%d_%d" % [spawn.npc_id, placed]
 		var local: Vector3 = spawn.local_position
@@ -3651,8 +3687,8 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 				height = (pair[0] as NavGraph).landing_height_at(local.x, local.z)
 				break
 		holder.position = Vector3(local.x, height, local.z)
-		holder.add_child(assembled.skeleton)
-		var bounds := _skeleton_bounds(assembled.skeleton)
+		holder.add_child(skeleton)
+		var bounds := _skeleton_bounds(skeleton)
 		holder.add_child(_npc_collider(bounds))
 		var npc_name: String = _npc_names.get(spawn.npc_id, "")
 		# Tagged so a click on the collider can name the NPC it talks to
@@ -3663,7 +3699,7 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 			holder.add_child(_name_plate(npc_name, bounds.y))
 			named += 1
 		group.add_child(holder)
-		_animate(assembled)
+		_animate_skeleton(skeleton, idle_anim)
 		placed += 1
 	print("World3D: %d/%d NPC(s) placed in %d/%d (%d had no model, %d named)" % [
 		placed, spawns.size(), region_x, region_y, skipped, named])

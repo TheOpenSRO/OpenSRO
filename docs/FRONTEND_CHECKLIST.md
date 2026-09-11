@@ -21,12 +21,15 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
   over the region load; the initial neighbourhood is now queued and pumped a batch a frame behind
   it. QA renders keep the synchronous load (verified). Real entry now has feedback instead of a
   black freeze.
-- [ ] **Optimize the world load itself** — profiled: character/item/NPC tables ~1.2s, but the 25-region
-  grid is **~68s (~2.75s per region)** — that is the whole wait. Reducing the initial radius just
-  moves the per-cell hitches to post-entry, so the real lever is the per-cell cost: almost certainly
-  the NPC assembly in `_try_spawn_region_npcs` (skinned `.bsr` per NPC). Defer/most likely thread
-  NPC spawns, or spawn them lazily after entry; then a smaller initial radius + background streaming
-  becomes a win too.
+- [~] **Optimize the world load itself** — profiled per phase across 24 cells: **terrain ~37s,
+  objects ~17s, NPCs ~2.4s**. So NPCs were NOT the cost (though caching+duplicating repeated NPC
+  models still helped, v0.1.109). The real bottleneck is **terrain**, and within it
+  `terrain_mesh.create_trimesh_shape()` — a concave BVH built from the full-region mesh per cell.
+  **Next (the real speed-up):** replace terrain collision with a `HeightMapShape3D` built from the
+  region's height grid (terrain is a heightfield, no overhangs), which is far cheaper to build and
+  collide — needs careful alignment with the visual mesh's rotation/offset/scale and a render
+  confirming click-to-move + camera still hit terrain. Then defer objects (~17s) to stream after
+  entry. Both are focused, verified follow-ups, not to be rushed.
 - [~] **Per-chunk freeze crossing into a new region** — streaming now queues the new leading-edge
   cells and builds one per frame instead of the whole row at once (v0.1.107, round 154), turning
   the ~1s freeze into brief per-frame hitches. **Needs in-game confirmation**; if still felt, next
@@ -101,6 +104,13 @@ Ordered roughly quick-fix → needs-a-server-system.
 **The big three (level-up, skills, character stats) share prerequisites the server lacks today:**
 EXP/leveling, stat points (Str/Int, 3/level), and a mastery/skill tree. Those systems come first,
 then the UIs become real rather than mock.
+
+## 7b. HUD styling (dumped 2026-09-11)
+- [ ] **MENU popup** (the underbar MENU button) is a plain text list; the original is an authored
+  framed menu with a per-item icon, dividers, and "System (Esc)" at the bottom. Build it from the
+  authored menu art / `resinfo` if there is one, or at least add icons + the frame. (The user's
+  reference has slightly different items/wording — likely a different client version; match the
+  structure, use our own item set.)
 
 ## 8. World / collision bugs (dumped 2026-09-11)
 - [ ] **Stuck/barriered inside a building** after teleporting into its corner. Repro (F3 on

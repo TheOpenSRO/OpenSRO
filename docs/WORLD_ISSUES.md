@@ -7075,6 +7075,26 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-fifty-sixth round: where the load minute really goes
+
+Chased the ~65s region load down to phases (timing added to `_load_region_cell`,
+printed at entry): across 24 cells, **terrain ~37s, objects ~17s, NPCs ~2.4s**.
+So NPCs were never the cost. NPC bodies are now cached per model and
+duplicated per spawn anyway (a skinned `.bsr` assembled once, the repeats a
+cheap node copy sharing its mesh/texture resources) -- it shaved a few
+seconds and helps the streaming hitches, and a top-down Jangan render
+confirms the duplicated NPCs render dressed and animated around the plaza.
+
+But the real bottleneck is terrain, and within it
+`terrain_mesh.create_trimesh_shape()` -- a concave-polygon BVH built from the
+full-region mesh, per cell. The fix (a follow-up, not rushed): terrain is a
+heightfield with no overhangs, so a `HeightMapShape3D` from the region's
+height grid is far cheaper to build and collide; it needs careful alignment
+with the visual mesh's 180-degree rotation, offset and tile scale, and a
+render proving click-to-move and the camera still hit terrain. Objects
+(~17s) can then be deferred to stream after entry. Recorded in
+`docs/FRONTEND_CHECKLIST.md`.
+
 ## Hundred-and-fifty-fifth round: a "NOW LOADING" screen, and where the minute goes
 
 World entry took 60-90s with no feedback -- a black, frozen window. Two
