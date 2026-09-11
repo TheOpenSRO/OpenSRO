@@ -2,6 +2,32 @@
 
 Running log of what's been done, in reverse-chronological order. Each entry: date, what changed, what's next.
 
+## 2026-09-11 (evening) — the playtest burn-down
+
+Two evenings of the first players on the public server turned into a run of releases, each a
+reported problem measured and fixed (rounds 134-141, `docs/WORLD_ISSUES.md`; the ordered list is
+at the top of `docs/TODO.md`):
+
+- **v0.1.87-90**: monsters by code name, the English text column, name plates in range, a
+  remembered server, the F3 debug panel; animations on the `.ban` files' own clock (the "5x speed"
+  was a hand-picked rate — the files carry a duration and a per-key time table); the camera keeps
+  its orbit and the click targets the ground; Alexandria's black houses (lit by the wrong material
+  colour); text whole at fractional UI scales.
+- **v0.1.91**: the camera hangs from its own pivot with the original's three views (Free / Third
+  Person / Quarter), the sword hangs tip-down (the item skeleton's root rest), and a character with
+  no gear is dressed on the way in.
+- **v0.1.92**: the town monsters moved out of the fountain into the fields; Escape raises the
+  authored System menu (Option / Help / Restart / Exit).
+- **v0.1.93**: clicking an NPC opens its dialogue.
+- **v0.1.94**: hovering an item shows its real stats, the columns pinned against a Copper Sword
+  (+5) tooltip a player sent.
+- **v0.1.95**: the paper doll — the dressed character rendered live in the equipment window.
+
+Open, in `docs/TODO.md`: fill the equipment slots with the equipped icons (needs the slot→artwork
+mapping measured), the armour defence tooltip columns (needs an armour ground-truth), the Skill
+window, the exact fixed-function lighting shader, and two reports not yet reproduced (stuck in a
+building, floating things in Alexandria) waiting on an F3 → Copy from the spot.
+
 ## 2026-09-11 — a public test server that follows `dev`
 
 A VM of OpenSRO's now runs the compose stack for outside testers, and `deploy/` keeps it current:
