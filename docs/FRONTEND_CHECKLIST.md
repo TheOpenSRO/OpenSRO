@@ -92,18 +92,22 @@ Ordered roughly quick-fix → needs-a-server-system.
 - [ ] **NPC talk dialogue with options** (pic 1): the talk box lists the NPC's services
   (e.g. "1. Deposit into storage / 2. Honor Rank / 3. End conversation"). Needs per-NPC service
   data (which NPC offers storage/shop/etc.); today we only show greeting text.
-- [ ] **Level-up animation** (pic 3): the golden burst + "You have advanced to level [N]" on
-  gaining a level. **Needs an EXP + leveling system server-side** (not tracked today).
+- [~] **EXP curve recovered** — `leveldata.txt` col 1 is exp-to-next-level (139 levels; level 9 =
+  17978, matches the screenshot), and stat points are **3/level** (Stat Point 24 at level 9). See
+  `docs/LEVELING.md`. **Next:** import the curve (game data, like refdata) + server exp/level/stat
+  tracking + a level-up broadcast.
+- [ ] **Level-up animation** (pic 3): golden burst + "You have advanced to level [N]" on the level-up
+  broadcast (needs the EXP/leveling above).
 - [ ] **Skills menu redone** (pic 4): Weapon / Force tabs, mastery tabs (Bicheon / Heuksal /
   Pacheon), Max Mastery / Max Skill, LEVEL UP, the skill grid with per-skill level arrows, Mastery
-  level total. **Needs a real skill/mastery system** (ours is a flat list — wrong).
+  level total. **Recover from `skilldata` / `skillmasterydata` / the Ghidra server** (not designed).
 - [ ] **Character menu redone** (pic 5): Current/Next Exp, Stat Point, Honor Point, Str/Int with
-  "+" buttons (**3 stat points per level, into Str or Int**), HP/MP, derived stats (phys/mag
-  atk·def·balance, hit rate, parry), job alias/level/exp. **Needs the Str/Int stat system + EXP.**
+  "+" buttons (3/level), HP/MP, derived stats, job alias/level/exp. Layout + the derived-stat
+  formulas **recovered from the client** (Ghidra) per the answer.
 
-**The big three (level-up, skills, character stats) share prerequisites the server lacks today:**
-EXP/leveling, stat points (Str/Int, 3/level), and a mastery/skill tree. Those systems come first,
-then the UIs become real rather than mock.
+**The big three (level-up, skills, character stats) are RE-and-build tasks now, grounded in real
+data:** the EXP curve is recovered (leveldata.txt); the stat and skill formulas come from the client
+/ the Ghidra server next; then the server systems, then the UIs become real.
 
 ## 7b. HUD styling (dumped 2026-09-11)
 - [ ] **MENU popup** (the underbar MENU button) is a plain text list; the original is an authored
