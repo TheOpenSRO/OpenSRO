@@ -107,7 +107,7 @@ func _test_encode_raise_mastery() -> void:
 	_check(encoded.decode_u16(0) == 4, "name length prefix is 4")
 	_check(encoded.decode_s64(6) == 257, "mastery id round-trips")
 
-func _build_state_result(error: String, level: int, sp: int, masteries: Array) -> PackedByteArray:
+func _build_state_result(error: String, level: int, sp: int, masteries: Array, known: Array = []) -> PackedByteArray:
 	var out := PackedByteArray()
 	var eb := error.to_utf8_buffer()
 	var lp := PackedByteArray()
@@ -129,16 +129,26 @@ func _build_state_result(error: String, level: int, sp: int, masteries: Array) -
 		mb.encode_s64(0, m.id)
 		mb.encode_u32(8, m.level)
 		out.append_array(mb)
+	var kb := PackedByteArray()
+	kb.resize(2)
+	kb.encode_u16(0, known.size())
+	out.append_array(kb)
+	for id in known:
+		var ib := PackedByteArray()
+		ib.resize(8)
+		ib.encode_s64(0, id)
+		out.append_array(ib)
 	return out
 
 func _test_decode_state_result() -> void:
-	var payload := _build_state_result("", 40, 123, [{"id": 257, "level": 20}, {"id": 258, "level": 5}])
+	var payload := _build_state_result("", 40, 123, [{"id": 257, "level": 20}, {"id": 258, "level": 5}], [17401, 17402])
 	var s := SkillNet.decode_state_result(payload)
 	_check(s.error == "", "no decode error")
 	_check(s.level == 40, "level round-trips")
 	_check(s.skill_points == 123, "skill points round-trip")
 	_check(s.mastery_levels.get(257, -1) == 20, "mastery 257 level round-trips")
 	_check(s.mastery_levels.get(258, -1) == 5, "mastery 258 level round-trips")
+	_check(s.known_skills.has(17401) and s.known_skills.has(17402), "known skills decode into the set")
 
 func _build_raise_result(error: String, mid: int, new_level: int, sp: int) -> PackedByteArray:
 	var out := PackedByteArray()

@@ -537,6 +537,9 @@ var _skill_mastery_levels: Dictionary = {}   ## mastery id -> level
 ## The character level the mastery-total cap (3 x level) is shown against; 0
 ## until the server reports it (set_skill_state).
 var _skill_char_level: int = 0
+## The unique skill ids the character has learned (a set), from the server --
+## a learned skill shows its level badge instead of a "+" learn button.
+var _skill_known: Dictionary = {}
 
 ## The mastery-total cap per character level: the sum of a character's mastery
 ## levels can reach 3 x its level. Grounded -- retail 80-cap total = 240 = 3x80;
@@ -555,6 +558,13 @@ const SKILL_CELL := 32.0
 const SKILL_COL_X0 := 37.0
 const SKILL_COL_PITCH := 36.0
 const SKILL_BOARD_H := 270.0
+# The skill cell's own parts, from ifskill_slot.txt (relative to the cell):
+# the 32x32 icon (GDR_STMS_SLOT_SKILL "0,0,32,32"), the 32x20 "+" level-up
+# button beneath it (GDR_STMS_BTN_LEVELUP "0,32,32,20"), and the level badge
+# over the icon's lower-right (GDR_STMS_LEVEL_BOARD at 19,17 -> skl_level_tab).
+const SKILL_LEVELUP_H := 20.0
+const SKILL_CELL_CONTENT_H := 52.0   # icon (32) + "+" strip (20)
+const SKILL_BADGE_POS := Vector2(19, 17)
 
 ## Reads the skill tree once: the groups (skillgroup.txt) and the skills in each
 ## (skilldata_*.txt), kept to the player's own masteries. Lazy -- the first time
@@ -594,17 +604,18 @@ func _load_skill_catalog() -> void:
 ## The server's skill state -- skill points and per-mastery levels. Refills the
 ## open window so learnable skills light up (their real icon instead of the grey
 ## disable book) and the totals show.
-func set_skill_state(skill_points: int, mastery_levels: Dictionary, char_level: int = 0) -> void:
+func set_skill_state(skill_points: int, mastery_levels: Dictionary, char_level: int = 0, known: Dictionary = {}) -> void:
 	_skill_points = skill_points
 	_skill_mastery_levels = mastery_levels.duplicate()
+	_skill_known = known.duplicate()
 	if char_level > 0:
 		_skill_char_level = char_level
 	_refill_skill()
 
-## The server's OpSkillState arrived -- apply points, mastery levels and the
-## character level (for the 3 x level cap).
+## The server's OpSkillState arrived -- apply points, mastery levels, learned
+## skills and the character level (for the 3 x level cap).
 func _apply_skill_state(state: SkillNet.SkillState) -> void:
-	set_skill_state(state.skill_points, state.mastery_levels, state.level)
+	set_skill_state(state.skill_points, state.mastery_levels, state.level, state.known_skills)
 
 ## After a mastery is raised, re-read the state so the totals and the lit/greyed
 ## skills refresh.
@@ -854,28 +865,128 @@ func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: Skil
 	var mastery_level := _mastery_level(mastery.id)
 	var disable_tex: Texture2D = _builder.load_texture("interface\\skill\\skl_mastery_disable.ddj") if _builder != null else null
 	var nothing_tex: Texture2D = _builder.load_texture("interface\\skill\\skl_mastery_nothing.ddj") if _builder != null else null
+	var levelup_tex: Texture2D = _builder.load_texture("interface\\skill\\skl_button_add.ddj") if _builder != null else null
+	var badge_tex: Texture2D = _builder.load_texture("interface\\skill\\skl_level_tab.ddj") if _builder != null else null
 	for col in range(SkillDataReader.COLUMNS):
-		var cell := TextureRect.new()
-		cell.position = Vector2(SKILL_COL_X0 + col * SKILL_COL_PITCH, (SKILL_ROW_H - SKILL_CELL) / 2.0)
-		cell.size = Vector2(SKILL_CELL, SKILL_CELL)
-		cell.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		cell.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		if by_col.has(col):
-			var s: SkillDataReader.BaseSkill = by_col[col]
-			var available := s.min_req_mastery_level > 0 and mastery_level >= s.min_req_mastery_level
-			if available:
-				cell.texture = _load_skill_icon(s.icon_path)
-			elif disable_tex != null:
-				cell.texture = disable_tex   # the real "locked" book
-			else:
-				cell.texture = _load_skill_icon(s.icon_path)
-				cell.modulate = Color(0.45, 0.45, 0.45, 0.85)
-			cell.mouse_filter = Control.MOUSE_FILTER_PASS
-			cell.tooltip_text = "%s (needs mastery Lv %d)" % [s.display_name(_text_table()), s.min_req_mastery_level]
-		else:
-			cell.texture = nothing_tex
-			cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# The cell is the 32x32 icon with the 32x20 "+" strip beneath it, centred
+		# in the bar row (ifskill_slot.txt geometry).
+		var cell := Control.new()
+		cell.position = Vector2(SKILL_COL_X0 + col * SKILL_COL_PITCH, (SKILL_ROW_H - SKILL_CELL_CONTENT_H) / 2.0)
+		cell.size = Vector2(SKILL_CELL, SKILL_CELL_CONTENT_H)
+		cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(cell)
+
+		var icon := TextureRect.new()
+		icon.position = Vector2.ZERO
+		icon.size = Vector2(SKILL_CELL, SKILL_CELL)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		cell.add_child(icon)
+
+		if not by_col.has(col):
+			icon.texture = nothing_tex
+			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			continue
+
+		var s: SkillDataReader.BaseSkill = by_col[col]
+		var learned := _skill_learned_level(s)
+		var available := s.min_req_mastery_level > 0 and mastery_level >= s.min_req_mastery_level
+		if learned > 0 or available:
+			icon.texture = _load_skill_icon(s.icon_path)
+		elif disable_tex != null:
+			icon.texture = disable_tex   # the real "locked" book
+		else:
+			icon.texture = _load_skill_icon(s.icon_path)
+			icon.modulate = Color(0.45, 0.45, 0.45, 0.85)
+		icon.mouse_filter = Control.MOUSE_FILTER_PASS
+		icon.tooltip_text = _skill_cell_tooltip(s, learned)
+
+		# A learned skill shows its level badge over the icon's lower-right.
+		if learned > 0 and badge_tex != null:
+			_add_level_badge(cell, badge_tex, learned)
+
+		# The "+" appears when the next level is within the current mastery level;
+		# the server enforces the SP cost (refdata ReqLearnSP) and refunds on fail.
+		var next_level := learned + 1
+		var can_learn := next_level <= s.max_level and next_level <= s.level_reqs.size() \
+			and mastery_level >= s.level_reqs[next_level - 1] and s.level_ids[next_level - 1] > 0
+		if can_learn and levelup_tex != null:
+			var add_btn := TextureButton.new()
+			add_btn.texture_normal = levelup_tex
+			add_btn.position = Vector2(0, SKILL_CELL)
+			add_btn.size = Vector2(SKILL_CELL, SKILL_LEVELUP_H)
+			add_btn.ignore_texture_size = true
+			add_btn.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+			add_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+			var target_id: int = s.level_ids[next_level - 1]
+			add_btn.pressed.connect(func(): _on_skill_learn(target_id))
+			add_btn.tooltip_text = "Learn %s Lv %d" % [s.display_name(_text_table()), next_level]
+			cell.add_child(add_btn)
+
+## The highest contiguous level of a skill the character has learned (0 = not
+## learned). Learning is sequential, so this is how many of the skill's levels
+## from level 1 up are in the server's known-skills set.
+func _skill_learned_level(s: SkillDataReader.BaseSkill) -> int:
+	# QA only: pretend the first N levels of every skill are learned, so a render
+	# can show the learned badge + the next level's "+" without a live server.
+	if OS.has_environment("SRREVAMP_QA_LEARNED"):
+		return mini(int(OS.get_environment("SRREVAMP_QA_LEARNED")), s.max_level)
+	var lvl := 0
+	for i in range(s.level_ids.size()):
+		var id := s.level_ids[i]
+		if id > 0 and _skill_known.has(id):
+			lvl = i + 1
+		else:
+			break
+	return lvl
+
+## The cell hover text: the skill name, plus its learned level or the mastery
+## level it still needs.
+func _skill_cell_tooltip(s: SkillDataReader.BaseSkill, learned: int) -> String:
+	var nm := s.display_name(_text_table())
+	if learned >= s.max_level and s.max_level > 0:
+		return "%s (Lv %d, mastered)" % [nm, learned]
+	if learned > 0:
+		return "%s (Lv %d/%d)" % [nm, learned, s.max_level]
+	return "%s (needs mastery Lv %d)" % [nm, s.min_req_mastery_level]
+
+## Draws the learned-level badge (skl_level_tab) over the icon's lower-right,
+## with the level number on it (ifskill_slot.txt GDR_STMS_LEVEL_BOARD at 19,17).
+func _add_level_badge(cell: Control, badge_tex: Texture2D, learned: int) -> void:
+	var badge := TextureRect.new()
+	badge.texture = badge_tex
+	badge.position = SKILL_BADGE_POS
+	badge.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	badge.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cell.add_child(badge)
+	var num := Label.new()
+	num.text = str(learned)
+	num.position = SKILL_BADGE_POS
+	num.size = Vector2(13, 12)
+	num.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	num.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	num.add_theme_font_size_override("font_size", 9)
+	num.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cell.add_child(num)
+
+## The "+" on a skill cell was pressed -- learn (or level up) that skill. The
+## server validates the mastery requirement and SP cost; learn_skill_result
+## comes back and we re-read the state to repaint the board.
+func _on_skill_learn(skill_id: int) -> void:
+	var who := NetClient.current_character_name
+	if who != "":
+		NetClient.learn_skill(who, skill_id)
+
+## A learn succeeded (or failed) -- re-read the skill state so a newly learned
+## skill shows its badge and the next level's "+" (or SP is restored on fail).
+func _on_learn_skill_result(_ok: bool, _reason: String) -> void:
+	var window: HudWindow = _windows.get("skill")
+	if window == null or not window.visible:
+		return
+	var who := NetClient.current_character_name
+	if who != "":
+		NetClient.skill_state(who)
 
 ## Loads a skillgroup/skilldata icon. Those tables name their icons without the
 ## `icon\` root the archive stores them under (unlike the mastery table), so it
@@ -1060,6 +1171,7 @@ func connect_net() -> void:
 	NetClient.character_stats_result.connect(_apply_stats)
 	NetClient.skill_state_result.connect(_apply_skill_state)
 	NetClient.raise_mastery_result.connect(_on_raise_mastery_result)
+	NetClient.learn_skill_result.connect(_on_learn_skill_result)
 	# Keep the skill window's points live: a kill grants skill points, so
 	# re-read the state after an attack while the window is open.
 	NetClient.attack_result.connect(_on_attack_refresh_skill)

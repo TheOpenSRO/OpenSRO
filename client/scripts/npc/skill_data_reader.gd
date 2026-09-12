@@ -43,6 +43,7 @@ const G_ROW := 4
 const G_NAME := 5
 const G_ICON := 6
 
+const S_UNIQUE_ID := 1
 const S_BASE_ID := 2
 const S_LEVEL := 7
 const S_MASTERY := 34
@@ -75,6 +76,18 @@ class BaseSkill:
 	## (skl_mastery_disable.ddj) until the mastery reaches this.
 	var min_req_mastery_level: int
 	var max_level: int
+	## The unique per-level skill id of this skill's level 1 -- the id the "+"
+	## learn button sends. 0 if the archive carries no level-1 row for it.
+	var first_level_id: int
+	## Every level's unique skill id, index i = level i+1's id (0 for a level the
+	## archive is missing). The "+" button sends the next unlearned level's id.
+	var level_ids: PackedInt64Array = PackedInt64Array()
+	## Every level's required mastery level, aligned with level_ids -- a level
+	## becomes learnable when the mastery reaches level_reqs[level-1].
+	var level_reqs: PackedInt32Array = PackedInt32Array()
+	## Accumulator during parse: level -> [unique_id, req_mastery_level]. Folded
+	## into level_ids/level_reqs once every row is seen; not used after that.
+	var _levels: Dictionary = {}
 
 	func display_name(names: UiTextTable) -> String:
 		if names != null and name_code != "" and name_code != "xxx":
@@ -145,12 +158,17 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				continue
 			var level := _int_at(cols, S_LEVEL)
 			var req := _int_at(cols, S_REQ_MASTERY_LEVEL)
+			var unique_id := _int_at(cols, S_UNIQUE_ID)
 			if by_base.has(base_id):
 				var existing: BaseSkill = by_base[base_id]
 				existing.max_level = maxi(existing.max_level, level)
 				if req > 0:
 					existing.min_req_mastery_level = mini(existing.min_req_mastery_level, req) \
 						if existing.min_req_mastery_level > 0 else req
+				if level == 1:
+					existing.first_level_id = unique_id
+				if level >= 1:
+					existing._levels[level] = [unique_id, req]
 			else:
 				var s := BaseSkill.new()
 				s.base_id = base_id
@@ -160,6 +178,10 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				s.name_code = cols[S_NAME].strip_edges()
 				s.min_req_mastery_level = req
 				s.max_level = level
+				if level == 1:
+					s.first_level_id = unique_id
+				if level >= 1:
+					s._levels[level] = [unique_id, req]
 				by_base[base_id] = s
 
 	# Group by mastery:row, order by base id, assign columns.
@@ -168,12 +190,28 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 	bases.sort_custom(func(a, b): return a.base_id < b.base_id)
 	for entry in bases:
 		var s: BaseSkill = entry
+		_finalize_levels(s)
 		var key := "%d:%d" % [s.mastery_id, s.group_row]
 		if not grid.has(key):
 			grid[key] = []
 		s.column = grid[key].size()
 		grid[key].append(s)
 	return grid
+
+## Folds a skill's per-level accumulator into level_ids/level_reqs, indexed
+## by level-1 (index 0 = level 1). Levels the archive is missing stay 0.
+static func _finalize_levels(s: BaseSkill) -> void:
+	var top := 0
+	for lv in s._levels:
+		top = maxi(top, int(lv))
+	if top <= 0:
+		return
+	s.level_ids.resize(top)
+	s.level_reqs.resize(top)
+	for lv in s._levels:
+		var info: Array = s._levels[lv]
+		s.level_ids[int(lv) - 1] = int(info[0])
+		s.level_reqs[int(lv) - 1] = int(info[1])
 
 static func _int_at(cols: PackedStringArray, col: int) -> int:
 	if col >= cols.size():

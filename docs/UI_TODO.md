@@ -155,16 +155,19 @@ authored presentation instead:
   level: 118 at level 1, 470 at 2, 1058 at 3).
 - **Party / Community / Guild** — the row controls exist (`CIFPartySlot` builds as a slot); they
   need one row per member with name, level and HP.
-- **Skill** — *done (the window)*: the real `CIFSkillBoard` rebuilt from the client's own resinfo
-  and a decompile of `CIFSkillBoard`/`CIFSkillGroup`/`CIFSkillSlot` — Weapon/Force tabs, the mastery
-  tabs (Bicheon/Heuksal/Pacheon…), and per mastery a scrolling grid of one row per skill group
-  (`skillgroup.txt`), each holding that group's skills as cells (`skilldata_*.txt`, via
-  `SkillDataReader`). Cell metrics are the client's own (8 columns pitched 36px from x=37, greyed
-  with `skl_mastery_disable`, empties `skl_mastery_nothing`). At mastery level 0 every skill shows
-  greyed, exactly as a fresh character's window does, because **the server tracks no mastery level
-  or skill point yet**. Remaining, server-first: the SP economy and mastery levels, then
-  learn/level-up, then skill effects and cast animations. Ghidra decompile helpers are in
-  `client/tools/ghidra/` (GhidraMCP is broken on the box's Ghidra 12.1.3).
+- **Skill** — *done (window + economy + per-skill learning, v0.1.121)*: the real `CIFSkillBoard`
+  rebuilt from the client's own resinfo and a decompile of `CIFSkillBoard`/`CIFSkillGroup`/
+  `CIFSkillSlot` — Weapon/Force tabs, the mastery tabs (Bicheon/Heuksal/Pacheon…), and per mastery
+  a scrolling grid of one row per skill group (`skillgroup.txt`), each holding that group's skills
+  as cells (`skilldata_*.txt`, via `SkillDataReader`). Cell metrics are the client's own (8 columns
+  pitched 36px from x=37). The window is server-driven (`set_skill_state`): a mastery's LEVEL UP
+  button spends skill points (capped 3×level total); each skill cell renders learned (colored icon
+  + `skl_level_tab` badge with the trained level) / learnable-next (icon + `skl_button_add` "+" →
+  learns the next level) / locked (`skl_mastery_disable`) / empty (`skl_mastery_nothing`), at the
+  grounded `ifskill_slot.txt` rects (icon 0,0,32,32; "+" 0,32,32,20; badge at 19,17). SP is earned
+  per kill (disclosed `SPFor` placeholder). Remaining: skill effects (`skilleffect.txt`) + cast
+  animations + the hotbar, and grounding the real per-mob SP/EXP amounts. Ghidra decompile helpers
+  are in `client/tools/ghidra/` (GhidraMCP is broken on the box's Ghidra 12.1.3).
 - **Quest** — quest rows.
 
 ### 2. Vitals, and the rest of the live data

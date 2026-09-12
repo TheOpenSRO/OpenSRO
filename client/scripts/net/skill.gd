@@ -165,6 +165,7 @@ class SkillState:
 	var level: int
 	var skill_points: int
 	var mastery_levels: Dictionary = {}   ## mastery id -> trained level
+	var known_skills: Dictionary = {}     ## unique skill id -> true (a set)
 
 ## Decodes an OpSkillStateResult payload.
 static func decode_state_result(data: PackedByteArray) -> SkillState:
@@ -193,6 +194,15 @@ static func decode_state_result(data: PackedByteArray) -> SkillState:
 			return s
 		s.mastery_levels[data.decode_s64(offset)] = data.decode_u32(offset + 8)
 		offset += 12
+	# Known (learned) skills: a u16 count then that many s64 unique ids.
+	if offset + 2 <= data.size():
+		var kcount := data.decode_u16(offset)
+		offset += 2
+		for i in range(kcount):
+			if offset + 8 > data.size():
+				break
+			s.known_skills[data.decode_s64(offset)] = true
+			offset += 8
 	return s
 
 ## Encodes an OpRaiseMastery request (name + mastery id -- same shape as a

@@ -468,6 +468,9 @@ type SkillStateResult struct {
 	Level       int32
 	SkillPoints int32
 	Masteries   []MasterySnapshot
+	// KnownSkills is the unique per-level skill ids the character has learned,
+	// so the window can badge learned skills apart from merely-available ones.
+	KnownSkills []int64
 }
 
 func (r *SkillStateResult) Encode() []byte {
@@ -485,6 +488,12 @@ func (r *SkillStateResult) Encode() []byte {
 		lb := make([]byte, 4)
 		binary.LittleEndian.PutUint32(lb, uint32(m.Level))
 		out = append(out, lb...)
+	}
+	kb := make([]byte, 2)
+	binary.LittleEndian.PutUint16(kb, uint16(len(r.KnownSkills)))
+	out = append(out, kb...)
+	for _, id := range r.KnownSkills {
+		out = append(out, encodeInt64(id)...)
 	}
 	return out
 }
@@ -515,6 +524,18 @@ func DecodeSkillStateResult(data []byte) (*SkillStateResult, error) {
 		}
 		r.Masteries = append(r.Masteries, MasterySnapshot{MasteryID: id, Level: int32(binary.LittleEndian.Uint32(r2[0:4]))})
 		rest = r2[4:]
+	}
+	if len(rest) >= 2 {
+		kcount := int(binary.LittleEndian.Uint16(rest[0:2]))
+		rest = rest[2:]
+		for i := 0; i < kcount; i++ {
+			id, r2, err := decodeInt64(rest)
+			if err != nil {
+				return nil, fmt.Errorf("session: decoding SkillStateResult: known skill %d: %w", i, err)
+			}
+			r.KnownSkills = append(r.KnownSkills, id)
+			rest = r2
+		}
 	}
 	return r, nil
 }
@@ -555,6 +576,9 @@ func SkillStateHandler(chars character.Store, store skill.Store) gateway.Handler
 			result.Masteries = append(result.Masteries, MasterySnapshot{MasteryID: id, Level: int32(lvl)})
 		}
 		sort.Slice(result.Masteries, func(i, j int) bool { return result.Masteries[i].MasteryID < result.Masteries[j].MasteryID })
+		if learned, err := store.KnownSkills(ctx, characterID); err == nil {
+			result.KnownSkills = learned
+		}
 		return send(result)
 	}
 }

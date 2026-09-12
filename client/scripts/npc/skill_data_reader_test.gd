@@ -30,6 +30,7 @@ func _skill(base_id: String, level: String, mastery: String, req_ml: String,
 	var cols := PackedStringArray()
 	cols.resize(119)
 	cols.fill("0")
+	cols[SkillDataReader.S_UNIQUE_ID] = str(int(base_id) * 100 + int(level))
 	cols[SkillDataReader.S_BASE_ID] = base_id
 	cols[SkillDataReader.S_LEVEL] = level
 	cols[SkillDataReader.S_MASTERY] = mastery
@@ -98,3 +99,12 @@ func _test_skills() -> void:
 			_check(r0[0].max_level == 2, "max level aggregates across a skill's levels")
 			_check(r0[0].min_req_mastery_level == 5,
 				"min required mastery level aggregates across levels")
+			_check(r0[0].first_level_id == 174 * 100 + 1,
+				"first_level_id is the level-1 row's unique id (got %d)" % r0[0].first_level_id)
+			_check(r0[0].level_ids.size() == 2
+				and r0[0].level_ids[0] == 174 * 100 + 1
+				and r0[0].level_ids[1] == 174 * 100 + 2,
+				"level_ids holds each level's unique id in order")
+			_check(r0[0].level_reqs.size() == 2
+				and r0[0].level_reqs[0] == 5 and r0[0].level_reqs[1] == 7,
+				"level_reqs holds each level's required mastery level")
