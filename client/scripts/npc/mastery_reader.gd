@@ -24,6 +24,9 @@ const TABLE_PATH := "server_dep\\silkroad\\textdata\\skillmasterydata.txt"
 
 const COL_ID := 0
 const COL_NAME_CODE := 2
+## Column 5 is the tab's own name code (UIIT_CTL_WEAPON_SKILL /
+## UIIT_CTL_FORCE_SKILL) -- what the skill window titles each tab with.
+const COL_TAB_CODE := 5
 const COL_TAB := 6
 const COL_WEAPON_TYPE_1 := 8
 const COL_ICON := 11
@@ -42,6 +45,8 @@ class Mastery:
 	var id: int
 	var name_code: String
 	var tab: int
+	## The UIIT_ token titling this mastery's tab (Weapon / Force skill).
+	var tab_name_code: String
 	var icon_path: String
 	## The weapon TypeID4s this mastery trains (empty for a force mastery).
 	var weapon_types: PackedInt32Array = PackedInt32Array()
@@ -84,6 +89,8 @@ static func parse_china(data: PackedByteArray) -> Array:
 		m.id = int(id_text)
 		m.name_code = cols[COL_NAME_CODE].strip_edges()
 		m.tab = _int_at(cols, COL_TAB)
+		if COL_TAB_CODE < cols.size():
+			m.tab_name_code = cols[COL_TAB_CODE].strip_edges()
 		# Column 11 already carries the full `icon\...` archive path, unlike
 		# the item table's bare filenames -- so it is used as-is.
 		m.icon_path = icon.replace("/", "\\")

@@ -522,44 +522,160 @@ func _load_masteries() -> void:
 ## per-mastery skill grid and the trained levels are not here: this project's
 ## server tracks no mastery level or skill point, so the window shows the
 ## masteries at level 0 and says "not trained" rather than a made-up number.
+## Which tab of the skill board is showing -- index into the ordered tab list
+## the masteries fall into (0 = the first, Weapon for China).
+var _skill_active_tab := 0
+
+## Builds the skill window's board the way the real client's CIFSkillBoard
+## does: a tab strip (Weapon Skill / Force Skill), and under the active tab a
+## column per mastery (Bicheon/Heuksal/Pacheon, or Cold/Lightning/Fire/Force),
+## each with its real icon, name and trained level. The masteries come from the
+## real skillmasterydata.txt (MasteryReader); the trained levels and skill grid
+## are the next phases, so a mastery shows Lv 0 rather than an invented number.
 func _fill_skill_masteries(window: HudWindow) -> void:
 	_load_masteries()
 	var board := window.node("GDR_SKILL_BOARD") as Control
-	var host: Control = board if board != null else window
-	var list := host.get_node_or_null("MasteryList") as VBoxContainer
-	if list == null:
-		list = VBoxContainer.new()
-		list.name = "MasteryList"
-		list.position = Vector2(10, 10)
-		list.add_theme_constant_override("separation", 6)
-		host.add_child(list)
-	for child in list.get_children():
-		child.queue_free()
+	if board == null:
+		return
+	board.clip_contents = true
+
+	# Group the masteries by their tab, in first-seen order.
+	var tab_keys: Array = []
+	var tabs: Dictionary = {}
 	for entry in _masteries:
-		var mastery: MasteryReader.Mastery = entry
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 6)
-		var icon := TextureRect.new()
-		icon.custom_minimum_size = Vector2(28, 28)
-		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		if _builder != null:
-			icon.texture = _builder.load_texture(mastery.icon_path)
-		row.add_child(icon)
-		var label := Label.new()
-		label.text = "%s  —  Lv 0 (not trained)" % mastery.display_name(_text_table())
-		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		label.add_theme_color_override("font_color", ROW_TEXT_COLOUR)
-		if _builder != null:
-			var font := _builder.font_at(0)
-			if font != null:
-				label.add_theme_font_override("font", font)
-			label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
-		row.add_child(label)
-		list.add_child(row)
-	# The bottom labels: this server tracks neither, so 0, plainly.
+		var m: MasteryReader.Mastery = entry
+		if not tabs.has(m.tab):
+			tabs[m.tab] = {"code": m.tab_name_code, "masteries": []}
+			tab_keys.append(m.tab)
+		tabs[m.tab]["masteries"].append(m)
+	if tab_keys.is_empty():
+		return
+	_skill_active_tab = clampi(_skill_active_tab, 0, tab_keys.size() - 1)
+
+	# Rebuild the board fresh each fill (server state may have changed).
+	for child in board.get_children():
+		if child.name in ["SkillTabStrip", "SkillTabContent", "SkillBoardBg"]:
+			child.queue_free()
+
+	# A dark backing so the world does not show through the board (the layout
+	# names no tile for the CIFSkillBoard area -- the EXE draws its own).
+	var bg := TextureRect.new()
+	bg.name = "SkillBoardBg"
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_TILE
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _builder != null:
+		bg.texture = _builder.load_texture("interface\\ifcommon\\bg_tile\\com_bg_tile_d.ddj")
+	if bg.texture == null:
+		var flat := ColorRect.new()
+		flat.name = "SkillBoardBg"
+		flat.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		flat.color = Color(0.04, 0.04, 0.05, 1.0)
+		flat.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		board.add_child(flat)
+	else:
+		board.add_child(bg)
+
+	# The tab strip along the top of the board.
+	var strip := HBoxContainer.new()
+	strip.name = "SkillTabStrip"
+	strip.position = Vector2(4, 2)
+	strip.add_theme_constant_override("separation", 3)
+	board.add_child(strip)
+	for i in range(tab_keys.size()):
+		var group: Dictionary = tabs[tab_keys[i]]
+		var btn := Button.new()
+		btn.text = _resolve_ui(group["code"], _skill_tab_fallback(tab_keys[i]))
+		btn.toggle_mode = true
+		btn.button_pressed = i == _skill_active_tab
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.custom_minimum_size = Vector2(84, 20)
+		_style_skill_tab(btn)
+		btn.pressed.connect(_on_skill_tab.bind(i))
+		strip.add_child(btn)
+
+	# The active tab's masteries, one column each.
+	var content := Control.new()
+	content.name = "SkillTabContent"
+	content.position = Vector2(4, 26)
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	board.add_child(content)
+	var masteries: Array = tabs[tab_keys[_skill_active_tab]]["masteries"]
+	var col_w: float = 351.0 / float(maxi(masteries.size(), 1))
+	for i in range(masteries.size()):
+		_build_mastery_column(content, masteries[i] as MasteryReader.Mastery, i * col_w, col_w - 4.0)
+
+	# SP and total mastery level -- the server tracks neither yet, so 0.
 	_set_label(window, "GDR_SKILL_TEXT_SP_NUM", "0")
 	_set_label(window, "GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM", "0")
+
+## One mastery's column on the board: its icon, name and trained level.
+func _build_mastery_column(host: Control, mastery: MasteryReader.Mastery, x: float, width: float) -> void:
+	var col := VBoxContainer.new()
+	col.position = Vector2(x, 0)
+	col.custom_minimum_size = Vector2(width, 0)
+	col.size = Vector2(width, 240)
+	col.add_theme_constant_override("separation", 3)
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	host.add_child(col)
+
+	var icon := TextureRect.new()
+	icon.custom_minimum_size = Vector2(width, 40)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _builder != null:
+		icon.texture = _builder.load_texture(mastery.icon_path)
+	col.add_child(icon)
+
+	var name_lbl := Label.new()
+	name_lbl.text = mastery.display_name(_text_table())
+	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_lbl.custom_minimum_size = Vector2(width, 0)
+	_style_skill_label(name_lbl)
+	col.add_child(name_lbl)
+
+	var lvl_lbl := Label.new()
+	lvl_lbl.text = "Lv 0 / 0"
+	lvl_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_style_skill_label(lvl_lbl)
+	col.add_child(lvl_lbl)
+
+func _on_skill_tab(index: int) -> void:
+	_skill_active_tab = index
+	var window: HudWindow = _windows.get("skill")
+	if window != null:
+		_fill_skill_masteries(window)
+
+## Titles a tab from its own name code, falling back to the plain English when
+## the archive has no text for the token.
+func _skill_tab_fallback(tab: int) -> String:
+	return "Weapon Skill" if tab == MasteryReader.TAB_WEAPON else "Force Skill"
+
+func _resolve_ui(token: String, fallback: String) -> String:
+	if token == "" or token == "xxx" or _text_table() == null:
+		return fallback
+	var resolved := _text_table().get_text(token)
+	return resolved if resolved != "" and resolved != token else fallback
+
+func _style_skill_label(label: Label) -> void:
+	label.add_theme_color_override("font_color", ROW_TEXT_COLOUR)
+	if _builder != null:
+		var font := _builder.font_at(0)
+		if font != null:
+			label.add_theme_font_override("font", font)
+		label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+
+func _style_skill_tab(btn: Button) -> void:
+	btn.add_theme_color_override("font_color", Color(0.93, 0.87, 0.70))
+	btn.add_theme_color_override("font_pressed_color", Color(1, 0.95, 0.75))
+	if _builder != null:
+		var font := _builder.font_at(0)
+		if font != null:
+			btn.add_theme_font_override("font", font)
+		btn.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
 
 ## The UI text table, for resolving a mastery's own name where the archive
 ## has it. The builder holds it.
