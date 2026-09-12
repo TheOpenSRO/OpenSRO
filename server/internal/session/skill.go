@@ -212,6 +212,27 @@ func LearnSkillHandler(chars character.Store, skills skill.Store, skillRef Skill
 	}
 }
 
+// DisclosedSkillDamagePerLevel is this project's OWN-DESIGN skill-damage rate,
+// NOT a recovered value. Real SRO skill damage is server-authoritative -- the
+// retail client only receives the result in the action packet (proven by
+// decompiling NetProcessInNavAndSkill.cpp), so the formula lives only in the
+// packed retail AgentServer and cannot be read from any artifact we have; and
+// _RefSkill's Param damage block is not decoded. So a cast's bonus damage is a
+// clearly-labeled stand-in, the same accepted pattern as SPFor/ExpFor. Replace
+// it wholesale if a real formula is ever recovered.
+const DisclosedSkillDamagePerLevel = 4
+
+// disclosedSkillDamageBonus is the own-design bonus a real skill adds on top of
+// the plain weapon attack, scaled by the skill's level so higher skills hit
+// harder. Disclosed, not recovered -- see DisclosedSkillDamagePerLevel.
+func disclosedSkillDamageBonus(ref *refdata.Skill) int {
+	lvl := ref.BasicLevel
+	if lvl < 1 {
+		lvl = 1
+	}
+	return lvl * DisclosedSkillDamagePerLevel
+}
+
 // UseSkillHandler returns a gateway.Handler implementing OpUseSkill:
 // checks the character knows the skill and it's off cooldown, then
 // delegates to performAttack with the skill's damage bonus. Responds with
@@ -244,13 +265,15 @@ func UseSkillHandler(
 		}
 
 		// Resolve the skill's cooldown and damage bonus. A real learned skill
-		// (refdata) uses its real ReuseDelay cooldown; its damage is a PLAIN
-		// attack for now (bonus 0) -- the skill's own bonus lives in _RefSkill's
-		// Param1-50 block, whose grammar this project has not decoded (see the
-		// skilldata-columns note), so a cast plays the real animation and takes
-		// the real cooldown but deals ordinary damage until that formula is
-		// grounded, rather than an invented skill-damage number. The own-design
-		// combat catalog (Power Strike etc.) keeps its own DamageBonus/cooldown.
+		// (refdata) uses its real ReuseDelay cooldown; its extra damage is a
+		// DISCLOSED own-design bonus (disclosedSkillDamageBonus), because the
+		// real formula is NOT recoverable: skill damage is server-authoritative
+		// (the retail client only receives it in the action packet -- proven by
+		// decompiling NetProcessInNavAndSkill.cpp), so it lives only in the
+		// packed retail AgentServer, and _RefSkill's Param block is not decoded.
+		// So this is a stand-in scaled by the skill's level, clearly labeled --
+		// the same accepted pattern as SPFor/ExpFor/Catalog.DamageBonus, never a
+		// value dressed as recovered. See the skilldata-columns note.
 		var cooldown time.Duration
 		var damageBonus int
 		if sk, inCatalog := skill.Catalog[req.SkillID]; inCatalog {
@@ -258,7 +281,7 @@ func UseSkillHandler(
 			damageBonus = int(sk.DamageBonus)
 		} else if ref, err := skillRef.GetSkill(ctx, req.SkillID); err == nil && ref != nil {
 			cooldown = time.Duration(ref.ReuseDelayMs) * time.Millisecond
-			damageBonus = 0
+			damageBonus = disclosedSkillDamageBonus(ref)
 		} else {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "no such skill"}).Encode()})
 		}

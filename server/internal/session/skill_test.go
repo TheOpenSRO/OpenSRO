@@ -223,10 +223,11 @@ func TestSkillFullFlow(t *testing.T) {
 		t.Fatalf("got %+v, want skill 1 to report a positive cooldown remaining", slr.Skills[0])
 	}
 
-	// A real (refdata) skill, id 999: learn it (free here) then cast it. It
-	// takes the real ReuseDelay cooldown and deals a PLAIN attack -- 30 weapon
-	// - 10 defense = 20, no invented skill bonus (the skill's real bonus lives
-	// in the not-yet-decoded _RefSkill Param block).
+	// A real (refdata) skill, id 999 (BasicLevel 1): learn it (free here) then
+	// cast it. It takes the real ReuseDelay cooldown and adds the DISCLOSED
+	// own-design skill bonus (BasicLevel * DisclosedSkillDamagePerLevel = 1*4):
+	// 30 weapon + 4 skill - 10 defense = 24. (The real formula is unrecoverable
+	// -- skill damage is server-authoritative; see disclosedSkillDamageBonus.)
 	resp = send(OpLearnSkill, (&LearnSkillRequest{CharacterName: "Aria", SkillID: 999}).Encode())
 	if lr, err := DecodeLearnSkillResult(resp.Data); err != nil || !lr.OK {
 		t.Fatalf("learn real skill failed: err=%v result=%+v", err, lr)
@@ -236,8 +237,9 @@ func TestSkillFullFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeAttackResult: %v", err)
 	}
-	if ar.Error != "" || ar.MonsterDamage != 20 {
-		t.Fatalf("got %+v, want a real-skill cast for 20 damage (30 weapon - 10 defense, no skill bonus)", ar)
+	want := 30 + DisclosedSkillDamagePerLevel - 10
+	if ar.Error != "" || int(ar.MonsterDamage) != want {
+		t.Fatalf("got %+v, want a real-skill cast for %d damage (30 weapon + %d skill - 10 defense)", ar, want, DisclosedSkillDamagePerLevel)
 	}
 	// Immediately again: the real ReuseDelay (500ms) keeps it on cooldown.
 	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 999, TargetMonsterID: monster.ID}).Encode())
