@@ -872,6 +872,9 @@ var _last_attack_target := -1
 ## the player has put on the hotbar from the skill window. Activating a slot
 ## casts its skill.
 var _quickslot_skills: Dictionary = {}
+## Set when the player casts a skill, consumed by the next attack result so the
+## critical-hit slash effect plays on the target (a plain attack does not).
+var _pending_skill_hit_fx := false
 ## Which of the four plain attacks plays next. The four animation *types*
 ## are real -- the `.bsr` groups list them as types 2, 5, 16, 17
 ## (`sword_base_01` to `_04`, or the bare-handed straight-left,
@@ -4556,6 +4559,7 @@ func _cast_skill(skill_id: int, basic_code: String) -> void:
 	_play_skill_cast_anim(anim_base)
 	if _last_attack_target != -1:
 		_show_target(_last_attack_target)
+		_pending_skill_hit_fx = true
 		NetClient.use_skill(NetClient.current_character_name, skill_id, _last_attack_target)
 
 ## The group entry behind _body_animation_for, for its events.
@@ -5255,6 +5259,11 @@ func _qa_step() -> void:
 	# Basic_Code -> .ban mapping. QA only, no target/server needed.
 	if OS.get_environment("SRREVAMP_QA_CASTANIM") != "" and _qa_tick % 90 == 0 and _qa_tick > 0:
 		_play_skill_cast_anim(OS.get_environment("SRREVAMP_QA_CASTANIM"))
+
+	# SRREVAMP_QA_HITFX=1 plays the critical-hit slash burst on the player every
+	# 90 ticks, so a render can verify the recovered hit_3_critical layers.
+	if OS.get_environment("SRREVAMP_QA_HITFX") != "" and _qa_tick >= 15 and _qa_tick % 15 == 0 and player != null:
+		_play_hit_effect_on(player, _player_world_height())
 
 	# SRREVAMP_QA_HOTBAR=1 assigns two real skills to the hotbar (the same path a
 	# window click takes) so a render can show their icons in the quickslots.
@@ -6981,6 +6990,11 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	# killing blow may clear _last_attack_target before the blow lands, and
 	# the floating damage number still has to appear over the dying body.
 	var damage_target := _last_attack_target
+	# A skill cast (not a plain attack) plays the critical-hit slash effect on
+	# the target when the blow lands. Consumed here so the next plain attack
+	# doesn't inherit it.
+	var skill_hit := _pending_skill_hit_fx
+	_pending_skill_hit_fx = false
 	if _last_attack_target != -1:
 		var dealt := result.monster_damage
 		_after(lands_after, func() -> void:
@@ -6989,7 +7003,9 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			_play_monster_action(_last_attack_target, BsrReader.AnimationEntry.TYPE_HIT)
 			var hit_body = _monster_bodies.get(damage_target)
 			if hit_body != null and is_instance_valid(hit_body):
-				_floating_damage(hit_body, _monster_text_height(damage_target), dealt, DAMAGE_DEALT_COLOUR))
+				_floating_damage(hit_body, _monster_text_height(damage_target), dealt, DAMAGE_DEALT_COLOUR)
+				if skill_hit:
+					_play_hit_effect_on(hit_body, _monster_text_height(damage_target)))
 	if result.player_damage_taken > 0 and _player_skeleton != null:
 		# The monster strikes back: its own attack, and the player's hit
 		# reaction (type 3) when that swing's hit event falls.
@@ -7097,6 +7113,21 @@ func _play_level_up_effect() -> void:
 	if fx == null:
 		return
 	player.add_child(fx)
+
+## Plays the real critical-hit slash burst on a body, centred on its mid-height.
+## Used when a skill lands on a target (and by SRREVAMP_QA_HITFX on the player).
+## No-ops without Particles.pk2 -- no fabricated stand-in.
+func _play_hit_effect_on(body: Node3D, world_height: float) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	var particles := _open_particles_pk2_if_set()
+	if particles == null:
+		return
+	var fx := HitEffect.create(particles, world_height)
+	if fx == null:
+		return
+	fx.position = Vector3(0, world_height * 0.5, 0)
+	body.add_child(fx)
 
 ## The player's rendered height in world units -- measured from the assembled
 ## skeleton when one is up, else the file's standing yardstick (a character is

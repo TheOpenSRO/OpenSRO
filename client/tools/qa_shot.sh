@@ -141,6 +141,7 @@ fi
 export SRREVAMP_PK2_PATH="$PK2_DIR/Data.pk2"
 export SRREVAMP_MAP_PK2_PATH="$PK2_DIR/Map.pk2"
 export SRREVAMP_MEDIA_PK2_PATH="$PK2_DIR/Media.pk2"
+export SRREVAMP_PARTICLES_PK2_PATH="$PK2_DIR/Particles.pk2"
 export SRREVAMP_MAPM_PATH="$REGION"
 [ -n "$AT" ]    && export SRREVAMP_QA_AT="$AT"
 [ -n "$YAW" ]   && export SRREVAMP_QA_YAW="$YAW"
