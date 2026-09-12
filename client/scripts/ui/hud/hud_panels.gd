@@ -769,6 +769,23 @@ func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> voi
 	levelup.focus_mode = Control.FOCUS_NONE
 	_style_skill_tab(levelup)
 	levelup.pressed.connect(_on_mastery_levelup.bind(mastery.id))
+	# Grey it and say why when the mastery can't be raised: a single mastery
+	# can't pass the character's level, and the total is capped at 3 x level
+	# (both server-enforced -- this just explains it before the click).
+	var real_level := int(_skill_mastery_levels.get(mastery.id, 0))
+	var total_now := 0
+	for lvl in _skill_mastery_levels.values():
+		total_now += int(lvl)
+	var reason := ""
+	if _skill_char_level > 0 and real_level >= _skill_char_level:
+		reason = "This mastery is at your character-level cap (Lv %d). Level up your character to raise it." % _skill_char_level
+	elif _skill_char_level > 0 and total_now >= MASTERY_TOTAL_CAP_PER_LEVEL * _skill_char_level:
+		reason = "Total mastery cap reached (%d / %d)." % [total_now, MASTERY_TOTAL_CAP_PER_LEVEL * _skill_char_level]
+	elif _skill_points <= 0:
+		reason = "Not enough skill points."
+	if reason != "":
+		levelup.disabled = true
+		levelup.tooltip_text = reason
 	host.add_child(levelup)
 
 	var lvl_lbl := Label.new()
