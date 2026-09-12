@@ -95,8 +95,19 @@ done
 [ -n "$OUT" ] || { echo "--out is required" >&2; exit 2; }
 
 # Never leave a previous run behind: two clients at once exhausted the RE box's
-# memory once already.
-pkill -9 -f "Godot_v4.2.2-stable_linux" 2>/dev/null || true
+# memory once already, and -- the flaky-startup cause -- leftovers from a killed
+# run made the next one fail. Killing only "Godot_v4.2.2-stable_linux" both
+# missed the Xvfb that xvfb-run spawns AND matched xvfb-run's own command line
+# (its args carry the godot path), so xvfb-run was SIGKILLed before it could
+# tear its Xvfb down. Stray Xvfb servers then piled up, and a stale in-memory
+# server still holding the fixed port kept the next server from binding -- so
+# the client connected to nothing and hung. Reap the whole stack: the godot
+# binary (by its real path, not the wrapper), any prior xvfb-run, every leftover
+# Xvfb, and any stale in-memory QA server.
+pkill -9 -f "godot-bin/Godot_v4.2.2" 2>/dev/null || true
+pkill -9 -f "xvfb-run" 2>/dev/null || true   # only prior ones; ours starts below
+pkill -9 -x Xvfb 2>/dev/null || true
+pkill -9 -f "srrevamp-server -in-memory" 2>/dev/null || true
 sleep 1
 rm -rf "$OUT"; mkdir -p "$OUT"
 
@@ -154,13 +165,22 @@ if [ "$SERVER" = "start" ]; then
   SERVER_PORT="${SERVER_PORT:-15899}"
   "$SERVER_BIN" -in-memory -addr "127.0.0.1:$SERVER_PORT" >"$OUT/server.log" 2>&1 &
   SERVER_PID=$!
-  trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+  # SIGKILL, not SIGTERM: the in-memory server did not always die on TERM, so
+  # servers piled up on the port between runs (the startup reap above now clears
+  # them, but do not leave them behind in the first place).
+  trap 'kill -9 "$SERVER_PID" 2>/dev/null || true' EXIT
+  # Wait for the server to actually be listening -- and fail loudly if it is
+  # not, rather than launch a client that connects to nothing and hangs (the
+  # symptom that read as "flaky startup"). Stop early if the server dies.
+  server_ready=""
   for _ in $(seq 1 50); do
-    grep -q "gateway listening" "$OUT/server.log" 2>/dev/null && break
+    if grep -q "gateway listening" "$OUT/server.log" 2>/dev/null; then server_ready=1; break; fi
+    kill -0 "$SERVER_PID" 2>/dev/null || break
     sleep 0.2
   done
-  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo "qa_shot: the server exited at once -- see $OUT/server.log" >&2
+  if [ -z "$server_ready" ]; then
+    echo "qa_shot: in-memory server never reported 'gateway listening' (port $SERVER_PORT busy, or it crashed) -- see $OUT/server.log" >&2
+    kill -9 "$SERVER_PID" 2>/dev/null || true
     exit 1
   fi
   echo "qa_shot: in-memory server on 127.0.0.1:$SERVER_PORT (pid $SERVER_PID)" >&2
