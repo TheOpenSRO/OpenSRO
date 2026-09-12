@@ -529,6 +529,12 @@ var _skill_groups: Dictionary = {}   ## mastery id -> Array[SkillDataReader.Skil
 var _skill_grid: Dictionary = {}     ## "<mastery>:<row>" -> Array[SkillDataReader.BaseSkill]
 var _skill_catalog_loaded := false
 
+## The player's skill state as the server reports it: skill points, and each
+## mastery's trained level. Empty until the server sends it (set_skill_state),
+## so a fresh window shows every skill greyed -- as the real one does.
+var _skill_points: int = 0
+var _skill_mastery_levels: Dictionary = {}   ## mastery id -> level
+
 ## Skill-board geometry inside the CIFSkillBoard area (GDR_SKILL_BOARD). The grid
 ## metrics are the real client's, decompiled from CIFSkillGroup::SetGroup: eight
 ## columns pitched 36px from x=37, 32px cells in a 56px-tall row bar. The tab and
@@ -576,6 +582,24 @@ func _load_skill_catalog() -> void:
 			if _skill_grid.has(k):
 				dbg += " row%d=%d" % [r, (_skill_grid[k] as Array).size()]
 		print("HudPanels: Bicheon(257) rows:%s" % dbg)
+
+## The server's skill state -- skill points and per-mastery levels. Refills the
+## open window so learnable skills light up (their real icon instead of the grey
+## disable book) and the totals show.
+func set_skill_state(skill_points: int, mastery_levels: Dictionary) -> void:
+	_skill_points = skill_points
+	_skill_mastery_levels = mastery_levels.duplicate()
+	_refill_skill()
+
+## A mastery's trained level -- the server's, or a QA override for demoing the
+## window lit up (SRREVAMP_QA_MASTERY applies one level to every mastery). The
+## board greys any skill whose required mastery level is above this (the real
+## availability rule, recovered from CIFSkillSlot).
+func _mastery_level(mastery_id: int) -> int:
+	var lvl: int = int(_skill_mastery_levels.get(mastery_id, 0))
+	if OS.has_environment("SRREVAMP_QA_MASTERY"):
+		lvl = maxi(lvl, int(OS.get_environment("SRREVAMP_QA_MASTERY")))
+	return lvl
 
 ## Builds the skill window's board the way the real client's CIFSkillBoard does:
 ## the Weapon/Force tabs, then the masteries within the active tab
@@ -632,9 +656,12 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 	if _skill_active_mastery < masteries.size():
 		_build_mastery_board(board, masteries[_skill_active_mastery] as MasteryReader.Mastery)
 
-	# SP and total mastery level -- the server tracks neither yet, so 0.
-	_set_label(window, "GDR_SKILL_TEXT_SP_NUM", "0")
-	_set_label(window, "GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM", "0")
+	# Skill points and total mastery level, from the server's state.
+	_set_label(window, "GDR_SKILL_TEXT_SP_NUM", str(_skill_points))
+	var total := 0
+	for entry in _masteries:
+		total += _mastery_level((entry as MasteryReader.Mastery).id)
+	_set_label(window, "GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM", str(total))
 
 ## A dark backing so the world does not show through the board (the layout names
 ## no tile for the CIFSkillBoard area -- the EXE draws its own).
@@ -705,7 +732,7 @@ func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> voi
 	host.add_child(name_lbl)
 
 	var lvl_lbl := Label.new()
-	lvl_lbl.text = "Lv 0"
+	lvl_lbl.text = "Lv %d" % _mastery_level(mastery.id)
 	lvl_lbl.position = Vector2(238, 6)
 	lvl_lbl.size = Vector2(100, 20)
 	lvl_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -767,7 +794,7 @@ func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: Skil
 	var by_col: Dictionary = {}
 	for s in skills:
 		by_col[(s as SkillDataReader.BaseSkill).column] = s
-	var mastery_level := 0  # the server tracks no mastery level yet
+	var mastery_level := _mastery_level(mastery.id)
 	var disable_tex: Texture2D = _builder.load_texture("interface\\skill\\skl_mastery_disable.ddj") if _builder != null else null
 	var nothing_tex: Texture2D = _builder.load_texture("interface\\skill\\skl_mastery_nothing.ddj") if _builder != null else null
 	for col in range(SkillDataReader.COLUMNS):
