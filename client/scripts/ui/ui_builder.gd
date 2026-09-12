@@ -523,6 +523,12 @@ func _build_slot(def: UiLayoutParser.ControlDef, background: Texture2D = null,
 	# the tree and resized, and a lattice cell is built, filled and measured
 	# before any of that happens.
 	var inner: Vector2 = cell_size if cell_size != Vector2.ZERO else Vector2(def.rect.size)
+	# The slot is given its final size outright (its own or the lattice cell's)
+	# so the FULL_RECT children below fill a real rectangle, and nothing they
+	# hold can spill past it.
+	slot.size = inner
+	slot.custom_minimum_size = inner
+	slot.clip_contents = true
 
 	var art: Texture2D = background
 	if art == null and def.ddj != "" and not is_slice_base(def.ddj):
@@ -534,16 +540,18 @@ func _build_slot(def: UiLayoutParser.ControlDef, background: Texture2D = null,
 		var bg := TextureRect.new()
 		bg.name = "SlotBg"
 		bg.texture = art
-		bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-		bg.size = inner
+		# Anchors AND offsets, so each layer exactly fills the slot no matter
+		# when the slot is sized. Setting size alone against a still-zero-size
+		# parent baked a +inner offset into the far anchors, which then doubled
+		# the child once the slot grew (a 32px slot showed a 64px icon).
+		bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		slot.add_child(bg)
 
 	var icon := TextureRect.new()
 	icon.name = "ItemIcon"
-	icon.set_anchors_preset(Control.PRESET_FULL_RECT)
-	icon.size = inner
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	slot.add_child(icon)
@@ -552,8 +560,7 @@ func _build_slot(def: UiLayoutParser.ControlDef, background: Texture2D = null,
 	count_lbl.name = "CountLabel"
 	count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	count_lbl.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
-	count_lbl.set_anchors_preset(Control.PRESET_FULL_RECT)
-	count_lbl.size = inner
+	count_lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_apply_font(count_lbl, def)
 	slot.add_child(count_lbl)
