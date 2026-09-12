@@ -52,10 +52,11 @@ signal system_option_requested
 signal system_restart_requested
 signal system_exit_requested
 signal system_help_requested
-## A learned skill in the window was clicked to cast it. World3D picks the
-## current target, plays the skill's cast animation (from basic_code) and sends
-## the use-skill request; the window itself has no target or combat state.
-signal skill_cast_requested(skill_id: int, basic_code: String)
+## A learned skill in the window was clicked to put it on the hotbar. World3D
+## assigns it to the next free underbar quickslot (its icon shown there);
+## activating that quickslot is what casts it. basic_code names the cast .ban
+## clip; icon is the skill's already-loaded cell texture for the slot.
+signal skill_assign_requested(skill_id: int, basic_code: String, icon: Texture2D)
 
 ## Sections beyond "Create" that a panel's window builds.
 ##
@@ -912,9 +913,10 @@ func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: Skil
 		if learned > 0:
 			var cast_id: int = s.level_ids[learned - 1]
 			var cast_code: String = s.basic_code
+			var cast_icon: Texture2D = icon.texture
 			icon.gui_input.connect(func(ev: InputEvent) -> void:
 				if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-					skill_cast_requested.emit(cast_id, cast_code))
+					skill_assign_requested.emit(cast_id, cast_code, cast_icon))
 
 		# The "+" appears when the next level is within the current mastery level;
 		# the server enforces the SP cost (refdata ReqLearnSP) and refunds on fail.

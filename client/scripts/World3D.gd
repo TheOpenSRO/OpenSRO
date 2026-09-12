@@ -868,6 +868,10 @@ var _player_one_shot_until := 0.0
 ## The monster the last attack was sent at, so its swing and the player's
 ## reaction to it can be played when the result comes back.
 var _last_attack_target := -1
+## Underbar quickslot index -> {"id": skill id, "code": Basic_Code} for skills
+## the player has put on the hotbar from the skill window. Activating a slot
+## casts its skill.
+var _quickslot_skills: Dictionary = {}
 ## Which of the four plain attacks plays next. The four animation *types*
 ## are real -- the `.bsr` groups list them as types 2, 5, 16, 17
 ## (`sword_base_01` to `_04`, or the bare-handed straight-left,
@@ -1183,6 +1187,7 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_underbar.offset_top = -float(HudUnderbar.BODY_HEIGHT)
 	_hud_underbar.offset_bottom = 0.0
 	_hud_underbar.setup()
+	_hud_underbar.quickslot_activated.connect(_on_quickslot_activated)
 
 	# The always-on block at the top left: portrait, name, level, HP and MP.
 	# Its own registry entry places it at 4,7 in the client's default
@@ -1238,7 +1243,7 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.system_exit_requested.connect(func(): get_tree().quit())
 	_hud_panels.system_help_requested.connect(func():
 		_log_system("Controls: click to move, right-drag or left-drag to orbit, mouse wheel to zoom. F1 dev tools, F3 debug panel, I inventory, K skill, M map. Type /unstuck if you get wedged in geometry."))
-	_hud_panels.skill_cast_requested.connect(_on_skill_cast_requested)
+	_hud_panels.skill_assign_requested.connect(_on_skill_assign_requested)
 
 	# The chat window, bottom-left where its registry entry puts it. This
 	# retires the developer chat box: the authored window is the same two
@@ -4519,11 +4524,29 @@ func _play_skill_cast_anim(anim_base: String) -> float:
 		return 0.0
 	return _play_player_once(anim)
 
-## A learned skill in the skill window was clicked: play its cast animation and
-## send the use-skill request against the current target. The animation plays
-## regardless (so the swing is visible even with no target); the server applies
-## the skill's real cooldown and (for now) plain-attack damage.
-func _on_skill_cast_requested(skill_id: int, basic_code: String) -> void:
+## A learned skill in the window was clicked: assign it to the next free
+## underbar quickslot (its icon shown there). Activating that quickslot is what
+## casts it -- the authentic Silkroad flow (the window never casts directly).
+func _on_skill_assign_requested(skill_id: int, basic_code: String, icon: Texture2D) -> void:
+	for slot in range(HudUnderbar.SLOTS_PER_PAGE):
+		if not _quickslot_skills.has(slot):
+			_quickslot_skills[slot] = {"id": skill_id, "code": basic_code}
+			_hud_underbar.set_slot_item(slot, icon)
+			_log_system("Assigned skill to quickslot %d -- click it (or its key) to cast." % (slot + 1))
+			return
+	_log_system("Quickslots are full.")
+
+## A quickslot was activated (clicked): cast the skill assigned to it.
+func _on_quickslot_activated(slot_index: int) -> void:
+	var entry = _quickslot_skills.get(slot_index)
+	if entry != null:
+		_cast_skill(int(entry["id"]), String(entry["code"]))
+
+## Casts a skill: plays its real cast animation (from basic_code) and sends the
+## use-skill request against the current target. The animation plays regardless
+## (the swing is visible even with no target); the server applies the skill's
+## real cooldown and, for now, plain-attack damage.
+func _cast_skill(skill_id: int, basic_code: String) -> void:
 	# basic_code carries the level suffix; derive the clip name the same way the
 	# reader's BaseSkill.cast_anim_name does (lowercase, drop trailing _NN).
 	var anim_base := basic_code.to_lower()
@@ -4531,10 +4554,9 @@ func _on_skill_cast_requested(skill_id: int, basic_code: String) -> void:
 	if us > 0 and anim_base.substr(us + 1).is_valid_int():
 		anim_base = anim_base.substr(0, us)
 	_play_skill_cast_anim(anim_base)
-	var target := _last_attack_target
-	if target != -1:
-		_show_target(target)
-		NetClient.use_skill(NetClient.current_character_name, skill_id, target)
+	if _last_attack_target != -1:
+		_show_target(_last_attack_target)
+		NetClient.use_skill(NetClient.current_character_name, skill_id, _last_attack_target)
 
 ## The group entry behind _body_animation_for, for its events.
 func _body_animation_entry(gender: String, action_type: int, group: String) -> BsrReader.AnimationEntry:
@@ -5233,6 +5255,14 @@ func _qa_step() -> void:
 	# Basic_Code -> .ban mapping. QA only, no target/server needed.
 	if OS.get_environment("SRREVAMP_QA_CASTANIM") != "" and _qa_tick % 90 == 0 and _qa_tick > 0:
 		_play_skill_cast_anim(OS.get_environment("SRREVAMP_QA_CASTANIM"))
+
+	# SRREVAMP_QA_HOTBAR=1 assigns two real skills to the hotbar (the same path a
+	# window click takes) so a render can show their icons in the quickslots.
+	if OS.get_environment("SRREVAMP_QA_HOTBAR") != "" and _qa_tick == 60 and _ui_builder != null:
+		_on_skill_assign_requested(3, "SKILL_CH_SWORD_SMASH_A_01",
+			_ui_builder.load_texture("icon\\skill\\china\\sword_smash_a.ddj"))
+		_on_skill_assign_requested(177, "SKILL_CH_SWORD_CHAIN_A_01",
+			_ui_builder.load_texture("icon\\skill\\china\\sword_chain_a.ddj"))
 
 	# SRREVAMP_QA_FAKEITEMS fills the bag with sample items (real IDs) a little
 	# after it opens -- past the server's empty-inventory reply -- so a render
