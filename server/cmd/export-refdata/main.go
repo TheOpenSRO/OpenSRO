@@ -47,7 +47,7 @@ import (
 // leading service column).
 const (
 	fID            = 1
-	fTypeID1       = 9  // TypeID1..4 run 9..12
+	fTypeID1       = 9 // TypeID1..4 run 9..12
 	fCountry       = 14
 	fReqLevelType1 = 32
 	fReqLevel1     = 33
@@ -66,12 +66,37 @@ const (
 	fMax = 116
 )
 
+// Skill (_RefSkill / skilldata_*.txt) raw column indices, 0-based. Only the
+// learn-gating columns are named and mapped -- verified against SMASH_A (see
+// docs/protocol/refdata_schema.md). skilldata's other columns (timing, range,
+// resource cost, chain) are left as placeholders in skillRecord until a
+// verified pass maps them; they aren't needed to LEARN a skill, only to cast
+// one (a later phase).
+const (
+	skID            = 1 // unique per-level skill id
+	skGroupID       = 2 // shared by every level of the skill
+	skBasicCode     = 3 // SKILL_CH_..._NN
+	skBasicLevel    = 7
+	skMastery1      = 34 // ReqCommon_Mastery1
+	skMasteryLevel1 = 36 // ReqCommon_MasteryLevel1 (required mastery level)
+	skReqLearnSP    = 46 // ReqLearn_SP (learn cost, verified 2/5/7 across SMASH_A 1-3)
+	skReqLearnRace  = 47 // ReqLearn_Race
+	skName          = 62 // SN_SKILL_ name code
+	// The highest field skillRecord reads; a shorter row isn't a real skill.
+	skMax = 62
+)
+
 func main() {
 	out := flag.String("out", "-", "output CSV path, or - for stdout")
+	mode := flag.String("mode", "items", "which reference table the input files are: items or skills")
 	flag.Parse()
-	if flag.NArg() == 0 {
-		fmt.Fprintln(os.Stderr, "usage: export-refdata -out items.csv <itemdata_*.txt> ...")
+	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills") {
+		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills] -out out.csv <data_*.txt> ...")
 		os.Exit(2)
+	}
+	record, noun := itemRecord, "item"
+	if *mode == "skills" {
+		record, noun = skillRecord, "skill"
 	}
 
 	var sink *os.File
@@ -97,7 +122,7 @@ func main() {
 			os.Exit(1)
 		}
 		for _, cols := range rows {
-			rec, ok := itemRecord(cols)
+			rec, ok := record(cols)
 			if !ok {
 				skipped++
 				continue
@@ -110,7 +135,7 @@ func main() {
 		}
 	}
 	w.Flush()
-	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d item rows, skipped %d non-item rows\n", written, skipped)
+	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d %s rows, skipped %d non-%s rows\n", written, noun, skipped, noun)
 }
 
 // itemRecord maps one tab-split itemdata row to the 28-column CSV
@@ -138,16 +163,16 @@ func itemRecord(cols []string) ([]string, bool) {
 		return s
 	}
 	return []string{
-		get(fID),          // 0  ID
-		"1",               // 1  MaxStack (default -- see package doc)
-		get(fReqStr),      // 2  ReqStr
-		get(fReqInt),      // 3  ReqInt
-		"0",               // 4  ItemClass (not mapped)
-		"0",               // 5  TwoHanded (not mapped)
+		get(fID),                // 0  ID
+		"1",                     // 1  MaxStack (default -- see package doc)
+		get(fReqStr),            // 2  ReqStr
+		get(fReqInt),            // 3  ReqInt
+		"0",                     // 4  ItemClass (not mapped)
+		"0",                     // 5  TwoHanded (not mapped)
 		num(fDurabilityMin),     // 6  DurabilityMin
 		num(fDurabilityMin + 1), // 7  DurabilityMax
-		"0", "0",          // 8,9   PhysDefenseMin/Max (armour, not verified)
-		"0", "0",          // 10,11 MagDefenseMin/Max
+		"0", "0",                // 8,9   PhysDefenseMin/Max (armour, not verified)
+		"0", "0", // 10,11 MagDefenseMin/Max
 		num(fPhysAttackMin), // 12 PhysAttackMin
 		num(fPhysAttackMax), // 13 PhysAttackMax
 		num(fMagAttackMin),  // 14 MagAttackMin
@@ -164,6 +189,54 @@ func itemRecord(cols []string) ([]string, bool) {
 		get(fReqGender),     // 25 ReqGender
 		get(fReqLevelType1), // 26 ReqLevelType1
 		get(fReqLevel1),     // 27 ReqLevel1
+	}, true
+}
+
+// skillRecord maps one tab-split skilldata row to the 24-column skill CSV
+// (refdata.skillCSVColumns order) import-refdata expects, or (nil, false) if
+// the row is not a real skill. Only the learn-gating fields are mapped from
+// verified real columns; the rest (timing, range, resource cost, chain) are
+// "0" placeholders until a verified pass maps them -- they matter to cast a
+// skill (a later phase), not to learn one.
+func skillRecord(cols []string) ([]string, bool) {
+	if len(cols) <= skMax {
+		return nil, false
+	}
+	if _, err := strconv.Atoi(strings.TrimSpace(cols[skID])); err != nil {
+		return nil, false
+	}
+	get := func(i int) string {
+		s := strings.TrimSpace(cols[i])
+		if s == "" {
+			return "0"
+		}
+		return s
+	}
+	return []string{
+		get(skID),            // 0  ID
+		get(skGroupID),       // 1  GroupID
+		get(skBasicCode),     // 2  Basic_Code
+		"0",                  // 3  Basic_Name (not verified)
+		get(skBasicLevel),    // 4  Basic_Level
+		"0",                  // 5  Basic_ChainCode (not verified)
+		"0",                  // 6  Basic_RecycleCost (not verified)
+		"0",                  // 7  PreparingTime (not verified -- cast timing, later)
+		"0",                  // 8  CastingTime (not verified)
+		"0",                  // 9  ActionDuration (not verified)
+		"0",                  // 10 ReuseDelay (not verified)
+		"0",                  // 11 CoolTime (not verified)
+		"0",                  // 12 FlyingSpeed (not verified)
+		"0",                  // 13 Interruptable (not verified)
+		"0",                  // 14 Overlap (not verified)
+		"0",                  // 15 AutoAttackType (not verified)
+		"0",                  // 16 Range (not verified)
+		"0",                  // 17 Consume_HP (not verified)
+		"0",                  // 18 Consume_MP (not verified)
+		get(skReqLearnSP),    // 19 ReqLearn_SP    (verified raw col 46)
+		get(skReqLearnRace),  // 20 ReqLearn_Race  (raw col 47)
+		get(skName),          // 21 UI_SkillName    (SN_SKILL_ name code, raw col 62)
+		get(skMastery1),      // 22 ReqCommon_Mastery1      (verified raw col 34)
+		get(skMasteryLevel1), // 23 ReqCommon_MasteryLevel1 (verified raw col 36)
 	}, true
 }
 
