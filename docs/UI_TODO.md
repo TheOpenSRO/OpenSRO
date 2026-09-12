@@ -165,9 +165,16 @@ authored presentation instead:
   + `skl_level_tab` badge with the trained level) / learnable-next (icon + `skl_button_add` "+" →
   learns the next level) / locked (`skl_mastery_disable`) / empty (`skl_mastery_nothing`), at the
   grounded `ifskill_slot.txt` rects (icon 0,0,32,32; "+" 0,32,32,20; badge at 19,17). SP is earned
-  per kill (disclosed `SPFor` placeholder). Remaining: skill effects (`skilleffect.txt`) + cast
-  animations + the hotbar, and grounding the real per-mob SP/EXP amounts. Ghidra decompile helpers
-  are in `client/tools/ghidra/` (GhidraMCP is broken on the box's Ghidra 12.1.3).
+  per kill (disclosed `SPFor` placeholder). **End-to-end as of v0.1.126:** casting a learned skill
+  plays its real cast animation (the `.ban` clip named after the skill's `Basic_Code`), the server
+  casts real skills on their real `ReuseDelay` cooldown, a learned skill goes on the hotbar
+  (click it → underbar quickslot; the quickslot casts), and each skill lands its own hit effect
+  (`skilleffect.txt` → the skill's hit `.efp`, layers recovered generically at runtime). The ONE
+  substantive item left is **real skill damage** — a cast deals a plain attack (disclosed) because
+  the `_RefSkill` Param damage grammar isn't decoded; it needs a dedicated Ghidra dig (all data
+  shortcuts are dead ends — see the skilldata-columns memory). Minor polish: the mirage
+  weapon-trail texture, cast-time effects, skill sounds, and grounding real per-mob SP/EXP.
+  Ghidra decompile helpers are in `client/tools/ghidra/` (GhidraMCP is broken on Ghidra 12.1.3).
 - **Quest** — quest rows.
 
 ### 2. Vitals, and the rest of the live data
