@@ -472,6 +472,29 @@ func _fill_inventory_grid(slots: Array) -> void:
 		if count_label != null and quantity != null and int(quantity) > 1:
 			count_label.text = str(int(quantity))
 
+## QA only: fills the bag grid with sample items so a render can show a
+## populated inventory without needing kills or a seeded server. The item IDs
+## are real (the private-server consumables the loot table drops), so their
+## icons resolve. Never used in real play -- driven by SRREVAMP_QA_FAKEITEMS.
+func qa_fill_sample_inventory() -> void:
+	var window: HudWindow = _windows.get("inventory")
+	if window == null:
+		return
+	var grid := window.node("GDR_INVENTORY_LATTICE") as Control
+	if grid == null:
+		return
+	var ids := [4, 11, 6, 13, 4, 11, 4, 11, 6, 13, 4, 11]
+	var qtys := [50, 50, 25, 25, 999, 720, 120, 88, 40, 15, 200, 333]
+	var cells := grid.get_child_count()
+	for i in range(mini(ids.size(), cells)):
+		var cell := grid.get_child(i)
+		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
+		if icon != null:
+			icon.texture = _item_icon(ids[i])
+		var count := cell.get_node_or_null("CountLabel") as Label
+		if count != null and qtys[i] > 1:
+			count.text = str(qtys[i])
+
 ## The worn items as last reported, so opening the equipment window fills
 ## its slots even if the list arrived while it was closed.
 var _equipped_items: Array = []

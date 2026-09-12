@@ -5184,6 +5184,12 @@ func _qa_step() -> void:
 	if OS.get_environment("SRREVAMP_QA_PANELS") != "" and _qa_tick == 30:
 		_qa_open_panels(OS.get_environment("SRREVAMP_QA_PANELS"))
 
+	# SRREVAMP_QA_FAKEITEMS fills the bag with sample items (real IDs) a little
+	# after it opens -- past the server's empty-inventory reply -- so a render
+	# can show a populated inventory. QA only.
+	if OS.get_environment("SRREVAMP_QA_FAKEITEMS") != "" and _qa_tick == 50 and _hud_panels != null:
+		_hud_panels.qa_fill_sample_inventory()
+
 	# SRREVAMP_QA_TALK="<name>" opens the NPC dialogue for a render, standing
 	# in for a click on an NPC (which a render cannot make).
 	if OS.get_environment("SRREVAMP_QA_TALK") != "" and _qa_tick == 30 and _hud_panels != null:
