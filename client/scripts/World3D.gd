@@ -1673,12 +1673,17 @@ func _qa_open_panels(spec: String) -> void:
 		if window == null:
 			print("QA PANELS: %s did not open" % panel_id)
 			continue
-		var view := get_viewport().get_visible_rect().size
-		var column := placed % 3
-		var row: int = placed / 3
-		window.position = Vector2(
-			20.0 + column * (view.x - 40.0) / 3.0,
-			90.0 + row * 200.0)
+		# A single panel centres for a clean shot, clear of the left-side chat
+		# log; several tile across the top.
+		if spec.split(",").size() == 1:
+			window.centre()
+		else:
+			var view := get_viewport().get_visible_rect().size
+			var column := placed % 3
+			var row: int = placed / 3
+			window.position = Vector2(
+				20.0 + column * (view.x - 40.0) / 3.0,
+				90.0 + row * 200.0)
 		print("QA PANELS: %s opened %dx%d at %s" % [
 			panel_id, int(window.size.x), int(window.size.y), window.position])
 		placed += 1

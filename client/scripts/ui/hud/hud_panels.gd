@@ -517,29 +517,83 @@ func _load_masteries() -> void:
 		_masteries = MasteryReader.parse_china(archive.read_file(entry))
 	print("HudPanels: %d China mastery(ies) read" % _masteries.size())
 
-## Fills the skill window with the real China masteries -- icon and name --
-## the way the original organises it, and its bottom labels honestly. The
-## per-mastery skill grid and the trained levels are not here: this project's
-## server tracks no mastery level or skill point, so the window shows the
-## masteries at level 0 and says "not trained" rather than a made-up number.
-## Which tab of the skill board is showing -- index into the ordered tab list
-## the masteries fall into (0 = the first, Weapon for China).
+## Which tab of the skill board is showing (0 = Weapon, 1 = Force for China) and
+## which mastery within it -- the real window's two rows of tabs.
 var _skill_active_tab := 0
+var _skill_active_mastery := 0
 
-## Builds the skill window's board the way the real client's CIFSkillBoard
-## does: a tab strip (Weapon Skill / Force Skill), and under the active tab a
-## column per mastery (Bicheon/Heuksal/Pacheon, or Cold/Lightning/Fire/Force),
-## each with its real icon, name and trained level. The masteries come from the
-## real skillmasterydata.txt (MasteryReader); the trained levels and skill grid
-## are the next phases, so a mastery shows Lv 0 rather than an invented number.
+## The real skill tree, read once from the player's own Media.pk2: the groups
+## (the rows of a mastery's board) and the skills in each (the columns). See
+## SkillDataReader -- recovered from skillgroup.txt + skilldata_*.txt.
+var _skill_groups: Dictionary = {}   ## mastery id -> Array[SkillDataReader.SkillGroup]
+var _skill_grid: Dictionary = {}     ## "<mastery>:<row>" -> Array[SkillDataReader.BaseSkill]
+var _skill_catalog_loaded := false
+
+## Skill-board geometry inside the CIFSkillBoard area (GDR_SKILL_BOARD). The grid
+## metrics are the real client's, decompiled from CIFSkillGroup::SetGroup: eight
+## columns pitched 36px from x=37, 32px cells in a 56px-tall row bar. The tab and
+## header bands are chrome the EXE draws, sized to match the original's window.
+const SKILL_TAB_H := 21.0
+const SKILL_HEADER_Y := 46.0
+const SKILL_HEADER_H := 30.0
+const SKILL_ROW_H := 56.0
+const SKILL_CELL := 32.0
+const SKILL_COL_X0 := 37.0
+const SKILL_COL_PITCH := 36.0
+const SKILL_BOARD_H := 270.0
+
+## Reads the skill tree once: the groups (skillgroup.txt) and the skills in each
+## (skilldata_*.txt), kept to the player's own masteries. Lazy -- the first time
+## the skill window opens -- because it scans a few MB of archive.
+func _load_skill_catalog() -> void:
+	if _skill_catalog_loaded:
+		return
+	_skill_catalog_loaded = true
+	if _builder == null:
+		return
+	var archive := _builder.media_archive()
+	if archive == null:
+		return
+	var gentry := ObjectLoader.find_file(archive, SkillDataReader.GROUP_TABLE)
+	if gentry != null:
+		_skill_groups = SkillDataReader.parse_groups(archive.read_file(gentry))
+	_load_masteries()
+	var ids := PackedInt32Array()
+	for entry in _masteries:
+		ids.append((entry as MasteryReader.Mastery).id)
+	var datas: Array = []
+	for path in SkillDataReader.SKILL_TABLES:
+		var e := ObjectLoader.find_file(archive, path)
+		if e != null:
+			datas.append(archive.read_file(e))
+	_skill_grid = SkillDataReader.parse_skills(datas, ids)
+	print("HudPanels: skill catalog -- %d masteries with groups, %d group-rows of skills"
+		% [_skill_groups.size(), _skill_grid.size()])
+	if OS.has_environment("SRREVAMP_QA_PANELS"):
+		var dbg := ""
+		for r in range(9):
+			var k := "257:%d" % r
+			if _skill_grid.has(k):
+				dbg += " row%d=%d" % [r, (_skill_grid[k] as Array).size()]
+		print("HudPanels: Bicheon(257) rows:%s" % dbg)
+
+## Builds the skill window's board the way the real client's CIFSkillBoard does:
+## the Weapon/Force tabs, then the masteries within the active tab
+## (Bicheon/Heuksal/Pacheon...), then the selected mastery's own board -- its
+## icon, name and level and a scrolling grid of one row per skill group, each
+## holding that group's skills as cells. Structure and metrics are recovered
+## (resinfo + decompiled CIFSkillBoard/Group/Slot); levels are the server's to
+## fill, so at mastery level 0 the skills show greyed (skl_mastery_disable),
+## exactly as a fresh character's window does.
 func _fill_skill_masteries(window: HudWindow) -> void:
 	_load_masteries()
+	_load_skill_catalog()
 	var board := window.node("GDR_SKILL_BOARD") as Control
 	if board == null:
 		return
 	board.clip_contents = true
 
-	# Group the masteries by their tab, in first-seen order.
+	# Group the masteries by their tab (Weapon/Force), in first-seen order.
 	var tab_keys: Array = []
 	var tabs: Dictionary = {}
 	for entry in _masteries:
@@ -551,14 +605,40 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 	if tab_keys.is_empty():
 		return
 	_skill_active_tab = clampi(_skill_active_tab, 0, tab_keys.size() - 1)
+	var masteries: Array = tabs[tab_keys[_skill_active_tab]]["masteries"]
+	_skill_active_mastery = clampi(_skill_active_mastery, 0, maxi(masteries.size() - 1, 0))
 
-	# Rebuild the board fresh each fill (server state may have changed).
+	# Rebuild the board fresh each fill (the selected tab/mastery may change).
 	for child in board.get_children():
-		if child.name in ["SkillTabStrip", "SkillTabContent", "SkillBoardBg"]:
+		if str(child.name).begins_with("Skill"):
 			child.queue_free()
 
-	# A dark backing so the world does not show through the board (the layout
-	# names no tile for the CIFSkillBoard area -- the EXE draws its own).
+	_add_skill_board_bg(board)
+
+	# Two rows of tabs: Weapon/Force, then the masteries within the active one.
+	var top := _skill_tab_strip(board, 2.0, "SkillTopTabs")
+	for i in range(tab_keys.size()):
+		var group: Dictionary = tabs[tab_keys[i]]
+		_add_skill_tab(top, _resolve_ui(group["code"], _skill_tab_fallback(tab_keys[i])),
+			i == _skill_active_tab, _on_skill_tab.bind(i))
+
+	var sub := _skill_tab_strip(board, 2.0 + SKILL_TAB_H + 2.0, "SkillMasteryTabs")
+	for i in range(masteries.size()):
+		var mm: MasteryReader.Mastery = masteries[i]
+		_add_skill_tab(sub, mm.display_name(_text_table()), i == _skill_active_mastery,
+			_on_skill_mastery_tab.bind(i))
+
+	# The selected mastery's board -- header + grid of group rows.
+	if _skill_active_mastery < masteries.size():
+		_build_mastery_board(board, masteries[_skill_active_mastery] as MasteryReader.Mastery)
+
+	# SP and total mastery level -- the server tracks neither yet, so 0.
+	_set_label(window, "GDR_SKILL_TEXT_SP_NUM", "0")
+	_set_label(window, "GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM", "0")
+
+## A dark backing so the world does not show through the board (the layout names
+## no tile for the CIFSkillBoard area -- the EXE draws its own).
+func _add_skill_board_bg(board: Control) -> void:
 	var bg := TextureRect.new()
 	bg.name = "SkillBoardBg"
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -568,83 +648,171 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 	if _builder != null:
 		bg.texture = _builder.load_texture("interface\\ifcommon\\bg_tile\\com_bg_tile_d.ddj")
 	if bg.texture == null:
+		bg.queue_free()
 		var flat := ColorRect.new()
 		flat.name = "SkillBoardBg"
 		flat.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		flat.color = Color(0.04, 0.04, 0.05, 1.0)
+		flat.color = Color(0.05, 0.05, 0.06, 1.0)
 		flat.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		board.add_child(flat)
 	else:
 		board.add_child(bg)
 
-	# The tab strip along the top of the board.
+func _skill_tab_strip(board: Control, y: float, strip_name: String) -> HBoxContainer:
 	var strip := HBoxContainer.new()
-	strip.name = "SkillTabStrip"
-	strip.position = Vector2(4, 2)
+	strip.name = strip_name
+	strip.position = Vector2(6, y)
 	strip.add_theme_constant_override("separation", 3)
 	board.add_child(strip)
-	for i in range(tab_keys.size()):
-		var group: Dictionary = tabs[tab_keys[i]]
-		var btn := Button.new()
-		btn.text = _resolve_ui(group["code"], _skill_tab_fallback(tab_keys[i]))
-		btn.toggle_mode = true
-		btn.button_pressed = i == _skill_active_tab
-		btn.focus_mode = Control.FOCUS_NONE
-		btn.custom_minimum_size = Vector2(84, 20)
-		_style_skill_tab(btn)
-		btn.pressed.connect(_on_skill_tab.bind(i))
-		strip.add_child(btn)
+	return strip
 
-	# The active tab's masteries, one column each.
-	var content := Control.new()
-	content.name = "SkillTabContent"
-	content.position = Vector2(4, 26)
-	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	board.add_child(content)
-	var masteries: Array = tabs[tab_keys[_skill_active_tab]]["masteries"]
-	var col_w: float = 351.0 / float(maxi(masteries.size(), 1))
-	for i in range(masteries.size()):
-		_build_mastery_column(content, masteries[i] as MasteryReader.Mastery, i * col_w, col_w - 4.0)
+func _add_skill_tab(strip: HBoxContainer, text: String, active: bool, on_press: Callable) -> void:
+	var btn := Button.new()
+	btn.text = text
+	btn.toggle_mode = true
+	btn.button_pressed = active
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.custom_minimum_size = Vector2(80, SKILL_TAB_H)
+	_style_skill_tab(btn)
+	btn.pressed.connect(on_press)
+	strip.add_child(btn)
 
-	# SP and total mastery level -- the server tracks neither yet, so 0.
-	_set_label(window, "GDR_SKILL_TEXT_SP_NUM", "0")
-	_set_label(window, "GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM", "0")
+## The selected mastery's board: its icon and name and level at the top, then a
+## scrolling grid of one row per skill group.
+func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> void:
+	var host := Control.new()
+	host.name = "SkillMasteryBoard"
+	host.position = Vector2(0, SKILL_HEADER_Y)
+	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	board.add_child(host)
 
-## One mastery's column on the board: its icon, name and trained level.
-func _build_mastery_column(host: Control, mastery: MasteryReader.Mastery, x: float, width: float) -> void:
-	var col := VBoxContainer.new()
-	col.position = Vector2(x, 0)
-	col.custom_minimum_size = Vector2(width, 0)
-	col.size = Vector2(width, 240)
-	col.add_theme_constant_override("separation", 3)
-	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	host.add_child(col)
-
+	# Header: mastery icon (left), name, and mastery level.
 	var icon := TextureRect.new()
-	icon.custom_minimum_size = Vector2(width, 40)
+	icon.position = Vector2(9, 0)
+	icon.size = Vector2(32, 32)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if _builder != null:
 		icon.texture = _builder.load_texture(mastery.icon_path)
-	col.add_child(icon)
+	host.add_child(icon)
 
 	var name_lbl := Label.new()
 	name_lbl.text = mastery.display_name(_text_table())
-	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	name_lbl.custom_minimum_size = Vector2(width, 0)
+	name_lbl.position = Vector2(48, 6)
+	name_lbl.size = Vector2(180, 20)
 	_style_skill_label(name_lbl)
-	col.add_child(name_lbl)
+	host.add_child(name_lbl)
 
 	var lvl_lbl := Label.new()
-	lvl_lbl.text = "Lv 0 / 0"
-	lvl_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lvl_lbl.text = "Lv 0"
+	lvl_lbl.position = Vector2(238, 6)
+	lvl_lbl.size = Vector2(100, 20)
+	lvl_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_style_skill_label(lvl_lbl)
-	col.add_child(lvl_lbl)
+	host.add_child(lvl_lbl)
+
+	# The scrolling grid of group rows.
+	var board_h: float = board.size.y if board.size.y > 0.0 else SKILL_BOARD_H
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(4, SKILL_HEADER_H)
+	scroll.size = Vector2(343, maxf(board_h - SKILL_HEADER_Y - SKILL_HEADER_H, SKILL_ROW_H))
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	host.add_child(scroll)
+	var rows := VBoxContainer.new()
+	rows.add_theme_constant_override("separation", 0)
+	rows.custom_minimum_size = Vector2(325, 0)
+	scroll.add_child(rows)
+
+	var groups: Array = _skill_groups.get(mastery.id, [])
+	if groups.is_empty():
+		var none := Label.new()
+		none.text = "No skills for this mastery in the archive."
+		_style_skill_label(none)
+		rows.add_child(none)
+		return
+	for g in groups:
+		_build_group_row(rows, mastery, g as SkillDataReader.SkillGroup)
+
+## One group's row: the bar background, the group's pack icon at the left, and
+## its skills in columns -- an unavailable skill greyed (skl_mastery_disable),
+## empty columns filled (skl_mastery_nothing), exactly as CIFSkillGroup lays it.
+## The mastery level is 0 until the server tracks it, so every skill is greyed.
+func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: SkillDataReader.SkillGroup) -> void:
+	var row := Control.new()
+	row.custom_minimum_size = Vector2(325, SKILL_ROW_H)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	host.add_child(row)
+
+	var bar := TextureRect.new()
+	bar.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bar.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bar.stretch_mode = TextureRect.STRETCH_SCALE
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _builder != null:
+		bar.texture = _builder.load_texture("interface\\skill\\skl_mastery_bar.ddj")
+	row.add_child(bar)
+
+	var pack := TextureRect.new()
+	pack.position = Vector2(6, 8)
+	pack.size = Vector2(24, 24)
+	pack.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	pack.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	pack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pack.texture = _load_skill_icon(group.icon_path)
+	pack.tooltip_text = _resolve_ui(group.name_code, "")
+	row.add_child(pack)
+
+	var skills: Array = _skill_grid.get("%d:%d" % [mastery.id, group.row], [])
+	var by_col: Dictionary = {}
+	for s in skills:
+		by_col[(s as SkillDataReader.BaseSkill).column] = s
+	var mastery_level := 0  # the server tracks no mastery level yet
+	var disable_tex: Texture2D = _builder.load_texture("interface\\skill\\skl_mastery_disable.ddj") if _builder != null else null
+	var nothing_tex: Texture2D = _builder.load_texture("interface\\skill\\skl_mastery_nothing.ddj") if _builder != null else null
+	for col in range(SkillDataReader.COLUMNS):
+		var cell := TextureRect.new()
+		cell.position = Vector2(SKILL_COL_X0 + col * SKILL_COL_PITCH, (SKILL_ROW_H - SKILL_CELL) / 2.0)
+		cell.size = Vector2(SKILL_CELL, SKILL_CELL)
+		cell.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		cell.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		if by_col.has(col):
+			var s: SkillDataReader.BaseSkill = by_col[col]
+			var available := s.min_req_mastery_level > 0 and mastery_level >= s.min_req_mastery_level
+			if available:
+				cell.texture = _load_skill_icon(s.icon_path)
+			elif disable_tex != null:
+				cell.texture = disable_tex   # the real "locked" book
+			else:
+				cell.texture = _load_skill_icon(s.icon_path)
+				cell.modulate = Color(0.45, 0.45, 0.45, 0.85)
+			cell.mouse_filter = Control.MOUSE_FILTER_PASS
+			cell.tooltip_text = "%s (needs mastery Lv %d)" % [s.display_name(_text_table()), s.min_req_mastery_level]
+		else:
+			cell.texture = nothing_tex
+			cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(cell)
+
+## Loads a skillgroup/skilldata icon. Those tables name their icons without the
+## `icon\` root the archive stores them under (unlike the mastery table), so it
+## is prepended.
+func _load_skill_icon(path: String) -> Texture2D:
+	if _builder == null or path == "":
+		return null
+	var full := path if path.to_lower().begins_with("icon\\") else "icon\\" + path
+	return _builder.load_texture(full)
 
 func _on_skill_tab(index: int) -> void:
-	_skill_active_tab = index
+	if index != _skill_active_tab:
+		_skill_active_tab = index
+		_skill_active_mastery = 0
+	_refill_skill()
+
+func _on_skill_mastery_tab(index: int) -> void:
+	_skill_active_mastery = index
+	_refill_skill()
+
+func _refill_skill() -> void:
 	var window: HudWindow = _windows.get("skill")
 	if window != null:
 		_fill_skill_masteries(window)
