@@ -10,8 +10,13 @@ func TestMemStoreLearnAndKnow(t *testing.T) {
 	store := NewMemStore()
 	ctx := context.Background()
 
-	if err := store.Learn(ctx, 1, 999); err != ErrUnknownSkill {
-		t.Fatalf("learning a skill outside the catalog: got %v, want ErrUnknownSkill", err)
+	// Learn no longer validates the id (real skills are validated against the
+	// refdata by session.LearnSkillHandler); the store just records it known.
+	if err := store.Learn(ctx, 3, 999); err != nil {
+		t.Fatalf("Learn(3, 999): %v", err)
+	}
+	if known, _ := store.Knows(ctx, 3, 999); !known {
+		t.Error("Learn did not record the skill as known")
 	}
 	if err := store.Learn(ctx, 1, 1); err != nil {
 		t.Fatalf("Learn: %v", err)

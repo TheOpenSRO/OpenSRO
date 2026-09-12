@@ -15,6 +15,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
@@ -125,45 +126,89 @@ func DecodeUseSkillRequest(data []byte) (*UseSkillRequest, error) {
 	return &UseSkillRequest{CharacterName: fields[0], SkillID: skillID, TargetMonsterID: targetID}, nil
 }
 
-// LearnSkillHandler returns a gateway.Handler implementing OpLearnSkill
-// against store.
-func LearnSkillHandler(chars character.Store, store skill.Store) gateway.Handler {
+// SkillRefStore looks up a real skill's learn requirements -- the mastery it
+// belongs to, the mastery level it needs, and its SP cost -- what
+// LearnSkillHandler gates on. Both refdata stores satisfy it.
+type SkillRefStore interface {
+	GetSkill(ctx context.Context, id int64) (*refdata.Skill, error)
+}
+
+// LearnSkillHandler implements OpLearnSkill against the real skill catalogue: a
+// skill is learnable once the character's level in its mastery reaches the
+// skill's required mastery level, and it costs the skill's ReqLearnSP (grounded
+// _RefSkill data). On success the points are spent and the skill recorded known.
+func LearnSkillHandler(chars character.Store, skills skill.Store, skillRef SkillRefStore) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpLearnSkill {
 			return nil
 		}
-
+		fail := func(reason string) error {
+			return sess.Send(&proto.Packet{Opcode: OpLearnSkillResult, Data: (&LearnSkillResult{Reason: reason}).Encode()})
+		}
 		req, err := DecodeLearnSkillRequest(p.Data)
 		if err != nil {
-			return sess.Send(&proto.Packet{
-				Opcode: OpLearnSkillResult,
-				Data:   (&LearnSkillResult{Reason: "malformed request"}).Encode(),
-			})
+			return fail("malformed request")
 		}
-
 		characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 		if errStr != "" {
-			return sess.Send(&proto.Packet{Opcode: OpLearnSkillResult, Data: (&LearnSkillResult{Reason: errStr}).Encode()})
+			return fail(errStr)
 		}
-
-		if _, known := skill.Catalog[req.SkillID]; !known {
-			return sess.Send(&proto.Packet{
-				Opcode: OpLearnSkillResult,
-				Data:   (&LearnSkillResult{Reason: "no such skill"}).Encode(),
-			})
-		}
-
-		result := &LearnSkillResult{OK: true}
-		if err := store.Learn(ctx, characterID, req.SkillID); err != nil {
-			switch {
-			case errors.Is(err, skill.ErrAlreadyKnown):
-				result.Reason = "already known"
-			default:
-				result.Reason = "learn failed"
+		ref, err := skillRef.GetSkill(ctx, req.SkillID)
+		if err != nil || ref == nil {
+			// Not a real skill -- fall back to the own-design combat catalog
+			// (Power Strike etc.), which has no mastery/SP gate. Keeps the
+			// learn->use combat flow working alongside real-skill learning.
+			if _, ok := skill.Catalog[req.SkillID]; !ok {
+				return fail("no such skill")
 			}
-			result.OK = false
+			if known, _ := skills.Knows(ctx, characterID, req.SkillID); known {
+				return fail("already known")
+			}
+			if err := skills.Learn(ctx, characterID, req.SkillID); err != nil {
+				if errors.Is(err, skill.ErrAlreadyKnown) {
+					return fail("already known")
+				}
+				return fail("learn failed")
+			}
+			return sess.Send(&proto.Packet{Opcode: OpLearnSkillResult, Data: (&LearnSkillResult{OK: true}).Encode()})
 		}
-		return sess.Send(&proto.Packet{Opcode: OpLearnSkillResult, Data: result.Encode()})
+		known, err := skills.Knows(ctx, characterID, req.SkillID)
+		if err != nil {
+			return fail("lookup failed")
+		}
+		if known {
+			return fail("already known")
+		}
+		// Gated by the mastery level the skill requires.
+		if ref.Mastery1 > 0 && ref.MasteryLevel1 > 0 {
+			levels, err := skills.MasteryLevels(ctx, characterID)
+			if err != nil {
+				return fail("lookup failed")
+			}
+			if levels[ref.Mastery1] < ref.MasteryLevel1 {
+				return fail("mastery level too low")
+			}
+		}
+		// Paid for with skill points.
+		points, err := skills.SkillPoints(ctx, characterID)
+		if err != nil {
+			return fail("lookup failed")
+		}
+		if points < ref.ReqLearnSP {
+			return fail("not enough skill points")
+		}
+		if _, err := skills.AddSkillPoints(ctx, characterID, -ref.ReqLearnSP); err != nil {
+			return fail("spending skill points failed")
+		}
+		if err := skills.Learn(ctx, characterID, req.SkillID); err != nil {
+			// Refund on a late failure (e.g. a race that already learned it).
+			skills.AddSkillPoints(ctx, characterID, ref.ReqLearnSP)
+			if errors.Is(err, skill.ErrAlreadyKnown) {
+				return fail("already known")
+			}
+			return fail("learn failed")
+		}
+		return sess.Send(&proto.Packet{Opcode: OpLearnSkillResult, Data: (&LearnSkillResult{OK: true}).Encode()})
 	}
 }
 

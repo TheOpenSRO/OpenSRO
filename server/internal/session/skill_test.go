@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -14,9 +15,18 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
+
+// stubSkillRef knows no real skills, so LearnSkillHandler falls back to the
+// own-design combat catalog (Power Strike etc.) -- what this test learns/uses.
+type stubSkillRef struct{}
+
+func (stubSkillRef) GetSkill(_ context.Context, _ int64) (*refdata.Skill, error) {
+	return nil, errors.New("no such skill")
+}
 
 func TestLearnSkillRequestRoundTrip(t *testing.T) {
 	want := &LearnSkillRequest{CharacterName: "Aria", SkillID: 1}
@@ -94,7 +104,7 @@ func TestSkillFullFlow(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		LearnSkillHandler(chars, skills),
+		LearnSkillHandler(chars, skills, stubSkillRef{}),
 		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv),
 		SkillListHandler(chars, skills),
 	)

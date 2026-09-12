@@ -27,12 +27,10 @@ func NewMemStore() *MemStore {
 	}
 }
 
-// Learn implements Store.
+// Learn implements Store. It records the skill as known without validating the
+// ID -- callers that learn real skills validate against the skill refdata (see
+// session.LearnSkillHandler); the SQL store's Learn is likewise unvalidated.
 func (m *MemStore) Learn(_ context.Context, characterID, skillID int64) error {
-	if _, ok := Catalog[skillID]; !ok {
-		return ErrUnknownSkill
-	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.known[characterID][skillID] {
