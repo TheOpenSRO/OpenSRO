@@ -41,6 +41,7 @@ type monsterSpec struct {
 	Zone       string
 	Name       string
 	CodeName   string  // the species' characterdata key; what the client draws it by
+	Level      int     // real level, from the client's characterdata (_RefObjChar col 57)
 	X, Z       float64 // own design placeholder spawn anchor -- see combat.Hub.Spawn
 	MaxHP      int
 	Defense    int
@@ -86,9 +87,9 @@ var monsterSpecs = []monsterSpec{
 	// spots are measured flat, walkable and clear of objects and blocking
 	// edges (client/tools qa_shot --columns in region 96/168; world (0,-840)
 	// is region-local 960,1800 and (340,-340) is 1300,1300).
-	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", X: 0, Z: -840, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
-	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", X: 340, Z: -340, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
-	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", X: 70, Z: -50, MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
+	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1, X: 0, Z: -840, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
+	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", Level: 5, X: 340, Z: -340, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
+	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", Level: 27, X: 70, Z: -50, MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
 }
 
 const respawnDelay = 10 * time.Second
@@ -98,7 +99,7 @@ const respawnDelay = 10 * time.Second
 // canceled. main() runs one of these per monsterSpecs entry.
 func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Logger, spec monsterSpec) {
 	spawn := func() int64 {
-		m := monsters.SpawnSpecies(spec.Zone, combat.Species{Name: spec.Name, CodeName: spec.CodeName}, spec.X, 0, spec.Z, spec.MaxHP, spec.Defense, spec.Attack, spec.GoldReward)
+		m := monsters.SpawnSpecies(spec.Zone, combat.Species{Name: spec.Name, CodeName: spec.CodeName, Level: spec.Level}, spec.X, 0, spec.Z, spec.MaxHP, spec.Defense, spec.Attack, spec.GoldReward)
 		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone)
 		return m.ID
 	}

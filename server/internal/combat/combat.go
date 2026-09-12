@@ -24,7 +24,13 @@ type Monster struct {
 	// CodeName is the characterdata key of the species (MOB_CH_MANGNYANG),
 	// the same string in every client archive where Name is whatever
 	// language column an archive carries. The client draws the model by it.
-	CodeName   string
+	CodeName string
+	// Level is the monster's real level, recovered from the client's own
+	// characterdata (_RefObjChar column 57 -- verified across 31 monsters:
+	// Mangyang 1, Gyo 5 ... TigerWoman 110, monotonic with difficulty). Unlike
+	// MaxHP/Attack (still disclosed defaults), the level is grounded. 0 if
+	// unknown.
+	Level      int
 	Zone       string
 	X, Y, Z    float64 // own design placeholder position -- see Hub.Spawn
 	MaxHP      int
@@ -98,6 +104,8 @@ func (h *Hub) Spawn(zone, name string, x, y, z float64, maxHP, defense, attack i
 type Species struct {
 	Name     string
 	CodeName string
+	// Level is the real monster level from characterdata (_RefObjChar col 57).
+	Level int
 }
 
 // SpawnSpecies is Spawn with the species' code name carried along, so the
@@ -107,7 +115,7 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
 	h.byID[id] = m
 	return m
 }

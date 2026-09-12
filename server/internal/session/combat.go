@@ -265,6 +265,9 @@ type MonsterSnapshot struct {
 	X, Y, Z  float32 // own design placeholder position -- see combat.Hub.Spawn
 	MaxHP    int32
 	HP       int32
+	// Level is the monster's real level (characterdata _RefObjChar col 57), so
+	// the target window can show it. 0 when unknown.
+	Level int32
 }
 
 func (m *MonsterSnapshot) Encode() []byte {
@@ -272,9 +275,10 @@ func (m *MonsterSnapshot) Encode() []byte {
 	out = append(out, encodeFloat32(m.X)...)
 	out = append(out, encodeFloat32(m.Y)...)
 	out = append(out, encodeFloat32(m.Z)...)
-	buf := make([]byte, 8)
+	buf := make([]byte, 12)
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(m.MaxHP))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(m.HP))
+	binary.LittleEndian.PutUint32(buf[8:12], uint32(m.Level))
 	return append(out, buf...)
 }
 
@@ -299,14 +303,15 @@ func decodeMonsterSnapshot(data []byte) (*MonsterSnapshot, []byte, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("z: %w", err)
 	}
-	if len(rest) < 8 {
-		return nil, nil, errors.New("truncated hp fields")
+	if len(rest) < 12 {
+		return nil, nil, errors.New("truncated hp/level fields")
 	}
 	return &MonsterSnapshot{
 		ID: id, Name: names[0], CodeName: names[1], X: x, Y: y, Z: z,
 		MaxHP: int32(binary.LittleEndian.Uint32(rest[0:4])),
 		HP:    int32(binary.LittleEndian.Uint32(rest[4:8])),
-	}, rest[8:], nil
+		Level: int32(binary.LittleEndian.Uint32(rest[8:12])),
+	}, rest[12:], nil
 }
 
 // MonsterListResult is the OpMonsterListResult payload.
@@ -434,7 +439,7 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 		snapshots[i] = MonsterSnapshot{
 			ID: m.ID, Name: m.Name, CodeName: m.CodeName,
 			X: float32(m.X), Y: float32(m.Y), Z: float32(m.Z),
-			MaxHP: int32(m.MaxHP), HP: int32(m.HP),
+			MaxHP: int32(m.MaxHP), HP: int32(m.HP), Level: int32(m.Level),
 		}
 	}
 	return sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: (&MonsterListResult{Monsters: snapshots}).Encode()})

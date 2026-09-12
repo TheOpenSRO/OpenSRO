@@ -58,6 +58,8 @@ class MonsterSnapshot:
 	var z: float
 	var max_hp: int
 	var hp: int
+	## The monster's real level (characterdata _RefObjChar col 57), 0 if unknown.
+	var level: int
 
 ## Result of decode_monster_list_result().
 class MonsterListResult:
@@ -186,11 +188,12 @@ static func _decode_monster_snapshot(data: PackedByteArray, offset: int) -> Arra
 	m.z = data.decode_float(offset + 8)
 	offset += 12
 
-	if offset + 8 > data.size():
+	if offset + 12 > data.size():
 		return [null, -1]
 	m.max_hp = data.decode_u32(offset)
 	m.hp = data.decode_u32(offset + 4)
-	offset += 8
+	m.level = data.decode_u32(offset + 8)
+	offset += 12
 
 	return [m, offset]
 

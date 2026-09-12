@@ -3446,11 +3446,11 @@ func _set_hp_bar(body: Node3D, hp: int, max_hp: int) -> void:
 ## information honestly); shown on click/attack, updated on damage, hidden
 ## on death or when nothing is targeted.
 # The current-target window at the top of the screen, built on the client's
-# own frame art (interface\targetwindow\tw_type1.ddj, 200x72). Name and an HP
-# bar with its percent -- the monster data the server actually sends; the
-# real window's rank gem and level are left off because that data is not on
-# the wire (the monster snapshot carries no level or rank), and inventing
-# them is against the rules. See docs/WORLD_ISSUES.md.
+# own frame art (interface\targetwindow\tw_type1.ddj, 200x72). Name, the real
+# level (grounded from characterdata _RefObjChar col 57, carried in the monster
+# snapshot), and an HP bar with its percent -- all data the server sends. The
+# real window's rank gem is still left off: rank isn't grounded/on the wire yet,
+# and inventing it is against the rules. See docs/WORLD_ISSUES.md.
 const TARGET_FRAME_DDJ := "interface\\targetwindow\\tw_type1.ddj"
 const TARGET_WINDOW_WIDTH := 320.0
 const TARGET_WINDOW_HEIGHT := 115.0
@@ -3550,7 +3550,12 @@ func _show_target(monster_id: int) -> void:
 	if snap == null:
 		_target_window.visible = false
 		return
-	_target_name_label.text = snap.monster_name
+	# Name plus the monster's real level (from characterdata, sent in the
+	# snapshot). Rank is still omitted -- it isn't grounded/on the wire yet.
+	if snap.level > 0:
+		_target_name_label.text = "%s  Lv %d" % [snap.monster_name, snap.level]
+	else:
+		_target_name_label.text = snap.monster_name
 	_set_target_hp(snap.hp, snap.max_hp)
 	_target_window.visible = true
 
@@ -5274,6 +5279,13 @@ func _qa_step() -> void:
 	# Basic_Code -> .ban mapping. QA only, no target/server needed.
 	if OS.get_environment("SRREVAMP_QA_CASTANIM") != "" and _qa_tick % 90 == 0 and _qa_tick > 0:
 		_play_skill_cast_anim(OS.get_environment("SRREVAMP_QA_CASTANIM"))
+
+	# SRREVAMP_QA_TARGET=1 opens the target window on the first known monster so a
+	# render can verify its real level (from characterdata) shows. QA only.
+	if OS.get_environment("SRREVAMP_QA_TARGET") != "" and _qa_tick == 90 and not _monsters.is_empty():
+		var m: CombatNet.MonsterSnapshot = _monsters[0]
+		_monster_snapshots[m.monster_id] = m
+		_show_target(m.monster_id)
 
 	# SRREVAMP_QA_STANCE=1 keeps the player "recently in combat" so a render shows
 	# the battle stance (STAND_BATTLE) instead of the town idle. QA only.
