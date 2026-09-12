@@ -77,13 +77,17 @@ Ordered roughly quick-fix → needs-a-server-system.
 - [x] **Left-click drag must not orbit the camera** — only right-drag orbits; a held left button now
   steers the character toward the cursor (v0.1.106; input isn't headless-verifiable, needs in-game
   confirmation).
-- [ ] **Character runs backwards on click-to-move** — the body faces away from the movement
-  direction. Both move branches set `rotation.y = atan2(dir.x, dir.z)`; diagnose with a `QA_WALK`
-  render (body facing vs. heading) — likely a 180° model-forward offset in the click path.
+- [x] **Character runs backwards on click-to-move** — fixed: the body's visual front is local -Z
+  while the player node points +Z at the movement dir, so the skeleton is turned 180°
+  (`skeleton.rotation.y = PI`) to align them. Verified by a `--walk 45` render (v0.1.128): the
+  body runs forward in the travel direction, in both the WASD and click-to-move branches.
 - [ ] **Target window like the reference** (pic 2): the authored frame with the monster's name, HP
   bar, level and rank ("General") and HP %, not the plain bar we draw now. (client-only)
-- [ ] **Storage-keeper (and NPCs) face the wrong way in Jangan** — use the placement heading so NPCs
-  face as they should. (needs the .ifo placement yaw)
+- [?] **Storage-keeper (and NPCs) face the wrong way in Jangan** — BLOCKED: the client's
+  `npcpos.txt` is position-only (5 cols: id, region, X, Y, Z — confirmed against the real 12,367-row
+  table), so the NPC heading is NOT in the client. Like damage/exp, NPC spawn heading is
+  server-authoritative (retail server spawn tables). Needs our server to define/send an NPC
+  heading, or a retail server DB — not fixable client-side without inventing headings.
 - [ ] **NPC talk dialogue with options** (pic 1): the talk box lists the NPC's services
   (e.g. "1. Deposit into storage / 2. Honor Rank / 3. End conversation"). Needs per-NPC service
   data (which NPC offers storage/shop/etc.); today we only show greeting text.
