@@ -378,8 +378,8 @@ func TestCombatLootFlow(t *testing.T) {
 		t.Fatalf("creating character: %v", err)
 	}
 
-	// Item 500 matches combat.LootTables["Mangyang"]'s guaranteed drop.
-	items := stubCombatItems{100: {ID: 100, PhysAttackMax: 30}, 500: {ID: 500}}
+	// combat.ItemHPPotion is combat.LootTables["Mangyang"]'s guaranteed drop.
+	items := stubCombatItems{100: {ID: 100, PhysAttackMax: 30}, combat.ItemHPPotion: {ID: combat.ItemHPPotion}}
 	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
 	if err != nil {
 		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
@@ -466,9 +466,11 @@ func TestCombatLootFlow(t *testing.T) {
 		t.Fatalf("got opcode 0x%04x, want OpLootDropped", lootPkt.Opcode)
 	}
 	ld, err := DecodeLootDropped(lootPkt.Data)
-	if err != nil || len(ld.Drops) != 1 || ld.Drops[0].ItemID != 500 || ld.Drops[0].Quantity != 1 {
+	if err != nil || len(ld.Drops) != 1 || ld.Drops[0].ItemID != combat.ItemHPPotion ||
+		ld.Drops[0].Quantity < 1 || ld.Drops[0].Quantity > 2 {
 		t.Fatalf("unexpected LootDropped: %+v (err=%v)", ld, err)
 	}
+	gotQty := ld.Drops[0].Quantity
 
 	slots, err := inv.List(ctx, c.ID)
 	if err != nil {
@@ -476,12 +478,12 @@ func TestCombatLootFlow(t *testing.T) {
 	}
 	var foundLoot bool
 	for _, s := range slots {
-		if s.ItemID == 500 && s.Quantity == 1 {
+		if s.ItemID == combat.ItemHPPotion && s.Quantity == int(gotQty) {
 			foundLoot = true
 		}
 	}
 	if !foundLoot {
-		t.Fatalf("expected item 500 in inventory after loot, got %+v", slots)
+		t.Fatalf("expected item %d in inventory after loot, got %+v", combat.ItemHPPotion, slots)
 	}
 }
 
