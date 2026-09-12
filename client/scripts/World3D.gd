@@ -876,6 +876,16 @@ var _quickslot_skills: Dictionary = {}
 ## attack result so that skill's own hit effect plays on the target (a plain
 ## attack does not). Set on cast, cleared when the blow lands.
 var _pending_skill_hit_code := ""
+## The animation-clock time of the player's last combat action (attack or cast).
+## While within COMBAT_STANCE_SECONDS of it, a standing player holds the battle
+## stance (STAND_BATTLE) instead of the town idle -- the real fighters carry a
+## STAND_BATTLE clip (sword falls back to the body's chinaman_standbattle.ban).
+var _last_combat_time := -1000.0
+## How long the battle stance is held after the last combat action, in seconds.
+## DISCLOSED own-design: the retail client's real revert timeout was never found
+## (round 132) and combat state is server-driven, so this is a labeled stand-in,
+## not a recovered value.
+const COMBAT_STANCE_SECONDS := 5.0
 ## skilleffect.txt parsed once: Basic_Code (upper) -> hit `.efp` path. Lazy.
 var _skill_hit_efp: Dictionary = {}
 var _skill_hit_efp_loaded := false
@@ -4560,6 +4570,7 @@ func _cast_skill(skill_id: int, basic_code: String) -> void:
 	var us := anim_base.rfind("_")
 	if us > 0 and anim_base.substr(us + 1).is_valid_int():
 		anim_base = anim_base.substr(0, us)
+	_last_combat_time = _player_anim_time
 	_play_skill_cast_anim(anim_base)
 	if _last_attack_target != -1:
 		_show_target(_last_attack_target)
@@ -5263,6 +5274,11 @@ func _qa_step() -> void:
 	# Basic_Code -> .ban mapping. QA only, no target/server needed.
 	if OS.get_environment("SRREVAMP_QA_CASTANIM") != "" and _qa_tick % 90 == 0 and _qa_tick > 0:
 		_play_skill_cast_anim(OS.get_environment("SRREVAMP_QA_CASTANIM"))
+
+	# SRREVAMP_QA_STANCE=1 keeps the player "recently in combat" so a render shows
+	# the battle stance (STAND_BATTLE) instead of the town idle. QA only.
+	if OS.get_environment("SRREVAMP_QA_STANCE") != "":
+		_last_combat_time = _player_anim_time
 
 	# SRREVAMP_QA_HITFX=1 plays the critical-hit slash burst on the player every
 	# 90 ticks, so a render can verify the recovered hit_3_critical layers.
@@ -6259,7 +6275,14 @@ func _physics_process(delta: float) -> void:
 		# is the type-7 entry, and it is the one a held sword replaces with
 		# its own (`_runforward_sword`) -- so moving plays the run of the
 		# weapon's group and standing plays its town idle.
-		var action := BsrReader.AnimationEntry.TYPE_RUN if is_moving else BsrReader.AnimationEntry.TYPE_STAND
+		var action: int
+		if is_moving:
+			action = BsrReader.AnimationEntry.TYPE_RUN
+		elif _player_anim_time - _last_combat_time < COMBAT_STANCE_SECONDS:
+			# Recently in combat: hold the battle stance rather than the town idle.
+			action = BsrReader.AnimationEntry.TYPE_STAND_BATTLE
+		else:
+			action = BsrReader.AnimationEntry.TYPE_STAND
 		var anim := _body_animation_for(_player_gender, action, _player_weapon_group)
 		_player_anim_time += delta
 		if _player_one_shot != null:
@@ -6976,6 +6999,8 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	print("World3D: attack hit for %d (%d left%s), took %d (HP %d)" % [
 		result.monster_damage, result.monster_remaining_hp,
 		", died" if result.monster_died else "", result.player_damage_taken, result.player_hp])
+	# A combat exchange keeps the player in the battle stance while idle.
+	_last_combat_time = _player_anim_time
 	# The player's swing: the next plain attack in the weapon group's
 	# chain, once. Its hit event says when the blow lands, and that is
 	# when the monster's own hit reaction plays.
