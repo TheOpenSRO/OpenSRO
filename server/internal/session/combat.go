@@ -17,6 +17,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
@@ -393,6 +394,7 @@ func CombatHandler(
 	monsters *combat.Hub,
 	quests quest.Store,
 	inv inventory.Store,
+	skills skill.Store,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
@@ -407,7 +409,7 @@ func CombatHandler(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 			}
 
-			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, characterID, req.TargetMonsterID, 0)
+			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, characterID, req.TargetMonsterID, 0)
 		case OpMonsterList:
 			return handleMonsterList(sess, hub, monsters)
 		default:
@@ -454,6 +456,7 @@ func performAttack(
 	monsters *combat.Hub,
 	quests quest.Store,
 	inv inventory.Store,
+	skills skill.Store,
 	characterID, targetMonsterID int64,
 	damageBonus int,
 ) error {
@@ -511,6 +514,17 @@ func performAttack(
 		// only under load, since locally the write always won the race.
 		if err := chars.AddGold(ctx, characterID, monster.GoldReward); err != nil {
 			return fmt.Errorf("combat: granting gold reward: %w", err)
+		}
+
+		// Skill points from the kill -- the skill economy's income, spent
+		// raising masteries (which unlocks skills in the skill window). Granted
+		// on every kill like gold; the amount is a disclosed default
+		// (combat.SPFor), see Monster.SPReward. A store without skill tracking
+		// (nil) simply grants none.
+		if skills != nil && monster.SPReward > 0 {
+			if _, err := skills.AddSkillPoints(ctx, characterID, int(monster.SPReward)); err != nil {
+				return fmt.Errorf("combat: granting skill points: %w", err)
+			}
 		}
 
 		// Experience, and a level-up if it crosses the curve -- only when the

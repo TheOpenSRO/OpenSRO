@@ -15,6 +15,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
@@ -138,7 +139,7 @@ func TestCombatFullFlow(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore()),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -291,7 +292,7 @@ func TestCombatArmorMitigation(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore()),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -421,7 +422,7 @@ func TestCombatLootFlow(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore()),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -562,7 +563,7 @@ func TestMonsterListFlow(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore()),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()

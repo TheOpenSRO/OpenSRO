@@ -48,8 +48,18 @@ var ErrNotKnown = errors.New("skill: not known")
 // again.
 var ErrOnCooldown = errors.New("skill: on cooldown")
 
+// ErrInsufficientSkillPoints is returned by RaiseMastery when the character
+// does not have enough skill points to pay the cost.
+var ErrInsufficientSkillPoints = errors.New("skill: insufficient skill points")
+
+// ErrMasteryCapped is returned by RaiseMastery when the mastery is already at
+// the level cap the caller passed.
+var ErrMasteryCapped = errors.New("skill: mastery at level cap")
+
 // Store tracks which skills each character knows and when they last used
-// each one (for cooldowns).
+// each one (for cooldowns), plus the character's skill points and per-mastery
+// trained levels (the skill economy: points are earned from mob kills and
+// spent raising masteries, which is what unlocks skills in the skill window).
 type Store interface {
 	// Learn adds skillID to characterID's known skills. Returns
 	// ErrAlreadyKnown if already known.
@@ -68,4 +78,23 @@ type Store interface {
 	// RecordUse marks skillID as used by characterID at usedAt (for
 	// cooldown tracking).
 	RecordUse(ctx context.Context, characterID, skillID int64, usedAt time.Time) error
+
+	// SkillPoints returns characterID's unspent skill points (0 if never
+	// earned any).
+	SkillPoints(ctx context.Context, characterID int64) (int, error)
+
+	// AddSkillPoints changes characterID's skill points by delta (positive
+	// from a mob kill; negative to spend), never letting the total go below
+	// zero, and returns the new total.
+	AddSkillPoints(ctx context.Context, characterID int64, delta int) (int, error)
+
+	// MasteryLevels returns characterID's trained level for each mastery it
+	// has raised (masteryID -> level); masteries never raised are absent.
+	MasteryLevels(ctx context.Context, characterID int64) (map[int64]int, error)
+
+	// RaiseMastery raises masteryID's level by one for characterID, spending
+	// cost skill points -- but only if the character has at least cost points
+	// and the mastery's current level is below levelCap. Returns the new
+	// mastery level, or ErrInsufficientSkillPoints / ErrMasteryCapped.
+	RaiseMastery(ctx context.Context, characterID, masteryID int64, cost, levelCap int) (newLevel int, err error)
 }

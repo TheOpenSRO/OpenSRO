@@ -37,6 +37,12 @@ type Monster struct {
 	// experience lives in mob data this project does not load yet; recovering
 	// it (like the item refdata) is a follow-up.
 	ExpReward int64
+	// SPReward is the skill points a kill grants -- the skill economy's income
+	// (points are spent raising masteries, which unlocks skills). Skill points
+	// come from mob kills in the real game, but the exact per-species amount is
+	// in the same mob data (RefObjChar) this project does not load yet, so this
+	// is a disclosed default (SPFor), the same status as ExpReward.
+	SPReward int64
 }
 
 // ExpFor is the placeholder experience a monster of the given toughness
@@ -48,6 +54,18 @@ func ExpFor(maxHP int) int64 {
 		return 1
 	}
 	return int64(maxHP)
+}
+
+// SPFor is the placeholder skill points a monster of the given toughness
+// grants on death: a tenth of its max HP, at least 1. A disclosed design
+// choice, not recovered -- skill points come from mob kills in the real game,
+// but the real per-species amount is in the mob data (RefObjChar), not loaded
+// yet, the same status as ExpFor.
+func SPFor(maxHP int) int64 {
+	if maxHP < 10 {
+		return 1
+	}
+	return int64(maxHP) / 10
 }
 
 // Hub tracks all live monsters, grouped by zone. Safe for concurrent use.
@@ -89,7 +107,7 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward, ExpReward: ExpFor(maxHP)}
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
 	h.byID[id] = m
 	return m
 }

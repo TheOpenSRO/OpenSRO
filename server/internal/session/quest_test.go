@@ -14,6 +14,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
+	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
@@ -110,7 +111,7 @@ func TestQuestFullFlow(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore()),
 		QuestHandler(chars, quests),
 	)
 	addr, cleanup := startTestServer(t, handle)

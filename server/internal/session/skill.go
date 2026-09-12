@@ -31,7 +31,31 @@ const (
 	// information either way.
 	OpSkillList       uint16 = 0x0073 // client -> server
 	OpSkillListResult uint16 = 0x0074 // server -> client
+	// The skill economy: a character's skill points (earned from mob kills)
+	// and its per-mastery trained levels, and raising a mastery a level by
+	// spending points. What the skill window's totals and lit/greyed skills
+	// are driven by.
+	OpSkillState         uint16 = 0x0075 // client -> server
+	OpSkillStateResult   uint16 = 0x0076 // server -> client
+	OpRaiseMastery       uint16 = 0x0077 // client -> server
+	OpRaiseMasteryResult uint16 = 0x0078 // server -> client
 )
+
+// MasteryTotalCapPerLevel caps the SUM of a character's mastery levels at this
+// multiple of its character level -- 3, so a level-80 character totals 240,
+// enough to max three masteries. Recovered from the user's account of the
+// retail 80-cap; the pserver's 440 is a mod (some servers raise it to 320 for
+// four maxable trees), so it is not used. A single mastery is separately
+// capped at the character's own level.
+const MasteryTotalCapPerLevel = 3
+
+// masteryUpCost is the skill-point cost to raise a mastery from currentLevel to
+// currentLevel+1. A DISCLOSED own-design default (currentLevel+1, so higher
+// levels cost more), NOT recovered -- the real per-level cost lives in the game
+// server, which this project does not have. Replace once it is known.
+func masteryUpCost(currentLevel int) int {
+	return currentLevel + 1
+}
 
 // LearnSkillRequest is the OpLearnSkill payload.
 type LearnSkillRequest struct {
@@ -202,7 +226,7 @@ func UseSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
 		}
 
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, characterID, req.TargetMonsterID, sk.DamageBonus)
+		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, characterID, req.TargetMonsterID, sk.DamageBonus)
 	}
 }
 
@@ -367,5 +391,239 @@ func SkillListHandler(chars character.Store, store skill.Store) gateway.Handler 
 			})
 		}
 		return sess.Send(&proto.Packet{Opcode: OpSkillListResult, Data: (&SkillListResult{Skills: snapshots}).Encode()})
+	}
+}
+
+// SkillStateRequest is the OpSkillState payload.
+type SkillStateRequest struct {
+	CharacterName string
+}
+
+func (r *SkillStateRequest) Encode() []byte { return encodeStrings(r.CharacterName) }
+
+func DecodeSkillStateRequest(data []byte) (*SkillStateRequest, error) {
+	fields, _, err := decodeStringsPrefix(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding SkillStateRequest: %w", err)
+	}
+	return &SkillStateRequest{CharacterName: fields[0]}, nil
+}
+
+// MasterySnapshot is one mastery's trained level, as sent over the wire.
+type MasterySnapshot struct {
+	MasteryID int64
+	Level     int32
+}
+
+// SkillStateResult is the OpSkillStateResult payload: the character's level (so
+// the client can show the 3x-level mastery cap), its unspent skill points, and
+// every mastery it has raised.
+type SkillStateResult struct {
+	Error       string
+	Level       int32
+	SkillPoints int32
+	Masteries   []MasterySnapshot
+}
+
+func (r *SkillStateResult) Encode() []byte {
+	out := encodeStrings(r.Error)
+	if r.Error != "" {
+		return out
+	}
+	buf := make([]byte, 10)
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(r.Level))
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(r.SkillPoints))
+	binary.LittleEndian.PutUint16(buf[8:10], uint16(len(r.Masteries)))
+	out = append(out, buf...)
+	for _, m := range r.Masteries {
+		out = append(out, encodeInt64(m.MasteryID)...)
+		lb := make([]byte, 4)
+		binary.LittleEndian.PutUint32(lb, uint32(m.Level))
+		out = append(out, lb...)
+	}
+	return out
+}
+
+func DecodeSkillStateResult(data []byte) (*SkillStateResult, error) {
+	fields, rest, err := decodeStringsPrefix(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding SkillStateResult: %w", err)
+	}
+	r := &SkillStateResult{Error: fields[0]}
+	if r.Error != "" {
+		return r, nil
+	}
+	if len(rest) < 10 {
+		return nil, errors.New("session: decoding SkillStateResult: truncated")
+	}
+	r.Level = int32(binary.LittleEndian.Uint32(rest[0:4]))
+	r.SkillPoints = int32(binary.LittleEndian.Uint32(rest[4:8]))
+	count := int(binary.LittleEndian.Uint16(rest[8:10]))
+	rest = rest[10:]
+	for i := 0; i < count; i++ {
+		id, r2, err := decodeInt64(rest)
+		if err != nil {
+			return nil, fmt.Errorf("session: decoding SkillStateResult: mastery %d id: %w", i, err)
+		}
+		if len(r2) < 4 {
+			return nil, errors.New("session: decoding SkillStateResult: truncated mastery level")
+		}
+		r.Masteries = append(r.Masteries, MasterySnapshot{MasteryID: id, Level: int32(binary.LittleEndian.Uint32(r2[0:4]))})
+		rest = r2[4:]
+	}
+	return r, nil
+}
+
+// SkillStateHandler answers OpSkillState with the character's level, unspent
+// skill points and per-mastery levels -- what the skill window's totals and
+// lit/greyed skills are drawn from.
+func SkillStateHandler(chars character.Store, store skill.Store) gateway.Handler {
+	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		if p.Opcode != OpSkillState {
+			return nil
+		}
+		send := func(r *SkillStateResult) error {
+			return sess.Send(&proto.Packet{Opcode: OpSkillStateResult, Data: r.Encode()})
+		}
+		req, err := DecodeSkillStateRequest(p.Data)
+		if err != nil {
+			return send(&SkillStateResult{Error: "malformed request"})
+		}
+		characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
+		if errStr != "" {
+			return send(&SkillStateResult{Error: errStr})
+		}
+		owned, err := chars.GetByID(ctx, characterID)
+		if err != nil {
+			return send(&SkillStateResult{Error: "lookup failed"})
+		}
+		points, err := store.SkillPoints(ctx, characterID)
+		if err != nil {
+			return send(&SkillStateResult{Error: "lookup failed"})
+		}
+		levels, err := store.MasteryLevels(ctx, characterID)
+		if err != nil {
+			return send(&SkillStateResult{Error: "lookup failed"})
+		}
+		result := &SkillStateResult{Level: int32(owned.Level), SkillPoints: int32(points)}
+		for id, lvl := range levels {
+			result.Masteries = append(result.Masteries, MasterySnapshot{MasteryID: id, Level: int32(lvl)})
+		}
+		sort.Slice(result.Masteries, func(i, j int) bool { return result.Masteries[i].MasteryID < result.Masteries[j].MasteryID })
+		return send(result)
+	}
+}
+
+// RaiseMasteryRequest is the OpRaiseMastery payload.
+type RaiseMasteryRequest struct {
+	CharacterName string
+	MasteryID     int64
+}
+
+func (r *RaiseMasteryRequest) Encode() []byte {
+	return append(encodeStrings(r.CharacterName), encodeInt64(r.MasteryID)...)
+}
+
+func DecodeRaiseMasteryRequest(data []byte) (*RaiseMasteryRequest, error) {
+	fields, rest, err := decodeStringsPrefix(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding RaiseMasteryRequest: %w", err)
+	}
+	id, _, err := decodeInt64(rest)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding RaiseMasteryRequest: mastery id: %w", err)
+	}
+	return &RaiseMasteryRequest{CharacterName: fields[0], MasteryID: id}, nil
+}
+
+// RaiseMasteryResult is the OpRaiseMasteryResult payload.
+type RaiseMasteryResult struct {
+	Error       string
+	MasteryID   int64
+	NewLevel    int32
+	SkillPoints int32
+}
+
+func (r *RaiseMasteryResult) Encode() []byte {
+	out := append(encodeStrings(r.Error), encodeInt64(r.MasteryID)...)
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(r.NewLevel))
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(r.SkillPoints))
+	return append(out, buf...)
+}
+
+func DecodeRaiseMasteryResult(data []byte) (*RaiseMasteryResult, error) {
+	fields, rest, err := decodeStringsPrefix(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding RaiseMasteryResult: %w", err)
+	}
+	id, rest, err := decodeInt64(rest)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding RaiseMasteryResult: mastery id: %w", err)
+	}
+	if len(rest) < 8 {
+		return nil, errors.New("session: decoding RaiseMasteryResult: truncated")
+	}
+	return &RaiseMasteryResult{
+		Error:       fields[0],
+		MasteryID:   id,
+		NewLevel:    int32(binary.LittleEndian.Uint32(rest[0:4])),
+		SkillPoints: int32(binary.LittleEndian.Uint32(rest[4:8])),
+	}, nil
+}
+
+// RaiseMasteryHandler raises a mastery one level, spending skill points, when
+// the character's mastery total is below its cap (MasteryTotalCapPerLevel x
+// level) and the mastery is below the character's level (no single mastery can
+// exceed it). Answers OpRaiseMasteryResult.
+func RaiseMasteryHandler(chars character.Store, store skill.Store) gateway.Handler {
+	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		if p.Opcode != OpRaiseMastery {
+			return nil
+		}
+		fail := func(reason string) error {
+			return sess.Send(&proto.Packet{Opcode: OpRaiseMasteryResult, Data: (&RaiseMasteryResult{Error: reason}).Encode()})
+		}
+		req, err := DecodeRaiseMasteryRequest(p.Data)
+		if err != nil {
+			return fail("malformed request")
+		}
+		characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
+		if errStr != "" {
+			return fail(errStr)
+		}
+		owned, err := chars.GetByID(ctx, characterID)
+		if err != nil {
+			return fail("lookup failed")
+		}
+		levels, err := store.MasteryLevels(ctx, characterID)
+		if err != nil {
+			return fail("lookup failed")
+		}
+		total := 0
+		for _, lvl := range levels {
+			total += lvl
+		}
+		if total >= MasteryTotalCapPerLevel*owned.Level {
+			return fail("mastery total at cap")
+		}
+		newLevel, err := store.RaiseMastery(ctx, characterID, req.MasteryID, masteryUpCost(levels[req.MasteryID]), owned.Level)
+		if err != nil {
+			switch {
+			case errors.Is(err, skill.ErrMasteryCapped):
+				return fail("mastery at level cap")
+			case errors.Is(err, skill.ErrInsufficientSkillPoints):
+				return fail("not enough skill points")
+			default:
+				return fail("raise failed")
+			}
+		}
+		points, err := store.SkillPoints(ctx, characterID)
+		if err != nil {
+			return fail("lookup failed")
+		}
+		return sess.Send(&proto.Packet{Opcode: OpRaiseMasteryResult, Data: (&RaiseMasteryResult{
+			MasteryID: req.MasteryID, NewLevel: int32(newLevel), SkillPoints: int32(points),
+		}).Encode()})
 	}
 }

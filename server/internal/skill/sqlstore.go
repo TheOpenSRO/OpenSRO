@@ -17,6 +17,16 @@ CREATE TABLE IF NOT EXISTS character_skills (
 	last_used_at TIMESTAMPTZ,
 	PRIMARY KEY (character_id, skill_id)
 );
+CREATE TABLE IF NOT EXISTS character_skill_points (
+	character_id BIGINT PRIMARY KEY,
+	points       INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS character_mastery_levels (
+	character_id BIGINT NOT NULL,
+	mastery_id   BIGINT NOT NULL,
+	level        INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (character_id, mastery_id)
+);
 `
 
 // SQLStore is a Store backed by PostgreSQL.
@@ -50,7 +60,8 @@ func (s *SQLStore) Close() error {
 // TruncateForTest clears all skill data, for other packages' tests sharing
 // this Postgres instance. Not for production use.
 func (s *SQLStore) TruncateForTest(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE character_skills`)
+	_, err := s.db.ExecContext(ctx,
+		`TRUNCATE TABLE character_skills, character_skill_points, character_mastery_levels`)
 	return err
 }
 
@@ -133,6 +144,100 @@ func (s *SQLStore) RecordUse(ctx context.Context, characterID, skillID int64, us
 		return ErrNotKnown
 	}
 	return nil
+}
+
+// SkillPoints implements Store.
+func (s *SQLStore) SkillPoints(ctx context.Context, characterID int64) (int, error) {
+	var points int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT points FROM character_skill_points WHERE character_id = $1`, characterID).Scan(&points)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("skill: reading skill points: %w", err)
+	}
+	return points, nil
+}
+
+// AddSkillPoints implements Store.
+func (s *SQLStore) AddSkillPoints(ctx context.Context, characterID int64, delta int) (int, error) {
+	var total int
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO character_skill_points (character_id, points) VALUES ($1, GREATEST($2, 0))
+		 ON CONFLICT (character_id) DO UPDATE SET points = GREATEST(character_skill_points.points + $2, 0)
+		 RETURNING points`, characterID, delta).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("skill: adding skill points: %w", err)
+	}
+	return total, nil
+}
+
+// MasteryLevels implements Store.
+func (s *SQLStore) MasteryLevels(ctx context.Context, characterID int64) (map[int64]int, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT mastery_id, level FROM character_mastery_levels WHERE character_id = $1`, characterID)
+	if err != nil {
+		return nil, fmt.Errorf("skill: listing mastery levels: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64]int)
+	for rows.Next() {
+		var id int64
+		var level int
+		if err := rows.Scan(&id, &level); err != nil {
+			return nil, fmt.Errorf("skill: scanning mastery row: %w", err)
+		}
+		out[id] = level
+	}
+	return out, rows.Err()
+}
+
+// RaiseMastery implements Store: one transaction that checks the cap and the
+// character's points, spends cost, and raises the mastery.
+func (s *SQLStore) RaiseMastery(ctx context.Context, characterID, masteryID int64, cost, levelCap int) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("skill: raising mastery: %w", err)
+	}
+	defer tx.Rollback()
+
+	var current int
+	err = tx.QueryRowContext(ctx,
+		`SELECT level FROM character_mastery_levels WHERE character_id = $1 AND mastery_id = $2`,
+		characterID, masteryID).Scan(&current)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, fmt.Errorf("skill: reading mastery level: %w", err)
+	}
+	if current >= levelCap {
+		return current, ErrMasteryCapped
+	}
+
+	var points int
+	err = tx.QueryRowContext(ctx,
+		`SELECT points FROM character_skill_points WHERE character_id = $1`, characterID).Scan(&points)
+	if err != nil && err != sql.ErrNoRows {
+		return current, fmt.Errorf("skill: reading skill points: %w", err)
+	}
+	if points < cost {
+		return current, ErrInsufficientSkillPoints
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE character_skill_points SET points = points - $1 WHERE character_id = $2`,
+		cost, characterID); err != nil {
+		return current, fmt.Errorf("skill: spending skill points: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO character_mastery_levels (character_id, mastery_id, level) VALUES ($1, $2, 1)
+		 ON CONFLICT (character_id, mastery_id) DO UPDATE SET level = character_mastery_levels.level + 1`,
+		characterID, masteryID); err != nil {
+		return current, fmt.Errorf("skill: raising mastery: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return current, fmt.Errorf("skill: committing mastery raise: %w", err)
+	}
+	return current + 1, nil
 }
 
 func isUniqueConstraintErr(err error) bool {
