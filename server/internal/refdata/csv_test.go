@@ -70,8 +70,8 @@ func TestLoadItemsCSVNonNumericField(t *testing.T) {
 
 func TestLoadSkillsCSV(t *testing.T) {
 	// Synthetic data, not any real game's actual values.
-	csv := "1,10,SKILL_CH_SWORD_ATTACK_01,SN_SWORD_ATTACK_01,1,0,5,500,300,1000,3000,3000,0.0,1,0,1,10,0,20,100,0,Sword Slash\n" +
-		"2,10,SKILL_CH_BOW_ATTACK_01,SN_BOW_ATTACK_01,5,1,15,700,400,1200,5000,4500,25.5,0,1,2,50,5,40,500,0,Piercing Shot\n"
+	csv := "1,10,SKILL_CH_SWORD_ATTACK_01,SN_SWORD_ATTACK_01,1,0,5,500,300,1000,3000,3000,0.0,1,0,1,10,0,20,100,0,Sword Slash,257,5\n" +
+		"2,10,SKILL_CH_BOW_ATTACK_01,SN_BOW_ATTACK_01,5,1,15,700,400,1200,5000,4500,25.5,0,1,2,50,5,40,500,0,Piercing Shot,259,3\n"
 
 	skills, err := LoadSkillsCSV(strings.NewReader(csv))
 	if err != nil {
@@ -96,6 +96,9 @@ func TestLoadSkillsCSV(t *testing.T) {
 	if skills[0].UISkillName != "Sword Slash" {
 		t.Fatalf("skill 0 UISkillName = %q, want %q", skills[0].UISkillName, "Sword Slash")
 	}
+	if skills[0].Mastery1 != 257 || skills[0].MasteryLevel1 != 5 {
+		t.Fatalf("skill 0 Mastery1/MasteryLevel1 = %d/%d, want 257/5", skills[0].Mastery1, skills[0].MasteryLevel1)
+	}
 
 	if skills[1].ID != 2 || skills[1].BasicChainCode != 1 {
 		t.Fatalf("skill 1 fields wrong: %+v", skills[1])
@@ -108,6 +111,9 @@ func TestLoadSkillsCSV(t *testing.T) {
 	}
 	if skills[1].ConsumeHP != 5 || skills[1].UISkillName != "Piercing Shot" {
 		t.Fatalf("skill 1 ConsumeHP/UISkillName wrong: %+v", skills[1])
+	}
+	if skills[1].Mastery1 != 259 || skills[1].MasteryLevel1 != 3 {
+		t.Fatalf("skill 1 Mastery1/MasteryLevel1 = %d/%d, want 259/3", skills[1].Mastery1, skills[1].MasteryLevel1)
 	}
 }
 
@@ -129,7 +135,7 @@ func TestLoadSkillsCSVMalformedRow(t *testing.T) {
 }
 
 func TestLoadSkillsCSVNonNumericField(t *testing.T) {
-	csv := "1,10,SKILL_CH_SWORD_ATTACK_01,SN_SWORD_ATTACK_01,1,0,5,500,300,1000,3000,3000,0.0,1,0,notanumber\n"
+	csv := "1,10,SKILL_CH_SWORD_ATTACK_01,SN_SWORD_ATTACK_01,notanumber,0,5,500,300,1000,3000,3000,0.0,1,0,1,10,0,20,100,0,Sword Slash,257,5\n"
 	_, err := LoadSkillsCSV(strings.NewReader(csv))
 	if err == nil {
 		t.Fatal("expected an error for a non-numeric field, got nil")

@@ -60,6 +60,14 @@ type Skill struct {
 	ReqLearnSP   int
 	ReqLearnRace int
 
+	// The mastery this skill belongs to and the mastery level required to learn
+	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the
+	// skill window gates a skill on -- a skill is learnable once the character's
+	// level in Mastery1 reaches MasteryLevel1. The real table has a second
+	// mastery/level pair too; only the first is curated in here for now.
+	Mastery1      int64
+	MasteryLevel1 int
+
 	// UISkillName is a real, plausible candidate for the skill's actual
 	// display name (UI_SkillName) -- distinct from BasicCode/BasicName, but
 	// still not 100% confirmed to hold literal player-facing text rather
