@@ -28,6 +28,18 @@ func (stubSkillRef) GetSkill(_ context.Context, _ int64) (*refdata.Skill, error)
 	return nil, errors.New("no such skill")
 }
 
+// fakeSkillRef knows one real (refdata) skill, id 999, learnable for free (no
+// mastery/SP gate) so the full network flow can learn and CAST a real skill.
+// Every other id falls through to the own-design catalog, as in production.
+type fakeSkillRef struct{}
+
+func (fakeSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error) {
+	if id == 999 {
+		return &refdata.Skill{ID: 999, BasicLevel: 1, ReuseDelayMs: 500}, nil
+	}
+	return nil, errors.New("no such skill")
+}
+
 func TestLearnSkillRequestRoundTrip(t *testing.T) {
 	want := &LearnSkillRequest{CharacterName: "Aria", SkillID: 1}
 	got, err := DecodeLearnSkillRequest(want.Encode())
@@ -104,8 +116,8 @@ func TestSkillFullFlow(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		LearnSkillHandler(chars, skills, stubSkillRef{}),
-		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv),
+		LearnSkillHandler(chars, skills, fakeSkillRef{}),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}),
 		SkillListHandler(chars, skills),
 	)
 	addr, cleanup := startTestServer(t, handle)
@@ -209,5 +221,27 @@ func TestSkillFullFlow(t *testing.T) {
 	}
 	if slr.Skills[0].ReadySeconds <= 0 {
 		t.Fatalf("got %+v, want skill 1 to report a positive cooldown remaining", slr.Skills[0])
+	}
+
+	// A real (refdata) skill, id 999: learn it (free here) then cast it. It
+	// takes the real ReuseDelay cooldown and deals a PLAIN attack -- 30 weapon
+	// - 10 defense = 20, no invented skill bonus (the skill's real bonus lives
+	// in the not-yet-decoded _RefSkill Param block).
+	resp = send(OpLearnSkill, (&LearnSkillRequest{CharacterName: "Aria", SkillID: 999}).Encode())
+	if lr, err := DecodeLearnSkillResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("learn real skill failed: err=%v result=%+v", err, lr)
+	}
+	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 999, TargetMonsterID: monster.ID}).Encode())
+	ar, err = DecodeAttackResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeAttackResult: %v", err)
+	}
+	if ar.Error != "" || ar.MonsterDamage != 20 {
+		t.Fatalf("got %+v, want a real-skill cast for 20 damage (30 weapon - 10 defense, no skill bonus)", ar)
+	}
+	// Immediately again: the real ReuseDelay (500ms) keeps it on cooldown.
+	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 999, TargetMonsterID: monster.ID}).Encode())
+	if ar2, err := DecodeAttackResult(resp.Data); err != nil || ar2.Error != "skill on cooldown" {
+		t.Fatalf("got %+v (err %v), want error 'skill on cooldown'", ar2, err)
 	}
 }

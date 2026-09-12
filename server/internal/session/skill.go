@@ -226,6 +226,7 @@ func UseSkillHandler(
 	monsters *combat.Hub,
 	quests quest.Store,
 	inv inventory.Store,
+	skillRef SkillRefStore,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpUseSkill {
@@ -242,8 +243,23 @@ func UseSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 		}
 
-		sk, known := skill.Catalog[req.SkillID]
-		if !known {
+		// Resolve the skill's cooldown and damage bonus. A real learned skill
+		// (refdata) uses its real ReuseDelay cooldown; its damage is a PLAIN
+		// attack for now (bonus 0) -- the skill's own bonus lives in _RefSkill's
+		// Param1-50 block, whose grammar this project has not decoded (see the
+		// skilldata-columns note), so a cast plays the real animation and takes
+		// the real cooldown but deals ordinary damage until that formula is
+		// grounded, rather than an invented skill-damage number. The own-design
+		// combat catalog (Power Strike etc.) keeps its own DamageBonus/cooldown.
+		var cooldown time.Duration
+		var damageBonus int
+		if sk, inCatalog := skill.Catalog[req.SkillID]; inCatalog {
+			cooldown = time.Duration(sk.CooldownSeconds) * time.Second
+			damageBonus = int(sk.DamageBonus)
+		} else if ref, err := skillRef.GetSkill(ctx, req.SkillID); err == nil && ref != nil {
+			cooldown = time.Duration(ref.ReuseDelayMs) * time.Millisecond
+			damageBonus = 0
+		} else {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "no such skill"}).Encode()})
 		}
 
@@ -260,8 +276,8 @@ func UseSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "lookup failed"}).Encode()})
 		}
 		now := time.Now()
-		if everUsed {
-			readyAt := lastUsed.Add(time.Duration(sk.CooldownSeconds) * time.Second)
+		if everUsed && cooldown > 0 {
+			readyAt := lastUsed.Add(cooldown)
 			if now.Before(readyAt) {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "skill on cooldown"}).Encode()})
 			}
@@ -271,7 +287,7 @@ func UseSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
 		}
 
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, characterID, req.TargetMonsterID, sk.DamageBonus)
+		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, characterID, req.TargetMonsterID, damageBonus)
 	}
 }
 

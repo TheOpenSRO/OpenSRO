@@ -353,7 +353,7 @@ func main() {
 		session.ShopHandler(chars, shopSvc),
 		session.CombatHandler(chars, eq, refItems, hub, monsters, quests, inv, skills),
 		session.LearnSkillHandler(chars, skills, refItems),
-		session.UseSkillHandler(chars, eq, refItems, skills, hub, monsters, quests, inv),
+		session.UseSkillHandler(chars, eq, refItems, skills, hub, monsters, quests, inv, refItems),
 		session.SkillListHandler(chars, skills),
 		session.SkillStateHandler(chars, skills),
 		session.RaiseMasteryHandler(chars, skills),
