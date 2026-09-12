@@ -53,7 +53,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
 - [ ] "Stuck in a building" and "floating things in Alexandria": not reproduced (round 134's
       addendum); wait for an F3 -> Copy from the spot.
-- [ ] How long the battle stance lasts (round 132); still not read from the client.
+- [~] Battle stance (round 132): the player now HOLDS the real STAND_BATTLE clip while
+      recently in combat (v0.1.128) — but its hold duration is a DISCLOSED stand-in
+      (`COMBAT_STANCE_SECONDS`); the retail revert timeout is still not read from the client
+      (combat state is server-driven; a dedicated dig would be needed to confirm a client value).
 
 ## Next up
 
