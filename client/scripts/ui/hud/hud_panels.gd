@@ -215,6 +215,7 @@ func open(panel_id: String) -> HudWindow:
 		if panel_id == "system":
 			_wire_system(window)
 		if panel_id == "inventory":
+			_apply_equipment_slot_backgrounds()
 			_place_paper_doll_docked()
 			_fill_equipment_slots(_equipped_items)
 		if panel_id == "skill":
@@ -549,6 +550,54 @@ func _text_table() -> UiTextTable:
 ## where the screenshot shows them -- so the rest of the +index run
 ## (helm 0, mail 1, shoulderguard 2, gauntlet 3, pants 4, boots 5) follows.
 const EQUIPMENT_SLOT_BASE := 100
+
+## The empty-slot silhouette each worn slot draws when nothing is in it. These
+## are real client art (interface\equipment\equip_slot_*.ddj, named in
+## sro_client.exe) that the CIFSlotWithHelp control has no `DDJ` for in the
+## layout -- the EXE supplies them per slot, the same way it hardcodes the
+## close button's default. The slot index -> type mapping is the game's own
+## equip-slot order, confirmed against the starter kit the server gives
+## (slot 1=mail, 4=pants, 5=boots, 6=weapon). Keyed by slot index i, drawn in
+## GDR_EQUIPMENT_SLOT_(100+i).
+const EQUIP_SLOT_TEXTURES := {
+	0: "interface\\equipment\\equip_slot_helm.ddj",
+	1: "interface\\equipment\\equip_slot_mail.ddj",
+	2: "interface\\equipment\\equip_slot_shoulderguard.ddj",
+	3: "interface\\equipment\\equip_slot_gauntlet.ddj",
+	4: "interface\\equipment\\equip_slot_pants.ddj",
+	5: "interface\\equipment\\equip_slot_boots.ddj",
+	6: "interface\\equipment\\equip_slot_weapon.ddj",
+	7: "interface\\equipment\\equip_slot_shield.ddj",
+	8: "interface\\equipment\\equip_slot_earring.ddj",
+	9: "interface\\equipment\\equip_slot_necklace.ddj",
+	10: "interface\\equipment\\equip_slot_l_ring.ddj",
+	11: "interface\\equipment\\equip_slot_r_ring.ddj",
+	12: "interface\\equipment\\equip_slot_specialdress.ddj",
+}
+
+## Draws each worn slot's empty silhouette behind its item icon. A filled
+## slot's icon covers it; an empty slot shows the silhouette -- which is what
+## makes the paper doll read as the real equipment panel rather than bare
+## squares on black.
+func _apply_equipment_slot_backgrounds() -> void:
+	var window: HudWindow = _windows.get("inventory")
+	if window == null or _builder == null:
+		return
+	for i in EQUIP_SLOT_TEXTURES:
+		var slot := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + i)) as Control
+		if slot == null:
+			continue
+		var bg := slot.get_node_or_null("EmptySlotBg") as TextureRect
+		if bg == null:
+			bg = TextureRect.new()
+			bg.name = "EmptySlotBg"
+			bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			slot.add_child(bg)
+			slot.move_child(bg, 0) # behind the ItemIcon
+		bg.texture = _builder.load_texture(EQUIP_SLOT_TEXTURES[i])
 
 func _fill_equipment_slots(items: Array) -> void:
 	# Equipment is docked inside the inventory window (see open()); its slots
