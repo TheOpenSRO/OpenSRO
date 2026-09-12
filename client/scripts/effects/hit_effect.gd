@@ -75,11 +75,76 @@ static func create(particles: Pk2Reader, target_world_height: float) -> HitEffec
 		if node == null:
 			continue
 		fx.add_child(node)
-		fx._layers.append({"node": node, "base_scale": node.scale})
+		fx._layers.append({"node": node, "base_scale": node.scale, "intensity": layer.intensity})
 	if fx._layers.is_empty():
 		fx.free()
 		return null
 	return fx
+
+## Builds the burst from an arbitrary hit `.efp` (skilleffect.txt gives each
+## skill its own -- see the skill-animations note), so every skill plays its own
+## real effect rather than one hardcoded set. The mesh/texture layers are read
+## out of the .efp's own RenderMesh node stream at runtime (grounded); the
+## animation is the same designed pop-and-fade as the hardcoded path (disclosed).
+## Falls back to null (caller uses create()) if the .efp yields no layers.
+static func create_from_efp(particles: Pk2Reader, efp_path: String, target_world_height: float) -> HitEffect:
+	if particles == null:
+		return null
+	var pairs := _extract_layers(particles, efp_path)
+	if pairs.is_empty():
+		return null
+	var fx := HitEffect.new()
+	var burst: float = maxf(target_world_height, 1.0) * HEIGHT_MULTIPLE
+	# Cap the layer count so a large effect stays a quick flash, not a soup.
+	var count: int = mini(pairs.size(), 4)
+	for i in range(count):
+		# Designed per-layer animation: alternate tilt, taper intensity so the
+		# stacked additive layers don't saturate (disclosed, as in LAYERS).
+		var layer := Layer.new(pairs[i][0], pairs[i][1], 1.0,
+			(-1.0 if i % 2 else 1.0) * (15.0 + 10.0 * i), 0.8 - 0.12 * i)
+		var node := _build_layer(particles, layer, burst)
+		if node == null:
+			continue
+		fx.add_child(node)
+		fx._layers.append({"node": node, "base_scale": node.scale, "intensity": layer.intensity})
+	if fx._layers.is_empty():
+		fx.free()
+		return null
+	return fx
+
+## Recovers a hit .efp's (mesh, texture) layer pairs by walking its printable
+## strings in file order -- each RenderMesh names a meshes\*.bms then the
+## textures\*.ddj it pairs with. Consecutive duplicate pairs (the .efp lists
+## each twice) are collapsed. Returns [] if the file is missing or has none.
+static func _extract_layers(particles: Pk2Reader, efp_path: String) -> Array:
+	var data := AssetSource.read_bytes(efp_path, particles)
+	if data.is_empty():
+		return []
+	# Printable-ASCII runs, in order.
+	var runs: PackedStringArray = PackedStringArray()
+	var cur := ""
+	for b in data:
+		if b >= 0x20 and b < 0x7f:
+			cur += char(b)
+		else:
+			if cur.length() >= 5:
+				runs.append(cur)
+			cur = ""
+	if cur.length() >= 5:
+		runs.append(cur)
+	# Pair each mesh with the next texture; collapse consecutive duplicate pairs.
+	var pairs: Array = []
+	var pending_mesh := ""
+	for r in runs:
+		var low := r.to_lower()
+		if low.ends_with(".bms"):
+			pending_mesh = r
+		elif low.ends_with(".ddj") and pending_mesh != "":
+			var pair := [pending_mesh, r]
+			if pairs.is_empty() or pairs[-1] != pair:
+				pairs.append(pair)
+			pending_mesh = ""
+	return pairs
 
 ## Builds one real mesh layer, centred on the effect origin (unlike the
 ## level-up burst which sits on the ground): a hit lands on the body, so the
@@ -153,13 +218,11 @@ func _process(delta: float) -> void:
 		a = clampf((1.0 - u) / 0.55, 0.0, 1.0)
 	else:
 		a = 1.0
-	for i in range(_layers.size()):
-		var entry: Dictionary = _layers[i]
+	for entry in _layers:
 		var node: Node3D = entry["node"]
 		var base: Vector3 = entry["base_scale"]
 		node.scale = base * scale_mul
-		var intensity: float = LAYERS[i][4]
-		_set_alpha(node, a * intensity)
+		_set_alpha(node, a * float(entry["intensity"]))
 	if _t >= LIFE:
 		_finished = true
 		queue_free()

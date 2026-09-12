@@ -872,9 +872,13 @@ var _last_attack_target := -1
 ## the player has put on the hotbar from the skill window. Activating a slot
 ## casts its skill.
 var _quickslot_skills: Dictionary = {}
-## Set when the player casts a skill, consumed by the next attack result so the
-## critical-hit slash effect plays on the target (a plain attack does not).
-var _pending_skill_hit_fx := false
+## The Basic_Code of a skill the player just cast (""=none), consumed by the next
+## attack result so that skill's own hit effect plays on the target (a plain
+## attack does not). Set on cast, cleared when the blow lands.
+var _pending_skill_hit_code := ""
+## skilleffect.txt parsed once: Basic_Code (upper) -> hit `.efp` path. Lazy.
+var _skill_hit_efp: Dictionary = {}
+var _skill_hit_efp_loaded := false
 ## Which of the four plain attacks plays next. The four animation *types*
 ## are real -- the `.bsr` groups list them as types 2, 5, 16, 17
 ## (`sword_base_01` to `_04`, or the bare-handed straight-left,
@@ -4559,7 +4563,7 @@ func _cast_skill(skill_id: int, basic_code: String) -> void:
 	_play_skill_cast_anim(anim_base)
 	if _last_attack_target != -1:
 		_show_target(_last_attack_target)
-		_pending_skill_hit_fx = true
+		_pending_skill_hit_code = basic_code
 		NetClient.use_skill(NetClient.current_character_name, skill_id, _last_attack_target)
 
 ## The group entry behind _body_animation_for, for its events.
@@ -5263,7 +5267,9 @@ func _qa_step() -> void:
 	# SRREVAMP_QA_HITFX=1 plays the critical-hit slash burst on the player every
 	# 90 ticks, so a render can verify the recovered hit_3_critical layers.
 	if OS.get_environment("SRREVAMP_QA_HITFX") != "" and _qa_tick >= 15 and _qa_tick % 15 == 0 and player != null:
-		_play_hit_effect_on(player, _player_world_height())
+		# Exercise the real per-skill path: look the effect up in skilleffect.txt
+		# by Basic_Code and play it via the generic .efp loader.
+		_play_skill_hit_effect_on(player, _player_world_height(), OS.get_environment("SRREVAMP_QA_HITFX"))
 
 	# SRREVAMP_QA_HOTBAR=1 assigns two real skills to the hotbar (the same path a
 	# window click takes) so a render can show their icons in the quickslots.
@@ -6990,11 +6996,11 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	# killing blow may clear _last_attack_target before the blow lands, and
 	# the floating damage number still has to appear over the dying body.
 	var damage_target := _last_attack_target
-	# A skill cast (not a plain attack) plays the critical-hit slash effect on
-	# the target when the blow lands. Consumed here so the next plain attack
-	# doesn't inherit it.
-	var skill_hit := _pending_skill_hit_fx
-	_pending_skill_hit_fx = false
+	# A skill cast (not a plain attack) plays that skill's own hit effect on the
+	# target when the blow lands. Consumed here so the next plain attack doesn't
+	# inherit it.
+	var skill_hit_code := _pending_skill_hit_code
+	_pending_skill_hit_code = ""
 	if _last_attack_target != -1:
 		var dealt := result.monster_damage
 		_after(lands_after, func() -> void:
@@ -7004,8 +7010,8 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			var hit_body = _monster_bodies.get(damage_target)
 			if hit_body != null and is_instance_valid(hit_body):
 				_floating_damage(hit_body, _monster_text_height(damage_target), dealt, DAMAGE_DEALT_COLOUR)
-				if skill_hit:
-					_play_hit_effect_on(hit_body, _monster_text_height(damage_target)))
+				if skill_hit_code != "":
+					_play_skill_hit_effect_on(hit_body, _monster_text_height(damage_target), skill_hit_code))
 	if result.player_damage_taken > 0 and _player_skeleton != null:
 		# The monster strikes back: its own attack, and the player's hit
 		# reaction (type 3) when that swing's hit event falls.
@@ -7114,20 +7120,38 @@ func _play_level_up_effect() -> void:
 		return
 	player.add_child(fx)
 
-## Plays the real critical-hit slash burst on a body, centred on its mid-height.
-## Used when a skill lands on a target (and by SRREVAMP_QA_HITFX on the player).
-## No-ops without Particles.pk2 -- no fabricated stand-in.
-func _play_hit_effect_on(body: Node3D, world_height: float) -> void:
+## Plays a specific skill's own hit effect on a body: looks up the skill's hit
+## `.efp` in skilleffect.txt (by Basic_Code) and plays it, falling back to the
+## generic critical-hit burst if the skill has no mapped effect.
+func _play_skill_hit_effect_on(body: Node3D, world_height: float, basic_code: String) -> void:
 	if body == null or not is_instance_valid(body):
 		return
 	var particles := _open_particles_pk2_if_set()
 	if particles == null:
 		return
-	var fx := HitEffect.create(particles, world_height)
+	var efp := SkillEffectReader.hit_efp_for(_skill_effects(), basic_code)
+	var fx: HitEffect = null
+	if efp != "":
+		fx = HitEffect.create_from_efp(particles, efp, world_height)
+	if fx == null:
+		fx = HitEffect.create(particles, world_height)
 	if fx == null:
 		return
 	fx.position = Vector3(0, world_height * 0.5, 0)
 	body.add_child(fx)
+
+## skilleffect.txt parsed once (from the player's own Media.pk2): Basic_Code ->
+## hit `.efp`. Empty when the archive has no table.
+func _skill_effects() -> Dictionary:
+	if _skill_hit_efp_loaded:
+		return _skill_hit_efp
+	_skill_hit_efp_loaded = true
+	if _media_pk2 != null:
+		var bytes := AssetSource.read_bytes(SkillEffectReader.TABLE, _media_pk2)
+		if not bytes.is_empty():
+			_skill_hit_efp = SkillEffectReader.parse(bytes)
+			print("World3D: skilleffect.txt -> %d skill hit effects" % _skill_hit_efp.size())
+	return _skill_hit_efp
 
 ## The player's rendered height in world units -- measured from the assembled
 ## skeleton when one is up, else the file's standing yardstick (a character is
