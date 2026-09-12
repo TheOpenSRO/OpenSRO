@@ -38,6 +38,13 @@ func _skill(base_id: String, level: String, mastery: String, req_ml: String,
 	cols[SkillDataReader.S_GROUP_ROW] = group_row
 	cols[SkillDataReader.S_ICON] = icon
 	cols[SkillDataReader.S_NAME] = name
+	# Cast stats: cast/cooldown/range constant per skill; sp/mp rise per level.
+	cols[SkillDataReader.S_CAST_TIME] = "400"
+	cols[SkillDataReader.S_REUSE_DELAY] = "3000"
+	cols[SkillDataReader.S_RANGE] = "0"
+	cols[SkillDataReader.S_REQ_SP] = str(int(level) * 10)
+	cols[SkillDataReader.S_CONSUME_MP] = str(int(level) * 5)
+	cols[SkillDataReader.S_TOOLTIP_DESC] = name + "_TT"
 	return "\t".join(cols)
 
 func _init() -> void:
@@ -108,3 +115,14 @@ func _test_skills() -> void:
 			_check(r0[0].level_reqs.size() == 2
 				and r0[0].level_reqs[0] == 5 and r0[0].level_reqs[1] == 7,
 				"level_reqs holds each level's required mastery level")
+			_check(r0[0].level_sp.size() == 2
+				and r0[0].level_sp[0] == 10 and r0[0].level_sp[1] == 20,
+				"level_sp holds each level's learn SP cost")
+			_check(r0[0].level_mp.size() == 2
+				and r0[0].level_mp[0] == 5 and r0[0].level_mp[1] == 10,
+				"level_mp holds each level's cast MP cost")
+			_check(r0[0].cast_time_ms == 400 and r0[0].cooldown_ms == 3000
+				and r0[0].range_val == 0,
+				"cast time / cooldown / range are the skill's constants")
+			_check(r0[0].desc_code == "SN_SKILL_CH_SWORD_SMASH_A_TT",
+				"desc_code is the tooltip description token")

@@ -46,11 +46,20 @@ const G_ICON := 6
 const S_UNIQUE_ID := 1
 const S_BASE_ID := 2
 const S_LEVEL := 7
+# Cast timing / cost / range, verified against SMASH_A (see the skilldata-columns
+# note): all in ms except Range. CastTime/ReuseDelay/Range are constant per skill;
+# ReqSP and ConsumeMP rise per level.
+const S_CAST_TIME := 12
+const S_REUSE_DELAY := 14         # the cooldown
+const S_RANGE := 21               # 0 = melee
 const S_MASTERY := 34
 const S_REQ_MASTERY_LEVEL := 36
+const S_REQ_SP := 46              # SP to learn this level
+const S_CONSUME_MP := 53
 const S_GROUP_ROW := 59
 const S_ICON := 61
 const S_NAME := 62
+const S_TOOLTIP_DESC := 64        # SN_..._TT_DESC, resolved via the UI text table
 
 ## One bar (row) of a mastery's board.
 class SkillGroup:
@@ -85,9 +94,29 @@ class BaseSkill:
 	## Every level's required mastery level, aligned with level_ids -- a level
 	## becomes learnable when the mastery reaches level_reqs[level-1].
 	var level_reqs: PackedInt32Array = PackedInt32Array()
-	## Accumulator during parse: level -> [unique_id, req_mastery_level]. Folded
-	## into level_ids/level_reqs once every row is seen; not used after that.
+	## SP to learn each level, aligned with level_ids (skilldata ReqLearn_SP).
+	var level_sp: PackedInt32Array = PackedInt32Array()
+	## MP each level costs to cast, aligned with level_ids (skilldata Consume_MP).
+	var level_mp: PackedInt32Array = PackedInt32Array()
+	## Cast timing / range, constant across a skill's levels (verified for SMASH_A):
+	## cast time and cooldown in ms, range in game units (0 = melee), and the
+	## tooltip description code resolved through the UI text table.
+	var cast_time_ms: int
+	var cooldown_ms: int
+	var range_val: int
+	var desc_code: String
+	## Accumulator during parse: level -> [unique_id, req_mastery_level, sp, mp].
+	## Folded into the level_* arrays once every row is seen; not used after that.
 	var _levels: Dictionary = {}
+
+	## The skill's tooltip description, resolved through the UI text table (like
+	## display_name); "" when the archive carries none.
+	func description(names: UiTextTable) -> String:
+		if names != null and desc_code != "" and desc_code != "xxx":
+			var resolved := names.get_text(desc_code)
+			if resolved != "" and resolved != desc_code:
+				return resolved
+		return ""
 
 	func display_name(names: UiTextTable) -> String:
 		if names != null and name_code != "" and name_code != "xxx":
@@ -159,6 +188,8 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 			var level := _int_at(cols, S_LEVEL)
 			var req := _int_at(cols, S_REQ_MASTERY_LEVEL)
 			var unique_id := _int_at(cols, S_UNIQUE_ID)
+			var sp := _int_at(cols, S_REQ_SP)
+			var mp := _int_at(cols, S_CONSUME_MP)
 			if by_base.has(base_id):
 				var existing: BaseSkill = by_base[base_id]
 				existing.max_level = maxi(existing.max_level, level)
@@ -168,7 +199,7 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				if level == 1:
 					existing.first_level_id = unique_id
 				if level >= 1:
-					existing._levels[level] = [unique_id, req]
+					existing._levels[level] = [unique_id, req, sp, mp]
 			else:
 				var s := BaseSkill.new()
 				s.base_id = base_id
@@ -181,8 +212,19 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				if level == 1:
 					s.first_level_id = unique_id
 				if level >= 1:
-					s._levels[level] = [unique_id, req]
+					s._levels[level] = [unique_id, req, sp, mp]
 				by_base[base_id] = s
+			var bs: BaseSkill = by_base[base_id]
+			if bs.cast_time_ms == 0 and bs.cooldown_ms == 0 and bs.range_val == 0 and bs.desc_code == "":
+				bs.cast_time_ms = _int_at(cols, S_CAST_TIME)
+				bs.cooldown_ms = _int_at(cols, S_REUSE_DELAY)
+				bs.range_val = _int_at(cols, S_RANGE)
+				bs.desc_code = cols[S_TOOLTIP_DESC].strip_edges() if cols.size() > S_TOOLTIP_DESC else ""
+			if level == 1:
+				bs.cast_time_ms = _int_at(cols, S_CAST_TIME)
+				bs.cooldown_ms = _int_at(cols, S_REUSE_DELAY)
+				bs.range_val = _int_at(cols, S_RANGE)
+				bs.desc_code = cols[S_TOOLTIP_DESC].strip_edges() if cols.size() > S_TOOLTIP_DESC else ""
 
 	# Group by mastery:row, order by base id, assign columns.
 	var grid: Dictionary = {}
@@ -208,10 +250,14 @@ static func _finalize_levels(s: BaseSkill) -> void:
 		return
 	s.level_ids.resize(top)
 	s.level_reqs.resize(top)
+	s.level_sp.resize(top)
+	s.level_mp.resize(top)
 	for lv in s._levels:
 		var info: Array = s._levels[lv]
 		s.level_ids[int(lv) - 1] = int(info[0])
 		s.level_reqs[int(lv) - 1] = int(info[1])
+		s.level_sp[int(lv) - 1] = int(info[2])
+		s.level_mp[int(lv) - 1] = int(info[3])
 
 static func _int_at(cols: PackedStringArray, col: int) -> int:
 	if col >= cols.size():

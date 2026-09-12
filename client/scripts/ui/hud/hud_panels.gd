@@ -940,15 +940,44 @@ func _skill_learned_level(s: SkillDataReader.BaseSkill) -> int:
 			break
 	return lvl
 
-## The cell hover text: the skill name, plus its learned level or the mastery
-## level it still needs.
+## The cell hover text -- an authentic skill tooltip built from the client's own
+## skilldata: name + level, the description, real cast stats (MP, cast time,
+## cooldown, range), and the next level's SP/mastery requirement. All grounded
+## (see the skilldata-columns note); no invented numbers.
 func _skill_cell_tooltip(s: SkillDataReader.BaseSkill, learned: int) -> String:
-	var nm := s.display_name(_text_table())
+	var names := _text_table()
+	var nm := s.display_name(names)
+	var lines := PackedStringArray()
 	if learned >= s.max_level and s.max_level > 0:
-		return "%s (Lv %d, mastered)" % [nm, learned]
-	if learned > 0:
-		return "%s (Lv %d/%d)" % [nm, learned, s.max_level]
-	return "%s (needs mastery Lv %d)" % [nm, s.min_req_mastery_level]
+		lines.append("%s (Lv %d, mastered)" % [nm, learned])
+	elif learned > 0:
+		lines.append("%s (Lv %d/%d)" % [nm, learned, s.max_level])
+	else:
+		lines.append(nm)
+	var desc := s.description(names)
+	if desc != "":
+		lines.append(desc)
+	# Real cast stats for the shown level (learned level, else level 1).
+	var shown: int = learned if learned > 0 else 1
+	var stats := PackedStringArray()
+	var mp: int = s.level_mp[shown - 1] if shown - 1 < s.level_mp.size() else 0
+	if mp > 0:
+		stats.append("MP %d" % mp)
+	if s.cast_time_ms > 0:
+		stats.append("Cast %.2fs" % (s.cast_time_ms / 1000.0))
+	if s.cooldown_ms > 0:
+		stats.append("Cooldown %.1fs" % (s.cooldown_ms / 1000.0))
+	var rng: String = "Melee" if s.range_val == 0 else ("Range %d" % s.range_val)
+	stats.append(rng)
+	if not stats.is_empty():
+		lines.append(" · ".join(stats))
+	# The next level's real learn cost, for the ADD button.
+	if learned < s.max_level:
+		var nxt: int = learned + 1
+		var sp: int = s.level_sp[nxt - 1] if nxt - 1 < s.level_sp.size() else 0
+		var req: int = s.level_reqs[nxt - 1] if nxt - 1 < s.level_reqs.size() else s.min_req_mastery_level
+		lines.append("Learn Lv %d: %d SP (mastery Lv %d)" % [nxt, sp, req])
+	return "\n".join(lines)
 
 ## Draws the learned-level badge (skl_level_tab) over the icon's lower-right,
 ## with the level number on it (ifskill_slot.txt GDR_STMS_LEVEL_BOARD at 19,17).
