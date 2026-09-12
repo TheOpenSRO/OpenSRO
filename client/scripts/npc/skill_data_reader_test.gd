@@ -32,6 +32,7 @@ func _skill(base_id: String, level: String, mastery: String, req_ml: String,
 	cols.fill("0")
 	cols[SkillDataReader.S_UNIQUE_ID] = str(int(base_id) * 100 + int(level))
 	cols[SkillDataReader.S_BASE_ID] = base_id
+	cols[SkillDataReader.S_BASIC_CODE] = name.replace("SN_", "") + "_0" + level
 	cols[SkillDataReader.S_LEVEL] = level
 	cols[SkillDataReader.S_MASTERY] = mastery
 	cols[SkillDataReader.S_REQ_MASTERY_LEVEL] = req_ml
@@ -126,3 +127,5 @@ func _test_skills() -> void:
 				"cast time / cooldown / range are the skill's constants")
 			_check(r0[0].desc_code == "SN_SKILL_CH_SWORD_SMASH_A_TT",
 				"desc_code is the tooltip description token")
+			_check(r0[0].cast_anim_name() == "skill_ch_sword_smash_a",
+				"cast_anim_name lowercases Basic_Code and drops the level suffix (got %s)" % r0[0].cast_anim_name())

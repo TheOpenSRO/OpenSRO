@@ -52,6 +52,10 @@ signal system_option_requested
 signal system_restart_requested
 signal system_exit_requested
 signal system_help_requested
+## A learned skill in the window was clicked to cast it. World3D picks the
+## current target, plays the skill's cast animation (from basic_code) and sends
+## the use-skill request; the window itself has no target or combat state.
+signal skill_cast_requested(skill_id: int, basic_code: String)
 
 ## Sections beyond "Create" that a panel's window builds.
 ##
@@ -901,9 +905,16 @@ func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: Skil
 		icon.mouse_filter = Control.MOUSE_FILTER_PASS
 		icon.tooltip_text = _skill_cell_tooltip(s, learned)
 
-		# A learned skill shows its level badge over the icon's lower-right.
+		# A learned skill shows its level badge over the icon's lower-right, and
+		# clicking it casts that skill (World3D picks the target and animates).
 		if learned > 0 and badge_tex != null:
 			_add_level_badge(cell, badge_tex, learned)
+		if learned > 0:
+			var cast_id: int = s.level_ids[learned - 1]
+			var cast_code: String = s.basic_code
+			icon.gui_input.connect(func(ev: InputEvent) -> void:
+				if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+					skill_cast_requested.emit(cast_id, cast_code))
 
 		# The "+" appears when the next level is within the current mastery level;
 		# the server enforces the SP cost (refdata ReqLearnSP) and refunds on fail.

@@ -1238,6 +1238,7 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.system_exit_requested.connect(func(): get_tree().quit())
 	_hud_panels.system_help_requested.connect(func():
 		_log_system("Controls: click to move, right-drag or left-drag to orbit, mouse wheel to zoom. F1 dev tools, F3 debug panel, I inventory, K skill, M map. Type /unstuck if you get wedged in geometry."))
+	_hud_panels.skill_cast_requested.connect(_on_skill_cast_requested)
 
 	# The chat window, bottom-left where its registry entry puts it. This
 	# retires the developer chat box: the authored window is the same two
@@ -4498,6 +4499,43 @@ func _play_player_once(anim: BanReader.ParsedAnimation) -> float:
 	_player_one_shot_start = _player_anim_time
 	return anim.duration_seconds()
 
+## Plays a skill's cast animation as a one-shot. The clip is named after the
+## skill's Basic_Code (anim_base, e.g. "skill_ch_sword_smash_a") and lives at
+## Prim\Ani\Char\China\<man|woman>\<anim_base>.ban in Data.pk2 -- a grounded
+## name-based mapping (see the skill-animations note). Returns the clip length
+## in seconds, or 0 if it could not be found/parsed (caller falls back).
+func _play_skill_cast_anim(anim_base: String) -> float:
+	if anim_base == "" or _data_pk2 == null or _player_skeleton == null:
+		return 0.0
+	var gender_dir := "woman" if _player_gender == "china_woman" else "man"
+	var path := "Prim\\Ani\\Char\\China\\%s\\%s.ban" % [gender_dir, anim_base]
+	var bytes := AssetSource.read_bytes(path, _data_pk2)
+	if bytes.is_empty():
+		print("World3D: no cast animation at %s" % path)
+		return 0.0
+	var anim := BanReader.parse(bytes)
+	if anim == null or anim.bones.is_empty():
+		print("World3D: could not parse cast animation %s" % path)
+		return 0.0
+	return _play_player_once(anim)
+
+## A learned skill in the skill window was clicked: play its cast animation and
+## send the use-skill request against the current target. The animation plays
+## regardless (so the swing is visible even with no target); the server applies
+## the skill's real cooldown and (for now) plain-attack damage.
+func _on_skill_cast_requested(skill_id: int, basic_code: String) -> void:
+	# basic_code carries the level suffix; derive the clip name the same way the
+	# reader's BaseSkill.cast_anim_name does (lowercase, drop trailing _NN).
+	var anim_base := basic_code.to_lower()
+	var us := anim_base.rfind("_")
+	if us > 0 and anim_base.substr(us + 1).is_valid_int():
+		anim_base = anim_base.substr(0, us)
+	_play_skill_cast_anim(anim_base)
+	var target := _last_attack_target
+	if target != -1:
+		_show_target(target)
+		NetClient.use_skill(NetClient.current_character_name, skill_id, target)
+
 ## The group entry behind _body_animation_for, for its events.
 func _body_animation_entry(gender: String, action_type: int, group: String) -> BsrReader.AnimationEntry:
 	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
@@ -5189,6 +5227,12 @@ func _qa_step() -> void:
 	# tiled rather than centred so several are visible in one shot.
 	if OS.get_environment("SRREVAMP_QA_PANELS") != "" and _qa_tick == 30:
 		_qa_open_panels(OS.get_environment("SRREVAMP_QA_PANELS"))
+
+	# SRREVAMP_QA_CASTANIM="<anim_base>" plays a skill's cast animation on the
+	# player at tick 90 (and replays it), so a render can verify the grounded
+	# Basic_Code -> .ban mapping. QA only, no target/server needed.
+	if OS.get_environment("SRREVAMP_QA_CASTANIM") != "" and _qa_tick % 90 == 0 and _qa_tick > 0:
+		_play_skill_cast_anim(OS.get_environment("SRREVAMP_QA_CASTANIM"))
 
 	# SRREVAMP_QA_FAKEITEMS fills the bag with sample items (real IDs) a little
 	# after it opens -- past the server's empty-inventory reply -- so a render

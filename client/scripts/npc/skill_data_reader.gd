@@ -45,6 +45,7 @@ const G_ICON := 6
 
 const S_UNIQUE_ID := 1
 const S_BASE_ID := 2
+const S_BASIC_CODE := 3          # SKILL_CH_..._NN -- names the cast .ban clip
 const S_LEVEL := 7
 # Cast timing / cost / range, verified against SMASH_A (see the skilldata-columns
 # note): all in ms except Range. CastTime/ReuseDelay/Range are constant per skill;
@@ -105,9 +106,25 @@ class BaseSkill:
 	var cooldown_ms: int
 	var range_val: int
 	var desc_code: String
+	## The skill's Basic_Code (SKILL_CH_..._NN). The cast animation clip is named
+	## after it (see cast_anim_name / the skill-animations note).
+	var basic_code: String
 	## Accumulator during parse: level -> [unique_id, req_mastery_level, sp, mp].
 	## Folded into the level_* arrays once every row is seen; not used after that.
 	var _levels: Dictionary = {}
+
+	## The cast animation clip's base name: the Basic_Code lowercased with the
+	## trailing "_NN" level suffix removed, e.g. SKILL_CH_SWORD_SMASH_A_01 ->
+	## "skill_ch_sword_smash_a". "" if the skill has no Basic_Code. The clip
+	## lives at Prim\Ani\Char\China\<gender>\<this>.ban in Data.pk2.
+	func cast_anim_name() -> String:
+		if basic_code == "":
+			return ""
+		var lower := basic_code.to_lower()
+		var us := lower.rfind("_")
+		if us > 0 and lower.substr(us + 1).is_valid_int():
+			return lower.substr(0, us)
+		return lower
 
 	## The skill's tooltip description, resolved through the UI text table (like
 	## display_name); "" when the archive carries none.
@@ -220,11 +237,13 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				bs.cooldown_ms = _int_at(cols, S_REUSE_DELAY)
 				bs.range_val = _int_at(cols, S_RANGE)
 				bs.desc_code = cols[S_TOOLTIP_DESC].strip_edges() if cols.size() > S_TOOLTIP_DESC else ""
+				bs.basic_code = cols[S_BASIC_CODE].strip_edges() if cols.size() > S_BASIC_CODE else ""
 			if level == 1:
 				bs.cast_time_ms = _int_at(cols, S_CAST_TIME)
 				bs.cooldown_ms = _int_at(cols, S_REUSE_DELAY)
 				bs.range_val = _int_at(cols, S_RANGE)
 				bs.desc_code = cols[S_TOOLTIP_DESC].strip_edges() if cols.size() > S_TOOLTIP_DESC else ""
+				bs.basic_code = cols[S_BASIC_CODE].strip_edges() if cols.size() > S_BASIC_CODE else ""
 
 	# Group by mastery:row, order by base id, assign columns.
 	var grid: Dictionary = {}
