@@ -120,6 +120,58 @@ func build(builder: UiBuilder, layout_path: String, title: String,
 	set_process(true)
 	return true
 
+## Docks a second layout's "Create" section inside this window, to the right
+## of the existing content, and re-spans the title bar and close button over
+## the pair. This is how the client's own fused inventory reads as one window:
+## the bag (ifinventory) and the paper doll (ifequipment) are two separate
+## authored layouts the EXE places side by side. x_offset is where the
+## companion's own origin sits in this window's space -- the primary content's
+## authored frame width. Returns the companion's section root (its controls are
+## then reachable through node(), since it hangs under panel_root), or null.
+func dock_companion(builder: UiBuilder, layout_path: String, x_offset: float) -> Control:
+	if builder == null or panel_root == null:
+		return null
+	var layout := builder.load_layout(layout_path)
+	if layout == null:
+		return null
+	var sec := layout.get_section("Create")
+	if sec == null or sec.controls.is_empty():
+		return null
+	var companion := builder.build_section(layout, "Create")
+	if companion == null:
+		return null
+	companion.position = Vector2(x_offset, 0.0)
+	panel_root.add_child(companion)
+	# The companion's own close button would land mid-window; the combined
+	# window keeps the single one on the far right.
+	var comp_close := _find_close_button_in(companion)
+	if comp_close != null:
+		(comp_close as CanvasItem).visible = false
+
+	var companion_size := UiBuilder.section_size(sec)
+	size.x = x_offset + companion_size.x
+	# Grow to the taller of the two so the companion's frame isn't clipped
+	# (the equipment frame runs to 355, past the bag's 333).
+	size.y = maxf(size.y, companion_size.y)
+	custom_minimum_size = size
+	# Re-span the title bar and move the close button to the new right edge.
+	var bar := get_node_or_null("TitleBar") as Control
+	if bar != null:
+		bar.size = Vector2(size.x - TITLE_INSET * 2.0, TITLE_TEXT_HEIGHT)
+	var close := get_node_or_null("CloseButton") as Control
+	if close != null:
+		close.position = Vector2(size.x - CLOSE_BUTTON_INSET, CLOSE_BUTTON_Y)
+	# Re-run the settle loop so the widened title bar and authored rects re-apply.
+	_settle_frames_left = SETTLE_FRAMES
+	set_process(true)
+	return companion
+
+static func _find_close_button_in(root: Node) -> BaseButton:
+	for child in root.get_children():
+		if child is BaseButton and (child as Node).name.to_upper().contains("CLOSE"):
+			return child as BaseButton
+	return null
+
 ## The caption the layout asks for, or the caller's.
 ##
 ## A window's own frame -- the one at the origin -- sometimes carries a

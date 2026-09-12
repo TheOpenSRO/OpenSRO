@@ -182,6 +182,11 @@ func show_menu(near: Vector2) -> void:
 ## possibility (layout names are our own mapping) and should not be an
 ## error the player sees.
 func open(panel_id: String) -> HudWindow:
+	# The client presents the bag and the equipment paper doll as one fused
+	# window; we build that by docking the equipment layout inside the inventory
+	# window, so the 'O' key and the bag both land on the same combined window.
+	if panel_id == "equipment":
+		panel_id = "inventory"
 	if _unavailable.has(panel_id):
 		return null
 	var window: HudWindow = _windows.get(panel_id)
@@ -199,12 +204,19 @@ func open(panel_id: String) -> HudWindow:
 			window.queue_free()
 			_unavailable[panel_id] = true
 			return null
+		if panel_id == "inventory":
+			# Dock the equipment paper doll flush to the right of the bag: the
+			# authored bag frame is INVENTORY_CONTENT_WIDTH wide, so the two
+			# read as the client's single fused inventory window.
+			_inventory_eq_root = window.dock_companion(
+				_builder, PANELS["equipment"][0], INVENTORY_CONTENT_WIDTH)
 		window.centre()
 		_windows[panel_id] = window
 		if panel_id == "system":
 			_wire_system(window)
-		if panel_id == "equipment":
-			_place_paper_doll(window)
+		if panel_id == "inventory":
+			_place_paper_doll_docked()
+			_fill_equipment_slots(_equipped_items)
 		if panel_id == "skill":
 			_fill_skill_masteries(window)
 		_populate(panel_id)
@@ -256,33 +268,40 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 		close("npctalk")
 
 ## The live paper-doll texture (a SubViewport's), set by World3D whenever
-## the dressed character changes. Shown in the equipment window's central
+## the dressed character changes. Shown in the equipment section's central
 ## column, between the two rows of worn slots.
 var _paper_doll_texture: Texture2D = null
 
+## The inventory bag's authored content width -- ifinventory's own frame is
+## 176 wide, and the equipment paper doll docks flush to its right so the two
+## authored windows read as the client's one fused inventory. Grounded in the
+## DUCKROAD layout, not eyeballed.
+const INVENTORY_CONTENT_WIDTH := 176.0
+## The equipment section docked inside the inventory window (see open()).
+var _inventory_eq_root: Control = null
+
 func set_paper_doll_texture(texture: Texture2D) -> void:
 	_paper_doll_texture = texture
-	var window: HudWindow = _windows.get("equipment")
-	if window != null:
-		_place_paper_doll(window)
+	_place_paper_doll_docked()
 
-func _place_paper_doll(window: HudWindow) -> void:
-	if _paper_doll_texture == null:
+## Draws the live 3D paper doll in the equipment section docked inside the
+## inventory window, in the central column between its two worn-slot columns.
+func _place_paper_doll_docked() -> void:
+	if _paper_doll_texture == null or _inventory_eq_root == null:
 		return
-	var doll := window.get_node_or_null("PaperDoll") as TextureRect
+	var doll := _inventory_eq_root.get_node_or_null("PaperDoll") as TextureRect
 	if doll == null:
 		doll = TextureRect.new()
 		doll.name = "PaperDoll"
 		doll.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		doll.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		doll.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		# The gap between the equipment window's two slot columns (slots sit
-		# at x 5 and x 141, 32 wide, over a 177-wide window): the central
-		# column from x 40 to x 138, below the title bar to just above the
-		# avatar-skill strip. The character renders here.
+		# Between the equipment window's two slot columns (slots at x 5 and
+		# x 141, 32 wide, over a 177-wide window): the central column x 40..138,
+		# below the title bar to just above the avatar-skill strip.
 		doll.position = Vector2(40, HudWindow.TITLE_BAR_HEIGHT + 4.0)
 		doll.size = Vector2(98, 236)
-		window.add_child(doll)
+		_inventory_eq_root.add_child(doll)
 	doll.texture = _paper_doll_texture
 
 ## Connects the System window's buttons to the signals World3D acts on.
@@ -309,6 +328,9 @@ func close(panel_id: String) -> void:
 		window.hide()
 
 func toggle(panel_id: String) -> void:
+	# Equipment is docked in the inventory window (see open()).
+	if panel_id == "equipment":
+		panel_id = "inventory"
 	var window: HudWindow = _windows.get(panel_id)
 	if window != null and window.visible:
 		window.hide()
@@ -529,7 +551,9 @@ func _text_table() -> UiTextTable:
 const EQUIPMENT_SLOT_BASE := 100
 
 func _fill_equipment_slots(items: Array) -> void:
-	var window: HudWindow = _windows.get("equipment")
+	# Equipment is docked inside the inventory window (see open()); its slots
+	# hang under that window's panel_root, so node() finds them there.
+	var window: HudWindow = _windows.get("inventory")
 	if window == null:
 		return
 	# Clear first, so an unequip empties its slot.
@@ -679,6 +703,9 @@ func _populate(panel_id: String) -> void:
 	match panel_id:
 		"inventory":
 			NetClient.list_inventory(who)
+			# The equipment paper doll is docked in this window; refresh it too.
+			_fill_equipment_slots(_equipped_items)
+			NetClient.list_equipment(who)
 		"quest":
 			NetClient.list_quests(who)
 		"community":
