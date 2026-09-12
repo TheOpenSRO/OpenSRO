@@ -66,22 +66,33 @@ const (
 	fMax = 116
 )
 
-// Skill (_RefSkill / skilldata_*.txt) raw column indices, 0-based. Only the
-// learn-gating columns are named and mapped -- verified against SMASH_A (see
-// docs/protocol/refdata_schema.md). skilldata's other columns (timing, range,
-// resource cost, chain) are left as placeholders in skillRecord until a
-// verified pass maps them; they aren't needed to LEARN a skill, only to cast
-// one (a later phase).
+// Skill (_RefSkill / skilldata_*.txt) raw column indices, 0-based. The
+// learn-gating columns AND the cast timing / range / resource cost are named
+// and mapped -- all verified against a real SMASH_A row (the column order is
+// the schema's group order, anchored by 6 known indices; see the
+// skilldata-columns note and docs/protocol/refdata_schema.md). Only a few flag
+// columns (FlyingSpeed, Interruptable, Overlap, AutoAttackType) stay unmapped.
 const (
-	skID            = 1 // unique per-level skill id
-	skGroupID       = 2 // shared by every level of the skill
-	skBasicCode     = 3 // SKILL_CH_..._NN
-	skBasicLevel    = 7
-	skMastery1      = 34 // ReqCommon_Mastery1
-	skMasteryLevel1 = 36 // ReqCommon_MasteryLevel1 (required mastery level)
-	skReqLearnSP    = 46 // ReqLearn_SP (learn cost, verified 2/5/7 across SMASH_A 1-3)
-	skReqLearnRace  = 47 // ReqLearn_Race
-	skName          = 62 // SN_SKILL_ name code
+	skID         = 1 // unique per-level skill id
+	skGroupID    = 2 // shared by every level of the skill
+	skBasicCode  = 3 // SKILL_CH_..._NN
+	skBasicLevel = 7
+	// Cast timing / range / cost, all in ms except Range. Verified against a
+	// real SMASH_A row (see the skilldata-columns note): the column order is the
+	// schema's group order, anchored by 6 known indices. All clean int values.
+	skPreparingTime  = 11
+	skCastingTime    = 12
+	skActionDuration = 13
+	skReuseDelay     = 14 // the cooldown
+	skCoolTime       = 15
+	skRange          = 21 // 0 = melee
+	skConsumeHP      = 52
+	skConsumeMP      = 53
+	skMastery1       = 34 // ReqCommon_Mastery1
+	skMasteryLevel1  = 36 // ReqCommon_MasteryLevel1 (required mastery level)
+	skReqLearnSP     = 46 // ReqLearn_SP (learn cost, verified 2/5/7 across SMASH_A 1-3)
+	skReqLearnRace   = 47 // ReqLearn_Race
+	skName           = 62 // SN_SKILL_ name code
 	// The highest field skillRecord reads; a shorter row isn't a real skill.
 	skMax = 62
 )
@@ -194,10 +205,10 @@ func itemRecord(cols []string) ([]string, bool) {
 
 // skillRecord maps one tab-split skilldata row to the 24-column skill CSV
 // (refdata.skillCSVColumns order) import-refdata expects, or (nil, false) if
-// the row is not a real skill. Only the learn-gating fields are mapped from
-// verified real columns; the rest (timing, range, resource cost, chain) are
-// "0" placeholders until a verified pass maps them -- they matter to cast a
-// skill (a later phase), not to learn one.
+// the row is not a real skill. The learn-gating fields and the cast timing /
+// range / resource cost are mapped from verified real columns (see the
+// skilldata-columns note); only a few flags (FlyingSpeed, Interruptable,
+// Overlap, AutoAttackType) and unused name/chain fields stay "0" placeholders.
 func skillRecord(cols []string) ([]string, bool) {
 	if len(cols) <= skMax {
 		return nil, false
@@ -213,30 +224,30 @@ func skillRecord(cols []string) ([]string, bool) {
 		return s
 	}
 	return []string{
-		get(skID),            // 0  ID
-		get(skGroupID),       // 1  GroupID
-		get(skBasicCode),     // 2  Basic_Code
-		"0",                  // 3  Basic_Name (not verified)
-		get(skBasicLevel),    // 4  Basic_Level
-		"0",                  // 5  Basic_ChainCode (not verified)
-		"0",                  // 6  Basic_RecycleCost (not verified)
-		"0",                  // 7  PreparingTime (not verified -- cast timing, later)
-		"0",                  // 8  CastingTime (not verified)
-		"0",                  // 9  ActionDuration (not verified)
-		"0",                  // 10 ReuseDelay (not verified)
-		"0",                  // 11 CoolTime (not verified)
-		"0",                  // 12 FlyingSpeed (not verified)
-		"0",                  // 13 Interruptable (not verified)
-		"0",                  // 14 Overlap (not verified)
-		"0",                  // 15 AutoAttackType (not verified)
-		"0",                  // 16 Range (not verified)
-		"0",                  // 17 Consume_HP (not verified)
-		"0",                  // 18 Consume_MP (not verified)
-		get(skReqLearnSP),    // 19 ReqLearn_SP    (verified raw col 46)
-		get(skReqLearnRace),  // 20 ReqLearn_Race  (raw col 47)
-		get(skName),          // 21 UI_SkillName    (SN_SKILL_ name code, raw col 62)
-		get(skMastery1),      // 22 ReqCommon_Mastery1      (verified raw col 34)
-		get(skMasteryLevel1), // 23 ReqCommon_MasteryLevel1 (verified raw col 36)
+		get(skID),             // 0  ID
+		get(skGroupID),        // 1  GroupID
+		get(skBasicCode),      // 2  Basic_Code
+		"0",                   // 3  Basic_Name (not verified)
+		get(skBasicLevel),     // 4  Basic_Level
+		"0",                   // 5  Basic_ChainCode (not verified)
+		"0",                   // 6  Basic_RecycleCost (not verified)
+		get(skPreparingTime),  // 7  PreparingTime  (verified raw col 11)
+		get(skCastingTime),    // 8  CastingTime    (verified raw col 12)
+		get(skActionDuration), // 9  ActionDuration (verified raw col 13)
+		get(skReuseDelay),     // 10 ReuseDelay/cooldown (verified raw col 14)
+		get(skCoolTime),       // 11 CoolTime       (verified raw col 15)
+		"0",                   // 12 FlyingSpeed (flag, not mapped)
+		"0",                   // 13 Interruptable (flag, not mapped)
+		"0",                   // 14 Overlap (bitfield, not mapped)
+		"0",                   // 15 AutoAttackType (not mapped)
+		get(skRange),          // 16 Range          (verified raw col 21)
+		get(skConsumeHP),      // 17 Consume_HP     (verified raw col 52)
+		get(skConsumeMP),      // 18 Consume_MP     (verified raw col 53)
+		get(skReqLearnSP),     // 19 ReqLearn_SP    (verified raw col 46)
+		get(skReqLearnRace),   // 20 ReqLearn_Race  (raw col 47)
+		get(skName),           // 21 UI_SkillName    (SN_SKILL_ name code, raw col 62)
+		get(skMastery1),       // 22 ReqCommon_Mastery1      (verified raw col 34)
+		get(skMasteryLevel1),  // 23 ReqCommon_MasteryLevel1 (verified raw col 36)
 	}, true
 }
 
