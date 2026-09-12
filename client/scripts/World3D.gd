@@ -1237,7 +1237,7 @@ func _try_initialize_pk2_ui() -> void:
 		get_tree().change_scene_to_file("res://scenes/Login.tscn"))
 	_hud_panels.system_exit_requested.connect(func(): get_tree().quit())
 	_hud_panels.system_help_requested.connect(func():
-		_log_system("Controls: click to move, right-drag or left-drag to orbit, mouse wheel to zoom. F1 dev tools, F3 debug panel, I inventory, K skill, M map."))
+		_log_system("Controls: click to move, right-drag or left-drag to orbit, mouse wheel to zoom. F1 dev tools, F3 debug panel, I inventory, K skill, M map. Type /unstuck if you get wedged in geometry."))
 
 	# The chat window, bottom-left where its registry entry puts it. This
 	# retires the developer chat box: the authored window is the same two
@@ -1320,6 +1320,7 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 	_debug_panel = DebugPanel.new(self)
 	$UI.add_child(_debug_panel)
 	_log_system("Debug panel (build, position, entities, loading, performance): F3")
+	_log_system("Stuck in a wall or building? Type /unstuck to return to the zone entry.")
 	_build_target_window()
 	set_name_plate_range(ClientSettings.name_plate_range(NAME_PLATE_RANGE))
 	var chat_font_size := ClientSettings.chat_font_size()
@@ -6599,7 +6600,26 @@ func _send_chat(text: String) -> void:
 		NetClient.whisper(target_name, whisper_text)
 		return
 
+	if text == "/unstuck" or text == "/stuck":
+		_unstuck_player()
+		return
+
 	NetClient.say(text)
+
+## Frees a player wedged into geometry: teleports them back to the zone's own
+## entry spawn (a known-open point the server placed them at) and clears any
+## velocity. A stopgap until movement is navmesh-constrained -- free-physics
+## movement lets the capsule wedge into a concave building corner. F1 zone
+## travel does the same the heavy way; this stays in the zone. The move sync in
+## _process sends the new position (it differs from _last_sent_pos).
+func _unstuck_player() -> void:
+	var result = NetClient.last_enter_world_result
+	if result == null or not result.ok:
+		_log_system("Unstuck: no spawn point known yet -- try F1 zone travel.")
+		return
+	player.velocity = Vector3.ZERO
+	player.position = Vector3(result.x, result.y, result.z)
+	_log_system("Unstuck: returned to the zone entry point.")
 
 func _on_disconnected() -> void:
 	get_tree().change_scene_to_file("res://scenes/Login.tscn")
