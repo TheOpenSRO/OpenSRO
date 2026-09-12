@@ -534,6 +534,14 @@ var _skill_catalog_loaded := false
 ## so a fresh window shows every skill greyed -- as the real one does.
 var _skill_points: int = 0
 var _skill_mastery_levels: Dictionary = {}   ## mastery id -> level
+## The character level the mastery-total cap (3 x level) is shown against; 0
+## until the server reports it (set_skill_state).
+var _skill_char_level: int = 0
+
+## The mastery-total cap per character level: the sum of a character's mastery
+## levels can reach 3 x its level. Grounded -- retail 80-cap total = 240 = 3x80;
+## matches the server's MasteryTotalCapPerLevel. The pserver's 440 is a mod.
+const MASTERY_TOTAL_CAP_PER_LEVEL := 3
 
 ## Skill-board geometry inside the CIFSkillBoard area (GDR_SKILL_BOARD). The grid
 ## metrics are the real client's, decompiled from CIFSkillGroup::SetGroup: eight
@@ -586,10 +594,26 @@ func _load_skill_catalog() -> void:
 ## The server's skill state -- skill points and per-mastery levels. Refills the
 ## open window so learnable skills light up (their real icon instead of the grey
 ## disable book) and the totals show.
-func set_skill_state(skill_points: int, mastery_levels: Dictionary) -> void:
+func set_skill_state(skill_points: int, mastery_levels: Dictionary, char_level: int = 0) -> void:
 	_skill_points = skill_points
 	_skill_mastery_levels = mastery_levels.duplicate()
+	if char_level > 0:
+		_skill_char_level = char_level
 	_refill_skill()
+
+## The server's OpSkillState arrived -- apply points, mastery levels and the
+## character level (for the 3 x level cap).
+func _apply_skill_state(state: SkillNet.SkillState) -> void:
+	set_skill_state(state.skill_points, state.mastery_levels, state.level)
+
+## After a mastery is raised, re-read the state so the totals and the lit/greyed
+## skills refresh.
+func _on_raise_mastery_result(result: SkillNet.RaiseMasteryResult) -> void:
+	if result.error != "":
+		return
+	var who := NetClient.current_character_name
+	if who != "":
+		NetClient.skill_state(who)
 
 ## A mastery's trained level -- the server's, or a QA override for demoing the
 ## window lit up (SRREVAMP_QA_MASTERY applies one level to every mastery). The
@@ -656,12 +680,17 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 	if _skill_active_mastery < masteries.size():
 		_build_mastery_board(board, masteries[_skill_active_mastery] as MasteryReader.Mastery)
 
-	# Skill points and total mastery level, from the server's state.
+	# Skill points and total mastery level (with the 3 x level cap once the
+	# server has reported the character's level), from the server's state.
 	_set_label(window, "GDR_SKILL_TEXT_SP_NUM", str(_skill_points))
+	# The real server total (a QA lighting override must not pollute it).
 	var total := 0
-	for entry in _masteries:
-		total += _mastery_level((entry as MasteryReader.Mastery).id)
-	_set_label(window, "GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM", str(total))
+	for lvl in _skill_mastery_levels.values():
+		total += int(lvl)
+	var total_text := str(total)
+	if _skill_char_level > 0:
+		total_text = "%d / %d" % [total, MASTERY_TOTAL_CAP_PER_LEVEL * _skill_char_level]
+	_set_label(window, "GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM", total_text)
 
 ## A dark backing so the world does not show through the board (the layout names
 ## no tile for the CIFSkillBoard area -- the EXE draws its own).
@@ -727,9 +756,20 @@ func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> voi
 	var name_lbl := Label.new()
 	name_lbl.text = mastery.display_name(_text_table())
 	name_lbl.position = Vector2(48, 6)
-	name_lbl.size = Vector2(180, 20)
+	name_lbl.size = Vector2(100, 20)
 	_style_skill_label(name_lbl)
 	host.add_child(name_lbl)
+
+	# The mastery LEVEL UP button (skl_mastery_levelup in ifskillboard): spends
+	# skill points to raise this mastery a level, which unlocks more skills.
+	var levelup := Button.new()
+	levelup.text = _resolve_ui("UIIT_CTL_SKILL_MASTERY_LEVELUP", "LEVEL UP")
+	levelup.position = Vector2(150, 3)
+	levelup.custom_minimum_size = Vector2(80, 22)
+	levelup.focus_mode = Control.FOCUS_NONE
+	_style_skill_tab(levelup)
+	levelup.pressed.connect(_on_mastery_levelup.bind(mastery.id))
+	host.add_child(levelup)
 
 	var lvl_lbl := Label.new()
 	lvl_lbl.text = "Lv %d" % _mastery_level(mastery.id)
@@ -843,6 +883,24 @@ func _refill_skill() -> void:
 	var window: HudWindow = _windows.get("skill")
 	if window != null:
 		_fill_skill_masteries(window)
+
+## The mastery LEVEL UP button was pressed -- ask the server to spend skill
+## points raising it. The result comes back as raise_mastery_result, which
+## re-reads the state and refreshes the window.
+func _on_mastery_levelup(mastery_id: int) -> void:
+	var who := NetClient.current_character_name
+	if who != "":
+		NetClient.raise_mastery(who, mastery_id)
+
+## After an attack (a kill grants skill points), re-read the skill state so the
+## open window's "Skill point" total stays current.
+func _on_attack_refresh_skill(_result) -> void:
+	var window: HudWindow = _windows.get("skill")
+	if window == null or not window.visible:
+		return
+	var who := NetClient.current_character_name
+	if who != "":
+		NetClient.skill_state(who)
 
 ## Titles a tab from its own name code, falling back to the plain English when
 ## the archive has no text for the token.
@@ -983,6 +1041,11 @@ func connect_net() -> void:
 	NetClient.friend_list_result.connect(func(friends: Array, _e: String) -> void:
 		_fill_list("community", friends.map(_describe_named)))
 	NetClient.character_stats_result.connect(_apply_stats)
+	NetClient.skill_state_result.connect(_apply_skill_state)
+	NetClient.raise_mastery_result.connect(_on_raise_mastery_result)
+	# Keep the skill window's points live: a kill grants skill points, so
+	# re-read the state after an attack while the window is open.
+	NetClient.attack_result.connect(_on_attack_refresh_skill)
 
 ## The character panel's own control names, from resinfo\\ifplayerinfo.txt.
 ## Every value field is a `_DAT` sibling of its label.
@@ -1091,6 +1154,8 @@ func _populate(panel_id: String) -> void:
 			NetClient.list_equipment(who)
 		"quest":
 			NetClient.list_quests(who)
+		"skill":
+			NetClient.skill_state(who)
 		"community":
 			NetClient.friend_list(who)
 		"party":

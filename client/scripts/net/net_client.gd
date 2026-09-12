@@ -49,6 +49,8 @@ signal monster_list_result(monsters: Array, error: String)
 signal level_up(new_level: int, stat_points: int)
 signal learn_skill_result(ok: bool, reason: String)
 signal skill_list_result(skills: Array, error: String)
+signal skill_state_result(state: SkillNet.SkillState)
+signal raise_mastery_result(result: SkillNet.RaiseMasteryResult)
 
 signal party_create_result(result: PartyNet.Result)
 signal party_join_result(result: PartyNet.Result)
@@ -308,6 +310,15 @@ func use_skill(char_name: String, skill_id: int, target_monster_id: int) -> void
 func list_skills(char_name: String) -> void:
 	_send(SkillNet.OP_LIST, SkillNet.encode_list(char_name))
 
+## Ask for the character's skill economy state (points + per-mastery levels),
+## which drives the skill window's totals and lit/greyed skills.
+func skill_state(char_name: String) -> void:
+	_send(SkillNet.OP_STATE, SkillNet.encode_state_request(char_name))
+
+## Spend skill points to raise a mastery one level.
+func raise_mastery(char_name: String, mastery_id: int) -> void:
+	_send(SkillNet.OP_RAISE, SkillNet.encode_raise_mastery(char_name, mastery_id))
+
 func create_party(char_name: String) -> void:
 	_send(PartyNet.OP_CREATE, PartyNet.encode_name_request(char_name))
 
@@ -454,6 +465,10 @@ func _dispatch(p: Packet) -> void:
 		SkillNet.OP_LIST_RESULT:
 			var r := SkillNet.decode_list_result(p.data)
 			skill_list_result.emit(r.skills, r.error)
+		SkillNet.OP_STATE_RESULT:
+			skill_state_result.emit(SkillNet.decode_state_result(p.data))
+		SkillNet.OP_RAISE_RESULT:
+			raise_mastery_result.emit(SkillNet.decode_raise_mastery_result(p.data))
 		PartyNet.OP_CREATE_RESULT:
 			party_create_result.emit(PartyNet.decode_result(p.data))
 		PartyNet.OP_JOIN_RESULT:

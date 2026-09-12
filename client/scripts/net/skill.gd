@@ -11,6 +11,12 @@ const OP_LEARN_RESULT := 0x0071   # server -> client
 const OP_USE := 0x0072            # client -> server (response: CombatNet.OP_ATTACK_RESULT)
 const OP_LIST := 0x0073           # client -> server
 const OP_LIST_RESULT := 0x0074    # server -> client
+# The skill economy: the character's skill points + per-mastery levels, and
+# raising a mastery by spending points (what the skill window is driven by).
+const OP_STATE := 0x0075          # client -> server
+const OP_STATE_RESULT := 0x0076   # server -> client
+const OP_RAISE := 0x0077          # client -> server
+const OP_RAISE_RESULT := 0x0078   # server -> client
 
 ## Encodes an OpLearnSkill request.
 static func encode_learn(character_name: String, skill_id: int) -> PackedByteArray:
@@ -147,3 +153,80 @@ static func decode_list_result(data: PackedByteArray) -> SkillListResult:
 		result.skills.append(decoded[0])
 		offset = decoded[1]
 	return result
+
+## Encodes an OpSkillState request (character name only -- same shape as a
+## skill-list request).
+static func encode_state_request(character_name: String) -> PackedByteArray:
+	return encode_list(character_name)
+
+## The character's skill economy state -- mirrors session.SkillStateResult (Go).
+class SkillState:
+	var error: String
+	var level: int
+	var skill_points: int
+	var mastery_levels: Dictionary = {}   ## mastery id -> trained level
+
+## Decodes an OpSkillStateResult payload.
+static func decode_state_result(data: PackedByteArray) -> SkillState:
+	var s := SkillState.new()
+	if data.size() < 2:
+		s.error = "truncated error length prefix"
+		return s
+	var error_len := data.decode_u16(0)
+	if 2 + error_len > data.size():
+		s.error = "declared error length %d exceeds remaining bytes" % error_len
+		return s
+	var offset := 2 + error_len
+	if error_len > 0:
+		s.error = data.slice(2, offset).get_string_from_utf8()
+		return s
+	if offset + 10 > data.size():
+		s.error = "truncated state header"
+		return s
+	s.level = data.decode_u32(offset)
+	s.skill_points = data.decode_u32(offset + 4)
+	var count := data.decode_u16(offset + 8)
+	offset += 10
+	for i in range(count):
+		if offset + 12 > data.size():
+			s.error = "truncated mastery %d" % i
+			return s
+		s.mastery_levels[data.decode_s64(offset)] = data.decode_u32(offset + 8)
+		offset += 12
+	return s
+
+## Encodes an OpRaiseMastery request (name + mastery id -- same shape as a
+## learn request).
+static func encode_raise_mastery(character_name: String, mastery_id: int) -> PackedByteArray:
+	return encode_learn(character_name, mastery_id)
+
+## Result of an OpRaiseMastery -- mirrors session.RaiseMasteryResult (Go); the
+## mastery id, its new level and the remaining skill points are always present
+## (zero on an error).
+class RaiseMasteryResult:
+	var error: String
+	var mastery_id: int
+	var new_level: int
+	var skill_points: int
+
+## Decodes an OpRaiseMasteryResult payload.
+static func decode_raise_mastery_result(data: PackedByteArray) -> RaiseMasteryResult:
+	var r := RaiseMasteryResult.new()
+	if data.size() < 2:
+		r.error = "truncated error length prefix"
+		return r
+	var error_len := data.decode_u16(0)
+	if 2 + error_len > data.size():
+		r.error = "declared error length %d exceeds remaining bytes" % error_len
+		return r
+	var offset := 2 + error_len
+	if error_len > 0:
+		r.error = data.slice(2, offset).get_string_from_utf8()
+	if offset + 16 > data.size():
+		if r.error == "":
+			r.error = "truncated raise result"
+		return r
+	r.mastery_id = data.decode_s64(offset)
+	r.new_level = data.decode_u32(offset + 8)
+	r.skill_points = data.decode_u32(offset + 12)
+	return r
