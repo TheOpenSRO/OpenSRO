@@ -39,16 +39,39 @@ import (
 // these Names, so a new entry here should usually come with matching
 // entries there too.
 type monsterSpec struct {
-	Zone       string
-	Name       string
-	CodeName   string  // the species' characterdata key; what the client draws it by
-	Level      int     // real level, from the client's characterdata (_RefObjChar col 57)
-	Rarity     int     // real rank, from characterdata (_RefObjChar col 15); 0 = normal
-	X, Z       float64 // own design placeholder spawn anchor -- see combat.Hub.Spawn
-	MaxHP      int
-	Defense    int
-	Attack     int
-	GoldReward int64
+	Zone     string
+	Name     string
+	CodeName string  // the species' characterdata key; what the client draws it by
+	Level    int     // real level, from the client's characterdata (_RefObjChar col 57)
+	Rarity   int     // real rank, from characterdata (_RefObjChar col 15); 0 = normal
+	X, Z     float64 // own-design spawn anchor (see the roster comment)
+	Count    int     // how many to keep alive around the anchor (default 1)
+}
+
+// monsterStatsForLevel is this project's OWN-DESIGN combat curve: a monster's
+// HP, defence, counter-attack and gold from its grounded level (and rarity).
+// No real monster HP/attack table exists in the client data -- those numbers
+// are server-side and were never recovered -- so rather than hand-guess each
+// species (which produced inconsistencies like a level-5 Weasel with less HP
+// than a level-1 Mangyang), one disclosed curve scales everything by the level
+// that IS grounded. Tunable; not derived from any original balance data.
+// Exp/SP per kill come from combat.ExpFor/SPFor off MaxHP, so they scale too.
+func monsterStatsForLevel(level, rarity int) (maxHP, defense, attack int, gold int64) {
+	if level < 1 {
+		level = 1
+	}
+	maxHP = 50 + level*22
+	defense = 1 + level/3
+	attack = 4 + level*2
+	gold = int64(10 + level*5)
+	// A rarer rank (champion/giant/...) is tougher and pays more. rarity 0 is
+	// an ordinary monster; the multiplier is disclosed own design.
+	if rarity > 0 {
+		mult := 1 + rarity
+		maxHP *= mult
+		gold *= int64(mult)
+	}
+	return
 }
 
 // These anchors were originally picked back when a character was still the
@@ -64,34 +87,31 @@ type monsterSpec struct {
 // rather than a blind PLAYER_SCALE_RATIO multiply, which would have pushed
 // these off the real terrain these zones actually have at those coordinates.
 var monsterSpecs = []monsterSpec{
-	// Species names are the ones the game's own tables use, so the client
-	// can resolve each to its model: characterdata carries every row's SN_
-	// name key and its .bsr, textdata_object resolves that key to a display
-	// name, and joining the two covers 642 species. The three invented
-	// names these replaced ("Stone Golem", "Wild Boar", "Sand Scorpion")
-	// appear nowhere in the real data, so they could only ever draw the
-	// placeholder capsule.
-	// Positions are within sight of the spawn point, which is at the
-	// origin. They used to be 250-350 units out, which measured as 292 and
-	// 461 units from a new character -- both were really there, with real
-	// resolved models, and neither was ever going to be seen. Placeholder
-	// content either way, but placeholder content a player meets.
+	// The real Jangan leveling ladder. Every species' identity is GROUNDED in
+	// the client's own characterdata (_RefObjChar): the CodeName is the row's
+	// key (what the client resolves the model by, the same in every archive),
+	// the Name is textdata_object's resolution of the row's SN_ name key, and
+	// the Level and Rarity are columns 57 and 15. Their combat stats are the
+	// disclosed monsterStatsForLevel curve (no real table exists). Positions
+	// are OWN DESIGN, clustered at the two farmland anchors measured flat,
+	// walkable and object-clear (region 96/168; (0,-840) and (340,-340) -- see
+	// docs/WORLD_ISSUES.md); the ladder shares those two hunting grounds so
+	// every monster stands on verified terrain rather than a blind guess.
 	//
-	// The code names are the rows' own keys in characterdata (Mangyang is
-	// row 1933, the Weasel row 1937 `MOB_CH_GYO`, the Earth Ghost 1963), and
-	// they are what the client resolves the model by: a display name is
-	// whatever language column a player's archive carries -- one archive
-	// labelled these in Arabic and Spanish -- where the code is the same
-	// string in every archive.
-	// In the farmland south of the walls, not on the fountain: these two
-	// used to sit 44 and 58 units from the (0,0,0) town spawn -- right under
-	// the plaza's centrepiece. The real game keeps them in the fields. Both
-	// spots are measured flat, walkable and clear of objects and blocking
-	// edges (client/tools qa_shot --columns in region 96/168; world (0,-840)
-	// is region-local 960,1800 and (340,-340) is 1300,1300).
-	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1, X: 0, Z: -840, MaxHP: 200, Defense: 10, Attack: 8, GoldReward: 50},
-	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", Level: 5, X: 340, Z: -340, MaxHP: 80, Defense: 3, Attack: 4, GoldReward: 15},
-	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", Level: 27, X: 70, Z: -50, MaxHP: 350, Defense: 18, Attack: 14, GoldReward: 120},
+	// A low-level ground north-west of the fields (the (0,-840) anchor):
+	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1, X: 0, Z: -840, Count: 3},
+	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", Level: 2, X: -170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", Level: 3, X: 170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", Level: 4, X: -170, Z: -760, Count: 2},
+	// A higher ground east of the fields (the (340,-340) anchor):
+	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", Level: 5, X: 340, Z: -340, Count: 3},
+	{Zone: "jangan", Name: "Water Ghost slave", CodeName: "MOB_CH_WATERGHOST_CLON", Level: 6, X: 500, Z: -360, Count: 2},
+	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", Level: 7, X: 340, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Tomb Stone Ghost", CodeName: "MOB_CH_TOMBSTONE_CLON", Level: 8, X: 500, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", Level: 9, X: 200, Z: -480, Count: 2},
+	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", Level: 10, X: 200, Z: -220, Count: 2},
+	// The donghwang example kept from before (a far, higher-level zone).
+	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", Level: 27, X: 70, Z: -50, Count: 1},
 }
 
 const respawnDelay = 10 * time.Second
@@ -100,9 +120,10 @@ const respawnDelay = 10 * time.Second
 // zone, respawning it respawnDelay after each death, until ctx is
 // canceled. main() runs one of these per monsterSpecs entry.
 func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Logger, spec monsterSpec) {
+	maxHP, defense, attack, gold := monsterStatsForLevel(spec.Level, spec.Rarity)
 	spawn := func() int64 {
-		m := monsters.SpawnSpecies(spec.Zone, combat.Species{Name: spec.Name, CodeName: spec.CodeName, Level: spec.Level, Rarity: spec.Rarity}, spec.X, 0, spec.Z, spec.MaxHP, spec.Defense, spec.Attack, spec.GoldReward)
-		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone)
+		m := monsters.SpawnSpecies(spec.Zone, combat.Species{Name: spec.Name, CodeName: spec.CodeName, Level: spec.Level, Rarity: spec.Rarity}, spec.X, 0, spec.Z, maxHP, defense, attack, gold)
+		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone, "level", m.Level)
 		return m.ID
 	}
 
@@ -351,7 +372,19 @@ func main() {
 	duels := duel.NewHub()
 	trades := trade.NewHub()
 	for _, spec := range monsterSpecs {
-		go maintainMonster(ctx, monsters, logger, spec)
+		count := spec.Count
+		if count < 1 {
+			count = 1
+		}
+		// Spread a species' instances around its anchor on a small deterministic
+		// grid (so respawns land back in place) -- a cluster, not a stack. ~130
+		// units apart, well over a monster's ~77-unit capsule.
+		for i := 0; i < count; i++ {
+			inst := spec
+			inst.X += float64((i%3)-1) * 130.0
+			inst.Z += float64(i/3) * 130.0
+			go maintainMonster(ctx, monsters, logger, inst)
+		}
 	}
 
 	handle := gateway.Chain(
