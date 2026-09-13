@@ -90,9 +90,11 @@ Ordered roughly quick-fix → needs-a-server-system.
   table), so the NPC heading is NOT in the client. Like damage/exp, NPC spawn heading is
   server-authoritative (retail server spawn tables). Needs our server to define/send an NPC
   heading, or a retail server DB — not fixable client-side without inventing headings.
-- [ ] **NPC talk dialogue with options** (pic 1): the talk box lists the NPC's services
-  (e.g. "1. Deposit into storage / 2. Honor Rank / 3. End conversation"). Needs per-NPC service
-  data (which NPC offers storage/shop/etc.); today we only show greeting text.
+- [~] **NPC talk dialogue with options** (pic 1, v0.1.131): the talk box shows the NPC's real
+  greeting (npcchat.txt -> textquest_speechname.txt) and lists its real services as numbered
+  options -- shop grounded by refshopgroup.txt membership, plus repair/storage/guild from the
+  NPC's own codename. Only "End conversation" acts; the systems behind Buy/Repair/Storage are
+  their own features still to come.
 - [x] **EXP curve recovered + server leveling** — `leveldata.txt` col 1 is exp-to-next-level (139
   levels; level 9 = 17978, matches the screenshot), stat points **3/level** (Stat Point 24 at level
   9). Curve imported at runtime (`cmd/export-leveldata` → CSV → `internal/leveldata`); the kill path
