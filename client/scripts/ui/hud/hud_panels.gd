@@ -338,6 +338,10 @@ const SHOP_TAB_FALLBACK_SIZE := Vector2(54, 20)
 
 var _shop_tabs: Array = []      # of ShopReader.Tab
 var _shop_selected := 0
+## item id -> price, from the server catalogue (its own disclosed formula --
+## there is no real NPC price table; see docs/GROUNDING_AUDIT.md). Requested
+## once and cached.
+var _shop_prices: Dictionary = {}
 
 ## Opens the store window for an NPC, filled with the tabs of real goods the
 ## caller resolved (World3D, via ShopReader). Retitles and refills a single
@@ -350,9 +354,34 @@ func open_shop(npc_name: String, tabs: Array) -> void:
 	_shop_tabs = tabs
 	_shop_selected = 0
 	_build_shop_tab_strip(window)
+	_build_shop_purse(window)
 	_select_shop_tab(0)
 	window.show()
 	window.move_to_front()
+	# Prices for just this NPC's goods, and the current purse. The catalogue is
+	# the server's to compute; the client only displays what it sends. Asking
+	# for only these ids (not the whole ~12k catalogue) keeps the reply inside
+	# a single frame.
+	if NetClient.is_connected_to_server():
+		var ids := _shop_item_ids()
+		if not ids.is_empty():
+			NetClient.list_shop(ids)
+		var who := NetClient.current_character_name
+		if who != "":
+			NetClient.character_stats(who)
+	_update_shop_purse()
+
+## The item ids of every good this NPC sells, across all its tabs -- what to
+## ask the server to price.
+func _shop_item_ids() -> Array:
+	_load_items()
+	var ids: Array = []
+	for tab in _shop_tabs:
+		for code in (tab as ShopReader.Tab).item_codes:
+			var item: ItemTableReader.Item = _items_by_code.get(code)
+			if item != null:
+				ids.append(item.id)
+	return ids
 
 func _build_shop_tab_strip(window: HudWindow) -> void:
 	var old := window.get_node_or_null("ShopTabs")
@@ -428,16 +457,199 @@ func _fill_shop_grid(codes: PackedStringArray) -> void:
 		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
 		if icon == null:
 			continue
-		if ci < codes.size():
-			var item: ItemTableReader.Item = _items_by_code.get(codes[ci])
-			if item != null and item.icon_path != "" and _builder != null:
-				icon.texture = _builder.load_texture(item.icon_path)
-				icon.tooltip_text = "\n".join(PackedStringArray(item.tooltip_lines(_object_names)))
-				icon.mouse_filter = Control.MOUSE_FILTER_STOP
-				continue
-		icon.texture = null
-		icon.tooltip_text = ""
-		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var item: ItemTableReader.Item = _items_by_code.get(codes[ci]) if ci < codes.size() else null
+		if item != null and item.icon_path != "" and _builder != null:
+			icon.texture = _builder.load_texture(item.icon_path)
+			icon.tooltip_text = _shop_tooltip(item)
+			icon.mouse_filter = Control.MOUSE_FILTER_STOP
+			icon.set_meta("shop_item_id", item.id)
+			# Click to buy. Wired once per cell (the cells persist across tab
+			# switches); the meta above carries the current item.
+			if not icon.has_meta("shop_click_wired"):
+				icon.set_meta("shop_click_wired", true)
+				icon.gui_input.connect(func(ev: InputEvent) -> void: _on_shop_cell_input(ev, icon))
+		else:
+			icon.texture = null
+			icon.tooltip_text = ""
+			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			if icon.has_meta("shop_item_id"):
+				icon.remove_meta("shop_item_id")
+
+## The hover tooltip for a shop item: its real stats, plus the price the server
+## quotes (when the catalogue has arrived).
+func _shop_tooltip(item: ItemTableReader.Item) -> String:
+	var lines := PackedStringArray(item.tooltip_lines(_object_names))
+	if _shop_prices.has(item.id):
+		lines.append("")
+		lines.append("Price: %s gold" % _grouped(_shop_prices[item.id]))
+	return "\n".join(lines)
+
+func _on_shop_cell_input(event: InputEvent, icon: TextureRect) -> void:
+	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		if icon.has_meta("shop_item_id"):
+			_confirm_buy(int(icon.get_meta("shop_item_id")))
+
+# --- Purse, buy confirmation, results ---------------------------------------
+## Where the gold line sits in the store window: the empty band below the grid
+## (the buyback row we don't build). Ours, disclosed.
+const SHOP_PURSE_POS := Vector2(20, 300)
+const SHOP_STATUS_POS := Vector2(20, 316)
+
+func _build_shop_purse(window: HudWindow) -> void:
+	if window.get_node_or_null("ShopPurse") != null:
+		return
+	var purse := Label.new()
+	purse.name = "ShopPurse"
+	purse.position = SHOP_PURSE_POS
+	purse.add_theme_color_override("font_color", Color(0.95, 0.85, 0.45))
+	var status := Label.new()
+	status.name = "ShopStatus"
+	status.position = SHOP_STATUS_POS
+	status.add_theme_color_override("font_color", ROW_TEXT_COLOUR)
+	for lbl in [purse, status]:
+		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if _builder != null:
+			var font := _builder.font_at(0)
+			if font != null:
+				lbl.add_theme_font_override("font", font)
+			lbl.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+		window.add_child(lbl)
+
+func _update_shop_purse() -> void:
+	var window: HudWindow = _windows.get("store")
+	if window == null:
+		return
+	var purse := window.get_node_or_null("ShopPurse") as Label
+	if purse != null:
+		purse.text = "Gold: %s" % (_grouped(_stats.gold) if _stats != null else "-")
+
+func _set_shop_status(text: String) -> void:
+	var window: HudWindow = _windows.get("store")
+	if window == null:
+		return
+	var status := window.get_node_or_null("ShopStatus") as Label
+	if status != null:
+		status.text = text
+
+## A small confirmation before spending gold, so a click does not buy by
+## accident. Built over the store window; Buy sends the purchase, Cancel closes.
+func _confirm_buy(item_id: int) -> void:
+	var window: HudWindow = _windows.get("store")
+	if window == null:
+		return
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	if item == null:
+		return
+	var old := window.get_node_or_null("BuyConfirm")
+	if old != null:
+		old.free()
+	var price: int = _shop_prices.get(item_id, -1)
+	var affordable: bool = _stats == null or price < 0 or _stats.gold >= price
+
+	var panel := PanelContainer.new()
+	panel.name = "BuyConfirm"
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
+	style.border_color = Color(0.55, 0.45, 0.22)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(4)
+	style.set_content_margin_all(12)
+	panel.add_theme_stylebox_override("panel", style)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	panel.add_child(box)
+	box.add_child(_shop_label("Buy %s?" % item.display_name(_object_names), Color(0.95, 0.9, 0.72)))
+	if price >= 0:
+		box.add_child(_shop_label("Price: %s gold" % _grouped(price), Color(0.95, 0.85, 0.45)))
+	if not affordable:
+		box.add_child(_shop_label("Not enough gold.", Color(0.95, 0.5, 0.45)))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(row)
+	var buy := Button.new()
+	buy.text = "Buy"
+	buy.disabled = not affordable
+	buy.pressed.connect(func() -> void:
+		panel.free()
+		_do_buy(item_id))
+	row.add_child(buy)
+	var cancel := Button.new()
+	cancel.text = "Cancel"
+	cancel.pressed.connect(func() -> void: panel.free())
+	row.add_child(cancel)
+
+	window.add_child(panel)
+	# Centre it over the window once it has a size.
+	panel.reset_size()
+	await panel.get_tree().process_frame
+	panel.position = ((window.size - panel.size) * 0.5).round()
+
+func _shop_label(text: String, colour: Color) -> Label:
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_color_override("font_color", colour)
+	if _builder != null:
+		var font := _builder.font_at(0)
+		if font != null:
+			lbl.add_theme_font_override("font", font)
+		lbl.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+	return lbl
+
+func _do_buy(item_id: int) -> void:
+	var who := NetClient.current_character_name
+	if who == "" or not NetClient.is_connected_to_server():
+		_set_shop_status("Not connected.")
+		return
+	NetClient.shop_buy(who, item_id, 1)
+
+func _on_shop_list_result(entries: Array, error: String) -> void:
+	if error != "":
+		push_warning("HudPanels: shop catalogue refused: %s" % error)
+		return
+	for e in entries:
+		_shop_prices[e.item_id] = e.price
+	# The catalogue arrived after the grid was drawn, so redraw the open tab to
+	# fold prices into the tooltips.
+	if _windows.has("store") and _shop_selected >= 0 and _shop_selected < _shop_tabs.size():
+		_fill_shop_grid((_shop_tabs[_shop_selected] as ShopReader.Tab).item_codes)
+
+func _on_shop_buy_result(ok: bool, reason: String) -> void:
+	if not _windows.has("store"):
+		return
+	if ok:
+		_set_shop_status("Purchased.")
+		# Refresh the purse and the bag (if open) from the server.
+		var who := NetClient.current_character_name
+		if who != "":
+			NetClient.character_stats(who)
+			NetClient.list_inventory(who)
+	else:
+		_set_shop_status("Could not buy: %s" % reason)
+
+## QA only: the first good of the open tab, for a render standing in for a
+## click (a render cannot click a shop cell). Never used in real play.
+func _qa_first_item_id() -> int:
+	if _shop_selected >= 0 and _shop_selected < _shop_tabs.size():
+		var codes: PackedStringArray = (_shop_tabs[_shop_selected] as ShopReader.Tab).item_codes
+		if codes.size() > 0:
+			var item: ItemTableReader.Item = _items_by_code.get(codes[0])
+			if item != null:
+				return item.id
+	return -1
+
+func qa_confirm_first_item() -> void:
+	var id := _qa_first_item_id()
+	if id >= 0:
+		_confirm_buy(id)
+
+func qa_buy_first_item() -> void:
+	var id := _qa_first_item_id()
+	if id >= 0:
+		_do_buy(id)
 
 ## The live paper-doll texture (a SubViewport's), set by World3D whenever
 ## the dressed character changes. Shown in the equipment section's central
@@ -1396,6 +1608,10 @@ func connect_net() -> void:
 	# Keep the skill window's points live: a kill grants skill points, so
 	# re-read the state after an attack while the window is open.
 	NetClient.attack_result.connect(_on_attack_refresh_skill)
+	# Shop: the catalogue carries each item's price (the server's own disclosed
+	# formula -- there is no real price table); a buy result refreshes the purse.
+	NetClient.shop_list_result.connect(_on_shop_list_result)
+	NetClient.shop_buy_result.connect(_on_shop_buy_result)
 
 ## The character panel's own control names, from resinfo\\ifplayerinfo.txt.
 ## Every value field is a `_DAT` sibling of its label.
@@ -1458,6 +1674,8 @@ func _apply_stats(stats: StatsNet.Stats) -> void:
 		var gold := inventory.node("GDR_INVENTORY_STA_GOLD") as Label
 		if gold != null:
 			gold.text = _grouped(stats.gold)
+	# The shop's own purse line, if the store is open.
+	_update_shop_purse()
 
 	var character: HudWindow = _windows.get("character")
 	if character != null:

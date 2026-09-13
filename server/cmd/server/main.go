@@ -159,6 +159,11 @@ func main() {
 		"path to a skill-refdata CSV (from cmd/export-refdata -mode skills); with -in-memory it "+
 			"lets the server gate learning on real skills. With PostgreSQL, import it via "+
 			"cmd/import-refdata instead. Without either, learning real skills is unavailable.")
+	itemsCSV := flag.String("items-csv", os.Getenv("SRREVAMP_ITEMS_CSV"),
+		"path to an item-refdata CSV (from cmd/export-refdata -mode items); with -in-memory it "+
+			"feeds the shop catalogue and prices, item stat lookups and inventory stack limits. "+
+			"With PostgreSQL, import it via cmd/import-refdata instead. Without either, the shop "+
+			"has no items to sell.")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -223,6 +228,24 @@ func main() {
 				os.Exit(1)
 			}
 			logger.Info("loaded skill refdata for learning", "skills", len(sk))
+		}
+		if *itemsCSV != "" {
+			f, err := os.Open(*itemsCSV)
+			if err != nil {
+				logger.Error("opening items CSV", "error", err)
+				os.Exit(1)
+			}
+			it, err := refdata.LoadItemsCSV(f)
+			f.Close()
+			if err != nil {
+				logger.Error("parsing items CSV", "error", err)
+				os.Exit(1)
+			}
+			if err := memRef.ImportItems(context.Background(), it); err != nil {
+				logger.Error("importing items", "error", err)
+				os.Exit(1)
+			}
+			logger.Info("loaded item refdata for the shop", "items", len(it))
 		}
 		memInv := inventory.NewMemStore(memRef)
 		memAccounts := account.NewMemStore()

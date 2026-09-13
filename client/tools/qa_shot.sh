@@ -164,7 +164,15 @@ if [ "$SERVER" = "start" ]; then
     exit 1
   fi
   SERVER_PORT="${SERVER_PORT:-15899}"
-  "$SERVER_BIN" -in-memory -addr "127.0.0.1:$SERVER_PORT" >"$OUT/server.log" 2>&1 &
+  # Feed the in-memory server its refdata so the shop has items to sell (and
+  # prices) and learning has skills: an items/skills CSV beside the pk2s, or
+  # named explicitly. Without them the shop opens but sells nothing.
+  ITEMS_CSV="${SRREVAMP_ITEMS_CSV:-$PK2_DIR/items.csv}"
+  SKILLS_CSV="${SRREVAMP_SKILLS_CSV:-$PK2_DIR/skills.csv}"
+  SERVER_ARGS=(-in-memory -addr "127.0.0.1:$SERVER_PORT")
+  [ -f "$ITEMS_CSV" ]  && SERVER_ARGS+=(-items-csv "$ITEMS_CSV")
+  [ -f "$SKILLS_CSV" ] && SERVER_ARGS+=(-skills-csv "$SKILLS_CSV")
+  "$SERVER_BIN" "${SERVER_ARGS[@]}" >"$OUT/server.log" 2>&1 &
   SERVER_PID=$!
   # SIGKILL, not SIGTERM: the in-memory server did not always die on TERM, so
   # servers piled up on the port between runs (the startup reap above now clears

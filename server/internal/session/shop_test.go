@@ -138,7 +138,7 @@ func TestShopFullFlow(t *testing.T) {
 		t.Fatalf("login failed: err=%v result=%+v", err, lr)
 	}
 
-	resp = send(OpShopList, nil)
+	resp = send(OpShopList, (&ShopListRequest{ItemIDs: []int64{100}}).Encode())
 	listResult, err := DecodeShopListResult(resp.Data)
 	if err != nil || listResult.Error != "" {
 		t.Fatalf("shop list failed: err=%v result=%+v", err, listResult)

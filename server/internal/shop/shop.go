@@ -115,3 +115,25 @@ func (s *Service) Catalog(ctx context.Context) ([]CatalogEntry, error) {
 	}
 	return out, nil
 }
+
+// CatalogFor returns catalog entries for just the given item ids -- the goods
+// one NPC sells -- rather than the whole refdata table. Ids that don't resolve
+// are skipped. This is what keeps a shop listing to a handful of items: the
+// full Catalog is ~12,000 entries, which overflows a single protocol frame.
+func (s *Service) CatalogFor(ctx context.Context, ids []int64) ([]CatalogEntry, error) {
+	out := make([]CatalogEntry, 0, len(ids))
+	for _, id := range ids {
+		item, err := s.Items.GetItem(ctx, id)
+		if err != nil {
+			continue
+		}
+		out = append(out, CatalogEntry{
+			ItemID:         item.ID,
+			Price:          Price(item),
+			ItemClass:      item.ItemClass,
+			PhysAttackMax:  item.PhysAttackMax,
+			PhysDefenseMax: item.PhysDefenseMax,
+		})
+	}
+	return out, nil
+}

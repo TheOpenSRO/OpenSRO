@@ -5406,6 +5406,15 @@ func _qa_step() -> void:
 		if _shop_reader != null:
 			_hud_panels.open_shop(scode, _shop_reader.tabs_for(scode))
 
+	# SRREVAMP_QA_SHOP_BUY exercises the buy flow for a render: show the confirm
+	# popup (proving the price + purse loaded), then actually buy (proving the
+	# transaction; the purse drops and the server logs it).
+	if OS.get_environment("SRREVAMP_QA_SHOP_BUY") != "" and _hud_panels != null:
+		if _qa_tick == 58:
+			_hud_panels.qa_confirm_first_item()
+		elif _qa_tick == 70:
+			_hud_panels.qa_buy_first_item()
+
 	# SRREVAMP_QA_NAVGAP compares each nearby object's *solid* footprint
 	# against its *walkable* one. A player can stand inside anything where
 	# the first is bigger than the second, so this says which objects those

@@ -70,9 +70,19 @@ static func decode_buy_result(data: PackedByteArray) -> BuyResult:
 	result.reason = data.slice(3, 3 + reason_len).get_string_from_utf8()
 	return result
 
-## Encodes an OpShopList request (no payload).
-static func encode_list_request() -> PackedByteArray:
-	return PackedByteArray()
+## Encodes an OpShopList request: the item ids to price (the goods the NPC
+## sells). Listing only these keeps the reply small -- the full catalogue is
+## thousands of items, past a single frame.
+static func encode_list_request(item_ids: Array = []) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(2)
+	out.encode_u16(0, item_ids.size())
+	for id in item_ids:
+		var id_buf := PackedByteArray()
+		id_buf.resize(8)
+		id_buf.encode_s64(0, int(id))
+		out.append_array(id_buf)
+	return out
 
 static func _decode_catalog_entry(data: PackedByteArray, offset: int) -> Array:
 	if offset + 16 > data.size():

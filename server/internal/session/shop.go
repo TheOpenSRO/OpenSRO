@@ -67,6 +67,45 @@ func DecodeShopBuyResult(data []byte) (*ShopBuyResult, error) {
 	return &ShopBuyResult{OK: ok, Reason: reason}, nil
 }
 
+// ShopListRequest is the OpShopList payload: the item ids to price (the goods
+// the NPC being talked to sells). Listing only these keeps the response small
+// -- the full catalogue is ~12,000 items, far past a single frame.
+type ShopListRequest struct {
+	ItemIDs []int64
+}
+
+// shopListMaxIDs caps a list request so a client cannot ask the server to
+// build an unbounded response.
+const shopListMaxIDs = 500
+
+func (r *ShopListRequest) Encode() []byte {
+	out := make([]byte, 2)
+	binary.LittleEndian.PutUint16(out, uint16(len(r.ItemIDs)))
+	for _, id := range r.ItemIDs {
+		out = append(out, encodeInt64(id)...)
+	}
+	return out
+}
+
+func DecodeShopListRequest(data []byte) (*ShopListRequest, error) {
+	if len(data) < 2 {
+		return &ShopListRequest{}, nil
+	}
+	count := int(binary.LittleEndian.Uint16(data))
+	rest := data[2:]
+	ids := make([]int64, 0, count)
+	for i := 0; i < count; i++ {
+		var id int64
+		var err error
+		id, rest, err = decodeInt64(rest)
+		if err != nil {
+			return nil, fmt.Errorf("session: decoding ShopListRequest: id %d: %w", i, err)
+		}
+		ids = append(ids, id)
+	}
+	return &ShopListRequest{ItemIDs: ids}, nil
+}
+
 // ShopCatalogEntry is one purchasable item, as sent over the wire.
 type ShopCatalogEntry struct {
 	ItemID         int64
@@ -169,7 +208,7 @@ func ShopHandler(chars character.Store, svc *shop.Service) gateway.Handler {
 		case OpShopBuy:
 			return handleShopBuy(ctx, sess, p, chars, svc)
 		case OpShopList:
-			return handleShopList(ctx, sess, svc)
+			return handleShopList(ctx, sess, p, svc)
 		default:
 			return nil
 		}
@@ -212,8 +251,16 @@ func handleShopBuy(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	return sess.Send(&proto.Packet{Opcode: OpShopBuyResult, Data: result.Encode()})
 }
 
-func handleShopList(ctx context.Context, sess *gateway.Session, svc *shop.Service) error {
-	catalog, err := svc.Catalog(ctx)
+func handleShopList(ctx context.Context, sess *gateway.Session, p *proto.Packet, svc *shop.Service) error {
+	req, err := DecodeShopListRequest(p.Data)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpShopListResult, Data: (&ShopListResult{Error: "malformed request"}).Encode()})
+	}
+	ids := req.ItemIDs
+	if len(ids) > shopListMaxIDs {
+		ids = ids[:shopListMaxIDs]
+	}
+	catalog, err := svc.CatalogFor(ctx, ids)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpShopListResult, Data: (&ShopListResult{Error: "failed to load catalog"}).Encode()})
 	}

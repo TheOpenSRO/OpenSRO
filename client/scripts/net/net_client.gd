@@ -290,8 +290,8 @@ func unequip(char_name: String, slot: int) -> void:
 func shop_buy(char_name: String, item_id: int, quantity: int) -> void:
 	_send(ShopNet.OP_BUY, ShopNet.encode_buy(char_name, item_id, quantity))
 
-func list_shop() -> void:
-	_send(ShopNet.OP_LIST, ShopNet.encode_list_request())
+func list_shop(item_ids: Array = []) -> void:
+	_send(ShopNet.OP_LIST, ShopNet.encode_list_request(item_ids))
 
 func attack(char_name: String, target_monster_id: int) -> void:
 	_send(CombatNet.OP_ATTACK, CombatNet.encode_attack(char_name, target_monster_id))

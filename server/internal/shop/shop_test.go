@@ -184,3 +184,34 @@ func TestCatalogListsEveryItemWithComputedPrice(t *testing.T) {
 		t.Fatalf("unexpected entry for item 200: %+v", byID[200])
 	}
 }
+
+func TestCatalogForReturnsOnlyRequestedResolvableItems(t *testing.T) {
+	ctx := context.Background()
+	items := stubItems{
+		100: {ID: 100, PhysAttackMax: 30},
+		200: {ID: 200, PhysDefenseMax: 20},
+		300: {ID: 300},
+	}
+	svc, _, _ := newTestService(t, items)
+
+	// Ask for two real ids and one that doesn't exist; the missing one is
+	// skipped, not an error.
+	entries, err := svc.CatalogFor(ctx, []int64{100, 999, 300})
+	if err != nil {
+		t.Fatalf("CatalogFor: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2 (100 and 300; 999 skipped)", len(entries))
+	}
+	if entries[0].ItemID != 100 || entries[0].Price != Price(items[100]) {
+		t.Fatalf("first entry should be item 100 at its price, got %+v", entries[0])
+	}
+	if entries[1].ItemID != 300 {
+		t.Fatalf("second entry should be item 300, got %+v", entries[1])
+	}
+	// An empty request returns nothing (never the whole catalogue).
+	empty, err := svc.CatalogFor(ctx, nil)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("CatalogFor(nil) = (%+v, %v), want empty", empty, err)
+	}
+}
