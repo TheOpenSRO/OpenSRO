@@ -7587,6 +7587,50 @@ foot. The worn slots around it are still empty frames -- filling them
 with the equipped icons, and the item table's armour defence block, are
 the follow-ups.
 
+## Hundred-and-forty-first round: the NPC shop -- real goods, real prices, a real purchase
+
+Talk -> Buy now opens the client's own store window filled with what the
+NPC really sells, and you can buy it. Grounded throughout; the two hard
+parts were where the shop's shape lives and why buying broke.
+
+**The store window carries no tabs -- the store *class* builds them.**
+`resinfo\ifstore.txt` has a 6x5 lattice (GDR_STORE_LAT, 21,71,216,180 ->
+30 cells), a page spinner and repair buttons, but not one tab control. The
+tabs are built in code: decompiling both store classes (FUN_006cf5a0
+CIFStore, FUN_006d2c70 CIFStoreForPackage) shows an identical loop from
+x=16 stepping 0x38=56 while x<0xf0=240 -- four `com_short_tab` tabs -- then
+a 4-tabs x pages x 30-slot store (classic 2 pages, package 8). So the
+visible window is the same either way; the branch only changes invisible
+page capacity. We build the tab strip the same way, over the authored
+frame, and take the classic 30-slot branch.
+
+**Its two slot sets are alternates behind `#ifdef RENEWAL_SHOP_SYSTEM`.**
+The layout declares both CIFSlotWithHelp (classic) and
+CIFSlotWithHelpForPackage (renewal) over the same grid; reading both draws
+60 slots. UiLayoutParser gained optional `#ifdef`/`#else`/`#endif`
+selection (off by default -- every window built so far relies on reading
+both branches, since the client binds by class), and the store builds with
+nothing defined: the base 30-slot grid, no RESTORE_SOLDITEM_INSHOP buyback
+row.
+
+**Item names come from the name string id, not the object name.** itemdata
+column 3 is written in mixed languages -- "Copper Sword" but Korean for
+many consumables; column 5 is the `SN_ITEM_*` id that textdata_object turns
+into real English ("HP Recovery Potion (X-Large)"). Reading column 5 fixed
+Korean names everywhere items show, not just the shop. Tab names
+(SN_TAB_WEAPON -> "Weapon") resolve through textuisystem.
+
+**Buying broke twice, both fixed.** The in-memory server never loaded item
+refdata, so its shop sold nothing ("no such item"); added `-items-csv`
+beside the existing `-skills-csv`. Then OpShopList returned the entire
+~12,000-item catalogue in one 329 KB packet, past a single frame -- the
+server closed the session and the client hung at login. A shop only needs
+its own NPC's goods, so the list request now carries the item ids to price
+(the smith's 19, capped at 500) and the server prices just those. Verified
+in a render: a Copper Sword priced 540 gold (the server's own disclosed
+formula, there being no real vendor price table), bought, purse 1,000 ->
+460.
+
 ## Hundred-and-fortieth round: a weapon's stats on hover, measured off a real tooltip
 
 "If I hover over an item it shows me the stats." Hovering an inventory

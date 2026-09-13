@@ -28,16 +28,18 @@ In order. Each is checked off here when it ships in a release, with its round in
       Restart = login screen, Exit = quit, Option = the F3 settings panel. Still open: the
       **authored Option window** (`ifoption` + `ifoption_video`, its View radios and our UI scale /
       chat font / name range as its Setting tab) in place of the F3 panel.
-- [x] **NPC talk.** A click on an NPC opens `if_npctalk` titled with its name -- round 139. Still
-      open: the service lines behind the greeting (storage deposit, merchant shop, honour rank),
-      each its own backend; only "End conversation" acts so far.
-      - **Merchant shop.** The server's `shop.Service` Buy/Catalog works, but its catalog is the
-        whole refdata `items` table. `export-refdata` (round 145) now generates the CSV to fill it
-        from the client's own itemdata, verified import-ready. Running `import-refdata` against a
-        live server is the operator's call (it also turns on real weapon damage and enforces equip
-        requirements -- `deploy/README.md`). Once imported, still open: per-NPC curation (a weapon
-        merchant sells weapons), which the whole-catalog service does not model, before wiring
-        NPC talk -> shop.
+- [x] **NPC talk.** A click on an NPC opens `if_npctalk` titled with its name -- round 139. The
+      greeting's service lines are now clickable; Buy opens the shop (below). Still open: the other
+      services (storage deposit, honour rank), each its own backend.
+      - [x] **Merchant shop.** Talk -> Buy opens the authored store window (`ifstore`) with the
+        NPC's real goods, tabs, prices, and a working purchase -- rounds 141 (this WORLD_ISSUES
+        numbering) / releases v0.1.134-135. Per-NPC goods come from the real shop chain
+        (`ShopReader`: refshopgroup -> ... -> refscrapofpackageitem -> item), so a smith sells
+        weapons, not the whole catalogue. Prices are the server's own disclosed formula (no real
+        vendor price table exists). The in-memory server loads items via `-items-csv` (qa_shot
+        feeds `items.csv` beside the pk2s); PostgreSQL imports them via `import-refdata`.
+        Still open: **selling** items back (the store has no sell path yet), **quantity** (buys 1
+        at a time), **repair** (the authored buttons are inert), and paging past 30 goods.
 - [x] **Item tooltips** with the real stats -- round 140, columns pinned against the Copper Sword
       (+5) the user sent.
 - [x] **Paper doll** -- round 141: the equipment window (`O`) renders the dressed character live.
