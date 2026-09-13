@@ -29,6 +29,13 @@ import (
 // catalog.
 var ErrItemNotFound = errors.New("shop: item not found")
 
+// ErrSlotEmpty is returned by Service.Sell when the inventory slot to sell
+// from holds nothing.
+var ErrSlotEmpty = errors.New("shop: nothing in that slot")
+
+// ErrNothingToSell is returned by Service.Sell for a non-positive quantity.
+var ErrNothingToSell = errors.New("shop: quantity must be positive")
+
 // basePrice and statMultiplier are this project's own pricing formula
 // constants -- the fallback when an import has no real price, not derived
 // from any original economy data. sellFallbackDivisor likewise: a buy-back
@@ -114,6 +121,51 @@ func (s *Service) Buy(ctx context.Context, characterID, itemID int64, quantity i
 		return fmt.Errorf("shop: adding item to inventory: %w", err)
 	}
 	return nil
+}
+
+// Sell sells quantity from the given inventory slot back to the NPC: it reads
+// the slot's own item and count from the server's inventory (never trusting
+// the client for what is there), credits SellValue*quantity in gold, and
+// removes the items. Selling more than the slot holds sells what it holds.
+// Returns the gold credited. If crediting gold fails after the items were
+// removed, the items are put back before returning the error.
+func (s *Service) Sell(ctx context.Context, characterID int64, slot, quantity int) (int64, error) {
+	if quantity <= 0 {
+		return 0, ErrNothingToSell
+	}
+	slots, err := s.Inv.List(ctx, characterID)
+	if err != nil {
+		return 0, fmt.Errorf("shop: reading inventory: %w", err)
+	}
+	var found *inventory.Slot
+	for i := range slots {
+		if slots[i].Index == slot {
+			found = &slots[i]
+			break
+		}
+	}
+	if found == nil || found.Quantity <= 0 {
+		return 0, ErrSlotEmpty
+	}
+	if quantity > found.Quantity {
+		quantity = found.Quantity
+	}
+	item, err := s.Items.GetItem(ctx, found.ItemID)
+	if err != nil {
+		return 0, ErrItemNotFound
+	}
+	gold := SellValue(item) * int64(quantity)
+
+	if err := s.Inv.RemoveItem(ctx, characterID, slot, quantity); err != nil {
+		return 0, fmt.Errorf("shop: removing sold item: %w", err)
+	}
+	if err := s.Gold.AddGold(ctx, characterID, gold); err != nil {
+		if backErr := s.Inv.AddItem(ctx, characterID, found.ItemID, quantity); backErr != nil {
+			return 0, fmt.Errorf("shop: crediting gold failed (%w) AND putting the item back failed (%v) -- character may have lost an item", err, backErr)
+		}
+		return 0, fmt.Errorf("shop: crediting gold: %w", err)
+	}
+	return gold, nil
 }
 
 // Catalog returns every purchasable item (the entire refdata catalog --

@@ -358,6 +358,16 @@ func open_shop(npc_name: String, tabs: Array) -> void:
 	_select_shop_tab(0)
 	window.show()
 	window.move_to_front()
+	# Open the bag alongside, so the player can sell from it -- the client sells
+	# by clicking an inventory item while the shop is open. Set side by side so
+	# the shop and the bag both read (the client pairs them the same way).
+	var bag: HudWindow = open("inventory")
+	if bag != null:
+		var view := get_viewport_rect().size
+		window.position = Vector2(view.x * 0.5 - window.size.x - 8.0, (view.y - window.size.y) * 0.5).round()
+		bag.position = Vector2(view.x * 0.5 + 8.0, (view.y - bag.size.y) * 0.5).round()
+		bag.move_to_front()
+		window.move_to_front()
 	# Prices for just this NPC's goods, and the current purse. The catalogue is
 	# the server's to compute; the client only displays what it sends. Asking
 	# for only these ids (not the whole ~12k catalogue) keeps the reply inside
@@ -369,6 +379,7 @@ func open_shop(npc_name: String, tabs: Array) -> void:
 		var who := NetClient.current_character_name
 		if who != "":
 			NetClient.character_stats(who)
+			NetClient.list_inventory(who)
 	_update_shop_purse()
 
 ## The item ids of every good this NPC sells, across all its tabs -- what to
@@ -676,6 +687,111 @@ func _on_shop_buy_result(ok: bool, reason: String) -> void:
 	else:
 		_set_shop_status("Could not buy: %s" % reason)
 
+## A confirmation before selling from the bag: the item, its buy-back price
+## and (for a stack) a quantity, then Sell sends it. The gold shown is the
+## client's estimate from itemdata; the server's result carries the truth.
+func _confirm_sell(slot: int, item_id: int, slot_qty: int) -> void:
+	var window: HudWindow = _windows.get("store")
+	if window == null:
+		return
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	if item == null:
+		return
+	var old := window.get_node_or_null("SellConfirm")
+	if old != null:
+		old.free()
+	var unit: int = item.sell_price
+	var max_qty: int = maxi(1, slot_qty)
+
+	var panel := PanelContainer.new()
+	panel.name = "SellConfirm"
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
+	style.border_color = Color(0.55, 0.45, 0.22)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(4)
+	style.set_content_margin_all(12)
+	panel.add_theme_stylebox_override("panel", style)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	panel.add_child(box)
+	box.add_child(_shop_label("Sell %s?" % item.display_name(_object_names), Color(0.95, 0.9, 0.72)))
+	if unit > 0 and max_qty > 1:
+		box.add_child(_shop_label("%s gold each" % _grouped(unit), Color(0.86, 0.82, 0.7)))
+
+	var qty_box := [1]
+	var total_label := _shop_label("", Color(0.95, 0.85, 0.45))
+	var refresh := func() -> void:
+		total_label.text = "Get: %s gold" % _grouped(unit * qty_box[0]) if unit > 0 else ""
+
+	if max_qty > 1:
+		var qrow := HBoxContainer.new()
+		qrow.add_theme_constant_override("separation", 8)
+		qrow.alignment = BoxContainer.ALIGNMENT_CENTER
+		box.add_child(qrow)
+		var minus := Button.new()
+		minus.text = "-"
+		minus.custom_minimum_size = Vector2(30, 0)
+		var qty_label := _shop_label("1", Color(0.96, 0.96, 0.96))
+		qty_label.custom_minimum_size = Vector2(52, 0)
+		var plus := Button.new()
+		plus.text = "+"
+		plus.custom_minimum_size = Vector2(30, 0)
+		minus.pressed.connect(func() -> void:
+			qty_box[0] = maxi(1, qty_box[0] - 1)
+			qty_label.text = str(qty_box[0])
+			refresh.call())
+		plus.pressed.connect(func() -> void:
+			qty_box[0] = mini(max_qty, qty_box[0] + 1)
+			qty_label.text = str(qty_box[0])
+			refresh.call())
+		qrow.add_child(minus)
+		qrow.add_child(qty_label)
+		qrow.add_child(plus)
+	box.add_child(total_label)
+	refresh.call()
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(row)
+	var sell := Button.new()
+	sell.text = "Sell"
+	sell.pressed.connect(func() -> void:
+		var q: int = qty_box[0]
+		panel.free()
+		_do_sell(slot, q))
+	row.add_child(sell)
+	var cancel := Button.new()
+	cancel.text = "Cancel"
+	cancel.pressed.connect(func() -> void: panel.free())
+	row.add_child(cancel)
+
+	window.add_child(panel)
+	panel.reset_size()
+	await panel.get_tree().process_frame
+	panel.position = ((window.size - panel.size) * 0.5).round()
+
+func _do_sell(slot: int, quantity: int) -> void:
+	var who := NetClient.current_character_name
+	if who == "" or not NetClient.is_connected_to_server():
+		_set_shop_status("Not connected.")
+		return
+	NetClient.sell_item(who, slot, maxi(1, quantity))
+
+func _on_shop_sell_result(ok: bool, reason: String, gold_received: int) -> void:
+	if not _windows.has("store"):
+		return
+	if ok:
+		_set_shop_status("Sold for %s gold." % _grouped(gold_received))
+		var who := NetClient.current_character_name
+		if who != "":
+			NetClient.character_stats(who)
+			NetClient.list_inventory(who)
+	else:
+		_set_shop_status("Could not sell: %s" % reason)
+
 ## QA only: an item to buy in a render standing in for a click (a render
 ## cannot click a shop cell). Prefers the cheapest stackable good across the
 ## NPC's tabs (so the quantity stepper shows and a bulk buy is affordable),
@@ -708,6 +824,31 @@ func qa_buy_first_item() -> void:
 	if id >= 0:
 		# A quantity, to exercise the bulk buy and stacking.
 		_do_buy(id, 20)
+
+## QA only: the first occupied inventory cell, a stand-in for clicking a bag
+## item to sell it. Never used in real play.
+func _qa_first_inventory_icon() -> TextureRect:
+	var inv: HudWindow = _windows.get("inventory")
+	if inv == null:
+		return null
+	var grid := inv.node("GDR_INVENTORY_LATTICE") as Control
+	if grid == null:
+		return null
+	for cell in grid.get_children():
+		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
+		if icon != null and icon.has_meta("inv_slot"):
+			return icon
+	return null
+
+func qa_confirm_sell_first() -> void:
+	var icon := _qa_first_inventory_icon()
+	if icon != null:
+		_confirm_sell(int(icon.get_meta("inv_slot")), int(icon.get_meta("inv_item_id")), int(icon.get_meta("inv_qty")))
+
+func qa_sell_first(quantity: int) -> void:
+	var icon := _qa_first_inventory_icon()
+	if icon != null:
+		_do_sell(int(icon.get_meta("inv_slot")), quantity)
 
 ## The live paper-doll texture (a SubViewport's), set by World3D whenever
 ## the dressed character changes. Shown in the equipment section's central
@@ -900,6 +1041,9 @@ func _fill_inventory_grid(slots: Array) -> void:
 		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
 		if icon != null:
 			icon.texture = null
+			for m in ["inv_slot", "inv_item_id", "inv_qty"]:
+				if icon.has_meta(m):
+					icon.remove_meta(m)
 		var count := cell.get_node_or_null("CountLabel") as Label
 		if count != null:
 			count.text = ""
@@ -912,6 +1056,8 @@ func _fill_inventory_grid(slots: Array) -> void:
 		var item_id = _first_field(entry, ["item_id", "id"])
 		if item_id == null:
 			continue
+		var quantity = _first_field(entry, COUNT_FIELDS)
+		var qty: int = int(quantity) if quantity != null else 1
 		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
 		if icon != null:
 			icon.texture = _item_icon(int(item_id))
@@ -921,10 +1067,28 @@ func _fill_inventory_grid(slots: Array) -> void:
 			# hover registers; the cell behind it still takes clicks.
 			icon.tooltip_text = _item_tooltip(int(item_id))
 			icon.mouse_filter = Control.MOUSE_FILTER_STOP
-		var quantity = _first_field(entry, COUNT_FIELDS)
+			# The slot's identity, so a click can sell it while a shop is open.
+			icon.set_meta("inv_slot", index)
+			icon.set_meta("inv_item_id", int(item_id))
+			icon.set_meta("inv_qty", qty)
+			if not icon.has_meta("inv_click_wired"):
+				icon.set_meta("inv_click_wired", true)
+				icon.gui_input.connect(func(ev: InputEvent) -> void: _on_inventory_cell_input(ev, icon))
 		var count_label := cell.get_node_or_null("CountLabel") as Label
-		if count_label != null and quantity != null and int(quantity) > 1:
-			count_label.text = str(int(quantity))
+		if count_label != null and qty > 1:
+			count_label.text = str(qty)
+
+## While a shop is open, a click on an inventory item offers to sell it.
+## (Selling from the bag is how the client sells to a vendor.)
+func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
+	if not (event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT):
+		return
+	var store: HudWindow = _windows.get("store")
+	if store == null or not store.visible:
+		return
+	if icon.has_meta("inv_slot") and icon.has_meta("inv_item_id"):
+		_confirm_sell(int(icon.get_meta("inv_slot")), int(icon.get_meta("inv_item_id")), int(icon.get_meta("inv_qty")))
 
 ## QA only: fills the bag grid with sample items so a render can show a
 ## populated inventory without needing kills or a seeded server. The item IDs
@@ -1670,6 +1834,7 @@ func connect_net() -> void:
 	# formula -- there is no real price table); a buy result refreshes the purse.
 	NetClient.shop_list_result.connect(_on_shop_list_result)
 	NetClient.shop_buy_result.connect(_on_shop_buy_result)
+	NetClient.shop_sell_result.connect(_on_shop_sell_result)
 
 ## The character panel's own control names, from resinfo\\ifplayerinfo.txt.
 ## Every value field is a `_DAT` sibling of its label.

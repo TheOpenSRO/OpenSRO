@@ -18,7 +18,77 @@ const (
 	OpShopBuyResult  uint16 = 0x0051 // server -> client
 	OpShopList       uint16 = 0x0052 // client -> server
 	OpShopListResult uint16 = 0x0053 // server -> client
+	OpShopSell       uint16 = 0x0054 // client -> server
+	OpShopSellResult uint16 = 0x0055 // server -> client
 )
+
+// ShopSellRequest is the OpShopSell payload: sell Quantity from inventory Slot.
+type ShopSellRequest struct {
+	CharacterName string
+	Slot          int32
+	Quantity      int32
+}
+
+func (r *ShopSellRequest) Encode() []byte {
+	out := encodeStrings(r.CharacterName)
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(r.Slot))
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(r.Quantity))
+	return append(out, buf...)
+}
+
+func DecodeShopSellRequest(data []byte) (*ShopSellRequest, error) {
+	fields, rest, err := decodeStringsPrefix(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding ShopSellRequest: %w", err)
+	}
+	if len(rest) < 8 {
+		return nil, errors.New("session: decoding ShopSellRequest: truncated slot/quantity")
+	}
+	return &ShopSellRequest{
+		CharacterName: fields[0],
+		Slot:          int32(binary.LittleEndian.Uint32(rest[0:4])),
+		Quantity:      int32(binary.LittleEndian.Uint32(rest[4:8])),
+	}, nil
+}
+
+// ShopSellResult is the OpShopSellResult payload: the outcome plus the gold
+// actually credited (the server's own SellValue, so the client shows the true
+// amount rather than its own estimate).
+type ShopSellResult struct {
+	OK           bool
+	Reason       string
+	GoldReceived int64
+}
+
+func (r *ShopSellResult) Encode() []byte {
+	out := encodeOKReason(r.OK, r.Reason)
+	return append(out, encodeInt64(r.GoldReceived)...)
+}
+
+func DecodeShopSellResult(data []byte) (*ShopSellResult, error) {
+	if len(data) < 1 {
+		return nil, errors.New("session: decoding ShopSellResult: empty payload")
+	}
+	ok := data[0] != 0
+	fields, rest, err := decodeStringsPrefix(data[1:], 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding ShopSellResult: %w", err)
+	}
+	// The gold tail is optional so an OK/Reason-only payload still decodes.
+	var gold int64
+	if len(rest) >= 8 {
+		gold, _, _ = decodeInt64(rest)
+	}
+	return &ShopSellResult{OK: ok, Reason: reason(fields), GoldReceived: gold}, nil
+}
+
+func reason(fields []string) string {
+	if len(fields) > 0 {
+		return fields[0]
+	}
+	return ""
+}
 
 // ShopBuyRequest is the OpShopBuy payload.
 type ShopBuyRequest struct {
@@ -209,6 +279,8 @@ func ShopHandler(chars character.Store, svc *shop.Service) gateway.Handler {
 			return handleShopBuy(ctx, sess, p, chars, svc)
 		case OpShopList:
 			return handleShopList(ctx, sess, p, svc)
+		case OpShopSell:
+			return handleShopSell(ctx, sess, p, chars, svc)
 		default:
 			return nil
 		}
@@ -249,6 +321,34 @@ func handleShopBuy(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 		}
 	}
 	return sess.Send(&proto.Packet{Opcode: OpShopBuyResult, Data: result.Encode()})
+}
+
+func handleShopSell(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *shop.Service) error {
+	req, err := DecodeShopSellRequest(p.Data)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpShopSellResult, Data: (&ShopSellResult{Reason: "malformed request"}).Encode()})
+	}
+	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
+	if errStr != "" {
+		return sess.Send(&proto.Packet{Opcode: OpShopSellResult, Data: (&ShopSellResult{Reason: errStr}).Encode()})
+	}
+
+	gold, err := svc.Sell(ctx, characterID, int(req.Slot), int(req.Quantity))
+	if err != nil {
+		result := &ShopSellResult{}
+		switch {
+		case errors.Is(err, shop.ErrSlotEmpty):
+			result.Reason = "nothing to sell there"
+		case errors.Is(err, shop.ErrNothingToSell):
+			result.Reason = "quantity must be positive"
+		case errors.Is(err, shop.ErrItemNotFound):
+			result.Reason = "cannot sell that item"
+		default:
+			result.Reason = "sale failed"
+		}
+		return sess.Send(&proto.Packet{Opcode: OpShopSellResult, Data: result.Encode()})
+	}
+	return sess.Send(&proto.Packet{Opcode: OpShopSellResult, Data: (&ShopSellResult{OK: true, GoldReceived: gold}).Encode()})
 }
 
 func handleShopList(ctx context.Context, sess *gateway.Session, p *proto.Packet, svc *shop.Service) error {

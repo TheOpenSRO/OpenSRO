@@ -8,12 +8,22 @@ const OP_BUY := 0x0050         # client -> server
 const OP_BUY_RESULT := 0x0051  # server -> client
 const OP_LIST := 0x0052        # client -> server
 const OP_LIST_RESULT := 0x0053 # server -> client
+const OP_SELL := 0x0054        # client -> server
+const OP_SELL_RESULT := 0x0055 # server -> client
 
 ## Result of decode_buy_result().
 class BuyResult:
 	var ok: bool
 	var reason: String
 	var error: String # decode error, distinct from a well-formed "not ok" response
+
+## Result of decode_sell_result(). gold_received is the real amount the server
+## credited (its own SellValue), so the UI shows the truth, not its estimate.
+class SellResult:
+	var ok: bool
+	var reason: String
+	var gold_received: int
+	var error: String
 
 ## One purchasable item, with enough stats to tell items apart -- refdata
 ## items have no display name (see docs/protocol/refdata_schema.md).
@@ -68,6 +78,41 @@ static func decode_buy_result(data: PackedByteArray) -> BuyResult:
 
 	result.ok = ok
 	result.reason = data.slice(3, 3 + reason_len).get_string_from_utf8()
+	return result
+
+## Encodes an OpShopSell request: sell `quantity` from inventory `slot`.
+static func encode_sell(character_name: String, slot: int, quantity: int) -> PackedByteArray:
+	var name_bytes := character_name.to_utf8_buffer()
+	var out := PackedByteArray()
+	out.resize(2)
+	out.encode_u16(0, name_bytes.size())
+	out.append_array(name_bytes)
+	var tail := PackedByteArray()
+	tail.resize(8)
+	tail.encode_u32(0, slot)
+	tail.encode_u32(4, quantity)
+	out.append_array(tail)
+	return out
+
+## Decodes an OpShopSellResult payload: 1 OK byte, a length-prefixed reason,
+## then an optional 8-byte gold-received tail.
+static func decode_sell_result(data: PackedByteArray) -> SellResult:
+	var result := SellResult.new()
+	if data.size() < 1:
+		result.error = "empty payload"
+		return result
+	result.ok = data[0] != 0
+	if data.size() < 3:
+		result.error = "truncated reason length prefix"
+		return result
+	var reason_len := data.decode_u16(1)
+	if 3 + reason_len > data.size():
+		result.error = "declared reason length %d exceeds remaining bytes" % reason_len
+		return result
+	result.reason = data.slice(3, 3 + reason_len).get_string_from_utf8()
+	var offset := 3 + reason_len
+	if offset + 8 <= data.size():
+		result.gold_received = data.decode_s64(offset)
 	return result
 
 ## Encodes an OpShopList request: the item ids to price (the goods the NPC

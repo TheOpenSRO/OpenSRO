@@ -126,6 +126,50 @@ func TestBuyMultipleQuantity(t *testing.T) {
 	}
 }
 
+func TestSellCreditsGoldAndRemovesItem(t *testing.T) {
+	ctx := context.Background()
+	// Buys at 200, sells back at its real SellPrice 80.
+	items := stubItems{100: {ID: 100, Price: 200, SellPrice: 80}}
+	svc, chars, characterID := newTestService(t, items)
+
+	if err := svc.Buy(ctx, characterID, 100, 2); err != nil {
+		t.Fatalf("Buy: %v", err)
+	}
+	invList, _ := svc.Inv.List(ctx, characterID)
+	if len(invList) != 1 {
+		t.Fatalf("expected one stacked slot after buying, got %+v", invList)
+	}
+	slot := invList[0].Index
+
+	gold, err := svc.Sell(ctx, characterID, slot, 1)
+	if err != nil {
+		t.Fatalf("Sell: %v", err)
+	}
+	if gold != 80 {
+		t.Fatalf("Sell credited %d, want the real SellPrice 80", gold)
+	}
+	list, _ := chars.ListByAccount(ctx, 1)
+	// Started, spent 2*200 buying, got 80 back selling one.
+	wantGold := int64(character.StartingGold) - 400 + 80
+	if list[0].Gold != wantGold {
+		t.Fatalf("got Gold %d, want %d", list[0].Gold, wantGold)
+	}
+	after, _ := svc.Inv.List(ctx, characterID)
+	if len(after) != 1 || after[0].Quantity != 1 {
+		t.Fatalf("expected 1 left in the slot after selling one, got %+v", after)
+	}
+}
+
+func TestSellEmptySlotFails(t *testing.T) {
+	ctx := context.Background()
+	items := stubItems{100: {ID: 100, SellPrice: 80}}
+	svc, _, characterID := newTestService(t, items)
+
+	if _, err := svc.Sell(ctx, characterID, 5, 1); !errors.Is(err, ErrSlotEmpty) {
+		t.Fatalf("Sell of an empty slot: got %v, want ErrSlotEmpty", err)
+	}
+}
+
 func TestBuyInsufficientGoldDoesNotAddItem(t *testing.T) {
 	ctx := context.Background()
 	// An expensive item the starting gold can't cover.

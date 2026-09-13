@@ -5410,13 +5410,14 @@ func _qa_step() -> void:
 	# popup (proving the price + purse loaded), then actually buy (proving the
 	# transaction; the purse drops and the server logs it).
 	if OS.get_environment("SRREVAMP_QA_SHOP_BUY") != "" and _hud_panels != null:
-		if _qa_tick == 58:
-			_hud_panels.qa_confirm_first_item()
-		elif _qa_tick == 70:
+		# Buy a stack, then sell part of it back -- the whole shop loop. The bag
+		# opens with the shop, so the stack and the sell dialog both show.
+		if _qa_tick == 55:
 			_hud_panels.qa_buy_first_item()
-		elif _qa_tick == 82:
-			# Open the bag so the render shows the bought stack (one slot, count).
-			_hud_panels.open("inventory")
+		elif _qa_tick == 75:
+			_hud_panels.qa_confirm_sell_first()
+		elif _qa_tick == 90:
+			_hud_panels.qa_sell_first(5)
 
 	# SRREVAMP_QA_NAVGAP compares each nearby object's *solid* footprint
 	# against its *walkable* one. A player can stand inside anything where

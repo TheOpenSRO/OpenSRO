@@ -83,12 +83,38 @@ func _test_decode_list_result_error() -> void:
 	_check(result.error == "failed to load catalog", "error round-trips")
 	_check(result.entries.size() == 0, "no entries alongside an error")
 
+func _test_encode_sell() -> void:
+	var encoded := ShopNet.encode_sell("Aria", 7, 5)
+	_check(encoded.decode_u16(0) == 4, "sell name length prefix is 4")
+	_check(encoded.decode_u32(6) == 7, "sell slot round-trips")
+	_check(encoded.decode_u32(10) == 5, "sell quantity round-trips")
+
+func _test_decode_sell_result() -> void:
+	# ok=1, empty reason, gold_received=42.
+	var payload := PackedByteArray([1, 0, 0])
+	var gold := PackedByteArray()
+	gold.resize(8)
+	gold.encode_s64(0, 42)
+	payload.append_array(gold)
+	var result := ShopNet.decode_sell_result(payload)
+	_check(result.error == "", "sell: no decode error")
+	_check(result.ok, "sell: ok is true")
+	_check(result.gold_received == 42, "sell: gold received round-trips (got %d)" % result.gold_received)
+
+func _test_decode_sell_result_no_gold_tail() -> void:
+	# An OK/reason-only payload (no gold tail) still decodes.
+	var result := ShopNet.decode_sell_result(PackedByteArray([1, 0, 0]))
+	_check(result.error == "" and result.ok and result.gold_received == 0, "sell: tolerates a missing gold tail")
+
 func _init() -> void:
 	_test_encode_buy()
 	_test_decode_buy_result_ok()
 	_test_decode_buy_result_failure()
 	_test_decode_list_result()
 	_test_decode_list_result_error()
+	_test_encode_sell()
+	_test_decode_sell_result()
+	_test_decode_sell_result_no_gold_tail()
 
 	if _failures == 0:
 		print("ALL PASS")

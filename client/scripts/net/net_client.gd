@@ -39,6 +39,7 @@ signal character_stats_result(stats: StatsNet.Stats)
 signal equipment_result(items: Array, error: String)
 signal shop_buy_result(ok: bool, reason: String)
 signal shop_list_result(entries: Array, error: String)
+signal shop_sell_result(ok: bool, reason: String, gold_received: int)
 signal attack_result(result: CombatNet.AttackResult)
 signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
@@ -293,6 +294,9 @@ func shop_buy(char_name: String, item_id: int, quantity: int) -> void:
 func list_shop(item_ids: Array = []) -> void:
 	_send(ShopNet.OP_LIST, ShopNet.encode_list_request(item_ids))
 
+func sell_item(char_name: String, slot: int, quantity: int) -> void:
+	_send(ShopNet.OP_SELL, ShopNet.encode_sell(char_name, slot, quantity))
+
 func attack(char_name: String, target_monster_id: int) -> void:
 	_send(CombatNet.OP_ATTACK, CombatNet.encode_attack(char_name, target_monster_id))
 
@@ -445,6 +449,9 @@ func _dispatch(p: Packet) -> void:
 		ShopNet.OP_LIST_RESULT:
 			var r := ShopNet.decode_list_result(p.data)
 			shop_list_result.emit(r.entries, r.error)
+		ShopNet.OP_SELL_RESULT:
+			var r := ShopNet.decode_sell_result(p.data)
+			shop_sell_result.emit(r.ok, r.reason if r.error == "" else r.error, r.gold_received)
 		CombatNet.OP_ATTACK_RESULT:
 			attack_result.emit(CombatNet.decode_attack_result(p.data))
 		CombatNet.OP_MONSTER_DAMAGED:
