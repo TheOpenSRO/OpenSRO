@@ -118,6 +118,14 @@ box. **No invented value dressed as real was found in the new work either.** Wha
   (level 9 = 17978); the runtime path is correct.
 - **Shop prices — re-confirmed.** Copper Sword (`ITEM_CH_SWORD_01_A`, id 71) still reads
   col 26 = 890 / col 31 = 427 in the client's own itemdata.
+- **Armor/shield defence columns — re-confirmed by type relationship** (the storage-session
+  grounding, which post-dated the first audit). Across real itemdata, cloth (`CLOTHES`), light
+  (`LIGHT`) and heavy (`HEAVY`) chests at one tier order exactly as the game's armor types should:
+  heavy has the highest col 65/66 (phys def) and durability (col 63), cloth the highest col 76/77
+  (mag def), light between — confirming col 65/66 = physical def and col 76/77 = magical def, each
+  min<max. Col 74/75 (block) is 0 on all body armor and 10–20 only on shields (`SHIELD`), confirming
+  it as the shield block ratio. So `item_table_reader`'s defence column map is grounded, not just
+  schema-aligned.
 - **Disclosures verified honest.** `character.go` (per-level MaxHP), `berserk.go` (gauge numbers)
   and the `monsterStatsForLevel` curve each label themselves own-design with the reason (all
   server-side balance, never recovered). No new FLAG.
