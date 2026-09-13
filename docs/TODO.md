@@ -34,28 +34,28 @@ In order. Each is checked off here when it ships in a release, with its round in
       - [x] **Storage (warehouse) -- items AND gold.** Talk -> Storage opens the authored
         warehouse window (`ifstorageroom`) with the bag beside it: click to deposit/withdraw items
         (each a quantity dialog), and the money button opens a gold deposit/withdraw dialog --
-        rounds 144-145 / releases v0.1.139-140. The warehouse is a second inventory container
+        rounds 168-169 / releases v0.1.139-140. The warehouse is a second inventory container
         (`storage_slots` table, `storage.Service`) plus a per-character `storage_gold` balance,
         reachable in real play from the grounded warehouse NPCs (`NPC_CH_WAREHOUSE_M`/`_W`). Still
         open: per-account vs per-character scope (currently per-character).
       - [x] **Merchant shop -- buy AND sell.** Talk -> Buy opens the authored store window
         (`ifstore`) with the NPC's real goods, tabs, real prices, quantity buying, and selling
-        from the bag -- rounds 141-143 / releases v0.1.134-138. Per-NPC goods come from the real
+        from the bag -- rounds 165-167 / releases v0.1.134-138. Per-NPC goods come from the real
         shop chain (`ShopReader`: refshopgroup -> ... -> refscrapofpackageitem -> item), so a
         smith sells weapons, not the whole catalogue. **Prices are REAL** (itemdata `_RefObjCommon`
-        Price col 26 / SellPrice col 31; the old stat formula is now a fallback -- see round 142
+        Price col 26 / SellPrice col 31; the old stat formula is now a fallback -- see round 166
         and GROUNDING_AUDIT.md). Stackables stack to their real MaxStack (col 57). The in-memory
         server loads items via `-items-csv` (qa_shot feeds `items.csv` beside the pk2s); PostgreSQL
         imports them via `import-refdata` (regenerate/re-import to pick up price + stack columns).
         Still open: **repair** (the authored buttons are inert -- needs a per-item durability
         system, which does not exist yet) and paging past 30 goods (no current NPC needs it).
 - [x] **Item tooltips** with the real stats -- round 140 (weapon attack, pinned against the Copper
-      Sword +5 the user sent) and round 146 (armour/shield defence at columns 65-77, grounded from
+      Sword +5 the user sent) and round 170 (armour/shield defence at columns 65-77, grounded from
       the DB column order + the cloth=magic / heavy=physical relationship). See ITEM_FORMAT.md.
 - [x] **Paper doll** -- round 141: the equipment window (`O`) renders the dressed character live.
 - [x] **Equipment slot icons** -- round 142: the worn slots show the equipped icons, slot i in
       GDR_EQUIPMENT_SLOT_(100+i), anchored to the user's screenshot. (Armour defence block now
-      grounded -- round 146, above.)
+      grounded -- round 170, above.)
 - [x] **Skill window** -- round 143: the real China masteries (icons + names from
       `skillmasterydata` / the UI text table) at Lv 0, with the authored skill-point and
       mastery-total labels at an honest 0. Open: the per-mastery skill grid (a client-drawn
@@ -78,6 +78,15 @@ on a monster attacks it (NPC->talk, monster->attack, ground->move), the current 
 the top of the screen, and every blow floats a damage number that rises and fades -- white for
 damage the player deals, red for damage taken (round 149). Combat behind it is still the
 placeholder damage until the round-145 refdata is imported (operator's call, `deploy/README.md`).
+
+**The combat loop — done** (rounds 171-173, releases v0.1.142-144). The world has the real Jangan
+monster ladder (Mangyang through Yeoha, 23 monsters across two hunting grounds; grounded
+identity, one disclosed level-scaled stat curve). Leveling pays off: max HP grows with level, and
+the level label, HP-bar maximum, underbar EXP gauge and SP are fed live from the stats packet
+(the EXP curve itself, leveldata.txt, is real). And the berserk gauge fills through combat on the
+authored five orbs, unleashing a damage burst on **R**. Open: the numbers (monster HP/attack,
+berserk fill/bonus, HP-per-level) are all disclosed own design -- server-side balance never
+recovered -- and MP has no server side, so skills spend nothing yet.
 
 ### 1. NPCs — **done, except that they are statues** (hundred-and-fifth round)
 12,367 spawns and 5,423 models read from the player's own Media.pk2, each assembled from its own

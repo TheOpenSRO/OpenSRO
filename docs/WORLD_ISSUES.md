@@ -7075,6 +7075,176 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-seventy-third round: berserk -- the five-orb gauge
+
+The real Silkroad berserk, on the authored orbs. The mini-frame carries five
+circles (GDR_PMI_CIRCLE0..4) that went unused; they are the berserk gauge.
+Fighting fills a server-side gauge (berserk.Tracker, +8 a hit), the orbs light
+as it fills, and at full the R key unleashes berserk -- a damage burst
+(+50% for 20s, disclosed own design; the mechanic is real, the numbers are
+server-side and were never recovered) -- and the orbs glow. The gauge and
+active flag ride on every AttackResult (appended, back-compatible), so the HUD
+tracks it live. Verified in a render: orbs filled through combat, then all
+glowed while berserk, "Berserk!" logged beside the level-up.
+
+## Hundred-and-seventy-second round: leveling that pays off
+
+Killing advanced the character but nothing showed it: max HP was a flat 100,
+the level label was hardcoded to 1, and the underbar's EXP/SP gauges were
+never fed. Now HP scales with level (MaxHPForLevel, base 100 + 40/level,
+disclosed), a level-up (and a respawn) heals to that maximum, and the stats
+packet carries level/exp/exp-to-next/SP (appended) which the world HUD applies
+on enter-world, each kill and each level-up. The EXP curve itself is real --
+leveldata.txt exported to a CSV the server loads. Verified in a render: the
+Jangan ladder took a character to level 2, HP 100 -> 140, the EXP gauge
+climbing and "You have advanced to level 2" logged.
+
+## Hundred-and-seventy-first round: the real Jangan monster ladder
+
+Three hand-tuned monsters with inconsistent stats (a level-5 Weasel weaker
+than a level-1 Mangyang) became the real Jangan ladder -- Mangyang through
+Yeoha, levels 1-10, plus the donghwang Earth Ghost -- 23 monsters across two
+hunting grounds. Each species' identity is grounded in characterdata (CodeName,
+Name via textdata_object, Level/Rarity at cols 57/15); their combat numbers
+come from one disclosed level curve (monsterStatsForLevel) rather than
+per-species guesses, so exp (ExpFor off MaxHP) scales with level too.
+Positions are own design, clustered at the two farmland anchors already
+measured walkable, so every monster stands on verified terrain.
+
+## Hundred-and-seventieth round: the armour defence block, grounded at last
+
+Round 140 left armour tooltips without a defence line, on the assumption that
+"armour reuses the weapon columns for different stats, not yet measured." That
+assumption was wrong twice over. Armour does not reuse the attack columns --
+weapons leave columns 65-77 zero and armour leaves the attack columns zero, so
+they are separate blocks. And it is measurable: `refdata_schema.md` already
+records the real DB `_RefObjItem` defence column order (PD, ER, PAR, BR, MD),
+and it maps straight onto the data positions -- physical defence first at
+65-66, the shield-only block ratio at 74-75, magical defence right after at
+76-77. Three independent lines agree: that DB order, the min/max-pair structure
+matching the verified weapon block, and the values themselves obeying real
+armour behaviour -- a Cotton garment reads 2~2.5 physical / 4.3~5.2 magical and
+a Copper heavy 2.5~3 / 3.2~3.9, i.e. heavy has more physical and cloth more
+magical, the cloth=magic / heavy=physical characteristic; a shield alone adds
+Block ratio 10~20. Tooltips now show "Phy./Mag. def. pwr. X ~ Y" for armour
+and shields, the sword still shows none, and the ER/PAR/MAR columns whose
+semantics the schema calls undecoded stay out rather than get a guessed label.
+
+## Hundred-and-sixty-ninth round: the warehouse holds gold too
+
+The warehouse now keeps gold as well as items, finishing the authored
+window's Total Gold line and its money button. Warehouse gold is a
+per-character balance on the characters row (`storage_gold` beside `gold`);
+character.Store gained AddStorageGold / DeductStorageGold, and storage.Service
+moves gold between purse and warehouse the same careful way it moves items --
+deduct one side, credit the other, refund on a failed credit. OpStorageGold
+carries an op (query / deposit / withdraw) and an amount, and its result the
+two balances, so the window and the bag always show the server's own numbers
+rather than a client guess. A render deposited 250: the purse 960 -> 710 and
+the warehouse's Total Gold 0 -> 250.
+
+## Hundred-and-sixty-eighth round: the warehouse -- a second item container
+
+Talk to a warehouse keeper -> Storage opens the authored warehouse window
+(ifstorageroom) with the bag beside it; clicking a bag item deposits it and a
+stored item withdraws it, each a quantity dialog. Verified in a render: 8
+arrows deposited, the bag stack 20 -> 12 and the warehouse holding them.
+
+The warehouse is not new machinery. It is an ordinary inventory container on
+its own table, so it inherits every stacking and placement rule the bag has --
+inventory.OpenSQLStore gained a named variant for a second table
+(storage_slots), and storage.Service just moves items between the two
+containers, reading the slot's own item and count from the source rather than
+trusting the client, and returning the item if the destination add fails.
+OpStorageList reuses the inventory-list wire shape.
+
+Grounded that the service is reachable: the storage NPCs really are named with
+WAREHOUSE (NPC_CH_WAREHOUSE_M / _W, and the EU/CA/KT/WC equivalents), so
+NpcServiceReader's `codename contains WAREHOUSE` test -- an earlier guess --
+turns out to match the real data, and a warehouse keeper's talk box offers
+Storage the same way a smith's offers Buy.
+
+## Hundred-and-sixty-seventh round: selling back, and stackables that stack
+
+Two follow-ups finished the shop's economic loop. **Selling**: the store now
+opens with the bag beside it, and a click on a bag item offers to sell it --
+a "Sell X? N gold each" dialog with a quantity stepper, then the server buys
+it back at the item's real SellPrice (`shop.Sell` reads the slot's own item
+and count from its own inventory, never trusting the client, and puts the
+item back if crediting gold fails). A render sold 5 arrows: the stack 20 ->
+15, the purse 960 -> 965. **Stacking**: export-refdata had hardcoded
+MaxStack=1 for every item on a note that it "is 1 for every row" -- but that
+was the wrong column. Column 57 is the real MaxStack: 1 for all 8,616
+equipment rows, a real cap for stackables (a potion 5,000, arrows 2,500,
+alchemy stones 500). Reading it makes potions and materials stack to one
+slot instead of one-each; a render bought 20 arrows and they landed as a
+single slot of 20. The client's ItemTableReader now reads MaxStack (col 57)
+and SellPrice (col 31) too, for the buy stepper's cap and the sell estimate.
+
+## Hundred-and-sixty-sixth round: the shop's prices were real all along
+
+The round below priced the Copper Sword at 540 gold from the own-design stat
+formula, "there being no real vendor price table." That was half right: the
+restored *database* `_RefObjItem` had no price, but the client's own
+itemdata.txt does. `_RefObjCommon` column 26 is Price and column 31 is
+SellPrice, and they line up exactly -- column 32, ReqLevelType1, is the one
+ItemTableReader already reads, so the two on its left are pinned. A Copper
+Sword reads 890 buy / 427 sell, an HP potion 600 / 210, a shield 495 / 238;
+SellPrice is under Price on every row, weapons carry a CostRepair (198) that
+consumables read 0, all internally consistent. So the shop now charges the
+real 890 -- verified in a render, purse 1,000 -> 110 -- and the own-design
+formula is only a fallback for an import that predates the columns.
+export-refdata emits the two new columns (appended, so an older 28-column
+export still loads); the refdata Item, the CSV loader and the SQL schema
+carry Price/SellPrice; shop.Price prefers the real number, and shop.SellValue
+(real SellPrice, for selling back) is ready for the sell path. This is the
+one grounding dead-end this project has reopened -- GROUNDING_AUDIT.md moves
+shop prices from own-design to recovered.
+
+## Hundred-and-sixty-fifth round: the NPC shop -- real goods, real prices, a real purchase
+
+Talk -> Buy now opens the client's own store window filled with what the
+NPC really sells, and you can buy it. Grounded throughout; the two hard
+parts were where the shop's shape lives and why buying broke.
+
+**The store window carries no tabs -- the store *class* builds them.**
+`resinfo\ifstore.txt` has a 6x5 lattice (GDR_STORE_LAT, 21,71,216,180 ->
+30 cells), a page spinner and repair buttons, but not one tab control. The
+tabs are built in code: decompiling both store classes (FUN_006cf5a0
+CIFStore, FUN_006d2c70 CIFStoreForPackage) shows an identical loop from
+x=16 stepping 0x38=56 while x<0xf0=240 -- four `com_short_tab` tabs -- then
+a 4-tabs x pages x 30-slot store (classic 2 pages, package 8). So the
+visible window is the same either way; the branch only changes invisible
+page capacity. We build the tab strip the same way, over the authored
+frame, and take the classic 30-slot branch.
+
+**Its two slot sets are alternates behind `#ifdef RENEWAL_SHOP_SYSTEM`.**
+The layout declares both CIFSlotWithHelp (classic) and
+CIFSlotWithHelpForPackage (renewal) over the same grid; reading both draws
+60 slots. UiLayoutParser gained optional `#ifdef`/`#else`/`#endif`
+selection (off by default -- every window built so far relies on reading
+both branches, since the client binds by class), and the store builds with
+nothing defined: the base 30-slot grid, no RESTORE_SOLDITEM_INSHOP buyback
+row.
+
+**Item names come from the name string id, not the object name.** itemdata
+column 3 is written in mixed languages -- "Copper Sword" but Korean for
+many consumables; column 5 is the `SN_ITEM_*` id that textdata_object turns
+into real English ("HP Recovery Potion (X-Large)"). Reading column 5 fixed
+Korean names everywhere items show, not just the shop. Tab names
+(SN_TAB_WEAPON -> "Weapon") resolve through textuisystem.
+
+**Buying broke twice, both fixed.** The in-memory server never loaded item
+refdata, so its shop sold nothing ("no such item"); added `-items-csv`
+beside the existing `-skills-csv`. Then OpShopList returned the entire
+~12,000-item catalogue in one 329 KB packet, past a single frame -- the
+server closed the session and the client hung at login. A shop only needs
+its own NPC's goods, so the list request now carries the item ids to price
+(the smith's 19, capped at 500) and the server prices just those. Verified
+in a render: a Copper Sword priced 540 gold (the server's own disclosed
+formula, there being no real vendor price table), bought, purse 1,000 ->
+460.
+
 ## Hundred-and-sixty-fourth round: the inventory was a debug list over the real grid
 
 Playtest: the inventory looked nothing like the game -- a plain list of
@@ -7586,140 +7756,6 @@ slots. Rendered on the box: the white Cotton set and the sword, head to
 foot. The worn slots around it are still empty frames -- filling them
 with the equipped icons, and the item table's armour defence block, are
 the follow-ups.
-
-## Hundred-and-forty-sixth round: the armour defence block, grounded at last
-
-Round 140 left armour tooltips without a defence line, on the assumption that
-"armour reuses the weapon columns for different stats, not yet measured." That
-assumption was wrong twice over. Armour does not reuse the attack columns --
-weapons leave columns 65-77 zero and armour leaves the attack columns zero, so
-they are separate blocks. And it is measurable: `refdata_schema.md` already
-records the real DB `_RefObjItem` defence column order (PD, ER, PAR, BR, MD),
-and it maps straight onto the data positions -- physical defence first at
-65-66, the shield-only block ratio at 74-75, magical defence right after at
-76-77. Three independent lines agree: that DB order, the min/max-pair structure
-matching the verified weapon block, and the values themselves obeying real
-armour behaviour -- a Cotton garment reads 2~2.5 physical / 4.3~5.2 magical and
-a Copper heavy 2.5~3 / 3.2~3.9, i.e. heavy has more physical and cloth more
-magical, the cloth=magic / heavy=physical characteristic; a shield alone adds
-Block ratio 10~20. Tooltips now show "Phy./Mag. def. pwr. X ~ Y" for armour
-and shields, the sword still shows none, and the ER/PAR/MAR columns whose
-semantics the schema calls undecoded stay out rather than get a guessed label.
-
-## Hundred-and-forty-fifth round: the warehouse holds gold too
-
-The warehouse now keeps gold as well as items, finishing the authored
-window's Total Gold line and its money button. Warehouse gold is a
-per-character balance on the characters row (`storage_gold` beside `gold`);
-character.Store gained AddStorageGold / DeductStorageGold, and storage.Service
-moves gold between purse and warehouse the same careful way it moves items --
-deduct one side, credit the other, refund on a failed credit. OpStorageGold
-carries an op (query / deposit / withdraw) and an amount, and its result the
-two balances, so the window and the bag always show the server's own numbers
-rather than a client guess. A render deposited 250: the purse 960 -> 710 and
-the warehouse's Total Gold 0 -> 250.
-
-## Hundred-and-forty-fourth round: the warehouse -- a second item container
-
-Talk to a warehouse keeper -> Storage opens the authored warehouse window
-(ifstorageroom) with the bag beside it; clicking a bag item deposits it and a
-stored item withdraws it, each a quantity dialog. Verified in a render: 8
-arrows deposited, the bag stack 20 -> 12 and the warehouse holding them.
-
-The warehouse is not new machinery. It is an ordinary inventory container on
-its own table, so it inherits every stacking and placement rule the bag has --
-inventory.OpenSQLStore gained a named variant for a second table
-(storage_slots), and storage.Service just moves items between the two
-containers, reading the slot's own item and count from the source rather than
-trusting the client, and returning the item if the destination add fails.
-OpStorageList reuses the inventory-list wire shape.
-
-Grounded that the service is reachable: the storage NPCs really are named with
-WAREHOUSE (NPC_CH_WAREHOUSE_M / _W, and the EU/CA/KT/WC equivalents), so
-NpcServiceReader's `codename contains WAREHOUSE` test -- an earlier guess --
-turns out to match the real data, and a warehouse keeper's talk box offers
-Storage the same way a smith's offers Buy.
-
-## Hundred-and-forty-third round: selling back, and stackables that stack
-
-Two follow-ups finished the shop's economic loop. **Selling**: the store now
-opens with the bag beside it, and a click on a bag item offers to sell it --
-a "Sell X? N gold each" dialog with a quantity stepper, then the server buys
-it back at the item's real SellPrice (`shop.Sell` reads the slot's own item
-and count from its own inventory, never trusting the client, and puts the
-item back if crediting gold fails). A render sold 5 arrows: the stack 20 ->
-15, the purse 960 -> 965. **Stacking**: export-refdata had hardcoded
-MaxStack=1 for every item on a note that it "is 1 for every row" -- but that
-was the wrong column. Column 57 is the real MaxStack: 1 for all 8,616
-equipment rows, a real cap for stackables (a potion 5,000, arrows 2,500,
-alchemy stones 500). Reading it makes potions and materials stack to one
-slot instead of one-each; a render bought 20 arrows and they landed as a
-single slot of 20. The client's ItemTableReader now reads MaxStack (col 57)
-and SellPrice (col 31) too, for the buy stepper's cap and the sell estimate.
-
-## Hundred-and-forty-second round: the shop's prices were real all along
-
-The round below priced the Copper Sword at 540 gold from the own-design stat
-formula, "there being no real vendor price table." That was half right: the
-restored *database* `_RefObjItem` had no price, but the client's own
-itemdata.txt does. `_RefObjCommon` column 26 is Price and column 31 is
-SellPrice, and they line up exactly -- column 32, ReqLevelType1, is the one
-ItemTableReader already reads, so the two on its left are pinned. A Copper
-Sword reads 890 buy / 427 sell, an HP potion 600 / 210, a shield 495 / 238;
-SellPrice is under Price on every row, weapons carry a CostRepair (198) that
-consumables read 0, all internally consistent. So the shop now charges the
-real 890 -- verified in a render, purse 1,000 -> 110 -- and the own-design
-formula is only a fallback for an import that predates the columns.
-export-refdata emits the two new columns (appended, so an older 28-column
-export still loads); the refdata Item, the CSV loader and the SQL schema
-carry Price/SellPrice; shop.Price prefers the real number, and shop.SellValue
-(real SellPrice, for selling back) is ready for the sell path. This is the
-one grounding dead-end this project has reopened -- GROUNDING_AUDIT.md moves
-shop prices from own-design to recovered.
-
-## Hundred-and-forty-first round: the NPC shop -- real goods, real prices, a real purchase
-
-Talk -> Buy now opens the client's own store window filled with what the
-NPC really sells, and you can buy it. Grounded throughout; the two hard
-parts were where the shop's shape lives and why buying broke.
-
-**The store window carries no tabs -- the store *class* builds them.**
-`resinfo\ifstore.txt` has a 6x5 lattice (GDR_STORE_LAT, 21,71,216,180 ->
-30 cells), a page spinner and repair buttons, but not one tab control. The
-tabs are built in code: decompiling both store classes (FUN_006cf5a0
-CIFStore, FUN_006d2c70 CIFStoreForPackage) shows an identical loop from
-x=16 stepping 0x38=56 while x<0xf0=240 -- four `com_short_tab` tabs -- then
-a 4-tabs x pages x 30-slot store (classic 2 pages, package 8). So the
-visible window is the same either way; the branch only changes invisible
-page capacity. We build the tab strip the same way, over the authored
-frame, and take the classic 30-slot branch.
-
-**Its two slot sets are alternates behind `#ifdef RENEWAL_SHOP_SYSTEM`.**
-The layout declares both CIFSlotWithHelp (classic) and
-CIFSlotWithHelpForPackage (renewal) over the same grid; reading both draws
-60 slots. UiLayoutParser gained optional `#ifdef`/`#else`/`#endif`
-selection (off by default -- every window built so far relies on reading
-both branches, since the client binds by class), and the store builds with
-nothing defined: the base 30-slot grid, no RESTORE_SOLDITEM_INSHOP buyback
-row.
-
-**Item names come from the name string id, not the object name.** itemdata
-column 3 is written in mixed languages -- "Copper Sword" but Korean for
-many consumables; column 5 is the `SN_ITEM_*` id that textdata_object turns
-into real English ("HP Recovery Potion (X-Large)"). Reading column 5 fixed
-Korean names everywhere items show, not just the shop. Tab names
-(SN_TAB_WEAPON -> "Weapon") resolve through textuisystem.
-
-**Buying broke twice, both fixed.** The in-memory server never loaded item
-refdata, so its shop sold nothing ("no such item"); added `-items-csv`
-beside the existing `-skills-csv`. Then OpShopList returned the entire
-~12,000-item catalogue in one 329 KB packet, past a single frame -- the
-server closed the session and the client hung at login. A shop only needs
-its own NPC's goods, so the list request now carries the item ids to price
-(the smith's 19, capped at 500) and the server prices just those. Verified
-in a render: a Copper Sword priced 540 gold (the server's own disclosed
-formula, there being no real vendor price table), bought, purse 1,000 ->
-460.
 
 ## Hundred-and-fortieth round: a weapon's stats on hover, measured off a real tooltip
 
