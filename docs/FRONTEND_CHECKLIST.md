@@ -58,7 +58,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
 - [x] `Create` on the select screen opens this screen (temporary inline popup removed)
 - [ ] Appearance sliders (figure/height/weapon/cloth) — omitted until there is a system behind them
 - [ ] Unique-check button — no name-availability RPC yet; name is validated on create
-- [ ] Dress the preview in the starting outfit (currently the bare base body)
+- [x] Dress the preview in the starting outfit — v0.1.133: the create preview wears the real starting kit (Cotton Suit/Trousers/Shoes + Copper Sword), matching the server's StartingKitFor.
 - [ ] Rotatable / per-race backdrop polish (using the gold-dragon `loading_charactercustom` for now)
 
 ## 5b. Look-better pass (user asked)
