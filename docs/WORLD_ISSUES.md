@@ -7075,6 +7075,37 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-seventy-fourth round: regrounding the combat loop
+
+A re-verification pass over everything the combat loop (rounds 171-173) touched,
+against real client data on the RE box -- because the `main.go` roster comment
+claimed all 11 species were "GROUNDED" while the memory recorded only 3 levels
+as actually checked. That gap is the project's classic failure shape, so it got
+checked.
+
+It held. Every one of the 11 monster CodeNames exists in the real
+`characterdata_*.txt`; every Level matches col 57 exactly (1,2,3,4,5,6,7,8,9,10,
+27), every Rarity is 0 (col 15), and every English Name matches
+`textdata_object`'s real English column -- including the counter-intuitive ones
+("Small-eyed Ghost" really is the retail string for `MOB_CH_BIGEYEGHOST_CLON`).
+The EXP curve re-checked too (loaded CSV == real `leveldata.txt`, level 9 =
+17978), as did the shop price grounding (Copper Sword id 71 = 890/427, cols
+26/31) and the loot potion IDs (4/11/6/13 = the real HP/MP_POTION_01/03). The
+own-design disclosures (per-level MaxHP, berserk numbers, `monsterStatsForLevel`)
+are all honestly labelled. No invented value dressed as real.
+
+Two things came out of it. **One gap fixed:** the roster grew from 3 to 11 but
+`combat.LootTables` still had entries for only Mangyang/Weasel/Earth Ghost, so
+the 8 new species dropped nothing -- exactly the "rename the spawns and silently
+drop the loot" failure the file's own comment warns about. Filled in all eight
+(disclosed own-design chances, real item IDs, grounded names). **One candidate
+strengthened, not acted on:** characterdata col 79 is a near-perfect ~23.5/level
+line across the ladder (24,47,71,94,118,141,165,188,212,235) -- a much better
+MaxHP candidate than the non-monotonic col 59. Still not grounded (loader
+column-map not decompiled; pserver stat values may be modded), so monster HP
+stays disclosed; recorded in `GROUNDING_AUDIT.md` for the next pass. See that
+doc's 2026-09-13 section.
+
 ## Hundred-and-seventy-third round: berserk -- the five-orb gauge
 
 The real Silkroad berserk, on the authored orbs. The mini-frame carries five

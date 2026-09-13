@@ -45,13 +45,49 @@ var LootTables = map[string][]LootEntry{
 	// Keyed by the species names the game's own tables use, matching the
 	// spawns in cmd/server. Renaming the spawns without renaming these
 	// would have silently dropped every monster's loot.
-	"Mangyang": {
+	//
+	// The whole Jangan ladder (levels 1-10) plus the Earth Ghost is covered so
+	// no spawned monster drops nothing. The names are grounded (characterdata);
+	// the drop chances/quantities are own design, scaling loosely with level --
+	// low mobs give small potions at high rates, higher ones start giving the
+	// large variants. Not the game's real per-monster drop rates.
+	"Mangyang": { // L1
 		{ItemID: ItemHPPotion, Chance: 1.0, MinQuantity: 1, MaxQuantity: 2},
 	},
-	"Weasel": {
+	"Small-eyed Ghost": { // L2
+		{ItemID: ItemHPPotion, Chance: 0.8, MinQuantity: 1, MaxQuantity: 2},
+	},
+	"Big-eyed Ghost": { // L3
+		{ItemID: ItemHPPotion, Chance: 0.6, MinQuantity: 1, MaxQuantity: 2},
+		{ItemID: ItemMPPotion, Chance: 0.3, MinQuantity: 1, MaxQuantity: 1},
+	},
+	"Old Weasel": { // L4
+		{ItemID: ItemMPPotion, Chance: 0.6, MinQuantity: 1, MaxQuantity: 2},
+	},
+	"Weasel": { // L5
 		{ItemID: ItemMPPotion, Chance: 0.5, MinQuantity: 1, MaxQuantity: 2},
 	},
-	"Earth Ghost": {
+	"Water Ghost slave": { // L6
+		{ItemID: ItemHPPotion, Chance: 0.5, MinQuantity: 1, MaxQuantity: 2},
+		{ItemID: ItemMPPotion, Chance: 0.4, MinQuantity: 1, MaxQuantity: 2},
+	},
+	"Water Ghost": { // L7
+		{ItemID: ItemHPPotion, Chance: 0.5, MinQuantity: 1, MaxQuantity: 2},
+		{ItemID: ItemMPPotion, Chance: 0.5, MinQuantity: 1, MaxQuantity: 2},
+	},
+	"Tomb Stone Ghost": { // L8
+		{ItemID: ItemHPPotion, Chance: 0.4, MinQuantity: 1, MaxQuantity: 2},
+		{ItemID: ItemMPPotion, Chance: 0.4, MinQuantity: 1, MaxQuantity: 2},
+	},
+	"Stone Ghost": { // L9
+		{ItemID: ItemHPPotionLg, Chance: 0.25, MinQuantity: 1, MaxQuantity: 1},
+		{ItemID: ItemMPPotion, Chance: 0.5, MinQuantity: 1, MaxQuantity: 2},
+	},
+	"Yeoha": { // L10
+		{ItemID: ItemHPPotionLg, Chance: 0.3, MinQuantity: 1, MaxQuantity: 1},
+		{ItemID: ItemMPPotionLg, Chance: 0.4, MinQuantity: 1, MaxQuantity: 2},
+	},
+	"Earth Ghost": { // L27
 		{ItemID: ItemHPPotionLg, Chance: 0.3, MinQuantity: 1, MaxQuantity: 1},
 		{ItemID: ItemMPPotionLg, Chance: 0.75, MinQuantity: 1, MaxQuantity: 3},
 	},

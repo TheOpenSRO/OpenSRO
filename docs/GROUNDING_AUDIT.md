@@ -48,11 +48,12 @@ built on recovered data, mostly disclosed, plus **one client comment that overst
 | Skill table (`refdata.Skill`) | **RECOVERED (schema)** | Curated subset of real `_RefSkill` (118 cols confirmed). Explicitly notes **no** real damage/effect column was found. |
 | Drop schema (`refdata.MonsterDrop`/`DropGroupEntry`) | **RECOVERED (schema)** | Real `_RefMonster_AssignedItemRndDrop`/`_RefDropItemGroup`; `refdata_schema.md`. |
 | Starter-kit item IDs | **RECOVERED** | The item table's own `_A_DEF` code-name marks starters; real rows (3643–3645 / 3652–3654 / 3632). Two picks (garment family, sword) **disclosed** as this project's, because the original chooses by creation-class the server doesn't record. |
-| Monster CodeNames (`MOB_CH_*`) | **RECOVERED** | Real `characterdata` keys; the model resolves by them. |
+| Monster identity — CodeName, Level, Rarity, Name (`MOB_CH_*`) | **RECOVERED** | Real `characterdata` (`_RefObjChar`): CodeName is the row key the model resolves by; Level is col 57, Rarity col 15, and the English Name is `textdata_object`'s resolution of the row's `SN_` key. Re-verified 2026-09-13 for the whole 11-species Jangan ladder (levels 1–10 + Earth Ghost 27) — every CodeName, level, rarity 0 and name matched real data. |
 | Combat damage model (`base + bonus − defense`, floor 1) | **OWN-DESIGN (disclosed)** | `combat.go`: "Entirely own design." No crit/dodge/evade (disclosed open item). |
 | Unarmed damage = 5 | **OWN-DESIGN (disclosed)** | Labelled "Own [design]." |
-| MaxHP = 100, flat | **OWN-DESIGN (disclosed)** | `character.go`: "Flat for now — own design." No Str→HP derivation yet (needs the client formula). |
-| Monster HP / def / atk / gold / spawn XYZ | **OWN-DESIGN (disclosed)** | `cmd/server` monsterSpecs: "Our own placeholder PvE content — no real map/monster data." |
+| MaxHP = 100 + 40·(level−1) | **OWN-DESIGN (disclosed)** | `character.go`: "Own design -- no real max-HP table was recovered (it is server-side, like monster HP) -- but scaled by level so leveling actually grows survivability." `MaxHPForLevel`. No Str→HP derivation yet (needs the client formula). Was flat 100 before the combat-loop pass (v0.1.143). |
+| Monster HP / def / atk / gold | **OWN-DESIGN (disclosed)** | `cmd/server` `monsterStatsForLevel`: one disclosed curve scaling every stat off the *grounded* level (HP 50+22·lvl, etc.) — "No real monster HP/attack table exists in the client data … not derived from any original balance data." Column-59-vs-79 HP candidate exists in characterdata but is unsettled (see the regrounding note below); kept disclosed. |
+| Monster spawn positions (XYZ) | **OWN-DESIGN (disclosed)** | Clustered at two farmland anchors (region 96/168) measured flat/walkable/object-clear; the coordinates themselves are ours, disclosed in the `monsterSpecs` comment. |
 | EXP reward per kill (`ExpFor` = maxHP) | **OWN-DESIGN (disclosed)** | Placeholder; real per-species `ExpToGive` not loaded yet. |
 | Loot table values | **OWN-DESIGN (disclosed)** | Placeholder item IDs 500–502; keyed by name (real tables key by `RefMonsterID`, mapping not yet confirmed). |
 | Shop prices | **RECOVERED** | Real Price/SellPrice from the client's own itemdata (`_RefObjCommon` cols 26/31; Copper Sword 890/427). The stat formula is now only a fallback for an import that predates them. The DB's `_RefPricePolicyOfItem` is still just the cash-shop table; the vendor prices were in itemdata all along. |
@@ -60,7 +61,8 @@ built on recovered data, mostly disclosed, plus **one client comment that overst
 | EXP overflow carries to next level | **RECOVERED (2026-09-11)** | Grounded in `sro_client.exe` `FUN_008a97c0`: the level-up loop subtracts each level's requirement from the running EXP and increments the level, carrying the remainder. `leveldata.Advance` matches. |
 | Max character level = 110 | **RECOVERED (2026-09-11)** | Same handler caps its loop `while (level != 'n')` (0x6E = 110), independent of the 139-row table. `leveldata.MaxCharacterLevel`. |
 | Max-level EXP held at requirement−1 (not zeroed) | **RECOVERED (2026-09-11)** | Same handler, cap branch: `exp = requirement - 1`. `Advance` corrected from its earlier zeroing assumption. |
-| Level-up refills HP; stat points granted at level-up | **BEHAVIOUR ASSUMPTION** | Server-authoritative (not in the client EXP handler), and sits inside the flat own-design `MaxHP=100`. Grounding it needs the real max-HP/derived-stat formula — the same recovery the character window needs. Tracked as the next target. |
+| Level-up refills HP; stat points granted at level-up | **BEHAVIOUR ASSUMPTION** | Server-authoritative (not in the client EXP handler), and sits inside the own-design `MaxHPForLevel` curve. Grounding it needs the real max-HP/derived-stat formula — the same recovery the character window needs. Tracked as the next target. |
+| Berserk gauge (fill/hit, orbs, duration, damage bonus) | **OWN-DESIGN (disclosed)** | `internal/berserk`: "The mechanic is the real one" (SRO's five-orb berserk); the numbers (Fill 8/hit, 5 orbs, 20 s, +50 %) are "this project's own disclosed design … server-side balance values that were never recovered." The client's own `GDR_PMI_CIRCLE0..4` (5 mini-info circles) drive the orbs — a structural mapping, not decompile-confirmed. |
 | PvP (duel) damage | **OWN-DESIGN (disclosed)** | Reuses the same combat model, mitigated by the defender's real equipped armour; no separate formula. |
 | Inventory size = 50 slots | **OWN-DESIGN (disclosed)** | Labelled "our [own design]"; not claimed as the real client's slot count. |
 
@@ -98,6 +100,36 @@ built on recovered data, mostly disclosed, plus **one client comment that overst
 
 - **EXP overflow carry + max level + max-level bar** — recovered from `sro_client.exe`
   `FUN_008a97c0`; `leveldata.Advance`/`MaxCharacterLevel` corrected. See the leveling rows above.
+
+## Regrounding pass — 2026-09-13 (combat loop v0.1.142–144)
+
+A re-verification of everything the combat-loop work touched, against real client data on the RE
+box. **No invented value dressed as real was found in the new work either.** What changed:
+
+- **Monster ladder — every claim re-checked and holds.** All 11 species in `cmd/server`'s
+  `monsterSpecs` were re-read from the real `characterdata_*.txt`: every CodeName exists, every
+  Level matches col 57 exactly (Mangyang 1 · Small-eyed Ghost 2 · Big-eyed Ghost 3 · Old Weasel 4
+  · Weasel 5 · Water Ghost slave 6 · Water Ghost 7 · Tomb Stone Ghost 8 · Stone Ghost 9 · Yeoha 10
+  · Earth Ghost 27), every Rarity is 0 (col 15), and every English Name matches `textdata_object`'s
+  real English column — including the non-obvious ones (`_CLON` of BIGEYEGHOST really is
+  "Small-eyed Ghost"). The `main.go` "GROUNDED" comment was accurate; the memory had merely
+  under-recorded it (3 of 11 verified → now all 11).
+- **EXP curve — re-confirmed.** The loaded CSV matches real `leveldata.txt` for every level
+  (level 9 = 17978); the runtime path is correct.
+- **Shop prices — re-confirmed.** Copper Sword (`ITEM_CH_SWORD_01_A`, id 71) still reads
+  col 26 = 890 / col 31 = 427 in the client's own itemdata.
+- **Disclosures verified honest.** `character.go` (per-level MaxHP), `berserk.go` (gauge numbers)
+  and the `monsterStatsForLevel` curve each label themselves own-design with the reason (all
+  server-side balance, never recovered). No new FLAG.
+- **Stale rows corrected (this doc):** the pre-combat-loop rows called MaxHP "flat 100" and said
+  monsters had "no real map/monster data" — both now false and rewritten above.
+- **Strengthened-but-still-disclosed candidate — monster MaxHP (characterdata col 79).** For the
+  ladder, col 79 is a strikingly clean ≈23.5-per-level line (L1–10: 24, 47, 71, 94, 118, 141, 165,
+  188, 212, 235) — a far better MaxHP candidate than col 59 (non-monotonic: 54, 55, 85, 83, …).
+  Still **not** grounded and behaviour unchanged, for the two standing reasons: the column→field
+  mapping is not decompile-confirmed, and the pserver client's stat *values* may be modded. The
+  way to settle it is to decompile the `characterdata` loader's column map (a real dig), or get a
+  retail `_RefObjChar`. Recorded so the next pass has the evidence, not to act on now.
 
 ## What is genuinely still assumed (summary for the next pass)
 
