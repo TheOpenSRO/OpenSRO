@@ -7587,6 +7587,19 @@ foot. The worn slots around it are still empty frames -- filling them
 with the equipped icons, and the item table's armour defence block, are
 the follow-ups.
 
+## Hundred-and-forty-fifth round: the warehouse holds gold too
+
+The warehouse now keeps gold as well as items, finishing the authored
+window's Total Gold line and its money button. Warehouse gold is a
+per-character balance on the characters row (`storage_gold` beside `gold`);
+character.Store gained AddStorageGold / DeductStorageGold, and storage.Service
+moves gold between purse and warehouse the same careful way it moves items --
+deduct one side, credit the other, refund on a failed credit. OpStorageGold
+carries an op (query / deposit / withdraw) and an amount, and its result the
+two balances, so the window and the bag always show the server's own numbers
+rather than a client guess. A render deposited 250: the purse 960 -> 710 and
+the warehouse's Total Gold 0 -> 250.
+
 ## Hundred-and-forty-fourth round: the warehouse -- a second item container
 
 Talk to a warehouse keeper -> Storage opens the authored warehouse window

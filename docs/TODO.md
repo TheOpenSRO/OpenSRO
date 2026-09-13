@@ -31,13 +31,13 @@ In order. Each is checked off here when it ships in a release, with its round in
 - [x] **NPC talk.** A click on an NPC opens `if_npctalk` titled with its name -- round 139. The
       greeting's service lines are now clickable; Buy opens the shop and Storage the warehouse
       (both below). Still open: the remaining services (guild, honour rank), each its own backend.
-      - [x] **Storage (warehouse).** Talk -> Storage opens the authored warehouse window
-        (`ifstorageroom`) with the bag beside it: click to deposit/withdraw, each a quantity
-        dialog -- round 144 / release v0.1.139. The warehouse is a second inventory container
-        (`storage_slots` table, `storage.Service`), reachable in real play from the grounded
-        warehouse NPCs (`NPC_CH_WAREHOUSE_M`/`_W`). Still open: storing gold (the window has a
-        Total Gold line; only items move so far) and per-account vs per-character scope (currently
-        per-character).
+      - [x] **Storage (warehouse) -- items AND gold.** Talk -> Storage opens the authored
+        warehouse window (`ifstorageroom`) with the bag beside it: click to deposit/withdraw items
+        (each a quantity dialog), and the money button opens a gold deposit/withdraw dialog --
+        rounds 144-145 / releases v0.1.139-140. The warehouse is a second inventory container
+        (`storage_slots` table, `storage.Service`) plus a per-character `storage_gold` balance,
+        reachable in real play from the grounded warehouse NPCs (`NPC_CH_WAREHOUSE_M`/`_W`). Still
+        open: per-account vs per-character scope (currently per-character).
       - [x] **Merchant shop -- buy AND sell.** Talk -> Buy opens the authored store window
         (`ifstore`) with the NPC's real goods, tabs, real prices, quantity buying, and selling
         from the bag -- rounds 141-143 / releases v0.1.134-138. Per-NPC goods come from the real
