@@ -51,6 +51,9 @@ const COL_ID := 1
 const COL_CODE_NAME := 2
 const COL_NAME := 3
 const COL_NAME_STRID := 5
+## MaxStack (column 57): 1 for equipment, the real per-item cap for stackables
+## (a potion 5000, arrows 2500) -- so the shop can offer buying a stack.
+const COL_MAX_STACK := 57
 const COL_TYPE_ID1 := 9
 const COL_TYPE_ID4 := 12
 ## `Country`: 0 for the China race's items, 1 for Europe's.
@@ -110,6 +113,9 @@ class Item:
 	## The name string id (column 5, `SN_ITEM_*`), resolved through
 	## textdata_object.txt for the real English display name.
 	var name_strid: String
+	## MaxStack (column 57): how many fit in one inventory slot. 1 for
+	## equipment; a large cap for stackable consumables/materials.
+	var max_stack: int = 1
 	## Archive path of the inventory icon, ICON_PREFIX already applied.
 	var icon_path: String
 	## The `.bsr` the item is worn as, as the table writes it (no `res\`
@@ -225,6 +231,9 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.item_name = cols[COL_NAME].strip_edges()
 		if cols.size() > COL_NAME_STRID:
 			item.name_strid = cols[COL_NAME_STRID].strip_edges()
+		var stack := _int_at(cols, COL_MAX_STACK)
+		if stack > 0:
+			item.max_stack = stack
 		var icon := _find_icon_path(cols)
 		if icon != "":
 			item.icon_path = ICON_PREFIX + icon

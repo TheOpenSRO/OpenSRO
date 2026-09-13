@@ -546,7 +546,13 @@ func _confirm_buy(item_id: int) -> void:
 	if old != null:
 		old.free()
 	var price: int = _shop_prices.get(item_id, -1)
-	var affordable: bool = _stats == null or price < 0 or _stats.gold >= price
+	var gold: int = _stats.gold if _stats != null else -1
+	var stackable: bool = item.max_stack > 1
+	# The most the player may buy: the item's stack, and (when price and purse
+	# are both known) what the gold affords.
+	var max_qty: int = maxi(1, item.max_stack)
+	if price > 0 and gold >= 0:
+		max_qty = clampi(gold / price, 1, maxi(1, item.max_stack))
 
 	var panel := PanelContainer.new()
 	panel.name = "BuyConfirm"
@@ -561,20 +567,60 @@ func _confirm_buy(item_id: int) -> void:
 	box.add_theme_constant_override("separation", 8)
 	panel.add_child(box)
 	box.add_child(_shop_label("Buy %s?" % item.display_name(_object_names), Color(0.95, 0.9, 0.72)))
-	if price >= 0:
-		box.add_child(_shop_label("Price: %s gold" % _grouped(price), Color(0.95, 0.85, 0.45)))
-	if not affordable:
-		box.add_child(_shop_label("Not enough gold.", Color(0.95, 0.5, 0.45)))
+	if price >= 0 and stackable:
+		box.add_child(_shop_label("%s gold each" % _grouped(price), Color(0.86, 0.82, 0.7)))
+
+	# Quantity + running total. The total label doubles as the affordability
+	# signal (it turns red and disables Buy when the purse can't cover it).
+	var qty_box := [1]
+	var total_label := _shop_label("", Color(0.95, 0.85, 0.45))
+	var buy := Button.new()
+	buy.text = "Buy"
+	var refresh := func() -> void:
+		var q: int = qty_box[0]
+		if price >= 0:
+			total_label.text = "Total: %s gold" % _grouped(price * q)
+			var afford: bool = gold < 0 or price * q <= gold
+			total_label.add_theme_color_override("font_color", Color(0.95, 0.85, 0.45) if afford else Color(0.95, 0.5, 0.45))
+			buy.disabled = not afford
+		else:
+			total_label.text = ""
+
+	if stackable and max_qty > 1:
+		var qrow := HBoxContainer.new()
+		qrow.add_theme_constant_override("separation", 8)
+		qrow.alignment = BoxContainer.ALIGNMENT_CENTER
+		box.add_child(qrow)
+		var minus := Button.new()
+		minus.text = "-"
+		minus.custom_minimum_size = Vector2(30, 0)
+		var qty_label := _shop_label("1", Color(0.96, 0.96, 0.96))
+		qty_label.custom_minimum_size = Vector2(52, 0)
+		var plus := Button.new()
+		plus.text = "+"
+		plus.custom_minimum_size = Vector2(30, 0)
+		minus.pressed.connect(func() -> void:
+			qty_box[0] = maxi(1, qty_box[0] - 1)
+			qty_label.text = str(qty_box[0])
+			refresh.call())
+		plus.pressed.connect(func() -> void:
+			qty_box[0] = mini(max_qty, qty_box[0] + 1)
+			qty_label.text = str(qty_box[0])
+			refresh.call())
+		qrow.add_child(minus)
+		qrow.add_child(qty_label)
+		qrow.add_child(plus)
+	box.add_child(total_label)
+	refresh.call()
+
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	box.add_child(row)
-	var buy := Button.new()
-	buy.text = "Buy"
-	buy.disabled = not affordable
 	buy.pressed.connect(func() -> void:
+		var q: int = qty_box[0]
 		panel.free()
-		_do_buy(item_id))
+		_do_buy(item_id, q))
 	row.add_child(buy)
 	var cancel := Button.new()
 	cancel.text = "Cancel"
@@ -599,12 +645,12 @@ func _shop_label(text: String, colour: Color) -> Label:
 		lbl.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
 	return lbl
 
-func _do_buy(item_id: int) -> void:
+func _do_buy(item_id: int, quantity: int = 1) -> void:
 	var who := NetClient.current_character_name
 	if who == "" or not NetClient.is_connected_to_server():
 		_set_shop_status("Not connected.")
 		return
-	NetClient.shop_buy(who, item_id, 1)
+	NetClient.shop_buy(who, item_id, maxi(1, quantity))
 
 func _on_shop_list_result(entries: Array, error: String) -> void:
 	if error != "":
@@ -630,26 +676,38 @@ func _on_shop_buy_result(ok: bool, reason: String) -> void:
 	else:
 		_set_shop_status("Could not buy: %s" % reason)
 
-## QA only: the first good of the open tab, for a render standing in for a
-## click (a render cannot click a shop cell). Never used in real play.
-func _qa_first_item_id() -> int:
-	if _shop_selected >= 0 and _shop_selected < _shop_tabs.size():
-		var codes: PackedStringArray = (_shop_tabs[_shop_selected] as ShopReader.Tab).item_codes
-		if codes.size() > 0:
-			var item: ItemTableReader.Item = _items_by_code.get(codes[0])
-			if item != null:
-				return item.id
-	return -1
+## QA only: an item to buy in a render standing in for a click (a render
+## cannot click a shop cell). Prefers the cheapest stackable good across the
+## NPC's tabs (so the quantity stepper shows and a bulk buy is affordable),
+## else the first good. Never used in real play.
+func _qa_buy_item_id() -> int:
+	_load_items()
+	var stack_id := -1
+	var stack_price := 1 << 62
+	var first_id := -1
+	for tab in _shop_tabs:
+		for code in (tab as ShopReader.Tab).item_codes:
+			var item: ItemTableReader.Item = _items_by_code.get(code)
+			if item == null:
+				continue
+			if first_id < 0:
+				first_id = item.id
+			var price: int = _shop_prices.get(item.id, 1 << 62)
+			if item.max_stack > 1 and price < stack_price:
+				stack_price = price
+				stack_id = item.id
+	return stack_id if stack_id >= 0 else first_id
 
 func qa_confirm_first_item() -> void:
-	var id := _qa_first_item_id()
+	var id := _qa_buy_item_id()
 	if id >= 0:
 		_confirm_buy(id)
 
 func qa_buy_first_item() -> void:
-	var id := _qa_first_item_id()
+	var id := _qa_buy_item_id()
 	if id >= 0:
-		_do_buy(id)
+		# A quantity, to exercise the bulk buy and stacking.
+		_do_buy(id, 20)
 
 ## The live paper-doll texture (a SubViewport's), set by World3D whenever
 ## the dressed character changes. Shown in the equipment section's central

@@ -5414,6 +5414,9 @@ func _qa_step() -> void:
 			_hud_panels.qa_confirm_first_item()
 		elif _qa_tick == 70:
 			_hud_panels.qa_buy_first_item()
+		elif _qa_tick == 82:
+			# Open the bag so the render shows the bought stack (one slot, count).
+			_hud_panels.open("inventory")
 
 	# SRREVAMP_QA_NAVGAP compares each nearby object's *solid* footprint
 	# against its *walkable* one. A player can stand inside anything where
