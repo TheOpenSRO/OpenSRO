@@ -18,9 +18,19 @@ const GENDER_BODY_CODE := {
 	"china_woman": "CHAR_CH_WOMAN_FIGHTER",
 }
 
+# The starting outfit a new character is created wearing, so the preview shows
+# the dressed character rather than the bare base body. These are the real
+# item ids the server's equipment.StartingKitFor gives (Cotton Suit/Trousers/
+# Shoes + Copper Sword) -- kept in sync with it; grounded, not invented.
+const STARTING_KIT := {
+	"china_man": [3643, 3644, 3645, 3632],
+	"china_woman": [3652, 3653, 3654, 3632],
+}
+
 var _data_pk2: Pk2Reader
 var _media_pk2: Pk2Reader
 var _bodies := {} # characterdata code -> body .bsr path
+var _item_models := {} # item id -> worn .bsr model, for the starting kit
 var _doll: PaperDoll
 var _view: TextureRect
 var _gender := ""
@@ -66,6 +76,13 @@ func _open_archives() -> void:
 		var entry := ObjectLoader.find_file(_media_pk2, path)
 		if entry != null:
 			_bodies = NpcTableReader.parse_models_by_code(_media_pk2.read_file(entry), _bodies)
+	# Item id -> worn model, so the starting kit can be hung on the body.
+	for path in ItemTableReader.TABLE_PATHS:
+		var entry := ObjectLoader.find_file(_media_pk2, path)
+		if entry != null:
+			for item in ItemTableReader.parse(_media_pk2.read_file(entry)).values():
+				if item.model_path != "":
+					_item_models[item.id] = item.model_path
 
 ## Shows the body for `gender` (one of GENDER_BODY_CODE's keys). Cheap to
 ## call with the current gender (a no-op).
@@ -87,6 +104,11 @@ func _rebuild() -> void:
 	var assembled := SkinnedBsrAssembler.assemble_from_archive(_data_pk2, bsr_path, true)
 	if assembled == null:
 		return
+	# Dress the body in the starting outfit (the real kit the server gives).
+	for item_id in STARTING_KIT.get(_gender, []):
+		var model: String = _item_models.get(item_id, "")
+		if model != "":
+			SkinnedBsrAssembler.attach_item_from_archive(_data_pk2, assembled.skeleton, model)
 	_skeleton = assembled.skeleton
 	_idle = assembled.idle_animation
 	_anim_time = 0.0
