@@ -7587,6 +7587,25 @@ foot. The worn slots around it are still empty frames -- filling them
 with the equipped icons, and the item table's armour defence block, are
 the follow-ups.
 
+## Hundred-and-forty-sixth round: the armour defence block, grounded at last
+
+Round 140 left armour tooltips without a defence line, on the assumption that
+"armour reuses the weapon columns for different stats, not yet measured." That
+assumption was wrong twice over. Armour does not reuse the attack columns --
+weapons leave columns 65-77 zero and armour leaves the attack columns zero, so
+they are separate blocks. And it is measurable: `refdata_schema.md` already
+records the real DB `_RefObjItem` defence column order (PD, ER, PAR, BR, MD),
+and it maps straight onto the data positions -- physical defence first at
+65-66, the shield-only block ratio at 74-75, magical defence right after at
+76-77. Three independent lines agree: that DB order, the min/max-pair structure
+matching the verified weapon block, and the values themselves obeying real
+armour behaviour -- a Cotton garment reads 2~2.5 physical / 4.3~5.2 magical and
+a Copper heavy 2.5~3 / 3.2~3.9, i.e. heavy has more physical and cloth more
+magical, the cloth=magic / heavy=physical characteristic; a shield alone adds
+Block ratio 10~20. Tooltips now show "Phy./Mag. def. pwr. X ~ Y" for armour
+and shields, the sword still shows none, and the ER/PAR/MAR columns whose
+semantics the schema calls undecoded stay out rather than get a guessed label.
+
 ## Hundred-and-forty-fifth round: the warehouse holds gold too
 
 The warehouse now keeps gold as well as items, finishing the authored

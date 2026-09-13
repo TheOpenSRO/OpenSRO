@@ -49,12 +49,13 @@ In order. Each is checked off here when it ships in a release, with its round in
         imports them via `import-refdata` (regenerate/re-import to pick up price + stack columns).
         Still open: **repair** (the authored buttons are inert -- needs a per-item durability
         system, which does not exist yet) and paging past 30 goods (no current NPC needs it).
-- [x] **Item tooltips** with the real stats -- round 140, columns pinned against the Copper Sword
-      (+5) the user sent.
+- [x] **Item tooltips** with the real stats -- round 140 (weapon attack, pinned against the Copper
+      Sword +5 the user sent) and round 146 (armour/shield defence at columns 65-77, grounded from
+      the DB column order + the cloth=magic / heavy=physical relationship). See ITEM_FORMAT.md.
 - [x] **Paper doll** -- round 141: the equipment window (`O`) renders the dressed character live.
 - [x] **Equipment slot icons** -- round 142: the worn slots show the equipped icons, slot i in
-      GDR_EQUIPMENT_SLOT_(100+i), anchored to the user's screenshot. Open: the armour defence block
-      (armour reuses the weapon stat columns for other stats -- needs an armour ground-truth).
+      GDR_EQUIPMENT_SLOT_(100+i), anchored to the user's screenshot. (Armour defence block now
+      grounded -- round 146, above.)
 - [x] **Skill window** -- round 143: the real China masteries (icons + names from
       `skillmasterydata` / the UI text table) at Lv 0, with the authored skill-point and
       mastery-total labels at an honest 0. Open: the per-mastery skill grid (a client-drawn

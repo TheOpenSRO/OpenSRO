@@ -200,12 +200,27 @@ through the per-plus growth floats beside each attack:
 | Required level | 33 (the ReqLevel1 pair) | 1 | **1** |
 
 Each stat is a four-int group whose displayed range is element [0] ~ [2];
-the attack groups carry a fifth `float` growth-per-plus. **Not** in this
-set, and so absent from the tooltip rather than guessed: the attack
-distance (0.6 m on the sword, not located in these columns) and the
-armour defence block (armour reuses these columns for different stats,
-not yet measured). The server gives `+0` items, so the tooltip shows the
-base range; nothing tracks an enhancement level yet.
+the attack groups carry a fifth `float` growth-per-plus. The server gives
+`+0` items, so the tooltip shows the base range; nothing tracks an
+enhancement level yet.
+
+**Armour defence** is a *separate* column block, not a reuse of the attack
+columns as an earlier note assumed: weapons leave the armour columns 0 and
+armour leaves the attack columns 0. It sits at columns 65-77 (min/max pairs):
+
+| Stat | Columns | Cotton (garment) reads | Copper (heavy) reads |
+|---|---|---|---|
+| Physical defence | 65 ~ 66 | 2 ~ 2.5 | 2.5 ~ 3 |
+| Magical defence | 76 ~ 77 | 4.3 ~ 5.2 | 3.2 ~ 3.9 |
+| Block ratio (shields) | 74 ~ 75 | — | (shield 10 ~ 20) |
+
+Grounded three ways that agree: the real DB `_RefObjItem` column order in
+`refdata_schema.md` (PD, ER, PAR, BR, MD — PD first, block, then MD) maps onto
+these positions; heavy armour reads more physical and cloth more magical
+(the cloth=magic / heavy=physical characteristic); and shields alone carry the
+block ratio. **Still** absent rather than guessed: the attack distance (0.6 m
+on the sword, not located in these columns) and the ER/PAR/MAR columns whose
+exact semantics `refdata_schema.md` records as not yet decoded.
 
 ## What the picture is evidence of
 
