@@ -30,7 +30,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
   160): the pk2 archives were re-opened per region (~1s to read a 2GB index each time). Holding the
   handles open cut the per-cell cost from ~2.2s to ~0.5s and the whole region load from 65s to 18s.
   Streaming still queues cells one per frame (v0.1.107). **Confirm in-game it's now smooth.**
-- [ ] Gold-dragon + class-silhouettes default screen (`loading_default.ddj`)
+- [x] Gold-dragon default screen (`loading_default.ddj`) — the loading screen already shows the real loading_default.ddj as its backdrop (loading_screen.gd DEFAULT_BACKDROP).
 - [ ] Shown on the other transitions too (login→select, select→customize)
 - [ ] Pick the region-appropriate loading image where known
 
@@ -64,7 +64,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
 ## 5b. Look-better pass (user asked)
 - [x] Vignette over login / select / create backdrops so panels pop and letterboxing frames well (v0.1.107)
 - [x] Login register link picks up the gold (v0.1.107)
-- [ ] Load the client's own UI font for the front-end (authenticity)
+- [x] Load the client's own UI font for the front-end (authenticity) — v0.1.132: FrontEndUi.apply_client_font sets the client's fonts\*.ttf as the scene Theme default on login/select/create.
 - [ ] Char-select: fill the empty centre with the 3D character (pass 2)
 
 ## 6. 3D backdrops (pass 2, the expensive one)
