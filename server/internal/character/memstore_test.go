@@ -285,3 +285,49 @@ func TestGetByIDNonexistentCharacter(t *testing.T) {
 		t.Fatalf("got %v, want ErrNotFound", err)
 	}
 }
+
+func TestMaxHPForLevel(t *testing.T) {
+	if got := MaxHPForLevel(1); got != MaxHP {
+		t.Fatalf("level 1 MaxHP = %d, want the base %d", got, MaxHP)
+	}
+	// Grows by HPPerLevel each level, and monotonically.
+	if got := MaxHPForLevel(2); got != MaxHP+HPPerLevel {
+		t.Fatalf("level 2 MaxHP = %d, want %d", got, MaxHP+HPPerLevel)
+	}
+	prev := 0
+	for lvl := 1; lvl <= 40; lvl++ {
+		hp := MaxHPForLevel(lvl)
+		if hp <= prev {
+			t.Fatalf("level %d MaxHP %d not greater than previous %d", lvl, hp, prev)
+		}
+		prev = hp
+	}
+	// A junk level clamps to level 1.
+	if MaxHPForLevel(0) != MaxHP || MaxHPForLevel(-5) != MaxHP {
+		t.Fatalf("a level below 1 should clamp to the base MaxHP")
+	}
+}
+
+func TestResetHPHealsToLevelMax(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+	c, _ := store.Create(ctx, 1, "Aria")
+	// Level them up and damage them, then reset -- HP should return to the
+	// level-appropriate maximum, not the flat base.
+	if err := store.SetLeveling(ctx, c.ID, 5, 0, 0); err != nil {
+		t.Fatalf("SetLeveling: %v", err)
+	}
+	if _, _, err := store.ApplyDamage(ctx, c.ID, 50); err != nil {
+		t.Fatalf("ApplyDamage: %v", err)
+	}
+	if err := store.ResetHP(ctx, c.ID); err != nil {
+		t.Fatalf("ResetHP: %v", err)
+	}
+	got, err := store.GetByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.HP != MaxHPForLevel(5) {
+		t.Fatalf("after reset HP = %d, want the level-5 max %d", got.HP, MaxHPForLevel(5))
+	}
+}

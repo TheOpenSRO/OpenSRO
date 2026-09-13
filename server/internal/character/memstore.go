@@ -69,7 +69,7 @@ func (m *MemStore) Create(_ context.Context, accountID int64, name string) (*Cha
 	}
 
 	m.nextID++
-	c := &Character{ID: m.nextID, AccountID: accountID, Name: name, Gold: StartingGold, HP: MaxHP, Gender: DefaultGender, Level: StartingLevel}
+	c := &Character{ID: m.nextID, AccountID: accountID, Name: name, Gold: StartingGold, HP: MaxHPForLevel(StartingLevel), Gender: DefaultGender, Level: StartingLevel}
 	m.byID[c.ID] = c
 	m.namesTaken[key] = true
 
@@ -174,7 +174,7 @@ func (m *MemStore) ResetHP(_ context.Context, characterID int64) error {
 	if !ok {
 		return ErrNotFound
 	}
-	c.HP = MaxHP
+	c.HP = MaxHPForLevel(c.Level)
 	return nil
 }
 

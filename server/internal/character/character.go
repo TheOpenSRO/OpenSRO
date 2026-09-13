@@ -39,9 +39,20 @@ var ErrInsufficientGold = errors.New("character: insufficient gold")
 // design choice.
 const StartingGold = 1000
 
-// MaxHP is every character's maximum health. Flat for now -- own design
-// choice, revisit once there's a leveling/stats system to scale it.
+// MaxHP is the base maximum health (at level 1) and HPPerLevel is how much
+// each level adds. Own design -- no real max-HP table was recovered (it is
+// server-side, like monster HP) -- but scaled by level so leveling actually
+// grows survivability. Use MaxHPForLevel rather than the raw base.
 const MaxHP = 100
+const HPPerLevel = 40
+
+// MaxHPForLevel is a character's maximum health at the given level.
+func MaxHPForLevel(level int) int {
+	if level < 1 {
+		level = 1
+	}
+	return MaxHP + (level-1)*HPPerLevel
+}
 
 // StartingLevel is the level a newly-created character is. There is no
 // way to gain a level yet -- experience is not tracked -- so every

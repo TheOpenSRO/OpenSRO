@@ -34,6 +34,19 @@ func _server_payload(error: String, gold: int, hp: int, max_hp: int, attack: int
 	out.append_array(body)
 	return out
 
+## The full 48-byte body: the 24 above, then level, exp (s64), exp_to_next
+## (s64), skill_points -- the server's field order in stats.go.
+func _server_payload_full(gold: int, hp: int, max_hp: int, level: int, exp: int, to_next: int, sp: int) -> PackedByteArray:
+	var out := _server_payload("", gold, hp, max_hp, 0, 0)
+	var tail := PackedByteArray()
+	tail.resize(24)
+	tail.encode_s32(0, level)
+	tail.encode_s64(4, exp)
+	tail.encode_s64(12, to_next)
+	tail.encode_s32(20, sp)
+	out.append_array(tail)
+	return out
+
 func _init() -> void:
 	var stats := StatsNet.decode_result(_server_payload("", 1000, 87, 100, 12, 34))
 	_check(stats.error == "", "no error on a good payload (got %s)" % stats.error)
@@ -52,6 +65,16 @@ func _init() -> void:
 
 	var truncated := StatsNet.decode_result(PackedByteArray([0, 0, 1, 2, 3]))
 	_check(truncated.error != "", "a short payload is reported, not read past")
+
+	# The appended level/exp/SP fields decode, and drive the EXP gauge.
+	var lvl := StatsNet.decode_result(_server_payload_full(500, 94, 140, 2, 130, 470, 14))
+	_check(lvl.level == 2, "level decoded (got %d)" % lvl.level)
+	_check(lvl.exp == 130 and lvl.exp_to_next == 470, "exp/exp_to_next decoded (got %d/%d)" % [lvl.exp, lvl.exp_to_next])
+	_check(lvl.skill_points == 14, "skill points decoded (got %d)" % lvl.skill_points)
+	_check(abs(lvl.exp_percent() - (130.0 / 470.0 * 100.0)) < 0.01, "exp_percent computes the gauge fill (got %.2f)" % lvl.exp_percent())
+	# An old 24-byte result still decodes, with the new fields at defaults.
+	var old := StatsNet.decode_result(_server_payload("", 1, 2, 3, 0, 0))
+	_check(old.error == "" and old.level == 1 and old.exp_to_next == 0, "an old 24-byte result decodes with default level/exp")
 
 	# The request is one length-prefixed name and nothing after it, which is
 	# the shape every name-only request on this protocol takes.

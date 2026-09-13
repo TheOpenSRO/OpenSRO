@@ -557,7 +557,8 @@ func performAttack(
 				if err := chars.ResetHP(ctx, characterID); err != nil {
 					return fmt.Errorf("combat: refilling hp on level up: %w", err)
 				}
-				result.PlayerHP = int32(character.MaxHP)
+				// Healed to the NEW level's higher maximum.
+				result.PlayerHP = int32(character.MaxHPForLevel(newLevel))
 				levelUp = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
 			}
 		}
@@ -580,7 +581,11 @@ func performAttack(
 			if err := chars.ResetHP(ctx, characterID); err != nil {
 				return fmt.Errorf("combat: respawning player: %w", err)
 			}
+			// Respawned at the character's own level-appropriate maximum.
 			result.PlayerHP = int32(character.MaxHP)
+			if reborn, e := chars.GetByID(ctx, characterID); e == nil {
+				result.PlayerHP = int32(character.MaxHPForLevel(reborn.Level))
+			}
 		} else {
 			result.PlayerHP = int32(hp)
 		}

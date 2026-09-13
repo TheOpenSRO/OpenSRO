@@ -1230,13 +1230,22 @@ func _try_initialize_pk2_ui() -> void:
 			if _hud_player_info != null:
 				_hud_player_info.set_hp(result.hp, result.max_hp)
 			if _hud_panels != null:
-				_hud_panels.set_character_vitals(result.hp, result.max_hp, 1))
+				_hud_panels.set_character_vitals(result.hp, result.max_hp, 1)
+			# Pull the full stats so the level, EXP gauge and SP are live from
+			# the moment the world loads, not just HP.
+			_request_world_stats())
 	NetClient.attack_result.connect(func(result) -> void:
 		if result != null and _last_enter_world_max_hp > 0:
 			if _hud_player_info != null:
 				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
 			if _hud_panels != null:
-				_hud_panels.set_character_vitals(result.player_hp, _last_enter_world_max_hp, 1))
+				_hud_panels.set_character_vitals(result.player_hp, _last_enter_world_max_hp, 1)
+			# A kill changes exp (and maybe level/HP-max), so refresh the gauges.
+			if result.monster_died:
+				_request_world_stats())
+	# The level, EXP gauge, HP-bar maximum and SP all come from the stats
+	# packet -- kept live here (enter-world, each kill, and level-up).
+	NetClient.character_stats_result.connect(_on_world_stats)
 	# MP has no server side at all yet -- nothing tracks or reports it -- so
 	# the bar is drawn full and carries no readout. See set_mp_unknown.
 	_hud_player_info.set_mp_unknown()
@@ -5467,7 +5476,11 @@ func _qa_step() -> void:
 	# off the numbers rather than inferred from a still image.
 	if OS.get_environment("SRREVAMP_QA_RIG") != "" and _qa_tick in [30, 60, 90]:
 		_qa_rig_report()
-	if _qa_attacking and _qa_tick % 60 == 0:
+	# Normally one attack a game-second (60 ticks). SRREVAMP_QA_ATTACK_FAST
+	# attacks every 10 ticks so a render can land enough hits to kill and level
+	# within a reasonable frame budget -- a QA-only accelerant, never real play.
+	var _qa_attack_interval := 10 if OS.get_environment("SRREVAMP_QA_ATTACK_FAST") != "" else 60
+	if _qa_attacking and _qa_tick % _qa_attack_interval == 0:
 		_qa_attack_nearest()
 
 	if not _qa_shots.is_empty():
@@ -7293,6 +7306,32 @@ func _on_level_up(new_level: int, _stat_points: int) -> void:
 			msg = template.replace("[%d]", str(new_level))
 	_log_system(msg)
 	_play_level_up_effect()
+	# Refresh the HUD to the new level: the HP bar's higher maximum, the level
+	# label, the reset EXP gauge and any new SP all come from the stats packet.
+	_request_world_stats()
+
+## Requests the character's full stats (level, exp, SP, HP max) so the HUD
+## gauges stay live. Cheap; called on enter-world, each kill, and level-up.
+func _request_world_stats() -> void:
+	var who := NetClient.current_character_name
+	if who != "" and NetClient.is_connected_to_server():
+		NetClient.character_stats(who)
+
+## Applies the stats packet to the always-on HUD: the level label, the HP bar
+## (with its level-scaled maximum), the underbar EXP gauge and the SP readout.
+func _on_world_stats(stats: StatsNet.Stats) -> void:
+	if stats == null or stats.error != "":
+		return
+	if stats.max_hp > 0:
+		_last_enter_world_hp = stats.hp
+		_last_enter_world_max_hp = stats.max_hp
+	if _hud_player_info != null:
+		_hud_player_info.set_character(NetClient.current_character_name, stats.level)
+		if stats.max_hp > 0:
+			_hud_player_info.set_hp(stats.hp, stats.max_hp)
+	if _hud_underbar != null:
+		_hud_underbar.set_exp(stats.exp_percent())
+		_hud_underbar.set_sp(stats.skill_points, maxi(stats.skill_points, 1))
 
 ## Spawns the real level-up burst on the player, sized to the player's own
 ## rendered height. Does nothing (beyond the message already logged) when the

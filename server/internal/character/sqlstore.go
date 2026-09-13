@@ -228,7 +228,10 @@ func (s *SQLStore) ApplyDamage(ctx context.Context, characterID int64, amount in
 
 // ResetHP implements Store.
 func (s *SQLStore) ResetHP(ctx context.Context, characterID int64) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE characters SET hp = $1 WHERE id = $2`, MaxHP, characterID)
+	// Max HP scales with the row's own level (base + per-level), so a reset
+	// heals to the level-appropriate maximum.
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE characters SET hp = $1 + (level - 1) * $2 WHERE id = $3`, MaxHP, HPPerLevel, characterID)
 	if err != nil {
 		return fmt.Errorf("character: resetting hp: %w", err)
 	}

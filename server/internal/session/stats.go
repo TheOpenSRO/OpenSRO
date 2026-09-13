@@ -11,6 +11,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/skill"
 )
 
 // The character-stats exchange: the client asks what its own character is
@@ -45,16 +46,28 @@ type CharacterStatsResult struct {
 	// across the worn armour.
 	PhysAttack  int32
 	PhysDefense int32
+
+	// Level, Exp and ExpToNext drive the underbar's EXP gauge and the
+	// player-info level; SkillPoints is the unspent SP shown beside it.
+	// ExpToNext is 0 when no level curve is loaded (then the gauge is empty).
+	Level       int32
+	Exp         int64
+	ExpToNext   int64
+	SkillPoints int32
 }
 
 func (r *CharacterStatsResult) Encode() []byte {
 	out := encodeStrings(r.Error)
-	buf := make([]byte, 24)
+	buf := make([]byte, 48)
 	binary.LittleEndian.PutUint64(buf[0:8], uint64(r.Gold))
 	binary.LittleEndian.PutUint32(buf[8:12], uint32(r.HP))
 	binary.LittleEndian.PutUint32(buf[12:16], uint32(r.MaxHP))
 	binary.LittleEndian.PutUint32(buf[16:20], uint32(r.PhysAttack))
 	binary.LittleEndian.PutUint32(buf[20:24], uint32(r.PhysDefense))
+	binary.LittleEndian.PutUint32(buf[24:28], uint32(r.Level))
+	binary.LittleEndian.PutUint64(buf[28:36], uint64(r.Exp))
+	binary.LittleEndian.PutUint64(buf[36:44], uint64(r.ExpToNext))
+	binary.LittleEndian.PutUint32(buf[44:48], uint32(r.SkillPoints))
 	return append(out, buf...)
 }
 
@@ -66,18 +79,29 @@ func DecodeCharacterStatsResult(data []byte) (*CharacterStatsResult, error) {
 	if len(rest) < 24 {
 		return nil, errors.New("session: decoding CharacterStatsResult: truncated")
 	}
-	return &CharacterStatsResult{
+	r := &CharacterStatsResult{
 		Error:       fields[0],
 		Gold:        int64(binary.LittleEndian.Uint64(rest[0:8])),
 		HP:          int32(binary.LittleEndian.Uint32(rest[8:12])),
 		MaxHP:       int32(binary.LittleEndian.Uint32(rest[12:16])),
 		PhysAttack:  int32(binary.LittleEndian.Uint32(rest[16:20])),
 		PhysDefense: int32(binary.LittleEndian.Uint32(rest[20:24])),
-	}, nil
+	}
+	// The level/exp/SP tail is appended, so an older 24-byte result still
+	// decodes (with these left 0).
+	if len(rest) >= 48 {
+		r.Level = int32(binary.LittleEndian.Uint32(rest[24:28]))
+		r.Exp = int64(binary.LittleEndian.Uint64(rest[28:36]))
+		r.ExpToNext = int64(binary.LittleEndian.Uint64(rest[36:44]))
+		r.SkillPoints = int32(binary.LittleEndian.Uint32(rest[44:48]))
+	}
+	return r, nil
 }
 
-// CharacterStatsHandler answers OpCharacterStats.
-func CharacterStatsHandler(chars character.Store, eq equipment.Store, items combat.ItemLookup) gateway.Handler {
+// CharacterStatsHandler answers OpCharacterStats. skills supplies the unspent
+// skill-point count (may be nil); the session's level table supplies the
+// exp-to-next for the EXP gauge.
+func CharacterStatsHandler(chars character.Store, eq equipment.Store, items combat.ItemLookup, skills skill.Store) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpCharacterStats {
 			return nil
@@ -107,7 +131,19 @@ func CharacterStatsHandler(chars character.Store, eq equipment.Store, items comb
 		result := &CharacterStatsResult{
 			Gold:  owned.Gold,
 			HP:    int32(owned.HP),
-			MaxHP: int32(character.MaxHP),
+			MaxHP: int32(character.MaxHPForLevel(owned.Level)),
+			Level: int32(owned.Level),
+			Exp:   owned.Exp,
+		}
+		if levelTable.Loaded() {
+			if toNext, ok := levelTable.ExpToNext(owned.Level); ok {
+				result.ExpToNext = toNext
+			}
+		}
+		if skills != nil {
+			if sp, err := skills.SkillPoints(ctx, characterID); err == nil {
+				result.SkillPoints = int32(sp)
+			}
 		}
 		if eq != nil && items != nil {
 			attack, err := attackerDamage(ctx, characterID, eq, items)

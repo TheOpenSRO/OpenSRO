@@ -420,7 +420,7 @@ func main() {
 		}),
 		session.InventoryHandler(chars, inv),
 		session.EquipmentHandlerWithRules(chars, eq, inv, refItems),
-		session.CharacterStatsHandler(chars, eq, refItems),
+		session.CharacterStatsHandler(chars, eq, refItems, skills),
 		session.ShopHandler(chars, shopSvc),
 		session.StorageHandler(chars, storageSvc),
 		session.CombatHandler(chars, eq, refItems, hub, monsters, quests, inv, skills),

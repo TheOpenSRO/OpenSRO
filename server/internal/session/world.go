@@ -594,7 +594,7 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
 		Gender: owned.Gender,
 		HP:     int32(owned.HP),
-		MaxHP:  int32(character.MaxHP),
+		MaxHP:  int32(character.MaxHPForLevel(owned.Level)),
 		Others: otherSnapshots,
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: result.Encode()}); err != nil {

@@ -23,6 +23,16 @@ class Stats:
 	var phys_attack: int
 	## Summed physical defence across the worn armour.
 	var phys_defense: int
+	## Level and experience progress at that level; exp_to_next is 0 when no
+	## level curve is loaded. skill_points is the unspent SP.
+	var level: int = 1
+	var exp: int = 0
+	var exp_to_next: int = 0
+	var skill_points: int = 0
+
+	## The EXP gauge fill, 0..100, or 0 when exp-to-next is unknown.
+	func exp_percent() -> float:
+		return (float(exp) / float(exp_to_next)) * 100.0 if exp_to_next > 0 else 0.0
 
 ## Encodes an OpCharacterStats request: one length-prefixed name, and
 ## nothing after it.
@@ -54,4 +64,10 @@ static func decode_result(data: PackedByteArray) -> Stats:
 	stats.max_hp = data.decode_s32(offset + 12)
 	stats.phys_attack = data.decode_s32(offset + 16)
 	stats.phys_defense = data.decode_s32(offset + 20)
+	# The level/exp/SP tail is appended; an older 24-byte result omits it.
+	if offset + 48 <= data.size():
+		stats.level = data.decode_s32(offset + 24)
+		stats.exp = data.decode_s64(offset + 28)
+		stats.exp_to_next = data.decode_s64(offset + 36)
+		stats.skill_points = data.decode_s32(offset + 44)
 	return stats

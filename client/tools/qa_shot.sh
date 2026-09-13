@@ -169,9 +169,11 @@ if [ "$SERVER" = "start" ]; then
   # named explicitly. Without them the shop opens but sells nothing.
   ITEMS_CSV="${SRREVAMP_ITEMS_CSV:-$PK2_DIR/items.csv}"
   SKILLS_CSV="${SRREVAMP_SKILLS_CSV:-$PK2_DIR/skills.csv}"
+  LEVELDATA_CSV="${SRREVAMP_LEVELDATA_CSV:-$PK2_DIR/leveldata.csv}"
   SERVER_ARGS=(-in-memory -addr "127.0.0.1:$SERVER_PORT")
-  [ -f "$ITEMS_CSV" ]  && SERVER_ARGS+=(-items-csv "$ITEMS_CSV")
-  [ -f "$SKILLS_CSV" ] && SERVER_ARGS+=(-skills-csv "$SKILLS_CSV")
+  [ -f "$ITEMS_CSV" ]     && SERVER_ARGS+=(-items-csv "$ITEMS_CSV")
+  [ -f "$SKILLS_CSV" ]    && SERVER_ARGS+=(-skills-csv "$SKILLS_CSV")
+  [ -f "$LEVELDATA_CSV" ] && SERVER_ARGS+=(-leveldata-csv "$LEVELDATA_CSV")
   "$SERVER_BIN" "${SERVER_ARGS[@]}" >"$OUT/server.log" 2>&1 &
   SERVER_PID=$!
   # SIGKILL, not SIGTERM: the in-memory server did not always die on TERM, so
