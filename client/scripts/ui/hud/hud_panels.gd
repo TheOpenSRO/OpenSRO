@@ -43,6 +43,22 @@ const PANELS := {
 	# Opened by clicking an NPC (World3D._try_talk_to_npc), titled with the
 	# NPC's name. The authored paper dialogue the original raises.
 	"npctalk": ["resinfo\\if_npctalk.txt", "", 0],
+	# Opened from the talk box's Buy option (open_shop), titled with the NPC's
+	# name. The authored store window: a 6x5 goods grid, a page spinner, and
+	# repair. Built with #ifdef selection (see PANEL_DEFINES).
+	"store": ["resinfo\\ifstore.txt", "Store", 0],
+}
+
+## Panels whose layout is read with #ifdef branch selection, mapped to the
+## symbols defined for them. ifstore's two slot sets are alternates behind
+## RENEWAL_SHOP_SYSTEM; with nothing defined we take the base 30-slot grid and
+## drop the RESTORE_SOLDITEM_INSHOP buyback row this project does not implement.
+## Both store classes (CIFStore, CIFStoreForPackage) build the same visible
+## window -- confirmed by decompiling each: four `com_short_tab` tabs and a 6x5
+## grid -- so the branch changes only invisible page capacity. Every other
+## window keeps the default (read both branches), which is what they rely on.
+const PANEL_DEFINES := {
+	"store": [],
 }
 
 ## Emitted by the System window's buttons, wired in _wire_system. World3D
@@ -57,6 +73,10 @@ signal system_help_requested
 ## activating that quickslot is what casts it. basic_code names the cast .ban
 ## clip; icon is the skill's already-loaded cell texture for the slot.
 signal skill_assign_requested(skill_id: int, basic_code: String, icon: Texture2D)
+## A talk-box service line other than "End conversation" was chosen; `key` is
+## the service's stable key (NpcServiceReader.Service.key -- "shop", "repair",
+## ...). World3D acts on it (opens the shop, ...).
+signal npc_service_selected(key: String)
 
 ## Sections beyond "Create" that a panel's window builds.
 ##
@@ -204,7 +224,9 @@ func open(panel_id: String) -> HudWindow:
 		window.name = "Window_" + panel_id
 		add_child(window)
 		var extra := PackedStringArray(EXTRA_SECTIONS.get(panel_id, []))
-		if not window.build(_builder, spec[0], spec[1], extra):
+		var honor_ifdef: bool = PANEL_DEFINES.has(panel_id)
+		var defines := PackedStringArray(PANEL_DEFINES.get(panel_id, []))
+		if not window.build(_builder, spec[0], spec[1], extra, defines, honor_ifdef):
 			print("HudPanels: %s unavailable (layout %s did not build)" % [panel_id, spec[0]])
 			window.queue_free()
 			_unavailable[panel_id] = true
@@ -237,7 +259,7 @@ func open(panel_id: String) -> HudWindow:
 ## behind the other lines (storage, shop, honour) are their own systems,
 ## still to come -- so the window greets and lets you leave, which is the
 ## skeleton the rest hangs on.
-func open_npc_talk(npc_name: String, greeting: String = "", services: PackedStringArray = PackedStringArray()) -> void:
+func open_npc_talk(npc_name: String, greeting: String = "", services: Array = []) -> void:
 	var window := open("npctalk")
 	if window == null:
 		return
@@ -275,15 +297,147 @@ func open_npc_talk(npc_name: String, greeting: String = "", services: PackedStri
 	lines.append(greeting if greeting != "" else "...")
 	lines.append("")
 	var n := 1
-	for label in services:
-		lines.append("%d. %s" % [n, label])
+	for svc in services:
+		# Each service is a clickable link keyed by its stable key; World3D
+		# acts on the ones that have a system behind them (Buy opens the shop).
+		lines.append("[url=%s]%d. %s[/url]" % [str(svc.key), n, str(svc.label)])
 		n += 1
 	lines.append("[url=end]%d. End conversation.[/url]" % n)
 	body.text = "\n".join(lines)
 
 func _on_npc_talk_choice(meta: Variant) -> void:
-	if str(meta) == "end":
+	var key := str(meta)
+	if key == "end":
 		close("npctalk")
+		return
+	# A real service was chosen. The talk box stays open behind the service
+	# window (the client keeps it up), so World3D decides what to raise.
+	npc_service_selected.emit(key)
+
+# --- The NPC shop -----------------------------------------------------------
+#
+# The authored store window (ifstore) shows the NPC's real goods: the 6x5 grid
+# (GDR_STORE_LAT) filled with icons, one authored tab per goods category, and
+# the item's real name/stats on hover. The goods and the tabs come from the
+# client's own shop tables (ShopReader). Buying is Stage 2.
+#
+# The tab strip is built here rather than read from the layout because the
+# store window builds its own tabs in code -- confirmed by decompiling both
+# CIFStore and CIFStoreForPackage: a loop from x=16 stepping 56 while x<240,
+# each tab a `com_short_tab`, so up to four. Their y is not in any data (the
+# layout has no tab controls), so it is placed on the grid frame's top edge --
+# ours, disclosed.
+const SHOP_TAB_ON := "interface\\ifcommon\\com_short_tab_on.ddj"
+const SHOP_TAB_OFF := "interface\\ifcommon\\com_short_tab_off.ddj"
+const SHOP_MAX_TABS := 4
+const SHOP_TAB_X0 := 16.0
+const SHOP_TAB_STEP := 56.0
+## The grid frame's authored top edge (GDR_STORE_FRAME y). Tabs sit on it.
+const SHOP_TAB_Y_BOTTOM := 60.0
+const SHOP_TAB_FALLBACK_SIZE := Vector2(54, 20)
+
+var _shop_tabs: Array = []      # of ShopReader.Tab
+var _shop_selected := 0
+
+## Opens the store window for an NPC, filled with the tabs of real goods the
+## caller resolved (World3D, via ShopReader). Retitles and refills a single
+## reused window, like the talk box.
+func open_shop(npc_name: String, tabs: Array) -> void:
+	var window := open("store")
+	if window == null:
+		return
+	window.set_title(npc_name)
+	_shop_tabs = tabs
+	_shop_selected = 0
+	_build_shop_tab_strip(window)
+	_select_shop_tab(0)
+	window.show()
+	window.move_to_front()
+
+func _build_shop_tab_strip(window: HudWindow) -> void:
+	var old := window.get_node_or_null("ShopTabs")
+	if old != null:
+		old.free() # free now, not queued -- we rebuild in this same call
+	var strip := Control.new()
+	strip.name = "ShopTabs"
+	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	window.add_child(strip)
+	var on: Texture2D = _builder.load_texture(SHOP_TAB_ON) if _builder != null else null
+	var off: Texture2D = _builder.load_texture(SHOP_TAB_OFF) if _builder != null else null
+	var tab_size: Vector2 = Vector2(on.get_size()) if on != null else SHOP_TAB_FALLBACK_SIZE
+	for i in range(mini(_shop_tabs.size(), SHOP_MAX_TABS)):
+		var tab: ShopReader.Tab = _shop_tabs[i]
+		var btn := TextureButton.new()
+		btn.name = "ShopTab%d" % i
+		btn.ignore_texture_size = true
+		btn.stretch_mode = TextureButton.STRETCH_SCALE
+		btn.texture_normal = off
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.position = Vector2(SHOP_TAB_X0 + i * SHOP_TAB_STEP, SHOP_TAB_Y_BOTTOM - tab_size.y)
+		btn.size = tab_size
+		btn.custom_minimum_size = tab_size
+		var idx := i
+		btn.pressed.connect(func() -> void: _select_shop_tab(idx))
+		var lbl := Label.new()
+		lbl.name = "Label"
+		lbl.text = _builder.resolve_text(tab.name_strid) if _builder != null else tab.name_strid
+		lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lbl.add_theme_color_override("font_color", Color(0.93, 0.87, 0.70))
+		if _builder != null:
+			var font := _builder.font_at(0)
+			if font != null:
+				lbl.add_theme_font_override("font", font)
+			lbl.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+		btn.add_child(lbl)
+		strip.add_child(btn)
+
+## Selects a tab: marks it (the `on` texture) and fills the grid with its goods.
+func _select_shop_tab(index: int) -> void:
+	_shop_selected = index
+	var window: HudWindow = _windows.get("store")
+	if window == null:
+		return
+	var strip := window.get_node_or_null("ShopTabs")
+	if strip != null and _builder != null:
+		var on: Texture2D = _builder.load_texture(SHOP_TAB_ON)
+		var off: Texture2D = _builder.load_texture(SHOP_TAB_OFF)
+		for child in strip.get_children():
+			if child is TextureButton:
+				var selected: bool = (child as Node).name == "ShopTab%d" % index
+				(child as TextureButton).texture_normal = on if selected else off
+	if index >= 0 and index < _shop_tabs.size():
+		_fill_shop_grid((_shop_tabs[index] as ShopReader.Tab).item_codes)
+
+## Fills the store's 6x5 grid (GDR_STORE_LAT) with the icons of the goods, in
+## the tab's own order. One page for now -- our NPCs' tabs each fit the 30
+## cells; the authored page spinner (paging past 30) is Stage 2.
+func _fill_shop_grid(codes: PackedStringArray) -> void:
+	var window: HudWindow = _windows.get("store")
+	if window == null:
+		return
+	var grid := window.node("GDR_STORE_LAT") as Control
+	if grid == null:
+		return
+	_load_items()
+	var cells := grid.get_child_count()
+	for ci in range(cells):
+		var cell := grid.get_child(ci)
+		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
+		if icon == null:
+			continue
+		if ci < codes.size():
+			var item: ItemTableReader.Item = _items_by_code.get(codes[ci])
+			if item != null and item.icon_path != "" and _builder != null:
+				icon.texture = _builder.load_texture(item.icon_path)
+				icon.tooltip_text = "\n".join(PackedStringArray(item.tooltip_lines(_object_names)))
+				icon.mouse_filter = Control.MOUSE_FILTER_STOP
+				continue
+		icon.texture = null
+		icon.tooltip_text = ""
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 ## The live paper-doll texture (a SubViewport's), set by World3D whenever
 ## the dressed character changes. Shown in the equipment section's central
@@ -406,7 +560,15 @@ var _net_connected := false
 ## Media.pk2. Lets a slot show an item's real name and icon from the id the
 ## server sends, instead of the id itself.
 var _items: Dictionary = {}
+## The same items keyed by code name, for the shop (whose tables name goods by
+## code, not id).
+var _items_by_code: Dictionary = {}
 var _items_loaded := false
+## The object-name table (textdata_object.txt): resolves an item's name string
+## id to its real English name, since itemdata's own name column is Korean for
+## many consumables. See ItemTableReader.Item.display_name.
+const OBJECT_NAME_TABLE_PATH := "server_dep\\silkroad\\textdata\\textdata_object.txt"
+var _object_names: UiTextTable = null
 
 func _load_items() -> void:
 	if _items_loaded:
@@ -421,6 +583,11 @@ func _load_items() -> void:
 		var entry := ObjectLoader.find_file(archive, path)
 		if entry != null:
 			_items = ItemTableReader.parse(archive.read_file(entry), _items)
+	for item in _items.values():
+		_items_by_code[(item as ItemTableReader.Item).code_name] = item
+	var names_entry := ObjectLoader.find_file(archive, OBJECT_NAME_TABLE_PATH)
+	if names_entry != null:
+		_object_names = UiTextTable.parse(archive.read_file(names_entry))
 	print("HudPanels: %d item(s) resolvable by id" % _items.size())
 
 ## The icon for an item id, or null. Icons are ordinary .ddj textures, so
@@ -439,12 +606,12 @@ func _item_tooltip(item_id: int) -> String:
 	var item: ItemTableReader.Item = _items.get(item_id)
 	if item == null:
 		return "Item %d" % item_id
-	return "\n".join(PackedStringArray(item.tooltip_lines()))
+	return "\n".join(PackedStringArray(item.tooltip_lines(_object_names)))
 
 func _item_name(item_id: int) -> String:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)
-	return item.item_name if item != null else ""
+	return item.display_name(_object_names) if item != null else ""
 
 ## Fills the inventory window's authored slot grid with the icons of what
 ## the character is carrying.

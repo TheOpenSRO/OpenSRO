@@ -49,7 +49,17 @@ class LayoutDef:
 		return null
 
 ## Parses the raw text or bytes of a resinfo/*.txt file.
-static func parse(data: Variant) -> LayoutDef:
+##
+## A few layouts guard controls behind C-style `#ifdef` / `#else` / `#endif`
+## for optional client features (ifstore's RENEWAL_SHOP_SYSTEM slot set,
+## ifequipment's avatar system, ...). By default those directive lines are
+## simply skipped and **both** branches are read -- which is what every window
+## built so far relies on, since the client resolves the branches by which C++
+## class binds each control. Pass `honor_ifdef` with the set of defined symbols
+## to instead select branches like a preprocessor, so a window that must show
+## exactly one branch (the store's 30-slot grid, not two overlaid) can.
+static func parse(data: Variant, honor_ifdef: bool = false,
+		defines: PackedStringArray = PackedStringArray()) -> LayoutDef:
 	var text := ""
 	if data is PackedByteArray:
 		var raw: PackedByteArray = data
@@ -69,10 +79,38 @@ static func parse(data: Variant) -> LayoutDef:
 	var current_control: ControlDef = null
 	var inside_section := false
 	var inside_control := false
+	# Preprocessor state, only used when honor_ifdef is on. Each entry:
+	# {active, parent_active, seen_true}. `active` already folds in every
+	# enclosing level, so a line is emitted when the stack is empty or its top
+	# is active. Directive lines are always processed (never emitted) so the
+	# stack stays balanced even inside a skipped branch.
+	var if_stack: Array = []
 
 	for line in lines:
 		var trimmed := line.strip_edges()
+		if honor_ifdef and trimmed.begins_with("#"):
+			if trimmed.begins_with("#ifdef ") or trimmed.begins_with("#ifndef "):
+				var negate := trimmed.begins_with("#ifndef")
+				var symbol := trimmed.substr(trimmed.find(" ")).strip_edges()
+				var parent_active: bool = if_stack.is_empty() or if_stack[-1]["active"]
+				var cond := defines.has(symbol)
+				if negate:
+					cond = not cond
+				var taken: bool = parent_active and cond
+				if_stack.append({"active": taken, "parent_active": parent_active, "seen_true": taken})
+			elif trimmed == "#else":
+				if not if_stack.is_empty():
+					var e: Dictionary = if_stack[-1]
+					e["active"] = e["parent_active"] and not e["seen_true"]
+					e["seen_true"] = e["seen_true"] or e["active"]
+			elif trimmed.begins_with("#endif"):
+				if not if_stack.is_empty():
+					if_stack.pop_back()
+			# Any other directive (#define, ...) is ignored, like a comment.
+			continue
 		if trimmed.is_empty() or trimmed.begins_with("//") or trimmed.begins_with("#"):
+			continue
+		if honor_ifdef and not (if_stack.is_empty() or if_stack[-1]["active"]):
 			continue
 
 		if trimmed.begins_with("Section =") or trimmed.begins_with("Section="):

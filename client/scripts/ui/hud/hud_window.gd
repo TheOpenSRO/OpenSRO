@@ -72,11 +72,13 @@ var panel_root: Control
 ## load MainSkillWnd -- one function, one branch, confirmed in the binary),
 ## so building both would draw two layouts over each other.
 func build(builder: UiBuilder, layout_path: String, title: String,
-		extra_sections: PackedStringArray = PackedStringArray()) -> bool:
+		extra_sections: PackedStringArray = PackedStringArray(),
+		defines: PackedStringArray = PackedStringArray(),
+		honor_ifdef: bool = false) -> bool:
 	_builder = builder
 	if builder == null:
 		return false
-	var layout := builder.load_layout(layout_path)
+	var layout := builder.load_layout(layout_path, defines, honor_ifdef)
 	if layout == null:
 		return false
 	var sec := layout.get_section("Create")

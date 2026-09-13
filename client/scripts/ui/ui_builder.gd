@@ -25,17 +25,24 @@ var _layout_cache: Dictionary = {} # String -> UiLayoutParser.LayoutDef
 
 ## Loads and caches a layout file from Media.pk2 by its archive path
 ## (e.g. "resinfo\\ifinventory.txt"). Returns null if it isn't there.
-func load_layout(layout_path: String) -> UiLayoutParser.LayoutDef:
-	if _layout_cache.has(layout_path):
-		return _layout_cache[layout_path]
+## Loads and parses a layout. `defines` selects `#ifdef` branches (see
+## UiLayoutParser.parse); passing any turns preprocessing on. The cache key
+## includes the defines so the same file can be read both ways.
+func load_layout(layout_path: String, defines: PackedStringArray = PackedStringArray(),
+		honor_ifdef: bool = false) -> UiLayoutParser.LayoutDef:
+	var cache_key := layout_path
+	if honor_ifdef:
+		cache_key = "%s%s" % [layout_path, "".join(defines)]
+	if _layout_cache.has(cache_key):
+		return _layout_cache[cache_key]
 	if _media_pk2 == null:
 		return null
 	var entry := ObjectLoader.find_file(_media_pk2, layout_path)
 	if entry == null:
 		push_warning("UiBuilder: layout %s not in Media.pk2" % layout_path)
 		return null
-	var layout := UiLayoutParser.parse(_media_pk2.read_file(entry))
-	_layout_cache[layout_path] = layout
+	var layout := UiLayoutParser.parse(_media_pk2.read_file(entry), honor_ifdef, defines)
+	_layout_cache[cache_key] = layout
 	return layout
 
 ## The size a window built from this section should be: its frame's rect,

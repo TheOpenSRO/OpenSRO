@@ -72,6 +72,53 @@ Section = Create,"0,0,0,0","0"
 	_check(btn_ctrl.rect == Rect2i(99, 47, 24, 24), "btn rect is (99, 47, 24, 24)")
 	_check(btn_ctrl.text == "UIIT_STT_MAP", "btn text is UIIT_STT_MAP")
 
+	# --- #ifdef branch selection --------------------------------------------
+	var guarded := """
+Section = Create,"0,0,0,0","0"
+{
+#ifdef FEATURE_A
+	GDR_A:CIFStatic
+	{
+		ID=INTEGER,"1"
+	}
+#else
+	GDR_B:CIFStatic
+	{
+		ID=INTEGER,"2"
+	}
+#endif
+	GDR_ALWAYS:CIFStatic
+	{
+		ID=INTEGER,"3"
+	}
+#ifdef FEATURE_C
+	GDR_C:CIFStatic
+	{
+		ID=INTEGER,"4"
+	}
+#endif
+}
+"""
+	# Default: directives ignored, both branches read (the behaviour every
+	# window built so far relies on).
+	var both := UiLayoutParser.parse(guarded).get_section("Create")
+	_check(both.controls.size() == 4, "ifdef off: both branches + always + C read (got %d)" % both.controls.size())
+
+	# Nothing defined: #else of A, and C skipped.
+	var none := UiLayoutParser.parse(guarded, true, PackedStringArray()).get_section("Create")
+	_check(none.controls.size() == 2, "ifdef on, none defined: 2 controls (got %d)" % none.controls.size())
+	_check(none.control_by_name.has("GDR_B"), "the #else branch (GDR_B) is taken")
+	_check(not none.control_by_name.has("GDR_A"), "the #ifdef branch (GDR_A) is dropped")
+	_check(not none.control_by_name.has("GDR_C"), "an unguarded-symbol #ifdef (GDR_C) is dropped")
+	_check(none.control_by_name.has("GDR_ALWAYS"), "an unguarded control is always kept")
+
+	# A and C defined: the #ifdef branches taken, #else dropped.
+	var ac := UiLayoutParser.parse(guarded, true, PackedStringArray(["FEATURE_A", "FEATURE_C"])).get_section("Create")
+	_check(ac.controls.size() == 3, "ifdef on, A+C defined: 3 controls (got %d)" % ac.controls.size())
+	_check(ac.control_by_name.has("GDR_A"), "GDR_A taken when FEATURE_A defined")
+	_check(not ac.control_by_name.has("GDR_B"), "the #else (GDR_B) is dropped when FEATURE_A defined")
+	_check(ac.control_by_name.has("GDR_C"), "GDR_C taken when FEATURE_C defined")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

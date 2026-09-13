@@ -40,10 +40,17 @@ const TABLE_PATHS := [
 ## Icon paths in the table are relative to this directory in Media.pk2.
 const ICON_PREFIX := "icon\\"
 
-## Column 1 is the id, column 3 the display name, in every part checked.
+## Column 1 is the id, column 2 the code name, column 3 an internal object
+## name and column 5 the name **string id** (`SN_ITEM_*`). Column 3 is written
+## in mixed languages -- English for weapons ("Copper Sword"), Korean for many
+## consumables -- so the display name comes from column 5 resolved through
+## textdata_object.txt (English), with column 3 the fallback. Confirmed against
+## real rows: HP_POTION_05's col3 is Korean while col5 is SN_ITEM_ETC_HP_POTION_05,
+## which textdata_object gives as "HP Recovery Potion (X-Large)".
 const COL_ID := 1
 const COL_CODE_NAME := 2
 const COL_NAME := 3
+const COL_NAME_STRID := 5
 const COL_TYPE_ID1 := 9
 const COL_TYPE_ID4 := 12
 ## `Country`: 0 for the China race's items, 1 for Europe's.
@@ -97,7 +104,12 @@ const REQ_LEVEL_PAIRS := 4
 class Item:
 	var id: int
 	var code_name: String
+	## The internal object name (column 3): English for weapons, but Korean for
+	## many consumables. Prefer display_name(), which resolves the string id.
 	var item_name: String
+	## The name string id (column 5, `SN_ITEM_*`), resolved through
+	## textdata_object.txt for the real English display name.
+	var name_strid: String
 	## Archive path of the inventory icon, ICON_PREFIX already applied.
 	var icon_path: String
 	## The `.bsr` the item is worn as, as the table writes it (no `res\`
@@ -136,14 +148,25 @@ class Item:
 	func is_armour() -> bool:
 		return CHINA_ARMOUR_FAMILIES.has(family()) or EUROPE_ARMOUR_FAMILIES.has(family())
 
+	## The real English display name: the name string id (column 5) resolved
+	## through textdata_object.txt, falling back to the column-3 object name
+	## when no table is given or the id does not resolve. This is what a player
+	## should see; item_name alone shows Korean for many consumables.
+	func display_name(names: UiTextTable = null) -> String:
+		if names != null and name_strid != "":
+			var resolved := names.get_text(name_strid)
+			if resolved != "" and resolved != name_strid:
+				return resolved
+		return item_name
+
 	## The lines a hover tooltip shows, top to bottom -- the item's own real
 	## figures, none invented. A weapon shows its attack block; every
 	## equippable shows durability, requirement, race and gender. Kept to
 	## what is measured: attack distance and the armour defence block are
 	## not among these columns yet, so they are simply absent rather than
 	## guessed at.
-	func tooltip_lines() -> Array:
-		var lines: Array = [item_name]
+	func tooltip_lines(names: UiTextTable = null) -> Array:
+		var lines: Array = [display_name(names)]
 		var type_id4: int = type_ids[3] if type_ids.size() > 3 else 0
 		var sort: String = str(WEAPON_SORT.get(type_id4, "")) if is_weapon() else ""
 		if sort != "":
@@ -200,6 +223,8 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.id = int(id_text)
 		item.code_name = cols[COL_CODE_NAME].strip_edges()
 		item.item_name = cols[COL_NAME].strip_edges()
+		if cols.size() > COL_NAME_STRID:
+			item.name_strid = cols[COL_NAME_STRID].strip_edges()
 		var icon := _find_icon_path(cols)
 		if icon != "":
 			item.icon_path = ICON_PREFIX + icon

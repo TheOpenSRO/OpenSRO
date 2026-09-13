@@ -1261,6 +1261,7 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.system_help_requested.connect(func():
 		_log_system("Controls: click to move, right-drag or left-drag to orbit, mouse wheel to zoom. F1 dev tools, F3 debug panel, I inventory, K skill, M map. Type /unstuck if you get wedged in geometry."))
 	_hud_panels.skill_assign_requested.connect(_on_skill_assign_requested)
+	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
 
 	# The chat window, bottom-left where its registry entry puts it. This
 	# retires the developer chat box: the authored window is the same two
@@ -3308,7 +3309,14 @@ var _npc_shop_set: Dictionary = {}
 var _npc_greetings: Dictionary = {}
 ## textdata_object table, kept to resolve NPC greeting SN_ strings.
 var _npc_text_table: UiTextTable = null
+## The shop tables (ShopReader), so the Buy option can open the NPC's real
+## goods. Built lazily with the NPC tables.
+var _shop_reader: ShopReader = null
 var _npc_tables_loaded := false
+## The NPC whose talk box is open, so a chosen service (Buy, ...) knows who it
+## is for.
+var _talk_npc_name := ""
+var _talk_npc_code := ""
 ## Regions whose NPCs have already been placed, so streaming back into a
 ## region doesn't stack a second copy of everyone in it.
 var _npc_regions_done: Dictionary = {}
@@ -3361,6 +3369,11 @@ func _load_npc_tables() -> void:
 	var chat_entry := ObjectLoader.find_file(_media_pk2, NpcServiceReader.CHAT_TABLE)
 	if chat_entry != null:
 		_npc_greetings = NpcServiceReader.parse_greetings(_media_pk2.read_file(chat_entry))
+	# The shop goods chain (refshopgroup -> ... -> item codename), so Buy shows
+	# the NPC's real wares. Reads through _media_pk2 by archive path.
+	_shop_reader = ShopReader.new().load(func(archive_path: String) -> PackedByteArray:
+		var e := ObjectLoader.find_file(_media_pk2, archive_path)
+		return _media_pk2.read_file(e) if e != null else PackedByteArray())
 	print("World3D: NPC tables -- %d spawn(s) across %d region(s), %d model(s), %d name(s), %d shop, %d greetings" % [
 		_npc_spawn_total(), _npc_spawns_by_region.size(), _npc_models.size(), _npc_names.size(), _npc_shop_set.size(), _npc_greetings.size()])
 
@@ -5379,7 +5392,19 @@ func _qa_step() -> void:
 		# its real greeting + services; falls back to using it as a display name.
 		_load_npc_tables()
 		var code := OS.get_environment("SRREVAMP_QA_TALK")
-		_hud_panels.open_npc_talk(code, _npc_greeting_text(code), _npc_service_labels(code))
+		_talk_npc_name = code
+		_talk_npc_code = code
+		_hud_panels.open_npc_talk(code, _npc_greeting_text(code), _npc_services(code))
+
+	# SRREVAMP_QA_SHOP="<NPC_CODE>" opens that NPC's store window for a render,
+	# standing in for talk -> Buy. Shows the real goods grid + tabs.
+	if OS.get_environment("SRREVAMP_QA_SHOP") != "" and _qa_tick == 40 and _hud_panels != null:
+		_load_npc_tables()
+		var scode := OS.get_environment("SRREVAMP_QA_SHOP")
+		_talk_npc_name = scode
+		_talk_npc_code = scode
+		if _shop_reader != null:
+			_hud_panels.open_shop(scode, _shop_reader.tabs_for(scode))
 
 	# SRREVAMP_QA_NAVGAP compares each nearby object's *solid* footprint
 	# against its *walkable* one. A player can stand inside anything where
@@ -6743,7 +6768,9 @@ func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 	if npc_name == "":
 		npc_name = "..."
 	var code := str(node.get_meta("npc_code")) if node.has_meta("npc_code") else ""
-	_hud_panels.open_npc_talk(npc_name, _npc_greeting_text(code), _npc_service_labels(code))
+	_talk_npc_name = npc_name
+	_talk_npc_code = code
+	_hud_panels.open_npc_talk(npc_name, _npc_greeting_text(code), _npc_services(code))
 	return true
 
 ## The NPC's real greeting, resolved from npcchat.txt's SN_ id through the
@@ -6760,15 +6787,23 @@ func _npc_greeting_text(code: String) -> String:
 				return resolved
 	return ""
 
-## The labels of the services the NPC offers (grounded detection; see
-## NpcServiceReader), for the talk window's numbered options.
-func _npc_service_labels(code: String) -> PackedStringArray:
-	var out := PackedStringArray()
+## The services the NPC offers (grounded detection; see NpcServiceReader), as
+## Service objects (key + label) for the talk window's clickable options.
+func _npc_services(code: String) -> Array:
 	if code == "":
-		return out
-	for svc in NpcServiceReader.services_for(code, _npc_shop_set):
-		out.append((svc as NpcServiceReader.Service).label)
-	return out
+		return []
+	return NpcServiceReader.services_for(code, _npc_shop_set)
+
+## Acts on a service chosen in the talk box. Buy opens the NPC's real shop; the
+## others (repair, storage, guild) are their own systems, still to come, so
+## they say so rather than doing nothing silently.
+func _on_npc_service_selected(key: String) -> void:
+	match key:
+		"shop":
+			if _shop_reader != null and _talk_npc_code != "":
+				_hud_panels.open_shop(_talk_npc_name, _shop_reader.tabs_for(_talk_npc_code))
+		_:
+			_log_system("%s is not available yet." % key.capitalize())
 
 func _try_set_move_target(screen_pos: Vector2) -> void:
 	var from := camera_3d.project_ray_origin(screen_pos)
