@@ -7587,6 +7587,27 @@ foot. The worn slots around it are still empty frames -- filling them
 with the equipped icons, and the item table's armour defence block, are
 the follow-ups.
 
+## Hundred-and-forty-fourth round: the warehouse -- a second item container
+
+Talk to a warehouse keeper -> Storage opens the authored warehouse window
+(ifstorageroom) with the bag beside it; clicking a bag item deposits it and a
+stored item withdraws it, each a quantity dialog. Verified in a render: 8
+arrows deposited, the bag stack 20 -> 12 and the warehouse holding them.
+
+The warehouse is not new machinery. It is an ordinary inventory container on
+its own table, so it inherits every stacking and placement rule the bag has --
+inventory.OpenSQLStore gained a named variant for a second table
+(storage_slots), and storage.Service just moves items between the two
+containers, reading the slot's own item and count from the source rather than
+trusting the client, and returning the item if the destination add fails.
+OpStorageList reuses the inventory-list wire shape.
+
+Grounded that the service is reachable: the storage NPCs really are named with
+WAREHOUSE (NPC_CH_WAREHOUSE_M / _W, and the EU/CA/KT/WC equivalents), so
+NpcServiceReader's `codename contains WAREHOUSE` test -- an earlier guess --
+turns out to match the real data, and a warehouse keeper's talk box offers
+Storage the same way a smith's offers Buy.
+
 ## Hundred-and-forty-third round: selling back, and stackables that stack
 
 Two follow-ups finished the shop's economic loop. **Selling**: the store now
