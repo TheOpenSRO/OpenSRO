@@ -41,6 +41,9 @@ func TestItemRecordRoundTripsThroughTheImporter(t *testing.T) {
 	set(fCritical+1, "15")
 	set(fPrice, "890")     // the Copper Sword's real buy price
 	set(fSellPrice, "427") // and its real buy-back price
+	// A sentinel (a real sword is 1) so this fails if MaxStack is hardcoded
+	// again instead of read from its column.
+	set(fMaxStack, "99")
 
 	rec, ok := itemRecord(cols)
 	if !ok {
@@ -71,6 +74,9 @@ func TestItemRecordRoundTripsThroughTheImporter(t *testing.T) {
 	if it.Price != 890 || it.SellPrice != 427 {
 		t.Errorf("price = %d buy / %d sell, want 890 / 427", it.Price, it.SellPrice)
 	}
+	if it.MaxStack != 99 {
+		t.Errorf("MaxStack = %d, want 99 (read from its column, not hardcoded)", it.MaxStack)
+	}
 	if it.DurabilityMin != 62 || it.DurabilityMax != 76 {
 		t.Errorf("durability = %v/%v, want 62/76", it.DurabilityMin, it.DurabilityMax)
 	}
@@ -79,9 +85,6 @@ func TestItemRecordRoundTripsThroughTheImporter(t *testing.T) {
 	}
 	if it.Country != 0 || it.ReqGender != 2 || it.ReqLevel1 != 1 {
 		t.Errorf("country/gender/reqlevel = %d/%d/%d, want 0/2/1", it.Country, it.ReqGender, it.ReqLevel1)
-	}
-	if it.MaxStack != 1 {
-		t.Errorf("MaxStack = %d, want the safe default 1", it.MaxStack)
 	}
 }
 

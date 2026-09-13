@@ -19,10 +19,13 @@
 // columns hold; the attack columns are the same for the bow and spear.
 // See docs/protocol/ITEM_FORMAT.md and WORLD_ISSUES.md.
 //
-// Left at defaults, and why it is safe: MaxStack is 1 for every row --
-// the server's current (no-refdata) behaviour already treats every item
-// as one-to-a-slot, so this changes nothing there, and the real per-item
-// stack sizes are not yet mapped. Physical/magical DEFENCE is 0: armour
+// MaxStack is real, from column 57: 1 for every one of the 8,616 equipment
+// rows (TypeID2=1) and a real per-item cap for the stackables (an alchemy
+// stone 500, a potion 5,000, arrows 2,500), which is exactly how a MaxStack
+// column behaves. An earlier note here defaulted it to 1 "because it is 1 for
+// every row" -- that was reading the wrong thing; the real column makes
+// potions and materials stack instead of filling a slot each. Physical/magical
+// DEFENCE is 0: armour
 // stores its defence in different columns than a weapon's attack, and this
 // project has no ground-truth armour tooltip to label them, so rather than
 // guess they are left empty -- combat does not read defence, and the only
@@ -49,6 +52,8 @@ const (
 	fID            = 1
 	fTypeID1       = 9 // TypeID1..4 run 9..12
 	fCountry       = 14
+	// MaxStack: 1 for all equipment, a real cap for stackables (col 57).
+	fMaxStack = 57
 	// Real NPC vendor prices: _RefObjCommon Price (buy) and SellPrice
 	// (buy-back). Confirmed against real rows -- SellPrice < Price on every
 	// item checked, potions carry a Price with 0 CostRepair, weapons carry
@@ -182,7 +187,7 @@ func itemRecord(cols []string) ([]string, bool) {
 	}
 	return []string{
 		get(fID),                // 0  ID
-		"1",                     // 1  MaxStack (default -- see package doc)
+		get(fMaxStack),          // 1  MaxStack (col 57: 1 for equipment, real cap for stackables)
 		get(fReqStr),            // 2  ReqStr
 		get(fReqInt),            // 3  ReqInt
 		"0",                     // 4  ItemClass (not mapped)
