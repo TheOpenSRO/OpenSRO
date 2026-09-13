@@ -81,10 +81,10 @@ Ordered roughly quick-fix → needs-a-server-system.
   while the player node points +Z at the movement dir, so the skeleton is turned 180°
   (`skeleton.rotation.y = PI`) to align them. Verified by a `--walk 45` render (v0.1.128): the
   body runs forward in the travel direction, in both the WASD and click-to-move branches.
-- [~] **Target window like the reference** (pic 2): the authored frame now shows the monster's name,
-  its REAL level (grounded from characterdata _RefObjChar col 57, carried in the snapshot), the HP
-  bar and HP % (v0.1.129). Still omitted: the rank gem ("General") — the rank column isn't
-  identified in characterdata yet, so inventing it is against the rules.
+- [x] **Target window like the reference** (pic 2): the authored frame shows the monster's name, its
+  REAL level (characterdata _RefObjChar col 57), the **rank gem** (rarity col 15 -> gem via the
+  mapping recovered from the retail client FUN_0069b4c0), and the HP bar + HP % (v0.1.129/130). All
+  grounded. (MaxHP itself is still a disclosed default -- its characterdata column isn't certain.)
 - [?] **Storage-keeper (and NPCs) face the wrong way in Jangan** — BLOCKED: the client's
   `npcpos.txt` is position-only (5 cols: id, region, X, Y, Z — confirmed against the real 12,367-row
   table), so the NPC heading is NOT in the client. Like damage/exp, NPC spawn heading is
