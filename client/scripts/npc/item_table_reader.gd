@@ -93,6 +93,21 @@ const COL_MAG_REINFORCE_MAX := 111
 const COL_ATTACK_RATE := 113
 const COL_CRITICAL := 116
 
+## Armour defence columns, a separate block from the weapon attack columns
+## above (weapons leave these 0; armour leaves the attack columns 0). Grounded
+## from the real DB _RefObjItem column order documented in
+## docs/protocol/refdata_schema.md -- PD (physical defence), ER, PAR, BR (block,
+## shields), MD (magical defence) -- which lines up with these positions in the
+## data, and is confirmed by the cloth-vs-heavy relationship (cloth armour has
+## more magical defence, heavy armour more physical). Each defence is a min/max
+## pair (the +0 range, like the weapon block); the values are floats (2 ~ 2.5).
+const COL_PHYS_DEF_MIN := 65
+const COL_PHYS_DEF_MAX := 66
+const COL_BLOCK_MIN := 74
+const COL_BLOCK_MAX := 75
+const COL_MAG_DEF_MIN := 76
+const COL_MAG_DEF_MAX := 77
+
 ## TypeID3 (the item family) values, index 2 of type_ids.
 const FAMILY_WEAPON := 6
 const CHINA_ARMOUR_FAMILIES := [1, 2, 3]
@@ -147,6 +162,11 @@ class Item:
 	var mag_reinforce := Vector2i.ZERO
 	var attack_rate: int = 0
 	var critical: int = 0
+	## Armour defence, base (+0), min~max (floats). Zero for a non-defensive
+	## item. block is a shield's block ratio.
+	var phys_def := Vector2.ZERO
+	var mag_def := Vector2.ZERO
+	var block := Vector2.ZERO
 
 	func is_equipment() -> bool:
 		return model_path != ""
@@ -159,6 +179,15 @@ class Item:
 
 	func is_armour() -> bool:
 		return CHINA_ARMOUR_FAMILIES.has(family()) or EUROPE_ARMOUR_FAMILIES.has(family())
+
+	## True when the item carries a defence value (armour or a shield) -- what
+	## decides whether the tooltip shows a defence block.
+	func has_defence() -> bool:
+		return phys_def != Vector2.ZERO or mag_def != Vector2.ZERO
+
+	## Formats a defence float without a trailing ".0" (2.0 -> "2", 2.5 -> "2.5").
+	static func _fmt(value: float) -> String:
+		return ("%.1f" % value).trim_suffix(".0")
 
 	## The real English display name: the name string id (column 5) resolved
 	## through textdata_object.txt, falling back to the column-3 object name
@@ -187,6 +216,11 @@ class Item:
 		if is_weapon():
 			lines.append("Phy. atk. pwr. %d ~ %d" % [phys_atk.x, phys_atk.y])
 			lines.append("Mag. atk. pwr. %d ~ %d" % [mag_atk.x, mag_atk.y])
+		elif has_defence():
+			lines.append("Phy. def. pwr. %s ~ %s" % [_fmt(phys_def.x), _fmt(phys_def.y)])
+			lines.append("Mag. def. pwr. %s ~ %s" % [_fmt(mag_def.x), _fmt(mag_def.y)])
+			if block != Vector2.ZERO:
+				lines.append("Block ratio %s ~ %s" % [_fmt(block.x), _fmt(block.y)])
 		if durability > 0:
 			lines.append("Durability %d / %d" % [durability, durability])
 		if is_weapon():
@@ -260,6 +294,9 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.mag_reinforce = Vector2i(_int_at(cols, COL_MAG_REINFORCE_MIN), _int_at(cols, COL_MAG_REINFORCE_MAX))
 		item.attack_rate = _int_at(cols, COL_ATTACK_RATE)
 		item.critical = _int_at(cols, COL_CRITICAL)
+		item.phys_def = Vector2(_float_at(cols, COL_PHYS_DEF_MIN), _float_at(cols, COL_PHYS_DEF_MAX))
+		item.mag_def = Vector2(_float_at(cols, COL_MAG_DEF_MIN), _float_at(cols, COL_MAG_DEF_MAX))
+		item.block = Vector2(_float_at(cols, COL_BLOCK_MIN), _float_at(cols, COL_BLOCK_MAX))
 		# A row with neither a name nor an icon tells the player nothing.
 		if item.item_name == "" and item.icon_path == "":
 			continue
@@ -280,6 +317,13 @@ static func _int_at(cols: PackedStringArray, col: int) -> int:
 		return 0
 	var text := cols[col].strip_edges()
 	return int(text) if text.is_valid_int() else 0
+
+## A float column (armour defence values are written like "2.5"), or 0.
+static func _float_at(cols: PackedStringArray, col: int) -> float:
+	if col >= cols.size():
+		return 0.0
+	var text := cols[col].strip_edges()
+	return float(text) if text.is_valid_float() else 0.0
 
 ## The `.ddj` field in an item row. A row also carries two `.bsr` model
 ## paths, so matching on the extension is what picks the icon out.
