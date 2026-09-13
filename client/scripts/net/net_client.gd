@@ -40,6 +40,9 @@ signal equipment_result(items: Array, error: String)
 signal shop_buy_result(ok: bool, reason: String)
 signal shop_list_result(entries: Array, error: String)
 signal shop_sell_result(ok: bool, reason: String, gold_received: int)
+signal storage_list_result(slots: Array, error: String)
+signal storage_deposit_result(ok: bool, reason: String)
+signal storage_withdraw_result(ok: bool, reason: String)
 signal attack_result(result: CombatNet.AttackResult)
 signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
@@ -297,6 +300,15 @@ func list_shop(item_ids: Array = []) -> void:
 func sell_item(char_name: String, slot: int, quantity: int) -> void:
 	_send(ShopNet.OP_SELL, ShopNet.encode_sell(char_name, slot, quantity))
 
+func list_storage(char_name: String) -> void:
+	_send(StorageNet.OP_LIST, StorageNet.encode_list_request(char_name))
+
+func deposit_to_storage(char_name: String, bag_slot: int, quantity: int) -> void:
+	_send(StorageNet.OP_DEPOSIT, StorageNet.encode_move(char_name, bag_slot, quantity))
+
+func withdraw_from_storage(char_name: String, warehouse_slot: int, quantity: int) -> void:
+	_send(StorageNet.OP_WITHDRAW, StorageNet.encode_move(char_name, warehouse_slot, quantity))
+
 func attack(char_name: String, target_monster_id: int) -> void:
 	_send(CombatNet.OP_ATTACK, CombatNet.encode_attack(char_name, target_monster_id))
 
@@ -452,6 +464,15 @@ func _dispatch(p: Packet) -> void:
 		ShopNet.OP_SELL_RESULT:
 			var r := ShopNet.decode_sell_result(p.data)
 			shop_sell_result.emit(r.ok, r.reason if r.error == "" else r.error, r.gold_received)
+		StorageNet.OP_LIST_RESULT:
+			var r := StorageNet.decode_list_result(p.data)
+			storage_list_result.emit(r.slots, r.error)
+		StorageNet.OP_DEPOSIT_RESULT:
+			var r := StorageNet.decode_move_result(p.data)
+			storage_deposit_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		StorageNet.OP_WITHDRAW_RESULT:
+			var r := StorageNet.decode_move_result(p.data)
+			storage_withdraw_result.emit(r.ok, r.reason if r.error == "" else r.error)
 		CombatNet.OP_ATTACK_RESULT:
 			attack_result.emit(CombatNet.decode_attack_result(p.data))
 		CombatNet.OP_MONSTER_DAMAGED:

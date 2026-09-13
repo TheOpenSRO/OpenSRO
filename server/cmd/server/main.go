@@ -26,6 +26,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/session"
 	"github.com/OpenSRO/srrevamp/server/internal/shop"
+	"github.com/OpenSRO/srrevamp/server/internal/storage"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/trade"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
@@ -200,6 +201,7 @@ func main() {
 		chars      character.Store
 		refItems   refItemStore
 		inv        inventory.Store
+		warehouse  inventory.Store // the storage NPC's container (a 2nd inventory)
 		eq         equipment.Store
 		skills     skill.Store
 		guilds     guild.Store
@@ -253,6 +255,7 @@ func main() {
 		chars = character.NewMemStore()
 		refItems = memRef
 		inv = memInv
+		warehouse = inventory.NewMemStore(memRef) // a second, independent container
 		eq = equipment.NewMemStore(memInv)
 		skills = skill.NewMemStore()
 		guilds = guild.NewMemStore()
@@ -287,6 +290,14 @@ func main() {
 			os.Exit(1)
 		}
 		defer sqlInv.Close()
+
+		// The warehouse is a second inventory container on its own table.
+		sqlWarehouse, err := inventory.OpenSQLStoreNamed(*postgresDSN, sqlRef, "storage_slots")
+		if err != nil {
+			logger.Error("opening warehouse store", "error", err)
+			os.Exit(1)
+		}
+		defer sqlWarehouse.Close()
 
 		sqlEq, err := equipment.OpenSQLStore(*postgresDSN, sqlInv)
 		if err != nil {
@@ -325,12 +336,14 @@ func main() {
 
 		accounts, registerer = sqlAccounts, sqlAccounts
 		chars, refItems = sqlChars, sqlRef
+		warehouse = sqlWarehouse
 		inv, eq, skills = sqlInv, sqlEq, sqlSkills
 		guilds, quests, friends = sqlGuilds, sqlQuests, sqlFriends
 		logger.Info("postgres storage ready")
 	}
 
 	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
+	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse}
 
 	hub := world.NewHub()
 	monsters := combat.NewHub()
@@ -376,6 +389,7 @@ func main() {
 		session.EquipmentHandlerWithRules(chars, eq, inv, refItems),
 		session.CharacterStatsHandler(chars, eq, refItems),
 		session.ShopHandler(chars, shopSvc),
+		session.StorageHandler(chars, storageSvc),
 		session.CombatHandler(chars, eq, refItems, hub, monsters, quests, inv, skills),
 		session.LearnSkillHandler(chars, skills, refItems),
 		session.UseSkillHandler(chars, eq, refItems, skills, hub, monsters, quests, inv, refItems),

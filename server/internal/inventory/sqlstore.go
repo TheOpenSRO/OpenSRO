@@ -8,27 +8,45 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )
 
-const schema = `
-CREATE TABLE IF NOT EXISTS inventory_slots (
+// DefaultTable is the bag's table. A second container (the warehouse) opens
+// the same store against a different table via OpenSQLStoreNamed, so all the
+// stacking and placement logic is shared rather than duplicated.
+const DefaultTable = "inventory_slots"
+
+// schemaFor returns the CREATE TABLE for a container's table. The table name
+// is a trusted constant (never user input), so interpolating it is safe.
+func schemaFor(table string) string {
+	return fmt.Sprintf(`
+CREATE TABLE IF NOT EXISTS %s (
 	character_id BIGINT NOT NULL,
 	slot         INTEGER NOT NULL,
 	item_id      BIGINT NOT NULL,
 	quantity     INTEGER NOT NULL,
 	PRIMARY KEY (character_id, slot)
 );
-`
+`, table)
+}
 
 // SQLStore is a Store backed by PostgreSQL, consistent with
 // account/character/refdata's approach. Needs a MaxStackLookup (in
-// production, refdata.SQLStore) to know each item's stack limit.
+// production, refdata.SQLStore) to know each item's stack limit. `table` is
+// the container's table -- the bag or the warehouse.
 type SQLStore struct {
 	db        *sql.DB
 	maxStacks MaxStackLookup
+	table     string
 }
 
-// OpenSQLStore opens a PostgreSQL database at dsn and ensures its schema
-// exists. maxStacks resolves item stack limits for AddItem.
+// OpenSQLStore opens the bag store (the DefaultTable). See OpenSQLStoreNamed
+// for a second container.
 func OpenSQLStore(dsn string, maxStacks MaxStackLookup) (*SQLStore, error) {
+	return OpenSQLStoreNamed(dsn, maxStacks, DefaultTable)
+}
+
+// OpenSQLStoreNamed opens a PostgreSQL-backed container using the given table,
+// ensuring its schema exists. The warehouse passes its own table so it is a
+// separate container sharing all of the bag's logic.
+func OpenSQLStoreNamed(dsn string, maxStacks MaxStackLookup, table string) (*SQLStore, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("inventory: opening postgres connection: %w", err)
@@ -37,11 +55,11 @@ func OpenSQLStore(dsn string, maxStacks MaxStackLookup) (*SQLStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("inventory: connecting to postgres: %w", err)
 	}
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.Exec(schemaFor(table)); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("inventory: creating schema: %w", err)
 	}
-	return &SQLStore{db: db, maxStacks: maxStacks}, nil
+	return &SQLStore{db: db, maxStacks: maxStacks, table: table}, nil
 }
 
 // TruncateForTest clears all inventory data. Exported only so other
@@ -57,7 +75,7 @@ func OpenSQLStore(dsn string, maxStacks MaxStackLookup) (*SQLStore, error) {
 // therefore run one package at a time (`go test -p 1`); see the CI
 // workflow.
 func (s *SQLStore) TruncateForTest(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE inventory_slots`)
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`TRUNCATE TABLE %s`, s.table))
 	return err
 }
 
@@ -69,7 +87,7 @@ func (s *SQLStore) Close() error {
 // List implements Store.
 func (s *SQLStore) List(ctx context.Context, characterID int64) ([]Slot, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT slot, item_id, quantity FROM inventory_slots WHERE character_id = $1 ORDER BY slot`,
+		fmt.Sprintf(`SELECT slot, item_id, quantity FROM %s WHERE character_id = $1 ORDER BY slot`, s.table),
 		characterID)
 	if err != nil {
 		return nil, fmt.Errorf("inventory: listing slots: %w", err)
@@ -103,7 +121,7 @@ func (s *SQLStore) AddItem(ctx context.Context, characterID, itemID int64, quant
 	}
 	defer tx.Rollback()
 
-	existing, occupied, err := loadOccupancy(ctx, tx, characterID)
+	existing, occupied, err := s.loadOccupancy(ctx, tx, characterID)
 	if err != nil {
 		return err
 	}
@@ -122,7 +140,7 @@ func (s *SQLStore) AddItem(ctx context.Context, characterID, itemID int64, quant
 		room := maxStack - sl.Quantity
 		add := min(room, remaining)
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE inventory_slots SET quantity = quantity + $1 WHERE character_id = $2 AND slot = $3`,
+			fmt.Sprintf(`UPDATE %s SET quantity = quantity + $1 WHERE character_id = $2 AND slot = $3`, s.table),
 			add, characterID, sl.Index); err != nil {
 			return fmt.Errorf("inventory: topping up slot %d: %w", sl.Index, err)
 		}
@@ -139,7 +157,7 @@ func (s *SQLStore) AddItem(ctx context.Context, characterID, itemID int64, quant
 
 		add := min(maxStack, remaining)
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO inventory_slots (character_id, slot, item_id, quantity) VALUES ($1, $2, $3, $4)`,
+			fmt.Sprintf(`INSERT INTO %s (character_id, slot, item_id, quantity) VALUES ($1, $2, $3, $4)`, s.table),
 			characterID, slotIdx, itemID, add); err != nil {
 			return fmt.Errorf("inventory: inserting into slot %d: %w", slotIdx, err)
 		}
@@ -163,7 +181,7 @@ func (s *SQLStore) RemoveItem(ctx context.Context, characterID int64, slot int, 
 
 	var current int
 	err = tx.QueryRowContext(ctx,
-		`SELECT quantity FROM inventory_slots WHERE character_id = $1 AND slot = $2`,
+		fmt.Sprintf(`SELECT quantity FROM %s WHERE character_id = $1 AND slot = $2`, s.table),
 		characterID, slot).Scan(&current)
 	if err == sql.ErrNoRows {
 		return ErrSlotEmpty
@@ -177,12 +195,12 @@ func (s *SQLStore) RemoveItem(ctx context.Context, characterID int64, slot int, 
 
 	if quantity == current {
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM inventory_slots WHERE character_id = $1 AND slot = $2`, characterID, slot); err != nil {
+			fmt.Sprintf(`DELETE FROM %s WHERE character_id = $1 AND slot = $2`, s.table), characterID, slot); err != nil {
 			return fmt.Errorf("inventory: clearing slot %d: %w", slot, err)
 		}
 	} else {
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE inventory_slots SET quantity = quantity - $1 WHERE character_id = $2 AND slot = $3`,
+			fmt.Sprintf(`UPDATE %s SET quantity = quantity - $1 WHERE character_id = $2 AND slot = $3`, s.table),
 			quantity, characterID, slot); err != nil {
 			return fmt.Errorf("inventory: decrementing slot %d: %w", slot, err)
 		}
@@ -192,10 +210,10 @@ func (s *SQLStore) RemoveItem(ctx context.Context, characterID int64, slot int, 
 
 // loadOccupancy returns the current slots plus a SlotsPerCharacter-sized
 // occupancy map, for AddItem's stacking/placement logic.
-func loadOccupancy(ctx context.Context, tx *sql.Tx, characterID int64) ([]Slot, [SlotsPerCharacter]bool, error) {
+func (s *SQLStore) loadOccupancy(ctx context.Context, tx *sql.Tx, characterID int64) ([]Slot, [SlotsPerCharacter]bool, error) {
 	var occupied [SlotsPerCharacter]bool
 	rows, err := tx.QueryContext(ctx,
-		`SELECT slot, item_id, quantity FROM inventory_slots WHERE character_id = $1 ORDER BY slot`,
+		fmt.Sprintf(`SELECT slot, item_id, quantity FROM %s WHERE character_id = $1 ORDER BY slot`, s.table),
 		characterID)
 	if err != nil {
 		return nil, occupied, fmt.Errorf("inventory: loading current slots: %w", err)

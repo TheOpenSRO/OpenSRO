@@ -5419,6 +5419,19 @@ func _qa_step() -> void:
 		elif _qa_tick == 90:
 			_hud_panels.qa_sell_first(5)
 
+	# SRREVAMP_QA_STORAGE (with SRREVAMP_QA_SHOP set to a shop) exercises the
+	# warehouse: buy a stack into the bag, open storage, then deposit part of it.
+	if OS.get_environment("SRREVAMP_QA_STORAGE") != "" and _hud_panels != null:
+		if _qa_tick == 52:
+			_hud_panels.qa_buy_first_item()
+		elif _qa_tick == 66:
+			_hud_panels.close("store")
+			_hud_panels.open_storage("Warehouse Keeper")
+		elif _qa_tick == 80:
+			_hud_panels.qa_deposit_first()
+		elif _qa_tick == 92:
+			_hud_panels.qa_do_deposit_first(8)
+
 	# SRREVAMP_QA_NAVGAP compares each nearby object's *solid* footprint
 	# against its *walkable* one. A player can stand inside anything where
 	# the first is bigger than the second, so this says which objects those
@@ -6815,6 +6828,8 @@ func _on_npc_service_selected(key: String) -> void:
 		"shop":
 			if _shop_reader != null and _talk_npc_code != "":
 				_hud_panels.open_shop(_talk_npc_name, _shop_reader.tabs_for(_talk_npc_code))
+		"storage":
+			_hud_panels.open_storage(_talk_npc_name)
 		_:
 			_log_system("%s is not available yet." % key.capitalize())
 

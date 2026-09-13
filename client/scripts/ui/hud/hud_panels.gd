@@ -47,6 +47,9 @@ const PANELS := {
 	# name. The authored store window: a 6x5 goods grid, a page spinner, and
 	# repair. Built with #ifdef selection (see PANEL_DEFINES).
 	"store": ["resinfo\\ifstore.txt", "Store", 0],
+	# Opened from the talk box's Storage option (open_storage). The authored
+	# warehouse window: a 6x5 grid of the character's stored items.
+	"storage": ["resinfo\\ifstorageroom.txt", "Storage", 0],
 }
 
 ## Panels whose layout is read with #ifdef branch selection, mapped to the
@@ -850,6 +853,213 @@ func qa_sell_first(quantity: int) -> void:
 	if icon != null:
 		_do_sell(int(icon.get_meta("inv_slot")), quantity)
 
+# --- The NPC storage (warehouse) --------------------------------------------
+#
+# The authored warehouse window (ifstorageroom) shows the character's stored
+# items in its 6x5 grid. Opening it puts the bag alongside: click a bag item to
+# deposit it, click a stored item to withdraw it. Both moves go through the
+# server (storage.Service), which shares the bag's stacking rules.
+
+## Opens the warehouse for an NPC, with the bag beside it. Refills both from
+## the server.
+func open_storage(npc_name: String) -> void:
+	var window := open("storage")
+	if window == null:
+		return
+	window.set_title(npc_name)
+	window.show()
+	window.move_to_front()
+	var bag: HudWindow = open("inventory")
+	if bag != null:
+		var view := get_viewport_rect().size
+		window.position = Vector2(view.x * 0.5 - window.size.x - 8.0, (view.y - window.size.y) * 0.5).round()
+		bag.position = Vector2(view.x * 0.5 + 8.0, (view.y - bag.size.y) * 0.5).round()
+		bag.move_to_front()
+		window.move_to_front()
+	if NetClient.is_connected_to_server():
+		var who := NetClient.current_character_name
+		if who != "":
+			NetClient.list_storage(who)
+			NetClient.list_inventory(who)
+
+## Fills the warehouse grid (GDR_STORAGE_LAT) with the stored items; each is
+## clickable to withdraw.
+func _fill_storage_grid(slots: Array) -> void:
+	var window: HudWindow = _windows.get("storage")
+	if window == null:
+		return
+	var grid := window.node("GDR_STORAGE_LAT") as Control
+	if grid == null:
+		return
+	_load_items()
+	for cell in grid.get_children():
+		var icon0 := cell.get_node_or_null("ItemIcon") as TextureRect
+		if icon0 != null:
+			icon0.texture = null
+			for m in ["wh_slot", "wh_item_id", "wh_qty"]:
+				if icon0.has_meta(m):
+					icon0.remove_meta(m)
+		var count0 := cell.get_node_or_null("CountLabel") as Label
+		if count0 != null:
+			count0.text = ""
+	var cells := grid.get_child_count()
+	for entry in slots:
+		var index: int = entry.slot_index
+		if index < 0 or index >= cells:
+			continue
+		var cell := grid.get_child(index)
+		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
+		if icon == null:
+			continue
+		var item: ItemTableReader.Item = _items.get(entry.item_id)
+		icon.texture = _item_icon(entry.item_id)
+		icon.tooltip_text = _item_tooltip(entry.item_id)
+		icon.mouse_filter = Control.MOUSE_FILTER_STOP
+		icon.set_meta("wh_slot", index)
+		icon.set_meta("wh_item_id", entry.item_id)
+		icon.set_meta("wh_qty", entry.quantity)
+		if not icon.has_meta("wh_click_wired"):
+			icon.set_meta("wh_click_wired", true)
+			icon.gui_input.connect(func(ev: InputEvent) -> void: _on_storage_cell_input(ev, icon))
+		var count_label := cell.get_node_or_null("CountLabel") as Label
+		if count_label != null and entry.quantity > 1:
+			count_label.text = str(entry.quantity)
+
+func _on_storage_cell_input(event: InputEvent, icon: TextureRect) -> void:
+	if not (event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT):
+		return
+	if icon.has_meta("wh_slot") and icon.has_meta("wh_item_id"):
+		_confirm_withdraw(int(icon.get_meta("wh_slot")), int(icon.get_meta("wh_item_id")), int(icon.get_meta("wh_qty")))
+
+func _confirm_deposit(bag_slot: int, item_id: int, held: int) -> void:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	var name: String = item.display_name(_object_names) if item != null else "item"
+	_quantity_move_confirm("DepositConfirm", "Deposit %s?" % name, held, "Deposit",
+		func(q: int) -> void: _do_deposit(bag_slot, q))
+
+func _confirm_withdraw(warehouse_slot: int, item_id: int, held: int) -> void:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	var name: String = item.display_name(_object_names) if item != null else "item"
+	_quantity_move_confirm("WithdrawConfirm", "Withdraw %s?" % name, held, "Withdraw",
+		func(q: int) -> void: _do_withdraw(warehouse_slot, q))
+
+## A quantity confirmation for a move (deposit/withdraw), built over whichever
+## of the storage/bag windows is topmost. on_action gets the chosen quantity.
+func _quantity_move_confirm(dialog_name: String, title: String, max_qty: int, action_label: String, on_action: Callable) -> void:
+	var window: HudWindow = _windows.get("storage")
+	if window == null:
+		return
+	var old := window.get_node_or_null(dialog_name)
+	if old != null:
+		old.free()
+	var panel := PanelContainer.new()
+	panel.name = dialog_name
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
+	style.border_color = Color(0.55, 0.45, 0.22)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(4)
+	style.set_content_margin_all(12)
+	panel.add_theme_stylebox_override("panel", style)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	panel.add_child(box)
+	box.add_child(_shop_label(title, Color(0.95, 0.9, 0.72)))
+
+	var qty_box := [1]
+	var cap: int = maxi(1, max_qty)
+	if cap > 1:
+		var qrow := HBoxContainer.new()
+		qrow.add_theme_constant_override("separation", 8)
+		qrow.alignment = BoxContainer.ALIGNMENT_CENTER
+		box.add_child(qrow)
+		var minus := Button.new()
+		minus.text = "-"
+		minus.custom_minimum_size = Vector2(30, 0)
+		var qty_label := _shop_label("1", Color(0.96, 0.96, 0.96))
+		qty_label.custom_minimum_size = Vector2(52, 0)
+		var plus := Button.new()
+		plus.text = "+"
+		plus.custom_minimum_size = Vector2(30, 0)
+		minus.pressed.connect(func() -> void:
+			qty_box[0] = maxi(1, qty_box[0] - 1)
+			qty_label.text = str(qty_box[0]))
+		plus.pressed.connect(func() -> void:
+			qty_box[0] = mini(cap, qty_box[0] + 1)
+			qty_label.text = str(qty_box[0]))
+		qrow.add_child(minus)
+		qrow.add_child(qty_label)
+		qrow.add_child(plus)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(row)
+	var act := Button.new()
+	act.text = action_label
+	act.pressed.connect(func() -> void:
+		var q: int = qty_box[0]
+		panel.free()
+		on_action.call(q))
+	row.add_child(act)
+	var cancel := Button.new()
+	cancel.text = "Cancel"
+	cancel.pressed.connect(func() -> void: panel.free())
+	row.add_child(cancel)
+
+	window.add_child(panel)
+	panel.reset_size()
+	await panel.get_tree().process_frame
+	panel.position = ((window.size - panel.size) * 0.5).round()
+
+func _do_deposit(bag_slot: int, quantity: int) -> void:
+	var who := NetClient.current_character_name
+	if who != "" and NetClient.is_connected_to_server():
+		NetClient.deposit_to_storage(who, bag_slot, maxi(1, quantity))
+
+func _do_withdraw(warehouse_slot: int, quantity: int) -> void:
+	var who := NetClient.current_character_name
+	if who != "" and NetClient.is_connected_to_server():
+		NetClient.withdraw_from_storage(who, warehouse_slot, maxi(1, quantity))
+
+func _refresh_storage_and_bag() -> void:
+	var who := NetClient.current_character_name
+	if who != "" and NetClient.is_connected_to_server():
+		NetClient.list_storage(who)
+		NetClient.list_inventory(who)
+
+func _on_storage_list_result(slots: Array, error: String) -> void:
+	if error != "":
+		push_warning("HudPanels: storage list refused: %s" % error)
+		return
+	_fill_storage_grid(slots)
+
+func _on_storage_deposit_result(ok: bool, reason: String) -> void:
+	if ok:
+		_refresh_storage_and_bag()
+	else:
+		push_warning("HudPanels: deposit refused: %s" % reason)
+
+func _on_storage_withdraw_result(ok: bool, reason: String) -> void:
+	if ok:
+		_refresh_storage_and_bag()
+	else:
+		push_warning("HudPanels: withdraw refused: %s" % reason)
+
+## QA only: deposit/withdraw stand-ins for a render click.
+func qa_deposit_first() -> void:
+	var icon := _qa_first_inventory_icon()
+	if icon != null:
+		_confirm_deposit(int(icon.get_meta("inv_slot")), int(icon.get_meta("inv_item_id")), int(icon.get_meta("inv_qty")))
+
+func qa_do_deposit_first(quantity: int) -> void:
+	var icon := _qa_first_inventory_icon()
+	if icon != null:
+		_do_deposit(int(icon.get_meta("inv_slot")), quantity)
+
 ## The live paper-doll texture (a SubViewport's), set by World3D whenever
 ## the dressed character changes. Shown in the equipment section's central
 ## column, between the two rows of worn slots.
@@ -1078,17 +1288,24 @@ func _fill_inventory_grid(slots: Array) -> void:
 		if count_label != null and qty > 1:
 			count_label.text = str(qty)
 
-## While a shop is open, a click on an inventory item offers to sell it.
-## (Selling from the bag is how the client sells to a vendor.)
+## A click on an inventory item, while an NPC service window is open: sell it
+## (shop) or deposit it (storage). The bag is how the client moves items to a
+## vendor or the warehouse.
 func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 	if not (event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
 			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT):
 		return
-	var store: HudWindow = _windows.get("store")
-	if store == null or not store.visible:
+	if not (icon.has_meta("inv_slot") and icon.has_meta("inv_item_id")):
 		return
-	if icon.has_meta("inv_slot") and icon.has_meta("inv_item_id"):
-		_confirm_sell(int(icon.get_meta("inv_slot")), int(icon.get_meta("inv_item_id")), int(icon.get_meta("inv_qty")))
+	var slot := int(icon.get_meta("inv_slot"))
+	var item_id := int(icon.get_meta("inv_item_id"))
+	var qty := int(icon.get_meta("inv_qty"))
+	var store: HudWindow = _windows.get("store")
+	var storage_win: HudWindow = _windows.get("storage")
+	if store != null and store.visible:
+		_confirm_sell(slot, item_id, qty)
+	elif storage_win != null and storage_win.visible:
+		_confirm_deposit(slot, item_id, qty)
 
 ## QA only: fills the bag grid with sample items so a render can show a
 ## populated inventory without needing kills or a seeded server. The item IDs
@@ -1835,6 +2052,9 @@ func connect_net() -> void:
 	NetClient.shop_list_result.connect(_on_shop_list_result)
 	NetClient.shop_buy_result.connect(_on_shop_buy_result)
 	NetClient.shop_sell_result.connect(_on_shop_sell_result)
+	NetClient.storage_list_result.connect(_on_storage_list_result)
+	NetClient.storage_deposit_result.connect(_on_storage_deposit_result)
+	NetClient.storage_withdraw_result.connect(_on_storage_withdraw_result)
 
 ## The character panel's own control names, from resinfo\\ifplayerinfo.txt.
 ## Every value field is a `_DAT` sibling of its label.
