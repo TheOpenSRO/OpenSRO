@@ -29,9 +29,12 @@ interpolation), which is legitimately this project's own client, not a claim abo
 
 **No invented value dressed as real was found.** Across every mechanics package audited, each item
 is either recovered with a real citation or honestly disclosed as own-design — including packages
-that document the RE *dead-end* that forced an own-design fallback (shop prices:
-`_RefPricePolicyOfItem` checked and found empty; skills: all 118 `_RefSkill` columns catalogued,
-none encodes a damage value). What genuinely exists is a short list of **behaviour assumptions**
+that document the RE *dead-end* that forced an own-design fallback (skills: all 118 `_RefSkill`
+columns catalogued, none encodes a damage value). One earlier such dead-end was later reopened:
+**shop prices are now REAL** — the client's own itemdata carries `_RefObjCommon` Price and SellPrice
+columns (a Copper Sword buys 890, sells 427), which the DB export had dropped and the audit had
+concluded absent; the own-design stat formula is now only a fallback. What genuinely exists is a
+short list of **behaviour assumptions**
 built on recovered data, mostly disclosed, plus **one client comment that overstated its grounding**
 (the attack-combo order), now corrected.
 
@@ -52,7 +55,7 @@ built on recovered data, mostly disclosed, plus **one client comment that overst
 | Monster HP / def / atk / gold / spawn XYZ | **OWN-DESIGN (disclosed)** | `cmd/server` monsterSpecs: "Our own placeholder PvE content — no real map/monster data." |
 | EXP reward per kill (`ExpFor` = maxHP) | **OWN-DESIGN (disclosed)** | Placeholder; real per-species `ExpToGive` not loaded yet. |
 | Loot table values | **OWN-DESIGN (disclosed)** | Placeholder item IDs 500–502; keyed by name (real tables key by `RefMonsterID`, mapping not yet confirmed). |
-| Shop prices | **OWN-DESIGN (disclosed)** | Formula from item stats; documents the real price-table dead-end (`_RefPricePolicyOfItem` empty). |
+| Shop prices | **RECOVERED** | Real Price/SellPrice from the client's own itemdata (`_RefObjCommon` cols 26/31; Copper Sword 890/427). The stat formula is now only a fallback for an import that predates them. The DB's `_RefPricePolicyOfItem` is still just the cash-shop table; the vendor prices were in itemdata all along. |
 | Quest catalog / gold rewards | **OWN-DESIGN (disclosed)** | "own design"; references the placeholder monster content. |
 | EXP overflow carries to next level | **RECOVERED (2026-09-11)** | Grounded in `sro_client.exe` `FUN_008a97c0`: the level-up loop subtracts each level's requirement from the running EXP and increments the level, carrying the remainder. `leveldata.Advance` matches. |
 | Max character level = 110 | **RECOVERED (2026-09-11)** | Same handler caps its loop `while (level != 'n')` (0x6E = 110), independent of the 139-row table. `leveldata.MaxCharacterLevel`. |

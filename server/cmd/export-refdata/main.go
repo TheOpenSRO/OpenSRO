@@ -49,6 +49,13 @@ const (
 	fID            = 1
 	fTypeID1       = 9 // TypeID1..4 run 9..12
 	fCountry       = 14
+	// Real NPC vendor prices: _RefObjCommon Price (buy) and SellPrice
+	// (buy-back). Confirmed against real rows -- SellPrice < Price on every
+	// item checked, potions carry a Price with 0 CostRepair, weapons carry
+	// both -- and pinned by fReqLevelType1=32 lining up (ItemTableReader reads
+	// the same column). See docs/protocol/refdata_schema.md.
+	fPrice         = 26
+	fSellPrice     = 31
 	fReqLevelType1 = 32
 	fReqLevel1     = 33
 	fReqGender     = 58
@@ -200,6 +207,8 @@ func itemRecord(cols []string) ([]string, bool) {
 		get(fReqGender),     // 25 ReqGender
 		get(fReqLevelType1), // 26 ReqLevelType1
 		get(fReqLevel1),     // 27 ReqLevel1
+		get(fPrice),         // 28 Price (real NPC buy price)
+		get(fSellPrice),     // 29 SellPrice (real NPC buy-back price)
 	}, true
 }
 

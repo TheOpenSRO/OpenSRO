@@ -1,15 +1,18 @@
-// Package shop implements a basic NPC vendor: buying items from the
-// refdata catalog with character gold. Entirely own design -- checked
-// (2026-08-22, restoring SRO_VT_SHARD.Bak) for a real per-item NPC vendor
-// price table and found a real, confirmed dead end: _RefPricePolicyOfItem
-// exists, but it's the item-mall (cash shop) package pricing table
-// (Country/PaymentDevice/RefPackageItemCodeName), not an ordinary vendor's
-// gold price for regular weapons/armor; _RefObjItem itself has no
-// Cost/Price-named column either. No real per-item NPC vendor price table
-// exists anywhere in this database -- see docs/protocol/refdata_schema.md.
-// So prices are computed from an item's own stats via a simple formula
-// rather than looked up, which is now a confirmed-necessary design, not
-// just an unexplored gap.
+// Package shop implements a basic NPC vendor: buying items from the refdata
+// catalog with character gold.
+//
+// Prices are REAL, from the client's own itemdata (_RefObjCommon Price and
+// SellPrice columns): a Copper Sword buys at 890 and sells at 427, an HP
+// potion 600/210 -- confirmed against real rows and pinned by the neighbouring
+// columns lining up with ItemTableReader (see docs/protocol/refdata_schema.md).
+//
+// This corrects an earlier conclusion. Restoring SRO_VT_SHARD.Bak (2026-08-22)
+// found no vendor price in the *database* _RefObjItem, only the item-mall
+// _RefPricePolicyOfItem, and the shop fell back to an own-design formula. But
+// the client itemdata.txt does carry Price/SellPrice; the DB export had simply
+// dropped them. So Price/SellValue return the real number when the import has
+// it, and keep the formula only as a fallback for an import that predates the
+// price columns.
 package shop
 
 import (
@@ -27,18 +30,36 @@ import (
 var ErrItemNotFound = errors.New("shop: item not found")
 
 // basePrice and statMultiplier are this project's own pricing formula
-// constants -- not derived from any original economy data.
+// constants -- the fallback when an import has no real price, not derived
+// from any original economy data. sellFallbackDivisor likewise: a buy-back
+// at half is a disclosed guess, used only when the real SellPrice is absent.
 const (
-	basePrice      = 100
-	statMultiplier = 10
+	basePrice           = 100
+	statMultiplier      = 10
+	sellFallbackDivisor = 2
 )
 
-// Price computes an item's cost in gold from its own stats: a flat base
-// plus a multiple of its best offensive/defensive numbers. Deliberately
-// simple -- refine once actual game balance work happens.
+// Price is the NPC buy price in gold: the item's real price from the client's
+// own itemdata when the import carries it, else the own-design formula (a flat
+// base plus a multiple of the item's best stats). The real number is what a
+// player pays, so it wins.
 func Price(item *refdata.Item) int64 {
+	if item.Price > 0 {
+		return item.Price
+	}
 	statTotal := item.PhysAttackMax + item.MagAttackMax + item.PhysDefenseMax + item.MagDefenseMax
 	return basePrice + int64(statTotal*statMultiplier)
+}
+
+// SellValue is what the NPC pays to buy an item back: the item's real
+// SellPrice when present, else a disclosed fraction of the buy price. On real
+// rows SellPrice is well under Price (Copper Sword 890 buy, 427 sell), so
+// selling at a loss is grounded rather than invented.
+func SellValue(item *refdata.Item) int64 {
+	if item.SellPrice > 0 {
+		return item.SellPrice
+	}
+	return Price(item) / sellFallbackDivisor
 }
 
 // ItemLookup resolves item stats, for pricing, existence checks, and

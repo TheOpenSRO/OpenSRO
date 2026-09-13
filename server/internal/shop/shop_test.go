@@ -185,6 +185,32 @@ func TestCatalogListsEveryItemWithComputedPrice(t *testing.T) {
 	}
 }
 
+func TestPricePrefersRealPriceOverFormula(t *testing.T) {
+	// A stat-carrying item whose real price is set uses the real price, not
+	// the stat formula.
+	real := &refdata.Item{ID: 1, PhysAttackMax: 50, Price: 890}
+	if Price(real) != 890 {
+		t.Fatalf("Price = %d, want the real 890", Price(real))
+	}
+	// With no real price, it falls back to the formula.
+	noPrice := &refdata.Item{ID: 2, PhysAttackMax: 50}
+	if Price(noPrice) != basePrice+int64(50*statMultiplier) {
+		t.Fatalf("Price = %d, want the formula fallback", Price(noPrice))
+	}
+}
+
+func TestSellValueUsesRealSellPriceElseFraction(t *testing.T) {
+	real := &refdata.Item{ID: 1, Price: 890, SellPrice: 427}
+	if SellValue(real) != 427 {
+		t.Fatalf("SellValue = %d, want the real 427", SellValue(real))
+	}
+	// No real sell price: a disclosed fraction of the buy price.
+	noSell := &refdata.Item{ID: 2, Price: 890}
+	if SellValue(noSell) != 890/sellFallbackDivisor {
+		t.Fatalf("SellValue = %d, want the fallback fraction", SellValue(noSell))
+	}
+}
+
 func TestCatalogForReturnsOnlyRequestedResolvableItems(t *testing.T) {
 	ctx := context.Background()
 	items := stubItems{

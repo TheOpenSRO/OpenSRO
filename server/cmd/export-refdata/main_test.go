@@ -39,13 +39,15 @@ func TestItemRecordRoundTripsThroughTheImporter(t *testing.T) {
 	set(fHitRate+1, "30")
 	set(fCritical, "3")
 	set(fCritical+1, "15")
+	set(fPrice, "890")     // the Copper Sword's real buy price
+	set(fSellPrice, "427") // and its real buy-back price
 
 	rec, ok := itemRecord(cols)
 	if !ok {
 		t.Fatal("itemRecord rejected a valid row")
 	}
-	if len(rec) != 28 {
-		t.Fatalf("record has %d fields, want the importer's 28", len(rec))
+	if len(rec) != 30 {
+		t.Fatalf("record has %d fields, want the importer's 30", len(rec))
 	}
 
 	items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
@@ -65,6 +67,9 @@ func TestItemRecordRoundTripsThroughTheImporter(t *testing.T) {
 	if it.PhysAttackMin != 15 || it.MagAttackMin != 25 || it.MagAttackMax != 28 {
 		t.Errorf("attack = %v..%v phys / %v..%v mag, want 15..16 / 25..28",
 			it.PhysAttackMin, it.PhysAttackMax, it.MagAttackMin, it.MagAttackMax)
+	}
+	if it.Price != 890 || it.SellPrice != 427 {
+		t.Errorf("price = %d buy / %d sell, want 890 / 427", it.Price, it.SellPrice)
 	}
 	if it.DurabilityMin != 62 || it.DurabilityMax != 76 {
 		t.Errorf("durability = %v/%v, want 62/76", it.DurabilityMin, it.DurabilityMax)

@@ -7587,6 +7587,26 @@ foot. The worn slots around it are still empty frames -- filling them
 with the equipped icons, and the item table's armour defence block, are
 the follow-ups.
 
+## Hundred-and-forty-second round: the shop's prices were real all along
+
+The round below priced the Copper Sword at 540 gold from the own-design stat
+formula, "there being no real vendor price table." That was half right: the
+restored *database* `_RefObjItem` had no price, but the client's own
+itemdata.txt does. `_RefObjCommon` column 26 is Price and column 31 is
+SellPrice, and they line up exactly -- column 32, ReqLevelType1, is the one
+ItemTableReader already reads, so the two on its left are pinned. A Copper
+Sword reads 890 buy / 427 sell, an HP potion 600 / 210, a shield 495 / 238;
+SellPrice is under Price on every row, weapons carry a CostRepair (198) that
+consumables read 0, all internally consistent. So the shop now charges the
+real 890 -- verified in a render, purse 1,000 -> 110 -- and the own-design
+formula is only a fallback for an import that predates the columns.
+export-refdata emits the two new columns (appended, so an older 28-column
+export still loads); the refdata Item, the CSV loader and the SQL schema
+carry Price/SellPrice; shop.Price prefers the real number, and shop.SellValue
+(real SellPrice, for selling back) is ready for the sell path. This is the
+one grounding dead-end this project has reopened -- GROUNDING_AUDIT.md moves
+shop prices from own-design to recovered.
+
 ## Hundred-and-forty-first round: the NPC shop -- real goods, real prices, a real purchase
 
 Talk -> Buy now opens the client's own store window filled with what the

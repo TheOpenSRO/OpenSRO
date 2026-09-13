@@ -21,7 +21,14 @@ var itemCSVColumns = []string{
 	// this one.
 	"TypeID1", "TypeID2", "TypeID3", "TypeID4", "Country", "ReqGender",
 	"ReqLevelType1", "ReqLevel1",
+	// Appended later still (real NPC vendor prices): an export made for the
+	// earlier 28 columns is a prefix of this one, so both load.
+	"Price", "SellPrice",
 }
+
+// itemCSVRequiredColumns is the prefix every export must carry; the columns
+// past it (Price, SellPrice) are optional so an older export still loads.
+const itemCSVRequiredColumns = 28
 
 // LoadItemsCSV parses item rows from r, a headerless CSV in
 // itemCSVColumns's order (i.e. exactly what a plain `SELECT <those
@@ -30,7 +37,9 @@ var itemCSVColumns = []string{
 // silently skipping bad data.
 func LoadItemsCSV(r io.Reader) ([]Item, error) {
 	cr := csv.NewReader(r)
-	cr.FieldsPerRecord = len(itemCSVColumns)
+	// Variable width, so an older 28-column export and a newer one carrying
+	// Price/SellPrice both load; the row count is checked per row below.
+	cr.FieldsPerRecord = -1
 
 	var items []Item
 	rowNum := 0
@@ -43,6 +52,9 @@ func LoadItemsCSV(r io.Reader) ([]Item, error) {
 			return nil, fmt.Errorf("refdata: reading row %d: %w", rowNum, err)
 		}
 		rowNum++
+		if len(record) < itemCSVRequiredColumns {
+			return nil, fmt.Errorf("refdata: row %d has %d columns, need at least %d", rowNum, len(record), itemCSVRequiredColumns)
+		}
 
 		item, err := parseItemRow(record)
 		if err != nil {
@@ -111,6 +123,14 @@ func parseItemRow(f []string) (Item, error) {
 	it.ReqGender = parseInt(f[25])
 	it.ReqLevelType1 = parseInt(f[26])
 	it.ReqLevel1 = parseInt(f[27])
+	// Prices are optional (appended after the original 28 columns): an older
+	// export lacks them and the shop falls back to its own formula.
+	if len(f) > 28 {
+		it.Price = parseInt64(f[28])
+	}
+	if len(f) > 29 {
+		it.SellPrice = parseInt64(f[29])
+	}
 
 	if err != nil {
 		return Item{}, err

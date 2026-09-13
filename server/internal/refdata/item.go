@@ -42,7 +42,17 @@ type Item struct {
 	ReqStr                         int
 	ReqInt                         int
 	ItemClass                      int
-	TwoHanded                      bool
+	// Price is the NPC buy price in gold, and SellPrice what the NPC pays to
+	// buy it back -- both real, from the client's own itemdata (_RefObjCommon
+	// Price and SellPrice columns; SellPrice < Price on every row checked).
+	// This is the one place the earlier "no real vendor price" conclusion was
+	// wrong: it held for the restored DB's _RefObjItem, but the client
+	// itemdata.txt carries these columns. Zero when an import predates them,
+	// in which case the shop falls back to its own formula. See
+	// docs/protocol/refdata_schema.md.
+	Price     int64
+	SellPrice int64
+	TwoHanded bool
 	DurabilityMin, DurabilityMax   float64
 	PhysDefenseMin, PhysDefenseMax float64
 	MagDefenseMin, MagDefenseMax   float64
