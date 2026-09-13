@@ -867,6 +867,7 @@ func open_storage(npc_name: String) -> void:
 	if window == null:
 		return
 	window.set_title(npc_name)
+	_wire_storage_money_button(window)
 	window.show()
 	window.move_to_front()
 	var bag: HudWindow = open("inventory")
@@ -881,6 +882,14 @@ func open_storage(npc_name: String) -> void:
 		if who != "":
 			NetClient.list_storage(who)
 			NetClient.list_inventory(who)
+			NetClient.storage_gold(who, StorageNet.GOLD_QUERY, 0)
+
+## Wires the warehouse's gold button (GDR_STORAGE_BTN_MONEY) to the gold
+## dialog, once.
+func _wire_storage_money_button(window: HudWindow) -> void:
+	var btn := window.node("GDR_STORAGE_BTN_MONEY") as BaseButton
+	if btn != null and not btn.pressed.is_connected(_open_gold_dialog):
+		btn.pressed.connect(_open_gold_dialog)
 
 ## Fills the warehouse grid (GDR_STORAGE_LAT) with the stored items; each is
 ## clickable to withdraw.
@@ -1049,6 +1058,104 @@ func _on_storage_withdraw_result(ok: bool, reason: String) -> void:
 	else:
 		push_warning("HudPanels: withdraw refused: %s" % reason)
 
+# --- Warehouse gold ---------------------------------------------------------
+var _storage_carried := 0
+var _storage_stored := 0
+
+func _on_storage_gold_result(ok: bool, reason: String, carried: int, stored: int) -> void:
+	if not ok and reason != "":
+		push_warning("HudPanels: warehouse gold: %s" % reason)
+	_storage_carried = carried
+	_storage_stored = stored
+	_update_storage_gold_labels()
+
+## Reflects the two balances in the warehouse window (its stored-gold line),
+## the bag window (carried gold), and the open gold dialog if any.
+func _update_storage_gold_labels() -> void:
+	var window: HudWindow = _windows.get("storage")
+	if window != null:
+		var stored_label := window.node("GDR_STORAGE_STA_GOLD") as Label
+		if stored_label != null:
+			stored_label.text = _grouped(_storage_stored)
+		var dialog_bal := window.get_node_or_null("GoldDialog/VB/GoldBal") as Label
+		if dialog_bal != null:
+			dialog_bal.text = "Carried: %s     Stored: %s" % [_grouped(_storage_carried), _grouped(_storage_stored)]
+	# Keep the bag's gold line and cached stats in step with the purse.
+	if _stats != null:
+		_stats.gold = _storage_carried
+	var inventory: HudWindow = _windows.get("inventory")
+	if inventory != null:
+		var carried_label := inventory.node("GDR_INVENTORY_STA_GOLD") as Label
+		if carried_label != null:
+			carried_label.text = _grouped(_storage_carried)
+
+## The gold dialog: an amount to deposit into or withdraw from the warehouse.
+## Stays open so several moves can be made; the balances line refreshes from
+## each result.
+func _open_gold_dialog() -> void:
+	var window: HudWindow = _windows.get("storage")
+	if window == null:
+		return
+	var old := window.get_node_or_null("GoldDialog")
+	if old != null:
+		old.free()
+	var panel := PanelContainer.new()
+	panel.name = "GoldDialog"
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
+	style.border_color = Color(0.55, 0.45, 0.22)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(4)
+	style.set_content_margin_all(12)
+	panel.add_theme_stylebox_override("panel", style)
+	var box := VBoxContainer.new()
+	box.name = "VB"
+	box.add_theme_constant_override("separation", 8)
+	panel.add_child(box)
+	box.add_child(_shop_label("Warehouse gold", Color(0.95, 0.9, 0.72)))
+	var bal := _shop_label("Carried: %s     Stored: %s" % [_grouped(_storage_carried), _grouped(_storage_stored)], Color(0.95, 0.85, 0.45))
+	bal.name = "GoldBal"
+	box.add_child(bal)
+	var amount := LineEdit.new()
+	amount.name = "Amount"
+	amount.placeholder_text = "amount"
+	amount.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	amount.custom_minimum_size = Vector2(150, 0)
+	if _builder != null:
+		var font := _builder.font_at(0)
+		if font != null:
+			amount.add_theme_font_override("font", font)
+		amount.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+	box.add_child(amount)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(row)
+	var deposit := Button.new()
+	deposit.text = "Deposit"
+	deposit.pressed.connect(func() -> void: _do_gold(StorageNet.GOLD_DEPOSIT, int(amount.text)))
+	row.add_child(deposit)
+	var withdraw := Button.new()
+	withdraw.text = "Withdraw"
+	withdraw.pressed.connect(func() -> void: _do_gold(StorageNet.GOLD_WITHDRAW, int(amount.text)))
+	row.add_child(withdraw)
+	var close := Button.new()
+	close.text = "Close"
+	close.pressed.connect(func() -> void: panel.free())
+	row.add_child(close)
+
+	window.add_child(panel)
+	panel.reset_size()
+	await panel.get_tree().process_frame
+	panel.position = ((window.size - panel.size) * 0.5).round()
+
+func _do_gold(op: int, amount: int) -> void:
+	if amount <= 0:
+		return
+	var who := NetClient.current_character_name
+	if who != "" and NetClient.is_connected_to_server():
+		NetClient.storage_gold(who, op, amount)
+
 ## QA only: deposit/withdraw stand-ins for a render click.
 func qa_deposit_first() -> void:
 	var icon := _qa_first_inventory_icon()
@@ -1059,6 +1166,12 @@ func qa_do_deposit_first(quantity: int) -> void:
 	var icon := _qa_first_inventory_icon()
 	if icon != null:
 		_do_deposit(int(icon.get_meta("inv_slot")), quantity)
+
+func qa_open_gold_dialog() -> void:
+	_open_gold_dialog()
+
+func qa_gold_deposit(amount: int) -> void:
+	_do_gold(StorageNet.GOLD_DEPOSIT, amount)
 
 ## The live paper-doll texture (a SubViewport's), set by World3D whenever
 ## the dressed character changes. Shown in the equipment section's central
@@ -2055,6 +2168,7 @@ func connect_net() -> void:
 	NetClient.storage_list_result.connect(_on_storage_list_result)
 	NetClient.storage_deposit_result.connect(_on_storage_deposit_result)
 	NetClient.storage_withdraw_result.connect(_on_storage_withdraw_result)
+	NetClient.storage_gold_result.connect(_on_storage_gold_result)
 
 ## The character panel's own control names, from resinfo\\ifplayerinfo.txt.
 ## Every value field is a `_DAT` sibling of its label.

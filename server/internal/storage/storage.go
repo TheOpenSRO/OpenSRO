@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 )
 
@@ -19,10 +20,65 @@ var ErrSlotEmpty = errors.New("storage: nothing in that slot")
 // ErrNothingToMove is returned for a non-positive quantity.
 var ErrNothingToMove = errors.New("storage: quantity must be positive")
 
-// Service moves items between a character's bag and warehouse.
+// Service moves items between a character's bag and warehouse, and gold
+// between the character's purse and the warehouse.
 type Service struct {
 	Bag       inventory.Store
 	Warehouse inventory.Store
+	Gold      character.Store
+}
+
+// Balances is a character's carried gold and warehouse gold.
+type Balances struct {
+	Carried int64
+	Stored  int64
+}
+
+// GoldBalances returns the character's carried and stored gold.
+func (s *Service) GoldBalances(ctx context.Context, characterID int64) (Balances, error) {
+	c, err := s.Gold.GetByID(ctx, characterID)
+	if err != nil {
+		return Balances{}, fmt.Errorf("storage: reading balances: %w", err)
+	}
+	return Balances{Carried: c.Gold, Stored: c.StorageGold}, nil
+}
+
+// DepositGold moves amount from the character's purse into the warehouse,
+// returning the balances afterwards. Refunds the purse if crediting the
+// warehouse fails.
+func (s *Service) DepositGold(ctx context.Context, characterID int64, amount int64) (Balances, error) {
+	if amount <= 0 {
+		return Balances{}, ErrNothingToMove
+	}
+	if err := s.Gold.DeductGold(ctx, characterID, amount); err != nil {
+		return Balances{}, fmt.Errorf("storage: taking gold from purse: %w", err)
+	}
+	if err := s.Gold.AddStorageGold(ctx, characterID, amount); err != nil {
+		if backErr := s.Gold.AddGold(ctx, characterID, amount); backErr != nil {
+			return Balances{}, fmt.Errorf("storage: crediting warehouse failed (%w) AND refunding purse failed (%v) -- gold may be lost", err, backErr)
+		}
+		return Balances{}, fmt.Errorf("storage: crediting warehouse gold: %w", err)
+	}
+	return s.GoldBalances(ctx, characterID)
+}
+
+// WithdrawGold moves amount from the warehouse back into the character's
+// purse, returning the balances afterwards. Refunds the warehouse if crediting
+// the purse fails.
+func (s *Service) WithdrawGold(ctx context.Context, characterID int64, amount int64) (Balances, error) {
+	if amount <= 0 {
+		return Balances{}, ErrNothingToMove
+	}
+	if err := s.Gold.DeductStorageGold(ctx, characterID, amount); err != nil {
+		return Balances{}, fmt.Errorf("storage: taking gold from warehouse: %w", err)
+	}
+	if err := s.Gold.AddGold(ctx, characterID, amount); err != nil {
+		if backErr := s.Gold.AddStorageGold(ctx, characterID, amount); backErr != nil {
+			return Balances{}, fmt.Errorf("storage: crediting purse failed (%w) AND returning to warehouse failed (%v) -- gold may be lost", err, backErr)
+		}
+		return Balances{}, fmt.Errorf("storage: crediting purse gold: %w", err)
+	}
+	return s.GoldBalances(ctx, characterID)
 }
 
 // List returns the warehouse's contents for a character.

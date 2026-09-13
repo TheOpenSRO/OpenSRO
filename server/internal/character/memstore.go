@@ -120,6 +120,35 @@ func (m *MemStore) DeductGold(_ context.Context, characterID int64, amount int64
 	return nil
 }
 
+// AddStorageGold implements Store.
+func (m *MemStore) AddStorageGold(_ context.Context, characterID int64, amount int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.byID[characterID]
+	if !ok {
+		return ErrNotFound
+	}
+	c.StorageGold += amount
+	return nil
+}
+
+// DeductStorageGold implements Store.
+func (m *MemStore) DeductStorageGold(_ context.Context, characterID int64, amount int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.byID[characterID]
+	if !ok {
+		return ErrNotFound
+	}
+	if c.StorageGold < amount {
+		return ErrInsufficientGold
+	}
+	c.StorageGold -= amount
+	return nil
+}
+
 // ApplyDamage implements Store.
 func (m *MemStore) ApplyDamage(_ context.Context, characterID int64, amount int) (int, bool, error) {
 	m.mu.Lock()

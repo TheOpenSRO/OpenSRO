@@ -12,6 +12,21 @@ const OP_DEPOSIT := 0x0058        # client -> server (bag -> warehouse)
 const OP_DEPOSIT_RESULT := 0x0059 # server -> client
 const OP_WITHDRAW := 0x005A       # client -> server (warehouse -> bag)
 const OP_WITHDRAW_RESULT := 0x005B # server -> client
+const OP_GOLD := 0x005C           # client -> server (query/deposit/withdraw gold)
+const OP_GOLD_RESULT := 0x005D    # server -> client
+
+## StorageGoldRequest op field.
+const GOLD_QUERY := 0
+const GOLD_DEPOSIT := 1
+const GOLD_WITHDRAW := 2
+
+## Result of decode_gold_result(): both balances after the op.
+class GoldResult:
+	var ok: bool
+	var reason: String
+	var carried: int
+	var stored: int
+	var error: String
 
 ## Result of decode_move_result() (deposit or withdraw).
 class MoveResult:
@@ -57,3 +72,41 @@ static func decode_move_result(data: PackedByteArray) -> MoveResult:
 ## The list result is the inventory list shape.
 static func decode_list_result(data: PackedByteArray) -> InventoryNet.ListResult:
 	return InventoryNet.decode_list_result(data)
+
+## Encodes an OpStorageGold request: character name, op (u32), amount (s64).
+static func encode_gold(character_name: String, op: int, amount: int) -> PackedByteArray:
+	var name_bytes := character_name.to_utf8_buffer()
+	var out := PackedByteArray()
+	out.resize(2)
+	out.encode_u16(0, name_bytes.size())
+	out.append_array(name_bytes)
+	var op_buf := PackedByteArray()
+	op_buf.resize(4)
+	op_buf.encode_u32(0, op)
+	out.append_array(op_buf)
+	var amt_buf := PackedByteArray()
+	amt_buf.resize(8)
+	amt_buf.encode_s64(0, amount)
+	out.append_array(amt_buf)
+	return out
+
+## Decodes an OpStorageGoldResult: OK byte, reason, then carried + stored (s64).
+static func decode_gold_result(data: PackedByteArray) -> GoldResult:
+	var result := GoldResult.new()
+	if data.size() < 1:
+		result.error = "empty payload"
+		return result
+	result.ok = data[0] != 0
+	if data.size() < 3:
+		result.error = "truncated reason length prefix"
+		return result
+	var reason_len := data.decode_u16(1)
+	var offset := 3 + reason_len
+	if offset > data.size():
+		result.error = "declared reason length %d exceeds remaining bytes" % reason_len
+		return result
+	result.reason = data.slice(3, offset).get_string_from_utf8()
+	if offset + 16 <= data.size():
+		result.carried = data.decode_s64(offset)
+		result.stored = data.decode_s64(offset + 8)
+	return result

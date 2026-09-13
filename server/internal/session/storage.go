@@ -22,7 +22,80 @@ const (
 	OpStorageDepositResult  uint16 = 0x0059 // server -> client
 	OpStorageWithdraw       uint16 = 0x005A // client -> server (warehouse -> bag)
 	OpStorageWithdrawResult uint16 = 0x005B // server -> client
+	OpStorageGold           uint16 = 0x005C // client -> server (query/deposit/withdraw gold)
+	OpStorageGoldResult     uint16 = 0x005D // server -> client
 )
+
+// Storage gold op codes (the Op field of StorageGoldRequest).
+const (
+	StorageGoldQuery    int32 = 0
+	StorageGoldDeposit  int32 = 1
+	StorageGoldWithdraw int32 = 2
+)
+
+// StorageGoldRequest queries or moves warehouse gold. Op is one of the
+// StorageGold* constants; Amount is ignored for a query.
+type StorageGoldRequest struct {
+	CharacterName string
+	Op            int32
+	Amount        int64
+}
+
+func (r *StorageGoldRequest) Encode() []byte {
+	out := encodeStrings(r.CharacterName)
+	buf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buf, uint32(r.Op))
+	out = append(out, buf...)
+	return append(out, encodeInt64(r.Amount)...)
+}
+
+func DecodeStorageGoldRequest(data []byte) (*StorageGoldRequest, error) {
+	fields, rest, err := decodeStringsPrefix(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding StorageGoldRequest: %w", err)
+	}
+	if len(rest) < 4 {
+		return nil, errors.New("session: decoding StorageGoldRequest: truncated op")
+	}
+	op := int32(binary.LittleEndian.Uint32(rest[0:4]))
+	amount, _, err := decodeInt64(rest[4:])
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding StorageGoldRequest: amount: %w", err)
+	}
+	return &StorageGoldRequest{CharacterName: fields[0], Op: op, Amount: amount}, nil
+}
+
+// StorageGoldResult reports the outcome plus both balances afterwards, so the
+// window shows the truth (the server's own numbers).
+type StorageGoldResult struct {
+	OK      bool
+	Reason  string
+	Carried int64
+	Stored  int64
+}
+
+func (r *StorageGoldResult) Encode() []byte {
+	out := encodeOKReason(r.OK, r.Reason)
+	out = append(out, encodeInt64(r.Carried)...)
+	return append(out, encodeInt64(r.Stored)...)
+}
+
+func DecodeStorageGoldResult(data []byte) (*StorageGoldResult, error) {
+	if len(data) < 1 {
+		return nil, errors.New("session: decoding StorageGoldResult: empty payload")
+	}
+	ok := data[0] != 0
+	fields, rest, err := decodeStringsPrefix(data[1:], 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding StorageGoldResult: %w", err)
+	}
+	r := &StorageGoldResult{OK: ok, Reason: reason(fields)}
+	if len(rest) >= 16 {
+		r.Carried, rest, _ = decodeInt64(rest)
+		r.Stored, _, _ = decodeInt64(rest)
+	}
+	return r, nil
+}
 
 // StorageMoveRequest is the OpStorageDeposit / OpStorageWithdraw payload: move
 // Quantity from Slot (a bag slot for deposit, a warehouse slot for withdraw).
@@ -82,6 +155,8 @@ func StorageHandler(chars character.Store, svc *storage.Service) gateway.Handler
 			return handleStorageMove(ctx, sess, p, chars, svc, true)
 		case OpStorageWithdraw:
 			return handleStorageMove(ctx, sess, p, chars, svc, false)
+		case OpStorageGold:
+			return handleStorageGold(ctx, sess, p, chars, svc)
 		default:
 			return nil
 		}
@@ -140,4 +215,42 @@ func handleStorageMove(ctx context.Context, sess *gateway.Session, p *proto.Pack
 		return sess.Send(&proto.Packet{Opcode: resultOp, Data: result.Encode()})
 	}
 	return sess.Send(&proto.Packet{Opcode: resultOp, Data: (&StorageMoveResult{OK: true}).Encode()})
+}
+
+func handleStorageGold(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *storage.Service) error {
+	req, err := DecodeStorageGoldRequest(p.Data)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpStorageGoldResult, Data: (&StorageGoldResult{Reason: "malformed request"}).Encode()})
+	}
+	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
+	if errStr != "" {
+		return sess.Send(&proto.Packet{Opcode: OpStorageGoldResult, Data: (&StorageGoldResult{Reason: errStr}).Encode()})
+	}
+
+	var bal storage.Balances
+	switch req.Op {
+	case StorageGoldDeposit:
+		bal, err = svc.DepositGold(ctx, characterID, req.Amount)
+	case StorageGoldWithdraw:
+		bal, err = svc.WithdrawGold(ctx, characterID, req.Amount)
+	default: // query
+		bal, err = svc.GoldBalances(ctx, characterID)
+	}
+	if err != nil {
+		result := &StorageGoldResult{}
+		switch {
+		case errors.Is(err, storage.ErrNothingToMove):
+			result.Reason = "amount must be positive"
+		case errors.Is(err, character.ErrInsufficientGold):
+			result.Reason = "not enough gold"
+		default:
+			result.Reason = "gold move failed"
+		}
+		// Even on failure, report the current balances so the window stays right.
+		if cur, e := svc.GoldBalances(ctx, characterID); e == nil {
+			result.Carried, result.Stored = cur.Carried, cur.Stored
+		}
+		return sess.Send(&proto.Packet{Opcode: OpStorageGoldResult, Data: result.Encode()})
+	}
+	return sess.Send(&proto.Packet{Opcode: OpStorageGoldResult, Data: (&StorageGoldResult{OK: true, Carried: bal.Carried, Stored: bal.Stored}).Encode()})
 }

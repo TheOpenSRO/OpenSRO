@@ -5428,9 +5428,9 @@ func _qa_step() -> void:
 			_hud_panels.close("store")
 			_hud_panels.open_storage("Warehouse Keeper")
 		elif _qa_tick == 80:
-			_hud_panels.qa_deposit_first()
+			_hud_panels.qa_open_gold_dialog()
 		elif _qa_tick == 92:
-			_hud_panels.qa_do_deposit_first(8)
+			_hud_panels.qa_gold_deposit(250)
 
 	# SRREVAMP_QA_NAVGAP compares each nearby object's *solid* footprint
 	# against its *walkable* one. A player can stand inside anything where

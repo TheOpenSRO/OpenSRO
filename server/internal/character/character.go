@@ -87,6 +87,9 @@ type Character struct {
 	// Spending them into Str/Int is the separate stat system, still to come.
 	Exp        int64
 	StatPoints int
+	// StorageGold is gold kept in the NPC warehouse, separate from the Gold
+	// the character carries. Moved between the two by the storage service.
+	StorageGold int64
 }
 
 // Store is anything that can list, create, and delete characters for an
@@ -110,6 +113,14 @@ type Store interface {
 	// DeductGold debits amount (must be positive) from characterID's
 	// balance. Returns ErrInsufficientGold if the balance is too low.
 	DeductGold(ctx context.Context, characterID int64, amount int64) error
+
+	// AddStorageGold credits amount to characterID's warehouse gold (the gold
+	// kept in storage, separate from what the character carries).
+	AddStorageGold(ctx context.Context, characterID int64, amount int64) error
+
+	// DeductStorageGold debits amount from characterID's warehouse gold.
+	// Returns ErrInsufficientGold if the stored balance is too low.
+	DeductStorageGold(ctx context.Context, characterID int64, amount int64) error
 
 	// ApplyDamage reduces characterID's HP by amount (never below 0),
 	// returning the resulting HP and whether this brought it to exactly 0.

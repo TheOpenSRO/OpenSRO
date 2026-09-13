@@ -343,7 +343,7 @@ func main() {
 	}
 
 	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
-	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse}
+	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars}
 
 	hub := world.NewHub()
 	monsters := combat.NewHub()

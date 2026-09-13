@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 )
 
@@ -86,6 +87,47 @@ func TestDepositMoreThanHeldMovesWhatIsThere(t *testing.T) {
 	}
 	if left, _ := svc.Bag.List(ctx, cid); len(left) != 0 {
 		t.Fatalf("bag should be empty, got %+v", left)
+	}
+}
+
+func TestGoldDepositAndWithdraw(t *testing.T) {
+	ctx := context.Background()
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria") // StartingGold
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+	svc := &Service{
+		Bag:       inventory.NewMemStore(generousStacks{}),
+		Warehouse: inventory.NewMemStore(generousStacks{}),
+		Gold:      chars,
+	}
+
+	bal, err := svc.DepositGold(ctx, c.ID, 300)
+	if err != nil {
+		t.Fatalf("DepositGold: %v", err)
+	}
+	if bal.Carried != character.StartingGold-300 || bal.Stored != 300 {
+		t.Fatalf("after deposit got carried=%d stored=%d, want %d/300", bal.Carried, bal.Stored, character.StartingGold-300)
+	}
+
+	bal, err = svc.WithdrawGold(ctx, c.ID, 100)
+	if err != nil {
+		t.Fatalf("WithdrawGold: %v", err)
+	}
+	if bal.Carried != character.StartingGold-200 || bal.Stored != 200 {
+		t.Fatalf("after withdraw got carried=%d stored=%d, want %d/200", bal.Carried, bal.Stored, character.StartingGold-200)
+	}
+
+	// Can't withdraw more than is stored, and can't deposit more than carried.
+	if _, err := svc.WithdrawGold(ctx, c.ID, 9999); !errors.Is(err, character.ErrInsufficientGold) {
+		t.Fatalf("over-withdraw: got %v, want ErrInsufficientGold", err)
+	}
+	if _, err := svc.DepositGold(ctx, c.ID, 9_999_999); !errors.Is(err, character.ErrInsufficientGold) {
+		t.Fatalf("over-deposit: got %v, want ErrInsufficientGold", err)
+	}
+	if _, err := svc.DepositGold(ctx, c.ID, 0); !errors.Is(err, ErrNothingToMove) {
+		t.Fatalf("deposit 0: got %v, want ErrNothingToMove", err)
 	}
 }
 

@@ -43,6 +43,7 @@ signal shop_sell_result(ok: bool, reason: String, gold_received: int)
 signal storage_list_result(slots: Array, error: String)
 signal storage_deposit_result(ok: bool, reason: String)
 signal storage_withdraw_result(ok: bool, reason: String)
+signal storage_gold_result(ok: bool, reason: String, carried: int, stored: int)
 signal attack_result(result: CombatNet.AttackResult)
 signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
@@ -309,6 +310,9 @@ func deposit_to_storage(char_name: String, bag_slot: int, quantity: int) -> void
 func withdraw_from_storage(char_name: String, warehouse_slot: int, quantity: int) -> void:
 	_send(StorageNet.OP_WITHDRAW, StorageNet.encode_move(char_name, warehouse_slot, quantity))
 
+func storage_gold(char_name: String, op: int, amount: int) -> void:
+	_send(StorageNet.OP_GOLD, StorageNet.encode_gold(char_name, op, amount))
+
 func attack(char_name: String, target_monster_id: int) -> void:
 	_send(CombatNet.OP_ATTACK, CombatNet.encode_attack(char_name, target_monster_id))
 
@@ -473,6 +477,9 @@ func _dispatch(p: Packet) -> void:
 		StorageNet.OP_WITHDRAW_RESULT:
 			var r := StorageNet.decode_move_result(p.data)
 			storage_withdraw_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		StorageNet.OP_GOLD_RESULT:
+			var r := StorageNet.decode_gold_result(p.data)
+			storage_gold_result.emit(r.ok, r.reason if r.error == "" else r.error, r.carried, r.stored)
 		CombatNet.OP_ATTACK_RESULT:
 			attack_result.emit(CombatNet.decode_attack_result(p.data))
 		CombatNet.OP_MONSTER_DAMAGED:
