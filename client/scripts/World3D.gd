@@ -3300,6 +3300,14 @@ var _npc_models: Dictionary = {}
 ## npc id -> the name the game calls it, from characterdata joined with
 ## textdata_object.
 var _npc_names: Dictionary = {}
+## npc id -> codename (NPC_CH_SMITH), the key the shop/greeting tables use.
+var _npc_codes: Dictionary = {}
+## Upper-cased NPC codenames that run a shop (refshopgroup) -> the "Buy" service.
+var _npc_shop_set: Dictionary = {}
+## NPC codename (upper) -> [greeting msg1 SN_ id, msg2 SN_ id] from npcchat.txt.
+var _npc_greetings: Dictionary = {}
+## textdata_object table, kept to resolve NPC greeting SN_ strings.
+var _npc_text_table: UiTextTable = null
 var _npc_tables_loaded := false
 ## Regions whose NPCs have already been placed, so streaming back into a
 ## region doesn't stack a second copy of everyone in it.
@@ -3332,15 +3340,29 @@ func _load_npc_tables() -> void:
 	var names: UiTextTable = null
 	if names_entry != null:
 		names = UiTextTable.parse(_media_pk2.read_file(names_entry))
+	# NPC greetings resolve through a different table than names: npcchat's SN_
+	# ids live in textquest_speechname.txt (with the English in a later column,
+	# which UiTextTable picks by content).
+	var greet_entry := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\textquest_speechname.txt")
+	if greet_entry != null:
+		_npc_text_table = UiTextTable.parse(_media_pk2.read_file(greet_entry))
 	for path in NpcTableReader.MODEL_TABLE_PATHS:
 		var entry := ObjectLoader.find_file(_media_pk2, path)
 		if entry != null:
 			var bytes := _media_pk2.read_file(entry)
 			_npc_models = NpcTableReader.parse_models(bytes, _npc_models)
+			_npc_codes = NpcTableReader.parse_codes(bytes, _npc_codes)
 			if names != null:
 				_npc_names = NpcTableReader.parse_names(bytes, names, _npc_names)
-	print("World3D: NPC tables -- %d spawn(s) across %d region(s), %d model(s), %d name(s)" % [
-		_npc_spawn_total(), _npc_spawns_by_region.size(), _npc_models.size(), _npc_names.size()])
+	# What each NPC offers: shops (refshopgroup) and greetings (npcchat).
+	var shop_entry := ObjectLoader.find_file(_media_pk2, NpcServiceReader.SHOP_TABLE)
+	if shop_entry != null:
+		_npc_shop_set = NpcServiceReader.parse_shop_npcs(_media_pk2.read_file(shop_entry))
+	var chat_entry := ObjectLoader.find_file(_media_pk2, NpcServiceReader.CHAT_TABLE)
+	if chat_entry != null:
+		_npc_greetings = NpcServiceReader.parse_greetings(_media_pk2.read_file(chat_entry))
+	print("World3D: NPC tables -- %d spawn(s) across %d region(s), %d model(s), %d name(s), %d shop, %d greetings" % [
+		_npc_spawn_total(), _npc_spawns_by_region.size(), _npc_models.size(), _npc_names.size(), _npc_shop_set.size(), _npc_greetings.size()])
 
 ## A floating name over an NPC's head.
 ##
@@ -3869,6 +3891,7 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 		# (see _try_talk_to_npc) -- the plate is a Label3D, no use for that.
 		holder.set_meta("npc_id", spawn.npc_id)
 		holder.set_meta("npc_name", npc_name if npc_name != "" else "")
+		holder.set_meta("npc_code", _npc_codes.get(spawn.npc_id, ""))
 		if npc_name != "":
 			holder.add_child(_name_plate(npc_name, bounds.y))
 			named += 1
@@ -5352,7 +5375,11 @@ func _qa_step() -> void:
 	# SRREVAMP_QA_TALK="<name>" opens the NPC dialogue for a render, standing
 	# in for a click on an NPC (which a render cannot make).
 	if OS.get_environment("SRREVAMP_QA_TALK") != "" and _qa_tick == 30 and _hud_panels != null:
-		_hud_panels.open_npc_talk(OS.get_environment("SRREVAMP_QA_TALK"))
+		# The env value is an NPC codename (e.g. NPC_CH_SMITH) so a render shows
+		# its real greeting + services; falls back to using it as a display name.
+		_load_npc_tables()
+		var code := OS.get_environment("SRREVAMP_QA_TALK")
+		_hud_panels.open_npc_talk(code, _npc_greeting_text(code), _npc_service_labels(code))
 
 	# SRREVAMP_QA_NAVGAP compares each nearby object's *solid* footprint
 	# against its *walkable* one. A player can stand inside anything where
@@ -6715,8 +6742,33 @@ func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 	var npc_name := str(node.get_meta("npc_name"))
 	if npc_name == "":
 		npc_name = "..."
-	_hud_panels.open_npc_talk(npc_name)
+	var code := str(node.get_meta("npc_code")) if node.has_meta("npc_code") else ""
+	_hud_panels.open_npc_talk(npc_name, _npc_greeting_text(code), _npc_service_labels(code))
 	return true
+
+## The NPC's real greeting, resolved from npcchat.txt's SN_ id through the
+## text table; "" when the NPC has none (the talk window then shows "...").
+func _npc_greeting_text(code: String) -> String:
+	if code == "" or _npc_text_table == null:
+		return ""
+	var pair: Array = _npc_greetings.get(code.to_upper(), [])
+	for strid in pair:
+		var s := str(strid)
+		if s != "" and s != "xxx":
+			var resolved := _npc_text_table.get_text(s)
+			if resolved != "" and resolved != s:
+				return resolved
+	return ""
+
+## The labels of the services the NPC offers (grounded detection; see
+## NpcServiceReader), for the talk window's numbered options.
+func _npc_service_labels(code: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	if code == "":
+		return out
+	for svc in NpcServiceReader.services_for(code, _npc_shop_set):
+		out.append((svc as NpcServiceReader.Service).label)
+	return out
 
 func _try_set_move_target(screen_pos: Vector2) -> void:
 	var from := camera_3d.project_ray_origin(screen_pos)

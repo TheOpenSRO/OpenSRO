@@ -78,6 +78,22 @@ static func parse_positions(data: PackedByteArray) -> Array[Spawn]:
 		out.append(spawn)
 	return out
 
+## Parses one characterdata part into {npc id -> codename}, merging into `into`.
+## The codename (NPC_CH_SMITH) is what the shop/greeting tables key by, so this
+## is the join from a placed NPC's id to those tables.
+static func parse_codes(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+	for line in _lines(data):
+		var cols := line.split("\t")
+		if cols.size() <= COL_CODE_NAME:
+			continue
+		var id_text := cols[COL_MODEL_ID].strip_edges()
+		if not id_text.is_valid_int():
+			continue
+		var code := cols[COL_CODE_NAME].strip_edges()
+		if code != "":
+			into[int(id_text)] = code
+	return into
+
 ## Parses one characterdata part into {npc id -> .bsr path}, merging into
 ## `into` so several parts can be accumulated.
 static func parse_models(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:

@@ -237,7 +237,7 @@ func open(panel_id: String) -> HudWindow:
 ## behind the other lines (storage, shop, honour) are their own systems,
 ## still to come -- so the window greets and lets you leave, which is the
 ## skeleton the rest hangs on.
-func open_npc_talk(npc_name: String) -> void:
+func open_npc_talk(npc_name: String, greeting: String = "", services: PackedStringArray = PackedStringArray()) -> void:
 	var window := open("npctalk")
 	if window == null:
 		return
@@ -267,7 +267,19 @@ func open_npc_talk(npc_name: String) -> void:
 			body.add_theme_font_size_override("normal_font_size", UiBuilder.FONT_SIZES[0])
 		body.meta_clicked.connect(_on_npc_talk_choice)
 		window.add_child(body)
-	body.text = "...\n\n[url=end]1. End conversation.[/url]"
+	# The real greeting (from npcchat.txt), then the NPC's real services as
+	# numbered options, then End conversation. The service lines are grounded
+	# detection (which NPC offers what); only End acts for now -- the services
+	# behind them (shop, storage, ...) are their own systems, still to come.
+	var lines := PackedStringArray()
+	lines.append(greeting if greeting != "" else "...")
+	lines.append("")
+	var n := 1
+	for label in services:
+		lines.append("%d. %s" % [n, label])
+		n += 1
+	lines.append("[url=end]%d. End conversation.[/url]" % n)
+	body.text = "\n".join(lines)
 
 func _on_npc_talk_choice(meta: Variant) -> void:
 	if str(meta) == "end":
