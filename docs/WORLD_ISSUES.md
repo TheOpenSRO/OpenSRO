@@ -7587,6 +7587,23 @@ foot. The worn slots around it are still empty frames -- filling them
 with the equipped icons, and the item table's armour defence block, are
 the follow-ups.
 
+## Hundred-and-forty-third round: selling back, and stackables that stack
+
+Two follow-ups finished the shop's economic loop. **Selling**: the store now
+opens with the bag beside it, and a click on a bag item offers to sell it --
+a "Sell X? N gold each" dialog with a quantity stepper, then the server buys
+it back at the item's real SellPrice (`shop.Sell` reads the slot's own item
+and count from its own inventory, never trusting the client, and puts the
+item back if crediting gold fails). A render sold 5 arrows: the stack 20 ->
+15, the purse 960 -> 965. **Stacking**: export-refdata had hardcoded
+MaxStack=1 for every item on a note that it "is 1 for every row" -- but that
+was the wrong column. Column 57 is the real MaxStack: 1 for all 8,616
+equipment rows, a real cap for stackables (a potion 5,000, arrows 2,500,
+alchemy stones 500). Reading it makes potions and materials stack to one
+slot instead of one-each; a render bought 20 arrows and they landed as a
+single slot of 20. The client's ItemTableReader now reads MaxStack (col 57)
+and SellPrice (col 31) too, for the buy stepper's cap and the sell estimate.
+
 ## Hundred-and-forty-second round: the shop's prices were real all along
 
 The round below priced the Copper Sword at 540 gold from the own-design stat

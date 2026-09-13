@@ -31,15 +31,17 @@ In order. Each is checked off here when it ships in a release, with its round in
 - [x] **NPC talk.** A click on an NPC opens `if_npctalk` titled with its name -- round 139. The
       greeting's service lines are now clickable; Buy opens the shop (below). Still open: the other
       services (storage deposit, honour rank), each its own backend.
-      - [x] **Merchant shop.** Talk -> Buy opens the authored store window (`ifstore`) with the
-        NPC's real goods, tabs, prices, and a working purchase -- rounds 141 (this WORLD_ISSUES
-        numbering) / releases v0.1.134-135. Per-NPC goods come from the real shop chain
-        (`ShopReader`: refshopgroup -> ... -> refscrapofpackageitem -> item), so a smith sells
-        weapons, not the whole catalogue. Prices are the server's own disclosed formula (no real
-        vendor price table exists). The in-memory server loads items via `-items-csv` (qa_shot
-        feeds `items.csv` beside the pk2s); PostgreSQL imports them via `import-refdata`.
-        Still open: **selling** items back (the store has no sell path yet), **quantity** (buys 1
-        at a time), **repair** (the authored buttons are inert), and paging past 30 goods.
+      - [x] **Merchant shop -- buy AND sell.** Talk -> Buy opens the authored store window
+        (`ifstore`) with the NPC's real goods, tabs, real prices, quantity buying, and selling
+        from the bag -- rounds 141-143 / releases v0.1.134-138. Per-NPC goods come from the real
+        shop chain (`ShopReader`: refshopgroup -> ... -> refscrapofpackageitem -> item), so a
+        smith sells weapons, not the whole catalogue. **Prices are REAL** (itemdata `_RefObjCommon`
+        Price col 26 / SellPrice col 31; the old stat formula is now a fallback -- see round 142
+        and GROUNDING_AUDIT.md). Stackables stack to their real MaxStack (col 57). The in-memory
+        server loads items via `-items-csv` (qa_shot feeds `items.csv` beside the pk2s); PostgreSQL
+        imports them via `import-refdata` (regenerate/re-import to pick up price + stack columns).
+        Still open: **repair** (the authored buttons are inert -- needs a per-item durability
+        system, which does not exist yet) and paging past 30 goods (no current NPC needs it).
 - [x] **Item tooltips** with the real stats -- round 140, columns pinned against the Copper Sword
       (+5) the user sent.
 - [x] **Paper doll** -- round 141: the equipment window (`O`) renders the dressed character live.
