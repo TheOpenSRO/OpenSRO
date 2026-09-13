@@ -49,6 +49,9 @@ const SHOWN_CONTROLS := [
 	"GDR_PMI_TXT_MP",
 ]
 
+## The five berserk orbs (GDR_PMI_CIRCLE0..4), lit as the gauge fills.
+var _berserk_orbs: Array = []
+
 var _builder: UiBuilder
 var _name_label: Label
 var _level_label: Label
@@ -118,6 +121,35 @@ func setup() -> void:
 	# The client's own bar fills, not a colour of ours. See GAUGE_FILL_HP.
 	_set_gauge_fill(_hp_gauge, GAUGE_FILL_HP)
 	_set_gauge_fill(_mp_gauge, GAUGE_FILL_MP)
+
+	# The berserk orbs: the layout's own five circles, shown (they're outside
+	# SHOWN_CONTROLS' allow-list) and driven by set_berserk. Start empty.
+	_berserk_orbs.clear()
+	for i in range(BERSERK_ORBS):
+		var orb := root.find_child("GDR_PMI_CIRCLE%d" % i, true, false) as CanvasItem
+		if orb != null:
+			orb.visible = true
+			_berserk_orbs.append(orb)
+	set_berserk(0, false)
+
+## Lights the berserk orbs for a gauge (0..BERSERK_MAX) and tints them when
+## berserk is active. An unlit orb is dimmed; a lit one full; all glow while
+## active.
+const BERSERK_ORBS := 5
+const BERSERK_MAX := 100
+func set_berserk(gauge: int, active: bool) -> void:
+	var per_orb: int = BERSERK_MAX / BERSERK_ORBS
+	for i in range(_berserk_orbs.size()):
+		var orb := _berserk_orbs[i] as CanvasItem
+		if orb == null:
+			continue
+		var lit: bool = gauge >= (i + 1) * per_orb
+		if active:
+			orb.modulate = Color(1.6, 0.7, 0.3) # a fiery glow while berserk
+		elif lit:
+			orb.modulate = Color(1, 1, 1, 1)
+		else:
+			orb.modulate = Color(1, 1, 1, 0.25) # dim: an empty orb
 
 ## Fills a gauge with the client's own bar artwork.
 ##

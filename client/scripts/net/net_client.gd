@@ -45,6 +45,7 @@ signal storage_deposit_result(ok: bool, reason: String)
 signal storage_withdraw_result(ok: bool, reason: String)
 signal storage_gold_result(ok: bool, reason: String, carried: int, stored: int)
 signal attack_result(result: CombatNet.AttackResult)
+signal berserk_result(activated: bool, gauge: int, active: bool)
 signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
 signal loot_dropped(dropped: CombatNet.LootDropped)
@@ -316,6 +317,9 @@ func storage_gold(char_name: String, op: int, amount: int) -> void:
 func attack(char_name: String, target_monster_id: int) -> void:
 	_send(CombatNet.OP_ATTACK, CombatNet.encode_attack(char_name, target_monster_id))
 
+func berserk(char_name: String) -> void:
+	_send(CombatNet.OP_BERSERK, CombatNet.encode_berserk(char_name))
+
 func list_monsters() -> void:
 	_send(CombatNet.OP_MONSTER_LIST, CombatNet.encode_monster_list())
 
@@ -482,6 +486,9 @@ func _dispatch(p: Packet) -> void:
 			storage_gold_result.emit(r.ok, r.reason if r.error == "" else r.error, r.carried, r.stored)
 		CombatNet.OP_ATTACK_RESULT:
 			attack_result.emit(CombatNet.decode_attack_result(p.data))
+		CombatNet.OP_BERSERK_RESULT:
+			var br := CombatNet.decode_berserk_result(p.data)
+			berserk_result.emit(br.activated, br.gauge, br.active)
 		CombatNet.OP_MONSTER_DAMAGED:
 			monster_damaged.emit(CombatNet.decode_monster_damaged(p.data))
 		CombatNet.OP_MONSTER_DIED:

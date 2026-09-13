@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
@@ -248,6 +249,7 @@ func UseSkillHandler(
 	quests quest.Store,
 	inv inventory.Store,
 	skillRef SkillRefStore,
+	zerk *berserk.Tracker,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpUseSkill {
@@ -310,7 +312,7 @@ func UseSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
 		}
 
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, characterID, req.TargetMonsterID, damageBonus)
+		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, characterID, req.TargetMonsterID, damageBonus)
 	}
 }
 

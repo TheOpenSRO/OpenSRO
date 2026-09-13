@@ -1238,11 +1238,26 @@ func _try_initialize_pk2_ui() -> void:
 		if result != null and _last_enter_world_max_hp > 0:
 			if _hud_player_info != null:
 				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
+				_hud_player_info.set_berserk(result.berserk_gauge, result.berserk_active)
 			if _hud_panels != null:
 				_hud_panels.set_character_vitals(result.player_hp, _last_enter_world_max_hp, 1)
 			# A kill changes exp (and maybe level/HP-max), so refresh the gauges.
 			if result.monster_died:
-				_request_world_stats())
+				_request_world_stats()
+			# QA: auto-activate berserk once the gauge fills, so a render shows
+			# the orbs light and the berserk glow. Never fires in real play.
+			if OS.get_environment("SRREVAMP_QA_BERSERK") != "" and result.berserk_gauge >= 100 and not result.berserk_active \
+					and NetClient.current_character_name != "":
+				NetClient.berserk(NetClient.current_character_name))
+	# Berserk: the orbs fill on attack (above); an activation result updates
+	# them and, when it started a berserk, announces it.
+	NetClient.berserk_result.connect(func(activated: bool, gauge: int, active: bool) -> void:
+		if _hud_player_info != null:
+			_hud_player_info.set_berserk(gauge, active)
+		if activated:
+			_log_system("Berserk!")
+		elif not active:
+			_log_system("The berserk gauge is not full yet."))
 	# The level, EXP gauge, HP-bar maximum and SP all come from the stats
 	# packet -- kept live here (enter-world, each kill, and level-up).
 	NetClient.character_stats_result.connect(_on_world_stats)
@@ -6730,6 +6745,15 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and (event as InputEventKey).pressed \
 			and (event as InputEventKey).keycode == KEY_F3 and _debug_panel != null:
 		_debug_panel.toggle()
+		get_viewport().set_input_as_handled()
+		return
+	# R goes berserk: the server activates it only if the five-orb gauge is
+	# full (see the berserk_result handler), so a press when it isn't is a
+	# no-op with a note rather than an error.
+	if event is InputEventKey and (event as InputEventKey).pressed \
+			and (event as InputEventKey).keycode == KEY_R \
+			and NetClient.current_character_name != "" and NetClient.is_connected_to_server():
+		NetClient.berserk(NetClient.current_character_name)
 		get_viewport().set_input_as_handled()
 		return
 	if event.is_action_pressed("toggle_ui"):

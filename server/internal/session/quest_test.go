@@ -111,7 +111,7 @@ func TestQuestFullFlow(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore()),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil),
 		QuestHandler(chars, quests),
 	)
 	addr, cleanup := startTestServer(t, handle)

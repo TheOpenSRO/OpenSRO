@@ -8,6 +8,7 @@ import (
 
 	"math/rand"
 
+	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
@@ -32,7 +33,59 @@ const (
 	OpMonsterList       uint16 = 0x0065 // client -> server
 	OpMonsterListResult uint16 = 0x0066 // server -> client
 	OpLevelUp           uint16 = 0x0067 // server -> client, direct to the character that levelled
+	OpBerserk           uint16 = 0x0068 // client -> server, request to go berserk
+	OpBerserkResult     uint16 = 0x0069 // server -> client, the gauge/active after the request
 )
+
+// BerserkResult reports the gauge (0..berserk.Max) and whether berserk is now
+// active, after an OpBerserk request. Activated is true only when this request
+// actually started a berserk (the gauge was full).
+type BerserkResult struct {
+	Activated bool
+	Gauge     int32
+	Active    bool
+}
+
+func (r *BerserkResult) Encode() []byte {
+	buf := make([]byte, 6)
+	if r.Activated {
+		buf[0] = 1
+	}
+	binary.LittleEndian.PutUint32(buf[1:5], uint32(r.Gauge))
+	if r.Active {
+		buf[5] = 1
+	}
+	return buf
+}
+
+func DecodeBerserkResult(data []byte) (*BerserkResult, error) {
+	if len(data) < 6 {
+		return nil, errors.New("session: decoding BerserkResult: truncated")
+	}
+	return &BerserkResult{
+		Activated: data[0] != 0,
+		Gauge:     int32(binary.LittleEndian.Uint32(data[1:5])),
+		Active:    data[5] != 0,
+	}, nil
+}
+
+func handleBerserk(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, zerk *berserk.Tracker) error {
+	if zerk == nil {
+		return sess.Send(&proto.Packet{Opcode: OpBerserkResult, Data: (&BerserkResult{}).Encode()})
+	}
+	req, err := DecodeCharacterNameRequest(p.Data)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpBerserkResult, Data: (&BerserkResult{}).Encode()})
+	}
+	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.Name)
+	if errStr != "" {
+		return sess.Send(&proto.Packet{Opcode: OpBerserkResult, Data: (&BerserkResult{}).Encode()})
+	}
+	activated := zerk.Activate(characterID)
+	return sess.Send(&proto.Packet{Opcode: OpBerserkResult, Data: (&BerserkResult{
+		Activated: activated, Gauge: int32(zerk.Gauge(characterID)), Active: zerk.Active(characterID),
+	}).Encode()})
+}
 
 // levelTable is the EXP curve the server was started with, or nil if the
 // operator provided none (then characters accumulate raw exp but never level).
@@ -109,11 +162,17 @@ type AttackResult struct {
 	PlayerDamageTaken int32
 	PlayerHP          int32
 	PlayerDied        bool // true if the counterattack killed the player (they've been respawned with full HP already)
+
+	// BerserkGauge (0..berserk.Max) and BerserkActive drive the five HUD orbs
+	// and the berserk aura; they ride along on every attack so the gauge fills
+	// visibly as you fight.
+	BerserkGauge  int32
+	BerserkActive bool
 }
 
 func (r *AttackResult) Encode() []byte {
 	out := encodeStrings(r.Error)
-	buf := make([]byte, 18)
+	buf := make([]byte, 23)
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(r.MonsterDamage))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(r.MonsterRemainingHP))
 	if r.MonsterDied {
@@ -123,6 +182,10 @@ func (r *AttackResult) Encode() []byte {
 	binary.LittleEndian.PutUint32(buf[13:17], uint32(r.PlayerHP))
 	if r.PlayerDied {
 		buf[17] = 1
+	}
+	binary.LittleEndian.PutUint32(buf[18:22], uint32(r.BerserkGauge))
+	if r.BerserkActive {
+		buf[22] = 1
 	}
 	return append(out, buf...)
 }
@@ -135,7 +198,7 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 	if len(rest) < 18 {
 		return nil, errors.New("session: decoding AttackResult: truncated")
 	}
-	return &AttackResult{
+	r := &AttackResult{
 		Error:              fields[0],
 		MonsterDamage:      int32(binary.LittleEndian.Uint32(rest[0:4])),
 		MonsterRemainingHP: int32(binary.LittleEndian.Uint32(rest[4:8])),
@@ -143,7 +206,13 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 		PlayerDamageTaken:  int32(binary.LittleEndian.Uint32(rest[9:13])),
 		PlayerHP:           int32(binary.LittleEndian.Uint32(rest[13:17])),
 		PlayerDied:         rest[17] != 0,
-	}, nil
+	}
+	// The berserk tail is appended, so an older 18-byte result still decodes.
+	if len(rest) >= 23 {
+		r.BerserkGauge = int32(binary.LittleEndian.Uint32(rest[18:22]))
+		r.BerserkActive = rest[22] != 0
+	}
+	return r, nil
 }
 
 // MonsterDamaged is the OpMonsterDamaged broadcast payload.
@@ -406,9 +475,12 @@ func CombatHandler(
 	quests quest.Store,
 	inv inventory.Store,
 	skills skill.Store,
+	zerk *berserk.Tracker,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
+		case OpBerserk:
+			return handleBerserk(ctx, sess, p, chars, zerk)
 		case OpAttack:
 			req, err := DecodeAttackRequest(p.Data)
 			if err != nil {
@@ -420,7 +492,7 @@ func CombatHandler(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 			}
 
-			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, characterID, req.TargetMonsterID, 0)
+			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, characterID, req.TargetMonsterID, 0)
 		case OpMonsterList:
 			return handleMonsterList(sess, hub, monsters)
 		default:
@@ -468,6 +540,7 @@ func performAttack(
 	quests quest.Store,
 	inv inventory.Store,
 	skills skill.Store,
+	zerk *berserk.Tracker,
 	characterID, targetMonsterID int64,
 	damageBonus int,
 ) error {
@@ -492,6 +565,10 @@ func performAttack(
 	}
 
 	net := base + damageBonus - monster.Defense
+	// Berserk boosts the hit while active.
+	if zerk != nil {
+		net = zerk.Boost(characterID, net)
+	}
 	if net < 1 {
 		net = 1
 	}
@@ -502,6 +579,12 @@ func performAttack(
 	}
 
 	result := &AttackResult{MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP), MonsterDied: monsterDied}
+	// Fighting fills the berserk gauge; report it (and whether berserk is on)
+	// so the HUD orbs and aura track it as the fight goes.
+	if zerk != nil {
+		result.BerserkGauge = int32(zerk.Fill(characterID))
+		result.BerserkActive = zerk.Active(characterID)
+	}
 	var levelUp *LevelUp // set on a kill that crosses the exp curve, sent below
 
 	// A dead monster can't counterattack. A surviving one always hits

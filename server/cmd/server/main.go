@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/account"
+	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/duel"
@@ -26,8 +27,8 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/session"
 	"github.com/OpenSRO/srrevamp/server/internal/shop"
-	"github.com/OpenSRO/srrevamp/server/internal/storage"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
+	"github.com/OpenSRO/srrevamp/server/internal/storage"
 	"github.com/OpenSRO/srrevamp/server/internal/trade"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
@@ -365,6 +366,7 @@ func main() {
 
 	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
 	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars}
+	zerkTracker := berserk.NewTracker()
 
 	hub := world.NewHub()
 	monsters := combat.NewHub()
@@ -423,9 +425,9 @@ func main() {
 		session.CharacterStatsHandler(chars, eq, refItems, skills),
 		session.ShopHandler(chars, shopSvc),
 		session.StorageHandler(chars, storageSvc),
-		session.CombatHandler(chars, eq, refItems, hub, monsters, quests, inv, skills),
+		session.CombatHandler(chars, eq, refItems, hub, monsters, quests, inv, skills, zerkTracker),
 		session.LearnSkillHandler(chars, skills, refItems),
-		session.UseSkillHandler(chars, eq, refItems, skills, hub, monsters, quests, inv, refItems),
+		session.UseSkillHandler(chars, eq, refItems, skills, hub, monsters, quests, inv, refItems, zerkTracker),
 		session.SkillListHandler(chars, skills),
 		session.SkillStateHandler(chars, skills),
 		session.RaiseMasteryHandler(chars, skills),

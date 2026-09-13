@@ -13,6 +13,32 @@ const OP_LOOT_DROPPED := 0x0064     # server -> client, direct to the killer (on
 const OP_MONSTER_LIST := 0x0065     # client -> server
 const OP_MONSTER_LIST_RESULT := 0x0066 # server -> client
 const OP_LEVEL_UP := 0x0067         # server -> client, direct to the character that levelled
+const OP_BERSERK := 0x0068          # client -> server, request to go berserk
+const OP_BERSERK_RESULT := 0x0069   # server -> client, the gauge/active after the request
+
+## Result of decode_berserk_result(). activated is true only when this request
+## actually started a berserk (the gauge was full); gauge/active are the state.
+class BerserkResult:
+	var activated: bool
+	var gauge: int
+	var active: bool
+
+## Encodes an OpBerserk request: just the character name.
+static func encode_berserk(character_name: String) -> PackedByteArray:
+	var name_bytes := character_name.to_utf8_buffer()
+	var out := PackedByteArray()
+	out.resize(2)
+	out.encode_u16(0, name_bytes.size())
+	out.append_array(name_bytes)
+	return out
+
+static func decode_berserk_result(data: PackedByteArray) -> BerserkResult:
+	var r := BerserkResult.new()
+	if data.size() >= 6:
+		r.activated = data[0] != 0
+		r.gauge = data.decode_u32(1)
+		r.active = data[5] != 0
+	return r
 
 ## Result of decode_level_up(): the character's new level and its unspent
 ## stat points, so the client can play the level-up effect and announce it.
@@ -38,6 +64,10 @@ class AttackResult:
 	var player_damage_taken: int
 	var player_hp: int
 	var player_died: bool
+	## The berserk gauge (0..100, five HUD orbs) and whether berserk is active,
+	## carried on every attack so the orbs fill as you fight.
+	var berserk_gauge: int = 0
+	var berserk_active: bool = false
 
 ## Result of decode_monster_damaged().
 class MonsterDamaged:
@@ -117,6 +147,10 @@ static func decode_attack_result(data: PackedByteArray) -> AttackResult:
 	result.player_damage_taken = data.decode_u32(offset + 9)
 	result.player_hp = data.decode_u32(offset + 13)
 	result.player_died = data[offset + 17] != 0
+	# The berserk tail is appended; an older 18-byte result omits it.
+	if offset + 23 <= data.size():
+		result.berserk_gauge = data.decode_u32(offset + 18)
+		result.berserk_active = data[offset + 22] != 0
 
 	return result
 
