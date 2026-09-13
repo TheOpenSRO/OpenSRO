@@ -77,6 +77,7 @@ func _build_ui() -> void:
 	add_child(ground)
 
 	var media := _open_media()
+	FrontEndUi.apply_client_font(self, media)
 	var backdrop_tex := _load_ddj(media, BACKDROP_DDJ)
 	if backdrop_tex != null:
 		var bg := TextureRect.new()

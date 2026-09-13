@@ -71,6 +71,21 @@ static func vignette() -> TextureRect:
 	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return tr
 
+## Applies the client's own UI font (fonts\*.ttf in the player's Media.pk2, the
+## same face the in-game HUD uses via UiBuilder) as the root's default font, so
+## the front-end reads in the game's own type rather than Godot's default. Sets
+## it through a Theme on the root, which every child inherits unless it overrides
+## its own font. No-ops without an archive/font -- Godot's default stays then.
+static func apply_client_font(root: Control, media: Pk2Reader) -> void:
+	if root == null or media == null:
+		return
+	var font := UiBuilder.new(media, null).font_at(0)
+	if font == null:
+		return
+	var theme := root.theme if root.theme != null else Theme.new()
+	theme.default_font = font
+	root.theme = theme
+
 ## A dark ground so a missing backdrop is black, not the host theme.
 static func ground(colour: Color = Color(0.03, 0.03, 0.04)) -> ColorRect:
 	var g := ColorRect.new()

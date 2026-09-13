@@ -56,6 +56,7 @@ func _qa_sample_characters() -> Array:
 func _build_ui() -> void:
 	add_child(FrontEndUi.ground())
 	var media := FrontEndUi.open_media()
+	FrontEndUi.apply_client_font(self, media)
 	var bg := FrontEndUi.backdrop(media, BACKDROP_DDJ)
 	if bg != null:
 		add_child(bg)
