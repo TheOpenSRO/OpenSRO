@@ -60,6 +60,10 @@ class MonsterSnapshot:
 	var hp: int
 	## The monster's real level (characterdata _RefObjChar col 57), 0 if unknown.
 	var level: int
+	## The monster's rank/rarity (characterdata _RefObjChar col 15): 0 normal,
+	## 1 champion, 3/8 unique, 4 giant, 5 titan, 6 elite. The target window's
+	## rank gem is picked from it (mapping recovered from the retail client).
+	var rarity: int
 
 ## Result of decode_monster_list_result().
 class MonsterListResult:
@@ -188,12 +192,13 @@ static func _decode_monster_snapshot(data: PackedByteArray, offset: int) -> Arra
 	m.z = data.decode_float(offset + 8)
 	offset += 12
 
-	if offset + 12 > data.size():
+	if offset + 16 > data.size():
 		return [null, -1]
 	m.max_hp = data.decode_u32(offset)
 	m.hp = data.decode_u32(offset + 4)
 	m.level = data.decode_u32(offset + 8)
-	offset += 12
+	m.rarity = data.decode_u32(offset + 12)
+	offset += 16
 
 	return [m, offset]
 

@@ -42,6 +42,7 @@ type monsterSpec struct {
 	Name       string
 	CodeName   string  // the species' characterdata key; what the client draws it by
 	Level      int     // real level, from the client's characterdata (_RefObjChar col 57)
+	Rarity     int     // real rank, from characterdata (_RefObjChar col 15); 0 = normal
 	X, Z       float64 // own design placeholder spawn anchor -- see combat.Hub.Spawn
 	MaxHP      int
 	Defense    int
@@ -99,7 +100,7 @@ const respawnDelay = 10 * time.Second
 // canceled. main() runs one of these per monsterSpecs entry.
 func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Logger, spec monsterSpec) {
 	spawn := func() int64 {
-		m := monsters.SpawnSpecies(spec.Zone, combat.Species{Name: spec.Name, CodeName: spec.CodeName, Level: spec.Level}, spec.X, 0, spec.Z, spec.MaxHP, spec.Defense, spec.Attack, spec.GoldReward)
+		m := monsters.SpawnSpecies(spec.Zone, combat.Species{Name: spec.Name, CodeName: spec.CodeName, Level: spec.Level, Rarity: spec.Rarity}, spec.X, 0, spec.Z, spec.MaxHP, spec.Defense, spec.Attack, spec.GoldReward)
 		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone)
 		return m.ID
 	}

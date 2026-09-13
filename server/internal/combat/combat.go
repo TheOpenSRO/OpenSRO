@@ -30,7 +30,12 @@ type Monster struct {
 	// Mangyang 1, Gyo 5 ... TigerWoman 110, monotonic with difficulty). Unlike
 	// MaxHP/Attack (still disclosed defaults), the level is grounded. 0 if
 	// unknown.
-	Level      int
+	Level int
+	// Rarity is the monster's rank, grounded from characterdata (_RefObjChar
+	// column 15): 0 normal, 1 champion, 3/8 unique, 4 giant, 5 titan, 6 elite.
+	// The client maps it to the target-window rank gem (mapping recovered from
+	// the retail client). Structural data, so grounded like Level.
+	Rarity     int
 	Zone       string
 	X, Y, Z    float64 // own design placeholder position -- see Hub.Spawn
 	MaxHP      int
@@ -106,6 +111,8 @@ type Species struct {
 	CodeName string
 	// Level is the real monster level from characterdata (_RefObjChar col 57).
 	Level int
+	// Rarity is the monster rank from characterdata (_RefObjChar col 15).
+	Rarity int
 }
 
 // SpawnSpecies is Spawn with the species' code name carried along, so the
@@ -115,7 +122,7 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
 	h.byID[id] = m
 	return m
 }

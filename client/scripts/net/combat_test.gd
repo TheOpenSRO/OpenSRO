@@ -107,7 +107,7 @@ func _test_decode_loot_dropped_empty() -> void:
 	if result != null:
 		_check(result.drops.size() == 0, "no drops")
 
-func _build_monster_snapshot(id: int, name: String, x: float, y: float, z: float, max_hp: int, hp: int, code: String = "", level: int = 0) -> PackedByteArray:
+func _build_monster_snapshot(id: int, name: String, x: float, y: float, z: float, max_hp: int, hp: int, code: String = "", level: int = 0, rarity: int = 0) -> PackedByteArray:
 	var out := PackedByteArray()
 	out.resize(8)
 	out.encode_s64(0, id)
@@ -125,10 +125,11 @@ func _build_monster_snapshot(id: int, name: String, x: float, y: float, z: float
 	pos_buf.encode_float(8, z)
 	out.append_array(pos_buf)
 	var hp_buf := PackedByteArray()
-	hp_buf.resize(12)
+	hp_buf.resize(16)
 	hp_buf.encode_u32(0, max_hp)
 	hp_buf.encode_u32(4, hp)
 	hp_buf.encode_u32(8, level)
+	hp_buf.encode_u32(12, rarity)
 	out.append_array(hp_buf)
 	return out
 
@@ -147,12 +148,12 @@ func _build_monster_list_result(error: String, monsters: Array) -> PackedByteArr
 	count_buf.encode_u16(0, monsters.size())
 	out.append_array(count_buf)
 	for m in monsters:
-		out.append_array(_build_monster_snapshot(m["id"], m["name"], m.get("x", 0.0), m.get("y", 0.0), m.get("z", 0.0), m["max_hp"], m["hp"], m.get("code", ""), m.get("level", 0)))
+		out.append_array(_build_monster_snapshot(m["id"], m["name"], m.get("x", 0.0), m.get("y", 0.0), m.get("z", 0.0), m["max_hp"], m["hp"], m.get("code", ""), m.get("level", 0), m.get("rarity", 0)))
 	return out
 
 func _test_decode_monster_list_result() -> void:
 	var payload := _build_monster_list_result("", [
-		{"id": 1, "name": "Stone Golem", "code": "MOB_TEST_GOLEM", "x": 15.0, "y": 0.0, "z": 10.0, "max_hp": 200, "hp": 150, "level": 12},
+		{"id": 1, "name": "Stone Golem", "code": "MOB_TEST_GOLEM", "x": 15.0, "y": 0.0, "z": 10.0, "max_hp": 200, "hp": 150, "level": 12, "rarity": 4},
 		{"id": 2, "name": "Weasel", "x": -55.0, "y": 0.0, "z": 58.0, "max_hp": 80, "hp": 80},
 	])
 	var result := CombatNet.decode_monster_list_result(payload)
@@ -167,6 +168,7 @@ func _test_decode_monster_list_result() -> void:
 		_check(result.monsters[0].max_hp == 200, "max hp round-trips")
 		_check(result.monsters[0].hp == 150, "hp round-trips")
 		_check(result.monsters[0].level == 12, "monster level round-trips")
+		_check(result.monsters[0].rarity == 4, "monster rarity round-trips")
 		_check(result.monsters[1].code_name == "" and result.monsters[1].monster_name == "Weasel",
 			"a monster without a code name decodes, and the next one after it is intact")
 

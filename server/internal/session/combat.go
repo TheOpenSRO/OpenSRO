@@ -268,6 +268,10 @@ type MonsterSnapshot struct {
 	// Level is the monster's real level (characterdata _RefObjChar col 57), so
 	// the target window can show it. 0 when unknown.
 	Level int32
+	// Rarity is the monster's rank (characterdata _RefObjChar col 15): 0 normal,
+	// 1 champion, 3/8 unique, 4 giant, 5 titan, 6 elite -- the target window
+	// picks its rank gem from it (mapping recovered from the retail client).
+	Rarity int32
 }
 
 func (m *MonsterSnapshot) Encode() []byte {
@@ -275,10 +279,11 @@ func (m *MonsterSnapshot) Encode() []byte {
 	out = append(out, encodeFloat32(m.X)...)
 	out = append(out, encodeFloat32(m.Y)...)
 	out = append(out, encodeFloat32(m.Z)...)
-	buf := make([]byte, 12)
+	buf := make([]byte, 16)
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(m.MaxHP))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(m.HP))
 	binary.LittleEndian.PutUint32(buf[8:12], uint32(m.Level))
+	binary.LittleEndian.PutUint32(buf[12:16], uint32(m.Rarity))
 	return append(out, buf...)
 }
 
@@ -303,15 +308,16 @@ func decodeMonsterSnapshot(data []byte) (*MonsterSnapshot, []byte, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("z: %w", err)
 	}
-	if len(rest) < 12 {
-		return nil, nil, errors.New("truncated hp/level fields")
+	if len(rest) < 16 {
+		return nil, nil, errors.New("truncated hp/level/rarity fields")
 	}
 	return &MonsterSnapshot{
 		ID: id, Name: names[0], CodeName: names[1], X: x, Y: y, Z: z,
-		MaxHP: int32(binary.LittleEndian.Uint32(rest[0:4])),
-		HP:    int32(binary.LittleEndian.Uint32(rest[4:8])),
-		Level: int32(binary.LittleEndian.Uint32(rest[8:12])),
-	}, rest[12:], nil
+		MaxHP:  int32(binary.LittleEndian.Uint32(rest[0:4])),
+		HP:     int32(binary.LittleEndian.Uint32(rest[4:8])),
+		Level:  int32(binary.LittleEndian.Uint32(rest[8:12])),
+		Rarity: int32(binary.LittleEndian.Uint32(rest[12:16])),
+	}, rest[16:], nil
 }
 
 // MonsterListResult is the OpMonsterListResult payload.
@@ -439,7 +445,7 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 		snapshots[i] = MonsterSnapshot{
 			ID: m.ID, Name: m.Name, CodeName: m.CodeName,
 			X: float32(m.X), Y: float32(m.Y), Z: float32(m.Z),
-			MaxHP: int32(m.MaxHP), HP: int32(m.HP), Level: int32(m.Level),
+			MaxHP: int32(m.MaxHP), HP: int32(m.HP), Level: int32(m.Level), Rarity: int32(m.Rarity),
 		}
 	}
 	return sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: (&MonsterListResult{Monsters: snapshots}).Encode()})

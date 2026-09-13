@@ -3462,6 +3462,7 @@ var _target_window: Control = null
 var _target_name_label: Label = null
 var _target_hp_fill: ColorRect = null
 var _target_hp_pct: Label = null
+var _target_rank_icon: TextureRect = null
 var _target_hp_full := 0.0
 
 func _build_target_window() -> void:
@@ -3539,7 +3540,38 @@ func _build_target_window() -> void:
 	_target_hp_pct.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_target_window.add_child(_target_hp_pct)
 
+	# The rank gem (top-left), set per target from its rarity. Position is a
+	# disclosed layout choice like the name/HP rects; the gem art and the
+	# rarity->gem mapping are grounded (see _rank_icon_path).
+	_target_rank_icon = TextureRect.new()
+	_target_rank_icon.position = Vector2(10, 8)
+	_target_rank_icon.size = Vector2(22, 22)
+	_target_rank_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_target_rank_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_target_rank_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_target_window.add_child(_target_rank_icon)
+
 	ui_control.add_child(_target_window)
+
+## The target-window rank gem for a monster's rarity (characterdata _RefObjChar
+## col 15). The mapping is recovered from the retail client (FUN_0069b4c0's
+## switch): 0/7 normal, 1 champion, 3/8 unique, 4 giant, 5 titan, 6 elite; any
+## other value shows no gem. Returns "" for no gem.
+func _rank_icon_path(rarity: int) -> String:
+	match rarity:
+		0, 7:
+			return "interface\\targetwindow\\tw_icon_normal.ddj"
+		1:
+			return "interface\\targetwindow\\tw_icon_champion.ddj"
+		3, 8:
+			return "interface\\targetwindow\\tw_icon_unique.ddj"
+		4:
+			return "interface\\targetwindow\\tw_icon_giant.ddj"
+		5:
+			return "interface\\targetwindow\\tw_icon_titan.ddj"
+		6:
+			return "interface\\targetwindow\\tw_icon_elite.ddj"
+	return ""
 
 ## Shows the target window for a monster id, or hides it if the id is not a
 ## known live monster.
@@ -3556,6 +3588,10 @@ func _show_target(monster_id: int) -> void:
 		_target_name_label.text = "%s  Lv %d" % [snap.monster_name, snap.level]
 	else:
 		_target_name_label.text = snap.monster_name
+	# The rank gem, from the monster's rarity (grounded mapping).
+	if _target_rank_icon != null:
+		var gem := _rank_icon_path(snap.rarity)
+		_target_rank_icon.texture = _ui_builder.load_texture(gem) if (gem != "" and _ui_builder != null) else null
 	_set_target_hp(snap.hp, snap.max_hp)
 	_target_window.visible = true
 
