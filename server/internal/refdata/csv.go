@@ -24,6 +24,10 @@ var itemCSVColumns = []string{
 	// Appended later still (real NPC vendor prices): an export made for the
 	// earlier 28 columns is a prefix of this one, so both load.
 	"Price", "SellPrice",
+	// Appended later still (real potion restore amounts, from the item
+	// table's self-labelling Param block): again a strict suffix, so every
+	// earlier export still loads.
+	"RestoreHP", "RestoreHPPct", "RestoreMP", "RestoreMPPct",
 }
 
 // itemCSVRequiredColumns is the prefix every export must carry; the columns
@@ -130,6 +134,19 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 29 {
 		it.SellPrice = parseInt64(f[29])
+	}
+	// Restore amounts are optional in the same way.
+	if len(f) > 30 {
+		it.RestoreHP = parseInt(f[30])
+	}
+	if len(f) > 31 {
+		it.RestoreHPPct = parseInt(f[31])
+	}
+	if len(f) > 32 {
+		it.RestoreMP = parseInt(f[32])
+	}
+	if len(f) > 33 {
+		it.RestoreMPPct = parseInt(f[33])
 	}
 
 	if err != nil {

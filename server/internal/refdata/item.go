@@ -38,10 +38,10 @@ type Item struct {
 	// ReqLevelType1/ReqLevel1 are the first of the table's four requirement
 	// pairs. Type 1 is the character's own level -- what every ordinary
 	// armour and weapon row carries.
-	ReqLevelType1, ReqLevel1       int
-	ReqStr                         int
-	ReqInt                         int
-	ItemClass                      int
+	ReqLevelType1, ReqLevel1 int
+	ReqStr                   int
+	ReqInt                   int
+	ItemClass                int
 	// Price is the NPC buy price in gold, and SellPrice what the NPC pays to
 	// buy it back -- both real, from the client's own itemdata (_RefObjCommon
 	// Price and SellPrice columns; SellPrice < Price on every row checked).
@@ -52,7 +52,19 @@ type Item struct {
 	// docs/protocol/refdata_schema.md.
 	Price     int64
 	SellPrice int64
-	TwoHanded bool
+
+	// RestoreHP/RestoreMP are how much health/mana using this item gives
+	// back, and the Pct pair the same as a percentage of the maximum. REAL,
+	// and unusually self-evidencing: the item table's Param block stores each
+	// value beside its own description, so col 118 is followed by the literal
+	// label "HP..." and col 122 by "MP...", with the "(%)" variants at 120 and
+	// 124. HP_POTION_01 carries 120 in the HP column and nothing in the MP
+	// one; MP_POTION_01 the mirror image. The large potions carry 370.
+	RestoreHP                      int
+	RestoreHPPct                   int
+	RestoreMP                      int
+	RestoreMPPct                   int
+	TwoHanded                      bool
 	DurabilityMin, DurabilityMax   float64
 	PhysDefenseMin, PhysDefenseMax float64
 	MagDefenseMin, MagDefenseMax   float64

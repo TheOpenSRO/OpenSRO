@@ -177,6 +177,11 @@ type Store interface {
 	// ResetHP restores characterID's HP to MaxHP (e.g. after death/respawn).
 	ResetHP(ctx context.Context, characterID int64) error
 
+	// Heal raises characterID's HP by amount, never above maxHP, returning
+	// the resulting HP. Used by consumables; a non-positive amount is a
+	// no-op that still reports the current HP.
+	Heal(ctx context.Context, characterID int64, amount, maxHP int) (int, error)
+
 	// SetLeveling writes characterID's level, current-level exp progress and
 	// unspent stat points -- the result the caller computed from a kill's exp
 	// against the leveldata curve. Returns ErrNotFound if no such character.

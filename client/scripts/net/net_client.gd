@@ -106,6 +106,8 @@ signal friend_decline_result(ok: bool, reason: String)
 signal friend_list_result(friends: Array, error: String)
 signal friend_remove_result(ok: bool, reason: String)
 signal friend_pending_list_result(requests: Array, error: String)
+## Using a consumable: what it restored, and how many are left.
+signal use_item_result(result: UseItemNet.Result)
 
 var _tcp_peer: StreamPeerTCP  # the real socket, always present once connecting starts
 var _peer: StreamPeer         # what packets are actually read/written through -- _tcp_peer directly, or a StreamPeerTLS wrapping it once connected with use_tls
@@ -302,6 +304,10 @@ func list_shop(item_ids: Array = []) -> void:
 func sell_item(char_name: String, slot: int, quantity: int) -> void:
 	_send(ShopNet.OP_SELL, ShopNet.encode_sell(char_name, slot, quantity))
 
+## Uses one item from a bag slot (a potion). The reply carries the new HP/MP.
+func use_item(char_name: String, inventory_slot: int) -> void:
+	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use(char_name, inventory_slot))
+
 func list_storage(char_name: String) -> void:
 	_send(StorageNet.OP_LIST, StorageNet.encode_list_request(char_name))
 
@@ -472,6 +478,8 @@ func _dispatch(p: Packet) -> void:
 		ShopNet.OP_SELL_RESULT:
 			var r := ShopNet.decode_sell_result(p.data)
 			shop_sell_result.emit(r.ok, r.reason if r.error == "" else r.error, r.gold_received)
+		UseItemNet.OP_RESULT:
+			use_item_result.emit(UseItemNet.decode_result(p.data))
 		StorageNet.OP_LIST_RESULT:
 			var r := StorageNet.decode_list_result(p.data)
 			storage_list_result.emit(r.slots, r.error)

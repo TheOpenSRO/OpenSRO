@@ -226,6 +226,28 @@ func (s *SQLStore) ApplyDamage(ctx context.Context, characterID int64, amount in
 	return hp, hp == 0, nil
 }
 
+// Heal implements Store.
+func (s *SQLStore) Heal(ctx context.Context, characterID int64, amount, maxHP int) (int, error) {
+	if amount <= 0 {
+		c, err := s.GetByID(ctx, characterID)
+		if err != nil {
+			return 0, err
+		}
+		return c.HP, nil
+	}
+	var hp int
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE characters SET hp = LEAST(hp + $1, $2) WHERE id = $3 RETURNING hp`,
+		amount, maxHP, characterID).Scan(&hp)
+	if err == sql.ErrNoRows {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("character: healing: %w", err)
+	}
+	return hp, nil
+}
+
 // ResetHP implements Store.
 func (s *SQLStore) ResetHP(ctx context.Context, characterID int64) error {
 	// Max HP scales with the row's own level (base + per-level), so a reset

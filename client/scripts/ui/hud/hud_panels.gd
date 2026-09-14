@@ -1401,18 +1401,26 @@ func _fill_inventory_grid(slots: Array) -> void:
 		if count_label != null and qty > 1:
 			count_label.text = str(qty)
 
-## A click on an inventory item, while an NPC service window is open: sell it
-## (shop) or deposit it (storage). The bag is how the client moves items to a
-## vendor or the warehouse.
+## A click on an inventory item. Left, while an NPC service window is open:
+## sell it (shop) or deposit it (storage) -- the bag is how the client moves
+## items to a vendor or the warehouse. Right: use it, which is what a potion
+## is for; the server decides whether the item is usable at all, so a
+## right-click on a sword is simply refused rather than doing something odd.
 func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
-	if not (event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
-			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT):
+	if not (event is InputEventMouseButton and (event as InputEventMouseButton).pressed):
 		return
 	if not (icon.has_meta("inv_slot") and icon.has_meta("inv_item_id")):
 		return
+	var button := (event as InputEventMouseButton).button_index
 	var slot := int(icon.get_meta("inv_slot"))
 	var item_id := int(icon.get_meta("inv_item_id"))
 	var qty := int(icon.get_meta("inv_qty"))
+	if button == MOUSE_BUTTON_RIGHT:
+		if NetClient.current_character_name != "":
+			NetClient.use_item(NetClient.current_character_name, slot)
+		return
+	if button != MOUSE_BUTTON_LEFT:
+		return
 	var store: HudWindow = _windows.get("store")
 	var storage_win: HudWindow = _windows.get("storage")
 	if store != null and store.visible:

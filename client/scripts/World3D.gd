@@ -1261,6 +1261,13 @@ func _try_initialize_pk2_ui() -> void:
 	# The level, EXP gauge, HP-bar maximum and SP all come from the stats
 	# packet -- kept live here (enter-world, each kill, and level-up).
 	NetClient.character_stats_result.connect(_on_world_stats)
+	# Using a potion returns the new HP/MP directly, so the bars redraw
+	# without a follow-up stats round trip, and the bag count is refreshed.
+	NetClient.use_item_result.connect(_on_use_item_result)
+	# QA: once a kill has dropped a potion into the bag, drink it, so a render
+	# can show a consumable actually working. Never fires in real play.
+	if OS.get_environment("SRREVAMP_QA_USEITEM") != "":
+		NetClient.inventory_list_result.connect(_qa_use_first_potion)
 	# Until the first stats packet lands the bar is drawn full with no
 	# readout rather than a made-up number -- see set_mp_unknown. The stats
 	# packet now carries real mana (the game's own base curve), so
@@ -7907,3 +7914,42 @@ func _on_friend_pending_list_result(requests: Array, error: String) -> void:
 	friend_pending_list.clear()
 	for r in _pending_friend_requests:
 		friend_pending_list.add_item(r.requester_name)
+
+## Applies a consumable's effect to the HUD. The restored amounts are the
+## game's own (the item table's Param block), so the message reports what the
+## player actually got back, which is capped at what was missing.
+func _on_use_item_result(result) -> void:
+	if result == null:
+		return
+	if result.error != "":
+		_log_system(result.error)
+		return
+	if _hud_player_info != null:
+		if result.max_hp > 0:
+			_hud_player_info.set_hp(result.hp, result.max_hp)
+			_last_enter_world_max_hp = result.max_hp
+		if result.max_mp > 0:
+			_hud_player_info.set_mp(result.mp, result.max_mp)
+	var parts: Array[String] = []
+	if result.restored_hp > 0:
+		parts.append("%d HP" % result.restored_hp)
+	if result.restored_mp > 0:
+		parts.append("%d MP" % result.restored_mp)
+	if not parts.is_empty():
+		_log_system("Recovered %s." % " and ".join(parts))
+	# The stack shrank, so redraw the bag.
+	if NetClient.current_character_name != "":
+		NetClient.list_inventory(NetClient.current_character_name)
+
+## QA only: uses the first potion found in the bag, once. Driven by
+## SRREVAMP_QA_USEITEM; the ids are the real consumables the loot tables drop.
+var _qa_used_potion := false
+func _qa_use_first_potion(slots: Array, _error: String) -> void:
+	if _qa_used_potion or NetClient.current_character_name == "":
+		return
+	for entry in slots:
+		var slot: InventoryNet.Slot = entry
+		if slot.item_id in [4, 6, 11, 13]:
+			_qa_used_potion = true
+			NetClient.use_item(NetClient.current_character_name, slot.slot_index)
+			return

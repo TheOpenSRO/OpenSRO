@@ -165,6 +165,24 @@ func (m *MemStore) ApplyDamage(_ context.Context, characterID int64, amount int)
 	return c.HP, c.HP == 0, nil
 }
 
+// Heal implements Store.
+func (m *MemStore) Heal(_ context.Context, characterID int64, amount, maxHP int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.byID[characterID]
+	if !ok {
+		return 0, ErrNotFound
+	}
+	if amount > 0 {
+		c.HP += amount
+		if c.HP > maxHP {
+			c.HP = maxHP
+		}
+	}
+	return c.HP, nil
+}
+
 // ResetHP implements Store.
 func (m *MemStore) ResetHP(_ context.Context, characterID int64) error {
 	m.mu.Lock()

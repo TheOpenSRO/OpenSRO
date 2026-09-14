@@ -49,9 +49,9 @@ import (
 // Field indices into a tab-split itemdata row (0-indexed; field 0 is the
 // leading service column).
 const (
-	fID            = 1
-	fTypeID1       = 9 // TypeID1..4 run 9..12
-	fCountry       = 14
+	fID      = 1
+	fTypeID1 = 9 // TypeID1..4 run 9..12
+	fCountry = 14
 	// MaxStack: 1 for all equipment, a real cap for stackables (col 57).
 	fMaxStack = 57
 	// Real NPC vendor prices: _RefObjCommon Price (buy) and SellPrice
@@ -59,8 +59,14 @@ const (
 	// item checked, potions carry a Price with 0 CostRepair, weapons carry
 	// both -- and pinned by fReqLevelType1=32 lining up (ItemTableReader reads
 	// the same column). See docs/protocol/refdata_schema.md.
-	fPrice         = 26
-	fSellPrice     = 31
+	fPrice     = 26
+	fSellPrice = 31
+	// The Param block stores a value beside its own label: 118 "HP...",
+	// 120 "HP...(%)", 122 "MP...", 124 "MP...(%)". Potion restore amounts.
+	fRestoreHP     = 118
+	fRestoreHPPct  = 120
+	fRestoreMP     = 122
+	fRestoreMPPct  = 124
 	fReqLevelType1 = 32
 	fReqLevel1     = 33
 	fReqGender     = 58
@@ -170,7 +176,13 @@ func itemRecord(cols []string) ([]string, bool) {
 	if _, err := strconv.Atoi(strings.TrimSpace(cols[fID])); err != nil {
 		return nil, false
 	}
+	// Bounds-checked: the columns read here run out to the Param block near
+	// col 124, and a short or older itemdata row must yield "0" rather than
+	// panic the exporter.
 	get := func(i int) string {
+		if i >= len(cols) {
+			return "0"
+		}
 		s := strings.TrimSpace(cols[i])
 		if s == "" {
 			return "0"
@@ -179,6 +191,9 @@ func itemRecord(cols []string) ([]string, bool) {
 	}
 	// A float field: itemdata writes some as "2.4"; keep as-is, default 0.
 	num := func(i int) string {
+		if i >= len(cols) {
+			return "0"
+		}
 		s := strings.TrimSpace(cols[i])
 		if _, err := strconv.ParseFloat(s, 64); err != nil {
 			return "0"
@@ -214,6 +229,10 @@ func itemRecord(cols []string) ([]string, bool) {
 		get(fReqLevel1),     // 27 ReqLevel1
 		get(fPrice),         // 28 Price (real NPC buy price)
 		get(fSellPrice),     // 29 SellPrice (real NPC buy-back price)
+		get(fRestoreHP),     // 30 RestoreHP    (Param block, labelled "HP...")
+		get(fRestoreHPPct),  // 31 RestoreHPPct
+		get(fRestoreMP),     // 32 RestoreMP    (Param block, labelled "MP...")
+		get(fRestoreMPPct),  // 33 RestoreMPPct
 	}, true
 }
 

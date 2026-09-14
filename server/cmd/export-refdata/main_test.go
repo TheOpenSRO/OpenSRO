@@ -49,8 +49,11 @@ func TestItemRecordRoundTripsThroughTheImporter(t *testing.T) {
 	if !ok {
 		t.Fatal("itemRecord rejected a valid row")
 	}
-	if len(rec) != 30 {
-		t.Fatalf("record has %d fields, want the importer's 30", len(rec))
+	// 30 was the count before the Param-block restore columns were appended
+	// (RestoreHP/Pct, RestoreMP/Pct). The importer takes them as an optional
+	// suffix, so both widths load.
+	if len(rec) != 34 {
+		t.Fatalf("record has %d fields, want the importer's 34", len(rec))
 	}
 
 	items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))

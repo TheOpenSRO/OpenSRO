@@ -455,6 +455,7 @@ func main() {
 		session.CharacterStatsHandler(chars, eq, refItems, skills, manaTracker),
 		session.ShopHandler(chars, shopSvc),
 		session.StorageHandler(chars, storageSvc),
+		session.UseItemHandler(chars, inv, refItems, manaTracker),
 		session.CombatHandler(chars, eq, refItems, hub, monsters, quests, inv, skills, zerkTracker, manaTracker),
 		session.LearnSkillHandler(chars, skills, refItems),
 		session.UseSkillHandler(chars, eq, refItems, skills, hub, monsters, quests, inv, refItems, zerkTracker, manaTracker),

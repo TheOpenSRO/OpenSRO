@@ -107,6 +107,22 @@ func (t *Tracker) Spend(characterID int64, maxMP, cost int) (remaining int, ok b
 	return cur, true
 }
 
+// Restore adds amount back to the pool, never above maxMP, returning the new
+// value. What a mana potion does.
+func (t *Tracker) Restore(characterID int64, maxMP, amount int) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	cur := t.currentLocked(characterID, maxMP)
+	if amount > 0 {
+		cur += amount
+		if cur > maxMP {
+			cur = maxMP
+		}
+		t.current[characterID] = cur
+	}
+	return cur
+}
+
 // Refill sets the character back to full (on level-up or respawn, where the
 // game already restores health).
 func (t *Tracker) Refill(characterID int64, maxMP int) {
