@@ -57,6 +57,24 @@ Writes `funcs_NNN.c` shards (each function preceded by
 own command line, so `until ! pgrep -f "godot4"` never exits — that trap has cost
 this project time twice.
 
+### Working the dump: `infn.sh` and `getfn.sh`
+
+A raw `grep` over the shards tells you a pattern matched but not *whose* function
+it is, which is almost always the actual question. These two cover it:
+
+```
+./infn.sh '\[0x72c\]'      # which functions contain a pattern (file + entry + name)
+./getfn.sh 004e3200        # print one function's body, found via index.txt
+```
+
+Both default to `/var/tmp/decomp_server` and take the dump directory as a second
+argument. Typical loop: `infn.sh` to narrow from 30k functions to a handful, then
+`getfn.sh` on each — no Ghidra, sub-second.
+
+**The dump is code only.** Vtables, RTTI and `.rdata` constants are data and do
+not appear in it, so grepping a vtable address returns nothing. For those, use
+`FindOffsetRefs.java` (`imm` mode for bare constants) or read the PE by RVA.
+
 ## FindOffsetRefs.java `<offsets> [max] [mode]`
 
 Finds the code that touches a struct field at a given offset — for when you know
