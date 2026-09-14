@@ -41,13 +41,12 @@ var ErrInsufficientGold = errors.New("character: insufficient gold")
 const StartingGold = 1000
 
 // MaxHP is the base maximum health (at level 1) and HPPerLevel is how much
-// each level adds. Own design -- but see MaxMPForLevel: the real game's *base*
-// curve was recovered, and deliberately is not used for HP. The real base is
-// only a fraction of a real character's health (the rest comes from the
-// Strength they have spent points on, which this project does not model), so
-// adopting it here would leave a level-10 character on 120 HP against the real
-// 249-HP Yeoha -- accurate in isolation and unplayable in practice. This stays
-// own design until the Strength term is recovered too. Use MaxHPForLevel.
+// each level adds. Own design. The game's real per-level growth is known (see
+// MPGrowth: health and mana scale on the same 1.02^(level-1) curve) but its
+// BASE is not, so there is nothing to adopt for health that would not just be
+// this same guess wearing a recovered shape -- and 1.02 compounding off a
+// base of 100 would leave a level-10 character on 120 HP against the real
+// 249-HP Yeoha. Stays own design. Use MaxHPForLevel.
 const MaxHP = 100
 const HPPerLevel = 40
 
@@ -59,22 +58,32 @@ func MaxHPForLevel(level int) int {
 	return MaxHP + (level-1)*HPPerLevel
 }
 
-// MPBase and MPGrowth are the REAL per-level mana curve, recovered from the
-// pserver's own SR_GameServer.exe. Its player stat initialiser (FUN_004e3200)
-// computes one value by binary exponentiation -- base^(level-1) -- and pushes
-// it as both the 'hp' and the 'mp' parameter, so a character's base health and
-// base mana are the same curve. The two constants are read straight out of
-// .rdata: 0x00b45af0 = 100.0 and 0x00b45ea0 = 1.02.
+// MPGrowth is REAL and MPBase is NOT. Read this before trusting the number.
 //
-// This is the BASE only. A real character's Strength and Intellect add on top,
-// and that term has not been recovered -- which is why it is honest for mana
-// (this project has no stat allocation, so the base is the whole of it) and
-// would be wrong for health (see MaxHP).
-const MPBase = 100.0
-const MPGrowth = 1.02
+// The pserver's own SR_GameServer.exe computes `1.02^(level-1)` by binary
+// exponentiation in its player stat initialiser (FUN_004e3200) and pushes it
+// for both the 'hp' and 'mp' parameters, so health and mana scale with level
+// on the same curve. **0x00b45ea0 = 1.02 is recovered.**
+//
+// What it is pushed as matters, and an earlier pass here got it wrong. The
+// push is `FUN_004b3510(3, ...)`, and that first argument is a SLOT INDEX into
+// the ParamKeeper's four-slot value (base, additive-percent, multiplier,
+// percent-scale -- combined by FUN_004b3210 as
+// `base * (1 + pct/100) * mult * (scale/100)`). Slot 3 is the percent scale,
+// whose default is 100.0 = 100%. So the level curve is a MULTIPLIER, and the
+// `* 100.0` beside it is just percent encoding that the evaluator divides
+// straight back out -- it is not an absolute quantity.
+//
+// The real base is whatever is pushed into slot 0 for those parameters, and it
+// has NOT been identified. **MPBase = 100 is therefore this project's own
+// disclosed choice**, picked so a level-1 character starts on 100 mana; only
+// the per-level compounding is the game's. Do not describe this as "the game's
+// mana curve" -- the shape is, the magnitude is ours.
+const MPBase = 100.0  // own design, disclosed
+const MPGrowth = 1.02 // recovered (.rdata 0x00b45ea0)
 
 // MaxMPForLevel is a character's maximum mana at the given level:
-// 100 * 1.02^(level-1), the game's own curve.
+// MPBase * 1.02^(level-1) -- the game's per-level growth on our own base.
 func MaxMPForLevel(level int) int {
 	if level < 1 {
 		level = 1
