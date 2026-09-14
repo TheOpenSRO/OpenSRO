@@ -131,8 +131,8 @@ func TestEquipmentFullFlow(t *testing.T) {
 // through the handler: a woman's suit on a man, a suit in the helm slot,
 // and an item above the character's level are all refused with a reason,
 // while the Cotton Suit a level-1 man may wear goes on -- and an item the
-// reference data does not know still equips, because "unknown" is not
-// "forbidden".
+// reference data does not know is refused too, because a typed slot needs
+// an item positively shown to belong in it.
 func TestEquipRefusesWhatTheItemTableForbids(t *testing.T) {
 	ctx := context.Background()
 	accounts := account.NewMemStore()
@@ -151,14 +151,19 @@ func TestEquipRefusesWhatTheItemTableForbids(t *testing.T) {
 			Country: equipment.CountryChina, ReqGender: equipment.ReqGenderWoman, ReqLevelType1: equipment.ReqLevelTypeCharacter, ReqLevel1: 1},
 		{ID: 4796, MaxStack: 1, TypeID1: equipment.TypeItem, TypeID2: equipment.TypeEquipment, TypeID3: equipment.FamilyChinaGarment, TypeID4: equipment.PieceHelm,
 			Country: equipment.CountryChina, ReqGender: equipment.ReqGenderMan, ReqLevelType1: equipment.ReqLevelTypeCharacter, ReqLevel1: 79},
+		// The real HP potion (ITEM_ETC_HP_POTION_01, id 4): TypeID2 is the
+		// ETC/consumable family, not equipment. Reported from a live session
+		// worn in an armour slot -- a consumable must never be equippable.
+		{ID: 4, MaxStack: 5000, TypeID1: equipment.TypeItem, TypeID2: 3, TypeID3: 1, TypeID4: 1,
+			Country: equipment.CountryChina},
 	}); err != nil {
 		t.Fatalf("importing items: %v", err)
 	}
 	inv := inventory.NewMemStore(items)
 	eq := equipment.NewMemStore(inv)
 	// Slot 0 the man's suit, 1 the woman's, 2 the level-79 hood, 3 an id
-	// with no reference row at all.
-	for _, id := range []int64{4842, 3652, 4796, 900001} {
+	// with no reference row at all, 4 an HP potion.
+	for _, id := range []int64{4842, 3652, 4796, 900001, 4} {
 		if err := inv.AddItem(ctx, c.ID, id, 1); err != nil {
 			t.Fatalf("seeding item %d: %v", id, err)
 		}
@@ -206,10 +211,20 @@ func TestEquipRefusesWhatTheItemTableForbids(t *testing.T) {
 	if got := equip(equipment.SlotMail, 0); got != "" {
 		t.Errorf("the Cotton Suit on a level-1 man: refused with %q", got)
 	}
-	// Slot 0 is free again once the suit is worn, so the unknown item is
-	// now in slot 2 (the hood moved down? no -- removal frees the index,
-	// it does not compact), so ask by the id's own index: still 3.
-	if got := equip(equipment.SlotWeapon, 3); got != "" {
-		t.Errorf("an item with no reference row: refused with %q", got)
+	// An item the reference data does not know is REFUSED. Removal frees the
+	// index without compacting, so the unknown id is still at index 3.
+	// This used to equip ("unknown" was read as "not forbidden"), which is
+	// how an HP potion ended up worn in an armour slot on a server whose
+	// refdata lacked the ETC consumables -- a slot is typed, so an item has
+	// to be positively shown to belong in it.
+	if got := equip(equipment.SlotWeapon, 3); got != "that cannot be equipped" {
+		t.Errorf("an item with no reference row: got %q, want refusal", got)
+	}
+	// The reported bug: an HP potion is a consumable, not armour.
+	if got := equip(equipment.SlotMail, 4); got != "that cannot be equipped" {
+		t.Errorf("an HP potion in the mail slot: got %q, want refusal", got)
+	}
+	if got := equip(equipment.SlotWeapon, 4); got != "that cannot be equipped" {
+		t.Errorf("an HP potion in the weapon slot: got %q, want refusal", got)
 	}
 }

@@ -114,14 +114,21 @@ func SlotFor(it *refdata.Item) (Slot, bool) {
 	return 0, false
 }
 
-// Refusal reports why c may not put it in slot, or nil if it may. A nil
-// item -- no reference data for that id -- is allowed through: reference
-// data is brought by the operator, and an id the tables do not know still
-// equips, it just has no name, icon or model. Every other outcome is one of
-// the Err* values above, wrapped with the specifics.
+// Refusal reports why c may not put it in slot, or nil if it may. Every
+// outcome is one of the Err* values above, wrapped with the specifics.
+//
+// A nil item -- no reference data for that id -- is REFUSED. This used to be
+// allowed through, on the reasoning that reference data is the operator's and
+// an id the tables do not know should still equip (just with no name, icon or
+// model). That permissiveness was a real bug: an HP potion could be put in an
+// armour slot on any server whose refdata did not carry the ETC consumables,
+// because "unknown" was read as "fine". A slot is typed, so belonging in it is
+// something an item must be positively shown to do -- if we cannot tell, the
+// safe answer is no. Callers that genuinely have no reference data wired skip
+// the rules entirely rather than passing nil here (see session.equipRefusal).
 func Refusal(c *character.Character, it *refdata.Item, slot Slot) error {
 	if it == nil {
-		return nil
+		return fmt.Errorf("%w: no reference data for the item", ErrNotEquippable)
 	}
 	want, ok := SlotFor(it)
 	if !ok {

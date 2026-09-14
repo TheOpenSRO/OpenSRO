@@ -202,9 +202,14 @@ func equipRefusal(ctx context.Context, chars character.Store, inv inventory.Stor
 		return ""
 	}
 	item, err := items.GetItem(ctx, itemID)
-	if err != nil {
-		// No reference row is "nothing known", not a refusal.
-		return ""
+	if err != nil || item == nil {
+		// Reference data IS wired (checked at the top), so an item those
+		// tables do not know cannot be shown to belong in a typed slot --
+		// refuse it. This used to return "" ("nothing known" is not a
+		// refusal), which is how an HP potion came to be equipped: on a
+		// server whose refdata lacked the ETC consumables the lookup missed
+		// and the equip sailed through. See equipment.Refusal.
+		return refusalMessage(equipment.ErrNotEquippable)
 	}
 	c, err := chars.GetByID(ctx, characterID)
 	if err != nil {

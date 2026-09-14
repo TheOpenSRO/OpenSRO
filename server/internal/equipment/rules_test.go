@@ -47,8 +47,11 @@ func TestRefusal(t *testing.T) {
 	if err := Refusal(man, cottonSuit(), SlotMail); err != nil {
 		t.Fatalf("a man at level 1 may wear a Cotton Suit: %v", err)
 	}
-	if err := Refusal(man, nil, SlotMail); err != nil {
-		t.Fatalf("an item with no reference row is allowed through: %v", err)
+	// An item with no reference row is REFUSED, not allowed through. The old
+	// permissive reading ("unknown" == "fine") is how an HP potion got worn
+	// in an armour slot on a server whose refdata lacked the consumables.
+	if err := Refusal(man, nil, SlotMail); !errors.Is(err, ErrNotEquippable) {
+		t.Errorf("an item with no reference row: got %v, want ErrNotEquippable", err)
 	}
 
 	if err := Refusal(man, cottonSuit(), SlotHelm); !errors.Is(err, ErrWrongSlot) {
