@@ -39,6 +39,24 @@ each. The client keeps its source paths and control names as strings
 `"CIFSkillBoard"`), so this is the reliable way in. Pass `decomp` to also decompile
 the top referencing functions.
 
+## DecompAll.java `<outDir> [timeoutSec] [shardSize]`
+
+**Start here for a binary you are going to ask more than a few questions about.**
+Decompiles every function once and writes the C to disk, after which any further
+question is a `grep` over local text instead of a ~25-second Ghidra round trip.
+That matters because the questions come in chains — a parser leads to a field, a
+field leads to its readers, a reader leads to a vtable slot — and it makes the
+searches that are otherwise impractical possible at all: *every* call site of a
+virtual slot, *every* reader of a struct offset, *every* use of a constant.
+
+Writes `funcs_NNN.c` shards (each function preceded by
+`===FUNC=== <entry> <name> size=<bytes>`), an `index.txt` of
+`entry / name / size / shard`, and a `DONE` marker written last.
+
+**Poll for `DONE`, not for a process.** `pgrep -f <pattern>` over ssh matches its
+own command line, so `until ! pgrep -f "godot4"` never exits — that trap has cost
+this project time twice.
+
 ## FindOffsetRefs.java `<offsets> [max] [mode]`
 
 Finds the code that touches a struct field at a given offset — for when you know
