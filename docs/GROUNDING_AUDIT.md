@@ -139,6 +139,20 @@ box. **No invented value dressed as real was found in the new work either.** Wha
   way to settle it is to decompile the `characterdata` loader's column map (a real dig), or get a
   retail `_RefObjChar`. Recorded so the next pass has the evidence, not to act on now.
 
+  **Dig update (2026-09-14):** scoped the decompile path; it is a genuine epic, not a quick win.
+  The client's refdata load is `FUN_00844cd0` (master dispatcher: builds each `%stextdata\…`
+  filename and calls a *generic* tokenizer `FUN_00952890(this, …)` per file, characterdata among
+  them). So the per-column `_RefObjChar` map lives in a per-type manager's virtual parse method
+  reached through dispatch the decompiler won't cleanly resolve — and the client is the binary that
+  prior work found does **not** store monster HP (it comes from the server), so this path may
+  confirm "no HP field" rather than a column. The authoritative source is the emulator server
+  (`SR_GameServer.exe`, a decompilable PE32 that *does* use HP for combat; its `SR_GameRefData/`
+  ships the same positional `CharacterData_*.txt`, so its loader parses by index too) — but that is
+  a fresh large import + the same dispatch chase, and grounds column *identity* off a non-retail
+  emulator (values still carry the pserver caveat). The server crash `.dmp`s on the box are
+  minidumps (0–55 KB), not full-memory dumps, so there are no loaded `_RefObjChar` structs to mine.
+  Net: HP stays disclosed until someone commits the server-binary dig.
+
 ## What is genuinely still assumed (summary for the next pass)
 
 None of these is a value dressed as real; each is a behaviour rule on top of recovered data, or a
