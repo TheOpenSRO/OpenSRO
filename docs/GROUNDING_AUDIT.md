@@ -162,8 +162,19 @@ box. **No invented value dressed as real was found in the new work either.** Wha
   earlier note here saying col 79 was `0x24c` was **off by one** — exactly the risk that kept it
   unshipped. Supporting the exp reading: the stat-publication function `FUN_004c3730` reads the ref
   object's 0x230–0x24c (cols 71–78, the combat stats) and **skips 0x250**, so col 79 is not a combat
-  stat. Still not positive identification — no use-site on a `CRefObjChar` has been found that names
-  it — so monster exp stays the disclosed `ExpFor`.
+  stat.
+
+  **Resolved 2026-09-14 — col 79 is NOT ExpToGive, and the "supporting evidence" above is
+  withdrawn.** Intersecting the readers of `0x250` with the readers of the *proven* MaxHP field
+  `0x19c` (`FindOffsetRefs`) leaves exactly two functions: `RefObjChar::ExtractData`, which writes
+  it, and `FUN_00495d60` — and that one reads `0x24c`/`0x250` as **floats in pairs**, alongside
+  `0x20c`–`0x218` and `0x1b0`–`0x1b8`, so it is a float stat block on a different struct whose
+  offsets merely collide. **Nothing in the server reads `CRefObjChar+0x250` as an integer at all.**
+  A field the server never reads cannot be the exp it grants, so col 79 is dead data in the server
+  (a derived copy of `leveldata` col 5, which is what the 95.3 % match really shows). Monster exp
+  stays the disclosed `ExpFor`, and the real source is still unfound: the exp-gain entry point
+  `FUN_004e5250` has no direct callers, only a vtable slot at `0x00af5b6c`, so tracing it needs
+  virtual-dispatch analysis.
 
   **Dig update (2026-09-14):** scoped the decompile path; it is a genuine epic, not a quick win.
   The client's refdata load is `FUN_00844cd0` (master dispatcher: builds each `%stextdata\…`

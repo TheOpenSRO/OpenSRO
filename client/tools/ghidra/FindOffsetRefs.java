@@ -105,7 +105,10 @@ public class FindOffsetRefs extends GhidraScript {
             int shown = 0;
             for (Map.Entry<String, int[]> e : rows) {
                 println("  FN " + e.getKey() + " hits=" + e.getValue()[0] + " writes=" + e.getValue()[1]);
-                if (++shown >= 25) { println("  ... " + (rows.size() - shown) + " more functions"); break; }
+                // Cap the summary with the same [max] the caller asked for --
+                // a hardcoded 25 silently truncated the list, which made an
+                // intersection of two offsets' users look far smaller than it is.
+                if (++shown >= max) { println("  ... " + (rows.size() - shown) + " more functions"); break; }
             }
         }
     }
