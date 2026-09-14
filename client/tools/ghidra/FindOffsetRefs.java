@@ -39,6 +39,7 @@ public class FindOffsetRefs extends GhidraScript {
         String spec = args.length > 0 ? args[0] : "0x0";
         int max = args.length > 1 ? Integer.parseInt(args[1]) : 40;
         String mode = args.length > 2 ? args[2] : "all";
+        immMode = mode.equals("imm");
 
         // One pass over the listing for every offset asked about. Mapping a
         // struct means asking about 20-30 at once, and re-walking a few million
@@ -113,11 +114,17 @@ public class FindOffsetRefs extends GhidraScript {
     // than writing it -- counting those as stores made ExtractData look like it
     // wrote MaxHP twice, when the second one is the m_dwMaxHP > 0 assertion.
     private boolean isStore(Instruction ins, int hitOp) {
-        if (hitOp != 0) return false;
+        if (hitOp != 0 || immMode) return false;
         String m = ins.getMnemonicString().toUpperCase();
         return !(m.startsWith("CMP") || m.startsWith("TEST") || m.startsWith("PUSH")
                 || m.startsWith("FLD") || m.startsWith("FILD"));
     }
+
+    // In "imm" mode the register requirement is dropped, so a bare constant
+    // matches: CMP EAX, 0x6d70. That is how you find the code handling a param
+    // identified by a C multi-char literal ('mp' == 0x6d70) rather than by a
+    // struct offset -- a field lookup and a tag comparison need opposite rules.
+    private boolean immMode = false;
 
     // Returns the operand index whose [reg + disp] displacement equals target,
     // or -1. Both a Register and the Scalar must appear in the same operand:
@@ -139,7 +146,7 @@ public class FindOffsetRefs extends GhidraScript {
                     if (sc.getUnsignedValue() == target || sc.getValue() == target) scalar = true;
                 }
             }
-            if (reg && scalar) return i;
+            if (scalar && (reg || immMode)) return i;
         }
         return -1;
     }

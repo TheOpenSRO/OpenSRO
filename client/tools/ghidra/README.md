@@ -51,7 +51,12 @@ requiring the register is what keeps plain immediates out.
   them are matched in a **single** pass over the listing, so asking about a whole
   struct at once is cheap; asking one at a time is not.
 - `[mode]` — `all` (default) lists every site; `funcs` prints only the
-  per-function summary, ordered by hit count, which is usually what you want first.
+  per-function summary, ordered by hit count, which is usually what you want first;
+  `imm` drops the register requirement so a **bare constant** matches
+  (`CMP EAX, 0x6d70`). A field lookup and a tag comparison need opposite rules —
+  use `imm` to find the code handling an id rather than a struct member. The SRO
+  server tags its derived stats with C multi-char literals, so `'mp'` is `0x6d70`
+  and `'hp'` is `0x6870`.
 
 Each site is marked `W`/`R` for whether the field was written or read (`CMP`/
 `TEST`/`FLD` on the destination operand count as reads, not stores).
