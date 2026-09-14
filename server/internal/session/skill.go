@@ -54,9 +54,27 @@ const (
 const MasteryTotalCapPerLevel = 3
 
 // masteryUpCost is the skill-point cost to raise a mastery from currentLevel to
-// currentLevel+1. A DISCLOSED own-design default (currentLevel+1, so higher
-// levels cost more), NOT recovered -- the real per-level cost lives in the game
-// server, which this project does not have. Replace once it is known.
+// currentLevel+1: a DISCLOSED own-design default (currentLevel+1, so higher
+// levels cost more), NOT recovered.
+//
+// The old note here said the real cost "lives in the game server, which this
+// project does not have". That justification is stale -- the pserver's
+// SR_GameServer.exe is decompiled now -- so it was looked for, and these are
+// ruled out:
+//   - skillmasterydata.txt has no cost column at all. The file carries its own
+//     header row, which names every column: ID, name, name code, group,
+//     description id, tab name code, type, tooltip type, three weapon types
+//     and two icons.
+//   - the per-character table `_CHARSKILLMASTERY` is only CharID, MasteryID
+//     and Level.
+//   - a character's RemainSkillPoint is charData+0x80, and the only code
+//     touching that field directly is a field-update packet builder and the
+//     kill reward, so the raise handler spends it through an accessor rather
+//     than a direct write.
+//
+// It is therefore computed in the raise-mastery packet handler, which was not
+// located -- the same virtual-dispatch wall the mob-exp hunt hit. Replace this
+// if that handler is ever found.
 func masteryUpCost(currentLevel int) int {
 	return currentLevel + 1
 }
