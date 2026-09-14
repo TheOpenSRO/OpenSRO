@@ -29,6 +29,11 @@ class Stats:
 	var exp: int = 0
 	var exp_to_next: int = 0
 	var skill_points: int = 0
+	## Mana. max_mp is the game's own base curve (100 * 1.02^(level-1),
+	## recovered from the server binary); mp equals it until something
+	## spends mana. 0 from a server too old to send the pair.
+	var mp: int = 0
+	var max_mp: int = 0
 
 	## The EXP gauge fill, 0..100, or 0 when exp-to-next is unknown.
 	func exp_percent() -> float:
@@ -70,4 +75,8 @@ static func decode_result(data: PackedByteArray) -> Stats:
 		stats.exp = data.decode_s64(offset + 28)
 		stats.exp_to_next = data.decode_s64(offset + 36)
 		stats.skill_points = data.decode_s32(offset + 44)
+	# The mana pair is appended in turn; a 48-byte result omits it.
+	if offset + 56 <= data.size():
+		stats.mp = data.decode_s32(offset + 48)
+		stats.max_mp = data.decode_s32(offset + 52)
 	return stats

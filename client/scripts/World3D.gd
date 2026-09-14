@@ -1261,9 +1261,18 @@ func _try_initialize_pk2_ui() -> void:
 	# The level, EXP gauge, HP-bar maximum and SP all come from the stats
 	# packet -- kept live here (enter-world, each kill, and level-up).
 	NetClient.character_stats_result.connect(_on_world_stats)
-	# MP has no server side at all yet -- nothing tracks or reports it -- so
-	# the bar is drawn full and carries no readout. See set_mp_unknown.
+	# Until the first stats packet lands the bar is drawn full with no
+	# readout rather than a made-up number -- see set_mp_unknown. The stats
+	# packet now carries real mana (the game's own base curve), so
+	# _on_world_stats replaces this with a live value.
 	_hud_player_info.set_mp_unknown()
+	# This scene usually loads *after* enter_world_result has already fired,
+	# so the handler above never runs for it -- the scene reads the cached
+	# result instead (see last_enter_world_result). Nothing then asked for
+	# stats until the first kill, which left the level label, EXP gauge, SP
+	# and mana empty on arrival. Ask now, with the handler connected.
+	if NetClient.last_enter_world_result != null and NetClient.last_enter_world_result.ok:
+		_request_world_stats()
 
 	# Every floating game window, created on demand.
 	_hud_panels = HudPanels.new(_ui_builder)
@@ -7353,6 +7362,11 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 		_hud_player_info.set_character(NetClient.current_character_name, stats.level)
 		if stats.max_hp > 0:
 			_hud_player_info.set_hp(stats.hp, stats.max_hp)
+		# The mana bar drew blank while the server had no mana to report.
+		# It does now -- the game's own base curve -- so show the real
+		# number; a server too old to send it still gets the blank bar.
+		if stats.max_mp > 0:
+			_hud_player_info.set_mp(stats.mp, stats.max_mp)
 	if _hud_underbar != null:
 		_hud_underbar.set_exp(stats.exp_percent())
 		_hud_underbar.set_sp(stats.skill_points, maxi(stats.skill_points, 1))

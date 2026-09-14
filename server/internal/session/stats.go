@@ -54,11 +54,18 @@ type CharacterStatsResult struct {
 	Exp         int64
 	ExpToNext   int64
 	SkillPoints int32
+
+	// MP and MaxMP drive the mana bar. MaxMP is the game's own base curve
+	// (character.MaxMPForLevel), so this is a real number rather than the
+	// blank bar the HUD used to draw. Nothing spends mana yet, so MP is
+	// simply MaxMP.
+	MP    int32
+	MaxMP int32
 }
 
 func (r *CharacterStatsResult) Encode() []byte {
 	out := encodeStrings(r.Error)
-	buf := make([]byte, 48)
+	buf := make([]byte, 56)
 	binary.LittleEndian.PutUint64(buf[0:8], uint64(r.Gold))
 	binary.LittleEndian.PutUint32(buf[8:12], uint32(r.HP))
 	binary.LittleEndian.PutUint32(buf[12:16], uint32(r.MaxHP))
@@ -68,6 +75,8 @@ func (r *CharacterStatsResult) Encode() []byte {
 	binary.LittleEndian.PutUint64(buf[28:36], uint64(r.Exp))
 	binary.LittleEndian.PutUint64(buf[36:44], uint64(r.ExpToNext))
 	binary.LittleEndian.PutUint32(buf[44:48], uint32(r.SkillPoints))
+	binary.LittleEndian.PutUint32(buf[48:52], uint32(r.MP))
+	binary.LittleEndian.PutUint32(buf[52:56], uint32(r.MaxMP))
 	return append(out, buf...)
 }
 
@@ -94,6 +103,11 @@ func DecodeCharacterStatsResult(data []byte) (*CharacterStatsResult, error) {
 		r.Exp = int64(binary.LittleEndian.Uint64(rest[28:36]))
 		r.ExpToNext = int64(binary.LittleEndian.Uint64(rest[36:44]))
 		r.SkillPoints = int32(binary.LittleEndian.Uint32(rest[44:48]))
+	}
+	// The mana pair is appended in turn, so a 48-byte result still decodes.
+	if len(rest) >= 56 {
+		r.MP = int32(binary.LittleEndian.Uint32(rest[48:52]))
+		r.MaxMP = int32(binary.LittleEndian.Uint32(rest[52:56]))
 	}
 	return r, nil
 }
@@ -128,12 +142,17 @@ func CharacterStatsHandler(chars character.Store, eq equipment.Store, items comb
 			})
 		}
 
+		// Mana is full: nothing spends it yet. The number itself is the
+		// game's own curve, so the bar shows a real value.
+		maxMP := int32(character.MaxMPForLevel(owned.Level))
 		result := &CharacterStatsResult{
 			Gold:  owned.Gold,
 			HP:    int32(owned.HP),
 			MaxHP: int32(character.MaxHPForLevel(owned.Level)),
 			Level: int32(owned.Level),
 			Exp:   owned.Exp,
+			MP:    maxMP,
+			MaxMP: maxMP,
 		}
 		if levelTable.Loaded() {
 			if toNext, ok := levelTable.ExpToNext(owned.Level); ok {

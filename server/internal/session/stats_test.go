@@ -34,3 +34,29 @@ func TestCharacterStatsResultBackCompat(t *testing.T) {
 		t.Fatalf("appended fields should be zero on an old result: %+v", out)
 	}
 }
+
+// The mana pair is appended to the wire format, so it must survive a round
+// trip and an older 48-byte result must still decode with mana left at 0.
+func TestCharacterStatsResultCarriesMana(t *testing.T) {
+	r := &CharacterStatsResult{HP: 100, MaxHP: 100, Level: 1, MP: 119, MaxMP: 120}
+	encoded := r.Encode()
+	back, err := DecodeCharacterStatsResult(encoded)
+	if err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	if back.MP != 119 || back.MaxMP != 120 {
+		t.Errorf("mana did not survive: got MP=%d MaxMP=%d, want 119/120", back.MP, back.MaxMP)
+	}
+	// Truncate the mana pair off the end: the rest must still decode.
+	short := encoded[:len(encoded)-8]
+	back, err = DecodeCharacterStatsResult(short)
+	if err != nil {
+		t.Fatalf("decoding a mana-less result: %v", err)
+	}
+	if back.MaxHP != 100 || back.Level != 1 {
+		t.Errorf("older result lost its head: %+v", back)
+	}
+	if back.MP != 0 || back.MaxMP != 0 {
+		t.Errorf("older result should leave mana at 0, got %d/%d", back.MP, back.MaxMP)
+	}
+}

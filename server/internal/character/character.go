@@ -9,6 +9,7 @@ package character
 import (
 	"context"
 	"errors"
+	"math"
 )
 
 // MaxPerAccount caps how many characters one account may have. Our own
@@ -40,9 +41,13 @@ var ErrInsufficientGold = errors.New("character: insufficient gold")
 const StartingGold = 1000
 
 // MaxHP is the base maximum health (at level 1) and HPPerLevel is how much
-// each level adds. Own design -- no real max-HP table was recovered (it is
-// server-side, like monster HP) -- but scaled by level so leveling actually
-// grows survivability. Use MaxHPForLevel rather than the raw base.
+// each level adds. Own design -- but see MaxMPForLevel: the real game's *base*
+// curve was recovered, and deliberately is not used for HP. The real base is
+// only a fraction of a real character's health (the rest comes from the
+// Strength they have spent points on, which this project does not model), so
+// adopting it here would leave a level-10 character on 120 HP against the real
+// 249-HP Yeoha -- accurate in isolation and unplayable in practice. This stays
+// own design until the Strength term is recovered too. Use MaxHPForLevel.
 const MaxHP = 100
 const HPPerLevel = 40
 
@@ -52,6 +57,29 @@ func MaxHPForLevel(level int) int {
 		level = 1
 	}
 	return MaxHP + (level-1)*HPPerLevel
+}
+
+// MPBase and MPGrowth are the REAL per-level mana curve, recovered from the
+// pserver's own SR_GameServer.exe. Its player stat initialiser (FUN_004e3200)
+// computes one value by binary exponentiation -- base^(level-1) -- and pushes
+// it as both the 'hp' and the 'mp' parameter, so a character's base health and
+// base mana are the same curve. The two constants are read straight out of
+// .rdata: 0x00b45af0 = 100.0 and 0x00b45ea0 = 1.02.
+//
+// This is the BASE only. A real character's Strength and Intellect add on top,
+// and that term has not been recovered -- which is why it is honest for mana
+// (this project has no stat allocation, so the base is the whole of it) and
+// would be wrong for health (see MaxHP).
+const MPBase = 100.0
+const MPGrowth = 1.02
+
+// MaxMPForLevel is a character's maximum mana at the given level:
+// 100 * 1.02^(level-1), the game's own curve.
+func MaxMPForLevel(level int) int {
+	if level < 1 {
+		level = 1
+	}
+	return int(math.Round(MPBase * math.Pow(MPGrowth, float64(level-1))))
 }
 
 // StartingLevel is the level a newly-created character is. There is no
