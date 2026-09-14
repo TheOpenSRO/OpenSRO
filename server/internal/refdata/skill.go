@@ -56,6 +56,15 @@ type Skill struct {
 	ConsumeHP int
 	ConsumeMP int
 
+	// AttackPercent is the share of the wielder's weapon damage this skill
+	// deals, and DamageMin/DamageMax a flat range added on top. REAL, from
+	// the skill's own 'att' parameter (see cmd/export-refdata's attackParam):
+	// a Sword Smash is 143% plus 15-18 at level 1, a plain swing 60% plus
+	// nothing. Zero for the many skills that are buffs, heals or passives.
+	AttackPercent int
+	DamageMin     int
+	DamageMax     int
+
 	// Real cost/prerequisite to learn the skill (ReqLearn_SP/ReqLearn_Race).
 	ReqLearnSP   int
 	ReqLearnRace int

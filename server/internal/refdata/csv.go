@@ -165,7 +165,16 @@ var skillCSVColumns = []string{
 	"ReuseDelay", "CoolTime", "FlyingSpeed", "Interruptable", "Overlap", "AutoAttackType",
 	"Range", "Consume_HP", "Consume_MP", "ReqLearn_SP", "ReqLearn_Race", "UI_SkillName",
 	"ReqCommon_Mastery1", "ReqCommon_MasteryLevel1",
+	// Appended later (real skill damage, from the 'att' parameter): a strict
+	// suffix, so an export made before it still loads.
+	"AttackPercent", "DamageMin", "DamageMax",
 }
+
+// skillCSVRequiredColumns is the prefix every skill export must carry; the
+// three damage columns past it are optional, so an older export still loads.
+// Rows shorter than this are rejected with a descriptive error rather than
+// reaching the field parser, which would index past the end.
+const skillCSVRequiredColumns = 24
 
 // LoadSkillsCSV parses skill rows from r, a headerless CSV in
 // skillCSVColumns's order (i.e. exactly what a plain `SELECT <those
@@ -174,7 +183,9 @@ var skillCSVColumns = []string{
 // silently skipping bad data.
 func LoadSkillsCSV(r io.Reader) ([]Skill, error) {
 	cr := csv.NewReader(r)
-	cr.FieldsPerRecord = len(skillCSVColumns)
+	// Variable width: the damage columns were appended, so an export made
+	// before them is a strict prefix and still loads.
+	cr.FieldsPerRecord = -1
 
 	var skills []Skill
 	rowNum := 0
@@ -188,6 +199,10 @@ func LoadSkillsCSV(r io.Reader) ([]Skill, error) {
 		}
 		rowNum++
 
+		if len(record) < skillCSVRequiredColumns {
+			return nil, fmt.Errorf("refdata: skill row %d has %d columns, need at least %d",
+				rowNum, len(record), skillCSVRequiredColumns)
+		}
 		sk, err := parseSkillRow(record)
 		if err != nil {
 			return nil, fmt.Errorf("refdata: row %d: %w", rowNum, err)
@@ -251,6 +266,16 @@ func parseSkillRow(f []string) (Skill, error) {
 	sk.UISkillName = f[21]
 	sk.Mastery1 = parseInt64(f[22])
 	sk.MasteryLevel1 = parseInt(f[23])
+	// The real damage from the skill's 'att' parameter, appended later.
+	if len(f) > 24 {
+		sk.AttackPercent = parseInt(f[24])
+	}
+	if len(f) > 25 {
+		sk.DamageMin = parseInt(f[25])
+	}
+	if len(f) > 26 {
+		sk.DamageMax = parseInt(f[26])
+	}
 
 	if err != nil {
 		return Skill{}, err

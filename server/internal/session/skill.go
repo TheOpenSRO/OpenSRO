@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sort"
 	"time"
 
@@ -215,18 +216,49 @@ func LearnSkillHandler(chars character.Store, skills skill.Store, skillRef Skill
 }
 
 // DisclosedSkillDamagePerLevel is this project's OWN-DESIGN skill-damage rate,
-// NOT a recovered value. Real SRO skill damage is server-authoritative -- the
-// retail client only receives the result in the action packet (proven by
-// decompiling NetProcessInNavAndSkill.cpp), so the formula lives only in the
-// packed retail AgentServer and cannot be read from any artifact we have; and
-// _RefSkill's Param damage block is not decoded. So a cast's bonus damage is a
-// clearly-labeled stand-in, the same accepted pattern as SPFor/ExpFor. Replace
-// it wholesale if a real formula is ever recovered.
+// used ONLY as a fallback now. Real skill damage is recovered -- see
+// skillDamageBonus -- but a skill whose row carries no 'att' parameter (and an
+// import predating the damage columns) still needs some number, and this stays
+// the clearly-labeled stand-in for that case.
 const DisclosedSkillDamagePerLevel = 4
 
-// disclosedSkillDamageBonus is the own-design bonus a real skill adds on top of
-// the plain weapon attack, scaled by the skill's level so higher skills hit
-// harder. Disclosed, not recovered -- see DisclosedSkillDamagePerLevel.
+// skillDamageBonus is the extra damage a skill adds on top of a plain weapon
+// swing. **This is real now**, recovered rather than invented.
+//
+// A skill's damage lives in its own 'att' parameter in skilldata. Parameters
+// are (code, values...) runs in the row's Param block, where the code is a C
+// multi-character literal stored as a big-endian integer; the server's own
+// parameter parser reads 'att' (0x00617474) as a fixed six-word run, which is
+// how the layout is known. The values are (type, percent, min, max, percent),
+// and reading a skill across its levels makes the meaning plain: for
+// SKILL_CH_SWORD_SMASH_A levels 1-5 the percent holds at 143 while min/max
+// climb 15-18, 18-22, 21-26, 25-30, 29-35. A plain swing
+// (SKILL_CH_SWORD_BASE_01) is 60 percent with no flat damage -- exactly what a
+// basic attack should be.
+//
+// So a cast deals `percent` of the weapon's damage plus a flat roll in
+// [min, max]. Since the caller already applies the plain weapon damage, what is
+// returned here is the DIFFERENCE the skill makes: the percentage's surplus (or
+// deficit, for a sub-100% skill like a basic swing) plus the flat roll.
+//
+// Falls back to the disclosed per-level bonus when the skill has no 'att'
+// (most skills are buffs, heals or passives) or when the reference data
+// predates the damage columns.
+func skillDamageBonus(ref *refdata.Skill, weaponDamage int) int {
+	if ref.AttackPercent <= 0 {
+		return disclosedSkillDamageBonus(ref)
+	}
+	bonus := weaponDamage*ref.AttackPercent/100 - weaponDamage
+	flat := ref.DamageMin
+	if ref.DamageMax > ref.DamageMin {
+		flat += rand.Intn(ref.DamageMax - ref.DamageMin + 1)
+	}
+	return bonus + flat
+}
+
+// disclosedSkillDamageBonus is the own-design fallback: a bonus scaled by the
+// skill's level so higher skills hit harder. Disclosed, not recovered -- see
+// DisclosedSkillDamagePerLevel.
 func disclosedSkillDamageBonus(ref *refdata.Skill) int {
 	lvl := ref.BasicLevel
 	if lvl < 1 {
@@ -289,8 +321,16 @@ func UseSkillHandler(
 			damageBonus = int(sk.DamageBonus)
 		} else if ref, err := skillRef.GetSkill(ctx, req.SkillID); err == nil && ref != nil {
 			cooldown = time.Duration(ref.ReuseDelayMs) * time.Millisecond
-			damageBonus = disclosedSkillDamageBonus(ref)
 			mpCost = ref.ConsumeMP
+			// A skill's damage is a percentage of the wielder's weapon damage
+			// plus a flat roll, so the weapon has to be read first.
+			weapon := 0
+			if eq != nil && items != nil {
+				if w, err := attackerDamage(ctx, characterID, eq, items); err == nil {
+					weapon = w
+				}
+			}
+			damageBonus = skillDamageBonus(ref, weapon)
 		} else {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "no such skill"}).Encode()})
 		}

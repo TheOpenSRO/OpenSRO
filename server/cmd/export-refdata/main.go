@@ -250,12 +250,16 @@ func skillRecord(cols []string) ([]string, bool) {
 		return nil, false
 	}
 	get := func(i int) string {
+		if i >= len(cols) {
+			return "0"
+		}
 		s := strings.TrimSpace(cols[i])
 		if s == "" {
 			return "0"
 		}
 		return s
 	}
+	pct, dmgMin, dmgMax := attackParam(cols)
 	return []string{
 		get(skID),             // 0  ID
 		get(skGroupID),        // 1  GroupID
@@ -281,7 +285,50 @@ func skillRecord(cols []string) ([]string, bool) {
 		get(skName),           // 21 UI_SkillName    (SN_SKILL_ name code, raw col 62)
 		get(skMastery1),       // 22 ReqCommon_Mastery1      (verified raw col 34)
 		get(skMasteryLevel1),  // 23 ReqCommon_MasteryLevel1 (verified raw col 36)
+		pct,                   // 24 AttackPercent -- real, from the 'att' param
+		dmgMin,                // 25 DamageMin
+		dmgMax,                // 26 DamageMax
 	}, true
+}
+
+// attackCode is the skill parameter tagged 'att', the one that carries a
+// skill's damage. Skill parameters live in the row's Param block as
+// (code, values...) runs, where a code is a C multi-character literal stored
+// as a big-endian integer -- 'att' is 0x00617474 = 6386804. The server's own
+// parameter parser reads 'att' as a fixed run of six words (the code plus five
+// values), which is how the layout below is known rather than guessed.
+const attackCode = "6386804"
+
+// attackParam pulls a skill's damage out of its Param block: the percentage of
+// weapon damage it deals, and the flat damage range added on top.
+//
+// The five values after the code are (type, percent, min, max, percent again).
+// Read across a skill's levels the meaning is plain: for SKILL_CH_SWORD_SMASH_A
+// levels 1-5 the percent stays 143 while min/max climb 15-18, 18-22, 21-26,
+// 25-30, 29-35. A plain swing (SKILL_CH_SWORD_BASE_01) is 60 percent and no
+// flat damage at all, which is exactly what a basic attack should be.
+//
+// Returns "0","0","0" for a skill with no 'att' -- most skills are buffs,
+// heals or passives and have no attack parameter.
+func attackParam(cols []string) (percent, dmgMin, dmgMax string) {
+	for i, v := range cols {
+		if strings.TrimSpace(v) != attackCode {
+			continue
+		}
+		at := func(off int) string {
+			if i+off >= len(cols) {
+				return "0"
+			}
+			s := strings.TrimSpace(cols[i+off])
+			if s == "" {
+				return "0"
+			}
+			return s
+		}
+		// i+1 is the type; the damage is in the three that follow.
+		return at(2), at(3), at(4)
+	}
+	return "0", "0", "0"
 }
 
 // readTable reads a tab-separated itemdata file, decoding UTF-16LE (with or
