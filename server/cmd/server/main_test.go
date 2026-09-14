@@ -2,17 +2,14 @@ package main
 
 import "testing"
 
-// The monster stat curve is own design, but it must at least be internally
-// consistent: monotonic in level (so the ladder actually ramps and doesn't
-// repeat the old "level-5 weaker than level-1" bug), positive net damage
-// against a starting weapon, and a rarity multiplier that only ever toughens.
+// What is left of the monster stat curve is own design, and must at least be
+// internally consistent: rising with level, positive net damage against a
+// starting weapon, and a rarity multiplier that only ever pays more. HP is no
+// longer part of it -- that is real characterdata (col 59), checked below.
 func TestMonsterStatsForLevel(t *testing.T) {
-	var prevHP, prevGold = -1, int64(-1)
+	var prevGold = int64(-1)
 	for lvl := 1; lvl <= 30; lvl++ {
-		hp, def, atk, gold := monsterStatsForLevel(lvl, 0)
-		if hp <= prevHP {
-			t.Fatalf("level %d HP %d not greater than previous %d", lvl, hp, prevHP)
-		}
+		def, atk, gold := monsterStatsForLevel(lvl, 0)
 		if gold <= prevGold {
 			t.Fatalf("level %d gold %d not greater than previous %d", lvl, gold, prevGold)
 		}
@@ -24,24 +21,45 @@ func TestMonsterStatsForLevel(t *testing.T) {
 		if lvl <= 5 && 16-def <= 0 {
 			t.Fatalf("level %d defence %d leaves a starter weapon dealing nothing", lvl, def)
 		}
-		prevHP, prevGold = hp, gold
+		prevGold = gold
 	}
 
 	// Level clamps at 1 for a junk level.
-	if hp0, _, _, _ := monsterStatsForLevel(0, 0); hp0 != mustHP(t, 1) {
+	d0, a0, g0 := monsterStatsForLevel(0, 0)
+	d1, a1, g1 := monsterStatsForLevel(1, 0)
+	if d0 != d1 || a0 != a1 || g0 != g1 {
 		t.Fatalf("level 0 should clamp to level 1 stats")
 	}
 
-	// A rarer rank only toughens and pays more, never less.
-	baseHP, _, _, baseGold := monsterStatsForLevel(10, 0)
-	rareHP, _, _, rareGold := monsterStatsForLevel(10, 1)
-	if rareHP <= baseHP || rareGold <= baseGold {
-		t.Fatalf("rarity 1 (%d hp/%d gold) should exceed rarity 0 (%d/%d)", rareHP, rareGold, baseHP, baseGold)
+	// A rarer rank pays more. It deliberately no longer touches HP: the real
+	// per-species MaxHP already says what the species is.
+	_, _, baseGold := monsterStatsForLevel(10, 0)
+	_, _, rareGold := monsterStatsForLevel(10, 1)
+	if rareGold <= baseGold {
+		t.Fatalf("rarity 1 gold %d should exceed rarity 0 %d", rareGold, baseGold)
 	}
 }
 
-func mustHP(t *testing.T, level int) int {
-	t.Helper()
-	hp, _, _, _ := monsterStatsForLevel(level, 0)
-	return hp
+// Every spawned species must carry its real characterdata values. A spec that
+// forgot MaxHP would put a monster in the world that dies to the first hit,
+// and one that forgot Level would break the exp/stat curve keyed off it.
+//
+// The HP numbers themselves are the game's own (col 59) and are deliberately
+// NOT asserted to rise with level: a "_CLON" is a weaker slave version, so
+// the level-4 Old Weasel really does sit under the level-3 Big-eyed Ghost.
+func TestMonsterSpecsCarryRealData(t *testing.T) {
+	if len(monsterSpecs) == 0 {
+		t.Fatal("no monsters configured")
+	}
+	for _, spec := range monsterSpecs {
+		if spec.MaxHP < 1 {
+			t.Errorf("%s (%s): no real MaxHP set", spec.Name, spec.CodeName)
+		}
+		if spec.Level < 1 {
+			t.Errorf("%s (%s): no Level set", spec.Name, spec.CodeName)
+		}
+		if spec.CodeName == "" {
+			t.Errorf("%s: no CodeName -- the client cannot resolve a model", spec.Name)
+		}
+	}
 }

@@ -51,8 +51,9 @@ built on recovered data, mostly disclosed, plus **one client comment that overst
 | Monster identity — CodeName, Level, Rarity, Name (`MOB_CH_*`) | **RECOVERED** | Real `characterdata` (`_RefObjChar`): CodeName is the row key the model resolves by; Level is col 57, Rarity col 15, and the English Name is `textdata_object`'s resolution of the row's `SN_` key. Re-verified 2026-09-13 for the whole 11-species Jangan ladder (levels 1–10 + Earth Ghost 27) — every CodeName, level, rarity 0 and name matched real data. |
 | Combat damage model (`base + bonus − defense`, floor 1) | **OWN-DESIGN (disclosed)** | `combat.go`: "Entirely own design." No crit/dodge/evade (disclosed open item). |
 | Unarmed damage = 5 | **OWN-DESIGN (disclosed)** | Labelled "Own [design]." |
-| MaxHP = 100 + 40·(level−1) | **OWN-DESIGN (disclosed)** | `character.go`: "Own design -- no real max-HP table was recovered (it is server-side, like monster HP) -- but scaled by level so leveling actually grows survivability." `MaxHPForLevel`. No Str→HP derivation yet (needs the client formula). Was flat 100 before the combat-loop pass (v0.1.143). |
-| Monster HP / def / atk / gold | **OWN-DESIGN (disclosed)** | `cmd/server` `monsterStatsForLevel`: one disclosed curve scaling every stat off the *grounded* level (HP 50+22·lvl, etc.) — "No real monster HP/attack table exists in the client data … not derived from any original balance data." Column-59-vs-79 HP candidate exists in characterdata but is unsettled (see the regrounding note below); kept disclosed. |
+| Player MaxHP = 100 + 40·(level−1); no MP pool | **OWN-DESIGN (disclosed)** | `character.go`: "Own design -- no real max-HP table was recovered (it is server-side, like monster HP)." `MaxHPForLevel`. **Narrowed 2026-09-14:** the player formula is now known to be *computed*, not table-driven, and three candidate sources are definitively ruled out — characterdata's own player rows (`CHAR_CH_*`) carry MaxHP=0/MaxMP=0; neither `LevelData.txt` nor `RefLevel.txt` has an HP/MP column; and the server's `_Char` table persists `CurLevel`, `Strength`, `Intellect`, `RemainStatPoint` but **no** MaxHP/MaxMP. So max HP/MP are derived from level + Str + Int in `CGObjPC` code. That function was not located this pass (the 5 assert-bearing `GObjPC.cpp` functions are not it), so nothing is shipped for MP — the pool stays absent rather than guessed. |
+| Monster **MaxHP** | **RECOVERED (2026-09-14)** | Real `characterdata` col 59. Recovered from the pserver's own `SR_GameServer.exe`: `RefObjChar::ExtractData` deserialises a row into `CRefObjChar`, whose layout runs `uint8 Lvl; uint8 CharGender; uint32 MaxHP; uint32 MaxMP;` at 0x198/0x199/0x19c/0x1a0, and 0x19c is the field the binary asserts `m_dwMaxHP > 0` on. Confirmed four ways against the data (col 57 = the already-verified Level, col 58 = CharGender 1/2, col 59 = MaxHP, col 60 = MaxMP = 0 for every monster). `monsterSpec.MaxHP`. |
+| Monster def / atk / gold | **OWN-DESIGN (disclosed)** | `cmd/server` `monsterStatsForLevel`: a disclosed curve off the grounded level. No real table for these three has been identified. Rarity multiplies gold only — it no longer touches HP, which is now real. |
 | Monster spawn positions (XYZ) | **OWN-DESIGN (disclosed)** | Clustered at two farmland anchors (region 96/168) measured flat/walkable/object-clear; the coordinates themselves are ours, disclosed in the `monsterSpecs` comment. |
 | EXP reward per kill (`ExpFor` = maxHP) | **OWN-DESIGN (disclosed)** | Placeholder; real per-species `ExpToGive` not loaded yet. |
 | Loot table values | **OWN-DESIGN (disclosed)** | Placeholder item IDs 500–502; keyed by name (real tables key by `RefMonsterID`, mapping not yet confirmed). |
@@ -131,13 +132,15 @@ box. **No invented value dressed as real was found in the new work either.** Wha
   server-side balance, never recovered). No new FLAG.
 - **Stale rows corrected (this doc):** the pre-combat-loop rows called MaxHP "flat 100" and said
   monsters had "no real map/monster data" — both now false and rewritten above.
-- **Strengthened-but-still-disclosed candidate — monster MaxHP (characterdata col 79).** For the
-  ladder, col 79 is a strikingly clean ≈23.5-per-level line (L1–10: 24, 47, 71, 94, 118, 141, 165,
-  188, 212, 235) — a far better MaxHP candidate than col 59 (non-monotonic: 54, 55, 85, 83, …).
-  Still **not** grounded and behaviour unchanged, for the two standing reasons: the column→field
-  mapping is not decompile-confirmed, and the pserver client's stat *values* may be modded. The
-  way to settle it is to decompile the `characterdata` loader's column map (a real dig), or get a
-  retail `_RefObjChar`. Recorded so the next pass has the evidence, not to act on now.
+- **Candidate raised, then DISPROVEN — monster MaxHP is col 59, not col 79.** This pass first
+  flagged col 79 as the better MaxHP candidate: across the ladder it is a strikingly clean
+  ≈23.5-per-level line (L1–10: 24, 47, 71, 94, 118, 141, 165, 188, 212, 235), where col 59 looked
+  "inconsistent" (54, 55, 85, 83, …). It was **not** grounded or shipped on that basis, which was
+  the right call — **it was wrong**. Col 79 is simply 23.5×level, the same value `leveldata`
+  col 5 carries. The real MaxHP is **col 59**, recovered from the binary (see the row above), and
+  its non-monotonicity is authored design, not noise: a `_CLON` is a weaker slave version, so the
+  level-4 Old Weasel (83) genuinely sits under the level-3 Big-eyed Ghost (85). The lesson is the
+  project's own: a clean-looking curve is not evidence of what a column *means*.
 
   **Dig update (2026-09-14):** scoped the decompile path; it is a genuine epic, not a quick win.
   The client's refdata load is `FUN_00844cd0` (master dispatcher: builds each `%stextdata\…`
@@ -151,7 +154,15 @@ box. **No invented value dressed as real was found in the new work either.** Wha
   a fresh large import + the same dispatch chase, and grounds column *identity* off a non-retail
   emulator (values still carry the pserver caveat). The server crash `.dmp`s on the box are
   minidumps (0–55 KB), not full-memory dumps, so there are no loaded `_RefObjChar` structs to mine.
-  Net: HP stays disclosed until someone commits the server-binary dig.
+
+  **Dig done (2026-09-14, same day):** the server-binary route was taken and it worked.
+  `SR_GameServer.exe` imports into Ghidra at `/home/ghidra/re_server` (`SR_GameServer_re`) and,
+  unlike the stripped client, carries RTTI class names, embedded `D:\WORK2005\…` source paths and
+  assertion strings — which is what made it tractable. `RefObjChar::ExtractData` was found by
+  xref'ing its own error string, and the `m_dwMaxHP > 0` assertion inside it named the field's
+  offset. **Monster MaxHP is grounded (col 59); MaxMP is col 60.** Worth noting the y0gi
+  `SR_GameRefData/CharacterData_*.txt` and the pserver client's characterdata agree value-for-value
+  on these rows, so the emulator is not modded here and the column indices transfer directly.
 
 ## What is genuinely still assumed (summary for the next pass)
 

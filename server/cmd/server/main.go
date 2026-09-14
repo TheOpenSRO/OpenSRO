@@ -45,32 +45,32 @@ type monsterSpec struct {
 	CodeName string  // the species' characterdata key; what the client draws it by
 	Level    int     // real level, from the client's characterdata (_RefObjChar col 57)
 	Rarity   int     // real rank, from characterdata (_RefObjChar col 15); 0 = normal
+	MaxHP    int     // real max HP, from characterdata (_RefObjChar col 59) -- see below
 	X, Z     float64 // own-design spawn anchor (see the roster comment)
 	Count    int     // how many to keep alive around the anchor (default 1)
 }
 
-// monsterStatsForLevel is this project's OWN-DESIGN combat curve: a monster's
-// HP, defence, counter-attack and gold from its grounded level (and rarity).
-// No real monster HP/attack table exists in the client data -- those numbers
-// are server-side and were never recovered -- so rather than hand-guess each
-// species (which produced inconsistencies like a level-5 Weasel with less HP
-// than a level-1 Mangyang), one disclosed curve scales everything by the level
-// that IS grounded. Tunable; not derived from any original balance data.
-// Exp/SP per kill come from combat.ExpFor/SPFor off MaxHP, so they scale too.
-func monsterStatsForLevel(level, rarity int) (maxHP, defense, attack int, gold int64) {
+// monsterStatsForLevel is what is still this project's OWN DESIGN in a
+// monster's combat profile: defence, counter-attack and gold, derived from
+// the grounded level. MaxHP is NOT here any more -- it is real, recovered
+// data now (characterdata col 59); see monsterSpec.MaxHP.
+//
+// No real monster defence/attack/gold table has been identified, so these
+// three stay a disclosed curve rather than per-species guesses. Exp/SP per
+// kill come from combat.ExpFor/SPFor off MaxHP, so they now scale off the
+// real HP.
+func monsterStatsForLevel(level, rarity int) (defense, attack int, gold int64) {
 	if level < 1 {
 		level = 1
 	}
-	maxHP = 50 + level*22
 	defense = 1 + level/3
 	attack = 4 + level*2
 	gold = int64(10 + level*5)
-	// A rarer rank (champion/giant/...) is tougher and pays more. rarity 0 is
-	// an ordinary monster; the multiplier is disclosed own design.
+	// A rarer rank (champion/giant/...) pays more. rarity 0 is an ordinary
+	// monster; the multiplier is disclosed own design. It no longer touches
+	// HP -- the real per-species MaxHP already reflects what the species is.
 	if rarity > 0 {
-		mult := 1 + rarity
-		maxHP *= mult
-		gold *= int64(mult)
+		gold *= int64(1 + rarity)
 	}
 	return
 }
@@ -88,31 +88,53 @@ func monsterStatsForLevel(level, rarity int) (maxHP, defense, attack int, gold i
 // rather than a blind PLAYER_SCALE_RATIO multiply, which would have pushed
 // these off the real terrain these zones actually have at those coordinates.
 var monsterSpecs = []monsterSpec{
-	// The real Jangan leveling ladder. Every species' identity is GROUNDED in
-	// the client's own characterdata (_RefObjChar): the CodeName is the row's
-	// key (what the client resolves the model by, the same in every archive),
-	// the Name is textdata_object's resolution of the row's SN_ name key, and
-	// the Level and Rarity are columns 57 and 15. Their combat stats are the
-	// disclosed monsterStatsForLevel curve (no real table exists). Positions
-	// are OWN DESIGN, clustered at the two farmland anchors measured flat,
-	// walkable and object-clear (region 96/168; (0,-840) and (340,-340) -- see
-	// docs/WORLD_ISSUES.md); the ladder shares those two hunting grounds so
-	// every monster stands on verified terrain rather than a blind guess.
+	// The real Jangan leveling ladder. Every species' identity AND its max HP
+	// are GROUNDED in the client's own characterdata (_RefObjChar): the
+	// CodeName is the row's key (what the client resolves the model by, the
+	// same in every archive), the Name is textdata_object's resolution of the
+	// row's SN_ name key, and Level, Rarity and MaxHP are columns 57, 15 and
+	// 59.
+	//
+	// **Col 59 = MaxHP was recovered from the binary**, not guessed. The
+	// pserver's own SR_GameServer.exe carries RefObjChar::ExtractData, which
+	// deserialises a row field-by-field into CRefObjChar; the struct there
+	// runs `uint8 Lvl; uint8 CharGender; uint32 MaxHP; uint32 MaxMP;` at
+	// offsets 0x198, 0x199, 0x19c, 0x1a0 (the two bytes then padding then two
+	// dwords), and 0x19c is the field the binary asserts `m_dwMaxHP > 0` on.
+	// Aligning that against the data confirms it four ways: col 57 is the
+	// independently-verified Level (a byte, 1..110), col 58 is CharGender (1
+	// for player men, 2 for monsters), col 59 is MaxHP and col 60 is MaxMP --
+	// 0 for every monster, which is right, monsters have no mana. An earlier
+	// pass had suspected col 79; that is wrong (it is 23.5*level, the same
+	// value leveldata col 5 holds) and was never shipped. See
+	// docs/GROUNDING_AUDIT.md.
+	//
+	// The HP values below are therefore the game's own. They are not
+	// monotonic in level, and that is real authored design rather than noise:
+	// a "_CLON" is a weaker slave version, so the level-4 Old Weasel (83) sits
+	// under the level-3 Big-eyed Ghost (85).
+	//
+	// Defence, counter-attack and gold are still the disclosed
+	// monsterStatsForLevel curve (no real table for those has been found).
+	// Positions are OWN DESIGN, clustered at the two farmland anchors measured
+	// flat, walkable and object-clear (region 96/168; (0,-840) and
+	// (340,-340) -- see docs/WORLD_ISSUES.md), so every monster stands on
+	// verified terrain rather than a blind guess.
 	//
 	// A low-level ground north-west of the fields (the (0,-840) anchor):
-	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1, X: 0, Z: -840, Count: 3},
-	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", Level: 2, X: -170, Z: -880, Count: 2},
-	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", Level: 3, X: 170, Z: -880, Count: 2},
-	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", Level: 4, X: -170, Z: -760, Count: 2},
+	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1, MaxHP: 54, X: 0, Z: -840, Count: 3},
+	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", Level: 2, MaxHP: 55, X: -170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", Level: 3, MaxHP: 85, X: 170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", Level: 4, MaxHP: 83, X: -170, Z: -760, Count: 2},
 	// A higher ground east of the fields (the (340,-340) anchor):
-	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", Level: 5, X: 340, Z: -340, Count: 3},
-	{Zone: "jangan", Name: "Water Ghost slave", CodeName: "MOB_CH_WATERGHOST_CLON", Level: 6, X: 500, Z: -360, Count: 2},
-	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", Level: 7, X: 340, Z: -500, Count: 2},
-	{Zone: "jangan", Name: "Tomb Stone Ghost", CodeName: "MOB_CH_TOMBSTONE_CLON", Level: 8, X: 500, Z: -500, Count: 2},
-	{Zone: "jangan", Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", Level: 9, X: 200, Z: -480, Count: 2},
-	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", Level: 10, X: 200, Z: -220, Count: 2},
+	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", Level: 5, MaxHP: 119, X: 340, Z: -340, Count: 3},
+	{Zone: "jangan", Name: "Water Ghost slave", CodeName: "MOB_CH_WATERGHOST_CLON", Level: 6, MaxHP: 114, X: 500, Z: -360, Count: 2},
+	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", Level: 7, MaxHP: 156, X: 340, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Tomb Stone Ghost", CodeName: "MOB_CH_TOMBSTONE_CLON", Level: 8, MaxHP: 204, X: 500, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", Level: 9, MaxHP: 194, X: 200, Z: -480, Count: 2},
+	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", Level: 10, MaxHP: 249, X: 200, Z: -220, Count: 2},
 	// The donghwang example kept from before (a far, higher-level zone).
-	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", Level: 27, X: 70, Z: -50, Count: 1},
+	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", Level: 27, MaxHP: 1451, X: 70, Z: -50, Count: 1},
 }
 
 const respawnDelay = 10 * time.Second
@@ -121,7 +143,13 @@ const respawnDelay = 10 * time.Second
 // zone, respawning it respawnDelay after each death, until ctx is
 // canceled. main() runs one of these per monsterSpecs entry.
 func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Logger, spec monsterSpec) {
-	maxHP, defense, attack, gold := monsterStatsForLevel(spec.Level, spec.Rarity)
+	defense, attack, gold := monsterStatsForLevel(spec.Level, spec.Rarity)
+	// Real HP from characterdata col 59 (see monsterSpecs). A spec that
+	// forgot it would otherwise spawn a 0-HP monster that dies on sight.
+	maxHP := spec.MaxHP
+	if maxHP < 1 {
+		maxHP = 1
+	}
 	spawn := func() int64 {
 		m := monsters.SpawnSpecies(spec.Zone, combat.Species{Name: spec.Name, CodeName: spec.CodeName, Level: spec.Level, Rarity: spec.Rarity}, spec.X, 0, spec.Z, maxHP, defense, attack, gold)
 		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone, "level", m.Level)

@@ -7075,6 +7075,49 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-seventy-fifth round: monster HP is real now (characterdata col 59)
+
+The 174th round flagged col 79 as the likely monster MaxHP and deliberately did
+not ship it. Good thing: **it was wrong.** Col 79 is 23.5*level -- the same
+value `leveldata` col 5 carries -- and a clean-looking curve turns out to be no
+evidence at all of what a column *means*.
+
+The real answer came out of the binary. The pserver's own `SR_GameServer.exe`
+(8.9 MB PE32, now a second Ghidra project `re_server`) is a much better RE
+target than the client: it kept RTTI class names, `D:\WORK2005\...` source
+paths and assertion strings. Xref'ing the string `RefObjChar::ExtractData!!!!`
+lands in the row parser, which deserialises a characterdata row field-by-field
+into `CRefObjChar`; the assertion `m_dwMaxHP > 0` inside that same function
+names the field's offset, **0x19c**. The struct there reads
+`uint8 Lvl; uint8 CharGender; uint32 MaxHP; uint32 MaxMP;` at 0x198, 0x199,
+0x19c, 0x1a0 -- two bytes, two padding, two dwords -- and laying that against
+the data confirms it four ways: col 57 is the already-verified Level (a byte,
+1..110), col 58 is CharGender (1 for player men, 2 for monsters), col 59 is
+MaxHP, and col 60 is MaxMP, which is 0 for every single monster. Monsters have
+no mana; that is exactly right.
+
+So the ladder now carries the game's own HP (Mangyang 54 ... Yeoha 249, Earth
+Ghost 1451) instead of a disclosed `50+22*lvl` curve. The values are not
+monotonic in level and that is authored design rather than noise -- a `_CLON`
+is a weaker slave version, so the level-4 Old Weasel (83) really does sit under
+the level-3 Big-eyed Ghost (85). That apparent "inconsistency" was the very
+reason an earlier pass had rejected col 59. Defence, attack and gold stay the
+disclosed curve; rarity now multiplies gold only, since real HP already says
+what a species is.
+
+The modded-pserver worry got measured instead of assumed: y0gi's own
+`SR_GameRefData/CharacterData_*.txt` agrees value-for-value with the pserver
+client's characterdata, and its 104 columns differ from the client's 105 only
+at the tail, so indices <=79 transfer directly.
+
+**Player HP/MP did not fall out of this**, and three sources are now
+definitively ruled out: characterdata's `CHAR_CH_*` rows are MaxHP=0/MaxMP=0,
+neither `LevelData.txt` nor `RefLevel.txt` has an HP/MP column, and the
+server's `_Char` table persists CurLevel/Strength/Intellect/RemainStatPoint but
+no MaxHP/MaxMP. They are computed in `CGObjPC` from level+Str+Int, and that
+function is still unlocated -- so there is still **no MP pool**, rather than a
+guessed one.
+
 ## Hundred-and-seventy-fourth round: regrounding the combat loop
 
 A re-verification pass over everything the combat loop (rounds 171-173) touched,
