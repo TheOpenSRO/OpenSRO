@@ -58,9 +58,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       grounded -- round 170, above.)
 - [x] **Skill window** -- round 143: the real China masteries (icons + names from
       `skillmasterydata` / the UI text table) at Lv 0, with the authored skill-point and
-      mastery-total labels at an honest 0. Open: the per-mastery skill grid (a client-drawn
-      `CIFSkillBoard`) and Level Up, both of which need the server to track mastery levels and skill
-      points (it tracks neither yet).
+      mastery-total labels. **Now complete**: the per-mastery skill grid (the client-drawn
+      `CIFSkillBoard`) is filled from `skilldata`, and the server tracks mastery levels and skill
+      points (`OpSkillState`/`OpRaiseMastery`), so learning a skill and raising a mastery both
+      work from the window. What is still own-design is the *mastery cost* (`masteryUpCost`).
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
 - [ ] "Stuck in a building" and "floating things in Alexandria": not reproduced (round 134's
@@ -84,9 +85,13 @@ monster ladder (Mangyang through Yeoha, 23 monsters across two hunting grounds; 
 identity, one disclosed level-scaled stat curve). Leveling pays off: max HP grows with level, and
 the level label, HP-bar maximum, underbar EXP gauge and SP are fed live from the stats packet
 (the EXP curve itself, leveldata.txt, is real). And the berserk gauge fills through combat on the
-authored five orbs, unleashing a damage burst on **R**. Open: the numbers (monster HP/attack,
-berserk fill/bonus, HP-per-level) are all disclosed own design -- server-side balance never
-recovered -- and MP has no server side, so skills spend nothing yet.
+authored five orbs, unleashing a damage burst on **R**.
+
+Since then: **monster max HP is REAL** (characterdata col 59, recovered from the server binary --
+round 175, v0.1.147), **mana exists and is spent** (skills pay their real `Consume_MP`;
+v0.1.149-150, with the level curve's *growth* recovered and its base disclosed), and **potions
+work** with the item table's own restore amounts (v0.1.151). Still disclosed own design: monster
+defence/attack/gold, HP-per-level, the berserk numbers, and skill damage.
 
 ### 1. NPCs — **done, except that they are statues** (hundred-and-fifth round)
 12,367 spawns and 5,423 models read from the player's own Media.pk2, each assembled from its own
