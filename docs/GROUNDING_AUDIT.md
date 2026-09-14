@@ -29,8 +29,12 @@ interpolation), which is legitimately this project's own client, not a claim abo
 
 **No invented value dressed as real was found.** Across every mechanics package audited, each item
 is either recovered with a real citation or honestly disclosed as own-design — including packages
-that document the RE *dead-end* that forced an own-design fallback (skills: all 118 `_RefSkill`
-columns catalogued, none encodes a damage value). One earlier such dead-end was later reopened:
+that document the RE *dead-end* that forced an own-design fallback. **Two of those dead-ends have
+since been reopened and are now real**, which is the pattern worth noting: a dead-end is a
+statement about the tools available at the time, not about the data. Skill damage was recorded
+here as unrecoverable ("all 118 `_RefSkill` columns catalogued, none encodes a damage value") —
+true of the *columns*, but the damage was in the Param block all along, and decompiling the
+server's parameter parser decoded it (2026-09-14). The other:
 **shop prices are now REAL** — the client's own itemdata carries `_RefObjCommon` Price and SellPrice
 columns (a Copper Sword buys 890, sells 427), which the DB export had dropped and the audit had
 concluded absent; the own-design stat formula is now only a fallback. What genuinely exists is a
