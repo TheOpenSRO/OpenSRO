@@ -25,8 +25,12 @@ import (
 
 // Column indices in leveldata.txt: level, then the exp to advance from it.
 const (
-	colLevel  = 0
+	colLevel   = 0
 	colExpNext = 1
+	// Column 2 is the skill-point cost to raise a mastery one level. The
+	// server's mastery level-up handler sums exactly this field over the
+	// levels being raised; see leveldata.Table.MasteryUpCost.
+	colMasterySP = 2
 )
 
 func main() {
@@ -72,11 +76,11 @@ func main() {
 	fmt.Fprintf(os.Stderr, "wrote %d levels to %s\n", len(records)-1, out)
 }
 
-// toRecords turns leveldata rows into "level,exp" CSV records (with a header),
-// skipping any row whose level or exp column is not a number (a header line or
-// a comment).
+// toRecords turns leveldata rows into "level,exp,mastery_sp" CSV records (with
+// a header), skipping any row whose level or exp column is not a number (a
+// header line or a comment).
 func toRecords(rows [][]string) [][]string {
-	records := [][]string{{"level", "exp"}}
+	records := [][]string{{"level", "exp", "mastery_sp"}}
 	for _, cols := range rows {
 		if len(cols) <= colExpNext {
 			continue
@@ -89,7 +93,13 @@ func toRecords(rows [][]string) [][]string {
 		if err != nil {
 			continue
 		}
-		records = append(records, []string{strconv.Itoa(level), strconv.FormatInt(exp, 10)})
+		masterySP := "0"
+		if len(cols) > colMasterySP {
+			if v, err := strconv.Atoi(strings.TrimSpace(cols[colMasterySP])); err == nil {
+				masterySP = strconv.Itoa(v)
+			}
+		}
+		records = append(records, []string{strconv.Itoa(level), strconv.FormatInt(exp, 10), masterySP})
 	}
 	return records
 }

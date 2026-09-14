@@ -33,7 +33,29 @@ const MaxCharacterLevel = 110
 // character must accumulate at level L to reach level L+1.
 type Table struct {
 	expToNext map[int]int64
+	// masterySP[L] is the skill-point cost to raise a mastery from level L to
+	// L+1 -- leveldata's column 2. REAL: the server sums exactly this field
+	// over the levels being raised. See MasteryUpCost.
+	masterySP map[int]int
 	maxLevel  int
+}
+
+// MasteryUpCost returns the skill-point cost to raise a mastery from level to
+// level+1, and whether the table knows it.
+//
+// **Recovered, not invented.** The pserver's own mastery level-up handler
+// (FUN_0059c4e0) walks the levels being raised and accumulates the level
+// table's entry+0x10 for each, then refuses the raise when the character's
+// skill points (charData+0x80) are below the total. The level entry holds the
+// int64 EXP requirement at +8, so +0x10 is the field after it -- leveldata's
+// column 2. The values escalate 1, 1, 2, 2, 4, 5, 6, 7, 9, 12 ... 53 at level
+// 20, 172 at level 32.
+func (t *Table) MasteryUpCost(level int) (int, bool) {
+	if t == nil {
+		return 0, false
+	}
+	v, ok := t.masterySP[level]
+	return v, ok
 }
 
 // ExpToNext returns the EXP needed to advance from level, and whether level is
@@ -108,7 +130,7 @@ func (t *Table) Advance(level int, exp int64, gained int64) (newLevel int, newEx
 // ParseCSV reads "level,expToNext" rows (a header line and blank lines are
 // skipped) into a Table.
 func ParseCSV(r io.Reader) (*Table, error) {
-	t := &Table{expToNext: map[int]int64{}}
+	t := &Table{expToNext: map[int]int64{}, masterySP: map[int]int{}}
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	line := 0
@@ -136,6 +158,13 @@ func ParseCSV(r io.Reader) (*Table, error) {
 			return nil, fmt.Errorf("leveldata: line %d: exp %q: %w", line, fields[1], err)
 		}
 		t.expToNext[level] = exp
+		// Column 2 is the mastery-up cost; optional so an older two-column
+		// export still loads.
+		if len(fields) > 2 {
+			if sp, err := strconv.Atoi(strings.TrimSpace(fields[2])); err == nil {
+				t.masterySP[level] = sp
+			}
+		}
 		if level > t.maxLevel {
 			t.maxLevel = level
 		}

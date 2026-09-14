@@ -54,28 +54,24 @@ const (
 const MasteryTotalCapPerLevel = 3
 
 // masteryUpCost is the skill-point cost to raise a mastery from currentLevel to
-// currentLevel+1: a DISCLOSED own-design default (currentLevel+1, so higher
-// levels cost more), NOT recovered.
+// currentLevel+1.
 //
-// The old note here said the real cost "lives in the game server, which this
-// project does not have". That justification is stale -- the pserver's
-// SR_GameServer.exe is decompiled now -- so it was looked for, and these are
-// ruled out:
-//   - skillmasterydata.txt has no cost column at all. The file carries its own
-//     header row, which names every column: ID, name, name code, group,
-//     description id, tab name code, type, tooltip type, three weapon types
-//     and two icons.
-//   - the per-character table `_CHARSKILLMASTERY` is only CharID, MasteryID
-//     and Level.
-//   - a character's RemainSkillPoint is charData+0x80, and the only code
-//     touching that field directly is a field-update packet builder and the
-//     kill reward, so the raise handler spends it through an accessor rather
-//     than a direct write.
+// **This is REAL when a level table is loaded.** The pserver's own mastery
+// level-up handler (FUN_0059c4e0) walks the levels being raised, accumulates
+// the level table's entry+0x10 for each, and refuses the raise when the
+// character's skill points (charData+0x80) fall short. A level entry holds the
+// int64 EXP requirement at +8, so +0x10 is the field straight after it, which
+// is leveldata's column 2 -- 1, 1, 2, 2, 4, 5, 6, 7, 9, 12 ... 53 at level 20
+// and 172 at level 32. leveldata.Table.MasteryUpCost serves it.
 //
-// It is therefore computed in the raise-mastery packet handler, which was not
-// located -- the same virtual-dispatch wall the mob-exp hunt hit. Replace this
-// if that handler is ever found.
+// Falls back to a DISCLOSED own-design currentLevel+1 when no level table is
+// loaded (or it predates the column), which is the same shape as the rest of
+// the leveling code: real when the operator brings the data, honestly labelled
+// when they do not.
 func masteryUpCost(currentLevel int) int {
+	if cost, ok := levelTable.MasteryUpCost(currentLevel); ok && cost > 0 {
+		return cost
+	}
 	return currentLevel + 1
 }
 
