@@ -150,11 +150,19 @@ box. **No invented value dressed as real was found in the new work either.** Wha
   col 5 is that per-level standard (23.5×level early, ~114×level by 110 — an accelerating curve).
   That shape fits **ExpToGive**, and the kill pacing works against the real EXP curve (≈20 level-1
   Mangyang at 24 each ≈ the 470 needed for level 2). It is **not shipped**, because none of that
-  says *which* quantity it is: in `RefObjChar::ExtractData` the block holding it is a bare run of
-  eleven sequential dwords (0x22c…0x254) with no assertion or distinguishing use, so the
-  `col 79 → 0x24c` alignment is plausible but unproven and could be off by N. Monster exp therefore
-  stays the disclosed `ExpFor` until a use-site in the binary names the field. Recorded so the next
-  pass starts from the evidence rather than the hunch.
+  says *which* quantity it is.
+
+  **The column→offset map is now settled** (`client/tools/ghidra/FindOffsetRefs.java`, written for
+  this). `RefObjChar::ExtractData` stores one column per write, so listing its stores in address
+  order and anchoring on two independently-known fields fixes the whole run: `0x19c` is col 59 (the
+  `m_dwMaxHP > 0` assertion) and `0x25c` is col 82 (the code defaults it to `0xbb8` = 3000, which is
+  col 82's value in the data). Counting between them gives col 67→0x224, 68→0x228, 69→0x22a,
+  70→0x22c, 71→0x230, 72→0x234, … 78→0x24c, **79→0x250**, 80→0x254, 81→0x258, 82→0x25c. So an
+  earlier note here saying col 79 was `0x24c` was **off by one** — exactly the risk that kept it
+  unshipped. Supporting the exp reading: the stat-publication function `FUN_004c3730` reads the ref
+  object's 0x230–0x24c (cols 71–78, the combat stats) and **skips 0x250**, so col 79 is not a combat
+  stat. Still not positive identification — no use-site on a `CRefObjChar` has been found that names
+  it — so monster exp stays the disclosed `ExpFor`.
 
   **Dig update (2026-09-14):** scoped the decompile path; it is a genuine epic, not a quick win.
   The client's refdata load is `FUN_00844cd0` (master dispatcher: builds each `%stextdata\…`
