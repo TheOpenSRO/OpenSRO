@@ -142,6 +142,20 @@ box. **No invented value dressed as real was found in the new work either.** Wha
   level-4 Old Weasel (83) genuinely sits under the level-3 Big-eyed Ghost (85). The lesson is the
   project's own: a clean-looking curve is not evidence of what a column *means*.
 
+- **What col 79 actually is — measured, but its *meaning* is still UNCONFIRMED.** Across all 6,117
+  `MOB_*` rows, col 79 equals `leveldata` col 5 for the monster's own level in **5,829 (95.3 %)**
+  of them; the 288 that differ are exactly the special cases (`MOB_EU_KERBEROS`, level 110 rarity 3
+  → 40000 against the 12550 standard; the `ROCKY_CLON2` quest mobs → 37060 against 6949). So col 79
+  is "the standard value for this level, overridden upward for uniques/quest mobs", and `leveldata`
+  col 5 is that per-level standard (23.5×level early, ~114×level by 110 — an accelerating curve).
+  That shape fits **ExpToGive**, and the kill pacing works against the real EXP curve (≈20 level-1
+  Mangyang at 24 each ≈ the 470 needed for level 2). It is **not shipped**, because none of that
+  says *which* quantity it is: in `RefObjChar::ExtractData` the block holding it is a bare run of
+  eleven sequential dwords (0x22c…0x254) with no assertion or distinguishing use, so the
+  `col 79 → 0x24c` alignment is plausible but unproven and could be off by N. Monster exp therefore
+  stays the disclosed `ExpFor` until a use-site in the binary names the field. Recorded so the next
+  pass starts from the evidence rather than the hunch.
+
   **Dig update (2026-09-14):** scoped the decompile path; it is a genuine epic, not a quick win.
   The client's refdata load is `FUN_00844cd0` (master dispatcher: builds each `%stextdata\…`
   filename and calls a *generic* tokenizer `FUN_00952890(this, …)` per file, characterdata among
