@@ -46,7 +46,7 @@ func TestNewCharacterIsDressedAndHasVitals(t *testing.T) {
 		WorldHandler(chars, eq, hub),
 		EquipmentHandler(chars, eq),
 		InventoryHandler(chars, inv),
-		CharacterStatsHandler(chars, eq, refItems, nil),
+		CharacterStatsHandler(chars, eq, refItems, nil, nil),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()

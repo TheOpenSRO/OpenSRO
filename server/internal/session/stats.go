@@ -10,6 +10,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
 )
@@ -57,8 +58,8 @@ type CharacterStatsResult struct {
 
 	// MP and MaxMP drive the mana bar. MaxMP is the game's own base curve
 	// (character.MaxMPForLevel), so this is a real number rather than the
-	// blank bar the HUD used to draw. Nothing spends mana yet, so MP is
-	// simply MaxMP.
+	// blank bar the HUD used to draw. MP is what is left after paying
+	// skills' real Consume_MP costs.
 	MP    int32
 	MaxMP int32
 }
@@ -115,7 +116,8 @@ func DecodeCharacterStatsResult(data []byte) (*CharacterStatsResult, error) {
 // CharacterStatsHandler answers OpCharacterStats. skills supplies the unspent
 // skill-point count (may be nil); the session's level table supplies the
 // exp-to-next for the EXP gauge.
-func CharacterStatsHandler(chars character.Store, eq equipment.Store, items combat.ItemLookup, skills skill.Store) gateway.Handler {
+// mp may be nil, in which case mana is reported full.
+func CharacterStatsHandler(chars character.Store, eq equipment.Store, items combat.ItemLookup, skills skill.Store, mp *mana.Tracker) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpCharacterStats {
 			return nil
@@ -142,17 +144,21 @@ func CharacterStatsHandler(chars character.Store, eq equipment.Store, items comb
 			})
 		}
 
-		// Mana is full: nothing spends it yet. The number itself is the
-		// game's own curve, so the bar shows a real value.
-		maxMP := int32(character.MaxMPForLevel(owned.Level))
+		// Max mana is the game's own curve; current mana is what the caster
+		// has left after paying skills' real Consume_MP costs.
+		maxMP := character.MaxMPForLevel(owned.Level)
+		curMP := maxMP
+		if mp != nil {
+			curMP = mp.Current(characterID, maxMP)
+		}
 		result := &CharacterStatsResult{
 			Gold:  owned.Gold,
 			HP:    int32(owned.HP),
 			MaxHP: int32(character.MaxHPForLevel(owned.Level)),
 			Level: int32(owned.Level),
 			Exp:   owned.Exp,
-			MP:    maxMP,
-			MaxMP: maxMP,
+			MP:    int32(curMP),
+			MaxMP: int32(maxMP),
 		}
 		if levelTable.Loaded() {
 			if toNext, ok := levelTable.ExpToNext(owned.Level); ok {

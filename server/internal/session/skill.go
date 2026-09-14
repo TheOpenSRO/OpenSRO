@@ -14,6 +14,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
@@ -250,6 +251,7 @@ func UseSkillHandler(
 	inv inventory.Store,
 	skillRef SkillRefStore,
 	zerk *berserk.Tracker,
+	mp *mana.Tracker,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpUseSkill {
@@ -276,14 +278,19 @@ func UseSkillHandler(
 		// So this is a stand-in scaled by the skill's level, clearly labeled --
 		// the same accepted pattern as SPFor/ExpFor/Catalog.DamageBonus, never a
 		// value dressed as recovered. See the skilldata-columns note.
+		// mpCost, unlike the damage bonus, IS real: refdata.Skill.ConsumeMP is
+		// the client's own skilldata Consume_MP column. The placeholder
+		// catalog skills have no real row and so cost nothing.
 		var cooldown time.Duration
 		var damageBonus int
+		var mpCost int
 		if sk, inCatalog := skill.Catalog[req.SkillID]; inCatalog {
 			cooldown = time.Duration(sk.CooldownSeconds) * time.Second
 			damageBonus = int(sk.DamageBonus)
 		} else if ref, err := skillRef.GetSkill(ctx, req.SkillID); err == nil && ref != nil {
 			cooldown = time.Duration(ref.ReuseDelayMs) * time.Millisecond
 			damageBonus = disclosedSkillDamageBonus(ref)
+			mpCost = ref.ConsumeMP
 		} else {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "no such skill"}).Encode()})
 		}
@@ -308,11 +315,25 @@ func UseSkillHandler(
 			}
 		}
 
+		// Pay the skill's real mana cost. Checked after the cooldown gate so a
+		// skill that is not ready does not drain anything, and before the use
+		// is recorded so a refused cast costs neither mana nor the cooldown.
+		if mp != nil && mpCost > 0 {
+			owned, err := chars.GetByID(ctx, characterID)
+			if err != nil {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "lookup failed"}).Encode()})
+			}
+			maxMP := character.MaxMPForLevel(owned.Level)
+			if _, ok := mp.Spend(characterID, maxMP, mpCost); !ok {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "not enough mana"}).Encode()})
+			}
+		}
+
 		if err := skills.RecordUse(ctx, characterID, req.SkillID, now); err != nil {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
 		}
 
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, characterID, req.TargetMonsterID, damageBonus)
+		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, characterID, req.TargetMonsterID, damageBonus)
 	}
 }
 

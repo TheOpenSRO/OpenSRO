@@ -13,6 +13,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
@@ -36,6 +37,11 @@ type fakeSkillRef struct{}
 func (fakeSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error) {
 	if id == 999 {
 		return &refdata.Skill{ID: 999, BasicLevel: 1, ReuseDelayMs: 500}, nil
+	}
+	// 998 is the mana test: no cooldown, and a real Consume_MP of 60, so a
+	// level-1 caster (100 max mana) can afford exactly one cast.
+	if id == 998 {
+		return &refdata.Skill{ID: 998, BasicLevel: 1, ReuseDelayMs: 0, ConsumeMP: 60}, nil
 	}
 	return nil, errors.New("no such skill")
 }
@@ -117,7 +123,7 @@ func TestSkillFullFlow(t *testing.T) {
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
 		LearnSkillHandler(chars, skills, fakeSkillRef{}),
-		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}, nil),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}, nil, mana.NewTracker()),
 		SkillListHandler(chars, skills),
 	)
 	addr, cleanup := startTestServer(t, handle)
@@ -245,5 +251,21 @@ func TestSkillFullFlow(t *testing.T) {
 	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 999, TargetMonsterID: monster.ID}).Encode())
 	if ar2, err := DecodeAttackResult(resp.Data); err != nil || ar2.Error != "skill on cooldown" {
 		t.Fatalf("got %+v (err %v), want error 'skill on cooldown'", ar2, err)
+	}
+
+	// A skill's real Consume_MP is actually spent, and a cast that cannot be
+	// paid for is refused. Skill 998 costs 60 of a level-1 caster's 100 mana
+	// (the game's own curve), so the first cast lands and the second cannot.
+	resp = send(OpLearnSkill, (&LearnSkillRequest{CharacterName: "Aria", SkillID: 998}).Encode())
+	if lr, err := DecodeLearnSkillResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("learn mana-costing skill failed: err=%v result=%+v", err, lr)
+	}
+	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 998, TargetMonsterID: monster.ID}).Encode())
+	if ar3, err := DecodeAttackResult(resp.Data); err != nil || ar3.Error != "" {
+		t.Fatalf("first cast of a 60-mana skill should land: got %+v (err %v)", ar3, err)
+	}
+	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 998, TargetMonsterID: monster.ID}).Encode())
+	if ar4, err := DecodeAttackResult(resp.Data); err != nil || ar4.Error != "not enough mana" {
+		t.Fatalf("second cast should be refused for mana: got %+v (err %v)", ar4, err)
 	}
 }

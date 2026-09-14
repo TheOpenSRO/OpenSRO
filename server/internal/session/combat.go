@@ -15,6 +15,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
+	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
@@ -476,6 +477,7 @@ func CombatHandler(
 	inv inventory.Store,
 	skills skill.Store,
 	zerk *berserk.Tracker,
+	mp *mana.Tracker,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
@@ -492,7 +494,7 @@ func CombatHandler(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 			}
 
-			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, characterID, req.TargetMonsterID, 0)
+			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, characterID, req.TargetMonsterID, 0)
 		case OpMonsterList:
 			return handleMonsterList(sess, hub, monsters)
 		default:
@@ -541,6 +543,7 @@ func performAttack(
 	inv inventory.Store,
 	skills skill.Store,
 	zerk *berserk.Tracker,
+	mp *mana.Tracker,
 	characterID, targetMonsterID int64,
 	damageBonus int,
 ) error {
@@ -640,8 +643,12 @@ func performAttack(
 				if err := chars.ResetHP(ctx, characterID); err != nil {
 					return fmt.Errorf("combat: refilling hp on level up: %w", err)
 				}
-				// Healed to the NEW level's higher maximum.
+				// Healed to the NEW level's higher maximum -- and mana with
+				// it, to the new level's own curve.
 				result.PlayerHP = int32(character.MaxHPForLevel(newLevel))
+				if mp != nil {
+					mp.Refill(characterID, character.MaxMPForLevel(newLevel))
+				}
 				levelUp = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
 			}
 		}
@@ -668,6 +675,9 @@ func performAttack(
 			result.PlayerHP = int32(character.MaxHP)
 			if reborn, e := chars.GetByID(ctx, characterID); e == nil {
 				result.PlayerHP = int32(character.MaxHPForLevel(reborn.Level))
+				if mp != nil {
+					mp.Refill(characterID, character.MaxMPForLevel(reborn.Level))
+				}
 			}
 		} else {
 			result.PlayerHP = int32(hp)
