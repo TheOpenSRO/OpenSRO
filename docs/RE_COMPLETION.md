@@ -794,8 +794,70 @@ is the weaker side at 4.4% and it is where the gameplay lives.
   (`"... call DelItem_EXT() returned fail"`); the rule that survives is **take
   the first identifier in the string, and only when nothing precedes it**.
   Lever closed.
-- **RTTI class recovery** — impossible, not merely hard. 1,871 type descriptors
-  survive and **zero** are referenced, so the COL/vftable chain was stripped.
+- **RTTI class recovery** — ~~impossible, not merely hard. 1,871 type descriptors
+  survive and **zero** are referenced, so the COL/vftable chain was stripped.~~
+  **WRONG, reopened and harvested 2026-09-15.** Nothing was stripped. The probe
+  was fired 8 bytes off. An MSVC `TypeDescriptor` is
+  `{ void *pVFTable; void *spare; char name[]; }`, so the `.?AVCGObjPC@@`
+  string sits at **+8 inside** the descriptor and the COMPLETE OBJECT LOCATOR
+  points at the descriptor's **start**. Asking for references to the *string's*
+  address returns zero however intact the chain is. Walking
+  `vftable[-1] → COL → TypeDescriptor` instead:
+
+  | | descriptors | pointed at | COLs | vftables | **classes** | slots |
+  |---|---|---|---|---|---|---|
+  | client | 1,223 | 1,223 | 1,751 | 1,680 | **1,211** | 34,840 |
+  | server | 2,003 | 2,003 | 2,029 | 1,972 | **1,939** | 40,513 |
+
+  Two things had to be fixed before the numbers meant anything, and both were
+  *artefacts of Ghidra's coverage rather than facts about the binary*:
+
+  - **Enumerate descriptors from raw bytes, not defined data.** Ghidra had
+    typed only 1,088 of the client's 1,223 as strings. Every missed descriptor
+    costs its class, its vftable and every slot in it — and one of the
+    casualties was the `CGObjPC` table this project has been hand-naming from
+    for sessions.
+  - **Walk slots while the word points into executable memory**, not while
+    Ghidra happens to have defined a function there. Using `getFunctionAt` as
+    the loop condition stopped at the first undefined entry and cut the average
+    table to 1.4 slots. Two vftables are always separated by their COL pointer,
+    which is `.rdata` and not executable, so the walk still terminates by
+    itself in the right place.
+
+  **Validated against four facts it did not produce.** Probing the one server
+  vftable whose slots this project derived by hand, `0x00af59fc`:
+  slot 73 → `Char_GetLevel`, 92 → `GObjPC_GainExpAndLevel`,
+  93 → `GObjPC_AddSkillPoints`, 421 → `GObjPC_GiveExp` — all four exact, and
+  the table ends at **427 slots**, just past 421. The walk neither over-runs
+  nor mis-numbers. And the table's class comes back as **`CGObjPC`**: the
+  naming convention this project adopted by hand is the binary's own.
+
+  **Applied conservatively.** A base class's implementation appears in *every*
+  derived class's table, so "first table wins" would file a base method under
+  an arbitrary subclass. A function is only *named* where exactly one class
+  claims it (5,313 client / 5,953 server targets) and only over a blank `FUN_`;
+  everything else gets a comment listing every class and slot that reaches it,
+  which is pure fact. Result: **5,362 functions named** (1,992 + 3,370) and
+  6,113 commented.
+
+  **Coverage after re-running the compounding chain: client 35.0%, server
+  39.2%** — combined identified **14,064 → 26,072**.
+
+  *Still on the table:* 43,060 slot targets point at code Ghidra never defined
+  as a function (20,411 client / 22,649 server). Defining functions there and
+  re-dumping would extend this substantially, and is the obvious next pull.
+  Also unexploited: the 2,014 + 1,207 pointer sites *rejected* for a bad COL
+  signature are `BaseClassDescriptor`s, which point at TypeDescriptors too —
+  i.e. the **inheritance graph** is sitting there unread.
+
+- **The 128 `CRef*` refdata classes** (server), recovered from the same
+  descriptor scan and readable straight out of the binary with `strings`. This
+  is the join from the 85 SQL `_REF*` tables to the C++ that parses them, and
+  it names several open ledger items outright: `CRefHWANLevel` (berserk),
+  `CRefCharGen`/`CRefCharGenData` (starting Str/Int), `CRefDropGold`,
+  `CRefDropItemGroup`, `CRefDropItemAssign`, `CRefDropOptLevelSel` and ten
+  `CRefDropClassSel_*` (the loot tables, previously "right but
+  under-specified").
 
 **The population nothing reaches:** 18,522 game-logic functions have no direct
 caller. They are virtuals, and every call-graph lever steps past them.

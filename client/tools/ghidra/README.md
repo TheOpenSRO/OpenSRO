@@ -331,3 +331,39 @@ as agreement.
 
 **This validates the gap size in use.** Raising `maxGap` invalidates the
 measurement; re-run after any change.
+
+## `RttiRebuild.java` — the class names, from the binary's own RTTI
+
+This lever was recorded closed ("impossible, not merely hard") on the strength
+of a probe that asked the wrong question. An MSVC `TypeDescriptor` is
+
+    struct TypeDescriptor { void *pVFTable; void *spare; char name[]; };
+
+so `.?AVCGObjPC@@` lives at **+8 inside** the descriptor while the complete
+object locator points at its **start**. Counting references to the *string*
+returns zero no matter how intact the chain is. Walk
+`vftable[-1] → COL → TypeDescriptor` and it is all there: **1,211 classes on
+the client, 1,939 on the server**.
+
+Two traps, both of which make the result look stripped when it is not:
+
+- **Enumerate the descriptors from raw bytes.** Ghidra had typed only 1,088 of
+  the client's 1,223 as strings, and a missed descriptor costs its class, its
+  vftable and every slot in it.
+- **Walk slots while the word points into executable memory**, not while
+  `getFunctionAt` succeeds. Ghidra's function coverage is not the binary's;
+  using it as the loop condition cut tables to 1.4 slots on average. The COL
+  pointer between two tables is `.rdata`, so the walk still stops correctly.
+
+`probe <hex>` prints one table against known slots. On `0x00af59fc` it returns
+class `CGObjPC` with slot 73 `Char_GetLevel`, 92 `GObjPC_GainExpAndLevel`, 93
+`GObjPC_AddSkillPoints`, 421 `GObjPC_GiveExp`, ending at 427 slots — four
+hand-derived facts reproduced by a mechanism that knew none of them.
+
+`apply` names a function only where **exactly one** class claims it, and only
+over a blank `FUN_`; an inherited implementation appears in every derived
+class's table, so anything shared gets a comment listing all its claims instead
+of a confident wrong name.
+
+Run it **first** in the compounding order below — it is a fact source, like the
+`__FILE__` seeds, and everything downstream feeds on its namespaces.
