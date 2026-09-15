@@ -204,3 +204,71 @@ The parser consumes only the code word and points the field at what follows.
 | `hntp` | 0x686e7470 | `0x48c` |
 | `slcc` | 0x736c6363 | `0x494` |
 | `nmf` | 0x006e6d66 | `0x594` |
+
+## What a code DOES: the skill-effect join
+
+The table above is the parser's structure — where each code's values are filed.
+It says nothing about meaning. `FUN_00594ac0`, the skill-effect applier, reads
+those same skill fields and publishes ParamKeeper params from them, so joining
+the two gives **code → the stat it modifies**.
+
+Extracted the same way and validated the same way, against three pairs this
+project had recovered independently before the join was run:
+
+| control | expected | extracted |
+|---|---|---|
+| `defp` | params 5/6 at slot 0 (the flat absorb) | `5@0, 6@0` |
+| `defr` | params 5/6 at slot 1 (a percentage on it) | `5@1, 6@1` |
+| `hwit` | param 195 | `195@0` |
+
+Three of three. Notation below is `param@slot`, where the slot is
+GParamKeeper's: 0 base, 1 additive percent, 2 multiplier, 3 percent scale (see
+the `reference_sro_server_internals` note and `combat.MitigateDamage`).
+
+Only 22 of the 102 codes publish a param directly. The rest act elsewhere —
+teleports, summons, cures, state flags — and reading one of those means
+following its field into whatever consumes it, not into this table.
+
+| code | skill field | publishes |
+|---|---|---|
+| `ru` | `0x250` | 33@0 |
+| `defp` | `0x25c` | 5@0, 6@0 |
+| `defr` | `0x260` | 5@1, 6@1 |
+| `er` | `0x27c` | 9@0 |
+| `dcmp` | `0x2a8` | 141@0 |
+| `mpi` | `0x2b0` | 145@0, 146@0, 147@0, 148@0, 149@0, 150@0, 27@0, 28@0, 29@0, 30@0, 31@0, 32@0, 11@1 |
+| `hste` | `0x2b8` | 23@2, 24@2 |
+| `hst3` | `0x2c0` | 23@2, 24@2 |
+| `irgc` | `0x2d0` | 25@1, 26@1 |
+| `apru` | `0x2d4` | 13@1, 14@1, 15@1, 16@1 |
+| `apau` | `0x2d8` | 13@0, 14@0, 15@0, 16@0 |
+| `terd` | `0x2dc` | 9@0 |
+| `thrd` | `0x2e0` | 11@0 |
+| `tpad` | `0x2e8` | 13@1, 14@1 |
+| `dru` | `0x3e4` | 128@0, 129@0, 130@0, 131@0 |
+| `stri` | `0x3f0` | 1@0 |
+| `luck` | `0x4b8` | 173@0 |
+| `gdr` | `0x4c8` | 182@0 |
+| `expu` | `0x580` | 186@0, 202@0, 187@0 |
+| `skc` | `0x584` | 194@0 |
+| `hwit` | `0x588` | 195@0 |
+| `bldr` | `0x58c` | 198@0, 199@0, 200@0 |
+
+Worth singling out, because they touch params this project already models:
+
+- **`apau`** adds a flat amount to params 13–16 — the physical and magical
+  damage min/max. **`apru`** adds a percentage to the same four. Those are the
+  params a weapon's range and the Strength-derived term already land in, so a
+  buff of either kind stacks into the same slot-0 sum or slot-1 percentage the
+  damage pipeline already reads.
+- **`stri`** publishes param 1, Strength itself, so a skill can raise the stat
+  the damage term derives from.
+- **`irgc`** publishes 25 and 26 at slot 1 — `'hprg'` and `'mprg'`, the health
+  and mana regeneration params.
+- **`er`** and **`terd`** both publish param 9 (`'era'`, parry rate), and
+  **`thrd`** publishes 11 (`'hra'`, attack rate).
+
+None of these is wired: srrevamp has no buff system, and a value with no
+consumer is the pattern this project keeps correcting. They are recorded so that
+a buff system, when it exists, starts from the game's own vocabulary rather than
+from invented effects.
