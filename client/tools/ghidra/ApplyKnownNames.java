@@ -132,10 +132,19 @@ public class ApplyKnownNames extends GhidraScript {
          + "param 0 (Level), rounded, which independently re-confirms that param 0 is Level. Used "
          + "as the exponent base in GObjPC_InitStats and as the level-gap term in the damage and "
          + "exp formulae."},
-        {"004e6980", "GObjPC_GrantKillReward",
-         "Computes a kill's reward with Formula_MonsterExpReward, doubles it under one condition, "
-         + "and hands it to GObjPC_GiveExp via the vtable. param_1 is the PC being paid, param_2 "
-         + "the source that died. Branches separately when the source's level is above 10."},
+        {"004e6980", "GObjPC_OnDeath",
+         "The death handler: it pays the KILLER and penalises the DEAD, and an earlier pass here "
+         + "named it GObjPC_GrantKillReward after reading only the first half -- misleading, and "
+         + "corrected. The top computes Formula_MonsterExpReward, doubles it under one condition, "
+         + "and hands it to GObjPC_GiveExp (vtable 0x694) for param_1. The rest, gated on the "
+         + "dead character's level being above 10, is the DEATH PENALTY on param_2: exp loss as "
+         + "levelEntry+0x1c (the per-level exp unit) times 20, 100 or 300 depending on branch, "
+         + "applied through GObjPC_GainExpAndLevel (vtable 0x170) with a NEGATIVE amount; skill-"
+         + "point loss through GObjPC_AddSkillPoints (0x174), also negative and capped at what "
+         + "the character has; then a rand roll against FUN_004e6930 that can drop an item via "
+         + "CGStorage__RandomSelectNonEmptySlotForDeathPenalty. The 20/100/300 branch conditions "
+         + "are NOT understood -- they turn on param_2[0x72d] != 5 and charData+0xb4 -- so the "
+         + "penalty is recorded, not shipped."},
         {"0040fed0", "Formula_ExpScaleByLevelWindow",
          "One of the two exp reward scalers. Reads both parties' levels and compares against a "
          + "+10 level window."},
@@ -231,6 +240,12 @@ public class ApplyKnownNames extends GhidraScript {
     public void run() throws Exception {
         String[] args = getScriptArgs();
         boolean apply = args.length > 0 && args[0].equalsIgnoreCase("apply");
+        // 'force' lets this table CORRECT a name it applied before. Needed
+        // because findings get revised: GObjPC_GrantKillReward was named after
+        // reading only the first half of the function, which turned out to be
+        // the death handler. Without force the tool could not fix its own
+        // mistakes, only add to them.
+        boolean force = args.length > 1 && args[1].equalsIgnoreCase("force");
 
         // Pick the table that belongs to the program being processed.
         String prog = currentProgram.getName().toLowerCase();
@@ -242,11 +257,16 @@ public class ApplyKnownNames extends GhidraScript {
             Address a = currentProgram.getAddressFactory().getAddress(k[0]);
             Function f = a == null ? null : currentProgram.getFunctionManager().getFunctionAt(a);
             if (f == null) { println("  no function at " + k[0]); missing++; continue; }
-            // Never clobber a name that came from the binary's own assert string.
+            // Never clobber a name that came from the binary's own assert
+            // string -- unless explicitly forced, which is how a correction is
+            // applied.
             if (!f.getName().startsWith("FUN_")) {
-                println("  " + k[0] + " already named " + f.getName() + " -- leaving it");
-                skipped++;
-                continue;
+                if (!force || f.getName().equals(k[1])) {
+                    println("  " + k[0] + " already named " + f.getName() + " -- leaving it");
+                    skipped++;
+                    continue;
+                }
+                println("  " + k[0] + " RENAMING " + f.getName() + " -> " + k[1]);
             }
             if (!apply) { println("  would name " + k[0] + " -> " + k[1]); done++; continue; }
             f.setName(k[1], SourceType.ANALYSIS);

@@ -67,9 +67,39 @@ pick one up without re-deriving anything.
    21-23, 25-29, 30-34, 35-40, 41-47, 47-54, 60-70, 67-79), which is
    corroboration rather than the finding — the finding is the skill-id column.
 
-   *Only gold remains disclosed* in a monster's profile.
+   *Only gold remains disclosed* in a monster's profile. **Probed 2026-09-15,
+   not closed.** `levelgold.txt` exists in both the original client and the
+   pserver's refdata, shaped level → min → max (L1 = 28-59, L2 = 32-66, rising
+   smoothly), which is exactly what a per-level gold drop would look like — and
+   that is precisely why it is *not* promoted: shape is not a use-site, and this
+   ledger has been burned twice by shape. The server carries a
+   `"Gold Drop Amount Factor"` config multiplier (`FUN_00427050`, a rate loader
+   reading `atol/100` into globals), so a base clearly exists somewhere, but no
+   code reading `levelgold` was found. *Next probe:* gold drops as an ITEM in
+   this game — find the gold item's id in itemdata and work backwards from
+   whatever creates it on a kill.
 
-2. **Combat damage model — the mitigation formula is RECOVERED; the model is
+2. **Death penalty — recovered, deliberately NOT shipped.** `GObjPC_OnDeath`
+   (`004e6980`) pays the killer and then penalises the dead: exp loss computed as
+   `levelEntry+0x1c` (the same per-level exp unit that pays for a kill) times
+   **20, 100 or 300** depending on branch, applied through
+   `GObjPC_GainExpAndLevel` with a **negative** amount; skill-point loss through
+   `GObjPC_AddSkillPoints`, also negative and capped at what the character has;
+   then a `rand` roll that can drop an inventory item via
+   `CGStorage__RandomSelectNonEmptySlotForDeathPenalty`. All gated on the dead
+   character's level being above 10.
+
+   **Not shipped because the branch conditions are not understood** — they turn
+   on `param_2[0x72d] != 5` and `charData+0xb4`, which are probably job or zone
+   state. Shipping a punishment on a guessed condition is worse than shipping
+   none. *Next probe:* identify those two fields.
+
+   This also corrected a name. `004e6980` was called `GObjPC_GrantKillReward`
+   after an earlier pass read only its first half; it is the death handler, and
+   `ApplyKnownNames.java` gained a `force` mode so the table can fix its own
+   mistakes rather than only add to them.
+
+3. **Combat damage model — the mitigation formula is RECOVERED; the model is
    not yet shipped.** srrevamp still runs `base + bonus - defence, floor 1`, own
    design. The real one is now partly in hand.
 
@@ -114,14 +144,14 @@ pick one up without re-deriving anything.
    defence. *Next probe:* resolve `Combat_ResolveDamage`'s arguments at its four
    calls to each twin (register-passed — use `ResolveRegArg.java`).
 
-3. **Berserk numbers** (fill 8/hit, 20 s, +50 %) — ours. The mechanic and the
+4. **Berserk numbers** (fill 8/hit, 20 s, +50 %) — ours. The mechanic and the
    five orbs are real. *Next probe:* the `'zb'` param tag (0x7a62) in the stat
    vocabulary.
-4. **Monster spawn positions** — ours by necessity (`npcpos.txt` has no
+5. **Monster spawn positions** — ours by necessity (`npcpos.txt` has no
    monsters). Likely genuinely absent; prove it and it stops counting as open.
-5. **Quest objectives** — proven not to exist as data; any objectives shipped
+6. **Quest objectives** — proven not to exist as data; any objectives shipped
    must be own design. Closed as a *recovery*, not a gap.
-6. **Loot tables** — **CLOSED as a proven absence (2026-09-15).** The mapping
+7. **Loot tables** — **CLOSED as a proven absence (2026-09-15).** The mapping
    question was a non-issue: `RefMonsterID` *is* characterdata col 1 (Mangyang
    = 1933), which we already carry. The blocker is the data. The drop classes
    are real in the binary (`CRefMonster_AssignedItemRndDrop`,
@@ -132,7 +162,7 @@ pick one up without re-deriving anything.
    SQL database. So per-monster drops stay own design *by necessity*, and
    become real the moment an operator brings that table — the schema and the
    key are both already in place.
-7. **Inventory size (50)**, **unarmed damage (5)** — ours; low value, may be
+8. **Inventory size (50)**, **unarmed damage (5)** — ours; low value, may be
    genuinely absent.
 
 ## Naming coverage, and the denominator
