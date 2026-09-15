@@ -2507,3 +2507,62 @@ entries ago.
 a reward: `FUN_0059f8b0` hands its 80% refund to `AddSkillPoints`.
 
 **No srrevamp value changed.**
+
+## The PvE exp question, closed (2026-09-15)
+
+The previous entry stopped at a boundary rather than a conclusion: the exp
+enumeration covered `GainExpAndLevel` call sites, so a PvE path reaching a
+character's experience *another way* would not have appeared in it. That hole is
+now closed from the other end.
+
+**Both experience fields have exactly one writer.**
+
+| field | what | writers |
+|---|---|---|
+| `charData+0x68` | `ExpOffset` | **`GObjPC_GainExpAndLevel`**, and nothing else |
+| `charData+0x70` | `SExpOffset` | the same function, and nothing else |
+
+The only other function touching either is a reader in both cases:
+`GObjPC::FUN_0049efc0` puts `SExpOffset` into a packet, and
+`GObjPC::FUN_004909f0` formats `ExpOffset` into `" ^^%d^^"` for what is plainly
+a GM stat dump. So **every** grant of experience or skill experience in the
+binary must pass through `GainExpAndLevel`, whose 42 call sites the previous
+entry enumerated in full.
+
+Combined with this tick's vtable reads, the mob side is covered three ways:
+`CGObjMob`'s death handler (slot 311, `0x004c42f0`), its slot-398 override
+(`0x004c1c80`, a death broadcast) and its slot-322 override (`0x004c1c30`, which
+only sets `[0x738] = 20000` behind the `vf[0x3b4]`/`vf[0x3bc]` predicates) grant
+no experience between them.
+
+**So this binary contains no PvE experience reward.** Not "none found" — none
+reachable, because the field it would have to write has a single writer and that
+writer's every caller is accounted for.
+
+### Why that strengthens srrevamp rather than undermining it
+
+The previous entry left `KillExp` resting on an extrapolation and flagged it as
+one. The extrapolation is now the *only* option rather than a choice: there is no
+PvE formula in the binary that srrevamp declined to use. It models a monster kill
+with the single reward formula the artifact contains, whose inputs -- the two
+levels and the level table -- carry nothing PvP-specific. `leveldata.ExpUnit`'s
+caveat now says so.
+
+The likeliest explanation for the absence is the artifact itself: this is a
+private-server build (y0gi "Easy" VSRO), and a PvE reward that was configured
+out, moved to a module outside this executable, or driven from data would leave
+exactly this signature. That is a hypothesis about *why*, not a hedge on the
+*what* -- the enumeration stands on its own.
+
+### Named this tick
+
+- **Slot 322** is a per-class "killed by" hook: `CGObjPC::vslot_322`
+  (`0x004e27c0`) routes to `FUN_004e1f60`, the per-death-kind social handler;
+  `CGObjMob::vslot_322` (`0x004c1c30`) is the only other override, everything
+  else sharing a stub at `0x00934da0`.
+- `GObjPC::FUN_004909f0` is a GM stat dump, and it carries a **second tag
+  dispatcher** -- `0x687261` `hra`, `0x68707267` `hprg`, `0x6870` `hp`,
+  `0x6872` `hr` are all visible in it. A cheap place to extend the param-code
+  vocabulary next, since the extraction method is already written and validated.
+
+**No srrevamp value changed.**

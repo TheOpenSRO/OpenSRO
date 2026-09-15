@@ -55,11 +55,18 @@ type Table struct {
 // death-kind dispatch at CGObjPC::vslot_311 -- so every use-site in the binary
 // is a PLAYER dying, not a monster. Nothing in the formula is PvP-specific: it
 // takes the two levels and the level table and nothing else. But applying it to
-// a monster kill is an EXTRAPOLATION from the only reward formula the binary
-// has, not a proven PvE path, and this file previously called it "proven by its
-// use-site" -- which was true of the function's identity and not of the
-// application. See docs/RE_COMPLETION.md for the full enumeration of every exp
-// grant in the binary.
+// a monster kill is an EXTRAPOLATION, and this file previously called it
+// "proven by its use-site" -- which was true of the function's identity and not
+// of the application.
+//
+// It is, however, the ONLY option rather than a choice among several. Both
+// character experience fields -- ExpOffset (charData+0x68) and SExpOffset
+// (+0x70) -- have exactly one writer in the binary, GObjPC_GainExpAndLevel, and
+// all 42 of its call sites are enumerated in docs/RE_COMPLETION.md. None is a
+// monster kill: CGObjMob's own death handler (slot 311) and its slot 322/398
+// overrides grant no experience at all. So there is no PvE reward formula in
+// this binary to have preferred, which is what makes extrapolating from the one
+// reward formula it does contain the grounded choice and not a shortcut.
 //
 // SR_GameServer.exe's Formula_MonsterExpReward (004105d0) computes a kill's
 // worth as
