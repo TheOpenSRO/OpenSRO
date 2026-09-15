@@ -187,6 +187,29 @@ pick one up without re-deriving anything.
    stays disclosed — but as "a per-character value we fix at 50", not "a number
    nobody has found". **Unarmed damage (5)** — still ours.
 
+## The message dispatcher, and 29 packet handlers
+
+`FUN_00414260` reads a **uint16 opcode** out of the message buffer at `+0x1050`
+and branches into a handler per opcode — a compiler-built binary-search tree,
+which is why it never looked like a table. 33 distinct opcodes have handlers
+across the dispatcher family, in the expected shapes: **0x3xxx requests, 0xBxxx
+responses**, plus some 0x7xxx and one 0x5xxx.
+
+The 29 handler functions are named `MsgHandler_<opcode>` — **by their opcode,
+because that is what is proven**. The number is a fact the dispatcher states;
+what the handler *does* is not claimed, and a handler serving several opcodes
+carries the first two in its name.
+
+This is the **inter-server / gateway** protocol layer, not the main client one
+(only 7 of the 33 are 0x7xxx). Finding where the client-facing protocol is
+dispatched is a separate, and larger, target.
+
+*Levers checked and found exhausted this pass, so nobody re-walks them:*
+high-fan-in helpers (the top ten are all infrastructure — assert, `std::string`
+assign, buffer write, allocator, list clear), and `__FILE__` attribution
+(**zero** headroom: 153 server functions cite a path, all already namespaced,
+and only one function anywhere cites two files).
+
 ## The real game's persisted data model
 
 One helper binds every database column to its struct offset, and **60 functions

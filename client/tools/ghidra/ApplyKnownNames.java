@@ -69,6 +69,130 @@ public class ApplyKnownNames extends GhidraScript {
         {"004b3130", "Param_PropagateToDependents",
          "Called by StoreSlot after a value changes: walks the dependent list and pushes the new "
          + "value into each target's registered slot. This is what makes the graph evaluate."},
+        // --- Packet handlers, from the message dispatcher's opcode tree. ---
+        // FUN_00414260 reads a uint16 opcode out of the message buffer at
+        // +0x1050 and branches to a handler per opcode. These are the
+        // inter-server / gateway families (0x3xxx requests, 0xBxxx responses,
+        // some 0x7xxx); the main client protocol is dispatched elsewhere.
+        // Named by their opcode because that is what is PROVEN -- the number,
+        // not the meaning. A handler serving several opcodes carries the first
+        // two in its name.
+        {"004039d0", "MsgHandler_bc10",
+         "Packet handler, dispatched on opcode 0xbc10. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00403b70", "MsgHandler_34f2",
+         "Packet handler, dispatched on opcode 0x34f2. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00404e50", "MsgHandler_34ba",
+         "Packet handler, dispatched on opcode 0x34ba. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00404f80", "MsgHandler_7155",
+         "Packet handler, dispatched on opcode 0x7155. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00414890", "MsgHandler_b808",
+         "Packet handler, dispatched on opcode 0xb808. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00415eb0", "MsgHandler_7c00",
+         "Packet handler, dispatched on opcode 0x7c00. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"004169d0", "MsgHandler_3c01",
+         "Packet handler, dispatched on opcode 0x3c01. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00416d00", "MsgHandler_3122",
+         "Packet handler, dispatched on opcode 0x3122. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00416db0", "MsgHandler_38e9",
+         "Packet handler, dispatched on opcode 0x38e9. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"004185a0", "MsgHandler_7c85",
+         "Packet handler, dispatched on opcode 0x7c85. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"004186d0", "MsgHandler_b11b",
+         "Packet handler, dispatched on opcode 0xb11b. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"004190c0", "MsgHandler_34bb",
+         "Packet handler, dispatched on opcode 0x34bb. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00419390", "MsgHandler_3cc3",
+         "Packet handler, dispatched on opcode 0x3cc3. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00419520", "MsgHandler_bcdc",
+         "Packet handler, dispatched on opcode 0xbcdc. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00419900", "MsgHandler_3cde",
+         "Packet handler, dispatched on opcode 0x3cde. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"0041a9c0", "MsgHandler_bce6",
+         "Packet handler, dispatched on opcode 0xbce6. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"0041b220", "MsgHandler_3ce8",
+         "Packet handler, dispatched on opcode 0x3ce8. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"0041b3c0", "MsgHandler_bd1b",
+         "Packet handler, dispatched on opcode 0xbd1b. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"0041b420", "MsgHandler_3542",
+         "Packet handler, dispatched on opcode 0x3542. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"0041bac0", "MsgHandler_38f5",
+         "Packet handler, dispatched on opcode 0x38f5. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"0041ce60", "MsgHandler_3b07",
+         "Packet handler, dispatched on opcode 0x3b07. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"0041ce80", "MsgHandler_3908",
+         "Packet handler, dispatched on opcode 0x3908. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"0041d090", "MsgHandler_34b1_74b7",
+         "Packet handler, dispatched on opcode 0x34b1, 0x74b7, 0xb4b0. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"0041d0b0", "MsgHandler_34d2_74d1",
+         "Packet handler, dispatched on opcode 0x34d2, 0x74d1, 0xb4d0. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"004263c0", "MsgHandler_3167",
+         "Packet handler, dispatched on opcode 0x3167. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"004c7a10", "MsgHandler_703e",
+         "Packet handler, dispatched on opcode 0x703e. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00676aa0", "MsgHandler_34fe",
+         "Packet handler, dispatched on opcode 0x34fe. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00964b60", "MsgHandler_7d1b",
+         "Packet handler, dispatched on opcode 0x7d1b. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00969990", "MsgHandler_5000",
+         "Packet handler, dispatched on opcode 0x5000. Recovered from the message dispatcher "
+         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
+         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
         {"0083e6b0", "CharData_BindDBColumns",
          "The complete charData column map, and the best single artifact in the binary for that "
          + "struct. It binds every persisted _CHAR column to its offset -- FUN_00401fc0(name, "
