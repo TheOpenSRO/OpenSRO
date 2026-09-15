@@ -253,6 +253,29 @@ above. And the client's own parser for it reads exactly **three** sequential
 tokens — a byte then two dwords — which grounds `levelgold`'s
 `(level, min, max)` shape in code rather than in eyeballed values.
 
+### 39 refdata files now have a readable column map
+
+A function that appears in **exactly one** switch case *and* reads many
+sequential tokens is that file's record parser — and therefore its exact
+column→offset map, straight from code. 59 such parsers exist; **39 are matched
+to a named refdata type** and now carry `RefParse_<type>` names. Among them the
+whole shop chain this project already depends on — `refshop`, `refshopgoods`,
+`refshopgroup`, `refpricepolicyofitem`, `reftreatitemofshop`,
+`refscrapofpackageitem`, `refpackageitem` — plus `teleportdata`/`teleportlink`,
+`magicoption`, `worldmap_mapinfo`/`localinfo`, `gameworlddata`, `siegefortress`,
+`leveldata` and `levelgold`.
+
+**So a column question about any of those is now a two-minute read instead of a
+dig.** That is the practical payoff of the catalogue.
+
+**`characterdata` is NOT among them, and that is now confirmed rather than
+suspected.** Case 5 calls fourteen functions and *none* of them reads a token
+directly — the per-column parse really does hide behind virtual dispatch, as
+this project found the hard way when it first tried the client. The
+characterdata column map stays what it is: derived from the server's
+`RefObjChar_ExtractData` store order, anchored on two independently-known
+fields.
+
 ### Column order is NOT offset order — a correction to how this was reasoned
 
 Reading the client's **leveldata** parser (case 8) settles something that had

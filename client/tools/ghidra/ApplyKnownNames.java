@@ -348,6 +348,209 @@ public class ApplyKnownNames extends GhidraScript {
     // with __FILE__ and an expression rather than Class::Method, so far less of
     // it names itself -- 17 functions against the server's 533.
     private static final String[][] KNOWN_CLIENT = {
+        // --- Refdata record parsers, one per textdata type. ---
+        // Client_LoadAllRefData pushes a type id beside each filename and
+        // Client_LoadRefDataFile switches on it; a function appearing in
+        // exactly one case AND reading many sequential tokens is that file's
+        // record parser. Each is therefore an exact column map -- the cheap way
+        // to answer a column question. The expensive way is counting stores in
+        // the server's own parser, which is how this project came to assume
+        // leveldata was packed in column order. It is not.
+        {"005339f0", "RefParse_atstructeffect",
+         "Parses one atstructeffect.txt record (refdata type 57). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"0062aba0", "RefParse_siegefortressreward",
+         "Parses one siegefortressreward.txt record (refdata type 102). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"0062c170", "RefParse_worldmap_mapinfo",
+         "Parses one worldmap_mapinfo.txt record (refdata type 3). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"006d5570", "RefParse_fmntidgroupmapdata",
+         "Parses one fmntidgroupmapdata.txt record (refdata type 34). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00744bd0", "RefParse_gachaitemset",
+         "Parses one gachaitemset.txt record (refdata type 30). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00745100", "RefParse_refgachatreeforclientuidata",
+         "Parses one refgachatreeforclientuidata.txt record (refdata type 67). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00745530", "RefParse_gachanpcmap",
+         "Parses one gachanpcmap.txt record (refdata type 31). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00750620", "RefParse_siegefortress",
+         "Parses one siegefortress.txt record (refdata type 54). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00753400", "RefParse_gameworlddata",
+         "Parses one gameworlddata.txt record (refdata type 56). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"0096f280", "RefParse_worldmap_localinfo",
+         "Parses one worldmap_localinfo.txt record (refdata type 4). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"0096f680", "RefParse_worldmap_mapinfo_f680",
+         "Parses one worldmap_mapinfo.txt record (refdata type 3). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"0096fbf0", "RefParse_worldmapguidedata",
+         "Parses one worldmapguidedata.txt record (refdata type 89). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00976840", "RefParse_teleportdata",
+         "Parses one teleportdata.txt record (refdata type 18). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00976c80", "RefParse_teleportlink",
+         "Parses one teleportlink.txt record (refdata type 19). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00976e60", "RefParse_actionwnddata",
+         "Parses one actionwnddata.txt record (refdata type 9). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00976fc0", "RefParse_dg",
+         "Parses one dg.txt record (refdata type 28). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00978020", "RefParse_gameguidedata",
+         "Parses one gameguidedata.txt record (refdata type 6). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"0097aab0", "RefParse_leveldata",
+         "Parses one leveldata.txt record (refdata type 8). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"0097aba0", "RefParse_levelgold",
+         "Parses one levelgold.txt record (refdata type 32). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"0097acc0", "RefParse_magicoptionassign",
+         "Parses one magicoptionassign.txt record (refdata type 66). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"0097aeb0", "RefParse_refmagicoptgroup",
+         "Parses one refmagicoptgroup.txt record (refdata type 91). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"0097b0b0", "RefParse_magicoption",
+         "Parses one magicoption.txt record (refdata type 24). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"0097f2e0", "RefParse_refeventreward",
+         "Parses one refeventreward.txt record (refdata type 101). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"0097fbe0", "RefParse_mallitemmenulistdata",
+         "Parses one mallitemmenulistdata.txt record (refdata type 85). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"0097fe30", "RefParse_refaccesspermissionofshop",
+         "Parses one refaccesspermissionofshop.txt record (refdata type 43). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00980030", "RefParse_refconditiontobuyscrapitem",
+         "Parses one refconditiontobuyscrapitem.txt record (refdata type 49). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"009802b0", "RefParse_refconditiontosellpackageitem",
+         "Parses one refconditiontosellpackageitem.txt record (refdata type 48). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"009804b0", "RefParse_refconditiontosellscrapitem",
+         "Parses one refconditiontosellscrapitem.txt record (refdata type 50). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"009811f0", "RefParse_refpackageitem",
+         "Parses one refpackageitem.txt record (refdata type 39). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00981ba0", "RefParse_refpricepolicyofitem",
+         "Parses one refpricepolicyofitem.txt record (refdata type 42). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00981ce0", "RefParse_refrewardpolicytobuyscrapitem",
+         "Parses one refrewardpolicytobuyscrapitem.txt record (refdata type 45). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00981f40", "RefParse_refrewardpolicytosellpackageitem",
+         "Parses one refrewardpolicytosellpackageitem.txt record (refdata type 46). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00982150", "RefParse_refrewardpolicytosellscrapitem",
+         "Parses one refrewardpolicytosellscrapitem.txt record (refdata type 47). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"009824e0", "RefParse_refscrapofpackageitem",
+         "Parses one refscrapofpackageitem.txt record (refdata type 41). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00983000", "RefParse_refshop",
+         "Parses one refshop.txt record (refdata type 35). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00983b70", "RefParse_refshopgoods",
+         "Parses one refshopgoods.txt record (refdata type 40). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"009842e0", "RefParse_refshopgroup",
+         "Parses one refshopgroup.txt record (refdata type 52). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"00986700", "RefParse_reftreatitemofshop",
+         "Parses one reftreatitemofshop.txt record (refdata type 44). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
+        {"009869f0", "RefParse_refshopitemstockperiod",
+         "Parses one refshopitemstockperiod.txt record (refdata type 86). Reads its columns as SEQUENTIAL "
+         + "tokens and stores each at a fixed struct offset, so this function IS that file's "
+         + "column map -- read it rather than counting stores in the server, and note that the "
+         + "columns are NOT stored in offset order."},
         {"00844cd0", "Client_LoadAllRefData",
          "Master refdata dispatcher: builds each \"%stextdata\\<file>.txt\" name in turn -- "
          + "characterdata, itemdata, skilldata, the shop chain, leveldata -- and calls the "
