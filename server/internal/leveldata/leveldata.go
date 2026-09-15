@@ -76,6 +76,80 @@ func (t *Table) ExpUnit(level int) (int64, bool) {
 	return v, ok
 }
 
+// ExpWindowScale is the OTHER of the two scalers on a kill's experience, and it
+// only ever reduces: killing far below your level, or far above it, pays less.
+//
+// RECOVERED from Formula_ExpScaleByLevelWindow (0040fed0) and the classifier it
+// calls, FUN_0040fe60 (0040fe60), which is three comparisons on the level gap:
+//
+//	gap = victimLevel - killerLevel
+//	gap <  -3  -> mode 2
+//	gap <  11  -> mode 0
+//	otherwise  -> mode 1
+//
+// and mode 0 takes a branch that leaves the result at the 1.0 it was
+// initialised to (`40ff03 SUB EAX,0 ; JE 0x40ff8c`, jumping straight past every
+// arithmetic path). So **inside a -3..+10 band the scale is exactly 1.0**,
+// which is most kills.
+//
+// The two outer modes, disassembled because the decompiler renders the register
+// levels as an unreadable mix of `uVar5` halves:
+//
+//	mode 1, 40ff5d:  SUB EDX,EBX ; SUB EDX,0xA
+//	                 FMUL qword [0x00b45ec8]        <- * 0.02
+//	                 FLD1 ; FSUBRP                  <- 1.0 - that
+//	mode 2, 40ff1f:  SUB ECX,EBX ; CMP ECX,-7 ; JG  <- near band?
+//	         40ff55:   FLD dword [0x00b45ddc]       <- 0.9 flat
+//	         40ff38:   SUB EBX,EDX ; SUB EBX,3
+//	                   FMUL qword [0x00b45ed0]      <- * 0.15
+//	                   FLD1 ; FSUBRP                <- 1.0 - that
+//	clamp,  40ff94:  FCOM qword [0x00b45ec0] -> below 0.1 returns 0.1
+//	        40ffb6:  FLD1 ; FCOM            -> at or above 1.0 returns 1.0
+//
+// EBX is the killer's level and EDX the victim's: Formula_MonsterExpReward
+// calls this with `MOV ECX,EDI` where EDI is the killer, and ESI still holds
+// the victim from the function's entry.
+//
+// Operand sizes again decide the constants, and here they matter more than
+// usual because both 0x00b45ec8 and 0x00b45ed0 read as 2 when taken as a float:
+// `FMUL qword` makes them doubles, **0.02** and **0.15**. 0x00b45ddc is `FLD
+// dword`, a float, **0.9**, and the clamp pair 0x00b45ec0 / 0x00b45eb8 are both
+// **0.1**.
+func ExpWindowScale(killerLevel, victimLevel int) float64 {
+	gap := victimLevel - killerLevel
+	scale := 1.0
+	switch {
+	case gap >= 11:
+		// The target is far above: leeching a kill on something out of reach
+		// decays by 2% a level past the tenth.
+		scale = 1 - float64(gap-10)*ExpWindowFarAbovePerLevel
+	case gap <= -4:
+		// The target is far below. Four to six levels down is a flat 0.9;
+		// past that it falls away fast, 15% a level.
+		if gap > -7 {
+			scale = ExpWindowNearBelow
+		} else {
+			scale = 1 - float64(-gap-3)*ExpWindowFarBelowPerLevel
+		}
+	}
+	if scale < ExpWindowScaleFloor {
+		scale = ExpWindowScaleFloor
+	}
+	if scale > 1 {
+		scale = 1
+	}
+	return scale
+}
+
+// The constants ExpWindowScale reads, all from .rdata -- see its doc comment
+// for the instruction that fixes each one's operand size.
+const (
+	ExpWindowFarAbovePerLevel = 0.02
+	ExpWindowFarBelowPerLevel = 0.15
+	ExpWindowNearBelow        = 0.9
+	ExpWindowScaleFloor       = 0.1
+)
+
 // ExpDiffScalePerStep, ExpDiffScaleMaxSteps and ExpDiffScaleCap are the real
 // level-gap bonus on a kill's experience: punching UP pays more, and
 // out-levelling a target by three or more pays nothing extra.
@@ -104,11 +178,15 @@ func (t *Table) ExpUnit(level int) (int64, bool) {
 //
 // NOT MODELLED, and deliberately: the function can add a further 0.15/0.3/0.45
 // (or 0.3/0.6/0.9 on a flag at the killer's ref object +0x88) for gaps above
-// 4, 6 and 8 levels, but only when the killer passes a state gate --
-// `killer[0x72e]` non-null with bit 0 of its +0x10 set -- that this project has
-// not identified. Shipping a bonus whose precondition is unknown would apply it
-// always, which is worse than omitting it. The cap is therefore unreachable
-// here: without that bonus the scale spans 1.03 to 1.39.
+// 4, 6 and 8 levels. It is a PARTY bonus -- the gate is `killer[0x72e]`
+// non-null with bit 0 of its +0x10 set, and `[0x72e]` is the party pointer,
+// named by the binary's own assert through CGObjPC::GetPartyInfo (vtable slot
+// 76), which reads exactly that field. What bit 0 of the party's +0x10 selects
+// is still unread, so a solo kill provably misses this bonus but a partied one
+// cannot be decided; srrevamp's parties are own design and carry no such flag.
+// Shipping it would apply it to every kill, which is worse than omitting it.
+// The cap is therefore unreachable here: without the bonus the scale spans
+// 1.03 to 1.39.
 const (
 	ExpDiffScalePerStep  = 0.03
 	ExpDiffScaleMaxSteps = 13
@@ -142,14 +220,12 @@ func ExpDiffScale(killerLevel, victimLevel int) float64 {
 // pays at the weaker party's rate. The rule is symmetric, so it does not matter
 // which argument is which.
 //
-// Of the two level-gap scalers the real formula also applies,
-// Formula_ExpScaleByLevelDiff is now RECOVERED and applied here -- see
-// ExpDiffScale. Formula_ExpScaleByLevelWindow (0040fed0) is not: it branches on
-// a mode returned by FUN_0040fe60 and asserts on two of the three paths, and
-// neither the mode nor what selects it is identified, so it stays 1.0. The
-// killer's own exp-rate multiplier (a float at killer+0x1cd8, presumably a
-// premium or event rate) is likewise not modelled. Both omissions only ever
-// scale the reward, so what ships is the game's shape at its base rate.
+// BOTH level-gap scalers the real formula applies are now recovered and applied
+// here -- see ExpDiffScale and ExpWindowScale. What remains unmodelled is the
+// killer's own exp-rate multiplier, a float at killer+0x1cd8 written only by
+// CTJ_PremiumKeeper's neighbours; it is a premium/event rate and a character
+// without one evaluates it at its default, so what ships is the game's formula
+// at the base rate.
 func (t *Table) KillExp(killerLevel, victimLevel int) (int64, bool) {
 	lvl := killerLevel
 	if victimLevel < lvl {
@@ -159,7 +235,9 @@ func (t *Table) KillExp(killerLevel, victimLevel int) (int64, bool) {
 	if !ok {
 		return 0, false
 	}
-	v = int64(math.Round(float64(v) * ExpDiffScale(killerLevel, victimLevel)))
+	v = int64(math.Round(float64(v) *
+		ExpWindowScale(killerLevel, victimLevel) *
+		ExpDiffScale(killerLevel, victimLevel)))
 	if v < 1 {
 		// The real formula floors its result at 1.
 		v = 1

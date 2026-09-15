@@ -177,28 +177,31 @@ func TestExpUnitAndKillExp(t *testing.T) {
 		t.Fatal("ExpUnit(7) should be unknown -- the fixture has no row for it")
 	}
 
-	// The minimum-level rule: a level-20 character killing a level-1 monster
-	// is paid at level 1, not level 20 -- and it out-levels the target by far
-	// more than three, so ExpDiffScale contributes exactly 1.0 and the unit is
-	// paid bare.
-	if got, ok := tbl.KillExp(20, 1); !ok || got != 24 {
-		t.Fatalf("KillExp(20, 1) = %d,%v; want 24 (paid at the monster's level)", got, ok)
+	// The minimum-level rule still holds -- a level-20 character killing a
+	// level-1 monster is paid at level 1's unit, not level 20's -- but the
+	// window scaler then takes almost all of it away, which is the game's real
+	// anti-powerlevelling behaviour and far stronger than the min rule alone.
+	// gap -19 -> 1 - 16*0.15 = -1.4, floored at 0.1. 24 * 0.1 = 2.4.
+	if got, ok := tbl.KillExp(20, 1); !ok || got != 2 {
+		t.Fatalf("KillExp(20, 1) = %d,%v; want 2 (level-1 unit, window floor 0.1)", got, ok)
 	}
-	// The reverse is NOT symmetric any more, and that is the recovered
-	// behaviour rather than a regression: the base is still the level-1 unit
-	// (the minimum-level rule), but punching 19 levels up earns the level-gap
-	// bonus, capped at 13 steps -- 24 * (1 + 13*0.03) = 33.36.
-	if got, ok := tbl.KillExp(1, 20); !ok || got != 33 {
-		t.Fatalf("KillExp(1, 20) = %d,%v; want 33 (level-1 unit, gap bonus capped)", got, ok)
+	// The reverse is not symmetric: the base is still the level-1 unit, but
+	// punching 19 levels up earns the gap bonus (capped at 13 steps, 1.39) and
+	// pays the far-above window penalty (1 - 9*0.02 = 0.82).
+	// 24 * 0.82 * 1.39 = 27.36.
+	if got, ok := tbl.KillExp(1, 20); !ok || got != 27 {
+		t.Fatalf("KillExp(1, 20) = %d,%v; want 27 (unit 24 * 0.82 * 1.39)", got, ok)
 	}
-	// A level-3 character killing a level-10 monster: base 71 at level 3,
-	// gap 7 -> 10 steps -> 1.30. 71 * 1.30 = 92.3.
+	// A level-3 character killing a level-10 monster sits INSIDE the -3..+10
+	// window, so the window scaler is exactly 1.0 and only the gap bonus
+	// applies: base 71 at level 3, 10 steps -> 1.30. 71 * 1.30 = 92.3.
 	if a, _ := tbl.KillExp(3, 10); a != 92 {
-		t.Fatalf("KillExp(3, 10) = %d; want 92 (71 * 1.30)", a)
+		t.Fatalf("KillExp(3, 10) = %d; want 92 (71 * 1.00 * 1.30)", a)
 	}
-	// The other way round the killer out-levels by 7, so no bonus at all.
-	if b, _ := tbl.KillExp(10, 3); b != 71 {
-		t.Fatalf("KillExp(10, 3) = %d; want the bare 71", b)
+	// The other way round the killer out-levels by 7: no gap bonus, and the
+	// window scaler's far-below arm, 1 - 4*0.15 = 0.4. 71 * 0.4 = 28.4.
+	if b, _ := tbl.KillExp(10, 3); b != 28 {
+		t.Fatalf("KillExp(10, 3) = %d; want 28 (71 * 0.40)", b)
 	}
 
 	// An export predating the exp_unit column still loads, and reports the
@@ -398,5 +401,53 @@ func TestApplyDeathPenaltyReduction(t *testing.T) {
 	if !ok || got != 470*100 {
 		t.Errorf("DeathPenaltyExp(20, monster) = %d,%v; want %d unchanged by the zero reduction",
 			got, ok, 470*100)
+	}
+}
+
+// TestExpWindowScale pins the recovered window scaler at every boundary its
+// three modes create. The mode edges are the whole content of the function, so
+// a test that only sampled the middle would prove nothing.
+func TestExpWindowScale(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		killerLevel, victimLevel int
+		want                     float64
+	}{
+		// Mode 0 is the band -3 <= gap < 11, and inside it the engine leaves
+		// the scale at the 1.0 it was initialised to.
+		{"same level", 20, 20, 1.00},
+		{"three below (the last of mode 0)", 20, 17, 1.00},
+		{"ten above (the last of mode 0)", 20, 30, 1.00},
+		// Mode 1 starts at gap 11 and decays 2% a level past the tenth.
+		{"eleven above (first of mode 1)", 20, 31, 0.98},
+		{"twenty above", 20, 40, 0.80},
+		{"far above, floored", 20, 100, 0.10},
+		// Mode 2 starts at gap -4. Four to six below is a flat 0.9.
+		{"four below (first of mode 2)", 20, 16, 0.90},
+		{"six below (last of the flat band)", 20, 14, 0.90},
+		// Seven below and worse falls away 15% a level, from 1 - (7-3)*0.15.
+		{"seven below", 20, 13, 0.40},
+		{"eight below", 20, 12, 0.25},
+		{"nine below", 20, 11, 0.10},
+		{"far below, floored", 20, 1, 0.10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ExpWindowScale(tc.killerLevel, tc.victimLevel)
+			if math.Abs(got-tc.want) > 1e-9 {
+				t.Errorf("ExpWindowScale(%d, %d) = %v, want %v",
+					tc.killerLevel, tc.victimLevel, got, tc.want)
+			}
+		})
+	}
+
+	// It never scales a reward UP, and never below the floor.
+	for killer := 1; killer <= 120; killer++ {
+		for victim := 1; victim <= 120; victim++ {
+			s := ExpWindowScale(killer, victim)
+			if s < ExpWindowScaleFloor || s > 1 {
+				t.Fatalf("ExpWindowScale(%d, %d) = %v, outside [%v, 1]",
+					killer, victim, s, ExpWindowScaleFloor)
+			}
+		}
 	}
 }

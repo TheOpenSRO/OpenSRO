@@ -2108,3 +2108,99 @@ later lands in the right arithmetic.
 - Still open from before: `GetParam(0x80/0x81)` and `GetParam(0x103)` in the
   damage pipeline; the mitigation-skipping descriptor flag `0x20`;
   `Formula_ExpScaleByLevelWindow`'s mode; itemdata columns 114 and 117.
+
+## [0x72e] and [0x72f] are PARTY and GUILD — and the exp formula closes (2026-09-15)
+
+The previous entry named these two adjacent PC pointer fields as the best next
+lever, on the grounds that either one would settle both a death kind and a
+shipped-adjacent bonus. Both are named now, and from the binary's own asserts
+rather than by inference:
+
+	CGObjPC::GetPartyInfo  (IGObj vtable slot 76)  reads pc+0x1cb8  -> [0x72e] = PARTY
+	CGObjPC::GetGuildName  (IGObj vtable slot 94)  reads pc+0x1cbc  -> [0x72f] = GUILD
+
+Each override is a two-line function whose only field access is the one in
+question, and each was already named by the base class's `__FILE__` assert. That
+retires two open items at once:
+
+- **The exp-reward tier bonus is a PARTY bonus.** Its gate is `killer[0x72e]`
+  non-null with bit 0 of the party's `+0x10` set. Still not shipped — what bit 0
+  selects is unread, and srrevamp's parties are own design with no such flag —
+  but the reason is now "a party-conditional bonus whose party flag is unread"
+  rather than "an unidentified state".
+- **Death kind 5 needs BOTH parties in guilds.** `FUN_004eb390` requires the
+  killer to pass the PC predicate, the victim's `+0x1cbc` to be non-null, and
+  the killer's `[0x72f]` likewise, before a further guild-to-guild comparison.
+  A player kill where both sides are guilded, which suppresses the PK penalty
+  and the doubled reward, is a guild-war or siege death. Described, not yet
+  named: the comparison itself (`FUN_005e4390`, a two-hop accessor into the
+  guild object) has not been followed to a war table.
+
+### Formula_ExpScaleByLevelWindow: RECOVERED, and the exp formula is now whole
+
+The last "treated as 1.0" term. Its mode comes from `FUN_0040fe60`, which turns
+out not to be a mode at all but three comparisons on the level gap:
+
+	gap = victimLevel - killerLevel
+	gap <  -3 -> 2      gap < 11 -> 0      otherwise -> 1
+
+and **mode 0 jumps straight past every arithmetic path** (`40ff03 SUB EAX,0 ;
+JE 0x40ff8c`), leaving the 1.0 the result was initialised to. So inside a
+-3..+10 band the scale is exactly 1.0 — which is most kills, and means the old
+placeholder was accidentally right for the common case and wrong only at the
+extremes.
+
+The two outer arms:
+
+	mode 1, 40ff5d:  SUB EDX,EBX ; SUB EDX,0xA
+	                 FMUL qword [0x00b45ec8]      <- * 0.02
+	                 FLD1 ; FSUBRP                <- 1.0 - that
+	mode 2, 40ff1f:  SUB ECX,EBX ; CMP ECX,-7 ; JG
+	         40ff55:   FLD dword [0x00b45ddc]     <- 0.9 flat
+	         40ff38:   SUB EBX,EDX ; SUB EBX,3
+	                   FMUL qword [0x00b45ed0]    <- * 0.15
+	                   FLD1 ; FSUBRP
+	clamp,  40ff94:  FCOM qword [0x00b45ec0]      <- below 0.1 -> 0.1
+	        40ffb6:  FLD1 ; FCOM                  <- at or above 1.0 -> 1.0
+
+`EBX` is the killer's level and `EDX` the victim's, from
+`Formula_MonsterExpReward`'s `MOV ECX,EDI` (EDI being the killer) with ESI still
+holding the victim.
+
+**Operand size mattered more than usual here.** Both `0x00b45ec8` and
+`0x00b45ed0` read as `2` when taken as a float and as `0.02` and `0.15` as
+doubles — and the instruction is `FMUL qword` in both cases, so they are the
+doubles. Taking the float would have made every extreme-gap kill pay a negative
+scale clamped to the floor.
+
+So the scaler is, clamped to [0.1, 1.0]:
+
+| gap (victim − killer) | scale |
+|---|---|
+| ≥ 11 | 1 − (gap − 10) × 0.02 |
+| −3 … 10 | **1.0** |
+| −4 … −6 | 0.9 |
+| ≤ −7 | 1 − (−gap − 3) × 0.15 |
+
+**What moved:** `leveldata.ExpWindowScale`, applied in `KillExp` alongside
+`ExpDiffScale`. With both scalers in, a kill's experience is the game's own
+formula at the base rate — only the killer's premium/event multiplier
+(`killer+0x1cd8`) is left out, and a character without one evaluates it at its
+default.
+
+The visible change is at the extremes, and it is the real anti-powerlevelling
+rule: a level-20 killing a level-1 drops from 24 to **2** (the minimum-level
+rule still pays the level-1 unit, but the window floor takes 90% of it), and a
+level-10 killing a level-3 from 71 to 28. Kills inside the band are unchanged —
+a level-3 on a level-10 stays 92.
+
+### Open
+
+- Bit 0 of a party's `+0x10`, which arms the exp tier bonus.
+- `FUN_005e4390` and the guild-to-guild comparison behind death kind 5.
+- `vf[0x3b4]` on the killer, which overrides the death loss outright.
+- Death kinds 1, 2 and 6 and their handlers.
+- Premium params 256 and 258, and `killer+0x1cd8`, the exp rate.
+- Still open from before: `GetParam(0x80/0x81)` and `GetParam(0x103)` in the
+  damage pipeline; the mitigation-skipping descriptor flag `0x20`; itemdata
+  columns 114 and 117.
