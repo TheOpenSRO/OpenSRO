@@ -2965,3 +2965,57 @@ comment carries the enumeration.
 This also closes the last open question about the `'hra'`/`'era'` pair, which
 this file has carried since the tag vocabulary was first read: they are real
 columns, really published, and vestigial in this build.
+
+## The damage pipeline is complete for an unbuffed character (2026-09-15)
+
+The previous entry's enumeration of every `GetParam` call produced a by-product
+worth acting on: the exact set of params the engine reads. Intersecting that
+with what srrevamp models leaves the terms the damage pipeline applies and this
+project omits — params **128–131, 178, 180, 187, 188, 189 and 259**, each a
+multiplier or addend on every blow. If any is non-zero by default, srrevamp's
+damage is wrong.
+
+**None of them is written by any baseline publisher.** The three functions that
+establish a character's stats write only these ids:
+
+| function | params written |
+|---|---|
+| `Char_PublishCombatStats` | 0x5–0x10, 0x17/0x18, 0x21–0x25, 0x3a, 0x8d, 0xbe–0xc1 |
+| `GObjMob_PublishStats` | 0x0, 0x3–0xc, 0x17/0x18, 0x1b–0x21, 0x8c |
+| `GObjPC_InitStats` | 0x0–0x2, 0x9, 0xb, 0x17/0x18, 0x21–0x25, 0x34–0x3c, 0x8c/0x8d, 0xc2–0xc8 |
+
+Not one of 0x80–0x83, 0xb2, 0xb4, 0xbb, 0xbc or 0x103 appears. Their writers are
+`Stat_ApplyTaggedModifier` (the item/skill tag path), `FUN_00594ac0` (the
+skill-effect applier) and `FUN_005830b0` — all modifier paths. 180 and 259 have
+**no writer at all**.
+
+So for a character with no buffs and no tagged item modifiers — which is every
+character srrevamp has — all of those terms evaluate to zero, and **the damage
+pipeline here is complete rather than approximate**. That is a closure, not a
+new value: nothing changes, and now it is known that nothing should.
+
+### An error caught mid-tick, and the trap that caused it
+
+Param 189 (the berserk bonus) is the exception, and I nearly filed it wrongly.
+The census showed its only writer is `CGObjCOS_Summoned::SetBodyMode`, which
+reads as "a summon's function, so a player's 189 is always zero, so berserk is
+exactly x2". That is wrong.
+
+`0x004a9fc0` is **vtable slot 198 across seventeen classes**, `CGObjChar` among
+them, and the binary's own base-class assert names it **`IGObj::SetBodyMode`**.
+The dump indexes a shared implementation under a single derived class — whichever
+the RTTI walk reached — and reading that label as the owner is a mistake that
+will recur, because most of this binary's shared virtuals are indexed the same
+way. **The RTTI line, not the function name, says which classes reach it.**
+
+A player therefore can carry param 189, and the existing account was already
+right: `SetBodyMode`'s fifth argument grants a base of 0.3, every call site bar
+one passes 0, so 2.0 is the plain multiplier and 2.3 the special case.
+
+### Also corrected
+
+`berserk.go` called `0x004a9fc0` "CGObjChar::SetBerserk". That name was this
+project's invention; the binary calls it `SetBodyMode`, and berserk is one body
+mode rather than the whole function. Renamed in the citation, with the reason.
+
+**No srrevamp value changed.**

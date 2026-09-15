@@ -35,8 +35,19 @@ const (
 	// 2026-09-15 by walking the whole chain rather than by finding a
 	// constant:
 	//
-	//   CGObjChar::SetBerserk    vtable slot 198 (0x004a9fc0) writes the
-	//                            berserk flag at (*(this+0x30))+3.
+	//   IGObj::SetBodyMode       vtable slot 198 (0x004a9fc0) writes the
+	//                            berserk flag at (*(this+0x30))+3. NAME
+	//                            CORRECTED 2026-09-15: this comment used to
+	//                            call it CGObjChar::SetBerserk, which was this
+	//                            project's invention. The binary names it
+	//                            itself -- the base class's own assert puts
+	//                            IGObj::SetBodyMode at slot 198 -- and berserk
+	//                            is one body mode rather than the whole
+	//                            function. One implementation serves all 17
+	//                            character classes, so the dump indexing it
+	//                            under CGObjCOS_Summoned does not make it a
+	//                            summon's: CGObjChar is in the same RTTI list,
+	//                            which is why a PLAYER can carry param 189.
 	//   CGObjChar::IsBerserk     vtable slot 64 (0x004aa5b0) reads that same
 	//                            byte -- which is what ties the two together.
 	//   Combat_ResolveDamage     (0x0058e5f0) sets bit 2 of the damage flags
@@ -56,11 +67,21 @@ const (
 	// would deal no damage at all.)
 	//
 	// Param 189 is a separate "berserk damage bonus" STAT that adds on top.
-	// SetBerserk's fifth argument grants it a base of 0.3 (float at
+	// SetBodyMode's fifth argument grants it a base of 0.3 (float at
 	// 0x00b45b8c) and clears it otherwise -- but every call site in the
 	// binary passes 0 there bar one, so the plain multiplier is 2.0 and 2.3
 	// is the special case. Nothing here models that stat yet, so it is left
 	// out rather than folded in at a guessed rate.
+	//
+	// That stat is also the ONLY term the game applies to a blow which this
+	// project omits and cannot prove is zero. Every other one can: the damage
+	// pipeline additionally reads params 128-131, 178, 180, 187, 188 and 259,
+	// and none of the three functions that establish a character's baseline --
+	// Char_PublishCombatStats, GObjMob_PublishStats, GObjPC_InitStats -- writes
+	// any of them (they write only 0x0-0x25, 0x34-0x3c, 0x8c/0x8d and
+	// 0xbe-0xc8). Their writers are skill effects and tagged item modifiers,
+	// which srrevamp has none of. So for an unbuffed character those terms
+	// evaluate to zero and the damage pipeline here is complete.
 	DamageNumerator   = 2
 	DamageDenominator = 1
 )
