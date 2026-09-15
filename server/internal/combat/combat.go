@@ -155,7 +155,19 @@ func RollDamage(min, max int, r *rand.Rand) int {
 // so no parser ties the file to the table. Two real things that fit perfectly,
 // with the join inferred.
 //
-// It is still strictly better than the `10 + level*5` invention it replaces.
+// **The linkage got WEAKER, not stronger, on 2026-09-15.** Enumerating the
+// server's SQL refdata tables turned up 85 of them, including `_REFLEVEL` (the
+// leveldata equivalent) and `_REFDROPGOLD` -- but **no `_REFLEVELGOLD`**. So the
+// server's gold table is named after *drops*, not after levelgold, and the file
+// this range comes from may be the client's own copy of something else. The
+// server loads its refdata from that database rather than from any file (it
+// references no refdata filename anywhere), so nothing here ties levelgold.txt
+// to the `+0x268` table that the gold item is actually spawned from.
+//
+// Kept anyway, because the honest comparison is against what it replaced: a
+// made-up `10 + level*5`. A real client table of per-level gold ranges is better
+// evidence than an invention, and the gap is named rather than hidden. If an
+// operator ever supplies `_REFDROPGOLD`, that supersedes this outright.
 func RollGold(min, max int64, flat int64, r *rand.Rand) int64 {
 	if max <= 0 || max < min {
 		return flat

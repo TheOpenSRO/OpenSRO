@@ -407,6 +407,42 @@ assign, buffer write, allocator, list clear), and `__FILE__` attribution
 (**zero** headroom: 153 server functions cite a path, all already namespaced,
 and only one function anywhere cites two files).
 
+## The server's OTHER refdata catalogue: 85 SQL tables
+
+The client reads 88 textdata files. The **server reads 85 `_REF*` tables out of
+its database** — it references no refdata filename anywhere, which is why every
+hunt for a server-side parser has come up empty. The two catalogues are the same
+reference data in two forms, and the table names are all in the binary:
+
+`_REFOBJCHAR` `_REFOBJITEM` `_REFOBJCOMMON` `_REFOBJSTRUCT` `_REFLEVEL`
+`_REFSKILL` `_REFSKILLMASTERY` `_REFQUEST` `_REFCHARDEFAULT_QUEST`
+**`_REFCHARGEN`** `_REFHWANLEVEL` `_REFDROPGOLD` `_REFDROPITEMGROUP`
+`_REFDROPITEMASSIGN` `_REFMONSTER_ASSIGNEDITEMDROP` `_REFMONSTER_ASSIGNEDITEMRNDDROP`
+`_REFDROPOPTLVLSEL` `_REFDROPCLASSSEL_*` (10) `_REFMAGICOPT*` (4) `_REFSHOP*` (8)
+`_REFSIEGE*` (11) `_REFTELEPORT` `_REFTELELINK` `_REFREGION` `_REFGAME_WORLD`
+`_REFGAMEWORLDNPC` `_REFINSTANCE_WORLD_START_POS` `_REFCLIMATE` `_REFALCHEMYMERIT`
+… and the rest.
+
+**This names where three open items actually live**, which is more useful than
+another round of guessing they are absent:
+
+- **`_REFCHARGEN`** — character generation. Starting Str/Int is disclosed
+  own-design precisely because nothing writes those constants in the exe; this
+  is the table that would hold them.
+- **`_REFHWANLEVEL`** — the berserk levels. `hwanleveldata.txt` turned out to be
+  a *title* table, and the gauge numbers had no string handle; this is where
+  they live.
+- **`_REFQUEST`** — quest refdata. Worth re-testing the standing "objectives are
+  not data" conclusion against it, the way `npcpos` was re-tested.
+
+**It also weakened a shipped value, and that is recorded in the code.** The
+catalogue contains `_REFLEVEL` and `_REFDROPGOLD` but **no `_REFLEVELGOLD`** —
+so the server's gold table is named after *drops*, and `levelgold.txt` may be
+the client's copy of something else entirely. `combat.RollGold`'s doc comment now
+says so. The value stays, because the honest comparison is against the invented
+`10 + level*5` it replaced, and an operator supplying `_REFDROPGOLD` supersedes
+it outright.
+
 ## The real game's persisted data model
 
 One helper binds every database column to its struct offset, and **60 functions
