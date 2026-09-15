@@ -31,6 +31,39 @@ CT 103 is not.
 Analyse client data **on this box** and bring back only statistics, so pulled game data never
 reaches the repo tree.
 
+## The 15-minute tick, and the lock you must actually take
+
+`/opt/srrevamp-re/re_tick.sh` runs from cron every 15 minutes. It keeps the
+evidence fresh — rebuilds a decomp dump whose binary is newer than the dump's
+own `DONE` marker, re-runs the standing probes, and writes `STATUS`.
+
+**It guards itself with `flock -n 9` on `/opt/srrevamp-re/lock`.** That is an
+*advisory* lock on the open file descriptor, not a lock on the file existing.
+Two consequences, both of which have already cost this project a dump:
+
+- **`touch /opt/srrevamp-re/lock` takes no lock and prevents nothing.** A job
+  that announces itself that way will be run straight over.
+- **`rm -f /opt/srrevamp-re/lock` is worse than useless** — it destroys the
+  inode the cron holds its lock on, so the next tick creates a fresh file and
+  locks that, and the mutex stops working entirely.
+
+Any long Ghidra job must do `exec 9>/opt/srrevamp-re/lock; flock -n 9 || exit`
+and simply let the descriptor close when it finishes. `/var/tmp/dump_all.sh`
+does this and is the thing to copy.
+
+The failure mode when you get it wrong is not obvious: the tick's staleness
+check is `[ ! -f "$out/DONE" ]`, and an in-progress dump has no `DONE` yet
+(`DecompAll.java` writes it at the end), so the tick concludes the dump is
+stale and `rm -rf`s the directory out from under the running job. On
+2026-09-15 that killed a client dump at shard 1513 with a
+`FileNotFoundException` on the next shard — a message that points at disk, not
+at a scheduler.
+
+Note also that the cron's own dumps use a **30-second** per-function timeout
+where `re_pass.sh` uses 180. The 27 KB `Client_LoadRefDataFile` needs ~30 s, so
+a cron-built dump can carry `failed=1` where a hand-run one does not. Check the
+`failed=` field in `DONE` before trusting a dump to be complete.
+
 ## Hardware rendering
 
 The host has an **AMD RX 5700 XT (Navi 10, `03:00.0`)**. It had been configured for VFIO
