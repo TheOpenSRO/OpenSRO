@@ -391,3 +391,40 @@ one), ones merely undisassembled, and ones that will not disassemble at all.
 
 **Re-dump after `create`.** The dumps are the artifact every later grep reads,
 and 6,799 new function bodies are not in them until you rebuild.
+
+## `NameVtableSlotsFromAsserts.java` — let the base class name the slot
+
+This is the lever that found berserk, generalised. `IGObj::UpdateHwanLevel`'s
+base implementation is a stub that does nothing but log its own name:
+
+    "## Illegal ##  IGObj::UpdateHwanLevel TypeID: %u"
+
+RTTI says that stub is slot 197. Those two facts together do not name one
+function — they name **slot 197 in every class that inherits it**.
+
+248 such `(class, slot, method)` triples are in the server's own strings, in the
+game's own spelling: `CGStorageOP::PushItem`,
+`CGStorageOP::RandomSelectNonEmptySlotForDeathPenalty`,
+`CGItemCOSSummoner::SetEngagedCOSforOpenMarket`, `IGObj::GetParam`.
+
+**Validated against three facts it did not produce**: `IGObj slot 65 GetParam`
+(this project derived vtable offset 0x104 = GetParam by hand; 0x104/4 = 65),
+`IGObj slot 197 UpdateHwanLevel` (the berserk work), and `IGObj slot 74
+GetMaxLevel` sitting immediately after the hand-derived slot 73 `Char_GetLevel`.
+
+Two guards, both of which earned their place:
+
+- **The string's class is the authority.** The seed is `(class named in the
+  string, slot)` and propagates only to vtables whose class is that class or has
+  it in its base chain. Slot numbers mean nothing across unrelated hierarchies —
+  `CGStorageOP` slot 38 and `CGObjChar` slot 38 are different methods.
+- **`Class::member` is not a method.** The client's `"CObjChild::m_pGfxDevice is
+  null"` would otherwise seed slot 15 of the root of the entire UI hierarchy;
+  that one string accounted for **477 of the client's 484** candidates. Names
+  starting `m_`, and ALL_CAPS tails, are rejected.
+
+Count nameable functions as **distinct entries**, not `(seed, class)` pairs: an
+inherited implementation is one function reached through every derived table, so
+the pair count runs about thirteen times higher than reality.
+
+Run it after `RttiRebuild`, before the interpolate/propagate/vtable chain.

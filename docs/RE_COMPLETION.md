@@ -755,6 +755,53 @@ Also named, with no tag counterpart found yet: `PARAM_PA` "Phy. atk. pwr.",
 `PARAM_PD` "Phy. def. pwr.", `PARAM_MA` "Mag. atk. pwr.", `PARAM_MD`
 "Mag. def. pwr.", `PARAM_ABSORB` "Absorption".
 
+## The base class names the slot (2026-09-15)
+
+The berserk lever, generalised into a pass. `IGObj::UpdateHwanLevel`'s base
+implementation is a stub that does nothing but log its own name —
+`"## Illegal ##  IGObj::UpdateHwanLevel TypeID: %u"` — and RTTI says that stub
+is slot 197. Those two facts do not name one function: they name **slot 197 in
+every class that inherits it**.
+
+248 such `(class, slot, method)` triples are sitting in the server's strings, in
+the game's own spelling. **Validated against three facts the pass did not
+produce**: `IGObj slot 65 GetParam` (this project derived vtable offset
+`0x104` = GetParam by hand, and 0x104/4 = 65), `IGObj slot 197 UpdateHwanLevel`
+(last tick's berserk work), and `IGObj slot 74 GetMaxLevel` landing immediately
+after the hand-derived slot 73 `Char_GetLevel` — the adjacency a declaration
+pair would have.
+
+Two guards earned their place:
+
+- **The string's class is the authority.** The seed is `(class named in the
+  string, slot)`, propagating only to vtables whose class is that class or has
+  it in its base chain. Slot numbers mean nothing across unrelated hierarchies.
+- **`Class::member` is not a method.** The client's
+  `"CObjChild::m_pGfxDevice is null"` would have seeded slot 15 of the root of
+  the whole UI hierarchy; that one string accounted for **477 of the client's
+  484** candidates before the filter. Only 7 client names survive it, and that
+  is the correct number.
+
+**481 functions named** (474 server, 7 client). Coverage after re-running the
+chain: **server 64.1%** (was 56.3%), **client 46.0%** (44.5%) — combined
+identified **38,555 → 41,844**. The gain is mostly downstream: 474 real names
+seeded +2,417 new attributions, which is the compounding effect again.
+
+A counting trap worth recording: nameable functions must be counted as
+**distinct entries**, not `(seed, class)` pairs. An inherited implementation is
+one function reached through every derived class's table, so the pair count read
+6,325 against an apply that named 474 — a thirteenfold overstatement in a
+report that would have been quoted as a result.
+
+**What the 248 names open up.** They are the game's own vocabulary for things
+this project has open items on: `CountEmptyInventory`, `ExpandInventory`,
+`FindEmptySlotNum`, `GetLatestAvailableSlot` (inventory size);
+`RandomSelectNonEmptySlotForDeathPenalty`, `CanRevive`, `GetLifeState`,
+`SetLifeState` (the death penalty); `OffsetGold`, `OffsetExpPoint`,
+`OffsetSkillPoint` (the economy); plus `GetCurHP`/`GetCurMP`, `GetBodyMode`/
+`SetBodyMode`, `IsWeapon`/`IsShield`/`IsArmor` and the rest of the type
+predicates.
+
 ## What "attack rate" actually does, and the damage dice (2026-09-15)
 
 The standing item was "crit/block/hit rolls — values recovered, dice not". The
