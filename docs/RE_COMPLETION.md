@@ -3948,3 +3948,75 @@ reader does not turn them into validation the game never performed.
 srrevamp's existing type-id constants gained a bounds test, nine `ReferenceData`
 functions gained evidence-backed names, and naming coverage is now a measured
 21.7% rather than an impression.
+
+## The kill-reward path: damage share, and a 3%-per-member party exp bonus (2026-09-15)
+
+Followed the source-path lever from last tick. Binary-wide it is nearly spent —
+only 156 functions carry a `WORK2005` path and 68 of those are still `FUN_` — but
+two of the files it names sit on srrevamp's critical path: **`Formulae.cpp`** (3
+functions, 2 unnamed) and **`RefItemDrop.cpp`**. Took `Formulae` first.
+
+Both unnamed functions are kill-reward formulas, and following their callers
+opened the whole path:
+
+	COS_DistributeKillReward (004d68c0)
+	  pass 1: accumulate each contributor's damage into entry+0x18
+	  pass 2: for each PC contributor -> vtable slot 420, with
+	          (accumulated damage, party multiplier)
+	GObjPC_ReceiveKillReward (004ea6a0, slot 420)
+	  -> Formula_ExpRewardForContributor (00410110)
+	  -> Formula_ExpShareByDamage        (004106b0)
+	  -> GObjPC_DistributePartyExp       (004fcb00)
+
+**The share is by accumulated damage, and the use-site settled it.** The obvious
+misreading was that the share is the *last blow* — which would cut a solo
+killer's exp by whatever fraction the final hit was, a tenfold difference. It is
+not: `add DWORD PTR [eax+0x18],edx` in the first pass is an accumulator, and the
+second pass passes `entry[6]` (that same field) per contributor. So
+`share = clamp(accumulatedDamage / victimMaxHP, 1e-6, 1.0)`, and a solo killer's
+share is exactly 1.0. The lower bound is an epsilon (`fld DWORD ds:0xb45c84` =
+1e-06f), not a minimum-contribution rule. `vf[0x110]` being MaxHP came free from
+the pool work two ticks ago.
+
+### VALUE SHIPPED: the party exp bonus
+
+`COS_DistributeKillReward` builds the multiplier immediately before each award:
+
+	4d6bb9  FLD1                          <- starts at 1.0
+	4d6bcd  CMP  DWORD [EDI+0x1cb8],0     <- pc[0x72e], the party field
+	4d6bd4  JE   ...                      <- no party: stays 1.0
+	4d6bd9  CALL 0x4ea230                 <- member count
+	4d6bde  SUB  EAX,1                    <- members - 1
+	4d6be9  FMUL QWORD ds:0xb45dc8        <- * 0.03
+	4d6bef  FADD QWORD ds:0xb45ac0        <- + 1.0
+
+**Party exp bonus = 1.0 + (members - 1) x 0.03** — 3% per extra member.
+
+Both constants are `QWORD`, so **doubles**: 0.03 and 1.0. Read as float32 the
+first is -3.7e19. The operand-size rule earned its keep again, and Ghidra had in
+fact rendered both as `(float)` in the decompiled C, which would have produced
+garbage.
+
+Wired through as `leveldata.PartyExpBonusPerMember` / `PartyExpBonus(members)`,
+applied in `session.applyPartyExpBonus` on the kill-reward path, with `parties`
+threaded into `CombatHandler`, `UseSkillHandler` and `performAttack`. Two tests:
+`leveldata.TestPartyExpBonus` pins the multiplier (and that it is monotonic and
+never a penalty), `session.TestApplyPartyExpBonus` covers the wiring and the
+three "no bonus" shapes — no hub, no party, party of one — which are all the
+engine's own `FLD1` default.
+
+**SCOPE, stated because the engine does more than srrevamp now does.** The real
+server scales each contributor by its damage share *and* distributes to party
+members through `GObjPC_DistributePartyExp`. srrevamp awards the whole unit to
+the killer. For the killer that is exactly right — a solo contributor's share
+clamps to 1.0, so the bonus alone reproduces the engine's number for that
+character. What srrevamp still does not do is give the other members anything;
+that is a separate missing feature, recorded in the constant's comment rather
+than papered over.
+
+**Also opened:** `killer+0x1cdc` is the multiplier `Formula_ExpShareByDamage`
+applies (`unaff_EBX[0x737]` is the same field), which sits beside the long-open
+`killer+0x1cd8`. Both are per-killer exp multipliers; neither is written by
+anything srrevamp models, so they stay open rather than guessed.
+
+**What moved:** a real value, shipped. Party kills now pay what the engine pays.

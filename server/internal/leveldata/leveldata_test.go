@@ -454,3 +454,46 @@ func TestExpWindowScale(t *testing.T) {
 		}
 	}
 }
+
+// TestPartyExpBonus pins the engine's party multiplier: 1.0 plus 3% for every
+// member past the first, from the FMUL 0.03 / FADD 1.0 pair in
+// CGObjCOS_GoldPet::vslot_399. Both constants are QWORD in the disassembly, so
+// they are doubles -- read as float32 the first is -3.7e19, which is why the
+// operand size is checked rather than assumed.
+func TestPartyExpBonus(t *testing.T) {
+	for _, tc := range []struct {
+		members int
+		want    float64
+	}{
+		{0, 1.0},  // nonsense size, no bonus
+		{1, 1.0},  // solo: the engine keeps the FLD1 it started with
+		{2, 1.03}, // one companion
+		{3, 1.06},
+		{5, 1.12}, // party.MaxSize here
+		{8, 1.21}, // the engine's own cap, for reference
+	} {
+		got := PartyExpBonus(tc.members)
+		if math.Abs(got-tc.want) > 1e-9 {
+			t.Errorf("PartyExpBonus(%d) = %v, want %v", tc.members, got, tc.want)
+		}
+	}
+
+	// The per-member step is the recovered constant itself, not a rounding of
+	// it: a bonus built from any other step would drift here.
+	if PartyExpBonusPerMember != 0.03 {
+		t.Fatalf("PartyExpBonusPerMember = %v, want the recovered 0.03", PartyExpBonusPerMember)
+	}
+
+	// Monotonic and never a penalty -- the engine only ever adds.
+	prev := PartyExpBonus(1)
+	for n := 2; n <= 16; n++ {
+		cur := PartyExpBonus(n)
+		if cur <= prev {
+			t.Errorf("PartyExpBonus(%d) = %v is not greater than PartyExpBonus(%d) = %v", n, cur, n-1, prev)
+		}
+		if cur < 1.0 {
+			t.Errorf("PartyExpBonus(%d) = %v, below 1.0 -- the bonus must never reduce exp", n, cur)
+		}
+		prev = cur
+	}
+}

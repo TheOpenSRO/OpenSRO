@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
+	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
@@ -607,6 +609,7 @@ func CombatHandler(
 	skills skill.Store,
 	zerk *berserk.Tracker,
 	mp *mana.Tracker,
+	parties *party.Hub,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
@@ -623,7 +626,7 @@ func CombatHandler(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 			}
 
-			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, characterID, req.TargetMonsterID, 0, 0, 1)
+			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, characterID, req.TargetMonsterID, 0, 0, 1)
 		case OpMonsterList:
 			return handleMonsterList(sess, hub, monsters)
 		default:
@@ -660,6 +663,26 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 // counterattack, sends OpAttackResult to sess, grants gold on a kill, and
 // broadcasts to everyone else in the zone. Shared by CombatHandler and
 // skill.UseHandler so both attack paths behave identically.
+// applyPartyExpBonus scales a kill's experience by the engine's party
+// multiplier -- 1.0 plus 3% for every member past the first, recovered from the
+// FMUL 0.03 / FADD 1.0 pair in CGObjCOS_GoldPet::vslot_399. See
+// leveldata.PartyExpBonusPerMember, which also records what srrevamp still does
+// NOT do: distribute a share to the other members.
+//
+// Returns exp unchanged when there is no party hub (the handler is constructed
+// without one in several tests), when the character is in no party, or when the
+// party has a single member -- all three are the engine's FLD1 default.
+func applyPartyExpBonus(parties *party.Hub, characterID int64, exp int64) int64 {
+	if parties == nil || exp == 0 {
+		return exp
+	}
+	pt, in := parties.Get(characterID)
+	if !in || pt == nil || len(pt.Members) < 2 {
+		return exp
+	}
+	return int64(math.Round(float64(exp) * leveldata.PartyExpBonus(len(pt.Members))))
+}
+
 func performAttack(
 	ctx context.Context,
 	sess *gateway.Session,
@@ -673,6 +696,7 @@ func performAttack(
 	skills skill.Store,
 	zerk *berserk.Tracker,
 	mp *mana.Tracker,
+	parties *party.Hub,
 	characterID, targetMonsterID int64,
 	damageBonus int,
 	damagePercent int,
@@ -825,6 +849,7 @@ func performAttack(
 			if unit, ok := levelTable.KillExp(char.Level, monster.Level); ok {
 				gainedExp = unit
 			}
+			gainedExp = applyPartyExpBonus(parties, characterID, gainedExp)
 			// The skill economy's income. The game grants skill EXPERIENCE,
 			// carries it on the character and converts whole points out of the
 			// running total at 400:1 -- see leveldata.SkillExpPerPoint, which

@@ -472,6 +472,31 @@ public class ApplyKnownNames extends GhidraScript {
          + "entry+0x10 (leveldata column 2) for each, and refuses with error 0x3802 when the "
          + "character's skill points fall short. This is where the mastery cost was recovered."},
 
+        // The kill-reward path: who contributed, how much each share is worth,
+        // and the party multiplier on top. See docs/RE_COMPLETION.md.
+        {"004106b0", "Formula_ExpShareByDamage",
+         "Scales a contributor's share of a kill by the damage it dealt: divides the accumulated "
+         + "damage by the victim's MaxHP (vf[0x110]) and clamps to [1e-6, 1.0], the lower bound "
+         + "being an epsilon rather than a balance value ('fld DWORD ds:0xb45c84' = 1e-06f). "
+         + "Multiplies that by Formula_ExpScaleByLevelWindow, Formula_ExpScaleByLevelDiff, the "
+         + "victim's reward and the killer's own multiplier at +0x1cdc. A solo killer's "
+         + "accumulated damage exceeds MaxHP, so its share clamps to exactly 1.0. Asserts from "
+         + "Formulae.cpp:0x69a."},
+        {"00410110", "Formula_ExpRewardForContributor",
+         "The sibling of Formula_ExpShareByDamage on the same reward path, returning a 64-bit "
+         + "amount. Calls the same two level scalers and asserts from Formulae.cpp:0x5c7."},
+        {"004d68c0", "COS_DistributeKillReward",
+         "Walks the victim's contributor list twice: the first pass accumulates each "
+         + "contributor's damage into entry+0x18 ('add DWORD PTR [eax+0x18],edx'), the second "
+         + "calls vtable slot 420 on each PC contributor with that accumulated total. Builds the "
+         + "PARTY MULTIPLIER just before each call -- FLD1, then if pc+0x1cb8 (the party field, "
+         + "pc[0x72e]) is non-zero, (memberCount-1) * 0.03 + 1.0, both constants read as QWORD "
+         + "so both are doubles. That is the 3%-per-extra-member party exp bonus."},
+        {"004ea6a0", "GObjPC_ReceiveKillReward",
+         "CGObjPC vtable slot 420 (offset 0x690): takes the contributor's accumulated damage as "
+         + "arg 2 and the party multiplier as arg 3, runs both Formulae reward functions over "
+         + "them, and hands the result on to GObjPC_DistributePartyExp."},
+
         // ReferenceData.cpp -- the refdata parsing layer. These were found by
         // harvesting assert strings across the whole ReferenceData namespace:
         // each one names the game's own variables, constants and error text, so

@@ -136,7 +136,7 @@ func TestSkillFullFlow(t *testing.T) {
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
 		LearnSkillHandler(chars, skills, fakeSkillRef{}),
-		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}, nil, mana.NewTracker()),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}, nil, mana.NewTracker(), nil),
 		SkillListHandler(chars, skills),
 	)
 	addr, cleanup := startTestServer(t, handle)
@@ -350,7 +350,7 @@ func TestSkillPercentageAppliesAfterMitigation(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}, nil, mana.NewTracker()),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}, nil, mana.NewTracker(), nil),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()

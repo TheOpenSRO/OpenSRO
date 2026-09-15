@@ -16,6 +16,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
+	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
@@ -349,6 +350,7 @@ func UseSkillHandler(
 	skillRef SkillRefStore,
 	zerk *berserk.Tracker,
 	mp *mana.Tracker,
+	parties *party.Hub,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpUseSkill {
@@ -433,7 +435,7 @@ func UseSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
 		}
 
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, characterID, req.TargetMonsterID, damageBonus, damagePercent, hits)
+		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, characterID, req.TargetMonsterID, damageBonus, damagePercent, hits)
 	}
 }
 

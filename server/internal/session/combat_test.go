@@ -141,7 +141,7 @@ func TestCombatFullFlow(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil, nil),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -294,7 +294,7 @@ func TestCombatArmorMitigation(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil, nil),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -424,7 +424,7 @@ func TestCombatLootFlow(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil, nil),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -565,7 +565,7 @@ func TestMonsterListFlow(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil, nil),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -696,7 +696,7 @@ func TestLevelAdvantageAppliedInCombat(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil, nil),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -813,7 +813,7 @@ func TestDeathPenaltyAppliedInCombat(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil, nil),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -958,7 +958,7 @@ func TestMonsterCriticalAppliedInCombat(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil, nil),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -1056,7 +1056,7 @@ func TestPlayerCriticalAppliedInCombat(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil, nil),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
@@ -1161,7 +1161,7 @@ func TestShieldBlocksInCombat(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
-		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil, nil),
 	)
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()

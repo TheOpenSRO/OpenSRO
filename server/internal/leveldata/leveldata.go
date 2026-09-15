@@ -201,6 +201,45 @@ const (
 	ExpWindowScaleFloor       = 0.1
 )
 
+// PartyExpBonusPerMember is the extra share of a kill's experience each
+// ADDITIONAL party member is worth: **0.03, i.e. 3% per member beyond the
+// first.** RECOVERED, not chosen.
+//
+// CGObjCOS_GoldPet::vslot_399 builds the multiplier just before handing each
+// contributor its award, and the disassembly spells it out:
+//
+//	4d6bb9  FLD1                          <- the multiplier starts at 1.0
+//	4d6bcd  CMP  DWORD [EDI + 0x1cb8],0   <- pc[0x72e], the party field
+//	4d6bd4  JE   ...                      <- no party: stays 1.0
+//	4d6bd9  CALL 0x4ea230                 <- the party's member count
+//	4d6bde  SUB  EAX,1                    <- members - 1
+//	4d6be9  FMUL QWORD ds:0xb45dc8        <- * 0.03
+//	4d6bef  FADD QWORD ds:0xb45ac0        <- + 1.0
+//
+// Both constants are read as QWORD, so they are DOUBLES: 0.03 and 1.0. Read as
+// float32 the first is -3.7e19, which is the usual reminder that operand size
+// decides a float constant in this binary.
+//
+// SCOPE, because this is only part of what the engine does with a party. The
+// real server also scales each contributor's award by its share of the victim's
+// maximum HP -- Formula_ExpShareByDamage clamps damage/MaxHP to [1e-6, 1.0] --
+// and then distributes to party members through GObjPC_DistributePartyExp.
+// srrevamp does neither: it awards the whole unit to the killer. For the killer
+// that is exactly right, because a solo contributor's share clamps to 1.0, and
+// the bonus below then matches the engine for that character. What srrevamp
+// still does NOT do is give the other party members anything, which is a
+// separate missing feature rather than a wrong number.
+const PartyExpBonusPerMember = 0.03
+
+// PartyExpBonus returns the multiplier applied to a kill's experience for a
+// party of the given size. A solo character (or any size below 2) gets 1.0.
+func PartyExpBonus(members int) float64 {
+	if members < 2 {
+		return 1.0
+	}
+	return 1.0 + float64(members-1)*PartyExpBonusPerMember
+}
+
 // ExpDiffScalePerStep, ExpDiffScaleMaxSteps and ExpDiffScaleCap are the real
 // level-gap bonus on a kill's experience: punching UP pays more, and
 // out-levelling a target by three or more pays nothing extra.
