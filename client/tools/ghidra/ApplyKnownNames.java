@@ -69,6 +69,29 @@ public class ApplyKnownNames extends GhidraScript {
         {"004b3130", "Param_PropagateToDependents",
          "Called by StoreSlot after a value changes: walks the dependent list and pushes the new "
          + "value into each target's registered slot. This is what makes the graph evaluate."},
+        {"00412c20", "InitializeGame",
+         "Names itself: \"InitializeGame() Succeeded!\"."},
+        {"00437a50", "CLobby_RemoveStalePlayers",
+         "Names itself: \"CLobby::_RemoveStalePlayers() NULL Lobby Entry Found!\"."},
+        {"00440870", "AQ_COSManipulator_DoWork",
+         "Names itself: \"AQ_COSManipulator::DoWork() - nothing to query\"."},
+        {"004e3860", "RemoveParamKeeperItemEntry",
+         "Names itself: \"RemoveParamKeeperItemEntry() - What the hell this equip set type? "
+         + "-_-; (btType: %d)\". Called by CGItemEquip__DetachAbilityByItemOptLevel, which "
+         + "establishes something structural: an equipped item ADDS AND REMOVES ITS OWN ENTRIES "
+         + "in the ParamKeeper rather than being folded into a flat total. So a player's derived "
+         + "stats are the sum of per-item entries, which is why hunting a single gear aggregate "
+         + "kept coming up empty."},
+        {"004ec340", "AutoReloadMagazine",
+         "Names itself: \"::AutoReloadMagazine() call DelItem_EXT() returned fail!!.\" -- the "
+         + "FIRST identifier in the message is the function; DelItem_EXT is what it called."},
+        {"004eeb70", "DelItem_EXT",
+         "Names itself: \"::DelItem_EXT() call AsyncQuery failed!! [MsgProcState: %d]\"."},
+        {"00511f00", "PC_ReleaseCOS",
+         "Names itself: \"PC::RelaseCOS() Failed!!!\" -- the misspelling is the game's own."},
+        {"0040f930", "Formula_RollMagicalDamage",
+         "The twin of Formula_RollWeaponDamage for the other damage type: identical three lines, "
+         + "reading param 193 as the minimum and 192 as the maximum instead of 191/190."},
         {"0040f8d0", "Formula_RollWeaponDamage",
          "The weapon damage roll: reads param 191 as the minimum and param 190 as the maximum "
          + "through the GetParam virtual at vtable offset 0x104, returns 0 when max <= min, else "

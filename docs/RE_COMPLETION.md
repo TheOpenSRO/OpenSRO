@@ -195,8 +195,19 @@ is the weaker side at 4.4% and it is where the gameplay lives.
 - **Log/assert strings naming `Class::Method`** — 517 server functions reference
   exactly one such string and **13** are still unnamed; the client, 18 and 2. The
   earlier assert-string pass took essentially all of it.
-- **Log strings naming a bare `Method()`** — 481 server functions reference
-  exactly one, **77** still unnamed. A small remaining seam.
+- **Log strings naming a bare `Method()`** — counted 77 unnamed, **worth about
+  6**. Reading them rather than trusting the count showed why: the overwhelming
+  majority are `"CLAMP() ==> min(%.3f) exceeded max(%.3f) value), File: %s,
+  Line: %d"`, a shared assertion macro that says nothing about the function
+  containing it — naming those `CLAMP` would be actively wrong. The genuinely
+  self-naming remainder is applied (`InitializeGame`,
+  `CLobby_RemoveStalePlayers`, `AQ_COSManipulator_DoWork`,
+  `RemoveParamKeeperItemEntry`, `AutoReloadMagazine`, `DelItem_EXT`,
+  `PC_ReleaseCOS`). Several more were rejected as ambiguous, because the message
+  names a function the code *called* rather than itself
+  (`"... call DelItem_EXT() returned fail"`); the rule that survives is **take
+  the first identifier in the string, and only when nothing precedes it**.
+  Lever closed.
 - **RTTI class recovery** — impossible, not merely hard. 1,871 type descriptors
   survive and **zero** are referenced, so the COL/vftable chain was stripped.
 
