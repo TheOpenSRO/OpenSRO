@@ -782,16 +782,11 @@ func performAttack(
 			return fmt.Errorf("combat: granting gold reward: %w", err)
 		}
 
-		// Skill points from the kill -- the skill economy's income, spent
-		// raising masteries (which unlocks skills in the skill window). Granted
-		// on every kill like gold; the amount is a disclosed default
-		// (combat.SPFor), see Monster.SPReward. A store without skill tracking
-		// (nil) simply grants none.
-		if skills != nil && monster.SPReward > 0 {
-			if _, err := skills.AddSkillPoints(ctx, characterID, int(monster.SPReward)); err != nil {
-				return fmt.Errorf("combat: granting skill points: %w", err)
-			}
-		}
+		// Skill points from the kill are granted BELOW, out of the kill's own
+		// experience, because the game grants skill EXPERIENCE and converts it
+		// at leveldata.SkillExpPerPoint. Without a level table there is no
+		// experience to convert, so that path falls back to the disclosed
+		// per-kill default -- see the else branch.
 
 		// Experience, and a level-up if it crosses the curve -- only when the
 		// server has a leveldata curve loaded (SetLevelTable). Without one, no
@@ -813,6 +808,21 @@ func performAttack(
 			if unit, ok := levelTable.KillExp(char.Level, monster.Level); ok {
 				gainedExp = unit
 			}
+			// The skill economy's income. The game grants skill EXPERIENCE,
+			// carries it on the character and converts whole points out of the
+			// running total at 400:1 -- see leveldata.SkillExpPerPoint, which
+			// is the recovered part. How much skill experience a KILL is worth
+			// is NOT recovered: the amount reaches GObjPC_GainExpAndLevel as
+			// `levelTable[lvl]+0x1c * M` from a struct this project has not
+			// identified, and the one caller that spells it out is a quest
+			// reward rather than a kill. srrevamp takes M = 1, so a kill is
+			// worth its own experience in skill experience -- a DISCLOSED
+			// choice, and the single knob to turn if M is ever read.
+			if skills != nil && gainedExp > 0 {
+				if _, _, err := skills.AddSkillExp(ctx, characterID, gainedExp); err != nil {
+					return fmt.Errorf("combat: granting skill experience: %w", err)
+				}
+			}
 			newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, gainedExp)
 			newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
 			if err := chars.SetLeveling(ctx, characterID, newLevel, newExp, newStatPoints); err != nil {
@@ -830,6 +840,15 @@ func performAttack(
 					mp.Refill(characterID, character.MaxMPFor(char.Int, newLevel))
 				}
 				levelUp = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
+			}
+		} else if skills != nil && monster.SPReward > 0 {
+			// No level table, so no experience to convert: fall back to the
+			// disclosed whole-point default (combat.SPFor). This is the only
+			// path that still hands out points directly, and it exists so a
+			// deployment that has imported no leveldata still has a skill
+			// economy at all.
+			if _, err := skills.AddSkillPoints(ctx, characterID, int(monster.SPReward)); err != nil {
+				return fmt.Errorf("combat: granting skill points: %w", err)
 			}
 		}
 	} else {

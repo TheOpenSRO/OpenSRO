@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
+
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )
 
@@ -21,6 +23,11 @@ CREATE TABLE IF NOT EXISTS character_skill_points (
 	character_id BIGINT PRIMARY KEY,
 	points       INTEGER NOT NULL DEFAULT 0
 );
+-- The carried skill-experience remainder, the game's _CHAR.SExpOffset. Added
+-- alongside the points column rather than replacing it, so an existing
+-- deployment keeps the points its characters already earned and simply starts
+-- carrying a remainder from here on.
+ALTER TABLE character_skill_points ADD COLUMN IF NOT EXISTS skill_exp BIGINT NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS character_mastery_levels (
 	character_id BIGINT NOT NULL,
 	mastery_id   BIGINT NOT NULL,
@@ -171,6 +178,48 @@ func (s *SQLStore) AddSkillPoints(ctx context.Context, characterID int64, delta 
 		return 0, fmt.Errorf("skill: adding skill points: %w", err)
 	}
 	return total, nil
+}
+
+// AddSkillExp implements Store. One statement, so the read-modify-write of the
+// carried remainder cannot interleave with another kill on the same character.
+func (s *SQLStore) AddSkillExp(ctx context.Context, characterID int64, sexp int64) (int, int, error) {
+	if sexp < 0 {
+		sexp = 0
+	}
+	// A transaction rather than one clever statement: Postgres RETURNING sees
+	// the NEW row, so there is no way to report how many points this call
+	// awarded from a single upsert. Read, compute, write -- the row is locked
+	// FOR UPDATE so two kills on one character cannot interleave.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("skill: adding skill experience: %w", err)
+	}
+	defer tx.Rollback()
+
+	var points int
+	var carried int64
+	err = tx.QueryRowContext(ctx,
+		`INSERT INTO character_skill_points (character_id) VALUES ($1)
+		 ON CONFLICT (character_id) DO UPDATE SET character_id = EXCLUDED.character_id
+		 RETURNING points, skill_exp`, characterID).Scan(&points, &carried)
+	if err != nil {
+		return 0, 0, fmt.Errorf("skill: reading carried skill experience: %w", err)
+	}
+
+	carried += sexp
+	gained := int(carried / leveldata.SkillExpPerPoint)
+	carried %= leveldata.SkillExpPerPoint
+	total := points + gained
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE character_skill_points SET points = $2, skill_exp = $3 WHERE character_id = $1`,
+		characterID, total, carried); err != nil {
+		return 0, 0, fmt.Errorf("skill: storing skill experience: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, fmt.Errorf("skill: committing skill experience: %w", err)
+	}
+	return gained, total, nil
 }
 
 // MasteryLevels implements Store.

@@ -29,9 +29,10 @@ type Monster struct {
 	CodeName string
 	// Level is the monster's real level, recovered from the client's own
 	// characterdata (_RefObjChar column 57 -- verified across 31 monsters:
-	// Mangyang 1, Gyo 5 ... TigerWoman 110, monotonic with difficulty). Unlike
-	// MaxHP/Attack (still disclosed defaults), the level is grounded. 0 if
-	// unknown.
+	// Mangyang 1, Gyo 5 ... TigerWoman 110, monotonic with difficulty). 0 if
+	// unknown. (This used to add "unlike MaxHP/Attack, still disclosed
+	// defaults"; MaxHP has been real since 2026-09-14, characterdata col 59,
+	// and the attack range since the same pass -- col 83's skill 'att'.)
 	Level int
 	// Rarity is the monster's rank, grounded from characterdata (_RefObjChar
 	// column 15): 0 normal, 1 champion, 3/8 unique, 4 giant, 5 titan, 6 elite.
@@ -42,7 +43,10 @@ type Monster struct {
 	X, Y, Z float64 // own design placeholder position -- see Hub.Spawn
 	MaxHP   int
 	HP      int
-	// Defense is a flat subtraction, still the disclosed curve.
+	// Defense is the monster's flat absorption, and it is REAL: characterdata
+	// col 71, which GObjMob_PublishStats publishes into ParamKeeper param 5 --
+	// exactly the term Formula_MitigatePhysicalDamage subtracts. See
+	// cmd/server's monsterSpec, which carries it per species.
 	Defense int
 	// DefensePercent is the monster's own mitigation percentage, and it is
 	// REAL: characterdata columns 73 and 74 hold the physical and magical
@@ -97,11 +101,12 @@ type Monster struct {
 	// level gap, so a monster contributes only its Level. There is no mob
 	// experience column to recover.
 	ExpReward int64
-	// SPReward is the skill points a kill grants -- the skill economy's income
-	// (points are spent raising masteries, which unlocks skills). A disclosed
-	// default (SPFor). Unlike ExpReward this one is genuinely unrecovered: the
-	// exp formula has been read end to end and pays no skill points, so
-	// whatever grants them is a separate path this project has not found.
+	// SPReward is the disclosed whole-point fallback (SPFor), used only when no
+	// level table is loaded. Normally the skill economy is fed by skill
+	// EXPERIENCE converted at leveldata.SkillExpPerPoint -- see that constant,
+	// and session's kill path. The conversion is recovered; how much skill
+	// experience a kill is worth is not, and srrevamp credits the kill's own
+	// experience as a disclosed stand-in.
 	SPReward int64
 }
 
@@ -366,11 +371,14 @@ func ExpFor(maxHP int) int64 {
 	return int64(maxHP)
 }
 
-// SPFor is the placeholder skill points a monster of the given toughness
-// grants on death: a tenth of its max HP, at least 1. A disclosed design
-// choice, not recovered -- skill points come from mob kills in the real game,
-// but the real per-species amount is in the mob data (RefObjChar), not loaded
-// yet, the same status as ExpFor.
+// SPFor is the disclosed whole-point fallback, used only when no level table is
+// loaded and there is therefore no experience to convert.
+//
+// The normal path does not use it. The game grants skill EXPERIENCE and
+// converts it at leveldata.SkillExpPerPoint, carrying the remainder on the
+// character; srrevamp does the same, crediting a kill's own experience as skill
+// experience. Granting whole points per kill cannot reproduce that pacing at
+// any rate, because it rounds each kill up or down to a whole point.
 func SPFor(maxHP int) int64 {
 	if maxHP < 10 {
 		return 1

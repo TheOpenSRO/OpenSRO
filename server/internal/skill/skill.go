@@ -88,6 +88,19 @@ type Store interface {
 	// zero, and returns the new total.
 	AddSkillPoints(ctx context.Context, characterID int64, delta int) (int, error)
 
+	// AddSkillExp credits characterID with skill EXPERIENCE and converts whole
+	// skill points out of the running total, carrying the remainder on the
+	// character. Returns how many points this call awarded (often zero) and
+	// the new unspent total.
+	//
+	// This is the game's own shape, not a convenience wrapper: a kill grants
+	// skill experience, not points, and GObjPC_GainExpAndLevel divides the
+	// carried total by leveldata.SkillExpPerPoint and keeps the remainder in
+	// _CHAR.SExpOffset. Granting points directly -- which this project did
+	// until 2026-09-15 -- cannot produce the game's pacing at any rate,
+	// because it rounds every kill up or down to a whole point.
+	AddSkillExp(ctx context.Context, characterID int64, sexp int64) (gained, total int, err error)
+
 	// MasteryLevels returns characterID's trained level for each mastery it
 	// has raised (masteryID -> level); masteries never raised are absent.
 	MasteryLevels(ctx context.Context, characterID int64) (map[int64]int, error)

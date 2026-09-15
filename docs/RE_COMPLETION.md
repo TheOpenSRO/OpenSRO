@@ -2285,3 +2285,84 @@ one code-adjacent edit is a correction: `docs/GROUNDING_AUDIT.md` asserted in a
 single sentence both that `Char_PublishCombatStats` publishes param 12 and that
 it "indeed does not". It does — `0x00497ef0`, `MOV EDI,0xc`, from the stat
 source's `+0x1dc` — and the tag route simply coexists with it.
+
+## Skill points are a CURRENCY, not a per-kill grant (2026-09-15)
+
+`combat.SPFor` -- a tenth of a monster's max HP -- was the last wholly invented
+value in a monster's profile. Every other field is real: level (col 57), rarity
+(15), max HP (59), flat absorb (71), reduction (73), the attack range (col 83's
+skill `'att'`), gold (levelgold.txt), critical (78), block (76), spawns
+(npcpos), and since two entries ago the experience. Skill points were the
+holdout, and the previous entry had recorded that "the exp formula has been read
+end to end and pays no skill points, so whatever grants them is a separate path
+this project has not found."
+
+It is not a separate path. It is the same call, one argument over.
+
+### The mechanism
+
+`GObjPC_GainExpAndLevel` (`004e5250`) takes SIX arguments, and the skill
+experience is the **fourth and fifth** -- a 64-bit pair distinct from the
+experience in the second and third. Every ordinary exp grant passes zero there
+(`GObjPC_GiveExp` calls it `(src, expLo, expHi, 0, 0, 0)`), which is why reading
+the exp path end to end found no skill points. The block that consumes it:
+
+	acc = charData[0x70] + amount          <- _CHAR.SExpOffset, the carried total
+	if acc >= 400 {
+	    sp  = __alldiv(acc, 400)           <- whole points
+	    acc = acc - sp*400                 <- the remainder STAYS on the character
+	    this->AddSkillPoints(sp, 0)        <- vtable slot 93
+	}
+	charData[0x70] = acc                   <- persisted, dirty bit 4 set
+
+`charData + 0x70` is `SExpOffset` in the recovered `_CHAR` schema, and the name
+says it: skill experience, offset-encoded like `ExpOffset` beside it.
+
+**So skill points are bought, at 400 skill-experience each, out of a running
+total the character carries between kills.** Granting whole points per kill --
+what srrevamp did -- cannot reproduce that at any rate, because it rounds every
+kill to a whole point.
+
+The same block confirms last entry's guild naming from a completely different
+function: it only touches its guild-contribution accumulator (`pc[0x861]`,
+flushed to the guild at 10) when `pc[0x72f]` is non-null, and `[0x72f]` was
+named GUILD from `CGObjPC::GetGuildName`.
+
+### What is NOT recovered, and is disclosed instead
+
+How much skill experience a KILL is worth. The amount reaches the function as
+`levelTable[lvl]+0x1c * M` (`FUN_00631050`), the same per-level unit that pays a
+kill's exp and a death's penalty -- but `M` comes from a struct that has not been
+identified, and the one caller that spells the expression out is a quest reward
+rather than a kill. srrevamp takes **M = 1**: a kill is worth its own experience
+in skill experience. That is a disclosed choice and the single knob to turn if
+`M` is ever read.
+
+It also corrects a claim in `ExpUnit`'s own comment, which said `FUN_00631050`
+hands that product to `GainExpAndLevel` "as an exp amount". It goes in as the
+skill experience. The same per-level unit feeding a kill's exp, a death's
+penalty and a skill-point award is what makes it the table's unit of account
+rather than one system's constant.
+
+### What moved, and the balance consequence stated plainly
+
+`leveldata.SkillExpPerPoint = 400`, `skill.Store.AddSkillExp` (both stores, with
+a `skill_exp` column added beside `points` so existing characters keep what they
+earned), and the kill path now credits skill experience instead of points. The
+whole-point path survives only as the fallback for a deployment with no level
+table, where there is no experience to convert.
+
+**SP income drops sharply, and that is the point rather than a side effect.** A
+level-1 character killing a Mangyang earned 5 points a kill (a tenth of its 54
+max HP); it now earns 26 skill experience, so a point arrives about every 15
+kills, and the first mastery level costs 1. At level 20 a same-level kill is
+worth ~512, so roughly a point a kill against a mastery cost of 53. That curve
+-- tight early, roughly one point per kill by mid level -- is the shape the
+400:1 conversion produces on its own, from numbers that were already grounded.
+
+### Also corrected
+
+Two field comments in `combat.Monster` that had gone stale: `Defense` was
+labelled "still the disclosed curve" when it has been characterdata col 71 since
+2026-09-15 (`cmd/server`'s own `monsterSpec` says so), and `Level` still claimed
+MaxHP and the attack range were disclosed defaults when both are real.

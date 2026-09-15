@@ -141,3 +141,39 @@ func TestRecordUseNotKnown(t *testing.T) {
 }
 
 var _ Store = (*SQLStore)(nil)
+
+// The SQL store must carry the remainder exactly as the in-memory one does --
+// they are the same mechanism, and a deployment that swaps one for the other
+// must not change how fast skill points arrive.
+func TestSQLAddSkillExpCarriesTheRemainder(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLStore(testDSN())
+	if err != nil {
+		t.Fatalf("OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer s.Close()
+	s.TruncateForTest(ctx)
+
+	for i := 0; i < 2; i++ {
+		if gained, total, err := s.AddSkillExp(ctx, 1, 150); err != nil {
+			t.Fatalf("AddSkillExp: %v", err)
+		} else if gained != 0 || total != 0 {
+			t.Fatalf("kill %d: gained %d total %d, want 0/0", i+1, gained, total)
+		}
+	}
+	if gained, total, err := s.AddSkillExp(ctx, 1, 150); err != nil {
+		t.Fatalf("AddSkillExp: %v", err)
+	} else if gained != 1 || total != 1 {
+		t.Fatalf("third kill: gained %d total %d, want 1/1", gained, total)
+	}
+	// The 50 left over must survive in the row, not be rounded away.
+	if gained, _, err := s.AddSkillExp(ctx, 1, 350); err != nil {
+		t.Fatalf("AddSkillExp: %v", err)
+	} else if gained != 1 {
+		t.Errorf("the carried remainder was dropped: got %d points, want 1", gained)
+	}
+	// And SkillPoints agrees with what AddSkillExp reported.
+	if pts, err := s.SkillPoints(ctx, 1); err != nil || pts != 2 {
+		t.Errorf("SkillPoints = %d,%v; want 2", pts, err)
+	}
+}

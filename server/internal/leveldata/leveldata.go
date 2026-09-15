@@ -57,7 +57,11 @@ type Table struct {
 // floored at 1, and its result goes to GObjPC_GiveExp (vtable slot 421, read
 // out of the vtable at 0x00af6090). A second, independent use-site settles what
 // the +0x1c field IS: FUN_00631050 hands `entry[0x1c] * multiplier` straight to
-// GObjPC_GainExpAndLevel as an exp amount, with no formula in between.
+// GObjPC_GainExpAndLevel with no formula in between. It goes in as the SKILL
+// experience -- the fourth argument -- rather than the experience, which
+// corrects an earlier reading here. The same per-level unit feeds a kill's exp,
+// a death's penalty AND a skill-point award, which is what makes it the table's
+// unit of account rather than one system's constant.
 //
 // That +0x1c is column 5 is settled by elimination, not by curve-matching.
 // Column 2 sits at +0x10 (the mastery cost, already grounded and confirmed
@@ -75,6 +79,33 @@ func (t *Table) ExpUnit(level int) (int64, bool) {
 	v, ok := t.expUnit[level]
 	return v, ok
 }
+
+// SkillExpPerPoint is how much SKILL EXPERIENCE buys one skill point: 400.
+//
+// **RECOVERED, and it is a mechanism rather than a number.** srrevamp used to
+// hand out whole skill points per kill. The game does not: it grants skill
+// experience, accumulates it on the character, and converts whole points out of
+// the running total, carrying the remainder.
+//
+// GObjPC_GainExpAndLevel (004e5250) takes the skill-exp amount as its FOURTH
+// and fifth arguments -- a 64-bit pair distinct from the experience in its
+// second and third -- and does:
+//
+//	acc = charData[0x70] + amount        <- _CHAR.SExpOffset, the carried total
+//	if acc >= 400 {
+//	    sp  = __alldiv(acc, 400)         <- whole points
+//	    acc = acc - sp*400               <- remainder stays on the character
+//	    this->AddSkillPoints(sp, 0)      <- vtable slot 93
+//	}
+//	charData[0x70] = acc                 <- persisted, dirty bit 4 set
+//
+// `charData + 0x70` is `SExpOffset` in the recovered _CHAR schema, and the name
+// says what it is: skill experience, offset-encoded like ExpOffset beside it.
+//
+// The same block is an independent confirmation of last entry's guild naming:
+// it only touches its guild-contribution accumulator when `pc[0x72f]` is
+// non-null, and `[0x72f]` was named GUILD from CGObjPC::GetGuildName.
+const SkillExpPerPoint = 400
 
 // ExpWindowScale is the OTHER of the two scalers on a kill's experience, and it
 // only ever reduces: killing far below your level, or far above it, pays less.

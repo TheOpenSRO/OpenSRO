@@ -2,6 +2,7 @@ package skill
 
 import (
 	"context"
+	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"sort"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ type MemStore struct {
 	known     map[int64]map[int64]bool      // characterID -> skillID -> known
 	lastUsed  map[int64]map[int64]time.Time // characterID -> skillID -> when
 	points    map[int64]int                 // characterID -> unspent skill points
+	skillExp  map[int64]int64               // characterID -> carried skill exp (_CHAR.SExpOffset)
 	masteries map[int64]map[int64]int       // characterID -> masteryID -> level
 }
 
@@ -23,6 +25,7 @@ func NewMemStore() *MemStore {
 		known:     make(map[int64]map[int64]bool),
 		lastUsed:  make(map[int64]map[int64]time.Time),
 		points:    make(map[int64]int),
+		skillExp:  make(map[int64]int64),
 		masteries: make(map[int64]map[int64]int),
 	}
 }
@@ -101,6 +104,22 @@ func (m *MemStore) AddSkillPoints(_ context.Context, characterID int64, delta in
 	}
 	m.points[characterID] = total
 	return total, nil
+}
+
+// AddSkillExp implements Store, carrying the remainder the same way the SQL
+// store does so the two behave identically under the same sequence of kills.
+func (m *MemStore) AddSkillExp(_ context.Context, characterID int64, sexp int64) (int, int, error) {
+	if sexp < 0 {
+		sexp = 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	carried := m.skillExp[characterID] + sexp
+	gained := int(carried / leveldata.SkillExpPerPoint)
+	m.skillExp[characterID] = carried % leveldata.SkillExpPerPoint
+	total := m.points[characterID] + gained
+	m.points[characterID] = total
+	return gained, total, nil
 }
 
 // MasteryLevels implements Store.
