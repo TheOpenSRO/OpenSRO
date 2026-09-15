@@ -1028,8 +1028,14 @@ So the four slots are **base (summed)**, **additive % (summed)**, **multiplier
 `slot0 * (slot1+100)/100 * slot2 * slot3/100`, with a clamp that asserts in
 `GParamKeeper.cpp:301`.
 
+> **SUPERSEDED — read the amendment below together with the registry recovery
+> that followed it the same day (`docs/protocol/param_registry.md`). The
+> mechanism described here is correct; the closing claim that the defaults are
+> "not in the binary" is WRONG. They are a static table at VA `0x00c64110`, and
+> reading it restored every inference this amendment had retracted.**
+>
 > **AMENDED 2026-09-15 — the formula above is right but incomplete, and the
-> missing piece invalidates an inference this project used repeatedly.**
+> missing piece changes how an unwritten param must be reasoned about.**
 > `ParamKeeper_EvaluateParam` has two fallbacks to a per-param **default** held
 > at `+0x28`:
 >
@@ -1047,14 +1053,12 @@ So the four slots are **base (summed)**, **additive % (summed)**, **multiplier
 > id is absent. The four values arrive as `fild [ecx+4/8/0xc/0x10]` — integers
 > from a record built at **runtime**, not immediates in the code.
 >
-> **Consequence**: "nothing writes param N, therefore N is zero" is not a valid
-> recovery, and three places in this codebase used it. They now read as "param N
-> is unmodified for an ordinary character", which is what the write census
-> actually proves. The defaults themselves are not in `SR_GameServer.exe` and
-> cannot be decompiled out of it. Corrected in `leveldata.DeathPenaltyReduction-
-> Percent` and `berserk`'s damage-completeness note; `combat.MitigateDamage`'s
-> params 9/11 argument is unaffected because it is a READ-side census (a param
-> nothing reads cannot matter whatever its default).
+> **Consequence**: "nothing writes param N, therefore N is zero" is not valid on
+> its own — the default has to be read before the conclusion follows. It now
+> has been, for all 120 params, and the conclusion does follow for every id this
+> project relies on. `combat.MitigateDamage`'s params 9/11 argument never
+> depended on it either way, being a READ-side census (a param nothing reads
+> cannot matter whatever its default).
 
 **The consequence for damage**: param 13's slot 0 holds the weapon's own range
 *and* the Str-derived contribution from 17, and they **add**. A player's physical
@@ -3687,3 +3691,74 @@ receiver class. Slot meaning depends on the receiver — again.
 
 **What moved:** nothing numeric. Two overreaching claims became accurate ones, a
 long-open question closed as a proven negative, and thirteen names landed.
+
+## The ParamKeeper registry, recovered whole — and yesterday's correction corrected (2026-09-15)
+
+Last tick I retracted the inference "nothing writes param N, therefore N is
+zero", on the grounds that an unwritten param falls back to a descriptor default
+and that those defaults were runtime data, not in the binary. The mechanism was
+right. **The claim that the defaults are unrecoverable was wrong, and this tick
+found them.**
+
+**The find.** There is exactly **one** `CParam` allocation site in the whole
+binary, inside `ParamKeeper_EnsureParam`, and it runs only when the param id is
+present in a global map. So if that map were empty the entire stat system would
+be dead — which is what my own probe appeared to show, because grepping for the
+map's address literals found a constructor, a clear and three lookups but no
+insert. The insert exists; it reaches the map through registers and touches only
+the size word, so an address-literal grep could not see it. `0xcd3118` found it
+in one line: `add DWORD PTR ds:0xcd3118,0x1`.
+
+From there it unwound: the insert's sole caller is `map::operator[]`, whose sole
+caller is `CMainProcess::ParamRegistry_Register` (`0x004b3960`) — a plain loop
+over a **static table at VA `0x00c64110`**, 20-byte records terminated by id
+`0xFFFF`:
+
+```c
+struct ParamDesc { uint16 id; uint16 pad; int32 min, max, default, flag; };
+```
+
+**120 params, ids 0-259 with gaps.** Read out of the PE and written up in full at
+`docs/protocol/param_registry.md`.
+
+**Two checks that the layout is right**, neither of them tuned for: param 0 comes
+out `min=1, max=140` — the level cap, matching `leveldata`'s own 140 — and the
+magnitudes sort by kind on their own, HP/MP capping at ~INT_MAX, the percentage
+stats (`bri`, `cri`, `hprg`, `mprg`, `evbl`, `evcr`) at 100, the rate stats
+(`era`, `hra`) at 65535.
+
+**What it settles.** Only **7 of 120** params have a non-zero default, every one
+of them `100`: ids 34, 35, 36, 37, 50, 51, 140. Everything else defaults to **0**
+— including every id this project reasons about. So the retracted inferences are
+restored, this time on data:
+
+- `leveldata.DeathPenaltyReductionPercent` — param 257 defaults to 0, so a
+  non-premium character takes the full penalty. **Recovered, not chosen.**
+- `berserk`'s damage-completeness note — 128-131, 178, 180, 187, 188 and 259 all
+  default to 0, so an unbuffed character's damage pipeline really is complete.
+- `mana` — `'hprg'`/`'mprg'` default to 0, so the engine's resting regeneration
+  rate is zero. That agrees with yesterday's independent result that no pool
+  writer is timer-driven: both halves say the same thing.
+
+**A validation lever, which is the durable part.** The registry is the
+authoritative list of param ids that can exist — an id absent from it asserts in
+`EnsureParam`, creates nothing, and then faults in `Param_GetValue`, which has no
+null check. Ids **61-127, 142, 151-168, 201, 203-255** are unregistered, so any
+future "recovered" param id landing there is wrong by construction. Every param
+id this project has previously recovered — 2, 3, 4, 9-17, 25-32, 52, 53, 56, 57,
+128-131, 140, 141, 143, 144, 174-177, 178-189, 190-193, 256-259 — validates
+against the registered set.
+
+**Three probe failures in one tick**, all the same shape and all caught before
+they became claims: a caller list that missed three callers, an "empty map" that
+was an incomplete grep, and yesterday's "unrecoverable" that was an unfinished
+search. The rule earned its place again — when a negative comes back, check the
+probe, and prefer a probe that would fail loudly over one that returns nothing.
+
+**Naming.** `ParamRegistry_Register`, `Param_Init`, `ParamKeeper_EnsureParam`,
+`ParamKeeper_ReadParam` and `Param_GetValue` added to `ApplyKnownNames.java`.
+
+**What moved:** nothing numeric — `DeathPenaltyReductionPercent` was already 0.
+What changed is its standing: three constants went from *disclosed own design*
+back to *recovered with a citation*, which is the direction this project is
+supposed to move in.

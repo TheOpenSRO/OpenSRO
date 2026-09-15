@@ -54,16 +54,15 @@ import (
 // written for either. They modify a regeneration that the server itself never
 // performs, which fits a client-side display and item tooltips.
 //
-// One honest limit on how far the negative reaches. A param whose slot 0 is
-// empty does NOT evaluate to zero: ParamKeeper_EvaluateParam falls back to a
-// per-param default at +0x28, and that default is supplied by
-// ParamKeeper_EnsureParam from a descriptor record (min, max, default) looked
-// up in a map keyed by param id and built at runtime -- so the defaults are
-// data, not constants in the binary, and cannot be read out of it. That is why
-// no `'mprg'` baseline is quoted here even as a disproven one. It does not
-// weaken the conclusion above, because the enumeration of pool writers is
-// independent of what any param evaluates to: nothing applies a regeneration
-// periodically whatever its rate would be.
+// And the baseline is zero as well, which was the last thing left to check. A
+// param whose slot 0 is empty does not evaluate to zero by default -- it falls
+// back to the per-param default in its descriptor record. Those records turned
+// out to be a static table in the binary after all (VA 0x00c64110, 120 params,
+// 20 bytes each; see docs/protocol/param_registry.md), and **`'hprg'` and
+// `'mprg'` both default to 0**, with a maximum of 100.
+//
+// So the two halves agree: the engine's resting regeneration rate is zero, and
+// there is no timer that would apply it even if it were not.
 //
 // So this is a plain, honest refill -- a percentage of the pool every few
 // seconds -- so a caster who runs dry recovers without relogging. It is not a

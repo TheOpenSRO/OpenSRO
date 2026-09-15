@@ -447,6 +447,34 @@ public class ApplyKnownNames extends GhidraScript {
          + "entry+0x10 (leveldata column 2) for each, and refuses with error 0x3802 when the "
          + "character's skill points fall short. This is where the mastery cost was recovered."},
 
+        // The ParamKeeper registry: where every param's min, max and default
+        // come from. Recovering this table settled a whole class of
+        // "is this term zero?" questions -- see docs/protocol/param_registry.md.
+        {"004b3960", "ParamRegistry_Register",
+         "Startup loop that publishes the param descriptor table into the global map keyed by "
+         + "param id. Walks a static array of 20-byte records at VA 0x00c64110 -- "
+         + "{uint16 id, int32 min, int32 max, int32 default, int32 flag} -- terminated by an id "
+         + "of 0xFFFF, 120 entries covering ids 0-259 with gaps. This table is the authoritative "
+         + "list of every param that can exist."},
+        {"004b2f40", "Param_Init",
+         "Initialises one CParam from a descriptor: +0x20 min, +0x24 max, +0x1c value and +0x28 "
+         + "default (both from the same argument), +0x2c the flag, and zeroes the four slot "
+         + "heads at +0x8/+0xc/+0x10/+0x14. min and max are pinned by EvaluateParam's own CLAMP "
+         + "assert, which prints +0x20 as min and +0x24 as max."},
+        {"004b3850", "ParamKeeper_EnsureParam",
+         "Lazily creates the param for an id at this+4+id*4. The ONLY CParam allocation site in "
+         + "the whole binary, and it runs only when the id is present in the registry map -- an "
+         + "absent id asserts and creates nothing. The id arrives in DI, not on the stack, which "
+         + "is why SetParam call sites decompile without it."},
+        {"004b3740", "ParamKeeper_ReadParam",
+         "The public param read: asserts if the id is >= 0x200, calls ParamKeeper_EnsureParam, "
+         + "asserts again if the param is still null, then TAIL-JUMPS into Param_GetValue with "
+         + "the pointer. Param_GetValue dereferences it with no null check, so reading a param "
+         + "absent from the registry would fault -- the asserts are the only warning."},
+        {"004b33a0", "Param_GetValue",
+         "Returns a param's cached value at +0x1c, first calling ParamKeeper_EvaluateParam when "
+         + "the dirty byte at +0x1a is set. No null check on the receiver."},
+
         // The HP/MP pool. Recovered while establishing that passive regeneration
         // does NOT exist server-side: naming every writer was how the negative
         // was made complete. SetCurHP names its own source file in its CLAMP

@@ -100,22 +100,21 @@ const (
 	// 0x34-0x3c, 0x8c/0x8d and 0xbe-0xc8). Their only writers are skill
 	// effects and tagged item modifiers, which srrevamp has none of.
 	//
-	// CORRECTION (2026-09-15): this used to conclude "so for an unbuffed
-	// character those terms evaluate to zero and the pipeline is complete."
-	// The premise is right and the conclusion overreached. An unwritten param
-	// does not evaluate to zero -- the read path FUN_004b3740 calls
-	// ParamKeeper_EnsureParam first, which creates it from a descriptor
-	// (min, max, default) looked up by id, and ParamKeeper_EvaluateParam uses
-	// that default as the base whenever slot 0 is empty. The descriptors are
-	// built at runtime and are not in the binary, so the baselines are not
-	// recoverable by decompiling it.
+	// A param nothing writes falls back to its DEFAULT, not to zero -- the
+	// read path calls ParamKeeper_EnsureParam first, and
+	// ParamKeeper_EvaluateParam uses the descriptor's default as the base
+	// whenever slot 0 is empty. So "nothing writes it" settles nothing on its
+	// own; the default has to be read.
 	//
-	// What is proven is that an unbuffed, unequipped character carries no
-	// MODIFIER on any of those params. Whether the engine's own defaults for
-	// them are zero is unknown and unknowable from SR_GameServer.exe. This
-	// project treats them as absent, which is a disclosed choice rather than a
-	// recovered fact -- and the same caveat applies anywhere else this
-	// codebase argued "nothing writes it, so it is zero".
+	// It has been. The descriptors are a static table at VA 0x00c64110 (120
+	// params, 20 bytes each), and **every one of 128-131, 178, 180, 187, 188
+	// and 259 defaults to 0**. Only seven params in the whole registry default
+	// to anything else, all of them to 100, and none is on this list. See
+	// docs/protocol/param_registry.md.
+	//
+	// So for an unbuffed character those terms really do evaluate to zero and
+	// the damage pipeline here is complete -- now on the table's authority
+	// rather than on the assumption.
 	DamageNumerator   = 2
 	DamageDenominator = 1
 )
