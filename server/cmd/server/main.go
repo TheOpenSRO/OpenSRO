@@ -47,24 +47,32 @@ type monsterSpec struct {
 	Level    int     // real level, from the client's characterdata (_RefObjChar col 57)
 	Rarity   int     // real rank, from characterdata (_RefObjChar col 15); 0 = normal
 	MaxHP    int     // real max HP, from characterdata (_RefObjChar col 59) -- see below
+	Defense  int     // real flat absorption, from characterdata col 71 -- see below
 	X, Z     float64 // own-design spawn anchor (see the roster comment)
 	Count    int     // how many to keep alive around the anchor (default 1)
 }
 
 // monsterStatsForLevel is what is still this project's OWN DESIGN in a
-// monster's combat profile: defence, counter-attack and gold, derived from
-// the grounded level. MaxHP is NOT here any more -- it is real, recovered
-// data now (characterdata col 59); see monsterSpec.MaxHP.
+// monster's combat profile: counter-attack and gold, derived from the grounded
+// level. MaxHP left in 2026-09-14 (real, characterdata col 59) and DEFENCE left
+// in 2026-09-15 -- both halves of it are real now:
 //
-// No real monster defence/attack/gold table has been identified, so these
-// three stay a disclosed curve rather than per-species guesses. Exp/SP per
-// kill come from combat.ExpFor/SPFor off MaxHP, so they now scale off the
-// real HP.
-func monsterStatsForLevel(level, rarity int) (defense, attack int, gold int64) {
+//   - the flat absorption is characterdata col 71 (monsterSpec.Defense), and
+//   - the percentage reduction is col 73, which is the monster's own level
+//     (combat.Monster.DefensePercent).
+//
+// Those are the two terms of the game's own mitigation,
+// `damage / (1 + pct/100) - flat`, read straight out of
+// Formula_MitigatePhysicalDamage: it fetches param 5 (the flat) and param 7
+// (the percentage), and GObjMob_PublishStats publishes cols 71 and 73 into
+// exactly those two params.
+//
+// Attack and gold have no identified real table and stay a disclosed curve.
+// Exp per kill is real (leveldata col 5); SP still comes from combat.SPFor.
+func monsterStatsForLevel(level, rarity int) (attack int, gold int64) {
 	if level < 1 {
 		level = 1
 	}
-	defense = 1 + level/3
 	attack = 4 + level*2
 	gold = int64(10 + level*5)
 	// A rarer rank (champion/giant/...) pays more. rarity 0 is an ordinary
@@ -123,19 +131,19 @@ var monsterSpecs = []monsterSpec{
 	// verified terrain rather than a blind guess.
 	//
 	// A low-level ground north-west of the fields (the (0,-840) anchor):
-	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1, MaxHP: 54, X: 0, Z: -840, Count: 3},
-	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", Level: 2, MaxHP: 55, X: -170, Z: -880, Count: 2},
-	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", Level: 3, MaxHP: 85, X: 170, Z: -880, Count: 2},
-	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", Level: 4, MaxHP: 83, X: -170, Z: -760, Count: 2},
+	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1, MaxHP: 54, Defense: 7, X: 0, Z: -840, Count: 3},
+	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", Level: 2, MaxHP: 55, Defense: 9, X: -170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", Level: 3, MaxHP: 85, Defense: 9, X: 170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", Level: 4, MaxHP: 83, Defense: 12, X: -170, Z: -760, Count: 2},
 	// A higher ground east of the fields (the (340,-340) anchor):
-	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", Level: 5, MaxHP: 119, X: 340, Z: -340, Count: 3},
-	{Zone: "jangan", Name: "Water Ghost slave", CodeName: "MOB_CH_WATERGHOST_CLON", Level: 6, MaxHP: 114, X: 500, Z: -360, Count: 2},
-	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", Level: 7, MaxHP: 156, X: 340, Z: -500, Count: 2},
-	{Zone: "jangan", Name: "Tomb Stone Ghost", CodeName: "MOB_CH_TOMBSTONE_CLON", Level: 8, MaxHP: 204, X: 500, Z: -500, Count: 2},
-	{Zone: "jangan", Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", Level: 9, MaxHP: 194, X: 200, Z: -480, Count: 2},
-	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", Level: 10, MaxHP: 249, X: 200, Z: -220, Count: 2},
+	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", Level: 5, MaxHP: 119, Defense: 12, X: 340, Z: -340, Count: 3},
+	{Zone: "jangan", Name: "Water Ghost slave", CodeName: "MOB_CH_WATERGHOST_CLON", Level: 6, MaxHP: 114, Defense: 15, X: 500, Z: -360, Count: 2},
+	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", Level: 7, MaxHP: 156, Defense: 15, X: 340, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Tomb Stone Ghost", CodeName: "MOB_CH_TOMBSTONE_CLON", Level: 8, MaxHP: 204, Defense: 15, X: 500, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", Level: 9, MaxHP: 194, Defense: 22, X: 200, Z: -480, Count: 2},
+	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", Level: 10, MaxHP: 249, Defense: 22, X: 200, Z: -220, Count: 2},
 	// The donghwang example kept from before (a far, higher-level zone).
-	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", Level: 27, MaxHP: 1451, X: 70, Z: -50, Count: 1},
+	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", Level: 27, MaxHP: 1451, Defense: 103, X: 70, Z: -50, Count: 1},
 }
 
 const respawnDelay = 10 * time.Second
@@ -144,7 +152,14 @@ const respawnDelay = 10 * time.Second
 // zone, respawning it respawnDelay after each death, until ctx is
 // canceled. main() runs one of these per monsterSpecs entry.
 func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Logger, spec monsterSpec) {
-	defense, attack, gold := monsterStatsForLevel(spec.Level, spec.Rarity)
+	attack, gold := monsterStatsForLevel(spec.Level, spec.Rarity)
+	// Real flat absorption from characterdata col 71. A spec that forgot it
+	// falls back to the old disclosed curve rather than spawning a monster
+	// with no defence at all.
+	defense := spec.Defense
+	if defense < 1 {
+		defense = 1 + spec.Level/3
+	}
 	// Real HP from characterdata col 59 (see monsterSpecs). A spec that
 	// forgot it would otherwise spawn a 0-HP monster that dies on sight.
 	maxHP := spec.MaxHP

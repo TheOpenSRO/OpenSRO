@@ -43,42 +43,39 @@ which is itself a recovery — quest objectives are the model for that.
 Ordered by value. Each line names the next concrete probe, so a cold start can
 pick one up without re-deriving anything.
 
-1. **Monster attack/defence — cols 75–78 grounded, 71–74 still open.**
-   Cols 75/76/77/78 are `'era'`/`'bri'`/`'hra'`/`'cri'` (see Grounded). The four
-   that remain are cols 71/72 → params 5/6 and 73/74 → params 7/8.
+1. **Monster ATTACK is open; monster DEFENCE is closed (2026-09-15).**
+   Both terms of a monster's mitigation are now real:
 
-   **Ruled out 2026-09-15, so nobody re-walks them:**
-   - **The tag vocabulary cannot name them.** Extracted in full from all five
-     dispatchers: **52 distinct stat tags** (`hp`, `mp`, `str`, `int`, `luck`,
-     `cri`, `hr`/`hra`, `er`/`era`, `bri`, `hprg`/`mprg`, `zb`, `ps`, `fz`, the
-     `r***` resistances, `dur*`, `evbl`/`evcr`, `soli`, `ape`, `atha`, …).
-     **None of them is an attack or defence tag.** So these four are not tagged
-     stats at all — they are gear-derived, which is why no modifier path touches
-     them. That closes the param-code lever for this question.
-   - **Keeper-index reads are not greppable.** A param read compiles to
-     `obj[0x7c+N]` → byte 0x204 for param 5, and that offset collides across many
-     structs: the three hits for param 5 turned out to be an equipment-slot check
-     (`if (obj[0x81] == 0 || obj[0x81]+0x10 != 1) obj[0x82]`), not a keeper read.
-   - **`FUN_0053f4d0` is NOT the aggregate builder** (last tick's suspicion
-     confirmed): it writes two parallel blocks from one source and uses `_rand()`
-     on neighbouring fields — a different struct whose offsets collide.
-   - **The client's authored labels don't reach it either.** The client carries
-     639 `UIIT_STT_*` label ids; `UIIT_STT_PHY_DAMAGE`/`MAG_DAMAGE` belong to the
-     42KB **item tooltip** builder (`00960b50`), which describes a weapon's own
-     itemdata columns, not a character's derived params.
+   | col | param | what it is | real values |
+   |---|---|---|---|
+   | 71 | 5 | **flat absorption** | Mangyang 7, Weasel 12, Yeoha 22, Earth Ghost 103 |
+   | 72 | 6 | flat absorption, magical side | Mangyang 10, Yeoha 41 |
+   | 73 | 7 | **reduction %** | = the monster's level, every row |
+   | 74 | 8 | reduction %, magical side | = the monster's level |
 
-   **Narrowed, with struct identity now settled.** `Char_PublishCombatStats`
-   (`00497830`) has exactly **two** callers, one of them `FUN_004e3760` in the
-   GObjPC range, which runs `FUN_004919e0` (gather) → `FUN_00498020` (a 35-byte
-   wrapper) → `FUN_00497830` (publish). So the six-field aggregate really is on
-   the char object, at bytes `+0x198..+0x1ac` (= `obj[0x66..0x6b]`), and
-   `FUN_00495b40` zero-resets exactly that block — which independently confirms
-   the block's location and extent.
+   Settled by **disassembling** `Formula_MitigatePhysicalDamage`, because the
+   decompiled C was unreadable there — x87 stack juggling turned the expression
+   into a `CONCAT44` and hid which value went where. The instructions are
+   unambiguous:
 
-   *Next probe:* the accumulator between the reset and the publish. It does not
-   write the six offsets literally (grep finds only the reset), so it almost
-   certainly walks them as `base + i*4` in a loop over equipment slots — search
-   for a loop indexing from `+0x198` rather than for fixed offsets.
+   ```
+   PUSH 0x5; CALL GetParam     FSTP [ESP+0x18]      ; save param 5
+   FLD  damage                 FSTP qword [ESP+0x10]
+   PUSH 0x7; CALL GetParam     FDIV [0x00b45af0]    ; param7 / 100
+                               FADD [0x00b45ac0]    ; + 1.0
+                               FDIVR qword [ESP+0x10]  ; damage / (1 + pct/100)
+                               FSUB [ESP+0x18]      ; - param 5
+                               FLDZ; FCOM; FST      ; clamp at 0
+   ```
+
+   So **param 5 is the flat term and param 7 the percentage** — which retires
+   the long-running "are 71/72 attack or defence" question: they are *defence*,
+   and the old "PhyAttack min/max" guess was wrong twice over (not a min/max
+   pair, and not attack). Shipped: `monsterSpec.Defense` carries the real col-71
+   value for all eleven species, from the **original client's** characterdata.
+
+   *Still open — monster ATTACK and gold.* No identified table; they remain a
+   disclosed curve off the grounded level.
 
 2. **Combat damage model — the mitigation formula is RECOVERED; the model is
    not yet shipped.** srrevamp still runs `base + bonus - defence, floor 1`, own
