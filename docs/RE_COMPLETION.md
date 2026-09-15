@@ -3762,3 +3762,74 @@ probe, and prefer a probe that would fail loudly over one that returns nothing.
 What changed is its standing: three constants went from *disclosed own design*
 back to *recovered with a citation*, which is the direction this project is
 supposed to move in.
+
+## The stat-tag vocabulary, extracted in full (2026-09-15)
+
+With the param registry recovered last tick (120 ids, each with min/max/default)
+the obvious next lever was the other half of the vocabulary: which *tag* writes
+which id. `Stat_ApplyTaggedModifier` (`0x00498690`) is the id→name table the
+binary lacks as data — each branch pushes into a specific param and slot — and
+this project had ~19 entries off it, read by hand.
+
+Extracted systematically instead: **53 tags, 31 resolved, 7 proven dead**, in
+`docs/protocol/param_tags.md`.
+
+**Why two passes were needed.** The annotation pass that seeds
+`/* ParamKeeper param id: EDI .. */` comments only resolves ids at a direct
+`SetParam` call. **34 of the 53 tags** reach their param through a shared tail
+(`LAB_00498adf`) with the id left in `EDI` — invisible to it, and rendered as a
+bare `goto` in the decompiled C. Disassembly dataflow over each branch, tracking
+`mov edi, imm`, resolves 12 more.
+
+**The control ran first**, against the 19 known tags: 17 reproduced exactly. Both
+discrepancies were informative rather than fatal, which is the point of running
+a control at all:
+
+- **`drua` came back as 128, 129, 130, 131** against a recorded 128, 129, 130.
+  The use-site settles it — after three `SetParam`s the branch does
+  `mov edi,0x83; jmp 0x498adf`, and the tail performs a fourth write. **The
+  recorded entry was incomplete**, hidden behind exactly the `goto` this pass
+  exists to see through. `berserk`'s note already said "128-131", so nothing
+  shipped was wrong; the memory was.
+- **`hp` came back empty** — it returns immediately after its single write and
+  the walker lost it. Already known and confirmed in the decompiled C.
+
+**What it newly settles:**
+
+- **Param 1 is Strength.** Four tags write it (`str`, `stra`, `strj`, `strv`) and
+  the dispatcher's own fall-through tail is `mov edi,0x1`. Independent
+  corroboration of the stat graph, where health runs `Str(1) -> 52 -> 54 -> MaxHP(3)`.
+- **Params 27-32 are the six status-effect resistances**: `fz` 27, *(28)*, `es`
+  29, `bu` 30, `ps` 31, `zb` 32, with `rals` writing all six at once. Id 28 is
+  only ever written as half of a pair (`mov edi,0x1b` beside
+  `mov [esp+0x24],0x1c`), so its own tag was not isolated. The client names three
+  of them: `PARAM_FZ` "Freezing", `PARAM_PS` "Poisoning", `PARAM_ZB` "Zombie".
+- **`umdu` writes 259** — one of the damage-pipeline params established as
+  unwritten for an ordinary character. Consistent rather than contradictory:
+  `umdu` is a buff tag, so only a buffed character carries it.
+- **Seven tags are DEAD** — recognised by the dispatcher, returning without
+  touching a param: `er`, `atha`, `rep`, `astr`, `dura`, `luck`, `soli`. Since
+  the dispatcher *is* the modifier path, a tag it ignores has no effect on
+  stats. Note `luck` is dead even though the client ships `PARAM_LUCK` = "Lucky"
+  and displays it — but the separate tag `luca` is live, so this is a statement
+  about the tag, not about the stat.
+
+**Cross-validation, which is the part worth keeping.** Every one of the 31
+resolved ids is present in the param registry recovered last tick. Those two
+artifacts came from completely different evidence — a static data table read out
+of the PE at `0x00c64110`, versus dataflow through a dispatcher's branches — so
+their agreement is a real check rather than a restatement.
+
+Also named `AvatarBless_TagList` (`0x00508170`), which builds the 12 tags an
+avatar item's blessing can carry and pairs with the `AVT <tag> +%d%%` strings.
+
+**15 tags remain unresolved**: `ape`, `duru`, `hr`, `inta`, `intj`, `luca`,
+`mdia`, `nrep`, `rcsi`, `rdii`, `rein`, `reis`, `rfei`, `rsli`, `rsti`. They
+reach a param through read-modify-write paths this pass does not follow. Do not
+guess them from the abbreviation — the client's `PARAM_*` keys have already
+corrected this project twice.
+
+**What moved:** nothing numeric; srrevamp models neither luck nor status
+resistances, and `berserk`'s 128-131 was already right. The vocabulary went from
+19 hand-read entries to 31 resolved plus 7 proven-dead, with a registry
+cross-check behind it.

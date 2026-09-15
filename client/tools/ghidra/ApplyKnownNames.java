@@ -397,7 +397,20 @@ public class ApplyKnownNames extends GhidraScript {
          + "pair a tag with the wrong branch if you match them): 'int'->2, 'hp'/'hpa'->3, "
          + "'mp'/'mpa'->4, 'era'->9 slot 1, 'bri'->10, 'hra'->11 slot 1, 'cri'->12, 'hprg'->25, "
          + "'mprg'->26, 'rals'->27, 'hpna'->52, 'mpna'->53, 'evbl'->56, 'evcr'->57. Slot 1 is the "
-         + "additive percent, slot 0 the base."},
+         + "additive percent, slot 0 the base. EXTRACTED IN FULL 2026-09-15 -- 53 tags, 31 "
+         + "resolved, 7 proven dead, see docs/protocol/param_tags.md. 34 of the 53 reach their "
+         + "param through the shared tail at LAB_00498adf with the id left in EDI, which the "
+         + "annotation pass cannot see; disassembly dataflow resolves them. That is how 'drua' "
+         + "turned out to write 128,129,130 AND 131 (the fourth is 'mov edi,0x83; jmp 0x498adf'), "
+         + "and how param 1 was confirmed as Strength ('str'/'stra'/'strj'/'strv', and the tail's "
+         + "own default is 'mov edi,0x1'). Params 27-32 are the six status resistances. Tags "
+         + "'er', 'atha', 'rep', 'astr', 'dura', 'luck' and 'soli' return without touching a "
+         + "param -- they are DEAD, not unimplemented."},
+        {"00508170", "AvatarBless_TagList",
+         "Builds the 12-tag list an avatar item's blessing can carry, in order: 'stra', 'inta', "
+         + "'hra', 'era', 'hpa', 'mpa', 'drua', 'dara', 'mdia', 'hprg', 'mprg', 'luca'. Pairs "
+         + "with the 'AVT <tag> +%d%%' / 'Ava <tag> +%d%%' format strings. Tags are stored "
+         + "big-endian, so read the constants as BE bytes -- a little-endian read reverses them."},
         {"00497830", "Char_PublishCombatStats",
          "Copies the character's precomputed aggregate combat block into the keeper: obj[0x66]->5, "
          + "[0x67]->9, [0x68]->7, [0x69]->10, [0x6a]->6, [0x6b]->8, then 13/14, 15/16, 11/12 and "

@@ -83,6 +83,12 @@ recovered, so it is reported rather than interpreted. The `known tag` column is
 this project's own id->tag mapping from `Stat_ApplyTaggedModifier`, included
 only where already established elsewhere.
 
+**See `param_tags.md`** for the full tag vocabulary — 53 tags, 31 resolved to
+param ids, 7 proven dead. Every id it resolves is registered here, which is a
+cross-check between two artifacts recovered by completely different means (a
+static data table read out of the PE, versus dataflow through a dispatcher's
+branches).
+
 | id | hex | min | max | default | flag | known tag |
 |---:|----:|----:|----:|--------:|-----:|---|
 | 0 | 0x000 | 1 | 140 | **0** | 0 | level |
