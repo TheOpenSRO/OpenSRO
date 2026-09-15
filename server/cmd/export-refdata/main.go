@@ -142,7 +142,7 @@ const (
 	fMagDefenseMin  = 76
 	// The highest field any mapping reads: a row shorter than this is not a
 	// real item row and is skipped.
-	fMax = 116
+	fMax = 117
 )
 
 // Skill (_RefSkill / skilldata_*.txt) raw column indices, 0-based. The
@@ -279,23 +279,35 @@ func itemRecord(cols []string) ([]string, bool) {
 		num(fMagAttackMin),       // 14 MagAttackMin
 		num(fMagAttackMax),       // 15 MagAttackMax
 		num(fHitRate),            // 16 HitRateMin -- col 113, the verified tooltip value
-		// 17 HitRateMax and 19 CriticalMax are NOT exported, and that is a
-		// correction rather than a gap. They were read as fHitRate+1 (col 114)
-		// and fCritical+1 (col 117), assuming each stat is a min/max pair the
-		// way physical defence is. The verified tooltip contradicts it: a
-		// Copper Sword reads 24 at col 113 and 30 at 114, 3 at col 116 and 15
-		// at 117, and its +5 tooltip showed "Attack rate 24" and "Critical 3"
-		// -- SINGLE values. A real max would have displayed as a range, the way
-		// physical attack does ("27 ~ 28").
+		// 17 HitRateMax and 19 CriticalMax are REAL after all, restored
+		// 2026-09-15. They had been withdrawn and emitted as literal "0" on the
+		// argument that a real max would display as a range the way physical
+		// attack does ("27 ~ 28"), while the verified Copper Sword tooltip shows
+		// "Attack rate 24" and "Critical 3" -- single values.
 		//
-		// So columns 114 and 117 are something else, not yet identified, and
-		// exporting them under a max's name would put 15 where a Copper Sword's
-		// critical is 3. Nothing reads either field today; a zero is an honest
-		// absence, a mislabel is a landmine for whoever reaches for it next. The
-		// column positions stay, so the CSV width is unchanged.
-		"0",                    // 17 HitRateMax (col 114 is not this -- see above)
+		// That argument's premise was wrong. Physical attack displays as a range
+		// because its min and max are two DIFFERENT stats, at cols 95 and 97, each
+		// with its own (lo, hi) variance pair beside it. Attack rate and critical
+		// are ONE stat each, and the pair beside them is that stat's per-instance
+		// variance -- so an instance has a single value and shows a single number.
+		// The tooltip is consistent with both readings; it never discriminated.
+		//
+		// What settles it is the engine. FUN_00495d60 computes every item stat as
+		// `lo + t*(hi-lo) + inc*plus` from a (lo, hi, inc) triple at consecutive
+		// ref-object dwords, and two of those triples are (0x288, 0x28c, 0x290) ->
+		// item +0x1d8 and (0x294, 0x298, 0x29c) -> item +0x1dc -- the exact fields
+		// Char_PublishCombatStats publishes as ParamKeeper params 11 ('hra',
+		// attack rate) and 12 ('cri', critical). So each of them IS a lo/hi pair,
+		// and the tooltip value is the lo.
+		//
+		// The data agrees with the engine's own precondition: it asserts that
+		// lo > hi is impossible, and across all 1,568 rows carrying the block,
+		// col 113 <= col 114 and col 116 <= col 117 with ZERO inversions (448 rows
+		// have col 116 == col 117, which the assert permits). Two unrelated stats
+		// would invert somewhere.
+		num(fHitRate + 1),      // 17 HitRateMax  -- col 114, the variance ceiling
 		num(fCritical),         // 18 CriticalMin -- col 116, the verified tooltip value
-		"0",                    // 19 CriticalMax (col 117 is not this -- see above)
+		num(fCritical + 1),     // 19 CriticalMax -- col 117, the variance ceiling
 		get(fTypeID1),          // 20 TypeID1
 		get(fTypeID1 + 1),      // 21 TypeID2
 		get(fTypeID1 + 2),      // 22 TypeID3

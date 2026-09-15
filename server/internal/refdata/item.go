@@ -80,11 +80,18 @@ type Item struct {
 	//	defenderArmor       PhysDefenseMax   (long-standing; also feeds the
 	//	                                      shop price and the shop listing
 	//	                                      the client displays)
-	//	attackerCritical    CriticalMin      (col 116 -- and this one is NOT a
-	//	                                      choice: the verified tooltip
-	//	                                      shows a single value there, so
-	//	                                      the "Max" field is not the same
-	//	                                      stat. See cmd/export-refdata.)
+	//	attackerCritical    CriticalMin      (col 116, the variance FLOOR --
+	//	                                      and this IS a choice after all.
+	//	                                      An earlier note here said the
+	//	                                      "Max" field was not the same
+	//	                                      stat, on the strength of the
+	//	                                      tooltip showing a single value.
+	//	                                      It is the same stat: col 117 is
+	//	                                      its per-instance variance
+	//	                                      ceiling, which a single instance
+	//	                                      never displays as a range. See
+	//	                                      cmd/export-refdata for the engine
+	//	                                      triple that settles it.)
 	//	defenderBlock       BlockRatioMin    (a genuine 10~20 range; the low
 	//	                                      end, so a shield is never
 	//	                                      overstated)

@@ -191,3 +191,57 @@ func TestCSVColumnsCoverEveryField(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryDropFieldSurvivesSQL completes the sweep over refdata's stored
+// types. MonsterDrop and DropGroupEntry go through the same import/read-back
+// path as Item and Skill, so they can lose a field the same way.
+//
+// DropRatio and SelectRatio are float64 and the audit fills floats with a
+// fractional value, so a column typed INTEGER rather than DOUBLE PRECISION
+// fails here rather than silently rounding every drop rate.
+func TestEveryDropFieldSurvivesSQL(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLStore(testDSN())
+	if err != nil {
+		t.Fatalf("OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer s.Close()
+
+	var drop MonsterDrop
+	seed := 0
+	fillStruct(t, reflect.ValueOf(&drop).Elem(), &seed)
+	drop.MonsterID = 987656
+	if err := s.ImportMonsterDrops(ctx, []MonsterDrop{drop}); err != nil {
+		t.Fatalf("ImportMonsterDrops: %v", err)
+	}
+	gotDrops, err := s.GetMonsterDrops(ctx, drop.MonsterID)
+	if err != nil {
+		t.Fatalf("GetMonsterDrops: %v", err)
+	}
+	if len(gotDrops) != 1 {
+		t.Fatalf("GetMonsterDrops returned %d rows, want 1", len(gotDrops))
+	}
+	if bad := diffFields(t, reflect.ValueOf(drop), reflect.ValueOf(*gotDrops[0])); len(bad) > 0 {
+		t.Errorf("%d of %d MonsterDrop fields did not survive:\n  %s",
+			len(bad), reflect.TypeOf(drop).NumField(), strings.Join(bad, "\n  "))
+	}
+
+	var entry DropGroupEntry
+	seed = 0
+	fillStruct(t, reflect.ValueOf(&entry).Elem(), &seed)
+	entry.GroupID = 987657
+	if err := s.ImportDropGroupEntries(ctx, []DropGroupEntry{entry}); err != nil {
+		t.Fatalf("ImportDropGroupEntries: %v", err)
+	}
+	gotEntries, err := s.GetDropGroupEntries(ctx, entry.GroupID)
+	if err != nil {
+		t.Fatalf("GetDropGroupEntries: %v", err)
+	}
+	if len(gotEntries) != 1 {
+		t.Fatalf("GetDropGroupEntries returned %d rows, want 1", len(gotEntries))
+	}
+	if bad := diffFields(t, reflect.ValueOf(entry), reflect.ValueOf(*gotEntries[0])); len(bad) > 0 {
+		t.Errorf("%d of %d DropGroupEntry fields did not survive:\n  %s",
+			len(bad), reflect.TypeOf(entry).NumField(), strings.Join(bad, "\n  "))
+	}
+}

@@ -2792,3 +2792,62 @@ A value is not shipped when it is recovered, nor when it is exported. It is
 shipped when something reads it back out of the store it will actually live in.
 Three values had passed the first two gates and failed the third; two of them
 for long enough to reach a tagged release.
+
+## itemdata 114 and 117 are the variance ceilings — a withdrawal reversed (2026-09-15)
+
+First, the audit from the previous entry was finished: `MonsterDrop` and
+`DropGroupEntry` round-trip cleanly, and the character store's SELECT covers all
+twelve `Character` fields. `Item` and `Skill` were the only leaks, and both are
+fixed. The class is closed.
+
+Then the open item this file has carried longest: columns 114 and 117, which
+`export-refdata` emitted as literal `"0"` under a note saying they were
+"something else, not yet identified".
+
+**They are attack rate's and critical's per-instance variance ceilings**, and the
+argument that withdrew them was wrong in its premise rather than its care.
+
+That argument ran: a real max would display as a range the way physical attack
+does (`"27 ~ 28"`), but the verified Copper Sword tooltip shows "Attack rate 24"
+and "Critical 3" — single values. True, and it does not follow. Physical attack
+displays as a range because its min and max are **two different stats**, at cols
+95 and 97, each with its own `(lo, hi)` pair beside it. Attack rate is **one
+stat**, and the column beside it is that stat's variance — so an instance has a
+single value and shows a single number. The tooltip never discriminated between
+the two readings.
+
+**The engine settles it.** `FUN_00495d60` computes every item stat as
+`lo + t*(hi-lo) + inc*plus` from a `(lo, hi, inc)` triple at consecutive
+ref-object dwords. Two of those triples are
+
+	(0x288, 0x28c, 0x290) -> item +0x1d8
+	(0x294, 0x298, 0x29c) -> item +0x1dc
+
+and `Char_PublishCombatStats` publishes item `+0x1d8` as ParamKeeper param 11
+(`'hra'`, attack rate) and `+0x1dc` as param 12 (`'cri'`, critical). So each of
+them *is* a lo/hi pair, and the tooltip value is the lo — which is what the
+project already reads from cols 113 and 116.
+
+**The data confirms the engine's own precondition.** `FUN_00495d60` asserts that
+`lo > hi` cannot happen. Across all 1,568 rows carrying the block:
+
+| pair | inversions | equal |
+|---|---|---|
+| col 113 vs 114 | **0** | 0 |
+| col 116 vs 117 | **0** | 448 |
+
+Zero inversions in either. Equality is permitted by the assert, which fires only
+on `lo > hi`. Two unrelated stats sitting side by side would invert somewhere in
+1,568 rows.
+
+### What moved
+
+`HitRateMax` and `CriticalMax` are exported again, from cols 114 and 117, and
+`fMax` rises to 117 to match the highest column now read. The test that pinned
+the zeros now pins the real values and asserts the floor never exceeds the
+ceiling. `refdata.Item`'s "which end does srrevamp use" note carried the same
+false claim — that the Max field "is not the same stat" — and is corrected.
+
+Nothing changes how a blow is rolled: `attackerCritical` still takes
+`CriticalMin`, and that is now visibly a **choice of end** rather than a
+consequence of the other end being a different stat.

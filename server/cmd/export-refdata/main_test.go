@@ -39,6 +39,10 @@ func TestItemRecordRoundTripsThroughTheImporter(t *testing.T) {
 	set(fHitRate+1, "30")
 	set(fCritical, "3")
 	set(fCritical+1, "15")
+	// col 114/117 are the variance ceilings of attack rate and critical, and
+	// they ARE exported -- restored 2026-09-15 after the argument that
+	// withdrew them turned out to rest on a false premise. The assertions
+	// below pin the real values rather than the zeros that used to ship.
 	// The Copper Sword's real reinforce quad, which is also the floor of each
 	// of these four columns across every weapon row in the table. The
 	// neighbouring odd columns carry the per-instance variance high end and
@@ -241,10 +245,18 @@ func TestUnverifiedMaxColumnsAreNotExported(t *testing.T) {
 	if it.CriticalMin != 3 {
 		t.Errorf("CriticalMin = %v, want the verified 3", it.CriticalMin)
 	}
-	if it.HitRateMax != 0 {
-		t.Errorf("HitRateMax = %v, want 0 -- col 114 is not the hit-rate max", it.HitRateMax)
+	// The variance ceilings, restored. These were literal zeros until
+	// 2026-09-15; the fixture sets 30 and 15, and both must now arrive.
+	if it.HitRateMax != 30 {
+		t.Errorf("HitRateMax = %v, want 30 -- col 114, attack rate's variance ceiling", it.HitRateMax)
 	}
-	if it.CriticalMax != 0 {
-		t.Errorf("CriticalMax = %v, want 0 -- col 117 is not the critical max", it.CriticalMax)
+	if it.CriticalMax != 15 {
+		t.Errorf("CriticalMax = %v, want 15 -- col 117, critical's variance ceiling", it.CriticalMax)
+	}
+	// And the engine's own precondition holds on the fixture, as it does on
+	// every real row: the floor never exceeds the ceiling.
+	if it.HitRateMin > it.HitRateMax || it.CriticalMin > it.CriticalMax {
+		t.Errorf("a variance pair is inverted: hit rate %v..%v, critical %v..%v",
+			it.HitRateMin, it.HitRateMax, it.CriticalMin, it.CriticalMax)
 	}
 }
