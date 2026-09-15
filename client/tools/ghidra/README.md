@@ -428,3 +428,28 @@ inherited implementation is one function reached through every derived table, so
 the pair count runs about thirteen times higher than reality.
 
 Run it after `RttiRebuild`, before the interpolate/propagate/vtable chain.
+
+## Greps that silently exclude a subset
+
+Two false negatives in two consecutive sessions, both from a pattern that looked
+exhaustive and was not. Recording the shape because it is now a pattern rather
+than an incident, and because **a false negative here looks exactly like a
+settled question** — an absent value reads as "this does not exist" and gets
+written into the docs as a closed item.
+
+- **`grep '== 0x'` over a decompiled switch misses every `!=` branch.** MSVC
+  emits a dispatch as a binary-search tree, and the leaves alternate between
+  equality and inequality tests. Harvesting the skill param-code vocabulary this
+  way dropped `'ar'` — which was the single code the question at hand turned on.
+- **`\(0x[0-9a-f]+\)` misses small numbers.** Ghidra prints them in decimal, so
+  a census of `GetParam(...)` call sites found nothing for params 1–9 — including
+  params 5 and 7, the two mitigation terms this project had already recovered
+  and could have used as a self-check.
+
+The cheap defence is to **include a known-present case in every census** and
+check the pattern finds it before trusting what it does not find. Params 5 and 7
+were right there; the run that missed them should have failed loudly.
+
+Related: multi-char constants worked out by hand are wrong often enough to
+matter (`'defr'` is 1684366962, not 1684366450 — a slip that reported 273 real
+skills as zero). Compute them in a script, not in your head.

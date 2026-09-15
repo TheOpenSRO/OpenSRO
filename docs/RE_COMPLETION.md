@@ -755,6 +755,51 @@ Also named, with no tag counterpart found yet: `PARAM_PA` "Phy. atk. pwr.",
 `PARAM_PD` "Phy. def. pwr.", `PARAM_MA` "Mag. atk. pwr.", `PARAM_MD`
 "Mag. def. pwr.", `PARAM_ABSORB` "Absorption".
 
+## Loot is DB-only, censused (2026-09-15)
+
+The audit carried monster drops as "keyed by name (real tables key by
+`RefMonsterID`, mapping not yet confirmed)". The mapping cannot be confirmed
+because **the tables are not shipped anywhere this project can reach**, and that
+is now a census rather than a failed search.
+
+The pserver's `SR_GameRefData` directory holds **238 refdata tables** — every
+one this project has ever used and many it has not: `LevelData`, `SkillData`,
+`CharacterData`, `npcpos`, `shopdata`, `QuestData`, `levelgold`,
+`hwanleveldata`, `MagicOption`, `teleportdata`, `siegefortress*`,
+`refquestrewarditems`, `collectionbook_*`, `gacha*`. **None of them is a drop
+table.** A `find` for `*drop*` across the entire server package returns only
+drop *models and icons* (`.bsr`, `.bmt`), and the ORIGINAL client's `Media.pk2`
+contains exactly one match for "drop" — `etc_waterdrop_yellow.ddj`.
+
+So `_RefDropItemGroup`, `_RefMonster_AssignedItemRndDrop`, `CRefDropItemAssign`
+and the ten `CRefDropClassSel_*` classes exist in the binary's RTTI and as DB
+tables, and nowhere else. srrevamp's placeholder loot is own design for a
+reason that is now stated rather than assumed, and an operator with the database
+supersedes it.
+
+## Blocking: the chance, not yet the effect (2026-09-15)
+
+Recovered in `Combat_ResolveDamage`, alongside the critical:
+
+```
+block = GetParam(10)                       the defender's 'bri'
+      + a bonus when (refobj+0x230) != 0   (FUN_00410c20)
+      / (1 + GetParam(56)/100)             opposed by the attacker's 'evbl'
+```
+
+the engine's standard opposed-stat idiom, stored into the damage record at
+`+0xe` where the critical chance sits at `+0xc`. Both sides have real inputs:
+monsters carry it in characterdata col 76 (0 across the Jangan ladder, **20 on
+938 other species**), and a player's comes from a shield's own block ratio,
+itemdata cols 74–75, which reads 10~20 and is present on exactly the 500 shield
+rows.
+
+**What a block DOES is still open, and is why nothing shipped.** The rolls in
+`Combat_ResolveDamage` write a hit-result enum at the record's `+5` (one path
+sets 4, another 7) rather than scaling damage inline the way the critical does,
+so the effect lives wherever that byte is consumed. Shipping a block that only
+prints a word would be inventing the part that matters.
+
 ## Criticals, and the dice behind them (2026-09-15)
 
 The standing "crit/block/hit rolls — values recovered, dice not" item closes on
