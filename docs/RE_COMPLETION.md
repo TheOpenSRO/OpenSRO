@@ -2851,3 +2851,60 @@ false claim — that the Max field "is not the same stat" — and is corrected.
 Nothing changes how a blow is rolled: `attackerCritical` still takes
 `CriticalMin`, and that is now visibly a **choice of end** rather than a
 consequence of the other end being a different stat.
+
+## Joining the two skill vocabularies: code → the stat it modifies (2026-09-15)
+
+`docs/protocol/skill_params.md` had 102 codes and where each files its values,
+but nothing about meaning — and the spec said so explicitly, warning that the
+names are suggestive and a name is not a use-site. This closes half of that gap
+mechanically rather than one code at a time.
+
+`FUN_00594ac0`, the skill-effect applier, reads the same skill-struct fields the
+parser fills and publishes ParamKeeper params from them. Extracting
+field → `param@slot` and joining on the field gives **code → the stat it
+modifies**, for 22 of the 102.
+
+**Validated before the join was read**, against three pairs recovered
+independently and long before:
+
+| control | expected | extracted |
+|---|---|---|
+| `defp` | params 5/6 at slot 0, the flat absorb | `5@0, 6@0` |
+| `defr` | params 5/6 at slot 1, a percentage on it | `5@1, 6@1` |
+| `hwit` | param 195 | `195@0` |
+
+Three of three, and the `defp`/`defr` slot difference is exactly the distinction
+this file recorded when `playerMitigationPercent` was settled as a real zero —
+one writes the flat term, the other a percentage boost to it.
+
+The four that matter most, because they touch params already modelled:
+
+- **`apau`** adds a flat amount to params 13–16, **`apru`** a percentage to the
+  same four. Those are the physical and magical damage min/max — the params a
+  weapon's range and the Strength-derived reinforce term already land in. A buff
+  of either kind stacks into the same slot-0 sum or slot-1 percentage the damage
+  pipeline reads, so the buff design is already determined by shipped work.
+- **`stri`** publishes param 1, Strength itself.
+- **`irgc`** publishes 25/26 at slot 1 — `'hprg'`/`'mprg'`, health and mana
+  regeneration.
+
+Only 22 codes publish a param. The other 80 act elsewhere — teleports, summons,
+cures, state flags — and each needs its own field followed into whatever
+consumes it. The join is not a shortcut around that; it is the subset where the
+shortcut exists.
+
+**Nothing wired, deliberately.** srrevamp has no buff system, and a value with
+no consumer is the pattern this file keeps correcting. The table is recorded so
+that a buff system, when it exists, starts from the game's own vocabulary.
+
+**No srrevamp value changed.**
+
+### A process note, because it is the second occurrence
+
+The commit that added the spec section went out without this entry: the heredoc
+writing it ran from `server/`, where `docs/RE_COMPLETION.md` does not exist, so
+the redirect failed while the `git commit` in the same command list succeeded.
+That is exactly the failure from two entries ago, repeated. `&&` between a
+redirect and a commit does not couple them — the redirect's failure is reported
+by the shell and the commit runs anyway. Write the ledger from the repo root, or
+check `git show --stat` before pushing.
