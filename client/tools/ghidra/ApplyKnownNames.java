@@ -472,6 +472,49 @@ public class ApplyKnownNames extends GhidraScript {
          + "entry+0x10 (leveldata column 2) for each, and refuses with error 0x3802 when the "
          + "character's skill points fall short. This is where the mastery cost was recovered."},
 
+        // ReferenceData.cpp -- the refdata parsing layer. These were found by
+        // harvesting assert strings across the whole ReferenceData namespace:
+        // each one names the game's own variables, constants and error text, so
+        // the names below say what the code demonstrably does rather than
+        // guessing an original identifier.
+        {"006a8090", "RefItem_ReadTypeIDs",
+         "Deserialises an item's five type bytes in order (btCash, btType1..btType4), advancing "
+         + "the cursor at +0x1c and counting at +0x28, then bounds-checks each against a named "
+         + "constant with the game's own file and line: ReferenceData.cpp:2466-2470, "
+         + "'btCash < MAX_CASHITEM_TID_COUNT' (fires when 1 < btCash), "
+         + "'btType1 < MAX_TID1_COUNT' (7 <), 'btType2 < MAX_TID2_COUNT' (3 <), "
+         + "'btType3 < MAX_TID3_COUNT' (0xf <), 'btType4 < MAX_TID4_COUNT' (0x1f <). So the "
+         + "limits are 2, 8, 4, 16, 32 and the field widths are 1, 3, 2, 4 and 5 bits."},
+        {"006a61b0", "RefMagicOpt_ValidateValue",
+         "Validates a magic option's value against its allowed range. Reports "
+         + "'error data that is a magicoption value. [ItemCode: %d, MagicOptionID: %d]' and "
+         + "'(%s) error data out of range to MagicoptionValue', from ReferenceData.cpp."},
+        {"006a6660", "RefMagicOpt_ResolveExtractor",
+         "Resolves the per-MagicType extractor for a magic option and validates its custom "
+         + "value. Reports 'can`t find MagicType[%d] extractor!!! [MagicOptID:%d]' and "
+         + "'CustomValue(RefMagicOptID[%d]) is error data out of range to MagicoptionValue'."},
+        {"006a8d80", "RefItem_ValidateDurabilityAndStack",
+         "Checks an item package row's durability, max stack and magic-option level. Reports "
+         + "'error data that is a durability or maxstack of a item. [PackageID: %s, ItemCode: %s]' "
+         + "and the matching magicoption-level message, both keyed by PackageID and ItemCode."},
+        {"006a9840", "RefShop_RegisterGoldPrice",
+         "Registers a shop good's gold price. Asserts '(%s) Expandable Items must be set "
+         + "StockCount > 0', touches pRefScrap->m_InstanceInfoOfItem.m_dwData, and logs "
+         + "'(%s) register gold price.'"},
+        {"006a99c0", "RefShop_ReplacePriceWithSilk",
+         "Drops a good's other prices in favour of the silk suit: 'Remove all price of (%s) "
+         + "except silkprice suit.' and 'insert cost to %s'."},
+        {"006a9ab0", "RefShop_CheckSellable",
+         "Gates a good on being sellable: asserts 'pRefItem != NULL && (pRefItem->m_dwAvailableOPs "
+         + "& OBJ_INTERACT_FLAG_CAN_SELL)' and handles the 'MALL_' name prefix."},
+        {"006a94a0", "RefShop_InsertPricePolicyLevel",
+         "Inserts a price-policy condition keyed by level: 'insert a PricePolicyConditionLevel "
+         + "%s', from ReferenceData.cpp."},
+        {"006a7650", "RefTeleport_LoadEntry",
+         "Loads a teleport reference row -- carries the literal 'TELEPORT' and asserts "
+         + "'dwID != 0' from ReferenceData.cpp. Its neighbour 006a7980 asserts the same "
+         + "'dwID != 0' and is the sibling loader."},
+
         // The ParamKeeper registry: where every param's min, max and default
         // come from. Recovering this table settled a whole class of
         // "is this term zero?" questions -- see docs/protocol/param_registry.md.

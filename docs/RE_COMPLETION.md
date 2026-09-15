@@ -3891,3 +3891,60 @@ family. One published claim narrowed from "these tags are dead" to "these tags
 are not stat modifiers", with a 28-function enumeration behind the half that
 held. The skill-code/stat-tag join that prompted all this turned out to be
 nearly empty, which is itself worth recording so it is not retried.
+
+## Naming coverage measured, and the item type-id widths recovered (2026-09-15)
+
+**Coverage, computed from the dump index rather than by running Ghidra** (instant,
+and it does not contend with the 15-minute cron): of the server's **34,113**
+functions, **7,386 are named (21.7%)** and 26,727 are still `FUN_`. Of the
+unnamed, 54% at least carry a class attribution (`Class::FUN_...`); 12,244 are
+bare with no class at all, and those are mostly CRT and template code.
+
+Biggest unnamed clusters by bytes: `CGameServer` (3,674 fns), `GObjPC` (2,906),
+`CMainProcess` (1,376), `CGameWorldLayer` (545), `MapLoader` (260), `CNetEngine`
+(273), `ReferenceData` (114).
+
+**`ReferenceData` was the right target**, being small, bounded, and the layer
+srrevamp actually ships against. Harvesting **assert strings across the whole
+namespace in one pass** found 32 unnamed functions carrying string anchors, and
+the anchors are the game's own error text, variable names and `ReferenceData.cpp`
+line numbers — so the names can say what the code demonstrably does instead of
+guessing an original identifier. Nine named this tick, covering the magic-option
+validators, the item package checks, the shop price/sellable path and the
+teleport loader.
+
+### The type-id widths, and a value grounded
+
+`ReferenceData::RefItem_ReadTypeIDs` (`0x006a8090`) deserialises an item's five
+type bytes and bounds-checks each against a named constant, asserting with the
+game's own file and line:
+
+| assert | fires when | constant | width |
+|---|---|---|---|
+| `btCash < MAX_CASHITEM_TID_COUNT` | `1 < btCash` | **2** | 1 bit |
+| `btType1 < MAX_TID1_COUNT` | `7 < btType1` | **8** | 3 bits |
+| `btType2 < MAX_TID2_COUNT` | `3 < btType2` | **4** | 2 bits |
+| `btType3 < MAX_TID3_COUNT` | `0xf < btType3` | **16** | 4 bits |
+| `btType4 < MAX_TID4_COUNT` | `0x1f < btType4` | **32** | 5 bits |
+
+`ReferenceData.cpp:2466-2470`. Each assert fires on `limit-1 < value`, so the
+constant is one past the largest legal value.
+
+**Wired into `internal/equipment`** as `MaxCashItemTID`, `MaxTID1..MaxTID4`, with
+`TestTypeIDsAreWithinRecoveredBounds` holding every declared family and piece
+constant inside them. Every value this project already used validates — the
+largest family is `FamilyEuropeHeavy` 11 against a 16 ceiling, the largest piece
+`PieceBoots` 6 against 32 — so nothing changed numerically. What the bounds add
+is a guard: TypeID3 being four bits wide means a family id of 30 is a typo rather
+than an undiscovered armour set, and such a constant would otherwise silently
+match no item at all. The test also checks each bound is a power of two, since
+each is one past a fixed-width field's maximum.
+
+The engine's own check is an assert, not a rejection, so these are not used to
+gate anything at runtime; that is recorded in the constant's comment so a later
+reader does not turn them into validation the game never performed.
+
+**What moved:** nothing numeric. Five recovered constants gained citations,
+srrevamp's existing type-id constants gained a bounds test, nine `ReferenceData`
+functions gained evidence-backed names, and naming coverage is now a measured
+21.7% rather than an impression.

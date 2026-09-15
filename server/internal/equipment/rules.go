@@ -64,6 +64,36 @@ const (
 	PieceBoots         = 6
 )
 
+// The widths of the type-id hierarchy, RECOVERED from the server binary rather
+// than inferred from the tables this project has seen.
+//
+// ReferenceData::RefItem_ReadTypeIDs (`0x006a8090`) deserialises the five type
+// bytes and bounds-checks each one against a named constant, asserting through
+// the game's own file and line:
+//
+//	ReferenceData.cpp:2466   if (1    < btCash)  "btCash < MAX_CASHITEM_TID_COUNT"
+//	ReferenceData.cpp:2467   if (7    < btType1) "btType1 < MAX_TID1_COUNT"
+//	ReferenceData.cpp:2468   if (3    < btType2) "btType2 < MAX_TID2_COUNT"
+//	ReferenceData.cpp:2469   if (0xf  < btType3) "btType3 < MAX_TID3_COUNT"
+//	ReferenceData.cpp:2470   if (0x1f < btType4) "btType4 < MAX_TID4_COUNT"
+//
+// Each assert fires on `limit-1 < value`, so the constant is one past the
+// largest legal value. The widths fall out as 1, 3, 2, 4 and 5 bits.
+//
+// These are not used to gate anything at runtime -- the engine's own check is
+// an assert, not a rejection, and real tables are well inside the bounds. They
+// are here because they bound the ENUMERATIONS above: there can be at most 16
+// families and at most 32 pieces, so a family id of 30 would be a typo rather
+// than an unknown armour set. TestTypeIDsAreWithinRecoveredBounds holds the
+// constants above to them.
+const (
+	MaxCashItemTID = 2  // btCash  in [0, 1]
+	MaxTID1        = 8  // TypeID1 in [0, 7]
+	MaxTID2        = 4  // TypeID2 in [0, 3]
+	MaxTID3        = 16 // TypeID3 in [0, 15]
+	MaxTID4        = 32 // TypeID4 in [0, 31]
+)
+
 // Country values.
 const (
 	CountryChina  = 0

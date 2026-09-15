@@ -89,3 +89,62 @@ func TestRefusal(t *testing.T) {
 		t.Errorf("a potion: got %v, want ErrNotEquippable", err)
 	}
 }
+
+// TestTypeIDsAreWithinRecoveredBounds holds every type-id constant this package
+// declares to the widths recovered from the server binary's own asserts (see the
+// MaxTID* block in rules.go, and ReferenceData.cpp:2466-2470).
+//
+// This is a guard, not a discovery: it cannot tell a wrong-but-in-range family
+// id from a right one. What it does catch is a constant that could never have
+// come out of a real table -- a mistyped family of 30 when TypeID3 is four bits
+// wide, say -- which is the failure mode worth a test, because such a constant
+// would silently never match any item.
+func TestTypeIDsAreWithinRecoveredBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value int
+		limit int
+	}{
+		{"TypeItem", TypeItem, MaxTID1},
+		{"TypeEquipment", TypeEquipment, MaxTID2},
+
+		{"FamilyChinaGarment", FamilyChinaGarment, MaxTID3},
+		{"FamilyChinaProtector", FamilyChinaProtector, MaxTID3},
+		{"FamilyChinaArmor", FamilyChinaArmor, MaxTID3},
+		{"FamilyShield", FamilyShield, MaxTID3},
+		{"FamilyWeapon", FamilyWeapon, MaxTID3},
+		{"FamilyAccessory", FamilyAccessory, MaxTID3},
+		{"FamilyEuropeRobe", FamilyEuropeRobe, MaxTID3},
+		{"FamilyEuropeLight", FamilyEuropeLight, MaxTID3},
+		{"FamilyEuropeHeavy", FamilyEuropeHeavy, MaxTID3},
+
+		{"PieceHelm", PieceHelm, MaxTID4},
+		{"PieceShoulderGuard", PieceShoulderGuard, MaxTID4},
+		{"PieceMail", PieceMail, MaxTID4},
+		{"PiecePants", PiecePants, MaxTID4},
+		{"PieceGauntlet", PieceGauntlet, MaxTID4},
+		{"PieceBoots", PieceBoots, MaxTID4},
+	} {
+		if tc.value < 0 || tc.value >= tc.limit {
+			t.Errorf("%s = %d, outside the recovered range [0, %d)", tc.name, tc.value, tc.limit)
+		}
+	}
+
+	// The bounds themselves are powers of two, because each is one past the
+	// largest value a fixed-width field can hold. If one of these ever stops
+	// being a power of two the constant was transcribed wrong.
+	for _, tc := range []struct {
+		name  string
+		limit int
+	}{
+		{"MaxCashItemTID", MaxCashItemTID},
+		{"MaxTID1", MaxTID1},
+		{"MaxTID2", MaxTID2},
+		{"MaxTID3", MaxTID3},
+		{"MaxTID4", MaxTID4},
+	} {
+		if tc.limit <= 0 || tc.limit&(tc.limit-1) != 0 {
+			t.Errorf("%s = %d, which is not a power of two", tc.name, tc.limit)
+		}
+	}
+}
