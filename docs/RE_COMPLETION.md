@@ -3076,3 +3076,48 @@ shape as the last three probe failures in this file: the control passes, the
 scale is absurd, and the absurdity is what catches it.
 
 **No srrevamp value changed.**
+
+## The drop path: wrong blocker, real gap (2026-09-15)
+
+`combat.LootTables` is own design, and its note said why: the real drop tables
+key by a numeric RefMonsterID "this project doesn't have a confirmed name->ID
+mapping to". Chasing that mapping is what this tick set out to do, and it took
+one lookup — **characterdata col 1 is the RefObjChar id and col 2 the code
+name**, exactly the id/code-name pair this project already reads out of
+itemdata. `MOB_CH_MANGNYANG` is **1933**.
+
+So the stated blocker was never the blocker.
+
+**The real one:** the drop tables are server-side DATABASE tables and are not in
+the client archives at all. Media.pk2's `server_dep\silkroad\textdata` listing
+carries characterdata, leveldata, levelgold, hwanleveldata, the
+refabilitybyitemopt family and the rest — and no drop or rnd-drop table of any
+kind. `_RefMonster_AssignedItemRndDrop` and `_RefDropItemGroup` live in the
+server package's SQL, which this project does not have. Own design stays, for a
+reason that is now the true one.
+
+### The real gap, found while checking: the importer had no way in
+
+`refdata` has had `LoadMonsterDropsCSV`, `LoadDropGroupEntriesCSV`,
+`ImportMonsterDrops` and `ImportDropGroupEntries` since the schemas were
+curated. **`cmd/import-refdata` exposed none of them.** An operator holding the
+real tables — the exact situation the "bring your own data" model exists for —
+had no way to load them.
+
+Every piece had its own test and passed. The chain had a missing link in the one
+place nothing tested, which is the same shape as the SQL columns that silently
+dropped a skill's damage and every potion's restore amount. **A capability is not
+shipped until something exercises it end to end.**
+
+**What moved:** `-drops-csv` and `-drop-groups-csv` on `import-refdata`, and a
+test that walks CSV text -> loader -> store -> read-back for both tables, keyed
+on 1933 so the mapping above is exercised rather than just asserted.
+
+### A dead end, recorded so it is not re-walked
+
+`hwanleveldata.txt` looked like the place to ground `berserk.Duration`, which is
+srrevamp's one openly unrecovered value, and to settle param 189 (the berserk
+damage bonus — the only term the game applies to a blow that this project omits
+and cannot prove is zero). It is neither. 257 rows of four columns, and the
+columns are display keys: `UIO_SECOND_HWAN_CH_NAME_LEVEL_1` and so on. It names
+hwan levels for the UI and carries no duration, no bonus, no number at all.

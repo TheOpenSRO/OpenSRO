@@ -37,10 +37,23 @@ const (
 //
 // refdata.MonsterDrop/refdata.DropGroupEntry exist as real, curated schemas for
 // the real _RefMonster_AssignedItemRndDrop/_RefDropItemGroup tables (see
-// docs/protocol/refdata_schema.md) -- real per-monster drop rates and item-group
-// weights are importable. Not wired in here yet: this map is keyed by monster
-// *name* (this project's own design), while the real tables key by a real
-// numeric RefMonsterID this project doesn't have a confirmed name->ID mapping to.
+// docs/protocol/refdata_schema.md), and since 2026-09-15 cmd/import-refdata can
+// actually load them (-drops-csv, -drop-groups-csv); before that the loaders
+// and the store existed but nothing exposed them.
+//
+// WHAT ACTUALLY BLOCKS THIS, corrected 2026-09-15. An earlier note here said
+// the obstacle was that the real tables key by a numeric RefMonsterID "this
+// project doesn't have a confirmed name->ID mapping to". That mapping is one
+// column lookup: characterdata's col 1 is the RefObjChar id and col 2 the code
+// name, so MOB_CH_MANGNYANG is 1933, the same shape as itemdata's id/code-name
+// pair this project already reads.
+//
+// The real obstacle is that the drop tables are SERVER-SIDE DATABASE tables and
+// are not in the client archives at all -- Media.pk2's server_dep textdata
+// listing carries characterdata, leveldata, levelgold, hwanleveldata and the
+// rest, and no drop or rnd-drop table of any kind. So this stays own design
+// until an operator brings those tables, which the importer is now able to
+// accept. Chasing the name->ID mapping would have been chasing the wrong thing.
 var LootTables = map[string][]LootEntry{
 	// Keyed by the species names the game's own tables use, matching the
 	// spawns in cmd/server. Renaming the spawns without renaming these

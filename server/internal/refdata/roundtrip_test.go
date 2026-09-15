@@ -245,3 +245,60 @@ func TestEveryDropFieldSurvivesSQL(t *testing.T) {
 			len(bad), reflect.TypeOf(entry).NumField(), strings.Join(bad, "\n  "))
 	}
 }
+
+// TestDropCSVReachesTheStore walks the whole drop path the way an operator
+// does: CSV text -> loader -> SQL store -> read back.
+//
+// It exists because the path was BUILT but not REACHABLE. refdata had
+// LoadMonsterDropsCSV and LoadDropGroupEntriesCSV, and the SQL store had
+// ImportMonsterDrops and ImportDropGroupEntries, since the schemas were
+// curated -- but cmd/import-refdata exposed no flag for either, so an operator
+// holding the real _RefMonster_AssignedItemRndDrop and _RefDropItemGroup tables
+// had no way to load them. Every piece passed its own test; the chain had a
+// missing link in the one place nothing tested.
+//
+// Same lesson as the SQL column drops: a capability is not shipped until
+// something exercises it end to end.
+func TestDropCSVReachesTheStore(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLStore(testDSN())
+	if err != nil {
+		t.Fatalf("OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer s.Close()
+
+	// MOB_CH_MANGNYANG is RefObjChar 1933 -- characterdata col 1 is the id and
+	// col 2 the code name, which is the mapping the loot system was missing.
+	const mangyang = 1933
+	drops, err := LoadMonsterDropsCSV(strings.NewReader("1933,700,1,1,2,0.25\n"))
+	if err != nil {
+		t.Fatalf("LoadMonsterDropsCSV: %v", err)
+	}
+	if err := s.ImportMonsterDrops(ctx, drops); err != nil {
+		t.Fatalf("ImportMonsterDrops: %v", err)
+	}
+	got, err := s.GetMonsterDrops(ctx, mangyang)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("GetMonsterDrops(%d) = %v, %v; want one row", mangyang, got, err)
+	}
+	if got[0].ItemGroupID != 700 || got[0].DropAmountMax != 2 || got[0].DropRatio != 0.25 {
+		t.Errorf("drop round trip: got group %d, max %d, ratio %v; want 700, 2, 0.25",
+			got[0].ItemGroupID, got[0].DropAmountMax, got[0].DropRatio)
+	}
+
+	entries, err := LoadDropGroupEntriesCSV(strings.NewReader("700,ITEM_ETC_HP_POTION_01,3629,0.5\n"))
+	if err != nil {
+		t.Fatalf("LoadDropGroupEntriesCSV: %v", err)
+	}
+	if err := s.ImportDropGroupEntries(ctx, entries); err != nil {
+		t.Fatalf("ImportDropGroupEntries: %v", err)
+	}
+	gotEntries, err := s.GetDropGroupEntries(ctx, 700)
+	if err != nil || len(gotEntries) != 1 {
+		t.Fatalf("GetDropGroupEntries(700) = %v, %v; want one row", gotEntries, err)
+	}
+	if gotEntries[0].ItemID != 3629 || gotEntries[0].SelectRatio != 0.5 {
+		t.Errorf("group round trip: got item %d ratio %v; want 3629, 0.5",
+			gotEntries[0].ItemID, gotEntries[0].SelectRatio)
+	}
+}

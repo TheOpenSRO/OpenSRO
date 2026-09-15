@@ -29,12 +29,21 @@ import (
 func main() {
 	itemsCSV := flag.String("items-csv", "", "path to a headerless CSV export of item reference data")
 	skillsCSV := flag.String("skills-csv", "", "path to a headerless CSV export of skill reference data")
+	// The drop tables. refdata has had the loaders and the SQL store for these
+	// since the schemas were curated, but nothing exposed them, so an operator
+	// holding the real tables had no way in. They are server-side DB tables
+	// (_RefMonster_AssignedItemRndDrop and _RefDropItemGroup) and are NOT in
+	// the client archives -- Media.pk2's textdata carries no drop table at all
+	// -- so this is strictly a bring-your-own-data path, like the rest.
+	dropsCSV := flag.String("drops-csv", "", "path to a headerless CSV export of per-monster drop rows")
+	dropGroupsCSV := flag.String("drop-groups-csv", "", "path to a headerless CSV export of drop-group item weights")
 	dsn := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
 		"PostgreSQL connection string to populate")
 	flag.Parse()
 
-	if *itemsCSV == "" && *skillsCSV == "" {
-		fmt.Fprintln(os.Stderr, "usage: import-refdata [-items-csv <path>] [-skills-csv <path>] [-postgres-dsn <dsn>]")
+	if *itemsCSV == "" && *skillsCSV == "" && *dropsCSV == "" && *dropGroupsCSV == "" {
+		fmt.Fprintln(os.Stderr, "usage: import-refdata [-items-csv <path>] [-skills-csv <path>] "+
+			"[-drops-csv <path>] [-drop-groups-csv <path>] [-postgres-dsn <dsn>]")
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
@@ -84,5 +93,46 @@ func main() {
 			log.Fatalf("verifying skill import: %v", err)
 		}
 		log.Printf("imported %d skills from %s; database now has %d", len(skills), *skillsCSV, count)
+	}
+
+	if *dropsCSV != "" {
+		f, err := os.Open(*dropsCSV)
+		if err != nil {
+			log.Fatalf("opening %s: %v", *dropsCSV, err)
+		}
+		drops, err := refdata.LoadMonsterDropsCSV(f)
+		f.Close()
+		if err != nil {
+			log.Fatalf("parsing %s: %v", *dropsCSV, err)
+		}
+		if err := store.ImportMonsterDrops(ctx, drops); err != nil {
+			log.Fatalf("importing monster drops: %v", err)
+		}
+		count, err := store.CountMonsterDrops(ctx)
+		if err != nil {
+			log.Fatalf("verifying drop import: %v", err)
+		}
+		log.Printf("imported %d monster drops from %s; database now has %d", len(drops), *dropsCSV, count)
+	}
+
+	if *dropGroupsCSV != "" {
+		f, err := os.Open(*dropGroupsCSV)
+		if err != nil {
+			log.Fatalf("opening %s: %v", *dropGroupsCSV, err)
+		}
+		entries, err := refdata.LoadDropGroupEntriesCSV(f)
+		f.Close()
+		if err != nil {
+			log.Fatalf("parsing %s: %v", *dropGroupsCSV, err)
+		}
+		if err := store.ImportDropGroupEntries(ctx, entries); err != nil {
+			log.Fatalf("importing drop groups: %v", err)
+		}
+		count, err := store.CountDropGroupEntries(ctx)
+		if err != nil {
+			log.Fatalf("verifying drop-group import: %v", err)
+		}
+		log.Printf("imported %d drop-group entries from %s; database now has %d",
+			len(entries), *dropGroupsCSV, count)
 	}
 }
