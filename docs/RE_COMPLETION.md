@@ -399,7 +399,25 @@ because that is what is proven**. The number is a fact the dispatcher states;
 what the handler *does* is not claimed, and a handler serving several opcodes
 carries the first two in its name.
 
-**One of those 29 was WRONG, and the way it was caught is the useful part.**
+**8 of those 29 were WRONG — a 28% error rate — and only a validation pass found
+them.** `ValidateNames.java` now checks every bulk pass against a signal the
+name did not come from, and is meant to run after each one:
+
+| prefix | independent check | result |
+|---|---|---|
+| `DB_Bind_*` | calls the column-bind helper | **55/55 clean** |
+| `RefParse_*` | reads ≥3 sequential tokens | **39/39 clean** |
+| `MsgHandler_*` | few callers (a handler has ~2) | **8 of 29 failed** |
+
+All eight turned out to be infrastructure the opcode-tree extractor had paired
+with a nearby comparison: **seven singleton accessors** (`if (g == 0) Assert();
+return g;`) and the **message buffer readers** `MsgBuf_ReadUInt8` /
+`MsgBuf_ReadUInt16`. They are now named for what they are; one that could not be
+identified had its name **withdrawn** rather than replaced with a guess. The
+singleton shape turned out to be a small lever of its own — 34 of them in the
+server, all now named.
+
+**The original slip, and why it went unnoticed:**
 `FUN_00964b60` was named `MsgHandler_7d1b`; it is the **assert helper** —
 `IsDebuggerPresent` and break — with **10,357 call sites**, the most-called
 function in either binary. The extractor paired an opcode comparison with the

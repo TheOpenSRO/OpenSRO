@@ -77,22 +77,6 @@ public class ApplyKnownNames extends GhidraScript {
         // Named by their opcode because that is what is PROVEN -- the number,
         // not the meaning. A handler serving several opcodes carries the first
         // two in its name.
-        {"004039d0", "MsgHandler_bc10",
-         "Packet handler, dispatched on opcode 0xbc10. Recovered from the message dispatcher "
-         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
-         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
-        {"00403b70", "MsgHandler_34f2",
-         "Packet handler, dispatched on opcode 0x34f2. Recovered from the message dispatcher "
-         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
-         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
-        {"00404e50", "MsgHandler_34ba",
-         "Packet handler, dispatched on opcode 0x34ba. Recovered from the message dispatcher "
-         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
-         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
-        {"00404f80", "MsgHandler_7155",
-         "Packet handler, dispatched on opcode 0x7155. Recovered from the message dispatcher "
-         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
-         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
         {"00414890", "MsgHandler_b808",
          "Packet handler, dispatched on opcode 0xb808. Recovered from the message dispatcher "
          + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
@@ -153,30 +137,6 @@ public class ApplyKnownNames extends GhidraScript {
          "Packet handler, dispatched on opcode 0x3542. Recovered from the message dispatcher "
          + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
          + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
-        {"0041bac0", "MsgHandler_38f5",
-         "Packet handler, dispatched on opcode 0x38f5. Recovered from the message dispatcher "
-         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
-         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
-        {"0041ce60", "MsgHandler_3b07",
-         "Packet handler, dispatched on opcode 0x3b07. Recovered from the message dispatcher "
-         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
-         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
-        {"0041ce80", "MsgHandler_3908",
-         "Packet handler, dispatched on opcode 0x3908. Recovered from the message dispatcher "
-         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
-         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
-        {"0041d090", "MsgHandler_34b1_74b7",
-         "Packet handler, dispatched on opcode 0x34b1, 0x74b7, 0xb4b0. Recovered from the message dispatcher "
-         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
-         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
-        {"0041d0b0", "MsgHandler_34d2_74d1",
-         "Packet handler, dispatched on opcode 0x34d2, 0x74d1, 0xb4d0. Recovered from the message dispatcher "
-         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
-         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
-        {"004263c0", "MsgHandler_3167",
-         "Packet handler, dispatched on opcode 0x3167. Recovered from the message dispatcher "
-         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
-         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
         {"004c7a10", "MsgHandler_703e",
          "Packet handler, dispatched on opcode 0x703e. Recovered from the message dispatcher "
          + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
@@ -189,6 +149,121 @@ public class ApplyKnownNames extends GhidraScript {
          "Packet handler, dispatched on opcode 0x5000. Recovered from the message dispatcher "
          + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
          + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00404e50", "FUN_00404e50",
+         "NAME WITHDRAWN. An earlier opcode-tree pass called this MsgHandler_34ba; it has 17 "
+         + "callers and branches on a message-object field (+0x1048) into one of two functions, "
+         + "so it is a helper of some kind -- but what kind is not established, and an unsupported "
+         + "name is worse than none. Reset to the default so it reads as unknown."},
+        {"00404f80", "MsgBuf_ReadUInt8",
+         "Reads one byte from the message buffer and advances the read cursor. The buffer is "
+         + "base +0x1034, read cursor +0x103c, size +0x103e -- the same object whose +0x1050 holds "
+         + "the opcode. 65 callers, because every handler reads its fields through this; an "
+         + "earlier pass mistook that for a packet handler."},
+        {"004263c0", "MsgBuf_ReadUInt16",
+         "The uint16 twin of MsgBuf_ReadUInt8: reads two bytes and advances the cursor by two."},
+        // --- Singleton accessors (server). Self-evidencing shape. ---
+        {"00401d10", "GetSingleton_00d6a8e8",
+         "Singleton accessor: `if (DAT_00d6a8e8 == 0) Assert_BreakIfDebugger(); return DAT_00d6a8e8;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"00401d30", "GetSingleton_00d6a8dc",
+         "Singleton accessor: `if (DAT_00d6a8dc == 0) Assert_BreakIfDebugger(); return DAT_00d6a8dc;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"00401d50", "GetSingleton_00d6aa18",
+         "Singleton accessor: `if (DAT_00d6aa18 == 0) Assert_BreakIfDebugger(); return DAT_00d6aa18;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"00401d70", "GetSingleton_00d6a984",
+         "Singleton accessor: `if (DAT_00d6a984 == 0) Assert_BreakIfDebugger(); return DAT_00d6a984;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"004039d0", "GetSingleton_00d6a9a4",
+         "Singleton accessor: `if (DAT_00d6a9a4 == 0) Assert_BreakIfDebugger(); return DAT_00d6a9a4;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"004039f0", "GetSingleton_00d6a968",
+         "Singleton accessor: `if (DAT_00d6a968 == 0) Assert_BreakIfDebugger(); return DAT_00d6a968;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"00403b50", "GetSingleton_00d6a9ec",
+         "Singleton accessor: `if (DAT_00d6a9ec == 0) Assert_BreakIfDebugger(); return DAT_00d6a9ec;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"00403b70", "GetSingleton_00d6aa00",
+         "Singleton accessor: `if (DAT_00d6aa00 == 0) Assert_BreakIfDebugger(); return DAT_00d6aa00;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"00404ca0", "GetSingleton_00d6aa14",
+         "Singleton accessor: `if (DAT_00d6aa14 == 0) Assert_BreakIfDebugger(); return DAT_00d6aa14;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0040bb50", "GetSingleton_00d6aa1c",
+         "Singleton accessor: `if (DAT_00d6aa1c == 0) Assert_BreakIfDebugger(); return DAT_00d6aa1c;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"00411110", "GetSingleton_00d6a8e4",
+         "Singleton accessor: `if (DAT_00d6a8e4 == 0) Assert_BreakIfDebugger(); return DAT_00d6a8e4;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041baa0", "GetSingleton_00d6a990",
+         "Singleton accessor: `if (DAT_00d6a990 == 0) Assert_BreakIfDebugger(); return DAT_00d6a990;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041bac0", "GetSingleton_00d6a994",
+         "Singleton accessor: `if (DAT_00d6a994 == 0) Assert_BreakIfDebugger(); return DAT_00d6a994;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041bae0", "GetSingleton_00d6a954",
+         "Singleton accessor: `if (DAT_00d6a954 == 0) Assert_BreakIfDebugger(); return DAT_00d6a954;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041bc40", "GetSingleton_00d6a96c",
+         "Singleton accessor: `if (DAT_00d6a96c == 0) Assert_BreakIfDebugger(); return DAT_00d6a96c;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041bc60", "GetSingleton_00d6a900",
+         "Singleton accessor: `if (DAT_00d6a900 == 0) Assert_BreakIfDebugger(); return DAT_00d6a900;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041bc80", "GetSingleton_00d6a950",
+         "Singleton accessor: `if (DAT_00d6a950 == 0) Assert_BreakIfDebugger(); return DAT_00d6a950;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041bca0", "GetSingleton_00d6a960",
+         "Singleton accessor: `if (DAT_00d6a960 == 0) Assert_BreakIfDebugger(); return DAT_00d6a960;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041ce40", "GetSingleton_00d6a94c",
+         "Singleton accessor: `if (DAT_00d6a94c == 0) Assert_BreakIfDebugger(); return DAT_00d6a94c;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041ce60", "GetSingleton_00d6a998",
+         "Singleton accessor: `if (DAT_00d6a998 == 0) Assert_BreakIfDebugger(); return DAT_00d6a998;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041ce80", "GetSingleton_00d6a9a0",
+         "Singleton accessor: `if (DAT_00d6a9a0 == 0) Assert_BreakIfDebugger(); return DAT_00d6a9a0;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041cea0", "GetSingleton_00d6a99c",
+         "Singleton accessor: `if (DAT_00d6a99c == 0) Assert_BreakIfDebugger(); return DAT_00d6a99c;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041cec0", "GetSingleton_00d6a980",
+         "Singleton accessor: `if (DAT_00d6a980 == 0) Assert_BreakIfDebugger(); return DAT_00d6a980;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041cee0", "GetSingleton_00d6a98c",
+         "Singleton accessor: `if (DAT_00d6a98c == 0) Assert_BreakIfDebugger(); return DAT_00d6a98c;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041d050", "GetSingleton_00d6a9e4",
+         "Singleton accessor: `if (DAT_00d6a9e4 == 0) Assert_BreakIfDebugger(); return DAT_00d6a9e4;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041d070", "GetSingleton_00d6a9a8",
+         "Singleton accessor: `if (DAT_00d6a9a8 == 0) Assert_BreakIfDebugger(); return DAT_00d6a9a8;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041d090", "GetSingleton_00d6a9f4",
+         "Singleton accessor: `if (DAT_00d6a9f4 == 0) Assert_BreakIfDebugger(); return DAT_00d6a9f4;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041d0b0", "GetSingleton_00d6a9fc",
+         "Singleton accessor: `if (DAT_00d6a9fc == 0) Assert_BreakIfDebugger(); return DAT_00d6a9fc;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041d0d0", "GetSingleton_00d6a964",
+         "Singleton accessor: `if (DAT_00d6a964 == 0) Assert_BreakIfDebugger(); return DAT_00d6a964;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041d2e0", "GetSingleton_00d6a988",
+         "Singleton accessor: `if (DAT_00d6a988 == 0) Assert_BreakIfDebugger(); return DAT_00d6a988;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"0041d300", "GetSingleton_00d6a9b4",
+         "Singleton accessor: `if (DAT_00d6a9b4 == 0) Assert_BreakIfDebugger(); return DAT_00d6a9b4;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"00442370", "GetSingleton_00d6a95c",
+         "Singleton accessor: `if (DAT_00d6a95c == 0) Assert_BreakIfDebugger(); return DAT_00d6a95c;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"004c27b0", "GetSingleton_00d6a9ac",
+         "Singleton accessor: `if (DAT_00d6a9ac == 0) Assert_BreakIfDebugger(); return DAT_00d6a9ac;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
+        {"005fcfc0", "GetSingleton_00d6a9f8",
+         "Singleton accessor: `if (DAT_00d6a9f8 == 0) Assert_BreakIfDebugger(); return DAT_00d6a9f8;` -- the "
+         + "shape is unambiguous and self-evidencing, no inference needed. 34 of these exist."},
         {"00964b60", "Assert_BreakIfDebugger",
          "The assert/verify helper -- calls IsDebuggerPresent and breaks. **10,357 call sites**, "
          + "the most-called function in the binary. An earlier pass here named it "

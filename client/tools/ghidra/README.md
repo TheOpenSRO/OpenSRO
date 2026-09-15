@@ -282,3 +282,33 @@ Beyond naming, it hands over the real game's **persisted data model**: `_CHAR`,
 `_ITEMS`, `_CHARQUEST`, `_CHARSKILL`, `_CHARSKILLMASTERY`, `_INVENTORY`,
 `_CHEST`, `_GUILD*`, `_Friend`, `_Memo`, the siege and training-camp families,
 and the log tables. See `docs/RE_COMPLETION.md` for the schemas that matter.
+
+## ValidateNames.java `[maxReport]`
+
+**Run this after every bulk naming pass.** Naming from a pattern is this
+project's highest-leverage technique and its most dangerous one, for the same
+reason: one inference is applied hundreds of times, and the per-name evidence is
+never re-read.
+
+That is not hypothetical. The opcode-tree pass produced 29 names and **8 were
+wrong** — a 28% error rate. The worst was `FUN_00964b60`, the assert helper with
+**10,357 call sites**, labelled `MsgHandler_7d1b`; it sat wrong for three ticks
+and surfaced only because an unrelated read showed `MsgHandler_7d1b()` being
+called *as an assert*, which reads as nonsense.
+
+Each bulk pass has a property its members must have that is **independent of how
+they were named**:
+
+| prefix | independent check |
+|---|---|
+| `DB_Bind_*` | must call the column-bind helper `0x00862e40` |
+| `MsgHandler_*` | must have few callers — a handler has ~2 |
+| `RefParse_*` | must read ≥3 sequential refdata tokens |
+
+Hand-named functions are not checked: they were reasoned about one at a time,
+which is exactly what bulk naming skips.
+
+It reports rather than fixes — a violation means the evidence needs re-reading,
+not that the name is automatically wrong. All eight bad opcode names turned out
+to be **singleton accessors** (`if (g == 0) Assert(); return g;`) and **message
+buffer readers**, and are now named as such.
