@@ -193,6 +193,18 @@ public class ApplyKnownNames extends GhidraScript {
          "Packet handler, dispatched on opcode 0x5000. Recovered from the message dispatcher "
          + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
          + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"0082c5e0", "DB_Load_RefDropItemGroup",
+         "Loads the _REFDROPITEMGROUP refdata table from the server's DATABASE. Drops are not in "
+         + "any shipped file -- they are SQL refdata, which is why no artifact this project has "
+         + "contains them."},
+        {"0082be90", "DB_Load_RefMonster_AssignedItemDrop",
+         "Loads _REFMONSTER_ASSIGNEDITEMDROP: the per-monster drop assignment. Its error string "
+         + "names the table -- \"Can't find ItemGroupID(%d) within _RefMonster_AssignedItemRndDrop "
+         + "Table\" -- so a monster maps to an item GROUP id, and the group maps to items."},
+        {"00833000", "DB_Load_RefDropItemAssign",
+         "Loads _REFDROPITEMASSIGN. CRefDropData__AddAssignedItemDrop walks these as a 48-byte "
+         + "(0x30) stride array and compares a rand against a FLOAT at record+8, so +8 is the drop "
+         + "probability."},
         {"0083e6b0", "CharData_BindDBColumns",
          "The complete charData column map, and the best single artifact in the binary for that "
          + "struct. It binds every persisted _CHAR column to its offset -- FUN_00401fc0(name, "

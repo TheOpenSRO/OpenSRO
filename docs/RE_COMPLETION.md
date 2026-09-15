@@ -202,17 +202,35 @@ pick one up without re-deriving anything.
 
 6. **Quest objectives** — proven not to exist as data; any objectives shipped
    must be own design. Closed as a *recovery*, not a gap.
-7. **Loot tables** — **CLOSED as a proven absence (2026-09-15).** The mapping
-   question was a non-issue: `RefMonsterID` *is* characterdata col 1 (Mangyang
-   = 1933), which we already carry. The blocker is the data. The drop classes
-   are real in the binary (`CRefMonster_AssignedItemRndDrop`,
-   `CRefDropItemGroup`, `CRefDropItemAssign`) but **no drop table exists in any
-   artifact this project has** — not in Media.pk2, not in the server's
-   `SR_GameRefData/`, nowhere in the y0gi bundle (the only files matching
-   "drop" are meshes for the falling-loot visuals). It lives in the server's
-   SQL database. So per-monster drops stay own design *by necessity*, and
-   become real the moment an operator brings that table — the schema and the
-   key are both already in place.
+7. **Loot tables — absence RE-TESTED and CONFIRMED, and now actionable
+   (2026-09-15).** After `npcpos` showed that a recorded absence can simply be
+   wrong, this one was re-examined against evidence the original conclusion did
+   not have: the **88-type refdata catalogue** and the **56 DB table schemas**.
+   Neither contains anything drop-related — the only `reward` types are quest,
+   event and shop. The absence holds.
+
+   But the re-test turned a dead end into something an operator can act on. The
+   drop tables are **SQL refdata**, and the binary names all four:
+
+   ```
+   _REFDROPITEMGROUP                          loader DB_Load_RefDropItemGroup
+   _REFDROPITEMASSIGN                         loader DB_Load_RefDropItemAssign
+   _REFMONSTER_ASSIGNEDITEMDROP               loader DB_Load_RefMonster_AssignedItemDrop
+   _REFCUSTOMIZINGRESERVEDITEMDROPFORMONSTER  loader FUN_0082c100
+   ```
+
+   The structure is recovered too. `RefItemDrop.cpp` is a 28-function module, and
+   `CRefDropData__AddAssignedItemDrop` walks the assignments as a **48-byte
+   (0x30) stride array**, comparing a roll against a **float at record+8** — the
+   drop probability. The error string names the key relation outright:
+   *"Can't find ItemGroupID(%d) within _RefMonster_AssignedItemRndDrop Table"* —
+   a monster maps to an item **group** id, and the group maps to items.
+
+   So the entry is no longer "no drop table exists anywhere". It is: **drops are
+   database refdata; here are the four table names, the relation between them,
+   and the record shape.** An operator with a real server database can import
+   them, and this project knows what to ask for.
+
 8. **Inventory size (50)** — ours, and now known **not** to be a constant in the
    real game: `InventorySize` is a persisted per-character `_CHAR` column
    (charData `+0xac`), so inventory is expandable per character. The starting
