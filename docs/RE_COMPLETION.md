@@ -149,8 +149,16 @@ pick one up without re-deriving anything.
    calls to each twin (register-passed — use `ResolveRegArg.java`).
 
 4. **Berserk numbers** (fill 8/hit, 20 s, +50 %) — ours. The mechanic and the
-   five orbs are real. *Next probe:* the `'zb'` param tag (0x7a62) in the stat
-   vocabulary.
+   five orbs are real.
+   **The recorded next probe was WRONG and is withdrawn (2026-09-15).** It said
+   to chase the `'zb'` tag; the client's own text says `PARAM_ZB` = **"Zombie"**,
+   a status effect, nothing to do with berserk. Berserk is **"Hwan"** internally
+   (`PARAM_HWAN_TIME_INCREASE` = *"Berserker time %d sec. increased"*,
+   `UIIT_CTL_TC_ACQUISITION_WHAN` = *"Chance of Obtaining Berserk Gage"*).
+   `hwanleveldata.txt` was checked and is **not** it either — 255 rows of
+   *titles* ("Ambassador", "Champion", "Conqueror"), not gauge values. The
+   numbers look genuinely server-side; *next probe:* the `HWAN`/`WHAN` naming in
+   the server binary, not the client's data.
 5. **Monster spawn positions** — ours by necessity (`npcpos.txt` has no
    monsters). Likely genuinely absent; prove it and it stops counting as open.
 6. **Quest objectives** — proven not to exist as data; any objectives shipped
@@ -168,6 +176,38 @@ pick one up without re-deriving anything.
    key are both already in place.
 8. **Inventory size (50)**, **unarmed damage (5)** — ours; low value, may be
    genuinely absent.
+
+## The stat vocabulary, in the game's own words
+
+The server tags stats with C multi-char literals (`Stat_ApplyTaggedModifier`,
+52 of them); the client names the same stats with `PARAM_*` localisation keys
+whose English text ships in `textuisystem.txt`. The two were recovered
+independently, from different binaries and different evidence, and the
+abbreviations line up exactly — eight of them, which is past coincidence:
+
+| tag | `PARAM_` key | the game's own English |
+|---|---|---|
+| `'hr'`/`'hra'` | `PARAM_HR` | **Attack rate** |
+| `'er'`/`'era'` | `PARAM_ER` | **Parry rate** |
+| `'cri'` | `PARAM_CRITICAL` | Critical |
+| `'bri'` | `PARAM_BLOCKING` | Blocking rate |
+| `'str'` | `PARAM_STR` | Str |
+| `'int'` | `PARAM_INT` | Int |
+| `'luck'` | `PARAM_LUCK` | Lucky |
+| `'ps'` | `PARAM_PS` | Poisoning |
+| `'fz'` | `PARAM_FZ` | Freezing |
+| `'zb'` | `PARAM_ZB` | **Zombie** |
+
+Also named, with no tag counterpart found yet: `PARAM_PA` "Phy. atk. pwr.",
+`PARAM_PD` "Phy. def. pwr.", `PARAM_MA` "Mag. atk. pwr.", `PARAM_MD`
+"Mag. def. pwr.", `PARAM_ABSORB` "Absorption".
+
+**Three of this project's readings were wrong and are corrected by this.**
+`'era'` was read as "evasion" and is *parry*; `'hra'` was read as "hit rate" and
+is *attack rate*; and `'zb'` was recorded as the next probe for the berserk
+numbers when it is a zombie status effect. The lesson is narrow: an abbreviation
+that looks obvious in English is still a guess until the game's own text says
+it, and the client ships that text.
 
 ## Naming coverage, and the denominator
 
