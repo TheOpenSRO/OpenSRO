@@ -16,9 +16,19 @@ class_name MasteryReader
 ## | 8, 9, 10 | the weapon TypeID4s this mastery trains (2/3 sword+blade, ...) |
 ## | 11 | Mastery icon (`icon\skillmastery\china\mastery_sword.ddj`) |
 ##
-## What this project does NOT have: a mastery's trained level, or a skill
-## point total -- the server tracks neither, so the skill window shows the
-## masteries at level 0 and says so, rather than inventing a number.
+## The column map above was derived by measurement on 2026-09-11 and is now
+## CONFIRMED by the table itself: skillmasterydata.txt ships a header row
+## naming every column -- "Mastery ID", "MasteryNameCode", "Tab Name Code",
+## "Type (TabID)", "Weapon Type 1..3", "Mastery Icon" -- and it agrees with all
+## six constants below. Rare in these tables, and worth knowing before anyone
+## re-derives them.
+##
+## STALE CLAIM REMOVED 2026-09-15. This used to say the project had neither a
+## mastery's trained level nor a skill point total, "so the skill window shows
+## the masteries at level 0 and says so". The server tracks both now --
+## skill.Store.MasteryLevels and SkillPoints, carried by OpSkillState and
+## raised through OpRaiseMastery -- and hud_panels.gd already renders the real
+## SP and the mastery total against the 3-per-level cap.
 
 const TABLE_PATH := "server_dep\\silkroad\\textdata\\skillmasterydata.txt"
 

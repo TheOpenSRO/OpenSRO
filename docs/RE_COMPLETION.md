@@ -3121,3 +3121,65 @@ damage bonus — the only term the game applies to a blow that this project omit
 and cannot prove is zero). It is neither. 257 rows of four columns, and the
 columns are display keys: `UIO_SECOND_HWAN_CH_NAME_LEVEL_1` and so on. It names
 hwan levels for the UI and carries no duration, no bonus, no number at all.
+
+## A survey of what the client actually ships (2026-09-15)
+
+The previous entry established that the drop tables are not in the client at
+all. That raised the obvious question: what IS there, and how much of it is this
+project leaving on the floor?
+
+**The client's `server_dep\silkroad\textdata` holds 136 distinct tables. The
+code opens 22 of them.**
+
+	characterdata  itemdata  skilldata  leveldata  levelgold  npcpos  npcchat
+	refshopgoods  refshopgroup  refshoptab  refmappingshopgroup
+	refmappingshopwithtab  refscrapofpackageitem  regioninfo  skilleffect
+	skillgroup  skillmasterydata  textdata_object  textquest_speechname
+	textuisystem  worldmap_mapinfo  worldmapguidedata
+
+The 114 untouched ones are the grounding roadmap. The substantial ones, by what
+they would ground: `questdata` and `questcontentsdata` (quest.Catalog is own
+design), `magicoption` and `magicoptionassign` (item blues, unmodelled),
+`teleportdata`/`teleportlink`/`teleportbuilding`, `refsetitemgroup`,
+`learnableskill`/`learnablemastery`, `erasableskill`/`erasablemastery` (the
+skill-reset path whose 80% refund was recovered two entries ago),
+`refpricepolicyofitem`, and the siege family.
+
+**How the count was got right.** The first pass grepped each table's basename
+across `.go`, `.gd` and `.md` and reported 96 of 136 "used" — nonsense, because
+`refdata_schema.md` *lists* table names and because "aaa" matches almost any
+file. Matching `[a-z_0-9&]+\.txt` literals in code only gives 22, which is
+checkable by eye against what the readers actually open.
+
+### The mastery table confirms a measured column map
+
+`skillmasterydata.txt` is unusual: it **ships a header row naming every
+column**. That is worth knowing because this project already derived its layout
+by measurement on 2026-09-11, and the header agrees on all six constants —
+`Mastery ID`→0, `MasteryNameCode`→2, `Tab Name Code`→5, `Type (TabID)`→6,
+`Weapon Type 1`→8, `Mastery Icon`→11. An independent confirmation of shipped
+work, at no cost.
+
+Its 13 real masteries, for the record — the id, the UI name code, the tab, and
+the weapon `TypeID4`s each trains:
+
+| id | name code | tab | weapons |
+|---|---|---|---|
+| 257 | `UIIT_STT_MASTERY_VI` | Weapon | 2, 3 (sword, blade) |
+| 258 | `UIIT_STT_MASTERY_HEUK` | Weapon | 4, 5 (spear, glaive) |
+| 259 | `UIIT_STT_MASTERY_PA` | Weapon | 6 (bow) |
+| 273–276 | `HAN`, `PUNG`, `HWA`, `GI` | Force | — |
+| 513, 515 | `WARRIOR`, `ROG` | EU physical | 7/8/9, 11/12 |
+| 514, 516 | `WIZARD`, `WARLOCK` | EU magical | 11, 10 |
+| 517, 518 | `BARD`, `CLERIC` | EU assist | 14, 10 |
+
+### Corrected
+
+`client/scripts/npc/mastery_reader.gd` said the project has neither a mastery's
+trained level nor a skill point total, "so the skill window shows the masteries
+at level 0 and says so". Both are tracked now — `skill.Store.MasteryLevels` and
+`SkillPoints`, carried by `OpSkillState`, raised through `OpRaiseMastery` — and
+`hud_panels.gd` already renders the real SP and the mastery total against the
+3-per-level cap. The comment described a window that no longer exists.
+
+**No srrevamp value changed.**
