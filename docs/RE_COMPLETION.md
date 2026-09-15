@@ -2204,3 +2204,84 @@ a level-3 on a level-10 stays 92.
 - Still open from before: `GetParam(0x80/0x81)` and `GetParam(0x103)` in the
   damage pipeline; the mitigation-skipping descriptor flag `0x20`; itemdata
   columns 114 and 117.
+
+## The stat-tag vocabulary, extracted mechanically (2026-09-15)
+
+`Stat_ApplyTaggedModifier` (`00498690`) is the id→name table this binary has as
+code rather than data, and it had been read by hand, fourteen tags at a time.
+Extracting it mechanically instead — walk the function body, remember the most
+recent `in_EAX == 0x…` equality (never a range test, which is the binary-search
+trap this file already records), and attribute the `ParamKeeper param id`
+comments that follow it — gives nineteen:
+
+| tag | constant | params |
+|---|---|---|
+| `int` | 0x00696e74 | 2 |
+| `hp` / `hpa` | 0x00006870 / 0x00687061 | 3 |
+| `mp` / `mpa` | 0x00006d70 / 0x006d7061 | 4 |
+| `era` | 0x00657261 | 9 |
+| `bri` | 0x00627269 | 10 |
+| `hra` | 0x00687261 | 11 |
+| `cri` | 0x00637269 | 12 |
+| `hprg` | 0x68707267 | 25 |
+| `mprg` | 0x6d707267 | 26 |
+| `hpmp` | 0x68706d70 | 25, 26 |
+| `rals` | 0x72616c73 | 27–32 |
+| `hpna` | 0x68706e61 | 52 |
+| `mpna` | 0x6d706e61 | 53 |
+| `evbl` | 0x6576626c | 56 |
+| `evcr` | 0x65766372 | 57 |
+| **`drua`** | 0x64727561 | **128, 129, 130** |
+| **`dara`** | 0x64617261 | **174, 175, 176, 177** |
+
+**Seventeen of the nineteen reproduce the map this project had already read by
+hand, value for value.** That is what licenses the other two: the extraction is
+not a new method whose output has to be taken on trust, it is a method checked
+against seventeen known answers before being asked a new question.
+
+`drua` matters because params 128 and 129 are read in the damage pipeline —
+`Formula_MitigatePhysicalDamage` multiplies the mitigated blow by
+`1 + GetParam(0x80 | 0x81)/100`, choosing between them on bits 0 and 1 of the
+attack descriptor. So it is a conditional damage bonus, and the tag that grants
+it is now named even though what the two bits select is not.
+
+**Encoding, since this has been got wrong before.** The tables store the tag as
+a multi-char literal, so the bytes come out reversed from a little-endian read:
+`0x00617474` unpacks to `tta` and is `att`. A census of the real skilldata Params
+block confirms it independently — the codes that fall out are `tta`, `pfed`,
+`laeh`, `arud`, `msnc`, which reversed are `att`, `defp`, `heal`, `dura`, `cnsm`.
+Hand-computing these constants has cost this project a wrong result twice; both
+times the fix was to let the machine do the arithmetic, and that is what this
+entry does.
+
+### A negative that does not hold, recorded so it is not re-derived
+
+`drua` and `dara` appear on **zero** rows of skilldata's Params block and zero
+rows of itemdata. That is NOT evidence they are dead, and the control run in the
+same probe proves why: **`cri` also appears zero times**, and `cri` is a real,
+shipped stat — a weapon's Critical reaches param 12 from itemdata **column 116**,
+a dedicated column, not from a Params tag. A tag's absence from the Params block
+therefore says nothing about whether the stat is live.
+
+The probe was too narrow, and only the control caught it. This is the fourth
+false negative in this project from a probe that could not have found what it was
+looking for; the rule it keeps re-teaching is to run a known-positive through
+every new probe before believing its zeros.
+
+### Naming coverage, measured
+
+Off the dump indexes directly, needing no Ghidra run: server **64.6%** (22,033 of
+34,113), client **46.1%** (20,038 of 43,460). The client's unnamed set is mostly
+small — 17,245 of its 23,422 are under 128 bytes — leaving roughly 6,200
+substantial functions genuinely unnamed.
+
+Both binaries already carry the source-file attribution pass (12,954 module
+comments in the client dump, 14,328 in the server), so that lever is spent. An
+earlier count here suggesting otherwise was an artifact of comparing *files*
+containing the comment across dumps with 22 and 2,133 shards respectively.
+
+**No srrevamp value changed this tick.** The vocabulary is knowledge, and the
+one code-adjacent edit is a correction: `docs/GROUNDING_AUDIT.md` asserted in a
+single sentence both that `Char_PublishCombatStats` publishes param 12 and that
+it "indeed does not". It does — `0x00497ef0`, `MOV EDI,0xc`, from the stat
+source's `+0x1dc` — and the tag route simply coexists with it.
