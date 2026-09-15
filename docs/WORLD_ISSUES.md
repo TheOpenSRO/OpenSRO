@@ -7075,6 +7075,38 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-eighty-ninth round: four recovered mechanics nobody could see
+
+Last round caught a value that never reached production. The same question asked
+of the other side of the wire turns up four more.
+
+`AttackResult` has carried `MonsterCritical`, `PlayerCritical`, `PlayerBlocked`
+and `DeathExpLost` for several releases. **The client decodes none of them** --
+its own `AttackResult` class stops at `berserk_active`. So criticals doubled
+blows, shields stopped hits dead and dying cost experience, and a player saw a
+plain damage number for all of it. `player_died` turned out to be worse: decoded
+since the first combat release and read by nothing, so death itself was silent.
+
+All five are decoded and shown now. A critical says `CRITICAL!`, a block says
+`Blocked it` rather than a damage figure, and a death says what it cost:
+
+```
+Hit for 60 CRITICAL! (440 HP left). Blocked it (HP 200).
+You were killed. Lost 25900 experience.
+```
+
+The decoder takes each field at its own width, because each was appended in its
+own release: an 18-byte result, a 23-byte one with the berserk tail, then 31,
+32, 33 and 34. The client test now walks **every one of those widths** and
+asserts the shorter ones report *absence* rather than a truncated field read as
+a real value -- the failure mode that matters when an older server meets a newer
+client.
+
+Verified by booting the real scene rather than by a parse check: `load()` on
+`World3D.gd` succeeds even when compilation aborts early on a missing autoload,
+which is not proof of anything. A real `qa_shot` boot reports zero script errors
+and a loaded region grid.
+
 ## Hundred-and-eighty-eighth round: the edit that silently did nothing
 
 Last round shipped `TwoHanded` as recovered and wired, with a tagged release

@@ -46,6 +46,49 @@ func _test_decode_attack_result() -> void:
 	_check(result.player_hp == 85, "player_hp round-trips")
 	_check(not result.player_died, "player_died is false")
 
+## The four fields appended after the berserk tail: the death penalty's exp
+## loss and the three combat outcomes. Each was added in its own release, so
+## every intermediate width has to decode -- an 18-byte result, a 23-byte one
+## with berserk, and every step up to 34.
+func _test_decode_attack_result_appended_tail() -> void:
+	var base := _build_attack_result("", 20, 20, false, 15, 85, false)
+	var tail := PackedByteArray()
+	tail.resize(16)
+	tail.encode_u32(0, 64)        # berserk gauge
+	tail[4] = 1                   # berserk active
+	tail.encode_s64(5, 25900)     # death exp lost
+	tail[13] = 1                  # monster critical
+	tail[14] = 1                  # player critical
+	tail[15] = 1                  # player blocked
+	var full := base.duplicate()
+	full.append_array(tail)
+
+	var r := CombatNet.decode_attack_result(full)
+	_check(r.berserk_gauge == 64, "berserk_gauge round-trips")
+	_check(r.berserk_active, "berserk_active round-trips")
+	_check(r.death_exp_lost == 25900, "death_exp_lost round-trips")
+	_check(r.monster_critical, "monster_critical round-trips")
+	_check(r.player_critical, "player_critical round-trips")
+	_check(r.player_blocked, "player_blocked round-trips")
+
+	# Every shorter width still decodes, reporting only what it carries --
+	# an older server must never make the client report a truncated field as
+	# a real value.
+	for width in [0, 5, 13, 14, 15]:
+		var short := base.duplicate()
+		short.append_array(tail.slice(0, width))
+		var s2 := CombatNet.decode_attack_result(short)
+		_check(s2.error == "", "a %d-byte tail still decodes" % width)
+		_check(s2.monster_damage == 20, "a %d-byte tail keeps the base fields" % width)
+		if width < 13:
+			_check(s2.death_exp_lost == 0, "a %d-byte tail reports no exp loss" % width)
+		if width < 14:
+			_check(not s2.monster_critical, "a %d-byte tail reports no monster crit" % width)
+		if width < 15:
+			_check(not s2.player_critical, "a %d-byte tail reports no player crit" % width)
+		if width < 16:
+			_check(not s2.player_blocked, "a %d-byte tail reports no block" % width)
+
 func _test_decode_attack_result_deaths() -> void:
 	var payload := _build_attack_result("", 20, 0, true, 0, 100, false)
 	var result := CombatNet.decode_attack_result(payload)
@@ -181,6 +224,7 @@ func _test_decode_monster_list_result_error() -> void:
 func _init() -> void:
 	_test_encode_attack()
 	_test_decode_attack_result()
+	_test_decode_attack_result_appended_tail()
 	_test_decode_attack_result_deaths()
 	_test_decode_monster_damaged()
 	_test_decode_monster_died()

@@ -68,6 +68,18 @@ class AttackResult:
 	## carried on every attack so the orbs fill as you fight.
 	var berserk_gauge: int = 0
 	var berserk_active: bool = false
+	## Whether the monster's counterattack was a critical. The chance is the
+	## species' own characterdata col 78, the doubling is the game's.
+	var monster_critical: bool = false
+	## Whether the player's blow was a critical -- the equipped weapon's own
+	## Critical column (itemdata 116).
+	var player_critical: bool = false
+	## Whether the player's shield blocked the counterattack outright. A
+	## blocked hit deals nothing at all.
+	var player_blocked: bool = false
+	## Experience lost to the death penalty, 0 when the player did not die or
+	## is still inside the level-10 grace period.
+	var death_exp_lost: int = 0
 
 ## Result of decode_monster_damaged().
 class MonsterDamaged:
@@ -151,6 +163,16 @@ static func decode_attack_result(data: PackedByteArray) -> AttackResult:
 	if offset + 23 <= data.size():
 		result.berserk_gauge = data.decode_u32(offset + 18)
 		result.berserk_active = data[offset + 22] != 0
+	# Each of these was appended in its own turn, so every width in between
+	# still decodes and an older server simply reports none of them.
+	if offset + 31 <= data.size():
+		result.death_exp_lost = data.decode_s64(offset + 23)
+	if offset + 32 <= data.size():
+		result.monster_critical = data[offset + 31] != 0
+	if offset + 33 <= data.size():
+		result.player_critical = data[offset + 32] != 0
+	if offset + 34 <= data.size():
+		result.player_blocked = data[offset + 33] != 0
 
 	return result
 

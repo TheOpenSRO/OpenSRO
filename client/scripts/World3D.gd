@@ -7265,9 +7265,13 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		return
 	# One line per exchange, so a render's log says what the fight did
 	# without reading it off a label.
-	print("World3D: attack hit for %d (%d left%s), took %d (HP %d)" % [
-		result.monster_damage, result.monster_remaining_hp,
-		", died" if result.monster_died else "", result.player_damage_taken, result.player_hp])
+	print("World3D: attack hit for %d%s (%d left%s), took %d%s (HP %d)%s" % [
+		result.monster_damage, " CRIT" if result.player_critical else "",
+		result.monster_remaining_hp, ", died" if result.monster_died else "",
+		result.player_damage_taken,
+		" BLOCKED" if result.player_blocked else (" CRIT" if result.monster_critical else ""),
+		result.player_hp,
+		", lost %d exp" % result.death_exp_lost if result.death_exp_lost > 0 else ""])
 	# A combat exchange keeps the player in the battle stance while idle.
 	_last_combat_time = _player_anim_time
 	# The player's swing: the next plain attack in the weapon group's
@@ -7328,15 +7332,33 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			# monster fallback uses), timed to when the counter-blow lands.
 			_floating_damage(player, 2.0 * PLAYER_SCALE_RATIO, result.player_damage_taken, DAMAGE_TAKEN_COLOUR))
 	if result.monster_died:
-		monster_status_label.text = "Hit for %d -- it died!" % result.monster_damage
+		monster_status_label.text = "Hit for %d%s -- it died!" % [
+			result.monster_damage, " CRITICAL!" if result.player_critical else ""]
 		# A kill may have progressed a quest's kill count even without
 		# completing it (OpQuestCompleted only fires on completion), so
 		# refresh here rather than only on _on_quest_completed.
 		NetClient.list_quests(NetClient.current_character_name)
 	else:
-		monster_status_label.text = "Hit for %d (%d HP left). Took %d damage (HP %d)." % [
-			result.monster_damage, result.monster_remaining_hp, result.player_damage_taken, result.player_hp
+		# The recovered combat mechanics are only worth recovering if a player
+		# can see them happen: a critical doubles the blow, a block stops it
+		# dead. Both were computed and sent for several releases before
+		# anything read them.
+		var taken := "Took %d damage" % result.player_damage_taken
+		if result.player_blocked:
+			taken = "Blocked it"
+		elif result.monster_critical:
+			taken = "Took %d -- critical!" % result.player_damage_taken
+		monster_status_label.text = "Hit for %d%s (%d HP left). %s (HP %d)." % [
+			result.monster_damage, " CRITICAL!" if result.player_critical else "",
+			result.monster_remaining_hp, taken, result.player_hp
 		]
+		# Dying was silent until now: the server has reported it since the
+		# first combat release and nothing read the flag. Above level 10 it
+		# also costs experience -- the real penalty, see
+		# leveldata.DeathPenaltyExp.
+		if result.player_died:
+			monster_status_label.text = "You were killed.%s" % (
+				" Lost %d experience." % result.death_exp_lost if result.death_exp_lost > 0 else "")
 	NetClient.list_monsters()
 	# OpUseSkill's response reuses this same OpAttackResult (see
 	# SkillNet's doc comment) -- refresh here too so a just-used skill's
