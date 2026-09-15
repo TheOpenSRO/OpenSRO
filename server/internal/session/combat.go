@@ -688,7 +688,14 @@ func performAttack(
 		if err != nil {
 			return fmt.Errorf("combat: reading armor: %w", err)
 		}
-		incoming := monster.Attack - armor
+		// A monster attacks with its SKILL's damage range (characterdata col 83
+		// -> that skill's 'att' param), rolled the same way a weapon is. The
+		// flat disclosed Attack remains only for a monster with no range.
+		raw := monster.Attack
+		if monster.AttackMax > 0 {
+			raw = rollDamage(monster.AttackMin, monster.AttackMax)
+		}
+		incoming := raw - armor
 		if incoming < 1 {
 			incoming = 1
 		}

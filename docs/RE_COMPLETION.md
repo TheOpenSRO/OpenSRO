@@ -43,39 +43,31 @@ which is itself a recovery — quest objectives are the model for that.
 Ordered by value. Each line names the next concrete probe, so a cold start can
 pick one up without re-deriving anything.
 
-1. **Monster ATTACK is open; monster DEFENCE is closed (2026-09-15).**
-   Both terms of a monster's mitigation are now real:
+1. **Monster combat profile — CLOSED (2026-09-15).** Every term is real now.
 
-   | col | param | what it is | real values |
-   |---|---|---|---|
-   | 71 | 5 | **flat absorption** | Mangyang 7, Weasel 12, Yeoha 22, Earth Ghost 103 |
-   | 72 | 6 | flat absorption, magical side | Mangyang 10, Yeoha 41 |
-   | 73 | 7 | **reduction %** | = the monster's level, every row |
-   | 74 | 8 | reduction %, magical side | = the monster's level |
+   | what | source | values |
+   |---|---|---|
+   | MaxHP | `characterdata` col 59 | Mangyang 54 … Yeoha 249 |
+   | flat absorption | col 71 → param 5 | 7, 12, 22, 103 |
+   | reduction % | col 73 → param 7 | = the monster's level |
+   | **attack damage** | **col 83 → that skill's `'att'` param** | 17-19 … 67-79 |
+   | exp per kill | `leveldata` col 5 at `min(lvl)` | 24 … 12550 |
 
-   Settled by **disassembling** `Formula_MitigatePhysicalDamage`, because the
-   decompiled C was unreadable there — x87 stack juggling turned the expression
-   into a `CONCAT44` and hid which value went where. The instructions are
-   unambiguous:
+   **Monster attack was hiding in plain sight because it is not a stat.** No
+   column holds it and `GObjMob_PublishStats` never publishes a damage range —
+   only `Char_PublishCombatStats` sets params 190/191, and that is the character
+   path. A monster attacks with a **skill**: characterdata col 83 is its primary
+   attack skill id, and the ids are named after the species itself —
+   `160 = MSKILL_CH_MANGNYANG_ATTACK01`, `165 = MSKILL_CH_GYO_ATTACK02`,
+   `176 = MSKILL_CH_YEOHA_ATTACK01`. That skill's `'att'` param carries the
+   damage, and this project decoded `'att'` months ago for player skills. With
+   no weapon to scale, the grounded skill formula collapses to `rand(min, max)`.
 
-   ```
-   PUSH 0x5; CALL GetParam     FSTP [ESP+0x18]      ; save param 5
-   FLD  damage                 FSTP qword [ESP+0x10]
-   PUSH 0x7; CALL GetParam     FDIV [0x00b45af0]    ; param7 / 100
-                               FADD [0x00b45ac0]    ; + 1.0
-                               FDIVR qword [ESP+0x10]  ; damage / (1 + pct/100)
-                               FSUB [ESP+0x18]      ; - param 5
-                               FLDZ; FCOM; FST      ; clamp at 0
-   ```
+   The ranges rise cleanly with level across the whole Jangan ladder (17-19,
+   21-23, 25-29, 30-34, 35-40, 41-47, 47-54, 60-70, 67-79), which is
+   corroboration rather than the finding — the finding is the skill-id column.
 
-   So **param 5 is the flat term and param 7 the percentage** — which retires
-   the long-running "are 71/72 attack or defence" question: they are *defence*,
-   and the old "PhyAttack min/max" guess was wrong twice over (not a min/max
-   pair, and not attack). Shipped: `monsterSpec.Defense` carries the real col-71
-   value for all eleven species, from the **original client's** characterdata.
-
-   *Still open — monster ATTACK and gold.* No identified table; they remain a
-   disclosed curve off the grounded level.
+   *Only gold remains disclosed* in a monster's profile.
 
 2. **Combat damage model — the mitigation formula is RECOVERED; the model is
    not yet shipped.** srrevamp still runs `base + bonus - defence, floor 1`, own

@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 )
 
@@ -104,6 +105,77 @@ func TestMonsterDefenceIsReal(t *testing.T) {
 		if got := combat.MitigateDamage(16, spec.Level, spec.Defense); got < 1 {
 			t.Fatalf("%s (lvl %d, def %d) takes %d from a starter weapon",
 				spec.CodeName, spec.Level, spec.Defense, got)
+		}
+	}
+}
+
+// TestMonsterAttackIsReal pins each species' damage range against the ORIGINAL
+// client's tables, and checks a starting character survives the early ladder.
+//
+// A monster attacks with a SKILL, not a weapon: characterdata col 83 is its
+// primary attack skill id, named after the species itself
+// (MSKILL_CH_MANGNYANG_ATTACK01 = 160), and that skill's 'att' param carries
+// the damage range. With no weapon to scale, the project's already-grounded
+// skill formula collapses to rand(min, max).
+func TestMonsterAttackIsReal(t *testing.T) {
+	want := map[string][2]int{
+		"MOB_CH_MANGNYANG": {17, 19}, "MOB_CH_BIGEYEGHOST_CLON": {21, 23},
+		"MOB_CH_BIGEYEGHOST": {25, 29}, "MOB_CH_GYO_CLON": {30, 34},
+		"MOB_CH_GYO": {35, 40}, "MOB_CH_WATERGHOST_CLON": {41, 47},
+		"MOB_CH_WATERGHOST": {47, 54}, "MOB_CH_TOMBSTONE_CLON": {74, 83},
+		"MOB_CH_STONEGHOST": {60, 70}, "MOB_CH_YEOHA": {67, 79},
+		"MOB_WC_EARTHGHOST": {219, 261},
+	}
+	seen := 0
+	for _, spec := range monsterSpecs {
+		w, ok := want[spec.CodeName]
+		if !ok {
+			continue
+		}
+		seen++
+		if spec.AttackMin != w[0] || spec.AttackMax != w[1] {
+			t.Errorf("%s attack = %d-%d, want the real skill range %d-%d",
+				spec.CodeName, spec.AttackMin, spec.AttackMax, w[0], w[1])
+		}
+		if spec.AttackMin > spec.AttackMax {
+			t.Errorf("%s has an inverted range %d-%d", spec.CodeName, spec.AttackMin, spec.AttackMax)
+		}
+	}
+	if seen != len(want) {
+		t.Fatalf("checked %d species, expected %d -- the roster changed", seen, len(want))
+	}
+
+	// A fresh character must survive a reasonable number of blows from the
+	// monster it actually starts on -- the level-1 one. This is a sanity check
+	// on the wiring, not a judgement on the game's balance: a level-3 monster
+	// killing an unarmoured level-1 character in seven hits is the real game
+	// being dangerous, not a bug, and an earlier version of this test wrongly
+	// flagged exactly that. Real numbers do not get rejected because an
+	// invented threshold dislikes them.
+	for _, spec := range monsterSpecs {
+		if spec.Level != 1 {
+			continue
+		}
+		hits := character.StartingMaxHP / spec.AttackMax
+		if hits < 8 {
+			t.Errorf("%s (the starting monster) kills a fresh character in %d unarmoured hits",
+				spec.CodeName, hits)
+		}
+	}
+
+	// The range must rise with level across the ladder, which is the property
+	// that makes the roster a progression at all.
+	prev := 0
+	for _, spec := range monsterSpecs {
+		if spec.Zone != "jangan" || spec.AttackMax == 0 {
+			continue
+		}
+		if spec.Level <= 7 && spec.AttackMax <= prev {
+			t.Errorf("%s (lvl %d) attack %d does not exceed the previous rung's %d",
+				spec.CodeName, spec.Level, spec.AttackMax, prev)
+		}
+		if spec.Level <= 7 {
+			prev = spec.AttackMax
 		}
 	}
 }

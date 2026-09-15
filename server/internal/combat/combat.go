@@ -37,11 +37,11 @@ type Monster struct {
 	// column 15): 0 normal, 1 champion, 3/8 unique, 4 giant, 5 titan, 6 elite.
 	// The client maps it to the target-window rank gem (mapping recovered from
 	// the retail client). Structural data, so grounded like Level.
-	Rarity     int
-	Zone       string
-	X, Y, Z    float64 // own design placeholder position -- see Hub.Spawn
-	MaxHP      int
-	HP         int
+	Rarity  int
+	Zone    string
+	X, Y, Z float64 // own design placeholder position -- see Hub.Spawn
+	MaxHP   int
+	HP      int
 	// Defense is a flat subtraction, still the disclosed curve.
 	Defense int
 	// DefensePercent is the monster's own mitigation percentage, and it is
@@ -51,8 +51,15 @@ type Monster struct {
 	// The server reads them as ParamKeeper params 7 and 8 and applies them as
 	// a percentage -- see MitigateDamage.
 	DefensePercent int
-	Attack         int // counter-damage dealt to whoever attacks it, before their own defense (none exists yet)
-	GoldReward int64
+	// Attack is the disclosed flat counter-damage, kept only as a fallback.
+	Attack int
+	// AttackMin/AttackMax are REAL: a monster attacks with a SKILL, not a
+	// weapon. characterdata col 83 is its primary attack skill id (named after
+	// the species -- MSKILL_CH_MANGNYANG_ATTACK01), and that skill's 'att'
+	// param carries the damage range. With no weapon to scale, the project's
+	// already-grounded skill formula collapses to rand(min, max).
+	AttackMin, AttackMax int
+	GoldReward           int64
 	// ExpReward is the experience a kill grants. Derived from the monster's
 	// toughness for now (a disclosed default, ExpFor) -- the real per-species
 	// experience lives in mob data this project does not load yet; recovering
@@ -188,6 +195,10 @@ type Species struct {
 	Level int
 	// Rarity is the monster rank from characterdata (_RefObjChar col 15).
 	Rarity int
+	// AttackMin/AttackMax are the real damage range of this species' primary
+	// attack skill (characterdata col 83 -> that skill's 'att' param). Zero
+	// means the caller has none and the flat disclosed Attack is used instead.
+	AttackMin, AttackMax int
 }
 
 // SpawnSpecies is Spawn with the species' code name carried along, so the
@@ -197,7 +208,7 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, GoldReward: goldReward, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax, GoldReward: goldReward, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
 	h.byID[id] = m
 	return m
 }

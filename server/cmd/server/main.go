@@ -43,13 +43,16 @@ import (
 type monsterSpec struct {
 	Zone     string
 	Name     string
-	CodeName string  // the species' characterdata key; what the client draws it by
-	Level    int     // real level, from the client's characterdata (_RefObjChar col 57)
-	Rarity   int     // real rank, from characterdata (_RefObjChar col 15); 0 = normal
-	MaxHP    int     // real max HP, from characterdata (_RefObjChar col 59) -- see below
-	Defense  int     // real flat absorption, from characterdata col 71 -- see below
-	X, Z     float64 // own-design spawn anchor (see the roster comment)
-	Count    int     // how many to keep alive around the anchor (default 1)
+	CodeName string // the species' characterdata key; what the client draws it by
+	Level    int    // real level, from the client's characterdata (_RefObjChar col 57)
+	Rarity   int    // real rank, from characterdata (_RefObjChar col 15); 0 = normal
+	MaxHP    int    // real max HP, from characterdata (_RefObjChar col 59) -- see below
+	Defense  int    // real flat absorption, from characterdata col 71 -- see below
+	// AttackMin/AttackMax are the real damage range of the species' primary
+	// attack SKILL (characterdata col 83 -> that skill's 'att' param).
+	AttackMin, AttackMax int
+	X, Z                 float64 // own-design spawn anchor (see the roster comment)
+	Count                int     // how many to keep alive around the anchor (default 1)
 }
 
 // monsterStatsForLevel is what is still this project's OWN DESIGN in a
@@ -131,19 +134,19 @@ var monsterSpecs = []monsterSpec{
 	// verified terrain rather than a blind guess.
 	//
 	// A low-level ground north-west of the fields (the (0,-840) anchor):
-	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1, MaxHP: 54, Defense: 7, X: 0, Z: -840, Count: 3},
-	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", Level: 2, MaxHP: 55, Defense: 9, X: -170, Z: -880, Count: 2},
-	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", Level: 3, MaxHP: 85, Defense: 9, X: 170, Z: -880, Count: 2},
-	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", Level: 4, MaxHP: 83, Defense: 12, X: -170, Z: -760, Count: 2},
+	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1, MaxHP: 54, Defense: 7, AttackMin: 17, AttackMax: 19, X: 0, Z: -840, Count: 3},
+	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", Level: 2, MaxHP: 55, Defense: 9, AttackMin: 21, AttackMax: 23, X: -170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", Level: 3, MaxHP: 85, Defense: 9, AttackMin: 25, AttackMax: 29, X: 170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", Level: 4, MaxHP: 83, Defense: 12, AttackMin: 30, AttackMax: 34, X: -170, Z: -760, Count: 2},
 	// A higher ground east of the fields (the (340,-340) anchor):
-	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", Level: 5, MaxHP: 119, Defense: 12, X: 340, Z: -340, Count: 3},
-	{Zone: "jangan", Name: "Water Ghost slave", CodeName: "MOB_CH_WATERGHOST_CLON", Level: 6, MaxHP: 114, Defense: 15, X: 500, Z: -360, Count: 2},
-	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", Level: 7, MaxHP: 156, Defense: 15, X: 340, Z: -500, Count: 2},
-	{Zone: "jangan", Name: "Tomb Stone Ghost", CodeName: "MOB_CH_TOMBSTONE_CLON", Level: 8, MaxHP: 204, Defense: 15, X: 500, Z: -500, Count: 2},
-	{Zone: "jangan", Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", Level: 9, MaxHP: 194, Defense: 22, X: 200, Z: -480, Count: 2},
-	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", Level: 10, MaxHP: 249, Defense: 22, X: 200, Z: -220, Count: 2},
+	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", Level: 5, MaxHP: 119, Defense: 12, AttackMin: 35, AttackMax: 40, X: 340, Z: -340, Count: 3},
+	{Zone: "jangan", Name: "Water Ghost slave", CodeName: "MOB_CH_WATERGHOST_CLON", Level: 6, MaxHP: 114, Defense: 15, AttackMin: 41, AttackMax: 47, X: 500, Z: -360, Count: 2},
+	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", Level: 7, MaxHP: 156, Defense: 15, AttackMin: 47, AttackMax: 54, X: 340, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Tomb Stone Ghost", CodeName: "MOB_CH_TOMBSTONE_CLON", Level: 8, MaxHP: 204, Defense: 15, AttackMin: 74, AttackMax: 83, X: 500, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", Level: 9, MaxHP: 194, Defense: 22, AttackMin: 60, AttackMax: 70, X: 200, Z: -480, Count: 2},
+	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", Level: 10, MaxHP: 249, Defense: 22, AttackMin: 67, AttackMax: 79, X: 200, Z: -220, Count: 2},
 	// The donghwang example kept from before (a far, higher-level zone).
-	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", Level: 27, MaxHP: 1451, Defense: 103, X: 70, Z: -50, Count: 1},
+	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", Level: 27, MaxHP: 1451, Defense: 103, AttackMin: 219, AttackMax: 261, X: 70, Z: -50, Count: 1},
 }
 
 const respawnDelay = 10 * time.Second
@@ -167,7 +170,8 @@ func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Log
 		maxHP = 1
 	}
 	spawn := func() int64 {
-		m := monsters.SpawnSpecies(spec.Zone, combat.Species{Name: spec.Name, CodeName: spec.CodeName, Level: spec.Level, Rarity: spec.Rarity}, spec.X, 0, spec.Z, maxHP, defense, attack, gold)
+		m := monsters.SpawnSpecies(spec.Zone, combat.Species{Name: spec.Name, CodeName: spec.CodeName, Level: spec.Level, Rarity: spec.Rarity,
+			AttackMin: spec.AttackMin, AttackMax: spec.AttackMax}, spec.X, 0, spec.Z, maxHP, defense, attack, gold)
 		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone, "level", m.Level)
 		return m.ID
 	}
