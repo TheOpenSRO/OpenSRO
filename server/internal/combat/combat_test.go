@@ -1,6 +1,9 @@
 package combat
 
-import "testing"
+import (
+	"math/rand"
+	"testing"
+)
 
 func TestSpawnStartsAtFullHP(t *testing.T) {
 	h := NewHub()
@@ -156,5 +159,46 @@ func TestMitigateDamage(t *testing.T) {
 	// A negative percentage cannot amplify damage.
 	if got := MitigateDamage(100, -50, 0); got != 100 {
 		t.Fatalf("MitigateDamage(100, -50, 0) = %d, want 100", got)
+	}
+}
+
+// TestRollDamage pins the recovered damage roll: uniform in [min, max],
+// inclusive at both ends, with a non-positive span yielding the max.
+//
+// Recovered from Formula_RollWeaponDamage (0040f8d0) and its twin (0040f930):
+//
+//	min = GetParam(191); max = GetParam(190)
+//	if max - min < 1 { return 0 }
+//	return rand() % (max - min + 1) + min
+func TestRollDamage(t *testing.T) {
+	r := rand.New(rand.NewSource(1))
+
+	// Both ends are reachable, and nothing outside the range ever is.
+	seen := map[int]bool{}
+	for i := 0; i < 2000; i++ {
+		v := RollDamage(10, 14, r)
+		if v < 10 || v > 14 {
+			t.Fatalf("roll %d outside [10, 14]", v)
+		}
+		seen[v] = true
+	}
+	for want := 10; want <= 14; want++ {
+		if !seen[want] {
+			t.Errorf("value %d never rolled in 2000 tries -- range is not inclusive", want)
+		}
+	}
+
+	// A zero-width range is the value itself, not a panic.
+	if got := RollDamage(7, 7, r); got != 7 {
+		t.Fatalf("RollDamage(7, 7) = %d, want 7", got)
+	}
+	// Reversed bounds are tolerated rather than producing nonsense.
+	if got := RollDamage(9, 3, r); got < 3 || got > 9 {
+		t.Fatalf("RollDamage(9, 3) = %d, want something in [3, 9]", got)
+	}
+	// A nil source rolls the maximum, so a caller that wants a fixed blow
+	// does not need a separate code path.
+	if got := RollDamage(4, 11, nil); got != 11 {
+		t.Fatalf("RollDamage(4, 11, nil) = %d, want the max 11", got)
 	}
 }

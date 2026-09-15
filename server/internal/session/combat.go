@@ -5,8 +5,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-
 	"math/rand"
+	"sync"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
@@ -37,6 +38,22 @@ const (
 	OpBerserk           uint16 = 0x0068 // client -> server, request to go berserk
 	OpBerserkResult     uint16 = 0x0069 // server -> client, the gauge/active after the request
 )
+
+// damageRoll is the randomness behind a blow's damage range. Its own source
+// rather than the global one, so a test can seed it and get a fixed blow, and
+// so nothing else in the server perturbs the sequence. Guarded because
+// rand.Rand is not safe for concurrent use and attacks arrive per session.
+var (
+	damageRollMu sync.Mutex
+	damageRollNG = rand.New(rand.NewSource(time.Now().UnixNano()))
+)
+
+// rollDamage is combat.RollDamage under the lock.
+func rollDamage(min, max int) int {
+	damageRollMu.Lock()
+	defer damageRollMu.Unlock()
+	return combat.RollDamage(min, max, damageRollNG)
+}
 
 // BerserkResult reports the gauge (0..berserk.Max) and whether berserk is now
 // active, after an OpBerserk request. Activated is true only when this request
@@ -785,7 +802,11 @@ func attackerDamage(ctx context.Context, characterID int64, eq equipment.Store, 
 		if err != nil {
 			return 0, fmt.Errorf("looking up weapon stats: %w", err)
 		}
-		return int(item.PhysAttackMax), nil
+		// The game rolls the blow in [min, max] rather than always swinging
+		// for maximum -- see combat.RollDamage, recovered from
+		// Formula_RollWeaponDamage. Both ends come from the client's own
+		// itemdata.
+		return rollDamage(int(item.PhysAttackMin), int(item.PhysAttackMax)), nil
 	}
 	return unarmedDamage, nil
 }

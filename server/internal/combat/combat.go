@@ -6,6 +6,7 @@ package combat
 import (
 	"context"
 	"math"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 
@@ -98,6 +99,36 @@ func MitigateDamage(raw, reductionPercent, flat int) int {
 		out = 1
 	}
 	return out
+}
+
+// RollDamage picks a blow's damage uniformly in [min, max], the way the game
+// does rather than always swinging for maximum.
+//
+// RECOVERED. Formula_RollWeaponDamage (0040f8d0) and its twin for the other
+// damage type (0040f930) are three lines each:
+//
+//	min = GetParam(191);  max = GetParam(190)      // 193 / 192 on the twin
+//	if max - min < 1 { return 0 }
+//	return rand() % (max - min + 1) + min
+//
+// so the range is inclusive at both ends and a non-positive span yields nothing.
+// Char_PublishCombatStats publishes 190/191 and 192/193 as the two types'
+// min/max pairs, and this project already loads both ends of the range from the
+// client's own itemdata (columns 12-15).
+//
+// r is the source of randomness; a nil r rolls the maximum, which keeps tests
+// that want a fixed blow deterministic without a second code path.
+func RollDamage(min, max int, r *rand.Rand) int {
+	if max < min {
+		min, max = max, min
+	}
+	if max-min < 1 {
+		return max
+	}
+	if r == nil {
+		return max
+	}
+	return min + r.Intn(max-min+1)
 }
 
 // ExpFor is the placeholder experience a monster of the given toughness
