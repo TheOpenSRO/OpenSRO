@@ -40,55 +40,90 @@ var ErrInsufficientGold = errors.New("character: insufficient gold")
 // design choice.
 const StartingGold = 1000
 
-// MaxHP is the base maximum health (at level 1) and HPPerLevel is how much
-// each level adds. Own design. The game's real per-level growth is known (see
-// MPGrowth: health and mana scale on the same 1.02^(level-1) curve) but its
-// BASE is not, so there is nothing to adopt for health that would not just be
-// this same guess wearing a recovered shape -- and 1.02 compounding off a
-// base of 100 would leave a level-10 character on 120 HP against the real
-// 249-HP Yeoha. Stays own design. Use MaxHPForLevel.
-const MaxHP = 100
-const HPPerLevel = 40
+// Health and mana are the game's own formula. RECOVERED, in full.
+//
+// SR_GameServer.exe does not compute stats with arithmetic in a function. It
+// builds a dependency graph of named parameters in a class the binary calls
+// GParamKeeper (it says so in its own assert string), and GObjPC_InitStats
+// declares the player's whole graph in one go: thirty edges, each a
+// `ParamKeeper_BindDerived(source, target, slot)`. Two of those chains are
+// health and mana:
+//
+//	Str(1) -> 52 -> 54 -> MaxHP(3)
+//	Int(2) -> 53 -> 55 -> MaxMP(4)
+//
+// 1000.0 is pushed into slot 3 of params 52 and 53, and 1.02^(level-1) * 100
+// into slot 3 of 54 and 55. The keeper evaluates one node as
+// `slot0 * (slot1+100)/100 * slot2 * slot3/100`, with slot 3 defaulting to 100,
+// so each chain collapses to `stat * (1000/100) * 1.02^(level-1)`.
+//
+// Reading that out of the binary took undoing two layers. The parameter's
+// identity travels in DI, which Ghidra never assigned to an argument, so all
+// 297 call sites decompiled to `SetParam(slot, 0, value)` with the identity
+// silently gone. And the callers never load the id with MOV -- the optimiser
+// materialises each one from whichever register already holds a nearby
+// constant, as a ping-pong of LEAs (`LEA EDI,[EBX+0x33]` / `LEA EBX,[EDI-0x32]`
+// ...), so nothing is written down to grep for. See
+// client/tools/ghidra/ResolveRegArg.java, which resolves the chains.
+//
+// The binary holds no id->name table -- the enum was compile-time only -- so
+// each id is earned from its use sites:
+//
+//   - 3 and 4 are MaxHP and MaxMP because GObjMob_PublishStats pushes
+//     refobj+0x19c and +0x1a0 at them, and +0x19c is the field that
+//     RefObjChar_ExtractData asserts `m_dwMaxHP > 0` on.
+//   - 0, 1 and 2 are Level, Str and Int because GObjPC_InitStats pushes
+//     charData+0x65, +0x74 and +0x76 at them; and 0 is confirmed Level a second
+//     time by the monster path pushing its level virtual at the same id.
+//
+// This supersedes the old own-design `100 + 40*(level-1)` health curve and the
+// disclosed `MPBase = 100`. Both are gone: the base was never a constant, it
+// was the stat.
+const (
+	// HPPerStr and MPPerInt are the 1000.0 at .rdata 0x00b462ac, applied by
+	// the keeper as a percent scale and so worth ten points of health per
+	// point of the stat.
+	HPPerStr = 10
+	MPPerInt = 10
+	// StatGrowth is .rdata 0x00b45ea0, raised to (level-1) by binary
+	// exponentiation in GObjPC_InitStats and pushed as a percent scale.
+	StatGrowth = 1.02
+)
 
-// MaxHPForLevel is a character's maximum health at the given level.
-func MaxHPForLevel(level int) int {
+// StartingStr and StartingInt are a new character's stats. OWN DESIGN,
+// disclosed -- the formula above is the game's, these two numbers are not.
+// SR_GameServer.exe does not contain them: nothing writes a constant to
+// charData+0x74 or +0x76 anywhere in it, because character creation happened on
+// the database side, which this project has no artifact of. 20 apiece puts a
+// level-1 character on 200 health and 200 mana.
+const (
+	StartingStr = 20
+	StartingInt = 20
+)
+
+// StartingMaxHP and StartingMaxMP are what those give at level 1, where the
+// growth term is 1.
+const (
+	StartingMaxHP = StartingStr * HPPerStr
+	StartingMaxMP = StartingInt * MPPerInt
+)
+
+// MaxHPFor is a character's maximum health: Str * 10 * 1.02^(level-1).
+func MaxHPFor(str, level int) int { return derivedStat(str, HPPerStr, level) }
+
+// MaxMPFor is a character's maximum mana: Int * 10 * 1.02^(level-1).
+func MaxMPFor(intel, level int) int { return derivedStat(intel, MPPerInt, level) }
+
+// derivedStat walks one of the keeper's stat chains: the stat scaled by its
+// per-point constant, then compounded by the level growth.
+func derivedStat(stat, perPoint, level int) int {
 	if level < 1 {
 		level = 1
 	}
-	return MaxHP + (level-1)*HPPerLevel
-}
-
-// MPGrowth is REAL and MPBase is NOT. Read this before trusting the number.
-//
-// The pserver's own SR_GameServer.exe computes `1.02^(level-1)` by binary
-// exponentiation in its player stat initialiser (FUN_004e3200) and pushes it
-// for both the 'hp' and 'mp' parameters, so health and mana scale with level
-// on the same curve. **0x00b45ea0 = 1.02 is recovered.**
-//
-// What it is pushed as matters, and an earlier pass here got it wrong. The
-// push is `FUN_004b3510(3, ...)`, and that first argument is a SLOT INDEX into
-// the ParamKeeper's four-slot value (base, additive-percent, multiplier,
-// percent-scale -- combined by FUN_004b3210 as
-// `base * (1 + pct/100) * mult * (scale/100)`). Slot 3 is the percent scale,
-// whose default is 100.0 = 100%. So the level curve is a MULTIPLIER, and the
-// `* 100.0` beside it is just percent encoding that the evaluator divides
-// straight back out -- it is not an absolute quantity.
-//
-// The real base is whatever is pushed into slot 0 for those parameters, and it
-// has NOT been identified. **MPBase = 100 is therefore this project's own
-// disclosed choice**, picked so a level-1 character starts on 100 mana; only
-// the per-level compounding is the game's. Do not describe this as "the game's
-// mana curve" -- the shape is, the magnitude is ours.
-const MPBase = 100.0  // own design, disclosed
-const MPGrowth = 1.02 // recovered (.rdata 0x00b45ea0)
-
-// MaxMPForLevel is a character's maximum mana at the given level:
-// MPBase * 1.02^(level-1) -- the game's per-level growth on our own base.
-func MaxMPForLevel(level int) int {
-	if level < 1 {
-		level = 1
+	if stat < 0 {
+		stat = 0
 	}
-	return int(math.Round(MPBase * math.Pow(MPGrowth, float64(level-1))))
+	return int(math.Round(float64(stat) * float64(perPoint) * math.Pow(StatGrowth, float64(level-1))))
 }
 
 // StartingLevel is the level a newly-created character is. There is no
@@ -135,10 +170,21 @@ type Character struct {
 	// Spending them into Str/Int is the separate stat system, still to come.
 	Exp        int64
 	StatPoints int
+	// Str and Int are the two spendable stats. They are what health and mana
+	// are derived from -- see MaxHPFor/MaxMPFor, which is the game's own
+	// formula, so these are not cosmetic.
+	Str int
+	Int int
 	// StorageGold is gold kept in the NPC warehouse, separate from the Gold
 	// the character carries. Moved between the two by the storage service.
 	StorageGold int64
 }
+
+// MaxHP is this character's maximum health, from its Str and Level.
+func (c *Character) MaxHP() int { return MaxHPFor(c.Str, c.Level) }
+
+// MaxMP is this character's maximum mana, from its Int and Level.
+func (c *Character) MaxMP() int { return MaxMPFor(c.Int, c.Level) }
 
 // Store is anything that can list, create, and delete characters for an
 // account.

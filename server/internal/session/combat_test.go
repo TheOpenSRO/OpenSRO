@@ -180,8 +180,8 @@ func TestCombatFullFlow(t *testing.T) {
 	if ar.Error != "" || ar.MonsterDamage != 20 || ar.MonsterRemainingHP != 20 || ar.MonsterDied {
 		t.Fatalf("first hit (monster side): got %+v, want damage=20 remaining=20 died=false", ar)
 	}
-	if ar.PlayerDamageTaken != 15 || ar.PlayerHP != int32(character.MaxHP)-15 || ar.PlayerDied {
-		t.Fatalf("first hit (player side): got %+v, want damageTaken=15 hp=%d died=false", ar, character.MaxHP-15)
+	if ar.PlayerDamageTaken != 15 || ar.PlayerHP != int32(character.StartingMaxHP)-15 || ar.PlayerDied {
+		t.Fatalf("first hit (player side): got %+v, want damageTaken=15 hp=%d died=false", ar, character.StartingMaxHP-15)
 	}
 
 	// Second hit: monster 20 -> 0 HP, dies -- no counterattack, gold reward
@@ -194,8 +194,8 @@ func TestCombatFullFlow(t *testing.T) {
 	if ar.Error != "" || ar.MonsterRemainingHP != 0 || !ar.MonsterDied {
 		t.Fatalf("second hit (monster side): got %+v, want remaining=0 died=true", ar)
 	}
-	if ar.PlayerDamageTaken != 0 || ar.PlayerHP != int32(character.MaxHP)-15 {
-		t.Fatalf("second hit (player side): got %+v, want no further damage, hp still %d", ar, character.MaxHP-15)
+	if ar.PlayerDamageTaken != 0 || ar.PlayerHP != int32(character.StartingMaxHP)-15 {
+		t.Fatalf("second hit (player side): got %+v, want no further damage, hp still %d", ar, character.StartingMaxHP-15)
 	}
 
 	list, err := chars.ListByAccount(ctx, 1)
@@ -329,8 +329,8 @@ func TestCombatArmorMitigation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeAttackResult: %v", err)
 	}
-	if ar.PlayerDamageTaken != 5 || ar.PlayerHP != int32(character.MaxHP)-5 || ar.PlayerDied {
-		t.Fatalf("armored hit: got %+v, want damageTaken=5 hp=%d died=false", ar, character.MaxHP-5)
+	if ar.PlayerDamageTaken != 5 || ar.PlayerHP != int32(character.StartingMaxHP)-5 || ar.PlayerDied {
+		t.Fatalf("armored hit: got %+v, want damageTaken=5 hp=%d died=false", ar, character.StartingMaxHP-5)
 	}
 
 	// Re-equip the huge-defense shoulderguard and confirm the 1-damage floor
@@ -343,8 +343,8 @@ func TestCombatArmorMitigation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeAttackResult: %v", err)
 	}
-	if ar.PlayerDamageTaken != 1 || ar.PlayerHP != int32(character.MaxHP)-5-1 {
-		t.Fatalf("overarmored hit: got %+v, want damageTaken=1 (floor) hp=%d", ar, character.MaxHP-5-1)
+	if ar.PlayerDamageTaken != 1 || ar.PlayerHP != int32(character.StartingMaxHP)-5-1 {
+		t.Fatalf("overarmored hit: got %+v, want damageTaken=1 (floor) hp=%d", ar, character.StartingMaxHP-5-1)
 	}
 }
 

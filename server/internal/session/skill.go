@@ -377,7 +377,7 @@ func UseSkillHandler(
 			if err != nil {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "lookup failed"}).Encode()})
 			}
-			maxMP := character.MaxMPForLevel(owned.Level)
+			maxMP := owned.MaxMP()
 			if _, ok := mp.Spend(characterID, maxMP, mpCost); !ok {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "not enough mana"}).Encode()})
 			}

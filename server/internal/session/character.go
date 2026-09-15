@@ -252,7 +252,7 @@ func handleList(ctx context.Context, sess *gateway.Session, store character.Stor
 			Gender: c.Gender,
 			Level:  c.Level,
 			HP:     c.HP,
-			MaxHP:  character.MaxHPForLevel(c.Level),
+			MaxHP:  c.MaxHP(),
 		}
 	}
 	return sess.Send(&proto.Packet{Opcode: OpCharacterListResult, Data: (&CharacterListResult{Characters: summaries}).Encode()})

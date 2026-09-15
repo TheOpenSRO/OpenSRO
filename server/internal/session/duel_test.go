@@ -279,9 +279,18 @@ func TestDuelFullFightFlow(t *testing.T) {
 		t.Fatalf("reading Aria's OpDuelStarted: opcode=%v err=%v", startedPkt, err)
 	}
 
-	// 30 damage/hit, 100 starting HP: 3 non-lethal hits (100->70->40->10),
-	// 4th hit kills (10->0).
-	wantHPs := []int32{70, 40, 10, 0}
+	// 30 damage a hit against the character's real starting health. Derived
+	// rather than written out, so it follows the recovered Str-based maximum
+	// instead of pinning a number that moves the moment the formula does.
+	const perHit = 30
+	var wantHPs []int32
+	for hp := int32(character.StartingMaxHP); hp > 0; {
+		hp -= perHit
+		if hp < 0 {
+			hp = 0
+		}
+		wantHPs = append(wantHPs, hp)
+	}
 	for i, wantHP := range wantHPs {
 		resp = doSend(connA, rA, OpDuelAttack, (&DuelAttackRequest{CharacterName: "Aria"}).Encode())
 		ar, err := DecodeDuelAttackResult(resp.Data)
@@ -289,7 +298,7 @@ func TestDuelFullFightFlow(t *testing.T) {
 			t.Fatalf("hit %d: err=%v result=%+v, want damage=30 hp=%d", i+1, err, ar, wantHP)
 		}
 
-		if i < 3 {
+		if i < len(wantHPs)-1 {
 			if ar.OpponentDied {
 				t.Fatalf("hit %d: unexpected death", i+1)
 			}
@@ -444,7 +453,7 @@ func TestDuelArmorMitigation(t *testing.T) {
 	// 30 attack - 12 armor (Bram's real equipped mail) = 18 net, not 30.
 	resp = doSend(connA, rA, OpDuelAttack, (&DuelAttackRequest{CharacterName: "Aria"}).Encode())
 	ar, err := DecodeDuelAttackResult(resp.Data)
-	if err != nil || ar.Error != "" || ar.Damage != 18 || ar.OpponentHP != int32(character.MaxHP)-18 {
-		t.Fatalf("armored hit: err=%v result=%+v, want damage=18 hp=%d", err, ar, character.MaxHP-18)
+	if err != nil || ar.Error != "" || ar.Damage != 18 || ar.OpponentHP != int32(character.StartingMaxHP)-18 {
+		t.Fatalf("armored hit: err=%v result=%+v, want damage=18 hp=%d", err, ar, character.StartingMaxHP-18)
 	}
 }

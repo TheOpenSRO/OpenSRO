@@ -56,10 +56,16 @@ is a rule, not a table value. A new character is level 1 with 0 spent points.
    (`0x0067`, payload `NewLevel:int32, StatPoints:int32` LE) right behind the `OpAttackResult`,
    direct to the attacker. Without a curve loaded, no exp is tracked (like flat damage with no
    item table).
-4. **Str/Int + spending the points.** later — the stat system; needs the derived-stat formulas.
-5. **Derive the combat stats** (HP from Str, MP from Int, phys/mag atk·def) — recover from the
-   client (Ghidra) before the character window's derived numbers are real. The window can show
-   level / EXP / stat-points / HP first, the derived stats once recovered.
+4. **Str/Int + spending the points.** Half built. `character.Character` now carries `Str` and
+   `Int` (migrated, defaulting to the disclosed starting 20/20), and health and mana derive from
+   them. **Spending** the accumulated points is still to come — the server has
+   `GObjPC_SpendStatPoints` (`00511470`) recovered as the reference: it moves points from
+   `charData+0x84` into `+0x74`/`+0x76` and pushes the new values into the keeper.
+5. **Derive the combat stats.** ✅ **HP and MP done (2026-09-15), recovered in full:**
+   `MaxHP = Str × 10 × 1.02^(level−1)` and `MaxMP = Int × 10 × 1.02^(level−1)`, read out of
+   `SR_GameServer.exe`'s own derived-stat graph — see `docs/GROUNDING_AUDIT.md` for the chain and
+   how the parameter ids were pinned. Phys/mag atk·def are the next ones; the same graph carries
+   them (`GObjMob_PublishStats` publishes ids 5/6 and 11/12 from the monster ref object).
 
 ## Client
 

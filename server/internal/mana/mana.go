@@ -2,10 +2,10 @@
 // something to cast.
 //
 // The two numbers that matter here are REAL, not invented: a character's
-// maximum mana is the game's own curve (character.MaxMPForLevel --
-// 100 * 1.02^(level-1), recovered from the server binary), and a skill's cost
-// is the real Consume_MP column of the client's own skilldata. This package
-// only holds the pool in between.
+// maximum mana is the game's own formula (character.MaxMPFor --
+// Int * 10 * 1.02^(level-1), recovered whole from the server binary's derived-
+// stat graph), and a skill's cost is the real Consume_MP column of the client's
+// own skilldata. This package only holds the pool in between.
 //
 // Current MP is deliberately NOT persisted, the same call berserk makes: it is
 // transient combat state that refills on its own, so it lives in memory and a

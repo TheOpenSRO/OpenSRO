@@ -145,8 +145,8 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		if err != nil {
 			return fail("lookup failed")
 		}
-		maxHP := character.MaxHPForLevel(owned.Level)
-		maxMP := character.MaxMPForLevel(owned.Level)
+		maxHP := owned.MaxHP()
+		maxMP := owned.MaxMP()
 
 		// Health first. Healing is capped at the missing amount so the
 		// reported "restored" figure is what the player actually got, not

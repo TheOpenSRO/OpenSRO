@@ -56,10 +56,10 @@ type CharacterStatsResult struct {
 	ExpToNext   int64
 	SkillPoints int32
 
-	// MP and MaxMP drive the mana bar. MaxMP is the game's own base curve
-	// (character.MaxMPForLevel), so this is a real number rather than the
-	// blank bar the HUD used to draw. MP is what is left after paying
-	// skills' real Consume_MP costs.
+	// MP and MaxMP drive the mana bar. MaxMP is the game's own formula
+	// (character.MaxMPFor, from the character's Int), so this is a real
+	// number rather than the blank bar the HUD used to draw. MP is what is
+	// left after paying skills' real Consume_MP costs.
 	MP    int32
 	MaxMP int32
 }
@@ -146,7 +146,7 @@ func CharacterStatsHandler(chars character.Store, eq equipment.Store, items comb
 
 		// Max mana is the game's own curve; current mana is what the caster
 		// has left after paying skills' real Consume_MP costs.
-		maxMP := character.MaxMPForLevel(owned.Level)
+		maxMP := owned.MaxMP()
 		curMP := maxMP
 		if mp != nil {
 			curMP = mp.Current(characterID, maxMP)
@@ -154,7 +154,7 @@ func CharacterStatsHandler(chars character.Store, eq equipment.Store, items comb
 		result := &CharacterStatsResult{
 			Gold:  owned.Gold,
 			HP:    int32(owned.HP),
-			MaxHP: int32(character.MaxHPForLevel(owned.Level)),
+			MaxHP: int32(owned.MaxHP()),
 			Level: int32(owned.Level),
 			Exp:   owned.Exp,
 			MP:    int32(curMP),

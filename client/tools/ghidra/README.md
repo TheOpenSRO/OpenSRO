@@ -106,3 +106,62 @@ confirmed and an off-by-one in col 79 was caught: `0x19c` was pinned by the
 and counting between them fixed every field in the run. Small offsets (`0x4`,
 `0x8`) appear in nearly every function and will drown you — this is a tool for
 distinctive ones.
+
+## ResolveRegArg.java `<addr[,addr...]> <REG[,REG...]> [maxReport] [annotate] [label]`
+
+**Use this when the decompiled C reads cleanly but tells you nothing.** Ghidra
+models one calling convention per function and silently drops any argument that
+does not fit it. `ParamKeeper_SetParam` is the case that earned this script: its
+297 call sites all decompile to `SetParam(slot, 0, value)` because the
+parameter's *identity* travels in `DI`, which never became a parameter. The C is
+not wrong, it is incomplete, and nothing in it hints that it is.
+
+It also undoes the constant obfuscation on top. These callers do not load ids
+with `MOV` — the optimiser materialises each one from a neighbouring constant as
+a ping-pong of `LEA`s (`LEA EDI,[EBX+0x33]` / `LEA EBX,[EDI-0x32]` …), so a grep
+for `MOV EDI` finds a few of them and every one it finds is stale. The script
+walks each caller forward with a small abstract state over the registers,
+models only the forms these chains use (`MOV r,imm` / `MOV r,r` /
+`LEA r,[r+imm]` / `XOR r,r`), and marks anything else UNKNOWN rather than
+guessing. A branch target clears the state; a `CALL` clears only EAX/ECX/EDX,
+since the chains deliberately live in the callee-saved registers.
+
+Several registers at once (`EBX,EDI`) for callees that take more than one —
+`ParamKeeper_BindDerived` takes a source *and* a target, and half an edge is
+worse than none.
+
+With `annotate`, each resolved value is written back as a pre-comment, which the
+decompiler prints into the C. After the next `DecompAll` the dump reads:
+
+```
+/* BindDerived source->target: EBX 0x36 (54), EDI 0x3 (3) */
+ParamKeeper_BindDerived(0);
+```
+
+That is the point: the recovered identity lives in the program, not in a commit
+message, and shows up at every call site in every future dump.
+
+## Disasm.java `<entryAddr> [maxInstructions]`
+
+The instructions of one function, with call targets resolved to names. Reach for
+it when the C looks complete but a value is missing — the decompiler hides what
+does not fit its convention, and only the instruction stream shows a register
+being loaded. Reading `PUSH EDI` with no matching `POP` is what settled
+`ParamKeeper_SetParam`'s real signature.
+
+## ReadConst.java `<addr[,addr...]>`
+
+Prints an address as int, float and double. Decompiled C shows float constants
+as bare `_DAT_00b462ac` symbols, so a formula recovered from the code stops one
+step short of being a number without this. All three widths are printed rather
+than one guessed; `0x00b45ea0` reads as garbage float and exactly `1.02` double.
+
+## ApplyKnownNames.java `[apply]`
+
+Writes this project's proven findings back into the program as function names,
+each with its evidence in a plate comment — so a later reader can audit the name
+instead of trusting it. Where behaviour is established but the original
+identifier is unknown, the name says what the function *does* rather than
+inventing what Joymax might have called it. Separate tables for the server and
+the client, chosen by program name. It never overwrites a name that came from
+the binary's own assert strings.

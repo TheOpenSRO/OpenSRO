@@ -7075,6 +7075,100 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-seventy-sixth round: a player's health was never a constant
+
+`MaxHP = 100 + 40*(level-1)` is gone. The real one is
+
+    MaxHP = Str * 10 * 1.02^(level-1)
+    MaxMP = Int * 10 * 1.02^(level-1)
+
+recovered whole from `SR_GameServer.exe`, and it closes the oldest open item in
+`docs/RE_COMPLETION.md`.
+
+Why it stayed open for three sessions is the interesting part, because the
+ledger's own "next probe" was aimed at something that does not exist. It said:
+find the `FUN_004b3510(0, ...)` push that fills slot 0 for the hp/mp params.
+There is no such push. The base never arrives as a value at all.
+
+`GObjPC_InitStats` does not compute stats. It **declares a graph** -- 30 edges,
+each one `ParamKeeper_BindDerived(source, target, slot)` -- in a class the
+binary names itself in an assert: `GParamKeeper.cpp`. Health is a chain:
+
+    Str(1) -> 52 -> 54 -> MaxHP(3)
+
+with `1000.0` pushed into slot 3 of param 52 and `1.02^(level-1) * 100` into
+slot 3 of param 54. A node evaluates as `slot0*(slot1+100)/100*slot2*slot3/100`
+with slot 3 defaulting to 100, so the chain collapses to
+`Str * (1000/100) * 1.02^(level-1)`. **The base was the stat all along**, which
+is why looking for a constant found nothing. At the starting Str of 20 that is
+200 health at level 1 -- close enough to a plausible constant that the wrong
+shape never looked wrong.
+
+Two layers had to come off before any of that was readable, and both are the
+kind of thing that makes a decompilation lie by omission rather than by error.
+
+**One: the argument was not in the arguments.** The parameter's identity travels
+in `DI` -- `MOVZX EDX,DI` then `MOV ECX,[ESI + EDX*4 + 4]` indexes the keeper's
+array of param objects. Ghidra never assigned `EDI` to a parameter, so all 297
+call sites decompiled to `ParamKeeper_SetParam(slot, 0, value)`. That C is
+correct, compiles in the head, reads fine, and identifies nothing.
+
+**Two: the ids are never written down.** The callers do not `MOV EDI, imm`. The
+optimiser materialises each constant from whichever register already holds a
+nearby one, because `LEA` is three bytes where `MOV imm32` is five:
+
+    MOV  EDI,0x3
+    LEA  EBX,[EDI + 0x33]      ; 0x36
+    LEA  EDI,[EBX + -0x32]     ; 0x04
+    LEA  EBX,[EDI + 0x33]      ; 0x37
+    LEA  EDI,[EBX + -0x1]      ; 0x36  <- the id this call uses
+
+A grep for `MOV EDI` finds a handful of the 297 and every one it finds is stale
+by the time of the call.
+
+`client/tools/ghidra/ResolveRegArg.java` undoes both: it walks each calling
+function forward keeping a small abstract state over the registers, modelling
+only the moves these chains actually use, and treating anything else as UNKNOWN
+rather than guessing -- 278 of 297 resolved, 19 honestly unresolved (they are
+loop-carried). It then writes each resolved id back as a pre-comment, so the
+**dump itself** now reads:
+
+    /* BindDerived source->target: EBX 0x36 (54), EDI 0x3 (3) */
+    ParamKeeper_BindDerived(0);
+
+The identity is back in the source permanently, not in a commit message.
+
+**The ids are pinned by use-site, never by shape** -- the discipline this file
+has learned twice the hard way on characterdata col 79:
+
+- **3 and 4 are MaxHP and MaxMP** because `GObjMob_PublishStats` pushes
+  `refobj+0x19c` and `+0x1a0` at them, and `+0x19c` is the exact field
+  `RefObjChar_ExtractData` asserts `m_dwMaxHP > 0` on -- the strongest anchor in
+  that struct.
+- **0, 1, 2 are Level, Str, Int** because `GObjPC_InitStats` pushes
+  `charData+0x65`, `+0x74`, `+0x76` at them; and 0 is confirmed Level a *second*
+  time, independently, by the monster path pushing its level virtual at the same
+  id.
+- The **direction** of every graph edge is proven mechanically:
+  `Param_PropagateToDependents`, which a write calls, walks the owner's list and
+  stores into each registered target. Independently, Level/Str/Int only ever
+  appear as the source -- they come from `charData` and cannot be derived.
+
+Stated plainly, because it is the one number here that is ours: **starting
+Str/Int = 20 is own design, disclosed.** It is not in the binary. Nothing writes
+a constant to `charData+0x74` or `+0x76` anywhere in `SR_GameServer.exe`,
+because character creation happened on the database side and this project has no
+artifact of it. The formula is the game's; those two integers are a choice, made
+so a level-1 character has 200 health.
+
+Shipped with it: `Str`/`Int` on the character (migrated, existing rows default
+to 20 rather than 0, which would otherwise have left every character on zero
+health), health and mana derived from them everywhere, and the SQL HP reset
+running the real formula. Three tests that had quietly hardcoded the old
+100-HP base now derive their expectations from `character.StartingMaxHP`
+instead, so the next change to the formula fails loudly rather than silently
+testing nothing.
+
 ## Hundred-and-seventy-fifth round: monster HP is real now (characterdata col 59)
 
 The 174th round flagged col 79 as the likely monster MaxHP and deliberately did

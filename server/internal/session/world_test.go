@@ -79,7 +79,7 @@ func TestEntitySnapshotRoundTrip(t *testing.T) {
 func TestEnterWorldResultRoundTripSuccess(t *testing.T) {
 	want := &EnterWorldResult{
 		OK: true, Zone: "jangan", X: 1, Y: 2, Z: 3, Gender: character.GenderChinaMan,
-		HP: 73, MaxHP: character.MaxHP,
+		HP: 73, MaxHP: character.StartingMaxHP,
 		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, Equipped: worn(int64(equipment.SlotMail), 4842, int64(equipment.SlotShield), 3639), Gender: character.GenderChinaWoman}},
 	}
 	got, err := DecodeEnterWorldResult(want.Encode())

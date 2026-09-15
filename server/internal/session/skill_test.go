@@ -29,6 +29,10 @@ func (stubSkillRef) GetSkill(_ context.Context, _ int64) (*refdata.Skill, error)
 	return nil, errors.New("no such skill")
 }
 
+// skill998ManaCost is two thirds of a starting caster's mana pool: enough that
+// one cast lands and a second is refused.
+const skill998ManaCost = character.StartingMaxMP * 2 / 3
+
 // fakeSkillRef knows one real (refdata) skill, id 999, learnable for free (no
 // mastery/SP gate) so the full network flow can learn and CAST a real skill.
 // Every other id falls through to the own-design catalog, as in production.
@@ -38,10 +42,13 @@ func (fakeSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error
 	if id == 999 {
 		return &refdata.Skill{ID: 999, BasicLevel: 1, ReuseDelayMs: 500}, nil
 	}
-	// 998 is the mana test: no cooldown, and a real Consume_MP of 60, so a
-	// level-1 caster (100 max mana) can afford exactly one cast.
+	// 998 is the mana test: no cooldown, and a Consume_MP pinned to two
+	// thirds of a starting caster's pool so exactly one cast is affordable.
+	// Tied to the pool rather than written as a number, because the pool comes
+	// from the recovered Int-based formula and a literal would silently stop
+	// testing the refusal the moment that changed.
 	if id == 998 {
-		return &refdata.Skill{ID: 998, BasicLevel: 1, ReuseDelayMs: 0, ConsumeMP: 60}, nil
+		return &refdata.Skill{ID: 998, BasicLevel: 1, ReuseDelayMs: 0, ConsumeMP: skill998ManaCost}, nil
 	}
 	return nil, errors.New("no such skill")
 }
@@ -254,15 +261,15 @@ func TestSkillFullFlow(t *testing.T) {
 	}
 
 	// A skill's real Consume_MP is actually spent, and a cast that cannot be
-	// paid for is refused. Skill 998 costs 60 of a level-1 caster's 100 mana
-	// (the game's own curve), so the first cast lands and the second cannot.
+	// paid for is refused. Skill 998 costs two thirds of a starting caster's
+	// pool, so the first cast lands and the second cannot.
 	resp = send(OpLearnSkill, (&LearnSkillRequest{CharacterName: "Aria", SkillID: 998}).Encode())
 	if lr, err := DecodeLearnSkillResult(resp.Data); err != nil || !lr.OK {
 		t.Fatalf("learn mana-costing skill failed: err=%v result=%+v", err, lr)
 	}
 	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 998, TargetMonsterID: monster.ID}).Encode())
 	if ar3, err := DecodeAttackResult(resp.Data); err != nil || ar3.Error != "" {
-		t.Fatalf("first cast of a 60-mana skill should land: got %+v (err %v)", ar3, err)
+		t.Fatalf("first cast of a %d-mana skill should land: got %+v (err %v)", skill998ManaCost, ar3, err)
 	}
 	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 998, TargetMonsterID: monster.ID}).Encode())
 	if ar4, err := DecodeAttackResult(resp.Data); err != nil || ar4.Error != "not enough mana" {

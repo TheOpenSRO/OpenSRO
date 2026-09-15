@@ -197,19 +197,19 @@ func TestSQLStoreHPOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if c.HP != MaxHP {
-		t.Fatalf("got starting HP %d, want %d", c.HP, MaxHP)
+	if c.HP != StartingMaxHP {
+		t.Fatalf("got starting HP %d, want %d", c.HP, StartingMaxHP)
 	}
 
 	hp, died, err := store.ApplyDamage(ctx, c.ID, 30)
 	if err != nil {
 		t.Fatalf("ApplyDamage: %v", err)
 	}
-	if died || hp != MaxHP-30 {
-		t.Fatalf("got hp=%d died=%v, want hp=%d died=false", hp, died, MaxHP-30)
+	if died || hp != StartingMaxHP-30 {
+		t.Fatalf("got hp=%d died=%v, want hp=%d died=false", hp, died, StartingMaxHP-30)
 	}
 
-	hp, died, err = store.ApplyDamage(ctx, c.ID, MaxHP)
+	hp, died, err = store.ApplyDamage(ctx, c.ID, StartingMaxHP)
 	if err != nil {
 		t.Fatalf("ApplyDamage: %v", err)
 	}
@@ -224,8 +224,8 @@ func TestSQLStoreHPOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListByAccount: %v", err)
 	}
-	if list[0].HP != MaxHP {
-		t.Fatalf("got HP %d after reset, want %d", list[0].HP, MaxHP)
+	if list[0].HP != StartingMaxHP {
+		t.Fatalf("got HP %d after reset, want %d", list[0].HP, StartingMaxHP)
 	}
 }
 

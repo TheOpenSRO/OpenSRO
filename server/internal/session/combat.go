@@ -627,8 +627,8 @@ func performAttack(
 		// Experience, and a level-up if it crosses the curve -- only when the
 		// server has a leveldata curve loaded (SetLevelTable). Without one, no
 		// exp is tracked, the same way an empty item table means flat damage.
-		// A level-up refills HP (MaxHP is flat for now) and is announced with
-		// OpLevelUp after the attack result below.
+		// A level-up refills HP and is announced with OpLevelUp after the
+		// attack result below.
 		if levelTable.Loaded() {
 			char, err := chars.GetByID(ctx, characterID)
 			if err != nil {
@@ -644,10 +644,11 @@ func performAttack(
 					return fmt.Errorf("combat: refilling hp on level up: %w", err)
 				}
 				// Healed to the NEW level's higher maximum -- and mana with
-				// it, to the new level's own curve.
-				result.PlayerHP = int32(character.MaxHPForLevel(newLevel))
+				// it. Both derive from the character's own Str/Int, so read
+				// the level off the advance rather than the stale record.
+				result.PlayerHP = int32(character.MaxHPFor(char.Str, newLevel))
 				if mp != nil {
-					mp.Refill(characterID, character.MaxMPForLevel(newLevel))
+					mp.Refill(characterID, character.MaxMPFor(char.Int, newLevel))
 				}
 				levelUp = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
 			}
@@ -671,12 +672,14 @@ func performAttack(
 			if err := chars.ResetHP(ctx, characterID); err != nil {
 				return fmt.Errorf("combat: respawning player: %w", err)
 			}
-			// Respawned at the character's own level-appropriate maximum.
-			result.PlayerHP = int32(character.MaxHP)
+			// Respawned at the character's own maximum, from its Str and
+			// level. Falls back to the starting maximum only if the re-read
+			// fails, which would mean the character vanished mid-respawn.
+			result.PlayerHP = int32(character.StartingMaxHP)
 			if reborn, e := chars.GetByID(ctx, characterID); e == nil {
-				result.PlayerHP = int32(character.MaxHPForLevel(reborn.Level))
+				result.PlayerHP = int32(reborn.MaxHP())
 				if mp != nil {
-					mp.Refill(characterID, character.MaxMPForLevel(reborn.Level))
+					mp.Refill(characterID, reborn.MaxMP())
 				}
 			}
 		} else {

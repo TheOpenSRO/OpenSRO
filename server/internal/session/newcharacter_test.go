@@ -153,7 +153,7 @@ func TestNewCharacterIsDressedAndHasVitals(t *testing.T) {
 	if stats.Gold != character.StartingGold {
 		t.Errorf("gold = %d, want the starting %d", stats.Gold, character.StartingGold)
 	}
-	if stats.MaxHP != int32(character.MaxHP) || stats.HP != stats.MaxHP {
+	if stats.MaxHP != int32(character.StartingMaxHP) || stats.HP != stats.MaxHP {
 		t.Errorf("stats report %d/%d hp", stats.HP, stats.MaxHP)
 	}
 	if stats.PhysAttack <= 0 {

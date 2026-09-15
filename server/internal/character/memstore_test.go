@@ -187,8 +187,8 @@ func TestGoldOperationsOnNonexistentCharacter(t *testing.T) {
 func TestNewCharacterHasFullHP(t *testing.T) {
 	store := NewMemStore()
 	c, _ := store.Create(context.Background(), 1, "Aria")
-	if c.HP != MaxHP {
-		t.Fatalf("got HP %d, want MaxHP %d", c.HP, MaxHP)
+	if c.HP != StartingMaxHP {
+		t.Fatalf("got HP %d, want StartingMaxHP %d", c.HP, StartingMaxHP)
 	}
 }
 
@@ -201,8 +201,8 @@ func TestApplyDamageReducesHP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApplyDamage: %v", err)
 	}
-	if died || hp != MaxHP-30 {
-		t.Fatalf("got hp=%d died=%v, want hp=%d died=false", hp, died, MaxHP-30)
+	if died || hp != StartingMaxHP-30 {
+		t.Fatalf("got hp=%d died=%v, want hp=%d died=false", hp, died, StartingMaxHP-30)
 	}
 }
 
@@ -211,7 +211,7 @@ func TestApplyDamageClampsAtZeroAndReportsDeath(t *testing.T) {
 	ctx := context.Background()
 	c, _ := store.Create(ctx, 1, "Aria")
 
-	hp, died, err := store.ApplyDamage(ctx, c.ID, MaxHP+50)
+	hp, died, err := store.ApplyDamage(ctx, c.ID, StartingMaxHP+50)
 	if err != nil {
 		t.Fatalf("ApplyDamage: %v", err)
 	}
@@ -231,15 +231,15 @@ func TestResetHP(t *testing.T) {
 	store := NewMemStore()
 	ctx := context.Background()
 	c, _ := store.Create(ctx, 1, "Aria")
-	store.ApplyDamage(ctx, c.ID, MaxHP)
+	store.ApplyDamage(ctx, c.ID, StartingMaxHP)
 
 	if err := store.ResetHP(ctx, c.ID); err != nil {
 		t.Fatalf("ResetHP: %v", err)
 	}
 
 	list, _ := store.ListByAccount(ctx, 1)
-	if list[0].HP != MaxHP {
-		t.Fatalf("got HP %d after reset, want %d", list[0].HP, MaxHP)
+	if list[0].HP != StartingMaxHP {
+		t.Fatalf("got HP %d after reset, want %d", list[0].HP, StartingMaxHP)
 	}
 }
 
@@ -286,25 +286,44 @@ func TestGetByIDNonexistentCharacter(t *testing.T) {
 	}
 }
 
-func TestMaxHPForLevel(t *testing.T) {
-	if got := MaxHPForLevel(1); got != MaxHP {
-		t.Fatalf("level 1 MaxHP = %d, want the base %d", got, MaxHP)
+func TestDerivedHPAndMP(t *testing.T) {
+	// The recovered formula: stat * 10 * 1.02^(level-1). Pinned at the shape
+	// and at exact values, so a later "tidy-up" of the constants fails here
+	// rather than quietly shipping a different game.
+	if got := MaxHPFor(StartingStr, 1); got != StartingMaxHP {
+		t.Fatalf("level 1 MaxHP = %d, want %d", got, StartingMaxHP)
 	}
-	// Grows by HPPerLevel each level, and monotonically.
-	if got := MaxHPForLevel(2); got != MaxHP+HPPerLevel {
-		t.Fatalf("level 2 MaxHP = %d, want %d", got, MaxHP+HPPerLevel)
+	if got := MaxMPFor(StartingInt, 1); got != StartingMaxMP {
+		t.Fatalf("level 1 MaxMP = %d, want %d", got, StartingMaxMP)
 	}
+	// Str 20 at level 10: 20 * 10 * 1.02^9 = 238.99... -> 239.
+	if got := MaxHPFor(20, 10); got != 239 {
+		t.Fatalf("Str 20 at level 10 = %d, want 239", got)
+	}
+	// The stat is the base, so doubling it doubles health at any level --
+	// within the one point that rounding each result separately can cost.
+	if d := MaxHPFor(40, 25) - 2*MaxHPFor(20, 25); d < -1 || d > 1 {
+		t.Fatalf("health is not linear in Str: %d vs %d", MaxHPFor(40, 25), 2*MaxHPFor(20, 25))
+	}
+	// Health and mana run the same curve off different stats.
+	if MaxHPFor(33, 17) != MaxMPFor(33, 17) {
+		t.Fatalf("the two chains disagree: %d vs %d", MaxHPFor(33, 17), MaxMPFor(33, 17))
+	}
+	// Monotonic in level.
 	prev := 0
-	for lvl := 1; lvl <= 40; lvl++ {
-		hp := MaxHPForLevel(lvl)
+	for lvl := 1; lvl <= 110; lvl++ {
+		hp := MaxHPFor(StartingStr, lvl)
 		if hp <= prev {
 			t.Fatalf("level %d MaxHP %d not greater than previous %d", lvl, hp, prev)
 		}
 		prev = hp
 	}
-	// A junk level clamps to level 1.
-	if MaxHPForLevel(0) != MaxHP || MaxHPForLevel(-5) != MaxHP {
-		t.Fatalf("a level below 1 should clamp to the base MaxHP")
+	// Junk input clamps rather than going negative or exploding.
+	if MaxHPFor(StartingStr, 0) != StartingMaxHP || MaxHPFor(StartingStr, -5) != StartingMaxHP {
+		t.Fatalf("a level below 1 should clamp to level 1")
+	}
+	if MaxHPFor(-3, 10) != 0 {
+		t.Fatalf("a negative stat should clamp to 0, got %d", MaxHPFor(-3, 10))
 	}
 }
 
@@ -327,7 +346,7 @@ func TestResetHPHealsToLevelMax(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
-	if got.HP != MaxHPForLevel(5) {
-		t.Fatalf("after reset HP = %d, want the level-5 max %d", got.HP, MaxHPForLevel(5))
+	if want := MaxHPFor(c.Str, 5); got.HP != want {
+		t.Fatalf("after reset HP = %d, want the level-5 max %d", got.HP, want)
 	}
 }

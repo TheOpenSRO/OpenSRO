@@ -107,8 +107,8 @@ func TestCharacterFullFlow(t *testing.T) {
 		t.Fatalf("expected [Aria], got %+v", listResult.Characters)
 	}
 	// The summary carries the honest starting stats the server tracks.
-	if got := listResult.Characters[0]; got.Level != character.StartingLevel || got.HP != character.MaxHP || got.MaxHP != character.MaxHP {
-		t.Fatalf("expected level %d, HP %d/%d, got %+v", character.StartingLevel, character.MaxHP, character.MaxHP, got)
+	if got := listResult.Characters[0]; got.Level != character.StartingLevel || got.HP != character.StartingMaxHP || got.MaxHP != character.StartingMaxHP {
+		t.Fatalf("expected level %d, HP %d/%d, got %+v", character.StartingLevel, character.StartingMaxHP, character.StartingMaxHP, got)
 	}
 
 	// Delete it.
