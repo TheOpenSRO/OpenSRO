@@ -66,10 +66,16 @@ public class VtableScan extends GhidraScript {
                     } catch (Exception e) {
                         break;
                     }
-                    Function f = fm.getFunctionAt(target);
-                    if (f == null) break;
+                    // Accept any pointer into executable memory, not just a
+                    // DEFINED function. Real vtables carry thunks, pure-virtual
+                    // stubs and code Ghidra never turned into a function, and
+                    // requiring a Function here truncated the big ones: the
+                    // char/PC vtable is 90+ slots but reported as 22.
+                    MemoryBlock tb = currentProgram.getMemory().getBlock(target);
+                    if (tb == null || !tb.isExecute()) break;
                     slots++;
-                    if (!f.getName().startsWith("FUN_")) named++;
+                    Function f = fm.getFunctionAt(target);
+                    if (f != null && !f.getName().startsWith("FUN_")) named++;
                     a = a.add(ptr);
                 }
                 if (slots >= minSlots) {
