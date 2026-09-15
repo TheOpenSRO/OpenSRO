@@ -360,9 +360,9 @@ separates game logic from library code.
 
 | | game-logic fns | % of binary | named | attributed | identified | of game logic |
 |---|---|---|---|---|---|---|
-| `SR_GameServer.exe` | 29,554 | 95.6% | 645 | 2,007 | **2,652** | **9.0%** |
-| `sro_client.exe` | 36,457 | 91.5% | 681 | 7,377 | **8,058** | **22.1%** |
-| **combined** | **66,011** | **93.3%** | 1,326 | 9,384 | **10,710** | **16.2%** |
+| `SR_GameServer.exe` | 29,554 | 95.6% | 730 | 3,168 | **3,898** | **13.2%** |
+| `sro_client.exe` | 36,457 | 91.5% | 681 | 9,485 | **10,166** | **27.9%** |
+| **combined** | **66,011** | **93.3%** | 1,411 | 12,653 | **14,064** | **21.3%** |
 
 **The "most of it is CRT and STL" assumption was wrong, and it was measured
 rather than argued.** An earlier note in this file said the real denominator
@@ -432,8 +432,16 @@ belongs last and wants re-running after every other lever.
 
 **A second chained pass confirmed it compounds rather than saturating**:
 7,822 → **10,710** (11.8% → 16.2%), with the vtable vote rising again from 149
-to 228 on the server and 55 to 786 on the client. The rule is to re-run the
-whole chain whenever names or namespaces are added, not once.
+to 228 on the server and 55 to 786 on the client.
+
+**A third pass, after adding 84 hand names (55 DB binders + 29 packet
+handlers), returned 10,710 → 14,064 (16.2% → 21.3%)** — and the server's
+interpolation nearly doubled, 158 → 295, precisely because those 84 names were
+scattered through previously unattributed stretches. That is the mechanism in
+one line: **a handful of well-placed names is worth thousands of attributions**,
+because each one anchors an interpolation that anchors a propagation that
+anchors a vtable vote. The rule is to re-run the whole chain whenever names are
+added, not once.
 
 ## How to work this file## How to work this file
 
