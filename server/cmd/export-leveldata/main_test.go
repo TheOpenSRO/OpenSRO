@@ -20,12 +20,15 @@ func utf16le(s string) []byte {
 	return out
 }
 
-// A synthetic leveldata.txt with real-shaped columns: level, exp-to-next, then
-// filler columns (the real file has ten). Level 9's exp is the real 17978, so
-// this pins the column choice to the verified value from docs/LEVELING.md.
+// A synthetic leveldata.txt with real-shaped columns: level, exp-to-next,
+// mastery cost, two always-zero columns, the kill EXP unit, then the job caps
+// (the real file has ten). Every value below except the trailing caps is the
+// REAL one from the original client's leveldata.txt, so this pins each column
+// choice to verified data: level 9's exp is 17978 (docs/LEVELING.md) and the
+// exp units are 24/47/212.
 const synthLeveldata = "1\t118\t1\t0\t0\t24\t15000000\n" +
 	"2\t470\t1\t0\t0\t47\t20000000\n" +
-	"9\t17978\t1\t0\t0\t71\t99\n"
+	"9\t17978\t7\t0\t0\t212\t99\n"
 
 func TestToRecordsPicksLevelAndExp(t *testing.T) {
 	rows, err := readRowsFromBytes(utf16le(synthLeveldata))
@@ -77,5 +80,39 @@ func TestExportRoundTripsThroughServerParser(t *testing.T) {
 	}
 	if got, ok := tbl.ExpToNext(1); !ok || got != 118 {
 		t.Errorf("ExpToNext(1) = %d, %v; want 118, true", got, ok)
+	}
+}
+
+// TestToRecordsPicksExpUnit pins column 5 -- the kill EXP unit -- against the
+// original client's real values. A column shift is the dangerous failure here:
+// it would not crash, it would quietly change the game's levelling pace, and
+// picking column 7 instead would make a level-1 kill worth 15,000,000 exp.
+func TestToRecordsPicksExpUnit(t *testing.T) {
+	rows, err := readRowsFromBytes(utf16le(synthLeveldata))
+	if err != nil {
+		t.Fatalf("readRows: %v", err)
+	}
+	records := toRecords(rows)
+	if got := records[0]; len(got) != 4 || got[3] != "exp_unit" {
+		t.Fatalf("header = %v, want a 4th column named exp_unit", got)
+	}
+	want := map[string]string{"1": "24", "2": "47", "9": "212"}
+	for _, r := range records[1:] {
+		if w, ok := want[r[0]]; ok {
+			if r[3] != w {
+				t.Errorf("level %s exp_unit = %s, want %s (the real column-5 value)", r[0], r[3], w)
+			}
+			delete(want, r[0])
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("rows missing from the export: %v", want)
+	}
+
+	// And the mastery cost still comes from column 2, not shifted.
+	for _, r := range records[1:] {
+		if r[0] == "9" && r[2] != "7" {
+			t.Errorf("level 9 mastery_sp = %s, want 7 (column 2)", r[2])
+		}
 	}
 }

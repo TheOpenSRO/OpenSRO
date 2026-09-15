@@ -31,6 +31,15 @@ const (
 	// server's mastery level-up handler sums exactly this field over the
 	// levels being raised; see leveldata.Table.MasteryUpCost.
 	colMasterySP = 2
+	// colExpUnit is the per-level standard EXP unit -- what a kill is worth
+	// before the level-gap scalers. RECOVERED: the server's own
+	// Formula_MonsterExpReward reads the level record's +0x1c, and
+	// FUN_00631050 hands `entry[0x1c] * multiplier` straight to
+	// GObjPC_GainExpAndLevel as an exp amount. See docs/RE_COMPLETION.md for
+	// why +0x1c is column 5 (every other packing puts a provably impossible
+	// value there). Verified identical in the ORIGINAL client's leveldata.txt
+	// and the pserver's: 24, 47, 71, 94 ... 470 at level 20, 12550 at 110.
+	colExpUnit = 5
 )
 
 func main() {
@@ -80,7 +89,7 @@ func main() {
 // a header), skipping any row whose level or exp column is not a number (a
 // header line or a comment).
 func toRecords(rows [][]string) [][]string {
-	records := [][]string{{"level", "exp", "mastery_sp"}}
+	records := [][]string{{"level", "exp", "mastery_sp", "exp_unit"}}
 	for _, cols := range rows {
 		if len(cols) <= colExpNext {
 			continue
@@ -99,7 +108,14 @@ func toRecords(rows [][]string) [][]string {
 				masterySP = strconv.Itoa(v)
 			}
 		}
-		records = append(records, []string{strconv.Itoa(level), strconv.FormatInt(exp, 10), masterySP})
+		expUnit := "0"
+		if len(cols) > colExpUnit {
+			if v, err := strconv.Atoi(strings.TrimSpace(cols[colExpUnit])); err == nil {
+				expUnit = strconv.Itoa(v)
+			}
+		}
+		records = append(records, []string{
+			strconv.Itoa(level), strconv.FormatInt(exp, 10), masterySP, expUnit})
 	}
 	return records
 }

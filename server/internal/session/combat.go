@@ -634,7 +634,17 @@ func performAttack(
 			if err != nil {
 				return fmt.Errorf("combat: reading character for exp: %w", err)
 			}
-			newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, monster.ExpReward)
+			// What the kill is worth. The level table's own EXP unit when it
+			// has one, taken at the MINIMUM of the two levels -- the game's
+			// anti-powerlevelling rule, recovered from
+			// Formula_MonsterExpReward. Falls back to the disclosed
+			// toughness-derived ExpReward only for a table with no exp_unit
+			// column (an export that predates it).
+			gainedExp := monster.ExpReward
+			if unit, ok := levelTable.KillExp(char.Level, monster.Level); ok {
+				gainedExp = unit
+			}
+			newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, gainedExp)
 			newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
 			if err := chars.SetLeveling(ctx, characterID, newLevel, newExp, newStatPoints); err != nil {
 				return fmt.Errorf("combat: applying experience: %w", err)

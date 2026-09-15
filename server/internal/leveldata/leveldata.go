@@ -37,7 +37,68 @@ type Table struct {
 	// L+1 -- leveldata's column 2. REAL: the server sums exactly this field
 	// over the levels being raised. See MasteryUpCost.
 	masterySP map[int]int
-	maxLevel  int
+	// expUnit[L] is the standard EXP a kill is worth at level L -- leveldata's
+	// column 5. REAL: see ExpUnit.
+	expUnit  map[int]int64
+	maxLevel int
+}
+
+// ExpUnit returns the level table's standard EXP unit for a level, and whether
+// the table knows it.
+//
+// **Recovered, and the rule around it matters as much as the number.**
+// SR_GameServer.exe's Formula_MonsterExpReward (004105d0) computes a kill's
+// worth as
+//
+//	lvl    = min(Char_GetLevel(killer), Char_GetLevel(victim))
+//	reward = scaleByWindow * levelTable[lvl]+0x1c * victim[0x1cd8] * scaleByDiff
+//
+// floored at 1, and its result goes to GObjPC_GiveExp (vtable slot 421, read
+// out of the vtable at 0x00af6090). A second, independent use-site settles what
+// the +0x1c field IS: FUN_00631050 hands `entry[0x1c] * multiplier` straight to
+// GObjPC_GainExpAndLevel as an exp amount, with no formula in between.
+//
+// That +0x1c is column 5 is settled by elimination, not by curve-matching.
+// Column 2 sits at +0x10 (the mastery cost, already grounded and confirmed
+// value-for-value against the real file), columns 3 and 4 are plain zero
+// integers, so the next 4-byte field is column 5. Every other packing puts a
+// provably impossible value at +0x1c: skipping the zero columns would land on
+// column 7, making a level-1 kill worth 15,000,000 exp, and an extra internal
+// field would land on a column that is zero at every level. Verified identical
+// in the ORIGINAL client's leveldata.txt and the pserver's, so it is not a
+// private-server edit. See docs/RE_COMPLETION.md.
+func (t *Table) ExpUnit(level int) (int64, bool) {
+	if t == nil {
+		return 0, false
+	}
+	v, ok := t.expUnit[level]
+	return v, ok
+}
+
+// KillExp is the experience a kill is worth, applying the game's own
+// **minimum-level rule**: the reward is taken at the LOWER of the two levels,
+// so out-levelling a monster -- or being power-levelled by someone who has --
+// pays at the weaker party's rate. The rule is symmetric, so it does not matter
+// which argument is which.
+//
+// The two level-gap scalers the real formula also applies
+// (Formula_ExpScaleByLevelWindow, Formula_ExpScaleByLevelDiff) are NOT
+// recovered yet and are treated as 1.0 here; that is a disclosed simplification,
+// not the game's behaviour. The base and the minimum-level rule are real.
+func (t *Table) KillExp(killerLevel, victimLevel int) (int64, bool) {
+	lvl := killerLevel
+	if victimLevel < lvl {
+		lvl = victimLevel
+	}
+	v, ok := t.ExpUnit(lvl)
+	if !ok {
+		return 0, false
+	}
+	if v < 1 {
+		// The real formula floors its result at 1.
+		v = 1
+	}
+	return v, true
 }
 
 // MasteryUpCost returns the skill-point cost to raise a mastery from level to
@@ -130,7 +191,7 @@ func (t *Table) Advance(level int, exp int64, gained int64) (newLevel int, newEx
 // ParseCSV reads "level,expToNext" rows (a header line and blank lines are
 // skipped) into a Table.
 func ParseCSV(r io.Reader) (*Table, error) {
-	t := &Table{expToNext: map[int]int64{}, masterySP: map[int]int{}}
+	t := &Table{expToNext: map[int]int64{}, masterySP: map[int]int{}, expUnit: map[int]int64{}}
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	line := 0
@@ -163,6 +224,13 @@ func ParseCSV(r io.Reader) (*Table, error) {
 		if len(fields) > 2 {
 			if sp, err := strconv.Atoi(strings.TrimSpace(fields[2])); err == nil {
 				t.masterySP[level] = sp
+			}
+		}
+		// Column 4 is the kill EXP unit; optional, so an older three-column
+		// export still loads.
+		if len(fields) > 3 {
+			if eu, err := strconv.ParseInt(strings.TrimSpace(fields[3]), 10, 64); err == nil {
+				t.expUnit[level] = eu
 			}
 		}
 		if level > t.maxLevel {

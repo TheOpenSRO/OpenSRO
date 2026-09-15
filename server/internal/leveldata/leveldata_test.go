@@ -140,3 +140,69 @@ func TestNilAndEmptyTableAreSafe(t *testing.T) {
 		t.Error("header-only table Loaded() = true")
 	}
 }
+
+// TestExpUnitAndKillExp pins the recovered kill-EXP economy: the level table's
+// own column-5 unit, and the minimum-level rule around it.
+//
+// The values are the real ones, identical in the original client's
+// leveldata.txt and the pserver's copy -- so a future export that silently
+// shifts a column fails here rather than quietly changing the game's pacing.
+func TestExpUnitAndKillExp(t *testing.T) {
+	// level,exp,mastery_sp,exp_unit -- real rows.
+	const csv = `level,exp,mastery_sp,exp_unit
+1,118,1,24
+2,470,1,47
+3,1058,1,71
+10,23500,9,235
+20,72700,53,470
+`
+	tbl, err := ParseCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+
+	for _, tc := range []struct {
+		level int
+		want  int64
+	}{{1, 24}, {2, 47}, {3, 71}, {10, 235}, {20, 470}} {
+		got, ok := tbl.ExpUnit(tc.level)
+		if !ok || got != tc.want {
+			t.Fatalf("ExpUnit(%d) = %d,%v; want %d", tc.level, got, ok, tc.want)
+		}
+	}
+
+	// A level the table does not carry is reported as unknown, never guessed.
+	if _, ok := tbl.ExpUnit(7); ok {
+		t.Fatal("ExpUnit(7) should be unknown -- the fixture has no row for it")
+	}
+
+	// The minimum-level rule: a level-20 character killing a level-1 monster
+	// is paid at level 1, not level 20.
+	if got, ok := tbl.KillExp(20, 1); !ok || got != 24 {
+		t.Fatalf("KillExp(20, 1) = %d,%v; want 24 (paid at the monster's level)", got, ok)
+	}
+	// And the reverse: a level-1 character killing a level-20 monster is also
+	// paid at level 1. The rule is symmetric.
+	if got, ok := tbl.KillExp(1, 20); !ok || got != 24 {
+		t.Fatalf("KillExp(1, 20) = %d,%v; want 24 (paid at the killer's level)", got, ok)
+	}
+	if a, _ := tbl.KillExp(3, 10); a != 71 {
+		t.Fatalf("KillExp(3, 10) = %d; want 71", a)
+	}
+	if b, _ := tbl.KillExp(10, 3); b != 71 {
+		t.Fatalf("KillExp(10, 3) = %d; want 71", b)
+	}
+
+	// An export predating the exp_unit column still loads, and reports the
+	// unit as unknown rather than zero -- so the caller keeps its fallback.
+	old, err := ParseCSV(strings.NewReader("level,exp,mastery_sp\n1,118,1\n"))
+	if err != nil {
+		t.Fatalf("ParseCSV (3-column): %v", err)
+	}
+	if _, ok := old.ExpUnit(1); ok {
+		t.Fatal("a three-column export should report no exp unit")
+	}
+	if _, ok := old.KillExp(1, 1); ok {
+		t.Fatal("KillExp should be unknown when the table has no exp units")
+	}
+}

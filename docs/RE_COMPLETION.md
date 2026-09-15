@@ -32,6 +32,7 @@ which is itself a recovery — quest objectives are the model for that.
 | Potion restore amounts | `itemdata` Param block cols 118/120/122/124 (self-labelling) |
 | **Player MaxHP / MaxMP (whole formula)** | `Str×10×1.02^(lvl−1)` / `Int×10×1.02^(lvl−1)` — `GObjPC_InitStats` graph, `.rdata 0x00b462ac`=1000, `0x00b45ea0`=1.02 |
 | ParamKeeper ids 0/1/2/3/4 = Level/Str/Int/MaxHP/MaxMP | `GObjPC_InitStats` pushes `charData+0x65/+0x74/+0x76`; `GObjMob_PublishStats` pushes `refobj+0x19c`/`+0x1a0`; and `Stat_ApplyTaggedModifier` maps `'int'`→2, `'hp'`→3, `'mp'`→4 independently |
+| **Monster EXP per kill** | `leveldata` col 5 at `min(killerLvl, victimLvl)` — `Formula_MonsterExpReward` (004105d0) reads levelRecord `+0x1c`, result to `GObjPC_GiveExp` (vtable 0x694); `FUN_00631050` grants `entry[0x1c]*n` directly. Column settled by elimination; identical in the ORIGINAL client |
 | **Monster `characterdata` cols 75–78** | `'era'`→9, `'bri'`→10, `'hra'`→11, `'cri'`→12 from `Stat_ApplyTaggedModifier`; real data: col 76 = **0** for every monster, cols 75 = 77 = **2·level+25**, col 78 = **2** |
 | Stat points per level (3) | real character window |
 | Quest identity, chain, descriptions, rewards | `questdata`, `questcontentsdata` cols 3/5-12, `refquestrewarditems` |
@@ -42,81 +43,7 @@ which is itself a recovery — quest objectives are the model for that.
 Ordered by value. Each line names the next concrete probe, so a cold start can
 pick one up without re-deriving anything.
 
-1. **Monster EXP per kill — formula RECOVERED 2026-09-15; one column index still
-   inferred.** Currently disclosed `ExpFor = maxHP`; not yet replaced, and the
-   reason is below.
-
-   The whole chain is proven by use-site, end to end:
-
-   ```
-   GObjPC_GrantKillReward (004e6980)
-     -> Formula_MonsterExpReward (004105d0)
-     -> x2 under one condition
-     -> vtable 0x694 = GObjPC_GiveExp (004eac40)   [slot read from 0x00af6090]
-     -> vtable 0x170 = GObjPC_GainExpAndLevel
-   ```
-
-   The formula itself:
-
-   ```
-   lvl    = min(Char_GetLevel(A), Char_GetLevel(B))
-   base   = levelTable[lvl] + 0x1c            (unsigned 32-bit)
-   reward = scaleByWindow x base x B[0x1cd8] x scaleByDiff , floored at 1
-   ```
-
-   **The most valuable part is not a number, it is a rule: the reward is taken
-   at the MINIMUM of the two levels.** That is the anti-powerlevelling rule, it
-   is symmetric so it does not matter which party is which, and it is
-   implementable today independently of any column. Both scalers
-   (`Formula_ExpScaleByLevelWindow`, `Formula_ExpScaleByLevelDiff`) are level-gap
-   functions; the second selects its constants from a flag at the source ref
-   object's `+0x88`.
-
-   Two vtable slots fell out and are now named: **0x124 = `Char_GetLevel`**
-   (slot 73 — and it returns ParamKeeper param 0 rounded, re-confirming param 0 =
-   Level) and **0x694 = `GObjPC_GiveExp`** (slot 421).
-
-   **Upgraded 2026-09-15 (second pass): the MEANING of `entry+0x1c` is now proven
-   by use-site, twice, independently.**
-
-   1. `Formula_MonsterExpReward` reads it, and its result reaches
-      `GObjPC_GiveExp` (vtable 0x694).
-   2. `FUN_00631050` hands `entry[0x1c] * multiplier` **straight to
-      `GObjPC_GainExpAndLevel`** (vtable 0x170) as an exp amount — a direct grant
-      with no formula in between.
-   3. Corroborating: the party-share path `FUN_004fcda0` reads `+0x1c` too.
-
-   So `entry+0x1c` is **the level table's per-level standard EXP unit**. That is a
-   citable recovery, settled the way the rules require.
-
-   *Still NOT proven: which leveldata COLUMN it is, and nothing ships until it is.*
-   Three lines point at col 5 (`entry+0x8` is the grounded int64 col 1,
-   `entry+0x10` the grounded col 2, so a 4-byte progression lands +0x1c on col 5;
-   and col 5's magnitude matches the exp pacing). That assumes cols 3/4 are 32-bit,
-   and no parser has confirmed it.
-
-   **Three candidate confirmations were chased and discarded**, all recorded so
-   nobody re-walks them:
-   - The accessor family around `RefLevel_GetEntry` reading `+0x14/+0x18/+0x20/
-     +0x24/+0x28` would have pinned the layout — but `FUN_00411370` is a
-     `std::string` constructor that merely shares the address range.
-   - `Mastery_LevelUp` looked like it read `entry+0x10` *and* `entry+0x20`, which
-     would have given a third anchor. It does not: the `+0x20` reads are on
-     `iVar3 + 8`, the mastery record. Two different structs in one function, and a
-     grep cannot tell them apart.
-   - The parser itself is **not findable in the server**: no `leveldata`/`RefLevel`
-     string literal is referenced anywhere in 30,922 functions, no `_RefLevel` SQL
-     column names (`Exp_C`, `Cost_Master`, …) appear, and only ONE function in the
-     whole binary self-names with `ExtractData` (`RefObjChar`). The server almost
-     certainly gets this table from its database, not from the text file.
-
-   *Next probe — switch binaries.* The CLIENT parses `leveldata.txt` per column:
-   `Client_LoadAllRefData` builds `"%stextdata\leveldata.txt"` and hands it to the
-   generic loader, behind which a per-type manager does the column split. Find that
-   manager's level branch and read its stores in order. That is the same move that
-   produced the characterdata column map, just on the other binary.
-
-2. **Monster attack/defence — half closed (2026-09-15).** Four of the eight
+1. **Monster attack/defence — half closed (2026-09-15).** Four of the eight
    combat columns are now grounded by **the game's own tag names**, and the
    remaining four are isolated.
 
@@ -156,17 +83,17 @@ pick one up without re-deriving anything.
    own damage columns turn into these params, and a weapon is a thing whose
    itemdata columns this project already knows.
 
-3. **Combat damage model** (base + bonus − defence, no crit/dodge) — ours.
+2. **Combat damage model** (base + bonus − defence, no crit/dodge) — ours.
    *Next probe:* `FUN_0058e5f0` is the real damage resolution; `FUN_0040f5f0`
    applies a level-gap roll clamped to [10%, 100%].
-4. **Berserk numbers** (fill 8/hit, 20 s, +50 %) — ours. The mechanic and the
+3. **Berserk numbers** (fill 8/hit, 20 s, +50 %) — ours. The mechanic and the
    five orbs are real. *Next probe:* the `'zb'` param tag (0x7a62) in the stat
    vocabulary.
-5. **Monster spawn positions** — ours by necessity (`npcpos.txt` has no
+4. **Monster spawn positions** — ours by necessity (`npcpos.txt` has no
    monsters). Likely genuinely absent; prove it and it stops counting as open.
-6. **Quest objectives** — proven not to exist as data; any objectives shipped
+5. **Quest objectives** — proven not to exist as data; any objectives shipped
    must be own design. Closed as a *recovery*, not a gap.
-7. **Loot tables** — **CLOSED as a proven absence (2026-09-15).** The mapping
+6. **Loot tables** — **CLOSED as a proven absence (2026-09-15).** The mapping
    question was a non-issue: `RefMonsterID` *is* characterdata col 1 (Mangyang
    = 1933), which we already carry. The blocker is the data. The drop classes
    are real in the binary (`CRefMonster_AssignedItemRndDrop`,
@@ -177,7 +104,7 @@ pick one up without re-deriving anything.
    SQL database. So per-monster drops stay own design *by necessity*, and
    become real the moment an operator brings that table — the schema and the
    key are both already in place.
-8. **Inventory size (50)**, **unarmed damage (5)** — ours; low value, may be
+7. **Inventory size (50)**, **unarmed damage (5)** — ours; low value, may be
    genuinely absent.
 
 ## How to work this file
