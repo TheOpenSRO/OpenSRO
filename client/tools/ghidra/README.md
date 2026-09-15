@@ -312,3 +312,22 @@ It reports rather than fixes — a violation means the evidence needs re-reading
 not that the name is automatically wrong. All eight bad opcode names turned out
 to be **singleton accessors** (`if (g == 0) Assert(); return g;`) and **message
 buffer readers**, and are now named as such.
+
+## ValidateAttribution.java `[maxReport]`
+
+The companion to `ValidateNames.java`, for the *attribution* passes rather than
+the naming ones. `InterpolateModules` assigns a module from **address
+adjacency**; the **call graph** is an independent signal, because a function
+really in module M usually calls or is called by other M functions.
+
+Measured at `maxGap = 3`: **79.6% agree** on the server and **72.9%** on the
+client, with genuine suspects (several dissenting neighbours, none agreeing) at
+**0.7%** and **3.3%**. The heuristic holds.
+
+Note what "isolated" means — ~16% have no attributed neighbour either way, so
+the call graph says nothing about them. That is not a failure, it is the check
+declining to have an opinion, and it is reported separately rather than counted
+as agreement.
+
+**This validates the gap size in use.** Raising `maxGap` invalidates the
+measurement; re-run after any change.

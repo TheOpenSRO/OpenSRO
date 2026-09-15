@@ -656,6 +656,31 @@ Two honest caveats on that number, in both directions:
   code in the binary — `GObjPC_GainExpAndLevel`, the exp-gain entry point, is in
   it. It does also hold genuinely dead code, and nothing here separates the two.
 
+**The big attribution passes were validated too, and they hold.**
+`ValidateAttribution.java` checks interpolated modules against the **call
+graph** — an independent signal, since interpolation used address adjacency
+alone:
+
+| | server | client |
+|---|---|---|
+| interpolated functions | 671 | 2,493 |
+| call graph **agrees** | **79.6%** | **72.9%** |
+| isolated (no signal either way) | 17.6% | 15.4% |
+| one dissenting neighbour (weak) | 2.1% | 8.4% |
+| several dissenting, none agreeing | **0.7%** (5) | **3.3%** (82) |
+
+So roughly three quarters are positively corroborated by evidence the heuristic
+never saw, and genuine suspects are under 1% on the server and about 3% on the
+client. That is a very different picture from the opcode-tree pass, which was
+**28% wrong** — and the difference is instructive: the attribution passes encode
+a structural fact about the compiler (a translation unit is contiguous; a callee
+shares its caller's module), while the opcode pass encoded a *textual* pattern
+that infrastructure calls happened to match.
+
+**This validates `maxGap = 3` specifically.** Raising it — 8 would take 3,027
+functions instead of 1,286 — invalidates the measurement, so re-run this after
+any change to the gap.
+
 Levers used so far, by what they returned: call-graph attribution
 (`PropagateModules.java`, +3,131), authored UI string ids
 (`LabelFromUIStrings.java`, +140 namespaced and 597 commented), `__FILE__`
