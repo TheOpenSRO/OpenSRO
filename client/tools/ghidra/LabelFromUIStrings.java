@@ -53,8 +53,12 @@ import java.util.regex.Pattern;
 public class LabelFromUIStrings extends GhidraScript {
 
     /** The authored-id families this client uses. */
+    // PARAM_* was missing from an earlier version of this pattern and is the
+    // client's third id family: 163 localisation keys naming every stat
+    // (PARAM_HR "Attack rate", PARAM_ER "Parry rate", PARAM_PD "Phy. def. pwr.").
+    // A function asking for one is stat-display code.
     private static final Pattern ID =
-        Pattern.compile("\\b(UIIT_[A-Z]+_[A-Z0-9_]+|UIO[A-Z0-9_]+)\\b");
+        Pattern.compile("\\b(UIIT_[A-Z]+_[A-Z0-9_]+|UIO[A-Z0-9_]+|PARAM_[A-Z0-9_]+)\\b");
 
     public void run() throws Exception {
         String[] args = getScriptArgs();
