@@ -187,6 +187,74 @@ pick one up without re-deriving anything.
    stays disclosed — but as "a per-character value we fix at 50", not "a number
    nobody has found". **Unarmed damage (5)** — still ours.
 
+## The client's refdata catalogue: 88 type ids
+
+`Client_LoadAllRefData` pushes a **type id** alongside each `%stextdata\<file>`
+name, and `Client_LoadRefDataFile` switches on that id. Pairing the two recovers
+the complete enum — every reference-data file the client loads, with its id:
+
+```
+    1 skilldata_virtual                     2 itemdata                          
+    3 worldmap_mapinfo                      4 worldmap_localinfo                
+    5 characterdata                         6 gameguidedata                     
+    7 usableresobjiddata                    8 leveldata                         
+    9 actionwnddata                        12 erasableskill                     
+   13 erasablemastery                      18 teleportdata                      
+   19 teleportlink                         20 teleportbuilding                  
+   21 npcchat                              23 skillgroup                        
+   24 magicoption                          25 questdata                         
+   26 questcontentsdata                    28 dg                                
+   29 npcpos                               30 gachaitemset                      
+   31 gachanpcmap                          32 levelgold                         
+   33 fmncategorytreedata                  34 fmntidgroupmapdata                
+   35 refshop                              36 refshoptabgroup                   
+   37 refshoptab                           38 refmappingshopwithtab             
+   39 refpackageitem                       40 refshopgoods                      
+   41 refscrapofpackageitem                42 refpricepolicyofitem              
+   43 refaccesspermissionofshop            44 reftreatitemofshop                
+   45 refrewardpolicytobuyscrapitem        46 refrewardpolicytosellpackageitem  
+   47 refrewardpolicytosellscrapitem       48 refconditiontosellpackageitem     
+   49 refconditiontobuyscrapitem           50 refconditiontosellscrapitem       
+   51 shopitemstockquantity                52 refshopgroup                      
+   53 refmappingshopgroup                  54 siegefortress                     
+   55 eventzonedata                        56 gameworlddata                     
+   57 atstructeffect                       58 siegefortressitemforge            
+   59 siegefortressbattlerank              60 siegestructupgradedata            
+   61 force_addobject                      66 magicoptionassign                 
+   67 refgachatreeforclientuidata          68 hwanleveldata                     
+   69 eventdata                            71 worldmap_instanceinfo             
+   72 event_npc_look                       74 refabilitybyitemoptleveldata      
+   75 refskillbyitemoptleveldata           76 refmagicoptbyitemoptleveldata     
+   77 itemeffect                           78 refoptionalteleport               
+   79 eventguidedata                       80 item_grouping                     
+   81 refsetitemgroup                      82 specialnpcdata                    
+   83 maxtradescaledata                    85 mallitemmenulistdata              
+   86 refshopitemstockperiod               87 gameworldconfigdata               
+   89 worldmapguidedata                    90 eventword                         
+   91 refmagicoptgroup                     93 worldmapguidedata_region          
+   94 refquestrewarditems                  95 refqusetreward                    
+   97 collectionbook_theme                 98 collectionbook_item               
+   99 refrentitem                         100 refeventrewarditems               
+  101 refeventreward                      102 siegefortressreward               
+  103 refsiegeblessbuff                   104 refsiegedungeon                   
+  106 groupworld_config_forclient       
+```
+
+This is the map for any future column work: it says which switch case parses
+which file, so a column question starts at a known case instead of a 155KB
+function. 421 functions appear in **exactly one** case, making them that file's
+parsing code; 71 were still unattributed and are now in `RefData_<file>`
+namespaces (the other 350 had already been swept into modules by the chain, and
+an existing namespace is never overwritten).
+
+Incidentally it re-confirms **type 32 = `levelgold`** — the client really does
+load that file, which supports (without proving) the gold linkage recorded
+above.
+
+`ApplyNamespaceTable.java` exists for this shape of result: attribution derived
+by reasoning over the decompiled C, which a Ghidra script cannot redo, arriving
+as a `address<TAB>namespace` table.
+
 ## The message dispatcher, and 29 packet handlers
 
 `FUN_00414260` reads a **uint16 opcode** out of the message buffer at `+0x1050`
