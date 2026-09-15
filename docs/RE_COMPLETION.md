@@ -2677,3 +2677,65 @@ entry's "run 1, 0 values" were caught by an output that was obviously impossible
 by the controls, which passed in both cases.
 
 **No srrevamp value changed.** A shipped one is now measured rather than assumed.
+
+## `mc` is a skill's HIT COUNT — and a shipped defect it uncovered (2026-09-15)
+
+The previous entry left `mc` as the most-used unknown in the skill format: field
+`0x288`, a three-word run, on 28,142 of 36,389 skills. It is the number of times
+one cast strikes.
+
+**Settled by a use-site, not by the name.** `Combat_ResolveDamage` (`0058e5f0`):
+
+	*(record + 5) = 1;                        // default
+	piVar12 = *(int **)(skill + 0x288);       // the 'mc' values
+	if (piVar12 && *piVar12 == 2)
+	    *(record + 5) = (char)piVar12[1];     // mc overrides it
+	if (*(record + 5) == '\0') Assert();      // 0 is a bug state
+	...
+	*(record + 6) = 0;                        // the iteration counter
+	do { ... *(record + 6) += 1; ... }
+	while (i < *(byte *)(record + 5));        // line 1162
+
+A loop bound, a counter, and an assert against zero. The loop body spans lines
+317–1162 and **contains the damage-kind switch and the mitigation calls**, so
+each iteration is an independent blow — its own damage roll, its own critical
+and block rolls. That is why it is a count and not a multiplier: multiplying one
+blow would give a different distribution.
+
+The real table: 24,368 skills strike once, 3,855 twice, 265 three times, 59 four
+and 6 five. 35 carry `(2, 0)`, which would trip the engine's own assert.
+
+**A wrong turn worth recording.** The byte `mc` writes is at `+5` of its record,
+and the damage-kind switch reads `+5` of *another* record. I briefly had `mc`
+selecting the damage kind — wrong, and it would have contradicted the earlier
+finding that case 0 is the ordinary attack. `FUN_005a9f20`, which allocates the
+switch's record, explicitly sets its `+5 = 0`, so the two are different objects
+and **case 0 really is the default damage kind**. A claim I had started to doubt
+came back stronger. Three distinct records in this one function carry a
+meaningful `+5`; conflating them is the trap.
+
+### The defect: SQL deployments were silently dropping skill damage
+
+Wiring the hit count through exposed something worse. The exporter emitted a
+skill's real `AttackPercent`/`DamageMin`/`DamageMax` and the CSV loader parsed
+them — but the **skills table had no columns for them**, `ImportSkills` never
+wrote them and `GetSkill` never read them back.
+
+So on any SQL deployment — the production path, `-in-memory` being the option —
+every skill silently lost its recovered damage and fell back to the disclosed
+per-level stand-in. Nothing errored; the numbers were quietly wrong. This is the
+same shape as the `TwoHanded` column that shipped as a false claim, and the same
+lesson: a value is not shipped until something reads it back out of the store it
+will actually live in.
+
+### What moved
+
+- `refdata.Skill.HitCount` and `HitsFor()`, exported from the `'mc'` parameter.
+- `attack_percent`, `damage_min`, `damage_max`, `hit_count` added to the skills
+  schema, the upsert and both selects.
+- `performAttack` takes a hit count and resolves that many independent blows.
+- A round-trip test that fails against the old schema, and boundary tests for
+  `HitsFor`.
+
+A two-hit skill now does roughly twice the damage it did, which is the
+correction rather than a buff: it was doing one hit's worth all along.

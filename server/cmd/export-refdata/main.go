@@ -343,6 +343,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		return s
 	}
 	pct, dmgMin, dmgMax := attackParam(cols)
+	hits := hitCountParam(cols)
 	return []string{
 		get(skID),             // 0  ID
 		get(skGroupID),        // 1  GroupID
@@ -371,6 +372,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		pct,                   // 24 AttackPercent -- real, from the 'att' param
 		dmgMin,                // 25 DamageMin
 		dmgMax,                // 26 DamageMax
+		hits,                  // 27 HitCount -- real, from the 'mc' param
 	}, true
 }
 
@@ -381,6 +383,11 @@ func skillRecord(cols []string) ([]string, bool) {
 // parameter parser reads 'att' as a fixed run of six words (the code plus five
 // values), which is how the layout below is known rather than guessed.
 const attackCode = "6386804"
+
+// hitCountCode is the skill's 'mc' parameter -- 0x6d63, the pair (2, N) where N
+// is how many times one cast strikes. See refdata.Skill.HitCount for the
+// use-site that settles it as a count rather than a multiplier.
+const hitCountCode = "28003"
 
 // attackParam pulls a skill's damage out of its Param block: the percentage of
 // weapon damage it deals, and the flat damage range added on top.
@@ -429,6 +436,29 @@ func attackParam(cols []string) (percent, dmgMin, dmgMax string) {
 		return at(2), at(3), at(4)
 	}
 	return "0", "0", "0"
+}
+
+// hitCountParam pulls a skill's hit count out of its Param block. The run is
+// (code, 2, N); the leading 2 is a selector the server tests before taking N,
+// so a run that does not carry it is not a hit count and is ignored.
+//
+// Returns "0" when the skill has no 'mc', which refdata.Skill.HitsFor reads as
+// a single strike -- the engine's own default.
+func hitCountParam(cols []string) string {
+	for i, v := range cols {
+		if strings.TrimSpace(v) != hitCountCode || i+2 >= len(cols) {
+			continue
+		}
+		if strings.TrimSpace(cols[i+1]) != "2" {
+			continue
+		}
+		n := strings.TrimSpace(cols[i+2])
+		if n == "" {
+			return "0"
+		}
+		return n
+	}
+	return "0"
 }
 
 // readTable reads a tab-separated itemdata file, decoding UTF-16LE (with or

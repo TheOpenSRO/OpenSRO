@@ -321,3 +321,45 @@ func TestImportDropGroupEntriesUpserts(t *testing.T) {
 		t.Fatalf("got %+v, want one entry with SelectRatio 0.9 (upsert should have replaced the row)", got)
 	}
 }
+
+// TestSkillDamageSurvivesTheSQLRoundTrip is the regression test for a defect
+// that shipped silently.
+//
+// The exporter emitted a skill's real damage ('att') and the CSV loader parsed
+// it, but ImportSkills never wrote those columns and GetSkill never read them
+// back. So on any SQL deployment -- the production path; -in-memory is the
+// option -- every skill silently lost its recovered damage and fell back to the
+// disclosed per-level stand-in. Nothing failed; the numbers were just quietly
+// wrong.
+//
+// This fails against the old schema, which had no columns to hold them.
+func TestSkillDamageSurvivesTheSQLRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLStore(testDSN())
+	if err != nil {
+		t.Fatalf("OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer s.Close()
+
+	// SKILL_CH_SWORD_SMASH_A_01's real shape, plus a two-hit count.
+	want := Skill{
+		ID: 70001, GroupID: 7, BasicCode: "SKILL_CH_SWORD_SMASH_A", BasicLevel: 1,
+		AttackPercent: 143, DamageMin: 15, DamageMax: 18, HitCount: 2,
+	}
+	if err := s.ImportSkills(ctx, []Skill{want}); err != nil {
+		t.Fatalf("ImportSkills: %v", err)
+	}
+	got, err := s.GetSkill(ctx, want.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetSkill: %v", err)
+	}
+	if got.AttackPercent != want.AttackPercent || got.DamageMin != want.DamageMin || got.DamageMax != want.DamageMax {
+		t.Errorf("damage lost in the round trip: got %d%%/%d-%d, want %d%%/%d-%d",
+			got.AttackPercent, got.DamageMin, got.DamageMax,
+			want.AttackPercent, want.DamageMin, want.DamageMax)
+	}
+	if got.HitCount != want.HitCount || got.HitsFor() != 2 {
+		t.Errorf("hit count lost in the round trip: got %d (HitsFor %d), want 2",
+			got.HitCount, got.HitsFor())
+	}
+}

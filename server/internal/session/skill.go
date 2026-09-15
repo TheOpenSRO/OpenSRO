@@ -343,6 +343,7 @@ func UseSkillHandler(
 		var cooldown time.Duration
 		var damageBonus int
 		var damagePercent int
+		var hits = 1
 		var mpCost int
 		if sk, inCatalog := skill.Catalog[req.SkillID]; inCatalog {
 			cooldown = time.Duration(sk.CooldownSeconds) * time.Second
@@ -351,6 +352,7 @@ func UseSkillHandler(
 			cooldown = time.Duration(ref.ReuseDelayMs) * time.Millisecond
 			mpCost = ref.ConsumeMP
 			damageBonus, damagePercent = skillDamageBonus(ref)
+			hits = ref.HitsFor()
 		} else {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "no such skill"}).Encode()})
 		}
@@ -393,7 +395,7 @@ func UseSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
 		}
 
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, characterID, req.TargetMonsterID, damageBonus, damagePercent)
+		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, characterID, req.TargetMonsterID, damageBonus, damagePercent, hits)
 	}
 }
 

@@ -64,6 +64,26 @@ type Skill struct {
 	AttackPercent int
 	DamageMin     int
 	DamageMax     int
+	// HitCount is how many times one cast strikes: 1 for most skills, up to 5.
+	// REAL, from the skill's own 'mc' parameter (docs/protocol/skill_params.md,
+	// field 0x288, a three-word run carrying the pair (2, N)).
+	//
+	// Settled by a use-site rather than by the name. Combat_ResolveDamage
+	// (0058e5f0) initialises a per-attack record's +5 byte to 1, overwrites it
+	// with the second 'mc' value when the first is 2, asserts it is non-zero,
+	// and then runs its whole damage resolution inside
+	//
+	//	do { ... } while (i < *(byte *)(record + 5));
+	//
+	// with +6 as the iteration counter. The loop body contains the damage-kind
+	// switch and the mitigation calls, so each iteration is an INDEPENDENT blow
+	// -- its own damage roll, its own critical and block rolls -- not one blow
+	// multiplied. That is why this is a count and not a multiplier.
+	//
+	// 0 is invalid (the engine asserts), so a missing or zero value reads as 1.
+	// In the real table 24,368 skills are 1-hit, 3,855 are 2, 265 are 3, 59 are
+	// 4 and 6 are 5.
+	HitCount int
 
 	// Real cost/prerequisite to learn the skill (ReqLearn_SP/ReqLearn_Race).
 	ReqLearnSP   int
@@ -83,4 +103,17 @@ type Skill struct {
 	// than another internal lookup key. Treat with the same caution as
 	// BasicName until confirmed either way.
 	UISkillName string
+}
+
+// HitsFor returns how many times a cast of this skill strikes: the skill's own
+// HitCount, or one when the export predates the column or carries a value the
+// engine would reject.
+//
+// The engine asserts the count is non-zero and its own default is 1, so 0 and
+// anything negative read as a single strike rather than as "no attack".
+func (s *Skill) HitsFor() int {
+	if s == nil || s.HitCount < 1 {
+		return 1
+	}
+	return s.HitCount
 }

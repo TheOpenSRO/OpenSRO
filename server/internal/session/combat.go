@@ -623,7 +623,7 @@ func CombatHandler(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 			}
 
-			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, characterID, req.TargetMonsterID, 0, 0)
+			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, characterID, req.TargetMonsterID, 0, 0, 1)
 		case OpMonsterList:
 			return handleMonsterList(sess, hub, monsters)
 		default:
@@ -676,6 +676,7 @@ func performAttack(
 	characterID, targetMonsterID int64,
 	damageBonus int,
 	damagePercent int,
+	hits int,
 ) error {
 	monster, ok := monsters.Get(targetMonsterID)
 	if !ok {
@@ -729,6 +730,22 @@ func performAttack(
 	// plain attack passes 0 and is unchanged.
 	net := combat.ApplySkillPercent(blow.Damage, damagePercent)
 	playerCrit := blow.Critical
+
+	// A multi-hit skill strikes again, and each strike is INDEPENDENT: the
+	// engine runs its whole damage resolution inside
+	// `do { ... } while (i < record[5])`, with the damage-kind switch and the
+	// mitigation calls inside the loop body, so every hit rolls its own
+	// damage, critical and block. Multiplying one blow would be a different
+	// distribution -- see refdata.Skill.HitCount.
+	//
+	// The first strike is the blow already resolved above; this adds the rest.
+	for i := 1; i < hits; i++ {
+		extra := resolveBlow(raw, monster.DefensePercent, monster.Defense,
+			attackerCritical(ctx, characterID, eq, items), monster.Block,
+			playerLevel, monster.Level)
+		net += combat.ApplySkillPercent(extra.Damage, damagePercent)
+		playerCrit = playerCrit || extra.Critical
+	}
 	// Berserk multiplies the blow AFTER mitigation, which is the order
 	// Formula_MitigatePhysicalDamage uses: it divides by the percentage term,
 	// subtracts the flat term, clamps at zero, and only then multiplies by

@@ -198,6 +198,10 @@ var skillCSVColumns = []string{
 	// Appended later (real skill damage, from the 'att' parameter): a strict
 	// suffix, so an export made before it still loads.
 	"AttackPercent", "DamageMin", "DamageMax",
+	// Appended later (a skill's hit count, from its 'mc' parameter): a strict
+	// suffix, so an export made before it still loads and every skill simply
+	// strikes once.
+	"HitCount",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -305,6 +309,11 @@ func parseSkillRow(f []string) (Skill, error) {
 	}
 	if len(f) > 26 {
 		sk.DamageMax = parseInt(f[26])
+	}
+	// The hit count from the skill's 'mc' parameter, appended later still. An
+	// export predating it leaves 0, which HitsFor reads as one strike.
+	if len(f) > 27 {
+		sk.HitCount = parseInt(f[27])
 	}
 
 	if err != nil {
