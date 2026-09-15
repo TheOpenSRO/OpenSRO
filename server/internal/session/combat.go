@@ -1058,13 +1058,26 @@ func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, i
 // docs/protocol/ITEM_FORMAT.md's weapon stat table). This project already
 // loaded it as refdata.Item.CriticalMin/Max and had nowhere to spend it.
 //
-// A CORRECTION to what was written here on 2026-09-15. That pass concluded
-// "the player never crits", on the grounds that Char_PublishCombatStats does
-// not publish param 12. The publishing path indeed does not -- but it is not
-// the only one: Stat_ApplyTaggedModifier maps the tag 'cri' to param 12, and
-// that is the item-modifier path, which is exactly where a weapon's Critical
-// column goes. The earlier statement was true about one route and wrong as a
-// conclusion.
+// TWO CORRECTIONS, both to things written here on 2026-09-15.
+//
+// The first pass concluded "the player never crits", on the grounds that
+// Char_PublishCombatStats does not publish param 12. The conclusion was wrong,
+// and the grounds were wrong too -- but it took a second pass to see the
+// second part.
+//
+// It publishes param 12 from the stat source's +0x1dc, and the reason the
+// earlier pass missed it is mundane: the disassembly was cut at 220
+// instructions and that write is at 0x00497ef0, three hundred instructions
+// past the end of what was read. The full publication is eighteen fields, and
+// the critical is the last of them -- immediately after 'hra' attack rate at
+// +0x1d8, exactly where a reader would expect the pair to sit.
+//
+// So a player's critical arrives by the SAME route as every other combat stat
+// rather than by the item-modifier path (Stat_ApplyTaggedModifier's 'cri'
+// tag), which is what the correction of 2026-09-15 offered instead. That path
+// exists and also reaches param 12; it is simply not the interesting one here.
+// The value this code uses -- the weapon's own Critical column, itemdata 116 --
+// is unchanged and was right throughout; only the citation improves.
 //
 // Unopposed here, and that is not a simplification: the real chance is divided
 // by (1 + the target's 'evcr'/100), and GObjMob_PublishStats publishes params

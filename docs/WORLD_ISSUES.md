@@ -7075,6 +7075,49 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-ninety-third round: an absence inside a measurement window
+
+Applying last round's two-reader check forward -- what does the CLIENT read that
+the server never exports? -- turns up exactly one combat stat: phys/mag
+**reinforce**, itemdata 105/107 and 109/111, which the client displays as
+`"Phy. reinforce 30.6 % ~ 34.2 %"` and `cmd/export-refdata` has never carried.
+Everything else the client reads is either exported or purely presentational
+(the worn model, the drop model, the name string id).
+
+Chasing where reinforce might land on the server meant finishing
+`Char_PublishCombatStats`, and finishing it caught me out.
+
+**The publication is eighteen fields, not eleven.** The pass that first mapped
+it cut its disassembly at 220 instructions. Six writes sit past that, and the
+last of them is `+0x1dc -> param 12` at `0x00497ef0` -- three hundred
+instructions beyond where the reading stopped.
+
+Param 12 is `'cri'`, the critical chance. This project had written down that
+`Char_PublishCombatStats` does **not** publish it, and then used that absence to
+argue the player's critical must arrive by the item-modifier path
+(`Stat_ApplyTaggedModifier`'s `'cri'` tag). It does not. It arrives by the same
+route as every other combat stat, published from `+0x1dc` immediately after
+`'hra'` attack rate at `+0x1d8` -- exactly where anyone would expect the pair to
+sit, had they looked that far.
+
+The shipped behaviour was right the whole time: a player's critical chance is
+the weapon's own Critical column, itemdata 116, and that has not changed. What
+changes is the citation, and it gets *better* -- the stat now has the same
+provenance as parry, blocking and attack rate instead of a special case.
+
+**The lesson is narrow and worth keeping**: a disassembly window is a
+measurement boundary, and an absence found inside one is not an absence. This is
+the third false negative in this epic from a probe that did not reach far
+enough -- after `grep '== 0x'` missing every `!=` branch, and a param census
+whose regex required `0x` and so skipped every parameter below ten. All three
+read as settled questions.
+
+Six of the eighteen fields are still unnamed -- `+0x1b0` and `+0x1b4` (params
+58, 59, with 23 also written from `+0x1b4`) and `+0x1c8`/`+0x1cc`/`+0x1d0`/
+`+0x1d4` (params 34-37). `+0x1b0`/`+0x1b4` sit between the defence block and the
+damage block and are the obvious candidates for reinforce, which is precisely
+why they are recorded as candidates and not as an answer.
+
 ## Hundred-and-ninety-second round: the client had been right all along
 
 Last round withdrew `HitRateMax` and `CriticalMax` on tooltip evidence, with the

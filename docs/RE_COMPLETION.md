@@ -1013,7 +1013,30 @@ are register-passed, so this is read off the disassembly:
 | +0x1bc | 14 **and** 190 | physical damage **max** |
 | +0x1c0 | 15 **and** 193 | magical damage min |
 | +0x1c4 | 16 **and** 192 | magical damage max |
+| +0x1b0 | 58 | not identified |
+| +0x1b4 | 23, 59 | not identified |
+| +0x1c8 | 34 | not identified |
+| +0x1cc | 36 | not identified |
+| +0x1d0 | 35 | not identified |
+| +0x1d4 | 37 | not identified |
 | +0x1d8 | 11 | `'hra'` **attack rate** |
+| **+0x1dc** | **12** | `'cri'` **critical** |
+
+**Extended and CORRECTED 2026-09-15 (same day).** The table above is eighteen
+fields, not the eleven this entry first recorded. The earlier pass cut its
+disassembly at 220 instructions, and six of the writes are past that — the last
+of them, `+0x1dc → param 12`, at `0x00497ef0`, three hundred instructions
+beyond where the reading stopped.
+
+That one matters, because this entry went on to say param 12 was **not**
+published here, and a later tick used that to argue the player's critical
+arrives by the item-modifier path (`Stat_ApplyTaggedModifier`'s `'cri'` tag)
+instead. It does not: it arrives by the same route as every other combat stat,
+published from `+0x1dc` immediately after `'hra'` attack rate at `+0x1d8` —
+exactly where a reader would expect the pair. The shipped value (the weapon's
+own Critical column, itemdata 116) was right throughout; only the citation
+improves. *A disassembly window is a measurement boundary, and an absence found
+inside one is not an absence.*
 
 **Two standing questions close.** First, params 13/14 and 190/191 are *the same
 two floats* — so `Formula_RollWeaponDamage`'s uniform roll (190/191) and the
