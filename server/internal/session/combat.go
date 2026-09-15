@@ -262,6 +262,11 @@ type AttackResult struct {
 	// critical -- real chance, real doubling. See combat.RollChance.
 	MonsterCritical bool
 
+	// PlayerCritical is true when the player's own blow was a critical. The
+	// chance is the equipped weapon's Critical column (itemdata 116); see
+	// attackerCritical.
+	PlayerCritical bool
+
 	// DeathExpLost is the experience the death penalty took, 0 when the
 	// player did not die or is still inside the level-10 grace period. Real;
 	// see leveldata.DeathPenaltyExp. Appended, so an older client that stops
@@ -271,7 +276,7 @@ type AttackResult struct {
 
 func (r *AttackResult) Encode() []byte {
 	out := encodeStrings(r.Error)
-	buf := make([]byte, 32)
+	buf := make([]byte, 33)
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(r.MonsterDamage))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(r.MonsterRemainingHP))
 	if r.MonsterDied {
@@ -289,6 +294,9 @@ func (r *AttackResult) Encode() []byte {
 	binary.LittleEndian.PutUint64(buf[23:31], uint64(r.DeathExpLost))
 	if r.MonsterCritical {
 		buf[31] = 1
+	}
+	if r.PlayerCritical {
+		buf[32] = 1
 	}
 	return append(out, buf...)
 }
@@ -320,6 +328,9 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 	}
 	if len(rest) >= 32 {
 		r.MonsterCritical = rest[31] != 0
+	}
+	if len(rest) >= 33 {
+		r.PlayerCritical = rest[32] != 0
 	}
 	return r, nil
 }
@@ -690,6 +701,15 @@ func performAttack(
 	// (characterdata cols 73/74 = the monster's level); the flat Defense is
 	// still the disclosed curve. See combat.MitigateDamage.
 	net := combat.MitigateDamage(raw, monster.DefensePercent, monster.Defense)
+	// The player's own critical: the equipped weapon's Critical column, rolled
+	// with the same recovered dice, doubling the blow. Applied after mitigation
+	// and before berserk/level, which is the order the real formula builds its
+	// multiplier in -- a critical DOUBLES whatever that multiplier already is,
+	// so a berserk critical compounds rather than replacing it.
+	playerCrit := rollChance(attackerCritical(ctx, characterID, eq, items))
+	if playerCrit {
+		net *= combat.CriticalMultiplier
+	}
 	// Berserk multiplies the blow AFTER mitigation, which is the order
 	// Formula_MitigatePhysicalDamage uses: it divides by the percentage term,
 	// subtracts the flat term, clamps at zero, and only then multiplies by
@@ -717,7 +737,8 @@ func performAttack(
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found"}).Encode()})
 	}
 
-	result := &AttackResult{MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP), MonsterDied: monsterDied}
+	result := &AttackResult{MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP), MonsterDied: monsterDied,
+		PlayerCritical: playerCrit}
 	// Fighting fills the berserk gauge; report it (and whether berserk is on)
 	// so the HUD orbs and aura track it as the fight goes.
 	if zerk != nil {
@@ -1030,4 +1051,45 @@ func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, i
 		total += int(item.PhysDefenseMax)
 	}
 	return total, nil
+}
+
+// attackerCritical is the player's critical-hit chance: the equipped weapon's
+// own Critical value, itemdata column 116.
+//
+// That column is REAL and was verified against a real +5 tooltip before this
+// used it -- a Copper Sword reads 3, and the tooltip showed 3 (see
+// docs/protocol/ITEM_FORMAT.md's weapon stat table). This project already
+// loaded it as refdata.Item.CriticalMin/Max and had nowhere to spend it.
+//
+// A CORRECTION to what was written here on 2026-09-15. That pass concluded
+// "the player never crits", on the grounds that Char_PublishCombatStats does
+// not publish param 12. The publishing path indeed does not -- but it is not
+// the only one: Stat_ApplyTaggedModifier maps the tag 'cri' to param 12, and
+// that is the item-modifier path, which is exactly where a weapon's Critical
+// column goes. The earlier statement was true about one route and wrong as a
+// conclusion.
+//
+// Unopposed here, and that is not a simplification: the real chance is divided
+// by (1 + the target's 'evcr'/100), and GObjMob_PublishStats publishes params
+// 0, 3-12, 23, 24, 27-33 and 140 -- param 57 ('evcr') is not among them, so a
+// monster's evasion term is zero and the divisor is 1.
+//
+// No weapon, or a weapon with no reference data, means no critical rather than
+// a disclosed default: an unarmed attack has no weapon column to read.
+func attackerCritical(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) int {
+	equipped, err := eq.Get(ctx, characterID)
+	if err != nil {
+		return 0
+	}
+	for _, e := range equipped {
+		if e.Slot != equipment.SlotWeapon {
+			continue
+		}
+		item, err := items.GetItem(ctx, e.ItemID)
+		if err != nil || item == nil {
+			return 0
+		}
+		return int(item.CriticalMin)
+	}
+	return 0
 }

@@ -777,9 +777,10 @@ tables, and nowhere else. srrevamp's placeholder loot is own design for a
 reason that is now stated rather than assumed, and an operator with the database
 supersedes it.
 
-## Blocking: the chance, not yet the effect (2026-09-15)
+## Blocking: a blocked hit deals nothing (2026-09-15)
 
-Recovered in `Combat_ResolveDamage`, alongside the critical:
+Recovered in `Combat_ResolveDamage`. The chance is the engine's standard opposed
+idiom:
 
 ```
 block = GetParam(10)                       the defender's 'bri'
@@ -787,18 +788,44 @@ block = GetParam(10)                       the defender's 'bri'
       / (1 + GetParam(56)/100)             opposed by the attacker's 'evbl'
 ```
 
-the engine's standard opposed-stat idiom, stored into the damage record at
-`+0xe` where the critical chance sits at `+0xc`. Both sides have real inputs:
-monsters carry it in characterdata col 76 (0 across the Jangan ladder, **20 on
-938 other species**), and a player's comes from a shield's own block ratio,
-itemdata cols 74–75, which reads 10~20 and is present on exactly the 500 shield
-rows.
+stored in the damage record at `+0xe`, where the critical chance sits at `+0xc`.
 
-**What a block DOES is still open, and is why nothing shipped.** The rolls in
-`Combat_ResolveDamage` write a hit-result enum at the record's `+5` (one path
-sets 4, another 7) rather than scaling damage inline the way the critical does,
-so the effect lives wherever that byte is consumed. Shipping a block that only
-prints a word would be inventing the part that matters.
+**The roll is the same one the critical uses, and the disassembly shows how the
+engine keeps them apart** — they differ only in a key byte placed in the high
+bits of ECX:
+
+```
+0058f0c8  MOVZX EAX,byte ptr [EBX + 0xe]   ; the BLOCK chance
+0058f0d2  OR ECX,0x42000000                ; 'B'
+0058f0de  CALL FUN_005a1a20
+
+0058ed8c  MOVZX EAX,byte ptr [ESP + 0x2f]  ; the CRITICAL chance
+0058ed97  OR ECX,0x43000000                ; 'C'
+0058eda3  CALL FUN_005a1a20
+```
+
+That key is what `FUN_00599cc0` stores its bad-luck accumulator under, so blocks
+and criticals have **independent streak protection** per actor. It also settles,
+rather than assumes, that the block roll really takes the block chance — the
+`MOVZX EAX,[EBX+0xe]` is the field the `'bri'`/`'evbl'` computation wrote.
+
+**A blocked hit deals nothing**, and the control flow proves it rather than a
+comment claiming it. On success the roll falls through to `JZ 0x005905fb`, and
+that target is **past all four** `Formula_Mitigate*` call pairs — at `0x58f15d`,
+`0x58f2fb`, `0x58f7ea` and `0x58f9b2`. No damage is ever computed, so the
+record's `+0x28` (physical), `+0x24` (magical) and `+0x20` (total) keep the zero
+they were initialised with. A *failed* block instead jumps to `0x58f739`, which
+is before the third pair, and resolves normally. (One secondary path, guarded by
+an ability pointer at defender+0xD2C, explicitly zeroes those fields and re-runs
+the formulas; that is a special case this project does not model.)
+
+**Not shipped, and the reason is the input rather than the mechanic.** A
+player's block chance is a shield's own block ratio — itemdata cols 74–75,
+reading 10~20 and present on exactly the 500 shield rows — and srrevamp's
+curated item export carries no such column, so wiring it means a schema change
+the operator's existing exports would not satisfy. The monster side would never
+fire either: every species on the Jangan ladder reads 0 for col 76 (938 other
+monsters carry 20).
 
 ## Criticals, and the dice behind them (2026-09-15)
 

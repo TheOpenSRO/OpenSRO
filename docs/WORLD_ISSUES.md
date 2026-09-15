@@ -7075,6 +7075,54 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-eighty-fifth round: the player crits too, and I was wrong yesterday
+
+Last round ended "the player never crits: param 12 is not among the fifteen
+`Char_PublishCombatStats` publishes, and comes from the item stat-tag path this
+project does not model." The first half is true. The conclusion is not.
+
+`Stat_ApplyTaggedModifier` maps the tag `'cri'` to param 12, and that is the
+item-modifier path -- which is exactly where a **weapon's Critical column
+(itemdata 116)** goes. That column was verified against a real +5 tooltip two
+epics ago (a Copper Sword reads 3; the tooltip showed 3) and has been loaded as
+`refdata.Item.CriticalMin` ever since, with nowhere to spend it. The input was
+already on disk. Checking one route and concluding about all of them is the
+mistake, and it is the same shape as the greps recorded in the tooling README:
+an absence found by looking in one place reads exactly like an absence.
+
+So the player crits now, at the weapon's own chance, doubling the blow. It is
+unopposed against monsters and that is not a simplification: the real chance
+divides by `(1 + the target's 'evcr'/100)`, and `GObjMob_PublishStats` publishes
+params 0, 3-12, 23, 24, 27-33 and 140 -- param 57 is not among them.
+
+**Blocking is fully recovered and deliberately not shipped.** A blocked hit
+deals *nothing*, and the control flow proves it rather than a comment asserting
+it: on a successful roll execution falls through to `JZ 0x005905fb`, which lands
+**past all four** `Formula_Mitigate*` call pairs (`0x58f15d`, `0x58f2fb`,
+`0x58f7ea`, `0x58f9b2`), so no damage is ever computed and the record's `+0x28`
+physical / `+0x24` magical / `+0x20` total keep their zero-initialised value. A
+*failed* block jumps to `0x58f739`, before the third pair, and resolves normally.
+
+The disassembly also showed how one roll function serves two chances:
+
+```
+0058f0c8  MOVZX EAX,byte ptr [EBX + 0xe]   ; the BLOCK chance
+0058f0d2  OR ECX,0x42000000                ; 'B'
+0058ed8c  MOVZX EAX,byte ptr [ESP + 0x2f]  ; the CRITICAL chance
+0058ed97  OR ECX,0x43000000                ; 'C'
+```
+
+The key byte is what the bad-luck accumulator is stored under, so blocks and
+criticals get independent streak protection -- and it settles, rather than
+assumes, that the block roll takes the block chance.
+
+Not shipped because of the *input*, not the mechanic: a player's block chance is
+a shield's block ratio (itemdata cols 74-75, 10~20, on exactly the 500 shield
+rows) and srrevamp's curated item export has no such column, so wiring it needs
+a schema change the operator's existing exports would not satisfy. The monster
+side would never fire either -- every Jangan-ladder species reads 0 for col 76,
+though 938 other monsters carry 20.
+
 ## Hundred-and-eighty-fourth round: criticals, and the dice behind them
 
 The standing item read "crit/block/hit rolls -- values recovered, dice not".
