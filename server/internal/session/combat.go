@@ -55,6 +55,17 @@ func rollDamage(min, max int) int {
 	return combat.RollDamage(min, max, damageRollNG)
 }
 
+// rollChance is combat.RollChance under the SAME lock as every other roll
+// here. It takes the roll rather than handing the generator out: returning
+// damageRollNG and letting the caller use it after the defer has unlocked
+// would be a data race dressed as synchronisation, which is the exact mistake
+// the gold roll below already made once.
+func rollChance(chance int) bool {
+	damageRollMu.Lock()
+	defer damageRollMu.Unlock()
+	return combat.RollChance(chance, damageRollNG)
+}
+
 // rollGold is combat.RollGold under the SAME lock -- one generator, one mutex.
 // An earlier version of this guarded it with a second mutex, which protects
 // nothing: two locks around one rand.Rand is a data race, not synchronisation.
@@ -247,6 +258,10 @@ type AttackResult struct {
 	BerserkGauge  int32
 	BerserkActive bool
 
+	// MonsterCritical is true when the monster's counterattack landed a
+	// critical -- real chance, real doubling. See combat.RollChance.
+	MonsterCritical bool
+
 	// DeathExpLost is the experience the death penalty took, 0 when the
 	// player did not die or is still inside the level-10 grace period. Real;
 	// see leveldata.DeathPenaltyExp. Appended, so an older client that stops
@@ -256,7 +271,7 @@ type AttackResult struct {
 
 func (r *AttackResult) Encode() []byte {
 	out := encodeStrings(r.Error)
-	buf := make([]byte, 31)
+	buf := make([]byte, 32)
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(r.MonsterDamage))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(r.MonsterRemainingHP))
 	if r.MonsterDied {
@@ -272,6 +287,9 @@ func (r *AttackResult) Encode() []byte {
 		buf[22] = 1
 	}
 	binary.LittleEndian.PutUint64(buf[23:31], uint64(r.DeathExpLost))
+	if r.MonsterCritical {
+		buf[31] = 1
+	}
 	return append(out, buf...)
 }
 
@@ -299,6 +317,9 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 	}
 	if len(rest) >= 31 {
 		r.DeathExpLost = int64(binary.LittleEndian.Uint64(rest[23:31]))
+	}
+	if len(rest) >= 32 {
+		r.MonsterCritical = rest[31] != 0
 	}
 	return r, nil
 }
@@ -813,6 +834,16 @@ func performAttack(
 		// subtraction, so the zero carries its citation instead of being a
 		// coincidence that happens to compute the same number.
 		incoming := combat.MitigateDamage(raw, playerMitigationPercent, armor)
+		// A critical doubles the blow, and the monster's chance is REAL
+		// (characterdata col 78 -- see combat.Monster.Critical). Applied
+		// AFTER mitigation and BEFORE the level term, which is the order the
+		// real formula uses: it builds a multiplier, doubles it on the
+		// critical flag, multiplies the already-mitigated damage by it, and
+		// only then applies the level difference.
+		if rollChance(monster.Critical) {
+			incoming *= combat.CriticalMultiplier
+			result.MonsterCritical = true
+		}
 		// The same level-advantage term, with the roles swapped: the monster
 		// is the attacker in its own counterattack, so a monster that
 		// out-levels the player hits harder for it. The formula is one

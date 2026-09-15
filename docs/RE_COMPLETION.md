@@ -755,6 +755,62 @@ Also named, with no tag counterpart found yet: `PARAM_PA` "Phy. atk. pwr.",
 `PARAM_PD` "Phy. def. pwr.", `PARAM_MA` "Mag. atk. pwr.", `PARAM_MD`
 "Mag. def. pwr.", `PARAM_ABSORB` "Absorption".
 
+## Criticals, and the dice behind them (2026-09-15)
+
+The standing "crit/block/hit rolls — values recovered, dice not" item closes on
+the dice side. `FUN_00599cc0`, reached through `FUN_005a1a20` from
+`Combat_ResolveDamage`, is the game's chance roll for criticals **and** blocks:
+
+```
+chance == 0     -> fail, no roll taken
+chance >= 100   -> succeed, no roll taken
+otherwise       -> succeed when chance >= rand() % 101
+```
+
+Inclusive at both ends — the modulus is `0x65`, not 100.
+
+**A critical doubles.** `Formula_MitigatePhysicalDamage` builds a multiplier
+(1.0 normally, `GetParam(189)+2.0` for a berserk attacker) and does
+`if (flags & 2) multiplier += multiplier` before multiplying the already-
+mitigated damage. Bit 1 is set on a successful critical roll, so an ordinary
+critical turns 1.0 into 2.0 — and a berserk critical is 4.6×, since it doubles
+whatever the multiplier already is.
+
+**The monster's chance is characterdata col 78**, settled by disassembling
+`GObjMob_PublishStats`, which publishes the ref-object's fields into params in a
+consecutive 4-byte run:
+
+| offset | param | column | |
+|---|---|---|---|
+| +0x230 | 5 | 71 | flat phys absorb — **already proven** |
+| +0x234 | 6 | 72 | flat mag absorb |
+| +0x238 | 7 | 73 | phys reduction % — **already proven** |
+| +0x23c | 8 | 74 | mag reduction % |
+| +0x240 | 9 | 75 | `'era'` parry |
+| +0x244 | 10 | 76 | `'bri'` block |
+| +0x248 | 11 | 77 | `'hra'` attack rate |
+| +0x24c | 12 | **78** | **`'cri'` critical** |
+
+Two known offsets anchor the run onto columns 71–78, and the data then agrees
+four ways: cols 73 and 74 equal the level exactly on every row; 75 and 77 are
+identical (`25 + 2*level`); 76 is 0 for every Jangan monster, which is right
+because blocking is a shield mechanic (938 monsters elsewhere do carry 20); and
+78 reads **2 on 7,493 of 7,495** rows. The two that differ are what prove it is
+a column rather than a shared default.
+
+**Not modelled, disclosed:** the real roll keeps a per-actor accumulator, raised
+by `chance` on a miss and dropped by 100 on a hit, and compares *that* on later
+rolls — bad-luck protection. srrevamp rolls memorylessly, so its criticals are
+streakier, never more or less frequent. **The player never crits:** param 12 is
+not among the fifteen `Char_PublishCombatStats` publishes; it comes from the
+item stat-tag path this project does not model — the same wall as the player's
+mitigation percentage.
+
+**Blocking is recovered but not shipped**, for the same reason: col 76 is the
+chance and the roll is the same function, but every monster on the Jangan ladder
+reads 0, so there is nothing to see until the roster reaches the 938 species
+that carry 20.
+
 ## Unarmed damage: the game does not define one (2026-09-15)
 
 `unarmedDamage = 5` was the last value in the grounding audit carrying no reason

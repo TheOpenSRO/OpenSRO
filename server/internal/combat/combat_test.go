@@ -299,3 +299,57 @@ func TestApplyLevelAdvantage(t *testing.T) {
 		t.Errorf("a minimum hit stays 1, got %d", got)
 	}
 }
+
+// The chance roll, pinned to its citation.
+//
+// FUN_00599cc0 (reached via FUN_005a1a20 from Combat_ResolveDamage):
+// chance 0 never succeeds, chance >= 100 always succeeds without rolling, and
+// otherwise success is `chance >= rand() % 101` -- inclusive at both ends,
+// modulus 0x65.
+func TestRollChanceEdges(t *testing.T) {
+	r := rand.New(rand.NewSource(1))
+	if RollChance(0, r) {
+		t.Error("a chance of 0 must never succeed")
+	}
+	if RollChance(-5, r) {
+		t.Error("a negative chance must never succeed")
+	}
+	if !RollChance(50, nil) {
+		t.Error("a nil generator takes the maximum outcome, like RollDamage")
+	}
+	if RollChance(0, nil) {
+		t.Error("...but a chance of 0 is still never, generator or not")
+	}
+	for _, c := range []int{100, 101, 1000} {
+		if !RollChance(c, r) {
+			t.Errorf("a chance of %d must always succeed", c)
+		}
+	}
+	if ChanceRollSides != 101 {
+		t.Errorf("roll sides = %d, want 101 (the binary's modulus is 0x65)", ChanceRollSides)
+	}
+	if CriticalMultiplier != 2 {
+		t.Errorf("critical multiplier = %d, want 2", CriticalMultiplier)
+	}
+}
+
+// A chance of n succeeds about n% of the time. Loose bounds -- this is a check
+// that the roll is not off by a factor or inverted, not a statistics exam.
+func TestRollChanceRoughlyMatchesItsPercent(t *testing.T) {
+	const trials = 200000
+	for _, chance := range []int{2, 20, 50, 90} {
+		r := rand.New(rand.NewSource(int64(chance)))
+		hits := 0
+		for i := 0; i < trials; i++ {
+			if RollChance(chance, r) {
+				hits++
+			}
+		}
+		got := float64(hits) * 100 / trials
+		// The true rate is (chance+1)/101, a shade above chance%.
+		want := float64(chance+1) * 100 / 101
+		if math.Abs(got-want) > 1.0 {
+			t.Errorf("chance %d succeeded %.2f%% of the time, want about %.2f%%", chance, got, want)
+		}
+	}
+}

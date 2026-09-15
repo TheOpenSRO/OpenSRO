@@ -7075,6 +7075,70 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-eighty-fourth round: criticals, and the dice behind them
+
+The standing item read "crit/block/hit rolls -- values recovered, dice not".
+The dice are recovered, and monsters now crit.
+
+`FUN_00599cc0`, reached through `FUN_005a1a20` from `Combat_ResolveDamage`, is
+the game's chance roll for both criticals and blocks:
+
+```
+chance == 0     -> fail, no roll taken
+chance >= 100   -> succeed, no roll taken
+otherwise       -> succeed when chance >= rand() % 101
+```
+
+Inclusive at both ends -- the modulus is `0x65`, not 100 -- so a chance of 100 is
+a certainty rather than a 100-in-101 near-certainty.
+
+**A critical doubles.** `Formula_MitigatePhysicalDamage` builds a multiplier,
+1.0 normally and `GetParam(189) + 2.0` for a berserk attacker, then does
+`if (flags & 2) multiplier += multiplier` before multiplying the
+already-mitigated damage by it. Bit 1 is set by `Combat_ResolveDamage` when the
+critical roll succeeds, so an ordinary critical turns 1.0 into 2.0 -- and a
+berserk critical is 4.6x, because it doubles whatever the multiplier already is.
+
+**The monster's chance is characterdata col 78.** Settled by disassembling
+`GObjMob_PublishStats`, which publishes the ref-object's fields into ParamKeeper
+params in a consecutive 4-byte run:
+
+```
++0x230 -> 5    +0x234 -> 6    +0x238 -> 7    +0x23c -> 8
++0x240 -> 9    +0x244 -> 10   +0x248 -> 11   +0x24c -> 12 ('cri')
+```
+
+Two of those offsets were already proven -- +0x230 is col 71, the flat absorb,
+and +0x238 is col 73, the reduction percentage -- which anchors the whole run
+onto columns 71..78 and puts the critical chance on col 78. The data then agrees
+four independent ways: cols 73 and 74 equal the monster's level *exactly* on
+every row; cols 75 and 77 are identical (`25 + 2*level`); col 76 is 0 for every
+monster on the Jangan ladder, which is right because blocking is a shield
+mechanic; and col 78 reads **2 on 7,493 of the game's 7,495 monster rows**. The
+two rows that differ (0 and 20) are what prove it is a real column rather than a
+shared default, which is why it is carried per-species rather than hardcoded.
+
+Not modelled, and disclosed: the real roll also keeps a per-actor accumulator,
+raised by `chance` on every miss and dropped by 100 on every hit, and compares
+*that* on subsequent rolls instead of the raw chance -- bad-luck protection.
+srrevamp rolls memorylessly, so its criticals are streakier than the game's,
+never more or less frequent on average. And the player never crits: param 12 is
+not among the fifteen `Char_PublishCombatStats` publishes, and comes from the
+item stat-tag path this project does not model.
+
+**A bug this nearly shipped, caught by the test.** `internal/session`'s
+`TestMain` sets the shared generator to **nil** on purpose, because
+`RollDamage(min, max, nil)` returns the maximum and lets the flow tests assert
+exact numbers. My `RollChance` had taken nil to mean "never succeeds" -- the
+opposite convention in the same package -- so every critical in every session
+test was silently impossible, and the end-to-end test failed with a chance of
+100. Aligned to the package's own rule: nil takes the maximum outcome. Getting
+this backwards fails quietly, which is the dangerous direction.
+
+Also fixed while in the file: inserting the level-advantage block two rounds ago
+had been done *above* `func MitigateDamage`, which detached that function's
+entire doc comment from it and left it attached to a `const` block. Reordered.
+
 ## Hundred-and-eighty-third round: the game does not define an unarmed attack
 
 `unarmedDamage = 5` was the last value in the grounding audit carrying no reason

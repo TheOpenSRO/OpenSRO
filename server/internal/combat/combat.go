@@ -63,6 +63,24 @@ type Monster struct {
 	// per-level range. See RollGold.
 	GoldReward       int64
 	GoldMin, GoldMax int64
+	// Critical is this monster's critical-hit chance, rolled by RollChance
+	// against 0..100. REAL: characterdata _RefObjChar col 78.
+	//
+	// The column is settled by disassembling GObjMob_PublishStats
+	// (004c3730), which publishes the monster's ref-object fields into
+	// ParamKeeper params in a consecutive 4-byte run -- +0x230 -> param 5,
+	// +0x234 -> 6, +0x238 -> 7, +0x23c -> 8, +0x240 -> 9, +0x244 -> 10,
+	// +0x248 -> 11, +0x24c -> 12. Two of those offsets were already proven
+	// (+0x230 = col 71, the flat absorb; +0x238 = col 73, the reduction
+	// percentage), which anchors the run onto columns 71..78 and puts
+	// 'cri' (param 12) on col 78.
+	//
+	// The data agrees four ways: cols 73 and 74 equal the monster's level
+	// exactly on every row, cols 75 and 77 are identical (25 + 2*level),
+	// col 76 is 0 for every monster on the Jangan ladder -- blocking is a
+	// shield mechanic -- and col 78 reads 2 on 7,493 of the game's 7,495
+	// monster rows.
+	Critical int
 	// ExpReward is the experience a kill grants. Derived from the monster's
 	// toughness for now (a disclosed default, ExpFor) -- the real per-species
 	// experience lives in mob data this project does not load yet; recovering
@@ -99,6 +117,18 @@ type Monster struct {
 // in the real game is a miss, and srrevamp has no hit/evade roll yet (the
 // 'hra'/'era' params exist and are unimplemented). That floor is own design,
 // disclosed.
+func MitigateDamage(raw, reductionPercent, flat int) int {
+	if reductionPercent < 0 {
+		reductionPercent = 0
+	}
+	reduced := float64(raw) / (1 + float64(reductionPercent)/100)
+	out := int(math.Round(reduced)) - flat
+	if out < 1 {
+		out = 1
+	}
+	return out
+}
+
 // LevelAdvantagePerLevel and LevelAdvantageCap are the real level-difference
 // damage term: an attacker who out-levels its target hits harder, 3% per level
 // and no more than 30%.
@@ -153,18 +183,6 @@ func LevelAdvantage(attackerLevel, defenderLevel int) float64 {
 // term only ever multiplies up, so the floor is just carried through.
 func ApplyLevelAdvantage(damage, attackerLevel, defenderLevel int) int {
 	out := int(math.Round(float64(damage) * LevelAdvantage(attackerLevel, defenderLevel)))
-	if out < 1 {
-		out = 1
-	}
-	return out
-}
-
-func MitigateDamage(raw, reductionPercent, flat int) int {
-	if reductionPercent < 0 {
-		reductionPercent = 0
-	}
-	reduced := float64(raw) / (1 + float64(reductionPercent)/100)
-	out := int(math.Round(reduced)) - flat
 	if out < 1 {
 		out = 1
 	}
@@ -301,6 +319,9 @@ type Species struct {
 	AttackMin, AttackMax int
 	// GoldMin/GoldMax are the real per-level gold range (levelgold.txt).
 	GoldMin, GoldMax int64
+	// Critical is the species' real critical-hit chance, characterdata
+	// _RefObjChar col 78. See Monster.Critical.
+	Critical int
 }
 
 // SpawnSpecies is Spawn with the species' code name carried along, so the
@@ -310,7 +331,7 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, Critical: species.Critical, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
 		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
 	h.byID[id] = m
 	return m
@@ -370,4 +391,60 @@ func (h *Hub) ApplyDamage(id int64, amount int) (monster Monster, died bool, ok 
 		return result, true, true
 	}
 	return result, false, true
+}
+
+// ChanceRollSides is the number of distinct values the game's chance roll can
+// take: rand() % 101, an integer in [0, 100] INCLUSIVE. Not 100 -- the modulus
+// in the binary is 0x65.
+const ChanceRollSides = 101
+
+// CriticalMultiplier is what a critical hit does: it doubles.
+//
+// Formula_MitigatePhysicalDamage builds a damage multiplier, 1.0 by default and
+// `GetParam(189) + 2.0` for a berserk attacker, and then
+//
+//	if (flags & 2) { multiplier = multiplier + multiplier }
+//
+// before multiplying the already-mitigated damage by it. Bit 1 of those flags is
+// set by Combat_ResolveDamage when the critical roll succeeds, so an ordinary
+// critical turns 1.0 into 2.0. It doubles whatever the multiplier already is,
+// which is why a berserk critical is 4.6x rather than 2.3x + 2.
+const CriticalMultiplier = 2
+
+// RollChance is the game's own chance roll, used for criticals and blocks.
+//
+// RECOVERED 2026-09-15 from FUN_00599cc0, reached through FUN_005a1a20 from
+// Combat_ResolveDamage:
+//
+//	if chance == 0            -> fail, no roll taken
+//	if chance >= 100          -> succeed, no roll taken
+//	otherwise                 -> succeed when chance >= rand() % 101
+//
+// so the roll is inclusive at both ends and a chance of 100 is a certainty
+// rather than a 100-in-101 near-certainty.
+//
+// NOT modelled, and disclosed: the real function also keeps a per-actor
+// accumulator, raised by `chance` on every failure and dropped by 100 on every
+// success, and on subsequent rolls it compares that accumulated value rather
+// than the raw chance. That is bad-luck protection -- a long dry streak becomes
+// progressively more likely to break. Reproducing it needs per-actor state this
+// project does not carry, so srrevamp rolls memorylessly. The effect is that
+// srrevamp's criticals are slightly streakier than the game's, never more or
+// less frequent on average.
+//
+// r is the source of randomness. A nil r takes the MAXIMUM outcome -- any
+// positive chance succeeds -- which is the same convention RollDamage and
+// RollGold already use in this package, and is what lets a caller switch the
+// randomness off and still assert exact numbers. Getting this backwards is a
+// silent failure rather than a loud one: internal/session's TestMain nils the
+// generator on purpose, so a nil-means-never rule made every critical in every
+// session test quietly impossible.
+func RollChance(chance int, r *rand.Rand) bool {
+	if chance <= 0 {
+		return false
+	}
+	if chance >= 100 || r == nil {
+		return true
+	}
+	return chance >= r.Intn(ChanceRollSides)
 }
