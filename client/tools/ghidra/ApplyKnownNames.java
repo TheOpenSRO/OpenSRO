@@ -472,6 +472,30 @@ public class ApplyKnownNames extends GhidraScript {
          + "entry+0x10 (leveldata column 2) for each, and refuses with error 0x3802 when the "
          + "character's skill points fall short. This is where the mastery cost was recovered."},
 
+        // Monster rank, and the two objects that share offset 0x1cd8.
+        {"004c1550", "CGObjMob_SetRankSpeedScale",
+         "Switches on the monster's rank byte (mob+0x1cd8 & 0xf, copied from refObj+0x50 by "
+         + "CGObjMob::vslot_212) and stores a float32 multiplier at mob+0x1cdc: 1.5 for rank 1, "
+         + "3.0 for rank 4, 1.7 for rank 6, and 1.0 for ranks 0/3/5/7/8, with an assert on "
+         + "anything else. The rank domain 0-8 matches characterdata column 15's rarity values, "
+         + "but that correspondence is NOT proven by a use-site and the multiplier is not an "
+         + "experience bonus -- see CGObjMob_ApplyRankSpeedScale for what actually consumes it."},
+        {"004c1690", "CGObjMob_ApplyRankSpeedScale",
+         "CGObjMob vtable slot 215. Multiplies the mob's two movement fields (+0x16c and +0x170) "
+         + "by the rank multiplier at +0x1cdc and publishes both into the ParamKeeper as params "
+         + "23 and 24 -- 'mov edi,0x17' then 'mov edi,0x18' -- which Char_PublishCombatStats "
+         + "already established as the MOVEMENT pair. So the rank multiplier is a movement-speed "
+         + "scale: champions and giants move faster. It is not an exp or damage term."},
+        {"004e30d0", "GObjPC_RecalcLevelDiffExpScale",
+         "Computes the symmetric pair at pc+0x1cd8 / pc+0x1cdc, the first of which "
+         + "Formula_MonsterExpReward multiplies a kill's reward by. ref = FUN_0059e870(pc+0xa30), "
+         + "a byte; if ref > 0x78 both are set to 1.0f, otherwise "
+         + "pc[0x1cd8] = clamp(1 - (charLevel - ref) * 0.1, 0.1, 1.9) and pc[0x1cdc] the mirror. "
+         + "K is 'fmul QWORD 0xb45ec0' = 0.1 (a double); the clamp bounds are 0.1 and 1.9. "
+         + "Recomputed on exactly three events: CGObjPC::vslot_212, GObjPC_SetLevel and "
+         + "Mastery_LevelUp. What the reference byte denotes is NOT recovered -- the mastery "
+         + "reading fits (120 is the mastery cap) but has no use-site, so it is not asserted."},
+
         // RefItemDrop.cpp -- how a kill decides what falls.
         {"00724e30", "RefItemDrop_RollGroupDrop",
          "Rolls a drop group and picks an entry from it. Uses the same per-million roll as the "

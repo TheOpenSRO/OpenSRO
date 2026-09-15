@@ -4090,3 +4090,73 @@ understanding.
 **What moved:** no shipped number, but two field semantics went from unexamined
 to recovered — and one of them (`DropAmountMin/Max`) was being read in a way
 that would have produced visibly wrong drop rates the moment real data arrived.
+
+## Monster rank scales SPEED, not experience — and offset 0x1cd8 is three fields (2026-09-15)
+
+Went after the long-open `killer+0x1cd8` / `+0x1cdc` pair, which last tick's
+exp-share work had put back in view. The tick nearly produced a wrong shipped
+value, and the thing that stopped it was insisting on the consuming use-site.
+
+**The near-miss.** `CGObjMob::FUN_004c1550` is a clean four-way table:
+
+| rank (`mob[0x1cd8] & 0xf`) | multiplier |
+|---|---|
+| 1 | **1.5** |
+| 4 | **3.0** |
+| 6 | **1.7** |
+| 0, 3, 5, 7, 8 | 1.0 |
+
+and the rank byte is copied from `refObj+0x50`. The domain 0-8 matches
+characterdata column 15's rarity values exactly (0 normal, 1 champion, 3/8
+unique, 4 giant, 5 titan, 6 elite), and the obvious next sentence writes itself:
+*champions give 1.5x experience, giants 3x*. srrevamp already carries `Rarity`,
+so it would have shipped.
+
+**It is not an experience multiplier.** `CGObjMob::vslot_215` is what consumes
+it, and it multiplies the mob's two movement fields (`+0x16c`, `+0x170`) and
+publishes both into the ParamKeeper — `mov edi,0x17` then `mov edi,0x18`, i.e.
+params **23 and 24**, which `Char_PublishCombatStats` had already established as
+the MOVEMENT pair. So the rank multiplier is a **movement-speed scale**:
+champions and giants move faster. Nothing about experience. srrevamp does not
+model monster movement speed at all, so there is nothing to ship — which is a
+far better outcome than shipping a 3x exp bonus that the game does not give.
+
+**Offset 0x1cd8 means three different things by receiver class**, which is what
+made the exp reading tempting in the first place:
+
+- `CGObjMob` — the rank BYTE (with the float multiplier at +0x1cdc)
+- `CGObjSiegeStruct` / COS — an integer timer (the writes are `0x1d4c0` = 120000
+  and `0x124f80` = 1200000, i.e. 2 and 20 minutes)
+- `CGObjPC` — a **float**, and this is the one `Formula_MonsterExpReward` reads
+  (`fld DWORD PTR [edi+0x1cd8]`)
+
+That is the fourth time this project has been caught by a per-class offset, and
+the first time the check was run *before* the claim rather than after.
+
+### What the PC's term actually is
+
+`GObjPC_RecalcLevelDiffExpScale` (`0x004e30d0`) is its only float writer:
+
+```c
+ref = FUN_0059e870(pc + 0xa30);                 // a byte, from a list walk
+if (ref > 0x78) { pc[0x1cd8] = pc[0x1cdc] = 1.0f; return; }
+pc[0x1cd8] = clamp(1 - (charLevel - ref) * 0.1, 0.1, 1.9);
+pc[0x1cdc] =        1 - (ref - charLevel) * 0.1;
+```
+
+K is `fmul QWORD ds:0xb45ec0` = **0.1, a double**; the clamp bounds are 0.1 and
+1.9. It is recomputed on exactly three events — `CGObjPC::vslot_212` (PC load),
+`GObjPC_SetLevel`, and `Mastery_LevelUp`.
+
+**What the reference byte denotes is NOT recovered, and is deliberately not
+guessed.** Recomputation on mastery level-up, and `0x78` being exactly 120 — the
+mastery cap this project already recovered — both fit the reference being the
+character's highest mastery level, which would make this the familiar "mastery
+lagging your level costs you experience" rule. That is two coincidences and no
+use-site, which is precisely the shape of reasoning that produced the wrong
+answer for characterdata column 79 twice. It stays a hypothesis, written down as
+one in `leveldata.go` beside the formula.
+
+**What moved:** no shipped number. A live multiplier on a shipped formula went
+from an unexamined field to a bounded, characterised term with its recompute
+triggers known, and a tempting 3x experience bonus was correctly *not* shipped.

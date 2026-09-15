@@ -74,6 +74,32 @@ type Table struct {
 //	lvl    = min(Char_GetLevel(killer), Char_GetLevel(victim))
 //	reward = scaleByWindow * levelTable[lvl]+0x1c * killer[0x1cd8] * scaleByDiff
 //
+// The `[0x1cd8]` term was long carried here as an unexamined field. It is now
+// CHARACTERISED, though not fully named (2026-09-15). On a CGObjPC it is a
+// float, written only by GObjPC::FUN_004e30d0, which computes a symmetric pair:
+//
+//	ref = FUN_0059e870(pc + 0xa30)          // a byte, from a list walk
+//	if (ref > 0x78) { pc[0x1cd8] = pc[0x1cdc] = 1.0f; return; }
+//	pc[0x1cd8] = clamp(1 - (charLevel - ref) * 0.1, 0.1, 1.9)
+//	pc[0x1cdc] =       1 - (ref - charLevel) * 0.1
+//
+// so the term is a LEVEL-DIFFERENCE modifier bounded to [0.1, 1.9], recomputed
+// on exactly three events: PC load (CGObjPC::vslot_212), GObjPC_SetLevel, and
+// Mastery_LevelUp. It is 1.0 whenever the reference exceeds 0x78 = 120.
+//
+// What the reference byte IS has NOT been settled and is deliberately not
+// guessed here. Recomputation on mastery level-up, and 120 being exactly the
+// recovered mastery cap (see session.MasteryLevelCap), both fit the reference
+// being the character's highest mastery level -- which would make this the
+// familiar "mastery lagging your level costs you experience" rule. That is a
+// hypothesis with two coincidences behind it and no use-site, which is the
+// shape of the reasoning that has been wrong twice on this project, so it stays
+// a hypothesis. srrevamp does not model the term at all.
+//
+// Beware the offset: +0x1cd8 means three different things by receiver class --
+// a float here on CGObjPC, the rank BYTE on CGObjMob (see
+// CGObjMob_ApplyRankSpeedScale), and an integer timer on the siege/COS objects.
+//
 // floored at 1, and its result goes to GObjPC_GiveExp (vtable slot 421, read
 // out of the vtable at 0x00af6090). A second, independent use-site settles what
 // the +0x1c field IS: FUN_00631050 hands `entry[0x1c] * multiplier` straight to
