@@ -3241,3 +3241,40 @@ registry already supplies. That is an epic, not a tick, and it now starts from
 measurements rather than from the assumption that quests are code.
 
 **No srrevamp value changed.**
+
+## Quest rewards: structure found, the column question still refused (2026-09-15)
+
+The previous entry left one bounded question: which of `refqusetreward`'s columns
+10 and 11 is experience and which is gold. It is still unanswered, and this
+records the path so the next attempt does not restart from the table.
+
+**What was established:**
+
+- `CRefQuestReward : CDBRecStream : CDBRecord : CBase`. It is a DB-record class,
+  and `FUN_0083a640` registers `_RefQuestReward` as its SQL table name.
+- **The `_CHAR` lever does not apply here.** `CharData_BindDBColumns` named 38
+  character columns because it binds each one by name (`FUN_00401fc0(name,len)`
+  then an offset). `FUN_0083a640` calls that once — for the table name — and
+  binds no columns at all. The text row reaches the struct positionally through
+  `CDBRecStream`, so the name→offset trick that worked for `_CHAR` has nothing
+  to read.
+- **`FUN_009287c0` is the reward payer.** It looks the record up by quest id
+  (`FUN_0051cd30`), asserts `"Can not find QuestRewardData : QuestID [%d]"` when
+  it is missing, and copies the record's `+8`, `+0xc`, `+0x10`, `+0x14`, `+0x18`
+  dwords and `+4`, `+5`, `+0x38`, `+0x39` bytes into a queued reward object. The
+  field from record `+0x14` is later accumulated across entries.
+- The reward is **queued rather than paid inline**, so the experience and gold
+  calls are in a different function, and following them is where the next
+  attempt should start.
+
+**What was not established, and is therefore not written down:** the identity of
+columns 10 and 11. The magnitudes (205/270, 475/375, 1000/2752) read like exp
+and gold, and two independent structures now sit either side of the gap — the
+CSV columns on one side, the struct offsets on the other — without a mapping
+between them. Guessing the join is exactly the move that made characterdata col
+79 wrong twice.
+
+A thin tick, honestly. The structure is worth having; the answer is not in it
+yet.
+
+**No srrevamp value changed.**
