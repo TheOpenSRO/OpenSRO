@@ -43,45 +43,42 @@ which is itself a recovery — quest objectives are the model for that.
 Ordered by value. Each line names the next concrete probe, so a cold start can
 pick one up without re-deriving anything.
 
-1. **Monster attack/defence — half closed (2026-09-15).** Four of the eight
-   combat columns are now grounded by **the game's own tag names**, and the
-   remaining four are isolated.
+1. **Monster attack/defence — cols 75–78 grounded, 71–74 still open.**
+   Cols 75/76/77/78 are `'era'`/`'bri'`/`'hra'`/`'cri'` (see Grounded). The four
+   that remain are cols 71/72 → params 5/6 and 73/74 → params 7/8.
 
-   The id→name table does exist after all — not as data, as **code**.
-   `Stat_ApplyTaggedModifier` (`00498690`) takes a stat tag as a C multi-char
-   literal in EAX and dispatches to a specific ParamKeeper id and slot, so the
-   enum can be read straight off the branches. Verified **equality branches
-   only**: the compiler compiles the dispatch as a binary-search tree, and its
-   `<` comparisons will happily pair a tag with the wrong branch — the first
-   pass here did exactly that and had to be thrown out.
+   **Ruled out 2026-09-15, so nobody re-walks them:**
+   - **The tag vocabulary cannot name them.** Extracted in full from all five
+     dispatchers: **52 distinct stat tags** (`hp`, `mp`, `str`, `int`, `luck`,
+     `cri`, `hr`/`hra`, `er`/`era`, `bri`, `hprg`/`mprg`, `zb`, `ps`, `fz`, the
+     `r***` resistances, `dur*`, `evbl`/`evcr`, `soli`, `ape`, `atha`, …).
+     **None of them is an attack or defence tag.** So these four are not tagged
+     stats at all — they are gear-derived, which is why no modifier path touches
+     them. That closes the param-code lever for this question.
+   - **Keeper-index reads are not greppable.** A param read compiles to
+     `obj[0x7c+N]` → byte 0x204 for param 5, and that offset collides across many
+     structs: the three hits for param 5 turned out to be an equipment-slot check
+     (`if (obj[0x81] == 0 || obj[0x81]+0x10 != 1) obj[0x82]`), not a keeper read.
+   - **`FUN_0053f4d0` is NOT the aggregate builder** (last tick's suspicion
+     confirmed): it writes two parallel blocks from one source and uses `_rand()`
+     on neighbouring fields — a different struct whose offsets collide.
+   - **The client's authored labels don't reach it either.** The client carries
+     639 `UIIT_STT_*` label ids; `UIIT_STT_PHY_DAMAGE`/`MAG_DAMAGE` belong to the
+     42KB **item tooltip** builder (`00960b50`), which describes a weapon's own
+     itemdata columns, not a character's derived params.
 
-   | tag | param | slot | col | what the real data does |
-   |---|---|---|---|---|
-   | `'era'` | 9 | 1 (add %) | 75 | 2·level + 25 |
-   | `'bri'` | 10 | 0 (base) | 76 | **0 for every monster** |
-   | `'hra'` | 11 | 1 (add %) | 77 | 2·level + 25 |
-   | `'cri'` | 12 | 0 (base) | 78 | 2 |
+   **Narrowed, with struct identity now settled.** `Char_PublishCombatStats`
+   (`00497830`) has exactly **two** callers, one of them `FUN_004e3760` in the
+   GObjPC range, which runs `FUN_004919e0` (gather) → `FUN_00498020` (a 35-byte
+   wrapper) → `FUN_00497830` (publish). So the six-field aggregate really is on
+   the char object, at bytes `+0x198..+0x1ac` (= `obj[0x66..0x6b]`), and
+   `FUN_00495b40` zero-resets exactly that block — which independently confirms
+   the block's location and extent.
 
-   Also read off the same function: `'int'`→2, `'hp'`/`'hpa'`→3, `'mp'`/`'mpa'`→4
-   (a **third** independent confirmation of MaxHP/MaxMP), `'hprg'`→25,
-   `'mprg'`→26, `'rals'`→27, `'hpna'`→52, `'mpna'`→53, `'evbl'`→56, `'evcr'`→57.
-
-   **Careful about what is and is not claimed.** The *tags* are recovered, the
-   *param ids* are proven, and the *data behaviour* is measured. Expanding the
-   mnemonics to English — evasion, block, hit, critical — is the obvious reading
-   and the data supports it (a monster carries no shield, and a block rate of
-   zero for every single one of them is hard to read another way), but it is a
-   **reading**, not a recovery, and should be labelled that way wherever it is
-   used. What srrevamp can use as real, today, is the numbers: monster `'bri'`
-   is 0, `'era'` and `'hra'` are 2·level+25, `'cri'` is 2.
-
-   *Still open:* cols 71/72 → params 5/6 and cols 73/74 → params 7/8. No tag in
-   the dispatcher reaches them, so they are set only from gear and refdata.
-   `Char_PublishCombatStats` (`00497830`) copies them out of a precomputed
-   aggregate at `obj[0x66..0x6b]` (→ 5, 9, 7, 10, 6, 8 in that field order).
-   *Next probe:* find what **writes** `obj[0x66..0x6b]`; that is where a weapon's
-   own damage columns turn into these params, and a weapon is a thing whose
-   itemdata columns this project already knows.
+   *Next probe:* the accumulator between the reset and the publish. It does not
+   write the six offsets literally (grep finds only the reset), so it almost
+   certainly walks them as `base + i*4` in a loop over equipment slots — search
+   for a loop indexing from `+0x198` rather than for fixed offsets.
 
 2. **Combat damage model** (base + bonus − defence, no crit/dodge) — ours.
    *Next probe:* `FUN_0058e5f0` is the real damage resolution; `FUN_0040f5f0`
