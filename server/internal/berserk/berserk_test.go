@@ -52,7 +52,35 @@ func TestBoostOnlyWhenActive(t *testing.T) {
 		tr.Fill(id)
 	}
 	tr.Activate(id)
-	if got := tr.Boost(id, 100); got != 100+100*DamageBonusPct/100 {
-		t.Fatalf("boosted damage = %d, want %d", got, 100+100*DamageBonusPct/100)
+	if got := tr.Boost(id, 100); got != 200 {
+		t.Fatalf("boosted damage = %d, want %d", got, 200)
+	}
+}
+
+// The multiplier is the recovered one, not a balance knob: berserk doubles
+// the blow, because Formula_MitigatePhysicalDamage replaces its 1.0 damage
+// multiplier with GetParam(189) + 2.0 when the attacker IsBerserk(), and
+// param 189 is zero unless the separate berserk-damage stat has been granted.
+//
+// Pinned as a test rather than left as a constant nobody rereads: this was
+// +50% own design until 2026-09-15, and a later "let's tune it" edit should
+// have to delete a citation to do it.
+func TestBerserkDoublesTheBlow(t *testing.T) {
+	if DamageNumerator != 2 || DamageDenominator != 1 {
+		t.Fatalf("berserk multiplier = %d/%d, want 2/1 (.rdata 0x00b45f30 = 2.0)",
+			DamageNumerator, DamageDenominator)
+	}
+	tr := NewTracker()
+	const id = int64(7)
+	for i := 0; i < Max/FillPerHit+1; i++ {
+		tr.Fill(id)
+	}
+	if !tr.Activate(id) {
+		t.Fatal("a full gauge must activate")
+	}
+	for _, tc := range []struct{ in, want int }{{0, 0}, {1, 2}, {37, 74}, {1000, 2000}} {
+		if got := tr.Boost(id, tc.in); got != tc.want {
+			t.Errorf("Boost(%d) = %d, want %d", tc.in, got, tc.want)
+		}
 	}
 }

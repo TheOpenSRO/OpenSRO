@@ -594,16 +594,22 @@ func performAttack(
 	}
 
 	raw := base + damageBonus
-	// Berserk boosts the hit while active -- applied to the blow, before the
-	// target's mitigation, which is the order the real formula implies.
-	if zerk != nil {
-		raw = zerk.Boost(characterID, raw)
-	}
 	// The game's own mitigation shape: a percentage reduction plus a flat
 	// term, not the flat subtraction this used to do. The percentage is REAL
 	// (characterdata cols 73/74 = the monster's level); the flat Defense is
 	// still the disclosed curve. See combat.MitigateDamage.
 	net := combat.MitigateDamage(raw, monster.DefensePercent, monster.Defense)
+	// Berserk multiplies the blow AFTER mitigation, which is the order
+	// Formula_MitigatePhysicalDamage uses: it divides by the percentage term,
+	// subtracts the flat term, clamps at zero, and only then multiplies by
+	// GetParam(189) + 2.0. This code boosted the raw roll instead until
+	// 2026-09-15, with a comment claiming that was "the order the real
+	// formula implies" -- it is not, and the two differ whenever the flat
+	// term is non-zero: 2*(d/(1+p) - f) against (2d)/(1+p) - f, the second
+	// of which quietly scales the defence away and over-pays berserk.
+	if zerk != nil {
+		net = zerk.Boost(characterID, net)
+	}
 
 	updated, monsterDied, ok := monsters.ApplyDamage(targetMonsterID, net)
 	if !ok {

@@ -1,9 +1,12 @@
 // Package berserk implements the Silkroad berserk gauge: fighting fills a
 // five-orb gauge, and when it is full the player can go berserk for a burst of
-// extra damage before it empties. The mechanic is the real one; the numbers
-// (how fast it fills, how long it lasts, how much it hits for) are this
-// project's own disclosed design -- they are server-side balance values that
-// were never recovered.
+// extra damage before it empties. The mechanic is the real one; how fast the
+// gauge fills and how long a berserk lasts are still this project's own
+// disclosed design.
+//
+// HOW MUCH IT HITS FOR IS NOT. That one is recovered -- see DamageNumerator.
+// Berserk is "Hwan" inside the game, which is why three sessions of grepping
+// for "berserk" found nothing.
 package berserk
 
 import (
@@ -21,10 +24,45 @@ const (
 	// design): ~13 hits to fill from empty.
 	FillPerHit = 8
 
-	// Duration is how long a berserk lasts, and DamageBonusPct the extra
-	// damage while it is active (own design).
-	Duration       = 20 * time.Second
-	DamageBonusPct = 50
+	// Duration is how long a berserk lasts (own design -- the real server
+	// keeps the timer somewhere other than the function that turns berserk
+	// on: every call site passes 0xff/0 for that function's state-change
+	// slot and duration, so this one is genuinely not recovered).
+	Duration = 20 * time.Second
+
+	// DamageNumerator/DamageDenominator are the REAL berserk damage
+	// multiplier: exactly 2, i.e. berserk doubles the blow. Recovered
+	// 2026-09-15 by walking the whole chain rather than by finding a
+	// constant:
+	//
+	//   CGObjChar::SetBerserk    vtable slot 198 (0x004a9fc0) writes the
+	//                            berserk flag at (*(this+0x30))+3.
+	//   CGObjChar::IsBerserk     vtable slot 64 (0x004aa5b0) reads that same
+	//                            byte -- which is what ties the two together.
+	//   Combat_ResolveDamage     (0x0058e5f0) sets bit 2 of the damage flags
+	//                            when the ATTACKER IsBerserk().
+	//   Formula_MitigatePhysicalDamage (0x0040e450) and its magical twin
+	//                            (0x0040e830) then use
+	//                                multiplier = GetParam(189) + 2.0
+	//                            in place of the 1.0 they use otherwise, and
+	//                            multiply the damage by it.
+	//
+	// The 2.0 is the double at .rdata 0x00b45f30. Its two neighbours in the
+	// same block are 0x00b45af0 = 100.0 and 0x00b45ac0 = 1.0, the two
+	// constants of this engine's already-confirmed `/(1 + p/100)` idiom, so
+	// the width is not a guess: all three read as 0.0 at float width because
+	// a double's low word is zero, and only the double reading is coherent.
+	// (At float width the multiplier would be 0.0 and a berserk attacker
+	// would deal no damage at all.)
+	//
+	// Param 189 is a separate "berserk damage bonus" STAT that adds on top.
+	// SetBerserk's fifth argument grants it a base of 0.3 (float at
+	// 0x00b45b8c) and clears it otherwise -- but every call site in the
+	// binary passes 0 there bar one, so the plain multiplier is 2.0 and 2.3
+	// is the special case. Nothing here models that stat yet, so it is left
+	// out rather than folded in at a guessed rate.
+	DamageNumerator   = 2
+	DamageDenominator = 1
 )
 
 // Tracker holds each character's transient berserk state. Not persisted --
@@ -79,13 +117,19 @@ func (t *Tracker) Active(characterID int64) bool {
 	return time.Now().Before(t.activeUntil[characterID])
 }
 
-// Boost applies the berserk damage bonus to a base amount when active, else
-// returns it unchanged.
+// Boost applies the berserk damage multiplier to a base amount when active,
+// else returns it unchanged.
+//
+// The real formula multiplies the damage that has ALREADY been through
+// mitigation -- the multiplier is applied inside Formula_MitigatePhysicalDamage
+// after the defence terms, not to the raw weapon roll. Callers that mitigate
+// first and boost second match the game; one that boosted the raw roll would
+// scale the defence away too.
 func (t *Tracker) Boost(characterID int64, damage int) int {
 	if !t.Active(characterID) {
 		return damage
 	}
-	return damage + damage*DamageBonusPct/100
+	return damage * DamageNumerator / DamageDenominator
 }
 
 // Clear drops a character's state (on disconnect).

@@ -7075,6 +7075,55 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-seventy-eighth round: berserk doubles the blow, and always did
+
+Berserk's damage was `+50%`, this project's own disclosed design, because three
+sessions of grepping for "berserk" found nothing. It is called **Hwan**
+internally. With the RTTI class names in place the whole chain reads straight
+through, and every link is a named function:
+
+```
+CGObjChar::SetBerserk   slot 198  0x004a9fc0   writes the flag at (*(this+0x30))+3
+CGObjChar::IsBerserk    slot  64  0x004aa5b0   reads that same byte
+Combat_ResolveDamage              0x0058e5f0   sets damage-flag bit 2 when the
+                                               ATTACKER IsBerserk()
+Formula_MitigatePhysicalDamage    0x0040e450   multiplier = GetParam(189) + 2.0
+Formula_MitigateMagicalDamage     0x0040e830   (instead of the usual 1.0)
+```
+
+The setter and the predicate touching the *same byte* is what ties the pair
+together — neither alone would have been more than a suggestive name.
+
+**×2 exactly.** The 2.0 is the double at `.rdata 0x00b45f30`. Its two
+neighbours in the same block are `0x00b45af0 = 100.0` and `0x00b45ac0 = 1.0` —
+the two constants of this engine's already-confirmed `/(1 + p/100)` idiom — so
+the width is settled, not assumed. All three read as `0.0` at float width
+because a double's low word is zero, and the float reading is incoherent
+anyway: it would make a berserk attacker deal *no damage at all*.
+
+**The order was wrong too, and that mattered.** This code boosted the raw
+weapon roll and carried a comment saying that was "the order the real formula
+implies". It is not. The real formula divides by the percentage term, subtracts
+the flat term, clamps at zero, and *then* multiplies. The two differ whenever
+the flat term is non-zero — `2*(d/(1+p) - f)` against `(2d)/(1+p) - f` — and
+the old order quietly scaled the defence away and over-paid berserk. Fixed.
+
+Left alone deliberately: param 189 is a separate berserk-damage **stat** that
+adds on top of the 2.0 (`SetBerserk`'s fifth argument grants it a base 0.3,
+float at `0x00b45b8c`), but every call site in the binary bar one passes 0
+there. So 2.0 is the plain case, 2.3 the special one, and the stat is not
+modelled rather than folded in at a guessed rate. The duration stays own
+design and is now known to be genuinely unrecoverable from this function:
+every call site passes `0xff`/`0` for its state-change slot and float duration,
+so the real server keeps that timer somewhere else.
+
+Fell out on the way: the tag→param vocabulary nearly doubled, harvested by
+grepping the 21 tag dispatchers for `in_EAX == 0x…` beside `ResolveRegArg`'s
+own annotations — `'dara'`→174-177, `'drua'`→128-130, `'hpmp'`→25,26,
+`'rals'`→27-32 (recorded as 27 alone before), and `'DABR'`/`'SPDU'`, the two
+tags a `CRefHWANLevel` row's effect list is built from (`{uint32 tag; uint8
+value}` pairs).
+
 ## Hundred-and-seventy-seventh round: a monster standing where the game put it
 
 Mangyang no longer stands on an anchor this project invented. It stands on its

@@ -586,7 +586,13 @@ another round of guessing they are absent:
   is the table that would hold them.
 - **`_REFHWANLEVEL`** — the berserk levels. `hwanleveldata.txt` turned out to be
   a *title* table, and the gauge numbers had no string handle; this is where
-  they live.
+  they live. **Partly closed 2026-09-15** — see below. `hwanleveldata.txt` is
+  re-confirmed as titles only: 255 rows of three columns, level plus two
+  `UIO_SECOND_HWAN_CH_NAME_LEVEL_n` keys, no effect columns. The per-level
+  effect list is a vector inside `CRefHWANLevel` of `{uint32 tag; uint8 value}`
+  pairs, built from the tags `'DABR'` and `'SPDU'`, and its magnitudes really
+  are DB rows this project does not have. **But the damage multiplier itself is
+  not in that table** and is now recovered — it is a constant in the formula.
 - **`_REFQUEST`** — quest refdata. Worth re-testing the standing "objectives are
   not data" conclusion against it, the way `npcpos` was re-tested.
 
@@ -681,8 +687,47 @@ exact.
   found", it is "a per-character value whose starting size is set on the database
   side", which is the same wall as starting Str/Int.
 - **`HwanLevel` and `RemainHwanCount` are both persisted**, so berserk has a
-  level *and* a count. The gauge numbers still have no string handle anywhere in
-  the server — that open item stays disclosed.
+  level *and* a count. **The berserk DAMAGE is recovered (2026-09-15); the
+  gauge/duration numbers stay disclosed.**
+
+  Berserk is "Hwan", which is why grepping for "berserk" found nothing for three
+  sessions. With the RTTI class names in place the chain reads straight through,
+  and every link is a named function:
+
+  ```
+  CGObjChar::SetBerserk   slot 198  0x004a9fc0   writes the flag at (*(this+0x30))+3
+  CGObjChar::IsBerserk    slot  64  0x004aa5b0   reads that same byte
+  Combat_ResolveDamage              0x0058e5f0   sets damage-flag bit 2 when the
+                                                 ATTACKER IsBerserk()
+  Formula_MitigatePhysicalDamage    0x0040e450   multiplier = GetParam(189) + 2.0
+  Formula_MitigateMagicalDamage     0x0040e830   (in place of the usual 1.0)
+  ```
+
+  The setter and the predicate touching the **same byte** is what ties the pair
+  together; neither alone would have been better than a suggestive name.
+  `UpdateHwanLevel` sits next door at slot 197, writing the level to
+  `CGObjChar+0x1c58` and persisting it to `_CHAR.HwanLevel` (`charData+0xf2`,
+  dirty bit `0x2000`) — which also confirms the `_CHAR` schema offset. The level
+  cap is the row count of the `_REFHWANLEVEL` vector.
+
+  **×2 exactly.** The 2.0 is the double at `.rdata 0x00b45f30`, and its
+  neighbours `0x00b45af0 = 100.0` / `0x00b45ac0 = 1.0` are the two already-
+  confirmed constants of the `/(1 + p/100)` idiom, so the width is settled
+  rather than assumed. All three read `0.0` at float width because a double's
+  low word is zero — and the float reading is incoherent anyway, since it would
+  make a berserk attacker deal no damage at all.
+
+  Param 189 is a separate berserk-damage **stat** adding on top (`SetBerserk`'s
+  fifth argument grants it a base of 0.3, float at `0x00b45b8c`, and clears it
+  otherwise), but every call site in the binary bar one passes 0 there. 2.0 is
+  the plain case, 2.3 the special one; the stat is not modelled rather than
+  folded in at a guessed rate.
+
+  The **duration** is now known to be genuinely unrecoverable from this
+  function: `SetBerserk`'s signature carries a state-change slot and a float
+  duration, and every call site passes `0xff`/`0` for them, so the real server
+  keeps that timer elsewhere. Body mode 1 is Hwan (the `BODYMODE_HWAN` string);
+  modes 0, 2 and 4 also appear at those call sites.
 - `DiedRegion`/`DiedPos` are persisted: the game remembers where you died.
 
 ## The stat vocabulary, in the game's own words
@@ -709,6 +754,31 @@ abbreviations line up exactly — eight of them, which is past coincidence:
 Also named, with no tag counterpart found yet: `PARAM_PA` "Phy. atk. pwr.",
 `PARAM_PD` "Phy. def. pwr.", `PARAM_MA` "Mag. atk. pwr.", `PARAM_MD`
 "Mag. def. pwr.", `PARAM_ABSORB` "Absorption".
+
+**The tag → ParamKeeper-id map, harvested wholesale (2026-09-15).** The tags
+above are names; this is where each one *writes*. Extracted by grepping the 21
+tag dispatchers for `in_EAX == 0x…` beside `ResolveRegArg.java`'s own
+`/* ParamKeeper param id: EDI … */` annotations, so both halves come out of the
+dump rather than being paired by eye:
+
+| tag | params | tag | params |
+|---|---|---|---|
+| `'int'` | 2 | `'rals'` | 27,28,29,30,31,32 |
+| `'hp'`/`'hpa'` | 3 | `'hpna'` | 52 |
+| `'mp'`/`'mpa'` | 4 | `'mpna'` | 53 |
+| `'era'` | 9 | `'evbl'` | 56 |
+| `'bri'` | 10 | `'evcr'` | 57 |
+| `'hra'` | 11 | `'drua'` | 128,129,130 |
+| `'cri'` | 12 | `'dara'` | 174,175,176,177 |
+| `'hprg'` | 25 | `'DABR'` | 174,175,176,177 *(negated)* |
+| `'mprg'` | 26 | `'SPDU'` | 23,24 |
+| `'hpmp'` | 25,26 | | |
+
+Two corrections to what was recorded: `'rals'` writes **six** params (27–32),
+not 27 alone, and `'hpmp'` is a single tag touching both regen params. `'DABR'`
+and `'SPDU'` are the two tags a `CRefHWANLevel` row's effect list is built from
+— each entry is a `{uint32 tag; uint8 value}` pair, and `'DABR'` applies its
+value *negated* to the same four params `'dara'` writes.
 
 **Three of this project's readings were wrong and are corrected by this.**
 `'era'` was read as "evasion" and is *parry*; `'hra'` was read as "hit rate" and
