@@ -259,26 +259,40 @@ func itemRecord(cols []string) ([]string, bool) {
 		num(fPhysAttackMax),      // 13 PhysAttackMax
 		num(fMagAttackMin),       // 14 MagAttackMin
 		num(fMagAttackMax),       // 15 MagAttackMax
-		num(fHitRate),            // 16 HitRateMin
-		num(fHitRate + 1),        // 17 HitRateMax
-		num(fCritical),           // 18 CriticalMin
-		num(fCritical + 1),       // 19 CriticalMax
-		get(fTypeID1),            // 20 TypeID1
-		get(fTypeID1 + 1),        // 21 TypeID2
-		get(fTypeID1 + 2),        // 22 TypeID3
-		get(fTypeID1 + 3),        // 23 TypeID4
-		get(fCountry),            // 24 Country
-		get(fReqGender),          // 25 ReqGender
-		get(fReqLevelType1),      // 26 ReqLevelType1
-		get(fReqLevel1),          // 27 ReqLevel1
-		get(fPrice),              // 28 Price (real NPC buy price)
-		get(fSellPrice),          // 29 SellPrice (real NPC buy-back price)
-		get(fRestoreHP),          // 30 RestoreHP    (Param block, labelled "HP...")
-		get(fRestoreHPPct),       // 31 RestoreHPPct
-		get(fRestoreMP),          // 32 RestoreMP    (Param block, labelled "MP...")
-		get(fRestoreMPPct),       // 33 RestoreMPPct
-		num(fBlockRatio),         // 34 BlockRatioMin (shields only)
-		num(fBlockRatio + 1),     // 35 BlockRatioMax
+		num(fHitRate),            // 16 HitRateMin -- col 113, the verified tooltip value
+		// 17 HitRateMax and 19 CriticalMax are NOT exported, and that is a
+		// correction rather than a gap. They were read as fHitRate+1 (col 114)
+		// and fCritical+1 (col 117), assuming each stat is a min/max pair the
+		// way physical defence is. The verified tooltip contradicts it: a
+		// Copper Sword reads 24 at col 113 and 30 at 114, 3 at col 116 and 15
+		// at 117, and its +5 tooltip showed "Attack rate 24" and "Critical 3"
+		// -- SINGLE values. A real max would have displayed as a range, the way
+		// physical attack does ("27 ~ 28").
+		//
+		// So columns 114 and 117 are something else, not yet identified, and
+		// exporting them under a max's name would put 15 where a Copper Sword's
+		// critical is 3. Nothing reads either field today; a zero is an honest
+		// absence, a mislabel is a landmine for whoever reaches for it next. The
+		// column positions stay, so the CSV width is unchanged.
+		"0",                  // 17 HitRateMax (col 114 is not this -- see above)
+		num(fCritical),       // 18 CriticalMin -- col 116, the verified tooltip value
+		"0",                  // 19 CriticalMax (col 117 is not this -- see above)
+		get(fTypeID1),        // 20 TypeID1
+		get(fTypeID1 + 1),    // 21 TypeID2
+		get(fTypeID1 + 2),    // 22 TypeID3
+		get(fTypeID1 + 3),    // 23 TypeID4
+		get(fCountry),        // 24 Country
+		get(fReqGender),      // 25 ReqGender
+		get(fReqLevelType1),  // 26 ReqLevelType1
+		get(fReqLevel1),      // 27 ReqLevel1
+		get(fPrice),          // 28 Price (real NPC buy price)
+		get(fSellPrice),      // 29 SellPrice (real NPC buy-back price)
+		get(fRestoreHP),      // 30 RestoreHP    (Param block, labelled "HP...")
+		get(fRestoreHPPct),   // 31 RestoreHPPct
+		get(fRestoreMP),      // 32 RestoreMP    (Param block, labelled "MP...")
+		get(fRestoreMPPct),   // 33 RestoreMPPct
+		num(fBlockRatio),     // 34 BlockRatioMin (shields only)
+		num(fBlockRatio + 1), // 35 BlockRatioMax
 	}, true
 }
 

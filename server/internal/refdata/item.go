@@ -68,6 +68,31 @@ type Item struct {
 	DurabilityMin, DurabilityMax   float64
 	PhysDefenseMin, PhysDefenseMax float64
 	MagDefenseMin, MagDefenseMax   float64
+	// WHICH END OF A RANGE srrevamp USES, in one place, because the answer is
+	// not consistent and the inconsistency is deliberate rather than an
+	// oversight.
+	//
+	// A real item has per-instance variance: the table gives a range and each
+	// dropped or bought instance sits somewhere inside it. srrevamp models no
+	// such variance, so every consumer has to pick an end, and neither end is
+	// more correct than the other:
+	//
+	//	defenderArmor       PhysDefenseMax   (long-standing; also feeds the
+	//	                                      shop price and the shop listing
+	//	                                      the client displays)
+	//	attackerCritical    CriticalMin      (col 116 -- and this one is NOT a
+	//	                                      choice: the verified tooltip
+	//	                                      shows a single value there, so
+	//	                                      the "Max" field is not the same
+	//	                                      stat. See cmd/export-refdata.)
+	//	defenderBlock       BlockRatioMin    (a genuine 10~20 range; the low
+	//	                                      end, so a shield is never
+	//	                                      overstated)
+	//
+	// Changing defenderArmor to match would move a displayed stat and a shop
+	// price for no grounded reason, so it stays; this comment is the record
+	// that the difference was examined rather than missed.
+
 	// BlockRatioMin/BlockRatioMax are a SHIELD's block ratio, itemdata
 	// columns 74-75 -- present on exactly the 500 shield rows in the real
 	// table and reading 10~20 on a starter shield. It is the chance, in

@@ -7075,6 +7075,36 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-ninety-first round: a max that was never a max
+
+The reachability sweep has one more kind of answer in it: not "this value never
+arrives" but "this value arrives wrong".
+
+`cmd/export-refdata` read the weapon's attack rate and critical as min/max
+*pairs* -- columns 113/114 and 116/117 -- on the reasonable assumption that they
+work the way physical defence does. The table this project already verified says
+otherwise. A Copper Sword reads **24** at col 113 and **30** at 114, **3** at
+col 116 and **15** at 117, and its +5 tooltip showed *"Attack rate 24"* and
+*"Critical 3"* -- single values. A real maximum would have displayed as a range,
+the way physical attack does (`27 ~ 28`).
+
+So columns 114 and 117 are something else, unidentified. They are no longer
+exported: `HitRateMax` and `CriticalMax` are zero now, and the column positions
+stay so the CSV width is unchanged. Nothing reads either field today, which is
+exactly why this was worth doing before something did -- a mislabel is a
+landmine for whoever reaches for it next, and 15 is five times a Copper Sword's
+real critical. `CriticalMin` (col 116) and `HitRateMin` (col 113) are the
+verified tooltip values and stay.
+
+**And a deliberate inconsistency, written down rather than churned.** A real
+item has per-instance variance -- the table gives a range and each instance sits
+inside it -- and srrevamp models none, so every consumer picks an end.
+`defenderArmor` takes `PhysDefenseMax`, `defenderBlock` takes `BlockRatioMin`,
+and neither end is more correct than the other. Making armour match would move a
+displayed stat and a shop price for no grounded reason, so it stays as it is and
+`refdata.Item` now carries the record that the difference was examined rather
+than missed.
+
 ## Hundred-and-ninetieth round: PvP had been left behind, and why
 
 Two rounds of asking "does this recovered thing actually reach anything?" found

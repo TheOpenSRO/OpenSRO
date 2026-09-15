@@ -179,3 +179,46 @@ func TestItemRecordCarriesArmourDefenceAndBlock(t *testing.T) {
 		t.Errorf("ItemClass = %d, want 7 -- column 61 is not reaching the importer", it.ItemClass)
 	}
 }
+
+// The two Max columns that the verified tooltip contradicts are exported as
+// zero, not as the neighbouring column.
+//
+// A Copper Sword reads 24 at col 113 and 30 at 114, 3 at col 116 and 15 at 117,
+// and its +5 tooltip showed "Attack rate 24" and "Critical 3" -- single values.
+// This pins that the exporter does not hand 30 and 15 out under a max's name,
+// where the next reader would take them for the stat.
+func TestUnverifiedMaxColumnsAreNotExported(t *testing.T) {
+	cols := make([]string, fMax+2)
+	for i := range cols {
+		cols[i] = "0"
+	}
+	cols[fID] = "71"
+	cols[fMaxStack] = "1"
+	// The Copper Sword's real readings.
+	cols[fHitRate] = "24"
+	cols[fHitRate+1] = "30"
+	cols[fCritical] = "3"
+	cols[fCritical+1] = "15"
+
+	rec, ok := itemRecord(cols)
+	if !ok {
+		t.Fatal("itemRecord rejected a valid row")
+	}
+	items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
+	if err != nil {
+		t.Fatalf("the importer rejected export's own output: %v", err)
+	}
+	it := items[0]
+	if it.HitRateMin != 24 {
+		t.Errorf("HitRateMin = %v, want the verified 24", it.HitRateMin)
+	}
+	if it.CriticalMin != 3 {
+		t.Errorf("CriticalMin = %v, want the verified 3", it.CriticalMin)
+	}
+	if it.HitRateMax != 0 {
+		t.Errorf("HitRateMax = %v, want 0 -- col 114 is not the hit-rate max", it.HitRateMax)
+	}
+	if it.CriticalMax != 0 {
+		t.Errorf("CriticalMax = %v, want 0 -- col 117 is not the critical max", it.CriticalMax)
+	}
+}

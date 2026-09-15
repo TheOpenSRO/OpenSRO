@@ -195,6 +195,15 @@ through the per-plus growth floats beside each attack:
 | Durability | 63 | 62 | **62 / 62** |
 | Attack rate | 113 | 24 | **24** |
 | Critical | 116 | 3 | **3** |
+
+**Columns 114 and 117 are NOT the maxima of those two** (corrected 2026-09-15).
+A Copper Sword reads 24 at 113 and **30** at 114, 3 at 116 and **15** at 117 —
+and the +5 tooltip above showed *single* values, 24 and 3. A real maximum would
+have displayed as a range, the way physical attack does (`27 ~ 28`). What 114
+and 117 actually are is not identified, so `cmd/export-refdata` exports zero for
+`HitRateMax` and `CriticalMax` rather than handing those numbers out under a
+max's name: an honest absence, not a value that would put 15 where a Copper
+Sword's critical is 3.
 | Phys. reinforce | 105 (min), 107 (max), tenths of a % | 306 / 342 | **30.6 % ~ 34.2 %** |
 | Mag. reinforce | 109 (min), 111 (max) | 519 / 591 | **51.9 % ~ 59.1 %** |
 | Required level | 33 (the ReqLevel1 pair) | 1 | **1** |
