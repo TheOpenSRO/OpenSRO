@@ -53,16 +53,49 @@ pick one up without re-deriving anything.
    level-entry field the reward reads. Careful — a grep for `+ 0x1c)` in that
    region matches **vtable calls**, not field reads, and briefly looked like a
    hit. Read the actual statements.
-2. **Monster defence / attack / gold** — disclosed curve. characterdata cols
-   71/72 are attack candidates, 75/77 defence candidates, none confirmed.
-   **Sharpened 2026-09-15:** `GObjMob_PublishStats` is now fully readable — the
-   dump carries each push's ParamKeeper id inline. The mapping so far is
-   refobj `+0x19c`→id 3 (MaxHP), `+0x1a0`→4 (MaxMP), `+0x230`→5, `+0x234`→6,
-   `+0x248`→11, `+0x24c`→12, and `+0x1a4`–`+0x1b8`→ids 27–32. Every one of those
-   reads adds 2^32 when negative, so the fields are **unsigned 32-bit**.
-   *Next probe:* ids 5/6 and 11/12 are the attack/defence pairs — settle which
-   by finding the combat use-site that reads them, then map `+0x230`/`+0x234`
-   back to columns the way col 59 was done (anchor on a known row).
+2. **Monster defence / attack / gold** — disclosed curve.
+   **Sharpened twice, 2026-09-15.** The mob stat publisher `GObjMob_PublishStats`
+   is now fully readable: the dump carries each push's ParamKeeper id inline, and
+   joining that to the already-settled characterdata column map gives
+
+   | refobj | column | param | what a PC derives it from |
+   |---|---|---|---|
+   | `0x230` | 71 | 5 | Str (via 21) |
+   | `0x234` | 72 | 6 | Int (via 22) |
+   | `0x238` | 73 | 7 | — |
+   | `0x23c` | 74 | 8 | — |
+   | `0x240` | 75 | 9 | Level |
+   | `0x244` | 76 | 10 | — |
+   | `0x248` | 77 | 11 | Level |
+   | `0x24c` | 78 | 12 | — |
+
+   Every one of those reads adds 2^32 when negative, so the fields are
+   **unsigned 32-bit**. Against the real `characterdata` (the Jangan ladder,
+   levels 1–12, both anchors re-verified: Yeoha is col 57 = 10, col 59 = 249,
+   col 82 = 3000):
+
+   - **col 73 = col 74 = the monster's level, exactly**, every row.
+   - **col 75 = col 77 = 2·level + 25**, every row.
+   - col 76 = 0 and col 78 = 2 for every monster on the ladder.
+   - cols 71/72 rise with level, are per-species, and 71 ≤ 72 always.
+
+   What that rules out: 71/72 are **not** a min/max pair of one quantity, because
+   the PC graph feeds 5 from **Str** and 6 from **Int** — two different sources.
+   They are a physical/magical pair. Which pair (attack or defence) is still
+   **open**, and the temptation to call it from the shape is exactly the mistake
+   col 79 punished twice.
+
+   *Next probe:* the read side, which is the real blocker. `ParamKeeper_GetParam`
+   has only **four** call sites — every other read is inlined with the constant id
+   folded into the displacement, so there is no getter to grep. `Combat_ResolveDamage`
+   does not touch `obj+0x1F0+4N` either (checked: `0x1fc/0x204/0x208/0x21c/0x220`
+   — those offsets are too common to signal anyway), so combat reads stats through
+   something else: find what it is handed. Two angles worth trying first — the
+   stat packet the server builds for the character window (its field order, matched
+   against the client's own authored labels), and params **13–16**, which the PC
+   graph builds as a Str-derived pair (13,14) and an Int-derived pair (15,16) and
+   which therefore look far more like attack min/max than 5/6 do.
+
 3. **Combat damage model** (base + bonus − defence, no crit/dodge) — ours.
    *Next probe:* `FUN_0058e5f0` is the real damage resolution; `FUN_0040f5f0`
    applies a level-gap roll clamped to [10%, 100%].

@@ -69,6 +69,14 @@ public class ApplyKnownNames extends GhidraScript {
         {"004b3130", "Param_PropagateToDependents",
          "Called by StoreSlot after a value changes: walks the dependent list and pushes the new "
          + "value into each target's registered slot. This is what makes the graph evaluate."},
+        {"004b3830", "ParamKeeper_GetParam",
+         "Reads a param's current value by id. The id is in AX (MOVZX EAX,AX), the keeper in ECX; "
+         + "indexes [ECX + id*4 + 4] and returns 0.0 when the param was never created. Only four "
+         + "call sites -- every other read is inlined, the constant id folded into the "
+         + "displacement, which is why grepping for a getter finds almost nothing."},
+        {"004b33a0", "Param_GetValue",
+         "Returns a param object's value: re-evaluates first if the dirty flag at +0x1a is set, "
+         + "then loads the cached result from +0x1c."},
         {"004e3200", "GObjPC_InitStats",
          "Player stat initialiser, and the whole player derived-stat graph in one function: 30 "
          + "BindDerived edges plus the constant pushes. Params 0/1/2 are Level (charData+0x65), "
