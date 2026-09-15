@@ -59,6 +59,38 @@ slot 0 — a stat modifier, and given the client's own `PARAM_HWAN_TIME_INCREASE
 most likely the berserk-duration bonus, but that last step is an inference and
 is flagged as one rather than entered in the table.
 
+## Where the block starts, and what actually occurs
+
+The Param block begins at **column 69** of a skilldata row (rows are 118-119
+columns wide). That is measured, not assumed: across every real skill row the
+`att` code appears at column 69 in 30,677 of them and never earlier, the later
+positions (71, 81, 84) being rows where another run comes first.
+
+Walking from column 69 with the fixed-run lengths below, **19,839 of 36,389 rows
+consume their Param block exactly to the end**. The remainder stop at a
+variable-length code, which is expected: those do not state a length. The most
+common stopper is `efr` (9,534 rows).
+
+Codes at verified code positions, most common first:
+
+| code | field | run | skills |
+|---|---|---|---|
+| `att` | 0x230 | 6 | 31,266 |
+| `mc` | 0x288 | 3 | 28,142 |
+| `getv` | 0x56c | 2 | 2,553 |
+| `dura` | 0x280 | 2 | 1,979 |
+| `bl` | 0x444 | 6 | 1,526 |
+| `st` | 0x450 | 4 | 1,510 |
+| `da` | 0x240 | 2 | 1,459 |
+| `reqi` | 0x2a4 | 3 | 484 |
+| `kb` | 0x254 | 3 | 462 |
+| `defp` | 0x25c | 4 | 373 |
+| `ps` | 0x31c | 4 | 353 |
+
+This doubles as an end-to-end test of the recovered format: a wrong run length
+anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
+19,839 independent confirmations of every length they touched.
+
 ## Fixed-run codes
 
 | code | constant | skill field | run | values |

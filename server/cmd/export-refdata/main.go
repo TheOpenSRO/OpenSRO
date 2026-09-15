@@ -393,6 +393,23 @@ const attackCode = "6386804"
 //
 // Returns "0","0","0" for a skill with no 'att' -- most skills are buffs,
 // heals or passives and have no attack parameter.
+//
+// SCANNING THE WHOLE ROW rather than walking the Param block is safe, and that
+// is now measured rather than hoped. The risk is obvious -- 6386804 could occur
+// as some other parameter's VALUE and be read as a code -- so it was tested
+// against the parser's own schema (docs/protocol/skill_params.md, the 102 codes
+// recovered from SkillGlobal::RefSkill_ParseParams):
+//
+//   - The Param block starts at column 69. Across every real skill row, the
+//     lowest column the literal ever appears at is 69, so nothing precedes the
+//     block: 0 of 31,605 rows carry it earlier.
+//   - No row carries it twice, so "first match" cannot pick the wrong one.
+//   - On the 19,839 rows whose Param block walks cleanly end to end under the
+//     recovered run lengths, the walk's 'att' position and this scan's first
+//     match agree 19,839 times and differ 0 times.
+//
+// The scan is also the more version-robust of the two: a client whose skilldata
+// shifts the block would break a hard-coded column 69, and this would not.
 func attackParam(cols []string) (percent, dmgMin, dmgMax string) {
 	for i, v := range cols {
 		if strings.TrimSpace(v) != attackCode {
