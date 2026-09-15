@@ -196,11 +196,48 @@ through the per-plus growth floats beside each attack:
 | Attack rate | 113 | 24 | **24** |
 | Critical | 116 | 3 | **3** |
 
+**Two independent readers, one column map.** This project reads the item table
+twice, from opposite ends and for different purposes: the client's
+`item_table_reader.gd` builds tooltips straight from the archive, and the
+server's `cmd/export-refdata` produces the CSV the server imports. They were
+written at different times for different reasons, and they now agree on every
+column either one reads:
+
+| stat | client reader | exporter |
+|---|---|---|
+| durability | 63 | 63 |
+| physical defence | 65 / 66 | 65 (+1) |
+| block ratio | 74 / 75 | 74 (+1) |
+| magical defence | 76 / 77 | 76 (+1) |
+| physical attack | 95 / 97 | 95 / 97 |
+| magical attack | 100 / 102 | 100 / 102 |
+| attack rate | **113, scalar** | **113, scalar** |
+| critical | **116, scalar** | **116, scalar** |
+| required level | 32 / 33 | 32 / 33 |
+| TypeID1–4 | 9 … 12 | 9 … 12 |
+
+**A disagreement between those two files is a bug signal, not a style
+difference** — and one has already been caught that way: the exporter emitted a
+literal `"0"` for both defences while the client had been reading 65/66 and
+76/77 correctly the whole time, so a Cotton Suit's tooltip showed its real
+defence while the server treated the character as wearing nothing.
+
 **Columns 114 and 117 are NOT the maxima of those two** (corrected 2026-09-15).
 A Copper Sword reads 24 at 113 and **30** at 114, 3 at 116 and **15** at 117 —
 and the +5 tooltip above showed *single* values, 24 and 3. A real maximum would
-have displayed as a range, the way physical attack does (`27 ~ 28`). What 114
-and 117 actually are is not identified, so `cmd/export-refdata` exports zero for
+have displayed as a range, the way physical attack does (`27 ~ 28`). A 3,818-row weapon census confirms it from the data side: if 114 were the
+hit-rate maximum the min/max ratio would be roughly consistent, and instead
+`114/113` clusters at ~2.11 for some weapons and ~1.22 for others, while
+`117 − 116` is **0** on 1,131 rows, 12 on 927, 13 on 892 and a scatter beyond.
+Neither behaves like a proportional range — real ones do, defence running
+2 → 2.5 and block 10 → 20.
+
+The client settles it outright: `item_table_reader.gd` reads `COL_ATTACK_RATE :=
+113` and `COL_CRITICAL := 116` as single ints and prints them as
+`"Attack rate %d"` / `"Critical %d"`, while it reads defence and block as
+`Vector2` pairs and prints them as `"%s ~ %s"`. It never reads 114 or 117 at
+all. What they
+actually are is not identified, so `cmd/export-refdata` exports zero for
 `HitRateMax` and `CriticalMax` rather than handing those numbers out under a
 max's name: an honest absence, not a value that would put 15 where a Copper
 Sword's critical is 3.

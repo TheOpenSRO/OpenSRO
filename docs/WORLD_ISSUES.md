@@ -7075,6 +7075,43 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-ninety-second round: the client had been right all along
+
+Last round withdrew `HitRateMax` and `CriticalMax` on tooltip evidence, with the
+columns left "unidentified". Both halves of that now have better backing, and
+one of them came from a source already sitting in this repository.
+
+**The data side.** A 3,818-row weapon census says these are not proportional
+ranges. If column 114 were the hit-rate maximum, `114/113` would be roughly
+constant; it clusters at **~2.11** for some weapons and **~1.22** for others.
+`117 − 116` is **0** on 1,131 rows, **12** on 927, **13** on 892, then a
+scatter. Real ranges in this table do not behave that way -- defence runs
+2 → 2.5, block 10 → 20, each a proportional spread.
+
+Worth recording that my first two samples suggested a clean `+12` offset and a
+clean `x1.25` ratio, and both dissolved at scale. Two rows are not a census.
+
+**The use-site.** `client/scripts/npc/item_table_reader.gd` -- written from real
+tooltips, long before any of this -- reads `COL_ATTACK_RATE := 113` and
+`COL_CRITICAL := 116` as single ints and prints `"Attack rate %d"` /
+`"Critical %d"`, while reading defence and block as `Vector2` pairs printed as
+`"%s ~ %s"`. **It never reads 114 or 117 at all.** That is the independent
+witness the withdrawal wanted, and it was in the tree the whole time.
+
+**And the two readers agree on everything else.** This project parses the item
+table twice, from opposite ends: the client for tooltips, `cmd/export-refdata`
+for the server's CSV. Written at different times for different reasons, they now
+pin identical columns for durability, both defences, block, both attacks, attack
+rate, critical, required level and the TypeIDs. `ITEM_FORMAT.md` carries the
+table.
+
+That makes a disagreement between those two files a **bug signal** rather than a
+style difference -- and one had already been caught that way without anyone
+noticing: the exporter emitted a literal `"0"` for both defences while the client
+had been reading 65/66 and 76/77 correctly all along. A Cotton Suit's tooltip
+showed its real defence while the server treated the character as wearing
+nothing, and the two files disagreeing was the evidence.
+
 ## Hundred-and-ninety-first round: a max that was never a max
 
 The reachability sweep has one more kind of answer in it: not "this value never
