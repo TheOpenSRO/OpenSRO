@@ -258,16 +258,29 @@ const DisclosedSkillDamagePerLevel = 4
 // Falls back to the disclosed per-level bonus when the skill has no 'att'
 // (most skills are buffs, heals or passives) or when the reference data
 // predates the damage columns.
-func skillDamageBonus(ref *refdata.Skill, weaponDamage int) int {
+// skillDamageBonus splits a skill's damage into the two halves the engine
+// keeps on OPPOSITE SIDES of mitigation: a flat term that joins the weapon roll
+// before it, and a percentage that scales the blow after it.
+//
+// The attack descriptor the engine carries at +0x230 has exactly these three
+// fields -- percentage at +4, flat minimum at +8, flat maximum at +0xc -- and
+// they are the same three this project reads out of skilldata's 'att'
+// parameter. FUN_0040db50 adds +0x8/+0xc to the rolled damage bound;
+// Formula_MitigatePhysicalDamage multiplies by +0x4 only after dividing by the
+// defender's reduction, subtracting its flat absorb and clamping at zero. See
+// combat.ApplySkillPercent.
+//
+// A skill with no real row falls back to the disclosed per-level bonus, which
+// is flat and therefore has no percentage half.
+func skillDamageBonus(ref *refdata.Skill) (flat, percent int) {
 	if ref.AttackPercent <= 0 {
-		return disclosedSkillDamageBonus(ref)
+		return disclosedSkillDamageBonus(ref), 0
 	}
-	bonus := weaponDamage*ref.AttackPercent/100 - weaponDamage
-	flat := ref.DamageMin
+	flat = ref.DamageMin
 	if ref.DamageMax > ref.DamageMin {
 		flat += rand.Intn(ref.DamageMax - ref.DamageMin + 1)
 	}
-	return bonus + flat
+	return flat, ref.AttackPercent
 }
 
 // disclosedSkillDamageBonus is the own-design fallback: a bonus scaled by the
@@ -329,6 +342,7 @@ func UseSkillHandler(
 		// catalog skills have no real row and so cost nothing.
 		var cooldown time.Duration
 		var damageBonus int
+		var damagePercent int
 		var mpCost int
 		if sk, inCatalog := skill.Catalog[req.SkillID]; inCatalog {
 			cooldown = time.Duration(sk.CooldownSeconds) * time.Second
@@ -336,21 +350,7 @@ func UseSkillHandler(
 		} else if ref, err := skillRef.GetSkill(ctx, req.SkillID); err == nil && ref != nil {
 			cooldown = time.Duration(ref.ReuseDelayMs) * time.Millisecond
 			mpCost = ref.ConsumeMP
-			// A skill's damage is a percentage of the wielder's weapon damage
-			// plus a flat roll, so the weapon has to be read first -- and the
-			// wielder's Strength with it, since it contributes to both ends of
-			// that range (see combat.ReinforceDamage).
-			weapon := 0
-			if eq != nil && items != nil {
-				attackerStr := 0
-				if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
-					attackerStr = c.Str
-				}
-				if w, err := attackerDamage(ctx, characterID, attackerStr, eq, items); err == nil {
-					weapon = w
-				}
-			}
-			damageBonus = skillDamageBonus(ref, weapon)
+			damageBonus, damagePercent = skillDamageBonus(ref)
 		} else {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "no such skill"}).Encode()})
 		}
@@ -393,7 +393,7 @@ func UseSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
 		}
 
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, characterID, req.TargetMonsterID, damageBonus)
+		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, characterID, req.TargetMonsterID, damageBonus, damagePercent)
 	}
 }
 

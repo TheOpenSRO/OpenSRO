@@ -1814,3 +1814,91 @@ columns leave them zero and behave exactly as before — pinned by its own test.
   since `unarmedDamage` is own design anyway.
 - Still open from before: itemdata columns 114 and 117; `pc[0x72d]`'s state enum;
   blocking's monster side.
+
+## The physical damage pipeline, register by register (2026-09-15)
+
+The previous entry's open item was *which roll the live melee path takes*. Both:
+`Combat_ResolveDamage` (`0058e5f0`) calls `Formula_MitigatePhysicalDamage` four
+times **and** `FUN_0040f990` twice. They are different stages, not rivals — and
+the one that produces the blow is the first.
+
+**A better tool, recorded because it changes what is cheap.** `objdump -d
+--start-address=… -M intel /var/tmp/SR_GameServer.exe` disassembles the PE
+directly. It needs no Ghidra, takes no `flock`, and answers in under a second,
+where a `Disasm.java` run costs ~25s and contends with the cron. Every register
+fact below came from it. Use it whenever the decompiled C is ambiguous — and
+here it was worse than ambiguous, reading `fStack_8` before assignment and
+applying `>> 0x20` to a float.
+
+### Who is who
+
+	esi = eax          the attack context   (+0x230 descriptor, +0x524 bonus)
+	bl  = cl           the flag byte
+	ebp = [esp+0x1c]   the ATTACKER
+	edi = edx          the DEFENDER
+
+The attacker/defender assignment is proven, not assumed: `FUN_0040dce0` is
+entered with `ecx = ebp`, moves it to `esi`, and calls `FUN_0040db50` with
+`eax = esi`; `FUN_0040db50` then does `GetParam((edi != 0) + 0xd)` on **eax**.
+So the object whose damage params 13/14 are rolled is `ebp`. The mitigation
+block reads params 5 and 7 off `edi`, the other one. **That settles whose params
+5 and 7 are — the defender's** — which this project had recorded as "the same
+object" without saying which.
+
+### The order
+
+	raw   = centre-biased roll of ATTACKER params 13/14        FUN_0040dce0
+	        + descriptor[+8] / [+0xc] folded into the bound     40db86 / 40db8b
+	raw  += context[+0x524] bonus                   if flags & 0x08
+	mit   = raw / (1 + defender_p7/100) - defender_p5          40e52a-40e542
+	        ... skipped entirely                    if flags & 0x20
+	mit   = max(mit, 0)                                        40e54a
+	mit  *= descriptor[+4] / 100                               40e56e-40e588
+	mit  *= 1 + GetParam(0x80 | 0x81)/100                 by flags bit0/bit1
+	mit  += GetParam(0x103)/100 * mit      if defender vf[0x12c] == 3
+	mit  *= GetParam(0xbd) + 2.0                    if flags & 0x04
+	mit  *= 2                                       if flags & 0x02
+	mit  *= 1 + LevelAdvantage()                    if atkLevel > defLevel
+
+The struct at `+0x230` is the **attack descriptor**, and its three numeric
+fields are exactly the three this project already reads out of skilldata's
+`'att'` parameter: the percentage at `+4`, a flat minimum at `+8` and a flat
+maximum at `+0xc`. **The two halves land on opposite sides of mitigation** —
+the flat pair is added to the rolled bound inside `FUN_0040db50`, the percentage
+multiplies only after the division, the subtraction and the clamp.
+
+### What moved
+
+- **Shipped:** `combat.ApplySkillPercent`, and `skillDamageBonus` now returns
+  `(flat, percent)` so `performAttack` can put them on the right sides. srrevamp
+  had folded the percentage into the raw roll, which scales the defence away:
+  a 200% skill against 10 flat armour paid 180 instead of 160. Pinned end to end
+  through the network harness by a test verified to report 50 under the old
+  order. This is the same mistake, and the same fix, as the berserk multiplier's
+  ordering two entries ago — worth noting that it recurred in a second place
+  after being fixed in the first.
+- **Fixed in passing:** the old `skillDamageBonus(ref, weaponDamage)` rolled the
+  weapon a *second* time to compute its percentage, then handed the result to
+  `performAttack`, which rolled the weapon again for `base`. Two independent
+  rolls were being mixed into one blow. The percentage now scales the actual
+  blow, so there is one roll.
+- **Citation upgraded, no code change:** `playerMitigationPercent = 0` and
+  `LevelAdvantage` 0.03/0.30 both re-derived independently here — the level
+  constants read out of `.rdata` as `fmul QWORD 0x00b45dc8` = 0.03 and
+  `fld DWORD 0x00b45b8c` = 0.30, with the operand sizes confirming which is
+  which. Both already carried the right values and the right citations.
+- **v0.1.174 validated:** the params the live path rolls for its damage bounds
+  are 13/14, the ones carrying the Str-derived reinforce term.
+
+### Open
+
+- `GetParam(0x80)` / `GetParam(0x81)` off the attacker, selected by descriptor
+  bits 0 and 1 — a percentage bonus against some target class.
+- `GetParam(0x103)` off the attacker, live only when the defender's `vf[0x12c]`
+  returns 3.
+- Descriptor flag `0x20` skips mitigation outright; which attacks set it.
+- `FUN_0040f990`'s switch (2..N) scales `Formula_RollWeaponDamage`'s uniform
+  190/191 roll by `.rdata` constants. Since 190/191 carry no Str term and no
+  buffs, this is a *second*, simpler damage path; what selects it is unknown.
+- Still open from before: itemdata columns 114 and 117; `pc[0x72d]`'s state
+  enum; blocking's monster side.

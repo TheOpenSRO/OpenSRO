@@ -458,3 +458,50 @@ func TestReinforceDamageRounds(t *testing.T) {
 		t.Fatal("ReinforceDamage truncated 6.84 to 6; the engine rounds")
 	}
 }
+
+// TestApplySkillPercentComesAfterMitigation pins the ORDER, which is the only
+// reason ApplySkillPercent is a separate step rather than folded into the raw
+// roll.
+//
+// The engine divides by the defender's reduction, subtracts its flat absorb,
+// clamps at zero, and only THEN multiplies by the skill's percentage
+// (Formula_MitigatePhysicalDamage, 0040e450). Doing it the other way round
+// scales the defence away: against 20 flat armour, a 200% skill on a 100 blow
+// is 2*(100-20) = 160 the engine's way, but 2*100-20 = 180 the wrong way.
+func TestApplySkillPercentComesAfterMitigation(t *testing.T) {
+	const raw, flat, pct = 100, 20, 200
+
+	mitigated := MitigateDamage(raw, 0, flat)
+	correct := ApplySkillPercent(mitigated, pct)
+
+	// The order this code used before 2026-09-15: scale first, mitigate after.
+	wrong := MitigateDamage(ApplySkillPercent(raw, pct), 0, flat)
+
+	if correct != 160 {
+		t.Errorf("mitigate-then-scale = %d, want 160", correct)
+	}
+	if wrong != 180 {
+		t.Errorf("scale-then-mitigate = %d, want 180 (the bug being pinned)", wrong)
+	}
+	if correct == wrong {
+		t.Fatal("the two orders agree, so this test cannot detect the regression")
+	}
+}
+
+// A skill that declares no percentage, or exactly 100%, leaves the blow alone.
+func TestApplySkillPercentNeutralCases(t *testing.T) {
+	for _, pct := range []int{0, -1, 100} {
+		if got := ApplySkillPercent(57, pct); got != 57 {
+			t.Errorf("ApplySkillPercent(57, %d) = %d, want 57 unchanged", pct, got)
+		}
+	}
+	// A sub-100 percentage really does reduce the blow -- the game's own basic
+	// swings are 60%.
+	if got := ApplySkillPercent(100, 60); got != 60 {
+		t.Errorf("a 60%% swing on a 100 blow = %d, want 60", got)
+	}
+	// It never rounds a real blow away to nothing.
+	if got := ApplySkillPercent(1, 1); got != 1 {
+		t.Errorf("ApplySkillPercent(1, 1) = %d, want the floor of 1", got)
+	}
+}

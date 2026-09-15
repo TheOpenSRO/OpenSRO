@@ -50,6 +50,12 @@ func (fakeSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error
 	if id == 998 {
 		return &refdata.Skill{ID: 998, BasicLevel: 1, ReuseDelayMs: 0, ConsumeMP: skill998ManaCost}, nil
 	}
+	// 997 carries a REAL 'att' parameter -- 200% and no flat term -- so the
+	// skill-percentage path can be exercised end to end. See
+	// TestSkillPercentageAppliesAfterMitigation.
+	if id == 997 {
+		return &refdata.Skill{ID: 997, BasicLevel: 1, ReuseDelayMs: 0, AttackPercent: 200}, nil
+	}
 	return nil, errors.New("no such skill")
 }
 
@@ -274,5 +280,119 @@ func TestSkillFullFlow(t *testing.T) {
 	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 998, TargetMonsterID: monster.ID}).Encode())
 	if ar4, err := DecodeAttackResult(resp.Data); err != nil || ar4.Error != "not enough mana" {
 		t.Fatalf("second cast should be refused for mana: got %+v (err %v)", ar4, err)
+	}
+}
+
+// TestSkillPercentageAppliesAfterMitigation drives a real percentage skill
+// through the whole network path and pins that its percentage lands AFTER the
+// target's defence is subtracted, not before.
+//
+// The engine's order is mitigate, clamp at zero, then multiply by the skill's
+// percentage (Formula_MitigatePhysicalDamage 0040e450; see
+// combat.ApplySkillPercent). With a 30-damage weapon, a 200% skill and a
+// monster carrying 10 flat defence:
+//
+//	correct:  (30 - 10) * 2 = 40
+//	wrong:    (30 * 2) - 10 = 50
+//
+// This code produced 50 until 2026-09-15, because the percentage was folded
+// into the raw roll before mitigation.
+func TestSkillPercentageAppliesAfterMitigation(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+
+	// A degenerate weapon range so the blow is exact, and no reinforce so
+	// Strength contributes nothing to this particular assertion.
+	items := stubCombatItems{100: {ID: 100, PhysAttackMin: 30, PhysAttackMax: 30}}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	inv.TruncateForTest(ctx)
+	inv.AddItem(ctx, c.ID, 100, 1)
+
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	eq.TruncateForTest(ctx)
+	eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0)
+
+	skills, err := skill.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("skill.OpenSQLStore: %v", err)
+	}
+	defer skills.Close()
+	skills.TruncateForTest(ctx)
+	if err := skills.Learn(ctx, c.ID, 997); err != nil {
+		t.Fatalf("Learn: %v", err)
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 1000, 10, 5, 500)
+
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	quests.TruncateForTest(ctx)
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}, nil, mana.NewTracker()),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	resp = send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 997, TargetMonsterID: monster.ID}).Encode())
+	ar, err := DecodeAttackResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeAttackResult: %v", err)
+	}
+	if ar.Error != "" {
+		t.Fatalf("skill cast failed: %s", ar.Error)
+	}
+	const wantCorrect, wantWrongOrder = 40, 50
+	if ar.MonsterDamage == wantWrongOrder {
+		t.Fatalf("skill damage %d: the percentage was applied BEFORE mitigation", ar.MonsterDamage)
+	}
+	if ar.MonsterDamage != wantCorrect {
+		t.Fatalf("skill damage = %d, want %d ((30 - 10) * 2)", ar.MonsterDamage, wantCorrect)
 	}
 }

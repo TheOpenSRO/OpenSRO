@@ -138,6 +138,50 @@ func MitigateDamage(raw, reductionPercent, flat int) int {
 	return out
 }
 
+// ApplySkillPercent scales an already-mitigated blow by a skill's attack
+// percentage. percent <= 0 means the skill declares none and the blow is
+// unchanged.
+//
+// ORDER, and it is the whole point of this function existing separately:
+// the game applies a skill's percentage AFTER mitigation and after the clamp
+// at zero, not to the raw roll. Formula_MitigatePhysicalDamage (0040e450),
+// disassembled because the decompiled C loses the registers here:
+//
+//	40e50a  push 0x5  ; ecx=edi ; call [edx+0x104]   <- defender's flat absorb
+//	40e524  push 0x7  ; ecx=edi ; call [edx+0x104]   <- defender's reduction %
+//	40e52a  fdiv qword [0x00b45af0]                  <- /100
+//	40e538  fadd qword [0x00b45ac0]                  <- +1.0
+//	40e53e  fdivr qword [esp+0x10]                   <- raw / (1 + pct/100)
+//	40e542  fsub dword [esp+0x18]                    <- - flat
+//	40e54a  fldz / fcom / fst                        <- clamped at 0
+//	40e56e  fild dword [eax+0x4]                     <- the skill's percentage
+//	40e57e  fmul dword [esp+0x24]
+//	40e582  fdiv qword [0x00b45af0]                  <- * pct / 100
+//
+// The struct at +0x230 that `eax` points at is the attack descriptor, and its
+// three numeric fields are exactly what this project already reads out of
+// skilldata's 'att' parameter: the percentage at +4, and a flat min/max pair at
+// +8/+0xc. The flat pair goes in EARLIER, added to the rolled bound inside
+// FUN_0040db50 (40db86 reads +0x8 for the minimum, 40db8b +0xc for the
+// maximum), so the two halves of a skill's damage land on opposite sides of
+// mitigation and cannot be folded into one number.
+//
+// Applying the percentage to the raw roll instead -- which this code did until
+// 2026-09-15 -- differs whenever the defender has any flat absorb:
+// `(raw*p)/(1+m) - flat` against `(raw/(1+m) - flat)*p`. The first scales the
+// defence away, so a 200% skill paid only half the armour it should. It is the
+// same mistake, and the same fix, as the berserk multiplier's ordering.
+func ApplySkillPercent(damage, percent int) int {
+	if percent <= 0 || percent == 100 {
+		return damage
+	}
+	out := int(math.Round(float64(damage) * float64(percent) / 100))
+	if out < 1 {
+		out = 1
+	}
+	return out
+}
+
 // LevelAdvantagePerLevel and LevelAdvantageCap are the real level-difference
 // damage term: an attacker who out-levels its target hits harder, 3% per level
 // and no more than 30%.

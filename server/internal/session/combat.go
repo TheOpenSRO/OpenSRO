@@ -623,7 +623,7 @@ func CombatHandler(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 			}
 
-			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, characterID, req.TargetMonsterID, 0)
+			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, characterID, req.TargetMonsterID, 0, 0)
 		case OpMonsterList:
 			return handleMonsterList(sess, hub, monsters)
 		default:
@@ -655,7 +655,7 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 }
 
 // performAttack computes damage (the attacker's base weapon/unarmed damage
-// plus damageBonus -- 0 for a plain OpAttack, a skill's DamageBonus for
+// plus damageBonus -- 0 for a plain OpAttack, a skill's flat damage for
 // OpUseSkill), applies it to the target monster, resolves the monster's
 // counterattack, sends OpAttackResult to sess, grants gold on a kill, and
 // broadcasts to everyone else in the zone. Shared by CombatHandler and
@@ -675,6 +675,7 @@ func performAttack(
 	mp *mana.Tracker,
 	characterID, targetMonsterID int64,
 	damageBonus int,
+	damagePercent int,
 ) error {
 	monster, ok := monsters.Get(targetMonsterID)
 	if !ok {
@@ -707,6 +708,10 @@ func performAttack(
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})
 	}
 
+	// A skill's FLAT damage joins the roll here, before mitigation -- the
+	// engine adds it to the rolled bound itself (FUN_0040db50 reads the attack
+	// descriptor's +0x8 for the minimum and +0xc for the maximum). Its
+	// PERCENTAGE does not; that lands after mitigation, below.
 	raw := base + damageBonus
 	// The game's own mitigation shape: a percentage reduction plus a flat
 	// term, not the flat subtraction this used to do. The percentage is REAL
@@ -719,7 +724,10 @@ func performAttack(
 	blow := resolveBlow(raw, monster.DefensePercent, monster.Defense,
 		attackerCritical(ctx, characterID, eq, items), monster.Block,
 		playerLevel, monster.Level)
-	net := blow.Damage
+	// A skill's percentage applies HERE, after mitigation and the clamp, not
+	// to the raw roll -- see combat.ApplySkillPercent for the disassembly. A
+	// plain attack passes 0 and is unchanged.
+	net := combat.ApplySkillPercent(blow.Damage, damagePercent)
 	playerCrit := blow.Critical
 	// Berserk multiplies the blow AFTER mitigation, which is the order
 	// Formula_MitigatePhysicalDamage uses: it divides by the percentage term,
