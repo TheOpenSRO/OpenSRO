@@ -2908,3 +2908,60 @@ That is exactly the failure from two entries ago, repeated. `&&` between a
 redirect and a commit does not couple them — the redirect's failure is reported
 by the shell and the commit runs anyway. Write the ledger from the repo root, or
 check `git show --stat` before pushing.
+
+## Attack rate and parry are DEAD params (2026-09-15)
+
+`combat.MitigateDamage` floors a blow at 1 rather than the game's 0, and the
+note explaining why said: a zero-damage hit is a miss in the real game, and
+srrevamp "has no hit/evade roll yet (the `'hra'`/`'era'` params exist and are
+unimplemented)". That reads as a gap waiting to be filled, and it is the kind of
+claim this file exists to check.
+
+**There is no roll to implement.** Params 9 (`'era'`, parry rate) and 11
+(`'hra'`, attack rate) are published from four different places —
+`Char_PublishCombatStats` from the equipped item's aggregate,
+`GObjMob_PublishStats` from characterdata, `GObjPC_InitStats` with a base of
+10.0 (`.rdata 0x00b45b44`), and the skill codes `er`/`terd`/`thrd` — and then
+read by **nothing**.
+
+### How the negative was made safe
+
+A literal-argument census is exactly the probe that has produced four false
+negatives in this project, so it was not trusted on its own. Every `GetParam`
+call site in the binary was enumerated, literal and computed:
+
+- **Literal ids present:** 1–8, 10, 12, 23, 24, 27–32, 56, 57, 140–150, 169,
+  172, 173, 178–181, 184, 187–193, 259. Neither 9 nor 11.
+- **Computed ids**, each resolved rather than waved at: `FUN_0040db50` reads
+  `(edi != 0) + 0xd` → 13/14; `FUN_0040dc10` reads `(edi != 0) + 0xf` → 15/16;
+  `Formula_MitigatePhysicalDamage` and its twin read 0x80/0x81; `FUN_0040ebe0`
+  and `FUN_0040eef0` read 0x80/0x81 and 0x82/0x83. None is 9 or 11.
+- The remaining ~100 non-literal hits are a three-argument call on a
+  **different class's** vtable slot `0x104`, in quest code — not GetParam.
+
+That 13/14 are also absent from the literal list is what makes the census
+trustworthy here: the probe demonstrably misses computed reads, which is why
+every computed read was resolved before the absence was believed.
+
+### What the engine rolls instead
+
+`Combat_ResolveDamage` reads exactly four combat params through GetParam: 12
+(`'cri'`) and 10 (`'bri'`) off the attacker and defender, opposed by 57
+(`'evcr'`) and 56 (`'evbl'`). Blocking and critical — and nothing else. **A
+swing is resolved as blocked or not, never as a miss.**
+
+Both are already modelled here, and both are correctly unopposed against
+monsters: `GObjMob_PublishStats` publishes params 0, 3–12, 23, 24, 27–33 and
+140, so neither 56 nor 57 exists on a monster. That was already recorded for
+`'evcr'` when criticals were shipped; it holds for `'evbl'` for the same reason.
+
+### What moved
+
+Nothing numeric. The floor stays 1 and stays own design — but its justification
+changes from "a mechanic we have not built yet" to "a mechanic the game does not
+have", which is the difference between a gap and a decision. `MitigateDamage`'s
+comment carries the enumeration.
+
+This also closes the last open question about the `'hra'`/`'era'` pair, which
+this file has carried since the tag vocabulary was first read: they are real
+columns, really published, and vestigial in this build.

@@ -129,10 +129,25 @@ type Monster struct {
 // attacker's -- a stat that weakens your own blows is not a stat. It is the
 // defender's.
 //
-// The floor stays at 1 here rather than the game's 0, because a zero-damage hit
-// in the real game is a miss, and srrevamp has no hit/evade roll yet (the
-// 'hra'/'era' params exist and are unimplemented). That floor is own design,
-// disclosed.
+// The floor stays at 1 here rather than the game's 0. That is own design and
+// disclosed -- but the REASON has been corrected: an earlier note here said a
+// zero-damage hit is a miss in the real game and that srrevamp "has no
+// hit/evade roll yet", implying one was waiting to be implemented.
+//
+// There is no such roll to implement. ParamKeeper params 9 ('era', parry rate)
+// and 11 ('hra', attack rate) are published -- by Char_PublishCombatStats from
+// the item aggregate, by GObjMob_PublishStats from characterdata, by
+// GObjPC_InitStats with a base of 10.0, and by three skill codes -- and then
+// read by NOTHING. Every GetParam call in the binary was enumerated, literal
+// and computed alike (the computed ones resolve to 13/14, 15/16, and
+// 0x80-0x83), and neither 9 nor 11 appears among them.
+//
+// What the engine actually rolls in Combat_ResolveDamage is blocking (param 10,
+// 'bri') opposed by 56 ('evbl'), and critical (12, 'cri') opposed by 57
+// ('evcr') -- both of which this project already models, and both of which are
+// unopposed against monsters because GObjMob_PublishStats publishes neither 56
+// nor 57. So srrevamp is not missing a hit/miss mechanic; the game resolves a
+// swing as blocked or not, never as a miss.
 func MitigateDamage(raw, reductionPercent, flat int) int {
 	if reductionPercent < 0 {
 		reductionPercent = 0
