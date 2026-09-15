@@ -114,9 +114,9 @@ separates game logic from library code.
 
 | | game-logic fns | % of binary | named | attributed | identified | of game logic |
 |---|---|---|---|---|---|---|
-| `SR_GameServer.exe` | 29,554 | 95.6% | 633 | 669 | **1,302** | **4.4%** |
-| `sro_client.exe` | 36,457 | 91.5% | 681 | 3,016 | **3,697** | **10.1%** |
-| **combined** | **66,011** | **93.3%** | 1,314 | 3,685 | **4,999** | **7.6%** |
+| `SR_GameServer.exe` | 29,554 | 95.6% | 633 | 1,215 | **1,848** | **6.3%** |
+| `sro_client.exe` | 36,457 | 91.5% | 681 | 5,293 | **5,974** | **16.4%** |
+| **combined** | **66,011** | **93.3%** | 1,314 | 6,508 | **7,822** | **11.8%** |
 
 **The "most of it is CRT and STL" assumption was wrong, and it was measured
 rather than argued.** An earlier note in this file said the real denominator
@@ -160,12 +160,18 @@ is the weaker side at 4.4% and it is where the gameplay lives.
 
 **The population nothing reaches:** 18,522 game-logic functions have no direct
 caller. They are virtuals, and every call-graph lever steps past them.
-`VtableAttribute.java` is the answer to that and now annotates 5,225 of them
-with their table and slot — the fact this project has re-derived by hand four
-times (slots 92 exp-gain, 93 SP-adder, 73 GetLevel, 421 GiveExp). Its
-*attribution* yield is near zero today because too few vtable slots are
-pre-attributed to vote with; it compounds as other levers seed namespaces, and
-should be re-run after each of them.
+`VtableAttribute.java` is the answer to that and annotates 5,225 of them with
+their table and slot — the fact this project has re-derived by hand four times
+(slots 92 exp-gain, 93 SP-adder, 73 GetLevel, 421 GiveExp).
+
+**The levers compound, and that is the main finding of 2026-09-15.** Run once
+each they returned little; run as an ordered chain they returned a lot, because
+each one's output is the next one's seed. On the server: interpolating 218 gaps
+let `PropagateModules` find **175 more** by call-graph unanimity, and the richer
+namespace set then let the vtables vote for **149** where they had managed 13
+before. Combined identified went 5,055 → **7,822** (7.6% → 11.8%) in a single
+chained pass. The order is in `client/tools/ghidra/README.md`; `VtableAttribute`
+belongs last and wants re-running after every other lever.
 
 ## How to work this file## How to work this file
 
