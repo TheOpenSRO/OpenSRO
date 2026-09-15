@@ -41,11 +41,17 @@ Ordered by value. Each line names the next concrete probe, so a cold start can
 pick one up without re-deriving anything.
 
 1. **Monster EXP per kill** — currently disclosed `ExpFor = maxHP`. Exp-gain is
-   vtable slot 92 (offset 0x170); `FUN_004eac40` is the `GiveExp` wrapper.
-   *Next probe:* find the kill-reward caller that computes the amount — start
-   from `FUN_004e6980` (reads the killer's SP at `charData+0x80`, passes a
-   negative delta to slot 93) and from `FUN_004105d0` (level-difference
-   exp/SP formula in Formulae.cpp).
+   vtable slot 92 (offset 0x170); `FUN_004eac40` is the `GiveExp` wrapper, and
+   it is virtual too, so there is no direct caller to read.
+   **Narrowed 2026-09-15:** `FUN_004105d0` (Formulae.cpp) is the reward formula
+   and it works from a **level-table lookup** (`FUN_00411130`) plus two
+   level-difference modifiers (`FUN_0040fed0`, `FUN_0040ffe0`) — it does not
+   touch characterdata at all. That fits the earlier proof that nothing reads
+   characterdata col 79: the server computes a kill's worth from the LEVEL
+   table, and col 79 is a per-species copy it ignores. *Next probe:* find which
+   level-entry field the reward reads. Careful — a grep for `+ 0x1c)` in that
+   region matches **vtable calls**, not field reads, and briefly looked like a
+   hit. Read the actual statements.
 2. **Player MaxHP/MaxMP base** — the 1.02 growth is real, the base is ours.
    *Next probe:* the base is whatever fills ParamKeeper **slot 0** for the
    `'hp'`/`'mp'` params; find the `FUN_004b3510(0, …)` push that targets them
@@ -64,8 +70,17 @@ pick one up without re-deriving anything.
    monsters). Likely genuinely absent; prove it and it stops counting as open.
 7. **Quest objectives** — proven not to exist as data; any objectives shipped
    must be own design. Closed as a *recovery*, not a gap.
-8. **Loot tables** — real item IDs, own-design assignment. Real tables key by
-   `RefMonsterID`; *next probe:* find the name→ID mapping.
+8. **Loot tables** — **CLOSED as a proven absence (2026-09-15).** The mapping
+   question was a non-issue: `RefMonsterID` *is* characterdata col 1 (Mangyang
+   = 1933), which we already carry. The blocker is the data. The drop classes
+   are real in the binary (`CRefMonster_AssignedItemRndDrop`,
+   `CRefDropItemGroup`, `CRefDropItemAssign`) but **no drop table exists in any
+   artifact this project has** — not in Media.pk2, not in the server's
+   `SR_GameRefData/`, nowhere in the y0gi bundle (the only files matching
+   "drop" are meshes for the falling-loot visuals). It lives in the server's
+   SQL database. So per-monster drops stay own design *by necessity*, and
+   become real the moment an operator brings that table — the schema and the
+   key are both already in place.
 9. **Inventory size (50)**, **unarmed damage (5)** — ours; low value, may be
    genuinely absent.
 
