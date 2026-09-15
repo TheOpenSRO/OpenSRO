@@ -165,3 +165,30 @@ identifier is unknown, the name says what the function *does* rather than
 inventing what Joymax might have called it. Separate tables for the server and
 the client, chosen by program name. It never overwrites a name that came from
 the binary's own assert strings.
+
+## LabelFromUIStrings.java `[apply] [minIdsForModule]`
+
+**The client does not name its UI functions, but it does name its TEXT.** Every
+label, message and control caption is fetched by an authored id —
+`UIIT_STT_ALCHEMYBOX_TIP_DISMANTLING_BUTTON`, `UIIT_MSG_…`, `UIIT_CTL_…`,
+`UIO…` — and those ids sit in the binary as wide string literals. A function
+that asks for one is, with certainty, the code behind that piece of interface.
+597 functions cite at least one.
+
+Same move as `NamespaceFromSourceFile.java`, on a different fact the binary
+states about itself. It produces two things and deliberately keeps them apart,
+because they are not equally certain:
+
+- **A plate comment** on all 597, listing the ids verbatim. Pure fact, no
+  interpretation — and the reason to run it: a reader of the dump lands in an
+  unnamed function and immediately knows which window they are in.
+- **A `UI_<module>` namespace**, but only where the evidence is a pattern rather
+  than a coincidence: at least two *distinct* ids agreeing on a first segment,
+  with none disagreeing. One `UIIT_STT_ACCEPT` earns nothing, because "ACCEPT"
+  is a word, not a window; three `UIIT_STT_ALCHEMYBOX_*` earn `UI_ALCHEMYBOX`,
+  because that is a place. 140 functions across 48 modules qualify — SILKMALL,
+  ALCHEMYBOX, FORT, PARTYMATCH, GUILD, LETTER, SOCKET, ARENA, WORLDMAP.
+
+**Deliberately not done: naming a function after its label.** "the function that
+mentions `UIIT_STT_ACCEPT`" is not the same claim as "the accept handler", and
+this project does not ship the second when it has only measured the first.

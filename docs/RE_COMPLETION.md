@@ -104,6 +104,32 @@ pick one up without re-deriving anything.
 7. **Inventory size (50)**, **unarmed damage (5)** — ours; low value, may be
    genuinely absent.
 
+## Naming coverage
+
+Measured by `SymbolReport.java`, which counts three states separately because
+two of them are different kinds of knowing: **NAMED** (a real name, from FID, an
+assert spelling out `Class::Method`, or applied by hand with evidence),
+**ATTRIBUTED** (still `FUN_xxxxxxxx`, but in a namespace derived from a fact the
+binary states about itself — the `__FILE__` it asserts with, the authored UI
+string ids it fetches, or call-graph unanimity), and **UNKNOWN**.
+
+| | named | attributed | identified | of total |
+|---|---|---|---|---|
+| `SR_GameServer.exe` | 1,052 | 702 | **1,754** | 5.7% of 30,922 |
+| `sro_client.exe` | 1,222 | 3,131 | **4,353** | 10.9% of 39,851 |
+
+**6,107 of 70,773 (8.6%)**, up from 4.0% at the start of 2026-09-15. The levers
+used, in order of what they returned: call-graph attribution
+(`PropagateModules.java`, +3,131 across both), authored UI string ids
+(`LabelFromUIStrings.java`, +140 namespaced and 597 commented), `__FILE__`
+asserts (`NamespaceFromSourceFile.java`, 760 seeds), Ghidra FID (506 on the
+server), and hand-proven names with citations (~30).
+
+**A caveat on the denominator.** Most of a stripped MSVC binary is CRT and STL
+template instantiations, not game logic, so 70,773 is not the number that
+matters — the meaningful denominator is much smaller and has not been measured.
+Until it is, this percentage says less than it looks like it does.
+
 ## How to work this file
 
 Pick the top open item, run its next probe against the dumps (grep, don't
