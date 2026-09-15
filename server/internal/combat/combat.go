@@ -99,6 +99,66 @@ type Monster struct {
 // in the real game is a miss, and srrevamp has no hit/evade roll yet (the
 // 'hra'/'era' params exist and are unimplemented). That floor is own design,
 // disclosed.
+// LevelAdvantagePerLevel and LevelAdvantageCap are the real level-difference
+// damage term: an attacker who out-levels its target hits harder, 3% per level
+// and no more than 30%.
+//
+// RECOVERED 2026-09-15 from Formula_MitigatePhysicalDamage (0040e450), which
+// ends with
+//
+//	defLvl = Char_GetLevel(defender);  atkLvl = Char_GetLevel(attacker)
+//	if defLvl < atkLvl { damage = (FUN_0040fd60() + 1.0) * damage }
+//
+// and FUN_0040fd60, disassembled because the decompiled register arguments are
+// ambiguous about which level is subtracted from which:
+//
+//	MOV EDX,[EAX + 0x124] ; CALL EDX ; MOVZX ESI,AL   <- level(ECX)
+//	MOV EDX,[EAX + 0x124] ; CALL EDX ; MOVZX EAX,AL   <- level(EDI)
+//	SUB ESI,EAX                                       <- level(ECX) - level(EDI)
+//	FMUL double [0x00b45dc8]                          <- * 0.03
+//	FLDZ / FCOM                                       <- clamped at 0 below
+//	... and at 0.3 above (float 0x00b45b8c)
+//
+// Which of the two objects is the attacker is settled by an independent fact
+// rather than by the argument order: the same function reads the DEFENCE
+// params 5 and 7 off the other one, and this project already established that
+// those are the target's (GObjMob_PublishStats publishes characterdata cols 71
+// and 73 into exactly them). So the object whose level is subtracted FROM is
+// the attacker, and the bonus favours out-levelling.
+//
+// ORDER: the game applies this after mitigation and after the berserk
+// multiplier, which is the last thing it does to the number before rounding.
+const (
+	LevelAdvantagePerLevel = 0.03
+	LevelAdvantageCap      = 0.30
+)
+
+// LevelAdvantage is the multiplier an attacker of attackerLevel gets against a
+// defender of defenderLevel: 1.0 when it does not out-level the target, rising
+// 3% per level to a maximum of 1.3.
+func LevelAdvantage(attackerLevel, defenderLevel int) float64 {
+	d := attackerLevel - defenderLevel
+	if d <= 0 {
+		return 1
+	}
+	bonus := float64(d) * LevelAdvantagePerLevel
+	if bonus > LevelAdvantageCap {
+		bonus = LevelAdvantageCap
+	}
+	return 1 + bonus
+}
+
+// ApplyLevelAdvantage scales a already-mitigated blow by LevelAdvantage. A
+// blow never drops below 1 -- the same floor MitigateDamage keeps, and this
+// term only ever multiplies up, so the floor is just carried through.
+func ApplyLevelAdvantage(damage, attackerLevel, defenderLevel int) int {
+	out := int(math.Round(float64(damage) * LevelAdvantage(attackerLevel, defenderLevel)))
+	if out < 1 {
+		out = 1
+	}
+	return out
+}
+
 func MitigateDamage(raw, reductionPercent, flat int) int {
 	if reductionPercent < 0 {
 		reductionPercent = 0

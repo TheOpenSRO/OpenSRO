@@ -622,3 +622,116 @@ func TestMonsterListFlow(t *testing.T) {
 		t.Fatalf("attack using discovered id: err=%v result=%+v", err, ar)
 	}
 }
+
+// TestLevelAdvantageAppliedInCombat proves the recovered level-difference term
+// actually reaches a real fight, in both directions, through the whole stack.
+//
+// The unit tests in internal/combat pin the formula; this pins the WIRING,
+// which is the part that silently does nothing if a level never reaches the
+// call. It matters here because the term is guarded on both levels being
+// known, and every other integration fixture spawns a level-less monster.
+//
+// Level 11 monster against the level-1 starting character:
+//
+//	player's blow  30 attack, mitigated by the monster's own level as the
+//	               percentage (11) and its flat 10: round(30/1.11) - 10 = 17,
+//	               and NO level bonus, because the player is out-levelled.
+//	counterattack  15 flat, no armour, and the monster DOES out-level the
+//	               player -- by 10, which is exactly the cap: 15 * 1.30 = 19.5,
+//	               rounded to 20.
+func TestLevelAdvantageAppliedInCombat(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+
+	items := stubCombatItems{100: {ID: 100, PhysAttackMax: 30}}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	if err := inv.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating inventory: %v", err)
+	}
+	if err := inv.AddItem(ctx, c.ID, 100, 1); err != nil {
+		t.Fatalf("seeding inventory: %v", err)
+	}
+
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	if err := eq.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating equipment: %v", err)
+	}
+	if err := eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0); err != nil {
+		t.Fatalf("equipping weapon: %v", err)
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	// AttackMin/Max left zero so the counterattack is the flat 15 and the
+	// assertion does not depend on a dice roll.
+	monster := monsters.SpawnSpecies("jangan",
+		combat.Species{Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", Level: 11},
+		0, 0, 0, 500, 10, 15, 0)
+
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	if err := quests.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating quests: %v", err)
+	}
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	if ewr, err := DecodeEnterWorldResult(send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode()).Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	ar, err := DecodeAttackResult(send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode()).Data)
+	if err != nil {
+		t.Fatalf("DecodeAttackResult: %v", err)
+	}
+	if ar.Error != "" {
+		t.Fatalf("attack refused: %s", ar.Error)
+	}
+	if ar.MonsterDamage != 17 {
+		t.Errorf("player's blow = %d, want 17 (out-levelled, so no bonus)", ar.MonsterDamage)
+	}
+	if ar.PlayerDamageTaken != 20 {
+		t.Errorf("counterattack = %d, want 20 (15 * the capped 1.30)", ar.PlayerDamageTaken)
+	}
+}

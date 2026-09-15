@@ -755,6 +755,63 @@ Also named, with no tag counterpart found yet: `PARAM_PA` "Phy. atk. pwr.",
 `PARAM_PD` "Phy. def. pwr.", `PARAM_MA` "Mag. atk. pwr.", `PARAM_MD`
 "Mag. def. pwr.", `PARAM_ABSORB` "Absorption".
 
+## What "attack rate" actually does, and the damage dice (2026-09-15)
+
+The standing item was "crit/block/hit rolls — values recovered, dice not". The
+dice are recovered, and **attack rate turns out not to be a hit/miss roll at
+all**.
+
+`Formula_MitigatePhysicalDamage` opens by calling `FUN_0040dce0`, which is where
+a blow's size is decided:
+
+```
+lo, hi  = GetParam(13), GetParam(14)     each scaled by (1 + bonus%/100)
+centre% = clamp( ((hra/era) * 0.5 + levelTerm) * 100 , 10 , 90 )
+p       = min(u1, u2, u3)                ui = rand()/32767 * 100
+damage% = centre% ± p                    fair coin, then clamped to [0, 100]
+damage  = lo + damage%/100 * (hi - lo)
+```
+
+`hra` is param 11 (**attack rate**, on the attacker) and `era` param 9 (**parry
+rate**, on the defender) — the two the client's own `textuisystem.txt` named.
+So attack-rate-versus-parry sets **where in the damage range the blow lands**,
+never below 10% nor above 90% of it. The excursion `p` is the **minimum of
+three uniform samples**, heavily biased toward zero, so blows cluster near the
+centre: the distribution is not uniform.
+
+`_DAT_00b45af8 = 32767.0` is `RAND_MAX`, and that is the check on the whole
+reading — `rand()/32767 * 100` is only a uniform percentage if every other
+constant in the expression was read at the right width. Clamps are floats 10.0
+/ 90.0; the `hra/era` scale is the double 0.5; the level factor is the double
+0.03 at `0x00b45dc8`.
+
+**Crit and block** use the engine's opposed-stat idiom, computed in
+`Combat_ResolveDamage` and stored into a struct at `+0xc` / `+0xe`:
+
+```
+effective crit  = attacker 'cri' (12) / (1 + defender 'evcr' (57)/100)
+effective block = attacker block     / (1 + defender 'evbl' (56)/100)
+```
+
+**Nothing was rewired from the distribution, deliberately.** It is a *second*
+roll, on params 13/14, distinct from `Formula_RollWeaponDamage` (uniform,
+`rand() % (max-min+1) + min`, params 190/191) which `combat.RollDamage` already
+implements correctly and which `Combat_ResolveDamage` also calls. srrevamp has
+no attack-rate or parry-rate stat, so porting the centre would mean inventing
+its only input.
+
+**One piece was wireable and is now shipped (v0.1.163).** The same formula ends
+with `if defLvl < atkLvl { damage = (levelTerm + 1.0) * damage }` where
+`levelTerm = clamp((level(ECX) - level(EDI)) * 0.03, 0, 0.3)` — so out-levelling
+the target is worth **+3% a level, capped at +30%**. Which object is the
+attacker was settled on the disassembly (`SUB ESI,EAX` after two
+`Char_GetLevel` calls) *plus* an independent fact: the other object supplies
+defence params 5 and 7, which this project already established are the
+*target's* (cols 71/73 via `GObjMob_PublishStats`). Applied last — after
+mitigation and after the berserk multiplier — and in both directions, since a
+monster is the attacker in its own counterattack. Guarded on both levels being
+non-zero, because a zero means "not set", not "level zero".
+
 **The tag → ParamKeeper-id map, harvested wholesale (2026-09-15).** The tags
 above are names; this is where each one *writes*. Extracted by grepping the 21
 tag dispatchers for `in_EAX == 0x…` beside `ResolveRegArg.java`'s own

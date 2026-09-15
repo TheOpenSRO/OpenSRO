@@ -7075,6 +7075,65 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-seventy-ninth round: what "attack rate" actually does
+
+The open item read "crit/block/hit rolls — values recovered, dice not". The
+dice are recovered now, and the surprise is that **attack rate is not a
+hit/miss roll at all**.
+
+`Formula_MitigatePhysicalDamage` opens by calling `FUN_0040dce0`, and that is
+where a blow's size is decided:
+
+```
+lo, hi  = GetParam(13), GetParam(14)     each scaled by (1 + bonus%/100)
+centre% = clamp( ((hra/era) * 0.5 + levelTerm) * 100 , 10 , 90 )
+p       = min(u1, u2, u3)                ui = rand()/32767 * 100
+damage% = centre% ± p                    fair coin, then clamped to [0, 100]
+damage  = lo + damage%/100 * (hi - lo)
+```
+
+`hra` is param 11 (**attack rate**) on the attacker and `era` is param 9
+(**parry rate**) on the defender — the two stats the client's own
+`textuisystem.txt` named for us two rounds ago. So the attacker's attack rate
+against the defender's parry sets **where in the weapon's damage range the blow
+lands**, clamped so it is never below 10% nor above 90% of the range. Missing
+is not modelled here at all.
+
+The excursion `p` is the **minimum of three uniform samples**, which is heavily
+biased toward zero — so blows cluster near the centre and only occasionally
+reach the ends. The distribution is not uniform.
+
+`_DAT_00b45af8 = 32767.0` is `RAND_MAX`, which is the check that this reading is
+right: `rand()/32767 * 100` is a uniform percentage, and that only makes sense
+if every other constant in the expression has been read at the right width.
+The clamps are floats 10.0 and 90.0; the `hra/era` scale is the double 0.5.
+
+**Nothing was rewired from this**, deliberately. This is a *second* roll, on
+params 13/14, distinct from `Formula_RollWeaponDamage` (uniform,
+`rand() % (max-min+1) + min` on params 190/191) which is what this project's
+`combat.RollDamage` already implements correctly and which `Combat_ResolveDamage`
+also calls. srrevamp has no attack-rate or parry-rate stat, so porting the
+centre would mean inventing its only input.
+
+**One piece of it was wireable, and is now wired.** The same formula ends with
+
+```
+if defLvl < atkLvl { damage = (levelTerm + 1.0) * damage }
+levelTerm = clamp((level(ECX) - level(EDI)) * 0.03, 0, 0.3)
+```
+
+so out-levelling the target is worth **+3% a level, capped at +30%**. Which
+object is the attacker was settled on the disassembly (`SUB ESI,EAX` after two
+`Char_GetLevel` calls) plus an independent fact: the other object is the one
+supplying defence params 5 and 7, which this project already established are
+the *target's* (cols 71/73 via `GObjMob_PublishStats`). Applied last, after
+mitigation and after the berserk multiplier — and applied in both directions,
+since a monster is the attacker in its own counterattack.
+
+Guarded on both levels being non-zero: a zero means "not set", not "level
+zero", and without that guard a level-1 character would collect a 3% bonus
+against every fixture whose level was simply never filled in.
+
 ## Hundred-and-seventy-eighth round: berserk doubles the blow, and always did
 
 Berserk's damage was `+50%`, this project's own disclosed design, because three

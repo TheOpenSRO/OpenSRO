@@ -593,6 +593,15 @@ func performAttack(
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})
 	}
 
+	// Both sides' levels, for the level-advantage term below and for the
+	// monster's counterattack. A store that cannot answer leaves playerLevel
+	// at zero and the term is simply skipped -- it only ever scales damage
+	// up, so missing it costs nobody anything.
+	playerLevel := 0
+	if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
+		playerLevel = c.Level
+	}
+
 	raw := base + damageBonus
 	// The game's own mitigation shape: a percentage reduction plus a flat
 	// term, not the flat subtraction this used to do. The percentage is REAL
@@ -609,6 +618,16 @@ func performAttack(
 	// of which quietly scales the defence away and over-pays berserk.
 	if zerk != nil {
 		net = zerk.Boost(characterID, net)
+	}
+	// Out-levelling the target hits harder: +3% a level, capped at +30%. Real,
+	// and applied here because the game applies it last -- after mitigation and
+	// after the berserk multiplier. See combat.LevelAdvantage.
+	//
+	// Both levels must be known. A zero is "not set", not "level zero", and
+	// treating it as a level would hand a level-1 attacker a 3% bonus against
+	// anything whose level simply was not filled in.
+	if playerLevel > 0 && monster.Level > 0 {
+		net = combat.ApplyLevelAdvantage(net, playerLevel, monster.Level)
 	}
 
 	updated, monsterDied, ok := monsters.ApplyDamage(targetMonsterID, net)
@@ -716,6 +735,13 @@ func performAttack(
 		incoming := raw - armor
 		if incoming < 1 {
 			incoming = 1
+		}
+		// The same level-advantage term, with the roles swapped: the monster
+		// is the attacker in its own counterattack, so a monster that
+		// out-levels the player hits harder for it. The formula is one
+		// function and does not care which side is a player.
+		if playerLevel > 0 && monster.Level > 0 {
+			incoming = combat.ApplyLevelAdvantage(incoming, monster.Level, playerLevel)
 		}
 		hp, playerDied, err := chars.ApplyDamage(ctx, characterID, incoming)
 		if err != nil {

@@ -1,6 +1,7 @@
 package combat
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 )
@@ -241,5 +242,60 @@ func TestRollGold(t *testing.T) {
 	// A nil generator takes the maximum, keeping callers deterministic.
 	if got := RollGold(28, 59, 0, nil); got != 59 {
 		t.Fatalf("RollGold with a nil source = %d, want the max 59", got)
+	}
+}
+
+// The level-advantage term, pinned to its citation.
+//
+// Formula_MitigatePhysicalDamage (0040e450) ends with
+// `if defLvl < atkLvl { damage = (FUN_0040fd60() + 1.0) * damage }`, and
+// FUN_0040fd60 is `clamp((level(ECX) - level(EDI)) * 0.03, 0, 0.3)` -- read off
+// the disassembly because the decompiled register arguments do not say which
+// level is subtracted from which. 0.03 is the double at .rdata 0x00b45dc8 and
+// the 0.3 ceiling is the float at 0x00b45b8c.
+func TestLevelAdvantage(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		atk, def int
+		want     float64
+	}{
+		{"same level is no bonus", 10, 10, 1.00},
+		{"being out-levelled is no penalty", 5, 20, 1.00},
+		{"one level up is 3%", 11, 10, 1.03},
+		{"five levels up is 15%", 15, 10, 1.15},
+		{"ten levels up hits the cap", 20, 10, 1.30},
+		{"beyond the cap stays capped", 99, 1, 1.30},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := LevelAdvantage(tc.atk, tc.def)
+			if math.Abs(got-tc.want) > 1e-9 {
+				t.Errorf("LevelAdvantage(%d, %d) = %g, want %g", tc.atk, tc.def, got, tc.want)
+			}
+		})
+	}
+}
+
+// The constants themselves, so a later "let's tune it" edit has to delete a
+// citation to do it.
+func TestLevelAdvantageConstantsAreTheRecoveredOnes(t *testing.T) {
+	if LevelAdvantagePerLevel != 0.03 {
+		t.Errorf("per-level = %g, want 0.03 (.rdata 0x00b45dc8)", LevelAdvantagePerLevel)
+	}
+	if LevelAdvantageCap != 0.30 {
+		t.Errorf("cap = %g, want 0.30 (.rdata 0x00b45b8c)", LevelAdvantageCap)
+	}
+}
+
+// ApplyLevelAdvantage scales an already-mitigated blow and never rounds a hit
+// away to nothing.
+func TestApplyLevelAdvantage(t *testing.T) {
+	if got := ApplyLevelAdvantage(100, 20, 10); got != 130 {
+		t.Errorf("capped bonus on 100 = %d, want 130", got)
+	}
+	if got := ApplyLevelAdvantage(100, 10, 10); got != 100 {
+		t.Errorf("no advantage must not change the blow, got %d", got)
+	}
+	if got := ApplyLevelAdvantage(1, 1, 50); got != 1 {
+		t.Errorf("a minimum hit stays 1, got %d", got)
 	}
 }
