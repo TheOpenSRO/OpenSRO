@@ -69,6 +69,21 @@ public class ApplyKnownNames extends GhidraScript {
         {"004b3130", "Param_PropagateToDependents",
          "Called by StoreSlot after a value changes: walks the dependent list and pushes the new "
          + "value into each target's registered slot. This is what makes the graph evaluate."},
+        {"00498690", "Stat_ApplyTaggedModifier",
+         "Applies one tagged stat modifier: the tag is a C multi-char literal in EAX, the amount "
+         + "in param_2. THIS IS THE id->name TABLE the binary otherwise lacks -- there is no data "
+         + "table anywhere, but each branch of this dispatcher pushes into a specific ParamKeeper "
+         + "id and slot, so the enum can be read off the code. Verified against the equality "
+         + "branches only (the compiler builds a binary-search tree, and its '<' comparisons will "
+         + "pair a tag with the wrong branch if you match them): 'int'->2, 'hp'/'hpa'->3, "
+         + "'mp'/'mpa'->4, 'era'->9 slot 1, 'bri'->10, 'hra'->11 slot 1, 'cri'->12, 'hprg'->25, "
+         + "'mprg'->26, 'rals'->27, 'hpna'->52, 'mpna'->53, 'evbl'->56, 'evcr'->57. Slot 1 is the "
+         + "additive percent, slot 0 the base."},
+        {"00497830", "Char_PublishCombatStats",
+         "Copies the character's precomputed aggregate combat block into the keeper: obj[0x66]->5, "
+         + "[0x67]->9, [0x68]->7, [0x69]->10, [0x6a]->6, [0x6b]->8, then 13/14, 15/16, 11/12 and "
+         + "the movement pair 23/24. The aggregate itself is built elsewhere; this only publishes "
+         + "it."},
         {"004b3830", "ParamKeeper_GetParam",
          "Reads a param's current value by id. The id is in AX (MOVZX EAX,AX), the keeper in ECX; "
          + "indexes [ECX + id*4 + 4] and returns 0.0 when the param was never created. Only four "

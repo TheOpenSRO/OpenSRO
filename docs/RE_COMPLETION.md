@@ -31,7 +31,8 @@ which is itself a recovery — quest objectives are the model for that.
 | Armour/shield defence | `itemdata` cols 63/65-66/74-75/76-77 |
 | Potion restore amounts | `itemdata` Param block cols 118/120/122/124 (self-labelling) |
 | **Player MaxHP / MaxMP (whole formula)** | `Str×10×1.02^(lvl−1)` / `Int×10×1.02^(lvl−1)` — `GObjPC_InitStats` graph, `.rdata 0x00b462ac`=1000, `0x00b45ea0`=1.02 |
-| ParamKeeper ids 0/1/2/3/4 = Level/Str/Int/MaxHP/MaxMP | `GObjPC_InitStats` pushes `charData+0x65/+0x74/+0x76`; `GObjMob_PublishStats` pushes `refobj+0x19c`/`+0x1a0` |
+| ParamKeeper ids 0/1/2/3/4 = Level/Str/Int/MaxHP/MaxMP | `GObjPC_InitStats` pushes `charData+0x65/+0x74/+0x76`; `GObjMob_PublishStats` pushes `refobj+0x19c`/`+0x1a0`; and `Stat_ApplyTaggedModifier` maps `'int'`→2, `'hp'`→3, `'mp'`→4 independently |
+| **Monster `characterdata` cols 75–78** | `'era'`→9, `'bri'`→10, `'hra'`→11, `'cri'`→12 from `Stat_ApplyTaggedModifier`; real data: col 76 = **0** for every monster, cols 75 = 77 = **2·level+25**, col 78 = **2** |
 | Stat points per level (3) | real character window |
 | Quest identity, chain, descriptions, rewards | `questdata`, `questcontentsdata` cols 3/5-12, `refquestrewarditems` |
 | Quest objectives are NOT data | proven absent: no objective refdata class; `_CHARQUEST` is status+count |
@@ -53,48 +54,45 @@ pick one up without re-deriving anything.
    level-entry field the reward reads. Careful — a grep for `+ 0x1c)` in that
    region matches **vtable calls**, not field reads, and briefly looked like a
    hit. Read the actual statements.
-2. **Monster defence / attack / gold** — disclosed curve.
-   **Sharpened twice, 2026-09-15.** The mob stat publisher `GObjMob_PublishStats`
-   is now fully readable: the dump carries each push's ParamKeeper id inline, and
-   joining that to the already-settled characterdata column map gives
+2. **Monster attack/defence — half closed (2026-09-15).** Four of the eight
+   combat columns are now grounded by **the game's own tag names**, and the
+   remaining four are isolated.
 
-   | refobj | column | param | what a PC derives it from |
-   |---|---|---|---|
-   | `0x230` | 71 | 5 | Str (via 21) |
-   | `0x234` | 72 | 6 | Int (via 22) |
-   | `0x238` | 73 | 7 | — |
-   | `0x23c` | 74 | 8 | — |
-   | `0x240` | 75 | 9 | Level |
-   | `0x244` | 76 | 10 | — |
-   | `0x248` | 77 | 11 | Level |
-   | `0x24c` | 78 | 12 | — |
+   The id→name table does exist after all — not as data, as **code**.
+   `Stat_ApplyTaggedModifier` (`00498690`) takes a stat tag as a C multi-char
+   literal in EAX and dispatches to a specific ParamKeeper id and slot, so the
+   enum can be read straight off the branches. Verified **equality branches
+   only**: the compiler compiles the dispatch as a binary-search tree, and its
+   `<` comparisons will happily pair a tag with the wrong branch — the first
+   pass here did exactly that and had to be thrown out.
 
-   Every one of those reads adds 2^32 when negative, so the fields are
-   **unsigned 32-bit**. Against the real `characterdata` (the Jangan ladder,
-   levels 1–12, both anchors re-verified: Yeoha is col 57 = 10, col 59 = 249,
-   col 82 = 3000):
+   | tag | param | slot | col | what the real data does |
+   |---|---|---|---|---|
+   | `'era'` | 9 | 1 (add %) | 75 | 2·level + 25 |
+   | `'bri'` | 10 | 0 (base) | 76 | **0 for every monster** |
+   | `'hra'` | 11 | 1 (add %) | 77 | 2·level + 25 |
+   | `'cri'` | 12 | 0 (base) | 78 | 2 |
 
-   - **col 73 = col 74 = the monster's level, exactly**, every row.
-   - **col 75 = col 77 = 2·level + 25**, every row.
-   - col 76 = 0 and col 78 = 2 for every monster on the ladder.
-   - cols 71/72 rise with level, are per-species, and 71 ≤ 72 always.
+   Also read off the same function: `'int'`→2, `'hp'`/`'hpa'`→3, `'mp'`/`'mpa'`→4
+   (a **third** independent confirmation of MaxHP/MaxMP), `'hprg'`→25,
+   `'mprg'`→26, `'rals'`→27, `'hpna'`→52, `'mpna'`→53, `'evbl'`→56, `'evcr'`→57.
 
-   What that rules out: 71/72 are **not** a min/max pair of one quantity, because
-   the PC graph feeds 5 from **Str** and 6 from **Int** — two different sources.
-   They are a physical/magical pair. Which pair (attack or defence) is still
-   **open**, and the temptation to call it from the shape is exactly the mistake
-   col 79 punished twice.
+   **Careful about what is and is not claimed.** The *tags* are recovered, the
+   *param ids* are proven, and the *data behaviour* is measured. Expanding the
+   mnemonics to English — evasion, block, hit, critical — is the obvious reading
+   and the data supports it (a monster carries no shield, and a block rate of
+   zero for every single one of them is hard to read another way), but it is a
+   **reading**, not a recovery, and should be labelled that way wherever it is
+   used. What srrevamp can use as real, today, is the numbers: monster `'bri'`
+   is 0, `'era'` and `'hra'` are 2·level+25, `'cri'` is 2.
 
-   *Next probe:* the read side, which is the real blocker. `ParamKeeper_GetParam`
-   has only **four** call sites — every other read is inlined with the constant id
-   folded into the displacement, so there is no getter to grep. `Combat_ResolveDamage`
-   does not touch `obj+0x1F0+4N` either (checked: `0x1fc/0x204/0x208/0x21c/0x220`
-   — those offsets are too common to signal anyway), so combat reads stats through
-   something else: find what it is handed. Two angles worth trying first — the
-   stat packet the server builds for the character window (its field order, matched
-   against the client's own authored labels), and params **13–16**, which the PC
-   graph builds as a Str-derived pair (13,14) and an Int-derived pair (15,16) and
-   which therefore look far more like attack min/max than 5/6 do.
+   *Still open:* cols 71/72 → params 5/6 and cols 73/74 → params 7/8. No tag in
+   the dispatcher reaches them, so they are set only from gear and refdata.
+   `Char_PublishCombatStats` (`00497830`) copies them out of a precomputed
+   aggregate at `obj[0x66..0x6b]` (→ 5, 9, 7, 10, 6, 8 in that field order).
+   *Next probe:* find what **writes** `obj[0x66..0x6b]`; that is where a weapon's
+   own damage columns turn into these params, and a weapon is a thing whose
+   itemdata columns this project already knows.
 
 3. **Combat damage model** (base + bonus − defence, no crit/dodge) — ours.
    *Next probe:* `FUN_0058e5f0` is the real damage resolution; `FUN_0040f5f0`
