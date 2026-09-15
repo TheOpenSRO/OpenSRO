@@ -2622,3 +2622,58 @@ use-site. Recorded, not wired.
 **No srrevamp value changed.** The artifact is a decoder: srrevamp reads one of
 these 102 codes today, and the next skill system that needs a second one no
 longer has to re-derive the format.
+
+## The Param decoder, tested against 36,389 real rows (2026-09-15)
+
+The previous entry recovered the skill Param schema but never ran it against
+data. Doing so tests the format and the shipped parser at once.
+
+**The block starts at column 69**, measured: the `att` code appears there in
+30,677 rows and never earlier. Walking from 69 with the recovered run lengths,
+**19,839 of 36,389 rows consume their Param block exactly to the end** — and
+that is a real test of the schema, because one wrong run length derails the rest
+of a row. 19,839 clean traversals are 19,839 independent confirmations of every
+length they touched. The rest stop at a variable-length code, as expected; the
+commonest is `efr`, on 9,534 skills.
+
+The true code frequencies, counted only at verified code positions, are now in
+`docs/protocol/skill_params.md`. `att` leads on 31,266 skills and `mc` (field
+`0x288`, run 3) is second on 28,142 — structural rather than incidental, and
+still unidentified.
+
+### The shipped parser: a defect looked for, and disproved
+
+`cmd/export-refdata`'s `attackParam` scans the WHOLE ROW for the literal
+`6386804` rather than walking the block. That is a textbook way to read another
+parameter's VALUE as a code, and this file already records the stat-tag literals
+colliding with the opcode range once before. Tested three ways:
+
+- the lowest column the literal ever occupies is 69, so **0 of 31,605** rows
+  carry it before the block;
+- **no row carries it twice**, so "first match" cannot pick the wrong one;
+- on the 19,839 cleanly-walked rows the walk's `att` position and the scan's
+  first match **agree 19,839 times and differ 0 times**.
+
+So the scan is correct, and it is also the more version-robust of the two — a
+client whose skilldata shifted the block would break a hard-coded column 69 and
+would not break this. The comment now carries the measurement instead of an
+assumption.
+
+### Two more of my own probes were wrong, and only impossible output caught them
+
+Worth recording because it is a pattern rather than an incident.
+
+1. To find the block's start I scored candidate columns by "clean walks". The
+   scorer treated a walk that stopped immediately on an empty cell as clean, so
+   it reported column **68** with 2,475/4,000 — almost all of them empty-at-68.
+   The census built on it returned **zero rows**, which is what exposed it.
+2. The real start is 69, one column over, found by simply asking where the
+   literal occurs.
+
+The general shape: a metric that cannot distinguish success from
+immediate-failure will report failure as success. Both this and the previous
+entry's "run 1, 0 values" were caught by an output that was obviously impossible
+— an empty census, a run that cannot hold the values it points at — rather than
+by the controls, which passed in both cases.
+
+**No srrevamp value changed.** A shipped one is now measured rather than assumed.
