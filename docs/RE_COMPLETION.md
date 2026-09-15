@@ -399,6 +399,23 @@ because that is what is proven**. The number is a fact the dispatcher states;
 what the handler *does* is not claimed, and a handler serving several opcodes
 carries the first two in its name.
 
+**One of those 29 was WRONG, and the way it was caught is the useful part.**
+`FUN_00964b60` was named `MsgHandler_7d1b`; it is the **assert helper** —
+`IsDebuggerPresent` and break — with **10,357 call sites**, the most-called
+function in either binary. The extractor paired an opcode comparison with the
+next call, and in one branch that call was this. Renamed
+`Assert_BreakIfDebugger`.
+
+Two cheap checks would have caught it immediately, and are worth applying to any
+future bulk naming:
+
+- **Call count.** A packet handler has ~2 call sites. Every other name in the
+  set does; this one had five thousand times more.
+- **Address band.** Every real handler sits near the `0x41xxxx` dispatcher;
+  `0x96xxxx` is infrastructure. An outlier band is a red flag on its own.
+
+The other 28 pass both checks.
+
 This is the **inter-server / gateway** protocol layer, not the main client one
 (only 7 of the 33 are 0x7xxx).
 

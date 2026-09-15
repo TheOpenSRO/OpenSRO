@@ -185,14 +185,17 @@ public class ApplyKnownNames extends GhidraScript {
          "Packet handler, dispatched on opcode 0x34fe. Recovered from the message dispatcher "
          + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
          + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
-        {"00964b60", "MsgHandler_7d1b",
-         "Packet handler, dispatched on opcode 0x7d1b. Recovered from the message dispatcher "
-         + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
-         + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
         {"00969990", "MsgHandler_5000",
          "Packet handler, dispatched on opcode 0x5000. Recovered from the message dispatcher "
          + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
          + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00964b60", "Assert_BreakIfDebugger",
+         "The assert/verify helper -- calls IsDebuggerPresent and breaks. **10,357 call sites**, "
+         + "the most-called function in the binary. An earlier pass here named it "
+         + "MsgHandler_7d1b: the opcode-tree extractor paired a comparison with the next call, "
+         + "and in one branch that call was this. The tell was the call count -- a packet handler "
+         + "has 2, not ten thousand -- and the address band, 0x96xxxx being infrastructure while "
+         + "every real handler sits near the 0x41xxxx dispatcher."},
         {"00869640", "QuestHandler_OnDead",
          "One quest's OnDead handler. All three of this triple resolve the SAME name id (0x15a) "
          + "through a virtual at +0x34 and log \"HandlerOnDead_%s()\" with it -- so the %s is the "
