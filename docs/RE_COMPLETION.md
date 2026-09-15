@@ -249,7 +249,41 @@ an existing namespace is never overwritten).
 
 Incidentally it re-confirms **type 32 = `levelgold`** — the client really does
 load that file, which supports (without proving) the gold linkage recorded
-above.
+above. And the client's own parser for it reads exactly **three** sequential
+tokens — a byte then two dwords — which grounds `levelgold`'s
+`(level, min, max)` shape in code rather than in eyeballed values.
+
+### Column order is NOT offset order — a correction to how this was reasoned
+
+Reading the client's **leveldata** parser (case 8) settles something that had
+been assumed rather than checked. It stores the nine columns like this:
+
+```
+col 0 → +0x08    col 3 → +0x1c    col 6 → +0x24
+col 1 → +0x10    col 4 → +0x20    col 7 → +0x28
+col 2 → +0x18    col 5 → +0x30    col 8 → +0x2c
+```
+
+**Column 5 is stored out of sequence.** So "the next column is at the next
+offset" is false for these records, and that assumption appears verbatim in the
+grounding of the monster exp unit: *"cols 3/4 are zero ints at +0x14/+0x18, so
+col 5 is at +0x1c"*.
+
+**The shipped value (v0.1.155) survives, but on different evidence than stated:**
+
+- The alternative readings are impossible by value. If the server mirrored the
+  client's layout, `+0x1c` would be **column 6 = 15,000,000**, and
+  `FUN_00631050` hands `entry[0x1c] × multiplier` *straight* to
+  `GObjPC_GainExpAndLevel` — a level-1 kill worth fifteen million experience.
+  Column 7 is 15,000,000 too. Only column 5 (23.5·level) is a possible per-kill
+  reward.
+- The offsets the server actually reads are `+0x0c`, `+0x10`, `+0x1c` — under
+  packing exactly columns 1, 2 and 5: the exp requirement, the mastery cost and
+  the exp unit. Precisely the three fields the game needs, and nothing spare.
+
+So the grounding rests on **elimination plus coherence**, not on packing. Any
+future column↔offset inference in this codebase must not assume packing — the
+client proves it does not hold.
 
 `ApplyNamespaceTable.java` exists for this shape of result: attribution derived
 by reasoning over the decompiled C, which a Ghidra script cannot redo, arriving
