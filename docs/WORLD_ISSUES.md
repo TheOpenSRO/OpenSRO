@@ -7075,6 +7075,58 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-eighty-first round: where a player's combat stats come from
+
+`Char_PublishCombatStats` (`00497830`) publishes fifteen ParamKeeper params from
+fifteen consecutive float fields. Every one of those calls decompiles to the
+same line — `ParamKeeper_SetParam(0, piVar1, param_1)` — because both the id and
+the value ride in registers, so the map only exists in the disassembly:
+
+```
++0x198 -> 5           physical flat absorb
++0x19c -> 9           'era'  parry rate
++0x1a0 -> 7           physical reduction %
++0x1a4 -> 10          'bri'  blocking rate
++0x1a8 -> 6           magical flat absorb
++0x1ac -> 8           magical reduction %
++0x1b8 -> 13 AND 191  physical damage min
++0x1bc -> 14 AND 190  physical damage max
++0x1c0 -> 15 AND 193  magical damage min
++0x1c4 -> 16 AND 192  magical damage max
++0x1d8 -> 11          'hra'  attack rate
+```
+
+**Params 13/14 and 190/191 are the same two floats.** Two rounds ago this
+project found two different damage rolls — `Formula_RollWeaponDamage`'s uniform
+`rand() % (max-min+1) + min` on 190/191, and the centre-biased min-of-three roll
+on 13/14 — and could not say how they related. They read an identical range;
+they differ in distribution alone.
+
+**The defence block decodes two columns the schema calls undecoded.** It runs
+PD, ER, PAR, BR, MD, MAR at consecutive floats, exactly the `_RefObjItem` order
+`refdata_schema.md` records, and two of them land on params the *client* names:
+ER on 9 (`PARAM_ER` = "Parry rate") and BR on 10 (`PARAM_BLOCKING`). Those
+anchors bracket PAR onto param 7 — the physical reduction percentage — and MAR
+onto 8. It is an ordering argument with a named anchor on each side, not a
+use-site on PAR itself, and it is written down at that strength.
+
+**Nothing shipped from it, and that is the point.** Whether a player's param 7 is
+ever non-zero is still open: the fields come from an object whose class is
+unidentified (it is *not* `CRefObjChar` — that has `uint8 Lvl` at 0x198, read
+here as a float). A census of all 21,560 item rows finds no populated
+percentage-reduction column anywhere — only the PD and MD triples, the
+non-shield pair at 68–69, and the shield block ratio at 74–75, with columns 70
+and 88–90 zero on every row. That is suggestive that gear grants no percentage
+mitigation, and suggestive is precisely what this project does not ship. The
+player stays on the flat term.
+
+Corrected on the way: `ITEM_FORMAT.md` had the armour defences as **pairs**.
+They are **triples** — 65/66/67 and 76/77/78 are populated on exactly the same
+10,163 rows. The third value scales with tier alongside min/max (heavy body
+armour tiers 1→5 read 0.4, 0.6, 0.8, 1.0, 1.3 against physical defence
+2.5→27.5) but not as a fixed fraction of either, so its shape is recorded and
+its meaning is not.
+
 ## Hundred-and-eightieth round: dying costs something now
 
 srrevamp had no death penalty at all — a killed character had its HP reset and

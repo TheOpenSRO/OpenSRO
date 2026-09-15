@@ -210,9 +210,32 @@ armour leaves the attack columns 0. It sits at columns 65-77 (min/max pairs):
 
 | Stat | Columns | Cotton (garment) reads | Copper (heavy) reads |
 |---|---|---|---|
-| Physical defence | 65 ~ 66 | 2 ~ 2.5 | 2.5 ~ 3 |
-| Magical defence | 76 ~ 77 | 4.3 ~ 5.2 | 3.2 ~ 3.9 |
+| Physical defence | 65 ~ 66 **~ 67** | 2 ~ 2.5, 0.3 | 2.5 ~ 3, 0.4 |
+| Magical defence | 76 ~ 77 **~ 78** | 4.3 ~ 5.2, 0.7 | 3.2 ~ 3.9, 0.5 |
 | Block ratio (shields) | 74 ~ 75 | — | (shield 10 ~ 20) |
+| Parry-family pair (non-shields) | 68 ~ 69 | 5 ~ 7 | 5 ~ 7 |
+
+**Corrected 2026-09-15: these are TRIPLES, not pairs.** A census of all 21,560
+item rows shows columns 65/66/67 populated on exactly the same 10,163 items, and
+76/77/78 likewise — a third value sits after each min/max. It scales with the
+item tier alongside them (heavy body armour tiers 1→5 read 0.4, 0.6, 0.8, 1.0,
+1.3 against physical defence 2.5→27.5) but not as a fixed fraction of either,
+which is consistent with a per-enhancement gain and **is deliberately not
+labelled here** — the shape is measured, the meaning is not.
+
+The census also settles which defence families the data actually uses:
+
+| columns | rows populated | what |
+|---|---|---|
+| 65–67 | 10,163 | physical defence triple |
+| 68–69 | 9,663 | a pair on every armour **except** shields (10,163 − 500) |
+| 74–75 | 500 | block ratio — shields only |
+| 76–78 | 10,163 | magical defence triple |
+| 70, 88–90 | **0** | never populated on any row |
+
+That 9,663 = 10,163 − 500 is the useful part: 68–69 is present on exactly the
+non-shield armour and 74–75 on exactly the shields, which is the parry/block
+split the `_RefObjItem` order (PD, ER, PAR, BR, MD) predicts.
 
 Grounded three ways that agree: the real DB `_RefObjItem` column order in
 `refdata_schema.md` (PD, ER, PAR, BR, MD — PD first, block, then MD) maps onto

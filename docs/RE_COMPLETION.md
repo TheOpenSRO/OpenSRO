@@ -755,6 +755,57 @@ Also named, with no tag counterpart found yet: `PARAM_PA` "Phy. atk. pwr.",
 `PARAM_PD` "Phy. def. pwr.", `PARAM_MA` "Mag. atk. pwr.", `PARAM_MD`
 "Mag. def. pwr.", `PARAM_ABSORB` "Absorption".
 
+## Where a player's combat stats come from (2026-09-15)
+
+`Char_PublishCombatStats` (`00497830`) publishes fifteen ParamKeeper params from
+fifteen consecutive float fields. Every call decompiles identically —
+`ParamKeeper_SetParam(0, piVar1, param_1)` — because both the id and the value
+are register-passed, so this is read off the disassembly:
+
+| field | param(s) | what |
+|---|---|---|
+| +0x198 | 5 | physical flat absorb |
+| +0x19c | 9 | `'era'` **parry rate** |
+| +0x1a0 | **7** | **physical reduction %** |
+| +0x1a4 | 10 | `'bri'` **blocking rate** |
+| +0x1a8 | 6 | magical flat absorb |
+| +0x1ac | 8 | magical reduction % |
+| +0x1b8 | 13 **and** 191 | physical damage **min** |
+| +0x1bc | 14 **and** 190 | physical damage **max** |
+| +0x1c0 | 15 **and** 193 | magical damage min |
+| +0x1c4 | 16 **and** 192 | magical damage max |
+| +0x1d8 | 11 | `'hra'` **attack rate** |
+
+**Two standing questions close.** First, params 13/14 and 190/191 are *the same
+two floats* — so `Formula_RollWeaponDamage`'s uniform roll (190/191) and the
+centre-biased roll in `FUN_0040dce0` (13/14) read an identical range. The two
+rolls differ in distribution, not in input, which is what the previous tick
+could not tell.
+
+Second, the defence block runs PD, ER, PAR, BR, MD, MAR at consecutive floats —
+**exactly the `_RefObjItem` column order `refdata_schema.md` records** — and two
+of those land on params the client itself names: ER on 9 (`PARAM_ER` = "Parry
+rate") and BR on 10 (`PARAM_BLOCKING`). Those two anchors bracket PAR, placing
+it on param 7, the physical reduction percentage, and MAR on param 8. That
+decodes two of the three columns the schema explicitly records as *not decoded*.
+It is an ordering argument with named anchors on both sides, **not** a use-site
+on PAR itself, and is recorded at that strength.
+
+**What this does NOT settle**, and the reason nothing shipped from it: whether a
+player's param 7 is ever non-zero. The fields are published from an object whose
+class is still unidentified — it is the first argument to
+`Char_PublishCombatStats`, carries floats at +0x198..+0x1d8, and is *not*
+`CRefObjChar` (that struct has `uint8 Lvl` at 0x198, read here as a float). A
+census of all 21,560 item rows finds no populated percentage-reduction column —
+only the PD and MD triples, the non-shield pair at 68–69 and the shield block
+ratio at 74–75, with 70 and 88–90 zero on every row — which is *suggestive* that
+a player has no percentage mitigation from gear, and is exactly the kind of
+suggestion this project does not promote without the use-site. `MitigateDamage`
+keeps the player on the flat term alone.
+
+*Next probe:* identify the first argument's class (it answers a virtual at slot
+33, `+0x84`), then find what writes its `+0x1a0`.
+
 ## The death penalty, and half of `pc[0x72d]` (2026-09-15)
 
 srrevamp had no death penalty at all. The real one is recovered and shipped
