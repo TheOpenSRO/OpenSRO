@@ -1040,15 +1040,51 @@ rate (param 11) and parry (param 9) are each **10.0** (`.rdata 0x00b45b44`),
 each with a level-derived binding (`0 → 11`, `0 → 9`). srrevamp models neither
 stat, so there is nothing to wire.
 
-**And one lead, recorded as a lead.** The damage quad's bases are
-`34 = 30.6`, `36 = 34.2`, `35 = 49.0`, `37 = 54.8` — set before any gear exists.
-30.6 and 34.2 are *numerically identical* to a Copper Sword's physical reinforce
-(`306 / 342`, tenths of a percent, from ITEM_FORMAT's verified tooltip row),
-which would make the damage quad the reinforce quad and answer where reinforce
-lands. It is not promoted: a tier-1 sword matching the character's innate base
-exactly is as easily authored design as identity, the magical pair does *not*
-match that sword (49.0/54.8 against its 51.9/59.1), and one numeric coincidence
-is precisely the shape of evidence this project has been wrong about before.
+### Params 34–37 are the REINFORCE quad (settled 2026-09-15)
+
+The previous pass recorded this as a lead and declined to promote it on one
+numeric coincidence. It is settled now, five ways, and the objection that held it
+back dissolved once the right question was asked.
+
+| param | base | is |
+|---|---|---|
+| 34 | 30.6 | physical reinforce **min** |
+| 36 | 34.2 | physical reinforce **max** |
+| 35 | 49.0 | magical reinforce **min** |
+| 37 | 54.8 | magical reinforce **max** |
+
+1. **The slot says "percentage".** Every edge in the graph binds at slot 0
+   (base) *except six*, and four of them are these: `34 → 17`, `36 → 18`,
+   `35 → 19`, `37 → 20`, all at **slot 3**, which
+   `ParamKeeper_EvaluateParam` divides by 100. The engine treats them as
+   percentages, which is what a reinforce *is*.
+2. **The targets split physical and magical** exactly as the client's two
+   labels do: 34/36 scale the physical damage chain (17,18 → 13,14) and 35/37
+   the magical (19,20 → 15,16).
+3. **They are min/max pairs**, matching the client's `"%s ~ %s"` rendering.
+4. **The values are real item values.** `306 / 342` is precisely
+   `ITEM_CH_SWORD_01_A`'s physical reinforce and `490 / 548` precisely
+   `ITEM_CH_BLADE_01_A`'s magical.
+5. **Both are the FLOOR of their column.** No weapon in the table has physical
+   reinforce below 306 or magical below 490 — which is exactly what an innate
+   baseline should be, and is what dissolves the earlier objection. The bases
+   are not "one weapon's stats"; they are the minimum of each column
+   independently, which is why the physical matched a sword and the magical a
+   blade.
+
+This answers the question two entries back: *the only combat stat the client
+reads that the server never exports is reinforce — where does it land?* It lands
+on the Str/Int-derived damage, as a percentage.
+
+**Not exported and not wired, deliberately.** Using it means knowing whether a
+derived bind OVERWRITES its target's slot or accumulates into it: param 13's
+slot 0 is written both directly (from the aggregate's `+0x1b8`, the weapon's own
+range) and by propagation from 17. Which of those survives decides whether a
+player's damage is the weapon's range alone or the weapon's range plus a
+Str-derived term — a formula change, not a constant. `Param_PropagateToDependents`
+is the function that settles it, and until it is read, exporting the columns
+would only add a field nothing consumes, which is the exact pattern the last
+four entries have been correcting.
 
 Also in the tail: a six-iteration loop binding `(phys, mag)` pairs from a static
 table at `.rdata 0x00c640d0` — 0.032/0.052, 0.027/0.043, 0.042/0.067,

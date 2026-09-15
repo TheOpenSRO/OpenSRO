@@ -7075,6 +7075,46 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-ninety-fifth round: reinforce, settled by the slot argument
+
+Last round left params 34-37 as a lead: their bases are 30.6 / 34.2 / 49.0 /
+54.8, and 30.6/34.2 are exactly a Copper Sword's physical reinforce. I declined
+to promote it on one numeric coincidence, and flagged an objection -- the
+magical pair did **not** match that same sword.
+
+Both halves resolve, and the thing that resolved them was already on screen: the
+**slot argument** to `ParamKeeper_BindDerived`, which I had been reading past.
+
+Every edge in the graph binds at slot 0 (base) *except six*, and four of those
+are `34 -> 17`, `36 -> 18`, `35 -> 19`, `37 -> 20`, all at **slot 3** -- the
+percent scale, which `ParamKeeper_EvaluateParam` divides by 100. So the engine
+itself treats these four as percentages applied to damage, physical and magical
+respectively. That is what a reinforce is, stated by the code rather than
+inferred from a number.
+
+And the objection dissolves once the right census is run. The bases are not one
+weapon's stats: **306 is the floor of physical reinforce across every weapon in
+the table** (zero below it) and **490 the floor of magical**. They are the
+minimum of each column, taken independently -- which is why the physical matched
+the starter sword and the magical the starter blade. An innate baseline being
+the table's floor is exactly right, and "a tier-1 sword matching it" was me
+looking at the wrong end of the relationship.
+
+So: **34/36 are physical reinforce min/max, 35/37 magical**, and the question
+two rounds ago -- the one combat stat the client reads that the server never
+exports -- is answered. It lands on the Str/Int-derived damage, as a percentage.
+
+**Nothing is exported or wired from it, and that is the point.** Using reinforce
+means knowing whether a derived bind *overwrites* its target's slot or
+*accumulates* into it. Param 13's slot 0 is written twice: directly from the
+aggregate's `+0x1b8` (the weapon's own range) and by propagation from 17
+(Str-derived, scaled by reinforce). Which one survives decides whether a
+player's damage is the weapon's range alone or the weapon's range **plus** a
+Str-derived term -- a formula change, not a constant.
+`Param_PropagateToDependents` settles it and has not been read. Exporting the
+columns now would add a field nothing consumes, which is the exact pattern the
+last four rounds have been correcting.
+
 ## Hundred-and-ninety-fourth round: the stat graph, and a guess of mine refuted
 
 Last round ended with six unnamed fields and a guess: that params 58 and 59 were
