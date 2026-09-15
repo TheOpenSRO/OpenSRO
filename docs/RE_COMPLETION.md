@@ -2366,3 +2366,67 @@ Two field comments in `combat.Monster` that had gone stale: `Defense` was
 labelled "still the disclosed curve" when it has been characterdata col 71 since
 2026-09-15 (`cmd/server`'s own `monsterSpec` says so), and `Level` still claimed
 MaxHP and the attack range were disclosed defaults when both are real.
+
+## No kill feeds the skill-point currency (2026-09-15)
+
+The previous entry shipped the 400:1 skill-experience conversion and disclosed
+one unknown: how much skill experience a KILL is worth, taken as `M = 1`. The
+justification was thin — "the one caller that spells it out is a quest reward
+rather than a kill" — and it sat under a large balance change, so it was worth
+settling. It is settled, in the negative, and the probe is closed rather than
+merely unlucky.
+
+**Every route into the currency, enumerated:**
+
+1. **The carried total has one writer.** `_CHAR.SExpOffset` (`charData+0x70`) is
+   written in exactly one place: the 400:1 conversion inside
+   `GObjPC_GainExpAndLevel`. The only other function that touches the field,
+   `GObjPC::FUN_0049efc0`, reads it (with `+0x74`, Strength) into a packet.
+   Checked two ways — the `[0xd] + 0x70` form and a broad `+ 0x70) =` scan whose
+   other hits are offset collisions on unrelated structs.
+2. **Only four of forty-two `GainExpAndLevel` call sites pass skill
+   experience.** It is the FOURTH argument, a 64-bit pair distinct from the
+   experience in the second and third, and every ordinary exp grant passes zero
+   there — `GObjPC_GiveExp` calls it `(src, expLo, expHi, 0, 0, 0)`. The four
+   that do not are a quest reward (`FUN_00631050`), its party distribution
+   (`FUN_00631630`), and two others off the same path. The first census of this
+   missed the argument lists because the decompiler wraps them across lines; the
+   second joins the call before matching, and finds the same four.
+3. **Every positive `AddSkillPoints` caller is the conversion or a refund.**
+
+So **no kill path in this binary feeds the skill-point currency**, and there is
+no `M` to read for a kill. That does not change what srrevamp ships; it replaces
+a thin reason for the disclosure with an exhaustive one, which is the difference
+between "not found yet" and "searched and absent".
+
+### Recovered in passing: the skill-reset refund is 80%
+
+`FUN_00410ea0` walks a chain (`+0x59c` is the next link), sums the skill points
+invested at each node (`+0xc0`), optionally stopping at a level threshold
+(`+0x64`), and then:
+
+	iVar1 = iVar1 + (iVar1 * -0x14) / 100      <- minus 20%, i.e. 80% back
+
+Its caller `FUN_0059f8b0` hands the result to `AddSkillPoints(n, 1)`, and the
+client ships the window it belongs to — `IFSkillWithdrawal.cpp` and
+`IFSkillRemovalBox.cpp` are both in the client's own source-path strings. So
+un-learning a skill chain refunds **80%** of the points spent on it.
+
+**Not shipped, deliberately:** srrevamp has no skill withdrawal, so exporting an
+80% constant would add a value nothing consumes — the pattern this file has
+corrected repeatedly. It is recorded here for whoever builds that window.
+
+### Open
+
+- Whether a mob's death runs through a handler this project has not found. All
+  three death handlers reached from `FUN_004e6ec0`'s dispatch (`FUN_004e6820`
+  kind 1, `GObjPC_OnDeath` kinds 3–5, `FUN_004e6d60` kind 6) are PC-death
+  variants in `GObjPC.cpp`, all gated on the victim's level exceeding 10 and all
+  applying an exp penalty. If a mob-side death handler exists, it is the one
+  place a kill-side skill-exp source could still hide.
+- `M` itself, for the quest path: `*(int *)(iVar2 + 0x10)` from an unidentified
+  struct.
+- Still open from before: bit 0 of a party's `+0x10`; `FUN_005e4390`'s guild
+  comparison; `vf[0x3b4]`; premium params 256/258 and `killer+0x1cd8`;
+  `GetParam(0x80/0x81)` and `GetParam(0x103)`; descriptor flag `0x20`; itemdata
+  columns 114 and 117.

@@ -811,13 +811,29 @@ func performAttack(
 			// The skill economy's income. The game grants skill EXPERIENCE,
 			// carries it on the character and converts whole points out of the
 			// running total at 400:1 -- see leveldata.SkillExpPerPoint, which
-			// is the recovered part. How much skill experience a KILL is worth
-			// is NOT recovered: the amount reaches GObjPC_GainExpAndLevel as
-			// `levelTable[lvl]+0x1c * M` from a struct this project has not
-			// identified, and the one caller that spells it out is a quest
-			// reward rather than a kill. srrevamp takes M = 1, so a kill is
-			// worth its own experience in skill experience -- a DISCLOSED
-			// choice, and the single knob to turn if M is ever read.
+			// is the recovered part.
+			//
+			// How much skill experience a KILL is worth is NOT recovered, and
+			// the search for it is now exhaustive rather than partial. Every
+			// route into the skill-point currency has been enumerated:
+			//
+			//   - _CHAR.SExpOffset (charData+0x70), the carried total, has
+			//     exactly ONE writer in the binary -- the 400:1 conversion
+			//     inside GObjPC_GainExpAndLevel. The only other function that
+			//     touches it, FUN_0049efc0, reads it into a packet.
+			//   - Of the 42 call sites of GainExpAndLevel, only four pass a
+			//     non-zero skill-exp argument (it is the FOURTH argument, and
+			//     every ordinary exp grant passes zero there). None is a kill:
+			//     they are a quest reward, its party distribution, and two
+			//     others off the same quest path.
+			//   - Every positive caller of AddSkillPoints is either that
+			//     conversion or a skill/mastery WITHDRAWAL refund.
+			//
+			// So no kill path in this binary feeds the currency at all, and
+			// there is no M to read for a kill. srrevamp takes M = 1 -- a kill
+			// is worth its own experience in skill experience -- which is a
+			// DISCLOSED choice and the single knob to turn if a kill-side
+			// source is ever found.
 			if skills != nil && gainedExp > 0 {
 				if _, _, err := skills.AddSkillExp(ctx, characterID, gainedExp); err != nil {
 					return fmt.Errorf("combat: granting skill experience: %w", err)
