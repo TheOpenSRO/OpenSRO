@@ -7075,6 +7075,48 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-eighty-sixth round: armour was doing nothing, and now shields block
+
+Blocking was left unshipped last round for a stated reason: a player's block
+chance is a shield's block ratio, and this project's curated item export had no
+such column. That was a self-imposed limit, not a data one -- and going to lift
+it turned up something worse sitting next to it.
+
+**`cmd/export-refdata` was emitting a literal `"0"` for both armour defences.**
+The line carried the note *"armour, not verified"*. That note stopped being true
+when `docs/protocol/ITEM_FORMAT.md` grounded those columns three ways -- the real
+`_RefObjItem` column order, the heavy-vs-cloth characteristic, and a real +5
+tooltip -- and the exporter was never revisited. So **every deployment that
+imported through this tool gave armour no defence at all**, while
+`defenderArmor` dutifully read the zeroes. Both defences are now exported from
+their verified columns: physical 65/66, magical 76/77.
+
+The same pass adds the shield's block ratio at 74/75 as an appended optional
+column, the pattern every earlier addition used (Price/SellPrice, then the
+Param-block restore amounts), so an export made at any older width still loads
+and simply blocks nothing.
+
+**So shields block now**, and a blocked hit deals nothing. That is not a design
+choice: on a successful roll `Combat_ResolveDamage` falls through to
+`JZ 0x005905fb`, which lands past **all four** `Formula_Mitigate*` call pairs
+(`0x58f15d`, `0x58f2fb`, `0x58f7ea`, `0x58f9b2`), so no damage is ever computed
+and the damage record keeps its zero-initialised `+0x28` physical, `+0x24`
+magical and `+0x20` total. A *failed* block jumps to `0x58f739`, before the third
+pair, and resolves normally. The roll comes before mitigation in this code for
+the same reason: mitigation is precisely what it skips.
+
+The block is unopposed against monsters, and that is measured rather than
+assumed -- the real chance divides by `(1 + the attacker's 'evbl'/100)`, and
+`GObjMob_PublishStats` publishes params 0, 3-12, 23, 24, 27-33 and 140, with
+param 56 not among them.
+
+The export width guard earned its keep: `TestItemRecordRoundTripsThroughTheImporter`
+failed immediately on the new columns because the exporter and importer had
+drifted apart, which is exactly the drift it exists to catch. A new test pins the
+six defence/block values through a full export-import round trip with a Cotton
+garment's real readings (2~2.5 physical, 4.3~5.2 magical) and a starter shield's
+10~20 -- the check that would have caught the zeroed defences years earlier.
+
 ## Hundred-and-eighty-fifth round: the player crits too, and I was wrong yesterday
 
 Last round ended "the player never crits: param 12 is not among the fifteen

@@ -28,6 +28,10 @@ var itemCSVColumns = []string{
 	// table's self-labelling Param block): again a strict suffix, so every
 	// earlier export still loads.
 	"RestoreHP", "RestoreHPPct", "RestoreMP", "RestoreMPPct",
+	// Appended later still (a shield's real block ratio, _RefObjItem's BR
+	// pair): a strict suffix like every block before it, so an export made
+	// for any earlier column count still loads and simply blocks nothing.
+	"BR_L", "BR_U",
 }
 
 // itemCSVRequiredColumns is the prefix every export must carry; the columns
@@ -147,6 +151,13 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 33 {
 		it.RestoreMPPct = parseInt(f[33])
+	}
+	// A shield's block ratio, optional in the same way.
+	if len(f) > 34 {
+		it.BlockRatioMin = parseFloat(f[34])
+	}
+	if len(f) > 35 {
+		it.BlockRatioMax = parseFloat(f[35])
 	}
 
 	if err != nil {

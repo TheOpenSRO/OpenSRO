@@ -819,13 +819,23 @@ is before the third pair, and resolves normally. (One secondary path, guarded by
 an ability pointer at defender+0xD2C, explicitly zeroes those fields and re-runs
 the formulas; that is a special case this project does not model.)
 
-**Not shipped, and the reason is the input rather than the mechanic.** A
-player's block chance is a shield's own block ratio — itemdata cols 74–75,
-reading 10~20 and present on exactly the 500 shield rows — and srrevamp's
-curated item export carries no such column, so wiring it means a schema change
-the operator's existing exports would not satisfy. The monster side would never
-fire either: every species on the Jangan ladder reads 0 for col 76 (938 other
-monsters carry 20).
+**SHIPPED 2026-09-15 (v0.1.168).** The blocker was the input, not the mechanic:
+a player's block chance is a shield's own block ratio — itemdata cols 74–75,
+10~20, on exactly the 500 shield rows — and the curated item export carried no
+such column. Added as an appended optional column, the pattern every earlier
+addition used, so an export made at any older width still loads and blocks
+nothing.
+
+**And it uncovered a live bug next to it.** `cmd/export-refdata` was emitting a
+literal `"0"` for *both armour defences*, under a note reading "armour, not
+verified" — a note that stopped being true when `ITEM_FORMAT.md` grounded those
+columns three ways and was never revisited. Every deployment importing through
+that tool gave armour **no defence at all**, while `defenderArmor` read the
+zeroes. Physical (65/66) and magical (76/77) are now exported from their
+verified columns.
+
+The monster side of blocking still never fires: every species on the Jangan
+ladder reads 0 for col 76, though 938 other monsters carry 20.
 
 ## Criticals, and the dice behind them (2026-09-15)
 

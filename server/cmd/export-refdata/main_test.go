@@ -49,11 +49,13 @@ func TestItemRecordRoundTripsThroughTheImporter(t *testing.T) {
 	if !ok {
 		t.Fatal("itemRecord rejected a valid row")
 	}
-	// 30 was the count before the Param-block restore columns were appended
-	// (RestoreHP/Pct, RestoreMP/Pct). The importer takes them as an optional
-	// suffix, so both widths load.
-	if len(rec) != 34 {
-		t.Fatalf("record has %d fields, want the importer's 34", len(rec))
+	// The width grows as verified columns are appended -- 30 before the
+	// Param-block restore amounts, 34 before the shield block ratio. The
+	// importer takes each addition as an optional suffix, so every older
+	// export still loads; this only pins that the exporter and importer agree
+	// on the CURRENT width, which is the half that would otherwise drift.
+	if len(rec) != 36 {
+		t.Fatalf("record has %d fields, want the importer's 36", len(rec))
 	}
 
 	items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
@@ -104,5 +106,59 @@ func TestItemRecordSkipsNonItemRows(t *testing.T) {
 	long[fID] = "xxx"
 	if _, ok := itemRecord(long); ok {
 		t.Error("a row with a non-numeric id was accepted")
+	}
+}
+
+// The armour defence and shield block columns are exported, not zeroed.
+//
+// Until 2026-09-15 this exporter emitted a literal "0" for both defences,
+// carrying a note that they were "armour, not verified" -- which stopped being
+// true when docs/protocol/ITEM_FORMAT.md grounded them three ways (the real DB
+// column order, heavy-vs-cloth behaviour, and a real +5 tooltip). Every
+// deployment importing through this tool gave armour no defence at all. This
+// test is the thing that would have caught it.
+func TestItemRecordCarriesArmourDefenceAndBlock(t *testing.T) {
+	cols := make([]string, fMax+2)
+	for i := range cols {
+		cols[i] = "0"
+	}
+	set := func(i int, v string) { cols[i] = v }
+	set(fID, "11")
+	set(fMaxStack, "1")
+	// A Cotton garment's real readings, and a shield's real block ratio.
+	set(fPhysDefenseMin, "2")
+	set(fPhysDefenseMin+1, "2.5")
+	set(fMagDefenseMin, "4.3")
+	set(fMagDefenseMin+1, "5.2")
+	set(fBlockRatio, "10")
+	set(fBlockRatio+1, "20")
+
+	rec, ok := itemRecord(cols)
+	if !ok {
+		t.Fatal("itemRecord rejected a valid row")
+	}
+	items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
+	if err != nil {
+		t.Fatalf("the importer rejected export's own output: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+	it := items[0]
+	for _, tc := range []struct {
+		name string
+		got  float64
+		want float64
+	}{
+		{"PhysDefenseMin", it.PhysDefenseMin, 2},
+		{"PhysDefenseMax", it.PhysDefenseMax, 2.5},
+		{"MagDefenseMin", it.MagDefenseMin, 4.3},
+		{"MagDefenseMax", it.MagDefenseMax, 5.2},
+		{"BlockRatioMin", it.BlockRatioMin, 10},
+		{"BlockRatioMax", it.BlockRatioMax, 20},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %v, want %v", tc.name, tc.got, tc.want)
+		}
 	}
 }

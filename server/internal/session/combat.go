@@ -267,6 +267,10 @@ type AttackResult struct {
 	// attackerCritical.
 	PlayerCritical bool
 
+	// PlayerBlocked is true when the player's shield blocked the monster's
+	// counterattack outright. A blocked hit deals nothing; see defenderBlock.
+	PlayerBlocked bool
+
 	// DeathExpLost is the experience the death penalty took, 0 when the
 	// player did not die or is still inside the level-10 grace period. Real;
 	// see leveldata.DeathPenaltyExp. Appended, so an older client that stops
@@ -276,7 +280,7 @@ type AttackResult struct {
 
 func (r *AttackResult) Encode() []byte {
 	out := encodeStrings(r.Error)
-	buf := make([]byte, 33)
+	buf := make([]byte, 34)
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(r.MonsterDamage))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(r.MonsterRemainingHP))
 	if r.MonsterDied {
@@ -297,6 +301,9 @@ func (r *AttackResult) Encode() []byte {
 	}
 	if r.PlayerCritical {
 		buf[32] = 1
+	}
+	if r.PlayerBlocked {
+		buf[33] = 1
 	}
 	return append(out, buf...)
 }
@@ -331,6 +338,9 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 	}
 	if len(rest) >= 33 {
 		r.PlayerCritical = rest[32] != 0
+	}
+	if len(rest) >= 34 {
+		r.PlayerBlocked = rest[33] != 0
 	}
 	return r, nil
 }
@@ -854,23 +864,33 @@ func performAttack(
 		// explicit 0 through combat.MitigateDamage rather than as a bare
 		// subtraction, so the zero carries its citation instead of being a
 		// coincidence that happens to compute the same number.
-		incoming := combat.MitigateDamage(raw, playerMitigationPercent, armor)
-		// A critical doubles the blow, and the monster's chance is REAL
-		// (characterdata col 78 -- see combat.Monster.Critical). Applied
-		// AFTER mitigation and BEFORE the level term, which is the order the
-		// real formula uses: it builds a multiplier, doubles it on the
-		// critical flag, multiplies the already-mitigated damage by it, and
-		// only then applies the level difference.
-		if rollChance(monster.Critical) {
-			incoming *= combat.CriticalMultiplier
-			result.MonsterCritical = true
-		}
-		// The same level-advantage term, with the roles swapped: the monster
-		// is the attacker in its own counterattack, so a monster that
-		// out-levels the player hits harder for it. The formula is one
-		// function and does not care which side is a player.
-		if playerLevel > 0 && monster.Level > 0 {
-			incoming = combat.ApplyLevelAdvantage(incoming, monster.Level, playerLevel)
+		// A blocked blow deals NOTHING, and the whole damage pipeline is
+		// skipped rather than reduced to zero -- which is exactly what the
+		// real resolve function does: a successful block jumps past every
+		// Formula_Mitigate* call and leaves the damage record at its
+		// zero-initialised value. So the roll comes first, and mitigation,
+		// the critical and the level term are the things it skips.
+		incoming := 0
+		result.PlayerBlocked = rollChance(defenderBlock(ctx, characterID, eq, items))
+		if !result.PlayerBlocked {
+			incoming = combat.MitigateDamage(raw, playerMitigationPercent, armor)
+			// A critical doubles the blow, and the monster's chance is REAL
+			// (characterdata col 78 -- see combat.Monster.Critical). Applied
+			// AFTER mitigation and BEFORE the level term, which is the order
+			// the real formula uses: it builds a multiplier, doubles it on
+			// the critical flag, multiplies the already-mitigated damage by
+			// it, and only then applies the level difference.
+			if rollChance(monster.Critical) {
+				incoming *= combat.CriticalMultiplier
+				result.MonsterCritical = true
+			}
+			// The same level-advantage term, with the roles swapped: the
+			// monster is the attacker in its own counterattack, so one that
+			// out-levels the player hits harder for it. The formula is one
+			// function and does not care which side is a player.
+			if playerLevel > 0 && monster.Level > 0 {
+				incoming = combat.ApplyLevelAdvantage(incoming, monster.Level, playerLevel)
+			}
 		}
 		hp, playerDied, err := chars.ApplyDamage(ctx, characterID, incoming)
 		if err != nil {
@@ -1090,6 +1110,51 @@ func attackerCritical(ctx context.Context, characterID int64, eq equipment.Store
 			return 0
 		}
 		return int(item.CriticalMin)
+	}
+	return 0
+}
+
+// defenderBlock is the player's chance to block a blow outright: the equipped
+// SHIELD's own block ratio, itemdata columns 74-75.
+//
+// REAL, and present on exactly the 500 shield rows in the real item table
+// (a starter shield reads 10~20); body armour carries the parry-family pair at
+// 68-69 instead, and the split is what the _RefObjItem order PD, ER, PAR, BR,
+// MD predicts. The lower end is used, matching how this project reads the
+// weapon's Critical column.
+//
+// A BLOCKED HIT DEALS NOTHING. That is not a design choice here -- it is the
+// control flow of Combat_ResolveDamage: on a successful block the roll falls
+// through to `JZ 0x005905fb`, which lands past ALL FOUR Formula_Mitigate* call
+// pairs (0x58f15d, 0x58f2fb, 0x58f7ea, 0x58f9b2), so no damage is ever
+// computed and the damage record's zero-initialised +0x28 (physical), +0x24
+// (magical) and +0x20 (total) stand. A FAILED block jumps to 0x58f739, before
+// the third pair, and resolves normally.
+//
+// The chance is rolled by the same function as the critical, and the
+// disassembly shows how the engine tells them apart -- a key byte in the high
+// bits of ECX, 'B' (0x42) for blocks against 'C' (0x43) for criticals, which is
+// also the key the bad-luck accumulator is filed under. So the two have
+// independent streak protection in the real game; srrevamp models neither.
+//
+// Unopposed, and that is measured rather than assumed: the real chance divides
+// by (1 + the attacker's 'evbl'/100), and GObjMob_PublishStats publishes params
+// 0, 3-12, 23, 24, 27-33 and 140 -- param 56 is not among them, so a monster's
+// block-evasion term is zero.
+func defenderBlock(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) int {
+	equipped, err := eq.Get(ctx, characterID)
+	if err != nil {
+		return 0
+	}
+	for _, e := range equipped {
+		if e.Slot != equipment.SlotShield {
+			continue
+		}
+		item, err := items.GetItem(ctx, e.ItemID)
+		if err != nil || item == nil {
+			return 0
+		}
+		return int(item.BlockRatioMin)
 	}
 	return 0
 }

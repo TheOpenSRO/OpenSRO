@@ -68,8 +68,14 @@ type Item struct {
 	DurabilityMin, DurabilityMax   float64
 	PhysDefenseMin, PhysDefenseMax float64
 	MagDefenseMin, MagDefenseMax   float64
-	PhysAttackMin, PhysAttackMax   float64
-	MagAttackMin, MagAttackMax     float64
-	HitRateMin, HitRateMax         float64
-	CriticalMin, CriticalMax       float64
+	// BlockRatioMin/BlockRatioMax are a SHIELD's block ratio, itemdata
+	// columns 74-75 -- present on exactly the 500 shield rows in the real
+	// table and reading 10~20 on a starter shield. It is the chance, in
+	// percent, that a blow at the wearer is blocked outright; see
+	// combat.RollChance and session.defenderBlock.
+	BlockRatioMin, BlockRatioMax float64
+	PhysAttackMin, PhysAttackMax float64
+	MagAttackMin, MagAttackMax   float64
+	HitRateMin, HitRateMax       float64
+	CriticalMin, CriticalMax     float64
 }

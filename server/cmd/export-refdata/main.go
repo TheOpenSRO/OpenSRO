@@ -79,6 +79,19 @@ const (
 	fMagAttackMax  = 102
 	fHitRate       = 113
 	fCritical      = 116
+	// Armour defence and the shield's block ratio, all verified against real
+	// +5 tooltips in docs/protocol/ITEM_FORMAT.md: a Cotton garment reads
+	// 2~2.5 physical and 4.3~5.2 magical, a starter shield 10~20 block. Each
+	// is a TRIPLE (min, max, a per-tier third value), so max is +1.
+	//
+	// These were exported as literal "0" until 2026-09-15, marked "armour,
+	// not verified" -- a note that stopped being true when ITEM_FORMAT.md
+	// grounded the columns three ways and was never revisited. Every
+	// deployment importing through this tool therefore gave armour no
+	// defence at all.
+	fPhysDefenseMin = 65
+	fBlockRatio     = 74 // shields only; body armour carries the parry pair at 68
+	fMagDefenseMin  = 76
 	// The highest field any mapping reads: a row shorter than this is not a
 	// real item row and is skipped.
 	fMax = 116
@@ -201,38 +214,42 @@ func itemRecord(cols []string) ([]string, bool) {
 		return s
 	}
 	return []string{
-		get(fID),                // 0  ID
-		get(fMaxStack),          // 1  MaxStack (col 57: 1 for equipment, real cap for stackables)
-		get(fReqStr),            // 2  ReqStr
-		get(fReqInt),            // 3  ReqInt
-		"0",                     // 4  ItemClass (not mapped)
-		"0",                     // 5  TwoHanded (not mapped)
-		num(fDurabilityMin),     // 6  DurabilityMin
-		num(fDurabilityMin + 1), // 7  DurabilityMax
-		"0", "0",                // 8,9   PhysDefenseMin/Max (armour, not verified)
-		"0", "0", // 10,11 MagDefenseMin/Max
-		num(fPhysAttackMin), // 12 PhysAttackMin
-		num(fPhysAttackMax), // 13 PhysAttackMax
-		num(fMagAttackMin),  // 14 MagAttackMin
-		num(fMagAttackMax),  // 15 MagAttackMax
-		num(fHitRate),       // 16 HitRateMin
-		num(fHitRate + 1),   // 17 HitRateMax
-		num(fCritical),      // 18 CriticalMin
-		num(fCritical + 1),  // 19 CriticalMax
-		get(fTypeID1),       // 20 TypeID1
-		get(fTypeID1 + 1),   // 21 TypeID2
-		get(fTypeID1 + 2),   // 22 TypeID3
-		get(fTypeID1 + 3),   // 23 TypeID4
-		get(fCountry),       // 24 Country
-		get(fReqGender),     // 25 ReqGender
-		get(fReqLevelType1), // 26 ReqLevelType1
-		get(fReqLevel1),     // 27 ReqLevel1
-		get(fPrice),         // 28 Price (real NPC buy price)
-		get(fSellPrice),     // 29 SellPrice (real NPC buy-back price)
-		get(fRestoreHP),     // 30 RestoreHP    (Param block, labelled "HP...")
-		get(fRestoreHPPct),  // 31 RestoreHPPct
-		get(fRestoreMP),     // 32 RestoreMP    (Param block, labelled "MP...")
-		get(fRestoreMPPct),  // 33 RestoreMPPct
+		get(fID),                 // 0  ID
+		get(fMaxStack),           // 1  MaxStack (col 57: 1 for equipment, real cap for stackables)
+		get(fReqStr),             // 2  ReqStr
+		get(fReqInt),             // 3  ReqInt
+		"0",                      // 4  ItemClass (not mapped)
+		"0",                      // 5  TwoHanded (not mapped)
+		num(fDurabilityMin),      // 6  DurabilityMin
+		num(fDurabilityMin + 1),  // 7  DurabilityMax
+		num(fPhysDefenseMin),     // 8  PhysDefenseMin
+		num(fPhysDefenseMin + 1), // 9  PhysDefenseMax
+		num(fMagDefenseMin),      // 10 MagDefenseMin
+		num(fMagDefenseMin + 1),  // 11 MagDefenseMax
+		num(fPhysAttackMin),      // 12 PhysAttackMin
+		num(fPhysAttackMax),      // 13 PhysAttackMax
+		num(fMagAttackMin),       // 14 MagAttackMin
+		num(fMagAttackMax),       // 15 MagAttackMax
+		num(fHitRate),            // 16 HitRateMin
+		num(fHitRate + 1),        // 17 HitRateMax
+		num(fCritical),           // 18 CriticalMin
+		num(fCritical + 1),       // 19 CriticalMax
+		get(fTypeID1),            // 20 TypeID1
+		get(fTypeID1 + 1),        // 21 TypeID2
+		get(fTypeID1 + 2),        // 22 TypeID3
+		get(fTypeID1 + 3),        // 23 TypeID4
+		get(fCountry),            // 24 Country
+		get(fReqGender),          // 25 ReqGender
+		get(fReqLevelType1),      // 26 ReqLevelType1
+		get(fReqLevel1),          // 27 ReqLevel1
+		get(fPrice),              // 28 Price (real NPC buy price)
+		get(fSellPrice),          // 29 SellPrice (real NPC buy-back price)
+		get(fRestoreHP),          // 30 RestoreHP    (Param block, labelled "HP...")
+		get(fRestoreHPPct),       // 31 RestoreHPPct
+		get(fRestoreMP),          // 32 RestoreMP    (Param block, labelled "MP...")
+		get(fRestoreMPPct),       // 33 RestoreMPPct
+		num(fBlockRatio),         // 34 BlockRatioMin (shields only)
+		num(fBlockRatio + 1),     // 35 BlockRatioMax
 	}, true
 }
 
