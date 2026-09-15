@@ -76,19 +76,45 @@ pick one up without re-deriving anything.
    (slot 73 — and it returns ParamKeeper param 0 rounded, re-confirming param 0 =
    Level) and **0x694 = `GObjPC_GiveExp`** (slot 421).
 
-   *What is NOT proven, and why nothing shipped:* which leveldata column
-   `entry+0x1c` is. Three lines point at **col 5** — `entry+0x8` is the int64 col 1
-   and `entry+0x10` is col 2, both already grounded, which puts +0x1c at col 5 on
-   a 4-byte progression; and col 5's magnitude (~23.5·level early) matches the
-   exp pacing the game needs. But that assumes cols 3 and 4 are 32-bit rather
-   than int64, and **no parser has been read to confirm it**. A promising-looking
-   confirmation was chased and discarded this pass: the function family around
-   `RefLevel_GetEntry` looked like per-field accessors and is not — `FUN_00411370`
-   is a `std::string` constructor that merely shares the address range. This is
-   the exact shape of the col-79 mistake, so the column stays inferred.
-   *Next probe:* find the code that BUILDS a level record (it allocates and fills
-   the struct whose `+0x8` is the int64 exp requirement) and read its stores in
-   order, the way `RefObjChar_ExtractData` gave the characterdata column map.
+   **Upgraded 2026-09-15 (second pass): the MEANING of `entry+0x1c` is now proven
+   by use-site, twice, independently.**
+
+   1. `Formula_MonsterExpReward` reads it, and its result reaches
+      `GObjPC_GiveExp` (vtable 0x694).
+   2. `FUN_00631050` hands `entry[0x1c] * multiplier` **straight to
+      `GObjPC_GainExpAndLevel`** (vtable 0x170) as an exp amount — a direct grant
+      with no formula in between.
+   3. Corroborating: the party-share path `FUN_004fcda0` reads `+0x1c` too.
+
+   So `entry+0x1c` is **the level table's per-level standard EXP unit**. That is a
+   citable recovery, settled the way the rules require.
+
+   *Still NOT proven: which leveldata COLUMN it is, and nothing ships until it is.*
+   Three lines point at col 5 (`entry+0x8` is the grounded int64 col 1,
+   `entry+0x10` the grounded col 2, so a 4-byte progression lands +0x1c on col 5;
+   and col 5's magnitude matches the exp pacing). That assumes cols 3/4 are 32-bit,
+   and no parser has confirmed it.
+
+   **Three candidate confirmations were chased and discarded**, all recorded so
+   nobody re-walks them:
+   - The accessor family around `RefLevel_GetEntry` reading `+0x14/+0x18/+0x20/
+     +0x24/+0x28` would have pinned the layout — but `FUN_00411370` is a
+     `std::string` constructor that merely shares the address range.
+   - `Mastery_LevelUp` looked like it read `entry+0x10` *and* `entry+0x20`, which
+     would have given a third anchor. It does not: the `+0x20` reads are on
+     `iVar3 + 8`, the mastery record. Two different structs in one function, and a
+     grep cannot tell them apart.
+   - The parser itself is **not findable in the server**: no `leveldata`/`RefLevel`
+     string literal is referenced anywhere in 30,922 functions, no `_RefLevel` SQL
+     column names (`Exp_C`, `Cost_Master`, …) appear, and only ONE function in the
+     whole binary self-names with `ExtractData` (`RefObjChar`). The server almost
+     certainly gets this table from its database, not from the text file.
+
+   *Next probe — switch binaries.* The CLIENT parses `leveldata.txt` per column:
+   `Client_LoadAllRefData` builds `"%stextdata\leveldata.txt"` and hands it to the
+   generic loader, behind which a per-type manager does the column split. Find that
+   manager's level branch and read its stores in order. That is the same move that
+   produced the characterdata column map, just on the other binary.
 
 2. **Monster attack/defence — half closed (2026-09-15).** Four of the eight
    combat columns are now grounded by **the game's own tag names**, and the
