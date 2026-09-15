@@ -143,9 +143,29 @@ Two honest caveats on that number, in both directions:
 Levers used so far, by what they returned: call-graph attribution
 (`PropagateModules.java`, +3,131), authored UI string ids
 (`LabelFromUIStrings.java`, +140 namespaced and 597 commented), `__FILE__`
-asserts (`NamespaceFromSourceFile.java`, 760 seeds), Ghidra FID (~930, mostly
-library), and hand-proven names with citations (~30). The server is the weaker
-side at 4.4% and it is where the gameplay lives.
+asserts (`NamespaceFromSourceFile.java`, 760 seeds), vtable slots
+(`VtableAttribute.java`, +68 namespaced and **5,225 annotated**), Ghidra FID
+(~930, mostly library), and hand-proven names with citations (~30). The server
+is the weaker side at 4.4% and it is where the gameplay lives.
+
+**Levers now exhausted, measured rather than assumed:**
+
+- **Log/assert strings naming `Class::Method`** — 517 server functions reference
+  exactly one such string and **13** are still unnamed; the client, 18 and 2. The
+  earlier assert-string pass took essentially all of it.
+- **Log strings naming a bare `Method()`** — 481 server functions reference
+  exactly one, **77** still unnamed. A small remaining seam.
+- **RTTI class recovery** — impossible, not merely hard. 1,871 type descriptors
+  survive and **zero** are referenced, so the COL/vftable chain was stripped.
+
+**The population nothing reaches:** 18,522 game-logic functions have no direct
+caller. They are virtuals, and every call-graph lever steps past them.
+`VtableAttribute.java` is the answer to that and now annotates 5,225 of them
+with their table and slot — the fact this project has re-derived by hand four
+times (slots 92 exp-gain, 93 SP-adder, 73 GetLevel, 421 GiveExp). Its
+*attribution* yield is near zero today because too few vtable slots are
+pre-attributed to vote with; it compounds as other levers seed namespaces, and
+should be re-run after each of them.
 
 ## How to work this file## How to work this file
 

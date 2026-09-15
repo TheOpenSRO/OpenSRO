@@ -192,3 +192,35 @@ because they are not equally certain:
 **Deliberately not done: naming a function after its label.** "the function that
 mentions `UIIT_STT_ACCEPT`" is not the same claim as "the accept handler", and
 this project does not ship the second when it has only measured the first.
+
+## VtableAttribute.java `[apply] [minSlots] [minAgree]`
+
+**The only lever that reaches virtual functions.** `CodeCensus.java` found
+18,522 game-logic functions with no direct caller across the two binaries. They
+are not dead — a virtual is reached only through a vtable slot, and Ghidra does
+not resolve those, so every call-graph-based lever (`PropagateModules.java` most
+of all) steps straight past them. They are also disproportionately important:
+`GObjPC_GainExpAndLevel`, `GObjPC_GiveExp` and `Char_GetLevel` are all in that
+population, and each one cost a manual vtable read to find (slots 92, 421, 73).
+
+Finding the tables needs no RTTI, which is just as well — this binary's is
+stripped (`RttiProbe.java`: 1,871 type descriptors, **zero** referenced). A C++
+vtable is a run of consecutive pointers into executable code sitting in
+read-only data, and that shape is unmistakable.
+
+Two outputs, kept apart by how certain they are:
+
+- **A plate comment** naming the table and slot, on every function found in one
+  (2,999 server + 2,226 client). This is the fact the project has had to
+  re-derive by hand four times; it turns "which slot is this?" into a grep.
+- **A `module` namespace**, only when the table's own slots vote for one: at
+  least `minAgree` already-attributed slots, and two thirds of them agreeing. A
+  class's vtable is mostly its own methods, so a clear majority is evidence; a
+  scattering is inherited base-class slots and earns nothing. **In practice this
+  returns almost nothing today** (13 server, 55 client) because too few vtable
+  slots are pre-attributed to vote with — it will pay off as other levers seed
+  the namespaces, not before.
+
+The comment says **"pointer table"**, not "vtable", because the shape alone
+cannot tell a vtable from an array of callbacks. That distinction does not
+matter for finding the code, and overstating it would be the usual mistake.
