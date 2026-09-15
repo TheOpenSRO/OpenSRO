@@ -3183,3 +3183,61 @@ at level 0 and says so". Both are tracked now — `skill.Store.MasteryLevels` an
 3-per-level cap. The comment described a window that no longer exists.
 
 **No srrevamp value changed.**
+
+## What the quest epic actually faces (2026-09-15)
+
+`quest.Catalog` is own design and is the largest invented surface left with real
+data present in the client, so the roadmap from the previous entry points here
+first. This is reconnaissance, not a value: what follows is the shape of the
+problem, measured.
+
+### The tables
+
+- **`questdata.txt` — 696 quests.** The registry: a numeric id, a code name
+  (`QNO_CH_SMITH_1`), and the `SN_*` string codes for the quest's name, its
+  reward text and its conditions. **No objectives, no rewards.**
+- **`questcontentsdata.txt` — 989 rows × 17.** Descriptions and `SN_CON_` string
+  codes. Also no objectives; most columns are the literal `xxx` placeholder.
+- **`refqusetreward.txt` — 709 rows × 26** (the game's own filename carries the
+  typo). Keyed by the same quest code name, with numeric columns at 10 and 11
+  carrying values like 205/270, 475/375, 1000/2752.
+- **`refquestrewarditems.txt` — 366 rows.** Quest code name → item code name and
+  a quantity, several rows per quest where a choice is offered.
+
+So **quest rewards are fully available as client data**; quest objectives are
+not in any client table.
+
+**Deliberately not named:** which of columns 10 and 11 is experience and which is
+gold. The magnitudes are suggestive and that is exactly the evidence this file
+does not accept — characterdata col 79 was wrong twice on a suggestive curve.
+A use-site settles it, and none has been read.
+
+### "Quests are compiled code" is false, and worth measuring before believing
+
+The server carries 177 bespoke quest classes — `CQNO_*`, `CQSP_*`,
+`CQTUTORIAL*`, `CQEVENT_*` — which invites the conclusion that quest logic is
+hand-written C++ and therefore ungroundable. Matching them against the registry
+(after stripping the leading `C`, which the class names carry and the table's
+code names do not) gives:
+
+| | count |
+|---|---|
+| quests in `questdata.txt` | 696 |
+| bespoke quest classes | 177 |
+| registry names WITH a class | **154** |
+| registry names WITHOUT one | **542** |
+
+**78% of quests have no bespoke class**, so they run on the generic engine this
+file already has anchors for — `CRefQuest`, `CBasicQuest`, and the `sQuestContents`
+objective struct. The blocker is locating that engine's objective source, not
+transcribing 700 C++ classes.
+
+### Where this leaves srrevamp
+
+Its quests are own design with invented names, so nothing keys to the real
+tables today. Adopting the real code names is the step that unlocks rewards
+wholesale — 709 reward rows and 366 reward-item rows arrive keyed by a name the
+registry already supplies. That is an epic, not a tick, and it now starts from
+measurements rather than from the assumption that quests are code.
+
+**No srrevamp value changed.**
