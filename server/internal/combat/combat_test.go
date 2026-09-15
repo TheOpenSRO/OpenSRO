@@ -117,3 +117,44 @@ func TestInZoneExcludesDeadMonsters(t *testing.T) {
 		t.Fatalf("got %d monsters, want 0 (dead monster should be gone)", len(got))
 	}
 }
+
+// TestMitigateDamage pins the game's own mitigation SHAPE -- a percentage
+// reduction plus a flat term -- against the flat subtraction it replaced.
+//
+// Recovered from Formula_MitigatePhysicalDamage (0040e450) and its magical twin
+// (0040e830): damage = raw / (1 + pct/100) - flat. See MitigateDamage.
+func TestMitigateDamage(t *testing.T) {
+	// A level-10 monster mitigates 10% (characterdata col 73 = its level).
+	// 100 / 1.10 = 90.909... -> 91, minus a flat 5 = 86.
+	if got := MitigateDamage(100, 10, 5); got != 86 {
+		t.Fatalf("MitigateDamage(100, 10, 5) = %d, want 86", got)
+	}
+	// No percentage is the old flat behaviour exactly.
+	if got := MitigateDamage(100, 0, 30); got != 70 {
+		t.Fatalf("MitigateDamage(100, 0, 30) = %d, want 70", got)
+	}
+	// The percentage is a DIVISOR, not a subtraction of a fraction: 100% halves
+	// rather than zeroing, which is the whole point of the shape.
+	if got := MitigateDamage(100, 100, 0); got != 50 {
+		t.Fatalf("MitigateDamage(100, 100, 0) = %d, want 50 (divide, not subtract)", got)
+	}
+	// Mitigation is monotonic in the percentage -- the property that settled
+	// which side of the fight owns it.
+	prev := MitigateDamage(1000, 0, 0)
+	for pct := 1; pct <= 120; pct++ {
+		got := MitigateDamage(1000, pct, 0)
+		if got > prev {
+			t.Fatalf("mitigation not monotonic: pct %d gave %d, up from %d", pct, got, prev)
+		}
+		prev = got
+	}
+	// Floor is 1, not the game's 0: srrevamp has no hit/evade roll, so a
+	// zero-damage hit would read as a bug rather than a miss. Disclosed.
+	if got := MitigateDamage(5, 90, 500); got != 1 {
+		t.Fatalf("over-mitigated hit = %d, want the floor 1", got)
+	}
+	// A negative percentage cannot amplify damage.
+	if got := MitigateDamage(100, -50, 0); got != 100 {
+		t.Fatalf("MitigateDamage(100, -50, 0) = %d, want 100", got)
+	}
+}

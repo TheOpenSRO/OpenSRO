@@ -5,6 +5,7 @@ package combat
 
 import (
 	"context"
+	"math"
 	"sync"
 	"sync/atomic"
 
@@ -40,8 +41,16 @@ type Monster struct {
 	X, Y, Z    float64 // own design placeholder position -- see Hub.Spawn
 	MaxHP      int
 	HP         int
-	Defense    int
-	Attack     int // counter-damage dealt to whoever attacks it, before their own defense (none exists yet)
+	// Defense is a flat subtraction, still the disclosed curve.
+	Defense int
+	// DefensePercent is the monster's own mitigation percentage, and it is
+	// REAL: characterdata columns 73 and 74 hold the physical and magical
+	// reduction, and both equal the monster's level on every row of the
+	// ORIGINAL client's table (Mangyang 1, Gyo 5, Yeoha 10, Bandit Archer 12).
+	// The server reads them as ParamKeeper params 7 and 8 and applies them as
+	// a percentage -- see MitigateDamage.
+	DefensePercent int
+	Attack         int // counter-damage dealt to whoever attacks it, before their own defense (none exists yet)
 	GoldReward int64
 	// ExpReward is the experience a kill grants. Derived from the monster's
 	// toughness for now (a disclosed default, ExpFor) -- the real per-species
@@ -54,6 +63,41 @@ type Monster struct {
 	// in the same mob data (RefObjChar) this project does not load yet, so this
 	// is a disclosed default (SPFor), the same status as ExpReward.
 	SPReward int64
+}
+
+// MitigateDamage applies the game's own mitigation, which is a SHAPE this
+// project had wrong rather than a number it had wrong.
+//
+// srrevamp subtracted defence flatly. SR_GameServer.exe does not:
+// Formula_MitigatePhysicalDamage (0040e450) and its magical twin
+// Formula_MitigateMagicalDamage (0040e830) -- structurally identical, gated on
+// bits 4 and 8 of the flags at +0x230 -- compute
+//
+//	damage = raw / (1 + reductionPercent/100) - flatAbsorb        (floored at 0)
+//
+// with the reduction read as ParamKeeper param 7 (physical) or param 8
+// (magical) through the getter virtual at vtable offset 0x104, and the
+// constants 1.0 and 100.0 at .rdata 0x00b45ac0 and 0x00b45af0.
+//
+// Which side owns the reduction is settled by the formula's own monotonicity,
+// not by assumption: a larger param 7 yields LESS damage, so it cannot be the
+// attacker's -- a stat that weakens your own blows is not a stat. It is the
+// defender's.
+//
+// The floor stays at 1 here rather than the game's 0, because a zero-damage hit
+// in the real game is a miss, and srrevamp has no hit/evade roll yet (the
+// 'hra'/'era' params exist and are unimplemented). That floor is own design,
+// disclosed.
+func MitigateDamage(raw, reductionPercent, flat int) int {
+	if reductionPercent < 0 {
+		reductionPercent = 0
+	}
+	reduced := float64(raw) / (1 + float64(reductionPercent)/100)
+	out := int(math.Round(reduced)) - flat
+	if out < 1 {
+		out = 1
+	}
+	return out
 }
 
 // ExpFor is the placeholder experience a monster of the given toughness
@@ -122,7 +166,7 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, Attack: attack, GoldReward: goldReward, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, GoldReward: goldReward, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
 	h.byID[id] = m
 	return m
 }

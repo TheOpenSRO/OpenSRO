@@ -567,14 +567,17 @@ func performAttack(
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})
 	}
 
-	net := base + damageBonus - monster.Defense
-	// Berserk boosts the hit while active.
+	raw := base + damageBonus
+	// Berserk boosts the hit while active -- applied to the blow, before the
+	// target's mitigation, which is the order the real formula implies.
 	if zerk != nil {
-		net = zerk.Boost(characterID, net)
+		raw = zerk.Boost(characterID, raw)
 	}
-	if net < 1 {
-		net = 1
-	}
+	// The game's own mitigation shape: a percentage reduction plus a flat
+	// term, not the flat subtraction this used to do. The percentage is REAL
+	// (characterdata cols 73/74 = the monster's level); the flat Defense is
+	// still the disclosed curve. See combat.MitigateDamage.
+	net := combat.MitigateDamage(raw, monster.DefensePercent, monster.Defense)
 
 	updated, monsterDied, ok := monsters.ApplyDamage(targetMonsterID, net)
 	if !ok {
