@@ -3478,3 +3478,50 @@ rate for a gauge the game does not have — and the test deliberately pins only
 
 **What moved:** `berserk.Orbs`'s citation, from a display assumption to the cap
 the engine enforces, with the shape difference recorded beside it.
+
+## Two constants closed as unrecoverable, and one coincidence declined (2026-09-15)
+
+Fourth pass of the constant audit. Both candidates this time end as disclosures
+rather than groundings — which is the honest result, and in one case only
+because a very plausible number was turned down.
+
+### `party.MaxSize`: the 8 is in the wrong module
+
+Party membership is a **linked list with no fixed bound** —
+`CGObjPC::FUN_005bdd70` walks it to fill the party-info packet — so the cap is
+enforced at join time and is not visible in the structure.
+
+The party module's neighbourhood does contain two loops bounded at **8**, over
+an array at `[x+4] + 0x1c + i*4`: one a membership test, one a broadcast. Eight
+is exactly the party size Silkroad is usually said to have, and taking it would
+have been easy.
+
+It is declined. Both loops sit in `CMainProcess` functions that call
+**`CGuild__BroadcastToLocalMember`**, in a shard ending at `0x5b9370` — *before*
+the `CParty` code, which starts at `0x5bb300`. A Silkroad guild alliance holds
+eight guilds, and an eight-slot array in guild-broadcast code is far more likely
+that than a party roster. **A loop bound that lands on the expected number in
+the wrong module is a coincidence, not a citation** — this is the same shape as
+characterdata col 79, which was wrong twice for looking right.
+
+### `character.MaxPerAccount`: not in this binary, and neither is its category
+
+`SR_GameServer.exe` has no character-creation path at all — no limit string, no
+count check. It cannot have one: creation happens on the AgentServer and in the
+database.
+
+That closes a **category** rather than a value, and the category is already
+half-documented in this file:
+
+| value | why it is not here |
+|---|---|
+| starting Str/Int | nothing writes `charData+0x74`/`+0x76` anywhere |
+| default `InventorySize` | nothing writes `charData+0xac` (the hits are offset collisions) |
+| `MaxPerAccount` | no creation path, no limit string |
+
+Anything decided when a character is first made is outside this executable. Worth
+stating once so the next audit does not spend a tick rediscovering it per value.
+
+**What moved:** nothing numeric. Both constants keep their values and gain the
+reason they cannot be grounded, which is what the brief asks for when a value
+cannot be cited.

@@ -12,7 +12,19 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 )
 
-// MaxSize caps how many characters can be in one party. Own design choice.
+// MaxSize caps how many characters can be in one party. Own design, and NOT
+// grounded despite a tempting near-miss.
+//
+// The server's party membership is a linked list with no fixed bound
+// (CGObjPC::FUN_005bdd70 walks it to fill the party-info packet), so the cap is
+// enforced at join time and not visible in the structure. The party module's
+// neighbourhood does contain two loops bounded at 8 over an array at
+// `[x+4] + 0x1c + i*4`, which is the size a Silkroad party is usually said to
+// be -- but they sit in CMainProcess functions that call
+// CGuild__BroadcastToLocalMember, before the CParty code begins, so that 8 is
+// far more likely a guild alliance's slot count (unions hold eight guilds) than
+// a party's. A loop bound that lands on the expected number in the wrong module
+// is a coincidence, not a citation.
 const MaxSize = 5
 
 // ErrPartyFull is returned by Hub.Join when the party already has MaxSize

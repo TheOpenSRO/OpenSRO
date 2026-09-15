@@ -12,8 +12,17 @@ import (
 	"math"
 )
 
-// MaxPerAccount caps how many characters one account may have. Our own
-// design choice (a common MMO convention), not taken from the original.
+// MaxPerAccount caps how many characters one account may have. Own design, and
+// now with a reason rather than just a label: it is not recoverable from the
+// artifact this project has.
+//
+// SR_GameServer.exe carries no character-creation path at all -- no limit
+// string, no count check -- because creation happens on the AgentServer and in
+// the database. That is the same wall this project already hit for starting
+// Str/Int ("nothing writes charData+0x74/+0x76 anywhere in the binary") and for
+// the default InventorySize (nothing writes charData+0xac either). Anything
+// decided when a character is first made is outside this executable, so the
+// whole category is closed rather than each value being rediscovered.
 const MaxPerAccount = 3
 
 // ErrNameTaken is returned by Store.Create when the requested character
