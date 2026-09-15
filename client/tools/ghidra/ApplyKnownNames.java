@@ -69,6 +69,35 @@ public class ApplyKnownNames extends GhidraScript {
         {"004b3130", "Param_PropagateToDependents",
          "Called by StoreSlot after a value changes: walks the dependent list and pushes the new "
          + "value into each target's registered slot. This is what makes the graph evaluate."},
+        {"004105d0", "Formula_MonsterExpReward",
+         "The monster exp reward. PROVEN by its use-site: the caller passes the result to the "
+         + "virtual at vtable offset 0x694, which on the char vtable (base 0x00af59fc) is "
+         + "GObjPC_GiveExp. Reads both parties' levels via Char_GetLevel, takes the MIN of the "
+         + "two -- so a kill is worth the LOWER level's reward, which is the anti-powerlevelling "
+         + "rule -- indexes the level table at that level, and returns "
+         + "scaleByWindow * table[min].field_0x1c * target[0x1cd8] * scaleByDiff, floored at 1. "
+         + "WHICH leveldata column field_0x1c is remains INFERRED, not proven: entry+0x8 is the "
+         + "int64 col 1 and entry+0x10 is col 2 (both grounded), which puts +0x1c at col 5, and "
+         + "col 5's scale matches the game's exp pacing -- but no parser has been read to confirm "
+         + "cols 3/4 are 32-bit rather than int64."},
+        {"004eac40", "GObjPC_GiveExp",
+         "Grants exp to a PC and then runs the party share (FUN_004fcda0). Virtual, vtable offset "
+         + "0x694 = slot 421; the slot was read straight out of the vtable at 0x00af6090."},
+        {"004a6870", "Char_GetLevel",
+         "Virtual, vtable offset 0x124 = slot 73. Not a field read -- it returns ParamKeeper "
+         + "param 0 (Level), rounded, which independently re-confirms that param 0 is Level. Used "
+         + "as the exponent base in GObjPC_InitStats and as the level-gap term in the damage and "
+         + "exp formulae."},
+        {"004e6980", "GObjPC_GrantKillReward",
+         "Computes a kill's reward with Formula_MonsterExpReward, doubles it under one condition, "
+         + "and hands it to GObjPC_GiveExp via the vtable. param_1 is the PC being paid, param_2 "
+         + "the source that died. Branches separately when the source's level is above 10."},
+        {"0040fed0", "Formula_ExpScaleByLevelWindow",
+         "One of the two exp reward scalers. Reads both parties' levels and compares against a "
+         + "+10 level window."},
+        {"0040ffe0", "Formula_ExpScaleByLevelDiff",
+         "The other exp reward scaler: works from (targetLevel - attackerLevel) and picks its "
+         + "constants from a flag at the source ref object's +0x88."},
         {"00498690", "Stat_ApplyTaggedModifier",
          "Applies one tagged stat modifier: the tag is a C multi-char literal in EAX, the amount "
          + "in param_2. THIS IS THE id->name TABLE the binary otherwise lacks -- there is no data "

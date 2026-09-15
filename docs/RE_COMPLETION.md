@@ -42,18 +42,54 @@ which is itself a recovery — quest objectives are the model for that.
 Ordered by value. Each line names the next concrete probe, so a cold start can
 pick one up without re-deriving anything.
 
-1. **Monster EXP per kill** — currently disclosed `ExpFor = maxHP`. Exp-gain is
-   vtable slot 92 (offset 0x170); `FUN_004eac40` is the `GiveExp` wrapper, and
-   it is virtual too, so there is no direct caller to read.
-   **Narrowed 2026-09-15:** `FUN_004105d0` (Formulae.cpp) is the reward formula
-   and it works from a **level-table lookup** (`FUN_00411130`) plus two
-   level-difference modifiers (`FUN_0040fed0`, `FUN_0040ffe0`) — it does not
-   touch characterdata at all. That fits the earlier proof that nothing reads
-   characterdata col 79: the server computes a kill's worth from the LEVEL
-   table, and col 79 is a per-species copy it ignores. *Next probe:* find which
-   level-entry field the reward reads. Careful — a grep for `+ 0x1c)` in that
-   region matches **vtable calls**, not field reads, and briefly looked like a
-   hit. Read the actual statements.
+1. **Monster EXP per kill — formula RECOVERED 2026-09-15; one column index still
+   inferred.** Currently disclosed `ExpFor = maxHP`; not yet replaced, and the
+   reason is below.
+
+   The whole chain is proven by use-site, end to end:
+
+   ```
+   GObjPC_GrantKillReward (004e6980)
+     -> Formula_MonsterExpReward (004105d0)
+     -> x2 under one condition
+     -> vtable 0x694 = GObjPC_GiveExp (004eac40)   [slot read from 0x00af6090]
+     -> vtable 0x170 = GObjPC_GainExpAndLevel
+   ```
+
+   The formula itself:
+
+   ```
+   lvl    = min(Char_GetLevel(A), Char_GetLevel(B))
+   base   = levelTable[lvl] + 0x1c            (unsigned 32-bit)
+   reward = scaleByWindow x base x B[0x1cd8] x scaleByDiff , floored at 1
+   ```
+
+   **The most valuable part is not a number, it is a rule: the reward is taken
+   at the MINIMUM of the two levels.** That is the anti-powerlevelling rule, it
+   is symmetric so it does not matter which party is which, and it is
+   implementable today independently of any column. Both scalers
+   (`Formula_ExpScaleByLevelWindow`, `Formula_ExpScaleByLevelDiff`) are level-gap
+   functions; the second selects its constants from a flag at the source ref
+   object's `+0x88`.
+
+   Two vtable slots fell out and are now named: **0x124 = `Char_GetLevel`**
+   (slot 73 — and it returns ParamKeeper param 0 rounded, re-confirming param 0 =
+   Level) and **0x694 = `GObjPC_GiveExp`** (slot 421).
+
+   *What is NOT proven, and why nothing shipped:* which leveldata column
+   `entry+0x1c` is. Three lines point at **col 5** — `entry+0x8` is the int64 col 1
+   and `entry+0x10` is col 2, both already grounded, which puts +0x1c at col 5 on
+   a 4-byte progression; and col 5's magnitude (~23.5·level early) matches the
+   exp pacing the game needs. But that assumes cols 3 and 4 are 32-bit rather
+   than int64, and **no parser has been read to confirm it**. A promising-looking
+   confirmation was chased and discarded this pass: the function family around
+   `RefLevel_GetEntry` looked like per-field accessors and is not — `FUN_00411370`
+   is a `std::string` constructor that merely shares the address range. This is
+   the exact shape of the col-79 mistake, so the column stays inferred.
+   *Next probe:* find the code that BUILDS a level record (it allocates and fills
+   the struct whose `+0x8` is the int64 exp requirement) and read its stores in
+   order, the way `RefObjChar_ExtractData` gave the characterdata column map.
+
 2. **Monster attack/defence — half closed (2026-09-15).** Four of the eight
    combat columns are now grounded by **the game's own tag names**, and the
    remaining four are isolated.
