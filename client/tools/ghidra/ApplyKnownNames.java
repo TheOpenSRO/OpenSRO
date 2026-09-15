@@ -69,6 +69,15 @@ public class ApplyKnownNames extends GhidraScript {
         {"004b3130", "Param_PropagateToDependents",
          "Called by StoreSlot after a value changes: walks the dependent list and pushes the new "
          + "value into each target's registered slot. This is what makes the graph evaluate."},
+        {"0083e6b0", "CharData_BindDBColumns",
+         "The complete charData column map, and the best single artifact in the binary for that "
+         + "struct. It binds every persisted _CHAR column to its offset -- FUN_00401fc0(name, "
+         + "nameLen) then local_150 = offset, local_20c = type -- for 38 columns. Validated "
+         + "against four offsets this project had derived independently by other means: Strength "
+         + "0x74, Intellect 0x76, CurLevel 0x65, RemainSkillPoint 0x80, all exact. New from it: "
+         + "+0x64 Scale, +0x70 SExpOffset, +0x78 RemainGold, +0x86 RemainHwanCount, +0x88 "
+         + "GatheredExpPoint, +0xa8 AutoInvestExp, +0xac InventorySize, +0xb0/0xb2 DailyPK/TotalPK, "
+         + "+0xb4 PKPenaltyPoint, +0xdc-0xe8 DiedRegion/Pos, +0xf2 HwanLevel."},
         {"00412c20", "InitializeGame",
          "Names itself: \"InitializeGame() Succeeded!\"."},
         {"00437a50", "CLobby_RemoveStalePlayers",

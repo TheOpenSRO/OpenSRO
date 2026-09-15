@@ -93,10 +93,16 @@ pick one up without re-deriving anything.
    `CGStorage__RandomSelectNonEmptySlotForDeathPenalty`. All gated on the dead
    character's level being above 10.
 
-   **Not shipped because the branch conditions are not understood** — they turn
-   on `param_2[0x72d] != 5` and `charData+0xb4`, which are probably job or zone
-   state. Shipping a punishment on a guessed condition is worse than shipping
-   none. *Next probe:* identify those two fields.
+   **Half the blocker is gone (2026-09-15).** `charData+0xb4` is
+   **`PKPenaltyPoint`**, from `CharData_BindDBColumns`. Re-reading the penalty
+   with that in hand, it is a *criminal* rule: the killer's exp **doubles** when
+   the victim carries PK penalty, and the victim's own loss is **3× plus 60 skill
+   points** in that case against the smaller factor otherwise.
+
+   Still not shipped, because the other condition — `param_2[0x72d] != 5`, a byte
+   state enum on the GObj rather than on charData — remains unidentified, and it
+   selects between the 20×, 100× and 300× factors. *Next probe:* that state enum;
+   values 2 and 5 are both used at other sites.
 
    This also corrected a name. `004e6980` was called `GObjPC_GrantKillReward`
    after an earlier pass read only its first half; it is the death handler, and
@@ -174,8 +180,50 @@ pick one up without re-deriving anything.
    SQL database. So per-monster drops stay own design *by necessity*, and
    become real the moment an operator brings that table — the schema and the
    key are both already in place.
-8. **Inventory size (50)**, **unarmed damage (5)** — ours; low value, may be
-   genuinely absent.
+8. **Inventory size (50)** — ours, and now known **not** to be a constant in the
+   real game: `InventorySize` is a persisted per-character `_CHAR` column
+   (charData `+0xac`), so inventory is expandable per character. The starting
+   size is set on the database side, the same wall as starting Str/Int, so it
+   stays disclosed — but as "a per-character value we fix at 50", not "a number
+   nobody has found". **Unarmed damage (5)** — still ours.
+
+## The character struct, in the game's own column names
+
+`CharData_BindDBColumns` (`0083e6b0`) binds every persisted `_CHAR` column to its
+offset in charData — `FUN_00401fc0(name, nameLen)` then `local_150 = offset` —
+for **38 columns**. It is the single best artifact in the binary for that struct,
+and it **validates against four offsets this project had derived independently**:
+`Strength` 0x74, `Intellect` 0x76, `CurLevel` 0x65, `RemainSkillPoint` 0x80, all
+exact.
+
+```
++0x020 CharID          +0x086 RemainHwanCount   +0x0b4 PKPenaltyPoint
++0x024 Deleted         +0x088 GatheredExpPoint  +0x0b8 GuildID
++0x028 RefObjID        +0x094 LatestRegion      +0x0bc LastLogout
++0x02c CharName16      +0x0a4 AppointedTeleport +0x0cc TelRegion
++0x048 NickName16      +0x0a8 AutoInvestExp     +0x0d0 TelPosX/Y/Z
++0x064 Scale           +0x0ac InventorySize     +0x0dc DiedRegion
++0x065 CurLevel        +0x0b0 DailyPK           +0x0e0 DiedPosX/Y/Z
++0x066 MaxLevel        +0x0b2 TotalPK           +0x0ec WorldID
++0x068 ExpOffset       +0x074 Strength          +0x0ee TelWorldID
++0x070 SExpOffset      +0x076 Intellect         +0x0f0 DiedWorldID
++0x078 RemainGold      +0x080 RemainSkillPoint  +0x0f2 HwanLevel
+                       +0x084 RemainStatPoint
+```
+
+**What it settled immediately:**
+
+- **`+0xb4` is `PKPenaltyPoint`** — one of the two unknown branch conditions in
+  the death penalty (see below). Half that blocker is gone.
+- **`InventorySize` is a per-character column**, so the real game's inventory is
+  expandable per character rather than the fixed 50 this project ships. That
+  changes the *nature* of that open item: it is not "a constant nobody has
+  found", it is "a per-character value whose starting size is set on the database
+  side", which is the same wall as starting Str/Int.
+- **`HwanLevel` and `RemainHwanCount` are both persisted**, so berserk has a
+  level *and* a count. The gauge numbers still have no string handle anywhere in
+  the server — that open item stays disclosed.
+- `DiedRegion`/`DiedPos` are persisted: the game remembers where you died.
 
 ## The stat vocabulary, in the game's own words
 
