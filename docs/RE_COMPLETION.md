@@ -165,8 +165,41 @@ pick one up without re-deriving anything.
    *titles* ("Ambassador", "Champion", "Conqueror"), not gauge values. The
    numbers look genuinely server-side; *next probe:* the `HWAN`/`WHAN` naming in
    the server binary, not the client's data.
-5. **Monster spawn positions** — ours by necessity (`npcpos.txt` has no
-   monsters). Likely genuinely absent; prove it and it stops counting as open.
+5. **Monster spawn positions — the "proven absence" was WRONG (2026-09-15).**
+   This line used to read *"ours by necessity (`npcpos.txt` has no monsters).
+   Likely genuinely absent; prove it and it stops counting as open."* Trying to
+   prove it disproved it.
+
+   **`npcpos.txt` is overwhelmingly monster spawns.** Of its 12,367 rows:
+   **12,110 `MOB_`**, 248 `NPC_`, 8 `STRUCTURE_`, 1 unresolved. The old claim
+   almost certainly came from grepping the file for `"MOB_"` — which returns
+   zero, because npcpos stores **numeric object ids**, not codenames. Resolving
+   those ids against `characterdata` is what settles it, and `2124` →
+   `MOB_KT_DESERTTRUNKZ_CLON` was the first thing that looked wrong.
+
+   Row shape: `objectId, regionId, localX, localY, localZ`. Every one of the
+   eleven species in this project's Jangan roster has real spawn points:
+
+   ```
+   MANGNYANG 1933  55 spawns      WATERGHOST_CLON 1938  20
+   BIGEYEGHOST_CLON 1934  37      WATERGHOST      1939  31
+   BIGEYEGHOST 1935  37           TOMBSTONE_CLON  1950  35
+   GYO_CLON  1936  41             STONEGHOST      1941  36
+   GYO       1937  30             YEOHA           1943  26
+                                  WC_EARTHGHOST   1963  65
+   ```
+
+   Region ids 23716–25511 decode to y 92–99 / x 166–171 — the Jangan area, as
+   expected. The ids also cross-check: 1933 is the `RefMonsterID` this project
+   already recorded for Mangyang.
+
+   *Not wired yet, deliberately.* The positions are region-local and srrevamp's
+   anchors are in its own world frame, so shipping them needs the
+   region+local → world conversion **and** a walkability check — get that wrong
+   and monsters spawn inside terrain. That is world-lane work with render-box
+   tooling, not a grep. *Next step:* convert one species' points and QA-verify
+   them before converting the rest.
+
 6. **Quest objectives** — proven not to exist as data; any objectives shipped
    must be own design. Closed as a *recovery*, not a gap.
 7. **Loot tables** — **CLOSED as a proven absence (2026-09-15).** The mapping
