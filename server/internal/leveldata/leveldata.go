@@ -546,13 +546,29 @@ func (t *Table) DeathPenaltyExp(level, multiplier int) (int64, bool) {
 //
 // so it is a PERCENTAGE of the loss, not a flat subtraction.
 //
-// It is zero for an ordinary character because exactly one function in the
-// binary writes param 257, and that function is `CTJ_PremiumKeeper::vslot_012`
-// -- a class that names itself. It sets 256, 257 and 258 together out of one
-// premium-benefit record (offsets +0x300, +0x2c0 and +0x320). So the reduction
-// is a PREMIUM ACCOUNT benefit; a character without one has no writer for the
-// param and evaluates it at zero. srrevamp has no premium system, so the term
-// is structurally zero here rather than unmodelled.
+// Exactly one function in the binary writes param 257, and that function is
+// `CTJ_PremiumKeeper::vslot_012` -- a class that names itself. It sets 256, 257
+// and 258 together out of one premium-benefit record (offsets +0x300, +0x2c0
+// and +0x320). So the reduction is a PREMIUM ACCOUNT benefit, and a character
+// without one has no writer for it.
+//
+// CORRECTION (2026-09-15), because this comment used to draw a stronger
+// conclusion than the evidence carries. It said an unwritten param "evaluates
+// at zero". It does not. Reading a param goes through FUN_004b3740, which calls
+// ParamKeeper_EnsureParam FIRST -- lazily creating the param from a descriptor
+// record (min, max, default) looked up by id in a map -- and
+// ParamKeeper_EvaluateParam then falls back to that default at +0x28 whenever
+// slot 0 holds no entries. An unwritten param therefore returns its DEFAULT,
+// and those defaults are built at runtime, not spelled out in the code, so they
+// cannot be read out of SR_GameServer.exe at all.
+//
+// What survives is still enough to ship on, but it is a different claim: the
+// binary proves this term is PREMIUM-ONLY and unmodified for an ordinary
+// character, not that the engine's baseline for it is zero. Zero is srrevamp's
+// own choice, and the right one, because srrevamp has no premium system to
+// grant the benefit -- a server with no premium accounts giving every character
+// a premium discount would be the actual error. Recorded as own design with a
+// recovered shape, not as a recovered value.
 //
 // Kept as a named constant, and applied through a function rather than folded
 // away, so the engine's shape stays visible and a premium system later has one

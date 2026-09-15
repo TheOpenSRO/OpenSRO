@@ -19,13 +19,56 @@ import (
 	"time"
 )
 
-// RegenPerTick and RegenInterval are this project's OWN DESIGN, disclosed.
-// The real game has an 'mprg' parameter in its derived-stat table (see the
-// ParamKeeper notes in docs/GROUNDING_AUDIT.md) but its value has not been
-// recovered, so rather than dress a guess up as the game's rate this is a
-// plain, honest refill: a percentage of the pool every few seconds. It exists
-// so a caster who runs dry recovers without having to relog, not as a claim
-// about the original balance.
+// RegenPercentPerTick and RegenInterval are this project's OWN DESIGN. This
+// note used to say the rate was the game's `'mprg'` parameter, waiting to be
+// read. That search has now finished, and the answer is that there is nothing
+// to read: no periodic regeneration exists in the server binary at all.
+//
+// The proof is an enumeration rather than a sampling, which is the only kind
+// worth trusting for a negative. A character's HP and MP live in charData and
+// are written through exactly two clamped setters -- GObjChar_SetCurHP
+// (0x004a66f0) and GObjChar_SetCurMP (0x004a6790), which name their own source
+// file in the assert "CLAMP() ==> min(%.3f) exceeded max(%.3f)",
+// d:\work2005\...\GObjChar.h line 0x16c. Disassembling the whole PE and
+// counting call sites gives 4 calls to the HP setter, 2 to the MP setter, 4 to
+// the generic GObjPC_AdjustHpMp they funnel through, and -- the part that makes
+// it an enumeration -- ZERO address-taken references to any of them, so none is
+// ever reached through a vtable or function pointer. Every writer is therefore
+// on this list, and every one has been read:
+//
+//	GObjPC_AdjustHpMp            the generic adjust (HP in EAX, MP in arg 2)
+//	GObjPC_RecoverHpMp           potions and heal skills (params 143/144)
+//	CGObjCOS_Summoned::ConsumeHpMp
+//	CGObjChar::vslot_317 / 318   effect application (318 passes HP=0, MP only)
+//	CGObjPC_PublishHpMp          clamp + send the HP/MP update packet
+//	GObjPC_OnEffectExpired       re-clamp when a buff's MaxHP/MaxMP goes away
+//	FUN_00634020                 siege-structure removal
+//	GObjPC_RestorePoolOnLoad     login/respawn seed at RespawnFraction
+//
+// Not one is driven by a clock. Healing in this game is an event -- a potion, a
+// skill, a respawn -- never a tick.
+//
+// `'hprg'`/`'mprg'` (params 25 and 26) are real but are not a resting rate.
+// All seven writes of them in the binary come from skill effects, and every one
+// targets slot 1 (the additive percent) or slot 3; slot 0, the base, is never
+// written for either. They modify a regeneration that the server itself never
+// performs, which fits a client-side display and item tooltips.
+//
+// One honest limit on how far the negative reaches. A param whose slot 0 is
+// empty does NOT evaluate to zero: ParamKeeper_EvaluateParam falls back to a
+// per-param default at +0x28, and that default is supplied by
+// ParamKeeper_EnsureParam from a descriptor record (min, max, default) looked
+// up in a map keyed by param id and built at runtime -- so the defaults are
+// data, not constants in the binary, and cannot be read out of it. That is why
+// no `'mprg'` baseline is quoted here even as a disproven one. It does not
+// weaken the conclusion above, because the enumeration of pool writers is
+// independent of what any param evaluates to: nothing applies a regeneration
+// periodically whatever its rate would be.
+//
+// So this is a plain, honest refill -- a percentage of the pool every few
+// seconds -- so a caster who runs dry recovers without relogging. It is not a
+// claim about the original balance, and there is no longer an `'mprg'` default
+// to go looking for.
 const (
 	RegenPercentPerTick = 4
 	RegenInterval       = 3 * time.Second

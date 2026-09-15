@@ -93,15 +93,29 @@ const (
 	// is the special case. Nothing here models that stat yet, so it is left
 	// out rather than folded in at a guessed rate.
 	//
-	// That stat is also the ONLY term the game applies to a blow which this
-	// project omits and cannot prove is zero. Every other one can: the damage
-	// pipeline additionally reads params 128-131, 178, 180, 187, 188 and 259,
-	// and none of the three functions that establish a character's baseline --
-	// Char_PublishCombatStats, GObjMob_PublishStats, GObjPC_InitStats -- writes
-	// any of them (they write only 0x0-0x25, 0x34-0x3c, 0x8c/0x8d and
-	// 0xbe-0xc8). Their writers are skill effects and tagged item modifiers,
-	// which srrevamp has none of. So for an unbuffed character those terms
-	// evaluate to zero and the damage pipeline here is complete.
+	// The damage pipeline additionally reads params 128-131, 178, 180, 187,
+	// 188 and 259, and none of the three functions that establish a
+	// character's baseline -- Char_PublishCombatStats, GObjMob_PublishStats,
+	// GObjPC_InitStats -- writes any of them (they write only 0x0-0x25,
+	// 0x34-0x3c, 0x8c/0x8d and 0xbe-0xc8). Their only writers are skill
+	// effects and tagged item modifiers, which srrevamp has none of.
+	//
+	// CORRECTION (2026-09-15): this used to conclude "so for an unbuffed
+	// character those terms evaluate to zero and the pipeline is complete."
+	// The premise is right and the conclusion overreached. An unwritten param
+	// does not evaluate to zero -- the read path FUN_004b3740 calls
+	// ParamKeeper_EnsureParam first, which creates it from a descriptor
+	// (min, max, default) looked up by id, and ParamKeeper_EvaluateParam uses
+	// that default as the base whenever slot 0 is empty. The descriptors are
+	// built at runtime and are not in the binary, so the baselines are not
+	// recoverable by decompiling it.
+	//
+	// What is proven is that an unbuffed, unequipped character carries no
+	// MODIFIER on any of those params. Whether the engine's own defaults for
+	// them are zero is unknown and unknowable from SR_GameServer.exe. This
+	// project treats them as absent, which is a disclosed choice rather than a
+	// recovered fact -- and the same caveat applies anywhere else this
+	// codebase argued "nothing writes it, so it is zero".
 	DamageNumerator   = 2
 	DamageDenominator = 1
 )

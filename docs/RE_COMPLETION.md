@@ -1028,6 +1028,34 @@ So the four slots are **base (summed)**, **additive % (summed)**, **multiplier
 `slot0 * (slot1+100)/100 * slot2 * slot3/100`, with a clamp that asserts in
 `GParamKeeper.cpp:301`.
 
+> **AMENDED 2026-09-15 — the formula above is right but incomplete, and the
+> missing piece invalidates an inference this project used repeatedly.**
+> `ParamKeeper_EvaluateParam` has two fallbacks to a per-param **default** held
+> at `+0x28`:
+>
+> ```c
+> if (!anySlotHasEntries) { value = *(float *)(param + 0x28); return; }
+> if (*(int *)(param + 8) == 0)  local[0] = *(float *)(param + 0x28);  // slot 0 empty -> base = default
+> ```
+>
+> and slot 2 *replaces* rather than multiplies when the base product is zero.
+> So **an unwritten param does not evaluate to zero — it evaluates to its
+> default.** The read path makes this unavoidable: `FUN_004b3740` calls
+> `ParamKeeper_EnsureParam` *first*, which lazily creates the param via
+> `FUN_004b2f40(min, max, default, ?)` from a descriptor record fetched out of a
+> map keyed by param id (sentinel `0xcd3110`, root `0xcd3114`), asserting if the
+> id is absent. The four values arrive as `fild [ecx+4/8/0xc/0x10]` — integers
+> from a record built at **runtime**, not immediates in the code.
+>
+> **Consequence**: "nothing writes param N, therefore N is zero" is not a valid
+> recovery, and three places in this codebase used it. They now read as "param N
+> is unmodified for an ordinary character", which is what the write census
+> actually proves. The defaults themselves are not in `SR_GameServer.exe` and
+> cannot be decompiled out of it. Corrected in `leveldata.DeathPenaltyReduction-
+> Percent` and `berserk`'s damage-completeness note; `combat.MitigateDamage`'s
+> params 9/11 argument is unaffected because it is a READ-side census (a param
+> nothing reads cannot matter whatever its default).
+
 **The consequence for damage**: param 13's slot 0 holds the weapon's own range
 *and* the Str-derived contribution from 17, and they **add**. A player's physical
 damage in the real game is the weapon's range plus a term of roughly
@@ -3572,3 +3600,90 @@ broken search.
 **What moved:** nothing numeric. `useitem.go`'s heal gains the citation that it
 is unmodified because the modifier is always zero, not because the modifier was
 overlooked.
+
+## Passive regeneration does not exist, and "unwritten means zero" was wrong (2026-09-15)
+
+Two results, the second of which matters more than the one I set out to get.
+
+**1. There is no passive HP/MP regeneration in the server binary.** Closed as a
+negative, and this time by an enumeration rather than a search that gave up.
+
+A character's pool is written through exactly two clamped setters, and they name
+their own source file: `GObjChar_SetCurHP` (`0x004a66f0`) and
+`GObjChar_SetCurMP` (`0x004a6790`) assert with
+`d:\work2005\source\silkroadonline\server\sr_gameserver\GObjChar.h` line `0x16c`
+and the format `"CLAMP() ==> min(%.3f) exceeded max(%.3f) value)"`. Disassembling
+the whole PE (`objdump -d -M intel`, 2.5M lines in 2s) and counting gives **4**
+calls to the HP setter, **2** to the MP setter, **4** to the generic
+`GObjPC_AdjustHpMp` they funnel through, and — the part that makes it an
+enumeration rather than a sample — **zero address-taken references** to any of
+the three, so none is ever reached through a vtable or a function pointer. Every
+writer is on the list, and every one has now been read:
+
+| Writer | What it is |
+|---|---|
+| `GObjPC_AdjustHpMp` `004a87d0` | the generic adjust: HP in EAX, MP in arg 2, notify mask OR'd into `pc+0xa0e` |
+| `GObjPC_RecoverHpMp` `004a86a0` | potions and heal skills (params 143/144) |
+| `CGObjCOS_Summoned::ConsumeHpMp` | summon upkeep |
+| `CGObjChar::vslot_317` / `vslot_318` | effect application — 318 passes HP=0, so it is MP-only |
+| `CGObjPC_PublishHpMp` `004e6330` | clamp, then send the update packet (bit 0 HP, bit 1 MP, bit 2 defers) |
+| `GObjPC_OnEffectExpired` `005829d0` | re-clamp when an expiring buff takes MaxHP/MaxMP away |
+| `FUN_00634020` | siege-structure removal |
+| `GObjPC_RestorePoolOnLoad` `004e1120` | login/respawn seed at `GetParam(3)*0.4` — writes charData directly, because at load there is no current value to clamp against |
+
+Not one is driven by a clock. Healing in this game is an **event** — a potion, a
+skill, a respawn — never a tick. `'hprg'`/`'mprg'` (params 25/26) are real but
+are not a resting rate: all seven writes of them come from skill effects and
+every one targets slot 1 (additive percent) or slot 3, never slot 0. They modify
+a regeneration the server itself never performs.
+
+`mana.RegenPercentPerTick`/`RegenInterval` therefore stay own design, and the
+comment now says so with the enumeration rather than with a hope that `'mprg'`
+was still out there to be read.
+
+**2. The correction, which came out of checking the probe.** I nearly shipped
+the argument "slot 0 is never written for 25/26, and the formula multiplies by
+slot 0, so the result is zero." Reading `ParamKeeper_EvaluateParam` instead of
+assuming it killed that: when slot 0 holds no entries the base falls back to a
+per-param **default** at `+0x28`, and when no slot has entries the result *is*
+the default. The read path forces it — `FUN_004b3740` calls
+`ParamKeeper_EnsureParam` first, which creates the param from a descriptor
+record `(min, max, default)` fetched from a map keyed by param id and asserts if
+the id is missing; the values arrive as `fild [ecx+4/8/0xc/0x10]`, integers from
+a record built at runtime.
+
+So **"nothing writes param N, therefore N is zero" is not a valid recovery**, and
+this codebase used it three times. Fixed:
+
+- `leveldata.DeathPenaltyReductionPercent` — still 0, but now disclosed as
+  srrevamp's own choice for a server with no premium accounts, not as a value
+  read out of the binary. What the binary proves is that param 257 is
+  premium-only (`CTJ_PremiumKeeper::vslot_012` is its sole writer).
+- `berserk`'s damage-completeness note — params 128-131, 178, 180, 187, 188, 259
+  are proven **unmodified** for an unbuffed character, not proven zero.
+- `combat.MitigateDamage`'s params 9/11 argument is **unaffected**: it is a
+  read-side census, and a param nothing reads cannot matter whatever its default.
+
+The defaults themselves are runtime data and are not recoverable from
+`SR_GameServer.exe` — a new entry on the unrecoverable list, alongside drop
+tables and character-creation defaults.
+
+**Naming.** Seven functions and six vtable slots gained real names in
+`ApplyKnownNames.java`, so they survive the next dump rebuild:
+`GObjChar_SetCurHP`, `GObjChar_SetCurMP`, `GObjPC_AdjustHpMp`,
+`GObjPC_RecoverHpMp`, `CGObjPC_PublishHpMp`, `GObjPC_OnEffectExpired`,
+`GObjPC_RestorePoolOnLoad`; and by use, `vf[0x104]` = `GetParam`,
+`vf[0x108]` = GetCurHP, `vf[0x10c]` = GetCurMP, `vf[0x110]` = GetMaxHP,
+`vf[0x114]` = GetMaxMP, charData `vf[0x40]`/`vf[0x44]` = the HP/MP stores.
+
+**A probe note worth keeping.** The param-id annotation pass covers **writes
+only** — 278 annotated `SetParam` sites, **zero** reads. Any census of "who uses
+param N" built on those comments is a write census wearing a use census's
+clothes, which is how the slot-0 argument looked convincing. The read side goes
+through `vf[0x104]`, and a literal-argument grep there finds real sites but must
+not be trusted as complete either: of 113 apparent "computed id" sites, most are
+three-argument calls to a *different* method at the same offset on another
+receiver class. Slot meaning depends on the receiver — again.
+
+**What moved:** nothing numeric. Two overreaching claims became accurate ones, a
+long-open question closed as a proven negative, and thirteen names landed.

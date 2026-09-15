@@ -446,6 +446,49 @@ public class ApplyKnownNames extends GhidraScript {
          "Mastery level-up. Walks the levels being raised, accumulates the level table's "
          + "entry+0x10 (leveldata column 2) for each, and refuses with error 0x3802 when the "
          + "character's skill points fall short. This is where the mastery cost was recovered."},
+
+        // The HP/MP pool. Recovered while establishing that passive regeneration
+        // does NOT exist server-side: naming every writer was how the negative
+        // was made complete. SetCurHP names its own source file in its CLAMP
+        // assert, which anchors the pair and the four accessor slots.
+        {"004a66f0", "GObjChar_SetCurHP",
+         "Clamped current-HP setter. Asserts with its own source path "
+         + "d:\\work2005\\source\\silkroadonline\\server\\sr_gameserver\\GObjChar.h line 0x16c "
+         + "and the format \"CLAMP() ==> min(%.3f) exceeded max(%.3f) value)\", so the clamp is "
+         + "the game's own. Takes the value in EAX, clamps to [0, GetMaxHP()] and writes it "
+         + "through charData (pc[0xd]) vtable slot 0x40."},
+        {"004a6790", "GObjChar_SetCurMP",
+         "Clamped current-MP setter, the twin of GObjChar_SetCurHP in the same GObjChar.h; "
+         + "clamps to [0, GetMaxMP()] and writes charData vtable slot 0x44."},
+        {"004a87d0", "GObjPC_AdjustHpMp",
+         "The generic pool adjustment every gameplay path funnels through: HP delta in EAX, MP "
+         + "delta in param_2, and a notify bitmask in param_3 OR'd into pc+0xa0e. Returns early "
+         + "unless vf[0xf8] says alive, and skips each half when its delta is zero -- which is "
+         + "why CGObjChar::vslot_318 calling it as (0, amount) is MP-only. Establishes the four "
+         + "pool accessor slots by use: vf[0x108] GetCurHP, vf[0x10c] GetCurMP, vf[0x110] "
+         + "GetMaxHP, vf[0x114] GetMaxMP."},
+        {"004a86a0", "GObjPC_RecoverHpMp",
+         "The recovery path potions and heal skills reach: separate HP (arg 2) and MP (arg 3) "
+         + "amounts, each passed through FUN_004b3740/FUN_009fbb40 before use, then handed to "
+         + "GObjPC_AdjustHpMp with the notify mask. When a scaled amount differs from the one "
+         + "asked for it reports through vf[0x15c] with a name constant (&DAT_00aebec0 for the "
+         + "HP half, &DAT_00aebedc for the MP half). Ghidra drops the HP argument here because "
+         + "it travels in EAX."},
+        {"004e6330", "CGObjPC_PublishHpMp",
+         "Vtable slot 310 (offset 0x4d8). Clamps current HP down when it exceeds max, then "
+         + "builds the update packet from a flag byte: bit 0 sends GetCurHP, bit 1 GetCurMP, "
+         + "bit 2 defers to GObjPC::FUN_004a5a50. A notifier, not a source of healing."},
+        {"005829d0", "GObjPC_OnEffectExpired",
+         "Buff/effect teardown, called three times from FUN_005830b0. Where the expiring effect "
+         + "touched MaxHP (effect+0x368) or MaxMP (+0x36c) it re-clamps the current pool down to "
+         + "the reduced maximum via GObjChar_SetCurHP/SetCurMP. This is the second-largest "
+         + "consumer of the pool setters and contains no healing."},
+        {"004e1120", "GObjPC_RestorePoolOnLoad",
+         "Login/respawn pool restore. When charData's vf[0x38]/vf[0x3c] report the stored pool "
+         + "as zero, seeds it with GetParam(3)=MaxHP and GetParam(4)=MaxMP scaled by the double "
+         + "at 0x00b460f0 -- the recovered 0.4 respawn fraction. Writes charData slots 0x40/0x44 "
+         + "DIRECTLY rather than through the clamped setters, because at load time there is no "
+         + "valid current value to clamp against."},
     };
 
     // The client binary's proven functions. Fewer, because the client asserts

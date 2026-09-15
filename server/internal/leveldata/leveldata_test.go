@@ -384,8 +384,12 @@ func TestApplyDeathPenaltyReduction(t *testing.T) {
 		})
 	}
 
-	// The constant itself is the recovered value: zero, because the only
-	// writer of param 257 in the whole binary is CTJ_PremiumKeeper.
+	// The constant is zero because the only writer of param 257 in the whole
+	// binary is CTJ_PremiumKeeper, so it is a premium-only benefit and an
+	// ordinary character never has it granted. Note this is srrevamp's own
+	// choice for a server with no premium system, NOT a value read out of the
+	// binary: an unwritten param evaluates to its descriptor default, and
+	// those defaults are runtime data. See the constant's own comment.
 	if DeathPenaltyReductionPercent != 0 {
 		t.Errorf("DeathPenaltyReductionPercent = %d; it is a premium-only stat and zero here",
 			DeathPenaltyReductionPercent)
