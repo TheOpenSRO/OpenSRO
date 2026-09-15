@@ -54,6 +54,22 @@ const (
 // rest, and no drop or rnd-drop table of any kind. So this stays own design
 // until an operator brings those tables, which the importer is now able to
 // accept. Chasing the name->ID mapping would have been chasing the wrong thing.
+//
+// UPDATE 2026-09-15: the missing DATA is still missing, but the missing
+// ALGORITHM no longer is. CRefDropData__AddAssignedItemDrop has been read, and
+// refdata.RollAssignedDrop / refdata.SelectFromGroup now implement it exactly:
+// an attempt count picked in [DropAmountMin, DropAmountMax] with DropRatio
+// rolled independently per attempt against a per-million roll, and a cumulative
+// SelectRatio pick within the group. So the table below is the only thing still
+// standing in for real data -- the machinery to consume that data faithfully is
+// written and tested.
+//
+// Two things remain before the real path can be switched on, and neither is
+// this file's to fix: an operator must supply the tables, and combat.Monster
+// carries CodeName but no numeric RefObjID, which is the key those tables use.
+// The rates below are the engine's shape only by accident -- each entry here is
+// a single independent roll with a separate quantity, which is NOT what the
+// engine does (see refdata.MonsterDrop's own comment).
 var LootTables = map[string][]LootEntry{
 	// Keyed by the species names the game's own tables use, matching the
 	// spawns in cmd/server. Renaming the spawns without renaming these

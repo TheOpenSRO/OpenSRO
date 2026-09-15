@@ -472,6 +472,23 @@ public class ApplyKnownNames extends GhidraScript {
          + "entry+0x10 (leveldata column 2) for each, and refuses with error 0x3802 when the "
          + "character's skill points fall short. This is where the mastery cost was recovered."},
 
+        // RefItemDrop.cpp -- how a kill decides what falls.
+        {"00724e30", "RefItemDrop_RollGroupDrop",
+         "Rolls a drop group and picks an entry from it. Uses the same per-million roll as the "
+         + "assigned-drop path -- two rand() calls combined as (r2<<15)|r1 modulo 1000000, "
+         + "because MSVC's rand() yields 15 bits -- and selects by CUMULATIVE weight: "
+         + "accumulates round(selectRatio * 1000000.0) across the group's entries (the ratio is "
+         + "a float32 at entry+0x24) and takes the first whose running total reaches the roll. A "
+         + "group whose ratios do not sum to 1 really can select nothing."},
+
+        {"00724a00", "CRefDropData_AddAssignedItemDrop",
+         "Named from its own assert string. Walks the monster ref object's assigned-drop vector "
+         + "(0x30-byte records at +0x28c): skips records whose group id at +0 is zero, picks an "
+         + "attempt count as rand() %% (max-min+1) + min from the BYTES at +6 and +7, then loops "
+         + "that many times rolling DropRatio (float32 at +8) independently each pass against "
+         + "(rand()<<15|rand()) %% 1000000 scaled by 'fmul QWORD ds:0xb45bc0' = 1000000.0. So the "
+         + "amount fields are an ATTEMPT COUNT, not a stack size."},
+
         // The kill-reward path: who contributed, how much each share is worth,
         // and the party multiplier on top. See docs/RE_COMPLETION.md.
         {"004106b0", "Formula_ExpShareByDamage",

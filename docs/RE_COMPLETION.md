@@ -4020,3 +4020,73 @@ applies (`unaff_EBX[0x737]` is the same field), which sits beside the long-open
 anything srrevamp models, so they stay open rather than guessed.
 
 **What moved:** a real value, shipped. Party kills now pay what the engine pays.
+
+## How the engine actually rolls a drop (2026-09-15)
+
+`RefItemDrop.cpp` was the other file the source-path lever named on srrevamp's
+critical path. Drop *tables* are still server-side database tables absent from
+every client archive — that closure stands — but the **drop ALGORITHM is in the
+binary**, and it turns out srrevamp's imported `MonsterDrop`/`DropGroupEntry`
+rows were being interpreted wrongly in two ways. Neither field had a use-site
+behind it; both were named from the column and left at that.
+
+### The assigned-drop roll
+
+`CRefDropData__AddAssignedItemDrop` (`0x00724a00`, named from its own assert)
+walks the monster ref object's assigned-drop vector — 0x30-byte records at
+`refObj+0x28c` — and for each record with a non-zero group id at +0:
+
+```c
+count = rand() % (max - min + 1) + min       // BYTES at record+6, +7
+for (i = 0; i < count; i++) {                // `} while (uVar5 < local_4)`
+    if (resultList full) break;
+    roll = (rand()<<15 | rand()) % 1000000;  // mov ecx,0xf4240
+    if (roll <= dropRatio * 1000000.0)       // fld DWORD [rec+8] ; fmul QWORD 0xb45bc0
+        produce one item from the group;
+}
+```
+
+**Two corrections fall out, and both change behaviour rather than wording:**
+
+1. **`DropAmountMin/Max` is an ATTEMPT COUNT, not a stack size.** The engine
+   picks a count in that range and then rolls `DropRatio` **independently for
+   each attempt**. A row of 1..3 at 10% yields nothing most kills and three items
+   rarely — a binomial, not "roll once then choose a quantity". The two models
+   agree only when `DropRatio` is 1.0.
+2. **`DropRatio` is a probability FRACTION in [0, 1]**, compared against a
+   per-million roll. Two `rand()` calls are combined because MSVC's `rand()`
+   yields 15 bits. The scale `0xb45bc0` is `QWORD` — a **double**, 1000000.0 —
+   while the ratio itself is `fld DWORD`, a float32; the usual operand-size
+   split, in one expression.
+
+### The group pick
+
+`RefItemDrop_RollGroupDrop` (`0x00724e30`) selects within a group by
+**cumulative** weight on the identical per-million scale: it accumulates
+`round(selectRatio * 1000000)` (a float32 at entry+0x24) and takes the first
+entry whose running total reaches the roll. That the same scale drives both is
+what establishes the two ratios as fractions on one common scale rather than two
+differently-encoded numbers. A group whose ratios do not sum to 1 genuinely
+selects nothing sometimes — a real outcome, not an error.
+
+### What shipped
+
+`refdata.RollAssignedDrop` and `refdata.SelectFromGroup` implement the above
+exactly, with `DropRollScale = 1000000` as a named recovered constant, and the
+struct comments now carry the semantics instead of the column names. The tests
+are written to separate the two mechanics rather than merely exercise one:
+`TestRollAssignedDropIsPerAttempt` runs 3 attempts at ratio 0.5 and asserts a
+zero-yield rate near **0.125**, because a roll-once model would give **0.5** —
+so a regression to the wrong mechanic fails loudly instead of drifting.
+
+**What did NOT move, stated plainly.** `combat.LootTables` is still own design
+and still what a kill actually rolls. Two things block the real path and neither
+is a value to recover: an operator must bring the tables, and `combat.Monster`
+carries `CodeName` but no numeric `RefObjID`, which is the key those tables use.
+What changed is that the machinery to consume that data faithfully now exists
+and is tested, so the remaining gap is data and plumbing rather than
+understanding.
+
+**What moved:** no shipped number, but two field semantics went from unexamined
+to recovered — and one of them (`DropAmountMin/Max`) was being read in a way
+that would have produced visibly wrong drop rates the moment real data arrived.
