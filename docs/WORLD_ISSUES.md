@@ -7075,6 +7075,54 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-ninety-sixth round: a slot is a container, and ctx is its key
+
+Last round named the reinforce quad and stopped at one question: does a derived
+bind **overwrite** its target's slot or **accumulate** into it? Param 13's slot 0
+is written twice -- directly from the weapon's own range, and by propagation from
+the Str-derived param 17 -- and which survives decides whether a player's damage
+is the weapon alone or the weapon plus a Str term.
+
+**It accumulates.** And getting there explained an argument this project has been
+carrying unexplained since the ParamKeeper was first named.
+
+`ParamKeeper_StoreSlot` shows a slot is not a float. It is a container, allocated
+on first use, and the value is stored **keyed by `ctx`** -- the third argument of
+`ParamKeeper_SetParam(slot, ctx, value)`, which had never had a meaning attached
+to it. It is the identity of the contributor, so two sources writing the same
+slot each keep their own entry: same key replaces, different keys coexist.
+
+`FUN_004b2e60` reduces a container, and how it combines entries depends on which
+slot it is:
+
+```
+acc = (slot == 3) ? 100.0 : 0
+for each entry:
+    slot 3  ->  acc = entry * acc / 100      percentages compound
+    slot 2  ->  acc = (entry/100 + 1) * acc  multipliers compound
+    slot 0  ->  acc = entry + acc            SUM
+    slot 1  ->  acc = entry + acc            SUM
+```
+
+So the four slots are base (summed), additive % (summed), multiplier
+(compounding) and percent scale (compounding from 100) -- and
+`ParamKeeper_EvaluateParam` combines them exactly as this project already had it,
+`slot0 * (slot1+100)/100 * slot2 * slot3/100`, with a clamp asserting in
+`GParamKeeper.cpp:301`.
+
+**What that means for damage**: a player's physical damage in the real game is
+the weapon's range **plus** a term of roughly `Str x reinforce%`. srrevamp's
+damage ignores Str entirely.
+
+**Still not shipped, and the gap is now exact rather than vague.** The magnitude
+needs one more fact: whether an item's reinforce *replaces* the innate base in
+param 34 or adds to it, which the `ctx` keying decides. `GObjPC_InitStats` writes
+ctx 0; `Char_PublishCombatStats` passes the stat-source pointer as ctx. Different
+keys would mean they sum, giving a Copper Sword user 61.2% reinforce instead of
+30.6%. That reads wrong -- so it is written down as the next question rather than
+shipped as a formula. Being able to state the objection precisely is the whole
+value of having read this far.
+
 ## Hundred-and-ninety-fifth round: reinforce, settled by the slot argument
 
 Last round left params 34-37 as a lead: their bases are 30.6 / 34.2 / 49.0 /

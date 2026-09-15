@@ -994,6 +994,54 @@ and `NamespaceFromSourceFile` reports **444 of 446** client functions and
 **166 of 166** server functions already namespaced. There is nothing left in it;
 a future tick should not re-run it hoping for yield.
 
+## GParamKeeper's combination rules, and what `ctx` was for (2026-09-15)
+
+The previous entry left one question in the way of using reinforce: does a
+derived bind **overwrite** its target's slot or **accumulate** into it? Param 13's
+slot 0 is written twice — directly from the aggregate's `+0x1b8` (the weapon's
+own range) and by propagation from 17 (Str-derived, scaled by reinforce) — and
+which survives decides whether a player's damage is the weapon alone or the
+weapon plus a Str term.
+
+**It accumulates, and the answer is slot-dependent.** `ParamKeeper_StoreSlot`
+(`004b3000`) shows a slot is not a float: it is a container, allocated on first
+use, and `FUN_004b2d60(container, ctx, value)` stores into it **keyed by `ctx`**.
+That is what the long-unexplained third argument to
+`ParamKeeper_SetParam(slot, ctx, value)` has been all along — the identity of the
+contributor, so two sources writing the same slot each keep their own entry.
+
+`FUN_004b2e60` then reduces a slot's container to one float, and how it combines
+them depends on which slot it is:
+
+```
+acc = (slot == 3) ? 100.0 : 0
+for each entry:
+    slot 3  ->  acc = entry * acc / 100     percentages compound
+    slot 2  ->  acc = (entry/100 + 1) * acc multipliers compound
+    slot 0  ->  acc = entry + acc           SUM
+    slot 1  ->  acc = entry + acc           SUM
+```
+
+So the four slots are **base (summed)**, **additive % (summed)**, **multiplier
+(compounding)** and **percent scale (compounding from 100)**, and
+`ParamKeeper_EvaluateParam` combines them exactly as recorded:
+`slot0 * (slot1+100)/100 * slot2 * slot3/100`, with a clamp that asserts in
+`GParamKeeper.cpp:301`.
+
+**The consequence for damage**: param 13's slot 0 holds the weapon's own range
+*and* the Str-derived contribution from 17, and they **add**. A player's physical
+damage in the real game is the weapon's range plus a term of roughly
+`Str x reinforce%`, and srrevamp's damage ignores Str entirely.
+
+**Still not shipped, and the remaining gap is now exact.** The magnitude needs
+one more fact: whether an item's reinforce *replaces* the innate base in param 34
+or adds to it. Both are plausible and the container's `ctx` keying decides it —
+same key replaces, different keys sum. `GObjPC_InitStats` writes ctx 0 while
+`Char_PublishCombatStats` passes the stat-source pointer as ctx, which would make
+them different keys and therefore additive — giving a Copper Sword user 61.2%
+reinforce rather than 30.6%. That reads wrong, which is exactly why it is written
+down as a question rather than shipped as a formula.
+
 ## The player stat graph, read off GObjPC_InitStats (2026-09-15)
 
 `GObjPC_InitStats` (`004e3200`) declares the whole graph in one function, and
