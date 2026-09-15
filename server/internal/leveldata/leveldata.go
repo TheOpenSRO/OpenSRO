@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,7 +52,7 @@ type Table struct {
 // worth as
 //
 //	lvl    = min(Char_GetLevel(killer), Char_GetLevel(victim))
-//	reward = scaleByWindow * levelTable[lvl]+0x1c * victim[0x1cd8] * scaleByDiff
+//	reward = scaleByWindow * levelTable[lvl]+0x1c * killer[0x1cd8] * scaleByDiff
 //
 // floored at 1, and its result goes to GObjPC_GiveExp (vtable slot 421, read
 // out of the vtable at 0x00af6090). A second, independent use-site settles what
@@ -75,16 +76,80 @@ func (t *Table) ExpUnit(level int) (int64, bool) {
 	return v, ok
 }
 
+// ExpDiffScalePerStep, ExpDiffScaleMaxSteps and ExpDiffScaleCap are the real
+// level-gap bonus on a kill's experience: punching UP pays more, and
+// out-levelling a target by three or more pays nothing extra.
+//
+// RECOVERED from Formula_ExpScaleByLevelDiff (0040ffe0), one of the two scalers
+// Formula_MonsterExpReward multiplies its base by. Disassembled rather than read
+// off the decompiler, because which level is subtracted from which is exactly
+// what the C loses:
+//
+//	40108f  LEA EAX,[EDI + 0x3] ; CMP EAX,EBX ; JG    <- victim+3 > killer?
+//	4100a0  FLD1 ; RET                                <- else exactly 1.0
+//	4100a8  SUB EDI,EBX ; ADD EDI,0x3                 <- victim - killer + 3
+//	4100ad  CMP EDI,0xD ; ... MOV [ESP+0xC],0xD       <- capped at 13
+//	4100c2  FMUL qword [0x00b45dc8]                   <- * 0.03
+//	4100c8  FADD [ESP + 0x8]                          <- + bonus + 1.0
+//	4100f1  FLD  dword [0x00b45dc0]                   <- clamped to 4.0 above
+//
+// EDI is the victim's level and EBX the killer's: the caller loads EAX with the
+// dead party and ESI with the killer (`MOV EAX,ESI ; MOV ESI,EDI` at 0x410666),
+// and GObjPC_OnDeath puts the stack argument -- the dead -- in EBP and `this`
+// -- the killer -- in EDI.
+//
+// The operand sizes settle the constants: `FMUL qword` makes 0x00b45dc8 a
+// double, 0.03 (the same constant the level-advantage damage term uses), and
+// `FLD dword` makes 0x00b45dc0 a float, 4.0.
+//
+// NOT MODELLED, and deliberately: the function can add a further 0.15/0.3/0.45
+// (or 0.3/0.6/0.9 on a flag at the killer's ref object +0x88) for gaps above
+// 4, 6 and 8 levels, but only when the killer passes a state gate --
+// `killer[0x72e]` non-null with bit 0 of its +0x10 set -- that this project has
+// not identified. Shipping a bonus whose precondition is unknown would apply it
+// always, which is worse than omitting it. The cap is therefore unreachable
+// here: without that bonus the scale spans 1.03 to 1.39.
+const (
+	ExpDiffScalePerStep  = 0.03
+	ExpDiffScaleMaxSteps = 13
+	ExpDiffScaleCap      = 4.0
+)
+
+// ExpDiffScale returns the level-gap multiplier on a kill's experience.
+func ExpDiffScale(killerLevel, victimLevel int) float64 {
+	// Out-levelling the target by three or more is worth no bonus at all --
+	// the engine returns a bare 1.0 without reaching the arithmetic below.
+	if victimLevel+3 <= killerLevel {
+		return 1
+	}
+	steps := victimLevel - killerLevel + 3
+	if steps > ExpDiffScaleMaxSteps {
+		steps = ExpDiffScaleMaxSteps
+	}
+	scale := 1 + float64(steps)*ExpDiffScalePerStep
+	if scale < 1 {
+		scale = 1
+	}
+	if scale > ExpDiffScaleCap {
+		scale = ExpDiffScaleCap
+	}
+	return scale
+}
+
 // KillExp is the experience a kill is worth, applying the game's own
 // **minimum-level rule**: the reward is taken at the LOWER of the two levels,
 // so out-levelling a monster -- or being power-levelled by someone who has --
 // pays at the weaker party's rate. The rule is symmetric, so it does not matter
 // which argument is which.
 //
-// The two level-gap scalers the real formula also applies
-// (Formula_ExpScaleByLevelWindow, Formula_ExpScaleByLevelDiff) are NOT
-// recovered yet and are treated as 1.0 here; that is a disclosed simplification,
-// not the game's behaviour. The base and the minimum-level rule are real.
+// Of the two level-gap scalers the real formula also applies,
+// Formula_ExpScaleByLevelDiff is now RECOVERED and applied here -- see
+// ExpDiffScale. Formula_ExpScaleByLevelWindow (0040fed0) is not: it branches on
+// a mode returned by FUN_0040fe60 and asserts on two of the three paths, and
+// neither the mode nor what selects it is identified, so it stays 1.0. The
+// killer's own exp-rate multiplier (a float at killer+0x1cd8, presumably a
+// premium or event rate) is likewise not modelled. Both omissions only ever
+// scale the reward, so what ships is the game's shape at its base rate.
 func (t *Table) KillExp(killerLevel, victimLevel int) (int64, bool) {
 	lvl := killerLevel
 	if victimLevel < lvl {
@@ -94,6 +159,7 @@ func (t *Table) KillExp(killerLevel, victimLevel int) (int64, bool) {
 	if !ok {
 		return 0, false
 	}
+	v = int64(math.Round(float64(v) * ExpDiffScale(killerLevel, victimLevel)))
 	if v < 1 {
 		// The real formula floors its result at 1.
 		v = 1

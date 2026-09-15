@@ -2,6 +2,7 @@ package leveldata
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 )
@@ -177,20 +178,27 @@ func TestExpUnitAndKillExp(t *testing.T) {
 	}
 
 	// The minimum-level rule: a level-20 character killing a level-1 monster
-	// is paid at level 1, not level 20.
+	// is paid at level 1, not level 20 -- and it out-levels the target by far
+	// more than three, so ExpDiffScale contributes exactly 1.0 and the unit is
+	// paid bare.
 	if got, ok := tbl.KillExp(20, 1); !ok || got != 24 {
 		t.Fatalf("KillExp(20, 1) = %d,%v; want 24 (paid at the monster's level)", got, ok)
 	}
-	// And the reverse: a level-1 character killing a level-20 monster is also
-	// paid at level 1. The rule is symmetric.
-	if got, ok := tbl.KillExp(1, 20); !ok || got != 24 {
-		t.Fatalf("KillExp(1, 20) = %d,%v; want 24 (paid at the killer's level)", got, ok)
+	// The reverse is NOT symmetric any more, and that is the recovered
+	// behaviour rather than a regression: the base is still the level-1 unit
+	// (the minimum-level rule), but punching 19 levels up earns the level-gap
+	// bonus, capped at 13 steps -- 24 * (1 + 13*0.03) = 33.36.
+	if got, ok := tbl.KillExp(1, 20); !ok || got != 33 {
+		t.Fatalf("KillExp(1, 20) = %d,%v; want 33 (level-1 unit, gap bonus capped)", got, ok)
 	}
-	if a, _ := tbl.KillExp(3, 10); a != 71 {
-		t.Fatalf("KillExp(3, 10) = %d; want 71", a)
+	// A level-3 character killing a level-10 monster: base 71 at level 3,
+	// gap 7 -> 10 steps -> 1.30. 71 * 1.30 = 92.3.
+	if a, _ := tbl.KillExp(3, 10); a != 92 {
+		t.Fatalf("KillExp(3, 10) = %d; want 92 (71 * 1.30)", a)
 	}
+	// The other way round the killer out-levels by 7, so no bonus at all.
 	if b, _ := tbl.KillExp(10, 3); b != 71 {
-		t.Fatalf("KillExp(10, 3) = %d; want 71", b)
+		t.Fatalf("KillExp(10, 3) = %d; want the bare 71", b)
 	}
 
 	// An export predating the exp_unit column still loads, and reports the
@@ -294,5 +302,50 @@ func TestDeathPenaltyUnknownLevel(t *testing.T) {
 	}
 	if _, ok := tbl.DeathPenaltyExp(9999, DeathPenaltyKilledByMonster); ok {
 		t.Error("a level the table does not know must report !ok")
+	}
+}
+
+// TestExpDiffScale pins the recovered level-gap bonus, boundary by boundary,
+// because every interesting case is a boundary.
+//
+// From Formula_ExpScaleByLevelDiff (0040ffe0): 1.0 flat when the killer
+// out-levels the target by three or more, otherwise 1 + 0.03 * (gap + 3) with
+// the step count capped at 13.
+func TestExpDiffScale(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		killerLevel, victimLevel int
+		want                     float64
+	}{
+		// The cutoff is `victim + 3 <= killer`, so a gap of exactly -3 is the
+		// first level that earns nothing and -2 the last that earns something.
+		{"out-levelled by 3 exactly", 10, 7, 1.00},
+		{"out-levelled by 4", 10, 6, 1.00},
+		{"out-levelled by 2", 10, 8, 1.03},
+		{"out-levelled by 1", 10, 9, 1.06},
+		{"same level", 10, 10, 1.09},
+		{"target one level up", 10, 11, 1.12},
+		// 13 steps is the cap: gap 10 reaches it, gap 11 and beyond stay there.
+		{"target ten levels up (the cap)", 10, 20, 1.39},
+		{"target eleven levels up (still capped)", 10, 21, 1.39},
+		{"target fifty levels up (still capped)", 10, 60, 1.39},
+		// The bare minimum is 1.0, never below.
+		{"a level-1 killer against a level-1 target", 1, 1, 1.09},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ExpDiffScale(tc.killerLevel, tc.victimLevel)
+			if math.Abs(got-tc.want) > 1e-9 {
+				t.Errorf("ExpDiffScale(%d, %d) = %v, want %v", tc.killerLevel, tc.victimLevel, got, tc.want)
+			}
+		})
+	}
+
+	// It never scales a reward down, whatever the levels.
+	for killer := 1; killer <= 80; killer++ {
+		for victim := 1; victim <= 80; victim++ {
+			if s := ExpDiffScale(killer, victim); s < 1 || s > ExpDiffScaleCap {
+				t.Fatalf("ExpDiffScale(%d, %d) = %v, outside [1, %v]", killer, victim, s, ExpDiffScaleCap)
+			}
+		}
 	}
 }

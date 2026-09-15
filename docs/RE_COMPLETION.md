@@ -1902,3 +1902,102 @@ multiplies only after the division, the subtraction and the clamp.
   buffs, this is a *second*, simpler damage path; what selects it is unknown.
 - Still open from before: itemdata columns 114 and 117; `pc[0x72d]`'s state
   enum; blocking's monster side.
+
+## The kill-EXP formula, and a correction (2026-09-15)
+
+### First, two open items closed cheaply
+
+**Which damage path is the ordinary attack.** `Combat_ResolveDamage` wraps its
+damage step in `switch (*(byte *)(iStack_e0 + 5))` — a damage-KIND selector:
+
+| case | path | params |
+|---|---|---|
+| **0** | `Formula_MitigatePhysicalDamage` + the magical twin | **13/14** |
+| 1 | `Formula_RollLevelDamage` | level-based |
+| 2 | `GObjPC::FUN_00615a20` | — |
+| 3 | `FUN_0040f990` → `Formula_RollWeaponDamage` | 190/191 |
+
+Case 0 is the ordinary attack, so the Str-carrying params 13/14 are the live
+path and `FUN_0040f990`'s simpler 190/191 roll is a special damage kind. That
+confirms v0.1.174 and v0.1.175 sit on the right branch.
+
+**The berserk constant.** `_DAT_00b45f30` reads 2.0 as a double and 0.0 as a
+float, so the operand size decides a shipped value. It is
+`40e672  FADD QWORD PTR ds:0xb45f30` — a double. Berserk is `GetParam(189) +
+2.0`, and srrevamp's flat ×2 is that at the default rate. No change; the
+citation is now operand-checked.
+
+### The exp reward, register by register
+
+`Formula_MonsterExpReward` (`004105d0`), disassembled:
+
+	ebx = MIN(level(esi), level(edi))            the anti-powerlevelling rule
+	A   = (float)(uint32) RefLevel_GetEntry(ebx)[+0x1c]
+	B   = Formula_ExpScaleByLevelWindow(edi)
+	C   = FLD DWORD PTR [edi + 0x1cd8]
+	D   = Formula_ExpScaleByLevelDiff(esi, edi)
+	exp = B * A * C * D, floored at 1
+
+**Correction: `+0x1cd8` is the KILLER's field, not the victim's.** This file
+recorded it as `victim[0x1cd8]`. `GObjPC_OnDeath` (`004e6980`) is `__thiscall`
+with the dead party as its stack argument, and its prologue is unambiguous:
+
+	4e69bf  MOV EBP,[ESP + 0x11f4]     <- the stack arg, the DEAD
+	4e69d2  MOV EDI,ECX                <- `this`, the KILLER
+	4e69c6  MOV EAX,[EBP + 0x34]       <- the dead's charData (+0xb4 below)
+	4e6a07  MOV EAX,EBP ; CALL 0x4105d0
+
+so inside the formula `esi` is the dead and `edi` the killer, and `C` is read
+off the killer. It is a float, and on `CGObjMob` the same offset is a packed
+byte (`CGObjMob::GetMonsterClass` is `MOV AL,BYTE PTR [ECX+0x1cd8] ; AND AL,0xF`)
+— different classes, which is what made the original reading look plausible.
+A per-character exp rate, presumably premium or event; not modelled.
+
+**There is no per-species exp column anywhere in this formula.** The monster
+contributes only its LEVEL, through the minimum and through the gap scaler.
+That retires the standing note in `combat.ExpFor` that "the real value is in the
+client's mob data (RefObjChar's ExpToGive)" — no such field is read.
+
+### Formula_ExpScaleByLevelDiff: RECOVERED and shipped
+
+	40108f  LEA EAX,[EDI + 0x3] ; CMP EAX,EBX ; JG     <- victim+3 > killer?
+	4100a0  FLD1 ; RET                                 <- else exactly 1.0
+	4100a8  SUB EDI,EBX ; ADD EDI,0x3                  <- victim - killer + 3
+	4100ad  CMP EDI,0xD ; MOV [ESP+0xC],0xD            <- capped at 13 steps
+	4100c2  FMUL qword [0x00b45dc8]                    <- * 0.03
+	4100c8  FADD [ESP + 0x8]                           <- + bonus + 1.0
+	4100f1  FLD  dword [0x00b45dc0]                    <- clamped to 4.0
+
+`EDI` is the victim's level and `EBX` the killer's, from the caller's
+`MOV EAX,ESI ; MOV ESI,EDI` at `0x410666` plus the prologue above. Operand sizes
+give the constants: `FMUL qword` makes `0x00b45dc8` a double, **0.03** — the
+same constant the level-advantage damage term uses — and `FLD dword` makes
+`0x00b45dc0` a float, **4.0**.
+
+So: out-level the target by three or more and the bonus is exactly 1.0;
+otherwise `1 + 0.03 * min(victim - killer + 3, 13)`, spanning 1.03 to 1.39.
+
+**Not modelled, deliberately.** The same function can add a further
+0.15/0.3/0.45 (or 0.3/0.6/0.9 under a flag at the killer's ref object `+0x88`)
+for gaps above 4, 6 and 8 — but only behind a state gate, `killer[0x72e]`
+non-null with bit 0 of its `+0x10` set, which is not identified. A bonus whose
+precondition is unknown would be applied always, which is worse than omitting
+it. The cap is therefore unreachable in srrevamp.
+
+`Formula_ExpScaleByLevelWindow` (`0040fed0`) stays at 1.0: it branches on a mode
+from `FUN_0040fe60` and asserts on two of its three paths, and neither the mode
+nor what selects it is identified.
+
+**What moved:** `leveldata.ExpDiffScale`, applied inside `KillExp`. The base and
+the minimum-level rule were already real and already wired into the kill path;
+this replaces the last "treated as 1.0" simplification in the kill reward with
+the recovered curve. A level-1 character killing a level-20 monster now earns
+33 rather than 24 — still paid at the level-1 unit, but with the gap bonus. The
+reverse direction is unchanged at 24, so the economy only opens upward.
+
+### Noted in passing
+
+`pc[0x72d]` — an open item — appears here as `CMP BYTE PTR [EBP+0x1cb4],0x5`
+(`0x72d * 4 = 0x1cb4`). `!= 5` is what gates both the doubled exp reward and
+the death-penalty branch, so whatever state 5 is, it suppresses both. Still not
+identified, but the use-site is now a pair rather than a single.
