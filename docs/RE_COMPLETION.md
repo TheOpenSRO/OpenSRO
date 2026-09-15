@@ -3525,3 +3525,50 @@ stating once so the next audit does not spend a tick rediscovering it per value.
 **What moved:** nothing numeric. Both constants keep their values and gain the
 reason they cannot be grounded, which is what the brief asks for when a value
 cannot be cited.
+
+## The HP/MP write pipeline, and why potions need no modifier (2026-09-15)
+
+Chasing `mana`'s still-ungrounded regeneration rate from the other end: instead
+of looking for a tick, enumerate everything in the binary that can change a
+character's pool. `charData`'s setters are virtuals at `vf[0x40]` (HP) and
+`vf[0x44]` (MP), and they have **two callers each**, which makes the whole
+pipeline small enough to map:
+
+	GObjChar::FUN_004a66f0 / FUN_004a6790   the setters themselves
+	GObjPC::FUN_004a87d0                   the generic adjust -- reads current
+	                                       via vf[0x108]/[0x10c] and max via
+	                                       vf[0x110]/[0x114], then writes
+	GObjPC::FUN_004a86a0                   the RECOVERY path, scaling first
+	CGObjChar::vslot_317 / vslot_318       effect application
+	GObjPC::FUN_004e1120                   the load/respawn restore (the 40%)
+
+**Passive regeneration is not on this list**, so it is still unlocated — but the
+recovery path yielded something better than the number I went looking for.
+
+### Potions: an unmodified heal, confirmed
+
+`FUN_004a86a0` does not hand a recovery straight to the pool. It scales the HP
+amount by ParamKeeper param **143** and the MP amount by **144** — `MOV EAX,0x8f`
+and `MOV EAX,0x90` into `EvaluateParam`, both against the character's own keeper
+at `+0x1ec` — before passing them on.
+
+**Both params are structurally zero.** Neither has a `SetParam` site anywhere in
+the binary, and neither is the target of a derived bind. So a
+recovery-effectiveness stat exists in the engine and nothing in this build ever
+grants one, which means the raw restore amount is what lands — exactly what
+`session/useitem.go` already does.
+
+That is a confirmation of a shipped value rather than a change, and it is the
+third time this session that enumerating a param's writers has turned "srrevamp
+omits a term" into "the term is provably zero" (after the damage-pipeline
+multipliers and the death-penalty reduction).
+
+**The probe was controlled.** A "no writers" result from the same search that
+produced four false negatives earlier in this project is worth nothing on its
+own, so it was run against param `0x22` — the weapon reinforce, known to be
+written — and found it in two shards. The absence for 143/144 is a result, not a
+broken search.
+
+**What moved:** nothing numeric. `useitem.go`'s heal gains the citation that it
+is unmodified because the modifier is always zero, not because the modifier was
+overlooked.

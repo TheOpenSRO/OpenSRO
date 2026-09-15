@@ -95,6 +95,20 @@ func DecodeUseItemResult(data []byte) (*UseItemResult, error) {
 // the large one 370. The percentage variants are honoured too, against the
 // maximum, and an item carrying both gets both.
 //
+// APPLIED UNMODIFIED, and that is confirmed rather than assumed (2026-09-15).
+// The engine does not hand a recovery straight to the pool: GObjPC::FUN_004a86a0
+// scales the HP amount by ParamKeeper param 143 and the MP amount by 144 --
+// `MOV EAX,0x8f` and `MOV EAX,0x90` into EvaluateParam, both read off the
+// character's own keeper at +0x1ec -- before passing them to the adjust that
+// writes the pool.
+//
+// Both are structurally ZERO. Neither has a SetParam site anywhere in the
+// binary and neither is the target of a derived bind, so the scaling is a no-op
+// for every character and the raw restore amount is what lands. (The probe was
+// checked against param 0x22, which it does find, so the absence is a result
+// and not a broken search.) A recovery-effectiveness stat exists in the engine;
+// nothing in this build ever gives a character one.
+//
 // An item that restores nothing is refused rather than silently eaten -- the
 // bag is full of equipment and quest items that have no use yet, and quietly
 // destroying one would be the worst possible answer.
