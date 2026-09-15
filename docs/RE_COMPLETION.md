@@ -187,6 +187,55 @@ pick one up without re-deriving anything.
    stays disclosed — but as "a per-character value we fix at 50", not "a number
    nobody has found". **Unarmed damage (5)** — still ours.
 
+## The real game's persisted data model
+
+One helper binds every database column to its struct offset, and **60 functions
+call it** — one per table. `NameDBBinders.java` names them all `DB_Bind_<TABLE>`
+and writes each table's columns into its plate comment, so the schema lives in
+the program. **55 named in a single pass**, which is the largest naming return
+from one lever since the attribution chain.
+
+It is self-validating, which is rare here: the `_CHAR` binder reproduces four
+offsets this project had already derived by entirely unrelated routes —
+`Strength` 0x74, `Intellect` 0x76, `CurLevel` 0x65, `RemainSkillPoint` 0x80, all
+exact. A map that gets four known answers right is worth trusting for the rest.
+
+The tables, by size: `_CHAR` (39), `_ITEMS` (19), `_OpenMarket` (16),
+`_GUILDMEMBER` (15), `_TIMEDJOB`/`_TIMEDJOBFORPET` (14), `_TRAININGCAMPMEMBER`,
+`_GUILDWAR`, `_LOGEVENTITEM` (11), `_ITEMQUOTATION`, `_GUILD`,
+`_CharInstanceWorldData`, `_SiegeFortress`, `_RentItemInfo` (10), `_CHARCOS`,
+`_CHARQUEST`, `_BindingOptionWithItem` (9), … plus `_USER`, `_INVENTORY`,
+`_INVENTORYFORAVATAR`, `_INVENTORYFORLINKEDSTORAGE`, `_CHEST`, `_INVCOS`,
+`_CHARSKILL`, `_CHARSKILLMASTERY`, `_Friend`, `_Memo`, and the siege/log family.
+
+The ones srrevamp already implements something for:
+
+```
+_ITEMS      RefItemID, OptLevel, Variance, CreaterName,
+            MagParamNum, MagParam x12, Serial64
+_CHARQUEST  CharID, QuestID, Status, AchievementCount,
+            StartTime, EndTime, QuestData1, QuestData2
+_CHARSKILL          CharID, SkillID, Enable
+_CHARSKILLMASTERY   CharID, MasteryID, Level
+_Friend     CharID, FriendCharID, FriendCharName, RefObjID
+_Memo       FromCharName, Message, Status, RefObjID
+_CHARCOS    OwnerCharID, RefCharID, KeeperNPC, State, CharName,
+            ExpOffset, PetOption, RentEndTime
+_USER       UserJID, CharID
+```
+
+Two of those refine recorded conclusions rather than merely adding facts:
+
+- **`_ITEMS` persists `Variance`** alongside `OptLevel` — so the real game rolls
+  a per-instance stat variance, which is why two identical weapons differ. This
+  project ships fixed itemdata values; that is a disclosed simplification nobody
+  had named before.
+- **`_CHARQUEST` has `QuestData1`/`QuestData2`**, not just status and a count.
+  The standing conclusion ("objectives are not data; `_CHARQUEST` persists only
+  status+count") is *narrowed*: objectives still live in server code, but
+  per-quest progress state is richer than a counter, and those two slots are
+  where it goes.
+
 ## The character struct, in the game's own column names
 
 `CharData_BindDBColumns` (`0083e6b0`) binds every persisted `_CHAR` column to its

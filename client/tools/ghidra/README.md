@@ -263,3 +263,22 @@ These levers feed each other, so a full pass runs them in this order:
 
 `re_pass.sh` runs the two binaries as parallel lanes; only the steps *within* a
 lane are ordered.
+
+## NameDBBinders.java `[apply]`
+
+**The largest single naming return in this project, and the game's schema.** The
+server binds every persisted column to a struct offset through one helper, in a
+fixed shape — `FUN_00401fc0("Strength", 8)` for the name, then the offset, the
+type, and the bind call. **60 functions call that helper, one per table**, and
+this names them all `DB_Bind_<TABLE>` with the columns written into each plate
+comment. 55 named in a single pass.
+
+It is self-validating, which almost nothing here is: the `_CHAR` binder
+reproduces `Strength` 0x74, `Intellect` 0x76, `CurLevel` 0x65 and
+`RemainSkillPoint` 0x80 — four offsets derived earlier by unrelated routes, all
+exact. A map that gets four known answers right can be trusted for the other 34.
+
+Beyond naming, it hands over the real game's **persisted data model**: `_CHAR`,
+`_ITEMS`, `_CHARQUEST`, `_CHARSKILL`, `_CHARSKILLMASTERY`, `_INVENTORY`,
+`_CHEST`, `_GUILD*`, `_Friend`, `_Memo`, the siege and training-camp families,
+and the log tables. See `docs/RE_COMPLETION.md` for the schemas that matter.
