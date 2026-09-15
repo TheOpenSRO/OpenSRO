@@ -98,23 +98,41 @@ pushes slot 0.
   had established as unwritten for an ordinary character. Consistent: `umdu` is
   a buff/item tag, so only a buffed character has it.
 
-## Dead tags: recognised, but they do nothing
+## Tags that are not character-stat modifiers
 
 These seven have a branch in the dispatcher that returns immediately without
-touching any param. They are **not** unimplemented-and-waiting; the dispatcher
-is the modifier path, so a tag it ignores has no effect on a character's stats:
+touching any param:
 
 > `er`, `atha`, `rep`, `astr`, `dura`, `luck`, `soli`
 
-Worth singling out: **`luck` is dead**, even though the client ships a
-`PARAM_LUCK` = "Lucky" localisation string and displays the stat. Note this is a
-statement about the `luck` tag specifically — the separate tag `luca` is live
-(it reads the current value and adds to it), so do not read this as "luck does
-nothing in the game".
+**They never reach a ParamKeeper param**, and that part is enumerated rather than
+assumed: exactly **28 functions in the binary write a param**, and only one of
+them — `Stat_ApplyTaggedModifier` — is dispatched on a tag. The other 27 are
+structural (`GObjPC_InitStats`, `Char_PublishCombatStats`, `GObjMob_PublishStats`,
+`GObjPC_SetLevel`, `GObjPC_SpendStatPoints`, the premium and mob and siege
+paths). So if a tag does not become a param here, it becomes one nowhere.
 
-Note also `er` is dead while `era` is live, and `dura` is dead while `drua` is
-live. The pattern is suggestive of legacy short forms, but `hp` and `mp` are both
-short and both live, so it is reported as an observation, not a rule.
+**CORRECTED 2026-09-15 — an earlier version of this section called these seven
+"DEAD" and said a tag the dispatcher ignores "has no effect on a character's
+stats".** The first half is right; the word *dead* is wrong, and the reason it
+matters is concrete: **`dura` appears on 1,979 skills.** A tag carried by two
+thousand skills is not dead.
+
+All seven are recognised elsewhere in the binary — in the description builders
+(`CGameServer::FUN_0072e2d0` and neighbours, which work in `LPCSTR`/`PCNZCH` and
+produce the `AVT <tag> +%d%%` strings), in the enchant system
+(`CEnchant_EnchantAttrStone` and friends), and in `CGItemEquip`. None of those
+files contains a single `SetParam` call, which is exactly why they are compatible
+with the enumeration above.
+
+So the accurate claim is narrow: **these seven are not character-stat modifiers.**
+What they *are* instead is not recovered here — plausible readings exist for some
+of them (`dura` for a duration, say) but nothing in this pass settles one, and
+this project has been wrong twice guessing a tag from its abbreviation.
+
+`luck` deserves its own note: it does not modify a stat, even though the client
+ships a `PARAM_LUCK` = "Lucky" localisation string and displays it. The separate
+tag `luca` **is** live, so do not read this as "luck does nothing in the game".
 
 ## Unresolved
 

@@ -406,6 +406,18 @@ public class ApplyKnownNames extends GhidraScript {
          + "own default is 'mov edi,0x1'). Params 27-32 are the six status resistances. Tags "
          + "'er', 'atha', 'rep', 'astr', 'dura', 'luck' and 'soli' return without touching a "
          + "param -- they are DEAD, not unimplemented."},
+        {"004d60a0", "COS_ApplyHalfCombatScale",
+         "Sets slot 3 (the percent scale, which compounds from 100) to 50.0 on the whole combat "
+         + "block at once -- params 5, 6, 9, 11 and 13/14/15/16 -- then flushes the keeper. The "
+         + "constant is 'fld DWORD ds:0xb4603c' = 50.0f, so it HALVES damage bounds, defence, "
+         + "parry rate and attack rate. Reached only from CGObjCOS_GoldPet::vslot_215 and "
+         + "vslot_211 (one call, one tail-jmp, no address-taken references), so it is the gold "
+         + "pet's combat penalty rather than a general scale."},
+        {"004aaf80", "Effect_NegateDaraFamily",
+         "Dispatches on the 4-char code 0x44414252 ('DABR' read big-endian) and negates the "
+         + "value into params 174-177 at slot 2 -- the same family the 'dara' tag writes. Paired "
+         + "with GObjPC::FUN_004ab060, which removes the same four via FUN_004b3570(0xae..0xb1). "
+         + "What the code itself denotes is NOT recovered; only the mechanics are."},
         {"00508170", "AvatarBless_TagList",
          "Builds the 12-tag list an avatar item's blessing can carry, in order: 'stra', 'inta', "
          + "'hra', 'era', 'hpa', 'mpa', 'drua', 'dara', 'mdia', 'hprg', 'mprg', 'luca'. Pairs "

@@ -3833,3 +3833,61 @@ corrected this project twice.
 resistances, and `berserk`'s 128-131 was already right. The vocabulary went from
 19 hand-read entries to 31 resolved plus 7 proven-dead, with a registry
 cross-check behind it.
+
+## The stat-write surface is 28 functions, and last tick's "dead tags" was too strong (2026-09-15)
+
+Started by joining the skill param codes to the tag vocabulary recovered last
+tick, on the theory that the two are partly the same language. They barely
+overlap — but the first overlap found was `dura`, which last tick's table listed
+as a **dead tag** and which `skill_params.md` shows on **1,979 skills**. A tag
+carried by two thousand skills is not dead, so the claim needed checking rather
+than extending.
+
+**What the check established.** Enumerating every `ParamKeeper_SetParam` caller
+gives **28 functions**, and exactly **one** of them is dispatched on a tag:
+`Stat_ApplyTaggedModifier`. The other 27 are structural — `GObjPC_InitStats`,
+`Char_PublishCombatStats`, `GObjMob_PublishStats`, `GObjPC_SetLevel`,
+`GObjPC_SpendStatPoints`, `CTJ_PremiumKeeper::vslot_008`/`012`,
+`CTJ_CharParamKeeper`, the mob, siege and mercenary paths, and the effect
+apply/expire pair. **So a tag that the dispatcher ignores does not become a param
+anywhere.** That half of last tick's claim survives, and is now enumerated rather
+than asserted.
+
+**What was wrong.** The published wording was that the dispatcher "**is** the
+modifier path, so a tag it ignores has no effect on a character's stats", and it
+called the seven tags DEAD. All seven are in fact recognised in five other
+files — the description builders (`CGameServer::FUN_0072e2d0` and neighbours,
+working in `LPCSTR`/`PCNZCH`, which produce the `AVT <tag> +%d%%` strings), the
+enchant system (`CEnchant_EnchantAttrStone`), and `CGItemEquip`. **None of those
+files contains a single `SetParam` call**, which is why they sit comfortably
+beside the enumeration — but it means the tags are live code, not dead strings.
+
+Corrected in `docs/protocol/param_tags.md` to the narrow claim the evidence
+supports: **these seven are not character-stat modifiers.** What they are
+instead is left unrecovered. `dura` reads like a duration and `rep` like a
+repeat, but nothing in this pass settles either, and guessing a tag from its
+abbreviation has already cost this project two wrong answers (`era` is parry,
+not evasion; `hra` is attack rate, not hit rate).
+
+**Recovered on the way**, from reading the unnamed half of those 28 writers:
+
+- **`COS_ApplyHalfCombatScale`** (`0x004d60a0`) — sets slot 3, the percent scale
+  that compounds from 100, to **50.0** across the entire combat block at once
+  (params 5, 6, 9, 11, 13, 14, 15, 16) and flushes the keeper. The constant is
+  `fld DWORD ds:0xb4603c` — a float32, checked for operand size — so it halves
+  damage bounds, defence, parry rate and attack rate. Reached only from
+  `CGObjCOS_GoldPet::vslot_215` and `vslot_211` (one call, one tail-`jmp`, no
+  address-taken references), so it is **the gold pet's combat penalty**, not a
+  general scale. srrevamp has no pet system, so this is recorded rather than
+  wired.
+- **`Effect_NegateDaraFamily`** (`0x004aaf80`) — dispatches on the four-character
+  code `0x44414252` (`DABR` big-endian) and negates the value into params
+  174-177 at slot 2, the same family the `dara` tag writes; `FUN_004ab060`
+  removes the four again. The mechanics are recovered; what the code denotes is
+  not, and is not guessed.
+
+**What moved:** nothing numeric — srrevamp models neither pets nor the `dara`
+family. One published claim narrowed from "these tags are dead" to "these tags
+are not stat modifiers", with a 28-function enumeration behind the half that
+held. The skill-code/stat-tag join that prompted all this turned out to be
+nearly empty, which is itself worth recording so it is not retried.
