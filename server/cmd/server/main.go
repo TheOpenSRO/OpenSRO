@@ -32,6 +32,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/storage"
 	"github.com/OpenSRO/srrevamp/server/internal/trade"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
 
 // monsterSpec describes one species of monster to keep alive somewhere in
@@ -55,6 +56,21 @@ type monsterSpec struct {
 	GoldMin, GoldMax int64
 	X, Z             float64 // own-design spawn anchor (see the roster comment)
 	Count            int     // how many to keep alive around the anchor (default 1)
+	// Spawns are the species' REAL placements, straight out of the client's
+	// own npcpos table, as the table states them: a region id and a position
+	// local to that region. When a species has these, they replace the
+	// own-design anchor entirely -- one monster per real row, where the game
+	// itself puts it -- and X/Z/Count are unused. worldmap.ToZoneWorld does
+	// the conversion; see that package for why it is measured, not derived.
+	Spawns []realSpawn
+}
+
+// realSpawn is one npcpos row, kept in the table's own terms rather than
+// pre-converted, so the source stores the grounded fact and the derived world
+// coordinate cannot drift away from it.
+type realSpawn struct {
+	RegionID       int
+	LocalX, LocalZ float64
 }
 
 // monsterStatsForLevel is what is still this project's OWN DESIGN in a
@@ -130,13 +146,41 @@ var monsterSpecs = []monsterSpec{
 	//
 	// Defence, counter-attack and gold are still the disclosed
 	// monsterStatsForLevel curve (no real table for those has been found).
-	// Positions are OWN DESIGN, clustered at the two farmland anchors measured
-	// flat, walkable and object-clear (region 96/168; (0,-840) and
-	// (340,-340) -- see docs/WORLD_ISSUES.md), so every monster stands on
-	// verified terrain rather than a blind guess.
 	//
-	// A low-level ground north-west of the fields (the (0,-840) anchor):
-	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1, MaxHP: 54, Defense: 7, AttackMin: 17, AttackMax: 19, GoldMin: 28, GoldMax: 59, X: 0, Z: -840, Count: 3},
+	// POSITIONS. Mangyang's are real -- see its entry. Every other species is
+	// still OWN DESIGN, clustered at two anchors measured flat, walkable and
+	// object-clear, so they stand on verified terrain rather than a blind
+	// guess: (0,-840) and (340,-340), which are region 97/168 local
+	// (960,1800) and (1300,1300). (Those two were described here as region
+	// 96/168 until 2026-09-15; the coordinates were right and the region
+	// label was wrong. worldmap's measured transform places them in 97/168,
+	// the town's own region, and no local position in 96/168 maps to either.)
+	//
+	// Mangyang stands where the GAME puts it. npcpos -- the client's own
+	// placement table, 12,367 rows across 1,451 regions -- has exactly four
+	// rows in region 96/168, the farmland region immediately south of the
+	// town, and all four are id 1933, which characterdata gives as
+	// MOB_CH_MANGNYANG at level 1 with 54 HP: the same species and the same
+	// two numbers this row already carried, arrived at independently.
+	//
+	// All four were measured walkable on the render box before being wired,
+	// which is the whole reason they sat unused for a tick. Each column
+	// reports exactly ONE surface, its landing height equal to the terrain
+	// height to within 0.05, no blocking edge within 40 units, and the
+	// nearest navmesh cell of any placed object 174 units away or more. That
+	// is open field -- no roof, no upper storey, nothing to spawn inside.
+	//
+	// Their authored heights (-29.4, 0.03, -28.4, -30.5) disagree with the
+	// measured terrain (-45.0, -41.4, -39.6, -51.9) by 11 to 41 units, and
+	// are deliberately not carried: the client resolves standing height from
+	// the region's walkable graph and ignores the authored y, so a height
+	// here would be a number nothing reads.
+	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1, MaxHP: 54, Defense: 7, AttackMin: 17, AttackMax: 19, GoldMin: 28, GoldMax: 59, Spawns: []realSpawn{
+		{RegionID: 24744, LocalX: 1089.65, LocalZ: 600.09003},
+		{RegionID: 24744, LocalX: 1842.3, LocalZ: 600.94},
+		{RegionID: 24744, LocalX: 553.73999, LocalZ: 471.07001},
+		{RegionID: 24744, LocalX: 1260.99, LocalZ: 22.690001},
+	}},
 	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", Level: 2, MaxHP: 55, Defense: 9, AttackMin: 21, AttackMax: 23, GoldMin: 32, GoldMax: 66, X: -170, Z: -880, Count: 2},
 	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", Level: 3, MaxHP: 85, Defense: 9, AttackMin: 25, AttackMax: 29, GoldMin: 35, GoldMax: 74, X: 170, Z: -880, Count: 2},
 	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", Level: 4, MaxHP: 83, Defense: 12, AttackMin: 30, AttackMax: 34, GoldMin: 39, GoldMax: 81, X: -170, Z: -760, Count: 2},
@@ -426,6 +470,36 @@ func main() {
 	duels := duel.NewHub()
 	trades := trade.NewHub()
 	for _, spec := range monsterSpecs {
+		// A species with real npcpos placements gets one monster per real
+		// row, where the game itself puts it. No spread: these are already
+		// the authored positions, and nudging them would throw away the only
+		// part of this that is grounded.
+		if len(spec.Spawns) > 0 {
+			placed := 0
+			for _, s := range spec.Spawns {
+				rx, ry := worldmap.RegionXY(s.RegionID)
+				x, z, ok := worldmap.ToZoneWorld(spec.Zone, rx, ry, s.LocalX, s.LocalZ)
+				if !ok {
+					// The zone's own centre region is what world coordinates
+					// are relative to; without it there is no frame to convert
+					// into, and placing the monster at the local position
+					// would silently put it somewhere arbitrary.
+					logger.Warn("real spawn skipped: zone has no known centre region",
+						"zone", spec.Zone, "name", spec.Name, "region", s.RegionID)
+					continue
+				}
+				inst := spec
+				inst.X, inst.Z = x, z
+				go maintainMonster(ctx, monsters, logger, inst)
+				placed++
+			}
+			if placed > 0 {
+				continue
+			}
+			// Nothing converted. Fall through to the own-design anchor rather
+			// than leaving the species out of the world entirely.
+			logger.Warn("no real spawn converted, falling back to the anchor", "name", spec.Name)
+		}
 		count := spec.Count
 		if count < 1 {
 			count = 1

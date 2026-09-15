@@ -224,12 +224,63 @@ pick one up without re-deriving anything.
    away in another town — exactly the shape a real ladder should have, from a
    transform that knew nothing about levels.
 
-   *Still not wired, and the reason is this project's own strictest rule:* **a
-   claim about the world needs a measurement, not an inference.** These
-   coordinates are unverified against the navmesh, the server has no navmesh
-   reader, and a spawn inside a building would surface as a monster on a roof.
-   *Next step:* `SRREVAMP_QA_SCAN` the converted points on the render box, then
-   wire the ones that stand on walkable ground.
+   **MEASURED, CORRECTED and WIRED (2026-09-15).** The derivation above has the
+   **wrong sign on Z**, and the sanity check could not have found it. Measured
+   on the render box at eleven columns, reading the client's own region group
+   nodes (`World3D.gd`'s `_qa_columns_report`), in a world centred on Jangan's
+   real region 97/168:
+
+   ```
+   worldX = (ry − 168)·1920 + (localX − 960)
+   worldZ = (97 − rx)·1920 + (960 − localZ)
+   ```
+
+   Two corrections, both of which change where a monster lands:
+
+   - **World Z is mirrored**, consistently: local z runs opposite to world Z
+     *inside* a region and the region-to-region step runs opposite too, so the
+     two agree and regions still tile seamlessly. The derived formula predicted
+     `(130, −1560)` for the first real Mangyang row; the measurement is
+     `(130, 2280)`. Shipping the prediction would have put that monster 3,840
+     units away, on the far side of the town. World X has **no** such mirror —
+     which is why both axes were probed in both directions (`97/169`→`(+1920,0)`,
+     `97/167`→`(−1920,0)`, `98/168`→`(0,−1920)`, `96/168`→`(0,+1920)`) rather
+     than one being assumed from the other.
+   - **The origin is the centre region's geometric centre, not the spawn
+     point.** The old constants 323562 and 187260 were built from
+     `ZONE_SPAWN_LOCAL` (1002, 1020); the true origin is local (960, 960), and
+     the client *moves* the player from there to the landing spot afterwards.
+     That is the 42-unit X offset between the two.
+
+   **Why the sanity check passed anyway, and this is the lesson:** the old Z is
+   exactly `−(true Z) + 900`. A sign flip applied to *both* the monster and the
+   reference point preserves every distance between them — it is an isometry —
+   so a table of distances is mathematically **incapable** of detecting it. The
+   curve looked right because it was right; it just was not evidence for the
+   thing it was being read as evidence for. This is the concrete case for
+   *never promote a value on a suggestive curve alone — a use-site settles it.*
+
+   Wired for Mangyang, the one species measured so far. `npcpos` has exactly
+   four rows in region 96/168 — the farmland immediately south of town — and
+   all four are id 1933, which `characterdata` gives as `MOB_CH_MANGNYANG` at
+   level 1 with 54 HP: the same species and the same two numbers the roster
+   already carried, reached independently. All four were measured walkable
+   first: one surface each, landing height equal to terrain within 0.05, no
+   blocking edge within 40 units, nearest placed-object navmesh cell ≥174 units.
+   The transform lives in `server/internal/worldmap` with all eleven columns as
+   its tests, and the roster stores the `npcpos` rows verbatim so the grounded
+   fact is what is in the source and the world coordinate is derived.
+
+   Their authored heights disagree with the measured terrain by 11–41 units and
+   are deliberately dropped: the client resolves standing height from the
+   region's walkable graph and ignores the authored y.
+
+   *Next step:* the other ten species. Their real regions are known
+   (Mangyang 95–96/166–170, Water Ghosts 100/166–169, Stone Ghosts
+   100–101/171–173, Yeoha 95–98/163–164, Earth Ghost 101–102/154–155), but each
+   needs its own walkability pass before wiring, and most sit 2+ regions out —
+   beyond the radius-2 grid the town loads, so they also need the player to
+   actually travel there.
 
    Found while deriving it: `World3D.gd`'s comment above `ZONE_SPAWN_LOCAL` said
    the town square is local **(1002, 917)** while the constant has always been

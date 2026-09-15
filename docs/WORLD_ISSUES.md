@@ -7075,6 +7075,72 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-seventy-seventh round: a monster standing where the game put it
+
+Mangyang no longer stands on an anchor this project invented. It stands on its
+four real `npcpos` rows — the client's own placement table, 12,367 rows across
+1,451 regions — in region 96/168, the farmland immediately south of Jangan.
+Those four rows are that region's *entire* npcpos content, all four are id
+1933, and `characterdata` gives 1933 as `MOB_CH_MANGNYANG` at level 1 with 54
+HP: the same species and the same two numbers the roster already carried,
+reached by a different route.
+
+**The conversion was wrong, and only measuring it found that.** The recorded
+region→world transform had been *derived* from the region layout. Measured
+against the client's own region group nodes at eleven columns, it has the wrong
+sign on Z:
+
+```
+worldX = (ry − 168)·1920 + (localX − 960)
+worldZ = (97 − rx)·1920 + (960 − localZ)
+```
+
+World Z is mirrored — local z runs opposite to world Z inside a region, *and*
+the region-to-region step runs opposite too, so the two cancel and regions
+still tile without a seam. World X has no such mirror, so both axes were probed
+in both directions rather than one being assumed from the other: `97/169` →
+`(+1920, 0)`, `97/167` → `(−1920, 0)`, `98/168` → `(0, −1920)`, `96/168` →
+`(0, +1920)`. The derived formula predicted `(130, −1560)` for the first real
+row; the measurement is `(130, 2280)`. That monster would have spawned 3,840
+units away, on the far side of the town. The origin was wrong too: it is the
+centre region's geometric centre, local (960, 960), not `ZONE_SPAWN_LOCAL` —
+the client *moves* the player to the landing spot afterwards.
+
+**The check that passed was incapable of failing.** The transform had been
+sanity-checked by "distance from town rises with monster level", and it does.
+But the old Z is exactly `−(true Z) + 900`, and a sign flip applied to both the
+monster and the reference point preserves every distance between them. The
+table was an isometry of the right answer. It looked like evidence and was not
+— the cleanest example yet of why a suggestive curve never promotes a value.
+
+Two independent checks did hold. The formula reproduces, exactly, the two
+anchors this project's monsters already stood on — `(0, −840)` and
+`(340, −340)`, derived by an unrelated route in an earlier session. And doing
+so revealed those anchors are in region **97/168** at locals (960, 1800) and
+(1300, 1300), not 96/168 as `main.go` had said for as long as they existed; no
+local position in 96/168 maps to either. The coordinates were right, the region
+label was wrong.
+
+Walkability was measured before anything was wired, which is why this sat a
+tick. Each of the four columns reports exactly one surface, its landing height
+equal to the terrain height within 0.05, no blocking edge within 40 units, and
+the nearest navmesh cell of any placed object 174 units or more away — open
+field, nothing to spawn inside or on top of. Their authored heights disagree
+with the measured terrain by 11–41 units and are dropped: the client resolves
+standing height from the walkable graph and ignores the authored y.
+
+`SRREVAMP_QA_COLUMNS` grew an `rx/ry@x,z` form to make any of this askable —
+it could previously only report the region the player was standing in, and a
+spawn point's world coordinate can only come from its own region's group node.
+Its print also now names the region the frame is centred on instead of calling
+the pair "the server's coordinates", which is true only when the grid happens
+to be built around the zone's own centre.
+
+The transform lives in `server/internal/worldmap` with all eleven measured
+columns as its tests; the roster stores the npcpos rows verbatim so the
+grounded fact is what is in the source. The other ten species' real regions are
+known but unmeasured, and most sit beyond the radius-2 grid the town loads.
+
 ## Hundred-and-seventy-sixth round: a player's health was never a constant
 
 `MaxHP = 100 + 40*(level-1)` is gone. The real one is

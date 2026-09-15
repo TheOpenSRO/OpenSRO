@@ -1,10 +1,12 @@
 package main
 
 import (
+	"math"
 	"testing"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
 
 // What is left of the monster stat curve is own design, and must at least be
@@ -61,6 +63,67 @@ func TestMonsterSpecsCarryRealData(t *testing.T) {
 		}
 		if spec.CodeName == "" {
 			t.Errorf("%s: no CodeName -- the client cannot resolve a model", spec.Name)
+		}
+		// Every species must be placeable: either it carries real npcpos
+		// rows that all convert, or it has an own-design anchor. A species
+		// with neither would spawn at the world origin, on top of the
+		// player's own landing spot.
+		if len(spec.Spawns) > 0 {
+			for _, s := range spec.Spawns {
+				rx, ry := worldmap.RegionXY(s.RegionID)
+				if _, _, ok := worldmap.ToZoneWorld(spec.Zone, rx, ry, s.LocalX, s.LocalZ); !ok {
+					t.Errorf("%s: real spawn in region %d/%d cannot convert -- zone %q has no centre region",
+						spec.Name, rx, ry, spec.Zone)
+				}
+			}
+			continue
+		}
+		if spec.X == 0 && spec.Z == 0 {
+			t.Errorf("%s: no real spawns and no anchor -- would spawn on the player", spec.Name)
+		}
+	}
+}
+
+// The real Mangyang placements, wired through to the world coordinates the
+// client and server actually exchange.
+//
+// This is the value-through-the-wire check for the npcpos placements: the
+// four rows in the table are region 96/168's ENTIRE npcpos content, all four
+// of them id 1933 (MOB_CH_MANGNYANG, level 1, 54 HP in characterdata -- the
+// same species and numbers this spec already carried), and each converts to
+// a world position measured on the render box rather than derived. Every one
+// was confirmed to stand on a single walkable surface with no blocking edge
+// within 40 units before it was wired.
+//
+// The expected values are rounded to whole units because that is the
+// precision the measurement was printed at; the real rows carry fractions.
+func TestMangyangStandsWhereTheGamePutsIt(t *testing.T) {
+	var spec monsterSpec
+	for _, s := range monsterSpecs {
+		if s.CodeName == "MOB_CH_MANGNYANG" {
+			spec = s
+			break
+		}
+	}
+	if spec.CodeName == "" {
+		t.Fatal("Mangyang is not in the roster")
+	}
+	if len(spec.Spawns) != 4 {
+		t.Fatalf("Mangyang has %d real spawns, want 4 -- region 96/168 has exactly four npcpos rows", len(spec.Spawns))
+	}
+	want := [][2]float64{{130, 2280}, {882, 2279}, {-406, 2409}, {301, 2857}}
+	for i, s := range spec.Spawns {
+		if s.RegionID != 24744 {
+			t.Errorf("spawn %d is in region %d, want 24744 (96/168)", i, s.RegionID)
+		}
+		rx, ry := worldmap.RegionXY(s.RegionID)
+		x, z, ok := worldmap.ToZoneWorld(spec.Zone, rx, ry, s.LocalX, s.LocalZ)
+		if !ok {
+			t.Fatalf("spawn %d did not convert", i)
+		}
+		if math.Abs(x-want[i][0]) > 1 || math.Abs(z-want[i][1]) > 1 {
+			t.Errorf("spawn %d -> (%.0f, %.0f), want the measured (%.0f, %.0f)",
+				i, x, z, want[i][0], want[i][1])
 		}
 	}
 }

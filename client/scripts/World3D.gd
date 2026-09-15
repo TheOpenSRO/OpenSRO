@@ -2098,6 +2098,20 @@ func _nav_graph_for(world_position: Vector3) -> Array:
 		return pair
 	return []
 
+## The [graph, group] pair for a named region, or [] if it is not loaded.
+## _nav_graph_for finds the region under a world position; this finds one by
+## the identity the real tables use (npcpos gives a region id and a local
+## position, never a world one), which is what lets a QA probe ask about a
+## region the player is not standing in.
+func _nav_graph_for_region(region_x: int, region_y: int) -> Array:
+	var group := get_node_or_null("RealTerrain_%d_%d" % [region_x, region_y]) as Node3D
+	if group == null:
+		return []
+	for pair in _region_nav_graphs:
+		if pair[1] == group:
+			return pair
+	return []
+
 func _try_add_navmesh_walls(terrain_group: Node3D, mapm_path: String) -> void:
 	var region := _load_region_navmesh(mapm_path)
 	if region == null:
@@ -5223,9 +5237,13 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_SCAN=n     sweep the region on an n x n grid and report
 ##                          where the walkable graph sits below the solid
 ##                          geometry (i.e. where a player walks underneath)
-##   SRREVAMP_QA_COLUMNS="x,z;x,z"  what the walkable graph knows at these
-##                          region-local columns: every surface, the
-##                          objects it considers, and any it does not index
+##   SRREVAMP_QA_COLUMNS="x,z;rx/ry@x,z"  what the walkable graph knows at
+##                          these region-local columns: every surface, the
+##                          objects it considers, and any it does not index.
+##                          A bare `x,z` asks the region the player stands
+##                          in; `rx/ry@x,z` asks any loaded region, which is
+##                          how a real npcpos spawn point (a region id plus
+##                          a local position) gets a world coordinate
 ##   SRREVAMP_QA_HIDE=a,b    hide every mesh whose own real mesh name
 ##                          contains one of these fragments
 ##   SRREVAMP_QA_LOOK=1     print which real placed objects the camera is
@@ -5921,21 +5939,46 @@ func _qa_through_report(spec: String) -> void:
 ## the column but which the graph's index does not return there -- so
 ## "under the deck here, on it 85 units away" can be read off the graph.
 func _qa_columns_report(spec: String) -> void:
-	var pair := _nav_graph_for(player.global_position)
-	if pair.is_empty():
-		print("QA COLUMNS: not standing in any loaded region")
-		return
-	var graph: NavGraph = pair[0]
+	var here := _nav_graph_for(player.global_position)
 	for item in spec.split(";"):
-		var parts := item.split(",")
+		# `rx/ry@x,z` asks a named region; a bare `x,z` asks the one the
+		# player is standing in. The named form is what makes a cross-region
+		# question answerable at all -- a spawn point three regions away has
+		# a world coordinate only the region's OWN group node can give.
+		var body := item
+		var pair := here
+		var at := item.find("@")
+		if at >= 0:
+			var coords := _parse_region_coords(item.substr(0, at).strip_edges())
+			body = item.substr(at + 1)
+			if coords.is_empty():
+				print("QA COLUMN: cannot parse a region out of '%s'" % item)
+				continue
+			pair = _nav_graph_for_region(coords["x"], coords["y"])
+			if pair.is_empty():
+				print("QA COLUMN: region %d/%d is not loaded" % [coords["x"], coords["y"]])
+				continue
+		if pair.is_empty():
+			print("QA COLUMNS: not standing in any loaded region")
+			continue
+		var graph: NavGraph = pair[0]
+		var parts := body.split(",")
 		if parts.size() < 2:
 			continue
 		var x := float(parts[0])
 		var z := float(parts[1])
+		# World space is anchored on whatever region the grid was BUILT
+		# around (see _grid_origin_region), and the server shares that frame
+		# only when that region is the zone's own centre. So the origin is
+		# printed with the coordinate rather than left implied -- a reading
+		# taken in a QA run centred somewhere else is in a different frame,
+		# and saying "the server's coordinates" unconditionally made two
+		# runs look like they disagreed when they did not.
 		var world_here := (pair[1] as Node3D).to_global(Vector3(x, 0.0, z))
-		print("QA COLUMN (%d, %d): terrain %.1f, surfaces %s, landing %.1f | world (%.0f, %.0f) -- the server's coordinates for this spot" % [
+		print("QA COLUMN (%d, %d): terrain %.1f, surfaces %s, landing %.1f | world (%.0f, %.0f) in the frame centred on %d/%d" % [
 			int(x), int(z), NvmCollision.sample_height(graph.region, x, z),
-			str(graph.heights_at(x, z)), graph.landing_height_at(x, z), world_here.x, world_here.z])
+			str(graph.heights_at(x, z)), graph.landing_height_at(x, z), world_here.x, world_here.z,
+			_grid_origin_region.x, _grid_origin_region.y])
 		# The real file's own answer first: which objects the navmesh cell
 		# under this column lists, whether or not the graph could place them.
 		var ci := graph.cell_index_at(x, z)
@@ -6973,9 +7016,17 @@ func _terrain_height_at(pos: Vector3) -> float:
 	return hit.position.y + 0.05 * PLAYER_SCALE_RATIO
 
 ## Creates or moves the real 3D body representing one live server-tracked
-## monster (see CombatNet.MonsterSnapshot's real X/Y/Z -- this project's own
-## placeholder spawn positions, not real per-monster coordinate data; see
-## combat.Hub.Spawn). A plain colored capsule for now, same honest
+## monster (see CombatNet.MonsterSnapshot's X/Y/Z). Those coordinates are
+## world-space and are used as sent; only the height is resolved here, off
+## the terrain, because the authored height and the walkable graph disagree.
+##
+## Whether a position is REAL now varies by species, and the server is the
+## place that says which. Mangyang stands on its four real npcpos rows in
+## region 96/168, converted by the server's worldmap package; every other
+## species is still on an own-design anchor. This comment said "not real
+## per-monster coordinate data" flatly until 2026-09-15, which stopped being
+## true for the first species that day.
+## A plain colored capsule for now, same honest
 ## "placeholder until a real per-species model mapping exists" approach
 ## World3D already uses for other players before a real character loads --
 ## no real monster model/skeleton mapping has been found or attempted yet
