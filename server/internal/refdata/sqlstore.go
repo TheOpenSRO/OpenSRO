@@ -43,6 +43,10 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS price BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE items ADD COLUMN IF NOT EXISTS sell_price BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE items ADD COLUMN IF NOT EXISTS block_ratio_min DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE items ADD COLUMN IF NOT EXISTS block_ratio_max DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS reinforce_phys_min DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS reinforce_phys_max DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS reinforce_mag_min DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS reinforce_mag_max DOUBLE PRECISION NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS skills (
 	id                  BIGINT PRIMARY KEY,
@@ -139,8 +143,9 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			mag_attack_min, mag_attack_max, hit_rate_min, hit_rate_max,
 			critical_min, critical_max,
 			type_id1, type_id2, type_id3, type_id4, country, req_gender, req_level_type1, req_level1,
-			price, sell_price, block_ratio_min, block_ratio_max
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)
+			price, sell_price, block_ratio_min, block_ratio_max,
+			reinforce_phys_min, reinforce_phys_max, reinforce_mag_min, reinforce_mag_max
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
 		ON CONFLICT (id) DO UPDATE SET
 			type_id1=excluded.type_id1, type_id2=excluded.type_id2, type_id3=excluded.type_id3, type_id4=excluded.type_id4,
 			country=excluded.country, req_gender=excluded.req_gender,
@@ -155,7 +160,9 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			mag_attack_min=excluded.mag_attack_min, mag_attack_max=excluded.mag_attack_max,
 			hit_rate_min=excluded.hit_rate_min, hit_rate_max=excluded.hit_rate_max,
 			critical_min=excluded.critical_min, critical_max=excluded.critical_max,
-			block_ratio_min=excluded.block_ratio_min, block_ratio_max=excluded.block_ratio_max
+			block_ratio_min=excluded.block_ratio_min, block_ratio_max=excluded.block_ratio_max,
+			reinforce_phys_min=excluded.reinforce_phys_min, reinforce_phys_max=excluded.reinforce_phys_max,
+			reinforce_mag_min=excluded.reinforce_mag_min, reinforce_mag_max=excluded.reinforce_mag_max
 	`)
 	if err != nil {
 		return fmt.Errorf("refdata: preparing insert: %w", err)
@@ -171,6 +178,7 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			it.CriticalMin, it.CriticalMax,
 			it.TypeID1, it.TypeID2, it.TypeID3, it.TypeID4, it.Country, it.ReqGender, it.ReqLevelType1, it.ReqLevel1,
 			it.Price, it.SellPrice, it.BlockRatioMin, it.BlockRatioMax,
+			it.ReinforcePhysMin, it.ReinforcePhysMax, it.ReinforceMagMin, it.ReinforceMagMax,
 		); err != nil {
 			return fmt.Errorf("refdata: inserting item %d: %w", it.ID, err)
 		}
@@ -188,7 +196,8 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 			mag_attack_min, mag_attack_max, hit_rate_min, hit_rate_max,
 			critical_min, critical_max,
 			type_id1, type_id2, type_id3, type_id4, country, req_gender, req_level_type1, req_level1,
-			price, sell_price, block_ratio_min, block_ratio_max
+			price, sell_price, block_ratio_min, block_ratio_max,
+			reinforce_phys_min, reinforce_phys_max, reinforce_mag_min, reinforce_mag_max
 		FROM items WHERE id = $1`, id)
 	if err := row.Scan(
 		&it.ID, &it.MaxStack, &it.ReqStr, &it.ReqInt, &it.ItemClass, &it.TwoHanded,
@@ -198,6 +207,7 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 		&it.CriticalMin, &it.CriticalMax,
 		&it.TypeID1, &it.TypeID2, &it.TypeID3, &it.TypeID4, &it.Country, &it.ReqGender, &it.ReqLevelType1, &it.ReqLevel1,
 		&it.Price, &it.SellPrice, &it.BlockRatioMin, &it.BlockRatioMax,
+		&it.ReinforcePhysMin, &it.ReinforcePhysMax, &it.ReinforceMagMin, &it.ReinforceMagMax,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("refdata: querying item %d: %w", id, ErrItemNotFound)
@@ -220,7 +230,8 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			mag_attack_min, mag_attack_max, hit_rate_min, hit_rate_max,
 			critical_min, critical_max,
 			type_id1, type_id2, type_id3, type_id4, country, req_gender, req_level_type1, req_level1,
-			price, sell_price, block_ratio_min, block_ratio_max
+			price, sell_price, block_ratio_min, block_ratio_max,
+			reinforce_phys_min, reinforce_phys_max, reinforce_mag_min, reinforce_mag_max
 		FROM items ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("refdata: listing items: %w", err)
@@ -238,6 +249,7 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			&it.CriticalMin, &it.CriticalMax,
 			&it.TypeID1, &it.TypeID2, &it.TypeID3, &it.TypeID4, &it.Country, &it.ReqGender, &it.ReqLevelType1, &it.ReqLevel1,
 			&it.Price, &it.SellPrice, &it.BlockRatioMin, &it.BlockRatioMax,
+			&it.ReinforcePhysMin, &it.ReinforcePhysMax, &it.ReinforceMagMin, &it.ReinforceMagMax,
 		); err != nil {
 			return nil, fmt.Errorf("refdata: scanning item: %w", err)
 		}

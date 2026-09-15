@@ -1690,3 +1690,127 @@ The fix (`client/tools/ghidra/ResolveRegArg.java`) resolves register arguments
 by abstract interpretation and writes them back as comments, so the next dump
 carries them. That tool generalises — any callee whose real arguments live in
 registers can be recovered the same way.
+
+## Strength reaches damage: the reinforce chain, settled (2026-09-15)
+
+The previous entry left the reinforce quad recovered but deliberately unwired,
+behind one question: *does a derived bind overwrite its target's slot or
+accumulate into it?* Both halves of that are now read out of the binary, and
+they have **opposite answers for different params** — which is why a single
+answer never fit.
+
+### A slot is keyed, and `SetParam` and the graph share one keyspace
+
+`ParamKeeper_SetParam(slot, ctx, value)` forwards straight to
+`ParamKeeper_StoreSlot(slot, ctx, value)`, and so does the graph:
+`Param_PropagateToDependents` calls `StoreSlot(*(iVar2+0x10), unaff_EBX, value)`
+where `unaff_EBX` is **the source param's own object pointer**. One keyspace,
+two kinds of writer. `FUN_004b2e60` then reduces a slot, and for slots 0 and 1
+the reduce is `acc = entry + acc` — a SUM over entries with distinct keys.
+
+So "replace or accumulate" is decided per call site, by whether two writers
+happen to use the same `ctx`. Reading the ctx off every call site in
+`Char_PublishCombatStats` gives a clean partition, not noise:
+
+| params | slot | ctx |
+|---|---|---|
+| 5,6,7,8,9,0xa,0xb,0xc,0xd,0xe,0xf,0x10, 0xbe–0xc1 | 0 | **EBP** |
+| 0x21–0x25, 0x3a, 0x3b, 0x8d | 0 | **0** |
+| 0x17, 0x18 (four pairs) | **2** | 0 |
+
+**And EBP is the equipped item, not the character.** The function takes the
+object in `arg0` (`MOV EBP,[ESP+0x10]`) and the character in `arg1`
+(`MOV ESI,[ESP+0x1c]; ADD ESI,0x1ec` — the keeper offset). `CGItemEquip::vslot_000`
+zeroes exactly `+0x19c/+0x1c8/+0x1cc/+0x1d0/+0x1d4`, the fields this function
+reads. That **closes the standing question about the class of arg0** (asked
+because it answers a virtual at slot 33, `+0x84`, and is not `CRefObjChar`), and
+it explains the ctx choice: an equipment contribution is keyed by the item, so
+two equipped items each keep their own entry in slot 0 and re-equipping replaces
+only that item's.
+
+### The two answers
+
+- **Param 34 REPLACES.** `GObjPC_InitStats` writes the innate default with
+  `SetParam(0, 0, …)` and `Char_PublishCombatStats` republishes the weapon's own
+  with `SetParam(0, 0, …)`. Same key, so the weapon's reinforce overwrites 30.6
+  rather than adding to it. This is what the last entry declined to assume, on
+  the grounds that summing would give a Copper Sword user 61.2% — that objection
+  was right, and the binary agrees with it.
+- **Param 13 ACCUMULATES.** Its slot 0 gets the weapon's flat minimum under
+  `ctx = the item` and the Str-derived term under `ctx = param 17's object`.
+  Different keys, so both live and the reduce sums them.
+
+### The use-site, and a false negative it corrected
+
+An intermediate reading of this said the opposite and would have shipped
+nothing: `Formula_RollWeaponDamage` reads params **190/191**, not 13/14, and
+nothing binds into 190–193 (checked two ways — no `BindDerived` mentions them on
+either side, and their only writers are in `Char_PublishCombatStats`). On that
+evidence the Str term never reaches damage.
+
+The evidence was real; the conclusion was wrong, because a second reader exists.
+`FUN_0040db50` — the helper `FUN_0040dce0` calls once per bound — reads
+
+	iVar4 = (unaff_EDI != 0) + 0xd;                 // 13 or 14
+	fVar5 = (**(code **)(*in_EAX + 0x104))(iVar4);  // GetParam(13/14)
+
+**a computed id**, so a census of literal `GetParam(0x…)` arguments finds no
+reader for params 13–16 and finding none proves nothing. Worse, the census was
+wrong twice over: Ghidra prints small integers in **decimal**, so the regex
+`\(0x[0-9a-f]+\)` silently dropped every id below 11 as well. *That is the third
+time a too-narrow probe has produced a confident false absence in this project*
+(after the 220-instruction disassembly window and the `== 0x` grep that missed
+every `!=` branch). The rule already in this file — check the probe before
+believing a negative — earned its place again.
+
+So both rolls are real and they differ in **input as well as distribution**:
+190/191 carry the weapon's flat range alone and are rolled uniformly; 13/14
+carry that range plus the Str term plus every buff and skill modifier, and are
+rolled centre-biased. **This corrects the earlier entry above**, which recorded
+that the two "read an identical range" — true of the floats at publish time,
+false at evaluation time, which is the only time that matters.
+
+### The columns, pinned by four floors
+
+`FUN_00495d60` computes an item's actual stat from a `(lo, hi, inc)` triple as
+`lo + t*(hi-lo) + inc*plus`, asserting `lo < hi`. srrevamp models neither
+per-instance variance nor plus level, so it takes `lo` — and `lo` is the end the
+engine's own innate defaults correspond to:
+
+| param | `.rdata` default | itemdata column | column floor (1,568 weapon rows) |
+|---|---|---|---|
+| 34 | 30.6 (`0x00b462a8`) | **105** | 306 |
+| 36 | 34.2 (`0x00b462a0`) | **107** | 342 |
+| 35 | 49.0 (`0x00b462a4`) | **109** | 490 |
+| 37 | 54.8 (`0x00b4629c`) | **111** | 548 |
+
+Four constants against four independent column minima. The `(n, n+2)` spacing
+matches the already-verified attack pair (`fPhysAttackMin = 95`, max at 97), and
+99/104 are the per-plus `inc` values. Read out of the PE's own `.rdata`, not
+inferred: `0x00b45af0` really is `100.0`, and the slot-3 accumulator base
+(`0x00b45e10`) really is `100.0`, so param 17 evaluates to `Str*reinforce/100`.
+
+The six-row table at `0x00c640d0` reads back byte-for-byte as this file already
+recorded it (3.2/5.2, 2.7/4.3, 4.2/6.7, 3.4/5.5, 2.5/3.9, 3.0/4.9), which is an
+independent check on that entry rather than a new finding.
+
+### Shipped
+
+`combat.ReinforceDamage` and the reinforce quad through export → CSV → SQL →
+`attackerDamage`, so a player's blow is `weapon range + Str*reinforce%` at both
+ends. A Copper Sword (306/342) at 20 Str adds 6 and 7. Exports predating the
+columns leave them zero and behave exactly as before — pinned by its own test.
+
+### Open
+
+- **The distribution is still uniform.** `FUN_0040dce0` rolls 13/14 with a
+  three-sample minimum centre-biased about a midpoint; srrevamp rolls uniformly.
+  That is a known, deliberate difference, not an unrecovered one.
+- **Which roll the live melee path takes.** Both `Formula_RollWeaponDamage`
+  (190/191, via `FUN_0040f990`'s attack-type switch) and `FUN_0040dce0` (13/14)
+  exist; this entry establishes that 13/14 are read for damage bounds, not that
+  190/191 are dead. Tracing `FUN_0040f990`'s callers is the next probe.
+- Unarmed keeps the innate 30.6/34.2 in the real engine; srrevamp takes 0 there,
+  since `unarmedDamage` is own design anyway.
+- Still open from before: itemdata columns 114 and 117; `pc[0x72d]`'s state enum;
+  blocking's monster side.

@@ -337,10 +337,16 @@ func UseSkillHandler(
 			cooldown = time.Duration(ref.ReuseDelayMs) * time.Millisecond
 			mpCost = ref.ConsumeMP
 			// A skill's damage is a percentage of the wielder's weapon damage
-			// plus a flat roll, so the weapon has to be read first.
+			// plus a flat roll, so the weapon has to be read first -- and the
+			// wielder's Strength with it, since it contributes to both ends of
+			// that range (see combat.ReinforceDamage).
 			weapon := 0
 			if eq != nil && items != nil {
-				if w, err := attackerDamage(ctx, characterID, eq, items); err == nil {
+				attackerStr := 0
+				if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
+					attackerStr = c.Str
+				}
+				if w, err := attackerDamage(ctx, characterID, attackerStr, eq, items); err == nil {
 					weapon = w
 				}
 			}

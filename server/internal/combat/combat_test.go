@@ -416,3 +416,45 @@ func TestResolveBlowBlockedIsZeroNotOne(t *testing.T) {
 		t.Errorf("blocked blow = %+v, want {Damage:0 Blocked:true}", got)
 	}
 }
+
+// TestReinforceDamage pins the Strength-to-damage term against the engine's
+// own numbers rather than a curve.
+//
+// The magnitudes here are real: 306 and 342 are itemdata columns 105 and 107
+// for a Copper Sword, and they are also the FLOORS of those two columns across
+// all 1,568 weapon rows -- which is what matches them to the innate defaults
+// GObjPC_InitStats writes from .rdata, 30.6 for param 34 and 34.2 for param 36.
+// A character with 20 Strength therefore adds 20*0.306 = 6.12 to the bottom of
+// its range and 20*0.342 = 6.84 to the top.
+func TestReinforceDamage(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		str       int
+		reinforce float64
+		want      int
+	}{
+		{"copper sword min at 20 Str", 20, 306, 6},  // 6.12
+		{"copper sword max at 20 Str", 20, 342, 7},  // 6.84, rounds up
+		{"the engine's innate floor", 100, 306, 31}, // 30.6
+		{"no strength", 0, 306, 0},
+		{"no reinforce column", 20, 0, 0},
+		{"an export predating the columns", 20, 0, 0},
+		{"negative strength cannot subtract", -5, 306, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ReinforceDamage(tc.str, tc.reinforce); got != tc.want {
+				t.Errorf("ReinforceDamage(%d, %v) = %d, want %d", tc.str, tc.reinforce, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReinforceDamageRounds guards the specific decision that it rounds rather
+// than truncates. The engine carries the whole chain in floats and rounds once
+// at the end, so truncating here would bias every blow down: 6.84 is a 7, not
+// a 6.
+func TestReinforceDamageRounds(t *testing.T) {
+	if got := ReinforceDamage(20, 342); got == 6 {
+		t.Fatal("ReinforceDamage truncated 6.84 to 6; the engine rounds")
+	}
+}

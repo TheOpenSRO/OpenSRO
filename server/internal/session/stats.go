@@ -171,7 +171,7 @@ func CharacterStatsHandler(chars character.Store, eq equipment.Store, items comb
 			}
 		}
 		if eq != nil && items != nil {
-			attack, err := attackerDamage(ctx, characterID, eq, items)
+			attack, err := attackerDamage(ctx, characterID, owned.Str, eq, items)
 			if err != nil {
 				return sess.Send(&proto.Packet{
 					Opcode: OpCharacterStatsResult,

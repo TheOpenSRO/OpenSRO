@@ -39,6 +39,18 @@ func TestItemRecordRoundTripsThroughTheImporter(t *testing.T) {
 	set(fHitRate+1, "30")
 	set(fCritical, "3")
 	set(fCritical+1, "15")
+	// The Copper Sword's real reinforce quad, which is also the floor of each
+	// of these four columns across every weapon row in the table. The
+	// neighbouring odd columns carry the per-instance variance high end and
+	// must NOT be what gets exported, so they are set to sentinels.
+	set(fReinforcePhysMin, "306")
+	set(fReinforcePhysMin+1, "999")
+	set(fReinforcePhysMax, "342")
+	set(fReinforcePhysMax+1, "999")
+	set(fReinforceMagMin, "490")
+	set(fReinforceMagMin+1, "999")
+	set(fReinforceMagMax, "548")
+	set(fReinforceMagMax+1, "999")
 	set(fPrice, "890")     // the Copper Sword's real buy price
 	set(fSellPrice, "427") // and its real buy-back price
 	// A sentinel (a real sword is 1) so this fails if MaxStack is hardcoded
@@ -50,12 +62,13 @@ func TestItemRecordRoundTripsThroughTheImporter(t *testing.T) {
 		t.Fatal("itemRecord rejected a valid row")
 	}
 	// The width grows as verified columns are appended -- 30 before the
-	// Param-block restore amounts, 34 before the shield block ratio. The
-	// importer takes each addition as an optional suffix, so every older
-	// export still loads; this only pins that the exporter and importer agree
-	// on the CURRENT width, which is the half that would otherwise drift.
-	if len(rec) != 36 {
-		t.Fatalf("record has %d fields, want the importer's 36", len(rec))
+	// Param-block restore amounts, 34 before the shield block ratio, 36
+	// before the weapon reinforce quad. The importer takes each addition as
+	// an optional suffix, so every older export still loads; this only pins
+	// that the exporter and importer agree on the CURRENT width, which is the
+	// half that would otherwise drift.
+	if len(rec) != 40 {
+		t.Fatalf("record has %d fields, want the importer's 40", len(rec))
 	}
 
 	items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
@@ -90,6 +103,19 @@ func TestItemRecordRoundTripsThroughTheImporter(t *testing.T) {
 	}
 	if it.Country != 0 || it.ReqGender != 2 || it.ReqLevel1 != 1 {
 		t.Errorf("country/gender/reqlevel = %d/%d/%d, want 0/2/1", it.Country, it.ReqGender, it.ReqLevel1)
+	}
+	// The reinforce quad has to arrive with the right VALUES, not merely
+	// occupy the right number of columns: a 999 here would mean the exporter
+	// reached for the variance column beside each one. This assertion exists
+	// because an earlier append shipped a column that was never actually
+	// written, and only the width was being checked.
+	if it.ReinforcePhysMin != 306 || it.ReinforcePhysMax != 342 {
+		t.Errorf("physical reinforce = %v/%v, want 306/342 (the low end, not the variance ceiling)",
+			it.ReinforcePhysMin, it.ReinforcePhysMax)
+	}
+	if it.ReinforceMagMin != 490 || it.ReinforceMagMax != 548 {
+		t.Errorf("magical reinforce = %v/%v, want 490/548 (the low end, not the variance ceiling)",
+			it.ReinforceMagMin, it.ReinforceMagMax)
 	}
 }
 

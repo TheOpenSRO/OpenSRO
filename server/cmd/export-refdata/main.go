@@ -77,8 +77,27 @@ const (
 	fPhysAttackMax = 97
 	fMagAttackMin  = 100
 	fMagAttackMax  = 102
-	fHitRate       = 113
-	fCritical      = 116
+	// A weapon's REINFORCE percentages, in tenths of a percent (306 = 30.6%),
+	// laid out with the same (n, n+2) spacing as the attack pair above: n and
+	// n+2 are the min's and max's low end, n+1 and n+3 their per-instance
+	// variance high end, and 99/104 the per-plus increments the engine reads
+	// as the `inc` of each (lo, hi, inc) triple (FUN_00495d60 computes an
+	// item's actual stat as lo + t*(hi-lo) + inc*plus, and asserts lo < hi).
+	//
+	// Pinned by the engine, not by position: GObjPC_InitStats writes each
+	// param's innate default from .rdata -- 30.6 (param 34), 34.2 (36), 49.0
+	// (35), 54.8 (37) -- and 306/342/490/548 are exactly the minima of columns
+	// 105/107/109/111 across all 1,568 weapon rows. Four constants, four
+	// column floors.
+	//
+	// srrevamp models no per-instance variance and no plus level, so it takes
+	// the low end, which is also the end the innate defaults correspond to.
+	fReinforcePhysMin = 105 // and 107 for max
+	fReinforcePhysMax = 107
+	fReinforceMagMin  = 109 // and 111 for max
+	fReinforceMagMax  = 111
+	fHitRate          = 113
+	fCritical         = 116
 	// Armour defence and the shield's block ratio, all verified against real
 	// +5 tooltips in docs/protocol/ITEM_FORMAT.md: a Cotton garment reads
 	// 2~2.5 physical and 4.3~5.2 magical, a starter shield 10~20 block. Each
@@ -274,25 +293,29 @@ func itemRecord(cols []string) ([]string, bool) {
 		// critical is 3. Nothing reads either field today; a zero is an honest
 		// absence, a mislabel is a landmine for whoever reaches for it next. The
 		// column positions stay, so the CSV width is unchanged.
-		"0",                  // 17 HitRateMax (col 114 is not this -- see above)
-		num(fCritical),       // 18 CriticalMin -- col 116, the verified tooltip value
-		"0",                  // 19 CriticalMax (col 117 is not this -- see above)
-		get(fTypeID1),        // 20 TypeID1
-		get(fTypeID1 + 1),    // 21 TypeID2
-		get(fTypeID1 + 2),    // 22 TypeID3
-		get(fTypeID1 + 3),    // 23 TypeID4
-		get(fCountry),        // 24 Country
-		get(fReqGender),      // 25 ReqGender
-		get(fReqLevelType1),  // 26 ReqLevelType1
-		get(fReqLevel1),      // 27 ReqLevel1
-		get(fPrice),          // 28 Price (real NPC buy price)
-		get(fSellPrice),      // 29 SellPrice (real NPC buy-back price)
-		get(fRestoreHP),      // 30 RestoreHP    (Param block, labelled "HP...")
-		get(fRestoreHPPct),   // 31 RestoreHPPct
-		get(fRestoreMP),      // 32 RestoreMP    (Param block, labelled "MP...")
-		get(fRestoreMPPct),   // 33 RestoreMPPct
-		num(fBlockRatio),     // 34 BlockRatioMin (shields only)
-		num(fBlockRatio + 1), // 35 BlockRatioMax
+		"0",                    // 17 HitRateMax (col 114 is not this -- see above)
+		num(fCritical),         // 18 CriticalMin -- col 116, the verified tooltip value
+		"0",                    // 19 CriticalMax (col 117 is not this -- see above)
+		get(fTypeID1),          // 20 TypeID1
+		get(fTypeID1 + 1),      // 21 TypeID2
+		get(fTypeID1 + 2),      // 22 TypeID3
+		get(fTypeID1 + 3),      // 23 TypeID4
+		get(fCountry),          // 24 Country
+		get(fReqGender),        // 25 ReqGender
+		get(fReqLevelType1),    // 26 ReqLevelType1
+		get(fReqLevel1),        // 27 ReqLevel1
+		get(fPrice),            // 28 Price (real NPC buy price)
+		get(fSellPrice),        // 29 SellPrice (real NPC buy-back price)
+		get(fRestoreHP),        // 30 RestoreHP    (Param block, labelled "HP...")
+		get(fRestoreHPPct),     // 31 RestoreHPPct
+		get(fRestoreMP),        // 32 RestoreMP    (Param block, labelled "MP...")
+		get(fRestoreMPPct),     // 33 RestoreMPPct
+		num(fBlockRatio),       // 34 BlockRatioMin (shields only)
+		num(fBlockRatio + 1),   // 35 BlockRatioMax
+		num(fReinforcePhysMin), // 36 ReinforcePhysMin (weapons only)
+		num(fReinforcePhysMax), // 37 ReinforcePhysMax
+		num(fReinforceMagMin),  // 38 ReinforceMagMin
+		num(fReinforceMagMax),  // 39 ReinforceMagMax
 	}, true
 }
 

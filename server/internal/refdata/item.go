@@ -99,8 +99,54 @@ type Item struct {
 	// percent, that a blow at the wearer is blocked outright; see
 	// combat.RollChance and session.defenderBlock.
 	BlockRatioMin, BlockRatioMax float64
-	PhysAttackMin, PhysAttackMax float64
-	MagAttackMin, MagAttackMax   float64
-	HitRateMin, HitRateMax       float64
-	CriticalMin, CriticalMax     float64
+	// ReinforcePhys/Mag are a WEAPON's reinforce percentages, itemdata
+	// columns 105/107 (physical) and 109/111 (magical), stored HERE IN THE
+	// TABLE'S OWN UNIT: tenths of a percent, so a Copper Sword's 306 means
+	// 30.6%. combat.ReinforceDamage is the one place that converts.
+	//
+	// This is the game's Strength-to-damage coupling, and it is a range
+	// endpoint rather than a multiplier on the result. GObjPC_InitStats
+	// declares the chain:
+	//
+	//	Str(1) -> 17 -> 13 (phys dmg min)   with 34 -> 17 at slot 3
+	//	Str(1) -> 18 -> 14 (phys dmg max)   with 36 -> 18 at slot 3
+	//
+	// Slot 3 is the percent scale, so param 17 evaluates to Str*reinforce/100,
+	// and it lands in param 13's slot 0 ALONGSIDE the weapon's own flat range.
+	// Slot 0 SUMS entries keyed by distinct ctx (GParamKeeper's reduce,
+	// 004b2e60), and the two arrive under different keys: the weapon's range
+	// is stored with ctx = the item pointer, the derived term with ctx = the
+	// source param's object (Param_PropagateToDependents). So they coexist and
+	// add -- a player's physical attack is the weapon's range PLUS a
+	// Str-derived term.
+	//
+	// THE USE-SITE, not a curve: FUN_0040db50 -- the helper the real attack
+	// roll calls twice for its two bounds -- reads
+	//
+	//	iVar4 = (unaff_EDI != 0) + 0xd;                // 13 or 14
+	//	fVar5 = (**(code **)(*in_EAX + 0x104))(iVar4); // GetParam(13/14)
+	//
+	// so the damage bounds ARE params 13/14. (Formula_RollWeaponDamage exists
+	// too and reads 190/191, which receive only the weapon's flat range and
+	// are never a bind target -- a separate, simpler path. Char_PublishCombatStats
+	// publishes the same two floats into both pairs, which is why they look
+	// identical at publish time and differ at evaluation time.)
+	//
+	// The columns are pinned by the engine's own innate defaults, which
+	// GObjPC_InitStats writes as .rdata constants: 30.6 / 34.2 / 49.0 / 54.8
+	// for params 34/36/35/37. Those are exactly the FLOORS of columns
+	// 105/107/109/111 across all 1,568 weapon rows -- four constants matching
+	// four independent column minima.
+	//
+	// A weapon's own reinforce REPLACES that innate default rather than adding
+	// to it: InitStats writes param 34 with ctx 0 and Char_PublishCombatStats
+	// republishes it with ctx 0 too, and a same-key store overwrites. An
+	// unarmed character keeps the 30.6/34.2 default; this project does not
+	// model that yet (see session.unarmedDamage) and takes 0 there.
+	ReinforcePhysMin, ReinforcePhysMax float64
+	ReinforceMagMin, ReinforceMagMax   float64
+	PhysAttackMin, PhysAttackMax       float64
+	MagAttackMin, MagAttackMax         float64
+	HitRateMin, HitRateMax             float64
+	CriticalMin, CriticalMax           float64
 }

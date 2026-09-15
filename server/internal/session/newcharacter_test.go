@@ -189,7 +189,7 @@ func TestCombatWorksWithoutReferenceData(t *testing.T) {
 		t.Errorf("armour with no stats contributed %d", armor)
 	}
 
-	damage, err := attackerDamage(ctx, 1, eq, refItems)
+	damage, err := attackerDamage(ctx, 1, 0, eq, refItems)
 	if err != nil {
 		t.Fatalf("attackerDamage with no reference data: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestCombatWorksWithoutReferenceData(t *testing.T) {
 	if err := eq.Equip(ctx, 1, equipment.SlotWeapon, slots[0].Index); err != nil {
 		t.Fatalf("Equip: %v", err)
 	}
-	damage, err = attackerDamage(ctx, 1, eq, refItems)
+	damage, err = attackerDamage(ctx, 1, 0, eq, refItems)
 	if err != nil {
 		t.Fatalf("attackerDamage with an unknown weapon: %v", err)
 	}

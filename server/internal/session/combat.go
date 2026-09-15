@@ -691,18 +691,20 @@ func performAttack(
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found"}).Encode()})
 	}
 
-	base, err := attackerDamage(ctx, characterID, eq, items)
-	if err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})
+	// Both sides' levels, for the level-advantage term below and for the
+	// monster's counterattack, and the attacker's Strength, which contributes
+	// to both ends of its damage range. A store that cannot answer leaves
+	// playerLevel at zero and the term is simply skipped -- it only ever
+	// scales damage up, so missing it costs nobody anything -- and leaves
+	// playerStr at zero, which drops the Strength term the same way.
+	playerLevel, playerStr := 0, 0
+	if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
+		playerLevel, playerStr = c.Level, c.Str
 	}
 
-	// Both sides' levels, for the level-advantage term below and for the
-	// monster's counterattack. A store that cannot answer leaves playerLevel
-	// at zero and the term is simply skipped -- it only ever scales damage
-	// up, so missing it costs nobody anything.
-	playerLevel := 0
-	if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
-		playerLevel = c.Level
+	base, err := attackerDamage(ctx, characterID, playerStr, eq, items)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})
 	}
 
 	raw := base + damageBonus
@@ -984,7 +986,9 @@ func performAttack(
 // attackerDamage resolves characterID's raw physical attack power from
 // their equipped weapon (falling back to unarmedDamage if none), before
 // the target's defense is subtracted.
-func attackerDamage(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
+// str is the attacker's Strength, which contributes a real term to both ends
+// of the range (see below); passing 0 is safe and simply omits it.
+func attackerDamage(ctx context.Context, characterID int64, str int, eq equipment.Store, items combat.ItemLookup) (int, error) {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {
 		return 0, fmt.Errorf("reading equipment: %w", err)
@@ -1010,7 +1014,18 @@ func attackerDamage(ctx context.Context, characterID int64, eq equipment.Store, 
 		// for maximum -- see combat.RollDamage, recovered from
 		// Formula_RollWeaponDamage. Both ends come from the client's own
 		// itemdata.
-		return rollDamage(int(item.PhysAttackMin), int(item.PhysAttackMax)), nil
+		//
+		// Each end is the weapon's own figure PLUS a Strength-derived term,
+		// which is how Strength reaches damage at all: the engine binds
+		// Str -> 17 -> 13 with the weapon's reinforce percentage scaling the
+		// middle edge, and param 13's slot 0 sums the weapon's flat minimum
+		// and that derived term rather than one overwriting the other. See
+		// combat.ReinforceDamage for the recovery. An export predating the
+		// reinforce columns leaves them zero and the term vanishes, which is
+		// exactly the old behaviour.
+		min := int(item.PhysAttackMin) + combat.ReinforceDamage(str, item.ReinforcePhysMin)
+		max := int(item.PhysAttackMax) + combat.ReinforceDamage(str, item.ReinforcePhysMax)
+		return rollDamage(min, max), nil
 	}
 	return unarmedDamage, nil
 }

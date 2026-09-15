@@ -356,7 +356,13 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "not in a duel"}).Encode()})
 	}
 
-	base, err := attackerDamage(ctx, characterID, eq, items)
+	// The attacker's Strength contributes to both ends of its damage range;
+	// a store that cannot answer drops the term rather than the attack.
+	attackerStr := 0
+	if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
+		attackerStr = c.Str
+	}
+	base, err := attackerDamage(ctx, characterID, attackerStr, eq, items)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "damage calculation failed"}).Encode()})
 	}

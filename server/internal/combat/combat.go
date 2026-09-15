@@ -198,6 +198,44 @@ func ApplyLevelAdvantage(damage, attackerLevel, defenderLevel int) int {
 	return out
 }
 
+// ReinforcePercentScale converts an itemdata reinforce column into a percent.
+// The table stores tenths of a percent -- a Copper Sword's 306 is 30.6% -- and
+// the engine's innate defaults confirm the unit: GObjPC_InitStats writes 30.6
+// as param 34's base from .rdata 0x00b462a8, and 306 is exactly the floor of
+// column 105 across all 1,568 weapon rows.
+const ReinforcePercentScale = 10
+
+// ReinforceDamage is the Strength-derived term added to one end of a weapon's
+// damage range: Str * reinforce%, where reinforceTenths is the itemdata column
+// in its own unit (see ReinforcePercentScale).
+//
+// RECOVERED. GObjPC_InitStats (004e3200) declares the chain as graph edges:
+// param 1 (Strength) binds into param 17 at slot 0, param 34 (the weapon's
+// physical reinforce) binds into param 17 at slot 3, and param 17 binds into
+// param 13 at slot 0. Slot 3 is the percent scale -- ParamKeeper_EvaluateParam
+// divides it by 100 -- so param 17 evaluates to Str*reinforce/100.
+//
+// It ADDS to the weapon's own range rather than replacing it. Param 13's slot 0
+// receives two entries: the weapon's flat minimum (stored by
+// Char_PublishCombatStats with ctx = the equipped item) and this derived term
+// (stored by Param_PropagateToDependents with ctx = the source param's object).
+// A slot is a container keyed by ctx, so distinct keys coexist, and slot 0's
+// reduce (GParamKeeper 004b2e60) sums its entries.
+//
+// The use-site is FUN_0040db50, the helper the attack roll calls once per
+// bound: it reads GetParam((EDI != 0) + 0xd), i.e. param 13 or 14 -- a computed
+// id, which is why a literal-id search of the dump finds no reader for these
+// two params and finding none proves nothing.
+//
+// Rounded rather than truncated: the engine carries the whole chain in floats
+// and rounds once at the end, so truncating here would bias every blow down.
+func ReinforceDamage(str int, reinforceTenths float64) int {
+	if str <= 0 || reinforceTenths <= 0 {
+		return 0
+	}
+	return int(math.Round(float64(str) * reinforceTenths / (ReinforcePercentScale * 100)))
+}
+
 // RollDamage picks a blow's damage uniformly in [min, max], the way the game
 // does rather than always swinging for maximum.
 //

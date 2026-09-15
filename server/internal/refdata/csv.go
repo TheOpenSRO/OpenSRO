@@ -32,6 +32,11 @@ var itemCSVColumns = []string{
 	// pair): a strict suffix like every block before it, so an export made
 	// for any earlier column count still loads and simply blocks nothing.
 	"BR_L", "BR_U",
+	// Appended later still (a weapon's reinforce percentages, the engine's
+	// Str-to-damage coupling): a strict suffix like every block before it, so
+	// an export made for any earlier column count still loads and simply
+	// contributes no Strength term.
+	"ReinforcePhys_L", "ReinforcePhys_U", "ReinforceMag_L", "ReinforceMag_U",
 }
 
 // itemCSVRequiredColumns is the prefix every export must carry; the columns
@@ -158,6 +163,20 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 35 {
 		it.BlockRatioMax = parseFloat(f[35])
+	}
+	// A weapon's reinforce percentages, optional in the same way. In the
+	// table's own unit (tenths of a percent) -- see refdata.Item.
+	if len(f) > 36 {
+		it.ReinforcePhysMin = parseFloat(f[36])
+	}
+	if len(f) > 37 {
+		it.ReinforcePhysMax = parseFloat(f[37])
+	}
+	if len(f) > 38 {
+		it.ReinforceMagMin = parseFloat(f[38])
+	}
+	if len(f) > 39 {
+		it.ReinforceMagMax = parseFloat(f[39])
 	}
 
 	if err != nil {
