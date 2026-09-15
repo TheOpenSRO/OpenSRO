@@ -2739,3 +2739,56 @@ will actually live in.
 
 A two-hit skill now does roughly twice the damage it did, which is the
 correction rather than a buff: it was doing one hit's worth all along.
+
+## Auditing for the silent-drop defect, systematically (2026-09-15)
+
+The previous entry found a skill's real damage being dropped by the SQL store —
+exported, parsed out of the CSV, then discarded because the table had no column
+for it. Nothing errored. It was found **by accident**, while editing nearby
+code, which is the worst way to find a whole class of defect.
+
+So this tick audited the class instead of the instance: a reflective
+field-by-field round trip that fills every field of `refdata.Item` and
+`refdata.Skill` with a distinct non-zero value, imports it, reads it back, and
+names every field that changed.
+
+**It found four more, and they were worse.** `RestoreHP`, `RestoreHPPct`,
+`RestoreMP` and `RestoreMPPct` — the potion restore amounts, real since the item
+table's self-labelling Param block was decoded — had no columns either. And
+unlike the skill damage, which degraded quietly to a disclosed stand-in, this
+one breaks a feature outright: `session/useitem.go` guards with
+
+	if it.RestoreHP <= 0 && it.RestoreMP <= 0 && it.RestoreHPPct <= 0 && it.RestoreMPPct <= 0 {
+	    return fail("that cannot be used")
+	}
+
+so on any SQL deployment — the production path, `-in-memory` being the option —
+**every potion answered "that cannot be used"**. A player-visible break that no
+test covered, because every test that exercised potions used the in-memory
+store, which keeps the struct whole by construction.
+
+### What the audit is, and why distinct values matter
+
+Filling every field with `1` would pass while two adjacent columns were swapped.
+The audit gives each field a distinct value, and floats a fractional one so a
+column typed `INTEGER` where `DOUBLE PRECISION` was meant truncates and fails
+rather than passing by luck.
+
+A second guard covers the step before the database: `Item` has 40 fields and
+exactly 40 CSV columns, `Skill` 28 and 28, and the parsers index positionally,
+so a field added without a column is dropped between the exporter and the
+importer just as silently. The counts are now asserted equal.
+
+### What moved
+
+- `restore_hp`, `restore_hp_pct`, `restore_mp`, `restore_mp_pct` added to the
+  items schema, the upsert and both selects. Potions work again on SQL.
+- `roundtrip_test.go`: the field-by-field audit for both types, plus the CSV
+  column-count guard. Both fail against the old schema.
+
+### The lesson, stated so it is not re-learned
+
+A value is not shipped when it is recovered, nor when it is exported. It is
+shipped when something reads it back out of the store it will actually live in.
+Three values had passed the first two gates and failed the third; two of them
+for long enough to reach a tagged release.
