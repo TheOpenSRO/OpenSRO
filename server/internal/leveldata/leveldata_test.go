@@ -206,3 +206,93 @@ func TestExpUnitAndKillExp(t *testing.T) {
 		t.Fatal("KillExp should be unknown when the table has no exp units")
 	}
 }
+
+// The death penalty, pinned to its citation.
+//
+// GObjPC_OnDeath (004e6980) gates the whole block on `10 < GetLevel(victim)`
+// and multiplies the level's EXP unit -- levelTable[lvl]+0x1c, the same field
+// a kill is paid from -- by one of four constants.
+func TestDeathPenaltyExp(t *testing.T) {
+	// Real rows, the same ones TestExpUnitAndKillExp uses, plus level 11 --
+	// the first level a death costs anything.
+	const csv = `level,exp,mastery_sp,exp_unit
+1,118,1,24
+10,23500,9,235
+11,34898,12,259
+20,282000,53,470
+`
+	tbl, err := ParseCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+
+	// Levels 1-10 die free: the real gate is `10 < level`, so 10 itself is
+	// still inside the grace period and 11 is the first level that pays.
+	for _, lvl := range []int{1, 10} {
+		loss, ok := tbl.DeathPenaltyExp(lvl, DeathPenaltyKilledByMonster)
+		if !ok || loss != 0 {
+			t.Errorf("level %d: loss %d ok %v, want a free death", lvl, loss, ok)
+		}
+	}
+
+	// Level 11 is the first that costs anything, and it costs the EXP unit
+	// times 100.
+	unit, ok := tbl.ExpUnit(11)
+	if !ok {
+		t.Fatal("the test table must know level 11")
+	}
+	for _, tc := range []struct {
+		name       string
+		multiplier int
+	}{
+		{"killed by a monster", DeathPenaltyKilledByMonster},
+		{"killed by a monster, PK-flagged", DeathPenaltyKilledByMonsterFlagged},
+		{"killed by a player", DeathPenaltyKilledByPlayer},
+		{"killed by a player, PK-flagged", DeathPenaltyKilledByPlayerFlagged},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			loss, ok := tbl.DeathPenaltyExp(11, tc.multiplier)
+			if !ok {
+				t.Fatal("level 11 must be known")
+			}
+			if want := unit * int64(tc.multiplier); loss != want {
+				t.Errorf("loss = %d, want %d (unit %d * %d)", loss, want, unit, tc.multiplier)
+			}
+		})
+	}
+}
+
+// The four multipliers are the recovered ones, so a later "let's tune it" edit
+// has to delete a citation to do it.
+func TestDeathPenaltyMultipliersAreTheRecoveredOnes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		got  int
+		want int
+	}{
+		{"min level", DeathPenaltyMinLevel, 10},
+		{"monster", DeathPenaltyKilledByMonster, 100},
+		{"monster, flagged", DeathPenaltyKilledByMonsterFlagged, 300},
+		{"player", DeathPenaltyKilledByPlayer, 20},
+		{"player, flagged", DeathPenaltyKilledByPlayerFlagged, 100},
+		{"SP loss, monster flagged", DeathPenaltySkillPointsMonsterFlagged, 60},
+		{"SP loss, player flagged", DeathPenaltySkillPointsPlayerFlagged, 20},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %d, want %d (GObjPC_OnDeath, 004e6980)", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
+// An unknown level is reported as unknown rather than silently costing
+// nothing: a death that quietly skips the penalty because the table is short
+// would look exactly like the grace period.
+func TestDeathPenaltyUnknownLevel(t *testing.T) {
+	tbl, err := ParseCSV(strings.NewReader("level,exp,mastery_sp,exp_unit\n11,34898,12,259\n"))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	if _, ok := tbl.DeathPenaltyExp(9999, DeathPenaltyKilledByMonster); ok {
+		t.Error("a level the table does not know must report !ok")
+	}
+}

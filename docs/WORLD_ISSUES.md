@@ -7075,6 +7075,61 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-eightieth round: dying costs something now
+
+srrevamp had no death penalty at all — a killed character had its HP reset and
+walked away. The real one is recovered and shipped.
+
+`GObjPC_OnDeath` (`004e6980`) gates the whole penalty on
+**`10 < Char_GetLevel(victim)`** — levels 1–10 die free — and then multiplies
+the level's EXP unit by one of four constants:
+
+```
+killed by a MONSTER   normal      unit * 100     no SP loss
+                      PK-flagged  unit * 300     60 SP
+killed by a PLAYER    normal      unit *  20     no SP loss
+                      PK-flagged  unit * 100     20 SP
+```
+
+The loss is clamped (the block's own CLAMP assert spells the minimum as `1.0`,
+and names the source file: `D:\WORK2005\Source\SilkroadOnline\Server\
+SR_GameServer\GObjPC.cpp` line 6168), reduced by a stat this project has not
+resolved, and applied through `GainExpAndLevel` — vtable slot `0x170` = 92, the
+same function that *grants* experience — with a **negative** 64-bit amount.
+Nothing in the block touches `CurLevel`: a death never costs a level.
+
+**The EXP unit is the same field a kill is paid from**, and that is not an
+assumption. `Formula_MonsterExpReward`'s disassembly reads the identical
+`levelTable[lvl]+0x1c`, and in the same handful of instructions also shows the
+minimum-level rule (`CMP EBX,EAX / JLE / MOV EBX,EAX` across two
+`Char_GetLevel` calls) that `leveldata.KillExp` already implements. One
+function confirmed both the field and a rule recovered separately.
+
+It also resolves half of the long-standing `pc[0x72d]` item: that byte (victim
++0x1CB4) is compared against **5**, and gates the harsh branches *together
+with* `charData+0xb4` = `PKPenaltyPoint` from the recovered `_CHAR` schema.
+What the state enum means is still unrecovered, so the branches are labelled by
+the condition that can be named.
+
+**What it costs, checked against the ORIGINAL client's own `leveldata.txt`**
+(identical to the pserver's at every level sampled, so not a private-server
+edit — only level 110's exp-to-next differs, a pserver cap edit):
+
+```
+lvl  11   74.2% of a level      lvl  50    1.9%
+lvl  20   16.7%                 lvl  90    0.2%
+lvl  30    6.1%                 lvl 110    ~0%
+```
+
+Steeply regressive: brutal the moment the level-10 grace period ends, shrugged
+off at cap. That shape is the game's, not a choice made here.
+
+Only the monster branch is reachable — srrevamp has no PK system — so the other
+three are implemented, tested and disclosed as unreachable rather than left
+out. The reduction stat is read through a register-passed ParamKeeper id this
+code has not resolved and is **left out rather than guessed at**, which makes
+srrevamp's penalty a strict upper bound on the real one.
+
 ## Hundred-and-seventy-ninth round: what "attack rate" actually does
 
 The open item read "crit/block/hit rolls — values recovered, dice not". The

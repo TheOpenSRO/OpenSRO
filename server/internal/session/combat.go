@@ -195,11 +195,17 @@ type AttackResult struct {
 	// visibly as you fight.
 	BerserkGauge  int32
 	BerserkActive bool
+
+	// DeathExpLost is the experience the death penalty took, 0 when the
+	// player did not die or is still inside the level-10 grace period. Real;
+	// see leveldata.DeathPenaltyExp. Appended, so an older client that stops
+	// reading at the berserk tail still decodes the rest.
+	DeathExpLost int64
 }
 
 func (r *AttackResult) Encode() []byte {
 	out := encodeStrings(r.Error)
-	buf := make([]byte, 23)
+	buf := make([]byte, 31)
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(r.MonsterDamage))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(r.MonsterRemainingHP))
 	if r.MonsterDied {
@@ -214,6 +220,7 @@ func (r *AttackResult) Encode() []byte {
 	if r.BerserkActive {
 		buf[22] = 1
 	}
+	binary.LittleEndian.PutUint64(buf[23:31], uint64(r.DeathExpLost))
 	return append(out, buf...)
 }
 
@@ -238,6 +245,9 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 	if len(rest) >= 23 {
 		r.BerserkGauge = int32(binary.LittleEndian.Uint32(rest[18:22]))
 		r.BerserkActive = rest[22] != 0
+	}
+	if len(rest) >= 31 {
+		r.DeathExpLost = int64(binary.LittleEndian.Uint64(rest[23:31]))
 	}
 	return r, nil
 }
@@ -750,6 +760,33 @@ func performAttack(
 		result.PlayerDamageTaken = int32(incoming)
 		result.PlayerDied = playerDied
 		if playerDied {
+			// Dying costs experience, above level 10. Real: GObjPC_OnDeath
+			// multiplies the level's EXP unit -- the same field a kill is
+			// paid from -- by 100 when a monster did the killing and the
+			// victim carries no PK penalty points, which is the only branch
+			// this project can reach until there is a PK system. See
+			// leveldata.DeathPenaltyExp for the other three and for why the
+			// reduction stat is left out.
+			if levelTable != nil {
+				if c, e := chars.GetByID(ctx, characterID); e == nil && c != nil {
+					loss, ok := levelTable.DeathPenaltyExp(c.Level, leveldata.DeathPenaltyKilledByMonster)
+					if ok && loss > 0 {
+						exp := c.Exp - loss
+						if exp < 0 {
+							// The real formula clamps the LOSS so it cannot
+							// exceed what is there; clamping the result to
+							// zero is the same thing from this side. A death
+							// never costs a level -- nothing in
+							// GObjPC_OnDeath touches CurLevel.
+							exp = 0
+						}
+						if err := chars.SetLeveling(ctx, characterID, c.Level, exp, c.StatPoints); err != nil {
+							return fmt.Errorf("combat: applying death penalty: %w", err)
+						}
+						result.DeathExpLost = loss
+					}
+				}
+			}
 			if err := chars.ResetHP(ctx, characterID); err != nil {
 				return fmt.Errorf("combat: respawning player: %w", err)
 			}

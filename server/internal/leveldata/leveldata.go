@@ -253,3 +253,85 @@ func ParseCSV(r io.Reader) (*Table, error) {
 	}
 	return t, nil
 }
+
+// DeathPenaltyMinLevel is the level a character must EXCEED before dying costs
+// anything. Real: GObjPC_OnDeath (004e6980) wraps the whole penalty block in
+// `if (10 < Char_GetLevel(victim))`, so levels 1-10 die free.
+const DeathPenaltyMinLevel = 10
+
+// The four death-penalty multipliers, in units of the level's EXP unit (the
+// same `levelTable[lvl]+0x1c` field a kill is paid from -- see ExpUnit). Real,
+// read straight out of GObjPC_OnDeath's four branches.
+//
+// The branch is chosen by two things: whether the killer was another PLAYER,
+// and whether the victim is carrying PK penalty points (charData+0xb4 =
+// _CHAR.PKPenaltyPoint, from the recovered schema; the test is `< 1`). A
+// second byte at victim+0x1cb4 is compared against 5 and gates the harsher
+// branch together with the PK points; what that state enum means is still
+// unrecovered, so the harsher branches are labelled by the condition this code
+// CAN name.
+const (
+	DeathPenaltyKilledByMonster        = 100
+	DeathPenaltyKilledByMonsterFlagged = 300
+	DeathPenaltyKilledByPlayer         = 20
+	DeathPenaltyKilledByPlayerFlagged  = 100
+)
+
+// The skill points a death costs, on top of the experience. Zero unless the
+// victim is carrying PK penalty points -- an ordinary death costs no SP at
+// all. Capped at what the character actually has (charData+0x80 =
+// RemainSkillPoint).
+const (
+	DeathPenaltySkillPointsMonsterFlagged = 60
+	DeathPenaltySkillPointsPlayerFlagged  = 20
+)
+
+// DeathPenaltyExp is the experience a death costs a character of this level,
+// and whether the table knows the level.
+//
+// RECOVERED 2026-09-15 from GObjPC_OnDeath (004e6980), which the binary itself
+// places at D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjPC.cpp
+// (the CLAMP assert in the middle of this very block names the file and line
+// 6168). The shape is
+//
+//	if 10 < GetLevel(victim) {
+//	    loss = levelTable[level]+0x1c * {100 | 300 | 20 | 100}
+//	    loss = CLAMP(loss, 1, ...)      // the assert's min is 1.0
+//	    loss -= <a reduction stat>
+//	    if loss > 0 { GainExpAndLevel(-loss) }   // slot 0x170 = 92, NEGATIVE
+//	}
+//
+// so the loss is applied through the same function that grants experience,
+// with a negative 64-bit amount.
+//
+// That +0x1c is the EXP UNIT is not assumed here: Formula_MonsterExpReward
+// reads the identical field, and its disassembly also shows the minimum-level
+// rule (`CMP EBX,EAX / JLE / MOV EBX,EAX` over two Char_GetLevel calls) that
+// KillExp already implements -- so one function confirms both the field and a
+// rule this project had recovered separately.
+//
+// What this costs is steeply regressive, and that is the real curve, checked
+// against the ORIGINAL client's own leveldata.txt (identical to the pserver's
+// at every level sampled, so it is not a private-server edit): 74% of a level
+// at 11, 17% at 20, 1.9% at 50, and effectively nothing by 110. Dying is
+// brutal just after the level-10 grace period and shrugged off at cap.
+//
+// The reduction stat subtracted before the loss lands is NOT modelled -- it is
+// read through a register-passed ParamKeeper id this code has not resolved, so
+// it is left out rather than guessed at.
+func (t *Table) DeathPenaltyExp(level, multiplier int) (int64, bool) {
+	if level <= DeathPenaltyMinLevel {
+		return 0, true
+	}
+	unit, ok := t.ExpUnit(level)
+	if !ok {
+		return 0, false
+	}
+	loss := unit * int64(multiplier)
+	if loss < 1 {
+		// The real formula clamps at 1 -- its own assert spells the minimum
+		// out as 1.0.
+		loss = 1
+	}
+	return loss, true
+}

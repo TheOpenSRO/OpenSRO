@@ -755,6 +755,59 @@ Also named, with no tag counterpart found yet: `PARAM_PA` "Phy. atk. pwr.",
 `PARAM_PD` "Phy. def. pwr.", `PARAM_MA` "Mag. atk. pwr.", `PARAM_MD`
 "Mag. def. pwr.", `PARAM_ABSORB` "Absorption".
 
+## The death penalty, and half of `pc[0x72d]` (2026-09-15)
+
+srrevamp had no death penalty at all. The real one is recovered and shipped
+(v0.1.164). `GObjPC_OnDeath` (`004e6980`) gates everything on
+**`10 < Char_GetLevel(victim)`** — levels 1–10 die free — then multiplies the
+level's EXP unit by one of four constants:
+
+| killed by | ordinary | PK-flagged |
+|---|---|---|
+| a monster | `unit * 100`, no SP loss | `unit * 300`, **60** SP |
+| a player | `unit * 20`, no SP loss | `unit * 100`, **20** SP |
+
+The loss is clamped (the block's own CLAMP assert gives the minimum as `1.0`
+and names the source file — `D:\WORK2005\Source\SilkroadOnline\Server\
+SR_GameServer\GObjPC.cpp` line 6168), reduced by an unresolved stat, and
+applied through `GainExpAndLevel` (vtable slot `0x170` = 92, the same function
+that grants experience) with a **negative** 64-bit amount. Nothing in the block
+touches `CurLevel`: a death never costs a level. The SP loss is capped at
+`charData+0x80` = `RemainSkillPoint`.
+
+**The EXP unit is the same field a kill is paid from**, and that is measured,
+not assumed: `Formula_MonsterExpReward`'s disassembly reads the identical
+`levelTable[lvl]+0x1c` and, in the same few instructions, shows the
+minimum-level rule (`CMP EBX,EAX / JLE / MOV EBX,EAX` over two `Char_GetLevel`
+calls) that `leveldata.KillExp` already implements. One function confirmed both
+the field and a rule this project had recovered by another route.
+
+**Half of the `pc[0x72d]` open item falls out.** That byte (victim `+0x1CB4`)
+is compared against **5**, and gates the harsh branches together with
+`charData+0xb4` = `PKPenaltyPoint` from the recovered `_CHAR` schema. What the
+state enum *means* is still unrecovered, so the branches are labelled by the
+condition that can be named rather than by a guess at the enum.
+
+Checked against the **ORIGINAL client's** `leveldata.txt`, identical to the
+pserver's at every level sampled (only level 110's exp-to-next differs, a
+pserver cap edit), the cost is steeply regressive: **74.2% of a level at 11,
+16.7% at 20, 6.1% at 30, 1.9% at 50, ~0% at 110.** Brutal the moment the
+level-10 grace period ends, shrugged off at cap.
+
+Only the monster branch is reachable — srrevamp has no PK system — so the other
+three are implemented, tested and disclosed as unreachable. The reduction stat
+is left out rather than guessed, which makes srrevamp's penalty a strict upper
+bound on the real one.
+
+*Also re-confirmed on the way:* `hwanleveldata.txt` aside, the **inventory**
+item is DB-side like starting Str/Int. `CGObjPC::ExpandInventory` caps the main
+inventory at **77** slots normally and **99** under a predicate (hard-capped
+below 100), and `CGObjPC::FindEmptySlotNum` calls
+`CGStorage::FindTotalEmptySlot(0xd)` — so the general inventory begins at index
+**13**, after 13 equipment slots. The starting size is a `_CHAR.InventorySize`
+row, not a constant in the exe, so `inventory.SlotsPerCharacter = 50` stays
+own design.
+
 ## The base class names the slot (2026-09-15)
 
 The berserk lever, generalised into a pass. `IGObj::UpdateHwanLevel`'s base

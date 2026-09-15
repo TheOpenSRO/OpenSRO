@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
@@ -733,5 +735,131 @@ func TestLevelAdvantageAppliedInCombat(t *testing.T) {
 	}
 	if ar.PlayerDamageTaken != 20 {
 		t.Errorf("counterattack = %d, want 20 (15 * the capped 1.30)", ar.PlayerDamageTaken)
+	}
+}
+
+// TestDeathPenaltyAppliedInCombat proves the recovered death penalty reaches a
+// real death through the whole stack, and that the level-10 grace period holds.
+//
+// The unit tests in internal/leveldata pin the multipliers; this pins the
+// WIRING, which is the half that silently does nothing if the level table or
+// the character read is missing. A level-11 character killed by a monster
+// loses exp_unit(11) * 100 = 259 * 100 = 25,900 experience and keeps its level.
+func TestDeathPenaltyAppliedInCombat(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+	// Level 11 with exp banked, so the penalty has something to take and the
+	// character is past the grace period.
+	const startExp = int64(30000)
+	if err := chars.SetLeveling(ctx, c.ID, 11, startExp, 0); err != nil {
+		t.Fatalf("setting level: %v", err)
+	}
+
+	tbl, err := leveldata.ParseCSV(strings.NewReader(
+		"level,exp,mastery_sp,exp_unit\n10,23500,9,235\n11,34898,12,259\n"))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	SetLevelTable(tbl)
+	defer SetLevelTable(nil)
+
+	items := stubCombatItems{100: {ID: 100, PhysAttackMax: 1}} // a feeble weapon
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	if err := inv.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating inventory: %v", err)
+	}
+	if err := inv.AddItem(ctx, c.ID, 100, 1); err != nil {
+		t.Fatalf("seeding inventory: %v", err)
+	}
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	if err := eq.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating equipment: %v", err)
+	}
+	if err := eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0); err != nil {
+		t.Fatalf("equipping weapon: %v", err)
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	// Enormous HP so it survives and counterattacks, and enough attack to
+	// kill the starting character in one blow.
+	monster := monsters.SpawnSpecies("jangan",
+		combat.Species{Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", Level: 11},
+		0, 0, 0, 100000, 0, 100000, 0)
+
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	if err := quests.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating quests: %v", err)
+	}
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	if ewr, err := DecodeEnterWorldResult(send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode()).Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	ar, err := DecodeAttackResult(send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode()).Data)
+	if err != nil {
+		t.Fatalf("DecodeAttackResult: %v", err)
+	}
+	if ar.Error != "" {
+		t.Fatalf("attack refused: %s", ar.Error)
+	}
+	if !ar.PlayerDied {
+		t.Fatalf("the counterattack should have killed the character, got %+v", ar)
+	}
+	const wantLoss = int64(259 * leveldata.DeathPenaltyKilledByMonster)
+	if ar.DeathExpLost != wantLoss {
+		t.Errorf("reported exp loss = %d, want %d", ar.DeathExpLost, wantLoss)
+	}
+	after, err := chars.GetByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("re-reading character: %v", err)
+	}
+	if after.Exp != startExp-wantLoss {
+		t.Errorf("exp after death = %d, want %d", after.Exp, startExp-wantLoss)
+	}
+	if after.Level != 11 {
+		t.Errorf("level after death = %d, want 11 -- a death never costs a level", after.Level)
 	}
 }
