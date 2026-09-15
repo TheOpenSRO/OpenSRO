@@ -312,6 +312,16 @@ pick one up without re-deriving anything.
    clear they always would have been — there is no table to import, in a file or
    a database.
 
+   **The RTTI pass put a number and a name on it (2026-09-15).** Those compiled
+   quests are classes, and the binary names every one: **153 `CQNO_*` objective
+   classes** (201 quest classes in total), each with its own vftable — which is
+   what the triple-handler lifecycle looks like from the type system's side.
+   The names are the quests' own ids (`CQNO_CH_HWAN_1_1` … `CQNO_WC_SOLDIER_SO_1`),
+   so a quest can now be matched to its compiled code by name rather than by
+   hunting its log string. That is the *confirmation* of "objectives are code",
+   not a contradiction of it: 153 hand-written classes is exactly what having no
+   objective table looks like.
+
 7. **Loot tables — absence RE-TESTED and CONFIRMED, and now actionable
    (2026-09-15).** After `npcpos` showed that a recorded absence can simply be
    wrong, this one was re-examined against evidence the original conclusion did
@@ -858,6 +868,15 @@ is the weaker side at 4.4% and it is where the gameplay lives.
   `CRefDropItemGroup`, `CRefDropItemAssign`, `CRefDropOptLevelSel` and ten
   `CRefDropClassSel_*` (the loot tables, previously "right but
   under-specified").
+
+- **The 291 `CIF*` UI window classes** (client) — the complete catalogue of
+  every window the game has, each now tied to its own vftable and therefore to
+  its code. This is the UI lane's index: `CIFAlchemyBox`, `CIFAutoPotion`,
+  `CIFApprenticeShipHonorRanking` and 288 more. It supersedes
+  `LabelFromUIStrings`' guess-by-authored-id for anything it covers, because a
+  class name is the binary naming the window itself rather than an inference
+  from the text it happens to display. Counts: 879 plain classes on the client,
+  809 on the server (the rest of each total is templates).
 
 **The population nothing reaches:** 18,522 game-logic functions have no direct
 caller. They are virtuals, and every call-graph lever steps past them.
