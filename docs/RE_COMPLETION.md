@@ -80,9 +80,51 @@ pick one up without re-deriving anything.
    certainly walks them as `base + i*4` in a loop over equipment slots — search
    for a loop indexing from `+0x198` rather than for fixed offsets.
 
-2. **Combat damage model** (base + bonus − defence, no crit/dodge) — ours.
-   *Next probe:* `FUN_0058e5f0` is the real damage resolution; `FUN_0040f5f0`
-   applies a level-gap roll clamped to [10%, 100%].
+2. **Combat damage model — the mitigation formula is RECOVERED; the model is
+   not yet shipped.** srrevamp still runs `base + bonus - defence, floor 1`, own
+   design. The real one is now partly in hand.
+
+   **The unlock was the read side.** Two ticks were lost hunting inlined keeper
+   reads (`obj[0x7c+N]`) that collide with every other struct at byte 0x204.
+   That was the wrong shape entirely: stats are read through a **virtual at
+   vtable offset 0x104 that takes the param id as a literal argument** —
+   `(**(code **)(*obj + 0x104))(0xbf)`. So every param read in the binary is
+   greppable, with its id visible. 141 read sites. This is the single most
+   useful handle found for the stat system and it should be the first thing
+   reached for next time.
+
+   **What it produced:**
+
+   - `Formula_RollWeaponDamage` (`0040f8d0`) — the damage roll:
+     `rand() % (max-min+1) + min`, with **min = param 191, max = param 190**,
+     returning 0 when `max <= min`. `Char_PublishCombatStats` sets 190/191 and
+     192/193 as the two types' min/max pairs.
+   - `Formula_MitigatePhysicalDamage` (`0040e450`) and
+     `Formula_MitigateMagicalDamage` (`0040e830`) — twins, gated on bits 4 and 8
+     of the flags at `+0x230`, structurally identical:
+
+     ```
+     damage = X / (1 + reduction% / 100) - flatAbsorb        (floored at 0)
+     ```
+
+     with **param 7** the reduction percentage on one side and **param 8** on the
+     other (`0x00b45ac0` = 1.0, `0x00b45af0` = 100.0). So mitigation is
+     *percentage-based with a flat term*, not the flat subtraction srrevamp
+     currently uses.
+
+   That also half-answers open item 1: params 5/7 are one damage type and 6/8
+   the other, and **param 7/8 is a percentage reduction**. Joined to the column
+   map, a monster's cols 73/74 → params 7/8 hold *exactly its level*, so a
+   level-10 monster mitigates 10%. Physical-vs-magical rests on the player stat
+   graph feeding param 5 from Strength and param 6 from Intellect.
+
+   *Not settled, and why nothing shipped:* which object the formula reads from.
+   Both params are read off the same pointer (`param_2`), and until the call
+   site in `Combat_ResolveDamage` is resolved it is not proven whether that is
+   the attacker or the defender — which decides whether params 5/6 are attack or
+   defence. *Next probe:* resolve `Combat_ResolveDamage`'s arguments at its four
+   calls to each twin (register-passed — use `ResolveRegArg.java`).
+
 3. **Berserk numbers** (fill 8/hit, 20 s, +50 %) — ours. The mechanic and the
    five orbs are real. *Next probe:* the `'zb'` param tag (0x7a62) in the stat
    vocabulary.

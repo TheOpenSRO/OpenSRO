@@ -69,6 +69,27 @@ public class ApplyKnownNames extends GhidraScript {
         {"004b3130", "Param_PropagateToDependents",
          "Called by StoreSlot after a value changes: walks the dependent list and pushes the new "
          + "value into each target's registered slot. This is what makes the graph evaluate."},
+        {"0040f8d0", "Formula_RollWeaponDamage",
+         "The weapon damage roll: reads param 191 as the minimum and param 190 as the maximum "
+         + "through the GetParam virtual at vtable offset 0x104, returns 0 when max <= min, else "
+         + "rand() %% (max-min+1) + min. Char_PublishCombatStats sets 190/191 (and 192/193 as the "
+         + "other type's pair) from the gear aggregate."},
+        {"0040f890", "Formula_RollLevelDamage",
+         "A level-scaled damage roll used when no weapon range applies: takes both parties' levels "
+         + "via Char_GetLevel (vtable 0x124) and rolls rand() in a window built from level*5 and "
+         + "level*10."},
+        {"0040e450", "Formula_MitigatePhysicalDamage",
+         "Damage mitigation, physical side. Gated on bit 4 of the flags at +0x230, twinned with "
+         + "Formula_MitigateMagicalDamage (bit 8). Reads params 5 and 7 off the same object and "
+         + "computes `X / (1 + param7/100) - flat`, floored at 0 -- so param 7 is a PERCENTAGE "
+         + "reduction and the subtraction is flat absorption. Constants: 0x00b45ac0 = 1.0, "
+         + "0x00b45af0 = 100.0. Physical rather than magical because the player stat graph feeds "
+         + "param 5 from Strength (charData+0x74, named by the server's own SQL DDL) while the "
+         + "twin's param 6 comes from Intellect."},
+        {"0040e830", "Formula_MitigateMagicalDamage",
+         "The magical twin of Formula_MitigatePhysicalDamage: same shape, bit 8 of +0x230, reads "
+         + "params 6 and 8, `X / (1 + param8/100) - flat` floored at 0. Param 6 is fed from "
+         + "Intellect in the player stat graph."},
         {"004105d0", "Formula_MonsterExpReward",
          "The monster exp reward. PROVEN by its use-site: the caller passes the result to the "
          + "virtual at vtable offset 0x694, which on the char vtable (base 0x00af59fc) is "
