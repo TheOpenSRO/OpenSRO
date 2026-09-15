@@ -201,8 +201,29 @@ what the handler *does* is not claimed, and a handler serving several opcodes
 carries the first two in its name.
 
 This is the **inter-server / gateway** protocol layer, not the main client one
-(only 7 of the 33 are 0x7xxx). Finding where the client-facing protocol is
-dispatched is a separate, and larger, target.
+(only 7 of the 33 are 0x7xxx).
+
+**The client-facing protocol does not dispatch this way, and that is the
+finding (2026-09-15).** Four routes were tried and none produced an
+opcode→handler map:
+
+- *More opcode switches.* Ranking functions by 0x70xx-0x75xx constants is a
+  **false signal**: the stat tag literals collide with the opcode range —
+  `'ps'` is 0x7073, `'zb'` is 0x7a62 — so the top hits are
+  `Stat_ApplyTaggedModifier` and its family, not dispatchers.
+- *`On*` handler names.* Only **10** exist in the whole server, all already
+  recovered by the assert lever (`COpenMarketMgr__On*Req` is the nice family).
+- *A masked opcode index.* **Zero** call sites of the form
+  `(**(code **)(table + idx * 4))()` anywhere in the binary.
+- *The one known handler's caller.* `FUN_0050d0c0` calls a
+  `GObjPC_MsgHandler_SpecialCommand` function but contains no opcode comparison
+  at all.
+
+What it does instead: `FUN_004054d0` reads the opcode and then **walks a
+registration table of subscribers** (`(id + 0x200) * 0x10 + base`), routing each
+message to whoever registered. So there is no static opcode→handler table to
+recover — the mapping is built at runtime, and recovering it would mean finding
+every registration call site rather than reading one tree.
 
 *Levers checked and found exhausted this pass, so nobody re-walks them:*
 high-fan-in helpers (the top ten are all infrastructure — assert, `std::string`
