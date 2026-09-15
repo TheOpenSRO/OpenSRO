@@ -7075,6 +7075,52 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-eighty-second round: a player's armour has no percentage, and that is the answer
+
+The last combat value the grounding audit listed as untraced was the player's
+own mitigation percentage. It is settled, and the answer is **zero** — recovered
+as zero, not assumed.
+
+Param 7 has exactly **three** writers, and none can set it for a player:
+
+```
+GObjMob_PublishStats     004c3730   mobs only (characterdata col 73 = its level)
+Char_PublishCombatStats  00497830   from the _RefObjItem defence block -- and no
+                                    percentage-reduction column is populated on
+                                    ANY of the 21,560 item rows
+skill-effect applier     00594ac0   only via the skill param code 'ar', which
+                                    appears on ZERO of 29,342 skill rows
+```
+
+`'ar'` is `SkillGlobal::RefSkill_ParseParams` writing `skill+0x268` as a 3-word
+run, published into params 7 and 8. Its single numeric hit in the skill table
+turned out to be a skill's **own id column**. The mechanism exists; nothing
+shipped uses it.
+
+**What makes this convincing rather than merely absent** is where the *live*
+defensive codes go instead:
+
+```
+'defp'  273 skills   skill+0x25c   -> params 5/6 slot 0   the FLAT absorb
+'defr'    4 skills   skill+0x260   -> params 5/6 slot 1   a % boost to the flat
+'ar'      0 skills   skill+0x268   -> params 7/8 slot 0   the reduction %
+```
+
+Defensive buffs raise your flat absorb. They never touch the percentage. So the
+asymmetry this project already had — monsters carry a percentage, players do not
+— is the game's own design, and `playerMitigationPercent` now says so as an
+explicit cited `0` routed through the same `combat.MitigateDamage` the monster
+side uses. No number changed; the zero stopped being a coincidence.
+
+**Two mistakes inside this round, both producing false negatives.** The first
+census said `'defp'`, `'defr'` and `'heal'` appeared on zero rows — because the
+multi-char constants were worked out by hand and were wrong (`'defr'` is
+1684366962, not 1684366450); recomputed, `'defp'` is on 273 skills. And the code
+list was harvested with `grep '== 0x'`, which misses every branch MSVC emits as
+`!=` — `'ar'`, the one code the whole question turned on, is exactly such a
+branch. False negatives are the dangerous kind here: an absent value looks
+exactly like a settled question.
+
 ## Hundred-and-eighty-first round: where a player's combat stats come from
 
 `Char_PublishCombatStats` (`00497830`) publishes fifteen ParamKeeper params from

@@ -791,20 +791,53 @@ decodes two of the three columns the schema explicitly records as *not decoded*.
 It is an ordering argument with named anchors on both sides, **not** a use-site
 on PAR itself, and is recorded at that strength.
 
-**What this does NOT settle**, and the reason nothing shipped from it: whether a
-player's param 7 is ever non-zero. The fields are published from an object whose
-class is still unidentified — it is the first argument to
-`Char_PublishCombatStats`, carries floats at +0x198..+0x1d8, and is *not*
-`CRefObjChar` (that struct has `uint8 Lvl` at 0x198, read here as a float). A
-census of all 21,560 item rows finds no populated percentage-reduction column —
-only the PD and MD triples, the non-shield pair at 68–69 and the shield block
-ratio at 74–75, with 70 and 88–90 zero on every row — which is *suggestive* that
-a player has no percentage mitigation from gear, and is exactly the kind of
-suggestion this project does not promote without the use-site. `MitigateDamage`
-keeps the player on the flat term alone.
+### SETTLED: a player's percentage mitigation is ZERO, and that is recovered
 
-*Next probe:* identify the first argument's class (it answers a virtual at slot
-33, `+0x84`), then find what writes its `+0x1a0`.
+The previous pass left this open because a census of item columns is only
+*suggestive*. It is closed now by enumerating the writers instead: param 7 has
+exactly **three**, and none of them can make it non-zero for a player.
+
+| writer | reaches a player? |
+|---|---|
+| `GObjMob_PublishStats` (`004c3730`) | no — mobs only (characterdata col 73 = the monster's level) |
+| `Char_PublishCombatStats` (`00497830`) | from the `_RefObjItem` defence block — and **no percentage-reduction column is populated on any of the 21,560 item rows** |
+| the skill-effect applier (`00594ac0`) | only through the skill param code **`'ar'`** — which appears on **zero of 29,342 skill rows** |
+
+`'ar'` is `SkillGlobal::RefSkill_ParseParams` (`00587630`) writing `skill+0x268`
+as a 3-word run, which the applier publishes into params **7 and 8 at slot 0**.
+The single numeric hit for it in the skill table is a skill's **own id column**,
+not a param code. The mechanism exists; nothing shipped uses it.
+
+**The two defensive skill codes that ARE live go somewhere else entirely**, and
+that is what makes the negative result convincing rather than merely absent:
+
+| code | writes | published as | real skills |
+|---|---|---|---|
+| `'defp'` | `skill+0x25c`, 4-word run | params 5/6 at **slot 0** — the FLAT absorb | **273** |
+| `'defr'` | `skill+0x260`, 2 words | params 5/6 at **slot 1** — a % boost to that flat term | 4 |
+| `'ar'` | `skill+0x268`, 3-word run | params 7/8 at slot 0 — the reduction % | **0** |
+
+So defensive buffs in this game raise your **flat absorb**, never your
+percentage. The asymmetry srrevamp already had — monsters carry a percentage,
+players do not — is the game's own. `session.playerMitigationPercent` now states
+it as an explicit cited `0` routed through the same `combat.MitigateDamage` the
+monster side uses, so the zero carries its evidence instead of being a bare
+subtraction that happens to compute the same number.
+
+**A methodological note worth keeping.** The first census of these codes said
+`'defr'`, `'defp'` and `'heal'` appeared on **zero** rows — because the
+multi-char constants had been worked out by hand and were wrong (`'defr'` is
+1684366962, not 1684366450). Recomputed properly, `'defp'` is on 273 skills.
+A second slip in the same pass: the code list was harvested with
+`grep '== 0x'`, which misses every branch the compiler emits as `!=` — and
+`'ar'`, the one code this whole question turned on, is exactly such a branch.
+Both mistakes produce *false negatives*, which are the dangerous kind here: an
+absent value looks like a settled question.
+
+**Now genuinely open:** the class of `Char_PublishCombatStats`'s first argument
+(it answers a virtual at slot 33, `+0x84`, and is *not* `CRefObjChar` — that has
+`uint8 Lvl` at 0x198, read here as a float). Not needed for the above, but it is
+the handle on where gear aggregates.
 
 ## The death penalty, and half of `pc[0x72d]` (2026-09-15)
 

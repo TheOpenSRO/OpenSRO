@@ -863,3 +863,35 @@ func TestDeathPenaltyAppliedInCombat(t *testing.T) {
 		t.Errorf("level after death = %d, want 11 -- a death never costs a level", after.Level)
 	}
 }
+
+// The player's mitigation percentage is zero, and that zero is RECOVERED.
+//
+// A player's ParamKeeper param 7 has three writers and none can set it:
+// Char_PublishCombatStats publishes it from the _RefObjItem defence block,
+// where a census of all 21,560 item rows finds no percentage-reduction column
+// populated; the skill-effect applier reaches it only via the skill param code
+// 'ar', which appears on zero of 29,342 real skill rows; and
+// GObjMob_PublishStats is mobs only. Monsters DO carry one (characterdata col
+// 73 = their level), so the asymmetry is the game's.
+//
+// Pinned so a later "players should have percentage armour too" edit has to
+// delete a citation rather than quietly introduce a value the game never had.
+func TestPlayerMitigationPercentIsRecoveredZero(t *testing.T) {
+	if playerMitigationPercent != 0 {
+		t.Fatalf("player mitigation percent = %d, want 0 -- see the constant's citation",
+			playerMitigationPercent)
+	}
+	// With a zero percentage the engine's shape collapses to the flat
+	// subtraction this code used to do by hand, which is why routing it
+	// through the shared function changes no number.
+	for _, tc := range []struct{ raw, armor, want int }{
+		{100, 30, 70},
+		{50, 0, 50},
+		{10, 9, 1},
+		{5, 100, 1}, // never below 1
+	} {
+		if got := combat.MitigateDamage(tc.raw, playerMitigationPercent, tc.armor); got != tc.want {
+			t.Errorf("MitigateDamage(%d, 0, %d) = %d, want %d", tc.raw, tc.armor, got, tc.want)
+		}
+	}
+}

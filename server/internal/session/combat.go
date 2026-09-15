@@ -153,6 +153,33 @@ func DecodeLevelUp(data []byte) (*LevelUp, error) {
 // design choice.
 const unarmedDamage = 5
 
+// playerMitigationPercent is the percentage term of a player's damage
+// mitigation: zero, and RECOVERED as zero rather than assumed.
+//
+// The engine's mitigation is `raw / (1 + pct/100) - flat` for both sides, with
+// the percentage read as ParamKeeper param 7. A monster's is populated on every
+// characterdata row (col 73 = its level, via GObjMob_PublishStats). A player's
+// has three writers and none of them can set it:
+//
+//   - Char_PublishCombatStats (00497830) publishes it from a float field whose
+//     source is the _RefObjItem defence block -- and a census of all 21,560
+//     item rows finds no percentage-reduction column populated anywhere.
+//   - The skill-effect applier (00594ac0) reaches it only through the skill
+//     param code 'ar' (SkillGlobal::RefSkill_ParseParams, 00587630, writing
+//     skill+0x268 as a 3-word run). 'ar' appears on ZERO of the 29,342 real
+//     skill rows; the single numeric match is a skill's own id column.
+//   - GObjMob_PublishStats is mobs only.
+//
+// The two defensive skill codes that ARE live go somewhere else entirely:
+// 'defp' (273 skills) writes params 5/6 at slot 0 -- the FLAT absorb -- and
+// 'defr' (4 skills) writes them at slot 1, a percentage boost to that flat
+// term. Neither touches param 7.
+//
+// So a player never has a percentage reduction, and the asymmetry with monsters
+// is the game's, not a gap here. If buffs ever land, 'defp'/'defr' belong on the
+// flat term.
+const playerMitigationPercent = 0
+
 // AttackRequest is the OpAttack payload.
 type AttackRequest struct {
 	CharacterName   string
@@ -742,10 +769,26 @@ func performAttack(
 		if monster.AttackMax > 0 {
 			raw = rollDamage(monster.AttackMin, monster.AttackMax)
 		}
-		incoming := raw - armor
-		if incoming < 1 {
-			incoming = 1
-		}
+		// The player's side of the SAME mitigation the monster gets, through
+		// the same function -- percentage term first, then the flat absorb.
+		// The player's percentage is ZERO, and that is recovered rather than
+		// a simplification: a player's ParamKeeper param 7 has exactly three
+		// writers, and none of them can make it non-zero here.
+		//
+		//   GObjMob_PublishStats     mobs only (characterdata col 73)
+		//   Char_PublishCombatStats  from a field no item column populates --
+		//                            a census of all 21,560 item rows finds
+		//                            no percentage-reduction column at all
+		//   the skill-effect applier only through the skill param code 'ar',
+		//                            which appears on ZERO of 29,342 skill
+		//                            rows (the one numeric hit is a skill id)
+		//
+		// So the asymmetry this code already had -- monsters carry a
+		// percentage, players do not -- is the game's own. Written as an
+		// explicit 0 through combat.MitigateDamage rather than as a bare
+		// subtraction, so the zero carries its citation instead of being a
+		// coincidence that happens to compute the same number.
+		incoming := combat.MitigateDamage(raw, playerMitigationPercent, armor)
 		// The same level-advantage term, with the roles swapped: the monster
 		// is the attacker in its own counterattack, so a monster that
 		// out-levels the player hits harder for it. The formula is one
