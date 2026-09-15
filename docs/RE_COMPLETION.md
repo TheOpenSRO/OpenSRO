@@ -3278,3 +3278,51 @@ A thin tick, honestly. The structure is worth having; the answer is not in it
 yet.
 
 **No srrevamp value changed.**
+
+## Correcting my own exp enumeration (2026-09-15)
+
+The previous entry said the reward is queued and the exp call is elsewhere, and
+pointed at eight `CQNO_*::vslot_103` functions that an earlier entry had listed
+among the binary's positive experience grants. Following them shows that list
+was wrong.
+
+**All eight are `IQuest` virtuals, not experience grants.** Each is
+`__thiscall Foo::vslot_103(Foo *param_1, …)` calling
+`(**(code **)(*param_1 + 0x170))(…)` — a call on `this`, and `this` is a quest:
+`CQNO_RM_OLDWOMAN_6 : CBasicQuest : CQuestBase : IQuest`. Slot `0x170` is
+`GObjPC_GainExpAndLevel` on a **character**; on a quest it is something else
+entirely. The earlier census matched the offset across the dump without checking
+what the receiver was.
+
+**The load-bearing conclusion survives, because it never rested on that census.**
+"No PvE experience reward exists in this binary" was established from
+`charData+0x68` having exactly one writer — `GObjPC_GainExpAndLevel` — with the
+only other function touching the field being a GM stat dump that formats it into
+a string. That probe is independent of the call-site list and is unaffected. What
+was wrong is the supporting enumeration's quest entries, not the finding.
+
+**A sharper open question falls out of it.** Quests demonstrably pay experience —
+`refqusetreward` carries 709 rows of reward values. If quest classes do not call
+`GainExpAndLevel`, and `GObjPC_GiveExp`'s only three callers are the PC-death
+handlers, then quest rewards reach the character through the queued-reward object
+`FUN_009287c0` builds, and a central payer drains that queue. Finding that payer
+answers both this and the column question the previous two entries left open.
+
+### The rule, now written down where it will be read
+
+Three separate wrong results in this project have the same cause: a vtable-slot
+census that did not resolve the receiver's class.
+
+| slot | on a character | elsewhere |
+|---|---|---|
+| `0x104` | `GetParam` | a three-argument virtual on quest classes |
+| `0x318` | `SetBodyMode`, shared by 17 classes | indexed under one derived class |
+| `0x170` | `GObjPC_GainExpAndLevel` | an `IQuest` virtual |
+
+`client/tools/ghidra/README.md` now carries the check, strongest evidence first:
+the receiver expression (a `__thiscall` on `param_1` is `this`), then the dump's
+own `RTTI hierarchy:` line, and only last the enclosing namespace — which is
+weak, because a `GObjPC` function may call a slot on a char it was handed, and a
+shared virtual is indexed under just one of its classes.
+
+**No srrevamp value changed.**

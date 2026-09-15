@@ -489,3 +489,35 @@ never as "this is the name".
 *before* the method (`std::bad_alloc::vslot_000` is class `bad_alloc`, not
 `std`), and a function whose RTTI lists a single class cannot have this problem
 at all. Ignoring either turns 48 findings into 906.
+
+## Censusing a vtable slot: resolve the RECEIVER's class
+
+A call like `(**(code **)(*x + 0x170))(...)` means nothing until you know what
+`x` is. The same offset is a different function in every unrelated hierarchy, so
+a census that greps `+ 0xNNN))(` across the dump silently mixes them.
+
+This has produced a wrong result three times in this project:
+
+- **`0x104`** is `GetParam` on a character and a three-argument something-else on
+  quest classes. ~100 quest hits nearly swamped a census of which params the
+  engine reads.
+- **`0x318`** (slot 198) is one shared implementation reaching seventeen classes;
+  the dump indexes it under `CGObjCOS_Summoned`, which made a player's berserk
+  bonus look unreachable.
+- **`0x170`** is `GObjPC_GainExpAndLevel` on a character and an `IQuest` virtual
+  on `CQNO_*`. Eight quest call sites were listed as experience grants when they
+  are `__thiscall` on `this`, a quest.
+
+**The check, in order of strength:**
+
+1. The receiver expression. `(*param_1 + 0x170)` inside a
+   `__thiscall Foo::bar(Foo *param_1, …)` is a call on `this` — the enclosing
+   class's own hierarchy, never another's.
+2. The dump's `RTTI hierarchy:` line for the enclosing function, which names the
+   chain the binary itself recorded.
+3. The enclosing function's namespace, which is the weakest: a function in
+   `GObjPC` may call the slot on a char it was passed, and a virtual shared by a
+   hierarchy is indexed under only one of its classes.
+
+A census that reports a count without saying which classes it counted has not
+answered the question it looks like it answered.
