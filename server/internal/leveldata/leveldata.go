@@ -382,9 +382,8 @@ const (
 // at 11, 17% at 20, 1.9% at 50, and effectively nothing by 110. Dying is
 // brutal just after the level-10 grace period and shrugged off at cap.
 //
-// The reduction stat subtracted before the loss lands is NOT modelled -- it is
-// read through a register-passed ParamKeeper id this code has not resolved, so
-// it is left out rather than guessed at.
+// The reduction the engine applies before the loss lands IS modelled, and it is
+// a proven zero rather than an omission -- see DeathPenaltyReductionPercent.
 func (t *Table) DeathPenaltyExp(level, multiplier int) (int64, bool) {
 	if level <= DeathPenaltyMinLevel {
 		return 0, true
@@ -399,5 +398,52 @@ func (t *Table) DeathPenaltyExp(level, multiplier int) (int64, bool) {
 		// out as 1.0.
 		loss = 1
 	}
-	return loss, true
+	return ApplyDeathPenaltyReduction(loss, DeathPenaltyReductionPercent), true
+}
+
+// DeathPenaltyReductionPercent is the percentage a character's own stat takes
+// off an exp death penalty. **Zero, and RECOVERED as zero rather than assumed.**
+//
+// GObjPC_OnDeath reads it off the DEAD character's own keeper and subtracts a
+// percentage of the loss. The id travels in a register, which is why the
+// decompiled C shows a bare call; the disassembly spells it out:
+//
+//	4e6b78  LEA  EDI,[EBP + 0x1ec]        <- the victim's GParamKeeper
+//	4e6b7e  MOV  EAX,0x101                <- param 257
+//	4e6b83  CALL 0x4b3740                 <- EvaluateParam
+//	4e6b88  FDIV qword [0x00b45af0]       <- / 100
+//	4e6b8e  FIMUL dword [ESP + 0x14]      <- * the loss
+//	4e6b9b  SUB  ESI,EAX                  <- loss -= that
+//
+// so it is a PERCENTAGE of the loss, not a flat subtraction.
+//
+// It is zero for an ordinary character because exactly one function in the
+// binary writes param 257, and that function is `CTJ_PremiumKeeper::vslot_012`
+// -- a class that names itself. It sets 256, 257 and 258 together out of one
+// premium-benefit record (offsets +0x300, +0x2c0 and +0x320). So the reduction
+// is a PREMIUM ACCOUNT benefit; a character without one has no writer for the
+// param and evaluates it at zero. srrevamp has no premium system, so the term
+// is structurally zero here rather than unmodelled.
+//
+// Kept as a named constant, and applied through a function rather than folded
+// away, so the engine's shape stays visible and a premium system later has one
+// place to change.
+const DeathPenaltyReductionPercent = 0
+
+// ApplyDeathPenaltyReduction takes reductionPercent off an exp death penalty,
+// the way GObjPC_OnDeath does: a percentage of the loss, subtracted only when
+// it comes out positive, and never taking the loss below zero.
+func ApplyDeathPenaltyReduction(loss int64, reductionPercent int) int64 {
+	if reductionPercent <= 0 || loss <= 0 {
+		return loss
+	}
+	off := int64(math.Round(float64(loss) * float64(reductionPercent) / 100))
+	if off <= 0 {
+		// The engine only subtracts when the term is positive.
+		return loss
+	}
+	if off >= loss {
+		return 0
+	}
+	return loss - off
 }

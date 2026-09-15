@@ -408,8 +408,22 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		return opponent.Session.Send(&proto.Packet{Opcode: OpDuelOpponentDamaged, Data: damaged.Encode()})
 	}
 
-	// Duel over: reset the loser's HP (no harsh death penalty, same as PvE)
-	// and clear both sides from the active duel set.
+	// Duel over: reset the loser's HP and clear both sides from the active
+	// duel set.
+	//
+	// Losing a duel costs NO experience here. That is own design, and it is a
+	// deliberate divergence rather than a match: the engine does charge for a
+	// player kill -- GObjPC_OnDeath picks its multiplier on the killer's
+	// vtable-0x1c predicate, the same one that gates the exp grant, so a
+	// PC killer takes the 20x branch (leveldata.DeathPenaltyKilledByPlayer)
+	// against a monster's 100x. What is NOT established is whether a duel
+	// death reaches that code at all: GObjPC_OnDeath is dispatched only for
+	// death kinds 3, 4 and 5 (the byte at pc+0x1cb4, written by FUN_004e6ec0),
+	// and kinds 1, 2 and 6 go elsewhere entirely. Until which kind a duel is
+	// has been read, charging 20x here would be a guess dressed as recovery.
+	//
+	// The comment this replaces claimed "same as PvE", which stopped being
+	// true when PvE started applying the real 100x penalty.
 	if err := chars.ResetHP(ctx, opponent.CharacterID); err != nil {
 		return fmt.Errorf("duel: resetting loser's hp: %w", err)
 	}

@@ -2001,3 +2001,110 @@ reverse direction is unchanged at 24, so the economy only opens upward.
 (`0x72d * 4 = 0x1cb4`). `!= 5` is what gates both the doubled exp reward and
 the death-penalty branch, so whatever state 5 is, it suppresses both. Still not
 identified, but the use-site is now a pair rather than a single.
+
+## The death handler, read to the bottom (2026-09-15)
+
+`GObjPC_OnDeath` (`004e6980`) had three things recorded against it as not
+understood. All three are now read.
+
+### pc[0x72d] is a DEATH-KIND code
+
+An open item since the death penalty was first recovered. It is written one
+instruction before it is dispatched on, by `GObjPC::FUN_004e6ec0` (`004e6ec0`):
+
+	uVar1 = FUN_004e6590();            <- classify the death
+	pc[0x1cb4] = uVar1;                <- 0x72d * 4
+	switch (uVar1) {
+	  case 1:            FUN_004e6820(); return;
+	  case 3: case 4: case 5: GObjPC_OnDeath(); return;
+	  case 6:            FUN_004e6d60(); return;
+	}
+
+So it is not a general state enum: it is the KIND of the death that just
+happened, and only kinds 3, 4 and 5 reach the penalty handler at all. The
+classifier `FUN_004e6590` ends with
+
+	iVar2 = FUN_004eb390(in_EAX);
+	return (-(uint)(iVar2 != 1) & 0xfffffffe) + 5;     <- ==1 -> 5, else -> 3
+
+and `FUN_004eb390` returns 1 only when the killer passes the `vf[0x1c]`
+predicate, BOTH parties have a non-null `[0x72f]`, and a further comparison
+matches. Two parties sharing a membership object, in a death that suppresses the
+PK treatment — the shape of a duel or a match — but `[0x72f]` is not identified,
+so the kind is described, not named.
+
+### The 20/100/300 branch conditions
+
+Previously "NOT understood". The selector is `killer->vf[0x1c]()`:
+
+	vf[0x1c]() == 0  ->  100 / 300,  SP loss 60
+	vf[0x1c]() != 0  ->   20 / 100,  SP loss 20
+
+and that same predicate gates the exp grant at the top of the function — the
+killer is paid only when it is non-zero. A predicate that decides whether the
+killer receives experience identifies a PC, so `!= 0` is **killed by a player**
+and `== 0` **killed by a monster**. That confirms, rather than changes,
+srrevamp's existing `DeathPenaltyKilledByMonster` 100 / `Flagged` 300 and
+`KilledByPlayer` 20 / `Flagged` 100 — names that were a reasonable hypothesis
+and are now the recovered mapping.
+
+The second condition, the one the names call "Flagged", is
+`deathKind != 5 && victim.PKPenaltyPoint >= 1` — and the SP loss is non-zero
+only on that branch, which is why srrevamp's two skill-point constants exist
+only in flagged form. The identical condition doubles the KILLER's experience,
+so a flagged victim is worth twice as much and loses three times as much.
+
+### The reduction stat: param 257, and a proven zero
+
+Recorded as "read through a register-passed ParamKeeper id this code has not
+resolved, so it is left out rather than guessed at". The id is in EAX:
+
+	4e6b78  LEA  EDI,[EBP + 0x1ec]      <- the VICTIM's own GParamKeeper
+	4e6b7e  MOV  EAX,0x101              <- param 257
+	4e6b83  CALL 0x4b3740               <- EvaluateParam
+	4e6b88  FDIV qword [0x00b45af0]     <- / 100
+	4e6b8e  FIMUL dword [ESP + 0x14]    <- * the loss
+	4e6b9b  SUB  ESI,EAX                <- loss -= that
+
+so it is a PERCENTAGE of the loss rather than a flat term. **Exactly one
+function in the binary writes param 257**, and it names itself:
+`CTJ_PremiumKeeper::vslot_012` (`006524b0`), which sets 256, 257 and 258
+together out of one premium-benefit record (`+0x300`, `+0x2c0`, `+0x320`). The
+death-penalty reduction is a PREMIUM ACCOUNT benefit; an ordinary character has
+no writer for the param and evaluates it at zero.
+
+**What moved:** `leveldata.DeathPenaltyReductionPercent` and
+`ApplyDeathPenaltyReduction`, wired into `DeathPenaltyExp`. The value is zero, so
+no death costs a different amount — but it is now a *cited* zero with the
+engine's shape around it, the same status as `playerMitigationPercent`, instead
+of an unmodelled gap. The test pins the percentage shape so a premium system
+later lands in the right arithmetic.
+
+### Three stale claims corrected
+
+- `combat.ExpFor` told the reader the real value was "RefObjChar's ExpToGive".
+  There is no such field in the formula — the previous entry established that a
+  monster contributes only its level — so the note sent future work looking for
+  a column that is never read. Same claim removed from `Monster.ExpReward`.
+- `Monster.SPReward` carried the same claim, but there the honest statement is
+  different and now says so: the exp formula has been read end to end and pays
+  no skill points at all, so whatever grants them is a path not yet found.
+- `duel.go` justified charging no death penalty with "same as PvE", which
+  stopped being true when PvE began applying the real 100x. The divergence is
+  now stated as own design, together with what is and is not established: a PC
+  killer does take the 20x branch, but whether a duel death reaches
+  `GObjPC_OnDeath` at all depends on its death kind, and kinds 1, 2 and 6 go
+  elsewhere. Charging 20x without reading that would be a guess dressed as
+  recovery, so the behaviour is unchanged.
+
+### Open
+
+- `[0x72f]` and `[0x72e]` — adjacent pointer fields on a PC, gating death kind 5
+  and the exp-reward tier bonus respectively. Naming either would name both a
+  death kind and a shipped-adjacent bonus.
+- `vf[0x3b4]` on the killer overrides the loss outright in the monster branch.
+- Death kinds 1, 2 and 6, and their handlers `FUN_004e6820` / `FUN_004e6d60`.
+- Params 256 and 258, the other two premium benefits.
+- Still open from before: `GetParam(0x80/0x81)` and `GetParam(0x103)` in the
+  damage pipeline; the mitigation-skipping descriptor flag `0x20`;
+  `Formula_ExpScaleByLevelWindow`'s mode; itemdata columns 114 and 117.

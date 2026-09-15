@@ -349,3 +349,54 @@ func TestExpDiffScale(t *testing.T) {
 		}
 	}
 }
+
+// TestApplyDeathPenaltyReduction pins the SHAPE of the engine's death-penalty
+// reduction, which matters even though srrevamp's own rate is zero: the term is
+// a percentage of the loss, not a flat subtraction, and a premium system later
+// has to slot into the right arithmetic.
+//
+// From GObjPC_OnDeath: EvaluateParam(257) on the victim's own keeper, divided
+// by 100, multiplied by the loss, subtracted only when positive.
+func TestApplyDeathPenaltyReduction(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		loss    int64
+		percent int
+		want    int64
+	}{
+		{"srrevamp's own rate is zero", 1000, 0, 1000},
+		{"a negative rate never adds", 1000, -20, 1000},
+		{"a quarter off", 1000, 25, 750},
+		{"rounds rather than truncates", 101, 50, 50}, // 50.5 -> 51 off
+		{"a full hundred percent wipes it", 1000, 100, 0},
+		{"beyond a hundred cannot go negative", 1000, 250, 0},
+		{"a zero loss stays zero", 0, 50, 0},
+		{"a rate too small to move a small loss", 1, 10, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ApplyDeathPenaltyReduction(tc.loss, tc.percent); got != tc.want {
+				t.Errorf("ApplyDeathPenaltyReduction(%d, %d) = %d, want %d",
+					tc.loss, tc.percent, got, tc.want)
+			}
+		})
+	}
+
+	// The constant itself is the recovered value: zero, because the only
+	// writer of param 257 in the whole binary is CTJ_PremiumKeeper.
+	if DeathPenaltyReductionPercent != 0 {
+		t.Errorf("DeathPenaltyReductionPercent = %d; it is a premium-only stat and zero here",
+			DeathPenaltyReductionPercent)
+	}
+
+	// And it must not have changed what a death costs. A level-20 character's
+	// loss is still the bare 470 * 100.
+	tbl, err := ParseCSV(strings.NewReader("level,exp,mastery_sp,exp_unit\n20,72700,53,470\n"))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	got, ok := tbl.DeathPenaltyExp(20, DeathPenaltyKilledByMonster)
+	if !ok || got != 470*100 {
+		t.Errorf("DeathPenaltyExp(20, monster) = %d,%v; want %d unchanged by the zero reduction",
+			got, ok, 470*100)
+	}
+}

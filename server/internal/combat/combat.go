@@ -90,16 +90,18 @@ type Monster struct {
 	// value rather than an unmodelled one: blocking is a shield mechanic and
 	// monsters carry no shields. 938 of the game's other monsters do read 20.
 	Block int
-	// ExpReward is the experience a kill grants. Derived from the monster's
-	// toughness for now (a disclosed default, ExpFor) -- the real per-species
-	// experience lives in mob data this project does not load yet; recovering
-	// it (like the item refdata) is a follow-up.
+	// ExpReward is the disclosed toughness-derived fallback (ExpFor), used only
+	// when no level table is loaded. The real reward is leveldata.KillExp, and
+	// it is NOT per-species: Formula_MonsterExpReward reads the level table's
+	// own per-level unit at the minimum of the two levels and scales it by the
+	// level gap, so a monster contributes only its Level. There is no mob
+	// experience column to recover.
 	ExpReward int64
 	// SPReward is the skill points a kill grants -- the skill economy's income
-	// (points are spent raising masteries, which unlocks skills). Skill points
-	// come from mob kills in the real game, but the exact per-species amount is
-	// in the same mob data (RefObjChar) this project does not load yet, so this
-	// is a disclosed default (SPFor), the same status as ExpReward.
+	// (points are spent raising masteries, which unlocks skills). A disclosed
+	// default (SPFor). Unlike ExpReward this one is genuinely unrecovered: the
+	// exp formula has been read end to end and pays no skill points, so
+	// whatever grants them is a separate path this project has not found.
 	SPReward int64
 }
 
@@ -348,9 +350,15 @@ func RollGold(min, max int64, flat int64, r *rand.Rand) int64 {
 }
 
 // ExpFor is the placeholder experience a monster of the given toughness
-// grants on death: its max HP. A disclosed design choice, not recovered --
-// the real value is in the client's mob data (RefObjChar's ExpToGive), which
-// is not loaded yet.
+// grants on death: its max HP. A disclosed design choice, and a FALLBACK ONLY:
+// the kill path uses leveldata.KillExp, the real formula, whenever a level
+// table is loaded. This is what remains for an export with no exp_unit column.
+//
+// An earlier note here sent the reader looking for "RefObjChar's ExpToGive".
+// There is no such field in the formula: Formula_MonsterExpReward (004105d0)
+// reads the LEVEL TABLE's per-level unit at the minimum of the two levels and
+// scales it, and the monster contributes only its level. Nothing per-species is
+// read, so there is no mob column to load.
 func ExpFor(maxHP int) int64 {
 	if maxHP < 1 {
 		return 1
