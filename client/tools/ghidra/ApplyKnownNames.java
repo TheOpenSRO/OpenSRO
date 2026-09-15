@@ -193,6 +193,20 @@ public class ApplyKnownNames extends GhidraScript {
          "Packet handler, dispatched on opcode 0x5000. Recovered from the message dispatcher "
          + "(FUN_00414260 and its family), which reads a uint16 opcode from the message buffer at "
          + "+0x1050 and branches. The opcode is a fact; what the handler DOES is not claimed."},
+        {"00869640", "QuestHandler_OnDead",
+         "One quest's OnDead handler. All three of this triple resolve the SAME name id (0x15a) "
+         + "through a virtual at +0x34 and log \"HandlerOnDead_%s()\" with it -- so the %s is the "
+         + "quest's name fetched for the log line, and the handler itself is COMPILED CODE for "
+         + "that quest. This is what \"quest objectives are not data\" looks like concretely."},
+        {"00869740", "QuestHandler_OnUpdate",
+         "The same quest's OnUpdate handler; logs \"HandlerOnUpdate_%s()\"."},
+        {"008699a0", "QuestHandler_SetupQuest",
+         "The same quest's setup handler; logs \"HandlerSetupQuest_%s(%d)\". Together with "
+         + "OnDead and OnUpdate this is the three-handler lifecycle each custom quest gets."},
+        {"008341b0", "DB_Load_RefQuest",
+         "Loads the _REFQUEST refdata table from the database -- quest identity and metadata, the "
+         + "server's counterpart to the client's questdata.txt. Like the drop loaders it is a "
+         + "SELECT * with no column names in the binary."},
         {"0082c5e0", "DB_Load_RefDropItemGroup",
          "Loads the _REFDROPITEMGROUP refdata table from the server's DATABASE. Drops are not in "
          + "any shipped file -- they are SQL refdata, which is why no artifact this project has "

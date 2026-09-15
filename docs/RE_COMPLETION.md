@@ -200,8 +200,31 @@ pick one up without re-deriving anything.
    tooling, not a grep. *Next step:* convert one species' points and QA-verify
    them before converting the rest.
 
-6. **Quest objectives** — proven not to exist as data; any objectives shipped
-   must be own design. Closed as a *recovery*, not a gap.
+6. **Quest objectives — absence RE-TESTED and CONFIRMED, now with the shape
+   (2026-09-15).** Re-examined against the same evidence that overturned
+   `npcpos`: the 85-table SQL refdata catalogue and `_CHARQUEST`'s
+   `QuestData1`/`QuestData2`. The conclusion holds — objectives are code — and
+   the re-test recovered *how*:
+
+   **Each custom quest gets a compiled three-handler lifecycle.** The triple
+   `QuestHandler_SetupQuest` / `QuestHandler_OnUpdate` / `QuestHandler_OnDead`
+   (`008699a0` / `00869740` / `00869640`) all resolve **the same name id
+   (0x15a)** through a virtual and log `"HandlerSetupQuest_%s(%d)"`,
+   `"HandlerOnUpdate_%s()"`, `"HandlerOnDead_%s()"` — so the `%s` is the quest's
+   name fetched *for the log line*, and the handler bodies are compiled C++ for
+   that one quest. They call the generic helpers `CBasicQuest__SetupMissionNPC`
+   and `CBasicQuest__PayQuest`.
+
+   `_REFQUEST` exists as a DB table (`DB_Load_RefQuest`, `008341b0`) but is the
+   server's copy of quest **identity and metadata** — the counterpart to
+   `questdata.txt`, not a table of objectives.
+
+   So the entry sharpens from "objectives live in server code somewhere" to
+   **"each quest is a compiled SetupQuest/OnUpdate/OnDead triple over
+   `CBasicQuest`"**. Any objectives srrevamp ships are own design, and now it is
+   clear they always would have been — there is no table to import, in a file or
+   a database.
+
 7. **Loot tables — absence RE-TESTED and CONFIRMED, and now actionable
    (2026-09-15).** After `npcpos` showed that a recorded absence can simply be
    wrong, this one was re-examined against evidence the original conclusion did
