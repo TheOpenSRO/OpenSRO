@@ -224,3 +224,42 @@ Two outputs, kept apart by how certain they are:
 The comment says **"pointer table"**, not "vtable", because the shape alone
 cannot tell a vtable from an array of callbacks. That distinction does not
 matter for finding the code, and overstating it would be the usual mistake.
+
+## InterpolateModules.java `[apply] [maxGap]`
+
+MSVC emits a translation unit's functions contiguously, so if the nearest
+attributed function *below* an unknown one and the nearest *above* it are both
+in module M, the unknown one is almost certainly M too. The whole risk sits in
+how far "nearest" is allowed to reach, which is what `maxGap` controls.
+
+**A stronger version was measured and rejected**, and it is worth knowing why
+before anyone reinvents it. Taking each module's full address span and claiming
+everything inside looks attractive — 1,781 server functions — until you see
+which: the biggest contributor was `RefInstanceGenerator`, **16 confirmed
+members spanning 1,207 functions**. A span being "clean" (no *other* module has
+a member inside) means almost nothing when 97% of functions are unattributed.
+That is extrapolation across a void. This script interpolates between near
+neighbours instead, a much smaller claim.
+
+`maxGap` is the honesty dial: 3 attributes 218 server / 1,068 client; 8 would
+take 478 / 2,549, and each step out weakens the claim. Default 3.
+
+Every touched function records **why** in a plate comment — both bracketing
+addresses, the module, and the gap size — and says plainly that it is an
+inference, unlike the `__FILE__` asserts that seeded it.
+
+## The compounding order
+
+These levers feed each other, so a full pass runs them in this order:
+
+1. `NamespaceFromSourceFile` — the `__FILE__` seeds (facts).
+2. `LabelFromUIStrings` — authored UI ids (facts, client only).
+3. `InterpolateModules` — fill small gaps between same-module neighbours.
+4. `PropagateModules` — call-graph unanimity, now with a richer seed set.
+5. `VtableAttribute` — let the vtables vote; **this one is last and wants
+   re-running after every other lever**, since it is the only step that can
+   reach virtuals and it needs attributed slots to vote with.
+6. `CodeCensus` then `DecompAll` — measure, then render to C.
+
+`re_pass.sh` runs the two binaries as parallel lanes; only the steps *within* a
+lane are ordered.
