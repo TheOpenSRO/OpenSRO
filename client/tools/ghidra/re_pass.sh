@@ -22,6 +22,15 @@ set -u
 G=/opt/ghidra_12.1.3_PUBLIC/support/analyzeHeadless
 PROP="${1:-}"
 
+# NOTE the argument order: DecompAll takes <outDir> [timeoutSec] [shardSize].
+# An earlier version of this passed the shard size where the TIMEOUT goes, which
+# silently dropped the per-function budget to 16-20s and made the client dump
+# report failed=1 -- the 27KB GlobalDataManager::Client_LoadRefDataFile needs
+# ~30s and is exactly the function whose column maps we keep wanting. Give it
+# room; a generous per-function ceiling costs nothing on the 39,850 functions
+# that finish in milliseconds.
+DECOMP_TIMEOUT=180
+
 lane() {
   local name="$1" proj="$2" prog="$3" out="$4" shards="$5"
   local base="/home/ghidra/$proj -process $prog -noanalysis -scriptPath /var/tmp"
@@ -33,7 +42,7 @@ lane() {
     echo "### $name report"
     $G $base -postScript SymbolReport.java 0
     echo "### $name dump"
-    $G $base -postScript DecompAll.java "$out" "$shards"
+    $G $base -postScript DecompAll.java "$out" "$DECOMP_TIMEOUT" "$shards"
     echo "### $name lane done"
   } > "/var/tmp/re_pass_$name.log" 2>&1
 }

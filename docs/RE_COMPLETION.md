@@ -104,33 +104,50 @@ pick one up without re-deriving anything.
 7. **Inventory size (50)**, **unarmed damage (5)** — ours; low value, may be
    genuinely absent.
 
-## Naming coverage
+## Naming coverage, and the denominator
 
-Measured by `SymbolReport.java`, which counts three states separately because
-two of them are different kinds of knowing: **NAMED** (a real name, from FID, an
-assert spelling out `Class::Method`, or applied by hand with evidence),
-**ATTRIBUTED** (still `FUN_xxxxxxxx`, but in a namespace derived from a fact the
-binary states about itself — the `__FILE__` it asserts with, the authored UI
-string ids it fetches, or call-graph unanimity), and **UNKNOWN**.
+Measured by `SymbolReport.java` (three states: **NAMED** — a real name, from
+FID, an assert spelling out `Class::Method`, or applied by hand with evidence;
+**ATTRIBUTED** — still `FUN_xxxxxxxx`, but in a namespace derived from a fact the
+binary states about itself; **UNKNOWN**) and by `CodeCensus.java`, which
+separates game logic from library code.
 
-| | named | attributed | identified | of total |
-|---|---|---|---|---|
-| `SR_GameServer.exe` | 1,052 | 702 | **1,754** | 5.7% of 30,922 |
-| `sro_client.exe` | 1,222 | 3,131 | **4,353** | 10.9% of 39,851 |
+| | game-logic fns | % of binary | named | attributed | identified | of game logic |
+|---|---|---|---|---|---|---|
+| `SR_GameServer.exe` | 29,554 | 95.6% | 633 | 669 | **1,302** | **4.4%** |
+| `sro_client.exe` | 36,457 | 91.5% | 681 | 3,016 | **3,697** | **10.1%** |
+| **combined** | **66,011** | **93.3%** | 1,314 | 3,685 | **4,999** | **7.6%** |
 
-**6,107 of 70,773 (8.6%)**, up from 4.0% at the start of 2026-09-15. The levers
-used, in order of what they returned: call-graph attribution
-(`PropagateModules.java`, +3,131 across both), authored UI string ids
+**The "most of it is CRT and STL" assumption was wrong, and it was measured
+rather than argued.** An earlier note in this file said the real denominator
+must be far smaller than the 70,773 total because a stripped MSVC binary is
+mostly library code. It is not. Across both binaries only **1,368 + 3,394**
+functions are clearly not game logic — 368 thunks, 3,461 tiny (<16 bytes), 933
+named as CRT/STL by Ghidra's own signature database. Everything else is the
+game. So "a full decomp with named functions" is a **~66,000-function problem**,
+not the ~6,000-function one that assumption implied.
+
+Two honest caveats on that number, in both directions:
+
+- **Upper bound.** Unnamed STL template instantiations cannot be told from game
+  code by any signal here, so some of the 66,011 is library. The `tiny` bucket
+  (3,461) is probably mostly STL accessors, and there will be more above 16
+  bytes that FID never named.
+- **Virtual functions are IN the count, deliberately.** 18,522 game functions
+  have no direct caller. An earlier version of the census excluded those as
+  dead, which was wrong: a virtual is reached only through a vtable slot and
+  Ghidra does not resolve those, so that bucket holds some of the most important
+  code in the binary — `GObjPC_GainExpAndLevel`, the exp-gain entry point, is in
+  it. It does also hold genuinely dead code, and nothing here separates the two.
+
+Levers used so far, by what they returned: call-graph attribution
+(`PropagateModules.java`, +3,131), authored UI string ids
 (`LabelFromUIStrings.java`, +140 namespaced and 597 commented), `__FILE__`
-asserts (`NamespaceFromSourceFile.java`, 760 seeds), Ghidra FID (506 on the
-server), and hand-proven names with citations (~30).
+asserts (`NamespaceFromSourceFile.java`, 760 seeds), Ghidra FID (~930, mostly
+library), and hand-proven names with citations (~30). The server is the weaker
+side at 4.4% and it is where the gameplay lives.
 
-**A caveat on the denominator.** Most of a stripped MSVC binary is CRT and STL
-template instantiations, not game logic, so 70,773 is not the number that
-matters — the meaningful denominator is much smaller and has not been measured.
-Until it is, this percentage says less than it looks like it does.
-
-## How to work this file
+## How to work this file## How to work this file
 
 Pick the top open item, run its next probe against the dumps (grep, don't
 re-decompile — see `feedback_re_decomp_first`), and then do one of three things:
