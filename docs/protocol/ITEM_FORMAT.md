@@ -215,6 +215,21 @@ armour leaves the attack columns 0. It sits at columns 65-77 (min/max pairs):
 | Block ratio (shields) | 74 ~ 75 | — | (shield 10 ~ 20) |
 | Parry-family pair (non-shields) | 68 ~ 69 | 5 ~ 7 | 5 ~ 7 |
 
+**Column 61 is `ItemClass`** (identified 2026-09-15), derived from the ORDER of
+the server's own deserialiser rather than by pattern-matching the data.
+`RefObjItem::ExtractData` reads its fields consecutively off the row —
+`+0x198` (4 bytes), `+0x19c` (1), `+0x1a0` (4), `+0x1a4` (4), `+0x1a8` (1) — and
+`+0x19c` is confirmed as `ReqGender` by `CGPCInventoryOP::CheckEquipsetIntegrity`,
+which compares it against the character's `GetGender()`. Columns 57/58/59/60 are
+already pinned as MaxStack / ReqGender / ReqStr / ReqInt, exactly those four in
+exactly that order, so the next field is **column 61** — and it is a one-byte
+read, matching `m_btItemClass`.
+
+Checked against the binary's own assertion rather than a curve: `ExtractData`
+asserts *"ItemClass must be not zero"* / `m_btItemClass > 0`, and column 61 is
+non-zero on **all 21,552** equipment rows. Values are small (1–14+), and one
+family's five tiers walk it 1, 4, 7, 10, 13.
+
 **Column 93 is `TwoHanded`** (identified 2026-09-15). A clean 0/1 that is
 **constant within every weapon kind** (`TypeID4`) — never mixed — and 0 on all
 511 shield rows.

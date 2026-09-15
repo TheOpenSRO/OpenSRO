@@ -7075,6 +7075,47 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-eighty-eighth round: the edit that silently did nothing
+
+Last round shipped `TwoHanded` as recovered and wired, with a tagged release
+saying so. **It never reached the exporter.** The edit that was meant to map
+column 93 matched nothing — the replacement text had the wrong indentation, and
+a silent no-op is what a non-matching string replace does. So `fTwoHanded = 93`
+sat defined and unused, the equipment rule that depends on it was inert in every
+real deployment, and the build was perfectly happy: Go objects to an unused
+local, not an unused const.
+
+Nothing caught it. The round-trip test only checked the record's WIDTH, and the
+new column test only checked defence and block. Both passed.
+
+Fixed, and now pinned by a test that was **verified to fail without the fix** --
+reverting the one line produces `TwoHanded = false, want true` -- because a test
+that passes either way is worth nothing. Every edit in this round asserts its own
+replacement matched before writing the file.
+
+**Column 61 is `ItemClass`**, and it was the last placeholder in the item
+exporter that anything actually reads -- it flows through the shop listing and
+out to the client, where it had been a constant 0.
+
+Derived from the ORDER of the server's own deserialiser rather than by
+pattern-matching the data. `RefObjItem::ExtractData` reads fields consecutively
+off the row -- `+0x198` (4 bytes), `+0x19c` (1), `+0x1a0` (4), `+0x1a4` (4),
+`+0x1a8` (1) -- and `+0x19c` is confirmed as `ReqGender` by
+`CGPCInventoryOP::CheckEquipsetIntegrity`, which compares it to the character's
+`GetGender()`. This exporter already pinned 57/58/59/60 as
+MaxStack/ReqGender/ReqStr/ReqInt, exactly those four in exactly that order, so
+the next field is column 61 -- a one-byte read, matching `m_btItemClass`.
+
+Checked against the binary's own assertion, not a curve: `ExtractData` asserts
+*"ItemClass must be not zero"* / `m_btItemClass > 0`, and column 61 is non-zero
+on **all 21,552** equipment rows.
+
+The sweep is otherwise finished. Every other `"0"` placeholder left in either
+exporter -- `FlyingSpeed`, `Interruptable`, `Overlap`, `AutoAttackType`,
+`Basic_Name`, `Basic_ChainCode`, `Basic_RecycleCost` -- has **zero readers**
+anywhere in the server, so a wrong value there cannot reach anything. They stay
+as they are, now for a measured reason rather than an unexamined one.
+
 ## Hundred-and-eighty-seventh round: both hands are on your weapon
 
 Shipping shield blocking last round quietly made a dormant gap load-bearing.

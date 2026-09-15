@@ -755,6 +755,40 @@ Also named, with no tag counterpart found yet: `PARAM_PA` "Phy. atk. pwr.",
 `PARAM_PD` "Phy. def. pwr.", `PARAM_MA` "Mag. atk. pwr.", `PARAM_MD`
 "Mag. def. pwr.", `PARAM_ABSORB` "Absorption".
 
+## `ItemClass` is itemdata column 61, and a shipped claim that was false (2026-09-15)
+
+**First, a correction.** The previous entry says `TwoHanded` was exported. It was
+not — the edit that was meant to map column 93 matched nothing (wrong
+indentation; a silent no-op is what a non-matching string replace does), so
+`fTwoHanded = 93` sat defined and unused and the equipment rule depending on it
+was inert in every real deployment. The build was happy: Go objects to an unused
+local, not an unused const. The round-trip test only checked the record's
+*width*, and the new-column test only checked defence and block. Fixed, and
+pinned by a test **verified to fail without the fix**.
+
+**`ItemClass` is column 61** — the last placeholder in the item exporter that
+anything reads. It flows through the shop listing to the client, where it had
+been a constant 0.
+
+Derived from the ORDER of the server's own deserialiser rather than from the
+shape of the data. `RefObjItem::ExtractData` reads fields consecutively off the
+row — `+0x198` (4 bytes), `+0x19c` (1), `+0x1a0` (4), `+0x1a4` (4), `+0x1a8` (1)
+— and `+0x19c` is confirmed as `ReqGender` by
+`CGPCInventoryOP::CheckEquipsetIntegrity`, which compares it against
+`GetGender()`. The exporter already pinned 57/58/59/60 as MaxStack / ReqGender /
+ReqStr / ReqInt, exactly those four in exactly that order, so the next field is
+column 61 — a one-byte read, matching `m_btItemClass`.
+
+Checked against the binary's own assertion rather than a curve: `ExtractData`
+asserts *"ItemClass must be not zero"* / `m_btItemClass > 0`, and column 61 is
+non-zero on **all 21,552** equipment rows.
+
+**The exporter sweep is finished.** Every remaining `"0"` placeholder in either
+exporter — `FlyingSpeed`, `Interruptable`, `Overlap`, `AutoAttackType`,
+`Basic_Name`, `Basic_ChainCode`, `Basic_RecycleCost` — has **zero readers** in
+the server, so a wrong value there reaches nothing. They stay, now for a
+measured reason.
+
 ## `TwoHanded` is itemdata column 93 (2026-09-15)
 
 The field existed in `refdata.Item`, was exported as a literal `"0"`, and

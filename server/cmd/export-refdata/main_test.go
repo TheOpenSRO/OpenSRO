@@ -132,6 +132,8 @@ func TestItemRecordCarriesArmourDefenceAndBlock(t *testing.T) {
 	set(fMagDefenseMin+1, "5.2")
 	set(fBlockRatio, "10")
 	set(fBlockRatio+1, "20")
+	set(fTwoHanded, "1")
+	set(fItemClass, "7")
 
 	rec, ok := itemRecord(cols)
 	if !ok {
@@ -160,5 +162,20 @@ func TestItemRecordCarriesArmourDefenceAndBlock(t *testing.T) {
 		if tc.got != tc.want {
 			t.Errorf("%s = %v, want %v", tc.name, tc.got, tc.want)
 		}
+	}
+	// TwoHanded travels the same route, and nearly did not: the edit that
+	// was supposed to map it in v0.1.169 silently matched nothing, so the
+	// column constant was defined and never used and the equipment rule that
+	// depends on it was inert in production. Nothing caught it, because the
+	// round-trip test only checked the record's WIDTH and this test only
+	// checked defence and block. It checks TwoHanded now.
+	if !it.TwoHanded {
+		t.Error("TwoHanded = false, want true -- column 93 is not reaching the importer")
+	}
+	// ItemClass reaches the client through the shop listing, so a zero here
+	// is visible, not just internal. The server's own deserialiser asserts
+	// "m_btItemClass > 0", which is what identifies column 61.
+	if it.ItemClass != 7 {
+		t.Errorf("ItemClass = %d, want 7 -- column 61 is not reaching the importer", it.ItemClass)
 	}
 }

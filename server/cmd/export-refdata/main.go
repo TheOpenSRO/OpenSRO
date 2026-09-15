@@ -100,6 +100,23 @@ const (
 	// `twohand_sword`, 11 `twohand_staff`. This column reads 0 for all three
 	// "onehand" kinds and 1 for both "twohand" kinds. Five for five, from a
 	// different binary recovered by a different route.
+	// ItemClass, the item's own class/degree byte. Column 61.
+	//
+	// Derived from the ORDER of the server's own deserialiser rather than by
+	// pattern-matching the data: RefObjItem::ExtractData reads its fields
+	// consecutively off the row -- +0x198 (4 bytes), +0x19c (1), +0x1a0 (4),
+	// +0x1a4 (4), +0x1a8 (1) -- and +0x19c is confirmed as ReqGender by
+	// CGPCInventoryOP::CheckEquipsetIntegrity, which compares it against the
+	// character's GetGender(). This exporter already maps 57/58/59/60 to
+	// MaxStack/ReqGender/ReqStr/ReqInt, exactly those four in exactly that
+	// order, so the next field is column 61 -- and it is a 1-byte read, which
+	// matches m_btItemClass.
+	//
+	// Checked against the binary's own assertion rather than against a curve:
+	// ExtractData asserts "ItemClass must be not zero" / "m_btItemClass > 0",
+	// and column 61 is non-zero on all 21,552 equipment rows. Its values are
+	// small (1..14+), and one family's tiers walk it 1, 4, 7, 10, 13.
+	fItemClass      = 61
 	fTwoHanded      = 93
 	fPhysDefenseMin = 65
 	fBlockRatio     = 74 // shields only; body armour carries the parry pair at 68
@@ -230,8 +247,8 @@ func itemRecord(cols []string) ([]string, bool) {
 		get(fMaxStack),           // 1  MaxStack (col 57: 1 for equipment, real cap for stackables)
 		get(fReqStr),             // 2  ReqStr
 		get(fReqInt),             // 3  ReqInt
-		"0",                      // 4  ItemClass (not mapped)
-		"0",                      // 5  TwoHanded (not mapped)
+		get(fItemClass),          // 4  ItemClass
+		get(fTwoHanded),          // 5  TwoHanded
 		num(fDurabilityMin),      // 6  DurabilityMin
 		num(fDurabilityMin + 1),  // 7  DurabilityMax
 		num(fPhysDefenseMin),     // 8  PhysDefenseMin
