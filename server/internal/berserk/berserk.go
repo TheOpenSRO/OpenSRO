@@ -15,8 +15,28 @@ import (
 )
 
 const (
-	// Max is a full gauge; Orbs is how many pips the client shows, so each orb
-	// is Max/Orbs of gauge.
+	// Max is a full gauge and each orb is Max/Orbs of it. Max and the gauge
+	// SHAPE are own design; Orbs is not.
+	//
+	// **Orbs = 5 is RECOVERED.** `_CHAR.RemainHwanCount` (charData+0x86 in the
+	// schema CharData_BindDBColumns spells out) is a persisted count, and
+	// `CUsedItemLimit::FUN_004a05b0` refuses an item outright when it has
+	// reached 5:
+	//
+	//	return (-(uint)(*(char *)(charData + 0x86) != '') & 0xffffe7c3) + 0x183e;
+	//
+	// which is a branchless ternary: not-5 yields 1 (allowed), 5 yields error
+	// 0x183e. A limit that refuses at exactly 5 is a cap of 5, so the five
+	// pips the client draws are five real charges rather than a display
+	// choice.
+	//
+	// **The shape around it is still ours, and the engine's is different.**
+	// The game persists a COUNT that an item can raise and a berserk spends;
+	// this package fills a 0..100 gauge from combat. Those are different
+	// mechanics that happen to agree on the number five, and nothing found so
+	// far says how the real count is earned -- so FillPerHit below stays own
+	// design rather than being dressed up as a fill rate for a gauge the game
+	// does not have.
 	Max  = 100
 	Orbs = 5
 

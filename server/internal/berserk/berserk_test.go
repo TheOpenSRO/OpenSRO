@@ -84,3 +84,24 @@ func TestBerserkDoublesTheBlow(t *testing.T) {
 		}
 	}
 }
+
+// TestOrbsIsTheRecoveredCap pins the one number in this package's gauge that is
+// the game's rather than ours.
+//
+// _CHAR.RemainHwanCount is a persisted count, and CUsedItemLimit::FUN_004a05b0
+// refuses an item when it has reached 5 -- a branchless ternary returning 1
+// when the count is not 5 and error 0x183e when it is. A limit that refuses at
+// exactly 5 is a cap of 5.
+//
+// Max and FillPerHit are deliberately NOT pinned here: they are own design, and
+// a test asserting an invented number only makes it harder to replace.
+func TestOrbsIsTheRecoveredCap(t *testing.T) {
+	if Orbs != 5 {
+		t.Errorf("Orbs = %d, want 5 -- the cap CUsedItemLimit refuses at", Orbs)
+	}
+	// The gauge must divide into whole orbs, or the HUD shows a partial pip
+	// for a full gauge.
+	if Max%Orbs != 0 {
+		t.Errorf("Max %d does not divide into %d orbs", Max, Orbs)
+	}
+}

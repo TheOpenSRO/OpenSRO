@@ -3435,3 +3435,46 @@ number in a citation is worse than no number, so it is gone.
 boundary (level 120 binds at 120, level 121 and level 140 both bind at 120).
 `MasteryTotalCapPerLevel` is unchanged, with the shape difference recorded
 against it rather than silently reconciled.
+
+## Five orbs are five real charges (2026-09-15)
+
+Third pass of the constant audit. The berserk gauge was the largest remaining
+cluster of own-design numbers with a live consumer — the HUD orbs and the R key —
+and one of the four turns out to be the game's.
+
+**`Orbs = 5` is recovered.** `_CHAR.RemainHwanCount` is a persisted count at
+`charData+0x86`, from the schema `CharData_BindDBColumns` spells out, and
+`CUsedItemLimit::FUN_004a05b0` refuses an item when it has reached five:
+
+	return (-(uint)(*(char *)(charData + 0x86) != '\x05') & 0xffffe7c3) + 0x183e;
+
+A branchless ternary, and worth evaluating rather than eyeballing: not-5 gives
+**1** (allowed), 5 gives **0x183e** (refused). A use-limit that refuses at
+exactly five is a cap of five, so the five pips the client draws are five real
+charges rather than a display choice.
+
+**The shape around it is still ours, and the engine's is different.** The game
+persists a COUNT that an item can raise and a berserk presumably spends; this
+project fills a 0..100 gauge from combat. Those are different mechanics that
+agree on the number five. Nothing found so far says how the real count is
+earned, so `FillPerHit` stays own design rather than being dressed up as a fill
+rate for a gauge the game does not have — and the test deliberately pins only
+`Orbs`, because asserting an invented number makes it harder to replace later.
+
+### Two audited and closed as unrecoverable
+
+- **`inventory.SlotsPerCharacter`.** `_CHAR.InventorySize` is real and
+  per-character, but nothing in the binary writes `charData+0xac` — the eight
+  apparent hits are offset collisions on unrelated structs. Character creation
+  is DB-side here, the same finding this project already reached for starting
+  Str/Int, so a new character's default slot count is a database default and not
+  in this executable.
+- **`mana`'s regeneration rate**, half-settled. Its comment hoped for an
+  `'mprg'` default; params 25 and 26 are written by no baseline publisher
+  (`InitStats`, `Char_PublishCombatStats`, `GObjMob_PublishStats` write none of
+  them), so they are zero without a buff and baseline regeneration is not
+  param-driven at all. What ticks it is still unfound; the number stays own
+  design, but the search for an `'mprg'` default can stop.
+
+**What moved:** `berserk.Orbs`'s citation, from a display assumption to the cap
+the engine enforces, with the shape difference recorded beside it.
