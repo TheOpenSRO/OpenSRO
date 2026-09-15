@@ -55,6 +55,15 @@ func rollDamage(min, max int) int {
 	return combat.RollDamage(min, max, damageRollNG)
 }
 
+// rollGold is combat.RollGold under the SAME lock -- one generator, one mutex.
+// An earlier version of this guarded it with a second mutex, which protects
+// nothing: two locks around one rand.Rand is a data race, not synchronisation.
+func rollGold(min, max, flat int64) int64 {
+	damageRollMu.Lock()
+	defer damageRollMu.Unlock()
+	return combat.RollGold(min, max, flat, damageRollNG)
+}
+
 // BerserkResult reports the gauge (0..berserk.Max) and whether berserk is now
 // active, after an OpBerserk request. Activated is true only when this request
 // actually started a berserk (the gauge was full).
@@ -629,7 +638,10 @@ func performAttack(
 		// intermittent CI failure (gold 1000 where 1500 was expected, i.e.
 		// the starting balance with the reward missing) that reproduced
 		// only under load, since locally the write always won the race.
-		if err := chars.AddGold(ctx, characterID, monster.GoldReward); err != nil {
+		// Gold is rolled in the real per-level range (levelgold) when the
+		// monster has one, falling back to the disclosed flat reward.
+		gold := rollGold(monster.GoldMin, monster.GoldMax, monster.GoldReward)
+		if err := chars.AddGold(ctx, characterID, gold); err != nil {
 			return fmt.Errorf("combat: granting gold reward: %w", err)
 		}
 

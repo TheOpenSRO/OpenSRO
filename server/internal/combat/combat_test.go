@@ -202,3 +202,44 @@ func TestRollDamage(t *testing.T) {
 		t.Fatalf("RollDamage(4, 11, nil) = %d, want the max 11", got)
 	}
 }
+
+// TestRollGold pins the per-level gold roll and its fallback.
+//
+// The range is real client data (levelgold.txt: level 1 = 28-59, level 10 =
+// 60-125) and the binary's gold table is the one a gold item is spawned from;
+// the join between file and table is inferred, and RollGold's doc comment says
+// so. What this test guards is the mechanics: in range, inclusive, and a clean
+// fall back to the flat disclosed reward when a monster has no range.
+func TestRollGold(t *testing.T) {
+	r := rand.New(rand.NewSource(7))
+
+	seen := map[int64]bool{}
+	for i := 0; i < 4000; i++ {
+		v := RollGold(28, 59, 999, r)
+		if v < 28 || v > 59 {
+			t.Fatalf("gold %d outside the level-1 range [28, 59]", v)
+		}
+		seen[v] = true
+	}
+	if !seen[28] || !seen[59] {
+		t.Error("the level-1 gold range is not inclusive at both ends")
+	}
+
+	// No range means the flat disclosed reward, not zero -- a monster whose
+	// level the table does not cover must still pay something.
+	if got := RollGold(0, 0, 42, r); got != 42 {
+		t.Fatalf("RollGold with no range = %d, want the flat fallback 42", got)
+	}
+	// An inverted range is treated as absent rather than panicking.
+	if got := RollGold(90, 10, 42, r); got != 42 {
+		t.Fatalf("RollGold with an inverted range = %d, want the fallback 42", got)
+	}
+	// A zero-width range is that value.
+	if got := RollGold(70, 70, 42, r); got != 70 {
+		t.Fatalf("RollGold(70, 70) = %d, want 70", got)
+	}
+	// A nil generator takes the maximum, keeping callers deterministic.
+	if got := RollGold(28, 59, 0, nil); got != 59 {
+		t.Fatalf("RollGold with a nil source = %d, want the max 59", got)
+	}
+}

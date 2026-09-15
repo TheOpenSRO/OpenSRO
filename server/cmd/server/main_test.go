@@ -179,3 +179,23 @@ func TestMonsterAttackIsReal(t *testing.T) {
 		}
 	}
 }
+
+// TestMonsterGoldIsReal pins each species' gold range against levelgold.txt at
+// its level, as shipped with the ORIGINAL client.
+func TestMonsterGoldIsReal(t *testing.T) {
+	byLevel := map[int][2]int64{
+		1: {28, 59}, 2: {32, 66}, 3: {35, 74}, 4: {39, 81}, 5: {42, 88},
+		6: {46, 96}, 7: {49, 103}, 8: {53, 110}, 9: {56, 118}, 10: {60, 125},
+		27: {119, 250},
+	}
+	for _, spec := range monsterSpecs {
+		w, ok := byLevel[spec.Level]
+		if !ok {
+			continue
+		}
+		if spec.GoldMin != w[0] || spec.GoldMax != w[1] {
+			t.Errorf("%s (lvl %d) gold = %d-%d, want levelgold's %d-%d",
+				spec.CodeName, spec.Level, spec.GoldMin, spec.GoldMax, w[0], w[1])
+		}
+	}
+}

@@ -67,17 +67,21 @@ pick one up without re-deriving anything.
    21-23, 25-29, 30-34, 35-40, 41-47, 47-54, 60-70, 67-79), which is
    corroboration rather than the finding — the finding is the skill-id column.
 
-   *Only gold remains disclosed* in a monster's profile. **Probed 2026-09-15,
-   not closed.** `levelgold.txt` exists in both the original client and the
-   pserver's refdata, shaped level → min → max (L1 = 28-59, L2 = 32-66, rising
-   smoothly), which is exactly what a per-level gold drop would look like — and
-   that is precisely why it is *not* promoted: shape is not a use-site, and this
-   ledger has been burned twice by shape. The server carries a
-   `"Gold Drop Amount Factor"` config multiplier (`FUN_00427050`, a rate loader
-   reading `atol/100` into globals), so a base clearly exists somewhere, but no
-   code reading `levelgold` was found. *Next probe:* gold drops as an ITEM in
-   this game — find the gold item's id in itemdata and work backwards from
-   whatever creates it on a kill.
+   *Gold — data real, linkage inferred (2026-09-15).* `levelgold.txt` ships with
+   the **original client**, shaped level → min → max (L1 = 28-59, L10 = 60-125,
+   L27 = 119-250). The server's level-table manager holds a per-level gold table
+   at `+0x268`, and what makes it *the gold table* rather than a lookalike is a
+   use-site: `FUN_009348f0` spawns `ITEM_ETC_GOLD_03` (itemdata id 3) with an
+   amount rolled straight out of it by `FUN_00724330`, which reads entries as
+   `{chance, min, max}`. Three `Formulae` functions read the same table after
+   `Char_GetLevel`.
+
+   **What is not proven is that `levelgold.txt` fills `+0x268`.** The server
+   references no refdata filename anywhere — it loads from its database — so no
+   parser ties the file to the table. Two real things that fit perfectly, with
+   the join inferred. Shipped anyway, labelled in `combat.RollGold`, because it
+   is strictly better than the `10 + level*5` invention it replaces; a reader who
+   disagrees can find the exact gap named in the doc comment.
 
 2. **Death penalty — recovered, deliberately NOT shipped.** `GObjPC_OnDeath`
    (`004e6980`) pays the killer and then penalises the dead: exp loss computed as

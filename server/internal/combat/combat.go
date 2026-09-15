@@ -59,7 +59,10 @@ type Monster struct {
 	// param carries the damage range. With no weapon to scale, the project's
 	// already-grounded skill formula collapses to rand(min, max).
 	AttackMin, AttackMax int
-	GoldReward           int64
+	// GoldReward is the flat disclosed fallback; GoldMin/GoldMax are the real
+	// per-level range. See RollGold.
+	GoldReward       int64
+	GoldMin, GoldMax int64
 	// ExpReward is the experience a kill grants. Derived from the monster's
 	// toughness for now (a disclosed default, ExpFor) -- the real per-species
 	// experience lives in mob data this project does not load yet; recovering
@@ -138,6 +141,31 @@ func RollDamage(min, max int, r *rand.Rand) int {
 	return min + r.Intn(max-min+1)
 }
 
+// RollGold picks a kill's gold in [min, max], falling back to flat when the
+// caller has no range.
+//
+// The RANGE is real client data, the LINKAGE is inferred, and the difference
+// matters. levelgold.txt ships with the original client shaped level -> min ->
+// max (level 1 = 28-59, level 10 = 60-125), and the server's level-table
+// manager holds a per-level gold table at +0x268 that a gold item is spawned
+// from -- FUN_009348f0 creates ITEM_ETC_GOLD_03 with an amount rolled out of
+// exactly that table, which is the use-site that makes it the gold table rather
+// than a lookalike. What is NOT proven is that levelgold.txt is what fills it:
+// the server references no refdata filename at all (it loads from its database),
+// so no parser ties the file to the table. Two real things that fit perfectly,
+// with the join inferred.
+//
+// It is still strictly better than the `10 + level*5` invention it replaces.
+func RollGold(min, max int64, flat int64, r *rand.Rand) int64 {
+	if max <= 0 || max < min {
+		return flat
+	}
+	if r == nil || max == min {
+		return max
+	}
+	return min + r.Int63n(max-min+1)
+}
+
 // ExpFor is the placeholder experience a monster of the given toughness
 // grants on death: its max HP. A disclosed design choice, not recovered --
 // the real value is in the client's mob data (RefObjChar's ExpToGive), which
@@ -199,6 +227,8 @@ type Species struct {
 	// attack skill (characterdata col 83 -> that skill's 'att' param). Zero
 	// means the caller has none and the flat disclosed Attack is used instead.
 	AttackMin, AttackMax int
+	// GoldMin/GoldMax are the real per-level gold range (levelgold.txt).
+	GoldMin, GoldMax int64
 }
 
 // SpawnSpecies is Spawn with the species' code name carried along, so the
@@ -208,7 +238,8 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax, GoldReward: goldReward, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
+		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
 	h.byID[id] = m
 	return m
 }
