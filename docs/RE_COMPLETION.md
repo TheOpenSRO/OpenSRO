@@ -755,6 +755,34 @@ Also named, with no tag counterpart found yet: `PARAM_PA` "Phy. atk. pwr.",
 `PARAM_PD` "Phy. def. pwr.", `PARAM_MA` "Mag. atk. pwr.", `PARAM_MD`
 "Mag. def. pwr.", `PARAM_ABSORB` "Absorption".
 
+## `TwoHanded` is itemdata column 93 (2026-09-15)
+
+The field existed in `refdata.Item`, was exported as a literal `"0"`, and
+nothing read it — harmless until shields started blocking, at which point a
+two-handed weapon plus a shield became free damage avoidance.
+
+Column 93 is a clean 0/1, **constant within every weapon kind** (`TypeID4`),
+never mixed, and 0 on all 511 shield rows. Diffing a one-hander against a
+two-hander finds it; that alone is a suggestive column, so it was settled
+against a source that knows nothing about this table — the **client's own
+weapon-to-animation-group switch**, recovered from a different binary by a
+different route, which names five kinds outright:
+
+| TypeID4 | the client's own name | col 93 |
+|---|---|---|
+| 7 | `onehand_sword` | 0 |
+| 10, 15 | `onehand_staff` | 0 |
+| 8 | `twohand_sword` | 1 |
+| 11 | `twohand_staff` | 1 |
+
+Five for five. The remaining kinds fall out consistently: spear, glaive, bow,
+axe, crossbow and harp read 1; blade and dagger read 0.
+
+Shipped with `equipment.TwoHandedConflict`. Slot 7 being the shield is
+confirmed independently by `CGPCInventoryOP::CheckEquipsetIntegrity`, which
+tests `local_c != 7` for exactly that slot — the same index this project's
+equipment package already used.
+
 ## Loot is DB-only, censused (2026-09-15)
 
 The audit carried monster drops as "keyed by name (real tables key by

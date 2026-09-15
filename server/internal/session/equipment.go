@@ -182,7 +182,7 @@ type ItemLookup interface {
 // characterID's inventorySlot. Returns "" when the item may be worn -- or
 // when there is no way to tell: no inventory or item data wired, no
 // reference row for the item, or a character that cannot be read.
-func equipRefusal(ctx context.Context, chars character.Store, inv inventory.Store, items ItemLookup, characterID int64, slot equipment.Slot, inventorySlot int) string {
+func equipRefusal(ctx context.Context, chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup, characterID int64, slot equipment.Slot, inventorySlot int) string {
 	if inv == nil || items == nil {
 		return ""
 	}
@@ -218,6 +218,28 @@ func equipRefusal(ctx context.Context, chars character.Store, inv inventory.Stor
 	if err := equipment.Refusal(c, item, slot); err != nil {
 		return refusalMessage(err)
 	}
+	// A two-handed weapon and a shield cannot be held at once. Checked here
+	// rather than in equipment.Refusal because it is the only rule that
+	// depends on what is ALREADY worn, not on the incoming item alone.
+	if store != nil {
+		if worn, err := store.Get(ctx, characterID); err == nil {
+			byslot := map[equipment.Slot]*equipment.ItemStats{}
+			for _, w := range worn {
+				it, err := items.GetItem(ctx, w.ItemID)
+				if err != nil || it == nil {
+					// An unknown worn item cannot be shown to be two-handed,
+					// so it does not block anything -- but it still occupies
+					// its slot, which is what the shield case needs.
+					byslot[w.Slot] = &equipment.ItemStats{}
+					continue
+				}
+				byslot[w.Slot] = &equipment.ItemStats{TwoHanded: it.TwoHanded}
+			}
+			if equipment.TwoHandedConflict(byslot, slot, &equipment.ItemStats{TwoHanded: item.TwoHanded}) {
+				return refusalMessage(equipment.ErrTwoHandedShield)
+			}
+		}
+	}
 	return ""
 }
 
@@ -235,6 +257,8 @@ func refusalMessage(err error) string {
 		return "that is for the other gender"
 	case errors.Is(err, equipment.ErrLevelTooLow):
 		return "your level is too low"
+	case errors.Is(err, equipment.ErrTwoHandedShield):
+		return "both hands are on your weapon"
 	default:
 		return "operation failed"
 	}
@@ -288,7 +312,7 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: errStr}).Encode()})
 	}
 
-	if refusal := equipRefusal(ctx, chars, inv, items, characterID, req.Slot, req.InventorySlot); refusal != "" {
+	if refusal := equipRefusal(ctx, chars, store, inv, items, characterID, req.Slot, req.InventorySlot); refusal != "" {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: refusal}).Encode()})
 	}
 	if err := store.Equip(ctx, characterID, req.Slot, req.InventorySlot); err != nil {

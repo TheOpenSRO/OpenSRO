@@ -74,3 +74,41 @@ type Store interface {
 	// there, or inventory.ErrNoRoom if there's nowhere to put it.
 	Unequip(ctx context.Context, characterID int64, slot Slot) error
 }
+
+// ErrTwoHandedShield is returned when a shield and a two-handed weapon would
+// be worn at once. Both hands are already busy.
+var ErrTwoHandedShield = errors.New("equipment: a two-handed weapon leaves no hand for a shield")
+
+// TwoHandedConflict reports whether putting `incoming` into `slot` would leave
+// a character holding a two-handed weapon and a shield at the same time.
+// `worn` is what is already equipped, keyed by slot.
+//
+// This rule was dormant until shields started blocking: with no block, a
+// spurious shield was only a drawing mistake, and now it is free damage
+// avoidance. The real game gives the shield its own slot (7, the same index
+// this package uses) and a two-handed weapon takes both hands.
+//
+// TwoHanded is real, from _RefObjItem's own column -- see
+// cmd/export-refdata's fTwoHanded for how it was identified and for the
+// five-of-five cross-check against the client's independently recovered
+// one-hand/two-hand animation group names.
+func TwoHandedConflict(worn map[Slot]*ItemStats, slot Slot, incoming *ItemStats) bool {
+	if incoming == nil {
+		return false
+	}
+	switch slot {
+	case SlotShield:
+		w := worn[SlotWeapon]
+		return w != nil && w.TwoHanded
+	case SlotWeapon:
+		return incoming.TwoHanded && worn[SlotShield] != nil
+	}
+	return false
+}
+
+// ItemStats is the slice of an item this package needs to judge a conflict.
+// Deliberately not refdata.Item: equipment must not depend on the reference
+// data package, which depends on this one for slot types.
+type ItemStats struct {
+	TwoHanded bool
+}

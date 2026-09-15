@@ -215,6 +215,26 @@ armour leaves the attack columns 0. It sits at columns 65-77 (min/max pairs):
 | Block ratio (shields) | 74 ~ 75 | — | (shield 10 ~ 20) |
 | Parry-family pair (non-shields) | 68 ~ 69 | 5 ~ 7 | 5 ~ 7 |
 
+**Column 93 is `TwoHanded`** (identified 2026-09-15). A clean 0/1 that is
+**constant within every weapon kind** (`TypeID4`) — never mixed — and 0 on all
+511 shield rows.
+
+Found by diffing a known one-hander against a known two-hander, then settled by a
+source that knows nothing about this table: the **client's own
+weapon-to-animation-group switch** (`WEAPON_ANIMATION_GROUP`, recovered in
+`docs/WORLD_ISSUES.md`'s hundred-and-thirty-third round) names five kinds
+explicitly, and column 93 agrees with all five:
+
+| TypeID4 | the client's own name | col 93 |
+|---|---|---|
+| 7 | `onehand_sword` | 0 |
+| 10, 15 | `onehand_staff` | 0 |
+| 8 | `twohand_sword` | 1 |
+| 11 | `twohand_staff` | 1 |
+
+The remaining kinds fall out consistently: spear (4), glaive (5), bow (6),
+axe (9), crossbow (12), harp (14) read 1; blade (3) and dagger (13) read 0.
+
 **Corrected 2026-09-15: these are TRIPLES, not pairs.** A census of all 21,560
 item rows shows columns 65/66/67 populated on exactly the same 10,163 items, and
 76/77/78 likewise — a third value sits after each min/max. It scales with the

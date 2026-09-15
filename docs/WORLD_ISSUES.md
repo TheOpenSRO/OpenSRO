@@ -7075,6 +7075,45 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-eighty-seventh round: both hands are on your weapon
+
+Shipping shield blocking last round quietly made a dormant gap load-bearing.
+Nothing stopped a character equipping a two-handed sword *and* a shield -- and
+with no blocking that was only a drawing mistake, while with blocking it is free
+damage avoidance. `equipment.TwoHanded` existed as a field, was exported as a
+literal `"0"`, and nothing in the server read it.
+
+**Itemdata column 93 is `TwoHanded`.** A clean 0/1, **constant within every
+weapon kind** (`TypeID4`) and 0 on all 511 shield rows. Found by diffing a known
+one-hander (Copper Sword) against a known two-hander (Crescent spear), which on
+its own is only a suggestive column -- so it was settled against a source that
+knows nothing about this table: the **client's own weapon-to-animation-group
+switch**, recovered in the hundred-and-thirty-third round from a different
+binary by a different route. That table names five kinds outright, and column 93
+agrees with every one:
+
+```
+TypeID4  7      -> onehand_sword   col93 = 0
+TypeID4 10, 15  -> onehand_staff   col93 = 0
+TypeID4  8      -> twohand_sword   col93 = 1
+TypeID4 11      -> twohand_staff   col93 = 1
+```
+
+Five for five. The rest fall out consistently -- spear, glaive, bow, axe,
+crossbow and harp read 1; blade and dagger read 0.
+
+So the column is exported now, and `equipment.TwoHandedConflict` refuses a
+shield onto a two-handed weapon and a two-handed weapon onto a worn shield. It
+lives beside `equipment.Refusal` rather than inside it because it is the only
+rule that depends on what is ALREADY worn rather than on the incoming item
+alone. The real game gives the shield its own slot 7 -- the same index this
+package already used, confirmed in `CGPCInventoryOP::CheckEquipsetIntegrity`,
+which tests `local_c != 7` for exactly that slot.
+
+An unknown worn item is treated as occupying its slot but not as two-handed:
+it cannot be *shown* to need both hands, so it blocks nothing, but it still
+fills the shield slot, which is what the weapon case needs.
+
 ## Hundred-and-eighty-sixth round: armour was doing nothing, and now shields block
 
 Blocking was left unshipped last round for a stated reason: a player's block

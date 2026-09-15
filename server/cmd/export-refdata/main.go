@@ -89,6 +89,18 @@ const (
 	// grounded the columns three ways and was never revisited. Every
 	// deployment importing through this tool therefore gave armour no
 	// defence at all.
+	// Whether the weapon needs both hands -- a clean 0/1 that is CONSTANT
+	// within every weapon kind (TypeID4) and 0 on all 511 shield rows.
+	//
+	// Identified by diffing a known one-hander against a known two-hander and
+	// then cross-checked against a source that knows nothing about this
+	// table: the CLIENT's own weapon-to-animation-group switch, recovered in
+	// docs/WORLD_ISSUES.md's hundred-and-thirty-third round, names five kinds
+	// explicitly -- 7 `onehand_sword`, 10 and 15 `onehand_staff`, 8
+	// `twohand_sword`, 11 `twohand_staff`. This column reads 0 for all three
+	// "onehand" kinds and 1 for both "twohand" kinds. Five for five, from a
+	// different binary recovered by a different route.
+	fTwoHanded      = 93
 	fPhysDefenseMin = 65
 	fBlockRatio     = 74 // shields only; body armour carries the parry pair at 68
 	fMagDefenseMin  = 76
