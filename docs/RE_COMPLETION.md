@@ -193,12 +193,48 @@ pick one up without re-deriving anything.
    expected. The ids also cross-check: 1933 is the `RefMonsterID` this project
    already recorded for Mangyang.
 
-   *Not wired yet, deliberately.* The positions are region-local and srrevamp's
-   anchors are in its own world frame, so shipping them needs the
-   region+local → world conversion **and** a walkability check — get that wrong
-   and monsters spawn inside terrain. That is world-lane work with render-box
-   tooling, not a grep. *Next step:* convert one species' points and QA-verify
-   them before converting the rest.
+   **The region→server conversion is now derived and sanity-checked
+   (2026-09-15).** npcpos rows are `(objectId, regionId, localX, localY,
+   localZ)`. The region id packs the project's own `x/y` as `(x << 8) | y` —
+   Jangan `97/168` is **25000**, and the ladder's regions cluster 23716–25511
+   around it, which is the first confirmation. The client's transform
+   (`World3D.gd`) is `worldX = y·1920 + localX`, `worldZ = x·1920 + localZ`, and
+   the server's `(0,0,0)` is `ZONE_SPAWN_LOCAL["97/168"]` = local (1002, 1020)
+   in that region. So:
+
+   ```
+   rx = regionId >> 8 ;  ry = regionId & 0xff
+   serverX = (ry·1920 + localX) − 323562
+   serverZ = (rx·1920 + localZ) − 187260
+   ```
+
+   **It sanity-checks strongly: distance from the town square rises with monster
+   level.** Nearest spawn per species, in the server's own frame:
+
+   ```
+   Mangyang        lvl 1   2,342     Water Ghost      lvl 7   4,011
+   Small-eyed      lvl 2   4,129     Tomb Stone Ghost lvl 8   7,103
+   Big-eyed        lvl 3   3,876     Stone Ghost      lvl 9   6,873
+   Old Weasel      lvl 4   3,559     Yeoha            lvl 10  6,501
+   Weasel          lvl 5   4,088     Earth Ghost      lvl 27 23,246
+   Water Ghost sl. lvl 6   4,290
+   ```
+
+   The level-1 monster is a short run from spawn and the level-27 one is 23k
+   away in another town — exactly the shape a real ladder should have, from a
+   transform that knew nothing about levels.
+
+   *Still not wired, and the reason is this project's own strictest rule:* **a
+   claim about the world needs a measurement, not an inference.** These
+   coordinates are unverified against the navmesh, the server has no navmesh
+   reader, and a spawn inside a building would surface as a monster on a roof.
+   *Next step:* `SRREVAMP_QA_SCAN` the converted points on the render box, then
+   wire the ones that stand on walkable ground.
+
+   Found while deriving it: `World3D.gd`'s comment above `ZONE_SPAWN_LOCAL` said
+   the town square is local **(1002, 917)** while the constant has always been
+   **(1002, 1020)**. Anything derived from the comment would have been 103 units
+   out. Corrected.
 
 6. **Quest objectives — absence RE-TESTED and CONFIRMED, now with the shape
    (2026-09-15).** Re-examined against the same evidence that overturned

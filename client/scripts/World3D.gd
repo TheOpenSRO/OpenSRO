@@ -2656,7 +2656,9 @@ func _load_real_terrain_lightmap(mapm_path: String, archive: Pk2Reader) -> Textu
 ## findregionassets) puts `cj_acce.bsr` (accessory shop) and
 ## `cj_jang_gate_dragon.bsr` in exactly one region, and that region is
 ## 97/168. Its centre is the real town square with the dragon statue, at
-## local (1002, 917) -- see ZONE_SPAWN_LOCAL.
+## local (1002, 1020) -- see ZONE_SPAWN_LOCAL. (This comment said 917 until
+## 2026-09-15; the constant has always been 1020, and the stale figure would
+## put anything derived from it 103 units out.)
 const JANGAN_ZONE_REGION := "97/168"
 
 ## Where a named zone's own real landing spot is, in that region's local
