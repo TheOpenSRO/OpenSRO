@@ -292,3 +292,37 @@ func TestSQLStoreGetByIDNonexistentCharacter(t *testing.T) {
 }
 
 var _ Store = (*SQLStore)(nil)
+
+// The SQL store must respawn at the same fraction as the in-memory one --
+// they are the same recovered rule, and a deployment swapping one for the other
+// must not change how much health a death costs.
+func TestSQLRespawnMatchesTheMemStore(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLStore(testDSN())
+	if err != nil {
+		t.Fatalf("OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer s.Close()
+	c, err := s.Create(ctx, 4242, "Respawner")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	full := c.MaxHP()
+	if _, _, err := s.ApplyDamage(ctx, c.ID, full); err != nil {
+		t.Fatalf("ApplyDamage: %v", err)
+	}
+	if err := s.RespawnHP(ctx, c.ID); err != nil {
+		t.Fatalf("RespawnHP: %v", err)
+	}
+	got, err := s.GetByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	want := int(float64(full) * RespawnFraction)
+	if got.HP != want {
+		t.Errorf("SQL respawn HP = %d, want %d (the MemStore's answer for the same character)", got.HP, want)
+	}
+	if got.HP >= full {
+		t.Errorf("SQL respawn gave the full pool (%d)", got.HP)
+	}
+}

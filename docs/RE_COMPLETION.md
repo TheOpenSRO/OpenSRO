@@ -3326,3 +3326,58 @@ weak, because a `GObjPC` function may call a slot on a char it was handed, and a
 shared virtual is indexed under just one of its classes.
 
 **No srrevamp value changed.**
+
+## Respawn is 40%, not full (2026-09-15)
+
+Three ticks had gone into the quest-reward column question without converging,
+on a table srrevamp does not read. Dropped it and audited the thing the tick
+brief actually asks for instead: every value srrevamp uses, grounded or disclosed
+with a proven reason. 263 constants, mostly opcodes and schema strings; the
+gameplay numbers are a much shorter list, and `mana`'s comment pointed at a real
+gap — "the real game has an `'mprg'` parameter … but its value has not been
+recovered".
+
+**Half of that is now settled, negatively.** Params 25/26 (`'hprg'`/`'mprg'`) are
+written by no baseline publisher — not `GObjPC_InitStats`, not
+`Char_PublishCombatStats`, not `GObjMob_PublishStats` — so they are zero without
+a buff, exactly like the damage-pipeline terms. Baseline regeneration is not
+param-driven, and looking for an `'mprg'` default is looking for something that
+does not exist.
+
+Following the HP/MP pair to its other readers found something better.
+
+### The recovery
+
+`CGObjPC::vslot_212` — the PC create/load path, identifiable by its own error
+string `"CheckEquipsetIntegrity() failed while Creating PC (CharID : %d)"` —
+calls `GObjPC::FUN_004e1120`, which restores a character whose **stored** pool is
+zero, which is the state a death leaves it in:
+
+	if (charData->vf[0x38]() == 0) {       // stored HP is zero
+	    hp = GetParam(3) * _DAT_00b460f0;   // MaxHP * 0.4
+	    charData->vf[0x40](hp);
+	}
+	if (charData->vf[0x3c]() == 0) {       // and the same for MP
+	    mp = GetParam(4) * _DAT_00b460f0;
+	    charData->vf[0x44](mp);
+	}
+
+**`FMUL QWORD PTR ds:0xb460f0`** at `0x004e1141` and `0x004e1190` — a QWORD, so
+the double **0.4**. At float width that address reads `-1.08e-19`, which would
+bring every character back on a negative sliver of health; only the double is
+coherent. Operand size has now decided four constants in this project.
+
+**It does not apply to a level-up.** Nothing in the level path zeroes the stored
+pool, so the branch never fires there and a level-up heals to full. That is why
+the two are separate calls rather than one shared helper.
+
+### What moved
+
+`character.RespawnFraction = 0.4`, `Store.RespawnHP` on both stores, and
+`character.RespawnMP`. The death path in `session/combat.go` uses them; the
+level-up path still calls `ResetHP` for the full heal. Dying now costs 60% of
+the pool on the way back, where it used to cost nothing.
+
+Tests pin the fraction, pin that a level-up still heals fully, and pin that the
+SQL and in-memory stores agree — the same recovered rule, so a deployment
+swapping one for the other must not change what a death costs.

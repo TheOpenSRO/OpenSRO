@@ -965,17 +965,22 @@ func performAttack(
 					}
 				}
 			}
-			if err := chars.ResetHP(ctx, characterID); err != nil {
+			if err := chars.RespawnHP(ctx, characterID); err != nil {
 				return fmt.Errorf("combat: respawning player: %w", err)
 			}
-			// Respawned at the character's own maximum, from its Str and
-			// level. Falls back to the starting maximum only if the re-read
-			// fails, which would mean the character vanished mid-respawn.
+			// Back at character.RespawnFraction of the maximum, not all of
+			// it: the game restores a character whose stored pool is zero --
+			// which is what death leaves -- to 40%, for HP and MP alike. See
+			// character.RespawnFraction for the recovery. A level-up still
+			// heals to full, which is why that path calls ResetHP instead.
+			//
+			// Falls back to the starting maximum only if the re-read fails,
+			// which would mean the character vanished mid-respawn.
 			result.PlayerHP = int32(character.StartingMaxHP)
 			if reborn, e := chars.GetByID(ctx, characterID); e == nil {
-				result.PlayerHP = int32(reborn.MaxHP())
+				result.PlayerHP = int32(reborn.HP)
 				if mp != nil {
-					mp.Refill(characterID, reborn.MaxMP())
+					mp.Refill(characterID, character.RespawnMP(reborn.MaxMP()))
 				}
 			}
 		} else {

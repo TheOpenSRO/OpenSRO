@@ -90,6 +90,36 @@ const (
 	StatGrowth = 1.02
 )
 
+// RespawnFraction is how much of its maximum a character gets back when it
+// comes back from death: **40%**, not full.
+//
+// RECOVERED. The PC create/load path (CGObjPC::vslot_212, the function whose
+// error string is "CheckEquipsetIntegrity() failed while Creating PC") calls
+// GObjPC::FUN_004e1120, which restores a character whose STORED pool is zero --
+// which is the state death leaves it in:
+//
+//	if (charData->vf[0x38]() == 0) {              // stored HP is zero
+//	    hp = GetParam(3) * _DAT_00b460f0;          // MaxHP * 0.4
+//	    charData->vf[0x40](hp);
+//	}
+//	if (charData->vf[0x3c]() == 0) {              // and the same for MP
+//	    mp = GetParam(4) * _DAT_00b460f0;          // MaxMP * 0.4
+//	    charData->vf[0x44](mp);
+//	}
+//
+// The constant is `FMUL QWORD PTR ds:0xb460f0` at 0x004e1141 and 0x004e1190 --
+// a QWORD, so the double 0.4. At float width the same address reads
+// -1.08e-19, which would resurrect every character on a negative sliver of
+// health; only the double is coherent. Operand size has decided four constants
+// in this project now.
+//
+// This does NOT apply to a level-up. Nothing in the level path zeroes the
+// stored pool, so the branch above never fires there and a level-up heals to
+// full -- which is why ResetHP and RespawnHP are separate calls.
+const (
+	RespawnFraction = 0.4
+)
+
 // StartingStr and StartingInt are a new character's stats. OWN DESIGN,
 // disclosed -- the formula above is the game's, these two numbers are not.
 // SR_GameServer.exe does not contain them: nothing writes a constant to
@@ -220,8 +250,14 @@ type Store interface {
 	// returning the resulting HP and whether this brought it to exactly 0.
 	ApplyDamage(ctx context.Context, characterID int64, amount int) (remainingHP int, died bool, err error)
 
-	// ResetHP restores characterID's HP to MaxHP (e.g. after death/respawn).
+	// ResetHP restores characterID's HP to MaxHP. Used on a LEVEL-UP, where
+	// the game does heal to full; a death respawns at RespawnFraction
+	// instead -- see RespawnHP.
 	ResetHP(ctx context.Context, characterID int64) error
+
+	// RespawnHP restores characterID's HP to RespawnFraction of its maximum,
+	// which is what the game gives a character coming back from death.
+	RespawnHP(ctx context.Context, characterID int64) error
 
 	// Heal raises characterID's HP by amount, never above maxHP, returning
 	// the resulting HP. Used by consumables; a non-positive amount is a
@@ -246,4 +282,15 @@ type Store interface {
 	// have already checked, same as this project's other Store methods
 	// trusting their caller for business-rule validation.
 	SetGender(ctx context.Context, characterID int64, gender string) error
+}
+
+// RespawnMP is the mana a character comes back from death with:
+// RespawnFraction of its maximum, floored at 0. The engine restores HP and MP
+// through the same branch and the same 0.4, so this is the one constant applied
+// twice rather than two numbers that happen to agree.
+func RespawnMP(maxMP int) int {
+	if maxMP <= 0 {
+		return 0
+	}
+	return int(float64(maxMP) * RespawnFraction)
 }

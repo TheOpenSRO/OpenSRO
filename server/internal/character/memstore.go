@@ -197,6 +197,25 @@ func (m *MemStore) ResetHP(_ context.Context, characterID int64) error {
 	return nil
 }
 
+// RespawnHP implements Store: back from death at RespawnFraction of maximum.
+func (m *MemStore) RespawnHP(_ context.Context, characterID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.byID[characterID]
+	if !ok {
+		return ErrNotFound
+	}
+	hp := int(float64(c.MaxHP()) * RespawnFraction)
+	if hp < 1 {
+		// Never respawn dead: a character with a tiny maximum still comes
+		// back alive.
+		hp = 1
+	}
+	c.HP = hp
+	return nil
+}
+
 // GetByID implements Store.
 func (m *MemStore) GetByID(_ context.Context, characterID int64) (*Character, error) {
 	m.mu.RLock()

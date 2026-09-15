@@ -256,6 +256,25 @@ func (s *SQLStore) Heal(ctx context.Context, characterID int64, amount, maxHP in
 }
 
 // ResetHP implements Store.
+// RespawnHP implements Store: back from death at RespawnFraction of maximum,
+// floored at 1 so a character never respawns dead.
+func (s *SQLStore) RespawnHP(ctx context.Context, characterID int64) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE characters SET hp = GREATEST(1, FLOOR(ROUND(str * $1 * POWER($2, level - 1)) * $3)) WHERE id = $4`,
+		HPPerStr, StatGrowth, RespawnFraction, characterID)
+	if err != nil {
+		return fmt.Errorf("character: respawning hp: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("character: checking update result: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *SQLStore) ResetHP(ctx context.Context, characterID int64) error {
 	// Max HP scales with the row's own level (base + per-level), so a reset
 	// heals to the level-appropriate maximum.
