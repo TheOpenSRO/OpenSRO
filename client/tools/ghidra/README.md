@@ -453,3 +453,39 @@ were right there; the run that missed them should have failed loudly.
 Related: multi-char constants worked out by hand are wrong often enough to
 matter (`'defr'` is 1684366962, not 1684366450 — a slip that reported 273 real
 skills as zero). Compute them in a script, not in your head.
+
+## mislabelled_owners.py `[dumpDir]`
+
+Finds functions whose name credits the **wrong class**, and needs no Ghidra —
+it reads the dump's own headers.
+
+A vtable slot implemented once and shared by a hierarchy appears in many
+classes' vtables. The RTTI walk that names it reaches one of them first and
+labels the function with that class; when the one it reached is a DERIVED class,
+the name misleads. `CGObjCOS_Summoned::EnterWorld` is not a summon's function —
+it is the `CGObjChar` implementation every character shares, and a reader
+looking for player logic greps straight past it. **A wrong name is worse than
+`FUN_`.**
+
+The test uses only what the dump records: a function's header carries both
+`RTTI: reached as A slot N, B slot N, …` and `RTTI hierarchy: Derived : … :
+Base`, so if the class in the name derives from another class that also reaches
+the function, the name credits a descendant of the real owner.
+
+	python3 mislabelled_owners.py /var/tmp/decomp_server
+	python3 mislabelled_owners.py /var/tmp/decomp_client
+
+As of 2026-09-15: **48 of 331** in the server, **69 of 93** in the client. The
+server's matter more — they include real names (`EnterWorld`, `ConsumeHpMp`,
+`GetCharName`, `GetGender`) rather than a wrong namespace on an unnamed method.
+
+**What it cannot tell you** is which class DECLARES the slot. The most ancestral
+class in the RTTI list is a lower bound; the declaring class may be further up
+and only an assert string will say so — `SetBodyMode` reaches `CGObjChar` in the
+list while its assert names `IGObj`. Read the output as "this name is wrong",
+never as "this is the name".
+
+**Two parsing traps, both hit on the first pass.** The class is the component
+*before* the method (`std::bad_alloc::vslot_000` is class `bad_alloc`, not
+`std`), and a function whose RTTI lists a single class cannot have this problem
+at all. Ignoring either turns 48 findings into 906.

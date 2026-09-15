@@ -3019,3 +3019,60 @@ project's invention; the binary calls it `SetBodyMode`, and berserk is one body
 mode rather than the whole function. Renamed in the citation, with the reason.
 
 **No srrevamp value changed.**
+
+## A naming defect measured, not just noticed (2026-09-15)
+
+The previous entry caught one mislabel by accident: `0x004a9fc0` is indexed as
+`CGObjCOS_Summoned::SetBodyMode`, but it is vtable slot 198 shared by seventeen
+classes including `CGObjChar`, so reading the label as the owner made a player's
+param 189 look unreachable. The question that leaves is how many more there are.
+
+**48 in the server, 69 in the client.** Measured by
+`client/tools/ghidra/mislabelled_owners.py`, which needs no Ghidra — the dump's
+own headers carry both `RTTI: reached as A slot N, B slot N, …` and
+`RTTI hierarchy: Derived : … : Base`, so a name that credits a class deriving
+from another class in the same list is provably crediting a descendant of the
+real owner.
+
+The two populations differ in how much they matter:
+
+- The server's **48 of 331** include real names —
+  `CGObjCOS_Summoned::EnterWorld`, `::ConsumeHpMp`, `::GetCharName`,
+  `::GetGender` are all shared `CGObjChar` implementations. Those are exactly
+  the functions a dig into player logic would want, and its author would grep
+  past them.
+- The client's **69 of 93** are a worse *rate* but a milder defect: nearly all
+  are a run of unnamed `CCompChar::FUN_*` methods that belong to
+  `CCompoundObj`. A wrong namespace on an unnamed function costs attribution,
+  not identity.
+
+### Why this is not a rename
+
+The most ancestral class in the RTTI list is a **lower bound** on the owner, not
+the answer. `SetBodyMode` reaches `CGObjChar` in its list, while its own assert
+names `IGObj` as the declaring class — so renaming to `CGObjChar::` would swap
+one inaccuracy for a smaller one. The detector says "this name is wrong"; only
+an assert string says what the name should be. Renaming 48 functions on that
+basis, in a write pass that would take the project lock and could not be
+validated in the same tick, is not worth it.
+
+What ships is the measurement and the rule, so the next naming pass can apply it
+and any reader can re-run it.
+
+### The parsing traps, recorded because they cost the first two attempts
+
+The first run reported **906**. Two flaws, both of which inflate:
+
+1. The class is the component **before the method**. `std::bad_alloc::vslot_000`
+   is class `bad_alloc`; taking the first `::` component makes it `std`, which
+   then "derives" from everything.
+2. A function whose RTTI lists **one** class cannot have this defect, and those
+   rows are pure noise.
+
+48 against 906 is a nineteen-fold difference between a measurement and an
+artifact, and the only thing that exposed it was the output being obviously
+wrong — `std::bad_alloc` is not a mislabelled game function. That is the same
+shape as the last three probe failures in this file: the control passes, the
+scale is absurd, and the absurdity is what catches it.
+
+**No srrevamp value changed.**
