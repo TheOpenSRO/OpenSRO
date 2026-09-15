@@ -48,6 +48,19 @@ type Table struct {
 // the table knows it.
 //
 // **Recovered, and the rule around it matters as much as the number.**
+//
+// A CAVEAT on the name, established 2026-09-15 and worth stating before the
+// formula: `Formula_MonsterExpReward` is this project's name, and its only two
+// callers (GObjPC_OnDeath and FUN_004e6d60) are both reached from the PC
+// death-kind dispatch at CGObjPC::vslot_311 -- so every use-site in the binary
+// is a PLAYER dying, not a monster. Nothing in the formula is PvP-specific: it
+// takes the two levels and the level table and nothing else. But applying it to
+// a monster kill is an EXTRAPOLATION from the only reward formula the binary
+// has, not a proven PvE path, and this file previously called it "proven by its
+// use-site" -- which was true of the function's identity and not of the
+// application. See docs/RE_COMPLETION.md for the full enumeration of every exp
+// grant in the binary.
+//
 // SR_GameServer.exe's Formula_MonsterExpReward (004105d0) computes a kill's
 // worth as
 //

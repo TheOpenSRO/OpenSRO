@@ -2430,3 +2430,80 @@ corrected repeatedly. It is recorded here for whoever builds that window.
   comparison; `vf[0x3b4]`; premium params 256/258 and `killer+0x1cd8`;
   `GetParam(0x80/0x81)` and `GetParam(0x103)`; descriptor flag `0x20`; itemdata
   columns 114 and 117.
+
+## Death dispatch is vtable slot 311 — and a foundational claim weakens (2026-09-15)
+
+The previous entry's recorded next thread was "whether a mob's death runs
+through a handler this project has not found". It does, it is found, and what it
+does not do is the finding.
+
+### The dispatch, by vtable slot
+
+Death entry is **slot 311** (`offset 0x4dc`), and reading that slot straight out
+of each class's vtable in the PE names all three implementations without opening
+Ghidra:
+
+| class | vtable | slot 311 |
+|---|---|---|
+| `CGObjPC` | 0x00af59fc | `0x004e67e0` → `FUN_004e6ec0`, the kind classifier |
+| `CGObjMob` / `CGObjNPC` | 0x00aee43c, 0x00aef674 | **`0x004c42f0`** |
+| `CGObjCOS` (pets) | 0x00af0c1c, 0x00af127c | `0x004d2cd0` |
+
+`0x004c42f0`'s RTTI confirms it: *CGObjMob slot 311, CGObjNPC slot 311,
+CGObjSiegeObject slot 311…*. **It grants no experience.** It runs a PK decay
+(`FUN_004eb6b0`, gated on the killer's `PKPenaltyPoint > 0`, scaling by a
+level-gap classifier) and dispatches slot 398, which for `CGObjMob` is a death
+broadcast building opcode `0x7808`.
+
+### Every exp grant in the binary, enumerated
+
+All 42 `GObjPC_GainExpAndLevel` (slot `0x170`) call sites, with argument lists
+joined across the decompiler's line wrapping first. The ones granting positive
+experience are:
+
+- **Quest completions** — eight `CQNO_*::vslot_103`.
+- **`GObjPC_GiveExp`** — and its only three callers are `GObjPC_OnDeath`,
+  `FUN_004e6d60` and `FUN_004e1f60`, all reached from the PC death-kind
+  dispatch.
+- **`FUN_004fcda0`** — `GiveExp`'s own party share.
+- **`FUN_0049ff20`** — a premium/item grant; it reads `+0x2c0` off the same
+  record `CTJ_PremiumKeeper::vslot_012` uses for param 257.
+- **`trs_*`** — GM and training-camp paths, one of which hands out a flat
+  2,000,000.
+
+### The consequence: the name overstated the case
+
+`Formula_MonsterExpReward` is **this project's** name. Its only two callers are
+reached when a **PLAYER** dies — `GObjPC_OnDeath`'s victim is always a PC, which
+is settled rather than assumed: the function reads `param_2[0x72d]`, the
+death-kind byte, and that byte is written only by `FUN_004e6ec0`, which is
+reached only from `CGObjPC::vslot_311`.
+
+So every use-site of the formula in this binary is a PvP kill. Nothing *in* the
+formula is PvP-specific — it takes the two levels and the level table and
+nothing else — so applying it to a monster kill remains the best grounded model
+available, and `KillExp` is unchanged. But this file called it "PROVEN by its
+use-site", and that was true of the function's **identity** (its result goes to
+`GObjPC_GiveExp`) and not of its **application**. The comment in
+`leveldata.ExpUnit` now carries the caveat.
+
+**What is NOT concluded:** that monsters grant no experience. That would
+contradict the game, and the honest reading is that a PvE reward path exists
+which this enumeration has not reached — most likely deeper in `FUN_004c42f0`'s
+slot-398 chain, which was read two levels down, or in the AI/tactics module. The
+enumeration above is of `GainExpAndLevel` call sites; a path that reaches the
+character's exp another way would not appear in it. Recording the boundary of
+the probe rather than treating its edge as the world's.
+
+### Also named
+
+`FUN_004e1f60` — a per-death-kind social handler. For kind 1 it pays the killer
+`levelTable[min(levels)]+0x1c * 3` and branches on `param_1[0x72e]`, the party
+pointer, routing through `FUN_005bd7f0` when the killer is partied and
+`FUN_004e2830` when solo. A third, independent use of the party field named two
+entries ago.
+
+`FUN_00410ea0`'s neighbourhood is confirmed as the skill-reset path rather than
+a reward: `FUN_0059f8b0` hands its 80% refund to `AddSkillPoints`.
+
+**No srrevamp value changed.**
