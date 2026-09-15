@@ -2566,3 +2566,59 @@ exactly this signature. That is a hypothesis about *why*, not a hedge on the
   vocabulary next, since the extraction method is already written and validated.
 
 **No srrevamp value changed.**
+
+## The skill parameter vocabulary, all 102 codes (2026-09-15)
+
+The previous entry's recorded next lever was a second tag dispatcher, to be
+extracted with the method already validated on `Stat_ApplyTaggedModifier`. A
+census first — every function in the server binary holding three or more
+multi-char-literal equality tests — found eleven, and the largest is not the one
+that was flagged:
+
+| function | tags |
+|---|---|
+| `SkillGlobal::RefSkill_ParseParams` | **105** |
+| `CGameServer::FUN_0072fd40` | 51 |
+| `Stat_ApplyTaggedModifier` | 46 |
+| `GObjPC::FUN_004909f0` | 33 |
+| `FUN_00491bd0` | 29 |
+
+`RefSkill_ParseParams` is the skill `Params` decoder, and this project had read
+exactly four of its codes. All 102 that resolve are now in
+**`docs/protocol/skill_params.md`**, each with the skill-struct field it fills
+and how far the cursor moves.
+
+**Validated before it was asked anything new**, the same discipline that licensed
+the `Stat_ApplyTaggedModifier` extraction: `att` → field `0x230`, 6 words;
+`defp` → `0x25c`, 4; `defr` → `0x260`, 3. Three of three against independently
+recovered answers. The run length **includes the code word**, which is what makes
+`att`'s six-word run carry the five values already in use —
+`(type, percent, min, max, percent)`.
+
+### A fabricated structural claim, caught before publishing
+
+The first extraction reported fifteen codes as "run 1, 0 values". That is
+self-contradictory: the parser points a field at values a one-word run cannot
+contain. They take a different branch shape —
+
+	cursor = cursor + 1;      // skip only the code word
+	skill[field] = cursor;    // values follow, count NOT encoded
+
+— so the "1" was the cursor advance past the code, not a run length. The three
+controls all use the other shape, so they passed while fifteen rows were wrong;
+a control set only proves the shape it exercises. They are now listed separately
+with no length claimed.
+
+### Deliberately not shipped
+
+`hwit` (field `0x588`) is read by the skill-effect applier `FUN_00594ac0` and
+written to ParamKeeper param **195**, which given the client's own
+`PARAM_HWAN_TIME_INCREASE` is most likely the berserk-duration bonus —
+`berserk.Duration` being srrevamp's one explicitly unrecovered value. It is not
+the base duration, though: it is a modifier srrevamp has no consumer for, and
+the identification's last step is an inference from a name rather than a
+use-site. Recorded, not wired.
+
+**No srrevamp value changed.** The artifact is a decoder: srrevamp reads one of
+these 102 codes today, and the next skill system that needs a second one no
+longer has to re-derive the format.
