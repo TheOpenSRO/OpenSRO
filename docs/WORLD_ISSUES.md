@@ -7075,6 +7075,53 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-eighty-third round: the game does not define an unarmed attack
+
+`unarmedDamage = 5` was the last value in the grounding audit carrying no reason
+at all -- just "Own [design]." It has one now, and it is an absence established
+by enumeration rather than by failing to find something.
+
+Damage reaches the engine as params 190/191, published from the equipment
+aggregate; the numbers live in a skill's `'att'` parameter, which is how a
+monster's attack was recovered. An unarmed player would therefore need a base
+attack skill with **no weapon type** -- and there is none. Every `_BASE_01`
+attack skill in the game is weapon-typed, all twelve:
+
+```
+CH   SWORD(2)      SPEAR(40)      BOW(70)
+EU   SWORD(8419)   TSWORD(8420)   AXE(8421)    CROSSBOW(9354)  DAGGER(9355)
+     STAFF(9944)   WAND_WARLOCK(10625)  HARP(11162)  WAND_CLERIC(11526)
+```
+
+The state exists visually -- the client's own animation-group table, recovered
+in the hundred-and-thirty-third round, has index 0 `default` for an empty hand
+-- but nothing in the data gives it a damage value. So 5 is a number this
+project must invent to have a fight, not one it failed to find.
+
+**A trap caught on the way, and it nearly shipped.** Player rows in
+`characterdata` read `[83]=1 [84]=2 [85]=40 [86]=70`, where a monster row has 0
+in both of the last two. Read as numbers, `[85]/[86]` is a tidy 40~70 damage
+range sitting exactly where an unarmed attack ought to be. It is nothing of the
+kind: those columns hold **base-attack skill ids**. 2 / 40 / 70 resolve to
+precisely the three Chinese base skills, and a European row reads
+8419 / 8420 / 8421 -- consecutive ids in the thousands that nobody would mistake
+for damage. Checking a second race is what refuted it; the single-race reading
+was entirely plausible and entirely wrong.
+
+Two stale rows in the grounding audit were corrected at the same time. **Monster
+spawn positions** still said "own design, clustered at two farmland anchors
+(region 96/168)" -- Mangyang's are real `npcpos` rows as of v0.1.161, and the
+anchors are region **97/168**, a label this project got wrong for as long as they
+existed. **Inventory size** now carries its proven reason: the starting size is a
+`_CHAR.InventorySize` row, not a constant in the exe, and the binary gives only
+the ceilings (77 normally, 99 under a predicate, hard cap below 100) plus the
+fact that the general inventory begins at index 13 after 13 equipment slots.
+
+And the `__FILE__` source-path lever is **exhausted, not open**: 164 distinct
+source paths in the client and 50 in the server, with 444 of 446 client and 166
+of 166 server functions already namespaced. Recorded so no later tick re-runs it
+hoping for yield.
+
 ## Hundred-and-eighty-second round: a player's armour has no percentage, and that is the answer
 
 The last combat value the grounding audit listed as untraced was the player's

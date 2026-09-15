@@ -755,6 +755,45 @@ Also named, with no tag counterpart found yet: `PARAM_PA` "Phy. atk. pwr.",
 `PARAM_PD` "Phy. def. pwr.", `PARAM_MA` "Mag. atk. pwr.", `PARAM_MD`
 "Mag. def. pwr.", `PARAM_ABSORB` "Absorption".
 
+## Unarmed damage: the game does not define one (2026-09-15)
+
+`unarmedDamage = 5` was the last value in the grounding audit carrying no reason
+at all — just "Own [design]." It has one now, and it is an absence established
+by enumeration.
+
+Damage reaches the engine as params 190/191, published from the equipment
+aggregate; the numbers themselves live in a skill's `'att'` parameter, which is
+how a monster's attack was recovered. So an unarmed player would need a base
+attack skill with **no weapon type** — and the skill table has none. Every
+`_BASE_01` attack skill in the game is weapon-typed, all twelve of them:
+
+```
+CH   SWORD(2)        SPEAR(40)        BOW(70)
+EU   SWORD(8419)     TSWORD(8420)     AXE(8421)      CROSSBOW(9354)
+     DAGGER(9355)    STAFF(9944)      WAND_WARLOCK(10625)
+     HARP(11162)     WAND_CLERIC(11526)
+```
+
+The state exists *visually* — the client's recovered animation-group table has
+index 0 `default` for an empty hand — but nothing in the data gives it a damage
+value. So 5 is a number this project must invent to have a fight at all, not one
+it failed to find.
+
+**A trap caught on the way, worth recording because it nearly shipped.**
+Player rows in `characterdata` read `[83]=1 [84]=2 [85]=40 [86]=70`, and
+`[85]/[86]` looks exactly like a tidy 40~70 unarmed damage range — a monster row
+has 0 in both. It is not a range. Those columns are **base-attack skill ids**:
+2 / 40 / 70 resolve to precisely the three Chinese base skills, and a European
+row reads 8419 / 8420 / 8421 (sword / tsword / axe), consecutive ids in the
+thousands that no one would mistake for damage. The census across both races is
+what refuted it; the single-race reading was entirely plausible.
+
+**Also closed this tick, as exhausted rather than open:** the `__FILE__`
+source-path lever. 164 distinct source paths in the client and 50 in the server,
+and `NamespaceFromSourceFile` reports **444 of 446** client functions and
+**166 of 166** server functions already namespaced. There is nothing left in it;
+a future tick should not re-run it hoping for yield.
+
 ## Where a player's combat stats come from (2026-09-15)
 
 `Char_PublishCombatStats` (`00497830`) publishes fifteen ParamKeeper params from

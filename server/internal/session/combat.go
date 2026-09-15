@@ -149,8 +149,32 @@ func DecodeLevelUp(data []byte) (*LevelUp, error) {
 	}, nil
 }
 
-// unarmedDamage is the base damage dealt with no weapon equipped. Own
-// design choice.
+// unarmedDamage is the base damage dealt with no weapon equipped. Own design,
+// and now with a PROVEN REASON rather than a bare label: the real game defines
+// no unarmed damage at all.
+//
+// A character's damage reaches the engine as ParamKeeper params 190/191, which
+// Char_PublishCombatStats publishes from the equipment aggregate; the damage
+// numbers themselves live in a skill's `'att'` parameter, which is how a
+// monster's attack was recovered (characterdata col 83 -> that skill's 'att').
+// So an unarmed player would need a base attack skill with no weapon type --
+// and the skill table has none. All twelve `_BASE_01` attack skills in the
+// game are weapon-typed:
+//
+//	CH  SWORD(2)  SPEAR(40)  BOW(70)
+//	EU  SWORD(8419) TSWORD(8420) AXE(8421) CROSSBOW(9354) DAGGER(9355)
+//	    STAFF(9944) WAND_WARLOCK(10625) HARP(11162) WAND_CLERIC(11526)
+//
+// The state exists visually -- the client's recovered animation-group table has
+// index 0 `default` for an empty hand -- but nothing in the data gives it a
+// damage value. So this is a number this project must invent to have a fight at
+// all, not one it failed to find.
+//
+// Guard against a plausible misreading while here: characterdata cols 84-86 on
+// a PLAYER row are base-attack SKILL IDS, not a damage range. A Chinese row
+// reads 2 / 40 / 70, which resolve to exactly the three CH base skills above;
+// a European row reads 8419 / 8420 / 8421. Read as numbers, `[85]=40 [86]=70`
+// looks like a tidy 40~70 damage range, and it is not one.
 const unarmedDamage = 5
 
 // playerMitigationPercent is the percentage term of a player's damage
