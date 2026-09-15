@@ -367,3 +367,27 @@ of a confident wrong name.
 
 Run it **first** in the compounding order below — it is a fact source, like the
 `__FILE__` seeds, and everything downstream feeds on its namespaces.
+
+## `RttiBases.java` — the hierarchy, and the functions Ghidra never reached
+
+`RttiRebuild` walks `vftable[-1] → COL → TypeDescriptor` and learns what a
+class is **called**. The COL's other pointer says what it **is**:
+`COL+0x10` → `ClassHierarchyDescriptor`, `+0x08` base count, `+0x0C` base
+array, each `BaseClassDescriptor` pointing at a `TypeDescriptor` from offset
+**0**. That offset is why those sites were rejected as "bad COL signature" —
+they were the other half of the chain, not noise.
+
+Element 0 of the base array is the class itself, so 1..n-1 are its bases in
+MSVC's own layout order. **1,939 server / 1,211 client classes get a chain.**
+
+`create` also defines a function at every vftable slot target Ghidra never
+reached — 6,799 of them. A slot target *is* a function entry; Ghidra finds
+functions by following calls and a virtual has no direct caller. This is the
+stronger version of what `VtableAttribute` works around, because a defined
+function gets **decompiled into the dumps**. Run the census first (no
+argument): it separates targets that are already entries, ones sitting inside
+another function (left alone — splitting a correct body is worse than missing
+one), ones merely undisassembled, and ones that will not disassemble at all.
+
+**Re-dump after `create`.** The dumps are the artifact every later grep reads,
+and 6,799 new function bodies are not in them until you rebuild.

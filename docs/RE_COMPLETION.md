@@ -853,12 +853,48 @@ is the weaker side at 4.4% and it is where the gameplay lives.
   **Coverage after re-running the compounding chain: client 35.0%, server
   39.2%** — combined identified **14,064 → 26,072**.
 
-  *Still on the table:* 43,060 slot targets point at code Ghidra never defined
-  as a function (20,411 client / 22,649 server). Defining functions there and
-  re-dumping would extend this substantially, and is the obvious next pull.
-  Also unexploited: the 2,014 + 1,207 pointer sites *rejected* for a bad COL
-  signature are `BaseClassDescriptor`s, which point at TypeDescriptors too —
-  i.e. the **inheritance graph** is sitting there unread.
+- **RTTI, second half: the inheritance graph and 6,799 new functions
+  (2026-09-15).** Both items the first pass left on the table are done.
+
+  The COL's *other* pointer is the hierarchy: `COL+0x10` →
+  `ClassHierarchyDescriptor`, whose `+0x08` is the base count and `+0x0C` the
+  base-class array; each `BaseClassDescriptor` points at a `TypeDescriptor`
+  from offset **0**, which is why those pointer sites had been rejected as
+  "bad COL signature". They were never noise — they were the other half of the
+  answer.
+
+  | | COLs | hierarchies read | classes with a chain | edges | roots | deepest |
+  |---|---|---|---|---|---|---|
+  | client | 1,751 | 1,680 | 1,211 | 7,266 | 276 | 10 |
+  | server | 2,029 | 1,970 | 1,939 | 2,595 | 552 | 8 |
+
+  ```
+  CGObjMob  : CGObjNPC : CGObjChar : CGObjMobile : CGObj : IGObj : CBase
+  CGObjCOS  : CGObjNPC : CGObjChar : CGObjMobile : CGObj : IGObj : CBase
+  CICPlayer : CICUser : CICharactor : CIGIDObject : CIObject : CIEntity : CObjChild : CObj : …
+  CIF<any>  : CIFMainFrame : CIFFrame : CIFTileWnd : CIFWnd : CGWnd : CGWndBase : CObjChild : CObj
+  ```
+
+  **It confirms two hard-won findings structurally.** `CGObjMob` **is a**
+  `CGObjNPC` — which is exactly why `npcpos` carries monsters, the correction
+  that overturned a recorded absence and had until now rested on resolving one
+  id by hand. And PC and mob share `CGObjChar`, which is why the GParamKeeper
+  sits at `charObj+0x1EC` for both; that was an observation, and is now a
+  consequence of the type system.
+
+  **6,799 functions created at vftable slot targets** (3,191 server, 3,608
+  client). A slot target *is* a function entry — the binary says so by putting
+  it in a vftable — and Ghidra had simply never reached them, because it finds
+  functions by following calls and a virtual has no direct caller. That is the
+  same blind spot `VtableAttribute` was written for, and this is the stronger
+  fix: a *defined* function gets decompiled into the dumps every later grep
+  reads. Done only where safe — 227 targets already inside another function
+  were left alone rather than splitting a correct body, and 8 that would not
+  disassemble were skipped rather than forced.
+
+  **Coverage after re-running the chain over them: server 56.3%, client
+  44.5%** — combined identified **26,072 → 38,555**. Across the two ticks that
+  opened this lever: **14,064 → 38,555**.
 
 - **The 128 `CRef*` refdata classes** (server), recovered from the same
   descriptor scan and readable straight out of the binary with `strings`. This
