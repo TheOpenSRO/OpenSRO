@@ -994,6 +994,69 @@ and `NamespaceFromSourceFile` reports **444 of 446** client functions and
 **166 of 166** server functions already namespaced. There is nothing left in it;
 a future tick should not re-run it hoping for yield.
 
+## The player stat graph, read off GObjPC_InitStats (2026-09-15)
+
+`GObjPC_InitStats` (`004e3200`) declares the whole graph in one function, and
+`ResolveRegArg`'s annotations make the edges readable directly:
+`/* BindDerived source->target: EBX 0x3a (58), EDI 0x32 (50) */`.
+
+**The three roots are confirmed against the `_CHAR` schema**, which is the check
+on everything built from them:
+
+```
+param 0 = Level      SetParam(0, charData+0x65)   _CHAR.CurLevel
+param 1 = Str        SetParam(1, charData+0x74)   _CHAR.Strength
+param 2 = Int        SetParam(2, charData+0x76)   _CHAR.Intellect
+```
+
+**The Str/Int split is the graph's shape**, not an inference about it:
+
+```
+1 (Str) -> 17, 18 -> 13, 14   physical damage min/max
+1 (Str) -> 21     -> 5        physical flat absorb
+2 (Int) -> 19, 20 -> 15, 16   magical damage min/max
+2 (Int) -> 22     -> 6        magical flat absorb
+```
+
+**This places the six fields the publication map had left unnamed:**
+
+| field | param | where it goes |
+|---|---|---|
+| +0x1b0 | 58 | → 50 → 21 → **5**, physical flat absorb |
+| +0x1b4 | 59 | → 51 → 22 → **6**, magical flat absorb |
+| +0x1c8 | 34 | → 17 → **13**, physical damage min |
+| +0x1cc | 36 | → 18 → **14**, physical damage max |
+| +0x1d0 | 35 | → 19 → **15**, magical damage min |
+| +0x1d4 | 37 | → 20 → **16**, magical damage max |
+
+**Which REFUTES the previous entry's guess.** 58 and 59 were recorded as the
+obvious candidates for the item table's phys/mag *reinforce*, on the strength of
+sitting between the defence and damage blocks. They feed **flat absorb**, a
+defence stat; reinforce is a weapon stat. The candidates are wrong, and the
+graph says so without needing a second opinion.
+
+**Two base values fall out, both real constants:** a character's innate attack
+rate (param 11) and parry (param 9) are each **10.0** (`.rdata 0x00b45b44`),
+each with a level-derived binding (`0 → 11`, `0 → 9`). srrevamp models neither
+stat, so there is nothing to wire.
+
+**And one lead, recorded as a lead.** The damage quad's bases are
+`34 = 30.6`, `36 = 34.2`, `35 = 49.0`, `37 = 54.8` — set before any gear exists.
+30.6 and 34.2 are *numerically identical* to a Copper Sword's physical reinforce
+(`306 / 342`, tenths of a percent, from ITEM_FORMAT's verified tooltip row),
+which would make the damage quad the reinforce quad and answer where reinforce
+lands. It is not promoted: a tier-1 sword matching the character's innate base
+exactly is as easily authored design as identity, the magical pair does *not*
+match that sword (49.0/54.8 against its 51.9/59.1), and one numeric coincidence
+is precisely the shape of evidence this project has been wrong about before.
+
+Also in the tail: a six-iteration loop binding `(phys, mag)` pairs from a static
+table at `.rdata 0x00c640d0` — 0.032/0.052, 0.027/0.043, 0.042/0.067,
+0.034/0.055, 0.025/0.039, 0.030/0.049, each ×100 — into params 50/51, the same
+defence chain. Six is the armour-slot count *and* the European mastery count,
+and the loop's param id is computed rather than literal, so which of those it is
+stays open.
+
 ## Where a player's combat stats come from (2026-09-15)
 
 `Char_PublishCombatStats` (`00497830`) publishes fifteen ParamKeeper params from

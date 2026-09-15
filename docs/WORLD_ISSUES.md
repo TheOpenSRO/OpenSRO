@@ -7075,6 +7075,53 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-ninety-fourth round: the stat graph, and a guess of mine refuted
+
+Last round ended with six unnamed fields and a guess: that params 58 and 59 were
+the item table's phys/mag **reinforce**, on the strength of their sitting between
+the defence block and the damage block. `GObjPC_InitStats` settles it, and the
+guess was wrong.
+
+The function declares the whole graph in one place, and `ResolveRegArg`'s
+annotations make the edges readable without any inference:
+
+```
+1 (Str) -> 17, 18 -> 13, 14   physical damage min/max
+1 (Str) -> 21     -> 5        physical flat absorb
+2 (Int) -> 19, 20 -> 15, 16   magical damage min/max
+2 (Int) -> 22     -> 6        magical flat absorb
+58      -> 50 -> 21 -> 5      physical flat absorb
+59      -> 51 -> 22 -> 6      magical flat absorb
+34, 36, 35, 37 -> 17, 18, 19, 20   into the damage quad
+```
+
+So **58 and 59 feed flat absorb** -- a defence stat -- and reinforce is a weapon
+stat. The candidates are refuted. The four remaining unnamed fields (34-37) feed
+the damage quad instead.
+
+**The three roots check out against the `_CHAR` schema**, which is what makes the
+rest trustworthy rather than merely consistent:
+
+```
+param 0 = Level   SetParam(0, charData+0x65)   _CHAR.CurLevel
+param 1 = Str     SetParam(1, charData+0x74)   _CHAR.Strength
+param 2 = Int     SetParam(2, charData+0x76)   _CHAR.Intellect
+```
+
+Two real constants fall out: a character's innate **attack rate and parry are
+both 10.0** (`.rdata 0x00b45b44`), each with a level-derived binding. srrevamp
+models neither stat, so nothing is wired from them.
+
+**And one lead I am deliberately not promoting.** The damage quad's bases,
+set before any gear exists, are 30.6 / 34.2 physical and 49.0 / 54.8 magical.
+30.6 and 34.2 are *numerically identical* to a Copper Sword's physical reinforce
+(306 / 342 in tenths, from the verified tooltip row) -- which would make the
+damage quad the reinforce quad and answer the question this round started with.
+It stays a lead: a tier-1 sword matching the character's innate base exactly is
+as easily authored design as identity, the magical pair does **not** match that
+same sword (49.0/54.8 against its 51.9/59.1), and a single numeric coincidence
+is exactly the shape of evidence characterdata col 79 was wrong about twice.
+
 ## Hundred-and-ninety-third round: an absence inside a measurement window
 
 Applying last round's two-reader check forward -- what does the CLIENT read that
