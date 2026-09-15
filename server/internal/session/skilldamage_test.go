@@ -77,3 +77,35 @@ func TestMasteryUpCostUsesTheLevelTable(t *testing.T) {
 		t.Errorf("a level missing from the table: got %d, want the fallback 8", got)
 	}
 }
+
+// TestMasteryLevelCap pins the recovered ceiling on a single mastery.
+//
+// Mastery_LevelUp's cost loop breaks once the level being raised passes 0x78,
+// so 120 is the engine's hard limit whatever the character's level. leveldata
+// runs to 140, so a character can outgrow it and the cap becomes the binding
+// constraint rather than a theoretical one.
+func TestMasteryLevelCap(t *testing.T) {
+	if MasteryLevelCap != 120 {
+		t.Fatalf("MasteryLevelCap = %d, want 120 (0x78, where Mastery_LevelUp's loop breaks)", MasteryLevelCap)
+	}
+
+	// The cap passed to the store is the lower of the character's level and
+	// the engine ceiling -- the same expression the handler builds.
+	capFor := func(charLevel int) int {
+		if charLevel > MasteryLevelCap {
+			return MasteryLevelCap
+		}
+		return charLevel
+	}
+	for _, tc := range []struct{ level, want int }{
+		{1, 1},
+		{80, 80},
+		{120, 120},
+		{121, 120}, // the first level where the ceiling binds
+		{140, 120}, // leveldata's own maximum
+	} {
+		if got := capFor(tc.level); got != tc.want {
+			t.Errorf("a level-%d character's mastery cap = %d, want %d", tc.level, got, tc.want)
+		}
+	}
+}

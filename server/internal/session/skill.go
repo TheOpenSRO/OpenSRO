@@ -48,10 +48,48 @@ const (
 // MasteryTotalCapPerLevel caps the SUM of a character's mastery levels at this
 // multiple of its character level -- 3, so a level-80 character totals 240,
 // enough to max three masteries. Recovered from the user's account of the
-// retail 80-cap; the pserver's 440 is a mod (some servers raise it to 320 for
-// four maxable trees), so it is not used. A single mastery is separately
-// capped at the character's own level.
+// retail 80-cap.
+//
+// THE SHAPE DIFFERS FROM THIS BINARY, recorded 2026-09-15 rather than changed.
+// Mastery_LevelUp enforces a FLAT total, not a per-level one: on the branch
+// where the ref object's +0x88 is zero it refuses when
+// `current + requested >= 0x14b`, i.e. a total of 330, with no reference to the
+// character's level at all. 330 is not 3 x any level cap this project can find
+// (leveldata runs to 140), so the two rules are genuinely different shapes and
+// not the same rule written twice.
+//
+// Left as it is deliberately: this is a modded private-server binary, the
+// per-level rule comes from an account of RETAIL, and adopting a flat 330 on
+// that basis would trade a sourced rule for a modded constant. The earlier note
+// here said "the pserver's 440 is a mod" -- whatever 440 was, it is not what
+// this binary does, and the number is dropped rather than left to mislead.
+// (Community servers are reported to raise the cap to 320 so four trees can be
+// maxed; that is hearsay about other servers and is not used either.)
+//
+// A single mastery is separately capped at the character's own level, and that
+// rule IS this binary's -- see MasteryLevelCap for the citation.
 const MasteryTotalCapPerLevel = 3
+
+// MasteryLevelCap is the hard ceiling on a SINGLE mastery: 120, whatever the
+// character's level.
+//
+// RECOVERED from Mastery_LevelUp (0059c4e0), which accumulates the cost of the
+// levels being raised in a loop that refuses to go past it:
+//
+//	do {
+//	    if (0x78 < uVar4) break;          // 0x78 = 120
+//	    entry = RefLevel_GetEntry();
+//	    cost += entry[0x10];              // leveldata column 2
+//	    uVar4++;
+//	} while (uVar4 < current + requested);
+//
+// The same function carries the per-mastery rule this project already
+// implements -- it compares Char_GetLevel() against the mastery's level plus
+// the levels requested and answers error 0x3804 when the character is lower --
+// so "no single mastery above your own level" is grounded now rather than
+// assumed, and 120 is the ceiling that applies once a character's level passes
+// it. leveldata runs to 140, so this is reachable rather than theoretical.
+const MasteryLevelCap = 120
 
 // masteryUpCost is the skill-point cost to raise a mastery from currentLevel to
 // currentLevel+1.
@@ -800,7 +838,13 @@ func RaiseMasteryHandler(chars character.Store, store skill.Store) gateway.Handl
 		if total >= MasteryTotalCapPerLevel*owned.Level {
 			return fail("mastery total at cap")
 		}
-		newLevel, err := store.RaiseMastery(ctx, characterID, req.MasteryID, masteryUpCost(levels[req.MasteryID]), owned.Level)
+		// The mastery may not pass the character's level, nor the engine's
+		// own ceiling of MasteryLevelCap whichever comes first.
+		levelCap := owned.Level
+		if levelCap > MasteryLevelCap {
+			levelCap = MasteryLevelCap
+		}
+		newLevel, err := store.RaiseMastery(ctx, characterID, req.MasteryID, masteryUpCost(levels[req.MasteryID]), levelCap)
 		if err != nil {
 			switch {
 			case errors.Is(err, skill.ErrMasteryCapped):

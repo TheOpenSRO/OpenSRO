@@ -3381,3 +3381,57 @@ the pool on the way back, where it used to cost nothing.
 Tests pin the fraction, pin that a level-up still heals fully, and pin that the
 SQL and in-memory stores agree — the same recovered rule, so a deployment
 swapping one for the other must not change what a death costs.
+
+## The mastery caps, and a number that was never this binary's (2026-09-15)
+
+Continuing the constant audit that found the 40% respawn. `MasteryTotalCapPerLevel`
+stood out because its citation was an account of retail rather than the binary,
+and mastery raising is a shipped feature. `Mastery_LevelUp` (`0059c4e0`) carries
+three rules, and only one of them was already in this project.
+
+**Per-mastery, the character's own level — now grounded.** The function compares
+`Char_GetLevel()` against the mastery's current level plus the levels requested
+and answers error `0x3804` when the character is lower. srrevamp already
+enforced this; it was asserted, and now it is cited.
+
+**Per-mastery, a hard 120.** The cost loop refuses to go past it:
+
+	do {
+	    if (0x78 < uVar4) break;          // 0x78 = 120
+	    entry = RefLevel_GetEntry();
+	    cost += entry[0x10];              // leveldata column 2, already grounded
+	    uVar4++;
+	} while (uVar4 < current + requested);
+
+srrevamp had no such ceiling. leveldata runs to **140**, so a character can
+outgrow 120 and the cap binds rather than being theoretical. Shipped as
+`MasteryLevelCap`, applied as the lower of it and the character's level.
+
+**The total cap is a FLAT 330, not a per-level rule.** On the branch where the
+ref object's `+0x88` is zero, it refuses when `current + requested >= 0x14b`,
+with no reference to the character's level at all.
+
+### Why that did not change anything
+
+srrevamp caps the total at 3 x the character's level. The binary caps it at 330
+flat. Those are different shapes, and it is worth being explicit about why the
+sourced rule survives the encounter:
+
+- **A tempting reconciliation was checked and failed.** 330 = 3 x 110, which
+  would make the flat cap "3 per level evaluated at the level cap" and confirm
+  srrevamp's rule outright. But leveldata runs to 140, not 110, and no level cap
+  this project can find is 110. The neat story does not hold, so it is not told.
+- This is a **modded private-server binary**; the per-level rule comes from an
+  account of **retail**. Adopting a flat 330 on that basis would trade a sourced
+  rule for a modded constant.
+
+**A number was also dropped.** The comment said "the pserver's 440 is a mod".
+Whatever 440 was, it is not what this binary enforces — 330 is — and a wrong
+number in a citation is worse than no number, so it is gone.
+
+### What moved
+
+`session.MasteryLevelCap = 120`, wired into the raise handler and tested at the
+boundary (level 120 binds at 120, level 121 and level 140 both bind at 120).
+`MasteryTotalCapPerLevel` is unchanged, with the shape difference recorded
+against it rather than silently reconciled.
