@@ -7075,6 +7075,54 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Hundred-and-ninetieth round: PvP had been left behind, and why
+
+Two rounds of asking "does this recovered thing actually reach anything?" found
+a value that was never exported and four the client threw away. The same
+question asked of the *duel* path finds the biggest one yet.
+
+`handleDuelAttack` computed `damage := base - armor`. A bare flat subtraction --
+no `/(1 + pct/100)` mitigation shape, no critical, no block, no level term. The
+grounding audit meanwhile said PvP *"reuses the same combat model ... no separate
+formula"*, which had been true when it was written and had quietly stopped being
+true six recoveries ago.
+
+**The cause was duplication, so the fix is one function.** `combat.ResolveBlow`
+now runs every blow in the game -- a player hitting a monster, a monster's
+counterattack, and one player duelling another -- in the order the engine runs
+them:
+
+```
+a successful BLOCK skips everything (the real resolve function jumps past
+  every Formula_Mitigate* call, so no damage is computed at all)
+otherwise  mitigate:  damage / (1 + pct/100) - flat
+then       multiply:  x2 on a critical
+then       scale:     the level-difference term, last
+```
+
+Berserk deliberately stays outside it: that is per-character state the combat
+package does not hold, and the caller that has it applies it between the
+critical and the level term, which is where the engine has it.
+
+So duels crit and get blocked now, with real inputs on both sides -- a weapon's
+Critical column and a shield's block ratio, both players, both real levels. The
+duel result carries the two outcomes as appended fields, and a 9-byte result
+from an older server still decodes without inventing them.
+
+`Monster.Block` came along with it, characterdata col 76. It reads **0 for every
+species on the Jangan ladder**, which is the real value and not an unmodelled
+one: blocking is a shield mechanic and monsters carry no shields. 938 of the
+game's other monsters do read 20.
+
+**Two silent no-ops in one round, both of the same family.** The first heredoc
+that was meant to add `ResolveBlow` was written as `cd server && cat >> ...` from
+a directory that was already `server`; `cd` failed, `&&` short-circuited, the
+function was never added -- and the `go build` that followed printed `BUILD-OK`
+on an unchanged file. Last round's was a string replace that matched nothing.
+Both produce a confident success message over work that did not happen. Every
+edit in this round asserts its own effect before moving on, and the one that
+mattered was caught by the compiler two commands later rather than by a release.
+
 ## Hundred-and-eighty-ninth round: four recovered mechanics nobody could see
 
 Last round caught a value that never reached production. The same question asked

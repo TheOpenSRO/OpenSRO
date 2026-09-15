@@ -710,16 +710,15 @@ func performAttack(
 	// term, not the flat subtraction this used to do. The percentage is REAL
 	// (characterdata cols 73/74 = the monster's level); the flat Defense is
 	// still the disclosed curve. See combat.MitigateDamage.
-	net := combat.MitigateDamage(raw, monster.DefensePercent, monster.Defense)
-	// The player's own critical: the equipped weapon's Critical column, rolled
-	// with the same recovered dice, doubling the blow. Applied after mitigation
-	// and before berserk/level, which is the order the real formula builds its
-	// multiplier in -- a critical DOUBLES whatever that multiplier already is,
-	// so a berserk critical compounds rather than replacing it.
-	playerCrit := rollChance(attackerCritical(ctx, characterID, eq, items))
-	if playerCrit {
-		net *= combat.CriticalMultiplier
-	}
+	// One pipeline for every blow in the game -- see combat.ResolveBlow. The
+	// monster's own block chance is characterdata col 76, which reads 0 for
+	// every species on the Jangan ladder (938 monsters elsewhere carry 20), so
+	// it is a real zero rather than an unmodelled one.
+	blow := resolveBlow(raw, monster.DefensePercent, monster.Defense,
+		attackerCritical(ctx, characterID, eq, items), monster.Block,
+		playerLevel, monster.Level)
+	net := blow.Damage
+	playerCrit := blow.Critical
 	// Berserk multiplies the blow AFTER mitigation, which is the order
 	// Formula_MitigatePhysicalDamage uses: it divides by the percentage term,
 	// subtracts the flat term, clamps at zero, and only then multiplies by
@@ -730,16 +729,6 @@ func performAttack(
 	// of which quietly scales the defence away and over-pays berserk.
 	if zerk != nil {
 		net = zerk.Boost(characterID, net)
-	}
-	// Out-levelling the target hits harder: +3% a level, capped at +30%. Real,
-	// and applied here because the game applies it last -- after mitigation and
-	// after the berserk multiplier. See combat.LevelAdvantage.
-	//
-	// Both levels must be known. A zero is "not set", not "level zero", and
-	// treating it as a level would hand a level-1 attacker a 3% bonus against
-	// anything whose level simply was not filled in.
-	if playerLevel > 0 && monster.Level > 0 {
-		net = combat.ApplyLevelAdvantage(net, playerLevel, monster.Level)
 	}
 
 	updated, monsterDied, ok := monsters.ApplyDamage(targetMonsterID, net)
@@ -870,28 +859,16 @@ func performAttack(
 		// Formula_Mitigate* call and leaves the damage record at its
 		// zero-initialised value. So the roll comes first, and mitigation,
 		// the critical and the level term are the things it skips.
-		incoming := 0
-		result.PlayerBlocked = rollChance(defenderBlock(ctx, characterID, eq, items))
-		if !result.PlayerBlocked {
-			incoming = combat.MitigateDamage(raw, playerMitigationPercent, armor)
-			// A critical doubles the blow, and the monster's chance is REAL
-			// (characterdata col 78 -- see combat.Monster.Critical). Applied
-			// AFTER mitigation and BEFORE the level term, which is the order
-			// the real formula uses: it builds a multiplier, doubles it on
-			// the critical flag, multiplies the already-mitigated damage by
-			// it, and only then applies the level difference.
-			if rollChance(monster.Critical) {
-				incoming *= combat.CriticalMultiplier
-				result.MonsterCritical = true
-			}
-			// The same level-advantage term, with the roles swapped: the
-			// monster is the attacker in its own counterattack, so one that
-			// out-levels the player hits harder for it. The formula is one
-			// function and does not care which side is a player.
-			if playerLevel > 0 && monster.Level > 0 {
-				incoming = combat.ApplyLevelAdvantage(incoming, monster.Level, playerLevel)
-			}
-		}
+		// The counterattack is the same pipeline with the roles swapped: the
+		// monster is the attacker, so its Critical applies and the player's
+		// shield is what blocks. combat.ResolveBlow does not care which side
+		// is a player, which is the point of it being one function.
+		counter := resolveBlow(raw, playerMitigationPercent, armor,
+			monster.Critical, defenderBlock(ctx, characterID, eq, items),
+			monster.Level, playerLevel)
+		incoming := counter.Damage
+		result.MonsterCritical = counter.Critical
+		result.PlayerBlocked = counter.Blocked
 		hp, playerDied, err := chars.ApplyDamage(ctx, characterID, incoming)
 		if err != nil {
 			return fmt.Errorf("combat: applying counterattack: %w", err)
@@ -1157,4 +1134,14 @@ func defenderBlock(ctx context.Context, characterID int64, eq equipment.Store, i
 		return int(item.BlockRatioMin)
 	}
 	return 0
+}
+
+// resolveBlow is combat.ResolveBlow under the SAME lock as every other roll in
+// this package -- it takes two chance rolls, and rand.Rand is not safe for
+// concurrent use.
+func resolveBlow(base, mitigationPercent, flat, critChance, blockChance, attackerLevel, defenderLevel int) combat.Blow {
+	damageRollMu.Lock()
+	defer damageRollMu.Unlock()
+	return combat.ResolveBlow(base, mitigationPercent, flat, critChance, blockChance,
+		attackerLevel, defenderLevel, damageRollNG)
 }

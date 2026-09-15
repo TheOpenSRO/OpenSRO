@@ -179,15 +179,28 @@ type DuelAttackResult struct {
 	Damage       int32
 	OpponentHP   int32
 	OpponentDied bool
+
+	// Critical and Blocked are the same two outcomes a PvE blow reports, and
+	// they reach a duel by the same route now -- both sides are players, so a
+	// weapon's Critical column and a shield's block ratio both apply.
+	// Appended, so an older client still decodes the rest.
+	Critical bool
+	Blocked  bool
 }
 
 func (r *DuelAttackResult) Encode() []byte {
 	out := encodeStrings(r.Error)
-	buf := make([]byte, 9)
+	buf := make([]byte, 11)
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(r.Damage))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(r.OpponentHP))
 	if r.OpponentDied {
 		buf[8] = 1
+	}
+	if r.Critical {
+		buf[9] = 1
+	}
+	if r.Blocked {
+		buf[10] = 1
 	}
 	return append(out, buf...)
 }
@@ -200,12 +213,18 @@ func DecodeDuelAttackResult(data []byte) (*DuelAttackResult, error) {
 	if len(rest) < 9 {
 		return nil, errors.New("session: decoding DuelAttackResult: truncated")
 	}
-	return &DuelAttackResult{
+	out := &DuelAttackResult{
 		Error:        fields[0],
 		Damage:       int32(binary.LittleEndian.Uint32(rest[0:4])),
 		OpponentHP:   int32(binary.LittleEndian.Uint32(rest[4:8])),
 		OpponentDied: rest[8] != 0,
-	}, nil
+	}
+	// Appended, so a 9-byte result from an older server still decodes.
+	if len(rest) >= 11 {
+		out.Critical = rest[9] != 0
+		out.Blocked = rest[10] != 0
+	}
+	return out, nil
 }
 
 // DuelOpponentDamaged is the OpDuelOpponentDamaged payload (direct to the
@@ -345,17 +364,35 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "damage calculation failed"}).Encode()})
 	}
-	damage := base - armor
-	if damage < 1 {
-		damage = 1
+	// PvP goes through the SAME pipeline as PvE, which it had not been doing:
+	// this was `base - armor` while the monster path collected the mitigation
+	// shape, criticals, blocking and the level term. Both sides are players,
+	// so both a weapon's Critical column and a shield's block ratio apply, and
+	// both have a real level.
+	//
+	// The player's own mitigation percentage is zero and that is recovered
+	// rather than assumed -- see session.playerMitigationPercent.
+	atkLevel, defLevel := 0, 0
+	if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
+		atkLevel = c.Level
 	}
+	if c, err := chars.GetByID(ctx, opponent.CharacterID); err == nil && c != nil {
+		defLevel = c.Level
+	}
+	blow := resolveBlow(
+		base, playerMitigationPercent, armor,
+		attackerCritical(ctx, characterID, eq, items),
+		defenderBlock(ctx, opponent.CharacterID, eq, items),
+		atkLevel, defLevel)
+	damage := blow.Damage
 
 	hp, opponentDied, err := chars.ApplyDamage(ctx, opponent.CharacterID, damage)
 	if err != nil {
 		return fmt.Errorf("duel: applying damage: %w", err)
 	}
 
-	result := &DuelAttackResult{Damage: int32(damage), OpponentHP: int32(hp), OpponentDied: opponentDied}
+	result := &DuelAttackResult{Damage: int32(damage), OpponentHP: int32(hp), OpponentDied: opponentDied,
+		Critical: blow.Critical, Blocked: blow.Blocked}
 	if err := sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: result.Encode()}); err != nil {
 		return err
 	}

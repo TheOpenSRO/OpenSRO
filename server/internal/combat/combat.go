@@ -81,6 +81,15 @@ type Monster struct {
 	// shield mechanic -- and col 78 reads 2 on 7,493 of the game's 7,495
 	// monster rows.
 	Critical int
+	// Block is this monster's chance to block a blow outright, characterdata
+	// _RefObjChar col 76 ('bri'), published into ParamKeeper param 10 by the
+	// same consecutive run that puts Critical on col 78 -- see Critical for
+	// how that run is anchored.
+	//
+	// It is 0 for every species on the Jangan ladder, and that is the real
+	// value rather than an unmodelled one: blocking is a shield mechanic and
+	// monsters carry no shields. 938 of the game's other monsters do read 20.
+	Block int
 	// ExpReward is the experience a kill grants. Derived from the monster's
 	// toughness for now (a disclosed default, ExpFor) -- the real per-species
 	// experience lives in mob data this project does not load yet; recovering
@@ -322,6 +331,9 @@ type Species struct {
 	// Critical is the species' real critical-hit chance, characterdata
 	// _RefObjChar col 78. See Monster.Critical.
 	Critical int
+	// Block is the species' real block chance, characterdata col 76. See
+	// Monster.Block.
+	Block int
 }
 
 // SpawnSpecies is Spawn with the species' code name carried along, so the
@@ -331,7 +343,7 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, Critical: species.Critical, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
 		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
 	h.byID[id] = m
 	return m
@@ -447,4 +459,54 @@ func RollChance(chance int, r *rand.Rand) bool {
 		return true
 	}
 	return chance >= r.Intn(ChanceRollSides)
+}
+
+// Blow is one resolved strike: what it did, and which of the game's outcomes
+// it took.
+type Blow struct {
+	Damage   int
+	Critical bool
+	Blocked  bool
+}
+
+// ResolveBlow runs the game's damage pipeline once, in the order the engine
+// runs it. Every attack in srrevamp goes through here -- a player hitting a
+// monster, a monster's counterattack, and one player duelling another -- so the
+// three cannot drift apart again.
+//
+// They had. The PvE path collected six recoveries in a row (the mitigation
+// shape, berserk, the level term, criticals, blocking, the death penalty) while
+// the duel path kept the bare `base - armor` it was written with, and the
+// grounding audit went on claiming PvP "reuses the same combat model". That is
+// what duplicated logic does; one function is the fix.
+//
+// The order is the real one, from Formula_MitigatePhysicalDamage:
+//
+//	a successful BLOCK skips everything -- the real resolve function jumps past
+//	  every Formula_Mitigate* call, so no damage is computed at all
+//	otherwise  mitigate:  damage / (1 + pct/100) - flat
+//	then       multiply:  x2 on a critical (the engine doubles a multiplier
+//	                      berserk may already have raised)
+//	then       scale:     the level-difference term, applied last
+//
+// Berserk is NOT applied here. It is per-character state this package does not
+// hold, and the caller that has it applies it between the critical and the
+// level term -- see session's use of berserk.Tracker.Boost.
+//
+// r is the source of randomness; a nil r takes the maximum outcome on every
+// roll, the same convention RollDamage and RollChance use.
+func ResolveBlow(base, mitigationPercent, flat, critChance, blockChance, attackerLevel, defenderLevel int, r *rand.Rand) Blow {
+	if RollChance(blockChance, r) {
+		return Blow{Blocked: true}
+	}
+	out := Blow{Damage: MitigateDamage(base, mitigationPercent, flat)}
+	if RollChance(critChance, r) {
+		out.Damage *= CriticalMultiplier
+		out.Critical = true
+	}
+	// Both levels must be known. A zero is "not set", not "level zero".
+	if attackerLevel > 0 && defenderLevel > 0 {
+		out.Damage = ApplyLevelAdvantage(out.Damage, attackerLevel, defenderLevel)
+	}
+	return out
 }

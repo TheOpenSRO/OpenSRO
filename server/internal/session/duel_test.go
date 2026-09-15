@@ -9,6 +9,7 @@ import (
 
 	"github.com/OpenSRO/srrevamp/server/internal/account"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/duel"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
@@ -455,5 +456,54 @@ func TestDuelArmorMitigation(t *testing.T) {
 	ar, err := DecodeDuelAttackResult(resp.Data)
 	if err != nil || ar.Error != "" || ar.Damage != 18 || ar.OpponentHP != int32(character.StartingMaxHP)-18 {
 		t.Fatalf("armored hit: err=%v result=%+v, want damage=18 hp=%d", err, ar, character.StartingMaxHP-18)
+	}
+}
+
+// The duel result carries the same two outcomes a PvE blow does, and an older
+// 9-byte result still decodes without inventing them.
+func TestDuelAttackResultCarriesCriticalAndBlock(t *testing.T) {
+	want := &DuelAttackResult{Damage: 60, OpponentHP: 40, Critical: true, Blocked: false}
+	got, err := DecodeDuelAttackResult(want.Encode())
+	if err != nil {
+		t.Fatalf("DecodeDuelAttackResult: %v", err)
+	}
+	if *got != *want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+
+	// A 9-byte payload is what an older server sends. It must decode, and it
+	// must report neither outcome rather than reading past its own end.
+	full := (&DuelAttackResult{Damage: 30, OpponentHP: 70}).Encode()
+	old := full[:len(full)-2]
+	got, err = DecodeDuelAttackResult(old)
+	if err != nil {
+		t.Fatalf("an older 9-byte result must still decode: %v", err)
+	}
+	if got.Damage != 30 || got.OpponentHP != 70 || got.Critical || got.Blocked {
+		t.Fatalf("older result decoded as %+v, want damage 30 hp 70 and no outcomes", got)
+	}
+}
+
+// PvP goes through the same pipeline as PvE. This pins the thing that had
+// drifted: the duel path was a bare `base - armor` for six releases while the
+// monster path collected the mitigation shape, criticals, blocking and the
+// level term, and the grounding audit went on claiming they were the same.
+//
+// Checked at the pipeline rather than over TCP, because what drifted was which
+// FUNCTION the duel called, not the protocol around it.
+func TestDuelUsesTheSharedPipeline(t *testing.T) {
+	// A duel blow: 100 weapon damage, 30 armour, the attacker's weapon always
+	// crits, the defender has no shield, and the attacker out-levels by 10.
+	got := combat.ResolveBlow(100, playerMitigationPercent, 30, 100, 0, 20, 10, nil)
+	if !got.Critical {
+		t.Error("a weapon that always crits must crit in a duel too")
+	}
+	if got.Damage != 182 {
+		t.Errorf("duel blow = %d, want 182 ((100-30)*2, then +30%% for ten levels)", got.Damage)
+	}
+	// And a shield stops it dead, exactly as it does against a monster.
+	blocked := combat.ResolveBlow(100, playerMitigationPercent, 30, 100, 100, 20, 10, nil)
+	if !blocked.Blocked || blocked.Damage != 0 {
+		t.Errorf("a blocked duel blow = %+v, want no damage", blocked)
 	}
 }

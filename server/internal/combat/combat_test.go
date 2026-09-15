@@ -353,3 +353,66 @@ func TestRollChanceRoughlyMatchesItsPercent(t *testing.T) {
 		}
 	}
 }
+
+// The shared pipeline, in the order the engine runs it.
+//
+// A nil generator takes the maximum outcome on every roll, so a chance of 0
+// still never fires and any positive chance always does -- which makes the
+// ordering assertions exact.
+func TestResolveBlowOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		base, pct, flat    int
+		crit, block        int
+		atkLevel, defLevel int
+		want               Blow
+	}{
+		{
+			name: "plain blow: mitigate only",
+			base: 100, pct: 0, flat: 30, want: Blow{Damage: 70},
+		},
+		{
+			name: "a block skips everything, including the flat floor",
+			base: 100, flat: 30, block: 1, crit: 1, atkLevel: 20, defLevel: 1,
+			want: Blow{Blocked: true},
+		},
+		{
+			name: "a critical doubles the MITIGATED damage, not the raw",
+			base: 100, flat: 30, crit: 1, want: Blow{Damage: 140, Critical: true},
+		},
+		{
+			name: "the level term comes last, after the critical",
+			base: 100, flat: 30, crit: 1, atkLevel: 20, defLevel: 10,
+			want: Blow{Damage: 182, Critical: true}, // (100-30)*2 = 140, +30% = 182
+		},
+		{
+			name: "percentage mitigation runs before the flat term",
+			base: 100, pct: 100, flat: 10, want: Blow{Damage: 40}, // 100/2 - 10
+		},
+		{
+			name: "being out-levelled is no penalty",
+			base: 100, flat: 30, atkLevel: 1, defLevel: 50, want: Blow{Damage: 70},
+		},
+		{
+			name: "an unknown level skips the term entirely",
+			base: 100, flat: 30, atkLevel: 0, defLevel: 10, want: Blow{Damage: 70},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ResolveBlow(tc.base, tc.pct, tc.flat, tc.crit, tc.block,
+				tc.atkLevel, tc.defLevel, nil)
+			if got != tc.want {
+				t.Errorf("ResolveBlow = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A blocked blow deals nothing -- never the floor of 1 that MitigateDamage
+// keeps, because a block skips mitigation rather than reducing its result.
+func TestResolveBlowBlockedIsZeroNotOne(t *testing.T) {
+	got := ResolveBlow(1000, 0, 0, 0, 100, 0, 0, nil)
+	if !got.Blocked || got.Damage != 0 {
+		t.Errorf("blocked blow = %+v, want {Damage:0 Blocked:true}", got)
+	}
+}
