@@ -59,8 +59,23 @@ const (
 	//	if (GetBodyMode() == 1)            -> error 3   // already berserk
 	//	if (charData[0x86] < 5)            -> error 1   // not enough charges
 	//	SetParam-free: FUN_004e4d00(-5)                 // SPEND ALL FIVE
-	//	dur = GetParam(60) + GetParam(195)
+	//	dur = EvaluateParam(60) + EvaluateParam(195)
 	//	SetBodyMode(mode=1, stateSlot=0, dur, 0)
+	//
+	// CITATION CORRECTED 2026-09-16: those two reads are NOT GetParam. They go
+	// through `EvaluateParam` (0x004b3740) with the id in **EAX**, a second
+	// param-read path that the vtable-0x104 grep cannot see:
+	//
+	//	515c5c  lea eax,[esi+0x41]   ; esi = -5, so eax = 0x3c = param 60
+	//	515c5f  call 0x4b3740
+	//	515c68  mov eax,0xc3         ; param 195
+	//	515c6d  call 0x4b3740
+	//
+	// and param 60's id is COMPUTED rather than literal, so it is invisible to
+	// an id-literal grep on either path. Grepping for `GetParam(195)` across
+	// both dumps returns zero hits, which is how this citation came to be
+	// checked at all. See docs/protocol/param_registry.md, "Params are read
+	// through two paths".
 	//
 	// and because the slot is 0 rather than 0xff, SetBodyMode takes its timer
 	// branch and hands the duration to AJStateChanger, whose per-tick update

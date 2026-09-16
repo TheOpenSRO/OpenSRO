@@ -272,3 +272,44 @@ unreachable rather than omitted — recorded here so it is not mistaken for a ga
 in the formula. The same goes for steps 3, 5 and 6, which are attacker
 percentages no srrevamp source publishes.
 
+## Params are read through TWO paths, and one grep sees only half (2026-09-16)
+
+`docs/RE_COMPLETION.md`'s combat entry calls the `GetParam` virtual **"the
+single most useful handle found for the stat system"** and says **"every param
+read in the binary is greppable, with its id visible"**, recommending it as the
+first thing to reach for. The handle is genuinely good and the recommendation is
+worth keeping, but the coverage claim is wrong, and measurably:
+
+| path | how the id travels | sites | distinct literal ids |
+|---|---|---|---|
+| `IGObj::GetParam`, vtable slot 65 / offset `0x104` | pushed as an argument | 186 | 53 |
+| `EvaluateParam`, `0x004b3740` | in **EAX** | 65 | 40 |
+
+**29 param ids are read only through the second path** and are invisible to a
+grep on the first:
+
+	13 14 15 16 25 26 33 136 137 138 139 143 144 170 171 174 175 176 177
+	183 186 194 195 196 197 202 256 257 258
+
+That set is not marginal. It holds **195** (`hwit`, the berserk duration bonus)
+and **256/257/258** — the death-penalty reduction this project recovered by
+reading the disassembly by hand precisely because the decompiled C showed a bare
+call.
+
+### And one id is computed, so no literal grep finds it
+
+The berserk activation reads its base duration as
+
+	515c4a  mov esi,0xfffffffb     ; -5, reused from the charge spend
+	515c5c  lea eax,[esi+0x41]     ; eax = 0x3c = param 60
+	515c5f  call 0x4b3740
+
+so **param 60 never appears as a literal anywhere near its own read**. Searching
+for `GetParam(195)` across both dumps returns zero hits, and that empty result
+is what sent this pass to the second path — an ordinary application of this
+project's own rule that a negative result is a fact about the probe.
+
+**When looking for who reads a param, run three probes:** `push <id>` before a
+`[reg+0x104]` call; `mov eax,<id>` before `call 0x4b3740`; and, if both come
+back empty, a register trace, because the id may be arithmetic.
+

@@ -140,6 +140,16 @@ pick one up without re-deriving anything.
    useful handle found for the stat system and it should be the first thing
    reached for next time.
 
+   **COVERAGE CLAIM CORRECTED 2026-09-16 — it sees about half.** There is a
+   second read path, `EvaluateParam` (`0x004b3740`) with the id in **EAX**, and
+   **29 param ids are read only through it** — including 195 (the berserk
+   duration bonus) and 256/257/258 (the death-penalty reduction, which this
+   project had to disassemble by hand for exactly this reason). Counted: the
+   vtable path has 186 sites over 53 ids, `EvaluateParam` 65 sites over 40. One
+   further id is *computed* (`lea eax,[esi+0x41]` with `esi = -5` → param 60,
+   the berserk base duration), so no id-literal grep on either path finds it.
+   Full note: `docs/protocol/param_registry.md`.
+
    **What it produced:**
 
    - `Formula_RollWeaponDamage` (`0040f8d0`) — the damage roll:
