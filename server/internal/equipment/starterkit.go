@@ -21,7 +21,12 @@ import (
 //
 // No hat, shoulder guard or gauntlet: the game does not start anyone in
 // those, and the Cotton Hat/Talisman/Wristlet this kit once gave were the
-// table's `_RARE` rows, not its defaults. **Two choices are this project's**:
+// table's `_RARE` rows, not its defaults. **A bare helm or gauntlet slot is
+// not a bare character** -- the client draws nothing there and never did,
+// which is why the original ships no default for them either. The two slots
+// that WOULD look wrong bare, the mail and the pants, the client covers by
+// itself; see defaultwear.go, and TestStartingKitFillsTheDefaultWearSlots
+// for why this kit fills them anyway with real items. **Two choices are this project's**:
 // the garment family (the table also carries Cloth protector and Copper
 // armour defaults, and the original picks by the class chosen at creation,
 // which this server does not record), and the sword among the five default

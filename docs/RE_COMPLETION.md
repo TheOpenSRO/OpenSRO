@@ -7708,3 +7708,77 @@ and every membership claim in `equipment.go` has a use-site behind it.
 alongside a character-data byte at `+0x9c`. That is what a character with an empty
 slot is drawn wearing, which this project currently handles by giving every new
 character a real starting kit.
+
+## 2026-09-16 — DEFAULT_WEAR_NUM, and what a bare slot is drawn as
+
+The last tick left `DEFAULT_WEAR_NUM == 2` unexplained. It is fully recovered
+now, and it answers a question `GiveStartingKit` had been guessing at.
+
+### The setter and the builder
+
+`CObjCharacter::FUN_00a5cca0` (`0x00a5cca0`) takes `(nDefaultWearNum,
+nEquipSlot)` and asserts both through the game's own source:
+
+	CObjCharacter.cpp:770   "(nEquipSlot >=0 ) && ( nEquipSlot < EQUIP_VISUAL_COUNT)"
+	CObjCharacter.cpp:771   "(nDefaultWearNum >=0 ) && ( nDefaultWearNum < DEFAULT_WEAR_NUM)"
+
+Guards `p < 0 || 8 < p` and `p < 0 || 1 < p`, so 9 and 2. It keeps the results
+in a two-entry array at `this + 0x11c`, eight bytes apart.
+
+`CObjCharacter::FUN_00a5c760` (`0x00a5c760`) builds what to draw, and it is an
+ordinary **packed TypeID** — the same 16-bit word the equip resolvers read. It
+starts at `0x2c` (TypeID1 3, TypeID2 1, family and piece clear), fills the
+family from the race byte at character-data `+0x9c`, and the piece from the wear
+number. Letting Python apply the masks rather than reading them by hand:
+
+	China   garment/none  wear 0 -> 0x18ac  3/1/1/3     wear 1 -> 0x20ac  3/1/1/4
+	China   protector/up  wear 0 -> 0x192c  3/1/2/3     wear 1 -> 0x212c  3/1/2/4
+	Europe  robe/none     wear 0 -> 0x1cac  3/1/9/3     wear 1 -> 0x24ac  3/1/9/4
+	Europe  light/up      wear 0 -> 0x1d2c  3/1/10/3    wear 1 -> 0x252c  3/1/10/4
+
+**Every one is TypeID4 3 or 4 — the mail and the pants.** Those are the two
+slots a character is never seen bare in, and nothing else gets a default. The
+race byte at `+0x9c` is 0 China / 1 Europe, matching `Country`.
+
+### The family follows what you are already wearing
+
+The second input is `CObjCharacter::FUN_00a5c670` (`0x00a5c670`), which walks the
+nine visual slots and returns the class of the first armour it finds: 1 for
+TypeID3 1 or 9, 2 for 2 or 10, 3 for 3 or 11, 0 if it reaches the end. Its loop
+bound `8 < i` is a **fourth independent witness** for EQUIP_VISUAL_COUNT.
+
+The classes then collapse into two: the client's switch groups `case 0: case 1:`
+and `case 2: case 3:`, so wearing nothing gets the same default as garment/robe,
+and armour/heavy the same as protector/light. Modelled as a comparison rather
+than a four-way table, because that is what the binary does.
+
+### Why it was worth recovering
+
+`GiveStartingKit` carries a long note about not drawing a default set, because
+"that would make the character look dressed while the equipment window, the
+inventory and the server all disagree". That reasoning is right, and it was
+missing a fact: **the client already does this, for exactly two slots, by
+design.** Which also explains the shape of the original's starter kit — it ships
+no hat, shoulder guard or gauntlet because a bare helm slot is not a bare
+character. The client draws nothing there and never did.
+
+So srrevamp does not need to prevent a character unequipping their mail for
+decency's sake, and a kit that omitted the mail would still look dressed — which
+is the silent disagreement, not the loud one. A test now holds the kit to
+covering both default-wear slots for that reason.
+
+### Shipped
+
+`DefaultWearCount = 2`, `DefaultWearSlots = {SlotMail, SlotPants}`,
+`DefaultWearPieces`, `ArmorClassNone/Garment/Protector/Armor`, `ArmorClassOf`
+and `DefaultWearFamily`, all in a new `defaultwear.go` with the addresses and
+source lines. `TestDefaultWearTypeWords` recomputes all eight type words from
+the client's own masks rather than asserting the table above;
+`TestStartingKitFillsTheDefaultWearSlots` pins the kit to them.
+
+**What moved:** the last unexplained constant from CObjCharacter.cpp is closed,
+and a design note that was reasoning without a fact now has one.
+
+**Next step:** `FUN_00a5ff00(slot, item)` — the path slots 9..12 take instead of
+the mesh, from the appearance installer. It is what an accessory *does* do
+visually, and it is the one branch of that function still unread.
