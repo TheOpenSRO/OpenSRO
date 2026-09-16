@@ -8538,3 +8538,79 @@ reached it are the same silent loss this tick was about — `igobj_vtable.md`'s
 209 slots and `error_attributed_functions.md` are the obvious places to look,
 and the join is mechanical: any address in those docs whose dump entry is still
 `FUN_` is a name that was recovered and dropped.
+
+## 2026-09-16 — a lever that gives 0% and 100% depending on one regex
+
+The previous entry proposed hunting names recovered before this session that
+never reached the binaries. The first two candidates turned out to be already
+done, and the third was a lever worth measuring rather than using.
+
+### Two dead ends, checked rather than assumed
+
+**The client assert harvest is spent as an attribution lever.** 295 functions
+carry an assert and 262 are still `FUN_` — but **256 of those already have a
+namespace**, leaving 6 bare. `ApplyNamespaceTable.java` had already been run.
+Naming the other 256 from an assert *expression* would be inventing: the
+expression says what the function checks, not what it does.
+
+**Thunks are not a lever either.** 234 server and 135 client `thunk_FUN_`
+functions exist, but Ghidra names a thunk after its target — so `thunk_FUN_X`
+means the TARGET is unnamed, and there is no free name to take.
+
+### The logger's embedded labels, and the regex that decides everything
+
+`naming_ceiling.md` recorded the logger's literal format strings as an
+unexploited lever. Re-measured: **1,242 calls with a literal, in 893 functions,
+311 still `FUN_`**, 219 of them with exactly one literal — and many of those
+literals open with something that reads exactly like a name:
+`CharDataLoadingCompleted::`, `OnRegisterPartyReq::`, `OnGuildWarBegun`.
+
+I had 25 candidates picked out. Then I ran the control over **already-named**
+functions with the same shape:
+
+	label matches the function's own name:    0
+	label does not match:                   131        agreement 0.0%
+
+**Zero.** The label is the class or subsystem — `CAgentMsg`, `AQ_OpenMarket`,
+`CLobby` — not the method. And it is not dependably that either: against the
+namespace it reaches only 76.1%, the misses being inherited methods logging
+their base class.
+
+Applying those 219 would have been the largest fabrication this project has come
+near. The control cost one script.
+
+### The same corpus, one regex tighter, is perfect
+
+Some messages carry BOTH parts, `Class::Method `. That form controls at
+**35 match, 0 miss — 100.0%**, and separates from the one-part form by regex
+alone. Its yield is two still-unnamed functions, both now applied:
+
+	0046dde0  trs_sm_trainingcampjob::vslot_007 -> Unlock
+	00621fd0  GObjPC::FUN_00621fd0             -> RemoveSiegeObject
+
+The second is the more interesting: the label names the class as
+`CSiegeFortress`, while the dump's `GObjPC` namespace is call-graph inference.
+The binary's own word outranks the inference, and that is recorded in the row's
+evidence.
+
+**The lesson is the split, not the two names.** One regex over one corpus gives
+0% and another gives 100%. "Text that looks like a name" is not a lever; a
+pattern whose agreement with known answers has been measured is.
+
+### Shipped
+
+Two names applied (origin=engine, control 35/35), `recovered_names.tsv` now at
+26 rows, and `naming_ceiling.md` gains the fifth lever with both numbers — so
+the 0% half is never re-attempted, and the 100% half is re-run against any
+future dump where new messages appear.
+
+**What moved:** two functions named from the binary's own words; three levers
+measured to exhaustion instead of guessed at; and a 219-name fabrication
+avoided by one control run.
+
+**Next step:** `/opt/srrevamp-re/STATUS` is stale — it still reports
+`shards=2133` because the rebuild bypassed `re_tick.sh`, which only refreshes
+STATUS when it does the rebuild itself. Harmless now (the next cron tick
+corrects it) but the shape is worth fixing: the tick should refresh STATUS
+unconditionally, so a dump rebuilt by hand is not silently misreported to the
+next session that opens cold.

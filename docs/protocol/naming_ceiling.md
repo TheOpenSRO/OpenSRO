@@ -48,3 +48,51 @@ Further naming has to come from **structure rather than text**: call-graph
 position, vtable shape, data-flow into known fields, and the file attribution
 built from the client's asserts. The remaining string yield is small and its
 best parts are spent.
+
+## The fifth lever, measured 2026-09-16: the logger's *embedded* labels
+
+This file previously noted that "the same logger is a broader source: 452 of its
+1,404 call sites carry a literal format string, 260 of them inside still-unnamed
+functions", and left it as unexploited. It is now measured, and it splits into
+two things with wildly different value.
+
+Re-measured on the current dump: **1,242 logger calls carry a literal, in 893
+functions, 311 of them still `FUN_`** — 219 with exactly one literal.
+
+### The one-part label `Name::` or `Name : ` — DO NOT USE
+
+219 unnamed functions begin their message with something that looks like a name.
+Controlled against **already-named** functions with the same shape:
+
+	label matches the function's own name:    0
+	label does not match:                   131        agreement 0.0%
+
+Zero. The mismatches say what the label really is: `CAgentMsg`, `AQ_OpenMarket`,
+`CLobby` — the **class or subsystem**, not the method. And it is not reliably
+even that: tested against the function's namespace it reaches only **76.1%**,
+with the misses being inherited methods logging their base class
+(`CGCOSInventoryOP` functions logging `CGStorageOP`) and the odd method name
+appearing where a class should be.
+
+76% is a coin weighted 3:1, not a lever. Applying these would have invented 219
+names, which is the largest single fabrication this project has come close to.
+
+### The two-part label `Class::Method ` — 100%, and nearly spent
+
+The same messages sometimes carry BOTH parts. That form is a different animal:
+
+	control over already-named functions:  35 match, 0 miss   (100.0%)
+
+Perfect, and cleanly separable from the one-part form by regex. Its yield is
+**two** still-unnamed functions, both applied:
+
+	0046dde0  trs_sm_trainingcampjob::vslot_007 -> Unlock
+	00621fd0  GObjPC::FUN_00621fd0             -> RemoveSiegeObject
+	                                              (label says class CSiegeFortress;
+	                                               the GObjPC namespace is call-graph
+	                                               inference and the label outranks it)
+
+**The lesson is the split, not the two names.** One regex over the same corpus
+gives 0% and another gives 100%, and telling them apart cost one control run.
+A lever is not "text that looks like a name" — it is a pattern whose agreement
+with known answers has been measured.
