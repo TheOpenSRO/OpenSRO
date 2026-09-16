@@ -3664,6 +3664,15 @@ overlooked.
 
 ## Passive regeneration does not exist, and "unwritten means zero" was wrong (2026-09-15)
 
+> **OVERTURNED 2026-09-16 — passive regeneration DOES exist.** Section 1 below is
+> wrong, and its own method is why: it enumerated every WRITER of the HP/MP pool,
+> correctly and exhaustively, and then concluded "not one is driven by a clock"
+> without checking what drives the writers. `GObjPC_RecoverHpMp` (`004a86a0`, the
+> row it labels "potions and heal skills") is called by `CGObjPC::vslot_362`
+> (`0x004e2990`), which is **registered as a timer**. See the entry at the end of
+> this file. What survives unchanged is section 2, and the enumeration itself —
+> every writer really is on that list.
+
 Two results, the second of which matters more than the one I set out to get.
 
 **1. There is no passive HP/MP regeneration in the server binary.** Closed as a
@@ -10093,4 +10102,72 @@ stubs and the TypeID constants, the pattern is clear: **check the docs for the
 thing before probing for it.** The probes that paid this session were the ones
 aimed at an explicitly recorded open question, not at a lever that looked
 promising.
+
+## 2026-09-16 — passive regeneration exists, and the tick is a timer callback
+
+**This overturns a shipped claim**, reached by following up the previous tick's
+param-read correction: 29 param ids are read only through `EvaluateParam`, and
+two of them — 25 and 26, `'hprg'` and `'mprg'` — are read in a function nobody
+had looked at.
+
+**The tick is `CGObjPC::vslot_362` (`0x004e2990`)**, registered as a timer:
+
+	4a6dd3  fld  DWORD PTR ds:0xb45dc0   ; 4.0 -- the interval
+	4a6ddc  mov  eax,0x4ac6f0            ; the slot-362 thunk -- the callback
+	4a6de6  push esi                     ; this
+	4a6de7  lea  edi,[esi+0x18c]         ; the timer list
+	4a6df0  call 0x4ab640                ; register
+
+**Why it was missed, and it is a probe lesson rather than an oversight:** slot
+362 is never *called*. A caller search returns zero. The thunk's address appears
+**exactly once in the entire image**, at `0x004a6ddd`, as the immediate of that
+`mov` — so only an address search over the image finds it. The earlier pass
+searched for callers of the pool writers, found no clock, and stopped; the clock
+is one indirection further out.
+
+**What the tick does**, from the disassembly — the decompiled C loses the x87
+stack, and the entire formula lives there:
+
+	if (GetLifeState() != 1) return;                     // alive
+	if (curHP == maxHP && curMP == maxMP) return;        // nothing to do
+	if (GetBodyMode() not in {0, 4}) return;
+	if (this[0xa2d]) {                                   // HP enabled
+	    amount = ftol(curHP * EvaluateParam(25) / 100.0) // 'hprg'; 100.0 at 0xb45af0
+	    if (amount < 1) amount = 1                       // FLOOR OF 1
+	    bound  = ftol(curHP * 0.5)                       // 0.5 at 0xb45c50
+	}
+	if (this[0xa2c]) { the same, EvaluateParam(26) 'mprg' }
+
+asserting against `GObjPC.cpp:0xdf9` (3577).
+
+**Two findings that change the model, not just the claim:**
+
+1. The rate is a percentage of the **current** pool, not the maximum, so
+   regeneration accelerates as it fills.
+2. The **floor of 1** means the engine's unbuffed rate is not zero. The old note
+   reasoned "`'hprg'`/`'mprg'` default to 0, therefore the resting rate is zero"
+   and never saw the floor. A live, damaged character recovers 1 per tick with no
+   buff at all.
+
+**Monsters take a different source entirely.** `CGObjMob::vslot_362`
+(`0x004c1b00`) reads its amount from `_RefObjCommon+0xd4` — characterdata
+**column 40** by the recovered column map, which is a use-site rather than a
+curve. The data agrees from the other side: all 52 `CHAR_` rows hold **-1**
+there and the engine skips a negative, while MOB rows span 0..5483 with a 0.611
+correlation to MaxHP (Mangyang 3 against 54 HP).
+
+**Shipped.** `mana.RegenInterval` is now **4 s** and real, the per-tick amount is
+the engine's shape (`mana.RegenPerTick`: percentage of current, floored at 1,
+capped at the deficit), and the tracker applies ticks in turn because
+percent-of-current compounds and cannot be multiplied out. Five tests, including
+one that fails if the percentage is taken of the maximum again.
+
+`RegenPercentPerTick = 4` stays **own design and is now disclosed with a
+reason**: the engine's literal rate is `'mprg'`, which srrevamp has no source
+for, so shipping it would mean 1 MP every four seconds for every caster. The
+shape is the engine's; only the percentage is ours.
+
+**Not implemented, deliberately:** the `curHP * 0.5` bound. The comparison that
+applies it sits at `0x004e2c00`, which this pass did not read, so its direction
+is unknown and guessing it would be inventing a rule.
 

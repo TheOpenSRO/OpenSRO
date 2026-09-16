@@ -19,10 +19,59 @@ import (
 	"time"
 )
 
-// RegenPercentPerTick and RegenInterval are this project's OWN DESIGN. This
-// note used to say the rate was the game's `'mprg'` parameter, waiting to be
-// read. That search has now finished, and the answer is that there is nothing
-// to read: no periodic regeneration exists in the server binary at all.
+// THE "NO PERIODIC REGENERATION" CLAIM WAS WRONG, corrected 2026-09-16.
+//
+// This note used to say "there is nothing to read: no periodic regeneration
+// exists in the server binary at all", and further down that "there is no timer
+// that would apply it even if it were not". Both are false, and the enumeration
+// that produced them was sound about WRITERS while wrong about what drives them.
+//
+// The regeneration tick is `CGObjPC::vslot_362` (`0x004e2990`), and it is
+// registered as a timer:
+//
+//	4a6dd3  fld  DWORD PTR ds:0xb45dc0   ; 4.0 -- the interval
+//	4a6ddc  mov  eax,0x4ac6f0            ; the slot-362 thunk -- the callback
+//	4a6de6  push esi                     ; this
+//	4a6de7  lea  edi,[esi+0x18c]         ; the timer list
+//	4a6df0  call 0x4ab640                ; register
+//
+// It was missed because slot 362 is never called directly: the thunk's address
+// appears exactly once in the whole image, at `0x004a6ddd`, as the immediate of
+// that `mov`. A caller search finds nothing; only an address search does.
+//
+// WHAT THE TICK DOES, from the disassembly (the decompiled C loses the x87
+// stack, which is where the whole formula lives):
+//
+//	if (GetLifeState() != 1) return;                      // must be alive
+//	if (curHP == maxHP && curMP == maxMP) return;         // nothing to do
+//	if (GetBodyMode() not in {0, 4}) return;
+//	if (this[0xa2d]) {                                    // HP enabled
+//	    amount = ftol(curHP * EvaluateParam(25) / 100.0)  // 'hprg', /100 at 0xb45af0
+//	    if (amount < 1) amount = 1                        // FLOOR OF 1
+//	    bound  = ftol(curHP * 0.5)                        // 0.5 at 0xb45c50
+//	    ...
+//	}
+//	if (this[0xa2c]) { the same with EvaluateParam(26), 'mprg' }
+//
+// and it asserts against `GObjPC.cpp` line 0xdf9 (3577).
+//
+// TWO THINGS THAT MATTER HERE. The rate is a percentage of the **current**
+// pool, not the maximum -- so regeneration accelerates as it fills. And the
+// **floor of 1** means the engine's own unbuffed rate is not zero: `'hprg'` and
+// `'mprg'` default to 0, so a live, damaged character recovers exactly 1 per
+// tick with no buff at all. The old note reasoned "the parameters default to 0,
+// therefore the rate is zero" and never saw the floor.
+//
+// The `bound` above is read but NOT implemented here: the comparison that
+// applies it sits at `0x004e2c00`, which this pass did not read, so its
+// direction is unknown and guessing it would be inventing a rule.
+//
+// Monsters do not use the parameters at all -- `CGObjMob::vslot_362`
+// (`0x004c1b00`) takes its amount from `_RefObjCommon+0xd4`, which is
+// characterdata **column 40**. Every one of the 52 `CHAR_` rows holds -1 there
+// and the engine skips a negative, which is the two halves agreeing.
+//
+// RegenInterval is now REAL. RegenPercentPerTick stays OWN DESIGN:
 //
 // The proof is an enumeration rather than a sampling, which is the only kind
 // worth trusting for a negative. A character's HP and MP live in charData and
@@ -61,17 +110,47 @@ import (
 // 20 bytes each; see docs/protocol/param_registry.md), and **`'hprg'` and
 // `'mprg'` both default to 0**, with a maximum of 100.
 //
-// So the two halves agree: the engine's resting regeneration rate is zero, and
-// there is no timer that would apply it even if it were not.
-//
-// So this is a plain, honest refill -- a percentage of the pool every few
-// seconds -- so a caster who runs dry recovers without relogging. It is not a
-// claim about the original balance, and there is no longer an `'mprg'` default
-// to go looking for.
+// the engine's own rate is whatever `'mprg'` evaluates to, which is 0 without a
+// buff, leaving only the floor of 1 per tick. srrevamp has no source of
+// `'mprg'` at all, so shipping the engine's literal rate would mean 1 MP every
+// four seconds for every caster in the game. 4% of the current pool is kept
+// instead, as a disclosed deviation: the SHAPE is the engine's (a percentage of
+// the current pool, floored at 1, applied on the engine's own interval), and
+// only the percentage is ours.
 const (
 	RegenPercentPerTick = 4
-	RegenInterval       = 3 * time.Second
+	// RegenInterval is REAL: the float the timer registration hands to the
+	// tick callback, `.rdata 0x00b45dc0` = 4.0. The unit is inferred as
+	// seconds -- the same inference the berserk duration carries, and for the
+	// same reason: nothing in the timer module converts it.
+	RegenInterval = 4 * time.Second
 )
+
+// RegenPerTick is what one tick restores to a pool holding cur out of max.
+//
+// The engine's shape, from CGObjPC::vslot_362: a percentage of the **current**
+// pool, floored at 1, and never more than the deficit. Percent-of-current is
+// the part srrevamp had wrong -- it took a percentage of the maximum, which
+// gives a drained caster the same trickle as a nearly-full one when the engine
+// gives it less.
+func RegenPerTick(cur, max int) int {
+	if cur >= max || max <= 0 {
+		return 0
+	}
+	if cur < 0 {
+		cur = 0
+	}
+	amount := cur * RegenPercentPerTick / 100
+	if amount < 1 {
+		// The engine's own floor, and the reason its unbuffed rate is not
+		// zero despite 'mprg' defaulting to 0.
+		amount = 1
+	}
+	if deficit := max - cur; amount > deficit {
+		amount = deficit
+	}
+	return amount
+}
 
 // Tracker holds live MP per character. The zero value is not usable; call
 // NewTracker.
@@ -109,11 +188,16 @@ func (t *Tracker) currentLocked(characterID int64, maxMP int) int {
 	if cur < maxMP {
 		last := t.lastGen[characterID]
 		if ticks := int(time.Since(last) / RegenInterval); ticks > 0 {
-			perTick := maxMP * RegenPercentPerTick / 100
-			if perTick < 1 {
-				perTick = 1
+			// Each tick is a percentage of the pool as it stands, so the
+			// ticks compound and cannot be multiplied out -- they are
+			// applied in turn, stopping as soon as the pool is full.
+			for i := 0; i < ticks; i++ {
+				gain := RegenPerTick(cur, maxMP)
+				if gain == 0 {
+					break
+				}
+				cur += gain
 			}
-			cur += ticks * perTick
 			if cur > maxMP {
 				cur = maxMP
 			}
