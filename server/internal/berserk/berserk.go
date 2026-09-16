@@ -137,6 +137,22 @@ const (
 	// 0x34-0x3c, 0x8c/0x8d and 0xbe-0xc8). Their only writers are skill
 	// effects and tagged item modifiers, which srrevamp has none of.
 	//
+	// RE-CHECKED 2026-09-16 against the dump's blind spot, because the writer
+	// census above is a census over what Ghidra recovered rather than over the
+	// binary -- the distinction that made the berserk-timer claim wrong. There
+	// IS a fourth writer of 178-181, at 0x004a4570, in a 4.3 KB region Ghidra
+	// never turned into a function. It does not change this conclusion: it
+	// writes them with `SetParam(slot 2, ctx 5, ...)` and removes the same ids
+	// at the same ctx, which is a keyed modifier being applied and taken away,
+	// not a baseline. An unbuffed character has no ctx-5 entry, so the params
+	// stay at the registry default.
+	//
+	// The load-bearing half is therefore the DEFAULT, not the writer census:
+	// what makes these terms zero is that the registry says 0 and every writer
+	// found -- visible or not -- is a keyed modifier. Stated that way it does
+	// not depend on having seen every writer. See client/tools/ghidra/
+	// dump_gaps.py, which is how the fourth one was found.
+	//
 	// A param nothing writes falls back to its DEFAULT, not to zero -- the
 	// read path calls ParamKeeper_EnsureParam first, and
 	// ParamKeeper_EvaluateParam uses the descriptor's default as the base

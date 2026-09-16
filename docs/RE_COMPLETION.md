@@ -4627,3 +4627,61 @@ all five" by luck rather than design; `Max` and `FillPerHit` stay own design.
 **What moved:** `berserk.Duration` 20s -> 60s, shipped with a test that also
 guards against drifting back to the placeholder. And a confidently-worded wrong
 conclusion, committed and pushed one tick ago, is retracted with its cause named.
+
+## Measuring the dump's blind spot, and re-checking what rested on it (2026-09-16)
+
+Last tick's retraction was caused by a census over the decompilation dump being
+mistaken for a census over the binary. Rather than move on to another value, this
+tick measures that gap and re-checks the conclusions standing on it.
+
+**The measurement.** `.text` is 7,176,192 bytes; the dump's 34,113 functions
+cover 5,936,050 of them. **17.3% of the executable section is invisible to every
+grep this project runs** — 1.24 MB in 31,578 gaps. Most is CRT and template code,
+but filtering to the game-logic band (`0x401000-0x700000`) and discarding padding
+by int3/zero density still leaves **145 real-code gaps, about 30 KB, 6.1% of the
+band**.
+
+The map finds its own precedent: `0x00515a52` (702 bytes) is exactly the region
+holding the berserk activation handler that broke last tick's claim.
+
+**The re-check, which is the point.** For each gap, disassemble it and ask which
+functions it calls. Against the thirteen functions this project's enumerations
+depend on — the pool setters, the generic adjust, `GainExpAndLevel`, the chance
+roll, `EnsureParam`, both mastery walks, `SetBodyMode`, `RecalcLevelDiffExpScale`
+and the param accessors — **only two gaps call any of them**:
+
+- `0x515a52` — the berserk handler, already found and already corrected.
+- `0x4a4561` — calls both `ParamKeeper_SetParam` and `ParamKeeper_ReadParam`.
+
+Everything else is clean. **The pool-writer enumeration behind `mana`'s
+no-regeneration closure, the exp-grant enumeration, the mastery work and the
+chance-roll work are all safe**: no invisible code calls any of those functions.
+That is a real validation of four earlier conclusions against the exact failure
+mode that broke a fifth.
+
+**The one gap that mattered.** `0x004a4570` is a 4.3 KB function Ghidra never
+recovered. It writes params 23, 24, 5, 6, 9, 11, 140, 169, 183 and — the
+interesting part — **178, 179, 180, 181**, which are on `berserk`'s "proven zero
+for an unbuffed character" list.
+
+It does not overturn that claim, and the reason is specific rather than
+hopeful: it writes them with `SetParam(slot 2, ctx 5, ...)` and calls the REMOVE
+function for the same ids at the same ctx. Slot 2 keyed by a ctx, applied and
+removed as a pair, is a temporary modifier — an unbuffed character has no ctx-5
+entry, so the params sit at the registry default of 0.
+
+What it did change is the claim's **reasoning**. It was written as "none of the
+three baseline functions writes them"; there is now a demonstrable fourth writer,
+so that phrasing was load-bearing on a census that cannot be complete. Restated,
+it rests on the param registry's defaults plus the observation that every writer
+found — visible or not — is a keyed modifier. That form does not require having
+seen every writer.
+
+**Shipped** as `client/tools/ghidra/dump_gaps.py`, with `--calls` for exactly the
+publish-time question: *does code I cannot see call the functions my enumeration
+depends on?* It answers "safe" or names the gap.
+
+**What moved:** no value. A tool that makes the dump's blind spot measurable, a
+17.3%/6.1% number for how big it is, four enumerations re-validated against it,
+and one claim restated so it no longer depends on a census that cannot be
+complete.

@@ -521,3 +521,47 @@ This has produced a wrong result three times in this project:
 
 A census that reports a count without saying which classes it counted has not
 answered the question it looks like it answered.
+
+
+## `dump_gaps.py` — what the dump cannot see
+
+**Run this before publishing any conclusion that rests on an enumeration.**
+
+Every census in this project greps `/var/tmp/decomp_server`: "who calls X", "how
+many call sites are there", "who writes offset Y". Those are censuses over *what
+Ghidra recovered*, not over the binary — and the difference is not small:
+
+| | bytes | share |
+|---|---|---|
+| `.text` | 7,176,192 | |
+| indexed by the dump | 5,936,050 | 82.7% |
+| **invisible** | **1,242,362** | **17.3%** |
+
+Most of that is CRT and template code, but **6.1% of the game-logic band
+(0x401000-0x700000) is invisible too — 145 real-code gaps, about 30 KB.**
+
+This is not hypothetical. On 2026-09-16 an enumeration found eleven
+`SetBodyMode` call sites, none giving berserk a duration, and shipped the
+conclusion "berserk has no timer". The berserk activation handler is at
+`0x00515bfd`, inside a gap; it was the twelfth call site, and berserk lasts 60
+seconds.
+
+```
+python3 dump_gaps.py                        # the gap map
+python3 dump_gaps.py --calls 4a9fc0,4b3510  # do invisible gaps call these?
+```
+
+`--calls` answers the only question that matters at publish time. If it prints
+"the enumeration is safe", the dump saw everything that calls those functions.
+If it names a gap, the enumeration is incomplete and `objdump` is the only way
+to finish it.
+
+Two findings from its first run, both worth keeping:
+
+- The pool-writer, exp-grant, mastery and chance-roll enumerations are **safe** —
+  no invisible code calls any of them.
+- A 4.3 KB invisible function at `0x004a4570` writes params 178-181. It does not
+  overturn `berserk`'s completeness note, because it writes them at
+  `slot 2, ctx 5` and removes them at the same ctx — a keyed modifier, not a
+  baseline — but it did force that note to be restated so it rests on the param
+  registry's defaults rather than on having seen every writer.
