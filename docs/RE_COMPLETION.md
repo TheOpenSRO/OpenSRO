@@ -4512,3 +4512,55 @@ updated from "genuinely not recovered" to name the table that probably holds it.
 
 **What moved:** four real constants and a parse rule, shipped, from a search that
 set out after something else entirely.
+
+## Berserk has no timer, and that is now proven rather than unfound (2026-09-16)
+
+Last tick left this as "blocked on one more read". The read is done, and the
+answer is a negative with a mechanism behind it — which is the difference
+between a closure and a failed search.
+
+The old disclosure said the duration was "genuinely not recovered" because every
+caller of the body-mode setter passes `0xff/0`. **That was not even accurate:**
+two of the eleven call sites pass a real state-change slot and a real float. The
+earlier pass had generalised from a sample.
+
+**The mechanism.** `IGObj::SetBodyMode` can carry a duration:
+
+```c
+if (param_3 != 0xff && 0.0 < param_4)
+    *(float *)(state + 0x10) = param_4;
+```
+
+so a body mode gets a timed life only when the state-change slot is real and the
+float is positive.
+
+**Berserk is body mode 1.** `Combat_ResolveDamage` reads `IGObj_GetBodyMode`
+(vtable slot 64, now named) and sets the berserk damage flag on `== 1` — the same
+byte at `(*(this+0x30))+3` that `SetBodyMode` writes. That ties the mode number
+to berserk through the damage path rather than by assumption.
+
+**The enumeration.** All eleven call sites were read, including the two whose
+arguments Ghidra lost — one copies another object's mode and passes `0xff,0,0`;
+the other sets up `local_74 = {.., 2, 0xff}`, mode 2 with no timer. Exactly two
+carry a duration, and **both pass body mode 2, not 1**. Every mode-1 and every
+variable-mode site passes `0xff`, the value that skips the timer branch.
+
+So the engine has a body-mode timer, uses it for another mode, and does not use
+it for berserk. How a real berserk ends is therefore not a duration this project
+failed to find — it is a different shape. `_CHAR.RemainHwanCount`, the persisted
+charge count already recovered beside `Orbs`, is the obvious candidate: a berserk
+spends a charge rather than running a clock. **Not promoted** — no use-site.
+
+`berserk.Duration` stays 20 seconds and stays own design, now with the same kind
+of proven reason `mana`'s regeneration rate carries.
+
+**A dead end worth recording so nobody repeats it.** The Hwan reference table
+`_REFHWANLEVEL` / `CRefHWANLevel` is real, its record is 0x30 bytes, and
+`hwanleveldata.txt` ships in Media.pk2's server_dep — all of which made it look
+like the place a duration would live. It is not: the server loads the table and
+uses only its SIZE, to bounds-check the level `IGObj::UpdateHwanLevel` will
+accept. No gameplay path reads its entries at all.
+
+**What moved:** no value. One disclosure went from "not recovered" to a proven
+negative, one inaccurate claim in it was corrected, and a promising-looking table
+is now marked as a dead end for this question.

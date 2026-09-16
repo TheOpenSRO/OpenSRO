@@ -494,6 +494,11 @@ public class ApplyKnownNames extends GhidraScript {
          + "codes -- irgc->25,26; er->9; hr->11; stri->1; mpi->4; dru->128,129,130,131 -- all of "
          + "which reproduce exactly."},
 
+        {"004aa5b0", "IGObj_GetBodyMode",
+         "Vtable slot 64, named from the base class's own assert. Returns the body-mode byte at "
+         + "(*(this+0x30))+3 -- the same byte IGObj::SetBodyMode writes. Combat_ResolveDamage "
+         + "compares it against 1 to set the berserk damage flag, so BODY MODE 1 IS BERSERK."},
+
         {"00427050", "CMainProcess_LoadGainRates",
          "Startup loader for the server's gain multipliers. Each knob follows one shape: "
          + "value = atol(setting) / 100.0 (so the setting is a PERCENTAGE), then a floor at 1.0 "

@@ -44,21 +44,43 @@ const (
 	// design): ~13 hits to fill from empty.
 	FillPerHit = 8
 
-	// Duration is how long a berserk lasts. Still OWN DESIGN, but the search
-	// narrowed on 2026-09-16 and the next reader should start further along.
+	// Duration is how long a berserk lasts. OWN DESIGN, and as of 2026-09-16
+	// it has a PROVEN REASON rather than a failed search behind it: **this
+	// server binary gives berserk no timer at all.**
 	//
-	// It is not in the function that turns berserk on: every call site there
-	// passes 0xff/0 for the state-change slot and duration. What the binary
-	// does have is a Hwan REFERENCE TABLE -- `_REFHWANLEVEL` / `CRefHWANLevel`,
-	// loaded into a vector at DAT_00d6aa14+0x8d0, whose size gates the level
-	// IGObj::UpdateHwanLevel will accept -- and `hwanleveldata.txt` is listed
-	// in Media.pk2's server_dep textdata, so unlike the drop tables this data
-	// IS in the client archives.
+	// The proof is a mechanism plus an enumeration, not an absence of hits.
 	//
-	// So the duration is most likely a column of that table. What is missing is
-	// the entry layout: no gameplay reader of the table's fields was found, only
-	// the size check. Not promoted to a guess, and not blocked on data either --
-	// blocked on one more read.
+	// 1. IGObj::SetBodyMode CAN carry a duration. Its fourth argument is a
+	//    float, and near the end it does
+	//
+	//        if (param_3 != 0xff && 0.0 < param_4)
+	//            *(float *)(state + 0x10) = param_4;
+	//
+	//    so a body mode is given a timed life only when the state-change slot
+	//    is real and the float is positive.
+	// 2. BERSERK IS BODY MODE 1. Combat_ResolveDamage reads GetBodyMode
+	//    (vtable slot 64) and sets the berserk damage flag on `== 1`, which is
+	//    the same byte at (*(this+0x30))+3 that SetBodyMode writes.
+	// 3. All eleven SetBodyMode call sites were read, including the two whose
+	//    arguments Ghidra lost. Exactly two carry a duration -- and both pass
+	//    body mode **2**, not 1. Every mode-1 and every variable-mode site
+	//    passes 0xff for the state-change slot, which is the value that skips
+	//    the timer branch entirely.
+	//
+	// So the engine has a body-mode timer, uses it for another mode, and does
+	// not use it for berserk. How a real berserk ends is therefore NOT a
+	// duration this project failed to find; it is something else, and the
+	// persisted `_CHAR.RemainHwanCount` beside Orbs above is the obvious
+	// candidate -- a berserk spends a charge rather than running out a clock.
+	// That is a hypothesis with no use-site and is not promoted.
+	//
+	// srrevamp's 20 seconds is therefore a straightforwardly invented timer for
+	// a mechanic the game shapes differently, and is disclosed as one.
+	//
+	// (The Hwan REFERENCE TABLE `_REFHWANLEVEL` is real and its data ships in
+	// Media.pk2, but it is a dead end for this question: the server loads it
+	// and uses only its SIZE, to bounds-check the level
+	// IGObj::UpdateHwanLevel will accept. No gameplay path reads its entries.)
 	Duration = 20 * time.Second
 
 	// DamageNumerator/DamageDenominator are the REAL berserk damage
