@@ -8290,3 +8290,92 @@ off-by-one caught.
 the per-option values. `MagicOption.txt` has a level column (col 4) and
 `refmagicoptbyitemoptleveldata.txt` is named for exactly this relationship, so
 the two can be joined: which options an item can carry at a given option level.
+
+## 2026-09-16 — CheckEquipsetIntegrity: a validator that names four things at once
+
+The previous entry proposed joining the item option level to
+`refmagicoptbyitemoptleveldata.txt`. The route there ran through
+`CGPCInventoryOP::CheckEquipsetIntegrity` (`0x004bb020`) — already a named
+function, already used once for `ReqGender` — and the validator turned out to
+be worth more than the join.
+
+A validator is a dense source for this kind of work: every refusal it makes is a
+rule stated with its bound, and the engine's log strings name the concepts.
+
+### What it gave
+
+**1. `vslot_317` has a real name.** The validator calls vtable offset `0x4f4`
+— slot 317, the equip check this project read in v0.1.225 — and names it in the
+failure message:
+
+	"Equiped already but CanBeEquipedAt() failed!! [Char: %s, Slot: %d, Item: %s]"
+
+`CanBeEquipedAt`, the engine's spelling with one `p`. Renamed in the comments
+that cite it. **Not renamed:** `internal/mana/mana.go` cites
+`CGObjChar::vslot_317`, a different class where slot 317 means something else
+entirely — the project already knows a slot number means nothing across
+unrelated vtables, and checking that before a global rename is why it did not
+become a wrong edit.
+
+**2. Ammunition is "Bullet", and slot 7 is the only place it is legal.** The
+condition spells the exception out:
+
+	if ((notEquip != 1) || (slot != 7))
+	    "Item is neither Equip nor Bullet! [Char: %s, Slot: %d, Item: %s]"
+
+A fourth confirmation of the v0.1.225 finding, and the first time the engine's
+own word for the concept appeared. A test now pins that `SlotFor` sends
+ammunition to slot 7 **and nowhere else** — the half a resolver can get wrong
+without anything noticing.
+
+**3. An item's option level is bounded at 250.** `if (0xfa < item[0xd]->optLevel)`
+→ `"Item OptLevel is invalid!!!"`. The guard fires above `0xfa`, so 250 is legal
+and 251 is not. Shipped as `equipment.MaxItemOptLevel` with the point that
+matters attached: **this is a validation ceiling, not a balance figure.** Real
+items reach single digits; 250 is where the engine stops believing the number.
+Reading it as "items go up to +250" would be manufacturing a design decision out
+of a sanity check, and the test is named to interrupt that.
+
+**4. A fourth witness for the slot count.** Its loop runs `local_c` from 0 and
+returns success at `0xc < local_c` — exactly slots 0..12. That is now the
+server's equip check, the server's resolver, the client's appearance installer,
+and this.
+
+### And one for the open list
+
+`vslot_0x454` gates `"Equiped Avatar Item!!"`, so **0x454 is an avatar-item
+predicate** — one of the two unresolved gating slots in `CanBeEquipedAt` from
+v0.1.225. `FUN_004890f0` is the bullet predicate and `FUN_00488e40` a second
+avatar one. Not wired into anything; recorded so the next reader of
+`CanBeEquipedAt` does not re-derive them.
+
+### Shipped
+
+`equipment.MaxItemOptLevel = 250`, the `CanBeEquipedAt` name in every comment
+that cited the slot number, the "Bullet" confirmation on `FamilyAmmunition`, and
+the fourth slot-count witness. Two tests:
+`TestMaxItemOptLevelIsTheEnginesCeiling` (bound plus the validation-not-balance
+warning) and `TestAmmunitionIsAllowedOnlyInTheShieldSlot`.
+
+### A stale duplicate of a corrected claim
+
+`ITEM_FORMAT.md` still read "weapons 6, shields 4, **accessories 7**" — the exact
+claim corrected in v0.1.224, which had been fixed in `equipment/rules.go` and
+left standing in the doc. Fixed, with a note saying what it used to say.
+
+Worth recording as a pattern rather than a one-off: **a correction applied in one
+place and not the other is how a fixed error comes back.** The grep that found it
+(`accessories 7`) took a second and should be part of making any correction, not
+a thing stumbled on two weeks later.
+
+**What moved:** one function got its engine name, one bound became grounded,
+the ammunition rule went from "allowed there" to "allowed only there", and a
+corrected claim stopped contradicting itself across two files.
+
+**Next step:** the join this tick set out to do and did not reach.
+`refmagicoptbyitemoptleveldata.txt` is 359 rows of 5 columns and the engine
+names its key in a log string — `"can't find MagicOptGroup[%s]:MagicOptLevel[%d]
+from MagOptEachLevel at RefMagicOptByItemOptLevel"`. The `%s` is the telling
+part: the group is looked up by NAME, not by the numeric id the set table uses,
+so the two tables are keyed differently and the joining function is where that
+is reconciled.

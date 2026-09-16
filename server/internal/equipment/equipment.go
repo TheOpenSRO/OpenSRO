@@ -82,7 +82,7 @@ const (
 	SlotEarring
 	SlotNecklace
 	// SlotRingLeft and SlotRingRight are a PAIR: the engine accepts either for a
-	// ring. Its equip check (CGItemEquip::vslot_317, `0x00497070`) resolves
+	// ring. Its equip check (CGItemEquip::CanBeEquipedAt, `0x00497070`) resolves
 	// the required slot and demands an exact match, except here --
 	//
 	//	if (required != 0xb)  return (given != required) ? 0x180e : 1;
@@ -97,13 +97,26 @@ const (
 
 // MaxEquipSlots is how many equipment slots the engine has, and NoSlot is
 // its "no slot" sentinel. Both are read off the front of the equip check
-// (CGItemEquip::vslot_317, `0x00497070`), which refuses with 0x1806
+// (CGItemEquip::CanBeEquipedAt, `0x00497070`), which refuses with 0x1806
 // UIIT_MSG_STRGERR_WRONG_POSITION before looking at anything else:
 //
 //	if ((slot == 0xff) || (0xc < slot)) return 0x1806;
 //
 // 0xff is the same not-set sentinel the skill table uses for an unused
 // weapon requirement (combat.ReqWeaponUnused).
+//
+// THE ENGINE'S OWN NAME for that check is CanBeEquipedAt (its spelling, one
+// `p`). CheckEquipsetIntegrity calls it through vtable offset 0x4f4 -- slot
+// 317, the same slot this project had been calling `vslot_317` -- and names it
+// when the call disagrees with what is already worn:
+//
+//	"Equiped already but CanBeEquipedAt() failed!! [Char: %s, Slot: %d, Item: %s]"
+//
+// A FOURTH WITNESS for the count, 2026-09-16: CheckEquipsetIntegrity's own
+// loop runs `local_c` from 0 and returns success at `0xc < local_c`, so it
+// validates exactly slots 0..12. That is now the server's equip check, the
+// server's resolver, the client's appearance installer, and this.
+//
 // EquipVisualCount is how many of those slots carry a model the client
 // draws. It is the client's own EQUIP_VISUAL_COUNT, from two differently
 // worded asserts in CObjCharacter.cpp:
@@ -121,6 +134,24 @@ const (
 	NoSlot           = 0xff
 	EquipVisualCount = 9
 )
+
+// MaxItemOptLevel is the highest option level an item may carry.
+//
+// From CGPCInventoryOP::CheckEquipsetIntegrity (`0x004bb020`), which walks a
+// character's equipped items and refuses the whole set if any one of them is
+// out of range:
+//
+//	if (0xfa < item[0xd]->optLevel)      // a byte at +0x2c
+//	    "Item OptLevel is invalid!!![Char: %s, Slot: %d, Item: %s, OptLevel: %d]"
+//
+// The guard fires ABOVE 0xfa, so 250 is legal and 251 is not.
+//
+// THIS IS A SANITY CEILING, NOT A GAMEPLAY ONE. Real items are enhanced to
+// single digits; 250 is where the engine stops believing the number at all.
+// Recorded as the engine's bound, not as a balance figure -- srrevamp does not
+// model option levels, and an implementation that treated 250 as a reachable
+// target would be reading a validation limit as a design limit.
+const MaxItemOptLevel = 250
 
 // AccessorySlots are the worn accessories.
 //

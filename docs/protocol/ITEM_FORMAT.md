@@ -53,8 +53,14 @@ project could not name for a long time — is the **gauntlet**, and the equipmen
 artwork calls it exactly that (`equip_slot_gauntlet.ddj`).
 
 **TypeID3 is the family**: China's garment / protector / armour are 1 / 2 / 3, Europe's robe /
-light / heavy are 9 / 10 / 11, weapons 6, shields 4, accessories 7, avatar dress 13. TypeID1 is
-3 for every item and TypeID2 is 1 for everything worn or held.
+light / heavy are 9 / 10 / 11, weapons 6, shields 4, **job suits 7**, accessories **5 (China) and
+12 (Europe)**, avatar dress 13. TypeID1 is 3 for every item and TypeID2 is 1 for everything worn
+or held — except ammunition, which is TypeID2 3 and still equips (see the slot table below).
+
+*(This line said "accessories 7" until 2026-09-16. Seven is the job suit; every TypeID3 == 7 row
+in a real itemdata is a trade outfit. The accessories are two families, one per race. Corrected
+in `equipment/rules.go` at the time and here afterwards — a stale duplicate of a corrected claim
+is how a fixed error comes back.)*
 
 ## Who may wear it
 
@@ -201,6 +207,31 @@ Three consequences, all of which srrevamp had wrong:
 The check also bounds the set: `if ((slot == 0xff) || (0xc < slot)) return 0x1806` — **13 slots,
 0…12**, with `0xff` the same not-set sentinel the skill table uses for an unused weapon
 requirement. Slots 13–16 in the artwork list have no resolver arm and no items.
+
+**The engine's own name for that check is `CanBeEquipedAt`** (its spelling, one `p`), recovered
+2026-09-16. `CGPCInventoryOP::CheckEquipsetIntegrity` (`0x004bb020`) calls it through vtable
+offset `0x4f4` — slot 317, which this project had been calling `vslot_317` — and names it when
+the answer disagrees with what is already worn:
+
+```
+"Equiped already but CanBeEquipedAt() failed!! [Char: %s, Slot: %d, Item: %s]"
+```
+
+That same validator supplies three more things. **Ammunition is "Bullet" in the engine's own
+word, and slot 7 is the only place it is legal** — the condition spells the exception out:
+
+```c
+if ((notEquip != 1) || (slot != 7))
+    "Item is neither Equip nor Bullet! [Char: %s, Slot: %d, Item: %s]"
+```
+
+**An item's option level is bounded at 250**: `if (0xfa < item->optLevel)` →
+`"Item OptLevel is invalid!!!..."`. The guard fires above `0xfa`, so 250 is legal. This is a
+validation ceiling, not a balance figure — real items reach single digits, and reading it as a
+design target would be a mistake (`equipment.MaxItemOptLevel` says so, and a test guards it).
+
+**And its loop is a fourth witness for the slot count**: `local_c` runs from 0 and it returns
+success at `0xc < local_c`, validating exactly slots 0..12.
 
 Incidentally, the same function re-confirms four values this project already shipped, from a
 source none of them came from: it compares the item's `ReqGender` against the character's and

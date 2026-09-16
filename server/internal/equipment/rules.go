@@ -132,6 +132,17 @@ const (
 	// (0x780 is the TypeID3 field, 0x200 >> 7 == 4.) That is the same slot
 	// number the shield arm returns, which is the mechanism: a bow user
 	// gives up the shield to carry arrows.
+	//
+	// THE ENGINE'S OWN WORD FOR IT IS "BULLET", and a fourth confirmation
+	// arrived 2026-09-16 from CGPCInventoryOP::CheckEquipsetIntegrity
+	// (`0x004bb020`). That validator rejects anything that is not equipment,
+	// with one exception spelled out in the condition itself:
+	//
+	//	if ((notEquip != 1) || (slot != 7))
+	//	    "Item is neither Equip nor Bullet! [Char: %s, Slot: %d, Item: %s]"
+	//
+	// A bullet passes only at slot 7. So the engine does not merely allow
+	// ammunition in the shield slot -- it allows it nowhere else.
 	FamilyAmmunition = 4
 )
 

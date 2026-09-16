@@ -366,3 +366,55 @@ func slotIn(s Slot, list []Slot) bool {
 	}
 	return false
 }
+
+// TestMaxItemOptLevelIsTheEnginesCeiling pins the bound and, more importantly,
+// what kind of bound it is. CheckEquipsetIntegrity refuses an equipped set when
+// any item's option level exceeds 0xfa, so 250 is legal and 251 is not.
+//
+// It is a VALIDATION ceiling, not a balance figure. Real items reach single
+// digits. A future change that reads this as "items go up to +250" would be
+// making a design decision out of a sanity check, which is the failure this
+// test's name is meant to interrupt.
+func TestMaxItemOptLevelIsTheEnginesCeiling(t *testing.T) {
+	if MaxItemOptLevel != 0xfa {
+		t.Fatalf("MaxItemOptLevel = %d; the engine refuses above 0xfa (%d)", MaxItemOptLevel, 0xfa)
+	}
+	// The guard is `0xfa < value`, so the bound itself is legal.
+	for _, tc := range []struct {
+		level int
+		legal bool
+	}{{0, true}, {12, true}, {MaxItemOptLevel, true}, {MaxItemOptLevel + 1, false}} {
+		if got := tc.level <= MaxItemOptLevel; got != tc.legal {
+			t.Errorf("option level %d: legal=%v, want %v", tc.level, got, tc.legal)
+		}
+	}
+	// It is a byte in the engine, so it cannot exceed 255 whatever else changes.
+	if MaxItemOptLevel > 255 {
+		t.Errorf("MaxItemOptLevel = %d, but the engine stores it in a byte", MaxItemOptLevel)
+	}
+}
+
+// TestAmmunitionIsAllowedOnlyInTheShieldSlot holds the exception the engine
+// spells out in CheckEquipsetIntegrity: a "Bullet" passes validation at slot 7
+// and nowhere else. srrevamp's SlotFor already sends ammunition there; this
+// pins that it sends it NOWHERE else, which is the half a resolver could get
+// wrong silently.
+func TestAmmunitionIsAllowedOnlyInTheShieldSlot(t *testing.T) {
+	for _, t4 := range []int{1, 2} {
+		ammo := &refdata.Item{ID: int64(t4), TypeID1: TypeItem,
+			TypeID2: TypeExpendable, TypeID3: FamilyAmmunition, TypeID4: t4}
+		slot, ok := SlotFor(ammo)
+		if !ok || slot != SlotShield {
+			t.Fatalf("ammunition TypeID4 %d resolved to %d,%v; want the shield slot %d",
+				t4, slot, ok, SlotShield)
+		}
+		for s := Slot(0); int(s) < MaxEquipSlots; s++ {
+			if s == SlotShield {
+				continue
+			}
+			if SlotAccepts(slot, s) {
+				t.Errorf("ammunition was accepted in slot %d; the engine allows only slot 7", s)
+			}
+		}
+	}
+}
