@@ -8137,3 +8137,83 @@ probe tags — `GObjPC::FUN_004909f0` and `FUN_00491bd0` (both unnamed). They ar
 tag dispatchers too, and whatever they do with the tags is a second, independent
 reading of the same vocabulary; agreement would extend the control set, and
 disagreement would be worth more.
+
+## 2026-09-16 — the two other tag functions are debug formatters, and they name everything
+
+The previous entry proposed running the same param-id walk over
+`GObjPC::FUN_004909f0` and `FUN_00491bd0`, on the reasoning that they carry all
+eight probe tags and are therefore dispatchers too.
+
+**They are not dispatchers.** Neither calls `ParamKeeper_SetParam` at all, and
+pointing the walker at them would have returned nothing — which is the kind of
+empty result this project has learned to distrust, so it was worth checking what
+they are before running it. They are **item debug formatters**: they build a
+human-readable dump of an item and its magic options, `[DBID: %I64d, RefID: %d]`,
+`[Dur: %d/%d]`, and then one line per option.
+
+That is better than what was proposed. Each option line is a literal like
+`"block rate +%d"` or `"evcr +%d%%"`, guarded by the tag constant — so the tag,
+**the engine's own human label**, and **the unit** come out together. 41 tags get
+a label. Two previously-unnamed functions get an identity.
+
+### What it settles
+
+- `dura` prints as **flaw**, with a MINUS sign: `"flaw -%d%%"`. That is
+  `MATTR_DEC_MAXDUR` — a durability penalty, and the only negative option in the
+  table. Inferring it from the code name would have been a guess; the format
+  string is the use-site.
+- `cri` -> **critical**, `rein` -> **reinforce**, `bri` -> **block rate**,
+  `hpmp` -> **regen hpmp**.
+- The five elemental resists get their meanings — `ps` **anti-toxin**, `fz`
+  **anti-frostbite**, `bu` **anti-burn**, `es` **anti-eshock**, `zb`
+  **anti-zombie** — even though the previous tick could not separate their param
+  ids. A name and an id are different questions; this answers the first.
+- The `AVT`/`Ava` prefixes confirm the avatar family split from the game's own
+  display code, a third artefact after the code names and the item-kind column.
+
+### The distinction that had to be got right
+
+`+%d` versus `+%d%%` is a property of **the bonus, not the stat**. `block rate
++%d` is flat because the option adds five POINTS; the block rate itself is still
+a percentage srrevamp rolls against 0..100. Reading "flat" as "this stat is not
+a percentage" would have been a real regression, and a test now stands against
+it.
+
+### Two probe faults, both caught before shipping
+
+The extractor attributes a literal to the most recently seen tag constant, which
+can bind it to a neighbour. `int` came back labelled `"Ava hr"` and `soli`
+labelled `"resist stun"` — labels that plainly belong to another tag, which is
+how they were spotted and dropped.
+
+Worse, a first and looser literal pattern swept up `"ape(%d%%): %d"`-style lines,
+where the `%%` is a **probability** and not the value's unit. That alone produced
+six false unit conflicts. Tightening the pattern to literals that are exactly
+`label ±%d[%%]` cut it to the two real ones.
+
+### The one real disagreement, disclosed
+
+`0x004909f0` prints `"hp +%d%%"`; `0x00491bd0` prints `"hp +%d"`. Both literals
+are really in the binary, so the **engine** disagrees with itself here rather
+than the probe being wrong. Which governs is not established, so `hp` ships no
+unit and a test pins the absence.
+
+### Shipped
+
+`combat.BonusUnit` (nine tags, flat or percent) and `combat.LabelFor` (sixteen
+tags whose label the spelling does not give), with the bonus-not-stat warning
+carried in both the comment and a test.
+`TestBonusUnitIsAboutTheBonusNotTheStat` guards the misreading;
+`TestBonusUnitExcludesHP` pins the disclosed conflict.
+`docs/protocol/magic_options.md` gains the full table and the note on how the
+noise rows were caught.
+
+**What moved:** 41 tags gained the engine's own name for them, two unnamed
+functions gained an identity, and the elemental resists became meaningful even
+though their param ids remain open.
+
+**Next step:** `FUN_00491bd0`'s bless family — `"ape(%d%%): %d"`, `"solid(%d%%): %d"`,
+`"atha(%d%%): %d"`, `"luck(%d%%): %d"` and `"unknown bless[%d]"`. Those print a
+PROBABILITY and a value, which is a different shape from every other option, and
+`"unknown bless"` means the formatter enumerates a closed set it can fall off —
+so the set is discoverable from the same function.

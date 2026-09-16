@@ -164,6 +164,54 @@ walk and is listed, but it is in the same block and carries the same caveat.)
 regen, which was about what writes the pools by default — nothing does. These params are there for
 items to grant.
 
+## The engine's own names for each tag, and the unit of each bonus
+
+Two server-side debug formatters print an item and its options in the game's own words:
+`GObjPC::FUN_004909f0` (`0x004909f0`) and `FUN_00491bd0` (`0x00491bd0`). Both were unnamed
+`FUN_` functions carrying tag constants, which is how they were found. Each option line is a
+literal like `"block rate +%d"` or `"evcr +%d%%"`, guarded by the tag constant — so the tag, the
+human label and the unit come out together. **41 tags get a label this way.**
+
+The pair are near-duplicates that differ in the avatar prefix (`AVT` vs `Ava`) and agree on every
+tag below.
+
+**`+%d` versus `+%d%%` is a property of the BONUS, not of the stat.** `block rate +%d` is flat
+because the option adds five *points*; the block rate itself is still a percentage. Reading
+"flat" as "this stat is not a percentage" would be a misreading, and `paramtags_test.go` has a
+test standing against exactly that.
+
+| tag | unit | the engine's label |
+|---|---|---|
+| `str` `int` `mp` | flat | as spelled |
+| `bri` | flat | **block rate** |
+| `cri` | flat | **critical** |
+| `astr` | flat | as spelled |
+| `hr` `er` `duru` `evbl` `evcr` | percent | as spelled |
+| `rein` | percent | **reinforce** |
+| `dura` | percent, **negative** | **flaw** (`"flaw -%d%%"`) |
+| `hpmp` | percent | **regen hpmp** |
+| `ps` `fz` `bu` `es` `zb` | percent | **anti-toxin, anti-frostbite, anti-burn, anti-eshock, anti-zombie** |
+| `rsti` `rsli` `rfei` `rdii` `rcsi` | percent | **resist stun / sleep / fear / disease / csmp** |
+| `hra` `era` `hpa` `mpa` `inta` `stra` `luca` `mdia` `drua` `dara` `hprg` `mprg` | mixed | `AVT <base>` — the avatar family |
+
+`dura` is the one worth noticing: it prints as **flaw**, with a minus sign. That is what
+`MATTR_DEC_MAXDUR` means — a durability penalty, and the only negative option in the table.
+
+The five elemental resists get their meanings here even though the previous tick could not
+separate their param ids. A name and an id are different questions, and this answers the first.
+
+**`hp` is deliberately absent.** `0x004909f0` prints `"hp +%d%%"` and `0x00491bd0` prints
+`"hp +%d"`. Both literals are really in the binary, so the engine disagrees with itself; which
+governs is not established, so neither ships.
+
+**Two rows were dropped as attribution noise**, and it is worth saying how they were caught: the
+extractor tracks the most recently seen tag constant, so a literal can be attributed to a
+neighbouring tag. `int` came back labelled "Ava hr" and `soli` labelled "resist stun" — both
+labels that plainly belong to another tag. A first, looser pattern also swept up
+`"ape(%d%%): %d"`-style lines, where the `%%` is a *probability* and not the value's unit; that
+alone produced six false conflicts. Tightening the pattern to literals that are exactly
+`label ±%d[%%]` cut the conflicts to the two real ones.
+
 ## What is NOT here
 
 The bonus *magnitudes*. Columns 4/5 hold a level and a factor and columns 8–16 further numbers,

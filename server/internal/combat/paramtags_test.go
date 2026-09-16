@@ -164,3 +164,63 @@ func TestEveryParamForTagPacks(t *testing.T) {
 		}
 	}
 }
+
+// TestBonusUnitIsAboutTheBonusNotTheStat guards the misreading the comment
+// warns about. Block rate's bonus is flat -- the option adds points -- while
+// the stat it adds to is a percentage srrevamp rolls against 0..100. If some
+// future change reads "flat" as "not a percentage" and stops rolling block as
+// a chance, this is the test that should have stopped it.
+func TestBonusUnitIsAboutTheBonusNotTheStat(t *testing.T) {
+	if BonusUnit[TagBlock] != "flat" {
+		t.Fatalf("block rate's bonus is %q; the engine prints \"block rate +%%d\"", BonusUnit[TagBlock])
+	}
+	// The stat is still one this package rolls as a percentage: Monster.Block
+	// feeds RollChance. Nothing here should imply otherwise.
+	if BonusUnit[TagEvadeBlk] != "percent" {
+		t.Errorf("evade-block's bonus is %q; the engine prints \"evbl +%%d%%%%\"", BonusUnit[TagEvadeBlk])
+	}
+	// Critical and its opposer differ the same way, which is the asymmetry
+	// worth keeping visible.
+	if BonusUnit[TagCritical] == BonusUnit[TagEvadeCri] {
+		t.Errorf("critical (%q) and evade-critical (%q) print differently in the engine",
+			BonusUnit[TagCritical], BonusUnit[TagEvadeCri])
+	}
+}
+
+// TestBonusUnitExcludesHP pins a deliberate absence: the two debug formatters
+// disagree about 'hp', one printing "hp +%d%%" and the other "hp +%d". Both
+// literals are really in the binary, so it is the engine that disagrees, not
+// the probe. A later tick that settles it should remove this test, not the
+// comment explaining why.
+func TestBonusUnitExcludesHP(t *testing.T) {
+	if u, ok := BonusUnit[TagHP]; ok {
+		t.Errorf("'hp' has unit %q, but 0x004909f0 prints it as a percentage and "+
+			"0x00491bd0 as flat -- say which governs before listing it", u)
+	}
+}
+
+// TestLabelForCoversWhatSpellingDoesNot keeps the map to its purpose: a tag
+// whose label is just the tag teaches nothing and should not be listed, while
+// every tag that needs one should have it.
+func TestLabelForCoversWhatSpellingDoesNot(t *testing.T) {
+	for tag, label := range LabelFor {
+		if label == tag {
+			t.Errorf("%q maps to itself; only tags whose label differs belong here", tag)
+		}
+		if UnpackTag(PackTag(tag)) != tag {
+			t.Errorf("%q is not a packable tag", tag)
+		}
+	}
+	// 'dura' is the negative one, and the reason it is here at all.
+	if LabelFor["dura"] != "flaw" {
+		t.Errorf("'dura' prints as %q; the engine's literal is \"flaw -%%d%%%%\"", LabelFor["dura"])
+	}
+	// The five elemental resists must all be named -- they are the tags whose
+	// param ids the previous tick could NOT separate, so the names are the only
+	// thing known about them.
+	for _, tag := range []string{"ps", "fz", "bu", "es", "zb"} {
+		if LabelFor[tag] == "" {
+			t.Errorf("resist tag %q has no label", tag)
+		}
+	}
+}

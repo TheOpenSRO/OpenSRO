@@ -145,3 +145,66 @@ var ParamFor = map[string]int{
 // earlier finding that there is no passive regen: that finding was about what
 // writes the pools by default, and nothing does. These params exist for items
 // to grant, which is a different claim and a compatible one.
+
+// BonusUnit says whether a magic option's number is an absolute amount or a
+// percentage -- as the engine's own item dumper prints it.
+//
+// READ THIS AS A PROPERTY OF THE BONUS, NOT OF THE STAT. `block rate +%d` is
+// flat because the option adds five POINTS; the underlying block rate is still
+// a percentage. Taking "flat" here to mean "this stat is not a percentage"
+// would be a misreading, and the distinction is exactly the sort that has cost
+// this project time before.
+//
+// Recovered from two server-side debug formatters that print an item and its
+// options in the game's own words -- `GObjPC::FUN_004909f0` (`0x004909f0`) and
+// `FUN_00491bd0` (`0x00491bd0`). Each option line is a literal like
+// `"block rate +%d"` or `"evcr +%d%%"`, guarded by the tag constant, so the
+// tag, the label and the unit come out together.
+//
+// The two formatters are near-duplicates with different prefixes for the
+// avatar family (`AVT` vs `Ava`), and they agree on every tag listed here.
+//
+// 'hp' IS DELIBERATELY ABSENT. The two formatters disagree about it --
+// `0x004909f0` prints `"hp +%d%%"` and `0x00491bd0` prints `"hp +%d"` -- and
+// both literals are really there, so this is a disagreement in the engine
+// rather than a bad probe. Which one governs is not established, so neither
+// ships.
+var BonusUnit = map[string]string{
+	TagStr:      "flat",    // "str +%d"
+	TagInt:      "flat",    // "int +%d"
+	TagMP:       "flat",    // "mp +%d"
+	TagBlock:    "flat",    // "block rate +%d"  -- points onto a percentage stat
+	TagCritical: "flat",    // "critical +%d"
+	TagHitRate:  "percent", // "hr +%d%%"
+	TagParry:    "percent", // "er +%d%%"
+	TagEvadeBlk: "percent", // "evbl +%d%%"
+	TagEvadeCri: "percent", // "evcr +%d%%"
+}
+
+// LabelFor is what the engine's own dumper calls each tag. Most print as the
+// tag itself; these are the ones that do not, which is the useful part -- each
+// is a tag whose meaning the spelling alone does not give.
+//
+// `dura` is the one worth noticing: it prints as **flaw**, and with a MINUS
+// sign (`"flaw -%d%%"`), which is what `MATTR_DEC_MAXDUR` means -- a durability
+// penalty, the only negative option in the table.
+var LabelFor = map[string]string{
+	TagBlock:    "block rate",
+	TagCritical: "critical",
+	"rein":      "reinforce",
+	"dura":      "flaw", // negative: "flaw -%d%%"
+	"hpmp":      "regen hpmp",
+	// The resist family, in the engine's English. These give the five tags
+	// their meanings even though the previous tick could not separate their
+	// param ids -- a name and an id are different questions.
+	"ps":   "anti-toxin",
+	"fz":   "anti-frostbite",
+	"bu":   "anti-burn",
+	"es":   "anti-eshock",
+	"zb":   "anti-zombie",
+	"rsti": "resist stun",
+	"rsli": "resist sleep",
+	"rfei": "resist fear",
+	"rdii": "resist disease",
+	"rcsi": "resist csmp",
+}
