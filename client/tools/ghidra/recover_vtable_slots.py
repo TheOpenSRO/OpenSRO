@@ -22,7 +22,20 @@ had been reading blind.
 WHAT IT DOES NOT RECOVER: virtuals with no base-class stub. A method the base
 declares pure, or that only derived classes have, leaves no string and so never
 appears here. Slots 353, 372, 399 and 400 -- all four vtable calls in the
-cast-requirement check -- are in that category.
+cast-requirement check -- are in that category, as is slot 224, a CGItem-family
+accessor called 313 times.
+
+A NAME AT TWO SLOTS IS NOT AMBIGUOUS, it is one of two things, and comparing the
+implementations at both slots tells them apart:
+
+  * the SAME function at both, in every vtable -- one method the layout lists
+    twice, which is what multiple inheritance does. GetCurHP (66, 68) and
+    GetCurMP (67, 69) are this.
+  * DIFFERENT functions -- two distinct methods whose stubs share one log
+    string, i.e. overloads. ExpandInventory (173, 174) and three others are
+    this.
+
+Either way both slots are real and both are reported.
 
 Usage:
     recover_vtable_slots.py --exe /var/tmp/SR_GameServer.exe \
@@ -78,6 +91,7 @@ def resolve_slots(img, stubs):
 
     slots = collections.defaultdict(set)
     tables = collections.defaultdict(set)
+    bases = collections.defaultdict(set)
     for addr, entries in where.items():
         for e in entries:
             va = e
@@ -85,7 +99,57 @@ def resolve_slots(img, stubs):
                 va -= 4
             slots[stubs[addr]].add((e - va) // 4)
             tables[stubs[addr]].add(va)
-    return slots, tables
+            bases[stubs[addr]].add(va)
+    return slots, tables, bases
+
+
+def classify_multi(img, name, slot_list, vtables):
+    """One method listed twice, or two overloads sharing a log string?
+
+    Reads both slots in every vtable that CONTAINS THIS METHOD'S STUB. Scoping
+    matters: slot 66 means something different in each of the ~274 vtables in
+    this binary, so comparing it across all of them answers nothing. Only the
+    tables in this method's own hierarchy are evidence about it.
+
+    If those always hold the same function it is one method the layout lists
+    twice; if they hold different ones they are distinct methods.
+    """
+
+    def dw(va):
+        return struct.unpack_from("<I", img, RDATA_OFF + (va - RDATA_VA))[0]
+
+    same = differ = 0
+    for base, length in vtables:
+        if length <= max(slot_list):
+            continue
+        vals = {dw(base + 4 * s) for s in slot_list}
+        if len(vals) == 1:
+            same += 1
+        else:
+            differ += 1
+    if same and not differ:
+        return "one method, duplicated slot (multiple inheritance)"
+    if differ and not same:
+        return "two distinct methods sharing a log string (overloads)"
+    return f"mixed: same in {same} vtables, different in {differ}"
+
+
+def find_vtables(img, min_len=40):
+    """Runs of at least min_len consecutive .text pointers in .rdata."""
+
+    def dwat(i):
+        return struct.unpack_from("<I", img, RDATA_OFF + i)[0]
+
+    out, start = [], None
+    for i in range(0, RDATA_SZ - 4, 4):
+        if TEXT_LO <= dwat(i) < TEXT_HI:
+            if start is None:
+                start = i
+        else:
+            if start is not None and (i - start) // 4 >= min_len:
+                out.append((RDATA_VA + start, (i - start) // 4))
+            start = None
+    return out
 
 
 def main():
@@ -104,7 +168,8 @@ def main():
 
     img = open(args.exe, "rb").read()
     stubs = find_stubs(args.dump)
-    slots, tables = resolve_slots(img, stubs)
+    slots, tables, bases = resolve_slots(img, stubs)
+    lengths = dict(find_vtables(img))
 
     single = {n: next(iter(s)) for n, s in slots.items() if len(s) == 1}
     ambiguous = {n: sorted(s) for n, s in slots.items() if len(s) > 1}
@@ -125,13 +190,19 @@ def main():
             rc = 1
 
     if ambiguous:
-        print("\nambiguous -- the same method name at two slots, i.e. separate hierarchies:")
+        print("\nnames at more than one slot -- both slots are real; which kind:")
         for n, ss in sorted(ambiguous.items()):
-            print(f"   {n:<48} {ss}")
+            own = [(b, lengths.get(b, 0)) for b in sorted(bases[n])]
+            print(f"   {n:<44} {ss}  {classify_multi(img, n, ss, own)}"
+                  f"  [{len(own)} vtables]")
 
     by_class = collections.defaultdict(list)
     for n, s in single.items():
         by_class[n.split("::")[0]].append((s, n.split("::", 1)[1]))
+    # A name at two slots occupies both; emit both rather than dropping it.
+    for n, ss in ambiguous.items():
+        for s in ss:
+            by_class[n.split("::")[0]].append((s, n.split("::", 1)[1]))
     print()
     for cls in sorted(by_class, key=lambda c: -len(by_class[c])):
         rows = sorted(by_class[cls])

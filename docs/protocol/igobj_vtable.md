@@ -8,8 +8,8 @@ returns**, so a derived class that forgets to override one is caught at runtime:
 
 Each of those 213 strings names its method in the binary's own words, and
 finding the stub's address in `.rdata` gives its slot — a stub sits at the same
-index in every vtable of the hierarchy. 202 resolve to exactly one slot; 195 of
-those are `IGObj`.
+index in every vtable of the hierarchy. 202 resolve to exactly one slot and 7
+sit at two (see below); **209 `IGObj` slots** are listed here.
 
 Regenerate with `client/tools/ghidra/recover_vtable_slots.py`, which asserts two
 slots this project had recovered **independently** and exits non-zero if the
@@ -49,16 +49,42 @@ Virtuals with **no base-class stub** leave no string and never appear here. That
 includes all four vtable calls in the cast-requirement check — slots 353, 372,
 399 and 400 — so the weapon and armour checks in `FUN_0058d480` stay unnamed.
 
-Seven method names resolve to **two** slots, which means two hierarchies whose
-layouts differ by an inserted virtual rather than an error: `GetCurHP` [66, 68],
-`GetCurMP` [67, 69], `ExpandInventory` [173, 174],
-`GetWorldLayerEventHandlers` [182, 188],
-`IsAccomplishedCollectionBook_Theme` [207, 208],
-`IsRegisteredCollectionBook_Item` [209, 210], `RaiseEvent` [two slots]. They are
-listed here as ambiguous rather than being assigned one.
+### Seven names sit at two slots, and that is not ambiguity
+
+**Corrected 2026-09-16.** An earlier version of this file called these ambiguous
+and guessed they were "two hierarchies whose layouts differ by an inserted
+virtual". Reading the *implementations* at both slots settles it, and the answer
+is not one thing but two — scoped to the vtables that actually contain each
+method's stub, because slot 66 means something different in each of the ~274
+vtables in this binary:
+
+| name | slots | what the implementations show |
+|---|---|---|
+| `GetCurHP` | 66, 68 | the **same** function at both, in all 14 vtables — one method the layout lists twice, which is what multiple inheritance does |
+| `GetCurMP` | 67, 69 | same, all 14 |
+| `ExpandInventory` | 173, 174 | **different** functions — two distinct methods whose stubs share one log string, i.e. overloads (30 vtables) |
+| `IsAccomplishedCollectionBook_Theme` | 207, 208 | overloads (30 vtables) |
+| `IsRegisteredCollectionBook_Item` | 209, 210 | overloads (30 vtables) |
+| `RaiseEvent` | 80, 81 | overloads |
+| `GetWorldLayerEventHandlers` | 182, 188 | **mixed** — same in 1 vtable, different in 19. Reported as mixed rather than forced into either box. |
+
+Either way both slots are real, so both are in the table below.
 
 The `IGOBJ::` spelling (six methods, all Temple/AP-related) is the engine's own
 inconsistent capitalisation, kept verbatim.
+
+## How much of the game this reads
+
+Joined against every `(**(code **)(*x + 0xNN))` call site in the server dump:
+**15,249 of 17,207 vtable call sites (88.6%) now resolve to a name**, across 170
+of the 353 distinct offsets called. The most-called are `GetGameID` (1,181),
+`GetQuestStatus` (1,056), `GetQuestData` (609), `SaveQuestNow` (578),
+`GetWorldID` (561) and `IsPC` (532).
+
+In the combat and damage shards specifically the top calls are `IsPC` (84),
+`GetParam` (56), `GetLifeState` (34), `GetLevel` (34) and `IsMonster` (29) —
+which is a fair description of what a damage routine does, and a sanity check on
+the names.
 
 ## The table
 
@@ -128,6 +154,10 @@ inconsistent capitalisation, kept verbatim.
 | 63 | `0xfc` | `IGObj::GetMotionState` |
 | 64 | `0x100` | `IGObj::GetBodyMode` |
 | 65 | `0x104` | `IGObj::GetParam` |
+| 66 | `0x108` | `IGObj::GetCurHP` |
+| 67 | `0x10c` | `IGObj::GetCurMP` |
+| 68 | `0x110` | `IGObj::GetCurHP` |
+| 69 | `0x114` | `IGObj::GetCurMP` |
 | 70 | `0x118` | `IGObj::IsTargeting` |
 | 71 | `0x11c` | `IGObj::GetJobState` |
 | 72 | `0x120` | `IGObj::GetTeleportState` |
@@ -138,6 +168,8 @@ inconsistent capitalisation, kept verbatim.
 | 77 | `0x134` | `IGObj::AttachCustomTeleportCapability` |
 | 78 | `0x138` | `IGObj::RegisterEventHandler` |
 | 79 | `0x13c` | `IGObj::UnregisterEventHandler` |
+| 80 | `0x140` | `IGObj::RaiseEvent` |
+| 81 | `0x144` | `IGObj::RaiseEvent` |
 | 82 | `0x148` | `IGObj::SetEventResult` |
 | 83 | `0x14c` | `IGObj::RaiseEventSingle` |
 | 84 | `0x150` | `IGObj::ShowMenu` |
@@ -229,6 +261,8 @@ inconsistent capitalisation, kept verbatim.
 | 170 | `0x2a8` | `IGObj::ChattingByProxyArg` |
 | 171 | `0x2ac` | `IGObj::SetCharacterState` |
 | 172 | `0x2b0` | `IGObj::EnterWorld` |
+| 173 | `0x2b4` | `IGObj::ExpandInventory` |
+| 174 | `0x2b8` | `IGObj::ExpandInventory` |
 | 175 | `0x2bc` | `IGObj::IsUsingBunusTimeOfGoldTimeItem` |
 | 176 | `0x2c0` | `IGObj::IsPremiumItemPlayState` |
 | 177 | `0x2c4` | `IGObj::IsQuestByCompositeItem` |
@@ -236,11 +270,13 @@ inconsistent capitalisation, kept verbatim.
 | 179 | `0x2cc` | `IGObj::GetRemainCountOfQuestByCompositeItem` |
 | 180 | `0x2d0` | `IGObj::GetMaxCountOfQuestByCompositeItem` |
 | 181 | `0x2d4` | `IGObj::GetEventHandlers` |
+| 182 | `0x2d8` | `IGObj::GetWorldLayerEventHandlers` |
 | 183 | `0x2dc` | `IGObj::LeaveWorldReq` |
 | 184 | `0x2e0` | `IGObj::REH_OnTrapped` |
 | 185 | `0x2e4` | `IGObj::GetCurSelectedObj` |
 | 186 | `0x2e8` | `IGObj::IHaveTradeItem` |
 | 187 | `0x2ec` | `IGObj::IHaveCart` |
+| 188 | `0x2f0` | `IGObj::GetWorldLayerEventHandlers` |
 | 189 | `0x2f4` | `IGObj::IHaveMercenary` |
 | 190 | `0x2f8` | `IGObj::BanToDefaultWorld` |
 | 191 | `0x2fc` | `IGObj::ActivateAI` |
@@ -259,3 +295,7 @@ inconsistent capitalisation, kept verbatim.
 | 204 | `0x330` | `IGOBJ::IsActiveBuff` |
 | 205 | `0x334` | `IGOBJ::GetRemainSkillPoint` |
 | 206 | `0x338` | `IGObj::ShowRewardWindow` |
+| 207 | `0x33c` | `IGObj::IsAccomplishedCollectionBook_Theme` |
+| 208 | `0x340` | `IGObj::IsAccomplishedCollectionBook_Theme` |
+| 209 | `0x344` | `IGObj::IsRegisteredCollectionBook_Item` |
+| 210 | `0x348` | `IGObj::IsRegisteredCollectionBook_Item` |

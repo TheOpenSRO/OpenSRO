@@ -6135,3 +6135,61 @@ names; one invented name retracted.
 **Next step:** apply these names to the dump (`ApplyKnownNames.java` exists), and
 read the remaining `IGObj::` slots against their call sites — `GetLifeState`
 alone settles what the mitigation guard means, and there are 189 more.
+
+## 2026-09-16 (tenth) — the vtable names, measured against the whole dump
+
+The previous entry shipped 195 named slots and said the next step was reading
+them against their call sites. Doing that produced one measurement worth keeping
+and one correction to that entry.
+
+### 88.6% of every vtable call in the server now has a name
+
+Joined against every `(**(code **)(*x + 0xNN))` in the dump: **15,249 of 17,207
+call sites (88.6%)** resolve to a name, across 170 of the 353 distinct offsets
+called. Most-called: `GetGameID` 1,181, `GetQuestStatus` 1,056, `GetQuestData`
+609, `SaveQuestNow` 578, `GetWorldID` 561, `IsPC` 532.
+
+In the combat shards the top calls are `IsPC` 84, `GetParam` 56, `GetLifeState`
+34, `GetLevel` 34, `IsMonster` 29 — a fair description of what a damage routine
+does, which is a sanity check on the names rather than a new claim.
+
+### "Ambiguous" was a guess, and it was wrong
+
+The previous entry said seven names sat at two slots because of "two hierarchies
+whose layouts differ by an inserted virtual". That was an explanation invented to
+cover a result, not read from anything. Comparing the **implementations** at both
+slots settles it, and the answer is two different things:
+
+- `GetCurHP` (66, 68) and `GetCurMP` (67, 69) hold the **same function at both
+  slots in all 14 vtables** — one method the layout lists twice, which is what
+  multiple inheritance does.
+- `ExpandInventory` (173, 174), `RaiseEvent` (80, 81) and the two CollectionBook
+  predicates hold **different functions** — distinct methods whose stubs share a
+  log string, i.e. overloads.
+- `GetWorldLayerEventHandlers` (182, 188) is genuinely mixed (same in 1 vtable,
+  different in 19) and is reported that way rather than forced into either box.
+
+Both slots are real in every case, so the table now carries **209 slots** rather
+than dropping these seven.
+
+**The scoping mattered and nearly went wrong.** The first run compared the two
+slots across all 274 vtables in the binary and reported `GetCurHP` as "same in
+14, different in 207" — meaningless, because slot 66 means something different in
+each unrelated vtable. Restricting the comparison to the vtables that actually
+contain the method's own stub gives a clean answer. A comparison is only evidence
+about the thing it is scoped to.
+
+### An absence that is correct
+
+Slot 224 is called 313 times and is not in the table, which looks like a gap. Its
+implementation is a ten-byte accessor (`return this->f34->f20`) and the dump's
+RTTI annotation places it on `CGItem`, `CGItemContainer`, `CGItemEquip` and their
+siblings. It is a **CGItem-family** virtual with no `IGObj` stub because it is not
+an `IGObj` method. Recorded so the next tick does not chase it as missing.
+
+**What moved:** the slot table is correct where it was guessed, 14 slots larger,
+and now carries a measured statement of how much of the dump it explains.
+
+**Next step:** the same harvest on the CLIENT dump (43,460 functions, 22 shards),
+which has its own `## Illegal ##` stubs and its own hierarchy -- the tool takes a
+`--dump` path and should run unchanged.
