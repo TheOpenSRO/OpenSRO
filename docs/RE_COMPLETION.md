@@ -5331,3 +5331,48 @@ abbreviation reasoning. Recorded with the mechanic and no name.
 mechanic-known-semantic-unknown, which is a real step and an honest stopping
 point — and the corrected ranking is what pointed at them rather than at the two
 guard functions the old ranking ranked first.
+
+## The damage floor of 1 is the game's own, not this project's (2026-09-16)
+
+Chasing what `state[0x1c]` holds — the field `tant`/`tnt2` scale, left open last
+tick — ran into something more valuable a few lines away.
+
+`combat.MitigateDamage` floors a blow at 1, and its comment said: *"The floor
+stays at 1 here rather than the game's 0. That is own design and disclosed."*
+**That is wrong about the game**, and wrong in the direction that makes srrevamp
+look less faithful than it is.
+
+The zero in the old reading is real but is not the end of the pipeline.
+`Formula_MitigatePhysicalDamage` clamps its result at 0; then
+`Combat_ResolveDamage` floors the finished blow:
+
+```c
+if (damage == 0) {
+    if (local_d0 == 0) { damage = 1; }
+    else { /* a different path for skills with no attack parameter */ }
+}
+```
+
+**`local_d0` decides which**, and it is set to 1 only when the skill carries
+NEITHER `att` (0x230) nor `ck` (0x248) — a buff or utility skill. So
+`local_d0 == 0` is exactly the case of a blow that HAS an attack parameter,
+which includes every ordinary swing (`SKILL_CH_SWORD_BASE_01` carries `att` at
+60%). For those the engine guarantees at least 1 damage.
+
+So srrevamp's floor is **recovered, not invented**. The earlier note read the
+mitigation clamp and stopped there, missing a floor applied one stage later —
+which is why the comment now says where in the pipeline each clamp lives, rather
+than just naming a number.
+
+`TestDamageFloorIsTheGamesOwn` pins it, including a sweep asserting no
+combination of raw damage and absorption can drive the result below 1.
+
+**A note on how this was found.** It came out of a question deliberately left
+open — "what is `state[0x1c]`?" — rather than from a search for it. That
+question is still open: `+0x1c` accumulates, is floored at 1 under a *different*
+condition, and belongs to an object whose class is not identified. The floor
+finding sat four lines above it.
+
+**What moved:** no number. A value shipped as own design turns out to be the
+game's, which is the direction this project wants corrections to run, and the
+comment now carries the pipeline position that made the earlier reading wrong.

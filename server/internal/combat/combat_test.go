@@ -505,3 +505,44 @@ func TestApplySkillPercentNeutralCases(t *testing.T) {
 		t.Errorf("ApplySkillPercent(1, 1) = %d, want the floor of 1", got)
 	}
 }
+
+// TestDamageFloorIsTheGamesOwn pins the floor of 1 as RECOVERED rather than
+// invented, which is what it was recorded as until 2026-09-16.
+//
+// Combat_ResolveDamage finishes with `if (damage == 0) { if (local_d0 == 0)
+// damage = 1; }`, and local_d0 is 1 only for a skill carrying neither 'att' nor
+// 'ck' -- a buff. So every blow with an attack parameter is guaranteed at least
+// 1 damage by the engine itself. The earlier note read
+// Formula_MitigatePhysicalDamage's clamp at 0 and stopped there, missing the
+// floor applied a stage later.
+//
+// The cases below are the ones where mitigation alone would reach or pass zero.
+func TestDamageFloorIsTheGamesOwn(t *testing.T) {
+	for _, tc := range []struct {
+		name                   string
+		raw, pct, flat, expect int
+	}{
+		{"flat absorb exceeds the blow", 10, 0, 50, 1},
+		{"flat absorb exactly equals the blow", 10, 0, 10, 1},
+		{"percentage alone cannot reach zero", 1, 900, 0, 1},
+		{"both terms together overwhelm it", 20, 100, 40, 1},
+		{"an ordinary blow is untouched by the floor", 100, 0, 10, 90},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := MitigateDamage(tc.raw, tc.pct, tc.flat); got != tc.expect {
+				t.Errorf("MitigateDamage(%d, %d, %d) = %d, want %d",
+					tc.raw, tc.pct, tc.flat, got, tc.expect)
+			}
+		})
+	}
+
+	// The floor must never be reachable downward: no input produces 0 or less.
+	for raw := 0; raw <= 60; raw++ {
+		for flat := 0; flat <= 60; flat += 5 {
+			if got := MitigateDamage(raw, 300, flat); got < 1 {
+				t.Fatalf("MitigateDamage(%d, 300, %d) = %d, below the engine's floor of 1",
+					raw, flat, got)
+			}
+		}
+	}
+}

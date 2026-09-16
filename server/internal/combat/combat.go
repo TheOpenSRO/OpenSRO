@@ -148,10 +148,35 @@ type Monster struct {
 // attacker's -- a stat that weakens your own blows is not a stat. It is the
 // defender's.
 //
-// The floor stays at 1 here rather than the game's 0. That is own design and
-// disclosed -- but the REASON has been corrected: an earlier note here said a
-// zero-damage hit is a miss in the real game and that srrevamp "has no
-// hit/evade roll yet", implying one was waiting to be implemented.
+// THE FLOOR OF 1 IS THE GAME'S OWN, corrected 2026-09-16. This note used to say
+// "the floor stays at 1 here rather than the game's 0. That is own design and
+// disclosed" -- which was wrong about the game, and wrong in the direction that
+// makes srrevamp look less faithful than it is.
+//
+// The zero the earlier reading found is real but is not the end of the
+// pipeline: Formula_MitigatePhysicalDamage clamps its result at 0, and then
+// Combat_ResolveDamage floors the finished blow at 1:
+//
+//	if (damage == 0) {
+//	    if (local_d0 == 0) { damage = 1; }
+//	    else { ... a different path for skills with no attack parameter ... }
+//	}
+//
+// `local_d0` is set to 1 only when the skill carries NEITHER 'att' (0x230) nor
+// 'ck' (0x248) -- a buff or utility skill. So `local_d0 == 0` is exactly the
+// case of a blow that HAS an attack parameter, which includes every ordinary
+// swing (SKILL_CH_SWORD_BASE_01 carries att at 60%). For those the engine
+// guarantees at least 1 damage.
+//
+// So srrevamp's floor is faithful rather than invented. The earlier note read
+// the mitigation clamp and stopped there, missing the floor applied a stage
+// later -- which is why this file now says where in the pipeline each clamp
+// lives.
+//
+// The REASON attached to the old note is unaffected and still correct: an even
+// earlier version said a zero-damage hit is a miss in the real game and that
+// srrevamp "has no hit/evade roll yet", implying one was waiting to be
+// implemented.
 //
 // There is no such roll to implement. ParamKeeper params 9 ('era', parry rate)
 // and 11 ('hra', attack rate) are published -- by Char_PublishCombatStats from
