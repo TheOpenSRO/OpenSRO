@@ -65,6 +65,12 @@ type Skill struct {
 	DamageMin     int
 	DamageMax     int
 	// HitCount is how many times one cast strikes: 1 for most skills, up to 5.
+	//
+	// CONFIRMED INDEPENDENTLY 2026-09-16: the client's own localisation key for
+	// this param is PARAM_MC_COUNT. HitsFor was recovered from the `mc` param's
+	// (2, N) shape alone, with no reference to the client, so the client
+	// calling it a COUNT is agreement from a separate source rather than a
+	// restatement. See docs/protocol/param_names.md.
 	// REAL, from the skill's own 'mc' parameter (docs/protocol/skill_params.md,
 	// field 0x288, a three-word run carrying the pair (2, N)).
 	//

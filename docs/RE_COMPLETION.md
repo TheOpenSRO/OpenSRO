@@ -4745,3 +4745,58 @@ rather than a missing one.
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.
+
+## The client's 163 param names, joined to the server vocabulary (2026-09-16)
+
+The client dump carries **163 `PARAM_*` localisation keys** — the game's own
+English wording for its stat vocabulary. This project has been corrected by them
+twice before (`'era'` is parry, not evasion; `'hra'` is attack rate, not hit
+rate), so joining the whole set to the server-side vocabulary was overdue.
+
+Written up in `docs/protocol/param_names.md`, **in two tiers on purpose**. A
+client key whose suffix *equals* a server tag or code is the game naming that
+thing; a key that merely *resembles* one is an abbreviation argument, which is
+precisely the reasoning that got characterdata column 79 wrong twice. Twenty
+joins are exact; the rest are listed as candidates for a later use-site, not as
+answers.
+
+### Two independent confirmations of SHIPPED values
+
+Both arrived by routes that never touched the client, which is what makes the
+agreement worth something:
+
+- **`PARAM_MC_COUNT` ↔ `mc`.** `refdata.HitCount`/`HitsFor()` was recovered from
+  the `mc` param's `(2, N)` shape with N in 1..5. The client calls it a COUNT.
+  The citation is now in `refdata.Skill`.
+- **`PARAM_HWAN_TIME_INCREASE` ↔ `hwit` ↔ param 195.** Last tick's berserk
+  duration is `GetParam(60) + GetParam(195)` with a base of 60, read out of the
+  activation handler's disassembly; `hwit → 195` came from the skill-code join
+  over `Skill_ApplyEffectsToParams`. The client names param 195 "Hwan time
+  increase". Three derivations from three different places meeting on one id is
+  the strongest confirmation this project can get.
+
+### The seven ignored tags, explained
+
+All seven tags the stat dispatcher recognises-and-ignores have client display
+names, which settles the narrowing made earlier: they are live game concepts,
+not dead strings.
+
+	astr -> PARAM_ASTRAL     atha -> PARAM_ATHANASIA   dura -> PARAM_DURA
+	er   -> PARAM_ER         luck -> PARAM_LUCK        rep  -> PARAM_REPAIRING_CHARGES
+	soli -> (no key)
+
+`rep` and `dura` now have a *reason* rather than just an observation:
+**repairing charges and durability are item condition fields, not character
+stats**, so a stat dispatcher skipping them is correct behaviour rather than a
+gap. Note the evidence for that is the two keys sitting together in the key set,
+which holds regardless of whether `rep` is literally short for "repairing" —
+the tier-2 caveat on the name does not weaken the explanation.
+
+Eighteen client names still have no server-side match (`PARAM_ABSORB`,
+`PARAM_AGGRO`, `PARAM_REFLECT`, `PARAM_STUN`, `PARAM_SLEEP`, `PARAM_STEALTH`
+and the rest) — each is a game concept whose server id is unjoined, and they are
+listed as the next thing to mine.
+
+**What moved:** no value. A third evidence class joined to the other two, twenty
+exact names for the vocabulary, two shipped values independently confirmed, and
+a reason found for why seven tags are ignored.
