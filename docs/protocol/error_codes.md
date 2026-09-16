@@ -1,0 +1,140 @@
+# Server error codes, and the client's name for each
+
+The server refuses an action by returning a 16-bit code — `0x300d` for the wrong
+weapon, `0x18fe` for a full container, `0x183e` for an item that cannot be used.
+The numbers carry no meaning on their own. The client turns each into a message,
+and `UI_SILKMALL::FUN_007b8b40` (10,296 bytes, 643 switch cases) is where.
+
+Regenerate with `client/tools/ghidra/recover_error_codes.py`.
+
+## Why the decompiled client says this is unrecoverable, and is wrong
+
+Every case ends in a call that takes the message name as a wide string, but the
+argument arrives in a register and Ghidra drops it:
+
+	case 0x180f:
+	  RefData_worldmapguidedata::FUN_0046e3d0();
+
+Reading the dump, the mapping looks data-driven and out of reach — which is what
+an earlier pass of this project concluded. In the **disassembly** the string is
+sitting right there:
+
+	7b8ca6:  push 0xdc7ea0          <- pointer to a UTF-16 message name
+	7b8cab:  lea  ecx,[esp+0x3c]
+	7b8caf:  call 0x46e3d0
+
+## The check that makes this trustworthy
+
+`0x183e` resolves here to **`UIIT_MSG_STRGERR_CANNOT_BE_USED`**. This project had
+already recovered `0x183e` from the *other binary*: `CUsedItemLimit::FUN_004a05b0`
+in the server returns it when an item is refused for having reached its use
+limit. A server-side item-use limiter and a client-side "cannot be used" agree
+without either being consulted about the other.
+
+## Coverage, stated honestly
+
+**95 of the dispatcher's 643 cases** resolve to a message name. The rest either
+`break` without emitting a message, or sit in category branches that route
+through a different helper. Notably the **`0x30xx` family is NOT resolved** —
+including `0x300d`, the wrong-weapon refusal this project uses elsewhere — so
+this table is a large sample of the vocabulary, not the whole of it.
+
+## The table
+
+| code | message name |
+|---|---|
+| `0x0003` | `UIIT_STT_ERR_COMMON_INVALID_TARGET` |
+| `0x0004` | `UIIT_STT_ERR_COMMON_TOO_FAR` |
+| `0x0005` | `UIIT_STT_ERR_COMMON_INVALID_OPERATION` |
+| `0x180b` | `UIIT_MSG_STRGERR_CANT_BE_STORED` |
+| `0x180f` | `UIIT_MSG_STRGERR_NOT_ENOUGH_GOLD` |
+| `0x1810` | `UIIT_MSG_STRGERR_HIGHER_LEVEL_REQUIRED` |
+| `0x1812` | `UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE` |
+| `0x1816` | `UIIT_MSG_STRGERR_GENDER_MISMATCH` |
+| `0x181f` | `UIIT_MSG_STRGERR_CANNOT_DEAL_NORMALCY` |
+| `0x1820` | `UIIT_MSG_STRGERR_CANNOT_DEAL_NORMALCY` |
+| `0x1821` | `UIIT_MSG_STRGERR_TRADE_BAY_FULL` |
+| `0x1822` | `UIIT_MSG_STRGERR_INVENTORY_FULL_DEAL_CANCEL` |
+| `0x182f` | `UIIT_MSG_STRGERR_COUNTRY_MISMATCH` |
+| `0x1830` | `UIIT_MSG_STRGERR_HIGHER_STRENGTH_REQUIRED` |
+| `0x1831` | `UIIT_MSG_STRGERR_HIGHER_INTELLECT_REQUIRED` |
+| `0x1832` | `UIIT_MSG_STRGERR_CANT_MIX_EXCLUSIVE_ARMOR_TYPE` |
+| `0x1835` | `UIIT_MSG_STRGERR_CANT_USEITEM_WHILE_INTERACT` |
+| `0x1837` | `UIIT_MSG_STRGERR_CANT_EQUIP_RAZED_ITEM` |
+| `0x1838` | `UIIT_MSG_STRGERR_CANNOT_BE_DROPPED` |
+| `0x1839` | `UIIT_MSG_STRGERR_CANNOT_BE_PICKED` |
+| `0x183a` | `UIIT_MSG_STRGERR_CANNOT_BE_TRADED` |
+| `0x183b` | `UIIT_MSG_STRGERR_CANNOT_DEAL_AT_SHOP` |
+| `0x183c` | `UIIT_STT_RENT_EQ_ITEM_USED_ERORR` |
+| `0x183d` | `UIIT_STT_RENT_EXP_ITEM_USED_ERORR` |
+| `0x183e` | `UIIT_MSG_STRGERR_CANNOT_BE_USED` |
+| `0x183f` | `UIIT_MSG_STRGERR_CANT_SELL_EQUIPED_ITEM` |
+| `0x1843` | `UIIT_MSG_STRGERR_INVALID_TARGET_STORAGE` |
+| `0x1846` | `UIIT_MSG_STRGERR_CANT_SWAP_JOBITEM` |
+| `0x1847` | `UIIT_MSG_STRGERR_WAIT_FOR_JOBCHANGE_COMPLETE` |
+| `0x1848` | `UIIT_MSG_STRGERR_CANT_DETACH_JOBITEM_IN_BATTLESTATE` |
+| `0x1849` | `UIIT_MSG_STRGERR_YOU_CANT_ACTIVATE_CART` |
+| `0x1851` | `UIIT_MGS_ERR_GOD_LEVEL` |
+| `0x185d` | `UIIT_MSG_STRGERR_PREV_TELESCROLL_ALREADY_WORKING` |
+| `0x185f` | `UIIT_MSG_STRGERR_REQUESTED_JOB_BLOCKED_BY_QUEST` |
+| `0x1861` | `UIIT_MSG_STRGERR_DONT_HAVE_ANY_TRADECART_TO_PICK_SPECIALTY` |
+| `0x186c` | `UIIT_MSG_STRGERR_HIGHER_LEVEL_REQUIRED_TO_USE_THISITEM` |
+| `0x1870` | `UIIT_MSG_STRGERR_WAIT_FOR_JOBITEM_DETACH_COMPLETE` |
+| `0x1871` | `UIIT_MSG_CANNOT_BE_USED_ITEM_CART` |
+| `0x1872` | `UIIT_MSG_STRGERR_POSSESSION_LIMIT_EXCEEDED` |
+| `0x1875` | `UIIT_MSG_STRGERR_MURDERER_CANT_USE_PORTAL_SCROLL` |
+| `0x1876` | `UIIT_MSG_STRGERR_MURDERER_CANT_SUMMON_VEHICLE` |
+| `0x1877` | `UIIT_MSG_STRGERR_CANT_DETACH_FREEBATTLEITEM_IN_BATTLESTATE` |
+| `0x1878` | `UIIT_MSG_COS_CAN_NOT_CREATE_BATTLE` |
+| `0x1879` | `UIIT_MSG_COS_CREATE_DUNGEON` |
+| `0x187a` | `UIIT_MSG_COSPETERR_CANT_USEITEM` |
+| `0x1880` | `UIIT_MSG_STRGERR_NOT_ENOUGH_SILK_TO_BUY_ITEM` |
+| `0x18a4` | `UIIT_MSG_COS_STATE_IS_NOT_SUMMONABLE` |
+| `0x18a5` | `UIIT_MSG_COSPETERR_CANT_PETSUM_HIGHLEVEL` |
+| `0x18a6` | `UIIT_MSG_COSPETERR_CANT_PETRE_DEADPET` |
+| `0x18a7` | `UIIT_MSG_COSPETERR_CANT_PETRE_BATTLE` |
+| `0x18a8` | `UIIT_MSG_COS_CANT_SUMMON_OVER_MAX_COUNT` |
+| `0x18a9` | `UIIT_MSG_COS_CANT_SUMMON_DUPLICATE_PETTYPE` |
+| `0x18aa` | `UIIT_MSG_SILKMALL_SOLDOUT_ITEM` |
+| `0x18b1` | `UIIT_MSG_COSPETERR_CANT_MOVETO_SUMITEM` |
+| `0x18b2` | `UIIT_MSG_COSPETERR_CANT_MOVETO_CHEST2` |
+| `0x18b3` | `UIIT_MSG_COSPETERR_HGPFULL_NODRINK` |
+| `0x18b6` | `UIIT_MSG_COSPETERR_CANT_TRADE` |
+| `0x18b7` | `UIIT_MSG_COSPETERR_CANT_SELL_ACTIVATED_COSITEM` |
+| `0x18bb` | `UIIT_MSG_GUILD_ITEM_RIGHT_LIMIT` |
+| `0x18bc` | `UIIT_MSG_GUILD_ITEM_RIGHT_LIMIT` |
+| `0x18c7` | `UIIT_MSG_GUILD_RECALL_LIMIT` |
+| `0x18cf` | `UIIT_MSG_SILKMALL_SOLDOUT_ITEM` |
+| `0x18fa` | `UIIT_CTL_NASRUN_NOT_TRADE` |
+| `0x1c07` | `UIIT_MSG_INTERACTION_FAIL_NOT_ENOUGH_MONEY` |
+| `0x1c10` | `UIIT_MSG_INTERACTION_FAIL_CANT_USE_TELEPORT_WITH_TRADECART` |
+| `0x1c11` | `UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REPAIRED` |
+| `0x1c12` | `UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REVIVED` |
+| `0x1c13` | `UIIT_MSG_INTERACTION_FAIL_TOO_FAR_FROM_TRADECART` |
+| `0x1c16` | `UIIT_MSG_INTERACTION_FAIL_MURDERER_CAN_USE_PORTAL_STRUCTURE` |
+| `0x1c17` | `UIIT_MSG_INTERACTION_FAIL__REQUESTED_JOB_BLOCKED_BY_QUEST` |
+| `0x1c1b` | `UIIT_MSG_FORT_PORTALSTONE_FAIL_04` |
+| `0x1c1c` | `UIIT_MSG_FORT_ENTRANCE_FORTRESS_FAIL_02` |
+| `0x1c1e` | `UIIT_MSG_FORT_ETC_ERR_CANT_ENTER_5MINBEFORE` |
+| `0x1c20` | `UIIT_MSG_NEWBIE_RETURN_LV20_OVER` |
+| `0x1c21` | `UIIT_MSG_NEWBIE_RETURN_ERROR` |
+| `0x1c23` | `UIIT_MSG_QUEST_ROC_CANNOT_ENTRANCE` |
+| `0x1c25` | `UIIT_MSG_INTERACTION_FAIL_OUT_OF_REQUIRED_NUMBER_FOR_TELEPORT` |
+| `0x2c07` | `UIIT_MSG_PARTYERR_OUT_OF_LEVEL` |
+| `0x2c12` | `UIIT_MSG_PARTYERR_EXISTING_MEMBER` |
+| `0x3c16` | `UIIT_MSG_FLEAMARKET_ERR_IM_BUSY` |
+| `0x3c41` | `UIIT_MSG_WARENETWORK_ERROR_FAIL` |
+| `0x3c42` | `UIIT_MSG_WARENETWORK_ERROR_FAIL` |
+| `0x3c43` | `UIIT_MSG_WARENETWORK_ERROR_FAIL` |
+| `0x3c46` | `UIIT_MSG_WARENETWORK_SCAN_FAIL` |
+| `0x3c49` | `UIIT_MSG_WARENETWORK_USE_CITY` |
+| `0x3c55` | `UIIT_CTL_NASRUN_NOT_TRADE` |
+| `0x4409` | `UIIT_MSG_COSERR_CANT_SELL_RIDING_COS` |
+| `0x440a` | `UIIT_MSG_COSERR_CANT_SELL_REQUESTED_COS` |
+| `0x440d` | `UIIT_MSG_COSPETERR_CANT_PETRE_BATTLE` |
+| `0x440e` | `UIIT_MSG_COSPETERR_PETNAME_NOTPUT` |
+| `0x4411` | `UIIT_MSG_COSPETERR_CANT_DEACTIVATE_IN_DEADSTATE` |
+| `0x4420` | `UIIT_MGS_ERR_FRPVP_DURING_CHANGE` |
+| `0x4817` | `UIIT_MSG_INTERACTION_FAIL__REQUESTED_JOB_BLOCKED_BY_QUEST` |
+| `0x4818` | `UIIT_INTERACTION_FAIL_ONLY_ROBBER_CAN_TELEPORT_TO_THIEFDEN` |
+| `0x6414` | `UIIT_MSG_LETTERERR_FULLLETTERBOX` |

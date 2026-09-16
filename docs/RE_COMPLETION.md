@@ -6364,3 +6364,73 @@ located with a citable size.
 
 **Next step:** `FUN_0046e3d0` — what it does with the code, and whether the text
 id it produces is derivable. That is the whole 643-code vocabulary if it resolves.
+
+## 2026-09-16 (fourteenth) — the error-code vocabulary, and a false "unrecoverable"
+
+The previous entry closed the error-code lever as blocked: the client's switch
+"does not resolve them to text inline … the mapping is data-driven rather than a
+literal table". **That was wrong, and wrong for the reason this project keeps
+rediscovering: it was a statement about the decompiler.**
+
+Every case ends in a call whose argument Ghidra drops, because it arrives in a
+register:
+
+	case 0x180f:
+	  RefData_worldmapguidedata::FUN_0046e3d0();
+
+Reading that helper settled it — `FUN_0046e3d0(short *)` walks a UTF-16 string to
+its length and forwards it, so it takes a **string**, not a code. In the
+disassembly the string is right there:
+
+	7b8ca6:  push 0xdc7ea0          <- pointer to a UTF-16 message name
+	7b8cab:  lea  ecx,[esp+0x3c]
+	7b8caf:  call 0x46e3d0
+
+### 95 codes recovered
+
+MSVC compiles the switches sparsely, so a case value takes two tables —
+`movzx ecx,[eax+IDX]; jmp [ecx*4+JMP]` giving `case base+i -> JMP[IDX[i]]` — plus
+the dense form where the jump table is indexed directly. Walking both and reading
+the string each target pushes yields **95 of the dispatcher's 643 cases**.
+
+They are immediately legible and obviously right: `0x180f NOT_ENOUGH_GOLD`,
+`0x1810 HIGHER_LEVEL_REQUIRED`, `0x1830 HIGHER_STRENGTH_REQUIRED`,
+`0x183a CANNOT_BE_TRADED`, `0x0004 ERR_COMMON_TOO_FAR`.
+
+### The check that makes it trustworthy
+
+`0x183e` resolves to **`UIIT_MSG_STRGERR_CANNOT_BE_USED`**, and this project had
+already recovered `0x183e` from the *server*: `CUsedItemLimit::FUN_004a05b0`
+returns it refusing an item at its use limit. A server-side item-use limiter and
+a client-side "cannot be used", from two binaries, agreeing without either being
+consulted about the other.
+
+**Coverage stated honestly:** the `0x30xx` family is NOT resolved, including
+`0x300d`, the wrong-weapon code this project uses elsewhere. Those cases sit in
+category branches that route through a different helper. This is a large sample,
+not the whole vocabulary.
+
+### A stale reason, corrected
+
+`equipment/rules.go` explained skipping ReqStr/ReqInt with "characters have no
+stats yet". That stopped being true when `character.Character` gained `Str` and
+`Int`. The right reason turned out to be better: **no item in the table carries
+either requirement** — measured over a complete real itemdata, the count of rows
+with a non-zero ReqStr or ReqInt is **zero**, on columns verified against the
+exporter's own `fReqStr = 59` / `fReqInt = 60` rather than assumed.
+
+So the decision was correct and its stated reason was false. Implementing the
+check would be dead code; the engine's own refusals for it (`0x1830`, `0x1831`)
+exist and the shipped data never triggers them. A false explanation for a correct
+decision is worse than none, because the next reader acts on it.
+
+Three of srrevamp's equipment refusals turned out to match the game's own, and
+now carry its codes: `ErrWrongRace` = `0x182f COUNTRY_MISMATCH`, `ErrWrongGender`
+= `0x1816 GENDER_MISMATCH`, `ErrLevelTooLow` = `0x1810 HIGHER_LEVEL_REQUIRED`.
+
+**What moved:** 95 error codes named with an independent cross-binary check; a
+"data-driven, unrecoverable" conclusion retracted; a stale justification replaced
+with a measured one.
+
+**Next step:** the `0x30xx` branch of the dispatcher -- a different helper, and it
+holds `0x300d`, which the weapon gate already returns.

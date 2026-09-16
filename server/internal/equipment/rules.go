@@ -19,8 +19,21 @@ import (
 // requirement is by character level (ReqLevelType1 == 1). What is
 // recorded but not yet enforced: requirements by mastery level (a
 // ReqLevelType1 of 513..518, the European masteries' own ids -- nothing
-// here tracks a mastery level yet) and ReqStr/ReqInt (characters have no
-// stats yet).
+// here tracks a mastery level yet) and ReqStr/ReqInt.
+//
+// THE REASON GIVEN FOR SKIPPING ReqStr/ReqInt WAS WRONG, corrected 2026-09-16.
+// It said "characters have no stats yet", which stopped being true when
+// character.Character gained Str and Int. The real reason is better: **no item
+// in the table carries either requirement.** Measured over a real client's
+// complete itemdata, the count of items with a non-zero ReqStr or ReqInt is
+// **zero** -- columns 59 and 60 are present on every row and always 0.
+//
+// The engine does have the refusals: `0x1830 UIIT_MSG_STRGERR_HIGHER_STRENGTH_
+// REQUIRED` and `0x1831 ..._HIGHER_INTELLECT_REQUIRED`
+// (docs/protocol/error_codes.md). So the mechanism is real and the data never
+// uses it. Implementing the check would be dead code, and saying "characters
+// have no stats" would now be a false explanation for a correct decision --
+// which is worse than no explanation.
 
 var (
 	// ErrNotEquippable means the item is not something that goes in an
@@ -28,11 +41,21 @@ var (
 	ErrNotEquippable = errors.New("equipment: item cannot be equipped")
 	// ErrWrongSlot means the item goes in a different slot from the one asked.
 	ErrWrongSlot = errors.New("equipment: item does not go in that slot")
+	// The three below are refusals the real game makes too, and each has the
+	// engine's own error code and message name -- recovered from the client's
+	// dispatcher, see docs/protocol/error_codes.md. srrevamp arrived at these
+	// independently from the itemdata columns; the names are recorded because
+	// agreeing with the game about WHICH refusals exist is worth being able to
+	// check.
+
 	// ErrWrongRace means the item belongs to another race.
+	// Engine: 0x182f UIIT_MSG_STRGERR_COUNTRY_MISMATCH.
 	ErrWrongRace = errors.New("equipment: item is for another race")
 	// ErrWrongGender means the item is for the other gender.
+	// Engine: 0x1816 UIIT_MSG_STRGERR_GENDER_MISMATCH.
 	ErrWrongGender = errors.New("equipment: item is for the other gender")
 	// ErrLevelTooLow means the character has not reached the item's level.
+	// Engine: 0x1810 UIIT_MSG_STRGERR_HIGHER_LEVEL_REQUIRED.
 	ErrLevelTooLow = errors.New("equipment: level too low")
 )
 
