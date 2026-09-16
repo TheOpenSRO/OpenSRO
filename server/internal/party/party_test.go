@@ -183,3 +183,43 @@ func TestLeaveBySessionNotInAnyParty(t *testing.T) {
 		t.Fatal("expected ok=false for a session not in any party")
 	}
 }
+
+// TestMaxSizeMatchesTheEngine pins the recovered join-time caps. The engine has
+// two, selected by bit 0 of the party's flags -- the exp-sharing bit, named by
+// the errors each branch raises (MEMBER_FULL_EXP_SHARED_PARTY at 8,
+// MEMBER_FULL_NONEEXP_SHARED_PARTY at 4). srrevamp's parties always share
+// experience, so 8 is the one that applies.
+func TestMaxSizeMatchesTheEngine(t *testing.T) {
+	if MaxSize != 8 {
+		t.Errorf("MaxSize = %d, want 8 -- the `cmp [ecx+0x1c],0x8` at 005145d4", MaxSize)
+	}
+	if MaxSizeNotShared != 4 {
+		t.Errorf("MaxSizeNotShared = %d, want 4 -- edx at 005145af", MaxSizeNotShared)
+	}
+	// Collapsing the two would lose a distinction the engine makes at the
+	// join-time check.
+	if MaxSize == MaxSizeNotShared {
+		t.Error("the two caps are different numbers in the engine")
+	}
+}
+
+// TestPartyFillsToTheRecoveredCap walks a party up to MaxSize and checks the
+// refusal lands exactly at the cap, so a change to the constant cannot silently
+// leave the join check disagreeing with it.
+func TestPartyFillsToTheRecoveredCap(t *testing.T) {
+	h := NewHub()
+	p, err := h.Create(Member{CharacterID: 1, Session: &gateway.Session{}})
+	if err != nil {
+		t.Fatalf("creating the party: %v", err)
+	}
+	for i := 2; i <= MaxSize; i++ {
+		m := Member{CharacterID: int64(i), Session: &gateway.Session{}}
+		if _, err := h.Join(p.ID, m); err != nil {
+			t.Fatalf("member %d of %d: %v", i, MaxSize, err)
+		}
+	}
+	over := Member{CharacterID: int64(MaxSize + 1), Session: &gateway.Session{}}
+	if _, err := h.Join(p.ID, over); !errors.Is(err, ErrPartyFull) {
+		t.Errorf("member %d: got %v, want ErrPartyFull", MaxSize+1, err)
+	}
+}

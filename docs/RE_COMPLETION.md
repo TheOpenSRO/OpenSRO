@@ -6702,3 +6702,58 @@ note refined; two wrong attributions caught before they were written down.
 **Next step:** `OVERLAP` (0x300c) and `DUPLICATE` (0x3039) are the remaining
 preconditions with plausible data behind them -- skilldata has an `Overlap`
 bitfield at column 18 that nothing has decoded.
+
+## 2026-09-16 (nineteenth) — the party cap, recovered; and a refusal vindicated
+
+The previous entry named `OVERLAP` and `DUPLICATE` as next. Checking before
+spending the tick: both govern **buff stacking** — the `OVERLAP` path tests the
+skill's `hide` (`0x428`) and `lnks` (`0x370`) parameter fields against a state
+value — and srrevamp models no buffs or status effects. Decoding the `Overlap`
+bitfield would ground nothing srrevamp uses, so the tick went to a value it does.
+
+### Two party caps, and the flag that chooses
+
+`party.MaxSize` was own design. The engine enforces its cap at join time, and
+there are **two**, selected by a flag on the party:
+
+	5145cc  test BYTE PTR [ecx+0x10],0x1   <- bit 0 of the party's flags
+	5145d0  je   clear
+	5145d4  cmp  DWORD PTR [ecx+0x1c],0x8  <- set:   full at 8
+	5145df  cmp  DWORD PTR [ecx+0x1c],edx  <- clear: full at 4 (edx=4 at 5145af)
+
+with `+0x1c` the member count. **Which cap is which was not readable from the
+numbers** — but the error each branch raises settles it, because the client names
+them: bit 0 set sends `PARTYERR_MEMBER_FULL_EXP_SHARED_PARTY`, clear sends
+`..._NONEEXP_SHARED_PARTY`.
+
+So **bit 0 of the party's `+0x10` is the exp-sharing flag** — an entry this
+project's open-items list has carried unnamed — and an exp-sharing party holds 8
+while a non-sharing one holds 4. This is the error-code table paying off a third
+time: it did not name a function here, it disambiguated two constants.
+
+srrevamp's parties share experience unconditionally, so 8 applies. `MaxSize`
+5 → 8, with `MaxSizeNotShared = 4` recorded beside it.
+
+### A refusal that was right, on a number that was right
+
+The comment being replaced had found two loops bounded at 8 near the party module
+and **declined to use them**:
+
+> they sit in CMainProcess functions that call CGuild__BroadcastToLocalMember,
+> before the CParty code begins, so that 8 is far more likely a guild alliance's
+> slot count (unions hold eight guilds) than a party's. A loop bound that lands
+> on the expected number in the wrong module is a coincidence, not a citation.
+
+The answer turned out to be 8. **The refusal was still correct**, and that is the
+point worth keeping: a right answer reached on wrong evidence is not a recovery,
+and adopting it then would have made every later reader believe a citation
+existed where none did. The number is adopted now because the join-time check
+itself says so. The old reasoning is preserved in place rather than deleted.
+
+**What moved:** one more own-design value grounded, with a test walking a party
+to the cap; `bit 0 of the party's +0x10` comes off the open list; the error table
+proves useful for disambiguating constants, not only naming functions.
+
+**Next step:** the same party function tests **bit 2** of those flags at 5145b6
+and nothing names it. The other `PARTYERR_*` codes -- `OUT_OF_LEVEL`,
+`TOO_LOW_CREATOR_LEVEL` -- point at level rules srrevamp has no equivalent for.

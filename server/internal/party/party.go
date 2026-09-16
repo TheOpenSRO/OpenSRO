@@ -12,20 +12,45 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 )
 
-// MaxSize caps how many characters can be in one party. Own design, and NOT
-// grounded despite a tempting near-miss.
+// MaxSize caps how many characters can be in one party. **RECOVERED
+// 2026-09-16**, having been own design until then.
 //
-// The server's party membership is a linked list with no fixed bound
-// (CGObjPC::FUN_005bdd70 walks it to fill the party-info packet), so the cap is
-// enforced at join time and not visible in the structure. The party module's
-// neighbourhood does contain two loops bounded at 8 over an array at
-// `[x+4] + 0x1c + i*4`, which is the size a Silkroad party is usually said to
-// be -- but they sit in CMainProcess functions that call
+// The engine enforces the cap at join time, and there are TWO of them, selected
+// by a flag on the party:
+//
+//	5145cc  test BYTE PTR [ecx+0x10],0x1   <- bit 0 of the party's flags
+//	5145d0  je   clear
+//	5145d4  cmp  DWORD PTR [ecx+0x1c],0x8  <- set:   full at 8
+//	5145df  cmp  DWORD PTR [ecx+0x1c],edx  <- clear: full at 4 (edx=4 at 5145af)
+//
+// where `+0x1c` is the member count. Which limit applied was ambiguous from the
+// numbers alone; the error each branch raises settles it, because the client
+// names them: bit 0 set sends `UIIT_MSG_PARTYERR_MEMBER_FULL_EXP_SHARED_PARTY`
+// and clear sends `..._NONEEXP_SHARED_PARTY` (docs/protocol/error_codes.md). So
+// **bit 0 of the party's +0x10 is the exp-sharing flag** -- an entry this
+// project's open-items list had carried unnamed -- and an exp-sharing party
+// holds 8 while a non-sharing one holds 4.
+//
+// srrevamp's parties share experience unconditionally: every member counts
+// toward leveldata.PartyExpBonus and no flag exists to turn it off. So the
+// exp-shared branch is the one that applies, and MaxSize is 8.
+//
+// THE PREVIOUS COMMENT WAS RIGHT TO REFUSE ITS EVIDENCE, and that is worth
+// keeping. It found two loops bounded at 8 in the party module's neighbourhood
+// and declined them: "they sit in CMainProcess functions that call
 // CGuild__BroadcastToLocalMember, before the CParty code begins, so that 8 is
 // far more likely a guild alliance's slot count (unions hold eight guilds) than
 // a party's. A loop bound that lands on the expected number in the wrong module
-// is a coincidence, not a citation.
-const MaxSize = 5
+// is a coincidence, not a citation." The number turned out to be 8 anyway. The
+// refusal was still correct: the right answer reached on wrong evidence is not
+// a recovery, and the citation above is from the join-time check itself.
+const MaxSize = 8
+
+// MaxSizeNotShared is the engine's OTHER cap -- the one for a party that does
+// not share experience (bit 0 of its flags clear). srrevamp has no such party,
+// so nothing uses this; it is recorded because the two limits are easy to
+// collapse into one number and the engine keeps them apart.
+const MaxSizeNotShared = 4
 
 // ErrPartyFull is returned by Hub.Join when the party already has MaxSize
 // members.
