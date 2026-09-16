@@ -9249,3 +9249,63 @@ named thing rather than a general difficulty.
 inline reads. Each is one column. With those in place every read has a column
 number, the Country anchor becomes a check rather than a puzzle, and the nine
 capability flags become wireable into `refdata.Item`.
+
+## 2026-09-16 — the column arithmetic falls out, and the data refuses the answer
+
+The previous entry's next step was to count the string-consuming helper calls so
+every read gets a column number. That worked, was confirmed three ways, and then
+the data rejected the conclusion drawn from it — which is the part worth keeping.
+
+### The arithmetic, and a prediction that landed exactly
+
+Two helpers consume a field without an inline indexed read. `FUN_006b2ef0` reads
+a length-prefixed string; `FUN_006b1a80` ends with `param_1[10]++`, which is the
+field counter at `+0x28`. Between read 1 and read 2 there are four of the first
+and one of the second — **five consumed columns**, which is exactly the gap the
+Country anchor predicted last tick.
+
+	READ0 -> column 0     READ1 -> column 1     READn -> column n+5  (n >= 2)
+
+Confirmed three ways, none of them the one that produced it: a real row's columns
+2..6 are exactly five strings (code name, display name, `xxx`, and two `SN_`
+ids); READ4..READ7 land on columns 9..12, which are TypeID1..4 and read 3/1/6/2
+for a sword; READ9 lands on column 14, Country, reading 0 for a China sword and 3
+for a MALL item.
+
+That arithmetic is a tool for the whole `_RefObjCommon` prefix.
+
+### And then the data said no
+
+Applying it to the nine capability reads gives columns 16..24. Checked against
+real rows, `ITEM_CH_SWORD_01_A_DEF` would read **`CanTrade = 0`, `CanDrop = 0`,
+`CanRepair = 0`** — a sword is plainly all three — and `ITEM_ETC_GOLD_01` would
+read **`CanDrop = 255`**, which is not a boolean at all.
+
+The 255 is the loud one. A boolean column holding 255 is not a near-miss to
+argue with; it says the reading is wrong.
+
+**Since the arithmetic is anchored three times, the fault is in the read → slot →
+bit binding**, and the extraction shows where: slots `esp+0x11` and `esp+0x12`
+are each **written twice**, by reads 2 and 3 and again by reads 11 and 13. My
+heuristic paired each read with the next store within a few instructions, which
+cannot say which write is live when the flags expression runs. There is no branch
+between the two groups — both execute — so the question is real.
+
+I could have shipped columns 16..24. The sword row is what stopped it, and the
+only reason the sword row got checked is that the map made a claim specific
+enough to test.
+
+### Shipped
+
+`item_capability_flags.md` gains the read-to-column arithmetic with its three
+anchors, and a section saying plainly that applying it to the flags contradicts
+the data, why the binding rather than the arithmetic is at fault, and what would
+fix it. No srrevamp value changed.
+
+**What moved:** a reusable column arithmetic for `_RefObjCommon`, established and
+triple-checked; and one wrong answer caught by the data before it became a doc.
+
+**Next step:** re-derive the slot binding properly — for each stack slot the
+flags expression reads, find the **last** write before `0x6a34e6` rather than the
+first write after each read. That is a small change to the extractor and it
+decides whether the capability columns are 16..24 or the earlier group at 7..12.

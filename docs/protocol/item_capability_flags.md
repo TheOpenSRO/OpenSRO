@@ -114,7 +114,51 @@ predicate:
 same order as the nine stubs. `CanBorrow` (bit 3) is not among them and is set
 somewhere else in the parser.
 
-## What is STILL not established: the column numbers
+## The read-to-column arithmetic, now established
+
+Two helpers consume a field without an inline indexed read, which is why the
+read count lags the column count:
+
+- `FUN_006b2ef0` reads a **length-prefixed string** (a 2-byte length, then that
+  many bytes) — one call per string column;
+- `FUN_006b1a80` ends with `param_1[10] = param_1[10] + 1`, which is the field
+  counter at `+0x28` — so it consumes a column too.
+
+Between read 1 and read 2 there are four `FUN_006b2ef0` calls and one
+`FUN_006b1a80`: **five consumed columns**. So
+
+	READ0 -> column 0      READ1 -> column 1      READn -> column n+5  (n >= 2)
+
+**Confirmed three ways, none of them the one that produced it:**
+
+| check | result |
+|---|---|
+| a real row's columns 2..6 | exactly five strings — code name, display name, `xxx`, `SN_…`, `SN_…_TT_DESC` |
+| READ4..READ7 -> columns 9..12 | TypeID1..4, already known; a sword reads 3/1/6/2 and a garment mail 3/1/1/3 |
+| READ9 -> column 14 | Country, already known; a sword reads 0 (China), a MALL item 3 (either) |
+
+That arithmetic is a tool for the whole `_RefObjCommon` prefix, not just these
+flags.
+
+## What is STILL not established: which columns the flags are
+
+Applying the arithmetic to the nine capability reads gives columns 16..24 — and
+**the data contradicts it**. `ITEM_CH_SWORD_01_A_DEF` would read
+`CanTrade = 0, CanDrop = 0, CanRepair = 0`, and a sword is plainly all three.
+`ITEM_ETC_GOLD_01` would read `CanDrop = 255`, which is not a boolean at all.
+
+Since the arithmetic is anchored three times, the fault is in the **read → slot →
+bit** binding rather than in the column numbers. The likely cause is visible in
+the extraction: **slots `esp+0x11` and `esp+0x12` are each written twice**, once
+by reads 2 and 3 and again by reads 11 and 13, and the heuristic that paired a
+read with "the next store within a few instructions" cannot tell which write is
+live at the flags expression. There is no branch between the two groups, so both
+execute — which makes the question real rather than academic.
+
+Re-deriving that binding wants the store for each slot tracked to the last write
+before `0x6a34e6`, not the first write after each read.
+
+### Earlier probes that failed, kept
 
 The read order is not the column order, and there is a clean anchor proving it.
 
@@ -133,7 +177,7 @@ Closing this needs the string-consuming calls counted alongside the inline reads
 so that every column is accounted for. Until then the bits are known, their order
 is known, and their columns are not.
 
-### Two earlier probes that failed, kept
+#### Two of them
 
 **A partial extraction that looked complete.** A regex over the decompiled reads
 captured 11 of the parser's fields and produced indices 2, 3, 4… — positions
