@@ -8457,3 +8457,84 @@ per binary and a forced dump rebuild afterwards (the tick only rebuilds when the
 binary is newer than `DONE`, which a rename does not change) — so it is a
 deliberate operation, not a side effect, and it should be done when nothing else
 is in flight. Re-measuring straight after is what proves the loop is closed.
+
+## 2026-09-16 — the names applied, the metric moved, and a correction to the tick before
+
+The previous entry said applying the names needed one non-readOnly
+analyzeHeadless run per binary and a forced dump rebuild. That is exactly what
+it needed, and it worked.
+
+	server  7,386 -> 7,394 named   (+8)
+	client  6,440 -> 6,455 named   (+15, all of them)
+
+**+23 of 24.** The missing one is not a failure: `0x00497070` was
+`CGItemEquip::vslot_317`, and the coverage counter treats `vslot_` as named
+already, so renaming it to `CanBeEquipedAt` improved the name without changing
+the count. Worth knowing before someone reads a discrepancy into it.
+
+Spot-checked in the rebuilt dumps rather than trusted from the script's output:
+`00497070 CGItemEquip::CanBeEquipedAt`, `00496c20
+GObjPC::ResolveEquipSlotForItem`, `004890f0 CGPCInventoryOP::IsBullet`,
+`009db5e0 GlobalDataManager::ResolveVisualSlotForItem`. They are really there.
+
+### THE CORRECTION: the previous entry overstated the gap
+
+v0.1.235 said "**nothing** writes them back into the Ghidra project" and
+"`/opt/srrevamp-re/` has no names-import path at all". The second is true. The
+first is not, and the difference matters: **`client/tools/ghidra/
+ApplyKnownNames.java` already existed**, carrying 193 names, and its header
+states the same rationale almost word for word —
+
+	"findings that live only in commit messages are lost to the next session.
+	 A name in the program survives, and shows up in every future
+	 decompilation dump at every call site."
+
+An earlier session had already seen this problem and built the tool. What was
+actually true is narrower and less dramatic: **this session's 24 names were
+never added to it, and nobody re-ran it.** The infrastructure was fine; the
+habit was missing.
+
+I found this only because deleting the dead Python file made me list the
+directory. Had I not, the record would have kept a confident, wrong claim that
+an earlier session's work did not exist.
+
+The new script is still worth having — `ApplyKnownNames.java` hardcodes its
+names in Java, `ApplyNamespaceTable.java` reads namespaces, and neither reads a
+file of *names*. But it is an addition to a working path, not the first one.
+
+### Two things that cost time, recorded so they do not again
+
+**Ghidra 12.1.3 will not run `.py` scripts here.** The first applier was Python
+and died with `SCRIPT ERROR: Ghidra was not started with PyGhidra. Python is not
+available`. The dump pipeline's own `DecompAll.java` was the clue sitting in
+plain sight: every script that has ever run on this box is Java. The Python file
+was deleted rather than kept as a reference — a script that looks runnable and
+is not costs the next reader the same ten minutes.
+
+**The dumps re-shard.** The rebuild produced `shards=18` for the server where
+the old STATUS said `shards=2133`, because `DecompAll.java ... 30 2000` puts
+2000 functions in a shard and 34,113 of them need 18. Every `funcs_NNN.c` path
+in earlier entries is therefore stale as a *path*; the content is identical and
+found by grep either way. `functions=34113 failed=0` both before and after, which
+is the number that matters.
+
+### Shipped
+
+All 24 names in both Ghidra projects, with each row's evidence written into the
+function comment — the convention `ApplyKnownNames.java` established, because a
+name a later reader can audit beats one they have to trust. Both dumps rebuilt
+so the names reach every future session at every call site.
+`ApplyRecoveredNames.java` replaces the Python, is idempotent (a second run
+renamed nothing and refreshed 24 comments), and refuses to overwrite a function
+that already carries a real name.
+
+**What moved:** the headline metric, for the first time in fifteen ticks — and
+more usefully, the 24 names now arrive free in every future dump instead of
+having to be re-derived.
+
+**Next step:** the same treatment for names recovered BEFORE this session.
+`ApplyKnownNames.java` has 193, but entries in `docs/protocol/*.md` that never
+reached it are the same silent loss this tick was about — `igobj_vtable.md`'s
+209 slots and `error_attributed_functions.md` are the obvious places to look,
+and the join is mechanical: any address in those docs whose dump entry is still
+`FUN_` is a name that was recovered and dropped.

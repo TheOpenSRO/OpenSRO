@@ -8,9 +8,19 @@
 #                     A descriptive name is a CLAIM, the same as a constant is;
 #                     the evidence column is what backs it.
 #
-# Apply with client/tools/ghidra/ApplyRecoveredNames.py, which needs a
+# Apply with client/tools/ghidra/ApplyRecoveredNames.java, which needs a
 # NON-readOnly analyzeHeadless run -- the dump tick uses -readOnly and so can
-# never write a name back.
+# never write a name back. It is idempotent: a second run renames nothing and
+# refreshes the evidence comments.
+#
+# APPLIED 2026-09-16. All 24 are now in the Ghidra projects and in the dumps.
+# Kept as the durable record of what was applied and on what evidence; new
+# recoveries are appended here and the script re-run.
+#
+# This is NOT the only such path. client/tools/ghidra/ApplyKnownNames.java
+# carries 193 earlier names with the same intent, hardcoded rather than
+# file-driven. Append here, not there, unless the name belongs with that
+# file's subject matter.
 00497070	server	CGItemEquip::CanBeEquipedAt	engine	CheckEquipsetIntegrity calls vtable 0x4f4 and logs "Equiped already but CanBeEquipedAt() failed!!"
 006beec0	server	ReferenceData::RefMagicOptGroup_FindByID	engine	"Can`t find MagicOptGroup(ID:%d) within _RefMagicOptGroup table"
 0066e020	server	ReferenceData::RefSetItemGroup_FindBySetID	engine	"This SetID[%d] is not registered in _RefSetItemGroup table!!"
