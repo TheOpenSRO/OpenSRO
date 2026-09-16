@@ -29,7 +29,17 @@ const (
 	SlotWeapon
 	SlotShield
 	SlotExtra
+	// The accessory slots, added 2026-09-16. Appended rather than inserted:
+	// a Slot is persisted as its integer, so giving an existing value a new
+	// meaning would silently move every equipped item.
+	SlotEarring
+	SlotNecklace
+	SlotRing
 )
+
+// AccessorySlots are the three worn accessories. They carry no model the
+// client draws, which is why they are not in WearableSlots.
+var AccessorySlots = []Slot{SlotEarring, SlotNecklace, SlotRing}
 
 // ArmorSlots are the six wearable armour slots -- the ones that add to a
 // character's defence and are drawn on the body. SlotWeapon and SlotShield

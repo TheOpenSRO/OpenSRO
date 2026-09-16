@@ -7458,3 +7458,60 @@ the evidence; a measured ceiling for text-based naming.
 position, vtable shape, data-flow into known fields. The client's 5,235 file
 attributions are the largest untapped structural signal, since a file groups
 functions that a call graph would otherwise have to rediscover.
+
+## 2026-09-16 (thirty-second) — a constant that was named without being checked
+
+The previous entry pointed at structural naming as the remaining work. Before
+starting something that large, a cheaper question: does srrevamp handle every
+item category the real tables contain? It does not, and the reason was a name
+nobody had tested.
+
+### `FamilyAccessory = 7` is not accessories
+
+`equipment/rules.go` carried `FamilyAccessory = 7` among its TypeID3 families.
+**Every TypeID3 == 7 row in a real itemdata is a JOB SUIT** —
+`ITEM_EU_F_TRADE_TRADER_01`, `ITEM_CH_M_TRADE_HUNTER_04_01`,
+`ITEM_CH_F_FRPVP_VOUCHER_D` — 111 items across TypeID4 1, 2, 3, 5, 6, 7 for
+trader, thief, hunter and free-PvP. The name was invented and never checked
+against the table it describes.
+
+It is the same failure as `party.MaxSize` and `friend`'s "nothing to RE": a
+plausible statement written once and quoted thereafter. The difference is that
+those two asserted an absence and this one asserted an identity, so the absence
+audit could not have caught it.
+
+### Where accessories actually are
+
+Two families, one per race, each holding exactly the same three pieces —
+measured over a complete itemdata, **99 items apiece**:
+
+	TypeID3  5  China   TypeID4 1 earring, 2 necklace, 3 ring
+	TypeID3 12  Europe  TypeID4 1 earring, 2 necklace, 3 ring
+
+**Neither family was in srrevamp's list**, so `SlotFor` returned "not
+equippable" and **594 real items could not be worn**.
+
+### Shipped
+
+`FamilyJobSuit = 7` replacing the wrong name, `FamilyChinaAccessory = 5` and
+`FamilyEuropeAccessory = 12` added, `PieceEarring/Necklace/Ring` as their own
+numbering (the armour pieces use the same 1/2/3 for different things), and
+`SlotEarring`, `SlotNecklace`, `SlotRing` wired through `SlotFor` and the SQL
+store's slot validation.
+
+**The slots are APPENDED, not inserted.** A `Slot` is persisted as its integer,
+so giving an existing value a new meaning would silently move every equipped item
+on every live character. A test pins all twelve slot numbers for exactly that
+reason, and a second asserts that a job suit resolves to no slot at all.
+
+**What this tick is:** checking a name rather than trusting it. The catalogue of
+such names is small and finite, and two of them have now been wrong.
+
+**What moved:** 594 items became equippable; a misnamed constant corrected against
+the table it claims to describe; three slots added without disturbing persisted
+data.
+
+**Next step:** the same question for the other invented names in that file --
+`PieceHelm..PieceBoots` were measured ("136-140 of each, with no exceptions") but
+`SlotExtra` is described only as "tracked but has no gameplay yet", which is a
+placeholder rather than a reading of anything.

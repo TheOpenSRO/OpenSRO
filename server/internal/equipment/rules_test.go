@@ -113,7 +113,9 @@ func TestTypeIDsAreWithinRecoveredBounds(t *testing.T) {
 		{"FamilyChinaArmor", FamilyChinaArmor, MaxTID3},
 		{"FamilyShield", FamilyShield, MaxTID3},
 		{"FamilyWeapon", FamilyWeapon, MaxTID3},
-		{"FamilyAccessory", FamilyAccessory, MaxTID3},
+		{"FamilyJobSuit", FamilyJobSuit, MaxTID3},
+		{"FamilyChinaAccessory", FamilyChinaAccessory, MaxTID3},
+		{"FamilyEuropeAccessory", FamilyEuropeAccessory, MaxTID3},
 		{"FamilyEuropeRobe", FamilyEuropeRobe, MaxTID3},
 		{"FamilyEuropeLight", FamilyEuropeLight, MaxTID3},
 		{"FamilyEuropeHeavy", FamilyEuropeHeavy, MaxTID3},
@@ -145,6 +147,68 @@ func TestTypeIDsAreWithinRecoveredBounds(t *testing.T) {
 	} {
 		if tc.limit <= 0 || tc.limit&(tc.limit-1) != 0 {
 			t.Errorf("%s = %d, which is not a power of two", tc.name, tc.limit)
+		}
+	}
+}
+
+// TestAccessoriesAreEquippable covers a gap that made 594 real items refuse to
+// equip: the accessory families were missing from SlotFor entirely, and the
+// constant that looked like it covered them (`FamilyAccessory = 7`) pointed at
+// job suits instead.
+func TestAccessoriesAreEquippable(t *testing.T) {
+	for _, family := range []int{FamilyChinaAccessory, FamilyEuropeAccessory} {
+		for _, tc := range []struct {
+			piece int
+			want  Slot
+		}{
+			{PieceEarring, SlotEarring},
+			{PieceNecklace, SlotNecklace},
+			{PieceRing, SlotRing},
+		} {
+			it := &refdata.Item{TypeID1: TypeItem, TypeID2: TypeEquipment,
+				TypeID3: family, TypeID4: tc.piece}
+			got, ok := SlotFor(it)
+			if !ok {
+				t.Errorf("family %d piece %d: not equippable", family, tc.piece)
+				continue
+			}
+			if got != tc.want {
+				t.Errorf("family %d piece %d: slot %d, want %d", family, tc.piece, got, tc.want)
+			}
+		}
+	}
+}
+
+// TestJobSuitIsNotAnAccessory pins the correction. TypeID3 7 is a job suit --
+// every real row there is a TRADE_TRADER, TRADE_THIEF, TRADE_HUNTER or
+// FRPVP_VOUCHER -- so it must not resolve to an accessory slot.
+func TestJobSuitIsNotAnAccessory(t *testing.T) {
+	if FamilyJobSuit == FamilyChinaAccessory || FamilyJobSuit == FamilyEuropeAccessory {
+		t.Fatal("the job-suit family must be distinct from the accessory families")
+	}
+	for _, piece := range []int{1, 2, 3, 5, 6, 7} {
+		it := &refdata.Item{TypeID1: TypeItem, TypeID2: TypeEquipment,
+			TypeID3: FamilyJobSuit, TypeID4: piece}
+		if slot, ok := SlotFor(it); ok {
+			t.Errorf("job suit piece %d resolved to slot %d; srrevamp has no job-suit slot", piece, slot)
+		}
+	}
+}
+
+// TestAccessorySlotsAppendedNotInserted guards the persistence rule: a Slot is
+// stored as its integer, so the pre-existing slots must keep their values.
+func TestAccessorySlotsAppendedNotInserted(t *testing.T) {
+	for _, tc := range []struct {
+		slot Slot
+		want int
+	}{
+		{SlotHelm, 0}, {SlotMail, 1}, {SlotShoulderGuard, 2}, {SlotGauntlet, 3},
+		{SlotPants, 4}, {SlotBoots, 5}, {SlotWeapon, 6}, {SlotShield, 7},
+		{SlotExtra, 8}, {SlotEarring, 9}, {SlotNecklace, 10}, {SlotRing, 11},
+	} {
+		if int(tc.slot) != tc.want {
+			t.Errorf("slot %d moved to %d -- every equipped item at that value would change meaning",
+				tc.want, int(tc.slot))
 		}
 	}
 }

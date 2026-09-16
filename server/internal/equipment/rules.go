@@ -71,10 +71,30 @@ const (
 	FamilyChinaArmor     = 3
 	FamilyShield         = 4
 	FamilyWeapon         = 6
-	FamilyAccessory      = 7
 	FamilyEuropeRobe     = 9
 	FamilyEuropeLight    = 10
 	FamilyEuropeHeavy    = 11
+
+	// The ACCESSORY families, added 2026-09-16, and a correction with them.
+	//
+	// This list used to carry `FamilyAccessory = 7`. **Seven is not
+	// accessories.** Every TypeID3 == 7 row in a real itemdata is a JOB SUIT --
+	// ITEM_EU_F_TRADE_TRADER_01, ITEM_CH_M_TRADE_HUNTER_04_01,
+	// ITEM_CH_F_FRPVP_VOUCHER_D and so on, 111 items across TypeID4 1, 2, 3, 5,
+	// 6, 7 for trader, thief, hunter and free-PvP. The name was invented and
+	// nothing checked it.
+	//
+	// Accessories are two families, one per race, and each holds exactly the
+	// same three pieces -- measured over a complete itemdata, 99 items apiece:
+	//
+	//	TypeID3  5  China   TypeID4 1 earring, 2 necklace, 3 ring
+	//	TypeID3 12  Europe  TypeID4 1 earring, 2 necklace, 3 ring
+	//
+	// Neither family was in this list, so 594 real items answered
+	// ErrNotEquippable.
+	FamilyChinaAccessory  = 5
+	FamilyJobSuit         = 7
+	FamilyEuropeAccessory = 12
 
 	// TypeID4 under an armour family: the piece. Its own numbering, not
 	// the slot order -- measured across every armour row in a real table,
@@ -85,6 +105,13 @@ const (
 	PiecePants         = 4
 	PieceGauntlet      = 5
 	PieceBoots         = 6
+
+	// TypeID4 under an ACCESSORY family. A separate numbering from the armour
+	// pieces above, which is why it gets its own names: both accessory families
+	// use 1/2/3, and each value holds 99 items in a real table.
+	PieceEarring  = 1
+	PieceNecklace = 2
+	PieceRing     = 3
 )
 
 // The widths of the type-id hierarchy, RECOVERED from the server binary rather
@@ -147,6 +174,17 @@ func SlotFor(it *refdata.Item) (Slot, bool) {
 		return SlotWeapon, true
 	case FamilyShield:
 		return SlotShield, true
+	case FamilyChinaAccessory, FamilyEuropeAccessory:
+		// Both races number the pieces identically.
+		switch it.TypeID4 {
+		case PieceEarring:
+			return SlotEarring, true
+		case PieceNecklace:
+			return SlotNecklace, true
+		case PieceRing:
+			return SlotRing, true
+		}
+		return 0, false
 	case FamilyChinaGarment, FamilyChinaProtector, FamilyChinaArmor,
 		FamilyEuropeRobe, FamilyEuropeLight, FamilyEuropeHeavy:
 		switch it.TypeID4 {
