@@ -25,10 +25,16 @@ interpolation), which is legitimately this project's own client, not a claim abo
 - **FLAG** — a comment or value that reads as more grounded than its evidence supports. Corrected
   as part of this audit (see the last section).
 
-## Open item added 2026-09-16
+## Open item added 2026-09-16 — CLOSED the same day
+
+**A character's Str and Int rise by 1 each per level, automatically.** Implemented
+in v0.1.239: `SetLeveling` now carries Str and Int, both stores persist them, and
+the level-up applies `character.StatGrowthPerLevel` per level gained. A level-40
+character has Str 59 rather than 20, and roughly three times the health it had.
+The text below is the original entry, kept for the reasoning.
 
 **A character's Str and Int rise by 1 each per level, automatically, and srrevamp
-does not model it.** `GObjPC_SetLevel` calls `SpendStatPoints(levels, levels)`
+did not model it.** `GObjPC_SetLevel` calls `SpendStatPoints(levels, levels)`
 immediately after granting the pool, which adds to charData `+0x74` and `+0x76`.
 srrevamp keeps Str and Int at `StartingStr`/`StartingInt` for a character's whole
 life and accumulates the three spendable points without spending them.

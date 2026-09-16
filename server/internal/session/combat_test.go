@@ -757,7 +757,7 @@ func TestDeathPenaltyAppliedInCombat(t *testing.T) {
 	// Level 11 with exp banked, so the penalty has something to take and the
 	// character is past the grace period.
 	const startExp = int64(30000)
-	if err := chars.SetLeveling(ctx, c.ID, 11, startExp, 0); err != nil {
+	if err := chars.SetLeveling(ctx, c.ID, 11, startExp, 0, character.StartingStr, character.StartingInt); err != nil {
 		t.Fatalf("setting level: %v", err)
 	}
 

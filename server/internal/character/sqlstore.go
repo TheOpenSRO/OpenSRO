@@ -310,10 +310,10 @@ func (s *SQLStore) GetByID(ctx context.Context, characterID int64) (*Character, 
 }
 
 // SetLeveling implements Store.
-func (s *SQLStore) SetLeveling(ctx context.Context, characterID int64, level int, exp int64, statPoints int) error {
+func (s *SQLStore) SetLeveling(ctx context.Context, characterID int64, level int, exp int64, statPoints, str, intel int) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE characters SET level = $1, exp = $2, stat_points = $3 WHERE id = $4`,
-		level, exp, statPoints, characterID)
+		`UPDATE characters SET level = $1, exp = $2, stat_points = $3, str = $4, intel = $5 WHERE id = $6`,
+		level, exp, statPoints, str, intel, characterID)
 	if err != nil {
 		return fmt.Errorf("character: setting leveling: %w", err)
 	}

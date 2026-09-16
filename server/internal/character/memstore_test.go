@@ -333,7 +333,7 @@ func TestResetHPHealsToLevelMax(t *testing.T) {
 	c, _ := store.Create(ctx, 1, "Aria")
 	// Level them up and damage them, then reset -- HP should return to the
 	// level-appropriate maximum, not the flat base.
-	if err := store.SetLeveling(ctx, c.ID, 5, 0, 0); err != nil {
+	if err := store.SetLeveling(ctx, c.ID, 5, 0, 0, StartingStr, StartingInt); err != nil {
 		t.Fatalf("SetLeveling: %v", err)
 	}
 	if _, _, err := store.ApplyDamage(ctx, c.ID, 50); err != nil {

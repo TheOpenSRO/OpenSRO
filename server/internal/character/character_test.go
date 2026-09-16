@@ -64,3 +64,41 @@ func TestRespawnMP(t *testing.T) {
 		}
 	}
 }
+
+// TestStatGrowthPerLevelIsAppliedToMaxHP is the reason the growth matters, in
+// the one number a player would notice.
+//
+// srrevamp held Str and Int fixed for a character's whole life until
+// 2026-09-16. MaxHPFor is Str * 10 * 1.02^(level-1), so the exponential term is
+// the smaller half of the growth and the Str term the larger -- a level-40
+// character on a fixed Str had roughly a third of the health the real game
+// gives one. This pins that the Str term is now moving.
+func TestStatGrowthPerLevelIsAppliedToMaxHP(t *testing.T) {
+	if StatGrowthPerLevel != 1 {
+		t.Fatalf("StatGrowthPerLevel = %d; the engine spends one point into each of "+
+			"Str and Int per level (SpendStatPoints(levels, levels))", StatGrowthPerLevel)
+	}
+
+	const level = 40
+	strAt40 := StartingStr + (level-1)*StatGrowthPerLevel
+	if strAt40 != 59 {
+		t.Fatalf("a level-%d character has Str %d, want %d", level, strAt40, 59)
+	}
+
+	grown := MaxHPFor(strAt40, level)
+	frozen := MaxHPFor(StartingStr, level)
+	if grown <= frozen {
+		t.Fatalf("growing Str must raise MaxHP: grown %d, frozen %d", grown, frozen)
+	}
+	// The ratio is the ratio of the Str terms, since the exponential term is
+	// common to both -- which is the point: the stat growth dominates.
+	if ratio := float64(grown) / float64(frozen); ratio < 2.8 || ratio > 3.0 {
+		t.Errorf("level-%d health went up %.2fx; want the Str ratio %.2fx",
+			level, ratio, float64(strAt40)/float64(StartingStr))
+	}
+	// At level 1 nothing has grown yet, so the two must agree exactly.
+	if MaxHPFor(StartingStr, 1) != StartingMaxHP {
+		t.Errorf("a level-1 character is unaffected: got %d, want %d",
+			MaxHPFor(StartingStr, 1), StartingMaxHP)
+	}
+}

@@ -947,7 +947,18 @@ func performAttack(
 			}
 			newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, gainedExp)
 			newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
-			if err := chars.SetLeveling(ctx, characterID, newLevel, newExp, newStatPoints); err != nil {
+			// Str and Int rise by one each per level, automatically and without
+			// the player choosing -- on top of the three spendable points.
+			// GObjPC_SetLevel grants five points and immediately calls
+			// SpendStatPoints(levels, levels), which is `Str += levels` and
+			// `Int += levels`; the asm is `movzx ecx,[eax+0x74]; add cx,si;
+			// call SetStr`, and it publishes ParamKeeper param 1 (Str)
+			// afterwards. See leveldata.StatPointsPerLevel for the full
+			// arithmetic and docs/GROUNDING_AUDIT.md for why this took a tick
+			// of its own: it moves every derived HP and MP number.
+			newStr := char.Str + gained*character.StatGrowthPerLevel
+			newInt := char.Int + gained*character.StatGrowthPerLevel
+			if err := chars.SetLeveling(ctx, characterID, newLevel, newExp, newStatPoints, newStr, newInt); err != nil {
 				return fmt.Errorf("combat: applying experience: %w", err)
 			}
 			if gained > 0 {
@@ -957,9 +968,12 @@ func performAttack(
 				// Healed to the NEW level's higher maximum -- and mana with
 				// it. Both derive from the character's own Str/Int, so read
 				// the level off the advance rather than the stale record.
-				result.PlayerHP = int32(character.MaxHPFor(char.Str, newLevel))
+				// The new Str/Int, not the stale record's: the level-up
+				// raised them, and the engine's refill goes to the maximum
+				// those give (GObjPC_SetLevel heals by GetMaxHP - GetCurHP).
+				result.PlayerHP = int32(character.MaxHPFor(newStr, newLevel))
 				if mp != nil {
-					mp.Refill(characterID, character.MaxMPFor(char.Int, newLevel))
+					mp.Refill(characterID, character.MaxMPFor(newInt, newLevel))
 				}
 				levelUp = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
 			}
@@ -1047,7 +1061,9 @@ func performAttack(
 							// GObjPC_OnDeath touches CurLevel.
 							exp = 0
 						}
-						if err := chars.SetLeveling(ctx, characterID, c.Level, exp, c.StatPoints); err != nil {
+						// A death penalty takes experience only: level, stat
+						// points, Str and Int are carried through unchanged.
+						if err := chars.SetLeveling(ctx, characterID, c.Level, exp, c.StatPoints, c.Str, c.Int); err != nil {
 							return fmt.Errorf("combat: applying death penalty: %w", err)
 						}
 						result.DeathExpLost = loss

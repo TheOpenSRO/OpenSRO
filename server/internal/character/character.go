@@ -147,6 +147,29 @@ const (
 	StartingInt = 20
 )
 
+// StatGrowthPerLevel is how much Str and Int each rise by on every level,
+// automatically and without the player choosing.
+//
+// REAL, from GObjPC_SetLevel (`0x004e4d90`), which grants five stat points and
+// then calls GObjPC_SpendStatPoints(levels, levels) -- spending two of them on
+// the character's behalf. The spend is a plain increment, and the disassembly
+// leaves no room for reading it otherwise:
+//
+//	movzx ecx,WORD PTR [eax+0x74]   ; current Str
+//	add   cx,si                     ; + the amount being spent
+//	call  0x51dc00                  ; SetStr(Str + amount)
+//
+// with the Int half the same against +0x76, and ParamKeeper param 1 (Str)
+// republished afterwards -- which independently agrees with
+// combat.ParamFor[TagStr] == 1, recovered from the tag dispatcher.
+//
+// THIS IS WHY A LEVEL-40 CHARACTER IS NOT A LEVEL-1 ONE WITH MORE HEALTH.
+// MaxHPFor is Str * 10 * 1.02^(level-1): the exponential term is the smaller
+// half of the growth, and the Str term is the larger. srrevamp held Str and Int
+// fixed for a character's whole life until 2026-09-16, which left a level-40
+// character on roughly a third of the health the real game gives one.
+const StatGrowthPerLevel = 1
+
 // StartingMaxHP and StartingMaxMP are what those give at level 1, where the
 // growth term is 1.
 const (
@@ -280,10 +303,17 @@ type Store interface {
 	// no-op that still reports the current HP.
 	Heal(ctx context.Context, characterID int64, amount, maxHP int) (int, error)
 
-	// SetLeveling writes characterID's level, current-level exp progress and
-	// unspent stat points -- the result the caller computed from a kill's exp
-	// against the leveldata curve. Returns ErrNotFound if no such character.
-	SetLeveling(ctx context.Context, characterID int64, level int, exp int64, statPoints int) error
+	// SetLeveling writes characterID's level, current-level exp progress,
+	// unspent stat points, and Str/Int -- the result the caller computed from
+	// a kill's exp against the leveldata curve. Returns ErrNotFound if no such
+	// character.
+	//
+	// Str and Int are here because the engine writes them in the same breath.
+	// GObjPC_SetLevel grants five stat points per level and immediately calls
+	// SpendStatPoints(levels, levels), which does `Str += levels` and
+	// `Int += levels` (asm: `movzx ecx,[eax+0x74]; add cx,si; call SetStr`).
+	// One level-up is one transaction in the engine, so it is one call here.
+	SetLeveling(ctx context.Context, characterID int64, level int, exp int64, statPoints, str, intel int) error
 
 	// GetByID returns the character with the given ID, regardless of which
 	// account owns it (unlike ListByAccount). Returns ErrNotFound if no

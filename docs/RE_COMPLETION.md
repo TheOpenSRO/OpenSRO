@@ -8713,3 +8713,73 @@ precise, cited, unimplemented mechanic — which is a better thing to have.
 and a test that a level-40 character has Str 20+39 rather than 20 — and it will
 move every derived HP/MP number on the live server, so it wants its own tick and
 its own release note.
+
+## 2026-09-16 — the stat growth, implemented
+
+The previous entry filed the automatic +1 Str / +1 Int per level rather than
+folding it into the tick that found it, because it is a schema change and a large
+balance change. This is that tick.
+
+### Verified once more before building on it
+
+Two of the three functions in the chain had lost their arguments to Ghidra, so
+the decompilation alone could not say what was written. `FUN_0051dc00` and
+`FUN_0051dbd0` turned out to be plain **setters** for charData `+0x74` and
+`+0x76`, not incrementers — the increment is at the call site, and the asm is
+explicit:
+
+	movzx ecx,WORD PTR [eax+0x74]   ; current Str
+	add   cx,si                     ; + the amount being spent
+	call  0x51dc00                  ; SetStr(Str + amount)
+
+with the Int half the same against `+0x76`. `SpendStatPoints` then republishes
+**ParamKeeper param 1**, which independently agrees with
+`combat.ParamFor[TagStr] == 1` recovered from the tag dispatcher two ticks ago —
+two unrelated functions, one answer.
+
+### What shipped
+
+`character.StatGrowthPerLevel = 1`, and `SetLeveling` extended to carry Str and
+Int. That last part is deliberate rather than convenient: the engine grants the
+points and spends two of them **in one level-up**, so making it one call here
+keeps the two from drifting apart. Both stores persist it; the death-penalty path
+passes Str and Int through unchanged, with a comment saying so, because a reader
+seeing new arguments on that call should not have to work out whether a death
+also changes stats.
+
+The level-up's own HP/MP refill now reads the **new** Str and Int rather than the
+stale record — which is what the engine does, since it heals by
+`GetMaxHP − GetCurHP` computed after the level has been set.
+
+### The balance change, stated plainly
+
+`MaxHPFor` is `Str × 10 × 1.02^(level−1)`. The exponential term is the smaller
+half of the growth and the Str term the larger, so a level-40 character goes from
+Str 20 to Str 59 and from roughly 428 health to roughly 1,263. **Every existing
+character on the live server keeps whatever Str its row holds** — the growth
+applies from the next level gained, not retroactively — so an established
+character will lag a freshly-levelled one until it catches up. That is a real
+consequence of fixing this late rather than early, and it is better said here
+than discovered.
+
+A test pins the level-40 ratio against the ratio of the Str terms, and pins that
+a level-1 character is unaffected.
+
+### A small trap avoided
+
+The `characters` table's Int column is named **`intel`**, not `int` — the schema
+had already stepped around the reserved word. My first `UPDATE` used `int = $5`
+and would have failed at runtime on the SQL backend while every in-memory test
+passed. Caught by reading the schema rather than by the tests, which is the order
+that matters for a column name.
+
+**What moved:** the audit's newest open item, closed the same day it was opened;
+one recovered mechanic implemented end to end; and the last of the level-up
+arithmetic now matches the engine's.
+
+**Next step:** `StartingStr = 20` and `StartingInt = 20` are still OWN DESIGN, and
+now they matter far more than they did — every level multiplies them. The audit
+says the category is closed because creation happens on the AgentServer, which
+this project has no artifact of. Worth one probe to confirm that is still true
+now that the stat *growth* is known: if any client-side character-creation
+preview computes a starting HP, it would name the starting Str.

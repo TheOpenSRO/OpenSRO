@@ -243,7 +243,7 @@ func (m *MemStore) SetGender(_ context.Context, characterID int64, gender string
 }
 
 // SetLeveling implements Store.
-func (m *MemStore) SetLeveling(_ context.Context, characterID int64, level int, exp int64, statPoints int) error {
+func (m *MemStore) SetLeveling(_ context.Context, characterID int64, level int, exp int64, statPoints, str, intel int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -254,5 +254,7 @@ func (m *MemStore) SetLeveling(_ context.Context, characterID int64, level int, 
 	c.Level = level
 	c.Exp = exp
 	c.StatPoints = statPoints
+	c.Str = str
+	c.Int = intel
 	return nil
 }
