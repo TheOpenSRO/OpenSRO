@@ -5019,3 +5019,48 @@ the wrong answer for characterdata column 79 twice.
 needed to replace them genuinely is absent. What changed is that the reason is
 now accurate and points at the 697 real quests that ARE importable, instead of
 claiming nothing exists.
+
+## A real bug found by finishing the table survey: the catalog shadowed two real skills (2026-09-16)
+
+Finishing last tick's cross-reference of srrevamp's own-design subsystems against
+the client's tables. `learnableskill.txt` turns out to be small and unrelated
+(205 rows of NPC-to-skill teaching pairs), but checking it raised a sharper
+question about `skill.Catalog`, whose disclosure said to "extend once real
+_RefSkill data informs what should exist" — and real skill data IS now imported,
+33,632 rows of it.
+
+**The collision.** `skill.Catalog` occupies ids **1 and 2**. In the client's own
+skilldata:
+
+	id 1  SKILL_PUNCH_01           the unarmed attack
+	id 2  SKILL_CH_SWORD_BASE_01   the basic sword swing
+	id 3  SKILL_CH_SWORD_SMASH_A_01
+
+so the two invented entries sit exactly on top of two of the most-used skills in
+the game.
+
+**The bug.** The LEARN path already preferred refdata and fell back to the
+catalog. The USE path had the order reversed — catalog first. So on a server with
+real refdata loaded, a player learned the real skill 2 and then **used an
+invented "Whirlwind" with a flat +10 bonus instead of the real 60%-of-weapon
+swing**. The two paths disagreed about what skill 2 even was.
+
+This project already knew skill 2 is the basic swing: `skilldamage_test.go` has
+asserted "SKILL_CH_SWORD_BASE_01: 60% and no flat damage" for a while. The fact
+and the bug sat next to each other without meeting.
+
+**Fixed** by making both paths try refdata first and fall back to the catalog,
+which is the rule the rest of the project already follows — `shop.Price` states
+it outright: "The real number is what a player pays, so it wins."
+
+The catalog's ids are deliberately NOT renumbered out of the real range:
+renumbering would orphan every character that has already learned 1 or 2, and
+the ordering fix makes the collision harmless.
+
+`TestRealSkillsWinOverTheOwnDesignCatalog` pins the two facts that make this a
+bug rather than a preference — the catalog really does occupy the colliding ids,
+and the real basic swing really is a sub-100 percentage with no flat damage, so
+the shadowing changed damage rather than just naming.
+
+**What moved:** a behavioural fix. Skills 1 and 2 now resolve to the game's own
+skills on any server with refdata loaded, instead of to invented ones.

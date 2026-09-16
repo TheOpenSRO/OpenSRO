@@ -25,9 +25,24 @@ type Skill struct {
 	CooldownSeconds int
 }
 
-// Catalog is this project's own small, fixed skill list. Extend once real
-// game-design work (or imported _RefSkill data) informs what should
-// actually exist.
+// Catalog is this project's own small, fixed skill list, kept only as a
+// FALLBACK for a server with no imported skill refdata.
+//
+// **Its ids collide with real skills, and that mattered.** The client's own
+// skilldata gives id 1 to SKILL_PUNCH_01 and id 2 to SKILL_CH_SWORD_BASE_01 --
+// the unarmed attack and the basic sword swing. Until 2026-09-16 the skill-use
+// path consulted this catalog FIRST, so on a server with real refdata loaded a
+// player who learned skill 2 then used an invented "Whirlwind" with a flat +10
+// bonus instead of the real 60%-of-weapon swing. The learn path had always
+// preferred refdata, so the two disagreed about what skill 2 was.
+//
+// Both paths now try refdata first and fall back here, which is the rule the
+// rest of the project already follows. The ids are left as they are rather than
+// moved out of the real range: renumbering would orphan every character that
+// has already learned 1 or 2, and the ordering fix makes the collision
+// harmless.
+//
+// Extend, or delete, once the real skill list is what servers actually run on.
 var Catalog = map[int64]Skill{
 	1: {ID: 1, Name: "Power Strike", DamageBonus: 15, CooldownSeconds: 5},
 	2: {ID: 2, Name: "Whirlwind", DamageBonus: 10, CooldownSeconds: 3},

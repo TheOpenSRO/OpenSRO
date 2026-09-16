@@ -6,6 +6,7 @@ import (
 
 	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/srrevamp/server/internal/skill"
 )
 
 // Skill damage is real, and it comes in TWO halves that the engine keeps on
@@ -107,5 +108,40 @@ func TestMasteryLevelCap(t *testing.T) {
 		if got := capFor(tc.level); got != tc.want {
 			t.Errorf("a level-%d character's mastery cap = %d, want %d", tc.level, got, tc.want)
 		}
+	}
+}
+
+// TestRealSkillsWinOverTheOwnDesignCatalog guards the ordering that was wrong
+// until 2026-09-16.
+//
+// skill.Catalog occupies ids 1 and 2. In the client's own skilldata those are
+// SKILL_PUNCH_01 and SKILL_CH_SWORD_BASE_01 -- the unarmed attack and the basic
+// sword swing. The use path consulted the catalog first, so a server with real
+// refdata loaded resolved skill 2 to an invented "Whirlwind" (+10 flat) rather
+// than the real 60%-of-weapon swing, while the LEARN path had already preferred
+// refdata. The two disagreed about the same id.
+//
+// This pins the two facts that made it a bug rather than a style choice: the
+// catalog really does occupy the colliding ids, and the real basic swing really
+// is a sub-100 percentage with no flat damage, so the shadowing changed damage.
+func TestRealSkillsWinOverTheOwnDesignCatalog(t *testing.T) {
+	for _, id := range []int64{1, 2} {
+		if _, ok := skill.Catalog[id]; !ok {
+			t.Fatalf("skill.Catalog no longer holds id %d; this guard assumed the collision", id)
+		}
+	}
+
+	// The real SKILL_CH_SWORD_BASE_01 (id 2): 60%, no flat damage. If the
+	// catalog shadowed it the blow would instead take a flat +10 and no
+	// percentage, which is what this asserts cannot silently become true.
+	realBase := &refdata.Skill{BasicLevel: 1, AttackPercent: 60}
+	flat, pct := skillDamageBonus(realBase)
+	if flat != 0 || pct != 60 {
+		t.Errorf("the real basic swing: got flat %d pct %d, want 0 and 60", flat, pct)
+	}
+	if cat := skill.Catalog[2]; int(cat.DamageBonus) == flat {
+		t.Errorf("the catalog's id 2 bonus (%d) is indistinguishable from the real "+
+			"skill's flat damage (%d); the test can no longer tell which one resolved",
+			cat.DamageBonus, flat)
 	}
 }

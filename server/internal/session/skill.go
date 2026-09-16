@@ -400,14 +400,27 @@ func UseSkillHandler(
 		var damagePercent int
 		var hits = 1
 		var mpCost int
-		if sk, inCatalog := skill.Catalog[req.SkillID]; inCatalog {
-			cooldown = time.Duration(sk.CooldownSeconds) * time.Second
-			damageBonus = int(sk.DamageBonus)
-		} else if ref, err := skillRef.GetSkill(ctx, req.SkillID); err == nil && ref != nil {
+		// REAL SKILLS WIN. This used to check skill.Catalog first, which
+		// silently shadowed two real skills: the own-design catalog occupies
+		// ids 1 and 2, and those are SKILL_PUNCH_01 and SKILL_CH_SWORD_BASE_01
+		// in the client's own skilldata -- the unarmed attack and the basic
+		// sword swing, two of the most-used skills in the game. A player who
+		// learned the real skill 2 then used an invented "Whirlwind" with a
+		// flat +10 instead of the real 60%-of-weapon swing.
+		//
+		// The learn path (above) already preferred refdata and fell back to the
+		// catalog; only this path had the order reversed, so the two disagreed
+		// about what skill 2 even was. Both now agree, and the ordering matches
+		// the rule the rest of the project follows -- shop.Price says it
+		// outright: "The real number is what a player pays, so it wins."
+		if ref, err := skillRef.GetSkill(ctx, req.SkillID); err == nil && ref != nil {
 			cooldown = time.Duration(ref.ReuseDelayMs) * time.Millisecond
 			mpCost = ref.ConsumeMP
 			damageBonus, damagePercent = skillDamageBonus(ref)
 			hits = ref.HitsFor()
+		} else if sk, inCatalog := skill.Catalog[req.SkillID]; inCatalog {
+			cooldown = time.Duration(sk.CooldownSeconds) * time.Second
+			damageBonus = int(sk.DamageBonus)
 		} else {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "no such skill"}).Encode()})
 		}
