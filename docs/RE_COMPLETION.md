@@ -8379,3 +8379,81 @@ from MagOptEachLevel at RefMagicOptByItemOptLevel"`. The `%s` is the telling
 part: the group is looked up by NAME, not by the numeric id the set table uses,
 so the two tables are keyed differently and the joining function is where that
 is reconciled.
+
+## 2026-09-16 — the metric that could not move
+
+This tick set out to finish the `MagicOptGroup[%s]` join and then, per the
+prompt's other option, measured naming coverage. The measurement is the finding.
+
+### The join, first, because it did close
+
+The lookup message's `%s` was the clue and it holds up.
+`ReferenceData::FUN_006a6660` copies **seven dwords — a 28-byte inline name —
+from row+0x08** onto the stack for that `%s`, so `_RefMagicOptByItemOptLevel`
+keys a magic-option group by **name**. `_RefMagicOptGroup` keys it by **id**:
+`FUN_006beec0` is the by-id lookup, and it says so itself —
+`"Can`t find MagicOptGroup(ID:%d) within _RefMagicOptGroup table"`. Two tables,
+two keyings, reconciled at load time. Assert anchor for the harvest lever:
+`ReferenceData.cpp:1566`.
+
+(The first probe for that message returned nothing. The literal is `can\'t` in
+the dump, and the pattern `can.t` needs exactly one character between "can" and
+"t" where there are two. An empty grep is a fact about the grep.)
+
+### The measurement
+
+	server  7,386 named of 34,113  (21.7%)
+	client  6,440 named of 43,460  (14.8%)
+
+**Identical to the figures recorded on 2026-09-15**, before roughly fifteen ticks
+of active reverse engineering. Not approximately — exactly.
+
+The reason is not that nothing was recovered. It is that **every name went into
+srrevamp's comments and docs, and nothing writes one back into the Ghidra
+project the metric reads.** Checked rather than assumed: `0x00497070` is still
+`CGItemEquip::vslot_317` in the dump, `0x009db5e0` still
+`GlobalDataManager::FUN_009db5e0`, and five more the same. And the pipeline
+cannot do it — `re_tick.sh` runs analyzeHeadless with `-readOnly`, so a rename
+is structurally impossible there, and `/opt/srrevamp-re/` has no names-import
+path at all.
+
+**A goal stated as "every game-logic function named" was being measured against
+an artefact the work never touched.** Fifteen ticks is how long that took to
+notice, and the only reason it surfaced now is that the prompt lists the
+measurement as an option and nobody had taken it.
+
+### What now closes the loop
+
+`docs/protocol/recovered_names.tsv` — 24 names read out of the binaries this
+session, each with its address, its binary, and its evidence. The `origin`
+column is the part that matters: **`engine` for the binary's own word,
+`descriptive` for one this project chose.** Four are the engine's
+(`CanBeEquipedAt`, `RefMagicOptGroup_FindByID`, `RefSetItemGroup_FindBySetID`,
+`IsBullet`); twenty are descriptive, and a descriptive name is a claim like any
+other, which is why each carries its evidence in the row.
+
+`client/tools/ghidra/ApplyRecoveredNames.py` applies them, and refuses to guess:
+a row with no function at its address, or whose function already carries a real
+name, is reported and skipped rather than overwritten — an existing name may be
+the engine's own and better than the one offered. It needs a NON-readOnly
+analyzeHeadless run, which the docstring says in so many words.
+
+### The file was wrong when written, and the check caught it
+
+Two rows claimed `client` for `0x004909f0` and `0x00491bd0`, which are in the
+**server** dump — I read them from `decomp_server/funcs_214.c` and typed the
+wrong binary. A pass that resolves every row against the two dump indexes found
+both; after the fix, **24 of 24 verified present and still unnamed**. That pass
+is worth running before any future application, and a Go test now guards the
+file's shape (address format, binary, origin, non-empty evidence, no duplicates)
+so the cheap mistakes cannot come back.
+
+**What moved:** the two keyings of the magic-option-by-level tables; 24 names
+made durable and machine-applicable instead of living only in prose; and an
+honest account of why a headline metric has been flat.
+
+**Next step:** apply the file. That needs one non-readOnly analyzeHeadless run
+per binary and a forced dump rebuild afterwards (the tick only rebuilds when the
+binary is newer than `DONE`, which a rename does not change) — so it is a
+deliberate operation, not a side effect, and it should be done when nothing else
+is in flight. Re-measuring straight after is what proves the loop is closed.

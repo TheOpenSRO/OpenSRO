@@ -1,0 +1,37 @@
+# address	binary	name	origin	evidence
+# Names recovered by reading, which are NOT yet in the Ghidra projects or the
+# dumps. See docs/RE_COMPLETION.md, the 2026-09-16 "the metric that could not
+# move" entry, for why this file exists.
+#
+# origin=engine  the binary's own word for it, from a log string or assert.
+# origin=descriptive  chosen by this project to describe what the function does.
+#                     A descriptive name is a CLAIM, the same as a constant is;
+#                     the evidence column is what backs it.
+#
+# Apply with client/tools/ghidra/ApplyRecoveredNames.py, which needs a
+# NON-readOnly analyzeHeadless run -- the dump tick uses -readOnly and so can
+# never write a name back.
+00497070	server	CGItemEquip::CanBeEquipedAt	engine	CheckEquipsetIntegrity calls vtable 0x4f4 and logs "Equiped already but CanBeEquipedAt() failed!!"
+006beec0	server	ReferenceData::RefMagicOptGroup_FindByID	engine	"Can`t find MagicOptGroup(ID:%d) within _RefMagicOptGroup table"
+0066e020	server	ReferenceData::RefSetItemGroup_FindBySetID	engine	"This SetID[%d] is not registered in _RefSetItemGroup table!!"
+004890f0	server	CGItem::IsBullet	engine	the alternative branch of "Item is neither Equip nor Bullet!"
+00496c20	server	GObjPC::ResolveEquipSlotForItem	descriptive	switches the packed TypeID to a slot 0..11; verified against 11,772 real itemdata rows
+0066c3d0	server	CSetMagicOptionOP::SetTierKeyForPieceCount	descriptive	count<2 -> 0, else 1<<(count-2); feeds the tier search
+006a7320	server	CRefSetItemGroup::FindMagicOptGroupForTierKey	descriptive	shifts the tier bit down until a tier matches, returns its MagicOptGroupID
+009db5e0	client	GlobalDataManager::ResolveVisualSlotForItem	descriptive	the client's half of ResolveEquipSlotForItem; same arms, same permutation
+0056fab0	client	IsShieldItem	descriptive	TypeID1 3 / TypeID2 1 / TypeID3 4 / TypeID4 in {1,2}; gates visual slot 7
+009db460	client	IsEarringItem	descriptive	TypeID3 in {5,12} and TypeID4 == 1; gates visual slot 9
+009db4b0	client	IsNecklaceItem	descriptive	TypeID3 in {5,12} and TypeID4 == 2; gates visual slot 10
+009db500	client	IsRingItem	descriptive	TypeID3 in {5,12} and TypeID4 == 3; gates visual slot 11
+00a61010	client	CObjCharacter::InstallEquipVisual	descriptive	branches at slot 8: 0..8 take the mesh path, 9..12 a separate one
+00a5ff00	client	CObjCharacter::ItemSet_AddWornSlot	descriptive	sets 1<<slot in the set's worn mask and increments its count
+00a5ffd0	client	CObjCharacter::ItemSet_RemoveWornSlot	descriptive	clears the bit, decrements, erases the entry at zero
+00a60160	client	CObjCharacter::ItemSet_RemoveWornSlotByItem	descriptive	the same removal, deriving the slot from ResolveVisualSlotForItem
+00a60220	client	CObjCharacter::ItemSet_IsComplete	descriptive	returns worn count == popcount of the set's slot mask
+009733c0	client	GlobalDataManager::RefSetItemGroup_SlotCount	descriptive	unrolled popcount of the set definition's slot mask at +0xa4
+00a5cca0	client	CObjCharacter::SetDefaultWear	descriptive	asserts nEquipSlot < EQUIP_VISUAL_COUNT and nDefaultWearNum < DEFAULT_WEAR_NUM
+00a5c760	client	CObjCharacter::BuildDefaultWearTypeID	descriptive	builds a packed TypeID from 0x2c: family by race, piece by wear number
+00a5c670	client	CObjCharacter::WornArmorClass	descriptive	walks the nine visual slots, returns 1/2/3 for the first armour family found
+00a5e360	client	CObjCharacter::DumpEquipVisual	descriptive	prints "HELM [ %d ] [ %d ]" .. "EXTRA [ %d ] [ %d ]" from the +0x38 array
+004909f0	server	GObjPC::DumpItemWithOptions	descriptive	prints "[DBID: %I64d, RefID: %d]" and one line per magic option
+00491bd0	server	DumpItemOptionsVerbose	descriptive	the same dump with English option names and the bless probabilities

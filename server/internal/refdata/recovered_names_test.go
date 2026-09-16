@@ -1,0 +1,66 @@
+package refdata
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// TestRecoveredNamesFileIsWellFormed guards docs/protocol/recovered_names.tsv,
+// the list of names this project has read out of the binaries but not yet
+// written back into the Ghidra projects.
+//
+// It cannot check the addresses -- those live on the RE box -- but it can catch
+// the mistakes that made the file wrong the first time it was written: two rows
+// were labelled `client` for functions that are in the SERVER dump, which the
+// verification pass against the dump index caught. A malformed row would fail
+// silently in the Ghidra applier, which prints and moves on.
+func TestRecoveredNamesFileIsWellFormed(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "docs", "protocol", "recovered_names.tsv")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("recovered_names.tsv not readable from here: %v", err)
+	}
+
+	seen := map[string]string{}
+	rows := 0
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		if len(f) < 5 {
+			t.Errorf("line %d: %d fields, want address/binary/name/origin/evidence", i+1, len(f))
+			continue
+		}
+		rows++
+		addr, binary, name, origin, evidence := f[0], f[1], f[2], f[3], f[4]
+
+		if len(addr) != 8 || strings.TrimLeft(addr, "0123456789abcdef") != "" {
+			t.Errorf("line %d: %q is not an 8-digit lowercase hex address", i+1, addr)
+		}
+		if binary != "server" && binary != "client" {
+			t.Errorf("line %d: binary %q, want server or client", i+1, binary)
+		}
+		if origin != "engine" && origin != "descriptive" {
+			t.Errorf("line %d: origin %q, want engine or descriptive", i+1, origin)
+		}
+		if strings.TrimSpace(evidence) == "" {
+			t.Errorf("line %d (%s): no evidence; a name without one is a guess", i+1, name)
+		}
+		if name == "" || strings.HasPrefix(name, "FUN_") || strings.Contains(name, "vslot_") {
+			t.Errorf("line %d: %q is not a recovered name", i+1, name)
+		}
+		key := binary + "/" + addr
+		if prev, dup := seen[key]; dup {
+			t.Errorf("line %d: %s listed twice (%q and %q)", i+1, key, prev, name)
+		}
+		seen[key] = name
+	}
+	if rows == 0 {
+		t.Fatal("no rows; the file exists to carry names, not to be empty")
+	}
+	t.Logf("%d recovered names awaiting application to the Ghidra projects", rows)
+}
