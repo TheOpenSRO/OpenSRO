@@ -1,0 +1,91 @@
+# The damage pipeline, in order
+
+`Formula_MitigatePhysicalDamage` (`0x0040e450`) read stage by stage. The magical
+twin (`0x0040e830`) is the same shape with every type-specific param shifted by
+one. This is the ordering that the recovered pieces needed before any of them
+could be wired: the formulas were known, the sequence was not.
+
+The running damage lives in **`[esp+0x24]`** and the pre-mitigation base in
+**`[esp+0x28]`**. An earlier note called `[esp+0x24]` a "multiplier
+accumulator" — it is the damage itself.
+
+`esi` is the attack context, `edi` the **defender**, `ebp` the **attacker**,
+`bl` the flags byte passed in `cl`.
+
+| # | addr | stage | what happens |
+|---|---|---|---|
+| 0 | `40e45c` | guard | `[esi+0x230] != 0`; both parties `GetLifeState() == 1`; descriptor bit `0x4` (physical) |
+| 1 | `40e4b0` | **base** | `FUN_0040dce0(ctx, defender, damage)` → `[esp+0x28]` |
+| 2 | `40e4c3` | flat bonus | if `bl & 0x8` and the attacker's `+0xa30` map holds the key: `base += entry[+4]` |
+| 3 | `40e4f7` | **bypass** | if `bl & 0x20`: skip mitigation entirely, damage = base |
+| 4 | `40e502` | **mitigate** | `base / (1 + defender_p7/100) − defender_p5` |
+| 5 | `40e54a` | clamp | at 0 |
+| 6 | `40e56e` | **skill %** | `damage *= descriptor[+4] / 100` |
+| 7 | `40e58e` | read | attacker param **128** (descriptor bit `0x1`) or **129** (bit `0x2`), held aside |
+| 8 | `40e5b4` | read | if defender `IsMonster()` **and** `GetMonsterClass() == 3`: `aside = damage * attacker_p259 / 100` |
+| 9 | `40e60b` | read | `SelectDaraParamForDamageType(flagsA, flagsB, defender)` → the `dara` value |
+| 10 | `40e614` | apply 7 | `damage *= 1 + p128or129/100` |
+| 11 | `40e62c` | apply 8 | `damage += aside` |
+| 12 | `40e638` | apply 9 | `damage *= dara`, conditional on a zero test |
+| 13 | `40e655` | **berserk** | `t = 1`; if `bl & 0x4`: `t = attacker_p189 + 2.0`; if `bl & 0x2`: `t += t`; `damage *= t` |
+| 14 | `40e696` | level gap | if attacker `Char_GetLevel()` **>** defender's: `damage *= 1 + FUN_0040fd60(attacker)` |
+| 15 | `40e6cd` | **Str ratio** | `damage *= StrLevelDamageRatio(attacker)` — the defender's is computed at `40e6d8` and discarded on this arm |
+| 16 | `40e6eb` | **floor band** | see below |
+| 17 | `40e758` | attacker % | param **178** (magical twin: 179) |
+
+Stages past 17 run to `40e819` and are not yet read.
+
+## The constants
+
+| VA | value | used for |
+|---|---|---|
+| `0xb45ac0` | 1.0 | `1 + pct/100` |
+| `0xb45af0` | 100.0 | every `/100` |
+| `0xb45f30` | **2.0** | the berserk term's additive base |
+| `0xb45f60` | **0.05** | the floor band's threshold |
+| `0xb45c60` | **10** | the floor band's scale |
+| `0xb45af8` | **32767** | `RAND_MAX`, the floor band's divisor |
+| `0xb45ba4` | 4294967296 | the standard unsigned-to-float fixup |
+
+## Stage 13 corroborates the shipped berserk multiplier
+
+`t = attacker_p189 + 2.0` when the berserk flag is set, and param 189's registry
+default is **0**, so an ordinary berserk multiplies by exactly **2** — which is
+what `berserk.DamageNumerator/DamageDenominator` already ship, recovered by a
+different route entirely (the `SetBodyMode` chain). Two independent readings,
+one number.
+
+Bit `0x2` doubles the term again, to 4.
+
+## Stage 16, the floor band — a mechanic nothing had
+
+	40e6eb  if (damage < base * 0.05):
+	40e706      damage = damage * 10 / 100        // i.e. damage / 10
+	40e716      if (damage <= 0) damage = 1
+	40e729      r = rand()                        // 0x9dd338
+	40e732      damage = 1 + (damage - 1) * r / 32767
+
+So a blow mitigated below **5% of its pre-mitigation base** is not simply
+floored at 1: it is divided by ten, floored at 1, and then **randomised
+uniformly between 1 and that value**. Heavily out-geared hits land for a small
+random amount rather than a constant.
+
+This is separate from the floor of 1 that `Combat_ResolveDamage` applies later
+(see `combat.MitigateDamage`) — that one catches a zero; this one reshapes the
+whole low end.
+
+## What this confirms that was already shipped
+
+- **Stage 6 fixes the skill percentage's position**: after mitigation and after
+  the clamp at zero, which is exactly what `combat.ApplySkillPercent`'s comment
+  argues and what it implements.
+- **Stage 4** is `combat.MitigateDamage`, unchanged.
+- **Stage 13** is the berserk ×2, above.
+
+## What is recovered but not wired
+
+Stages 2, 7, 8, 9, 10, 11, 12, 14, 15 and 17. srrevamp publishes no source for
+params 128/129, 178, 189 or 259, nor for `dara`, so most are unreachable rather
+than missing. The two that are reachable in principle are **stage 14** (the
+level gap, which needs `FUN_0040fd60` read) and **stage 15** (the Str ratio,
+already shipped as `combat.StrLevelDamageRatio` and waiting on this ordering).

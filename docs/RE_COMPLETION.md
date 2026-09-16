@@ -10319,3 +10319,51 @@ the next probe.
 
 Two names applied.
 
+## 2026-09-16 — the damage pipeline in order, end to end
+
+The recovered pieces all needed one thing before any could be wired: the
+sequence. `Formula_MitigatePhysicalDamage` is now read stage by stage, seventeen
+stages from the base roll to the attacker's param-178 percentage, with every
+address, condition and constant. Full table:
+`docs/protocol/damage_pipeline.md`.
+
+**A correction to my own wording from the previous tick**: `[esp+0x24]` is the
+running damage, not a "multiplier accumulator". The base sits in `[esp+0x28]`
+and stays there, which is what stage 16 needs it for.
+
+### Three stages confirm work already shipped, each by a different route
+
+- **Stage 6** puts the skill percentage after mitigation and after the clamp at
+  zero — exactly the ordering `combat.ApplySkillPercent` argues for and
+  implements.
+- **Stage 4** is `combat.MitigateDamage`, unchanged.
+- **Stage 13** is `t = attacker_param189 + 2.0`, and param 189's registry default
+  is 0, so an ordinary berserk multiplies by **exactly 2** — what
+  `berserk.DamageNumerator/DamageDenominator` already carry, recovered
+  originally through the `SetBodyMode` chain. Two independent readings, one
+  number. Flag bit `0x2` doubles the term again, to 4.
+
+### Stage 16: a floor band nothing had
+
+	if (damage < base * 0.05):
+	    damage = damage / 10
+	    if (damage <= 0) damage = 1
+	    damage = 1 + (damage - 1) * rand() / 32767
+
+A blow mitigated below **5% of its pre-mitigation base** is divided by ten,
+floored at 1, and then **randomised uniformly between 1 and that value**. So a
+heavily out-geared hit lands for a small random amount rather than a flat 1.
+Constants: `0xb45f60` = 0.05, `0xb45c60` = 10, `0xb45af8` = 32767 (`RAND_MAX`).
+
+This is a different clamp from the floor of 1 that `Combat_ResolveDamage`
+applies later; that one catches a zero, this one reshapes the whole low end.
+
+### Still not wired, and now for a stated reason rather than a missing one
+
+Nine stages are recovered but unreachable in srrevamp — nothing here publishes
+params 128/129, 178, 189 or 259, nor `dara`. The two that are reachable in
+principle are **stage 14** (the level gap, which needs `FUN_0040fd60` read) and
+**stage 15** (the Str ratio, shipped last tick as `combat.StrLevelDamageRatio`
+and waiting on exactly this ordering). That makes `FUN_0040fd60` the next probe:
+it is the last unread piece of a stage srrevamp could actually use.
+
