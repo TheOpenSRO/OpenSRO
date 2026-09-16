@@ -7220,3 +7220,69 @@ been overturned; a reusable audit with its own failure mode documented.
 **Next step:** the values lever is close to exhausted, so the naming half is
 where the remaining work is. The client is the weaker side and has no
 `## Illegal ##` convention -- finding what it *does* have is the open question.
+
+## 2026-09-16 (twenty-eighth) — the client's naming lever, and a probe I should have re-run
+
+The previous entry closed the values half and named the open question: the client
+has no `## Illegal ##` convention, so what does it have? **Asserts, intact.**
+
+### A probe I abandoned instead of fixing
+
+Seventeen entries ago this project ran a source-path probe against the client,
+got nothing, and moved on — noting the regex might be wrong without re-testing
+it. The regex was wrong. The client has **424 assert sites across 123 source
+files**, and every one carries a path like
+`D:\vss-od\Silkroad\Client\client\CObjCharacter.cpp`.
+
+Nothing was published on that empty result, so no claim needs retracting. But
+"the probe might be wrong" written down and not acted on cost seventeen entries.
+
+### What an assert carries
+
+	FUN_0049e490(0x765, "...\CObjCharacter.cpp", "dwSlotPos < EQUIP_VISUAL_COUNT");
+
+A **source file** (attributing the enclosing function to a translation unit), a
+**line number** (ordering functions within it), and the **expression text**,
+which names variables, members and constants from the original source. 307
+distinct expressions, 295 functions carrying one, **263 of them still `FUN_`**.
+
+The obvious regex fails: Ghidra breaks the call across two lines, so a
+line-oriented grep finds the file and loses the expression — a first pass counted
+34 expressions where there are 307.
+
+### Read the expression, not just the guard
+
+The guard gives the bound; **the operator in the expression decides the
+off-by-one**, and both shapes occur:
+
+| constant | expression | guard | value |
+|---|---|---|---|
+| `EQUIP_VISUAL_COUNT` | `dwSlotPos <` | `8 < p` | 9 |
+| `DEFAULT_WEAR_NUM` | `nDefaultWearNum <` | `1 < p` | 2 |
+| `AUTO_POTION_COUNT` | `byType <` | `2 < p` | 3 |
+| `MAX_MAGPARAM_PER_ITEM` | `m_btMagicParamNum <=` | `0xc < v` | **12**, not 13 |
+
+"One past the guard" as a rule would have made the last one wrong. It also has an
+independent check: the **server** bounds the same quantity with `0xc <` at three
+sites and logs `"Item's MagParamNum(%d) is out of range"`. Two binaries, one
+number.
+
+**None of these is used by srrevamp** — no magic options, no quickslots, no
+auto-potions, and its equipment slots are server-side rather than the client's
+visual ones. They are recorded because they are recovered, and the doc says so
+rather than implying a pending fix.
+
+### Shipped
+
+`client/tools/ghidra/harvest_client_asserts.py` and
+`docs/protocol/client_asserts.md`: the constants with their operators, the
+whole-file regex, and 263 unnamed functions placed in a translation unit.
+
+**What moved:** the client's naming lever identified after being wrongly
+abandoned; 263 functions attributable to a source file; four constants recovered,
+one of them confirmed across both binaries.
+
+**Next step:** the attribution is per-file, not per-function. `CObjCharacter.cpp`
+alone has 23 asserts in it -- pairing their LINE NUMBERS with function order
+would turn a file attribution into an ordering, which is the step from "belongs
+here" toward a name.
