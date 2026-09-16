@@ -4336,3 +4336,49 @@ combat-side and cure/resurrect codes are untouched.
 **What moved:** no value. srrevamp models skill damage but no stat buffs, so none
 of this is wired — it is the vocabulary for when that changes, and it took the
 unidentified-code count from 80 down to 52.
+
+## The combat-side skill codes, and a correction to last tick's census (2026-09-16)
+
+Continued last tick's reader census into `Combat_ResolveDamage`, which had come
+second at 28 distinct skill-field offsets. **The headline number turned out to be
+an artefact of the method, and that is the more useful finding.**
+
+Twenty of those 28 codes appear exactly once each, all inside one
+`== 0 && ... == 0` chain spanning about twenty lines: a single composite guard
+asking whether the skill carries any effect field at all before taking the
+plain-attack path. A code named in that guard is tested for presence, not acted
+on. **Ranking functions by distinct offsets read therefore over-counts anything
+carrying a large null-guard**, and the fix is to weight by reads per code. By
+that measure the function really acts on `att` (15 reads), `da` (12), `tant` and
+`tnt2` (5), `ck` and `dtnt` (4), `kb`, `lfst`, `pdmg` (3).
+
+This does not undermine last tick's join: `Skill_ApplyEffectsToParams` was
+validated by six independent controls, not by its offset count. But the count is
+what selected it, and the same count would have pointed somewhere useless if the
+guard had been bigger.
+
+**Two codes identified.**
+
+- **`da` is a conditional damage percentage.** When the skill carries `da` and
+  the target's `vf[0xfc]()` is 8, both damage fields are scaled by
+  `da[0] / 100`. It scales BOTH (`+0x24` and `+0x28`), not one. What kind 8
+  denotes is not recovered — `vf[0xfc]` is compared across the whole binary
+  against only 0, 8 and 11 — so this is "a bonus against one specific target
+  kind" and deliberately no more than that.
+- **`kb` is knockback.** Gated on four conditions simultaneously (the skill
+  carries `kb`; the attacker's ref object has bit 1 at `+0x258`; the result byte
+  is not already 4; and `GObjPC::FUN_005a1a20()` passes), it sets the hit-result
+  byte to **5** and does position arithmetic from `kb[1]`, copying both
+  coordinate triples.
+
+**A near-miss, recorded because it is the same class of error as the guard
+chain.** Five instructions before the `kb` branch sits `x / 1000.0 + 0.5` — both
+constants `QWORD`, so doubles — which reads exactly like a knockback duration in
+seconds and would have been a tidy result. It belongs to the preceding block, not
+to `kb`, and is left unattributed. Proximity inside one function is no more
+evidence than proximity inside one expression.
+
+**What moved:** no value — srrevamp has neither a target-kind concept for `da`
+nor a knockback result for `kb`. Two more codes identified (52 -> 50 unknown),
+and the census tool gained a documented failure mode before it could mislead a
+later pass.

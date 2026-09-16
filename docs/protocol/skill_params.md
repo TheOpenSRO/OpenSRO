@@ -371,3 +371,53 @@ damage bounds (13-16), `defr`/`pmdp` the defences (5, 6, 7), `hst3`/`hste` the
   not joined here.
 - None of it is wired into srrevamp, which models skill damage but no stat
   buffs. It is vocabulary for when that changes.
+
+## The combat-side codes, and a correction to the census above (2026-09-16)
+
+`Combat_ResolveDamage` came second in the reader census at 28 distinct code
+fields. **That number is misleading, and the way it misleads is worth recording
+because the census is a tool this project will reuse.**
+
+Twenty of those 28 appear exactly once each, all inside a single `== 0 && ... ==
+0` chain spanning about twenty lines — one composite guard asking *"does this
+skill carry any effect field at all?"* before taking the plain-attack path. A
+code named in that guard is being tested for presence, not acted on. So
+**ranking functions by distinct offsets read over-counts anything with a large
+null-guard**, and the fix is to weight by the number of reads per code rather
+than by distinct codes.
+
+By read count, the codes `Combat_ResolveDamage` actually acts on are `att` (15),
+`da` (12), `tant` and `tnt2` (5 each), `ck` and `dtnt` (4), `kb`, `lfst` and
+`pdmg` (3).
+
+### `da` — a conditional damage percentage
+
+```c
+if (skill[0x240] != 0 && target->vf[0xfc]() == 8) {
+    dmg[0x28] = round(da[0] * dmg[0x28] / 100.0);
+    dmg[0x24] = round(da[0] * dmg[0x24] / 100.0);
+}
+```
+
+`da[0]` is a percentage (the divisor is the familiar 100.0 at `0xb45af0`) and it
+scales **both** damage fields, not one. The gate is the target's kind from
+`vf[0xfc]`, a small enum compared across the binary against only 0, 8 and 11 —
+**what kind 8 denotes is not recovered**, so this is "a damage bonus against one
+specific target kind" and no more.
+
+### `kb` — knockback
+
+Gated on four conditions at once: the skill carries `kb`, the attacker's ref
+object has bit 1 set at `+0x258`, the result byte is not already 4, and
+`GObjPC::FUN_005a1a20()` passes. It then sets the hit-result byte to **5** and
+does position arithmetic reading `kb[1]`, copying attacker and target coordinate
+triples (`[0x22]`, `[0x23]`, `[0x24]` on each).
+
+**A near-miss worth recording**: a line five instructions earlier computes
+`x / 1000.0 + 0.5` (both constants `QWORD`, so doubles) and looked exactly like a
+knockback duration in seconds. It is in the preceding block, not the `kb` branch,
+and is NOT attributed here. The same care that separates a guard from an action
+separates a neighbouring block from the one being read.
+
+None of this is wired into srrevamp: it has no target-kind concept for `da` and
+no knockback result for `kb`.
