@@ -169,6 +169,13 @@ const (
 	skConsumeMP      = 53
 	skMastery1       = 34 // ReqCommon_Mastery1
 	skMasteryLevel1  = 36 // ReqCommon_MasteryLevel1 (required mastery level)
+	// The two required-weapon bytes. The engine names them itself: the
+	// skilldata row loader SkillGlobal::FUN_005893e0 refuses a row whose
+	// CRefSkill+199/+200 are zero with "ReqWeapon Error [RefSkill ID: %d]",
+	// and FUN_0058d480 checks them against the equipped weapon's TID >> 11.
+	// 0xff (255) marks an unused slot; both 0xff means no requirement.
+	skReqCastWeapon1 = 50
+	skReqCastWeapon2 = 51
 	skReqLearnSP     = 46 // ReqLearn_SP (learn cost, verified 2/5/7 across SMASH_A 1-3)
 	skReqLearnRace   = 47 // ReqLearn_Race
 	skName           = 62 // SN_SKILL_ name code
@@ -437,6 +444,8 @@ func skillRecord(cols []string) ([]string, bool) {
 		dmgMax,                // 26 DamageMax
 		hits,                  // 27 HitCount -- real, from the 'mc' param
 		atkType,               // 28 AttackType -- real, 'att' value[0]
+		get(skReqCastWeapon1), // 29 ReqCast_Weapon1
+		get(skReqCastWeapon2), // 30 ReqCast_Weapon2
 	}, true
 }
 

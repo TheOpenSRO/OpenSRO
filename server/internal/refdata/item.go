@@ -68,6 +68,7 @@ type Item struct {
 	DurabilityMin, DurabilityMax   float64
 	PhysDefenseMin, PhysDefenseMax float64
 	MagDefenseMin, MagDefenseMax   float64
+
 	// WHICH END OF A RANGE srrevamp USES, in one place, because the answer is
 	// not consistent and the inconsistency is deliberate rather than an
 	// oversight.

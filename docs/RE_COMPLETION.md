@@ -5689,3 +5689,76 @@ is fully recovered with its vocabulary confirmed 24 ways.
 
 **Next step:** export item TIDs so the gate can be wired -- `refdata.Item` carries
 none today, which is the only thing between here and enforcing ReqCast_Weapon.
+
+## 2026-09-16 (fourth) — the weapon gate, wired
+
+The previous entry named its next step as "export item TIDs, the only thing
+between here and enforcing ReqCast_Weapon". **That premise was wrong in the
+cheapest possible way: the TIDs were already exported.** `refdata.Item` has
+carried `TypeID1..4` at CSV columns 20-23 with SQL columns to match for as long
+as `ITEM_FORMAT.md` has existed. The compiler said so within a minute of trying
+to add them ("TypeID1 redeclared"), which is the good version of this mistake --
+but it is the fourth consecutive tick whose stated next step contained a claim
+nobody checked. Checking took one grep.
+
+### TID4 is the weapon code, and itemdata confirms the vocabulary
+
+The engine's item tests use paired masks all over the binary -- `& 0x780` for
+bits 7-10 and `& 0xf800` for bits 11-15 -- which fixes the packing: **TID3 at
+bits 7-10, TID4 at bits 11-15**. So `FUN_0058d480`'s `equippedTID >> 11` reads
+**TypeID4**, not a flat weapon enum as the previous entry's table implied.
+
+Every weapon row in real itemdata is `(TypeID1, TypeID2, TypeID3) = (3, 1, 6)`,
+and under that category each family occupies exactly one TypeID4 -- 112 rows
+apiece, no family split:
+
+| 2 CH sword | 3 CH blade | 4 CH spear | 5 CH tblade | 6 CH bow | 7 EU sword | 8 EU tsword |
+| 9 EU axe | 10 EU darkstaff | 11 EU tstaff | 12 EU crossbow | 13 EU dagger | 14 EU harp | 15 EU staff |
+
+plus **16 = `ITEM_FORT_FORTRESS_HAMMER`/`_AXE`**, which matches
+`SKILL_*_FORTRESSWEAPON` -> 16 from the other table and is the code the engine
+special-cases into `GObjPC::FUN_004f1130`.
+
+**This corrects three names the previous entry invented.** It read the weapon
+names off the *skill* families that require them, and got: 10 "wand" (really
+`DARKSTAFF`), 11 "staff" (really `TSTAFF`), 15 "cleric rod" (really `STAFF`).
+The skill family that requires a code is not the item's name for it -- exactly
+the "a name is not a use-site" rule, applied one table too early.
+
+Code 1 is confirmed from a third direction: **`SKILL_PUNCH_01` requires exactly
+code 1**, and the engine's `if (code == 0) code = 1` makes an empty hand satisfy
+it. (TypeID4 1 under the weapon category holds fireworks, 10 rows -- so 1 is not
+a weapon family, it is the "nothing wielded" slot.)
+
+### What shipped
+
+- `refdata.Skill.ReqCastWeapon1/2` -- skilldata columns 50/51, exported as
+  strict-suffix CSV columns 29/30 and persisted in SQL.
+- `combat.SkillAllowsWeapon` reproducing `FUN_0058d480`, with the 16 codes named
+  from **itemdata's** own families, and a table test walking each branch.
+- The gate enforced in the skill-use path: a mismatch answers "wrong weapon for
+  this skill" instead of casting.
+
+### Two compatibility rules, both load-bearing rather than defensive
+
+**Zero requirement bytes permit the cast.** Zero is *invalid* in the real table
+-- the row loader refuses it with "ReqWeapon Error" -- so a zero here can only
+mean an export predating the columns. Refusing on it would lock every skill on
+every existing deployment.
+
+**An unreadable weapon permits the cast, but an empty hand does not.** These look
+identical by value: an item row imported before the `type_id` columns existed
+carries `TypeID3 = TypeID4 = 0`, which is exactly what an empty hand looks like.
+Treating that as bare hand would refuse every weapon-requiring skill to a
+character holding a perfectly good sword, on a deployment whose only fault is an
+old import. `equippedWeaponType` returns a `known` flag so the two cases stay
+distinct.
+
+**What moved:** the weapon gate is recovered, confirmed three ways, and enforced;
+the TID packing is read off the binary's own masks rather than inferred from
+field widths; three invented weapon names are corrected.
+
+**Next step:** the gate covers `skill[0x3a0] == 0`, the ordinary path.
+`FUN_0058d480`'s other branch walks a list at `+0x3a0` with a `switch` on its
+first word -- an override that some skills carry. Nothing reads it yet, and what
+it overrides is unrecovered.

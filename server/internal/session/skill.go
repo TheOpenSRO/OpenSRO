@@ -404,6 +404,11 @@ func UseSkillHandler(
 		// so leaves 0, which combat.AttackType reads as physical -- the
 		// behaviour those invented skills already had.
 		var attackType combat.AttackType
+		// The skill's two required-weapon codes. A catalog skill has no real
+		// row and leaves 0, which combat.SkillAllowsWeapon reads as "unknown"
+		// and permits -- 0 is invalid in the real table, so it can only mean an
+		// export predating the columns.
+		var reqWeapon1, reqWeapon2 int
 		// REAL SKILLS WIN. This used to check skill.Catalog first, which
 		// silently shadowed two real skills: the own-design catalog occupies
 		// ids 1 and 2, and those are SKILL_PUNCH_01 and SKILL_CH_SWORD_BASE_01
@@ -423,6 +428,7 @@ func UseSkillHandler(
 			damageBonus, damagePercent = skillDamageBonus(ref)
 			hits = ref.HitsFor()
 			attackType = combat.AttackType(ref.AttackType)
+			reqWeapon1, reqWeapon2 = ref.ReqCastWeapon1, ref.ReqCastWeapon2
 		} else if sk, inCatalog := skill.Catalog[req.SkillID]; inCatalog {
 			cooldown = time.Duration(sk.CooldownSeconds) * time.Second
 			damageBonus = int(sk.DamageBonus)
@@ -436,6 +442,23 @@ func UseSkillHandler(
 		}
 		if !knows {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "skill not known"}).Encode()})
+		}
+
+		// THE WEAPON GATE, recovered from FUN_0058d480: a skill names up to two
+		// weapon type codes and the engine refuses the cast with error 0x300d
+		// when the equipped weapon matches neither. See combat.SkillAllowsWeapon
+		// for the codes and how they were confirmed.
+		//
+		// A lookup failure permits the cast rather than refusing it. Reference
+		// data is brought by the operator, so on a deployment that has imported
+		// none of it -- which is every fresh one -- refusing here would mean
+		// nobody could use a skill at all, the same reasoning attackerDamage
+		// already applies to an unknown weapon.
+		if reqWeapon1 != 0 || reqWeapon2 != 0 {
+			t3, t4, known := equippedWeaponType(ctx, characterID, eq, items)
+			if known && !combat.SkillAllowsWeapon(reqWeapon1, reqWeapon2, t3, t4) {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "wrong weapon for this skill"}).Encode()})
+			}
 		}
 
 		lastUsed, everUsed, err := skills.LastUsed(ctx, characterID, req.SkillID)
@@ -902,4 +925,42 @@ func RaiseMasteryHandler(chars character.Store, store skill.Store) gateway.Handl
 			MasteryID: req.MasteryID, NewLevel: int32(newLevel), SkillPoints: int32(points),
 		}).Encode()})
 	}
+}
+
+// equippedWeaponType returns the TypeID3/TypeID4 of the weapon characterID has
+// equipped, and whether the answer is trustworthy enough to refuse a cast on.
+//
+// An EMPTY HAND is (0, 0, true): that is a real answer, and
+// combat.SkillAllowsWeapon turns it into the bare-hand code, matching the
+// engine's own `if (code == 0) code = 1` branch -- SKILL_PUNCH_01, the unarmed
+// attack, requires exactly that code.
+//
+// An UNREADABLE one is (0, 0, false), and the caller permits the cast. The
+// distinction is load-bearing rather than defensive: an item row imported before
+// the type_id columns existed carries TypeID3 = TypeID4 = 0, which is
+// indistinguishable from an empty hand by value alone. Treating that as bare
+// hand would refuse every weapon-requiring skill to a character holding a
+// perfectly good sword, on a deployment whose only fault is an old import.
+func equippedWeaponType(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (typeID3, typeID4 int, known bool) {
+	equipped, err := eq.Get(ctx, characterID)
+	if err != nil {
+		return 0, 0, false
+	}
+	for _, e := range equipped {
+		if e.Slot != equipment.SlotWeapon {
+			continue
+		}
+		item, err := items.GetItem(ctx, e.ItemID)
+		if err != nil || item == nil {
+			return 0, 0, false
+		}
+		// A weapon whose type fields are both zero predates the type_id
+		// columns. Say so rather than letting it read as an empty hand.
+		if item.TypeID3 == 0 && item.TypeID4 == 0 {
+			return 0, 0, false
+		}
+		return item.TypeID3, item.TypeID4, true
+	}
+	// Nothing in the weapon slot: a real empty hand.
+	return 0, 0, true
 }

@@ -206,6 +206,10 @@ var skillCSVColumns = []string{
 	// suffix, so an export made before it loads with 0, which
 	// combat.AttackType reads as "unknown, treat as physical".
 	"AttackType",
+	// Appended later still (the two required-weapon bytes): a strict suffix,
+	// so an export made before them loads with 0, which is invalid in the real
+	// table and here means "unknown", permitting the cast.
+	"ReqCastWeapon1", "ReqCastWeapon2",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -325,6 +329,13 @@ func parseSkillRow(f []string) (Skill, error) {
 	// rather than silently changing it.
 	if len(f) > 28 {
 		sk.AttackType = parseInt(f[28])
+	}
+	// The two required-weapon bytes, appended later still.
+	if len(f) > 29 {
+		sk.ReqCastWeapon1 = parseInt(f[29])
+	}
+	if len(f) > 30 {
+		sk.ReqCastWeapon2 = parseInt(f[30])
 	}
 
 	if err != nil {

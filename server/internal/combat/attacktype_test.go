@@ -62,3 +62,81 @@ func TestBitsAreTheFormulaGuards(t *testing.T) {
 		t.Errorf("AttackMagical = %d, want 8 -- Formula_MitigateMagicalDamage (0040e830) tests & 8", AttackMagical)
 	}
 }
+
+// TestSkillAllowsWeapon walks FUN_0058d480 with the real codes.
+func TestSkillAllowsWeapon(t *testing.T) {
+	const weapon = WeaponTypeIDCategory
+	for _, tc := range []struct {
+		name       string
+		req1, req2 int
+		t3, t4     int
+		want       bool
+	}{
+		// Both slots unused: 4,144 magical attack skills are in this state,
+		// including every CH elemental nuke.
+		{"no requirement, any weapon", ReqWeaponUnused, ReqWeaponUnused, weapon, WeaponEUAxe, true},
+		{"no requirement, bare hand", ReqWeaponUnused, ReqWeaponUnused, 0, 0, true},
+
+		// One slot used -- the common shape (e.g. SKILL_EU_AXE -> 9).
+		{"axe skill with an axe", WeaponEUAxe, ReqWeaponUnused, weapon, WeaponEUAxe, true},
+		{"axe skill with a staff", WeaponEUAxe, ReqWeaponUnused, weapon, WeaponEUStaff, false},
+		{"axe skill bare-handed", WeaponEUAxe, ReqWeaponUnused, 0, 0, false},
+
+		// Two slots used: SKILL_CH_SWORD takes sword OR blade, SKILL_CH_SPEAR
+		// spear OR tblade. Both slots are really checked.
+		{"CH sword skill with a sword", WeaponCHSword, WeaponCHBlade, weapon, WeaponCHSword, true},
+		{"CH sword skill with a blade", WeaponCHSword, WeaponCHBlade, weapon, WeaponCHBlade, true},
+		{"CH sword skill with a spear", WeaponCHSword, WeaponCHBlade, weapon, WeaponCHSpear, false},
+		{"CH spear skill with a tblade", WeaponCHSpear, WeaponCHTBlade, weapon, WeaponCHTBlade, true},
+
+		// SKILL_PUNCH_01 requires code 1, and an empty hand is code 1 via the
+		// engine's own `if (code == 0) code = 1`.
+		{"punch bare-handed", WeaponBareHand, ReqWeaponUnused, 0, 0, true},
+		{"punch holding a sword", WeaponBareHand, ReqWeaponUnused, weapon, WeaponCHSword, false},
+
+		// A non-weapon in the slot has a TypeID4 that means something else
+		// entirely (armour's TypeID4 is which piece), so it must not be read as
+		// a weapon code. TypeID3 3 is armour; its TypeID4 2 is a shoulder guard,
+		// which must not satisfy a CH-sword requirement.
+		{"armour in the weapon slot is not a CH sword", WeaponCHSword, ReqWeaponUnused, 3, WeaponCHSword, false},
+
+		// Compatibility: 0/0 is invalid in the real table (the loader refuses
+		// it), so it can only mean an export predating the columns.
+		{"unknown requirement permits", 0, 0, weapon, WeaponEUAxe, true},
+		{"unknown requirement permits bare-handed", 0, 0, 0, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SkillAllowsWeapon(tc.req1, tc.req2, tc.t3, tc.t4); got != tc.want {
+				t.Errorf("SkillAllowsWeapon(%d, %d, t3=%d, t4=%d) = %v, want %v",
+					tc.req1, tc.req2, tc.t3, tc.t4, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestWeaponCodesAreDistinct guards the vocabulary: these are TypeID4 values
+// read out of real itemdata, where each weapon family occupies exactly one.
+// A duplicate would silently let one weapon satisfy another's requirement.
+func TestWeaponCodesAreDistinct(t *testing.T) {
+	codes := map[string]int{
+		"bare": WeaponBareHand, "ch_sword": WeaponCHSword, "ch_blade": WeaponCHBlade,
+		"ch_spear": WeaponCHSpear, "ch_tblade": WeaponCHTBlade, "ch_bow": WeaponCHBow,
+		"eu_sword": WeaponEUSword, "eu_tsword": WeaponEUTSword, "eu_axe": WeaponEUAxe,
+		"eu_darkstaff": WeaponEUDarkStaff, "eu_tstaff": WeaponEUTStaff,
+		"eu_crossbow": WeaponEUCrossbow, "eu_dagger": WeaponEUDagger,
+		"eu_harp": WeaponEUHarp, "eu_staff": WeaponEUStaff, "fortress": WeaponFortress,
+	}
+	seen := map[int]string{}
+	for name, c := range codes {
+		if prev, dup := seen[c]; dup {
+			t.Errorf("code %d is both %s and %s", c, prev, name)
+		}
+		seen[c] = name
+		if c < 1 || c > MaxTID4Code {
+			t.Errorf("%s = %d, outside the recovered TypeID4 range", name, c)
+		}
+	}
+	if len(seen) != 16 {
+		t.Errorf("got %d distinct codes, want 16 (1 bare hand + 15 real weapon types)", len(seen))
+	}
+}

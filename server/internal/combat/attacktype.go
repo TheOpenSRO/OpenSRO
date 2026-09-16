@@ -177,3 +177,93 @@ func WeaponRange(item *refdata.Item, str, intel int, atk AttackType) (min, max i
 	}
 	return min, max
 }
+
+// Weapon type codes, the values a skill's ReqCastWeapon bytes and an item's
+// TypeID4 both carry. RECOVERED, and confirmed independently by three sources
+// that were not asked to agree:
+//
+//   - itemdata: every weapon row is (TypeID1,2,3) = (3,1,6), and under that
+//     category each ITEM_<race>_<type>_* family lands on exactly one TypeID4 --
+//     112 rows apiece, no family split across two codes.
+//   - skilldata: grouping all 36,389 rows by the family in their Basic_Code puts
+//     all 24 families on the code their own name says (SKILL_EU_AXE -> 9,
+//     SKILL_CH_SPEAR -> 4 and 5, ...).
+//   - the engine: FUN_0058d480 compares `equippedTID >> 11` against the skill's
+//     two bytes, and TID4 occupies bits 11-15 (the masks 0x780 for TID3 and
+//     0xf800 for TID4 appear all over the binary's item tests).
+//
+// The names are itemdata's own, not inferred from the skill families that
+// require them -- a distinction that matters, because reading them off the skill
+// names got three wrong: code 10 is DARKSTAFF (not "wand"), 11 is TSTAFF (not
+// "staff"), and 15 is STAFF (not "cleric rod"). The skill family that requires a
+// code is not the item's name for it.
+const (
+	WeaponBareHand    = 1 // SKILL_PUNCH_01 requires exactly this
+	WeaponCHSword     = 2
+	WeaponCHBlade     = 3
+	WeaponCHSpear     = 4
+	WeaponCHTBlade    = 5
+	WeaponCHBow       = 6
+	WeaponEUSword     = 7
+	WeaponEUTSword    = 8
+	WeaponEUAxe       = 9
+	WeaponEUDarkStaff = 10
+	WeaponEUTStaff    = 11
+	WeaponEUCrossbow  = 12
+	WeaponEUDagger    = 13
+	WeaponEUHarp      = 14
+	WeaponEUStaff     = 15
+	WeaponFortress    = 16 // ITEM_FORT_FORTRESS_HAMMER / _AXE
+
+	// WeaponTypeIDCategory is TypeID3 for the weapon category. An item with a
+	// different TypeID3 is not a weapon and cannot satisfy a requirement.
+	WeaponTypeIDCategory = 6
+
+	// MaxTID4Code bounds the vocabulary: TypeID4 is 5 bits (the 0xf800 field),
+	// so 31 is the largest value one can hold. equipment.MaxTID4 states the
+	// same bound from ReferenceData.cpp's own assert.
+	MaxTID4Code = 31
+
+	// ReqWeaponUnused is the value in a required-weapon slot that carries no
+	// requirement. Both slots unused means the skill may be cast with anything.
+	ReqWeaponUnused = 0xff
+)
+
+// SkillAllowsWeapon reports whether a skill may be cast with the given equipped
+// weapon, reproducing FUN_0058d480:
+//
+//	if (skill[199] == -1 && skill[200] == -1) return 0;   // no requirement
+//	code = equippedTID >> 11;                             // == TypeID4
+//	if (code == 0) code = 1;                              // bare hand
+//	for (p = skill+199; p - skill < 201; p++)
+//	    if (*p != 0xff && code == *p) goto ok;
+//	return 0x300d;                                         // wrong weapon
+//
+// weaponTypeID3/4 are the equipped weapon's type fields; pass 0,0 for an empty
+// hand, which the engine's own `code == 0` branch turns into WeaponBareHand --
+// and SKILL_PUNCH_01, the unarmed attack, requires exactly that code, which is
+// the data confirming the branch.
+//
+// UNKNOWN INPUTS PERMIT THE CAST, and that is a compatibility rule rather than a
+// claim about the engine. Zero is *invalid* in the real table -- the row loader
+// SkillGlobal::FUN_005893e0 refuses a row whose bytes are zero with "ReqWeapon
+// Error [RefSkill ID: %d]" -- so a zero here can only mean an export predating
+// the columns. Refusing on it would lock every skill on every existing
+// deployment.
+func SkillAllowsWeapon(req1, req2, weaponTypeID3, weaponTypeID4 int) bool {
+	if req1 == 0 && req2 == 0 {
+		return true // export predates the columns; 0 is not a real requirement
+	}
+	if req1 == ReqWeaponUnused && req2 == ReqWeaponUnused {
+		return true // no requirement -- 4,144 magical attack skills are here
+	}
+	code := weaponTypeID4
+	// Only the weapon category carries a meaningful TypeID4. Anything else --
+	// an empty hand, or a non-weapon somehow in the slot -- reads as bare hand,
+	// which is the engine's `code == 0` branch.
+	if weaponTypeID3 != WeaponTypeIDCategory || code == 0 {
+		code = WeaponBareHand
+	}
+	return (req1 != ReqWeaponUnused && req1 == code) ||
+		(req2 != ReqWeaponUnused && req2 == code)
+}

@@ -78,6 +78,20 @@ type Skill struct {
 	// combat.AttackType, which treats an unknown mask as physical so an old
 	// export behaves exactly as it did before the column existed.
 	AttackType int
+
+	// ReqCastWeapon1/2 are the two weapon types this skill may be cast with,
+	// as TypeID4 codes (see refdata.Item.TypeID4). 255 marks an unused slot,
+	// and both 255 means the skill has no weapon requirement -- 4,144 of the
+	// 10,465 magical attack skills are in that state, including every CH
+	// elemental nuke.
+	//
+	// RECOVERED, and named by the binary rather than by a schema listing: the
+	// row loader SkillGlobal::FUN_005893e0 refuses a row whose CRefSkill+199 or
+	// +200 is zero, logging "ReqWeapon Error [RefSkill ID: %d]". So ZERO IS NOT
+	// "no requirement" in the real table -- it is invalid, and here it means
+	// an export predating these columns. combat.SkillAllowsWeapon treats it
+	// that way and permits the cast.
+	ReqCastWeapon1, ReqCastWeapon2 int
 	// HitCount is how many times one cast strikes: 1 for most skills, up to 5.
 	//
 	// CONFIRMED INDEPENDENTLY 2026-09-16: the client's own localisation key for
