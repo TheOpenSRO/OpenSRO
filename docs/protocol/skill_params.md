@@ -716,3 +716,90 @@ saying so is the point of measuring rather than assuming:
 shape of a per-myriad rate but is not claimed as one here. `spi` occurs three
 times in the entire table and its three values are mask-shaped, which is
 suggestive and nothing more.
+
+## `ReqCast_Weapon`: the weapon gate, recovered (2026-09-16)
+
+Not a param code — two fixed columns — but it belongs here because it decides
+whether a skill runs at all, and because it settles a question the damage work
+kept bumping into.
+
+### The engine names the field itself
+
+`SkillGlobal::FUN_005893e0`, the skilldata row loader, validates every row:
+
+```c
+if ((*(char *)(skill + 199) == '\0') || (*(char *)(skill + 200) == '\0')) {
+    FUN_00936640(0x2000000, "ReqWeapon Error [RefSkill ID: %d]", skill[4]);
+    Assert_BreakIfDebugger();
+}
+```
+
+So `CRefSkill+199` and `+200` (0xc7/0xc8) are the two required-weapon bytes,
+named by the game's own error string rather than by a schema listing. **Zero is
+invalid** — the loader refuses it — which is worth knowing, because it means 0
+is not "no requirement".
+
+### The check
+
+`FUN_0058d480(actor, skill)`:
+
+```c
+if (skill[0x3a0] == 0) {                                  // no override list
+    if (skill[199] == -1 && skill[200] == -1) return 0;   // no requirement
+    code = *(ushort *)equippedWeapon >> 11;               // the TID's top 5 bits
+    if (code == 0) code = 1;                              // BARE HANDS == 1
+    for (p = skill + 199; p - skill < 201; p++)
+        if (*p != 0xff && code == *p) goto ok;            // exactly two slots
+    return 0x300d;                                         // wrong weapon
+}
+```
+
+So the code is `TID >> 11`, `0xff` marks an unused slot, both `0xff` means no
+requirement, an empty hand reads as **1**, and a mismatch is error **0x300d**.
+Code **16** is special-cased into `GObjPC::FUN_004f1130`.
+
+### The vocabulary, confirmed by the skills' own names
+
+Columns **50 and 51** carry these bytes. That mapping is not taken from a schema
+listing — it is confirmed by the data confirming itself. Grouping all 36,389
+real rows by the family in their `Basic_Code` and taking each family's code:
+
+| code | weapon | named by | code | weapon | named by |
+|---|---|---|---|---|---|
+| 1 | bare hand | the `code == 0` branch | 9 | axe | `SKILL_EU_AXE` |
+| 2 | CH sword | `SKILL_CH_SWORD` (2,3) | 10 | wand | `SKILL_EU_WAND`, `_WARLOCK` |
+| 3 | CH blade | " | 11 | staff | `SKILL_EU_STAFF`, `_WIZARD` |
+| 4 | CH spear | `SKILL_CH_SPEAR` (4,5) | 12 | crossbow | `SKILL_EU_CROSSBOW` |
+| 5 | CH glaive | " | 13 | dagger | `SKILL_EU_DAGGER`, `_ROG` |
+| 6 | bow | `SKILL_CH_BOW` | 14 | harp | `SKILL_EU_HARP`, `_BARD` |
+| 7 | EU sword | `SKILL_EU_SWORD` | 15 | cleric rod | `SKILL_EU_CLERIC` |
+| 8 | EU two-hander | `SKILL_EU_TSWORD` | 16 | fortress weapon | `SKILL_*_FORTRESSWEAPON` |
+
+Twenty-four families, each landing on the code its own name says it should.
+`SKILL_CH_SWORD` and `SKILL_CH_SPEAR` are the only ones using both slots, and
+they use them for the two weapons of the same class — which is what a two-slot
+field is for.
+
+### What this settles about magical damage
+
+**4,144 of the 10,465 magical attack skills require no weapon at all** (both
+bytes `0xff`) — every CH elemental nuke among them. So the engine does *not*
+prevent casting a magical skill with a physical-only weapon, and an earlier
+entry that deferred work on the claim that it does was wrong.
+
+Nor does that produce a 1-damage blow. The skill's own flat `att` damage is
+added to the bound inside the builder regardless of the weapon (`0040dc10` reads
+the attack descriptor's `+0xc`), and across those 4,144 rows the median flat is
+**2,068** against a median percent of **263**. The weapon's contribution is the
+small term.
+
+| kind | weapon requirement | rows |
+|---|---|---|
+| magical | none | 4,144 |
+| magical | required | 6,321 |
+| physical | none | 11,499 |
+| physical | required | 9,631 |
+| neither | none | 10 |
+
+**Not yet wired into srrevamp.** The gate needs the equipped item's TID, and
+`refdata.Item` does not carry one — exporting it is the next step.

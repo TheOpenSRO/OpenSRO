@@ -126,27 +126,52 @@ func WeaponRange(item *refdata.Item, str, intel int, atk AttackType) (min, max i
 	min = int(item.PhysAttackMin) + ReinforceDamage(str, item.ReinforcePhysMin)
 	max = int(item.PhysAttackMax) + ReinforceDamage(str, item.ReinforcePhysMax)
 
-	// The magical columns are used when the blow is magical, and also when the
-	// weapon has no physical damage at all -- 448 of 1,582 real attack-carrying
-	// items are magical-only, and reading only the physical columns would give
-	// them 0 and land every swing on MitigateDamage's floor of 1.
+	switch {
+	// A MAGICAL blow reads the magical columns and nothing else, even when the
+	// weapon has none -- then the weapon contributes zero.
 	//
-	// NOT DONE, deliberately: routing a magical blow to the magical columns
-	// when the weapon has none. That IS the engine's behaviour and it is now
-	// fully grounded -- Char_PublishCombatStats (00497830) writes params 34-37
+	// THIS CORRECTS THE PREVIOUS TICK, which made the reroute conditional on
+	// `item.MagAttackMax > 0` and gave two reasons for holding back. Both were
+	// measured afterwards and both were wrong.
+	//
+	// The first was "the engine refuses the cast first, via ReqCast_Weapon".
+	// It does have that gate -- FUN_0058d480 compares `weaponTID >> 11` against
+	// the skill's two required-weapon bytes and returns error 0x300d on a
+	// mismatch -- but **4,144 of the 10,465 magical attack skills require no
+	// weapon at all** (both bytes 0xff), including every CH elemental nuke. So
+	// for 40% of exactly the skills in question the engine does not refuse, and
+	// the justification did not hold.
+	//
+	// The second was "it would drop a caster holding a sword to 1 damage". Also
+	// wrong: the skill's own flat `att` damage is added to the bound inside the
+	// builder regardless of the weapon (0040dc10 reads the descriptor's +0xc),
+	// and for those 4,144 skills the median flat is 2,068 against a median
+	// percent of 263. The weapon contribution is the small term, not the whole
+	// blow. srrevamp adds that flat separately as damageBonus, so the shape
+	// already matches.
+	//
+	// What IS true, and is what makes the zero correct: the magical half draws
+	// params 15/16, Char_PublishCombatStats (00497830) writes params 34-37
 	// UNCONDITIONALLY (the only branch substitutes 0.0, it never skips the
 	// write), so a physical-only weapon writes param 35 = 0 rather than leaving
-	// it at the registry default of 100, slot 3 scales Intellect to nothing,
-	// and the magical half really is 0. Measured: all 574 physical-only items
-	// carry no magical reinforce, with no exceptions.
+	// it at the registry default of 100, and slot 3 scales Intellect to
+	// nothing. Measured: all 574 physical-only items carry no magical
+	// reinforce, no exceptions.
+	case atk.IsMagical():
+		min = int(item.MagAttackMin) + ReinforceDamage(intel, item.ReinforceMagMin)
+		max = int(item.MagAttackMax) + ReinforceDamage(intel, item.ReinforceMagMax)
+
+	// A blow with no known mask on a weapon that has no physical damage: 448 of
+	// 1,582 real attack-carrying items are magical-only, and reading only the
+	// physical columns would give them 0 and land every swing on the floor of 1.
 	//
-	// The engine can afford that because it refuses the cast first: skills
-	// carry ReqCast_Weapon1/2 (skilldata columns 50/51) and srrevamp does not
-	// model them yet (refdata/skill.go says so outright). Shipping the penalty
-	// without the prevention would give a tester holding a sword 1 damage from
-	// a skill the real game would not have let them cast. The gate comes
-	// first; this follows it.
-	if (atk.IsMagical() || max <= 0) && item.MagAttackMax > 0 {
+	// This is a STAND-IN, not the engine's rule. The engine has no maskless
+	// blow: a plain swing runs the weapon's own basic-attack skill, and that
+	// skill carries the matching mask (SKILL_CH_SWORD_BASE_01 is physical,
+	// SKILL_EU_STAFF_BASE_01 magical). srrevamp's plain OpAttack passes
+	// AttackPhysical for every weapon, so this stands in for picking the right
+	// basic skill. It disappears once OpAttack resolves one.
+	case max <= 0 && item.MagAttackMax > 0:
 		min = int(item.MagAttackMin) + ReinforceDamage(intel, item.ReinforceMagMin)
 		max = int(item.MagAttackMax) + ReinforceDamage(intel, item.ReinforceMagMax)
 	}

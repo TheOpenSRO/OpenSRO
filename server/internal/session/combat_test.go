@@ -1230,11 +1230,16 @@ func TestWeaponRangePicksTheRightColumnsAndStat(t *testing.T) {
 	if min, max := combat.WeaponRange(sword, 0, 0, combat.AttackMagical); min != 25 || max != 28 {
 		t.Errorf("both-carrying weapon, magical blow: got %d-%d, want 25-28", min, max)
 	}
-	// A magical blow with a weapon that has no magical damage is left on the
-	// physical columns -- the engine would give 0 here, but it refuses the cast
-	// first via ReqCast_Weapon, which srrevamp does not model yet.
-	if min, max := combat.WeaponRange(club, 0, 0, combat.AttackMagical); min != 7 || max != 9 {
-		t.Errorf("physical-only weapon, magical blow: got %d-%d, want 7-9 until ReqCast_Weapon exists", min, max)
+	// A magical blow with a weapon that has no magical damage contributes
+	// NOTHING from the weapon. The engine's magical half draws params 15/16,
+	// and a physical-only weapon writes param 35 = 0, so the derived term is
+	// zero. The blow is not zero overall -- the skill's own flat att damage is
+	// added separately as damageBonus -- but the weapon's share is.
+	//
+	// This is the case the previous tick deliberately did not ship, on two
+	// reasons that were both measured wrong afterwards. See combat.WeaponRange.
+	if min, max := combat.WeaponRange(club, 0, 0, combat.AttackMagical); min != 0 || max != 0 {
+		t.Errorf("physical-only weapon, magical blow: got %d-%d, want 0-0 (the weapon contributes nothing)", min, max)
 	}
 	if min, max := combat.WeaponRange(nil, 0, 0, combat.AttackPhysical); min != 0 || max != 0 {
 		t.Errorf("no item: got %d-%d, want 0-0", min, max)

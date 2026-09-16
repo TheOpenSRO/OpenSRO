@@ -5611,3 +5611,81 @@ feature that has to be built first".
 **Next step, now unblocked and named:** export `ReqCast_Weapon1/2` and gate skill
 use on the equipped weapon. That is the last thing between here and the faithful
 magical damage path.
+
+## 2026-09-16 (third) — the weapon gate, and a retraction of the previous entry
+
+The previous entry named its own next step: *"export `ReqCast_Weapon1/2` and gate
+skill use on the equipped weapon"*, and justified deferring the magical reroute
+on the claim that **the engine refuses the cast first**. Reading the gate
+disproved the justification. Both reasons that entry gave were wrong, and the
+reroute has now shipped.
+
+### The gate, named by the binary
+
+The skilldata row loader `SkillGlobal::FUN_005893e0` validates every row and
+names the field in its own error string:
+
+	if (skill[199] == '\0' || skill[200] == '\0')
+	    FUN_00936640(0x2000000, "ReqWeapon Error [RefSkill ID: %d]", skill[4]);
+
+So `CRefSkill+199/+200` are the two required-weapon bytes, and **0 is invalid** —
+the loader refuses it. The check is `FUN_0058d480`: the equipped weapon's code is
+`TID >> 11`, `0xff` is an unused slot, both `0xff` means no requirement, an empty
+hand reads as **1**, and a mismatch returns error **0x300d**.
+
+Columns 50/51 carry them. The memory note listed those columns from a schema
+listing; they are now confirmed by the data confirming itself — grouping 36,389
+real rows by the family in their `Basic_Code` puts every one of 24 families on
+the code its own name says it should have (`SKILL_EU_AXE` → 9, `SKILL_EU_STAFF` →
+11, `SKILL_CH_SPEAR` → 4 and 5, …). Full table in
+`docs/protocol/skill_params.md`.
+
+### The retraction
+
+**"The engine refuses the cast first."** It has the gate, but **4,144 of the
+10,465 magical attack skills require no weapon at all** — both bytes `0xff`,
+including every CH elemental nuke. For 40% of exactly the skills in question the
+engine does not refuse, so the justification did not hold.
+
+**"It would drop a caster holding a sword to 1 damage."** Also wrong. The
+skill's own flat `att` damage is added to the bound inside the builder
+regardless of the weapon (`0040dc10` reads the descriptor's `+0xc`), and across
+those 4,144 rows the median flat is **2,068** against a median percent of
+**263**. The weapon's contribution is the small term, not the blow. srrevamp
+already adds that flat separately as `damageBonus`, so the shape matched all
+along.
+
+What survives from that entry is the part that was actually read: the magical
+half draws params 15/16, `Char_PublishCombatStats` writes params 34-37
+unconditionally (the only branch substitutes 0.0, it never skips the write), so
+a physical-only weapon writes param 35 = 0 rather than inheriting the registry
+default of 100. The weapon's share of a magical blow really is zero. That was
+right; the two conclusions drawn around it were not.
+
+### What shipped
+
+`combat.WeaponRange` now routes a magical blow to the magical columns
+**unconditionally** — the weapon contributes nothing when it has no magical
+attack, which is the engine's behaviour. The old `item.MagAttackMax > 0`
+condition remains only for a blow with **no known mask**, and is now labelled a
+stand-in rather than a rule: the engine has no maskless blow, because a plain
+swing runs the weapon's own basic-attack skill and that skill carries the
+matching mask. srrevamp's `OpAttack` passes `AttackPhysical` for every weapon, so
+the fallback stands in for picking the right basic skill, and disappears when
+`OpAttack` resolves one.
+
+### Method note
+
+This is the third tick in a row where the *previous* tick's deferral reasoning
+turned out to be wrong while its measurements held. The pattern is consistent:
+the numbers read out of the binary survived, and the sentences about what they
+implied for srrevamp did not. Deferrals deserve the same "what would show this is
+wrong" treatment as findings — all three would have been caught in one tick by
+asking "how many real rows does this claim actually cover?" before writing it
+down.
+
+**What moved:** the magical damage path is complete and faithful; the weapon gate
+is fully recovered with its vocabulary confirmed 24 ways.
+
+**Next step:** export item TIDs so the gate can be wired -- `refdata.Item` carries
+none today, which is the only thing between here and enforcing ReqCast_Weapon.
