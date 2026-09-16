@@ -7970,3 +7970,91 @@ NAMES its own entries and make a prediction that can fail.
 already recovered (`reference_sro_server_internals`). Joining them would make
 the bonuses concrete, and would also test the param map against a table it was
 not derived from.
+
+## 2026-09-16 — the stat-tag vocabulary: 4 tags become 53, and a correction I did not make
+
+The previous entry proposed following `refmagicoptgroup.txt`'s id column into the
+param space. It does not go there — it goes to `MagicOption.txt`, and that table
+turned out to be worth far more than the bonuses it holds.
+
+### The table names the engine's tags itself
+
+The engine addresses a stat by a short ASCII string packed big-endian into a
+word. This project had **four** of these — `era`, `bri`, `hra`, `cri`, from the
+characterdata columns — and no list.
+
+`MagicOption.txt` column 2 is an option's human code name and column 7 is the
+packed tag it modifies. Every row pairs a name with a tag, with nothing
+inferred:
+
+	MATTR_INT -> 'int'   MATTR_STR -> 'str'   MATTR_BLOCKRATE -> 'bri'
+
+**53 distinct tags, and all 53 packed constants appear in the server binary**,
+compared in `Stat_ApplyTaggedModifier` (`0x00498690`) — a binary-search tree on
+the packed value ending in `GObjPC::ParamKeeper_SetParam`. Full table in
+`docs/protocol/magic_options.md`.
+
+### Column 29 is the item kind, and it is the part that settles meanings
+
+	MATTR_CRITICAL  'cri'   weapon      MATTR_EVADE_CRITICAL  'evcr'  shield
+	MATTR_BLOCKRATE 'bri'   shield      MATTR_EVADE_BLOCK     'evbl'  weapon
+
+Attacker's weapon, defender's shield, both ways round — **exactly the
+opposition `MitigateDamage`'s note already describes**, from a table none of it
+was derived from.
+
+It also re-confirms three things established earlier this session, each from an
+artefact that had nothing to do with them: the accessory split (`rsti` on
+necklace, `rcsi`/`rsli` on earring, `rdii`/`rfei` on ring), the job suits
+(`strj`/`intj` on hunter/thief/trader), and the armour pieces (`hp`/`mp` on
+armor/helm/mail/pants).
+
+### The correction I was about to make and didn't
+
+`combat.go` calls param 9 (`'era'`) the **parry rate** and param 11 (`'hra'`)
+the **attack rate**. The new codenames are `MATTR_AVATAR_ER` and
+`MATTR_AVATAR_HR`, and I had the edit half-written to change "parry" to
+"evasion" on the strength of expanding `ER`.
+
+Column 29 stopped it: `MATTR_ER` sits on **armor** and `MATTR_HR` on
+**weapon** — the parry ratio and attack ratio the game displays. The existing
+comment was right and the expansion of the initials would have been the error.
+**Initials are not evidence; the use-site is.** The near-miss is recorded
+because the rule usually appears here as "a curve is not evidence", and this is
+the same rule wearing a different disguise — a plausible expansion of an
+abbreviation is a guess.
+
+(There is a real nuance underneath: `era`/`hra` ARE the avatar variants, a
+separate family sitting on cosmetic pieces, distinct from base `er`/`hr`. That
+is recorded without reclassifying params 9 and 11, whose mapping came from the
+dispatcher and was not re-derived this tick.)
+
+### And a fourth hand-typed tag went wrong, mid-tick
+
+A probe for tag constants in the server dump returned **zero functions** while a
+probe run minutes earlier had found all 53. Two faults, both mine: it searched
+only the decimal form when Ghidra prints hex, and `'str'` was hand-typed as
+`7565170` when `0x737472` is `7566450`. The empty result was a fact about the
+probe. That is now the fourth time a hand-typed tag has been wrong here, which
+is why the constants ship as a function of the string.
+
+### Shipped
+
+`internal/combat/paramtags.go`: the twelve tags this project's comments name, as
+string constants with their MATTR code names, plus `PackTag`/`UnpackTag`.
+`paramtags_test.go` holds each against the packed value the real table carries,
+pins the byte order, and asserts the avatar variants stay distinct from the base
+pair — the distinction that stopped the wrong correction.
+`docs/protocol/magic_options.md` carries all 53 with their item kinds.
+`MitigateDamage`'s note gains the second-artefact confirmation.
+
+**What moved:** the tag vocabulary went from 4 names to 53, all cross-checked
+against the binary; four shipped combat values gained an independent
+confirmation; and a shipped comment was verified rather than damaged.
+
+**Next step:** `Stat_ApplyTaggedModifier`'s dispatch arms differ — most tags end
+in `ParamKeeper_SetParam(0, ...)` but `'era'` and `'hra'` use slot **1**. The
+slot is the combining rule (slot 0 sums by ctx, slot 3 is the percent scale, per
+`reference_sro_server_internals`), so enumerating which tag uses which slot
+would recover the arithmetic for a whole family at once, rather than one stat
+at a time.

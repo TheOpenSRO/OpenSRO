@@ -194,6 +194,20 @@ type Monster struct {
 // unopposed against monsters because GObjMob_PublishStats publishes neither 56
 // nor 57. So srrevamp is not missing a hit/miss mechanic; the game resolves a
 // swing as blocked or not, never as a miss.
+//
+// CONFIRMED FROM A SECOND ARTEFACT 2026-09-16. `MagicOption.txt` names these
+// tags itself and says which item kind carries each: MATTR_CRITICAL ('cri') on
+// a weapon against MATTR_EVADE_CRITICAL ('evcr') on a shield, and
+// MATTR_BLOCKRATE ('bri') on a shield against MATTR_EVADE_BLOCK ('evbl') on a
+// weapon. Attacker's weapon, defender's shield, both ways round -- exactly the
+// pairing above, from a table none of it was derived from.
+//
+// That table also checks the two names in the paragraph before this one rather
+// than overturning them: MATTR_ER sits on `armor` and MATTR_HR on `weapon`, so
+// 'er'/'hr' are the parry and attack ratios, and reading ER as "evasion" would
+// have been a wrong correction. (Params 9 and 11 carry the AVATAR variants
+// 'era'/'hra', a separate family that sits on cosmetic pieces -- see
+// paramtags.go.) Full vocabulary: docs/protocol/magic_options.md.
 func MitigateDamage(raw, reductionPercent, flat int) int {
 	if reductionPercent < 0 {
 		reductionPercent = 0
