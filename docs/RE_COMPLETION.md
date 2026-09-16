@@ -5376,3 +5376,54 @@ finding sat four lines above it.
 **What moved:** no number. A value shipped as own design turns out to be the
 game's, which is the direction this project wants corrections to run, and the
 comment now carries the pipeline position that made the earlier reading wrong.
+
+## Magical weapons dealt 1 damage: srrevamp models one of the engine's two damage halves (2026-09-16)
+
+Last tick's floor correction came from reading one stage of the damage pipeline
+and stopping. That suggested a systematic question — **is srrevamp's damage
+ORDER also incomplete?** — so this tick traced every touch of the damage field
+in `Combat_ResolveDamage`.
+
+**The engine computes TWO damage halves and sums them:**
+
+```c
+dmg[0x28] = Formula_MitigatePhysicalDamage(...)    // physical
+dmg[0x24] = Formula_MitigateMagicalDamage(...)     // magical
+...
+damage    = dmg[0x28] + dmg[0x24]
+```
+
+srrevamp reads only `PhysAttackMin/Max`. `MagAttackMin/Max` is imported into
+`refdata.Item` and **never used**.
+
+**Measured over a real client's itemdata**, of 2,927 items carrying any attack
+value:
+
+	physical only   1,049
+	magical only      828
+	both            1,050
+
+So **828 items — every staff and magic weapon — have no physical damage at
+all.** Reading only the physical columns gives them min = max = 0, the blow
+lands on `MitigateDamage`'s floor, and the weapon does **1 damage**.
+
+### What shipped, and what deliberately did not
+
+Fixed: when a weapon has no physical damage, the magical columns are used.
+Items that carry physical damage are untouched.
+
+**Not fixed: the sum.** Three sites zero one half or the other — a skill flag,
+and bits 4 and 8 of the ref object's `+0x2b4`. How often a blow really carries
+both is a question about flags this project has not read. Summing them for the
+1,050 items that carry both would roughly double their damage — including the
+Copper Sword, whose magical 25-28 exceeds its physical 15-16 — on an unread
+condition. That is a balance change dressed as a fix, on a server with live
+testers.
+
+What is unambiguous regardless of those flags is that a weapon with no physical
+damage should not deal 1. That much is shipped; the rest is written down with
+exactly what has to be read before anyone acts on it.
+
+**What moved:** magical-only weapons now deal their real damage instead of 1.
+The larger question — whether a blow sums both halves — is recorded as open with
+the deciding flags named, rather than guessed.

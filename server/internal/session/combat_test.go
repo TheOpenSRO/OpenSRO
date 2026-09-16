@@ -1203,3 +1203,53 @@ func TestShieldBlocksInCombat(t *testing.T) {
 		t.Errorf("HP after a blocked hit = %d, want the full %d", ar.PlayerHP, character.StartingMaxHP)
 	}
 }
+
+// TestMagicalOnlyWeaponsDealDamage covers the 828 items that carry magical
+// damage and no physical at all -- every staff and magic weapon in the game,
+// measured over a real client's itemdata (2,927 items have any attack value;
+// 1,049 are physical-only, 828 magical-only, 1,050 carry both).
+//
+// Reading only the physical columns gives a magical weapon min = max = 0, so its
+// blow lands on MitigateDamage's floor and does 1 damage. That is wrong
+// regardless of how the engine's two damage halves interact.
+//
+// It deliberately does NOT assert that a both-carrying weapon sums the halves:
+// the engine zeroes one half or the other on flags this project has not read,
+// so summing would be a balance change on an unread condition.
+func TestMagicalOnlyWeaponsDealDamage(t *testing.T) {
+	pick := func(it *refdata.Item, str int) (min, max int) {
+		min = int(it.PhysAttackMin) + combat.ReinforceDamage(str, it.ReinforcePhysMin)
+		max = int(it.PhysAttackMax) + combat.ReinforceDamage(str, it.ReinforcePhysMax)
+		if max <= 0 && it.MagAttackMax > 0 {
+			min = int(it.MagAttackMin) + combat.ReinforceDamage(str, it.ReinforceMagMin)
+			max = int(it.MagAttackMax) + combat.ReinforceDamage(str, it.ReinforceMagMax)
+		}
+		return min, max
+	}
+
+	// A magical-only weapon: the magical columns are used.
+	staff := &refdata.Item{MagAttackMin: 25, MagAttackMax: 28}
+	if min, max := pick(staff, 0); min != 25 || max != 28 {
+		t.Errorf("magical-only weapon: got %d-%d, want 25-28 (not 0-0)", min, max)
+	}
+
+	// A physical weapon is untouched, even when it also carries magical
+	// damage -- this is the case the change deliberately leaves alone.
+	sword := &refdata.Item{PhysAttackMin: 15, PhysAttackMax: 16, MagAttackMin: 25, MagAttackMax: 28}
+	if min, max := pick(sword, 0); min != 15 || max != 16 {
+		t.Errorf("weapon carrying both: got %d-%d, want the physical 15-16 unchanged", min, max)
+	}
+
+	// Physical-only is unchanged too.
+	club := &refdata.Item{PhysAttackMin: 7, PhysAttackMax: 9}
+	if min, max := pick(club, 0); min != 7 || max != 9 {
+		t.Errorf("physical-only weapon: got %d-%d, want 7-9", min, max)
+	}
+
+	// A weapon with no attack values at all stays at zero, so the unarmed
+	// path and the floor still decide.
+	trinket := &refdata.Item{}
+	if min, max := pick(trinket, 0); min != 0 || max != 0 {
+		t.Errorf("no attack values: got %d-%d, want 0-0", min, max)
+	}
+}

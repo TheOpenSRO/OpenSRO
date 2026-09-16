@@ -1175,6 +1175,33 @@ func attackerDamage(ctx context.Context, characterID int64, str int, eq equipmen
 		// exactly the old behaviour.
 		min := int(item.PhysAttackMin) + combat.ReinforceDamage(str, item.ReinforcePhysMin)
 		max := int(item.PhysAttackMax) + combat.ReinforceDamage(str, item.ReinforcePhysMax)
+		// A MAGICAL-ONLY weapon would otherwise deal nothing. Measured over a
+		// real client's itemdata, of 2,927 items carrying any attack value
+		// **828 have magical damage and no physical at all** -- every staff and
+		// magic weapon in the game. Reading only the physical columns gives
+		// them min = max = 0, so the blow lands on MitigateDamage's floor and
+		// does 1 damage.
+		//
+		// The engine computes BOTH halves and sums them:
+		// Combat_ResolveDamage fills dmg[0x28] from
+		// Formula_MitigatePhysicalDamage and dmg[0x24] from
+		// Formula_MitigateMagicalDamage, then sets the blow to their sum.
+		//
+		// This does NOT reproduce that sum, deliberately. Three sites zero one
+		// half or the other -- a skill flag and bits 4 and 8 of the ref
+		// object's +0x2b4 -- so how often a blow really carries both is a
+		// question about flags this project has not read. Summing them for the
+		// 1,050 items that carry both would roughly double their damage on an
+		// unread flag, which is a balance change dressed as a fix.
+		//
+		// What is unambiguous regardless of those flags is that a weapon with
+		// no physical damage should not deal 1. So the magical columns are used
+		// only when the physical ones are absent. Items that carry physical
+		// damage are completely unaffected.
+		if max <= 0 && item.MagAttackMax > 0 {
+			min = int(item.MagAttackMin) + combat.ReinforceDamage(str, item.ReinforceMagMin)
+			max = int(item.MagAttackMax) + combat.ReinforceDamage(str, item.ReinforceMagMax)
+		}
 		return rollDamage(min, max), nil
 	}
 	return unarmedDamage, nil
