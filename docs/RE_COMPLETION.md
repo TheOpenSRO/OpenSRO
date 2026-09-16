@@ -8840,3 +8840,81 @@ system. `strj`/`intj` were measured onto `hunter, thief, trader` in the magic
 options work, and `_RefSetItemGroup`'s job suits occupy equipment slot 8, so the
 three-job vocabulary is already partly recovered. Finding the server function that
 reads a job's experience would settle columns 6–8 the honest way.
+
+## 2026-09-16 — hunting a use-site, finding two probe faults and a blind spot
+
+The previous entry left `LevelData.txt`'s columns 6–8 — a triple of identical
+large values — unclaimed, and proposed finding the job system's reader to settle
+them honestly. The hunt came back empty, and everything useful this tick is a
+by-product of how it failed.
+
+### The search, and what it actually establishes
+
+Every consumer of the level record goes through `RefLevel_GetEntry`
+(`0x00411130`). There are **ten**, and between them they read exactly three
+offsets: `+0x8/+0xc` (the 64-bit exp to next), `+0x10` (the mastery cost) and
+`+0x1c` (the kill-exp unit). **Nothing reads past `+0x1c`.**
+
+That is not proof the columns are dead — the table is an array off the
+reference-data singleton and code could index it without the accessor — but the
+straightforward search is now done and recorded, so the next attempt starts
+elsewhere instead of here.
+
+### Two probe faults, both the same cause
+
+My extractor found "offsets read from the variable holding the entry" and
+reported `FUN_00631050` reading `+0x28` and `+0x30`, and `Mastery_LevelUp`
+reading `+0x20`. Both were wrong, and for one reason: **Ghidra reuses a variable
+name across scopes, and the extractor did not track bindings.**
+
+- `FUN_00631050`'s `iVar5 + 0x28` is a `std::string` SSO check on a *different*
+  `iVar5` — `if (*(uint *)(iVar5 + 0x28) < 0x10) iVar5 = iVar5 + 0x14;` is the
+  short-string-optimisation test, not a level-record field.
+- `Mastery_LevelUp`'s `iVar5 + 0x20` is the *mastery* record's level, from
+  `iVar5 = *(int *)(iVar3 + 8)`, not the level record at all.
+
+An "offsets read from variable X" scan over decompiled C is unsound without scope
+tracking. Both faults were caught by reading the surrounding lines rather than
+trusting the extraction — which is the only reason two invented level-record
+fields did not end up in a doc.
+
+### What the failed hunt confirmed on the way
+
+`Mastery_LevelUp` sums `RefLevel_GetEntry(level) + 0x10` across the levels
+between a mastery's current and target level, and refuses with `0x3802` when the
+character's skill points (charData `+0x80`) are less than the sum. That
+**independently confirms column 2 as the per-level mastery cost** — a claim
+`leveldata.go` already made from the server summing "exactly this field", now
+with a second reading of the same use-site. charData `+0x80` is the skill-point
+pool, next to `+0x84` (stat points) recovered two ticks ago.
+
+### A blind spot in the error-code table
+
+`Mastery_LevelUp` raises `0x3802` and `0x3804`, and **neither is in
+`error_codes.md` — the whole `0x38xx` family is absent** while `0x30xx` (52
+codes) and `0x3cxx` (27) are present.
+
+The reason is the harvest's pattern. It scans for `mov ax,0xNNNN` / `mov
+eax,0xNNNN`, the shape of `return ERRORCODE`. `Mastery_LevelUp` assigns its codes
+to a **stack local** instead, so they are invisible to it. The gap is a property
+of the probe, not of the game.
+
+Two numbers for judging that table's completeness, measured: the scan finds 445
+distinct codes ≥ 0x100 in ax/eax, of which **201 are not in the table**. Some of
+that is legitimate — a code the client has no message for cannot be named — but
+it bounds what "605 codes" means.
+
+### Shipped
+
+The measured negative on columns 6–8 and the confirmation of column 2, both in
+`leveldata.go`; the error-code blind spot in `error_codes.md` with the two codes
+that exposed it and the 445/201 figures. No value changed.
+
+**What moved:** one dead end closed with a measurement instead of a shrug, one
+shipped column confirmed from a second use-site, and a harvest that had been
+treated as complete now carries its own limits.
+
+**Next step:** widen the error-code harvest to the assignment forms it misses —
+`mov WORD PTR [ebp-N],0xNNNN` and the register-to-local shapes — and re-run it.
+`0x38xx` is a whole family the table has never seen, and `Mastery_LevelUp` shows
+there is at least one real subsystem behind it.

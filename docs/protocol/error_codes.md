@@ -702,3 +702,27 @@ attributed to them.
 | `0x7804` | `UIIT_MSG_WITHDRAW_SKILL_FAIL_NOT_ENOUGH_GOLD` |
 | `0x7805` | `UIIT_MSG_WITHDRAW_SKILL_FAIL_NOT_ENOUGH_POTION` |
 | `0x7806` | `UIIT_MSG_WITHDRAW_SKILL_FAIL_DEPENDANCY_LIMIT` |
+
+## A blind spot in how this table was built, measured 2026-09-16
+
+The table was harvested by scanning the server disassembly for `mov ax,0xNNNN` /
+`mov eax,0xNNNN` — the shape of `return ERRORCODE`. **That misses every code that
+never passes through ax/eax.**
+
+`Mastery_LevelUp` (`0x0059c4e0`) is the proof. It raises two codes and assigns
+both to a stack local rather than returning them directly:
+
+	uStack_22c = 0x3804;   // the target mastery level exceeds the character's
+	uStack_22c = 0x3802;   // not enough skill points for the summed cost
+
+Neither appears in the scan's output, and **the whole `0x38xx` family is absent
+from this table** while `0x30xx` (52 codes) and `0x3cxx` (27) are present. That
+gap is a property of the probe, not of the game.
+
+Two other numbers worth having when judging this table's completeness: the scan
+finds **445** distinct codes ≥ 0x100 loaded into ax/eax, of which **201 are not
+in this table**. Some of that is legitimate — a code the client has no message
+for cannot be named here — but it bounds how complete "605 codes" is.
+
+Nothing is renamed on the strength of this; it is recorded so the next person to
+extend the table starts by widening the pattern rather than by trusting it.

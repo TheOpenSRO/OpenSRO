@@ -26,8 +26,19 @@ import (
 // which would make them job experience. **That is a curve and a coincidence of
 // arity, which is exactly what this project has been wrong about before**
 // (characterdata col 79, twice). Nothing is claimed until a use-site reads one of
-// them; the note exists so the next reader starts from the observation rather
-// than rediscovering it.
+// them.
+//
+// LOOKED FOR THE USE-SITE 2026-09-16, AND THERE IS NONE in the obvious place.
+// Every consumer of the level record goes through `RefLevel_GetEntry`
+// (`0x00411130`) -- ten callers -- and between them they read exactly three
+// offsets: `+0x8/+0xc` (the 64-bit exp to the next level), `+0x10` (the mastery
+// cost, summed) and `+0x1c` (the kill-exp unit). **Nothing reads past `+0x1c`.**
+//
+// That does not prove the columns are dead: the table is an array off the
+// reference-data singleton and code could index it without the accessor. It does
+// mean the straightforward search has been done and come back empty, so the next
+// attempt should start somewhere else -- the job system's own reader, if there is
+// one.
 //
 // StatPointsPerLevel is how many points a character gets to spend (into Str or
 // Int) each level.
@@ -81,6 +92,14 @@ type Table struct {
 	masterySP map[int]int
 	// expUnit[L] is the standard EXP a kill is worth at level L -- leveldata's
 	// column 5. REAL: see ExpUnit.
+	//
+	// CONFIRMED INDEPENDENTLY 2026-09-16 from a use-site read fresh:
+	// Mastery_LevelUp (`0x0059c4e0`) walks the levels between the mastery's
+	// current level and its target, summing `RefLevel_GetEntry(level) + 0x10`,
+	// and refuses with 0x3802 when the character's skill points (charData
+	// `+0x80`) are less than that sum. So `+0x10` is the per-level mastery cost
+	// and the sum is what a multi-level mastery raise actually costs -- which is
+	// what this field was already claimed to be.
 	expUnit  map[int]int64
 	maxLevel int
 }
