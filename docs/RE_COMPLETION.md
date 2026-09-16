@@ -5157,3 +5157,51 @@ was wrong; both are now marked.
 **What moved:** no value. The tag vocabulary went from 31 resolved + 15 unknown +
 7 argued to **56 named from the game's own data**, one floated guess is corrected
 in place, and a tier-2 caveat is retired.
+
+## An item-effect code vocabulary, and a naming probe that had to be thrown away (2026-09-16)
+
+Last tick's win came from a client table naming a code vocabulary. Trying the
+same for **item effects**, after `BCS1` turned up in the item-use dispatcher two
+ticks ago with nothing behind it.
+
+**Two clean negatives first**, both worth recording so they are not retried:
+
+- `itemeffect.txt` is not the vocabulary. It is 46 rows mapping item code names
+  to *visual* skill-effect code names, nothing to do with mechanical effects.
+- **itemdata has no param block** of the kind skilldata has. Censusing every
+  2-4 character multi-char literal across all 15,338 item rows from column 100
+  on yields 7 strings, all low-count decoding artefacts (`dddP`, `u0`, `lppu`).
+  The skill vocabulary's technique does not transfer to items.
+- The codes are not in **any** extracted client table. Like drop tables and quest
+  objectives, item-effect codes are server-side.
+
+**The vocabulary, from the binary itself.** Censusing the four-byte comparisons
+in the two item-use dispatchers (`GObjPC::FUN_0049f090` and `FUN_0049f590`) and
+decoding them big-endian gives **eight item-effect codes**:
+
+	BCS1  BFI1  PSU1  UIL1  UIU1  UQL1  USL1  USU1
+
+These are solid — they are literal `cmp` operands in the dispatch, the same shape
+that yielded the stat-tag vocabulary.
+
+**One is named.** `BCS1` gates `INC_INVENTORY_SIZE`: its branch calls
+`GObjPC::FUN_00864aa0`, which compares against that string via
+`mov ecx, 0xae57d4`. That is a direct reference inside the branch, not a
+proximity guess.
+
+### The probe I threw away
+
+Trying to name the other seven the same way — walk each code's branch, follow its
+calls, report the first string those functions reference — returned
+`INC_INVENTORY_SIZE` for **four different codes**. That is not a finding; four
+codes do not share one meaning. The 80-instruction window was bleeding across
+branch boundaries into the same neighbouring helper.
+
+It is recorded because the output looked exactly like a result: a tidy table with
+plausible entries, produced by a method that had just worked elsewhere. The tell
+was the uniformity, not anything in the individual rows. Seven codes stay
+unnamed.
+
+**What moved:** no value. An eight-entry item-effect vocabulary recovered from
+the dispatcher, one entry named with a direct citation, three negatives bounded,
+and a false naming pass discarded before it reached a doc.
