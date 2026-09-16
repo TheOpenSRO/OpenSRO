@@ -9376,3 +9376,58 @@ is the obvious consumer, and the engine has the matching refusal ready —
 `0x183b CANNOT_DEAL_AT_SHOP`, raised by `GObjPC::FUN_006182a0` when `CanSell`
 answers zero — so it is the same shape of change as this one, with the citation
 already in hand.
+
+## 2026-09-16 — CanSell enforced, and the zero value that would have broken everything
+
+The previous entry's next step was to wire `CanSell` into the shop's sell path,
+with the engine's refusal already in hand. Done — and the interesting part is a
+hazard the field's own type created.
+
+### The refusal
+
+`GObjPC::FUN_006182a0` calls `CanSell` (vtable slot 50) and returns
+`0x183b UIIT_MSG_STRGERR_CANNOT_DEAL_AT_SHOP` when it answers zero.
+`shop.Service.Sell` already had the item in hand, so the check went in exactly
+where the engine makes it — **before the item is removed**, so a refusal costs
+nothing. New `shop.ErrCannotSell`, and a test asserting the inventory is
+untouched after a refusal.
+
+That handler turned out to be the specialty/trade-goods path rather than the
+ordinary one (its other ten refusals are `SPECIALTY_ERR_*`), but the `CanSell`
+check is the same check, and the flag is the item's own.
+
+### The hazard, which is about Go rather than the engine
+
+`CanTrade`/`CanSell`/`CanDrop` are **permissions: a clear bit forbids.** Go's zero
+value for a bool is false. So an export made before those columns existed loads
+every item as un-tradeable and un-sellable, and a server running it refuses every
+trade and every sale **with nothing in the logs to explain it**.
+
+The SQL store already defaulted `TRUE`. The CSV loader did not, and the two have
+to agree or the same export behaves differently per backend. Fixed: an absent
+column now means unrestricted, set in the loader rather than left to each caller
+to remember, with a test holding both halves — an older row loads unrestricted,
+and an explicit zero still forbids.
+
+**The remaining sharp edge is deliberate.** A `refdata.Item` built by hand still
+zero-values to "forbidden", and the shop test caught it immediately — the sale
+was refused with `shop: this item cannot be sold`. That is the right behaviour to
+keep: a literal is written by someone who can see the field, an old export is
+not. The fixture now says `CanSell: true` because that is what it means.
+
+### Shipped
+
+`shop.ErrCannotSell` and the check; `TestSellRefusesUnsellableItem`;
+`TestCapabilityFlagsDefaultToUnrestricted` guarding the loader default against
+the SQL default. Two of the three recovered flags are now enforced where the
+engine enforces them.
+
+**What moved:** un-sellable items can no longer be sold, and a footgun that would
+have silently disabled trading and selling on every pre-existing export is closed
+before anyone met it.
+
+**Next step:** `CanDrop` is the last of the three and srrevamp has no drop path to
+enforce it in — items are removed by `RemoveItem`, with no player-facing "drop"
+action. That makes it the first of these flags with nothing to wire into, so the
+honest move is to leave it carried-but-unused and say so, rather than invent a
+drop action to justify the field.

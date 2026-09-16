@@ -31,6 +31,10 @@ var ErrItemNotFound = errors.New("shop: item not found")
 
 // ErrSlotEmpty is returned by Service.Sell when the inventory slot to sell
 // from holds nothing.
+// ErrCannotSell means the item carries no CanSell permission -- the engine's
+// own flag, refused at a shop with 0x183b UIIT_MSG_STRGERR_CANNOT_DEAL_AT_SHOP.
+var ErrCannotSell = errors.New("shop: this item cannot be sold")
+
 var ErrSlotEmpty = errors.New("shop: nothing in that slot")
 
 // ErrNothingToSell is returned by Service.Sell for a non-positive quantity.
@@ -154,6 +158,17 @@ func (s *Service) Sell(ctx context.Context, characterID int64, slot, quantity in
 	if err != nil {
 		return 0, ErrItemNotFound
 	}
+	// THE ITEM'S OWN SELL FLAG, the engine's refusal at this exact point.
+	// `CanSell` is vtable slot 50 (`IGObj::CanSell`), and the shop path returns
+	// 0x183b UIIT_MSG_STRGERR_CANNOT_DEAL_AT_SHOP when it answers zero --
+	// `GObjPC::FUN_006182a0` does precisely this. See
+	// docs/protocol/item_capability_flags.md; the flag is itemdata column 17.
+	//
+	// Checked BEFORE the item is removed, so a refusal costs nothing.
+	if item != nil && !item.CanSell {
+		return 0, ErrCannotSell
+	}
+
 	gold := SellValue(item) * int64(quantity)
 
 	if err := s.Inv.RemoveItem(ctx, characterID, slot, quantity); err != nil {

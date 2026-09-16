@@ -190,10 +190,21 @@ func parseItemRow(f []string) (Item, error) {
 	if len(f) > 40 {
 		it.SetID = parseInt(f[40])
 	}
-	// The capability flags, optional in the same way. An export that predates
-	// them leaves all three FALSE, which would forbid everything -- so the
-	// absence is read as "unrestricted" by the callers, not here. See
-	// equipment/trade call sites.
+	// The capability flags, optional in the same way -- but with the default the
+	// OTHER way round, which matters.
+	//
+	// These are permissions: a clear bit forbids. Go's zero value for a bool is
+	// false, so an export made before these columns existed would load every
+	// item as un-tradeable, un-sellable and un-droppable, and a server running
+	// it would refuse every trade and every sale with no indication why. So an
+	// absent column means UNRESTRICTED, set here rather than left to each
+	// caller to remember. The SQL store defaults the same way (`DEFAULT TRUE`).
+	//
+	// The remaining sharp edge is a `refdata.Item` built by hand -- in a test,
+	// say -- where the zero value still forbids everything. That is deliberate:
+	// a literal is written by someone who can see the field, whereas an old
+	// export is not.
+	it.CanTrade, it.CanSell, it.CanDrop = true, true, true
 	if len(f) > 41 {
 		it.CanTrade = parseBool(f[41])
 	}

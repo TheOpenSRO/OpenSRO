@@ -128,8 +128,10 @@ func TestBuyMultipleQuantity(t *testing.T) {
 
 func TestSellCreditsGoldAndRemovesItem(t *testing.T) {
 	ctx := context.Background()
-	// Buys at 200, sells back at its real SellPrice 80.
-	items := stubItems{100: {ID: 100, Price: 200, SellPrice: 80}}
+	// Buys at 200, sells back at its real SellPrice 80. CanSell must be set
+	// explicitly: it is a permission, and a hand-built refdata.Item zero-values
+	// to "forbidden" -- which is what a real un-sellable item looks like.
+	items := stubItems{100: {ID: 100, Price: 200, SellPrice: 80, CanSell: true}}
 	svc, chars, characterID := newTestService(t, items)
 
 	if err := svc.Buy(ctx, characterID, 100, 2); err != nil {
@@ -283,5 +285,34 @@ func TestCatalogForReturnsOnlyRequestedResolvableItems(t *testing.T) {
 	empty, err := svc.CatalogFor(ctx, nil)
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("CatalogFor(nil) = (%+v, %v), want empty", empty, err)
+	}
+}
+
+// TestSellRefusesUnsellableItem covers the engine's own refusal at this exact
+// point: `IGObj::CanSell` is vtable slot 50, and the shop path returns
+// 0x183b UIIT_MSG_STRGERR_CANNOT_DEAL_AT_SHOP when it answers zero.
+//
+// The check runs before the item is removed, so a refused sale must leave the
+// inventory untouched -- that is the half worth asserting.
+func TestSellRefusesUnsellableItem(t *testing.T) {
+	ctx := context.Background()
+	items := stubItems{100: {ID: 100, Price: 200, SellPrice: 80, CanSell: false}}
+	svc, _, characterID := newTestService(t, items)
+
+	if err := svc.Inv.AddItem(ctx, characterID, 100, 1); err != nil {
+		t.Fatalf("seeding the inventory: %v", err)
+	}
+	before, _ := svc.Inv.List(ctx, characterID)
+	if len(before) != 1 {
+		t.Fatalf("expected one slot, got %+v", before)
+	}
+
+	gold, err := svc.Sell(ctx, characterID, before[0].Index, 1)
+	if !errors.Is(err, ErrCannotSell) {
+		t.Fatalf("Sell returned %v (gold %d); want ErrCannotSell", err, gold)
+	}
+	after, _ := svc.Inv.List(ctx, characterID)
+	if len(after) != 1 || after[0].Quantity != 1 {
+		t.Errorf("a refused sale consumed the item: %+v", after)
 	}
 }

@@ -232,3 +232,47 @@ func TestLoadDropGroupEntriesCSVNonNumericField(t *testing.T) {
 		t.Fatal("expected an error for a non-numeric field, got nil")
 	}
 }
+
+// TestCapabilityFlagsDefaultToUnrestricted guards the one place where Go's zero
+// value would have been actively dangerous.
+//
+// CanTrade/CanSell/CanDrop are PERMISSIONS: a clear bit forbids. An export made
+// before those columns existed has no value for them, and a bool defaults to
+// false -- so without this the loader would mark every item in an older export
+// un-tradeable and un-sellable, and the server would refuse every trade and
+// every sale with nothing in the logs to explain it.
+//
+// The SQL store defaults the same way (`DEFAULT TRUE`). These two have to agree,
+// or the same export behaves differently depending on the backend.
+func TestCapabilityFlagsDefaultToUnrestricted(t *testing.T) {
+	// A 41-column row: everything through SetID, nothing after it.
+	row := make([]string, 41)
+	for i := range row {
+		row[i] = "0"
+	}
+	row[0] = "4842"
+
+	items, err := LoadItemsCSV(strings.NewReader(strings.Join(row, ",") + "\n"))
+	if err != nil {
+		t.Fatalf("LoadItemsCSV: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+	it := items[0]
+	if !it.CanTrade || !it.CanSell || !it.CanDrop {
+		t.Errorf("an export predating the capability columns must load as unrestricted; "+
+			"got CanTrade=%v CanSell=%v CanDrop=%v", it.CanTrade, it.CanSell, it.CanDrop)
+	}
+
+	// And a row that DOES carry them is obeyed, including the forbidding case.
+	row = append(row, "0", "0", "0")
+	items, err = LoadItemsCSV(strings.NewReader(strings.Join(row, ",") + "\n"))
+	if err != nil {
+		t.Fatalf("LoadItemsCSV with flags: %v", err)
+	}
+	if items[0].CanTrade || items[0].CanSell || items[0].CanDrop {
+		t.Errorf("explicit zeros must forbid; got CanTrade=%v CanSell=%v CanDrop=%v",
+			items[0].CanTrade, items[0].CanSell, items[0].CanDrop)
+	}
+}
