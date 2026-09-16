@@ -38,7 +38,26 @@ import sys
 # Below this, a "code" is far more likely an ordinary small return value.
 CODE_FLOOR = 0x100
 
-RETURN_RE = re.compile(r"^\s+([0-9a-f]+):\t[0-9a-f ]+\tmov\s+(?:ax|eax),0x([0-9a-f]+)$")
+# WIDENED 2026-09-16. This used to match only `mov ax,0xNNNN` / `mov eax,0xNNNN`
+# -- the shape of `return ERRORCODE`. That misses every code a function assigns
+# to a local or another register instead, and the miss is large: Mastery_LevelUp
+# raises 0x3802 and 0x3804 into a stack slot, and the whole 0x38xx family was
+# invisible to the narrow pattern.
+#
+# WIDENING IS ONLY SAFE BECAUSE OF THE JOIN. On its own the wide pattern matches
+# any 16-bit immediate move -- loop bounds, sizes, masks -- and finds 1,206
+# distinct values in 0x100..0xffff against the narrow pattern's 445. Most of the
+# extra are not codes at all. What makes it usable is that every match is then
+# required to be a code the CLIENT already names; the name table is the
+# validation, not the pattern. Measured on that basis:
+#
+#     narrow: 157 functions touch a named code, 117 still FUN_
+#     wide:   298 functions touch a named code, 204 still FUN_
+#
+# 208 named codes are raised only in a form the narrow pattern cannot see.
+RETURN_RE = re.compile(
+    r"^\s+([0-9a-f]+):\t[0-9a-f ]+\tmov\s+"
+    r"(?:(?:BYTE|WORD|DWORD) PTR \[[^\]]+\]|[a-z]{2,3}),0x([0-9a-f]+)$")
 
 # UIIT_MSG_<DOMAIN>ERR_..., UIIT_STT_<DOMAIN>..., UIIT_MGS_... (the engine's typo)
 PREFIXES = ("UIIT_MSG_", "UIIT_MGS_", "UIIT_STT_", "UIIT_CTL_", "UIIT_")

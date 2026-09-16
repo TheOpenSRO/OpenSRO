@@ -8918,3 +8918,67 @@ treated as complete now carries its own limits.
 `mov WORD PTR [ebp-N],0xNNNN` and the register-to-local shapes — and re-run it.
 `0x38xx` is a whole family the table has never seen, and `Mastery_LevelUp` shows
 there is at least one real subsystem behind it.
+
+## 2026-09-16 — widening the error-code scan, and why widening alone would be wrong
+
+The previous entry found that the error-code harvest only sees `mov ax,0xNNNN` —
+the shape of `return ERRORCODE` — and so had never seen the `0x38xx` family that
+`Mastery_LevelUp` raises into a stack slot. This is that fix, and the interesting
+part is what stopped it being a bad one.
+
+### The client half first, because it changes what "missing" means
+
+`0x3802`, `0x3804` and `0x3805` **are** in the client — handled in
+`UI_SILKMALL::FUN_007b8b40`, a large dispatcher keyed on a category and then a
+code. But they are handled by `if (param_2 == 0x3802)`, not by a `case` label,
+and they route to shared endings rather than to a per-code message string.
+
+So the same class of blind spot exists on both sides of the join, and the
+conclusion is narrower than "the table is missing names": these codes may have
+**no client message name at all**, which would make their absence from
+`error_codes.md` correct rather than a gap. No name was invented for them.
+
+### Widening the server scan, and the trap in doing so
+
+Widened to any 16-bit immediate move, including into a memory local:
+
+	narrow (mov ax/eax):        445 distinct values in 0x100..0xffff
+	wide   (any reg or local): 1206
+	seen only by the wide scan: 761
+
+**761 new values is not 761 new error codes.** Loop bounds, sizes, masks and
+offsets all look exactly like this, and taking the wide scan at face value would
+be the same mistake the `0x100` floor exists to prevent, one level up — that
+floor stops a small return value being read as a code; nothing in the pattern
+stops an arbitrary immediate being read as one.
+
+**The join is what makes it safe.** Require every match to be a code the client
+already names, and the widening adds reach without adding guesses:
+
+	narrow:  157 functions touch a named code, 117 still FUN_,  88 single-domain
+	wide:    298 functions touch a named code, 204 still FUN_, 143 single-domain
+
+**208 named codes are raised only in a form the narrow pattern could not see.**
+The name table is the validation, not the pattern.
+
+### Shipped
+
+`label_by_error_code.py` widened, with the 1,206-vs-445 figures and the reason
+the join is load-bearing written into it — because the next person to read that
+regex will wonder why it is so permissive.
+`error_attributed_functions.md` regenerated: **143 single-domain attributions
+across 15 domains**, up from 88. The biggest movers are STRG (34), SKILL (28),
+GUILD (24) and FORT (17).
+
+No srrevamp value changed — this is an attribution table, and the doc says in its
+own words that an attribution is not a name.
+
+**What moved:** 56 more unnamed server functions now have a grounded statement of
+which subsystem they belong to, and the tool that produces them no longer has a
+silent blind spot.
+
+**Next step:** the 44 "mixed domains" functions are the interesting residue —
+each raises codes from two or more subsystems, which usually means a shared
+helper (an inventory move that can fail as STRG or as GUILD storage). Those are
+where a single function ties two systems together, so they are better reading
+than the single-domain ones for anyone mapping how the server is put together.
