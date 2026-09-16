@@ -9774,3 +9774,75 @@ distinct values topping out at 110) while itemdata's is stack-shaped (1/250/500)
 and both land in the same `+0x184` field — worth a reader of `+0x184` to settle
 what the engine calls it.
 
+## 2026-09-16 — naming by vtable slot: 53 names, and the 209 that were wrong
+
+**What moved.** 53 server functions named, applied to the Ghidra project
+(`applied 53, kept 0, no function 0, failed 0`). Full method: `Create` x23,
+`Update` x11, `OnTimeout` x4, `DoJob` x4, `CreateWorld` x4, `PublishStats` x2,
+`ExtractData` x2, plus three singles. See
+`docs/protocol/vtable_slot_propagation.md`.
+
+**The lever.** RTTI already gave the dump every function's class, vtable slot
+and base chain — **5,992 server functions carry a slot tag and only 520 had a
+real leaf name.** MSVC lays a derived vtable out with the base's slots as a
+prefix, so a name known at slot N of a base is the same method at slot N of any
+descendant. Validated before use against the 466 already-named slot-functions:
+**458 agree (98.3%)**.
+
+**Most of this tick was spent NOT shipping the wrong 209.** Propagating by slot
+number alone offers 271 names, 209 of them `GetRefObjID` at slot 1 — which on
+those classes is the MSVC scalar deleting destructor
+(`*this = &vftable; if (flag & 1) free(this); return this`). The obvious guard
+(require a shared base that has a function at that slot) does not help, because
+`CBase` is a universal root and has its own slot 1, so every pair "shares an
+ancestor". Excluding ancestors common to more than a fifth of all 747 classes
+drops the offer to 69 with agreement unchanged; reading the bodies then rejected
+14 more (`GetRefObjID` x7, still destructors; `Assert_BreakIfDebugger` x6, a
+global helper's name leaking through a mislabelled function; a bare thunk).
+
+**The three genuine ground-truth misses are the shape to remember**: `COnDead`,
+`COnUpdate` and `COnSetupQuest` each override slot 1 with a different method.
+Sibling agreement is not guaranteed — a candidate is only safe when every name
+the rule finds normalises to the same method.
+
+**Worth having by itself:** `RefObjItem::ExtractData` and
+`RefObjStruct::ExtractData` are the siblings of `RefObjChar_ExtractData` — the
+per-table parsers behind this week's column work, now named.
+
+### Checked and already grounded — three constants not re-shipped
+
+Harvesting the server's assert expressions (70 sites, 49 distinct expressions,
+32 `m_` member names) produced the engine's own named limits. All were already
+recovered, and re-deriving them independently is a cross-check rather than
+progress:
+
+| constant | value | already at |
+|---|---|---|
+| `MAX_CASHITEM_TID_COUNT` / `MAX_TID1..4_COUNT` | 2, 8, 4, 16, 32 | `equipment/rules.go`, same `ReferenceData.cpp:2466-2470` citation |
+| `MAX_MAGPARAM_PER_ITEM` | 12 | `combat/paramtags.go`, from the **client's** `<=` assert |
+
+The server's own site for the last one is an independent second source with a
+different operator: `m_InstanceInfoOfItem.m_btMagParamNum < MAX_MAGPARAM_PER_ITEM`
+guarded by `0xb < v`, against the client's `<=` guarded by `0xc < v`. Two
+binaries, two operators, one number — and it reveals the struct:
+`m_btMagParamNum` is a byte at `+0x24` with up to 12 `uint32` params at `+0x28`.
+
+**Newly grounded:** `MAX_LOCALOBJID_BITS = 21`, from `CGObj::Create`
+(`0x00484b80`) — the exponent `0x15` feeding a pow-by-squaring loop, the mask
+`id & 0x1fffff` (2^21-1), and the engine's own
+`"GOBJID is Overflow!! [Max: %d]"`. A GOBJID's local-id field is 21 bits, so
+2,097,152 objects.
+
+**Bounds verified against real data**, not just read off the asserts: across
+23,327 itemdata and 13,291 characterdata rows, **zero** TypeID values fall
+outside the recovered limits.
+
+**Not promoted.** Column 7 is 0/1 and matches `btCash`'s bound, and `c7 == 1`
+rows are 160x more likely to be MALL/CASH-named (32.1% against 0.2%). That is a
+correlation, not a use-site, and 68% of `c7 == 1` rows are fireworks and
+speed-ups rather than MALL-named. Left open rather than called CashItem. Column
+8 is 0 on every item row and 1 on every character row — a living/non-living
+discriminator, and **not** the cash flag, which is worth recording because the
+five-byte block that `ReferenceData::FUN_006a8090` reads
+(cash, TID1..4) tempts exactly that misreading.
+
