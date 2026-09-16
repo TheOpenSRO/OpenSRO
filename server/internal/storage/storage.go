@@ -1,8 +1,37 @@
-// Package storage is the NPC warehouse: a character's second item container.
-// It is not new machinery -- the warehouse is an ordinary inventory.Store on
-// its own table, so depositing and withdrawing are just "read the slot's item,
-// remove it here, add it there" between the bag and the warehouse. This keeps
-// all the stacking/placement rules identical to the bag's.
+// Package storage is the NPC warehouse: a second item container. It is not new
+// machinery -- the warehouse is an ordinary inventory.Store on its own table, so
+// depositing and withdrawing are just "read the slot's item, remove it here, add
+// it there" between the bag and the warehouse. This keeps all the
+// stacking/placement rules identical to the bag's.
+//
+// KNOWN DIVERGENCE, recorded 2026-09-16 rather than fixed: **this warehouse is
+// per CHARACTER, and the game's is per ACCOUNT.**
+//
+// The evidence is the server's own SQL, which is about as unambiguous as this
+// project's evidence gets. Every statement touching the warehouse table filters
+// on the account id, never a character id:
+//
+//	SELECT SLOT FROM _CHEST WHERE UserJID=%d AND ItemID<>0 ...
+//	SELECT IT.*   FROM _Chest C JOIN _ITEMS IT ON C.ItemID=IT.ID64 WHERE C.UserJID=%d ...
+//	SELECT BIND.* FROM _Chest C ... WHERE C.UserJID=%d ...
+//	SELECT R.*    FROM _Chest C ... WHERE C.UserJID=%d ...
+//
+// and the server's own error text is `failed to load user's chest size
+// [UserJID: %d]`, so the warehouse's CAPACITY is an account property too. By
+// contrast `_Inventory` is keyed by `CharID`, `_InvCOS` by `COSID` and
+// `_GuildChest` by `GuildID` -- the binary distinguishes all four owners
+// deliberately. See docs/protocol/server_sql.md.
+//
+// So in the real game every character on an account opens the same warehouse.
+// Here each gets a private one, and `character.storage_gold` is likewise a
+// per-character column.
+//
+// WHY IT IS NOT FIXED HERE. Correcting it is a data migration, not a code
+// change: every existing account's per-character warehouses would have to be
+// merged into one, and a merge that overflows the slot limit destroys items
+// belonging to live testers. That is a deliberate, supervised change with a
+// backup behind it, not something to slip into an unattended pass. It is on the
+// open list in docs/RE_COMPLETION.md.
 package storage
 
 import (

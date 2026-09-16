@@ -4685,3 +4685,63 @@ depends on?* It answers "safe" or names the gap.
 17.3%/6.1% number for how big it is, four enumerations re-validated against it,
 and one claim restated so it no longer depends on a census that cannot be
 complete.
+
+## The server's own SQL, and a storage divergence found by reading it (2026-09-16)
+
+Surveying what the 145 invisible gaps actually contain (using the tool shipped
+last tick) turned up something better than the gaps themselves. One gap at
+`0x0043d6b0` is full of raw SQL, which pointed at a lever this project had never
+used: **the binary states its own database schema, in its own words.**
+
+Extracted: **67 distinct SQL statements naming 25 tables**, now in
+`docs/protocol/server_sql.md` verbatim. This is the least ambiguous evidence
+available here — the server spells out its column names, its join conditions and
+which id each table is keyed by, with nothing inferred.
+
+The gap survey is worth recording on its own, since it says what Ghidra missed:
+the invisible regions in `0x515xxx-0x51bxxx` are **command and packet handlers**
+(one calls `Mastery_LevelUp`, several call `COpenMarketMgr` handlers, several
+read from `MsgBuf`), `0x0043d6b0` is DB loading, and 78 of the 145 gaps carry no
+identifying evidence at all.
+
+### The finding: the warehouse is per ACCOUNT, not per character
+
+The item containers are keyed by four different owners, and the binary is
+unanimous about which:
+
+| table | keyed by |
+|---|---|
+| `_Inventory` | `CharID` |
+| `_InventoryForAvatar` | `CharID` |
+| **`_Chest`** | **`UserJID`** |
+| `_InvCOS` | `COSID` |
+| `_GuildChest` | `GuildID` |
+
+Four separate `_Chest` statements all filter on `C.UserJID` and none mentions a
+character id, and the server's own error text is `failed to load user's chest
+size [UserJID: %d]` — so the warehouse's **capacity** is an account property
+too. Every character on an account opens the same warehouse.
+
+**srrevamp keys its warehouse and its `storage_gold` by character**, so each
+character gets a private warehouse. That is a real divergence from the game.
+
+### Why it is recorded and not fixed
+
+Correcting it is a data migration rather than a code change: every existing
+account's per-character warehouses have to be merged into one, and a merge that
+overflows the slot limit **destroys items belonging to live testers**. The gold
+column moves too. That is a supervised change with a backup behind it, not
+something to slip into an unattended pass — so it goes on the open list, with
+the citation, rather than being half-done tonight.
+
+The alternative — shipping the key change and letting the merge happen
+implicitly — would have looked like progress and lost player items.
+
+Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
+INSTANCE id that every container references (bindings and rentals hang off it
+via `nItemDBID`), and an empty slot is a real row with `ItemID = 0 or NULL`
+rather than a missing one.
+
+**What moved:** no value. A new evidence class opened (the binary's own SQL, 67
+statements), a real divergence found and cited in `internal/storage`, and it is
+on the open list as a migration to do deliberately.
