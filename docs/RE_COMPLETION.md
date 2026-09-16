@@ -4224,3 +4224,54 @@ changed on a half-read branch. Recorded as open.
 **What moved:** a real mechanic, shipped — and a hypothesis that was correctly
 refused last tick became a citation this tick by finding the use-site rather
 than by growing more confident about the coincidences.
+
+## The mastery cap is three rules, not one (2026-09-16)
+
+Closing out the open item left by the mastery-penalty tick: `Mastery_LevelUp`
+was recorded as enforcing "a FLAT total of 330", and a second branch comparing
+against 240.0 had been spotted but not read. It is neither one rule nor two —
+there are **three**, selected by a byte at `(charData+0x18)+0x88`:
+
+| selector | total-mastery rule |
+|---|---|
+| **0** | refuses when `sum + requested >= 0x14b` — a flat **330**, with no level term at all |
+| **1** | allows only when `total <= 240.0` **and** `total <= level + level` |
+| **2** | no total cap whatsoever |
+| other | error `0x3801` |
+
+240.0 is the double at `0xb46130`, compared with `FCOMP QWORD`; the level term is
+literally `level + level`, i.e. **2 x** the character level, not 3.
+
+**And a rule srrevamp already had, now cited rather than assumed.** Past the cap
+branch, `Mastery_LevelUp` applies a per-mastery check and refuses with error
+`0x3804` when `characterLevel < currentMasteryLevel + levelsRequested`. So a
+single mastery may never exceed the character's level — which is exactly the
+`levelCap := owned.Level` bound `session` already enforced on the strength of a
+plain assertion. That comment now carries the citation.
+
+The full error vocabulary: `0x3801` bad mastery or selector, `0x3802`
+insufficient skill points, `0x3803`, `0x3804` exceeds character level, `0x3805`
+total cap.
+
+**`MasteryTotalCapPerLevel` stays at its sourced 3.** None of the three branches
+is `3 * characterLevel`, so the sourced retail rule and this binary's rules are
+still genuinely different shapes — but the note in `skill.go` now records all
+three instead of one, which is materially better information for whoever revisits
+the decision. Worth flagging one coincidence for that future reader: selector 1
+saturates at **240**, which is exactly the level-80 total the retail account
+reports, reached by a different route (`min(240, 2 x 80)` is 160, so the two do
+NOT agree at level 80 — the 240 matches only as a ceiling, not as the binding
+constraint there).
+
+**The selector is NOT identified, and deliberately so.** It is read from the same
+field that a skill's own `+0xc4` is compared against (`funcs_550.c:309`) and that
+indexes a small table at `DAT_00c8262c` (`funcs_550.c:372`), both of which fit it
+being the character's race/country — China/Europe being exactly the kind of split
+that would carry different mastery rules. That is a shape argument with no
+use-site behind it, which is the reasoning that was wrong twice on characterdata
+column 79 and was correctly refused two ticks ago on this very field's neighbour.
+It stays open.
+
+**What moved:** no value. One shipped rule gained a citation, one recorded rule
+turned out to be a third of the real rule, and the remaining unknown is now a
+single named byte rather than a vague branch.

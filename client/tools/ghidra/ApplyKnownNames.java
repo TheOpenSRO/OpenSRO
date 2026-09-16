@@ -470,7 +470,18 @@ public class ApplyKnownNames extends GhidraScript {
         {"0059c4e0", "Mastery_LevelUp",
          "Mastery level-up. Walks the levels being raised, accumulates the level table's "
          + "entry+0x10 (leveldata column 2) for each, and refuses with error 0x3802 when the "
-         + "character's skill points fall short. This is where the mastery cost was recovered."},
+         + "character's skill points fall short. This is where the mastery cost was recovered. "
+         + "FULL RULE read 2026-09-16: there are THREE total-cap branches, selected by the byte "
+         + "at (charData+0x18)+0x88 -- selector 0 refuses when sum+requested >= 0x14b (a flat "
+         + "total of 330, no level term); selector 1 allows only when total <= 240.0 (the double "
+         + "at 0xb46130, via FCOMP QWORD) AND total <= level+level; selector 2 imposes no total "
+         + "cap; anything else is error 0x3801. Past the cap check it applies a PER-MASTERY "
+         + "rule, refusing with 0x3804 when characterLevel < currentMasteryLevel + requested -- "
+         + "so one mastery may never exceed the character's level. Error codes: 0x3801 bad "
+         + "mastery or selector, 0x3802 insufficient skill points, 0x3803, 0x3804 exceeds "
+         + "character level, 0x3805 total cap. The selector is NOT identified: it is the same "
+         + "field a skill's +0xc4 is compared against and that indexes DAT_00c8262c, which fits "
+         + "race/country, but that is a shape argument without a use-site."},
 
         // The mastery collection at pc+0xa30, and the exp rule built on it.
         {"0059e870", "Mastery_MaxLevel",

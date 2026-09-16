@@ -51,13 +51,28 @@ const (
 // enough to max three masteries. Recovered from the user's account of the
 // retail 80-cap.
 //
-// THE SHAPE DIFFERS FROM THIS BINARY, recorded 2026-09-15 rather than changed.
-// Mastery_LevelUp enforces a FLAT total, not a per-level one: on the branch
-// where the ref object's +0x88 is zero it refuses when
-// `current + requested >= 0x14b`, i.e. a total of 330, with no reference to the
-// character's level at all. 330 is not 3 x any level cap this project can find
-// (leveldata runs to 140), so the two rules are genuinely different shapes and
-// not the same rule written twice.
+// THE SHAPE DIFFERS FROM THIS BINARY, recorded 2026-09-15 rather than changed,
+// and the binary's own shape was read in full on 2026-09-16. Mastery_LevelUp
+// does not have ONE total-cap rule, it has THREE, selected by a byte on the
+// character's ref object (charData+0x18, then +0x88):
+//
+//	selector 0: refuses when `sum + requested >= 0x14b`  -> total capped at 330,
+//	            flat, with no reference to the character's level at all
+//	selector 1: allows only when `total <= 240.0` AND `total <= 2 * charLevel`
+//	selector 2: no total cap at all
+//	otherwise:  error 0x3801
+//
+// (240.0 is the double at 0xb46130, compared with FCOMP QWORD; the level term is
+// literally `level + level`.) None of the three is `3 * characterLevel`, so the
+// two rules remain genuinely different shapes rather than the same rule written
+// twice -- but note that selector 1 does saturate at 240, which is exactly the
+// level-80 total the retail account reports, reached there by a different route.
+//
+// The selector is NOT identified. It is read from the same field that a skill's
+// own +0xc4 is compared against and that indexes a race-shaped table at
+// DAT_00c8262c, which fits it being the character's race/country -- but that is
+// a shape argument without a use-site, and this project has twice been wrong
+// exactly there, so it is not asserted.
 //
 // Left as it is deliberately: this is a modded private-server binary, the
 // per-level rule comes from an account of RETAIL, and adopting a flat 330 on
@@ -841,7 +856,11 @@ func RaiseMasteryHandler(chars character.Store, store skill.Store) gateway.Handl
 			return fail("mastery total at cap")
 		}
 		// The mastery may not pass the character's level, nor the engine's
-		// own ceiling of MasteryLevelCap whichever comes first.
+		// own ceiling of MasteryLevelCap whichever comes first. The first
+		// half is now CITED rather than assumed: Mastery_LevelUp refuses
+		// with error 0x3804 when
+		// `characterLevel < currentMasteryLevel + levelsRequested`, which is
+		// exactly this bound for a single-level raise.
 		levelCap := owned.Level
 		if levelCap > MasteryLevelCap {
 			levelCap = MasteryLevelCap
