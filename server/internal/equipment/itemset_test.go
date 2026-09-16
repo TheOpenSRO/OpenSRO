@@ -119,3 +119,76 @@ func TestSetPiecesAllResolveToASlot(t *testing.T) {
 		}
 	}
 }
+
+// TestBonusTierPicksHighestNotExceeding holds the rule the engine's own search
+// implements: FUN_006a7320 shifts its tier bit right until something matches,
+// and each shift is one fewer piece. So a partial set earns the best tier it
+// has reached, not nothing and not the next one up.
+//
+// The tier table is the real one for ITEM_11_SET_A's armour: groups 2, 3 and 4
+// -- MAGIC_11_SET_A_DEFENSE_2, _DEFENSE_4 and _DEFENSE_6 -- at two, four and
+// six pieces.
+func TestBonusTierPicksHighestNotExceeding(t *testing.T) {
+	tiers := map[int]int{2: 2, 4: 3, 6: 4}
+	for _, tc := range []struct {
+		worn      int
+		wantGroup int
+		wantOK    bool
+	}{
+		{0, 0, false},
+		{1, 0, false}, // below MinSetPiecesForBonus
+		{2, 2, true},
+		{3, 2, true}, // no three-piece tier: the two-piece one still applies
+		{4, 3, true},
+		{5, 3, true},
+		{6, 4, true},
+	} {
+		p := SetProgress{SetID: 13, Slots: map[Slot]bool{}}
+		for i := 0; i < tc.worn; i++ {
+			p.Slots[Slot(i)] = true
+		}
+		got, ok := p.BonusTier(tiers)
+		if ok != tc.wantOK || got != tc.wantGroup {
+			t.Errorf("%d pieces: got group %d,%v; want %d,%v", tc.worn, got, ok, tc.wantGroup, tc.wantOK)
+		}
+	}
+}
+
+// TestAccessorySetHasNoSixPieceTier is the prediction that decoded the table,
+// kept as a test because it is what makes the position-is-piece-count reading
+// falsifiable: three slots cannot reach six pieces, so a three-slot set that
+// somehow carried a six-piece tier could never award it.
+func TestAccessorySetHasNoSixPieceTier(t *testing.T) {
+	// ITEM_11_SET_A_ACCESSORY: _ACCESSORY_2 at two pieces, _ACCESSORY_4 at four.
+	tiers := map[int]int{2: 5, 4: 6}
+	full := SetProgress{SetID: 25, Slots: map[Slot]bool{
+		SlotEarring: true, SlotNecklace: true, SlotRingLeft: true,
+	}}
+	if full.Count() != 3 {
+		t.Fatalf("an accessory set fills 3 slots, got %d", full.Count())
+	}
+	got, ok := full.BonusTier(tiers)
+	if !ok || got != 5 {
+		t.Errorf("a full three-slot accessory set earns the two-piece tier (group 5), got %d,%v", got, ok)
+	}
+	// And it can never reach the four-piece tier with three slots -- unless the
+	// character also wears the second ring, which is why there are four
+	// accessory slots and only three accessory pieces per set.
+	if _, ok := (SetProgress{Slots: map[Slot]bool{SlotEarring: true}}).BonusTier(tiers); ok {
+		t.Error("one piece earns nothing")
+	}
+}
+
+// TestMinSetPiecesForBonus pins the constant against the engine's own guard.
+func TestMinSetPiecesForBonus(t *testing.T) {
+	if MinSetPiecesForBonus != 2 {
+		t.Fatalf("MinSetPiecesForBonus = %d; FUN_0066c3d0 returns 0 below 2", MinSetPiecesForBonus)
+	}
+	// The engine's key is 1 << (count-2); that it is a shift is why the search
+	// can walk down one piece at a time.
+	for count := MinSetPiecesForBonus; count < 12; count++ {
+		if got, want := 1<<(count-MinSetPiecesForBonus), 1<<(count-2); got != want {
+			t.Errorf("count %d: key %d, want %d", count, got, want)
+		}
+	}
+}

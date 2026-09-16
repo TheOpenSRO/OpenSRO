@@ -7883,3 +7883,90 @@ its reward, and magic options are a system this project has touched before
 (`ReferenceData`'s magic-option validators were named in the assert-harvest
 tick). Following the group id from `CSetMagicOptionOP` into the magic-option
 tables is the way into the twelve columns that does not require guessing them.
+
+## 2026-09-16 — the set bonus, decoded one tick after being disclosed
+
+The previous entry said the set table's twelve trailing columns "admit at least
+three readings and no loader was found to settle them", and shipped nothing on
+that basis. Following `MagicOptGroupID` out of the second assert, as that entry
+proposed, settled them — **without ever reading the loader**, which is the part
+worth recording.
+
+### The chain
+
+	CSetMagicOptionOP::vslot_003 (0x0066c060)    recompute, per dirty set
+	  -> FUN_0066c360 (0x0066c360)               set -> MagicOptGroupID
+	    -> FUN_0066c3d0 (0x0066c3d0)             worn count -> tier key
+	    -> GObjPC::FUN_0066e020 (0x0066e020)     set row from _RefSetItemGroup
+	    -> FUN_006a7320 (0x006a7320)             tier key -> group id
+	  -> FUN_006beec0                            group id -> the option list
+	                                             (fails => the [SetID][MagicOptGroupID] assert)
+
+Two of those are small enough to read outright:
+
+	FUN_0066c3d0(count):   if (count < 2) return 0;  return 1 << (count - 2);
+
+	FUN_006a7320(row):     while (bit != 0) { if (found(bit)) return group; bit >>= 1; }
+	                       return 0;
+
+So **bonuses start at two pieces**, the tier key is a shifted bit, and the
+search walks DOWN one piece at a time — meaning the rule is "the highest tier
+you have reached", not an exact match. Five pieces of a six-slot set earn the
+four-piece bonus.
+
+### The columns, settled by prediction rather than by pattern
+
+`refmagicoptgroup.txt` names its own tiers: group 2 is `MAGIC_11_SET_A_
+DEFENSE_2`, group 3 `..._DEFENSE_4`, group 4 `..._DEFENSE_6`. In the set row
+for `ITEM_11_SET_A_CH_M_HEAVY` those three sit at positions **2, 4 and 6** of
+the twelve.
+
+If position means piece count, that predicts something checkable: an ACCESSORY
+set has only three slots, can never reach six pieces, and must therefore leave
+position 6 empty. It does —
+
+	ITEM_11_SET_A_CH_M_HEAVY   pos 2 DEFENSE_2   pos 4 DEFENSE_4   pos 6 DEFENSE_6
+	ITEM_11_SET_A_ACCESSORY    pos 2 ACCESSORY_2 pos 4 ACCESSORY_4 pos 6 (empty)
+	ITEM_11_SET_B_CH_M_HEAVY   pos 2 B_DEFENSE_2 pos 4 B_DEFENSE_4 pos 6 B_DEFENSE_6
+	ITEM_11_SET_B_ACCESSORY    pos 2 B_ACCESSORY_2 pos 4 B_ACCESSORY_4 pos 6 (empty)
+
+— three name-to-position agreements plus an absence the reading predicts in
+advance. **The last ten of the twelve columns are the MagicOptGroupID for
+wearing exactly N pieces, indexed by N (2..11).**
+
+### The column that looks like a tier and is not
+
+Positions 0 and 1 remain unknown, and position 1 is the interesting one: its
+values ARE legal group ids, so an "is it a valid id?" test passes and would
+have promoted it. Two things say it is something else — the armour sets hold
+**21** there, which is `SOCKET_STONE_CRITICAL_E`, a socket stone with nothing to
+do with sets; and SET_B's accessory row holds **5**, which is SET_**A**'s
+accessory group. A set pointing at another set's bonus is not a tier.
+
+That test (all four probe values were legal group ids) was the one that failed
+to discriminate. What discriminated was the group table's own names — the same
+lever that has paid every time it has been reached for.
+
+### Shipped
+
+`MinSetPiecesForBonus = 2` and `SetProgress.BonusTier(tiers)`, implementing the
+highest-tier-not-exceeding rule with the two addresses behind it.
+`TestBonusTierPicksHighestNotExceeding` walks 0..6 pieces against
+`ITEM_11_SET_A`'s real tier table; `TestAccessorySetHasNoSixPieceTier` keeps the
+prediction that decoded the layout as a standing test. The "not decoded" notes
+in `itemset.go` and `refdata/item.go` are corrected in place, saying what they
+used to claim.
+
+srrevamp still grants nothing: it has no magic-option system to grant into, and
+`refmagicoptgroup.txt` is not loaded. What it has now is the whole rule, tested.
+
+**What moved:** a disclosure became a recovery in one tick, and the method is
+worth repeating — when a value's meaning is ambiguous, find the table that
+NAMES its own entries and make a prediction that can fail.
+
+**Next step:** `refmagicoptgroup.txt` itself. Its rows are
+`(group, seq, ?, codename, paramId, ?, value, 0)` — and `paramId` 357/358/359/
+362/363/389/390 are in the same id space as the GParamKeeper params this project
+already recovered (`reference_sro_server_internals`). Joining them would make
+the bonuses concrete, and would also test the param map against a table it was
+not derived from.

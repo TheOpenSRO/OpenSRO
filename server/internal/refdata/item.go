@@ -74,11 +74,12 @@ type Item struct {
 	// columns that also hold only legal set ids score ~25%, which is chance
 	// for a four-way split.
 	//
-	// WHAT THE BONUS IS, THIS PROJECT DOES NOT KNOW. The set table's twelve
-	// trailing columns hold it and they are not decoded; the values seen
-	// (`0 21 2 0 3 0 4 0 0 0 0 0`) admit at least three readings and no loader
-	// was found to settle them. srrevamp therefore models set MEMBERSHIP and
-	// COMPLETION, which are recovered, and grants nothing.
+	// The bonus is a `MagicOptGroupID` into `refmagicoptgroup.txt`, chosen by
+	// how many pieces are worn -- see equipment.BonusTier, which carries the
+	// tier rule and the evidence. (A note here said the tier columns "are not
+	// decoded"; they were decoded the following tick.) srrevamp models set
+	// membership, completion and tier selection, and grants nothing, because
+	// it has no magic-option system to grant into.
 	SetID int
 	// Price is the NPC buy price in gold, and SellPrice what the NPC pays to
 	// buy it back -- both real, from the client's own itemdata (_RefObjCommon
