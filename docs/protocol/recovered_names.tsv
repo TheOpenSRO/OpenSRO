@@ -13,7 +13,8 @@
 # never write a name back. It is idempotent: a second run renames nothing and
 # refreshes the evidence comments.
 #
-# APPLIED 2026-09-16. All 24 are now in the Ghidra projects and in the dumps.
+# APPLIED 2026-09-16, in three batches: 24, then 2, then 9. All 35 are in the
+# Ghidra projects; all but the client half of the last batch are in the dumps.
 # Kept as the durable record of what was applied and on what evidence; new
 # recoveries are appended here and the script re-run.
 #
@@ -47,3 +48,12 @@
 00491bd0	server	DumpItemOptionsVerbose	descriptive	the same dump with English option names and the bless probabilities
 0046dde0	server	trs_sm_trainingcampjob::Unlock	engine	logs "trs_sm_trainingcampjob::Unlock ..."; the two-part Class::Method log label, which controls 35/35 on already-named functions
 00621fd0	server	CSiegeFortress::RemoveSiegeObject	engine	logs "CSiegeFortress::RemoveSiegeObject pGObjFortressObject is NULL! (%d)"; the dump's GObjPC namespace is call-graph inference and this label is the binary's own word for the class
+0051dc00	server	GObjPC::SetStr	descriptive	writes charData +0x74 with dirty flag 4; SpendStatPoints calls it as SetStr(Str + amount) and republishes ParamKeeper param 1
+0051dbd0	server	GObjPC::SetInt	descriptive	the Int half of the same pair, writing charData +0x76
+004f92f0	server	GObjPC::SetStatPoints	descriptive	writes charData +0x84 with dirty flag 0x10; GObjPC_SetLevel writes held+levels*5 through it and SpendStatPoints deducts through it
+004a86a0	server	GObjPC::ApplyHPMPDelta	descriptive	takes (deltaHP, deltaMP, flags) and applies each only when non-zero; the level-up calls it with GetMaxHP-GetCurHP and GetMaxMP-GetCurMP
+006b2ef0	server	RefData_ReadStringField	descriptive	reads a 2-byte length then that many bytes from the row cursor, advancing it; one call per string column in RefObjCommon_ExtractData
+00526910	server	CGStorage::TradeOfferItem	descriptive	the trade-offer handler: refuses slot < 0xd with 0x1806 and a non-tradeable item with 0x183a CANNOT_BE_TRADED
+00480a20	server	TradeMgr::OfferItemToPartner	descriptive	the offer transaction: caps an offer at 12 items and requires the partner CountEmptySlot(0xd,-1) >= offered+1, else 0x1836
+004b2ab0	server	CGStorage::DropItem	descriptive	the drop path; returns 0x1838 UIIT_MSG_STRGERR_CANNOT_BE_DROPPED
+006182a0	server	GObjPC::SellItemAtSpecialtyShop	descriptive	the specialty sell path; calls CanSell (slot 50) and returns 0x183b CANNOT_DEAL_AT_SHOP when it answers zero, alongside ten SPECIALTY_ERR_* refusals

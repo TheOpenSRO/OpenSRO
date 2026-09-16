@@ -9431,3 +9431,62 @@ enforce it in — items are removed by `RemoveItem`, with no player-facing "drop
 action. That makes it the first of these flags with nothing to wire into, so the
 honest move is to leave it carried-but-unused and say so, rather than invent a
 drop action to justify the field.
+
+## 2026-09-16 — nine more names applied, and a characterisation corrected
+
+`CanDrop` was the standing next step and it is a deliberate non-action: srrevamp
+has no player-facing drop action at all — items leave an inventory through
+`RemoveItem` — so the flag is carried and unused, and inventing a drop action to
+justify a field would be the wrong order of work. Said here rather than left as
+an open item that looks unfinished.
+
+So this tick took the other standing thread: the names this session recovered
+after the last apply.
+
+### Applied
+
+Nine, all `descriptive` with the evidence in the row:
+
+	SetStr / SetInt / SetStatPoints   the three charData setters behind the level-up
+	ApplyHPMPDelta                    the level-up's heal, guarded per-pool on non-zero
+	RefData_ReadStringField           one call per string column in the row parser
+	TradeOfferItem                    refuses slot < 0xd and a non-tradeable item
+	OfferItemToPartner                the offer transaction and its space check
+	DropItem                          returns 0x1838 CANNOT_BE_DROPPED
+	SellItemAtSpecialtyShop           calls CanSell, returns 0x183b
+
+	server  7,394 -> 7,404 named  (+10)
+
+Ten rather than nine because `RemoveSiegeObject` from v0.1.237 was applied to the
+project but its dump was never rebuilt — so it only became visible now. Worth
+knowing: **applying a name and rebuilding the dump are separate steps, and the
+metric only sees the second.**
+
+### A characterisation corrected
+
+v0.1.244 read `FUN_0047eda0` as counting the items in a trade offer. It is not:
+it walks a two-entry array of party records, matches one by its first field, and
+returns a field from the matched record — a **lookup**, not a count.
+
+The number it returns is still what gets compared against 12, so the *conclusion*
+("an offer holds at most 12 items") stands; what was wrong was the description of
+how the engine gets there. A function summarised from its caller rather than read
+is a claim about the caller.
+
+### Three candidates deliberately not named
+
+`FUN_0042e750` tests for TypeID 3/2/2, which a real itemdata has exactly one row
+of (`ITEM_ETC_TRANS_MONSTER`) — too thin a basis for a name.
+`FUN_00498610` tests TypeID3 == 14, the avatar family, then calls three unnamed
+functions; and `GObjPC::FUN_00483f40` is the tenth capability predicate with no
+stub to name it. All three are read and understood in shape but not in purpose,
+which is not enough.
+
+**What moved:** nine names into the binaries where every future session sees
+them, one wrong description corrected, and three candidates left alone.
+
+**Next step:** the client half of the applier has not run since the first batch,
+and two of the 35 rows are client-side additions waiting. More usefully, the
+client dump has not been rebuilt since then either — so the client figure
+(6,455) is current but will drift the moment anything is applied. Running both
+halves and rebuilding both dumps is the cheap way to keep the metric honest.
