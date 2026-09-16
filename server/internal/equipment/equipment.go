@@ -56,10 +56,22 @@ const (
 	SlotWeapon
 	SlotShield
 	// SlotJobSuit was called SlotExtra until 2026-09-16, when the engine's
-	// resolver named it: TypeID3 == 7 returns slot 8, and every TypeID3 == 7
-	// row in a real itemdata is a trade outfit -- ITEM_EU_F_TRADE_TRADER_01,
-	// ITEM_CH_M_TRADE_HUNTER_04_01 and so on. "Extra" was a placeholder, and
-	// a placeholder is a claim like any other.
+	// resolver said what lives here: TypeID3 == 7 returns slot 8, and every
+	// TypeID3 == 7 row in a real itemdata is a trade outfit --
+	// ITEM_EU_F_TRADE_TRADER_01, ITEM_CH_M_TRADE_HUNTER_04_01 and so on.
+	//
+	// "EXTRA" WAS NOT AN INVENTED NAME, contrary to what the commit that
+	// renamed it said. The client's own equip-visual debug dump
+	// (`0x00a5e360`) prints this slot as `"EXTRA [ %d ] [ %d ]"`, reading
+	// `this + 0x98` -- which is 0x38 + 8*0xc, slot 8 exactly. The name came
+	// out of the binary; what was a placeholder was the COMMENT on it
+	// ("tracked but has no gameplay yet"), which described this project's
+	// ignorance rather than the slot.
+	//
+	// The client has two words for it and they disagree: the debug dump says
+	// EXTRA, the window artwork is `equip_slot_specialdress.ddj`. The item
+	// table breaks the tie by saying what is actually in it, which is why
+	// this is the name that stuck.
 	//
 	// 10 of the 128 rows are ITEM_CH_F_FRPVP_VOUCHER_*, the free-PvP tokens,
 	// which are not job suits but share the family and therefore the slot.
@@ -92,14 +104,40 @@ const (
 //
 // 0xff is the same not-set sentinel the skill table uses for an unused
 // weapon requirement (combat.ReqWeaponUnused).
+// EquipVisualCount is how many of those slots carry a model the client
+// draws. It is the client's own EQUIP_VISUAL_COUNT, from two differently
+// worded asserts in CObjCharacter.cpp:
+//
+//	:1893  8 < dwSlotPos                  "dwSlotPos < EQUIP_VISUAL_COUNT"
+//	:770   nEquipSlot < 0 || 8 < nEquipSlot
+//	       "(nEquipSlot >=0 ) && ( nEquipSlot < EQUIP_VISUAL_COUNT)"
+//
+// Both guards stop at 8 and both expressions are strict `<`, so the count is
+// 9 -- slots 0..8. It bounds a nine-entry array at CObjCharacter+0x38 with a
+// twelve-byte stride, which is the array EQUIP_SLOTS.md described as having
+// eight entries. It has nine; the ninth is the job suit.
 const (
-	MaxEquipSlots = 13
-	NoSlot        = 0xff
+	MaxEquipSlots    = 13
+	NoSlot           = 0xff
+	EquipVisualCount = 9
 )
 
-// AccessorySlots are the worn accessories. They carry no model the client
-// draws, which is why they are not in WearableSlots. There are two ring
-// slots and the engine takes a ring in either.
+// AccessorySlots are the worn accessories.
+//
+// THEY CARRY NO DRAWN MODEL, and that is now measured rather than assumed.
+// This comment used to assert it flatly. The client's appearance installer
+// (`0x00a61010`) splits on exactly this line:
+//
+//	if (8 < slot) {                          // 9..12
+//	    if ((slot < 0xd) && (item != 0))
+//	        FUN_00a5ff00(slot, item);        // a different path entirely
+//	    return 0;                            // no mesh, no visual record
+//	}
+//	// 0..8 fall through to the +0x38 array and the model attach calls
+//
+// So an accessory never reaches the mesh path. Its `slot < 0xd` is also a
+// third independent witness for MaxEquipSlots, from a different binary than
+// the two that gave it.
 var AccessorySlots = []Slot{SlotEarring, SlotNecklace, SlotRingLeft, SlotRingRight}
 
 // ArmorSlots are the six wearable armour slots -- the ones that add to a
@@ -108,9 +146,23 @@ var AccessorySlots = []Slot{SlotEarring, SlotNecklace, SlotRingLeft, SlotRingRig
 // tracks but has no job system to give meaning to yet.
 var ArmorSlots = []Slot{SlotHelm, SlotMail, SlotShoulderGuard, SlotGauntlet, SlotPants, SlotBoots}
 
-// WearableSlots is every slot that carries a model the client draws on
-// the character: the armour, plus the weapon and shield.
-var WearableSlots = []Slot{SlotHelm, SlotMail, SlotShoulderGuard, SlotGauntlet, SlotPants, SlotBoots, SlotWeapon, SlotShield}
+// WearableSlots is every slot that carries a model the client draws on the
+// character: the armour, the weapon and shield, and the job suit.
+//
+// THE JOB SUIT WAS MISSING until 2026-09-16, when the claim above it was
+// checked for the first time. The client's own item-to-visual-slot resolver
+// (GlobalDataManager::FUN_009db5e0, `0x009db5e0`) sends TypeID3 == 7 --
+// `(w & 0x780) == 0x380` -- to visual slot 8, which is inside
+// EquipVisualCount and therefore on the mesh path. A trade outfit is worn
+// and seen, which is the whole point of one.
+//
+// That resolver is also the client's half of a CROSS-BINARY confirmation.
+// It reproduces the server's GObjPC::FUN_00496c20 arm for arm, including
+// the armour permutation 1->0 2->2 3->1 4->4 5->3 6->5, weapons to 6,
+// shields to 7 (TypeID3 == 4, TypeID4 in {1,2}), and the accessories to
+// 9/10/11 by TypeID4 1/2/3 under TypeID3 5 or 12. Two binaries, written
+// against each other but compiled separately, agreeing on all twelve.
+var WearableSlots = []Slot{SlotHelm, SlotMail, SlotShoulderGuard, SlotGauntlet, SlotPants, SlotBoots, SlotWeapon, SlotShield, SlotJobSuit}
 
 // ErrInvalidSlot is returned for a Slot value outside the known set.
 var ErrInvalidSlot = errors.New("equipment: invalid slot")

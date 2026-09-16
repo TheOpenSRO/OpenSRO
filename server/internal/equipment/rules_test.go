@@ -309,7 +309,7 @@ func TestRingTakesEitherSlot(t *testing.T) {
 // equip check refuses any slot above 12 outright (0x1806), so a Slot this
 // project invents beyond that could never be sent to a real client.
 func TestSlotsFitEngineBound(t *testing.T) {
-	for _, s := range append(append([]Slot{}, WearableSlots...), append(AccessorySlots, SlotJobSuit)...) {
+	for _, s := range append(append([]Slot{}, WearableSlots...), AccessorySlots...) {
 		if int(s) >= MaxEquipSlots {
 			t.Errorf("slot %d is outside the engine's %d slots", s, MaxEquipSlots)
 		}
@@ -317,4 +317,52 @@ func TestSlotsFitEngineBound(t *testing.T) {
 	if int(SlotRingRight) != MaxEquipSlots-1 {
 		t.Errorf("SlotRingRight = %d, want the last engine slot %d", SlotRingRight, MaxEquipSlots-1)
 	}
+}
+
+// TestWearableSlotsAreTheVisualRange holds the split the client's appearance
+// installer (`0x00a61010`) actually makes: slots 0..EquipVisualCount-1 go to
+// the mesh path, and 9..12 go somewhere else and return before any model is
+// attached. So WearableSlots must be exactly the first range and
+// AccessorySlots exactly the second -- together covering every slot the
+// engine has, with none left over.
+//
+// The job suit is the slot this caught: it is at 8, inside the visual range,
+// and WearableSlots did not have it.
+func TestWearableSlotsAreTheVisualRange(t *testing.T) {
+	seen := map[Slot]string{}
+	for _, s := range WearableSlots {
+		if int(s) >= EquipVisualCount {
+			t.Errorf("slot %d is in WearableSlots but outside the client's %d visual slots", s, EquipVisualCount)
+		}
+		seen[s] = "wearable"
+	}
+	for _, s := range AccessorySlots {
+		if int(s) < EquipVisualCount {
+			t.Errorf("slot %d is in AccessorySlots but inside the visual range -- the client would draw it", s)
+		}
+		if was, dup := seen[s]; dup {
+			t.Errorf("slot %d is both %s and an accessory", s, was)
+		}
+		seen[s] = "accessory"
+	}
+	if len(seen) != MaxEquipSlots {
+		t.Errorf("the two lists cover %d slots, want all %d", len(seen), MaxEquipSlots)
+	}
+	for s := Slot(0); int(s) < MaxEquipSlots; s++ {
+		if _, ok := seen[s]; !ok {
+			t.Errorf("slot %d is in neither list", s)
+		}
+	}
+	if !slotIn(SlotJobSuit, WearableSlots) {
+		t.Error("the job suit is at visual slot 8 and the client draws it")
+	}
+}
+
+func slotIn(s Slot, list []Slot) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }

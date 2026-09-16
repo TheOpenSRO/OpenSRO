@@ -7615,3 +7615,96 @@ asserts the accessories carry no model the client draws, which is a statement
 about the client that has never been checked against the client. The avatar's
 equip-visual struct keeps *eight* entries twelve bytes apart, which is where to
 look.
+
+## 2026-09-16 — the client's half of the slot model, and a correction to the tick above
+
+The previous tick ended pointing at `WearableSlots`: it asserted the accessories
+"carry no model the client draws", which is a statement about the client that had
+never been checked against the client. Checking it found the claim true, a
+neighbouring one false, and a mistake in the tick that set the question.
+
+### EQUIP_VISUAL_COUNT is 9, and that is the line
+
+`CObjCharacter.cpp` asserts the bound twice, worded differently, which is what
+makes the off-by-one safe:
+
+	:1893   guard `8 < dwSlotPos`                "dwSlotPos < EQUIP_VISUAL_COUNT"
+	:770    guard `p < 0 || 8 < p`   "(nEquipSlot >=0 ) && ( nEquipSlot < EQUIP_VISUAL_COUNT)"
+
+Both stop at 8 and both expressions are strict `<`, so the count is 9 — slots
+0..8. It bounds a nine-entry array at `CObjCharacter+0x38`, stride twelve.
+
+### The accessories really are not drawn
+
+Not by absence of evidence — by the client's own branch. Its appearance installer
+(`0x00a61010`) splits on the slot before touching a model:
+
+	if (8 < slot) {                        // 9..12
+	    if ((slot < 0xd) && (item != 0))
+	        FUN_00a5ff00(slot, item);      // a separate path
+	    return 0;                          // no mesh, no visual record
+	}
+	// 0..8 fall through to the +0x38 array and the model attach calls
+
+So `WearableSlots` was right to exclude them, and now has a citation instead of an
+assertion. `slot < 0xd` is also a **third independent witness** for the 13-slot
+bound, from the other binary.
+
+### But the job suit is drawn, and was missing
+
+Slot 8 is inside that range. The client's own item-to-visual-slot resolver,
+`GlobalDataManager::FUN_009db5e0` (`0x009db5e0`), sends `TypeID3 == 7` --
+`(w & 0x780) == 0x380` -- to slot 8, which is on the mesh path. A trade outfit is
+worn and seen. `WearableSlots` now has nine entries, and a test holds the two
+lists to the split the installer makes: `WearableSlots` exactly 0..8,
+`AccessorySlots` exactly 9..12, together covering all 13 with no overlap.
+
+### The cross-binary confirmation is now complete
+
+`FUN_009db5e0` is the client's `GObjPC::FUN_00496c20`, arm for arm: the same
+armour permutation `1→0 2→2 3→1 4→4 5→3 6→5`, weapons to 6, shields to 7 by
+`TypeID3 == 4` with `TypeID4` in {1,2}, job suits to 8, and accessories to
+9/10/11 by `TypeID4` 1/2/3 under `TypeID3` 5 or 12. The character-appearance
+packet parser that calls it (`0x009de2f0`) filters with byte-identical bitfield
+tests to the server's: `& 2 == 0`, `& 0x1c == 0xc`, `& 0x60 == 0x20`.
+
+Two binaries, compiled separately, agreeing on all twelve slots and on the type-id
+packing that addresses them.
+
+### THE CORRECTION: "SlotExtra was an invented name" is wrong
+
+v0.1.225 renamed `SlotExtra` to `SlotJobSuit` and justified it by calling the old
+name a placeholder this project made up. **It was the client's own word.** The
+equip-visual debug dump (`0x00a5e360`) prints this slot as `"EXTRA [ %d ] [ %d ]"`,
+reading `this + 0x98` — which is `0x38 + 8*0xc`, slot 8 exactly.
+
+What was a placeholder was the *comment*, "tracked but has no gameplay yet",
+which described this project's ignorance rather than the slot. The rename still
+stands: the client has two names for slot 8 and they disagree (`EXTRA` in the
+debug dump, `specialdress` in the window artwork), and the item table breaks the
+tie. But the stated reason was false, and a false reason attached to a correct
+change is exactly the failure this tick's own predecessor was written to warn
+about — it would have taught the next reader that `EXTRA` in the binary is not
+worth trusting.
+
+Noted in place in `equipment.go` and `EQUIP_SLOTS.md` rather than quietly fixed,
+so a reader who finds `EXTRA` in the client does not conclude the Go name drifted.
+
+### Shipped
+
+`EquipVisualCount = 9`; `SlotJobSuit` added to `WearableSlots`; the
+`AccessorySlots` claim replaced with the installer branch that proves it;
+`TestWearableSlotsAreTheVisualRange` holding both lists to the client's split;
+the v0.1.225 justification corrected in the two places it was recorded.
+`EQUIP_SLOTS.md` gains the bound, the installer branch, the client resolver and
+the two-names note.
+
+**What moved:** the slot model is now confirmed from both binaries independently,
+and every membership claim in `equipment.go` has a use-site behind it.
+
+**Next step:** `DEFAULT_WEAR_NUM == 2` fell out of the same file
+(`CObjCharacter.cpp:771`, guard `p < 0 || 1 < p`) and is unexplained — two
+"default wear" sets, selected by `FUN_00a5cca0(this, nDefaultWearNum, nEquipSlot)`
+alongside a character-data byte at `+0x9c`. That is what a character with an empty
+slot is drawn wearing, which this project currently handles by giving every new
+character a real starting kit.
