@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 )
 
@@ -416,5 +417,33 @@ func TestAmmunitionIsAllowedOnlyInTheShieldSlot(t *testing.T) {
 				t.Errorf("ammunition was accepted in slot %d; the engine allows only slot 7", s)
 			}
 		}
+	}
+}
+
+// TestSrrevampSlotsFitTheEnginesCombinedArray holds srrevamp's two separate
+// index spaces to the engine's single one.
+//
+// The original puts equipment and backpack in one array: slots 0..12 are worn
+// (equipment.MaxEquipSlots) and the backpack starts at 13. Its "inventory size"
+// cap of 99 therefore covers both, leaving at most 86 usable backpack slots.
+// srrevamp splits them, which is a different design rather than a wrong one --
+// but the total still has to be something the engine could represent, or a
+// character here could hold more than one there ever could.
+//
+// This lives in the equipment package because it is the only one that imports
+// both. See the note in inventory.go for the two use-sites.
+func TestSrrevampSlotsFitTheEnginesCombinedArray(t *testing.T) {
+	total := MaxEquipSlots + inventory.SlotsPerCharacter
+	if total > inventory.MaxSlotsExpanded {
+		t.Errorf("%d equipment slots + %d inventory slots = %d, more than the engine's "+
+			"largest single array (%d)", MaxEquipSlots, inventory.SlotsPerCharacter,
+			total, inventory.MaxSlotsExpanded)
+	}
+	// And the backpack alone must leave room for the equipment slots inside the
+	// engine's cap -- the mistake this guards is reading 99 as 99 free slots.
+	if inventory.SlotsPerCharacter > inventory.MaxSlotsExpanded-MaxEquipSlots {
+		t.Errorf("inventory.SlotsPerCharacter is %d; the engine's array leaves only %d "+
+			"once the %d equipment slots are counted",
+			inventory.SlotsPerCharacter, inventory.MaxSlotsExpanded-MaxEquipSlots, MaxEquipSlots)
 	}
 }

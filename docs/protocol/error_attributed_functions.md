@@ -54,6 +54,38 @@ That is the same lesson as the `0x100` floor above, one level up. The floor stop
 a small return value being read as a code; the join stops an arbitrary immediate
 being read as one.
 
+## The mixed-domain residue, and what it is good for
+
+44 unnamed functions raise codes from **more than one** subsystem. They are not
+noise — a function that can fail as both `FORT` and `GUILD` is usually the
+shared helper where those two systems meet, and the combinations cluster:
+
+| combination | functions |
+|---|---|
+| FORT + GUILD | 7 |
+| INSTANCEDUNGEON + INTERACTION | 2 |
+| COSPET + STRG | 2 |
+| QUEST + SKILL | 2 |
+| FORT + FORTRESS + INTERACTION + SKILL | 2 |
+
+The shapes are legible from the refusal sets alone: `FUN_004a00c0` raises
+`CANT_USEITEM`, `PORTALSTONE_FAIL` and `CANT_TELEPORT_WITH_CART` (a portal-item
+use path); `FUN_0058d8f0` and `FUN_0059dc80` both raise `CANNOT_MAKE_TRAP` with
+`SKILL_USE_FAIL_OVERLAP` (the trap-summoning skill); `FUN_00514010` raises
+`CANT_PARTY_WITH_OPPONENT_IN_BATTLE_ARENA` with `PARTYMATCH_JOIN_ERROR_DUPLE`
+(party join).
+
+**None of those is a name**, and none was promoted. A union of refusals is an
+inference about purpose, and this file's own rule is that an attribution is not a
+name. What the residue is good for is choosing what to READ — a function whose
+refusals span two systems tells you more per minute than one whose refusals are
+all `STRG`.
+
+Read that way it has already paid: `0x00526910` (COSPET + STRG) turned out to be
+the trade-offer handler, and its first line — `if (slot < 0xd) return 0x1806` —
+is what established that the engine keeps equipment and backpack in one index
+space with the worn slots at 0..12. See `inventory.go`.
+
 ## The attributions
 
 ### STRG (34)

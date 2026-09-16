@@ -8982,3 +8982,70 @@ each raises codes from two or more subsystems, which usually means a shared
 helper (an inventory move that can fail as STRG or as GUILD storage). Those are
 where a single function ties two systems together, so they are better reading
 than the single-domain ones for anyone mapping how the server is put together.
+
+## 2026-09-16 — the mixed-domain residue, read rather than promoted
+
+The previous entry proposed the 44 mixed-domain functions as better reading than
+the single-domain ones, because a function that fails as both `FORT` and `GUILD`
+is usually where those systems meet. That held, and the payoff came from reading
+one rather than from the list itself.
+
+### The list, and what it is not
+
+The combinations cluster — FORT+GUILD 7, INSTANCEDUNGEON+INTERACTION 2,
+COSPET+STRG 2, QUEST+SKILL 2 — and the shapes are legible from the refusal sets:
+`FUN_004a00c0` raises `CANT_USEITEM` + `PORTALSTONE_FAIL` +
+`CANT_TELEPORT_WITH_CART` (a portal-item use path), `FUN_0058d8f0` and
+`FUN_0059dc80` both raise `CANNOT_MAKE_TRAP` with `SKILL_USE_FAIL_OVERLAP` (the
+trap-summoning skill), `FUN_00514010` raises
+`CANT_PARTY_WITH_OPPONENT_IN_BATTLE_ARENA` with `PARTYMATCH_JOIN_ERROR_DUPLE`.
+
+**Not one of those was promoted to a name.** A union of refusals is an inference
+about purpose, and the attribution doc's own rule is that an attribution is not a
+name. The residue's value is in choosing what to read, not in what it appears to
+say.
+
+### Reading one, and the constant it gave
+
+`0x00526910` (COSPET + STRG) is the **trade-offer handler**, and its first line
+is the find:
+
+	if (*(byte *)(param_2 + 3) < 0xd) return 0x1806;   // WRONG_POSITION
+
+It refuses a slot below 13 before it even fetches the item — because what is
+*worn* cannot be put into a trade. `0xd` is `equipment.MaxEquipSlots`, recovered
+independently four times over.
+
+So **the engine keeps equipment and backpack in ONE index space**, worn items at
+slots 0..12 and the backpack from 13. A second use-site agrees without knowing
+about the first: `CheckEquipsetIntegrity` validates exactly slots 0..12 of that
+same storage, calling `CanBeEquipedAt` on each.
+
+### What that changes, which is a reading and not a number
+
+`inventory.MaxSlotsExpanded = 99` is documented as "the largest inventory the
+engine will ever produce". True — but it counts the equipment slots, so it is
+**at most 86 usable backpack slots, not 99**. Nothing here was wrong; what was
+missing is the sentence that stops someone reading 99 as 99 free slots.
+
+srrevamp models the two spaces separately, which is a different design rather
+than a wrong one, so no value changed. A test now holds the two models to the
+engine's single array — `MaxEquipSlots + SlotsPerCharacter` must fit inside
+`MaxSlotsExpanded` — placed in the equipment package because it is the only one
+that imports both.
+
+### Shipped
+
+The mixed-domain map and its caveat in `error_attributed_functions.md`; the
+shared-index-space note in `inventory.go` with both use-sites;
+`TestSrrevampSlotsFitTheEnginesCombinedArray`.
+
+**What moved:** one of the 44 read and turned into a grounded fact about how the
+engine indexes items, and a cap that was correct but easy to misread now says
+what it counts.
+
+**Next step:** `FUN_00480a20`, the function the trade handler delegates to — it
+is already in the STRG attribution list with five refusals including
+`NOT_ENOUGH_OPPONENT_INV_SPACE`. That is the actual trade transaction, and the
+space check inside it is where the engine decides whether a trade fits, which is
+a rule srrevamp's own trading would need.

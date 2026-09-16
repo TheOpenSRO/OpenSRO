@@ -32,6 +32,30 @@ import (
 // rather than being replaced by a number that merely looks plausible.
 const SlotsPerCharacter = 50
 
+// HOW TO READ THE BOUNDS BELOW: the engine counts the EQUIPMENT SLOTS inside
+// them. Recovered 2026-09-16, and it changes what 99 means without changing any
+// number here.
+//
+// The original keeps equipment and backpack in ONE index space on the character's
+// storage: slots 0..12 are the equipment slots and the backpack starts at 13.
+// Two use-sites agree, neither aware of the other:
+//
+//   - the trade-offer handler (`0x00526910`) refuses `slot < 0xd` with 0x1806
+//     UIIT_MSG_STRGERR_WRONG_POSITION before it even fetches the item, because
+//     what is worn cannot be put into a trade;
+//   - CGPCInventoryOP::CheckEquipsetIntegrity (`0x004bb020`) validates exactly
+//     slots 0..12 of that same storage, calling CanBeEquipedAt on each.
+//
+// 0xd is equipment.MaxEquipSlots, recovered independently four times over.
+//
+// So the engine's "inventory size" of 77 or 99 is the whole array: **at most 86
+// usable backpack slots, not 99.** srrevamp models the two spaces separately --
+// equipment.Slot is its own enum and inventory slots start at 0 -- which is a
+// different design, not a wrong one, and it is why nothing here changes. What
+// would be wrong is reading MaxSlotsExpanded as 99 free backpack slots.
+// TestSrrevampSlotsFitTheEnginesCombinedArray (in the equipment package, which
+// is the one that can see both) holds the two models to the engine's total.
+
 // The engine's own inventory bounds, RECOVERED from CGObjPC::ExpandInventory.
 // CONFIRMED AT INSTRUCTION LEVEL 2026-09-16 -- the decompiler's constants were
 // re-read in the disassembly rather than trusted:
