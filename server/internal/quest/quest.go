@@ -1,9 +1,37 @@
 // Package quest implements this project's own quest system: a small fixed
-// catalog of "kill N of monster X for gold" quests (own design, like
-// skill.Catalog -- no real _RefQuest-equivalent data has been catalogued
-// yet to import from), with Postgres-backed per-character progress that
-// survives disconnects/restarts (unlike party/combat, quest progress isn't
-// something a player should lose on relog).
+// catalog of "kill N of monster X for gold" quests, with Postgres-backed
+// per-character progress that survives disconnects/restarts (unlike
+// party/combat, quest progress isn't something a player should lose on relog).
+//
+// CORRECTION 2026-09-16. This comment used to justify the invented catalog with
+// "no real _RefQuest-equivalent data has been catalogued yet to import from".
+// That is not true, and it was never checked -- Media.pk2 carries two quest
+// tables:
+//
+//	questdata.txt          697 rows: quest id, code name (QNO_*), and the
+//	                       SN_* localisation keys for its name, payment,
+//	                       conditions and NPC
+//	questcontentsdata.txt  989 rows: quest code, display name, a category
+//	                       (0/1/3), a PREREQUISITE quest code on 373 of them,
+//	                       up to eight SN_CON_* objective/step keys, and a
+//	                       numeric field on 442 rows
+//
+// So the quest GRAPH is real and importable: ids, code names, prerequisites
+// (QNO_CH_PRIEST_1 requires QNO_WC_PRIEST2_1) and how many steps a quest has
+// (QNO_CH_PRIEST_1 has eight). The SN_* keys resolve to real text through the
+// same textdata mechanism the NPC chat already uses.
+//
+// WHAT IS GENUINELY MISSING is the only part that would let the catalog below be
+// replaced wholesale: the machine-readable objective TARGETS. A step is a
+// localisation key pointing at human text ("bring me five wolf pelts"), not a
+// (monster id, count) pair, so "kill N of monster X" cannot be imported from
+// these tables. That part is server-side, like the drop tables.
+//
+// The numeric field on 442 rows runs 5..110, which is exactly this client's
+// character level range (see leveldata.MaxCharacterLevel) and clusters at
+// 101-110. A level requirement is the obvious reading and is NOT asserted here:
+// it is a range argument with no use-site behind it, which is the shape that has
+// been wrong twice on this project.
 package quest
 
 import (

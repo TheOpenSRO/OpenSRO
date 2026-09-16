@@ -4979,3 +4979,43 @@ nobody had extracted.
 **What moved:** no value. skilldata proven free of the overlap that afflicts
 itemdata, the skill column map confirmed against an independent anchor, and a
 previous validation re-run on the full corpus with its numbers corrected.
+
+## "114 untouched client tables" surveyed, and a quest disclosure corrected (2026-09-16)
+
+The open list has carried "114 untouched client data tables" as a bare count for
+a long time. Turning it into something actionable: list what Media.pk2's
+`textdata` actually holds and cross-reference against the subsystems srrevamp
+still calls own design.
+
+That immediately contradicted one of them.
+
+**`internal/quest` said** its invented catalog existed because "no real
+_RefQuest-equivalent data has been catalogued yet to import from". Media.pk2
+carries two quest tables, and the claim had evidently never been checked:
+
+| table | rows | what it holds |
+|---|---|---|
+| `questdata.txt` | 697 | quest id, code name (`QNO_*`), and the `SN_*` localisation keys for name, payment, conditions and NPC |
+| `questcontentsdata.txt` | 989 | quest code, display name, a category (0/1/3), a **prerequisite quest code** on 373 rows, up to eight `SN_CON_*` step keys, and a numeric field on 442 rows |
+
+So the quest **graph** is real and importable — ids, code names, prerequisites
+(`QNO_CH_PRIEST_1` requires `QNO_WC_PRIEST2_1`), and step counts
+(`QNO_CH_PRIEST_1` has eight). The `SN_*` keys resolve to real text through the
+same textdata mechanism the NPC chat already uses.
+
+**What is genuinely missing** is the part that would let the catalog be replaced
+wholesale: machine-readable objective TARGETS. A step is a localisation key
+pointing at human text, not a `(monster id, count)` pair, so "kill N of monster
+X" still cannot be imported. That much of the original disclosure was right — it
+was the blanket "no data" that was wrong.
+
+**One thing deliberately not claimed.** The numeric field on 442 rows runs
+**5..110**, exactly this client's character level range, clustering at 101-110.
+A level requirement is the obvious reading. It is recorded as a range argument
+with no use-site behind it and left unasserted — that is the shape that produced
+the wrong answer for characterdata column 79 twice.
+
+**What moved:** no value; srrevamp's two invented quests stay, because the piece
+needed to replace them genuinely is absent. What changed is that the reason is
+now accurate and points at the 697 real quests that ARE importable, instead of
+claiming nothing exists.
