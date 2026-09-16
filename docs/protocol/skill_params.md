@@ -480,3 +480,41 @@ and teleport handlers. Neither `FUN_00586700` nor `FUN_0091f330` carries a strin
 confirming it, and `FUN_0091f330` is a vtable slot in the quest band. Naming them
 from the code's abbreviation is the reasoning this project has rejected
 repeatedly, so they stay unnamed.
+
+
+## `tant` and `tnt2`: the mechanic, recovered; the name, not (2026-09-16)
+
+Two codes that the corrected consumer ranking showed `Combat_ResolveDamage`
+genuinely acts on (4 typed reads each, not guard mentions). `tant` is on **293**
+skill rows and `tnt2` on **550**.
+
+Both have run length 3 — the code plus two words — and both are used the same
+way:
+
+```c
+acc = state[0x1c] + src[0x20];                      // running accumulator
+pct = code[1];
+acc = round(acc * (pct / 100.0 + 1.0));             // 0xb45af0 = 100.0, 0xb45ac0 = 1.0
+state[0x1c] = code[0] + acc;                        // then the flat word
+```
+
+So each code carries a **(flat, percent) pair**: scale the accumulator by
+`1 + percent/100`, then add the flat amount. The run length agrees exactly — two
+words, both used, none spare.
+
+**They are alternatives, not cumulative.** The branch is
+`if (tant == 0) { if (tnt2 != 0) {…} } else {…}`: `tant` takes precedence and
+`tnt2` applies only in its absence. Both arms compute the identical formula, so
+the two codes differ in *when* they apply, not in *what* they do.
+
+**What the value is remains unrecovered.** `state` is an object constructed a few
+lines earlier in the damage path — fields at 0x24-0x48 are filled in, including
+the float 2.0 at +0x48 — and `+0x1c` is the field this pair scales. That is the
+shape of a timed status-effect record rather than the blow's damage, which is
+carried in the separate fields `da` scales (`+0x24` and `+0x28`). Which quantity
++0x1c holds is not settled here, so the codes are recorded with their mechanic
+and without a name.
+
+The client's `PARAM_*` set offers `PARAM_TIME_BOMB` and similar as tempting
+matches for `tant`/`tnt2`. That is an abbreviation argument with no use-site, and
+it is not taken.

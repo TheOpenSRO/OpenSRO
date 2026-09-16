@@ -5295,3 +5295,39 @@ rejecting, so all three stay unnamed.
 measured rather than assumed, two apparent top consumers are exposed as guards,
 and the one conclusion built on it is shown to rest on controls rather than on
 the contaminated ranking.
+
+## Two more skill codes: mechanic recovered, name withheld (2026-09-16)
+
+Using last tick's corrected consumer ranking — typed reads only, weighted by
+codes read more than once — to read what `Combat_ResolveDamage` genuinely acts
+on. `tant` (293 skill rows) and `tnt2` (550) each get 4 real reads.
+
+**The mechanic, from the use-site:**
+
+```c
+acc = state[0x1c] + src[0x20];
+acc = round(acc * (code[1] / 100.0 + 1.0));
+state[0x1c] = code[0] + acc;
+```
+
+Each code carries a **(flat, percent) pair** — scale by `1 + percent/100`, then
+add the flat amount. Both have run length 3 (code plus two words), so every word
+is accounted for and none is spare, which is a decent internal check on the
+reading.
+
+**They are alternatives.** `if (tant == 0) { if (tnt2 != 0) … } else …` — `tant`
+takes precedence and `tnt2` applies only in its absence, with both arms computing
+the identical formula. The codes differ in *when*, not in *what*.
+
+**The name is withheld deliberately.** The field they scale, `state[0x1c]`,
+belongs to an object built a few lines earlier in the damage path (fields
+0x24-0x48 filled, including the float 2.0 at +0x48) — the shape of a timed
+status-effect record, not the blow's damage, which lives in the separate fields
+`da` scales. Which quantity `+0x1c` holds is not settled, and the client's
+`PARAM_TIME_BOMB` is a tempting match for `tant`/`tnt2` that is pure
+abbreviation reasoning. Recorded with the mechanic and no name.
+
+**What moved:** no value. Two codes go from unidentified to
+mechanic-known-semantic-unknown, which is a real step and an honest stopping
+point — and the corrected ranking is what pointed at them rather than at the two
+guard functions the old ranking ranked first.
