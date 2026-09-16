@@ -45,6 +45,26 @@ This is a schema change (Str/Int must travel through `SetLeveling`) and a large
 balance change, which is why it is filed here rather than folded into the tick
 that found it.
 
+## The starting-stat absence, measured 2026-09-16
+
+`StartingStr`/`StartingInt` (20 apiece) are OWN DESIGN, and the audit closed the
+whole character-creation category on one binary's silence — `SR_GameServer.exe`
+writes no constant to charData `+0x74`/`+0x76`, because creation happened on the
+AgentServer. That reasoning is sound but it is a negative from a single artifact,
+and since `StatGrowthPerLevel` shipped these two numbers multiply at every level.
+
+Three artifacts were asked, and the absence holds in all three:
+
+| asked | answer |
+|---|---|
+| characterdata's player rows | 78 rows match `CHAR_(CH\|EU)_(MAN\|WOMAN)`; **0 carry a non-zero MaxHP**. No bare `CHAR_CH_MAN` row exists — the player rows are class/appearance variants. |
+| the client's creation screen | `UIO_NEWCHAR_*` strings are race, gender, class and explanation text. It previews an appearance, not a stat line. |
+| `LevelData.txt` | nine columns, none a stat. |
+
+So the value stays own-design with a stronger reason. Recorded because an absence
+inferred from one artifact and an absence measured across three are different
+claims, and this project has been bitten by the first kind.
+
 ## Headline
 
 **No invented value dressed as real was found.** Across every mechanics package audited, each item

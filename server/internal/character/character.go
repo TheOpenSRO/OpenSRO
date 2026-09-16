@@ -142,6 +142,27 @@ const (
 // charData+0x74 or +0x76 anywhere in it, because character creation happened on
 // the database side, which this project has no artifact of. 20 apiece puts a
 // level-1 character on 200 health and 200 mana.
+//
+// THE ABSENCE IS NOW MEASURED, NOT INFERRED (2026-09-16). It used to rest on one
+// binary's silence, which is the weaker kind of negative -- and these two numbers
+// matter far more since StatGrowthPerLevel shipped, because every level
+// multiplies them. Three artifacts were asked, and none of them holds a starting
+// stat:
+//
+//   - characterdata's PLAYER rows. 78 rows match CHAR_(CH|EU)_(MAN|WOMAN), and
+//     **zero of them carry a non-zero MaxHP (col 59)** -- the column that would
+//     give Str away, since MaxHP is Str*10 at level 1. There is no bare
+//     CHAR_CH_MAN row at all; the player rows are class and appearance variants.
+//   - the client's character-creation screen. Its strings are UIO_NEWCHAR_*, and
+//     they are race, gender, class and _EXPLANATION text. It previews an
+//     appearance, not a stat line, so there is no formula in the client either.
+//   - LevelData.txt. Nine columns, none of them a stat: level, exp, mastery cost,
+//     two zero columns, the kill-exp unit, and a triple of large identical values
+//     (see the note below).
+//
+// So the value stays own-design, but the reason is now three measurements rather
+// than one silence. If it is ever recovered, it is worth doing: at level 40 a
+// wrong starting Str is a wrong health total by the same ratio.
 const (
 	StartingStr = 20
 	StartingInt = 20

@@ -8783,3 +8783,60 @@ says the category is closed because creation happens on the AgentServer, which
 this project has no artifact of. Worth one probe to confirm that is still true
 now that the stat *growth* is known: if any client-side character-creation
 preview computes a starting HP, it would name the starting Str.
+
+## 2026-09-16 — an absence worth measuring, since the numbers now multiply
+
+The previous entry proposed one probe: whether a client-side creation preview
+names the starting Str, now that `StatGrowthPerLevel` makes `StartingStr` and
+`StartingInt` multiply at every level. The answer is no — and the useful part is
+that the negative is now measured across three artifacts instead of inferred from
+one.
+
+The audit had closed the whole character-creation category on `SR_GameServer.exe`
+writing no constant to charData `+0x74`/`+0x76`. That is sound reasoning about
+one binary. It is also exactly the shape of claim this project has been burned by:
+a negative from a single artifact, stated as if it were about the game.
+
+So three were asked:
+
+- **characterdata's player rows.** 78 rows match `CHAR_(CH|EU)_(MAN|WOMAN)` and
+  **zero carry a non-zero MaxHP** — the column that would give Str away, since
+  MaxHP is `Str × 10` at level 1. There is no bare `CHAR_CH_MAN` row at all; the
+  player rows are class and appearance variants (`_NOBLE`, `_EXORCIST`, …).
+- **The client's character-creation screen.** Its strings are `UIO_NEWCHAR_*` —
+  race, gender, class, and `_EXPLANATION` text. It previews an appearance, not a
+  stat line, so there is no formula in the client either.
+- **`LevelData.txt`.** Nine columns, none of them a stat.
+
+The value stays own-design. What changed is that the reason is three measurements
+rather than one silence — which matters now in a way it did not a week ago,
+because at level 40 a wrong starting Str is a wrong health total by the same
+ratio.
+
+### A lead found on the way, deliberately not promoted
+
+`LevelData.txt`'s columns 6, 7 and 8 hold a triple of large, mutually **identical**
+values that grow fast — 70,875 three times at level 1, 2,388,750 three times at
+level 2. Three identical values invites reading them as the three jobs (trader,
+thief, hunter) and calling them job experience.
+
+**That is a curve plus a coincidence of arity**, which is the exact shape that got
+characterdata col 79 wrong twice. Nothing is claimed; the observation is recorded
+in `leveldata.go` so the next reader starts from it rather than rediscovering it,
+and it will stay unclaimed until a use-site reads one of those fields.
+
+### Shipped
+
+The absence upgraded in `character.go` and `GROUNDING_AUDIT.md`, with the three
+probes and their counts; the LevelData lead recorded as a lead. No value changed,
+so nothing needed wiring — which is the right outcome for a tick whose finding is
+that a number cannot be recovered yet.
+
+**What moved:** a single-artifact negative became a three-artifact one, on the two
+values that the previous tick made the most load-bearing in the whole stat model.
+
+**Next step:** the LevelData triple has a natural use-site to look for — the job
+system. `strj`/`intj` were measured onto `hunter, thief, trader` in the magic
+options work, and `_RefSetItemGroup`'s job suits occupy equipment slot 8, so the
+three-job vocabulary is already partly recovered. Finding the server function that
+reads a job's experience would settle columns 6–8 the honest way.

@@ -16,6 +16,19 @@ import (
 	"strings"
 )
 
+// AN OPEN LEAD IN THE RAW TABLE, recorded 2026-09-16 and deliberately NOT
+// promoted. `LevelData.txt` has nine columns and this project maps five of them
+// (level, exp-to-next, mastery cost, two provable zeros, kill-exp unit). Columns
+// 6, 7 and 8 hold a triple of large, mutually IDENTICAL values that grow fast --
+// 70,875 three times at level 1, 2,388,750 three times at level 2.
+//
+// Three identical values is suggestive of the three jobs (trader, thief, hunter),
+// which would make them job experience. **That is a curve and a coincidence of
+// arity, which is exactly what this project has been wrong about before**
+// (characterdata col 79, twice). Nothing is claimed until a use-site reads one of
+// them; the note exists so the next reader starts from the observation rather
+// than rediscovering it.
+//
 // StatPointsPerLevel is how many points a character gets to spend (into Str or
 // Int) each level.
 //
