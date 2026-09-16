@@ -6055,3 +6055,83 @@ the open ledger; 517 skills that had no requirement check now have the engine's.
 
 **Next step:** the kind-14 character flag (vtable `+0x584` arg 4, and
 `FUN_00498610`) is the last unmodelled term in the gate, on 23 item-mall skills.
+
+## 2026-09-16 (ninth) — 195 virtual-function names and their vtable slots
+
+The previous entry named the kind-14 character flag as next. That affects 23
+skills; naming coverage sits at **21.7%** (7,386 of 34,113), so the tick went to
+a systematic lever instead, and the flag stays open.
+
+### The lever
+
+The server's base classes implement most virtuals as a **stub that logs and
+returns**, so a derived class that forgets to override one is caught at runtime:
+
+	CGameServer::FUN_00936640(0x2000000,
+	    "## Illegal ## IGObj::SetBodyMode TypeID: %u", ...);
+
+**213 such strings exist**, each naming its method in the binary's own words.
+Finding the stub's address in `.rdata` then gives its slot, because a stub sits
+at the same index in every vtable of the hierarchy. 202 resolve to exactly one
+slot, 195 of them `IGObj`.
+
+This is the same pattern that named `IGObj::SetBodyMode` a week ago from a single
+string. Harvesting the whole family at once is what the naming-coverage note has
+been recommending; it had not been run.
+
+### Why the slots are trustworthy, tested rather than asserted
+
+The vtable base comes from walking backwards until a dword stops being a `.text`
+pointer. That is a heuristic, so it was checked against facts recovered without
+it:
+
+- The `SetBodyMode` stub appears in **14 different vtables** and lands at slot
+  **198 in all 14** — the figure recovered earlier from the berserk activation
+  handler.
+- Five further slots each explain a call site this project had been reading
+  blind, and each fits its observed use:
+
+| offset | slot | name | what was already observed |
+|---|---|---|---|
+| `0x1c` | 7 | `IGObj::IsPC` | tested for "is not a PC" |
+| `0x28` | 10 | `IGObj::IsMonster` | both raw-damage builders call it |
+| `0xf8` | 62 | `IGObj::GetLifeState` | the guard opening **both** mitigation formulas — so it means *both parties must be alive*, which nothing had established |
+| `0xfc` | 63 | `IGObj::GetMotionState` | tested `== 8` |
+| `0x100` | 64 | `IGObj::GetBodyMode` | tested `== 1`; the berserk handler's own `if (GetBodyMode() == 1)` |
+| `0x104` | 65 | **`IGObj::GetParam`** | the most-cited unnamed virtual in this project's comments |
+
+### A name this project invented, corrected
+
+`berserk.go` called slot 64 `CGObjChar::IsBerserk`. The binary calls it
+`GetBodyMode`, twin of `SetBodyMode` at 198. The implementation at `0x004aa5b0`
+does return "is the body mode 1", which is why the invented name looked right —
+and it is the *second* time that file has had to retract a name it made up for a
+body-mode function. Corrected in place.
+
+### What it does not recover, stated
+
+Virtuals with **no base-class stub** leave no string. That includes all four
+vtable calls in the cast-requirement check (slots 353, 372, 399, 400), so the
+weapon and armour checks in `FUN_0058d480` stay unnamed.
+
+Seven names resolve to **two** slots — `GetCurHP` [66, 68], `GetCurMP` [67, 69],
+`ExpandInventory` [173, 174] and four more. Two hierarchies whose layouts differ
+by an inserted virtual, not an error; they are listed as ambiguous rather than
+assigned one.
+
+### Shipped
+
+- `docs/protocol/igobj_vtable.md` — the 195-slot table with its validation.
+- `client/tools/ghidra/recover_vtable_slots.py` — regenerates it, and **asserts
+  the two independently-recovered slots**, exiting non-zero if the arithmetic
+  breaks.
+- `combat.go` and `berserk.go` now name `IGObj::GetParam` and `IGObj::GetBodyMode`
+  instead of describing them.
+
+**What moved:** 195 virtuals named with their slots, from 6 to ~201 known slots
+in this hierarchy; six vtable offsets the damage code cites by number now have
+names; one invented name retracted.
+
+**Next step:** apply these names to the dump (`ApplyKnownNames.java` exists), and
+read the remaining `IGObj::` slots against their call sites — `GetLifeState`
+alone settles what the mitigation guard means, and there are 189 more.

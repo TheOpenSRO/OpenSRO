@@ -140,7 +140,9 @@ type Monster struct {
 //	damage = raw / (1 + reductionPercent/100) - flatAbsorb        (floored at 0)
 //
 // with the reduction read as ParamKeeper param 7 (physical) or param 8
-// (magical) through the getter virtual at vtable offset 0x104, and the
+// (magical) through IGObj::GetParam, vtable slot 65 / offset 0x104 -- named
+// 2026-09-16 from the base class's own stub string, having been read as "the
+// getter virtual" until then (docs/protocol/igobj_vtable.md) -- and the
 // constants 1.0 and 100.0 at .rdata 0x00b45ac0 and 0x00b45af0.
 //
 // Which side owns the reduction is settled by the formula's own monotonicity,
@@ -213,8 +215,8 @@ func MitigateDamage(raw, reductionPercent, flat int) int {
 // at zero, not to the raw roll. Formula_MitigatePhysicalDamage (0040e450),
 // disassembled because the decompiled C loses the registers here:
 //
-//	40e50a  push 0x5  ; ecx=edi ; call [edx+0x104]   <- defender's flat absorb
-//	40e524  push 0x7  ; ecx=edi ; call [edx+0x104]   <- defender's reduction %
+//	40e50a  push 0x5  ; ecx=edi ; call [edx+0x104]   <- GetParam(5),  flat absorb
+//	40e524  push 0x7  ; ecx=edi ; call [edx+0x104]   <- GetParam(7),  reduction %
 //	40e52a  fdiv qword [0x00b45af0]                  <- /100
 //	40e538  fadd qword [0x00b45ac0]                  <- +1.0
 //	40e53e  fdivr qword [esp+0x10]                   <- raw / (1 + pct/100)

@@ -105,8 +105,18 @@ const (
 	//                            under CGObjCOS_Summoned does not make it a
 	//                            summon's: CGObjChar is in the same RTTI list,
 	//                            which is why a PLAYER can carry param 189.
-	//   CGObjChar::IsBerserk     vtable slot 64 (0x004aa5b0) reads that same
+	//   IGObj::GetBodyMode       vtable slot 64 (0x004aa5b0) reads that same
 	//                            byte -- which is what ties the two together.
+	//                            NAME CORRECTED 2026-09-16: this said
+	//                            CGObjChar::IsBerserk, which was again this
+	//                            project's invention rather than the game's.
+	//                            The binary names slot 64 itself, in the base
+	//                            class's "## Illegal ##" stub string, and calls
+	//                            it GetBodyMode -- the exact twin of
+	//                            SetBodyMode at slot 198. The implementation at
+	//                            0x004aa5b0 does return "is the body mode 1",
+	//                            which is why the invented name looked right.
+	//                            See docs/protocol/igobj_vtable.md.
 	//   Combat_ResolveDamage     (0x0058e5f0) sets bit 2 of the damage flags
 	//                            when the ATTACKER IsBerserk().
 	//   Formula_MitigatePhysicalDamage (0x0040e450) and its magical twin
