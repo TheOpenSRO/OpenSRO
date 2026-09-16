@@ -70,8 +70,24 @@ vtables in this binary:
 
 | name | slots | what the implementations show |
 |---|---|---|
-| `GetCurHP` | 66, 68 | the **same** function at both, in all 14 vtables — one method the layout lists twice, which is what multiple inheritance does |
-| `GetCurMP` | 67, 69 | same, all 14 |
+| `GetCurHP` | 66, 68 | the same function at both **in the vtables this was measured over** — but see the correction below; it is not universal |
+| `GetCurMP` | 67, 69 | same caveat |
+
+**CORRECTION 2026-09-16: 68 and 69 are not always duplicates of 66 and 67.**
+`CGObjCOS_Summoned` has `GetCurHP` (`0x004aa5e0`) at slot 66 and a *different*
+function (`0x004a6830`) at slot 68 — and that one reads a ParamKeeper param
+(`FUN_004b3740` → `ParamKeeper_EnsureParam` + `Param_GetValue`) rather than the
+object's stored HP. **Slot 68 is the computed MAXIMUM, not the current value.**
+`CGItemMonsterCapsule` does have the same function at both, which is how the
+original measurement came out the way it did.
+
+This is not a footnote. `GObjPC_SetLevel` computes its level-up heal as
+`vslot(0x110) − vslot(0x108)`; under the "both are GetCurHP" reading that
+difference is identically zero and the engine would refill nothing. Under the
+corrected reading it is `MaxHP − CurHP`, a full top-up — which is what the
+engine actually does. **A slot identity taken as universal produced exactly the
+wrong answer about a game mechanic**, and the thing that caught it was noticing
+that the zero reading made four virtual calls into dead code.
 | `ExpandInventory` | 173, 174 | **different** functions — two distinct methods whose stubs share one log string, i.e. overloads (30 vtables) |
 | `IsAccomplishedCollectionBook_Theme` | 207, 208 | overloads (30 vtables) |
 | `IsRegisteredCollectionBook_Item` | 209, 210 | overloads (30 vtables) |

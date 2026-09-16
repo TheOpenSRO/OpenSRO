@@ -553,3 +553,24 @@ func TestMasteryExpScale(t *testing.T) {
 		t.Errorf("MasteryExpRefCap = %d, want 120 (0x78)", MasteryExpRefCap)
 	}
 }
+
+// TestStatPointsPerLevelMatchesTheEngineArithmetic pins the constant to the
+// engine's own two steps rather than to the character window that first
+// suggested it: five granted, two immediately spent, three left.
+//
+// Written as the arithmetic and not as a bare `== 3` so that the relationship
+// is what fails if someone changes one half of it.
+func TestStatPointsPerLevelMatchesTheEngineArithmetic(t *testing.T) {
+	const (
+		grantedPerLevel   = 5 // GObjPC_SetLevel: pool += levels*5
+		autoSpentPerLevel = 2 // SpendStatPoints(str = levels, int = levels)
+	)
+	if got := grantedPerLevel - autoSpentPerLevel; got != StatPointsPerLevel {
+		t.Fatalf("the engine grants %d and auto-spends %d, leaving %d; StatPointsPerLevel is %d",
+			grantedPerLevel, autoSpentPerLevel, got, StatPointsPerLevel)
+	}
+	// The original observation this replaces: a level-9 character had 24 points.
+	if got := (9 - 1) * StatPointsPerLevel; got != 24 {
+		t.Errorf("a level-9 character should hold 24 spendable points, got %d", got)
+	}
+}

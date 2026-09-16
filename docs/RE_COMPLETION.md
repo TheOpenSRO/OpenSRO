@@ -8614,3 +8614,102 @@ STATUS when it does the rebuild itself. Harmless now (the next cron tick
 corrects it) but the shape is worth fixing: the tick should refresh STATUS
 unconditionally, so a dump rebuilt by hand is not silently misreported to the
 next session that opens cold.
+
+## 2026-09-16 — the level-up, and a vtable identity that gave exactly the wrong answer
+
+My own proposed next step was wrong: I said `STATUS` was structurally stale and
+the tick should refresh it unconditionally. **It already does** — `re_tick.sh`
+writes STATUS every tick from the DONE files, and what I saw was a one-tick lag
+while my hand-run rebuild was still going. Nothing to fix. Recorded because a
+"next step" built on a misreading is worth catching before someone spends a tick
+on it.
+
+So: the other half of the goal. `GROUNDING_AUDIT.md` had exactly **one**
+BEHAVIOUR ASSUMPTION left — *"level-up refills HP; stat points granted at
+level-up"* — which it calls the actionable part of the audit. Both halves are
+now settled in `GObjPC_SetLevel` (`0x004e4d90`).
+
+### The stat points: five granted, two spent, three left
+
+srrevamp has used `StatPointsPerLevel = 3` on the strength of a level-9
+character window showing 24 points. The engine says:
+
+	lea edx,[esi+edi*1]     ; esi = levels gained, edi = points already held
+	lea ecx,[edx+esi*4]     ; ecx = edi + esi*5
+	mov [eax+0x84],cx       ; the pool becomes held + levels*5
+	push esi ; mov eax,esi  ; SpendStatPoints(str = levels, int = levels)
+
+**Five per level, two immediately auto-spent, three left to the player.** The
+number is unchanged; what changed is that the reason is the engine's rather than
+one screenshot's — which is the difference this project's own rules care about.
+
+### The refill, and the slot identity that nearly settled it backwards
+
+The level-up path calls
+
+	heal(this, vslot(0x110) − vslot(0x108), vslot(0x114) − vslot(0x10c), 0x80)
+
+and `igobj_vtable.md` says slots 66 and 68 (`0x108`, `0x110`) are **the same
+function in all 14 vtables**. Under that reading the difference is identically
+zero, the heal does nothing, and level-up does **not** refill. I had that written
+down.
+
+What stopped it: a zero delta makes four virtual calls and a guarded helper into
+dead code, and authors do not write that. Checking the disassembly first ruled
+out the other candidate — Ghidra dropping a register argument, which it had
+already done once this session — and the calls really are `mov ecx,ebp; call
+edx`, `this` only.
+
+So the vtable claim itself had to be wrong, and it is:
+**`CGObjCOS_Summoned` has `GetCurHP` (`0x004aa5e0`) at slot 66 and a different
+function (`0x004a6830`) at slot 68**, and that one reads a ParamKeeper param
+rather than stored HP. **Slot 68 is the computed maximum.**
+`CGItemMonsterCapsule` does have the same function at both, which is how the
+original measurement came out as it did.
+
+With that corrected, the delta is `MaxHP − CurHP` and the level-up **tops both
+pools up in full**. The assumption is confirmed, not refuted — but it was one
+inference away from being recorded as refuted.
+
+**A slot identity taken as universal produced exactly the wrong answer about a
+game mechanic.** The vtable doc now carries the correction and the reason it
+matters, because the next reader of that table will be doing the same thing.
+
+### What is NOT shipped, and why it is filed rather than folded in
+
+`SpendStatPoints(levels, levels)` means **a character's Str and Int each rise by
+1 per level, automatically**, and srrevamp models none of it: Str and Int sit at
+their starting values for life. `MaxHPFor` is `Str × 10 × 1.02^(level−1)`, so a
+level-40 character here has roughly a third of the health a real one has.
+
+That is a schema change (Str/Int must travel through `SetLeveling`, touching the
+store interface and both backends) and a large balance change on a server the
+user plays from tagged releases. Folding it into the tick that found it would
+make a naming-and-grounding tick silently triple everyone's health. It is filed
+as the new open item in `GROUNDING_AUDIT.md`, with the citation, so the next tick
+can do it deliberately.
+
+### And a paraphrase that had lost its qualifier
+
+`character.go` said *"nothing writes charData+0x74/+0x76 anywhere in the
+binary"*. `GObjPC_SpendStatPoints` writes both. The claim that actually holds is
+the narrower one it was paraphrasing — nothing writes an initial *constant*
+there — and the original still says so correctly ten lines further down. Fixed.
+**A paraphrase that drops the word doing the work turns a true absence into a
+false one.**
+
+### Shipped
+
+`StatPointsPerLevel` grounded with the engine arithmetic and a test written as
+the relationship (5 − 2 = 3) rather than a bare equality; `GROUNDING_AUDIT.md`'s
+last behaviour assumption closed as RECOVERED and a new, bigger one opened;
+`igobj_vtable.md` corrected; the `character.go` paraphrase repaired.
+
+**What moved:** the audit's actionable list went from one vague assumption to one
+precise, cited, unimplemented mechanic — which is a better thing to have.
+
+**Next step:** implement the automatic +1 Str / +1 Int per level. It needs
+`SetLeveling` to carry Str and Int, the memstore and sqlstore to persist them,
+and a test that a level-40 character has Str 20+39 rather than 20 — and it will
+move every derived HP/MP number on the live server, so it wants its own tick and
+its own release note.

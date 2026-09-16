@@ -19,8 +19,15 @@ import (
 // SR_GameServer.exe carries no character-creation path at all -- no limit
 // string, no count check -- because creation happens on the AgentServer and in
 // the database. That is the same wall this project already hit for starting
-// Str/Int ("nothing writes charData+0x74/+0x76 anywhere in the binary") and for
-// the default InventorySize (nothing writes charData+0xac either). Anything
+// Str/Int ("nothing writes a CONSTANT to charData+0x74/+0x76") and for
+// the default InventorySize (nothing writes charData+0xac either).
+//
+// THE QUALIFIER MATTERS AND THIS LINE HAD LOST IT (fixed 2026-09-16). It read
+// "nothing writes charData+0x74/+0x76 anywhere in the binary", which is false:
+// GObjPC_SpendStatPoints (`0x00511470`) writes both, incrementing them when
+// points are spent. The claim that holds is the narrower one at StartingStr --
+// nothing writes an initial constant there. A paraphrase that drops the word
+// doing the work turns a true absence into a false one. Anything
 // decided when a character is first made is outside this executable, so the
 // whole category is closed rather than each value being rediscovered.
 const MaxPerAccount = 3

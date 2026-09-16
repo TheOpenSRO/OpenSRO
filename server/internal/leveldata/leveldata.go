@@ -17,8 +17,36 @@ import (
 )
 
 // StatPointsPerLevel is how many points a character gets to spend (into Str or
-// Int) each level. Recovered as a rule, not a table value: a real level-9
-// character window showed 24 stat points, and (9-1)*3 = 24. See docs/LEVELING.md.
+// Int) each level.
+//
+// It was recovered as a rule rather than a table value: a real level-9 character
+// window showed 24 stat points, and (9-1)*3 = 24. **The number is now grounded
+// in the engine instead** (2026-09-16), and the mechanism explains why it is 3
+// and not the 5 the engine actually grants.
+//
+// GObjPC_SetLevel (`0x004e4d90`) does two things on a level increase, and the
+// disassembly is unambiguous about both:
+//
+//	lea edx,[esi+edi*1]     ; esi = levels gained, edi = points already held
+//	lea ecx,[edx+esi*4]     ; ecx = edi + esi*5
+//	mov [eax+0x84],cx       ; the pool becomes held + levels*5
+//	push esi ; mov eax,esi  ; then SpendStatPoints(str = levels, int = levels)
+//	call 0x511470
+//
+// So the engine grants **five** points per level and immediately spends **two**
+// of them -- one into Str and one into Int -- leaving **three** for the player.
+// GObjPC_SpendStatPoints (`0x00511470`) is a genuine spend: it refuses unless
+// str+int <= the pool, then adds to charData +0x74 (Str) and +0x76 (Int).
+//
+// The old evidence and the new agree on 3, so nothing changes here. What changes
+// is that the reason is the engine's rather than one character window's.
+//
+// NOT MODELLED YET: the automatic +1 Str and +1 Int per level. srrevamp keeps a
+// character's Str and Int at their starting values and accumulates the three
+// spendable points without spending them, so a high-level character here has far
+// lower stats -- and therefore far lower MaxHP -- than the real game's. That is a
+// schema and balance change rather than a constant, so it is recorded in
+// docs/GROUNDING_AUDIT.md as the open item instead of being slipped in here.
 const StatPointsPerLevel = 3
 
 // MaxCharacterLevel is the hard level cap this client enforces, recovered from
