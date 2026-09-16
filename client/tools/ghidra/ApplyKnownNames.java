@@ -494,6 +494,23 @@ public class ApplyKnownNames extends GhidraScript {
          + "codes -- irgc->25,26; er->9; hr->11; stri->1; mpi->4; dru->128,129,130,131 -- all of "
          + "which reproduce exactly."},
 
+        // Chance rolls, which are not memoryless.
+        {"00599cc0", "Chance_RollWithBadLuckProtection",
+         "The engine's chance roll. Returns false at once for a chance of 0 and true for 100 or "
+         + "more, touching no state; otherwise it looks up a per-actor accumulator and compares "
+         + "THAT against rand()%%101 rather than the raw chance, then adds `chance` on a failure "
+         + "or `chance - 100` on a success. The first roll for a key has no entry, compares the "
+         + "raw chance, and seeds chance*2 or chance*2-100 -- which is the same update rule "
+         + "applied once, not a special case. Net effect: bad-luck protection, with the long-run "
+         + "rate unchanged."},
+        {"005a1a20", "GObjPC_RollChanceForActor",
+         "Thin wrapper on Chance_RollWithBadLuckProtection: refuses a chance below 1, then calls "
+         + "it with the container at param_2+4 and the key in param_1. Call sites build the key "
+         + "as (objectId & 0xFFFFFF) | tag<<24 -- `and ecx,0xffffff` then `or ecx,<tag>000000` -- "
+         + "so accumulators are per actor AND per kind. Seven tags appear in the binary, six "
+         + "ASCII: B, C, D, E, H, M. Only 0x43 ('C') has a use-site behind it, the call inside "
+         + "Combat_ResolveDamage; the rest are unidentified."},
+
         // The mastery collection at pc+0xa30, and the exp rule built on it.
         {"0059e870", "Mastery_MaxLevel",
          "Walks the mastery list under pc+0xa30 (head at +0x238, sentinel +0x234) and returns the "

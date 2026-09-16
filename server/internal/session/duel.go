@@ -389,7 +389,7 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		base, playerMitigationPercent, armor,
 		attackerCritical(ctx, characterID, eq, items),
 		defenderBlock(ctx, opponent.CharacterID, eq, items),
-		atkLevel, defLevel)
+		atkLevel, defLevel, characterID, opponent.CharacterID)
 	damage := blow.Damage
 
 	hp, opponentDied, err := chars.ApplyDamage(ctx, opponent.CharacterID, damage)

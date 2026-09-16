@@ -548,14 +548,17 @@ const CriticalMultiplier = 2
 // so the roll is inclusive at both ends and a chance of 100 is a certainty
 // rather than a 100-in-101 near-certainty.
 //
-// NOT modelled, and disclosed: the real function also keeps a per-actor
-// accumulator, raised by `chance` on every failure and dropped by 100 on every
-// success, and on subsequent rolls it compares that accumulated value rather
-// than the raw chance. That is bad-luck protection -- a long dry streak becomes
-// progressively more likely to break. Reproducing it needs per-actor state this
-// project does not carry, so srrevamp rolls memorylessly. The effect is that
-// srrevamp's criticals are slightly streakier than the game's, never more or
-// less frequent on average.
+// NOW MODELLED, 2026-09-16, and this note used to say otherwise. The real
+// function also keeps a per-actor accumulator, raised by `chance` on every
+// failure and dropped by 100 on every success, and rolls against that
+// accumulated value rather than the raw chance -- bad-luck protection. The
+// blocker recorded here was "reproducing it needs per-actor state this project
+// does not carry", which stopped being true once the package grew trackers of
+// its own. See RollChanceTracked and ChanceTracker in chancememory.go.
+//
+// RollChance itself is unchanged and stays the memoryless roll: it is what a
+// nil tracker falls back to, and what every test asserting an exact outcome
+// depends on.
 //
 // r is the source of randomness. A nil r takes the MAXIMUM outcome -- any
 // positive chance succeeds -- which is the same convention RollDamage and
@@ -608,12 +611,19 @@ type Blow struct {
 //
 // r is the source of randomness; a nil r takes the maximum outcome on every
 // roll, the same convention RollDamage and RollChance use.
-func ResolveBlow(base, mitigationPercent, flat, critChance, blockChance, attackerLevel, defenderLevel int, r *rand.Rand) Blow {
-	if RollChance(blockChance, r) {
+//
+// mem carries the engine's per-actor bad-luck accumulators (see
+// chancememory.go). It may be nil, in which case both rolls are memoryless --
+// which is what every test that asserts an exact outcome relies on. The BLOCK
+// roll is the defender's and the CRITICAL roll is the attacker's, so the two
+// draw on different actors' streaks, which is why ChanceMemory carries both
+// ids rather than one.
+func ResolveBlow(base, mitigationPercent, flat, critChance, blockChance, attackerLevel, defenderLevel int, r *rand.Rand, mem *ChanceMemory) Blow {
+	if mem.roll(blockChance, r, mem.defender(), ChanceBlock) {
 		return Blow{Blocked: true}
 	}
 	out := Blow{Damage: MitigateDamage(base, mitigationPercent, flat)}
-	if RollChance(critChance, r) {
+	if mem.roll(critChance, r, mem.attacker(), ChanceCritical) {
 		out.Damage *= CriticalMultiplier
 		out.Critical = true
 	}

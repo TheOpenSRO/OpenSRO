@@ -782,7 +782,7 @@ func performAttack(
 	// it is a real zero rather than an unmodelled one.
 	blow := resolveBlow(raw, monster.DefensePercent, monster.Defense,
 		attackerCritical(ctx, characterID, eq, items), monster.Block,
-		playerLevel, monster.Level)
+		playerLevel, monster.Level, characterID, monster.ID)
 	// A skill's percentage applies HERE, after mitigation and the clamp, not
 	// to the raw roll -- see combat.ApplySkillPercent for the disassembly. A
 	// plain attack passes 0 and is unchanged.
@@ -800,7 +800,7 @@ func performAttack(
 	for i := 1; i < hits; i++ {
 		extra := resolveBlow(raw, monster.DefensePercent, monster.Defense,
 			attackerCritical(ctx, characterID, eq, items), monster.Block,
-			playerLevel, monster.Level)
+			playerLevel, monster.Level, characterID, monster.ID)
 		net += combat.ApplySkillPercent(extra.Damage, damagePercent)
 		playerCrit = playerCrit || extra.Critical
 	}
@@ -834,6 +834,9 @@ func performAttack(
 	// A dead monster can't counterattack. A surviving one always hits
 	// back -- there's no dodge/evade system yet, see docs' open items.
 	if monsterDied {
+		// The monster's object is gone, so its blocking streak goes with it.
+		// The engine's accumulator lives on the object; nothing survives it.
+		chanceMemory.Forget(targetMonsterID)
 		// No damage taken, but the client still wants to know current HP.
 		hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
 		if err != nil {
@@ -987,7 +990,7 @@ func performAttack(
 		// is a player, which is the point of it being one function.
 		counter := resolveBlow(raw, playerMitigationPercent, armor,
 			monster.Critical, defenderBlock(ctx, characterID, eq, items),
-			monster.Level, playerLevel)
+			monster.Level, playerLevel, monster.ID, characterID)
 		incoming := counter.Damage
 		result.MonsterCritical = counter.Critical
 		result.PlayerBlocked = counter.Blocked
@@ -1292,9 +1295,29 @@ func defenderBlock(ctx context.Context, characterID int64, eq equipment.Store, i
 // resolveBlow is combat.ResolveBlow under the SAME lock as every other roll in
 // this package -- it takes two chance rolls, and rand.Rand is not safe for
 // concurrent use.
-func resolveBlow(base, mitigationPercent, flat, critChance, blockChance, attackerLevel, defenderLevel int) combat.Blow {
+func resolveBlow(base, mitigationPercent, flat, critChance, blockChance, attackerLevel, defenderLevel int, attackerID, defenderID int64) combat.Blow {
 	damageRollMu.Lock()
 	defer damageRollMu.Unlock()
 	return combat.ResolveBlow(base, mitigationPercent, flat, critChance, blockChance,
-		attackerLevel, defenderLevel, damageRollNG)
+		attackerLevel, defenderLevel, damageRollNG,
+		&combat.ChanceMemory{Tracker: chanceMemory, AttackerID: attackerID, DefenderID: defenderID})
 }
+
+// chanceMemory holds the engine's per-actor bad-luck accumulators for every
+// blow this package resolves -- see combat.ChanceTracker. It is package-level
+// for the same reason damageRollNG is: the streak belongs to the actor across
+// fights, not to one request.
+//
+// Monster ids and character ids share this key space, and CAN collide -- a
+// character id comes from the characters table while a monster id comes from
+// combat.Hub's own counter, so nothing stops both from being 7. The collision is
+// harmless rather than prevented: a shared key would merge two actors' streaks
+// of the same kind, which costs a little fidelity and cannot produce a wrong
+// damage number, and separating the spaces would mean threading an actor-kind
+// through every call site for no gameplay difference. Written down because the
+// next reader will notice it and should not have to re-derive that it is safe.
+//
+// A monster's streak is dropped when it dies (the engine's accumulator lives on
+// the object, so it cannot outlive one); a character's persists across fights,
+// which is what the engine does.
+var chanceMemory = combat.NewChanceTracker()

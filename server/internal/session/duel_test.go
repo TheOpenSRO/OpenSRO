@@ -494,7 +494,7 @@ func TestDuelAttackResultCarriesCriticalAndBlock(t *testing.T) {
 func TestDuelUsesTheSharedPipeline(t *testing.T) {
 	// A duel blow: 100 weapon damage, 30 armour, the attacker's weapon always
 	// crits, the defender has no shield, and the attacker out-levels by 10.
-	got := combat.ResolveBlow(100, playerMitigationPercent, 30, 100, 0, 20, 10, nil)
+	got := combat.ResolveBlow(100, playerMitigationPercent, 30, 100, 0, 20, 10, nil, nil)
 	if !got.Critical {
 		t.Error("a weapon that always crits must crit in a duel too")
 	}
@@ -502,7 +502,7 @@ func TestDuelUsesTheSharedPipeline(t *testing.T) {
 		t.Errorf("duel blow = %d, want 182 ((100-30)*2, then +30%% for ten levels)", got.Damage)
 	}
 	// And a shield stops it dead, exactly as it does against a monster.
-	blocked := combat.ResolveBlow(100, playerMitigationPercent, 30, 100, 100, 20, 10, nil)
+	blocked := combat.ResolveBlow(100, playerMitigationPercent, 30, 100, 100, 20, 10, nil, nil)
 	if !blocked.Blocked || blocked.Damage != 0 {
 		t.Errorf("a blocked duel blow = %+v, want no damage", blocked)
 	}

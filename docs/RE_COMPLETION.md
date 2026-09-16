@@ -4382,3 +4382,73 @@ evidence than proximity inside one expression.
 nor a knockback result for `kb`. Two more codes identified (52 -> 50 unknown),
 and the census tool gained a documented failure mode before it could mislead a
 later pass.
+
+## VALUE SHIPPED: chance rolls are not memoryless (2026-09-16)
+
+`combat.RollChance` carried a disclosure saying the engine "also keeps a
+per-actor accumulator... reproducing it needs per-actor state this project does
+not carry". That blocker stopped being true a while ago — the package grew
+`berserk.Tracker` and `mana.Tracker` — so the note was describing an obstacle
+that had dissolved. This tick implemented it.
+
+**The mechanism**, from `Chance_RollWithBadLuckProtection` (`0x00599cc0`),
+reached from `Combat_ResolveDamage` through `GObjPC_RollChanceForActor`:
+
+```c
+if (chance == 0)   return false;      // no roll, no state touched
+if (chance >= 100) return true;       // likewise
+roll = rand() % 101;
+entry = find(container, key);
+if (entry) {
+    if (entry.acc < roll) { entry.acc += chance;       return false; }
+                            entry.acc += chance - 100; return true;
+}
+if (chance < roll) { insert(key, chance*2);       return false; }
+                     insert(key, chance*2 - 100); return true;
+```
+
+The two seeds look like special cases and are not: `chance*2` and
+`chance*2 - 100` are exactly what the update rule produces from a starting value
+of `chance`, so the whole function is **one** rule:
+
+	succeed when acc >= rand()%101, acc starting at chance
+	then acc += chance        on failure
+	     acc += chance - 100  on success
+
+That is bad-luck protection. Each failure raises the effective chance by the
+base chance; each success spends 100 of it. **The long-run rate is unchanged** —
+the accumulator gains exactly `chance` per roll and loses exactly 100 per
+success — while long dry streaks get progressively more likely to break.
+
+**Scoping, and what is grounded versus what is not.** The accumulator lives in a
+map keyed by `(objectId & 0xFFFFFF) | tag<<24`, built at the call site as
+`and ecx,0xffffff` then `or ecx,<tag>000000`. Seven distinct tags appear, six of
+them ASCII: `B`, `C`, `D`, `E`, `H`, `M`. So the engine keeps separate
+accumulators **per actor and per kind of roll** — that separation is recovered,
+and srrevamp now reproduces it. Only one tag has a use-site: the `0x43` ('C')
+call inside `Combat_ResolveDamage`. The other letters are NOT identified, so the
+Go constants are named for what they gate (`ChanceCritical`, `ChanceBlock`)
+rather than for letters this project cannot pin, and `ChanceBlock` says so.
+
+**Shipped** as `combat.ChanceTracker` / `RollChanceTracked` / `ChanceMemory`,
+threaded through `ResolveBlow` and its four call sites. The block roll is the
+DEFENDER's and the critical roll the ATTACKER's, so a blow draws on two
+different actors' streaks. A nil memory falls back to the memoryless
+`RollChance` exactly, which is what every test asserting an exact blow relies
+on. A monster's streak is dropped when it dies, since the engine's accumulator
+lives on the object and cannot outlive one.
+
+The test that matters asserts **both halves at once**: over 400k rolls at 20%,
+the tracked long-run rate must match the memoryless rate to within 1%, and the
+longest dry streak must be strictly shorter. Checking only the rate would pass
+an accumulator that did nothing; checking only the streaks would pass one that
+inflated the chance.
+
+**Two things caught before they shipped.** A comment claimed `Hub.Despawn` calls
+`Forget` — there is no `Despawn`; the claim was written from expectation rather
+than from the code, and was replaced with the real cleanup point (monster death)
+plus an honest note that monster and character ids share the key space and can
+collide harmlessly.
+
+**What moved:** a real mechanic, shipped, and a disclosure that had outlived its
+own blocker.

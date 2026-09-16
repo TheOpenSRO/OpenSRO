@@ -400,7 +400,7 @@ func TestResolveBlowOrder(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := ResolveBlow(tc.base, tc.pct, tc.flat, tc.crit, tc.block,
-				tc.atkLevel, tc.defLevel, nil)
+				tc.atkLevel, tc.defLevel, nil, nil)
 			if got != tc.want {
 				t.Errorf("ResolveBlow = %+v, want %+v", got, tc.want)
 			}
@@ -411,7 +411,7 @@ func TestResolveBlowOrder(t *testing.T) {
 // A blocked blow deals nothing -- never the floor of 1 that MitigateDamage
 // keeps, because a block skips mitigation rather than reducing its result.
 func TestResolveBlowBlockedIsZeroNotOne(t *testing.T) {
-	got := ResolveBlow(1000, 0, 0, 0, 100, 0, 0, nil)
+	got := ResolveBlow(1000, 0, 0, 0, 100, 0, 0, nil, nil)
 	if !got.Blocked || got.Damage != 0 {
 		t.Errorf("blocked blow = %+v, want {Damage:0 Blocked:true}", got)
 	}
