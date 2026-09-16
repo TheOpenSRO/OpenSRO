@@ -627,7 +627,7 @@ func CombatHandler(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 			}
 
-			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, characterID, req.TargetMonsterID, 0, 0, 1)
+			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, characterID, req.TargetMonsterID, 0, 0, 1, combat.AttackPhysical)
 		case OpMonsterList:
 			return handleMonsterList(sess, hub, monsters)
 		default:
@@ -746,6 +746,10 @@ func performAttack(
 	damageBonus int,
 	damagePercent int,
 	hits int,
+	// attackType is the skill's `att` value[0]: which half of the blow
+	// exists. A plain OpAttack passes combat.AttackPhysical. See
+	// combat.AttackType.
+	attackType combat.AttackType,
 ) error {
 	monster, ok := monsters.Get(targetMonsterID)
 	if !ok {
@@ -773,7 +777,7 @@ func performAttack(
 		playerLevel, playerStr = c.Level, c.Str
 	}
 
-	base, err := attackerDamage(ctx, characterID, playerStr, eq, items)
+	base, err := attackerDamageOf(ctx, characterID, playerStr, eq, items, attackType)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})
 	}
@@ -1139,6 +1143,13 @@ func performAttack(
 // str is the attacker's Strength, which contributes a real term to both ends
 // of the range (see below); passing 0 is safe and simply omits it.
 func attackerDamage(ctx context.Context, characterID int64, str int, eq equipment.Store, items combat.ItemLookup) (int, error) {
+	// A caller with no skill in hand is swinging a weapon, which is physical.
+	return attackerDamageOf(ctx, characterID, str, eq, items, combat.AttackPhysical)
+}
+
+// attackerDamageOf is attackerDamage for a blow whose damage-type mask is
+// known -- `att` value[0] off the skill being used. See combat.AttackType.
+func attackerDamageOf(ctx context.Context, characterID int64, str int, eq equipment.Store, items combat.ItemLookup, atk combat.AttackType) (int, error) {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {
 		return 0, fmt.Errorf("reading equipment: %w", err)
@@ -1187,18 +1198,33 @@ func attackerDamage(ctx context.Context, characterID int64, str int, eq equipmen
 		// Formula_MitigatePhysicalDamage and dmg[0x24] from
 		// Formula_MitigateMagicalDamage, then sets the blow to their sum.
 		//
-		// This does NOT reproduce that sum, deliberately. Three sites zero one
-		// half or the other -- a skill flag and bits 4 and 8 of the ref
-		// object's +0x2b4 -- so how often a blow really carries both is a
-		// question about flags this project has not read. Summing them for the
-		// 1,050 items that carry both would roughly double their damage on an
-		// unread flag, which is a balance change dressed as a fix.
+		// THE SUM IS SETTLED, 2026-09-16, and this comment used to be wrong
+		// about why it was risky. It said "how often a blow really carries
+		// both is a question about flags this project has not read" and worried
+		// that summing would double the damage of the 1,050 items carrying
+		// both. Those flags have now been read, and the worry was aimed at the
+		// wrong object: the gate is on the SKILL, not the item.
 		//
-		// What is unambiguous regardless of those flags is that a weapon with
-		// no physical damage should not deal 1. So the magical columns are used
-		// only when the physical ones are absent. Items that carry physical
-		// damage are completely unaffected.
-		if max <= 0 && item.MagAttackMax > 0 {
+		// Both halves are gated on `att` value[0], the damage-type mask --
+		// physical on bit 4, magical on bit 8 -- and across 31,605 real skill
+		// rows **not one sets both**. The engine's sum therefore always has
+		// exactly one live term. See combat.AttackType for the full recovery.
+		//
+		// So the rule is the skill's, not the weapon's: a magical skill draws
+		// on the weapon's magical attack. `atk` carries that mask.
+		//
+		// WHAT IS DELIBERATELY NOT DONE: routing a magical skill to the
+		// magical columns UNCONDITIONALLY. Measured over a real client's
+		// itemdata, of 1,582 items carrying any attack value 574 have physical
+		// damage and no magical at all -- so an unconditional reroute would
+		// drop every caster holding one of those to MitigateDamage's floor of
+		// 1. Whether that is the engine's behaviour turns on whether Intellect
+		// feeds params 15/16 the way Strength feeds 13/14, and that has not
+		// been read. Until it is, the magical columns are used only where they
+		// EXIST, which is a strict improvement with nothing to regress: the 560
+		// items carrying both now answer a magical skill correctly, and the 574
+		// physical-only ones behave exactly as they did.
+		if (atk.IsMagical() || max <= 0) && item.MagAttackMax > 0 {
 			min = int(item.MagAttackMin) + combat.ReinforceDamage(str, item.ReinforceMagMin)
 			max = int(item.MagAttackMax) + combat.ReinforceDamage(str, item.ReinforceMagMax)
 		}

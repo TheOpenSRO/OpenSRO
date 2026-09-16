@@ -405,7 +405,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		}
 		return s
 	}
-	pct, dmgMin, dmgMax := attackParam(cols)
+	atkType, pct, dmgMin, dmgMax := attackParam(cols)
 	hits := hitCountParam(cols)
 	return []string{
 		get(skID),             // 0  ID
@@ -436,6 +436,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		dmgMin,                // 25 DamageMin
 		dmgMax,                // 26 DamageMax
 		hits,                  // 27 HitCount -- real, from the 'mc' param
+		atkType,               // 28 AttackType -- real, 'att' value[0]
 	}, true
 }
 
@@ -488,7 +489,12 @@ const hitCountCode = "28003"
 //
 // The scan is also the more version-robust of the two: a client whose skilldata
 // shifts the block would break a hard-coded column 69, and this would not.
-func attackParam(cols []string) (percent, dmgMin, dmgMax string) {
+// attackType is value[0], the damage-TYPE mask -- exported since 2026-09-16
+// because the engine gates each half of a blow on it. Bit 4 enables the
+// physical half, bit 8 the magical one; bits 1 and 2 are a second axis
+// selecting which flat-absorption param applies. See combat.AttackType and
+// docs/protocol/skill_params.md.
+func attackParam(cols []string) (attackType, percent, dmgMin, dmgMax string) {
 	for i, v := range cols {
 		if strings.TrimSpace(v) != attackCode {
 			continue
@@ -504,9 +510,9 @@ func attackParam(cols []string) (percent, dmgMin, dmgMax string) {
 			return s
 		}
 		// i+1 is the type; the damage is in the three that follow.
-		return at(2), at(3), at(4)
+		return at(1), at(2), at(3), at(4)
 	}
-	return "0", "0", "0"
+	return "0", "0", "0", "0"
 }
 
 // hitCountParam pulls a skill's hit count out of its Param block. The run is

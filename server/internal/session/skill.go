@@ -400,6 +400,10 @@ func UseSkillHandler(
 		var damagePercent int
 		var hits = 1
 		var mpCost int
+		// The skill's damage-type mask. A catalog skill has no real row and
+		// so leaves 0, which combat.AttackType reads as physical -- the
+		// behaviour those invented skills already had.
+		var attackType combat.AttackType
 		// REAL SKILLS WIN. This used to check skill.Catalog first, which
 		// silently shadowed two real skills: the own-design catalog occupies
 		// ids 1 and 2, and those are SKILL_PUNCH_01 and SKILL_CH_SWORD_BASE_01
@@ -418,6 +422,7 @@ func UseSkillHandler(
 			mpCost = ref.ConsumeMP
 			damageBonus, damagePercent = skillDamageBonus(ref)
 			hits = ref.HitsFor()
+			attackType = combat.AttackType(ref.AttackType)
 		} else if sk, inCatalog := skill.Catalog[req.SkillID]; inCatalog {
 			cooldown = time.Duration(sk.CooldownSeconds) * time.Second
 			damageBonus = int(sk.DamageBonus)
@@ -463,7 +468,7 @@ func UseSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
 		}
 
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, characterID, req.TargetMonsterID, damageBonus, damagePercent, hits)
+		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, characterID, req.TargetMonsterID, damageBonus, damagePercent, hits, attackType)
 	}
 }
 

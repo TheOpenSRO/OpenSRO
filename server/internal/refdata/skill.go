@@ -64,6 +64,20 @@ type Skill struct {
 	AttackPercent int
 	DamageMin     int
 	DamageMax     int
+
+	// AttackType is 'att' value[0], the damage-TYPE mask -- the word this
+	// project discarded until 2026-09-16 while reading the three numbers
+	// after it. REAL, and load-bearing in the engine: each half of a blow is
+	// gated on one of its bits.
+	//
+	// Bit 4 enables the physical half, bit 8 the magical one, and no real
+	// skill sets both (0 of 31,605 rows). Bits 1 and 2 are a separate axis
+	// that selects which flat-absorption param the defender pays.
+	//
+	// 0 means the export predates the column, NOT "no damage" -- see
+	// combat.AttackType, which treats an unknown mask as physical so an old
+	// export behaves exactly as it did before the column existed.
+	AttackType int
 	// HitCount is how many times one cast strikes: 1 for most skills, up to 5.
 	//
 	// CONFIRMED INDEPENDENTLY 2026-09-16: the client's own localisation key for

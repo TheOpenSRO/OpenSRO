@@ -5427,3 +5427,116 @@ exactly what has to be read before anyone acts on it.
 **What moved:** magical-only weapons now deal their real damage instead of 1.
 The larger question — whether a blow sums both halves — is recorded as open with
 the deciding flags named, rather than guessed.
+
+## 2026-09-16 — the damage-half question, settled; and two wrong rows in the skill-param table
+
+The previous entry named exactly what had to be read before the damage sum could
+be acted on: *"a skill flag, and bits 4 and 8 of the ref object's `+0x2b4`"*.
+Both have been read. The answer closes the question, and it also **corrects the
+framing of the previous entry**, which was aimed at the wrong object.
+
+### `+0x2b4` is a skill param, not a "ref object" field
+
+Grepping writers of `+0x2b4` landed inside `SkillGlobal::RefSkill_ParseParams`,
+the skill parameter parser. So `+0x2b4` is a *skill* field, filed there by the
+param code `pw` (`0x00007077` — a two-character tag; Ghidra renders the compare
+as a 16-bit value and `005879c1` shows it is a full `cmp edx,0x7077`).
+
+### The bits mean physical and magical, and two sources say so
+
+`Combat_ResolveDamage` computes two halves and sums them:
+
+	rec[0x28] = Formula_MitigatePhysicalDamage(...)
+	rec[0x24] = Formula_MitigateMagicalDamage(...)
+	rec[0x20] = rec[0x28] + rec[0x24]
+
+and each formula returns 0 unless its bit is set in **`att` value[0]** — bit 4
+for physical (`0040e450`), bit 8 for magical (`0040e830`). Independently, their
+raw-damage builders read different stats: `0040db50` reads param
+`(max ? 1 : 0) + 13`, `0040dc10` reads `+ 15`, and the recovered param registry
+already named 13/14 "phys damage low/high" and 15/16 "mag damage low/high"
+without reference to any of this.
+
+`att` value[0] is the word this project had been reading *past* for a year while
+consuming the three numbers behind it.
+
+### The sum was never the risk
+
+Measured over the real table — 36,389 skilldata rows, 31,605 carrying `att`:
+
+	 5 {1,4} 17,075 physical      10 {2,8}  6,971 magical
+	 6 {2,4}  4,055 physical       9 {1,8}  2,528 magical
+	                               8 {8}      966 magical
+	 0/1/2       10 neither
+
+**Zero rows of 31,605 set both bit 4 and bit 8.** The two halves are mutually
+exclusive by authoring, so the engine's sum always has exactly one live term.
+
+The previous entry's worry — "summing them for the 1,050 **items** that carry
+both would roughly double their damage" — counted items, and the gate is on the
+**skill**. The caution was right; the reason given for it was not.
+
+### `pw` inverts the same mask, and only two skill families use it
+
+`pw`'s bits *suppress* rather than enable: bit 4 zeroes the physical half, bit 8
+the magical one, applied to the base blow and to a second damage record. All 61
+`pw` runs in the real table belong to Cold or Fire "Wall" skills —
+`SKILL_CH_COLD_BINGBYEOK_*` carries 7 (kills physical),
+`SKILL_CH_FIRE_HWABYEOK_*` carries 11 (kills magical). Whether the holder hangs
+off the attacker or the target is **not settled** and is left open rather than
+asserted.
+
+A third code shares the vocabulary: `skc` (field `0x490`) is AND-ed against the
+mask as a filter — `(*att_v0 & *skc_v0) != 0` — so `att` writes it, `skc` tests
+it, and `pw` inverts it. One encoding, three consumers.
+
+### Two rows of the recovered param table were wrong
+
+Chasing `pw` found it already in `docs/protocol/skill_params.md` with field
+`0x434` — which belongs to the *next* tag, `rt`. A second walker was written
+that follows each `je` to its target instead of reading the fall-through. It
+agrees with the table on **88 of 90** fixed-run codes and disagrees on two:
+
+	pw   0x434 -> 0x2b4      (0x434 is rt's,  which was missing)
+	skc  0x584 -> 0x490      (0x584 is spi's, which was missing)
+
+Both corrected, both missing tags added, both hand-verified in the disassembly.
+The two errors share a cause: `pw` and `skc` are the only codes whose handler
+*rewrites the value it points at*, and that shape defeated the extractor's
+handler detection. The failure had a signature and the signature is exhausted.
+
+The walker also finds ~55 further tag comparisons in neither table. That is
+recorded in `skill_params.md` as a **lead, not a finding** — it has already
+over-reported once (it read the in-handler `cmp edx,0x4` value tests as tags
+until constrained), so the vocabulary size stays open.
+
+### What shipped
+
+- `refdata.Skill.AttackType` — `att` value[0], exported as a strict-suffix CSV
+  column 28 and persisted in SQL. An export predating it reads 0.
+- `combat.AttackType` with `IsPhysical`/`IsMagical`/`Known` and the whole
+  recovery written where it is used, plus tests pinned to the measured row
+  counts so a later edit that swaps the bits fails loudly.
+- The mask threaded through `performAttack`; a magical skill now draws on the
+  weapon's magical attack columns.
+
+### What deliberately did not ship
+
+Routing a magical skill to the magical columns **unconditionally**. Of 1,582
+real items carrying any attack value, **574 have physical damage and no magical
+at all**, so an unconditional reroute drops every caster holding one of those to
+the floor of 1. Whether that is the engine's behaviour turns on whether
+Intellect feeds params 15/16 the way Strength feeds 13/14 — which has **not**
+been read.
+
+So the magical columns are used only where they exist: the 560 items carrying
+both now answer a magical skill correctly, the 574 physical-only ones are
+untouched. Strict improvement, nothing to regress.
+
+**What moved:** the damage-half question is closed with a measurement instead of
+a guess, one of the three "unrecoverable" param codes turned out to be two
+*wrong* rows rather than missing ones, and the skill-param table gained two
+codes and lost two errors.
+
+**Still open:** whether Intellect feeds params 15/16; whether `pw`'s holder is
+the attacker or the target; the ~55 unverified tag comparisons.

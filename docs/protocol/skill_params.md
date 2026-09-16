@@ -44,9 +44,25 @@ before it was asked anything new:
 | `defp` | field `0x25c`, 4 words | field `0x25c`, 4 words |
 | `defr` | field `0x260`, 3 words | field `0x260`, 3 words |
 
-Three of three. 102 of the parser's 105 code comparisons resolve; the remaining
-three take a shape the extractor does not model and are omitted rather than
+Three of three. 104 of the parser's 105 code comparisons resolve; the remaining
+one takes a shape the extractor does not model and is omitted rather than
 guessed at.
+
+**Corrected 2026-09-16.** This said 102 of 105 until a second, independent walker
+was run over the same function — one that follows each `je` to its target rather
+than reading the fall-through. It agrees on 88 of 90 fixed-run codes and
+disagrees on two, `pw` and `skc`, whose fields belonged to the *next* tag in the
+search tree. Both were corrected, and the two tags whose fields they had taken
+(`rt`, `spi`) were added. See "The damage-type mask, and two corrections to the
+table above" at the end of this file.
+
+**An open lead, recorded as a lead and not as a finding.** That second walker
+also finds roughly 55 further tag comparisons in this function that are in
+neither table here — plausible-looking 2-to-4 character tags, each with its own
+distinct field offset. They have not been hand-verified, and this walker has
+already over-reported once (it read the in-handler `cmp edx,0x4` value tests as
+tags until it was constrained to tags ≥ 0x100). So the count above is still the
+extractor's; whether the vocabulary is really ~105 or ~145 is open.
 
 **What this is and is not.** It is the parser's own structure: every code the
 server recognises, where it files the values, and how far the cursor moves. It is
@@ -154,7 +170,8 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `abnb` | 0x61626e62 | `0x41c` | 2 | 1 |
 | `dtt` | 0x00647474 | `0x420` | 3 | 2 |
 | `se` | 0x00007365 | `0x430` | 4 | 3 |
-| `pw` | 0x00007077 | `0x434` | 5 | 4 |
+| `pw` | 0x00007077 | `0x2b4` | 5 | 4 |
+| `rt` | 0x00007274 | `0x434` | 4 | 3 |
 | `fe` | 0x00006665 | `0x43c` | 4 | 3 |
 | `bl` | 0x0000626c | `0x444` | 6 | 5 |
 | `stns` | 0x73746e73 | `0x448` | 4 | 3 |
@@ -179,7 +196,8 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `getv` | 0x67657476 | `0x56c` | 2 | 1 |
 | `mom` | 0x006d6f6d | `0x57c` | 5 | 4 |
 | `expu` | 0x65787075 | `0x580` | 3 | 2 |
-| `skc` | 0x00736b63 | `0x584` | 4 | 3 |
+| `skc` | 0x00736b63 | `0x490` | 4 | 3 |
+| `spi` | 0x00737069 | `0x584` | 2 | 1 |
 | `hwit` | 0x68776974 | `0x588` | 2 | 1 |
 | `bldr` | 0x626c6472 | `0x58c` | 4 | 3 |
 
@@ -518,3 +536,183 @@ and without a name.
 The client's `PARAM_*` set offers `PARAM_TIME_BOMB` and similar as tempting
 matches for `tant`/`tnt2`. That is an abbreviation argument with no use-site, and
 it is not taken.
+
+## The damage-type mask, and two corrections to the table above (2026-09-16)
+
+**Two rows in the table above were wrong, and the table has been corrected.**
+They were not omissions — they were mis-pairings, and both have the same cause.
+
+The parser's tag tests come in two shapes. Most are `cmp edx,TAG` / `jne <next
+test>`, where the handler follows immediately. But some are `cmp edx,TAG` / `je
+<handler elsewhere>`, and there the *next* instructions are the following tag's
+handler, not this one's. The mechanical extractor recorded the fall-through in
+both cases, so for two codes it filed the **next tag's** field:
+
+| code | was | is | what `was` actually belongs to |
+|---|---|---|---|
+| `pw` | `0x434` | **`0x2b4`** | `rt`, which was missing entirely |
+| `skc` | `0x584` | **`0x490`** | `spi`, which was missing entirely |
+
+Both recovered tags have been added. Verified by hand at `005879c1` (`pw`/`rt`)
+and `00587d6c` (`skc`/`spi`), and then mechanically: a walker that follows each
+`je` to its target and reads the field it stores agrees with the corrected table
+on **88 of 90** fixed-run codes and disagrees on exactly these two.
+
+The two errors are not random. `pw` and `skc` are the only two codes whose
+handler **rewrites the value it points at** instead of just filing a pointer, and
+it is that unusual shape — a store followed immediately by `cmp DWORD PTR
+[edx],0x4` rather than by the loop tail — that the extractor's handler-detection
+tripped over. Which is the useful part: the failure had a signature, and the
+signature is exhausted.
+
+A note on tag width, because the decompiler misleads here. Ghidra renders these
+compares as `uVar1 == 0x7077`, which looks like a truncated 16-bit test against a
+4-byte tag. It is not. `005879c1` is `cmp edx,0x7077` — a full 32-bit compare
+against a value whose top two bytes are zero. Short tags are ordinary in this
+table (`rt` 0x7274, `ru` 0x7275, `st` 0x7374, `se` 0x7365, `dru` 0x647275).
+
+### The parser normalises value[0]
+
+`pw` at `005879e9` (and `skc` at `00587d94`, identically):
+
+```
+skill[0x2b4] = cursor + 1;             // the field points at value[0]
+v = *(cursor + 1);
+if (v == 4 || v == 8 || v == 0xc)      v |= 1, v |= 2;
+else if (v == 1 || v == 2 || v == 3)   v |= 4, v |= 8;
+cursor += 5;                            // code + 4 values, on every path
+```
+
+So value[0] is a **4-bit mask over two independent axes** — bits 1/2 and bits
+4/8 — and the parser's job is to fill in whichever axis the author left out with
+"both". Whatever the author wrote survives; only the missing axis is defaulted.
+
+### What bits 4 and 8 mean
+
+The same two bits appear in `att` value[0], and there they are load-bearing.
+`Formula_MitigatePhysicalDamage` (`0040e450`) and
+`Formula_MitigateMagicalDamage` (`0040e830`) both open with the same guard:
+
+```c
+if (skill[0x230] == 0 || ... || ((**(byte **)(skill + 0x230) & BIT) == 0))
+    return 0;                   // BIT is 4 for physical, 8 for magical
+```
+
+and the raw-damage builders beneath them draw on a different pair of stats each
+— `0040db50` reads ParamKeeper param `(max ? 1 : 0) + 13`, `0040dc10` reads
+`(max ? 1 : 0) + 15`. The recovered registry names those independently:
+**13/14 phys damage low/high, 15/16 mag damage low/high**
+(docs/protocol/param_registry.md). `0040db50` also gates its flat `att` min/max
+add on the same `test BYTE PTR [eax],0x4`.
+
+**Bit 4 is physical, bit 8 is magical.** Two sources agree without being asked
+to: the formula guards and the stat pairs.
+
+### The blow's total is the sum of its halves — and only one is ever live
+
+`Combat_ResolveDamage` writes the two halves into a per-blow record and sums
+them:
+
+```c
+rec[0x28] = Formula_MitigatePhysicalDamage(...);   // physical
+rec[0x24] = Formula_MitigateMagicalDamage(...);    // magical
+...
+rec[0x20] = rec[0x28] + rec[0x24];
+```
+
+This project treated that sum as dangerous for three ticks — summing two halves
+could double a blow. **Measured against the real table, it cannot.** Across
+36,389 real skilldata rows, 31,605 carry `att`, and the distribution of
+value[0] is:
+
+| value[0] | bits | rows | half |
+|---|---|---|---|
+| 5 | {1,4} | 17,075 | physical |
+| 10 | {2,8} | 6,971 | magical |
+| 6 | {2,4} | 4,055 | physical |
+| 9 | {1,8} | 2,528 | magical |
+| 8 | {8} | 966 | magical |
+| 0 / 1 / 2 | — | 10 | neither |
+
+**Zero rows of 31,605 set both bit 4 and bit 8.** The two formulas are mutually
+exclusive by authoring, and the sum has exactly one non-zero term. So the sum is
+not a doubling risk; it is how the engine writes "whichever half this skill
+deals".
+
+Bits 1 and 2 are a second, orthogonal axis. In the magical formula they select
+which flat-absorption param is read — bit 1 → param `0x82` (130), bit 2 → param
+`0x83` (131), via the getter at vtable `+0x104`. Every real row sets exactly one
+of them, which is why the 4/8 and 1/2 pairs both look like enums in the table
+above.
+
+### Where `pw` is read
+
+`Combat_ResolveDamage` reads `pw` value[0] off a *different* skill than the one
+being cast — one reached through an object hanging off `+0xC0C` of a character
+in the blow — and uses its bits to **suppress** the corresponding half:
+
+```c
+if (holder != 0) {
+    if (**(byte **)(*(int *)(*(int *)(holder + 0x18) + 8) + 0x2b4) & 4)  rec[0x28] = 0;
+    if (**(byte **)(*(int *)(*(int *)(holder + 0x18) + 8) + 0x2b4) & 8)  rec[0x24] = 0;
+}
+```
+
+applied twice: once to the base blow, and once to a second damage record the
+same holder contributes before it is added in. Note the polarity is the
+**opposite** of `att`'s: in `att` a set bit *enables* a half, in `pw` a set bit
+*removes* it.
+
+### Which skills carry it, and what that says
+
+61 `pw` runs exist in the whole real table, and every one belongs to a Cold or
+Fire "Wall" skill:
+
+| value[0] | bits | effect | skills |
+|---|---|---|---|
+| 7 | {1,2,4} | removes the physical half | `SKILL_CH_COLD_BINGBYEOK_A..D` (빙벽, ice wall) |
+| 11 | {1,2,8} | removes the magical half | `SKILL_CH_FIRE_HWABYEOK_A..E` (화벽, fire wall) |
+
+Both authored values are from the 4/8 axis, which is why the parser filled in
+bits 1|2 on every one of them — the `1/2/3` arm of that branch exists in the
+code and is used by nothing that shipped.
+
+**What is not settled:** whether `+0xC0C` hangs off the attacker or off the
+target. The decompiler reuses one variable for both the `mc` param pointer and,
+later, an object returned from a lookup, so the receiver cannot be read off the
+C without following the lookup. A barrier that removes one damage type reads
+naturally as a buff on the *target*, and the skill names agree with that, but a
+name is not a use-site and this one is left open rather than asserted.
+
+### `skc` is the same vocabulary used as a filter
+
+`skc` (field `0x490`, run 4) carries values from the same 4-bit space and is
+consumed as a **mask intersection** rather than a switch:
+
+```c
+(**(uint **)(skill + 0x230) & **(uint **)(other + 0x490)) != 0
+```
+
+— `att` value[0] AND-ed with `skc` value[0]. That is one line, and it is what
+ties the three codes together: they are not three private encodings that happen
+to use small integers, they are one damage-type vocabulary, written by `att`,
+tested by `skc`, and inverted by `pw`.
+
+Measured over the real table, 181 `skc` runs carry value[0] ∈ {15, 12, 0} —
+every one a clean mask, none a magnitude — on EU guard, invisibility and dance
+buffs (`SKILL_EU_BARD_BATTLAA_GUARD_A`, `SKILL_EU_WIZARD_COLDA_INVISIBLE_A`, …).
+15 is all four bits and so intersects any blow; 12 is {4,8} and intersects any
+blow that deals damage at all, irrespective of the 1/2 axis.
+
+The two codes recovered alongside them do **not** belong to this vocabulary, and
+saying so is the point of measuring rather than assuming:
+
+| code | field | run | real values | carriers |
+|---|---|---|---|---|
+| `rt` | `0x434` | 4 | 10000 (×225), 3000 (×4) | `*_ROOT_*`, `*_ABNORMAL_*` |
+| `spi` | `0x584` | 2 | 11, 12, 15 (×1 each) | `SKILL_ITEM_ETC_SOCKET_STONE_SP_E` |
+
+`rt`'s values are magnitudes, not masks — 10000 on 225 of 230 runs, which has the
+shape of a per-myriad rate but is not claimed as one here. `spi` occurs three
+times in the entire table and its three values are mask-shaped, which is
+suggestive and nothing more.

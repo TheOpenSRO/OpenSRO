@@ -202,6 +202,10 @@ var skillCSVColumns = []string{
 	// suffix, so an export made before it still loads and every skill simply
 	// strikes once.
 	"HitCount",
+	// Appended later still ('att' value[0], the damage-type mask): a strict
+	// suffix, so an export made before it loads with 0, which
+	// combat.AttackType reads as "unknown, treat as physical".
+	"AttackType",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -314,6 +318,13 @@ func parseSkillRow(f []string) (Skill, error) {
 	// export predating it leaves 0, which HitsFor reads as one strike.
 	if len(f) > 27 {
 		sk.HitCount = parseInt(f[27])
+	}
+	// The damage-type mask from 'att' value[0], appended later still. An
+	// export predating it leaves 0, which combat.AttackType(0).IsMagical()
+	// reports false -- so an old export keeps today's physical-only behaviour
+	// rather than silently changing it.
+	if len(f) > 28 {
+		sk.AttackType = parseInt(f[28])
 	}
 
 	if err != nil {
