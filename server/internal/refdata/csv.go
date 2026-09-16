@@ -37,6 +37,10 @@ var itemCSVColumns = []string{
 	// an export made for any earlier column count still loads and simply
 	// contributes no Strength term.
 	"ReinforcePhys_L", "ReinforcePhys_U", "ReinforceMag_L", "ReinforceMag_U",
+	// Appended later still (the item set a piece belongs to): a strict suffix
+	// like every block before it, so an export made for any earlier column
+	// count still loads and simply belongs to no set.
+	"SetID",
 }
 
 // itemCSVRequiredColumns is the prefix every export must carry; the columns
@@ -177,6 +181,10 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 39 {
 		it.ReinforceMagMax = parseFloat(f[39])
+	}
+	// The item set, optional in the same way.
+	if len(f) > 40 {
+		it.SetID = parseInt(f[40])
 	}
 
 	if err != nil {

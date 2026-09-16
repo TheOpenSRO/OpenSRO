@@ -56,6 +56,30 @@ type Item struct {
 	ReqStr                   int
 	ReqInt                   int
 	ItemClass                int
+	// SetID is the item set this piece belongs to, 0 for most items. It is
+	// the key of the game's own `_RefSetItemGroup` table (shipped as
+	// `textdata\refsetitemgroup.txt`), and wearing one piece in each of a
+	// set's slots grants a bonus.
+	//
+	// Grounded twice, independently. The server reads it into its RefObjItem
+	// at +0x1ac -- the next field after ItemClass in RefObjItem::vslot_001's
+	// consecutive march (+0x198 +0x19c +0x1a0 +0x1a4 +0x1a8 +0x1ac), which is
+	// what makes it column 62 -- and CSetMagicOptionOP::PutoutTheBindingItem
+	// reads that same offset and logs it in the engine's own words:
+	// `"## %s %d ## Invalid data is used! [SetID:%d]"`.
+	//
+	// The data agrees: joining column 62 against the set table's own code
+	// names, the race and gender spelled in the item's name match the ones in
+	// its set's name on 360 of 360 rows where both spell them. The decoy
+	// columns that also hold only legal set ids score ~25%, which is chance
+	// for a four-way split.
+	//
+	// WHAT THE BONUS IS, THIS PROJECT DOES NOT KNOW. The set table's twelve
+	// trailing columns hold it and they are not decoded; the values seen
+	// (`0 21 2 0 3 0 4 0 0 0 0 0`) admit at least three readings and no loader
+	// was found to settle them. srrevamp therefore models set MEMBERSHIP and
+	// COMPLETION, which are recovered, and grants nothing.
+	SetID int
 	// Price is the NPC buy price in gold, and SellPrice what the NPC pays to
 	// buy it back -- both real, from the client's own itemdata (_RefObjCommon
 	// Price and SellPrice columns; SellPrice < Price on every row checked).

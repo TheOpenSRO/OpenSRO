@@ -7782,3 +7782,104 @@ and a design note that was reasoning without a fact now has one.
 **Next step:** `FUN_00a5ff00(slot, item)` — the path slots 9..12 take instead of
 the mesh, from the appearance installer. It is what an accessory *does* do
 visually, and it is the one branch of that function still unread.
+
+## 2026-09-16 — item sets: the mechanism recovered, the bonus disclosed
+
+`FUN_00a5ff00` was the last unread branch of the client's appearance installer
+— the path slots 9..12 take instead of the mesh. It is not a rendering path at
+all. It is the **item set** tracker, and pulling on it recovered a whole system
+plus one new grounded itemdata column.
+
+### What the client keeps
+
+A map, per character, from set id to a two-word record:
+
+	FUN_00a5ff00(slot, item)   bit = 1 << slot
+	                           if ((bit & mask) == 0) { count++; mask |= bit; }
+	FUN_00a5ffd0(slot, item)   if ((bit & mask) != 0) { count--; mask &= ~bit; }
+	                           if (mask == 0) erase the entry
+	FUN_00a60220(item)         return count == popcount(setdef + 0xa4)
+
+`0x00a5ff00`, `0x00a5ffd0`, `0x00a60220`. Both map helpers (`0x00675f60`,
+`0x00a5edf0`) are red-black tree walks — `+0x15` is `_Isnil`, `[3]` the key — so
+it is genuinely `map<SetID, {slotMask, count}>`. `FUN_009733c0` (`0x009733c0`) is
+an unrolled popcount. **A set is complete when the character wears one piece in
+each of its slots** — distinct slots, not items. When it matches, the installer
+sets a byte at `character + 0x1a0`.
+
+The removal path `0x00a60160` derives its bit from
+`GlobalDataManager::FUN_009db5e0`, last tick's visual-slot resolver, which is
+what proves the bits are slot numbers rather than anything else.
+
+### The game's own names
+
+	server table     _REFSETITEMGROUP,  class CRefSetItemGroup, record stride 0x54
+	client file      textdata\refsetitemgroup.txt
+	server class     CSetMagicOptionOP : IBindingOptionOP
+	asserts          "This SetID[%d] is not registered in _RefSetItemGroup table!!"
+	                 "Invalid Set ID is used!! [SetID:%d] [MagicOptGroupID:%d]"
+
+So a completed set grants a **magic option** — the same mechanism as an item's
+own magic options, bound by the set rather than by the item.
+
+### itemdata column 62 is SetID, grounded twice
+
+**From the binary:** `RefObjItem::vslot_001` (`0x006a3d50`) reads its fields
+consecutively — `+0x198 +0x19c +0x1a0 +0x1a4 +0x1a8 +0x1ac`. The exporter
+already pinned 57..61 to the first five (61 is ItemClass, held by the engine's
+own `"ItemClass must be not zero"` assert), so column 62 is `+0x1ac`. And
+`CSetMagicOptionOP::PutoutTheBindingItem` (`0x0066c620`) reads exactly
+`*(item[0xd] + 0x18) + 0x1ac` and logs it as `[SetID:%d]`.
+
+**From the data:** joining column 62 to the set table's own code names, the race
+and gender spelled in an item's name match those in its set's name on **360 of
+360** rows that spell both. Three decoy columns that also hold only legal set ids
+score ~25%, which is chance for a four-way split.
+
+The first probe of that join reported 0/0 — `\b(CH|EU)_(M|W)\b` cannot match
+`CH_M_HEAVY`, because `_` is a word character and `M\b` fails before it. The
+probe was broken, not the hypothesis; checking it was the difference between
+this column and no column.
+
+### The shapes agree with the mechanism
+
+Of the 42 sets a real itemdata references, **30 list more than one item for some
+slot** (gender and rarity variants) — counting items would never complete those,
+counting distinct slots does, and that is what the client's `(bit & mask) == 0`
+guard is for. The slot shapes:
+
+	36 sets  {0,1,2,3,4,5}   the six armour pieces
+	 2 sets  {9,10,11}       the three accessories
+	 2 sets  {6}             a weapon alone
+	 2 sets  {7}             a shield alone
+
+Every piece of every set resolves through `SlotFor`, none left over.
+
+### What is NOT known, and why it is not guessed
+
+The set table's twelve trailing columns hold the reward. A populated row reads
+`0 21 2 0 3 0 4 0 0 0 0 0`, which admits at least three readings — six
+(count, group) pairs, a group id followed by thresholds, or two blocks of six —
+and no loader was found that settles them. **So srrevamp models set MEMBERSHIP
+and COMPLETION, which are recovered, and grants nothing.** Guessing a pairing
+here is exactly the shape of mistake that cost this project characterdata col 79
+twice.
+
+### Shipped
+
+`refdata.Item.SetID` from column 62, wired through the exporter, the CSV
+importer (appended as a strict suffix, so older exports still load), and the SQL
+store — the field-by-field round-trip tests caught the last of those, which is
+what they exist for. New `equipment/itemset.go` with `SetProgress`, `SetsWorn`
+and `Complete`, mirroring the client's counter; four tests including the
+slots-not-items distinction and the ring pair.
+
+**What moved:** a whole system identified by the game's own names, one new
+itemdata column confirmed from two directions, and an honest boundary drawn
+around the part that is not decoded.
+
+**Next step:** `MagicOptGroupID` in that second assert is the link from a set to
+its reward, and magic options are a system this project has touched before
+(`ReferenceData`'s magic-option validators were named in the assert-harvest
+tick). Following the group id from `CSetMagicOptionOP` into the magic-option
+tables is the way into the twelve columns that does not require guessing them.

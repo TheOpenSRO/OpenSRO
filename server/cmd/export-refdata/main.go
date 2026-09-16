@@ -135,7 +135,18 @@ const (
 	// ExtractData asserts "ItemClass must be not zero" / "m_btItemClass > 0",
 	// and column 61 is non-zero on all 21,552 equipment rows. Its values are
 	// small (1..14+), and one family's tiers walk it 1, 4, 7, 10, 13.
-	fItemClass      = 61
+	fItemClass = 61
+	// SetID, the item set this piece belongs to. Column 62, and the field
+	// RefObjItem::vslot_001 writes at +0x1ac immediately after ItemClass's
+	// +0x1a8 -- the same consecutive march that pinned 57..61.
+	//
+	// The use-site names it: CSetMagicOptionOP::PutoutTheBindingItem reads
+	// `*(item[0xd] + 0x18) + 0x1ac` and logs it as
+	// `"## %s %d ## Invalid data is used! [SetID:%d]"`. Cross-checked against
+	// the data by joining to `refsetitemgroup.txt`: the race and gender in an
+	// item's code name match its set's code name on 360 of 360 rows that spell
+	// both, where the other columns holding only legal set ids score ~25%.
+	fSetID          = 62
 	fTwoHanded      = 93
 	fPhysDefenseMin = 65
 	fBlockRatio     = 74 // shields only; body armour carries the parry pair at 68
@@ -386,6 +397,7 @@ func itemRecord(cols []string) ([]string, bool) {
 		num(fReinforcePhysMax), // 37 ReinforcePhysMax
 		num(fReinforceMagMin),  // 38 ReinforceMagMin
 		num(fReinforceMagMax),  // 39 ReinforceMagMax
+		get(fSetID),            // 40 SetID
 	}, true
 }
 

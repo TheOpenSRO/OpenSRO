@@ -71,8 +71,8 @@ func TestItemRecordRoundTripsThroughTheImporter(t *testing.T) {
 	// an optional suffix, so every older export still loads; this only pins
 	// that the exporter and importer agree on the CURRENT width, which is the
 	// half that would otherwise drift.
-	if len(rec) != 40 {
-		t.Fatalf("record has %d fields, want the importer's 40", len(rec))
+	if len(rec) != 41 {
+		t.Fatalf("record has %d fields, want the importer's 41", len(rec))
 	}
 
 	items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
