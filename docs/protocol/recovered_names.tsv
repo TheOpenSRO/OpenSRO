@@ -144,3 +144,10 @@
 #
 00410bb0	server	Formulae::SelectDaraParamForDamageType	descriptive	2x2 selector reading obj+0x1ec: flag bit 0x4 (physical) or 0x8 (magical) crossed with 0x1 or 0x2 picks param 174/175/176/177, the four the registry tags `dara` (MATTR_AVATAR_DARA). Called from both mitigation twins with edx = the defender, and from the 0x40f1b0/0x40f3d0 pair with literal flags 5 and 9.
 00410c20	server	Formulae::SelectParamByDamageType_136_139	descriptive	the same 2x2 shape on one flags byte: 0x4/0x8 crossed with 0x1/0x2 picks param 136/137/138/139 off obj+0x1ec. Called once, from Combat_ResolveDamage at 0x58eae2. Named for its mechanism because the four params have no tag in the registry and no other use-site.
+#
+# APPENDED 2026-09-16 (fifth batch): the Str/Int-against-level damage ratios,
+# found by the transitive pipeline walk at depth 1 -- an inline walk of the
+# mitigation twins never sees them.
+#
+00410a00	server	Formulae::StrLevelDamageRatio	descriptive	gated on IsPC (slot 7, returns fld1 otherwise); reads GetMaxLevel (slot 74) and param 1 (Str) and returns (Str + 2*level + 14) / (6*(level+7)) clamped to [0, 1.2]. The denominator is ((level-1)*7 + 56) * 6/7 in the binary. Called twice inside Formula_MitigatePhysicalDamage at 40e6cd (attacker) and 40e6d8 (defender).
+00410ab0	server	Formulae::IntLevelDamageRatio	descriptive	the Int twin, and NOT symmetric: reads param 2 and returns Int / (4*(level+7)) with no level term in the numerator. Denominator is ((level-1)*5 + 40) * 0.8. Same IsPC gate and same 1.2 clamp.

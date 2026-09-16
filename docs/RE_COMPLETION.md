@@ -10270,3 +10270,52 @@ are unreachable rather than omitted.
 **Method note worth keeping:** report the depth an enumeration searched. All
 three recent corrections would have been visible as caveats at the time.
 
+## 2026-09-16 — a second stat-to-damage coupling, found at depth 1
+
+The transitive walk's remaining clusters paid off. Params 1 and 2 — Str and Int
+— are read inside the damage pipeline by two small functions an inline walk of
+the mitigation twins never sees.
+
+**`Formulae::StrLevelDamageRatio` (`0x00410a00`)** and
+**`Formulae::IntLevelDamageRatio` (`0x00410ab0`)**, both gated on `IsPC`
+(vtable slot 7, returning `fld1` for anything else) and both reading
+`GetMaxLevel` (slot 74) rather than the current level:
+
+	Str: (Str + 2*level + 14) / (6 * (level + 7))     clamped to [0, 1.2]
+	Int: Int             / (4 * (level + 7))          clamped to [0, 1.2]
+
+The denominators are `((level-1)*7 + 56) * 6/7` and `((level-1)*5 + 40) * 0.8`
+in the binary and simplify exactly; a test recomputes them the engine's long way
+at every level 1..140 so a mis-simplified constant fails loudly.
+
+**They are not symmetric, and that is the detail most likely to be tidied into
+a bug**: the Str numerator carries `+16` and `+2*(level-1)`, the Int numerator
+carries nothing. A second test pins it.
+
+**Where it lands.** Inside `Formula_MitigatePhysicalDamage`:
+
+	40e6cb  mov esi,ebp      ; the ATTACKER
+	40e6cd  call 0x410a00    ; ratio(attacker)
+	40e6d6  mov esi,edi      ; the DEFENDER
+	40e6d8  call 0x410a00    ; ratio(defender)
+	40e6df  fld  [esp+0x2c]  ; reload the attacker's
+	40e6e3  fmul [esp+0x24]  ; into the damage accumulator
+
+so the engine computes it for both parties and, on the arm read, multiplies by
+the attacker's. **Player-only** — a monster's swing takes the `fld1` path.
+
+**This is a SECOND coupling, not the one srrevamp has.** `combat.ReinforceDamage`
+is additive (`Str * reinforce/100`, folded into the weapon's range). This is a
+multiplier on the mitigated damage. Both are real and they are different
+mechanisms.
+
+**Shipped as formulas, deliberately not wired.** `combat.StrLevelDamageRatio` and
+`IntLevelDamageRatio` are exact and carry six tests. They are *not* in the damage
+path yet: the mitigation function accumulates several multipliers into
+`[esp+0x24]` and this pass read one of them, so the ordering is the open part —
+and wiring a partial accumulator is precisely the failure this ledger has
+recorded three times running. The formulas are the durable half; the ordering is
+the next probe.
+
+Two names applied.
+
