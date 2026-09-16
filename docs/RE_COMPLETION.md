@@ -5540,3 +5540,74 @@ codes and lost two errors.
 
 **Still open:** whether Intellect feeds params 15/16; whether `pw`'s holder is
 the attacker or the target; the ~55 unverified tag comparisons.
+
+## 2026-09-16 (later) — Intellect feeds the magical half, and a real bug it exposed
+
+The previous entry left one named blocker: *"whether Intellect feeds params
+15/16 the way Strength feeds 13/14"*. It does, and reading it found a bug in the
+code that entry had just shipped.
+
+### The parameter graph, read edge by edge
+
+`GObjPC_InitStats` (`004e3200`) declares the chain explicitly — these are the
+binder's own annotated calls, not an inference from symmetry:
+
+	 1 (str) -> 17 -> 13     phys low      34 -> 17 at slot 3
+	 1 (str) -> 18 -> 14     phys high     36 -> 18 at slot 3
+	 2 (int) -> 19 -> 15     mag low       35 -> 19 at slot 3
+	 2 (int) -> 20 -> 16     mag high      37 -> 20 at slot 3
+
+Param 2 carries the game's own tag `int` in the recovered registry, so Intellect
+is named by the binary rather than by its position in the pair. Slot 3 is the
+percent scale, so each derived term is `stat * reinforce / 100`.
+
+### The bug
+
+`session.attackerDamage` passed **Strength** into the magical columns. It had
+done so since the magical-weapon fallback shipped, and the previous tick
+propagated it into the new mask-driven path. Fixed: the magical half scales with
+Intellect.
+
+Worth stating plainly — **symmetry alone would not have justified this fix**.
+"Str feeds physical, so Int must feed magical" is precisely the suggestive curve
+this project has been wrong on before. The edge list is a use-site; that is why
+it was read.
+
+### The selection now lives in one place
+
+The rule was inline in `session.attackerDamage` with a **copy of itself in the
+test**, and the copy was already stale: it lacked the damage-type branch added
+the tick before, so the test went on asserting the old rule after the rule
+changed. Both are replaced by `combat.WeaponRange`, which the test now calls
+directly. The Intellect guard was checked by reintroducing the bug — it fails
+with `got 110-110, want 50` and passes when restored.
+
+### The unconditional reroute: now fully grounded, still not shipped
+
+The previous entry deferred this on an unread step. That step is read, and it
+says the reroute would be **faithful**:
+
+`Char_PublishCombatStats` (`00497830`) writes params 34-37 **unconditionally** —
+the only branch substitutes `0.0`, it never skips the write. So a physical-only
+weapon writes param 35 = **0** rather than leaving it at the registry default of
+**100**, slot 3 scales Intellect to nothing, and the magical half really is 0.
+(The default mattered: a param nothing writes falls back to its default, and 100
+would have meant a 1.0 scale and Intellect flowing through. It is written, so it
+does not.) Measured: all 574 physical-only items carry no magical reinforce and
+all 448 magical-only carry no physical reinforce — no exceptions either way.
+
+It is still not shipped, for a different and better reason than last time. The
+engine can afford to give 1 damage there because **it refuses the cast first**:
+skills carry `ReqCast_Weapon1/2` (skilldata columns 50/51), and srrevamp does not
+model them — `refdata/skill.go` says so outright. Shipping the penalty without
+the prevention would hand a tester holding a sword 1 damage from a skill the
+real game would not have let them cast.
+
+**What moved:** the magical half now scales with the right stat, one grounded in
+the engine's parameter graph; the selection rule and its test are no longer two
+copies; and the reroute's blocker changed from "a fact nobody has read" to "a
+feature that has to be built first".
+
+**Next step, now unblocked and named:** export `ReqCast_Weapon1/2` and gate skill
+use on the equipped weapon. That is the last thing between here and the faithful
+magical damage path.

@@ -1,5 +1,7 @@
 package combat
 
+import "github.com/OpenSRO/srrevamp/server/internal/refdata"
+
 // AttackType is a skill's damage-type mask -- `att` value[0] in the skill's
 // Param block, the word this project read past for a year while consuming the
 // three numbers behind it.
@@ -90,3 +92,63 @@ func (t AttackType) IsMagical() bool { return t&AttackMagical != 0 }
 // Known reports whether the mask actually names a damage half, distinguishing a
 // real physical skill from an export that predates the column.
 func (t AttackType) Known() bool { return t&(AttackPhysical|AttackMagical) != 0 }
+
+// WeaponRange picks the ends of a weapon's damage roll for a blow of the given
+// type, and is the ONE place that decision is made. It used to live inline in
+// session.attackerDamage with a copy of itself in the test, which is how the
+// test went on asserting the old rule after the rule changed.
+//
+// str and intel are the wielder's Strength and Intellect. WHICH STAT GOES WITH
+// WHICH HALF IS RECOVERED, from the parameter graph GObjPC_InitStats (004e3200)
+// declares edge by edge:
+//
+//	1 (str) -> 17 -> 13    phys low      34 -> 17 at slot 3
+//	1 (str) -> 18 -> 14    phys high     36 -> 18 at slot 3
+//	2 (int) -> 19 -> 15    mag low       35 -> 19 at slot 3
+//	2 (int) -> 20 -> 16    mag high      37 -> 20 at slot 3
+//
+// Params 13-16 are named "phys/mag damage low/high" in the recovered registry,
+// and the two mitigation formulas read exactly these pairs -- 0040db50 reads
+// param `(max ? 1 : 0) + 13`, 0040dc10 reads `+ 15`. Param 2 carries the game's
+// own tag `int`, so Intellect is named by the binary rather than by position.
+//
+// The magical half therefore scales with INTELLECT, not Strength. This code
+// passed `str` into both halves until 2026-09-16 -- a real bug, and one that
+// symmetry alone would not have justified fixing, which is why the edge list
+// was read instead of assumed.
+//
+// Slot 3 is the percent scale (ParamKeeper_EvaluateParam divides it by 100), so
+// each derived term is stat*reinforce/100 -- see ReinforceDamage.
+func WeaponRange(item *refdata.Item, str, intel int, atk AttackType) (min, max int) {
+	if item == nil {
+		return 0, 0
+	}
+	min = int(item.PhysAttackMin) + ReinforceDamage(str, item.ReinforcePhysMin)
+	max = int(item.PhysAttackMax) + ReinforceDamage(str, item.ReinforcePhysMax)
+
+	// The magical columns are used when the blow is magical, and also when the
+	// weapon has no physical damage at all -- 448 of 1,582 real attack-carrying
+	// items are magical-only, and reading only the physical columns would give
+	// them 0 and land every swing on MitigateDamage's floor of 1.
+	//
+	// NOT DONE, deliberately: routing a magical blow to the magical columns
+	// when the weapon has none. That IS the engine's behaviour and it is now
+	// fully grounded -- Char_PublishCombatStats (00497830) writes params 34-37
+	// UNCONDITIONALLY (the only branch substitutes 0.0, it never skips the
+	// write), so a physical-only weapon writes param 35 = 0 rather than leaving
+	// it at the registry default of 100, slot 3 scales Intellect to nothing,
+	// and the magical half really is 0. Measured: all 574 physical-only items
+	// carry no magical reinforce, with no exceptions.
+	//
+	// The engine can afford that because it refuses the cast first: skills
+	// carry ReqCast_Weapon1/2 (skilldata columns 50/51) and srrevamp does not
+	// model them yet (refdata/skill.go says so outright). Shipping the penalty
+	// without the prevention would give a tester holding a sword 1 damage from
+	// a skill the real game would not have let them cast. The gate comes
+	// first; this follows it.
+	if (atk.IsMagical() || max <= 0) && item.MagAttackMax > 0 {
+		min = int(item.MagAttackMin) + ReinforceDamage(intel, item.ReinforceMagMin)
+		max = int(item.MagAttackMax) + ReinforceDamage(intel, item.ReinforceMagMax)
+	}
+	return min, max
+}

@@ -772,12 +772,12 @@ func performAttack(
 	// playerLevel at zero and the term is simply skipped -- it only ever
 	// scales damage up, so missing it costs nobody anything -- and leaves
 	// playerStr at zero, which drops the Strength term the same way.
-	playerLevel, playerStr := 0, 0
+	playerLevel, playerStr, playerInt := 0, 0, 0
 	if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
-		playerLevel, playerStr = c.Level, c.Str
+		playerLevel, playerStr, playerInt = c.Level, c.Str, c.Int
 	}
 
-	base, err := attackerDamageOf(ctx, characterID, playerStr, eq, items, attackType)
+	base, err := attackerDamageOf(ctx, characterID, playerStr, playerInt, eq, items, attackType)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})
 	}
@@ -1144,12 +1144,12 @@ func performAttack(
 // of the range (see below); passing 0 is safe and simply omits it.
 func attackerDamage(ctx context.Context, characterID int64, str int, eq equipment.Store, items combat.ItemLookup) (int, error) {
 	// A caller with no skill in hand is swinging a weapon, which is physical.
-	return attackerDamageOf(ctx, characterID, str, eq, items, combat.AttackPhysical)
+	return attackerDamageOf(ctx, characterID, str, 0, eq, items, combat.AttackPhysical)
 }
 
 // attackerDamageOf is attackerDamage for a blow whose damage-type mask is
 // known -- `att` value[0] off the skill being used. See combat.AttackType.
-func attackerDamageOf(ctx context.Context, characterID int64, str int, eq equipment.Store, items combat.ItemLookup, atk combat.AttackType) (int, error) {
+func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq equipment.Store, items combat.ItemLookup, atk combat.AttackType) (int, error) {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {
 		return 0, fmt.Errorf("reading equipment: %w", err)
@@ -1171,63 +1171,11 @@ func attackerDamageOf(ctx context.Context, characterID int64, str int, eq equipm
 		if err != nil {
 			return 0, fmt.Errorf("looking up weapon stats: %w", err)
 		}
-		// The game rolls the blow in [min, max] rather than always swinging
-		// for maximum -- see combat.RollDamage, recovered from
-		// Formula_RollWeaponDamage. Both ends come from the client's own
-		// itemdata.
-		//
-		// Each end is the weapon's own figure PLUS a Strength-derived term,
-		// which is how Strength reaches damage at all: the engine binds
-		// Str -> 17 -> 13 with the weapon's reinforce percentage scaling the
-		// middle edge, and param 13's slot 0 sums the weapon's flat minimum
-		// and that derived term rather than one overwriting the other. See
-		// combat.ReinforceDamage for the recovery. An export predating the
-		// reinforce columns leaves them zero and the term vanishes, which is
-		// exactly the old behaviour.
-		min := int(item.PhysAttackMin) + combat.ReinforceDamage(str, item.ReinforcePhysMin)
-		max := int(item.PhysAttackMax) + combat.ReinforceDamage(str, item.ReinforcePhysMax)
-		// A MAGICAL-ONLY weapon would otherwise deal nothing. Measured over a
-		// real client's itemdata, of 2,927 items carrying any attack value
-		// **828 have magical damage and no physical at all** -- every staff and
-		// magic weapon in the game. Reading only the physical columns gives
-		// them min = max = 0, so the blow lands on MitigateDamage's floor and
-		// does 1 damage.
-		//
-		// The engine computes BOTH halves and sums them:
-		// Combat_ResolveDamage fills dmg[0x28] from
-		// Formula_MitigatePhysicalDamage and dmg[0x24] from
-		// Formula_MitigateMagicalDamage, then sets the blow to their sum.
-		//
-		// THE SUM IS SETTLED, 2026-09-16, and this comment used to be wrong
-		// about why it was risky. It said "how often a blow really carries
-		// both is a question about flags this project has not read" and worried
-		// that summing would double the damage of the 1,050 items carrying
-		// both. Those flags have now been read, and the worry was aimed at the
-		// wrong object: the gate is on the SKILL, not the item.
-		//
-		// Both halves are gated on `att` value[0], the damage-type mask --
-		// physical on bit 4, magical on bit 8 -- and across 31,605 real skill
-		// rows **not one sets both**. The engine's sum therefore always has
-		// exactly one live term. See combat.AttackType for the full recovery.
-		//
-		// So the rule is the skill's, not the weapon's: a magical skill draws
-		// on the weapon's magical attack. `atk` carries that mask.
-		//
-		// WHAT IS DELIBERATELY NOT DONE: routing a magical skill to the
-		// magical columns UNCONDITIONALLY. Measured over a real client's
-		// itemdata, of 1,582 items carrying any attack value 574 have physical
-		// damage and no magical at all -- so an unconditional reroute would
-		// drop every caster holding one of those to MitigateDamage's floor of
-		// 1. Whether that is the engine's behaviour turns on whether Intellect
-		// feeds params 15/16 the way Strength feeds 13/14, and that has not
-		// been read. Until it is, the magical columns are used only where they
-		// EXIST, which is a strict improvement with nothing to regress: the 560
-		// items carrying both now answer a magical skill correctly, and the 574
-		// physical-only ones behave exactly as they did.
-		if (atk.IsMagical() || max <= 0) && item.MagAttackMax > 0 {
-			min = int(item.MagAttackMin) + combat.ReinforceDamage(str, item.ReinforceMagMin)
-			max = int(item.MagAttackMax) + combat.ReinforceDamage(str, item.ReinforceMagMax)
-		}
+		// One selection, in one place: combat.WeaponRange. The rule -- which
+		// stat scales which half, and when the magical columns are used -- is
+		// recovered there from the engine's own parameter graph, together with
+		// what is deliberately not done and why.
+		min, max := combat.WeaponRange(item, str, intel, atk)
 		return rollDamage(min, max), nil
 	}
 	return unarmedDamage, nil

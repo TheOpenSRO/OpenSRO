@@ -1204,52 +1204,68 @@ func TestShieldBlocksInCombat(t *testing.T) {
 	}
 }
 
-// TestMagicalOnlyWeaponsDealDamage covers the 828 items that carry magical
-// damage and no physical at all -- every staff and magic weapon in the game,
-// measured over a real client's itemdata (2,927 items have any attack value;
-// 1,049 are physical-only, 828 magical-only, 1,050 carry both).
+// TestWeaponRangePicksTheRightColumnsAndStat exercises combat.WeaponRange
+// directly. It used to define its own copy of the selection and assert against
+// that, which tests nothing: the production rule changed underneath it and the
+// copy went on passing.
 //
-// Reading only the physical columns gives a magical weapon min = max = 0, so its
-// blow lands on MitigateDamage's floor and does 1 damage. That is wrong
-// regardless of how the engine's two damage halves interact.
-//
-// It deliberately does NOT assert that a both-carrying weapon sums the halves:
-// the engine zeroes one half or the other on flags this project has not read,
-// so summing would be a balance change on an unread condition.
-func TestMagicalOnlyWeaponsDealDamage(t *testing.T) {
-	pick := func(it *refdata.Item, str int) (min, max int) {
-		min = int(it.PhysAttackMin) + combat.ReinforceDamage(str, it.ReinforcePhysMin)
-		max = int(it.PhysAttackMax) + combat.ReinforceDamage(str, it.ReinforcePhysMax)
-		if max <= 0 && it.MagAttackMax > 0 {
-			min = int(it.MagAttackMin) + combat.ReinforceDamage(str, it.ReinforceMagMin)
-			max = int(it.MagAttackMax) + combat.ReinforceDamage(str, it.ReinforceMagMax)
-		}
-		return min, max
-	}
-
-	// A magical-only weapon: the magical columns are used.
+// Row counts are measured over a real client's itemdata -- 1,582 items carry
+// any attack value, 574 physical-only, 448 magical-only, 560 both.
+func TestWeaponRangePicksTheRightColumnsAndStat(t *testing.T) {
 	staff := &refdata.Item{MagAttackMin: 25, MagAttackMax: 28}
-	if min, max := pick(staff, 0); min != 25 || max != 28 {
+	sword := &refdata.Item{PhysAttackMin: 15, PhysAttackMax: 16, MagAttackMin: 25, MagAttackMax: 28}
+	club := &refdata.Item{PhysAttackMin: 7, PhysAttackMax: 9}
+
+	// A magical-only weapon uses the magical columns: 448 real items would
+	// otherwise read 0 and land every swing on MitigateDamage's floor of 1.
+	if min, max := combat.WeaponRange(staff, 0, 0, combat.AttackPhysical); min != 25 || max != 28 {
 		t.Errorf("magical-only weapon: got %d-%d, want 25-28 (not 0-0)", min, max)
 	}
-
-	// A physical weapon is untouched, even when it also carries magical
-	// damage -- this is the case the change deliberately leaves alone.
-	sword := &refdata.Item{PhysAttackMin: 15, PhysAttackMax: 16, MagAttackMin: 25, MagAttackMax: 28}
-	if min, max := pick(sword, 0); min != 15 || max != 16 {
-		t.Errorf("weapon carrying both: got %d-%d, want the physical 15-16 unchanged", min, max)
+	// A physical blow with a weapon carrying both stays physical.
+	if min, max := combat.WeaponRange(sword, 0, 0, combat.AttackPhysical); min != 15 || max != 16 {
+		t.Errorf("both-carrying weapon, physical blow: got %d-%d, want 15-16", min, max)
 	}
-
-	// Physical-only is unchanged too.
-	club := &refdata.Item{PhysAttackMin: 7, PhysAttackMax: 9}
-	if min, max := pick(club, 0); min != 7 || max != 9 {
-		t.Errorf("physical-only weapon: got %d-%d, want 7-9", min, max)
+	// A MAGICAL blow with that same weapon takes the magical columns. This is
+	// the behaviour the damage-type mask unlocked.
+	if min, max := combat.WeaponRange(sword, 0, 0, combat.AttackMagical); min != 25 || max != 28 {
+		t.Errorf("both-carrying weapon, magical blow: got %d-%d, want 25-28", min, max)
 	}
+	// A magical blow with a weapon that has no magical damage is left on the
+	// physical columns -- the engine would give 0 here, but it refuses the cast
+	// first via ReqCast_Weapon, which srrevamp does not model yet.
+	if min, max := combat.WeaponRange(club, 0, 0, combat.AttackMagical); min != 7 || max != 9 {
+		t.Errorf("physical-only weapon, magical blow: got %d-%d, want 7-9 until ReqCast_Weapon exists", min, max)
+	}
+	if min, max := combat.WeaponRange(nil, 0, 0, combat.AttackPhysical); min != 0 || max != 0 {
+		t.Errorf("no item: got %d-%d, want 0-0", min, max)
+	}
+}
 
-	// A weapon with no attack values at all stays at zero, so the unarmed
-	// path and the floor still decide.
-	trinket := &refdata.Item{}
-	if min, max := pick(trinket, 0); min != 0 || max != 0 {
-		t.Errorf("no attack values: got %d-%d, want 0-0", min, max)
+// TestWeaponRangeScalesMagicalDamageWithIntellect pins the stat split recovered
+// from GObjPC_InitStats's parameter graph: 1 (str) -> 17 -> 13/14 on the
+// physical side, 2 (int) -> 19 -> 15/16 on the magical one. This code passed
+// Strength into both halves until 2026-09-16.
+func TestWeaponRangeScalesMagicalDamageWithIntellect(t *testing.T) {
+	// Reinforce columns are in tenths of a percent; the same figure on both
+	// sides isolates which stat is read.
+	w := &refdata.Item{
+		PhysAttackMin: 10, PhysAttackMax: 10, ReinforcePhysMin: 1000, ReinforcePhysMax: 1000,
+		MagAttackMin: 10, MagAttackMax: 10, ReinforceMagMin: 1000, ReinforceMagMax: 1000,
+	}
+	const str, intel = 100, 40
+
+	pMin, pMax := combat.WeaponRange(w, str, intel, combat.AttackPhysical)
+	mMin, mMax := combat.WeaponRange(w, str, intel, combat.AttackMagical)
+
+	wantPhys := 10 + combat.ReinforceDamage(str, 1000)
+	wantMag := 10 + combat.ReinforceDamage(intel, 1000)
+	if wantPhys == wantMag {
+		t.Fatal("test is not discriminating: pick str and intel that differ")
+	}
+	if pMin != wantPhys || pMax != wantPhys {
+		t.Errorf("physical blow: got %d-%d, want %d (Strength)", pMin, pMax, wantPhys)
+	}
+	if mMin != wantMag || mMax != wantMag {
+		t.Errorf("magical blow: got %d-%d, want %d (INTELLECT, not Strength)", mMin, mMax, wantMag)
 	}
 }
