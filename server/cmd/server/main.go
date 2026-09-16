@@ -593,7 +593,7 @@ func main() {
 		session.ChatHandler(hub),
 		session.QuestHandler(chars, quests),
 		session.DuelHandler(chars, eq, refItems, hub, duels),
-		session.TradeHandler(chars, inv, hub, trades),
+		session.TradeHandler(chars, inv, refItems, hub, trades),
 		session.FriendHandler(chars, friends, hub),
 	)
 

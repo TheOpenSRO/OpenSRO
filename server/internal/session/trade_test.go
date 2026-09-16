@@ -12,6 +12,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/trade"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
@@ -116,7 +117,7 @@ func setupTradeTest(t *testing.T) *tradeTestFixture {
 
 	hub := world.NewHub()
 	trades := trade.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), TradeHandler(chars, inv, hub, trades))
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), TradeHandler(chars, inv, nil, hub, trades))
 
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)
@@ -452,7 +453,7 @@ func TestTradeRefusesWhenRecipientIsFull(t *testing.T) {
 		OfferB: trade.Offer{ItemSlot: -1},
 	}
 
-	_, _, failReason, err := executeTrade(ctx, chars, inv, sess)
+	_, _, failReason, err := executeTrade(ctx, chars, inv, nil, sess)
 	if err != nil {
 		t.Fatalf("a full recipient is an orderly failure, not an error: %v", err)
 	}
@@ -467,5 +468,55 @@ func TestTradeRefusesWhenRecipientIsFull(t *testing.T) {
 	}
 	if len(after) != 1 || after[0].ItemID != 4842 {
 		t.Errorf("the giver lost the item to a refused trade: %+v", after)
+	}
+}
+
+// TestTradeRefusesUntradeableItem covers the engine's first check on an offer:
+// its trade handler calls CanTrade (vtable slot 49) and returns 0x183a
+// UIIT_MSG_STRGERR_CANNOT_BE_TRADED when the flag is clear.
+//
+// This matters more than it looks. In a real itemdata the flag is clear on every
+// starter item (all 52 `_A_DEF` rows) and every quest item (all 558 `ITEM_QNO_`
+// rows), so without it srrevamp let players trade away gear the real game pins
+// to the character.
+func TestTradeRefusesUntradeableItem(t *testing.T) {
+	ctx := context.Background()
+	chars := character.NewMemStore()
+	giver, _ := chars.Create(ctx, 1, "Giver")
+	taker, _ := chars.Create(ctx, 2, "Taker")
+
+	inv := inventory.NewMemStore(nil)
+	const boundItem = 3632 // a starter sword: CanTrade is clear on every _A_DEF row
+	if err := inv.AddItem(ctx, giver.ID, boundItem, 1); err != nil {
+		t.Fatalf("seeding the giver: %v", err)
+	}
+
+	items := refdata.NewMemStore()
+	items.ImportItems(ctx, []refdata.Item{{ID: boundItem, CanTrade: false}})
+
+	sess := &trade.Session{
+		A:      trade.Member{CharacterID: giver.ID, Name: "Giver"},
+		B:      trade.Member{CharacterID: taker.ID, Name: "Taker"},
+		OfferA: trade.Offer{ItemSlot: 0, Quantity: 1},
+		OfferB: trade.Offer{ItemSlot: -1},
+	}
+
+	_, _, failReason, err := executeTrade(ctx, chars, inv, items, sess)
+	if err != nil {
+		t.Fatalf("a bound item is an orderly refusal, not an error: %v", err)
+	}
+	if failReason == "" {
+		t.Fatal("a non-tradeable item was traded")
+	}
+	after, _ := inv.List(ctx, giver.ID)
+	if len(after) != 1 || after[0].ItemID != boundItem {
+		t.Errorf("the giver lost a bound item to a refused trade: %+v", after)
+	}
+
+	// And a tradeable item still goes through the same path.
+	items2 := refdata.NewMemStore()
+	items2.ImportItems(ctx, []refdata.Item{{ID: boundItem, CanTrade: true}})
+	if _, _, reason, err := executeTrade(ctx, chars, inv, items2, sess); err != nil || reason != "" {
+		t.Errorf("a tradeable item was refused: reason=%q err=%v", reason, err)
 	}
 }

@@ -9309,3 +9309,70 @@ triple-checked; and one wrong answer caught by the data before it became a doc.
 flags expression reads, find the **last** write before `0x6a34e6` rather than the
 first write after each read. That is a small change to the extractor and it
 decides whether the capability columns are 16..24 or the earlier group at 7..12.
+
+## 2026-09-16 — the capability columns confirmed, and a wrong exemplar corrected
+
+The previous entry rejected the column mapping because
+`ITEM_CH_SWORD_01_A_DEF` reads `CanTrade = 0` and "a sword is plainly
+tradeable". Re-deriving the slot binding by **last write before the flags
+expression**, as that entry proposed, gives **exactly the same answer** — so the
+binding was never the problem.
+
+**The exemplar was.** `_A_DEF` is the *starter* row, and starter gear is the one
+class of sword the real game binds to the character. I rejected a correct mapping
+on a badly chosen representative item.
+
+### What settles it
+
+A distribution over item classes rather than one row:
+
+	group                          CanTrade (col 16)   drop mask (col 19)
+	ordinary swords (136 of 160)   1                   255
+	starter, _A_DEF (all 52)       0                   0
+	quest, ITEM_QNO_ (all 558)     0                   0
+	cash shop (247 of 267)         1                   255
+
+Starter and quest items bound, ordinary and cash-shop items free. That is the
+real game's behaviour, **predicted by the mapping rather than fitted to it**.
+
+And column 19 is the detail that proves it. The flags expression extracts *two*
+bits from that slot (`((b & 2) << 9 | b & 1) << 4`), and column 19 is the one
+column in the block holding **255/128/223/192** where its neighbours hold 0/1. A
+boolean column would not need masking; a masked column that happened to be
+boolean would be a coincidence.
+
+### What that makes the 255 from last tick
+
+Last tick I called the 255 "the loud one — a boolean column holding 255 is not a
+near-miss to argue with". That was right to stop on and wrong about why: the
+value was loud because the column **is a bitmask**, which is evidence *for* the
+mapping. A signal that something does not fit one's model can mean the model is
+wrong in a smaller way than assumed.
+
+### Shipped, wired and enforced
+
+`refdata.Item` gains `CanTrade`, `CanSell` and `CanDrop` from columns 16, 17 and
+19 — through the exporter (which emits bit 0 of the mask column rather than the
+raw byte), the CSV loader as a strict suffix, and the SQL store with the new
+columns **defaulting to TRUE**, so an older import leaves items unrestricted
+rather than silently forbidding every trade.
+
+**And the engine's own refusal is now enforced.** `TradeHandler` takes an item
+lookup and `executeTrade` refuses a bound item before anything moves, as the
+engine does with `0x183a CANNOT_BE_TRADED`. A deployment with no reference data
+enforces nothing by design — `items` is nil, and an unknown item is "no opinion"
+rather than a refusal, because `CanTrade` is a bool and an unknown item would
+otherwise read false and fail every trade.
+
+`TestTradeRefusesUntradeableItem` checks both directions: a bound item is refused
+and stays with its owner, a tradeable one still goes through.
+
+**What moved:** nine capability predicates went from named-but-unusable to three
+of them grounded, wired and enforced — and srrevamp stopped letting players trade
+away starter and quest gear the real game pins to the character.
+
+**Next step:** `CanSell` is now in `refdata.Item` and unused. The shop's sell path
+is the obvious consumer, and the engine has the matching refusal ready —
+`0x183b CANNOT_DEAL_AT_SHOP`, raised by `GObjPC::FUN_006182a0` when `CanSell`
+answers zero — so it is the same shape of change as this one, with the citation
+already in hand.

@@ -10,6 +10,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/trade"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
@@ -341,7 +342,7 @@ func DecodeTradeCancelled(data []byte) (*TradeCancelled, error) {
 
 // TradeHandler returns a gateway.Handler implementing the client->server
 // trade opcodes.
-func TradeHandler(chars character.Store, inv inventory.Store, hub *world.Hub, trades *trade.Hub) gateway.Handler {
+func TradeHandler(chars character.Store, inv inventory.Store, items ItemLookup, hub *world.Hub, trades *trade.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpTradeRequest:
@@ -351,7 +352,7 @@ func TradeHandler(chars character.Store, inv inventory.Store, hub *world.Hub, tr
 		case OpTradeSetOffer:
 			return handleTradeSetOffer(ctx, sess, p, chars, trades)
 		case OpTradeConfirm:
-			return handleTradeConfirm(ctx, sess, p, chars, inv, trades)
+			return handleTradeConfirm(ctx, sess, p, chars, inv, items, trades)
 		case OpTradeCancel:
 			return handleTradeCancel(ctx, sess, p, chars, trades)
 		default:
@@ -443,7 +444,7 @@ func handleTradeSetOffer(ctx context.Context, sess *gateway.Session, p *proto.Pa
 	return other.Session.Send(&proto.Packet{Opcode: OpTradeOfferUpdated, Data: updated.Encode()})
 }
 
-func handleTradeConfirm(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, inv inventory.Store, trades *trade.Hub) error {
+func handleTradeConfirm(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub) error {
 	req, err := DecodeTradeConfirmRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpTradeConfirmResult, Data: (&TradeConfirmResult{Reason: "malformed request"}).Encode()})
@@ -464,7 +465,7 @@ func handleTradeConfirm(ctx context.Context, sess *gateway.Session, p *proto.Pac
 		return nil
 	}
 
-	itemA, itemB, failReason, err := executeTrade(ctx, chars, inv, tradeSess)
+	itemA, itemB, failReason, err := executeTrade(ctx, chars, inv, items, tradeSess)
 	if err != nil {
 		return fmt.Errorf("trade: executing: %w", err)
 	}
@@ -542,7 +543,7 @@ func offerItemID(ctx context.Context, inv inventory.Store, characterID int64, of
 // on the second failing -> remove both items, with refund on the second
 // failing -> credit everything) minimizes the window, and the one gap
 // left is documented at the final AddItem calls below.
-func executeTrade(ctx context.Context, chars character.Store, inv inventory.Store, sess *trade.Session) (itemA, itemB int64, failReason string, err error) {
+func executeTrade(ctx context.Context, chars character.Store, inv inventory.Store, items ItemLookup, sess *trade.Session) (itemA, itemB int64, failReason string, err error) {
 	itemA, err = offerItemID(ctx, inv, sess.A.CharacterID, sess.OfferA)
 	if err != nil {
 		if errors.Is(err, errOfferInvalid) {
@@ -556,6 +557,17 @@ func executeTrade(ctx context.Context, chars character.Store, inv inventory.Stor
 			return 0, 0, "offer no longer valid", nil
 		}
 		return 0, 0, "", err
+	}
+
+	// THE ITEM'S OWN TRADE FLAG, the engine's first check on an offer. Its
+	// trade handler calls CanTrade (vtable slot 49) and returns
+	// 0x183a UIIT_MSG_STRGERR_CANNOT_BE_TRADED when the flag is clear. In a
+	// real itemdata that is every starter item (all 52 `_A_DEF` rows) and every
+	// quest item (all 558 `ITEM_QNO_` rows) -- so without this check srrevamp
+	// let players trade away bound gear the real game pins to the character.
+	// See refdata.Item.CanTrade.
+	if reason, err := tradeFlagRefusal(ctx, items, sess, itemA, itemB); err != nil || reason != "" {
+		return 0, 0, reason, err
 	}
 
 	// THE RECIPIENT-CAPACITY PRE-CHECK, added 2026-09-16 and taken from the
@@ -729,6 +741,46 @@ func tradeSpaceShortfall(ctx context.Context, inv inventory.Store, sess *trade.S
 		}
 		if len(occupied) >= inventory.SlotsPerCharacter {
 			return side.name + "'s inventory is full", nil
+		}
+	}
+	return "", nil
+}
+
+// tradeFlagRefusal reports a failReason when either offered item is one the
+// engine forbids trading. Empty reason means both are tradeable.
+//
+// A DEPLOYMENT WITH NO REFERENCE DATA ENFORCES NOTHING, deliberately. `items`
+// is nil on a server that has imported none, and an item the tables do not know
+// returns ErrItemNotFound -- both are treated as "no opinion" rather than as a
+// refusal. The alternative is worse: refdata.Item.CanTrade is a bool, so an
+// unknown item would read false and every trade on an unconfigured server would
+// fail. That is the same trap the CSV loader's comment warns about, which is why
+// the absence is handled here at the call site rather than by defaulting the
+// field.
+func tradeFlagRefusal(ctx context.Context, items ItemLookup, sess *trade.Session, itemA, itemB int64) (string, error) {
+	if items == nil {
+		return "", nil
+	}
+	for _, side := range []struct {
+		itemID  int64
+		name    string
+		offered bool
+	}{
+		{itemA, sess.A.Name, sess.OfferA.ItemSlot >= 0},
+		{itemB, sess.B.Name, sess.OfferB.ItemSlot >= 0},
+	} {
+		if !side.offered || side.itemID == 0 {
+			continue
+		}
+		it, err := items.GetItem(ctx, side.itemID)
+		if err != nil {
+			if errors.Is(err, refdata.ErrItemNotFound) {
+				continue
+			}
+			return "", fmt.Errorf("looking up item %d: %w", side.itemID, err)
+		}
+		if it != nil && !it.CanTrade {
+			return side.name + " offered an item that cannot be traded", nil
 		}
 	}
 	return "", nil

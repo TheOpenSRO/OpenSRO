@@ -48,6 +48,12 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS reinforce_phys_max DOUBLE PRECISION N
 ALTER TABLE items ADD COLUMN IF NOT EXISTS reinforce_mag_min DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE items ADD COLUMN IF NOT EXISTS reinforce_mag_max DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE items ADD COLUMN IF NOT EXISTS set_id INTEGER NOT NULL DEFAULT 0;
+-- The engine's item capability flags (itemdata columns 16, 17, 19). Default
+-- TRUE, not false: an older import that never saw these columns must leave every
+-- item unrestricted rather than silently forbidding trades on every row.
+ALTER TABLE items ADD COLUMN IF NOT EXISTS can_trade BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS can_sell BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS can_drop BOOLEAN NOT NULL DEFAULT TRUE;
 -- The potion restore amounts. REAL and exported since the Param block was
 -- decoded, and parsed by the CSV loader -- but there were no columns here, so
 -- ImportItems dropped them and every potion failed useitem's "cannot be used"
@@ -169,8 +175,9 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			type_id1, type_id2, type_id3, type_id4, country, req_gender, req_level_type1, req_level1,
 			price, sell_price, block_ratio_min, block_ratio_max,
 			reinforce_phys_min, reinforce_phys_max, reinforce_mag_min, reinforce_mag_max,
-			restore_hp, restore_hp_pct, restore_mp, restore_mp_pct, set_id
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41)
+			restore_hp, restore_hp_pct, restore_mp, restore_mp_pct, set_id,
+			can_trade, can_sell, can_drop
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44)
 		ON CONFLICT (id) DO UPDATE SET
 			type_id1=excluded.type_id1, type_id2=excluded.type_id2, type_id3=excluded.type_id3, type_id4=excluded.type_id4,
 			country=excluded.country, req_gender=excluded.req_gender,
@@ -190,7 +197,9 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			reinforce_mag_min=excluded.reinforce_mag_min, reinforce_mag_max=excluded.reinforce_mag_max,
 			restore_hp=excluded.restore_hp, restore_hp_pct=excluded.restore_hp_pct,
 			restore_mp=excluded.restore_mp, restore_mp_pct=excluded.restore_mp_pct,
-			set_id=excluded.set_id
+			set_id=excluded.set_id,
+			can_trade=excluded.can_trade, can_sell=excluded.can_sell,
+			can_drop=excluded.can_drop
 	`)
 	if err != nil {
 		return fmt.Errorf("refdata: preparing insert: %w", err)
@@ -207,7 +216,7 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			it.TypeID1, it.TypeID2, it.TypeID3, it.TypeID4, it.Country, it.ReqGender, it.ReqLevelType1, it.ReqLevel1,
 			it.Price, it.SellPrice, it.BlockRatioMin, it.BlockRatioMax,
 			it.ReinforcePhysMin, it.ReinforcePhysMax, it.ReinforceMagMin, it.ReinforceMagMax,
-			it.RestoreHP, it.RestoreHPPct, it.RestoreMP, it.RestoreMPPct, it.SetID,
+			it.RestoreHP, it.RestoreHPPct, it.RestoreMP, it.RestoreMPPct, it.SetID, it.CanTrade, it.CanSell, it.CanDrop,
 		); err != nil {
 			return fmt.Errorf("refdata: inserting item %d: %w", it.ID, err)
 		}
@@ -227,7 +236,8 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 			type_id1, type_id2, type_id3, type_id4, country, req_gender, req_level_type1, req_level1,
 			price, sell_price, block_ratio_min, block_ratio_max,
 			reinforce_phys_min, reinforce_phys_max, reinforce_mag_min, reinforce_mag_max,
-			restore_hp, restore_hp_pct, restore_mp, restore_mp_pct, set_id
+			restore_hp, restore_hp_pct, restore_mp, restore_mp_pct, set_id,
+			can_trade, can_sell, can_drop
 		FROM items WHERE id = $1`, id)
 	if err := row.Scan(
 		&it.ID, &it.MaxStack, &it.ReqStr, &it.ReqInt, &it.ItemClass, &it.TwoHanded,
@@ -238,7 +248,7 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 		&it.TypeID1, &it.TypeID2, &it.TypeID3, &it.TypeID4, &it.Country, &it.ReqGender, &it.ReqLevelType1, &it.ReqLevel1,
 		&it.Price, &it.SellPrice, &it.BlockRatioMin, &it.BlockRatioMax,
 		&it.ReinforcePhysMin, &it.ReinforcePhysMax, &it.ReinforceMagMin, &it.ReinforceMagMax,
-		&it.RestoreHP, &it.RestoreHPPct, &it.RestoreMP, &it.RestoreMPPct, &it.SetID,
+		&it.RestoreHP, &it.RestoreHPPct, &it.RestoreMP, &it.RestoreMPPct, &it.SetID, &it.CanTrade, &it.CanSell, &it.CanDrop,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("refdata: querying item %d: %w", id, ErrItemNotFound)
@@ -263,7 +273,8 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			type_id1, type_id2, type_id3, type_id4, country, req_gender, req_level_type1, req_level1,
 			price, sell_price, block_ratio_min, block_ratio_max,
 			reinforce_phys_min, reinforce_phys_max, reinforce_mag_min, reinforce_mag_max,
-			restore_hp, restore_hp_pct, restore_mp, restore_mp_pct, set_id
+			restore_hp, restore_hp_pct, restore_mp, restore_mp_pct, set_id,
+			can_trade, can_sell, can_drop
 		FROM items ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("refdata: listing items: %w", err)
@@ -282,7 +293,7 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			&it.TypeID1, &it.TypeID2, &it.TypeID3, &it.TypeID4, &it.Country, &it.ReqGender, &it.ReqLevelType1, &it.ReqLevel1,
 			&it.Price, &it.SellPrice, &it.BlockRatioMin, &it.BlockRatioMax,
 			&it.ReinforcePhysMin, &it.ReinforcePhysMax, &it.ReinforceMagMin, &it.ReinforceMagMax,
-			&it.RestoreHP, &it.RestoreHPPct, &it.RestoreMP, &it.RestoreMPPct, &it.SetID,
+			&it.RestoreHP, &it.RestoreHPPct, &it.RestoreMP, &it.RestoreMPPct, &it.SetID, &it.CanTrade, &it.CanSell, &it.CanDrop,
 		); err != nil {
 			return nil, fmt.Errorf("refdata: scanning item: %w", err)
 		}

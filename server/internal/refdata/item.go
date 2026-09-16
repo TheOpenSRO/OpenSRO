@@ -81,6 +81,37 @@ type Item struct {
 	// membership, completion and tier selection, and grants nothing, because
 	// it has no magic-option system to grant into.
 	SetID int
+	// CanTrade, CanSell and CanDrop are three of the engine's item capability
+	// flags -- itemdata columns 16, 17 and 19. REAL, and grounded in both
+	// directions.
+	//
+	// The engine keeps these as bits of one word on the item's reference row
+	// (`+0x8c`), and the base class names each bit with an `## Illegal ##`
+	// virtual stub: `IGObj::CanTrade`, `IGObj::CanSell`, `IGObj::CanDrop` and
+	// six more. `CGObjCOS_Summoned` implements all nine, each a two-line reader
+	// of one bit. Zero means REFUSE -- a set bit is permission -- and the trade
+	// handler returns `0x183a UIIT_MSG_STRGERR_CANNOT_BE_TRADED` when CanTrade
+	// answers zero.
+	//
+	// The columns come from counting `RefObjCommon_ExtractData`'s field reads in
+	// the disassembly, where each is a `mov` through `[cursor + base*1]`, plus
+	// the two helpers that consume a column without one (`FUN_006b2ef0` reads a
+	// length-prefixed string, `FUN_006b1a80` increments the field counter).
+	// See docs/protocol/item_capability_flags.md for the arithmetic and its
+	// three anchors.
+	//
+	// CanDrop's column is a BITMASK, not a boolean: the engine takes bit 0 of it
+	// (and bit 1 for a separate flag), and the column reads 255/128/223/192 in
+	// real data where the others read 0/1. That is the detail that proves the
+	// mapping rather than merely fitting it.
+	//
+	// Confirmed by class over a real itemdata: ordinary swords and cash-shop
+	// items are tradeable and droppable; starter items (`_A_DEF`, all 52) and
+	// quest items (`ITEM_QNO_`, all 558) are neither. Starter gear being bound
+	// is the real game's behaviour, predicted rather than fitted.
+	CanTrade bool
+	CanSell  bool
+	CanDrop  bool
 	// Price is the NPC buy price in gold, and SellPrice what the NPC pays to
 	// buy it back -- both real, from the client's own itemdata (_RefObjCommon
 	// Price and SellPrice columns; SellPrice < Price on every row checked).

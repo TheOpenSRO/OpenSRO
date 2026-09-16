@@ -140,7 +140,54 @@ Between read 1 and read 2 there are four `FUN_006b2ef0` calls and one
 That arithmetic is a tool for the whole `_RefObjCommon` prefix, not just these
 flags.
 
-## What is STILL not established: which columns the flags are
+## The columns, confirmed against real data
+
+Applying the arithmetic to the nine capability reads gives:
+
+| column | flag bit | predicate | shape in real itemdata |
+|---:|---:|---|---|
+| 16 | 0 | `CanTrade` | 0/1 |
+| 17 | 1 | `CanSell` | 0/1 |
+| 18 | 12, 13 | two unnamed (tested `& 0x80`, `& 0x40`) | 0/1 |
+| 19 | 4 (and 14) | `CanDrop` — **a bitmask, not a boolean**: the parser takes `& 1` and `& 2` | 255, 128, 223, 192, 0 |
+| 20 | 5 | `CanPick` | 0/3/1 |
+| 21 | 6 | `CanRepair` | 0/1 |
+| 22 | 7 | `CanRevive` | 0/1 |
+| 23 | 8 | `CanUse` | 0/1 |
+| 24 | 9 | `CanThrow` | 0/1 |
+
+Column 19 is the tell that the mapping is right rather than merely plausible: the
+flags expression extracts **two separate bits** from that slot
+(`((b & 2) << 9 | b & 1) << 4`), and column 19 is the one column in the block
+that holds 255/128/223/192 instead of 0/1. A boolean column would not need
+masking, and a masked column that happened to be boolean would be a coincidence.
+
+**Verified by class, and this is what settles it:**
+
+| group | `CanTrade` | drop mask |
+|---|---|---|
+| ordinary swords (136 of 160) | **1** | 255 |
+| starter items, `_A_DEF` (all 52) | **0** | 0 |
+| quest items, `ITEM_QNO_` (all 558) | **0** | 0 |
+| cash shop, `ITEM_MALL_` (247 of 267) | 1 | 255 |
+
+Starter gear and quest items are bound; ordinary and cash-shop items are not.
+That is the real game's behaviour, predicted by the mapping rather than fitted to
+it.
+
+### The wrong exemplar that nearly sank this
+
+The previous tick rejected this same mapping because `ITEM_CH_SWORD_01_A_DEF`
+reads `CanTrade = 0` and "a sword is plainly tradeable". **The `_A_DEF` suffix is
+the starter row** — the one class of sword that is bound — so the exemplar was
+the fault, not the model. Choosing a representative item badly is as good a way
+to get a wrong answer as choosing a bad probe.
+
+What did survive that tick, correctly, was the refusal to publish on the strength
+of an argument; the thing that resolved it was a distribution over classes rather
+than one row.
+
+### Earlier probes that failed, kept
 
 Applying the arithmetic to the nine capability reads gives columns 16..24 — and
 **the data contradicts it**. `ITEM_CH_SWORD_01_A_DEF` would read

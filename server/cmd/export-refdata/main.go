@@ -146,7 +146,15 @@ const (
 	// the data by joining to `refsetitemgroup.txt`: the race and gender in an
 	// item's code name match its set's code name on 360 of 360 rows that spell
 	// both, where the other columns holding only legal set ids score ~25%.
-	fSetID          = 62
+	fSetID = 62
+	// The capability flags. Columns 16, 17 and 19 of _RefObjCommon, recovered by
+	// counting RefObjCommon_ExtractData's field reads in the disassembly -- see
+	// docs/protocol/item_capability_flags.md. fCanDrop is a BITMASK column
+	// (255/128/223/192 in real data); the engine takes its bit 0, so the
+	// exporter emits that bit rather than the raw byte.
+	fCanTrade       = 16
+	fCanSell        = 17
+	fCanDrop        = 19
 	fTwoHanded      = 93
 	fPhysDefenseMin = 65
 	fBlockRatio     = 74 // shields only; body armour carries the parry pair at 68
@@ -330,6 +338,20 @@ func itemRecord(cols []string) ([]string, bool) {
 		}
 		return s
 	}
+	// dropBit takes bit 0 of a mask column and emits it as 0/1. The engine reads
+	// CanDrop as `mask & 1`, and the column really is a mask -- 255, 128, 223
+	// and 192 all occur -- so emitting the raw byte would make every consumer
+	// repeat the masking or, worse, treat 255 as a boolean.
+	dropBit := func(s string) string {
+		n, err := strconv.Atoi(strings.TrimSpace(s))
+		if err != nil {
+			return "0"
+		}
+		if n&1 != 0 {
+			return "1"
+		}
+		return "0"
+	}
 	return []string{
 		get(fID),                 // 0  ID
 		get(fMaxStack),           // 1  MaxStack (col 57: 1 for equipment, real cap for stackables)
@@ -398,6 +420,9 @@ func itemRecord(cols []string) ([]string, bool) {
 		num(fReinforceMagMin),  // 38 ReinforceMagMin
 		num(fReinforceMagMax),  // 39 ReinforceMagMax
 		get(fSetID),            // 40 SetID
+		get(fCanTrade),         // 41 CanTrade
+		get(fCanSell),          // 42 CanSell
+		dropBit(get(fCanDrop)), // 43 CanDrop -- bit 0 of a mask column
 	}, true
 }
 

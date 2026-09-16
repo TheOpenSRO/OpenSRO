@@ -41,6 +41,10 @@ var itemCSVColumns = []string{
 	// like every block before it, so an export made for any earlier column
 	// count still loads and simply belongs to no set.
 	"SetID",
+	// Appended later still (the item capability flags): a strict suffix like
+	// every block before it, so an older export still loads and simply reports
+	// every item as unrestricted.
+	"CanTrade", "CanSell", "CanDrop",
 }
 
 // itemCSVRequiredColumns is the prefix every export must carry; the columns
@@ -185,6 +189,19 @@ func parseItemRow(f []string) (Item, error) {
 	// The item set, optional in the same way.
 	if len(f) > 40 {
 		it.SetID = parseInt(f[40])
+	}
+	// The capability flags, optional in the same way. An export that predates
+	// them leaves all three FALSE, which would forbid everything -- so the
+	// absence is read as "unrestricted" by the callers, not here. See
+	// equipment/trade call sites.
+	if len(f) > 41 {
+		it.CanTrade = parseBool(f[41])
+	}
+	if len(f) > 42 {
+		it.CanSell = parseBool(f[42])
+	}
+	if len(f) > 43 {
+		it.CanDrop = parseBool(f[43])
 	}
 
 	if err != nil {
