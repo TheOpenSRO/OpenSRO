@@ -454,7 +454,12 @@ func UseSkillHandler(
 
 		// THE WEAPON GATE, recovered from FUN_0058d480: a skill names up to two
 		// weapon type codes and the engine refuses the cast with error 0x300d
-		// when the equipped weapon matches neither. See combat.SkillAllowsWeapon
+		// when the equipped weapon matches neither.
+		//
+		// CONFIRMED FROM THE OTHER BINARY 2026-09-16: the client names 0x300d
+		// `UIIT_SKILL_USE_FAIL_WRONGWEAPON` (docs/protocol/error_codes.md).
+		// This was named "the weapon gate" from the server alone; the client
+		// agrees without having been consulted. See combat.SkillAllowsWeapon
 		// for the codes and how they were confirmed.
 		//
 		// A lookup failure permits the cast rather than refusing it. Reference

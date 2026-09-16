@@ -47,7 +47,17 @@ the name looked right — but it was this project's name, not the game's.
 
 Virtuals with **no base-class stub** leave no string and never appear here. That
 includes all four vtable calls in the cast-requirement check — slots 353, 372,
-399 and 400 — so the weapon and armour checks in `FUN_0058d480` stay unnamed.
+399 and 400.
+
+**Three of the four have since been given a MEANING by a different lever**
+(2026-09-16), which is worth recording because it shows what to reach for when
+the stub harvest comes up empty. `FUN_0058d480` returns error `0x300f` when slot
+`0x5d0` (372), `0x63c` (399) or `0x640` (400) returns 0, and the client names
+`0x300f` **`UIIT_SKILL_USE_FAIL_BROKEN_WEAPON`** (docs/protocol/error_codes.md).
+So all three are **serviceability checks**: a cast requirement wants the item
+present *and* not broken, and these are the second half. Their method NAMES are
+still unrecovered — an error code gives meaning, not a symbol — and slot 353
+remains unknown on both counts.
 
 ### Seven names sit at two slots, and that is not ambiguity
 

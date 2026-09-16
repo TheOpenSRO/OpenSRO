@@ -310,6 +310,18 @@ type EquippedType struct{ TypeID3, TypeID4 int }
 // and event skills (SKILL_MALL_NASRUN, SKILL_EVENT_NASRUN). Modelling it would
 // need the flag, which is not recovered -- so it passes rather than refusing a
 // cast on a condition this project cannot evaluate.
+// NOT MODELLED, and disclosed rather than silently skipped: the engine also
+// requires the matched item to be SERVICEABLE. FUN_0058d480 follows each
+// equipment match with a vtable call (slot 0x5d0 for the weapon, 0x63c and
+// 0x640 for the other slots) and returns error 0x300f when it fails -- which
+// the client names UIIT_SKILL_USE_FAIL_BROKEN_WEAPON
+// (docs/protocol/error_codes.md). So a broken item satisfies nothing.
+//
+// srrevamp has no per-instance durability: refdata.Item carries
+// DurabilityMin/Max as reference data, but an equipped item has no wear state,
+// so nothing can be broken. The check has nothing to apply to rather than being
+// omitted, and this note is here so that adding durability later comes with the
+// requirement already written down.
 func (r CastRequirement) Satisfied(worn []EquippedType) bool {
 	if r.Kind == CastReqFlagKind {
 		return true

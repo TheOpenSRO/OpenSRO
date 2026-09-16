@@ -6498,3 +6498,67 @@ checked-in tool was found and fixed.
 **Next step:** the category-4 inner jump table. Its preamble does not use the
 `sub`/`cmp`/`movzx` shape the walker looks for, so finding how MSVC dispatched
 that one switch is the whole remaining gap.
+
+## 2026-09-16 (sixteenth) — the weapon gate confirmed from the other binary
+
+The previous entry named the category-4 jump table as the whole remaining gap. It
+was, and it was one instruction:
+
+	7b9823:  add eax,0xffffcffd      <- `eax -= 0x3003`
+
+MSVC normalises a switch's case base with an **`add` of a negative immediate** as
+readily as with a `sub`, and the walker only knew `sub`. That single missing
+shape was the entire `0x30xx` family. **614 of 643 cases** now resolve.
+
+The progression is worth keeping, because every jump was a bug in the reader and
+none was new data:
+
+| | codes | what was wrong |
+|---|---|---|
+| first | 95 | — |
+| second | 445 | stopped at `jmp` with a push outstanding, dropping every case that uses the shared call tail |
+| third | 614 | knew only `sub eax,base`, not `add eax,<negative>` |
+
+### `0x300d` is `UIIT_SKILL_USE_FAIL_WRONGWEAPON`
+
+Four ticks ago this project named `FUN_0058d480` "the weapon gate" from the
+**server alone**, reasoning from the code it returns when the equipped weapon
+matches neither of a skill's `ReqCastWeapon` bytes. The client names that code
+`SKILL_USE_FAIL_WRONGWEAPON`. The whole reading — the gate, the two bytes, the
+`TID >> 11` comparison, srrevamp's "wrong weapon for this skill" — confirmed from
+a binary that was never consulted about it.
+
+Its neighbours came with it: `0x3003 NOTLEARN`, `0x3006 WRONGTARGET`, `0x300f
+BROKEN_WEAPON`.
+
+### An error code named three vtable slots
+
+`docs/protocol/igobj_vtable.md` lists slots 353, 372, 399 and 400 as unreachable:
+they have no base-class stub, so the harvest that named 209 others leaves no
+string for them. But `FUN_0058d480` returns `0x300f` when slot `0x5d0` (372),
+`0x63c` (399) or `0x640` (400) returns 0 — and `0x300f` is **BROKEN_WEAPON**.
+
+So all three are **serviceability checks**: a cast requirement wants the item
+present *and* not broken, and these are the second half. That is a meaning, not a
+symbol — their method names are still unrecovered, and slot 353 is unknown on
+both counts. Worth recording as a technique: when the stub harvest comes up
+empty, the error a function returns on that path can still say what the call was
+for.
+
+### A requirement srrevamp cannot yet apply
+
+`combat.CastRequirement.Satisfied` now records that the engine also demands the
+matched item be serviceable. srrevamp has no per-instance durability —
+`refdata.Item` carries DurabilityMin/Max as reference data, but an equipped item
+has no wear state — so nothing can be broken and the check has nothing to apply
+to. Disclosed in place rather than silently skipped, so that adding durability
+later comes with the requirement already written down.
+
+**What moved:** the error vocabulary is effectively complete (614/643); the
+weapon-gate recovery has independent confirmation; three vtable slots the
+previous lever could not reach have their purpose.
+
+**Next step:** 614 codes now name refusals across the whole server. Grepping the
+server for `mov ax,0x<code>` returns and joining against this table would label
+a large number of failure paths at once -- a naming lever over functions, not
+just constants.

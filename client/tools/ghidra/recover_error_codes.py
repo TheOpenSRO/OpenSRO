@@ -163,8 +163,16 @@ def main():
             if mn2 == "movzx" and mm and idxtab is None:
                 idxtab = int(mm.group(1), 16)
             ms = re.fullmatch(r"e[a-z]x,0x([0-9a-f]+)", op2)
-            if mn2 == "sub" and ms and base is None:
-                base = int(ms.group(1), 16)
+            if ms and base is None:
+                v = int(ms.group(1), 16)
+                if mn2 == "sub":
+                    base = v
+                elif mn2 == "add" and v >= 0x80000000:
+                    # MSVC normalises the case base with an ADD of a negative
+                    # immediate as often as with a SUB: `add eax,0xffffcffd` is
+                    # `eax -= 0x3003`. Missing this shape cost the entire 0x30xx
+                    # family, 70 cases including 0x300d.
+                    base = (1 << 32) - v
             if mn2 == "cmp" and ms and count is None:
                 count = int(ms.group(1), 16)
         if base is None or count is None:
