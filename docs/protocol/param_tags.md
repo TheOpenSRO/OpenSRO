@@ -126,23 +126,132 @@ files contains a single `SetParam` call, which is exactly why they are compatibl
 with the enumeration above.
 
 So the accurate claim is narrow: **these seven are not character-stat modifiers.**
-What they *are* instead is not recovered here — plausible readings exist for some
-of them (`dura` for a duration, say) but nothing in this pass settles one, and
-this project has been wrong twice guessing a tag from its abbreviation.
+
+**SUPERSEDED 2026-09-16 — what they ARE is now recovered.** This paragraph used
+to say their meaning was unknown and warned off guessing (`dura` "for a
+duration, say"). `magicoption.txt` names all seven outright, and the guess
+floated here was wrong: `dura` is **MATTR_DEC_MAXDUR**, durability, not
+duration. See the MATTR table below.
 
 `luck` deserves its own note: it does not modify a stat, even though the client
 ships a `PARAM_LUCK` = "Lucky" localisation string and displays it. The separate
-tag `luca` **is** live, so do not read this as "luck does nothing in the game".
+tag `luca` **is** live (MATTR_AVATAR_LUCK), so do not read this as "luck does
+nothing in the game".
 
-## Unresolved
+## Previously unresolved — now NAMED by the game's own data (2026-09-16)
 
-15 of the 53 tags are recognised and do reach a param, but through paths this
-pass does not follow (read-modify-write via `ParamKeeper_GetParam`, or ids the
-dataflow could not pin):
+15 of the 53 tags reach a param through paths the dispatcher pass could not
+follow. All 15 are now named, and **not by guessing the abbreviation**: the
+client's `magicoption.txt` stores each item magic-option's stat tag as a
+big-endian multi-char literal beside its `MATTR_*` code name, so the table
+states the mapping outright.
 
-> `ape`, `duru`, `hr`, `inta`, `intj`, `luca`, `mdia`, `nrep`, `rcsi`, `rdii`,
-> `rein`, `reis`, `rfei`, `rsli`, `rsti`
+| tag | the game's own name |
+|---|---|
+| `ape` | MATTR_APE |
+| `duru` | MATTR_DUR |
+| `hr` | MATTR_HR |
+| `inta` | MATTR_AVATAR_INT |
+| `intj` | MATTR_INT_3JOB |
+| `luca` | MATTR_AVATAR_LUCK |
+| `mdia` | MATTR_AVATAR_MDIA |
+| `nrep` | MATTR_NOT_REPARABLE |
+| `rcsi` | MATTR_RESIST_CSMP |
+| `rdii` | MATTR_RESIST_DISEASE |
+| `rein` | MATTR_REINFORCE_ITEM |
+| `reis` | MATTR_REINFORCE_ITEM_SET |
+| `rfei` | MATTR_RESIST_FEAR |
+| `rsli` | MATTR_RESIST_SLEEP |
+| `rsti` | MATTR_RESIST_STUN |
 
-Do not guess these from the abbreviation. The client's `PARAM_*` localisation
-keys are the game's own wording and have already corrected this project twice
-(`era` is *parry*, not evasion; `hra` is *attack rate*, not hit rate).
+Seven of them are **resistances** (`rsli`, `rsti`, `rfei`, `rdii`, `rcsi`, plus
+the already-known `bu`/`es`/`fz`/`ps`/`zb`), which is why they never appeared in
+the stat dispatcher's damage paths.
+
+### This CONFIRMS the "not a stat modifier" explanation with data
+
+The seven tags the dispatcher recognises and ignores were explained as item
+condition fields rather than character stats — an argument built on
+`PARAM_REPAIRING_CHARGES` sitting beside `PARAM_DURA` in the client's key set.
+`magicoption.txt` settles it outright:
+
+	dura -> MATTR_DEC_MAXDUR        (decrease maximum durability)
+	rep  -> MATTR_REPAIR
+	nrep -> MATTR_NOT_REPARABLE
+	soli -> MATTR_SOLID
+	astr -> MATTR_ASTRAL
+	atha -> MATTR_ATHANASIA
+	luck -> MATTR_LUCK
+
+Durability, repair and not-repairable are unambiguously **item** properties. A
+stat dispatcher skipping them is correct behaviour, now on the game's own naming
+rather than on an abbreviation argument. The earlier tier-2 caveat on `rep` can
+be dropped.
+
+## The full tag → MATTR map
+
+56 tags appear in `magicoption.txt`. Where a tag has several `MATTR_*` variants
+(base, `_SET`, avatar, event) the shortest is shown.
+
+| tag | MATTR name |
+|---|---|
+| `2d` | MATTR_HP |
+| `ape` | MATTR_APE |
+| `astr` | MATTR_ASTRAL |
+| `atha` | MATTR_ATHANASIA |
+| `bri` | MATTR_BLOCKRATE |
+| `brna` | MATTR_NASRUN_BLOCKRATE |
+| `bu` | MATTR_RESIST_BURN |
+| `cri` | MATTR_CRITICAL |
+| `dara` | MATTR_AVATAR_DARA |
+| `dn` | MATTR_REGENHPMP |
+| `drua` | MATTR_AVATAR_DRUA |
+| `dura` | MATTR_DEC_MAXDUR |
+| `duru` | MATTR_DUR |
+| `er` | MATTR_ER |
+| `era` | MATTR_AVATAR_ER |
+| `es` | MATTR_RESIST_ESHOCK |
+| `evbl` | MATTR_EVADE_BLOCK |
+| `evcr` | MATTR_EVADE_CRITICAL |
+| `fz` | MATTR_RESIST_FROSTBITE |
+| `hp` | MATTR_HP |
+| `hpa` | MATTR_AVATAR_HP |
+| `hpmp` | MATTR_REGENHPMP |
+| `hpna` | MATTR_NASRUN_HPNA |
+| `hprg` | MATTR_AVATAR_HPRG |
+| `hr` | MATTR_HR |
+| `hra` | MATTR_AVATAR_HR |
+| `int` | MATTR_INT |
+| `inta` | MATTR_AVATAR_INT |
+| `intj` | MATTR_INT_3JOB |
+| `intv` | MATTR_INT_AVATAR |
+| `luca` | MATTR_AVATAR_LUCK |
+| `luck` | MATTR_LUCK |
+| `mdia` | MATTR_AVATAR_MDIA |
+| `mp` | MATTR_MP |
+| `mpa` | MATTR_AVATAR_MP |
+| `mpna` | MATTR_NASRUN_MPNA |
+| `mprg` | MATTR_AVATAR_MPRG |
+| `nrep` | MATTR_NOT_REPARABLE |
+| `nx` | MATTR_REGENHPMP |
+| `ps` | MATTR_RESIST_POISON |
+| `rals` | MATTR_RESIST_ALL_SET |
+| `rcsi` | MATTR_RESIST_CSMP |
+| `rdii` | MATTR_RESIST_DISEASE |
+| `rein` | MATTR_REINFORCE_ITEM |
+| `reis` | MATTR_REINFORCE_ITEM_SET |
+| `rep` | MATTR_REPAIR |
+| `rfei` | MATTR_RESIST_FEAR |
+| `rsli` | MATTR_RESIST_SLEEP |
+| `rsti` | MATTR_RESIST_STUN |
+| `soli` | MATTR_SOLID |
+| `str` | MATTR_STR |
+| `stra` | MATTR_AVATAR_STR |
+| `strj` | MATTR_STR_3JOB |
+| `strv` | MATTR_STR_AVATAR |
+| `umdu` | MATTR_NASRUN_UMDU |
+| `zb` | MATTR_RESIST_ZOMBIE |
+
+Note `magicoption.txt` names a tag's MEANING, not its param id. The id still
+comes from `Stat_ApplyTaggedModifier` or the skill-code join; this table is what
+each tag IS.

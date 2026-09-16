@@ -5108,3 +5108,52 @@ renumbering, which would orphan existing progress.
 **What moved:** no value. A bug class opened last tick is now bounded by an audit,
 and the one remaining instance of it is documented at the site with the fix
 prescribed in advance.
+
+## The stat-tag vocabulary is complete: magicoption.txt names every tag (2026-09-16)
+
+Fifteen tags were left explicitly unresolved by the dispatcher passes, with the
+instruction not to guess them from their abbreviations. The client's
+**`magicoption.txt`** names all fifteen outright — it stores each item
+magic-option's stat tag as a big-endian multi-char literal in the same row as its
+`MATTR_*` code name, so the mapping is stated rather than inferred.
+
+	rsli -> MATTR_RESIST_SLEEP        rsti -> MATTR_RESIST_STUN
+	rfei -> MATTR_RESIST_FEAR         rdii -> MATTR_RESIST_DISEASE
+	rcsi -> MATTR_RESIST_CSMP         nrep -> MATTR_NOT_REPARABLE
+	rein -> MATTR_REINFORCE_ITEM      reis -> MATTR_REINFORCE_ITEM_SET
+	duru -> MATTR_DUR                 hr   -> MATTR_HR
+	ape  -> MATTR_APE                 intj -> MATTR_INT_3JOB
+	inta -> MATTR_AVATAR_INT          luca -> MATTR_AVATAR_LUCK
+	mdia -> MATTR_AVATAR_MDIA
+
+Five of them are resistances, which is why they never surfaced in the damage
+paths the earlier passes walked. **56 tags in total** appear in the table; the
+full map is in `param_tags.md`.
+
+### It settles an argument, and corrects a guess this project floated
+
+The seven tags `Stat_ApplyTaggedModifier` recognises and ignores were explained
+as **item condition fields rather than character stats**. That explanation rested
+on `PARAM_REPAIRING_CHARGES` sitting beside `PARAM_DURA` in the client's key set
+— suggestive, and labelled tier-2 at the time. The table settles it with the
+game's own naming:
+
+	dura -> MATTR_DEC_MAXDUR    rep  -> MATTR_REPAIR    nrep -> MATTR_NOT_REPARABLE
+	soli -> MATTR_SOLID         astr -> MATTR_ASTRAL    atha -> MATTR_ATHANASIA
+	luck -> MATTR_LUCK
+
+Decrease-max-durability, repair and not-repairable are unambiguously item
+properties. A stat dispatcher skipping them is correct behaviour, now on data
+rather than on an abbreviation argument.
+
+**And it corrects one guess.** The superseded paragraph in `param_tags.md`
+floated "`dura` for a duration, say" while warning against exactly that kind of
+reading. `dura` is **durability**. The warning was right and the parenthetical
+was wrong; both are now marked.
+
+`PARAM_REPAIRING_CHARGES` → `rep` is promoted out of tier 2 in
+`param_names.md`, since MATTR_REPAIR names it directly.
+
+**What moved:** no value. The tag vocabulary went from 31 resolved + 15 unknown +
+7 argued to **56 named from the game's own data**, one floated guess is corrected
+in place, and a tier-2 caveat is retired.

@@ -48,7 +48,7 @@ later pass can settle them at a use-site, not so they can be quoted as answers.
 
 | client key | candidate | why it is only a candidate |
 |---|---|---|
-| `PARAM_REPAIRING_CHARGES` | `rep` | prefix only; but see the note below |
+| ~~`PARAM_REPAIRING_CHARGES`~~ | ~~`rep`~~ | **PROMOTED 2026-09-16**: `magicoption.txt` gives `rep` the name MATTR_REPAIR outright, so this is no longer an abbreviation argument |
 | `PARAM_LIFE_STEAL` | `lfst` | initials, not the string |
 | `PARAM_TIME_BOMB` | `tb` | initials |
 | `PARAM_RESU` | `resu` | exact, but `resu` has no confirmed server id yet |
