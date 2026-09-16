@@ -93,9 +93,36 @@ read as `clamp((attackerLevel - defenderLevel) * 0.03, 0, 0.3)` and both
 constants cited. **Stage 16 is now shipped too**, as `combat.ApplyFloorBand`,
 wired into `combat.ResolveBlow` after the level term.
 
-**Stage 15** (the Str ratio) stays unwired: it is `combat.StrLevelDamageRatio`,
-exact and tested, but `ResolveBlow` is not given the attacker's Str or level-cap
-and threading them through is a caller change rather than a formula question.
+**Stage 15** (the Str ratio) stays unwired, and the reason is now measured
+rather than procedural. Threading the Str through is trivial — it was done, it
+compiles, and it changes seven integration tests by exactly the predicted
+factor. The blocker is the INPUT.
+
+The ratio is calibrated against the engine's stat scale, and that scale is not
+readable: `GObjPC_InitStats` publishes `charData+0x74` into param 1, and that
+column comes from a table this project does not have (`_REFCHARGEN`). The one
+statement the binary does make about the scale is the ratio's own ceiling —
+solving `1.2 = (Str + 2L + 14) / (6*(L+7))` gives **Str = 5.2*L + 36.4**, the
+point past which more Str does nothing (`combat.StrForMaxRatio`).
+
+Against that, srrevamp's stats are systematically low:
+
+| level | srrevamp Str, all points invested | engine ceiling |
+|---|---|---|
+| 1 | 20 | 41.6 |
+| 20 | 96 | 140.4 |
+| 50 | 216 | 296.4 |
+
+So every srrevamp character lands below 1.0 on a multiplier the engine designed
+to straddle 1. Wiring it would apply an exactly-recovered formula to a
+differently-scaled input and produce a flat ~25% damage cut that is an artifact
+of `character.StartingStr` — which is own design — rather than anything
+recovered. `combat.TestSrrevampStatScaleIsBelowTheEnginesCeiling` fails the day
+that stops being true, so the decision gets revisited deliberately instead of by
+drift.
+
+**Grounding `character.StartingStr` is the unblocker**, and the ledger already
+names where it lives: `_REFCHARGEN`.
 
 ### srrevamp's order against the engine's
 

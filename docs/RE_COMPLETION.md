@@ -10408,3 +10408,41 @@ it is correctly gated rather than silently reshaping everything.
 the attacker's Str or level cap. Threading those through is a caller change, not
 a formula question — that is the next concrete step for this system.
 
+## 2026-09-16 — stage 15 wired, measured, and deliberately reverted
+
+The last reachable stage of the damage pipeline. Threading the attacker's Str
+through `ResolveBlow` is a small change: it compiles, it runs, and it moves
+seven integration tests by exactly the predicted factor — a level-1 character
+with Str 20 gives `(20 + 2 + 14) / (6*8) = 0.75`, and every failing expectation
+moved by exactly that. The mechanism works.
+
+**It was reverted, because the input is not the engine's.** The ratio is
+calibrated against the engine's stat scale, and that scale is not readable:
+`GObjPC_InitStats` publishes `charData+0x74` into param 1 (the column
+`GObjPC::SetStr` writes), so a character's Str comes from a table this project
+does not have.
+
+**What the binary does say about the scale** is the ratio's own ceiling. Solving
+`1.2 = (Str + 2L + 14) / (6*(L+7))` gives **Str = 5.2*L + 36.4** — past which
+more Str does nothing. Against it, srrevamp's stats are low at every level: 20
+against 41.6 at level 1, 96 against 140.4 at 20, 216 against 296.4 at 50.
+
+So every srrevamp character would sit below 1.0 on a multiplier the engine
+designed to straddle 1, and wiring it would ship a flat ~25% damage cut that is
+an artifact of `character.StartingStr` — own design — rather than anything
+recovered. That is the failure mode this project's first rule names, arriving
+by the back door: an exactly-recovered formula does not make its output real
+when its input is invented.
+
+**Shipped instead**: `combat.StrForMaxRatio` and `IntForMaxRatio`, the ceiling
+solutions, as algebra on the already-recovered constants. They are the yardstick
+any future attempt to ground `character.StartingStr` should be measured against.
+Two tests: one proving the solutions hit the clamp exactly and one point below
+does not, and one asserting srrevamp's scale is still under the ceiling — which
+FAILS the day that stops being true, so the decision to leave stage 15 unwired
+gets revisited deliberately rather than by drift.
+
+**The unblocker is named and unchanged**: `_REFCHARGEN`, which this ledger
+already identifies as where starting Str lives. Grounding it makes stage 15 a
+five-line change.
+

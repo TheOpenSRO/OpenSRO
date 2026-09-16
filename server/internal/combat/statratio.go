@@ -85,3 +85,33 @@ func clampStatRatio(num, den float64) float64 {
 	}
 	return r
 }
+
+// StrForMaxRatio and IntForMaxRatio are the stat values at which each ratio
+// reaches its 1.2 ceiling -- i.e. the point past which more of that stat does
+// nothing. They are algebra on the recovered constants, not a new measurement:
+//
+//	1.2 = (Str + 2L + 14) / (6*(L+7))   =>  Str = 5.2*L + 36.4
+//	1.2 =  Int            / (4*(L+7))   =>  Int = 4.8*L + 33.6
+//
+// WHY THIS IS WORTH HAVING. The ratio is only meaningful relative to the stat
+// scale it was calibrated against, and that scale is not otherwise readable:
+// the engine takes a character's Str from charData, `GObjPC_InitStats`
+// publishing `charData+0x74` into param 1, and that column comes from a table
+// this project does not have. These two lines are the one statement the binary
+// DOES make about the intended scale, so they are the yardstick for any future
+// attempt to ground character.StartingStr.
+//
+// Measured against srrevamp's own numbers, which is why stage 15 of the damage
+// pipeline is not wired: a character putting every point into Str reaches
+// `StartingStr + 4*(level-1)` = 20, 96 and 216 at levels 1, 20 and 50, against
+// an engine ceiling of 41.6, 140.4 and 296.4. srrevamp's stats sit below the
+// scale the ratio expects at every level, so feeding them in produces a
+// systematic multiplier under 1 -- an artifact of our Str, not a recovered
+// value. See docs/protocol/damage_pipeline.md.
+func StrForMaxRatio(level int) float64 {
+	return 5.2*float64(level) + 36.4
+}
+
+func IntForMaxRatio(level int) float64 {
+	return 4.8*float64(level) + 33.6
+}

@@ -103,3 +103,40 @@ func TestNonPCConstantIsOne(t *testing.T) {
 		t.Errorf("StatRatioNonPC = %v, want 1.0 (the `fld1` behind the IsPC gate)", StatRatioNonPC)
 	}
 }
+
+// The ceiling solutions must actually hit the clamp, and one point below must
+// not. This is what makes them algebra on the constants rather than a claim.
+func TestStatCeilingSolutionsReachTheClampExactly(t *testing.T) {
+	for _, level := range []int{1, 7, 20, 50, 110, 140} {
+		s := StrForMaxRatio(level)
+		if got := StrLevelDamageRatio(int(math.Ceil(s)), level); got != StatRatioClamp {
+			t.Errorf("level %d: Str %v should reach the clamp, gave %v", level, math.Ceil(s), got)
+		}
+		if got := StrLevelDamageRatio(int(math.Floor(s))-1, level); got >= StatRatioClamp {
+			t.Errorf("level %d: Str just below %v should NOT clamp, gave %v", level, s, got)
+		}
+		i := IntForMaxRatio(level)
+		if got := IntLevelDamageRatio(int(math.Ceil(i)), level); got != StatRatioClamp {
+			t.Errorf("level %d: Int %v should reach the clamp, gave %v", level, math.Ceil(i), got)
+		}
+		if got := IntLevelDamageRatio(int(math.Floor(i))-1, level); got >= StatRatioClamp {
+			t.Errorf("level %d: Int just below %v should NOT clamp, gave %v", level, i, got)
+		}
+	}
+}
+
+// srrevamp's own stat scale sits below the engine's at every level, which is
+// the measured reason stage 15 stays unwired. If character.StartingStr or the
+// growth ever rises to meet it, this test fails and the decision gets revisited
+// deliberately rather than by drift.
+func TestSrrevampStatScaleIsBelowTheEnginesCeiling(t *testing.T) {
+	// 20 starting, 4 a level at full investment -- character.StartingStr plus
+	// StatGrowthPerLevel plus leveldata.StatPointsPerLevel.
+	srrevampStr := func(level int) float64 { return 20 + 4*float64(level-1) }
+	for _, level := range []int{1, 20, 50, 110} {
+		if ours, ceiling := srrevampStr(level), StrForMaxRatio(level); ours >= ceiling {
+			t.Errorf("level %d: srrevamp Str %v has reached the engine's ceiling %v -- "+
+				"revisit wiring stage 15", level, ours, ceiling)
+		}
+	}
+}
