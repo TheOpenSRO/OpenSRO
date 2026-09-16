@@ -6200,9 +6200,12 @@ which has its own `## Illegal ##` stubs and its own hierarchy -- the tool takes 
 
 The previous entry said the `## Illegal ##` harvest should "run unchanged" on the
 client dump. **The client dump contains zero such strings** — 16 `Class::Method`
-strings in total, against the server's 213 — and there is no client binary on the
-RE box for the `.rdata` half to read. That idiom is a server-side debugging
+strings in total, against the server's 213. That idiom is a server-side debugging
 convention, not an engine-wide one.
+
+(This paragraph also said "there is no client binary on the RE box". **That was
+wrong** — see the correction in the thirteenth entry. The stub finding stands on
+its own; the binary claim was an unchecked aside.)
 
 One grep, before any work. That is the fifth handoff sentence in this run to
 carry an unchecked claim, and the first to cost nothing, because the claim was
@@ -6282,10 +6285,12 @@ full, `0x183e` berserk charges, …) — **129 distinct** `0x18xx`/`0x30xx`
 immediates, the commonest being `0x1809` (19 sites), `0x1811` (18), `0x1806`
 (15). A code→name table would name that many failure paths at once.
 
-There is none to harvest. The server carries just **9** `UIIT_` strings, and they
-are passed as message *names* on paths that send text, not as labels for the
-numeric codes. The mapping lives client-side, and there is no client binary on
-the RE box. Closed until there is one.
+There is none *in the server* to harvest: it carries just **9** `UIIT_` strings,
+passed as message *names* on paths that send text, not as labels for the numeric
+codes. The mapping lives client-side.
+
+**"and there is no client binary on the RE box" was wrong** — see the correction
+below.
 
 ### A third capacity cap, and the first two confirmed in assembly
 
@@ -6313,3 +6318,49 @@ in assembly rather than through the decompiler.
 **Next step:** the client binary is the blocker for both the error-code table and
 the `## Illegal ##` harvest's client half. Getting `SRO_Client.exe` onto the RE
 box would unblock both at once -- worth more than either dig alone.
+
+## 2026-09-16 (thirteenth) — retraction: the client binary was on the box all along
+
+Two entries above claimed "there is no client binary on the RE box". **Both are
+wrong.** There are three copies and a Ghidra project:
+
+	/opt/sro-files/client/sro_client.exe          (11.5 MB)
+	/opt/sro-files/client/sro_client_NODLL.exe
+	/mnt/silkroad/pserver/client/sro_client.exe
+	/home/ghidra/re_client/sro_client_re.gpr
+
+It could hardly have been otherwise — the 43,460-function client dump was made
+from something. A `find` took seconds and was not run, because the claim entered
+as an aside to a different finding and was never treated as a claim.
+
+**This is the sixth unchecked assertion in this run, and the first to reach a
+pushed commit.** The previous five were caught in the next tick's opening grep.
+The difference is that those were load-bearing "next step" sentences, which now
+get checked by habit, while this one rode along inside a conclusion about
+something else. The habit needs to cover asides, not just handoffs.
+
+### What is actually true about the error-code lever
+
+Rechecked with the binary in hand, so this replaces the closed-off version:
+
+- The client dump carries **1,133 distinct `UIIT_` message names** (the server
+  has 9).
+- `UI_SILKMALL::FUN_007b8b40` is the client's server-error dispatcher: a single
+  switch over **643 distinct case values**, including the `0x18xx`/`0x30xx`
+  codes the server returns.
+- But it does **not** resolve them to text inline. Each case either `break`s or
+  calls a helper (`FUN_0046e3d0`, 435 call sites across the dump) with the code
+  in a register, so the code→text mapping is data-driven rather than a literal
+  table in the switch.
+
+So the lever is **not blocked by a missing binary** — it is blocked by the
+mapping living behind a helper and the text tables. An earlier version of this
+entry said "found it" on seeing the switch; that was premature, and the
+extraction that followed mapped 222 codes onto one string because it was reading
+the dump's header annotation rather than the function body.
+
+**What moved:** a false blocker removed, the real one named, and the dispatcher
+located with a citable size.
+
+**Next step:** `FUN_0046e3d0` — what it does with the code, and whether the text
+id it produces is derivable. That is the whole 643-code vocabulary if it resolves.
