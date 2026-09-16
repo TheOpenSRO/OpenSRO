@@ -204,7 +204,21 @@ func main() {
 	w := csv.NewWriter(sink)
 	defer w.Flush()
 
-	written, skipped := 0, 0
+	// The client's itemdata shards OVERLAP. Measured 2026-09-16 over a real
+	// client's tables: 6,224 of 15,338 item ids appear in more than one shard,
+	// and 608 of those carry genuinely different values -- itemdata_1000.txt
+	// and itemdata_5000.txt disagree on shield defence (1.3 against 1.25),
+	// which is an older copy of the table sitting beside a newer one.
+	//
+	// Streaming every row straight out would put both copies in the CSV and
+	// leave which one reaches the database up to the importer's upsert order,
+	// i.e. up to the order the operator's shell happened to glob the files in.
+	// So rows are collected keyed by id, LAST occurrence wins (the same rule
+	// the upsert follows, now made explicit rather than accidental), and the
+	// operator is told what collided.
+	written, skipped, dupes, conflicts := 0, 0, 0, 0
+	order := []string{}
+	byID := map[string][]string{}
 	for _, path := range flag.Args() {
 		rows, err := readTable(path)
 		if err != nil {
@@ -217,15 +231,52 @@ func main() {
 				skipped++
 				continue
 			}
-			if err := w.Write(rec); err != nil {
-				fmt.Fprintf(os.Stderr, "writing: %v\n", err)
-				os.Exit(1)
+			id := rec[0]
+			if prev, seen := byID[id]; seen {
+				dupes++
+				if !sameRecord(prev, rec) {
+					conflicts++
+				}
+			} else {
+				order = append(order, id)
 			}
-			written++
+			byID[id] = rec
 		}
+	}
+	for _, id := range order {
+		if err := w.Write(byID[id]); err != nil {
+			fmt.Fprintf(os.Stderr, "writing: %v\n", err)
+			os.Exit(1)
+		}
+		written++
 	}
 	w.Flush()
 	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d %s rows, skipped %d non-%s rows\n", written, noun, skipped, noun)
+	if dupes > 0 {
+		fmt.Fprintf(os.Stderr, "export-refdata: %d duplicate ids across the input files, %d of them with CONFLICTING values; kept the last occurrence of each\n", dupes, conflicts)
+	}
+}
+
+// sameRecord reports whether two CSV records are equal field for field, with
+// numbers compared as numbers. The shards disagree on formatting far more often
+// than on substance -- the same value appears as "0" in one table and "0.0" in
+// another -- and reporting those as conflicts would bury the 608 that matter in
+// thousands that do not.
+func sameRecord(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] == b[i] {
+			continue
+		}
+		x, errX := strconv.ParseFloat(a[i], 64)
+		y, errY := strconv.ParseFloat(b[i], 64)
+		if errX != nil || errY != nil || x != y {
+			return false
+		}
+	}
+	return true
 }
 
 // itemRecord maps one tab-split itemdata row to the 28-column CSV

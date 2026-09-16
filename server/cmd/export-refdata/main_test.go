@@ -260,3 +260,30 @@ func TestUnverifiedMaxColumnsAreNotExported(t *testing.T) {
 			it.HitRateMin, it.HitRateMax, it.CriticalMin, it.CriticalMax)
 	}
 }
+
+// TestSameRecordComparesNumbersAsNumbers covers the distinction that makes the
+// duplicate report useful. A real client's itemdata shards overlap on 6,224 of
+// 15,338 ids, but 5,616 of those differ only in how a number is written -- "0"
+// in one table against "0.0" in another. Reporting those as conflicts would
+// bury the 608 that genuinely disagree.
+func TestSameRecordComparesNumbersAsNumbers(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		a, b []string
+		want bool
+	}{
+		{"identical", []string{"4", "60", "0"}, []string{"4", "60", "0"}, true},
+		{"0 against 0.0 is the same value", []string{"4", "0"}, []string{"4", "0.0"}, true},
+		{"1.3 against 1.30 is the same value", []string{"7", "1.3"}, []string{"7", "1.30"}, true},
+		{"1.3 against 1.25 is a real conflict", []string{"7", "1.3"}, []string{"7", "1.25"}, false},
+		{"text fields still compare exactly", []string{"ITEM_A"}, []string{"ITEM_B"}, false},
+		{"a number against text is a conflict", []string{"1"}, []string{"one"}, false},
+		{"different lengths are never equal", []string{"1", "2"}, []string{"1"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sameRecord(tc.a, tc.b); got != tc.want {
+				t.Errorf("sameRecord(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
+}

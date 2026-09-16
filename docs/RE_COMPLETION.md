@@ -4881,3 +4881,48 @@ failed by returning a confident "0 rows matched".
 monster table is now verified rather than asserted, the one two-hop derivation
 is confirmed end to end, and there is a tool to re-run after anyone edits the
 table.
+
+## The client's itemdata shards overlap, and the exporter did not notice (2026-09-16)
+
+Last tick verified the hardcoded monster numbers. The same provenance question
+applies to a far bigger surface — the ~15,000 items `export-refdata` reads out of
+the client's own tables — except there the risk is not a mistyped constant but a
+wrong column index or a bad assumption about the input files.
+
+**The column map checks out.** Verified against independent anchors this project
+already records: `ITEM_CH_SWORD_01_A` reads Price **890** and SellPrice **427**
+at `fPrice`/`fSellPrice` — exactly the "Copper Sword 890 buy, 427 sell" in
+`shop.go` — and `ITEM_ETC_HP_POTION_01` reads MaxStack **5000**, matching the
+test fixture. The indices are right.
+
+**The input files are not what the exporter assumes.** Two measurements:
+
+- **itemdata rows come in two widths**, 161 fields (15,338 rows) and 160 (6,224).
+  That one is harmless: the 161st is a trailing empty field, so no index shifts.
+  characterdata (105) and skilldata (119) are uniform.
+- **The shards OVERLAP.** Of 15,338 distinct item ids, **6,224 appear in more
+  than one shard**. Comparing numbers as numbers rather than as text, 5,616 of
+  those are the same row written differently (`0` against `0.0`) — but **608
+  genuinely disagree**. `itemdata_1000.txt` and `itemdata_5000.txt` give
+  `ITEM_CH_SHIELD_01_A` a defence of 1.3 and 1.25 respectively; the shields drift
+  by a few hundredths across a whole block of ids. One is an older copy of the
+  table sitting beside a newer one.
+
+The shards are supposed to be disjoint id ranges. They are not.
+
+**What that meant in practice.** `export-refdata` streamed every row from every
+file with no duplicate detection, so a shell glob put both copies in the CSV and
+left which one reached the database to the importer's upsert order — that is, to
+the order the operator's shell happened to expand `itemdata_*.txt`. The outcome
+was correct only by accident, and silently wrong if the glob order changed.
+
+**Fixed**: rows are now collected keyed by id with the LAST occurrence winning —
+the same rule the upsert already followed, made explicit instead of accidental —
+and the exporter reports how many ids collided and how many of those actually
+conflicted. `sameRecord` compares numbers as numbers, because reporting 5,616
+formatting differences would bury the 608 that matter.
+
+**What moved:** no shipped number changed. An unnoticed dependency on shell glob
+order became a deterministic rule with a diagnostic behind it, and the 608 real
+conflicts are now visible to whoever runs the import instead of being resolved
+silently.
