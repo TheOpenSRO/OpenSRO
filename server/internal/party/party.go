@@ -52,9 +52,35 @@ const MaxSize = 8
 // collapse into one number and the engine keeps them apart.
 const MaxSizeNotShared = 4
 
+// MinLevelToCreate is the character level required to START a party: **5**,
+// RECOVERED. Two entry points check it and both read the same way:
+//
+//	513fe2  mov  eax,[edx+0x124]   <- vtable slot 73 = IGObj::GetLevel
+//	513fea  call eax
+//	513fec  cmp  al,0x5
+//	513fee  jae  ok                <- level 5 or higher may create
+//	513ff0  mov  ax,0x2c0a         <- else PARTYERR_TOO_LOW_CREATOR_LEVEL
+//
+// and identically at 00514218 in FUN_00514170, on the branch taken when the
+// character is not already in a party.
+//
+// JOINING HAS NO LEVEL REQUIREMENT, which is the more surprising half and is
+// why both sites were read rather than one. FUN_00514170 reaches the level check
+// only when its party pointer is null; with a party in hand it compares against
+// that party instead and answers 0x2c1d. The client does carry a
+// PARTYERR_OUT_OF_LEVEL string, but **the server never returns that code** --
+// `0x2c07` appears nowhere in its .text -- so whatever enforces a level range
+// between members is not here.
+const MinLevelToCreate = 5
+
 // ErrPartyFull is returned by Hub.Join when the party already has MaxSize
 // members.
 var ErrPartyFull = errors.New("party: party is full")
+
+// ErrLeaderLevelTooLow is returned by Hub.Create when the would-be leader is
+// below MinLevelToCreate. The engine's own refusal is
+// PARTYERR_TOO_LOW_CREATOR_LEVEL.
+var ErrLeaderLevelTooLow = errors.New("party: leader level too low to create a party")
 
 // ErrPartyNotFound is returned by Hub.Join when partyID doesn't exist.
 var ErrPartyNotFound = errors.New("party: no such party")
@@ -72,6 +98,9 @@ type Member struct {
 	Session     *gateway.Session
 	CharacterID int64
 	Name        string
+	// Level is the character's level. Only Hub.Create reads it, to enforce
+	// MinLevelToCreate; joining carries no level requirement in the engine.
+	Level int
 }
 
 // Party is a group of characters, one of whom is the leader.
@@ -104,6 +133,10 @@ func NewHub() *Hub {
 func (h *Hub) Create(leader Member) (*Party, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	if leader.Level < MinLevelToCreate {
+		return nil, ErrLeaderLevelTooLow
+	}
 
 	if _, in := h.characterToID[leader.CharacterID]; in {
 		return nil, ErrAlreadyInParty

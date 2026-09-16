@@ -8,7 +8,7 @@ import (
 )
 
 func member(id uint64, characterID int64, name string) Member {
-	return Member{Session: gateway.NewTestSession(id), CharacterID: characterID, Name: name}
+	return Member{Session: gateway.NewTestSession(id), CharacterID: characterID, Name: name, Level: MinLevelToCreate}
 }
 
 func TestCreateParty(t *testing.T) {
@@ -208,7 +208,7 @@ func TestMaxSizeMatchesTheEngine(t *testing.T) {
 // leave the join check disagreeing with it.
 func TestPartyFillsToTheRecoveredCap(t *testing.T) {
 	h := NewHub()
-	p, err := h.Create(Member{CharacterID: 1, Session: &gateway.Session{}})
+	p, err := h.Create(Member{CharacterID: 1, Session: &gateway.Session{}, Level: MinLevelToCreate})
 	if err != nil {
 		t.Fatalf("creating the party: %v", err)
 	}
@@ -221,5 +221,38 @@ func TestPartyFillsToTheRecoveredCap(t *testing.T) {
 	over := Member{CharacterID: int64(MaxSize + 1), Session: &gateway.Session{}}
 	if _, err := h.Join(p.ID, over); !errors.Is(err, ErrPartyFull) {
 		t.Errorf("member %d: got %v, want ErrPartyFull", MaxSize+1, err)
+	}
+}
+
+// TestCreateRefusesBelowTheEngineLevel pins the recovered `cmp al,0x5 / jae` at
+// 00513fec: level 5 or higher may start a party, and anything under is refused
+// with the engine's own PARTYERR_TOO_LOW_CREATOR_LEVEL. Joining is deliberately
+// not covered, because the engine puts no level requirement on it.
+func TestCreateRefusesBelowTheEngineLevel(t *testing.T) {
+	for lvl := 0; lvl < MinLevelToCreate; lvl++ {
+		h := NewHub()
+		m := Member{CharacterID: 100, Session: &gateway.Session{}, Level: lvl}
+		if _, err := h.Create(m); !errors.Is(err, ErrLeaderLevelTooLow) {
+			t.Errorf("level %d: got %v, want ErrLeaderLevelTooLow", lvl, err)
+		}
+	}
+	h := NewHub()
+	m := Member{CharacterID: 200, Session: &gateway.Session{}, Level: MinLevelToCreate}
+	if _, err := h.Create(m); err != nil {
+		t.Errorf("level %d must be allowed (the comparison is jae): %v", MinLevelToCreate, err)
+	}
+}
+
+// TestJoinHasNoLevelRequirement states the more surprising half of the recovery:
+// FUN_00514170 reaches the level check only when the character has no party, so
+// a low-level character may be pulled into an existing one.
+func TestJoinHasNoLevelRequirement(t *testing.T) {
+	h := NewHub()
+	p, err := h.Create(Member{CharacterID: 1, Session: &gateway.Session{}, Level: MinLevelToCreate})
+	if err != nil {
+		t.Fatalf("creating the party: %v", err)
+	}
+	if _, err := h.Join(p.ID, Member{CharacterID: 2, Session: &gateway.Session{}, Level: 1}); err != nil {
+		t.Errorf("a level-1 character must be allowed to join: %v", err)
 	}
 }

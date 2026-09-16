@@ -64,8 +64,13 @@ func TestPartyFullFlow(t *testing.T) {
 	accounts.Add("alice", "hunter2")
 	accounts.Add("bob", "hunter3")
 	chars := character.NewMemStore()
-	chars.Create(ctx, 1, "Aria")
-	chars.Create(ctx, 2, "Bram")
+	c1, _ := chars.Create(ctx, 1, "Aria")
+	c2, _ := chars.Create(ctx, 2, "Bram")
+	// The engine requires level 5 to start a party (party.MinLevelToCreate), so
+	// these characters have to clear it. Set through the store rather than on
+	// the returned value, which is a copy.
+	chars.SetLeveling(ctx, c1.ID, party.MinLevelToCreate, 0, 0)
+	chars.SetLeveling(ctx, c2.ID, party.MinLevelToCreate, 0, 0)
 
 	parties := party.NewHub()
 	handle := gateway.Chain(LoginHandler(accounts), PartyHandler(chars, parties))
@@ -160,7 +165,8 @@ func TestPartyInfoFlow(t *testing.T) {
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
 	chars := character.NewMemStore()
-	chars.Create(ctx, 1, "Aria")
+	c1, _ := chars.Create(ctx, 1, "Aria")
+	chars.SetLeveling(ctx, c1.ID, party.MinLevelToCreate, 0, 0)
 
 	parties := party.NewHub()
 	handle := gateway.Chain(LoginHandler(accounts), PartyHandler(chars, parties))

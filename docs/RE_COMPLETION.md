@@ -6757,3 +6757,53 @@ proves useful for disambiguating constants, not only naming functions.
 **Next step:** the same party function tests **bit 2** of those flags at 5145b6
 and nothing names it. The other `PARTYERR_*` codes -- `OUT_OF_LEVEL`,
 `TOO_LOW_CREATOR_LEVEL` -- point at level rules srrevamp has no equivalent for.
+
+## 2026-09-16 (twentieth) — level 5 to start a party
+
+The previous entry named the party level rules as next. One of the two codes it
+pointed at does not exist in the server, and the other gave a clean rule.
+
+### `OUT_OF_LEVEL` is client-only
+
+`PARTYERR_OUT_OF_LEVEL` (`0x2c07`) appears in the client's message table, and a
+level range between party members is the obvious thing it would mean. **The
+server never returns it** — `0x2c07` is nowhere in its `.text`. Whatever enforces
+a member level range, if anything does, is not in the party code. Recorded so the
+next reader does not go looking for it there.
+
+### `TOO_LOW_CREATOR_LEVEL` is level 5, at two sites
+
+	513fe2  mov  eax,[edx+0x124]   <- vtable slot 73 = IGObj::GetLevel
+	513fea  call eax
+	513fec  cmp  al,0x5
+	513fee  jae  ok
+	513ff0  mov  ax,0x2c0a         <- PARTYERR_TOO_LOW_CREATOR_LEVEL
+
+and identically at `00514218`. That is the fourth time the recovered vtable table
+has paid off inside a fresh dig — slot 73 `GetLevel` again.
+
+**Joining has no level requirement**, which is the half worth reading both sites
+for. `FUN_00514170` reaches the level check only on the branch where the
+character has no party; with a party in hand it compares against that party and
+answers `0x2c1d` instead. So a level-1 character can be pulled into an existing
+party but cannot start one.
+
+### Shipped
+
+`party.MinLevelToCreate = 5`, enforced in `Hub.Create`, with `Member.Level`
+carrying the leader's level and `handlePartyCreate` reading it from the character
+store. Tests pin the boundary (every level below 5 refused, 5 itself allowed
+because the comparison is `jae`) and the join exemption.
+
+**Six existing tests failed on the new rule, which is the right outcome** — they
+were creating parties with level-0 leaders. Fixing them turned up a detail worth
+noting: `character.MemStore.Create` and `GetByID` both return **copies**, so a
+test cannot raise a level by writing to the returned struct; it has to go through
+`SetLeveling`. The first fix did exactly that and silently did nothing.
+
+**What moved:** another own-design value grounded and enforced, with the
+surprising half (join is unrestricted) established rather than assumed; one
+client-only error code identified as such.
+
+**Next step:** bit 2 of the party flags, tested at 5145b6 and still unnamed --
+the same place bit 0 was, so the same technique may name it.

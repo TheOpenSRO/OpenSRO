@@ -249,7 +249,16 @@ func handlePartyCreate(ctx context.Context, sess *gateway.Session, p *proto.Pack
 		return sess.Send(&proto.Packet{Opcode: OpPartyCreateResult, Data: (&PartyResult{Error: errStr}).Encode()})
 	}
 
-	pt, err := parties.Create(party.Member{Session: sess, CharacterID: characterID, Name: req.Name})
+	// The engine requires level 5 to start a party (party.MinLevelToCreate), so
+	// the leader's level has to travel with the member. A character the store
+	// cannot answer for is refused rather than admitted at level 0: this is the
+	// live character store, not an optional export, so a failure here is a bug
+	// and not missing data.
+	leader, err := chars.GetByID(ctx, characterID)
+	if err != nil || leader == nil {
+		return sess.Send(&proto.Packet{Opcode: OpPartyCreateResult, Data: (&PartyResult{Error: "lookup failed"}).Encode()})
+	}
+	pt, err := parties.Create(party.Member{Session: sess, CharacterID: characterID, Name: req.Name, Level: leader.Level})
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpPartyCreateResult, Data: (&PartyResult{Error: partyErrorMessage(err)}).Encode()})
 	}

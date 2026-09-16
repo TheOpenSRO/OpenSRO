@@ -12,7 +12,11 @@ import (
 // member builds a party member with a distinct session, which Hub.Create and
 // Hub.Join both dereference.
 func member(sessionID uint64, characterID int64, name string) party.Member {
-	return party.Member{Session: gateway.NewTestSession(sessionID), CharacterID: characterID, Name: name}
+	// Level clears party.MinLevelToCreate: Hub.Create enforces the engine's
+	// level-5 rule for starting a party, and these tests are about the exp
+	// bonus rather than that gate.
+	return party.Member{Session: gateway.NewTestSession(sessionID), CharacterID: characterID,
+		Name: name, Level: party.MinLevelToCreate}
 }
 
 // TestApplyPartyExpBonus covers the wiring between a live party and the
