@@ -9922,3 +9922,61 @@ this project's renames of the engine's own `OffsetSkillPoint` and
 renamed descriptively are `IGObj::OffsetExpPoint` (slot 92) and
 `IGObj::OffsetSkillPoint` (slot 93) -- the canonical EXP and SP entry points.
 
+## 2026-09-16 — column 57 resolved: one index, two formats
+
+**The open item from v0.1.256 is closed**, by running exactly the test recorded
+there: read `CGameServer::FUN_006ba850` and see whether its second argument is a
+row key or a kind selector. **It is a row key.** Full write-up in
+`docs/protocol/refobj_binary_format.md`.
+
+	FUN_006ba850(kind, key):
+	  for each stream in the loaded list:
+	    kind 0xc,0xd,0xe -> save cursor/col; cursor = col = 0;
+	                        id = *(int *)(stream->base);   // the row's FIRST field
+	                        restore; if (id == key) return stream
+
+**The resolution: the server does not parse the text tables at all.** It parses
+a binary record -- 4-byte fields, 2-byte length-prefixed strings -- whose last
+common field is a foreign key to the type-specific record. The client's
+`itemdata.txt` is the **denormalised join** of the two and does not carry that
+link: no itemdata column is per-row unique, and characterdata's only unique
+columns are 1 and 2 (ID and code name). So binary field 57 and text column 57
+are different fields sharing an index, and `fMaxStack = 57` reads the text
+correctly. The contested flag is removed from the constant.
+
+**Two structural findings fell out.**
+
+*The binary tables are self-describing.* `FUN_006b1a80` -- which the 58-field
+count depended on and which I had accepted merely because it bumps the counter
+-- is a **schema-driven field skipper**: it fetches a schema through the
+stream's own vtable, walks per-column records (stride 0x54) matching
+`stream->col + 1` against `+0x30`, then advances the byte cursor by that
+record's width at `+0x24`. Field 5 really is consumed, so v0.1.254's 58 stands,
+now for a real reason.
+
+*`"xxx"` is the tables' null placeholder and the parser erases it* --
+`strcmp(this+0x48, "xxx")` then clear (`6a3173`..`6a318c`), which is also why
+the `"GP:"` scan on column 55 tests for it first.
+
+### CORRECTION — every itemdata count in these docs is inflated
+
+Found while testing the above. `/var/tmp/tables/itemdata_*.txt` is a **mixture
+of two extractions**: globbing it gives 23,317 enabled rows but only **16,819
+distinct IDs**, because the coarse files are supersets of the fine ones
+(`itemdata_15000.txt` contains 11000/12000/13000/14000; `itemdata_5000.txt`
+contains 1000/2000; `itemdata_30000.txt` contains 26000). The game's own index
+(`/var/tmp/idparts/itemdata.txt`) names 63 shards, one per 1000-ID range, and
+only **20** are on the box -- so the corpus is partial as well as duplicated.
+characterdata is clean (13,291 rows, 13,291 IDs).
+
+**What this invalidates:** counts only. Every "N of 23,327 itemdata rows"
+written this week -- the requirement-slot census, the capability-flag counts,
+the TypeID row totals -- is inflated by roughly 39% and drawn from a partial
+corpus; read them as proportions, not censuses. **What survives:** the shape and
+existence claims. "Zero TypeID values out of bounds" is a superset check;
+"column 55 takes five values", "column 57 has 18 distinct values" and "no column
+equals the ID" are unaffected by duplicates.
+
+**Rule going forward:** deduplicate itemdata by ID before counting, report
+distinct IDs rather than rows, and state that the corpus is partial.
+

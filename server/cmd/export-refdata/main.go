@@ -54,22 +54,27 @@ const (
 	fCountry = 14
 	// MaxStack: 1 for all equipment, a real cap for stackables (col 57).
 	//
-	// CONTESTED AS OF 2026-09-16, and the data still says keep it. Column 57
-	// is the LAST column of the common prefix and lands in
-	// `_RefObjCommon+0x184` -- and all three ExtractData overrides assert that
-	// field non-zero and pass it to a lookup whose failure message calls it
-	// "RefItem ID" (`"Can't find associated item data [RefObjCommon ID: %d,
-	// RefItem ID: %d]"`). A foreign key it is not: across 23,327 enabled rows
-	// column 57 has 18 distinct values (1 x19,679, 250, 500, 50), which is
-	// exactly MaxStack's shape, and it is 0 on six enabled item rows and 328
-	// enabled character rows -- values that assert would reject.
+	// CONTESTED 2026-09-16 AND RESOLVED THE SAME DAY. The conflict was real
+	// but it was between two FORMATS, not two readings.
 	//
-	// Every link was checked rather than assumed: the walk is branch-clean,
-	// `this` reaches the parser in ecx, and the client's and server's own
-	// table copies have the same width. So this is a real open contradiction,
-	// not a mis-measurement, and it is recorded rather than resolved -- see
-	// docs/RE_COMPLETION.md. Reading column 57 as MaxStack is what the DATA
-	// supports; the engine's word for the field is what does not fit.
+	// The server does not parse these text files. It parses a BINARY record
+	// (4-byte fields, 2-byte length-prefixed strings) whose last common field,
+	// `_RefObjCommon+0x184`, every ExtractData override asserts non-zero and
+	// passes to a lookup logging "Can't find associated item data
+	// [RefObjCommon ID: %d, RefItem ID: %d]". That lookup
+	// (CGameServer::FUN_006ba850) scans a list of row-streams and compares the
+	// key against each candidate's FIRST 4-byte field, so it is a per-row
+	// foreign key -- the binary common record ends with a link to the
+	// type-specific record.
+	//
+	// The client's text table is the DENORMALISED JOIN of the two, and it does
+	// not carry that link: no itemdata column is per-row unique, and
+	// characterdata's only unique columns are 1 and 2 (ID and code name). So
+	// binary field 57 and text column 57 are simply different fields at the
+	// same index, and reading text column 57 as MaxStack -- 18 distinct values
+	// shaped 1 / 250 / 500 / 50 -- is correct.
+	//
+	// See docs/protocol/refobj_binary_format.md.
 	fMaxStack = 57
 	// Real NPC vendor prices: _RefObjCommon Price (buy) and SellPrice
 	// (buy-back). Confirmed against real rows -- SellPrice < Price on every
