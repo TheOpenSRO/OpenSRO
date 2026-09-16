@@ -50,10 +50,29 @@ type Monster struct {
 	Defense int
 	// DefensePercent is the monster's own mitigation percentage, and it is
 	// REAL: characterdata columns 73 and 74 hold the physical and magical
-	// reduction, and both equal the monster's level on every row of the
-	// ORIGINAL client's table (Mangyang 1, Gyo 5, Yeoha 10, Bandit Archer 12).
-	// The server reads them as ParamKeeper params 7 and 8 and applies them as
-	// a percentage -- see MitigateDamage.
+	// reduction, and the server reads them as ParamKeeper params 7 and 8 and
+	// applies them as a percentage -- see MitigateDamage.
+	//
+	// Hub.Spawn passes the monster's LEVEL here, because the two columns equal
+	// the level. That used to rest on four hand-checked rows (Mangyang 1, Gyo
+	// 5, Yeoha 10, Bandit Archer 12), which is the sample size that has misread
+	// a characterdata column twice before. MEASURED 2026-09-16 across the whole
+	// table instead:
+	//
+	//	7,495 MOB_ rows with a level     -> 99.45% have BOTH columns == level
+	//	41 diverge
+	//
+	// so the rule is real rather than a coincidence of four rows, but it is NOT
+	// universal. The 41 exceptions are bosses, uniques and quest clones --
+	// MOB_EU_KERBEROS is level 110 with 24, MOB_TQ_WHITESNAKE level 110 with
+	// 105, the MOB_QT_*_CLON quest spawns give the two columns DIFFERENT values
+	// (level 29 with 29 and 54) -- which is exactly the population where a
+	// designer would hand-tune mitigation away from the level.
+	//
+	// All 11 species this server currently spawns were checked individually and
+	// every one holds the equality, so passing the level is correct today. It
+	// stops being correct the moment a boss or a quest clone is added: those
+	// need the real columns carried on Species, not the level.
 	DefensePercent int
 	// Attack is the disclosed flat counter-damage, kept only as a fallback.
 	Attack int

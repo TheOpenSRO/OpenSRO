@@ -4800,3 +4800,43 @@ listed as the next thing to mine.
 **What moved:** no value. A third evidence class joined to the other two, twenty
 exact names for the vocabulary, two shipped values independently confirmed, and
 a reason found for why seven tags are ignored.
+
+## Auditing a shipped value that rested on four rows (2026-09-16)
+
+`combat.Monster.DefensePercent` is marked REAL, and `Hub.Spawn` passes the
+monster's LEVEL for it, on the grounds that characterdata columns 73 and 74
+"equal the monster's level on every row of the ORIGINAL client's table" — with
+four examples named. Four rows is the sample size that has misread a
+characterdata column **twice** on this project, and the columns feed
+`MitigateDamage`, so every blow against every monster depends on it. It was
+worth measuring rather than trusting.
+
+**The measurement**, over the extracted tables (which are UTF-16, and the
+project's column numbers turn out to be 0-indexed — two probe corrections before
+a single number came out):
+
+	12,963 rows with a level        -> 98.34% have both columns == level
+	 7,495 MOB_ rows with a level   -> 99.45% have both columns == level, 41 diverge
+
+So the rule is real rather than a coincidence of four rows. **It is not
+universal**, and the exceptions are exactly the population a designer would
+hand-tune: bosses, uniques and quest clones. `MOB_EU_KERBEROS` is level 110 with
+24. `MOB_TQ_WHITESNAKE` is level 110 with 105. The `MOB_QT_*_CLON` quest spawns
+give the two columns *different* values — `MOB_QT_01_ARCHER_CLON` is level 29
+with 29 and 54 — which the current code cannot express at all, since it passes
+one number for both.
+
+**All 11 species this server spawns were checked individually** and every one
+holds the equality, so passing the level is correct today. The comment now says
+that, with the failure set named, instead of implying the rule is universal.
+
+**What moved:** no value — the number is right for srrevamp's roster. What
+changed is its standing: a claim resting on four observations is now a
+measurement over 7,495, with the 41 rows that break it identified and the
+condition under which the shortcut stops working written down (add a boss or a
+quest clone and the real columns have to be carried on `Species`).
+
+Worth recording separately: **the probe was wrong twice before it was right** —
+the tables are UTF-16 rather than ASCII, and this project's characterdata column
+numbers are 0-indexed rather than 1-indexed. Both failures returned a confident
+"0 rows match", which is the shape that gets mistaken for a finding.
