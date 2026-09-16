@@ -714,5 +714,60 @@ func ResolveBlow(base, mitigationPercent, flat, critChance, blockChance, attacke
 	if attackerLevel > 0 && defenderLevel > 0 {
 		out.Damage = ApplyLevelAdvantage(out.Damage, attackerLevel, defenderLevel)
 	}
+	// Stage 16: the engine's floor band, applied after the level term and
+	// before the attacker percentages srrevamp cannot reach. See
+	// ApplyFloorBand.
+	out.Damage = ApplyFloorBand(out.Damage, base, r)
+	return out
+}
+
+// FloorBandThreshold, FloorBandScale and FloorBandRandMax are the engine's
+// low-end reshaping constants, all three read out of .rdata.
+const (
+	// FloorBandThreshold is the fraction of the PRE-mitigation base below
+	// which a blow is reshaped. `.rdata 0x00b45f60` = 0.05.
+	FloorBandThreshold = 0.05
+	// FloorBandScale divides the surviving damage. The engine multiplies by
+	// `.rdata 0x00b45c60` = 10 and divides by 100, i.e. a tenth.
+	FloorBandScale = 10.0
+	// FloorBandRandMax is `RAND_MAX`, `.rdata 0x00b45af8` = 32767, the
+	// divisor the engine interpolates against.
+	FloorBandRandMax = 32767
+)
+
+// ApplyFloorBand is stage 16 of Formula_MitigatePhysicalDamage
+// (docs/protocol/damage_pipeline.md): a blow that has been mitigated below 5%
+// of its pre-mitigation base is NOT simply floored at 1. It is divided by ten,
+// floored at 1, and then randomised uniformly between 1 and that value:
+//
+//	40e6eb  if (damage < base * 0.05):
+//	40e706      damage = damage * 10 / 100        // a tenth
+//	40e716      if (damage <= 0) damage = 1
+//	40e729      r = rand()                        // 0x9dd338
+//	40e732      damage = 1 + (damage - 1) * r / 32767
+//
+// So a heavily out-geared hit lands for a small RANDOM amount rather than a
+// constant 1. This is a different clamp from the floor of 1 that
+// Combat_ResolveDamage applies later, which catches a zero; this one reshapes
+// the whole low end.
+//
+// A nil r takes the maximum outcome, the convention RollDamage and RollChance
+// already use, which leaves the tenth undisturbed.
+func ApplyFloorBand(damage, base int, r *rand.Rand) int {
+	if base <= 0 || float64(damage) >= float64(base)*FloorBandThreshold {
+		return damage
+	}
+	v := float64(damage) * FloorBandScale / 100
+	if v <= 0 {
+		v = 1
+	}
+	frac := 1.0
+	if r != nil {
+		frac = float64(r.Intn(FloorBandRandMax+1)) / FloorBandRandMax
+	}
+	out := int(math.Round(1 + (v-1)*frac))
+	if out < 1 {
+		out = 1
+	}
 	return out
 }

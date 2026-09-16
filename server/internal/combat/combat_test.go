@@ -546,3 +546,97 @@ func TestDamageFloorIsTheGamesOwn(t *testing.T) {
 		}
 	}
 }
+
+// Stage 16 of the engine's pipeline. A blow mitigated below 5% of its
+// PRE-mitigation base is divided by ten, floored at 1, and randomised between
+// 1 and that value -- not simply floored at 1.
+func TestFloorBandOnlyTriggersBelowFivePercentOfBase(t *testing.T) {
+	// 60 out of a base of 1000 is 6%, above the threshold: untouched.
+	if got := ApplyFloorBand(60, 1000, nil); got != 60 {
+		t.Errorf("60 of base 1000 (6%%) = %d, want it untouched", got)
+	}
+	// 40 out of 1000 is 4%, below: a tenth, so 4.
+	if got := ApplyFloorBand(40, 1000, nil); got != 4 {
+		t.Errorf("40 of base 1000 (4%%) = %d, want 4 (a tenth, nil r takes the max)", got)
+	}
+	// Exactly at the threshold is not below it.
+	if got := ApplyFloorBand(50, 1000, nil); got != 50 {
+		t.Errorf("50 of base 1000 (exactly 5%%) = %d, want it untouched", got)
+	}
+}
+
+// The band never returns less than 1, however small the input.
+func TestFloorBandNeverGoesBelowOne(t *testing.T) {
+	r := rand.New(rand.NewSource(1))
+	for _, dmg := range []int{0, 1, 2, 3, 9} {
+		for i := 0; i < 50; i++ {
+			if got := ApplyFloorBand(dmg, 100000, r); got < 1 {
+				t.Fatalf("ApplyFloorBand(%d, 100000) = %d, want >= 1", dmg, got)
+			}
+		}
+	}
+}
+
+// The randomisation spans [1, tenth] rather than being constant -- the whole
+// point of the stage. 400 of a base of 100000 is 0.4%, a tenth of which is 40.
+func TestFloorBandRandomisesBetweenOneAndTheTenth(t *testing.T) {
+	r := rand.New(rand.NewSource(7))
+	lo, hi := 1<<30, 0
+	for i := 0; i < 500; i++ {
+		got := ApplyFloorBand(400, 100000, r)
+		if got < 1 || got > 40 {
+			t.Fatalf("got %d, outside [1, 40]", got)
+		}
+		if got < lo {
+			lo = got
+		}
+		if got > hi {
+			hi = got
+		}
+	}
+	if lo == hi {
+		t.Errorf("the band produced the constant %d over 500 rolls, want a spread", lo)
+	}
+	if hi < 30 {
+		t.Errorf("the band's top observed value was %d, want it to reach near 40", hi)
+	}
+}
+
+// A base of zero (or an unknown one) leaves the damage alone rather than
+// dividing it.
+func TestFloorBandIgnoresAnUnknownBase(t *testing.T) {
+	if got := ApplyFloorBand(7, 0, nil); got != 7 {
+		t.Errorf("ApplyFloorBand(7, 0) = %d, want 7", got)
+	}
+}
+
+// The constants are the recovered ones, so a tuning edit has to delete a
+// citation to happen.
+func TestFloorBandConstantsAreTheRecoveredOnes(t *testing.T) {
+	if FloorBandThreshold != 0.05 {
+		t.Errorf("threshold = %g, want 0.05 (.rdata 0x00b45f60)", FloorBandThreshold)
+	}
+	if FloorBandScale != 10.0 {
+		t.Errorf("scale = %g, want 10 (.rdata 0x00b45c60)", FloorBandScale)
+	}
+	if FloorBandRandMax != 32767 {
+		t.Errorf("rand max = %d, want 32767 (.rdata 0x00b45af8)", FloorBandRandMax)
+	}
+}
+
+// ResolveBlow must run the band, and an ordinary blow must be unaffected by it.
+func TestResolveBlowAppliesTheFloorBandWithoutDisturbingOrdinaryHits(t *testing.T) {
+	// 100 base, no mitigation: 100 is well above 5% of 100, untouched.
+	got := ResolveBlow(100, 0, 0, 0, 0, 0, 0, nil, nil)
+	if got.Damage != 100 {
+		t.Errorf("an unmitigated blow = %d, want 100", got.Damage)
+	}
+	// Heavy mitigation drives it under the threshold, so the band reshapes it.
+	heavy := ResolveBlow(1000, 0, 980, 0, 0, 0, 0, nil, nil)
+	if heavy.Damage > 20 {
+		t.Errorf("a blow mitigated to 20 of 1000 should be reshaped, got %d", heavy.Damage)
+	}
+	if heavy.Damage < 1 {
+		t.Errorf("the band must never go below 1, got %d", heavy.Damage)
+	}
+}

@@ -84,8 +84,28 @@ whole low end.
 
 ## What is recovered but not wired
 
-Stages 2, 7, 8, 9, 10, 11, 12, 14, 15 and 17. srrevamp publishes no source for
+Stages 2, 7, 8, 9, 10, 11, 12, 15 and 17. srrevamp publishes no source for
 params 128/129, 178, 189 or 259, nor for `dara`, so most are unreachable rather
-than missing. The two that are reachable in principle are **stage 14** (the
-level gap, which needs `FUN_0040fd60` read) and **stage 15** (the Str ratio,
-already shipped as `combat.StrLevelDamageRatio` and waiting on this ordering).
+than missing.
+
+**Stage 14 was already shipped** — `combat.LevelAdvantage`, with `FUN_0040fd60`
+read as `clamp((attackerLevel - defenderLevel) * 0.03, 0, 0.3)` and both
+constants cited. **Stage 16 is now shipped too**, as `combat.ApplyFloorBand`,
+wired into `combat.ResolveBlow` after the level term.
+
+**Stage 15** (the Str ratio) stays unwired: it is `combat.StrLevelDamageRatio`,
+exact and tested, but `ResolveBlow` is not given the attacker's Str or level-cap
+and threading them through is a caller change rather than a formula question.
+
+### srrevamp's order against the engine's
+
+`combat.ResolveBlow` implements stages 4, 13, 14 and 16 and runs them in the
+engine's order: mitigate (4) -> critical/berserk (13) -> level gap (14) ->
+floor band (16). The skill percentage (stage 6) is applied by the caller, after
+mitigation, which is also where the engine puts it.
+
+One thing worth stating because it looks like a difference and is not: the
+engine folds berserk and critical into a **single** term at stage 13 —
+`t = attacker_p189 + 2.0`, then `t += t` on flag bit `0x2` — where srrevamp
+applies two separate doublings. With param 189 at its default of 0 both give x2
+alone and x4 together, so the two agree.

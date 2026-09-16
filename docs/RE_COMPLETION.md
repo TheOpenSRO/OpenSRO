@@ -10367,3 +10367,44 @@ principle are **stage 14** (the level gap, which needs `FUN_0040fd60` read) and
 and waiting on exactly this ordering). That makes `FUN_0040fd60` the next probe:
 it is the last unread piece of a stage srrevamp could actually use.
 
+## 2026-09-16 — the floor band shipped, and the live order audited against the engine
+
+**The next probe came back already-done, and the audit it enabled was the real
+result.** `FUN_0040fd60` — the level-gap term — turned out to be recovered and
+shipped long ago as `combat.LevelAdvantage`, with the disassembly in its test's
+comment and both constants (`0.03` at `0xb45dc8`, the `0.3` cap at `0xb45b8c`)
+pinned. That is the fifth already-worked probe this session.
+
+**So I audited `combat.ResolveBlow` against the ordering recovered last tick,
+which is the check the ordering was for.** It implements stages 4, 13, 14 and 16
+and runs them in the engine's order: mitigate -> critical/berserk -> level gap
+-> floor band, with the skill percentage applied by the caller after mitigation,
+where the engine also puts it. **No discrepancy.**
+
+One apparent difference is not one, and is worth recording so it is not
+"fixed" later: the engine folds berserk and critical into a **single** stage-13
+term — `t = attacker_p189 + 2.0`, then `t += t` on flag bit `0x2` — where
+srrevamp applies two separate doublings. With param 189 at its registry default
+of 0, both give x2 alone and x4 together.
+
+### Shipped: stage 16, the floor band
+
+The one recovered stage that was both missing and reachable. `ResolveBlow`
+already holds the pre-mitigation base, which is all the stage needs:
+
+	if (damage < base * 0.05):
+	    damage = damage / 10
+	    if (damage <= 0) damage = 1
+	    damage = 1 + (damage - 1) * rand() / 32767
+
+so a blow mitigated below 5% of its base lands for a small **random** amount
+rather than a flat 1. `combat.ApplyFloorBand`, six tests, constants cited to
+`.rdata` (`0x00b45f60`, `0x00b45c60`, `0x00b45af8`). Ordinary blows are
+untouched — the whole existing suite passes unchanged, which is the check that
+it is correctly gated rather than silently reshaping everything.
+
+**Stage 15 stays unwired** and now for a precise reason rather than a vague one:
+`combat.StrLevelDamageRatio` is exact and tested, but `ResolveBlow` is not given
+the attacker's Str or level cap. Threading those through is a caller change, not
+a formula question — that is the next concrete step for this system.
+
