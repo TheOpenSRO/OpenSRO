@@ -9188,3 +9188,64 @@ partial-regex approach is now proven inadequate — it wants the disassembly, wh
 each field read is an unambiguous `mov` from `[cursor + base]` with the cursor
 advancing by a known width, rather than decompiled C where the reads take several
 shapes.
+
+## 2026-09-16 — the parser's field order, from the disassembly the C could not give
+
+The previous entry ended with the column hunt blocked and named the reason: a
+regex over decompiled C captured 11 of the parser's fields where it has many
+more, and the approach was "proven inadequate — it wants the disassembly, where
+each field read is an unambiguous `mov` from `[cursor + base]`". That turned out
+to be exactly right.
+
+### What the disassembly gives
+
+Every field read in `RefObjCommon_ExtractData` is a `mov` through indexed
+addressing `[cursor + base*1]`, followed by a field-counter increment and a
+cursor advance of the field's own width. **41 reads**, against the regex's 11.
+
+Better, each read's value can be followed to the stack slot it is stored in, and
+the flags expression names the slot it takes each bit from. That makes the chain
+exact — read → slot → bit → predicate:
+
+	read 11  esp+0x11  bit 0  CanTrade      read 16  esp+0x27  bit 6  CanRepair
+	read 12  esp+0x26  bit 1  CanSell       read 17  esp+0x25  bit 7  CanRevive
+	read 13  esp+0x12  bits 12/13           read 18  bl        bit 8  CanUse
+	read 14  esp+0x13  bit 4  CanDrop       read 19  al        bit 9  CanThrow
+	read 15  esp+0x23  bit 5  CanPick
+
+**Nine consecutive reads immediately before the flags word is assembled, in the
+same order as the nine stubs.** Not an inference from adjacency — every row is a
+slot the flags expression actually reads.
+
+### And the column numbers are still not the read numbers
+
+The obvious next move is to call read *n* column *n*. **It is wrong, and there is
+a clean anchor proving it.**
+
+Read 9 writes row `+0x88`. `CanBeEquipedAt` reads `+0x88` as the item's Country
+(refusing with `0x182f COUNTRY_MISMATCH` unless it is 3), and `ITEM_FORMAT.md`
+pins Country to **itemdata column 14**. So read 9 is column 14 — a gap of five.
+
+The cause is in the pattern itself: **string columns are consumed by a helper
+call, not by an inline indexed `mov`**, so they never increment this count. The
+gap is therefore not a constant to add — it grows by one per string column
+passed, and `_RefObjCommon` has several near the front.
+
+Had I applied the naive mapping, `CanTrade` would have been published as column
+11. The Country anchor says it is at least 16, and "at least" is not a column
+number.
+
+### Shipped
+
+`item_capability_flags.md` gains the field-order table with its stack-slot
+bindings, the Country anchor, and the reason the gap is not constant. No
+srrevamp value changed — the columns are still what would make this usable.
+
+**What moved:** the bit order went from "nine consecutive reads, probably these"
+to an exact slot-by-slot binding, and the remaining blocker is now one specific,
+named thing rather than a general difficulty.
+
+**Next step:** count the string-consuming helper calls interleaved with the 41
+inline reads. Each is one column. With those in place every read has a column
+number, the Country anchor becomes a check rather than a puzzle, and the nine
+capability flags become wireable into `refdata.Item`.

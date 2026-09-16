@@ -86,25 +86,63 @@ So `CanTrade`, `CanSell`, `CanPick`, `CanRepair`, `CanRevive`, `CanUse` and
 `CanThrow` are seven separate boolean columns, and bits 12/13/14 come from
 elsewhere in the row.
 
-## What is NOT established: which columns they are
+## The field order, recovered from the disassembly
 
-Two probes failed, and both failures are worth keeping.
+The decompiled C could not give this — its reads take several shapes and a regex
+over them captured 11 of the parser's fields. **The disassembly can**: every
+field read is a `mov` through indexed addressing `[cursor + base*1]`, followed by
+a field-counter increment and a cursor advance of the field's own width. That
+finds **41** reads.
 
-**The parser's field order was extracted only partially.** A regex over the
-decompiled reads captured 11 of the parser's fields where it has many more, and
-the indices it produced (2, 3, 4, …) are positions *within that subset*, not
-column numbers. They look exactly like column numbers, which is the danger.
+Binding each read to the stack slot it stores into, and each slot to the bit the
+flags expression takes it from, gives an exact chain — read → slot → bit →
+predicate:
 
-**A shape prediction failed cleanly.** If seven of these are consecutive boolean
-columns, itemdata should contain a run of seven columns holding only 0 or 1.
-There is exactly one such run — columns 41..47 — and `ITEM_CH_SWORD_01_A_DEF`
-reads **0 across all seven**. A plain sword must be tradeable, and a set bit is
-permission, so that run cannot be the flags.
+| read # | stack slot | bit | predicate |
+|---:|---|---:|---|
+| 11 | `esp+0x11` | 0 | `CanTrade` |
+| 12 | `esp+0x26` | 1 | `CanSell` |
+| 13 | `esp+0x12` | 12 and 13 | two further flags, unnamed |
+| 14 | `esp+0x13` | 4 (and 14) | `CanDrop` |
+| 15 | `esp+0x23` | 5 | `CanPick` |
+| 16 | `esp+0x27` | 6 | `CanRepair` |
+| 17 | `esp+0x25` | 7 | `CanRevive` |
+| 18 | `bl` | 8 | `CanUse` |
+| 19 | `al` | 9 | `CanThrow` |
 
-**A discriminator search found no run either.** Columns where a sword reads 1 and
-a quest item reads 0 are 17, 22, 23, 26 and 33 — scattered, no run of seven. That
-is not conclusive on its own (a quest item may still be repairable or usable, so
-not every flag need differ between the pair) but it does not support the reading.
+**Nine consecutive reads immediately before the flags word is assembled**, in the
+same order as the nine stubs. `CanBorrow` (bit 3) is not among them and is set
+somewhere else in the parser.
 
-Until the parser's full field order is recovered, the columns are unknown and
-nothing here is wired into srrevamp.
+## What is STILL not established: the column numbers
+
+The read order is not the column order, and there is a clean anchor proving it.
+
+**Read 9 writes row `+0x88`.** `CanBeEquipedAt` reads `+0x88` as the item's
+Country — refusing with `0x182f COUNTRY_MISMATCH` unless it is 3 — and
+`ITEM_FORMAT.md` pins Country to **itemdata column 14**. So read 9 is column 14:
+a gap of five at that point.
+
+The cause is visible in the pattern: **string columns are consumed by a helper
+call, not by an inline indexed `mov`**, so they never increment this count. The
+gap is therefore not a constant to add — it grows by one for every string column
+passed, and `_RefObjCommon` has several near the front (code name, object name,
+the two string ids).
+
+Closing this needs the string-consuming calls counted alongside the inline reads,
+so that every column is accounted for. Until then the bits are known, their order
+is known, and their columns are not.
+
+### Two earlier probes that failed, kept
+
+**A partial extraction that looked complete.** A regex over the decompiled reads
+captured 11 of the parser's fields and produced indices 2, 3, 4… — positions
+within that subset, which look exactly like column numbers. Promoting them would
+have invented seven columns.
+
+**A shape prediction that failed cleanly.** If seven of these were consecutive
+boolean columns, itemdata should hold a run of seven columns containing only 0
+or 1. There is exactly one — columns 41..47 — and `ITEM_CH_SWORD_01_A_DEF` reads
+**0 across all seven**. A sword must be tradeable and a set bit is permission, so
+that run is not the flags. A discriminator search (sword 1, quest item 0) gave
+17, 22, 23, 26, 33 — scattered, no run of seven.
