@@ -65,6 +65,12 @@ const (
 
 	TypeEquipment = 1 // TypeID2: worn or held
 
+	// TypeExpendable is TypeID2 for everything consumed rather than worn --
+	// potions, quest items, alchemy stock. It is here for one reason: the
+	// engine's slot resolver has a second arm for it, and it holds
+	// ammunition. See FamilyAmmunition.
+	TypeExpendable = 3
+
 	// TypeID3 under TypeEquipment: the family.
 	FamilyChinaGarment   = 1
 	FamilyChinaProtector = 2
@@ -112,6 +118,21 @@ const (
 	PieceEarring  = 1
 	PieceNecklace = 2
 	PieceRing     = 3
+
+	// FamilyAmmunition is TypeID3 == 4 under TypeExpendable -- quivers of
+	// arrows and cases of bolts. FOUR IS ALSO FamilyShield, under
+	// TypeEquipment: TypeID3's meaning depends on the TypeID2 above it, so
+	// the two constants share a value without sharing a meaning.
+	//
+	// Ammunition is EQUIPPED, and in the shield slot. The engine's resolver
+	// has a whole second arm for it:
+	//
+	//	if (tid2 != 1) { if (tid2 != 3) assert; if ((w & 0x780) == 0x200) return 7; }
+	//
+	// (0x780 is the TypeID3 field, 0x200 >> 7 == 4.) That is the same slot
+	// number the shield arm returns, which is the mechanism: a bow user
+	// gives up the shield to carry arrows.
+	FamilyAmmunition = 4
 )
 
 // The widths of the type-id hierarchy, RECOVERED from the server binary rather
@@ -165,8 +186,27 @@ const ReqLevelTypeCharacter = 1
 
 // SlotFor reports the slot an item goes in, or false if it is not worn or
 // held in any of the slots this project has.
+//
+// This is GObjPC::FUN_00496c20 (`0x00496c20`), the engine's own resolver,
+// arm for arm. Checked against a real client's complete itemdata: of 11,772
+// TypeID1 == 3 rows, every row this returns a slot for is one the engine
+// returns the same slot for, and the two disagree nowhere. The rows with no
+// slot are the expendables (which are not worn) and TypeID3 13/14, the
+// avatars -- the engine has no case for those either and asserts on them,
+// because they live in a separate container.
 func SlotFor(it *refdata.Item) (Slot, bool) {
-	if it == nil || it.TypeID1 != TypeItem || it.TypeID2 != TypeEquipment {
+	if it == nil || it.TypeID1 != TypeItem {
+		return 0, false
+	}
+	// Ammunition is not TypeEquipment but is still equipped, in the shield
+	// slot. The engine tests this arm before the family switch.
+	if it.TypeID2 == TypeExpendable {
+		if it.TypeID3 == FamilyAmmunition {
+			return SlotShield, true
+		}
+		return 0, false
+	}
+	if it.TypeID2 != TypeEquipment {
 		return 0, false
 	}
 	switch it.TypeID3 {
@@ -174,6 +214,8 @@ func SlotFor(it *refdata.Item) (Slot, bool) {
 		return SlotWeapon, true
 	case FamilyShield:
 		return SlotShield, true
+	case FamilyJobSuit:
+		return SlotJobSuit, true
 	case FamilyChinaAccessory, FamilyEuropeAccessory:
 		// Both races number the pieces identically.
 		switch it.TypeID4 {
@@ -182,7 +224,7 @@ func SlotFor(it *refdata.Item) (Slot, bool) {
 		case PieceNecklace:
 			return SlotNecklace, true
 		case PieceRing:
-			return SlotRing, true
+			return SlotRingLeft, true
 		}
 		return 0, false
 	case FamilyChinaGarment, FamilyChinaProtector, FamilyChinaArmor,
@@ -205,6 +247,16 @@ func SlotFor(it *refdata.Item) (Slot, bool) {
 	return 0, false
 }
 
+// SlotAccepts reports whether an item whose resolved slot is want may
+// actually be placed in given. It is an equality test everywhere except the
+// rings, where the engine takes either of the pair -- see SlotRingRight.
+func SlotAccepts(want, given Slot) bool {
+	if want == SlotRingLeft {
+		return given == SlotRingLeft || given == SlotRingRight
+	}
+	return want == given
+}
+
 // Refusal reports why c may not put it in slot, or nil if it may. Every
 // outcome is one of the Err* values above, wrapped with the specifics.
 //
@@ -225,7 +277,7 @@ func Refusal(c *character.Character, it *refdata.Item, slot Slot) error {
 	if !ok {
 		return fmt.Errorf("%w: item %d is type %d/%d/%d/%d", ErrNotEquippable, it.ID, it.TypeID1, it.TypeID2, it.TypeID3, it.TypeID4)
 	}
-	if want != slot {
+	if !SlotAccepts(want, slot) {
 		return fmt.Errorf("%w: item %d goes in slot %d, not %d", ErrWrongSlot, it.ID, want, slot)
 	}
 	// Every character is China today; a Europe item is for another race.

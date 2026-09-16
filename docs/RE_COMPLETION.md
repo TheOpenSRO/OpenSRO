@@ -7515,3 +7515,103 @@ data.
 `PieceHelm..PieceBoots` were measured ("136-140 of each, with no exceptions") but
 `SlotExtra` is described only as "tracked but has no gameplay yet", which is a
 placeholder rather than a reading of anything.
+
+## 2026-09-16 — the engine has an item-to-slot resolver, and it named slot 8
+
+The previous tick ended by asking what `SlotExtra` was. The answer is not in the
+item table and not in the client: it is a single server function, and finding it
+settled the whole slot model rather than one name.
+
+### Finding it
+
+`docs/protocol/error_codes.md` already carried `0x180e
+UIIT_MSG_STRGERR_EQUIPITEM`. Three sites in the server return it; the middle one
+is inside `CGItemEquip::vslot_317` (`0x00497070`), the equip check. That function
+delegates the actual slot question to `GObjPC::FUN_00496c20` (`0x00496c20`) —
+**the engine's item-to-slot resolver**, a switch on the item's packed type word.
+
+This is the error-code table paying for itself a second time. The route to the
+function was a message name, not a guess about what an equip check might be
+called.
+
+### What the resolver says
+
+Full table in `docs/protocol/ITEM_FORMAT.md`. The load-bearing part is the armour
+arm, which maps `TypeID4 -> slot` as
+
+	1 -> 0   2 -> 2   3 -> 1   4 -> 4   5 -> 3   6 -> 5
+
+**a permutation, not the identity.** srrevamp's `Slot` order came from the
+client's equipment-window artwork; the piece numbering came from the item table.
+That permutation is exactly the map between them. Two independently derived
+orderings agreeing on a non-trivial permutation is not a coincidence that a wrong
+model survives — **srrevamp's slot numbering is the engine's own.**
+
+Verified cell by cell against a real client's complete itemdata: 11,772
+`TypeID1 == 3` rows, and the codename suffixes settle each armour row
+independently of the switch (`_HA_`/`_CA_` head, `_SA_` shoulder, `_BA_` body,
+`_LA_` leg, `_AA_` arm, `_FA_` foot). No disagreement anywhere.
+
+### Three things srrevamp had wrong
+
+- **Slot 8 is the JOB SUIT.** `TypeID3 == 7` returns 8, and every row there is a
+  trade outfit. `SlotExtra` was a placeholder; it is now `SlotJobSuit`, and 128
+  more real items equip.
+- **There are TWO ring slots.** `vslot_317` demands an exact slot match
+  everywhere except a ring, where it accepts 11 **or** 12. srrevamp had one.
+- **Ammunition is equipped, in the shield slot.** The resolver has a second arm
+  for `TypeID2 == 3, TypeID3 == 4` returning 7. A bow user gives up the shield to
+  carry arrows. srrevamp refused quivers outright — another entry in the
+  "refuses what the engine allows" column, alongside the 517 skills.
+
+### The correction that matters most
+
+`refdata/item.go` carried a note, written the same day, saying `SlotFor` was
+"already correct about this for a reason worth noting rather than by luck: it
+rejects anything whose TypeID2 is not TypeEquipment (1) before it looks at
+TypeID3 at all, so ammunition never reaches the shield branch."
+
+**Rejecting ammunition is not correct — it is the bug.** The note reasoned
+carefully about srrevamp's own code and never asked the engine, then congratulated
+the code for the behaviour that was wrong. A plausible-sounding mechanism is not
+evidence about the game, and writing one down makes the error harder to find
+later, not easier.
+
+### The names came from the client, and were already in the repo
+
+`docs/protocol/EQUIP_SLOTS.md` has listed the equipment window's per-slot artwork
+since it was written:
+
+	8  equip_slot_specialdress.ddj   11  equip_slot_l_ring.ddj   12  equip_slot_r_ring.ddj
+
+The artwork knew there were two ring slots before this project did, and named
+slot 8 before the item table was asked what lives there. `SlotRing`/`SlotRing2`
+are therefore `SlotRingLeft`/`SlotRingRight` — the game's own words. **A
+recovered artefact sitting unread is indistinguishable from one not recovered.**
+
+### Free re-confirmations
+
+`vslot_317` independently re-confirms four already-shipped values from a source
+none of them came from: `ReqGenderAny == 2` and `CountryAny == 3` (each is the
+value that makes the comparison pass), and `ReqStr`/`ReqInt` tested against
+`GetParam(1)` and `GetParam(2)` — the Strength and Intellect param ids.
+
+### Shipped
+
+`SlotJobSuit` (was `SlotExtra`), `SlotRingRight` added at 12,
+`SlotRing -> SlotRingLeft`, `TypeExpendable`, `FamilyAmmunition`, `MaxEquipSlots
+= 13`, `NoSlot = 0xff`, and `SlotAccepts` for the ring pair. `SlotFor` now mirrors
+the resolver arm for arm; `Refusal` goes through `SlotAccepts`.
+`TestSlotForMatchesEngineResolver` holds all 23 representative rows,
+`TestRingTakesEitherSlot` the pair, `TestSlotsFitEngineBound` the 13-slot bound.
+Slot 12 is appended, so no persisted value changes meaning.
+
+**What moved:** the equipment slot model went from "eight slots the client's
+artwork implied, plus four guesses" to the engine's own thirteen, with a
+use-site for every one.
+
+**Next step:** `WearableSlots` is the last unexamined claim in that file — it
+asserts the accessories carry no model the client draws, which is a statement
+about the client that has never been checked against the client. The avatar's
+equip-visual struct keeps *eight* entries twelve bytes apart, which is where to
+look.

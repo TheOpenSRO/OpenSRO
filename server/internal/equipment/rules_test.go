@@ -163,7 +163,7 @@ func TestAccessoriesAreEquippable(t *testing.T) {
 		}{
 			{PieceEarring, SlotEarring},
 			{PieceNecklace, SlotNecklace},
-			{PieceRing, SlotRing},
+			{PieceRing, SlotRingLeft},
 		} {
 			it := &refdata.Item{TypeID1: TypeItem, TypeID2: TypeEquipment,
 				TypeID3: family, TypeID4: tc.piece}
@@ -182,6 +182,12 @@ func TestAccessoriesAreEquippable(t *testing.T) {
 // TestJobSuitIsNotAnAccessory pins the correction. TypeID3 7 is a job suit --
 // every real row there is a TRADE_TRADER, TRADE_THIEF, TRADE_HUNTER or
 // FRPVP_VOUCHER -- so it must not resolve to an accessory slot.
+//
+// This test used to assert job suits resolved to NOTHING, on the grounds that
+// "srrevamp has no job-suit slot". It had one all along: slot 8, carrying the
+// invented name SlotExtra. The engine's resolver returns 8 for exactly this
+// family, which is what named the slot -- so the assertion is now that every
+// piece lands there, and only the family boundary is what it was.
 func TestJobSuitIsNotAnAccessory(t *testing.T) {
 	if FamilyJobSuit == FamilyChinaAccessory || FamilyJobSuit == FamilyEuropeAccessory {
 		t.Fatal("the job-suit family must be distinct from the accessory families")
@@ -189,8 +195,14 @@ func TestJobSuitIsNotAnAccessory(t *testing.T) {
 	for _, piece := range []int{1, 2, 3, 5, 6, 7} {
 		it := &refdata.Item{TypeID1: TypeItem, TypeID2: TypeEquipment,
 			TypeID3: FamilyJobSuit, TypeID4: piece}
-		if slot, ok := SlotFor(it); ok {
-			t.Errorf("job suit piece %d resolved to slot %d; srrevamp has no job-suit slot", piece, slot)
+		slot, ok := SlotFor(it)
+		if !ok || slot != SlotJobSuit {
+			t.Errorf("job suit piece %d resolved to %d,%v; want the job-suit slot %d", piece, slot, ok, SlotJobSuit)
+		}
+		for _, acc := range AccessorySlots {
+			if slot == acc {
+				t.Errorf("job suit piece %d resolved to accessory slot %d", piece, acc)
+			}
 		}
 	}
 }
@@ -204,11 +216,105 @@ func TestAccessorySlotsAppendedNotInserted(t *testing.T) {
 	}{
 		{SlotHelm, 0}, {SlotMail, 1}, {SlotShoulderGuard, 2}, {SlotGauntlet, 3},
 		{SlotPants, 4}, {SlotBoots, 5}, {SlotWeapon, 6}, {SlotShield, 7},
-		{SlotExtra, 8}, {SlotEarring, 9}, {SlotNecklace, 10}, {SlotRing, 11},
+		{SlotJobSuit, 8}, {SlotEarring, 9}, {SlotNecklace, 10}, {SlotRingLeft, 11},
+		{SlotRingRight, 12},
 	} {
 		if int(tc.slot) != tc.want {
 			t.Errorf("slot %d moved to %d -- every equipped item at that value would change meaning",
 				tc.want, int(tc.slot))
 		}
+	}
+}
+
+// TestSlotForMatchesEngineResolver holds SlotFor to GObjPC::FUN_00496c20
+// (`0x00496c20`), the engine's own item-to-slot resolver, arm for arm. The
+// sample codenames are from a real client's itemdata and are what settles
+// each row: the armour mapping is a permutation, so agreeing with it by
+// accident is not possible.
+func TestSlotForMatchesEngineResolver(t *testing.T) {
+	for _, tc := range []struct {
+		t2, t3, t4 int
+		want       Slot
+		ok         bool
+		sample     string
+	}{
+		// Armour: six families, six pieces. TypeID4 -> slot is 1,2,3,4,5,6
+		// -> 0,2,1,4,3,5, and the codename suffix says which piece is which.
+		{1, FamilyChinaGarment, PieceHelm, SlotHelm, true, "ITEM_CH_W_CLOTHES_06_HA_B_RARE"},
+		{1, FamilyChinaGarment, PieceShoulderGuard, SlotShoulderGuard, true, "ITEM_CH_W_CLOTHES_01_SA_A_RARE"},
+		{1, FamilyChinaGarment, PieceMail, SlotMail, true, "ITEM_CH_W_CLOTHES_01_BA_A_RARE"},
+		{1, FamilyChinaGarment, PiecePants, SlotPants, true, "ITEM_CH_W_CLOTHES_01_LA_A_RARE"},
+		{1, FamilyChinaGarment, PieceGauntlet, SlotGauntlet, true, "ITEM_CH_W_CLOTHES_01_AA_A_RARE"},
+		{1, FamilyChinaGarment, PieceBoots, SlotBoots, true, "ITEM_CH_W_CLOTHES_02_FA_C_RARE"},
+		{1, FamilyEuropeHeavy, PieceMail, SlotMail, true, "ITEM_EU_M_HEAVY_03_BA_B_RARE"},
+		{1, FamilyEuropeLight, PieceGauntlet, SlotGauntlet, true, "ITEM_EU_W_LIGHT_06_AA_C_RARE"},
+
+		{1, FamilyShield, 1, SlotShield, true, "ITEM_CH_SHIELD_01_A_DEF"},
+		{1, FamilyShield, 2, SlotShield, true, "ITEM_EU_SHIELD_01_A"},
+		{1, FamilyWeapon, 2, SlotWeapon, true, "ITEM_CH_SWORD_08_A_RARE_HONOR"},
+		{1, FamilyWeapon, 16, SlotWeapon, true, "ITEM_FORT_FORTRESS_HAMMER_06"},
+
+		// TypeID3 == 7 is the job suit -- the slot this project called
+		// "extra" until the resolver named it.
+		{1, FamilyJobSuit, 1, SlotJobSuit, true, "ITEM_EU_F_TRADE_TRADER_01"},
+		{1, FamilyJobSuit, 3, SlotJobSuit, true, "ITEM_EU_F_TRADE_HUNTER_01"},
+		{1, FamilyJobSuit, 5, SlotJobSuit, true, "ITEM_CH_F_FRPVP_VOUCHER_D"},
+
+		{1, FamilyChinaAccessory, PieceEarring, SlotEarring, true, "ITEM_CH_EARRING_11_A_RARE"},
+		{1, FamilyChinaAccessory, PieceRing, SlotRingLeft, true, "ITEM_CH_RING_01_A_RARE"},
+		{1, FamilyEuropeAccessory, PieceNecklace, SlotNecklace, true, "ITEM_EU_NECKLACE_01_A_RARE"},
+
+		// Ammunition: not TypeEquipment, still equipped, in the shield slot.
+		{TypeExpendable, FamilyAmmunition, 1, SlotShield, true, "ITEM_EVENT_QUIVER"},
+		{TypeExpendable, FamilyAmmunition, 2, SlotShield, true, "ITEM_ETC_AMMO_BOLT_01_DEF"},
+
+		// Avatars (TypeID3 13/14) have no case in the resolver -- it
+		// asserts and returns -1. They live in a separate container.
+		{1, 13, 2, 0, false, "ITEM_EVENT_AVATAR_W_TURKEY"},
+		{1, 14, 1, 0, false, "ITEM_EVENT_AVATAR_M_NASRUN_RED"},
+		// An ordinary expendable is not equipment at all.
+		{TypeExpendable, 1, 1, 0, false, "ITEM_MALL_HP_SUPERSET_5_BAG"},
+	} {
+		it := &refdata.Item{TypeID1: TypeItem, TypeID2: tc.t2, TypeID3: tc.t3, TypeID4: tc.t4}
+		got, ok := SlotFor(it)
+		if ok != tc.ok || (ok && got != tc.want) {
+			t.Errorf("SlotFor(%d/%d/%d/%d) = %d,%v; want %d,%v  (%s)",
+				TypeItem, tc.t2, tc.t3, tc.t4, got, ok, tc.want, tc.ok, tc.sample)
+		}
+	}
+}
+
+// TestRingTakesEitherSlot is the one place the engine does not demand an
+// exact slot match: a ring resolves to slot 11 and it accepts 11 or 12.
+func TestRingTakesEitherSlot(t *testing.T) {
+	ring := &refdata.Item{ID: 1, TypeID1: TypeItem, TypeID2: TypeEquipment,
+		TypeID3: FamilyEuropeAccessory, TypeID4: PieceRing, Country: CountryAny, ReqGender: ReqGenderAny}
+	for _, slot := range []Slot{SlotRingLeft, SlotRingRight} {
+		if err := Refusal(nil, ring, slot); err != nil {
+			t.Errorf("a ring was refused slot %d: %v", slot, err)
+		}
+	}
+	if err := Refusal(nil, ring, SlotNecklace); err == nil {
+		t.Error("a ring was allowed into the necklace slot")
+	}
+	// The pair is rings only: a necklace resolves to 10 and stays there.
+	neck := &refdata.Item{ID: 2, TypeID1: TypeItem, TypeID2: TypeEquipment,
+		TypeID3: FamilyEuropeAccessory, TypeID4: PieceNecklace, Country: CountryAny, ReqGender: ReqGenderAny}
+	if err := Refusal(nil, neck, SlotRingRight); err == nil {
+		t.Error("a necklace was allowed into the second ring slot")
+	}
+}
+
+// TestSlotsFitEngineBound holds the enum inside the engine's own bound: its
+// equip check refuses any slot above 12 outright (0x1806), so a Slot this
+// project invents beyond that could never be sent to a real client.
+func TestSlotsFitEngineBound(t *testing.T) {
+	for _, s := range append(append([]Slot{}, WearableSlots...), append(AccessorySlots, SlotJobSuit)...) {
+		if int(s) >= MaxEquipSlots {
+			t.Errorf("slot %d is outside the engine's %d slots", s, MaxEquipSlots)
+		}
+	}
+	if int(SlotRingRight) != MaxEquipSlots-1 {
+		t.Errorf("SlotRingRight = %d, want the last engine slot %d", SlotRingRight, MaxEquipSlots-1)
 	}
 }

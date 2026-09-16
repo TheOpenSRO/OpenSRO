@@ -221,9 +221,9 @@ func TestEquipMultipleArmorPiecesSimultaneously(t *testing.T) {
 // against accidental drift. The numbers are on the wire and in the
 // equipment table, and the client's constants mirror them.
 func TestArmorSlotsRealOrder(t *testing.T) {
-	if SlotHelm != 0 || SlotMail != 1 || SlotShoulderGuard != 2 || SlotGauntlet != 3 || SlotPants != 4 || SlotBoots != 5 || SlotWeapon != 6 || SlotShield != 7 || SlotExtra != 8 {
-		t.Fatalf("slot numbers drifted from the game's order: helm %d mail %d shoulder %d gauntlet %d pants %d boots %d weapon %d shield %d extra %d",
-			SlotHelm, SlotMail, SlotShoulderGuard, SlotGauntlet, SlotPants, SlotBoots, SlotWeapon, SlotShield, SlotExtra)
+	if SlotHelm != 0 || SlotMail != 1 || SlotShoulderGuard != 2 || SlotGauntlet != 3 || SlotPants != 4 || SlotBoots != 5 || SlotWeapon != 6 || SlotShield != 7 || SlotJobSuit != 8 {
+		t.Fatalf("slot numbers drifted from the game's order: helm %d mail %d shoulder %d gauntlet %d pants %d boots %d weapon %d shield %d jobsuit %d",
+			SlotHelm, SlotMail, SlotShoulderGuard, SlotGauntlet, SlotPants, SlotBoots, SlotWeapon, SlotShield, SlotJobSuit)
 	}
 	want := []Slot{SlotHelm, SlotMail, SlotShoulderGuard, SlotGauntlet, SlotPants, SlotBoots}
 	if len(ArmorSlots) != len(want) {

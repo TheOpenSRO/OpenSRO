@@ -17,6 +17,33 @@ import (
 // docs/protocol/EQUIP_SLOTS.md). Gauntlet is the slot that struct's debug
 // dump skipped and this project once could not name: the wristlet worn on
 // the forearms, `clothes_NN_aa` in the model files.
+//
+// CONFIRMED AGAINST THE SERVER 2026-09-16, and this numbering is the
+// engine's own. GObjPC::FUN_00496c20 (`0x00496c20`) is the engine's
+// item-to-slot resolver: it reads the item's packed type word and switches
+// to a slot number. Its armour arm maps TypeID4 to slot as
+//
+//	1 -> 0   2 -> 2   3 -> 1   4 -> 4   5 -> 3   6 -> 5
+//
+// which is a PERMUTATION, not the identity -- and it is exactly the
+// permutation between the table's piece order (helm, shoulder, mail, pants,
+// gauntlet, boots) and the order above, derived independently from the
+// client's window artwork. Two binaries, two unrelated artefacts, one
+// numbering. The rest of the resolver lands weapons on 6, shields on 7, job
+// suits on 8 and the accessories on 9/10/11, all of which this enum already
+// had in place. See docs/protocol/EQUIP_SLOTS.md.
+//
+// AND A THIRD ARTEFACT AGREES, which is what named slots 8, 11 and 12. The
+// client's equipment window loads one .ddj per slot and the filenames are
+// the game's own words for them:
+//
+//	8  equip_slot_specialdress.ddj      11  equip_slot_l_ring.ddj
+//	9  equip_slot_earring.ddj           12  equip_slot_r_ring.ddj
+//	10 equip_slot_necklace.ddj
+//
+// The artwork had two ring slots before this project knew the server
+// accepted two, and it called slot 8 a dress before the item table was
+// asked what lives there. Both were sitting in EQUIP_SLOTS.md unread.
 type Slot int
 
 const (
@@ -28,22 +55,57 @@ const (
 	SlotBoots
 	SlotWeapon
 	SlotShield
-	SlotExtra
+	// SlotJobSuit was called SlotExtra until 2026-09-16, when the engine's
+	// resolver named it: TypeID3 == 7 returns slot 8, and every TypeID3 == 7
+	// row in a real itemdata is a trade outfit -- ITEM_EU_F_TRADE_TRADER_01,
+	// ITEM_CH_M_TRADE_HUNTER_04_01 and so on. "Extra" was a placeholder, and
+	// a placeholder is a claim like any other.
+	//
+	// 10 of the 128 rows are ITEM_CH_F_FRPVP_VOUCHER_*, the free-PvP tokens,
+	// which are not job suits but share the family and therefore the slot.
+	SlotJobSuit
 	// The accessory slots, added 2026-09-16. Appended rather than inserted:
 	// a Slot is persisted as its integer, so giving an existing value a new
 	// meaning would silently move every equipped item.
 	SlotEarring
 	SlotNecklace
-	SlotRing
+	// SlotRingLeft and SlotRingRight are a PAIR: the engine accepts either for a
+	// ring. Its equip check (CGItemEquip::vslot_317, `0x00497070`) resolves
+	// the required slot and demands an exact match, except here --
+	//
+	//	if (required != 0xb)  return (given != required) ? 0x180e : 1;
+	//	if (given == 0xb) return 1;
+	//	if (given == 0xc) return 1;
+	//	return 0x180e;
+	//
+	// -- so a character wears two rings. Added 2026-09-16; srrevamp had one.
+	SlotRingLeft
+	SlotRingRight
 )
 
-// AccessorySlots are the three worn accessories. They carry no model the
-// client draws, which is why they are not in WearableSlots.
-var AccessorySlots = []Slot{SlotEarring, SlotNecklace, SlotRing}
+// MaxEquipSlots is how many equipment slots the engine has, and NoSlot is
+// its "no slot" sentinel. Both are read off the front of the equip check
+// (CGItemEquip::vslot_317, `0x00497070`), which refuses with 0x1806
+// UIIT_MSG_STRGERR_WRONG_POSITION before looking at anything else:
+//
+//	if ((slot == 0xff) || (0xc < slot)) return 0x1806;
+//
+// 0xff is the same not-set sentinel the skill table uses for an unused
+// weapon requirement (combat.ReqWeaponUnused).
+const (
+	MaxEquipSlots = 13
+	NoSlot        = 0xff
+)
+
+// AccessorySlots are the worn accessories. They carry no model the client
+// draws, which is why they are not in WearableSlots. There are two ring
+// slots and the engine takes a ring in either.
+var AccessorySlots = []Slot{SlotEarring, SlotNecklace, SlotRingLeft, SlotRingRight}
 
 // ArmorSlots are the six wearable armour slots -- the ones that add to a
 // character's defence and are drawn on the body. SlotWeapon and SlotShield
-// are held, not worn; SlotExtra is tracked but has no gameplay yet.
+// are held, not worn; SlotJobSuit holds a trade outfit, which this project
+// tracks but has no job system to give meaning to yet.
 var ArmorSlots = []Slot{SlotHelm, SlotMail, SlotShoulderGuard, SlotGauntlet, SlotPants, SlotBoots}
 
 // WearableSlots is every slot that carries a model the client draws on

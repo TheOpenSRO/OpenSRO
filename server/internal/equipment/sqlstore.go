@@ -58,8 +58,8 @@ func (s *SQLStore) TruncateForTest(ctx context.Context) error {
 
 func validSlot(slot Slot) bool {
 	switch slot {
-	case SlotHelm, SlotMail, SlotShoulderGuard, SlotGauntlet, SlotPants, SlotBoots, SlotWeapon, SlotShield, SlotExtra,
-		SlotEarring, SlotNecklace, SlotRing:
+	case SlotHelm, SlotMail, SlotShoulderGuard, SlotGauntlet, SlotPants, SlotBoots, SlotWeapon, SlotShield, SlotJobSuit,
+		SlotEarring, SlotNecklace, SlotRingLeft, SlotRingRight:
 		return true
 	default:
 		return false

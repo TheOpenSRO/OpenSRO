@@ -166,8 +166,46 @@ equip-visual struct keeps the first eight twelve bytes apart in the same order (
 8 specialdress  9 earring  10 necklace  11 l_ring  12 r_ring  13 cloth  14 pandernt  15 plag  16 extraneous01
 ```
 
-This project's `equipment.Slot` and `EquipmentNet.SLOT_*` now use that numbering for the first
-eight plus `SlotExtra` at 8.
+This project's `equipment.Slot` and `EquipmentNet.SLOT_*` use that numbering through slot 12.
+
+**The server agrees, and that is what settled the last four slots (2026-09-16).**
+`GObjPC::FUN_00496c20` (`0x00496c20`) is the engine's own item-to-slot resolver: it reads the
+item's packed type word and returns a slot. Its armour arm maps `TypeID4 -> slot` as
+`1→0 2→2 3→1 4→4 5→3 6→5` — a permutation, and exactly the one between the table's piece order
+and the artwork order above, so the two orderings were derived independently and agree.
+
+| TypeID2 | TypeID3 | TypeID4 | slot | what lives there |
+|---|---|---|---|---|
+| 1 | 1, 2, 3, 9, 10, 11 | 1…6 | 0…5 | the six armour pieces, six families |
+| 1 | 4 | 1, 2 | 7 | `ITEM_CH_SHIELD`, `ITEM_EU_SHIELD` |
+| 1 | 6 | 1…16 | 6 | every weapon |
+| 1 | 7 | 1, 2, 3, 5, 6, 7 | 8 | `ITEM_*_TRADE_TRADER/THIEF/HUNTER`, `FRPVP_VOUCHER` |
+| 1 | 5 (China), 12 (Europe) | 1, 2, 3 | 9, 10, 11 | earring, necklace, ring |
+| **3** | **4** | 1, 2 | **7** | **`ITEM_EVENT_QUIVER`, `ITEM_ETC_AMMO_BOLT`** |
+| 1 | 13, 14 | — | *(none)* | avatars — the resolver asserts; separate container |
+
+Checked cell by cell against a real client's complete itemdata: 11,772 `TypeID1 == 3` rows, no
+disagreement anywhere.
+
+Three consequences, all of which srrevamp had wrong:
+
+- **Slot 8 is the job suit**, not an unexplained "extra". The client calls its artwork
+  `equip_slot_specialdress.ddj`; every item the resolver sends there is a trade outfit.
+- **There are two ring slots.** The equip check (`CGItemEquip::vslot_317`, `0x00497070`) demands
+  an exact slot match everywhere except a ring, where it takes 11 or 12 — matching the client's
+  `equip_slot_l_ring.ddj` / `equip_slot_r_ring.ddj`.
+- **Ammunition is equipped, in the shield slot.** A bow user gives up the shield to carry arrows.
+  srrevamp refused quivers entirely, and the note claiming that was correct reasoned about
+  srrevamp's own code without asking the engine.
+
+The check also bounds the set: `if ((slot == 0xff) || (0xc < slot)) return 0x1806` — **13 slots,
+0…12**, with `0xff` the same not-set sentinel the skill table uses for an unused weapon
+requirement. Slots 13–16 in the artwork list have no resolver arm and no items.
+
+Incidentally, the same function re-confirms four values this project already shipped, from a
+source none of them came from: it compares the item's `ReqGender` against the character's and
+passes on `2` (`ReqGenderAny`), compares `Country` and passes on `3` (`CountryAny`), and tests
+`ReqStr`/`ReqInt` against `GetParam(1)` and `GetParam(2)` — the Strength and Intellect param ids.
 
 ## What a new character starts with
 

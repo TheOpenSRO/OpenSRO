@@ -26,18 +26,24 @@ type Item struct {
 	// TypeID1..4 are the game's own four-level classification of the item:
 	// 3/1/x/y is equipment, where TypeID3 says which family (China's
 	// garment/protector/armour are 1/2/3, Europe's robe/light/heavy are
-	// 9/10/11, weapons 6, shields 4, accessories 7) and TypeID4 which
-	// piece -- for armour 1 helm, 2 shoulder guard, 3 mail, 4 pants,
-	// 5 gauntlet, 6 boots, which is what decides the slot an item may go
-	// in. See docs/protocol/ITEM_FORMAT.md.
+	// 9/10/11, weapons 6, shields 4, job suits 7, accessories 5 for China
+	// and 12 for Europe) and TypeID4 which piece -- for armour 1 helm,
+	// 2 shoulder guard, 3 mail, 4 pants, 5 gauntlet, 6 boots, which is what
+	// decides the slot an item may go in. See docs/protocol/ITEM_FORMAT.md.
 	//
 	// REFINEMENT 2026-09-16: TypeID3 == 4 is not only shields. It holds shields
 	// AND ammunition, told apart by TypeID2 -- (3,1,4,1) is ITEM_CH_SHIELD and
 	// (3,3,4,1) is a quiver of arrows; (3,1,4,2) is ITEM_EU_SHIELD and (3,3,4,2)
-	// is bolts. equipment.SlotFor is already correct about this for a reason
-	// worth noting rather than by luck: it rejects anything whose TypeID2 is not
-	// TypeEquipment (1) before it looks at TypeID3 at all, so ammunition never
-	// reaches the shield branch.
+	// is bolts.
+	//
+	// AND THE CONCLUSION DRAWN FROM THAT WAS WRONG, corrected the same day.
+	// It said equipment.SlotFor was "already correct ... it rejects anything
+	// whose TypeID2 is not TypeEquipment (1) before it looks at TypeID3 at all,
+	// so ammunition never reaches the shield branch." Rejecting ammunition is
+	// not correct, it is the bug: the engine's own resolver
+	// (GObjPC::FUN_00496c20) has a second arm that returns the SHIELD slot for
+	// TypeID2 == 3, TypeID3 == 4. Arrows are equipped, where a shield would go.
+	// The note reasoned about srrevamp's code and never asked the engine.
 	TypeID1, TypeID2, TypeID3, TypeID4 int
 	// Country is the race the item belongs to: 0 China, 1 Europe, 3 either.
 	Country int
