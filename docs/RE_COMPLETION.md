@@ -6434,3 +6434,67 @@ with a measured one.
 
 **Next step:** the `0x30xx` branch of the dispatcher -- a different helper, and it
 holds `0x300d`, which the weapon gate already returns.
+
+## 2026-09-16 (fifteenth) — 445 error codes, and a bug in my own walker
+
+The previous entry recovered 95 codes and named the `0x30xx` branch as next. The
+branch is still not decoded, but chasing it found something better: **a bug in
+the extractor that was discarding most of the table.**
+
+### The walker was throwing away the common case
+
+Reading the `0x30xx` case bodies in assembly showed the shape:
+
+	7b90c7:  push 0xdc6ca8
+	7b90cc:  jmp  0x7b966d      <- a SHARED TAIL does the lea+call
+
+Most cases do not call the helper themselves. They push the string and jump to a
+tail that makes the call. The walker treated a `jmp` as the end of a block
+whenever a push was outstanding — so it kept only the minority of cases that
+inline the call, and silently dropped the rest.
+
+Following the jump **with the push still in hand** took the table from **95 to
+445 of the dispatcher's 643 cases.**
+
+That is the second time in two ticks that a conclusion about this function was
+really a statement about the tool reading it: first Ghidra dropping the register
+argument, then my own walker dropping the jump.
+
+### A second cross-binary check, and a name off the open list
+
+`0x18fe` resolves to **`UIIT_STT_STORAGE_EXPANSION_USE_ERORR`** (the game's typo).
+Three ticks ago this project recovered `0x18fe` from the **server** — the refusal
+`CGObjPC::ExpandInventory` returns on its `kind == 3` path — and wrote:
+
+> WHICH container kind 3 is has NOT been identified … naming it from that would
+> be the kind of guess this project has paid for.
+
+The client answers it. Kind 3 is the **storage expansion** path, and the "USE" in
+the name fits: it is reached by using an expansion item. Two binaries agreeing
+without either being consulted about the other, which is the standard this
+project accepts — and a name recovered rather than guessed, three ticks after
+refusing to guess it.
+
+`inventory.MaxThirdContainerSlots` is accordingly now `MaxStorageExpansionSlots`.
+**One tension is flagged rather than resolved:** `MaxStorageSlots` is 112 via
+`AQ_StorageExpander` and this path caps at 210. Two limits in the same area of
+the engine; which governs what is not established.
+
+`ErrNoRoom` also gains the game's name for the same refusal: `0x281c`
+`UIIT_MSG_STRGERR_INVENTORY_FULL`.
+
+### Coverage, stated honestly
+
+445 of 643. The remainder either `break` without a message, or `goto` into the
+middle of another case's block *after* its push, where no string can be
+attributed. The `0x30xx` family is entirely unresolved — their bodies are visible
+in the decompiled C and do call the helper, so they are recoverable; the
+category-4 inner switch's jump table is simply not decoded by this walker.
+
+**What moved:** the error vocabulary went 95 -> 445 with a second independent
+check; one open "not identified" became a recovered name; a real bug in a
+checked-in tool was found and fixed.
+
+**Next step:** the category-4 inner jump table. Its preamble does not use the
+`sub`/`cmp`/`movzx` shape the walker looks for, so finding how MSVC dispatched
+that one switch is the whole remaining gap.

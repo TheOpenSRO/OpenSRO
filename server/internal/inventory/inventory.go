@@ -72,15 +72,35 @@ const (
 	//	4e1957  mov ax,0x18fe                <- refused
 	//
 	// so current + count must be at most 0xd2 = 210, and the refusal is error
-	// 0x18fe. WHICH container kind 3 is has NOT been identified -- a byte count
-	// and a 210 cap fit several, and naming it from that would be the kind of
-	// guess this project has paid for. Recorded with its citation and without a
-	// name.
-	MaxThirdContainerSlots = 210
+	// 0x18fe.
+	//
+	// NAMED 2026-09-16, and not by guessing. An earlier version of this comment
+	// said "WHICH container kind 3 is has NOT been identified". The CLIENT
+	// answers it: `0x18fe` is `UIIT_STT_STORAGE_EXPANSION_USE_ERORR` (the game's
+	// own typo), recovered from the client's error dispatcher --
+	// docs/protocol/error_codes.md. So kind 3 is the STORAGE EXPANSION path, and
+	// the "USE" in the name fits its shape: it is reached by using an expansion
+	// item.
+	//
+	// That is two binaries agreeing without either being consulted about the
+	// other -- the server returning 0x18fe from this path, the client calling
+	// 0x18fe a storage-expansion-use error -- which is the standard this project
+	// accepts for a name.
+	//
+	// UNRESOLVED, and worth flagging rather than smoothing over: MaxStorageSlots
+	// above is 112 and reached through AQ_StorageExpander, while this path caps
+	// at 210. Two different limits in the same area of the engine. Which governs
+	// what is not established here.
+	MaxStorageExpansionSlots = 210
 )
 
 // ErrNoRoom is returned by Store.AddItem when there's no slot available to
 // hold the item (all slots full, and no existing stack has spare capacity).
+//
+// The game makes the same refusal and names it: engine code `0x281c`,
+// `UIIT_MSG_STRGERR_INVENTORY_FULL` (docs/protocol/error_codes.md). srrevamp
+// arrived at this independently; the name is recorded so the two can be
+// compared.
 var ErrNoRoom = errors.New("inventory: no room for item")
 
 // ErrInvalidSlot is returned when a requested slot index is out of range

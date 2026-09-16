@@ -104,12 +104,23 @@ def disassemble(exe, lo, hi):
     return ins
 
 
-def string_at_target(img, ins, idx_by_addr, target, span=24):
-    """From a case target, the message name it pushes before calling the helper."""
+def string_at_target(img, ins, idx_by_addr, target, span=24, pending=None, depth=0):
+    """From a case target, the message name it pushes before calling the helper.
+
+    THE JUMP MUST BE FOLLOWED WITH THE PUSH STILL IN HAND. Most cases do not call
+    the helper themselves -- they push the string and jump to a shared tail that
+    does the `lea ecx,[buf]; call`:
+
+        7b90c7:  push 0xdc6ca8
+        7b90cc:  jmp  0x7b966d      <- the tail makes the call
+
+    An earlier version of this walker treated a `jmp` as the end of the block
+    whenever a push was outstanding, and so threw away precisely the cases that
+    use the shared tail -- which is most of them, and all of the 0x30xx family.
+    """
     i = idx_by_addr.get(target)
-    if i is None:
+    if i is None or depth > 6:
         return None
-    pending = None
     for addr, mn, op in ins[i:i + span]:
         m = re.fullmatch(r"0x([0-9a-f]+)", op)
         if mn == "push" and m:
@@ -119,13 +130,12 @@ def string_at_target(img, ins, idx_by_addr, target, span=24):
             if t == HELPER:
                 return wstr(img, pending)
             pending = None
-        elif mn in ("jmp", "ret"):
-            # An unconditional jump may still land on the shared tail that makes
-            # the call, so follow one hop rather than giving up.
-            if mn == "jmp" and pending is None:
-                t = int(op.split()[-1], 16) if op.startswith("0x") else None
-                if t is not None and span > 8:
-                    return string_at_target(img, ins, idx_by_addr, t, span - 8)
+        elif mn == "jmp":
+            t = int(op.split()[-1], 16) if op.startswith("0x") else None
+            if t is None:
+                break
+            return string_at_target(img, ins, idx_by_addr, t, span, pending, depth + 1)
+        elif mn == "ret":
             break
     return None
 
