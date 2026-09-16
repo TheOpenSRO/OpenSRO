@@ -206,6 +206,41 @@ Between read 1 and read 2 there are four `FUN_006b2ef0` calls and one
 That arithmetic is a tool for the whole `_RefObjCommon` prefix, not just these
 flags.
 
+## Counting columns properly: the counter, not the reads
+
+Pattern-matching field reads is the wrong instrument. The engine keeps its own
+column index in the stream at `+0x28` and bumps it once per column, so
+**counting `add DWORD PTR [reg+0x28]` plus the two helper calls** counts columns
+directly — and it catches read forms a regex over addressing modes misses (42
+increments against 41 matched reads).
+
+**It also has to account for loops, and this parser has one.** `0x6a36ab..0x6a3700`
+runs **four** times (`mov eax,0x4`, decremented per iteration) and consumes **two
+columns per iteration** — a dword then a byte, written at `row+0xb4` and
+`row+0xb8` with a stride of 8. Static counting sees two columns where the engine
+consumes eight.
+
+That loop is identifiable: four `(dword, byte)` pairs is exactly the shape of the
+**four `(ReqLevelType, ReqLevel)` requirement pairs**, which `ITEM_FORMAT.md`
+documents at **columns 32..39** from the data side. And the counter says the loop
+begins at column **32** and ends at **39**.
+
+That is a third anchor for the column arithmetic, independent of the two that
+established it (the five-column string prefix, and Country at column 14), and the
+first one *after* the capability block.
+
+### The residual, stated
+
+Accounting reaches **54** columns for `_RefObjCommon`; the `RefObjChar` anchors
+(Level at 57, MaxHP at 59) require **56**. Two consumers are still in a form the
+counter scan does not see, so columns past 39 are not safe to derive yet. The
+capability columns at 16..24 are unaffected, being long before the loop.
+
+**Not the explanation:** the nine calls after the capability block that the
+previous pass suspected. Four are CRT (`_free`, `_atol`, `__stricmp`,
+`__security_check_cookie`) and the other six touch neither the cursor at `+0x1c`
+nor the counter at `+0x28`. None consumes a column.
+
 ## The columns, confirmed against real data
 
 Applying the arithmetic to the nine capability reads gives:

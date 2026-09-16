@@ -9626,3 +9626,57 @@ singletons, all after the capability block. Each that turns out to consume a
 column shifts every `_RefObjCommon` field after it, so the columns past 24 are
 not yet safe to derive, and saying which of those calls are consumers is what
 makes the rest of that prefix reachable.
+
+## 2026-09-16 — the missing columns were a loop, and it identifies itself
+
+The named next step was to identify the nine uncounted consumers in
+`RefObjCommon_ExtractData`. **They are not consumers**, and the hypothesis that
+they were is disproven: four are CRT (`_free`, `_atol`, `__stricmp`,
+`__security_check_cookie`) and the other six touch neither the stream cursor at
+`+0x1c` nor the field counter at `+0x28`.
+
+### A better instrument
+
+The engine keeps its own column index in the stream at `+0x28` and bumps it once
+per column, so **counting `add DWORD PTR [reg+0x28]` plus the two helper calls
+counts columns directly**. It catches read forms a regex over addressing modes
+misses — 42 increments against 41 matched reads.
+
+### The real cause, and it names itself
+
+**A loop.** `0x6a36ab..0x6a3700` runs four times (`mov eax,0x4`, decremented per
+iteration) and consumes two columns each — a dword then a byte, written to
+`row+0xb4` and `row+0xb8` with a stride of 8. Static counting sees two columns
+where the engine consumes eight.
+
+Four `(dword, byte)` pairs is the shape of the **four `(ReqLevelType, ReqLevel)`
+requirement pairs**, and `ITEM_FORMAT.md` documents those at **columns 32..39**
+from the data side. The counter says the loop begins at column **32** and ends at
+**39**.
+
+**That is a third anchor**, independent of the two that established the
+arithmetic (the five-column string prefix, and Country at column 14) — and the
+first one *after* the capability block, where nothing had reached before.
+
+### The residual, stated rather than rounded away
+
+Accounting now reaches **54** columns; the `RefObjChar` anchors require **56**.
+Two consumers are still invisible to the counter scan. That is a precise
+residual, not a mystery: the instrument is validated (it lands column 32 exactly),
+the class of explanation is known (loops and unmatched read forms), and what is
+left is two instructions.
+
+Columns past 39 stay underivable until those two are found. **The capability
+columns at 16..24 are unaffected** — they sit long before the loop, and their five
+preceding consumers were enumerated individually.
+
+**What moved:** a wrong hypothesis removed, a better instrument established and
+validated against a third independent anchor, and the parser's one column-eating
+loop identified as the requirement pairs.
+
+**Next step:** find the two. The counter scan matches `add DWORD PTR
+[reg+0x28]`; an `inc`, an `add` through a different operand shape, or a second
+short loop would all be invisible to it. Diffing the engine's own counter — the
+value at `+0x28` when the parser returns, if a caller checks it — against the 54
+would say exactly where to look, and `RefObjChar_ExtractData` has the same
+instrument available to cross-check.
