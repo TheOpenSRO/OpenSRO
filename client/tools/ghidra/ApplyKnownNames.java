@@ -494,6 +494,13 @@ public class ApplyKnownNames extends GhidraScript {
          + "codes -- irgc->25,26; er->9; hr->11; stri->1; mpi->4; dru->128,129,130,131 -- all of "
          + "which reproduce exactly."},
 
+        {"004e4d00", "GObjPC_AdjustHwanCount",
+         "Adds a signed delta to _CHAR.RemainHwanCount (charData+0x86), clamped to [0, 5], "
+         + "setting dirty bit 0x10 and notifying on change. Refuses a POSITIVE delta while "
+         + "GetBodyMode() == 1, which is an independent confirmation that body mode 1 is "
+         + "berserk: you cannot bank charges mid-berserk. Six call sites -- an item grants +5, "
+         + "the berserk activation spends -5, and the rest are variable."},
+
         {"004aa5b0", "IGObj_GetBodyMode",
          "Vtable slot 64, named from the base class's own assert. Returns the body-mode byte at "
          + "(*(this+0x30))+3 -- the same byte IGObj::SetBodyMode writes. Combat_ResolveDamage "

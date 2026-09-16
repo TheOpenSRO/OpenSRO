@@ -1,6 +1,9 @@
 package berserk
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestFillCapsAndActivates(t *testing.T) {
 	tr := NewTracker()
@@ -103,5 +106,49 @@ func TestOrbsIsTheRecoveredCap(t *testing.T) {
 	// for a full gauge.
 	if Max%Orbs != 0 {
 		t.Errorf("Max %d does not divide into %d orbs", Max, Orbs)
+	}
+}
+
+// TestDurationIsTheRecoveredSixty pins the berserk duration and, more
+// importantly, the two facts behind it -- because the previous reading of this
+// code concluded the opposite (that berserk has no timer at all) and was wrong.
+//
+// What is recovered: GObjPC_InitStats sets param 60 to the float32 60.0 at
+// 0xb461bc, the berserk activation handler passes GetParam(60) + GetParam(195)
+// to SetBodyMode with a real state-change slot, and param 195 (`hwit`,
+// PARAM_HWAN_TIME_INCREASE) is initialised to 0. So an unbuffed berserk runs
+// for exactly the base.
+//
+// What is NOT recovered is the unit; see the constant's comment.
+func TestDurationIsTheRecoveredSixty(t *testing.T) {
+	if Duration != 60*time.Second {
+		t.Errorf("Duration = %v, want the recovered base of 60 (param 60 = 60.0f)", Duration)
+	}
+	// It must not silently drift back to the invented 20s it carried before
+	// the activation handler was found.
+	if Duration == 20*time.Second {
+		t.Error("Duration is back at the pre-recovery placeholder of 20s")
+	}
+}
+
+// TestOrbsMatchesTheChargeSpend records the third independent grounding of
+// Orbs = 5. The berserk activation handler refuses when RemainHwanCount < 5 and
+// then spends exactly -5 against a field the adjuster clamps to [0, 5].
+//
+// The three are independent: CUsedItemLimit refuses an item at 5, the adjuster
+// clamps at 5, and the activation both requires and spends 5.
+func TestOrbsMatchesTheChargeSpend(t *testing.T) {
+	if Orbs != 5 {
+		t.Fatalf("Orbs = %d, want 5", Orbs)
+	}
+	// A full gauge is what activation costs, so the two must stay in step: a
+	// gauge that filled to Max in fewer than Orbs units would let a player
+	// berserk without the engine's five charges.
+	if Max%Orbs != 0 {
+		t.Errorf("Max (%d) is not a whole number of Orbs (%d) -- one orb is not a "+
+			"clean fraction of the gauge", Max, Orbs)
+	}
+	if perOrb := Max / Orbs; perOrb <= 0 {
+		t.Errorf("Max/Orbs = %d, want a positive gauge step", perOrb)
 	}
 }

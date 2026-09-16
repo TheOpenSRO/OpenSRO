@@ -44,44 +44,48 @@ const (
 	// design): ~13 hits to fill from empty.
 	FillPerHit = 8
 
-	// Duration is how long a berserk lasts. OWN DESIGN, and as of 2026-09-16
-	// it has a PROVEN REASON rather than a failed search behind it: **this
-	// server binary gives berserk no timer at all.**
+	// Duration is how long a berserk lasts: **60 seconds**, RECOVERED.
 	//
-	// The proof is a mechanism plus an enumeration, not an absence of hits.
+	// THIS CORRECTS THE PREVIOUS TICK, which concluded "the engine gives
+	// berserk no timer at all" and said so with a mechanism and an
+	// enumeration behind it. The mechanism was right; the enumeration was not.
+	// It grepped the DECOMPILED dump for call sites of SetBodyMode, and the
+	// berserk activation handler sits in a region Ghidra never recovered as a
+	// function -- so "all eleven call sites" was all eleven *decompiled* ones.
+	// The disassembly has a twelfth, and it is the one that matters.
 	//
-	// 1. IGObj::SetBodyMode CAN carry a duration. Its fourth argument is a
-	//    float, and near the end it does
+	// The activation handler (around 0x00515bfd, unindexed) does:
 	//
-	//        if (param_3 != 0xff && 0.0 < param_4)
-	//            *(float *)(state + 0x10) = param_4;
+	//	if (GetBodyMode() == 1)            -> error 3   // already berserk
+	//	if (charData[0x86] < 5)            -> error 1   // not enough charges
+	//	SetParam-free: FUN_004e4d00(-5)                 // SPEND ALL FIVE
+	//	dur = GetParam(60) + GetParam(195)
+	//	SetBodyMode(mode=1, stateSlot=0, dur, 0)
 	//
-	//    so a body mode is given a timed life only when the state-change slot
-	//    is real and the float is positive.
-	// 2. BERSERK IS BODY MODE 1. Combat_ResolveDamage reads GetBodyMode
-	//    (vtable slot 64) and sets the berserk damage flag on `== 1`, which is
-	//    the same byte at (*(this+0x30))+3 that SetBodyMode writes.
-	// 3. All eleven SetBodyMode call sites were read, including the two whose
-	//    arguments Ghidra lost. Exactly two carry a duration -- and both pass
-	//    body mode **2**, not 1. Every mode-1 and every variable-mode site
-	//    passes 0xff for the state-change slot, which is the value that skips
-	//    the timer branch entirely.
+	// and because the slot is 0 rather than 0xff, SetBodyMode takes its timer
+	// branch and hands the duration to AJStateChanger, whose per-tick update
+	// is a float countdown (`*(float *)(this+0x10) -= elapsed`).
 	//
-	// So the engine has a body-mode timer, uses it for another mode, and does
-	// not use it for berserk. How a real berserk ends is therefore NOT a
-	// duration this project failed to find; it is something else, and the
-	// persisted `_CHAR.RemainHwanCount` beside Orbs above is the obvious
-	// candidate -- a berserk spends a charge rather than running out a clock.
-	// That is a hypothesis with no use-site and is not promoted.
+	// **The 60 is GObjPC_InitStats's own value for param 60**:
+	// `ParamKeeper_SetParam(0, 0, _DAT_00b461bc)` with `fld DWORD ds:0xb461bc`
+	// = 60.0f. Param 195 is `hwit` -- the client calls it
+	// PARAM_HWAN_TIME_INCREASE -- and InitStats sets it to 0, its registry
+	// default, so an unbuffed berserk is exactly 60 and a buffed one is longer.
 	//
-	// srrevamp's 20 seconds is therefore a straightforwardly invented timer for
-	// a mechanic the game shapes differently, and is disclosed as one.
+	// THE UNIT IS INFERRED, not read. What is recovered is the number 60 and
+	// the fact that it counts down as a float against elapsed time; no
+	// conversion appears in the AJStateChanger module, so the tick's delta unit
+	// was never actually read. Seconds is the only reading that makes sense of
+	// a float countdown from 60.0 with a buff term capped at 100, but it is an
+	// inference and is labelled one.
 	//
-	// (The Hwan REFERENCE TABLE `_REFHWANLEVEL` is real and its data ships in
-	// Media.pk2, but it is a dead end for this question: the server loads it
-	// and uses only its SIZE, to bounds-check the level
-	// IGObj::UpdateHwanLevel will accept. No gameplay path reads its entries.)
-	Duration = 20 * time.Second
+	// The charge model is now recovered too, and it is NOT this package's
+	// gauge: berserk requires all five charges and spends all five at once.
+	// srrevamp fills a 0..100 bar and activates when full, which is the same
+	// shape by luck rather than by design -- see Max/FillPerHit, still own
+	// design, and Orbs, which this path grounds for a third time (the spend is
+	// literally -5 against a field clamped to [0, 5]).
+	Duration = 60 * time.Second
 
 	// DamageNumerator/DamageDenominator are the REAL berserk damage
 	// multiplier: exactly 2, i.e. berserk doubles the blow. Recovered

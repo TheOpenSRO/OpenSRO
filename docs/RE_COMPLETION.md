@@ -4564,3 +4564,66 @@ accept. No gameplay path reads its entries at all.
 **What moved:** no value. One disclosure went from "not recovered" to a proven
 negative, one inaccurate claim in it was corrected, and a promising-looking table
 is now marked as a dead end for this question.
+
+## CORRECTION: berserk DOES have a timer, and it is 60 (2026-09-16)
+
+**The previous entry in this ledger is wrong and is retracted.** It concluded
+"berserk has no timer, and that is now proven rather than unfound", with a
+mechanism and an enumeration behind it. The mechanism was right. The enumeration
+was not, and the way it failed is the one this project keeps relearning.
+
+**How it failed.** The enumeration grepped the DECOMPILED dump for call sites of
+`SetBodyMode` and found eleven, none of which passed body mode 1 with a
+duration. But the berserk activation handler lives at about `0x00515bfd`, in a
+region **Ghidra never recovered as a function** — so it is absent from the dump
+entirely. "All eleven call sites" was all eleven *decompiled* call sites. The
+disassembly has a twelfth, and it is the only one that mattered.
+
+That is the same lesson as the caller list that missed three callers and the map
+that looked empty: **a census over the dump is a census over what Ghidra
+recovered**, not over the binary. The dump's 34,113 functions are not all of it.
+
+### What the activation handler actually does
+
+```
+if (GetBodyMode() == 1)        -> error 3        // already berserk
+if (charData[0x86] < 5)        -> error 1        // not enough charges
+GObjPC_AdjustHwanCount(-5)                       // SPEND ALL FIVE
+dur = GetParam(60) + GetParam(195)
+SetBodyMode(mode = 1, stateSlot = 0, dur, 0)
+```
+
+The slot is **0, not 0xff**, so `SetBodyMode` takes exactly the timer branch the
+previous entry described and hands `dur` to **`AJStateChanger`**, whose per-tick
+update is a float countdown (`*(float *)(this+0x10) -= elapsed`).
+
+### The value
+
+`GObjPC_InitStats` sets param 60 with `ParamKeeper_SetParam(0, 0, _DAT_00b461bc)`
+and `fld DWORD ds:0xb461bc` = **60.0f**. Param 195 is `hwit` — the client's
+`PARAM_HWAN_TIME_INCREASE`, and the same id last week's skill-code join mapped —
+and InitStats sets it to 0, its registry default. So an unbuffed berserk lasts
+exactly **60**, and `hwit` extends it.
+
+**The UNIT is inferred, not read.** What is recovered is the number and that it
+counts down as a float against elapsed time; no conversion appears anywhere in
+the `AJStateChanger` module, so the tick's delta unit was never actually read.
+Seconds is the only reading that makes sense of a float countdown from 60.0 with
+a buff term capped at 100 — but that is an inference and is labelled one in the
+constant's comment.
+
+### The charge model, recovered
+
+Berserk **requires all five charges and spends all five at once**. That grounds
+`Orbs = 5` for a third independent time: `CUsedItemLimit` refuses an item at 5,
+`GObjPC_AdjustHwanCount` clamps to [0, 5], and activation both demands and
+spends 5. The adjuster also refuses a positive delta while body mode is 1 — you
+cannot bank charges mid-berserk — which confirms mode 1 is berserk from a third
+direction.
+
+srrevamp's 0..100 gauge filling to full is the same shape as "five charges, spend
+all five" by luck rather than design; `Max` and `FillPerHit` stay own design.
+
+**What moved:** `berserk.Duration` 20s -> 60s, shipped with a test that also
+guards against drifting back to the placeholder. And a confidently-worded wrong
+conclusion, committed and pushed one tick ago, is retracted with its cause named.
