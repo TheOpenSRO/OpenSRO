@@ -153,6 +153,11 @@ The rest, new:
 
 Shipped as `combat.ParamFor`. Regenerate with `client/tools/ghidra/recover_tag_params.py`.
 
+**Each resist has a FLAT counterpart too (2026-09-16).** `FUN_00590680` reads the six percentage
+resists and the run 145..150 in strict alternation -- 27, 145, 28, 146, 29, 147, 30, 148, 31, 149,
+32, 150 -- so they are six `(percent, flat)` pairs, and `bu`'s flat term is param **148**. See
+`docs/protocol/param_registry.md`. The bounds agree: 27..32 cap at 100, 145..150 at 9,999,999.
+
 **Not listed, deliberately:** `fz`, `ps`, `zb` and the other resists share one tail block, each
 setting its own EDI before jumping in, so a walk that explores both arms of every branch reaches
 all of params 27, 29, 30, 31 and 32 from each. The family occupies that range; which tag takes

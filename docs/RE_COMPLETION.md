@@ -10219,3 +10219,54 @@ literal callers use `0x1` and no use-site seen so far distinguishes them.
 these are unreachable rather than omitted — the same standing as the
 anti-monster-class bonus. Two names applied.
 
+## 2026-09-16 — the damage pipeline holds 47 params, not 16
+
+Three corrections in a row had the same root: an enumeration searched one depth
+or one path and was reported as complete. Rather than read another function, this
+tick fixed the class of error for the system that matters most.
+
+**Walked the damage pipeline transitively.** From
+`Formula_MitigatePhysicalDamage`, `Formula_MitigateMagicalDamage` and
+`Combat_ResolveDamage`, to depth 3, collecting param reads on **both** paths at
+every function reached:
+
+| | count |
+|---|---|
+| functions reachable within depth 3 | 156 |
+| distinct params read in the pipeline | **47** |
+| read at depth 0 — what an inline walk sees | **16** |
+| read only deeper | **31** |
+
+**The walk validates against ground it did not produce**: 190/191 land in
+`Formula_RollWeaponDamage` and 192/193 in its magical twin, documented here long
+ago; 174..177 and 136..139 land in the two selectors recovered last tick;
+143/144 land in `GObjPC::ApplyHPMPDelta`. Nothing known was missed, and 31
+things were added.
+
+### Params 145..150 recovered: the flat terms of the six resists
+
+`FUN_00590680` (11,956 bytes, depth 1 from `Combat_ResolveDamage`) reads thirteen
+params, and the ORDER is the finding — strict alternation, six times:
+
+	169, then 27/145, 28/146, 29/147, 30/148, 31/149, 32/150
+
+So the two runs are six `(percent, flat)` pairs, the same shape mitigation uses
+with param 7 and param 5. Params 27..32 were already known as the resist family
+(`rals` = `MATTR_RESIST_ALL_SET` on 27, `bu` = `MATTR_RESIST_BURN` on 30);
+**145..150 appeared in no document at all**. Their bounds agree without having
+been used to reach the reading: 27..32 cap at 100, 145..150 at 9,999,999.
+
+`bu`'s flat counterpart is therefore param 148. Which tag takes which of the
+other five stays open, for the reason `magic_options.md` already records.
+
+**Not claimed:** what param 169 is. It gates the block and caps at 100; that is
+all this pass read. **Not named:** `FUN_00590680` itself — at 11,956 bytes it
+plainly does more than the resist block, and naming it for the one part I read
+would mislead, the same call made for `0x0040f1b0`/`0x0040f3d0` last tick.
+
+**Nothing shipped.** srrevamp has no status-effect system, so the resist pairs
+are unreachable rather than omitted.
+
+**Method note worth keeping:** report the depth an enumeration searched. All
+three recent corrections would have been visible as caveats at the time.
+

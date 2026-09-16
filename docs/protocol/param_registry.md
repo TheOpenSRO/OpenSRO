@@ -367,3 +367,70 @@ damage-reduction percentage.
 srrevamp has no source for `dara`, so this is unreachable rather than omitted,
 the same as the anti-monster-class bonus recorded above.
 
+## The damage pipeline holds 47 params, and a depth-0 walk sees 16 (2026-09-16)
+
+The two tables above were each built by reading one function's own `GetParam`
+sites. That is the wrong unit, and this is the measurement that says by how
+much. Walking the call graph from `Formula_MitigatePhysicalDamage`,
+`Formula_MitigateMagicalDamage` and `Combat_ResolveDamage` to depth 3, and
+collecting param reads on **both** paths at every function reached:
+
+| | count |
+|---|---|
+| functions reachable within depth 3 | 156 |
+| distinct params read anywhere in the pipeline | **47** |
+| read at depth 0 — what an inline walk sees | **16** |
+| read only deeper | **31** |
+
+The 16: 5, 6, 7, 8, 10, 12, 56, 57, 178, 179, 180, 181, 187, 188, 189, 259.
+
+**The walk validates against ground it did not produce**: 190/191 land in
+`Formula_RollWeaponDamage` and 192/193 in its magical twin, which this project
+documented long ago; 174..177 land in the `dara` selector and 136..139 in its
+sibling, both recovered the previous tick; 143/144 land in
+`GObjPC::ApplyHPMPDelta`.
+
+This is the same failure that produced three corrections in a row — the v0.1.259
+pipeline table (depth 0), the "no passive regeneration" enumeration (it
+enumerated writers without checking what drives them), and the `GetParam`
+coverage claim (one of two read paths). **An enumeration is only as complete as
+the depth and the paths it searches, and saying which depth it searched is part
+of reporting it.**
+
+## Params 145..150 are the flat terms of the six resists
+
+`FUN_00590680` — 11,956 bytes, reachable at depth 1 from `Combat_ResolveDamage`
+— reads thirteen params, and the order is the finding:
+
+	5906e0  param 169      <- gates the block
+	59078e  param 27       590c97  param 31
+	5907e0  param 145      590d08  param 149
+	5908c3  param 28       590e22  param 32
+	590915  param 146      590e74  param 150
+	5909f5  param 29
+	590a47  param 147
+	590b33  param 30
+	590b85  param 148
+
+**Strict alternation, six times.** Each percentage param is followed ~80 bytes
+later by one of the 145..150 run, so the two runs are six `(percent, flat)`
+pairs — the same shape mitigation uses with param 7 (percent) and param 5
+(flat):
+
+| percent | 27 | 28 | 29 | 30 | 31 | 32 |
+|---|---|---|---|---|---|---|
+| **flat** | **145** | **146** | **147** | **148** | **149** | **150** |
+
+Params 27..32 were already known to be the resist family (`rals` =
+`MATTR_RESIST_ALL_SET` on 27, `bu` = `MATTR_RESIST_BURN` on 30). **145..150 were
+in no document at all**, and their bounds agree with the reading without having
+been used to reach it: 27..32 are capped at 100 like percentages, 145..150 at
+9,999,999 like flat quantities.
+
+So `bu`'s flat counterpart is param 148. Which tag takes which of the other
+five is still open, and still for the reason `magic_options.md` records — the
+tags share a tail block, each setting its own EDI before jumping in.
+
+**Not claimed:** what param 169 is. It gates the block and is capped at 100, and
+that is all this pass read.
+
