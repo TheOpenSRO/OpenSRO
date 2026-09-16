@@ -2,9 +2,11 @@ package party
 
 import (
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 )
 
 func member(id uint64, characterID int64, name string) Member {
@@ -254,5 +256,27 @@ func TestJoinHasNoLevelRequirement(t *testing.T) {
 	}
 	if _, err := h.Join(p.ID, Member{CharacterID: 2, Session: &gateway.Session{}, Level: 1}); err != nil {
 		t.Errorf("a level-1 character must be allowed to join: %v", err)
+	}
+}
+
+// TestExpBonusAtTheRecoveredCap ties the two recovered party numbers together.
+// The engine's bonus multiplies the party's member count at `party + 0x1c` --
+// the same field its join-time cap tests -- so a party at MaxSize is exactly the
+// largest input the bonus can ever see. If MaxSize is changed without thinking
+// about the bonus, this is where it shows up.
+func TestExpBonusAtTheRecoveredCap(t *testing.T) {
+	atCap := leveldata.PartyExpBonus(MaxSize)
+	want := 1.0 + float64(MaxSize-1)*leveldata.PartyExpBonusPerMember
+	if math.Abs(atCap-want) > 1e-9 {
+		t.Errorf("PartyExpBonus(MaxSize=%d) = %v, want %v", MaxSize, atCap, want)
+	}
+	// A party cannot exceed MaxSize, so nothing larger is reachable.
+	if leveldata.PartyExpBonus(MaxSize) <= leveldata.PartyExpBonus(MaxSize-1) {
+		t.Error("each additional member must raise the bonus")
+	}
+	// The unshared cap is smaller, so its bonus is too -- recorded because the
+	// engine keeps the two caps apart.
+	if leveldata.PartyExpBonus(MaxSizeNotShared) >= atCap {
+		t.Error("the unshared cap yields a smaller bonus than the shared one")
 	}
 }

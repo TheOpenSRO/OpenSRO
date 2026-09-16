@@ -52,6 +52,18 @@ const MaxSize = 8
 // collapse into one number and the engine keeps them apart.
 const MaxSizeNotShared = 4
 
+// BIT 2 OF THE PARTY FLAGS IS NOT NAMED, and the attempt is recorded so it is
+// not repeated blind. It is tested once, at 005145b6, in the shape of a
+// permission check -- the actor must equal the party's `+0xc` OR bit 2 must be
+// set, else the function returns. That shape suggests "members other than the
+// leader may invite", and a shape is not a meaning.
+//
+// Two techniques were tried. The error-code lookup that named bit 0 does not
+// apply: the branch bails with a silent `ret` and no code, so the client names
+// nothing. Tracing the writer does not work either -- offset 0x10 is generic
+// enough that the binary has hundreds of unrelated writes to it, and none can be
+// attributed to a party without another anchor.
+
 // MinLevelToCreate is the character level required to START a party: **5**,
 // RECOVERED. Two entry points check it and both read the same way:
 //

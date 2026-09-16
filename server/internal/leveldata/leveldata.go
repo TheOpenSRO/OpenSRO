@@ -309,6 +309,28 @@ func MasteryExpScale(charLevel, maxMasteryLevel int) float64 {
 // float32 the first is -3.7e19, which is the usual reminder that operand size
 // decides a float constant in this binary.
 //
+// WHAT THE COUNT IS, settled 2026-09-16 rather than assumed. The call at 4d6bd9
+// is GObjPC::FUN_004ea230, and it is four instructions long:
+//
+//	if (pc[0x1cb8] == 0) Assert;   // there must be a party
+//	return *(party + 0x1c);        // the member count
+//
+// `party + 0x1c` is the **same field the join-time cap compares against 8 or 4**
+// (see party.MaxSize). So it is the TOTAL party size, not a subset filtered by
+// range or eligibility, and srrevamp passing len(pt.Members) is the right input.
+//
+// TWO GATES, AND ONE THAT IS ABSENT. The chain applies the bonus only when
+//
+//	4d6bc1  mov  eax,[edx+0x1c]   <- vtable slot 7 = IGObj::IsPC
+//	4d6bc8  cmp  eax,0x1          <- players only
+//	4d6bcd  cmp  DWORD [edi+0x1cb8],0 / je   <- and only with a party
+//
+// and it does **not** test the party's exp-sharing flag. That absence is worth
+// recording now that the flag is known to exist: bit 0 of the party's +0x10
+// selects the member cap (8 shared, 4 not), so a reader could reasonably expect
+// the exp bonus to depend on it too. It does not. srrevamp applying the bonus
+// unconditionally is therefore correct, and now checked rather than unexamined.
+//
 // SCOPE, because this is only part of what the engine does with a party. The
 // real server also scales each contributor's award by its share of the victim's
 // maximum HP -- Formula_ExpShareByDamage clamps damage/MaxHP to [1e-6, 1.0] --

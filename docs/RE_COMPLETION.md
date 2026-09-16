@@ -6807,3 +6807,58 @@ client-only error code identified as such.
 
 **Next step:** bit 2 of the party flags, tested at 5145b6 and still unnamed --
 the same place bit 0 was, so the same technique may name it.
+
+## 2026-09-16 (twenty-first) — bit 2 resists, and a shipped value gets its check
+
+The previous entry named bit 2 of the party flags as next, on the reasoning that
+the technique which named bit 0 would work again. **It does not**, and the tick
+is mostly the record of why plus a confirmation it turned up on the way.
+
+### Bit 2 is not nameable by the two available levers
+
+It is tested once, at `005145b6`, in the shape of a permission check: the actor
+must equal the party's `+0xc` **or** bit 2 must be set, else the function
+returns. That shape suggests "members other than the leader may invite" — and a
+shape is not a meaning, which is the whole reason this project reads use-sites.
+
+- **The error-code lookup fails.** What named bit 0 was the refusal each branch
+  raised. Here the branch bails with a silent `ret` and no code, so the client
+  names nothing.
+- **Tracing the writer fails.** Offset `0x10` is generic enough that the binary
+  has hundreds of unrelated writes to it, and none can be attributed to a party
+  without another anchor.
+
+Recorded in `party.go` beside the named bits so the next reader does not repeat
+both blind.
+
+### A value srrevamp already ships, now actually checked
+
+Knowing bit 0 exists raised a question about something already shipped: the party
+exp bonus is applied unconditionally, but the engine has an exp-sharing flag — is
+the bonus gated on it?
+
+**It is not.** The chain at `4d6bb9` applies the bonus when two things hold and
+neither is the flag:
+
+	4d6bc1  mov  eax,[edx+0x1c]   <- vtable slot 7 = IGObj::IsPC
+	4d6bc8  cmp  eax,0x1          <- players only
+	4d6bcd  cmp  DWORD [edi+0x1cb8],0 / je   <- and only with a party
+
+So srrevamp is correct, and now correct *with a citation* rather than by not
+having asked.
+
+The same read settled a second thing that had been assumed. The member count the
+bonus multiplies comes from `GObjPC::FUN_004ea230`, which is four instructions:
+assert a party exists, then `return *(party + 0x1c)`. **That is the same field
+the join-time cap compares against 8 or 4** — so it is the total party size, not
+a subset filtered by range or eligibility, and passing `len(pt.Members)` is
+right. A test now ties the two constants together, so changing `MaxSize` without
+thinking about the bonus fails loudly.
+
+**What moved:** a dead end documented with both techniques that failed; two
+previously-unexamined assumptions behind a shipped value turned into citations;
+`party + 0x1c` established as one field serving both the cap and the bonus.
+
+**Next step:** `PARTYERR_CREATE_PARTY_REFUSED` and `JOIN_PARTY_REFUSED` (0x2c0c,
+0x2c17) are the remaining party codes the server actually returns -- unlike
+OUT_OF_LEVEL, which it does not.
