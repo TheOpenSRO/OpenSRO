@@ -233,3 +233,32 @@ func TestParseCastRequirements(t *testing.T) {
 		t.Errorf("a malformed entry must cost one requirement, got %v", r)
 	}
 }
+
+// TestCanPaySkillHealth pins the comparison read at 0058e290, which is a `jge`:
+// the engine passes a cast whose cost EQUALS the caster's health, and only
+// refuses when health is strictly less. An off-by-one here would either make 16
+// real skills uncastable at full price or let them be cast for free.
+func TestCanPaySkillHealth(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		hp, cst int
+		want    bool
+	}{
+		{"no cost is never checked (the jle at 58e27e)", 1, 0, true},
+		{"a negative cost is not checked either", 1, -5, true},
+		{"plenty of health", 5000, 495, true},
+		{"exactly enough passes -- the comparison is jge", 495, 495, true},
+		{"one short is refused", 494, 495, false},
+		{"no health at all", 0, 495, false},
+		// SKILL_EU_BARD_RECOVERA_ABNORMALTIME_A_06 costs 2,543, the highest in
+		// the real table.
+		{"the most expensive real skill, affordable", 2543, 2543, true},
+		{"the most expensive real skill, one short", 2542, 2543, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CanPaySkillHealth(tc.hp, tc.cst); got != tc.want {
+				t.Errorf("CanPaySkillHealth(%d, %d) = %v, want %v", tc.hp, tc.cst, got, tc.want)
+			}
+		})
+	}
+}

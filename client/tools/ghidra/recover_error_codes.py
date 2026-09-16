@@ -36,6 +36,7 @@ Usage:
 """
 
 import argparse
+import collections
 import re
 import struct
 import subprocess
@@ -191,18 +192,37 @@ def main():
                 continue
             s = string_at_target(img, ins, idx_by_addr, target)
             if s and s.startswith("UIIT_"):
-                mapping.setdefault(base + k, s)
+                # Keyed by (switch table, code): the dispatcher selects a
+                # CATEGORY first and only then the code, so the same 16-bit
+                # value means different things in different categories. Merging
+                # them into one code->name dict silently invents mappings.
+                mapping.setdefault((jmptab, base + k), s)
 
-    print(f"error codes resolved to a message name: {len(mapping)}")
-    for code, name in sorted(mapping.items())[:20]:
-        print(f"   0x{code:04x}  {name}")
-    if len(mapping) > 20:
-        print(f"   ... and {len(mapping) - 20} more")
+    # Collapse to code -> {names}. A code with one name is unambiguous; a code
+    # with several is category-dependent and must not be used to label anything
+    # without knowing which category the caller is in.
+    by_code = collections.defaultdict(set)
+    for (_, code), name in mapping.items():
+        by_code[code].add(name)
+    solo = {c: next(iter(v)) for c, v in by_code.items() if len(v) == 1}
+    multi = {c: sorted(v) for c, v in by_code.items() if len(v) > 1}
+
+    print(f"(category, code) pairs resolved: {len(mapping)}")
+    print(f"distinct codes:                  {len(by_code)}")
+    print(f"  unambiguous (one name):        {len(solo)}")
+    print(f"  category-dependent:            {len(multi)}")
+    for code, names in sorted(multi.items())[:6]:
+        print(f"     0x{code:04x}  {' | '.join(names[:3])}{' ...' if len(names) > 3 else ''}")
     if args.out:
         with open(args.out, "w") as fh:
-            for code, name in sorted(mapping.items()):
+            for code, name in sorted(solo.items()):
                 fh.write(f"0x{code:04x}\t{name}\n")
-        print(f"wrote {args.out}")
+        print(f"wrote {args.out} ({len(solo)} unambiguous codes)")
+        amb = args.out.replace(".tsv", "_ambiguous.tsv")
+        with open(amb, "w") as fh:
+            for code, names in sorted(multi.items()):
+                fh.write(f"0x{code:04x}\t{';'.join(names)}\n")
+        print(f"wrote {amb} ({len(multi)} category-dependent codes)")
     return 0 if mapping else 1
 
 

@@ -394,3 +394,34 @@ func ParseCastRequirements(packed string) []CastRequirement {
 	}
 	return out
 }
+
+// CanPaySkillHealth reports whether a character can pay a skill's health cost.
+//
+// RECOVERED from the skill-use precondition check at 0058e279, read in assembly
+// because the comparison is the whole content:
+//
+//	58e279  cmp DWORD PTR [esp+0x10],0x0   ; the cost
+//	58e27e  jle skip                       ; a cost <= 0 is not checked at all
+//	58e280  call [edx+0x108]               ; vtable slot 66 = IGObj::GetCurHP
+//	58e28c  cmp eax,[esp+0x10]             ; current HP vs cost
+//	58e290  jge ok                         ; passes on EQUAL
+//	58e292  mov ax,0x3013                  ; else 0x3013, which the client names
+//	                                       ; UIIT_SKILL_USE_FAIL_NOTENOUGHHP
+//
+// So the bar is `currentHP >= cost`, not "must survive": a cast that spends the
+// caster's last point is allowed through. The MP check directly below it is the
+// same shape against slot 67 (GetCurMP), which is how the ordering here is known
+// -- the engine tests health first.
+//
+// WHAT HAPPENS AT EXACTLY ZERO IS NOT RECOVERED. The comparison permitting
+// `currentHP == cost` is read; whether the engine then treats the caster as
+// dead is not. srrevamp's own rule applies (character.Store.ApplyDamage reports
+// died when HP reaches 0), which is a composition of two things that ARE known
+// rather than an invented behaviour -- but it is the one edge this citation does
+// not cover, and it is reachable only when HP equals the cost exactly.
+func CanPaySkillHealth(currentHP, cost int) bool {
+	if cost <= 0 {
+		return true
+	}
+	return currentHP >= cost
+}

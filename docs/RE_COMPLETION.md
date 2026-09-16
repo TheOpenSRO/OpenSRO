@@ -6562,3 +6562,77 @@ previous lever could not reach have their purpose.
 server for `mov ax,0x<code>` returns and joining against this table would label
 a large number of failure paths at once -- a naming lever over functions, not
 just constants.
+
+## 2026-09-16 (seventeenth) — the error codes name functions, and find a free skill
+
+The previous entry proposed joining the error table against the server's returns
+to label failure paths. That works: **1,014 server functions return a known
+error code, 704 of them still `FUN_`**, and the codes say what each does —
+`005c6550` returns the guild-alliance refusals, `005c6b60` the guild-war ones,
+`006182a0` the specialty-trade ones.
+
+### A flaw caught before publishing
+
+The first join put `UIIT_MSG_PARTYERR_UNKNOWN_ERROR` inside a magic-option
+function, which is nonsense. The cause: **the client dispatcher selects a
+CATEGORY before switching on the code**, so the same 16-bit value carries
+different messages in different categories, and the extractor had merged them
+into one code→name dict.
+
+Measured after keying by `(category, code)`: of 614 distinct codes, **605 are
+unambiguous and 9 are category-dependent**. The 9 are the low generic ones
+(`0x0003` is `PARTYERR_INVALID_TARGET`, `STRGERR_INVALID_TARGET` *or*
+`ERR_COMMON_INVALID_TARGET`) — precisely the set most likely to be grepped up by
+accident. They are now split into a separate file and excluded from the table.
+
+### The engine's skill-use preconditions, in order
+
+`FUN_0058d8f0` is the precondition check, and its returns enumerate it:
+
+	NOTLEARN · WRONGTARGET · NOTENOUGHLEVEL · DUPLICATE · CANT_BATTLE_STATE
+	GROGGY · DO_STEALTH · MUSICAL_RANGE · TIMEDELAY_COOL_TIME · NOTENOUGHHP
+	NOTENOUGHMP · OVERLAP · RUNOUT_AMMO · PATH_INTERRUPTED
+
+srrevamp checks known, cooldown, mana, weapon and cast requirements. Comparing
+against that list found one the data already supported.
+
+### 16 skills were free to cast
+
+`refdata.Skill.ConsumeHP` has been exported, stored in SQL and **never read**.
+Sixteen real skills carry a health cost — all
+`SKILL_EU_BARD_RECOVERA_ABNORMALTIME_*`, 495 to 2,543 across their levels — and
+srrevamp let them be cast for nothing.
+
+Measured before implementing, because the last time a requirement column looked
+enforceable (`ReqStr`/`ReqInt`) **no item used it** and the check would have been
+dead code. Here 16 of 36,389 rows use it: rare, but not nothing.
+
+The comparison was read in assembly rather than assumed:
+
+	58e279  cmp DWORD PTR [esp+0x10],0x0   ; the cost
+	58e27e  jle skip                       ; a cost <= 0 is not checked
+	58e280  call [edx+0x108]               ; vtable slot 66 = IGObj::GetCurHP
+	58e28c  cmp eax,[esp+0x10]
+	58e290  jge ok                         ; passes on EQUAL
+	58e292  mov ax,0x3013                  ; NOTENOUGHHP
+
+So the bar is `currentHP >= cost`, not "must survive". And `0x108` / the MP
+check's `0x10c` are **slots 66 and 67** — `GetCurHP` and `GetCurMP` from the
+vtable harvest two ticks ago, which also settles which of that duplicated pair
+the combat code uses.
+
+Shipped as `combat.CanPaySkillHealth` with the boundary pinned by test, checked
+**before** mana so a cast short on health never spends mana on the way to being
+refused — the engine's own order.
+
+**One edge disclosed:** the comparison permitting `currentHP == cost` is read;
+whether the engine then treats the caster as dead is not. srrevamp's own rule
+applies, which composes two known facts rather than inventing one, but it is the
+gap in the citation.
+
+**What moved:** 1,014 failure paths joined to names; a category-collision bug
+found and split out; a skill cost that was exported for months and never charged.
+
+**Next step:** `NOTENOUGHLEVEL` and `RUNOUT_AMMO` are the next two preconditions
+with data behind them -- skilldata carries a required level, and bows in real
+itemdata have an ammo type.

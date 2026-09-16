@@ -62,6 +62,22 @@ error code supplies the meaning instead: a cast-requirement entry checks that th
 required item is present *and serviceable*, and failing the second half is
 "broken weapon".
 
+## A code does not always mean one thing
+
+The dispatcher selects a **category** first and only then switches on the code,
+so the same 16-bit value can carry different messages in different categories.
+An earlier version of this table merged them, which silently invented mappings —
+it is why `PARTYERR_UNKNOWN_ERROR` briefly appeared to be returned by a
+magic-option function.
+
+Measured: of 614 distinct codes, **605 are unambiguous** and **9 are
+category-dependent**. Only the 605 are listed below; the 9 are in
+`errcodes_ambiguous.tsv` beside the tool and must not be used to label anything
+without knowing the caller's category. They are the low generic ones —
+`0x0003` is `PARTYERR_INVALID_TARGET`, `STRGERR_INVALID_TARGET` **or**
+`ERR_COMMON_INVALID_TARGET` — which is exactly the set most likely to be
+grepped up by accident.
+
 ## Coverage
 
 **614 of the dispatcher's 643 cases.** The progression is worth recording because
@@ -82,9 +98,7 @@ attributed to them.
 | code | message name |
 |---|---|
 | `0x0002` | `UIIT_MSG_PARTYERR_UNKNOWN_ERROR` |
-| `0x0003` | `UIIT_MSG_PARTYERR_INVALID_TARGET` |
 | `0x0004` | `UIIT_STT_ERR_COMMON_TOO_FAR` |
-| `0x0005` | `UIIT_MSG_PARTYERR_UNKNOWN_OPERATION` |
 | `0x0006` | `UIIT_MSG_AVATAR_MAGICOPTION_ADD_ERORR` |
 | `0x0007` | `UIIT_STT_AVATAR_MAGICOPTION_ADD_FAIL` |
 | `0x0008` | `UIIT_STT_AVATAR_MAGICOPTION_ONLY_AVATAR` |
@@ -301,27 +315,20 @@ attributed to them.
 | `0x1c21` | `UIIT_MSG_NEWBIE_RETURN_ERROR` |
 | `0x1c23` | `UIIT_MSG_QUEST_ROC_CANNOT_ENTRANCE` |
 | `0x1c24` | `UIIT_MSG_QUEST_ROC_CANNOT_ENTRANCE` |
-| `0x1c25` | `UIIT_MSG_INTERACTION_FAIL_OUT_OF_REQUIRED_NUMBER_FOR_TELEPORT` |
 | `0x1c26` | `UIIT_MSG_EGYPT_MENU_ERROR_UNIONMEMBER` |
 | `0x1c27` | `UIIT_MSG_EGYPT_TOMB_ENTRANCE_CONDITION_ERROR_01` |
 | `0x1c28` | `UIIT_MSG_EGYPT_TOMB_ENTRANCE_CONDITION_ERROR_02` |
 | `0x1c29` | `UIIT_MSG_INSTANCEDUNGEON_ERROR_MSG_01` |
 | `0x1c2a` | `UIIT_MSG_EGYPT_TOMB_ENTRANCE_CONDITION_ERROR_05` |
-| `0x1c2b` | `UIIT_MSG_FLAGWAR_GAME_JOB_NOT_ENTER` |
-| `0x1c2c` | `UIIT_MSG_EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_01` |
 | `0x1c2d` | `UIIT_MSG_EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_04` |
 | `0x1c2e` | `UIIT_MSG_EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_03` |
 | `0x1c2f` | `UIIT_MSG_EGYPT_SHRINE_ENTRANCE_CONDITION_ERROR_02` |
-| `0x1c30` | `UIIT_MSG_INTERACTION_FAIL_CANT_USE_TELEPORT_WITH_RIDE` |
 | `0x1c31` | `UIIT_MSG_INSTANCEDUNGEON_ERROR_MSG_02` |
 | `0x1c32` | `UIIT_MGS_ERR_GOD_LIMIT_TIME` |
 | `0x1c33` | `UIIT_MGS_ERR_GOD_TELEPORT_HOLE_NOT_PARTY` |
 | `0x1c34` | `UIIT_MSG_PARTYMATCH_RECORD_ERROR_PARTYLEADER` |
 | `0x1c35` | `UIIT_MGS_ERR_GOD_INS_WORLD` |
-| `0x1c36` | `UIIT_MGS_ERR_GOD_DEADSTATE` |
-| `0x1c37` | `UIIT_MGS_ERR_GOD_TELEPORT_HOLE_NOT_TOWN` |
 | `0x1c38` | `UIIT_MGS_ERR_GOD_BATTLE_STATE` |
-| `0x1c39` | `UIIT_MGS_ERR_GOD_GUILD` |
 | `0x1c3a` | `UIIT_STT_PARTY_SUMMON_WAIT_ERR` |
 | `0x2807` | `UIIT_MSG_FORT_ETC_ERROR_ONLYGUILDMASTER_ACTION` |
 | `0x2808` | `UIIT_MSG_FORT_MANAGER_TAX_ERROR_01` |

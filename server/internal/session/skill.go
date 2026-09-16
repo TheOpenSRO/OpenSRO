@@ -400,6 +400,10 @@ func UseSkillHandler(
 		var damagePercent int
 		var hits = 1
 		var mpCost int
+		// The skill's real health cost (skilldata Consume_HP). Only 16 skills in
+		// the whole table carry one, all SKILL_EU_BARD_RECOVERA_ABNORMALTIME_*,
+		// which trade health for their effect instead of mana.
+		var hpCost int
 		// The skill's damage-type mask. A catalog skill has no real row and
 		// so leaves 0, which combat.AttackType reads as physical -- the
 		// behaviour those invented skills already had.
@@ -430,6 +434,7 @@ func UseSkillHandler(
 		if ref, err := skillRef.GetSkill(ctx, req.SkillID); err == nil && ref != nil {
 			cooldown = time.Duration(ref.ReuseDelayMs) * time.Millisecond
 			mpCost = ref.ConsumeMP
+			hpCost = ref.ConsumeHP
 			damageBonus, damagePercent = skillDamageBonus(ref)
 			hits = ref.HitsFor()
 			attackType = combat.AttackType(ref.AttackType)
@@ -514,6 +519,25 @@ func UseSkillHandler(
 			readyAt := lastUsed.Add(cooldown)
 			if now.Before(readyAt) {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "skill on cooldown"}).Encode()})
+			}
+		}
+
+		// Pay the skill's real HEALTH cost first. The engine checks health
+		// before mana -- 0058e292 returns UIIT_SKILL_USE_FAIL_NOTENOUGHHP and
+		// 0058e2b1 returns ..._NOTENOUGHMP, in that order -- and doing the same
+		// here means a cast short on health never spends mana on the way to
+		// being refused. refdata.Skill.ConsumeHP was exported and stored but
+		// never read until 2026-09-16; these 16 skills were free to cast.
+		if hpCost > 0 {
+			hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
+			if err != nil {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "lookup failed"}).Encode()})
+			}
+			if !combat.CanPaySkillHealth(hp, hpCost) {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "not enough health"}).Encode()})
+			}
+			if _, _, err := chars.ApplyDamage(ctx, characterID, hpCost); err != nil {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "spending health failed"}).Encode()})
 			}
 		}
 
