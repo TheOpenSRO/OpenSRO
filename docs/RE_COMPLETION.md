@@ -7286,3 +7286,59 @@ one of them confirmed across both binaries.
 alone has 23 asserts in it -- pairing their LINE NUMBERS with function order
 would turn a file attribution into an ordering, which is the step from "belongs
 here" toward a name.
+
+## 2026-09-16 (twenty-ninth) — interpolating the client attribution, and withholding 88% of it
+
+The previous entry named this: pair the asserts' line numbers with function order
+to turn a file attribution into something stronger. Two tests were run and both
+changed the answer.
+
+### The naive form is unsound
+
+Within a file, address order should match source-line order. Of 172 adjacent
+pairs, **only 119 (69.2%)** are ordered. The violations have a shape —
+`line 1084 -> 23`, `2234 -> 897`, `4392 -> 2339` — large then small, i.e. a
+translation unit emitted in **several separate runs**. Splitting on that: 123
+files, 176 ascending runs, 1.43 per file.
+
+### The rule that holds, and its reach
+
+*If the nearest asserted function below and above name the same file, the one
+between is in that file.* Leave-one-out over the 295 asserted functions is
+**110/110 correct**.
+
+**The test cannot reach far.** Its spans are bounded by assert density; applied
+to unnamed functions the spans have a median of **127** and a maximum of **516**.
+Only **12%** of the 4,972-function yield falls inside the validated range.
+
+### A second validator that cannot settle it
+
+19,154 client functions already carry a `Class::` prefix, so the interpolated
+file can be checked against it. Agreement is **61.5%**, and only 72% even at span
+<= 30 where leave-one-out said 100%.
+
+That is not proof of error. The two measure different things: a `.cpp` holds
+several classes, and the biggest disagreements are `UI_ALCHEMYBOX` (209) and
+`UI_SILKMALL` — **module attributions from an earlier pass, not real class
+names**. Comparing one inference against another settles nothing, and saying so
+is more useful than picking whichever number is larger.
+
+### What shipped, and what did not
+
+**579 interpolated functions in spans <= 30**, where leave-one-out has coverage
+(65 predictions there, all correct). Total client attribution: **263 direct + 579
+= 842**.
+
+**4,393 are withheld.** The rule may well hold for them, but nothing available
+validates a 500-function span, and this project has twice published a number that
+looked like success and was inflation — the 704-function error-code join, and the
+329 "party" functions. The pattern is consistent enough to plan around.
+
+**What moved:** a plausible technique tested to destruction and then salvaged at
+the scale it survives; client attribution more than tripled, with the unvalidated
+majority named and left out.
+
+**Next step:** what would validate a long span is an independent per-function
+signal that is not itself an inference -- the asserts' LINE NUMBERS are one, since
+a function's line must fall between its neighbours' if the run is contiguous.
+That is testable on the 295 asserted functions.
