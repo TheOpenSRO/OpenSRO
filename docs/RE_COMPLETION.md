@@ -8058,3 +8058,82 @@ slot is the combining rule (slot 0 sums by ctx, slot 3 is the percent scale, per
 `reference_sro_server_internals`), so enumerating which tag uses which slot
 would recover the arithmetic for a whole family at once, rather than one stat
 at a time.
+
+## 2026-09-16 — tag to param id: a whole recovery behind one dropped register
+
+The previous entry proposed enumerating which ParamKeeper *slot* each tag uses.
+That turned out to be the smaller half. `Stat_ApplyTaggedModifier`
+(`0x00498690`) also decides **which param id** each tag writes — and the
+decompilation cannot show it.
+
+### Why the C output is blind here
+
+The dispatcher's leaves call `GObjPC::ParamKeeper_SetParam`, whose param id
+arrives in **EDI**. Ghidra does not map that register to a parameter, so every
+leaf decompiles to the identical
+
+	GObjPC::ParamKeeper_SetParam(0,param_3,fVar1);
+
+and the 53-way switch appears to do the same thing 53 times. In the asm each
+leaf is `mov edi,N` immediately before the call. A whole recovery was sitting
+behind one dropped register, in a function that had already been read and named.
+
+**This is the general lesson worth keeping:** when a decompiled switch looks
+like it has identical arms, the distinguishing value is probably in a register
+the decompiler dropped. Check the disassembly before concluding the arms are the
+same.
+
+### The control licensed the rest
+
+A walker binds each `cmp eax,TAG / je LEAF` to the param its leaf loads. Six of
+the results were already known from functions the dispatcher has nothing to do
+with:
+
+	bri  -> 10   cri  -> 12    GObjMob_PublishStats' consecutive publish run
+	evbl -> 56   evcr -> 57    Combat_ResolveDamage's block and critical rolls
+	str  -> 1    int  -> 2     the damage pipeline's own GetParam calls
+
+**All six came back right.** That is what licenses the other fourteen, which
+are new: `hpa` 3, `mp` 4, `hra` 11, `hpmp`/`hprg` 25, `mprg` 26, `rals` 27,
+`bu` 30, `mpna` 53, `drua` 128, `brna` 10, `strj`/`strv` 1, `intv` 2.
+
+`hra` -> 11 is a seventh confirmation in passing: `MitigateDamage`'s note
+already named param 11 as `'hra'`, from the other direction.
+
+### What the walk cannot say, and is not guessed
+
+The resist tags (`fz`, `ps`, `zb`, …) share one tail block, each setting its own
+EDI before jumping in. A conservative walk gives them different answers from an
+exhaustive one, and the exhaustive walk reaches params 27, 29, 30, 31 and 32
+from every one of them. The family occupies that range; which tag takes which,
+this walk does not separate. None of them ships, and a test asserts their
+absence so a later tick has to explain itself rather than quietly fill them in.
+
+### A finding that refines rather than overturns
+
+Params 25 and 26 are written by `MATTR_REGENHPMP`, `MATTR_AVATAR_HPRG` and
+`MATTR_AVATAR_MPRG` — the engine has HP/MP regeneration parameters. This does
+NOT reopen the earlier "there is no passive regen" finding, which was about what
+writes the pools by default: nothing does. Regeneration is a stat items grant,
+not a baseline. Two compatible claims, recorded together so the next reader does
+not take one for a contradiction of the other.
+
+### Shipped
+
+`combat.ParamFor`, twenty tag-to-param bindings with the six controls named in
+the comment. `TestParamForHoldsTheIndependentlyKnownSix` keeps the control
+standing — if a future re-read disagrees with one of those six, the re-read is
+what to doubt. `TestParamForExcludesTheAmbiguousResists` pins the deliberate
+absence. `client/tools/ghidra/recover_tag_params.py` is the walker, with its
+control and its limits in the docstring. `docs/protocol/magic_options.md` gains
+the full table.
+
+**What moved:** fourteen new stat-parameter bindings, six shipped ones
+re-confirmed from an unrelated function, and a reusable method for the next
+dispatcher that looks like it has identical arms.
+
+**Next step:** the same walk over the OTHER two functions that carry all eight
+probe tags — `GObjPC::FUN_004909f0` and `FUN_00491bd0` (both unnamed). They are
+tag dispatchers too, and whatever they do with the tags is a second, independent
+reading of the same vocabulary; agreement would extend the control set, and
+disagreement would be worth more.

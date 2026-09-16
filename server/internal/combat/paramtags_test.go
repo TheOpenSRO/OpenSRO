@@ -91,3 +91,76 @@ func TestAvatarTagsAreDistinctFromTheBaseOnes(t *testing.T) {
 		}
 	}
 }
+
+// TestParamForHoldsTheIndependentlyKnownSix is the control that validated the
+// disassembly walk in the first place, kept standing. Each of these six param
+// ids was established by earlier work from a function the dispatcher had
+// nothing to do with -- GObjMob_PublishStats' consecutive publish run,
+// Combat_ResolveDamage's block/critical rolls, and the damage pipeline's own
+// GetParam calls. If a future re-read of the dispatcher disagrees with one of
+// them, the re-read is what to doubt.
+func TestParamForHoldsTheIndependentlyKnownSix(t *testing.T) {
+	for _, tc := range []struct {
+		tag   string
+		param int
+		from  string
+	}{
+		{TagBlock, 10, "GObjMob_PublishStats consecutive run (characterdata col 76)"},
+		{TagCritical, 12, "GObjMob_PublishStats consecutive run (characterdata col 78)"},
+		{TagEvadeBlk, 56, "Combat_ResolveDamage, opposes block"},
+		{TagEvadeCri, 57, "Combat_ResolveDamage, opposes critical"},
+		{TagStr, 1, "the damage pipeline's GetParam(1)"},
+		{TagInt, 2, "the damage pipeline's GetParam(2)"},
+	} {
+		got, ok := ParamFor[tc.tag]
+		if !ok {
+			t.Errorf("%q has no param; it was known to be %d from %s", tc.tag, tc.param, tc.from)
+			continue
+		}
+		if got != tc.param {
+			t.Errorf("%q -> param %d, want %d (%s)", tc.tag, got, tc.param, tc.from)
+		}
+	}
+}
+
+// TestParamForOppositionsArePaired keeps the two rolls the engine actually
+// makes legible: each is a stat opposed by another, and the pair must not
+// collapse onto one param.
+func TestParamForOppositionsArePaired(t *testing.T) {
+	for _, p := range [][2]string{{TagBlock, TagEvadeBlk}, {TagCritical, TagEvadeCri}} {
+		a, b := ParamFor[p[0]], ParamFor[p[1]]
+		if a == 0 || b == 0 {
+			t.Fatalf("%q/%q: one of the pair is missing (%d/%d)", p[0], p[1], a, b)
+		}
+		if a == b {
+			t.Errorf("%q and %q both map to param %d; they oppose each other", p[0], p[1], a)
+		}
+	}
+}
+
+// TestParamForExcludesTheAmbiguousResists documents a deliberate absence. The
+// frostbite/poison/zombie tags share a tail block and the walk cannot say which
+// of params 27..32 each takes, so they are left out rather than guessed. A
+// later tick that separates them should delete this test, not work around it.
+func TestParamForExcludesTheAmbiguousResists(t *testing.T) {
+	for _, tag := range []string{"fz", "ps", "zb"} {
+		if p, ok := ParamFor[tag]; ok {
+			t.Errorf("%q maps to param %d, but the walk that produced this table "+
+				"reaches five different params from it -- if this is now known, "+
+				"say how in the comment and remove it from this test", tag, p)
+		}
+	}
+}
+
+// TestEveryParamForTagPacks keeps the map's keys real tags: each must survive
+// the pack/unpack round trip, which a typo would not.
+func TestEveryParamForTagPacks(t *testing.T) {
+	for tag, param := range ParamFor {
+		if UnpackTag(PackTag(tag)) != tag {
+			t.Errorf("%q is not a packable tag (param %d)", tag, param)
+		}
+		if param <= 0 {
+			t.Errorf("%q -> param %d; param ids are positive", tag, param)
+		}
+	}
+}

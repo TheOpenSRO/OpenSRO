@@ -112,6 +112,58 @@ and the note there about the fourth time hand-typing one went wrong.
 Regenerate with the script recorded in that tick's entry: decode column 7 of `MagicOption.txt`
 as big-endian ASCII and group by it.
 
+## Tag to ParamKeeper param id
+
+Recovered 2026-09-16 from `Stat_ApplyTaggedModifier` (`0x00498690`) — **from the disassembly, not
+the decompilation.** The dispatcher ends in `GObjPC::ParamKeeper_SetParam`, whose param id arrives
+in EDI, a register Ghidra does not map to a parameter; the C output therefore renders every leaf
+as the identical `ParamKeeper_SetParam(0, param_3, value)` and cannot tell the tags apart at all.
+In the asm each leaf is `mov edi,N` immediately before the call.
+
+**The control:** six of these bindings were already known from unrelated functions, and all six
+came back right — which is what licenses the other fourteen.
+
+| tag | param | code name | how the control knew it |
+|---|---:|---|---|
+| `str` | 1 | `MATTR_STR` | the damage pipeline's `GetParam(1)` |
+| `int` | 2 | `MATTR_INT` | the damage pipeline's `GetParam(2)` |
+| `bri` | 10 | `MATTR_BLOCKRATE` | `GObjMob_PublishStats` run, characterdata col 76 |
+| `cri` | 12 | `MATTR_CRITICAL` | same run, col 78 |
+| `evbl` | 56 | `MATTR_EVADE_BLOCK` | `Combat_ResolveDamage` |
+| `evcr` | 57 | `MATTR_EVADE_CRITICAL` | `Combat_ResolveDamage` |
+
+The rest, new:
+
+| tag | param | code name |
+|---|---:|---|
+| `hpa` | 3 | `MATTR_AVATAR_HP` |
+| `mp` | 4 | `MATTR_MP` |
+| `hra` | 11 | `MATTR_AVATAR_HR` |
+| `hpmp` | 25 | `MATTR_REGENHPMP` |
+| `hprg` | 25 | `MATTR_AVATAR_HPRG` |
+| `mprg` | 26 | `MATTR_AVATAR_MPRG` |
+| `rals` | 27 | `MATTR_RESIST_ALL_SET` |
+| `bu` | 30 | `MATTR_RESIST_BURN` |
+| `mpna` | 53 | `MATTR_NASRUN_MPNA` |
+| `drua` | 128 | `MATTR_AVATAR_DRUA` |
+| `brna` | 10 | `MATTR_NASRUN_BLOCKRATE` — the same param as `bri` |
+| `strj` | 1 | `MATTR_STR_3JOB` |
+| `strv` | 1 | `MATTR_STR_AVATAR` |
+| `intv` | 2 | `MATTR_INT_AVATAR` |
+
+Shipped as `combat.ParamFor`. Regenerate with `client/tools/ghidra/recover_tag_params.py`.
+
+**Not listed, deliberately:** `fz`, `ps`, `zb` and the other resists share one tail block, each
+setting its own EDI before jumping in, so a walk that explores both arms of every branch reaches
+all of params 27, 29, 30, 31 and 32 from each. The family occupies that range; which tag takes
+which, this walk does not say. (`bu` resolved singly in both a conservative and an exhaustive
+walk and is listed, but it is in the same block and carries the same caveat.)
+
+**Regeneration is an item stat.** Params 25/26 exist and `MATTR_REGENHPMP`/`MATTR_AVATAR_HPRG`/
+`MATTR_AVATAR_MPRG` write them. That does not reopen the earlier finding that there is no passive
+regen, which was about what writes the pools by default — nothing does. These params are there for
+items to grant.
+
 ## What is NOT here
 
 The bonus *magnitudes*. Columns 4/5 hold a level and a factor and columns 8–16 further numbers,
