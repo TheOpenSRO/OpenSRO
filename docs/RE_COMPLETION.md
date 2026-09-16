@@ -9118,3 +9118,73 @@ engine rather than invented, and the slot-13 boundary confirmed a fourth time.
 unused — srrevamp's `trade.Offer` is a single item plus gold, so neither applies
 to its model yet. If the offer ever becomes a list, both are already grounded and
 should be taken from here rather than chosen.
+
+## 2026-09-16 — the item capability flags: nine engine-named predicates, one flags word
+
+The previous entry's next step was a non-action — the 12-item offer cap does not
+fit srrevamp's single-item model — so this tick took the vein that produced the
+last two findings instead: **srrevamp's gaps against the engine's refusals.**
+
+A sweep for admitted gaps in srrevamp came back nearly clean (two hits, neither a
+game rule), so the sharper question: the engine has refusals named
+`CANNOT_BE_TRADED`, `CANNOT_BE_DROPPED`, `CANNOT_DEAL_AT_SHOP` — **item flags**,
+and srrevamp models none of them.
+
+### The recovery
+
+The trade handler refuses `0x183a CANNOT_BE_TRADED` when `vslot(0xc4)` returns
+zero. `0xc4` is slot 49, and the base implements it as an `## Illegal ##` stub
+that names itself: `IGObj::CanTrade`. There are **nine** such stubs, consecutive
+in memory 0x30 apart — `CanTrade, CanSell, CanBorrow, CanDrop, CanPick,
+CanRepair, CanRevive, CanUse, CanThrow`.
+
+`CGObjCOS_Summoned` implements all nine, and each override is two lines reading
+**one bit of one flags word** at ref row `+0x8c`:
+
+	bit 0 CanTrade   bit 4 CanDrop    bit 7 CanRevive
+	bit 1 CanSell    bit 5 CanPick    bit 8 CanUse
+	bit 3 CanBorrow  bit 6 CanRepair  bit 9 CanThrow
+
+plus a tenth at bit 10 with no stub to name it. **Zero means refuse** — a set bit
+is permission. Full table and the parser's construction in
+`docs/protocol/item_capability_flags.md`.
+
+`0x1838 CANNOT_BE_DROPPED` is deliberately **not** in that family despite the
+matching name: its guard is a TID lookup, a different mechanism.
+
+### Two failed probes, kept
+
+The bits are settled; **which itemdata columns feed them is not**, and both
+attempts failed in ways worth recording.
+
+**A partial extraction that looked complete.** A regex over the parser's field
+reads captured 11 where it has many more, and produced indices 2, 3, 4… —
+positions within that subset, which look exactly like column numbers. Promoting
+them would have invented seven columns. This is the same fault as the
+level-record offsets two ticks ago: an extraction over decompiled C that does not
+account for everything it is counting.
+
+**A shape prediction that failed cleanly, which is the useful kind.** If seven of
+these are consecutive boolean columns, itemdata should hold a run of seven
+columns containing only 0 or 1. There is exactly one — columns 41..47 — and
+`ITEM_CH_SWORD_01_A_DEF` reads **0 across all seven**. A sword must be tradeable
+and a set bit is permission, so that run is not the flags. A discriminator search
+(sword 1, quest item 0) gave 17, 22, 23, 26, 33 — scattered, no run.
+
+### Shipped
+
+`docs/protocol/item_capability_flags.md`: the nine names, the bit map with an
+implementation address for each, the flags-word construction, and an explicit
+section on what is not established and what was tried. No srrevamp value changed
+— without the columns there is nothing to wire.
+
+**What moved:** a whole permission system identified by the engine's own names,
+with ten bits mapped to predicates by use-site, and an honest boundary around the
+half that is still open.
+
+**Next step:** recover `RefObjCommon_ExtractData`'s **full** field order. It is
+the blocker for these columns and for anything else in `_RefObjCommon`, and the
+partial-regex approach is now proven inadequate — it wants the disassembly, where
+each field read is an unambiguous `mov` from `[cursor + base]` with the cursor
+advancing by a known width, rather than decompiled C where the reads take several
+shapes.
