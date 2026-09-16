@@ -421,3 +421,62 @@ separates a neighbouring block from the one being read.
 
 None of this is wired into srrevamp: it has no target-kind concept for `da` and
 no knockback result for `kb`.
+
+
+## The consumer census was contaminated twice — corrected (2026-09-16)
+
+The reader census that selected `Skill_ApplyEffectsToParams` ranked functions by
+how many distinct skill-field offsets they mention. That ranking had **two**
+false-positive sources, and both are now measured.
+
+### 1. Vtable calls, not field reads — 58.6% of all occurrences
+
+An offset like `0x27c` is `er`'s field, and it is also a vtable slot. Grepping
+`+ 0x27c)` finds both. Dump-wide, over every skill-field offset:
+
+	any occurrence      2,851
+	VTABLE calls        1,670   (58.6%)
+	typed FIELD reads     664   (23.3%)
+
+`er` (0x27c) is the extreme: **407 vtable calls against 4 real reads.** `scls`
+(0x380) is 314 against 4. So more than half of what the census counted as
+evidence was a virtual call that has nothing to do with skills.
+
+Filtering to typed reads (`*(int *)(x + 0xNNN)` and friends) drops
+`Skill_ApplyEffectsToParams` from 34 distinct codes to **23**, and
+`Combat_ResolveDamage` from 28 to 24.
+
+### 2. Guard chains — already known, now applied together
+
+A code tested once in a `== 0 && ... == 0` chain is being checked for presence,
+not acted on. Weighting by codes read **more than once** and applying the typed
+filter gives the first honest consumer ranking:
+
+| function | acted on | of | dominant codes |
+|---|---|---|---|
+| `Combat_ResolveDamage` | 12 | 24 | att(11), tant(4), tnt2(4), da(4) |
+| `Skill_ApplyEffectsToParams` | 12 | 23 | defp(5), dru(4), apau(4), apru(4) |
+| `FUN_0091f330` | 7 | 11 | lfst(8) |
+| `FUN_00593f50` | 7 | 9 | heal(7), resu(5), curt(4) |
+| `FUN_00586700` | 3 | 3 | tel2(5), tele(3) |
+
+**`FUN_00589d20` (24 codes) and `FUN_00589f10` (16) drop off the list entirely** —
+every one of their codes is read exactly once, so they are pure guard functions.
+The naive ranking put them at the top and would have sent a reader to spend a
+tick on functions that do nothing with those codes.
+
+### What this does and does not invalidate
+
+The **code → param join stands.** It was validated by six independent controls
+that reproduced exactly, and its mechanism — pairing a field read with the
+`SetParam` annotation that follows — cannot be produced by a vtable call. What
+was contaminated is the *selection* of which function to read, not the join
+computed from it. `Skill_ApplyEffectsToParams` turns out to be tied rather than
+dominant: a right answer reached partly by luck.
+
+**Not claimed**: the three functions above are dominated by one code each
+(`lfst`, `heal`/`resu`, `tel2`/`tele`), which is suggestive of life-steal, healing
+and teleport handlers. Neither `FUN_00586700` nor `FUN_0091f330` carries a string
+confirming it, and `FUN_0091f330` is a vtable slot in the quest band. Naming them
+from the code's abbreviation is the reasoning this project has rejected
+repeatedly, so they stay unnamed.

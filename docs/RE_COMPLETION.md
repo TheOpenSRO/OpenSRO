@@ -5249,3 +5249,49 @@ is in.
 
 **What moved:** no value. Seven codes stay unnamed on purpose, one is confirmed,
 and the method that keeps getting this wrong is now a tool that checks itself.
+
+## The skill-code census was 58% noise, and two consumers are pure guards (2026-09-16)
+
+Reading `FUN_00593f50` to name the cure/heal codes turned up a false positive
+that matters more than the codes did: line 52's `(**(code **)(iVar3 + 0x254))(…)`
+is a **vtable call at offset 0x254**, not a read of the `kb` field. The census
+that selected this project's skill-code lever counts those as evidence.
+
+**Measured dump-wide over every skill-field offset:**
+
+	any occurrence      2,851
+	VTABLE calls        1,670   (58.6%)
+	typed FIELD reads     664   (23.3%)
+
+`er` (0x27c) is the extreme — **407 vtable calls against 4 real reads**. More
+than half of what the census treated as evidence was a virtual call unrelated to
+skills.
+
+**Applying both corrections** — typed reads only, then weighting by codes read
+more than once (the guard-chain fix found earlier) — gives the first honest
+consumer ranking. Two results stand out:
+
+- **`FUN_00589d20` (24 codes) and `FUN_00589f10` (16) drop off entirely.** Every
+  one of their codes is read exactly once: they are pure guard functions. The
+  naive ranking put them at the top, and a future tick would have been spent
+  reading functions that do nothing with those codes.
+- **`Skill_ApplyEffectsToParams` falls from 34 distinct codes to 23**, tying
+  rather than leading. The right lever was picked partly by luck.
+
+**What survives.** The code → param join is unaffected: it was validated by six
+independent controls that reproduced exactly, and its mechanism — pairing a field
+read with the `SetParam` annotation that follows — cannot be produced by a vtable
+call. The *selection* was contaminated, not the join.
+
+**What was not claimed.** Three functions are each dominated by a single code —
+`FUN_0091f330` by `lfst` (8 reads), `FUN_00593f50` by `heal`/`resu`,
+`FUN_00586700` by `tel2`/`tele` — which reads like life-steal, healing and
+teleport handlers. Neither of the first two carries a confirming string, and
+`FUN_0091f330` is a vtable slot in the quest band. Naming a function from its
+dominant code's abbreviation is exactly the reasoning this project keeps
+rejecting, so all three stay unnamed.
+
+**What moved:** no value. A census method leaned on for several findings is now
+measured rather than assumed, two apparent top consumers are exposed as guards,
+and the one conclusion built on it is shown to rest on controls rather than on
+the contaminated ranking.
