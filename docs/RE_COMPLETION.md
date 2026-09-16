@@ -7163,3 +7163,60 @@ moments, with the boundary and the rollback behaviour pinned by test.
 **Next step:** `friend.go` still carries the request/accept shape as own design,
 and the engine's `0x640a FRIEND_SYSCANCEL` / `0x640e FRIEND_SYSPROGRESS` suggest
 a request lifecycle with states srrevamp does not model.
+
+## 2026-09-16 (twenty-seventh) — auditing every "nothing to recover here" claim
+
+The previous entry named the friend request lifecycle as next. The more valuable
+thing it had actually produced was a **method**: two package comments asserting
+absence had both been wrong, and the error-code table makes re-testing them
+cheap. This tick applied that to all fifteen.
+
+### The method, and what it does not prove
+
+The server refuses actions with numeric codes the client maps to `UIIT_*` names,
+so **a subsystem that exists in the server almost always has an error family**.
+Its presence is evidence there is something to recover; its absence is evidence
+there is not.
+
+It is not proof. A constant reached on no failure path leaves no code, so "no
+error family" narrows where to look rather than closing the question. Every
+"holds" in the audit means *no engine error family was found*, and the doc says
+so in those words.
+
+### The probe lied first, and was caught
+
+A first pass matched substrings and reported five domains that do not exist:
+`mana` matched `FORT_MANAGER`, `leveldata` matched `RENT_EXP_ITEM`, and `quest`
+matched `REQUESTED_JOB`, `QUESTION_GUILD` and `FREQUEST_WAR`. Same inflation
+failure mode as the error-code join two entries ago — a key space overlapping
+something common — caught this time before anything was written down. The fix is
+to match the domain **prefix**, not the word anywhere in the name.
+
+### Result
+
+Of fifteen claims: **four were wrong or incomplete and are now recovered**
+(party, friend, guild, inventory — all in previous entries), and **eleven hold**.
+The two most worth stating as tested rather than assumed:
+
+- **`duel`** — the only PvP codes are two spellings of `FRPVP_DURING_CHANGE`,
+  about switching free-PvP mode. There is no challenge/accept/refuse family, so
+  the duel system really is srrevamp's own invention. Marked tested in place.
+- **`quest`** — only 4 genuine codes, all specific mechanics (Roc entrance,
+  trap-making), no system limit.
+
+Shipped as `docs/protocol/absence_audit.md`: the verdicts, the method, its
+limits, and the false-positive warning so the next sweep does not repeat the bad
+probe.
+
+### Where this leaves the project
+
+For every package that carries such a claim, the **values** half of the goal is
+as closed as this lever can make it. What remains is the harder half — naming
+functions, at **21.7%** on the server and **14.8%** on the client.
+
+**What moved:** eleven bare assertions became tested ones and four had already
+been overturned; a reusable audit with its own failure mode documented.
+
+**Next step:** the values lever is close to exhausted, so the naming half is
+where the remaining work is. The client is the weaker side and has no
+`## Illegal ##` convention -- finding what it *does* have is the open question.

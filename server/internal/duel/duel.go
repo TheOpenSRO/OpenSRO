@@ -2,6 +2,13 @@
 // session-scoped challenge/accept/fight flow (like party and combat, not
 // persisted -- a duel dissolving on server restart is normal, not a bug).
 // Entirely own design; no real duel/PvP data to RE.
+//
+// TESTED 2026-09-16, not merely asserted -- two claims of this shape elsewhere
+// in the tree turned out to be wrong. The server's error vocabulary contains no
+// duel family: the only PvP codes are two spellings of
+// UIIT_MGS_ERR_FRPVP_DURING_CHANGE, about switching free-PvP mode, and there is
+// no challenge/accept/refuse family at all. See docs/protocol/absence_audit.md
+// for the method and its limits.
 package duel
 
 import (
