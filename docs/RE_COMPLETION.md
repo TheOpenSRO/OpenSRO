@@ -5836,3 +5836,64 @@ exporter is no longer conditional on the part of the table nobody had read.
 **Next step:** the nine value-dispatched stoppers (`bu`, `cr`, `curl`, `efr`,
 `es`, `fz`, `ko`, `setv`, `sl`). Their handlers branch on value[0], so each needs
 reading individually -- `efr` first, at 9,538 rows by far the most used.
+
+## 2026-09-16 (sixth) — the nine "stoppers" were fixed runs, and a third mis-filed field
+
+The previous entry named the nine value-dispatched stoppers as the next step,
+`efr` first. All nine are decoded. **They are not variable-length at all** — each
+is a fixed run, and classifying them as stoppers was this project's own error,
+not a property of the parser.
+
+### The dispatch form that hid seven of them
+
+Tag dispatch takes two shapes, and only one had been modelled. The obvious one is
+`cmp edx,IMM` / `je`. The other is a **cumulative subtraction chain**, where each
+branch tests the running *sum* of the immediates:
+
+	587725:  sub edi,0x6272  / je   -> 'br'  (0x6272)
+	58772d:  sub edi,0x3     / jne  -> 'bu'  (0x6272 + 3 = 0x6275)
+
+Seven of the nine appear only in that form, so "no comparison found in the
+disassembly" was a fact about the scanner. Teaching the extractor to accumulate
+`sub` chains found all seven immediately.
+
+### `efr` is a fixed run of 7 whose value picks the field
+
+Its handler reads value[0] and branches to one of three stores — 1 → `0x28c`,
+2 → `0x290`, 3 → `0x294`, anything else no store — but **every path adds the same
+7 words**. So the run was constant all along; only the destination varies.
+
+### The numbers
+
+| table | fixed | varlen | clean | varlen-stop | unknown |
+|---|---|---|---|---|---|
+| start of the previous pass | 89 | 15 | 19,155 | 1,609 | 15,625 |
+| after that pass | 119 | 20 | 19,990 | 2,111 | 14,288 |
+| after these 11 | 130 | 21 | **33,965** | 2,424 | **0** |
+
+**33,965 of 36,389 rows (93.3%) now walk cleanly end to end**, up from 19,155.
+`efr` alone is worth +6,183 rows, `bu` +879, `fz` +856, `setv` +762. None of the
+11 lowers the clean count when added on its own.
+
+### A third instance of one bug, and a limit worth stating
+
+`br`'s real handler stores to **`0x278`**; the table said `0x318`, which belongs
+to `bu` — the next tag in the same `sub` chain. That is the identical
+`je`-target-versus-fall-through mis-pairing that had already mis-filed `pw` and
+`skc`. Three instances, one cause, now also seen across `sub` chains.
+
+**The walk cannot catch this class.** `br`'s run (3) was correct, and a walk only
+ever exercises run lengths — a field offset is never tested by walking. So the
+correction rests on the disassembly alone, and the walk's authority is bounded:
+**it validates runs, never fields.** Worth recording plainly, because the
+previous two entries leaned on the walk as though it validated entries whole.
+
+**What moved:** the skill-param vocabulary reaches 151 codes with zero
+unrecognised rows and 93.3% of the table walking cleanly; the nine "variable
+length" codes turn out to be fixed runs; a third mis-filed field is corrected.
+
+**Next step:** the 21 remaining stoppers (`ao`, `bbuf`, `cbuf`, `efta`, `eshp`,
+`fitp`, `hitm`, `hntp`, `lkdr`, `lks2`, `nbuf`, `nmf`, `nmh`, `php1`, `pmp1`,
+`reqi`, `rpkt`, `slcc`, `ssou`, `trap`, `odar`) account for the last 2,424 rows.
+They were classed variable-length by the original extractor, and the nine just
+decoded are a reason to distrust that classification rather than inherit it.

@@ -114,7 +114,9 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `att` | 0x00617474 | `0x230` | 6 | 5 |
 | `pdmg` | 0x70646d67 | `0x234` | 2 | 1 |
 | `pdm2` | 0x70646d32 | `0x238` | 2 | 1 |
+| `ko` | 0x00006b6f | `0x23c` | 3 | 2 |
 | `da` | 0x00006461 | `0x240` | 2 | 1 |
+| `cr` | 0x00006372 | `0x244` | 3 | 2 |
 | `ck` | 0x0000636b | `0x248` | 2 | 1 |
 | `hr` | 0x00006872 | `0x24c` | 3 | 2 |
 | `ru` | 0x00007275 | `0x250` | 2 | 1 |
@@ -122,10 +124,12 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `defp` | 0x64656670 | `0x25c` | 4 | 3 |
 | `defr` | 0x64656672 | `0x260` | 3 | 2 |
 | `spda` | 0x73706461 | `0x264` | 3 | 2 |
+| `br` | 0x00006272 | `0x278` | 3 | 2 |
 | `er` | 0x00006572 | `0x27c` | 3 | 2 |
 | `dura` | 0x64757261 | `0x280` | 2 | 1 |
 | `onff` | 0x6f6e6666 | `0x284` | 3 | 2 |
 | `mc` | 0x00006d63 | `0x288` | 3 | 2 |
+| `efr` | 0x00656672 | `0x28c` | 7 | 6 |
 | `esht` | 0x65736874 | `0x29c` | 3 | 2 |
 | `cnsm` | 0x636e736d | `0x2a0` | 4 | 3 |
 | `dcmp` | 0x64636d70 | `0x2a8` | 2 | 1 |
@@ -148,8 +152,10 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `real` | 0x7265616c | `0x300` | 4 | 3 |
 | `pola` | 0x706f6c61 | `0x304` | 3 | 2 |
 | `summ` | 0x73756d6d | `0x308` | 6 | 5 |
+| `fz` | 0x0000667a | `0x30c` | 3 | 2 |
 | `fb` | 0x00006662 | `0x310` | 3 | 2 |
-| `br` | 0x00006272 | `0x318` | 3 | 2 |
+| `es` | 0x00006573 | `0x314` | 4 | 3 |
+| `bu` | 0x00006275 | `0x318` | 4 | 3 |
 | `ps` | 0x00007073 | `0x31c` | 4 | 3 |
 | `zb` | 0x00007a62 | `0x320` | 3 | 2 |
 | `heal` | 0x6865616c | `0x324` | 5 | 4 |
@@ -170,6 +176,7 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `puls` | 0x70756c73 | `0x384` | 2 | 1 |
 | `reqc` | 0x72657163 | `0x39c` | 2 | 1 |
 | `atca` | 0x61746361 | `0x3bc` | 3 | 2 |
+| `pwtt` | 0x70777474 | `0x3c0` | 2 | 1 |
 | `tant` | 0x74616e74 | `0x3c8` | 3 | 2 |
 | `tnt2` | 0x746e7432 | `0x3cc` | 3 | 2 |
 | `dtnt` | 0x64746e74 | `0x3d0` | 3 | 2 |
@@ -185,6 +192,7 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `mwhs` | 0x6d776873 | `0x404` | 2 | 1 |
 | `tran` | 0x7472616e | `0x408` | 3 | 2 |
 | `curt` | 0x63757274 | `0x40c` | 3 | 2 |
+| `curl` | 0x6375726c | `0x410` | 4 | 3 |
 | `rcur` | 0x72637572 | `0x414` | 2 | 1 |
 | `dmgr` | 0x646d6772 | `0x418` | 5 | 4 |
 | `abnb` | 0x61626e62 | `0x41c` | 2 | 1 |
@@ -193,6 +201,7 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `dcri` | 0x64637269 | `0x42c` | 2 | 1 |
 | `se` | 0x00007365 | `0x430` | 4 | 3 |
 | `rt` | 0x00007274 | `0x434` | 4 | 3 |
+| `sl` | 0x0000736c | `0x438` | 4 | 3 |
 | `fe` | 0x00006665 | `0x43c` | 4 | 3 |
 | `my` | 0x00006d79 | `0x440` | 5 | 4 |
 | `bl` | 0x0000626c | `0x444` | 6 | 5 |
@@ -223,6 +232,7 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `msid` | 0x6d736964 | `0x4c4` | 2 | 1 |
 | `gdr` | 0x00676472 | `0x4c8` | 2 | 1 |
 | `dgmp` | 0x64676d70 | `0x4cc` | 2 | 1 |
+| `hwir` | 0x68776972 | `0x4d0` | 2 | 1 |
 | `getv` | 0x67657476 | `0x56c` | 2 | 1 |
 | `mom` | 0x006d6f6d | `0x57c` | 5 | 4 |
 | `expu` | 0x65787075 | `0x580` | 3 | 2 |
@@ -230,6 +240,7 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `hwit` | 0x68776974 | `0x588` | 2 | 1 |
 | `bldr` | 0x626c6472 | `0x58c` | 4 | 3 |
 | `msr` | 0x006d7372 | `0x590` | 3 | 2 |
+| `setv` | 0x73657476 | `--` | 4 | 3 |
 
 ## Variable-length codes
 
@@ -898,26 +909,90 @@ Fourteen codes stop a walk. Five have a recovered field:
 | `lkdr` | 0x6c6b6472 | `0x478` |
 | `nmh` | 0x006e6d68 | `0x598` |
 
-Nine do not: **`bu`, `cr`, `curl`, `efr`, `es`, `fz`, `ko`, `setv`, `sl`**. They
-are listed because real rows demonstrably stop on them — `efr` on 9,538 rows, the
-single most common stopper in the table — not because their handlers have been
-read.
+Nine more were listed here as "field not recovered", with `efr` at 9,538 rows
+the most common stopper in the table. **All nine are now decoded, and none of
+them is variable-length** -- see "The nine stoppers were fixed runs all along"
+at the end of this file. The five above remain, joined by `fitp`.
 
-`efr` explains the class. It *is* dispatched by an ordinary `cmp edx,0x656672`,
-but its handler does not store a field and move on:
+## The nine stoppers were fixed runs all along, and `br` was mis-filed (2026-09-16)
+
+The previous section called nine codes "stoppers with no recovered field" and
+classed them as operationally variable-length. **That was wrong: every one is a
+fixed run, and `efr` alone accounts for 6,183 rows that could not be walked.**
+
+### Why a `cmp`-only scanner could not see seven of them
+
+Tag dispatch in this parser takes **two** forms. The obvious one is
+`cmp edx,IMM` / `je`. The other is a **cumulative subtraction chain**, where the
+tag each branch tests is the running *sum* of the immediates so far:
 
 ```
-587bf6:  mov  edx,DWORD PTR [eax+0x4]   <- value[0]
-587bfc:  add  ecx,0x1
-587bff:  sub  edx,0x1 / je ...          <- branch on the value
-587c04:  sub  edx,0x1 / je ...
+587723:  mov edi,edx
+587725:  sub edi,0x6272   / je  -> handler for 'br'   (0x6272)
+58772d:  sub edi,0x3      / jne -> handler for 'bu'   (0x6272 + 3 = 0x6275)
 ```
 
-It **branches on its own first value** before storing anything, so the field and
-the run depend on that value. That is exactly the shape that mis-filed `pw` and
-`skc`, and it is why a scanner looking for the next `mov [esi+N],eax` finds the
-wrong one or none at all.
+Seven of the nine are dispatched only this way, so a scanner that knows only
+`cmp` finds no comparison for them at all — which is exactly what "not found in
+the disassembly" meant, and it was a statement about the scanner.
 
-So "variable-length" is the right *operational* class for these — a walk cannot
-pass them — but the mechanism is value dispatch rather than an unstated count,
-and that distinction is recorded rather than smoothed over.
+### `efr`: a fixed run whose VALUE picks the field
+
+```
+587bf6:  mov edx,[eax+0x4]          ; value[0]
+587bfc:  add ecx,0x1                ; the code word
+587bff:  sub edx,1 / je  -> mov [esi+0x28c],eax     ; value[0] == 1
+587c04:  sub edx,1 / je  -> mov [esi+0x290],eax     ; value[0] == 2
+587c09:  sub edx,1 / jne -> (no store)              ; value[0] == 3 -> [esi+0x294]
+         add ecx,6 ; add eax,0x18                   ; EVERY path: 7 words
+```
+
+So `efr` is a **fixed run of 7** carrying 6 values, and value[0] selects which of
+three fields the pointer is filed into (1 → `0x28c`, 2 → `0x290`, 3 → `0x294`,
+anything else → no field, run still consumed). It is listed once in the table
+above under `0x28c`.
+
+### The nine
+
+| code | constant | field | run | solo gain |
+|---|---|---|---|---|
+| `efr` | 0x00656672 | `0x28c` / `0x290` / `0x294` by value[0] | 7 | +6,183 |
+| `bu` | 0x00006275 | `0x318` | 4 | +879 |
+| `fz` | 0x0000667a | `0x30c` | 3 | +856 |
+| `setv` | 0x73657476 | (stores no field) | 4 | +762 |
+| `cr` | 0x00006372 | `0x244` | 3 | +400 |
+| `ko` | 0x00006b6f | `0x23c` | 3 | +380 |
+| `curl` | 0x6375726c | `0x410` | 4 | +72 |
+| `sl` | 0x0000736c | `0x438` | 4 | +51 |
+| `es` | 0x00006573 | `0x314` | 4 | +34 |
+
+"Solo gain" is the increase in cleanly-walked rows from adding that one code to
+the table and changing nothing else. Two further codes reached by the same pass
+(`pwtt` `0x3c0` run 2, `hwir` `0x4d0` run 2) gain nothing on their own but are
+real and were added.
+
+### `br` was filed under `bu`'s field — the third instance of one bug
+
+The chain above shows `br`'s own handler at `0x58774a` storing to **`0x278`**,
+not `0x318`. The table said `0x318`, which is `bu`'s. That is the same
+`je`-target-versus-fall-through mis-pairing that had already mis-filed `pw` and
+`skc`, now occurring across a `sub` chain as well as a `cmp`.
+
+The run (3) was right, so the walk cannot detect this one — a field offset is
+never exercised by walking. It is corrected on the disassembly's authority
+alone, and that limit is worth stating: **the walk validates run lengths, never
+fields.**
+
+`br`'s handler is itself value-dispatched (it reads `[edx]` and compares against
+4 before storing), which is why the original extractor tripped here.
+
+### Where the walk stands now
+
+| table | fixed | varlen | clean | varlen-stop | unknown |
+|---|---|---|---|---|---|
+| after the previous pass | 119 | 20 | 19,990 | 2,111 | 14,288 |
+| after these 11 | 130 | 21 | **33,965** | 2,424 | **0** |
+
+**33,965 of 36,389 rows (93.3%) now walk their Param block cleanly end to end**,
+against 19,155 when this file's table was 89 codes. None of the 11 additions
+lowers the clean count when added on its own.
