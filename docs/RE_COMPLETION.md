@@ -5064,3 +5064,47 @@ the shadowing changed damage rather than just naming.
 
 **What moved:** a behavioural fix. Skills 1 and 2 now resolve to the game's own
 skills on any server with refdata loaded, instead of to invented ones.
+
+## Closing the bug class: every real-vs-fallback precedence audited (2026-09-16)
+
+Last tick's bug was not really about skills. It was a **precedence inversion**:
+invented data consulted before real data. That is a class, not an incident, so
+this tick audits every place srrevamp makes that choice.
+
+**Result: the skill path was the only inversion.** Every other decision prefers
+real data, verified in the code rather than from the comment claiming it:
+
+| decision | order | correct |
+|---|---|---|
+| `shop.Price` | real `item.Price` first, formula second | yes |
+| `shop.SellValue` | real `SellPrice` first, fraction second | yes |
+| kill experience | `levelTable.KillExp` overrides `monster.ExpReward` | yes |
+| `combat.RollGold` | falls back to the flat only when the range is absent (`max <= 0 \|\| max < min`) | yes |
+| monster attack | `raw := monster.Attack`, overridden whenever `AttackMax > 0` | yes |
+| mastery cost | level table's column 2 first, disclosed cost second | yes |
+| skill damage | real `att` params first, disclosed per-level second | yes |
+| **skill resolution** | **catalog first** — fixed last tick | was NO |
+
+That bounds the damage: one inversion, found and fixed, and nothing else of the
+same shape.
+
+### A latent instance of the same collision, recorded before it bites
+
+`quest.Catalog` uses ids **1 and 2**. The client's `questdata.txt` gives those to
+real quests — id 1 is `QEVENT_GUIDE`, id 2 is `QTUTORIAL_CH`, the Chinese
+tutorial — and real quest ids run **1..1051 with no gap at the bottom**, so any
+small invented id collides.
+
+It is **not** a bug today, and the reason is specific rather than lucky: nothing
+imports real quests, because the objective TARGETS are not in the client tables
+(established last tick). There is no real quest data to shadow. It becomes a bug
+the moment the quest graph is imported — which last tick showed is possible.
+
+Written into `internal/quest` with the real quest names and the instruction that
+matters: when real quests are wired in, fix it the way the skill path was fixed —
+**try the real table first and fall back to the catalog** — rather than
+renumbering, which would orphan existing progress.
+
+**What moved:** no value. A bug class opened last tick is now bounded by an audit,
+and the one remaining instance of it is documented at the site with the fix
+prescribed in advance.

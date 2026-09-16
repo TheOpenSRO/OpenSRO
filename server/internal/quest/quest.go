@@ -48,6 +48,24 @@ type Quest struct {
 	GoldReward  int64
 }
 
+// LATENT ID COLLISION, recorded 2026-09-16 so it is not discovered the hard way.
+//
+// The ids below are 1 and 2, and the client's own questdata.txt gives those to
+// real quests: id 1 is QEVENT_GUIDE and id 2 is QTUTORIAL_CH, the Chinese
+// tutorial. Real quest ids run 1..1051 with no gap at the bottom, so ANY small
+// invented id collides.
+//
+// This is not a bug today, because nothing imports real quests -- the objective
+// TARGETS are not in the client tables (see the package comment), so there is no
+// real quest data to shadow. It becomes one the moment the quest graph is
+// imported.
+//
+// The identical shape WAS a live bug in skill.Catalog: its ids 1 and 2 are
+// SKILL_PUNCH_01 and SKILL_CH_SWORD_BASE_01, and the skill-use path consulted
+// the catalog before refdata, so players used an invented skill in place of the
+// real basic swing. The fix there was ordering, not renumbering. Whoever wires
+// real quests in should apply the same rule: try the real table first, fall back
+// to this catalog.
 // Catalog is the fixed set of quests available. Own design; monster names
 // reference cmd/server's own placeholder monster content (monsterSpecs).
 var Catalog = map[int64]Quest{
