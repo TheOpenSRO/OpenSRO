@@ -92,6 +92,19 @@ type Skill struct {
 	// an export predating these columns. combat.SkillAllowsWeapon treats it
 	// that way and permits the cast.
 	ReqCastWeapon1, ReqCastWeapon2 int
+
+	// ReqCastListCount is how many entries the skill puts in the five-slot list
+	// at CRefSkill+0x3a0, filled by its 'reqi' parameter.
+	//
+	// It matters because THE WEAPON GATE DOES NOT APPLY WHEN IT IS NON-ZERO.
+	// FUN_0058d480 opens with `if (skill[0x3a0] == 0)` and only checks
+	// ReqCastWeapon1/2 inside that branch; a skill with a list takes an entirely
+	// different path. 1,094 real skills carry 'reqi', and 517 of them also carry
+	// a weapon requirement the engine therefore never applies.
+	//
+	// What the list HOLDS is not recovered, so srrevamp does not model the other
+	// branch -- it simply declines to apply a check the engine would not.
+	ReqCastListCount int
 	// HitCount is how many times one cast strikes: 1 for most skills, up to 5.
 	//
 	// CONFIRMED INDEPENDENTLY 2026-09-16: the client's own localisation key for

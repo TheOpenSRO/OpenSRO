@@ -5897,3 +5897,85 @@ length" codes turn out to be fixed runs; a third mis-filed field is corrected.
 `reqi`, `rpkt`, `slcc`, `ssou`, `trap`, `odar`) account for the last 2,424 rows.
 They were classed variable-length by the original extractor, and the nine just
 decoded are a reason to distrust that classification rather than inherit it.
+
+## 2026-09-16 (seventh) — the 21 stoppers, a shipped bug found, and a tool so this stops being ad-hoc
+
+The previous entry warned against inheriting the "variable-length" label for the
+21 remaining stoppers. Checking each: **10 are genuinely variable-length**, 3
+were fixed runs, 1 is something else entirely, and 7 remain unfound. Chasing the
+"something else" found a bug this project shipped two ticks ago.
+
+### `ssou` is a parse TERMINATOR, and my delta test could not see it
+
+`ssou`'s handler writes the counter and cursor back to their globals, stores
+`0x354`, and **returns from the parser**:
+
+	5890dc:  mov [esi+0x354],eax
+	5890e5:  ret                      <- never reaches the loop tail
+
+My extractor walked straight past that `ret` into the *next* handler and
+reported `ssou` as run 4, field `0x264` — which is `spda`'s. The per-code test
+then rated it "confirms", because adding it raised the clean count by 103.
+
+**It also derailed 189 rows, and the test never looked.** Of 292 rows reaching
+`ssou`, 103 happened to land on a terminator after skipping 4 words and 189
+landed mid-value. A run-length test must check that **UNKNOWN does not rise**,
+not only that clean does; a wrong run can buy clean rows by luck. The verifier
+below reports all three columns for exactly this reason.
+
+### `reqi` fills the weapon gate's override list — and srrevamp was refusing legal casts
+
+Two ticks ago the weapon gate shipped with an open question: `FUN_0058d480`
+checks `ReqCastWeapon` only inside `if (skill[0x3a0] == 0)`, and nothing was
+known about `+0x3a0`. It is filled by the `reqi` parameter:
+
+	588f5d:  lea edi,[esi+0x3a0]           ; a five-slot list
+	588f63:  cmp edx,0x5 / je              ; capped at 5
+	588f6c:  cmp DWORD PTR [edi],0x0 / je  ; first free slot
+	588f79:  mov [esi+edx*4+0x3a0],eax
+
+So **a skill carrying `reqi` never has its weapon bytes consulted.** Measured:
+1,094 real skills carry `reqi`, and **517 of them also carry a weapon
+requirement the engine ignores**. srrevamp has been refusing those casts since
+v0.1.197. Fixed: the gate now applies only when the list is empty, which is the
+faithful half — what the other branch checks is still unrecovered, and declining
+to apply a check the engine would not apply is the right half to ship.
+
+`reqi`'s own field was also wrong in the table: it said `0x2a4`, which belongs to
+`rhru` (`00588f9f`). That is the **fourth** instance of the
+`je`-target-versus-fall-through mis-pairing, and this one this project introduced
+itself an hour earlier by copying the figure out of the occurrence table.
+
+### `reqn`, and a name off the open ledger
+
+`reqn` (0x7265716e, one `sub edi,5` past `reqi`) is variable-length with field
+**`0x3b4`** — a field the open-items ledger has carried unnamed as `vf[0x3b4]`.
+
+### A verifier, checked in
+
+`client/tools/verify_skill_params.py` parses the table out of the markdown,
+walks every real Param block, and reports clean / varlen-stop / **unknown**,
+exiting non-zero if any row ends on a code the table lacks. Three ticks of
+claims about this table rested on throwaway scripts; now they are reproducible,
+and the tool's docstring states plainly what the walk does **not** test:
+
+> field offsets. No walk ever reads a field, so a code filed under the wrong
+> offset walks exactly as well as a correct one.
+
+Four mis-filed fields have now been found (`pw`, `skc`, `br`, `reqi`) and the
+walk caught none of them.
+
+### Where it stands
+
+| | fixed | varlen | clean | varlen-stop | unknown |
+|---|---|---|---|---|---|
+| start of this tick | 129 | 20 | 33,203 | 2,344 | 842 |
+| now | 132 | 21 | **34,707 (95.4%)** | 1,682 | **0** |
+
+**What moved:** the vocabulary is 153 codes with zero unrecognised rows;
+`skill+0x3a0` is named and the gate corrected; `0x3b4` comes off the ledger; the
+measurement is a checked-in tool rather than a script in a scratch directory.
+
+**Next step:** what the `reqi` list HOLDS, and the branch `FUN_0058d480` takes
+when it is non-empty -- that branch switches on the first word of each entry.
+517 skills currently get no weapon check at all because of it.

@@ -409,6 +409,9 @@ func UseSkillHandler(
 		// and permits -- 0 is invalid in the real table, so it can only mean an
 		// export predating the columns.
 		var reqWeapon1, reqWeapon2 int
+		// How many entries the skill puts in the list at CRefSkill+0x3a0. The
+		// weapon gate applies ONLY when this is zero -- see below.
+		var reqCastList int
 		// REAL SKILLS WIN. This used to check skill.Catalog first, which
 		// silently shadowed two real skills: the own-design catalog occupies
 		// ids 1 and 2, and those are SKILL_PUNCH_01 and SKILL_CH_SWORD_BASE_01
@@ -429,6 +432,7 @@ func UseSkillHandler(
 			hits = ref.HitsFor()
 			attackType = combat.AttackType(ref.AttackType)
 			reqWeapon1, reqWeapon2 = ref.ReqCastWeapon1, ref.ReqCastWeapon2
+			reqCastList = ref.ReqCastListCount
 		} else if sk, inCatalog := skill.Catalog[req.SkillID]; inCatalog {
 			cooldown = time.Duration(sk.CooldownSeconds) * time.Second
 			damageBonus = int(sk.DamageBonus)
@@ -454,7 +458,23 @@ func UseSkillHandler(
 		// none of it -- which is every fresh one -- refusing here would mean
 		// nobody could use a skill at all, the same reasoning attackerDamage
 		// already applies to an unknown weapon.
-		if reqWeapon1 != 0 || reqWeapon2 != 0 {
+		// CORRECTED 2026-09-16. The gate shipped two versions ago applied the
+		// ReqCastWeapon bytes to every skill that carries them. The engine does
+		// not: FUN_0058d480 opens with
+		//
+		//	if (skill[0x3a0] == 0) { ...the weapon check... }
+		//	else                   { ...a different check entirely... }
+		//
+		// and `+0x3a0` is a five-slot list filled by the skill's 'reqi'
+		// parameter. So a skill with a list never has its weapon bytes
+		// consulted. 1,094 real skills carry 'reqi' and **517 of them also
+		// carry a weapon requirement the engine ignores** -- srrevamp was
+		// refusing casts the game allows.
+		//
+		// What the other branch checks is not recovered, so this does not model
+		// it. Declining to apply a check the engine would not apply is the
+		// faithful half of the answer; the other half is still open.
+		if reqCastList == 0 && (reqWeapon1 != 0 || reqWeapon2 != 0) {
 			t3, t4, known := equippedWeaponType(ctx, characterID, eq, items)
 			if known && !combat.SkillAllowsWeapon(reqWeapon1, reqWeapon2, t3, t4) {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "wrong weapon for this skill"}).Encode()})

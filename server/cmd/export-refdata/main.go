@@ -446,6 +446,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		atkType,               // 28 AttackType -- real, 'att' value[0]
 		get(skReqCastWeapon1), // 29 ReqCast_Weapon1
 		get(skReqCastWeapon2), // 30 ReqCast_Weapon2
+		reqItemCount(cols),    // 31 ReqCastListCount -- 'reqi' runs; non-zero disables the weapon gate
 	}, true
 }
 
@@ -456,6 +457,20 @@ func skillRecord(cols []string) ([]string, bool) {
 // parameter parser reads 'att' as a fixed run of six words (the code plus five
 // values), which is how the layout below is known rather than guessed.
 const attackCode = "6386804"
+
+// reqItemCode is the skill parameter tagged 'reqi'. Its handler appends into a
+// FIVE-SLOT LIST at CRefSkill+0x3a0 (`mov [esi+edx*4+0x3a0],eax` at 00588f79,
+// with the slot chosen by scanning for the first zero and capped at 5), and
+// that list is what the weapon gate branches on:
+//
+//	if (skill[0x3a0] == 0) { ...check ReqCastWeapon... }
+//	else                   { ...a different check entirely... }
+//
+// So a skill carrying 'reqi' does NOT have its ReqCastWeapon bytes applied.
+// 1,094 real skills carry it, 517 of them alongside a weapon requirement that
+// the engine therefore ignores. Let Python compute the constant -- hand-typing
+// these has been wrong twice in this project.
+const reqItemCode = "1919250793" // 0x72657169
 
 // hitCountCode is the skill's 'mc' parameter -- 0x6d63, the pair (2, N) where N
 // is how many times one cast strikes. See refdata.Skill.HitCount for the
@@ -536,6 +551,25 @@ func attackParam(cols []string) (attackType, percent, dmgMin, dmgMax string) {
 		return at(1), at(2), at(3), at(4)
 	}
 	return "0", "0", "0", "0"
+}
+
+// reqItemCount counts the skill's 'reqi' runs, i.e. how many entries it puts in
+// the list at CRefSkill+0x3a0. The engine caps the list at 5.
+//
+// Only whether it is ZERO matters to the weapon gate, but the count is exported
+// rather than a boolean because what the list HOLDS is not recovered yet, and a
+// count is the more useful thing to already have when it is.
+func reqItemCount(cols []string) string {
+	n := 0
+	for _, v := range cols {
+		if strings.TrimSpace(v) == reqItemCode {
+			n++
+		}
+	}
+	if n > 5 {
+		n = 5 // the engine's own cap: `cmp edx,0x5 / je` ends the slot scan
+	}
+	return strconv.Itoa(n)
 }
 
 // hitCountParam pulls a skill's hit count out of its Param block. The run is

@@ -210,6 +210,10 @@ var skillCSVColumns = []string{
 	// so an export made before them loads with 0, which is invalid in the real
 	// table and here means "unknown", permitting the cast.
 	"ReqCastWeapon1", "ReqCastWeapon2",
+	// Appended later ("reqi" run count; non-zero means the weapon gate does
+	// not apply). A strict suffix: an older export leaves 0, which applies the
+	// gate exactly as before this column existed.
+	"ReqCastListCount",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -336,6 +340,9 @@ func parseSkillRow(f []string) (Skill, error) {
 	}
 	if len(f) > 30 {
 		sk.ReqCastWeapon2 = parseInt(f[30])
+	}
+	if len(f) > 31 {
+		sk.ReqCastListCount = parseInt(f[31])
 	}
 
 	if err != nil {

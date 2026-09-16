@@ -98,7 +98,7 @@ Codes at verified code positions, most common first:
 | `bl` | 0x444 | 6 | 1,526 |
 | `st` | 0x450 | 4 | 1,510 |
 | `da` | 0x240 | 2 | 1,459 |
-| `reqi` | 0x2a4 | 3 | 484 |
+| `reqi` | 0x3a0 | 3 | 484 |
 | `kb` | 0x254 | 3 | 462 |
 | `defp` | 0x25c | 4 | 373 |
 | `ps` | 0x31c | 4 | 353 |
@@ -124,6 +124,7 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `defp` | 0x64656670 | `0x25c` | 4 | 3 |
 | `defr` | 0x64656672 | `0x260` | 3 | 2 |
 | `spda` | 0x73706461 | `0x264` | 3 | 2 |
+| `odar` | 0x6f646172 | `0x270` | 3 | 2 |
 | `br` | 0x00006272 | `0x278` | 3 | 2 |
 | `er` | 0x00006572 | `0x27c` | 3 | 2 |
 | `dura` | 0x64757261 | `0x280` | 2 | 1 |
@@ -132,6 +133,7 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `efr` | 0x00656672 | `0x28c` | 7 | 6 |
 | `esht` | 0x65736874 | `0x29c` | 3 | 2 |
 | `cnsm` | 0x636e736d | `0x2a0` | 4 | 3 |
+| `reqi` | 0x72657169 | `0x3a0` | 3 | 2 |
 | `dcmp` | 0x64636d70 | `0x2a8` | 2 | 1 |
 | `hpi` | 0x00687069 | `0x2ac` | 3 | 2 |
 | `mpi` | 0x006d7069 | `0x2b0` | 3 | 2 |
@@ -240,7 +242,7 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `hwit` | 0x68776974 | `0x588` | 2 | 1 |
 | `bldr` | 0x626c6472 | `0x58c` | 4 | 3 |
 | `msr` | 0x006d7372 | `0x590` | 3 | 2 |
-| `setv` | 0x73657476 | `--` | 4 | 3 |
+| `setv` | 0x73657476 | `none` | 4 | 3 |
 
 ## Variable-length codes
 
@@ -249,17 +251,18 @@ The parser consumes only the code word and points the field at what follows.
 | code | constant | skill field |
 |---|---|---|
 | `ao` | 0x0000616f | `0x274` |
+| `fitp` | 0x66697470 | `0x578` |
+| `reqn` | 0x7265716e | `0x3b4` |
+| `ssou` | 0x73736f75 | `0x354` |
 | `eshp` | 0x65736870 | `0x298` |
 | `hitm` | 0x6869746d | `0x2c8` |
 | `rpkt` | 0x72706b74 | `0x2cc` |
 | `php1` | 0x70687031 | `0x348` |
 | `pmp1` | 0x706d7031 | `0x34c` |
-| `ssou` | 0x73736f75 | `0x354` |
 | `cbuf` | 0x63627566 | `0x358` |
 | `nbuf` | 0x6e627566 | `0x35c` |
 | `bbuf` | 0x62627566 | `0x360` |
 | `lks2` | 0x6c6b7332 | `0x374` |
-| `reqi` | 0x72657169 | `0x3b4` |
 | `hntp` | 0x686e7470 | `0x48c` |
 | `slcc` | 0x736c6363 | `0x494` |
 | `nmf` | 0x006e6d66 | `0x594` |
@@ -901,13 +904,13 @@ comes from real data disagreeing with the walker.
 
 Fourteen codes stop a walk. Five have a recovered field:
 
-| code | constant | skill field |
-|---|---|---|
-| `odar` | 0x6f646172 | `0x270` |
-| `trap` | 0x74726170 | `0x4a0` |
-| `efta` | 0x65667461 | `0x4b0` |
-| `lkdr` | 0x6c6b6472 | `0x478` |
-| `nmh` | 0x006e6d68 | `0x598` |
+| code | constant | skill field | later |
+|---|---|---|---|
+| `odar` | 0x6f646172 | `0x270` | **fixed run 3** -- moved to the table above |
+| `trap` | 0x74726170 | `0x4a0` | still a stopper |
+| `efta` | 0x65667461 | `0x4b0` | still a stopper |
+| `lkdr` | 0x6c6b6472 | `0x478` | still a stopper |
+| `nmh` | 0x006e6d68 | `0x598` | still a stopper |
 
 Nine more were listed here as "field not recovered", with `efr` at 9,538 rows
 the most common stopper in the table. **All nine are now decoded, and none of

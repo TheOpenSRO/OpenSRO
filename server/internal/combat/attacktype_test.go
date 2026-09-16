@@ -140,3 +140,29 @@ func TestWeaponCodesAreDistinct(t *testing.T) {
 		t.Errorf("got %d distinct codes, want 16 (1 bare hand + 15 real weapon types)", len(seen))
 	}
 }
+
+// TestWeaponGateAppliesOnlyWithoutAReqCastList states the branch this gate sits
+// inside. FUN_0058d480 checks ReqCastWeapon only when the skill's list at
+// +0x3a0 is empty; 517 real skills carry both a 'reqi' list and a weapon
+// requirement, and for those the engine never looks at the requirement.
+//
+// The rule lives in session.handleUseSkill, so this pins the DECISION rather
+// than the plumbing: given a list count, is the weapon check consulted at all?
+func TestWeaponGateAppliesOnlyWithoutAReqCastList(t *testing.T) {
+	// The predicate the call site uses.
+	applies := func(reqCastList, req1, req2 int) bool {
+		return reqCastList == 0 && (req1 != 0 || req2 != 0)
+	}
+	if !applies(0, WeaponEUAxe, ReqWeaponUnused) {
+		t.Error("no list + a real requirement: the gate must apply")
+	}
+	if applies(1, WeaponEUAxe, ReqWeaponUnused) {
+		t.Error("a 'reqi' list is present: the engine takes the other branch, so the gate must NOT apply")
+	}
+	if applies(5, WeaponCHSword, WeaponCHBlade) {
+		t.Error("a full five-slot list must still suppress the gate")
+	}
+	if applies(0, 0, 0) {
+		t.Error("an export predating the columns must not gate anything")
+	}
+}
