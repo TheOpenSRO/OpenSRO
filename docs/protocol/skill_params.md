@@ -272,3 +272,102 @@ None of these is wired: srrevamp has no buff system, and a value with no
 consumer is the pattern this project keeps correcting. They are recorded so that
 a buff system, when it exists, starts from the game's own vocabulary rather than
 from invented effects.
+
+## What the codes DO: the code → ParamKeeper join (2026-09-16)
+
+The table above says where each code's values land in the skill struct. This
+section says what the engine then does with them, for 28 of the codes.
+
+### Method
+
+A code's meaning is settled by whoever READS its field. Censusing every function
+in the server dump for reads of the 87 known field offsets ranks the skill
+consumers by how many distinct codes they touch:
+
+| function | distinct code fields read |
+|---|---|
+| `SkillGlobal::RefSkill_ParseParams` | 87 (the parser itself, by construction) |
+| **`Skill_ApplyEffectsToParams`** (`0x00594ac0`) | **34** |
+| `Combat_ResolveDamage` | 28 |
+| `FUN_00589d20` | 24 |
+| `FUN_00589f10` | 16 |
+| `FUN_00593f50` | 12 |
+
+`Skill_ApplyEffectsToParams` is the lever: it reads a skill's parsed fields and
+pushes them into the target's ParamKeeper, and the dump already annotates each
+`SetParam` with its param id. Pairing each skill-field read with the param ids
+written within the next 14 lines yields the join below.
+
+### The controls came first
+
+Six of the resulting rows were already established by completely independent
+means, and all six reproduce exactly:
+
+| code | joined to | previously established as |
+|---|---|---|
+| `irgc` | 25, 26 | the skill code that grants `hprg`/`mprg` |
+| `er` | 9 | `'era'` → 9, parry rate |
+| `hr` | 11 | `'hra'` → 11, attack rate |
+| `stri` | 1 | param 1 = Strength |
+| `mpi` | 4 | `'mp'` → 4 |
+| `dru` | 128, 129, 130, **131** | `'drua'` → 128-131 |
+
+That last row is worth its own note: `dru` joining to **four** params
+independently confirms the correction made when the tag vocabulary was
+extracted, where a by-hand read of the decompiled C had recorded only three and
+missed the fourth behind a `goto`.
+
+`luck` is the other row worth singling out. The tag `luck` is one of the seven
+that `Stat_ApplyTaggedModifier` recognises and then ignores — and the skill code
+`luck` writes **param 173** here. That is a direct confirmation that "the stat
+dispatcher ignores it" never meant "it does nothing", which is exactly the
+narrowing that section of `param_tags.md` had to make.
+
+### The join
+
+| code | writes ParamKeeper params |
+|---|---|
+| `apau` | 13, 14, 15, 16 |
+| `apru` | 13, 14, 15, 16, 57 |
+| `bldr` | 198, 199, 200 |
+| `dcmp` | 141 |
+| `defr` | 5, 6, 7 |
+| `dru` | 128, 129, 130, 131 |
+| `dtt` | 188 |
+| `er` | 9 |
+| `expu` | 186, 202 |
+| `gdr` | 172, 182 |
+| `hr` | 11 |
+| `hst3` | 23, 24 |
+| `hste` | 23, 24 |
+| `hwit` | 195 |
+| `irgc` | 25, 26 |
+| `luck` | 173 |
+| `mpi` | 4 |
+| `onff` | 26 |
+| `pmdp` | 5, 6, 170 |
+| `reat` | 145, 146, 147, 148, 149, 150 |
+| `ru` | 33 |
+| `skc` | 194 |
+| `stri` | 1 |
+| `tant` | 187 |
+| `terd` | 9 |
+| `thrd` | 11 |
+| `tpad` | 13, 14 |
+
+Readable immediately from the param registry: `apau`/`apru`/`tpad` move the
+damage bounds (13-16), `defr`/`pmdp` the defences (5, 6, 7), `hst3`/`hste` the
+**movement pair** (23, 24), `er`/`terd` parry and `hr`/`thrd` attack rate.
+
+### Limits, stated
+
+- **This is a proximity join, not a proof per row.** Six rows are controlled;
+  the rest rest on the same mechanism and the same 14-line window. A row here is
+  good evidence about which params a code touches, and is NOT a claim about the
+  code's full semantics — duration, stacking and target selection are not in it.
+- It covers only the codes `Skill_ApplyEffectsToParams` handles. Codes consumed
+  by `Combat_ResolveDamage`, `FUN_00589d20` and the cure/resurrect handler at
+  `FUN_00593f50` (`cura`, `curt`, `heal`, `rcur`, `resu`, `rmut`, `tran`) are
+  not joined here.
+- None of it is wired into srrevamp, which models skill damage but no stat
+  buffs. It is vocabulary for when that changes.

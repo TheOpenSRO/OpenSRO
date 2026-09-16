@@ -4275,3 +4275,64 @@ It stays open.
 **What moved:** no value. One shipped rule gained a citation, one recorded rule
 turned out to be a third of the real rule, and the remaining unknown is now a
 single named byte rather than a vague branch.
+
+## 28 skill codes joined to what they actually do (2026-09-16)
+
+The largest item on the open list was "80 of 102 skill codes unidentified". The
+codes' *field offsets* were recovered long ago; what was missing is what the
+engine does with each field. A code's meaning is settled by whoever READS it, so
+the lever is a reader census rather than reading codes one at a time.
+
+**The census.** Grepping every function in the server dump for reads of the 87
+known skill-field offsets, and ranking by how many DISTINCT code fields each
+touches, puts one function far ahead of everything except the parser:
+
+	RefSkill_ParseParams          87   (the parser, by construction)
+	Skill_ApplyEffectsToParams    34   <- the lever
+	Combat_ResolveDamage          28
+	FUN_00589d20                  24
+	FUN_00589f10                  16
+	FUN_00593f50                  12   (cura, curt, heal, rcur, resu, rmut, tran)
+
+`Skill_ApplyEffectsToParams` (`0x00594ac0`, now named) reads a skill's parsed
+fields and pushes them into the target's ParamKeeper — the applier whose teardown
+is the already-named `GObjPC_OnEffectExpired`. Because the dump annotates each
+`SetParam` with its param id, pairing each skill-field read with the ids written
+within the next 14 lines produces a **code → param** join for 28 codes. The full
+table is in `docs/protocol/skill_params.md`.
+
+**The controls ran first, and this is the part that makes the join trustworthy.**
+Six rows were already established by entirely independent means and all six
+reproduce exactly: `irgc` → 25, 26; `er` → 9; `hr` → 11; `stri` → 1; `mpi` → 4;
+and `dru` → 128, 129, 130, **131**.
+
+Two rows are worth singling out because each confirms an earlier *correction*
+rather than merely agreeing with a fact:
+
+- **`dru` → four params.** When the tag vocabulary was extracted, a by-hand read
+  of the decompiled C had recorded `drua` as writing three params and missed the
+  fourth behind a `goto`; the disassembly caught it. This join, built from a
+  completely different function by a completely different method, independently
+  lands on four.
+- **`luck` → 173.** `luck` is one of the seven tags `Stat_ApplyTaggedModifier`
+  recognises and ignores. An earlier version of `param_tags.md` called those
+  tags DEAD and said a tag the dispatcher ignores "has no effect on a
+  character's stats"; that had to be narrowed to "not a character-stat
+  modifier". Here is the skill code `luck` writing param 173 — the narrowing was
+  necessary, and the original wording would now be provably wrong.
+
+**Readable straight off the param registry**: `apau`/`apru`/`tpad` move the damage
+bounds (13-16), `defr`/`pmdp` the defences (5, 6, 7), `hst3`/`hste` the movement
+pair (23, 24), `er`/`terd` parry and `hr`/`thrd` attack rate, `reat` the block
+145-150.
+
+**Limits, written into the doc rather than left implied.** This is a proximity
+join: six rows are controlled, the rest rest on the same mechanism and the same
+14-line window. A row is good evidence about which params a code touches and is
+NOT a claim about the code's full semantics — duration, stacking and targeting
+are not in it. It also covers only the codes this one function handles; the
+combat-side and cure/resurrect codes are untouched.
+
+**What moved:** no value. srrevamp models skill damage but no stat buffs, so none
+of this is wired — it is the vocabulary for when that changes, and it took the
+unidentified-code count from 80 down to 52.

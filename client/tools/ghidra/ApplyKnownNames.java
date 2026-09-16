@@ -483,6 +483,17 @@ public class ApplyKnownNames extends GhidraScript {
          + "field a skill's +0xc4 is compared against and that indexes DAT_00c8262c, which fits "
          + "race/country, but that is a shape argument without a use-site."},
 
+        {"00594ac0", "Skill_ApplyEffectsToParams",
+         "Reads a skill's parsed param fields and pushes them into the target's ParamKeeper -- "
+         + "the applier side of the pair whose teardown is GObjPC_OnEffectExpired. Touches 34 "
+         + "distinct skill-param field offsets, more than any function but the parser itself, "
+         + "which is what makes it the lever for identifying what a skill code DOES: pairing "
+         + "each field read with the param ids written just after gives the code->param join in "
+         + "docs/protocol/skill_params.md. 85 of its SetParam calls are positive and 17 negated "
+         + "(debuffs such as the dara family). Controlled against six independently established "
+         + "codes -- irgc->25,26; er->9; hr->11; stri->1; mpi->4; dru->128,129,130,131 -- all of "
+         + "which reproduce exactly."},
+
         // The mastery collection at pc+0xa30, and the exp rule built on it.
         {"0059e870", "Mastery_MaxLevel",
          "Walks the mastery list under pc+0xa30 (head at +0x238, sentinel +0x234) and returns the "
