@@ -6193,3 +6193,65 @@ and now carries a measured statement of how much of the dump it explains.
 **Next step:** the same harvest on the CLIENT dump (43,460 functions, 22 shards),
 which has its own `## Illegal ##` stubs and its own hierarchy -- the tool takes a
 `--dump` path and should run unchanged.
+
+## 2026-09-16 (eleventh) — a handoff premise that was wrong, and real inventory bounds
+
+### The named next step did not exist
+
+The previous entry said the `## Illegal ##` harvest should "run unchanged" on the
+client dump. **The client dump contains zero such strings** — 16 `Class::Method`
+strings in total, against the server's 213 — and there is no client binary on the
+RE box for the `.rdata` half to read. That idiom is a server-side debugging
+convention, not an engine-wide one.
+
+One grep, before any work. That is the fifth handoff sentence in this run to
+carry an unchecked claim, and the first to cost nothing, because the claim was
+checked before it was acted on.
+
+For the record, the client's own numbers: **14.8% named** (6,440 of 43,460), with
+the unnamed concentrated in `GlobalDataManager` (2,027), `UI_SILKMALL` (1,807),
+`UI_ALCHEMYBOX` (966) and `Map` (706) — UI and data-manager code, not the
+gameplay core.
+
+### Inventory: the caps are real, the base is not
+
+`inventory.SlotsPerCharacter = 50` was own design, and its comment said "easy to
+change later", which quietly implied the number was unconstrained. It is not.
+`CGObjPC::ExpandInventory` (0x004e1910, **vtable slot 173** — named by last
+tick's harvest, which is how this was found at all) refuses an expansion unless
+both hold:
+
+	count <= cap - size     and     size + count < 100
+
+so the size after any expansion is at most `cap`, and never reaches 100. `cap` is
+**0x4d = 77**, raised to **99** by a condition at `GObjPC::FUN_004e13b0`.
+
+The slot-174 overload (0x004e19d0) is a different thing and caps at **0x70 =
+112**, routing through `AQ_StorageExpander` — that is STORAGE, not inventory. The
+two are easy to conflate and they differ.
+
+**What is NOT claimed.** `FUN_004e13b0` is 1,359 bytes and was not read, so what
+unlocks the 99 cap is not stated. And the STARTING size stays unrecovered: the
+live field is `this + 0x1c2c` and it persists as the `_CHAR` column
+`InventorySize` at charData+0xac, but **nothing in the dump writes +0x1c2c** —
+the write reaches it through a register, the failure mode this project already
+has a name for. So 50 remains own design rather than being replaced by a number
+that merely looks plausible.
+
+### What shipped
+
+The bounds as named constants with their citation, and
+`TestSlotsPerCharacterFitsTheEngine`, which fails with the disassembly reference
+if a later change puts srrevamp outside what the engine can represent. Checked by
+setting the value to 120: it fails on both conditions and passes when restored.
+
+This is the upgrade available here — not "own design" to "recovered", but **own
+design to own design inside a recovered bound**, with a test holding it there.
+
+**What moved:** one of the 51 own-design values in `internal/` now has real
+limits attached and a guard; the client's naming profile is measured; a wrong
+next-step premise was caught before it cost anything.
+
+**Next step:** the starting inventory size, via whatever writes `+0x1c2c`. A
+register-indirect write is exactly what `dump_gaps.py` and an `objdump` sweep
+are for, rather than another grep of the decompiled C.

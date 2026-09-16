@@ -9,10 +9,51 @@ import (
 	"errors"
 )
 
-// SlotsPerCharacter is how many inventory slots each character has. Our
-// own design choice, not taken from any original game; easy to change
-// later if it needs to vary by character level/class/etc.
+// SlotsPerCharacter is how many inventory slots each character has. STILL OWN
+// DESIGN -- the game's own starting size has not been recovered -- but it is no
+// longer an unbounded choice, which is what this comment used to imply with
+// "easy to change later".
+//
+// The real engine's LIMITS are recovered, and this number now sits inside them.
+// `CGObjPC::ExpandInventory` (0x004e1910, vtable slot 173 -- see
+// docs/protocol/igobj_vtable.md) refuses an expansion unless BOTH hold:
+//
+//	count <= cap - size        and        size + count < 100
+//
+// so the size after any expansion is at most `cap` and never reaches 100. `cap`
+// is 0x4d = 77, raised to 99 by a condition at GObjPC::FUN_004e13b0 -- a
+// 1,359-byte function this project has not read, so what unlocks the larger cap
+// is NOT claimed here.
+//
+// The character's live size lives at `this + 0x1c2c` and persists as the _CHAR
+// column `InventorySize` at charData+0xac (CInstancePC::CharData_BindDBColumns).
+// Nothing in the dump writes +0x1c2c -- the write reaches it through a register
+// -- so the STARTING size is still unrecovered, which is why 50 stays own design
+// rather than being replaced by a number that merely looks plausible.
 const SlotsPerCharacter = 50
+
+// The engine's own inventory bounds, RECOVERED from CGObjPC::ExpandInventory.
+// Nothing enforces these at runtime here; they exist so that a later change to
+// SlotsPerCharacter is checked against the real game rather than against
+// nothing. TestSlotsPerCharacterFitsTheEngine holds it to them.
+const (
+	// MaxSlotsExpanded is the largest inventory the engine will ever produce:
+	// the raised cap, 99.
+	MaxSlotsExpanded = 99
+	// MaxSlotsDefault is the cap without whatever GObjPC::FUN_004e13b0 tests
+	// for: 0x4d.
+	MaxSlotsDefault = 77
+	// SlotsHardLimit is the second, independent condition -- `size + count <
+	// 100` -- so an inventory never reaches this value.
+	SlotsHardLimit = 100
+
+	// MaxStorageSlots is the separate cap on STORAGE, not inventory: the
+	// slot-174 overload of ExpandInventory (0x004e19d0) returns early when the
+	// new size would exceed 0x70, and routes through AQ_StorageExpander.
+	// srrevamp's storage is its own design and does not use this yet; it is
+	// recorded because the two caps are easy to confuse and they differ.
+	MaxStorageSlots = 112
+)
 
 // ErrNoRoom is returned by Store.AddItem when there's no slot available to
 // hold the item (all slots full, and no existing stack has spare capacity).
