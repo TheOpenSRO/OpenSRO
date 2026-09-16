@@ -7401,3 +7401,60 @@ failed twice as string matching.
 **Next step:** attribution is not a name. `CompoundObj.cpp` holds 229 attributed
 functions and the asserts inside it name members and locals -- `m_btMagicParamNum`
 and the rest -- so per-function naming from expression text is the next rung.
+
+## 2026-09-16 (thirty-first) — three levers measured, three exhausted, and the ceiling
+
+The previous entry named per-function naming from assert expression text as next.
+The client's asserts carry no `__FUNCTION__`, so they cannot name functions —
+they name **members** (79 distinct, e.g. `m_btMagicParamNum`), and client runtime
+structs are not what srrevamp reads. So the tick measured the naming levers
+instead of guessing which had yield left.
+
+### Vtable slots applied to implementations: spent
+
+209 slots reach **275 distinct implementation addresses** across the 14
+IGObj-family vtables — not 14x209, because most virtuals have a single
+implementation shared by every derived class. **271 are already named**; 4 remain,
+all `IGOBJ::` spelling variants. Applied.
+
+### The server names its own functions in log calls — and that is spent too
+
+The server's logger passes the function's name as an argument:
+
+	CGameServer::FUN_00936640(0x2000001, "## %s %s %d ## CharName[%s]...",
+	                          "...\GStorage.cpp", "CGStorage::SetItem", 0x26e, ...)
+
+**106 distinct `Class::Method` literals** exist (the client has 1). An earlier
+sweep here missed them by looking for `::` *inside format strings*, where these
+sit as a separate argument.
+
+The control settles both questions at once: of the 108 functions carrying such a
+literal, 104 are already named, and in **104 of 104 the literal matches the
+existing name**. So the literal is the function's own identity, and a previous
+pass already applied it. Four remain; **three are not applied** because
+`AI::CMsg` and `AI::CSquad` look like RTTI type tags rather than methods.
+
+### The ceiling, measured
+
+Of **26,727** unnamed server functions, only **5,971 (22.3%)** contain any string
+literal. The other **20,756 cannot be reached by a text-based lever at all**. And
+**13,408 of the unnamed are under 128 bytes** — accessors, thunks, template
+instantiations.
+
+That is the honest shape of the gap between 21.7% and 100%: most of it is not
+game logic, and most of what remains has no text to name it by.
+
+### What this tick is
+
+Mostly negative, and deliberately so. Three levers were measured rather than
+re-run on the assumption that a big multiplier was waiting — the vtable one
+looked like 14x and is 1.3x. `docs/protocol/naming_ceiling.md` records all of it
+so the next pass does not repeat the estimate.
+
+**What moved:** four implementations named; three levers marked exhausted with
+the evidence; a measured ceiling for text-based naming.
+
+**Next step:** naming now has to come from structure rather than text -- call-graph
+position, vtable shape, data-flow into known fields. The client's 5,235 file
+attributions are the largest untapped structural signal, since a file groups
+functions that a call graph would otherwise have to rediscover.

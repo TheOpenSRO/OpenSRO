@@ -96,6 +96,23 @@ In the combat and damage shards specifically the top calls are `IsPC` (84),
 which is a fair description of what a damage routine does, and a sanity check on
 the names.
 
+## Applying the slots to their implementations — already done
+
+A slot name should also name the function sitting in that slot of every derived
+vtable. Measured: the 209 slots reach **275 distinct implementation addresses**
+across the 14 IGObj-family vtables — not 14x209, because most virtuals have one
+implementation shared by every derived class.
+
+**271 of those 275 are already named.** The multiplier was ~1.3x, not 14x, and it
+has been applied. The four remaining are the `IGOBJ::` spelling variants:
+
+| address | was | slot name |
+|---|---|---|
+| `0057f980` | `CGObjCOS_Summoned::FUN_0057f980` | `EngageBuffSkill` |
+| `0057fad0` | `CGObjCOS_Summoned::FUN_0057fad0` | `NotifyClientAPIconStatus` |
+| `0057fb00` | `CGObjCOS_Summoned::FUN_0057fb00` | `IsActiveBuff` |
+| `0057fb30` | `CGObjCOS_Summoned::FUN_0057fb30` | `GetRemainSkillPoint` |
+
 ## The table
 
 | slot | offset | method |
