@@ -44,10 +44,21 @@ const (
 	// design): ~13 hits to fill from empty.
 	FillPerHit = 8
 
-	// Duration is how long a berserk lasts (own design -- the real server
-	// keeps the timer somewhere other than the function that turns berserk
-	// on: every call site passes 0xff/0 for that function's state-change
-	// slot and duration, so this one is genuinely not recovered).
+	// Duration is how long a berserk lasts. Still OWN DESIGN, but the search
+	// narrowed on 2026-09-16 and the next reader should start further along.
+	//
+	// It is not in the function that turns berserk on: every call site there
+	// passes 0xff/0 for the state-change slot and duration. What the binary
+	// does have is a Hwan REFERENCE TABLE -- `_REFHWANLEVEL` / `CRefHWANLevel`,
+	// loaded into a vector at DAT_00d6aa14+0x8d0, whose size gates the level
+	// IGObj::UpdateHwanLevel will accept -- and `hwanleveldata.txt` is listed
+	// in Media.pk2's server_dep textdata, so unlike the drop tables this data
+	// IS in the client archives.
+	//
+	// So the duration is most likely a column of that table. What is missing is
+	// the entry layout: no gameplay reader of the table's fields was found, only
+	// the size check. Not promoted to a guess, and not blocked on data either --
+	// blocked on one more read.
 	Duration = 20 * time.Second
 
 	// DamageNumerator/DamageDenominator are the REAL berserk damage

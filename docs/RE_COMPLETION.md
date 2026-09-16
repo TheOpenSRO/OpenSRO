@@ -4452,3 +4452,63 @@ collide harmlessly.
 
 **What moved:** a real mechanic, shipped, and a disclosure that had outlived its
 own blocker.
+
+## VALUE SHIPPED: the server's own gain-rate knobs (2026-09-16)
+
+Set out to recover `berserk.Duration`, whose disclosure said the timer "is
+genuinely not recovered" because every caller of the body-mode setter passes
+0/0xff. Searching the *clear* side instead led to the Hwan reference table
+(`_REFHWANLEVEL`, loaded into a vector at `DAT_00d6aa14 + 0x8d0`) and, via the
+string `HwanGainFactor` sitting in `.rdata`, to something better: a block of
+**server configuration knobs** with their defaults and ceilings.
+
+`CMainProcess_LoadGainRates` (`0x00427050`) reads them at startup. Every knob has
+the same three-step shape:
+
+```c
+value = atol(setting) / 100.0;   // the setting is a PERCENTAGE
+if (value <  1.0) value = 1.0;   // the branch that logs "<knob>: system default"
+if (value >= cap) value = cap;   // a per-knob ceiling
+```
+
+| knob | global | cap | source of the cap |
+|---|---|---|---|
+| `ExpRatio` | `0xc82518` | **2.5** | `0xb45b90` |
+| `ExpRatioParty` | `0xc8251c` | **2.5** | `0xb45b90` |
+| `DropItemRatio` | `0xc82520` | **3.0** | `0xb45b84` |
+| `DropGoldAmountCoef` | `0xc82524` | **2.5** | `0xb45b90` |
+| `HwanGainFactor` | `0xc82528` | **10.0** | `0xb45b44` |
+
+All caps are `fld DWORD`, so float32.
+
+**Two findings inside that are worth stating on their own.**
+
+1. **A rate below 1x cannot be expressed.** The `< 1.0` branch is not input
+   validation, it is the branch that logs "system default" — so the engine has
+   no way to configure a server slower than retail, and neither does srrevamp
+   now.
+2. **The default is 1x, confirmed twice.** The `< 1.0` fallback sets it, and
+   independently the globals are statically initialised to `0x3f800000` (1.0f)
+   before any setting is read.
+
+**The exp knobs are alternatives, not factors.** `GObjPC_ReceiveKillReward` does
+`fVar1 = ExpRatio; if (pc[0x72e] != 0) fVar1 = ExpRatioParty;` — `pc[0x72e]`
+being the party field recovered earlier — so a partied character takes the party
+knob *instead of*, not *as well as*, the solo one. Multiplying them would have
+been the natural implementation and would have been wrong; there is a test that
+fails if anyone does.
+
+**Shipped** as `internal/rates`, read from the environment under the game's own
+knob names, applied to a kill's experience (choosing by party membership) and to
+its gold. `DropItemRatio` and `HwanGainFactor` are carried with their caps but
+applied to nothing, because srrevamp's loot table and berserk gauge are still own
+design — recorded rather than quietly hooked to the wrong thing.
+
+**What did NOT move.** `berserk.Duration` is still own design; the Hwan table is
+real and `hwanleveldata.txt` is in Media.pk2's server_dep listing, so the
+duration is plausibly a column in it, but no gameplay reader of the table's
+entry fields was found and no column layout was recovered. The disclosure is
+updated from "genuinely not recovered" to name the table that probably holds it.
+
+**What moved:** four real constants and a parse rule, shipped, from a search that
+set out after something else entirely.

@@ -21,6 +21,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
+	"github.com/OpenSRO/srrevamp/server/internal/rates"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
@@ -663,6 +664,16 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 // counterattack, sends OpAttackResult to sess, grants gold on a kill, and
 // broadcasts to everyone else in the zone. Shared by CombatHandler and
 // skill.UseHandler so both attack paths behave identically.
+// inParty reports whether a character is in a party, the condition the engine
+// uses to choose between ExpRatio and ExpRatioParty (`pc[0x72e] != 0`).
+func inParty(parties *party.Hub, characterID int64) bool {
+	if parties == nil {
+		return false
+	}
+	pt, in := parties.Get(characterID)
+	return in && pt != nil && len(pt.Members) > 0
+}
+
 // applyMasteryExpScale scales a kill's experience by the gap between the
 // character's level and its highest mastery level -- the engine's
 // "keep your mastery up" rule, recovered in
@@ -856,6 +867,11 @@ func performAttack(
 		// Gold is rolled in the real per-level range (levelgold) when the
 		// monster has one, falling back to the disclosed flat reward.
 		gold := rollGold(monster.GoldMin, monster.GoldMax, monster.GoldReward)
+		// The server's own DropGoldAmountCoef knob, default 1x and capped at
+		// 2.5 -- see internal/rates.
+		if g := rates.Current().Gold; g != 1 {
+			gold = int64(math.Round(float64(gold) * g))
+		}
 		if err := chars.AddGold(ctx, characterID, gold); err != nil {
 			return fmt.Errorf("combat: granting gold reward: %w", err)
 		}
@@ -888,6 +904,12 @@ func performAttack(
 			}
 			gainedExp = applyMasteryExpScale(ctx, skills, characterID, char.Level, gainedExp)
 			gainedExp = applyPartyExpBonus(parties, characterID, gainedExp)
+			// The server's ExpRatio / ExpRatioParty knob. The engine picks
+			// ONE of the two by party membership rather than multiplying
+			// both -- see rates.Rates.ExpFor.
+			if m := rates.Current().ExpFor(inParty(parties, characterID)); m != 1 {
+				gainedExp = int64(math.Round(float64(gainedExp) * m))
+			}
 			// The skill economy's income. The game grants skill EXPERIENCE,
 			// carries it on the character and converts whole points out of the
 			// running total at 400:1 -- see leveldata.SkillExpPerPoint, which

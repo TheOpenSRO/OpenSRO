@@ -494,6 +494,19 @@ public class ApplyKnownNames extends GhidraScript {
          + "codes -- irgc->25,26; er->9; hr->11; stri->1; mpi->4; dru->128,129,130,131 -- all of "
          + "which reproduce exactly."},
 
+        {"00427050", "CMainProcess_LoadGainRates",
+         "Startup loader for the server's gain multipliers. Each knob follows one shape: "
+         + "value = atol(setting) / 100.0 (so the setting is a PERCENTAGE), then a floor at 1.0 "
+         + "reached via the branch that logs \"<knob>: system default\", then a clamp at a "
+         + "per-knob ceiling. So rates below 1x cannot be configured at all. The knobs and their "
+         + "caps, each a float32 loaded by the comparison: ExpRatio and ExpRatioParty 2.5 "
+         + "(0xb45b90), DropItemRatio 3.0 (0xb45b84), DropGoldAmountCoef 2.5, HwanGainFactor "
+         + "10.0 (0xb45b44). The globals (0xc82518, 0xc8251c, 0xc82520, 0xc82524, 0xc82528) are "
+         + "statically initialised to 0x3f800000 = 1.0f first, confirming the default "
+         + "independently. GObjPC_ReceiveKillReward picks ONE of the two exp knobs by party "
+         + "membership -- `fVar1 = ExpRatio; if (pc[0x72e] != 0) fVar1 = ExpRatioParty;` -- "
+         + "rather than multiplying them."},
+
         // Chance rolls, which are not memoryless.
         {"00599cc0", "Chance_RollWithBadLuckProtection",
          "The engine's chance roll. Returns false at once for a chance of 0 and true for 100 or "

@@ -25,6 +25,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
+	"github.com/OpenSRO/srrevamp/server/internal/rates"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/session"
 	"github.com/OpenSRO/srrevamp/server/internal/shop"
@@ -472,6 +473,16 @@ func main() {
 
 	hub := world.NewHub()
 	monsters := combat.NewHub()
+	// The server's own gain multipliers, under the game's knob names. All
+	// default to 1x, and the engine's floor means a server cannot be
+	// configured slower than retail -- see internal/rates.
+	rates.Set(rates.FromEnv())
+	if r := rates.Current(); r != rates.Default() {
+		logger.Info("rates configured",
+			"exp", r.Exp, "party_exp", r.PartyExp, "gold", r.Gold,
+			"drop_item", r.DropItem, "hwan_gain", r.HwanGain)
+	}
+
 	parties := party.NewHub()
 	duels := duel.NewHub()
 	trades := trade.NewHub()
