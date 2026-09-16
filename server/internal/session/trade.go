@@ -558,6 +558,12 @@ func executeTrade(ctx context.Context, chars character.Store, inv inventory.Stor
 		return 0, 0, "", err
 	}
 
+	// THE RECIPIENT-CAPACITY PRE-CHECK, added 2026-09-16 and taken from the
+	// engine. Nothing has moved yet at this point, so a refusal here is free.
+	if reason, err := tradeSpaceShortfall(ctx, inv, sess); err != nil || reason != "" {
+		return 0, 0, reason, err
+	}
+
 	if sess.OfferA.Gold > 0 {
 		if err := chars.DeductGold(ctx, sess.A.CharacterID, sess.OfferA.Gold); err != nil {
 			if errors.Is(err, character.ErrInsufficientGold) {
@@ -602,11 +608,13 @@ func executeTrade(ctx context.Context, chars character.Store, inv inventory.Stor
 	}
 
 	// Items have already left both givers' inventories at this point. If
-	// AddItem fails here (e.g. the recipient's inventory filled up in the
-	// meantime), the item is lost rather than returned -- a known,
-	// low-probability gap. A production system would pre-check recipient
-	// capacity before ever removing anything; that check isn't
-	// implemented yet.
+	// AddItem fails here the item is lost rather than returned.
+	//
+	// THE PRE-CHECK THIS NOTE ASKED FOR NOW EXISTS -- see
+	// tradeSpaceShortfall, above, which refuses before anything moves. What
+	// is left is only the race: a slot that was free when the trade was
+	// validated and is not by the time it commits, which needs a shared
+	// transaction across the two stores rather than a better check.
 	if sess.OfferA.ItemSlot >= 0 {
 		if err := inv.AddItem(ctx, sess.B.CharacterID, itemA, sess.OfferA.Quantity); err != nil {
 			return 0, 0, "", fmt.Errorf("crediting item to recipient: %w", err)
@@ -674,4 +682,54 @@ func tradeErrorMessage(err error) string {
 	default:
 		return "operation failed"
 	}
+}
+
+// tradeSpaceShortfall reports a failReason when either side has no free
+// inventory slot for the item they are about to receive. Empty reason means
+// the trade fits.
+//
+// THIS IS THE ENGINE'S OWN RULE. The server's trade-offer handler
+// (`0x00480a20`) counts the partner's empty slots and refuses when there are
+// too few:
+//
+//	iVar7 = GStorage::CGStorage__CountEmptySlot(0xd, 0xffffffff);
+//	if (iVar7 < iVar6 + 1) return 0x1836;   // NOT_ENOUGH_OPPONENT_INV_SPACE
+//
+// Two things in that are worth copying and one is worth noting.
+//
+// Worth copying: it counts EMPTY SLOTS and ignores stacking, so an item that
+// would have merged into an existing stack is still required to have a slot.
+// That is conservative, and this matches it -- a trade refused for space when
+// it would technically have fitted is a far better failure than an item that
+// vanishes.
+//
+// Also worth copying: the check happens before anything is removed. The engine
+// goes further and refuses at OFFER time, so the player finds out while
+// arranging the trade rather than on confirming it; srrevamp checks at commit,
+// which closes the item-loss hole but reports later.
+//
+// Worth noting: the `0xd` is the engine counting from slot 13, because slots
+// 0..12 are the equipment slots in the same array (see inventory.go). srrevamp
+// keeps the two spaces separate, so there is no offset to apply here.
+func tradeSpaceShortfall(ctx context.Context, inv inventory.Store, sess *trade.Session) (string, error) {
+	for _, side := range []struct {
+		recipient int64
+		name      string
+		receiving bool
+	}{
+		{sess.B.CharacterID, sess.B.Name, sess.OfferA.ItemSlot >= 0},
+		{sess.A.CharacterID, sess.A.Name, sess.OfferB.ItemSlot >= 0},
+	} {
+		if !side.receiving {
+			continue
+		}
+		occupied, err := inv.List(ctx, side.recipient)
+		if err != nil {
+			return "", fmt.Errorf("checking inventory space for %s: %w", side.name, err)
+		}
+		if len(occupied) >= inventory.SlotsPerCharacter {
+			return side.name + "'s inventory is full", nil
+		}
+	}
+	return "", nil
 }

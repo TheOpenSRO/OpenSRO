@@ -414,3 +414,58 @@ func TestTradeInsufficientGold(t *testing.T) {
 		t.Fatalf("Aria's gold should be untouched: got %d, want %d", list[0].Gold, character.StartingGold)
 	}
 }
+
+// TestTradeRefusesWhenRecipientIsFull closes the gap executeTrade's own comment
+// used to describe: items left both givers' inventories before anything checked
+// whether the recipients could hold them, so a full recipient meant the item was
+// destroyed rather than returned.
+//
+// The engine refuses first -- its trade handler counts the partner's empty slots
+// and returns 0x1836 NOT_ENOUGH_OPPONENT_INV_SPACE -- and this is that rule. The
+// test asserts the part that matters: after a refusal, the giver STILL HAS the
+// item.
+func TestTradeRefusesWhenRecipientIsFull(t *testing.T) {
+	ctx := context.Background()
+	chars := character.NewMemStore()
+	giver, _ := chars.Create(ctx, 1, "Giver")
+	taker, _ := chars.Create(ctx, 2, "Taker")
+
+	inv := inventory.NewMemStore(nil)
+	if err := inv.AddItem(ctx, giver.ID, 4842, 1); err != nil {
+		t.Fatalf("seeding the giver: %v", err)
+	}
+	// Fill every one of the taker's slots with a distinct non-stacking item.
+	for i := 0; i < inventory.SlotsPerCharacter; i++ {
+		if err := inv.AddItem(ctx, taker.ID, int64(9000+i), 1); err != nil {
+			t.Fatalf("filling the taker at slot %d: %v", i, err)
+		}
+	}
+	occupied, _ := inv.List(ctx, taker.ID)
+	if len(occupied) != inventory.SlotsPerCharacter {
+		t.Fatalf("the taker holds %d slots, wanted a full %d", len(occupied), inventory.SlotsPerCharacter)
+	}
+
+	sess := &trade.Session{
+		A:      trade.Member{CharacterID: giver.ID, Name: "Giver"},
+		B:      trade.Member{CharacterID: taker.ID, Name: "Taker"},
+		OfferA: trade.Offer{ItemSlot: 0, Quantity: 1},
+		OfferB: trade.Offer{ItemSlot: -1},
+	}
+
+	_, _, failReason, err := executeTrade(ctx, chars, inv, sess)
+	if err != nil {
+		t.Fatalf("a full recipient is an orderly failure, not an error: %v", err)
+	}
+	if failReason == "" {
+		t.Fatal("the trade was allowed into a full inventory")
+	}
+
+	// The whole point: nothing moved.
+	after, err := inv.List(ctx, giver.ID)
+	if err != nil {
+		t.Fatalf("listing the giver: %v", err)
+	}
+	if len(after) != 1 || after[0].ItemID != 4842 {
+		t.Errorf("the giver lost the item to a refused trade: %+v", after)
+	}
+}

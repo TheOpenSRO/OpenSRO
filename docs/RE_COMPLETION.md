@@ -9049,3 +9049,72 @@ is already in the STRG attribution list with five refusals including
 `NOT_ENOUGH_OPPONENT_INV_SPACE`. That is the actual trade transaction, and the
 space check inside it is where the engine decides whether a trade fits, which is
 a rule srrevamp's own trading would need.
+
+## 2026-09-16 — the trade transaction, and an item-loss bug closed with the engine's own rule
+
+The previous entry proposed reading `FUN_00480a20`, the function the trade-offer
+handler delegates to, because its refusal set includes
+`NOT_ENOUGH_OPPONENT_INV_SPACE` and that is where the engine decides whether a
+trade fits. It is, and srrevamp had a documented hole exactly there.
+
+### What the function gives
+
+	if ((byte)param_3 < 0xd) return 0x1806;           // slot 0..12 is worn, not tradeable
+	iVar6 = FUN_0047eda0();
+	if (iVar6 < 0xc) { ...                             // at most 12 items in an offer
+	  iVar7 = CGStorage__CountEmptySlot(0xd, -1);      // count the partner's free slots FROM 13
+	  if (iVar7 < iVar6 + 1) return 0x1836;            // NOT_ENOUGH_OPPONENT_INV_SPACE
+
+Three things. A trade offer holds **at most 12 items**. The partner must have at
+least **one free slot per offered item**. And `CountEmptySlot(0xd, …)` counting
+from 13 is a **fourth independent confirmation** that the backpack starts at slot
+13 — after the trade-offer handler's `slot < 0xd`, `CheckEquipsetIntegrity`'s
+0..12 loop, and `CanBeEquipedAt`'s own bound.
+
+### The bug it closes
+
+`executeTrade` carried this comment:
+
+> Items have already left both givers' inventories at this point. If AddItem
+> fails here … the item is **lost** rather than returned — a known,
+> low-probability gap. **A production system would pre-check recipient capacity
+> before ever removing anything; that check isn't implemented yet.**
+
+The engine's check is precisely that pre-check, so it is now implemented as
+`tradeSpaceShortfall`, called before any gold or item moves.
+
+**The new test fails without it, and the failure message is the bug**:
+`crediting item to recipient: inventory: no room for item` — raised *after* the
+item had already left the giver. With the check, the trade is refused cleanly and
+the giver still holds the item, which is what the test asserts.
+
+### Two details copied deliberately
+
+**It counts empty slots and ignores stacking.** An item that would have merged
+into an existing stack is still required to have a free slot. That is
+conservative, and matching it is the point: a trade refused for space it would
+technically have had is a far better failure than an item that vanishes.
+
+**The engine checks earlier than srrevamp now does.** It refuses at *offer* time,
+so the player learns while arranging the trade; srrevamp checks at commit, which
+closes the item-loss hole but reports later. That difference is written into the
+code rather than left for someone to discover.
+
+What remains is only the race — a slot free at validation and taken by the time
+the trade commits — which needs a transaction spanning the character and
+inventory stores, not a better check. The comment now says that instead of
+describing a missing check.
+
+### Shipped
+
+`tradeSpaceShortfall` with the engine's rule and the three citations;
+`TestTradeRefusesWhenRecipientIsFull`, verified to fail without the fix; the
+stale "not implemented yet" comment replaced by what is actually left.
+
+**What moved:** a real item-destruction path closed, using a rule read out of the
+engine rather than invented, and the slot-13 boundary confirmed a fourth time.
+
+**Next step:** the 12-item offer cap and the `0x1836` refusal are recovered but
+unused — srrevamp's `trade.Offer` is a single item plus gold, so neither applies
+to its model yet. If the offer ever becomes a list, both are already grounded and
+should be taken from here rather than chosen.
