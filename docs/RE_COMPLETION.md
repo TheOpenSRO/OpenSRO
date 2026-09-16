@@ -9490,3 +9490,72 @@ and two of the 35 rows are client-side additions waiting. More usefully, the
 client dump has not been rebuilt since then either — so the client figure
 (6,455) is current but will drift the moment anything is applied. Running both
 halves and rebuilding both dumps is the cheap way to keep the metric honest.
+
+## 2026-09-16 — every writer of the capability word, enumerated
+
+The named next step was housekeeping — run both applier halves, rebuild both
+dumps — and it was **based on a wrong premise**. Verifying first showed all 35
+names already applied and visible, client half included: *rows verified
+unnamed-and-present: 0, already named: 35*. Nothing was pending. That is twice
+now a "next step" has assumed work remained without checking, and the check costs
+one command.
+
+So the tick went to a real open item instead, and then to a better one behind it.
+
+### The false lead, and what it opened
+
+`0x180b CANT_BE_STORED` looked like it might be the unaccounted **bit 2** of the
+capability word. It is not: the constant appears at exactly **one** site in the
+binary, inside `SellItemAtSpecialtyShop`, so it is a specialty rule rather than a
+general storage flag.
+
+But the probe raised the better question. `RefObjCommon_ExtractData` touches the
+flags word only four times, and none of those touches set bits 2 or 3 — yet
+`CanBorrow` reads bit 3. So who writes them?
+
+### Every writer, in the whole binary
+
+Scanning every `or`/`mov`/`and`/`xor` into `[reg+0x8c]` and keeping the ones
+inside a row parser gives **five instructions, total**:
+
+	6a351b  mov [esi+0x8c],ecx      RefObjCommon   bits 0, 1
+	6a3529  mov [esi+0x8c],ecx      RefObjCommon   the same, | bit 12
+	6a3536  or  [esi+0x8c],0x2000   RefObjCommon   bit 13
+	6a3595  or  [esi+0x8c],edx      RefObjCommon   bits 4,5,6,7,8,9,14
+	6a5cb4  or  [edi+0x8c],eax      RefObjChar     bits 10, 11
+
+`RefObjItem`'s own extract touches `[esp+0x8c]` — the stack — and never the row.
+
+Two results fall out, and both are the kind of absence this project wants:
+**enumerated, not inferred.**
+
+- **Bits 10 and 11 exist only on CHARACTER rows.** `RefObjChar_ExtractData`
+  contributes them from two of its own columns, so an item can never have them.
+  Bit 10 is the tenth predicate (`GObjPC::FUN_00483f40`) — a question only a
+  character can answer yes to, which is why no stub names it for items.
+- **Bits 2 and 3 are never written at all.** So **`CanBorrow` always returns 0**:
+  nothing in the game is borrowable, for any object type. The predicate exists,
+  has a stub and an implementation, and is answered "no" by construction. Bit 2
+  has neither a writer nor a reader — a gap in the numbering, not something this
+  project failed to find.
+
+If srrevamp ever models borrowing, the grounded answer is *false for everything*,
+and that is the engine's answer rather than an omission here.
+
+### Shipped
+
+`item_capability_flags.md` gains the complete writer list and what it settles.
+The bit table now says bit 2 is dead and `CanBorrow` always answers zero, each
+with the reason. No srrevamp value changed — this closes questions rather than
+opening behaviour.
+
+**What moved:** the capability word went from "nine named bits and two mysteries"
+to fully accounted for, by enumerating writes across the whole binary rather than
+reasoning about the parser I happened to be reading.
+
+**Next step:** the same enumeration is worth running on the OTHER shared ref-row
+fields. `RefObjChar_ExtractData` contributing bits 10/11 means character rows
+extend the common prefix in ways items do not, and the column arithmetic
+established two ticks ago (`READn -> col n+5`) applies to characterdata as well —
+so the two characterdata columns behind bits 10 and 11 are recoverable by exactly
+the method that worked here.

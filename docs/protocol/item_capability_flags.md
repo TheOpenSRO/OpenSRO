@@ -45,8 +45,8 @@ family and each override is two lines.
 |---:|---|---|
 | 0 | `CanTrade` | `0x00483d50`, `flags & 1` |
 | 1 | `CanSell` | `0x00483d80`, `flags >> 1 & 1` |
-| 2 | *unaccounted* | no reader found |
-| 3 | `CanBorrow` | `0x00483db0` |
+| 2 | **dead** | no reader **and no writer** — see below |
+| 3 | `CanBorrow` | `0x00483db0` — **always answers 0**: nothing writes bit 3, see below |
 | 4 | `CanDrop` | `0x00483de0` |
 | 5 | `CanPick` | `0x00483e50` |
 | 6 | `CanRepair` | `0x00483e80` (also `CGObjSiegeStruct::CanRepair`, `0x004cecd0`) |
@@ -65,6 +65,39 @@ when `vslot(200)` — 200 decimal is `0xc8`, slot 50, `CanSell` — returns zero
 `0x1838 UIIT_MSG_STRGERR_CANNOT_BE_DROPPED` is **not** one of these: its guard
 (`0x004b2ab0`) is a TID lookup through `FUN_0042e750`, a different mechanism
 despite the matching name.
+
+## Every writer of the flags word, enumerated
+
+Five instructions in the **whole binary** write it, and they are all in the two
+row parsers:
+
+	6a351b  mov [esi+0x8c],ecx      RefObjCommon_ExtractData   bits 0, 1
+	6a3529  mov [esi+0x8c],ecx      RefObjCommon_ExtractData   the same, | bit 12
+	6a3536  or  [esi+0x8c],0x2000   RefObjCommon_ExtractData   bit 13
+	6a3595  or  [esi+0x8c],edx      RefObjCommon_ExtractData   bits 4,5,6,7,8,9,14
+	6a5cb4  or  [edi+0x8c],eax      RefObjChar_ExtractData     bits 10, 11
+
+Found by scanning every `or`/`mov`/`and`/`xor` into `[reg+0x8c]` across the
+disassembly, then keeping the ones whose enclosing function is a row parser.
+`RefObjItem`'s own extract touches `[esp+0x8c]` — the stack — and never the row.
+
+**So bits 10 and 11 exist only on CHARACTER rows.** `RefObjChar_ExtractData`
+contributes them from two of its own columns; an item can never have them. Bit 10
+is the tenth capability predicate (`GObjPC::FUN_00483f40`), which is therefore a
+question only a character can answer yes to.
+
+**And bits 2 and 3 are never written at all.** That is not "no writer found in the
+places I looked" — it is every write instruction in the binary, enumerated. Two
+consequences:
+
+- **`CanBorrow` always returns 0.** Nothing in the game is borrowable, for any
+  object type. The predicate exists, has a stub, has an implementation, and is
+  answered "no" by construction.
+- **Bit 2 is dead**: no writer and no reader. A gap in the numbering rather than a
+  flag this project has failed to identify.
+
+If srrevamp ever models borrowing, the grounded answer is *false for everything*,
+and that is the engine's answer rather than an omission here.
 
 ## How the flags word is built
 
