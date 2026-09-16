@@ -136,6 +136,17 @@ func (s *SQLStore) Join(ctx context.Context, guildID, characterID int64, charact
 		return nil, ErrGuildNotFound
 	}
 
+	// The engine's member cap (see guild.MaxMembers). Counted inside the same
+	// transaction as the insert, so two simultaneous joins cannot both see room.
+	var members int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM guild_members WHERE guild_id = $1`, guildID).Scan(&members); err != nil {
+		return nil, fmt.Errorf("guild: counting members: %w", err)
+	}
+	if members >= MaxMembers {
+		return nil, ErrGuildFull
+	}
+
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO guild_members (guild_id, character_id, character_name, role) VALUES ($1, $2, $3, $4)`,
 		guildID, characterID, characterName, RoleMember); err != nil {

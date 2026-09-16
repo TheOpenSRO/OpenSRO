@@ -81,6 +81,9 @@ func (m *MemStore) Join(_ context.Context, guildID, characterID int64, character
 	if _, in := m.ofChar[characterID]; in {
 		return nil, ErrAlreadyInGuild
 	}
+	if len(g.Members) >= MaxMembers {
+		return nil, ErrGuildFull
+	}
 	m.seq++
 	g.Members = append(g.Members, Member{CharacterID: characterID, Name: characterName, Role: RoleMember})
 	m.ofChar[characterID] = guildID

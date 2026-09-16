@@ -6983,3 +6983,57 @@ against the engine's refusals rather than by reading srrevamp's code.
 **Next step:** `STRGERR_CANNOT_DEAL_NORMALCY` appears in six separate STRG
 functions and nothing has decoded what "normalcy" gates -- it is the most common
 single refusal in that domain.
+
+## 2026-09-16 (twenty-fourth) — the guild member cap, and two verifications
+
+The previous entry named `STRGERR_CANNOT_DEAL_NORMALCY` as next. It is a
+mismatch check inside a phase machine — `cmp ax,0x1` on a state, then a field
+comparison, refusing when they disagree — so "normalcy" is the engine's phrasing
+for "this trade is not in a state where that makes sense". That raised two
+questions about srrevamp's trade code, and **both answers were already correct**:
+
+- Acting on someone else's trade is structurally impossible: every `Hub` method
+  keys off the caller's own `characterID`.
+- Confirm-then-swap, the classic trade exploit, is already defeated —
+  `SetOffer` clears **both** confirmations, so changing an offer forces the other
+  party to confirm again. `SetOffer` also already rejects negative gold and
+  quantity, the same rule this project only just added to inventory.
+
+Verified rather than assumed, which is the point; the tick then moved to a domain
+where srrevamp had nothing.
+
+### Guilds had no member cap at all
+
+`0x4c13` is `UIIT_MSG_GUILDERR_MEMBER_FULL`, and the join path pushes it when
+`FUN_005d0fb0` answers 1. That predicate is short enough to read whole:
+
+	level = *(char *)(*(int *)(guild + 4) + 0x38);
+	if (level == 0)        { Assert; level = 1; }
+	if (4 < (byte)(level-1)) Assert;                  // levels are 1..5
+	return table[level-1] <= *(uint *)(guild + 0x24); // <- member count
+
+The table is five dwords at `.rdata 0x00ade8dc`: **15, 20, 25, 35, 50** — and
+five is exactly the range the assert allows, which is what makes the table
+boundary certain rather than guessed.
+
+**srrevamp's `Guild` is `{ID, Name, LeaderID, Members}` with no cap and no
+level.** Every guild is therefore a level-1 guild, so `MaxMembers = 15` — taking
+a larger entry would grant capacity the game makes you earn. The full table ships
+as `MaxMembersByLevel` with `MaxMembersFor(level)` clamping to the engine's own
+1..5, so adding guild levels later has the rule already written.
+
+Enforced in both stores. The SQL one counts **inside the same transaction as the
+insert**, so two simultaneous joins cannot both see room.
+
+**Not claimed:** the three dwords following the table (5400, 50400, 135000) look
+like a guild-experience curve. Nothing read so far uses them, so they are
+mentioned and left alone.
+
+**What moved:** a capacity rule that did not exist in srrevamp, grounded and
+enforced with the cap and the check pinned together by test; two trade-exploit
+questions answered against the code rather than assumed.
+
+**Next step:** `GUILDERR_PERMISSION_DENIED` (0x18e6/0x18e7, and 0x4c1e) is raised
+from 21 functions -- more than any other single guild code -- and srrevamp's
+guild has only RoleMember and RoleLeader, so whatever permission model sits
+behind those is richer than what it models.

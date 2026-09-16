@@ -12,6 +12,51 @@ import (
 	"errors"
 )
 
+// MaxMembersByLevel is how many characters a guild may hold, by guild level.
+// **RECOVERED**: 15, 20, 25, 35, 50 for levels 1 to 5.
+//
+// The engine's join path calls a predicate (0x005d0fb0) that answers "is this
+// guild full", and it is short enough to read whole:
+//
+//	level = *(char *)(*(int *)(guild + 4) + 0x38);
+//	if (level == 0)          { Assert; level = 1; }
+//	if (4 < (byte)(level-1))   Assert;              // levels are 1..5
+//	return table[level-1] <= *(uint *)(guild + 0x24);   // <- member count
+//
+// The caller pushes `0x4c13` when that returns 1, and the client names `0x4c13`
+// `UIIT_MSG_GUILDERR_MEMBER_FULL` (docs/protocol/error_codes.md), which is what
+// ties the predicate to the cap rather than to some other fullness.
+//
+// The table is five dwords at .rdata 0x00ade8dc, and five is exactly the range
+// the assert above allows. The three dwords that follow it (5400, 50400,
+// 135000) look like a guild-experience curve and are NOT claimed here -- nothing
+// read so far uses them.
+var MaxMembersByLevel = [5]int{15, 20, 25, 35, 50}
+
+// MaxMembers is the cap that applies to srrevamp today: **15**, the level-1
+// entry. srrevamp's guilds have no level -- Guild is {ID, Name, LeaderID,
+// Members} -- so every guild is a level-1 guild, and taking a larger entry would
+// be granting a capacity the game makes you earn.
+const MaxMembers = 15
+
+// MaxMembersFor returns the cap for a guild level, clamped to the range the
+// engine's own assert allows. It exists so that adding guild levels later has
+// the rule already written; nothing calls it with a level above 1 yet.
+func MaxMembersFor(level int) int {
+	if level < 1 {
+		level = 1
+	}
+	if level > len(MaxMembersByLevel) {
+		level = len(MaxMembersByLevel)
+	}
+	return MaxMembersByLevel[level-1]
+}
+
+// ErrGuildFull is returned by Store.Join when the guild already holds
+// MaxMembers characters. The engine's own refusal is
+// UIIT_MSG_GUILDERR_MEMBER_FULL.
+var ErrGuildFull = errors.New("guild: guild is full")
+
 // MaxNameLength caps a guild's name length. Own design choice.
 const MaxNameLength = 32
 
