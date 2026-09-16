@@ -10171,3 +10171,51 @@ shape is the engine's; only the percentage is ours.
 applies it sits at `0x004e2c00`, which this pass did not read, so its direction
 is unknown and guessing it would be inventing a rule.
 
+## 2026-09-16 — the damage pipeline is wider than I recorded, and `dara` is four params
+
+Continued the vein that paid last tick: reading the functions that the
+`EvaluateParam`-only param map turned up. Two of them are adjacent helpers in
+the `Formulae` range, each reading a run of four consecutive params.
+
+**Both are 2x2 param selectors**, picking one param from two flag axes and
+reading it off `obj + 0x1ec`:
+
+| helper | `0x4`+`0x1` | `0x4`+`0x2` | `0x8`+`0x1` | `0x8`+`0x2` |
+|---|---|---|---|---|
+| `Formulae::SelectDaraParamForDamageType` (`0x00410bb0`) | 174 | 175 | 176 | 177 |
+| `Formulae::SelectParamByDamageType_136_139` (`0x00410c20`) | 136 | 137 | 138 | 139 |
+
+**Bit `0x4` is physical and `0x8` is magical — settled by a use-site.** Two
+callers pass the flags as literals and are a phys/mag twin pair identified by
+the params they read themselves: `0x0040f1b0` reads 5, 7 and 180 (the physical
+defender set) and passes `5` = `0x4|0x1`; `0x0040f3d0` reads 6, 8 and 181
+(magical) and passes `9` = `0x8|0x1`. Not an analogy to the mitigation twins —
+the same three-param signature, from the other end.
+
+### CORRECTION to v0.1.259, one tick old
+
+That entry published "the damage pipeline's params, and which side supplies
+each" as a seven-row table. It is incomplete. The table was built by walking the
+`GetParam` sites **inline** in the two mitigation twins, and both twins also
+read params through a helper — `40e60b` in the physical, `40e9b1` in the
+magical, each passing `edx = edi`, the defender. So **params 174..177 are
+defender params in that pipeline** and belong in the table.
+
+The lesson is the same shape as the last two corrections: an enumeration is only
+as complete as the call depth it searches. The v0.1.259 walk stopped at depth 0.
+
+### `dara` resolves to four params, not one
+
+The registry tags 174..177 `dara`, which `magic_options.md` names
+`MATTR_AVATAR_DARA` on `avatar_helm` — the avatar family. So one magic-option
+tag maps to **four** params, chosen by damage type and a second axis, each
+bounded 0..100 and read off the defender inside mitigation: an avatar
+damage-reduction percentage. Both docs now say so.
+
+**Left open rather than guessed:** the second axis, `0x1` against `0x2`. Both
+literal callers use `0x1` and no use-site seen so far distinguishes them.
+
+**Nothing shipped.** srrevamp has no source for `dara` or for params 136..139, so
+these are unreachable rather than omitted — the same standing as the
+anti-monster-class bonus. Two names applied.
+

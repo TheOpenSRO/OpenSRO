@@ -136,3 +136,11 @@
 004e6ec0	server	GObjPC::ResolveDeathCauseAndDispatch	descriptive	writes the death-cause byte at this+0x1cb4 from FUN_004e6590, then switches on it: 1 -> the job-suit path, 3/4/5 -> GObjPC_OnDeath, 6 -> the zone path. The only writer of that byte.
 004e6590	server	GObjPC::ResolveDeathCause	descriptive	computes the death-cause enum: 6 and 2 from zone/faction predicates, 1 when equipment slot 8 (the job suit) is worn, and `(-(uint)(IsKilledByPlayer != 1) & 0xfffffffe) + 5` -- 5 for a player kill, 3 otherwise.
 004eb390	server	GObjPC::IsKilledByPlayer	descriptive	returns 1 only when both parties answer vtable slot 7, which the engine's own "## Illegal ##  IGObj::IsPC Entered!" stub names IsPC. It is what separates death cause 5 from 3, and so the 20x branch from the 100x branch in GObjPC_OnDeath.
+#
+# APPENDED 2026-09-16 (fourth batch): the damage pipeline's 2x2 param selectors.
+# These are why the v0.1.259 pipeline table was incomplete -- it walked the
+# GetParam sites INLINE in the mitigation twins, and these are read through a
+# helper.
+#
+00410bb0	server	Formulae::SelectDaraParamForDamageType	descriptive	2x2 selector reading obj+0x1ec: flag bit 0x4 (physical) or 0x8 (magical) crossed with 0x1 or 0x2 picks param 174/175/176/177, the four the registry tags `dara` (MATTR_AVATAR_DARA). Called from both mitigation twins with edx = the defender, and from the 0x40f1b0/0x40f3d0 pair with literal flags 5 and 9.
+00410c20	server	Formulae::SelectParamByDamageType_136_139	descriptive	the same 2x2 shape on one flags byte: 0x4/0x8 crossed with 0x1/0x2 picks param 136/137/138/139 off obj+0x1ec. Called once, from Combat_ResolveDamage at 0x58eae2. Named for its mechanism because the four params have no tag in the registry and no other use-site.

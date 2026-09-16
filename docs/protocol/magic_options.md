@@ -61,7 +61,7 @@ and the note there about the fourth time hand-typing one went wrong.
 | `brna` | 1651666529 | `MATTR_NASRUN_BLOCKRATE` | avatar_special_armlet, xxx |
 | `bu` | 25205 | `MATTR_RESIST_BURN` | accessory, xxx |
 | `cri` | 6517353 | `MATTR_CRITICAL` | weapon, xxx |
-| `dara` | 1684107873 | `MATTR_AVATAR_DARA` | avatar_helm, xxx |
+| `dara` | 1684107873 | `MATTR_AVATAR_DARA` | avatar_helm, xxx | **four params: 174..177**, picked by damage type x a second axis — see param_registry.md |
 | `drua` | 1685222753 | `MATTR_AVATAR_DRUA` | avatar_mail, xxx |
 | `dura` | 1685418593 | `MATTR_DEC_MAXDUR` | armor, shield, weapon, xxx |
 | `duru` | 1685418613 | `MATTR_DUR` | armor, shield, weapon, xxx |

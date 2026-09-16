@@ -313,3 +313,57 @@ project's own rule that a negative result is a fact about the probe.
 `[reg+0x104]` call; `mov eax,<id>` before `call 0x4b3740`; and, if both come
 back empty, a register trace, because the id may be arithmetic.
 
+## The damage pipeline is wider than the inline reads show (2026-09-16)
+
+The table above ("The damage pipeline's params, and which side supplies each")
+was built by walking the `GetParam` sites **inline** in the two mitigation
+twins. That is incomplete: the twins also read params through a **helper**, and
+those never appeared.
+
+`Formula_MitigatePhysicalDamage` calls `0x00410bb0` at `40e60b`, and the magical
+twin calls the same helper at `40e9b1`:
+
+	40e5f9  mov edx,[esi+0x230]   ; the attack descriptor's flags
+	40e5ff  mov ecx,[eax+0x230]   ; a second descriptor's flags
+	40e605  mov eax,[edx]
+	40e607  mov ecx,[ecx]
+	40e609  mov edx,edi           ; edi = the DEFENDER
+	40e60b  call 0x410bb0
+
+so params **174..177 are defender params in the damage pipeline** and belong in
+that table.
+
+### Two 2x2 param selectors
+
+Both helpers pick one param from a pair of flag axes and read it off
+`obj + 0x1ec` (the ParamKeeper):
+
+| helper | `0x4`+`0x1` | `0x4`+`0x2` | `0x8`+`0x1` | `0x8`+`0x2` |
+|---|---|---|---|---|
+| `0x00410bb0` (both mitigation twins; defender) | 174 | 175 | 176 | 177 |
+| `0x00410c20` (`Combat_ResolveDamage`, once) | 136 | 137 | 138 | 139 |
+
+**Bit `0x4` is physical and bit `0x8` is magical, settled by a use-site rather
+than by analogy.** Two further callers pass the flags as literals, and they are
+a phys/mag twin pair identified by the params they themselves read:
+
+| caller | reads | passes | selects |
+|---|---|---|---|
+| `0x0040f1b0` | 5, 7, 180 — the **physical** defender set | `5` = `0x4\|0x1` | 174 |
+| `0x0040f3d0` | 6, 8, 181 — the **magical** defender set | `9` = `0x8\|0x1` | 176 |
+
+The second axis (`0x1` against `0x2`) is **not settled**. Both literal callers
+use `0x1`, and no use-site seen so far distinguishes them, so it is left open
+rather than guessed.
+
+### `dara` is four params, not one
+
+The registry tags 174..177 `dara`, and `docs/protocol/magic_options.md` names it
+`MATTR_AVATAR_DARA` on `avatar_helm` — the avatar family. So one magic-option
+tag resolves to **four** params, chosen by damage type and the second axis, each
+bounded 0..100 and read off the defender inside mitigation. That is an avatar
+damage-reduction percentage.
+
+srrevamp has no source for `dara`, so this is unreachable rather than omitted,
+the same as the anti-monster-class bonus recorded above.
+
