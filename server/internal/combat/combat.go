@@ -150,6 +150,29 @@ type Monster struct {
 // attacker's -- a stat that weakens your own blows is not a stat. It is the
 // defender's.
 //
+// CONFIRMED A SECOND WAY 2026-09-16, from the registers rather than the shape.
+// The formula takes the defender in EDX and the attacker as its first stack
+// argument, and it asks the EDX object what it is before reading a stat off the
+// other one:
+//
+//	40e5ba  mov edx,[eax+0x28]    ; slot 10 = IGObj::IsMonster   on EDX
+//	40e5c7  mov edx,[eax+0x12c]   ; slot 75 = GetMonsterClass    on EDX
+//	40e5d1  cmp al,0x3 / jne skip
+//	40e5d8  mov edx,[eax+0x104]   ; GetParam                     on the STACK object
+//	40e5de  push 0x103
+//
+// A bonus conditioned on what the target IS belongs to the attacker, so EDX is
+// the target. Two independent routes, one answer.
+//
+// WHAT SRREVAMP DOES NOT MODEL, so it is not mistaken for a gap: the full
+// pipeline reads seven params, four of them the attacker's. Step 4 above is an
+// anti-monster-class bonus (param 259, a percentage, only against monster class
+// 3); steps 3, 5 and 6 are further attacker percentages (128/129, 189,
+// 178/179). No srrevamp item or skill publishes any of them, so they are
+// unreachable rather than omitted. The defender's side -- params 5/7 here, plus
+// 180 -- is what this function implements. Full table:
+// docs/protocol/param_registry.md.
+//
 // THE FLOOR OF 1 IS THE GAME'S OWN, corrected 2026-09-16. This note used to say
 // "the floor stays at 1 here rather than the game's 0. That is own design and
 // disclosed" -- which was wrong about the game, and wrong in the direction that

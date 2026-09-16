@@ -211,3 +211,64 @@ branches).
 | 257 | 0x101 | 0 | 1000 | **0** | -1 | death-penalty reduction (premium) |
 | 258 | 0x102 | 0 | 1000 | **0** | -1 | premium |
 | 259 | 0x103 | 0 | 100 | **0** | 0 |  |
+
+## The damage pipeline's params, and which side supplies each (2026-09-16)
+
+The registry above gives every param's bounds and default but leaves the role
+column empty. For the eight params the mitigation formulas touch, the role is
+now readable — and so is the thing that matters more, **which of the two
+characters each is read from.**
+
+`Formula_MitigatePhysicalDamage` (`0x0040e450`) takes the defender in **EDX**
+and the attacker as its **first stack argument**; the magical twin
+(`0x0040e830`) is identical with every type-specific id shifted by one. Reading
+the `GetParam` sites in address order, with the object register resolved:
+
+| # | addr (phys / mag) | side | param | bounds | role |
+|---|---|---|---|---|---|
+| 1 | `40e504` / `40e8a6` | **defender** | 5 / 6 | 0..9,999,999 | flat absorption, subtracted |
+| 2 | `40e51a` / `40e8bc` | **defender** | 7 / 8 | 0..10,000 | percentage reduction, the divisor |
+| 3 | `40e5a4` / `40e94a` | attacker | **128 or 129** | 0..100 | one of two, chosen by `test [ecx],0x2` |
+| 4 | `40e5d8` / `40e97e` | attacker | 259 | 0..100 | **only when the defender is a monster of class 3** |
+| 5 | `40e663` / `40ea09` | attacker | 189 | 0..100 | gated on flag bit `0x4` |
+| 6 | `40e75b` / `40eb0d` | attacker | 178 / 179 | 0..100 | |
+| 7 | `40e78d` / `40eb3f` | **defender** | 180 / 181 | 0..100 | |
+
+**The bounds corroborate the roles rather than being assumed from them.** Param
+5's ceiling of 9,999,999 is a flat quantity; param 7's 10,000 is a percentage
+with headroom; and every other param here is capped at exactly 100, which is
+what a percentage looks like. None of that was used to derive the split — it is
+a second source agreeing with it.
+
+### Which side is which, settled twice
+
+The project had already settled this by **monotonicity**: a larger param 7
+yields less damage, so it cannot belong to the attacker (see
+`combat.MitigateDamage`). The register walk settles it again, independently:
+
+	40e5b4  mov eax,[edi]          ; the EDX object
+	40e5ba  mov edx,[eax+0x28]     ; vtable slot 10 = IGObj::IsMonster
+	40e5bf  call edx / test eax,eax / je skip
+	40e5c5  mov eax,[edi]
+	40e5c7  mov edx,[eax+0x12c]    ; vtable slot 75 = IGObj::GetMonsterClass
+	40e5cf  call edx / cmp al,0x3 / jne skip
+	40e5d5  mov eax,[ebp+0x0]      ; the STACK object
+	40e5d8  mov edx,[eax+0x104]    ; GetParam
+	40e5de  push 0x103
+
+The formula asks the EDX object *what kind of monster it is* and, on the answer,
+reads a param off the stack object. A bonus conditioned on what the target is
+belongs to the attacker, so EDX is the target. Two routes, one answer.
+
+### A mechanic srrevamp does not model
+
+Step 4 is an **anti-monster-class damage bonus**: attacker param 259, applied as
+a percentage, only when the defender is a monster whose `GetMonsterClass()`
+returns 3. `CGObjMob::GetMonsterClass` is `MOV AL,[ECX+0x1cd8] ; AND AL,0xF`, so
+the class is the low nibble of a byte on the mob.
+
+srrevamp has no item or skill that grants param 259, so the bonus is
+unreachable rather than omitted — recorded here so it is not mistaken for a gap
+in the formula. The same goes for steps 3, 5 and 6, which are attacker
+percentages no srrevamp source publishes.
+

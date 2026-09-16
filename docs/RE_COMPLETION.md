@@ -165,12 +165,41 @@ pick one up without re-deriving anything.
    level-10 monster mitigates 10%. Physical-vs-magical rests on the player stat
    graph feeding param 5 from Strength and param 6 from Intellect.
 
-   *Not settled, and why nothing shipped:* which object the formula reads from.
-   Both params are read off the same pointer (`param_2`), and until the call
-   site in `Combat_ResolveDamage` is resolved it is not proven whether that is
-   the attacker or the defender — which decides whether params 5/6 are attack or
-   defence. *Next probe:* resolve `Combat_ResolveDamage`'s arguments at its four
-   calls to each twin (register-passed — use `ResolveRegArg.java`).
+   **CLOSED 2026-09-16, and this entry was stale in two ways.** The model IS
+   shipped — `combat.MitigateDamage` has carried
+   `raw / (1 + pct/100) - flat` since v0.1.1xx, with the `push 0x5` disassembly
+   as its citation — and the "which object" question had already been settled
+   once, by the formula's own monotonicity (a larger param 7 yields less damage,
+   so it is the defender's).
+
+   The register walk settles it a **second, independent way**: the formula takes
+   the defender in **EDX** and the attacker as its **first stack argument**, and
+   it asks the EDX object `IsMonster` (slot 10) then `GetMonsterClass` (slot 75)
+   before reading a param off the *other* object. A bonus conditioned on what
+   the target is belongs to the attacker, so EDX is the target. Two routes, one
+   answer — so params 5/6 are defence, as shipped.
+
+   **What is new is the whole pipeline, split by side** — the param registry had
+   bounds for these eight ids and no roles. Full table in
+   `docs/protocol/param_registry.md`; the shape is
+
+   | # | side | param (phys / mag) | role |
+   |---|---|---|---|
+   | 1 | defender | 5 / 6 | flat absorption, subtracted |
+   | 2 | defender | 7 / 8 | percentage reduction, the divisor |
+   | 3 | attacker | 128 **or** 129 | chosen by `test [ecx],0x2` |
+   | 4 | attacker | 259 | **only when the defender is a monster of class 3** |
+   | 5 | attacker | 189 | gated on flag bit `0x4` |
+   | 6 | attacker | 178 / 179 | |
+   | 7 | defender | 180 / 181 | |
+
+   The registry's own bounds corroborate rather than being assumed from: param 5
+   is capped at 9,999,999 (a flat quantity), param 7 at 10,000 (a percentage
+   with headroom), and every other id here at exactly 100.
+
+   Step 4 is an **anti-monster-class damage bonus** that srrevamp cannot reach —
+   nothing here publishes param 259 — as are steps 3, 5 and 6. Recorded in
+   `combat.go` so they read as unreachable rather than as a gap in the formula.
 
 4. **Berserk numbers** (fill 8/hit, 20 s, +50 %) — ours. The mechanic and the
    five orbs are real.
@@ -10027,4 +10056,31 @@ The client's own unexploited pool remains its **263 assert-carrying functions
 that are still `FUN_`** (`docs/protocol/client_asserts.md`). An assert names the
 source file and the expression, so it yields a class and member names rather
 than a method name — which is why it has not moved the leaf-name metric.
+
+## 2026-09-16 — the damage pipeline, split by side
+
+Ran the probe queue item 3 recorded (resolve `Combat_ResolveDamage`'s register
+arguments). It closed the item, and it found the entry stale: the mitigation
+model was already shipped and the attacker/defender question already settled by
+monotonicity. The walk settles it **independently** — the formula asks the EDX
+object `IsMonster` and `GetMonsterClass` and then reads a param off the *other*
+object, so EDX is the target — and produces the genuinely new part, **the roles
+of all eight damage params and which character supplies each**. The param
+registry had their bounds and an empty role column; it now has the table, and
+the bounds agree with it without having been used to derive it.
+
+**A mechanic named, not shipped:** an anti-monster-class damage bonus (attacker
+param 259, applied as a percentage, only when the defender is a monster whose
+`GetMonsterClass()` is 3). srrevamp publishes no source for param 259, so it is
+unreachable rather than missing; `combat.go` now says so, along with the other
+three attacker percentages the formula reads (128/129, 189, 178/179).
+
+**Third lever this session found already-worked.** `IGObj::GetLifeState` (slot
+62), `GetParam` (65) and `GetMonsterClass` (75) were all already in
+`docs/protocol/igobj_vtable.md`, including the note that the `GetLifeState`
+guard means *both parties must be alive*. Between this, the `## Illegal ##`
+stubs and the TypeID constants, the pattern is clear: **check the docs for the
+thing before probing for it.** The probes that paid this session were the ones
+aimed at an explicitly recorded open question, not at a lever that looked
+promising.
 
