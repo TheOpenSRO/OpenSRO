@@ -107,6 +107,9 @@ func (s *SQLStore) List(ctx context.Context, characterID int64) ([]Slot, error) 
 
 // AddItem implements Store.
 func (s *SQLStore) AddItem(ctx context.Context, characterID, itemID int64, quantity int) error {
+	if quantity <= 0 {
+		return ErrInvalidQuantity
+	}
 	maxStack, err := s.maxStacks.GetMaxStack(ctx, itemID)
 	if err != nil {
 		return fmt.Errorf("inventory: looking up max stack for item %d: %w", itemID, err)
@@ -171,6 +174,11 @@ func (s *SQLStore) AddItem(ctx context.Context, characterID, itemID int64, quant
 func (s *SQLStore) RemoveItem(ctx context.Context, characterID int64, slot int, quantity int) error {
 	if slot < 0 || slot >= SlotsPerCharacter {
 		return ErrInvalidSlot
+	}
+	// See MemStore.RemoveItem: a negative quantity passes the upper-bound check
+	// and turns the removal into an addition.
+	if quantity <= 0 {
+		return ErrInvalidQuantity
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)

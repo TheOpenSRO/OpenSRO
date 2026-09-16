@@ -40,6 +40,9 @@ func (m *MemStore) List(_ context.Context, characterID int64) ([]Slot, error) {
 
 // AddItem implements Store.
 func (m *MemStore) AddItem(ctx context.Context, characterID, itemID int64, quantity int) error {
+	if quantity <= 0 {
+		return ErrInvalidQuantity
+	}
 	maxStack := 1
 	if m.maxStacks != nil {
 		n, err := m.maxStacks.GetMaxStack(ctx, itemID)
@@ -101,6 +104,11 @@ func (m *MemStore) AddItem(ctx context.Context, characterID, itemID int64, quant
 func (m *MemStore) RemoveItem(_ context.Context, characterID int64, slot int, quantity int) error {
 	if slot < 0 || slot >= SlotsPerCharacter {
 		return ErrInvalidSlot
+	}
+	// Checked BEFORE the upper bound, because `quantity > slot.Quantity` passes
+	// for every negative value and the removal below is a subtraction.
+	if quantity <= 0 {
+		return ErrInvalidQuantity
 	}
 
 	m.mu.Lock()

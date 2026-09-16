@@ -6925,3 +6925,61 @@ can no longer produce the inflated version.
 `TC_ERROR_OPEN_GOLD`, `TC_ERROR_OPEN_LEVEL`, `TC_ERROR_NOT_OPEN_7D`, so it is
 something opened with a gold cost and a level requirement, and those are two
 recoverable values.
+
+## 2026-09-16 (twenty-third) — TC is the Training Camp, and an item-duplication bug
+
+The previous entry named the unidentified `TC` domain as next. It is the
+**Training Camp**, and reading its open handler turned up a real bug in srrevamp
+on the way.
+
+### TC named, with two constants
+
+The codes say it outright — `TC_ERROR_TRAININGCAMP_NOTHING`,
+`..._ALREADY_ENTRY`, `..._OTHER_TRAININGCAMP_ENTRY` — and the server's own log
+string `"Failed TO Post AQ_TrainingCamp!"` agrees. `FUN_004e4680` is the open
+handler and reads whole:
+
+	if (GetLifeState() != 1)  return 0x6807;   // slot 62 -- must be alive
+	if (GetLevel() < 0x3c)    return 0x6809;   // slot 73 -- LEVEL 60
+	gold_hi = *(int *)(charData + 0x7c);
+	if (gold_hi < 1 && (gold_hi < 0 || *(uint *)(charData + 0x78) < 100000))
+	                          return 0x680a;   // 100,000 GOLD
+
+Opening a training camp costs **100,000 gold** at **level 60**. srrevamp has no
+academy, so these are recorded rather than used. Two things confirm themselves:
+slots 62 and 73 from the vtable table again, and `charData+0x78` `RemainGold` as
+a **64-bit** quantity with `+0x7c` its high half — which the server's own SQL
+already implied by writing it `%I64d`.
+
+### `SPECIFY_POSITIVE_NUMBER_ONLY` found a duplication bug
+
+The `STRG` attributions showed `UIIT_MSG_STRGERR_SPECIFY_POSITIVE_NUMBER_ONLY`
+(`0x1829`) raised from three separate storage handlers. Its companion `0x1814`
+`..._ENABLEINPUT_FEWERTHAN_REMAIN` is the upper bound. **The engine guards both
+ends of a quantity; srrevamp guarded only the upper one.**
+
+`inventory.RemoveItem` checked `quantity > slot.Quantity` and nothing else. Every
+negative value passes that, and the removal is
+
+	slot.Quantity -= quantity
+
+so a negative quantity **added items**. `internal/storage` had the guard;
+`internal/inventory` did not, in both the memory and SQL stores. `AddItem` was
+the milder version of the same gap — a silent no-op that reported success.
+
+Fixed with `ErrInvalidQuantity` in all four places, and tests that assert the
+holdings are unchanged after a refused call rather than only that an error came
+back.
+
+**A test caught a wrong assumption of mine mid-write**: the first version
+asserted "a single stack of 5", but a `MemStore` with no max-stack source splits
+into five slots of one. The store was right and the expectation was wrong; the
+assertion now sums quantities instead of matching a shape.
+
+**What moved:** a domain named and two of its constants recovered; an item
+duplication path closed in both inventory stores, found by comparing srrevamp
+against the engine's refusals rather than by reading srrevamp's code.
+
+**Next step:** `STRGERR_CANNOT_DEAL_NORMALCY` appears in six separate STRG
+functions and nothing has decoded what "normalcy" gates -- it is the most common
+single refusal in that domain.

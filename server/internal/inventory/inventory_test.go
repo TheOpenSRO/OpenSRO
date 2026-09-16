@@ -1,6 +1,10 @@
 package inventory
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+)
 
 // TestSlotsPerCharacterFitsTheEngine holds this project's own inventory size to
 // the real game's recovered bounds. SlotsPerCharacter is own design, but it is
@@ -38,5 +42,59 @@ func TestSlotsPerCharacterFitsTheEngine(t *testing.T) {
 	if MaxStorageSlots <= SlotsHardLimit {
 		t.Errorf("MaxStorageSlots = %d; the slot-174 overload caps at 0x70 = 112, above the inventory limit",
 			MaxStorageSlots)
+	}
+}
+
+// TestRemoveItemRejectsNonPositiveQuantity covers a duplication bug: RemoveItem
+// checked only that the quantity did not EXCEED the stack, and every negative
+// value passes that test. The removal is `slot.Quantity -= quantity`, so a
+// negative amount added items.
+//
+// The engine guards both ends of the range -- 0x1829
+// SPECIFY_POSITIVE_NUMBER_ONLY below, 0x1814 ENABLEINPUT_FEWERTHAN_REMAIN above
+// -- and srrevamp was guarding only the upper one.
+func TestRemoveItemRejectsNonPositiveQuantity(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore(nil)
+	if err := m.AddItem(ctx, 1, 100, 5); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+
+	for _, q := range []int{0, -1, -1000} {
+		if err := m.RemoveItem(ctx, 1, 0, q); !errors.Is(err, ErrInvalidQuantity) {
+			t.Errorf("RemoveItem(quantity=%d): got %v, want ErrInvalidQuantity", q, err)
+		}
+		// The holdings must be untouched. Before the guard, q=-1000 raised the
+		// slot's quantity. Summed rather than shape-matched, because a store
+		// with no max-stack source splits into slots of one.
+		slots, err := m.List(ctx, 1)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		total := 0
+		for _, sl := range slots {
+			total += sl.Quantity
+		}
+		if total != 5 {
+			t.Fatalf("after RemoveItem(quantity=%d) the character holds %d, want 5", q, total)
+		}
+	}
+
+	// A positive removal still works.
+	if err := m.RemoveItem(ctx, 1, 0, 1); err != nil {
+		t.Errorf("RemoveItem(1): %v", err)
+	}
+}
+
+// TestAddItemRejectsNonPositiveQuantity is the same guard on the other side. It
+// was a silent no-op rather than a duplication, but an operation that reports
+// success without doing anything is its own kind of bug.
+func TestAddItemRejectsNonPositiveQuantity(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore(nil)
+	for _, q := range []int{0, -3} {
+		if err := m.AddItem(ctx, 1, 100, q); !errors.Is(err, ErrInvalidQuantity) {
+			t.Errorf("AddItem(quantity=%d): got %v, want ErrInvalidQuantity", q, err)
+		}
 	}
 }

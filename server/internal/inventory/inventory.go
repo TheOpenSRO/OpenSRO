@@ -111,6 +111,22 @@ var ErrInvalidSlot = errors.New("inventory: invalid slot index")
 // nothing in it.
 var ErrSlotEmpty = errors.New("inventory: slot is empty")
 
+// ErrInvalidQuantity is returned when an operation is given a quantity of zero
+// or less.
+//
+// The game makes the same refusal and names it: engine code `0x1829`,
+// `UIIT_MSG_STRGERR_SPECIFY_POSITIVE_NUMBER_ONLY`, raised from three separate
+// storage handlers (`00480f30`, `004b2450`, `005243d0`). Its companion `0x1814`
+// `..._ENABLEINPUT_FEWERTHAN_REMAIN` is the upper bound, which srrevamp already
+// had as ErrInsufficientQuantity -- so the engine guards both ends of the range
+// and srrevamp was guarding only one.
+//
+// THIS WAS A DUPLICATION BUG, not a tidiness issue. RemoveItem checked only
+// `quantity > slot.Quantity`, so a negative quantity passed every guard and
+// reached `slot.Quantity -= quantity`, which ADDS. internal/storage already
+// rejected non-positive amounts; inventory did not.
+var ErrInvalidQuantity = errors.New("inventory: quantity must be positive")
+
 // ErrInsufficientQuantity is returned by Store.RemoveItem when asked to
 // remove more than the slot currently holds.
 var ErrInsufficientQuantity = errors.New("inventory: not enough quantity in slot")

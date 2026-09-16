@@ -97,7 +97,33 @@ value is invisible unless you go looking for it.
 | `005c7900` | `FUN_005c7900` | `UIIT_MSG_ERROR_GUILD_LEVEL_UP_GP_DEFICIT`, `UIIT_MSG_GUILDERR_NOT_ENOUGH_GOLD`, `UIIT_MSG_GUILDERR_PERMISSION_DENIED` +2 |
 | `005c8510` | `trs_wait_response::FUN_005c8510` | `UIIT_MSG_GUILDERR_JOIN_GUILD_REFUSED`, `UIIT_MSG_GUILDERR_NOT_ENOUGH_GOLD`, `UIIT_MSG_GUILDERR_PERMISSION_DENIED` +1 |
 
-### TC (11)
+### TC (11) — the Training Camp
+
+`TC` is the **Training Camp** (the academy/mentoring system). The codes name it
+outright: `TC_ERROR_TRAININGCAMP_NOTHING`, `..._ALREADY_ENTRY`,
+`..._OTHER_TRAININGCAMP_ENTRY`, and the server's own log string
+`"Failed TO Post AQ_TrainingCamp!"` agrees.
+
+`FUN_004e4680` is the **open** handler, and it is short enough to read whole:
+
+```c
+if (GetLifeState() != 1)  return 0x6807;   // [*this+0xf8]  slot 62 -- must be alive
+if (GetLevel() < 0x3c)    return 0x6809;   // [*this+0x124] slot 73 -- LEVEL 60
+gold_hi = *(int *)(charData + 0x7c);        // a 64-bit gold compare
+if (gold_hi < 1 && (gold_hi < 0 || *(uint *)(charData + 0x78) < 100000))
+                          return 0x680a;   // 100,000 GOLD
+if (this[0x733] != 0)     return 0x6812;   // already in another camp
+```
+
+So opening a training camp costs **100,000 gold** and requires **level 60**, and
+the character must be alive. srrevamp has no academy system, so these are
+recorded rather than used.
+
+Two things confirm themselves here: slots 62 (`GetLifeState`) and 73
+(`GetLevel`) from `igobj_vtable.md` again, and `charData+0x78` `RemainGold` read
+as a **64-bit** quantity with `+0x7c` its high half — which is what the server's
+own SQL already implied, writing it with `%I64d`.
+
 
 | address | current name | evidence |
 |---|---|---|
