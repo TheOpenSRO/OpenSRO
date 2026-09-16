@@ -77,6 +77,17 @@ func (s *SQLStore) SendRequest(ctx context.Context, fromID int64, fromName strin
 		return ErrAlreadyFriends
 	}
 
+	// The engine refuses the request itself when the sender's list is full
+	// (FUN_005d7620) rather than letting it sit and fail on acceptance.
+	var mine int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM friendships WHERE character_id = $1`, fromID).Scan(&mine); err != nil {
+		return fmt.Errorf("friend: counting friendships: %w", err)
+	}
+	if mine >= MaxFriends {
+		return ErrListFull
+	}
+
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO friend_requests (requester_id, requester_name, target_id) VALUES ($1, $2, $3)`,
 		fromID, fromName, toID)
@@ -106,6 +117,21 @@ func (s *SQLStore) AcceptRequest(ctx context.Context, characterID int64, charact
 	}
 	if err != nil {
 		return fmt.Errorf("friend: consuming request: %w", err)
+	}
+
+	// A friendship is mutual, so both lists grow and both must have room
+	// (friend.MaxFriends). Counted inside this transaction, after the request
+	// has been consumed: returning here rolls the DELETE back, so a refusal
+	// leaves the pending request intact rather than silently eating it.
+	for _, id := range [2]int64{characterID, requesterID} {
+		var n int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM friendships WHERE character_id = $1`, id).Scan(&n); err != nil {
+			return fmt.Errorf("friend: counting friendships for %d: %w", id, err)
+		}
+		if n >= MaxFriends {
+			return ErrListFull
+		}
 	}
 
 	if _, err := tx.ExecContext(ctx,

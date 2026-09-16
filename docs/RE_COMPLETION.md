@@ -7095,3 +7095,71 @@ divergence in `Join` written down with the bit that will close it.
 **Next step:** bit 2's two call sites -- `GObjPC::FUN_004b1750` and
 `FUN_005c49a0` -- raise no error codes, so naming it needs a different lever than
 the one that named the other three.
+
+## 2026-09-16 (twenty-sixth) — "no real friends-list data to RE" was untested
+
+The previous entry named guild permission bit 2 as next. It gates a permission
+srrevamp does not enforce, so the tick went looking for an ungrounded value in
+code srrevamp actually runs — and found one hiding behind a claim.
+
+### The claim
+
+`friend.go` opened with:
+
+> Entirely own design; no real friends-list data to RE.
+
+The first half is true of the request/accept shape. **The second half was never
+tested**, and it is wrong: the server has a friend system with its own error
+family, and the domain attribution had already surfaced one function in it.
+
+This is the same shape as the party cap, which was labelled "own design, and NOT
+grounded" until the join-time check turned up. A package comment asserting
+absence deserves the same scrutiny as a finding.
+
+### The cap is 20
+
+`FUN_005d7620` handles a friend request and checks the list before growing it:
+
+	5d7734  mov ax,0x6409                   <- FRIENDERR_ALREADYFRIEND, just above
+	5d7746  cmp DWORD PTR [esi+0x14],0x14   <- the friend count, against 20
+	5d774a  jb  ok                          <- strictly fewer than 20 may add
+	5d775d  mov ax,0x6408                   <- else FRIENDERR_FULLLIST
+
+What ties `[esi+0x14]` to the friend list rather than to some other count is the
+company it keeps: the comparison sits between an ALREADYFRIEND check and a
+FULLLIST refusal, both named by the client.
+
+The comparison is `jb`, so **20 is a full list, not a permitted one** — the same
+kind of boundary the party cap needed read rather than assumed.
+
+### What srrevamp had, and what it has now
+
+**No cap at all, in either store.** Accepting a request inserted both directions
+unbounded.
+
+Now `MaxFriends = 20`, enforced at both moments the engine does:
+
+- **on request**, because `FUN_005d7620` refuses there rather than letting a
+  request sit and fail on acceptance;
+- **on acceptance**, for **both** characters, because a friendship is mutual and
+  both lists grow.
+
+The SQL store counts inside the same transaction as the insert, and the check
+sits after the `DELETE … RETURNING` that consumes the request — so a refusal
+rolls that back and the pending request survives rather than being silently
+eaten. A test asserts exactly that, not merely that an error came back.
+
+**Not claimed:** the engine has `0x640f FRIENDERR_TARGETLISTFULL` for the other
+side, but **the server never returns it** — `0x640f` appears nowhere in its
+`.text`, like `PARTYERR_OUT_OF_LEVEL` before it. Where the engine enforces the
+target's limit is not established. srrevamp checks both sides because it writes
+to both; that is the conservative reading, and the comment says so rather than
+implying the engine was read that way.
+
+**What moved:** an untested absence claim replaced with a recovered constant;
+a capacity rule that did not exist in srrevamp, enforced at both stores and both
+moments, with the boundary and the rollback behaviour pinned by test.
+
+**Next step:** `friend.go` still carries the request/accept shape as own design,
+and the engine's `0x640a FRIEND_SYSCANCEL` / `0x640e FRIEND_SYSPROGRESS` suggest
+a request lifecycle with states srrevamp does not model.

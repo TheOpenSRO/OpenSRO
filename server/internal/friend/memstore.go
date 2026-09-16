@@ -37,6 +37,11 @@ func (m *MemStore) SendRequest(_ context.Context, fromID int64, fromName string,
 	if _, pending := m.requests[toID][fromID]; pending {
 		return ErrRequestAlreadySent
 	}
+	// The engine refuses the request itself when the sender's list is full
+	// (FUN_005d7620), rather than letting it sit and fail on acceptance.
+	if len(m.friends[fromID]) >= MaxFriends {
+		return ErrListFull
+	}
 	if m.requests[toID] == nil {
 		m.requests[toID] = make(map[int64]string)
 	}
@@ -52,6 +57,11 @@ func (m *MemStore) AcceptRequest(_ context.Context, characterID int64, character
 	requesterName, pending := m.requests[characterID][requesterID]
 	if !pending {
 		return ErrNoSuchRequest
+	}
+	// Both lists grow, so both must have room. Checked before the request is
+	// consumed: a refusal must not silently discard the pending request.
+	if len(m.friends[characterID]) >= MaxFriends || len(m.friends[requesterID]) >= MaxFriends {
+		return ErrListFull
 	}
 	delete(m.requests[characterID], requesterID)
 
