@@ -53,6 +53,23 @@ const (
 	fTypeID1 = 9 // TypeID1..4 run 9..12
 	fCountry = 14
 	// MaxStack: 1 for all equipment, a real cap for stackables (col 57).
+	//
+	// CONTESTED AS OF 2026-09-16, and the data still says keep it. Column 57
+	// is the LAST column of the common prefix and lands in
+	// `_RefObjCommon+0x184` -- and all three ExtractData overrides assert that
+	// field non-zero and pass it to a lookup whose failure message calls it
+	// "RefItem ID" (`"Can't find associated item data [RefObjCommon ID: %d,
+	// RefItem ID: %d]"`). A foreign key it is not: across 23,327 enabled rows
+	// column 57 has 18 distinct values (1 x19,679, 250, 500, 50), which is
+	// exactly MaxStack's shape, and it is 0 on six enabled item rows and 328
+	// enabled character rows -- values that assert would reject.
+	//
+	// Every link was checked rather than assumed: the walk is branch-clean,
+	// `this` reaches the parser in ecx, and the client's and server's own
+	// table copies have the same width. So this is a real open contradiction,
+	// not a mis-measurement, and it is recorded rather than resolved -- see
+	// docs/RE_COMPLETION.md. Reading column 57 as MaxStack is what the DATA
+	// supports; the engine's word for the field is what does not fit.
 	fMaxStack = 57
 	// Real NPC vendor prices: _RefObjCommon Price (buy) and SellPrice
 	// (buy-back). Confirmed against real rows -- SellPrice < Price on every

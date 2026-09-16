@@ -9846,3 +9846,79 @@ discriminator, and **not** the cash flag, which is worth recording because the
 five-byte block that `ReferenceData::FUN_006a8090` reads
 (cash, TID1..4) tempts exactly that misreading.
 
+## 2026-09-16 — column 55 recovered, and an open contradiction at column 57
+
+**What moved.** **Column 55 is a tagged string and the parser reads a number out
+of it**: it skips the table's `"xxx"` placeholder, searches for the literal
+`"GP:"`, and `atoi`s the remainder into `_RefObjCommon+0x180`. Both literals are
+the binary's own (`0xb090cc` = `"GP:"`, `0xae8110` = `"xxx"`), the branch is at
+`6a3add..6a3ba2`, and the real data agrees exactly -- across 23,327 enabled
+itemdata rows column 55 takes five values: `xxx` (23,298), `GP:5000` (24),
+`GP:20000` (2), `GP:30000` (2), `GP:1000` (1). Characterdata uses the same
+column for a different vocabulary (`FORTRESS_SAMARKAND` and eight more, 37
+rows), which the `"GP:"` search does not match. Full note in
+`docs/protocol/item_capability_flags.md`. This is one of the columns that opened
+up when the prefix turned out to be 58 wide.
+
+**Two things checked rather than assumed.**
+
+*The 58-column walk is branch-clean.* v0.1.254's walk assumed every consuming
+site executes once; loops were expanded but **branches were never tested**. Of
+81 forward jumps inside the parser, exactly one skips a consuming site --
+`6a3104 jmp 0x6a3c70`, the early return when column 0 (service) is zero. Nothing
+is conditionally skipped on the success path, so the 58 columns stand.
+
+*`RefObjCommon::ExtractData` is a `__thiscall` and the dump's signature is
+wrong.* `6a30dc mov [esp+0x14],ecx` stashes `this`; Ghidra dropped the `ecx`
+parameter, the same failure as `Stat_ApplyTaggedModifier`'s EDI argument.
+`RefObjItem` and `RefObjChar` pass **their own `this`** (`6a3d93`/`6a3d9a`,
+`6a58ff`/`6a5906`), so they do not hold a separate common record -- they are
+one, by inheritance.
+
+### OPEN: what the engine calls column 57
+
+Following `+0x184` to a use-site produced a conflict I could not resolve, and it
+is recorded here rather than forced, because it bears on a value srrevamp uses
+(`export-refdata`'s `fMaxStack = 57`).
+
+**For "RefItem ID":** all three `ExtractData` overrides assert `this+0x184`
+non-zero and pass it to `CGameServer::FUN_006ba850(0xc|0xd, id)`, whose failure
+logs `"Can't find associated item data [RefObjCommon ID: %d, RefItem ID: %d]"`.
+That callee returns a row stream (same `+0x18/+0x1c/+0x20/+0x28` shape), so it
+is a genuine table lookup. The engine also has a member `m_dwLink`, from the
+assert `dwItemID == m_dwLink`.
+
+**For MaxStack:** column 57 has **18 distinct values** across 23,327 enabled
+itemdata rows (1 x19,679, then 250, 500, 50) -- no foreign key looks like that
+-- and it is **0 on 6 enabled item rows and 328 enabled character rows**, which
+the non-zero assert would reject.
+
+**Ruled out, each by measurement rather than argument:** a mis-counted column
+(the walk is branch-clean, and four independent anchors land); the wrong object
+(`this` reaches the parser in ecx and the overrides pass their own); a
+client/server table-version split (both copies are 105 columns for
+characterdata, 161 for itemdata).
+
+**What would settle it:** read `CGameServer::FUN_006ba850` itself -- whether its
+second argument is a row key or a table/kind selector. An 18-value key into a
+small per-kind table would reconcile both halves; a per-row key would mean the
+column attribution is wrong despite the anchors.
+
+Until then srrevamp keeps reading column 57 as MaxStack, which is what the data
+supports, with the conflict written at the constant.
+
+### Closed: the vtable-slot lever is exhausted
+
+v0.1.255 flagged the `## Illegal ##` stubs as the obvious multiplier. They are
+**already fully applied** -- 207 functions carry such a label and 206 already
+hold the label's own method name. The limit is the hierarchy: only **24 classes
+derive from IGObj**, so its 202 named slots leave just **10** unnamed functions
+to propagate to, and 6 of those are the `GetRefObjID` destructors already
+rejected. Ground truth against IGObj's slots is 228/230 (99.1%); both misses are
+this project's renames of the engine's own `OffsetSkillPoint` and
+`OffsetExpPoint`.
+
+**Worth noting for the ledger:** the engine's names for two functions srrevamp
+renamed descriptively are `IGObj::OffsetExpPoint` (slot 92) and
+`IGObj::OffsetSkillPoint` (slot 93) -- the canonical EXP and SP entry points.
+

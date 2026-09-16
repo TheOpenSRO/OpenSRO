@@ -404,3 +404,65 @@ without an inline read, so the *next* inline read is column **57**, not 52.
 Anything applying `n+5` past that point is five columns low. srrevamp's own
 column constants are raw indices rather than derived through the rule, so none
 of them were wrong — but the rule as written would have produced wrong ones.
+
+## Column 55 is a tagged string: `"GP:<n>"` (2026-09-16)
+
+Column 55 is the 4th of the five `std::string`s at `+0xf4` stride `0x1c`, i.e.
+`_RefObjCommon+0x148`. The parser does not store it and move on -- it **scans
+it for a tag** and parses a number out, into the adjacent field `+0x180`:
+
+	+0x180 = 0                                     6a3a4e
+	s = this+0x148                                 6a3a9e   (column 55)
+	if (strcmp(s, "xxx") == 0) goto skip           6a3add / 6a3ae7
+	pos = s.find("GP:")                            6a3b0f
+	if (pos == npos) goto skip                     6a3b17
+	+0x180 = atoi(s.substr(pos + 3))               6a3b31 / 6a3b94
+	skip:                                          6a3ba2
+
+Both literals are the binary's own: `0xb090cc` = `"GP:"` (pushed with length 3
+at `6a3a71`), `0xae8110` = `"xxx"`, the table's null placeholder.
+
+The real values agree exactly. Across 23,327 enabled itemdata rows column 55
+has **five** distinct values:
+
+| value | rows |
+|---|---|
+| `xxx` | 23,298 |
+| `GP:5000` | 24 |
+| `GP:20000` | 2 |
+| `GP:30000` | 2 |
+| `GP:1000` | 1 |
+
+Characterdata uses the same column for a different tag -- `FORTRESS_SAMARKAND`,
+`FORTRESS_CONSTANTINOPLE` and seven more, on 37 rows of 13,291 -- which the
+`"GP:"` search simply does not match, leaving `+0x180` at 0. One column, a
+tagged vocabulary, and the common parser only understands the one tag.
+
+This closes one of the columns that opened up when the prefix turned out to be
+58 wide rather than 56.
+
+### The 58-column walk re-verified
+
+The walk assumed every consuming site executes once. That was checked for loops
+but never for **branches**, so it has now been tested directly: of 81 forward
+jumps inside `RefObjCommon::ExtractData`, exactly **one** skips a consuming site
+-- `6a3104 jmp 0x6a3c70`, the early return taken when column 0 (service) is
+zero. No conditional skips anything on the success path, so the linear walk and
+its 58 columns stand.
+
+### `RefObjCommon::ExtractData` is a `__thiscall`, and the dump's signature is wrong
+
+`6a30dc mov DWORD PTR [esp+0x14],ecx` stashes `this`; `edi` is the stream from
+`[ebp+8]`. Ghidra dropped the `ecx` parameter, the same failure as
+`Stat_ApplyTaggedModifier`'s EDI argument -- the decompiled signature reads
+`(param_1, param_2)` where the truth is `(this, stream)`.
+
+`RefObjItem` and `RefObjChar` pass **their own `this`**:
+
+	6a3d93  mov ebx,ecx      6a3d9a  mov ecx,ebx      6a3da0  call 0x6a3090
+	6a58ff  mov edi,ecx      6a5906  mov ecx,edi      6a5908  call 0x6a3090
+
+So they do not own a separate common record -- they **are** one, by
+inheritance, which is why `6a3da5 cmp BYTE PTR [ebx+0x88],0x2` reads Country
+(column 14) straight off `this` after the call.
+
