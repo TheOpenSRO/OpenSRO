@@ -4840,3 +4840,44 @@ Worth recording separately: **the probe was wrong twice before it was right** �
 the tables are UTF-16 rather than ASCII, and this project's characterdata column
 numbers are 0-indexed rather than 1-indexed. Both failures returned a confident
 "0 rows match", which is the shape that gets mistaken for a finding.
+
+## Verifying 55 "grounded" numbers instead of trusting the word (2026-09-16)
+
+Last tick found a shipped value whose GROUNDED label rested on four hand-checked
+rows. That is a category of risk rather than one bug: `cmd/server`'s
+`monsterSpecs` carries ~55 numbers all labelled real, and a label is a claim
+about provenance. Provenance rots — a transcription slip, a column that shifts
+between table versions, a species renamed upstream — and every one of those
+leaves the comment saying "real" while the number drifts.
+
+So this tick re-derived all of them from the client's own tables.
+
+**The direct columns** — Level (57), MaxHP (59), Defense (71), Critical (78),
+for all 11 species: **44 fields, 0 mismatches.**
+
+**The derived one** is where an error would actually hide. `AttackMin/AttackMax`
+is not copied from a column; it is two hops — characterdata column 83 names a
+SKILL, and that skill's `att` parameter carries the range. Extracting
+`skilldata_*.txt` from Media.pk2 and walking the chain:
+
+	MOB_CH_MANGNYANG  col83=160 -> MSKILL_CH_MANGNYANG_ATTACK01  att run (5,200,17,19,100,28003)  spec 17-19
+	MOB_CH_GYO        col83=165 -> MSKILL_CH_GYO_ATTACK02                                          spec 35-40
+	MOB_WC_EARTHGHOST col83=210 -> MSKILL_WC_EARTHGHOST_ATTACK02                                   spec 219-261
+
+**11 of 11 matched**, and the skill code names corroborate the chain
+independently: column 83 for `MOB_CH_MANGNYANG` resolves to a skill literally
+called `MSKILL_CH_MANGNYANG_ATTACK01`. The `att` run's third and fourth words
+are the min and max, exactly as `skill_params.md` documents.
+
+**Total: 55 verified, 0 mismatched, 0 unresolved.**
+
+**Shipped** as `client/tools/verify_monster_specs.py`, so this is repeatable
+rather than a one-off assertion, with both table-reading traps written into its
+docstring — the tables are UTF-16, and this project's characterdata column
+numbers are 0-indexed. Each of those cost a probe attempt last tick, and both
+failed by returning a confident "0 rows matched".
+
+**What moved:** no value, and that is the result. Every grounded number in the
+monster table is now verified rather than asserted, the one two-hop derivation
+is confirmed end to end, and there is a tool to re-run after anyone edits the
+table.

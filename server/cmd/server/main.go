@@ -124,6 +124,19 @@ func monsterStatsForLevel(level, rarity int) (attack int, gold int64) {
 // real measured building/wall scale (~44-300 units, see docs/WORLD_ISSUES.md)
 // rather than a blind PLAYER_SCALE_RATIO multiply, which would have pushed
 // these off the real terrain these zones actually have at those coordinates.
+// VERIFIED 2026-09-16 against the client's own tables, not just asserted:
+// client/tools/verify_monster_specs.py re-derives every number below and
+// reports 55 verified, 0 mismatched. That covers the four copied columns
+// (Level 57, MaxHP 59, Defense 71, Critical 78) for all 11 species, and the one
+// genuinely DERIVED value -- the attack range, which is two hops:
+// characterdata column 83 names a SKILL and that skill's 'att' parameter
+// carries the range. The skill names corroborate the chain on their own
+// (MOB_CH_MANGNYANG's column 83 resolves to MSKILL_CH_MANGNYANG_ATTACK01).
+//
+// "Grounded" is a claim about provenance, and provenance rots -- a
+// transcription slip or an upstream column shift leaves the comment saying
+// "real" while the number drifts. Re-run the verifier on the RE box after
+// touching this table.
 var monsterSpecs = []monsterSpec{
 	// The real Jangan leveling ladder. Every species' identity AND its max HP
 	// are GROUNDED in the client's own characterdata (_RefObjChar): the
