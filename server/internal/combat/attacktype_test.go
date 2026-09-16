@@ -166,3 +166,70 @@ func TestWeaponGateAppliesOnlyWithoutAReqCastList(t *testing.T) {
 		t.Error("an export predating the columns must not gate anything")
 	}
 }
+
+// TestCastRequirementsMatchTheRealRecords walks FUN_0058d480's list branch with
+// the (kind, value) shapes that actually occur: kind is a TypeID3 category and
+// value a TypeID4 type, 0 meaning any.
+func TestCastRequirementsMatchTheRealRecords(t *testing.T) {
+	const weapon, shield, euLight, euRobe = 6, 4, 10, 9
+	staff := EquippedType{TypeID3: weapon, TypeID4: WeaponEUStaff} // kind 6 value 15, 230 records
+	axe := EquippedType{TypeID3: weapon, TypeID4: WeaponEUAxe}     // kind 6 value 9, 146 records
+	buckler := EquippedType{TypeID3: shield, TypeID4: 1}           // kind 4 value 1, 141 records
+	robe := EquippedType{TypeID3: euRobe, TypeID4: 3}
+
+	for _, tc := range []struct {
+		name string
+		reqs []CastRequirement
+		all  bool
+		worn []EquippedType
+		want bool
+	}{
+		{"staff skill with a staff", []CastRequirement{{weapon, WeaponEUStaff}}, false, []EquippedType{staff}, true},
+		{"staff skill with an axe", []CastRequirement{{weapon, WeaponEUStaff}}, false, []EquippedType{axe}, false},
+		{"staff skill bare-handed", []CastRequirement{{weapon, WeaponEUStaff}}, false, nil, false},
+
+		// value 0 means any item of that category -- kind 9 and 10 only ever
+		// carry 0 in the real table.
+		{"robe skill wearing a robe", []CastRequirement{{euRobe, 0}}, false, []EquippedType{robe}, true},
+		{"robe skill wearing light armour", []CastRequirement{{euRobe, 0}}, false, []EquippedType{{euLight, 3}}, false},
+
+		// ANY-of: 966 real skills. One match is enough.
+		{"any-of: second entry matches", []CastRequirement{{weapon, WeaponEUStaff}, {weapon, WeaponEUAxe}}, false, []EquippedType{axe}, true},
+		{"any-of: nothing matches", []CastRequirement{{weapon, WeaponEUStaff}, {shield, 1}}, false, []EquippedType{axe}, false},
+
+		// ALL-of ('reqn', field 0x3b4): 128 real skills. Every entry must match.
+		{"all-of: both match", []CastRequirement{{weapon, WeaponEUAxe}, {shield, 1}}, true, []EquippedType{axe, buckler}, true},
+		{"all-of: only one matches", []CastRequirement{{weapon, WeaponEUAxe}, {shield, 1}}, true, []EquippedType{axe}, false},
+
+		// Kind 14 is a character flag, not equipment; it is deliberately
+		// permissive because the flag is not recovered.
+		{"flag kind passes bare-handed", []CastRequirement{{CastReqFlagKind, 1}}, false, nil, true},
+		{"flag kind passes under all-of too", []CastRequirement{{CastReqFlagKind, 1}, {weapon, WeaponEUAxe}}, true, []EquippedType{axe}, true},
+
+		// An empty list never reaches this branch in the engine.
+		{"empty list allows", nil, false, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SkillAllowsEquipment(tc.reqs, tc.all, tc.worn); got != tc.want {
+				t.Errorf("SkillAllowsEquipment(%v, all=%v, %v) = %v, want %v",
+					tc.reqs, tc.all, tc.worn, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseCastRequirements covers the packed export form, including the
+// malformed entry that must cost one requirement rather than the whole skill.
+func TestParseCastRequirements(t *testing.T) {
+	got := ParseCastRequirements("6:15;4:1")
+	want := []CastRequirement{{6, 15}, {4, 1}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if r := ParseCastRequirements(""); r != nil {
+		t.Errorf("empty packs to %v, want nil", r)
+	}
+	if r := ParseCastRequirements("6:15;garbage;4:1"); len(r) != 2 {
+		t.Errorf("a malformed entry must cost one requirement, got %v", r)
+	}
+}

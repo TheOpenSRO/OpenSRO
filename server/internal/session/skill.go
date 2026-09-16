@@ -412,6 +412,8 @@ func UseSkillHandler(
 		// How many entries the skill puts in the list at CRefSkill+0x3a0. The
 		// weapon gate applies ONLY when this is zero -- see below.
 		var reqCastList int
+		var reqCastReqs []combat.CastRequirement
+		var reqCastAll bool
 		// REAL SKILLS WIN. This used to check skill.Catalog first, which
 		// silently shadowed two real skills: the own-design catalog occupies
 		// ids 1 and 2, and those are SKILL_PUNCH_01 and SKILL_CH_SWORD_BASE_01
@@ -433,6 +435,8 @@ func UseSkillHandler(
 			attackType = combat.AttackType(ref.AttackType)
 			reqWeapon1, reqWeapon2 = ref.ReqCastWeapon1, ref.ReqCastWeapon2
 			reqCastList = ref.ReqCastListCount
+			reqCastReqs = combat.ParseCastRequirements(ref.ReqCastList)
+			reqCastAll = ref.ReqCastAll
 		} else if sk, inCatalog := skill.Catalog[req.SkillID]; inCatalog {
 			cooldown = time.Duration(sk.CooldownSeconds) * time.Second
 			damageBonus = int(sk.DamageBonus)
@@ -474,10 +478,25 @@ func UseSkillHandler(
 		// What the other branch checks is not recovered, so this does not model
 		// it. Declining to apply a check the engine would not apply is the
 		// faithful half of the answer; the other half is still open.
-		if reqCastList == 0 && (reqWeapon1 != 0 || reqWeapon2 != 0) {
-			t3, t4, known := equippedWeaponType(ctx, characterID, eq, items)
-			if known && !combat.SkillAllowsWeapon(reqWeapon1, reqWeapon2, t3, t4) {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "wrong weapon for this skill"}).Encode()})
+		if reqCastList == 0 {
+			// The ordinary branch: the skill's two weapon bytes.
+			if reqWeapon1 != 0 || reqWeapon2 != 0 {
+				t3, t4, known := equippedWeaponType(ctx, characterID, eq, items)
+				if known && !combat.SkillAllowsWeapon(reqWeapon1, reqWeapon2, t3, t4) {
+					return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "wrong weapon for this skill"}).Encode()})
+				}
+			}
+		} else if len(reqCastReqs) > 0 {
+			// The OTHER branch, recovered 2026-09-16. When the skill carries a
+			// 'reqi' list the engine ignores the weapon bytes entirely and walks
+			// the list instead, matching each record's (TypeID3, TypeID4) against
+			// what the character is wearing. See combat.SkillAllowsEquipment.
+			//
+			// The previous tick made this case cast-anything, which was the
+			// faithful half of an unfinished answer; this is the rest of it.
+			worn, known := equippedTypes(ctx, characterID, eq, items)
+			if known && !combat.SkillAllowsEquipment(reqCastReqs, reqCastAll, worn) {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "wrong equipment for this skill"}).Encode()})
 			}
 		}
 
@@ -983,4 +1002,30 @@ func equippedWeaponType(ctx context.Context, characterID int64, eq equipment.Sto
 	}
 	// Nothing in the weapon slot: a real empty hand.
 	return 0, 0, true
+}
+
+// equippedTypes returns the TypeID3/TypeID4 of every item the character is
+// wearing, and whether the answer is trustworthy enough to refuse a cast on.
+//
+// It is NOT trustworthy when any worn item has both type fields zero, which is
+// what an item row imported before the type_id columns carries -- the same
+// distinction equippedWeaponType draws, for the same reason: a stale import
+// must not look like an empty equipment set and lock every skill.
+func equippedTypes(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) ([]combat.EquippedType, bool) {
+	equipped, err := eq.Get(ctx, characterID)
+	if err != nil {
+		return nil, false
+	}
+	out := make([]combat.EquippedType, 0, len(equipped))
+	for _, e := range equipped {
+		item, err := items.GetItem(ctx, e.ItemID)
+		if err != nil || item == nil {
+			return nil, false
+		}
+		if item.TypeID3 == 0 && item.TypeID4 == 0 {
+			return nil, false // metadata predates the type_id columns
+		}
+		out = append(out, combat.EquippedType{TypeID3: item.TypeID3, TypeID4: item.TypeID4})
+	}
+	return out, true
 }

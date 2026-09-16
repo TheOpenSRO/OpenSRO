@@ -105,6 +105,15 @@ type Skill struct {
 	// What the list HOLDS is not recovered, so srrevamp does not model the other
 	// branch -- it simply declines to apply a check the engine would not.
 	ReqCastListCount int
+
+	// ReqCastList is the same list's records, packed as `kind:value;kind:value`
+	// -- a TypeID3 category and a TypeID4 type, 0 meaning any. See
+	// combat.CastRequirement, which holds the recovery.
+	//
+	// ReqCastAll is the skill's 'reqn' parameter (field 0x3b4): it turns the list
+	// from ANY-of into ALL-of. 128 real skills set it, 966 do not.
+	ReqCastList string
+	ReqCastAll  bool
 	// HitCount is how many times one cast strikes: 1 for most skills, up to 5.
 	//
 	// CONFIRMED INDEPENDENTLY 2026-09-16: the client's own localisation key for

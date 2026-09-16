@@ -214,6 +214,8 @@ var skillCSVColumns = []string{
 	// not apply). A strict suffix: an older export leaves 0, which applies the
 	// gate exactly as before this column existed.
 	"ReqCastListCount",
+	// Appended later (the list records themselves, and the ALL-of flag).
+	"ReqCastList", "ReqCastAll",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -343,6 +345,12 @@ func parseSkillRow(f []string) (Skill, error) {
 	}
 	if len(f) > 31 {
 		sk.ReqCastListCount = parseInt(f[31])
+	}
+	if len(f) > 32 {
+		sk.ReqCastList = f[32]
+	}
+	if len(f) > 33 {
+		sk.ReqCastAll = parseInt(f[33]) != 0
 	}
 
 	if err != nil {

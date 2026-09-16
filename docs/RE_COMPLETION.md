@@ -5979,3 +5979,79 @@ measurement is a checked-in tool rather than a script in a scratch directory.
 **Next step:** what the `reqi` list HOLDS, and the branch `FUN_0058d480` takes
 when it is non-empty -- that branch switches on the first word of each entry.
 517 skills currently get no weapon check at all because of it.
+
+## 2026-09-16 (eighth) — the cast-requirement list, decoded and enforced
+
+The previous entry left the weapon gate half-finished on purpose: a skill
+carrying `reqi` had its weapon bytes correctly ignored, but the check the engine
+runs *instead* was unrecovered, so those 517 skills got no requirement check at
+all. That branch is now read, and the other half is shipped.
+
+### The record is (TypeID3 category, TypeID4 type)
+
+`reqi` is a three-word run carrying **(kind, value)**, and the check's own
+arithmetic settles what they mean: it compares the kind against
+`(itemTID >> 7) & 0xf` — the TypeID3 field — and the value against
+`itemTID >> 11`, TypeID4. Value 0 means any.
+
+Measured over 1,552 real records, the kinds land exactly on the TypeID3
+vocabulary `refdata.Item` already documented for its own reasons:
+
+| kind | category | records | values |
+|---|---|---|---|
+| 6 | weapon | 1,216 | 2-15, the weapon TypeID4 set |
+| 4 | shield | 179 | 1, 2 |
+| 10 | EU light armour | 94 | 0 (any) |
+| 9 | EU robe | 34 | 0 (any) |
+| 14 | not equipment -- a character flag | 23 | 1 |
+
+Two independent tables agreeing on a vocabulary neither was consulted about is
+the kind of confirmation this project trusts. The weapon values are the same
+TypeID4 set recovered from itemdata two ticks ago, and the armour kinds are the
+ones `item.go` names from `ITEM_FORMAT.md`.
+
+### `reqn` names `0x3b4`, an open-ledger item
+
+`reqn` sets `CRefSkill+0x3b4`, and the loop reads it to require that **every**
+entry match rather than any one:
+
+	if (skill[0x3b4] != 0) { if (!matched) goto fail; matches++; }
+
+966 real skills use the ANY form, 128 the ALL form. The open-items ledger has
+carried `0x3b4` unnamed as `vf[0x3b4]`; it is the cast-requirement conjunction
+flag.
+
+### What shipped
+
+- `combat.CastRequirement` / `SkillAllowsEquipment` / `ParseCastRequirements`,
+  with the recovery written where it is used and a table test walking every
+  branch including both list forms.
+- `refdata.Skill.ReqCastList` (packed `kind:value;...`) and `ReqCastAll`,
+  exported as strict-suffix columns and persisted in SQL.
+- The skill-use path now takes the engine's *other* branch rather than skipping
+  the check: a list is matched against worn equipment, and a mismatch answers
+  "wrong equipment for this skill".
+
+### Deliberately permissive, and said so
+
+Kind 14 always passes. Its case tests a character flag via vtable `+0x584` and
+`FUN_00498610`, not equipment; the flag is unrecovered, and refusing a cast on a
+condition this project cannot evaluate would be worse than allowing it. 23
+records carry it, all item-mall and event skills.
+
+An unreadable equipment set also passes, on the same reasoning as the weapon
+gate: an item row imported before the `type_id` columns carries both type fields
+zero, which is indistinguishable by value from wearing nothing.
+
+### A constant caught by its own check
+
+`reqn`'s literal was hand-typed as 1919250910 and is 1919250798. The project's
+rule -- let Python compute multi-char constants, hand-typing has been wrong twice
+-- caught it within a minute because the value was verified rather than trusted.
+Third time it has paid for itself.
+
+**What moved:** the weapon gate is complete on both branches; `0x3b4` comes off
+the open ledger; 517 skills that had no requirement check now have the engine's.
+
+**Next step:** the kind-14 character flag (vtable `+0x584` arg 4, and
+`FUN_00498610`) is the last unmodelled term in the gate, on 23 item-mall skills.

@@ -999,3 +999,59 @@ fields.**
 **33,965 of 36,389 rows (93.3%) now walk their Param block cleanly end to end**,
 against 19,155 when this file's table was 89 codes. None of the 11 additions
 lowers the clean count when added on its own.
+
+## `reqi` and `reqn`: the cast-requirement list, decoded (2026-09-16)
+
+`reqi` fills a five-slot list at `CRefSkill+0x3a0` and `reqn` sets a flag at
+`+0x3b4`. Together they are the skill's **cast requirement**, and they are what
+`FUN_0058d480` uses instead of `ReqCastWeapon` whenever the list is non-empty.
+
+### The record
+
+`reqi` is a three-word run: the code plus **(kind, value)**. The parser stores a
+pointer to the pair (`mov [esi+edx*4+0x3a0],eax`, slot chosen by scanning for the
+first zero, capped at 5), and the check reads `*p` as the kind and `p[1]` as the
+value.
+
+**Kind is a TypeID3 category and value a TypeID4 type, 0 meaning any.** That is
+the engine's own arithmetic, not an interpretation: it compares the kind against
+`(itemTID >> 7) & 0xf` — the TypeID3 field — and the value against
+`itemTID >> 11`, which is TypeID4.
+
+Measured over 1,552 real records, and the kinds land exactly on the TypeID3
+vocabulary `refdata.Item` already documents:
+
+| kind | category | records | values | carried by |
+|---|---|---|---|---|
+| 6 | weapon | 1,216 | 2-15, the weapon TypeID4 set | `SKILL_EU_WARRIOR`, `SKILL_EU_CLERIC`, `SKILL_EU_ROG` |
+| 4 | shield | 179 | 1, 2 | `SKILL_CH_SWORD`, `SKILL_EU_WARRIOR` |
+| 10 | EU light armour | 94 | 0 (any) | `SKILL_EU_CLERIC` |
+| 9 | EU robe | 34 | 0 (any) | `SKILL_EU_CLERIC` |
+| 14 | **not equipment** | 23 | 1 | `SKILL_MALL_NASRUN`, `SKILL_EVENT_NASRUN` |
+
+The switch also handles kinds 1, 2, 3 and 11 — China's garment/protector/armour
+and Europe's heavy — which no shipped skill uses.
+
+Kind 14 is the exception: its case tests a character flag through vtable `+0x584`
+and `FUN_00498610`, not equipment at all. The flag is not recovered, so srrevamp
+treats that requirement as satisfied rather than refusing a cast on a condition
+it cannot evaluate. Disclosed, not read.
+
+### `reqn` makes the list conjunctive
+
+```c
+if (*(int *)(skill + 0x3b4) != 0) {   // reqn present
+    if (!matched) goto fail;          // EVERY entry must match
+    matched = false; matches++;
+}
+...
+} while (i < 5);
+if (!matched) goto fail;              // no reqn: ONE match is enough
+```
+
+So `reqn` turns ANY-of into ALL-of. **966 real skills use the ANY form, 128 the
+ALL form.** A failure returns error `0x300d`, the same code the ordinary weapon
+branch uses for a wrong weapon.
+
+That also names `0x3b4`, which this project's open-items ledger had carried
+unnamed as `vf[0x3b4]`.

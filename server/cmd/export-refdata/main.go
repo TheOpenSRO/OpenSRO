@@ -447,6 +447,8 @@ func skillRecord(cols []string) ([]string, bool) {
 		get(skReqCastWeapon1), // 29 ReqCast_Weapon1
 		get(skReqCastWeapon2), // 30 ReqCast_Weapon2
 		reqItemCount(cols),    // 31 ReqCastListCount -- 'reqi' runs; non-zero disables the weapon gate
+		reqItemList(cols),     // 32 ReqCastList -- the 'reqi' records as kind:value;...
+		reqAll(cols),          // 33 ReqCastAll -- 'reqn': the list is ALL-of, not ANY-of
 	}, true
 }
 
@@ -471,6 +473,12 @@ const attackCode = "6386804"
 // the engine therefore ignores. Let Python compute the constant -- hand-typing
 // these has been wrong twice in this project.
 const reqItemCode = "1919250793" // 0x72657169
+
+// reqAllCode is the skill parameter tagged 'reqn' (0x7265716e, one `sub edi,5`
+// past 'reqi' in the parser's dispatch chain). Its presence sets CRefSkill+0x3b4,
+// and FUN_0058d480 reads that field to turn the requirement list from ANY-of
+// into ALL-of. 128 real skills carry it against 966 that do not.
+const reqAllCode = "1919250798" // 0x7265716e
 
 // hitCountCode is the skill's 'mc' parameter -- 0x6d63, the pair (2, N) where N
 // is how many times one cast strikes. See refdata.Skill.HitCount for the
@@ -570,6 +578,38 @@ func reqItemCount(cols []string) string {
 		n = 5 // the engine's own cap: `cmp edx,0x5 / je` ends the slot scan
 	}
 	return strconv.Itoa(n)
+}
+
+// reqItemList packs the skill's 'reqi' records as `kind:value;kind:value`.
+// The run is three words -- the code plus (kind, value) -- and the engine stores
+// a pointer to the pair, reading *p as the kind and p[1] as the value.
+func reqItemList(cols []string) string {
+	var out []string
+	for i, v := range cols {
+		if strings.TrimSpace(v) != reqItemCode || i+2 >= len(cols) {
+			continue
+		}
+		kind := strings.TrimSpace(cols[i+1])
+		val := strings.TrimSpace(cols[i+2])
+		if kind == "" || val == "" {
+			continue
+		}
+		out = append(out, kind+":"+val)
+		if len(out) == 5 {
+			break // the engine's own cap on the list
+		}
+	}
+	return strings.Join(out, ";")
+}
+
+// reqAll reports whether the skill carries 'reqn', as "1" or "0".
+func reqAll(cols []string) string {
+	for _, v := range cols {
+		if strings.TrimSpace(v) == reqAllCode {
+			return "1"
+		}
+	}
+	return "0"
 }
 
 // hitCountParam pulls a skill's hit count out of its Param block. The run is

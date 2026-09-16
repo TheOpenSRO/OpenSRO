@@ -1,6 +1,11 @@
 package combat
 
-import "github.com/OpenSRO/srrevamp/server/internal/refdata"
+import (
+	"strconv"
+	"strings"
+
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+)
 
 // AttackType is a skill's damage-type mask -- `att` value[0] in the skill's
 // Param block, the word this project read past for a year while consuming the
@@ -266,4 +271,114 @@ func SkillAllowsWeapon(req1, req2, weaponTypeID3, weaponTypeID4 int) bool {
 	}
 	return (req1 != ReqWeaponUnused && req1 == code) ||
 		(req2 != ReqWeaponUnused && req2 == code)
+}
+
+// CastRequirement is one entry of a skill's cast-requirement list -- the
+// five-slot list at CRefSkill+0x3a0 that the skill's `reqi` parameter fills
+// (`mov [esi+edx*4+0x3a0],eax` at 00588f79). Each entry is a two-word record.
+//
+// Kind is a TypeID3 CATEGORY and Value a TypeID4 TYPE within it, with 0 meaning
+// "any". That reading is the engine's own: FUN_0058d480 compares Kind against
+// `(itemTID >> 7) & 0xf`, which is the TypeID3 field, and Value against
+// `itemTID >> 11`, which is TypeID4.
+//
+// Measured over 1,552 real records, and the kinds land exactly on the TypeID3
+// vocabulary refdata.Item already documents:
+//
+//	kind  6  weapon        1,216 records, values 2-15 (the weapon TypeID4 set)
+//	kind  4  shield          179 records, values 1-2
+//	kind 10  EU light armour  94 records, value 0 (any)
+//	kind  9  EU robe          34 records, value 0 (any)
+//	kind 14  NOT equipment    23 records -- an item-mall flag, see Satisfied
+//
+// The switch also handles kinds 1, 2, 3 and 11 (China's garment/protector/
+// armour and Europe's heavy), which no shipped skill uses.
+type CastRequirement struct {
+	Kind  int // a TypeID3 category
+	Value int // a TypeID4 type, or 0 for any
+}
+
+// EquippedType is one worn item's type fields, as the requirement check needs
+// them.
+type EquippedType struct{ TypeID3, TypeID4 int }
+
+// Satisfied reports whether worn equipment meets this requirement.
+//
+// KIND 14 IS ALWAYS SATISFIED, and that is a disclosed gap rather than a
+// reading of the engine. Its case tests a character flag through vtable +0x584
+// and FUN_00498610, not equipment at all; 23 records carry it, all on item-mall
+// and event skills (SKILL_MALL_NASRUN, SKILL_EVENT_NASRUN). Modelling it would
+// need the flag, which is not recovered -- so it passes rather than refusing a
+// cast on a condition this project cannot evaluate.
+func (r CastRequirement) Satisfied(worn []EquippedType) bool {
+	if r.Kind == CastReqFlagKind {
+		return true
+	}
+	for _, w := range worn {
+		if w.TypeID3 == r.Kind && (r.Value == 0 || w.TypeID4 == r.Value) {
+			return true
+		}
+	}
+	return false
+}
+
+// CastReqFlagKind is the one requirement kind that is not about equipment.
+const CastReqFlagKind = 14
+
+// SkillAllowsEquipment reports whether worn equipment satisfies a skill's
+// cast-requirement list.
+//
+// requireAll is the skill's `reqn` parameter (field 0x3b4). It changes the list
+// from ANY-of to ALL-of, which is the engine's own branch:
+//
+//	if (skill[0x3b4] != 0) {          // reqn present
+//	    if (!matched) goto fail;      // every entry must match
+//	    matched = false; matches++;
+//	}
+//	...
+//	while (i < 5);
+//	if (!matched) goto fail;          // no reqn: one match is enough
+//
+// Measured: 966 skills use the ANY form and 128 the ALL form.
+//
+// An EMPTY LIST allows the cast. That is not this function's decision to make:
+// the engine only reaches this code when the list is non-empty, and the caller
+// applies ReqCastWeapon instead when it is empty. See SkillAllowsWeapon.
+func SkillAllowsEquipment(reqs []CastRequirement, requireAll bool, worn []EquippedType) bool {
+	if len(reqs) == 0 {
+		return true
+	}
+	for _, r := range reqs {
+		ok := r.Satisfied(worn)
+		if requireAll && !ok {
+			return false
+		}
+		if !requireAll && ok {
+			return true
+		}
+	}
+	return requireAll
+}
+
+// ParseCastRequirements decodes the packed `kind:value;kind:value` form the
+// refdata export carries. A malformed entry is skipped rather than failing the
+// parse, so a bad row costs one requirement and not the whole skill.
+func ParseCastRequirements(packed string) []CastRequirement {
+	if packed == "" {
+		return nil
+	}
+	var out []CastRequirement
+	for _, part := range strings.Split(packed, ";") {
+		k, v, ok := strings.Cut(part, ":")
+		if !ok {
+			continue
+		}
+		kind, err1 := strconv.Atoi(strings.TrimSpace(k))
+		val, err2 := strconv.Atoi(strings.TrimSpace(v))
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		out = append(out, CastRequirement{Kind: kind, Value: val})
+	}
+	return out
 }
