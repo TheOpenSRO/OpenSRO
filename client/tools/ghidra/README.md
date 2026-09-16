@@ -565,3 +565,41 @@ Two findings from its first run, both worth keeping:
   `slot 2, ctx 5` and removes them at the same ctx — a keyed modifier, not a
   baseline — but it did force that note to be restated so it rests on the param
   registry's defaults rather than on having seen every writer.
+
+
+## `dispatch_walk.py` — read a code-dispatch branch without escaping it
+
+This binary dispatches on four-character codes in several places:
+`Stat_ApplyTaggedModifier` on stat tags, the item-use handlers on item-effect
+codes. The useful question is always *what does the branch for code X do*, and
+the obvious method — read N instructions after the comparison — is wrong in a
+dangerous way.
+
+A fixed 80-instruction window over the item-use dispatcher reported that
+**BCS1, BFI1, PSU1 and UIU1 all mean INC_INVENTORY_SIZE**. Four codes do not
+share one meaning; the window had run past the end of each branch into the same
+neighbouring helper. The output looked like a result — a tidy table, plausible
+entries, a method that had just worked on the tag dispatcher — and the only tell
+was the *uniformity*.
+
+The fix is to scope the walk to the branch: enter at the comparison's `je`
+target, follow jumps, and stop on reaching any other code's comparison site or a
+`ret`. Follow calls exactly **one** level, because a branch often names itself
+only inside a helper (BCS1's string lives in `GObjPC::FUN_00864aa0`); going
+deeper picks up shared infrastructure and reintroduces the same
+over-attribution.
+
+```
+python3 dispatch_walk.py --start 0x49f090 --end 0x4a0000 \
+    --codes BCS1,BFI1,PSU1,UIL1,UIU1,UQL1,USL1,USU1
+```
+
+Scoped correctly, exactly one code resolves — the one independently verified —
+and the other seven are reported as unnamed rather than given a borrowed
+meaning. The tool also prints a warning if every resolved code returns the same
+answer, since that is the signature of a walk escaping its branch.
+
+**Its own control**: it must reproduce `BCS1 -> INC_INVENTORY_SIZE`. A first
+version of this tool did not, because it read only strings referenced directly
+in the branch and missed the helper. If that row ever stops appearing, the tool
+is broken, not the binary.

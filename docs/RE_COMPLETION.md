@@ -5205,3 +5205,47 @@ unnamed.
 **What moved:** no value. An eight-entry item-effect vocabulary recovered from
 the dispatcher, one entry named with a direct citation, three negatives bounded,
 and a false naming pass discarded before it reached a doc.
+
+## The discarded naming pass, redone correctly — and shipped as a tool (2026-09-16)
+
+Last tick recovered eight item-effect codes (`BCS1`, `BFI1`, `PSU1`, `UIL1`,
+`UIU1`, `UQL1`, `USL1`, `USU1`) and threw away the pass that tried to name them,
+because a fixed 80-instruction window gave four of them the same answer. This
+tick redoes it with the method that works, and ships it.
+
+**The fix** is the one the tag-dispatcher work already used: scope the walk to
+the branch. Enter at the comparison's `je` target, follow jumps, stop on reaching
+any other code's comparison site or a `ret`. Follow calls exactly one level,
+because a branch often names itself only inside a helper.
+
+**The control passes.** Scoped correctly, exactly **one** code resolves —
+`BCS1 -> INC_INVENTORY_SIZE`, the one independently verified by a direct string
+reference — against four last tick. The other seven return nothing, which is the
+honest answer rather than a borrowed one.
+
+**Three further avenues closed**, so nobody retries them:
+
+- the codes appear in **no** extracted client table;
+- the server's own SQL has no effect table naming them;
+- the `.rdata` strings that look like the codes (`PSUVW`…) are x86 instruction
+  bytes, not data.
+
+Characterising the seven by their **calls** instead of their strings does not
+help either: the branches reach only `Assert_BreakIfDebugger`,
+`__security_check_cookie` and a singleton getter, delegating the actual work to
+unnamed helpers. Two of them (`PSU1`, `UIU1`) also touch a time function, which
+hints at a timed effect and is **not** recorded as a finding — it is proximity
+again, and proximity is what produced the discarded table.
+
+**Shipped** as `client/tools/ghidra/dispatch_walk.py`, with the failure it exists
+to prevent written into its docstring and a built-in warning: if every resolved
+code returns the same answer, that is the signature of a walk escaping its
+branch, not of codes sharing a meaning.
+
+A first version of the tool **failed its own control** — it read only strings
+referenced directly in the branch and so missed `BCS1`, whose name lives in a
+helper. Caught by running the control before committing; the call-following fix
+is in.
+
+**What moved:** no value. Seven codes stay unnamed on purpose, one is confirmed,
+and the method that keeps getting this wrong is now a tool that checks itself.
