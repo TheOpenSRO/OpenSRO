@@ -45,7 +45,21 @@ var itemCSVColumns = []string{
 	// every block before it, so an older export still loads and simply reports
 	// every item as unrestricted.
 	"CanTrade", "CanSell", "CanDrop",
+	// Appended later still (the three requirement slots past the first): a
+	// strict suffix like every block before it, so an older export still
+	// loads and simply carries no requirement beyond its first pair -- which
+	// is exactly what the loader did before these columns existed.
+	"ReqLevelType2", "ReqLevel2", "ReqLevelType3", "ReqLevel3",
+	"ReqLevelType4", "ReqLevel4",
 }
+
+// ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
+// column past itemCSVRequiredColumns is an optional suffix, so a shorter
+// export still loads -- this is for the EXPORTER, which must emit exactly this
+// many so the two halves cannot drift apart. export-refdata's round-trip test
+// reads it rather than repeating the number, which it had to hand-bump three
+// times before this existed.
+var ItemCSVColumnCount = len(itemCSVColumns)
 
 // itemCSVRequiredColumns is the prefix every export must carry; the columns
 // past it (Price, SellPrice) are optional so an older export still loads.
@@ -213,6 +227,28 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 43 {
 		it.CanDrop = parseBool(f[43])
+	}
+	// Requirement slots 2..4, optional in the same way. Zero -- not the
+	// table's -1 -- is the absent value here, and equipment.RequirementsOf
+	// treats both as "slot unused", so an older export simply carries the one
+	// pair it has.
+	if len(f) > 44 {
+		it.ReqLevelType2 = parseInt(f[44])
+	}
+	if len(f) > 45 {
+		it.ReqLevel2 = parseInt(f[45])
+	}
+	if len(f) > 46 {
+		it.ReqLevelType3 = parseInt(f[46])
+	}
+	if len(f) > 47 {
+		it.ReqLevel3 = parseInt(f[47])
+	}
+	if len(f) > 48 {
+		it.ReqLevelType4 = parseInt(f[48])
+	}
+	if len(f) > 49 {
+		it.ReqLevel4 = parseInt(f[49])
 	}
 
 	if err != nil {

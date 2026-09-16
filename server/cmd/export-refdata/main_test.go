@@ -67,12 +67,14 @@ func TestItemRecordRoundTripsThroughTheImporter(t *testing.T) {
 	}
 	// The width grows as verified columns are appended -- 30 before the
 	// Param-block restore amounts, 34 before the shield block ratio, 36
-	// before the weapon reinforce quad. The importer takes each addition as
-	// an optional suffix, so every older export still loads; this only pins
-	// that the exporter and importer agree on the CURRENT width, which is the
-	// half that would otherwise drift.
-	if len(rec) != 44 {
-		t.Fatalf("record has %d fields, want the importer's 44", len(rec))
+	// before the weapon reinforce quad, 44 before the three requirement
+	// slots past the first. The importer takes each addition as an optional
+	// suffix, so every older export still loads; this only pins that the
+	// exporter and importer agree on the CURRENT width, which is the half
+	// that would otherwise drift. Read from the importer rather than
+	// repeated here, so appending a column cannot break this test.
+	if len(rec) != refdata.ItemCSVColumnCount {
+		t.Fatalf("record has %d fields, want the importer's %d", len(rec), refdata.ItemCSVColumnCount)
 	}
 
 	items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))

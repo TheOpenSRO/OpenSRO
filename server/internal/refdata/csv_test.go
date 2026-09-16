@@ -276,3 +276,53 @@ func TestCapabilityFlagsDefaultToUnrestricted(t *testing.T) {
 			items[0].CanTrade, items[0].CanSell, items[0].CanDrop)
 	}
 }
+
+// The three requirement slots past the first are appended columns 44..49, so
+// a 28-column export made before they existed must still load and simply
+// carry no requirement beyond its first pair.
+func TestLoadItemsCSVRequirementSlots(t *testing.T) {
+	// 50 columns: the first 44 as the loader already knew them, then the
+	// three appended (type, value) pairs. Shaped like a real Chinese row
+	// whose requirements are a mastery in slot 1 and masteries after it.
+	full := "1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0," + // 0..19
+		"3,1,1,2,0,2,513,20," + // 20..27 classification + first pair
+		"0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1," + // 28..43
+		"515,30,518,40,0,0\n" // 44..49 the appended pairs
+
+	items, err := LoadItemsCSV(strings.NewReader(full))
+	if err != nil {
+		t.Fatalf("LoadItemsCSV: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+	it := items[0]
+	if it.ReqLevelType1 != 513 || it.ReqLevel1 != 20 {
+		t.Errorf("slot 1 = (%d,%d), want (513,20)", it.ReqLevelType1, it.ReqLevel1)
+	}
+	if it.ReqLevelType2 != 515 || it.ReqLevel2 != 30 {
+		t.Errorf("slot 2 = (%d,%d), want (515,30)", it.ReqLevelType2, it.ReqLevel2)
+	}
+	if it.ReqLevelType3 != 518 || it.ReqLevel3 != 40 {
+		t.Errorf("slot 3 = (%d,%d), want (518,40)", it.ReqLevelType3, it.ReqLevel3)
+	}
+	if it.ReqLevelType4 != 0 || it.ReqLevel4 != 0 {
+		t.Errorf("slot 4 = (%d,%d), want unused", it.ReqLevelType4, it.ReqLevel4)
+	}
+
+	// An export from before the appended columns: the 28-column form the
+	// original test uses. It must load, keep its first pair, and leave the
+	// rest unused rather than failing.
+	old := "7,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,1,1,2,0,2,1,20\n"
+	items, err = LoadItemsCSV(strings.NewReader(old))
+	if err != nil {
+		t.Fatalf("LoadItemsCSV(old export): %v", err)
+	}
+	it = items[0]
+	if it.ReqLevelType1 != 1 || it.ReqLevel1 != 20 {
+		t.Errorf("old export slot 1 = (%d,%d), want (1,20)", it.ReqLevelType1, it.ReqLevel1)
+	}
+	if it.ReqLevelType2 != 0 || it.ReqLevelType3 != 0 || it.ReqLevelType4 != 0 {
+		t.Errorf("old export should carry no later slots: %+v", it)
+	}
+}

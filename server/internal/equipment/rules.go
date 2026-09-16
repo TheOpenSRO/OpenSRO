@@ -16,10 +16,17 @@ import (
 //
 // What is checked: the slot an item may go in (its TypeID4), the race
 // (Country), the gender (ReqGender) and the character's level where the
-// requirement is by character level (ReqLevelType1 == 1). What is
-// recorded but not yet enforced: requirements by mastery level (a
-// ReqLevelType1 of 513..518, the European masteries' own ids -- nothing
-// here tracks a mastery level yet) and ReqStr/ReqInt.
+// requirement is by character level (a requirement type of 1). What is
+// recorded but not yet enforced: requirements by mastery level (a type of
+// 513..518 -- nothing here tracks a mastery level yet), the job-tier type
+// 769, and ReqStr/ReqInt.
+//
+// ALL FOUR REQUIREMENT SLOTS ARE READ as of 2026-09-16, not just the first,
+// and the rule for combining them is the engine's -- see requirements.go,
+// which recovers CheckEquipRequirements (0x004919e0). An earlier note here
+// called 513..518 "the European masteries' own ids"; that is wrong. Real
+// Chinese rows use 513/515/518 and real European ones 514/516/517/518, so
+// the range covers both races' masteries.
 //
 // THE REASON GIVEN FOR SKIPPING ReqStr/ReqInt WAS WRONG, corrected 2026-09-16.
 // It said "characters have no stats yet", which stopped being true when
@@ -306,8 +313,13 @@ func Refusal(c *character.Character, it *refdata.Item, slot Slot) error {
 				return fmt.Errorf("%w: item %d is a woman's", ErrWrongGender, it.ID)
 			}
 		}
-		if it.ReqLevelType1 == ReqLevelTypeCharacter && c.Level < it.ReqLevel1 {
-			return fmt.Errorf("%w: item %d needs level %d, character is %d", ErrLevelTooLow, it.ID, it.ReqLevel1, c.Level)
+		// All four requirement slots, by the engine's own rule -- see
+		// requirements.go. The mastery and tier categories are passed no
+		// lookup and so are carried but not enforced, which is the same
+		// decision as before, now stated in one place instead of by
+		// reading only the first slot.
+		if err := CheckRequirements(RequirementsOf(it), c.Level, nil, nil); err != nil {
+			return fmt.Errorf("item %d: %w", it.ID, err)
 		}
 	}
 	return nil

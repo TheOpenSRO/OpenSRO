@@ -203,8 +203,9 @@ Between read 1 and read 2 there are four `FUN_006b2ef0` calls and one
 | READ4..READ7 -> columns 9..12 | TypeID1..4, already known; a sword reads 3/1/6/2 and a garment mail 3/1/1/3 |
 | READ9 -> column 14 | Country, already known; a sword reads 0 (China), a MALL item 3 (either) |
 
-That arithmetic is a tool for the whole `_RefObjCommon` prefix, not just these
-flags.
+That arithmetic is a tool for the whole `_RefObjCommon` prefix — **but only as
+far as column 51.** See "The rule's end", below: a five-iteration string loop
+sits at columns 52..56, and past it `READn -> n+5` lands five columns short.
 
 ## Counting columns properly: the counter, not the reads
 
@@ -338,3 +339,68 @@ or 1. There is exactly one — columns 41..47 — and `ITEM_CH_SWORD_01_A_DEF` r
 **0 across all seven**. A sword must be tradeable and a set bit is permission, so
 that run is not the flags. A discriminator search (sword 1, quest item 0) gave
 17, 22, 23, 26, 33 — scattered, no run of seven.
+
+## The rule's end: the prefix is 58 columns, not 56 (2026-09-16)
+
+The "counting columns properly" instrument above is the right one, and it was
+still undercounting, because it counted **call sites rather than executions**.
+Two loops sit inside `RefObjCommon_ExtractData` and each site inside one runs
+more than once:
+
+| loop | address | trips | per trip | columns |
+|---|---|---|---|---|
+| requirement pairs | `6a36ab..6a3700` | 4 (`mov eax,0x4` at `6a3690`) | a 4-byte field + a 1-byte field | 32..39 |
+| asset paths | `6a3a30..6a3a45` | 5 (`mov [esp+0x28],0x5` at `6a3a1f`) | one `RefData_ReadStringField` | 52..56 |
+
+The second was the one that hid: its single `call 0x6b2ef0` at `6a3a36` counts
+as one string column when it is five. That `[esp+0x28]` is the loop's own trip
+counter on the stack, unrelated to the stream's column counter at `[edi+0x28]`
+— which is exactly why an earlier pass dismissed it as "stack, not the stream"
+and moved on. Both readings of `+0x28` were correct; only one of them was the
+relevant one.
+
+Expanded, and with every increment register pinned to a literal 1 (`ebx` at
+`6a30f0`, `esi` at `6a34c1` and `6a388d`, a `mov ecx,0x1` before each `ecx`
+bump, one literal at `6a3bc5`):
+
+	42 inline bumps + 4 standalone string calls + 5 in-loop string calls
+	+ 1 FUN_006b1a80 + loop 1 expanded 4x  =  58 columns, 0..57
+
+**`RefObjCommon_ExtractData` consumes columns 0..57.** There were never two
+missing columns; the count was two short of a row width that was itself wrong.
+A real client's itemdata rows have **161** columns and characterdata **105** —
+56 was never either table's width, it was a mis-measured prefix.
+
+Four independent anchors land exactly on the expanded map, none of them the
+thing that produced it:
+
+| anchor | lands on |
+|---|---|
+| `export-refdata`'s `fID = 1` | col 1, a 4-byte store at `+0x8` |
+| `fCountry = 14` | col 14, a 1-byte store at `+0x88` |
+| `fMaxStack = 57` | col 57, the last column, a 4-byte store at `+0x184` |
+| the four requirement pairs | cols 32..39, the 4x loop's (4-byte, 1-byte) pairs |
+
+### Columns 52..56, the block that was invisible
+
+Five `std::string`s at `_RefObjCommon+0xf4`, stride `0x1c`. Read from real rows
+in both tables:
+
+| col | itemdata | characterdata |
+|---|---|---|
+| 52 | worn/world model `.bsr` | model `.bsr` (`mob\europe\movoi.bsr`) |
+| 53 | ground-drop model `.bsr` (48 distinct, e.g. `item\etc\drop_ch_equip.bsr`) | always `xxx` |
+| 54 | inventory icon `.ddj` (3,616 distinct) | icon `.ddj` for COS/pet rows |
+| 55 | `xxx`, with a handful of `GP:5000` | `xxx`, plus `FORTRESS_*` on 9 rows |
+| 56 | always `xxx` | always `xxx` |
+
+These are paths into the user's own archives, not data this repo carries.
+
+### Why the rule broke where it did
+
+`READn -> col n+5` holds while the inline reads are contiguous, which is true
+from column 7 through column 51. The five-string block then consumes 52..56
+without an inline read, so the *next* inline read is column **57**, not 52.
+Anything applying `n+5` past that point is five columns low. srrevamp's own
+column constants are raw indices rather than derived through the rule, so none
+of them were wrong — but the rule as written would have produced wrong ones.

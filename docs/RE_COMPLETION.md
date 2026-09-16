@@ -9680,3 +9680,97 @@ short loop would all be invisible to it. Diffing the engine's own counter — th
 value at `+0x28` when the parser returns, if a caller checks it — against the 54
 would say exactly where to look, and `RefObjChar_ExtractData` has the same
 instrument available to cross-check.
+
+## 2026-09-16 — the two missing columns were never missing
+
+**What moved.** `RefObjCommon_ExtractData` consumes **58 columns (0..57)**, not
+56. The long-running hunt for "the two unaccounted columns" was chasing a gap
+between a count that was two short and a row width that was wrong in the first
+place: a real client's itemdata rows have **161** columns and characterdata
+**105**, so 56 was never either table's width — it was a mis-measured prefix.
+
+**Why the count was short.** The instrument was right (count the stream's own
+column counter at `[edi+0x28]`, plus the two helpers that bump it internally)
+and it counted **call sites rather than executions**. Two loops sit in the
+parser:
+
+- the requirement pairs, `6a36ab..6a3700`, 4 trips x 2 fields -> columns 32..39;
+- five asset-path strings, `6a3a30..6a3a45`, 5 trips x 1 string -> columns 52..56.
+
+The second hid the whole discrepancy: one `call 0x6b2ef0` that runs five times.
+Its trip counter is `[esp+0x28]`, and a previous pass found exactly that
+instruction, correctly identified it as stack rather than the stream, and moved
+on — both readings of `+0x28` were right; only one was the relevant one. **A
+scan over instruction forms cannot see a loop; it has to be given trip counts.**
+
+**The contradiction that broke it open.** `RefObjChar_ExtractData` makes *zero*
+string calls, yet characterdata columns 52..56 are five strings — so the common
+parser had to read them, while its five string calls were already placed at
+columns 2..6. Both were true: there are **nine** string columns (2,3,4,6 and
+52..56), plus column 5 through `FUN_006b1a80`. Counting five was the error.
+
+**Checks, none of them the thing that produced the map.** Four anchors land
+exactly: `fID = 1` on a 4-byte store at `+0x8`; `fCountry = 14` on a 1-byte
+store at `+0x88`; `fMaxStack = 57` on the final 4-byte store at `+0x184`; and
+the four requirement pairs on the 4x loop's (4-byte, 1-byte) pairs at 32..39.
+
+**Columns 52..56**, five `std::string`s at `+0xf4` stride `0x1c`: the worn/world
+model `.bsr` (52), the ground-drop model `.bsr` (53), the inventory icon `.ddj`
+(54), and two mostly-`xxx` columns. Columns past 39 were blocked on this and are
+now derivable.
+
+**The rule that hid it.** `READn -> col n+5` holds only through column 51; the
+five-string block then consumes 52..56 with no inline read, so the next inline
+read is column **57**. srrevamp's constants are raw indices rather than derived
+through the rule, so none were wrong — but the rule as written produces wrong
+ones past that point. Corrected in `docs/protocol/item_capability_flags.md`.
+
+### Wired through: all four item requirement slots
+
+Following the column map to its use-site recovered
+`CGItemEquip::CheckEquipRequirements` (`0x004919e0`), which `CanBeEquipedAt`
+calls before any of its other tests. Full spec in
+`docs/protocol/item_requirements.md`. Two rules there are easy to invert and
+both change real answers:
+
+- **within a category the slots are OR** — `need`/`met` are one bit per
+  category. The seven real rows with two level requirements are all
+  `ITEM_MALL_STATS_POINT_RECALL*`, e.g. `(1,1)` and `(1,40)`: that item needs
+  level **1**. Requiring every slot would have locked it to 40, which is the
+  bug a naive "now check all four" would have shipped;
+- **across categories it is AND.**
+
+`refdata.Item` now carries all four slots (it carried one), `export-refdata`
+emits columns 34..39 alongside 32/33, and `equipment.CheckRequirements` applies
+the engine's rule. The mastery (513..518) and tier (769) categories take a
+lookup and **a nil lookup leaves them unenforced** — srrevamp tracks neither
+value, and refusing every mastery-gated item would be further from the engine's
+answer, not closer.
+
+**No level outcome changes on real data**, and that is the honest claim: the
+gain is that the model matches the engine, the previously-invisible
+requirements on 3,372 rows are carried, and enforcement is one lookup away.
+
+**Corrected in passing.** `equipment/rules.go` called 513..518 "the European
+masteries' own ids". Real Chinese rows use 513/515/518 and European ones
+514/516/517/518 — the range spans both races.
+
+**Not a data bug.** 24 rows carry requirement type 10, which would trip the
+engine's own "This Mastery Type is not exist!" assert. They are all
+`ITEM_ETC_GUILD_*_SOLDIER*_SCROLL`, TypeID `3/3/12/1` — ETC items that are used,
+never equipped, so the equip checker never sees them. Type 10 belongs to the use
+path's vocabulary, not this one.
+
+**Also recovered:** the engine source path
+`D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp`,
+and a second parser (`ReferenceData::FUN_006a8d80`, the item-package table)
+using the identical `count = 4; do { read; [+0x28]++; ReadStringField(); }
+while(--count)` idiom — so loop-expansion is the norm in these parsers, and any
+earlier column count taken from call sites alone should be re-checked.
+
+**Open, and now unblocked:** columns 40..51 and 58..57+ are derivable from the
+map; characterdata column 57 is level-shaped (`MOB_CH_MANGNYANG` = 1, 140
+distinct values topping out at 110) while itemdata's is stack-shaped (1/250/500),
+and both land in the same `+0x184` field — worth a reader of `+0x184` to settle
+what the engine calls it.
+

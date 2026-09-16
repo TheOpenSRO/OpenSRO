@@ -49,10 +49,23 @@ type Item struct {
 	Country int
 	// ReqGender is who may wear it: 1 a man, 0 a woman, 2 either.
 	ReqGender int
-	// ReqLevelType1/ReqLevel1 are the first of the table's four requirement
-	// pairs. Type 1 is the character's own level -- what every ordinary
-	// armour and weapon row carries.
+	// The table's four requirement pairs, in the engine's own order. Type 1
+	// is the character's own level -- what every ordinary armour and weapon
+	// row carries. See equipment.Requirement for the rest of the vocabulary
+	// and for how the engine combines them.
+	//
+	// ALL FOUR ARE CARRIED AS OF 2026-09-16; only the first used to be.
+	// _RefObjCommon stores them as four (int32 type, uint8 value) pairs at
+	// +0xb4/+0xb8 stride 8, filled from columns 32..39 by a four-iteration
+	// loop in RefObjCommon_ExtractData, and CheckEquipRequirements
+	// (0x004919e0) reads every one. Over a real client's 23,327 item rows the
+	// later slots are not decoration: 3,372 rows carry mastery requirements
+	// there, 8 carry a type 0x301, and 7 carry a SECOND character-level
+	// requirement that reading only the first pair drops on the floor.
 	ReqLevelType1, ReqLevel1 int
+	ReqLevelType2, ReqLevel2 int
+	ReqLevelType3, ReqLevel3 int
+	ReqLevelType4, ReqLevel4 int
 	ReqStr                   int
 	ReqInt                   int
 	ItemClass                int

@@ -63,12 +63,29 @@ const (
 	fSellPrice = 31
 	// The Param block stores a value beside its own label: 118 "HP...",
 	// 120 "HP...(%)", 122 "MP...", 124 "MP...(%)". Potion restore amounts.
-	fRestoreHP     = 118
-	fRestoreHPPct  = 120
-	fRestoreMP     = 122
-	fRestoreMPPct  = 124
+	fRestoreHP    = 118
+	fRestoreHPPct = 120
+	fRestoreMP    = 122
+	fRestoreMPPct = 124
+	// The four requirement slots. _RefObjCommon holds them as four
+	// (int32 type, uint8 value) pairs at +0xb4 and +0xb8, stride 8, and
+	// RefObjCommon_ExtractData fills them from columns 32..39 in a
+	// four-iteration loop (0x6a36ab..0x6a3700, trip count from
+	// `mov eax,0x4`). CGItemEquip::CheckEquipRequirements (0x004919e0)
+	// walks all four and asserts on a slot index above 3, which is where
+	// the count of four comes from rather than from the column layout.
+	//
+	// Only slot 1 was exported before, which is right for 11,636 of 23,327
+	// real rows (the ones whose only requirement is a character level) but
+	// silently drops every requirement in the other slots.
 	fReqLevelType1 = 32
 	fReqLevel1     = 33
+	fReqLevelType2 = 34
+	fReqLevel2     = 35
+	fReqLevelType3 = 36
+	fReqLevel3     = 37
+	fReqLevelType4 = 38
+	fReqLevel4     = 39
 	fReqGender     = 58
 	fReqStr        = 59
 	fReqInt        = 60
@@ -423,6 +440,12 @@ func itemRecord(cols []string) ([]string, bool) {
 		get(fCanTrade),         // 41 CanTrade
 		get(fCanSell),          // 42 CanSell
 		dropBit(get(fCanDrop)), // 43 CanDrop -- bit 0 of a mask column
+		get(fReqLevelType2),    // 44 ReqLevelType2 -- requirement slots 2..4
+		get(fReqLevel2),        // 45 ReqLevel2
+		get(fReqLevelType3),    // 46 ReqLevelType3
+		get(fReqLevel3),        // 47 ReqLevel3
+		get(fReqLevelType4),    // 48 ReqLevelType4
+		get(fReqLevel4),        // 49 ReqLevel4
 	}, true
 }
 
