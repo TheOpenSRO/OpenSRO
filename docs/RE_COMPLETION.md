@@ -6566,10 +6566,14 @@ just constants.
 ## 2026-09-16 (seventeenth) — the error codes name functions, and find a free skill
 
 The previous entry proposed joining the error table against the server's returns
-to label failure paths. That works: **1,014 server functions return a known
-error code, 704 of them still `FUN_`**, and the codes say what each does —
+to label failure paths. That works, and the codes say what each function does —
 `005c6550` returns the guild-alliance refusals, `005c6b60` the guild-war ones,
 `006182a0` the specialty-trade ones.
+
+**The counts first published here — "1,014 server functions return a known error
+code, 704 of them still `FUN_`" — were wrong, inflated roughly tenfold by a
+collision this entry did not test for. The real figures are 157 and 117. See the
+twenty-second entry.**
 
 ### A flaw caught before publishing
 
@@ -6862,3 +6866,62 @@ previously-unexamined assumptions behind a shipped value turned into citations;
 **Next step:** `PARTYERR_CREATE_PARTY_REFUSED` and `JOIN_PARTY_REFUSED` (0x2c0c,
 0x2c17) are the remaining party codes the server actually returns -- unlike
 OUT_OF_LEVEL, which it does not.
+
+## 2026-09-16 (twenty-second) — a tenfold overcount, and the floor that fixes it
+
+The previous entry named two party codes as next. They exist in the server (one
+site each), but `CREATE_PARTY_REFUSED` and `JOIN_PARTY_REFUSED` relay a player
+declining an invite rather than encoding a rule with a value, so the tick went to
+the systematic lever instead — and found a mistake in it.
+
+### 704 was really 117
+
+Two entries ago this project published: *"1,014 server functions return a known
+error code, 704 of them still `FUN_`."* Building the domain attribution on top of
+that produced an obviously wrong answer — **329 unnamed functions attributed to
+PARTY**, which is not a believable shape for a game server. That implausibility
+is what prompted the check, and the check found the cause:
+
+**Error codes start at 1, and `mov eax,0x2` is overwhelmingly "return 2".**
+
+	unnamed functions "returning an error code"   704
+	...returning ONLY codes below 0x100           587
+	0x0002 (PARTYERR_UNKNOWN_ERROR) attributed to 381 functions
+	0x0004 (ERR_COMMON_TOO_FAR)     attributed to 335 functions
+
+With a floor at `0x100` the same join gives **157 functions returning a real
+error code, 117 still `FUN_`, 88 attributable to a single domain** — STRG 28,
+GUILD 22, TC 11, FLEAMARKET 5, SKILL 5, PARTY 5.
+
+The earlier entry is corrected in place rather than left to be quoted.
+
+### Why this one slipped through
+
+The low-code collision is the same *class* of error as the category collision
+caught two entries ago — a value that means one thing in the table and another in
+the wild — but it presented differently. The category collision announced itself
+(`PARTYERR` inside a magic-option function, visibly absurd). This one produced
+large, plausible-looking counts, and large numbers read as success.
+
+**A join's failure mode is inflation, and inflation looks like a good result.**
+The guard is to ask what the join would report if the key space overlapped
+something common — here, small integers — rather than to admire the total. That
+is now in the tool's docstring, which states the floor as the whole trick and
+shows the numbers with and without it.
+
+### Shipped
+
+- `client/tools/ghidra/label_by_error_code.py` rewritten with the floor, the
+  contamination figures, and `--out` for the table.
+- `docs/protocol/error_attributed_functions.md` — the 88 attributions by domain,
+  each row carrying the codes that justify it, and headed by a statement that an
+  attribution is not a name.
+
+**What moved:** a published count corrected by a factor of nine; 88 unnamed
+functions attributed to a part of the game with evidence attached; a tool that
+can no longer produce the inflated version.
+
+**Next step:** the `TC` domain (11 functions) is unidentified -- its codes are
+`TC_ERROR_OPEN_GOLD`, `TC_ERROR_OPEN_LEVEL`, `TC_ERROR_NOT_OPEN_7D`, so it is
+something opened with a gold cost and a level requirement, and those are two
+recoverable values.
