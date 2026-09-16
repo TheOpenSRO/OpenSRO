@@ -33,6 +33,15 @@ import (
 const SlotsPerCharacter = 50
 
 // The engine's own inventory bounds, RECOVERED from CGObjPC::ExpandInventory.
+// CONFIRMED AT INSTRUCTION LEVEL 2026-09-16 -- the decompiler's constants were
+// re-read in the disassembly rather than trusted:
+//
+//	4e1960  call 0x4e13b0                 <- the condition, unread
+//	4e1965  mov  ecx,[ebx+0x1c2c]         <- current size
+//	4e196d  mov  eax,0x4d                 <- cap 77
+//	4e1974  mov  eax,0x63                 <- cap 99 when the call returned non-zero
+//	4e197e  sub  eax,ecx ; cmp eax,esi    <- count <= cap - size
+//
 // Nothing enforces these at runtime here; they exist so that a later change to
 // SlotsPerCharacter is checked against the real game rather than against
 // nothing. TestSlotsPerCharacterFitsTheEngine holds it to them.
@@ -53,6 +62,21 @@ const (
 	// srrevamp's storage is its own design and does not use this yet; it is
 	// recorded because the two caps are easy to confuse and they differ.
 	MaxStorageSlots = 112
+
+	// MaxThirdContainerSlots is a THIRD cap, on the container ExpandInventory
+	// reaches when its `kind` argument is 3 -- a pointer at `this + 0x21d8`
+	// whose current count is a BYTE at `+0x1c`:
+	//
+	//	4e192c  mov eax,[ebx+0x21d8] ; mov al,[eax+0x1c]
+	//	4e194d  cmp ecx,0xd2 ; jle ok
+	//	4e1957  mov ax,0x18fe                <- refused
+	//
+	// so current + count must be at most 0xd2 = 210, and the refusal is error
+	// 0x18fe. WHICH container kind 3 is has NOT been identified -- a byte count
+	// and a 210 cap fit several, and naming it from that would be the kind of
+	// guess this project has paid for. Recorded with its citation and without a
+	// name.
+	MaxThirdContainerSlots = 210
 )
 
 // ErrNoRoom is returned by Store.AddItem when there's no slot available to

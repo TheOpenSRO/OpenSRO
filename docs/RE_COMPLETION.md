@@ -6255,3 +6255,61 @@ next-step premise was caught before it cost anything.
 **Next step:** the starting inventory size, via whatever writes `+0x1c2c`. A
 register-indirect write is exactly what `dump_gaps.py` and an `objdump` sweep
 are for, rather than another grep of the decompiled C.
+
+## 2026-09-16 (twelfth) — two dead ends closed properly, and a third cap
+
+This tick is mostly negatives. They are recorded because each was reached by a
+**complete enumeration** rather than a grep that came back empty, which is the
+difference between "not there" and "I did not find it".
+
+### The inventory base is not written anywhere in `.text`
+
+The previous entry guessed that the write to `this + 0x1c2c` "reaches it through
+a register". That was speculation dressed as an explanation. Searching the full
+125 MB disassembly — not the decompiled C, which cannot see such things — finds
+**nine reads of `[reg+0x1c2c]` and zero writes**. The only other occurrence is
+`mov WORD PTR [eax],0x1c2c`, which stores the number, not to the field.
+
+So the field is never individually assigned. It is filled by a bulk operation —
+a DB row load or a container's own generic code — and the starting inventory size
+stays **not found yet**, with this as the record of where the search stopped.
+`inventory.SlotsPerCharacter = 50` remains own design inside the recovered bound.
+
+### The 129 error codes have no server-side names
+
+The engine returns numeric codes (`0x300d` wrong weapon, `0x18fe` container
+full, `0x183e` berserk charges, …) — **129 distinct** `0x18xx`/`0x30xx`
+immediates, the commonest being `0x1809` (19 sites), `0x1811` (18), `0x1806`
+(15). A code→name table would name that many failure paths at once.
+
+There is none to harvest. The server carries just **9** `UIIT_` strings, and they
+are passed as message *names* on paths that send text, not as labels for the
+numeric codes. The mapping lives client-side, and there is no client binary on
+the RE box. Closed until there is one.
+
+### A third capacity cap, and the first two confirmed in assembly
+
+Re-reading `CGObjPC::ExpandInventory` at instruction level rather than trusting
+the decompiler confirmed 77 and 99 (`mov eax,0x4d` / `mov eax,0x63` at 4e196d /
+4e1974) and turned up a cap the decompiled C had shown only as `< 0xd3`:
+
+	4e192c  mov eax,[ebx+0x21d8] ; mov al,[eax+0x1c]   <- a BYTE count
+	4e194d  cmp ecx,0xd2 ; jle ok                      <- at most 210
+	4e1957  mov ax,0x18fe                              <- refused
+
+So `ExpandInventory(count, kind=3)` caps a third container at **210** and refuses
+with error `0x18fe`. **Which container kind 3 is has not been identified** — a
+byte count and a 210 cap fit several, and naming it on that would be a guess.
+Shipped with its citation and no name.
+
+Three distinct caps now: 99 inventory, 112 storage, 210 kind-3. The test asserts
+they stay distinct, because collapsing them would lose a distinction the engine
+makes.
+
+**What moved:** two speculative leads are now closed with enumerations instead of
+guesses; a third recovered cap with its error code; the first two caps confirmed
+in assembly rather than through the decompiler.
+
+**Next step:** the client binary is the blocker for both the error-code table and
+the `## Illegal ##` harvest's client half. Getting `SRO_Client.exe` onto the RE
+box would unblock both at once -- worth more than either dig alone.

@@ -25,6 +25,15 @@ func TestSlotsPerCharacterFitsTheEngine(t *testing.T) {
 	if MaxSlotsExpanded >= SlotsHardLimit {
 		t.Errorf("the expanded cap (%d) must stay under the hard limit (%d)", MaxSlotsExpanded, SlotsHardLimit)
 	}
+	// The three caps are distinct and must not be conflated: 99 inventory,
+	// 112 storage, 210 for the unidentified kind-3 container.
+	if MaxThirdContainerSlots != 0xd2 {
+		t.Errorf("MaxThirdContainerSlots = %d, want 0xd2 = 210 (the `cmp ecx,0xd2` at 004e194d)",
+			MaxThirdContainerSlots)
+	}
+	if MaxStorageSlots == MaxThirdContainerSlots || MaxStorageSlots == MaxSlotsExpanded {
+		t.Error("the three recovered caps are different numbers; collapsing them loses a distinction the engine makes")
+	}
 	// Storage is a different cap and must not be conflated with inventory.
 	if MaxStorageSlots <= SlotsHardLimit {
 		t.Errorf("MaxStorageSlots = %d; the slot-174 overload caps at 0x70 = 112, above the inventory limit",
