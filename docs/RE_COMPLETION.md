@@ -9559,3 +9559,70 @@ extend the common prefix in ways items do not, and the column arithmetic
 established two ticks ago (`READn -> col n+5`) applies to characterdata as well —
 so the two characterdata columns behind bits 10 and 11 are recoverable by exactly
 the method that worked here.
+
+## 2026-09-16 — bits 10 and 11 traced to characterdata, and a near-miss on the capability columns
+
+The named next step was to recover the two characterdata columns behind
+capability bits 10 and 11, using the column arithmetic on
+`RefObjChar_ExtractData`. Done — and on the way it nearly overturned the
+capability mapping shipped two ticks ago.
+
+### The scare, and why it was not one
+
+Counting every column consumer in `RefObjCommon_ExtractData` gave **47** (41
+inline reads, 5 string calls, 1 other). But the arithmetic only works if
+`RefObjChar` continues from there, and it does not: starting at 47 puts `+0x198`
+(Level) at column 48 when the established anchor says **57**. A shift of nine.
+
+Nine uncounted consumers in the common parser could have meant the capability
+columns were wrong. **They are not**, and the check is exact: of the 5
+`RefData_ReadStringField` calls, **four are before the capability block and one
+after**; the single `FUN_006b1a80` is before. So exactly five consumers precede
+read 2, `READn -> col n+5` holds through the whole block, and the table confirms
+it instruction by instruction — READ14 lands on column 19, READ17 on 22, READ19
+on 24, exactly as shipped. All nine uncounted consumers are *after* the block.
+
+That also matches the empirical check from two ticks ago, where the mapping
+predicted starter and quest items bound and ordinary items free. Two independent
+confirmations of the same columns, and a third route that would have broken them
+if it could.
+
+### The columns, anchored twice
+
+With `RefObjChar` starting at column 56, its reads land `+0x198` on **column 57**
+(Level) and `+0x19c` on **column 59** (MaxHP) — both already established. A real
+characterdata agrees: column 57 reads 1/2/3 for pets, 95 for a monster, 100 for
+an NPC; column 59 reads 360/441/524 and 6,000,000 for a boss, with player rows
+at MaxHP 0, exactly as the starting-stat audit found.
+
+	bit 10  <- characterdata column 67
+	bit 11  <- characterdata column 68   (always 0 in a real table)
+
+### What column 67 separates
+
+It splits the COS families perfectly, no exceptions either way:
+
+	COS_P (pets)      9,826   all 1        COS_GUILD   3,514   all 0
+	COS_C               124   all 1        COS_GUARD   3,079   all 0
+	COS_T (transports)   94   all 1
+
+Set on every player-ownable COS, clear on every guild soldier and guard.
+
+**The predicate is not named.** Bit 10's reader is `GObjPC::FUN_00483f40`, the
+tenth entry in the `CGObjCOS_Summoned` block, and unlike the nine above it has
+**no `## Illegal ##` stub** — the engine offers no word for it. A clean split
+between ownable and non-ownable COS describes what the flag *separates*; it is
+not the engine's name for what the flag *permits*, and the two are not the same
+claim. Nothing was invented.
+
+**What moved:** two more capability bits traced to their columns with two
+anchors and a class-level check; the shipped capability columns survived a route
+that could have falsified them; and a tenth predicate is now characterised
+without being named.
+
+**Next step:** the nine uncounted consumers in `RefObjCommon_ExtractData` are
+worth identifying — four calls to `0x9dd03d`, two to `0x402090` and a handful of
+singletons, all after the capability block. Each that turns out to consume a
+column shifts every `_RefObjCommon` field after it, so the columns past 24 are
+not yet safe to derive, and saying which of those calls are consumers is what
+makes the rest of that prefix reachable.

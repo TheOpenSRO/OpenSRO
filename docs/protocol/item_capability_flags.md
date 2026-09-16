@@ -81,6 +81,39 @@ Found by scanning every `or`/`mov`/`and`/`xor` into `[reg+0x8c]` across the
 disassembly, then keeping the ones whose enclosing function is a row parser.
 `RefObjItem`'s own extract touches `[esp+0x8c]` — the stack — and never the row.
 
+### Bits 10 and 11: characterdata columns 67 and 68
+
+Recovered 2026-09-16 by the same column arithmetic, applied to
+`RefObjChar_ExtractData` and anchored twice: its reads land `+0x198` on
+**column 57** (Level) and `+0x19c` on **column 59** (MaxHP), both already
+established. A real characterdata confirms the anchors — column 57 holds 1/2/3
+for pets, 95 for a monster, 100 for an NPC, and column 59 holds 360/441/524 and
+6,000,000 for a boss, with player rows reading MaxHP 0 exactly as the
+starting-stat audit found.
+
+	bit 10  <- characterdata column 67
+	bit 11  <- characterdata column 68   (always 0 in a real table)
+
+**Column 67 splits the COS families perfectly, with no exceptions either way:**
+
+| COS family | rows | column 67 |
+|---|---:|---|
+| `COS_P` (pets) | 9,826 | all 1 |
+| `COS_C` | 124 | all 1 |
+| `COS_T` (transports) | 94 | all 1 |
+| `COS_GUILD` | 3,514 | all 0 |
+| `COS_GUARD` | 3,079 | all 0 |
+
+Set on every player-ownable COS and clear on every guild soldier and guard.
+Monsters, NPCs and players are all 0 (2 of 646 NPC rows excepted).
+
+**The predicate is NOT named here.** Bit 10's reader is
+`GObjPC::FUN_00483f40`, the tenth entry in the `CGObjCOS_Summoned` block, and
+unlike the nine above it **has no `## Illegal ##` stub** — so the engine offers
+no word for it. A clean split between ownable and non-ownable COS is a strong
+description of what the flag separates; it is not the engine's name for what the
+flag *permits*, and this file does not invent one.
+
 **So bits 10 and 11 exist only on CHARACTER rows.** `RefObjChar_ExtractData`
 contributes them from two of its own columns; an item can never have them. Bit 10
 is the tenth capability predicate (`GObjPC::FUN_00483f40`), which is therefore a
