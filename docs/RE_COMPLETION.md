@@ -6636,3 +6636,69 @@ found and split out; a skill cost that was exported for months and never charged
 **Next step:** `NOTENOUGHLEVEL` and `RUNOUT_AMMO` are the next two preconditions
 with data behind them -- skilldata carries a required level, and bows in real
 itemdata have an ammo type.
+
+## 2026-09-16 (eighteenth) — `cnsm` named, and two near-misses
+
+The previous entry named `NOTENOUGHLEVEL` and `RUNOUT_AMMO` as the next two
+preconditions with data behind them. One of them was not what it looked like,
+and the other named a parameter code.
+
+### `NOTENOUGHLEVEL` is the transform path, not a skill level check
+
+The check at 0058de94 compares the caster's level against a byte at `[edi+0x198]`
+and, on the face of it, looks like "this skill needs character level N". It is
+not, and the offset nearly caused a wrong attribution.
+
+**The near-miss:** grepping for what writes `+0x198` found
+`ReferenceData::RefObjChar_ExtractData` — a **characterdata** loader, not
+skilldata. Offset 0x198 is generic, and treating a `CRefObjChar` field as a
+`CRefSkill` one would have been the characterdata-column-79 mistake in a new
+costume.
+
+Reading what `edi` actually holds settles it: it is a **reference record looked
+up from the refdata singleton** (`ds:0xd6aa14`) by an id off the request, and the
+branch immediately above returns `UIIT_STT_EU_BAN_HAWN_TRANS`. This is the
+**transform** path — the caster's level against the mob being transformed into.
+srrevamp has no transform skills, so it is not missing a check.
+
+### `cnsm` is the ammunition a skill spends
+
+`cnsm` (field `0x2a0`, run 4) entered the parameter table by a mechanical pass
+that recorded where each code files its values and nothing about meaning. Its
+use-site names it:
+
+	58e337  call [edx+0x1c]                ; slot 7 = IsPC -- players only
+	58e348  cmp DWORD PTR [esi+0x2a0],0x0  ; the `cnsm` field
+	58e353  call 0x4ec220                  ; look for ammunition
+	58e360  mov ax,0x300e                  ; RUNOUT_AMMO
+
+All **448** `cnsm` runs are ranged — 331 `SKILL_CH_BOW` carrying (4, 1, 1), 117
+`SKILL_EU_ROG`/`_CROSSBOW` carrying (4, 2, 1) or (4, 2, 3) — and the record turns
+out to be the **same (TypeID3, TypeID4, count) shape the cast-requirement list
+uses**, plus a quantity.
+
+### A correction to this project's own TypeID3 note
+
+`refdata.Item` says TypeID3 4 is "shields". Itemdata says it is shields **and
+ammunition**, separated by TypeID2: (3,**1**,4,1) is `ITEM_CH_SHIELD`,
+(3,**3**,4,1) is a quiver; (3,**1**,4,2) is `ITEM_EU_SHIELD`, (3,**3**,4,2) is
+bolts.
+
+**The second near-miss:** that raised an obvious worry — does `equipment.SlotFor`
+put arrows in the shield slot? It does not, and for a reason rather than by luck:
+it rejects anything whose TypeID2 is not `TypeEquipment` (1) before it ever looks
+at TypeID3. Checked rather than assumed, and the guard is now documented as
+load-bearing so nobody removes it as redundant.
+
+### What is disclosed rather than shipped
+
+srrevamp neither stocks nor spends ammunition, so the `cnsm` requirement has
+nothing to check. Recorded in the skill-use path beside the health cost, so that
+adding quivers later comes with the rule already written down.
+
+**What moved:** a parameter code named from its use-site; this project's TypeID3
+note refined; two wrong attributions caught before they were written down.
+
+**Next step:** `OVERLAP` (0x300c) and `DUPLICATE` (0x3039) are the remaining
+preconditions with plausible data behind them -- skilldata has an `Overlap`
+bitfield at column 18 that nothing has decoded.

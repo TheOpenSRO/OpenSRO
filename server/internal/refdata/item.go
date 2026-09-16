@@ -30,6 +30,14 @@ type Item struct {
 	// piece -- for armour 1 helm, 2 shoulder guard, 3 mail, 4 pants,
 	// 5 gauntlet, 6 boots, which is what decides the slot an item may go
 	// in. See docs/protocol/ITEM_FORMAT.md.
+	//
+	// REFINEMENT 2026-09-16: TypeID3 == 4 is not only shields. It holds shields
+	// AND ammunition, told apart by TypeID2 -- (3,1,4,1) is ITEM_CH_SHIELD and
+	// (3,3,4,1) is a quiver of arrows; (3,1,4,2) is ITEM_EU_SHIELD and (3,3,4,2)
+	// is bolts. equipment.SlotFor is already correct about this for a reason
+	// worth noting rather than by luck: it rejects anything whose TypeID2 is not
+	// TypeEquipment (1) before it looks at TypeID3 at all, so ammunition never
+	// reaches the shield branch.
 	TypeID1, TypeID2, TypeID3, TypeID4 int
 	// Country is the race the item belongs to: 0 China, 1 Europe, 3 either.
 	Country int

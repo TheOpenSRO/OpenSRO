@@ -1055,3 +1055,51 @@ branch uses for a wrong weapon.
 
 That also names `0x3b4`, which this project's open-items ledger had carried
 unnamed as `vf[0x3b4]`.
+
+## `cnsm`: the ammunition the skill spends (2026-09-16)
+
+`cnsm` (0x636e736d, field `0x2a0`, run 4) was added to the table above by a
+mechanical pass that recovered *where* each code files its values and said
+nothing about what any of them mean. This one is now named, from its use-site.
+
+### The use-site
+
+In the skill-use precondition check (`FUN_0058d8f0`):
+
+```
+58e337:  call [edx+0x1c]                ; vtable slot 7 = IGObj::IsPC -- players only
+58e348:  cmp DWORD PTR [esi+0x2a0],0x0  ; the skill's `cnsm` field
+58e34f:  je   skip                      ; absent -> no ammunition needed
+58e353:  call 0x4ec220                  ; look for the ammunition
+58e35e:  jne  ok
+58e360:  mov  ax,0x300e                 ; UIIT_SKILL_USE_FAIL_RUNOUT_AMMO
+```
+
+So a skill carrying `cnsm` requires ammunition, and failing to find it is
+`RUNOUT_AMMO` (docs/protocol/error_codes.md). The check applies to players only.
+
+### The record is (TypeID3, TypeID4, count)
+
+Measured over the real table, all **448** `cnsm` runs belong to ranged families,
+and the values are the same `(category, type)` shape the cast-requirement list
+uses, plus a quantity:
+
+| values | runs | family |
+|---|---|---|
+| (4, 1, 1) | 331 | `SKILL_CH_BOW` |
+| (4, 2, 1) | 104 | `SKILL_EU_ROG` |
+| (4, 2, 3) | 13 | `SKILL_EU_ROG` |
+| — | 1 | `SKILL_EU_CROSSBOW` |
+
+and itemdata confirms what those name. Every item with `TypeID3 == 4`:
+
+| (t1,t2,t3,t4) | what |
+|---|---|
+| (3, **1**, 4, 1) | `ITEM_CH_SHIELD` |
+| (3, **3**, 4, 1) | `ITEM_ETC_AMMO`, `ITEM_MALL_QUIVER` — **arrows** |
+| (3, **1**, 4, 2) | `ITEM_EU_SHIELD` |
+| (3, **3**, 4, 2) | `ITEM_ETC_AMMO`, `ITEM_MALL_BOLT` — **bolts** |
+
+So bow skills spend one arrow, rogue skills one or three bolts. **TypeID3 4 is
+not only shields** — it holds shields and ammunition, told apart by TypeID2
+(1 equipment, 3 etc.), which refines the note in `refdata.Item`.

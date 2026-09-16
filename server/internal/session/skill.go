@@ -522,6 +522,18 @@ func UseSkillHandler(
 			}
 		}
 
+		// NOT MODELLED, disclosed: AMMUNITION. A skill carrying the `cnsm`
+		// parameter spends ammunition, and the engine refuses the cast with
+		// UIIT_SKILL_USE_FAIL_RUNOUT_AMMO when the player has none (the check at
+		// 0058e348, guarded by IsPC). 448 real skills carry it -- every
+		// SKILL_CH_BOW and SKILL_EU_ROG -- and the record is
+		// (TypeID3, TypeID4, count): one arrow for bows, one or three bolts for
+		// rogues. See docs/protocol/skill_params.md.
+		//
+		// srrevamp neither stocks nor spends ammunition, so there is nothing to
+		// check. Written down so that adding quivers later comes with the
+		// requirement already stated.
+
 		// Pay the skill's real HEALTH cost first. The engine checks health
 		// before mana -- 0058e292 returns UIIT_SKILL_USE_FAIL_NOTENOUGHHP and
 		// 0058e2b1 returns ..._NOTENOUGHMP, in that order -- and doing the same
