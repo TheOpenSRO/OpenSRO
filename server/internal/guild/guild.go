@@ -57,6 +57,60 @@ func MaxMembersFor(level int) int {
 // UIIT_MSG_GUILDERR_MEMBER_FULL.
 var ErrGuildFull = errors.New("guild: guild is full")
 
+// Permission is a guild member's permission bitmask. RECOVERED, and richer than
+// the Role this package models.
+//
+// The engine keeps a 32-bit mask on each member's record and tests it with
+// FUN_005d0f80, which is four lines:
+//
+//	member = FindMember(characterID);
+//	if (member == 0) return false;
+//	if (member->rec == 0) Assert;
+//	return (*(uint *)(member->rec + 0x54) & required) == required;
+//
+// so a caller passes the mask it needs and every bit in it must be set. The
+// refusal is UIIT_MSG_GUILDERR_PERMISSION_DENIED (docs/protocol/error_codes.md).
+//
+// Seven call sites carry a required mask, and what each gates is read from the
+// errors its own handler raises rather than from the bit's position:
+//
+//	bit 0 (0x01)  invite       FUN_00514f10, the join path -- it also raises
+//	                           GUILDERR_MEMBER_FULL
+//	bit 3 (0x08)  warehouse    FUN_005c7440 / FUN_005c74d0, which raise
+//	                           GUILD_WAREHOUSE_LIMIT
+//	bit 4 (0x10)  notice       FUN_005c6480, which raises
+//	                           GUILDERR_INVALID_MASTER_COMMENT and _TITLE
+//
+// BIT 2 (0x04) IS NOT NAMED. Two call sites require it and neither handler
+// raises an error code, so nothing says what it gates. Bits 1 and 5-31 are not
+// observed at any call site at all -- that is an absence of evidence, not
+// evidence they are unused.
+type Permission uint32
+
+const (
+	// PermInvite is required to bring a character into the guild.
+	PermInvite Permission = 1 << 0
+	// PermWarehouse is required to use the guild warehouse.
+	PermWarehouse Permission = 1 << 3
+	// PermNotice is required to edit the guild's notice and title.
+	PermNotice Permission = 1 << 4
+)
+
+// Has reproduces the engine's test: EVERY bit of required must be set, which is
+// why it is an equality against the mask and not a non-zero check.
+func (p Permission) Has(required Permission) bool {
+	return p&required == required
+}
+
+// NOTHING ENFORCES PERMISSIONS YET, and that is a statement about scope rather
+// than an oversight: this package has no operation that needs one. Its Store is
+// Create/Join/Leave/Get -- there is no kick, no disband, and no invite.
+//
+// The divergence worth recording is Join. In the engine a character is brought
+// in by a member holding PermInvite; here Join is self-service, so anyone may
+// join any guild by id, uninvited. Building an invite flow is the missing
+// feature, and when it is built PermInvite is the bit it checks.
+
 // MaxNameLength caps a guild's name length. Own design choice.
 const MaxNameLength = 32
 

@@ -7037,3 +7037,61 @@ questions answered against the code rather than assumed.
 from 21 functions -- more than any other single guild code -- and srrevamp's
 guild has only RoleMember and RoleLeader, so whatever permission model sits
 behind those is richer than what it models.
+
+## 2026-09-16 (twenty-fifth) — guild permissions are a bitmask, not a role
+
+The previous entry guessed that whatever sits behind `GUILDERR_PERMISSION_DENIED`
+is "richer than" srrevamp's two roles. It is, and now with a shape.
+
+### The model
+
+`FUN_005d0f80` is the predicate, and it is four lines:
+
+	member = FindMember(characterID);
+	if (member == 0) return false;
+	if (member->rec == 0) Assert;
+	return (*(uint *)(member->rec + 0x54) & required) == required;
+
+So each member carries a **32-bit permission mask at `record + 0x54`**, a caller
+passes the mask it needs, and **every** bit must be set — an equality, not a
+non-zero test. That distinction is the whole reason to read it: a non-zero check
+would let a warehouse-only member pass a two-bit requirement.
+
+### What the bits gate, from the handlers rather than the positions
+
+Seven call sites carry a required mask. Each one's meaning comes from the errors
+its own handler raises:
+
+| bit | mask | handler | evidence |
+|---|---|---|---|
+| 0 | 0x01 | `FUN_00514f10`, the join path | also raises `GUILDERR_MEMBER_FULL` |
+| 3 | 0x08 | `FUN_005c7440`, `FUN_005c74d0` | raise `GUILD_WAREHOUSE_LIMIT` |
+| 4 | 0x10 | `FUN_005c6480` | raises `GUILDERR_INVALID_MASTER_COMMENT`, `_TITLE` |
+
+**Bit 2 (0x04) is not named.** Two call sites require it and neither handler
+raises an error code, so nothing says what it gates. Bits 1 and 5-31 appear at no
+call site — which is an absence of evidence, not evidence they are unused, and
+the comment says so.
+
+### Nothing enforces this yet, and that is scope rather than oversight
+
+srrevamp's guild Store is Create/Join/Leave/Get. There is **no kick, no disband,
+no invite** — so there is no permissioned operation to protect, and adding
+enforcement now would guard nothing.
+
+The divergence worth recording is `Join`. In the engine a character is brought in
+by a member holding `PermInvite`; in srrevamp `Join` is self-service, so anyone
+may join any guild by id, uninvited. That is a missing feature rather than a bug,
+and `PermInvite` is the bit it will check when built.
+
+Shipped as `guild.Permission` with the three named bits, a `Has` method
+reproducing the all-bits equality, and a test that specifically fails if `Has`
+is ever weakened to a non-zero check.
+
+**What moved:** a permission model recovered with three of its bits named from
+use-sites; the honest gap (bit 2, and bits nobody exercises) stated; a
+divergence in `Join` written down with the bit that will close it.
+
+**Next step:** bit 2's two call sites -- `GObjPC::FUN_004b1750` and
+`FUN_005c49a0` -- raise no error codes, so naming it needs a different lever than
+the one that named the other three.

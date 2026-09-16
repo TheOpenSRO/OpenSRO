@@ -48,3 +48,43 @@ func TestJoinRefusesWhenFull(t *testing.T) {
 		t.Errorf("member %d: got %v, want ErrGuildFull", MaxMembers+1, err)
 	}
 }
+
+// TestPermissionMasksMatchTheEngine pins the bit positions read off the seven
+// call sites of FUN_005d0f80, and the ALL-bits semantics of its comparison.
+func TestPermissionMasksMatchTheEngine(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		got  Permission
+		want Permission
+	}{
+		{"invite is bit 0", PermInvite, 0x01},
+		{"warehouse is bit 3", PermWarehouse, 0x08},
+		{"notice is bit 4", PermNotice, 0x10},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s: got %#x, want %#x", tc.name, tc.got, tc.want)
+		}
+	}
+
+	// The engine's test is `(perms & required) == required`, so a member needs
+	// EVERY requested bit -- not merely one of them. A non-zero check would pass
+	// the third case below and let a warehouse-only member edit the notice.
+	full := PermInvite | PermWarehouse | PermNotice
+	if !full.Has(PermNotice) {
+		t.Error("a member with every bit must pass a single-bit requirement")
+	}
+	if !full.Has(PermInvite | PermWarehouse) {
+		t.Error("a member with every bit must pass a multi-bit requirement")
+	}
+	if PermWarehouse.Has(PermWarehouse | PermNotice) {
+		t.Error("holding one bit of a two-bit requirement must NOT pass")
+	}
+	if Permission(0).Has(PermInvite) {
+		t.Error("holding nothing must not pass")
+	}
+	// A requirement of zero is vacuously satisfied, which is what the engine's
+	// equality does too.
+	if !Permission(0).Has(0) {
+		t.Error("an empty requirement is satisfied by anyone")
+	}
+}
