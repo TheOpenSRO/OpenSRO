@@ -5762,3 +5762,77 @@ field widths; three invented weapon names are corrected.
 `FUN_0058d480`'s other branch walks a list at `+0x3a0` with a `switch` on its
 first word -- an override that some skills carry. Nothing reads it yet, and what
 it overrides is unrecovered.
+
+## 2026-09-16 (fifth) — the skill-param vocabulary closes: 148 codes, zero unknowns
+
+Two ticks ago this project recorded an open lead: a second walker over
+`RefSkill_ParseParams` found "roughly 55 further tag comparisons in neither
+table", unverified, with the question *"whether the vocabulary is really ~105 or
+~145 is open"*. **Closed: it is 148, and 44 codes were added.**
+
+It was closed by a structural test rather than by reading more disassembly,
+which matters because the disassembly is what was unreliable.
+
+### The test, and why it fails loudly
+
+Walk every real skilldata row's Param block from column 69 using a table's run
+lengths. A wrong run lands the cursor on a *value* instead of the next code and
+derails the rest of the row, so a bad entry shows up as **fewer** clean walks,
+not as a silent pass.
+
+| table | fixed | varlen | clean | varlen-stop | unknown |
+|---|---|---|---|---|---|
+| doc table as it stood | 89 | 15 | 19,155 | 1,609 | 15,625 |
+| + 30 fixed-run codes | 119 | 15 | 19,990 | 1,845 | 14,554 |
+| + 14 stoppers | 119 | 29 | 19,990 | 16,399 | **0** |
+
+**Zero of 36,389 rows hit an unrecognised code.** Each of the 30 was also added
+alone against the unmodified table: 24 raise the clean count by themselves, 4 are
+neutral (their rows stop later on a different code), and none lower it.
+
+### The walker was a good finder and a bad measurer
+
+Walking with the walker's whole 145-tag table scores **910** clean — far worse
+than the 89-code doc table. Its run lengths are unreliable: it accumulates
+`add ecx,N` over a fixed instruction window and under-counts any handler that
+adds more inside a branch. So only the entries real data actually exercises,
+where the walk confirms the run, were published.
+
+That is the `pw`/`skc` lesson arriving from the other side. That correction came
+from a walker disagreeing with the table; this one comes from **real data
+disagreeing with the walker**. Neither artefact is authoritative on its own.
+
+### One class of code explains every remaining gap
+
+Nine of the fourteen stoppers have no recovered field, and `efr` — the single
+most common stopper, 9,538 rows — shows why. It is dispatched by an ordinary
+`cmp edx,0x656672`, but its handler reads `mov edx,[eax+0x4]` and **branches on
+its own first value** before storing anything, so its field and run depend on
+that value. A scanner looking for the next `mov [esi+N],eax` finds the wrong one
+or none.
+
+That is the same shape that mis-filed `pw` and `skc`, so the two failures the
+last three ticks turned up are one failure: **value-dispatched handlers**. They
+are recorded as operationally variable-length, with the mechanism named rather
+than smoothed over.
+
+### A justification that was quietly conditional
+
+`export-refdata`'s whole-row scan for the `att` literal was defended by "on the
+19,839 rows that walk cleanly, the walk and the scan agree 19,839 times and
+differ 0". Under a 104-code table, 15,625 rows stopped at an unrecovered code --
+so "the rows that walk" was doing unexamined work in that sentence.
+
+Re-run on the complete vocabulary: 19,990 rows walk end to end, walk and scan
+agree on 18,727 and differ on 0, and the `att` literal appears as some other
+code's VALUE **exactly 0 times** across every walked run. That last number is
+the scan's actual failure mode, now measured directly instead of argued from the
+schema.
+
+**What moved:** the skill-param vocabulary went from 104 codes with 15,625
+unexplained rows to 148 codes with none; a load-bearing justification in the
+exporter is no longer conditional on the part of the table nobody had read.
+
+**Next step:** the nine value-dispatched stoppers (`bu`, `cr`, `curl`, `efr`,
+`es`, `fz`, `ko`, `setv`, `sl`). Their handlers branch on value[0], so each needs
+reading individually -- `efr` first, at 9,538 rows by far the most used.

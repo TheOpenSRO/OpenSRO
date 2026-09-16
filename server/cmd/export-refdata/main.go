@@ -492,9 +492,23 @@ const hitCountCode = "28003"
 // still hold exactly: 0 rows carry it before column 69, 0 rows carry it twice,
 // and the lowest column it ever appears at is 69. The first-match scan is safe
 // on the whole table, not just the part that happened to be extracted.
-//   - On the 19,839 rows whose Param block walks cleanly end to end under the
+//   - On the rows whose Param block walks cleanly end to end under the
 //     recovered run lengths, the walk's 'att' position and this scan's first
-//     match agree 19,839 times and differ 0 times.
+//     match agree and never differ.
+//
+// RE-VALIDATED AGAIN 2026-09-16, against a COMPLETE vocabulary. The check above
+// ran against a 104-code table under which 15,625 rows stopped at a code nobody
+// had recovered -- so "they agree on the rows that walk" was quietly conditioned
+// on the rows that happened to walk. The vocabulary is now 148 codes and **no
+// row in the table hits an unrecognised code** (docs/protocol/skill_params.md).
+// Re-run on that footing:
+//
+//   - 19,990 rows walk end to end; the walk's 'att' position and this scan's
+//     first match agree on 18,727 of them and differ on 0.
+//   - The 'att' literal 6386804 appears as some other code's VALUE exactly
+//     **0 times** across every walked run. That is the scan's actual failure
+//     mode, and it is now measured directly rather than argued from the
+//     schema.
 //
 // The scan is also the more version-robust of the two: a client whose skilldata
 // shifts the block would break a hard-coded column 69, and this would not.

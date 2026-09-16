@@ -113,6 +113,7 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 |---|---|---|---|---|
 | `att` | 0x00617474 | `0x230` | 6 | 5 |
 | `pdmg` | 0x70646d67 | `0x234` | 2 | 1 |
+| `pdm2` | 0x70646d32 | `0x238` | 2 | 1 |
 | `da` | 0x00006461 | `0x240` | 2 | 1 |
 | `ck` | 0x0000636b | `0x248` | 2 | 1 |
 | `hr` | 0x00006872 | `0x24c` | 3 | 2 |
@@ -120,14 +121,19 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `kb` | 0x00006b62 | `0x254` | 3 | 2 |
 | `defp` | 0x64656670 | `0x25c` | 4 | 3 |
 | `defr` | 0x64656672 | `0x260` | 3 | 2 |
+| `spda` | 0x73706461 | `0x264` | 3 | 2 |
 | `er` | 0x00006572 | `0x27c` | 3 | 2 |
 | `dura` | 0x64757261 | `0x280` | 2 | 1 |
 | `onff` | 0x6f6e6666 | `0x284` | 3 | 2 |
 | `mc` | 0x00006d63 | `0x288` | 3 | 2 |
 | `esht` | 0x65736874 | `0x29c` | 3 | 2 |
+| `cnsm` | 0x636e736d | `0x2a0` | 4 | 3 |
 | `dcmp` | 0x64636d70 | `0x2a8` | 2 | 1 |
+| `hpi` | 0x00687069 | `0x2ac` | 3 | 2 |
 | `mpi` | 0x006d7069 | `0x2b0` | 3 | 2 |
+| `pw` | 0x00007077 | `0x2b4` | 5 | 4 |
 | `hste` | 0x68737465 | `0x2b8` | 2 | 1 |
+| `hst2` | 0x68737432 | `0x2bc` | 2 | 1 |
 | `hst3` | 0x68737433 | `0x2c0` | 2 | 1 |
 | `irgc` | 0x69726763 | `0x2d0` | 3 | 2 |
 | `apru` | 0x61707275 | `0x2d4` | 3 | 2 |
@@ -137,29 +143,43 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `tpad` | 0x74706164 | `0x2e8` | 2 | 1 |
 | `tele` | 0x74656c65 | `0x2ec` | 3 | 2 |
 | `tel2` | 0x74656c32 | `0x2f0` | 3 | 2 |
+| `tel3` | 0x74656c33 | `0x2f4` | 3 | 2 |
 | `reat` | 0x72656174 | `0x2fc` | 3 | 2 |
+| `real` | 0x7265616c | `0x300` | 4 | 3 |
+| `pola` | 0x706f6c61 | `0x304` | 3 | 2 |
+| `summ` | 0x73756d6d | `0x308` | 6 | 5 |
 | `fb` | 0x00006662 | `0x310` | 3 | 2 |
 | `br` | 0x00006272 | `0x318` | 3 | 2 |
 | `ps` | 0x00007073 | `0x31c` | 4 | 3 |
+| `zb` | 0x00007a62 | `0x320` | 3 | 2 |
 | `heal` | 0x6865616c | `0x324` | 5 | 4 |
+| `mwhh` | 0x6d776868 | `0x328` | 2 | 1 |
 | `mwmh` | 0x6d776d68 | `0x32c` | 2 | 1 |
 | `resu` | 0x72657375 | `0x330` | 3 | 2 |
 | `cura` | 0x63757261 | `0x334` | 2 | 1 |
+| `pmhp` | 0x706d6870 | `0x338` | 5 | 4 |
 | `pmmp` | 0x706d6d70 | `0x33c` | 5 | 4 |
+| `pmdg` | 0x706d6467 | `0x340` | 5 | 4 |
 | `pmdp` | 0x706d6470 | `0x344` | 5 | 4 |
 | `pao` | 0x0070616f | `0x350` | 2 | 1 |
 | `cmcr` | 0x636d6372 | `0x36c` | 2 | 1 |
+| `lnks` | 0x6c6e6b73 | `0x370` | 5 | 4 |
 | `lkcp` | 0x6c6b6370 | `0x378` | 2 | 1 |
 | `ovl2` | 0x6f766c32 | `0x37c` | 2 | 1 |
 | `scls` | 0x73636c73 | `0x380` | 2 | 1 |
+| `puls` | 0x70756c73 | `0x384` | 2 | 1 |
 | `reqc` | 0x72657163 | `0x39c` | 2 | 1 |
+| `atca` | 0x61746361 | `0x3bc` | 3 | 2 |
 | `tant` | 0x74616e74 | `0x3c8` | 3 | 2 |
 | `tnt2` | 0x746e7432 | `0x3cc` | 3 | 2 |
 | `dtnt` | 0x64746e74 | `0x3d0` | 3 | 2 |
 | `pwdt` | 0x70776474 | `0x3d4` | 2 | 1 |
 | `mwdt` | 0x6d776474 | `0x3d8` | 2 | 1 |
+| `dmgt` | 0x646d6774 | `0x3dc` | 3 | 2 |
 | `dru` | 0x00647275 | `0x3e4` | 3 | 2 |
+| `expi` | 0x65787069 | `0x3ec` | 3 | 2 |
 | `stri` | 0x73747269 | `0x3f0` | 3 | 2 |
+| `inti` | 0x696e7469 | `0x3f4` | 3 | 2 |
 | `abir` | 0x61626972 | `0x3f8` | 3 | 2 |
 | `lfst` | 0x6c667374 | `0x400` | 2 | 1 |
 | `mwhs` | 0x6d776873 | `0x404` | 2 | 1 |
@@ -169,37 +189,47 @@ anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 | `dmgr` | 0x646d6772 | `0x418` | 5 | 4 |
 | `abnb` | 0x61626e62 | `0x41c` | 2 | 1 |
 | `dtt` | 0x00647474 | `0x420` | 3 | 2 |
+| `hide` | 0x68696465 | `0x428` | 4 | 3 |
+| `dcri` | 0x64637269 | `0x42c` | 2 | 1 |
 | `se` | 0x00007365 | `0x430` | 4 | 3 |
-| `pw` | 0x00007077 | `0x2b4` | 5 | 4 |
 | `rt` | 0x00007274 | `0x434` | 4 | 3 |
 | `fe` | 0x00006665 | `0x43c` | 4 | 3 |
+| `my` | 0x00006d79 | `0x440` | 5 | 4 |
 | `bl` | 0x0000626c | `0x444` | 6 | 5 |
 | `stns` | 0x73746e73 | `0x448` | 4 | 3 |
+| `dn` | 0x0000646e | `0x44c` | 5 | 4 |
 | `st` | 0x00007374 | `0x450` | 4 | 3 |
 | `ds` | 0x00006473 | `0x454` | 5 | 4 |
 | `ca` | 0x00006361 | `0x458` | 4 | 3 |
 | `cssr` | 0x63737372 | `0x45c` | 5 | 4 |
 | `csit` | 0x63736974 | `0x460` | 5 | 4 |
+| `cspd` | 0x63737064 | `0x464` | 5 | 4 |
+| `csmd` | 0x63736d64 | `0x468` | 5 | 4 |
 | `cshp` | 0x63736870 | `0x46c` | 7 | 6 |
 | `csmp` | 0x63736d70 | `0x470` | 7 | 6 |
 | `tb` | 0x00007462 | `0x474` | 5 | 4 |
+| `lkag` | 0x6c6b6167 | `0x47c` | 3 | 2 |
 | `lkdd` | 0x6c6b6464 | `0x480` | 2 | 1 |
 | `tcmd` | 0x74636d64 | `0x488` | 3 | 2 |
+| `skc` | 0x00736b63 | `0x490` | 4 | 3 |
 | `pchr` | 0x70636872 | `0x498` | 2 | 1 |
 | `qest` | 0x71657374 | `0x49c` | 5 | 4 |
 | `msch` | 0x6d736368 | `0x4a4` | 3 | 2 |
+| `mcap` | 0x6d636170 | `0x4a8` | 3 | 2 |
 | `rmut` | 0x726d7574 | `0x4ac` | 2 | 1 |
 | `luck` | 0x6c75636b | `0x4b8` | 2 | 1 |
 | `mstc` | 0x6d737463 | `0x4bc` | 2 | 1 |
 | `mscc` | 0x6d736363 | `0x4c0` | 2 | 1 |
+| `msid` | 0x6d736964 | `0x4c4` | 2 | 1 |
 | `gdr` | 0x00676472 | `0x4c8` | 2 | 1 |
+| `dgmp` | 0x64676d70 | `0x4cc` | 2 | 1 |
 | `getv` | 0x67657476 | `0x56c` | 2 | 1 |
 | `mom` | 0x006d6f6d | `0x57c` | 5 | 4 |
 | `expu` | 0x65787075 | `0x580` | 3 | 2 |
-| `skc` | 0x00736b63 | `0x490` | 4 | 3 |
 | `spi` | 0x00737069 | `0x584` | 2 | 1 |
 | `hwit` | 0x68776974 | `0x588` | 2 | 1 |
 | `bldr` | 0x626c6472 | `0x58c` | 4 | 3 |
+| `msr` | 0x006d7372 | `0x590` | 3 | 2 |
 
 ## Variable-length codes
 
@@ -803,3 +833,91 @@ small term.
 
 **Not yet wired into srrevamp.** The gate needs the equipped item's TID, and
 `refdata.Item` does not carry one — exporting it is the next step.
+
+## The vocabulary is 148 codes, and the walk now closes (2026-09-16)
+
+An earlier section recorded an open lead: a second walker found "roughly 55
+further tag comparisons in this function that are in neither table", unverified,
+with the note that *"whether the vocabulary is really ~105 or ~145 is open"*.
+**It is 148, and the question is now closed by a structural test rather than by
+reading more disassembly.**
+
+### The test
+
+Walk every real skilldata row's Param block from column 69 using a table's run
+lengths, and count how each walk ends: **clean** (reaches the `0` terminator or
+the row's end), **varlen-stop** (hits a code with no stated length), or
+**unknown** (hits a code the table does not have). A wrong run length lands the
+cursor on a *value* and derails everything after it, so this fails loudly in the
+direction that matters.
+
+| table | fixed | varlen | clean | varlen-stop | unknown |
+|---|---|---|---|---|---|
+| the doc's table, as it stood | 89 | 15 | 19,155 | 1,609 | 15,625 |
+| + 30 recovered fixed-run codes | 119 | 15 | 19,990 | 1,845 | 14,554 |
+| + 14 recovered stoppers | 119 | 29 | 19,990 | 16,399 | **0** |
+
+**Zero of 36,389 rows now hit an unrecognised code.** Every code the real table
+uses is in this file.
+
+(The control's 19,155 differs from the 19,839 quoted earlier in this document.
+Two harnesses, slightly different end conditions — what is comparable is the
+delta *within* one harness, and the load-bearing number is the unknown column
+going to zero.)
+
+### Each addition was confirmed on its own
+
+Adding all 30 at once raises clean walks by 835, which a batch of wrong runs
+could not do. Adding them **one at a time** against the unmodified table: 24
+raise the clean count on their own, 4 are neutral (the rows reaching them stop
+later on a different code, so they cannot complete a walk alone), and **none
+lower it**. `cnsm` alone accounts for 226 rows, `atca` 115, `mwhh` 65.
+
+### Why the raw walker output was worthless and these 30 are not
+
+Taking the walker's whole 145-tag table and walking with it scores **910** clean
+— far worse than the doc's 89 codes. That is not a paradox, it is the walker's
+run lengths being unreliable: it accumulates `add ecx,N` over a fixed window and
+under-counts any handler that adds more inside a branch. So the walker is a good
+*finder* of tags and a bad *source* of runs, and only the entries that real data
+actually exercises — where the walk confirms the run — are published here.
+
+This is the same lesson the `pw`/`skc` correction taught, arriving from the other
+side: that correction came from a walker disagreeing with the table, and this one
+comes from real data disagreeing with the walker.
+
+### The stoppers, and one that is understood
+
+Fourteen codes stop a walk. Five have a recovered field:
+
+| code | constant | skill field |
+|---|---|---|
+| `odar` | 0x6f646172 | `0x270` |
+| `trap` | 0x74726170 | `0x4a0` |
+| `efta` | 0x65667461 | `0x4b0` |
+| `lkdr` | 0x6c6b6472 | `0x478` |
+| `nmh` | 0x006e6d68 | `0x598` |
+
+Nine do not: **`bu`, `cr`, `curl`, `efr`, `es`, `fz`, `ko`, `setv`, `sl`**. They
+are listed because real rows demonstrably stop on them — `efr` on 9,538 rows, the
+single most common stopper in the table — not because their handlers have been
+read.
+
+`efr` explains the class. It *is* dispatched by an ordinary `cmp edx,0x656672`,
+but its handler does not store a field and move on:
+
+```
+587bf6:  mov  edx,DWORD PTR [eax+0x4]   <- value[0]
+587bfc:  add  ecx,0x1
+587bff:  sub  edx,0x1 / je ...          <- branch on the value
+587c04:  sub  edx,0x1 / je ...
+```
+
+It **branches on its own first value** before storing anything, so the field and
+the run depend on that value. That is exactly the shape that mis-filed `pw` and
+`skc`, and it is why a scanner looking for the next `mov [esi+N],eax` finds the
+wrong one or none at all.
+
+So "variable-length" is the right *operational* class for these — a walk cannot
+pass them — but the mechanism is value dispatch rather than an unstated count,
+and that distinction is recorded rather than smoothed over.

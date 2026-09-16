@@ -424,7 +424,7 @@ func (s *SQLStore) ListAllSkills(ctx context.Context) ([]*Skill, error) {
 			&sk.Range, &sk.ConsumeHP, &sk.ConsumeMP, &sk.ReqLearnSP, &sk.ReqLearnRace, &sk.UISkillName,
 			&sk.Mastery1, &sk.MasteryLevel1,
 			&sk.AttackPercent, &sk.DamageMin, &sk.DamageMax, &sk.HitCount, &sk.AttackType,
-		&sk.ReqCastWeapon1, &sk.ReqCastWeapon2,
+			&sk.ReqCastWeapon1, &sk.ReqCastWeapon2,
 		); err != nil {
 			return nil, fmt.Errorf("refdata: scanning skill: %w", err)
 		}
