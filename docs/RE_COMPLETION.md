@@ -7342,3 +7342,62 @@ majority named and left out.
 signal that is not itself an inference -- the asserts' LINE NUMBERS are one, since
 a function's line must fall between its neighbours' if the run is contiguous.
 That is testable on the 295 asserted functions.
+
+## 2026-09-16 (thirtieth) — the withheld 4,393, released; and a matcher that lied twice
+
+The previous entry withheld 88% of the client attribution as unvalidated and
+named what would settle it: *"an independent per-function signal that is not
+itself an inference"*. There is one, and it was already in the dump.
+
+### RTTI is data, not inference
+
+5,545 client functions carry a class recovered from the binary's own
+`ClassHierarchyDescriptor`. The previous entry lumped these in with the
+call-graph and module attributions and dismissed the whole set as "one inference
+against another" — **too broad**. The module ones are inferences; the RTTI ones
+are read out of the binary.
+
+### The matcher was the problem, twice
+
+Comparing class name to file name as strings gives **15.1% agreement**, and the
+failures are `CResObjSimple` vs `ResObject.cpp`, `CCompChar` vs
+`CompoundObj.cpp`, `CICUser` vs `ICharactor.cpp` — obviously the same file,
+invisible to a substring test.
+
+That is the second probe in two entries whose own logic produced the misleading
+answer; the first was substring-matching error domains, which invented five that
+do not exist. **When validating a mapping, test consistency, not string
+similarity.**
+
+### Consistency settles it
+
+Does each RTTI class land in one file? **79 of 80 (98.8%)**, against a **7.2%**
+baseline for attribution drawn at random over the same file distribution. Every
+mapping is coherent: `CCompChar` -> `CompoundObj.cpp`, `CCObjCharacter` ->
+`CObjCharacter.cpp`, `CResObjSimple` and `CResChar` -> `ResObject.cpp`.
+
+And it holds where leave-one-out could not reach:
+
+	span <= 30   100%  (n=19)      span <= 500  100%  (n=15)
+	span <= 100   98%  (n=41)      span > 500   100%  (n=5)
+
+**The long buckets are small — 20 samples above span 100.** Evidence, not proof,
+and the doc prints the sample sizes rather than summarising them as "validated".
+
+### Released
+
+All **4,972** interpolated functions. Total client attribution: **263 direct +
+4,972 = 5,235** of 43,460 functions, up from 263 two entries ago.
+
+Withholding them last entry was right on what was then known — the only validator
+available was disagreeing. It was superseded by finding a better validator, not
+by deciding the old evidence mattered less.
+
+**What moved:** the client's file attribution went 263 -> 842 -> 5,235 across
+three entries, each step gated on a test rather than on the yield looking good;
+and a validation technique (consistency over string similarity) that has now
+failed twice as string matching.
+
+**Next step:** attribution is not a name. `CompoundObj.cpp` holds 229 attributed
+functions and the asserts inside it name members and locals -- `m_btMagicParamNum`
+and the rest -- so per-function naming from expression text is the next rung.
