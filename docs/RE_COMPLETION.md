@@ -8217,3 +8217,76 @@ though their param ids remain open.
 PROBABILITY and a value, which is a different shape from every other option, and
 `"unknown bless"` means the formatter enumerates a closed set it can fall off —
 so the set is discoverable from the same function.
+
+## 2026-09-16 — the bless family: four options that roll a chance, and a closed set proved by its fallback
+
+The previous entry pointed at `FUN_00491bd0`'s odd literals — `"ape(%d%%): %d"`
+and friends, which print a probability as well as a value, plus an
+`"unknown bless[%d]"` fallback. Reading that branch out gives a named family and
+a struct.
+
+### Four, and the binary says four
+
+`ape`, `luck`, `soli`, `atha` — `MATTR_APE`, `MATTR_LUCK`, `MATTR_SOLID`,
+`MATTR_ATHANASIA` — each printing two numbers, the first read from the option
+record's `+0x14`, a field no other branch touches. They fire by chance rather
+than applying flatly.
+
+**What makes the set closed is the fallback, not the enumeration.** A tag
+reaching that group and matching none of the four prints
+
+	FUN_00425f70("unknown bless[%d]", tag);
+
+An author who writes that expected nothing else to arrive there. That is better
+evidence than counting the branches, because counting cannot tell a complete
+list from a list someone stopped extending.
+
+`rep` (`MATTR_REPAIR`) is in the same branch group and is NOT one of them: it
+prints `"rep: %d,"` with no chance and at **`value - 1`**. The stored number is
+one more than the displayed one — recorded because an off-by-one hiding in a
+display path is exactly what gets re-derived wrongly later.
+
+### The per-item option record, from two readers
+
+The dumper prints `+0x04` as the tag and `+0x10` as the value. The accessor
+`FUN_004927e0` (`0x004927e0`) independently returns `+0x10` and writes `+0x04`
+back through EDI. The bless branch adds `+0x14`, the chance.
+
+	+0x04  tag (packed)     +0x10  value     +0x14  chance (bless only)
+
+The options live in a container at `GObjPC + 0x5c0` and are **looked up, not
+indexed**, so there is no stride — worth stating, because the obvious assumption
+would be an array. The 12-per-item cap was already known from the client's
+`"m_btMagicParamNum <= MAX_MAGPARAM_PER_ITEM"` assert and is now attached to the
+record it bounds.
+
+### A negative result, and what it does and does not mean
+
+No column of `MagicOption.txt` is populated on every bless row and no plain row.
+So the chance is **not** a distinct reference column. That is consistent with
+`+0x14` being a per-item-instance field rather than a table one — but consistency
+is not proof, and this tick did not separately establish where the value is
+written, so the doc says so rather than asserting it.
+
+### Shipped
+
+`combat.BlessTags` (the four), `TagAstral/TagLuck/TagSolid/TagAthanasia/
+TagRepair`, `LabelFor[TagSolid] = "solid"` (the only one whose label differs
+from its spelling), and the `MagicOption*Offset` / `MaxMagicParamsPerItem`
+constants. Three tests: the closed set with its literals, the packed constants
+against the dumper's comparisons, and the record-shape guard.
+
+Nothing consumes any of it — srrevamp implements no magic options. It is
+recorded because an implementation that modelled these four as unconditional
+would be wrong, and the cost of finding that out later is higher than the cost
+of writing it down now.
+
+**What moved:** a named, closed family of four probabilistic options; the
+per-item magic-option record from two independent readers; one display
+off-by-one caught.
+
+**Next step:** `"[OptLvl: +%d] "` at the top of the same dumper reads
+`*(item[0x34] + 0x2c)` as a single byte — the item's option LEVEL, distinct from
+the per-option values. `MagicOption.txt` has a level column (col 4) and
+`refmagicoptbyitemoptleveldata.txt` is named for exactly this relationship, so
+the two can be joined: which options an item can carry at a given option level.

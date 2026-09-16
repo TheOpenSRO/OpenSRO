@@ -207,4 +207,62 @@ var LabelFor = map[string]string{
 	"rfei": "resist fear",
 	"rdii": "resist disease",
 	"rcsi": "resist csmp",
+	// The bless family: only 'soli' prints as something other than itself.
+	TagSolid: "solid",
 }
+
+// The BLESS family: the magic options that carry a probability as well as a
+// value, and so fire by chance rather than applying flatly.
+//
+// The item dumper `FUN_00491bd0` (`0x00491bd0`) prints these four differently
+// from every other option -- two numbers instead of one --
+//
+//	"ape(%d%%): %d"   "luck(%d%%): %d"   "solid(%d%%): %d"   "atha(%d%%): %d"
+//
+// reading the chance from the option record's `+0x14`, a field no other branch
+// touches. **The set is closed and the binary says so**: any tag reaching that
+// group and matching none of them falls through to
+//
+//	FUN_00425f70("unknown bless[%d]", tag);
+//
+// A fallback that names the concept is stronger evidence of a closed set than
+// an enumeration is, because it shows the author expected nothing else.
+//
+// 'rep' (MATTR_REPAIR) sits in the same branch group and is NOT one of them: it
+// prints `"rep: %d,"` with no chance, and with `value - 1` -- the stored number
+// is one more than the one displayed. Recorded because an off-by-one in a
+// display path is exactly the sort of thing that gets re-derived wrongly later.
+const (
+	TagAstral    = "ape"  // MATTR_APE
+	TagLuck      = "luck" // MATTR_LUCK
+	TagSolid     = "soli" // MATTR_SOLID
+	TagAthanasia = "atha" // MATTR_ATHANASIA
+	TagRepair    = "rep"  // MATTR_REPAIR -- same branch group, no chance
+)
+
+// BlessTags are the four options that roll a chance. srrevamp does not
+// implement magic options, so nothing consumes this yet; it is here so that
+// whoever does implement them does not model these four as unconditional.
+var BlessTags = map[string]bool{
+	TagAstral:    true,
+	TagLuck:      true,
+	TagSolid:     true,
+	TagAthanasia: true,
+}
+
+// The per-item magic-option record, as two independent readers agree on it.
+// The dumper walks the options printing `record+0x04` as the tag and
+// `record+0x10` as the value, and the accessor `FUN_004927e0` (`0x004927e0`)
+// returns `record+0x10` while writing `record+0x04` back through EDI. The
+// bless branch adds `record+0x14`, the chance.
+//
+// The options live in a container at `GObjPC + 0x5c0` and are looked up rather
+// than indexed, so there is no stride to record. An item carries at most
+// MAX_MAGPARAM_PER_ITEM of them -- 12, from the client's own assert
+// `"m_btMagicParamNum <= MAX_MAGPARAM_PER_ITEM"`.
+const (
+	MagicOptionTagOffset    = 0x04
+	MagicOptionValueOffset  = 0x10
+	MagicOptionChanceOffset = 0x14
+	MaxMagicParamsPerItem   = 12
+)

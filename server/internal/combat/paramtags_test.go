@@ -224,3 +224,83 @@ func TestLabelForCoversWhatSpellingDoesNot(t *testing.T) {
 		}
 	}
 }
+
+// TestBlessTagsAreTheFourThatRollAChance pins the closed set. The dumper's
+// `"unknown bless[%d]"` fallback is what makes it closed: a fifth probabilistic
+// option would have printed through that branch rather than getting a format
+// string of its own.
+func TestBlessTagsAreTheFourThatRollAChance(t *testing.T) {
+	want := map[string]string{
+		TagAstral:    "ape(%d%%): %d,",
+		TagLuck:      "luck(%d%%): %d",
+		TagSolid:     "solid(%d%%): %d",
+		TagAthanasia: "atha(%d%%): %d",
+	}
+	if len(BlessTags) != len(want) {
+		t.Fatalf("BlessTags has %d entries, want the %d the dumper formats with a chance",
+			len(BlessTags), len(want))
+	}
+	for tag, literal := range want {
+		if !BlessTags[tag] {
+			t.Errorf("%q rolls a chance in the engine (%q) but is not in BlessTags", tag, literal)
+		}
+		if UnpackTag(PackTag(tag)) != tag {
+			t.Errorf("%q is not a packable tag", tag)
+		}
+	}
+	// 'rep' is in the same branch group and is deliberately NOT one of them:
+	// it prints without a chance.
+	if BlessTags[TagRepair] {
+		t.Errorf("%q prints as \"rep: %%d,\" with no chance; it does not roll", TagRepair)
+	}
+}
+
+// TestBlessTagsMatchTheirCodeNames keeps the four tied to the MagicOption rows
+// they came from, since the tag spellings alone are opaque.
+func TestBlessTagsMatchTheirCodeNames(t *testing.T) {
+	// The packed constants the dumper compares against, transcribed from the
+	// disassembly -- the one place transcription is unavoidable.
+	for tag, packed := range map[string]uint32{
+		TagAstral:    0x617065,
+		TagLuck:      0x6c75636b,
+		TagSolid:     0x736f6c69,
+		TagAthanasia: 0x61746861,
+		TagRepair:    0x726570,
+	} {
+		if got := PackTag(tag); got != packed {
+			t.Errorf("%q packs to %#x, but the dumper compares against %#x", tag, got, packed)
+		}
+	}
+	// 'soli' is the only one whose printed label differs from its spelling.
+	if LabelFor[TagSolid] != "solid" {
+		t.Errorf("%q prints as %q; the engine's literal is \"solid(%%d%%%%): %%d\"",
+			TagSolid, LabelFor[TagSolid])
+	}
+	for _, tag := range []string{TagAstral, TagLuck, TagAthanasia} {
+		if l, ok := LabelFor[tag]; ok {
+			t.Errorf("%q prints as itself in the engine; LabelFor should not carry %q", tag, l)
+		}
+	}
+}
+
+// TestMagicOptionRecordOffsetsAreDistinct is a shape guard, not a discovery:
+// the three fields are read at different offsets by two independent readers,
+// and collapsing any two would mean a transcription slip.
+func TestMagicOptionRecordOffsetsAreDistinct(t *testing.T) {
+	offs := []int{MagicOptionTagOffset, MagicOptionValueOffset, MagicOptionChanceOffset}
+	seen := map[int]bool{}
+	for _, o := range offs {
+		if seen[o] {
+			t.Errorf("offset %#x appears twice in the record layout", o)
+		}
+		seen[o] = true
+	}
+	if MagicOptionChanceOffset != MagicOptionValueOffset+4 {
+		t.Errorf("the chance sits immediately after the value in the record: %#x vs %#x",
+			MagicOptionChanceOffset, MagicOptionValueOffset)
+	}
+	if MaxMagicParamsPerItem != 12 {
+		t.Fatalf("MaxMagicParamsPerItem = %d; the client asserts "+
+			"m_btMagicParamNum <= MAX_MAGPARAM_PER_ITEM with a guard of 12", MaxMagicParamsPerItem)
+	}
+}

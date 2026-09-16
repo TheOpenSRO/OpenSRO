@@ -212,6 +212,58 @@ labels that plainly belong to another tag. A first, looser pattern also swept up
 alone produced six false conflicts. Tightening the pattern to literals that are exactly
 `label ±%d[%%]` cut the conflicts to the two real ones.
 
+## The bless family, and the per-item option record
+
+Four options print differently from every other one in the item dumper
+(`FUN_00491bd0`, `0x00491bd0`) — **two numbers instead of one**:
+
+```
+"ape(%d%%): %d"    "luck(%d%%): %d"    "solid(%d%%): %d"    "atha(%d%%): %d"
+```
+
+The first number comes from the option record's `+0x14`, a field no other branch reads. These are
+the probabilistic blessings — `MATTR_APE`, `MATTR_LUCK`, `MATTR_SOLID`, `MATTR_ATHANASIA` — and
+they fire by chance rather than applying flatly.
+
+**The set is closed, and the binary says so.** Any tag reaching that group and matching none of
+the four falls through to
+
+```c
+FUN_00425f70("unknown bless[%d]", tag);
+```
+
+A fallback that names the concept is stronger evidence of a closed set than an enumeration would
+be: it shows the author expected nothing else to arrive there.
+
+`rep` (`MATTR_REPAIR`) sits in the same branch group and is **not** one of them — it prints
+`"rep: %d,"` with no chance, and at `value - 1`. The stored number is one more than the displayed
+one, which is recorded because an off-by-one in a display path is exactly what gets re-derived
+wrongly later.
+
+### The record
+
+Two independent readers agree on the layout. The dumper walks the options printing `+0x04` as the
+tag and `+0x10` as the value; the accessor `FUN_004927e0` (`0x004927e0`) returns `+0x10` and
+writes `+0x04` back through EDI. The bless branch adds `+0x14`.
+
+| offset | field |
+|---:|---|
+| `+0x04` | tag (packed) |
+| `+0x10` | value |
+| `+0x14` | chance — bless family only |
+
+The options live in a container at `GObjPC + 0x5c0` and are **looked up, not indexed**, so there
+is no stride to record. An item carries at most 12 of them, from the client's own assert
+`"m_btMagicParamNum <= MAX_MAGPARAM_PER_ITEM"`.
+
+Shipped as `combat.BlessTags` and the `MagicOption*Offset` constants. Nothing consumes them yet —
+srrevamp implements no magic options — but a later implementation that modelled these four as
+unconditional would be wrong, which is why they are recorded now.
+
+**What the data could not confirm.** No column of `MagicOption.txt` is populated on every bless
+row and no plain row, so the chance is not a distinct reference column; consistent with `+0x14`
+being a per-item-instance field rather than a table one, though that was not separately proven.
+
 ## What is NOT here
 
 The bonus *magnitudes*. Columns 4/5 hold a level and a factor and columns 8–16 further numbers,
