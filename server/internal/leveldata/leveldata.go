@@ -670,11 +670,16 @@ const DeathPenaltyMinLevel = 10
 //
 // The branch is chosen by two things: whether the killer was another PLAYER,
 // and whether the victim is carrying PK penalty points (charData+0xb4 =
-// _CHAR.PKPenaltyPoint, from the recovered schema; the test is `< 1`). A
-// second byte at victim+0x1cb4 is compared against 5 and gates the harsher
-// branch together with the PK points; what that state enum means is still
-// unrecovered, so the harsher branches are labelled by the condition this code
-// CAN name.
+// _CHAR.PKPenaltyPoint, from the recovered schema; the test is `< 1`).
+//
+// THE STATE ENUM IS RECOVERED (2026-09-16) and these names are no longer an
+// inference. The byte at victim+0x1cb4 that GObjPC_OnDeath compares against 5
+// is the death CAUSE -- see DeathCause, which carries the derivation. 5 is
+// "the killer is a player" and 3 is "the killer is not", settled by a use-site:
+// the value comes from `FUN_004eb390`, which tests both parties through vtable
+// slot 7, and slot 7 is IsPC by the engine's own `## Illegal ##` stub. So
+// KilledByMonster and KilledByPlayer are the engine's distinction, read off the
+// engine, rather than a reading of the multipliers.
 const (
 	DeathPenaltyKilledByMonster        = 100
 	DeathPenaltyKilledByMonsterFlagged = 300

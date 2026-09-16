@@ -99,10 +99,28 @@ pick one up without re-deriving anything.
    the victim carries PK penalty, and the victim's own loss is **3× plus 60 skill
    points** in that case against the smaller factor otherwise.
 
-   Still not shipped, because the other condition — `param_2[0x72d] != 5`, a byte
-   state enum on the GObj rather than on charData — remains unidentified, and it
-   selects between the 20×, 100× and 300× factors. *Next probe:* that state enum;
-   values 2 and 5 are both used at other sites.
+   **CLOSED 2026-09-16. The state enum is the death CAUSE.** `param_2[0x72d]`
+   (victim `+0x1CB4`) has exactly one writer, `GObjPC::ResolveDeathCauseAndDispatch`
+   (`004e6ec0`), which computes it and switches on it in the same 81 bytes:
+   1 -> the job-suit path, **3/4/5 -> `GObjPC_OnDeath`**, 6 -> a zone path, and
+   2 is not in the switch at all, so such a death costs nothing.
+
+   What separates 3 from 5 is a use-site, not a curve. `ResolveDeathCause`
+   (`004e6590`) ends `return (-(uint)(IsKilledByPlayer != 1) & 0xfffffffe) + 5`
+   — 5 when it returns 1, else 3 — and `IsKilledByPlayer` (`004eb390`) gates on
+   **vtable slot 7 for both parties**, which the engine's own
+   `"## Illegal ##  IGObj::IsPC Entered! TypeID: %u"` stub names `IsPC`
+   (`IsNPC` at slot 8, `IsMonster` at slot 10 for corroboration). So **5 is a
+   player kill and 3 is not**, which agrees with the multipliers already read out
+   of the branches — a monster kill costing more than a player kill is what the
+   table says. That agreement is the check, not the finding.
+
+   Shipped as `leveldata.DeathCause` with `DeathPenaltyFactorFor`, so the engine's
+   own `byte != 5` test is encoded rather than `== 3` (cause 4 takes the
+   not-a-player branch with it). srrevamp still only ever reaches
+   `DeathCauseMonster`; the rest are implemented, tested and disclosed
+   unreachable. Three names applied: `ResolveDeathCauseAndDispatch`,
+   `ResolveDeathCause`, `IsKilledByPlayer`.
 
    This also corrected a name. `004e6980` was called `GObjPC_GrantKillReward`
    after an earlier pass read only its first half; it is the death handler, and
@@ -9979,4 +9997,34 @@ equals the ID" are unaffected by duplicates.
 
 **Rule going forward:** deduplicate itemdata by ID before counting, report
 distinct IDs rather than rows, and state that the corpus is partial.
+
+## 2026-09-16 — the death-cause enum, and three levers measured as exhausted
+
+**Closed the queue's item 2 blocker.** The byte at victim `+0x1CB4` that
+`GObjPC_OnDeath` compares against 5 is the **death cause**; see the work-queue
+entry above for the derivation. `leveldata.DeathCause` now carries it, with
+`DeathPenaltyFactorFor` encoding the engine's `!= 5` test rather than `== 3`,
+and five tests including the one that would catch the enum being read backwards
+(a monster death must cost more than a player death). The penalty constants'
+names, `KilledByMonster` / `KilledByPlayer`, were an inference from the
+multipliers and are now the engine's own distinction.
+
+**`IsPC` is vtable slot 7** — worth recording on its own, because slot 7 turns
+up all over the combat and object code and the `## Illegal ##` stub names it
+outright, with `IsNPC` at 8 and `IsMonster` at 10.
+
+### Three levers measured and found exhausted
+
+Recorded so the next tick does not re-probe them:
+
+| lever | measurement | verdict |
+|---|---|---|
+| binary table schema | the 0x54-stride column records are runtime DB metadata; no column-name table exists in the exe (`CodeName128`, `TypeID1`, `NameStrID128` all absent) | not statically readable |
+| vtable propagation on the **client** | 5,839 slot tags but only **24** named (class, slot) pairs to seed from; 18 candidates, 16 of them `scalar_deleting_destructor` | no seed |
+| cross-binary shared classes | 105 classes appear in both dumps, but **zero** unnamed client functions sit at a server-named slot — the server's named slots are concentrated in `IGObj`, which is not a client class | no overlap |
+
+The client's own unexploited pool remains its **263 assert-carrying functions
+that are still `FUN_`** (`docs/protocol/client_asserts.md`). An assert names the
+source file and the expression, so it yields a class and member names rather
+than a method name — which is why it has not moved the leaf-name metric.
 

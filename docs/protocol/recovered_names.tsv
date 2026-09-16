@@ -128,3 +128,11 @@
 006557a0	server	CTJ_EnterWorldGroupKeeper::Create	descriptive	vtable slot 3 of CTJ_EnterWorldGroupKeeper; the same slot is named CTJ_OpenMarketTicketKeeper__Create on a class sharing a non-generic base, and the body chains to or mirrors that base. Hierarchy-scoped slot propagation, validated 458/466 against already-named slots.
 006a3d50	server	RefObjItem::ExtractData	descriptive	vtable slot 1 of RefObjItem; the same slot is named RefObjChar_ExtractData on a class sharing a non-generic base, and the body chains to or mirrors that base. Hierarchy-scoped slot propagation, validated 458/466 against already-named slots.
 006a7390	server	RefObjStruct::ExtractData	descriptive	vtable slot 1 of RefObjStruct; the same slot is named RefObjChar_ExtractData on a class sharing a non-generic base, and the body chains to or mirrors that base. Hierarchy-scoped slot propagation, validated 458/466 against already-named slots.
+#
+# APPENDED 2026-09-16 (third batch): the death-cause enum. These close the open
+# item that had blocked the death penalty since 2026-09-15 -- GObjPC_OnDeath
+# compares a byte at victim+0x1cb4 against 5 and nothing knew what the byte was.
+#
+004e6ec0	server	GObjPC::ResolveDeathCauseAndDispatch	descriptive	writes the death-cause byte at this+0x1cb4 from FUN_004e6590, then switches on it: 1 -> the job-suit path, 3/4/5 -> GObjPC_OnDeath, 6 -> the zone path. The only writer of that byte.
+004e6590	server	GObjPC::ResolveDeathCause	descriptive	computes the death-cause enum: 6 and 2 from zone/faction predicates, 1 when equipment slot 8 (the job suit) is worn, and `(-(uint)(IsKilledByPlayer != 1) & 0xfffffffe) + 5` -- 5 for a player kill, 3 otherwise.
+004eb390	server	GObjPC::IsKilledByPlayer	descriptive	returns 1 only when both parties answer vtable slot 7, which the engine's own "## Illegal ##  IGObj::IsPC Entered!" stub names IsPC. It is what separates death cause 5 from 3, and so the 20x branch from the 100x branch in GObjPC_OnDeath.
