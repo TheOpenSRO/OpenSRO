@@ -497,3 +497,59 @@ func TestPartyExpBonus(t *testing.T) {
 		prev = cur
 	}
 }
+
+// TestMasteryExpScale pins the recovered "keep your mastery up" rule: 0.1 of a
+// kill's experience lost per level the best mastery lags the character level,
+// clamped to [0.1, 1.9], and a flat 1.0 once the reference passes 120.
+//
+// The reference being the HIGHEST MASTERY LEVEL is the part that took a use-site
+// to settle (see the constant's comment), so the table below is written in those
+// terms deliberately -- a future reader changing it should have to confront what
+// the second argument means.
+func TestMasteryExpScale(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		charLevel  int
+		maxMastery int
+		want       float64
+	}{
+		{"mastery level with the character: no adjustment", 40, 40, 1.0},
+		{"one level behind", 41, 40, 0.9},
+		{"five levels behind", 45, 40, 0.5},
+		{"nine behind reaches the floor exactly", 49, 40, 0.1},
+		{"far behind is held at the floor", 80, 40, 0.1},
+		{"one level ahead", 40, 41, 1.1},
+		{"far ahead is held at the ceiling", 40, 80, 1.9},
+		{"a fresh level-1 character with no mastery", 1, 0, 0.9},
+		{"a level-10 character who ignored masteries", 10, 0, 0.1},
+		{"reference above 120 short-circuits to 1.0", 80, 121, 1.0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MasteryExpScale(tc.charLevel, tc.maxMastery)
+			if math.Abs(got-tc.want) > 1e-9 {
+				t.Errorf("MasteryExpScale(%d, %d) = %v, want %v",
+					tc.charLevel, tc.maxMastery, got, tc.want)
+			}
+		})
+	}
+
+	// The scale never leaves the recovered bounds, whatever the inputs.
+	for charLevel := 0; charLevel <= 140; charLevel++ {
+		for mastery := 0; mastery <= 120; mastery++ {
+			got := MasteryExpScale(charLevel, mastery)
+			if got < MasteryExpScaleMin || got > MasteryExpScaleMax {
+				t.Fatalf("MasteryExpScale(%d, %d) = %v, outside [%v, %v]",
+					charLevel, mastery, got, MasteryExpScaleMin, MasteryExpScaleMax)
+			}
+		}
+	}
+
+	// The per-level step is the recovered constant, not a rounding of it.
+	if MasteryExpPenaltyPerLevel != 0.1 {
+		t.Errorf("MasteryExpPenaltyPerLevel = %v, want the recovered 0.1", MasteryExpPenaltyPerLevel)
+	}
+	// 0x78 -- the same ceiling as a single mastery.
+	if MasteryExpRefCap != 120 {
+		t.Errorf("MasteryExpRefCap = %d, want 120 (0x78)", MasteryExpRefCap)
+	}
+}

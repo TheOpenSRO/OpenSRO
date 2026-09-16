@@ -4160,3 +4160,67 @@ one in `leveldata.go` beside the formula.
 **What moved:** no shipped number. A live multiplier on a shipped formula went
 from an unexamined field to a bounded, characterised term with its recompute
 triggers known, and a tempting 3x experience bonus was correctly *not* shipped.
+
+## The mastery-lag experience penalty, settled by a use-site (2026-09-16)
+
+Last tick characterised the float at `pc+0x1cd8` that `Formula_MonsterExpReward`
+multiplies every kill by, and **explicitly refused to name its reference byte**:
+two coincidences pointed at "highest mastery level" — recomputation on
+`Mastery_LevelUp`, and `0x78` being exactly the recovered single-mastery cap of
+120 — but that is the shape of reasoning that got characterdata column 79 wrong
+twice, so it was written down as a hypothesis. This tick settled it properly.
+
+**The use-site that settled it.** `FUN_0059e870` walks a list under `pc+0xa30`
+and returns the **maximum** byte at `entry[0x10][8]+0x20`, skipping entries whose
+`[0x10]+0xc` is 3. Its neighbour `FUN_0059e7c0` walks the **identical** list with
+the identical skip rule and identical value path, but **sums** instead — and
+`Mastery_LevelUp` calls it and compares `that sum + the levels requested`
+against its total-mastery cap:
+
+```asm
+59c569  CALL 0x59e7c0            <- the sum
+59c570  MOVZX EAX,BYTE [EBP+0xc] <- levels requested
+59c574  ADD  ECX,EAX
+59c57e  FCOMP QWORD ds:0xb46130  <- against 240.0
+```
+
+A function whose result is the quantity a *mastery cap* is checked against is
+summing mastery levels. Its twin over the same list is therefore the highest
+mastery level. Named `Mastery_SumLevels` and `Mastery_MaxLevel`.
+
+A third, independent corroboration: `CMainProcess_RollByEffectiveLevel`
+(`0x0060c4b0`) takes `max(characterLevel, Mastery_MaxLevel())`, which only makes
+sense if the two are on the same scale.
+
+### VALUE SHIPPED: the mastery penalty
+
+```
+expScale = clamp(1 - (charLevel - maxMasteryLevel) * 0.1, 0.1, 1.9)
+         = 1.0 when maxMasteryLevel > 120
+```
+
+K is `fmul QWORD ds:0xb45ec0` = **0.1, a double**; the clamp bounds are the
+floats at `0xb45eb8` (0.1) and `0xb45f18` (1.9). Shipped as
+`leveldata.MasteryExpScale`, applied in `session.applyMasteryExpScale` on the
+kill-reward path ahead of the party bonus.
+
+**SCOPE, and it is a sharp one.** The engine does **not** special-case a
+character with no mastery — the only escape is a reference above 120, which no
+real character reaches. So a level-10 character who has never raised a mastery
+really does fall to the 0.1 floor, and that is the mechanic rather than an
+oversight. srrevamp now reproduces it. The one place this implementation
+deliberately departs from the engine is a lookup FAILURE: the engine always has
+the number to hand, so a store error here returns the award unscaled rather than
+charging the player 90% of a kill for srrevamp's own problem.
+
+**Also found, and NOT promoted.** `Mastery_LevelUp` carries **two** total-cap
+shapes: the flat `0x14b` (331) this project already recorded, and a second
+branch comparing against the double **240.0** at `0xb46130` alongside a term
+involving twice the character level. Which branch runs depends on a selector
+this pass did not identify, and the `2 x level` term's operand was not pinned
+down, so `session.MasteryTotalCapPerLevel` is left at its sourced 3 rather than
+changed on a half-read branch. Recorded as open.
+
+**What moved:** a real mechanic, shipped — and a hypothesis that was correctly
+refused last tick became a citation this tick by finding the use-site rather
+than by growing more confident about the coincidences.

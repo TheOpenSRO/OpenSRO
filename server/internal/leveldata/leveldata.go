@@ -227,6 +227,69 @@ const (
 	ExpWindowScaleFloor       = 0.1
 )
 
+// MasteryExpPenaltyPerLevel and the MasteryExpScale bounds are the game's
+// "keep your mastery up with your level" rule: **0.1 lost per level your best
+// mastery lags behind your character level, clamped to [0.1, 1.9]**. RECOVERED,
+// including what the reference actually is -- which took two ticks and a
+// refused guess to settle.
+//
+// GObjPC_RecalcLevelDiffExpScale (0x004e30d0) is the only writer of the float
+// at pc+0x1cd8 that Formula_MonsterExpReward multiplies a kill's reward by:
+//
+//	ref = Mastery_MaxLevel(pc + 0xa30)
+//	if (ref > 0x78) { pc[0x1cd8] = pc[0x1cdc] = 1.0f; return; }   // 0x78 = 120
+//	pc[0x1cd8] = clamp(1 - (charLevel - ref) * 0.1, 0.1, 1.9)
+//	pc[0x1cdc] =        1 - (ref - charLevel) * 0.1               // the mirror
+//
+// K is `fmul QWORD ds:0xb45ec0` = 0.1, a double; the clamp bounds are the float
+// at 0xb45eb8 (0.1) and 0xb45f18 (1.9). It is recomputed on exactly three
+// events: PC load, GObjPC_SetLevel and Mastery_LevelUp -- and that last one is
+// the tell that the reference tracks masteries.
+//
+// HOW THE REFERENCE WAS SETTLED, because the previous tick recorded it as an
+// explicitly refused guess. Two coincidences pointed at "highest mastery level"
+// -- recomputation on mastery level-up, and 0x78 being exactly the recovered
+// single-mastery cap -- and that is the shape of reasoning that got
+// characterdata column 79 wrong twice, so it was not promoted. What settled it
+// is a USE-SITE: FUN_0059e7c0 walks the identical list under pc+0xa30 with the
+// identical skip rule and value path but SUMS instead of taking the maximum,
+// and Mastery_LevelUp compares `that sum + the levels requested` against its
+// total-mastery cap. A function whose result is the thing a mastery cap is
+// checked against is summing mastery levels; its twin over the same list is
+// therefore the highest mastery level.
+//
+// SCOPE: a character with NO mastery is not special-cased by the engine. The
+// only escape is ref > 120, which no real character reaches, so a level-10
+// character who has never raised a mastery really does fall to the 0.1 floor.
+// That is the mechanic, not an oversight -- but it means the penalty is severe
+// for a character that ignores masteries entirely.
+const (
+	MasteryExpPenaltyPerLevel = 0.1
+	MasteryExpScaleMin        = 0.1
+	MasteryExpScaleMax        = 1.9
+
+	// MasteryExpRefCap is the reference value above which the engine gives up
+	// and returns a flat 1.0 -- 0x78, the same 120 that caps a single mastery.
+	MasteryExpRefCap = 120
+)
+
+// MasteryExpScale returns the multiplier a kill's experience takes from the gap
+// between a character's level and its highest mastery level. 1.0 means no
+// adjustment; below 1.0 the mastery is lagging, above it the mastery is ahead.
+func MasteryExpScale(charLevel, maxMasteryLevel int) float64 {
+	if maxMasteryLevel > MasteryExpRefCap {
+		return 1.0
+	}
+	scale := 1.0 - float64(charLevel-maxMasteryLevel)*MasteryExpPenaltyPerLevel
+	if scale < MasteryExpScaleMin {
+		return MasteryExpScaleMin
+	}
+	if scale > MasteryExpScaleMax {
+		return MasteryExpScaleMax
+	}
+	return scale
+}
+
 // PartyExpBonusPerMember is the extra share of a kill's experience each
 // ADDITIONAL party member is worth: **0.03, i.e. 3% per member beyond the
 // first.** RECOVERED, not chosen.

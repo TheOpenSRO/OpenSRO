@@ -1,10 +1,12 @@
 package session
 
 import (
+	"context"
 	"testing"
 
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/party"
+	"github.com/OpenSRO/srrevamp/server/internal/skill"
 )
 
 // member builds a party member with a distinct session, which Hub.Create and
@@ -70,5 +72,67 @@ func TestApplyPartyExpBonus(t *testing.T) {
 	// 9 * 1.06 = 9.54 -> 10. Truncation would give 9 and hide the bonus.
 	if got := applyPartyExpBonus(hub, 42, 9); got != 10 {
 		t.Errorf("small award rounding: got %d, want 10 (9 * 1.06 = 9.54)", got)
+	}
+}
+
+// TestApplyMasteryExpScale covers the wiring between a character's masteries and
+// the recovered penalty. The multiplier itself is pinned in
+// leveldata.TestMasteryExpScale; this checks that the HIGHEST mastery is the one
+// that counts, and that every failure shape leaves the award alone rather than
+// silently costing the player most of a kill.
+func TestApplyMasteryExpScale(t *testing.T) {
+	ctx := context.Background()
+
+	// No skill store at all -- how several handlers are built in tests.
+	if got := applyMasteryExpScale(ctx, nil, 1, 40, 1000); got != 1000 {
+		t.Errorf("no skill store: got %d, want 1000", got)
+	}
+
+	store := skill.NewMemStore()
+	if _, err := store.AddSkillPoints(ctx, 1, 100000); err != nil {
+		t.Fatalf("AddSkillPoints: %v", err)
+	}
+
+	// No masteries at all: a level-40 character falls to the floor, 0.1.
+	if got := applyMasteryExpScale(ctx, store, 1, 40, 1000); got != 100 {
+		t.Errorf("no masteries at level 40: got %d, want 100 (the 0.1 floor)", got)
+	}
+
+	// Raise one mastery to 5 and another to 3. The HIGHEST is what counts, so
+	// the gap is 40-5 = 35, still past the floor.
+	for i := 0; i < 5; i++ {
+		if _, err := store.RaiseMastery(ctx, 1, 257, 1, 120); err != nil {
+			t.Fatalf("RaiseMastery 257: %v", err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := store.RaiseMastery(ctx, 1, 258, 1, 120); err != nil {
+			t.Fatalf("RaiseMastery 258: %v", err)
+		}
+	}
+	if got := applyMasteryExpScale(ctx, store, 1, 40, 1000); got != 100 {
+		t.Errorf("best mastery 5 at level 40: got %d, want 100", got)
+	}
+
+	// A character whose best mastery keeps pace takes no penalty.
+	if got := applyMasteryExpScale(ctx, store, 1, 5, 1000); got != 1000 {
+		t.Errorf("level 5 with mastery 5: got %d, want 1000", got)
+	}
+	// One level of lag costs exactly a tenth.
+	if got := applyMasteryExpScale(ctx, store, 1, 6, 1000); got != 900 {
+		t.Errorf("level 6 with mastery 5: got %d, want 900", got)
+	}
+	// Mastery ahead of level pays MORE -- the rule is symmetric.
+	if got := applyMasteryExpScale(ctx, store, 1, 3, 1000); got != 1200 {
+		t.Errorf("level 3 with mastery 5: got %d, want 1200", got)
+	}
+
+	// Zero exp stays zero rather than being floored up to 1.
+	if got := applyMasteryExpScale(ctx, store, 1, 40, 0); got != 0 {
+		t.Errorf("zero exp: got %d, want 0", got)
+	}
+	// A tiny award never rounds away to nothing.
+	if got := applyMasteryExpScale(ctx, store, 1, 40, 3); got < 1 {
+		t.Errorf("small award: got %d, want at least 1", got)
 	}
 }

@@ -472,6 +472,25 @@ public class ApplyKnownNames extends GhidraScript {
          + "entry+0x10 (leveldata column 2) for each, and refuses with error 0x3802 when the "
          + "character's skill points fall short. This is where the mastery cost was recovered."},
 
+        // The mastery collection at pc+0xa30, and the exp rule built on it.
+        {"0059e870", "Mastery_MaxLevel",
+         "Walks the mastery list under pc+0xa30 (head at +0x238, sentinel +0x234) and returns the "
+         + "MAXIMUM level byte at entry[0x10][8]+0x20, skipping entries whose [0x10]+0xc is 3. "
+         + "Proven by its twin: FUN_0059e7c0 walks the identical list with the identical skip "
+         + "rule and value path but SUMS, and Mastery_LevelUp compares that sum plus the levels "
+         + "requested against its total-mastery cap -- so the list is masteries and the byte is "
+         + "a mastery level."},
+        {"0059e7c0", "Mastery_SumLevels",
+         "Sums every mastery level over the same list Mastery_MaxLevel maximises. Its result is "
+         + "what Mastery_LevelUp checks a raise against: 'sum + requested' is compared with the "
+         + "flat 0x14b (331) on one branch and with the double 240.0 at 0xb46130 on another, so "
+         + "this binary carries two total-cap shapes rather than one."},
+        {"0060c4b0", "CMainProcess_RollByEffectiveLevel",
+         "Takes max(characterLevel, Mastery_MaxLevel) -- confirming the mastery level is on the "
+         + "same scale as a character level -- subtracts 4, floors at 16, and combines that with "
+         + "a random draw and its argument. The argument is doubled on a 2%% chance "
+         + "(rand() %% 100 < 2). What the result feeds is not recovered."},
+
         // Monster rank, and the two objects that share offset 0x1cd8.
         {"004c1550", "CGObjMob_SetRankSpeedScale",
          "Switches on the monster's rank byte (mob+0x1cd8 & 0xf, copied from refObj+0x50 by "

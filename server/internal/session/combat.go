@@ -663,6 +663,40 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 // counterattack, sends OpAttackResult to sess, grants gold on a kill, and
 // broadcasts to everyone else in the zone. Shared by CombatHandler and
 // skill.UseHandler so both attack paths behave identically.
+// applyMasteryExpScale scales a kill's experience by the gap between the
+// character's level and its highest mastery level -- the engine's
+// "keep your mastery up" rule, recovered in
+// leveldata.MasteryExpScale (0.1 lost per level of lag, clamped to [0.1, 1.9]).
+//
+// Returns exp unchanged when there is no skill store, when the lookup fails, or
+// when the scale works out to 1.0. A lookup FAILURE deliberately does not
+// penalise the player: the engine always has the number to hand, so a missing
+// one here is srrevamp's problem and should not cost someone 90% of a kill.
+func applyMasteryExpScale(ctx context.Context, skills skill.Store, characterID int64, charLevel int, exp int64) int64 {
+	if skills == nil || exp == 0 {
+		return exp
+	}
+	levels, err := skills.MasteryLevels(ctx, characterID)
+	if err != nil {
+		return exp
+	}
+	best := 0
+	for _, lvl := range levels {
+		if lvl > best {
+			best = lvl
+		}
+	}
+	scale := leveldata.MasteryExpScale(charLevel, best)
+	if scale == 1.0 {
+		return exp
+	}
+	out := int64(math.Round(float64(exp) * scale))
+	if out < 1 {
+		out = 1
+	}
+	return out
+}
+
 // applyPartyExpBonus scales a kill's experience by the engine's party
 // multiplier -- 1.0 plus 3% for every member past the first, recovered from the
 // FMUL 0.03 / FADD 1.0 pair in CGObjCOS_GoldPet::vslot_399. See
@@ -849,6 +883,7 @@ func performAttack(
 			if unit, ok := levelTable.KillExp(char.Level, monster.Level); ok {
 				gainedExp = unit
 			}
+			gainedExp = applyMasteryExpScale(ctx, skills, characterID, char.Level, gainedExp)
 			gainedExp = applyPartyExpBonus(parties, characterID, gainedExp)
 			// The skill economy's income. The game grants skill EXPERIENCE,
 			// carries it on the character and converts whole points out of the
