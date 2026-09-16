@@ -472,8 +472,16 @@ const hitCountCode = "28003"
 //
 //   - The Param block starts at column 69. Across every real skill row, the
 //     lowest column the literal ever appears at is 69, so nothing precedes the
-//     block: 0 of 31,605 rows carry it earlier.
+//     block: 0 rows carry it earlier.
 //   - No row carries it twice, so "first match" cannot pick the wrong one.
+//
+// RE-VALIDATED 2026-09-16 on the COMPLETE table. The figures above were
+// measured over 31,605 rows, which turned out to be a partial extraction --
+// only some skilldata shards were on disk at the time. Pulling all seven from
+// Media.pk2 gives **33,632 rows**, of which 30,064 carry 'att', and both claims
+// still hold exactly: 0 rows carry it before column 69, 0 rows carry it twice,
+// and the lowest column it ever appears at is 69. The first-match scan is safe
+// on the whole table, not just the part that happened to be extracted.
 //   - On the 19,839 rows whose Param block walks cleanly end to end under the
 //     recovered run lengths, the walk's 'att' position and this scan's first
 //     match agree 19,839 times and differ 0 times.

@@ -4926,3 +4926,56 @@ formatting differences would bury the 608 that matter.
 order became a deterministic rule with a diagnostic behind it, and the 608 real
 conflicts are now visible to whoever runs the import instead of being resolved
 silently.
+
+## skilldata is clean, and a previous validation had run on a partial table (2026-09-16)
+
+Last tick found the client's **itemdata** shards overlap — 6,224 duplicate ids,
+608 of them conflicting — and made the exporter deterministic about it. The
+obvious next question is whether skills have the same problem, since skill
+values drive combat. They do not, and finding that out turned up something else.
+
+**skilldata is clean.** All seven shards pulled from Media.pk2:
+
+	33,632 rows, uniformly 119 fields
+	33,632 distinct skill ids
+	0 ids appearing in more than one shard
+
+So the overlap problem is specific to itemdata. That is worth stating as a bound:
+the fix shipped last tick does not need a twin on the skill side, and a future
+reader should not go looking for one.
+
+**The skill column map is confirmed** against an anchor this project already
+records independently. `SKILL_CH_SWORD_SMASH_A_01` (id 3) carries the `att` run
+`(5, 143, 15, 18, 143, …)`, and `session`'s own test fixture asserts
+AttackPercent **143**, DamageMin **15**, DamageMax **18**. The exporter reads run
+positions 1, 2 and 3 — exactly those three.
+
+### The find: a validation measured on a partial extraction
+
+`attackParam` scans the whole row for the `att` literal rather than walking the
+Param block, and its comment justifies that with a measurement: the literal never
+appears before column 69 and never twice, "0 of **31,605** rows". That is a
+careful, well-made argument — and it ran on however many skilldata shards
+happened to be on disk at the time. Only `skilldata_5000.txt` was extracted when
+this tick started.
+
+Pulling all seven and re-running it:
+
+	rows scanned              33,632   (was 31,605 -- 2,027 rows unmeasured)
+	rows carrying 'att'       30,064
+	rows with 'att' before 69      0
+	rows carrying 'att' twice      0
+	lowest column it appears at   69
+
+**Both claims hold exactly on the complete table**, so the conclusion was right —
+but it was right on 94% of the data and stated as though it were all of it. The
+comment now says 33,632 and records why the figure moved.
+
+This is the same failure shape as the dump-gap work two ticks ago: a census is
+only as complete as the corpus it ran over, and the corpus is easy to assume.
+There the missing 17% was code Ghidra never recovered; here it was 6% of a table
+nobody had extracted.
+
+**What moved:** no value. skilldata proven free of the overlap that afflicts
+itemdata, the skill column map confirmed against an independent anchor, and a
+previous validation re-run on the full corpus with its numbers corrected.
