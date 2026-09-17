@@ -94,9 +94,12 @@ Two probes recur across several rows and are the highest-value targets left:
   field-by-field deserializer, and mapping its offsets to columns would unblock
   the packed reinforce rates in `alchemy.md` *and* the repair price basis in
   `durability.md`. One function, two rows. `client/tools/re/fields.py` reads
-  these deserializers mechanically but **accounts for only 47 of the 58 fields**
-  in the one function whose count is already known, so nothing is published from
-  it yet; explaining those eleven is the concrete next step.
+  these deserializers mechanically and is **validated** as of 2026-09-17 — it
+  returns exactly the 58 fields known for `_RefObjCommon`, with three anchors
+  landing — and gives `RefObjItem` 153 fields, 79 offsets resolved. The offsets
+  those two rows need are in the unresolved gap (`0x2a0..0x520`, written through
+  walking pointers), and `+0xa4` is written by two different `ExtractData`
+  functions, so which record it belongs to must be settled first.
 - **`AQ_Siege::FUN_006232c0` (11,816 bytes)** holds most of the fortress logic,
   including the dungeon caps and the structure-upgrade costs.
 

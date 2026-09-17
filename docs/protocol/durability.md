@@ -114,8 +114,14 @@ per-point price only in that direction. Nothing names either field.
   to a column means counting through 7,052 bytes of it. That single unread
   function now blocks two systems, which makes it the most valuable one left.
 
-  `client/tools/re/fields.py` is the start of doing it mechanically, and it is
-  **not yet trustworthy**: against the one function whose field count is already
-  known (`RefObjCommon_ExtractData`, 58) it accounts for 47. The eleven missing
-  fields are the gap to close, and `client/tools/re/README.md` says where the 47
-  come from.
+  `client/tools/re/fields.py` does it mechanically and is now **validated** —
+  it returns exactly the 58 fields known for `_RefObjCommon`, with three
+  independent anchors landing.
+
+  **It does not yet settle `+0xa4`, and there is a specific trap here.** That
+  offset is written by **both** `RefObjItem::ExtractData` and
+  `RefObjCommon_ExtractData`, so which record `item->[0x34]->[0x18]` points at
+  decides which function's field index applies. Taking either without settling
+  that would be the `characterdata` column-79 mistake a third time. The probe is
+  to identify the record, then resolve the walking-pointer stores in
+  `0x2a0..0x520`.

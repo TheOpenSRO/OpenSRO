@@ -136,14 +136,18 @@ columns 22, 23, 24" is **not** supported. Mapping offset to column means countin
 fields through 7,052 bytes of `ExtractData`, and that is this system's next
 probe.
 
-**Progress on it, 2026-09-17.** `client/tools/re/fields.py` now reads these
-deserializers mechanically — field index to struct offset, handling integer,
-float and walking-pointer stores and expanding short counted loops. It is **not
-yet trustworthy**: run against `RefObjCommon_ExtractData`, whose field count
-`docs/protocol/refobj_binary_format.md` already fixes at **58**, it accounts for
-only **47** (42 inline reads plus 5 `RefData_ReadStringField` calls). Until
-those eleven are explained, its output is a plausible field order and not a
-column mapping, so nothing from it is quoted here.
+**Progress on it, 2026-09-17.** `client/tools/re/fields.py` reads these
+deserializers mechanically and is now **validated**: it returns exactly the 58
+fields `docs/protocol/refobj_binary_format.md` fixes for `_RefObjCommon`, with
+three of that document's own anchors landing. It gives `RefObjItem::ExtractData`
+153 fields with 79 offsets resolved.
+
+**The offsets this page needs are still not among them.** Resolved offsets run
+to `+0x298` and resume at `+0x524`, and `0x2c0`/`0x2e0`/`0x300` sit in the gap —
+that region is written through walking pointers the tracker loses. The
+validation covers the field *count*, not the offsets, so nothing is quoted here
+yet. The probe is now narrow: resolve the walking-pointer stores in
+`0x2a0..0x520`.
 
 ### 2. The second element — `CEnchant_Reinforce::vslot_006`
 

@@ -11250,3 +11250,84 @@ is a graph and nothing else fits.
 PARTIAL with the inference named as its next probe, and srrevamp — which has no
 teleport system at all — now has three real tables to build one from.
 
+
+## The reference-record field scanner is validated (2026-09-17)
+
+**Tracker: 11 specified, 22 partial, 0 open, of 33.** The trailing number in the
+entry above this one is stale — eleven systems moved between it and this entry
+(Monster AI, alchemy, persistence, fortress war, guild, party, pets, academy,
+jobs, durability, timed jobs, battle arena), each with a spec under
+`docs/protocol/`, a Go package with tests, and names applied.
+
+### What was blocked
+
+`RefObjItem::ExtractData` (`0x006a3d50`, 7,052 bytes) is the single unread
+function standing between two shipped specs and a real number: the packed
+reinforce success rates in `alchemy.md` (`refRecord + (tier+21)*32`) and the
+repair price basis in `durability.md` (`refRecord + 0xa4`). Both say "the offset
+is read, the column is not".
+
+`client/tools/re/fields.py` reads these deserializers mechanically — they consume
+a record field by field from a cursor, bumping a column counter at `reader+0x28`
+for each — so walking in address order gives field index → struct offset.
+
+The previous tick shipped it **explicitly unvalidated**: against
+`RefObjCommon_ExtractData`, whose 58-field count `refobj_binary_format.md` fixes
+independently, it accounted for 47. The recorded next step was "explain eleven
+fields".
+
+### The eleven are explained, and the count now lands exactly
+
+	40  inline counter bumps outside any loop
+	 8  a 4-trip loop bumping twice per pass    -- the four requirement pairs
+	 4  RefData_ReadStringField calls outside a loop
+	 5  RefData_ReadStringField inside a 5-trip loop -- the five asset strings
+	 1  FUN_006b1a80, the schema-driven field skipper
+	--
+	58
+
+Six came from the requirement loop and five from the asset-string loop, both of
+which the scanner had been counting as single fields.
+
+**Three of the doc's own anchors land**, under one consistent convention (field
+N, 1-based = text column N−1): the requirement pairs at fields 33..40 against
+its columns 32..39, the asset strings at 53..57 against its 52..56, and field 58
+at `+0x184` against its "58th and last common field". Three anchors from a
+document written months earlier, agreeing with a scanner that knew nothing about
+them.
+
+### Three bugs, each of which produced a plausible wrong answer
+
+Worth recording because none of them failed loudly:
+
+1. **Loop trip counts.** A bump inside a loop executes once per iteration and
+   appears once in the instruction stream. Counting instructions gave 43.
+2. **Register-sourced trip counts.** The requirement loop sets its count with
+   `mov eax,0x4` … `mov [esp+0x1c],eax` rather than an immediate store. Missing
+   that form cost exactly six fields — 52 instead of 58.
+3. **Pass ordering.** Building the stack-slot counter map in a pass of its own
+   let a later `mov [esp+0x1c],ecx` (ecx = 1) overwrite the 4 the loop depends
+   on. The value that matters is the one live *at the branch*, so it is one
+   forward pass now.
+
+A fourth had been fixed the tick before: the reader register is not fixed —
+`esi` in `RefObjItem`, `edi` in `RefObjCommon` — and hardcoding one reported
+**zero** fields for the other.
+
+### Still not published, for two reasons
+
+`RefObjItem::ExtractData` returns **153 fields, 79 offsets resolved**. The
+validation covers the **count**, not the offsets, and two things block a column
+claim:
+
+- Resolved offsets run to `+0x298` and resume at `+0x524`. The gap holds exactly
+  what the two specs want, because that region is written through walking
+  pointers the tracker loses.
+- **`+0xa4` and `+0xa8` are written by both `RefObjItem::ExtractData` and
+  `RefObjCommon_ExtractData`.** Until it is settled which record
+  `item->[0x34]->[0x18]` actually points at, a column index taken from either is
+  a coin flip dressed as a recovery — the `characterdata` column-79 failure
+  exactly.
+
+So the next probe is narrow and stated: resolve the walking-pointer stores in
+`0x2a0..0x520`, and settle which record `+0xa4` belongs to.

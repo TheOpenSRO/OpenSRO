@@ -26,30 +26,60 @@ file fails even as root — delete first, or pipe through `cat` as above.
 **Do not rename `rebox.py` to `re.py`.** It shadows the standard library's `re`
 and nothing on the box will import.
 
-## `fields.py` — and why it is not finished
+## `fields.py` — validated 2026-09-17
 
 `fields.py <addr>` reads a sequential `ExtractData` deserializer and reports its
-field order: **field index → struct offset**, which is what a column layout
-needs. It handles the three store shapes that appear (integer, float, and float
-through a walking pointer), expands short counted loops so a bump inside one is
-counted per iteration rather than per instruction, and auto-detects which
-register holds the reader.
+**field index → struct offset**, which is what a column layout needs.
 
-**It does not yet reproduce a known answer, so nothing should be published from
-it.** `docs/protocol/refobj_binary_format.md` establishes that `_RefObjCommon`
-has **58** fields, the last at `+0x184`. The tool accounts for **47**:
+**It reproduces a known answer.** `docs/protocol/refobj_binary_format.md` fixes
+`_RefObjCommon` at 58 fields independently; the scanner returns exactly 58, and
+three of that document's own anchors land under one consistent convention
+(field N, 1-based = text column N−1):
 
-	42  inline reads it sees directly
-	 5  calls to RefData_ReadStringField, which bumps the counter inside the callee
+	fields 33..40  the four requirement pairs   (doc: columns 32..39)
+	fields 53..57  the five asset strings       (doc: columns 52..56)
+	field  58      +0x184, the last common field  (doc: "the 58th and last")
+
+The arithmetic that closes:
+
+	40  inline counter bumps outside any loop
+	 8  a 4-trip loop bumping twice per pass    -- the requirement pairs
+	 4  RefData_ReadStringField calls outside a loop
+	 5  RefData_ReadStringField inside a 5-trip loop -- the asset strings
+	 1  FUN_006b1a80, the schema-driven field skipper
 	--
-	47  of 58
+	58
 
-**Eleven fields are unaccounted for**, and closing that gap is the whole job.
-Until it closes, the tool's output for `RefObjItem::ExtractData` (62 fields, 39
-offsets resolved) is a plausible field order and **not** a column mapping, and
-using it would put un-validated offsets into two shipped specs.
+### Three bugs it had, each of which shifted every later index
 
-The reason this matters: `RefObjItem::ExtractData` is the single unread function
-blocking a real number in two places — the packed reinforce success rates in
-`docs/protocol/alchemy.md` and the repair price basis in
-`docs/protocol/durability.md`.
+Worth listing because each produced a *plausible* wrong answer rather than an
+obvious failure:
+
+1. **Loop trip counts.** A bump inside a loop executes once per iteration and
+   appears once in the instruction stream. Counting instructions gave 43.
+2. **Register-sourced trip counts.** The requirement loop sets its count with
+   `mov eax,0x4` … `mov [esp+0x1c],eax`, not an immediate store. Missing that
+   form cost exactly six fields — 52 instead of 58.
+3. **Pass ordering.** Building the stack-slot counter map in a separate pass let
+   a later `mov [esp+0x1c],ecx` (ecx = 1) overwrite the 4 the loop depends on.
+   The value that matters is the one live *at the loop's branch*, so it is one
+   forward pass now.
+
+### What it does and does not give you
+
+`RefObjItem::ExtractData` returns **153 fields, 79 offsets resolved**. The
+**count** is what the validation covers. The **offsets** are only as good as the
+register tracking, and two things are known to be unresolved:
+
+- Resolved offsets run to `+0x298` and resume at `+0x524`. The gap contains
+  exactly the offsets two specs want — the packed reinforce rates at
+  `+0x2c0/0x2e0/0x300` and the repair price basis at `+0xa4` — because that
+  region is written through walking pointers the tracker loses.
+- **`+0xa4` and `+0xa8` are written by BOTH `RefObjItem::ExtractData` and
+  `RefObjCommon_ExtractData`.** Until it is settled which record the pointer in
+  `item->[0x34]->[0x18]` actually is, a column index taken from either would be
+  a coin flip dressed as a recovery.
+
+So: no column mapping is published yet, and the next probe is narrow — resolve
+the walking-pointer stores in `0x2a0..0x520`, and settle which record `+0xa4`
+belongs to.
