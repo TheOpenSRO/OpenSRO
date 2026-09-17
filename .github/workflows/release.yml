@@ -16,7 +16,7 @@ on:
 jobs:
   release:
     name: Build & Release Client
-    runs-on: ubuntu-latest
+    runs-on: kakariko-runner
     permissions:
       contents: write
     steps:

@@ -9,7 +9,7 @@ on:
 jobs:
   server:
     name: Build & test server (Go)
-    runs-on: ubuntu-latest
+    runs-on: kakariko-runner
     defaults:
       run:
         working-directory: server
@@ -51,7 +51,7 @@ jobs:
 
   client:
     name: Validate client (Godot)
-    runs-on: ubuntu-latest
+    runs-on: kakariko-runner
     steps:
       - uses: actions/checkout@v5
       - name: Set up Godot
@@ -94,7 +94,7 @@ jobs:
 
   no-assets-check:
     name: Guard against committed pk2/game assets
-    runs-on: ubuntu-latest
+    runs-on: kakariko-runner
     steps:
       - uses: actions/checkout@v5
       - name: Fail if any pk2/original asset files are committed
