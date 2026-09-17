@@ -11715,3 +11715,64 @@ has no file because it is the shared prefix denormalised into `itemdata` and
 No value srrevamp computes with. What changed is that "77 unread" — a number
 that discouraged looking — became "51 readable, here are the filenames", which
 is a work queue.
+
+## Two open probes retired, one of them for the right reason (2026-09-17)
+
+Spent the tick on the census the goal actually asks for — *which values srrevamp
+ships that are still own design, and which of them a readable table or a code
+path could ground* — and two entries resolved.
+
+### `masteryUpCost` was already recovered; the tracker row was stale
+
+`SYSTEMS.md` said of Skills and masteries: *"mastery cost `masteryUpCost` is own
+design; find its use-site"*. Both halves are wrong. The use-site was found —
+`FUN_0059c4e0`, the mastery level-up handler, which walks the levels being raised
+and accumulates the level table's `entry+0x10` — and the value is real, served
+from leveldata's column 2 (1, 1, 2, 2, 4, 5, 6, 7, 9, 12 … 53 at level 20, 172 at
+32). Only the **no-table fallback** is own design.
+
+The row now says so, and points at what actually remains own design there:
+`DisclosedSkillDamagePerLevel`.
+
+This is the rot `internal/systems` exists to catch, and it is the half the test
+cannot catch: the checker verifies that an unfinished row *has* a next probe, not
+that the probe is still open. Worth knowing about the guard's limits.
+
+### Inventory's starting size: there is no write, so there is nothing to find
+
+`internal/inventory` explained its own-design `SlotsPerCharacter = 50` with
+*"nothing in the dump writes +0x1c2c — the write reaches it through a register —
+so the STARTING size is still unrecovered"*. That implies a write exists and the
+search fell short.
+
+Searching the **disassembly** rather than the decompiler's output shows there is
+no write at all:
+
+- All **ten** instructions referencing `+0x1c2c` are READS, in
+  `CGObjPC::ExpandInventory`, the trade and storage paths and four others.
+- **No `lea reg,[base+0x1c2c]`** exists, so nothing takes the field's address to
+  write through either.
+
+The live field is populated from the loaded `_CHAR` row; expansion is accounted
+for separately, by `AQ_StorageExpander` writing the persisted column at
+`charData+0xac`. So the starting value is set by whatever **creates** a
+character, and this binary does not: no `INSERT INTO _CHAR`, and no function body
+carries a character-creation string — `AQ_CharDataLoader` only loads an existing
+one.
+
+So 50 stays own design, but for a **different and better reason**: the number is
+not in `SR_GameServer.exe` to recover. The probe is retired rather than left
+open, which is worth more than the number would have been.
+
+One loose end is recorded rather than assumed: `_charnamelist` and
+`_KeepDelCharName` appear as strings in a separate all-lowercase run of table
+names this project has not explained. Nothing was found that uses them, and no
+claim is made about what they are for.
+
+### Also checked, and not the answer
+
+`_REFPRICEPOLICYOFITEM` is readable from the archive and was a candidate for
+grounding `shop`'s fallback formula — but `shop.go` already returns the real
+`Price`/`SellPrice` from itemdata, and the formula is only a fallback for an
+import predating those columns. Nothing to gain; recorded so the next tick does
+not re-open it.

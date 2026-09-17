@@ -27,9 +27,33 @@ import (
 //
 // The character's live size lives at `this + 0x1c2c` and persists as the _CHAR
 // column `InventorySize` at charData+0xac (CInstancePC::CharData_BindDBColumns).
-// Nothing in the dump writes +0x1c2c -- the write reaches it through a register
-// -- so the STARTING size is still unrecovered, which is why 50 stays own design
-// rather than being replaced by a number that merely looks plausible.
+//
+// WHY 50 STAYS OWN DESIGN, restated 2026-09-17 on better evidence. This note
+// used to say "the write reaches it through a register", implying a write
+// existed and had not been found. Searching the DISASSEMBLY rather than the
+// decompiler's output shows there is no such write:
+//
+//   - all ten instructions referencing `+0x1c2c` are READS
+//     (`mov reg, DWORD PTR [base+0x1c2c]`) -- in CGObjPC::ExpandInventory, the
+//     trade and storage paths, and four others;
+//   - no `lea reg,[base+0x1c2c]` exists, so nothing takes the field's address
+//     to write through either.
+//
+// The live field is populated from the loaded _CHAR row, and expansion is
+// accounted for separately: AQ_StorageExpander writes the persisted column at
+// charData+0xac. So the STARTING value is set by whatever CREATES a character,
+// and this binary does not -- it carries no `INSERT INTO _CHAR`, and no function
+// body holds a character-creation string (AQ_CharDataLoader only loads an
+// existing one).
+//
+// That RETIRES the probe rather than leaving it open: 50 is own design because
+// the number is not in SR_GameServer.exe to recover, not because the search
+// fell short.
+//
+// One loose end, recorded rather than assumed: `_charnamelist` and
+// `_KeepDelCharName` do appear as strings, in a separate all-lowercase run of
+// table names this project has not explained. Nothing was found that uses them,
+// and no claim is made about what they are for.
 const SlotsPerCharacter = 50
 
 // HOW TO READ THE BOUNDS BELOW: the engine counts the EQUIPMENT SLOTS inside

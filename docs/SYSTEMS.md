@@ -51,7 +51,7 @@ one cannot rot the same way without the build going red.
 | Reference-table catalogue | 85 tables | PARTIAL | docs/protocol/refdata_tables.md | ReferenceTables, ClientTextdata | the count is PROVEN complete, and **51 of the 85 are readable right now** from `Media.pk2` -- the mapping is `persistence.ClientTextdata`. The other 34 are server-only, 17 of them the loot tables, which is measured rather than assumed. Read a readable one when a value needs it |
 | Teleport network | 3 tables | PARTIAL | docs/protocol/teleport_network.md |  | cols 3/8/9 of teleportlink (cost, level range) are inferred; read the `_REFTELELINK` consumer at `0x0082d770` |
 | Berserk | 6 fns | PARTIAL | docs/protocol/param_registry.md | DamageNumerator, Duration, FillPerHit | the gauge fill rate; no probe known to exist (the magnitudes are DB rows) |
-| Skills and masteries | 20 fns | PARTIAL | docs/protocol/skill_params.md |  | mastery cost `masteryUpCost` is own design; find its use-site |
+| Skills and masteries | 20 fns | PARTIAL | docs/protocol/skill_params.md | MasteryUpCost, MasteryLevelCap | **the mastery-cost probe is DONE** (2026-09-17): `masteryUpCost` is real, from leveldata column 2, with its use-site at `FUN_0059c4e0` -- only the no-table fallback is own design. What remains is skill damage: `DisclosedSkillDamagePerLevel` is still own design |
 | Item stats and tooltips | 128 CRef | PARTIAL | docs/protocol/ITEM_FORMAT.md | ReinforceDamage | durability and plus-level columns unread |
 | Packet protocol | 11 | PARTIAL | docs/protocol/PACKET_FORMAT.md |  | opcode coverage vs the real space is unmeasured |
 | Shops and the goods chain | 4 | PARTIAL | docs/protocol/refdata_schema.md |  | repair and item durability |
