@@ -10554,3 +10554,50 @@ and `RENAMED`, which reads as two changes. It logs one.
 are unexamined. Some will be overloads, some defects; each needs its own
 evidence, which is why they are not batch-renamed here.
 
+## 2026-09-17 — the name-collision audit, closed
+
+Last tick left "~38 remaining two- and three-way collisions are unexamined" as
+an honest caveat. This closes it: **outside the template and CRT families there
+are 17 names over 42 functions, and every one is now classified.** No further
+renames are warranted.
+
+Each was classified from structure rather than by eye — address adjacency, size,
+and a fingerprint of the set of functions each body calls:
+
+| group | names | why it is not a defect |
+|---|---|---|
+| `AQ_StorageUpdater__Init` x10 | 1 | **was** a defect; fixed in v0.1.269. Still visible in the dump only because `rebuilt_dumps=0` — the Ghidra project has the new names |
+| adjacent, identical size, identical fingerprint | 4 | **MSVC adjustor thunks** for multiple inheritance — `IGObj::RaiseEvent`, and `CGObjCOS_Summoned::{ExpandInventory, IsAccomplishedCollectionBook_Theme, IsRegisteredCollectionBook_Item}`. Two entry points, one adjusting `this` |
+| 5-byte member of a pair | 1 | a `jmp` thunk — `Assert_BreakIfDebugger` at `005ecf60` (5 bytes) in front of `00964b60` (123) |
+| CRT | 3 | `_atol`, `_clearerr_s`, and `FID_conflict:__atoflt_l`, which is Ghidra's own marker rather than a name this project chose |
+| different arity or argument types | 6 | overloads — `CGObjCOS_Summoned::RaiseEvent`, `CGObjPC::ExpandInventory`, the three `CGStorage__*` pairs, the two `CGObjPC::*CollectionBook*` accessors |
+| `CGameWorld__SendMsgToGameWorldAllianceUser` x2 | 1 | **the engine's own ambiguity** — see below |
+
+### The one worth reading: the binary reuses a name
+
+`005ec900` and `005eca40` are both 299 bytes and byte-for-byte parallel except a
+single call — `FUN_004ea630` against `FUN_004ea580` — and **both carry the same
+log string**:
+
+	"CGameWorld::SendMsgToGameWorldAllianceUser() - Cant get client context from PC!!!"
+
+So the duplicate name came from the engine, not from this project: the developer
+copy-pasted the message into two near-identical broadcasters. The two 16-byte
+accessors that distinguish them both read the same pointer at PC `+0x1cbc` and
+tail-call different getters (`005e4390` against `005d0e90`), so the pair differs
+only in which id it filters recipients by.
+
+**No rename**: inventing two distinct names would replace the binary's own word
+with a guess about which is guild and which is alliance, and the accessors'
+return values were not read. Recorded instead so the next collision audit does
+not flag it again.
+
+*Small bonus:* PC `+0x1cbc` is a social-context pointer, and it is the same
+field `GObjPC::IsKilledByPlayer` gates on — which is why that function also
+calls `005e4390`.
+
+**Net: zero naming defects remain among the collisions.** The 323
+`CChunkAllocatorST__AllocItemBlock` functions and the CRT duplicates stay as
+they are, because a template instantiated per type genuinely does share one
+name.
+
