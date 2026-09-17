@@ -100,7 +100,15 @@ the engine really does compare all of it. Guild points are a dword at
 Unchanged from the earlier pass and recorded here for completeness: each member
 carries a 32-bit mask at `member->rec + 0x54`, tested by `FUN_005d0f80` with
 `(mask & required) == required` — **every** bit of the requested mask must be
-set. Three bits are named from the errors their call sites raise:
+set.
+
+**Its storage is now named too**: `_GUILDMEMBER.Permission`
+(`docs/protocol/db_columns.md`), beside `Contribution`, `GP_Donation`,
+`CharLevel`, `GuildWarKill`, `GuildWarKilled`, `Nickname` and `SiegeAuthority`.
+`SiegeAuthority` is a separate column from `Permission`, so the fortress-war
+rights the siege system checks are **not** bits of this mask.
+
+Three bits are named from the errors their call sites raise:
 
 | bit | gates | raised by |
 |---|---|---|

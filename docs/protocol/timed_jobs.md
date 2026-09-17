@@ -99,9 +99,16 @@ That is a design fact worth having before building a third ad-hoc timer.
 
 ## Not recovered
 
-- **What the thirteen non-timestamp columns are.** The getters are unnamed and
-  each kind overrides a different subset; reading them means reading twelve
-  classes.
+- **Which getter supplies which column.** The column NAMES are now in hand —
+  `_TIMEDJOB` introduces `Category`, `JobID`, `TimeToKeep`, `Data3`…`Data8` and
+  `JID` to the binary's schema pool (`docs/protocol/db_columns.md`), and
+  `TimeToKeep` is the obvious candidate for the single `%I64d`. What is still
+  unread is the mapping from those names to the fourteen getters at slots
+  25..38, which needs the twelve kinds' overrides read.
+
+  `_TIMEDJOBFORPET` introduces **no** names of its own, reusing `_TIMEDJOB`'s
+  entirely — which is consistent with the pet record being the character record
+  minus one field rather than a different shape.
 - **What the three pure virtuals do.**
 - **How a job fires.** The managers presumably poll, and nothing here says at
   what interval or through what.

@@ -128,6 +128,14 @@ limit are read from a structure rather than compared against a literal, so there
 is nothing to quote. That is the honest state: the *rules* are enumerated, the
 *numbers* are not.
 
+**The structure's fields are now named**, which narrows it. `_SiegeFortress`
+introduces `CreatedDungeonCount` and `CreatedDungeonTime` to the binary's schema
+pool (`docs/protocol/db_columns.md`), alongside `TaxRatio`, `Tax`, `NPCHired`,
+`TempGuildID`, `Introduction` and `IntroductionModificationPermission`. So the
+max-count check compares against a per-fortress **database column**, not a
+constant — which is why no literal was found, and means the cap is server
+configuration rather than a recoverable engine value.
+
 Entry also charges — the path can refuse with `0x280e`
 `ERROR_GUILD_LEVEL_UP_GP_DEFICIT` or `0x280f` `NOT_ENOUGH_MONEY`, so a dungeon
 entry costs both guild points and gold.

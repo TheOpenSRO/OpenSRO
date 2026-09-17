@@ -63,6 +63,12 @@ therefore names the constants by their values rather than by a role, and has a
 test that a later pass mapping them has to change the constants rather than
 quietly reinterpret them.
 
+**The field that distinguishes the roles is now named**:
+`_TRAININGCAMPMEMBER.MemberClass` (`docs/protocol/db_columns.md`). That is the
+column the two predicates almost certainly test — but "almost certainly" is not
+a reading, and the mapping from `MemberClass` values to the 41 and 61 branches
+is exactly what still has to be read.
+
 Note 61 sits one above the founder level of 60, which is suggestive and is not
 evidence.
 
@@ -88,7 +94,15 @@ from the other side, as one of the fifteen codes the `CEnchant` family returns.
 **The same code appears in both systems' vocabularies**, which is what a shared
 item category should look like.
 
-Nothing is recovered about how honour points are earned or what the ranks do.
+**The schema is now named**, which is not the same as knowing the rules:
+`_TRAININGCAMPMEMBER.HonorPoint`, `_TRAININGCAMP.Rank`, `.GraduateCount`,
+`.EvaluationPoint`, `.LatestEvaluationDate`, and `_TRAININGCAMPHONORRANK.Ranking`
+(`docs/protocol/db_columns.md`). So honour is a per-member point total feeding a
+per-camp rank, evaluated periodically — the shape of the economy, read off the
+column names.
+
+Nothing is recovered about how points are earned, what a rank grants, or what
+`EvaluationPoint` is scored on.
 
 ## The surface
 
@@ -106,7 +120,12 @@ correspondence is one-to-one and obvious.
 
 - Which membership branch is the master and which the apprentice.
 - The three 24-hour windows, as server-side values.
-- Honour points: how they are earned, what the ranks are, what they grant.
-- `CInstanceTrainingCampBuffStatus` — a camp confers a buff and nothing here
-  says what it is.
-- Any column layout, for any of the four tables.
+- Honour points: how they are earned, what a rank grants, what
+  `EvaluationPoint` is scored on. The columns are named; the rules are not.
+- `CInstanceTrainingCampBuffStatus` — a camp confers a buff. Its columns are
+  named (`RecipientCharID`, `BuffSlotIdx`, `DonorCharID`, `StartingTime`,
+  `RemainBuffPoint`, `BuffType`), so it is a **donated, expiring, slotted** buff
+  with a point budget; what the types are is unread.
+- A complete column list for any of the four tables. The binary's schema pool is
+  deduplicated, so it gives each table the names it **introduces**, not all it
+  uses — see `docs/protocol/db_columns.md`.

@@ -11470,3 +11470,71 @@ The scanner is a **linear pass with no control flow**. A register set on an
 untaken branch is still attributed afterwards, which is why the `+0x184` anchor
 cannot be recovered — field 58's store through `ebx` is real, but an earlier
 `mov ebx,esi` on a different path drops the tracker's identity for `ebx`.
+
+## The database column names are in the binary (2026-09-17)
+
+The recorded probe was the stream's per-column schema — the `(index, width)`
+records `FUN_006b1a80` walks — as the last route to a type-specific column
+index. Reading it produced something better than the index, and also closed the
+index question for good.
+
+### The record carries a NAME
+
+`Database::BuildStatement` (`0x009732f0`, newly named) builds `SELECT`,
+`INSERT`, `UPDATE` and `WHERE` from those records, so they must hold column
+names, and reading the loop gives the layout:
+
+| offset | what |
+|---|---|
+| `+0x04` | the column **name**, an SSO `std::string` |
+| `+0x24` | the column **width** |
+| `+0x2c` | an ODBC-reported value |
+| `+0x30` | the column **index** |
+| `+0x34` | a flag: `1` excludes the column from `INSERT` |
+
+### The index is runtime, the name is static
+
+`Database::BindTableSchema` (`0x00972b40`, newly named) binds a table by
+**name**: it fetches column metadata over ODBC, walks the records comparing each
+declared name against the ODBC one with `CompareStringA`, and on a match writes
+the **ODBC column index** into `+0x30`.
+
+So **the executable declares the names and the live database supplies the
+ordinals.** `ODBC32.dll` is imported by ordinal, 18 functions.
+
+That closes the question the last three ticks were circling from the other side:
+a static column index is not recoverable from the binary **because the binary
+does not have one**. It matches by name and takes whatever position the database
+reports. Both routes are now exhausted, and for a good reason rather than a
+missing technique.
+
+### The names themselves — 310 identifiers, 54 tables
+
+They sit in a contiguous, 4-byte-aligned string pool at `.rdata`
+**`0x00b11b08`–`0x00b12a70`**, extracted into `server/internal/persistence`
+(`ColumnPool`, `TableColumns`, `SchemaTableOrder`) with tests, and written up in
+`docs/protocol/db_columns.md`.
+
+**The pool is deduplicated** — each name appears once, at first use — so a table
+gets the names it *introduces*, not its full column list. `_TIMEDJOBFORPET` and
+`_INVENTORYFORAVATAR` introduce nothing at all, reusing `_TIMEDJOB`'s and
+`_INVENTORY`'s. That is stated wherever the list is used, and a test asserts the
+empty ones stay empty.
+
+### What it closes in four shipped specs
+
+| spec | was unrecovered | now named |
+|---|---|---|
+| `timed_jobs.md` | "what the thirteen non-timestamp columns are" | `Category`, `JobID`, `TimeToKeep`, `Data3`…`Data8`, `JID` |
+| `siege.md` | the dungeon caps, "read from a structure, not a literal" | `_SiegeFortress.CreatedDungeonCount` / `.CreatedDungeonTime` — so the cap is a per-fortress **database column**, i.e. server configuration, which is why no literal exists |
+| `academy.md` | which membership branch is the master role | `_TRAININGCAMPMEMBER.MemberClass` |
+| `academy.md` | the honour economy | `HonorPoint`, `Rank`, `GraduateCount`, `EvaluationPoint`, `LatestEvaluationDate`, `Ranking` |
+| `guild.md` | where the permission mask lives | `_GUILDMEMBER.Permission` — and `SiegeAuthority` is a **separate column**, so fortress rights are not bits of that mask |
+
+**These are names, not values.** Naming the field a cap is compared against is
+not knowing the cap, and every spec says so where it cites one. The siege entry
+is the most useful of the five precisely because it explains an absence: the
+number was never in the binary to find.
+
+`_CHAR`'s 42 introduced columns are the full character-persistence schema and
+are the most directly useful of the lot for srrevamp.
