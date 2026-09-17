@@ -13416,3 +13416,31 @@ change the constants deliberately; it is replaced by
 swap a "class 1 is the master" reading would have shipped.
 
 Suite verified unambiguously: `go test` exit 0, 52 packages, no FAIL lines.
+
+## The academy's "third branch" was a refusal (2026-09-17)
+
+Last tick left one branch of the invite routine unnamed: invitees of level 60 or
+more jump to `0x0051937f`, recorded as "a third branch, NOT read".
+
+**It is not a role.** The block is `push 0x3 ; call send(0xb472) ; ret`, and
+`00519305 ja 0x51937f` is its only entry. Invitees of 60+ are refused outright.
+The academy has exactly **two** invitable roles, student (≤ 39) and second
+guardian (40–59).
+
+Result `3` is generic: the same routine sends it when the target fails vtable
+slot `0x1c`, `IsPC`, so it means "cannot invite this character" rather than
+anything about level. Not a `TC_ERROR_` code, so it has no client name.
+
+**A boundary with both sides read.** The founder floor is 60 and the invite
+ceiling is 59: no level can both found and be invited, and none can do neither.
+Both constants were recovered independently, from `FUN_004e4680` and this
+routine, and `TestFounderFloorMeetsInviteCeiling` holds them together. That is a
+structural claim about two read numbers, not a claim about what the founder's
+role is. Whether "second" guardian implies the founder is the first is unread and
+stays unwritten.
+
+Recorded because it is the cheap version of an expensive mistake: leaving a
+branch as "a third role, unread" invites the next pass to go looking for a role
+that does not exist. Reading the branch took one disassembly.
+
+Suite verified unambiguously: `go test` exit 0, 52 packages, no FAIL lines.

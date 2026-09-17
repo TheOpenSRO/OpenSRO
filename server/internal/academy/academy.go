@@ -126,29 +126,45 @@ const (
 )
 
 // The invite handler assigns the role by the INVITEE's level (GetLevel, vtable
-// slot 0x124, on the target):
+// slot 0x124, on the target), and REFUSES anyone above the second-guardian band:
 //
 //	005192ce  cmp al,0x27 ; ja    ; <= 39 -> student, capped by MaxStudents
 //	00519303  cmp al,0x3b ; ja    ; 40..59 -> second guardian
-//	                              ; >= 60 -> a third branch, NOT read
+//	0051937f  push 0x3 ; call send(0xb472) ; ret   ; >= 60 -> REFUSED
 //
-// The >= 60 branch is left unnamed: its refusal was not read, so what role an
-// invitee of 60 or more takes is not recovered. The membership floors above sit
-// one level past each band's top (41 past 39, 61 past 59), which is suggestive
-// of those checks being about outgrowing the band -- and, per the correction
-// above, suggestive is not recovered.
+// CORRECTED 2026-09-17, same day. The previous version of this comment called
+// the >= 60 path "a third branch, NOT read" and left its role unnamed. It is not
+// a role at all: `00519305 ja 0x51937f` is the only way into that block, and the
+// block sends result 3 and returns. There are exactly two invitable roles.
+//
+// Result 3 is GENERIC, not level-specific: the same routine sends 3 when the
+// target fails vtable slot 0x1c -- IsPC, slot 7 -- i.e. is not a player. It is a
+// small integer rather than a TC_ERROR code, so the client's error dispatcher
+// has no name for it.
+//
+// A STRUCTURAL FACT, both halves read: the founder floor is 60
+// (MinFounderLevel, `GetLevel() < 0x3c`) and the invite ceiling is 59. The two
+// meet at one boundary -- a character is either old enough to found a camp or
+// young enough to be invited into one, never both. What role the founder holds,
+// and whether "second" guardian implies the founder is the first, is NOT read.
 const (
 	StudentMaxInviteLevel        = 39
 	SecondGuardianMaxInviteLevel = 59
+	// InviteMaxLevel is the highest level that can be invited at all.
+	InviteMaxLevel = SecondGuardianMaxInviteLevel
+	// InviteRefused is the result the invite handler sends on opcode 0xb472 for
+	// an invitee above InviteMaxLevel -- and for a target that is not a player.
+	InviteRefused = 3
 )
 
-// InviteRole is the role an invitee of the given level is invited into, and ok
-// is false for a level the read branches do not cover (60 and above).
+// InviteRole is the role an invitee of the given level is invited into. ok is
+// false when the engine refuses the invite outright, which it does for every
+// level above InviteMaxLevel (sending InviteRefused).
 func InviteRole(level int) (class int, ok bool) {
 	switch {
 	case level <= StudentMaxInviteLevel:
 		return MemberClassStudent, true
-	case level <= SecondGuardianMaxInviteLevel:
+	case level <= InviteMaxLevel:
 		return MemberClassSecondGuardian, true
 	}
 	return 0, false

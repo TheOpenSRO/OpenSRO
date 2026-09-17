@@ -101,24 +101,37 @@ membership check below reads: a student needs level ≥ 41, a second guardian
 |---:|---|---:|---:|---|
 | `2` | student | **5** | 41 | level ≤ 39 |
 | `1` | second guardian | **2** | 61 | level 40–59 |
+| — | *(not invitable)* | — | — | level ≥ 60: refused, result `3` |
 
 The caps are from assembly, `cmp eax,0x5 ; sbb ; add 1` and `cmp eax,0x2 ; sbb ;
 add 1`; Ghidra shows them as `4 < count` and `1 < count`, which means the same
 but hides the engine's constants.
 
-### The invite routine assigns the role by level
+### The invite routine assigns the role by level, and refuses 60+
 
 The routine that sends opcode `0xb472` branches on the **invitee's** level
 (`GetLevel`, vtable slot `0x124`):
 
-	005192ce  cmp al,0x27 ; ja    ; <= 39 -> student cap, STUDENT_COUNT_OVER
-	00519303  cmp al,0x3b ; ja    ; 40..59 -> second-guardian cap
-	                              ; >= 60 -> a third branch, NOT read
+	005192ce  cmp al,0x27 ; ja                     ; <= 39 -> student
+	00519303  cmp al,0x3b ; ja 0x51937f            ; 40..59 -> second guardian
+	0051937f  push 0x3 ; call send(0xb472) ; ret   ; >= 60 -> REFUSED
 
-What an invitee of 60 or more becomes is **not recovered**: that branch's refusal
-was not read. The membership floors sit one past each band's top — 41 past 39,
-61 past 59 — which suggests those checks concern outgrowing a band. That is
-recorded as suggestive and not as recovered, for the reason directly below.
+**Corrected the same day.** This section first called the `>= 60` path "a third
+branch, NOT read". It is not a role: `00519305 ja 0x51937f` is the only way in,
+and the block sends result `3` and returns. **There are exactly two invitable
+roles.**
+
+Result `3` is generic rather than level-specific: the same routine sends it when
+the target fails vtable slot `0x1c` (`IsPC`) — i.e. is not a player. It is a small
+integer, not a `TC_ERROR_` code, so the client's dispatcher has no name for it.
+
+**The founder floor and the invite ceiling meet at one boundary**, and both
+halves are read: founding needs level ≥ 60 (`GetLevel() < 0x3c` refuses) and
+invites stop at 59. A character is either old enough to found a camp or young
+enough to be invited into one — never both, never neither.
+`TestFounderFloorMeetsInviteCeiling` fails if either constant drifts. What role
+the founder holds, and whether "second" guardian means the founder is the first,
+is **not** read.
 
 ### A suggestive reading this page carried was wrong
 

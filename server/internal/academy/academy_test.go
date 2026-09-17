@@ -107,7 +107,7 @@ func TestInviteRoleByLevel(t *testing.T) {
 	}{
 		{1, MemberClassStudent, true}, {39, MemberClassStudent, true},
 		{40, MemberClassSecondGuardian, true}, {59, MemberClassSecondGuardian, true},
-		{60, 0, false}, {110, 0, false}, // the >= 60 branch is not read
+		{60, 0, false}, {110, 0, false}, // refused outright: `ja 0x51937f` sends 3
 	} {
 		class, ok := InviteRole(tc.level)
 		if class != tc.class || ok != tc.ok {
@@ -184,5 +184,18 @@ func TestMembershipLevelFloorByClass(t *testing.T) {
 func TestMembershipRefusalCode(t *testing.T) {
 	if ErrMembershipLevel != 0x6822 {
 		t.Errorf("ErrMembershipLevel = %#x, want 0x6822 (TC_ERROR_POSIBLE_41L)", ErrMembershipLevel)
+	}
+}
+
+// The founder floor and the invite ceiling are two separately read constants
+// that meet at one boundary: no level is both foundable and invitable, and none
+// is neither. If either drifts, this fails.
+func TestFounderFloorMeetsInviteCeiling(t *testing.T) {
+	if MinFounderLevel != InviteMaxLevel+1 {
+		t.Errorf("founder floor %d and invite ceiling %d do not meet: the engine "+
+			"refuses invitees above 59 and founders below 60", MinFounderLevel, InviteMaxLevel)
+	}
+	if InviteRefused != 3 {
+		t.Errorf("InviteRefused = %d, want 3 (pushed at 0x0051937f)", InviteRefused)
 	}
 }
