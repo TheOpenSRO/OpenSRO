@@ -64,6 +64,34 @@ The recipe, in `scratchpad/vt2.py` and `vt3.py`:
 Step 4 is the part that pays. `CAIState`'s base slot 3 is seven instructions and
 it explained the dwell timer for all sixteen states at once.
 
+## The second lever: `docs/protocol/error_codes.md` names 609 refusals
+
+Before deciding a system's error codes are anonymous, look here. It maps
+609 numeric codes to the client's own `UIIT_MSG_*` / `UIIT_STT_*` names,
+recovered from `UI_SILKMALL::FUN_007b8b40` — a 643-case switch whose message
+pointers Ghidra drops from the decompilation but which are plain in the
+disassembly.
+
+**This is how a server-side check gets its meaning for free.** A refusal path
+that returns `0x5408` is not "the third check"; it is
+`ONLY_EQUIPITEM_CAN_BE_REINFORCED`, which says what the virtual it calls asks.
+Three separate readings in the alchemy system were corrected this way, and one
+inferred reading — that the optional second element boosts the rate — was
+confirmed by the code's own name, `EQUIPCLASS_MISMATCH_PROB_UP`.
+
+The table's coverage by system, which is also a rough map of where the protocol
+is best documented:
+
+	FORT/FORTRESS 111   STRGERR 93   GUILD* 63   TC_ERROR 27
+	PARTY* 26           COS* 21      REINFORCERR 20   SKILL 18
+	FLEAMARKET 15       SOCKETERR 12
+
+**The failure this prevents, concretely.** `docs/protocol/alchemy.md` shipped in
+v0.1.285 saying "no string in either binary names them" about fifteen codes,
+fourteen of which were already in this file. The probe had searched only inside
+the CEnchant functions. An empty grep is a fact about the grep — and the cheapest
+second probe is usually a file this repository already has.
+
 ## Traps, each of which has cost real time
 
 **COMDAT folding — check the reference count before attaching a name.** The
@@ -108,6 +136,17 @@ for both an argument and a return value (`xor ebx,ebx` … `lea edi,[ebx+0x3]` �
 of 40 call sites; one that resolves `lea` recursively against a proven-zero base
 resolves 36. `scratchpad/ai7.py` has the working version — it walks back
 resolving each register, and bails on `call` or any other write to the target.
+
+**`pgrep -f <pattern>` over ssh matches its own command line**, exactly as
+`pkill -f` does — `AGENTS.md` warns about the `pkill` half and the `pgrep` half
+is the same bug with a worse symptom. A wait loop written as
+
+	while pgrep -f "DecompAll.java" >/dev/null; do sleep 20; done
+
+never exits: the ssh command that contains the loop also contains the string.
+It spins silently, so it looks like the thing being waited on is slow. Match on
+something the invocation does not contain, or split the literal — `"Dec""ompAll"`.
+Hit twice on 2026-09-17, the second time while cleaning up after the first.
 
 **The RE box's lock file always exists.** `re_tick.sh` uses `flock`, not a
 pidfile, so `/opt/srrevamp-re/lock` is present whether or not a tick is running.
