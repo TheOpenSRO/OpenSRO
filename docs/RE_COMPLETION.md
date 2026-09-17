@@ -14989,3 +14989,41 @@ question now: read which param ids `RefAbilityByItemOptLevel` rows carry. srreva
 `defenderArmor`, which sums armour across the equipped pieces, is structurally closer
 to the engine than the audit's "still disclosed" note implies — the audit row should be
 updated when that table is read, not before.
+
+## The tag dispatcher writes 27 params, and never the flat absorb (2026-09-17)
+
+Continuing the flat-`Defense` chain. `Stat_ApplyTaggedModifier` is the function whose
+own recovered comment calls it "the id->name TABLE the binary otherwise lacks", with 14
+tag->id pairs read from its equality branches. Two questions: can a tag write param 5,
+and what else is in the table.
+
+**It writes 27 distinct params and none of them is 5 or 6:**
+
+	1 2 3 4 9 10 11 12 25 26 27 28 29 30 31 32 52 53 56 57 128 129 130 174 175 176 177
+
+**And the tag path is magic options, not base item stats.** It has exactly three
+callers: `CAlchemyMagicOptionOP::vslot_003`, `CSetMagicOptionOP::vslot_003` and
+`FUN_00498160`. So the named-stat vocabulary ('str', 'int', 'hp', 'cri' …) is how an
+item's *blue* bonuses reach the character — which is why no tag carries a flat absorb.
+
+An item's **base** defence therefore still has to arrive through the per-item
+ParamKeeper entries that `RemoveParamKeeperItemEntry` documents, and which param id
+those carry is still unread. That is the one step left, and it is unchanged from last
+tick — this tick eliminated a candidate path rather than closing it.
+
+### Two more probe failures, and a lesson about over-engineering
+
+- **Every tag came out backwards.** A C multi-char literal `'hra'` is `0x687261`, so
+  it reads big-endian; decoding little-endian spelled it `arh`, and `'int'` became
+  `tni`. The tell was that the extraction agreed with **zero** of the 14 recorded
+  pairs while producing their exact ids — impossible unless the spelling was wrong.
+- **The tree walk never finished.** MSVC compares these literals with a binary search
+  tree that also carries a `sub eax,K` accumulator, so I wrote a walker that tracked
+  the accumulated subtraction per path. It exploded combinatorially and was killed.
+
+The second one is the lesson. The question was "can a tag write param 5", and that
+needed only *the set of ids this function writes* — a linear scan that ran in seconds
+and answered it exactly. Reconstructing the whole tree was answering a question nobody
+had asked, and it cost the tick's remaining time. The 27 ids above are what the cheap
+query produced; mapping each back to its tag is the expensive part, and it is only
+worth paying when a tag is what is actually needed.
