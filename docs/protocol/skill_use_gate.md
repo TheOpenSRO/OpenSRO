@@ -80,6 +80,45 @@ not known to be the engine's order when it was written. Nothing changed; it is
 recorded because "we happen to agree" and "we match a read" are different
 claims and only the second is worth anything.
 
+
+## The fields it reads, named (2026-09-17)
+
+The gate reads **15 distinct `CRefSkill` fields** through `esi`; 14 now have
+names, from `docs/protocol/skill_fields.md`.
+
+| param | offset |
+|---|---|
+| `ao` | `0x274` |
+| `?` | `0x294` |
+| `cnsm` | `0x2a0` |
+| `pw` | `0x2b4` |
+| `rpkt` | `0x2cc` |
+| `tele` | `0x2ec` |
+| `tel2` | `0x2f0` |
+| `tel3` | `0x2f4` |
+| `lnks` | `0x370` |
+| `reqc` | `0x39c` |
+| `hide` | `0x428` |
+| `qest` | `0x49c` |
+| `trap` | `0x4a0` |
+| `msch` | `0x4a4` |
+| `nmf` | `0x594` |
+
+`0x294` is the one still unnamed. `+0x428`, noted below as unnamed, is read
+through a different register in this function and so is not in this scan either.
+
+**These are param names, not explanations.** Knowing `+0x4a4` is `msch` says
+which skilldata parameter fills the field the `EU_BAN_HAWN_TRANS` branch tests;
+it does not say what the branch means. The rows in the ladder above are still
+described by the shape of their test, and that is the honest level of claim.
+
+Several names are suggestive in ways that must NOT be promoted without checking
+which offset each row actually reads: `hide`, `trap`, `tele`/`tel2`/`tel3` and
+`cnsm` all appear in this set, and the ladder has stealth, trap-placement,
+teleport and ammunition rows. Matching them up by theme is exactly the inference
+this project has been wrong with before. The join needs the offset, not the
+vibe.
+
 ## What is not recovered
 
 - **PARTLY CLOSED 2026-09-17.** Three of the five field names are now recovered

@@ -12825,3 +12825,61 @@ been wrong about exactly that once: `att` was listed as list-valued yesterday
 when it was a filter bug.
 
 Nothing srrevamp uses changed, so nothing was wired; `go test -p 1 ./...` green.
+
+## The damage resolution reads 37 named skill params; srrevamp models one (2026-09-17)
+
+Three ticks went into the `CRefSkill` field map. This is what it was for.
+
+### The inventory
+
+`Combat_ResolveDamage` reads **38 distinct `CRefSkill` fields** through `ebx`,
+and **37 now have names** — up from 19 before the map became a bijection. The
+skill-use gate reads 15 and **14 are named**.
+
+`ebx` being a `CRefSkill` is established independently (loaded as `[arg2+8]`, and
+the base of `+0x230` `att` and `+0x234` `pdmg`), which is the whole reason this
+scan is valid where the whole-binary version is not: an offset does not identify
+an object type, and the unconstrained scan matches 1,456 functions, mostly quest
+handlers.
+
+Both lists are now in `damage_pipeline.md` and `skill_use_gate.md`.
+
+### The number that matters
+
+**srrevamp models one of the 37**: `att`, plus the mastery scale wired two ticks
+ago. The other 36 are read by the engine and not by this project.
+
+That is a measurement of scope rather than a defect list — most have no source
+srrevamp can reach. But it is worth having, because *"srrevamp implements the
+damage pipeline"* and *"srrevamp implements one of the pipeline's 37 inputs"* are
+very different claims, and until this tick nothing in the project could tell them
+apart. `damage_pipeline.md` reads as a fairly complete recovery; the input count
+is the thing that puts it in proportion.
+
+`da` is read **ten times**, more than any other field — more than `att` (6) or
+`pdmg` (5). A page that describes the pipeline stage by stage and mentions `da`
+once, at stage 12, is not wrong, but it is not weighted like the code.
+
+### A temptation declined
+
+The gate's newly-named fields include `hide`, `trap`, `tele`/`tel2`/`tel3` and
+`cnsm`; its refusal ladder has stealth, trap-placement, teleport and ammunition
+rows. Matching them up by theme would take about a minute and would look
+convincing.
+
+Not done, and recorded as not done. This project has twice promoted a meaning on
+a resemblance (characterdata col 79) and once invented a mechanic to explain a
+register allocation (the "reverse exchange" in `Formula_SkillPhysDamage`). The
+join needs the offset each row actually tests, which is a separate read. What
+shipped is the field list; the row-to-param join is an open item, stated as one.
+
+### And a cwd bug caught by an implausible answer
+
+A check for which params `skill_params.md` decodes returned **zero** — run from
+`server/` against a relative `docs/` path that does not exist there. Zero of 37
+being documented was implausible enough to re-check; the real answer is 36. The
+recorded trap in this project is "`cd server && …` fails when cwd is already
+`server/`"; this is the same trap from the other side, where the command
+succeeds and silently answers about nothing.
+
+Nothing srrevamp uses changed, so nothing was wired; `go test -p 1 ./...` green.

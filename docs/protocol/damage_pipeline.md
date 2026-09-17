@@ -99,6 +99,64 @@ biased by 20, 5 in the guild fullness predicate is `MaxLevel`. These four sites
 were the largest thing the audit found that **nothing claimed**, sitting in the
 one function srrevamp reimplements most closely.
 
+## The damage resolution's full input list (2026-09-17)
+
+`Combat_ResolveDamage` reads **38 distinct `CRefSkill` fields** through `ebx`,
+and 37 of them now have names. This is the complete set of skill parameters the
+engine consults to resolve one blow.
+
+`ebx` is provably a `CRefSkill` here — it is loaded as `[arg2+8]` in the
+prologue and is the base of `+0x230` (`att`) and `+0x234` (`pdmg`), both
+independently confirmed. That matters, because an offset alone does NOT identify
+an object type: scanning the whole server for reads in this offset range matches
+1,456 functions, most of them quest and event handlers with unrelated structs.
+See `docs/protocol/skill_fields.md`.
+
+| param | offset | reads | | param | offset | reads |
+|---|---|---:|---|---|---|---:|
+| `att` | `0x230` | 6 | `dttp` | `0x424` | 1 |
+| `pdmg` | `0x234` | 5 | `se` | `0x430` | 1 |
+| `pdm2` | `0x238` | 5 | `rt` | `0x434` | 1 |
+| `da` | `0x240` | 10 | `sl` | `0x438` | 1 |
+| `cr` | `0x244` | 2 | `fe` | `0x43c` | 1 |
+| `ck` | `0x248` | 1 | `my` | `0x440` | 1 |
+| `mc` | `0x288` | 1 | `bl` | `0x444` | 1 |
+| `?` | `0x28c` | 1 | `dn` | `0x44c` | 1 |
+| `fz` | `0x30c` | 1 | `st` | `0x450` | 1 |
+| `fb` | `0x310` | 1 | `ds` | `0x454` | 1 |
+| `es` | `0x314` | 1 | `ca` | `0x458` | 1 |
+| `bu` | `0x318` | 1 | `cssr` | `0x45c` | 1 |
+| `ps` | `0x31c` | 1 | `csit` | `0x460` | 1 |
+| `zb` | `0x320` | 1 | `cspd` | `0x464` | 1 |
+| `atca` | `0x3bc` | 2 | `csmd` | `0x468` | 1 |
+| `tant` | `0x3c8` | 1 | `cshp` | `0x46c` | 1 |
+| `tnt2` | `0x3cc` | 1 | `csmp` | `0x470` | 1 |
+| `dtnt` | `0x3d0` | 2 | `tb` | `0x474` | 1 |
+| `lfst` | `0x400` | 3 | `SAAA` | `0x538` | 2 |
+
+`0x28c` is the one field still unnamed — `reqi` and `getv` are the codes the
+extractor cannot place, and one of them may own it.
+
+### What srrevamp models of this
+
+**One.** `att` — its percentage, minimum and maximum — plus the mastery scale
+that multiplies the roll (stage 1). The other 36 are read by the engine and not
+by srrevamp.
+
+That is a measurement of scope, not a defect list. Most of these have no source
+srrevamp can reach: they are consumed as pointers into a Param stream this
+project reads only through the client's `skilldata_*.txt`, and
+`docs/protocol/skill_params.md` decodes the *meaning* of a subset. Recording the
+count matters because "srrevamp implements the damage pipeline" and "srrevamp
+implements one of the pipeline's 37 inputs" are very different claims, and until
+now nothing in this project could tell them apart.
+
+The ones worth wanting, because the pipeline pages already reference them:
+`pdmg` and `pdm2` (the physical damage params, stage 1's siblings), `da` (the
+conditional damage percentage, read ten times — more than any other field),
+`dtnt`/`tant`/`tnt2` (the target filters), and `lfst`, which selects the
+alternate damage formula `FUN_0040f750`.
+
 ## The constants
 
 | VA | value | used for |
