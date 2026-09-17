@@ -384,12 +384,18 @@ func TestClass0GatesAreInverse(t *testing.T) {
 	}
 }
 
-// The founding cooldown is 7 because the engine names its refusal NOT_OPEN_7D,
-// NOT because FUN_004114d0's second argument is 7. That argument is an id: the
-// same helper is called with id 8 for NOT_INVITE_24T and id 9 for
-// NOT_ENTRY_24T, and 24 hours is neither 8 nor 9 days. If a later pass wants to
-// ground the length, it has to read where the entry is created.
-func TestReopenCooldownRestsOnTheRefusalName(t *testing.T) {
+// The founding cooldown is 7 because the penalty CTJ_PenaltyKeeper::Create
+// builds for id 7 is 604,800 seconds -- NOT because FUN_004114d0's second
+// argument is 7. That argument is an id: the same helper takes id 8 for
+// NOT_INVITE_24T and id 9 for NOT_ENTRY_24T, and 24 hours is neither 8 nor 9
+// days. The value was right through two wrong readings; this test pins it to
+// the one that is read.
+func TestReopenCooldownComesFromThePenalty(t *testing.T) {
+	sec, ok := PenaltySeconds(PenaltyIDOpen)
+	if !ok || sec != ReopenCooldownDays*24*3600 {
+		t.Errorf("penalty id %d lasts %d s (ok=%v), but ReopenCooldownDays says %d days (%d s)",
+			PenaltyIDOpen, sec, ok, ReopenCooldownDays, ReopenCooldownDays*24*3600)
+	}
 	if ReopenCooldownDays != 7 {
 		t.Errorf("ReopenCooldownDays = %d, want 7 (TC_ERROR_NOT_OPEN_7D)", ReopenCooldownDays)
 	}
@@ -401,5 +407,55 @@ func TestReopenCooldownRestsOnTheRefusalName(t *testing.T) {
 		t.Logf("the two 7-day windows have drifted apart: disband %d s, reopen %d d. "+
 			"That is allowed -- they are separate mechanisms -- but check it was meant",
 			DisbandWindowSeconds, ReopenCooldownDays)
+	}
+}
+
+// The durations read from CTJ_PenaltyKeeper::Create's jump table.
+func TestPenaltyDurations(t *testing.T) {
+	for _, tc := range []struct {
+		id, want int
+	}{
+		{PenaltyIDOpen, 604800},
+		{PenaltyIDInvite, 86400},
+		{PenaltyIDEnter, 86400},
+		{PenaltyIDEnter3D, 259200},
+	} {
+		got, ok := PenaltySeconds(tc.id)
+		if !ok || got != tc.want {
+			t.Errorf("PenaltySeconds(%d) = (%d, %v), want (%d, true)", tc.id, got, ok, tc.want)
+		}
+	}
+	// Ids this package has not read must say so rather than answer 0.
+	for _, id := range []int{0, 1, 2, 3, 4, 5, 6, 11} {
+		if _, ok := PenaltySeconds(id); ok {
+			t.Errorf("PenaltySeconds(%d) claims to know an id the academy does not check", id)
+		}
+	}
+}
+
+// The trap this table exists to stop: both entry penalties refuse with the
+// message named NOT_ENTRY_24T, and they are not the same length. A window read
+// off an engine string's name would be wrong for one of them.
+func TestBothEntryPenaltiesShareAMessageButNotALength(t *testing.T) {
+	short, _ := PenaltySeconds(PenaltyIDEnter)
+	long, _ := PenaltySeconds(PenaltyIDEnter3D)
+	if short == long {
+		t.Errorf("both entry penalties are %d s; the jump table has them at 86400 and 259200", short)
+	}
+	if short != 24*3600 {
+		t.Errorf("the 24T-named penalty is %d s, which is not 24 hours", short)
+	}
+	if long != 3*24*3600 {
+		t.Errorf("the second entry penalty is %d s, which is not 3 days", long)
+	}
+}
+
+// Invite and entry are both a day, from one shared block in that switch.
+func TestInviteAndEntryShareTheirLength(t *testing.T) {
+	inv, _ := PenaltySeconds(PenaltyIDInvite)
+	ent, _ := PenaltySeconds(PenaltyIDEnter)
+	if inv != ent || inv != MemberWindowSeconds {
+		t.Errorf("invite %d s, entry %d s, ban/leave %d s: case 8 and case 9 are one block "+
+			"at 0x00651c81 and 86400 is also the ban/leave window", inv, ent, MemberWindowSeconds)
 	}
 }

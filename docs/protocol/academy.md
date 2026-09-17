@@ -363,28 +363,28 @@ binary was checked for a preceding `mov ecx,<imm>`; only three sites load a lite
 attributed 86,400 to ban alone, because leave calls `0x005dd490`, five bytes that
 jump to it.
 
-### Invite and entry are not clock arithmetic at all
+### Invite and entry are not clock arithmetic at the check
 
 	4e4862  push 0x8 ; push 0x2 ; lea eax,[esi+0x1dfc] ; call 0x411440   -> 0x681f NOT_INVITE_24T
 	4e48d1  push 0x9 ; push 0x2 ; lea edi,[esi+0x1dfc] ; call 0x411440   -> 0x681e NOT_ENTRY_24T
+	4e48f3  push 0xa ; push 0x2 ;                        call 0x411440   -> 0x681e as well
 	        (founding: FUN_004114d0(2, 7)                                -> 0x681c NOT_OPEN_7D)
 
 `0x411440` walks a **per-character list at `+0x1dfc`** and matches each entry on a
 category byte (vtable slot `0x68`) and an id (slot `0x6c`); `0x4114d0` is its twin,
 returning the entry instead of a flag. **Their durations are set where the entries
-are created, not where they are checked**, which is why no literal is visible at the
-check.
+are created**, which is why no literal is visible at any check.
 
-#### This corrects a recorded fact: the founding cooldown's "7"
+#### This corrected a recorded fact, and then grounded it again
 
 Every call site of both helpers, with the two pushed arguments:
 
 | category | id | refuses with | in |
 |---:|---:|---|---|
 | 2 | 7 | `TC_ERROR_NOT_OPEN_7D` | `CInstanceTrainingCamp::CheckCanCreate` |
-| 2 | 8 | `TC_ERROR_NOT_INVITE_24T` | `0x004e4800`, `0x004e4950` |
-| 2 | 9 | `TC_ERROR_NOT_ENTRY_24T` | `0x004e4890`, `0x004e4aa0` |
-| 2 | 10 | — (checked beside id 9) | `0x004e4890`, `0x004e4aa0` |
+| 2 | 8 | `TC_ERROR_NOT_INVITE_24T` | `TrainingCamp_CheckCanInvite`, `0x004e4950` |
+| 2 | 9 | `TC_ERROR_NOT_ENTRY_24T` | `TrainingCamp_CheckCanEnter`, `0x004e4aa0` |
+| 2 | 10 | `TC_ERROR_NOT_ENTRY_24T` | the same two, one branch later |
 | 2 | 2 | — | `CInstanceCharTrijob::HandleJoinJobGuild` |
 | 2 | 1 | — | `0x00514b20`, `0x00514c40` |
 | 7 | 0 | — | `GObjPC::FUN_006185f0` |
@@ -393,14 +393,50 @@ Every call site of both helpers, with the two pushed arguments:
 "the literal 7 is the second argument, and the error name carries the same number".
 **The second argument is an id.** If it were a day count, invite would be 8 days and
 entry 9 days, and both of those refusals say 24 hours; the same category also serves
-the job guild with ids 1 and 2. The agreement was a coincidence.
+the job guild with ids 1 and 2. That agreement was a coincidence, and the citation
+was withdrawn.
 
-`ReopenCooldownDays = 7` stays, because `NOT_OPEN_**7D**` is the engine's own name
-for the refusal — but it is **disclosed from the name**, not grounded in a read
-comparison.
+### Where the entries are created, with their real lengths
 
-Nearby, `CTJ_PenaltyKeeper::Create` holds a 259,200-second (3-day) literal and five
-computed spans, which is the shape of the thing that creates these entries. Not read.
+`CTJ_PenaltyKeeper::Create` (`0x00651b20`) switches on **the same id** (slot `0x6c`)
+and builds the span. Read from the jump table at `0x00651d00`, because block order is
+not evidence:
+
+| case | block | span | the academy's window |
+|---:|---|---|---|
+| 7 | `0x00651c5b` | `mov ecx,0x93a80` → 604,800 s | **open: 7 days** |
+| 8, 9 | `0x00651c81` | `mov ecx,0x15180` → 86,400 s | **invite and entry: 24 hours** |
+| 10 | `0x00651ca3` | `mov ecx,0x3f480` → 259,200 s | **a second entry block: 3 days** |
+| 1 | `0x00651bb7` | `span(days=3)` | the job guild's |
+| 2 | `0x00651bed` | `span(days=7)` | the job guild's |
+| 3, 4, 5 | `0x00651c23` | `span(seconds=vt+0x70())` | data-driven, unread |
+
+So all three academy windows are now **read**, and the founding cooldown's 7 is
+grounded a third time — on the duration, not on the id and not on the name. The value
+never changed; two of the three readings that reached it were wrong.
+
+**A player can be told the wrong number.** Ids 9 and 10 both refuse with the string
+named `NOT_ENTRY_**24T**`, and id 10's penalty lasts **three days**. Anyone reading a
+window off an engine string's name has a one-in-two chance here.
+
+**Following jumps is what completes the table.** A backward scan by address finds only
+the 259,200: cases 7, 8 and 9 reach the shared tail by `jmp`. The first sweep reported
+"3 literal sites in the binary" and the real count at this one call site is three.
+
+### The two invite-side checks
+
+	TrainingCamp_CheckCanInvite (0x004e4800), on the INVITER, from 0x00519262
+	  state -> 0x6808 ; !alive -> 0x6807 ; no camp -> 3
+	  not class 0 -> 0x6816          <- only class 0 may invite
+	  target is self -> 3
+	  penalty (2, 8) -> 0x681f NOT_INVITE_24T
+
+	TrainingCamp_CheckCanEnter (0x004e4890), on the TARGET, from 0x0051932f
+	  two state bytes at [char+0x30]+4/+6 -> 0x6806 ; !alive -> 3
+	  penalty (2, 9) -> 0x681e ; penalty (2, 10) -> 0x681e
+	  target's camp == inviter's -> 0x680f ALREADY_ENTRY, else 0x6812 OTHER_ENTRY
+
+That last pair is one expression: `sbb eax,eax ; and eax,3 ; add eax,0x680f`.
 
 ## Ban and leave, read in full (2026-09-17)
 

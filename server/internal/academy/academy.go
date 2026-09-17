@@ -55,33 +55,77 @@ const (
 	// gold is read as 64-bit at +0x78 / +0x7c.
 	FoundingGold = 100_000
 
-	// ReopenCooldownDays is 7, and **it rests on the refusal's name alone**.
+	// ReopenCooldownDays is 7, now read from the penalty's own duration:
+	// PenaltySeconds(PenaltyIDOpen) is 604,800. It stays a constant (a const
+	// cannot call a function), and TestReopenCooldownComesFromThePenalty holds
+	// the two together.
 	//
-	// CORRECTED 2026-09-17. This comment used to tie it to the literal: "the
-	// check is FUN_004114d0(2, 7) ... the literal 7 is the second argument, and
-	// the error name carries the same number, which is what ties the two
-	// together." Reading FUN_004114d0 and every call site of it and its twin
-	// FUN_00411440 shows the second argument is an **id**, not a duration:
+	// TWICE CORRECTED, both on 2026-09-17, and the trail is the point.
+	// This comment first said the value was grounded because "the literal 7 is
+	// the second argument [of FUN_004114d0(2, 7)], and the error name carries
+	// the same number". That was wrong: the second argument is an **id**, and
+	// the same helper is called with id 8 for NOT_INVITE_24T and id 9 for
+	// NOT_ENTRY_24T, neither of which is a day count. The citation was
+	// withdrawn and the value kept, disclosed from the engine's own
+	// NOT_OPEN_7D.
 	//
-	//	FUN_00411440/4114d0 walk a per-character list at +0x1dfc and match each
-	//	entry on a category byte (vtable slot 0x68) and an id (slot 0x6c).
-	//
-	//	category 2, id 7   -> TC_ERROR_NOT_OPEN_7D     (founding)
-	//	category 2, id 8   -> TC_ERROR_NOT_INVITE_24T  (0x004e4862)
-	//	category 2, id 9   -> TC_ERROR_NOT_ENTRY_24T   (0x004e48d1)
-	//	category 2, id 10  -> checked beside id 9, unread
-	//	category 2, ids 1, 2 -> the JOB GUILD's own checks (0x00514b20, 0x005121fe)
-	//
-	// If the id were a day count, invite would be 8 days and entry 9 days, and
-	// both names say 24 hours. The same category also serves another system
-	// with ids 1 and 2. So 7 agreeing with "7D" was a coincidence.
-	//
-	// The value stays 7 because the engine's own refusal is named
-	// NOT_OPEN_**7D**, which is a fact about the engine's vocabulary. It is
-	// disclosed on that basis, not grounded in a read comparison. The length
-	// lives wherever these entries are created, which is not read.
+	// Then the place where those entries are CREATED was read, and id 7's
+	// duration is 604,800 seconds. The value was right, both readings that
+	// reached it were wrong, and it is now grounded on the third.
 	ReopenCooldownDays = 7
 )
+
+// The timed penalties the academy checks. A character carries a list at
+// +0x1dfc; FUN_00411440 and FUN_004114d0 walk it and match an entry on a
+// category byte (vtable slot 0x68) and an id (slot 0x6c). Each check site
+// refuses when its entry is present:
+//
+//	id 7  -> TC_ERROR_NOT_OPEN_7D      CInstanceTrainingCamp::CheckCanCreate
+//	id 8  -> TC_ERROR_NOT_INVITE_24T   TrainingCamp_CheckCanInvite (the INVITER)
+//	id 9  -> TC_ERROR_NOT_ENTRY_24T    TrainingCamp_CheckCanEnter  (the TARGET)
+//	id 10 -> TC_ERROR_NOT_ENTRY_24T    the same check, the branch straight after
+//
+// The durations are set where the entries are created, not where they are
+// checked, which is why no literal is visible at any check. CTJ_PenaltyKeeper::
+// Create switches on the same id (slot 0x6c) and builds each span. Read from the
+// jump table at 0x00651d00 rather than from block order:
+//
+//	case 7      0x00651c5b  mov ecx,0x93a80   604800 s
+//	case 8, 9   0x00651c81  mov ecx,0x15180    86400 s   (one block, both ids)
+//	case 10     0x00651ca3  mov ecx,0x3f480   259200 s
+//	case 1      0x00651bb7  span(days=3)                 the JOB GUILD's, not ours
+//	case 2      0x00651bed  span(days=7)                 likewise
+//	case 3,4,5  0x00651c23  span(seconds=vt+0x70())      data-driven, unread
+//
+// A backward scan by address finds only the 259,200: cases 7, 8 and 9 reach the
+// shared tail by `jmp`. Following jumps is what makes the table complete.
+const (
+	// PenaltyCategory is the category byte all four academy entries carry.
+	PenaltyCategory  = 2
+	PenaltyIDOpen    = 7
+	PenaltyIDInvite  = 8
+	PenaltyIDEnter   = 9
+	PenaltyIDEnter3D = 10
+)
+
+// PenaltySeconds is how long each academy penalty lasts, from
+// CTJ_PenaltyKeeper::Create. ok is false for an id this package has not read.
+//
+// NOTE the last row. Both entry penalties refuse with the message named
+// NOT_ENTRY_**24T**, and one of them lasts three days. A player told "24 hours"
+// by that string may be waiting three times as long. Anyone tempted to take a
+// window from an engine string's name should read this row first.
+func PenaltySeconds(id int) (seconds int, ok bool) {
+	switch id {
+	case PenaltyIDOpen:
+		return 604800, true // 7 days
+	case PenaltyIDInvite, PenaltyIDEnter:
+		return 86400, true // 24 hours
+	case PenaltyIDEnter3D:
+		return 259200, true // 3 days
+	}
+	return 0, false
+}
 
 // The two level thresholds in FUN_00519770's membership check
 // (CInstanceTrainingCamp::CheckMembershipLevel), which refuses with

@@ -14172,3 +14172,58 @@ evidence. If that holds for each, the read class is the better owner and these s
 be `force` rows. **It is not yet checked per function**, and "looks like an
 attribution" is not evidence, so nothing is changed. The check is cheap: each
 function's own comment says whether its owner was inferred from callers.
+
+## The academy's three windows, read where the penalties are created (2026-09-17)
+
+Last tick retracted the founding cooldown's citation: the "7" in `FUN_004114d0(2, 7)`
+is an **id**, not a duration, since the same helper takes id 8 for a 24-hour invite
+refusal and id 9 for a 24-hour entry refusal. That left three windows disclosed from
+their names. This tick read the place the entries are created, and all three are now
+grounded.
+
+`CTJ_PenaltyKeeper::Create` switches on the same id the check sites match on and
+builds each span. Bound through the **jump table at `0x00651d00`**, not block order:
+
+	case 7      604,800 s   open      matches NOT_OPEN_7D
+	case 8, 9    86,400 s   invite, entry (one shared block)
+	case 10     259,200 s   a second entry penalty
+	case 1, 2   span(days=3), span(days=7)   the job guild's, not the academy's
+	case 3,4,5  span(seconds = vt+0x70())    data-driven, unread
+
+**The founding cooldown's 7 is now grounded on its third reading.** The value was
+never wrong. The first reading (the id looked like a day count) and the second (the
+refusal's name) were both invalid, and the duration in the creation switch is neither.
+Two wrong routes to a right number is exactly the shape this project's rules warn
+about, and it is worth noticing that the retraction was still correct: withdrawing a
+bad citation is not the same as doubting the value.
+
+**Invite and entry are 24 hours, read.** Both come from one block, and 86,400 is also
+the ban/leave window, which is a separate function -- the same length reached two ways.
+
+**A window whose name lies.** Ids 9 and 10 both refuse with the string named
+`NOT_ENTRY_24T`. Id 10's penalty is **three days**. Any window taken from an engine
+string's name has a one-in-two chance of being wrong here, and this project takes
+values from names when nothing better is available. `PenaltySeconds` in
+`internal/academy` carries that row with a test that pins the two lengths apart.
+
+### The sweep was wrong, twice, and the fix was mechanical
+
+Last tick's sweep reported "25 call sites, 3 with a literal". At this one call site
+there are three, because cases 7, 8 and 9 reach the shared tail by `jmp` and a
+backward scan by address only sees the case that falls through.
+
+The first flow-aware rewrite **still missed them**: on finding a literal it stopped
+before exploring that node's jump predecessors. The corrected walk explores jump
+predecessors at every node and only stops the fall-through path at the literal. It
+reproduces all three. A sweep is a probe, and a probe that walks addresses cannot see
+control flow -- the same lesson as the thunk that hid leave's caller last tick.
+
+### Named
+
+	004e4800  TrainingCamp_CheckCanInvite      the INVITER's side; only class 0 may invite
+	004e4890  TrainingCamp_CheckCanEnter       the TARGET's side; ALREADY_ENTRY vs OTHER_ENTRY
+	00975400  TimeSpan_SetDaysMinutesSeconds   days*1440 + minutes, *60, + seconds
+	009753f0  TimeSpan_SetSeconds              one int of seconds, set from ECX
+
+Wired into `internal/academy` as `PenaltyCategory`, the four ids and `PenaltySeconds`,
+with `ReopenCooldownDays` now pinned to the penalty's own duration by a test.
