@@ -188,9 +188,51 @@ does. That matters: applied backwards, this term would penalise the wrong side.
 
 This project settled the same question for `LevelAdvantage` by an independent
 fact — the same function reads the DEFENCE params off one of the two objects,
-and those are known to be the target's. **The equivalent probe here is to
-identify `esi` and `edi` inside `Combat_ResolveDamage`** (8,298 bytes, unread),
-and that is this term's next probe.
+and those are known to be the target's.
+
+### The equivalent probe was tried, and the tempting answer is wrong
+
+`Formula_SkillPhysDamage` opens by looking something up in one participant's
+`+0xa30` and **adding** the result to the base damage:
+
+	40f607  lea eax,[esi+0xa30]
+	40f60d  call 0x5a0330          ; an STL map find, keyed off the EAX argument
+	40f616  add edi,[eax+0x4]      ; edi is the damage
+
+A bonus added to damage looks like the attacker's, which would settle the
+direction. **It does not, because `+0xa30` is on every character.** It is the
+character's active skill/buff container: `CMainProcess::CGame__EnterWorld`
+creates it, `AQ_SkillManager::vslot_007/008` and `CGSkillObject::Update`
+maintain it, `Stat_ApplyTaggedModifier` reads it, and
+`Formula_MitigatePhysicalDamage` — the function whose roles this project
+*already* settled — takes `lea eax,[ebp+0xa30]` off its own participant. Both
+sides have one, so having one identifies nobody.
+
+Recorded because it is a good trap: the lookup really is a damage bonus, and the
+inference from "bonus ⇒ attacker" really is unsound.
+
+### The calling convention, decoded
+
+	ecx  the damage struct        (caller: ebx->0x234; the formula reads *ecx)
+	edx  -> the formula's `ebx`
+	stack -> the formula's `esi`
+	eax  the map key              (caller: ebx->0x538)
+
+and the penalty fires when `level(ebx) > level(esi)`.
+
+### Why the two call sites cannot settle it either
+
+	58f4fc  push edi ; mov edx,esi   ->  formula esi = caller edi, ebx = caller esi
+	58fbab  push esi ; mov edx,edi   ->  formula esi = caller esi, ebx = caller edi
+
+The pair is passed in **opposite orders**, so site 1 penalises whichever way site
+2 rewards. One of the two is presumably the reverse direction of the exchange —
+a counter, a reflect, or a second damage type — and which is which needs
+`Combat_ResolveDamage`'s control flow, not its call sites.
+
+**That is the remaining probe**, and it is narrower than before: identify what
+`esi` and `edi` hold at `0x0058f4ff` and `0x0058fbae` specifically, rather than
+reading all 8,298 bytes.
 
 **Nothing is wired into `server/internal/combat` for exactly that reason.** A
 cap or a floor can be parked in code with "nothing enforces this yet"; a damage

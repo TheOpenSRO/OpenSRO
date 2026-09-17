@@ -342,3 +342,24 @@ has been applied. The four remaining are the `IGOBJ::` spelling variants:
 | 208 | `0x340` | `IGObj::IsAccomplishedCollectionBook_Theme` |
 | 209 | `0x344` | `IGObj::IsRegisteredCollectionBook_Item` |
 | 210 | `0x348` | `IGObj::IsRegisteredCollectionBook_Item` |
+
+## `+0xa30` is the character's active skill/buff container (2026-09-17)
+
+Not a vtable slot, but it belongs beside them: `+0xa30` on a `CGObjChar` is an
+STL map holding the character's active skills and buffs, keyed by skill id.
+
+Identified by its users rather than by its shape:
+
+| function | what it does with it |
+|---|---|
+| `CMainProcess::CGame__EnterWorld` | creates it as a character enters |
+| `AQ_SkillManager::vslot_007` / `_008` | the persistence pair |
+| `CGSkillObject::Update` | maintains it, five call sites |
+| `Stat_ApplyTaggedModifier` | reads it when applying a tagged stat modifier |
+| `Formula_MitigatePhysicalDamage`, `Formula_SkillPhysDamage` | look up a damage contribution in it |
+| `CGItemExpendable::vslot_307/309/329/330` | item use consults it |
+
+**Every character has one**, which is the useful negative: its presence in a
+damage formula does not tell you which participant is the attacker. See
+`docs/protocol/damage_pipeline.md`, where that inference was tried and
+discarded.

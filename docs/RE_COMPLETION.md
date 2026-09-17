@@ -11991,3 +11991,68 @@ code with "nothing enforces this yet"; a damage multiplier whose direction is
 unknown cannot**, because the obvious way to use it is also the way to get it
 backwards. That distinction is worth keeping — the previous tick parked two
 constants in code quite happily, and this one should not.
+
+## `+0xa30` named, and a tempting damage inference discarded (2026-09-17)
+
+Took the probe the previous tick recorded: settle which participant is the
+attacker in `Formula_SkillPhysDamage`, so its 2.5%-per-level penalty can be
+wired.
+
+### The inference that looked like it would settle it
+
+The formula opens by looking something up in one participant's `+0xa30` and
+**adding** the result to the base damage:
+
+	40f607  lea eax,[esi+0xa30]
+	40f60d  call 0x5a0330          ; an STL map find, keyed off the EAX argument
+	40f616  add edi,[eax+0x4]      ; edi is the damage
+
+A bonus added to damage is the attacker's. That would have settled the
+direction, and it is wrong.
+
+### `+0xa30` is on every character
+
+It is the character's **active skill/buff container**, identified by its users:
+`CMainProcess::CGame__EnterWorld` creates it, `AQ_SkillManager::vslot_007/008`
+persist it, `CGSkillObject::Update` maintains it at five sites,
+`Stat_ApplyTaggedModifier` reads it, the item-use paths consult it — and
+`Formula_MitigatePhysicalDamage`, the function whose participant roles this
+project *already* settled, takes `lea eax,[ebp+0xa30]` off its own.
+
+Both sides have one, so having one identifies nobody. Written up in
+`docs/protocol/igobj_vtable.md`, with the negative stated: its presence in a
+damage formula does not tell you who is attacking.
+
+This is worth recording as a trap rather than as a dead end. The lookup really
+is a damage bonus; the inference "bonus, therefore attacker" really is unsound;
+and the two facts feel like one.
+
+### What did come out of it
+
+The formula's calling convention, decoded:
+
+	ecx   the damage struct   (caller: ebx->0x234; the formula reads *ecx)
+	edx   -> the formula's `ebx`
+	stack -> the formula's `esi`
+	eax   the map key         (caller: ebx->0x538)
+
+with the penalty firing when `level(ebx) > level(esi)`.
+
+And the reason the call sites cannot settle it, now precise:
+
+	58f4fc  push edi ; mov edx,esi   ->  formula esi = caller edi, ebx = caller esi
+	58fbab  push esi ; mov edx,edi   ->  formula esi = caller esi, ebx = caller edi
+
+The pair is passed in **opposite orders**, so site 1 penalises whichever way
+site 2 rewards. One is presumably the reverse direction of the exchange — a
+counter, a reflect, or a second damage type.
+
+### The probe, narrowed
+
+Identify what `esi` and `edi` hold at `0x0058f4ff` and `0x0058fbae`
+specifically. That is a control-flow question about two addresses, not a reading
+of all 8,298 bytes of `Combat_ResolveDamage`, which is what the previous tick's
+note implied.
+
+Still nothing wired into `internal/combat`, for the same reason as before: a
+damage multiplier applied backwards is worse than one not applied at all.
