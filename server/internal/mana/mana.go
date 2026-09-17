@@ -8,10 +8,20 @@
 // own skilldata. This package only holds the pool in between.
 //
 // Current MP is deliberately NOT persisted, the same call berserk makes: it is
-// transient combat state that refills on its own, so it lives in memory and a
-// character comes back full after a restart. Max HP is persisted because
-// damage should survive a relog; being topped up on mana should not be worth
-// reconnecting for, because the pool refills anyway.
+// treated as transient combat state that refills on its own, so it lives in
+// memory and a character comes back full after a restart.
+//
+// THIS IS A DIVERGENCE FROM THE ENGINE, corrected 2026-09-17. The wording here
+// used to argue that "being topped up on mana should not be worth reconnecting
+// for, because the pool refills anyway", which reads as though the design
+// followed the game. It does not: `_CHAR` carries an **MP** column right beside
+// **HP** (docs/protocol/db_columns.md), so the real server persists current
+// mana and relogging does not refill it.
+//
+// The choice can stand on its own merits -- srrevamp has no cross-session
+// consequence that turns on a mana total -- but it is own design, and
+// internal/character's EngineOnlyColumns records it as one with a test that
+// keeps it stated.
 package mana
 
 import (

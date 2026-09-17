@@ -11598,3 +11598,57 @@ No value changed that srrevamp computes with — the corrections are to a table
 list and to three documents. The one behavioural claim, that reference columns
 are consumed positionally, is a restatement of what
 `refobj_binary_format.md` already established from the other end.
+
+## srrevamp's character model, mapped against the engine's `_CHAR` (2026-09-17)
+
+The schema pool's most directly useful entry was `_CHAR`'s 42 columns, and it
+had been recovered but not used. This tick used it.
+
+`server/internal/character/schema.go` now holds the engine's column list and a
+field-by-field mapping, with tests that fail if a `Character` field is added
+without an entry, if a mapped column is not a real one, if any of the 42 goes
+unaccounted for, or if the list drifts from `persistence.TableColumns["_CHAR"]`.
+
+### Two naming confirmations
+
+srrevamp's `Str` and `Int` are the engine's **`Strength`** and **`Intellect`**.
+Small, but it is the difference between a convention and a citation.
+
+### Two divergences, now named rather than incidental
+
+- **`Gender` is not a column.** Race and sex follow from `RefObjID`, the
+  reference object a character is built from. srrevamp stores a string because
+  it selects asset paths directly.
+- **`StorageGold` is not on the character.** Warehouse gold is the separate
+  `_CHEST` table.
+
+### A justification that rested on an assumption, corrected
+
+`internal/mana` did not persist current MP and argued that "being topped up on
+mana should not be worth reconnecting for, because the pool refills anyway",
+which reads as though the design followed the game.
+
+**`_CHAR` carries an `MP` column immediately beside `HP`.** The real server
+persists current mana; relogging does not refill it there.
+
+The choice stands — srrevamp has no cross-session consequence that turns on a
+mana total — but it is **own design**, and it is recorded as one with a test
+that keeps it stated. This is the third time a claim about the engine has rested
+on a plausible assumption rather than a reading, and the shape is the same every
+time: the design was fine, the justification was not.
+
+### What the engine keeps that srrevamp models nowhere
+
+Thirty of the 42, listed in `docs/protocol/character_schema.md`. The two worth
+flagging:
+
+- **Five columns for the return point and five for the death point**
+  (`TelRegion`/`TelPos*`/`TelWorldID`, `DiedRegion`/`DiedPos*`/`DiedWorldID`).
+  The engine treats "where you go back to" and "where you died" as first-class
+  persisted state.
+- **`HwanLevel` is persisted**, which is worth holding against the berserk work
+  in `param_registry.md`: the gauge is transient, the level is not.
+
+No value srrevamp computes with changed. What changed is that every field on
+`Character` is now either matched to the engine's own name or recorded as a
+deliberate divergence, and the next field added has to answer the same question.
