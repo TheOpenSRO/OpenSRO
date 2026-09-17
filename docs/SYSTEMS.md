@@ -49,6 +49,7 @@ one cannot rot the same way without the build going red.
 | Levelling and EXP | 8 fns | SPECIFIED | docs/protocol/param_registry.md | DeathPenaltyMinLevel, StatPointsPerLevel | — |
 | Quest scripting | 696 quests, 153 compiled | PARTIAL | docs/protocol/quest_scripting.md |  | **BLOCKED**: how the 543 classless quests attach. CQuestBase's slot-55 default is not reachable via the dump's slot tags; needs the vtable read directly in Ghidra |
 | Reference-table catalogue | 85 tables | PARTIAL | docs/protocol/refdata_tables.md |  | 77 of 85 tables unread; read one when a value needs it |
+| Teleport network | 3 tables | PARTIAL | docs/protocol/teleport_network.md |  | cols 3/8/9 of teleportlink (cost, level range) are inferred; read the `_REFTELELINK` consumer at `0x0082d770` |
 | Berserk | 6 fns | PARTIAL | docs/protocol/param_registry.md | DamageNumerator, Duration, FillPerHit | the gauge fill rate; no probe known to exist (the magnitudes are DB rows) |
 | Skills and masteries | 20 fns | PARTIAL | docs/protocol/skill_params.md |  | mastery cost `masteryUpCost` is own design; find its use-site |
 | Item stats and tooltips | 128 CRef | PARTIAL | docs/protocol/ITEM_FORMAT.md | ReinforceDamage | durability and plus-level columns unread |
@@ -67,12 +68,11 @@ one cannot rot the same way without the build going red.
 | Party | 15 | OPEN | — |  | 15 classes; CParty and the party packet handlers |
 | Academy and training camp | 11 | OPEN | — |  | 11 classes; CInstanceTrainingCamp* |
 | Jobs, trade routes and market | 11 | OPEN | — |  | 11 classes; CInstanceCharTrijob and CFleaMarket |
-| Teleport network | ? | OPEN | — |  | `_REFTELEPORT` and `_REFTELELINK` are in the catalogue, unread |
 | Durability and repair | ? | OPEN | — |  | itemdata durability columns are known; the repair path is not |
 
 ## How to read the count
 
-**11 specified, 9 partial, 13 open, of 33.** That is the honest headline, and it
+**11 specified, 10 partial, 12 open, of 33.** That is the honest headline, and it
 is not a percentage of the game — a specified system is one this project can
 implement faithfully, not one it has implemented. What srrevamp actually ships is
 a separate question, tracked in `docs/TODO.md`.

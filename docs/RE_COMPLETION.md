@@ -11201,3 +11201,52 @@ an edit to the tracker. It is doing the job it was built for.
 **Tracker unchanged at 11 specified, 9 partial, 13 open, of 33** — this tick
 added no system, it added the thing that stops a pivot losing one.
 
+## 2026-09-17 — the teleport network, and a file that was there all along
+
+Took the tracker's cheapest next probe: *"`_REFTELEPORT` and `_REFTELELINK` are
+in the catalogue, unread"*. It closed further than expected, because the missing
+half was not missing.
+
+**Only `teleportdata.txt` had ever been extracted.** `teleportlink.txt` and
+`teleportbuilding.txt` were sitting in `Media.pk2` under
+`server_dep\silkroad\textdata\` the whole time. The server-side `_REFTELELINK`
+looked like a dead end purely because nobody had listed the archive for it. Same
+shape as the `## Illegal ##` typo and the `GetParam` path: **the probe was
+narrow, not the evidence.**
+
+### Three tables, and the join checks out
+
+| file | rows | what it is |
+|---|---|---|
+| `teleportdata.txt` | 222 | the **points** — id, codename, building object, zone name, region + local x/y/z |
+| `teleportlink.txt` | 292 | the **edges** — source, destination, and columns reading as cost and level range |
+| `teleportbuilding.txt` | 77 | the **gate objects** — `2094 STORE_CH_GATE`, `2095 STORE_WC_GATE`, … |
+
+`GATE_CH` carries building object **2094**, and `teleportbuilding`'s first row is
+**2094 `STORE_CH_GATE`** — the join confirmed by a shared id rather than by
+position in the file.
+
+### The positions decode against a transform derived from unrelated evidence
+
+	GATE_CH   region 25000 (97/168)  local(969, 0, 1369)  ->  server(-33, 349)
+
+Region 97/168 is Jangan and the server origin is Jangan's own spawn, so the
+Chinese main gate lands 33 west and 349 north of the town spawn. The transform
+came from terrain-edge matching and minimap tiling; the table came from the
+client's media. Two unrelated derivations agreeing on a gate's position is the
+check. 117 regions carry a point.
+
+### What is NOT claimed
+
+`teleportlink` cols 3, 8 and 9 read as **cost** (`0`, `500`, `5000`, `40000`) and
+a **level range** (`110`, `999`) — strongly suggestive, and left **inferred**. No
+use-site has been read, and this project's rule is that a use-site settles
+meaning. *Next probe:* the consumer of `_REFTELELINK` (loader `0x0082d770`).
+
+Cols 1 and 2 are safe — 169 sources and 157 destinations over a 222-point table
+is a graph and nothing else fits.
+
+**Tracker: 11 specified, 10 partial, 12 open, of 33.** Teleport moves OPEN ->
+PARTIAL with the inference named as its next probe, and srrevamp — which has no
+teleport system at all — now has three real tables to build one from.
+
