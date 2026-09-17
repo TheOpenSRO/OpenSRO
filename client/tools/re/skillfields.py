@@ -29,15 +29,27 @@ VERIFICATION. Three independent anchors, none of them used to build the map:
     `[ebx+0x240] != 0` immediately after the magical mitigation call.
   * `pw -> 0x2b4` matches that page's "Where `pw` is read".
 
-COVERAGE, stated rather than implied. The parser compares 188 distinct printable
-codes; 120 case bodies are reached by a `je`; 119 of those contain a direct
-field store, and this tool reports those.
+THE FIELD BLOCK. The prologue does `lea ebp,[esi+0x230]` and memsets 0x37c bytes,
+so ESI is the CRefSkill record and every param field lives in 0x230..0x5ac. That
+bound is used as the filter here. An earlier version filtered on "offset >= 0x20"
+instead, which is a guess dressed as a rule -- and it dropped `att`, whose store
+is `mov [ebp+0x0],eax`, i.e. offset 0 relative to the block and 0x230 in the
+record. `att` is the attack descriptor the whole damage pipeline reads.
 
-It does NOT report codes whose values go into a LIST rather than a field --
-`reqi` fills a five-slot array and `att` is six words, per the function's own
-header comment -- because those are written in a loop whose body sits past a
-conditional branch. Their absence from the output is a limit of the tool, NOT
-evidence that the code has no field. Do not read this map as complete.
+Each field holds a POINTER INTO THE PARAM STREAM, not a value: a case body does
+`add eax,4` past the code word and stores EAX. So `CRefSkill+0x240` is a pointer
+to `da`'s values, not `da` itself.
+
+COVERAGE, stated rather than implied. The parser compares 188 distinct printable
+codes and 120 case bodies are reached by a `je`. Codes whose values are consumed
+without being stored -- read in place and normalised, as `att`'s type word is --
+still register, because the pointer store is what this looks for.
+
+Codes that fill a LIST may still be missed if the loop body sits past a
+conditional branch; `reqi` (a five-slot array at 0x3a0, known from
+docs/protocol/skill_params.md) is the known example. Its absence is a limit of
+the tool, NOT evidence that the code has no field. Do not read this map as
+complete.
 
 Usage:  python3 skillfields.py
 """
@@ -50,9 +62,16 @@ PARSER, SIZE = 0x587630, 7509
 
 CMP = re.compile(r"^cmp\s+([a-z0-9]+)\s*,\s*0x([0-9a-f]+)$")
 JE = re.compile(r"^je\s+0x([0-9a-f]+)$")
+# The record base is ESI. EBP is an ALIAS for `esi+0x230`, set up by the
+# prologue (`lea ebp,[esi+0x230]`) for the memset that clears the whole param
+# block -- and then reused as a store base by a few case bodies. A pattern that
+# only accepts ESI silently loses those; `att` is one, and it is the most
+# important field in the record.
 STORE = re.compile(
-    r"^mov\s+(?:BYTE |WORD |DWORD )?PTR \[e(?!sp)([a-z][a-z])(?:\+e[a-z][a-z](?:\*[0-9])?)?\+0x([0-9a-f]{2,4})\]"
+    r"^mov\s+(?:BYTE |WORD |DWORD )?PTR \[e(?!sp)([a-z][a-z])(?:\+e[a-z][a-z](?:\*[0-9])?)?\+0x([0-9a-f]{1,4})\]"
 )
+# Offsets relative to EBP are relative to the start of the param block.
+EBP_BASE = 0x230
 
 
 def as_code(v):
@@ -92,8 +111,15 @@ def main():
             text = ins[j][1]
             m = STORE.match(text)
             if m:
-                off = int(m.group(2), 16)
-                if off >= 0x20:
+                base, off = m.group(1), int(m.group(2), 16)
+                if base == "bp":
+                    off += EBP_BASE
+                # Everything the parser writes lives in the param block it
+                # cleared: `lea ebp,[esi+0x230]` then memset 0x37c bytes, so
+                # 0x230..0x5ac. Anything outside is a local, not a field --
+                # which is a far better filter than "offset is large enough",
+                # the one that lost `att` by rejecting its offset of 0.
+                if EBP_BASE <= off < EBP_BASE + 0x37c:
                     for c in codes:
                         fields[c].add(off)
             if re.match(r"^(jmp|ret)\b", text):

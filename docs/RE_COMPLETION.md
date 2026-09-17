@@ -12688,3 +12688,70 @@ reason it can be stated as a bound on the tool rather than a hope.
 
 No value changed, so nothing was wired; this is naming, and `go test -p 1 ./...`
 is green unchanged.
+
+## The field map's most important row was missing, and my filter was the reason (2026-09-17)
+
+Went back at yesterday's `CRefSkill` map to close the gap it shipped with —
+list-valued codes absent — and found that one of the two examples given for that
+gap was not an example of it at all.
+
+### `att` was lost to a filter, not to a loop
+
+`skill_fields.md` said `att` was missing because list-valued codes are written
+by loops the extractor cannot follow. That was wrong. `att`'s case body stores a
+pointer like every other:
+
+	00587af3  add eax,0x4
+	00587af8  mov DWORD PTR [ebp+0x0],eax
+
+The store is via **`ebp`**, which the prologue set to `esi+0x230`, at offset
+**0** — and the extractor's filter was `offset >= 0x20`. A guess dressed as a
+rule, and it dropped the single most-read field in the record: `CRefSkill+0x230`
+is the attack descriptor the **entire** damage pipeline reads.
+
+Two failure modes — "the tool cannot follow a loop" and "the tool's filter
+rejected it" — produce identical output, which is why the coverage claim needed a
+*known-missing* example to rest on. `reqi` is one, from
+`docs/protocol/skill_params.md`. `att` was cited alongside it on a guess, and the
+guess was wrong. The claim now rests on `reqi` alone, which is the only one it was
+ever entitled to.
+
+### The real bound, and a structural check that did not exist before
+
+The prologue is the answer to what the filter should have been:
+
+	00587638  lea ebp,[esi+0x230]
+	00587641  call 0x9e3520          ; memset(ebp, 0, 0x37c)
+
+`esi` is the record; the param-field block is exactly `0x230`–`0x5ac`. Filtering
+on that instead recovers `att` and takes the map from 119 to **120**.
+
+It also gives the table something it lacked yesterday: **an independent check on
+the map as a whole**. Every one of the 120 offsets falls inside the block the
+parser clears. A row-by-row anchor (`pdmg`, `da`, `pw`) can only confirm the rows
+it names; a block bound confirms that nothing drifted anywhere.
+
+### Each field is a pointer, not a value
+
+	005877ff  add eax,0x4
+	00587802  mov DWORD PTR [esi+0x240],eax    ; a POINTER to da's values
+	00587808  add ecx,0x2                      ; 2 words: code + 1 value
+
+So `CRefSkill+0x240` is where `da`'s values start, not `da`. Reading yesterday's
+table as "offset holds the value" would be wrong in all 120 rows, and the table
+did not say which it was.
+
+### A question I opened this tick, and closed against myself
+
+I started from the premise that `att` had **six** values while
+`skill_params.md` accounted for five, and that the sixth was an ungrounded value
+srrevamp reads around. It is not. `ecx` counts words **including the code word** —
+`da` consumes 2 (code + 1 value), `att` consumes 6 — so `att` has **five**
+values, and `(type, percent, min, max, percent)` is complete.
+
+The premise was wrong and the tick's stated reason for existing dissolved.
+Recording it because the alternative — quietly pivoting to what did pan out — is
+how a project ends up unable to tell which of its open questions were ever real.
+
+Nothing srrevamp uses changed, so nothing was wired; `go test -p 1 ./...` green
+unchanged.

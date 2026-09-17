@@ -6,7 +6,39 @@ skill's Param stream as `(code, values...)` runs and stores each value into a
 field of the record. Regenerate with `client/tools/re/skillfields.py`.
 
 Before this, `docs/protocol/` named **two** `CRefSkill` offsets. It now names
-119.
+**120**.
+
+## The record's shape, which bounds the whole map
+
+The prologue is the structural check that the map is right:
+
+	00587638  lea ebp,[esi+0x230]
+	00587641  call 0x9e3520          ; memset(ebp, 0, 0x37c)
+
+So **`esi` is the CRefSkill record and the param-field block is exactly
+`0x230`–`0x5ac`**. Every one of the 120 recovered offsets falls inside it. That
+is an independent check on the table as a whole rather than on any single row:
+an extraction that had drifted would put fields outside the block the parser
+clears.
+
+**Each field holds a POINTER INTO THE PARAM STREAM, not a value.** A case body
+does `add eax,4` to step past the code word and stores EAX:
+
+	005877ff  add eax,0x4
+	00587802  mov DWORD PTR [esi+0x240],eax    ; a pointer to da's values
+	00587808  add ecx,0x2                      ; 2 words consumed: code + 1 value
+	0058780b  add eax,0x4
+
+so `CRefSkill+0x240` is *where `da`'s values start*, not `da`. Reading the table
+as "offset holds the value" would be wrong everywhere.
+
+`ecx` counts **words including the code word**, which settles a question this
+page's sibling raised. `att`'s block does `add ecx,0x1` then `add ecx,0x5` — six
+words — and the parser's own header comment calls `att` "six words". That is
+**one code word plus five values**, so `skill_params.md`'s
+`(type, percent, min, max, percent)` is complete; there is no unaccounted sixth
+value. The worry that there might be was this page's, and it is resolved rather
+than dropped.
 
 ## The trap, because the first extraction was wrong
 
@@ -53,6 +85,15 @@ Offsets this project was reading blind until today:
 | `0x49c` | `qest` | the gate's `ITS_NOT_A_BATTLE_FIELD` code arithmetic |
 | `0x4a4` | `msch` | the gate's `EU_BAN_HAWN_TRANS` and `DUPLICATE` branches |
 | `0x534` | `BSHP` | the bonus-map key in `FUN_0040f750` |
+| `0x230` | **`att`** | the attack descriptor the ENTIRE damage pipeline reads |
+
+`att -> 0x230` is the one that matters most, and the first version of this tool
+lost it. Its store is `mov [ebp+0x0],eax` — offset **0** relative to the block,
+via the `ebp` alias — and the filter was `offset >= 0x20`, a guess dressed as a
+rule. Replacing it with the real bound (the memset block, `0x230`–`0x5ac`)
+recovers it. `docs/protocol/damage_pipeline.md` already identified the `+0x230`
+descriptor as skilldata's `att`; what is new is that the parser says so
+directly, rather than the identification resting on the three fields matching.
 | `0x3d0` | `dtnt` | `Combat_ResolveDamage`'s target filter |
 
 Checked rather than assumed: `+0x294` and `+0x428`, the other two the skill-use
@@ -72,17 +113,23 @@ The parser compares **188** distinct printable codes. **120** case bodies are
 reached by a `je`, and **119** contain a direct field store. Those are the ones
 below.
 
-**Codes whose values go into a list are absent**, and their absence is a limit
-of the tool rather than evidence they have no field: `reqi` fills a five-slot
-array and `att` is six words (the function's own header comment says so), and
-both are written by loops whose bodies sit past a conditional branch. `reqi` and
-`att` are the two this project already knew about, so the gap is known to be
-real rather than suspected.
+**`reqi` is still absent**, and its absence is a limit of the tool rather than
+evidence it has no field: it fills a five-slot array at `0x3a0`
+(`docs/protocol/skill_params.md`) written by a loop whose body sits past a
+conditional branch. It is the one code this project already knew about that the
+tool cannot reach, so the gap is *known* to be real rather than suspected —
+which is what lets it be stated as a bound on the tool.
+
+`att` used to be listed here too. It was never a list-valued case; it was a
+filter bug. The two failure modes look identical from the output, which is why
+the claim needed a known-missing example to rest on rather than a count.
 
 ## The map
 
 | code | offset | | code | offset | | code | offset |
 |---|---|---|---|---|---|---|---|
+| `att` | `0x230` | | `nbuf` | `0x35c` | | `slcc` | `0x494` |
+| `pdmg` | `0x234` | | `bbuf` | `0x360` | | `pchr` | `0x498` |
 | `da` | `0x240` | | `cmcr` | `0x36c` | | `qest` | `0x49c` |
 | `hr` | `0x24c` | | `lks2` | `0x374` | | `trap` | `0x4a0` |
 | `ru` | `0x250` | | `lkcp` | `0x378` | | `msch` | `0x4a4` |
@@ -121,5 +168,3 @@ real rather than suspected.
 | `pmp1` | `0x34c` | | `tcmd` | `0x488` | | `hwit` | `0x588` |
 | `pao` | `0x350` | | `hntp` | `0x48c` | | `bldr` | `0x58c` |
 | `cbuf` | `0x358` | | `skc` | `0x490` | | `nmf` | `0x594` |
-| `nbuf` | `0x35c` | | `slcc` | `0x494` | |  |  |
-| `bbuf` | `0x360` | | `pchr` | `0x498` | |  |  |
