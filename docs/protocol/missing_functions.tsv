@@ -1,0 +1,18 @@
+# address	binary	evidence
+# Game functions Ghidra never created, for CreateMissingFunctions.java.
+#
+# Each row is the first real instruction after a run of MSVC's int3 inter-function
+# padding, outside every existing function body, beginning with a real prologue,
+# and raising at least one named game refusal. The last condition is what makes it
+# game logic rather than merely a plausible function. Measured 2026-09-17; see
+# docs/RE_COMPLETION.md, "Code Ghidra never made into functions, measured".
+#
+# Only rows meeting all four conditions belong here. The script re-checks the int3
+# boundary itself and refuses rows that fail it.
+00519230	server	the academy invite routine: assigns the role by invitee level and raises TC_ERROR_STUDENT_COUNT_OVER and TC_ERROR_SECOND_GUARDIAN_COUNT_OVER. Read by hand and independently rediscovered by the padding probe. Prologue push ecx; push ebx; mov ebx,[esp+0xc]
+00519600	server	academy graduation: raises TC_ERROR_GRADUATION_LEVER, TC_ERROR_ORDER_WORK and TC_ERROR_TRAININGCAMP_NOTHING. Prologue push ecx; push ebx; mov ebx,ecx
+00519510	server	academy handler raising TC_ERROR_NOT_OUT_24T, TC_ERROR_ORDER_WORK and TC_ERROR_TRAININGCAMP_NOTHING. Prologue push ecx; push ebx; push esi
+00519120	server	academy handler raising TC_ERROR_NOT_DISORGANIZATION_7D. Prologue sub esp,0x8; push esi; push edi
+00515340	server	raises FORT_STRUCTURE_ACTION_ERROR_06 and GUILDERR_PERMISSION_DENIED. Prologue push ecx; push ebx; push esi
+004ae0c0	server	raises STRGERR_LOCKED_BY_OTHER_ONE. Prologue mov eax,[esp+0x4]; sub esp,0x8; push ebx
+00511640	server	raises PREMIUM_USE_OVER. Prologue sub esp,0x8; push ebx; push ebp

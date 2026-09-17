@@ -13580,3 +13580,54 @@ and name them.
 
 The 142 prologue-confirmed entries with no named refusal are the larger, weaker
 set: probably real functions, not proven to be game logic.
+
+## Seven missing functions created, and the boundaries confirmed them (2026-09-17)
+
+Took the step named last tick. `client/tools/ghidra/CreateMissingFunctions.java`
+creates functions only at an explicit, reviewed address list
+(`docs/protocol/missing_functions.tsv`, one row of evidence each), and leaves
+`ApplyRecoveredNames`' refusal to create functions untouched.
+
+It refuses to guess in the same spirit: in Ghidra's own memory it re-checks each
+row and skips — never forces — an address that already starts a function
+(`EXISTS`), lies inside one (`INSIDE`, which would split it), does not follow an
+`int3` byte (`NOT_AT_BOUNDARY`), or does not disassemble. It ran under
+`re_tick.sh`'s `flock`, and the seven entries were re-verified immediately before
+(no containing function, `int3` before each, a real prologue at each).
+
+	created 7, exists 0, inside 0, not at boundary 0, no disassembly 0, failed 0
+
+### The boundaries are the evidence
+
+The address list said where each function *starts*. It said nothing about where
+each *ends* — Ghidra worked that out from control flow, independently. Every body
+stopped exactly at the next `int3` padding run:
+
+	00519120..00519225   262 bytes
+	00519230..00519391   354 bytes    <- int3 at 0x519392, observed by hand earlier
+	00519510..005195fa   235 bytes
+	00519600..0051976b   364 bytes    <- stops before CheckMembershipLevel @ 0x519770
+	00515340..00515489   330 bytes
+	004ae0c0..004ae3b2   755 bytes
+	00511640..0051172a   235 bytes
+
+If an entry had been wrong — mid-function, or data — its flow-derived body would
+have run into a neighbour or stopped somewhere arbitrary. None did; the academy
+region now tiles cleanly between padding runs with no overlap. The server dump's
+`PROJSTAMP` is cleared, so the next tick rebuilds it with these as `FUN_` bodies
+the loop can read and name.
+
+### And a blind spot the tiling exposed
+
+The tiling leaves one gap: **`0x005193a0`**, between `0x00519391` and
+`0x00519510`. It is a real function — `int3` before it, the full MSVC SEH
+prologue `push 0xffffffff ; push 0xabefe8 ; mov eax,fs:0x0`, and it raises
+`TC_ERROR_TRAININGCAMP_NOTHING` — and the padding probe did not list it. That is
+the same entry the probe's SEH sub-count returned 0 for.
+
+So the probe that produced the seven has a bug that drops at least this shape of
+entry, and the "7 missing game functions" count is a **floor, not a census**. Not
+added this tick: a row belongs in `missing_functions.tsv` because a probe found it
+and a person verified it, and the probe is known to be wrong about this case.
+Next: find why the SEH prologue fails the probe's filter, fix it, re-run, and add
+what it finds.
