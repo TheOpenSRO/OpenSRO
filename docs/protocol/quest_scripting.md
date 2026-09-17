@@ -107,10 +107,23 @@ generic `CBasicQuest` machinery serves them from something not yet found — the
 inferred its contents from its file counterpart — or they are simple enough
 (talk to an NPC, receive a reward) that the lifecycle needs no objective at all.
 
-**That is not settled here, and it is the next probe**: read `DB_Load_RefQuest`
-(`0x008341b0`) and see what columns it binds. If `_REFQUEST` carries objective
-columns the long-standing "objectives are code" conclusion needs qualifying to
-"objectives are code *for the scripted fifth*".
+**Settled for the data half (2026-09-17).** `DB_Load_RefQuest` (`0x008341b0`)
+was read, and more usefully every loader like it: the server loads **85**
+reference tables and the complete list is in
+`docs/protocol/refdata_tables.md`. The quest-related entries are exactly four —
+`_REFQUEST`, `_REFCHARDEFAULT_QUEST`, `_REFSIEGEQUEST`, `_REFSIEGEQUESTREWARD` —
+and **none is a table of objectives**.
+
+So there is no objective data anywhere: not in the client's two quest files, not
+in the server's entire reference surface. *"Objectives are code"* is now settled
+by enumeration rather than by a failed search, and it holds for all 696 quests,
+not just the scripted fifth.
+
+**What remains open is narrower**: how the generic `CBasicQuest` machinery drives
+the 543 that have no compiled class. They need no objective table — that much is
+proven — so either they are simple enough not to need one, or the machinery
+derives their behaviour from `questdata`'s own fields. Reading `CBasicQuest` is
+the next probe, and it is a code question now rather than a data one.
 
 ## Where the rest of a quest lives
 
@@ -119,14 +132,14 @@ columns the long-standing "objectives are code" conclusion needs qualifying to
 | identity and metadata | `_REFQUEST`, loaded by `DB_Load_RefQuest` (`0x008341b0`) — the server's counterpart to `questdata.txt` |
 | per-character progress | `_CHARQUEST`, with `QuestData1` / `QuestData2` |
 | objectives, scripted quests | the compiled handler bodies above |
-| objectives, the other 543 | **not established** — see above |
+| objectives, the other 543 | no table exists anywhere; the generic `CBasicQuest` path is unread |
 | helpers the handlers call | `CBasicQuest__SetupMissionNPC` and the rest of the `CBasicQuest` surface |
 
 ## What this means for srrevamp
 
-Any quest objectives srrevamp ships are **own design** for the 153 scripted
-quests — there is no table to import for those. For the other 543 that is not
-yet established, pending the `_REFQUEST` probe above.
+Any quest objectives srrevamp ships are **own design**, for all 696 quests —
+there is no table to import, and that is now proven by enumerating the server's
+85 reference tables rather than by failing to find one.
 
 A quest engine that matched this one would expose these 15 events as hooks plus
 a per-target kill hook, and let a quest bind handlers to the ones it needs. That

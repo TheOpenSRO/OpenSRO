@@ -11060,3 +11060,53 @@ which four fifths of the system it does not cover, instead of implying it covers
 all of it. PARTIAL exists for exactly this, and a row moving backwards one tick
 after being claimed is the tracker working, not failing.
 
+## 2026-09-17 — the server's whole reference surface, and what is not in it
+
+Chasing the quest probe produced something bigger than the probe.
+`docs/protocol/refdata_tables.md` now lists **all 85 reference tables the server
+loads**, each with the `CRef*` class it fills and the address of its loader. It
+is an enumeration rather than a sample: every loader names its own table, so
+finding every function that names a `_REF*` string finds every table that
+exists.
+
+### The quest question, settled by enumeration
+
+The quest-related tables are exactly four — `_REFQUEST`,
+`_REFCHARDEFAULT_QUEST`, `_REFSIEGEQUEST`, `_REFSIEGEQUESTREWARD` — and **none
+is a table of objectives**. With the two client files checked the same day:
+
+| source | rows | objectives? |
+|---|---|---|
+| `questdata.txt` | 696 | no |
+| `questcontentsdata.txt` | 989 | no — description text |
+| the server's 85 reference tables | — | **no** |
+
+So *"objectives are code, not data"* moves from a conclusion drawn by failing to
+find a table to one **proven by listing everything there is**, and it now covers
+all 696 quests rather than the scripted fifth. Same strong form as the
+stored-procedure enumeration that settled starting Str.
+
+What remains open is narrower and is a code question: how `CBasicQuest` drives
+the 543 quests with no compiled class. They need no objective table — that is
+settled — so either they are trivial or the machinery reads `questdata`'s own
+fields.
+
+### A wrong reading, made and discarded inside the tick
+
+Each loader stores `0x30` or `0x18` beside its class pointer and I read that as
+the record width — which would have made `CRefQuest` a 24-byte record, far too
+small for objectives, and would have "settled" the question on a coincidence.
+The check that killed it: `_REFOBJITEM`, the 161-column item table, carries the
+same `0x30` as everything else. The value does not vary with table complexity,
+so it is an allocator constant. It is recorded in the catalogue so the next
+reader does not make the same inference.
+
+That is the second time this session a convenient number nearly became a finding
+— the first was column 7 looking like `CashItem` on a 160x correlation. Both
+were caught by asking what else carries the same value.
+
+**Tracker: 11 specified, 9 partial, 13 open, of 33.** The catalogue moves
+"Reference tables" from OPEN to PARTIAL: all 85 are enumerated with their
+loaders, 8 have been read, 77 are unread — which is now a known quantity rather
+than an open-ended search.
+

@@ -43,6 +43,7 @@ one cannot rot the same way without the build going red.
 | Magic-option vocabulary | 53 tags | SPECIFIED | docs/protocol/magic_options.md | ParamFor, PackTag |
 | Levelling and EXP | 8 fns | SPECIFIED | docs/protocol/param_registry.md | DeathPenaltyMinLevel, StatPointsPerLevel |
 | Quest scripting | 696 quests, 153 compiled | PARTIAL | docs/protocol/quest_scripting.md | |
+| Reference-table catalogue | 85 tables | PARTIAL | docs/protocol/refdata_tables.md | |
 | Berserk | 6 fns | PARTIAL | docs/protocol/param_registry.md | DamageNumerator, Duration, FillPerHit |
 | Skills and masteries | 20 fns | PARTIAL | docs/protocol/skill_params.md | |
 | Item stats and tooltips | 128 CRef | PARTIAL | docs/protocol/ITEM_FORMAT.md | ReinforceDamage |
@@ -61,13 +62,12 @@ one cannot rot the same way without the build going red.
 | Party | 15 | OPEN | — | |
 | Academy and training camp | 11 | OPEN | — | |
 | Jobs, trade routes and market | 11 | OPEN | — | |
-| Reference tables (the other 120) | 120 | OPEN | — | |
 | Teleport network | ? | OPEN | — | |
 | Durability and repair | ? | OPEN | — | |
 
 ## How to read the count
 
-**11 specified, 8 partial, 14 open, of 33.** That is the honest headline, and it
+**11 specified, 9 partial, 13 open, of 33.** That is the honest headline, and it
 is not a percentage of the game — a specified system is one this project can
 implement faithfully, not one it has implemented. What srrevamp actually ships is
 a separate question, tracked in `docs/TODO.md`.
