@@ -47,7 +47,23 @@ const MaxUnitPrice = 9.9999997e+37
 //
 //	price = (float)refRecord[0xa4] / (float)item[0x194]
 //
-// clamped to [MinUnitPrice, MaxUnitPrice]. `refRecord[0xa4]` is the item's
+// clamped to [MinUnitPrice, MaxUnitPrice].
+//
+// `refRecord[0xa4]` IDENTIFIED 2026-09-17 as **_RefObjCommon field 28**, from
+// `fields2.py` on `RefObjCommon_ExtractData` (the scanner validated against that
+// function's independently-fixed 58-field count). It belongs to the COMMON
+// record, not the item-specific one -- `RefObjItem::ExtractData` writes nothing
+// below `+0x198`.
+//
+// That does NOT give it a text column. `docs/protocol/refobj_binary_format.md`
+// says outright that treating "consumed field N" as "text column N" is wrong:
+// the binary tables are self-describing, carry a per-column schema, and the
+// parser skips columns, so binary field 57 and text column 57 are different
+// fields. Mapping field 28 to an itemdata column needs that schema, and until
+// it is read, priceBasis stays a caller-supplied input rather than something
+// this package can look up.
+//
+// `refRecord[0xa4]` is the item's
 // price basis and `item[0x194]` its maximum durability, so a FULL repair of an
 // undamaged-to-destroyed item costs the basis -- the division spreads the basis
 // across the item's durability range.

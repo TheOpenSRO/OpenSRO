@@ -13021,3 +13021,72 @@ stub string claims: comparing a value to itself would make the guard
 unconditional.
 
 `docs/SYSTEMS.md`'s regen row now has no caveat.
+
+## Sweeping the tracker's caveats, and a tool trap (2026-09-17)
+
+Last tick a caveat in `docs/SYSTEMS.md` led straight to a shipped test that
+encoded a gap as a fact. That generalises, so this tick swept the whole caveat
+column — 23 rows carry one.
+
+### Two caveats were stale and one was wrong
+
+- **Guild** still listed the alliance rules (`FUN_005c6550`) and guild war
+  (`FUN_005c6b60`) as open. Both were recovered this session (v0.1.317,
+  v0.1.318).
+- **Persistence** said "the interface and the **39** procedures are whole" and
+  "none of the **35** runtime tables" — both numbers this project corrected
+  itself (71 and 54). The tracker had drifted from the pages it points at.
+- **Teleport network** said to "read the `_REFTELELINK` consumer at
+  `0x0082d770`". That address is the table **loader** — it binds the name
+  `"_REFTELELINK"` and walks rows, exactly like `_REFCHARGEN`'s loader. No
+  consumer has been located, and the caveat now says so instead of sending the
+  next reader to the wrong function.
+
+A tracker that tells you a solved thing is open is worse than one that says
+nothing, because it costs a tick to find out.
+
+### `refRecord[0xa4]` is `_RefObjCommon` field 28
+
+Two caveats — durability and alchemy — both said they were blocked on
+"`RefObjItem::ExtractData` counted through". **That premise was wrong.**
+
+`RefObjItem::ExtractData` (7,052 bytes) makes only 23 direct stores across 19
+distinct offsets, and **every one is `≥ 0x198`**. It does not write `+0xa4` at
+all. The field belongs to the **common** record, and running the scanner on
+`RefObjCommon_ExtractData` resolves it positively: **field 28 → `+0xa4`**.
+
+So the durability caveat has moved from "needs a function counted through" to a
+specific, positive identification.
+
+### What it still does not give, and why that is the doc's own rule
+
+A field index is **not** a text column index. `refobj_binary_format.md` says it
+outright — the binary tables are self-describing, carry a per-column schema of
+`(index, width)` records, and the parser **skips** columns it does not want, so
+"binary field 57 and text column 57 are different fields". That page exists
+because this exact inference was made and corrected before.
+
+So `refRecord[0xa4]` is field 28 and its itemdata column is still unknown, and
+mapping it needs the per-column schema rather than a field count. Recorded in
+`repair.UnitPrice`, where `priceBasis` stays a caller-supplied input for that
+reason rather than for a vague one.
+
+### A tool trap worth more than the finding
+
+`/var/tmp` holds both `fields.py` and `fields2.py`. Running the obvious one:
+
+	fields.py  RefObjCommon_ExtractData ->  42 fields,  4 offsets resolved
+	fields2.py RefObjCommon_ExtractData ->  58 fields, 20 offsets resolved
+
+**58 is the validated number** — `refobj_binary_format.md` fixes it
+independently, and `fields2.py`'s own header shows the arithmetic that reaches
+it. `fields.py` is the superseded version and it fails silently: it returns a
+plausible count and a handful of offsets, with nothing marking it as wrong.
+
+I ran `fields.py` first, got 62 fields for `RefObjItem::ExtractData` with three
+distinct offsets, and nearly wrote that up as "the scanner does not generalise to
+this function". The scanner that does not generalise was the one I picked. The
+thing that caught it was the project's own record that the tool "returns exactly
+58" — a remembered number disagreeing with the output.
+
+Nothing srrevamp uses changed, so nothing was wired; `go test -p 1 ./...` green.
