@@ -81,8 +81,16 @@ type Item struct {
 	// ITEM_CH_SWORD_01_A: column 28 = 297 against durability 62/76, so 3.9 gold a
 	// unit and 297 for a full repair, against a vendor Price of 890.
 	//
-	// Zero for an item whose export predates the column, which repair.Estimate
-	// treats as "no basis known" rather than "free".
+	// Zero for an item whose export predates the column. CORRECTED 2026-09-17:
+	// this comment used to claim repair.Estimate treats a zero basis as "no basis
+	// known" rather than "free". It does neither. UnitPrice clamps the price to a
+	// floor of 1.0 -- the engine's own `fld1`, so this is faithful -- and
+	// Estimate(1000000, 0, 76, 0) returns {Units:76 Cost:76}: a missing basis
+	// silently charges one gold per durability point. A caller that cares about
+	// the difference must check RepairCost == 0 itself; nothing here refuses it.
+	//
+	// Note also that repair.Estimate has NO callers in the server yet -- there is
+	// no repair handler -- so this field is loaded but not consumed.
 	RepairCost int
 	ReqStr     int
 	ReqInt     int

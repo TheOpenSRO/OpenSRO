@@ -13283,3 +13283,46 @@ upsert.
 `repair.Estimate` still takes `priceBasis` as an argument rather than reaching
 for the item — that is a call-site change in `session`, and this tick stopped at
 the data layer.
+
+## CI runs again, and the next step I named did not exist (2026-09-17)
+
+**CI is back.** The user moved Actions to a self-hosted runner (`kakariko-runner`).
+The first run on it (35227775726) went fully green: Go build & test, Godot client
+validation, and the pk2 asset guard. The Godot job passing means the runner image
+carries Godot 4.2.2. Only one runner is registered, so a run's three jobs execute
+serially. Tags v0.1.313–v0.1.329 were pushed while GitHub-hosted runs were not
+dispatching, and their Release client builds never ran.
+
+The 15-minute re-prompt that drives this loop did not survive the session
+restart and has been recreated, on minutes 3/18/33/48 rather than the quarter
+hour, so each tick reads `STATUS` after the RE box's own `re_tick.sh` has released
+its lock rather than racing it.
+
+### The step I named last tick was not a step
+
+Last tick ended: *"thread `priceBasis` from `refdata.Item.RepairCost` into
+`repair.Estimate` at the `session` call site."* **There is no call site.**
+`repair.Estimate` has no callers anywhere in the server — no repair handler
+exists — so "wiring" it would mean building a repair feature, which is not an RE
+step. I named it without grepping for the caller. `RepairCost` is loaded and not
+consumed, and `refdata.Item` now says so.
+
+### And a comment I wrote last tick was false
+
+`refdata.Item.RepairCost` claimed that `repair.Estimate` treats a zero basis as
+"no basis known" rather than "free". I never ran it. Running it:
+
+	Estimate(1_000_000, 0, 76, 0)  ->  {Units:76 Cost:76 Refusal:0}
+
+It does **neither**. `UnitPrice` floors the price at 1.0 — the engine's own `fld1`,
+so the behaviour is faithful — and a missing basis silently charges one gold per
+durability point. The comment is corrected and
+`TestZeroBasisChargesTheFloorPrice` pins the real behaviour.
+
+Both are the same failure as the green-suite reports, one size smaller: a claim
+about code, written as if checked, that one command would have settled. The rule
+that falls out is narrow and cheap: **before naming a call site, grep for the
+caller; before describing what a function does with an edge input, call it with
+that input.**
+
+Suite verified the unambiguous way: `go test` exit 0, 52 packages, no FAIL lines.

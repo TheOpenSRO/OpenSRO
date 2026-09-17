@@ -173,3 +173,17 @@ func TestFullRepairCostsExactlyTheBasis(t *testing.T) {
 		}
 	}
 }
+
+// A zero basis is not a refusal and not free: UnitPrice floors the price at 1.0
+// (the engine's `fld1`), so a missing basis charges one gold per durability
+// point. Pinned because a comment in refdata.Item claimed otherwise until
+// 2026-09-17, and the claim had never been run.
+func TestZeroBasisChargesTheFloorPrice(t *testing.T) {
+	q := Estimate(1_000_000, 0, 76, 0)
+	if q.Refusal != 0 {
+		t.Fatalf("a zero basis was refused (%v); it is charged the floor price instead", q.Refusal)
+	}
+	if q.Units != 76 || q.Cost != 76 {
+		t.Errorf("zero basis over 76 durability = %+v, want 76 units for 76 gold", q)
+	}
+}
