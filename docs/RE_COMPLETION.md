@@ -13444,3 +13444,72 @@ branch as "a third role, unread" invites the next pass to go looking for a role
 that does not exist. Reading the branch took one disassembly.
 
 Suite verified unambiguously: `go test` exit 0, 52 packages, no FAIL lines.
+
+## This session's names, written into the project (2026-09-17)
+
+A day of reads identified about twenty functions with solid evidence, and **none
+had reached `recovered_names.tsv` or Ghidra.** The dumps still called them all
+`FUN_`, so none of it counted toward the loop's first goal. `RE_LOOP.md` says it
+directly: "a name that is only in a commit message does not exist".
+
+**18 added and applied**: `applied 18, forced 0, reowned 0, no function 0,
+failed 0` — every address resolved to a real function start, and the 17 client
+rows were correctly skipped. All `origin=reading`, each with the use-site that
+names it:
+
+- the skill-use gate, `Skill_CheckUseConditions`
+- skill withdrawal: `SkillWithdraw_Validate`, `Formula_SkillWithdrawGoldCost`
+- guild alliances: `Guild_ValidateAllianceRequest`, `Alliance_SetGuildSlot`,
+  `Alliance_RemoveGuild`, `Alliance_ContainsGuild`
+- guild war: `Guild_ValidateWarDeclaration`
+- the mastery damage scale: `Skill_GetRequiredMasteryLevel`, `Mastery_GetLevel`
+- the academy: `TrainingCampMember_IsStudent` / `_IsSecondGuardian`,
+  `TrainingCamp_CountStudents` / `_CountSecondGuardians`,
+  `TrainingCamp_StudentsFull` / `_SecondGuardiansFull`
+- the level gold table: `LevelGold_FindEntry`, `LevelGold_GetMin`
+
+### Checked before naming, not after
+
+- **Each address was confirmed as a function start** that still read `FUN_` in
+  the dump index, because the format test cannot check addresses and a wrong one
+  "would fail silently in the Ghidra applier".
+- **The six tiny functions (14–29 bytes) were checked for COMDAT folding**, the
+  trap `RE_LOOP.md` records: none has a vtable or pointer reference, and every
+  caller is in the function's own domain. The class-byte tests are called from
+  `CTrainingCamp__MemberGraduated` and from `GObjPC`'s level-up path, which calls
+  `FUN_004e4170` when level passes 39 — the top of the student invite band.
+- Names were kept general where the evidence was general. `LevelGold_GetMin` has
+  eight callers pricing things off a gold drop, so it is not named after
+  withdrawal.
+- **Two candidates were left out** because the evidence names an effect, not an
+  operation: `FUN_005c6870` (refuses `GUILD_ERROR_BREAK_WAR` when a guild is at
+  war, but which operation it guards was not read) and `FUN_00485d90` (a thin
+  object-id wrapper).
+
+The apply ran **under `re_tick.sh`'s own `flock`**, so it could not collide with
+a dump rebuild on the same project. Only the server dump's `PROJSTAMP` was
+cleared; the client project did not change, and clearing its stamp would have
+forced a needless 5½-minute rebuild.
+
+### A coverage gap no count can see
+
+The caller scan resolved four call sites to **no function at all**:
+`?(005192d8)`, `?(0051930d)`, `?(005196b8)`, `?(005196fd)`. They are inside code
+Ghidra never turned into a function — the whole academy invite routine that
+assigns student and second-guardian roles, and the code around
+`TC_ERROR_GRADUATION_LEVER` at `0x005196e3`. That is also why the owner lookup
+failed when those refusals were first scanned.
+
+These functions are not unnamed. They are **absent**, so they appear in neither
+the named nor the `FUN_` count, and no naming metric will ever report them. The
+probe that would size the gap is a scan for executable bytes reachable by `call`
+or `jmp` that fall outside every function body. Recorded as open.
+
+### A probe that was wrong and did not matter
+
+The "is anything running" line printed before the apply matched its own parent
+shell: the command string contained the path `.../analyzeHeadless`, and the
+`[H]` bracket only stops `grep` matching *itself*. It was harmless here because
+the `flock` was the real guard. Recorded because it is the same self-match trap
+as the loop's earlier `Godot_v4` false positive, in a new shape: a pattern that
+appears anywhere in the command being run will find that command.
