@@ -47,15 +47,31 @@ started=$(date -Is)
 # --- step 1: are the dumps still current? ---------------------------------
 # A dump is stale if its binary is newer than the DONE marker. Re-dumping is
 # ~5 minutes and only happens when the binary actually changed.
+# The binary is a fixed artifact and never changes, so "is the binary newer
+# than the dump" could only ever answer no -- which is why this reported
+# rebuilt_dumps=0 for every tick of a session that applied a hundred names.
+# What DOES change is the Ghidra project: ApplyRecoveredNames.java writes names
+# into it and nowhere else, so the project's newest file is the only signal
+# that a dump has fallen behind. Checked as of 2026-09-17 -- the same defect as
+# "the metric that could not move", from the other end.
+projstamp() { find "$1" -type f -printf "%T@\n" 2>/dev/null | sort -rn | head -1 | cut -d. -f1; }
+
 redump() { # <name> <project> <program> <binary> <outdir>
   local name=$1 proj=$2 prog=$3 bin=$4 out=$5
-  if [ ! -f "$out/DONE" ] || [ "$bin" -nt "$out/DONE" ]; then
-    say "$name dump missing or stale - rebuilding"
+  local projdir=/home/ghidra/$proj stamp=$out/PROJSTAMP cur prev
+  cur=$(projstamp "$projdir"); cur=${cur:-0}
+  prev=$(cat "$stamp" 2>/dev/null); prev=${prev:-0}
+  if [ ! -f "$out/DONE" ] || [ "$bin" -nt "$out/DONE" ] || [ "$cur" -gt "$prev" ]; then
+    say "$name dump stale (binary or project changed) - rebuilding"
     rm -rf "$out"
     su ghidra -s /bin/bash -c \
       "$GHIDRA /home/ghidra/$proj $prog -readOnly -noanalysis -process $(basename "$bin") \
        -scriptPath /var/tmp -postScript DecompAll.java $out 30 2000" >>"$LOG" 2>&1
     say "$name dump rebuilt: $(cat "$out/DONE" 2>/dev/null)"
+    # Captured AFTER the run on purpose: analyzeHeadless touches the project
+    # even with -readOnly, and stamping it here is what stops that touch from
+    # triggering a rebuild on every tick forever.
+    projstamp "$projdir" >"$stamp"
     return 0
   fi
   return 1

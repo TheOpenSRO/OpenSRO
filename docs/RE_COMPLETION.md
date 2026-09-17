@@ -10601,3 +10601,55 @@ calls `005e4390`.
 they are, because a template instantiated per type genuinely does share one
 name.
 
+## 2026-09-17 — the dumps could never notice a rename
+
+`STATUS` has reported **`rebuilt_dumps=0` on every tick of this session**, during
+which about a hundred names were applied to the Ghidra projects. That is not a
+coincidence and it is not the cron misbehaving: `re_tick.sh` could not detect
+the change, by construction.
+
+The staleness test was
+
+	if [ ! -f "$out/DONE" ] || [ "$bin" -nt "$out/DONE" ]; then
+
+— *is the binary newer than the dump?* The binary is a fixed artifact from
+2026-09-14 and never changes, so that question could only ever answer no. What
+changes when a name is applied is the **Ghidra project**, and nothing looked at
+it.
+
+Measured before fixing, which is what turned a suspicion into a defect:
+
+| | |
+|---|---|
+| `SR_GameServer.exe` mtime | 2026-09-14 00:48 (fixed) |
+| `/var/tmp/decomp_server/DONE` | 2026-09-16 19:39 |
+| newest file in `/home/ghidra/re_server` | **2026-09-17 00:21** — the last name-application run |
+
+The project was five hours ahead of the dump and the check could not see it.
+
+**This is "the metric that could not move" from the other end.** That entry
+recorded names going into docs while nothing wrote them back into the project.
+This is names going into the project while nothing pulls them into the dump —
+and the dump is what every grep, every probe and every coverage count in this
+ledger actually reads. It cost this session directly: the collision audit read
+ten functions still called `AQ_StorageUpdater__Init` **after** they had been
+renamed, and the discrepancy had to be explained rather than avoided.
+
+**Fixed.** `redump` now also rebuilds when the project's newest file is newer
+than a `PROJSTAMP` written into the dump directory. Two details matter:
+
+- the stamp is captured **after** the rebuild, not before — `analyzeHeadless`
+  touches the project even with `-readOnly`, and stamping it beforehand would
+  make every tick see a change and rebuild forever;
+- `rm -rf "$out"` wipes the dump directory, so the stamp has to live there and
+  be rewritten each time, which is exactly what makes a missing stamp mean
+  "rebuild".
+
+Verified by dry-running the new condition before trusting it (`project=…00:21:45
+stamp=0 -> rebuild=YES` for both dumps), then running the tick to bring the
+dumps level with the names.
+
+The script is version-controlled at `client/tools/re_tick.sh`; the repo copy was
+**byte-identical** to the box's before this change, so there was no prior drift
+to reconcile, and it now carries the fix.
+
