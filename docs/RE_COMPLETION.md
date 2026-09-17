@@ -11934,3 +11934,60 @@ and parked where they will be needed, which is the honest shape of this one.
 `docs/protocol/engine_limits.md` also records the sixteen expressions that name
 members rather than constants — `m_dwAvailableOPs`, `m_dwLink`, `m_btItemClass`
 and more, each confirming a reading another spec reached from the other end.
+
+## A second level-difference damage term, found and deliberately not wired (2026-09-17)
+
+Followed the `__FILE__` attribution lever to its most promising name:
+**`Formulae.cpp`**. Small — 49 source files and 155 functions carry a file
+string, so this is not the 14,473-function ATTRIBUTED tier, which gets its
+namespaces from RTTI rather than asserts — but the file names are the engine's
+own module decomposition, and one of them is called Formulae.
+
+Three functions live in it. One, `Formula_SkillPhysDamage`, was already named;
+its two siblings turned out to be the EXP path, which this project has already
+mined (`Formula_ExpScaleByLevelWindow`, `Formula_MonsterExpReward`,
+`GObjPC_RecalcLevelDiffExpScale` are all cited in `internal/leveldata`).
+
+### What is new
+
+`Formula_SkillPhysDamage` carries a **second** level-difference term, opposite
+in sign to the one this project already ships:
+
+	scale  = 1 - 0.025 * d          (d = the level difference, when positive)
+	floor  = damage * 10 / 100
+	result = clamp(damage * scale, floor, damage)
+
+**2.5% per level, floored at 10% of the base.** The constants are `2.5` at
+`.rdata 0xb45e50` and `100.0` at `0xb45af0`; the `imul 0x51eb851f ; sar edx,5`
+beside the floor is the compiler's division by 100, not a game constant.
+
+The asymmetry with the known term is the interesting part:
+`combat.LevelAdvantage` is **3% per level, capped at +30%**, from
+`Formula_MitigatePhysicalDamage`. This one is **2.5% per level, floored at
+10%**. Two different rates in two different directions, which is exactly why
+neither could have been inferred from the other.
+
+### Why nothing was wired
+
+`Combat_ResolveDamage` calls it twice, and the two sites pass the object pair
+**swapped**:
+
+	58f4fc  push edi ; mov edx,esi ; call 0x40f5f0
+	58fbab  push esi ; mov edx,edi ; call 0x40f5f0
+
+so the argument order cannot say which participant is the attacker, and nothing
+else read so far does. **Applied backwards, this term penalises the wrong
+side.**
+
+`LevelAdvantage` had the same ambiguity and was settled by an independent fact —
+the same function reads the DEFENCE params off one of the two objects, and those
+are known to be the target's. The equivalent probe here is identifying `esi` and
+`edi` inside `Combat_ResolveDamage` (8,298 bytes, unread), and that is the
+recorded next step.
+
+So `docs/protocol/damage_pipeline.md` carries the term and
+`server/internal/combat` carries nothing. **A cap or a floor can be parked in
+code with "nothing enforces this yet"; a damage multiplier whose direction is
+unknown cannot**, because the obvious way to use it is also the way to get it
+backwards. That distinction is worth keeping — the previous tick parked two
+constants in code quite happily, and this one should not.

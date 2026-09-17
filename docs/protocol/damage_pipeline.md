@@ -136,3 +136,63 @@ engine folds berserk and critical into a **single** term at stage 13 —
 `t = attacker_p189 + 2.0`, then `t += t` on flag bit `0x2` — where srrevamp
 applies two separate doublings. With param 189 at its default of 0 both give x2
 alone and x4 together, so the two agree.
+
+
+## A second level-difference term, in `Formulae.cpp` (2026-09-17)
+
+This page records `LevelAdvantage` — 3% per level, capped at 30%, the **bonus**
+an attacker gets for out-levelling its target, from
+`Formula_MitigatePhysicalDamage`.
+
+There is a second, opposite term, and srrevamp does not model it.
+`Formulae::Formula_SkillPhysDamage` (`0x0040f5f0`, 248 bytes) scales skill
+physical damage **down** when the level difference runs the other way:
+
+	40f62c  <level of the ebx object>
+	40f63b  sub eax,esi              ; d = level(ebx) - level(esi)
+	40f643  jle done                 ; only when d > 0
+	40f651  fild  d
+	40f655  fmul  QWORD ds:0xb45e50  ; * 2.5
+	40f65b  fld   QWORD ds:0xb45af0  ; 100.0
+	40f661  fdiv  st(1),st           ; (d * 2.5) / 100
+	40f663  fld1
+	40f665  fsubrp st(2),st          ; 1 - (d * 2.5)/100
+	40f66d  fmulp                    ; damage * that
+	40f671  call  __ftol2
+	40f678  lea ecx,[edi+edi*4] / add ecx,ecx / imul 0x51eb851f / sar edx,5
+	                                 ; floor = damage * 10 / 100
+
+So:
+
+	scale  = 1 - 0.025 * d
+	floor  = damage * 10 / 100
+	result = clamp(damage * scale, floor, damage)
+
+**2.5% per level, floored at 10% of the base.** Note the asymmetry with the
+bonus: the advantage is 3% per level to +30%, the penalty 2.5% per level down to
+10%. Two different rates, which is why neither can be assumed from the other.
+
+The `imul 0x51eb851f ; sar edx,5` pair is the compiler's magic-number division
+by 100, not a constant of the game.
+
+### WHICH PARTICIPANT IS THE ATTACKER IS NOT SETTLED
+
+`Combat_ResolveDamage` calls this twice, and the two sites pass the object pair
+**swapped**:
+
+	58f4fc  push edi ; mov edx,esi ; call 0x40f5f0
+	58fbab  push esi ; mov edx,edi ; call 0x40f5f0
+
+so the argument order cannot settle the roles, and nothing else read so far
+does. That matters: applied backwards, this term would penalise the wrong side.
+
+This project settled the same question for `LevelAdvantage` by an independent
+fact — the same function reads the DEFENCE params off one of the two objects,
+and those are known to be the target's. **The equivalent probe here is to
+identify `esi` and `edi` inside `Combat_ResolveDamage`** (8,298 bytes, unread),
+and that is this term's next probe.
+
+**Nothing is wired into `server/internal/combat` for exactly that reason.** A
+cap or a floor can be parked in code with "nothing enforces this yet"; a damage
+multiplier whose direction is unknown cannot, because the obvious way to use it
+is also the way to get it backwards.
