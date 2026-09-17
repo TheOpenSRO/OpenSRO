@@ -638,9 +638,14 @@ reference data in two forms, and the table names are all in the binary:
 **This names where three open items actually live**, which is more useful than
 another round of guessing they are absent:
 
-- **`_REFCHARGEN`** — character generation. Starting Str/Int is disclosed
-  own-design precisely because nothing writes those constants in the exe; this
-  is the table that would hold them.
+- **`_REFCHARGEN`** — character generation. **CORRECTED 2026-09-17: this is NOT
+  the table that would hold starting Str/Int.** `CRefCharGen__AddEntry`
+  (`0x006a29a0`) takes an ObjID, resolves it to a RefObj, reads that object's
+  Country (`+0x88`, the common table's column 14) and the flag bits at `+0x80`,
+  and files the entry in a per-country list. It is the **roster of selectable
+  characters** — which models a player may create — not a stat table. Obtaining
+  it would not answer the starting-stat question. See the entry at the end of
+  this file for where that question actually stands.
 - **`_REFHWANLEVEL`** — the berserk levels. `hwanleveldata.txt` turned out to be
   a *title* table, and the gauge numbers had no string handle; this is where
   they live. **Partly closed 2026-09-15** — see below. `hwanleveldata.txt` is
@@ -10445,4 +10450,42 @@ gets revisited deliberately rather than by drift.
 **The unblocker is named and unchanged**: `_REFCHARGEN`, which this ledger
 already identifies as where starting Str lives. Grounding it makes stage 15 a
 five-line change.
+
+## 2026-09-17 — the starting-stat disclosure, proven by enumeration
+
+Chasing last tick's named unblocker (`_REFCHARGEN`, to ground
+`character.StartingStr` and so wire damage stage 15) ended with the unblocker
+being the wrong table and the disclosure becoming much stronger.
+
+**`_REFCHARGEN` is the selectable-character roster, not a stat table.**
+`CRefCharGen__AddEntry` (`0x006a29a0`) resolves an ObjID to a RefObj, reads its
+Country (`+0x88` = column 14) and the flags at `+0x80`, and files it per
+country. The ledger's standing note said it was "the table that would hold
+them"; it is corrected in place, because a future agent who obtains
+`_REFCHARGEN` would find a list of models and no stats.
+
+**The GameServer cannot create characters at all**, and that is the strong form
+of the negative. The binary names **75 stored procedures** covering every
+persistence operation it performs — `_AddNewCOS` for a pet, twenty-odd
+`_STRG_*` for items, `_SiegeFortress*` for sieges, `_AssignNickName` for a
+rename — and **none creates a character**. This does not depend on having
+searched the right place: creation is not one of this binary's operations, so
+no further search in it can succeed.
+
+**The `AgentServer.exe` on the box is a gateway, not the creator.** Worth
+recording because an empty result there is easy to misread: `strings` returned
+nothing for every creation term, which on a 933 KB binary is a fact about the
+probe, so I checked — it is **not packed** (`.text` entropy 6.06, 6,980
+strings). Its actual content is `CServerApp`, `CBaseSocket`, `XTrap`,
+`netengine`, `CQueMT9x<CMsg>`: a session relay with no SQL and no character
+logic.
+
+So `character.StartingStr` now rests on **four** measurements, the last an
+enumeration rather than a search, and its comment says where not to look next.
+
+**What this means for damage stage 15**: the blocker recorded last tick is
+unchanged in substance but firmer in reason. Starting Str is not in any binary
+on this box, so the Str scale the ratio is calibrated against cannot be
+recovered from what we have — it needs a real `_CHAR` row or the creation
+service. `combat.StrForMaxRatio` remains the yardstick for the day one turns up.
 

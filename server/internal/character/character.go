@@ -153,16 +153,37 @@ const (
 //     **zero of them carry a non-zero MaxHP (col 59)** -- the column that would
 //     give Str away, since MaxHP is Str*10 at level 1. There is no bare
 //     CHAR_CH_MAN row at all; the player rows are class and appearance variants.
+//
 //   - the client's character-creation screen. Its strings are UIO_NEWCHAR_*, and
 //     they are race, gender, class and _EXPLANATION text. It previews an
 //     appearance, not a stat line, so there is no formula in the client either.
+//
 //   - LevelData.txt. Nine columns, none of them a stat: level, exp, mastery cost,
 //     two zero columns, the kill-exp unit, and a triple of large identical values
 //     (see the note below).
 //
-// So the value stays own-design, but the reason is now three measurements rather
-// than one silence. If it is ever recovered, it is worth doing: at level 40 a
-// wrong starting Str is a wrong health total by the same ratio.
+//   - **the GameServer's own stored-procedure list (2026-09-17).** This is the
+//     structural one, and it is stronger than the other three because it does
+//     not depend on having looked in the right place. The binary names **75**
+//     stored procedures, covering every persistence operation it performs:
+//     `_AddNewCOS` creates a pet, the twenty-odd `_STRG_*` move items,
+//     `_SiegeFortress*` run a siege, `_AssignNickName` renames. **None of them
+//     creates a character.** So character creation is not a GameServer
+//     operation at all, and no amount of further searching in this binary can
+//     turn one up.
+//
+// So the value stays own-design, but the reason is now four measurements rather
+// than one silence, and the last of them is an enumeration rather than a search.
+// If it is ever recovered, it is worth doing: at level 40 a wrong starting Str
+// is a wrong health total by the same ratio.
+//
+// WHERE NOT TO LOOK, corrected 2026-09-17. docs/RE_COMPLETION.md named
+// `_REFCHARGEN` as "the table that would hold them". It is not.
+// `CRefCharGen__AddEntry` (`0x006a29a0`) takes an ObjID, resolves it to a
+// RefObj, reads that object's **Country** (`+0x88`, the common table's column
+// 14) and the flag bits at `+0x80`, and files the entry in a per-country list.
+// `_REFCHARGEN` is the **roster of selectable characters** -- which models a
+// player may create -- not a stat table. Obtaining it would not answer this.
 const (
 	StartingStr = 20
 	StartingInt = 20
