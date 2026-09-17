@@ -203,8 +203,23 @@ message does not exist.
 	   -postScript ApplyRecoveredNames.java /var/tmp/recovered_names.tsv server"'
 
 Expect a final `applied N, forced N, … failed 0` line. `other binary N` counts
-the client rows it correctly skipped. The next `re_tick.sh` run notices the
-project changed and rebuilds the dumps.
+the client rows it correctly skipped.
+
+**Then invalidate the dump cache yourself:**
+
+	ssh root@192.168.5.78 'rm -f /var/tmp/decomp_*/PROJSTAMP'
+
+`re_tick.sh` stamps the project's newest mtime *after* a rebuild, so its own
+`-readOnly` run does not look like a change. That is the only stable choice —
+stamping *before* the run instead makes the tool's own touch newer than the
+stamp, and both dumps then rebuild every tick forever, which starved this loop
+for four consecutive ticks on 2026-09-17.
+
+The cost of the stable choice is that a rename applied while a dump is building
+is absorbed into the post-run stamp and missed. **Deleting `PROJSTAMP` after an
+apply closes that**, and it puts the invalidation where the knowledge is: the
+apply step is the only thing that meaningfully changes the project, so it is the
+thing that should say so.
 
 Ghidra 12.1.3 **will not run `.py` scripts** — it needs PyGhidra, which is not
 enabled. Java only.

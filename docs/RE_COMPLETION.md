@@ -11842,3 +11842,44 @@ independent routes to the same answer.
 11,495 functions in the server have a real body, no name, no slot and no module.
 That is the work, and it is the first time this project has had a number for it
 that is not flattered.
+
+## A staleness fix that starved the loop, reverted (2026-09-17)
+
+v0.1.288 changed `re_tick.sh` to record the project stamp taken **before** a
+dump rebuild rather than after, to catch a rename applied while the dump was
+building. The reasoning was wrong and the effect was severe.
+
+`analyzeHeadless` touches the Ghidra project while it runs, even under
+`-readOnly`. So the project's newest mtime always ends up **newer than a
+pre-run stamp**, and every subsequent tick sees the dump as stale:
+
+	re_server: stamp=1789628606   project newest=1789629504
+	re_client: stamp=(none)       project newest=1789629507
+
+Both dumps then rebuild on every 15-minute tick — about **nine minutes of every
+tick** — which is exactly the failure the original post-run stamping existed to
+prevent, and which its comment had warned about in those words. The tick log
+shows 26 "dump stale" rebuilds.
+
+**It starved this loop for four consecutive ticks**, each of which correctly
+found a decompilation in flight and stood down.
+
+### The fix, and where the responsibility belongs
+
+Post-run stamping is restored. The mid-run window it cannot close is real but
+narrow, and it belongs to whoever changes the project rather than to the
+heartbeat: `ApplyRecoveredNames` is the only thing that meaningfully changes it,
+so the apply step now deletes `PROJSTAMP` and the next tick rebuilds.
+`docs/RE_LOOP.md`'s apply recipe carries the extra line.
+
+That is a better division than either stamping choice on its own — the cache is
+invalidated by the operation that dirties it, instead of being guessed at from
+timestamps that cannot distinguish a rename from a read.
+
+### What this cost, stated plainly
+
+Four ticks of no progress, and the diagnosis took a fifth. The change that
+caused it shipped with a confident commit message explaining why the previous
+behaviour was wrong; the previous behaviour was right, and its own comment said
+why. Reading that comment as a warning rather than as an obstacle would have
+saved all five.

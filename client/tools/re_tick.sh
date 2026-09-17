@@ -68,19 +68,24 @@ redump() { # <name> <project> <program> <binary> <outdir>
       "$GHIDRA /home/ghidra/$proj $prog -readOnly -noanalysis -process $(basename "$bin") \
        -scriptPath /var/tmp -postScript DecompAll.java $out 30 2000" >>"$LOG" 2>&1
     say "$name dump rebuilt: $(cat "$out/DONE" 2>/dev/null)"
-    # Record the stamp taken BEFORE the run, written after it.
+    # Record the stamp taken AFTER the run.
     #
-    # Both halves matter and an earlier version got the second one wrong. It
-    # re-measured here, which does stop analyzeHeadless's own -readOnly touch
-    # from triggering a rebuild every tick -- but it also SWALLOWS any rename
-    # applied while the dump was building. The post-run stamp includes that
-    # change, so the next tick compares equal and skips, and the dump stays
-    # stale with nothing reporting it. That happened on 2026-09-17: 138 owner
-    # corrections landed during a build and the next tick saw nothing to do.
+    # THE PRE-RUN STAMP WAS A REGRESSION AND IS REVERTED (2026-09-17). The idea
+    # was that writing the pre-run value would keep analyzeHeadless's own touch
+    # out of the stamp while letting a rename applied DURING the build win on
+    # the next tick. The first half is wrong: the tool touches the project while
+    # it runs, so the project's newest mtime always ends up NEWER than a pre-run
+    # stamp, and every subsequent tick sees the dump as stale. Both dumps then
+    # rebuild every 15 minutes forever -- about nine minutes of every tick --
+    # which is exactly the failure the original post-run stamping existed to
+    # prevent, and it starved this loop for four consecutive ticks.
     #
-    # Writing the pre-run value keeps the touch out (it is not in $cur) and
-    # lets a real mid-run change win next tick (its mtime is newer than $cur).
-    echo "$cur" >"$stamp"
+    # The mid-run window the pre-run stamp was trying to close is real but
+    # narrow, and it belongs to whoever changes the project rather than here:
+    # ApplyRecoveredNames is the only thing that meaningfully changes it, so the
+    # apply step deletes these stamps and the next tick rebuilds. See the
+    # "Applying names" recipe in docs/RE_LOOP.md.
+    projstamp "$projdir" >"$stamp"
     return 0
   fi
   return 1
