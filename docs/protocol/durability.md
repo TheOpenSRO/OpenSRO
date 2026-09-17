@@ -113,3 +113,9 @@ per-point price only in that direction. Nothing names either field.
   deserialised field-by-field by `RefObjItem::ExtractData`, so mapping an offset
   to a column means counting through 7,052 bytes of it. That single unread
   function now blocks two systems, which makes it the most valuable one left.
+
+  `client/tools/re/fields.py` is the start of doing it mechanically, and it is
+  **not yet trustworthy**: against the one function whose field count is already
+  known (`RefObjCommon_ExtractData`, 58) it accounts for 47. The eleven missing
+  fields are the gap to close, and `client/tools/re/README.md` says where the 47
+  come from.

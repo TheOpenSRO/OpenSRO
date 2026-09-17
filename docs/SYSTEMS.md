@@ -93,7 +93,10 @@ Two probes recur across several rows and are the highest-value targets left:
 - **`RefObjItem::ExtractData` (`0x006a3d50`, 7,052 bytes)** is a sequential
   field-by-field deserializer, and mapping its offsets to columns would unblock
   the packed reinforce rates in `alchemy.md` *and* the repair price basis in
-  `durability.md`. One function, two rows.
+  `durability.md`. One function, two rows. `client/tools/re/fields.py` reads
+  these deserializers mechanically but **accounts for only 47 of the 58 fields**
+  in the one function whose count is already known, so nothing is published from
+  it yet; explaining those eleven is the concrete next step.
 - **`AQ_Siege::FUN_006232c0` (11,816 bytes)** holds most of the fortress logic,
   including the dungeon caps and the structure-upgrade costs.
 

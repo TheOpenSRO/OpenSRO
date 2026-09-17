@@ -25,3 +25,31 @@ file fails even as root — delete first, or pipe through `cat` as above.
 
 **Do not rename `rebox.py` to `re.py`.** It shadows the standard library's `re`
 and nothing on the box will import.
+
+## `fields.py` — and why it is not finished
+
+`fields.py <addr>` reads a sequential `ExtractData` deserializer and reports its
+field order: **field index → struct offset**, which is what a column layout
+needs. It handles the three store shapes that appear (integer, float, and float
+through a walking pointer), expands short counted loops so a bump inside one is
+counted per iteration rather than per instruction, and auto-detects which
+register holds the reader.
+
+**It does not yet reproduce a known answer, so nothing should be published from
+it.** `docs/protocol/refobj_binary_format.md` establishes that `_RefObjCommon`
+has **58** fields, the last at `+0x184`. The tool accounts for **47**:
+
+	42  inline reads it sees directly
+	 5  calls to RefData_ReadStringField, which bumps the counter inside the callee
+	--
+	47  of 58
+
+**Eleven fields are unaccounted for**, and closing that gap is the whole job.
+Until it closes, the tool's output for `RefObjItem::ExtractData` (62 fields, 39
+offsets resolved) is a plausible field order and **not** a column mapping, and
+using it would put un-validated offsets into two shipped specs.
+
+The reason this matters: `RefObjItem::ExtractData` is the single unread function
+blocking a real number in two places — the packed reinforce success rates in
+`docs/protocol/alchemy.md` and the repair price basis in
+`docs/protocol/durability.md`.
