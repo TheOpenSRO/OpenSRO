@@ -144,7 +144,8 @@ This page records `LevelAdvantage` — 3% per level, capped at 30%, the **bonus*
 an attacker gets for out-levelling its target, from
 `Formula_MitigatePhysicalDamage`.
 
-There is a second, opposite term, and srrevamp does not model it.
+There is a second, opposite term. srrevamp did not model it until 2026-09-17;
+it now does, as `combat.SkillLevelPenalty`.
 `Formulae::Formula_SkillPhysDamage` (`0x0040f5f0`, 248 bytes) scales skill
 physical damage **down** when the level difference runs the other way:
 
@@ -175,10 +176,14 @@ bonus: the advantage is 3% per level to +30%, the penalty 2.5% per level down to
 The `imul 0x51eb851f ; sar edx,5` pair is the compiler's magic-number division
 by 100, not a constant of the game.
 
-### WHICH PARTICIPANT IS THE ATTACKER IS NOT SETTLED
+### Which participant is the attacker — SETTLED 2026-09-17
 
-`Combat_ResolveDamage` calls this twice, and the two sites pass the object pair
-**swapped**:
+**Resolved below; this section records the reasoning that failed first.** The
+direction is *target minus attacker*, so the penalty falls on an attacker
+striking something above its level.
+
+`Combat_ResolveDamage` calls this twice, and the two sites *appear* to pass the
+object pair **swapped**:
 
 	58f4fc  push edi ; mov edx,esi ; call 0x40f5f0
 	58fbab  push esi ; mov edx,edi ; call 0x40f5f0
@@ -220,21 +225,80 @@ inference from "bonus ⇒ attacker" really is unsound.
 
 and the penalty fires when `level(ebx) > level(esi)`.
 
-### Why the two call sites cannot settle it either
+### SETTLED 2026-09-17 — and the two call sites were never swapped
 
-	58f4fc  push edi ; mov edx,esi   ->  formula esi = caller edi, ebx = caller esi
-	58fbab  push esi ; mov edx,edi   ->  formula esi = caller esi, ebx = caller edi
+	58f4fc  push edi ; mov edx,esi
+	58fbab  push esi ; mov edx,edi
 
-The pair is passed in **opposite orders**, so site 1 penalises whichever way site
-2 rewards. One of the two is presumably the reverse direction of the exchange —
-a counter, a reflect, or a second damage type — and which is which needs
-`Combat_ResolveDamage`'s control flow, not its call sites.
+This page read that pair as the arguments being passed in **opposite orders**.
+They are not. It is register allocation, and the two sites pass the same two
+things:
 
-**That is the remaining probe**, and it is narrower than before: identify what
-`esi` and `edi` hold at `0x0058f4ff` and `0x0058fbae` specifically, rather than
-reading all 8,298 bytes.
+	58f4bc  mov edi,[esp+0x124]      58fb5d  mov esi,[esp+0x124]
+	58f468  mov esi,[esp+0x28]       58fb64  mov edi,[esp+0x28]
 
-**Nothing is wired into `server/internal/combat` for exactly that reason.** A
-cap or a floor can be parked in code with "nothing enforces this yet"; a damage
-multiplier whose direction is unknown cannot, because the obvious way to use it
-is also the way to get it backwards.
+So **both** sites push `[esp+0x124]` and put `[esp+0x28]` in `edx`. There is no
+reverse direction, no counter and no second exchange; there is one call made
+from two branches of the same `if`.
+
+That was the whole blocker, and it was a misreading of two instructions rather
+than a missing fact. Worth recording: the registers at a call site say nothing
+until the writes that feed them are traced, and *symmetric-looking* allocation
+is exactly what a compiler produces from straight-line code either side of a
+branch.
+
+### Which side is which, three ways
+
+`Formula_SkillPhysDamage(param_1 = the pdmg record, param_2, param_3)`, with
+`param_2` = `[esp+0x28]` and `param_3` = `[esp+0x124]`.
+
+1. **`[esp+0x124]` is `Combat_ResolveDamage`'s own arg0.** Its callers —
+   `FUN_005857b0` and `FUN_00586700` — call it as
+   `Combat_ResolveDamage(param_2, *(param_3+0x14), *(param_3+0x18))`, where
+   their `param_2` is the actor they read param `0x8d` off, whose `+0x28c`
+   block they maintain and whose `[0x302]` they clear: **the caster**.
+2. **The same slot is `Formula_MitigatePhysicalDamage`'s `param_3`.** At both of
+   *its* call sites (`58f2f8`, `58f7e7`) `[esp+0x124]` is the last push — the
+   argument immediately before the damage float, which fixes it as `param_3`
+   rather than by counting. Inside that function `param_3` is `ebp`, and `ebp`
+   is the object that receives the out-levelling **bonus** at `40e6b6` and the
+   **Str ratio** at `40e6cb`. Both are the attacker's, and stage 14's compare
+   (`level(ebp) > level(edi)`, `jbe` past the bonus) says so in one line.
+3. **`[esp+0x28]` is a target, not a participant passed in.** It is written
+   exactly once, at `58e908`, inside a walk over the container the caller
+   passes as args 1 and 2 — `cmp ecx,edx / je`, `cmp ecx,[eax+8] / jae`,
+   `mov ecx,[ecx]`, `call FUN_00485d90` — and each resolved object is filtered
+   on vtable slots `0x18` and `0x28` before it is damaged. One attacker, many
+   targets.
+
+**So `param_2` is the TARGET and `param_3` the ATTACKER**, the subtraction
+`level(param_2) − level(param_3)` is *target minus attacker*, and the penalty
+fires when **the target out-levels the attacker**. The bonus and the penalty
+therefore act on opposite sides of the same difference, at different rates.
+
+`FUN_0040f750` — the sibling called on the other arm of the same `if`, when
+`[ebx+0x400]` is set — carries the **identical** level test with the roles in
+the same two slots (`this` = the target, stack = the attacker), which is a
+fourth reading of the direction from a function this probe did not set out to
+read.
+
+### Where the term applies
+
+The result is **added into `[ebp+0x20]`** (`58f522`, `58fbd1`), one of three
+accumulators on the damage record; the mitigated weapon blow lands in `+0x28`
+(physical) and `+0x24` (magical). So this scales the **skill's own flat damage
+contribution**, not the weapon blow — and it is not part of the mitigation
+chain at all.
+
+### Wired
+
+`combat.SkillLevelPenalty`, applied in `session.performAttack` to `damageBonus`
+— srrevamp's name for exactly that half — before it joins the roll. The rate,
+the floor and the truncation (`__ftol2`, not rounding) are all from the
+disassembly; `TestSkillLevelPenaltyIsNotTheLevelAdvantage` fails if a later
+refactor collapses the two level terms into one.
+
+A consequence worth stating, since it is arithmetic on recovered constants
+rather than a further claim: `1 − 0.025·d` reaches the 10% floor at exactly
+**d = 36**, so the penalty saturates 36 levels below the target and every
+deeper deficit is identical.

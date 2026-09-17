@@ -782,6 +782,14 @@ func performAttack(
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})
 	}
 
+	// A skill's own flat damage is scaled DOWN when the monster out-levels the
+	// attacker -- 2.5% per level, floored at 10%. This is the opposite term to
+	// the level ADVANTAGE resolveBlow applies below, it has a different rate,
+	// and the engine applies it to the skill's damage bucket alone rather than
+	// to the weapon blow. See combat.SkillLevelPenalty for the disassembly and
+	// for how the attacker was told from the target.
+	damageBonus = combat.SkillLevelPenalty(damageBonus, playerLevel, monster.Level)
+
 	// A skill's FLAT damage joins the roll here, before mitigation -- the
 	// engine adds it to the rolled bound itself (FUN_0040db50 reads the attack
 	// descriptor's +0x8 for the minimum and +0xc for the maximum). Its

@@ -347,6 +347,109 @@ func ApplyLevelAdvantage(damage, attackerLevel, defenderLevel int) int {
 	return out
 }
 
+// SkillLevelPenaltyPerLevel and SkillLevelPenaltyFloorPercent are the OPPOSITE
+// level-difference term: a skill's own physical damage is scaled DOWN when the
+// TARGET out-levels the attacker, 2.5% per level, floored at 10% of the base.
+//
+// Note the asymmetry with LevelAdvantage above -- 3% per level up to +30% for
+// out-levelling, 2.5% per level down to 10% for being out-levelled. Two
+// different rates, in two different functions, which is why neither can be
+// assumed from the other.
+//
+// RECOVERED from Formulae::Formula_SkillPhysDamage (0040f5f0, 248 bytes), whose
+// assert names its own source file:
+//
+//	"... File: %s, Line: %d", "D:\WORK2005\...\SR_GameServer\Formulae.cpp", 0x436
+//
+// The body, after a flat bonus is added to the base:
+//
+//	40f62c  uVar2 = level(param_3) ; uVar3 = level(param_2)
+//	40f63b  sub eax,esi                  ; d = level(param_2) - level(param_3)
+//	40f643  jle done                     ; only when d > 0
+//	40f651  fild  d
+//	40f655  fmul  QWORD ds:0xb45e50      ; * 2.5
+//	40f65b  fld   QWORD ds:0xb45af0      ; 100.0
+//	40f661  fdiv  st(1),st               ; (d * 2.5) / 100
+//	40f663  fld1
+//	40f665  fsubrp st(2),st              ; 1 - (d * 2.5)/100
+//	40f66d  fmulp                        ; base * that
+//	40f671  call  __ftol2                ; TRUNCATES toward zero
+//	40f678  lea ecx,[edi+edi*4] / add ecx,ecx / imul 0x51eb851f / sar edx,5
+//	                                     ; floor = base * 10 / 100
+//	        return clamp(scaled, floor, base)
+//
+// The `imul 0x51eb851f ; sar edx,5` pair is the compiler's magic-number
+// division by 100, not a constant of the game.
+//
+// WHICH PARTICIPANT IS THE ATTACKER -- settled 2026-09-17, three ways.
+// The argument order alone cannot settle it: Combat_ResolveDamage (0058e5f0)
+// calls this twice and the two sites look swapped --
+//
+//	58f4fc  push edi ; mov edx,esi ; call 0x40f5f0
+//	58fbab  push esi ; mov edx,edi ; call 0x40f5f0
+//
+// -- but that is register allocation, not argument order. Both sites load the
+// SAME two stack slots (58f4bc/58fb5d read [esp+0x124], 58f468/58fb64 read
+// [esp+0x28]) and pass [esp+0x124] as param_3 at both. So:
+//
+//  1. [esp+0x124] is Combat_ResolveDamage's own arg0. Its callers -- FUN_005857b0
+//     and FUN_00586700 -- pass their actor object there, the one they read
+//     param 0x8d off and whose skill state they mutate: the CASTER.
+//  2. The same slot is passed as param_3 to Formula_MitigatePhysicalDamage at
+//     both of ITS call sites (58f2f8, 58f7e7), always as the last push, i.e.
+//     the argument immediately before the damage float -- and inside that
+//     function param_3 is `ebp`, the object that receives the out-levelling
+//     BONUS (40e6b6) and the Str ratio (40e6cb). Both are the attacker's.
+//  3. [esp+0x28] is written once (58e908), from a walk over a container the
+//     caller passes as arg1/arg2, each element resolved through FUN_00485d90
+//     and then filtered on vtable slots 0x18 and 0x28 before it is damaged:
+//     one attacker, many targets.
+//
+// So param_2 is the TARGET, param_3 the ATTACKER, and the subtraction
+// `level(param_2) - level(param_3)` makes the penalty fire when the target
+// out-levels the attacker. Applied backwards it would penalise the wrong side,
+// which is why nothing was wired until this was proven rather than inferred.
+//
+// WHERE IT APPLIES. The engine keeps three damage accumulators on the record
+// at `ebp` and this result is ADDed into +0x20 (58f522, 58fbd1), while the
+// mitigated weapon blow lands in +0x28 (physical) and +0x24 (magical). So the
+// term scales the skill's OWN flat damage contribution, not the weapon blow --
+// which is srrevamp's `damageBonus`, the half that joins the roll before
+// mitigation.
+const (
+	SkillLevelPenaltyPerLevel     = 0.025
+	SkillLevelPenaltyFloorPercent = 10
+)
+
+// SkillLevelPenalty scales a skill's own flat damage down when the target
+// out-levels the attacker. It returns base unchanged when the attacker is the
+// equal or higher level, and never drops below SkillLevelPenaltyFloorPercent of
+// base -- so the penalty saturates at 36 levels of deficit, where
+// 1 - 0.025*36 is exactly 0.10.
+//
+// A zero level on either side is "not known", not "level zero", and skips the
+// term, the same convention ApplyLevelAdvantage's caller uses.
+func SkillLevelPenalty(base, attackerLevel, targetLevel int) int {
+	if base <= 0 || attackerLevel <= 0 || targetLevel <= 0 {
+		return base
+	}
+	d := targetLevel - attackerLevel
+	if d <= 0 {
+		return base
+	}
+	// math.Trunc, not Round: the engine converts through __ftol2 (0x9fbb40),
+	// which is the C cast and truncates toward zero.
+	scaled := int(math.Trunc(float64(base) * (1 - SkillLevelPenaltyPerLevel*float64(d))))
+	floor := base * SkillLevelPenaltyFloorPercent / 100
+	if scaled < floor {
+		return floor
+	}
+	if scaled < base {
+		return scaled
+	}
+	return base
+}
+
 // ReinforcePercentScale converts an itemdata reinforce column into a percent.
 // The table stores tenths of a percent -- a Copper Sword's 306 is 30.6% -- and
 // the engine's innate defaults confirm the unit: GObjPC_InitStats writes 30.6

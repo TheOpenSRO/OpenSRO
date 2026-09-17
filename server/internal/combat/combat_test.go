@@ -640,3 +640,89 @@ func TestResolveBlowAppliesTheFloorBandWithoutDisturbingOrdinaryHits(t *testing.
 		t.Errorf("the band must never go below 1, got %d", heavy.Damage)
 	}
 }
+
+// TestSkillLevelPenalty pins Formulae::Formula_SkillPhysDamage (0040f5f0): a
+// skill's own flat damage is scaled by 1 - 0.025*d when the TARGET out-levels
+// the attacker by d, clamped to [10% of base, base]. See SkillLevelPenalty for
+// the disassembly and for the three-way proof of which side is the attacker.
+func TestSkillLevelPenalty(t *testing.T) {
+	// No deficit, and an advantage, both leave the base alone: the engine's
+	// `jle` skips the whole term unless d > 0. The BONUS for out-levelling is
+	// a different function (LevelAdvantage) with a different rate.
+	for _, tc := range []struct{ atk, tgt int }{{50, 50}, {50, 40}, {50, 1}} {
+		if got := SkillLevelPenalty(1000, tc.atk, tc.tgt); got != 1000 {
+			t.Errorf("SkillLevelPenalty(1000, %d, %d) = %d, want 1000 (no deficit)",
+				tc.atk, tc.tgt, got)
+		}
+	}
+
+	// One level of deficit is 2.5%; ten is 25%.
+	if got := SkillLevelPenalty(1000, 50, 51); got != 975 {
+		t.Errorf("one level of deficit = %d, want 975", got)
+	}
+	if got := SkillLevelPenalty(1000, 50, 60); got != 750 {
+		t.Errorf("ten levels of deficit = %d, want 750", got)
+	}
+
+	// The floor is 10% of base, and the two ways of reaching it agree: the
+	// scale hits 0.10 at exactly 36 levels, so 36 and anything beyond it pin
+	// to the same number. That equality is the check that the floor and the
+	// rate were read off the same function.
+	const floor = 1000 * SkillLevelPenaltyFloorPercent / 100
+	for _, d := range []int{36, 37, 100, 255} {
+		if got := SkillLevelPenalty(1000, 50, 50+d); got != floor {
+			t.Errorf("deficit of %d = %d, want the floor %d", d, got, floor)
+		}
+	}
+	// One level short of saturation must still be above the floor, or the
+	// floor is being reached early and the rate is wrong.
+	if got := SkillLevelPenalty(1000, 50, 85); got <= floor {
+		t.Errorf("deficit of 35 = %d, want more than the floor %d", got, floor)
+	}
+
+	// The engine truncates through __ftol2 rather than rounding: 101 * 0.975
+	// is 98.475, and the cast makes it 98, not 98.5-rounded-to-98... the
+	// distinction bites at .5, so use a base that lands there. 200 * 0.975 =
+	// 195 exactly; 100 * 0.975 = 97.5, which truncates to 97 and would round
+	// to 98.
+	if got := SkillLevelPenalty(100, 50, 51); got != 97 {
+		t.Errorf("SkillLevelPenalty(100, 50, 51) = %d, want 97 (__ftol2 truncates)", got)
+	}
+
+	// An unknown level on either side is "not set", not "level zero", and
+	// skips the term -- the same convention ResolveBlow uses for the advantage.
+	if got := SkillLevelPenalty(1000, 0, 60); got != 1000 {
+		t.Errorf("unknown attacker level = %d, want 1000", got)
+	}
+	if got := SkillLevelPenalty(1000, 50, 0); got != 1000 {
+		t.Errorf("unknown target level = %d, want 1000", got)
+	}
+	// A plain attack carries no skill damage, so there is nothing to scale.
+	if got := SkillLevelPenalty(0, 1, 99); got != 0 {
+		t.Errorf("SkillLevelPenalty(0, ...) = %d, want 0", got)
+	}
+}
+
+// TestSkillLevelPenaltyIsNotTheLevelAdvantage guards against the two
+// level-difference terms being collapsed into one. They have different rates
+// (2.5% against 3%), different bounds (a floor at 10% against a cap at +30%),
+// they fire on opposite signs of the difference, and they come from different
+// functions. A future refactor that "unifies" them is a bug.
+func TestSkillLevelPenaltyIsNotTheLevelAdvantage(t *testing.T) {
+	if SkillLevelPenaltyPerLevel == LevelAdvantagePerLevel {
+		t.Fatalf("the penalty rate and the advantage rate are both %v; they are "+
+			"2.5%% and 3%% and were read out of different functions",
+			SkillLevelPenaltyPerLevel)
+	}
+	// Ten levels either way: the advantage multiplies up, the penalty scales
+	// down, and neither touches the other's side of the difference.
+	if adv := LevelAdvantage(60, 50); adv <= 1 {
+		t.Errorf("LevelAdvantage(60, 50) = %v, want more than 1", adv)
+	}
+	if LevelAdvantage(50, 60) != 1 {
+		t.Error("LevelAdvantage fires when the attacker is out-levelled; it must not")
+	}
+	if SkillLevelPenalty(1000, 60, 50) != 1000 {
+		t.Error("SkillLevelPenalty fires when the attacker out-levels; it must not")
+	}
+}

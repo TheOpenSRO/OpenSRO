@@ -12056,3 +12056,92 @@ note implied.
 
 Still nothing wired into `internal/combat`, for the same reason as before: a
 damage multiplier applied backwards is worse than one not applied at all.
+
+## The skill level penalty settled and wired, and a two-instruction misreading (2026-09-17)
+
+Took the narrowed probe the previous tick recorded — *what do `esi` and `edi`
+hold at `0x0058f4ff` and `0x0058fbae`* — and it dissolved the blocker rather
+than answering it.
+
+### The two call sites were never swapped
+
+The previous tick recorded this as the reason the direction could not be read:
+
+	58f4fc  push edi ; mov edx,esi   ->  "formula esi = caller edi"
+	58fbab  push esi ; mov edx,edi   ->  "formula esi = caller esi"
+
+and concluded "the pair is passed in **opposite orders**", inventing a reverse
+exchange — a counter or a reflect — to explain it.
+
+Tracing the writes that feed those registers:
+
+	58f4bc  mov edi,[esp+0x124]      58fb5d  mov esi,[esp+0x124]
+	58f468  mov esi,[esp+0x28]       58fb64  mov edi,[esp+0x28]
+
+**Both sites pass the same two operands.** `[esp+0x124]` is pushed at both;
+`[esp+0x28]` goes to `edx` at both. The apparent swap is register allocation
+across two branches of one `if`, and the two blocks are otherwise
+instruction-for-instruction identical.
+
+So the blocker was never a missing fact. It was reading two instructions without
+tracing what fed them — and a plausible mechanic (a counterattack) invented to
+explain the artifact. The mechanic does not exist.
+
+### Whose level is subtracted from whose, three ways
+
+`Formula_SkillPhysDamage(param_1 = pdmg record, param_2 = [esp+0x28],
+param_3 = [esp+0x124])`, testing `level(param_2) - level(param_3) > 0`.
+
+1. **`[esp+0x124]` is `Combat_ResolveDamage`'s arg0**, and its callers
+   `FUN_005857b0` / `FUN_00586700` call
+   `Combat_ResolveDamage(param_2, *(param_3+0x14), *(param_3+0x18))` where their
+   `param_2` is the actor whose param `0x8d` they read, whose `+0x28c` block they
+   maintain and whose `[0x302]` they clear: the **caster**.
+2. **The same slot is `Formula_MitigatePhysicalDamage`'s `param_3`** at both of
+   that function's call sites (`58f2f8`, `58f7e7`) — always the last push, i.e.
+   the argument immediately before the damage float, which fixes the position
+   without counting pushes. Inside, `param_3` is `ebp`: the object that gets the
+   out-levelling **bonus** (`40e6b6`) and the **Str ratio** (`40e6cb`), both the
+   attacker's, with stage 14's `cmp bl,al / jbe` stating the direction outright.
+3. **`[esp+0x28]` is iterated, not passed in.** Written exactly once, at
+   `58e908`, from a walk over the container the caller hands in as args 1 and 2
+   (`cmp ecx,edx / je`, `cmp ecx,[eax+8] / jae`, `mov ecx,[ecx]`,
+   `call FUN_00485d90`), each element filtered on vtable slots `0x18` and `0x28`
+   before being damaged. One attacker, many targets.
+
+A fourth reading fell out unasked: `FUN_0040f750`, the sibling on the other arm
+of the same `if`, carries the **identical** level test with the roles in the same
+slots (`this` = target, stack = attacker).
+
+**`param_2` is the target, `param_3` the attacker.** The penalty fires when the
+target out-levels the attacker — the mirror of `LevelAdvantage`, at a different
+rate and with a floor instead of a cap.
+
+### Where it applies
+
+The result is **added into `[ebp+0x20]`** (`58f522`, `58fbd1`). The mitigated
+weapon blow goes to `+0x28` (physical) and `+0x24` (magical), so this term scales
+the **skill's own flat damage**, separately from the mitigation chain.
+
+### Wired
+
+`combat.SkillLevelPenalty(base, attackerLevel, targetLevel)` — `1 - 0.025*d`
+truncated through `__ftol2`, clamped to `[base*10/100, base]` — applied in
+`session.performAttack` to `damageBonus`, srrevamp's name for exactly that half,
+before it joins the roll.
+
+Two tests: `TestSkillLevelPenalty` pins the rate, the floor, the truncation and
+the "0 means unknown" convention; `TestSkillLevelPenaltyIsNotTheLevelAdvantage`
+fails if a later refactor collapses the two level terms, which differ in rate
+(2.5% vs 3%), in bound (a 10% floor vs a +30% cap), in sign, and in source
+function.
+
+The floor is reached at exactly **d = 36**, where `1 - 0.025*36 = 0.10`, so the
+penalty saturates 36 levels below the target. That is arithmetic on the two
+recovered constants, not a third claim.
+
+### What this closes
+
+The ledger's standing refusal — *"a damage multiplier applied backwards is worse
+than one not applied at all"* — was correct and is now discharged by proof rather
+than waived. It cost four ticks of not-wiring, which was the right price.
