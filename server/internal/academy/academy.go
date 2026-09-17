@@ -72,26 +72,99 @@ const (
 // and the floor depends on the class: **class 2 -> 41, class 1 -> 61**. The level
 // tested is the looked-up member's stored level, not the caller's.
 //
-// WHICH ROLE EACH CLASS IS REMAINS NOT RECOVERED, and deliberately so. Two other
-// functions (FUN_005e0790, FUN_005e0a30) test `class == 1` and SKIP that member
-// inside a loop over the camp's members, which is the shape of "everyone except
-// the master". That is suggestive, and this package has already recorded that
-// 61 sitting one above the founder level of 60 is suggestive too. Neither is a
-// use-site that names a role, so the constants below are still named by value
-// and the class codes by number.
+// WHICH ROLE EACH CLASS IS -- RECOVERED 2026-09-17, from use-sites only.
+//
+// The roles are named by the engine's own refusals, and each one reaches the
+// class byte through a chain of calls with no inference in it:
+//
+//	TC_ERROR_STUDENT_COUNT_OVER (0x6828)
+//	  <- cap   FUN_005e44d0: count >= 5
+//	  <- count FUN_005e4460: counts members where FUN_005e36e0() -- class == 2
+//
+//	TC_ERROR_SECOND_GUARDIAN_COUNT_OVER (0x6810)
+//	  <- cap   FUN_005e4450: count >= 2
+//	  <- count FUN_005e43e0: counts members where FUN_005e36c0() -- class == 1
+//
+// So **class 2 is a STUDENT and class 1 is a SECOND GUARDIAN**.
+//
+// A PREVIOUS READING HERE WAS WRONG, and declining to promote it was right.
+// This comment used to note that two functions skip `class == 1` inside a loop
+// over the members, "the shape of 'everyone except the master'", and that 61
+// sits one above the founder level of 60 -- two suggestive readings pointing at
+// class 1 being the master. Class 1 is the second guardian. And "master" and
+// "apprentice" were never the engine's words at all; they came from outside
+// knowledge of the game. Its words are student and guardian.
 const (
-	MembershipLevelA = 41 // the class-2 floor
-	MembershipLevelB = 61 // the class-1 floor
+	MembershipLevelA = 41 // the STUDENT floor (class 2)
+	MembershipLevelB = 61 // the SECOND GUARDIAN floor (class 1)
 
-	// MemberClass1 and MemberClass2 are the two values of the member record's
-	// class byte (+0x50) that the membership check distinguishes. Numbers, not
-	// roles -- see above.
-	MemberClass1 = 1
-	MemberClass2 = 2
+	// MemberClassStudent and MemberClassSecondGuardian are the member
+	// record's class byte (+0x50) values, named by the count functions above.
+	MemberClassSecondGuardian = 1
+	MemberClassStudent        = 2
+
+	// MemberClass1 and MemberClass2 are the value-named aliases this package
+	// used before the roles were read. Kept so the recovery is additive.
+	MemberClass1 = MemberClassSecondGuardian
+	MemberClass2 = MemberClassStudent
 
 	// ErrMembershipLevel is TC_ERROR_POSIBLE_41L. Not 0x6818.
 	ErrMembershipLevel = 0x6822
 )
+
+// The per-camp caps, read in assembly rather than off the decompiler:
+//
+//	005e44d5  cmp eax,0x5 ; sbb eax,eax ; add eax,0x1 ; ret   ; full at 5
+//	005e4455  cmp eax,0x2 ; sbb eax,eax ; add eax,0x1 ; ret   ; full at 2
+//
+// Ghidra renders these as `4 < count` and `1 < count`. They mean the same, but
+// the engine's constants are 5 and 2, and this project has had a decompiler-
+// rendered bound read as one-too-few before (guild.MaxHostileGuilds).
+const (
+	MaxStudents        = 5
+	MaxSecondGuardians = 2
+)
+
+// The invite handler assigns the role by the INVITEE's level (GetLevel, vtable
+// slot 0x124, on the target):
+//
+//	005192ce  cmp al,0x27 ; ja    ; <= 39 -> student, capped by MaxStudents
+//	00519303  cmp al,0x3b ; ja    ; 40..59 -> second guardian
+//	                              ; >= 60 -> a third branch, NOT read
+//
+// The >= 60 branch is left unnamed: its refusal was not read, so what role an
+// invitee of 60 or more takes is not recovered. The membership floors above sit
+// one level past each band's top (41 past 39, 61 past 59), which is suggestive
+// of those checks being about outgrowing the band -- and, per the correction
+// above, suggestive is not recovered.
+const (
+	StudentMaxInviteLevel        = 39
+	SecondGuardianMaxInviteLevel = 59
+)
+
+// InviteRole is the role an invitee of the given level is invited into, and ok
+// is false for a level the read branches do not cover (60 and above).
+func InviteRole(level int) (class int, ok bool) {
+	switch {
+	case level <= StudentMaxInviteLevel:
+		return MemberClassStudent, true
+	case level <= SecondGuardianMaxInviteLevel:
+		return MemberClassSecondGuardian, true
+	}
+	return 0, false
+}
+
+// RoleFull reproduces the two cap functions: a role is full once its count
+// reaches the cap, so the invite is refused when count >= cap.
+func RoleFull(class, count int) bool {
+	switch class {
+	case MemberClassStudent:
+		return count >= MaxStudents
+	case MemberClassSecondGuardian:
+		return count >= MaxSecondGuardians
+	}
+	return false
+}
 
 // MembershipLevelFloor is the minimum member level FUN_00519770 accepts for a
 // member of the given class, and ok is false for a class the check does not

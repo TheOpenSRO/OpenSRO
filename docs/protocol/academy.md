@@ -77,23 +77,57 @@ The level compared is the **looked-up member's stored level**, not the caller's.
 A `cmp eax,ecx ; jne` just before it refuses with `5` when that member is the
 caller, i.e. the check is about *another* member.
 
-### Which role each class is — still not recovered
+### Which role each class is — RECOVERED 2026-09-17
 
-The shared refusal's name carries 41, which matches class 2. That says which
-floor the client's message was written for, not which role holds it.
+**The engine's roles are student and guardian, not master and apprentice.** This
+page used those words before any read supplied them; they came from outside
+knowledge of the game. The refusal vocabulary names the real ones:
+`TC_ERROR_STUDENT_COUNT_OVER` (`0x6828`) and
+`TC_ERROR_SECOND_GUARDIAN_COUNT_OVER` (`0x6810`).
 
-Two other functions, `FUN_005e0790` and `FUN_005e0a30`, test `class == 1` and
-**skip** that member inside a loop over the camp's members — the shape of
-"everyone except the master". Together with 61 sitting one above the founder
-level of 60 (below), that is two suggestive readings pointing the same way, and
-**it is still not a use-site that names a role**. No function tested raises a
-refusal whose name says master or apprentice, and no store of the class byte was
-found — it most likely arrives from `_TRAININGCAMPMEMBER.MemberClass` through the
-column bind, which a scan for `mov BYTE PTR [reg+0x50],imm` cannot see.
+Each refusal reaches the class byte through a chain of calls with no inference
+in it:
 
-`server/internal/academy` therefore names the constants by value and the classes
-by number (`MemberClass1`, `MemberClass2`), and `MeetsMembershipLevel` reproduces
-the check exactly.
+	STUDENT_COUNT_OVER         <- cap FUN_005e44d0 (count >= 5)
+	                           <- count FUN_005e4460: members with class == 2
+	SECOND_GUARDIAN_COUNT_OVER <- cap FUN_005e4450 (count >= 2)
+	                           <- count FUN_005e43e0: members with class == 1
+
+So **class 2 is a student** and **class 1 is a second guardian**, and the
+membership check below reads: a student needs level ≥ 41, a second guardian
+≥ 61.
+
+| class byte | role | cap per camp | membership floor | invited at |
+|---:|---|---:|---:|---|
+| `2` | student | **5** | 41 | level ≤ 39 |
+| `1` | second guardian | **2** | 61 | level 40–59 |
+
+The caps are from assembly, `cmp eax,0x5 ; sbb ; add 1` and `cmp eax,0x2 ; sbb ;
+add 1`; Ghidra shows them as `4 < count` and `1 < count`, which means the same
+but hides the engine's constants.
+
+### The invite routine assigns the role by level
+
+The routine that sends opcode `0xb472` branches on the **invitee's** level
+(`GetLevel`, vtable slot `0x124`):
+
+	005192ce  cmp al,0x27 ; ja    ; <= 39 -> student cap, STUDENT_COUNT_OVER
+	00519303  cmp al,0x3b ; ja    ; 40..59 -> second-guardian cap
+	                              ; >= 60 -> a third branch, NOT read
+
+What an invitee of 60 or more becomes is **not recovered**: that branch's refusal
+was not read. The membership floors sit one past each band's top — 41 past 39,
+61 past 59 — which suggests those checks concern outgrowing a band. That is
+recorded as suggestive and not as recovered, for the reason directly below.
+
+### A suggestive reading this page carried was wrong
+
+Before this pass the section noted that two functions skip `class == 1` members
+inside a loop over the camp, "the shape of 'everyone except the master'", and
+that 61 sits one above the founder level of 60 — two readings pointing at class 1
+being the master. **Class 1 is the second guardian.** Neither reading was
+promoted, and that restraint is the only reason no code shipped the wrong role.
+Two hints agreeing is how a curve feels from the inside.
 
 ## Windows named but not read
 

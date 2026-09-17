@@ -13363,3 +13363,56 @@ inside. The probe that would settle it is a refusal whose *name* says master or
 apprentice, gated on the class byte; none was found in the functions read.
 
 Suite verified unambiguously: `go test` exit 0, 52 packages, no FAIL lines.
+
+## Academy roles settled — and the reading I declined to promote was wrong (2026-09-17)
+
+The previous tick left one question open with a named probe: *a refusal whose
+name says a role, gated on the class byte*. It worked, and it proved the
+suggestive reading the previous tick declined to promote was wrong.
+
+**The engine's roles are student and guardian.** `academy.md` framed the camp as
+"a master and apprentices". That came from outside knowledge of the game, not
+from any read; the refusal vocabulary uses `STUDENT_COUNT_OVER` and
+`SECOND_GUARDIAN_COUNT_OVER`.
+
+**Each role reaches the class byte by use-site alone.** `STUDENT_COUNT_OVER` is
+raised by cap `FUN_005e44d0`, which calls count `FUN_005e4460`, which counts
+members for which `FUN_005e36e0()` holds, i.e. class byte `== 2`. The
+second-guardian chain goes `FUN_005e4450` → `FUN_005e43e0` → `FUN_005e36c0()` →
+`== 1`. So **class 2 is a student, class 1 a second guardian**.
+
+**Caps, from assembly:** `cmp eax,0x5 ; sbb eax,eax ; add eax,1` gives full at
+**5 students**, and `cmp eax,0x2` gives **2 second guardians**. Ghidra renders
+them `4 < count` and `1 < count`. Equivalent, but the engine's literals are 5 and
+2, and a decompiler-rendered bound has been read one too few before in this
+project.
+
+**The invite routine assigns the role by the invitee's level**: ≤ 39 student,
+40–59 second guardian, ≥ 60 a third branch whose refusal was not read and is not
+named.
+
+### The wrong reading
+
+Last tick recorded that two functions skip `class == 1` members inside a loop
+over the camp, "the shape of 'everyone except the master'", and that 61 is one
+above the founder level of 60: two suggestive readings agreeing on class 1 being
+the master. **Class 1 is the second guardian.**
+
+Neither reading was promoted, and that restraint is the only reason no code
+shipped the wrong role. This is the characterdata-col-79 rule demonstrated
+inside two ticks rather than cited: *two hints agreeing is how a curve feels from
+the inside*, and the thing that settled it was a chain of calls ending at a
+refusal the engine named.
+
+### Wired
+
+`MemberClassStudent = 2`, `MemberClassSecondGuardian = 1` (the old
+`MemberClass1/2` kept as aliases), `MaxStudents = 5`, `MaxSecondGuardians = 2`,
+`StudentMaxInviteLevel = 39`, `SecondGuardianMaxInviteLevel = 59`, `RoleFull`
+and `InviteRole` (which returns `ok = false` for 60+, the unread branch).
+`TestMembershipLevelsAreRecordedByValueNotRole` existed to make exactly this pass
+change the constants deliberately; it is replaced by
+`TestMembershipLevelsByRole` and `TestRoleClassCodes`, the latter pinning the
+swap a "class 1 is the master" reading would have shipped.
+
+Suite verified unambiguously: `go test` exit 0, 52 packages, no FAIL lines.

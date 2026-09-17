@@ -55,13 +55,64 @@ func TestCreateOrderIsTheBinarys(t *testing.T) {
 // The two membership levels share one refusal, and which role each belongs to
 // is deliberately not claimed. This test exists so a later pass that DOES map
 // them has to change the constants rather than quietly reinterpret them.
-func TestMembershipLevelsAreRecordedByValueNotRole(t *testing.T) {
+// This test used to be TestMembershipLevelsAreRecordedByValueNotRole, and its
+// job was to force a later pass that mapped the floors onto roles to change the
+// constants deliberately rather than reinterpret them quietly. That pass is
+// 2026-09-17: the roles are read from the count functions behind the engine's
+// STUDENT_COUNT_OVER and SECOND_GUARDIAN_COUNT_OVER refusals.
+func TestMembershipLevelsByRole(t *testing.T) {
 	if MembershipLevelA != 41 || MembershipLevelB != 61 {
 		t.Errorf("membership levels are %d and %d, want 41 and 61",
 			MembershipLevelA, MembershipLevelB)
 	}
-	if MembershipLevelA >= MembershipLevelB {
-		t.Error("A should be the lower of the two; the error name carries 41")
+	if f, _ := MembershipLevelFloor(MemberClassStudent); f != 41 {
+		t.Errorf("student floor = %d, want 41", f)
+	}
+	if f, _ := MembershipLevelFloor(MemberClassSecondGuardian); f != 61 {
+		t.Errorf("second guardian floor = %d, want 61", f)
+	}
+}
+
+// The class codes are named by what the engine COUNTS, not by a guess. Swapping
+// them is the regression this pins, and it is the exact mistake a "class 1 is
+// the master" reading would have shipped.
+func TestRoleClassCodes(t *testing.T) {
+	if MemberClassStudent != 2 {
+		t.Errorf("student class = %d, want 2 (FUN_005e4460 counts class 2)", MemberClassStudent)
+	}
+	if MemberClassSecondGuardian != 1 {
+		t.Errorf("second guardian class = %d, want 1 (FUN_005e43e0 counts class 1)", MemberClassSecondGuardian)
+	}
+}
+
+func TestRoleCaps(t *testing.T) {
+	for _, tc := range []struct {
+		class, count int
+		want         bool
+	}{
+		{MemberClassStudent, 4, false}, {MemberClassStudent, 5, true},
+		{MemberClassSecondGuardian, 1, false}, {MemberClassSecondGuardian, 2, true},
+		{0, 99, false},
+	} {
+		if got := RoleFull(tc.class, tc.count); got != tc.want {
+			t.Errorf("RoleFull(class %d, count %d) = %v, want %v", tc.class, tc.count, got, tc.want)
+		}
+	}
+}
+
+func TestInviteRoleByLevel(t *testing.T) {
+	for _, tc := range []struct {
+		level, class int
+		ok           bool
+	}{
+		{1, MemberClassStudent, true}, {39, MemberClassStudent, true},
+		{40, MemberClassSecondGuardian, true}, {59, MemberClassSecondGuardian, true},
+		{60, 0, false}, {110, 0, false}, // the >= 60 branch is not read
+	} {
+		class, ok := InviteRole(tc.level)
+		if class != tc.class || ok != tc.ok {
+			t.Errorf("InviteRole(%d) = (%d, %v), want (%d, %v)", tc.level, class, ok, tc.class, tc.ok)
+		}
 	}
 }
 
