@@ -14885,3 +14885,50 @@ which is how the percentage term was settled.
 srrevamp's `defenderArmor` (summing `PhysDefenseMax` over five armour slots) stays own
 design, and the reason is now sharper: the engine's published flat absorb does not come
 from armour columns through this path at all.
+
+## Enumerating the flat-absorb writers, and the trap that took four tries (2026-09-17)
+
+The probe named last tick: every `GObjPC::ParamKeeper_SetParam` call site by param id,
+to settle whether a player's flat `Defense` can be non-zero. **367 call sites, 346
+resolved.**
+
+### The id does not always arrive as a literal
+
+	0049785b  mov ebx,0x1
+	...
+	0049788b  lea edi,[ebx+0x4]        <- EDI = 5, by arithmetic
+	0049788e  call 0x4b3510
+
+Three successive versions of the scan missed this, and the tell was that
+`Char_PublishCombatStats` — whose own decompiled annotation says `EDI 0x5` — was absent
+from the param-5 list while present for 6, 7 and 8. Matching `mov edi,imm` was not
+enough; neither was widening the window, because walking **backwards** meets the `lea`
+before the `mov ebx,1` that gives it meaning. The resolver now switches to tracking the
+base register and carries the offset, and the publisher appears where it belongs.
+
+This is the same family as the `fstp` miss last tick and the `mov ecx,<imm>` misses
+before it: **a constant that reaches a register by any route other than a literal move
+is invisible to a pattern match.**
+
+### Param 5, the flat absorb: 13 sites in 8 functions
+
+	Char_PublishCombatStats        publishes the aggregate block (characterdata interpolation)
+	GObjPC::GObjMob_PublishStats   monsters
+	CGObjSiegeObject::PublishStats siege objects
+	FUN_00594ac0 (5 sites)         the skill-effect applier -- the 'defp' path
+	GObjPC::FUN_004d60a0, FUN_005830b0, FUN_00596a40    unread
+	0x004a4cc0, 0x004a5160         FUNCTIONS GHIDRA NEVER CREATED
+
+Param 7, the percentage, comes out as four sites in four functions, which agrees with
+the audit's independent count for that term — a cross-check on the method.
+
+**The question is not settled, and the reason is now specific.** Two of the param-5
+writers were not functions at all, so nothing could read them. They sit at `0x004a4cc0`
+and `0x004a5160`, in the item and inventory address range, after int3 padding, and both
+write params 5 and 6 with `mov edi,0x5`. If either turns out to read equipped items,
+then equipment does reach the flat absorb and srrevamp's armour sum is closer to the
+engine than the audit records; if neither does, the term is zero for players the way
+the percentage is.
+
+**created 2, failed 0.** They decompile on the next rebuild, and reading them is the
+next step — along with `FUN_005830b0` (9,247 bytes) and `FUN_00596a40`.
