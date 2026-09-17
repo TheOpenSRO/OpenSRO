@@ -13513,3 +13513,70 @@ shell: the command string contained the path `.../analyzeHeadless`, and the
 the `flock` was the real guard. Recorded because it is the same self-match trap
 as the loop's earlier `Godot_v4` false positive, in a new shape: a pattern that
 appears anywhere in the command being run will find that command.
+
+## Code Ghidra never made into functions, measured (2026-09-17)
+
+The names applied last tick are confirmed in the rebuilt server dump, **18 of 18**
+(e.g. `0058d8f0 Skill_CheckUseConditions`), so the whole path — read, record,
+apply, invalidate, rebuild — is verified end to end.
+
+This tick sized the gap recorded last tick: game code that sits in no function,
+and therefore in neither the named nor the `FUN_` count.
+
+### Three probes, and what each can and cannot see
+
+**1. Instructions outside every function body: 235,585 non-padding. Not trusted.**
+The disassembly is a linear sweep, so data stored inside `.text` (jump tables,
+constants) is decoded as instructions too. That number is inflated by non-code
+and is not reported as missing code.
+
+**2. `call` targets that are not function starts: 9, from real code.** Counting
+calls from anywhere gave 45 targets; restricted to calls made *from inside a
+known function*, 9 targets and 11 call sites, two of them the C++ exception
+runtime (`___FrameUnwindToState`, `CallCatchBlock`). Robust, and **blind to the
+thing that matters most**: the academy invite routine is not in it, because a
+network message handler is reached through a dispatch table rather than a direct
+`call`. A call-target probe cannot find a function entry that nothing calls
+directly.
+
+**3. The padding boundary: 7 missing game functions.** MSVC pads between functions
+with `int3`, so the first real instruction after an `int3` run is a function
+entry. 15,437 such positions lie outside every function; **142** start with a real
+prologue; **7** raise at least one named refusal, which makes them game logic:
+
+| entry | refusals it raises | what it is |
+|---|---|---|
+| `00519230` | `STUDENT_COUNT_OVER`, `SECOND_GUARDIAN_COUNT_OVER` | **the academy invite routine** — read two ticks ago, independently rediscovered |
+| `00519600` | `GRADUATION_LEVER` | academy graduation |
+| `00519510` | `NOT_OUT_24T` | academy leave-window |
+| `00519120` | `NOT_DISORGANIZATION_7D` | academy disband cooldown |
+| `00515340` | `FORT_STRUCTURE_ACTION_ERROR_06`, `GUILDERR_PERMISSION_DENIED` | a fortress/guild handler |
+| `004ae0c0` | `STRGERR_LOCKED_BY_OTHER_ONE` | a storage handler |
+| `00511640` | `PREMIUM_USE_OVER` | a premium-item handler |
+
+Probe 3 rediscovering `0x00519230` — a function already read by hand from a
+different starting point — is the evidence that it works.
+
+**A sub-probe that is broken, and not relied on:** counting the full MSVC SEH
+prologue (`push -1 ; push handler ; mov eax,fs:0x0`) among those entries returned
+**0**, yet exactly that prologue sits at `0x005193a0`, in code outside every
+function. The count is contradicted by direct observation, so it says nothing,
+and nothing above uses it.
+
+### Why these are not named yet
+
+`ApplyRecoveredNames.java` **refuses to create a function** — its header: "IT
+REFUSES TO GUESS. A row whose address holds no function...". That is correct: a
+function created at a bad address changes the boundaries of the code around it.
+So these seven cannot enter the naming count by adding rows to
+`recovered_names.tsv`; they first need a separate, deliberate step that creates
+functions **only at an explicit, verified address list** and leaves the applier's
+refusal intact.
+
+**Next step, named:** a `CreateMissingFunctions.java` that takes this table's
+seven addresses, runs under `re_tick.sh`'s `flock`, and reports each boundary it
+created, so the next dump rebuild shows them as functions and the loop can read
+and name them.
+
+The 142 prologue-confirmed entries with no named refusal are the larger, weaker
+set: probably real functions, not proven to be game logic.
