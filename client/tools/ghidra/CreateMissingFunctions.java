@@ -27,6 +27,22 @@
 //
 // Nothing is created twice, so the script is safe to re-run.
 //
+// TWO KINDS OF EVIDENCE, added 2026-09-17. A row's optional fourth column says
+// how its entry was established, and it changes exactly one guard:
+//
+//   padding     (the default, and every three-column row) -- the entry was found
+//               as the first instruction after MSVC int3 padding, so it MUST
+//               follow an int3 byte; NOT_AT_BOUNDARY refuses it otherwise.
+//   registered  the entry is a pointer the binary itself registers as a message
+//               handler (docs/protocol/message_handlers.tsv). That is stronger
+//               evidence than padding -- a registered handler IS a function
+//               entry -- and client handlers need not follow padding, so the
+//               int3 check is skipped for these rows and ONLY for these rows.
+//               EXISTS, INSIDE and NO_DISASSEMBLY still apply.
+//
+// Any other kind is reported as MALFORMED and skipped, so a typo cannot quietly
+// disable the boundary check.
+//
 // Run it in a NON-readOnly analyzeHeadless invocation, under re_tick.sh's lock so
 // it cannot collide with a dump rebuild on the same project:
 //
@@ -95,8 +111,14 @@ public class CreateMissingFunctions extends GhidraScript {
 					inside++;
 					continue;
 				}
+				String kind = f.length >= 4 ? f[3].trim() : "padding";
+				if (!kind.equals("padding") && !kind.equals("registered")) {
+					printerr("MALFORMED        " + f[0] + "  unknown kind '" + kind + "'");
+					failed++;
+					continue;
+				}
 				byte before = currentProgram.getMemory().getByte(addr.subtract(1));
-				if ((before & 0xff) != 0xcc) {
+				if (kind.equals("padding") && (before & 0xff) != 0xcc) {
 					println(String.format("NOT_AT_BOUNDARY  %s  byte before is 0x%02x, not int3", f[0], before & 0xff));
 					notBoundary++;
 					continue;

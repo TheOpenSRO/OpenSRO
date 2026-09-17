@@ -1,4 +1,4 @@
-# address	binary	evidence
+# address	binary	evidence	kind (optional: padding | registered; default padding)
 # Game functions Ghidra never created, for CreateMissingFunctions.java.
 #
 # Each row is the first real instruction after a run of MSVC's int3 inter-function
@@ -16,3 +16,110 @@
 00515340	server	raises FORT_STRUCTURE_ACTION_ERROR_06 and GUILDERR_PERMISSION_DENIED. Prologue push ecx; push ebx; push esi
 004ae0c0	server	raises STRGERR_LOCKED_BY_OTHER_ONE. Prologue mov eax,[esp+0x4]; sub esp,0x8; push ebx
 00511640	server	raises PREMIUM_USE_OVER. Prologue sub esp,0x8; push ebx; push ebp
+#
+# Client message handlers the client registers but Ghidra never made into functions.
+# kind=registered: a registered handler pointer is a function entry, so the int3
+# boundary check is skipped for these rows only. 2026-09-17.
+0086d550	client	registered as the client message handler for opcode 0x300a (docs/protocol/message_handlers.tsv)	registered
+0086db40	client	registered as the client message handler for opcode 0xb005 (docs/protocol/message_handlers.tsv)	registered
+00871d50	client	registered as the client message handler for opcode 0x34b1 (docs/protocol/message_handlers.tsv)	registered
+00872010	client	registered as the client message handler for opcode 0x302d (docs/protocol/message_handlers.tsv)	registered
+00872040	client	registered as the client message handler for opcode 0xb0b1 (docs/protocol/message_handlers.tsv)	registered
+008720f0	client	registered as the client message handler for opcode 0xb0b2 (docs/protocol/message_handlers.tsv)	registered
+008721b0	client	registered as the client message handler for opcode 0x30b9 (docs/protocol/message_handlers.tsv)	registered
+00872450	client	registered as the client message handler for opcode 0xb0b5 (docs/protocol/message_handlers.tsv)	registered
+00872710	client	registered as the client message handler for opcode 0x3011 (docs/protocol/message_handlers.tsv)	registered
+00872740	client	registered as the client message handler for opcode 0x3058 (docs/protocol/message_handlers.tsv)	registered
+00872810	client	registered as the client message handler for opcode 0x3156 (docs/protocol/message_handlers.tsv)	registered
+00872810	client	registered as the client message handler for opcode 0xb155 (docs/protocol/message_handlers.tsv)	registered
+00872940	client	registered as the client message handler for opcode 0xb157 (docs/protocol/message_handlers.tsv)	registered
+00873140	client	registered as the client message handler for opcode 0x3078 (docs/protocol/message_handlers.tsv)	registered
+00878230	client	registered as the client message handler for opcode 0xb0ba (docs/protocol/message_handlers.tsv)	registered
+0087fcb0	client	registered as the client message handler for opcode 0x3086 (docs/protocol/message_handlers.tsv)	registered
+0087fcd0	client	registered as the client message handler for opcode 0x34b3 (docs/protocol/message_handlers.tsv)	registered
+0087fd00	client	registered as the client message handler for opcode 0x3102 (docs/protocol/message_handlers.tsv)	registered
+0087fd90	client	registered as the client message handler for opcode 0x3109 (docs/protocol/message_handlers.tsv)	registered
+0087fdd0	client	registered as the client message handler for opcode 0x3305 (docs/protocol/message_handlers.tsv)	registered
+0087fe00	client	registered as the client message handler for opcode 0x3204 (docs/protocol/message_handlers.tsv)	registered
+00880010	client	registered as the client message handler for opcode 0xb060 (docs/protocol/message_handlers.tsv)	registered
+008800b0	client	registered as the client message handler for opcode 0xb062 (docs/protocol/message_handlers.tsv)	registered
+00880120	client	registered as the client message handler for opcode 0xb067 (docs/protocol/message_handlers.tsv)	registered
+008803f0	client	registered as the client message handler for opcode 0x3085 (docs/protocol/message_handlers.tsv)	registered
+00880840	client	registered as the client message handler for opcode 0x3088 (docs/protocol/message_handlers.tsv)	registered
+00880970	client	registered as the client message handler for opcode 0x30e8 (docs/protocol/message_handlers.tsv)	registered
+00880b60	client	registered as the client message handler for opcode 0xb074 (docs/protocol/message_handlers.tsv)	registered
+00880cc0	client	registered as the client message handler for opcode 0xb0a2 (docs/protocol/message_handlers.tsv)	registered
+00880e90	client	registered as the client message handler for opcode 0xb203 (docs/protocol/message_handlers.tsv)	registered
+00881090	client	registered as the client message handler for opcode 0x30cd (docs/protocol/message_handlers.tsv)	registered
+00881100	client	registered as the client message handler for opcode 0x30ce (docs/protocol/message_handlers.tsv)	registered
+00881170	client	registered as the client message handler for opcode 0x30d3 (docs/protocol/message_handlers.tsv)	registered
+00881280	client	registered as the client message handler for opcode 0x30d7 (docs/protocol/message_handlers.tsv)	registered
+00881450	client	registered as the client message handler for opcode 0xb0d8 (docs/protocol/message_handlers.tsv)	registered
+00881570	client	registered as the client message handler for opcode 0xb515 (docs/protocol/message_handlers.tsv)	registered
+00881600	client	registered as the client message handler for opcode 0x30e0 (docs/protocol/message_handlers.tsv)	registered
+00881670	client	registered as the client message handler for opcode 0x30eb (docs/protocol/message_handlers.tsv)	registered
+008819b0	client	registered as the client message handler for opcode 0x3100 (docs/protocol/message_handlers.tsv)	registered
+00881ae0	client	registered as the client message handler for opcode 0xb0f6 (docs/protocol/message_handlers.tsv)	registered
+008821c0	client	registered as the client message handler for opcode 0xb0ed (docs/protocol/message_handlers.tsv)	registered
+00882280	client	registered as the client message handler for opcode 0x3201 (docs/protocol/message_handlers.tsv)	registered
+008822c0	client	registered as the client message handler for opcode 0x3041 (docs/protocol/message_handlers.tsv)	registered
+008825d0	client	registered as the client message handler for opcode 0x3042 (docs/protocol/message_handlers.tsv)	registered
+00882de0	client	registered as the client message handler for opcode 0x3153 (docs/protocol/message_handlers.tsv)	registered
+00882e50	client	registered as the client message handler for opcode 0x3154 (docs/protocol/message_handlers.tsv)	registered
+00883060	client	registered as the client message handler for opcode 0x3101 (docs/protocol/message_handlers.tsv)	registered
+00887300	client	registered as the client message handler for opcode 0x34b4 (docs/protocol/message_handlers.tsv)	registered
+00888da0	client	registered as the client message handler for opcode 0x2000 (docs/protocol/message_handlers.tsv)	registered
+0088d1d0	client	registered as the client message handler for opcode 0x3253 (docs/protocol/message_handlers.tsv)	registered
+0088d570	client	registered as the client message handler for opcode 0x30da (docs/protocol/message_handlers.tsv)	registered
+0088d690	client	registered as the client message handler for opcode 0xb118 (docs/protocol/message_handlers.tsv)	registered
+0088d700	client	registered as the client message handler for opcode 0xb119 (docs/protocol/message_handlers.tsv)	registered
+0088d750	client	registered as the client message handler for opcode 0xb258 (docs/protocol/message_handlers.tsv)	registered
+0088dad0	client	registered as the client message handler for opcode 0x320c (docs/protocol/message_handlers.tsv)	registered
+0088dca0	client	registered as the client message handler for opcode 0xb461 (docs/protocol/message_handlers.tsv)	registered
+0088df60	client	registered as the client message handler for opcode 0xb462 (docs/protocol/message_handlers.tsv)	registered
+0088e210	client	registered as the client message handler for opcode 0xb4d4 (docs/protocol/message_handlers.tsv)	registered
+0088e690	client	registered as the client message handler for opcode 0x3254 (docs/protocol/message_handlers.tsv)	registered
+0088eb10	client	registered as the client message handler for opcode 0x3255 (docs/protocol/message_handlers.tsv)	registered
+008986c0	client	registered as the client message handler for opcode 0x3c81 (docs/protocol/message_handlers.tsv)	registered
+008994e0	client	registered as the client message handler for opcode 0x315d (docs/protocol/message_handlers.tsv)	registered
+0089a1a0	client	registered as the client message handler for opcode 0x3261 (docs/protocol/message_handlers.tsv)	registered
+0089a250	client	registered as the client message handler for opcode 0x34be (docs/protocol/message_handlers.tsv)	registered
+0089a540	client	registered as the client message handler for opcode 0x34e1 (docs/protocol/message_handlers.tsv)	registered
+0089a820	client	registered as the client message handler for opcode 0xb50c (docs/protocol/message_handlers.tsv)	registered
+0089ac00	client	registered as the client message handler for opcode 0xb50a (docs/protocol/message_handlers.tsv)	registered
+0089ae80	client	registered as the client message handler for opcode 0x3530 (docs/protocol/message_handlers.tsv)	registered
+0089afa0	client	registered as the client message handler for opcode 0x3531 (docs/protocol/message_handlers.tsv)	registered
+0089b000	client	registered as the client message handler for opcode 0x3532 (docs/protocol/message_handlers.tsv)	registered
+0089c620	client	registered as the client message handler for opcode 0xb478 (docs/protocol/message_handlers.tsv)	registered
+008a4960	client	registered as the client message handler for opcode 0xb071 (docs/protocol/message_handlers.tsv)	registered
+008a4990	client	registered as the client message handler for opcode 0x30d1 (docs/protocol/message_handlers.tsv)	registered
+008a4a30	client	registered as the client message handler for opcode 0x330f (docs/protocol/message_handlers.tsv)	registered
+008a4de0	client	registered as the client message handler for opcode 0xb072 (docs/protocol/message_handlers.tsv)	registered
+008a4ec0	client	registered as the client message handler for opcode 0xb024 (docs/protocol/message_handlers.tsv)	registered
+008a5230	client	registered as the client message handler for opcode 0xb402 (docs/protocol/message_handlers.tsv)	registered
+008a52f0	client	registered as the client message handler for opcode 0x3200 (docs/protocol/message_handlers.tsv)	registered
+008a6580	client	registered as the client message handler for opcode 0x34a5 (docs/protocol/message_handlers.tsv)	registered
+008a6650	client	registered as the client message handler for opcode 0x30c8 (docs/protocol/message_handlers.tsv)	registered
+008a6ca0	client	registered as the client message handler for opcode 0x3015 (docs/protocol/message_handlers.tsv)	registered
+008a6dc0	client	registered as the client message handler for opcode 0x3020 (docs/protocol/message_handlers.tsv)	registered
+008a6e80	client	registered as the client message handler for opcode 0x3027 (docs/protocol/message_handlers.tsv)	registered
+008a6f50	client	registered as the client message handler for opcode 0x3809 (docs/protocol/message_handlers.tsv)	registered
+008a7020	client	registered as the client message handler for opcode 0x3054 (docs/protocol/message_handlers.tsv)	registered
+008a70d0	client	registered as the client message handler for opcode 0x304e (docs/protocol/message_handlers.tsv)	registered
+008a74f0	client	registered as the client message handler for opcode 0x3047 (docs/protocol/message_handlers.tsv)	registered
+008a7550	client	registered as the client message handler for opcode 0x3092 (docs/protocol/message_handlers.tsv)	registered
+008a75c0	client	registered as the client message handler for opcode 0x304d (docs/protocol/message_handlers.tsv)	registered
+008a7630	client	registered as the client message handler for opcode 0x30df (docs/protocol/message_handlers.tsv)	registered
+008a7690	client	registered as the client message handler for opcode 0x30ca (docs/protocol/message_handlers.tsv)	registered
+008a7870	client	registered as the client message handler for opcode 0x30c3 (docs/protocol/message_handlers.tsv)	registered
+008a78b0	client	registered as the client message handler for opcode 0x3036 (docs/protocol/message_handlers.tsv)	registered
+008a7950	client	registered as the client message handler for opcode 0x3091 (docs/protocol/message_handlers.tsv)	registered
+008a8c00	client	registered as the client message handler for opcode 0x3013 (docs/protocol/message_handlers.tsv)	registered
+008a8c10	client	registered as the client message handler for opcode 0x3049 (docs/protocol/message_handlers.tsv)	registered
+008a8fc0	client	registered as the client message handler for opcode 0x30c1 (docs/protocol/message_handlers.tsv)	registered
+008a9000	client	registered as the client message handler for opcode 0x30c2 (docs/protocol/message_handlers.tsv)	registered
+008a9100	client	registered as the client message handler for opcode 0x3048 (docs/protocol/message_handlers.tsv)	registered
+008abba0	client	registered as the client message handler for opcode 0x34a6 (docs/protocol/message_handlers.tsv)	registered
+008ac0e0	client	registered as the client message handler for opcode 0x3017 (docs/protocol/message_handlers.tsv)	registered
+008ac170	client	registered as the client message handler for opcode 0x3019 (docs/protocol/message_handlers.tsv)	registered
+008ac3d0	client	registered as the client message handler for opcode 0x3018 (docs/protocol/message_handlers.tsv)	registered

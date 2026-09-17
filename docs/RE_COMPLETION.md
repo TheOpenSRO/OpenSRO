@@ -13832,3 +13832,56 @@ next step is to give the script a second evidence class — *registered as a mes
 handler* — that skips only that one guard and keeps `EXISTS`, `INSIDE` and
 `NO_DISASSEMBLY`. Then create the 105, and check that their bodies tile the way the
 server's seven did.
+
+## 102 missing client message handlers created (2026-09-17)
+
+Took the step named last tick. The client registers 318 message handlers and
+Ghidra had never created functions for 103 of the registrations.
+
+### A second evidence class, one guard changed
+
+`CreateMissingFunctions.java`'s `NOT_AT_BOUNDARY` guard demands an `int3` byte
+before each entry. That is right for padding-derived entries and wrong for these:
+a pointer the binary registers as a message handler *is* a function entry, which
+is stronger evidence, and a client handler need not follow padding.
+
+So rows now take an optional fourth column. `padding` is the default, and every
+existing three-column row keeps it. `registered` skips **only** the `int3` check;
+`EXISTS`, `INSIDE` and `NO_DISASSEMBLY` still apply. Any other value is
+`MALFORMED` and skipped, so a typo cannot quietly switch the boundary check off.
+
+### The run
+
+Previewed against the client's own function list first: 0 of the addresses were
+already function starts and 0 lay inside an existing function. Then, under
+`re_tick.sh`'s lock:
+
+	created 102, exists 1, inside 0, not at boundary 0, no disassembly 0, failed 0, other binary 7
+
+**The one `EXISTS` is a correction to my own count, not a fault.** `0x00872810` is
+registered for two opcodes, `0x3156` and `0xb155`, so it had two rows: the first
+created it and the second found it. The preview's "103 distinct addresses" was 103
+`(address, opcode)` pairs, which is **102 distinct addresses**, and all 102 were
+created. A one-handler-two-opcodes case is worth knowing about for the message map
+as well.
+
+### Validated the way the server's seven were
+
+The row list gave only entries; Ghidra derived every body from control flow. Across
+all 102:
+
+- **0** created bodies overlap each other
+- **0** overlap any pre-existing client function
+- sizes are handler-shaped: minimum 8 bytes, median 110, maximum 2,037
+- **1** body is non-contiguous, and no pre-existing function sits in its gap
+
+A registration parse that had attached a handler to the wrong opcode, or an entry
+that landed mid-function, would have shown up as overlap. None did.
+
+### What moves
+
+The client dump is invalidated. Its pipeline counter should read
+`43460 + 102 = 43562` after the rebuild, an independent check that these landed.
+They then become 102 readable client handlers, each already bound to an opcode by
+`docs/protocol/message_handlers.tsv`, so any server-side read of a message names
+its client handler for free.
