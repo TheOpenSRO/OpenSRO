@@ -15,7 +15,7 @@ accumulator" — it is the damage itself.
 | # | addr | stage | what happens |
 |---|---|---|---|
 | 0 | `40e45c` | guard | `[esi+0x230] != 0`; both parties `GetLifeState() == 1`; descriptor bit `0x4` (physical) |
-| 1 | `40e4b0` | **base** | `FUN_0040dce0(ctx, defender, damage)` → `[esp+0x28]` |
+| 1 | `40e4b0` | **base** | `FUN_0040dce0(ctx, masteryPct)` → `[esp+0x28]`; see the correction below |
 | 2 | `40e4c3` | flat bonus | if `bl & 0x8` and the attacker's `+0xa30` map holds the key: `base += entry[+4]` |
 | 3 | `40e4f7` | **bypass** | if `bl & 0x20`: skip mitigation entirely, damage = base |
 | 4 | `40e502` | **mitigate** | `base / (1 + defender_p7/100) − defender_p5` |
@@ -34,6 +34,70 @@ accumulator" — it is the damage itself.
 | 17 | `40e758` | attacker % | param **178** (magical twin: 179) |
 
 Stages past 17 run to `40e819` and are not yet read.
+
+## Stage 1 is mastery-scaled, and this page had its argument wrong (2026-09-17)
+
+The row above used to read `FUN_0040dce0(ctx, defender, damage)`. That function
+takes **no damage argument**. Its shape is:
+
+	fVar9 = FUN_0040db50(ctx)              ; the weapon/skill damage roll
+	fVar1 = (float)param_2 / 100.0 + 1.0   ; param_2 is a PERCENTAGE BYTE
+	fVar3 = fVar1 * (float)fVar9
+
+so **stage 1 is `roll * (1 + percent/100)`**, and the percentage is the
+character's **mastery level**.
+
+`Combat_ResolveDamage` builds that byte with `FUN_0059e770`, which reads the
+skill's two mastery-requirement slots (`ctx+0xa0`, `ctx+0xa4` — the same pair
+`docs/protocol/skill_withdraw.md`'s cost formula reads) and returns the
+character's level in the higher of them:
+
+	if (ctx == 0 || ctx[0x574] == 0) return 0;
+	a = 1; b = 1;
+	if (ctx[0xa0] != 0) a = masteryLevel(slot1);   ; FUN_0059e750
+	if (ctx[0xa4] != 0) b = masteryLevel(slot2);
+	return max(a, b);
+
+`FUN_0059e750` resolves the mastery on the character's `+0xa30` container and
+returns the byte at `record[+8] + 0x20`. So it is the **character's** level in
+the mastery, not the skill's requirement — and a skill with a mastery slot the
+character has never trained still contributes **1**, not 0. Only an attack with
+no skill record returns 0.
+
+### The cap is 90, and it is not a `min`
+
+	0058f2c1  cmp al,0x5a ; mov [esp+0x68],al ; jbe done   ; p1 <= 90 -> p1
+	0058f2cd  mov [esp+0x68],0x5a                          ; else 90
+	0058f2d7  cmp al,0x5a ; jbe done                       ; p2 <= 90 -> keep 90
+	0058f2db  mov [esp+0x68],al                            ; else p2
+
+The percentage is computed **twice**, off two different attack records, and the
+engine picks: `p1` when `p1 <= 90`, otherwise `max(90, p2)`. When both exceed 90
+the result is `p2`, **above** the cap — which is exactly the case a
+`min(pct, 90)` gets wrong, and the only reason four instructions exist here.
+`combat.ClampMasteryPercent` reproduces it and has a test that fails if it is
+ever simplified to a min.
+
+The same constant appears at four sites (`0058f2c1`, `0058f2d7`, `0058f97d`,
+`0058f993`) — the physical and magical arms of the same clamp.
+
+**What the second record is has not been identified.** It is the object the
+mitigation formula receives as its context, distinct from the one the first
+percentage is read off. srrevamp passes the same value for both, which makes its
+clamp a plain cap at 90 — correct for every case it can currently reach, and
+wrong the day a second record exists. Said here so that day is noticed.
+
+### How this was found
+
+Not by reading the damage path again. After a decompiler-rendered bound nearly
+shipped as 49 instead of 50 (`guild.MaxHostileGuilds`), **every unsigned bound
+inside the 161 functions this project cites was re-read in assembly** — 54
+comparisons. Most confirmed a shipped constant: 13 in `CGItemEquip::CanBeEquipedAt`
+is `equipment.MaxEquipSlots`, 3 and 7 in `HandleSiegeRequest` are the
+fortress-war requirements, 40 in the siege module is the −20…+20 tax range
+biased by 20, 5 in the guild fullness predicate is `MaxLevel`. These four sites
+were the largest thing the audit found that **nothing claimed**, sitting in the
+one function srrevamp reimplements most closely.
 
 ## The constants
 

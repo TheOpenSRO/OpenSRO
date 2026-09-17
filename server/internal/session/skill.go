@@ -404,6 +404,13 @@ func UseSkillHandler(
 		// the whole table carry one, all SKILL_EU_BARD_RECOVERA_ABNORMALTIME_*,
 		// which trade health for their effect instead of mana.
 		var hpCost int
+		// masteryPercent is stage 1 of the engine's damage pipeline: the weapon
+		// roll is scaled by `1 + masteryPercent/100` before mitigation. It is
+		// the CASTER's trained level in the skill's required mastery, not the
+		// skill's requirement -- see combat.MasteryDamagePercent. A catalog
+		// skill has no mastery slot and leaves this 0, which is what the engine
+		// returns for an attack with no skill record.
+		var masteryPercent int
 		// The skill's damage-type mask. A catalog skill has no real row and
 		// so leaves 0, which combat.AttackType reads as physical -- the
 		// behaviour those invented skills already had.
@@ -442,6 +449,21 @@ func UseSkillHandler(
 			reqCastList = ref.ReqCastListCount
 			reqCastReqs = combat.ParseCastRequirements(ref.ReqCastList)
 			reqCastAll = ref.ReqCastAll
+			// The engine takes the higher of the skill's TWO mastery slots;
+			// refdata carries only the first (see refdata.Skill.Mastery1), so
+			// the second is reported as unoccupied and contributes the engine's
+			// default of 1. That is a faithful reading of a table this project
+			// has half of, not a simplification of the formula.
+			if ref.Mastery1 != 0 {
+				trained := 0
+				if levels, err := skills.MasteryLevels(ctx, characterID); err == nil {
+					trained = levels[ref.Mastery1]
+				}
+				pct := combat.MasteryDamagePercent(true, true, false, trained, 0)
+				// srrevamp has one attack record, so the engine's two-record
+				// clamp collapses to a cap at 90. See ClampMasteryPercent.
+				masteryPercent = combat.ClampMasteryPercent(pct, pct)
+			}
 		} else if sk, inCatalog := skill.Catalog[req.SkillID]; inCatalog {
 			cooldown = time.Duration(sk.CooldownSeconds) * time.Second
 			damageBonus = int(sk.DamageBonus)
@@ -571,7 +593,7 @@ func UseSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
 		}
 
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, characterID, req.TargetMonsterID, damageBonus, damagePercent, hits, attackType)
+		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType)
 	}
 }
 

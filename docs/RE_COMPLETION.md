@@ -12530,3 +12530,84 @@ to be undone, which is worth knowing before anyone writes it.
 **An ally cannot be a war target**, so the two systems recovered this week are
 mutually exclusive on the same pair of guilds — asserted in
 `TestAllianceAndWarAreMutuallyExclusive` so a later pass cannot let both hold.
+
+## An audit of every grounded bound, and the largest unclaimed constant in the damage path (2026-09-17)
+
+The previous tick nearly shipped 49 where the engine says 50, because Ghidra
+renders `cmp al,0x32 ; jb` as `0x31 < x`. That is a defect of a *class*, not of
+one function, so this tick audited the class.
+
+### The audit
+
+Extracted every address this project cites — 161 functions across `docs/` and
+`server/internal` — and re-read **every unsigned bound inside them in assembly**:
+54 comparisons of the form `cmp <operand>, IMM` followed by `jb`/`jbe`/`ja`/`jae`.
+
+**Nothing already shipped is wrong.** The audit confirmed:
+
+| function | asm | what it is |
+|---|---|---|
+| `CGItemEquip::CanBeEquipedAt` | `cmp al,13 ; jae` | `equipment.MaxEquipSlots` = 13 |
+| `SiegeFortressMgr::HandleSiegeRequest` | `cmp al,3 ; jae` | fortress war needs guild level ≥ 3 |
+| same | `cmp [ebp+0x24],7 ; jae` | …and ≥ 7 members |
+| `FUN_0062f640` | `cmp cx,40 ; ja` | the −20…+20 tax range, biased by 20 |
+| `FUN_005d0fb0` | `cmp bl,5 ; jb` | five entries in `MaxMembersByLevel` |
+| `GObjPC_SetLevel` | `cmp di,65530 ; jb` | the stat-point overflow guard |
+
+A negative result, and the right kind: the constants this project relies on were
+read correctly the first time. The audit's value is that this is now **measured**
+rather than assumed after one near-miss.
+
+### What it found that nothing claimed
+
+Four sites in `Combat_ResolveDamage` — `0058f2c1`, `0058f2d7`, `0058f97d`,
+`0058f993` — all `cmp al,0x5a`, in the one function srrevamp reimplements most
+closely. Following them:
+
+**Stage 1 of the damage pipeline is mastery-scaled, and this project had the
+argument wrong.** `damage_pipeline.md` recorded stage 1 as
+`FUN_0040dce0(ctx, defender, damage)`. That function takes no damage argument:
+
+	fVar9 = FUN_0040db50(ctx)              ; the weapon/skill roll
+	fVar1 = (float)param_2 / 100.0 + 1.0   ; param_2 is a PERCENTAGE BYTE
+	fVar3 = fVar1 * (float)fVar9
+
+and the percentage is built by `FUN_0059e770` from the skill's two mastery slots
+(`ctx+0xa0`, `ctx+0xa4` — the same pair the skill-withdraw cost reads), returning
+the **character's** trained level in the higher of them via `FUN_0059e750`
+(`record[+8] + 0x20`). A skill with a mastery the character never trained still
+contributes **1**; only an attack with no skill record returns 0.
+
+So **mastery adds up to +90% to base damage, before mitigation** — the largest
+single multiplier in the pipeline, and srrevamp had none of it.
+
+### The clamp is not a `min`, and that is the whole point of the four sites
+
+	0058f2c1  cmp al,0x5a ; mov [esp+0x68],al ; jbe done   ; p1 <= 90 -> p1
+	0058f2cd  mov [esp+0x68],0x5a                          ; else 90
+	0058f2d7  cmp al,0x5a ; jbe done                       ; p2 <= 90 -> keep 90
+	0058f2db  mov [esp+0x68],al                            ; else p2
+
+The percentage is computed twice, off two different attack records: `p1` when it
+is within the cap, otherwise `max(90, p2)`. **When both exceed 90 the result is
+`p2`, above the cap** — precisely the case `min(pct, 90)` gets wrong, and the
+only reason the engine spends four instructions instead of one.
+`combat.ClampMasteryPercent` reproduces it, with a test that fails if it is ever
+tidied into a min.
+
+What the second record is has not been identified. srrevamp has one, so it
+passes the same value twice and its clamp collapses to a cap at 90 — correct for
+everything it can reach today, and recorded so the day that stops being true is
+noticed rather than discovered.
+
+### Wired
+
+`combat.MasteryDamagePercent`, `ClampMasteryPercent`, `MasteryDamageScale` and
+`ApplyMasteryScale`, threaded through `session.performAttack` as `masteryPercent`
+and applied to the roll before mitigation. A plain attack passes 0 and is
+unchanged, which is what the engine does too.
+
+srrevamp carries only `Mastery1` (`refdata.Skill` notes the real table has a
+second), so the second slot is reported unoccupied and contributes the engine's
+default of 1. That is a faithful reading of a table this project has half of,
+stated as such rather than smoothed into "the formula uses one mastery".

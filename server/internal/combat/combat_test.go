@@ -726,3 +726,80 @@ func TestSkillLevelPenaltyIsNotTheLevelAdvantage(t *testing.T) {
 		t.Error("SkillLevelPenalty fires when the attacker out-levels; it must not")
 	}
 }
+
+// TestMasteryDamagePercent pins FUN_0059e770: the max of the two slots, with
+// BOTH defaulting to 1 rather than 0 when the slot is occupied but unknown.
+func TestMasteryDamagePercent(t *testing.T) {
+	// No skill record at all is the only way to get 0.
+	if got := MasteryDamagePercent(false, true, true, 50, 60); got != 0 {
+		t.Errorf("no skill gave %d, want 0", got)
+	}
+	// A skill with no mastery slots still contributes 1, not 0. This is the
+	// default the engine writes before either branch, and a reading that made
+	// it 0 would silently remove stage 1 for every masteryless skill.
+	if got := MasteryDamagePercent(true, false, false, 50, 60); got != 1 {
+		t.Errorf("a skill with no mastery slots gave %d, want 1", got)
+	}
+	// The higher of the two wins, from either side.
+	if got := MasteryDamagePercent(true, true, true, 20, 45); got != 45 {
+		t.Errorf("got %d, want the higher slot 45", got)
+	}
+	if got := MasteryDamagePercent(true, true, true, 45, 20); got != 45 {
+		t.Errorf("got %d, want the higher slot 45", got)
+	}
+	// An occupied slot whose level is below the default still loses to it,
+	// because the OTHER slot's default of 1 is compared in.
+	if got := MasteryDamagePercent(true, true, false, 0, 0); got != 1 {
+		t.Errorf("a zero-level mastery gave %d, want 1 (the other slot's default)", got)
+	}
+}
+
+// TestClampMasteryPercent pins the three-way clamp. A plain min(pct, 90) passes
+// the first two cases and fails the third, which is the whole reason the engine
+// spends four instructions here.
+func TestClampMasteryPercent(t *testing.T) {
+	if got := ClampMasteryPercent(40, 200); got != 40 {
+		t.Errorf("a primary under the cap gave %d, want 40", got)
+	}
+	if got := ClampMasteryPercent(MasteryDamageCap, 200); got != MasteryDamageCap {
+		t.Errorf("a primary AT the cap gave %d, want %d", got, MasteryDamageCap)
+	}
+	// Primary over, secondary under: the result is the cap.
+	if got := ClampMasteryPercent(120, 50); got != MasteryDamageCap {
+		t.Errorf("got %d, want the cap %d", got, MasteryDamageCap)
+	}
+	// BOTH over: the result is the secondary, ABOVE the cap. min() gives 90
+	// here and is wrong.
+	if got := ClampMasteryPercent(120, 150); got != 150 {
+		t.Errorf("got %d, want 150 -- both over the cap yields the SECONDARY, "+
+			"which is not a min()", got)
+	}
+	if got := ClampMasteryPercent(120, 150); got == MasteryDamageCap {
+		t.Error("the clamp collapsed to min(pct, 90)")
+	}
+}
+
+func TestMasteryDamageScale(t *testing.T) {
+	if got := MasteryDamageScale(0); got != 1 {
+		t.Errorf("mastery 0 scales by %v, want 1", got)
+	}
+	if got := MasteryDamageScale(MasteryDamageCap); got != 1.9 {
+		t.Errorf("mastery at the cap scales by %v, want 1.9", got)
+	}
+	// The cap is on the PERCENT, and 90 means +90%, not +9% or x90. Pin the
+	// magnitude, since this is the largest single multiplier in the pipeline.
+	if got := ApplyMasteryScale(100, MasteryDamageCap); got != 190 {
+		t.Errorf("ApplyMasteryScale(100, 90) = %d, want 190", got)
+	}
+	if got := ApplyMasteryScale(100, 40); got != 140 {
+		t.Errorf("ApplyMasteryScale(100, 40) = %d, want 140", got)
+	}
+	// A masteryless skill's default of 1 is +1%, which rounds away on small
+	// numbers and must not be mistaken for a bug.
+	if got := ApplyMasteryScale(100, 1); got != 101 {
+		t.Errorf("ApplyMasteryScale(100, 1) = %d, want 101", got)
+	}
+	if got := ApplyMasteryScale(0, 90); got != 0 {
+		t.Errorf("scaling a zero base gave %d, want 0", got)
+	}
+}

@@ -627,7 +627,7 @@ func CombatHandler(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 			}
 
-			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, characterID, req.TargetMonsterID, 0, 0, 1, combat.AttackPhysical)
+			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, characterID, req.TargetMonsterID, 0, 0, 0, 1, combat.AttackPhysical)
 		case OpMonsterList:
 			return handleMonsterList(sess, hub, monsters)
 		default:
@@ -745,6 +745,12 @@ func performAttack(
 	characterID, targetMonsterID int64,
 	damageBonus int,
 	damagePercent int,
+	// masteryPercent is stage 1 of the engine's damage pipeline: the weapon
+	// roll is scaled by `1 + masteryPercent/100` BEFORE mitigation. A plain
+	// attack has no skill record and passes 0, which the engine also does --
+	// FUN_0059e770 returns 0 when there is no skill -- so a plain swing is
+	// unchanged. See combat.MasteryDamageScale.
+	masteryPercent int,
 	hits int,
 	// attackType is the skill's `att` value[0]: which half of the blow
 	// exists. A plain OpAttack passes combat.AttackPhysical. See
@@ -781,6 +787,11 @@ func performAttack(
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})
 	}
+
+	// Stage 1: the roll is scaled by the caster's mastery before anything else
+	// touches it. Recovered 2026-09-17 -- docs/protocol/damage_pipeline.md had
+	// this stage's argument recorded as "damage" when it is a mastery percent.
+	base = combat.ApplyMasteryScale(base, masteryPercent)
 
 	// A skill's own flat damage is scaled DOWN when the monster out-levels the
 	// attacker -- 2.5% per level, floored at 10%. This is the opposite term to

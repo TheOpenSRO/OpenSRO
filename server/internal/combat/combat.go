@@ -874,3 +874,106 @@ func ApplyFloorBand(damage, base int, r *rand.Rand) int {
 	}
 	return out
 }
+
+// MasteryDamageCap is the ceiling on the mastery percentage that scales base
+// damage, `cmp al,0x5a` in Combat_ResolveDamage at 0x0058f2c1, 0x0058f2d7,
+// 0x0058f97d and 0x0058f993 -- four sites, the same constant.
+//
+// FOUND BY AUDIT, not by reading. After a decompiler-rendered bound nearly
+// shipped as 49 instead of 50 (see guild.MaxHostileGuilds), every unsigned
+// bound inside the 161 functions this project cites was re-read in assembly:
+// 54 comparisons. Most confirmed a shipped constant -- 13 in
+// CGItemEquip::CanBeEquipedAt is equipment.MaxEquipSlots, 3 and 7 in
+// HandleSiegeRequest are the fortress-war requirements, 40 in the siege module
+// is the -20..+20 tax range biased by 20. These four were the largest thing the
+// audit found that nothing claimed.
+const MasteryDamageCap = 90
+
+// MasteryDamagePercent is what FUN_0059e770 returns: the character's level in
+// the higher of the skill's two required masteries.
+//
+//	if (ctx == 0 || ctx[0x574] == 0) return 0;
+//	a = 1; b = 1;
+//	if (ctx[0xa0] != 0) a = masteryLevel(slot1);
+//	if (ctx[0xa4] != 0) b = masteryLevel(slot2);
+//	return max(a, b);
+//
+// `masteryLevel` is FUN_0059e750, which resolves the mastery on the character's
+// `+0xa30` container and returns the byte at `record[+8] + 0x20` -- the level.
+// So it is the CHARACTER's level in that mastery, not the skill's requirement.
+//
+// The defaults matter: a skill with a mastery slot the character has no level
+// in still contributes 1, not 0. Only an attack with no skill record at all
+// returns 0.
+func MasteryDamagePercent(hasSkill, slot1, slot2 bool, level1, level2 int) int {
+	if !hasSkill {
+		return 0
+	}
+	a, b := 1, 1
+	if slot1 {
+		a = level1
+	}
+	if slot2 {
+		b = level2
+	}
+	if a < b {
+		return b
+	}
+	return a
+}
+
+// ClampMasteryPercent is the call-site clamp, and it is NOT min(pct, 90).
+// Combat_ResolveDamage computes the percentage twice, off two different attack
+// records, and picks between them:
+//
+//	0058f2c1  cmp al,0x5a ; mov [esp+0x68],al ; jbe done   ; p1 <= 90 -> p1
+//	0058f2cd  mov [esp+0x68],0x5a                          ; else 90
+//	0058f2d7  cmp al,0x5a ; jbe done                       ; p2 <= 90 -> keep 90
+//	0058f2db  mov [esp+0x68],al                            ; else p2
+//
+// so: p1 if p1 <= 90, otherwise max(90, p2). A plain `min` would be wrong in
+// the one case the engine bothered to write four instructions for -- when BOTH
+// exceed 90 the result is p2, which is above the cap.
+//
+// What the second record is has NOT been identified; it is the object the
+// mitigation formula receives as its context, distinct from the one the first
+// percentage is read off. Pass secondary equal to primary when there is only
+// one, which is what srrevamp does.
+func ClampMasteryPercent(primary, secondary int) int {
+	if primary <= MasteryDamageCap {
+		return primary
+	}
+	if secondary <= MasteryDamageCap {
+		return MasteryDamageCap
+	}
+	return secondary
+}
+
+// MasteryDamageScale is stage 1's multiplier: `1 + pct/100`.
+//
+// FUN_0040dce0, which docs/protocol/damage_pipeline.md listed as
+// `FUN_0040dce0(ctx, defender, damage)` -> base, takes no damage argument at
+// all. Its real shape is
+//
+//	fVar9 = FUN_0040db50(ctx)                    ; the weapon/skill roll
+//	fVar1 = (float)param_2 / 100.0 + 1.0         ; param_2 is a PERCENTAGE byte
+//	fVar3 = fVar1 * (float)fVar9
+//
+// so **stage 1 is `roll * (1 + masteryPercent/100)`**, and the byte the caller
+// spends four instructions clamping is that percentage. The page described the
+// argument as damage; it is mastery.
+func MasteryDamageScale(pct int) float64 {
+	if pct < 0 {
+		pct = 0
+	}
+	return 1 + float64(pct)/100
+}
+
+// ApplyMasteryScale scales a rolled base by MasteryDamageScale, rounding the
+// way every other integer step in this package does.
+func ApplyMasteryScale(base, pct int) int {
+	if base <= 0 {
+		return base
+	}
+	return int(math.Round(float64(base) * MasteryDamageScale(pct)))
+}
