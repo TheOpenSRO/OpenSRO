@@ -13631,3 +13631,47 @@ added this tick: a row belongs in `missing_functions.tsv` because a probe found 
 and a person verified it, and the probe is known to be wrong about this case.
 Next: find why the SEH prologue fails the probe's filter, fix it, re-run, and add
 what it finds.
+
+## Correction: `0x005193a0` was never missing, and the probe was right (2026-09-17)
+
+The previous entry said the padding probe has a blind spot, because
+`0x005193a0` — a real function with an SEH prologue — was absent from its list,
+and it concluded that "7 missing game functions" is "a floor, not a census".
+
+**That was wrong.** `0x005193a0` is `FUN_005193a0` (362 bytes,
+`0x005193a0..0x00519509`) and **already existed** before anything was created.
+The probe excluded it correctly, as a known function start.
+
+The arithmetic settles it without re-running anything: the server dump went from
+`functions=34113` to `functions=34120`, exactly **+7**, and
+`CreateMissingFunctions` reported exactly seven `CREATED` rows with none at
+`0x005193a0`. Had it been missing, the count would be `34121`.
+
+So, retracted:
+
+- **The probe has no blind spot for this case.** Its SEH-prologue sub-count of 0
+  was correct: there was no SEH-prologue entry *outside* a function, because the
+  one observed is inside one.
+- **"A floor, not a census" had no basis.** The seven stand as what the probe
+  found. It may still miss entries for other reasons — anything raising no named
+  refusal is outside its definition of game logic — but not for the reason given.
+- **The "tiling gap" was not a gap.** The academy region tiles completely:
+
+	00519120..00519225   FUN_00519120   (created)
+	00519230..00519391   FUN_00519230   (created)
+	005193a0..00519509   FUN_005193a0   (pre-existing)
+	00519510..005195fa   FUN_00519510   (created)
+	00519600..0051976b   FUN_00519600   (created)
+	00519770 ...         CInstanceTrainingCamp::CheckMembershipLevel
+
+  Every byte from `0x00519120` to `CheckMembershipLevel` now belongs to a
+  function, with padding between and no overlap.
+
+**How it went wrong:** I read the `int3` padding and SEH prologue at `0x005193a0`
+in a disassembly window while its neighbour was orphan, and took the ownership as
+the same without running the one-line ownership check that settled it this tick.
+A claim about code, stated as observed, that one command would have refuted.
+
+Verified this tick instead: the dump pipeline's own counter shows the seven
+created functions landed (`34113 -> 34120`), and they are now `FUN_` bodies the
+loop can read and name.
