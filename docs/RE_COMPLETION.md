@@ -13707,3 +13707,76 @@ validator's neighbour reads as disband, but it answers on two opcodes and the
 validator is unread: one piece of evidence, not two. Recorded as the obvious open
 item, along with the three non-academy created functions (`0x00515340` guild,
 `0x004ae0c0` storage, `0x00511640` premium), which were profiled but not read.
+
+## The client's handler table joins the two binaries by message (2026-09-17)
+
+Last tick named the academy handlers partly by their **response opcodes**, which
+ran as a contiguous series. This tick asked whether that is a general lever.
+
+### The server side
+
+133 server functions reply through the send helper `FUN_004e7250`
+(`mov ecx,OPCODE ; call 0x4e7250`), **121 of them still unnamed**, across **98
+distinct response opcodes**. The academy family `0xb47_` alone has 13.
+
+### The client side, after a probe that returned zero
+
+A first search of the client for those opcodes returned **0 of 98**. That was the
+probe, not the client: it matched only `case 0xb472:` and `== 0xb472`, while each
+opcode appears once as `local_1c = 0xb472;` and exactly once as a 32-bit immediate
+in the raw binary.
+
+That single immediate is a **registration**. The client binds every reply handler
+as an `{opcode, handler}` pair:
+
+	local_1c = 0xb472;  local_18 = FUN_008997a0;  FUN_008a1b80(table, &local_1c);
+
+Parsed across the dump: **318 pairs, 318 distinct opcodes, one handler each**,
+through three registrars (`FUN_0086f740` 217, `FUN_008a1b80` 62, `FUN_00894ac0`
+39). **96 of the server's 98 response opcodes are in it.** Saved as
+`docs/protocol/message_handlers.tsv`, one row per opcode with the server senders
+joined.
+
+### What it does and does not buy
+
+**Name transfer is small today.** Once attribution-only names such as
+`UI_ALCHEMYBOX::FUN_008a4010` are excluded, only **2** of 318 client handlers have
+a real name (`Client_ApplyExpAndLevelUp`, `OnAlchemyResult`; two more are `DAT_`
+labels). An earlier count of 50 counted attribution prefixes as names. Across
+single-sender opcodes, client names transfer to **0** unnamed server handlers and
+server names to **4** unnamed client handlers.
+
+**The map is the value.** Each row pairs a message's server handler with its client
+handler, so any future read that names one side names both.
+
+**It is independently confirmed on the academy.** The client registers
+`0xb470`–`0xb47e` to handlers at **contiguous addresses** (`FUN_00899630`, `…730`,
+`…7a0`, `…800`, …), and two carry the client's own module attribution **`UI_TC`**
+(training camp). The client's own code agrees the family is the academy.
+
+### What the join corrected and exposed
+
+- **`0xb472` has two server senders**: `TrainingCamp_HandleInvite` and
+  `0x005e11b0`. I had assumed the invite handler was the only one. The join
+  correctly excluded it from single-sender pairing. My expectation was wrong, not
+  the probe.
+- **Every academy opcode has a second sender in `0x005e10b0`–`0x005e11b0`**,
+  alongside the `0x00519xxx` handlers. That is the shape of request handlers paired
+  with completion callbacks, consistent with the async `AQ_TrainingCampQuery` layer
+  `academy.md` names, but **inference, not read**.
+- **This weakens last tick's "shared removed notice" reading of `0xb473`.** The
+  completion side `0x005e10b0` sends both `0xb473` and `0xb474`, so the two may
+  simply be the removal results. That reading was labelled inference, and it is now
+  a weaker one.
+- **`0xb470` has a third sender, `0x00518fd0`.** With `0x00519120` sending both
+  `0xb470` and `0xb471`, that is the likeliest place for the unnamed *create*
+  handler. Not read.
+- **`0xb476` is answered by `CheckMembershipLevel` itself**, so that function is a
+  handler in the same series, not only a check.
+
+### A bound, stated
+
+**222 of 318** client-registered opcodes have no server sender *through
+`FUN_004e7250`*. Those are sent some other way, or are broadcasts. The send-helper
+probe covers 96 of 318, and `"-"` in the table means "not through this helper", not
+"never sent".
