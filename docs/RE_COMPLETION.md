@@ -12404,3 +12404,65 @@ expecting `WithdrawCost(7, 15)` to be 805, having read the divisor as 100. It is
 1750 — the divisor is 10, so mastery 15 is `1 + 1.5`. The code was right and the
 test was wrong, which is the good direction for that to happen in, and the
 sweep-based assertion that replaced it cannot be written wrong the same way.
+
+## The union cap is 8, read rather than assumed (2026-09-17)
+
+Took two items off `guild.md`'s "What is not recovered" list, both located by the
+refusal-vocabulary lever rather than by reading around.
+
+### A claim this project had carried for a long time
+
+`guild.md` recorded, verbatim: *"Unions holding eight guilds is a long-standing
+note in this project that no read has confirmed."* That is the exact shape of
+claim the loop's rules exist to stop — a number everyone knows, sourced to
+nothing.
+
+It is now read **four ways**, from the three functions that maintain the member
+array at `alliance + 0x1c`:
+
+1. `CMainProcess::FUN_005b8c70`, the slot setter: `if (7 < index)
+   Assert_BreakIfDebugger();` before `alliance[+0x1c + index*4] = guildID`.
+2. `FUN_005b8cf0`, the clearer: the same assert.
+3. That function's loop, which runs `0 .. 7` inclusive and exits on
+   `if (7 < i) return 1`.
+4. `FUN_005b8e90`, the membership scan: `do { ... } while (i < 8);`.
+
+**Two of the four are traversals rather than guards** — code the engine actually
+walks, not an assert that merely fires in a debug build. That is the difference
+between a bound and a convention, and it is why this is a confirmation rather
+than a fourth restatement of the same folklore.
+
+It is also a **fixed array, not a list**: the setter refuses an occupied index
+with its own log line (`"Anohter Alliance guild is set in that index!!"`, the
+engine's typo), so a guild holds a slot and leaving frees that slot rather than
+compacting.
+
+### Both guilds need level 2, and the error names are the second witness
+
+`FUN_005c6550`'s ladder checks the same constant against two different guilds.
+On its own, a symmetric pair of comparisons is exactly what a reader invents a
+story about — so the direction comes from the client's names instead:
+`TOO_LOW_CREATOR_ALLIANCE` (0x4c2a) for the requester and
+`TOO_LOW_JOINER_ALLIANCE` (0x4c2b) for the target, each matching the object whose
+`GetLevel()` was called. The error table did the work an independent binary
+would otherwise have to.
+
+### Two codes the engine never raises
+
+`0x4c27 ALREADY_ALLIED` and `0x4c29 ALLIANCE_FULL` are in the client's message
+table and appear **nowhere** in `SR_GameServer.exe`. The probe is known good on
+this family — the same scan finds `0x4c2a` inside the very function being read.
+
+The interesting part is what that means rather than that it is missing: the cap
+is enforced by the **array bound**, structurally, and never by returning a code.
+The client carries two messages it may never be sent. Both are kept in
+`internal/guild/alliance.go` so the vocabulary is complete and the absence is not
+re-derived by the next pass.
+
+### The lever is doing what it was built for
+
+Three ticks ago the error-code scan was one pattern that had never been
+falsified. Widening it reached 362 functions; grouping the 291 unnamed ones by
+vocabulary left 62 unambiguous; the first cluster gave the skill-reset system and
+this one gives the alliance rules. Both were on documented "not recovered" lists,
+and neither needed a function read speculatively to find.

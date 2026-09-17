@@ -125,12 +125,74 @@ an absence of evidence rather than evidence of absence.
 `0xb0f0` is the guild-create response (`FUN_00514ce0` sends it on both the
 penalty path and the length-refusal path).
 
+## Alliances (unions) — RECOVERED 2026-09-17
+
+`FUN_005c6550` (433 bytes) is the alliance request. It was listed below as not
+read; it surfaced as one of the 62 single-vocabulary functions the widened
+error-code scan located (`client/tools/re/errsites.py`), every code it raises
+being a `GUILDERR_`. Implemented in `server/internal/guild/alliance.go`.
+
+### The cap is 8, and the long-standing note is now confirmed
+
+This page said: *"Unions holding eight guilds is a long-standing note in this
+project that no read has confirmed."* It is now read **four ways**, none of them
+a curve:
+
+1. The slot setter (`CMainProcess::FUN_005b8c70`) asserts the index before
+   writing: `if (7 < index) Assert_BreakIfDebugger();`, then
+   `alliance[+0x1c + index*4] = guildID`.
+2. The slot clearer (`FUN_005b8cf0`) carries the same assert.
+3. That function's loop runs `0 .. 7` inclusive, exiting on `if (7 < i) return 1`
+   — a **traversal**, not a defensive guard.
+4. The membership scan (`FUN_005b8e90`) is a literal
+   `do { ... } while (i < 8);` over the same array.
+
+So the alliance record holds a fixed array of **eight** guild ids at `+0x1c`.
+Two of the four witnesses are code the engine actually walks, which is the
+difference between a bound and an assumption. `7 < index` is this engine's usual
+`limit-1 < value` idiom.
+
+**It is a fixed array, not a list.** The setter refuses an occupied index with
+its own log line — `"Anohter Alliance guild is set in that index!!"`, the
+engine's typo — so a guild occupies a *slot*, and leaving frees that slot rather
+than compacting the array.
+
+### Both guilds must be level 2
+
+	if (GetLifeState() != 1)            -> 0x4c07  GUILDERR_IM_DEAD
+	if (myGuild == 0)                   -> 0x4c0d
+	if (!IsGuildMaster())               -> 0x4c1e  PERMISSION_DENIED
+	if (myGuild.GetLevel() < 2)         -> 0x4c2a  TOO_LOW_CREATOR_ALLIANCE
+	if (target has no guild)            -> 0x4c25  CANT_FIND_TARGET_GUILD
+	if (targetGuild == myGuild)         -> 0x4c26  CANT_ALLY_TO_OWN_GUILD
+	if (targetGuild.GetLevel() < 2)     -> 0x4c2b  TOO_LOW_JOINER_ALLIANCE
+	if (target already in an alliance)  -> 0x4c28  TARGET_GUILD_HAS_ALLIANCE_ALREADY
+	if (!target.IsGuildMaster())        -> 0x4c24
+
+**The two level checks are what makes this safe to read.** They are the same
+comparison against the same constant on two different objects, and on its own
+that is exactly the kind of symmetry a reader invents a story about. The client's
+names settle it: the requester's failure is `TOO_LOW_CREATOR_ALLIANCE` and the
+target's is `TOO_LOW_JOINER_ALLIANCE`, and each matches the object whose
+`GetLevel()` was called. The error table is doing the work an independent
+witness would otherwise have to.
+
+### Two codes the server never raises
+
+`0x4c27 ALREADY_ALLIED` and `0x4c29 ALLIANCE_FULL` are in the client's message
+table and are **not materialised anywhere in `SR_GameServer.exe`** — checked
+with the widened scan, which finds `0x4c2a` in this very function, so the probe
+is known to work on this family.
+
+That does not mean the rules do not exist; the cap is enforced by the array
+bound above, and `ALREADY_ALLIED` is implied by `TARGET_GUILD_HAS_ALLIANCE_ALREADY`.
+It means **the engine refuses these two conditions structurally rather than by
+returning a code**, and the client carries messages it may never receive. Both
+are kept in `alliance.go` so the vocabulary is complete and nobody re-derives
+their absence.
+
 ## What is not recovered
 
-- **The alliance rules.** `FUN_005c6550` (433 bytes) carries
-  `CANT_ALLY_TO_OWN_GUILD`, `CANT_FIND_TARGET_GUILD` and more, and has not been
-  read. Unions holding eight guilds is a long-standing note in this project that
-  no read has confirmed.
 - **Guild war.** `FUN_005c6b60` (1,102 bytes) and the `GUILDWARERR_*` family.
 - **The warehouse.** Only the permission bit and `GUILD_WAREHOUSE_LIMIT` are
   known; the limit's value is not.
