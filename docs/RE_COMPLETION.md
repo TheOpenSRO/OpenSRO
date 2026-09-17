@@ -13954,3 +13954,59 @@ had dropped that. These functions carried the attribution `trs_wait_response::`,
 the applier keeps an existing owner when a row offers none, so they read
 `trs_wait_response::TrainingCamp_…`. With the `::` form restored, all three were
 present. The "failure" was in the check, not the apply.
+
+## Client handlers named from the UI strings they display (2026-09-17)
+
+Last tick one client handler named its own operation through the string it shows
+(`UIIT_MSG_TC_OPEN_SUCCESS`). This tick measured that as a lever across all the
+handlers the client registers.
+
+**Measured:** 314 of 318 registered handlers now resolve to client functions (the
+102 created two ticks ago made that possible). **64 display at least one `UIIT_`
+string and 33 display exactly one**, across arena, academy, guild, party-match,
+fortress, silk-mall, letters and quests.
+
+### A string names an operation only under three conditions
+
+A handler's string was used as its name only when all three held:
+
+1. **It carries a result verb** — `SUCCESS`, `COMPLETE`, `RESULT`, `FAILED`,
+   `CANCELED`, `INTERRUPT`. That excluded 19 whose strings name a window, not an
+   outcome: `UIIT_STT_COSNEWUI_TITLE`, `UIIT_STT_EVENTGUIDE`, `UIIT_STT_CONFIRM_BOX`,
+   `UIIT_MSG_GACHA_ANNOUNCE`.
+2. **No other registered handler displays the same string.** That excluded
+   `TRANSITION_CANCEL_RESULT` (two handlers), `GUILD_GP_SUBSCRIPION_RESULT` (two)
+   and `ALCHEMY_CANCELED_COMPOUND` (two handlers across three registrations). A string
+   shared by two handlers names neither.
+3. **The handler displays only that string**, so there is no other message it might
+   equally be about.
+
+`OUTCOM_COMPLETE` was dropped because `OUTCOM` cannot be expanded with confidence. Two
+the verb pattern **missed** were added back: `JOBGUILD_JOIN_COMPELET` and
+`JOBGUILD_WITHD_COMPELET` are result verbs misspelled in the engine's own strings.
+
+**Named** (`applied 7, failed 0, kept 0`), each on its registration plus its unique
+string:
+
+	008a9e30  Fortress_OnItemUseInterrupted  0x3057  FORT_ITEMUSE_INTERRUPT
+	00880840  Storage_OnItemExchangeResult   0x3088  STRGERR_ITEM_EXCHANGE_FAILED
+	0088a820  Char_OnSkinChangeResult        0x3207  CHAR_SKIN_CHANGE_SUCCESS
+	00883f90  PartyMatch_OnRecordResult      0xb069  PARTYMATCH_RECORD_COMPLETE
+	008840d0  PartyMatch_OnModifyResult      0xb06a  PARTYMATCH_MODIFY_COMPLETE
+	008890b0  JobGuild_OnJoinResult          0xb0e1  JOBGUILD_JOIN_COMPELET
+	00889210  JobGuild_OnWithdrawResult      0xb0e2  JOBGUILD_WITHD_COMPELET
+
+One naming choice is worth stating. A handler whose only string is a **failure**
+message (`ITEM_EXCHANGE_FAILED`) still *receives the whole result*, success included;
+it just has nothing to say on success. It is named for the result, not the failure.
+Calling it "on failed" would describe its visible output, not its job.
+
+### A conflict in the names file, surfaced and not resolved
+
+The apply printed a line unrelated to these seven:
+`KEEPOWNER 00a5ffd0 owner is NetProcessInInner, offered CObjCharacter (no force)`.
+An older row places that function in `CObjCharacter`, while the project attributes it
+to `NetProcessInInner`. The applier refused to choose, which is its designed behaviour.
+It is recorded here as an open conflict. Forcing either side would be a guess, and
+`NetProcessInInner` versus `CObjCharacter` is exactly the kind of owner question that
+has been wrong before in this project.
