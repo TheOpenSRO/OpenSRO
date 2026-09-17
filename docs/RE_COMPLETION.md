@@ -83,7 +83,9 @@ pick one up without re-deriving anything.
    is strictly better than the `10 + level*5` invention it replaces; a reader who
    disagrees can find the exact gap named in the doc comment.
 
-2. **Death penalty — recovered, deliberately NOT shipped.** `GObjPC_OnDeath`
+2. **Death penalty — CLOSED (2026-09-16), shipped since v0.1.164.** The header
+   used to read "recovered, deliberately NOT shipped", which contradicted this
+   item's own body and stayed wrong after the last blocker fell. `GObjPC_OnDeath`
    (`004e6980`) pays the killer and then penalises the dead: exp loss computed as
    `levelEntry+0x1c` (the same per-level exp unit that pays for a kill) times
    **20, 100 or 300** depending on branch, applied through
@@ -127,9 +129,13 @@ pick one up without re-deriving anything.
    `ApplyKnownNames.java` gained a `force` mode so the table can fix its own
    mistakes rather than only add to them.
 
-3. **Combat damage model — the mitigation formula is RECOVERED; the model is
-   not yet shipped.** srrevamp still runs `base + bonus - defence, floor 1`, own
-   design. The real one is now partly in hand.
+3. **Combat damage model — SHIPPED, and the pipeline read end to end
+   (2026-09-16).** The header used to say "not yet shipped" and that srrevamp
+   "still runs `base + bonus - defence, floor 1`". Both were stale:
+   `combat.MitigateDamage` has carried the real percentage-plus-flat shape for
+   many tags, and `combat.ResolveBlow` runs stages 4, 13, 14 and 16 in the
+   engine's own order (`docs/protocol/damage_pipeline.md`). What remains open
+   is only stage 15, and for a stated reason — see the end of this file.
 
    **The unlock was the read side.** Two ticks were lost hunting inlined keeper
    reads (`obj[0x7c+N]`) that collide with every other struct at byte 0x204.
@@ -211,17 +217,35 @@ pick one up without re-deriving anything.
    nothing here publishes param 259 — as are steps 3, 5 and 6. Recorded in
    `combat.go` so they read as unreachable rather than as a gap in the formula.
 
-4. **Berserk numbers** (fill 8/hit, 20 s, +50 %) — ours. The mechanic and the
-   five orbs are real.
+4. **Berserk numbers — mostly RECOVERED (corrected 2026-09-17).** This line read
+   "(fill 8/hit, 20 s, +50 %) — ours" and was wrong on two of its three numbers.
+   As shipped in `internal/berserk`:
+
+   | value | status |
+   |---|---|
+   | `Duration = 60s` | **RECOVERED** — `EvaluateParam(60) + EvaluateParam(195)`, then `SetBodyMode(1, 0, dur, 0)` |
+   | `DamageNumerator = 2` | **RECOVERED** twice over — the `SetBodyMode` chain, and damage-pipeline stage 13 (`attacker_p189 + 2.0`, param 189 defaulting to 0) |
+   | `Orbs = 5` | **RECOVERED** — `_CHAR.RemainHwanCount`, charData `+0x86`, and the activation spends exactly -5 |
+   | `FillPerHit = 8`, `Max = 100` | **ours** — the only berserk numbers still own design |
+
+   So the open part is the gauge FILL RATE alone, not the duration or the
+   multiplier.
    **The recorded next probe was WRONG and is withdrawn (2026-09-15).** It said
    to chase the `'zb'` tag; the client's own text says `PARAM_ZB` = **"Zombie"**,
    a status effect, nothing to do with berserk. Berserk is **"Hwan"** internally
    (`PARAM_HWAN_TIME_INCREASE` = *"Berserker time %d sec. increased"*,
    `UIIT_CTL_TC_ACQUISITION_WHAN` = *"Chance of Obtaining Berserk Gage"*).
    `hwanleveldata.txt` was checked and is **not** it either — 255 rows of
-   *titles* ("Ambassador", "Champion", "Conqueror"), not gauge values. The
-   numbers look genuinely server-side; *next probe:* the `HWAN`/`WHAN` naming in
-   the server binary, not the client's data.
+   *titles* ("Ambassador", "Champion", "Conqueror"), not gauge values.
+
+   **That next probe is now DONE and is withdrawn (2026-09-17).** The
+   `HWAN`/`WHAN` naming in the server binary was chased: it yields
+   `IGObj::UpdateHwanLevel` (slot 197), the RTTI class `CRefHWANLevel`, and the
+   activation handler — all of which produced the duration and the multiplier
+   above. The per-level effect magnitudes inside `CRefHWANLevel` are `{uint32
+   tag; uint8 value}` rows from a DB table this project does not have, and the
+   fill rate is not among the things the binary states. *No next probe is
+   recorded, because none is known to exist.*
 5. **Monster spawn positions — the "proven absence" was WRONG (2026-09-15).**
    This line used to read *"ours by necessity (`npcpos.txt` has no monsters).
    Likely genuinely absent; prove it and it stops counting as open."* Trying to
@@ -10800,4 +10824,48 @@ cannot see its own blind spot.
 **For the next lever**: when a naming rule is scored against already-named
 functions, check first whether those names came from the rule. If they did, the
 score measures nothing.
+
+## 2026-09-17 — the self-naming-stub lever is provably done, and the queue was lying
+
+### The stub lever, closed by completeness rather than by giving up
+
+Generalised last tick's find from a string pattern to a **body shape**: any
+function of 90 bytes or less whose *only* string literal carries a
+`Class::Method`. That catches a self-naming stub however the message is worded,
+which is the fragility that had already bitten twice (`## Illegal ##` missing the
+one-hash variant, `GetParam` missing `EvaluateParam`).
+
+	tiny functions whose only string carries a Class::Method:  215
+	  already named:                                           215
+	  still unnamed:                                             0
+
+**Zero remain.** The wording breakdown confirms why the generalisation was
+needed: 206 say `## Illegal ##`, **4 say `# Illegal ##`**, 4 have no prefix at
+all, and one says `DISCONNECT FROM`. A pattern-based harvest would have to guess
+all four spellings; a shape-based one does not.
+
+### Three of seven queue items misstated their own status
+
+The queue's header says *"Ordered by value. Each line names the next concrete
+probe, so a cold start can pick one up without re-deriving anything."* That is
+exactly what makes a stale line expensive, and **this session lost part of two
+ticks to one**. Audited against the shipped code:
+
+| item | said | actually |
+|---|---|---|
+| 2 Death penalty | "recovered, deliberately NOT shipped" | shipped since **v0.1.164**; the last blocker closed in v0.1.258. The header contradicted its own body |
+| 3 Combat damage model | "the model is not yet shipped… srrevamp still runs `base + bonus - defence`" | `combat.MitigateDamage` has carried the real shape for many tags; `ResolveBlow` runs the engine's stages 4, 13, 14, 16 in order |
+| 4 Berserk numbers | "(fill 8/hit, 20 s, +50 %) — ours" | **wrong on two of three.** Duration is 60 s and recovered; the multiplier is x2 and recovered twice over; `Orbs = 5` is recovered. Only the fill rate and the 0..100 scale are ours |
+
+All three headers are corrected in place, and item 4's "next probe" — chase
+`HWAN`/`WHAN` in the server binary — is **withdrawn as done**: it was chased,
+and it is what produced the duration and the multiplier. No replacement probe is
+recorded for the fill rate, because none is known to exist; the per-level
+magnitudes live in `CRefHWANLevel` rows from a DB table this project does not
+have.
+
+**The pattern worth keeping:** a ledger entry describes the moment it was
+written, and the queue is the one place where that is actively harmful. When an
+item closes, the *header* has to move, not just a note in the body — a cold
+start reads the list, not the paragraphs.
 
