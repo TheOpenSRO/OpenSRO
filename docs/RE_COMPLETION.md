@@ -14083,6 +14083,8 @@ carries two opcodes**: its queuer is shared by two request handlers, as type 3's
 - The record field `FUN_005e4390` reads (`[camp+4]+0x18`) is written as "presumably
   the camp's id". It is not read as an id.
 
-**Not yet applied to the Ghidra projects.** A client dump rebuild was running when
-the names were ready, and the loop's rule is not to start competing work. The
-rows are in `recovered_names.tsv`, and the apply runs on the next tick.
+**Applied** after the in-flight client rebuild released the lock, rather than
+competing with it. Server: `applied 8, forced 0, reowned 0, kept 0, no function 0,
+failed 0`. Client: `applied 1, … failed 0`. Both `PROJSTAMP`s were removed so the
+next tick rebuilds both dumps. Checking that the names appear in the rebuilt dumps
+is the next tick's first step (grep `\tNAME\t|::NAME\t`, not the bare form).
