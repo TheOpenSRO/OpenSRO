@@ -14740,3 +14740,55 @@ naming its own operations.
 argument breaks on any apostrophe in the text, which silently ate `quest's` into
 `quests` in an earlier evidence string and then failed outright here. Write the script
 to a file and copy it instead.
+
+## Client slot 10 measured and not named; the client has no vtable index (2026-09-17)
+
+The server's slot-1 pass worked, so the client's biggest cluster — **slot 10, 172
+classes with a large override** — was the obvious next lever. It does not clear the
+bar, and finding out why exposed a structural gap.
+
+### What slot 10 is, and why two samples are not enough
+
+	CNIFEdit::vslot_010       creates a Win32 "EDIT" control, stores the HWND at +0x368
+	CNIFSliderCtrl::vslot_010 zeroes +0x354, +0x370, +0x378, +0x37c, +0x3a4 ...
+
+Both read as **initialisation**, and both belong to the UI framework
+(`CNIFSliderCtrl : CNIFWnd : CGWnd : CGWndBase : CObjChild : CObj`). But measured
+across all 348 `vslot_010` bodies:
+
+	writing at least one field through the object:   225 (65%)
+	writing three or more:                           126 (36%)
+
+Against slot 55's 157/157 and `CEVENTHandler`'s 194/194, that is not a family trait.
+**Not named.** A third of them write no fields at all, so "Initialise" would be wrong
+for a third of the 348.
+
+### The gap underneath it
+
+The server pass could check `vtq.py who`, the base class's own vtable and the
+call sites in `srgs.asm`. **None of that exists for the client**: there is no
+`vt_client.json`, and no full client disassembly. That is why the client's 5,136
+placeholders resist the levers that worked on the server, and it is the thing to fix
+before trying again.
+
+A stopgap now exists: `client/tools/re/build_vt_client_from_comments.py` rebuilds an
+index out of the RTTI comments the dump already carries — **904 classes, 7,264
+class/slot pairs**. It is deliberately named
+`vt_client_from_comments_PARTIAL.json`, because **272 of those comments end in "and N
+more", hiding 29,962 further entries**. It covers roughly a fifth of the client's
+class/slot pairs and must not be mistaken for the real thing; the real fix is to scan
+the binary's vtables the way the server's index was built.
+
+### Two probes of mine failed inside this tick
+
+- Measuring self-field writes returned **4%**, which contradicted both bodies I had
+  just read. The filter dropping comment lines rejected anything starting with `*` —
+  which is exactly the decompiler's write syntax, `*(undefined4 *)(param_1 + 0x354) = 0`.
+  Fixed, the answer was 65%.
+- The index builder reported **zero** truncated comments while the dump has hundreds:
+  the `... and N more` tail sits on its own line and the parser matched line by line.
+  Fixed, it reports 272 and the 29,962 entries they hide — which is the number that
+  turned this from an index into a stopgap.
+
+Both were caught by an existing fact disagreeing with the measurement, which is the
+cheapest kind of check available and the reason to keep sanity anchors around.
