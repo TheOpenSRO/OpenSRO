@@ -13924,3 +13924,33 @@ names the other.
 The apply got the tick lock immediately, so the `:45` tick rebuilds **both** dumps:
 the client for last tick's 102 created handlers (expected `43460 -> 43562`) and the
 server for these names.
+
+## The client names its own operation: academy "open" (2026-09-17)
+
+The 102 client handlers created last tick paid off first. The client dump rebuilt to
+`functions=43562`, exactly the predicted `43460 + 102`, and the rebuilt handlers
+could be read for the strings they display. **A client handler that shows a named UI
+string names its own operation**, which is a lever the server side does not have.
+
+`0x00899630`, registered for `0xb470`, displays `L"UIIT_MSG_TC_OPEN_SUCCESS"`. "Open"
+is the engine's word for founding a camp (`TC_ERROR_OPEN_LEVEL`, `OPEN_GOLD`,
+`NOT_OPEN_7D`). That settles `0xb470`, which three ticks of server-side reading had
+left as "create or disband, unresolved", and it names the chain in both binaries,
+each on two facts: `TrainingCamp_HandleOpen` (`0x00518fd0`, calls the founding
+validator), `TrainingCamp_SendOpenResult` (`0x005e1140`, dispatcher case 0), and
+`TrainingCamp_OnOpenResult` (`0x00899630`). Server `applied 2`, client `applied 1`,
+both `failed 0`.
+
+**`0x00519120` was read in full and is still not named.** The `NOT_DISORGANIZATION_7D`
+refusal gets a detailed reply on its own opcode `0xb471`, which is strong evidence for
+disband, but plain refusals go out on open's `0xb470`, and nothing read explains
+that. `FUN_004e4780`'s checks would settle it.
+
+### A false failure caught before it was reported
+
+Verifying last tick's three server names returned **0 of 3**. The grep matched
+`\tNAME\t`. When I verified the eighteen names earlier I also matched `::NAME`, and I
+had dropped that. These functions carried the attribution `trs_wait_response::`, and
+the applier keeps an existing owner when a row offers none, so they read
+`trs_wait_response::TrainingCamp_…`. With the `::` form restored, all three were
+present. The "failure" was in the check, not the apply.

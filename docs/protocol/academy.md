@@ -187,7 +187,7 @@ at `+0x28`, and **its ten cases cover exactly the academy response family**:
 
 | sub-type | result sender | sends | operation |
 |---:|---|---|---|
-| 0 | `0x005e1140` | `0xb470` | not established |
+| 0 | `TrainingCamp_SendOpenResult` | `0xb470` | **open** (founding) |
 | 1 | `0x005e1110` | `0xb471` | not established |
 | 2 | `TrainingCamp_SendInviteResult` | `0xb472` | invite |
 | 3 | `TrainingCamp_SendRemoveMemberResult` | `0xb473`, `0xb474` | ban / leave |
@@ -204,6 +204,37 @@ Named only where the operation is already established on the request side. Sub-t
 4 is left unnamed because it also carries `0xb476`, whose operation is not named.
 Sub-types 0 and 1 map to `0xb470`/`0xb471`, where create and disband are expected
 but not resolved.
+
+## Open is named from the client's own string (2026-09-17)
+
+The client handler registered for `0xb470` (`TrainingCamp_OnOpenResult`,
+`0x00899630`, one of the 102 handlers created from the registration table) displays
+`L"UIIT_MSG_TC_OPEN_SUCCESS"`. **Open** is the engine's word for founding a camp:
+the founding validator's refusals are `TC_ERROR_OPEN_LEVEL`, `OPEN_GOLD` and
+`NOT_OPEN_7D`. So the whole open chain is named, each function on two facts:
+
+	0x00518fd0  TrainingCamp_HandleOpen      calls founding validator FUN_004e4680; replies 0xb470
+	0x005e1140  TrainingCamp_SendOpenResult  dispatcher case 0; sends 0xb470
+	0x00899630  TrainingCamp_OnOpenResult    registered for 0xb470; shows TC_OPEN_SUCCESS
+
+### `0x00519120`: disband, strongly indicated and still not named
+
+Read in full:
+
+	call FUN_004e4780                          ; the validator
+	result == 0x681d NOT_DISORGANIZATION_7D -> build a DETAILED 0xb471 (three extra fields)
+	result is any other refusal              -> send it plainly on 0xb470
+	result == ok -> call FUN_005df140; on failure send on 0xb471
+
+`0xb471` is this handler's own opcode, and the only refusal it handles specially is
+the seven-day disband one, answered with extra fields that are presumably the time
+remaining. That is strong evidence for **disband**.
+
+It stays unnamed for one reason: **plain refusals go out on `0xb470`, open's
+opcode**, and nothing read explains that. It may be a generic "academy request
+refused" channel, and the client shows the right text for any code whichever handler
+displays it, but that is a guess. The probe that would settle it is `FUN_004e4780`'s
+own checks.
 
 ## Windows named but not read
 
