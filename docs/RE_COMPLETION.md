@@ -14932,3 +14932,60 @@ the percentage is.
 
 **created 2, failed 0.** They decompile on the next rebuild, and reading them is the
 next step — along with `FUN_005830b0` (9,247 bytes) and `FUN_00596a40`.
+
+## The flat-absorb hunt nearly reached a wrong conclusion (2026-09-17)
+
+The two functions created last tick decompiled (server dump 34,169, +2) and read
+cleanly. **Neither is an equipment path**: both take a mode byte (apply / tick /
+remove), use `GetTickCount` against a duration, and apply a **negative** value to param
+5 — armour-reducing debuffs, with `FUN_004b3570(5,5)` undoing them.
+
+With the other writers identified —
+
+	Char_PublishCombatStats           the aggregate block (characterdata interpolation)
+	GObjMob_PublishStats              monsters
+	CGObjSiegeObject::PublishStats    siege objects
+	FUN_00594ac0 (5 sites)            the skill-effect applier
+	FUN_005830b0                      the skill parameter applier ("SKILL_CH_FIRE_SHIELD_")
+	FUN_00596a40, 0x4a4cc0, 0x4a5160  timed effects, all negative
+	GObjPC::FUN_004d60a0              a reset to a constant
+
+— the conclusion was one step away: *nothing reads equipment, so a player's flat absorb
+is zero like the percentage*. **That would have been wrong.**
+
+### What stopped it
+
+The enumeration left **21 sites unresolved**, and their owners are the point:
+
+	GObjPC::GObjPC_InitStats        6
+	NO FUNCTION                     5
+	RemoveParamKeeperItemEntry      4
+	Char_PublishCombatStats         2
+	Stat_ApplyTaggedModifier        2
+
+`RemoveParamKeeperItemEntry` already carries a comment this project recovered earlier:
+
+> an equipped item ADDS AND REMOVES ITS OWN ENTRIES in the ParamKeeper rather than
+> being folded into a flat total. So a player's derived stats are the sum of per-item
+> entries, which is why hunting a single gear aggregate kept coming up empty.
+
+So equipment **does** reach the params — per item, with the param id coming from data
+(`RefAbilityByItemOptLevel`, `RefSkillByItemOptLevel`, `RefMagicOptByItemOptLevel`),
+which is precisely why those call sites carry no literal id and why an enumeration by
+literal id cannot see them.
+
+**The lesson, and it is a general one:** an enumeration keyed on literal constants is
+blind to data-driven writers, and its completeness claim is only as good as its
+unresolved list. The 21 unresolved sites were not noise to be trimmed; they held the
+answer. Had the resolver "cleaned up" by dropping them, the wrong conclusion would have
+looked fully evidenced.
+
+### Where it stands
+
+A player's flat absorb is **not** a single aggregate: it is per-item ParamKeeper
+entries plus skill effects, minus timed debuffs. Whether an armour piece's defence
+column lands specifically on param 5 is the one step left, and it is a **data**
+question now: read which param ids `RefAbilityByItemOptLevel` rows carry. srrevamp's
+`defenderArmor`, which sums armour across the equipped pieces, is structurally closer
+to the engine than the audit's "still disclosed" note implies — the audit row should be
+updated when that table is read, not before.
