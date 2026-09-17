@@ -56,11 +56,70 @@ Each class also carries its own error format string, which is how a failing
 query is attributed: `"AQ_GuildQuery::DB Query Error(%d): %s"`,
 `"AQ_CharDataSaver::DB Query Error(%d): %s"`, and so on for most of the 28.
 
-## The 39 stored procedures
+## The stored procedures — **71, corrected 2026-09-17 from 39**
 
-Read from the ODBC call literals the binary builds — `{?=CALL _NAME (%d, %d,
-…)}` — so both the name and the **argument count** are exact. The caller column
-says which subsystem owns each.
+Read from the ODBC call literals the binary builds, so both the name and the
+**argument count** are exact. The caller column says which subsystem owns each.
+
+**The first harvest found 39 because it matched one spelling.** The server calls
+procedures in four forms, and only the first was searched:
+
+| form | count | example |
+|---|---:|---|
+| `{?=CALL _NAME (…)}` | 39 | `{?=CALL _STRG_DEL_ITEM (%d, %I64d,%d, %I64d)}` |
+| `{CALL _NAME (…)}` | 26 | `{CALL _STRG_ADD_EQUIP_NORMAL (?, ?, %d,…)}` |
+| `EXEC _NAME …` | 7 | `exec _skill_manage %d, %d, %d, %d` |
+| `trs_sm_*job` wrappers | 5 | `trs_sm_trainingcampjob` |
+
+**This is the same defect as the runtime-table count on this page**, which found
+35 of 54 because its regex was uppercase-only. Twice now, in this one document, a
+harvest has been reported as a complete enumeration when it was one pattern run
+once. The lesson is specific: *a harvest is complete only once its pattern has
+been falsified — by finding a second spelling and confirming there is no third —
+not once it has been run.* Both counts were caught by an unrelated probe
+noticing a number that did not match, not by anything in this file.
+
+### What the 32 missing ones changed
+
+- **Item creation was entirely absent.** `_STRG_ADD_EQUIP_NORMAL`,
+  `_STRG_ADD_EXPENDABLE`, `_STRG_ADD_ALCHEMYSTONE`, `_STRG_ADD_SPECIALTY`,
+  `_STRG_ADD_ITEM_MAGIC`, `_STRG_ADD_PACKAGEITEM`(`_WITH_STOCKQUANTITY`) and
+  `_STRG_SPLIT_ITEM` are every route by which an item comes into existence. The
+  catalogue could describe *moving* an item but not *making* one.
+- **A whole cash-shop subsystem**: `_STRG_BUY_CASHITEM_*` and the five
+  `_STRG_RESTORE_SOLDITEM_*` that undo a sale.
+- **The claim below was false.** This page said "there is no procedure for
+  gaining experience, taking damage, or changing a skill level".
+  `_skill_manage` (4 args, `AQ_SkillManager`) and `_quest_manage` (3 args,
+  `AQ_QuestDataManager`) both exist. Experience and damage are still not
+  procedures — they really do ride the character save — but skills and quests
+  are, and the original sentence drew a structural conclusion from a gap that
+  was an artifact of the regex.
+- **Gold is read by procedure as well as written**: `_GET_USER_GOLD`,
+  `_GET_GUILD_GOLD`, both from `AQ_CharDataLoader`.
+- **Five logging procedures**, each called from a `_Log*` class's slot 0. The
+  uniform shape is itself the check that none was missed.
+
+### Two procedures are variadic
+
+`_STRG_ADD_ITEM_MAGIC` and `_STRG_RESTORE_SOLDITEM_ITEM_MAGIC` have literals
+that simply **stop**:
+
+	{CALL _STRG_ADD_ITEM_MAGIC (?, ?, %d, %d,%d, %d,%d,%I64d,%d, %d
+
+That is not a truncated dump — the string ends there in the binary.
+`AQ_StorageUpdater::AddMagicItem` emits this head and then appends
+`"%s,%I64d"` once per magic parameter, bounded by its own assert
+`"Item's MagParamNum(%d) is out of range"`. So their arity depends on the item,
+and `persistence.Proc.Variadic` marks them.
+
+### Counting arguments
+
+A quoted placeholder group is **one** argument. `_Rent_Info_Manager` passes three
+datetimes as `'%d-%d-%d %d:%d:%d'` and takes **10** arguments, not the 24 a
+`%d`-counter reports. That error was made and caught during this pass, which is
+why the original 39 arities were re-checked rather than regenerated — they were
+right, and the naive recount was wrong.
 
 | procedure | args | called from |
 |---|---:|---|
@@ -104,11 +163,13 @@ says which subsystem owns each.
 | `_AssignNickName` | 2 | `FUN_00465160` |
 | `_DeleteGPHistory` | 1 | `FUN_005d05e0` |
 
-Worth noticing what is *not* here: there is no procedure for gaining
-experience, taking damage, or changing a skill level. Those live in the
-character save, not in individual calls — the write path for ordinary play is
-`AQ_CharDataSaver`, and the procedures above are for things that must be
-transactional.
+**The table above lists the 39 the first harvest found; the other 32 are in
+`server/internal/persistence`.** What was said here about them was wrong and is
+corrected above: *"there is no procedure for gaining experience, taking damage,
+or changing a skill level"* — `_skill_manage` and `_quest_manage` exist.
+Experience and damage do still ride the character save (`AQ_CharDataSaver`), so
+half the observation survives; the half that did not was a conclusion drawn from
+the regex's blind spot rather than from the binary.
 
 `_STRG_MOVEITEM_NEW` sitting beside `_STRG_MOVE_ITEM` with one extra argument is
 the engine's own migration, kept because `AQ_ItemXChanger` uses the new one and

@@ -12145,3 +12145,90 @@ recovered constants, not a third claim.
 The ledger's standing refusal — *"a damage multiplier applied backwards is worse
 than one not applied at all"* — was correct and is now discharged by proof rather
 than waived. It cost four ticks of not-wiring, which was the right price.
+
+## The stored-procedure catalogue was 39 of 71 (2026-09-17)
+
+Set out to close `character.StartingStr`, and closed a different, larger thing
+on the way.
+
+### The Strength question, settled at the machine level
+
+`character.StartingStr` has been own-design throughout, resting on four
+measurements that no artifact holds a starting stat. A fifth was added, and it
+is the strongest kind — an enumeration of writers rather than a search:
+
+- `CInstancePC::CharData_BindDBColumns` binds `"Strength"` to charData `+0x74`
+  and `"Intellect"` to `+0x76`, **literally**, in the engine's own code.
+- Scanning **every word-sized store to those two offsets across the whole
+  image**, the only ones touching charData are inside `GObjPC::SetStr` and
+  `GObjPC::SetInt`. The other hits are unrelated structs — `CInstanceCOS`,
+  `CGameWorldLayer`, quest handlers, `RTNavMeshTerrain`.
+- Those two functions appear in **0 vtable slots**, so nothing reaches them
+  virtually.
+- Their **only** caller is `GObjPC_SpendStatPoints`, which refuses unless
+  `str + int <= pool` and only ever **adds**.
+
+So `SR_GameServer.exe` never assigns a starting Strength; it only increments one
+it loaded from `_CHAR`. The value is unreachable from this binary as a matter of
+structure, which is a *proven reason to disclose* rather than an unexplored gap.
+
+Also re-confirmed the level-up economy directly from the disassembly rather than
+from the note: `lea edx,[esi+edi*1] / lea ecx,[edx+esi*4] / mov [eax+0x84],cx`
+then `push esi / mov eax,esi / call 0x511470` — grant `levels*5`, auto-spend
+`levels` into each of Str and Int, leaving 3. Already shipped as
+`leveldata.StatPointsPerLevel` and `character.StatGrowthPerLevel`.
+
+### The number that did not match
+
+`character.go` cited **75** stored procedures as the structural argument;
+`persistence.Procs` and its test asserted **39**. Both were wrong, in opposite
+directions, and the contradiction had been sitting in the repo unnoticed.
+
+Harvesting every invocation form:
+
+| form | distinct | example |
+|---|---:|---|
+| `{?=CALL _NAME (…)}` | 39 | the only one the original harvest matched |
+| `{CALL _NAME (…)}` | 26 | `{CALL _STRG_ADD_EQUIP_NORMAL (?, ?, %d,…)}` |
+| `EXEC _NAME …` | 7 | `exec _skill_manage %d, %d, %d, %d` |
+| `trs_sm_*job` | 5 | `trs_sm_trainingcampjob` |
+
+**71 procedures**, plus the five job wrappers. The catalogue was missing 32.
+
+**This is the second time the same defect has shipped in the same file.**
+`persistence.md`'s runtime-table count was 35 of 54 because its regex was
+uppercase-only. One pattern, run once, reported as a complete enumeration. The
+rule that would have caught both: *a harvest is complete only when its pattern
+has been falsified — a second spelling found and a third ruled out — not when it
+has been run.* Neither was caught by anything in that file; both were caught by
+an unrelated probe noticing a number that did not match.
+
+### What the 32 changed
+
+- **Item creation was entirely absent.** The `_STRG_ADD_*` family plus
+  `_STRG_SPLIT_ITEM` is every route by which an item comes into existence. The
+  catalogue could describe moving an item but not making one.
+- **A whole cash-shop subsystem**: `_STRG_BUY_CASHITEM_*` and five
+  `_STRG_RESTORE_SOLDITEM_*` that undo a sale.
+- **A false claim, now retracted.** `persistence.md` said "there is no procedure
+  for gaining experience, taking damage, or changing a skill level" and drew a
+  structural conclusion from it. `_skill_manage` and `_quest_manage` exist.
+  Experience and damage genuinely do ride the character save, so half of it
+  survives; the other half was an artifact of the regex presented as a finding
+  about the engine.
+- **Gold is read by procedure too**: `_GET_USER_GOLD`, `_GET_GUILD_GOLD`.
+
+### Two are variadic, and one recount was wrong
+
+`_STRG_ADD_ITEM_MAGIC` and `_STRG_RESTORE_SOLDITEM_ITEM_MAGIC` have literals
+that end mid-list *in the binary* — `AQ_StorageUpdater::AddMagicItem` appends
+`"%s,%I64d"` once per magic parameter, bounded by its own assert. Marked
+`Variadic`.
+
+And a caught mistake worth recording: the first recount of the arities counted
+`%d` placeholders and reported `_Rent_Info_Manager` as 24 arguments. It takes
+**10** — three of them are datetimes spelled `'%d-%d-%d %d:%d:%d'`, and a quoted
+group is one argument. The original 39 arities were right; the recount was
+wrong, and was checked against them before anything was changed. Had the recount
+been trusted, this pass would have "corrected" 39 correct numbers into 39 wrong
+ones while fixing the count.

@@ -2,10 +2,19 @@
 // from SR_GameServer.exe.
 //
 // Nothing here is designed. The procedure names and their argument counts were
-// read out of the ODBC call literals the binary builds -- `{?=CALL _NAME (%d,
-// %d, ...)}` -- and the table names out of its string pool. srrevamp does not
-// have to use this schema, but it is what the game's own operations are, and a
-// reimplementation that cannot express one of these has found a gap.
+// read out of the ODBC call literals the binary builds and the table names out
+// of its string pool. srrevamp does not have to use this schema, but it is what
+// the game's own operations are, and a reimplementation that cannot express one
+// of these has found a gap.
+//
+// CORRECTED 2026-09-17: there are 71 procedures, not 39. The first harvest
+// matched only `{?=CALL _NAME (...)}` and the server calls procedures in three
+// more forms it never saw -- `{CALL _NAME (...)}` (26), `EXEC _NAME ...` (7),
+// and five `trs_sm_*job` wrappers. This is the SAME defect as the runtime-table
+// count in docs/protocol/persistence.md, which found 35 of 54 because its regex
+// was uppercase-only: one pattern, assumed to be the only spelling, in this same
+// file. A harvest is only complete once its pattern has been falsified rather
+// than just run.
 //
 // See docs/protocol/persistence.md.
 package persistence
@@ -16,7 +25,18 @@ type Proc struct {
 	// Args is the number of parameter placeholders in the call literal. It is
 	// the count in the widest literal found, because a few procedures are
 	// called from more than one site.
+	//
+	// A quoted placeholder group is ONE argument, not several: _Rent_Info_Manager
+	// passes three datetimes as `'%d-%d-%d %d:%d:%d'` and takes 10 arguments, not
+	// 24. A counter that tallies `%d` rather than top-level commas gets that
+	// wrong, and got it wrong once during this recovery.
 	Args int
+	// Variadic marks a procedure whose literal is built in pieces, so Args is
+	// the fixed head and the real arity depends on the data. Only the two magic
+	// -item procedures are: AQ_StorageUpdater::AddMagicItem emits the head and
+	// then appends `"%s,%I64d"` once per magic parameter, bounded by its own
+	// assert "Item's MagParamNum(%d) is out of range".
+	Variadic bool
 	// Caller is the function that builds the call, which is usually an AQ_*
 	// class method and so says which subsystem owns the procedure.
 	Caller string
@@ -63,6 +83,49 @@ var Procs = []Proc{
 	{Name: "_UPDATE_GUILD_N_CHAR_GOLD", Args: 4, Caller: "AQ_StorageUpdater::MoveItemWithGold"},
 	{Name: "_UPDATE_USER_N_CHAR_GOLD", Args: 4, Caller: "AQ_StorageUpdater::MoveItemWithGold"},
 	{Name: "_UpdateSiegeFortressTaxRatio", Args: 2, Caller: "GObjPC::FUN_0061e330"},
+	// --- ADDED 2026-09-17: the 32 the {?=CALL} pattern never saw. ---
+	// Item creation, which the first harvest missed entirely: every route by
+	// which an item comes into existence is one of these.
+	{Name: "_STRG_ADD_EQUIP_NORMAL", Args: 9, Caller: "AQ_StorageUpdater::AddItem"},
+	{Name: "_STRG_ADD_EXPENDABLE", Args: 7, Caller: "AQ_StorageUpdater::AddItem"},
+	{Name: "_STRG_ADD_ALCHEMYSTONE", Args: 8, Caller: "AQ_StorageUpdater::AddItem"},
+	{Name: "_STRG_ADD_SPECIALTY", Args: 8, Caller: "AQ_StorageUpdater::AddItem"},
+	{Name: "_STRG_ADD_ITEM_MAGIC", Args: 10, Variadic: true, Caller: "AQ_StorageUpdater::AddMagicItem"},
+	{Name: "_STRG_ADD_PACKAGEITEM", Args: 11, Caller: "AQ_StorageUpdaterForPacakageItem"},
+	{Name: "_STRG_ADD_PACKAGEITEM_WITH_STOCKQUANTITY", Args: 12, Caller: "AQ_StorageUpdaterForPacakageItem"},
+	{Name: "_STRG_SPLIT_ITEM", Args: 9, Caller: "AQ_StorageUpdater::RearrangeItem"},
+	// The cash shop and its undo, a whole subsystem the catalogue had no trace of.
+	{Name: "_STRG_BUY_CASHITEM_EQUIP_NORMAL", Args: 12, Caller: "AQ_StorageUpdater::BuyCashItem"},
+	{Name: "_STRG_BUY_CASHITEM_EXP", Args: 10, Caller: "AQ_StorageUpdater::BuyCashItem"},
+	{Name: "_STRG_RESTORE_SOLDITEM_EQUIP_NORMAL", Args: 11, Caller: "AQ_StorageUpdater::RestoreSoldItem"},
+	{Name: "_STRG_RESTORE_SOLDITEM_EXPENDABLE", Args: 8, Caller: "AQ_StorageUpdater::RestoreSoldItem"},
+	{Name: "_STRG_RESTORE_SOLDITEM_ALCHEMYSTONE", Args: 9, Caller: "AQ_StorageUpdater::RestoreSoldItem"},
+	{Name: "_STRG_RESTORE_SOLDITEM_SPECIALTY", Args: 9, Caller: "AQ_StorageUpdater::RestoreSoldItem"},
+	{Name: "_STRG_RESTORE_SOLDITEM_ITEM_MAGIC", Args: 11, Variadic: true, Caller: "AQ_StorageUpdater::RestoreSoldMagicItem"},
+	// Skills and quests ARE persisted by a procedure -- see the correction in
+	// docs/protocol/persistence.md, which claimed they were not.
+	{Name: "_skill_manage", Args: 4, Caller: "AQ_SkillManager::FUN_004587a0"},
+	{Name: "_quest_manage", Args: 3, Caller: "AQ_QuestDataManager::FUN_00455f50"},
+	// Gold is READ by procedure too, not only written.
+	{Name: "_GET_USER_GOLD", Args: 2, Caller: "AQ_CharDataLoader::vslot_006"},
+	{Name: "_GET_GUILD_GOLD", Args: 2, Caller: "AQ_CharDataLoader::vslot_006"},
+	// The five logging procedures, each called from a _Log* class's slot 0 --
+	// a uniform shape that is itself the check that none was missed.
+	{Name: "_ADDLOGCHAR", Args: 6, Caller: "_LogChar::vslot_000"},
+	{Name: "_ADDLOGITEM", Args: 11, Caller: "_LogItem::vslot_000"},
+	{Name: "_ADDLOGSIEGEFORTRESS", Args: 6, Caller: "_LogSiegeFortress::vslot_000"},
+	{Name: "_AddLogServerEvent", Args: 3, Caller: "_LogServerEvent::vslot_000"},
+	{Name: "_AddLogSchedule", Args: 6, Caller: "_LogSchedule::vslot_000"},
+	// The trade-job (Trijob) history, which only _Insert/_Delete were known for.
+	{Name: "_AddTrijobReward", Args: 2, Caller: "FUN_00465220"},
+	{Name: "_GetOldTrijobData", Args: 8, Caller: "FUN_00465390"},
+	{Name: "_QueryOldTrijobInfo", Args: 5, Caller: "FUN_00465000"},
+	{Name: "_DeleteOldTrijobData", Args: 1, Caller: "FUN_004652e0"},
+	// The remainder.
+	{Name: "_AddCollectionBook_Item", Args: 3, Caller: "GObjPC::FUN_0044d0c0"},
+	{Name: "_AddFlagEventParticipant", Args: 1, Caller: "FUN_006480e0"},
+	{Name: "_Memo_Delete", Args: 1, Caller: "AQ_CharDataLoader::FUN_005d70a0"},
+	{Name: "_SiegeFortressCollectForgedItem", Args: 8, Caller: "AQ_Siege::FUN_006282f0"},
 }
 
 // ReferenceTables are the 85 read-only tables the server loads at start-up.

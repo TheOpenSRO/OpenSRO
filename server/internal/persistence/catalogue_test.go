@@ -26,8 +26,54 @@ func TestProcsAreDistinctAndPlausible(t *testing.T) {
 			t.Errorf("procedure %s records no caller", p.Name)
 		}
 	}
-	if len(Procs) != 39 {
-		t.Errorf("%d procedures; 39 were harvested from the call literals", len(Procs))
+	// 71, CORRECTED 2026-09-17 from 39. The original harvest matched only
+	// `{?=CALL _NAME (...)}`; the server also calls procedures as
+	// `{CALL _NAME (...)}` and `EXEC _NAME ...`, which together account for the
+	// 32 added. See the package comment for why this is the same defect as the
+	// runtime-table undercount.
+	if len(Procs) != 71 {
+		t.Errorf("%d procedures; 71 were harvested across all three call forms", len(Procs))
+	}
+}
+
+// The procedures that were missed are the interesting ones, because their
+// absence made a FALSE claim look supported: docs/protocol/persistence.md said
+// "there is no procedure for gaining experience, taking damage, or changing a
+// skill level", and _skill_manage is right there. Item creation was missing
+// entirely too, so the catalogue could describe moving an item but not making
+// one. Pin the ones whose absence changed a conclusion.
+func TestTheProceduresTheFirstHarvestMissed(t *testing.T) {
+	have := map[string]Proc{}
+	for _, p := range Procs {
+		have[p.Name] = p
+	}
+	for _, name := range []string{
+		// The claim-falsifying pair.
+		"_skill_manage", "_quest_manage",
+		// Every route by which an item comes into existence.
+		"_STRG_ADD_EQUIP_NORMAL", "_STRG_ADD_EXPENDABLE", "_STRG_ADD_ALCHEMYSTONE",
+		"_STRG_ADD_SPECIALTY", "_STRG_ADD_ITEM_MAGIC", "_STRG_ADD_PACKAGEITEM",
+		// Reading gold, which only had writers before.
+		"_GET_USER_GOLD", "_GET_GUILD_GOLD",
+	} {
+		if _, ok := have[name]; !ok {
+			t.Errorf("%s is missing; it was one of the 32 the {?=CALL} pattern never saw", name)
+		}
+	}
+	// Exactly two procedures are variadic, and both are the magic-item ones.
+	var variadic []string
+	for _, p := range Procs {
+		if p.Variadic {
+			variadic = append(variadic, p.Name)
+		}
+	}
+	if len(variadic) != 2 {
+		t.Errorf("%d variadic procedures %v; only the two magic-item ones are", len(variadic), variadic)
+	}
+	for _, name := range variadic {
+		if !strings.Contains(name, "ITEM_MAGIC") {
+			t.Errorf("%s is marked variadic but is not a magic-item procedure", name)
+		}
 	}
 }
 

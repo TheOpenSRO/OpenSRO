@@ -164,13 +164,32 @@ const (
 //
 //   - **the GameServer's own stored-procedure list (2026-09-17).** This is the
 //     structural one, and it is stronger than the other three because it does
-//     not depend on having looked in the right place. The binary names **75**
-//     stored procedures, covering every persistence operation it performs:
-//     `_AddNewCOS` creates a pet, the twenty-odd `_STRG_*` move items,
-//     `_SiegeFortress*` run a siege, `_AssignNickName` renames. **None of them
-//     creates a character.** So character creation is not a GameServer
-//     operation at all, and no amount of further searching in this binary can
-//     turn one up.
+//     not depend on having looked in the right place. The binary names **71**
+//     stored procedures across all three call forms, plus five `trs_sm_*job`
+//     wrappers, covering every persistence operation it performs: `_AddNewCOS`
+//     creates a pet, the `_STRG_ADD_*` family creates every kind of item,
+//     `_SiegeFortress*` run a siege, `_AssignNickName` renames, `_skill_manage`
+//     and `_quest_manage` persist progress. **None of them creates a
+//     character.** So character creation is not a GameServer operation at all,
+//     and no amount of further searching in this binary can turn one up.
+//
+//     The count was re-measured 2026-09-17 (this comment said 75, and
+//     persistence.Procs held 39; both were wrong, in opposite directions). The
+//     re-measurement STRENGTHENS the argument rather than weakening it: the
+//     enumeration now includes the `_STRG_ADD_*` family, so the binary demonstrably
+//     has a procedure for creating an item and still has none for creating a
+//     character. See docs/protocol/persistence.md.
+//
+//   - **a fifth, at the machine level (2026-09-17).** `CharData_BindDBColumns`
+//     binds `"Strength"` to charData `+0x74` and `"Intellect"` to `+0x76`
+//     literally. Scanning every word-sized store to those two offsets across the
+//     whole image, the only ones that touch charData are inside `GObjPC::SetStr`
+//     and `GObjPC::SetInt` (the other hits are unrelated structs -- quest
+//     handlers, navmesh, COS). Those two appear in **0 vtable slots**, so there
+//     is no virtual path to them, and their **only** caller is
+//     `GObjPC_SpendStatPoints`, which refuses unless `str+int <= pool` and only
+//     ever ADDS. So the binary never assigns a starting Strength; it only ever
+//     increments one it loaded.
 //
 // So the value stays own-design, but the reason is now four measurements rather
 // than one silence, and the last of them is an enumeration rather than a search.
