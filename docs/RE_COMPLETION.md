@@ -14010,3 +14010,79 @@ to `NetProcessInInner`. The applier refused to choose, which is its designed beh
 It is recorded here as an open conflict. Forcing either side would be a guess, and
 `NetProcessInInner` versus `CObjCharacter` is exactly the kind of owner question that
 has been wrong before in this project.
+
+## Academy disband named on both binaries; a 604,800-second window grounded (2026-09-17)
+
+`0x00519120` had been left unnamed. Disband was strongly indicated, but there was one
+piece of evidence where the other handlers had two, and the doc named the probe that
+would settle it: its validator's own checks. Read this tick, together with the client's
+`0xb471` parser:
+
+	server 00519120  TrainingCamp_HandleDisband
+	server 004e4780  TrainingCamp_CheckCanDisband
+	server 005dd350  TrainingCamp_SecondsUntilDisbandAllowed
+	server 005df140  TrainingCamp_RequestDisbandJob
+	server 005dedc0  TrainingCamp_RequestOpenJob
+	server 005e1110  TrainingCamp_SendDisbandResult
+	server 005e43b0  TrainingCamp_IsMemberClass0
+	server 005e36a0  TrainingCampMember_IsClass0
+	client 00899730  TrainingCamp_OnDisbandResult
+
+**Two independent readings settle it.** (1) The server: the validator's time refusal
+is `0x681d TC_ERROR_NOT_DISORGANIZATION_7D`, and "disorganization" is the engine's
+word for disbanding. (2) The client: its `0xb471` handler reads a trailing field
+**only** for `0x681d`, exactly as open's `0xb470` handler does only for `0x681c
+NOT_OPEN_7D`, and the server's `0x681d` reply carries exactly that field.
+
+### A value, grounded, with a unit
+
+`mov ecx,0x93a80` at `0x005dd36a` is **604,800**, added to a timestamp on the camp's
+record and compared against `_time32(NULL)` (`0x009dd35a`, a library match). That
+makes the unit seconds, and 604,800 is 7 × 24 × 3600: the literal and the `7D` in the
+refusal's name agree. **The decompiler dropped the literal** (`FUN_009753f0()` with no
+argument) because it travels in `ECX`. The window closes *at* 604,800 (`setle` →
+zero). Which timestamp it runs from is not read.
+
+Wired into `server/internal/academy`: `DisbandWindowSeconds`, `DisbandNotInCamp` (3),
+`MemberClass0`, `ErrNotDisorganization7D`, and `CheckDisband`, in the binary's order.
+The tests cover the boundary (604,799 refuses with 1 second left, 604,800 passes), the
+class gate, and the order. Two mutants were run against the new tests: `left >= 0` and
+a class gate admitting class 1. Both were caught.
+
+### A correction to existing rules
+
+Both validators open with `char[0xc]+4 == 1 -> 0x6808`. **`CheckCreate` was missing
+that first step** while its comment said "the order is the binary's". Reading the
+disband validator beside it showed the gap. `CreateRequest.WrongState` is added. It
+defaults to false, so no existing caller changes.
+
+### Two probes that returned nothing, and why
+
+- **`infn.sh "FUN_004e4780\b"` found no callers.** `infn.sh` is awk, and awk's `\b` is
+  backspace, not a word boundary, so the pattern could match nothing. Re-run as
+  `FUN_004e4780[^0-9a-f]`, it found `0x00519120`. A second probe with a different
+  failure mode (`call   0x4e4780` in the asm listing) agreed: one caller.
+- **A literal grep for `0x681d` found only the handler.** The validator computes it as
+  `(-(x != 0) & 0x681c) + 1`. A literal search cannot answer "which function produces
+  this code" when the code is an idiom's output.
+
+### Structure: every academy job type mapped
+
+The job sender takes its type in `CL`, and all six call sites were read in asm. That
+gives a complete type → queuer → request-handler table (in `academy.md`): 0 open,
+1 disband, 2 invite-accept (`trs_wait_response` slot 2), 3 ban+leave, 4 graduation +
+`CheckMembershipLevel`, 7 `0x00519900`. **This explains why sub-type 4's result sender
+carries two opcodes**: its queuer is shared by two request handlers, as type 3's is.
+
+### Disclosed, not resolved
+
+- **Class 0's role.** It is the only class that may disband. It is named by value,
+  because nothing read says what class 0 is. "Founder" is the guess and is not recorded.
+- **Plain disband refusals go out on `0xb470`**, open's opcode. The effect is read:
+  the client shows the right text anyway. The reason is not.
+- The record field `FUN_005e4390` reads (`[camp+4]+0x18`) is written as "presumably
+  the camp's id". It is not read as an id.
+
+**Not yet applied to the Ghidra projects.** A client dump rebuild was running when
+the names were ready, and the loop's rule is not to start competing work. The
+rows are in `recovered_names.tsv`, and the apply runs on the next tick.

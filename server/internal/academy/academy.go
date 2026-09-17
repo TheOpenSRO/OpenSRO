@@ -23,6 +23,12 @@ const (
 	ErrOrderWork       = 0x6816 // TC_ERROR_ORDER_WORK
 	ErrNotOpen7D       = 0x681c // TC_ERROR_NOT_OPEN_7D
 	ErrNotInvite24T    = 0x681f // TC_ERROR_NOT_INVITE_24T
+
+	// ErrNotDisorganization7D is TC_ERROR_NOT_DISORGANIZATION_7D, the disband
+	// window refusal. The validator never contains the literal: it computes
+	// `(-(remaining != 0) & 0x681c) + 1`, so a grep for 0x681d finds only the
+	// handler that compares against it.
+	ErrNotDisorganization7D = 0x681d
 )
 
 // Creating a camp -- FUN_004e4680, in the order it tests.
@@ -205,6 +211,11 @@ func MeetsMembershipLevel(class, level int) bool {
 
 // CreateRequest is what FUN_004e4680 decides about.
 type CreateRequest struct {
+	// WrongState is the validator's first test, `char[0xc]+4 == 1` -> 0x6808.
+	// What that byte means is not read. The disband validator opens with the
+	// same test, and this field was missing here until that was read on
+	// 2026-09-17: the order below was the binary's minus its first step.
+	WrongState    bool
 	Alive         bool
 	Level         int
 	Gold          int64
@@ -217,6 +228,9 @@ type CreateRequest struct {
 // CheckCreate returns 0 when a camp may be founded, or the refusal code.
 // The order is the binary's.
 func CheckCreate(r CreateRequest) int {
+	if r.WrongState {
+		return ErrWrongState
+	}
 	if !r.Alive {
 		return ErrDeadOrBusy
 	}
@@ -233,6 +247,79 @@ func CheckCreate(r CreateRequest) int {
 		return ErrNotOpen7D
 	}
 	return 0
+}
+
+// Disbanding a camp -- TrainingCamp_CheckCanDisband (FUN_004e4780), reached
+// only from TrainingCamp_HandleDisband (FUN_00519120). See academy.md.
+const (
+	// DisbandWindowSeconds is 604,800, read as a literal the decompiler drops:
+	//
+	//	005dd36a  mov  ecx,0x93a80    ; the span, 604800
+	//	005dd373  call 0x9753f0       ; span = ecx
+	//	005dd3a7  call 0x9755e0       ; stamp from the camp record's TIMESTAMP_STRUCT
+	//	005dd3b2  call 0x975540       ; stamp.t += span
+	//	005dd3bb  call 0x9755c0       ; now = _time32(NULL)
+	//	005dd3ca  call 0x975530       ; span = stamp.t - now.t
+	//
+	// It is SECONDS because the field it is added to is written from
+	// _time32(NULL) (0x009dd35a, a library match). 604800 is 7 * 24 * 3600, the
+	// "7D" in the refusal's name -- the literal and the name agree, which is
+	// the same pair of facts that grounds ReopenCooldownDays.
+	//
+	// WHICH timestamp is not read: it is a TIMESTAMP_STRUCT at +0x1c on the
+	// camp's record, but no column layout of _TRAININGCAMP is recovered.
+	DisbandWindowSeconds = 0x93a80
+
+	// DisbandNotInCamp is what the validator returns when the caller is in no
+	// camp: the bare integer 3, the same generic result InviteRefused is, not
+	// a TC_ERROR code. (The job request that follows re-tests the same field
+	// and would say 0x680b, but it cannot be reached with it empty.)
+	DisbandNotInCamp = 3
+
+	// MemberClass0 is the only class TrainingCamp_IsMemberClass0 admits, and so
+	// the only class that may disband. It is named by value on purpose: class 1
+	// is the second guardian and class 2 the student, each read from a count
+	// function behind an engine refusal, but nothing read yet says what class
+	// 0 is. "The founder" is the obvious guess and is not recorded as a fact.
+	MemberClass0 = 0
+)
+
+// DisbandRequest is what TrainingCamp_CheckCanDisband decides about.
+type DisbandRequest struct {
+	WrongState bool // char[0xc]+4 == 1, as in CreateRequest
+	Alive      bool
+	InCamp     bool
+	// HasMemberRecord and MemberClass are TrainingCamp_IsMemberClass0's two
+	// halves: the member lookup (a miss returns 0) and the class byte (+0x50).
+	HasMemberRecord bool
+	MemberClass     int
+	// SinceStamp is now minus the camp record's timestamp, in seconds.
+	SinceStamp int64
+}
+
+// CheckDisband returns 0 when a camp may be disbanded, or the refusal code. On
+// ErrNotDisorganization7D, remaining is the seconds left in the window, which
+// the engine sends as the reply's extra 4-byte field. The order is the
+// binary's.
+func CheckDisband(r DisbandRequest) (code int, remaining int64) {
+	if r.WrongState {
+		return ErrWrongState, 0
+	}
+	if !r.Alive {
+		return ErrDeadOrBusy, 0
+	}
+	if !r.InCamp {
+		return DisbandNotInCamp, 0
+	}
+	if !r.HasMemberRecord || r.MemberClass != MemberClass0 {
+		return ErrOrderWork, 0
+	}
+	// `setle cl ; sub ecx,1 ; and eax,ecx`: a difference of 0 or less is 0, so
+	// the window closes AT 604800 seconds, not after it.
+	if left := DisbandWindowSeconds - r.SinceStamp; left > 0 {
+		return ErrNotDisorganization7D, left
+	}
+	return 0, 0
 }
 
 // Classes are the four training-camp instance classes, each with a nine-slot

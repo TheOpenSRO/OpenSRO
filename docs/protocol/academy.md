@@ -162,7 +162,8 @@ the likeliest reading of both sending `0xb473`: a shared "member removed" notice
 with `0xb474` as leave's own reply. The notice reading is inference and is
 labelled as such; the shared removal is read.
 
-**`0x00519120` is deliberately not named.** It raises
+**`0x00519120` was deliberately not named here — it is now `TrainingCamp_HandleDisband`, on
+the evidence in "Disband, named on both binaries" below.** It raises
 `TC_ERROR_NOT_DISORGANIZATION_7D` and calls `FUN_004e4780`, the neighbour of the
 founding validator `FUN_004e4680`, so disband is the obvious reading. But it
 answers on **two** opcodes (`0xb470`, `0xb471`), and that validator was not read,
@@ -188,7 +189,7 @@ at `+0x28`, and **its ten cases cover exactly the academy response family**:
 | sub-type | result sender | sends | operation |
 |---:|---|---|---|
 | 0 | `TrainingCamp_SendOpenResult` | `0xb470` | **open** (founding) |
-| 1 | `0x005e1110` | `0xb471` | not established |
+| 1 | `TrainingCamp_SendDisbandResult` | `0xb471` | **disband** (see below) |
 | 2 | `TrainingCamp_SendInviteResult` | `0xb472` | invite |
 | 3 | `TrainingCamp_SendRemoveMemberResult` | `0xb473`, `0xb474` | ban / leave |
 | 4 | `0x005e10e0` | `0xb475`, `0xb476` | graduation, and `CheckMembershipLevel`'s opcode |
@@ -203,7 +204,8 @@ result sender coming out.
 Named only where the operation is already established on the request side. Sub-type
 4 is left unnamed because it also carries `0xb476`, whose operation is not named.
 Sub-types 0 and 1 map to `0xb470`/`0xb471`, where create and disband are expected
-but not resolved.
+but not resolved. **Both resolved the same day**: 0 is open, and 1 is disband (the
+disband section below).
 
 ## Open is named from the client's own string (2026-09-17)
 
@@ -217,24 +219,112 @@ the founding validator's refusals are `TC_ERROR_OPEN_LEVEL`, `OPEN_GOLD` and
 	0x005e1140  TrainingCamp_SendOpenResult  dispatcher case 0; sends 0xb470
 	0x00899630  TrainingCamp_OnOpenResult    registered for 0xb470; shows TC_OPEN_SUCCESS
 
-### `0x00519120`: disband, strongly indicated and still not named
+## Disband, named on both binaries (2026-09-17)
 
-Read in full:
+The last section closed on "the probe that would settle it is `FUN_004e4780`'s own
+checks". Those checks were read, and a second reading came from the client.
+Together they name the chain:
 
-	call FUN_004e4780                          ; the validator
-	result == 0x681d NOT_DISORGANIZATION_7D -> build a DETAILED 0xb471 (three extra fields)
-	result is any other refusal              -> send it plainly on 0xb470
-	result == ok -> call FUN_005df140; on failure send on 0xb471
+	0x00519120  TrainingCamp_HandleDisband               request handler
+	0x004e4780  TrainingCamp_CheckCanDisband             its validator (its only caller)
+	0x005dd350  TrainingCamp_SecondsUntilDisbandAllowed  the window (validator is its only caller)
+	0x005df140  TrainingCamp_RequestDisbandJob           queues job type 1 (handler is its only caller)
+	0x005e1110  TrainingCamp_SendDisbandResult           dispatcher case 1; sends 0xb471
+	0x00899730  TrainingCamp_OnDisbandResult             client, registered for 0xb471
 
-`0xb471` is this handler's own opcode, and the only refusal it handles specially is
-the seven-day disband one, answered with extra fields that are presumably the time
-remaining. That is strong evidence for **disband**.
+### The validator, in order
 
-It stays unnamed for one reason: **plain refusals go out on `0xb470`, open's
-opcode**, and nothing read explains that. It may be a generic "academy request
-refused" channel, and the client shows the right text for any code whichever handler
-displays it, but that is a guess. The probe that would settle it is `FUN_004e4780`'s
-own checks.
+	char[0xc]+4 == 1                         -> 0x6808
+	!IsAlive()                               -> 0x6807
+	char[0x733] == 0     (no camp)           -> 3        a bare integer, as InviteRefused is
+	!TrainingCamp_IsMemberClass0             -> 0x6816   TC_ERROR_ORDER_WORK
+	SecondsUntilDisbandAllowed() != 0        -> 0x681d   TC_ERROR_NOT_DISORGANIZATION_7D
+	                                            and *out = those seconds
+
+`0x681d` never appears as a literal in the validator: it is computed as
+`(-(remaining != 0) & 0x681c) + 1`. A grep for `0x681d` finds only the handler that
+compares against it. That is why "which function produces the disband refusal" had
+no answer from a literal search.
+
+**Only class 0 may disband.** `TrainingCamp_IsMemberClass0` (`0x005e43b0`) looks the
+caller up in the camp's member map and tests `TrainingCampMember_IsClass0`
+(`0x005e36a0`): `cmp byte [member+0x34 → +0x50], 0`. That is byte for byte the
+sibling of `_IsSecondGuardian` (`== 1`) and `_IsStudent` (`== 2`). A missing member
+fails the gate. The gate has 14 callers (ban, leave, graduation, the membership
+check, invite accept, …), so it is general, not disband-specific. **What role class
+0 is, is not read.** "The founder" is the obvious guess, and it is not written down
+as a fact.
+
+### The window is 604,800 seconds, and the decompiler dropped it
+
+	005dd36a  mov  ecx,0x93a80     ; 604800
+	005dd373  call 0x9753f0        ; span = ecx
+	005dd3a7  call 0x9755e0        ; stamp from a TIMESTAMP_STRUCT on the camp record (+0x1c)
+	005dd3b2  call 0x975540        ; stamp.t += span
+	005dd3bb  call 0x9755c0        ; now = _time32(NULL)   (0x009dd35a, FID library match)
+	005dd3ca  call 0x975530        ; span = stamp.t - now.t
+	005dd3d4  setle cl ; sub ecx,1 ; and eax,ecx   ; negative or zero -> 0
+
+The decompiled body shows `FUN_009753f0()` with no argument, because the literal
+travels in `ECX`. The unit is **seconds** because `stamp.t` (`+0x24`) is the field
+`_time32` fills. 604,800 is exactly 7 × 24 × 3600, so the literal and the refusal's
+`7D` agree — the same two facts that ground the reopen cooldown. The window closes
+**at** 604,800 seconds: a difference of 0 is not refused. **Which** timestamp this is
+(founding? last change?) is not read, because no `_TRAININGCAMP` column layout is
+recovered. The record's layout at `+0x1c` is year/month, `+0x20` day/hour,
+`+0x24` minute/second, `+0x28` fraction, which is ODBC's `TIMESTAMP_STRUCT`.
+
+### The client special-cases the same code, on the same opcode
+
+	TrainingCamp_OnOpenResult    (0xb470):  on 2, show the code; if code == 0x681c read 4 more bytes
+	TrainingCamp_OnDisbandResult (0xb471):  on 2, show the code; if code == 0x681d read 4 more bytes
+
+The server's 0x681d reply is exactly that shape. It is built in `HandleDisband` as
+byte 2, word code, dword seconds-remaining (`0x0051916b`–`0x0051919e`). The client's
+`0xb471` parser knows that `NOT_DISORGANIZATION_7D` carries a trailing field, which
+makes `0xb471` the disband result from the client's side independently.
+On success the client handler does nothing visible.
+
+### Every academy job type, mapped to the request that queues it
+
+Every call to `CTrainingCampMamager::SendOlappedTrainingCampJobReqToSM` passes the
+job type in `CL`, which is why the decompiler shows the argument as `0` at most call
+sites. Read in assembly at all six sites:
+
+| type | queued by | called only from | result |
+|---:|---|---|---|
+| 0 | `TrainingCamp_RequestOpenJob` `0x005dedc0` (`xor cl,cl`) | `TrainingCamp_HandleOpen` | `0xb470` |
+| 1 | `TrainingCamp_RequestDisbandJob` `0x005df140` (`mov cl,1`) | `TrainingCamp_HandleDisband` | `0xb471` |
+| 2 | `0x005df910` (`mov cl,2`) | `trs_wait_response` slot 2 (`0x0046cb30`) | `0xb472` |
+| 3 | `TrainingCamp_RemoveMember` `0x005deeb0` (`mov cl,3`) | `HandleBan`, `HandleLeave` | `0xb473`/`0xb474` |
+| 4 | `0x005def20` (`mov cl,4`) | `HandleGraduation`, `CheckMembershipLevel` | `0xb475`/`0xb476` |
+| 7 | `0x005df070` (`mov cl,7`) | `0x00519900` | `0xb477` |
+
+The sender's `switch` agrees with the table's shape. Type 0 is the only case that stores
+nothing from an existing camp record. Types 1–7 all store `FUN_005e4390`'s
+`[camp+4]+0x18`, presumably the camp's id (not read), and a founding job has no
+camp to read it from. Type 2 asserts "can't find training camp to
+**join**!" and type 3 asserts "… to **leave**! (maybe dismissed)".
+
+This row also **explains sub-type 4 carrying two opcodes**, which is why it was left
+unnamed above. Its one queuer is shared by `HandleGraduation` (`0xb475`) and
+`CheckMembershipLevel` (`0xb476`), just as type 3's is shared by ban and leave. What
+operation type 4 performs for the membership check is still not read, so it stays
+unnamed.
+
+### Still not explained
+
+**Plain refusals from `HandleDisband` go out on `0xb470`**, open's opcode
+(`mov ecx,0xb470` at `0x005191d0`). Only the 0x681d refusal and a failed job
+request use `0xb471`. The consequence is read: `0xb470`'s client handler shows any
+code, and the one code that needs a trailing field (`0x681c`) is never among these,
+so the player sees the right message either way. The reason is not read. Nothing
+here tells a deliberate shared "refused" channel from a copy of the open handler.
+
+`TrainingCamp_RequestDisbandJob` re-tests the camp and the class gate, and would
+answer `0x680b` / `0x6816`. From `HandleDisband` neither can fire. The validator
+tested the same fields a few instructions earlier (`char[0x733]` is `[edi+0x1ccc]`
+in the queuer), and nothing but an assert runs between them.
 
 ## Windows named but not read
 
@@ -282,7 +372,11 @@ correspondence is one-to-one and obvious.
 
 ## Not recovered
 
-- Which membership branch is the master and which the apprentice.
+- What role member class 0 is. It is the only class that may disband
+  (`TrainingCampMember_IsClass0`); class 1 is the second guardian and class 2 the
+  student, each read from a count function. "Master" and "apprentice" were never
+  the engine's words.
+- Which timestamp on the camp record the 604,800-second disband window runs from.
 - The three 24-hour windows, as server-side values.
 - Honour points: how they are earned, what a rank grants, what
   `EvaluationPoint` is scored on. The columns are named; the rules are not.

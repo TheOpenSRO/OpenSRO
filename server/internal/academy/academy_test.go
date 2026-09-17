@@ -121,6 +121,7 @@ func TestRefusalCodesAreDistinct(t *testing.T) {
 	for _, c := range []int{
 		ErrDeadOrBusy, ErrWrongState, ErrOpenLevel, ErrOpenGold, ErrNoCamp,
 		ErrInviteRejection, ErrAlreadyInCamp, ErrOrderWork, ErrNotOpen7D, ErrNotInvite24T,
+		ErrNotDisorganization7D,
 	} {
 		if seen[c] {
 			t.Errorf("code %#x listed twice", c)
@@ -130,8 +131,8 @@ func TestRefusalCodesAreDistinct(t *testing.T) {
 			t.Errorf("code %#x is outside the 0x68xx training-camp range", c)
 		}
 	}
-	if len(seen) != 10 {
-		t.Errorf("%d distinct codes, want 10", len(seen))
+	if len(seen) != 11 {
+		t.Errorf("%d distinct codes, want 11", len(seen))
 	}
 }
 
@@ -197,5 +198,97 @@ func TestFounderFloorMeetsInviteCeiling(t *testing.T) {
 	}
 	if InviteRefused != 3 {
 		t.Errorf("InviteRefused = %d, want 3 (pushed at 0x0051937f)", InviteRefused)
+	}
+}
+
+// Both validators open with the same `char[0xc]+4 == 1 -> 0x6808` test. It was
+// missing from CheckCreate until the disband validator was read beside it.
+func TestCreateWrongStateComesFirst(t *testing.T) {
+	r := CreateRequest{WrongState: true}
+	if got := CheckCreate(r); got != ErrWrongState {
+		t.Errorf("a wrong-state, dead request gave %#x, want %#x -- the state is "+
+			"tested before IsAlive", got, ErrWrongState)
+	}
+}
+
+func okDisband() DisbandRequest {
+	return DisbandRequest{
+		Alive: true, InCamp: true, HasMemberRecord: true,
+		MemberClass: MemberClass0, SinceStamp: DisbandWindowSeconds,
+	}
+}
+
+func TestDisbandAcceptsTheMinimum(t *testing.T) {
+	if code, left := CheckDisband(okDisband()); code != 0 || left != 0 {
+		t.Errorf("a class-0 member exactly at the window gave (%#x, %d), want (0, 0)", code, left)
+	}
+}
+
+// The order is FUN_004e4780's: state, alive, camp, class, window.
+func TestDisbandOrderIsTheBinarys(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		r    DisbandRequest
+		want int
+	}{
+		{"everything wrong", DisbandRequest{WrongState: true}, ErrWrongState},
+		{"dead, no camp", DisbandRequest{}, ErrDeadOrBusy},
+		{"no camp, no record, in window", DisbandRequest{Alive: true}, DisbandNotInCamp},
+		{"student, in window", DisbandRequest{Alive: true, InCamp: true,
+			HasMemberRecord: true, MemberClass: MemberClassStudent}, ErrOrderWork},
+	} {
+		if got, _ := CheckDisband(tc.r); got != tc.want {
+			t.Errorf("%s: got %#x, want %#x", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Only class 0 passes the gate, and a member lookup that misses fails it even
+// though the zero class byte would have passed.
+func TestDisbandNeedsClass0(t *testing.T) {
+	for _, class := range []int{MemberClassSecondGuardian, MemberClassStudent} {
+		r := okDisband()
+		r.MemberClass = class
+		if got, _ := CheckDisband(r); got != ErrOrderWork {
+			t.Errorf("class %d gave %#x, want ORDER_WORK %#x", class, got, ErrOrderWork)
+		}
+	}
+	r := okDisband()
+	r.HasMemberRecord = false
+	if got, _ := CheckDisband(r); got != ErrOrderWork {
+		t.Errorf("a missing member record gave %#x, want ORDER_WORK %#x", got, ErrOrderWork)
+	}
+}
+
+// `setle cl ; sub ecx,1 ; and eax,ecx`: the remaining time is returned only
+// while it is positive, so one second short refuses with 1 left and the full
+// 604800 passes.
+func TestDisbandWindowBoundary(t *testing.T) {
+	r := okDisband()
+	r.SinceStamp = DisbandWindowSeconds - 1
+	if code, left := CheckDisband(r); code != ErrNotDisorganization7D || left != 1 {
+		t.Errorf("one second short gave (%#x, %d), want (%#x, 1)", code, left, ErrNotDisorganization7D)
+	}
+	r.SinceStamp = 0
+	if _, left := CheckDisband(r); left != DisbandWindowSeconds {
+		t.Errorf("a fresh stamp left %d seconds, want the whole window %d", left, DisbandWindowSeconds)
+	}
+}
+
+// The literal is 0x93a80 and the refusal's name says 7D; they agree only if the
+// unit is seconds.
+func TestDisbandWindowIsSevenDaysOfSeconds(t *testing.T) {
+	const literal = 0x93a80 // `mov ecx,0x93a80` at 0x005dd36a
+	if DisbandWindowSeconds != literal {
+		t.Errorf("DisbandWindowSeconds = %d, want %d", DisbandWindowSeconds, literal)
+	}
+	if day := 24 * 3600; literal%day != 0 || literal/day != 7 {
+		t.Errorf("%d seconds is not 7 whole days, so the unit reading is wrong", literal)
+	}
+	if DisbandNotInCamp != 3 || MemberClass0 != 0 {
+		t.Errorf("DisbandNotInCamp = %d, MemberClass0 = %d; want 3 and 0", DisbandNotInCamp, MemberClass0)
+	}
+	if ErrNotDisorganization7D != ErrNotOpen7D+1 {
+		t.Errorf("0x681d is computed as 0x681c + 1 in the validator; got %#x", ErrNotDisorganization7D)
 	}
 }
