@@ -10653,3 +10653,28 @@ The script is version-controlled at `client/tools/re_tick.sh`; the repo copy was
 **byte-identical** to the box's before this change, so there was no prior drift
 to reconcile, and it now carries the fix.
 
+### Verified after the fix
+
+The catch-up run finished and the fix is confirmed end to end:
+
+	last_tick=2026-09-17T00:51:06   finished=2026-09-17T01:00:02
+	rebuilt_dumps=1
+	server_dump=functions=34113 failed=0 seconds=200 shards=18
+	client_dump=functions=43460 failed=0 seconds=326 shards=22
+
+**`rebuilt_dumps=1` is the first non-zero of the session.** Checked in the
+rebuilt dump rather than assumed:
+
+- all fifteen sampled names applied this session are present —
+  the ten storage operations, `StrLevelDamageRatio`, `IntLevelDamageRatio`,
+  `SelectDaraParamForDamageType`, `ResolveDeathCause`, `IsKilledByPlayer`;
+- **zero** functions still carry `AQ_StorageUpdater__Init`, so the ten-way
+  collision is gone from the dump as well as the project;
+- server functions with a real leaf name: **1,718 -> 1,778**.
+
+That last number is the one worth keeping in view. It is the *leaf-name* count —
+a function is counted only when its own name is real, not when it merely sits in
+a named class — which is why it reads 5.2% where the class-qualified figure
+reads 62%. Both are true and they measure different things; quoting the second
+as "named" is the trap.
+
