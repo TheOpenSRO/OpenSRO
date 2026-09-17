@@ -12883,3 +12883,70 @@ recorded trap in this project is "`cd server && …` fails when cwd is already
 succeeds and silently answers about nothing.
 
 Nothing srrevamp uses changed, so nothing was wired; `go test -p 1 ./...` green.
+
+## The theme match would have been wrong (2026-09-17)
+
+Last tick named the 15 `CRefSkill` fields the skill-use gate reads and
+**declined** to say which refusal each guards, because matching `hide`, `trap`,
+`tele`/`tel2`/`tel3` and `cnsm` to the stealth, trap, teleport and ammunition
+rows by theme is the inference that produced this project's characterdata col 79
+errors and the invented "reverse exchange" in `Formula_SkillPhysDamage`.
+
+The join is now read, and it contradicts the theme match on three of four:
+
+- **`hide` does not guard the stealth row.** It gates the *battle-state* block
+  (`CANT_BATTLE_STATE`). Stealth is `reqc` bit `0x10`.
+- **`trap` does not guard the trap rows.** It is an inner condition of that same
+  battle-state block; the trap refusals are hundreds of bytes earlier.
+- **`reqc` (`0x39c`) is one flag word driving three unrelated rows** — groggy
+  (bit `0x4`), stealth (`0x10`) and musical range (`0x20`). No name-to-row
+  mapping could have produced that, because the three share no theme.
+
+`cnsm` before the ammunition row is the one case where position and theme agree,
+and it is recorded as **positional only** — the field read sits immediately
+before the refusal, and no decompiled condition was read for it.
+
+So the general claim is now measured rather than asserted: **a four-character
+param name says which skilldata column fills a field, not what the field means**,
+and here it actively misleads for 3 of the 4 names a reader would have reached
+for. `skill_use_gate.md` carries the table.
+
+### A suspicion raised and then disproved
+
+Spot-checking five map rows against the parser, four verified immediately
+(`hide`, `cnsm`, `lnks`, the `tel*` family) and **`trap -> 0x4a0` looked wrong**:
+its store sits immediately before `0x58933f`, the shared tail every case jumps
+to, which is where a default handler would live.
+
+It is correct. `cmp edx,0x74726170 ; je 0x589333` is the *only* jump to that
+block, and the block stores `0x4a0` before falling into the tail. The suspicion
+came from reading the window *before* the store instead of following the jump —
+the same mistake in miniature that the whole binary-search-tree saga was about.
+
+Recorded because a disproved suspicion is worth as much as a confirmed one here:
+the alternative is a map with an unexplained asterisk nobody re-checks.
+
+### Two things confirmed in passing
+
+- **`cmp ecx,0x32` at `0x58934a`** is the parser's loop bound: **50 param
+  slots**, which is exactly what `refdata.Skill`'s comment already claimed
+  ("the 50 generic Param slots"). An independent confirmation of a number the
+  project had from the client side.
+- **`+0x428` is `hide`.** An earlier pass listed it as unnamed; it is read
+  through `esi` like the rest and was simply missed.
+
+Nothing srrevamp uses changed, so nothing was wired; `go test -p 1 ./...` green.
+
+### CI has not run since 2026-09-16 04:36 UTC
+
+Worth recording in the ledger because it affects what every recent entry can
+claim. `AGENTS.md` says a tag "builds and publishes the release". It has not:
+**268 consecutive runs have failed**, every one with zero steps executed,
+`runner_id: 0` and no logs — jobs created and then never dispatched. All four
+workflows are affected, the workflow files are untouched, and Actions is still
+enabled on the repo, which points at the account's Actions billing rather than
+anything in the tree. The repo is private, so every run bills against quota.
+
+v0.1.313–v0.1.323 were tagged into that. The code is fine — `go test -p 1 ./...`
+ran green locally before each — but **"tagged" has not meant "built" for 31
+hours**, and this loop had been treating the two as the same thing.

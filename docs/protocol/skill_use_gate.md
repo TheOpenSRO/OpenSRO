@@ -81,43 +81,58 @@ recorded because "we happen to agree" and "we match a read" are different
 claims and only the second is worth anything.
 
 
-## The fields it reads, named (2026-09-17)
+## Which row tests which param (2026-09-17)
 
-The gate reads **15 distinct `CRefSkill` fields** through `esi`; 14 now have
-names, from `docs/protocol/skill_fields.md`.
+The previous pass named the 15 fields the gate reads but **declined to say which
+refusal each one guards**, on the grounds that matching `hide`, `trap`,
+`tele`/`tel2`/`tel3` and `cnsm` to the stealth, trap, teleport and ammunition
+rows by theme was the inference this project has been wrong with before.
 
-| param | offset |
-|---|---|
-| `ao` | `0x274` |
-| `?` | `0x294` |
-| `cnsm` | `0x2a0` |
-| `pw` | `0x2b4` |
-| `rpkt` | `0x2cc` |
-| `tele` | `0x2ec` |
-| `tel2` | `0x2f0` |
-| `tel3` | `0x2f4` |
-| `lnks` | `0x370` |
-| `reqc` | `0x39c` |
-| `hide` | `0x428` |
-| `qest` | `0x49c` |
-| `trap` | `0x4a0` |
-| `msch` | `0x4a4` |
-| `nmf` | `0x594` |
+That was the right call. **The actual join contradicts the theme match.**
 
-`0x294` is the one still unnamed. `+0x428`, noted below as unnamed, is read
-through a different register in this function and so is not in this scan either.
+| row | refusal | field the guard tests | how known |
+|---|---|---|---|
+| 4 | `EU_BAN_HAWN_TRANS` | **`msch`** `0x4a4` | decompiled `param_4 + 0x4a4` |
+| 7 | `SKILL_USE_FAIL_DUPLICATE` | **`msch`** `0x4a4` | same field, `== 2` |
+| 8 | `SKILLUSE_FAIL_CANT_BATTLE_STATE` | **`hide`** `0x428`, with **`trap`** `0x4a0` inside | decompiled `param_4 + 0x428`, `+0x4a0` |
+| 9 | `SKILL_USE_FAIL_GROGGY` | **`reqc`** `0x39c`, bit `0x4` | decompiled `**(uint**)(param_4+0x39c)` |
+| 10 | `SKILL_USE_DO_STEALTH` | **`reqc`** `0x39c`, bit `0x10` | same word |
+| 11 | `SKILL_USE_FAIL_MUSICAL_RANGE` | **`reqc`** `0x39c`, bit `0x20` | same word |
+| 13 | `ITS_NOT_A_BATTLE_FIELD` | **`qest`** `0x49c` | decompiled `param_4 + 0x49c` |
+| 17 | `SKILL_USE_FAIL_RUNOUT_AMMO` | `cnsm` `0x2a0` — **positional only** | read at `0058e348`, immediately before |
 
-**These are param names, not explanations.** Knowing `+0x4a4` is `msch` says
-which skilldata parameter fills the field the `EU_BAN_HAWN_TRANS` branch tests;
-it does not say what the branch means. The rows in the ladder above are still
-described by the shape of their test, and that is the honest level of claim.
+### What the theme match would have got wrong
 
-Several names are suggestive in ways that must NOT be promoted without checking
-which offset each row actually reads: `hide`, `trap`, `tele`/`tel2`/`tel3` and
-`cnsm` all appear in this set, and the ladder has stealth, trap-placement,
-teleport and ammunition rows. Matching them up by theme is exactly the inference
-this project has been wrong with before. The join needs the offset, not the
-vibe.
+- **`hide` does not guard the stealth row.** It gates the *battle-state* block.
+  Stealth is `reqc` bit `0x10`.
+- **`trap` does not guard the trap rows.** It is an inner condition of that same
+  battle-state block, and the trap refusals are hundreds of bytes earlier.
+- **`reqc` is one flag word driving three different rows** via bits `0x4`,
+  `0x10` and `0x20` — groggy, stealth and musical range, which share no theme at
+  all. No name-to-row mapping could have produced that.
+
+`cnsm` before the ammunition row is the one case where position and theme agree,
+and it is marked positional because that is all the evidence is: the field read
+sits immediately before the refusal, and no decompiled condition was read for it.
+
+**The general lesson, now measured rather than asserted**: a four-character param
+name says which skilldata column fills a field. It does not say what the field
+means, and for 3 of the 4 suggestive names here it actively misleads.
+
+### The fields, for reference
+
+| param | offset | | param | offset |
+|---|---|---|---|---|
+| `ao` | `0x274` | | `qest` | `0x49c` |
+| `cnsm` | `0x2a0` | | `reqc` | `0x39c` |
+| `hide` | `0x428` | | `rpkt` | `0x2cc` |
+| `lnks` | `0x370` | | `tel2` | `0x2f0` |
+| `msch` | `0x4a4` | | `tel3` | `0x2f4` |
+| `nmf` | `0x594` | | `tele` | `0x2ec` |
+| `pw` | `0x2b4` | | `trap` | `0x4a0` |
+
+`0x294` is the one field still unnamed. `+0x428` — listed below as unnamed by an
+earlier pass — is `hide`, read through `esi` like the rest.
 
 ## What is not recovered
 
