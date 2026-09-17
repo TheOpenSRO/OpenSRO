@@ -15027,3 +15027,34 @@ and answered it exactly. Reconstructing the whole tree was answering a question 
 had asked, and it cost the tick's remaining time. The 27 ids above are what the cheap
 query produced; mapping each back to its tag is the expensive part, and it is only
 worth paying when a tag is what is actually needed.
+
+## Armour does reach the flat absorb, through the stat graph (2026-09-17)
+
+Four ticks of enumerating param-5 writers kept finding publishers, skill effects and
+timed debuffs and no equipment. The reason is that **equipment never writes param 5**.
+
+`GObjPC_InitStats` binds 30 derived-stat edges, and decoding them (the ids arrive in
+`EDI`/`EBX` through chained `lea`, so simulating the chain is what recovers them — see
+`docs/protocol/stat_graph.md`) gives:
+
+	item entry -> param 59 -> param 50 -> param 21 -> param 5 (the flat absorb)
+
+`param 59`'s only two writers are `Char_PublishCombatStats` and
+**`RemoveParamKeeperItemEntry`** — the per-item entry function whose comment said all
+along that an equipped item adds and removes its own entries. `param 21` also takes
+`param 1`, Strength, so the flat absorb has two upstream sources; the magical twin
+mirrors it with Intellect.
+
+The first two edges recovered are `3 <- 54 <- 52 <- 1` and `4 <- 55 <- 53 <- 2`, which
+reproduce the MaxHP-from-Strength and MaxMP-from-Intellect chains this project recovered
+by other means. That agreement is the check that the decoding is right.
+
+**Grounded: the shape. Not grounded: the weights.** `BindDerived` records dependency,
+not arithmetic; the coefficients live in `ParamKeeper_EvaluateParam`, unread. srrevamp's
+`defenderArmor` matches the equipment half of the shape, and the Strength half stays out
+of srrevamp until that function is read.
+
+The lesson from the four ticks: **a derived value has no writer.** Enumerating writers
+of param 5 was the right probe for the wrong model, and it returned a confident, complete
+and misleading answer every time. What broke it open was asking how the param was
+*bound*, not who *wrote* it.
