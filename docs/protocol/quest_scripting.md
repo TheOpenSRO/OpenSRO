@@ -63,6 +63,44 @@ lifecycle:
 (`IGObj::SetBodyMode`, vtable slot 198) — so a quest can react to a player going
 berserk.
 
+## The quest vtable: what a compiled quest actually overrides
+
+`CQNO_<NAME> : CBasicQuest : CQuestBase : IQuest` gives a quest a vtable, and
+counting which slots the 153 compiled quests override says what a quest *is*:
+
+| slot | quests overriding | median size | what it is |
+|---|---|---|---|
+| 20 | 153 | 31 | the **scalar deleting destructor** — not an interface method; every class has one |
+| 55 | 151 | 723 | **setup** — see below |
+| 22 | 85 | 1230 | the **dialogue handler** |
+| 103 | 41 | 304 | |
+| 1 | 35 | 769 | |
+| 29, 24, 32, 104, 39, 38, 23, 70, 41 … | 19 down to 2 | | a long tail |
+
+`CQuestBase` itself carries slots 5, 6, 9, 10, 11 and 12 as **4-byte stubs** —
+default implementations returning a constant. So a quest that overrides nothing
+is not broken; it inherits a working default for everything.
+
+### Slot 55 is setup, and its data is compiled in
+
+`CQNO_CH_POTION_4::vslot_055` (`0x008904a0`) carries these literals:
+
+	"QNO_CH_POTION_2"    <- the prerequisite quest
+	"NPC_CH_POTION"      <- the NPC it attaches to
+	"NPC_CH_FERRY"  "NPC_CH_FERRY2"
+
+**So even the quest-to-NPC binding is code.** This is the same conclusion as
+"objectives are code" reaching one level further out: a quest does not have a row
+saying *offered by NPC X, requires quest Y*, it has a compiled method naming them
+as string literals.
+
+### Slot 22 is the dialogue
+
+`CQNO_CH_POTION_5::vslot_022` (`0x00890c60`) references
+`SN_TALK_QNO_CH_POTION_5_01`, `…_07`, `…_09`, `…_10` — the quest's own dialogue
+lines, resolved through the text table. It takes the speaking object as an
+argument and calls vtable slots `0x158` and `0x184` on it.
+
 ## Kill objectives compile a hook per target
 
 Beyond the generic `OnDead`, quests declare **named per-target kill hooks** —

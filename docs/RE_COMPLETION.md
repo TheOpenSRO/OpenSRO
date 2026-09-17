@@ -11110,3 +11110,50 @@ were caught by asking what else carries the same value.
 loaders, 8 have been read, 77 are unread — which is now a known quantity rather
 than an open-ended search.
 
+## 2026-09-17 — what a compiled quest actually is
+
+Followed the recorded probe into `CBasicQuest`. The answer came from the vtable
+rather than the class: counting which slots the 153 compiled quests override
+says what a quest *is*.
+
+| slot | quests | median size | what it is |
+|---|---|---|---|
+| 20 | **153** | 31 | the scalar deleting destructor — **not** an interface method |
+| 55 | 151 | 723 | **setup** |
+| 22 | 85 | 1230 | the **dialogue handler** |
+| 103 | 41 | 304 | |
+| 1 | 35 | 769 | |
+
+Slot 20 being universal looked at first like an identity method every quest must
+implement. It is the destructor — the same `*this = vftable; if (flag & 1)
+free(this)` shape that nearly became 209 `GetRefObjID` names in v0.1.255. Third
+time this session that shape has had to be recognised rather than counted.
+
+`CQuestBase` carries slots 5, 6, 9, 10, 11 and 12 as **4-byte stubs**, so a
+quest that overrides nothing still has a working default for everything. That is
+how 543 quests can exist with no compiled class at all.
+
+### The binding is compiled too, not just the objectives
+
+`CQNO_CH_POTION_4::vslot_055` (`0x008904a0`) carries as **string literals**:
+
+	"QNO_CH_POTION_2"   the prerequisite quest
+	"NPC_CH_POTION"     the NPC it attaches to
+	"NPC_CH_FERRY"  "NPC_CH_FERRY2"
+
+So a quest has no row saying *offered by NPC X, requires quest Y* — it has a
+compiled method naming them. This pushes the standing conclusion one level
+further out: not only are objectives code, the quest's **prerequisites and NPC
+attachment** are code. Yesterday's 85-table enumeration said no objective table
+exists; this says no binding table would help either.
+
+Slot 22 is the dialogue: `CQNO_CH_POTION_5::vslot_022` (`0x00890c60`) references
+`SN_TALK_QNO_CH_POTION_5_01/07/09/10`, the quest's own lines resolved through
+the text table.
+
+**Still open, and now precisely**: how the 543 classless quests attach to
+anything, given attachment is a slot-55 override they do not have. Either the
+generic path binds them from `_REFQUEST`, or they are not offered by NPCs at all
+(event, tutorial and auto-granted quests would fit). That is the next probe, and
+it is answerable by reading `CQuestBase`'s own slot-55 default.
+
