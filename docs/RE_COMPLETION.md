@@ -40,6 +40,12 @@ which is itself a recovery — quest objectives are the model for that.
 
 ## Open — the actual work queue
 
+**SUPERSEDED as the tracker (2026-09-17) by `docs/SYSTEMS.md`.** Every item below
+is CLOSED, SHIPPED, or blocked with a proven reason, and this list measured the
+wrong unit anyway — it tracked *questions asked* rather than *systems specified*.
+Kept for its evidence; the live count lives in SYSTEMS.md and is checked by
+`internal/systems` on every test run.
+
 Ordered by value. Each line names the next concrete probe, so a cold start can
 pick one up without re-deriving anything.
 
@@ -10924,4 +10930,50 @@ it.
 
 **So: when a value moves from open to recovered, the summary that lists it as
 open is part of the change.** That is now true of the queue and of the audit.
+
+## 2026-09-17 — a tracker that cannot rot
+
+The naming metric was measuring the wrong thing and saying so out loud was
+overdue: the server has 34,113 functions, **~1,977 distinct addresses have ever
+been cited across all of this project's docs**, and those produced the entire
+grounded value set. The other ~32,000 are the CRT, template instantiations, and
+code no reimplementation touches one function at a time. "4% named" made a
+nearly-finished job look barely started.
+
+**`docs/SYSTEMS.md` replaces it.** The unit is a system, and a system is
+*specified* when it clears the bar `damage_pipeline.md` clears: entry points
+named, an ordered spec with citations, every value grounded or disclosed with a
+proven reason.
+
+**The denominator is derived from the binary rather than invented.**
+`SR_GameServer.exe` carries **1,209 distinct RTTI type descriptors**, of which
+**1,177 are game classes**. Clustering them by family gives the surface area of
+each system — and shows why a class count is not a system count: **346 of those
+classes are `QNO_*` quest scripts**, instances of one handler pattern with seven
+`COn*` event types. Specifying the pattern covers all 346.
+
+Opening count: **11 specified, 7 partial, 15 open, of 33.**
+
+### Why it is a test and not a document
+
+Both of this project's forward-looking summaries rotted, and both were corrected
+the same day: the work queue listed three of seven items as open after they had
+shipped, and the grounding audit told readers the server binary was not
+authoritative. The detailed entries never rotted — they are append-only, and a
+new one corrects an old one in place. **Summaries decay because they make claims
+about the present, and nothing re-reads them.**
+
+So `internal/systems` parses the table on every `go test` run and fails when:
+
+- a row cites a spec document that does not exist,
+- a row claims SPECIFIED without one,
+- a row claims OPEN while a spec exists — the rot that actually happened,
+- an anchor identifier has vanished from `server/`,
+- the prose headline disagrees with its own table.
+
+**That last check earned its place inside one edit.** The first draft of
+SYSTEMS.md said "11 of 34 specified, 7 partial, 16 open" above a table holding
+33 rows with 15 open — a summary drifting from its own table, in the file whose
+entire purpose is to stop summaries drifting. The test caught it before the
+commit.
 
