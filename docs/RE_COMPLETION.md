@@ -10869,3 +10869,59 @@ written, and the queue is the one place where that is actively harmful. When an
 item closes, the *header* has to move, not just a note in the body — a cold
 start reads the list, not the paragraphs.
 
+## 2026-09-17 — the audit told readers to distrust the evidence base
+
+With the work queue emptied, the other half of the goal is
+`docs/GROUNDING_AUDIT.md` — the document that answers "is anything dressed up as
+recovered?". Its own closing section, *"What is genuinely still assumed (summary
+for the next pass)"*, had two entries and **both were stale**. One of them
+mattered a great deal.
+
+### "SR_GameServer.exe is a third-party emulator bundle, not authoritative"
+
+That sentence sat in the audit since 2026-09-11 and told every later reader to
+discount the single artifact most of this project's recovered values come from —
+the damage pipeline, the death-cause enum, passive regeneration, the
+`_RefObjCommon` column map, the param registry, all of it. Measured rather than
+argued:
+
+| evidence | result |
+|---|---|
+| strings naming `D:\WORK2005\Source\SilkroadOnline\Server\` | **55** |
+| distinct Joymax **source filenames** among them | **52** |
+| PE TimeDateStamp | 2011-08-08 |
+| linker version | **8.0** (Visual Studio 2005, matching a `WORK2005` tree) |
+| RTTI classes in Joymax's naming | 1,882 |
+| `## Illegal ##` stubs naming `IGObj` methods | 208 |
+
+Those filenames reach the binary through `__FILE__` in the assert macro **at
+compile time**. A third party writing an emulator from scratch cannot end up
+with 52 of Joymax's own source filenames, nor with their internal class names.
+**The binary is Joymax's own build.**
+
+**The true half is kept and separated**: a redistributed server *bundle* is
+third-party, and the DATA shipped with it — rates, tables, DB contents — may be
+modded, which this project already records for the VSRO package. A Joymax binary
+does not make the bundled data authoritative. And the limit is stated: no
+integrity check was run, so this is a claim about provenance, not about
+byte-for-byte purity.
+
+### The other entry was simply overtaken
+
+*"Level-up refills HP; derived stats (maxHP/maxMP from level+Str/Int) — the
+biggest remaining ground."* It is in the grounded table at the top of this file:
+`MaxHP = Str x 10 x 1.02^(lvl-1)`, `MaxMP = Int x 10 x 1.02^(lvl-1)`, off the
+`GObjPC_InitStats` stat graph with `.rdata 0x00b462ac` = 1000 and
+`0x00b45ea0` = 1.02.
+
+### The pattern, now seen three times in two ticks
+
+The work queue misstated three of seven items; the grounding audit misstated
+both of its remaining ones. Both documents are *summaries pointing forward*, and
+both decayed while the detailed entries below them stayed correct. The detail is
+append-only and self-correcting; the summary is not, and nothing was re-reading
+it.
+
+**So: when a value moves from open to recovered, the summary that lists it as
+open is part of the change.** That is now true of the queue and of the audit.
+

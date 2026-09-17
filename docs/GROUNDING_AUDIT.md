@@ -256,13 +256,38 @@ box. **No invented value dressed as real was found in the new work either.** Wha
 None of these is a value dressed as real; each is a behaviour rule on top of recovered data, or a
 disclosed placeholder, to confirm against the client when the relevant system is next opened:
 
-- **Level-up refills HP; derived stats (maxHP/maxMP from level+Str/Int, phys/mag atk·def).** The
-  biggest remaining ground, and the same recovery the character window needs. Entry points found:
-  the client's `CIFPlayerInfo` player-info window (RTTI `.?AVCIFPlayerInfo@@`) and the character
-  struct at `DAT_00eef5ec` (level@0x868, EXP@0x870). The local player's maxHP is largely
-  server-set in the client, so this may need cross-checking against the authoritative server logic
-  — note the on-disk `SR_GameServer.exe` is a third-party emulator bundle (y0gi), *not*
-  authoritative; the official client stays the ground truth.
+- ~~**Level-up refills HP; derived stats (maxHP/maxMP from level+Str/Int).** The biggest
+  remaining ground.~~ **RECOVERED — this entry is stale (corrected 2026-09-17).** The whole
+  formula is in `docs/RE_COMPLETION.md`'s grounded table: `MaxHP = Str x 10 x 1.02^(lvl-1)`
+  and `MaxMP = Int x 10 x 1.02^(lvl-1)`, read off the `GObjPC_InitStats` stat graph with
+  `.rdata 0x00b462ac` = 1000 and `0x00b45ea0` = 1.02.
+
+  **AND THE CAVEAT ATTACHED TO IT WAS WRONG, which mattered more.** It read: *"the on-disk
+  `SR_GameServer.exe` is a third-party emulator bundle (y0gi), not authoritative"*. That
+  sentence told every later reader to discount the single artifact most of this project's
+  recovered values come from. Measured:
+
+  | evidence | result |
+  |---|---|
+  | strings naming Joymax's build tree `D:\WORK2005\Source\SilkroadOnline\Server\` | **55** |
+  | distinct Joymax **source filenames** in them | **52** — `Formulae.cpp`, `GObjPC.cpp`, `GObjChar.cpp`, `AIHive.cpp`, `AsyncQuery_*.cpp`, … |
+  | PE TimeDateStamp | 2011-08-08 |
+  | linker version | **8.0** (Visual Studio 2005 — consistent with a `WORK2005` tree) |
+  | RTTI classes in Joymax's own naming | 1,882 |
+  | `## Illegal ##` base-class stubs naming `IGObj` methods | 208 |
+
+  Those filenames come from `__FILE__` in the assert macro **at compile time**. A
+  reimplementation written by a third party cannot contain 52 of Joymax's own source
+  filenames, nor their internal class names. **The binary is Joymax's own compiled build.**
+
+  What stays true is the *other* half, and it is worth keeping separate: a redistributed
+  server **bundle** is third-party, and the DATA shipped alongside it (rates, tables, DB
+  contents) may well be modded — this project already records that for the VSRO package.
+  A Joymax binary does not make the bundled data authoritative.
+
+  **Not verified**: whether this particular build was patched after compilation. Nothing seen
+  suggests it, but no integrity check was run, so "Joymax's build" is a claim about its
+  provenance and not about its byte-for-byte purity.
 - Attack-combo order (the four animation types are real; the order is ours).
 - Monster always counterattacks; no dodge/crit/evade (disclosed own-design combat).
 - The rest of the own-design economy/combat layer (damage, flat HP, monster stats, prices, quests,
