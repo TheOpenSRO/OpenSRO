@@ -10678,3 +10678,67 @@ a named class — which is why it reads 5.2% where the class-qualified figure
 reads 62%. Both are true and they measure different things; quoting the second
 as "named" is the trap.
 
+## 2026-09-17 — where the unnamed functions actually are
+
+First measurement taken on dumps that carry every name this session applied
+(v0.1.271 made that possible). Two results: the slot-propagation lever is out of
+seeds, and the map says what could replace it.
+
+### The propagation is out of SEEDS, not targets
+
+Re-running it against the rebuilt dumps offers **16** candidates, **14 of which
+were already rejected in v0.1.255** — `GetRefObjID` x7 (scalar deleting
+destructors), `Assert_BreakIfDebugger` x6 (a global helper's name leaking
+through a mislabelled function), and a bare thunk. Ground truth is unchanged at
+**98.3%**. The two new ones are genuine and were applied:
+`trs_sm_messengerjob::OnTimeout` and `trs_sm_gameworldjob::OnTimeout`, slot 1 of
+a `trs_wait_response` descendant, the singleton-assert-then-dispatch body with
+no `_free` — the same evidence class as the four applied in v0.1.255.
+
+**It would have been wrong to call the lever dead**, and the count says why:
+
+	unnamed leaf functions:                     32,335
+	  of which vtable slots:                     5,646  (17.5%)
+	    ...library/template among those:         1,665
+	  => GAME-LOGIC slots still unnamed:         3,981
+
+There are nearly four thousand unnamed game-logic vtable slots. The rule cannot
+reach them because it needs a **named slot in the same hierarchy** to propagate
+from, and the named slots are almost all `IGObj`'s 202 — whose descendants are
+only 24 classes. The `## Illegal ##` stubs were a seed source for exactly one
+hierarchy. **A second seed source for other hierarchies is what unlocks the
+remaining 3,981**, and that is the shape of the next lever worth looking for.
+
+### The map
+
+| bucket | count | share of unnamed |
+|---|---|---|
+| no RTTI class at all | 12,230 | 37.8% |
+| library / template noise | 2,992 | 9.3% |
+| **named class, unnamed method** | **17,113** | 52.9% |
+
+and the largest named-class clusters, with how many of each are vtable slots:
+
+| class | unnamed | slots |
+|---|---|---|
+| `CGameServer` | 3,681 | 7 |
+| `GObjPC` | 2,887 | **0** |
+| `CMainProcess` | 1,384 | 8 |
+| `CGameWorldLayer` | 552 | 7 |
+| `CNetEngine` | 313 | 40 |
+| `MapLoader` | 260 | 0 |
+| `CGObjPC` | 248 | 99 |
+
+**The big clusters are not reached through vtables at all.** `GObjPC` has 2,887
+unnamed functions and not one is a vtable slot — consistent with the standing
+note that the dump's `GObjPC` namespace is call-graph inference rather than
+RTTI. So for the largest clusters a slot-based lever is structurally the wrong
+tool; anything further has to key on call-site context, on strings inside the
+function, or on cross-binary matching.
+
+**Kept honest about the headline number:** 94.8% of server functions have no
+real leaf name. That is the strict measure — a function counts only when its own
+name is real, not when it sits in a named class — and it is the one this ledger
+should quote, because the class-qualified figure (62%) measures attribution, not
+naming.
+

@@ -169,3 +169,12 @@
 0045b970	server	AQ_StorageUpdater::RestoreSoldMagicItem	engine	builds the ODBC call for _STRG_RESTORE_SOLDITEM_ITEM_MAGIC; it carried the shared name AQ_StorageUpdater__Init, which ten distinct functions had	force
 0045bb60	server	AQ_StorageUpdater::RestoreSoldItem	engine	builds the ODBC call for _STRG_RESTORE_SOLDITEM_ALCHEMYSTONE, _..._EQUIP_NORMAL, _..._EXPENDABLE and _..._SPECIALTY; it carried the shared name AQ_StorageUpdater__Init, which ten distinct functions had	force
 0045c9a0	server	AQ_StorageUpdater::MoveItem	engine	builds the ODBC call for _STRG_MOVE_ITEM alone; it carried the shared name AQ_StorageUpdater__Init, which ten distinct functions had	force
+#
+# APPENDED 2026-09-17 (seventh batch): two more trs_* timeout handlers, surfaced
+# by re-running the slot propagation against the REBUILT dumps. Same evidence
+# class as the four applied in the second batch -- slot 1 of a trs_wait_response
+# descendant, the singleton-assert-then-dispatch shape, and no _free (which is
+# what separates these from the destructors that share slot 1 elsewhere).
+#
+0046ec90	server	trs_sm_messengerjob::OnTimeout	descriptive	vtable slot 1 of a trs_wait_response descendant; body is `if (singleton == 0) Assert(); dispatch();` with no _free, the shape the four already-applied OnTimeout handlers share	
+0046ef20	server	trs_sm_gameworldjob::OnTimeout	descriptive	vtable slot 1 of a trs_wait_response descendant; body is `if (singleton == 0) Assert(); dispatch();` with no _free, the shape the four already-applied OnTimeout handlers share	
