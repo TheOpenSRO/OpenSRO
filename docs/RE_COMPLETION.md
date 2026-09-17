@@ -11157,3 +11157,47 @@ generic path binds them from `_REFQUEST`, or they are not offered by NPCs at all
 (event, tutorial and auto-granted quests would fit). That is the next probe, and
 it is answerable by reading `CQuestBase`'s own slot-55 default.
 
+## 2026-09-17 — every unfinished row now says what would close it
+
+The quest probe hit a wall and the wall was the useful part. `CQuestBase`'s
+slot-55 default — the thing that would explain how 543 classless quests attach
+to anything — **is not reachable through the dump's slot tags**; only the
+destructor at slot 20 is attributed to the base. Answering it needs the vtable
+read directly in Ghidra rather than through the decompiled dump.
+
+That is a pivot, and pivots are where a tracker leaks. So the tracker now has a
+**Next probe** column, and `internal/systems` fails the build if a row that is
+not SPECIFIED leaves it empty. A row may say `—`, meaning *nothing is known to
+close this* — which is itself information, and is how Berserk's fill rate is
+recorded. What it may not do is go quiet.
+
+Every one of the 22 unfinished rows now carries a starting point:
+
+| row | next probe |
+|---|---|
+| Quest scripting | **BLOCKED** — needs `CQuestBase`'s vtable read in Ghidra directly |
+| Siege and fortress war | `CRefSiegeFortress` and the 11 `_REFSIEGE*` tables |
+| Monster AI | `AI::CAIHive` and `CAISkill` |
+| Persistence / AsyncQuery | 28 `AQ_*` classes; the 75 stored procedures are already enumerated |
+| Teleport network | `_REFTELEPORT` and `_REFTELELINK`, both in the catalogue, unread |
+| Skills and masteries | `masteryUpCost` is own design; find its use-site |
+| … | … |
+
+Most of those starting points come from the 85-table catalogue and the RTTI
+class census, which is what those two passes were for: a system is no longer an
+open-ended question, it is a named class or table to start at.
+
+**A self-inflicted bug worth recording.** Adding the column by regex dropped 21
+of 33 rows — the pattern required a space either side of every cell, and rows
+with an empty Anchors column are written `| |` rather than `|  |`. The failure
+was silent in the document and loud in the test: `TestHeadlineMatchesTheTable`
+reported "should read 10 specified, 2 partial, 0 open, of 12", which is how it
+was caught within a minute. Repaired by splitting on `|` instead of matching a
+pattern.
+
+That is the second time this session the tracker's own checks caught an error in
+an edit to the tracker. It is doing the job it was built for.
+
+**Tracker unchanged at 11 specified, 9 partial, 13 open, of 33** — this tick
+added no system, it added the thing that stops a pivot losing one.
+

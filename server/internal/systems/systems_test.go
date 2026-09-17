@@ -147,3 +147,34 @@ func TestHeadlineMatchesTheTable(t *testing.T) {
 		t.Errorf("the headline does not match the table; it should read %q", want)
 	}
 }
+
+// A row that is not finished must say what would finish it. "—" is a valid
+// answer -- it means nothing is known to close it, which is itself information
+// and is how Berserk's fill rate is recorded. What is not valid is silence: a
+// row that stalled without recording why is how a pivot becomes a loose end.
+func TestUnfinishedRowsRecordANextProbe(t *testing.T) {
+	_, rows := load(t)
+	for _, r := range rows {
+		if r.Status == Specified {
+			continue
+		}
+		if strings.TrimSpace(r.NextProbe) == "" {
+			t.Errorf("SYSTEMS.md:%d %q is %s with no next probe recorded",
+				r.Line, r.Name, r.Status)
+		}
+	}
+}
+
+// A finished row should not be carrying a probe that implies work remains.
+func TestSpecifiedRowsDoNotClaimOutstandingWork(t *testing.T) {
+	_, rows := load(t)
+	for _, r := range rows {
+		if r.Status != Specified {
+			continue
+		}
+		if strings.Contains(strings.ToUpper(r.NextProbe), "BLOCKED") {
+			t.Errorf("SYSTEMS.md:%d %q is SPECIFIED but its probe says BLOCKED",
+				r.Line, r.Name)
+		}
+	}
+}

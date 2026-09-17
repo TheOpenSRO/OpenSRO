@@ -45,7 +45,12 @@ type Row struct {
 	Status  Status
 	Spec    string   // repo-relative path, or "" when the row declares none
 	Anchors []string // Go identifiers the spec's claims rest on
-	Line    int
+	// NextProbe is what would close the row, for anything not SPECIFIED. It
+	// may say that nothing is known to -- what it may not do is be absent,
+	// because a row that has stalled without recording why is how a pivot
+	// turns into a loose end.
+	NextProbe string
+	Line      int
 }
 
 // Parse reads the tracker at path. It returns the rows in file order.
@@ -71,7 +76,7 @@ func Parse(path string) ([]Row, error) {
 			continue
 		}
 		cells := splitRow(line)
-		if len(cells) < 5 {
+		if len(cells) < 6 {
 			continue
 		}
 		st := Status(strings.TrimSpace(cells[2]))
@@ -89,12 +94,13 @@ func Parse(path string) ([]Row, error) {
 			}
 		}
 		rows = append(rows, Row{
-			Name:    strings.TrimSpace(cells[0]),
-			Classes: strings.TrimSpace(cells[1]),
-			Status:  st,
-			Spec:    spec,
-			Anchors: anchors,
-			Line:    lineNo,
+			Name:      strings.TrimSpace(cells[0]),
+			Classes:   strings.TrimSpace(cells[1]),
+			Status:    st,
+			Spec:      spec,
+			Anchors:   anchors,
+			NextProbe: strings.TrimSpace(cells[5]),
+			Line:      lineNo,
 		})
 	}
 	if err := sc.Err(); err != nil {
