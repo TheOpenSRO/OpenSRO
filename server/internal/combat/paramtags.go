@@ -1,5 +1,28 @@
 package combat
 
+// MaxMagicOptionsPerItem is 12: an item may carry at most twelve magic options.
+//
+// **Recovered 2026-09-17 from the engine's own assert**, which names the
+// constant in words:
+//
+//	ReferenceData.cpp line 3011:
+//	  "m_InstanceInfoOfItem.m_btMagParamNum < MAX_MAGPARAM_PER_ITEM"
+//
+// and compiles to a comparison against the literal:
+//
+//	6a9209  cmp BYTE PTR [esi+0x24],0xc
+//	6a920d  jb  pass
+//
+// So the constant is 12, `m_btMagParamNum` is the count, and it lives at
+// `+0x24` of the item's instance-info struct. The persisted counterpart is the
+// _ITEMS column `MagParamNum` beside `MagParam`
+// (docs/protocol/db_columns.md) -- the same quantity, stored.
+//
+// NOTHING IN srrevamp ENFORCES THIS YET. It has the tag vocabulary and no
+// per-item option list to cap, so this is recorded for when it does rather
+// than applied to something.
+const MaxMagicOptionsPerItem = 12
+
 // The engine addresses a character stat by a short ASCII tag packed into an
 // integer, big-endian, and this file is the handful of those tags srrevamp's
 // own comments name -- as constants, so the packed value is computed rather

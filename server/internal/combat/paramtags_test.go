@@ -304,3 +304,15 @@ func TestMagicOptionRecordOffsetsAreDistinct(t *testing.T) {
 			"m_btMagicParamNum <= MAX_MAGPARAM_PER_ITEM with a guard of 12", MaxMagicParamsPerItem)
 	}
 }
+
+// The engine's assert compiles to `cmp BYTE PTR [esi+0x24],0xc`, so the cap is
+// 12 and it fits in the byte the count is stored in.
+func TestMaxMagicOptionsPerItem(t *testing.T) {
+	if MaxMagicOptionsPerItem != 0xc {
+		t.Errorf("MaxMagicOptionsPerItem is %d; the comparison is against 0xc",
+			MaxMagicOptionsPerItem)
+	}
+	if MaxMagicOptionsPerItem > 0xff {
+		t.Error("the count is a byte (m_btMagParamNum); the cap cannot exceed 255")
+	}
+}

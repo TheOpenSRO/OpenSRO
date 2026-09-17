@@ -11883,3 +11883,54 @@ caused it shipped with a confident commit message explaining why the previous
 behaviour was wrong; the previous behaviour was right, and its own comment said
 why. Reading that comment as a warning rather than as an obstacle would have
 saved all five.
+
+## Three named limits, from the engine's own asserts (2026-09-17)
+
+With the heartbeat fixed and both dumps current, this tick went after naming
+levers that had not been tried.
+
+**Tried and exhausted first:** harvesting log strings shaped `Class::Method(` as
+candidate function names. 56 such signatures exist, 46 name exactly one
+function, and after removing those already named that way **6 remain, none with
+a matching namespace**. The `## Illegal ##` pass had already taken this lever;
+recorded so it is not tried a third time.
+
+**The lever that paid** is the third argument of
+`CGameServer::FUN_00964760(line, file, expr)` — the assert's **source text**, so
+the engine states its invariants in its own words. Only **49 distinct
+expressions across 19 files**, but where one names a `MAX_*` constant, the
+comparison right above the assert gives its value:
+
+| constant | value | how fixed |
+|---|---:|---|
+| `MAX_MAGPARAM_PER_ITEM` | **12** | `cmp BYTE PTR [esi+0x24],0xc ; jb` |
+| `MAX_ITEM_PER_SHOP_TAB` | **240** | `cmp BYTE PTR [esi+0x48],0xf0 ; jb` |
+| `MAX_LOCALOBJID_BITS` | **21** | `mov eax,0x15` as the `pow(2,N)` exponent **and** `and ecx,0x1fffff`, eight instructions apart |
+
+The third is the one worth dwelling on: `CGObj::Create` inlines `pow(2, N)` by
+square-and-multiply with the exponent as a literal, then masks the id to 21
+bits. Two independent statements of 21 in one function — not a suggestive curve.
+
+### Two readings that needed each other
+
+`MAX_ITEM_PER_SHOP_TAB`'s assert has **two** clauses and compiles to **one**
+comparison, because `m_btSlotIndex` is a byte and `0 <= x` is vacuous for an
+unsigned one. The instruction alone under-reports what the engine checks; the
+assert text alone over-reports what it compiles to. Both together are what makes
+it safe — and it is a good reminder that a decompiled comparison is not the
+whole predicate.
+
+### Where they landed
+
+`combat.MaxMagicOptionsPerItem` and `shop.MaxItemsPerShopTab`, each with the
+citation and a test pinning it to the literal. **Neither is enforced**, and both
+say so: srrevamp has the magic-option vocabulary but no per-item option list,
+and no shop-tab model. `MAX_LOCALOBJID_BITS` has no home — srrevamp allocates no
+live object ids — so it is documented only.
+
+No number srrevamp computes with changed. Three engine facts are now grounded
+and parked where they will be needed, which is the honest shape of this one.
+
+`docs/protocol/engine_limits.md` also records the sixteen expressions that name
+members rather than constants — `m_dwAvailableOPs`, `m_dwLink`, `m_btItemClass`
+and more, each confirming a reading another spec reached from the other end.

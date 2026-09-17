@@ -40,6 +40,28 @@ var ErrSlotEmpty = errors.New("shop: nothing in that slot")
 // ErrNothingToSell is returned by Service.Sell for a non-positive quantity.
 var ErrNothingToSell = errors.New("shop: quantity must be positive")
 
+// MaxItemsPerShopTab is 240, the highest slot index a shop tab addresses.
+//
+// **Recovered 2026-09-17 from the engine's own assert**, which names the
+// constant in words:
+//
+//	ReferenceData.h line 1809:
+//	  "0 <= pGoods->m_btSlotIndex && pGoods->m_btSlotIndex < MAX_ITEM_PER_SHOP_TAB"
+//
+// and compiles to a single unsigned comparison, because `m_btSlotIndex` is a
+// byte and `0 <= x` is vacuous for one:
+//
+//	720a81  cmp BYTE PTR [esi+0x48],0xf0
+//	720a85  jb  pass
+//
+// So the constant is 0xf0 = 240, and `m_btSlotIndex` lives at `+0x48` of the
+// goods record.
+//
+// This is a bound on the slot INDEX, not a statement that a tab holds 240
+// items -- the real shop tables are far sparser. srrevamp does not model shop
+// tabs at all yet, so nothing enforces it; it is recorded for when it does.
+const MaxItemsPerShopTab = 240
+
 // basePrice and statMultiplier are this project's own pricing formula
 // constants -- the fallback when an import has no real price, not derived
 // from any original economy data. sellFallbackDivisor likewise: a buy-back

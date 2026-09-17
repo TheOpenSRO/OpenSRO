@@ -316,3 +316,15 @@ func TestSellRefusesUnsellableItem(t *testing.T) {
 		t.Errorf("a refused sale consumed the item: %+v", after)
 	}
 }
+
+// The engine's assert compiles to `cmp BYTE PTR [esi+0x48],0xf0`, so the bound
+// is 240 and it fits in the byte the slot index is stored in.
+func TestMaxItemsPerShopTab(t *testing.T) {
+	if MaxItemsPerShopTab != 0xf0 {
+		t.Errorf("MaxItemsPerShopTab is %d; the comparison is against 0xf0",
+			MaxItemsPerShopTab)
+	}
+	if MaxItemsPerShopTab > 0xff {
+		t.Error("the index is a byte (m_btSlotIndex); the bound cannot exceed 255")
+	}
+}
