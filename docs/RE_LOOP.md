@@ -115,9 +115,20 @@ Two different things are mixed in that 240, and they need different treatment:
 - **An inherited base method** — e.g. the 37-byte `## Illegal ##` stubs, each
   in 30 vtables. Here the *method* name is right (it came from the stub's own
   string) and only the *class prefix* is wrong, naming an arbitrary derived
-  class instead of the base that declares it. The vtable index can compute the
-  right owner: it is the class whose vtable is shortest among those sharing the
-  slot, i.e. the most base-like.
+  class instead of the base that declares it.
+
+`vtq.py owner <addr>` decides between the two. The rule it applies: among the
+classes whose vtable holds the address, the declaring class is the most
+base-like — the shortest vtable — **provided the function sits at the same slot
+index in all of them and is at least ten bytes**.
+
+**The obvious discriminator is the wrong one and was tried first.** Requiring
+the sharing classes to agree on a vtable *prefix* up to the slot rejects real
+hierarchies, because a derived class overriding an *earlier* slot is completely
+normal — `CGItem` and `CGItemEquip` differ well before the slot they share. Slot
+agreement plus size is what works: it resolved twelve mismatches twelve for
+twelve, each confirming a reading this project had already made against the
+plate pass's.
 
 Size is the quick discriminator: under about 10 bytes, assume a fold.
 
@@ -136,6 +147,12 @@ for both an argument and a return value (`xor ebx,ebx` … `lea edi,[ebx+0x3]` �
 of 40 call sites; one that resolves `lea` recursively against a proven-zero base
 resolves 36. `scratchpad/ai7.py` has the working version — it walks back
 resolving each register, and bails on `call` or any other write to the target.
+
+**Two heredocs in one Bash call silently lose one of them.** A command shaped
+`ssh … <<'EOF' … EOF && git commit -F - <<'EOF' … EOF` ran the commit and
+swallowed the ssh's output *and* its effect — a name-apply reported success and
+applied nothing, found only because the next dump still had the old name. One
+heredoc per call.
 
 **`pgrep -f <pattern>` over ssh matches its own command line**, exactly as
 `pkill -f` does — `AGENTS.md` warns about the `pkill` half and the `pgrep` half

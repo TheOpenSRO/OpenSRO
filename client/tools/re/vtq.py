@@ -6,6 +6,7 @@
   vtq.py who <addr>              which classes/slots point at this function
   vtq.py family <regex>          every matching class with its slot count
   vtq.py bases <regex>           guess base/derived by shared slot prefixes
+  vtq.py owner <addr>...         which class DECLARES a vtable function
 """
 import sys, json, collections
 sys.path.insert(0,"/var/tmp"); import rebox as X
@@ -88,6 +89,44 @@ def cmd_bases(pat):
                 n += 1
             if n > best: best, bn = n, b
         print("   %-46s %4d slots, shares %3d with %s" % (a, len(pref[a]), best, bn))
+
+FOLD_SIZE = 10   # docs/RE_LOOP.md: under about ten bytes, assume a fold
+
+def cmd_owner(*addrs):
+    """Which class declares a vtable function.
+
+    The rule: among the classes whose vtable holds the address, the declaring
+    class is the most base-like -- the shortest vtable -- provided the function
+    sits at the SAME SLOT INDEX in all of them and is big enough not to be a
+    COMDAT fold. A derived class overriding an EARLIER slot is normal, so a
+    shared-prefix test is the wrong discriminator and rejects real hierarchies;
+    slot agreement plus size is the right one.
+    """
+    import collections
+    byaddr = collections.defaultdict(list)
+    for cls, ts in CLS.items():
+        for t in ts:
+            for i, a in enumerate(t["slots"]):
+                byaddr[a].append((cls, i, t["slots"]))
+    for arg in addrs:
+        a = int(arg, 16)
+        hits = byaddr.get(a, [])
+        if not hits:
+            print("%s: in no vtable -- not a virtual, so the index says nothing" % arg)
+            continue
+        f = X.owner(a, fs())
+        size = f["size"] if f else 0
+        slots = {i for _, i, _ in hits}
+        base_cls, base_slot, _ = sorted(hits, key=lambda h: len(h[2]))[0]
+        others = sorted({c for c, _, _ in hits})
+        if size and size < FOLD_SIZE:
+            verdict = "FOLDED (%d bytes) -- attach no class name" % size
+        elif len(slots) != 1:
+            verdict = "AMBIGUOUS -- appears at slots %s, not one inherited method" % sorted(slots)
+        else:
+            verdict = "DECLARED BY %s (slot %d, %d bytes)" % (base_cls, base_slot, size)
+        print("%s: %s" % (arg, verdict))
+        print("      in %d vtable(s): %s" % (len(hits), ", ".join(others)[:110]))
 
 if __name__ == "__main__":
     if len(sys.argv) < 2: sys.exit(__doc__)
