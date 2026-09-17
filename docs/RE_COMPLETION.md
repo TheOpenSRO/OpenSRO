@@ -13885,3 +13885,42 @@ The client dump is invalidated. Its pipeline counter should read
 They then become 102 readable client handlers, each already bound to an opcode by
 `docs/protocol/message_handlers.tsv`, so any server-side read of a message names
 its client handler for free.
+
+## One dispatcher carries every academy result (2026-09-17)
+
+Followed the message map's open thread: every academy response opcode had a second
+server sender in `0x005e10b0`–`0x005e1360`, which I had guessed were completion
+callbacks for the async DB layer, nameable through the `AQ_*` vtable's success and
+failure slots 7 and 8.
+
+**The mechanism was wrong, and a better one turned up.** None of the five is in any
+vtable slot. All are attributed to `trs_wait_response`, and all are called from
+**one function**, `0x005e0fa0`. It switches on job-response message `0xbc80`
+(Ghidra prints `-0x4380`) by a sub-type byte at `+0x28`, and its ten cases send
+**exactly `0xb470`–`0xb47d`**, the whole academy response family, one sender per
+sub-type. "Results are sent after the DB job" was right; "via `AQ_*` vtable slots"
+was not.
+
+That gives the academy its full shape: a request handler starts a
+`trs_sm_trainingcampjob`, this dispatcher receives the reply, and a per-operation
+sender answers the client. The result side mirrors the request side exactly. Ban and
+leave share `TrainingCamp_RemoveMember` going in and share the sub-type-3 sender
+coming out.
+
+**Named, each on two facts** (`applied 3, failed 0`):
+
+- `TrainingCamp_DispatchJobResult` `0x005e0fa0`: the switch, and that its cases are
+  exactly the family the client registers under `UI_TC`
+- `TrainingCamp_SendInviteResult` `0x005e11b0`: sub-type 2, and sends the invite
+  opcode `0xb472`
+- `TrainingCamp_SendRemoveMemberResult` `0x005e10b0`: sub-type 3, and sends exactly
+  the ban/leave pair
+
+**Not named:** sub-type 4, which also carries `CheckMembershipLevel`'s `0xb476`;
+sub-types 0 and 1, the create/disband pair; and 7 and `0x10`–`0x13`, which were not
+read. The table in `academy.md` records their opcodes, so any later read of one side
+names the other.
+
+The apply got the tick lock immediately, so the `:45` tick rebuilds **both** dumps:
+the client for last tick's 102 created handlers (expected `43460 -> 43562`) and the
+server for these names.

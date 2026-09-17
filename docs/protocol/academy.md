@@ -174,6 +174,37 @@ This fills in half of the "Windows named but not read" section below: the 24-hou
 `BAN` and `OUT` windows are now attributed to the handlers that enforce them. Their
 **values** are still not read.
 
+## Every academy result goes through one dispatcher (2026-09-17)
+
+The message map showed every academy response opcode had a second server sender in
+`0x005e10b0`-`0x005e1360`. They are not `AQ_*` vtable callbacks: none is in any
+vtable slot, all are attributed to `trs_wait_response`, and all are called from one
+function.
+
+`TrainingCamp_DispatchJobResult` (`0x005e0fa0`) handles the reply to an academy DB
+job (`trs_sm_trainingcampjob`). It switches on message `0xbc80` by a sub-type byte
+at `+0x28`, and **its ten cases cover exactly the academy response family**:
+
+| sub-type | result sender | sends | operation |
+|---:|---|---|---|
+| 0 | `0x005e1140` | `0xb470` | not established |
+| 1 | `0x005e1110` | `0xb471` | not established |
+| 2 | `TrainingCamp_SendInviteResult` | `0xb472` | invite |
+| 3 | `TrainingCamp_SendRemoveMemberResult` | `0xb473`, `0xb474` | ban / leave |
+| 4 | `0x005e10e0` | `0xb475`, `0xb476` | graduation, and `CheckMembershipLevel`'s opcode |
+| 7 | `0x005e12a0` | `0xb477` | not read |
+| 0x10–0x13 | `0x005e12d0`…`0x005e1360` | `0xb47a`–`0xb47d` | not read |
+
+So an academy operation is a request handler that starts a DB job, then this
+dispatcher, then a per-operation sender. **The result side mirrors the request
+side**: ban and leave share `TrainingCamp_RemoveMember` going in, and share one
+result sender coming out.
+
+Named only where the operation is already established on the request side. Sub-type
+4 is left unnamed because it also carries `0xb476`, whose operation is not named.
+Sub-types 0 and 1 map to `0xb470`/`0xb471`, where create and disband are expected
+but not resolved.
+
 ## Windows named but not read
 
 `TC_ERROR_NOT_INVITE_24T`, `TC_ERROR_NOT_ENTRY_24T` and `TC_ERROR_NOT_BAN_24T`
