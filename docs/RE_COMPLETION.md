@@ -14700,3 +14700,43 @@ Naming these does not mean 2,382 functions were understood; it means they were
 `field getter` count (65) is low because the heuristic was strict, so the tiny-function
 share is understated rather than the reverse; a later pass wanting those should match on
 size and a single `return *(x + 0xNN)` line rather than on my regex.
+
+## 194 quest event handlers, named by what the binary calls them (2026-09-17)
+
+With boilerplate excluded, coverage is **11.27% server / 4.47% client**, and the
+question is where the remaining logic sits. The large placeholders (>200 bytes) do not
+cluster by class -- the biggest single class has 28 -- but they cluster hard **by slot**:
+
+	server slot 001   195 classes with a large override
+	client slot 010   172 classes
+
+Following the server's: those classes are mostly **nested** classes inside quests, and
+the binary's RTTI names both halves --
+
+	QNO_RM_OLDWOMAN_6::OnDead : CEVENTHandler
+
+so the outer name is the quest and the inner name is the event. **202 classes derive
+`CEVENTHandler`**, with the event vocabulary:
+
+	OnSetupQuest 26   OnUpdate 23   OnLeaveWorld 22   OnEnterWorld 21
+	OnInstanceInvitaionAnswered 20   OnDead 8   OnAfterActivated 8   OnAbortQuest 6
+
+**Slot 1 is the handler body, and that is measured, not assumed:** of the 194 such
+classes that have a `vslot_` function in the dump, **194 implement slot 1 and no other
+slot at all**. A class with one virtual has no ambiguity about which one is the entry.
+
+Named `<Quest>::<Event>::Handle` on all 194. **Applied 194, failed 0.**
+
+This is the same lever as the quest content hook, applied to the other half of the
+quest system: that one gave each quest its content, this one gives each quest its
+behaviour, and both came from measuring a family rather than reading a member.
+
+Also seen while sampling and left for later: slot 1 carries a second, smaller family --
+`CEnchant_EnchantAttrStone`, `CEnchant_EnchantMagicStone`, `CEnchant_EnchantAvatarItem`,
+`CBless_AvatarItemWithNPC`, all deriving `CEnchant` -- which is the alchemy system
+naming its own operations.
+
+**A shell trap worth recording**: a generator script passed inside a single-quoted `ssh`
+argument breaks on any apostrophe in the text, which silently ate `quest's` into
+`quests` in an earlier evidence string and then failed outright here. Write the script
+to a file and copy it instead.
