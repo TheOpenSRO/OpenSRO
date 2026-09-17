@@ -87,15 +87,32 @@ func TestRegenPerTickScalesWithCurrentNotMax(t *testing.T) {
 	}
 }
 
-// The engine floors the amount at 1 before anything else, which is why its
-// unbuffed rate is not zero even though 'hprg'/'mprg' default to 0.
+// The engine floors the amount at 1, which is why its unbuffed rate is not zero
+// even though 'hprg'/'mprg' default to 0.
+//
+// CORRECTED 2026-09-17. This test used to assert `RegenPerTick(1, 1000) == 1`
+// and `RegenPerTick(0, 1000) == 1`, and its comment said the floor applied
+// "before anything else". The floor is real and still applies; what was missing
+// is that the engine then caps the amount at half the CURRENT pool
+// (RegenHalfCapDivisor), so at cur 0 and cur 1 the cap is 0 and takes the floor
+// straight back off. Those two rows were asserting a consequence of a partial
+// reading of CGObjPC::vslot_362, not a behaviour anyone had observed.
+//
+// The floor is still observable -- it is what makes a pool of 2..24 regenerate
+// at all, since 4% of those rounds to zero -- so it is pinned there instead.
 func TestRegenPerTickFloorsAtOne(t *testing.T) {
-	// A pool so small that the percentage rounds to nothing.
-	if got := RegenPerTick(1, 1000); got != 1 {
-		t.Errorf("RegenPerTick(1, 1000) = %d, want 1 (the engine's floor)", got)
+	// 4% of any of these is zero; only the floor makes them non-zero.
+	for _, cur := range []int{2, 3, 10, 24} {
+		if got := RegenPerTick(cur, 1000); got != 1 {
+			t.Errorf("RegenPerTick(%d, 1000) = %d, want 1 (the engine's floor)", cur, got)
+		}
 	}
-	if got := RegenPerTick(0, 1000); got != 1 {
-		t.Errorf("RegenPerTick(0, 1000) = %d, want 1", got)
+	// And the cap takes it back off where the pool cannot afford it.
+	for _, cur := range []int{0, 1} {
+		if got := RegenPerTick(cur, 1000); got != 0 {
+			t.Errorf("RegenPerTick(%d, 1000) = %d, want 0 — the half-of-current "+
+				"cap overrides the floor here", cur, got)
+		}
 	}
 }
 
@@ -136,5 +153,67 @@ func TestRegenTicksCompound(t *testing.T) {
 func TestRegenIntervalIsTheEnginesFour(t *testing.T) {
 	if RegenInterval != 4*time.Second {
 		t.Errorf("RegenInterval = %v, want 4s (.rdata 0x00b45dc0 = 4.0)", RegenInterval)
+	}
+}
+
+// TestRegenHalfCap pins the cap recovered 2026-09-17 from CGObjPC::vslot_362:
+// one tick restores at most half the CURRENT pool, applied after the floor at 1.
+//
+// docs/SYSTEMS.md carried this as the regen row's one open item ("the curHP*0.5
+// bound at 0x004e2c00 is read but its comparison is not") until the comparison
+// at 0x004e2b4c was read: `cmp ebp,edi ; jl ; mov ebp,edi`, i.e. a min.
+func TestRegenHalfCap(t *testing.T) {
+	// The cap binds only at the bottom, where the floor of 1 would otherwise
+	// hand out more than the pool can support. These three rows are the whole
+	// behavioural difference the cap makes.
+	for _, tc := range []struct{ cur, max, want int }{
+		{0, 100, 0}, // was 1 before the cap
+		{1, 100, 0}, // was 1 before the cap -- a pool at 1 does not regenerate
+		{2, 100, 1}, // cap is 1, floor is 1
+		{3, 100, 1}, // cap is 1 (truncated), floor is 1
+		{4, 100, 1}, // 4% of 4 is 0 -> floor 1; cap is 2, so 1 survives
+	} {
+		if got := RegenPerTick(tc.cur, tc.max); got != tc.want {
+			t.Errorf("RegenPerTick(%d, %d) = %d, want %d", tc.cur, tc.max, got, tc.want)
+		}
+	}
+
+	// Above the bottom the cap is inert: 4% of the pool is far below 50% of it,
+	// so removing the cap must not change anything here. A cap applied to the
+	// MAXIMUM instead of the current pool would also pass the rows above and
+	// fail these, which is the misreading worth guarding.
+	for _, cur := range []int{25, 50, 100, 1000, 9999} {
+		want := cur * RegenPercentPerTick / 100
+		if want < 1 {
+			want = 1
+		}
+		if got := RegenPerTick(cur, cur*10); got != want {
+			t.Errorf("RegenPerTick(%d, …) = %d, want %d — the cap must be inert here",
+				cur, got, want)
+		}
+	}
+}
+
+// The cap is on the CURRENT pool, not the maximum, and it is a truncating
+// integer halving because the engine converts through __ftol2. Both are easy to
+// "tidy" into something that passes the common cases and diverges at the edge.
+func TestRegenHalfCapIsOfCurrentAndTruncates(t *testing.T) {
+	// If the cap were half the MAXIMUM, a nearly-empty pool in a huge bar would
+	// regenerate 1; with the real cap it regenerates 0.
+	if got := RegenPerTick(1, 100000); got != 0 {
+		t.Errorf("RegenPerTick(1, 100000) = %d, want 0 — the cap is half the "+
+			"CURRENT pool, not half the maximum", got)
+	}
+	// An odd pool truncates down: 3/2 is 1, not 2 and not 1.5 rounded up.
+	if got := RegenPerTick(3, 100); got != 1 {
+		t.Errorf("RegenPerTick(3, 100) = %d, want 1 — __ftol2 truncates", got)
+	}
+	// The deficit clamp still wins when it is the tighter of the two.
+	if got := RegenPerTick(98, 99); got != 1 {
+		t.Errorf("RegenPerTick(98, 99) = %d, want 1 (the deficit)", got)
+	}
+	// And a full pool still regenerates nothing at all.
+	if got := RegenPerTick(100, 100); got != 0 {
+		t.Errorf("a full pool regenerated %d", got)
 	}
 }

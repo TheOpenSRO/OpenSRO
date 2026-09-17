@@ -12950,3 +12950,74 @@ anything in the tree. The repo is private, so every run bills against quota.
 v0.1.313–v0.1.323 were tagged into that. The code is fine — `go test -p 1 ./...`
 ran green locally before each — but **"tagged" has not meant "built" for 31
 hours**, and this loop had been treating the two as the same thing.
+
+## The regen row's last open item, and a shipped test that was wrong (2026-09-17)
+
+`docs/SYSTEMS.md` carried one caveat on the passive-regeneration row for as long
+as the row has existed: *"the curHP\*0.5 bound at 0x004e2c00 is read but its
+comparison is not."* A read constant with an unread comparison is exactly the
+shape that has burned this project before, and it sat on a value srrevamp ships.
+
+### The comparison
+
+`0x004e2c00` is not a function; it is `CGObjPC::vslot_362 + 0x270`, and the
+comparison is 0xb4 bytes earlier at `0x004e2b4c`:
+
+	004e2afb  cmp ebp,0x1 ; jge ; mov ebp,0x1   ; floor the amount at 1
+	004e2b05  fmul QWORD PTR ds:0xb45c50        ; cap = cur * 0.5
+	004e2b0b  call 0x9fbb40                     ; __ftol2, so TRUNCATED
+	004e2b4c  cmp ebp,edi ; jl ; mov ebp,edi    ; amount = min(amount, cap)
+
+`.rdata 0x00b45c50` is the double `0.5`. `jl` keeps the amount when it is the
+smaller, so the pair is a **min**, and — the part that matters — the cap is
+applied **after** the floor at 1.
+
+### Where it binds, which is the whole point
+
+With `RegenPercentPerTick` at 4, the percentage term is 4% of the pool and the
+cap is 50% of it, so the cap is inert everywhere except at the very bottom,
+where the floor of 1 has pushed the amount above what the pool can afford:
+
+	cur = 0  ->  cap 0, amount 0   (srrevamp gave 1)
+	cur = 1  ->  cap 0, amount 0   (srrevamp gave 1)
+	cur = 2  ->  cap 1, amount 1
+
+**A character at 1 point does not passively regenerate at all.** That is a
+mechanic rather than a rounding artifact: the engine spends four instructions
+making the floor of 1 conditional on the pool being able to support it.
+
+### A shipped test was asserting a partial reading
+
+`TestRegenPerTickFloorsAtOne` asserted `RegenPerTick(1, 1000) == 1` and
+`RegenPerTick(0, 1000) == 1`, with the comment *"The engine floors the amount at
+1 **before anything else**"*. Those are precisely the two inputs the cap
+overrides.
+
+The floor is real and still applies. What was wrong is "before anything else" —
+and the two rows were asserting a *consequence* of the unread comparison, not a
+behaviour anyone had observed. The floor is now pinned where it is still
+observable (pools of 2–24, where 4% rounds to zero and only the floor makes them
+regenerate), and the two overridden rows assert 0 with the reason attached.
+
+Worth stating plainly: a test can encode a gap as confidently as it encodes a
+fact, and this one had been green for as long as the caveat had been open. The
+caveat was the only thing that flagged it.
+
+### Two mistakes of mine, caught by the tests
+
+I wrote the new cap test expecting `RegenPerTick(4, 100) == 2`, having confused
+the cap with the amount — 4% of 4 is 0, the floor lifts it to 1, and the cap of 2
+never binds, so the answer is 1. And my first edit to fix that row silently did
+nothing, because `gofmt` had realigned the struct literal and my exact-string
+replacement no longer matched; the test kept failing with the same message until
+I checked the line rather than assuming the edit had landed.
+
+### Confirmed in passing
+
+`vslot_362` opens with `if (slot0x110() == slot0x108() && slot0x114() ==
+slot0x10c()) return` — "both pools are full, nothing to do". That is a fifth
+independent witness that slot `0x110` is **MaxHP** and not the `GetCurHP` its
+stub string claims: comparing a value to itself would make the guard
+unconditional.
+
+`docs/SYSTEMS.md`'s regen row now has no caveat.

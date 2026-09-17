@@ -136,13 +136,44 @@ const (
 	RegenInterval = 4 * time.Second
 )
 
+// RegenHalfCapDivisor is the engine's ceiling on one tick: **half the current
+// pool**.
+//
+// RECOVERED 2026-09-17. docs/SYSTEMS.md carried this as the system's one open
+// item -- "the curHP*0.5 bound at 0x004e2c00 is read but its comparison is not"
+// -- for as long as the row has existed. The comparison is at 0x004e2b4c, and
+// the whole sequence reads:
+//
+//	004e2afb  cmp ebp,0x1 ; jge ; mov ebp,0x1   ; floor the amount at 1
+//	004e2b05  fmul QWORD PTR ds:0xb45c50        ; cap = cur * 0.5
+//	004e2b0b  call 0x9fbb40                     ; __ftol2, so TRUNCATED
+//	004e2b4c  cmp ebp,edi ; jl ; mov ebp,edi    ; amount = min(amount, cap)
+//
+// `.rdata 0x00b45c50` is the double 0.5. `jl` keeps the amount when it is the
+// smaller, so the pair is a min, and the cap is applied AFTER the floor at 1 --
+// which is the only reason it ever binds.
+//
+// WHERE IT BINDS, which is the whole point. With RegenPercentPerTick at 4 the
+// percentage term is 4% of the pool and the cap is 50% of it, so the cap is
+// inert everywhere except at the very bottom, where the floor at 1 has pushed
+// the amount above what the pool can support:
+//
+//	cur = 0  ->  cap 0, amount 0   (was 1)
+//	cur = 1  ->  cap 0, amount 0   (was 1)
+//	cur = 2  ->  cap 1, amount 1
+//
+// So **a character at 1 point does not passively regenerate at all**. That is a
+// mechanic, not a rounding artifact: the engine spends four instructions to make
+// the floor of 1 conditional on the pool being able to afford it.
+const RegenHalfCapDivisor = 2
+
 // RegenPerTick is what one tick restores to a pool holding cur out of max.
 //
 // The engine's shape, from CGObjPC::vslot_362: a percentage of the **current**
-// pool, floored at 1, and never more than the deficit. Percent-of-current is
-// the part srrevamp had wrong -- it took a percentage of the maximum, which
-// gives a drained caster the same trickle as a nearly-full one when the engine
-// gives it less.
+// pool, floored at 1, capped at half the current pool, and never more than the
+// deficit. Percent-of-current is the part srrevamp had wrong -- it took a
+// percentage of the maximum, which gives a drained caster the same trickle as a
+// nearly-full one when the engine gives it less.
 func RegenPerTick(cur, max int) int {
 	if cur >= max || max <= 0 {
 		return 0
@@ -155,6 +186,11 @@ func RegenPerTick(cur, max int) int {
 		// The engine's own floor, and the reason its unbuffed rate is not
 		// zero despite 'mprg' defaulting to 0.
 		amount = 1
+	}
+	// The half-of-current cap, applied after the floor exactly as the engine
+	// applies it. Integer division matches __ftol2's truncation toward zero.
+	if cap := cur / RegenHalfCapDivisor; amount > cap {
+		amount = cap
 	}
 	if deficit := max - cur; amount > deficit {
 		amount = deficit
