@@ -14421,3 +14421,57 @@ sweep could only match functions that already had a leaf name. **69 labels in th
 server, 45 appearing in exactly one function, and only 7 of those functions unnamed**,
 of which 3 are usable (the rest are message names or the bare word "Party"). The
 client has none. Worth the ten minutes to measure; not worth a pass.
+
+## Naming handlers by what they refuse (2026-09-17)
+
+With every handler's reply opcode known, the next lever is its **refusal codes**: the
+client's error table names 609 of them, and a code like `JOBGUILD_WITHD_ERR_QUEST`
+names an operation, not just a system.
+
+### The first run of this probe was contaminated, in two ways
+
+It reported 46 handlers with codes, and `UIIT_MSG_PARTYERR_UNKNOWN_ERROR` appeared in
+letter, fortress and job-guild handlers alike. Both causes are worth recording:
+
+1. **`PARTYERR_UNKNOWN_ERROR` is code `0x0002`.** Eleven of the 609 codes are below
+   `0x100`, so every `push 0x2` — an argument, a flag, a count — matched one.
+2. **The probe collected every push in the function**, not only pushes feeding the
+   send helper.
+
+Requiring codes `>= 0x100` *and* a push within five instructions of
+`call 0x4e7250`/`0x4e72a0` cut it to 18 handlers, all coherent. Following one level of
+calls, so a handler inherits the codes its validator returns in `AX`, brought it to
+**53 of 162**.
+
+### It validates on ten handlers named by other means
+
+`TrainingCamp_HandleInvite` refuses `STUDENT_COUNT_OVER` and
+`SECOND_GUARDIAN_COUNT_OVER`; `HandleLeave` adds `NOT_OUT_24T`; `HandleGraduation`
+adds `GRADUATION_LEVER`; `GObjPC::HandleNameCOS` refuses `COSPETERR_PETNAME_NOTPUT`;
+`CGuildManager::HandleCreateGuild` refuses `INVALID_GUILDNAME_LEN`. And last tick's
+`JobGuild_HandleWithdraw`, named from a client string, refuses
+`JOBGUILD_WITHD_ERR_WEARITEM` and `JOBGUILD_WITHD_ERR_QUEST` — the server's own words
+for the name the client's string suggested. `Guild_HandleNoticeUpdate` likewise
+refuses `GUILDERR_INVALID_MASTER_COMMENT_TITLE`.
+
+### Named, each on two facts
+
+	00510980  Item_HandleUseItem            three CANT_USE/CANNOT_BE_USED codes + GStorage::GetItem, GetTID
+	00515f10  FleaMarket_HandleOpenStall    three CANT_OPEN_MARKET codes + the block it shares with the buy handler
+	00516560  FleaMarket_HandleBuyItem      buyer's gold/inventory codes + calls CFleaMarket::SellFMarketItem
+	00516da0  Guild_HandleLevelUpRequest    GUILD_LEVEL_UP_FULL, unique to it + calls CGuild::HandleLevelUp
+	00518820  Guild_HandleWarDeclaration    GUILDWARERR_ENEMYGUILD/MAX_HOSTILE + calls Guild_ValidateWarDeclaration
+	00519e60  SiegeFortress_DispatchCommand reads a sub-command byte + its only named callees are
+	                                        the five SiegeFortressMgr::Handle* commands
+
+Applied 6, failed 0. **One opcode carries every fortress command**, selected by a byte,
+the same shape as the academy's job-result dispatcher.
+
+### Left unnamed on purpose
+
+`0x168` (`RE_BUY_OBJECT_CANT`, so a buy-back) and `0x302` (`FRIENDERR_FULLLIST`,
+`ALREADYFRIEND`) each rest on one fact, and the friend codes fit "accept" as well as
+"add". `0x202`/`0x203` share `WITHDRAW_SKILL_FAIL_NOT_LEARN` exactly, so nothing read
+separates them; the same goes for the three reinforce handlers and the fortress
+structure handlers, whose `FORT_STRUCTURE_ACTION_ERROR_06` name is shared by fifteen
+different codes in the client's own table.
