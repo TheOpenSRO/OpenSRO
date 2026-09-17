@@ -12327,3 +12327,80 @@ client dispatcher walk. Measured: **no function in the client has a `0x38xx`
 switch case at all.** Those codes are raised by the server and have no message in
 the client's error dispatcher, so mastery refusals surface some other way or not
 at all. Naming that family needs a different source, not a wider pattern.
+
+## A whole system found by its vocabulary: skill withdrawal (2026-09-17)
+
+The previous tick built the widened error-code scan and then used it to read
+exactly one function. This tick used it the way it was meant to be used.
+
+### The refusal vocabulary is a locating lever
+
+Of the **362** server functions the widened scan attributes to a named refusal,
+**291 are still `FUN_`**. Grouping those by the *system* each code belongs to
+leaves **62 whose refusals all come from one vocabulary** — an unambiguous
+attribution, by system:
+
+	STRGERR 17   FORT 13   SKILL_USE 9   SOCKETERR 5   REINFORCERR 4
+	WITHDRAW 4   TC_ERROR 3   GUILDERR 3   COSERR 1   JOB 1   PARTYERR 1   FRIEND 1
+
+This is a different kind of lever from the ones already used up. It does not
+need a string inside the function, a vtable slot, or a source path — only that
+the function refuses something the client can name. Three of the clusters are
+recorded open items: `FUN_005c6550` (guild alliance) and `FUN_005c6b60` (guild
+war) are both listed as unrecovered in `guild.md`, and `AQ_Siege::FUN_006232c0`
+is the fortress-dungeon probe.
+
+### `WITHDRAW_SKILL_*`: four contiguous unnamed functions, one system
+
+`0059f410`, `0059f610`, `0059f8b0`, `0059fd60` raise nothing else. That is the
+**skill reset**, a system this project had no trace of. Written up as
+`docs/protocol/skill_withdraw.md`; the cost formula is in
+`server/internal/skill/withdraw.go` with tests.
+
+**`0x7800` is the success value**, recovered from the server's own use
+(`if (r != 0x7800) return r`). It is absent from `error_codes.md` and correctly
+so — that table lists refusals, and the client has no message for success. Worth
+recording as a shape: a family running `0x7801`–`0x7806` looks complete, and the
+base of the range is exactly the value a client-side harvest structurally cannot
+supply.
+
+The validator's gold check is the same 64-bit `charData+0x78`/`+0x7c` comparison
+as everywhere else — the **fifth** independent subsystem to confirm that layout.
+And the charge is gated on `flags & 1`, so a free withdrawal path exists; what
+sets the flag is not read.
+
+### The cost, and what it is priced in
+
+	cost per refunded level = goldMin * 100 * (1 + masteryLevel/10)
+
+from `0x00410c80`, with `.rdata` 0.8, 80.0, 10.0, 1.0 and 0.5 all read. The
+engine spells `* 100` as `(base / 0.8) * 80.0`.
+
+`goldMin` is **the per-level gold table's minimum at the character's MaxLevel**
+(vtable slot `0x128` = slot 74). That the `+0x268` array is the gold table was
+already settled by this project from its *other* reader, `FUN_00724330`, which
+rolls `rand()%101 <= entry[0]` then a range between `entry[1]` and `entry[2]` to
+fund `ITEM_ETC_GOLD_03` — so `+4` is the minimum.
+
+So a skill reset is priced in **hundreds of a level-appropriate gold drop**: the
+cost tracks the economy's own curve instead of a hand-written table. The
+consequence worth acting on is that the gold table is now load-bearing for two
+unrelated systems, which raises the value of proving the `levelgold.txt` join —
+still **inferred, not proven**, and said again here rather than quietly reused.
+
+### A measurement instead of an assumption about rounding
+
+`__ftol2(x + 0.5)` looks like round-half-up and is not a rounding rule at all:
+with integer inputs the term is always an integer, `goldMin*100 +
+goldMin*10*m`. Measured over 600,000 (goldMin, mastery) pairs, the `+ 0.5`
+changes the answer in **27,435**, and in **every one of those** plain truncation
+lands exactly one *below* the correct integer. It is a float-error guard, and
+dropping it would be a systematic off-by-one on 4.6% of inputs rather than a
+convention quibble. The test asserts the closed form across a sweep instead of
+memorising the one case that happens to fail.
+
+A wrong expectation of mine was caught the same way: I first wrote the test
+expecting `WithdrawCost(7, 15)` to be 805, having read the divisor as 100. It is
+1750 — the divisor is 10, so mastery 15 is `1 + 1.5`. The code was right and the
+test was wrong, which is the good direction for that to happen in, and the
+sweep-based assertion that replaced it cannot be written wrong the same way.
