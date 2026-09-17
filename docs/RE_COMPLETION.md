@@ -12611,3 +12611,80 @@ srrevamp carries only `Mastery1` (`refdata.Skill` notes the real table has a
 second), so the second slot is reported unoccupied and contributes the engine's
 default of 1. That is a faithful reading of a table this project has half of,
 stated as such rather than smoothed into "the formula uses one mastery".
+
+## The `CRefSkill` field map: 2 offsets named, now 119 (2026-09-17)
+
+Recent ticks kept reading raw `skill+0xNNN` offsets blind — `+0x4a4`, `+0x39c`,
+`+0x49c` in the skill-use gate; `+0x240`, `+0x400`, `+0x3d0` in
+`Combat_ResolveDamage`; `+0xa0`/`+0xa4` in the mastery scale. `docs/protocol/`
+named exactly **two** `CRefSkill` offsets in total. That is the gap this tick
+closed, systematically rather than one field at a time.
+
+`SkillGlobal::RefSkill_ParseParams` (`0x00587630`, 7,509 bytes) walks a skill's
+Param stream as `(code, values...)` runs and stores each value into a field of
+the record — so it *is* the code → offset map. Vendored as
+`client/tools/re/skillfields.py`; written up as
+`docs/protocol/skill_fields.md`.
+
+### The first extraction was wrong, and looked right
+
+Pairing each store with the nearest preceding `cmp reg,CODE` produced a clean,
+monotonic, plausible table. It was wrong: MSVC compiles a large switch on sparse
+values as a **binary search tree**, so the last comparison before a store is
+whichever tree node was visited on the way down, not the code that matched.
+
+It was caught by the two anchors this project already had:
+
+	pdm2 -> 0x234    but Combat_ResolveDamage's comment says 0x234 is pdmg
+	resu -> 0x3a0    but skill_params.md says 0x3a0 is reqi's five-slot list
+
+Both disagreed. Following `je` targets instead — the equality test, with `ja`/`jb`
+ignored as tree navigation — gives `pdmg -> 0x234`, and the map then agrees with
+all three independent anchors (`pdmg`, `da`, `pw`).
+
+**This project's notes already called the binary-search-tree shape a trap**, when
+reading the ParamKeeper tag dispatcher. It cost a first pass here anyway. Worth
+recording as its own lesson: knowing a trap by name is not the same as
+recognising it in a new function, and the thing that actually saved it was having
+two previously-recovered facts to contradict.
+
+### And a fabricated row, caught before it shipped
+
+The first draft of the skill-use gate's update listed `+0x294` as `efr`. That
+came from the **discarded contaminated extraction**, not the corrected one —
+carried across while writing prose rather than re-checked. Grepping the corrected
+map for `0x294` returns nothing.
+
+Corrected to say `+0x294` and `+0x428` remain unnamed, and that their absence
+means the extractor could not reach them rather than that nothing fills them.
+Recorded because it is precisely the failure mode this project's hard rules name:
+a value that was not read, presented as if it had been.
+
+### What it grounds
+
+| offset | code | was read blind by |
+|---|---|---|
+| `0x240` | `da` | `Combat_ResolveDamage`, after the magical mitigation |
+| `0x39c` | `reqc` | the gate's stealth and musical-range flags |
+| `0x400` | `lfst` | the branch to `FUN_0040f750` |
+| `0x49c` | `qest` | the gate's computed `ITS_NOT_A_BATTLE_FIELD` code |
+| `0x4a4` | `msch` | the gate's `EU_BAN_HAWN_TRANS` and `DUPLICATE` branches |
+| `0x534` | `BSHP` | the bonus-map key in `FUN_0040f750` |
+| `0x3d0` | `dtnt` | `Combat_ResolveDamage`'s target filter |
+
+`da -> 0x240` is the satisfying one: `skill_params.md` had already decoded `da`
+as "a conditional damage percentage" from the *other* side, and
+`Combat_ResolveDamage` tests `[ebx+0x240] != 0` immediately after the magical
+mitigation call. Two pages that never referenced each other, agreeing.
+
+### Coverage, stated rather than implied
+
+188 distinct printable codes are compared; 120 case bodies are reached by a `je`;
+119 contain a direct field store. **Codes whose values go into a list are
+absent** — `reqi` fills five slots and `att` is six words, both written by loops
+past a conditional branch. Those two are the ones this project already knew
+about, so the gap is *known* to be real rather than suspected, which is the only
+reason it can be stated as a bound on the tool rather than a hope.
+
+No value changed, so nothing was wired; this is naming, and `go test -p 1 ./...`
+is green unchanged.

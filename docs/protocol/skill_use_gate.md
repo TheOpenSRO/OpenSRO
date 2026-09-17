@@ -82,10 +82,21 @@ claims and only the second is worth anything.
 
 ## What is not recovered
 
-- The **field names** behind `+0x4a4`, `+0x428`, `+0x39c`, `+0x49c` and
-  `+0x294` on the skill record. Each is read here as a kind or a flag word, and
-  the refusal it guards says roughly what it selects, but none was traced to the
-  skilldata column that fills it.
+- **PARTLY CLOSED 2026-09-17.** Three of the five field names are now recovered
+  from the param parser — see `docs/protocol/skill_fields.md`:
+
+	+0x4a4  msch      rows 4 and 7 (EU_BAN_HAWN_TRANS, DUPLICATE)
+	+0x39c  reqc      rows 10 and 11 (stealth, musical range)
+	+0x49c  qest      row 13's computed ITS_NOT_A_BATTLE_FIELD code
+
+  **`+0x428` and `+0x294` are still unnamed.** Neither appears in the recovered
+  map, which for this extractor means only that it could not reach them — the
+  tool misses codes whose values go into a list rather than a single field. It is
+  not evidence that no code fills them.
+
+  **A four-letter code is a label, not an explanation.** Knowing `+0x4a4` is
+  `msch` says which skilldata param fills it, not what the branch means, and the
+  rows above are still described by the shape of their test.
 - Rows 2, 3, 7, 16, 17 and 18 are listed with the *shape* of their test rather
   than a value. They gate trap placement, buff duplication, ammunition and line
   of sight, and each would need its own read.
