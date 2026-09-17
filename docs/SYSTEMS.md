@@ -58,7 +58,7 @@ one cannot rot the same way without the build going red.
 | Storage and warehouse | 39 | PARTIAL | docs/protocol/db_schema.md |  | per-account vs per-character scope |
 | Monster profile and spawns | 36 | PARTIAL | docs/protocol/refdata_schema.md |  | AI behaviour, not stats -- see Monster AI |
 | Monster AI | 36 | PARTIAL | docs/protocol/monster_ai.md | StateBattle, FallbackState, DwellExtension | the machine is whole; the four DB tables that configure it (`TAB_REFTACTICS`, `_REFNEST`, `_REFHIVE`, `_REFAISKILL`) have no column layout. Read `CRefTactics`' parse method -- the loader at `0x008334e0` only installs the class |
-| Siege and fortress war | 39 | OPEN | — |  | 39 classes; start at CRefSiegeFortress and the 11 _REFSIEGE* tables |
+| Siege and fortress war | 39 | PARTIAL | docs/protocol/siege.md | MinGuildLevel, ValidTaxRatio, CanAttack | registration, tax and the attack rules are grounded; the dungeon caps and structure-upgrade costs are read from a structure, not compared against literals. Read `AQ_Siege::FUN_006232c0` (11,816 bytes), where most of the fortress logic lives |
 | Persistence / AsyncQuery | 28 | PARTIAL | docs/protocol/persistence.md | Procs, SlotDoWork, ReferenceTables | the interface and the 39 procedures are whole; no procedure's PARAMETERS are read, and none of the 35 runtime tables has a column layout. Read AQ_CharDataSaver's argument set-up first |
 | Guild | 27 | OPEN | — |  | 27 classes; CGuildManager and the guild tables |
 | Pets and COS | 23 | OPEN | — |  | 23 classes; CGObjCOS and CGItemCOSSummoner |
@@ -72,7 +72,7 @@ one cannot rot the same way without the build going red.
 
 ## How to read the count
 
-**11 specified, 13 partial, 9 open, of 33.** That is the honest headline, and it
+**11 specified, 14 partial, 8 open, of 33.** That is the honest headline, and it
 is not a percentage of the game — a specified system is one this project can
 implement faithfully, not one it has implemented. What srrevamp actually ships is
 a separate question, tracked in `docs/TODO.md`.
