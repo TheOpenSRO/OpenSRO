@@ -57,8 +57,8 @@ one cannot rot the same way without the build going red.
 | Shops and the goods chain | 4 | PARTIAL | docs/protocol/refdata_schema.md |  | repair and item durability |
 | Storage and warehouse | 39 | PARTIAL | docs/protocol/db_schema.md |  | per-account vs per-character scope |
 | Monster profile and spawns | 36 | PARTIAL | docs/protocol/refdata_schema.md |  | AI behaviour, not stats -- see Monster AI |
+| Monster AI | 36 | PARTIAL | docs/protocol/monster_ai.md | StateBattle, FallbackState, DwellExtension | the machine is whole; the four DB tables that configure it (`TAB_REFTACTICS`, `_REFNEST`, `_REFHIVE`, `_REFAISKILL`) have no column layout. Read `CRefTactics`' parse method -- the loader at `0x008334e0` only installs the class |
 | Siege and fortress war | 39 | OPEN | — |  | 39 classes; start at CRefSiegeFortress and the 11 _REFSIEGE* tables |
-| Monster AI | 36 | OPEN | — |  | 36 classes under AI::; start at AI::CAIHive and CAISkill |
 | Persistence / AsyncQuery | 28 | OPEN | — |  | 28 AQ_* classes; the 75 stored procedures are already enumerated |
 | Guild | 27 | OPEN | — |  | 27 classes; CGuildManager and the guild tables |
 | Pets and COS | 23 | OPEN | — |  | 23 classes; CGObjCOS and CGItemCOSSummoner |
@@ -72,7 +72,7 @@ one cannot rot the same way without the build going red.
 
 ## How to read the count
 
-**11 specified, 10 partial, 12 open, of 33.** That is the honest headline, and it
+**11 specified, 11 partial, 11 open, of 33.** That is the honest headline, and it
 is not a percentage of the game — a specified system is one this project can
 implement faithfully, not one it has implemented. What srrevamp actually ships is
 a separate question, tracked in `docs/TODO.md`.
