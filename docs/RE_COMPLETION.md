@@ -12755,3 +12755,73 @@ how a project ends up unable to tell which of its open questions were ever real.
 
 Nothing srrevamp uses changed, so nothing was wired; `go test -p 1 ./...` green
 unchanged.
+
+## The `CRefSkill` map is a bijection now: 2 → 120 → 203 offsets (2026-09-17)
+
+Set out to use yesterday's map as a whole-binary scanner — label every
+`skill+0xNNN` read with the param it consumes — and the scanner turned out to be
+invalid, which sent the tick somewhere better.
+
+### The scanner does not work, and the reason is worth keeping
+
+Scanning the server for reads in the param block's offset range finds **1,456
+functions**. Most are not reading a CRefSkill at all: `CQSP_ALL_POTION_3`,
+`CQEV_WINTER_EVENT_2009` and dozens of quest and event handlers have their own
+fields in `0x230`–`0x5ac` and match on offset alone. A quest handler does not
+consume 28 skill params.
+
+**An offset does not identify an object type.** The map is a join key only where
+the base register is independently known to be a CRefSkill. That is a real
+constraint on how it can be used, and it would have produced hundreds of
+confident false attributions if shipped.
+
+### Where it IS valid, and what it says
+
+In `Combat_ResolveDamage`, `ebx` is provably a CRefSkill — loaded as `[arg2+8]`
+and the base of `+0x230` (`att`) and `+0x234` (`pdmg`), both confirmed. Scanning
+only `[ebx+…]` there gives **38 distinct fields read**, of which 19 were mapped
+and 19 were not.
+
+The 19 unmapped ones clustered *beside* mapped ones — `0x238` next to `pdmg`,
+`0x244`/`0x248` next to `da` — which is what sent the tick at the extractor
+instead.
+
+### Three more forms of one trap
+
+Each expansion came from a different way MSVC spells "this code matched":
+
+| shape | what it hid |
+|---|---|
+| `cmp reg,CODE ; jne DEFAULT`, body falls through | `pdm2` at `0x238` |
+| `sub reg,K1 ; je` / `sub reg,K2 ; jne` — a chain compiled as a **running subtraction**, so the second test is `K1+K2`, not `K2` | `cr`/`ck` at `0x244`/`0x248` |
+| a `je` target that is itself another comparison **sub-tree** | `getv` claiming `BLAT`'s field |
+
+120 → 205 → **203** after the last was fixed.
+
+### The collision check earned its keep
+
+At 205 the map had 205 codes claiming 204 offsets: **one duplicate**. One
+duplicate in 205 rows is easy to wave away as an alias, and it was not an alias —
+it was a whole class of mis-attribution showing through a single row. `getv` is a
+genuine code (`cmp edx,0x67657476 ; je 0x5882b5`) whose target compares four more
+codes, so a linear walk from it ran into `BLAT`'s store.
+
+The discriminator: **a real case body is straight-line up to its store.** `att`
+branches, but only after storing. Abandoning a block whose first conditional jump
+precedes any store drops `getv` and keeps `att`.
+
+**The map is now a bijection** — 203 codes, 203 distinct offsets, none outside
+the memset block, no code claiming two and no offset claimed by two. That is a
+property that cannot hold by accident across 203 rows, and it is worth more than
+any individual anchor: a row anchor confirms its own row, a bijection over a
+known-size block (223 dword slots, 203 named) constrains everything at once.
+
+### Honest about what is still missing
+
+`reqi` and `getv` are real codes the tool does not place — one writes through a
+loop past a conditional branch, the other is a tree node. Twenty slots are
+unnamed. Their absence bounds the tool, not the binary, and the tool has already
+been wrong about exactly that once: `att` was listed as list-valued yesterday
+when it was a filter bug.
+
+Nothing srrevamp uses changed, so nothing was wired; `go test -p 1 ./...` green.

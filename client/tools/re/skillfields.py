@@ -15,10 +15,33 @@ produces a map that is plausible, monotonic, and wrong: it gave `pdm2 -> 0x234`
 where Combat_ResolveDamage's own comment says 0x234 is `pdmg`, and `resu ->
 0x3a0` where docs/protocol/skill_params.md says 0x3a0 is `reqi`.
 
-The fix is to follow control flow rather than proximity: a case body is the
-target of a `je` from the comparison that MATCHED. `ja`/`jb` are tree
-navigation and must be ignored. This tool collects `cmp reg,IMM ; je TARGET`
-pairs and attributes the block at TARGET to IMM.
+The fix is to follow control flow rather than proximity: a case body is the block
+the comparison that MATCHED branches to. `ja`/`jb` are tree navigation and must be
+ignored. MSVC spells "this one matched" three ways, and all three occur here:
+
+  1. `cmp reg,CODE ; je BODY`        -- the body is at the jump target.
+  2. `cmp reg,CODE ; jne DEFAULT`    -- the body is the FALLTHROUGH.
+  3. `mov edi,reg ; sub edi,K1 ; je BODY ; sub edi,K2 ; jne DEFAULT`
+     -- a chain of equality tests compiled as a running subtraction. The value
+     being compared is the CUMULATIVE sum: the second test above is
+     `reg == K1+K2`, not `reg == K2`. Reading each `sub` as its own constant
+     yields codes like `0x7`, which decode to nothing and are silently dropped.
+
+Handling only (1) finds 120 codes; handling all three finds 204. The ones (2)
+and (3) hide are not random: `pdm2` at 0x238 sits directly beside `pdmg`, and
+`ck`/`cr` at 0x248/0x244 sit beside `da` -- adjacent fields that a reader scanning
+a struct would most expect to be named.
+
+A FOURTH form of the same trap, one level down. A `je` target is not always a
+case body: it can be the root of a further comparison sub-tree. `getv`
+(`cmp edx,0x67657476 ; je 0x5882b5`) branches to a node that compares four more
+codes, and walking forward from it runs past them into an unrelated leaf's store
+-- which is how `getv` came to claim `BLAT`'s field at 0x530.
+
+The discriminator is that a real case body is STRAIGHT-LINE UP TO ITS STORE.
+`att` has conditional jumps, but only AFTER it stores its pointer. So: abandon a
+block if a conditional jump appears BEFORE the first field store. That drops
+`getv` and keeps `att`.
 
 VERIFICATION. Three independent anchors, none of them used to build the map:
 
@@ -62,6 +85,9 @@ PARSER, SIZE = 0x587630, 7509
 
 CMP = re.compile(r"^cmp\s+([a-z0-9]+)\s*,\s*0x([0-9a-f]+)$")
 JE = re.compile(r"^je\s+0x([0-9a-f]+)$")
+JNE = re.compile(r"^jne\s+0x([0-9a-f]+)$")
+MOVREG = re.compile(r"^mov\s+(e[a-z][a-z])\s*,\s*e[a-z][a-z]$")
+SUB = re.compile(r"^sub\s+(e[a-z][a-z])\s*,\s*0x([0-9a-f]+)$")
 # The record base is ESI. EBP is an ALIAS for `esi+0x230`, set up by the
 # prologue (`lea ebp,[esi+0x230]`) for the memset that clears the whole param
 # block -- and then reused as a store base by a few case bodies. A pattern that
@@ -88,27 +114,65 @@ def main():
     ins = [(a, t.strip()) for a, t in X.asm() if PARSER <= a < PARSER + SIZE]
     at = {a: i for i, (a, _) in enumerate(ins)}
 
-    # cmp reg,CODE ; je TARGET  -- the equality test, not the tree navigation.
     cases = collections.defaultdict(set)
+
+    def record(value, body):
+        code = as_code(value)
+        if code:
+            cases[body].add(code)
+
+    # Idioms (1) and (2): an explicit compare, then je-to-body or
+    # jne-to-default with the body falling through.
     for i, (_, text) in enumerate(ins):
         m = CMP.match(text)
         if not m:
             continue
-        code = as_code(int(m.group(2), 16))
-        if not code:
-            continue
+        value = int(m.group(2), 16)
         for j in range(i + 1, min(i + 3, len(ins))):
             mj = JE.match(ins[j][1])
             if mj:
-                cases[int(mj.group(1), 16)].add(code)
+                record(value, int(mj.group(1), 16))
+                break
+            mn = JNE.match(ins[j][1])
+            if mn and j + 1 < len(ins):
+                record(value, ins[j + 1][0])
+                break
+
+    # Idiom (3): `mov <reg>,<src>` seeds an accumulator, then each `sub
+    # <reg>,K` advances it and the following je/jne tests the CUMULATIVE
+    # total. Reset whenever the register is reloaded.
+    acc_reg, acc = None, 0
+    for i, (_, text) in enumerate(ins):
+        m = MOVREG.match(text)
+        if m:
+            acc_reg, acc = m.group(1), 0
+            continue
+        m = SUB.match(text)
+        if not m or m.group(1) != acc_reg:
+            continue
+        acc += int(m.group(2), 16)
+        for j in range(i + 1, min(i + 3, len(ins))):
+            mj = JE.match(ins[j][1])
+            if mj:
+                record(acc, int(mj.group(1), 16))
+                break
+            mn = JNE.match(ins[j][1])
+            if mn and j + 1 < len(ins):
+                record(acc, ins[j + 1][0])
                 break
 
     fields = collections.defaultdict(set)
     for target, codes in cases.items():
         if target not in at:
             continue
+        stored = False
         for j in range(at[target], min(at[target] + 40, len(ins))):
             text = ins[j][1]
+            # A `je` target can be another tree node rather than a case body.
+            # A real body stores its pointer before it branches anywhere; a
+            # node compares first. See the fourth trap in the header.
+            if not stored and re.match(r"^j[a-z]+\s", text) and not re.match(r"^jmp\b", text):
+                break
             m = STORE.match(text)
             if m:
                 base, off = m.group(1), int(m.group(2), 16)
@@ -120,6 +184,7 @@ def main():
                 # which is a far better filter than "offset is large enough",
                 # the one that lost `att` by rejecting its offset of 0.
                 if EBP_BASE <= off < EBP_BASE + 0x37c:
+                    stored = True
                     for c in codes:
                         fields[c].add(off)
             if re.match(r"^(jmp|ret)\b", text):
