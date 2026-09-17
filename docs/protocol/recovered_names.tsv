@@ -177,4 +177,20 @@
 # what separates these from the destructors that share slot 1 elsewhere).
 #
 0046ec90	server	trs_sm_messengerjob::OnTimeout	descriptive	vtable slot 1 of a trs_wait_response descendant; body is `if (singleton == 0) Assert(); dispatch();` with no _free, the shape the four already-applied OnTimeout handlers share	
-0046ef20	server	trs_sm_gameworldjob::OnTimeout	descriptive	vtable slot 1 of a trs_wait_response descendant; body is `if (singleton == 0) Assert(); dispatch();` with no _free, the shape the four already-applied OnTimeout handlers share	
+0046ef20	server	trs_sm_gameworldjob::OnTimeout	descriptive	vtable slot 1 of a trs_wait_response descendant; body is `if (singleton == 0) Assert(); dispatch();` with no _free, the shape the four already-applied OnTimeout handlers share
+#
+# APPENDED 2026-09-17 (eighth batch): four base-class stubs the original
+# `## Illegal ##` harvest could not see, because the engine's own source has a
+# TYPO -- six of these strings carry a single leading '#' where 208 carry two,
+# and the harvest grepped for two. The class is spelled IGOBJ in these, not
+# IGObj; the string's class is the authority, per the same rule that pass used.
+#
+# Each is confirmed by its BODY, not by the label alone: 34-39 bytes of
+# `log("# Illegal ## IGOBJ::<Method> TypeID: %u"); Assert(); return;` -- the
+# base class's "you did not override this" stub, where the string is the whole
+# purpose of the function rather than something it merely mentions.
+#
+0057f980	server	IGObj::EngageBuffSkill	engine	one-hash variant of the `## Illegal ##` base-class stub, 34-39 bytes: logs its own name then asserts. The two-hash harvest missed six such strings; this is one of the four that were still unnamed	
+0057fad0	server	IGObj::NotifyClientAPIconStatus	engine	one-hash variant of the `## Illegal ##` base-class stub, 34-39 bytes: logs its own name then asserts. The two-hash harvest missed six such strings; this is one of the four that were still unnamed	
+0057fb00	server	IGObj::IsActiveBuff	engine	one-hash variant of the `## Illegal ##` base-class stub, 34-39 bytes: logs its own name then asserts. The two-hash harvest missed six such strings; this is one of the four that were still unnamed	
+0057fb30	server	IGObj::GetRemainSkillPoint	engine	one-hash variant of the `## Illegal ##` base-class stub, 34-39 bytes: logs its own name then asserts. The two-hash harvest missed six such strings; this is one of the four that were still unnamed	

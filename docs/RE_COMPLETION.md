@@ -10742,3 +10742,62 @@ name is real, not when it sits in a named class — and it is the one this ledge
 should quote, because the class-qualified figure (62%) measures attribution, not
 naming.
 
+## 2026-09-17 — a typo in the engine's source hid four stubs, and a circular validation
+
+Hunting the "second seed source" the last entry called for. It found one, small
+and exact — and, more usefully, caught a flaw in how I had been validating.
+
+### The `## Illegal ##` harvest missed a typo variant
+
+The base-class stub strings are not uniform. Counted:
+
+| leading hashes | strings | still unnamed |
+|---|---|---|
+| `##` | **208** | 0 |
+| `#` | **6** | **4** |
+
+The original harvest grepped `"## Illegal ##"`, so the six one-hash strings were
+invisible to it. They also spell the class `IGOBJ` rather than `IGObj`. Four
+were still unnamed and are now applied — `IGObj::EngageBuffSkill`,
+`NotifyClientAPIconStatus`, `IsActiveBuff`, `GetRemainSkillPoint` — each
+confirmed by its **body** and not merely its label: 34-39 bytes of
+`log("# Illegal ## IGOBJ::<Method> TypeID: %u"); Assert(); return;`, where the
+string is the function's whole purpose rather than something it mentions.
+
+Two entries this session now turn on the same thing: an empty or short result is
+a fact about the pattern. `"## Illegal ##"` and `GetParam` were both *good*
+probes that quietly under-covered.
+
+### Where the ten-way collision came from
+
+Visible now that the dump carries last tick's corrections: each of those ten
+functions contains the literal string `"AQ_StorageUpdater::Init"`. One shared
+log label, taken by an earlier pass as ten names. The same shape as
+`SendMsgToGameWorldAllianceUser`, where two functions share one message.
+
+**So the rule is: a `Class::Method` label names a function only when exactly one
+function carries it.** Measured: of **409** distinct labels found inside
+function bodies, **23 are carried by more than one function** and are unsafe as
+names; 386 are unique.
+
+### The validation was circular, and 100% was not evidence
+
+Testing that rule against already-named functions gave **360 agree, 0 differ**.
+That number is worthless, and noticing why is the point: the functions it tested
+are largely ones an earlier pass named *from these very labels*, so the sample
+was selected by the rule under test.
+
+The independent check exposed it immediately. `FUN_00469100` carries a unique
+label `GObjPC::DumpItemWithOptions` — and is a **7,622-byte logging function**
+full of item-serial, drop, gold and token messages. It is not that method; it
+merely mentions it. A rule scored at "100%" would have renamed it.
+
+**What survives**: the four stubs above, because their evidence is structural
+(body shape) rather than the label alone. The remaining unique-label candidates
+are not applied, because the only thing recommending them is a validation that
+cannot see its own blind spot.
+
+**For the next lever**: when a naming rule is scored against already-named
+functions, check first whether those names came from the rule. If they did, the
+score measures nothing.
+
