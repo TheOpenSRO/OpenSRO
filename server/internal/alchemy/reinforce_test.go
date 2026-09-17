@@ -2,6 +2,7 @@ package alchemy
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -231,8 +232,11 @@ func TestErrorCodesAreDistinctAndInRange(t *testing.T) {
 		t.Errorf("%d error codes, want the 15 harvested from the family", len(ErrorCodes))
 	}
 	for _, named := range []int{
-		ErrNoSourceItem, ErrNoTargetItem, ErrBaseCheck,
-		ErrKindMismatch, ErrSlotOccupied, ErrNeedAthanasia,
+		ErrNoSourceItem, ErrRecipeNotLoaded, ErrOnlyEquipCanBeReinforced,
+		ErrRecipeMismatch, ErrEquipClassMismatchProbUp, ErrTargetCannotBeReinforced,
+		ErrNotReinforceStuff, ErrStuffLoadedTwice, ErrAstral,
+		ErrEnchantEquipClassMismatch, ErrMagicStone2Max, ErrEnchantFailed,
+		ErrAstralAlt, ErrHonorItem, ErrAlreadyDone,
 	} {
 		if !seen[named] {
 			t.Errorf("named code %#x is not in ErrorCodes", named)
@@ -240,5 +244,48 @@ func TestErrorCodesAreDistinctAndInRange(t *testing.T) {
 	}
 	if seen[Success] {
 		t.Error("Success collides with an error code")
+	}
+}
+
+// Every code must carry the client message error_codes.md gives it, and the one
+// that carries none must be the one the client's switch has no case for.
+//
+// This test exists because a previous version of the package asserted that the
+// engine names none of these codes, on the strength of a grep that only looked
+// inside the CEnchant functions. The names were in this repository the whole
+// time.
+func TestEveryCodeHasItsClientMessage(t *testing.T) {
+	for _, c := range ErrorCodes {
+		msg, ok := ErrorMessages[c]
+		if !ok {
+			t.Errorf("code %#x has no ErrorMessages entry", c)
+			continue
+		}
+		if c == ErrNoSourceItem {
+			if msg != "" {
+				t.Errorf("%#x maps to %q; it has no case in the client switch", c, msg)
+			}
+			continue
+		}
+		if msg == "" {
+			t.Errorf("code %#x maps to an empty message", c)
+		}
+		if !strings.HasPrefix(msg, "UIIT_MSG_") {
+			t.Errorf("code %#x maps to %q, which is not a UIIT_MSG_ name", c, msg)
+		}
+	}
+	if len(ErrorMessages) != len(ErrorCodes) {
+		t.Errorf("%d messages for %d codes", len(ErrorMessages), len(ErrorCodes))
+	}
+}
+
+// 0x5420 and 0x5424 both mean STRGERR_ASTRAL. Keeping that visible stops a
+// later reader "fixing" what looks like a copy-paste.
+func TestTwoCodesShareTheAstralMessage(t *testing.T) {
+	if ErrorMessages[ErrAstral] != ErrorMessages[ErrAstralAlt] {
+		t.Errorf("%#x and %#x no longer share a message", ErrAstral, ErrAstralAlt)
+	}
+	if ErrorMessages[ErrAstral] != "UIIT_MSG_STRGERR_ASTRAL" {
+		t.Errorf("%#x maps to %q", ErrAstral, ErrorMessages[ErrAstral])
 	}
 }

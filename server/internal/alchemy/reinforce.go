@@ -239,21 +239,114 @@ func (o Outcome) Messages(optionLevelAfter int) []string {
 	return out
 }
 
-// The alchemy error codes, as the numbers they are. The engine names none of
-// them anywhere in either binary, so this project does not either -- the codes
-// travel on the wire and the client switches on them.
+// The alchemy error codes, with the client's own name for each.
+//
+// A PREVIOUS VERSION OF THIS FILE SAID THE ENGINE NAMES NONE OF THEM. That was
+// wrong, and the mistake is worth keeping visible because of its shape: the
+// probe was "search for a string inside the CEnchant functions", it found
+// nothing, and the conclusion drawn was about the whole image. The names were
+// already in this repository -- docs/protocol/error_codes.md decoded them from
+// the client's 643-case message switch months before. An empty grep is a fact
+// about the grep.
+//
+// Fourteen of the fifteen resolve. 0x5406 has no case in that switch.
 const (
-	ErrNoSourceItem  = 0x5406 // CEnchant::vslot_004, slot[0].item == 0
-	ErrNoTargetItem  = 0x5407 // CEnchant::vslot_004, target == 0
-	ErrBaseCheck     = 0x5408 // CEnchant::vslot_004, the third check
-	ErrKindMismatch  = 0x540a // CEnchant_Reinforce::vslot_005
-	ErrSlotOccupied  = 0x5412 // CEnchant_Reinforce::vslot_000
-	ErrNeedAthanasia = 0x5420 // CEnchant_Reinforce::vslot_005
+	// ErrNoSourceItem is CEnchant::vslot_004's first check, ctx+0x2246 == 0.
+	// It is the one code with no entry in the client's switch, so the name
+	// here is descriptive rather than the engine's.
+	ErrNoSourceItem = 0x5406
+
+	// ErrRecipeNotLoaded is vslot_004's second check, ctx+0x2252 == 0.
+	// UIIT_MSG_REINFORCERR_RECIPE_NOT_LOADED -- so the second slot holds the
+	// RECIPE, which the field name alone did not say.
+	ErrRecipeNotLoaded = 0x5407
+
+	// ErrOnlyEquipCanBeReinforced is vslot_004's third check, a virtual on the
+	// loaded item. UIIT_MSG_REINFORCERR_ONLY_EQUIPITEM_CAN_BE_REINFORCED names
+	// what that virtual asks: is this an equipment item.
+	ErrOnlyEquipCanBeReinforced = 0x5408
+
+	// ErrRecipeMismatch -- UIIT_MSG_REINFORCERR_RECIPE_MISMATCH.
+	ErrRecipeMismatch = 0x5409
+
+	// ErrEquipClassMismatchProbUp is CEnchant_Reinforce::vslot_005's second
+	// check. UIIT_MSG_REINFORCERR_EQUIPCLASS_MISMATCH_PROB_UP.
+	//
+	// "PROB_UP" independently confirms the rate reading: the optional second
+	// element whose presence makes slot 6 add the base rate twice is a
+	// PROBABILITY-BOOSTING item, which is why it contributes to the rate at
+	// all. That was inferred from the arithmetic; this names it.
+	ErrEquipClassMismatchProbUp = 0x540a
+
+	// ErrTargetCannotBeReinforced -- UIIT_MSG_REINFORCERR_TARGETEQUIP_CANT_BE_REINFORCED.
+	ErrTargetCannotBeReinforced = 0x540f
+
+	// ErrNotReinforceStuff -- UIIT_MSG_REINFORCERR_IS_NOT_REINFORCE_STUFF.
+	ErrNotReinforceStuff = 0x5410
+
+	// ErrStuffLoadedTwice is CEnchant_Reinforce::vslot_000's refusal when the
+	// slot it picked is already occupied.
+	// UIIT_MSG_REINFORCERR_STUFF_CANT_BE_LOADED_MULTIPLE_TIME.
+	ErrStuffLoadedTwice = 0x5412
+
+	// ErrAstral is CEnchant_Reinforce::vslot_005's third check, which tests the
+	// item for magic-option tag 'atha' (TagAthanasia, MATTR_ATHANASIA) and
+	// raises UIIT_MSG_STRGERR_ASTRAL.
+	//
+	// THE TAG AND THE MESSAGE DISAGREE and this project does not resolve it:
+	// the code tests Athanasia, the message says Astral. Both readings are
+	// solid on their own -- 0x61746861 is 'atha' and magic_options.md maps it
+	// to MATTR_ATHANASIA, and error_codes.md maps 0x5420 to STRGERR_ASTRAL --
+	// so either the message is reused across two stones or one of the two
+	// vocabularies uses a different English word than the other. Recorded as a
+	// conflict rather than decided.
+	ErrAstral = 0x5420
+
+	// ErrEnchantEquipClassMismatch -- UIIT_MSG_ENCHANT_EQUIPCLASS_MISMATCH.
+	ErrEnchantEquipClassMismatch = 0x5421
+
+	// ErrMagicStone2Max -- UIIT_MSG_STRGERR_MAGICSTONE2_MAX.
+	ErrMagicStone2Max = 0x5422
+
+	// ErrEnchantFailed is UIIT_MSG_ENCHANT_FAILED, and it is the one code the
+	// client's alchemy result handler special-cases: it is NOT shown through
+	// the generic error box, because a plain failed enchant has its own UI.
+	ErrEnchantFailed = 0x5423
+
+	// ErrAstralAlt is a second code mapping to UIIT_MSG_STRGERR_ASTRAL.
+	ErrAstralAlt = 0x5424
+
+	// ErrHonorItem -- UIIT_MSG_TC_ERROR_ENCHANT_HONOR_ITEM. "TC" is the
+	// training camp, whose honour items cannot be enchanted.
+	ErrHonorItem = 0x5425
+
+	// ErrAlreadyDone is CEnchant_UpperReinforce::vslot_005's refusal.
+	// UIIT_MSG_REINFORCERR_ALREADY_DONE.
+	ErrAlreadyDone = 0x5426
 )
 
+// ErrorMessages maps each code to the client message it produces, from
+// docs/protocol/error_codes.md. 0x5406 is absent from the client's switch and
+// so maps to "".
+var ErrorMessages = map[int]string{
+	0x5406: "",
+	0x5407: "UIIT_MSG_REINFORCERR_RECIPE_NOT_LOADED",
+	0x5408: "UIIT_MSG_REINFORCERR_ONLY_EQUIPITEM_CAN_BE_REINFORCED",
+	0x5409: "UIIT_MSG_REINFORCERR_RECIPE_MISMATCH",
+	0x540a: "UIIT_MSG_REINFORCERR_EQUIPCLASS_MISMATCH_PROB_UP",
+	0x540f: "UIIT_MSG_REINFORCERR_TARGETEQUIP_CANT_BE_REINFORCED",
+	0x5410: "UIIT_MSG_REINFORCERR_IS_NOT_REINFORCE_STUFF",
+	0x5412: "UIIT_MSG_REINFORCERR_STUFF_CANT_BE_LOADED_MULTIPLE_TIME",
+	0x5420: "UIIT_MSG_STRGERR_ASTRAL",
+	0x5421: "UIIT_MSG_ENCHANT_EQUIPCLASS_MISMATCH",
+	0x5422: "UIIT_MSG_STRGERR_MAGICSTONE2_MAX",
+	0x5423: "UIIT_MSG_ENCHANT_FAILED",
+	0x5424: "UIIT_MSG_STRGERR_ASTRAL",
+	0x5425: "UIIT_MSG_TC_ERROR_ENCHANT_HONOR_ITEM",
+	0x5426: "UIIT_MSG_REINFORCERR_ALREADY_DONE",
+}
+
 // ErrorCodes is every 0x54xx value the CEnchant family returns, in order.
-// Six are placed above; the rest appear in operations not yet read, and are
-// listed so a reader knows the range is not exhausted by the named ones.
 var ErrorCodes = []int{
 	0x5406, 0x5407, 0x5408, 0x5409, 0x540a, 0x540f, 0x5410, 0x5412,
 	0x5420, 0x5421, 0x5422, 0x5423, 0x5424, 0x5425, 0x5426,

@@ -56,20 +56,56 @@ Fifteen distinct codes appear across the family:
 	0x5406 0x5407 0x5408 0x5409 0x540a 0x540f 0x5410 0x5412
 	0x5420 0x5421 0x5422 0x5423 0x5424 0x5425 0x5426
 
-Success is **1**. The base precondition check (`CEnchant::vslot_004`,
-`0x00501cd0`) is the clearest specimen:
+Success is **1**.
+
+**CORRECTION (2026-09-17).** This section first said *"no string in either
+binary names them"*. That is wrong, and the way it went wrong is worth keeping:
+the probe was a search for message strings **inside the CEnchant functions**, it
+came back empty, and the conclusion drawn from it was about the whole image.
+Fourteen of the fifteen were already named **in this repository** —
+`docs/protocol/error_codes.md` decoded them from the client's 643-case message
+switch in an earlier pass. An empty grep is a fact about the grep.
+
+| code | the client's name |
+|---|---|
+| `0x5406` | **no case in the client's switch** |
+| `0x5407` | `UIIT_MSG_REINFORCERR_RECIPE_NOT_LOADED` |
+| `0x5408` | `UIIT_MSG_REINFORCERR_ONLY_EQUIPITEM_CAN_BE_REINFORCED` |
+| `0x5409` | `UIIT_MSG_REINFORCERR_RECIPE_MISMATCH` |
+| `0x540a` | `UIIT_MSG_REINFORCERR_EQUIPCLASS_MISMATCH_PROB_UP` |
+| `0x540f` | `UIIT_MSG_REINFORCERR_TARGETEQUIP_CANT_BE_REINFORCED` |
+| `0x5410` | `UIIT_MSG_REINFORCERR_IS_NOT_REINFORCE_STUFF` |
+| `0x5412` | `UIIT_MSG_REINFORCERR_STUFF_CANT_BE_LOADED_MULTIPLE_TIME` |
+| `0x5420` | `UIIT_MSG_STRGERR_ASTRAL` |
+| `0x5421` | `UIIT_MSG_ENCHANT_EQUIPCLASS_MISMATCH` |
+| `0x5422` | `UIIT_MSG_STRGERR_MAGICSTONE2_MAX` |
+| `0x5423` | `UIIT_MSG_ENCHANT_FAILED` |
+| `0x5424` | `UIIT_MSG_STRGERR_ASTRAL` |
+| `0x5425` | `UIIT_MSG_TC_ERROR_ENCHANT_HONOR_ITEM` |
+| `0x5426` | `UIIT_MSG_REINFORCERR_ALREADY_DONE` |
+
+Three of these change what an earlier reading of this page said:
+
+- **`0x5407` is `RECIPE_NOT_LOADED`**, so the operation's second slot
+  (`ctx+0x2252`) holds a **recipe**, which the offset alone did not say.
+- **`0x5408` is `ONLY_EQUIPITEM_CAN_BE_REINFORCED`**, which names the third,
+  virtual check in `CEnchant::vslot_004`: it asks whether the loaded item is
+  equipment.
+- **`0x540a` is `EQUIPCLASS_MISMATCH_PROB_UP`.** This one is a confirmation
+  rather than a correction: the optional second element whose presence makes
+  slot 6 add the base rate twice is a **probability-boosting item**, which is
+  exactly why it contributes to the rate. That was read out of the arithmetic
+  before the name was found.
+
+So the base precondition check (`CEnchant::vslot_004`, `0x00501cd0`) reads:
 
 	if (ctx->slot[0].item == 0) return 0x5406;   // nothing to work on
-	if (ctx->target        == 0) return 0x5407;  // no second item
-	return  <third check>  ? 1 : 0x5408;
+	if (ctx->recipe        == 0) return 0x5407;  // no recipe loaded
+	return  <is this equipment?>  ? 1 : 0x5408;
 
-The client's matching codes are in `sro_client.exe`, so the pair is a real
-protocol vocabulary rather than an internal enum. **The codes are the engine's;
-no string in either binary names them**, so this document quotes the numbers and
-does not invent names for them.
-
-`0x5423` is special-cased by the client's result handler and is not shown as a
-generic error.
+`0x5423` — `ENCHANT_FAILED` — is special-cased by the client's result handler
+and is deliberately **not** shown through the generic error box, because a
+plain failed enchant has its own UI. That is consistent with its name.
 
 ## Reinforcing: the complete success formula
 
@@ -153,6 +189,13 @@ whatever the level.
 `0x61746861` is the tag `atha`, which `magic_options.md` records as
 `MATTR_ATHANASIA` (1635018849) — the second tag constant in this system to match
 that table exactly.
+
+**The tag and the error message disagree, and this project does not resolve
+it.** The code tests Athanasia; `0x5420` is `UIIT_MSG_STRGERR_ASTRAL`. Both
+readings are independently solid — `0x61746861` really does spell `atha`, and
+`error_codes.md` really does map `0x5420` to `STRGERR_ASTRAL` — so either one
+message serves two stones, or the two vocabularies use different English words
+for the same thing. Recorded as a conflict rather than decided either way.
 
 ## The outcome the client shows
 
