@@ -42,7 +42,7 @@ one cannot rot the same way without the build going red.
 | IGObj vtable | 208 slots | SPECIFIED | docs/protocol/igobj_vtable.md | |
 | Magic-option vocabulary | 53 tags | SPECIFIED | docs/protocol/magic_options.md | ParamFor, PackTag |
 | Levelling and EXP | 8 fns | SPECIFIED | docs/protocol/param_registry.md | DeathPenaltyMinLevel, StatPointsPerLevel |
-| Quest scripting | 153 quests, 193 handlers | SPECIFIED | docs/protocol/quest_scripting.md | |
+| Quest scripting | 696 quests, 153 compiled | PARTIAL | docs/protocol/quest_scripting.md | |
 | Berserk | 6 fns | PARTIAL | docs/protocol/param_registry.md | DamageNumerator, Duration, FillPerHit |
 | Skills and masteries | 20 fns | PARTIAL | docs/protocol/skill_params.md | |
 | Item stats and tooltips | 128 CRef | PARTIAL | docs/protocol/ITEM_FORMAT.md | ReinforceDamage |
@@ -67,7 +67,7 @@ one cannot rot the same way without the build going red.
 
 ## How to read the count
 
-**12 specified, 7 partial, 14 open, of 33.** That is the honest headline, and it
+**11 specified, 8 partial, 14 open, of 33.** That is the honest headline, and it
 is not a percentage of the game — a specified system is one this project can
 implement faithfully, not one it has implemented. What srrevamp actually ships is
 a separate question, tracked in `docs/TODO.md`.
@@ -75,12 +75,13 @@ a separate question, tracked in `docs/TODO.md`.
 The open rows are ordered by class count, which is a rough proxy for effort, not
 for value.
 
-Quest scripting was the first row taken, and it shows what "specified" buys: the
-346 classes turned out to be 153 quests plus 193 nested handler classes over a
-**15-event lifecycle** — not the three-handler triple the previous note
-recorded — plus 12 named per-target kill hooks. Specifying the lifecycle covers
-all 153 quests; specifying what any individual quest *does* is separate and is
-not claimed.
+Quest scripting was the first row taken, and it went SPECIFIED then straight
+back to PARTIAL within the same session — which is the tracker working. The
+lifecycle is recovered in full (15 events, 12 per-target kill hooks, the
+`CEVENTHandler` slot-1 dispatch). What the first pass got wrong was the
+denominator: there are **696 quests**, not 153. 153 is the count of *compiled*
+ones. The other **543 have no compiled class and no objective row in either data
+file**, and until that is explained the system is not specified.
 
 ## Adding a row
 

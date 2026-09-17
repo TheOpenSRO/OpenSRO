@@ -10988,7 +10988,14 @@ commit.
 ## 2026-09-17 — first system off the new tracker: quest scripting
 
 `docs/SYSTEMS.md` went live this tick and quest scripting was the first OPEN row
-taken. **12 specified, 7 partial, 14 open, of 33.**
+taken. It went SPECIFIED and then **straight back to PARTIAL in the same
+session**, which is the tracker doing its job. **11 specified, 8 partial, 14
+open, of 33.**
+
+**The denominator was wrong and the user caught it.** The first pass wrote "153
+quests". 153 is the count of *compiled* quests; `questdata.txt` holds **696**.
+So roughly a fifth of quests are scripted in C++ and four fifths are not, and
+the spec had quietly generalised from the scripted fifth to the whole system.
 
 **The previous note described a third of the system.** It recorded a
 "SetupQuest / OnUpdate / OnDead triple". Counting the nested handler classes
@@ -11024,4 +11031,32 @@ so rather than implying coverage it does not have.
 berserk rides on (`IGObj::SetBodyMode`, slot 198), so a quest can react to a
 player going berserk. Two systems recovered a week apart turning out to share a
 mechanism is the kind of thing the tracker should surface more of.
+
+### The 543, and a conclusion that needed qualifying
+
+Checking the denominator turned up the real open question. Of 696 quests, 153
+have a compiled class (145 matching a `questdata` codename directly). The other
+**543 have no compiled class — and no objective row either**:
+
+| file | rows | what it actually holds |
+|---|---|---|
+| `questdata.txt` | 696 | id, codename, required level, title, `SN_*` text ids. A scan of all 12 columns for `MOB_`/`ITEM_`/`NPC_` codenames returns **nothing** |
+| `questcontentsdata.txt` | 989 | the quest's **description text** — up to eight `SN_CON_*` string-id slots at cols 5-12, plus chain links. Again no mob, item or count |
+
+`questcontentsdata.txt` is worth naming explicitly because it looks like the
+objectives table this project has repeatedly concluded does not exist, and it is
+not one: it is the words shown in the quest window.
+
+So "objectives are code" holds for the scripted fifth and is **unestablished for
+the other 543**. *Next probe:* read `DB_Load_RefQuest` (`0x008341b0`) and see
+which columns it binds — this project has only ever inferred `_REFQUEST`'s
+contents from its file counterpart. If it carries objective columns, the
+standing conclusion needs qualifying rather than overturning.
+
+**Why this is a good outcome rather than a retraction.** The lifecycle recovered
+this tick — 15 events, 12 per-target kill hooks, `CEVENTHandler` slot-1 dispatch
+— is unaffected and is the durable half. What changed is that the row now says
+which four fifths of the system it does not cover, instead of implying it covers
+all of it. PARTIAL exists for exactly this, and a row moving backwards one tick
+after being claimed is the tracker working, not failing.
 

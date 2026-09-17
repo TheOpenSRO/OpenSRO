@@ -1,18 +1,28 @@
 # Quest scripting
 
-How the engine runs a quest. This is the system behind the standing conclusion
-that **quest objectives are code, not data** — there is no objectives table in
-any file or database, and this document is what that looks like from the inside.
+How the engine runs a quest.
+
+This is the system behind the standing conclusion that **quest objectives are
+code, not data**. That conclusion survives this pass but needs one qualification
+it did not have: it is established for the **153 compiled quests**, and 543 of
+the game's 696 quests have neither a compiled class nor an objective row. See
+"The 543 are the open part of this system".
 
 ## Two hierarchies
 
 	CQNO_<QUESTNAME>  : CBasicQuest : CQuestBase : IQuest
 	COn<Event>        : CEVENTHandler
 
-A quest is a **compiled C++ class**. `SR_GameServer.exe` names **153** of them —
-`CQNO_CA_GORIA_2`, `CQNO_CH_HWAN_1_1`, `CQNO_WC_SOLDIER_SO_1` — each with its own
-vftable. The name is the quest's own id, so a quest can be matched to its code by
-name rather than by hunting a log string.
+**There are 696 quests, and only 153 are compiled.** `questdata.txt` holds
+**696** enabled rows, each a quest with an id, a codename, a required level, a
+title and its text ids. `SR_GameServer.exe` names **153** `CQNO_*` classes —
+`CQNO_CA_GORIA_2`, `CQNO_CH_HWAN_1_1`, `CQNO_WC_SOLDIER_SO_1` — of which **145**
+match a `questdata` codename directly. So **roughly a fifth of quests are
+scripted in C++ and the other four fifths are not.**
+
+A scripted quest is a **compiled C++ class**, each with its own vftable. The name
+is the quest's own id, so a quest can be matched to its code by name rather than
+by hunting a log string.
 
 Its objectives are **nested handler classes**, one per event it cares about, each
 deriving from `CEVENTHandler`. `CQNO_CA_GORIA_7::COnUpdate` is a distinct class
@@ -70,17 +80,37 @@ classes. `CQNO_CH_HWAN_1_1` alone carries `OnDeadForSoldier_1_1`,
 
 ## Not every quest is scripted
 
-Of the 153 quest classes, only **29 carry nested handlers** — between 1 and 12
-events each:
+Of the 153 *compiled* quest classes, only **29 carry nested handlers** — between
+1 and 12 events each:
 
 	1 event: 2 quests      7 events:  8
 	2 events: 1            8 events:  2
 	3 events: 5            9 events:  3
 	6 events: 3           10-12 events: 5
 
-The other **124 declare no handler classes at all**. Those are the ordinary
-fetch-and-report quests the generic `CBasicQuest` machinery serves without
-custom code; the 29 are the scripted ones.
+The other **124 compiled classes declare no handler classes at all**, and a
+further **543 quests have no compiled class whatsoever**.
+
+## The 543 are the open part of this system
+
+This is the gap, and it is why this system is PARTIAL rather than specified.
+Neither data file carries objectives:
+
+| file | rows | what it holds |
+|---|---|---|
+| `questdata.txt` | 696 | id, codename, required level, title, and `SN_*` text ids. **No mob, item or count columns** — a scan for `MOB_`/`ITEM_`/`NPC_` codenames across all 12 columns returns nothing |
+| `questcontentsdata.txt` | 989 | the quest's **description text**: a codename, a title, and up to eight `SN_CON_*` string-id slots (cols 5-12), plus chain links to other quests. Again no mob, item or count |
+
+So for 543 quests there is no compiled class **and** no objective row. Either the
+generic `CBasicQuest` machinery serves them from something not yet found — the
+`_REFQUEST` DB table is the obvious candidate, and this project has only ever
+inferred its contents from its file counterpart — or they are simple enough
+(talk to an NPC, receive a reward) that the lifecycle needs no objective at all.
+
+**That is not settled here, and it is the next probe**: read `DB_Load_RefQuest`
+(`0x008341b0`) and see what columns it binds. If `_REFQUEST` carries objective
+columns the long-standing "objectives are code" conclusion needs qualifying to
+"objectives are code *for the scripted fifth*".
 
 ## Where the rest of a quest lives
 
@@ -88,14 +118,15 @@ custom code; the 29 are the scripted ones.
 |---|---|
 | identity and metadata | `_REFQUEST`, loaded by `DB_Load_RefQuest` (`0x008341b0`) — the server's counterpart to `questdata.txt` |
 | per-character progress | `_CHARQUEST`, with `QuestData1` / `QuestData2` |
-| objectives | **nowhere** — they are the compiled handler bodies above |
+| objectives, scripted quests | the compiled handler bodies above |
+| objectives, the other 543 | **not established** — see above |
 | helpers the handlers call | `CBasicQuest__SetupMissionNPC` and the rest of the `CBasicQuest` surface |
 
 ## What this means for srrevamp
 
-Any quest objectives srrevamp ships are **own design, and always would have
-been** — there is no table to import. That conclusion is unchanged; what is new
-is the shape a faithful implementation needs.
+Any quest objectives srrevamp ships are **own design** for the 153 scripted
+quests — there is no table to import for those. For the other 543 that is not
+yet established, pending the `_REFQUEST` probe above.
 
 A quest engine that matched this one would expose these 15 events as hooks plus
 a per-target kill hook, and let a quest bind handlers to the ones it needs. That
