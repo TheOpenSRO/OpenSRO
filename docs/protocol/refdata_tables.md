@@ -20,7 +20,7 @@ are the tables we found", but "these are the tables that exist".
 
 **A constant that is NOT a record size.** Each loader also stores `0x30` or
 `0x18` near the class pointer, and it is tempting to read that as the record
-width. It is not: `_REFOBJITEM` — the item table with 161 columns — and
+width. It is not: `_REFOBJITEM` — the item table with 160 columns — and
 `_REFCLIMATE` carry the same `0x30`/`0x18` pair as everything else, and the
 value does not vary with table complexity. It is an allocator constant. Recorded
 because the wrong reading was made and discarded during this pass.

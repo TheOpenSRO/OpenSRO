@@ -11393,3 +11393,80 @@ offset model is demonstrably wrong nearby**, so no index is claimed:
 The count is validated; the offsets are not, and this tick has a concrete
 demonstration of how they fail rather than a suspicion. Next probe: make the
 loop expansion use the walking pointer's own stride.
+
+## Counting binary fields is a dead end past the common prefix (2026-09-17)
+
+The recorded next probe was "make the loop expansion use the walking pointer's
+own stride". That is done, a second ordering bug fell out with it, and together
+they turned up a result that **redirects the effort rather than advancing it**.
+
+### Two more scanner bugs, both producing right-looking wrong output
+
+4. **Loop stride.** A loop's walking pointer advances by its own `add`, not by
+   the field size. The requirement loop walks `ebx` by 8 and stores a dword at
+   `[ebx-4]` and a byte at `[ebx]`; the field-size expansion reported
+   `0xb4,0xb8,0xbc,0xc0` where the real stores are `0xb4,0xbc,0xc4,0xcc`.
+5. **Multi-bump loop bodies interleave.** That loop consumes dword, byte, dword,
+   byte … Emitting all iterations of the first store then all of the second
+   gives the right offsets in the **wrong order**, and the order *is* the column
+   map.
+
+Fixed, the requirement pairs land as four `(dword, byte)` pairs at `0xb4/0xb8`,
+`0xbc/0xc0`, `0xc4/0xc8`, `0xcc/0xd0` — which is what "four requirement pairs"
+should look like, and the doc's columns 32..39 at fields 33..40.
+
+### The dead end
+
+Running the fixed scanner on all three deserializers:
+
+| deserializer | binary fields | real text columns |
+|---|---:|---:|
+| `RefObjCommon_ExtractData` | 58 | — (a prefix) |
+| `RefObjItem::ExtractData` | **153** | **160** |
+| `RefObjChar_ExtractData` | **80** | **104** |
+
+Both type-specific tables consume **fewer binary fields than their text has
+columns** — item by 7, char by 24. So binary field order and text column order
+agree only through the common prefix, exactly as `refobj_binary_format.md` said,
+and **a type-specific offset cannot be turned into a text column by counting**.
+
+That kills the plan `alchemy.md` was carrying for its packed reinforce rates.
+The route that remains is the stream's own per-column schema — the
+`(index, width)` records at `+0xe4`/`+0xe8`, stride `0x54`, that `FUN_006b1a80`
+walks — and that is now the recorded probe.
+
+`durability.md` is unaffected in principle: `+0xa4` is a **common** field, where
+the two orders do agree, so `field N → text column N−1` applies to it.
+
+### A column count was one too many, in two docs
+
+itemdata was recorded as 161 columns and characterdata as 105. A natural
+experiment settles both: `itemdata_1000` has **160** fields per line and **no
+trailing tab**, while `itemdata_5000`, `_10000` and `_20000` have 161 and **every
+line ends with a tab**. Splitting on tab turns that terminator into an empty
+final field. The real counts are **itemdata 160** and **characterdata 104**.
+
+**No recorded column index changes** — data still occupies 0..159 and 0..103.
+Only the totals were wrong, and only by the one empty field. No Go value depends
+on either number (`ItemCSVColumnCount` is srrevamp's own export width), so this
+is a documentation correction.
+
+### Still not published: the index for `+0xa4`
+
+The scanner resolves it as field 28, which would be text column 27, and that is
+**not** being claimed. Field 28 sits in a run whose offsets do not ascend with
+the field order (27 → `+0x9c`, 28 → `+0xa4`, 29 → `+0xa8`, **30 → `+0xa0`**),
+and no anchor brackets it. A struct need not be laid out in read order, so the
+jump is not proof of error — but it removes the only sanity check there, and
+itemdata columns 27 and 28 sit in a clean **1.5 ratio** that would make a wrong
+answer look convincing. That is the `characterdata` column-79 shape exactly.
+
+What would settle it: resolve the offset for field 15, which the doc anchors as
+"Country at column 14", bracketing field 28 from below.
+
+### The limitation now named
+
+The scanner is a **linear pass with no control flow**. A register set on an
+untaken branch is still attributed afterwards, which is why the `+0x184` anchor
+cannot be recovered — field 58's store through `ebx` is real, but an earlier
+`mov ebx,esi` on a different path drops the tracker's identity for `ebx`.

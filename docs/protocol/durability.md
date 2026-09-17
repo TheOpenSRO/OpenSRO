@@ -160,14 +160,29 @@ per-point price only in that direction. Nothing names either field.
   to a column means counting through 7,052 bytes of it. That single unread
   function now blocks two systems, which makes it the most valuable one left.
 
-  `client/tools/re/fields.py` does it mechanically and is now **validated** —
-  it returns exactly the 58 fields known for `_RefObjCommon`, with three
-  independent anchors landing.
+  `client/tools/re/fields.py` does it mechanically and is **validated** — it
+  returns exactly the 58 fields known for `_RefObjCommon`, and its requirement
+  pairs now land as four `(dword, byte)` pairs at `0xb4/0xb8`, `0xbc/0xc0`,
+  `0xc4/0xc8`, `0xcc/0xd0` — a stride-8 walk, matching the doc's "four
+  requirement pairs" at columns 32..39.
 
-  **It does not yet settle `+0xa4`, and there is a specific trap here.** That
-  offset is written by **both** `RefObjItem::ExtractData` and
-  `RefObjCommon_ExtractData`, so which record `item->[0x34]->[0x18]` points at
-  decides which function's field index applies. Taking either without settling
-  that would be the `characterdata` column-79 mistake a third time. The probe is
-  to identify the record, then resolve the walking-pointer stores in
-  `0x2a0..0x520`.
+  **Being in the common half is what makes this reachable at all.** Binary field
+  order and text column order agree only through the common prefix; the item
+  half consumes 153 binary fields against 160 text columns, so counting cannot
+  convert there (see `refobj_binary_format.md`). `+0xa4` is common, so
+  `field N → text column N−1` applies to it and not to alchemy's rates.
+
+  **The index is still not published.** The scanner resolves `+0xa4` as field
+  28 — which would be text column 27 — and that is *not* being claimed, for one
+  specific reason: field 28 sits in a run whose offsets do not ascend with the
+  field order (27 → `+0x9c`, 28 → `+0xa4`, 29 → `+0xa8`, **30 → `+0xa0`**), and
+  no anchor brackets it. A struct need not be laid out in read order, so the
+  jump is not proof of an error — but it removes the only sanity check available
+  there, and the nearby columns 27 and 28 sit in a clean 1.5 ratio that would
+  make a wrong answer look right.
+
+  That is the `characterdata` column-79 shape exactly, and the rule is that a
+  suggestive curve is not a use-site. **What would settle it**: verify the
+  scanner against a common-prefix anchor that brackets field 28 — the doc's
+  "Country at column 14" is field 15 and currently unresolved, so resolving that
+  one offset would do it.

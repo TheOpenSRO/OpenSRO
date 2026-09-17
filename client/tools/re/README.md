@@ -67,19 +67,39 @@ obvious failure:
 
 ### What it does and does not give you
 
-`RefObjItem::ExtractData` returns **153 fields, 79 offsets resolved**. The
-**count** is what the validation covers. The **offsets** are only as good as the
-register tracking, and two things are known to be unresolved:
+| deserializer | binary fields | real text columns |
+|---|---:|---:|
+| `RefObjCommon_ExtractData` | **58** (validated) | — (a prefix) |
+| `RefObjItem::ExtractData` | 153 | 160 |
+| `ReferenceData::RefObjChar_ExtractData` | 80 | 104 |
 
-- Resolved offsets run to `+0x298` and resume at `+0x524`. The gap contains
-  exactly the offsets two specs want — the packed reinforce rates at
-  `+0x2c0/0x2e0/0x300` and the repair price basis at `+0xa4` — because that
-  region is written through walking pointers the tracker loses.
-- **`+0xa4` and `+0xa8` are written by BOTH `RefObjItem::ExtractData` and
-  `RefObjCommon_ExtractData`.** Until it is settled which record the pointer in
-  `item->[0x34]->[0x18]` actually is, a column index taken from either would be
-  a coin flip dressed as a recovery.
+**The count is what the validation covers.** Two more bugs were found and fixed
+on 2026-09-17, both of which produced right-looking wrong output:
 
-So: no column mapping is published yet, and the next probe is narrow — resolve
-the walking-pointer stores in `0x2a0..0x520`, and settle which record `+0xa4`
-belongs to.
+4. **Loop stride.** A loop's walking pointer advances by its own `add`, not by
+   the field size. The requirement loop walks `ebx` by 8 and stores a dword at
+   `[ebx-4]` and a byte at `[ebx]`; using the field size reported
+   `0xb4,0xb8,0xbc,0xc0` where the real stores are `0xb4,0xbc,0xc4,0xcc`.
+5. **Multi-bump loop bodies interleave.** That loop consumes dword, byte, dword,
+   byte … Emitting every iteration of the first store and then every iteration
+   of the second gives the right offsets in the **wrong order** — and the order
+   *is* the column map. Loop bodies are buffered and replayed now, and the
+   requirement pairs land as four `(dword, byte)` pairs.
+
+**Counting does not give a text column past the common prefix.** Both
+type-specific tables consume fewer binary fields than their text has columns, so
+the agreement the common prefix enjoys does not extend. A type-specific column
+index lives in the stream's own per-column schema — the `(index, width)` records
+at `+0xe4`/`+0xe8`, stride `0x54`, that `FUN_006b1a80` walks — not in a count of
+reads.
+
+### The limitation that remains
+
+**It is a linear scan with no control flow.** Registers are tracked in address
+order, so a value set on a branch that is not taken is still attributed
+afterwards. That is why the `+0x184` anchor cannot be recovered: field 58's
+store through `ebx` is real, but a `mov ebx,esi` earlier in the listing — on a
+different path — drops the tracker's identity for `ebx`, and a linear walk has
+no way to know the two never execute together.
+
+Any offset it reports should be treated as a lead until an anchor brackets it.

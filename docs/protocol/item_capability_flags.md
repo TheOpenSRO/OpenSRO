@@ -368,7 +368,7 @@ bump, one literal at `6a3bc5`):
 
 **`RefObjCommon_ExtractData` consumes columns 0..57.** There were never two
 missing columns; the count was two short of a row width that was itself wrong.
-A real client's itemdata rows have **161** columns and characterdata **105** —
+A real client's itemdata rows have **160** columns and characterdata **104** —
 56 was never either table's width, it was a mis-measured prefix.
 
 Four independent anchors land exactly on the expanded map, none of them the

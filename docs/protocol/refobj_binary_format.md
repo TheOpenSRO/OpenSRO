@@ -110,3 +110,52 @@ What this does and does not invalidate:
 
 **Rule for future measurements**: deduplicate itemdata by ID before counting,
 report distinct IDs rather than rows, and say the corpus is partial.
+
+## The text column counts were one too many (2026-09-17)
+
+This project recorded itemdata as **161** columns and characterdata as **105**.
+Both counted one field too many, and a natural experiment in the data proves it:
+
+| file | fields per line | lines ending in a tab |
+|---|---:|---:|
+| `itemdata_1000` | **160** | 0 |
+| `itemdata_5000` | 161 | all 2,876 |
+| `itemdata_10000` | 161 | all 2,267 |
+| `itemdata_20000` | 161 | all 74 |
+| `characterdata_5000` | 105 | all 1,698 |
+| `characterdata_10000` | 105 | all 2,281 |
+
+Every file with a trailing tab reports one more field than `itemdata_1000`,
+which has no trailing tab. Splitting on tab turns that terminator into an empty
+final field. So the real counts are **itemdata 160** and **characterdata 104**.
+
+**No recorded column index changes** — real data still occupies 0..159 and
+0..103, and every index this project has cited stays where it was. Only the
+totals were wrong, and only by the one empty field.
+
+## Counting binary fields does NOT give a text column past the common prefix
+
+The section above establishes that binary field order and text column order
+agree **through the last common field**. `client/tools/re/fields.py` now counts
+binary fields reliably, and running it on all three deserializers shows exactly
+where the agreement stops:
+
+| deserializer | binary fields | real text columns |
+|---|---:|---:|
+| `RefObjCommon_ExtractData` | 58 | — (a prefix, not a table) |
+| `RefObjItem::ExtractData` | **153** | **160** |
+| `ReferenceData::RefObjChar_ExtractData` | **80** | **104** |
+
+Both type-specific tables consume **fewer binary fields than their text has
+columns** — item by 7, char by 24. So a type-specific offset cannot be turned
+into a text column by counting, whatever the counting gets right.
+
+**This is a dead end, identified rather than walked into.** The route for a
+type-specific column is the **per-column schema** the stream carries — the
+`(index, width)` records at `+0xe4`/`+0xe8`, stride `0x54`, that `FUN_006b1a80`
+walks to skip a column. That is where a type-specific index lives; counting
+reads is not.
+
+The common prefix is unaffected: there the two orders agree by four independent
+anchors, so **a common-record offset still converts**, as `field N → text
+column N−1`.

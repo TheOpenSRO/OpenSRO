@@ -151,12 +151,23 @@ sequence, not the common prefix's. See `docs/protocol/durability.md` for the
 proof, which was worked out there because the repair price basis turned out to
 sit in the *other* half.
 
-**The index itself is still not published.** Resolved offsets run to `+0x298`
-and resume at `+0x524`, and these three sit in the gap — that region is written
-through walking pointers whose stride the tracker gets wrong (it advances by the
-field size where the loop advances by 8). The validation covers the field
-*count*, not the offsets. The probe is now narrow: make the loop expansion use
-the walking pointer's own stride.
+**Counting will never give these a text column, and that is now established
+rather than suspected.** `RefObjItem::ExtractData` consumes **153** binary
+fields; a real itemdata row has **160** columns. The two type-specific tables
+both consume fewer binary fields than their text has columns — item by 7, char
+by 24 — so binary field order and text column order agree only **through the
+common prefix**, exactly as `docs/protocol/refobj_binary_format.md` said they
+would.
+
+So the plan this page carried — resolve the offset, count to a field index,
+read off the column — **cannot work for these three**, because they are in the
+item half. That is a dead end identified, not walked into.
+
+**The route that remains** is the per-column schema the stream carries: the
+`(index, width)` records at `+0xe4`/`+0xe8`, stride `0x54`, that `FUN_006b1a80`
+walks to skip a column. A type-specific column index lives there. Reading that
+walker's record layout is this system's next probe, and it replaces the counting
+plan.
 
 ### 2. The second element — `CEnchant_Reinforce::vslot_006`
 

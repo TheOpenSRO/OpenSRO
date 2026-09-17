@@ -47,7 +47,7 @@ def bumps_in(addr, fs):
     if not hits:
         return 0
     f = X.owner(addr, fs)
-    trips = loop_trips(f["addr"], f["addr"] + f["size"])
+    trips, _, _ = loop_trips(f["addr"], f["addr"] + f["size"])
     return sum(trips.get(a, 1) for a in hits)
 
 def loop_trips(lo, hi):
@@ -70,6 +70,9 @@ def loop_trips(lo, hi):
     cmpn = R.compile(r"^cmp\s+(e[a-z]{2}),(0x[0-9a-f]+)$")
     clob = R.compile(r"^(?:mov|add|sub|xor|inc|dec|and|or|lea|pop|movzx|movsx)\s+(e[a-z]{2})\b")
     trips, counters, regval = {}, {}, {}
+    strides, loops = {}, []
+    adv = R.compile(r"^add\s+(e[a-z]{2}),(0x[0-9a-f]+)$")
+    st = R.compile(r"^(?:mov|fstp)\s+(?:BYTE|WORD|DWORD|QWORD) PTR \[(e[a-z]{2})")
     pend = None
     for a, t in rows:
         m = imm.match(t)
@@ -99,49 +102,99 @@ def loop_trips(lo, hi):
                 if lo <= tgt <= a:
                     n = pend[1] if isinstance(pend, tuple) else counters.get(pend)
                     if n and 1 < n <= 64:
+                        body = [(x, y) for x, y in rows if tgt <= x <= a]
+                        # THE STRIDE IS THE LOOP'S OWN ADVANCE, not the field
+                        # size. The requirement-pair loop walks ebx by 8 and
+                        # stores a dword at [ebx-4] and a byte at [ebx]; using
+                        # the field size reports 0xb4,0xb8,0xbc,0xc0 where the
+                        # real stores are 0xb4,0xbc,0xc4,0xcc. So: find the
+                        # register the body stores through, and the `add` it
+                        # takes inside the body.
+                        bases = collections.Counter(
+                            st.match(y).group(1) for _, y in body
+                            if st.match(y) and st.match(y).group(1) != "esp")
+                        stride = None
+                        if bases:
+                            base_reg = bases.most_common(1)[0][0]
+                            for _, y in body:
+                                m2 = adv.match(y)
+                                if m2 and m2.group(1) == base_reg:
+                                    stride = int(m2.group(2), 16); break
+                        loops.append((tgt, a, n, stride))
                         for aa, _ in rows:
                             if tgt <= aa <= a:
                                 trips[aa] = n
+                                if stride: strides[aa] = stride
             pend = None
             continue
         m = clob.match(t)
         if m:
             regval.pop(m.group(1), None)
-    return trips
+    return trips, strides, loops
 
 def scan(lo, hi, fs):
     """Field index -> record offset for one ExtractData body.
 
-    THE RECORD POINTER LIVES IN MORE THAN ONE REGISTER. RefObjCommon_ExtractData
-    spills it to [esp+0x14] at entry and reloads it into esi and into ebx at
-    different points, and also builds short-lived walking pointers off it with
-    `lea ebx,[esi+0xb8]`. Picking the single busiest store register -- which an
-    earlier version did -- resolved the ebx stores (0xd8..0x184) and silently
-    dropped the esi ones (0x80..0xd8), which is the range holding +0xa4.
+    ONE FORWARD PASS. Three things have to be right together, and each was got
+    wrong on its own first:
 
-    So identity is propagated instead: the incoming `this` (ecx, thiscall) is
-    the record; a stack slot written from a record register is the record; a
-    register loaded from such a slot is the record; `lea R,[record+N]` makes R a
-    walking pointer at a known displacement.
+    * THE RECORD POINTER LIVES IN MORE THAN ONE REGISTER. It is spilled to a
+      stack slot at entry and reloaded into esi and ebx at different points, and
+      short-lived walking pointers are built off it with `lea`. Identity is
+      propagated rather than guessing one busiest register.
+    * A LOOP'S STRIDE IS ITS OWN ADVANCE, not the field size. The requirement
+      loop walks by 8 and stores a dword at [ebx-4] and a byte at [ebx].
+    * A MULTI-BUMP LOOP BODY INTERLEAVES. That loop consumes dword, byte, dword,
+      byte ... Emitting every iteration of the first store and then every
+      iteration of the second gives the right offsets in the wrong ORDER, and
+      the order is the column map. So a loop body is buffered and replayed.
     """
     rows = [(a, t.strip()) for a, t in X.asm() if lo <= a < hi]
     rc = collections.Counter(BUMP.match(t).group(1) for _, t in rows if BUMP.match(t))
     RD = rc.most_common(1)[0][0] if rc else "esi"
-    trips = loop_trips(lo, hi)
+    trips, strides, loops = loop_trips(lo, hi)
+    loop_at = {}
+    for tgt, end, n, stride in loops:
+        for a, _ in rows:
+            if tgt <= a <= end:
+                loop_at[a] = (tgt, end, n, stride)
 
-    base = {"ecx": 0}          # register -> displacement from the record
-    slots = {}                 # esp slot -> displacement from the record
+    base = {"ecx": 0}
+    slots = {}
     out, idx, pending = [], 0, None
+    body, cur_loop = [], None
 
     spill = R.compile(r"^mov\s+DWORD PTR \[esp([+-]0x[0-9a-f]+)?\],(e[a-z]{2})$")
     fill = R.compile(r"^mov\s+(e[a-z]{2}),DWORD PTR \[esp([+-]0x[0-9a-f]+)?\]$")
     leab = R.compile(r"^lea\s+(e[a-z]{2}),\[(e[a-z]{2})([+-]0x[0-9a-f]+)?\]$")
     movr = R.compile(r"^mov\s+(e[a-z]{2}),(e[a-z]{2})$")
-    adv = R.compile(r"^add\s+(e[a-z]{2}),(0x[0-9a-f]+)$")
+    advr = R.compile(r"^add\s+(e[a-z]{2}),(0x[0-9a-f]+)$")
     store = R.compile(r"^(?:mov|fstp)\s+(BYTE|WORD|DWORD|QWORD) PTR \[(e[a-z]{2})([+-]0x[0-9a-f]+)?\]")
     clob = R.compile(r"^(?:mov|movzx|movsx|xor|pop|sub|and|or|imul|inc|dec)\s+(e[a-z]{2})\b")
 
+    def emit(pr, step, stride, kind="read"):
+        nonlocal idx
+        idx += 1
+        if pr:
+            off, sz = pr
+            out.append((idx, off + step * (stride or sz), sz, kind))
+        else:
+            out.append((idx, None, None, kind))
+
+    def flush():
+        nonlocal body, cur_loop
+        if cur_loop is None:
+            return
+        _, _, n, stride = cur_loop
+        for step in range(n):
+            for pr, kind in body:
+                emit(pr, step, stride, kind)
+        body, cur_loop = [], None
+
     for a, t in rows:
+        L = loop_at.get(a)
+        if cur_loop and (L is None or L[:2] != cur_loop[:2]):
+            flush()
         m = spill.match(t)
         if m:
             slot = m.group(1) or ""
@@ -156,7 +209,7 @@ def scan(lo, hi, fs):
             continue
         m = leab.match(t)
         if m:
-            src = m.group(2); o = m.group(3)
+            src, o = m.group(2), m.group(3)
             if src in base: base[m.group(1)] = base[src] + (int(o, 16) if o else 0)
             else: base.pop(m.group(1), None)
             continue
@@ -165,38 +218,46 @@ def scan(lo, hi, fs):
             if m.group(2) in base: base[m.group(1)] = base[m.group(2)]
             else: base.pop(m.group(1), None)
             continue
-        m = adv.match(t)
+        m = advr.match(t)
         if m and m.group(1) in base:
-            base[m.group(1)] += int(m.group(2), 16); continue
+            # inside a loop the advance is the stride, already accounted for by
+            # the replay -- applying it here as well would double-count
+            if L is None:
+                base[m.group(1)] += int(m.group(2), 16)
+            continue
         m = store.match(t)
         if m and m.group(2) in base:
             o = m.group(3)
-            pending = (base[m.group(2)] + (int(o, 16) if o else 0), SZ[m.group(1)]); continue
+            pending = (base[m.group(2)] + (int(o, 16) if o else 0), SZ[m.group(1)])
+            continue
         m = CALL.match(t)
         if m:
             n = bumps_in(int(m.group(1), 16), fs)
             if n:
-                for _ in range(n * trips.get(a, 1)):
-                    idx += 1
-                    out.append((idx, None, None, "helper"))
+                if L is not None:
+                    cur_loop = L
+                    for _ in range(n):
+                        body.append((None, "helper"))
+                else:
+                    for _ in range(n):
+                        idx += 1
+                        out.append((idx, None, None, "helper"))
                 pending = None
-            # a call clobbers the volatile registers
-            for r in ("eax", "ecx", "edx"): base.pop(r, None)
+            for r in ("eax", "ecx", "edx"):
+                base.pop(r, None)
             continue
         if BUMP.match(t):
-            n = trips.get(a, 1)
-            for step in range(n):
-                idx += 1
-                if pending:
-                    off, sz = pending
-                    out.append((idx, off + step * sz, sz, "read"))
-                else:
-                    out.append((idx, None, None, "read"))
+            if L is not None:
+                cur_loop = L
+                body.append((pending, "read"))
+            else:
+                emit(pending, 0, None)
             pending = None
             continue
         m = clob.match(t)
         if m and not (movr.match(t) or fill.match(t) or leab.match(t)):
             base.pop(m.group(1), None)
+    flush()
     return out, idx, RD, "record"
 
 if __name__ == "__main__":
