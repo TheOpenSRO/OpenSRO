@@ -100,3 +100,38 @@ func TestClassesAndTablesCorrespond(t *testing.T) {
 		}
 	}
 }
+
+// The class-to-floor mapping, read in assembly on 2026-09-17. The boundaries
+// are the point: the engine compares `cmp dl,0x28 ; jbe` and `cmp dl,0x3c ; ja`,
+// so 40 fails and 41 passes for class 2, and 60 fails and 61 passes for class 1.
+func TestMembershipLevelFloorByClass(t *testing.T) {
+	for _, tc := range []struct {
+		class, level int
+		want         bool
+	}{
+		{MemberClass2, 40, false}, {MemberClass2, 41, true},
+		{MemberClass1, 60, false}, {MemberClass1, 61, true},
+		// A class the check does not test has no floor at all.
+		{0, 1, true}, {3, 1, true},
+	} {
+		if got := MeetsMembershipLevel(tc.class, tc.level); got != tc.want {
+			t.Errorf("MeetsMembershipLevel(class %d, level %d) = %v, want %v",
+				tc.class, tc.level, got, tc.want)
+		}
+	}
+	// The two classes must not share a floor; swapping them is the likeliest
+	// regression, and it would pass any test that only checked the set {41, 61}.
+	if f2, _ := MembershipLevelFloor(MemberClass2); f2 != 41 {
+		t.Errorf("class 2 floor = %d, want 41", f2)
+	}
+	if f1, _ := MembershipLevelFloor(MemberClass1); f1 != 61 {
+		t.Errorf("class 1 floor = %d, want 61", f1)
+	}
+}
+
+// 0x6818 is not in the client's error table; the check pushes 0x6822.
+func TestMembershipRefusalCode(t *testing.T) {
+	if ErrMembershipLevel != 0x6822 {
+		t.Errorf("ErrMembershipLevel = %#x, want 0x6822 (TC_ERROR_POSIBLE_41L)", ErrMembershipLevel)
+	}
+}

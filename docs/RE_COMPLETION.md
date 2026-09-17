@@ -13326,3 +13326,40 @@ caller; before describing what a function does with an edge input, call it with
 that input.**
 
 Suite verified the unambiguous way: `go test` exit 0, 52 packages, no FAIL lines.
+
+## The academy membership check, read in assembly (2026-09-17)
+
+`academy.md` carried an open question with a wiring target already built: two
+level floors, 41 and 61, sharing one refusal, with "which branch is which role"
+unread. The read settled the mechanics and corrected two recorded facts; it did
+not settle the roles, and the entry says why.
+
+**The refusal code was wrong.** `academy.md`, `academy.go` and the function's
+Ghidra comment all gave it as `0x6818`. **`0x6818` is not in the client's error
+table.** The branch pushes `0x6822`, which *is* `TC_ERROR_POSIBLE_41L`: the name
+was right and the number beside it was not. No Go code used the wrong value; it
+lived only in prose, which is how it survived three copies.
+
+**The predicates were vague.** They were recorded as `a != 0` and `b() != 0`.
+In assembly they are two tiny functions comparing a **class byte at
+`member[+0x34][+0x50]`** against `2` and `1`, and the level is a **byte at
+`[+0x53]` of the same record**, the looked-up member's stored level rather than
+the caller's. Class 2 needs level ≥ 41 (`cmp dl,0x28 ; jbe refuse`); class 1
+needs ≥ 61 (`cmp dl,0x3c ; ja pass`). Ghidra's `extraout_DL` naming made it look
+like each helper returned a level; neither touches `DL`. The level is loaded
+once, before either call.
+
+**Wired**: `MembershipLevelFloor`, `MeetsMembershipLevel`, `MemberClass1/2` and
+`ErrMembershipLevel = 0x6822`, with boundary tests at 40/41 and 60/61, and a test
+that fails if the two classes' floors are swapped, which a test checking only
+the set {41, 61} would never catch.
+
+**Roles not named.** `FUN_005e0790` and `FUN_005e0a30` both skip `class == 1`
+members inside a loop over the camp, which looks like "everyone except the
+master", and 61 is one above the founder level of 60. Two suggestive readings
+agreeing is still not a use-site. This loop's rule exists because a column was
+promoted on a curve twice, and "two hints agree" is how a curve feels from the
+inside. The probe that would settle it is a refusal whose *name* says master or
+apprentice, gated on the class byte; none was found in the functions read.
+
+Suite verified unambiguously: `go test` exit 0, 52 packages, no FAIL lines.

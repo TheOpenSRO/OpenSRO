@@ -48,23 +48,71 @@ const (
 	ReopenCooldownDays = 7
 )
 
-// The two level thresholds in FUN_00519770's membership check, which refuses
-// with TC_ERROR_POSIBLE_41L:
+// The two level thresholds in FUN_00519770's membership check
+// (CInstanceTrainingCamp::CheckMembershipLevel), which refuses with
+// TC_ERROR_POSIBLE_41L -- code **0x6822**.
 //
-//	if ((a != 0 && level < 0x29) || (b() != 0 && level < 0x3d))
-//	    -> 0x6818
+// CORRECTED 2026-09-17. This comment, docs/protocol/academy.md and the
+// function's Ghidra comment all gave the code as 0x6818. **0x6818 is not in the
+// client's error table at all**; the branch pushes `0x6822`, and 0x6822 is
+// UIIT_MSG_TC_ERROR_POSIBLE_41L. The name was right and the number was wrong.
 //
-// Two branches, two different minimums, one shared refusal. The error name
-// carries 41, which matches the first.
+// The predicates were recorded as `a != 0` and `b() != 0`. They are now read,
+// in assembly:
 //
-// WHICH BRANCH IS WHICH ROLE IS NOT RECOVERED. A training camp has a master and
-// apprentices and it is tempting to map them onto these two numbers, but
-// nothing read so far says which predicate selects which, so this package names
-// them by their values rather than by a role.
+//	00519872  mov edx,[edi+0x34]       ; the MEMBER's record
+//	00519875  mov dl,[edx+0x53]         ; the member's LEVEL byte
+//	0051987a  call 0x5e36e0             ; [+0x34][+0x50] == 2 ?
+//	00519883  cmp dl,0x28 ; jbe refuse  ; class 2 needs level >= 41
+//	0051988a  call 0x5e36c0             ; [+0x34][+0x50] == 1 ?
+//	00519893  cmp dl,0x3c ; ja  pass    ; class 1 needs level >= 61
+//	00519898  push 0x6822
+//
+// So a member record carries a CLASS byte at +0x50 and a LEVEL byte at +0x53,
+// and the floor depends on the class: **class 2 -> 41, class 1 -> 61**. The level
+// tested is the looked-up member's stored level, not the caller's.
+//
+// WHICH ROLE EACH CLASS IS REMAINS NOT RECOVERED, and deliberately so. Two other
+// functions (FUN_005e0790, FUN_005e0a30) test `class == 1` and SKIP that member
+// inside a loop over the camp's members, which is the shape of "everyone except
+// the master". That is suggestive, and this package has already recorded that
+// 61 sitting one above the founder level of 60 is suggestive too. Neither is a
+// use-site that names a role, so the constants below are still named by value
+// and the class codes by number.
 const (
-	MembershipLevelA = 41
-	MembershipLevelB = 61
+	MembershipLevelA = 41 // the class-2 floor
+	MembershipLevelB = 61 // the class-1 floor
+
+	// MemberClass1 and MemberClass2 are the two values of the member record's
+	// class byte (+0x50) that the membership check distinguishes. Numbers, not
+	// roles -- see above.
+	MemberClass1 = 1
+	MemberClass2 = 2
+
+	// ErrMembershipLevel is TC_ERROR_POSIBLE_41L. Not 0x6818.
+	ErrMembershipLevel = 0x6822
 )
+
+// MembershipLevelFloor is the minimum member level FUN_00519770 accepts for a
+// member of the given class, and ok is false for a class the check does not
+// test -- such a member passes without any level requirement.
+func MembershipLevelFloor(class int) (floor int, ok bool) {
+	switch class {
+	case MemberClass2:
+		return MembershipLevelA, true
+	case MemberClass1:
+		return MembershipLevelB, true
+	}
+	return 0, false
+}
+
+// MeetsMembershipLevel reproduces the check's comparisons exactly:
+// `cmp dl,0x28 ; jbe refuse` and `cmp dl,0x3c ; ja pass`, i.e. strictly above
+// 40 and strictly above 60.
+func MeetsMembershipLevel(class, level int) bool {
+	floor, ok := MembershipLevelFloor(class)
+	return !ok || level >= floor
+}
 
 // CreateRequest is what FUN_004e4680 decides about.
 type CreateRequest struct {

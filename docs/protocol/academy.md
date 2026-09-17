@@ -48,29 +48,52 @@ of the twenty functions as the "are you in a camp at all" test, refusing with
 either `0x6812` (you are, and shouldn't be) or `0x680b`
 `TC_ERROR_TRAININGCAMP_NOTHING` (you aren't, and should be).
 
-## Membership levels — `FUN_00519770`
+## Membership levels — `FUN_00519770` (`CheckMembershipLevel`)
 
-	if ((a != 0 && level < 0x29) || (b() != 0 && level < 0x3d))
-	    -> TC_ERROR_POSIBLE_41L
+**CORRECTED 2026-09-17.** This section gave the refusal as code `0x6818` and the
+two predicates as `a != 0` / `b() != 0`. **`0x6818` is not in the client's error
+table.** The branch pushes `0x6822`, which is `UIIT_MSG_TC_ERROR_POSIBLE_41L` —
+the name here was right and the number was wrong. The predicates are now read in
+assembly:
 
-**Two branches, two minimums — 41 and 61 — and one shared refusal.** The error
-name carries 41, which matches the first.
+	00519872  mov edx,[edi+0x34]        ; the MEMBER's record
+	00519875  mov dl,[edx+0x53]          ; the member's LEVEL byte
+	0051987a  call 0x5e36e0              ; [+0x34][+0x50] == 2 ?
+	00519883  cmp dl,0x28 ; jbe refuse   ; class 2: level must be >= 41
+	0051988a  call 0x5e36c0              ; [+0x34][+0x50] == 1 ?
+	00519893  cmp dl,0x3c ; ja  pass     ; class 1: level must be >= 61
+	00519898  push 0x6822                ; TC_ERROR_POSIBLE_41L
 
-**Which branch is which role is NOT recovered.** A training camp has a master
-and apprentices, and it is tempting to map those onto these two numbers, but
-nothing read so far says which predicate selects which. `server/internal/academy`
-therefore names the constants by their values rather than by a role, and has a
-test that a later pass mapping them has to change the constants rather than
-quietly reinterpret them.
+So a member record carries a **class byte at `+0x50`** and a **level byte at
+`+0x53`**, and the floor depends on the class:
 
-**The field that distinguishes the roles is now named**:
-`_TRAININGCAMPMEMBER.MemberClass` (`docs/protocol/db_columns.md`). That is the
-column the two predicates almost certainly test — but "almost certainly" is not
-a reading, and the mapping from `MemberClass` values to the 41 and 61 branches
-is exactly what still has to be read.
+| class byte | minimum level |
+|---:|---:|
+| `2` | **41** |
+| `1` | **61** |
+| anything else | none |
 
-Note 61 sits one above the founder level of 60, which is suggestive and is not
-evidence.
+The level compared is the **looked-up member's stored level**, not the caller's.
+A `cmp eax,ecx ; jne` just before it refuses with `5` when that member is the
+caller, i.e. the check is about *another* member.
+
+### Which role each class is — still not recovered
+
+The shared refusal's name carries 41, which matches class 2. That says which
+floor the client's message was written for, not which role holds it.
+
+Two other functions, `FUN_005e0790` and `FUN_005e0a30`, test `class == 1` and
+**skip** that member inside a loop over the camp's members — the shape of
+"everyone except the master". Together with 61 sitting one above the founder
+level of 60 (below), that is two suggestive readings pointing the same way, and
+**it is still not a use-site that names a role**. No function tested raises a
+refusal whose name says master or apprentice, and no store of the class byte was
+found — it most likely arrives from `_TRAININGCAMPMEMBER.MemberClass` through the
+column bind, which a scan for `mov BYTE PTR [reg+0x50],imm` cannot see.
+
+`server/internal/academy` therefore names the constants by value and the classes
+by number (`MemberClass1`, `MemberClass2`), and `MeetsMembershipLevel` reproduces
+the check exactly.
 
 ## Windows named but not read
 
