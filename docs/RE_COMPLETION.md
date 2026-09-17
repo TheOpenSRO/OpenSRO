@@ -14227,3 +14227,61 @@ control flow -- the same lesson as the thunk that hid leave's caller last tick.
 
 Wired into `internal/academy` as `PenaltyCategory`, the four ids and `PenaltySeconds`,
 with `ReopenCooldownDays` now pinned to the penalty's own duration by a test.
+
+## The engine names its own classes: 13 owners corrected (2026-09-17)
+
+Last tick left five rows the applier kept refusing to reown, with a guess attached:
+"the project's owner reads like a call-graph attribution, so the file's class is
+probably better". **That guess was wrong** — none of the four server functions carries
+an attribution comment, and none of them is in a vtable. Checking it turned up the
+real lever instead.
+
+### The lever
+
+Some functions log their own name, class included:
+`"CSiegeFortress::RemoveSiegeObject pGObjFortressObject is NULL! (%d)"`. Sweeping
+**every dumped function for a string that names its own method**:
+
+	server:  8 agree with the function's owner, 14 disagree
+	client:  5 agree, 0 disagree
+
+A disagreement is the binary contradicting the project about which class a function
+belongs to, and the binary is the better witness — but not blindly.
+
+### The cross-check that makes it safe
+
+**A derived override often keeps the base class's log string.** So each disagreement
+was checked against the named class's *own* vtable:
+
+- **13 passed.** Eleven are `CGStorageOP` methods sitting in `CGStorageOP`'s own
+  vtable (slots 25, 31, 33, 34, 37-43) while the project had attributed them to
+  `CGCOSInventoryOP` or `CGPCInventoryOP` — arbitrary picks among the 7 derived
+  classes whose vtables point at the same address, which `vtq.py` already flags
+  `FOLDED, do not name after one class`. Also `CAIState::OnCSNM_Activate_AI` (in
+  `CAIState`'s own slot 30, and in 17 derived vtables) and
+  `CSiegeFortress::RemoveSiegeObject` (in no vtable; its owner `GObjPC` is a
+  2,991-function bucket, beside `CGameServer`'s 3,809).
+- **One failed and was left alone.** `0x0045e620` logs `AQ_StorageUpdater::DoWork`,
+  but `AQ_StorageUpdater`'s own vtable does **not** hold it; only the derived
+  `AQ_StorageUpdaterForPacakageItem` does, at slot 6. So it is the derived override
+  and the string is inherited text. The existing owner is right. Without the vtable
+  check this sweep would have moved a correct name to a wrong class.
+
+Applied: **reowned 13, failed 0**. Twelve of the thirteen were **not in
+`recovered_names.tsv` at all** — they existed only inside the Ghidra project, which is
+the state `docs/RE_LOOP.md` warns about, so they are now durable as well as correct.
+
+### The four that stay as they are
+
+`0066e020`, `004890f0`, `006a7320` (server) and `00a5ffd0` (client) keep printing
+`KEEPOWNER`. Their offered classes (`ReferenceData`, `CGItem`, `CRefSetItemGroup`,
+`CObjCharacter`) are **choices by a recoverer, not engine-stated**: the strings behind
+them name a table or a message, never a class. Neither side is read, so neither is
+forced, and the warning is expected rather than outstanding.
+
+### Verified
+
+Every name applied this session is present in the dumps rebuilt at 18:24: 16 server
+names and the client handlers, grepped as `\tNAME\t|::NAME\t`.
+`TrainingCampMember_IsPast24HourWindow` appears twice, being the function and the
+thunk that Ghidra names after it.
