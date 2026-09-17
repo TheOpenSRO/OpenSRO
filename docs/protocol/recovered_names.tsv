@@ -151,3 +151,21 @@
 #
 00410a00	server	Formulae::StrLevelDamageRatio	descriptive	gated on IsPC (slot 7, returns fld1 otherwise); reads GetMaxLevel (slot 74) and param 1 (Str) and returns (Str + 2*level + 14) / (6*(level+7)) clamped to [0, 1.2]. The denominator is ((level-1)*7 + 56) * 6/7 in the binary. Called twice inside Formula_MitigatePhysicalDamage at 40e6cd (attacker) and 40e6d8 (defender).
 00410ab0	server	Formulae::IntLevelDamageRatio	descriptive	the Int twin, and NOT symmetric: reads param 2 and returns Int / (4*(level+7)) with no level term in the numerator. Denominator is ((level-1)*5 + 40) * 0.8. Same IsPC gate and same 1.2 clamp.
+#
+# APPENDED 2026-09-17 (sixth batch): TEN functions that all carried the single
+# name "AQ_StorageUpdater::AQ_StorageUpdater__Init". They are ten different
+# storage operations, and the stored-procedure string each one builds says which.
+# These rows carry the sixth field "force" because the applier otherwise refuses
+# to overwrite an existing name -- see the note at the top of
+# ApplyRecoveredNames.java about when that is legitimate.
+#
+00459f70	server	AQ_StorageUpdater::AddLinkedStorageItem	engine	builds the ODBC call for _STRG_ADD_LINKED_STORAGE; it carried the shared name AQ_StorageUpdater__Init, which ten distinct functions had	force
+0045a5d0	server	AQ_StorageUpdater::BuyCashItem	engine	builds the ODBC call for _STRG_BUY_CASHITEM_EQUIP_NORMAL and _STRG_BUY_CASHITEM_EXP; it carried the shared name AQ_StorageUpdater__Init, which ten distinct functions had	force
+0045a840	server	AQ_StorageUpdater::DeleteItem	engine	builds the ODBC call for _STRG_DEL_ITEM; it carried the shared name AQ_StorageUpdater__Init, which ten distinct functions had	force
+0045a9a0	server	AQ_StorageUpdater::AddItem	engine	builds the ODBC call for _STRG_ADD_ALCHEMYSTONE, _STRG_ADD_EQUIP_NORMAL, _STRG_ADD_EXPENDABLE and _STRG_ADD_SPECIALTY -- one function, the kind chosen per call; it carried the shared name AQ_StorageUpdater__Init, which ten distinct functions had	force
+0045ada0	server	AQ_StorageUpdater::AddMagicItem	engine	builds the ODBC call for _STRG_ADD_ITEM_MAGIC; it carried the shared name AQ_StorageUpdater__Init, which ten distinct functions had	force
+0045af70	server	AQ_StorageUpdater::MoveItemWithGold	engine	builds the ODBC call for _STRG_MOVE_ITEM together with _UPDATE_CHAR_GOLD_FOR_GUILDCHEST, _UPDATE_GUILD_N_CHAR_GOLD and _UPDATE_USER_N_CHAR_GOLD -- the move that also shifts gold; it carried the shared name AQ_StorageUpdater__Init, which ten distinct functions had	force
+0045b5a0	server	AQ_StorageUpdater::RearrangeItem	engine	builds the ODBC call for _STRG_MERGE_ITEM, _STRG_MOVE_ITEM, _STRG_SPLIT_ITEM and _STRG_SWAP_ITEM; it carried the shared name AQ_StorageUpdater__Init, which ten distinct functions had	force
+0045b970	server	AQ_StorageUpdater::RestoreSoldMagicItem	engine	builds the ODBC call for _STRG_RESTORE_SOLDITEM_ITEM_MAGIC; it carried the shared name AQ_StorageUpdater__Init, which ten distinct functions had	force
+0045bb60	server	AQ_StorageUpdater::RestoreSoldItem	engine	builds the ODBC call for _STRG_RESTORE_SOLDITEM_ALCHEMYSTONE, _..._EQUIP_NORMAL, _..._EXPENDABLE and _..._SPECIALTY; it carried the shared name AQ_StorageUpdater__Init, which ten distinct functions had	force
+0045c9a0	server	AQ_StorageUpdater::MoveItem	engine	builds the ODBC call for _STRG_MOVE_ITEM alone; it carried the shared name AQ_StorageUpdater__Init, which ten distinct functions had	force

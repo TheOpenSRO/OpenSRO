@@ -10489,3 +10489,68 @@ on this box, so the Str scale the ratio is calibrated against cannot be
 recovered from what we have — it needs a real `_CHAR` row or the creation
 service. `combat.StrForMaxRatio` remains the yardstick for the day one turns up.
 
+## 2026-09-17 — the stored-procedure lever, and ten functions sharing one name
+
+The combat lane is blocked on data that is not on this box, so this tick worked
+a lever last tick surfaced but did not use: the server names **75 stored
+procedures**, and each names an operation.
+
+**Validated first, and the rule failed.** 48 functions reference a procedure, 12
+of them already named. Checking the rule against those twelve gave **1 agree, 5
+differ** — so "name the caller after its procedure" is not safe as a blanket
+rename. But the five disagreements were the finding.
+
+### 377 named functions share a name, and 323 of those are fine
+
+Measuring name collisions across the whole server dump: of 1,718 functions with
+a real leaf name, **377 (21.9%) carry a name another function also carries.**
+That number is misleading on its own and the breakdown is the point:
+
+| name | count | verdict |
+|---|---|---|
+| `CChunkAllocatorST__AllocItemBlock` (five namespaces) | 323 | **legitimate** — a C++ template, one compiled copy per instantiated type |
+| `AQ_StorageUpdater::AQ_StorageUpdater__Init` | **10** | **a defect** |
+| `_free`, `std::exception::exception` | 6 | CRT duplicates |
+| assorted pairs | ~38 | overloads or defects, individually |
+
+So the collision rate is not a quality problem across the board; it is one
+template plus one real mistake.
+
+### The ten, disambiguated by the engine's own procedure names
+
+Ten contiguous functions (`0x459f70`..`0x45c9a0`) all carried
+`AQ_StorageUpdater__Init`. They are ten different storage operations, and the
+ODBC call each one builds says which:
+
+| addr | new name | procedure |
+|---|---|---|
+| `00459f70` | `AddLinkedStorageItem` | `_STRG_ADD_LINKED_STORAGE` |
+| `0045a5d0` | `BuyCashItem` | `_STRG_BUY_CASHITEM_*` |
+| `0045a840` | `DeleteItem` | `_STRG_DEL_ITEM` |
+| `0045a9a0` | `AddItem` | `_STRG_ADD_{ALCHEMYSTONE,EQUIP_NORMAL,EXPENDABLE,SPECIALTY}` |
+| `0045ada0` | `AddMagicItem` | `_STRG_ADD_ITEM_MAGIC` |
+| `0045af70` | `MoveItemWithGold` | `_STRG_MOVE_ITEM` + the three `_UPDATE_*_GOLD` |
+| `0045b5a0` | `RearrangeItem` | `_STRG_{MERGE,MOVE,SPLIT,SWAP}_ITEM` |
+| `0045b970` | `RestoreSoldMagicItem` | `_STRG_RESTORE_SOLDITEM_ITEM_MAGIC` |
+| `0045bb60` | `RestoreSoldItem` | `_STRG_RESTORE_SOLDITEM_*` |
+| `0045c9a0` | `MoveItem` | `_STRG_MOVE_ITEM` alone |
+
+All ten applied (`applied 10, forced 10, failed 0`), and a re-run applies 0, so
+the pass is idempotent.
+
+### `ApplyRecoveredNames.java` can now correct its own mistakes
+
+The applier refused to overwrite an existing name, which is right in general and
+made this impossible. It now honours a sixth TSV field of `force`, with the
+purpose stated narrowly in its header: **for correcting names THIS project got
+wrong, never for overwriting the engine's own word** — a log label, an assert or
+an `## Illegal ##` stub is better evidence than anything the table offers.
+`ApplyKnownNames.java` already had such a mode; the two now match.
+
+A cosmetic defect was fixed in the same pass: a forced row logged both `FORCED`
+and `RENAMED`, which reads as two changes. It logs one.
+
+**Left as the honest caveat:** the ~38 remaining two- and three-way collisions
+are unexamined. Some will be overloads, some defects; each needs its own
+evidence, which is why they are not batch-renamed here.
+

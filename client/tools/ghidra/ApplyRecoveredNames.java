@@ -30,6 +30,14 @@
 // Drop the `-readOnly` the dump tick uses, or every rename is silently
 // discarded.
 //
+// IT CAN CORRECT ITS OWN MISTAKES, added 2026-09-17. A sixth TSV field of
+// "force" overwrites a name that is already there, which is the only way to fix
+// a name THIS project got wrong -- ten distinct storage functions all carrying
+// "AQ_StorageUpdater__Init" was the case that motivated it. Use it only for
+// that. A name the binary gave itself (a log label, an assert, an `## Illegal ##`
+// stub) is better evidence than anything offered here, and force would silently
+// discard it.
+//
 // IT REFUSES TO GUESS. A row whose address holds no function, or whose function
 // already carries a name that is not FUN_/thunk_FUN_/vslot_, is reported and
 // skipped rather than overwritten -- an existing name may be the engine's own
@@ -80,7 +88,7 @@ public class ApplyRecoveredNames extends GhidraScript {
 		String wantBinary = args[1];
 
 		int applied = 0, skippedOther = 0, skippedNamed = 0, missing = 0, failed = 0,
-				refreshed = 0;
+				refreshed = 0, forced = 0;
 
 		BufferedReader in = new BufferedReader(new FileReader(path));
 		String line;
@@ -94,6 +102,10 @@ public class ApplyRecoveredNames extends GhidraScript {
 			}
 			String addrS = f[0], binary = f[1], name = f[2], origin = f[3];
 			String evidence = f.length > 4 ? f[4] : "";
+			// A sixth field of "force" overwrites a name that is already there.
+			// See the header: this is for correcting THIS project's own bad
+			// names, never for overwriting the engine's own word.
+			boolean force = f.length > 5 && f[5].trim().equals("force");
 			if (!binary.equals(wantBinary)) {
 				skippedOther++;
 				continue;
@@ -111,17 +123,25 @@ public class ApplyRecoveredNames extends GhidraScript {
 			String current = fn.getName();
 			if (!isUnnamed(current)) {
 				if (!leaf(current).equals(leaf(name))) {
-					println("KEEP     " + addrS + "  already named " + current
-							+ " (offered " + name + ", origin=" + origin + ")");
-					skippedNamed++;
+					if (!force) {
+						println("KEEP     " + addrS + "  already named " + current
+								+ " (offered " + name + ", origin=" + origin + ")");
+						skippedNamed++;
+						continue;
+					}
+					println("FORCED   " + addrS + "  " + current + " -> " + leaf(name)
+							+ "  (origin=" + origin + ")");
+					forced++;
+				}
+				else {
+					// Already carries the name this file offers -- almost
+					// certainly a re-run. Refresh the evidence comment anyway,
+					// so a row whose evidence was improved after the first
+					// application still lands.
+					comment(fn, origin, evidence);
+					refreshed++;
 					continue;
 				}
-				// Already carries the name this file offers -- almost certainly
-				// a re-run. Refresh the evidence comment anyway, so a row whose
-				// evidence was improved after the first application still lands.
-				comment(fn, origin, evidence);
-				refreshed++;
-				continue;
 			}
 
 			// The TSV carries Class::Method; Ghidra holds the class as the
@@ -141,14 +161,19 @@ public class ApplyRecoveredNames extends GhidraScript {
 				continue;
 			}
 			comment(fn, origin, evidence);
-			println("RENAMED  " + addrS + "  " + current + " -> " + leaf(name)
-					+ "  (origin=" + origin + ")");
+			if (!force || isUnnamed(current)) {
+				// A forced row already logged its own FORCED line above;
+				// printing RENAMED too would read as two changes.
+				println("RENAMED  " + addrS + "  " + current + " -> " + leaf(name)
+						+ "  (origin=" + origin + ")");
+			}
 			applied++;
 		}
 		in.close();
 
 		println("");
-		println("applied " + applied + ", evidence refreshed " + refreshed
+		println("applied " + applied + ", forced " + forced
+				+ ", evidence refreshed " + refreshed
 				+ ", kept " + skippedNamed + ", no function " + missing
 				+ ", failed " + failed + ", other binary " + skippedOther);
 	}
