@@ -96,6 +96,34 @@ that the zero reading made four virtual calls into dead code.
 
 Either way both slots are real, so both are in the table below.
 
+### A third witness for slot 68, and this one is a reductio (2026-09-17)
+
+The correction above rests on `CGObjCOS_Summoned` having different functions at
+66 and 68, and on `GObjPC_SetLevel`'s heal being `vslot(0x110) - vslot(0x108)`.
+A third, independent one comes from the skill-use gate
+(`docs/protocol/skill_use_gate.md`), and it does not depend on any vtable at all:
+
+	0058df8e  mov edx,[eax+0x108] ; call   ; A = slot 0x108()
+	0058dfaa  fstp QWORD [esp+0x28]        ; keep A
+	0058dfa2  mov edx,[eax+0x110] ; call   ; B = slot 0x110()
+	0058dfb8  fmul QWORD ds:0xb45ce0       ; B * 0.3
+	0058dfbe  fcomp QWORD [esp+0x28]       ; (B*0.3) vs A
+	0058dfc9  mov ax,0x3036                ; UIIT_STT_SKILL_USE_FAIL_GROGGY
+
+The refusal fires when `B * 0.3 < A`. Under "both slots are GetCurHP" that reads
+`cur * 0.3 < cur`, which is **true for every positive HP** — the skill could
+never be cast, from any state, and the whole branch would be unreachable code
+that the engine nonetheless computes two virtual calls for.
+
+Under `B = MaxHP` it reads "refuse unless the caster is at or below 30% health",
+which is what a desperation skill is.
+
+**The wrong reading does not merely give a wrong number here; it gives a
+constant.** That is the useful shape of this check: where the two slots being
+identical would collapse an expression to something with no free variable, the
+expression itself decides. `GObjPC_SetLevel` collapses to zero, this collapses
+to always-true, and both are the kind of answer a compiler would not emit.
+
 The `IGOBJ::` spelling (six methods, all Temple/AP-related) is the engine's own
 inconsistent capitalisation, kept verbatim.
 
@@ -199,8 +227,8 @@ has been applied. The four remaining are the `IGOBJ::` spelling variants:
 | 65 | `0x104` | `IGObj::GetParam` |
 | 66 | `0x108` | `IGObj::GetCurHP` |
 | 67 | `0x10c` | `IGObj::GetCurMP` |
-| 68 | `0x110` | `IGObj::GetCurHP` |
-| 69 | `0x114` | `IGObj::GetCurMP` |
+| 68 | `0x110` | **`IGObj::GetMaxHP`** — the stub string says `GetCurHP`, the behaviour says maximum; see the correction above and the third witness below |
+| 69 | `0x114` | **`IGObj::GetMaxMP`** — same correction, by the same argument |
 | 70 | `0x118` | `IGObj::IsTargeting` |
 | 71 | `0x11c` | `IGObj::GetJobState` |
 | 72 | `0x120` | `IGObj::GetTeleportState` |

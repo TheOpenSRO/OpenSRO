@@ -1070,3 +1070,27 @@ func equippedTypes(ctx context.Context, characterID int64, eq equipment.Store, i
 	}
 	return out, true
 }
+
+// The engine's own precondition ladder for a skill cast is recovered in
+// docs/protocol/skill_use_gate.md, read off FUN_0058d8f0 -- the function that
+// sits immediately before Combat_ResolveDamage and returns one of seventeen
+// refusal codes.
+//
+// UseSkillHandler above checks the skill is known, then the cooldown, then the
+// HP cost, then the MP cost, each gated on the cost being greater than zero.
+// That is the engine's order and the engine's gating:
+//
+//	58d93f  0x3003  NOTLEARN              the skill does not resolve
+//	58e095  0x3005  TIMEDELAY_COOL_TIME   the cooldown check fails
+//	58e292  0x3013  NOTENOUGHHP           hpCost > 0 && CurHP < hpCost
+//	58e2b1  0x3004  NOTENOUGHMP           mpCost > 0 && CurMP < mpCost
+//
+// This was NOT known to be the engine's order when the handler was written, and
+// nothing changed when it was read. It is recorded because "we happen to agree"
+// and "we match a read" are different claims, and only the second is worth
+// anything later.
+//
+// The thirteen refusals srrevamp does not implement are listed on that page
+// with the shape of each test: stealth and musical range, trap placement, buff
+// duplication and overlap, ammunition, line of sight, and a level requirement
+// read off the TARGET's ref object rather than the skill's.

@@ -12232,3 +12232,98 @@ group is one argument. The original 39 arities were right; the recount was
 wrong, and was checked against them before anything was changed. Had the recount
 been trusted, this pass would have "corrected" 39 correct numbers into 39 wrong
 ones while fixing the count.
+
+## The error-code scan was widened, and it found the skill-use gate (2026-09-17)
+
+Applied the previous tick's rule — *a harvest is complete only once its pattern
+has been falsified* — to the project's other load-bearing enumerations. Two
+survived, one did not, and the one that did not was the most useful.
+
+### What survived falsification
+
+- **The reference-table count (85)** already has a genuine cross-check: two
+  probes sharing nothing (reading loaders, harvesting strings) agree.
+- **The client's error dispatcher.** `error_codes.md` builds its table from one
+  function, `UI_SILKMALL::FUN_007b8b40`, which is exactly the "one pattern,
+  assumed to be the only one" shape that just failed twice. Counting switch
+  cases on values ≥ 0x100 across the entire client: that function has **624**
+  and the next-largest has **36** — and all five of the others switch on
+  disjoint ranges (`0x01xx`–`0x0fxx`, opcodes) rather than error codes. The
+  one-dispatcher model is correct.
+- **The source-path lever is exhausted**: 153 functions carry a `.cpp` path and
+  all 153 are already named. So is the self-naming-string lever — of 12,194
+  still-`FUN_` server functions, exactly **one** carries a `Class::Method`
+  string, and it has more than one candidate. 64.3% of the server is named
+  strictly; further naming needs a different kind of lever, not another string
+  harvest.
+
+### What did not: the server-side scan
+
+`error_codes.md` recorded, and never fixed, that its scan for where a code is
+*raised* matched only `mov ax,0xNNNN` / `mov eax,…`. Widened to every constant
+materialisation (`client/tools/re/errsites.py`):
+
+| | narrow | widened |
+|---|---:|---:|
+| (function, code) pairs | 391 | 924 |
+| functions carrying a named refusal | **157** | **362** |
+
+**205 functions with a named refusal were invisible.** The missed shapes, by
+yield: `mov WORD PTR [reg],CODE` (an out-parameter), `mov DWORD PTR [esp+N],CODE`
+(a stack local — `Mastery_LevelUp`'s shape, the example the doc gave), `push
+CODE`, `mov ebx/edi,CODE`, and `cmp ax,CODE`, which attributes a code's *handler*
+as well as its raiser.
+
+Two traps, both caught by checking the probe rather than the result:
+
+- **Displacements are not constants.** `mov ecx,DWORD PTR [esp+0x3003]` is a
+  stack access. Blanking bracketed expressions first drops the count from 414 to
+  362 — 52 of the "new" functions were noise.
+- **Some codes are computed.** The skill-use gate spells one refusal as
+  `(-(ushort)(x != 0) & 0xfff1) + 0x3018`, giving `0x3018` or `0x3009` with
+  neither present as an immediate. No immediate scan finds those.
+
+### The richest function in the binary
+
+`FUN_0058d8f0` (3,134 bytes) sits immediately before `Combat_ResolveDamage` and
+returns **seventeen distinct refusal codes** — more than any other function in
+`SR_GameServer.exe`; the next-densest manages twelve. It is the precondition
+ladder every cast passes through, and it is now written up in full, in the
+engine's own order, as `docs/protocol/skill_use_gate.md`.
+
+**srrevamp already matches rows 1, 12, 14 and 15** — known skill, cooldown, then
+HP cost, then MP cost, each gated on the cost exceeding zero. That is the
+engine's order and gating, and it was not known to be when the handler was
+written. Nothing changed; it is recorded because "we happen to agree" and "we
+match a read" are different claims.
+
+### The groggy threshold, and a vtable slot settled a third time
+
+Row 9 refuses when `MaxHP * 0.3 < CurHP` — a skill that requires the caster at or
+**below 30% health**. `.rdata 0x00b45ce0` is a **double** (the operand is
+`QWORD PTR`; read four bytes wide the same address looks like the float 2.0),
+holding `0.30000001192092896` = `(double)0.3f`, so the game's number is 0.3. The
+direction comes from the flags — `fcomp` sets C0 on `ST0 < mem`, `test ah,0x5`
+masks C0/C2, `jp` skips on even parity — not from the source order.
+
+This is a **third independent witness** that vtable slot `0x110` is `GetMaxHP`
+and not the `GetCurHP` its stub string says, and the first one that is a
+reductio: under "both slots are current HP" the test reads `cur*0.3 < cur`, true
+for every positive HP, and the branch is unreachable code the engine still pays
+two virtual calls for. `igobj_vtable.md` had the correction in prose since
+2026-09-16 but its **summary table still said `GetCurHP` for slots 68 and 69**;
+both rows are fixed.
+
+The useful shape, worth keeping: where two slots being identical would collapse
+an expression to something with no free variable — zero for `GObjPC_SetLevel`'s
+heal, always-true here — the expression itself decides, with no vtable evidence
+needed.
+
+### And a correction to this ledger's own reasoning
+
+`error_codes.md` said the absent `0x38xx` family "is a property of the probe, not
+of the game". **That was wrong**, and it conflated the server scan with the
+client dispatcher walk. Measured: **no function in the client has a `0x38xx`
+switch case at all.** Those codes are raised by the server and have no message in
+the client's error dispatcher, so mastery refusals surface some other way or not
+at all. Naming that family needs a different source, not a wider pattern.

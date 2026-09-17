@@ -715,14 +715,61 @@ both to a stack local rather than returning them directly:
 	uStack_22c = 0x3804;   // the target mastery level exceeds the character's
 	uStack_22c = 0x3802;   // not enough skill points for the summed cost
 
-Neither appears in the scan's output, and **the whole `0x38xx` family is absent
-from this table** while `0x30xx` (52 codes) and `0x3cxx` (27) are present. That
-gap is a property of the probe, not of the game.
+Neither appears in the scan's output.
 
-Two other numbers worth having when judging this table's completeness: the scan
-finds **445** distinct codes ≥ 0x100 loaded into ax/eax, of which **201 are not
-in this table**. Some of that is legitimate — a code the client has no message
-for cannot be named here — but it bounds how complete "605 codes" is.
+### The pattern was widened, 2026-09-17
 
-Nothing is renamed on the strength of this; it is recorded so the next person to
-extend the table starts by widening the pattern rather than by trusting it.
+`client/tools/re/errsites.py` is that scan, done properly — every constant
+materialisation rather than only `mov ax`:
+
+| | narrow (`mov ax/eax`) | widened |
+|---|---:|---:|
+| (function, code) pairs | 391 | 924 |
+| functions carrying a named refusal | **157** | **362** |
+
+So **205 functions carrying a named refusal were invisible to the narrow
+pattern.** The shapes it missed, by yield: `mov WORD PTR [reg],CODE` (an
+out-parameter), `mov DWORD PTR [esp+N],CODE` (a stack local — this is
+`Mastery_LevelUp`'s shape), `push CODE`, `mov ebx/edi,CODE`, and `cmp ax,CODE`,
+which attributes the *handler* of a code as well as its raiser.
+
+The richest thing in the difference was `FUN_0058d8f0`, the skill-use gate, with
+seventeen distinct refusals — more than any other function in the binary. It has
+its own page now: `docs/protocol/skill_use_gate.md`.
+
+Two traps, both of which produced wrong counts before being fixed:
+
+- **Displacements are not constants.** `mov ecx,DWORD PTR [esp+0x3003]` is a
+  stack access, not the weapon-gate refusal. Blanking bracketed expressions
+  before scanning drops the function count from 414 to 362 — 52 functions were
+  pure noise.
+- **Some codes are computed rather than written.** The skill-use gate spells one
+  refusal as `(-(ushort)(x != 0) & 0xfff1) + 0x3018`, yielding `0x3018` or
+  `0x3009` with neither present as an immediate. No scan over immediates finds
+  those, widened or not, and the tool does not claim to.
+
+### What the widened scan did NOT explain: the `0x38xx` family
+
+This section used to assert that the `0x38xx` family's absence "is a property of
+the probe, not of the game". **That was wrong**, and it conflated two different
+probes — the *server* scan that finds where a code is raised, and the *client*
+dispatcher walk that gives it a name.
+
+Measured: **no function in `sro_client.exe` has a `0x38xx` switch case at all.**
+The dispatcher is genuinely the only one — checked by counting switch cases on
+values ≥ 0x100 across the whole client, where `UI_SILKMALL::FUN_007b8b40` has
+**624** and the next-largest has **36** (and that one, like the other four
+above twenty, switches on a disjoint range: `0x01xx`–`0x0fxx`, opcodes rather
+than error codes). Its families are `0x0c, 0x18, 0x1c, 0x28, 0x2c, 0x30, 0x3c,
+0x40, 0x44, 0x48, 0x4c, 0x54, 0x58, 0x64, 0x68, 0x6c, 0x70, 0x78` — and `0x38`
+is not among them.
+
+So `0x38xx` codes are raised by the server and have **no message in the client's
+error dispatcher**. Mastery refusals must surface through some other path, or
+not at all. That is a fact about the game, and naming the family needs a
+different source than this one.
+
+The remaining bound on completeness: the narrow scan found 445 distinct codes
+≥ 0x100 in ax/eax of which 201 are not in this table. Some of that is
+legitimate — a code the client has no message for cannot be named here, and
+`0x38xx` is now a proven example of exactly that.
