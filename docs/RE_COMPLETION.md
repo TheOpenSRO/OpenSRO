@@ -12466,3 +12466,67 @@ falsified. Widening it reached 362 functions; grouping the 291 unnamed ones by
 vocabulary left 62 unambiguous; the first cluster gave the skill-reset system and
 this one gives the alliance rules. Both were on documented "not recovered" lists,
 and neither needed a function read speculatively to find.
+
+## Guild war, and a decompiler artifact that would have shipped a wrong cap (2026-09-17)
+
+`FUN_005c6b60` was the last combat item on `guild.md`'s "What is not recovered"
+list. Located the same way the alliance was — one vocabulary, every code a
+`GUILDWARERR_` or `GUILD*`.
+
+### The cap is 50 and the decompiler says 49
+
+Ghidra renders the check as `if (0x31 < (byte)guild[0x11]) return 0x4c3e;`, which
+reads as a cap of **49**. The instructions:
+
+	005c6ddd  mov eax,DWORD PTR [esi+0x44]
+	005c6de0  cmp al,0x32                  ; 50
+	005c6de2  jb  0x5c6dfe                 ; proceed only while count < 50
+	005c6df5  mov ax,0x4c3e                ; GUILDWARERR_MAX_HOSTILE_GUILD
+
+`0x31 <` is Ghidra's rewriting of `< 0x32`. I read the decompiled form first and
+was about to write 49; the assembly was checked only because this project's own
+note calls `limit-1 < value` an idiom to read constants off, and reading a
+constant off an idiom is exactly when to look at the instruction.
+
+**This is the second such bound in the same document.** The alliance array's
+appears as `7 < index` for an array of **8**. So the rule is now general and
+worth stating once: *when the decompiler shows a bound as `N < x`, the engine's
+constant is `N+1`, and the assembly is what to quote.* Both constants shipped
+this week; only one of them would have been wrong, and it is the one where the
+array length did not independently corroborate the number.
+
+### The two-sided check, and why it is safe to read
+
+The cap is compared against the same offset on both guilds, with
+`MAX_HOSTILE_GUILD` (0x4c3e) for the declarer and `TARGET_MAX_HOSTILE_GUILD`
+(0x4c3f) for the target. That is the third time this week a symmetric pair of
+identical comparisons has been disambiguated purely by the client's names for
+the two refusals — the alliance level check and the skill-use gate being the
+others. The error table is functioning as a second binary.
+
+### The field, named by two refusals and honest about a gap
+
+`guild + 0x44` is a byte, and two refusals pin it:
+
+	FUN_005c6b60  count >= 50  -> GUILDWARERR_MAX_HOSTILE_GUILD
+	FUN_005c6870  count != 0   -> GUILD_ERROR_BREAK_WAR
+
+A state enum would not be compared against 50; a flag would not need a byte.
+**No writer was found** — every access at that offset inside the guild module is
+a comparison — so the count is maintained somewhere this pass did not reach.
+Recorded as a gap. A probe that found only readers and concluded "therefore it
+is constant" would be the `SetStr` mistake in reverse, and that one only came out
+right because the enumeration was exhaustive; here it is not.
+
+### A war is wagered and timed
+
+`DB_Bind__GUILDWAR` binds `WarType`, `VictoryPointIndex`, **`LodgedGold`**,
+`WarEndTime`, two `Guild` and two `PointGain` columns. Already in
+`db_columns.md`, so not a new recovery — but reading it here changes what the
+system IS: a war has a type, staked gold, an end time and a per-side score. An
+implementation that starts from "a war is a boolean between two guilds" will have
+to be undone, which is worth knowing before anyone writes it.
+
+**An ally cannot be a war target**, so the two systems recovered this week are
+mutually exclusive on the same pair of guilds — asserted in
+`TestAllianceAndWarAreMutuallyExclusive` so a later pass cannot let both hold.

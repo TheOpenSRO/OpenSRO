@@ -191,9 +191,80 @@ returning a code**, and the client carries messages it may never receive. Both
 are kept in `alliance.go` so the vocabulary is complete and nobody re-derives
 their absence.
 
+## Guild war — RECOVERED 2026-09-17
+
+`FUN_005c6b60` (1,102 bytes) is the declaration handler, located the same way the
+alliance was: every code it raises belongs to one vocabulary. Implemented in
+`server/internal/guild/war.go`.
+
+### The cap is 50, and the decompiler says 49
+
+Ghidra renders the check as `if (0x31 < (byte)guild[0x11])`, which reads as a cap
+of **49**. The instructions say otherwise:
+
+	005c6ddd  mov eax,DWORD PTR [esi+0x44]
+	005c6de0  cmp al,0x32                  ; 50
+	005c6de2  jb  0x5c6dfe                 ; proceed only while count < 50
+	005c6df5  mov ax,0x4c3e                ; GUILDWARERR_MAX_HOSTILE_GUILD
+
+`0x31 <` is Ghidra's rewriting of `< 0x32`. **This is the second `limit-1 < value`
+shape in this document that has had to be read in assembly to get the limit
+right** — the alliance array's bound appears as `7 < index` for an array of 8.
+The rule that falls out: when the decompiler shows a bound as `N < x`, the
+engine's own constant is `N+1`, and the assembly is what to quote.
+
+The check runs on **both** guilds at the same offset, with two refusals —
+`GUILDWARERR_MAX_HOSTILE_GUILD` (`0x4c3e`) for the declarer and
+`GUILDWARERR_TARGET_MAX_HOSTILE_GUILD` (`0x4c3f`) for the target. Same
+construction as the alliance level check, and safe for the same reason: the
+client's names say which side each identical comparison is about.
+
+### The declaration ladder
+
+	if (target resolves to no guild)     -> 0x4c25  CANT_FIND_TARGET_GUILD
+	if (out of range)                    -> 0x4c60  ERR_COMMON_TOO_FAR
+	if (!IsGuildMaster())                -> 0x4c1e  PERMISSION_DENIED
+	if (myHostiles   >= 50)              -> 0x4c3e  MAX_HOSTILE_GUILD
+	if (theirHostiles >= 50)             -> 0x4c3f  TARGET_MAX_HOSTILE_GUILD
+	if (already at war with them)        -> 0x4c3a  ENEMYGUILD
+	if (same alliance)                   -> 0x4c41  ALLYGUILD
+	if (inside the battle arena)         -> 0x4c7a  ARENA_ERR_FREQUEST_WAR_IN_BATTLE_ARENA
+
+**A war is declared in person** — there is a range check — but its value is not
+recovered: the distance is computed by a helper rather than compared against a
+literal.
+
+**An ally cannot be a war target**, so the two systems recovered this week are
+mutually exclusive on the same pair of guilds.
+
+### `guild + 0x44` is the hostile count, named by two refusals
+
+	FUN_005c6b60  count >= 50  -> GUILDWARERR_MAX_HOSTILE_GUILD
+	FUN_005c6870  count != 0   -> GUILD_ERROR_BREAK_WAR (0x4c46)
+
+A state enum would not be compared against 50, and a flag would not need a byte.
+**No writer was found**: every access to that offset inside the guild module is a
+comparison, so the count is maintained somewhere this pass did not reach — most
+likely rebuilt from the `_GUILDWAR` rows on load. Stated as a gap rather than
+guessed.
+
+### A war is wagered and timed, not a flag
+
+`DB_Bind__GUILDWAR` (`0x0084dd90`) binds `WarType`, `VictoryPointIndex`,
+**`LodgedGold`**, `WarEndTime`, two `Guild` columns and two `PointGain` columns,
+plus `Data1`/`Data2` (already listed in `docs/protocol/db_columns.md`, which
+deduplicates the paired names).
+
+So a war has a type, a victory-point index, **staked gold**, an end time and a
+per-side score. Recorded because the shape rules out the simplest reading: a war
+is not a boolean between two guilds, and an implementation that starts there
+will have to be undone.
+
 ## What is not recovered
 
-- **Guild war.** `FUN_005c6b60` (1,102 bytes) and the `GUILDWARERR_*` family.
+- **The war range**, and what `WarType`, `VictoryPointIndex` and the two `Data`
+  columns hold.
+- **What maintains `guild + 0x44`.**
 - **The warehouse.** Only the permission bit and `GUILD_WAREHOUSE_LIMIT` are
   known; the limit's value is not.
 - **Guild points: where they come from.** The costs above are grounded; what
