@@ -14835,3 +14835,53 @@ attempt on this slot.
 
 `client/tools/re/query_client_vtables.py` keeps the corrected query (all tables, joined
 to the RTTI hierarchy) so the next client pass starts from it.
+
+## Where a character's published stats come from, and a probe that hid float writes (2026-09-17)
+
+Two negatives first. The window-framework vocabulary that gave slot 10 its name does
+not extend: across every window-class vtable slot, `FUN_00425ae0` builds **"Create"
+320 times and no other verb anywhere** — one slot, one word, lever exhausted.
+
+Then back to the grounding audit's open value, the player's flat `Defense`.
+
+### The probe bug that mattered
+
+Scanning for writers of the published field `char+0x198` returned a list with no stat
+code in it, which contradicted an earlier reading of `FUN_00495d60` writing `[0x66]`.
+The regex required a trailing comma after the destination:
+
+	mov  DWORD PTR [ebx+0x198],eax      <- matched
+	fstp DWORD PTR [ebx+0x198]          <- MISSED: one operand, no comma
+
+The aggregate block is floats, so **every write to it was invisible**. That is the
+third probe this session whose empty result was a fact about the probe, and all three
+were caught the same way: an existing fact disagreed with the measurement.
+
+### The finding
+
+With float stores included, **`Char_BuildAggregateStats` (`0x00495d60`) is the only
+function that writes those fields on a character.** The other writers of the same
+numeric offsets are storage updaters, AI tactics, display windows and item ref rows,
+each on its own object type.
+
+It builds every stat the same way, from the character's **own ref row**:
+
+	value = min + f*(max - min) + perLevel*degree
+	        min at +0x1b0, max at +0x1b4, per-level at +0x1b8, per stat onward
+	        assert(min <= max); f from FUN_00495d10 keyed by TID; degree from FUN_00459c70
+
+So the block `Char_PublishCombatStats` copies into ParamKeeper params 5-10 is
+**characterdata interpolation, and equipment contributes nothing to it**. For monsters
+that is the whole story. For players, whose characterdata rows the audit already
+showed carry zero stats, it means the flat absorb published this way is zero and
+armour must arrive by some other route.
+
+**That is the shape of the answer, not the answer.** It does not prove a player's flat
+`Defense` is zero the way the audit proved the percentage is: param 5 may have writers
+besides this publisher. The exact next probe is named — enumerate every
+`ParamKeeper_SetParam` call site with param id 5 and check which can fire for a player,
+which is how the percentage term was settled.
+
+srrevamp's `defenderArmor` (summing `PhysDefenseMax` over five armour slots) stays own
+design, and the reason is now sharper: the engine's published flat absorb does not come
+from armour columns through this path at all.
