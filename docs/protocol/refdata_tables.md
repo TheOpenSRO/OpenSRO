@@ -143,3 +143,128 @@ address is where to read how it is parsed. Eight of these have been read so far
 `_REFSHOP*` for the goods chain, `_REFQUEST`, `_REFCHARGEN`, `_REFDROPGOLD`);
 the other 77 are unread, and the catalogue is what makes that a known quantity
 rather than an open-ended search.
+
+
+## 51 of the 85 are readable right now (2026-09-17)
+
+This page has said "77 of 85 tables unread" since it was written, and that
+conflated **not yet read** with **not readable**. Most of them were sitting in
+`Media.pk2` the whole time.
+
+Matching all 85 table names against the archive's
+`server_dep\silkroad\textdata\` directory gives a clean partition:
+
+| | count |
+|---|---:|
+| have a client file — **readable now** | **51** |
+| server-only, the loot tables | 17 |
+| server-only, other | 17 |
+
+`server/internal/persistence` holds the mapping as `ClientTextdata`,
+`ServerOnlyLootTables` and `ServerOnlyOtherTables`, with a test that the three
+partition the 85 exactly.
+
+Seven filenames could not be derived from the table name and were resolved by
+reading the archive's own listing: `_REFTELELINK` is `teleportlink`,
+`_REFOBJITEM` is `itemdata`, `_REFOBJCHAR` is `characterdata`, `_REFMAGICOPT` is
+`magicoption`, `_REFMAGICOPTASSIGN` is `magicoptionassign`,
+`_REFSIEGEFORTRESSREWARDS` is `siegefortressreward` (singular), and `_REFSHOP`
+is `shopdata`.
+
+### Every loot table is server-only, and that is measured
+
+All **seventeen** tables with `DROP` in their name have no client file:
+
+	_REFDROPCLASSSEL_ALCHEMY_ATTRSTONE   _REFDROPCLASSSEL_ALCHEMY_MAGICSTONE
+	_REFDROPCLASSSEL_ALCHEMY_TABLET      _REFDROPCLASSSEL_AMMO
+	_REFDROPCLASSSEL_CURE                _REFDROPCLASSSEL_EQUIP
+	_REFDROPCLASSSEL_RAREEQUIP           _REFDROPCLASSSEL_RECOVER
+	_REFDROPCLASSSEL_REINFORCE           _REFDROPCLASSSEL_SCROLL
+	_REFDROPGOLD                         _REFDROPITEMASSIGN
+	_REFDROPITEMGROUP                    _REFDROPOPTLVLSEL
+	_REFMONSTER_ASSIGNEDITEMDROP         _REFMONSTER_ASSIGNEDITEMRNDDROP
+	_REFCUSTOMIZINGRESERVEDITEMDROPFORMONSTER
+
+**The probe was checked before the negative was believed**, as this project's
+rules require: exactly **one** file in the whole of `Media.pk2` has "drop"
+anywhere in its path, and it is not one of these. The reward files that do ship
+(`refquestrewarditems`, `refeventreward`, `siegefortressreward`) are quest,
+event and siege rewards, not monster loot.
+
+So **drop rates are not recoverable from the client**, and that is by design
+rather than by omission — you do not ship loot tables to players. A
+reimplementation needs its own numbers or a real database, and this is the
+citation for saying so.
+
+### The other seventeen
+
+	_REFALCHEMYMERIT  _REFCHARDEFAULT_QUEST  _REFCHARGEN  _REFCLIMATE
+	_REFGACHACODE  _REFGAMEWORLDNPC  _REFINSTANCE_WORLD_REGION
+	_REFINSTANCE_WORLD_START_POS  _REFOBJCHAREXTRASKILL  _REFOBJCOMMON
+	_REFOBJSTRUCT  _REFREGIONBINDASSOCSERVER  _REFSHARDCONTENTCONFIG
+	_REFSHOPOBJECT  _REFSIEGELVLSUMMONMONSTER  _REFSIEGEQUEST
+	_REFSIEGEQUESTREWARD
+
+One of these is explained rather than merely absent: **`_REFOBJCOMMON` has no
+file because it is the shared prefix denormalised into `itemdata` and
+`characterdata`**, which `docs/protocol/refobj_binary_format.md` established from
+the other end. The rest are simply not shipped, and no reason is claimed.
+
+### The full readable list
+
+| table | file |
+|---|---|
+| `_REFABILITYBYITEMOPTLEVEL` | `refabilitybyitemoptleveldata.txt` |
+| `_REFACCESSPERMISSIONOFSHOP` | `refaccesspermissionofshop.txt` |
+| `_REFCONDITIONTOBUYSCRAPITEM` | `refconditiontobuyscrapitem.txt` |
+| `_REFCONDITIONTOSELLPACKAGEITEM` | `refconditiontosellpackageitem.txt` |
+| `_REFCONDITIONTOSELLSCRAPITEM` | `refconditiontosellscrapitem.txt` |
+| `_REFEVENT` | `eventdata.txt` |
+| `_REFEVENTZONE` | `eventzonedata.txt` |
+| `_REFGACHAITEMSET` | `gachaitemset.txt` |
+| `_REFGACHANPCMAP` | `gachanpcmap.txt` |
+| `_REFGAME_WORLD` | `gameworlddata.txt` |
+| `_REFGAME_WORLD_CONFIG` | `gameworldconfigdata.txt` |
+| `_REFHWANLEVEL` | `hwanleveldata.txt` |
+| `_REFLEVEL` | `leveldata.txt` |
+| `_REFMAGICOPT` | `magicoption.txt` |
+| `_REFMAGICOPTASSIGN` | `magicoptionassign.txt` |
+| `_REFMAGICOPTBYITEMOPTLEVEL` | `refmagicoptbyitemoptleveldata.txt` |
+| `_REFMAGICOPTGROUP` | `refmagicoptgroup.txt` |
+| `_REFMAPPINGSHOPGROUP` | `refmappingshopgroup.txt` |
+| `_REFMAPPINGSHOPWITHTAB` | `refmappingshopwithtab.txt` |
+| `_REFOBJCHAR` | `characterdata.txt` |
+| `_REFOBJITEM` | `itemdata.txt` |
+| `_REFOPTIONALTELEPORT` | `refoptionalteleport.txt` |
+| `_REFPACKAGEITEM` | `refpackageitem.txt` |
+| `_REFPRICEPOLICYOFITEM` | `refpricepolicyofitem.txt` |
+| `_REFQUEST` | `questdata.txt` |
+| `_REFREGION` | `refregion.txt` |
+| `_REFREWARDPOLICYTOBUYSCRAPITEM` | `refrewardpolicytobuyscrapitem.txt` |
+| `_REFREWARDPOLICYTOSELLPACKAGEITEM` | `refrewardpolicytosellpackageitem.txt` |
+| `_REFREWARDPOLICYTOSELLSCRAPITEM` | `refrewardpolicytosellscrapitem.txt` |
+| `_REFSCRAPOFPACKAGEITEM` | `refscrapofpackageitem.txt` |
+| `_REFSETITEMGROUP` | `refsetitemgroup.txt` |
+| `_REFSHOP` | `shopdata.txt` |
+| `_REFSHOPGOODS` | `refshopgoods.txt` |
+| `_REFSHOPGROUP` | `shopgroupdata.txt` |
+| `_REFSHOPITEMSTOCKPERIOD` | `refshopitemstockperiod.txt` |
+| `_REFSHOPTAB` | `shoptabdata.txt` |
+| `_REFSHOPTABGROUP` | `refshoptabgroup.txt` |
+| `_REFSIEGEBLESSBUFF` | `refsiegeblessbuff.txt` |
+| `_REFSIEGEDUNGEON` | `refsiegedungeon.txt` |
+| `_REFSIEGEFORTRESS` | `siegefortress.txt` |
+| `_REFSIEGEFORTRESSBATTLERANK` | `siegefortressbattlerank.txt` |
+| `_REFSIEGEFORTRESSGUARD` | `siegefortressguard.txt` |
+| `_REFSIEGEFORTRESSITEMFORGE` | `siegefortressitemforge.txt` |
+| `_REFSIEGEFORTRESSREWARDS` | `siegefortressreward.txt` |
+| `_REFSIEGESTRUCTUPGRADE` | `siegestructupgradedata.txt` |
+| `_REFSKILL` | `skilldata.txt` |
+| `_REFSKILLBYITEMOPTLEVEL` | `refskillbyitemoptleveldata.txt` |
+| `_REFSKILLMASTERY` | `skillmasterydata.txt` |
+| `_REFTELELINK` | `teleportlink.txt` |
+| `_REFTELEPORT` | `teleportdata.txt` |
+| `_REFTREATITEMOFSHOP` | `reftreatitemofshop.txt` |
+
+`itemdata`, `characterdata` and `skilldata` are **sharded** — `itemdata_1000`,
+`itemdata_5000` and so on — so the stem above is the family, not one file.

@@ -11652,3 +11652,66 @@ flagging:
 No value srrevamp computes with changed. What changed is that every field on
 `Character` is now either matched to the engine's own name or recorded as a
 deliberate divergence, and the next field added has to answer the same question.
+
+## 51 of the 85 reference tables were readable all along (2026-09-17)
+
+Chasing the berserk row — which `SYSTEMS.md` marks with the strongest possible
+statement of being stuck, *"no probe known to exist (the magnitudes are DB
+rows)"* — turned up `_REFHWANLEVEL`'s client file, `hwanleveldata.txt`, sitting
+in `Media.pk2`. That file turned out to be the wrong answer, and asking why it
+was there at all was the right question.
+
+### The berserk probe itself: a negative, recorded so it is not repeated
+
+`hwanleveldata.txt` is **four columns and 256 rows**: a level id and two
+`UIO_SECOND_HWAN_*` string ids. It is the hwan-level **name** table, not the
+gauge magnitudes. Berserk's row is unchanged, and the next tick should not spend
+the extraction again.
+
+### The general result
+
+Matching all 85 reference table names against the archive's
+`server_dep\silkroad\textdata\` directory partitions them cleanly:
+
+| | count |
+|---|---:|
+| have a client file — **readable now** | **51** |
+| server-only, the loot tables | 17 |
+| server-only, other | 17 |
+
+`refdata_tables.md` had said "77 of 85 unread" since it was written, which
+**conflated *not yet read* with *not readable***. Most of them were in the
+archive. The mapping is now `persistence.ClientTextdata`, with
+`ServerOnlyLootTables` and `ServerOnlyOtherTables`, and a test that the three
+partition the 85 exactly.
+
+Seven filenames share no stem with their table and were resolved by reading the
+archive's own listing — `_REFTELELINK` is `teleportlink`, `_REFOBJITEM` is
+`itemdata`, `_REFSIEGEFORTRESSREWARDS` is `siegefortressreward` (singular), and
+four more.
+
+### Every loot table is server-only, and the probe was checked
+
+All **seventeen** tables with `DROP` in the name have no client file — the nine
+`_REFDROPCLASSSEL_*`, `_REFDROPGOLD`, `_REFDROPITEMASSIGN`, `_REFDROPITEMGROUP`,
+`_REFDROPOPTLVLSEL`, both `_REFMONSTER_ASSIGNEDITEM*DROP` and
+`_REFCUSTOMIZINGRESERVEDITEMDROPFORMONSTER`.
+
+Before believing that negative: **exactly one file in the whole of `Media.pk2`
+has "drop" anywhere in its path**, and it is not one of these. The reward files
+that do ship are quest, event and siege rewards, not monster loot.
+
+So **drop rates are not recoverable from the client, by design rather than by
+omission.** That is worth having as a citation: it stops the question being
+reopened, and it tells a reimplementation plainly that its loot numbers must be
+its own or come from a real database.
+
+`_REFOBJCOMMON`'s absence is the one explained rather than merely observed: it
+has no file because it is the shared prefix denormalised into `itemdata` and
+`characterdata`, which `refobj_binary_format.md` established from the other end.
+
+### What changed
+
+No value srrevamp computes with. What changed is that "77 unread" — a number
+that discouraged looking — became "51 readable, here are the filenames", which
+is a work queue.

@@ -48,7 +48,7 @@ one cannot rot the same way without the build going red.
 | Magic-option vocabulary | 53 tags | SPECIFIED | docs/protocol/magic_options.md | ParamFor, PackTag | — |
 | Levelling and EXP | 8 fns | SPECIFIED | docs/protocol/param_registry.md | DeathPenaltyMinLevel, StatPointsPerLevel | — |
 | Quest scripting | 696 quests, 153 compiled | PARTIAL | docs/protocol/quest_scripting.md |  | **BLOCKED**: how the 543 classless quests attach. CQuestBase's slot-55 default is not reachable via the dump's slot tags; needs the vtable read directly in Ghidra |
-| Reference-table catalogue | 85 tables | PARTIAL | docs/protocol/refdata_tables.md | ReferenceTables | the count is now PROVEN complete -- a string harvest found the same 85, and a test holds the two lists equal. 77 of the 85 still have no column layout; read one when a value needs it |
+| Reference-table catalogue | 85 tables | PARTIAL | docs/protocol/refdata_tables.md | ReferenceTables, ClientTextdata | the count is PROVEN complete, and **51 of the 85 are readable right now** from `Media.pk2` -- the mapping is `persistence.ClientTextdata`. The other 34 are server-only, 17 of them the loot tables, which is measured rather than assumed. Read a readable one when a value needs it |
 | Teleport network | 3 tables | PARTIAL | docs/protocol/teleport_network.md |  | cols 3/8/9 of teleportlink (cost, level range) are inferred; read the `_REFTELELINK` consumer at `0x0082d770` |
 | Berserk | 6 fns | PARTIAL | docs/protocol/param_registry.md | DamageNumerator, Duration, FillPerHit | the gauge fill rate; no probe known to exist (the magnitudes are DB rows) |
 | Skills and masteries | 20 fns | PARTIAL | docs/protocol/skill_params.md |  | mastery cost `masteryUpCost` is own design; find its use-site |
