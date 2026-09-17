@@ -64,7 +64,7 @@ one cannot rot the same way without the build going red.
 | Pets and COS | 23 | PARTIAL | docs/protocol/pets.md | MinOwnerLevel, CheckSummon, PetRequiredLevelOffset | the summon, level and naming rules are grounded; the five switch cases in `GObjPC::FUN_004fcef0` are not mapped to COS kinds, and the hunger gauge (`HGPFULL_NODRINK`) is named but unread |
 | Alchemy and enchanting | 19 | PARTIAL | docs/protocol/alchemy.md | ClampRate, LuckyBonus, SuccessBonusParam | the reinforce rate is whole; the base rate's ref-record offset `(tier+21)*32` is not mapped to a column -- count fields through `RefObjItem::ExtractData` (`0x006a3d50`). The other seven operations' slot 6/7 pairs are unread |
 | Battle arena | 16 | OPEN | — |  | 16 classes; CBattleArenaInfo* |
-| Timed jobs | 16 | OPEN | — |  | 16 CTJ_* classes; CTimedJob::Create is already named |
+| Timed jobs | 16 | PARTIAL | docs/protocol/timed_jobs.md | Kinds, GetterSlotFor, PetFieldCount | the mechanism, the twelve kinds and the record's arity are grounded; what the thirteen non-timestamp columns hold needs the twelve kinds' getters read, and how a job fires is unread |
 | Party | 15 | PARTIAL | docs/protocol/party.md | MaxSize, MinCreatorLevel, CanCreate | size and the creator level are grounded; the invite and expulsion flows are only enumerated, and party flag bit 2 has no probe known to name it |
 | Academy and training camp | 11 | PARTIAL | docs/protocol/academy.md | MinFounderLevel, FoundingGold, ReopenCooldownDays | founding is grounded; which of the two membership levels (41/61) is the master role is unread, and the three 24-hour windows are named by the client but not confirmed server-side |
 | Jobs, trade routes and market | 11 | PARTIAL | docs/protocol/jobs.md | MinJobLevel, FleaMarketSlots, CheckJoin | the level floor, the three kinds and the market size are grounded; which kind is trader/hunter/thief is unread, and every other limit (distance, wear limits, reward rates) sits behind a helper rather than a literal |
@@ -72,7 +72,7 @@ one cannot rot the same way without the build going red.
 
 ## How to read the count
 
-**11 specified, 20 partial, 2 open, of 33.** That is the honest headline, and it
+**11 specified, 21 partial, 1 open, of 33.** That is the honest headline, and it
 is not a percentage of the game — a specified system is one this project can
 implement faithfully, not one it has implemented. What srrevamp actually ships is
 a separate question, tracked in `docs/TODO.md`.
