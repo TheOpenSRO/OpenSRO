@@ -13090,3 +13090,58 @@ thing that caught it was the project's own record that the tool "returns exactly
 58" — a remembered number disagreeing with the output.
 
 Nothing srrevamp uses changed, so nothing was wired; `go test -p 1 ./...` green.
+
+## I misread my own source page, and the correction opened a conflict (2026-09-17)
+
+Last tick I identified `refRecord[0xa4]` as `_RefObjCommon` field 28 and then
+said the field index gives **no** text column, citing
+`refobj_binary_format.md`'s line that "binary field 57 and text column 57 are
+different fields".
+
+**That misread the page.** Read in full, it says the opposite for the range that
+matters:
+
+> The two agree on field order — four independent anchors land exactly (ID at
+> index 1, Country at 14, the four requirement pairs at 32..39, the five asset
+> strings at 52..56) — which is why treating "consumed field N" as "text column
+> N" **has worked**. It stops working at the last common field.
+
+The break is at 57, where the binary carries the link to the type-specific
+record and the denormalised text table does not. **Field 28 sits inside the
+anchored range**, bracketed by the anchors at 14 and 32..39. So field 28 is text
+column 28.
+
+I quoted the one sentence that supported the cautious answer and did not read
+the paragraph it sits in. Being wrong in the conservative direction is still
+being wrong: it parked a solved question as blocked.
+
+### And then the answer did not fit
+
+Measured on the real table — `itemdata_1000`, 837 rows, **UTF-16LE** (a first
+read with latin-1 produced plausible-looking garbage) — columns 28 and 29 are a
+**paired range**: `c29 ≈ 1.5 × c28` on every row, and `c28` climbs monotonically
+with weapon tier, 198 → 2020 across `SWORD_01_A` … `SWORD_05_B`.
+
+That is the shape of a durability or stat pair. It is not the shape of a price.
+And `repair.go` cites the engine as
+
+	price = (float)refRecord[0xa4] / (float)item[0x194]
+
+A durability divided by the instance's max durability is ≈ 1, which would make
+`UnitPrice` a constant.
+
+**So something is wrong and this tick does not know which.** Either the
+field-to-column identification fails here in a way the four anchors do not
+catch, or `refRecord[0xa4]` is not the price basis that comment has called it
+since it was written.
+
+**Not resolved, and deliberately not guessed.** The shape of a column is a
+curve, and this project's rule is that a use-site settles meaning — the rule
+exists because characterdata col 79 was promoted on a curve twice. The probe is
+named instead: read what writes `_RefObjCommon+0xa4`, and what `item[0x194]`
+actually holds.
+
+`priceBasis` stays a caller-supplied input, now for a stated reason rather than
+a vague one, and `SYSTEMS.md`'s durability caveat carries the conflict.
+
+Nothing srrevamp uses changed; `go test -p 1 ./...` green.

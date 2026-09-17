@@ -55,13 +55,29 @@ const MaxUnitPrice = 9.9999997e+37
 // record, not the item-specific one -- `RefObjItem::ExtractData` writes nothing
 // below `+0x198`.
 //
-// That does NOT give it a text column. `docs/protocol/refobj_binary_format.md`
-// says outright that treating "consumed field N" as "text column N" is wrong:
-// the binary tables are self-describing, carry a per-column schema, and the
-// parser skips columns, so binary field 57 and text column 57 are different
-// fields. Mapping field 28 to an itemdata column needs that schema, and until
-// it is read, priceBasis stays a caller-supplied input rather than something
-// this package can look up.
+// CORRECTED 2026-09-17, same day: the note above said the field index gives no
+// text column at all, citing refobj_binary_format.md. That misread the page.
+// It says the two formats DO agree on field order -- with four independent
+// anchors landing exactly, at indices 1, 14, 32..39 and 52..56 -- and that the
+// correspondence "stops working at the last common field", the break being at
+// 57 where the binary carries link fields the denormalised text table lacks.
+// Field 28 is inside the anchored range, so field 28 IS text column 28.
+//
+// AND THAT OPENS A CONFLICT, which is why priceBasis still stays a
+// caller-supplied input. Measured on the real table (837 rows of
+// itemdata_1000, UTF-16), columns 28 and 29 are a paired range -- c29 is
+// almost exactly 1.5 * c28 on every row -- and c28 climbs monotonically with
+// weapon tier, 198 through 2020 across SWORD_01_A..SWORD_05_B. That is the
+// shape of a durability or stat pair, not of a price.
+//
+// A durability divided by the instance's max durability is approximately 1,
+// which would make UnitPrice a constant. So either the field-to-column
+// identification fails here in a way the anchors do not catch, or
+// refRecord[0xa4] is not the price basis this comment has called it since it
+// was written. NOT RESOLVED, and deliberately not guessed: the shape of a
+// column is a curve, and this project's rule is that a use-site settles
+// meaning. The use-site to read is what fills _RefObjCommon+0xa4 and what
+// item[0x194] actually holds.
 //
 // `refRecord[0xa4]` is the item's
 // price basis and `item[0x194]` its maximum durability, so a FULL repair of an
