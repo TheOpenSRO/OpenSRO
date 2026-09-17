@@ -138,3 +138,38 @@ func TestRestoreCostHasTwoIndependentReaders(t *testing.T) {
 		t.Errorf("slot %d is offset %#x, not +0xdc", RestorePredicateSlot, RestorePredicateSlot*4)
 	}
 }
+
+// TestFullRepairCostsExactlyTheBasis is the identity that IDENTIFIES the basis
+// rather than merely describing it, and it is what settled a conflict this
+// project opened and closed on 2026-09-17.
+//
+// The engine computes price = basis/maxDurability and cost = price * units, so
+// repairing from zero to full buys units = maxDurability and costs exactly
+// `basis`. That makes `refRecord[0xa4]` **the item's full-repair cost in gold**
+// -- a use-site identification, not a shape.
+//
+// Checked against the real table: ITEM_CH_SWORD_01_A has itemdata column 28 =
+// 297 and durability 62/76, giving 297/76 = 3.9 gold per unit and a full repair
+// of 297. Its vendor price (column 26) is 890.
+func TestFullRepairCostsExactlyTheBasis(t *testing.T) {
+	for _, tc := range []struct{ basis, maxDur int }{
+		{297, 76},   // ITEM_CH_SWORD_01_A
+		{500, 78},   // ITEM_CH_SWORD_01_B
+		{1426, 87},  // ITEM_CH_SWORD_03_A
+		{2482, 97},  // ITEM_CH_SWORD_04_C
+		{3718, 107}, // ITEM_CH_SWORD_06_A
+	} {
+		q := Estimate(1<<40, tc.basis, tc.maxDur, 0)
+		if q.Units != tc.maxDur {
+			t.Errorf("basis %d: repaired %d units, want the full %d",
+				tc.basis, q.Units, tc.maxDur)
+		}
+		// price is a float divided then multiplied back, so allow the rounding
+		// the engine's own float path would also produce.
+		if diff := q.Cost - float64(tc.basis); diff > 1 || diff < -1 {
+			t.Errorf("basis %d over %d durability cost %v, want %d — a full "+
+				"repair must cost exactly the basis",
+				tc.basis, tc.maxDur, q.Cost, tc.basis)
+		}
+	}
+}

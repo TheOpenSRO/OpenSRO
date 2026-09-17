@@ -13145,3 +13145,72 @@ actually holds.
 a vague one, and `SYSTEMS.md`'s durability caveat carries the conflict.
 
 Nothing srrevamp uses changed; `go test -p 1 ./...` green.
+
+## The repair basis is itemdata column 28, and the conflict was mine (2026-09-17)
+
+Took the probe the previous tick named — read what fills `_RefObjCommon+0xa4`
+and what `item[0x194]` holds — and it dissolved the conflict rather than
+deciding it.
+
+### The formula, re-read
+
+`GItemEquip::ComputeRepair` (`0x00496e60`) reaches the ref record through **two**
+dereferences, which the old comment glossed as one:
+
+	00496e94  mov esi,[eax+0x34]      ; the instance's data block
+	00496e97  mov ebx,[esi+0x38]      ; current durability
+	00496eaf  mov edi,[eax+0x194]     ; max durability
+	00496ee6  mov edx,[esi+0x18]      ; -> THE REF RECORD
+	00496ee9  mov ecx,[edx+0xa4]
+	00496eef  fild [edx+0xa4] ; fild [eax+0x194] ; fdivp
+	00496f1b  fld1 ; fcom             ; clamp at 1.0
+
+So `price = refRecord[0xa4] / maxDurability` is exactly right, and
+`item[0x194]` really is max durability — it is the minuend of the "anything to
+repair?" test.
+
+### The conflict was an off-by-one of mine
+
+The previous tick reported columns 28/29 as a 1.5-ratio pair climbing with tier
+and called that "durability-shaped", concluding something must be wrong.
+
+**The pair is 27/28, not 28/29.** My column dump printed `r[2], r[6], r[7],
+r[26]…` under a header that labelled them `name, c6, c7, c26…`, and the long name
+string in the `r[6]` slot made the printed columns look shifted by one. Column 26
+is **Price** — `export-refdata`'s own `fPrice = 26`, and the values 890/1500/2250
+are exactly that. Durability is **63/64**, confirmed by the same map and by that
+tool's test fixture (`62/76`, which is literally `ITEM_CH_SWORD_01_A`'s row).
+
+So nothing about the binary was inconsistent. I built a conflict out of
+mislabelled output and then correctly refused to resolve it by guessing — which
+was the right call for the wrong reason, since the thing to check was my own
+probe.
+
+### What column 28 is, from the use-site
+
+`price = basis/maxDurability` and `cost = price * units`, so repairing from zero
+to full buys `units = maxDurability` and costs **exactly `basis`**. Column 28 is
+therefore **the item's full-repair cost in gold** — an identification from the
+arithmetic, not from the column's shape.
+
+Against the real table:
+
+| item | col 28 | durability | gold/unit | col 26 (Price) |
+|---|---:|---:|---:|---:|
+| `ITEM_CH_SWORD_01_A` | 297 | 62/76 | 3.9 | 890 |
+| `ITEM_CH_SWORD_03_A` | 1426 | 71/87 | 16.4 | 15,250 |
+| `ITEM_CH_SWORD_06_A` | 3718 | 87/107 | 34.7 | 40,000 |
+
+`TestFullRepairCostsExactlyTheBasis` pins the identity on five real items.
+
+### What this closes and what it does not
+
+`SYSTEMS.md`'s durability caveat loses the conflict and gains a column number.
+`priceBasis` is still a caller-supplied input to `repair.Estimate` — the value is
+now *known* to be itemdata column 28, but `refdata.Item` does not carry that
+column yet, so wiring it is a schema change rather than a constant.
+
+The reading of the tick: **"the answer does not fit" is a claim about the probe
+at least as often as about the binary.** The previous tick's instinct not to
+promote a curve was right, but the next step should have been to re-check the
+dump's column labels, not to write the conflict up as a property of the engine.
