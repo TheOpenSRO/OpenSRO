@@ -14514,3 +14514,49 @@ identical, reference the same three item codes (`ITEM_MALL_SKILL_RESTORATION_POT
 `ITEM_QSP_ALL_POTION_1_01`, `ITEM_QNO_RM_OLDWOMAN_2_02`) and differ in exactly one
 call: `FUN_0059f8b0` against `FUN_0059fd60`. That pair is what separates them, and
 reading those two is the next step on them.
+
+## A claim from the last tick, corrected: 162 quest classes, not nine (2026-09-17)
+
+Last tick's entry said "**only nine** quests in the entire binary are classes rather
+than data". That was a fact about a grep for `^CQSP_`, not about the binary. Chasing
+an unrelated thread through the same index turned up `QNO_RM_OLDWOMAN_6::OnDead` and
+friends, and the real count is:
+
+	CQNO_*   153 classes     864 functions
+	CQSP_*     9 classes      60 functions
+	total    162 classes
+
+The six inventory-expansion quests are still exactly what `GObjPC::HasInventoryExpansionQuest`
+consults, and the reason they turned up is not that they are rare classes but that they
+are the ones an **engine limit** reads. Both this file and
+`internal/inventory.ExpansionQuestCodes` are corrected.
+
+### The quest framework, measured
+
+Every quest class derives the same chain, from the RTTI the dump already carries:
+
+	CQNO_CH_POTION_4 : CBasicQuest : CQuestBase : IQuest
+
+`CBasicQuest`'s vtable has **103 slots**, two of them already named in this project
+(`CBasicQuest__PayQuest` at slot 65, 2,649 bytes, and `CBasicQuest__SetupMissionNPC`
+at slot 75). Across the 153 `CQNO_` classes the overrides cluster:
+
+	slot 20   153 of 153   the MSVC deleting destructor -- boilerplate, not game logic
+	slot 55   151 of 153   the per-quest hook: ~900 bytes each, and CBasicQuest's own
+	                       default is a 42-byte stub
+	slot 22    81          slot 103  40          slot 1  35
+
+**That is the next lever, and it is a large one.** Identifying what slot 55 does names
+151 functions in one pass, each already carrying its quest's name; slots 22 and 103
+add another 120. This is the same shape as the message-handler table: one mechanism
+read, then a hundred functions named from it. Recorded here rather than started,
+because the tick is spent.
+
+### Also this tick
+
+`Char_PublishCombatStats` only publishes a precomputed block; the aggregate for a
+monster is built by `FUN_00495d60`, which interpolates **characterdata** columns as
+`min + f*(max-min) + perLevel*degree` with an assert that `min <= max`, writing the
+whole `[0x65]..[0x77]` stat block. That is the monster path. The player's flat
+`Defense` term — the one the grounding audit still lists as disclosed — does **not**
+come from there, so it is still open.

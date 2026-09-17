@@ -237,9 +237,15 @@ type Store interface {
 //
 // A SECOND, INDEPENDENT SOURCE for the same six: the server carries an RTTI
 // class per quest, and their names are these codes with a C in front --
-// CQSP_CH_EXINVENTORY_1, CQSP_WC_EXINVENTORY_2 and so on. Only nine quests in
-// the whole binary are classes rather than data; the other three are
-// CQSP_ALL_POTION_1..3.
+// CQSP_CH_EXINVENTORY_1, CQSP_WC_EXINVENTORY_2 and so on. There are nine such
+// CQSP_ classes: these six and CQSP_ALL_POTION_1..3.
+//
+// CORRECTED 2026-09-17, the same day it was written. This comment first said
+// "only nine quests in the whole binary are classes rather than data", which
+// was a fact about a grep for `^CQSP_`, not about the binary. There are **162
+// quest classes**: 9 `CQSP_` and 153 `CQNO_`, each deriving
+// CBasicQuest : CQuestBase : IQuest. What is true of the six is that they are
+// the ones an ENGINE LIMIT consults, which is why they turned up here.
 //
 // NOT READ: what status 8 means. "Completed" is the obvious reading and is not
 // recorded as fact. Three sibling functions (0x005703b0, 0x00570650,
