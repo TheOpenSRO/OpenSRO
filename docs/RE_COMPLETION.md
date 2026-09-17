@@ -14653,3 +14653,50 @@ right four times in five. **The discriminator a later tick should reach for**: t
 parameter those overrides all call through (offsets 0x194, 0x150, 0x154, 0x1a0, 0x118
 are the most common). Identifying that class says what the hook is handed, and that
 settles what it is.
+
+## The placeholder backlog, classified — and 2,382 of it is boilerplate (2026-09-17)
+
+Last tick corrected the metric: **6.08%** of the server and **3.08%** of the client are
+named once `vslot_NNN` placeholders count as unnamed, with 5,459 and 5,136 of them. This
+tick asked what that backlog actually contains, because "10,595 functions to name" and
+"10,595 functions worth naming" are different claims.
+
+### By size
+
+	client   43% tiny (<=16 bytes)   32% small   14% medium   12% large (636)
+	server   17% tiny               45% small   23% medium   16% large (883)
+
+### By shape
+
+	                      client   server
+	deleting destructor      607     1775
+	field getter              35       30
+	real body               4494     3654
+
+**2,382 are MSVC deleting destructors**, and that reading rests on two facts, neither of
+them a reading of one function:
+
+1. **The idiom**: the body calls one function on `this`, then frees it under
+   `(flag & 1) != 0`. No hand-written code does that; the compiler emits it.
+2. **The position**: 1,908 of the 2,382 sit in vtable **slot 0 or 1**, where MSVC places
+   this destructor. The server's next cluster is slot 20 with 198 — the quest classes,
+   whose slot 20 was already read as a destructor last tick, independently.
+
+Named `<Class>::ScalarDeletingDestructor` (suffixed with the slot where a class has more
+than one). **Applied 1,775 server and 607 client, 0 failed.**
+
+**They are in `docs/protocol/boilerplate_names.tsv`, not `recovered_names.tsv`.** The
+curated file is for names recovered from evidence about the *game*; these are the
+compiler's furniture, identified mechanically and re-derivable by rerunning the shape
+match. Keeping 2,382 mechanical rows out of the curated record is the point —
+`ApplyRecoveredNames.java` already takes the file as an argument, so nothing needed
+changing.
+
+### What this says about the remaining work
+
+Naming these does not mean 2,382 functions were understood; it means they were
+**excluded**, which is the useful part. The remaining placeholder backlog is roughly
+8,100 functions, and the ~1,500 "large" ones are where the game logic actually is. The
+`field getter` count (65) is low because the heuristic was strict, so the tiny-function
+share is understated rather than the reverse; a later pass wanting those should match on
+size and a single `return *(x + 0xNN)` line rather than on my regex.
