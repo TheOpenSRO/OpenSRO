@@ -14792,3 +14792,46 @@ the binary's vtables the way the server's index was built.
 
 Both were caught by an existing fact disagreeing with the measurement, which is the
 cheapest kind of check available and the reason to keep sanity anchors around.
+
+## The client vtable index already existed, and slot 10 is Create (2026-09-17)
+
+Last tick concluded the client had no vtable index and built a partial one out of the
+dump's RTTI comments — 7,264 pairs with 29,962 knowingly missing. **That work was
+unnecessary.** `/var/tmp/vtindex.py` builds a complete index for any PE from RTTI in
+`.rdata`, and running it on the client took **0.38 seconds**:
+
+	sro_client.exe: 977 classes, 1444 vtables, 34220 slots
+
+The comment-derived stopgap is deleted. The lesson is the one this project's own memory
+already states — the RE box carries a toolkit, and the first move is to look for the
+tool, not to write one. Checking `vtindex.py --help` would have cost ten seconds.
+
+### With a real index, slot 10 answers
+
+	the base implementations are STUBS   CIFWnd's is 1 byte (inherited by 293 classes)
+	                                     CNIFWnd's is 1 byte (124 classes)
+	so slot 10 is a hook with no default behaviour, like the quest content hook.
+
+	319 window-hierarchy classes override it
+	177 of those build the literal string "Create" via FUN_00425ae0("Create", 6)
+
+"Create" is the engine's own word, it is the only verb string anywhere in the family,
+and it matches what the bodies do: `CNIFEdit`'s creates a Win32 `EDIT` control and
+stores the HWND at `+0x368`; `CNIFSliderCtrl`'s zeroes its state block.
+
+**Named `<Class>::Create` on the 177 that carry the word in their own body. Applied
+177, failed 0.** The other 142 overrides share the slot but not the per-function
+evidence, so they are left alone — the same line drawn at slot 22 and at the first
+attempt on this slot.
+
+### A measurement of mine was wrong twice before it was right
+
+- First pass said **40** window classes override slot 10, which contradicted the 172
+  large overrides counted from the index. The query took each class's *first* vtable;
+  **457 of 977 classes have more than one**. Across all tables the answer is 319.
+- The tick before, the same slot looked like "initialise" from two bodies and 65%
+  field-writes, which was correctly refused. The real discriminator was not the shape
+  of the bodies but a string inside them.
+
+`client/tools/re/query_client_vtables.py` keeps the corrected query (all tables, joined
+to the RTTI hierarchy) so the next client pass starts from it.
