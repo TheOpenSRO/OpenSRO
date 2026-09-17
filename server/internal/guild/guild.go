@@ -111,8 +111,78 @@ func (p Permission) Has(required Permission) bool {
 // join any guild by id, uninvited. Building an invite flow is the missing
 // feature, and when it is built PermInvite is the bit it checks.
 
-// MaxNameLength caps a guild's name length. Own design choice.
-const MaxNameLength = 32
+// Guild name length. **RECOVERED 2026-09-17**, having been own design until
+// then -- the previous comment read "Own design choice" and the value was 32.
+//
+// The create handler (FUN_00514ce0) validates the name with one unsigned
+// comparison against the std::string's own size field:
+//
+//	if (len - 2u < 0xb) { ...create... }
+//	else FUN_004e7250(0x4c18);      // GUILDERR_INVALID_GUILDNAME_LEN
+//
+// so the accepted range is 2 through 12 inclusive. The same compiler shape as
+// the fortress tax check in internal/siege: a symmetric bound written as one
+// unsigned subtract-and-compare rather than two signed tests.
+//
+// srrevamp had NO minimum at all, which is the more consequential half: a
+// one-character guild name was legal here and is not in the engine.
+const (
+	MinNameLength = 2
+	MaxNameLength = 12
+)
+
+// ValidName reproduces the engine's check rather than the range it accepts, so
+// the two cannot drift.
+func ValidName(name string) bool {
+	return uint(len(name)-MinNameLength) < uint(MaxNameLength-MinNameLength+1)
+}
+
+// ErrInvalidNameLength is the refusal a name outside that range earns.
+// GUILDERR_INVALID_GUILDNAME_LEN.
+var ErrInvalidNameLength = errors.New("guild: name must be 2 to 12 characters")
+
+// MaxLevel is 5, and the check is `cmp al,0x5; jb` in the level-up handler
+// (FUN_005c63d0): a guild at level 5 is refused with
+// ERROR_GUILD_LEVEL_UP_FULL (0x4c21).
+//
+// This is an independent confirmation of MaxMembersByLevel having exactly five
+// entries -- that table's length came from a bounds assert in a different
+// function, and this cap agrees with it.
+const MaxLevel = 5
+
+// LevelUpGold is what it costs to advance FROM each level, read from the
+// 64-bit table at .rdata 0x00ade918 that FUN_005c6240 indexes as
+// `&DAT_00ade910 + level*8`. The high dword is zero for all four, so the values
+// fit comfortably in an int64 and the engine's 64-bit compare never needs it.
+//
+// Index 0 is unused: the function's switch accepts only levels 1 through 4, and
+// the dwords that would be index 0 hold 3 and 6, which are not gold.
+var LevelUpGold = [MaxLevel]int64{0, 3_000_000, 9_000_000, 15_000_000, 21_000_000}
+
+// LevelUpGuildPoints is the other half of the cost, from the dword table at
+// .rdata 0x00ade8f0 indexed as `&DAT_00ade8ec + level*4`.
+//
+// THIS SETTLES A QUESTION THIS FILE USED TO LEAVE OPEN. The comment on
+// MaxMembersByLevel said of the dwords following the capacity table: "The three
+// dwords that follow it (5400, 50400, 135000) look like a guild-experience
+// curve and are NOT claimed here -- nothing read so far uses them." They are
+// the guild-point costs, there are FOUR of them rather than three (378,000 was
+// past where that pass looked), and FUN_005c6240 is what uses them.
+//
+// Declining to claim them was right. A guild-experience curve and a level-up
+// cost table are the same numbers in the same place, and only the use-site
+// separates them.
+var LevelUpGuildPoints = [MaxLevel]int{0, 5_400, 50_400, 135_000, 378_000}
+
+// LevelUpCost returns what advancing from the given level costs. ok is false
+// for a level the engine's switch would reject -- anything outside 1..4, which
+// includes level 5, the cap.
+func LevelUpCost(fromLevel int) (gold int64, guildPoints int, ok bool) {
+	if fromLevel < 1 || fromLevel >= MaxLevel {
+		return 0, 0, false
+	}
+	return LevelUpGold[fromLevel], LevelUpGuildPoints[fromLevel], true
+}
 
 // ErrNameTaken is returned by Store.Create when the guild name is already
 // in use.

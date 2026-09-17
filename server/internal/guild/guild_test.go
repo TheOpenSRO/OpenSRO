@@ -3,6 +3,7 @@ package guild
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -86,5 +87,90 @@ func TestPermissionMasksMatchTheEngine(t *testing.T) {
 	// equality does too.
 	if !Permission(0).Has(0) {
 		t.Error("an empty requirement is satisfied by anyone")
+	}
+}
+
+// --- values recovered 2026-09-17 -------------------------------------
+
+// `len - 2u < 0xb` accepts 2 through 12. The boundaries are what a restatement
+// of the range gets wrong, and the minimum is the half srrevamp did not have.
+func TestValidNameMatchesTheUnsignedCheck(t *testing.T) {
+	for n := MinNameLength; n <= MaxNameLength; n++ {
+		if !ValidName(strings.Repeat("a", n)) {
+			t.Errorf("a %d-character name was rejected", n)
+		}
+	}
+	for _, n := range []int{0, 1, 13, 14, 32, 100} {
+		if ValidName(strings.Repeat("a", n)) {
+			t.Errorf("a %d-character name was accepted", n)
+		}
+	}
+	// And against the instruction rather than the range.
+	for n := 0; n <= 200; n++ {
+		want := uint(n-MinNameLength) < uint(MaxNameLength-MinNameLength+1)
+		if got := ValidName(strings.Repeat("a", n)); got != want {
+			t.Fatalf("length %d: got %v want %v", n, got, want)
+		}
+	}
+}
+
+// MaxLevel and the capacity table were recovered from different functions and
+// must agree; that agreement is the evidence for both.
+func TestMaxLevelAgreesWithTheCapacityTable(t *testing.T) {
+	if MaxLevel != len(MaxMembersByLevel) {
+		t.Errorf("MaxLevel is %d but MaxMembersByLevel has %d entries; the level-up "+
+			"cap and the capacity table came from different functions and agreeing "+
+			"is what makes either trustworthy", MaxLevel, len(MaxMembersByLevel))
+	}
+	if MaxMembersFor(MaxLevel) != 50 {
+		t.Errorf("a level-%d guild holds %d, want 50", MaxLevel, MaxMembersFor(MaxLevel))
+	}
+}
+
+func TestLevelUpCost(t *testing.T) {
+	for _, c := range []struct {
+		from   int
+		gold   int64
+		points int
+	}{
+		{1, 3_000_000, 5_400},
+		{2, 9_000_000, 50_400},
+		{3, 15_000_000, 135_000},
+		{4, 21_000_000, 378_000},
+	} {
+		gold, points, ok := LevelUpCost(c.from)
+		if !ok {
+			t.Errorf("level %d has no cost", c.from)
+			continue
+		}
+		if gold != c.gold || points != c.points {
+			t.Errorf("level %d costs %d gold / %d GP, want %d / %d",
+				c.from, gold, points, c.gold, c.points)
+		}
+	}
+	// The switch accepts 1..4 and nothing else. Level 5 is the cap, so it has
+	// no cost -- which is a different statement from its cost being zero.
+	for _, from := range []int{0, -1, MaxLevel, MaxLevel + 1, 99} {
+		if _, _, ok := LevelUpCost(from); ok {
+			t.Errorf("level %d reported a cost; the engine's switch rejects it", from)
+		}
+	}
+}
+
+// The gold costs rise by a constant six million. Recording the shape catches a
+// transcription slip that a per-value check would not, because a wrong digit in
+// one entry breaks the progression.
+func TestLevelUpGoldIsAnArithmeticProgression(t *testing.T) {
+	const step = 6_000_000
+	for from := 2; from < MaxLevel; from++ {
+		if d := LevelUpGold[from] - LevelUpGold[from-1]; d != step {
+			t.Errorf("the step from level %d to %d is %d, want %d", from-1, from, d, step)
+		}
+	}
+	// The guild-point costs do NOT form a clean progression, and that is the
+	// point of saying so: they are a hand-tuned table, so nothing here should
+	// try to derive them.
+	if LevelUpGuildPoints[2]-LevelUpGuildPoints[1] == LevelUpGuildPoints[3]-LevelUpGuildPoints[2] {
+		t.Error("the guild-point costs became a progression; they are a hand-tuned table")
 	}
 }

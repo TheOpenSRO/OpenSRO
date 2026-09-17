@@ -60,7 +60,7 @@ one cannot rot the same way without the build going red.
 | Monster AI | 36 | PARTIAL | docs/protocol/monster_ai.md | StateBattle, FallbackState, DwellExtension | the machine is whole; the four DB tables that configure it (`TAB_REFTACTICS`, `_REFNEST`, `_REFHIVE`, `_REFAISKILL`) have no column layout. Read `CRefTactics`' parse method -- the loader at `0x008334e0` only installs the class |
 | Siege and fortress war | 39 | PARTIAL | docs/protocol/siege.md | MinGuildLevel, ValidTaxRatio, CanAttack | registration, tax and the attack rules are grounded; the dungeon caps and structure-upgrade costs are read from a structure, not compared against literals. Read `AQ_Siege::FUN_006232c0` (11,816 bytes), where most of the fortress logic lives |
 | Persistence / AsyncQuery | 28 | PARTIAL | docs/protocol/persistence.md | Procs, SlotDoWork, ReferenceTables | the interface and the 39 procedures are whole; no procedure's PARAMETERS are read, and none of the 35 runtime tables has a column layout. Read AQ_CharDataSaver's argument set-up first |
-| Guild | 27 | OPEN | — |  | 27 classes; CGuildManager and the guild tables |
+| Guild | 27 | PARTIAL | docs/protocol/guild.md | MaxLevel, LevelUpCost, ValidName | size, level and the level-up costs are grounded; the alliance rules (`FUN_005c6550`), guild war (`FUN_005c6b60`) and where guild points come from are unread |
 | Pets and COS | 23 | OPEN | — |  | 23 classes; CGObjCOS and CGItemCOSSummoner |
 | Alchemy and enchanting | 19 | PARTIAL | docs/protocol/alchemy.md | ClampRate, LuckyBonus, SuccessBonusParam | the reinforce rate is whole; the base rate's ref-record offset `(tier+21)*32` is not mapped to a column -- count fields through `RefObjItem::ExtractData` (`0x006a3d50`). The other seven operations' slot 6/7 pairs are unread |
 | Battle arena | 16 | OPEN | — |  | 16 classes; CBattleArenaInfo* |
@@ -72,7 +72,7 @@ one cannot rot the same way without the build going red.
 
 ## How to read the count
 
-**11 specified, 14 partial, 8 open, of 33.** That is the honest headline, and it
+**11 specified, 15 partial, 7 open, of 33.** That is the honest headline, and it
 is not a percentage of the game — a specified system is one this project can
 implement faithfully, not one it has implemented. What srrevamp actually ships is
 a separate question, tracked in `docs/TODO.md`.
