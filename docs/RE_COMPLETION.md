@@ -14611,3 +14611,45 @@ rebuild produces.
 `0x005713d0` was recorded last tick as `GObjPC::GetQuestCounter`; the project has it in
 `CGObjPC`. The applier refused the owner change and said so, which is how it surfaced.
 The row now reads `CGObjPC::` and a re-apply reports no change, which is the confirmation.
+
+## The naming metric was flattering itself (2026-09-17)
+
+Verified first: all **157** `DeclareQuestContent` names are in the dump rebuilt at
+21:03. Then the coverage number did not move — 22.06% before and after — which is a
+fact about the metric, not the work.
+
+This project has been measuring "named" as *not* matching `FUN_`/`LAB_`. But a
+function called `CQNO_CH_POTION_4::vslot_055` matches neither, and it was **already
+counted as named** before this tick renamed it. `vslot_NNN` names a *location* — which
+vtable, which slot — and says nothing about what the function does, which is the thing
+the loop is trying to establish.
+
+	server, 34,167 functions
+	  counting FUN_/LAB_ as unnamed:                     22.06% named
+	  counting vslot_NNN placeholders as unnamed too:     6.08% named   (5,459 placeholders)
+
+**The honest figure is 6%.** Both numbers are real; the second is the one that matches
+the goal. 5,459 vtable placeholders is also the size of the remaining opportunity, and
+the slot-55 pass shows the shape of the work: identify one slot, name every class's
+override at once.
+
+## Slot 22 measured and NOT named
+
+The next slot down was the obvious continuation — 94 quest classes override it, ~1,300
+bytes each — and it does not meet the bar slot 55 met.
+
+	slot 55:  157 of 157 declare NPC codes    (100%)
+	slot 22:   73 of  94 carry SN_ dialogue ids  (78%)
+
+A sample override reads like dialogue handling: it queries an object through vtable
+offsets 0x194/0x150/0x154, tests a status against 4, and picks
+`SN_TALK_QNO_CH_POTION_5_01`. But 21 of the 94 touch no dialogue at all, and the
+call-site probe does not isolate it either: offset `0x58` is used by 56 call sites
+across storage, inventory and siege classes, and none of the seven in the quest region
+is a quest manager calling into a quest.
+
+So it is left unnamed, with the numbers recorded rather than a name that would be
+right four times in five. **The discriminator a later tick should reach for**: the
+parameter those overrides all call through (offsets 0x194, 0x150, 0x154, 0x1a0, 0x118
+are the most common). Identifying that class says what the hook is handed, and that
+settles what it is.
