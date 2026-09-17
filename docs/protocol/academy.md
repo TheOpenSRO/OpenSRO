@@ -21,7 +21,7 @@ they do, both are confirmed.
 	if (GetLevel() < 0x3c)                 return 0x6809;  // TC_ERROR_OPEN_LEVEL
 	if (gold < 100000)                     return 0x680a;  // TC_ERROR_OPEN_GOLD
 	if (char[0x733] != 0)                  return 0x6812;  // already in a camp
-	if (FUN_004114d0(2, 7) != NULL)        return 0x681c;  // TC_ERROR_NOT_OPEN_7D
+	if (FUN_004114d0(2, 7) != NULL)        return 0x681c;  // TC_ERROR_NOT_OPEN_7D, see the correction below
 	return 1;
 
 | requirement | value |
@@ -326,17 +326,109 @@ answer `0x680b` / `0x6816`. From `HandleDisband` neither can fire. The validator
 tested the same fields a few instructions earlier (`char[0x733]` is `[edi+0x1ccc]`
 in the queuer), and nothing but an assert runs between them.
 
-## Windows named but not read
+## The 24-hour windows: two read, two are a different mechanism (2026-09-17)
 
-`TC_ERROR_NOT_INVITE_24T`, `TC_ERROR_NOT_ENTRY_24T` and `TC_ERROR_NOT_BAN_24T`
-all carry **24** in their names, so three separate 24-hour windows exist around
-inviting, entering and banning. **None of the three comparisons was read** — each
-is produced by a helper returning a bare flag rather than by a visible literal,
-the way the 7-day cooldown is.
+The previous version of this section said all three `24T` windows were "named but
+not read", each "produced by a helper returning a bare flag rather than by a visible
+literal". That was right about the shape, and the helper has now been read for two
+of them.
 
-So: the 24 is the *client's* word for these rules, and this project has not
-confirmed it against the server. That is a weaker claim than the 7 and is stated
-as one.
+### Ban and leave share one window, and one function
+
+	005194a7  call 0x5dd3f0        ; HandleBan, on the TARGET member
+	005195b3  call 0x5dd490        ; HandleLeave, on the caller's own member
+	005dd490  jmp  0x5dd3f0        ; ...the same function
+
+`TrainingCampMember_IsPast24HourWindow` (`0x005dd3f0`):
+
+	005dd40e  mov   ecx,0x15180                  ; 86400
+	005dd417  call  0x9753f0                     ; span = ecx
+	005dd44b  call  0x9755e0                     ; stamp = TIMESTAMP_STRUCT at record+0x40
+	005dd456  call  0x975540                     ; stamp.t += span
+	005dd45f  call  0x9755c0                     ; now = _time32(NULL)
+	005dd46e  call  0x975530                     ; span = stamp.t - now.t
+	005dd47c  setle cl ; mov eax,ecx             ; 1 once the window has passed
+
+Same shape as the disband window, same helpers, same reason the unit is **seconds**:
+`+0x24` is the field `_time32` fills. 86,400 = 24 × 3600, and "24T" is in both
+refusal names. A null member or record also answers 0, so the refusal covers "no
+such member" too.
+
+Which timestamp `+0x40` holds is **not read**. Joining is the obvious guess and is
+not recorded as a fact.
+
+**The thunk is why a sweep found only one caller.** Every `call 0x9753f0` in the
+binary was checked for a preceding `mov ecx,<imm>`; only three sites load a literal
+(604,800 disband, 86,400 here, 259,200 in `CTJ_PenaltyKeeper::Create`). That sweep
+attributed 86,400 to ban alone, because leave calls `0x005dd490`, five bytes that
+jump to it.
+
+### Invite and entry are not clock arithmetic at all
+
+	4e4862  push 0x8 ; push 0x2 ; lea eax,[esi+0x1dfc] ; call 0x411440   -> 0x681f NOT_INVITE_24T
+	4e48d1  push 0x9 ; push 0x2 ; lea edi,[esi+0x1dfc] ; call 0x411440   -> 0x681e NOT_ENTRY_24T
+	        (founding: FUN_004114d0(2, 7)                                -> 0x681c NOT_OPEN_7D)
+
+`0x411440` walks a **per-character list at `+0x1dfc`** and matches each entry on a
+category byte (vtable slot `0x68`) and an id (slot `0x6c`); `0x4114d0` is its twin,
+returning the entry instead of a flag. **Their durations are set where the entries
+are created, not where they are checked**, which is why no literal is visible at the
+check.
+
+#### This corrects a recorded fact: the founding cooldown's "7"
+
+Every call site of both helpers, with the two pushed arguments:
+
+| category | id | refuses with | in |
+|---:|---:|---|---|
+| 2 | 7 | `TC_ERROR_NOT_OPEN_7D` | `CInstanceTrainingCamp::CheckCanCreate` |
+| 2 | 8 | `TC_ERROR_NOT_INVITE_24T` | `0x004e4800`, `0x004e4950` |
+| 2 | 9 | `TC_ERROR_NOT_ENTRY_24T` | `0x004e4890`, `0x004e4aa0` |
+| 2 | 10 | — (checked beside id 9) | `0x004e4890`, `0x004e4aa0` |
+| 2 | 2 | — | `CInstanceCharTrijob::HandleJoinJobGuild` |
+| 2 | 1 | — | `0x00514b20`, `0x00514c40` |
+| 7 | 0 | — | `GObjPC::FUN_006185f0` |
+
+`academy.md` and `academy.go` both said the founding cooldown was grounded because
+"the literal 7 is the second argument, and the error name carries the same number".
+**The second argument is an id.** If it were a day count, invite would be 8 days and
+entry 9 days, and both of those refusals say 24 hours; the same category also serves
+the job guild with ids 1 and 2. The agreement was a coincidence.
+
+`ReopenCooldownDays = 7` stays, because `NOT_OPEN_**7D**` is the engine's own name
+for the refusal — but it is **disclosed from the name**, not grounded in a read
+comparison.
+
+Nearby, `CTJ_PenaltyKeeper::Create` holds a 259,200-second (3-day) literal and five
+computed spans, which is the shape of the thing that creates these entries. Not read.
+
+## Ban and leave, read in full (2026-09-17)
+
+	TrainingCamp_HandleBan (0x005193a0)          TrainingCamp_HandleLeave (0x00519510)
+	  not in a camp      -> 0x680b on 0xb473       not in a camp      -> 0x680b on 0xb474
+	  NOT class 0        -> 0x6816 on 0xb473       IS  class 0        -> 0x6816 on 0xb474
+	  name not found     -> 0x6815                 own member missing -> 0x6815 on 0xb474
+	  target is caller   -> 0x6816                 inside 24h         -> 0x6821 on 0xb473
+	  target inside 24h  -> 0x6820                 RemoveMember(1)
+	  RemoveMember(2)
+
+**The class gates are inverses.** Only class 0 may ban (and disband); class 0 is the
+only member who may **not** leave. A missing member record answers 0 from
+`TrainingCamp_IsMemberClass0`, so it passes leave's gate and is caught by the lookup
+after it -- which is why leave has both `0x6816` and `0x6815` paths.
+
+**`0x6815` is not `0x6816`.** The client shows both as `TC_ERROR_ORDER_WORK`
+(`0x6813`-`0x6816` all map to that one string), but the server sends `0x6815` only
+for an empty member lookup and `0x6816` only for a permission failure.
+
+Ban resolves its target **by name from the packet**, case-insensitively
+(`CompareStringA(0x400, NORM_IGNORECASE|NORM_IGNOREKANATYPE)`), and a name shorter
+than two characters is found as nobody.
+
+**Leave's 24-hour refusal goes out on `0xb473`**, ban's opcode, while its other
+refusals go on `0xb474` -- the same kind of crossed channel disband has, and equally
+unexplained. The client's handlers for `0xb473`-`0xb476` display whatever code
+arrives and carry no special fields, so a player sees the right text either way.
 
 ## Honour
 

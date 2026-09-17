@@ -121,7 +121,7 @@ func TestRefusalCodesAreDistinct(t *testing.T) {
 	for _, c := range []int{
 		ErrDeadOrBusy, ErrWrongState, ErrOpenLevel, ErrOpenGold, ErrNoCamp,
 		ErrInviteRejection, ErrAlreadyInCamp, ErrOrderWork, ErrNotOpen7D, ErrNotInvite24T,
-		ErrNotDisorganization7D,
+		ErrNotDisorganization7D, ErrOrderWorkNoMember, ErrNotBan24T, ErrNotOut24T,
 	} {
 		if seen[c] {
 			t.Errorf("code %#x listed twice", c)
@@ -131,8 +131,8 @@ func TestRefusalCodesAreDistinct(t *testing.T) {
 			t.Errorf("code %#x is outside the 0x68xx training-camp range", c)
 		}
 	}
-	if len(seen) != 11 {
-		t.Errorf("%d distinct codes, want 11", len(seen))
+	if len(seen) != 14 {
+		t.Errorf("%d distinct codes, want 14", len(seen))
 	}
 }
 
@@ -290,5 +290,116 @@ func TestDisbandWindowIsSevenDaysOfSeconds(t *testing.T) {
 	}
 	if ErrNotDisorganization7D != ErrNotOpen7D+1 {
 		t.Errorf("0x681d is computed as 0x681c + 1 in the validator; got %#x", ErrNotDisorganization7D)
+	}
+}
+
+// One literal, one function, two refusals: ban reaches 0x5dd3f0 directly and
+// leave through the thunk at 0x5dd490.
+func TestMemberWindowIsOneDayOfSeconds(t *testing.T) {
+	const literal = 0x15180 // `mov ecx,0x15180` at 0x005dd40e
+	if MemberWindowSeconds != literal {
+		t.Errorf("MemberWindowSeconds = %d, want %d", MemberWindowSeconds, literal)
+	}
+	if hour := 3600; literal%hour != 0 || literal/hour != 24 {
+		t.Errorf("%d seconds is not 24 whole hours, so the unit reading is wrong", literal)
+	}
+}
+
+func okBan() BanRequest {
+	return BanRequest{InCamp: true, HasMemberRecord: true, MemberClass: MemberClass0,
+		TargetFound: true, TargetSinceStamp: MemberWindowSeconds}
+}
+
+func TestBanAcceptsTheMinimum(t *testing.T) {
+	if got := CheckBan(okBan()); got != 0 {
+		t.Errorf("a class-0 ban of a member exactly 24h in gave %#x, want 0", got)
+	}
+}
+
+func TestBanOrderIsTheBinarys(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		r    BanRequest
+		want int
+	}{
+		{"nothing right", BanRequest{}, ErrNoCamp},
+		{"student banning a missing name", BanRequest{InCamp: true, HasMemberRecord: true,
+			MemberClass: MemberClassStudent}, ErrOrderWork},
+		{"class 0, missing name, fresh", BanRequest{InCamp: true, HasMemberRecord: true}, ErrOrderWorkNoMember},
+		{"class 0 banning themself, fresh", BanRequest{InCamp: true, HasMemberRecord: true,
+			TargetFound: true, TargetIsCaller: true}, ErrOrderWork},
+	} {
+		if got := CheckBan(tc.r); got != tc.want {
+			t.Errorf("%s: got %#x, want %#x", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestBanWindowBoundary(t *testing.T) {
+	r := okBan()
+	r.TargetSinceStamp = MemberWindowSeconds - 1
+	if got := CheckBan(r); got != ErrNotBan24T {
+		t.Errorf("a target one second short of 24h gave %#x, want NOT_BAN_24T %#x", got, ErrNotBan24T)
+	}
+	for _, class := range []int{MemberClassSecondGuardian, MemberClassStudent} {
+		r := okBan()
+		r.MemberClass = class
+		if got := CheckBan(r); got != ErrOrderWork {
+			t.Errorf("a class-%d caller gave %#x, want ORDER_WORK %#x", class, got, ErrOrderWork)
+		}
+	}
+}
+
+func TestLeaveOrderIsTheBinarys(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		r    LeaveRequest
+		want int
+	}{
+		{"not in a camp", LeaveRequest{HasMemberRecord: true}, ErrNoCamp},
+		{"class 0, fresh", LeaveRequest{InCamp: true, HasMemberRecord: true, MemberClass: MemberClass0}, ErrOrderWork},
+		{"no member record", LeaveRequest{InCamp: true}, ErrOrderWorkNoMember},
+		{"student, fresh", LeaveRequest{InCamp: true, HasMemberRecord: true,
+			MemberClass: MemberClassStudent, SinceStamp: MemberWindowSeconds - 1}, ErrNotOut24T},
+		{"student, exactly 24h", LeaveRequest{InCamp: true, HasMemberRecord: true,
+			MemberClass: MemberClassStudent, SinceStamp: MemberWindowSeconds}, 0},
+		{"second guardian, long in", LeaveRequest{InCamp: true, HasMemberRecord: true,
+			MemberClass: MemberClassSecondGuardian, SinceStamp: 10 * MemberWindowSeconds}, 0},
+	} {
+		if got := CheckLeave(tc.r); got != tc.want {
+			t.Errorf("%s: got %#x, want %#x", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The one class that may ban and disband is the one class that may not leave.
+func TestClass0GatesAreInverse(t *testing.T) {
+	leave := CheckLeave(LeaveRequest{InCamp: true, HasMemberRecord: true,
+		MemberClass: MemberClass0, SinceStamp: MemberWindowSeconds})
+	ban := CheckBan(okBan())
+	disband, _ := CheckDisband(okDisband())
+	if leave != ErrOrderWork || ban != 0 || disband != 0 {
+		t.Errorf("class 0: leave %#x (want ORDER_WORK), ban %#x and disband %#x (want 0)",
+			leave, ban, disband)
+	}
+}
+
+// The founding cooldown is 7 because the engine names its refusal NOT_OPEN_7D,
+// NOT because FUN_004114d0's second argument is 7. That argument is an id: the
+// same helper is called with id 8 for NOT_INVITE_24T and id 9 for
+// NOT_ENTRY_24T, and 24 hours is neither 8 nor 9 days. If a later pass wants to
+// ground the length, it has to read where the entry is created.
+func TestReopenCooldownRestsOnTheRefusalName(t *testing.T) {
+	if ReopenCooldownDays != 7 {
+		t.Errorf("ReopenCooldownDays = %d, want 7 (TC_ERROR_NOT_OPEN_7D)", ReopenCooldownDays)
+	}
+	// The disband window happens to be the same length (604800 s = 7 days), but
+	// it is read from a literal and this one is not. Keeping both spellings --
+	// seconds there, days here -- is deliberate: it stops the grounded value
+	// from lending its authority to the disclosed one.
+	if DisbandWindowSeconds != int(ReopenCooldownDays)*24*3600 {
+		t.Logf("the two 7-day windows have drifted apart: disband %d s, reopen %d d. "+
+			"That is allowed -- they are separate mechanisms -- but check it was meant",
+			DisbandWindowSeconds, ReopenCooldownDays)
 	}
 }

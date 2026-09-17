@@ -14088,3 +14088,67 @@ competing with it. Server: `applied 8, forced 0, reowned 0, kept 0, no function 
 failed 0`. Client: `applied 1, … failed 0`. Both `PROJSTAMP`s were removed so the
 next tick rebuilds both dumps. Checking that the names appear in the rebuilt dumps
 is the next tick's first step (grep `\tNAME\t|::NAME\t`, not the bare form).
+
+## Two of the academy's 24-hour windows read; a "grounded" 7 retracted (2026-09-17)
+
+Last tick's lesson was that MSVC hides literals in registers, so this tick swept the
+whole server for them: every `call 0x9753f0` (the time-span setter), checked for a
+preceding `mov ecx,<imm>`. **25 call sites, 3 with a literal:** 604,800 (disband,
+last tick), 259,200 in `CTJ_PenaltyKeeper::Create`, and **86,400 in `0x005dd3f0`**.
+
+### 86,400 seconds serves both ban and leave
+
+`TrainingCampMember_IsPast24HourWindow` adds 86,400 to a `TIMESTAMP_STRUCT` at
+`+0x40` on a member's record and answers a bare flag — the exact shape `academy.md`
+predicted for the "24T" windows when it said they were "named but not read".
+
+The sweep credited it to ban alone. It is also leave's: `0x005dd490` is five bytes,
+`jmp 0x5dd3f0`. **A sweep over call sites misses callers of a thunk**, which is worth
+remembering the next time one looks complete.
+
+	HandleBan   -> 0x005dd3f0 on the TARGET member -> 0x6820 NOT_BAN_24T
+	HandleLeave -> 0x005dd490 on its own member    -> 0x6821 NOT_OUT_24T
+
+Both handlers are now read in full, and **their class gates are inverses**: only
+class 0 may ban (and disband); class 0 is the one member who may not leave. Ban
+resolves its target by name from the packet, case-insensitively
+(`CompareStringA`, `NORM_IGNORECASE|NORM_IGNOREKANATYPE`), rejecting names under two
+characters. `0x6815` and `0x6816` show the same text to the player but are used
+apart: empty lookup versus permission.
+
+Wired into `internal/academy` as `MemberWindowSeconds`, `CheckBan` and `CheckLeave`,
+in the binary's order, with boundary tests. Three mutants run, three caught.
+
+### The correction: the founding cooldown's "7" was a coincidence
+
+`academy.md` and `academy.go` both said `ReopenCooldownDays = 7` was grounded
+because "the literal 7 is the second argument [of `FUN_004114d0(2, 7)`], and the
+error name carries the same number, which is what ties the two together".
+
+Reading that helper and **every call site of it and its twin** shows the second
+argument is an **id**. The helpers walk a per-character list at `+0x1dfc` and match
+entries on a category byte (vtable slot `0x68`) and an id (slot `0x6c`):
+
+	category 2, id 7    -> NOT_OPEN_7D          category 2, id 8  -> NOT_INVITE_24T
+	category 2, id 9    -> NOT_ENTRY_24T        category 2, id 10 -> unread
+	category 2, ids 1,2 -> the JOB GUILD's checks
+
+If the id were a day count, invite would be 8 days and entry 9 days; both refusals
+say 24 hours, and the same category serves another system entirely. **So invite and
+entry are not clock arithmetic at the check at all**, and the founding cooldown's
+agreement with `NOT_OPEN_7D` was luck.
+
+The value stays 7, because the engine named its own refusal `NOT_OPEN_7D`. It is now
+recorded as **disclosed from the engine's vocabulary, not grounded in a comparison**,
+in both the doc and the code. This is the failure the loop's rules warn about — a
+number agreeing with a name is a suggestive curve, not a use-site — and it had been
+sitting in this package as a citation.
+
+A test error of my own went the same way: I asserted the disband window could not
+equal `ReopenCooldownDays * 86400`. It does (both are 7 days, from unrelated
+mechanisms). The run caught it; the assertion was wrong, not the code.
+
+### Next lead
+
+The `0xb477` client handler displays `UIIT_MSG_TC_COMMON_KNOW_REMIND_UPDATE` on
+success, which should name job type 7 and its request handler `0x00519900`.

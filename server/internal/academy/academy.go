@@ -29,6 +29,14 @@ const (
 	// `(-(remaining != 0) & 0x681c) + 1`, so a grep for 0x681d finds only the
 	// handler that compares against it.
 	ErrNotDisorganization7D = 0x681d
+
+	// ErrOrderWorkNoMember is 0x6815. The client shows it with the same
+	// TC_ERROR_ORDER_WORK text as 0x6816 (0x6813-0x6816 all map there), but the
+	// server keeps it apart: both ban and leave send 0x6815 exactly when a
+	// member lookup comes back empty, and 0x6816 for a permission failure.
+	ErrOrderWorkNoMember = 0x6815
+	ErrNotBan24T         = 0x6820 // TC_ERROR_NOT_BAN_24T
+	ErrNotOut24T         = 0x6821 // TC_ERROR_NOT_OUT_24T
 )
 
 // Creating a camp -- FUN_004e4680, in the order it tests.
@@ -47,10 +55,31 @@ const (
 	// gold is read as 64-bit at +0x78 / +0x7c.
 	FoundingGold = 100_000
 
-	// ReopenCooldownDays is 7. The check is a call to FUN_004114d0(2, 7) whose
-	// non-null result refuses with TC_ERROR_NOT_OPEN_7D -- the literal 7 is the
-	// second argument, and the error name carries the same number, which is
-	// what ties the two together.
+	// ReopenCooldownDays is 7, and **it rests on the refusal's name alone**.
+	//
+	// CORRECTED 2026-09-17. This comment used to tie it to the literal: "the
+	// check is FUN_004114d0(2, 7) ... the literal 7 is the second argument, and
+	// the error name carries the same number, which is what ties the two
+	// together." Reading FUN_004114d0 and every call site of it and its twin
+	// FUN_00411440 shows the second argument is an **id**, not a duration:
+	//
+	//	FUN_00411440/4114d0 walk a per-character list at +0x1dfc and match each
+	//	entry on a category byte (vtable slot 0x68) and an id (slot 0x6c).
+	//
+	//	category 2, id 7   -> TC_ERROR_NOT_OPEN_7D     (founding)
+	//	category 2, id 8   -> TC_ERROR_NOT_INVITE_24T  (0x004e4862)
+	//	category 2, id 9   -> TC_ERROR_NOT_ENTRY_24T   (0x004e48d1)
+	//	category 2, id 10  -> checked beside id 9, unread
+	//	category 2, ids 1, 2 -> the JOB GUILD's own checks (0x00514b20, 0x005121fe)
+	//
+	// If the id were a day count, invite would be 8 days and entry 9 days, and
+	// both names say 24 hours. The same category also serves another system
+	// with ids 1 and 2. So 7 agreeing with "7D" was a coincidence.
+	//
+	// The value stays 7 because the engine's own refusal is named
+	// NOT_OPEN_**7D**, which is a fact about the engine's vocabulary. It is
+	// disclosed on that basis, not grounded in a read comparison. The length
+	// lives wherever these entries are created, which is not read.
 	ReopenCooldownDays = 7
 )
 
@@ -320,6 +349,102 @@ func CheckDisband(r DisbandRequest) (code int, remaining int64) {
 		return ErrNotDisorganization7D, left
 	}
 	return 0, 0
+}
+
+// Banning and leaving -- TrainingCamp_HandleBan (FUN_005193a0) and
+// TrainingCamp_HandleLeave (FUN_00519510), read in assembly.
+
+// MemberWindowSeconds is 86,400, the window behind both NOT_BAN_24T and
+// NOT_OUT_24T. It is one function, reached two ways:
+//
+//	005194a7  call 0x5dd3f0             ; HandleBan, on the TARGET member
+//	005195b3  call 0x5dd490             ; HandleLeave, on the caller's own member
+//	005dd490  jmp  0x5dd3f0             ; ...a thunk to the same function
+//
+//	005dd40e  mov  ecx,0x15180          ; 86400
+//	005dd417  call 0x9753f0             ; span = ecx
+//	          ...                        ; stamp = TIMESTAMP_STRUCT at record+0x40,
+//	          ...                        ; stamp.t += span; span = stamp.t - _time32(NULL)
+//	005dd47c  setle cl ; mov eax,ecx    ; 1 once the window has passed
+//
+// It is seconds for the same reason DisbandWindowSeconds is: the field it is
+// added to comes from _time32. 86400 is 24 * 3600, the "24T" in both refusal
+// names. Which timestamp +0x40 is on the member record (joining is the obvious
+// guess) is not read.
+//
+// NOT covered here: TC_ERROR_NOT_INVITE_24T and NOT_ENTRY_24T. Those are not
+// clock arithmetic at the check. They look up an entry (category 2, id 8 or 9)
+// in a per-character list at +0x1dfc, as the founding check does for id 7, so
+// their durations are set wherever the entries are created, which is not read.
+const MemberWindowSeconds = 0x15180
+
+// BanRequest is what TrainingCamp_HandleBan decides about before it calls
+// TrainingCamp_RemoveMember.
+type BanRequest struct {
+	InCamp bool
+	// HasMemberRecord and MemberClass are the CALLER's, through the same
+	// TrainingCamp_IsMemberClass0 gate disband uses: only class 0 may ban.
+	HasMemberRecord bool
+	MemberClass     int
+	// TargetFound is TrainingCamp_FindMemberByName (FUN_005e42c0): the name
+	// from the packet compared with each member's by CompareStringA with
+	// NORM_IGNORECASE | NORM_IGNOREKANATYPE, and any name under 2 characters
+	// (lstrlenA < 2) found as nobody.
+	TargetFound bool
+	// TargetIsCaller is TrainingCampMember_GetKey(target) == the caller's key.
+	TargetIsCaller bool
+	// TargetSinceStamp is now minus the TARGET's member-record timestamp.
+	TargetSinceStamp int64
+}
+
+// CheckBan returns 0 when the ban goes ahead, or the refusal code, in the
+// binary's order.
+func CheckBan(r BanRequest) int {
+	if !r.InCamp {
+		return ErrNoCamp
+	}
+	if !r.HasMemberRecord || r.MemberClass != MemberClass0 {
+		return ErrOrderWork
+	}
+	if !r.TargetFound {
+		return ErrOrderWorkNoMember
+	}
+	if r.TargetIsCaller {
+		return ErrOrderWork
+	}
+	if r.TargetSinceStamp < MemberWindowSeconds {
+		return ErrNotBan24T
+	}
+	return 0
+}
+
+// LeaveRequest is what TrainingCamp_HandleLeave decides about.
+type LeaveRequest struct {
+	InCamp          bool
+	HasMemberRecord bool
+	MemberClass     int
+	SinceStamp      int64 // now minus the caller's own member-record timestamp
+}
+
+// CheckLeave returns 0 when the caller may leave, or the refusal code, in the
+// binary's order. The class gate is the INVERSE of ban's: `cmp eax,0x1 ; jne`
+// after TrainingCamp_IsMemberClass0, so class 0 is the one member who cannot
+// leave. A missing member passes that gate (it answers 0) and is refused by
+// the lookup that follows instead.
+func CheckLeave(r LeaveRequest) int {
+	if !r.InCamp {
+		return ErrNoCamp
+	}
+	if r.HasMemberRecord && r.MemberClass == MemberClass0 {
+		return ErrOrderWork
+	}
+	if !r.HasMemberRecord {
+		return ErrOrderWorkNoMember
+	}
+	if r.SinceStamp < MemberWindowSeconds {
+		return ErrNotOut24T
+	}
+	return 0
 }
 
 // Classes are the four training-camp instance classes, each with a nine-slot
