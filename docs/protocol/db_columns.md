@@ -119,6 +119,31 @@ read as a column count.
 | `_AssociationReputation` | 28 | `AssociationCodeName`, `Reputation`, `PriorOccupation`, `nItemDBID`, `bOptType`, `nSlot`, `nOptID`, `nOptLvl`, `nOptValue`, `nParam1`, `nParam2`, `nRentType`, `nCanDelete`, `nCanRecharge`, `PeriodBeginTime`, `PeriodEndTime`, `MeterRateTime`, `nPackingState`, `nPackingTime`, `PersnalID`, `ItemID`, `SellCnt`, `RegDate`, `EndDate`, `Price`, `Deposit`, `SellFee`, `UseCash` |
 | `_CharCollectionBook` | 2 | `ThemeID`, `SlotIndex` |
 
+## No reference table declares a column name, and that is structural
+
+**Not one of the 85 `_REF*` tables appears in the pool.** They sit elsewhere in
+`.rdata` as a bare run of table names with nothing between them — table name,
+table name, table name — while the 54 runtime tables each carry their columns.
+
+The reason is in `Database::BuildStatement`: a table with no column records is
+queried with
+
+	SELECT * FROM %s
+
+and the reference loaders consume the result **positionally**, through the
+field-by-field `ExtractData` deserializers. The server never needs a reference
+table's column names, so the binary does not carry them.
+
+**This closes the item-column-naming question for good.** Three ticks looked for
+a way to name or index `_REFOBJITEM`'s columns — by counting binary fields, then
+by the per-column schema. Neither could work, and now the reason is one fact
+rather than two failures: *the server does not know those names either.*
+
+What a reference-table column can still be identified by is its **offset in the
+deserialised record**, which `client/tools/re/fields.py` reads and which
+`alchemy.md` and `durability.md` already cite. An offset is enough to implement
+against; a name would only have been nicer.
+
 ## What this closes elsewhere
 
 | spec | what it said was unrecovered | the name now in hand |

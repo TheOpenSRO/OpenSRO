@@ -108,8 +108,26 @@ func TestTablesAreDistinctAndDisjoint(t *testing.T) {
 			t.Errorf("%s appears in both lists (%s)", tbl, prev)
 		}
 		seen[tbl] = "runtime"
-		if strings.HasPrefix(tbl, "_REF") {
+		if strings.HasPrefix(strings.ToUpper(tbl), "_REF") {
 			t.Errorf("%s is a _REF table but is in RuntimeTables", tbl)
+		}
+	}
+	// The runtime list IS the schema pool's table order. Holding them equal is
+	// what stops the list drifting back to a hand-maintained one.
+	if len(RuntimeTables) != len(SchemaTableOrder) {
+		t.Errorf("%d runtime tables but %d in the schema pool", len(RuntimeTables), len(SchemaTableOrder))
+	}
+	for i := range RuntimeTables {
+		if i < len(SchemaTableOrder) && RuntimeTables[i] != SchemaTableOrder[i] {
+			t.Errorf("entry %d is %q in RuntimeTables and %q in the pool",
+				i, RuntimeTables[i], SchemaTableOrder[i])
+		}
+	}
+	// _LOADED is deliberately absent: it is not in the schema pool, which is
+	// what resolved persistence.md's hedge that it might be a flag.
+	for _, tbl := range RuntimeTables {
+		if tbl == "_LOADED" {
+			t.Error("_LOADED is back in RuntimeTables; it is not in the schema pool")
 		}
 	}
 }
@@ -155,5 +173,22 @@ func TestSlotIndicesAreDistinctAndInRange(t *testing.T) {
 	}
 	if QueryStateRunning != 0xb {
 		t.Errorf("QueryStateRunning is %#x; both callbacks assert 0xb", QueryStateRunning)
+	}
+}
+
+// Not one of the 85 reference tables declares a column name in the binary, and
+// that is structural: they are read with `SELECT * FROM %s` and consumed
+// positionally by the ExtractData deserializers, so the server never needs
+// their names. This is the fact that closes the item-column-naming question --
+// see docs/protocol/db_columns.md.
+func TestNoReferenceTableIsInTheSchemaPool(t *testing.T) {
+	inPool := map[string]bool{}
+	for _, tbl := range SchemaTableOrder {
+		inPool[strings.ToUpper(tbl)] = true
+	}
+	for _, tbl := range ReferenceTables {
+		if inPool[strings.ToUpper(tbl)] {
+			t.Errorf("%s is a reference table but declares columns in the schema pool", tbl)
+		}
 	}
 }

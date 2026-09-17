@@ -158,47 +158,83 @@ var ReferenceTables = []string{
 	"_REFTREATITEMOFSHOP",
 }
 
-// RuntimeTables are the tables the server reads and writes as it runs: the
-// character, inventory, guild and log tables. Unlike the reference tables
-// these have no loader to enumerate them, so this list is what the string pool
-// carries and may be incomplete -- a table only touched through a stored
-// procedure would not appear.
+// RuntimeTables are the tables the server reads and writes as it runs.
+//
+// **CORRECTED 2026-09-17, from 35 to 54.** The first version of this list came
+// from harvesting `_UPPERCASE` identifiers out of the string pool with the
+// pattern `_[A-Z][A-Z0-9_]{3,}` -- uppercase only -- and that silently dropped
+// every mixed-case table name. All twenty it missed are mixed-case, so the
+// regex accounts for the gap exactly: `_SiegeFortress`, `_CharTrijob`,
+// `_FleaMarketNetwork`, `_Friend`, `_Memo` and fifteen more.
+//
+// This list is now the 54 tables the binary's own schema pool declares, in its
+// order -- see SchemaTableOrder and docs/protocol/db_columns.md. That is a
+// better source than a regex over strings, because the pool is what
+// Database::BindTableSchema actually binds.
+//
+// `_LOADED` was in the old list and is NOT here: it does not appear in the
+// schema pool. docs/protocol/persistence.md hedged that it "may be a flag
+// rather than a table", and its absence from the pool is that hedge resolved.
+//
+// NOT ONE OF THE 85 REFERENCE TABLES IS IN THIS LIST, and that is structural
+// rather than incidental: reference tables are read with `SELECT * FROM %s`
+// and consumed positionally by the ExtractData deserializers, so the server
+// never needs their column names and the binary does not carry them.
 var RuntimeTables = []string{
-	"_ALLIEDCLANS",
+	"_USER",
 	"_CHAR",
 	"_CHARCOS",
-	"_CHARQUEST",
-	"_CHARSKILL",
-	"_CHARSKILLMASTERY",
-	"_CHEST",
-	"_DELETEDCHAR",
-	"_DUMMY",
-	"_EVENTDAEMON",
-	"_GUILD",
-	"_GUILDCHEST",
-	"_GUILDMEMBER",
-	"_GUILDWAR",
-	"_INVCOS",
 	"_INVENTORY",
 	"_INVENTORYFORAVATAR",
 	"_INVENTORYFORLINKEDSTORAGE",
+	"_CHEST",
+	"_INVCOS",
 	"_ITEMQUOTATION",
 	"_ITEMS",
-	"_LOADED",
+	"_CHARSKILL",
+	"_CHARSKILLMASTERY",
+	"_STRUCT",
+	"_DUMMY",
+	"_EVENTDAEMON",
+	"_SIEGEFORTRESSSTRUCT",
+	"_CHARQUEST",
+	"_TRAININGCAMP",
+	"_TRAININGCAMPMEMBER",
+	"_TRAININGCAMPHONORRANK",
+	"_TRAININGCAMPBUFFSTATUS",
+	"_GUILD",
+	"_GUILDMEMBER",
+	"_ALLIEDCLANS",
+	"_GUILDWAR",
+	"_GUILDCHEST",
+	"_Friend",
+	"_GPHistory",
+	"_Memo",
+	"_DELETEDCHAR",
+	"_TIMEDJOB",
+	"_TIMEDJOBFORPET",
+	"_STATICAVATAR",
+	"_CharInstanceWorldData",
+	"_CharTrijob",
+	"_FleaMarketNetwork",
+	"_SiegeFortress",
+	"_SiegeFortressObject",
+	"_SiegeFortressItemForge",
+	"_SiegeFortressRequest",
+	"_SiegeFortressBattleRecord",
+	"_SiegeFortressStoneState",
+	"_ServerEvent",
+	"_ServerEventReward",
 	"_LOGEVENTCHAR",
 	"_LOGEVENTITEM",
 	"_LOGEVENTSIEGEFORTRESS",
 	"_LOGSERVEREVENT",
-	"_SIEGEFORTRESSSTRUCT",
-	"_STATICAVATAR",
-	"_STRUCT",
-	"_TIMEDJOB",
-	"_TIMEDJOBFORPET",
-	"_TRAININGCAMP",
-	"_TRAININGCAMPBUFFSTATUS",
-	"_TRAININGCAMPHONORRANK",
-	"_TRAININGCAMPMEMBER",
-	"_USER",
+	"_LogSchedule",
+	"_ClientConfig",
+	"_BlockedWhisperers",
+	"_CharTrijobSafeTrade",
+	"_AssociationReputation",
+	"_CharCollectionBook",
 }
 
 // The AsyncQuery interface. All 28 AQ_* classes derive from AQ_Base and

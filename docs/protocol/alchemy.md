@@ -163,11 +163,18 @@ So the plan this page carried — resolve the offset, count to a field index,
 read off the column — **cannot work for these three**, because they are in the
 item half. That is a dead end identified, not walked into.
 
-**The route that remains** is the per-column schema the stream carries: the
-`(index, width)` records at `+0xe4`/`+0xe8`, stride `0x54`, that `FUN_006b1a80`
-walks to skip a column. A type-specific column index lives there. Reading that
-walker's record layout is this system's next probe, and it replaces the counting
-plan.
+**That route is closed too, and the question is now settled.** The per-column
+schema records do carry a name — at `+0x04`, an SSO string — but
+`Database::BindTableSchema` shows the names are *declared* by the binary and the
+*indices* come from ODBC at runtime. And **not one of the 85 reference tables
+declares any column names at all**: they are queried with `SELECT * FROM %s` and
+consumed positionally, so the server does not know their column names either.
+See `docs/protocol/db_columns.md`.
+
+So there is nothing left to find: these three fields have **no name and no
+stable index in the binary**, only an offset in the deserialised record. That
+offset is what a reimplementation would use, and it is already cited above. The
+line of enquiry is closed rather than parked.
 
 ### 2. The second element — `CEnchant_Reinforce::vslot_006`
 

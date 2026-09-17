@@ -11538,3 +11538,63 @@ number was never in the binary to find.
 
 `_CHAR`'s 42 introduced columns are the full character-persistence schema and
 are the most directly useful of the lot for srrevamp.
+
+## The reference tables have no column names, and that closes the question (2026-09-17)
+
+The previous entry recovered the binary's schema pool — 310 identifiers, 54
+tables — and noted `_CHAR`'s 42 columns as the most directly useful. This tick
+asked the obvious follow-up: **is there a pool for the 85 reference tables?**
+
+### No, and the absence is the answer
+
+The `_REF*` names sit elsewhere in `.rdata` as a **bare run of table names with
+nothing between them** — table name, table name, table name — while each of the
+54 runtime tables carries its columns. A cross-check confirms it: **not one of
+the 85 reference tables appears in the schema pool**, and a test now asserts
+that.
+
+`Database::BuildStatement` explains why. A table with no column records is
+queried with
+
+	SELECT * FROM %s
+
+and the reference loaders consume the result **positionally**, through the
+field-by-field `ExtractData` deserializers. The server never needs a reference
+table's column names, so the binary does not carry them.
+
+**This closes the item-column question for good.** Three ticks looked for a way
+to name or index `_REFOBJITEM`'s columns — first by counting binary fields, then
+by the per-column schema. Neither could work, and the reason is now a single
+fact rather than two separate failures: *the server does not know those names
+either.* A reference-table column is identifiable only by its **offset in the
+deserialised record**, which `client/tools/re/fields.py` reads and which
+`alchemy.md` and `durability.md` already cite. `alchemy.md` now says the line of
+enquiry is closed rather than parked.
+
+### The runtime table list was 35 and should have been 54
+
+Cross-checking the pool against `persistence.RuntimeTables` found twenty tables
+missing. The cause is exact and dull: the original harvest used
+`_[A-Z][A-Z0-9_]{3,}` — **uppercase only** — and **all twenty it missed are
+mixed-case**. `_SiegeFortress`, `_CharTrijob`, `_FleaMarketNetwork`, `_Friend`,
+`_Memo` and fifteen more.
+
+`RuntimeTables` is now the schema pool's own table order, with a test holding
+the two equal so it cannot drift back to a hand-maintained list. The total is
+**139 tables** — 85 reference, 54 runtime — not 120.
+
+### `_LOADED` is not a table
+
+It was in the old 35, and `persistence.md` hedged that it "may be a flag rather
+than a table". **It is absent from the schema pool**, which resolves the hedge:
+the server binds a schema for every runtime table it uses, and it binds none for
+`_LOADED`. Dropped, with a test that fails if it returns.
+
+`_DUMMY`, hedged the same way, **is** in the pool and stays.
+
+### What this tick did not do
+
+No value changed that srrevamp computes with — the corrections are to a table
+list and to three documents. The one behavioural claim, that reference columns
+are consumed positionally, is a restatement of what
+`refobj_binary_format.md` already established from the other end.

@@ -2,7 +2,8 @@
 
 Every write the real server makes to its database goes through one uniform
 interface. This is that interface, the 39 stored procedures behind it, and the
-120 tables it touches — all read out of `SR_GameServer.exe`.
+**139 tables** it touches — 85 reference and 54 runtime — all read out of
+`SR_GameServer.exe`.
 
 Implemented as a catalogue in `server/internal/persistence`.
 
@@ -115,10 +116,14 @@ the engine's own migration, kept because `AQ_ItemXChanger` uses the new one and
 
 `_OpenMarket_Cancle` is the engine's typo, and is quoted as it is spelled.
 
-## The 120 tables, and a completeness proof
+## The 139 tables, and a completeness proof
 
-Harvesting every `_UPPERCASE` identifier from the string pool gives **120**
-names: 85 beginning `_REF` and 35 that do not.
+Two disjoint sets, found by different means: **85 reference tables** and **54
+runtime tables**.
+
+An early harvest of `_UPPERCASE` identifiers found 120 — the 85 plus only 35 of
+the runtime ones — because its pattern was uppercase-only. See the correction
+below.
 
 **The 85 are exactly the set `docs/protocol/refdata_tables.md` enumerated** —
 same count, same members, no difference in either direction. That catalogue was
@@ -127,7 +132,29 @@ built by finding the 85 loader *functions*; this list was built by harvesting
 reference tables" from a count of what was found into a complete count.
 `server/internal/persistence` has a test that fails if the two ever drift.
 
-The 35 runtime tables are the ones the server reads and writes as it runs:
+The runtime tables are the ones the server reads and writes as it runs.
+
+**CORRECTED 2026-09-17: there are 54, not 35.** The list below came from
+harvesting `_UPPERCASE` identifiers with the pattern `_[A-Z][A-Z0-9_]{3,}` —
+**uppercase only** — which silently dropped every mixed-case table name. All
+twenty it missed are mixed-case, so the regex accounts for the gap exactly:
+`_SiegeFortress`, `_SiegeFortressObject`, `_SiegeFortressBattleRecord`,
+`_SiegeFortressItemForge`, `_SiegeFortressRequest`, `_SiegeFortressStoneState`,
+`_CharTrijob`, `_CharTrijobSafeTrade`, `_CharInstanceWorldData`,
+`_CharCollectionBook`, `_FleaMarketNetwork`, `_Friend`, `_Memo`, `_GPHistory`,
+`_ServerEvent`, `_ServerEventReward`, `_ClientConfig`, `_LogSchedule`,
+`_BlockedWhisperers`, `_AssociationReputation`.
+
+The authoritative list is now the binary's own schema pool
+(`docs/protocol/db_columns.md`), which is what `Database::BindTableSchema`
+binds, rather than a regex over strings. `server/internal/persistence` holds it
+as `SchemaTableOrder`, and a test keeps `RuntimeTables` equal to it.
+
+**`_LOADED` is gone from the list.** This page hedged that it "may be a flag
+rather than a table"; it is absent from the schema pool, which resolves the
+hedge.
+
+The old 35, for the record:
 
 	_USER  _CHAR  _DELETEDCHAR  _STATICAVATAR  _DUMMY  _LOADED
 	_INVENTORY  _INVENTORYFORAVATAR  _INVENTORYFORLINKEDSTORAGE  _ITEMS
@@ -139,11 +166,15 @@ The 35 runtime tables are the ones the server reads and writes as it runs:
 	_SIEGEFORTRESSSTRUCT  _STRUCT  _EVENTDAEMON
 	_LOGEVENTCHAR  _LOGEVENTITEM  _LOGEVENTSIEGEFORTRESS  _LOGSERVEREVENT
 
-Unlike the reference tables these have **no loader to enumerate**, so this list
-is only what the string pool carries — a table reached solely through a stored
-procedure would not appear. `_DUMMY` and `_LOADED` may be flags rather than
-tables; they are listed because the harvest found them, not because they were
-confirmed.
+Unlike the reference tables these have **no loader to enumerate** — but they do
+have something better, found later: the binary declares their **column names**,
+and the set of tables it declares them for is exactly this list plus the twenty
+the uppercase regex missed. `_DUMMY` is in the schema pool and is a real table;
+`_LOADED` is not in it, which is why it has been dropped.
+
+A table reached solely through a stored procedure and never bound by name would
+still not appear, so the list is "every table the server binds a schema for"
+rather than "every table it touches".
 
 ## What is not recovered
 
