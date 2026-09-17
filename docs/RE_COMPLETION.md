@@ -13675,3 +13675,35 @@ A claim about code, stated as observed, that one command would have refuted.
 Verified this tick instead: the dump pipeline's own counter shows the seven
 created functions landed (`34113 -> 34120`), and they are now `FUN_` bodies the
 loop can read and name.
+
+## The academy handlers, named from the functions created two ticks ago (2026-09-17)
+
+The seven missing functions landed in the rebuilt dump (`34113 -> 34120`) and
+were readable this tick. Profiling each by **response opcode** as well as refusal
+showed the academy handlers form a contiguous series, `0xb470`–`0xb475`, one
+handler per opcode.
+
+**Named, each on two independent kinds of evidence** (`applied 5, failed 0`,
+server dump invalidated):
+
+- `TrainingCamp_HandleInvite` `0x00519230` — read in full, `0xb472`
+- `TrainingCamp_HandleGraduation` `0x00519600` — `GRADUATION_LEVER`, `0xb475`,
+  and calls both role predicates
+- `TrainingCamp_HandleBan` `0x005193a0` — `NOT_BAN_24T`, and calls the
+  **target** lookup `FUN_005e42c0` plus the not-self check
+- `TrainingCamp_HandleLeave` `0x00519510` — `NOT_OUT_24T`, and **never** calls the
+  target lookup
+- `TrainingCamp_RemoveMember` `0x005deeb0` — its only two callers are ban and
+  leave
+
+The ban/leave distinction was confirmed at the **call** level before naming,
+not from the decompiled bodies, which a too-aggressive output filter had mostly
+stripped. A refusal name alone is naming by vocabulary: a "24 hour" refusal could
+guard more than one operation. The target-vs-self call structure is independent of
+the name and settles it.
+
+**Not named: `0x00519120`.** `NOT_DISORGANIZATION_7D` plus a call to the founding
+validator's neighbour reads as disband, but it answers on two opcodes and the
+validator is unread: one piece of evidence, not two. Recorded as the obvious open
+item, along with the three non-academy created functions (`0x00515340` guild,
+`0x004ae0c0` storage, `0x00511640` premium), which were profiled but not read.

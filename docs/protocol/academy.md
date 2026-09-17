@@ -142,6 +142,38 @@ being the master. **Class 1 is the second guardian.** Neither reading was
 promoted, and that restraint is the only reason no code shipped the wrong role.
 Two hints agreeing is how a curve feels from the inside.
 
+## The academy handlers, named (2026-09-17)
+
+The academy's message handlers turned out to be mostly functions Ghidra had never
+created (see `docs/protocol/missing_functions.tsv`). Once created, they read as a
+**contiguous response-opcode series**, one handler per opcode:
+
+| handler | answers on | refusal | independent second evidence |
+|---|---|---|---|
+| `TrainingCamp_HandleInvite` `0x00519230` | `0xb472` | student / second-guardian caps | read in full |
+| `TrainingCamp_HandleBan` `0x005193a0` | `0xb473` | `TC_ERROR_NOT_BAN_24T` | looks up a **target** member (`FUN_005e42c0`) and checks it is not the caller (`FUN_005e3700`) |
+| `TrainingCamp_HandleLeave` `0x00519510` | `0xb473`, `0xb474` | `TC_ERROR_NOT_OUT_24T` | acts on **itself**: never calls the target lookup |
+| `TrainingCamp_HandleGraduation` `0x00519600` | `0xb475` | `TC_ERROR_GRADUATION_LEVER` | calls both `TrainingCampMember_IsStudent` and `_IsSecondGuardian` |
+
+**Ban and leave are two entry points to one removal.** Both end in
+`FUN_005deeb0` — now `TrainingCamp_RemoveMember` — and those two handlers are its
+**only** callers, one passing a target and one passing the caller. That is also
+the likeliest reading of both sending `0xb473`: a shared "member removed" notice,
+with `0xb474` as leave's own reply. The notice reading is inference and is
+labelled as such; the shared removal is read.
+
+**`0x00519120` is deliberately not named.** It raises
+`TC_ERROR_NOT_DISORGANIZATION_7D` and calls `FUN_004e4780`, the neighbour of the
+founding validator `FUN_004e4680`, so disband is the obvious reading. But it
+answers on **two** opcodes (`0xb470`, `0xb471`), and that validator was not read,
+which leaves one piece of evidence where the named four have two. With `0xb470`
+and `0xb471` both unassigned, the gap is also where a *create* handler would sit
+in the series.
+
+This fills in half of the "Windows named but not read" section below: the 24-hour
+`BAN` and `OUT` windows are now attributed to the handlers that enforce them. Their
+**values** are still not read.
+
 ## Windows named but not read
 
 `TC_ERROR_NOT_INVITE_24T`, `TC_ERROR_NOT_ENTRY_24T` and `TC_ERROR_NOT_BAN_24T`
