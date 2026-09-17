@@ -208,3 +208,39 @@ Mark a row SPECIFIED only when nothing material is outstanding. Quest scripting
 went SPECIFIED and straight back to PARTIAL in one session for want of that
 discipline; Monster AI is PARTIAL on purpose, because the machine is whole but
 the tables that configure it are unread.
+
+## Correcting an owner, not just a name
+
+`ApplyRecoveredNames.java` used to set only the leaf and leave the namespace as
+found. That was deliberate and it made one whole class of error uncorrectable:
+a base class's method attributed to a derived class.
+
+The `## Illegal ##` stubs are the clean case. Each one's entire body is
+
+	Log(0x2000001, "## Illegal ##  IGObj::GetJID Entered! TypeID: %u", GetTypeID());
+	Assert_BreakIfDebugger();
+
+so **the engine states its own owner in the string**. One compiled copy serves
+thirty vtables, and the RTTI plate pass named it after whichever of the thirty
+it reached first. 116 functions were in that state, every one with the right
+method name and the wrong class.
+
+The script now fixes the owner too, under the same rule as renaming: an
+existing owner is replaced only on a `force` row or an unnamed function. It
+creates the class namespace if it does not exist, reports `REOWNED`, and is
+idempotent — the second run reports `reowned 0`.
+
+**A `leaf` match is not a name match.** The old run reported
+`applied 1, evidence refreshed 252` over 116 pending corrections and looked
+like a success. Read the counters: `refreshed` climbing while `applied` stays
+flat means the rows are landing on functions that already have that leaf, which
+is either a genuine re-run or an owner that nobody is checking.
+
+Harvest the corrections with:
+
+	pat = r"#+\s*Illegal\s*#+\s+([A-Za-z_][\w:]*)::(\w+)\s+Entered"
+
+and require `Assert_BreakIfDebugger` in the body, so a real function that merely
+mentions the string is not swept in. One was: `0x004eb390` is a 63-byte
+predicate this project named `GObjPC::IsKilledByPlayer`, and its own evidence
+column already explained that the `IsPC` string belongs to a stub it calls.

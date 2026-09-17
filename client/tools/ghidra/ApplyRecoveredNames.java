@@ -52,6 +52,7 @@ import java.io.FileReader;
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.SourceType;
 
 public class ApplyRecoveredNames extends GhidraScript {
@@ -77,6 +78,62 @@ public class ApplyRecoveredNames extends GhidraScript {
 		fn.setComment("Identified by srrevamp RE (origin=" + origin + ").\n" + evidence);
 	}
 
+	// Move a function into the class the TSV names, creating that class
+	// namespace if it does not exist yet.
+	//
+	// WHY THIS EXISTS. The script used to set only the leaf, deliberately --
+	// "leave the namespace as found". That made one whole category of error
+	// uncorrectable: a base class's method attributed to a derived class. The
+	// `## Illegal ##` stubs are the clearest case. Each logs its own owner --
+	// "## Illegal ##  IGObj::GetJID Entered!" -- and 30 vtables share the one
+	// compiled copy, so the plate pass named it after an arbitrary one of the
+	// 30. The method name was right every time; the owner was wrong 116 times.
+	//
+	// The same safety rule as renaming applies: an existing owner is only
+	// replaced when the row says `force`, or when the function was unnamed.
+	private boolean applyNamespace(Function fn, String name, String addrS, boolean force)
+			throws Exception {
+		int i = name.lastIndexOf("::");
+		if (i < 0) {
+			return false; // the row offers no owner, so there is nothing to set
+		}
+		String want = name.substring(0, i);
+		Namespace cur = fn.getParentNamespace();
+		String curName = cur == null || cur.isGlobal() ? "" : cur.getName(true);
+		if (want.equals(curName)) {
+			return false;
+		}
+		if (!curName.isEmpty() && !force) {
+			println("KEEPOWNER " + addrS + "  owner is " + curName + ", offered " + want
+					+ " (no force)");
+			return false;
+		}
+
+		// Resolve or create the class namespace, one "::" segment at a time.
+		Namespace ns = currentProgram.getGlobalNamespace();
+		for (String seg : want.split("::")) {
+			if (seg.length() == 0) {
+				continue;
+			}
+			Namespace child = currentProgram.getSymbolTable().getNamespace(seg, ns);
+			if (child == null) {
+				child = currentProgram.getSymbolTable()
+						.createClass(ns, seg, SourceType.USER_DEFINED);
+			}
+			ns = child;
+		}
+		try {
+			fn.setParentNamespace(ns);
+		}
+		catch (Exception e) {
+			println("FAILOWNER " + addrS + "  -> " + want + ": " + e);
+			return false;
+		}
+		println("REOWNED  " + addrS + "  " + (curName.isEmpty() ? "<global>" : curName)
+				+ "::" + fn.getName() + " -> " + want + "::" + fn.getName());
+		return true;
+	}
+
 	@Override
 	public void run() throws Exception {
 		String[] args = getScriptArgs();
@@ -88,7 +145,7 @@ public class ApplyRecoveredNames extends GhidraScript {
 		String wantBinary = args[1];
 
 		int applied = 0, skippedOther = 0, skippedNamed = 0, missing = 0, failed = 0,
-				refreshed = 0, forced = 0;
+				refreshed = 0, forced = 0, reowned = 0;
 
 		BufferedReader in = new BufferedReader(new FileReader(path));
 		String line;
@@ -140,13 +197,23 @@ public class ApplyRecoveredNames extends GhidraScript {
 					// application still lands.
 					comment(fn, origin, evidence);
 					refreshed++;
+					// The LEAF matching does not mean the OWNER does. An
+					// inherited base stub is attributed by the RTTI plate pass
+					// to whichever derived class it reached first, so
+					// CGObjCOS_Summoned::GetJID and IGObj::GetJID have the same
+					// leaf and different, and one wrong, owners. 116 functions
+					// in this project were in exactly that state.
+					if (applyNamespace(fn, name, addrS, force)) {
+						reowned++;
+					}
 					continue;
 				}
 			}
 
 			// The TSV carries Class::Method; Ghidra holds the class as the
-			// function's namespace, so set only the leaf and leave the
-			// namespace as found.
+			// function's namespace. The leaf is set here; the namespace is
+			// handled separately below, because the two can need fixing
+			// independently.
 			//
 			// setName throws on a duplicate or an invalid identifier. Catching
 			// it matters because an uncaught exception aborts the whole script,
@@ -161,6 +228,9 @@ public class ApplyRecoveredNames extends GhidraScript {
 				continue;
 			}
 			comment(fn, origin, evidence);
+			if (applyNamespace(fn, name, addrS, force)) {
+				reowned++;
+			}
 			if (!force || isUnnamed(current)) {
 				// A forced row already logged its own FORCED line above;
 				// printing RENAMED too would read as two changes.
@@ -173,6 +243,7 @@ public class ApplyRecoveredNames extends GhidraScript {
 
 		println("");
 		println("applied " + applied + ", forced " + forced
+				+ ", reowned " + reowned
 				+ ", evidence refreshed " + refreshed
 				+ ", kept " + skippedNamed + ", no function " + missing
 				+ ", failed " + failed + ", other binary " + skippedOther);
