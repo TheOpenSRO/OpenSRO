@@ -280,3 +280,21 @@ func TestExpBonusAtTheRecoveredCap(t *testing.T) {
 		t.Error("the unshared cap yields a smaller bonus than the shared one")
 	}
 }
+
+// Level 5 exactly may create; level 4 may not. `bVar2 < 5` is the comparison,
+// at two separate call sites.
+func TestMinCreatorLevel(t *testing.T) {
+	if MinCreatorLevel != 5 {
+		t.Errorf("MinCreatorLevel is %d, want 5", MinCreatorLevel)
+	}
+	for _, level := range []int{5, 6, 10, 140} {
+		if !CanCreate(level) {
+			t.Errorf("level %d cannot create a party", level)
+		}
+	}
+	for _, level := range []int{0, 1, 4} {
+		if CanCreate(level) {
+			t.Errorf("level %d created a party", level)
+		}
+	}
+}

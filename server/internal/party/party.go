@@ -46,6 +46,31 @@ import (
 // a recovery, and the citation above is from the join-time check itself.
 const MaxSize = 8
 
+// MinCreatorLevel is 5: a character below level 5 cannot form a party.
+// **RECOVERED 2026-09-17**, and srrevamp had no such rule at all.
+//
+// Two independent call sites enforce it, both by calling vtable slot 73
+// (`+0x124`, the level getter) and comparing:
+//
+//	FUN_00513f90:  if (level < 5) return 0x2c0a;   // the plain create path
+//	FUN_00514170:  if (level < 5) return 0x2c0a;   // the party-match path
+//
+// and `0x2c0a` is `UIIT_MSG_PARTYERR_TOO_LOW_CREATOR_LEVEL`
+// (docs/protocol/error_codes.md), which names the rule rather than leaving it
+// to be inferred from the comparison.
+//
+// The party-match path applies it only when the character is not ALREADY in a
+// party -- an existing member re-listing the party is checked for leadership
+// instead. So the rule is about forming a party, not about being in one, which
+// is what "CREATOR" in the error name says.
+const MinCreatorLevel = 5
+
+// ErrCreatorTooLow is the refusal. PARTYERR_TOO_LOW_CREATOR_LEVEL.
+var ErrCreatorTooLow = errors.New("party: a party leader must be at least level 5")
+
+// CanCreate reports whether a character of this level may form a party.
+func CanCreate(level int) bool { return level >= MinCreatorLevel }
+
 // MaxSizeNotShared is the engine's OTHER cap -- the one for a party that does
 // not share experience (bit 0 of its flags clear). srrevamp has no such party,
 // so nothing uses this; it is recorded because the two limits are easy to
