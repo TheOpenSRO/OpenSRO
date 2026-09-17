@@ -63,3 +63,48 @@ const (
 	// Agent login hand-off response before its payload was known.
 	OpAgentLoginAuthAck uint16 = 0xA103
 )
+
+// How the retail server routes a message, recovered 2026-09-17 from
+// CGObjPC::vslot_376 (0x0050eee0). See docs/protocol/server_dispatch.md.
+//
+//	50ef13  and eax,0x7ff                    ; the index
+//	50ef1e  cmp cx,ax                        ; bit 0x800 set -> a fallback path
+//	50ef44  mov edx,[eax*8+0xcd3d08]         ; the handler
+//
+// The server picks a handler with the LOW ELEVEN BITS of the opcode and ignores
+// the top five, which is why a request and its reply reach the same slot.
+const DispatchMask uint16 = 0x7ff
+
+// DispatchIndex is the handler slot a given opcode reaches on the retail server.
+// Opcodes with bit 0x800 set never reach the table: the dispatcher compares the
+// 11-bit and 12-bit maskings and takes a different path when they differ.
+func DispatchIndex(op uint16) (index uint16, dispatched bool) {
+	return op & DispatchMask, op&0x800 == 0
+}
+
+// The academy (the engine calls it the training camp). The requests are read
+// from the client's own senders, which pass the opcode to its packet builder:
+//
+//	00821e40  FUN_00841780(0x7470, ...)   open
+//	008220e0  FUN_00841780(0x7471, ...)   disband
+//	00821f00  FUN_00841780(0x7472, ...)   invite -- it shows UIIT_STT_TC_PROPOSAL_PENDING
+//	00822180  FUN_00841780(0x7475, ...)   graduation
+//
+// The replies are read from the server's senders (docs/protocol/academy.md), and
+// each request reaches the handler the server's table holds at its index:
+// 0x470 TrainingCamp_HandleOpen, 0x471 HandleDisband, 0x472 HandleInvite,
+// 0x475 HandleGraduation.
+//
+// Ban and leave are NOT here. The server has handlers at 0x473 and 0x474 and
+// answers on 0xb473/0xb474, but the client senders that would give their request
+// opcodes have not been read, and 0x7473/0x7474 would be a guess from the shape.
+const (
+	OpAcademyOpenRequest       uint16 = 0x7470
+	OpAcademyOpenAck           uint16 = 0xB470
+	OpAcademyDisbandRequest    uint16 = 0x7471
+	OpAcademyDisbandAck        uint16 = 0xB471
+	OpAcademyInviteRequest     uint16 = 0x7472
+	OpAcademyInviteAck         uint16 = 0xB472
+	OpAcademyGraduationRequest uint16 = 0x7475
+	OpAcademyGraduationAck     uint16 = 0xB475
+)

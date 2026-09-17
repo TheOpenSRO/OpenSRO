@@ -14285,3 +14285,51 @@ Every name applied this session is present in the dumps rebuilt at 18:24: 16 ser
 names and the client handlers, grepped as `\tNAME\t|::NAME\t`.
 `TrainingCampMember_IsPast24HourWindow` appears twice, being the function and the
 thunk that Ghidra names after it.
+
+## The server's message dispatch table: 162 handlers, one rule (2026-09-17)
+
+Naming coverage stands at **22.0% in the server** (7,519 of 34,120) and **14.9% in
+the client** (6,470 of 43,562), and the largest unnamed clusters are attribution
+buckets rather than a system. So this tick went after the mechanism instead: the
+client's registration table was worth 102 created functions last week, and the
+server had no equivalent recovered.
+
+**It has one.** `CGObjPC::vslot_376` (now `CGObjPC::DispatchClientMessage`) reads a
+message's 16-bit opcode, masks the **low eleven bits**, and calls
+`*(0x00cd3d08 + 8 * index)` — an array of pointers to member functions. Opcodes with
+bit `0x800` set take a fallback instead. The table is filled by initialiser code, two
+instructions per entry, so it does not exist in the file image: 224 such assignments
+in the binary, **162 inside the table**, at indices `0x005`-`0x51c`. They are now
+`docs/protocol/server_handlers.tsv`, with `docs/protocol/server_dispatch.md` for the
+mechanism.
+
+### The relation was validated before it was used
+
+Eleven table entries were already named by earlier work that never touched this
+table. **Every one matches the client handler registered for the reply opcode with
+the same eleven bits** — party, job guild, guild create, COS naming and all seven
+academy handlers — with no disagreement. Two of those pairs
+(`CInstanceCharTrijob::HandleJoinJobGuild` ↔ `JobGuild_OnJoinResult`,
+`TrainingCamp_HandleDisband` ↔ `TrainingCamp_OnDisbandResult`) were recovered from
+opposite sides of the wire in this session and had never been compared.
+
+### The academy's request opcodes, read rather than inferred
+
+The mask means an index does not give the opcode a client puts on the wire. The
+client's senders do: `FUN_00841780(0x7470...)` open, `0x7471` disband, `0x7472`
+invite (that function also shows `UIIT_STT_TC_PROPOSAL_PENDING`), `0x7475`
+graduation. Ban and leave are deliberately absent: the server has handlers at `0x473`
+and `0x474`, but the client senders were not read and `0x7473`/`0x7474` would be a
+guess from the shape.
+
+Wired into `internal/proto` as `DispatchMask`, `DispatchIndex` and the four
+request/reply pairs, with a test that each pair lands on the same slot and that
+`0xBC80` — the DB job result — is one of the opcodes the table never sees.
+
+### What it opens
+
+**47 of the 162 handlers are not functions in Ghidra at all**, and **103 more are
+`FUN_`-style.** That is the same shape the client's table had before
+`CreateMissingFunctions.java`, and it is now the largest single naming lever left in
+the server. Every one of them carries an index, so each can be tied to the client's
+end of the same conversation.
