@@ -83,6 +83,9 @@ const (
 	// the same column). See docs/protocol/refdata_schema.md.
 	fPrice     = 26
 	fSellPrice = 31
+	// fRepairCost is the item's FULL-REPAIR cost in gold -- see
+	// refdata.Item.RepairCost for the engine arithmetic that identifies it.
+	fRepairCost = 28
 	// The Param block stores a value beside its own label: 118 "HP...",
 	// 120 "HP...(%)", 122 "MP...", 124 "MP...(%)". Potion restore amounts.
 	fRestoreHP    = 118
@@ -468,6 +471,7 @@ func itemRecord(cols []string) ([]string, bool) {
 		get(fReqLevel3),        // 47 ReqLevel3
 		get(fReqLevelType4),    // 48 ReqLevelType4
 		get(fReqLevel4),        // 49 ReqLevel4
+		num(fRepairCost),       // 50 RepairCost
 	}, true
 }
 

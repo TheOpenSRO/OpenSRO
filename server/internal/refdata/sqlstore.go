@@ -60,6 +60,7 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS req_level_type3 INTEGER NOT NULL DEFA
 ALTER TABLE items ADD COLUMN IF NOT EXISTS req_level3 INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE items ADD COLUMN IF NOT EXISTS req_level_type4 INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE items ADD COLUMN IF NOT EXISTS req_level4 INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS repair_cost INTEGER NOT NULL DEFAULT 0;
 -- The potion restore amounts. REAL and exported since the Param block was
 -- decoded, and parsed by the CSV loader -- but there were no columns here, so
 -- ImportItems dropped them and every potion failed useitem's "cannot be used"
@@ -184,8 +185,8 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			restore_hp, restore_hp_pct, restore_mp, restore_mp_pct, set_id,
 			can_trade, can_sell, can_drop,
 			req_level_type2, req_level2, req_level_type3, req_level3,
-			req_level_type4, req_level4
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50)
+			req_level_type4, req_level4, repair_cost
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51)
 		ON CONFLICT (id) DO UPDATE SET
 			type_id1=excluded.type_id1, type_id2=excluded.type_id2, type_id3=excluded.type_id3, type_id4=excluded.type_id4,
 			country=excluded.country, req_gender=excluded.req_gender,
@@ -210,7 +211,8 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			can_drop=excluded.can_drop,
 			req_level_type2=excluded.req_level_type2, req_level2=excluded.req_level2,
 			req_level_type3=excluded.req_level_type3, req_level3=excluded.req_level3,
-			req_level_type4=excluded.req_level_type4, req_level4=excluded.req_level4
+			req_level_type4=excluded.req_level_type4, req_level4=excluded.req_level4,
+			repair_cost=excluded.repair_cost
 	`)
 	if err != nil {
 		return fmt.Errorf("refdata: preparing insert: %w", err)
@@ -228,7 +230,7 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			it.Price, it.SellPrice, it.BlockRatioMin, it.BlockRatioMax,
 			it.ReinforcePhysMin, it.ReinforcePhysMax, it.ReinforceMagMin, it.ReinforceMagMax,
 			it.RestoreHP, it.RestoreHPPct, it.RestoreMP, it.RestoreMPPct, it.SetID, it.CanTrade, it.CanSell, it.CanDrop,
-			it.ReqLevelType2, it.ReqLevel2, it.ReqLevelType3, it.ReqLevel3, it.ReqLevelType4, it.ReqLevel4,
+			it.ReqLevelType2, it.ReqLevel2, it.ReqLevelType3, it.ReqLevel3, it.ReqLevelType4, it.ReqLevel4, it.RepairCost,
 		); err != nil {
 			return fmt.Errorf("refdata: inserting item %d: %w", it.ID, err)
 		}
@@ -251,7 +253,7 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 			restore_hp, restore_hp_pct, restore_mp, restore_mp_pct, set_id,
 			can_trade, can_sell, can_drop,
 			req_level_type2, req_level2, req_level_type3, req_level3,
-			req_level_type4, req_level4
+			req_level_type4, req_level4, repair_cost
 		FROM items WHERE id = $1`, id)
 	if err := row.Scan(
 		&it.ID, &it.MaxStack, &it.ReqStr, &it.ReqInt, &it.ItemClass, &it.TwoHanded,
@@ -263,7 +265,7 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 		&it.Price, &it.SellPrice, &it.BlockRatioMin, &it.BlockRatioMax,
 		&it.ReinforcePhysMin, &it.ReinforcePhysMax, &it.ReinforceMagMin, &it.ReinforceMagMax,
 		&it.RestoreHP, &it.RestoreHPPct, &it.RestoreMP, &it.RestoreMPPct, &it.SetID, &it.CanTrade, &it.CanSell, &it.CanDrop,
-		&it.ReqLevelType2, &it.ReqLevel2, &it.ReqLevelType3, &it.ReqLevel3, &it.ReqLevelType4, &it.ReqLevel4,
+		&it.ReqLevelType2, &it.ReqLevel2, &it.ReqLevelType3, &it.ReqLevel3, &it.ReqLevelType4, &it.ReqLevel4, &it.RepairCost,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("refdata: querying item %d: %w", id, ErrItemNotFound)
@@ -291,7 +293,7 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			restore_hp, restore_hp_pct, restore_mp, restore_mp_pct, set_id,
 			can_trade, can_sell, can_drop,
 			req_level_type2, req_level2, req_level_type3, req_level3,
-			req_level_type4, req_level4
+			req_level_type4, req_level4, repair_cost
 		FROM items ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("refdata: listing items: %w", err)
@@ -311,7 +313,7 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			&it.Price, &it.SellPrice, &it.BlockRatioMin, &it.BlockRatioMax,
 			&it.ReinforcePhysMin, &it.ReinforcePhysMax, &it.ReinforceMagMin, &it.ReinforceMagMax,
 			&it.RestoreHP, &it.RestoreHPPct, &it.RestoreMP, &it.RestoreMPPct, &it.SetID, &it.CanTrade, &it.CanSell, &it.CanDrop,
-			&it.ReqLevelType2, &it.ReqLevel2, &it.ReqLevelType3, &it.ReqLevel3, &it.ReqLevelType4, &it.ReqLevel4,
+			&it.ReqLevelType2, &it.ReqLevel2, &it.ReqLevelType3, &it.ReqLevel3, &it.ReqLevelType4, &it.ReqLevel4, &it.RepairCost,
 		); err != nil {
 			return nil, fmt.Errorf("refdata: scanning item: %w", err)
 		}

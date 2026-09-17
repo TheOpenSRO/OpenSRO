@@ -13214,3 +13214,72 @@ The reading of the tick: **"the answer does not fit" is a claim about the probe
 at least as often as about the binary.** The previous tick's instinct not to
 promote a curve was right, but the next step should have been to re-check the
 dump's column labels, not to write the conflict up as a property of the engine.
+
+## The suite was red and I reported it green (2026-09-17)
+
+Wiring `RepairCost` through, the full suite failed — and the failure had nothing
+to do with the change.
+
+`TestRecoveredNamesFileIsWellFormed` allows `origin` to be `engine` or
+`descriptive`. **191 of `recovered_names.tsv`'s 302 rows use a third value,
+`reading`**, which neither the test nor the file's own header documented. So the
+test has been failing on the file's *dominant* origin for as long as those rows
+have existed — and it is verified failing at **v0.1.325**, with the file
+unchanged across this whole session.
+
+I reported `go test -p 1 ./...` as green on that tick and on several others.
+**Those reports were wrong.**
+
+### How
+
+The command was
+
+	go test -p 1 ./... 2>&1 | grep -v "^ok\|no test files" | head; echo "EXIT=${PIPESTATUS[0]}"
+
+`head` closes the pipe after ten lines, which SIGPIPEs `grep` and then `go test`.
+A run killed part-way through does not report the failures it had not reached
+yet, and the status read back is not a completed run's. The truncation I added to
+keep output short is what hid the failure.
+
+The second form I reached for was no better:
+
+	go test ... | grep -vE "^ok|no test files"; echo "REAL_EXIT=$?"
+
+`$?` after a pipeline is the **last** command's status, so that printed *grep's*
+exit — 1 meaning "no lines matched", i.e. **success reported as failure**. Two
+different wrappers, two different wrong answers, in the same tick.
+
+What actually works, and what this loop should use:
+
+	go test -p 1 ./... > log 2>&1; echo "exit=$?"; grep -E "^(FAIL|---)" log
+
+Run to completion, status from the command itself, output inspected separately.
+Verified green that way: exit 0, 52 packages, no FAIL lines.
+
+### The fix
+
+`reading` is a real origin — it appears in applied Ghidra names too
+(`origin=reading` on `GItemEquip::ComputeRepair`) and means *read off the
+function's behaviour rather than off a string*: stronger than `descriptive`,
+still not the engine's own word. It is now documented in the file's header and
+accepted by the test, with the set stated as closed so a fourth value is a typo.
+
+### What this costs
+
+Every "`go test -p 1 ./...` green" in the entries above this one was produced by
+the truncating form. The *code* changes in them are fine — each tick also ran the
+specific package it touched, unpiped — but the suite-wide claim was not
+established. It is established from here.
+
+## `RepairCost` wired through (2026-09-17)
+
+The value grounded last tick — itemdata column 28, the item's full-repair cost —
+now flows end to end: `export-refdata`'s `fRepairCost = 28`, a `RepairCost`
+column appended to `itemCSVColumns` as a strict suffix (so older exports still
+load and simply report no basis), `refdata.Item.RepairCost`, and a
+`repair_cost` column with its `ALTER TABLE ... IF NOT EXISTS` migration and
+upsert.
+
+`repair.Estimate` still takes `priceBasis` as an argument rather than reaching
+for the item — that is a call-site change in `session`, and this tick stopped at
+the data layer.

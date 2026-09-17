@@ -44,8 +44,15 @@ func TestRecoveredNamesFileIsWellFormed(t *testing.T) {
 		if binary != "server" && binary != "client" {
 			t.Errorf("line %d: binary %q, want server or client", i+1, binary)
 		}
-		if origin != "engine" && origin != "descriptive" {
-			t.Errorf("line %d: origin %q, want engine or descriptive", i+1, origin)
+		// The three origins the file's own header documents. `reading` was
+		// missing from this check until 2026-09-17 even though 191 of the 302
+		// rows use it -- so this test failed on every run for as long as those
+		// rows have existed, and was reported as passing because the runs were
+		// piped through `head`, which truncated the output.
+		switch origin {
+		case "engine", "descriptive", "reading":
+		default:
+			t.Errorf("line %d: origin %q, want engine, descriptive or reading", i+1, origin)
 		}
 		if strings.TrimSpace(evidence) == "" {
 			t.Errorf("line %d (%s): no evidence; a name without one is a guess", i+1, name)

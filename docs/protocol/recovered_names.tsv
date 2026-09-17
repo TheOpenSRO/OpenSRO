@@ -7,6 +7,13 @@
 # origin=descriptive  chosen by this project to describe what the function does.
 #                     A descriptive name is a CLAIM, the same as a constant is;
 #                     the evidence column is what backs it.
+# origin=reading  read off the function's own behaviour rather than a string.
+#                 Stronger than descriptive -- the evidence column cites the
+#                 instructions -- but still this project's words, not the
+#                 engine's. DOCUMENTED 2026-09-17: 191 of the 302 rows already
+#                 used it and neither this header nor the guarding test listed
+#                 it, so the test had been failing on the file's dominant
+#                 origin. The set is closed; a fourth value is a typo.
 #
 # Apply with client/tools/ghidra/ApplyRecoveredNames.java, which needs a
 # NON-readOnly analyzeHeadless run -- the dump tick uses -readOnly and so can

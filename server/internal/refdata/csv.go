@@ -51,6 +51,10 @@ var itemCSVColumns = []string{
 	// is exactly what the loader did before these columns existed.
 	"ReqLevelType2", "ReqLevel2", "ReqLevelType3", "ReqLevel3",
 	"ReqLevelType4", "ReqLevel4",
+	// Appended later still (the item's full-repair cost, itemdata column 28):
+	// a strict suffix like every block before it, so an older export still
+	// loads and simply reports no repair basis.
+	"RepairCost",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -249,6 +253,9 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 49 {
 		it.ReqLevel4 = parseInt(f[49])
+	}
+	if len(f) > 50 {
+		it.RepairCost = parseInt(f[50])
 	}
 
 	if err != nil {

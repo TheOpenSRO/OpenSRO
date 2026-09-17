@@ -66,9 +66,27 @@ type Item struct {
 	ReqLevelType2, ReqLevel2 int
 	ReqLevelType3, ReqLevel3 int
 	ReqLevelType4, ReqLevel4 int
-	ReqStr                   int
-	ReqInt                   int
-	ItemClass                int
+
+	// RepairCost is what a FULL repair of this item costs in gold -- itemdata
+	// column 28, GROUNDED 2026-09-17 from the engine's own arithmetic rather
+	// than from the column's shape.
+	//
+	// GItemEquip::ComputeRepair (0x00496e60) computes
+	// `price = refRecord[0xa4] / maxDurability` and `cost = price * units`, so
+	// repairing from zero to full buys `units = maxDurability` and costs exactly
+	// `refRecord[0xa4]`. `refRecord[0xa4]` is _RefObjCommon field 28, and field 28
+	// is text column 28 (docs/protocol/refobj_binary_format.md's anchors at
+	// indices 1, 14, 32..39 and 52..56 bracket it; the formats diverge at 57).
+	//
+	// ITEM_CH_SWORD_01_A: column 28 = 297 against durability 62/76, so 3.9 gold a
+	// unit and 297 for a full repair, against a vendor Price of 890.
+	//
+	// Zero for an item whose export predates the column, which repair.Estimate
+	// treats as "no basis known" rather than "free".
+	RepairCost int
+	ReqStr     int
+	ReqInt     int
+	ItemClass  int
 	// SetID is the item set this piece belongs to, 0 for most items. It is
 	// the key of the game's own `_RefSetItemGroup` table (shipped as
 	// `textdata\refsetitemgroup.txt`), and wearing one piece in each of a
