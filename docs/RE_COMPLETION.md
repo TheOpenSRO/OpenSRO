@@ -14560,3 +14560,54 @@ monster is built by `FUN_00495d60`, which interpolates **characterdata** columns
 whole `[0x65]..[0x77]` stat block. That is the monster path. The player's flat
 `Defense` term — the one the grounding audit still lists as disclosed — does **not**
 come from there, so it is still open.
+
+## The quest content hook: 157 functions named from one slot (2026-09-17)
+
+Last tick recorded the lever and did not start it: 151 of 153 quest classes override
+**slot 55** of `CBasicQuest`'s 103-slot vtable, ~900 bytes each, where the base's own
+implementation is a stub. This tick identified the slot and named every override.
+
+### Finding the slot took two probes, the first of which was empty
+
+Searching for `call DWORD PTR [reg+0xdc]` found **nothing** — this binary loads a slot
+into a register first (`mov eax,[edx+0xdc]; call eax`). The two-step form found five
+call sites, only one in the quest region.
+
+### What slot 55 is
+
+Inside `CQNO_CH_POTION_4::vslot_055`: `NPC_CH_FERRY`, `NPC_CH_POTION`, and
+`SN_TALK_QNO_CH_POTION_4_01` through `_13` — **the quest's own name inside its own
+dialogue ids**. Each is built with the string builder `FUN_00401fc0` and pushed into a
+vector by `FUN_00476cd0` (element size 0x1c), and the caller — the shared slot-17 body
+`FUN_0091e7f0` — invokes it on `this` and asserts the result:
+
+	91e8f2  mov eax,[edx+0xdc]
+	91e8fa  call eax
+	91e8fc  test eax,eax ; jne ok
+	91e900  call 0x964b60          <- assert
+
+So it is a declaration, not an event handler: the quest builds its own content lists
+and answers true.
+
+**Measured over every override, not read from one:**
+
+	157 of 157   declare NPC_ codes
+	155 of 157   carry SN_ dialogue ids containing their own quest's name
+
+The two without dialogue ids still declare NPCs and item codes
+(`CQNO_CH_LOTTERY_1`, `CQNO_CH_BIGMAN_1`), so the NPC declaration is the universal
+part and the name says content rather than dialogue.
+
+Named `<Class>::DeclareQuestContent` on all 157. **Applied 157, failed 0** — each row
+carrying that quest's own counts. The base class's slot-55 stub is deliberately NOT
+named: it is a 42-byte function shared by 290+ classes as a generic stub, exactly the
+folded shape this project refuses to name after one class.
+
+Server naming coverage was 22.0% before this tick; these 157 land in the dump the next
+rebuild produces.
+
+### A correction of my own, found by the applier
+
+`0x005713d0` was recorded last tick as `GObjPC::GetQuestCounter`; the project has it in
+`CGObjPC`. The applier refused the owner change and said so, which is how it surfaced.
+The row now reads `CGObjPC::` and a re-apply reports no change, which is the confirmation.
