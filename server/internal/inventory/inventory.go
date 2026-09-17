@@ -28,6 +28,8 @@ import (
 // The character's live size lives at `this + 0x1c2c` and persists as the _CHAR
 // column `InventorySize` at charData+0xac (CInstancePC::CharData_BindDBColumns).
 //
+// WHAT RAISES THE CAP is now read: see ExpansionQuestCodes below.
+//
 // WHY 50 STAYS OWN DESIGN, restated 2026-09-17 on better evidence. This note
 // used to say "the write reaches it through a register", implying a write
 // existed and had not been found. Searching the DISASSEMBLY rather than the
@@ -97,8 +99,9 @@ const (
 	// MaxSlotsExpanded is the largest inventory the engine will ever produce:
 	// the raised cap, 99.
 	MaxSlotsExpanded = 99
-	// MaxSlotsDefault is the cap without whatever GObjPC::FUN_004e13b0 tests
-	// for: 0x4d.
+	// MaxSlotsDefault is the cap before the expansion quest: 0x4d. What
+	// GObjPC::FUN_004e13b0 tests for is READ as of 2026-09-17 -- see
+	// ExpansionQuestCodes.
 	MaxSlotsDefault = 77
 	// SlotsHardLimit is the second, independent condition -- `size + count <
 	// 100` -- so an inventory never reaches this value.
@@ -215,4 +218,42 @@ type Store interface {
 	// RemoveItem removes quantity from the given slot. If that empties the
 	// slot exactly, the slot becomes free again.
 	RemoveItem(ctx context.Context, characterID int64, slot int, quantity int) error
+}
+
+// ExpansionQuestCodes is what raises the inventory cap from MaxSlotsDefault to
+// MaxSlotsExpanded. Read 2026-09-17 from GObjPC::FUN_004e13b0, the 1,359-byte
+// function `CGObjPC::ExpandInventory` consults, which this package had recorded
+// as unread and deliberately made no claim about.
+//
+// The function builds these six quest codes, looks each up in the character's
+// quest container at `this + 0x1d98`, and returns 1 on the first one that
+// matches (`mov eax,0x1` at 0x004e1833). Two conditions count as a match:
+//
+//	4e1758  call 0x570c90 ; cmp al,0x8    <- the quest's status byte (record +0x20)
+//	4e177a  call 0x5713d0 ; test ax,ax    <- its 16-bit field (record +0x22), non-zero
+//
+// The prefixes are the engine's race and region tags, the same shape as its
+// other quest codes.
+//
+// A SECOND, INDEPENDENT SOURCE for the same six: the server carries an RTTI
+// class per quest, and their names are these codes with a C in front --
+// CQSP_CH_EXINVENTORY_1, CQSP_WC_EXINVENTORY_2 and so on. Only nine quests in
+// the whole binary are classes rather than data; the other three are
+// CQSP_ALL_POTION_1..3.
+//
+// NOT READ: what status 8 means. "Completed" is the obvious reading and is not
+// recorded as fact. Three sibling functions (0x005703b0, 0x00570650,
+// 0x00570960) accept exactly {1, 7, 8} as a group, so 8 is one of three live
+// states rather than a unique terminal one, and the write that sets it was not
+// found -- it goes through a computed pointer, not a literal `[reg+0x20]`.
+//
+// srrevamp has no quests yet, so nothing consumes this. It is recorded because
+// "the cap is 77 or 99" was in this package for a week without the reason.
+var ExpansionQuestCodes = []string{
+	"QSP_CH_EXINVENTORY_1",
+	"QSP_EU_EXINVENTORY_1",
+	"QSP_WC_EXINVENTORY_2",
+	"QSP_CA_EXINVENTORY_2",
+	"QSP_KT_EXINVENTORY_3",
+	"QSP_RM_EXINVENTORY_4",
 }

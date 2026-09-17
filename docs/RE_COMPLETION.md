@@ -14475,3 +14475,42 @@ the same shape as the academy's job-result dispatcher.
 separates them; the same goes for the three reinforce handlers and the fortress
 structure handlers, whose `FORT_STRUCTURE_ACTION_ERROR_06` name is shared by fifteen
 different codes in the client's own table.
+
+## What unlocks the 99-slot inventory, read at last (2026-09-17)
+
+This tick went at the other half of the loop's goal — values srrevamp uses that are
+not grounded — by grepping the Go tree for comments that admit it. The best-defined
+one named its own blocker: `internal/inventory` recorded that the cap rises from 77 to
+99 "by a condition at GObjPC::FUN_004e13b0 — a 1,359-byte function this project has
+not read, so what unlocks the larger cap is NOT claimed here."
+
+**It is six quests.** The function builds `QSP_CH_EXINVENTORY_1`,
+`QSP_EU_EXINVENTORY_1`, `QSP_WC_EXINVENTORY_2`, `QSP_CA_EXINVENTORY_2`,
+`QSP_KT_EXINVENTORY_3` and `QSP_RM_EXINVENTORY_4`, looks each up in the character's
+quest container at `this + 0x1d98`, and returns 1 on the first match:
+
+	4e1758  call 0x570c90 ; cmp al,0x8    the quest's status byte (record +0x20)
+	4e177a  call 0x5713d0 ; test ax,ax    its 16-bit counter (record +0x22)
+	4e1833  mov eax,0x1                   either one is enough
+
+**A second source names the same six.** The server carries an RTTI class per quest
+and their names are these codes with a `C` in front — `CQSP_CH_EXINVENTORY_1` and so
+on. Only **nine** quests in the entire binary are classes rather than data: these six
+and `CQSP_ALL_POTION_1..3`. So the engine hard-codes exactly the quests that change
+engine behaviour, which is a structural fact worth having.
+
+**Still not read: what status 8 means.** "Completed" is the obvious reading and is not
+recorded as one. Three sibling functions accept `{1, 7, 8}` as a group, so 8 is one of
+three live states rather than a unique terminal one, and the write that sets it goes
+through a computed pointer rather than a literal `[reg+0x20]`, so it was not found.
+
+Named: `GObjPC::HasInventoryExpansionQuest`, `GObjPC::GetQuestStatus`,
+`GObjPC::GetQuestCounter`. `internal/inventory.ExpansionQuestCodes` carries the six
+with the citation and a test; the caps themselves did not change.
+
+**A side result:** the two skill-withdraw handlers at table indices `0x202` and
+`0x203`, which last tick could not be told apart because their refusal codes are
+identical, reference the same three item codes (`ITEM_MALL_SKILL_RESTORATION_POTION`,
+`ITEM_QSP_ALL_POTION_1_01`, `ITEM_QNO_RM_OLDWOMAN_2_02`) and differ in exactly one
+call: `FUN_0059f8b0` against `FUN_0059fd60`. That pair is what separates them, and
+reading those two is the next step on them.

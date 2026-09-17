@@ -3,6 +3,7 @@ package inventory
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -96,5 +97,30 @@ func TestAddItemRejectsNonPositiveQuantity(t *testing.T) {
 		if err := m.AddItem(ctx, 1, 100, q); !errors.Is(err, ErrInvalidQuantity) {
 			t.Errorf("AddItem(quantity=%d): got %v, want ErrInvalidQuantity", q, err)
 		}
+	}
+}
+
+// The six codes are the engine's, and each is also the name of an RTTI class in
+// the server (with a C prefixed). If a later pass adds a code, it has to come
+// from one of those two places.
+func TestExpansionQuestCodes(t *testing.T) {
+	if len(ExpansionQuestCodes) != 6 {
+		t.Errorf("%d expansion quest codes, want 6 (GObjPC::FUN_004e13b0 builds six)",
+			len(ExpansionQuestCodes))
+	}
+	seen := map[string]bool{}
+	for _, c := range ExpansionQuestCodes {
+		if seen[c] {
+			t.Errorf("%s listed twice", c)
+		}
+		seen[c] = true
+		if !strings.HasPrefix(c, "QSP_") || !strings.Contains(c, "_EXINVENTORY_") {
+			t.Errorf("%s is not one of the engine's expansion quest codes", c)
+		}
+	}
+	// The cap they unlock, and the one they unlock it from.
+	if MaxSlotsDefault != 0x4d || MaxSlotsExpanded != 0x63 {
+		t.Errorf("caps are %d and %d, want 0x4d and 0x63 as read at 0x004e196d and 0x004e1974",
+			MaxSlotsDefault, MaxSlotsExpanded)
 	}
 }
