@@ -108,3 +108,27 @@ const (
 	OpAcademyGraduationRequest uint16 = 0x7475
 	OpAcademyGraduationAck     uint16 = 0xB475
 )
+
+// ReplyOpcode is the opcode the retail server answers a request with. Measured,
+// not assumed: every handler in the server's dispatch table was walked in
+// assembly for the opcodes it hands its send helper (`mov ecx,<op>; call
+// 0x4e7250`) or its message builder (`push <op>; call [this+0x278]`). 98 of the
+// 162 handlers name an opcode, and **96 of those answer on 0xB000 | index**,
+// with no other high nibble appearing.
+//
+// The two that do not are read, not swept under the rule:
+//
+//	index 0x0c4 (0x0050faf0) answers on 0xb045, another operation's opcode
+//	index 0x4a9 (0x005079c0) answers on 0x34aa, which is not a 0xBxxx reply
+//
+// The academy has its own crossed channels of the same kind (its disband
+// handler sends plain refusals on open's opcode), so a request answering
+// somewhere else is a real pattern in this engine, not a decoding error.
+// ok is false when the request carries bit 0x800 and never reaches the table.
+func ReplyOpcode(request uint16) (reply uint16, ok bool) {
+	index, dispatched := DispatchIndex(request)
+	if !dispatched {
+		return 0, false
+	}
+	return 0xB000 | index, true
+}

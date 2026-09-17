@@ -14333,3 +14333,37 @@ request/reply pairs, with a test that each pair lands on the same slot and that
 `CreateMissingFunctions.java`, and it is now the largest single naming lever left in
 the server. Every one of them carries an index, so each can be tied to the client's
 end of the same conversation.
+
+## 47 server handlers created; the reply rule measured (2026-09-17)
+
+The dispatch table's 47 addresses that Ghidra had never made into functions are now
+functions: **created 47, failed 0**, with the table entry itself as the evidence.
+Checked first: all 47 have disassembly, none falls inside an existing function, 45 sit
+directly after `int3` padding, and the two that do not (`0x005146d0`, `0x00516250`)
+follow a `ret 0x4` with no padding between — packed neighbours, still function starts.
+
+### The reply rule, from the server rather than from a pattern
+
+Every one of the 162 handlers was walked in assembly for the opcodes it hands its send
+helper or message builder. **98 name an opcode, and 96 of those answer on
+`0xB000 | index`** — no other high nibble occurs. The eleven-bit index is therefore
+both how a request reaches its handler and what its reply is built from, now resting
+on 96 readings instead of the 11 name matches that first suggested it.
+
+Two exceptions, recorded rather than smoothed over: index `0x0c4` answers on `0xb045`
+(another operation's opcode) and index `0x4a9` on `0x34aa` (not a `0xBxxx` reply).
+The academy shows the same habit in the small, so this is the engine's, not a
+decoding error. `internal/proto.ReplyOpcode` carries the rule with both exceptions in
+its doc comment, and `server_handlers.tsv` gained a `replies_with` column.
+
+**A test of mine asserted its own premise wrongly again**: I wrote that `0x7A55` keeps
+bit `0x800` clear. It does not (`0xA` is `1010`), so the function correctly refused it
+and the test failed. The case is kept, inverted, as a reminder — that is twice this
+session that a bad assertion was caught by running it rather than by reading it.
+
+### Next
+
+The 47 new bodies appear in the dump rebuilt after this apply. With `replies_with`
+joined to the client's handler for the same opcode, the UI-string lever that named
+seven client handlers can now be pointed at the server side: handler → its reply
+opcode → the client handler that displays a string naming the operation.

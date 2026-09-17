@@ -46,3 +46,32 @@ func TestAcademyRequestAndAckShareTheirSlot(t *testing.T) {
 		}
 	}
 }
+
+// The rule holds for every academy pair that was read from both sides.
+func TestReplyOpcodeMatchesTheReadPairs(t *testing.T) {
+	for _, tc := range []struct{ req, ack uint16 }{
+		{OpAcademyOpenRequest, OpAcademyOpenAck},
+		{OpAcademyDisbandRequest, OpAcademyDisbandAck},
+		{OpAcademyInviteRequest, OpAcademyInviteAck},
+		{OpAcademyGraduationRequest, OpAcademyGraduationAck},
+	} {
+		got, ok := ReplyOpcode(tc.req)
+		if !ok || got != tc.ack {
+			t.Errorf("ReplyOpcode(%#x) = (%#x, %v), want (%#x, true)", tc.req, got, ok, tc.ack)
+		}
+	}
+	if _, ok := ReplyOpcode(0x7C00); ok {
+		t.Error("a request with bit 0x800 set never reaches the table, so it has no table reply")
+	}
+	// The rule is 0xB000 | the eleven bits, not "flip the top nibble". 0x7255
+	// keeps bit 0x800 clear, so it dispatches and its reply is 0xB255.
+	if got, ok := ReplyOpcode(0x7255); !ok || got != 0xB255 {
+		t.Errorf("ReplyOpcode(0x7255) = (%#x, %v), want (0xB255, true)", got, ok)
+	}
+	// 0x7A55 does carry bit 0x800 (0xA is 1010), so it takes the fallback and
+	// has no table reply. This case is here because the first version of this
+	// test asserted the opposite and the run caught it.
+	if _, ok := ReplyOpcode(0x7A55); ok {
+		t.Error("0x7A55 carries bit 0x800 and must not be reported as dispatched")
+	}
+}

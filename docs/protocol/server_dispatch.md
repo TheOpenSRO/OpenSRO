@@ -80,6 +80,29 @@ on the wire. The client's own senders do:
 So the academy is `0x747x` out, `0xb47x` back, with the low eleven bits shared —
 and both halves are read, not inferred from the pattern.
 
+## Each handler's reply, walked in assembly
+
+Every handler in the table was walked from its entry to its end, collecting the
+opcodes it hands the send helper (`mov ecx,<op>; call 0x4e7250`) or the message
+builder (`push <op>; call [this+0x278]`). **98 of the 162 name an opcode**, and
+
+	96 of those 98 answer on 0xB000 | index
+
+with no other high nibble appearing anywhere. So the eleven-bit index is not only how
+a request finds its handler; it is also what the reply is built from. That relation
+now rests on 96 handlers read from the server itself, not on the 11 name matches that
+first suggested it.
+
+The two that do not follow it are read, not explained away:
+
+	idx 0c4  0050faf0  answers on 0xb045, which is another operation's opcode
+	idx 4a9  005079c0  answers on 0x34aa, not a 0xBxxx reply at all
+
+The academy does the same thing in the small — its disband handler sends plain
+refusals on open's opcode — so a handler answering somewhere else is a real habit of
+this engine rather than a decoding mistake. The `replies_with` column in
+`server_handlers.tsv` carries every opcode found per handler.
+
 ## What this opens
 
 **47 of the 162 handlers are not functions in Ghidra at all**, the same gap the
