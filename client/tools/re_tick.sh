@@ -68,10 +68,19 @@ redump() { # <name> <project> <program> <binary> <outdir>
       "$GHIDRA /home/ghidra/$proj $prog -readOnly -noanalysis -process $(basename "$bin") \
        -scriptPath /var/tmp -postScript DecompAll.java $out 30 2000" >>"$LOG" 2>&1
     say "$name dump rebuilt: $(cat "$out/DONE" 2>/dev/null)"
-    # Captured AFTER the run on purpose: analyzeHeadless touches the project
-    # even with -readOnly, and stamping it here is what stops that touch from
-    # triggering a rebuild on every tick forever.
-    projstamp "$projdir" >"$stamp"
+    # Record the stamp taken BEFORE the run, written after it.
+    #
+    # Both halves matter and an earlier version got the second one wrong. It
+    # re-measured here, which does stop analyzeHeadless's own -readOnly touch
+    # from triggering a rebuild every tick -- but it also SWALLOWS any rename
+    # applied while the dump was building. The post-run stamp includes that
+    # change, so the next tick compares equal and skips, and the dump stays
+    # stale with nothing reporting it. That happened on 2026-09-17: 138 owner
+    # corrections landed during a build and the next tick saw nothing to do.
+    #
+    # Writing the pre-run value keeps the touch out (it is not in $cur) and
+    # lets a real mid-run change win next tick (its mtime is newer than $cur).
+    echo "$cur" >"$stamp"
     return 0
   fi
   return 1
