@@ -23,7 +23,21 @@ PK2 = "/opt/sro-files/client/Media.pk2"
 
 _cache = {}
 def funcs(dump=SRV):
+    """All functions in a dump.
+
+    REFUSES A DUMP WITHOUT ITS `DONE` MARKER. re_tick.sh rebuilds by `rm -rf`ing
+    the directory and writing shards as it goes, so a probe that runs during a
+    rebuild sees a partial dump -- or an empty one -- and returns nothing at
+    all. That looks exactly like a real negative result, and on 2026-09-17 four
+    probes in a row came back silently empty for that reason. An empty grep is
+    a fact about the grep; this makes it a fact about the dump instead.
+    """
     if dump in _cache: return _cache[dump]
+    if not os.path.exists(os.path.join(dump, "DONE")):
+        raise RuntimeError(
+            "%s has no DONE marker: a dump rebuild is in progress, so any result "
+            "from it would be partial. Wait for `cat %s/DONE` to print a "
+            "functions= line." % (dump, dump))
     out = []
     for p in sorted(glob.glob(dump + "/funcs_*.c")):
         txt = open(p, errors="replace").read()

@@ -66,13 +66,13 @@ one cannot rot the same way without the build going red.
 | Battle arena | 16 | OPEN | — |  | 16 classes; CBattleArenaInfo* |
 | Timed jobs | 16 | OPEN | — |  | 16 CTJ_* classes; CTimedJob::Create is already named |
 | Party | 15 | PARTIAL | docs/protocol/party.md | MaxSize, MinCreatorLevel, CanCreate | size and the creator level are grounded; the invite and expulsion flows are only enumerated, and party flag bit 2 has no probe known to name it |
-| Academy and training camp | 11 | OPEN | — |  | 11 classes; CInstanceTrainingCamp* |
+| Academy and training camp | 11 | PARTIAL | docs/protocol/academy.md | MinFounderLevel, FoundingGold, ReopenCooldownDays | founding is grounded; which of the two membership levels (41/61) is the master role is unread, and the three 24-hour windows are named by the client but not confirmed server-side |
 | Jobs, trade routes and market | 11 | OPEN | — |  | 11 classes; CInstanceCharTrijob and CFleaMarket |
 | Durability and repair | ? | OPEN | — |  | itemdata durability columns are known; the repair path is not |
 
 ## How to read the count
 
-**11 specified, 17 partial, 5 open, of 33.** That is the honest headline, and it
+**11 specified, 18 partial, 4 open, of 33.** That is the honest headline, and it
 is not a percentage of the game — a specified system is one this project can
 implement faithfully, not one it has implemented. What srrevamp actually ships is
 a separate question, tracked in `docs/TODO.md`.
