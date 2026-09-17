@@ -50,13 +50,42 @@ contribution arrives at the flat absorb through the graph.
 sources, equipment and Strength**, and the magical twin (`6 <- 22 <- 2/51`) mirrors it
 with Intellect.
 
+## The slots, which are the arithmetic
+
+`ParamKeeper_BindDerived` takes source in `EBX`, target in `EDI` and **the slot on the
+stack** (its own recovered comment states the direction, and Level/Str/Int only ever
+appear as `EBX`). The slot decides how the source enters the target, because
+`ParamKeeper_EvaluateParam` combines a param's four slots as
+
+	value = base * (1 + pct/100) * mult * (scale/100)
+
+Decoded with the slot, the flat-absorb chain reads:
+
+	Strength -> 21   into slot 0  (base)
+	50       -> 21   into slot 3  (SCALE)
+	21       -> 5    into slot 0  (base)
+	58 -> 50, 59 -> 50   into slot 0 (base)
+
+and `GParamKeeper::FUN_004b2e60` combines a slot's contributors by slot type: a scale
+slot starts at **100.0** and each contributor composes as `acc = contrib * acc / 100`.
+
+**So equipment does not add to the flat absorb; it scales it.** The absorb is a
+Strength-derived base multiplied by a percentage that `param 50` carries, and `param 50`
+is where the per-item entries land (via `param 59`). The magical twin is identical with
+Intellect and `param 51`.
+
 ## What is NOT read
 
-**The arithmetic at each node.** `BindDerived` records that 5 depends on 21; the
-coefficient lives in `GParamKeeper::ParamKeeper_EvaluateParam` (`0x004b3210`), which is
-unread. So the *shape* is grounded and the *weights* are not: nothing here says how much
-armour or how much Strength.
+- **How a base slot combines several contributors.** `58 -> 50` and `59 -> 50` both
+  land in slot 0, and the branch of `FUN_004b2e60` that handles slot type 0 was not
+  read, so whether they sum or replace is unknown.
+- **Which aggregate fields 58 and 59 are.** `Char_PublishCombatStats` writes both out of
+  the block `Char_BuildAggregateStats` fills, and which characterdata columns those are
+  has not been traced.
 
-srrevamp's `defenderArmor` sums armour into the flat term, which matches the equipment
-half of this shape. The Strength half is absent from srrevamp and should not be added
-until `ParamKeeper_EvaluateParam` gives the arithmetic.
+**What this means for srrevamp, and why nothing was changed yet.** `defenderArmor` adds
+armour into the flat term. The engine multiplies: a Strength base scaled by an
+equipment-fed percentage. That is a different model, not a different constant, so
+changing it is a real behaviour change and it needs the two unread pieces above first --
+otherwise a character with armour and no Strength would come out with an absorb of zero
+on a reading that is only three quarters done.

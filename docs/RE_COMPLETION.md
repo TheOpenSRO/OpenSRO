@@ -15058,3 +15058,29 @@ The lesson from the four ticks: **a derived value has no writer.** Enumerating w
 of param 5 was the right probe for the wrong model, and it returned a confident, complete
 and misleading answer every time. What broke it open was asking how the param was
 *bound*, not who *wrote* it.
+
+## The flat absorb is Strength SCALED by equipment, not Strength plus equipment (2026-09-17)
+
+Last tick recovered the graph's shape and said the weights were missing. They are in the
+**slot** each edge writes: `ParamKeeper_BindDerived` takes the slot on the stack, and
+`ParamKeeper_EvaluateParam` combines a param's slots as
+`base * (1 + pct/100) * mult * (scale/100)`.
+
+Re-decoded with slots:
+
+	Strength -> 21  slot 0 (base)
+	50       -> 21  slot 3 (SCALE)          <- where the per-item entries arrive
+	21       -> 5   slot 0 (base)           <- param 5 is the flat absorb
+
+and `FUN_004b2e60` shows a scale slot starts at **100.0** with each contributor composing
+`acc = contrib * acc / 100`.
+
+**So armour multiplies rather than adds.** srrevamp's `defenderArmor` sums armour into
+the flat term; the engine takes a Strength-derived base and scales it by a percentage the
+equipment entries carry. That is a different *model*, not a different constant.
+
+**Nothing was changed in srrevamp**, deliberately. Two pieces are still unread: how a
+base slot combines its several contributors (`58 -> 50` and `59 -> 50` both land there),
+and which aggregate fields 58 and 59 actually are. Switching the model on three quarters
+of a reading would give a character with armour and no Strength an absorb of zero, and
+that would be a confident regression rather than a recovery.
