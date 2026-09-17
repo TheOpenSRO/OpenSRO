@@ -48,7 +48,7 @@ one cannot rot the same way without the build going red.
 | Magic-option vocabulary | 53 tags | SPECIFIED | docs/protocol/magic_options.md | ParamFor, PackTag | — |
 | Levelling and EXP | 8 fns | SPECIFIED | docs/protocol/param_registry.md | DeathPenaltyMinLevel, StatPointsPerLevel | — |
 | Quest scripting | 696 quests, 153 compiled | PARTIAL | docs/protocol/quest_scripting.md |  | **BLOCKED**: how the 543 classless quests attach. CQuestBase's slot-55 default is not reachable via the dump's slot tags; needs the vtable read directly in Ghidra |
-| Reference-table catalogue | 85 tables | PARTIAL | docs/protocol/refdata_tables.md |  | 77 of 85 tables unread; read one when a value needs it |
+| Reference-table catalogue | 85 tables | PARTIAL | docs/protocol/refdata_tables.md | ReferenceTables | the count is now PROVEN complete -- a string harvest found the same 85, and a test holds the two lists equal. 77 of the 85 still have no column layout; read one when a value needs it |
 | Teleport network | 3 tables | PARTIAL | docs/protocol/teleport_network.md |  | cols 3/8/9 of teleportlink (cost, level range) are inferred; read the `_REFTELELINK` consumer at `0x0082d770` |
 | Berserk | 6 fns | PARTIAL | docs/protocol/param_registry.md | DamageNumerator, Duration, FillPerHit | the gauge fill rate; no probe known to exist (the magnitudes are DB rows) |
 | Skills and masteries | 20 fns | PARTIAL | docs/protocol/skill_params.md |  | mastery cost `masteryUpCost` is own design; find its use-site |
@@ -59,7 +59,7 @@ one cannot rot the same way without the build going red.
 | Monster profile and spawns | 36 | PARTIAL | docs/protocol/refdata_schema.md |  | AI behaviour, not stats -- see Monster AI |
 | Monster AI | 36 | PARTIAL | docs/protocol/monster_ai.md | StateBattle, FallbackState, DwellExtension | the machine is whole; the four DB tables that configure it (`TAB_REFTACTICS`, `_REFNEST`, `_REFHIVE`, `_REFAISKILL`) have no column layout. Read `CRefTactics`' parse method -- the loader at `0x008334e0` only installs the class |
 | Siege and fortress war | 39 | OPEN | — |  | 39 classes; start at CRefSiegeFortress and the 11 _REFSIEGE* tables |
-| Persistence / AsyncQuery | 28 | OPEN | — |  | 28 AQ_* classes; the 75 stored procedures are already enumerated |
+| Persistence / AsyncQuery | 28 | PARTIAL | docs/protocol/persistence.md | Procs, SlotDoWork, ReferenceTables | the interface and the 39 procedures are whole; no procedure's PARAMETERS are read, and none of the 35 runtime tables has a column layout. Read AQ_CharDataSaver's argument set-up first |
 | Guild | 27 | OPEN | — |  | 27 classes; CGuildManager and the guild tables |
 | Pets and COS | 23 | OPEN | — |  | 23 classes; CGObjCOS and CGItemCOSSummoner |
 | Alchemy and enchanting | 19 | PARTIAL | docs/protocol/alchemy.md | ClampRate, LuckyBonus, SuccessBonusParam | the reinforce rate is whole; the base rate's ref-record offset `(tier+21)*32` is not mapped to a column -- count fields through `RefObjItem::ExtractData` (`0x006a3d50`). The other seven operations' slot 6/7 pairs are unread |
@@ -72,7 +72,7 @@ one cannot rot the same way without the build going red.
 
 ## How to read the count
 
-**11 specified, 12 partial, 10 open, of 33.** That is the honest headline, and it
+**11 specified, 13 partial, 9 open, of 33.** That is the honest headline, and it
 is not a percentage of the game — a specified system is one this project can
 implement faithfully, not one it has implemented. What srrevamp actually ships is
 a separate question, tracked in `docs/TODO.md`.

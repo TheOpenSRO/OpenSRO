@@ -72,6 +72,27 @@ compiler keeps one copy of `return 1` and points nine unrelated vtables at it.
 shared by 89 call sites. Naming either after one class would be a lie in the
 project's own dump.
 
+`vtq.py who <addr>` answers this in one command, and it flags anything in more
+than four vtables. **This is not hypothetical and the dump already has the
+problem:** 240 class-qualified names in it sit on a function shared by ten or
+more vtables, and 19 functions of four bytes or fewer are shared by ten or
+more. The worst is `0x0066b100`, a one-byte `ret` that 281 vtables point at,
+carrying the name `CGObjCOS_Summoned::SaveCurPosAsLastTelPosition`.
+
+Two different things are mixed in that 240, and they need different treatment:
+
+- **A true fold** — a tiny function (`ret`, `return 1`, `return 0`) that the
+  compiler emitted once. Even the method name is arbitrary. Do not attach a
+  class-qualified name, and be suspicious of one that is already there.
+- **An inherited base method** — e.g. the 37-byte `## Illegal ##` stubs, each
+  in 30 vtables. Here the *method* name is right (it came from the stub's own
+  string) and only the *class prefix* is wrong, naming an arbitrary derived
+  class instead of the base that declares it. The vtable index can compute the
+  right owner: it is the class whose vtable is shortest among those sharing the
+  slot, i.e. the most base-like.
+
+Size is the quick discriminator: under about 10 bytes, assume a fold.
+
 Count data references before naming anything small:
 
 	for off in range(0, len(data)-4, 4):
