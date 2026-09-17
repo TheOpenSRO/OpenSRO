@@ -14152,3 +14152,23 @@ mechanisms). The run caught it; the assertion was wrong, not the code.
 
 The `0xb477` client handler displays `UIIT_MSG_TC_COMMON_KNOW_REMIND_UPDATE` on
 success, which should name job type 7 and its request handler `0x00519900`.
+
+### Five owner conflicts the applier keeps re-reporting
+
+Every apply prints `KEEPOWNER` for the same five rows, because the names file offers
+an owner class the project does not have, and the applier will not overwrite a
+non-empty owner without `force` (correctly — that is a judgement, not a rename):
+
+	0066e020 server  offers ReferenceData::…      project has GObjPC
+	004890f0 server  offers CGItem::IsBullet      project has CGPCInventoryOP
+	006a7320 server  offers CRefSetItemGroup::…   project has CSetMagicOptionOP
+	00621fd0 server  offers CSiegeFortress::…     project has GObjPC
+	00a5ffd0 client  offers CObjCharacter::…      project has NetProcessInInner
+
+They share a shape: the project's owner reads like a **call-graph attribution** (the
+kind this project marks "Module inferred from the call graph: every caller of this
+function is in X — attribution, not a name"), while the file offers a class read from
+evidence. If that holds for each, the read class is the better owner and these should
+be `force` rows. **It is not yet checked per function**, and "looks like an
+attribution" is not evidence, so nothing is changed. The check is cheap: each
+function's own comment says whether its owner was inferred from callers.
