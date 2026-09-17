@@ -13780,3 +13780,55 @@ handler, so any future read that names one side names both.
 `FUN_004e7250`*. Those are sent some other way, or are broadcasts. The send-helper
 probe covers 96 of 318, and `"-"` in the table means "not through this helper", not
 "never sent".
+
+## The message map, used: four client names, and 103 missing client functions (2026-09-17)
+
+Last tick built `docs/protocol/message_handlers.tsv` and named nothing. This tick
+used it.
+
+### Four client handlers named, on the first client-project apply
+
+Where a message's server request handler is established by a read **and** is the
+only request-side sender, the client handler registered for that opcode handles
+that message's result. Those are two independent facts: a registration in the
+client, and a read on the server.
+
+	008997a0  TrainingCamp_OnInviteResult      0xb472  <- TrainingCamp_HandleInvite
+	00899850  TrainingCamp_OnLeaveResult       0xb474  <- TrainingCamp_HandleLeave
+	008998a0  TrainingCamp_OnGraduationResult  0xb475  <- TrainingCamp_HandleGraduation
+	008852c0  Guild_OnCreateResult             0xb0f0  <- CGuildManager::HandleCreateGuild
+
+`0xb473` and `0xb476` were left out. `0xb473` has two request-side senders (ban
+and leave) and `0xb476`'s operation is not named, so neither identifies a single
+message.
+
+`applied 4, failed 0, no function 0`, client dump invalidated.
+
+### `reowned 6` was checked, not assumed
+
+Six reowns from four new rows looked wrong. Reading `applyNamespace` settled it:
+it **returns at once when a row name has no `::`**, so the four new rows moved
+nothing, and it only ever **fills an empty owner**. A non-empty owner is kept
+(`KEEPOWNER`) unless forced. The six are older client rows whose `Class::` owners
+had never been set, because this was the first time the client project was run
+through the applier this session. By construction a reown can add an owner but
+never remove one, so no RTTI class namespace was lost.
+
+### 103 registered client handlers are not functions
+
+**103 of the 318** handlers the client registers are `LAB_` labels, and 2 more are
+`DAT_`: Ghidra never created functions there. A third of the client's message
+handlers are in neither the named nor the `FUN_` count.
+
+This probe is **definitive** where the server's `int3`-padding probe was a
+heuristic: a pointer the client registers as a message handler *is* a function
+entry. There is no shape to misread.
+
+**Not created this tick, on purpose.** `CreateMissingFunctions.java`'s
+`NOT_AT_BOUNDARY` guard requires an `int3` byte before each entry, which is the
+right test for padding-derived entries and the wrong one here: a registered
+pointer is stronger evidence, and client handlers need not follow padding. The
+next step is to give the script a second evidence class — *registered as a message
+handler* — that skips only that one guard and keeps `EXISTS`, `INSIDE` and
+`NO_DISASSEMBLY`. Then create the 105, and check that their bodies tile the way the
+server's seven did.
