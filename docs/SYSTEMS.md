@@ -63,7 +63,7 @@ one cannot rot the same way without the build going red.
 | Guild | 27 | PARTIAL | docs/protocol/guild.md | MaxLevel, LevelUpCost, ValidName | size, level and the level-up costs are grounded; the alliance rules (`FUN_005c6550`), guild war (`FUN_005c6b60`) and where guild points come from are unread |
 | Pets and COS | 23 | PARTIAL | docs/protocol/pets.md | MinOwnerLevel, CheckSummon, PetRequiredLevelOffset | the summon, level and naming rules are grounded; the five switch cases in `GObjPC::FUN_004fcef0` are not mapped to COS kinds, and the hunger gauge (`HGPFULL_NODRINK`) is named but unread |
 | Alchemy and enchanting | 19 | PARTIAL | docs/protocol/alchemy.md | ClampRate, LuckyBonus, SuccessBonusParam | the reinforce rate is whole; the base rate's ref-record offset `(tier+21)*32` is not mapped to a column -- count fields through `RefObjItem::ExtractData` (`0x006a3d50`). The other seven operations' slot 6/7 pairs are unread |
-| Battle arena | 16 | OPEN | — |  | 16 classes; CBattleArenaInfo* |
+| Battle arena | 16 | PARTIAL | docs/protocol/battle_arena.md | Modes, Scorings, ArenaCoinItemKind | the STRUCTURE is grounded and essentially none of the behaviour is -- the mode classes' slots are all unnamed. Read `CGame_BattleArenaSchedule` for how a match starts |
 | Timed jobs | 16 | PARTIAL | docs/protocol/timed_jobs.md | Kinds, GetterSlotFor, PetFieldCount | the mechanism, the twelve kinds and the record's arity are grounded; what the thirteen non-timestamp columns hold needs the twelve kinds' getters read, and how a job fires is unread |
 | Party | 15 | PARTIAL | docs/protocol/party.md | MaxSize, MinCreatorLevel, CanCreate | size and the creator level are grounded; the invite and expulsion flows are only enumerated, and party flag bit 2 has no probe known to name it |
 | Academy and training camp | 11 | PARTIAL | docs/protocol/academy.md | MinFounderLevel, FoundingGold, ReopenCooldownDays | founding is grounded; which of the two membership levels (41/61) is the master role is unread, and the three 24-hour windows are named by the client but not confirmed server-side |
@@ -72,13 +72,30 @@ one cannot rot the same way without the build going red.
 
 ## How to read the count
 
-**11 specified, 21 partial, 1 open, of 33.** That is the honest headline, and it
+**11 specified, 22 partial, 0 open, of 33.** That is the honest headline, and it
 is not a percentage of the game — a specified system is one this project can
 implement faithfully, not one it has implemented. What srrevamp actually ships is
 a separate question, tracked in `docs/TODO.md`.
 
-The open rows are ordered by class count, which is a rough proxy for effort, not
-for value.
+**No row is OPEN any more**, as of 2026-09-17, and that is a smaller claim than
+it sounds. PARTIAL means a spec exists and the gap is named; it does not mean
+the system is nearly done. Battle arena is the honest floor — its structure is
+grounded and essentially none of its behaviour is — and the distance between
+that row and, say, Monster AI is larger than the distance between OPEN and
+PARTIAL ever was.
+
+What the sweep bought is that **every system now has a spec document and a named
+next probe**, so no row is a question mark, and the remaining work is legible
+rather than merely unstarted.
+
+Two probes recur across several rows and are the highest-value targets left:
+
+- **`RefObjItem::ExtractData` (`0x006a3d50`, 7,052 bytes)** is a sequential
+  field-by-field deserializer, and mapping its offsets to columns would unblock
+  the packed reinforce rates in `alchemy.md` *and* the repair price basis in
+  `durability.md`. One function, two rows.
+- **`AQ_Siege::FUN_006232c0` (11,816 bytes)** holds most of the fortress logic,
+  including the dungeon caps and the structure-upgrade costs.
 
 Quest scripting was the first row taken, and it went SPECIFIED then straight
 back to PARTIAL within the same session — which is the tracker working. The
