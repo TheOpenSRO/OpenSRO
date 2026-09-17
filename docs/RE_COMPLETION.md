@@ -11776,3 +11776,69 @@ grounding `shop`'s fallback formula — but `shop.go` already returns the real
 `Price`/`SellPrice` from itemdata, and the formula is only a fallback for an
 import predating those columns. Nothing to gain; recorded so the next tick does
 not re-open it.
+
+## The naming figure overstated by fourfold, and the arithmetic reconciles (2026-09-17)
+
+The loop prompt suggests `SymbolReport.java` as a way to see named-vs-`FUN_`
+counts, so this tick ran it — and found the number it reports has been counting
+the wrong thing.
+
+### What it was counting
+
+	boolean hasName = !(st == SourceType.DEFAULT || n.startsWith("FUN_"));
+
+A function whose symbol is `vslot_395` is not `FUN_`-prefixed, so it landed in
+**NAMED**. A `vslot_NNN` is what the RTTI plate pass produces: it says which
+vtable slot a function occupies and nothing about what it does.
+
+### The real figures
+
+| | server | client |
+|---|---:|---:|
+| **NAMED** (a real name) | **1,825 (5.3%)** | **1,285 (3.0%)** |
+| SLOTTED (vtable slot only) | 5,617 | 5,136 |
+| ATTRIBUTED (module only) | 14,473 | 13,565 |
+| UNKNOWN | 12,198 | 23,474 |
+| — of those, real bodies | 11,495 | 21,270 |
+
+against the **21.7%** and **14.8%** this project has quoted in five places.
+
+### How the mechanism was confirmed rather than guessed
+
+	server   1,825 named + 5,617 slotted = 7,442   (recorded: 7,386, 21.7%)
+	client   1,285 named + 5,136 slotted = 6,421   (recorded: 6,432, 14.8%)
+
+Both reconcile to within the handful of names applied since the old figures were
+taken. That is what makes this a mechanism rather than a suspicion: the
+overstatement is *exactly* the slotted count, in both binaries independently.
+
+### Why it matters beyond the number
+
+The plate pass added roughly 14,000 class prefixes and 5,600 slot labels in one
+go. Under the old metric that is a jump from 7,386 to 21,919 "named" functions —
+**a tripling with no additional function understood.** A metric that moves like
+that cannot be used to steer work, which is the job a coverage number has.
+
+`SymbolReport.java` now reports four tiers, because a slot number is the same
+kind of knowing as a module name: **where a function lives, not what it is.**
+Its own header already warned that folding attribution into naming "would
+flatter the number" — the warning was right and was being applied to the wrong
+tier.
+
+This is the same failure `docs/SYSTEMS.md` was created to escape ("N% of
+functions named measured the wrong thing"). SYSTEMS.md replaced the metric for
+tracking *systems*; the metric itself was never fixed, and kept being quoted.
+
+### An independent corroboration, noticed in passing
+
+`absence_audit.md` already records `character` as "creation lives on the
+AgentServer, already disclosed". The previous tick reached that conclusion from
+the other end — no `INSERT INTO _CHAR`, no creation handler strings, no write to
+the live inventory-size field — without knowing this line was there. Two
+independent routes to the same answer.
+
+### The honest read of 5.3%
+
+11,495 functions in the server have a real body, no name, no slot and no module.
+That is the work, and it is the first time this project has had a number for it
+that is not flattered.

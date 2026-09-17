@@ -103,3 +103,14 @@ different path — drops the tracker's identity for `ebx`, and a linear walk has
 no way to know the two never execute together.
 
 Any offset it reports should be treated as a lead until an anchor brackets it.
+
+## `coverage.py` — the dump-side naming count
+
+`coverage.py` reports the same thing `SymbolReport.java` does, from the dumps
+rather than the Ghidra project, split by the `0x900000` boundary so CRT and game
+logic are counted apart.
+
+**Use the strict definition.** A name is real only if its *leaf* is not
+`FUN_`, `thunk_FUN_` or `vslot_NNN`. Counting `Class::vslot_395` or
+`Class::FUN_00590680` as named is how the project's coverage figure came to
+overstate by fourfold — see `docs/protocol/absence_audit.md`.

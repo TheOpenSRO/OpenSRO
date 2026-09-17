@@ -11,12 +11,27 @@
 //   NAMED     the function has a real name, from Ghidra's FID signatures, from
 //             an assert string that spelled out Class::Method, or applied by
 //             hand with evidence (ApplyKnownNames.java).
+//   SLOTTED   the name is vslot_NNN: the RTTI plate pass knows which vtable
+//             slot the function occupies, and nothing about what it does. Added
+//             2026-09-17 -- see below.
 //   ATTRIBUTED the name is still FUN_xxxxxxxx, but the function sits in a
 //             namespace taken from the __FILE__ string it asserts with -- so
 //             the module is known and the identity is not. Real progress, and
 //             not the same thing as a name; counting it as one would flatter
 //             the number.
 //   UNKNOWN   neither.
+//
+// SLOTTED WAS BEING COUNTED AS NAMED, AND IT FLATTERED THE NUMBER FOURFOLD.
+// The test below was `!(DEFAULT || n.startsWith("FUN_"))`, and a function whose
+// symbol is `vslot_395` is not FUN_-prefixed, so it landed in NAMED. On
+// 2026-09-17 that was 5,617 functions against 1,857 with a real name: the
+// server read 7,386 named (21.7%) when the count of functions whose PURPOSE is
+// known was 1,857 (5.4%).
+//
+// That is the very thing this header already warned about, applied to the wrong
+// tier. A slot number is the same kind of knowing as a module name -- where it
+// lives, not what it is -- so it gets its own tier rather than being folded
+// into either neighbour.
 //
 // An earlier version of this script reported "class-scoped (A::B): 0" while its
 // own example lines printed GParamKeeper::... -- it tested getName(), which is
@@ -42,7 +57,7 @@ public class SymbolReport extends GhidraScript {
         String[] args = getScriptArgs();
         int maxEx = args.length > 0 ? Integer.parseInt(args[0]) : 15;
 
-        int total = 0, named = 0, attributed = 0, unknown = 0;
+        int total = 0, named = 0, slotted = 0, attributed = 0, unknown = 0;
         int thunks = 0, tiny = 0, demangled = 0;
         int bodyUnknown = 0;   // unknown AND not a thunk AND not tiny
         Map<String, Integer> modules = new HashMap<>();
@@ -59,7 +74,9 @@ public class SymbolReport extends GhidraScript {
 
             String n = f.getName();
             SourceType st = f.getSymbol() == null ? SourceType.DEFAULT : f.getSymbol().getSource();
-            boolean hasName = !(st == SourceType.DEFAULT || n.startsWith("FUN_"));
+            boolean isSlotted = n.startsWith("vslot_");
+            boolean hasName = !(st == SourceType.DEFAULT
+                    || n.startsWith("FUN_") || n.startsWith("thunk_FUN_") || isSlotted);
 
             Namespace ns = f.getParentNamespace();
             boolean hasModule = ns != null && !ns.isGlobal();
@@ -69,6 +86,8 @@ public class SymbolReport extends GhidraScript {
                 named++;
                 if (n.startsWith("?") || n.contains("@@")) demangled++;
                 if (examples.size() < maxEx) examples.add(f.getEntryPoint() + "  " + f.getName(true));
+            } else if (isSlotted) {
+                slotted++;
             } else if (hasModule) {
                 attributed++;
             } else {
@@ -77,11 +96,13 @@ public class SymbolReport extends GhidraScript {
             }
         }
 
-        int identified = named + attributed;
+        int identified = named + slotted + attributed;
         println("===SYMREPORT===");
         println("  total functions        : " + total);
-        println("  NAMED (real name)      : " + named);
+        println("  NAMED (real name)      : " + named
+                + String.format("  (%.1f%%)", 100.0 * named / Math.max(1, total)));
         println("    mangled remnants     : " + demangled);
+        println("  SLOTTED (vtable slot only): " + slotted);
         println("  ATTRIBUTED (module only): " + attributed
                 + "  across " + modules.size() + " modules");
         println("  UNKNOWN                : " + unknown);

@@ -54,5 +54,29 @@ word anywhere in the name.
 ## What this leaves
 
 For the packages above, the *values* half of the project's goal is as closed as
-this lever can make it. What remains is the harder half: **naming functions**,
-where the server sits at 21.7% and the client at 14.8%.
+this lever can make it. What remains is the harder half: **naming functions**.
+
+**CORRECTED 2026-09-17: the server is at 5.3% and the client at 3.0%**, not
+21.7% and 14.8%. The old figures counted `vslot_NNN` — a vtable slot number
+applied by the RTTI plate pass — as a real name. `SymbolReport.java` tested
+`!name.startsWith("FUN_")`, and `vslot_395` passes that test while saying
+nothing about what the function does.
+
+The arithmetic reconciles exactly, which is how the mechanism was confirmed:
+
+	server   1,825 named + 5,617 slotted = 7,442   (recorded: 7,386, 21.7%)
+	client   1,285 named + 5,136 slotted = 6,421   (recorded: 6,432, 14.8%)
+
+The tool now reports four tiers — NAMED, SLOTTED, ATTRIBUTED, UNKNOWN — because
+a slot number is the same kind of knowing as a module name: **where a function
+lives, not what it is.** Its own header had already warned that folding
+attribution into naming "would flatter the number"; the warning was right and
+was being applied to the wrong tier.
+
+| | server | client |
+|---|---:|---:|
+| NAMED (a real name) | **1,825 (5.3%)** | **1,285 (3.0%)** |
+| SLOTTED (vtable slot only) | 5,617 | 5,136 |
+| ATTRIBUTED (module only) | 14,473 | 13,565 |
+| UNKNOWN | 12,198 | 23,474 |
+| — of those, real bodies | 11,495 | 21,270 |
