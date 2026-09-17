@@ -110,41 +110,68 @@ def loop_trips(lo, hi):
     return trips
 
 def scan(lo, hi, fs):
+    """Field index -> record offset for one ExtractData body.
+
+    THE RECORD POINTER LIVES IN MORE THAN ONE REGISTER. RefObjCommon_ExtractData
+    spills it to [esp+0x14] at entry and reloads it into esi and into ebx at
+    different points, and also builds short-lived walking pointers off it with
+    `lea ebx,[esi+0xb8]`. Picking the single busiest store register -- which an
+    earlier version did -- resolved the ebx stores (0xd8..0x184) and silently
+    dropped the esi ones (0x80..0xd8), which is the range holding +0xa4.
+
+    So identity is propagated instead: the incoming `this` (ecx, thiscall) is
+    the record; a stack slot written from a record register is the record; a
+    register loaded from such a slot is the record; `lea R,[record+N]` makes R a
+    walking pointer at a known displacement.
+    """
     rows = [(a, t.strip()) for a, t in X.asm() if lo <= a < hi]
     rc = collections.Counter(BUMP.match(t).group(1) for _, t in rows if BUMP.match(t))
     RD = rc.most_common(1)[0][0] if rc else "esi"
     trips = loop_trips(lo, hi)
 
-    # store-offset tracking: a direct [R+OFF] store, or one through a pointer
-    # the code just aimed at the record with `lea R,[REC+OFF]` and advances.
-    sc = collections.Counter()
-    for _, t in rows:
-        m = R.match(r"(?:mov|fstp)\s+(?:BYTE|WORD|DWORD|QWORD) PTR \[(e[a-z]{2})[+\]]", t)
-        if m and m.group(1) not in (RD, "esp"):
-            sc[m.group(1)] += 1
-    REC = sc.most_common(1)[0][0] if sc else "ebx"
-
+    base = {"ecx": 0}          # register -> displacement from the record
+    slots = {}                 # esp slot -> displacement from the record
     out, idx, pending = [], 0, None
-    walk = {}
-    lea = R.compile(r"^lea\s+(e[a-z]{2}),\[" + REC + r"([+-]0x[0-9a-f]+)?\]$")
+
+    spill = R.compile(r"^mov\s+DWORD PTR \[esp([+-]0x[0-9a-f]+)?\],(e[a-z]{2})$")
+    fill = R.compile(r"^mov\s+(e[a-z]{2}),DWORD PTR \[esp([+-]0x[0-9a-f]+)?\]$")
+    leab = R.compile(r"^lea\s+(e[a-z]{2}),\[(e[a-z]{2})([+-]0x[0-9a-f]+)?\]$")
+    movr = R.compile(r"^mov\s+(e[a-z]{2}),(e[a-z]{2})$")
     adv = R.compile(r"^add\s+(e[a-z]{2}),(0x[0-9a-f]+)$")
-    storeR = R.compile(r"^(?:mov|fstp)\s+(BYTE|WORD|DWORD|QWORD) PTR \[" + REC + r"([+-]0x[0-9a-f]+)?\]")
-    storeW = R.compile(r"^(?:mov|fstp)\s+(BYTE|WORD|DWORD|QWORD) PTR \[(e[a-z]{2})([+-]0x[0-9a-f]+)?\]")
+    store = R.compile(r"^(?:mov|fstp)\s+(BYTE|WORD|DWORD|QWORD) PTR \[(e[a-z]{2})([+-]0x[0-9a-f]+)?\]")
+    clob = R.compile(r"^(?:mov|movzx|movsx|xor|pop|sub|and|or|imul|inc|dec)\s+(e[a-z]{2})\b")
+
     for a, t in rows:
-        m = lea.match(t)
+        m = spill.match(t)
         if m:
-            o = m.group(2); walk[m.group(1)] = int(o, 16) if o else 0; continue
+            slot = m.group(1) or ""
+            if m.group(2) in base: slots[slot] = base[m.group(2)]
+            else: slots.pop(slot, None)
+            continue
+        m = fill.match(t)
+        if m:
+            slot = m.group(2) or ""
+            if slot in slots: base[m.group(1)] = slots[slot]
+            else: base.pop(m.group(1), None)
+            continue
+        m = leab.match(t)
+        if m:
+            src = m.group(2); o = m.group(3)
+            if src in base: base[m.group(1)] = base[src] + (int(o, 16) if o else 0)
+            else: base.pop(m.group(1), None)
+            continue
+        m = movr.match(t)
+        if m:
+            if m.group(2) in base: base[m.group(1)] = base[m.group(2)]
+            else: base.pop(m.group(1), None)
+            continue
         m = adv.match(t)
-        if m and m.group(1) in walk:
-            walk[m.group(1)] += int(m.group(2), 16); continue
-        m = storeR.match(t)
-        if m:
-            o = m.group(2)
-            pending = (int(o, 16) if o else 0, SZ[m.group(1)]); continue
-        m = storeW.match(t)
-        if m and m.group(2) in walk:
+        if m and m.group(1) in base:
+            base[m.group(1)] += int(m.group(2), 16); continue
+        m = store.match(t)
+        if m and m.group(2) in base:
             o = m.group(3)
-            pending = (walk[m.group(2)] + (int(o, 16) if o else 0), SZ[m.group(1)]); continue
+            pending = (base[m.group(2)] + (int(o, 16) if o else 0), SZ[m.group(1)]); continue
         m = CALL.match(t)
         if m:
             n = bumps_in(int(m.group(1), 16), fs)
@@ -153,6 +180,8 @@ def scan(lo, hi, fs):
                     idx += 1
                     out.append((idx, None, None, "helper"))
                 pending = None
+            # a call clobbers the volatile registers
+            for r in ("eax", "ecx", "edx"): base.pop(r, None)
             continue
         if BUMP.match(t):
             n = trips.get(a, 1)
@@ -164,7 +193,11 @@ def scan(lo, hi, fs):
                 else:
                     out.append((idx, None, None, "read"))
             pending = None
-    return out, idx, RD, REC
+            continue
+        m = clob.match(t)
+        if m and not (movr.match(t) or fill.match(t) or leab.match(t)):
+            base.pop(m.group(1), None)
+    return out, idx, RD, "record"
 
 if __name__ == "__main__":
     fs = X.funcs()

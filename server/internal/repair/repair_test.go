@@ -94,3 +94,47 @@ func TestConstants(t *testing.T) {
 		seen[c] = true
 	}
 }
+
+// The two record halves must stay disjoint and adjacent. That disjointness is
+// the whole proof that the price basis and the restore cost are COMMON-record
+// fields rather than item ones, and a column index taken from the wrong half
+// would be wrong by 58 fields.
+func TestRecordHalvesAreDisjoint(t *testing.T) {
+	if CommonHalfEnd >= ItemHalfStart {
+		t.Errorf("the common half ends at %#x and the item half starts at %#x; they overlap",
+			CommonHalfEnd, ItemHalfStart)
+	}
+	for _, off := range []int{PriceBasisOffset, RestoreCostOffset} {
+		if off > CommonHalfEnd {
+			t.Errorf("offset %#x is above the common half's end %#x, so it is not a "+
+				"common-record field", off, CommonHalfEnd)
+		}
+	}
+	// The durability offsets are on the item INSTANCE, not the record, so they
+	// are deliberately not range-checked against either half.
+	if MaxDurabilityOffset <= CommonHalfEnd {
+		t.Errorf("MaxDurabilityOffset %#x collides with the common record's range; "+
+			"it is an instance offset and should not", MaxDurabilityOffset)
+	}
+}
+
+// Two unrelated subsystems read the restore cost, which is why it is not filed
+// as an item-repair detail.
+func TestRestoreCostHasTwoIndependentReaders(t *testing.T) {
+	if len(RestoreCostReaders) != 2 {
+		t.Errorf("%d readers recorded, want 2", len(RestoreCostReaders))
+	}
+	seen := map[string]bool{}
+	for _, r := range RestoreCostReaders {
+		if seen[r] {
+			t.Errorf("%s listed twice", r)
+		}
+		seen[r] = true
+	}
+	if RestorePredicateSlot != 55 {
+		t.Errorf("RestorePredicateSlot is %d; both paths call vtable +0xdc", RestorePredicateSlot)
+	}
+	if RestorePredicateSlot*4 != 0xdc {
+		t.Errorf("slot %d is offset %#x, not +0xdc", RestorePredicateSlot, RestorePredicateSlot*4)
+	}
+}

@@ -86,10 +86,56 @@ a character who could pay for it. The order matters and is preserved.
 
 | offset | on | reading |
 |---|---|---|
-| `+0xa4` | the reference record | the price basis |
-| `+0xa8` | the reference record | the flat revive fee |
+| `+0xa4` | the **common** record | the price basis |
+| `+0xa8` | the **common** record | a flat restore cost |
 | `+0x194` | the item instance | maximum durability |
 | `+0x38` | the item's data block (the one whose `+0x18` is the reference record) | current durability |
+
+### Which half of the record, settled 2026-09-17
+
+A `CRefObjItem` is **one object with two adjacent halves**, written by two
+different functions:
+
+	0x000 .. 0x184   RefObjCommon_ExtractData   -- the common record
+	0x198 .. 0x53d   RefObjItem::ExtractData    -- the item record
+
+The ranges are **disjoint**, and that is the proof. Two facts, independently:
+
+- Every `+0xa4` and `+0xa8` reference in `RefObjItem::ExtractData` is
+  `[esp+0xa4]` / `[esp+0xa8]` — **stack locals, not record stores**. The item
+  half never touches those offsets.
+- `RefObjCommon_ExtractData` writes `record+0xa4` and `record+0xa8` at
+  `0x006a35e4` and `0x006a360f`, through a register traced back to the record
+  pointer it spills to `[esp+0x14]` at entry.
+
+**So the price basis and the restore cost are properties every game object has**,
+not item-specific columns. That is not a curiosity — see the next section.
+
+This matters for a further reason: the two halves are deserialised by different
+functions, so a column index derived from the wrong one would be wrong by the
+whole 58-field common prefix. That risk was flagged as open on the previous tick
+and is now closed.
+
+### `+0xa8` is confirmed by a second, unrelated reader
+
+Exactly two functions read it, and they are in different subsystems with the
+same shape:
+
+	if (!obj->vt[55]())   refuse;          // "can this be restored"
+	cost = refRecord[0xa8];
+	if (gold < cost)      refuse;
+	gold -= cost;
+
+| function | its refusal |
+|---|---|
+| `GObjNPCNPC::HandleRepairRequest` (`0x004c7af0`) | `0x1c12` `CANNOT_BE_REVIVED` |
+| `SiegeFortressMgr::HandleStructureRepair` (`0x00634950`) | `0x2830` `FORT_BATTLEAIDE_REPAIR_FAIL` |
+
+One field, two subsystems, **the same vtable slot 55 (`+0xdc`) guard**, and the
+same charge-then-deduct. An item being revived and a fortress structure being
+rebuilt are the same operation on the same common-record cost, which is exactly
+what a common field should look like and is a stronger reading than the item
+path alone supported.
 
 The max/current assignment is a **reading**, not a label from the engine: it
 follows from `missing = item[0x194] - itemData[0x38]` needing to be positive for

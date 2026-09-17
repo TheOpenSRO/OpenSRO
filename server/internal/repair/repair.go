@@ -120,14 +120,63 @@ func Estimate(gold int64, priceBasis, maxDurability, currentDurability int) Quot
 	return Quote{Units: int(units), Cost: price * float64(units)}
 }
 
-// The object offsets this model reads, recorded so a later pass checking them
-// does not have to re-derive which is which.
+// The object offsets this model reads.
+//
+// WHICH HALF OF THE RECORD THEY LIVE IN IS NOW SETTLED (2026-09-17), and it
+// matters because the two halves are deserialised by different functions, so a
+// column index for one would be wrong for the other.
+//
+// A `CRefObjItem` is ONE object with two adjacent halves:
+//
+//	0x000 .. 0x184   written by RefObjCommon_ExtractData   -- the common record
+//	0x198 .. 0x53d   written by RefObjItem::ExtractData    -- the item record
+//
+// The ranges are disjoint, which is the proof. Every `+0xa4` in
+// RefObjItem::ExtractData turned out to be `[esp+0xa4]` -- a stack local, not a
+// record store -- so the item half never touches it, and
+// RefObjCommon_ExtractData writes `record+0xa4` through a register traced back
+// to the record pointer it spills at entry.
+//
+// So **the repair price basis and the restore cost are COMMON-record fields**:
+// properties every game object has, not item-specific ones. That is not a
+// curiosity -- it is why a fortress structure can be charged from the same
+// field, below.
 const (
-	// PriceBasisOffset is `+0xa4` in the item's reference record.
+	// PriceBasisOffset is `+0xa4`, a _RefObjCommon field.
 	PriceBasisOffset = 0xa4
+	// RestoreCostOffset is `+0xa8`, also _RefObjCommon: a FLAT cost charged
+	// when an object is restored rather than merely repaired.
+	RestoreCostOffset = 0xa8
 	// MaxDurabilityOffset is `+0x194` on the item instance.
 	MaxDurabilityOffset = 0x194
 	// CurrentDurabilityOffset is `+0x38` on the item's data block -- the same
 	// block whose `+0x18` is the reference record.
 	CurrentDurabilityOffset = 0x38
+
+	// CommonHalfEnd is the last offset the common deserializer writes, and the
+	// first item offset is CommonHalfStart below it -- see the block comment.
+	CommonHalfEnd = 0x184
+	ItemHalfStart = 0x198
 )
+
+// RestorePredicateSlot is vtable slot 55 (`+0xdc`), the "can this be restored"
+// question both restore paths ask before charging RestoreCostOffset.
+const RestorePredicateSlot = 55
+
+// RestoreCostReaders are the two functions that read RestoreCostOffset, and
+// they are the evidence for what it is. They are in unrelated subsystems and
+// have the same shape:
+//
+//	if (!obj->vt[55]())  refuse;
+//	cost = refRecord[0xa8];
+//	if (gold < cost)     refuse;
+//	gold -= cost;
+//
+// with GObjNPCNPC::HandleRepairRequest refusing CANNOT_BE_REVIVED (0x1c12) and
+// SiegeFortressMgr's structure path refusing FORT_BATTLEAIDE_REPAIR_FAIL
+// (0x2830). One field, two subsystems, one guard slot -- which is what makes it
+// a common-record cost rather than an item-repair detail.
+var RestoreCostReaders = []string{
+	"GObjNPCNPC::HandleRepairRequest",         // 0x004c7af0
+	"SiegeFortressMgr::HandleStructureRepair", // 0x00634950
+}

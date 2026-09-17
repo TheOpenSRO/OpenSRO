@@ -11331,3 +11331,65 @@ claim:
 
 So the next probe is narrow and stated: resolve the walking-pointer stores in
 `0x2a0..0x520`, and settle which record `+0xa4` belongs to.
+
+## `+0xa4` and `+0xa8` are common-record fields, and a second reader names one (2026-09-17)
+
+The previous entry closed the field-count question and left two things open:
+resolve the walking-pointer stores in `0x2a0..0x520`, and **settle which record
+`+0xa4` belongs to** — flagged as a coin-flip risk, because the offset appeared
+to be written by both `ExtractData` functions and a column index from the wrong
+one would be wrong by the whole 58-field common prefix.
+
+### The ownership question is closed
+
+A `CRefObjItem` is **one object with two adjacent halves**:
+
+	0x000 .. 0x184   RefObjCommon_ExtractData   -- the common record
+	0x198 .. 0x53d   RefObjItem::ExtractData    -- the item record
+
+The ranges are **disjoint**, and two independent facts establish it:
+
+- Every `+0xa4` / `+0xa8` in `RefObjItem::ExtractData` is `[esp+0xa4]` /
+  `[esp+0xa8]` — **stack locals, not record stores**. The apparent conflict was
+  an artefact of matching on the offset without checking the base register.
+- `RefObjCommon_ExtractData` writes `record+0xa4` and `record+0xa8` at
+  `0x006a35e4` / `0x006a360f`, through a register traced back to the record
+  pointer it spills to `[esp+0x14]` at entry.
+
+So the repair price basis and the restore cost are **properties every game
+object has**, and `alchemy.md`'s packed reinforce rates at
+`0x2c0`/`0x2e0`/`0x300` are in the **item** half. Each spec now says which
+deserializer its column index will come from.
+
+### A second, unrelated reader confirms `+0xa8`
+
+Exactly two functions read it, in different subsystems, with the same shape:
+
+	if (!obj->vt[55]())   refuse;          // "can this be restored"
+	cost = refRecord[0xa8];
+	if (gold < cost)      refuse;
+	gold -= cost;
+
+`GObjNPCNPC::HandleRepairRequest` refuses `CANNOT_BE_REVIVED`;
+`SiegeFortressMgr::HandleStructureRepair` (`0x00634950`, newly named) refuses
+`FORT_BATTLEAIDE_REPAIR_FAIL`. **One field, two subsystems, the same vtable
+slot 55 guard.** Reviving an item and rebuilding a fortress structure are the
+same operation on the same common-record cost — a stronger reading than the item
+path alone supported, and the reason `durability.md` no longer calls it "a flat
+revive fee".
+
+### Still not published: the column index
+
+The scanner's identity propagation now resolves `+0xa4` (field 28) but **the
+offset model is demonstrably wrong nearby**, so no index is claimed:
+
+- The requirement loop's walking pointer advances by **8**, and the expansion
+  uses the field size, so it reports `0xb4, 0xb8, 0xbc, 0xc0` where the real
+  stores are `0xb4, 0xbc, 0xc4, 0xcc`.
+- Propagating identity gained `+0xa4` and **lost the `+0x184` anchor**, because
+  `mov ebx,[ebx+0x8]` reloads `ebx` from a *different* object and the tracker
+  correctly drops it — so the two register strategies resolve different subsets.
+
+The count is validated; the offsets are not, and this tick has a concrete
+demonstration of how they fail rather than a suspicion. Next probe: make the
+loop expansion use the walking pointer's own stride.

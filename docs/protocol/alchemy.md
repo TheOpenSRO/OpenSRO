@@ -142,12 +142,21 @@ fields `docs/protocol/refobj_binary_format.md` fixes for `_RefObjCommon`, with
 three of that document's own anchors landing. It gives `RefObjItem::ExtractData`
 153 fields with 79 offsets resolved.
 
-**The offsets this page needs are still not among them.** Resolved offsets run
-to `+0x298` and resume at `+0x524`, and `0x2c0`/`0x2e0`/`0x300` sit in the gap —
-that region is written through walking pointers the tracker loses. The
-validation covers the field *count*, not the offsets, so nothing is quoted here
-yet. The probe is now narrow: resolve the walking-pointer stores in
-`0x2a0..0x520`.
+**Which half of the record they live in is settled**, which is half the
+question. A `CRefObjItem` is one object with two adjacent halves —
+`0x000..0x184` written by `RefObjCommon_ExtractData` and `0x198..0x53d` written
+by `RefObjItem::ExtractData`, disjoint ranges — so `0x2c0`/`0x2e0`/`0x300` are
+**item** fields, and their column index comes from `RefObjItem::ExtractData`'s
+sequence, not the common prefix's. See `docs/protocol/durability.md` for the
+proof, which was worked out there because the repair price basis turned out to
+sit in the *other* half.
+
+**The index itself is still not published.** Resolved offsets run to `+0x298`
+and resume at `+0x524`, and these three sit in the gap — that region is written
+through walking pointers whose stride the tracker gets wrong (it advances by the
+field size where the loop advances by 8). The validation covers the field
+*count*, not the offsets. The probe is now narrow: make the loop expansion use
+the walking pointer's own stride.
 
 ### 2. The second element — `CEnchant_Reinforce::vslot_006`
 
