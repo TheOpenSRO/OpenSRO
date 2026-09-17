@@ -14367,3 +14367,57 @@ The 47 new bodies appear in the dump rebuilt after this apply. With `replies_wit
 joined to the client's handler for the same opcode, the UI-string lever that named
 seven client handlers can now be pointed at the server side: handler → its reply
 opcode → the client handler that displays a string naming the operation.
+
+## Naming the server through the client's own words (2026-09-17)
+
+The server dump rebuilt at **34,167 functions, exactly +47**, so last tick's created
+handlers are real. This tick pointed the UI-string lever at them, through the chain
+
+	server handler -> its reply opcode -> the client handler registered for it -> the string it shows
+
+**The chain validates itself twice.** It reproduces `CInstanceCharTrijob::HandleJoinJobGuild`
+and `TrainingCamp_HandleOpen`, two names recovered earlier by unrelated means, from the
+client strings `JOBGUILD_JOIN_COMPELET` and `TC_OPEN_SUCCESS`.
+
+**And it has a trap, caught by the validation pass.** Taking a handler's *first* reply
+opcode maps `TrainingCamp_HandleDisband` onto open's `0xb470`, because disband sends
+plain refusals on open's opcode. That would have named disband "Open". Using the
+opcode that matches the handler's own index removes it -- and the two letter handlers
+that also mismapped that way.
+
+Of 162 handlers: 98 name a reply opcode, 97 of those have a known client handler, 30
+of those display any `UIIT_` string, and **18 display exactly one**. Twelve of those
+strings are unique across the whole client; window titles (`CONFIRM_BOX`, 29 handlers)
+and shared strings were dropped.
+
+### Named, each on at least two facts
+
+	00514750  OnRegisterPartyReq                 its own log label, plus PARTYMATCH_RECORD_COMPLETE
+	005147c0  PartyMatch_HandleModify            MODIFY_COMPLETE, plus the register handler's body shape
+	005122b0  JobGuild_HandleWithdraw            WITHD_COMPELET, plus adjacency to the join handler
+	00516ea0  Guild_HandleNoticeUpdate           GUILD_COMMON_KNOW_REMIND_UPDATE, reads a packet string
+	005178b0  Guild_HandleWarehouseUse           GUILD_WAREHOUSE_USE, calls the guild manager
+	00519900  TrainingCamp_HandleNoticeUpdate    TC_COMMON_KNOW_REMIND_UPDATE, job type 7, ORDER_WORK
+	00519b80  TrainingCamp_HandleMatchingEntry   TC_MACHING_ENTRY, runs the id-8 invite penalty
+	00519bd0  TrainingCamp_HandleMatchingCorrect TC_MACHING_CORRECT, runs the id-9/10 entry penalties
+	00881a70  Guild_OnNoticeUpdateResult         client side of 0xb0f9
+	0088f630  Guild_OnWarehouseUseResult         client side of 0xb250
+	00899940  TrainingCamp_OnNoticeUpdateResult  client side of 0xb477
+
+Applied: server 8, client 3, **0 failed**. `0x00513410` was left unnamed: its only
+evidence is one client string (`STATE_REBIRTH_POINT_APPOINT`) and nothing in its body
+corroborates it. This also closes the lead left two ticks ago -- `0xb477` is the
+academy's notice, and job type 7 is what writes it.
+
+**"Common know remind" is the engine's phrase for a notice**, and it appears in both
+the guild's and the academy's strings, which is what let the two handlers corroborate
+each other.
+
+### A lever measured and found small
+
+Functions that name themselves in a log label without a class -- `"OnRegisterPartyReq::
+Is not a PC[%s]"` -- were swept for across both dumps, since the earlier class-label
+sweep could only match functions that already had a leaf name. **69 labels in the
+server, 45 appearing in exactly one function, and only 7 of those functions unnamed**,
+of which 3 are usable (the rest are message names or the bare word "Party"). The
+client has none. Worth the ten minutes to measure; not worth a pass.
