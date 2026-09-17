@@ -42,6 +42,7 @@ one cannot rot the same way without the build going red.
 | IGObj vtable | 208 slots | SPECIFIED | docs/protocol/igobj_vtable.md | |
 | Magic-option vocabulary | 53 tags | SPECIFIED | docs/protocol/magic_options.md | ParamFor, PackTag |
 | Levelling and EXP | 8 fns | SPECIFIED | docs/protocol/param_registry.md | DeathPenaltyMinLevel, StatPointsPerLevel |
+| Quest scripting | 153 quests, 193 handlers | SPECIFIED | docs/protocol/quest_scripting.md | |
 | Berserk | 6 fns | PARTIAL | docs/protocol/param_registry.md | DamageNumerator, Duration, FillPerHit |
 | Skills and masteries | 20 fns | PARTIAL | docs/protocol/skill_params.md | |
 | Item stats and tooltips | 128 CRef | PARTIAL | docs/protocol/ITEM_FORMAT.md | ReinforceDamage |
@@ -49,7 +50,6 @@ one cannot rot the same way without the build going red.
 | Shops and the goods chain | 4 | PARTIAL | docs/protocol/refdata_schema.md | |
 | Storage and warehouse | 39 | PARTIAL | docs/protocol/db_schema.md | |
 | Monster profile and spawns | 36 | PARTIAL | docs/protocol/refdata_schema.md | |
-| Quest scripting | 346+7 | OPEN | — | |
 | Siege and fortress war | 39 | OPEN | — | |
 | Monster AI | 36 | OPEN | — | |
 | Persistence / AsyncQuery | 28 | OPEN | — | |
@@ -67,15 +67,20 @@ one cannot rot the same way without the build going red.
 
 ## How to read the count
 
-**11 specified, 7 partial, 15 open, of 33.** That is the honest headline, and it
+**12 specified, 7 partial, 14 open, of 33.** That is the honest headline, and it
 is not a percentage of the game — a specified system is one this project can
 implement faithfully, not one it has implemented. What srrevamp actually ships is
 a separate question, tracked in `docs/TODO.md`.
 
 The open rows are ordered by class count, which is a rough proxy for effort, not
-for value. Quest scripting is the largest and probably among the cheapest per
-class: 346 of those classes are instances of one handler pattern with seven
-event types, so specifying the pattern covers all of them.
+for value.
+
+Quest scripting was the first row taken, and it shows what "specified" buys: the
+346 classes turned out to be 153 quests plus 193 nested handler classes over a
+**15-event lifecycle** — not the three-handler triple the previous note
+recorded — plus 12 named per-target kill hooks. Specifying the lifecycle covers
+all 153 quests; specifying what any individual quest *does* is separate and is
+not claimed.
 
 ## Adding a row
 

@@ -399,6 +399,14 @@ pick one up without re-deriving anything.
    clear they always would have been — there is no table to import, in a file or
    a database.
 
+   **SPECIFIED 2026-09-17 — and the "triple" was a third of it.** See
+   `docs/protocol/quest_scripting.md`. The real lifecycle is **15 events**, not
+   three, plus **12 named per-target kill hooks** (`OnDeadForGeneral1..4`,
+   `OnDeadForSoldier_1_1`, `OnDeadForGhost`, …). The 346 `QNO_*` classes are
+   153 quests plus **193 nested handler classes**, each deriving from
+   `CEVENTHandler` with its body at vtable slot 1. Only **29** quests carry
+   handlers at all; the other 124 are served by generic `CBasicQuest` machinery.
+
    **The RTTI pass put a number and a name on it (2026-09-15).** Those compiled
    quests are classes, and the binary names every one: **153 `CQNO_*` objective
    classes** (201 quest classes in total), each with its own vftable — which is
@@ -10976,4 +10984,44 @@ SYSTEMS.md said "11 of 34 specified, 7 partial, 16 open" above a table holding
 33 rows with 15 open — a summary drifting from its own table, in the file whose
 entire purpose is to stop summaries drifting. The test caught it before the
 commit.
+
+## 2026-09-17 — first system off the new tracker: quest scripting
+
+`docs/SYSTEMS.md` went live this tick and quest scripting was the first OPEN row
+taken. **12 specified, 7 partial, 14 open, of 33.**
+
+**The previous note described a third of the system.** It recorded a
+"SetupQuest / OnUpdate / OnDead triple". Counting the nested handler classes
+gives the real lifecycle — **15 generic events**:
+
+	OnSetupQuest OnEnterWorld OnUpdate OnLeaveWorld OnInstanceInvitaionAnswered
+	OnEventZoneEntered OnAfterActivated OnPartyStatusChanged OnAbortQuest
+	OnPreUseItem OnDead OnTimer OnTimer_Second OnScriptStarted OnBodyModeChanged
+
+plus **12 named per-target kill hooks** — `OnDeadForGeneral1..4`,
+`OnDeadForSoldier_1_1/2_1/2_2`, `OnDeadForGhost`, `OnDeadForBlackSnake`,
+`OnDeadForWhiteSnake`, `OnDeadForFlameMaster`, `OnDeadForEventMonster`.
+
+Those hooks are the strongest evidence yet for "objectives are code": a quest
+that needs *kill these four named generals* does not fill in a table row, it
+compiles four classes.
+
+**The structure**: `CQNO_<NAME> : CBasicQuest : CQuestBase : IQuest` for the
+quest, `COn<Event> : CEVENTHandler` for each handler, the handler's body at
+vtable slot 1. The 346 `QNO_*` classes resolve as **153 quests + 193 nested
+handlers**, and only **29 quests carry handlers at all** — the other 124 are
+ordinary fetch-and-report quests the generic machinery serves.
+
+**Why this counts as specified without reading 29 quest bodies:** the lifecycle
+is what generalises and what an implementation has to expose. A quest engine
+matching this one offers these 15 hooks plus a per-target kill hook and lets a
+quest bind the ones it needs — a concrete interface derived from the engine
+rather than a guess. What any individual quest *does* is 29 classes' worth of
+reading that nothing needs until srrevamp ships those quests, and the spec says
+so rather than implying coverage it does not have.
+
+`OnBodyModeChanged` is worth noting on its own: it is the same body-mode enum
+berserk rides on (`IGObj::SetBodyMode`, slot 198), so a quest can react to a
+player going berserk. Two systems recovered a week apart turning out to share a
+mechanism is the kind of thing the tracker should surface more of.
 
