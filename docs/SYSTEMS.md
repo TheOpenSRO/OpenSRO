@@ -62,7 +62,7 @@ one cannot rot the same way without the build going red.
 | Persistence / AsyncQuery | 28 | OPEN | — |  | 28 AQ_* classes; the 75 stored procedures are already enumerated |
 | Guild | 27 | OPEN | — |  | 27 classes; CGuildManager and the guild tables |
 | Pets and COS | 23 | OPEN | — |  | 23 classes; CGObjCOS and CGItemCOSSummoner |
-| Alchemy and enchanting | 19 | OPEN | — |  | 19 classes; CEnchant_* and the _REFALCHEMYMERIT table |
+| Alchemy and enchanting | 19 | PARTIAL | docs/protocol/alchemy.md | ClampRate, LuckyBonus, SuccessBonusParam | the reinforce rate is whole; the base rate's ref-record offset `(tier+21)*32` is not mapped to a column -- count fields through `RefObjItem::ExtractData` (`0x006a3d50`). The other seven operations' slot 6/7 pairs are unread |
 | Battle arena | 16 | OPEN | — |  | 16 classes; CBattleArenaInfo* |
 | Timed jobs | 16 | OPEN | — |  | 16 CTJ_* classes; CTimedJob::Create is already named |
 | Party | 15 | OPEN | — |  | 15 classes; CParty and the party packet handlers |
@@ -72,7 +72,7 @@ one cannot rot the same way without the build going red.
 
 ## How to read the count
 
-**11 specified, 11 partial, 11 open, of 33.** That is the honest headline, and it
+**11 specified, 12 partial, 10 open, of 33.** That is the honest headline, and it
 is not a percentage of the game — a specified system is one this project can
 implement faithfully, not one it has implemented. What srrevamp actually ships is
 a separate question, tracked in `docs/TODO.md`.

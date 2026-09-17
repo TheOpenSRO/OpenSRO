@@ -178,7 +178,7 @@ branches).
 | 170 | 0x0aa | 0 | 100 | **0** | 0 |  |
 | 171 | 0x0ab | 0 | 100 | **0** | 0 |  |
 | 172 | 0x0ac | 0 | 100 | **0** | 0 |  |
-| 173 | 0x0ad | 0 | 100 | **0** | 0 |  |
+| 173 | 0x0ad | 0 | 100 | **0** | 0 | **reinforce success bonus** — see below |
 | 174 | 0x0ae | 0 | 100 | **0** | 0 | dara |
 | 175 | 0x0af | 0 | 100 | **0** | 0 | dara |
 | 176 | 0x0b0 | 0 | 100 | **0** | 0 | dara |
@@ -434,3 +434,31 @@ tags share a tail block, each setting its own EDI before jumping in.
 **Not claimed:** what param 169 is. It gates the block and is capped at 100, and
 that is all this pass read.
 
+
+## Param 173 is the reinforce success bonus (2026-09-17)
+
+Named from its only use-site, which is unambiguous. `CEnchant_Reinforce`'s
+vtable slot 7 (`0x00506df0`) is 41 bytes and does exactly two things:
+
+	00506df3  mov    eax,DWORD PTR [esi]
+	00506df5  mov    edx,DWORD PTR [eax+0x18]   ; slot 6 -- the base rate
+	00506df9  call   edx
+	00506dfe  mov    edi,eax
+	00506e00  mov    eax,DWORD PTR [ecx]
+	00506e02  mov    edx,DWORD PTR [eax+0x104]  ; slot 65 -- IGObj::GetParam
+	00506e08  push   0xad
+	00506e0d  call   edx
+	00506e0f  call   0x9fbb40                   ; __ftol2
+	00506e14  add    eax,edi                    ; rate = base + (int)param(173)
+
+so the returned rate is `baseRate + (int)GetParam(173)`, and that rate is what
+`CEnchant_Reinforce::vslot_001` clamps to [10, 100] and rolls `rand() % 100`
+against. The param is added in **percentage points**, and its registry row
+already says `min 0, max 100, default 0`, which is the right shape for one and
+was recorded before this use-site was read.
+
+This is the first param named from the alchemy system rather than the damage
+pipeline. `0x9fbb40` is the CRT's `__ftol2` (`fstp qword [esp]; cvttsd2si`), so
+the param is a float truncated toward zero — not rounded.
+
+See `docs/protocol/alchemy.md`.
