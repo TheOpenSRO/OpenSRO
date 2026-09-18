@@ -17754,3 +17754,24 @@ A cross-check fell out and held: `'fb'` is **not** an item magic-option tag (0 c
 
 Added `combat.AfflictionResistParam`/`AfflictionSecondParam` and a test tying them to `ResistParams`.
 Not wired (no status-effect system). Applied 1 name: `Combat_ApplyStatusEffects`.
+
+## The buff read side: a param -> reader map, and enchant luck grounded (2026-09-18)
+
+`skillparam.DrivesParams` maps 47 skill codes to the ParamKeeper params they GRANT, but a grant
+whose param nothing reads does nothing. This round built the inverse for those 70 params: every
+function that reads each via the `GetParam` getter (slot 0x104) with a literal id. 24 have a
+grounded literal reader; the other 46 are read via register/loop or the derived-stat graph and are
+left UNRESOLVED (a literal scan cannot see them -- stated so the blank is not mistaken for "dead").
+Recorded in `docs/protocol/param_readers.md`.
+
+The new grounding worth calling out: **`'alcu'`/`'luck'` -> params 172/173 -> enchant/reinforce
+success rate.** `Enchant_SuccessRateBasePlusBonus` (`0x00503d30`) is `baseRate() +
+round(GetParam(172))`, shared by three `CEnchant_*` classes as their GetSuccessRate slot, and
+`CEnchant_Reinforce::GetSuccessRate` reads 173. So the alchemy-luck buffs add a flat percentage to
+enchant/reinforce success -- a consumer for a buff family, settled from the read side (the write
+side, `DrivesParams`, already had `alcu`/`luck` -> 172/173).
+
+The rest of the map's readers were already documented (status resists -> Combat_ApplyStatusEffects;
+12/57/178/179/187/188/259 -> the damage pipeline), which is itself a useful negative: the buff read
+side is now almost entirely accounted for. Nothing wired -- these feed enchant/status/buff systems
+srrevamp lacks. Applied 0 names.
