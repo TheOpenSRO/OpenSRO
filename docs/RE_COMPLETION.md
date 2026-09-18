@@ -15802,3 +15802,38 @@ sends it; the server handler calls `CFleaMarket__BroadcastToParticipants`. Both 
 probably true — an inventory action inside a running stall — but "Inventory" would have
 been the wrong name, and the server's own callee is the better evidence. It is left as it
 was.
+
+## 2026-09-18 — who writes each param, and a correction to the param 5 claim
+
+Three ticks of naming, so this one goes at the other half of the goal: a **value** srrevamp
+uses that is still ungrounded. `defenderArmor` adds armour into the flat damage term, and
+the ledger has carried "where an equipped item's defence reaches the flat absorb" as
+unlocated since the equipment retraction.
+
+`ParamKeeper_SetParam` takes the param id in **EDI**, invisible to the decompiler. Resolving
+it at every call site gives the whole stat system's writer map at once — **338 of 367 sites,
+99 params** — now in [param_writers.md](protocol/param_writers.md), with the 29 unresolved
+sites listed by reason so the table is never read as "nothing else writes this".
+
+**It immediately corrected a claim of mine.** `stat_graph.md` said nothing writes param 5
+for a player except the publisher, skill effects and timed debuffs. Param 5 has **twelve
+write sites in eight functions**. Two are an apply/unapply pair, `FUN_004a4cc0` and
+`FUN_004a5160`, the latter doing `SetParam(slot 0, param 5, -min(record+0x34, …))`. They
+have **zero direct callers and appear in no vtable** — a call-graph search finds nothing —
+because they are reached only through pointers installed into object fields at `+0xe38` and
+`+0xe50`. Named those three functions; applied 3, failed 0.
+
+**Param 7 is now placed.** `Formula_MitigatePhysicalDamage` divides by `1 + param7/100`, and
+the derived-stat graph has no edge feeding param 7, so it is written directly. Its character
+write site reads block field `+0x1a0` into **slot 0**, and the block index is the offset over
+four — confirmed against the known pair, 58 from `+0x1b0` = `[0x6c]` and 59 from `+0x1b4` =
+`[0x6d]`. So param 7's source is block `[0x68]`, written once in `Char_BuildAggregateStats`
+as a **level interpolation between two assert-checked reference floats**, plus an
+accumulator.
+
+**The armour question is narrowed, not settled, and I am not promoting it.** The accumulator
+at `0x004969a3` was not traced, so nothing here says equipment cannot reach param 7. What is
+established is that the item path and the defence pair still do not meet: the item-entry
+writer touches params 34, 35, 36, 37, 59 and 141, and the graph feeds 34→17, 36→18, 35→19,
+37→20 — not 5 or 7. srrevamp's damage model is unchanged, because changing it on this much
+would be exactly the "suggestive curve" mistake.

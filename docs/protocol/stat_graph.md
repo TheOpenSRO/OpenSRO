@@ -47,6 +47,13 @@ chain that produces it is:
 `RemoveParamKeeperItemEntry`. **The second writes 0.0** (see the retraction below), so
 this does not show equipment reaching the absorb.
 
+**CORRECTED 2026-09-18: "nothing writes param 5 except the publisher, skill effects and
+timed debuffs" was too loose.** Resolving the param id at every `ParamKeeper_SetParam`
+call site shows param 5 has **twelve write sites in eight functions** -- see
+[param_writers.md](param_writers.md) for the full map, including the callback pair
+`FUN_004a4cc0`/`FUN_004a5160` that no call-graph search finds, because they are reached
+only through pointers installed into object fields.
+
 `param 21` takes `param 1`, Strength, as its base and `param 50` as its scale, and the
 magical twin (`6 <- 22 <- 2/51`) mirrors it with Intellect.
 
