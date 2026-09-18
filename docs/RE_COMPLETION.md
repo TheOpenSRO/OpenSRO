@@ -15375,3 +15375,39 @@ alchemy helpers exist to avoid.
 Three passes in three ticks have now come from the payoff measurement. The server's
 named-base levers are close to spent; what is left of that ranking is the quest slot I
 keep declining and the client, which needs a base class named before anything propagates.
+
+## A loose heuristic that would have mislabelled 500 game-logic functions (2026-09-18)
+
+The ranking's last item is the client, which needs a base class named before anything
+propagates. Reading `CNIFWnd`'s top-payoff slots turned up two things.
+
+**Slot 2 is a deleting destructor that the earlier boilerplate sweep missed**, because it
+releases `this` through a class-specific deallocator instead of `_free`. Sweeping the
+client for that guard returned **532 candidates** — a tempting number, since the earlier
+pass had named 607.
+
+**Tightening the test to the whole idiom cut 532 to 1.** The destructor shape is:
+destructor body on `this`, release of `this` under `(flag & 1)`, short body, returns
+`this`. Requiring all of it rejected 503 for body size alone, and sampling those
+rejections shows what they really are:
+
+	CRTNavMeshTerrain::vslot_003   348 bytes, two parameters, float maths
+	CRegionManagerBody::vslot_012  1,242 bytes, seven parameters
+	CRTNavMeshDungeon::vslot_009   154 bytes, navmesh logic
+
+Navmesh and region code that happens to test a flag bit. **The loose version would have
+renamed 500-odd real game-logic functions to `ScalarDeletingDestructor`** — silently,
+in bulk, and with the appearance of a systematic pass. Applied the one genuine miss;
+the earlier sweep was complete apart from it.
+
+### A lead, recorded without the conclusion
+
+`CNIFWnd::vslot_000` returns a pointer to a per-class static and `vslot_001` returns a
+value beside it — **the same shape as the server's DB table-name accessors**, which were
+named this session. The temptation is to carry that meaning across, and the reason not to
+is that the server's meaning came from a *use-site* (`"DBTable Registering Failed: %s"`),
+not from the shape. The client's static is runtime-initialised and no initialiser was
+found this tick, so the slot stays unnamed and the lead is written down instead.
+
+That is the same discipline that has now produced two retractions and this near-miss:
+shape proposes, a use-site disposes.
