@@ -15447,3 +15447,38 @@ The habit that keeps paying: when two measurements of the same thing disagree, s
 find out which is broken. That is now the fourth time this session it has caught
 something — twice my own probes, once a heuristic that would have mislabelled 500
 functions, and here a generator that would have silently under-delivered by 90.
+
+## A tick of negative results, recorded (2026-09-18)
+
+No names this tick. Three attempts, each stopped at the point where continuing would have
+meant guessing.
+
+**1. Batch evidence for the remaining base slots.** Last tick's lesson was that a base's
+own implementation settles a slot, so this tick gathered that evidence for every base slot
+with eight or more unnamed derived overrides. The result is that the lesson does not
+generalise: of the fourteen biggest, five are the `__purecall` stub (`AQ_Base` slots 3, 5,
+7, 8 and `CBasicQuest` slot 55 — no implementation to read at all), and the rest carry no
+log strings and no calls into already-named slots. Quest slot 22 was identifiable because
+it logged "fail pay quest" and called `PayQuest`; its neighbours simply do not talk about
+themselves.
+
+**2. Quest slot 23** (35 unnamed overrides, base at `0x00920f60`). Read in full: a
+five-parameter function with a mode argument, no strings, no named calls. Nothing to name
+it from.
+
+**3. Alchemy singleton 51.** The search for a per-table getter using index 51 returned one
+candidate, `FUN_004e0130`, and it is a **false positive** — it reads `[param_1+0x34]+0xcc`,
+a record's own fields, not the registry at `+0xc`. The identification is no closer.
+
+### One thing did move
+
+`DAT_00d6aa18` is not a generic "manager singleton array": `CGameServer::vslot_011` is the
+**DB initialisation** step, connecting through `ShardDB` and logging
+`"InitializeDB is Successful"`, and the per-table getters register into this same vector
+with `"DBTable Registering Failed: %s"` — the `%s` being the table-name string recovered
+this session. `docs/protocol/manager_singletons.md` is corrected to say **DB table
+registry**, which also explains why its entries line up with systems.
+
+Recording a tick that produced no names is the point: the alternative was to name quest
+slot 23 from its neighbours, which is exactly the reasoning that produced two retractions
+earlier today.

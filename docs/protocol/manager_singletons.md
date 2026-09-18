@@ -1,4 +1,13 @@
-# The manager singleton array at `DAT_00d6aa18`
+# The DB table registry at `DAT_00d6aa18`
+
+**Refined 2026-09-18.** This page first called the array "manager singletons". It is more
+specific than that: `CGameServer::vslot_011` is the DB initialisation step — it connects
+through `ShardDB`, logs `"DB Connection Failed!"` and `"InitializeDB is Successful"`, and
+asserts on this same global — and the per-table getters in `CGameServer::FUN_0073c…`
+register their table into it, failing with `"DBTable Registering Failed: %s"` where the
+`%s` is the class's own table-name string (see `GetTableName`, recovered the same day).
+So the vector holds **registered DB tables**, which is why its entries line up with
+systems: guild, training camp, siege, timed jobs.
 
 Recovered 2026-09-18 while tracing `CEnchant_UpperReinforce`'s success rate.
 
@@ -56,6 +65,12 @@ So entries cluster by system — guild at 11/13/14/15, training camp at 22/23/24
 identifying.
 
 ## Entry 51 and the alchemy question
+
+**Still unidentified as of 2026-09-18.** A probe looking for the per-table getter that
+uses index 51 returned exactly one function, `FUN_004e0130`, and it is a **false
+positive**: it reads `[param_1+0x34]+0xcc`, a record's own fields, not the table array at
+`+0xc`. No getter indexes 51 through the array, so the table is registered some other way
+and the identification did not fall out.
 
 Entry 51 is read by exactly four functions:
 
