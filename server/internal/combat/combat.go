@@ -198,6 +198,29 @@ type Monster struct {
 // later -- which is why this file now says where in the pipeline each clamp
 // lives.
 //
+// EXTENDED 2026-09-18, because the description above is true but partial in two
+// ways that matter.
+//
+// First, `local_d0` does more than pick the floor: it gates the
+// Formula_MitigatePhysicalDamage call itself. Every branch that mitigates is
+// under `if (local_d0 == 0)`, so a skill with no attack parameter does not take
+// the physical path at all. What it takes instead has not been read, so nothing
+// here claims what such a skill deals.
+//
+// Second, there is an EARLY RETURN before `local_d0` is ever set, and it is the
+// part with a settled meaning. The test is 33 parameters wide -- the whole
+// vocabulary of "does this skill do anything in combat", see
+// skillparam.CombatParameters -- and a skill carrying none of them, with no
+// 'efr' whose second value is 6, makes Combat_ResolveDamage return before it
+// resolves anything. No blow, not a blow of zero.
+//
+// That is 1,797 of the 32,367 real skill rows that walk cleanly (5.6%).
+// srrevamp gives every one of them DisclosedSkillDamagePerLevel * level
+// instead, because session.skillDamageBonus falls back to the disclosed bonus
+// whenever AttackPercent is zero. Closing that needs the exporter to say
+// whether a skill carries any combat parameter, which is a new column rather
+// than a new constant; it is queued, not done.
+//
 // The REASON attached to the old note is unaffected and still correct: an even
 // earlier version said a zero-damage hit is a miss in the real game and that
 // srrevamp "has no hit/evade roll yet", implying one was waiting to be

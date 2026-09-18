@@ -300,3 +300,68 @@ func TestWalkSkipsPadding(t *testing.T) {
 		t.Errorf("pdmg at word %d, want 2", entries[0].Index)
 	}
 }
+
+// The 33 field offsets Combat_ResolveDamage (0x0058e5f0) tests, transcribed
+// from its opening condition. Freezing them here is the cross-check: they were
+// read off a function that had no part in building Field, so if Field ever
+// drifts, this fails.
+func TestCombatParametersMatchTheOffsetsResolveDamageTests(t *testing.T) {
+	tested := map[int]bool{
+		0x230: true, 0x234: true, 0x238: true, 0x248: true, 0x28c: true,
+		0x30c: true, 0x310: true, 0x314: true, 0x318: true, 0x31c: true,
+		0x320: true, 0x3c8: true, 0x3cc: true, 0x3d0: true, 0x400: true,
+		0x424: true, 0x430: true, 0x434: true, 0x438: true, 0x43c: true,
+		0x440: true, 0x444: true, 0x44c: true, 0x450: true, 0x454: true,
+		0x458: true, 0x45c: true, 0x460: true, 0x464: true, 0x468: true,
+		0x46c: true, 0x470: true, 0x474: true,
+	}
+	if len(CombatParameters) != len(tested) {
+		t.Fatalf("%d codes for %d tested offsets", len(CombatParameters), len(tested))
+	}
+	for _, c := range CombatParameters {
+		off, ok := Field[c]
+		if !ok {
+			t.Errorf("%q has no field", c)
+			continue
+		}
+		// 'efr' is the one code whose field Combat_ResolveDamage reads is not
+		// the one Field happens to record, because efr has three.
+		if c == "efr" {
+			if !tested[EfrField[1]] {
+				t.Errorf("efr's first field %#x is not among the offsets tested", EfrField[1])
+			}
+			continue
+		}
+		if !tested[off] {
+			t.Errorf("Field[%q] = %#x, which Combat_ResolveDamage does not test", c, off)
+		}
+		delete(tested, off)
+	}
+	delete(tested, EfrField[1])
+	if len(tested) != 0 {
+		var left []int
+		for o := range tested {
+			left = append(left, o)
+		}
+		t.Errorf("offsets tested by Combat_ResolveDamage with no code: %#x", left)
+	}
+}
+
+// Every combat parameter must be a code the parser recognises, and none may be
+// variable-length: the walk has to be able to pass them to decide whether a
+// skill carries any.
+func TestCombatParametersAreWalkable(t *testing.T) {
+	for _, c := range CombatParameters {
+		k, ok := Kind[c]
+		if !ok {
+			t.Errorf("%q is not a top-level code", c)
+			continue
+		}
+		if k == KindVarLen {
+			t.Errorf("%q is variable-length; a walk cannot pass it to decide the rest", c)
+		}
+	}
+	if EfrCombatSelector != 6 {
+		t.Errorf("EfrCombatSelector = %d, want 6 -- `if (*(int *)(efr + 4) != 6) return`", EfrCombatSelector)
+	}
+}

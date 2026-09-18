@@ -558,3 +558,54 @@ func Find(words []int32, code Code) (index int, found bool, complete bool) {
 	}
 	return 0, false, complete
 }
+
+// CombatParameters is the engine's own test for "does this skill do anything in
+// combat", read off Formulae's Combat_ResolveDamage (0x0058e5f0).
+//
+// The function opens with a 33-way test of the skill record, every term of the
+// form `*(int *)(skill + <field>) == 0`. Read through Field it is exactly this
+// list of parameter codes, which is what makes it a vocabulary question rather
+// than a wall of offsets:
+//
+//	if (!att && !ck) {
+//	    if (none of the other 31 are set) {
+//	        if (!efr)                      return;   // no blow at all
+//	        if (efr.values[1] != 6)        return;
+//	    }
+//	    local_d0 = 1;
+//	}
+//
+// WHAT THIS CONFIRMS INDEPENDENTLY. 32 of the 33 offsets resolve against Field,
+// and the 33rd is 'efr' at 0x28c, which Field records under a different one of
+// efr's three fields. Combat_ResolveDamage played no part in building Field, so
+// this is a second function agreeing with it on 33 offsets at once. Three
+// further agreements fall out of the same function: skill+0x230 is dereferenced
+// and masked with 4, which is the physical bit of the damage-type mask that
+// combat.AttackType already reads out of 'att' value[0]; skill+0x288 is read as
+// the pair (2, N), which is exactly what export-refdata's hitCountParam takes
+// from 'mc'; and skill+0x230's value[4] is read, so 'att' really does carry
+// five values and not four.
+//
+// WHAT IT MEANS, AND THE PART THAT IS NOT READ. A skill carrying none of these
+// and no qualifying 'efr' makes the function RETURN -- it resolves no blow at
+// all. That is an unconditional return and is settled. What local_d0 = 1 leads
+// to when the function does continue is NOT settled here: it gates the
+// Formula_MitigatePhysicalDamage call as well as the damage floor, and the
+// branches it selects instead have not been read. So "a skill with no attack
+// parameter deals nothing" is proven only for the early-return case, and is not
+// claimed for the rest.
+//
+// MEASURED. Of the 32,367 real skill rows that walk cleanly, 1,813 carry none
+// of these 33; 16 of those carry 'efr' with value[1] == 6 and survive, and
+// **1,797 (5.6%) take the early return**.
+var CombatParameters = []Code{
+	"att", "pdmg", "pdm2", "ck", "fz", "fb", "es", "bu", "ps", "zb",
+	"tant", "tnt2", "dtnt", "lfst", "dttp", "se", "rt", "sl", "fe", "my",
+	"bl", "dn", "st", "ds", "ca", "cssr", "csit", "cspd", "csmd", "cshp",
+	"csmp", "tb", "efr",
+}
+
+// EfrCombatSelector is the value 'efr' must carry as its SECOND value for a
+// skill with no other combat parameter to resolve a blow at all:
+// `if (*(int *)(efr + 4) != 6) return;`. What the 6 selects is not read.
+const EfrCombatSelector = 6

@@ -17340,3 +17340,67 @@ goes on to the real one. Worth recording because the first measurement flagged i
 the probe rather than the finding is what showed the shipping code was already right.
 
 Applied 0 names; this was a format recovery, not a naming pass.
+
+## What a skill parameter is FOR: the engine's own combat test, and a sized gap (2026-09-18)
+
+With the Param vocabulary complete (previous round), the question stopped being "what codes exist"
+and became "which ones does the engine read". A census over the 32,367 real skill rows that walk
+cleanly answers the first half and re-orders the work queue:
+
+| code | skills carrying it | status in srrevamp |
+|---|---|---|
+| `att` | 29,884 | read (AttackPercent/DamageMin/DamageMax) |
+| `mc` | 27,543 | read (HitCount) |
+| `efr` | 10,403 | **not read** |
+| `getv` | 3,768 | not read |
+| `pdmg` | 74 | not read |
+| `lfst` | 43 | not read |
+| `pmdg` | 23 | not read |
+
+**This retired the step that was queued.** The plan was to implement the `lfst` branch, since
+`Formula_SkillPhysDamage`'s caller tries it before `pdmg`. It is carried by **43 rows, 0.13%**.
+Measuring before implementing is what stopped that; the mnemonics gave no hint of the sizes.
+
+**Combat_ResolveDamage (`0x0058e5f0`) contains the engine's own definition of a combat skill.**
+The function opens with a 33-term test, every term `*(int *)(skill + <field>) == 0`. Read through
+`skillparam.Field` it is a list of parameter codes:
+
+	att pdmg pdm2 ck fz fb es bu ps zb tant tnt2 dtnt lfst dttp se rt sl fe my
+	bl dn st ds ca cssr csit cspd csmd cshp csmp tb   (+ efr, see below)
+
+	if (!att && !ck) {
+	    if (none of the other 31) {
+	        if (!efr)                return;   // no blow at all
+	        if (efr.values[1] != 6)  return;
+	    }
+	    local_d0 = 1;
+	}
+
+**32 of the 33 offsets resolve against `Field`, and the 33rd is `efr` at `0x28c`** — which `Field`
+records under a different one of efr's three fields. Combat_ResolveDamage played no part in
+building that table, so this is a second function agreeing with it on 33 offsets at once. Three
+smaller agreements fall out of the same read: `skill+0x230` is dereferenced and masked with 4,
+the physical bit `combat.AttackType` already takes from `att` value[0]; `skill+0x288` is read as
+the pair `(2, N)`, exactly what `export-refdata`'s `hitCountParam` takes from `mc`; and
+`skill+0x230`'s value[4] is read, so `att` carries five values and not four.
+
+**The sized gap.** A skill carrying none of the 33, with no `efr` whose second value is 6, makes
+the function **return before resolving anything** — no blow, not a blow of zero. Measured:
+
+	carry none of the 33        1,813
+	  rescued by efr[1] == 6       16
+	  EARLY RETURN, no blow     1,797   (5.6% of walked rows)
+
+srrevamp gives every one of those 1,797 `DisclosedSkillDamagePerLevel * level` instead, because
+`session.skillDamageBonus` falls back to the disclosed bonus whenever `AttackPercent` is zero. So
+an own-design constant is standing in for a case the engine settles outright. Closing it needs
+`export-refdata` to emit whether a skill carries any combat parameter — a new CSV column, through
+import and schema — which is the next step and is deliberately not rushed into this round.
+
+**What is NOT claimed.** `local_d0 = 1` gates the `Formula_MitigatePhysicalDamage` call as well as
+the damage floor, and the branches taken instead have not been read. So "a skill with no attack
+parameter deals nothing" is proven for the early-return case ONLY, and is not asserted for the
+rest. `combat.go`'s note, which described `local_d0` as picking the floor, has been extended to say
+both of these.
+
+Applied 0 names.
