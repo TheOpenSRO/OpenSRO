@@ -16703,3 +16703,34 @@ That is a case where neither function could be named alone — a scan returning 
 nothing — and the pair plus the registration says all of it.
 
 No value changed.
+
+## 2026-09-18 — a registration that names its own handlers, and one attribution refused
+
+Continuing the installer chain, two of the remaining unnamed installers went opposite ways.
+
+**`CMainProcess::FUN_00413590` names its handlers outright.** It allocates four probe records,
+sets each one's handler at `+0x18`, and then passes *that same record* to a registrar with an id
+and a display name:
+
+	FUN_004122e0  0x3020001  "Obj Count"        FUN_00412340  0x3020003  "Game Update"
+	FUN_00412310  0x3020002  "DBQuery Count"    FUN_00412350  0x3020004  "Msg Dispatch"
+
+The pairing is a **data dependency**, not proximity — the record written at `+0x18` is the
+argument to the registration — which is what makes this safe where the `DumpItemOptionsVerbose`
+text pairing was not. Named `Probe_ObjCount`, `Probe_DBQueryCount`, `Probe_GameUpdate`,
+`Probe_MsgDispatch`, `RegisterPerformanceProbes` and `RegisterNamedProbe`; applied 6.
+
+**`FUN_0053ea60` was not named, and the reason is the point.** It installs a genuine 8-slot
+handler table at `+0x128..+0x144`, and the case for calling it AI tactics looked good:
+`AI::CTactics::vslot_017` installs `+0xe8..+0x124`, so the two ranges are exactly contiguous
+(`0x124 + 4 = 0x128`), and the two functions sit in the same address region. Both signals are
+circumstantial. The hard checks fail — `0x53ea60` is in **no vtable** and has **no callers**, so
+nothing ties it to `CTactics` except adjacency, and two classes having tables at adjoining
+offsets is precisely the struct-offset coincidence that has misled this log four times. It is
+left unnamed with the table shape recorded.
+
+Contiguous offsets are not identity, in the same way that a shared string is not a shared
+operation. The difference between the two halves of this tick is whether the evidence is a
+dependency or a neighbourhood.
+
+No value changed.
