@@ -16083,3 +16083,38 @@ A footnote on the record itself: `Formula_MitigatePhysicalDamage` turned out **n
 in `recovered_names.tsv` at all. It had been named in an earlier session and its evidence
 lived only in the Ghidra database, so the in-place correction matched nothing and said so.
 The corrected row is now appended, and the two stores agree.
+
+## 2026-09-18 — twenty functions that were never in the dump
+
+Last tick's open question was where param 180 — the defender-side multiplier the physical
+mitigation formula applies to the final damage — comes from. The `SetParam` sweep had found
+one write site and attributed it to `?`, meaning no indexed function contained it. That `?`
+was the finding.
+
+`GObjPC_InstallParamContributionCallbacks` (`0x004a40c0`) builds a table of **23 function
+pointers** at `+0xe0c` onward, each a contribution applier taking a mode byte (0 applies, 2
+removes). **Twenty of the twenty-three targets were functions Ghidra had never defined** —
+real game logic absent from the decompiled dump entirely. That is why call-graph searches for
+them came back empty and why their param writes had no owner.
+
+All twenty were created from their install sites and named (`created 20, failed 0`;
+`applied 20, failed 0`). The table, with the params each applier writes, is in
+[param_writers.md](protocol/param_writers.md).
+
+**An earlier scan of this same installer found three slots, not twenty-three.** It required
+the pointer target to be an already-named function, so it silently dropped every undefined
+one — the filter hid exactly the functions worth finding.
+
+**Param 180's writer is slot 20** (`0x004a50b0`), paired with 181; slot 19 (`0x004a5000`) is
+its twin for the attacker-side pair 178 and 179. So the real defensive multiplier is produced
+through the effect table, not through an item's magic options, which is why the tag dispatcher
+could not reach it and why the previous tick's negative was true but narrow.
+
+Each applier's extent was **bounded by the next installed target** before reading its param
+writes, so a scan cannot run past its own function. Bounding changed no attribution, which is
+the check that the unbounded pass had not been over-reaching. It did correct one thing: the
+body at `0x004a5000` ends at `0x004a50a8`, so the region I had read as one function is two,
+and the table's split is right.
+
+No value changed, and the slot index's meaning is deliberately not claimed — the table says
+which applier sits at an index and which params it touches, not what an index *is*.

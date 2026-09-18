@@ -346,6 +346,66 @@ The previous tick's negative stands unchanged and is narrower than it sounded: e
 cannot reach params **5 or 7**. It says nothing about 180, which was not enumerated because
 the formula's reads had not been fully read.
 
+
+## The effect-applier table
+
+**Recovered 2026-09-18.** `GObjPC_InstallParamContributionCallbacks` (`0x004a40c0`) builds a
+table of **23 function pointers** at `+0xe0c` onward, stepping by four, and every one of them
+is a contribution applier: a function taking a mode byte (0 applies, 2 removes) plus a record,
+which writes or clears specific ParamKeeper params.
+
+**Twenty of the twenty-three targets were functions Ghidra had never defined.** They are real
+game logic that was absent from the decompiled dump entirely, which is why a call-graph search
+for them found nothing and why the param writer sweep attributed their writes to `?`. They
+have been created from their install sites and named `ParamApplier_Slot<NN>`, with the params
+they write in the name where a write was found.
+
+	0     +0xe0c  004a4570  UNDEFINED                -
+	1     +0xe10  004a45d0  UNDEFINED                23,24,140
+	2     +0xe14  004a46f0  UNDEFINED                -
+	3     +0xe18  004a4850  UNDEFINED                9
+	4     +0xe1c  004a4940  UNDEFINED                -
+	5     +0xe20  009371f0  FUN_009371f0             -
+	6     +0xe24  004a49f0  UNDEFINED                -
+	7     +0xe28  004a4a50  UNDEFINED                -
+	8     +0xe2c  004a4a90  UNDEFINED                23,24,140
+	9     +0xe30  004a4bd0  UNDEFINED                -
+	10    +0xe34  004a4c60  UNDEFINED                183
+	11    +0xe38  004a4cc0  Param5And6_ApplyOrRemoveContribution 5,6
+	13    +0xe40  004a4e20  UNDEFINED                11
+	14    +0xe44  004a4ec0  UNDEFINED                -
+	15    +0xe48  004a4f20  UNDEFINED                169
+	16    +0xe4c  004a4f70  UNDEFINED                -
+	17    +0xe50  004a5160  Param5_ApplyOrRemoveContribution 5
+	18    +0xe54  004a5240  UNDEFINED                6
+	19    +0xe58  004a5000  UNDEFINED                178,179
+	20    +0xe5c  004a50b0  UNDEFINED                180,181
+	21    +0xe60  004a5320  UNDEFINED                3,143
+	22    +0xe64  004a54a0  UNDEFINED                4,144
+	24    +0xe6c  004a5620  UNDEFINED                -
+
+Slots 12 and 23 are not installed by this function.
+
+The params were read at each applier's `ParamKeeper_SetParam` (id in EDI) and `0x004b3570`
+(id pushed) call sites, with each body's extent **bounded by the next installed target** so a
+scan cannot run past its function into the next one. Bounding changed nothing, which is the
+check that the attributions were not over-scanning to begin with.
+
+### What this settles
+
+**Param 180's writer is slot 20** (`0x004a50b0`), paired with 181. Param 180 is the
+defender-side multiplier the physical mitigation formula applies to the final damage, so this
+is the applier that produces the game's real defensive multiplier — and it is reached through
+the effect table, not through an item's magic options, which is why the tag dispatcher could
+not produce it.
+
+Slot 19 (`0x004a5000`) is its twin for params 178 and 179, the attacker-side pair the same
+formula reads.
+
+**What the slot index means is not read.** The table is indexed by something the caller
+supplies; nothing here says what an index *is*, only which applier sits at it and which params
+that applier touches.
+
 ## Two traps this cost
 
 **A struct-offset sweep does not establish struct identity.** Sweeping every writer of
