@@ -16885,3 +16885,40 @@ shape.
 block, and this file was already using it.
 
 Full suite green, 53 packages.
+
+## 2026-09-18 — auditing every recovered vocabulary for the same decoder bug
+
+A length assumption in a decoder has now silently dropped codes twice — the stat tags published
+with four-character codes truncated to three, and `skillparam` published without its two- and
+three-character codes, losing `'att'`. Both times nothing downstream could see the gap. Rather
+than move on, this tick audited the other vocabularies for the same fault.
+
+**The stat-tag vocabulary is complete.** Re-extracted with variable-length decoding,
+`Stat_ApplyTaggedModifier` compares **43 distinct tags** — 6 two-character, 10 three-character,
+27 four-character — and all three lengths are present in what was published. That artifact was
+sound.
+
+**And the shipped tables are correctly partitioned by source**, which was the real question:
+
+	ParamFor           24 keys, every one a tag the dispatcher compares
+	SecondParamFor      1 key,  likewise
+	ResistCategoryFor   5 keys, likewise
+	LabelFor           16 keys, one ('dura') the dispatcher never sees
+	BonusUnit           9 keys, two ('er', 'hr') the dispatcher never sees
+
+The three tables claiming dispatcher provenance hold **nothing** that the dispatcher does not
+compare. The outliers are all in `LabelFor`/`BonusUnit`, which are read from the *item dumper* —
+a different function that legitimately knows tags the stat path never handles. Correct by
+design, not a leak.
+
+**One false alarm on the way, caused by my own shortcut.** The first comparison used a tag list
+hand-copied out of terminal output that had been truncated at 80 characters, and it reported
+four tags as unknown. Re-running it against the full extracted list is what produced the numbers
+above. A truncated display is not a data source.
+
+**Made durable**: `combat.DispatcherTags` now carries the 43, and
+`TestParamTablesOnlyUseTagsTheDispatcherCompares` asserts that every key of the three
+dispatcher-derived tables is in it. The next decoder that quietly loses a code will fail a test
+rather than ship.
+
+Full suite green, 53 packages.

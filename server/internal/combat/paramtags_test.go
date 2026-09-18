@@ -388,3 +388,38 @@ func TestStatusResistsAreCategoriesNotParams(t *testing.T) {
 			LabelFor["rsti"], LabelFor["soli"])
 	}
 }
+
+// TestParamTablesOnlyUseTagsTheDispatcherCompares is the guard for a failure
+// this project has hit twice: a decoder with a length assumption silently
+// dropping or truncating codes, with nothing downstream able to notice. Any
+// table claiming to come from Stat_ApplyTaggedModifier must only hold tags that
+// function actually compares.
+func TestParamTablesOnlyUseTagsTheDispatcherCompares(t *testing.T) {
+	known := map[string]bool{}
+	for _, tag := range DispatcherTags {
+		if l := len(tag); l < 2 || l > 4 {
+			t.Errorf("DispatcherTags holds %q, %d characters; the dispatcher compares two to four", tag, l)
+		}
+		known[tag] = true
+	}
+	for name, keys := range map[string][]string{
+		"ParamFor":          keysOf(ParamFor),
+		"SecondParamFor":    keysOf(SecondParamFor),
+		"ResistCategoryFor": keysOf(ResistCategoryFor),
+	} {
+		for _, k := range keys {
+			if !known[k] {
+				t.Errorf("%s has %q, which Stat_ApplyTaggedModifier never compares -- "+
+					"either the tag is wrong or DispatcherTags is stale", name, k)
+			}
+		}
+	}
+}
+
+func keysOf[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}

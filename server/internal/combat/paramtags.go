@@ -307,7 +307,6 @@ const (
 	MaxMagicParamsPerItem   = 12
 )
 
-
 // SecondParamFor records the tags whose leaf writes a *second* param. The leaf
 // sets the first id in EDI and stashes the second in [esp+0x24]; the shared
 // tail writes the first, then writes the second if the stash is not -1.
@@ -351,4 +350,65 @@ var ResistCategoryFor = map[string]int{
 	"rsti": 7,
 	"rdii": 8,
 	"rcsi": 15,
+}
+
+// DispatcherTags is every tag Stat_ApplyTaggedModifier (0x00498690) actually
+// compares: each `cmp reg,<imm>` whose immediate decodes as two, three or four
+// printable characters, big-endian.
+//
+// WHY THIS EXISTS AS DATA. Two separate recovered vocabularies in this project
+// have been published with a length assumption baked into the decoder -- the
+// stat tags once with four-character codes truncated to three, and skillparam
+// with the two- and three-character codes dropped entirely, which lost 'att',
+// a code the project already used elsewhere. Both times nothing downstream
+// could see the gap. Listing what the dispatcher compares lets a test check the
+// tables against it instead of against a decoder's assumptions.
+//
+// LabelFor and BonusUnit are deliberately NOT constrained to this set: they are
+// read from the item dumper, a different function, and legitimately carry tags
+// the stat dispatcher never sees ('dura', 'er', 'hr').
+var DispatcherTags = []string{
+	"ape",
+	"astr",
+	"atha",
+	"bri",
+	"brna",
+	"bu",
+	"cri",
+	"dara",
+	"drua",
+	"era",
+	"es",
+	"evbl",
+	"evcr",
+	"fz",
+	"hpa",
+	"hpmp",
+	"hpna",
+	"hprg",
+	"hra",
+	"int",
+	"intv",
+	"mp",
+	"mpa",
+	"mpna",
+	"mprg",
+	"nrep",
+	"ps",
+	"rals",
+	"rcsi",
+	"rdii",
+	"rein",
+	"reis",
+	"rep",
+	"rfei",
+	"rsli",
+	"rsti",
+	"soli",
+	"str",
+	"stra",
+	"strj",
+	"strv",
+	"umdu",
+	"zb",
 }
