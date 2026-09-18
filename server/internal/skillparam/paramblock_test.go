@@ -62,21 +62,17 @@ func TestAttCarriesTheFiveValuesTheExporterReads(t *testing.T) {
 	}
 }
 
-// Run and Kind must describe the same vocabulary, and a variable-length code
-// must NOT have a run -- claiming one would silently invent a length the parser
-// never states, which is the exact failure this file exists to avoid.
+// Run and Kind must describe the same vocabulary. Every code now has a run --
+// markers and the terminator are run 1 (the code word, no values) -- and the
+// two maps must cover exactly the same set.
 func TestRunAndKindAgreeOnEveryCode(t *testing.T) {
 	for code, kind := range Kind {
-		_, hasRun := Run[code]
-		switch kind {
-		case KindVarLen:
-			if hasRun {
-				t.Errorf("%q is variable-length but Run claims a length of %d", code, Run[code])
-			}
-		default:
-			if !hasRun {
-				t.Errorf("%q is %v but has no Run", code, kind)
-			}
+		run, hasRun := Run[code]
+		if !hasRun {
+			t.Errorf("%q is %v but has no Run", code, kind)
+		}
+		if (kind == KindMarker || kind == KindTerminator) && run != 1 {
+			t.Errorf("%q is a marker/terminator but Run is %d, want 1", code, run)
 		}
 	}
 	for code := range Run {
@@ -100,7 +96,8 @@ func TestVocabularyCounts(t *testing.T) {
 		what string
 	}{
 		{KindFixed, 146, "fixed-run"},
-		{KindVarLen, 20, "variable-length"},
+		{KindMarker, 19, "marker"},
+		{KindTerminator, 1, "terminator"},
 		{KindArray, 2, "array"},
 		{KindPrefix, 1, "two-word prefix"},
 	} {
@@ -226,33 +223,57 @@ func TestWalkConsumesEveryFixedRun(t *testing.T) {
 }
 
 // A walk must stop at a variable-length code rather than guess, and must say so
-// -- a caller that reads "not found" as "the skill has not got it" would be
-// wrong for the 1,265 real rows that stop this way.
-func TestWalkStopsAtAVariableLengthCode(t *testing.T) {
-	var varlen Code
+// A marker does NOT stop a walk -- the parser advances past it and so does the
+// walk. The terminator ('ssou') completes it. An unknown word stops it
+// incomplete. All three are exercised here.
+func TestWalkHandlesMarkersTerminatorAndUnknowns(t *testing.T) {
+	// A marker between two fixed runs: the walk passes it and finds both.
+	var marker Code
 	for c, k := range Kind {
-		if k == KindVarLen {
-			varlen = c
+		if k == KindMarker {
+			marker = c
 			break
 		}
 	}
-	if varlen == "" {
-		t.Fatal("no variable-length code in the table")
+	if marker == "" {
+		t.Fatal("no marker in the table")
 	}
-	words := append(block("att"), codeWord(varlen), 1, 2, 3)
-	entries, stopped, complete := Walk(words)
+	words := append(block("att"), codeWord(marker))
+	words = append(words, block("pdmg")...)
+	entries, _, complete := Walk(words)
+	if !complete {
+		t.Error("walk stopped at a marker; markers must not stop a walk")
+	}
+	if _, found, complete := Find(words, "pdmg"); !found || !complete {
+		t.Errorf("Find past a marker returned found=%v complete=%v, want true/true", found, complete)
+	}
+
+	// The terminator completes the walk and IS recorded as the last run.
+	term := append(block("att"), codeWord("ssou"), 1, 2, 3)
+	entries, _, complete = Walk(term)
+	if !complete {
+		t.Error("walk did not complete at the terminator")
+	}
+	if entries[len(entries)-1].Code != "ssou" {
+		t.Errorf("last entry is %q, want ssou", entries[len(entries)-1].Code)
+	}
+
+	// An unknown word stops the walk incomplete -- the only remaining way for a
+	// walk to be undecided, and the one Find must report so a caller can fall
+	// back.
+	junk := append(block("att"), 0x7fffffff, 0x7ffffffe)
+	entries, stopped, complete := Walk(junk)
 	if complete {
-		t.Error("walk reported complete despite a variable-length code")
+		t.Error("walk reported complete despite an unknown word")
 	}
-	if stopped != varlen {
-		t.Errorf("stopped at %q, want %q", stopped, varlen)
+	if stopped == "" {
+		t.Error("walk did not report what stopped it")
 	}
 	if len(entries) != 1 {
-		t.Errorf("consumed %d runs before stopping, want 1", len(entries))
+		t.Errorf("consumed %d runs before the unknown word, want 1", len(entries))
 	}
-	// Find must report the incomplete walk so the caller can fall back.
-	if _, found, complete := Find(words, "pdmg"); found || complete {
-		t.Errorf("Find past a variable-length code returned found=%v complete=%v, want false/false", found, complete)
+	if _, found, complete := Find(junk, "pdmg"); found || complete {
+		t.Errorf("Find past an unknown word returned found=%v complete=%v, want false/false", found, complete)
 	}
 }
 
@@ -357,9 +378,10 @@ func TestCombatParametersAreWalkable(t *testing.T) {
 			t.Errorf("%q is not a top-level code", c)
 			continue
 		}
-		if k == KindVarLen {
-			t.Errorf("%q is variable-length; a walk cannot pass it to decide the rest", c)
+		if _, hasRun := Run[c]; !hasRun {
+			t.Errorf("%q has no run; a walk cannot pass it to decide the rest", c)
 		}
+		_ = k
 	}
 	if EfrCombatSelector != 6 {
 		t.Errorf("EfrCombatSelector = %d, want 6 -- `if (*(int *)(efr + 4) != 6) return`", EfrCombatSelector)
@@ -404,20 +426,15 @@ func TestEfrCountsOnlyWithItsSelector(t *testing.T) {
 // A walk that cannot finish has not proved the skill carries nothing, and must
 // say so -- otherwise 1,265 real rows would be silenced on no evidence.
 func TestCarriesCombatParameterDoesNotDecidePastAVarLenCode(t *testing.T) {
-	var varlen Code
-	for c, k := range Kind {
-		if k == KindVarLen {
-			varlen = c
-			break
-		}
-	}
-	words := append([]int32{codeWord(varlen)}, 1, 2, 3)
+	// An unknown word (not a marker -- markers no longer stop a walk) is the
+	// only thing that leaves a walk undecided.
+	words := []int32{0x7fffffff, 1, 2, 3}
 	carries, decided := CarriesCombatParameter(words)
 	if carries || decided {
 		t.Errorf("stopped walk: carries=%v decided=%v, want false/false", carries, decided)
 	}
-	// But a combat parameter BEFORE the stop still settles it.
-	words = append(block("att"), append([]int32{codeWord(varlen)}, 1, 2, 3)...)
+	// But a combat parameter BEFORE the unknown word still settles it.
+	words = append(block("att"), 0x7fffffff, 1, 2, 3)
 	if carries, decided := CarriesCombatParameter(words); !carries || !decided {
 		t.Errorf("att before the stop: carries=%v decided=%v, want true/true", carries, decided)
 	}
@@ -450,18 +467,12 @@ func TestDealsZeroDamage(t *testing.T) {
 }
 
 func TestDealsZeroDamageDoesNotDecidePastAVarLenCode(t *testing.T) {
-	var varlen Code
-	for c, k := range Kind {
-		if k == KindVarLen {
-			varlen = c
-			break
-		}
-	}
-	if zero, decided := DealsZeroDamage([]int32{codeWord(varlen), 1, 2}); !zero || decided {
+	// An unknown word leaves the walk undecided.
+	if zero, decided := DealsZeroDamage([]int32{0x7fffffff, 1, 2}); !zero || decided {
 		t.Errorf("stopped walk: zero=%v decided=%v, want true/false (undecided)", zero, decided)
 	}
 	// An 'att' before the stop settles it.
-	words := append(block("att"), codeWord(varlen), 1, 2)
+	words := append(block("att"), 0x7fffffff, 1, 2)
 	if zero, decided := DealsZeroDamage(words); zero || !decided {
 		t.Errorf("att before the stop: zero=%v decided=%v, want false/true", zero, decided)
 	}

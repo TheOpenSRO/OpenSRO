@@ -311,10 +311,12 @@ func TestSkillDamageClassColumns(t *testing.T) {
 	ck := skillparam.WordOf("ck")
 	bl := skillparam.WordOf("bl")
 	dura := skillparam.WordOf("dura")
-	// 'ssou' is variable-length: the walk cannot pass it.
+	// 'ssou' is the block terminator: the parser returns at it, so a walk
+	// COMPLETES there and anything after it is never parsed -- by the engine or
+	// by us.
 	ssou := skillparam.WordOf("ssou")
-	if skillparam.Kind["ssou"] != skillparam.KindVarLen {
-		t.Fatal("test premise: ssou must be variable-length")
+	if skillparam.Kind["ssou"] != skillparam.KindTerminator {
+		t.Fatal("test premise: ssou must be the terminator")
 	}
 
 	for _, c := range []struct {
@@ -328,12 +330,15 @@ func TestSkillDamageClassColumns(t *testing.T) {
 		{"ck alone", skillRow(ck, 100), "0", "0", "1"},
 		{"a combat parameter but no att/ck", skillRow(bl, 1, 2, 3, 4, 5), "0", "1", "0"},
 		{"no combat parameter at all", skillRow(dura, 30000), "1", "1", "0"},
-		// The walk stops at ssou, but NEITHER literal is anywhere in the row,
-		// which is proof rather than a guess.
-		{"stopped walk, literals absent", skillRow(ssou, 7, 7), "1", "1", "0"},
-		// The walk stops, and the att literal IS in the row past the stop. The
-		// scan finds it, so this is an att skill, not a zero-damage one.
-		{"stopped walk, att past the stop", skillRow(ssou, 7, att, 5, 143, 15, 18, 0), "0", "0", "0"},
+		// The terminator completes the walk with no att/ck seen -> zero-damage.
+		{"terminator, no combat param", skillRow(ssou), "1", "1", "0"},
+		// An 'att' placed AFTER the terminator is never parsed -- the engine
+		// returns at ssou -- so the skill genuinely has no working att and is
+		// zero-damage. The old whole-row scan wrongly reached past it.
+		{"att after the terminator is dead", skillRow(ssou, att, 5, 143, 15, 18, 0), "1", "1", "0"},
+		// An unknown word leaves the walk undecided; literal absence then proves
+		// no att/ck is anywhere in the row.
+		{"undecided walk, literals absent", skillRow(0x7fffffff, 7, 7), "1", "1", "0"},
 	} {
 		if got := noCombatParam(c.cols); got != c.noCombat {
 			t.Errorf("%s: noCombatParam = %s, want %s", c.name, got, c.noCombat)
@@ -356,11 +361,12 @@ func TestSkillDamageClassColumns(t *testing.T) {
 }
 
 // Absence of a code word from the whole row is proof; PRESENCE is not, because
-// the same integer can be another column's value. A stopped row that has the
-// att literal only OUTSIDE the block -- as a skill id, say -- must not be
-// declared zero-damage on the strength of the walk having found nothing.
+// the same integer can be another column's value. When a walk is UNDECIDED (an
+// unknown word), a row that has the att literal only OUTSIDE the block -- as a
+// skill id, say -- must not be declared zero-damage on the strength of the walk
+// having found nothing: absence was not proved.
 func TestLiteralAbsenceIsOnlyUsedInTheSoundDirection(t *testing.T) {
-	cols := skillRow(skillparam.WordOf("ssou"), 7, 7)
+	cols := skillRow(0x7fffffff, 7, 7)                    // an unknown word -> the walk cannot finish
 	cols[1] = strconv.Itoa(int(skillparam.WordOf("att"))) // the literal, but as the ID column
 	if got := zeroDamage(cols); got != "0" {
 		t.Errorf("zeroDamage = %s with the att literal present in the row; absence was not proved, so it must answer 0", got)

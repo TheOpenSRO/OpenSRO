@@ -33,12 +33,12 @@ package skillparam
 // %d, ParamValue: %d]". Nothing falls through silently.
 //
 // MEASURED AGAINST REAL DATA. Walking all 33,632 rows of the seven skilldata
-// shards in a real Media.pk2 with this table: 32,367 rows (96.2%) consume their
-// Param block exactly to the end, and the remaining 1,265 stop at a
-// variable-length code, which is expected because those do not state a length.
-// **No row hits an unrecognised code.** A wrong run length anywhere derails the
-// rest of a row, so 32,367 clean traversals are that many independent
-// confirmations of every length they touch.
+// shards in a real Media.pk2 with this table: **every row walks to completion**
+// -- 33,340 to the natural end of the block and 292 to the 'ssou' terminator --
+// with zero unrecognised codes. (It was 96.2% until the 19 markers were
+// reclassified from KindVarLen to run-1; see KindMarker.) A wrong run length
+// anywhere derails the rest of a row, so 33,632 clean traversals are that many
+// independent confirmations of every length they touch.
 
 // ParamKind is how the parser consumes a run.
 type ParamKind int
@@ -46,11 +46,23 @@ type ParamKind int
 const (
 	// KindFixed: the parser states the run length. Run[code] is it.
 	KindFixed ParamKind = iota
-	// KindVarLen: the parser advances ONE word and points the field at what
-	// follows, without stating how much of it belongs to the run. Whatever
-	// reads the field decides. A walk cannot continue past one of these, and
-	// Run has no entry for them.
-	KindVarLen
+	// KindMarker: the parser advances exactly ONE word -- past the code word --
+	// and points the field at the run that FOLLOWS, then continues the loop.
+	// So a marker carries no values of its own; the field is a bookmark into the
+	// rest of the stream, and the following (code, value) runs are walked by the
+	// same loop. Run is 1.
+	//
+	// CORRECTED 2026-09-18: these were KindVarLen, "a walk cannot continue past
+	// one of these". That was wrong for 19 of the 20. The parser does not stop
+	// at them and neither should a walk: reclassified as run-1 markers, EVERY
+	// one of the 33,632 real skill rows walks to completion with zero
+	// unrecognised codes (was 96.2%). The one real stopper is the terminator.
+	KindMarker
+	// KindTerminator: the parser stores the field and RETURNS -- this code is
+	// always the last in the block. Only 'ssou' is one (it has a `return;` in
+	// its branch where every other code falls through to the loop). A walk that
+	// reaches it is COMPLETE, not blocked. Run is 1.
+	KindTerminator
 	// KindArray: the run fills the next free slot of a fixed-size array, so the
 	// code may legitimately appear several times in one block.
 	KindArray
@@ -82,7 +94,7 @@ const (
 )
 
 // Run is the run length in 32-bit WORDS, including the code word, so a run of 6
-// carries 5 values. Variable-length codes have no entry.
+// carries 5 values. Markers and the terminator are run 1 (code word only).
 var Run = map[Code]int{
 	"att":  6,
 	"pdmg": 2,
@@ -236,10 +248,33 @@ var Run = map[Code]int{
 	// and all 40 advance by 2. So the run is 2 -- the code word and the
 	// sub-code -- and the sub-code is the value.
 	"getv": 2,
+	// The 19 markers and the one terminator all advance exactly one word (the
+	// code) and carry no values; their field is a bookmark into the runs that
+	// follow. 'ssou' additionally makes the parser return.
+	"ao":   1,
+	"bbuf": 1,
+	"cbuf": 1,
+	"efta": 1,
+	"eshp": 1,
+	"fitp": 1,
+	"hitm": 1,
+	"hntp": 1,
+	"lks2": 1,
+	"nbuf": 1,
+	"nmf":  1,
+	"nmh":  1,
+	"php1": 1,
+	"pmp1": 1,
+	"reqn": 1,
+	"rpkt": 1,
+	"slcc": 1,
+	"tctc": 1,
+	"trap": 1,
+	"ssou": 1,
 }
 
-// Kind classifies every top-level code. There are 169: 146 fixed-run, 20
-// variable-length, 2 arrays and the one two-word prefix.
+// Kind classifies every top-level code. There are 169: 146 fixed-run, 19
+// markers, 1 terminator ('ssou'), 2 arrays and the one two-word prefix.
 var Kind = map[Code]ParamKind{
 	"att":  KindFixed,
 	"pdmg": KindFixed,
@@ -387,26 +422,26 @@ var Kind = map[Code]ParamKind{
 	"hwit": KindFixed,
 	"bldr": KindFixed,
 	"msr":  KindFixed,
-	"ao":   KindVarLen,
-	"eshp": KindVarLen,
-	"tctc": KindVarLen,
-	"hitm": KindVarLen,
-	"rpkt": KindVarLen,
-	"php1": KindVarLen,
-	"pmp1": KindVarLen,
-	"ssou": KindVarLen,
-	"cbuf": KindVarLen,
-	"nbuf": KindVarLen,
-	"bbuf": KindVarLen,
-	"lks2": KindVarLen,
-	"reqn": KindVarLen,
-	"hntp": KindVarLen,
-	"slcc": KindVarLen,
-	"trap": KindVarLen,
-	"efta": KindVarLen,
-	"fitp": KindVarLen,
-	"nmf":  KindVarLen,
-	"nmh":  KindVarLen,
+	"ao":   KindMarker,
+	"eshp": KindMarker,
+	"tctc": KindMarker,
+	"hitm": KindMarker,
+	"rpkt": KindMarker,
+	"php1": KindMarker,
+	"pmp1": KindMarker,
+	"ssou": KindTerminator,
+	"cbuf": KindMarker,
+	"nbuf": KindMarker,
+	"bbuf": KindMarker,
+	"lks2": KindMarker,
+	"reqn": KindMarker,
+	"hntp": KindMarker,
+	"slcc": KindMarker,
+	"trap": KindMarker,
+	"efta": KindMarker,
+	"fitp": KindMarker,
+	"nmf":  KindMarker,
+	"nmh":  KindMarker,
 	"setv": KindArray,
 	"reqi": KindArray,
 	"getv": KindPrefix,
@@ -517,11 +552,13 @@ func CodeOf(w int32) Code {
 // that stopped it. A walk stops for exactly two reasons, and they mean
 // different things:
 //
-//   - a KindVarLen code, which is not an error -- the parser genuinely does not
-//     state that run's length, so nothing can know where the next one starts;
+//   - the 'ssou' terminator, which the parser returns at -- a COMPLETE walk;
 //   - a word that is no code at all, which IS an error and means either the
 //     block does not start where the caller thinks it does or the table is
 //     wrong. Across all 33,632 real rows this does not happen.
+//
+// Markers (KindMarker) do NOT stop a walk: they advance one word and the loop
+// continues, exactly as the parser does.
 //
 // Callers that only need to locate one parameter should prefer Find, which says
 // what to do about an incomplete walk.
@@ -532,14 +569,19 @@ func Walk(words []int32) (entries []Entry, stopped Code, complete bool) {
 			continue
 		}
 		c := CodeOf(words[i])
-		if Kind[c] == KindVarLen {
-			return entries, c, false
-		}
 		run, ok := Run[c]
 		if !ok || run < 1 {
+			// A word that is no code at all: the block does not start where the
+			// caller thinks, or the table is wrong. Across all 33,632 real rows
+			// this does not happen at ParamBlockColumn.
 			return entries, c, false
 		}
 		entries = append(entries, Entry{Code: c, Index: i, Run: run})
+		if Kind[c] == KindTerminator {
+			// The parser returns here; this run is the last in the block. The
+			// walk is COMPLETE, not blocked.
+			return entries, "", true
+		}
 		i += run
 	}
 	return entries, "", true

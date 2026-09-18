@@ -17620,3 +17620,36 @@ Applied **7 names** to the server project: `CGObj::IsFortressFlag`,
 `EventMobList_GetFixedDamage`, `EventMobList_BuildWinterSnowman`, `EventMobList_AddWinterSnowman`.
 The two slot functions had carried an interpolated `CGObjCOS_Summoned` attribution; a function in
 slot 244 of all 30 classes is a `CGObj` method.
+
+## The Param walk now finishes every real row: 19 markers, 1 terminator (2026-09-18)
+
+The last three rounds scoped skill-damage rules to "rows that walk cleanly" and decided the 1,265
+that stopped by a sound literal-absence fallback. This round removes the stopping: reading each of
+the 20 "variable-length" codes' branches in `RefSkill_ParseParams` shows 19 are **run-1 markers**
+(advance one word, point the field at the following runs, continue) and one, `ssou`, is a
+**terminator** (its branch is the only one that `return`s). Reclassified, **all 33,632 real rows
+walk to completion** with zero unrecognised codes — up from 96.2%.
+
+This was pure format understanding, but it changed exporter output on 134 rows, and each change was
+verified to be a CORRECTION rather than a regression before shipping:
+
+- **123 rows: `NoCombatParam` 0 → 1.** These carry `efr` in a mode ≠ 6 and no other combat
+  parameter, so the engine returns without a blow. The old literal-absence fallback saw the `efr`
+  code word present and conservatively left them "resolves a blow"; it could not evaluate the mode.
+  The complete walk can. Verified by walking three of them (`SKILL_ETC_DETECT_01_01`,
+  `SKILL_QNO_EU_EASTEU_14_02_01`, `SKILL_CH_WATER_HARMONY_D_01`) and reading their `efr` values —
+  all mode 1.
+- **11 rows: `HitCount` 1 → 0.** Monster skills (`MSKILL_SD_CHIEF_HYENA_*`,
+  `MSKILL_MOB_EV_WINTER_PRINCESS_*`) whose Param block is `ssou` at the first column — empty and
+  immediately terminated. The whole-row `mc` scan was reading a coincidental `28003` in a column
+  *past* the terminator. `HitsFor` maps 0 and 1 alike to one hit, so no behaviour change; the value
+  is just correct now.
+
+Both are the scan's documented failure mode — a code's integer appearing as data — which a walk
+that finishes does not have. The exporter keeps the scan as a fallback for input the walk cannot
+finish; no real row is such input any more. The invariants hold on the new output: NoCombatParam
+(2,792) ⊂ ZeroDamage (3,567), disjoint from FloorBlow (446), and the computed/floor/zero classes
+still partition all 33,632 rows.
+
+`skillparam.Walk`/`Find` are now reliable on every real row, and `KindVarLen` is gone, replaced by
+`KindMarker` and `KindTerminator`. Applied 0 names.

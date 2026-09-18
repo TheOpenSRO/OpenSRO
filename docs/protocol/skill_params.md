@@ -1202,3 +1202,45 @@ behaviour; it is recorded because it explains `skillparam.EfrCombatSelector` (th
 damage path is "area mode 6") and because it is the anchor for a targeting system when one is built.
 The field offsets (`0x28c`/`0x290`/`0x294` and the `+4` mode) are grounded; the mechanics of modes 6
 and 7 are read from one function and would want a second witness before implementation.
+
+## The 20 "variable-length" codes: 19 markers and 1 terminator (2026-09-18)
+
+The section above and the table below call 20 codes "variable-length" and say a walk cannot pass
+them. Reading each one's branch in the parser shows that is wrong for 19 of them, and it is why the
+walk stopped on 1,265 real rows.
+
+Each of the 19 advances the cursor by **exactly one word** — past the code word — points its field
+at what follows, and **the loop continues**:
+
+	cbuf: cursor += 1; skill[0x358] = cursor;   // then the loop reads *cursor as the next code
+
+So they carry no values of their own. The field is a bookmark into the rest of the stream, and the
+following `(code, value)` runs are walked by the same loop. As a run length that is **1**. They are
+markers, not variable-length. (Semantically they look like group markers — `cbuf`/`bbuf`/`nbuf`
+buff groups, `php1`/`pmp1` periodic HP/MP — but that is the mnemonic talking; what is grounded is
+the run length.)
+
+The one real exception is **`ssou`**, whose branch ends in `return;`. It is a **terminator**: the
+parser stops there, so it is always the last code in the block, and a walk that reaches it is
+**complete**, not blocked. It is also the only code whose branch returns — checked across all 20.
+
+**Measured.** Reclassifying the 19 as run-1 markers and `ssou` as a terminator, **every one of the
+33,632 real skill rows now walks to completion** — 33,340 to the natural end, 292 to `ssou` — with
+zero unrecognised codes (was 96.2% / 1,265 stopping). A wrong run length anywhere derails the rest
+of a row, so 33,632 clean traversals confirm every length they touch.
+
+**Two corrections to shipped exporter output followed**, both verified against the real table:
+
+- **123 skills flip `NoCombatParam` 0 → 1.** They carry `efr` in a mode other than 6 and no other
+  combat parameter, so `Combat_ResolveDamage` returns without a blow (`if (efr[1] != 6) return`).
+  The old walk stopped at a marker and fell back to literal-absence, which could not evaluate the
+  `efr` *mode* and left them at 0. The complete walk reads the mode and settles it. (`efr` mode is
+  itself grounded — see "efr is a targeting mode".)
+- **11 monster skills flip `HitCount` 1 → 0.** Their Param block is `ssou` at the very first column
+  — an empty, immediately-terminated block — and the whole-row `mc` scan was reading a coincidental
+  `28003` in an unparsed column *past* the terminator. `refdata.Skill.HitsFor` maps both 0 and 1 to
+  a single hit, so this is a cleaner value, not a behaviour change.
+
+Both are the scan's documented failure mode (a code's integer occurring as data), now avoided by a
+walk that finishes. The exporter keeps the scan only as a fallback for input the walk cannot finish
+— which no real row now is.
