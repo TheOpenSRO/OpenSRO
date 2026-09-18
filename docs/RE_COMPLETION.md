@@ -16643,3 +16643,39 @@ order — `WRITE_MINIDUMP` is `0x200` while sitting between `0x008` and `0x010` 
 layout as the bit sequence would have produced three wrong values.
 
 No names applied and no value changed.
+
+## 2026-09-18 — sweeping for installers, as the previous tick concluded
+
+Last tick ended with "the way to find a handler table here is to find its **installer**, not to
+scan for the table". This tick ran that sweep: every function storing four or more `.text`
+immediates into object fields.
+
+**Eleven installers**, holding **18 distinct pointers to addresses Ghidra never defined** — real
+game logic absent from the dump, with no call graph reaching it. All 18 created from their
+install sites; created 18, failed 0.
+
+	AI::CTactics::vslot_017                25 pointers  +0xe8..+0x124   3 undefined
+	GObjPC_InstallParamContributionCallbacks  23 pointers  +0xe0c..+0xe6c  (the abnormal-state table)
+	FUN_00427d90                            9 pointers  all at +0x18    9 undefined
+	FUN_0053ea60                            8 pointers  +0x128..+0x144  4 undefined
+	CMainProcess::FUN_00413590              4 pointers  all at +0x18    4 undefined
+
+**The bug that hid this the first time is worth restating.** An earlier pass over
+`GObjPC_InstallParamContributionCallbacks` reported *three* slots for a 23-slot table, because it
+required the pointer target to be an already-named function — which excluded precisely the
+undefined ones the sweep exists to find. Removing that filter is the whole difference between 3
+and 23, and between 0 and 18 here.
+
+**Only four were named.** `AITactics_Handler_0e8/0fc/110` and `SockDatagram_Handler_0d4` have an
+installer with a clear identity, so the name states the subsystem and the slot — the same
+standard as `AbnormalState_Apply20`. The other fourteen sit behind installers that are
+themselves unnamed (`FUN_00427d90`, `FUN_0053ea60`, `CMainProcess::FUN_00413590`), and a name
+built on an unidentified installer would say nothing, so they are left as created functions with
+their install site recorded in `missing_functions.tsv`. Several share one offset — four pointers
+all at `+0x18` means the installer picks among alternatives, not a table of distinct slots, which
+is another reason not to number them.
+
+The win is that all 18 are now defined and will appear in the next dump, where the ordinary
+levers can reach them.
+
+No value changed.
