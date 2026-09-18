@@ -15411,3 +15411,39 @@ found this tick, so the slot stays unnamed and the lead is written down instead.
 
 That is the same discipline that has now produced two retractions and this near-miss:
 shape proposes, a use-site disposes.
+
+## Quest slot 22 settled by reading the base — 91 names, after two refusals (2026-09-18)
+
+This slot was measured twice and declined twice: 73 of 94 overrides carry `SN_` dialogue
+ids, and 78% is not a family trait. **Both refusals were right, and both measured the
+wrong thing.**
+
+`CBasicQuest`'s own slot-22 implementation (`0x00920110`, inherited by 70+ classes) was
+never read. It settles the contract three ways:
+
+	logs   "fail pay quest : %s[%d] -> %s"
+	logs   "fail pay quest. because don`t have QuestData : %d[%d] - >%s"
+	string SN_TALK_COMMON_END                     the common closing line
+	loads  vtable offset 0x104 = slot 65 = CBasicQuest__PayQuest
+
+**Slot 22 is the quest's completion step**: it pays the quest and shows the closing
+dialogue. The dialogue ids I kept measuring are a *symptom* of completing a quest, not
+the slot's contract — which is exactly why the figure sat at 78% instead of at 100%.
+
+Named `<Class>::CompleteQuest` on the 91 classes with their own override (27 inherit the
+base, 14 were already named). **Applied 91, failed 0.**
+
+### Two probe errors inside one tick
+
+- The client lead from last tick is **blocked, with a reason**: `CNIFWnd`'s slot-0 static
+  is zero-filled in the image, so it is runtime-built like the server's table names, and
+  unlike the server there is no message naming it — its only uses pass it to string
+  helpers. Recorded rather than guessed by analogy.
+- My first generator reported **1** nameable where an independent count said **91**. An
+  in-place edit had corrupted its class list. The disagreement between two counts is what
+  exposed it; a clean rewrite gave 132 derived classes and 91 nameable, matching.
+
+The habit that keeps paying: when two measurements of the same thing disagree, stop and
+find out which is broken. That is now the fourth time this session it has caught
+something — twice my own probes, once a heuristic that would have mislabelled 500
+functions, and here a generator that would have silently under-delivered by 90.
