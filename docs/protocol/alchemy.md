@@ -142,12 +142,24 @@ reads the dword of elements 1–3 (`0x2c0`/`0x2e0`/`0x300`). This is why the
 sequential columns, so no field count maps them — confirmed below, and now with
 the mechanism rather than only the conclusion.
 
-**The array is not reinforce-specific.** Element 0 (`0x2a0`) is read elsewhere via
-`TimeSpan_SetDaysMinutesSeconds`, and `ExtractData`'s own error string for a bad
-element is *"invalid parameter has been assigned for item cooltime"* — so this is
-a general per-index array (item cooltimes and, in elements 1–3, the packed
-reinforce rates), one dword + one string per element. `LookupPackedRate` is one
-consumer of it, not its definition.
+**The array is not reinforce-specific.** Element 0 (`0x2a0`) is read elsewhere as
+an item **reuse cooltime in MINUTES** — the item-use result builder
+(`GObjPC::FUN_00440120`, `0x440120`) does, from the asm at `0x4402ea`,
+`TimeSpan_SetDaysMinutesSeconds(days=0, minutes=item[0x2a0], seconds=0)`, so the
+span is `item[0x2a0] * 60s`, and it is copied into the use-result packet at
+`+0x170..`. `ExtractData`'s own error string for a bad element is *"invalid
+parameter has been assigned for item cooltime"*. So the array is a general
+per-index structure — element 0 a minutes-scale reuse cooltime, elements 1–3 the
+packed reinforce rates — one dword + one string per element, and
+`LookupPackedRate` is one consumer of it, not its definition.
+
+The unit is worth pinning because it is easy to get wrong: the value is
+**minutes**, not seconds (so not an HP/MP-potion cooldown, which is seconds and
+category-based elsewhere) and not days (the `TimeSpan` helper's first argument is
+days, but the call passes the cooltime as its *minutes* argument). It is the
+long-cooldown reuse delay a scroll or special consumable carries. srrevamp
+imports neither this column nor enforces any item cooldown; `session.useitem`
+lets a consumable be used with no reuse delay at all. Recovered, not wired.
 
 **Progress on it, 2026-09-17.** `client/tools/re/fields.py` reads these
 deserializers mechanically and is now **validated**: it returns exactly the 58

@@ -17807,3 +17807,22 @@ consumer, not its definition.
 
 Docs only; `CEnchant_Reinforce::LookupPackedRate` was already named. Not wired -- srrevamp's alchemy
 uses its own rates and has no real per-item reinforce table loaded. Applied 0 names.
+
+## Item reuse cooltime is minutes-scale, at record+0x2a0 (2026-09-18)
+
+Following the strided array, element 0 (`item+0x2a0`) is the item's **reuse cooltime in minutes**,
+settled from the asm rather than the mnemonic. `GObjPC::FUN_00440120` (the item-use result builder)
+at `0x4402ea` calls `TimeSpan_SetDaysMinutesSeconds(days=0, minutes=item[0x2a0], seconds=0)` --
+`push 0 / push [esi+0x2a0] / xor ecx,ecx` -- so the span is `item[0x2a0] * 60s`, copied into the
+use-result packet at `+0x170`. The unit matters: it is minutes, not seconds (so NOT the HP/MP-potion
+cooldown, which is seconds and category-based) and not days (a mid-read error the asm corrected --
+the `TimeSpan` helper's first arg is days, but the call passes the cooltime as *minutes*). It is the
+long reuse delay a scroll or special consumable carries.
+
+**srrevamp gap, grounded and honest:** `session.useitem` enforces NO item cooldown -- a consumable
+can be used as fast as the client sends. Wiring the real one needs the itemdata column that feeds
+`item+0x2a0` imported into `refdata.Item`; the column is not identified (it is inside the
+loop-populated strided array, not a sequential field), so this is recorded as a grounded gap with
+its anchor, not a guessed constant. Two leads this tick -- teleport cost/level (cols 3/8/9) and the
+item cooltime -- were run down; teleport's consumer was not located and is unbuilt in srrevamp, and
+the cooltime is minutes-scale as above. Docs only, applied 0 names.
