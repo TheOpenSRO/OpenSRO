@@ -16545,3 +16545,36 @@ Wired through with three tests: the `pdmg`/`0x234` agreement, that every code is
 printable characters (the check that would have caught the stat-tag truncation published twice
 before it was found), and that the list stays distinct and full-sized. Full suite green, **53
 packages**.
+
+## 2026-09-18 — the withheld table, repaired and shipped
+
+Last tick built the skill-param field table, caught it producing a wrong row, and withheld all
+169. The fault was in the walker, not the evidence, so this tick fixed the walker.
+
+**The fix is a bound.** Each code's `je` leads to a leaf; the first walker scanned a fixed
+window forward from it and, where a leaf contained a loop, ran past into the next leaf's code.
+In a binary-search dispatcher **every leaf is a `je` target**, so sorting the targets gives each
+leaf a hard upper bound — the same bounding that was applied to the abnormal-state applier
+table, where it changed nothing and merely confirmed the result. Here it changes everything:
+
+	before   169 of 171 resolved, one collision ('setv' and 'slcc' both 0x494)
+	after    154 of 156 resolved, ZERO collisions
+
+`'slcc'` keeps `0x494`, which is what its leaf really stores —
+`mov DWORD PTR [esi+0x494],eax` followed immediately by a `jmp` out. `'setv'` is now **absent**
+rather than reassigned, which is the right outcome for a branch the method cannot read: it and
+`'getv'` are the only two, both loop rather than storing directly, and both are named in the
+package so a silent third absence is a test failure.
+
+The cross-check still holds: `'pdmg'` lands on `skill+0x234`, matching the annotation on
+`Formulae::Formula_SkillPhysDamage` from an earlier session and a different function.
+`'pmdg'`, its magical counterpart, is at `0x340`.
+
+**The guard test is the reason any of this is trustworthy, and it is kept.** The bad table
+looked entirely plausible and *passed the pdmg cross-check anyway* — the only thing that
+detected the overrun was two codes landing on one offset. A cross-check on one known row cannot
+find a walker that is wrong somewhere else.
+
+Shipped as `skillparam.Field`, 154 entries, with tests for distinctness, for the map and the
+code list agreeing, and for the two absences being exactly the named pair. Full suite green,
+53 packages.

@@ -3,33 +3,35 @@ package skillparam
 // Code is a four-character skill-parameter code out of skilldata's Params column.
 // The engine dispatches on them in SkillGlobal::RefSkill_ParseParams (0x00587630).
 //
-// HOW THESE WERE READ. Every `cmp reg,<imm32>` in that function whose immediate
-// decodes as four printable characters, big-endian -- the same encoding as the
-// stat tags, where decoding little-endian spells every code backwards. No control
-// flow is followed to produce this list, so nothing here depends on a walker.
+// HOW THE CODES WERE READ. Every `cmp reg,<imm32>` in that function whose
+// immediate decodes as four printable characters, big-endian -- the same encoding
+// as the stat tags, where decoding little-endian spells every code backwards. No
+// control flow is followed for this list.
 //
-// WHAT IS NOT HERE, AND WHY. A first version of this package also carried the
-// skill-record field each code writes, obtained by following each branch to the
-// store its leaf performs. It is withheld. A guard test caught 'setv' and 'slcc'
-// resolving to the same offset, and reading them shows why: 'setv's branch
-// contains a loop, so the walk ran past the branch into unrelated code. One
-// demonstrated wrong row means the others cannot be trusted individually, and a
-// table that is right in most places is worse than no table. The single offset
-// below survives because a different function, annotated in an earlier session,
-// states it independently.
+// HOW THE FIELDS WERE READ, AND THE BUG THAT SHAPED IT. Each code's `je` leads to
+// a leaf that stores into the skill record. A first attempt walked forward a fixed
+// window from each leaf and was WITHHELD: a guard test caught 'setv' and 'slcc'
+// resolving to the same offset, because 'setv's branch contains a loop and the
+// walk ran past it into 'slcc's code. The fix is to bound each leaf by the next
+// leaf: in a binary-search dispatcher every leaf is a `je` target, so the sorted
+// targets give a hard upper bound. With that bound there are **no collisions at
+// all**, 'slcc' keeps the 0x494 its leaf really stores, and 'setv' is absent
+// rather than re-guessed.
 //
-// The MEANING of a code is likewise not claimed. 'atca' and 'lkdh' are read as
-// text and nothing infers a semantic from the mnemonic.
+// WHAT VALIDATES IT. Formulae::Formula_SkillPhysDamage was annotated in an earlier
+// session, from a different function, as being called "when the skill carries
+// 'pdmg' (skill+0x234)". This table, built without reference to that, puts 'pdmg'
+// at 0x234.
+//
+// WHAT IS NOT CLAIMED is what a code MEANS. 'atca' and 'lkdh' are read as text;
+// nothing here infers a semantic from the mnemonic.
 type Code string
 
-// PhysDamage carries a skill's physical damage. Formulae::Formula_SkillPhysDamage
-// is annotated -- from a different function, before this package existed -- as
-// being called "when the skill carries 'pdmg' (skill+0x234)", and the branch walk
-// independently put 'pdmg' at 0x234. That agreement is why this one is kept.
-const PhysDamage Code = "pdmg"
-
-// PhysDamageField is the skill-record offset PhysDamage fills.
-const PhysDamageField = 0x234
+// PhysDamage carries a skill's physical damage; PhysDamageField is where it lands.
+const (
+	PhysDamage      Code = "pdmg"
+	PhysDamageField      = 0x234
+)
 
 // Codes is every parameter code the parser recognises, in sorted order.
 var Codes = []Code{
@@ -189,4 +191,164 @@ var Codes = []Code{
 	"tpdd",
 	"tran",
 	"trap",
+}
+
+// Field maps a code to the skill-record offset its leaf stores into. Two codes
+// the parser recognises are absent -- 'setv' and 'getv', whose branches loop
+// rather than storing directly -- so a lookup here can miss even for a real code.
+var Field = map[Code]int{
+	"BDMD": 0x554,
+	"BLAT": 0x530,
+	"BSHP": 0x534,
+	"CBAT": 0x510,
+	"CBRA": 0x50c,
+	"COAT": 0x4f0,
+	"DGHR": 0x520,
+	"DSCR": 0x550,
+	"DSER": 0x54c,
+	"DTAT": 0x528,
+	"DTDR": 0x52c,
+	"E1SA": 0x4d4,
+	"E2AA": 0x4dc,
+	"E2AH": 0x4e0,
+	"E2SA": 0x4d8,
+	"EAAT": 0x4ec,
+	"FIAT": 0x4f4,
+	"HLAT": 0x560,
+	"HLBP": 0x56c,
+	"HLFS": 0x564,
+	"HLMD": 0x55c,
+	"HLMI": 0x568,
+	"HLRU": 0x558,
+	"HLSM": 0x570,
+	"LIAT": 0x4f8,
+	"MAAT": 0x574,
+	"MUAT": 0x540,
+	"MUCR": 0x548,
+	"MUER": 0x544,
+	"RPBU": 0x508,
+	"RPDU": 0x500,
+	"RPTU": 0x504,
+	"SAAA": 0x538,
+	"STDU": 0x518,
+	"STSP": 0x514,
+	"TRAA": 0x53c,
+	"WIMD": 0x4e4,
+	"WIRU": 0x4e8,
+	"abir": 0x3f8,
+	"abnb": 0x41c,
+	"alcu": 0x4b4,
+	"apau": 0x2d8,
+	"apru": 0x2d4,
+	"atca": 0x3bc,
+	"bbuf": 0x360,
+	"bgra": 0x2f8,
+	"bldr": 0x58c,
+	"cbuf": 0x358,
+	"chcr": 0x368,
+	"cmcr": 0x36c,
+	"cnsm": 0x2a0,
+	"cshp": 0x46c,
+	"csit": 0x460,
+	"csmd": 0x468,
+	"csmp": 0x470,
+	"cspd": 0x464,
+	"cssr": 0x45c,
+	"curt": 0x40c,
+	"dcmp": 0x2a8,
+	"dcri": 0x42c,
+	"defp": 0x25c,
+	"defr": 0x260,
+	"dgmp": 0x4cc,
+	"dmgr": 0x418,
+	"dmgt": 0x3dc,
+	"dru2": 0x3e8,
+	"dtnt": 0x3d0,
+	"dttp": 0x424,
+	"dura": 0x280,
+	"efta": 0x4b0,
+	"eshp": 0x298,
+	"esht": 0x29c,
+	"expi": 0x3ec,
+	"expu": 0x580,
+	"fitp": 0x578,
+	"heal": 0x324,
+	"hide": 0x428,
+	"hitm": 0x2c8,
+	"hntp": 0x48c,
+	"hst2": 0x2bc,
+	"hst3": 0x2c0,
+	"hste": 0x2b8,
+	"hwir": 0x4d0,
+	"hwit": 0x588,
+	"inti": 0x3f4,
+	"irgc": 0x2d0,
+	"lfst": 0x400,
+	"lkag": 0x47c,
+	"lkcp": 0x378,
+	"lkdr": 0x478,
+	"lks2": 0x374,
+	"lnks": 0x370,
+	"luck": 0x4b8,
+	"mcap": 0x4a8,
+	"mscc": 0x4c0,
+	"msch": 0x4a4,
+	"msid": 0x4c4,
+	"mstc": 0x4bc,
+	"mwdt": 0x3d8,
+	"mwhh": 0x328,
+	"mwhs": 0x404,
+	"mwmh": 0x32c,
+	"mwtt": 0x3c4,
+	"nbuf": 0x35c,
+	"odar": 0x270,
+	"onff": 0x284,
+	"ovl2": 0x37c,
+	"pcdu": 0x364,
+	"pchr": 0x498,
+	"pdm2": 0x238,
+	"pdmg": 0x234,
+	"php1": 0x348,
+	"pmdg": 0x340,
+	"pmdp": 0x344,
+	"pmhp": 0x338,
+	"pmmp": 0x33c,
+	"pmp1": 0x34c,
+	"pola": 0x304,
+	"puls": 0x384,
+	"pwdt": 0x3d4,
+	"pwtt": 0x3c0,
+	"qest": 0x49c,
+	"rcur": 0x414,
+	"real": 0x300,
+	"reat": 0x2fc,
+	"reqa": 0x3b8,
+	"reqc": 0x39c,
+	"resu": 0x330,
+	"rhru": 0x2a4,
+	"rmut": 0x4ac,
+	"rpkt": 0x2cc,
+	"saps": 0x258,
+	"scls": 0x380,
+	"slcc": 0x494,
+	"spda": 0x264,
+	"ssou": 0x354,
+	"stns": 0x448,
+	"stri": 0x3f0,
+	"summ": 0x308,
+	"tant": 0x3c8,
+	"tcmd": 0x488,
+	"tctc": 0x2c4,
+	"tel2": 0x2f0,
+	"tel3": 0x2f4,
+	"tele": 0x2ec,
+	"terd": 0x2dc,
+	"thld": 0x484,
+	"thrd": 0x2e0,
+	"tkss": 0x3fc,
+	"tnt2": 0x3cc,
+	"tpad": 0x2e8,
+	"tpdd": 0x2e4,
+	"tran": 0x408,
+	"trap": 0x4a0,
 }

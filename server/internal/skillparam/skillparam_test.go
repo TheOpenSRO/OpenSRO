@@ -51,3 +51,46 @@ func TestCodesAreDistinctAndPlausiblyComplete(t *testing.T) {
 		t.Errorf("only %d codes; the parser compares 156 distinct four-character immediates", len(Codes))
 	}
 }
+
+// TestFieldOffsetsAreDistinct is the guard that caused the first version of this
+// table to be withheld: two codes resolving to one offset means a branch walk ran
+// past its leaf into the next one. It is kept because it is the only thing that
+// detects that failure -- the table looked entirely plausible with the bad row in
+// it, and the pdmg cross-check passed anyway.
+func TestFieldOffsetsAreDistinct(t *testing.T) {
+	seen := map[int]Code{}
+	for c, off := range Field {
+		if prev, dup := seen[off]; dup {
+			t.Errorf("codes %q and %q both resolve to skill+%#x; a leaf walk overran", prev, c, off)
+		}
+		seen[off] = c
+	}
+}
+
+// TestEveryFieldKeyIsAKnownCode stops the map and the list drifting apart.
+func TestEveryFieldKeyIsAKnownCode(t *testing.T) {
+	known := map[Code]bool{}
+	for _, c := range Codes {
+		known[c] = true
+	}
+	for c := range Field {
+		if !known[c] {
+			t.Errorf("Field has %q, which is not in Codes", c)
+		}
+	}
+	// The two absences are deliberate and named, so a silent third one is a bug.
+	var missing []Code
+	for _, c := range Codes {
+		if _, ok := Field[c]; !ok {
+			missing = append(missing, c)
+		}
+	}
+	if len(missing) != 2 {
+		t.Errorf("codes without a field: %v; expected exactly getv and setv, whose branches loop", missing)
+	}
+	for _, c := range missing {
+		if c != "getv" && c != "setv" {
+			t.Errorf("%q has no field but is not one of the two known loop branches", c)
+		}
+	}
+}
