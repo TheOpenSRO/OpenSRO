@@ -15275,3 +15275,36 @@ made-up suffix. The collision check is now part of the append step, not an after
 
 `client/tools/re/propagate_slot_names.py` keeps the sweep so the next pass that names a
 base class can re-run it and collect whatever newly propagates.
+
+## 201 class-name accessors, found by asking where naming one slot pays most (2026-09-18)
+
+Last tick's conclusion was that propagation is exhausted because **base classes** are
+unnamed. So this tick measured the payoff directly: for every ancestor, how many derived
+overrides sit on a slot that nothing in the hierarchy names. The ranking:
+
+	server   CBasicQuest 495, CDBRecStream 292, CDBRecord 249, AQ_Base 186
+	client   CNIFWnd 514, CNIFMainFrame 408, CNIFFrame 262, CIFWnd 137 (123 of them on slot 0)
+
+Reading the top server base settled it immediately:
+
+	CDBRecStream::vslot_000:   return &PTR_s_CDBRecStream_00add900;
+
+**Slot 0 returns a pointer to a string naming the class.** Measured across the whole
+binary rather than generalised from one: **205 classes have a slot-0 function of that
+shape, and every one returns its own class's name.** (Twelve looked like mismatches and
+were not — Ghidra truncates long symbols, and the class names were truncated too.)
+
+Named `<Class>::GetClassName` on **201** of them. **Applied 201, failed 0.** Four were
+skipped: one function shared by several classes, three where the dump attributes the
+function to a different class than the vtable does.
+
+This is the largest single naming pass of the session, and it came from a measurement
+rather than a hunch — the previous two ticks had been guessing which family to try next.
+
+### What this does not do
+
+It names an accessor, not game logic. Its value is that a class's *own name* is now
+attached to a function in each of 201 classes, which makes the next questions cheaper —
+and the same measurement points at the remaining targets: `CBasicQuest` slot 22 (105
+overrides, still the biggest and still declined at 73/94 evidence), `CDBRecord` slots 2
+and 3, `AQ_Base`'s four, and on the client `CNIFWnd` slots 0-2 and 10.
