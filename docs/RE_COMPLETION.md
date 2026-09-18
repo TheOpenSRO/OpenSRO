@@ -15673,3 +15673,46 @@ Named: `GObjPC_HandleIncreaseStr`, `GObjPC_HandleIncreaseInt`, `Skill_HandleMast
 Wired into `internal/proto` as `OpIncreaseStr/IntRequest` and their acks, with a test that
 each pair lands on dispatch slots 0x050 and 0x051 and that the two are adjacent — the
 swap being the one mistake that would look right. Full suite green, 52 packages.
+
+## 2026-09-18 — the manager singletons, and the subsystem of 50 handlers
+
+The handlers-by-named-callee lever surfaced six thunks that all forwarded into
+`COpenMarketMgr__On*Req` after asserting the same global. That global is the lever: **the
+server reaches every subsystem through a singleton pointer**, so identifying the globals
+identifies the subsystem of every handler that touches one.
+
+Each manager nulls its own global in its destructor, and MSVC writes the vtable first, so
+one function states both facts at once. With RTTI already giving vtable → class, the
+sweep resolves **24 of ~39 singleton globals** — see `docs/protocol/manager_singletons.md`
+for the method, the table and the fifteen left unproven.
+
+**The strict test matters.** A loose version — any known vtable anywhere in the writing
+function — resolved 27 globals but misattributed `DAT_00d6a8dc` and `DAT_00d6a8e8` to
+classes those functions merely construct in passing. Requiring the vtable to land on *the
+same object* that is stored to the global rejects both. Two probe bugs also turned up,
+each one returning quietly fewer results rather than failing: the `a3` accumulator store
+prints without a `DWORD PTR` prefix, and the destructors clear the global with an
+immediate rather than a zeroed register.
+
+Of 128 still-unnamed dispatch handlers, **69 reach for one of these singletons**, and the
+index blocks line up with the subsystems — guild `0x0f1`–`0x114` / `0x250`–`0x258`, party
+`0x060`–`0x06d`, messenger `0x302`–`0x30c`, camp `0x477`–`0x47e`, trade `0x081`–`0x084`,
+open market `0x506`–`0x50c`. **50 handlers named**, plus 22 singleton getters renamed from
+`GetSingleton_<address>` to `GetSingleton_<class>`. Applied 72, forced 22, failed 0.
+
+Two exclusions keep the inference honest. Infrastructure singletons (`CLogBuilder`,
+`CMainProcess`, `COverlappedJobMgr`, …) are reached from everywhere and identify nothing.
+And `SiegeFortressMgr::IsWarPeriodActive` is a **guard**, not a subject: the first pass
+named handler `0x053` `…SiegeMsg_053` on that basis alone, which is wrong, and the rule
+that replaced it requires a second, non-guard reach into the manager.
+
+Only the six open-market handlers are named for the operation they perform, because their
+callee states it (`OnPutonGoodsReq`, `OnPurchaseGoodsReq`, …). The other 44 are named for
+subsystem and dispatch index only — `GObjPC_HandleGuildMsg_0f9` — since that is all the
+singleton proves. **The individual operations remain open.**
+
+A stale snapshot nearly cost accuracy here: `server_handlers.tsv` still listed 18 handlers
+as unnamed that later ticks had named, and the generator would have overwritten
+`SiegeFortress_DispatchCommand` with a worse name. The generator now filters against the
+live index, and the table's name column has been refreshed — **84 of 162 rows** now carry
+a real name, up from 34.

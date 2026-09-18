@@ -1,4 +1,112 @@
-# The DB table registry at `DAT_00d6aa18`
+# The server's manager singletons
+
+**Recovered 2026-09-18.** The server reaches every subsystem through a global pointer,
+and a handler that asserts one of these globals belongs to that subsystem. This page
+first documented only the DB table registry, because the singletons themselves were not
+identified; they are now, and the registry section is kept below.
+
+## How each one is proven
+
+Each manager is a singleton that registers itself on construction and **nulls its global
+in its own destructor**. MSVC emits the destructor with the vtable store first, so the
+function that writes the global also states, structurally, which class it belongs to:
+
+	5bdf17  mov DWORD PTR [ecx],0xafe604   ; vtable installed on `this`
+	5bdf36  mov DWORD PTR ds:0xd6a990,0x0  ; the same object's global, cleared
+	5bdf4f  ret
+
+RTTI already maps vtable -> class (`/var/tmp/vt_server.json`, 977 classes), so
+`0xafe604` names it: `DAT_00d6a990` holds a **CPartyManager**.
+
+The test is deliberately narrow: **the vtable must be installed on the same object that
+is stored to the global**, tracked by register aliasing. A looser test — "any known
+vtable anywhere in the writing function" — resolved 27 globals but got `DAT_00d6a8dc`
+and `DAT_00d6a8e8` wrong, attributing a class that the function merely constructed in
+passing. The strict test rejects both attributions and settles `d6a8dc` from its
+destructor instead. Where the two disagreed, the strict answer is the one recorded here.
+
+Two probe bugs were found and fixed while building the sweep, both of which silently
+returned *fewer* results rather than failing:
+
+- the `a3` accumulator store disassembles as `mov ds:0x…,eax` with **no `DWORD PTR`
+  prefix**, so a regex requiring the prefix missed the most common store form;
+- the destructors null the global with an **immediate** (`mov DWORD PTR ds:0x…,0x0`),
+  not a zeroed register, so a null-detector looking only for `xor r,r` saw none of them.
+
+## The table
+
+| Global | Class | Vtable store proving it |
+|---|---|---|
+| `DAT_00d6a8dc` | `CMainProcess` | `0x004027bb` |
+| `DAT_00d6a8e4` | `CFormulae` | `0x0040db27` |
+| `DAT_00d6a900` | `CLobby` | `0x0043727b` |
+| `DAT_00d6a94c` | `CLogBuilder` | `0x00466e47` |
+| `DAT_00d6a950` | `COverlappedJobMgr` | `0x0046f0eb` |
+| `DAT_00d6a958` | `COpenMarketMgr` | `0x00478f87` |
+| `DAT_00d6a95c` | `CTradeMgr` | `0x0047f3ca` |
+| `DAT_00d6a960` | `CGObjFactory` | `0x004896e7` |
+| `DAT_00d6a964` | `CUserMsgDumpMgr` | `0x0052736a` |
+| `DAT_00d6a968` | `CMap` | `0x005303ca` |
+| `DAT_00d6a974` | `CAINavDataManager` | `0x0055609a` |
+| `DAT_00d6a988` | `CAssociationReputationMgr` | `0x005b9707` |
+| `DAT_00d6a98c` | `CCallUserMgr` | `0x005b9dd7` |
+| `DAT_00d6a990` | `CPartyManager` | `0x005bdf17` |
+| `DAT_00d6a994` | `CGuildManager` | `0x005c5cba` |
+| `DAT_00d6a998` | `CMessengerMgr` | `0x005d73d7` |
+| `DAT_00d6a99c` | `CTrainingCampManager` | `0x005dea4a` |
+| `DAT_00d6a9a0` | `CVoteManager` | `0x005e7de7` |
+| `DAT_00d6a9a4` | `CGameWorldMgr` | `0x005f5aea` |
+| `DAT_00d6a9a8` | `CPublicInstanceWorldMgr` | `0x00606bba` |
+| `DAT_00d6a9ac` | `CEventDaemonMgr` | `0x0061179a` |
+| `DAT_00d6a9e4` | `CGShopFactory` | `0x00619bd7` |
+| `DAT_00d6a9ec` | `CSiegeFortressMgr` | `0x0062e417` |
+| `DAT_00d6aa00` | `CServerEvent_Middleman` | `0x0066f19a` |
+
+`DAT_00d6a9ec` reaches the same conclusion by the same shape; its `xor ebx,ebx` sits
+0x3e bytes before the store, with no reassignment in between.
+
+## What is NOT resolved
+
+These globals have a `GetSingleton_*` reader but no destructor that both installs a
+vtable and clears them, so they are left unnamed rather than guessed:
+
+	DAT_00d6a8e8
+	DAT_00d6a954
+	DAT_00d6a96c
+	DAT_00d6a970
+	DAT_00d6a978
+	DAT_00d6a97c
+	DAT_00d6a980
+	DAT_00d6a984
+	DAT_00d6a9b4
+	DAT_00d6a9f4
+	DAT_00d6a9f8
+	DAT_00d6a9fc
+	DAT_00d6aa14
+	DAT_00d6aa18
+	DAT_00d6aa1c
+
+`DAT_00d6aa18` is among them. The *loose* sweep pointed at `CShardDB` from its writer and
+`CTableKeeper` from a nearby constructor, which is exactly the ambiguity the strict test
+exists to reject. The registry section below rests on different evidence — the assert
+strings and `GetTableName` — and is unaffected.
+
+## What this settled
+
+Of the 128 dispatch handlers still unnamed, **69 reach for one of these singletons**, and
+the index blocks line up with the subsystems: guild `0x0f1`–`0x114` and `0x250`–`0x258`,
+party `0x060`–`0x06d`, messenger `0x302`–`0x30c`, training camp `0x477`–`0x47e`, trade
+`0x081`–`0x084`, open market `0x506`–`0x50c`. 50 were named from this.
+
+Infrastructure singletons (`CLogBuilder`, `CMainProcess`, `COverlappedJobMgr`,
+`CGObjFactory`, `CMap`, `CFormulae`, …) are reached from everywhere and identify nothing,
+so they are excluded from that inference. `CSiegeFortressMgr` needed the same treatment
+for a different reason: `SiegeFortressMgr::IsWarPeriodActive` is a **precondition guard**
+used by guild and world handlers, so a handler counts as siege only when it reaches the
+manager for something else too. Handler `0x053` was named `…SiegeMsg_053` by the first
+pass on exactly that mistake, and is excluded by the rule that replaced it.
+
+## The DB table registry at `DAT_00d6aa18`
 
 **Refined 2026-09-18.** This page first called the array "manager singletons". It is more
 specific than that: `CGameServer::vslot_011` is the DB initialisation step — it connects
