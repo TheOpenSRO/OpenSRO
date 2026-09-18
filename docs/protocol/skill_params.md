@@ -171,6 +171,11 @@ Codes at verified code positions, most common first:
 | `defp` | 0x25c | 4 | 373 |
 | `ps` | 0x31c | 4 | 353 |
 
+`dura` is **duration in milliseconds**, not durability: `CGSkillObject::Update` compares its
+first value with `GetTickCount() - start`, and `FUN_0059b8d0` prints `[0]/1000`. Settled by
+those use-sites on 2026-09-18 while reading durability consumption (`durability.md`), which
+turned out to come from hit counters in `Combat_ResolveDamage`, not from any skill parameter.
+
 This doubles as an end-to-end test of the recovered format: a wrong run length
 anywhere in a row derails the rest of the walk, so 19,839 clean traversals are
 19,839 independent confirmations of every length they touched.

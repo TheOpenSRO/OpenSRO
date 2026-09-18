@@ -17961,3 +17961,27 @@ the damage pipeline audit (floor band fixed, mitigation/level/crit/berserk/HP-MP
 penalty verified) now stands entirely against the authoritative binary. `.rdata` constant reads from
 the on-disk exe are safe; only code-immediate rates need per-value confirmation against the dump.
 Docs only; 0 names.
+
+## What consumes durability (2026-09-18)
+
+`SYSTEMS.md`'s durability row said consumption was "entirely unread". It is read
+now, by following the field's writers rather than a name: the item record's
+`Data` (`+0x38`, dirty bit 4) is only ever moved by `GItemEquip::AddDurability`
+(`0x00496d90`, clamp `[0, this+0x194]`, broken flag at 0), whose one caller
+`CGObjPC::ChangeItemDurability` (`vslot_312`, `0x004e7100`) removes a broken
+item's stats from the ParamKeeper and tells the client with `0x3052 [u8 slot]
+[s32 durability]`. Every loss is **-1**, rolled by `GObjPC::RollDurabilityLoss`
+(`0x004a9a90`) at `min(2*rate, 100)`% -- weapon slot 6 for kind 0, the first of
+slots 0..7-except-6 to pass for kind 1, shield slot 7 for kind 2 -- and the
+**rates are hit counters** written by `Combat_ResolveDamage`: the attacker's
+`action+6` +1 per landed hit, a target's `+0x15` +1 per landed hit, `+0x14` +1
+per blocked hit. A timed skill effect (`0x004a9a10`) can also drain the weapon
+or shield one point a tick. Full spec: `docs/protocol/durability.md`.
+
+Two things this settled by use-site rather than by name: the skill parameter
+`'dura'` is a **duration in ms** (`CGSkillObject::Update` clocks it), not
+durability; and `GObjPC::FUN_005a1a20` is the percentage dice (`RollChance`),
+which is why it gates the block roll and both drains alike. Six names added to
+`recovered_names.tsv`. Not wired: srrevamp still has no per-instance durability,
+so nothing in the server changes until that exists; the row stays PARTIAL with
+that as its next probe.

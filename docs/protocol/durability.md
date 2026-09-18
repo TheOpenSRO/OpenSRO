@@ -142,6 +142,101 @@ follows from `missing = item[0x194] - itemData[0x38]` needing to be positive for
 there to be anything to repair, and from the division producing a sensible
 per-point price only in that direction. Nothing names either field.
 
+## What consumes durability (2026-09-18)
+
+Read from the Ghidra dump by following the **writers** of the durability field,
+not by guessing a mechanic. The chain, innermost first:
+
+### 1. The field and its persistence
+
+An item instance is a `CInstanceItem` (`CDBRecord`): its `Data` column sits at
+`record+0x38` -- durability for equipment, stack count for expendables (the
+server's own refdata check says "a durability or maxstack of a item"). The
+record's `+8` word is a per-field dirty mask; `Data` is bit **4** (`CInstanceItem
+::vslot_005` Reset and `vslot_008` CopyFrom set 4 / 8 / 0x10 / 0x20 field by
+field). A `GItemEquip` reaches its record through `+0x34`; its **max**
+durability is `GItemEquip+0x194` (`[0x65]`), the value `ComputeRepair` reads
+too, recomputed by `FUN_00496a70` from the item's `'dura'` magic option
+(`GItemEquip::FUN_00495ca0` then clamps `Data` down to a lowered max).
+
+### 2. `GItemEquip::AddDurability(delta)` -- `0x00496d90`
+
+```
+new = Data + delta                        ; record+0x38
+if max < 0: log CLAMP (GItemEquip.cpp:925), new = 0
+new = clamp(new, 0, max)                  ; max = this+0x194
+FUN_00495980(new < 1)                     ; the BROKEN flag
+if new != Data and (DAT_00d2043c & 1):    ; a server-wide gate, unidentified
+    record+8 |= 4 ; record+0x38 = new     ; persist
+return new
+```
+
+The early `return 1` when virtual slot 36 answers non-zero is an item that has
+no durability to lose (the slot's exact name is unread).
+
+### 3. `CGObjPC::ChangeItemDurability(slot, delta)` -- `CGObjPC::vslot_312`, `0x004e7100`
+
+Looks the item up in the slot; requires virtual slot 33 (equipment) true;
+**refuses a decrease when `Data` is already 0**; applies `AddDurability`. For an
+equipment slot (`< 13`) it then watches the zero crossing: falling to 0 calls
+`RemoveParamKeeperItemEntry` -- **a broken item stops contributing its stats** --
+and rising from 0 re-adds it (`FUN_004e3760`), followed by a stat rebuild
+(`GObjPC::FUN_0059f0e0`) and publish (vslot `0x538`). Finally it sends the client
+opcode **`0x3052` = `[u8 slot][s32 durability]`**.
+
+### 4. `GObjPC::RollDurabilityLoss(kind, rate)` -- `0x004a9a90`
+
+PCs only (vtable slot 7, `IsPC`). `chance = min(2 * rate, 100)` percent, rolled
+as `rand() % 100 + 1 <= chance`. Every loss is **-1**, through
+`ChangeItemDurability`:
+
+| kind | what rolls | on success |
+|---|---|---|
+| 0 | one roll | **slot 6, the weapon**, -1 |
+| 1 | slots 0..7 except 6, each rolled **in order** | the **first** to pass, -1 -- one piece per event |
+| 2 | one roll | **slot 7, the shield**, -1 |
+
+The slot numbers are the equipment slots (`EquipmentNet.SLOT_*`: 0 helm, 1 mail,
+2 shoulder, 3 gauntlet, 4 pants, 5 boots, 6 weapon, 7 shield).
+
+### 5. Where the rates come from -- `Combat_ResolveDamage`, `0x0058e5f0`
+
+The rates are **hit counters**, not table values. At entry the action record's
+weapon byte (`action+6`, `action = ctx+0x50`) is zeroed (line 150 of the
+decompile) and each target's effect block zeroes `+0x14` / `+0x15`. Then, per
+target:
+
+- a **landed hit** (state byte 0): `action+6 += 1` (line 677) and that target's
+  armour byte `+0x15 += 1` (line 690);
+- a **blocked hit** (state byte 2; the block roll is `GObjPC::RollChance`,
+  `0x005a1a20` -> `FUN_00599cc0`, the dice the critical-hit section already
+  reads): that target's shield byte `+0x14 += 1` (line 459), and its armour byte
+  too when `pc[0x34b] != 0` (line 465; that flag is not identified).
+
+The apply pass (`FUN_00593800`) then spends them: **once per action** for the
+attacker, `RollDurabilityLoss(0, action+6)` -- so a single-target blow gives the
+weapon a 2% roll and a five-target skill a 10% one -- and **per target**
+`RollDurabilityLoss(1, +0x15)` and `RollDurabilityLoss(2, +0x14)` on the
+*target*. For one plain hit the victim's worn pieces are rolled in slot order at
+2% each, first success loses the point (with all seven worn that is
+1 - 0.98^7 = 13.2% that some piece loses one); a blocked hit costs the shield a
+2% roll instead.
+
+### 6. A timed drain -- `0x004a9a10` from `TickTimedSkillEffect`
+
+A timed skill effect whose parameter record's first word is **1** (weapon, slot
+6) or **2** (shield, slot 7) takes 1 durability off that slot per tick when it
+holds a working item and a `RollChance` passes. The chance is carried in a
+register the decompiler does not show; not recovered.
+
+### Negative result: skill `'dura'` is not durability
+
+The skill parameter `'dura'` (offset 0x280, two values, 1,979 skills) looked like
+the obvious source and is not: `CGSkillObject::Update` compares its first value
+against `GetTickCount() - start`, and `FUN_0059b8d0` divides it by 1000 for a
+message. It is a **duration in milliseconds**. The item magic option spelled the
+same way is the "Durability +%" attribute (`dec-dura` in the option dumper).
+
 ## Other repair paths, unread
 
 | function | what |
@@ -152,8 +247,12 @@ per-point price only in that direction. Nothing names either field.
 
 ## Not recovered
 
-- **What consumes durability.** This page is entirely about restoring it;
-  nothing here says how much a hit, a death or a cast takes off.
+- **Consumption is read (above); four small gates in it are not named:** the
+  server-wide `DAT_00d2043c & 1` that permits the persisted write, `pc[0x34b]`
+  (armour also rolls on a block when it is set), the chance fed to the timed
+  drain's `RollChance`, and the two item virtuals (slot 33 "is equipment",
+  slot 36 "has no durability"). Nothing here takes durability off on death or
+  on a cast; only hits, blocks and that timed effect do.
 - **Which reference-data column feeds `refRecord[0xa4]`.** The same gap
   `docs/protocol/alchemy.md` has for its packed success rates: the record is
   deserialised field-by-field by `RefObjItem::ExtractData`, so mapping an offset
