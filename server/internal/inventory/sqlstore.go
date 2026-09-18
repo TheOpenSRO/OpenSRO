@@ -216,6 +216,105 @@ func (s *SQLStore) RemoveItem(ctx context.Context, characterID int64, slot int, 
 	return tx.Commit()
 }
 
+// MoveItem implements Store. See the interface for the three outcomes. One
+// transaction, so a swap can never be observed half-done.
+func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int) error {
+	if from < 0 || from >= SlotsPerCharacter || to < 0 || to >= SlotsPerCharacter {
+		return ErrInvalidSlot
+	}
+	if from == to {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("inventory: beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	readSlot := func(slot int) (itemID int64, qty int, found bool, err error) {
+		err = tx.QueryRowContext(ctx,
+			fmt.Sprintf(`SELECT item_id, quantity FROM %s WHERE character_id = $1 AND slot = $2`, s.table),
+			characterID, slot).Scan(&itemID, &qty)
+		if err == sql.ErrNoRows {
+			return 0, 0, false, nil
+		}
+		if err != nil {
+			return 0, 0, false, fmt.Errorf("inventory: reading slot %d: %w", slot, err)
+		}
+		return itemID, qty, true, nil
+	}
+	srcItem, srcQty, srcFound, err := readSlot(from)
+	if err != nil {
+		return err
+	}
+	if !srcFound {
+		return ErrSlotEmpty
+	}
+	dstItem, dstQty, dstFound, err := readSlot(to)
+	if err != nil {
+		return err
+	}
+	space := 0
+	if dstFound && dstItem == srcItem {
+		space = s.mergeSpace(ctx, srcItem, dstQty)
+	}
+
+	switch {
+	case !dstFound:
+		// Plain move into a free slot.
+		if _, err := tx.ExecContext(ctx,
+			fmt.Sprintf(`UPDATE %s SET slot = $1 WHERE character_id = $2 AND slot = $3`, s.table),
+			to, characterID, from); err != nil {
+			return fmt.Errorf("inventory: moving slot %d to %d: %w", from, to, err)
+		}
+	case space > 0:
+		// Same item with room: merge what fits, the rest stays behind.
+		moved := min(space, srcQty)
+		if _, err := tx.ExecContext(ctx,
+			fmt.Sprintf(`UPDATE %s SET quantity = quantity + $1 WHERE character_id = $2 AND slot = $3`, s.table),
+			moved, characterID, to); err != nil {
+			return fmt.Errorf("inventory: merging into slot %d: %w", to, err)
+		}
+		if moved == srcQty {
+			if _, err := tx.ExecContext(ctx,
+				fmt.Sprintf(`DELETE FROM %s WHERE character_id = $1 AND slot = $2`, s.table), characterID, from); err != nil {
+				return fmt.Errorf("inventory: clearing slot %d: %w", from, err)
+			}
+		} else if _, err := tx.ExecContext(ctx,
+			fmt.Sprintf(`UPDATE %s SET quantity = quantity - $1 WHERE character_id = $2 AND slot = $3`, s.table),
+			moved, characterID, from); err != nil {
+			return fmt.Errorf("inventory: decrementing slot %d: %w", from, err)
+		}
+	default:
+		// Swap. (character_id, slot) is the primary key, so the two rows are
+		// rewritten rather than renumbered past each other.
+		if _, err := tx.ExecContext(ctx,
+			fmt.Sprintf(`DELETE FROM %s WHERE character_id = $1 AND slot IN ($2, $3)`, s.table),
+			characterID, from, to); err != nil {
+			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			fmt.Sprintf(`INSERT INTO %s (character_id, slot, item_id, quantity) VALUES ($1, $2, $3, $4), ($1, $5, $6, $7)`, s.table),
+			characterID, to, srcItem, srcQty, from, dstItem, dstQty); err != nil {
+			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// mergeSpace is how many more of itemID a slot already holding `have` can
+// take -- zero for an item that does not stack, or whose limit the lookup
+// cannot answer (a failed lookup means "do not merge", which falls through
+// to a swap rather than to a lost item).
+func (s *SQLStore) mergeSpace(ctx context.Context, itemID int64, have int) int {
+	limit, err := s.maxStacks.GetMaxStack(ctx, itemID)
+	if err != nil || limit <= 1 {
+		return 0
+	}
+	return limit - have
+}
+
 // loadOccupancy returns the current slots plus a SlotsPerCharacter-sized
 // occupancy map, for AddItem's stacking/placement logic.
 func (s *SQLStore) loadOccupancy(ctx context.Context, tx *sql.Tx, characterID int64) ([]Slot, [SlotsPerCharacter]bool, error) {

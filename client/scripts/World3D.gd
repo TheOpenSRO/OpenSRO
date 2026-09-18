@@ -1286,6 +1286,10 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.name = "HudPanels"
 	ui_control.add_child(_hud_panels)
 	_hud_panels.connect_net()
+	# QA: rearrange the bag once (SRREVAMP_QA_MOVE="from,to") so a render's
+	# log shows a drag landing server-side -- see HudPanels.qa_move_sequence.
+	if OS.get_environment("SRREVAMP_QA_MOVE") != "" and NetClient.is_connected_to_server():
+		_hud_panels.qa_move_sequence(OS.get_environment("SRREVAMP_QA_MOVE"))
 	# The Escape / System menu (see HudPanels): its Option button opens the
 	# settings panel (the same F3 debug panel that carries the working UI
 	# scale, chat font, name range and camera view), Restart returns to the
@@ -5261,6 +5265,10 @@ func _update_blob_shadow() -> void:
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
 ##                          for the China-man heavy set plus the starter sword),
 ##                          resolved through the real item table
+##   SRREVAMP_QA_MOVE="from,to" (needs --server) unequip the boots into the bag,
+##                          then move that bag slot onto another and print the
+##                          bag before and after from the server's own answers
+##                          (see HudPanels.qa_move_sequence)
 ##   SRREVAMP_QA_RIG=1      report where each assembled character piece is
 ##                          against where its own bone is
 ##   SRREVAMP_QA_SCAN=n     sweep the region on an n x n grid and report

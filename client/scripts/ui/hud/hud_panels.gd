@@ -1427,6 +1427,259 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		_confirm_sell(slot, item_id, qty)
 	elif storage_win != null and storage_win.visible:
 		_confirm_deposit(slot, item_id, qty)
+	else:
+		# No vendor open: a press is the start of a drag -- to another bag
+		# slot (move / merge / swap, the server's call) or onto a worn slot
+		# of the docked paper doll (equip). Nothing is sent until it is
+		# dropped somewhere that means something.
+		_arm_bag_drag(slot, item_id, icon, (event as InputEventMouseButton).global_position)
+
+# --- Dragging in the bag -----------------------------------------------------
+#
+# Godot's own drag-and-drop wants _get_drag_data/_can_drop_data on the
+# controls involved, and the bag's cells are plain Controls built from the
+# authored layout by UiBuilder. So the drag is done by hand: a press on a
+# filled cell arms it, moving a few pixels starts it (a copy of the icon
+# follows the mouse), and the release is resolved against the cells' own
+# rects -- the 4x8 lattice at its authored 36-pixel pitch -- or the docked
+# paper doll's worn slots. The server owns the outcome: a bag drop is
+# OP_MOVE (move / merge / swap, its rule), a doll drop is OP_EQUIP (which it
+# refuses for the wrong kind of item), and the window redraws from what it
+# answers, never from what the drag assumed.
+
+## Pixels the mouse must move before a press becomes a drag, so a plain
+## click never spawns a ghost icon.
+const BAG_DRAG_THRESHOLD := 4.0
+
+var _bag_drag_slot := -1
+var _bag_drag_item_id := 0
+var _bag_drag_icon: TextureRect = null
+var _bag_drag_origin := Vector2.ZERO
+var _bag_drag_preview: TextureRect = null
+
+func _arm_bag_drag(slot: int, item_id: int, icon: TextureRect, at: Vector2) -> void:
+	_cancel_bag_drag()
+	_bag_drag_slot = slot
+	_bag_drag_item_id = item_id
+	_bag_drag_icon = icon
+	_bag_drag_origin = at
+
+func _start_bag_drag() -> void:
+	if _bag_drag_preview != null or _bag_drag_icon == null:
+		return
+	var preview := TextureRect.new()
+	preview.texture = _bag_drag_icon.texture
+	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	preview.custom_minimum_size = Vector2(32, 32)
+	preview.size = Vector2(32, 32)
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	preview.top_level = true
+	preview.z_index = 4096
+	preview.modulate = Color(1, 1, 1, 0.85)
+	add_child(preview)
+	_bag_drag_preview = preview
+	_bag_drag_icon.modulate = Color(1, 1, 1, 0.35)
+	_position_bag_drag_preview(get_global_mouse_position())
+
+func _position_bag_drag_preview(mouse: Vector2) -> void:
+	if _bag_drag_preview != null:
+		_bag_drag_preview.global_position = mouse - Vector2(16, 16)
+
+func _cancel_bag_drag() -> void:
+	if _bag_drag_preview != null:
+		_bag_drag_preview.queue_free()
+		_bag_drag_preview = null
+	if _bag_drag_icon != null and is_instance_valid(_bag_drag_icon):
+		_bag_drag_icon.modulate = Color.WHITE
+	_bag_drag_icon = null
+	_bag_drag_slot = -1
+	_bag_drag_item_id = 0
+
+## Which bag cell (its slot index) is under a screen point, or -1. Cells are
+## GDR_INVENTORY_LATTICE's children in slot order, the same indexing
+## _fill_inventory_grid draws by.
+func _bag_slot_at(point: Vector2) -> int:
+	var window: HudWindow = _windows.get("inventory")
+	if window == null or not window.visible:
+		return -1
+	var grid := window.node("GDR_INVENTORY_LATTICE") as Control
+	if grid == null:
+		return -1
+	for i in range(grid.get_child_count()):
+		var cell := grid.get_child(i) as Control
+		if cell != null and cell.get_global_rect().has_point(point):
+			return i
+	return -1
+
+## Which worn slot of the docked paper doll is under a screen point (an
+## EquipmentNet.SLOT_* index), or -1.
+func _equipment_slot_at(point: Vector2) -> int:
+	var window: HudWindow = _windows.get("inventory")
+	if window == null or not window.visible:
+		return -1
+	for i in range(17):
+		var slot := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + i)) as Control
+		if slot != null and slot.is_visible_in_tree() and slot.get_global_rect().has_point(point):
+			return i
+	return -1
+
+## The drag's motion and release arrive here rather than on the cell, since
+## the mouse has left it by then. Nothing is consumed unless a drag actually
+## ends on a release, so ordinary clicks elsewhere are unaffected.
+func _input(event: InputEvent) -> void:
+	if _bag_drag_slot < 0:
+		return
+	if event is InputEventMouseMotion:
+		var motion := event as InputEventMouseMotion
+		if _bag_drag_preview == null:
+			if motion.global_position.distance_to(_bag_drag_origin) >= BAG_DRAG_THRESHOLD:
+				_start_bag_drag()
+		_position_bag_drag_preview(motion.global_position)
+		return
+	if event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
+		if _bag_drag_preview != null:
+			_cancel_bag_drag()
+			get_viewport().set_input_as_handled()
+		return
+	if event is InputEventMouseButton and not (event as InputEventMouseButton).pressed \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		var dragging := _bag_drag_preview != null
+		var from := _bag_drag_slot
+		var at := (event as InputEventMouseButton).global_position
+		_cancel_bag_drag()
+		if not dragging:
+			return  # a click, not a drag: nothing to do
+		get_viewport().set_input_as_handled()
+		_drop_bag_item(from, at)
+
+## Resolves where a bag drag ended and asks the server for it.
+func _drop_bag_item(from: int, at: Vector2) -> void:
+	var who := NetClient.current_character_name
+	if who == "" or not NetClient.is_connected_to_server():
+		return
+	var to := _bag_slot_at(at)
+	if to >= 0:
+		if to != from:
+			NetClient.move_item(who, from, to)
+		return
+	var worn := _equipment_slot_at(at)
+	if worn >= 0:
+		# Equip out of that bag slot; the server refuses a wrong kind of
+		# item for the slot. Its equipment result redraws the doll, and the
+		# bag is re-read since the item left it.
+		NetClient.equip(who, worn, from)
+		NetClient.list_inventory(who)
+
+## The server's answer to a move: the whole bag as it now stands, or the
+## refusal. Drawn from the answer, so a refused move leaves the grid as it was.
+func _on_inventory_move_result(slots: Array, error: String) -> void:
+	if error != "":
+		push_warning("HudPanels: bag move refused: %s" % error)
+		print("HudPanels: bag move refused: %s" % error)
+		return
+	_fill_inventory_grid(slots)
+	print("HudPanels: bag after move: %s" % _describe_bag(slots))
+
+## "slot:item xqty" per occupied slot, for the log lines the QA hooks read.
+static func _describe_bag(slots: Array) -> String:
+	var parts := PackedStringArray()
+	for entry in slots:
+		var index = _first_field(entry, ["slot", "slot_index", "index"])
+		var item_id = _first_field(entry, ["item_id", "id"])
+		var quantity = _first_field(entry, COUNT_FIELDS)
+		parts.append("%s:%s x%s" % [str(index), str(item_id), str(quantity) if quantity != null else "1"])
+	return "{" + ", ".join(parts) + "}"
+
+## QA only (SRREVAMP_QA_MOVE="from,to"): exercises a bag move end to end with
+## a REAL item and nothing seeded. A new character's bag is empty -- its kit
+## is equipped straight out of it -- so the sequence first unequips the boots
+## (real OP_UNEQUIP; they land in the lowest free slot, 0), lists the bag,
+## sends the move, and prints the bag before and after from the server's own
+## answers. Both lines are what a render's log is checked against. Never
+## fires in real play.
+var _qa_move_from := -1
+var _qa_move_to := -1
+var _qa_move_stage := 0  # 0 idle, 1 unequipping, 2 listing, 3 moved
+
+func qa_move_sequence(spec: String) -> void:
+	var parts := spec.split(",", false)
+	if parts.size() != 2 or not parts[0].strip_edges().is_valid_int() or not parts[1].strip_edges().is_valid_int():
+		printerr("QA MOVE: bad spec '%s' (want from,to)" % spec)
+		return
+	_qa_move_from = int(parts[0].strip_edges())
+	_qa_move_to = int(parts[1].strip_edges())
+	var who := NetClient.current_character_name
+	if who == "" or not NetClient.is_connected_to_server():
+		printerr("QA MOVE: no connected character")
+		return
+	_qa_move_stage = 1
+	NetClient.equipment_result.connect(_qa_move_on_equipment)
+	NetClient.inventory_list_result.connect(_qa_move_on_list)
+	NetClient.inventory_move_result.connect(_qa_move_on_moved)
+	print("QA MOVE: unequipping boots so the bag holds something real")
+	NetClient.unequip(who, EquipmentNet.SLOT_BOOTS)
+
+func _qa_move_on_equipment(_items: Array, error: String) -> void:
+	if _qa_move_stage != 1:
+		return
+	if error != "":
+		printerr("QA MOVE: unequip refused: %s" % error)
+		_qa_move_stage = 0
+		return
+	_qa_move_stage = 2
+	NetClient.list_inventory(NetClient.current_character_name)
+
+func _qa_move_on_list(slots: Array, error: String) -> void:
+	if _qa_move_stage != 2 and _qa_move_stage != 4:
+		return
+	if error != "":
+		printerr("QA MOVE: list refused: %s" % error)
+		_qa_move_stage = 0
+		return
+	if _qa_move_stage == 4:
+		# The bag after the drop onto the doll: the boots left it again.
+		_qa_move_stage = 0
+		print("QA MOVE equip-drop: bag %s (dropped slot %d on the doll's boots rect)" % [_describe_bag(slots), _qa_move_to])
+		return
+	print("QA MOVE before: %s" % _describe_bag(slots))
+	_qa_move_stage = 3
+	NetClient.move_item(NetClient.current_character_name, _qa_move_from, _qa_move_to)
+
+func _qa_move_on_moved(slots: Array, error: String) -> void:
+	if _qa_move_stage != 3:
+		return
+	if error != "":
+		_qa_move_stage = 0
+		print("QA MOVE after: REFUSED (%s)" % error)
+		return
+	print("QA MOVE after: %s (asked %d -> %d)" % [_describe_bag(slots), _qa_move_from, _qa_move_to])
+	# Then put them back on by "dropping" the moved slot onto the doll's
+	# boots slot -- through _drop_bag_item and the same rect hit-test a real
+	# drag resolves against -- and read the bag once more. Stage 4 is set
+	# at the drop itself, not here: the panel's own opening lists the bag in
+	# between, and that answer must not be mistaken for the drop's.
+	_qa_move_stage = 5
+	_qa_move_drop_when_doll_ready()
+
+## The network round trips above finish before the QA harness has opened
+## the inventory window, so the doll's slot controls may not exist yet: wait
+## for them (up to ~20 s) rather than report a drop target that is merely
+## not built yet.
+func _qa_move_drop_when_doll_ready() -> void:
+	var slot_name := "GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + EquipmentNet.SLOT_BOOTS)
+	for _attempt in range(80):
+		var window: HudWindow = _windows.get("inventory")
+		if window != null and window.visible:
+			var boots := window.node(slot_name) as Control
+			if boots != null and boots.is_visible_in_tree():
+				var at := boots.get_global_rect().get_center()
+				print("QA MOVE equip-drop: dropping bag slot %d at %s (the doll's boots rect)" % [_qa_move_to, str(at.round())])
+				_qa_move_stage = 4
+				_drop_bag_item(_qa_move_to, at)
+				return
+		await get_tree().create_timer(0.25).timeout
+	_qa_move_stage = 0
+	print("QA MOVE equip-drop: the inventory window never opened, nothing to drop on")
 
 ## QA only: fills the bag grid with sample items so a render can show a
 ## populated inventory without needing kills or a seeded server. The item IDs
@@ -2151,7 +2404,16 @@ func connect_net() -> void:
 	# hiding it. That debug overlay is gone: the grid is the window.
 	NetClient.inventory_list_result.connect(func(slots: Array, _e: String) -> void:
 		_fill_inventory_grid(slots))
-	NetClient.equipment_result.connect(func(items: Array, _e: String) -> void:
+	# A drag's outcome comes back as the whole bag (see _drop_bag_item).
+	NetClient.inventory_move_result.connect(_on_inventory_move_result)
+	NetClient.equipment_result.connect(func(items: Array, error: String) -> void:
+		# A refusal carries no item list. Redrawing from it blanked every
+		# worn slot on the doll while the body stayed dressed -- so a refused
+		# equip is logged and the last known equipment stays on screen.
+		if error != "":
+			push_warning("HudPanels: equipment: %s" % error)
+			print("HudPanels: equipment refused: %s" % error)
+			return
 		_equipped_items = items
 		_fill_equipment_slots(items))
 	# The skill window shows the masteries (client data, _fill_skill_masteries),
@@ -2239,6 +2501,9 @@ func _apply_stats(stats: StatsNet.Stats) -> void:
 		var gold := inventory.node("GDR_INVENTORY_STA_GOLD") as Label
 		if gold != null:
 			gold.text = _grouped(stats.gold)
+			# The number on the authored gold row, so a render's log can be
+			# held against the frame (and against the server's own value).
+			print("HudPanels: inventory gold readout %s (server gold %d)" % [gold.text, stats.gold])
 	# The shop's own purse line, if the store is open.
 	_update_shop_purse()
 

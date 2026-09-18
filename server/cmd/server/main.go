@@ -577,6 +577,7 @@ func main() {
 			return equipment.GiveStartingKit(ctx, inv, eq, c.ID, c.Gender)
 		}),
 		session.InventoryHandler(chars, inv),
+		session.InventoryMoveHandler(chars, inv),
 		session.EquipmentHandlerWithRules(chars, eq, inv, refItems),
 		session.CharacterStatsHandler(chars, eq, refItems, skills, manaTracker),
 		session.ShopHandler(chars, shopSvc),

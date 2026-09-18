@@ -128,3 +128,71 @@ func (m *MemStore) RemoveItem(_ context.Context, characterID int64, slot int, qu
 	sl.Quantity -= quantity
 	return nil
 }
+
+// maxStackFor is AddItem's stack-limit rule in one place: one to a slot
+// unless the lookup says otherwise, and a lookup that never heard of the
+// item answers zero, which also means one.
+func (m *MemStore) maxStackFor(ctx context.Context, itemID int64) (int, error) {
+	if m.maxStacks == nil {
+		return 1, nil
+	}
+	n, err := m.maxStacks.GetMaxStack(ctx, itemID)
+	if err != nil {
+		return 0, err
+	}
+	if n <= 0 {
+		return 1, nil
+	}
+	return n, nil
+}
+
+// MoveItem implements Store. See the interface for the three outcomes.
+func (m *MemStore) MoveItem(ctx context.Context, characterID int64, from, to int) error {
+	if from < 0 || from >= SlotsPerCharacter || to < 0 || to >= SlotsPerCharacter {
+		return ErrInvalidSlot
+	}
+	if from == to {
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	held := m.slots[characterID]
+	src := held[from]
+	if src == nil {
+		return ErrSlotEmpty
+	}
+	dst := held[to]
+
+	// Plain move into a free slot.
+	if dst == nil {
+		src.Index = to
+		held[to] = src
+		delete(held, from)
+		return nil
+	}
+
+	// Same item: merge what fits. A stack limit of one (a non-stackable, or
+	// an item the lookup does not know) never merges, so two swords swap.
+	if dst.ItemID == src.ItemID {
+		limit, err := m.maxStackFor(ctx, src.ItemID)
+		if err != nil {
+			return err
+		}
+		if space := limit - dst.Quantity; space > 0 {
+			moved := min(space, src.Quantity)
+			dst.Quantity += moved
+			src.Quantity -= moved
+			if src.Quantity == 0 {
+				delete(held, from)
+			}
+			return nil
+		}
+	}
+
+	// Different items, or nowhere to merge into: swap the two slots.
+	src.Index, dst.Index = to, from
+	held[to], held[from] = src, dst
+	return nil
+}

@@ -30,6 +30,9 @@ signal entity_left(character_id: int)
 signal change_zone_result(result: WorldNet.ChangeZoneResult)
 
 signal inventory_list_result(slots: Array, error: String)
+## The bag after a move_item (the server's own list, not an assumption), or
+## why the move was refused.
+signal inventory_move_result(slots: Array, error: String)
 ## The character's own gold, vitals and equipment-derived combat numbers.
 signal character_stats_result(stats: StatsNet.Stats)
 ## Fires for OpEquipmentList AND for equip/unequip acks -- the server uses
@@ -282,6 +285,12 @@ func change_zone(zone: String) -> void:
 func list_inventory(char_name: String) -> void:
 	_send(InventoryNet.OP_LIST, InventoryNet.encode_list_request(char_name))
 
+## Moves the stack in one bag slot onto another (a drag in the inventory
+## window). The server decides whether that is a move, a merge or a swap and
+## answers with the whole bag -- see inventory_move_result.
+func move_item(char_name: String, from_slot: int, to_slot: int) -> void:
+	_send(InventoryNet.OP_MOVE, InventoryNet.encode_move_request(char_name, from_slot, to_slot))
+
 ## Asks for the character's own gold, vitals and combat numbers.
 func character_stats(char_name: String) -> void:
 	_send(StatsNet.OP_STATS, StatsNet.encode_request(char_name))
@@ -464,6 +473,9 @@ func _dispatch(p: Packet) -> void:
 		InventoryNet.OP_LIST_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)
 			inventory_list_result.emit(r.slots, r.error)
+		InventoryNet.OP_MOVE_RESULT:
+			var r := InventoryNet.decode_list_result(p.data)
+			inventory_move_result.emit(r.slots, r.error)
 		StatsNet.OP_STATS_RESULT:
 			character_stats_result.emit(StatsNet.decode_result(p.data))
 		EquipmentNet.OP_RESULT:
