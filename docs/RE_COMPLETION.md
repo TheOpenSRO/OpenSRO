@@ -17104,3 +17104,36 @@ reads it from, and asserting `'pmdg'` is not either damage formula's base -- so 
 wrong cannot come back.
 
 Full suite green, 53 packages.
+
+## 2026-09-18 — the skill query reply group, and a new flavour of the offset trap
+
+Following the timed-effect record to where it is paid out: `QueueTimedSkillEffect` hands it to
+`0x0059ec10`, which is a small **list insert** — the record joins a list at `object+0x278`. So
+the payout is elsewhere, and finding it means finding what walks that list.
+
+**That search was contaminated in a way this log has not recorded before.** Sweeping for
+`+0x278]` returned 338 functions, and the first one read turned out not to touch the list at
+all: `AQ_SkillManager::FUN_0059edc0` uses `*(code **)(*obj + 0x278)`, which is a **vtable slot**,
+not a struct field. The sweep mixed struct-member reads with virtual-call slots at the same
+numeric offset. Every previous instance of this trap was one struct's field colliding with
+another's; this is a field colliding with a *slot*, and the two are not even the same kind of
+thing.
+
+**The wrong turn was still worth the read.** That function is the reply builder for completed
+asynchronous skill queries: it switches on the query type and sends one of four messages, with a
+success flag selecting the failure path.
+
+	case 0 -> 0xb0a1     case 1 -> 0xb0a2     case 2 -> 0xb202     case 3 -> 0xb203
+
+All four are acks of real dispatch indices, and **index 0x0a2's handler was already named
+`Skill_HandleMasteryLevelUp`** — which is what grounds the whole group as skill and mastery work
+rather than leaving it a guess. Named `AQ_SkillManager_SendQueryReply` and the three unnamed
+handlers `GObjPC_HandleSkillMsg_0a1/202/203`; applied 4, and the handler table's reply column
+now carries the three acks it was missing.
+
+The names say only what is read: each handler is one of the four the skill manager answers. The
+specific operation behind 0x0a1, 0x202 and 0x203 is **not** read and is not inferred from the
+company they keep.
+
+**The timed-effect payout is still open**, and the next attempt needs a discriminator that
+separates a struct field from a vtable slot — the offset alone cannot.

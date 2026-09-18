@@ -39,7 +39,7 @@ index	handler	server_name	function_exists	client_opcodes	client_handlers	replies
 0x082	00515820	GObjPC_HandleTradeMsg_082	yes	0xb082	FUN_00880430	0xb082
 0x083	005158f0	Trade_HandleExchange	yes	0xb083	FUN_008804a0	0xb083
 0x084	005159c0	GObjPC_HandleTradeMsg_084	yes	0xb084	FUN_00880520	0xb084
-0x0a1	00515a60	FUN_00515a60	no	0xb0a1	NetProcessInInterface::FUN_00880be0	-
+0x0a1	00515a60	GObjPC_HandleSkillMsg_0a1	no	0xb0a1	NetProcessInInterface::FUN_00880be0	0xb0a1
 0x0a2	00515ab0	Skill_HandleMasteryLevelUp	no	0xb0a2	LAB_00880cc0	-
 0x0a7	00515b30	FUN_00515b30	no	0xb0a7	FUN_008a7a20	0xb0a7
 0x0b1	00515f10	FleaMarket_HandleOpenStall	yes	0xb0b1	LAB_00872040	0xb0b1
@@ -102,8 +102,8 @@ index	handler	server_name	function_exists	client_opcodes	client_handlers	replies
 0x160	00511730	FUN_00511730	yes	0xb160	FUN_00899580	0xb160
 0x168	005118a0	FUN_005118a0	yes	0xb168	FUN_008995e0	0xb168
 0x16a	00506fa0	GObjPC_HandleSocketMsg_16a	yes	0xb16a	FUN_00872fa0	-
-0x202	005169d0	FUN_005169d0	yes	0xb202	FUN_00880db0	-
-0x203	00516bb0	FUN_00516bb0	yes	0xb203	LAB_00880e90	-
+0x202	005169d0	GObjPC_HandleSkillMsg_202	yes	0xb202	FUN_00880db0	0xb202
+0x203	00516bb0	GObjPC_HandleSkillMsg_203	yes	0xb203	LAB_00880e90	0xb203
 0x250	005178b0	Guild_HandleWarehouseUse	yes	0xb250	FUN_0088f630	0xb250
 0x251	00517980	GObjPC_HandleGuildMsg_251	yes	0xb251	FUN_0088d160	0xb251
 0x252	00517a50	FUN_00517a50	yes	0xb252	FUN_0088d390	0xb252
