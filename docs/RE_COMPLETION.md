@@ -15548,3 +15548,34 @@ the binary's own.
 names would be exactly the shape of mistake this session has been correcting. The value
 is targeting: "where is the drop logic" now answers with an address list, and a future
 pass that names one function in a file knows which others share it.
+
+## Two unnamed formulas, localised but not identified (2026-09-18)
+
+The source-file map from the last tick earned its keep immediately: the server has a
+**`Formulae.cpp`**, and it holds three functions carrying that path — one already named
+`Formulae::Formula_SkillPhysDamage`, and **two unnamed**, `0x00410110` and `0x004106b0`.
+Formulas are values, so this is the part of the goal srrevamp actually consumes.
+
+**What is established:**
+
+- The two are a **pair**: both are called from exactly the same two places,
+  `CGObjPC::vslot_420` (1,426 bytes) and `GObjPC::FUN_004fcb00`, and nowhere else.
+- `0x00410110` calls the already-recovered `Formula_ExpScaleByLevelWindow` and
+  `Formula_ExpScaleByLevelDiff`, returns a `longlong`, and **floors its result at 1**.
+- `0x004106b0` is a parallel float computation returning a rounded value.
+- Their shared caller also calls `0x005e3a20`, whose result it **divides by 100.0** — a
+  percentage bonus — and that function sums over a list of members.
+
+**What is not established: which one is EXP and which is SP**, or whether they are that at
+all. The tempting reading is an academy bonus split into experience and skill points: the
+percentage, the member list, the exp scalers and the floor of 1 all point that way. It is
+not named, because "all point that way" is the shape of reasoning that produced this
+session's two retractions. This is also a different path from the kill reward —
+`Formula_MonsterExpReward` is called from `GObjPC_OnDeath`, not from here.
+
+**The next probe is specific:** follow `CGObjPC::vslot_420`'s writes to see which
+character field each return value lands in. EXP and SP have known offsets, so the
+destination settles it without any inference.
+
+srrevamp's SP-per-kill is still the disclosed whole-point fallback the grounding audit
+records, and it stays that way until this is read.
