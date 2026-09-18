@@ -17072,3 +17072,35 @@ does not here. That is a missing branch rather than a wrong constant, so it is w
 patched over with the formula that is implemented.
 
 Full suite green, 53 packages.
+
+## 2026-09-18 — 'pmdg' is not magical damage, and the flag that caught it
+
+The previous tick's own note flagged a doubt: a grep for reads of `skill+0x340` ('pmdg') found
+it used mostly as a **bit field** (`test BYTE PTR [reg+0x340],0x1`), which is not what a damage
+base looks like. That doubt was right to raise and it resolves in two parts.
+
+**The table row is correct.** Reading the parser's leaf settles it: `'pmdg'` stores a pointer
+into `[esi+0x340]`, the same shape as `'pdmg'`. The bit-field sites are a different structure
+sharing the offset -- the collision this log has now hit six times. Checking the leaf rather
+than the grep is what separates them.
+
+**But the interpretation was wrong, and it was mine.** Two ticks ago I wrote that `'pmdg'` is
+"its magical counterpart" to `'pdmg'`, on the strength of the mnemonic and the two sitting near
+each other in the struct. **No damage formula reads it.** Its only readers are
+`ApplySkillParamsToChar` and `FUN_00596960`, and that second one shows what it actually is.
+
+`QueueTimedSkillEffect` (`0x00596960`) tests eight of a skill's parameters -- `'pmhp'`,
+`'pmmp'`, `'pmdg'`, `'pmdp'`, `'php1'`, `'pmp1'`, `'pao'`, `'pcdu'` -- and if any is set,
+allocates a record, copies all eight pointers into it, **stamps `GetTickCount()`** and queues
+it. The tick stamp is the evidence: an effect applied immediately has no reason to record when
+it started; one that pays out on a clock does.
+
+All eight begin with `p`, which is suggestive and is deliberately **not** the reason they are
+grouped -- the grouping is the function reading and copying them as a unit. What the `p` stands
+for is not read.
+
+Wired as `skillparam.TimedEffectCodes` with a test pinning each code to the offset the function
+reads it from, and asserting `'pmdg'` is not either damage formula's base -- so the claim I got
+wrong cannot come back.
+
+Full suite green, 53 packages.

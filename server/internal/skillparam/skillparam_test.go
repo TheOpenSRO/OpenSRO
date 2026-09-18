@@ -245,3 +245,30 @@ func TestAltDamageInputsMatchTheCallSite(t *testing.T) {
 		t.Error("the two skill-damage formulas must take different base parameters")
 	}
 }
+
+// TestTimedEffectCodesMatchTheFieldsQueued pins the eight parameters
+// QueueTimedSkillEffect copies, by the offsets it reads them from.
+func TestTimedEffectCodesMatchTheFieldsQueued(t *testing.T) {
+	want := map[Code]int{
+		"pmhp": 0x338, "pmmp": 0x33c, "pmdg": 0x340, "pmdp": 0x344,
+		"php1": 0x348, "pmp1": 0x34c, "pao": 0x350, "pcdu": 0x364,
+	}
+	if len(TimedEffectCodes) != len(want) {
+		t.Fatalf("TimedEffectCodes has %d entries, want %d", len(TimedEffectCodes), len(want))
+	}
+	for _, c := range TimedEffectCodes {
+		off, expected := want[c]
+		if !expected {
+			t.Errorf("%q is not one of the eight the function queues", c)
+			continue
+		}
+		if got := Field[c]; got != off {
+			t.Errorf("Field[%q] = %#x, want %#x -- the offset the function reads", c, got, off)
+		}
+	}
+	// 'pmdg' belongs here and NOT to a damage formula: it is not the magical
+	// counterpart of 'pdmg', which an earlier note in this project claimed.
+	if PhysDamage == "pmdg" || AltDamage == "pmdg" {
+		t.Error("'pmdg' is a timed-effect parameter, not a damage-formula base")
+	}
+}

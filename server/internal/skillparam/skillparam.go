@@ -643,3 +643,34 @@ const (
 	AltDamageBonus      Code = "BSHP"
 	AltDamageBonusField      = 0x534
 )
+
+// TimedEffectCodes are the eight skill parameters QueueTimedSkillEffect
+// (0x00596960) groups into one timed effect. It tests all eight, and if any is
+// set it allocates a record, copies all eight pointers into it at +0x14..+0x30,
+// stamps GetTickCount() at +0x8 and queues it.
+//
+// THE TICK STAMP IS THE EVIDENCE. An effect applied immediately has no reason
+// to record when it started; one that pays out on a clock does. That, plus the
+// eight being read and copied as a unit, is why they are grouped here.
+//
+// NOT INFERRED FROM THE NAMES. Every one of the eight begins with 'p', which is
+// suggestive and is not the reason they are grouped -- the grouping is the
+// function reading and copying them together. What the 'p' stands for is not
+// read.
+//
+// CORRECTION. An earlier note in this project called 'pmdg' "the magical
+// counterpart" of 'pdmg', on the strength of the mnemonic and the two sitting
+// near each other. That was wrong. 'pdmg' is dereferenced by
+// Formula_SkillPhysDamage as a damage base; 'pmdg' is read by no damage formula
+// at all -- its readers are ApplySkillParamsToChar and this function, which
+// treats it as one of eight timed-effect parameters.
+var TimedEffectCodes = []Code{
+	"pmhp", // 0x338
+	"pmmp", // 0x33c
+	"pmdg", // 0x340
+	"pmdp", // 0x344
+	"php1", // 0x348
+	"pmp1", // 0x34c
+	"pao",  // 0x350
+	"pcdu", // 0x364
+}
