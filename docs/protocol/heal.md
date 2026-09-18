@@ -30,17 +30,23 @@ skill's `'heal'` value[0]):
   +18/22/26/… % HP recovery with a zero MP term. It never co-occurs with `'heal'` on the same skill,
   which is the design: the dance buffs an ally, and a separate heal landing on that ally later reads
   param 170 from them. `skillparam.HealHPScaleParam` / `HealMPScaleParam` / `HealScaleBuffCode`.
-- **`'mwhh'`** (skill+0x328) and **`'mwmh'`** (skill+0x32c) add a further HP / MP term, computed by
-  `FUN_00411080` from the parameter's value through an Int/level ratio (`Formulae::IntLevelDamageRatio`).
-  107 skills carry `'mwhh'`, 44 carry `'mwmh'`. The exact derivation of that term is **not fully
-  read** and is flagged rather than stated.
+- **`'mwhh'`** (skill+0x328) and **`'mwmh'`** (skill+0x32c) add a further HP / MP term, now read in
+  full. Each is `Formula_WeaponAvgDamagePercent(caster, value)` = `trunc( avgWeaponDamage *
+  IntLevelDamageRatio * value/100 )`, where `avgWeaponDamage = (weapon+0x1c0 + weapon+0x1c4) * 0.5`
+  from the caster's equipped weapon (storage slot 6, via `GObjPC_GetItem`), and 0 when the caster
+  holds no weapon. So `'mwhh'`/`'mwmh'` add a heal term equal to their percent of the healer's
+  average weapon damage, scaled by the Int/level ratio. 107 skills carry `'mwhh'`, 44 `'mwmh'`. The
+  SAME helper drives `'mwhs'` (`skill+0x404`, `AltDamageExtra`) in `Combat_ResolveDamage`, which is
+  the cross-check that it is a general "percent of weapon damage" term rather than a heal special
+  case.
 
 ## What is grounded and what is not
 
 - **Grounded**: the two `1 + GetParam/100` scalings and their param ids; the `'nmh'` percent mode
   and its `GetMaxHP` slot; that the scaling params are read from the healed object; that 170/171 are
   skill-granted (single writer); the `ApplyHPMPDelta` sink.
-- **Not read**: the exact `'mwhh'`/`'mwmh'` term (an Int/level ratio, magnitude not decoded) and
-  `ApplyHPMPDelta`'s `0x40` flag. (Which code grants 170/171 is now answered: `'rhru'`, above.)
+- **Not read**: `ApplyHPMPDelta`'s `0x40` flag, and the exact field identity of the weapon floats at
+  `+0x1c0`/`+0x1c4` (read as the damage bounds from the `*0.5`-average and the weapon slot). The
+  `'mwhh'`/`'mwmh'` magnitude and the `'rhru'` grant are now both read.
 - **Not wired**: srrevamp has no heal system, so `'heal'`, `'nmh'`, `'mwhh'`, `'mwmh'` and params
   170/171 are recorded in `internal/skillparam` but read by no game code.

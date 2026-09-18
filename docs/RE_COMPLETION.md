@@ -17704,3 +17704,32 @@ Added `skillparam.HealHPScaleParam`/`HealMPScaleParam`/`HealScaleBuffCode` and a
 fails if `DrivesParams["rhru"]`, the heal params, or the slots ever drift apart — the two halves
 were recovered from different functions and only agree because both are right. Still not wired (no
 heal system); `heal.md` updated to close the open item. Applied 0 names.
+
+## `mwhh`/`mwmh` read: a percent of the caster's weapon damage (2026-09-18)
+
+`heal.md`'s last open item was the exact `'mwhh'`/`'mwmh'` heal term, computed by a helper flagged
+"not fully read." Read now, from disassembly (the decompile lost its `this`):
+
+`Formula_WeaponAvgDamagePercent` (`0x00411080`), thiscall `(this, value)`:
+
+	weapon = this->GetItem(6)                 # slot 6 = weapon, via GObjPC_GetItem (vtable slot 350)
+	if weapon == 0: return 0
+	avg = (weapon+0x1c0 + weapon+0x1c4) * 0.5 # 0.5 at .rdata 0xb45c50 -> average of two damage bounds
+	return trunc( avg * IntLevelDamageRatio() * value/100 )
+
+So `'mwhh'`/`'mwmh'` add a heal term equal to their percent of the healer's **average weapon damage**,
+scaled by the Int/level ratio, and nothing when the healer holds no weapon. The `*0.5` of a summed
+pair is what identifies it as an average; that the two floats are specifically the weapon's damage
+bounds is a reading from the weapon slot and the `*0.5`, flagged as such rather than a proven field
+identity.
+
+The helper is **general, not heal-specific** — the cross-check that settles its meaning. Its five
+call sites pass different skill values: `Combat_ResolveDamage` passes `'mwhs'` (skill+0x404,
+`AltDamageExtra`), `Skill_ApplyHealToObject` passes `'mwhh'`/`'mwmh'`, and three more. All are
+"percent of weapon damage" terms filed under different codes.
+
+Two names applied: `Formula_WeaponAvgDamagePercent`, `GObjPC_GetItem` (the slot-350 forwarder to
+`CGStorage::GetItem`, one implementation across 17 classes). This closes `heal.md` to two small
+unread items (`ApplyHPMPDelta`'s `0x40` flag; the exact identity of weapon `+0x1c0`/`+0x1c4`). Not
+wired -- srrevamp has no heal system and does not implement the `'mwhs'` alt-damage branch either.
+Applied 0 Go changes.
