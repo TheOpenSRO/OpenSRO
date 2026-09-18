@@ -86,3 +86,35 @@ Server: one 123-member family (`ReleaseAndClear`) and four quest families (`PayQ
 `GiveQuestItemToPlayer` 9, `PayQuestRewardCatchMob` 7, plus 11 of the QuestData family already
 covered). Client: nothing. **The lever is worked out** — what remains behind shared strings is
 either the C++ runtime or subject ids, and a fresh name now needs a different kind of evidence.
+
+
+## Unique strings, not shared ones
+
+The clustering above only looked at strings held by five or more functions. The **unique**
+strings are the richer half: **273 unnamed server functions hold a string that appears nowhere
+else and reads like an operation** (it contains fail/error/cannot/success/already/…). They
+concentrate in `CMainProcess` (51), `GObjPC` (38), `CGameServer` (21), `AQ_CharDataLoader` (16)
+and `AQ_Siege` (15).
+
+Two sub-patterns are worth separating.
+
+**A function announcing its own name.** A log string opening `Identifier::` or `Identifier :`
+is often the function saying what it is — `"CharDataLoadingCompleted:: Create Char Instance
+failed!!"`. 38 unnamed functions have such a prefix, but **30 of them are a subsystem log tag,
+not a name**: `BattleArena`, `ScheduleExecutor`, `ScheduleJob`, `ALCHEMY` and `Scheduleing` are
+each shared by several functions. The test that separates them is the same uniqueness rule the
+SQL pass used — **a prefix used by exactly one function is a name; a prefix used by several is
+a tag.** That leaves 8, of which `AQ_Siege` and `NetEngine` are *class* names and
+`StorageOwner` is a data label, so three are real self-names.
+
+**The operation named in a later segment.** `"failed : SQLAllocHandle : %s"` and
+`"error : SendFileTo : %s"` open with a generic word; the operation is the second segment.
+Taking the first segment would have named two functions `failed` and `error`.
+
+Twelve names were applied from this pass, including the three `AQ_*::vslot_008`
+implementations: three different AsyncQuery classes implement that one slot and each logs its
+own data-load failure there, which makes slot 8 the completion virtual — named
+`OnQueryCompleted` in each.
+
+The remaining ~260 candidates each need their string read; they are a real pool, not a lever,
+because no mechanical rule turns an arbitrary failure message into a name.

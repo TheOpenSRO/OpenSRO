@@ -16482,3 +16482,35 @@ named. The distinction is the same one the rule draws — mentioning a table is 
 something to it.
 
 No value changed.
+
+## 2026-09-18 — unique strings, and telling a self-name from a log tag
+
+The family sweep only considered strings shared by five or more functions. The unique ones are
+the richer half: **273 unnamed server functions hold a string that appears nowhere else and
+reads like an operation**, concentrated in `CMainProcess`, `GObjPC`, `CGameServer` and the
+`AQ_*` AsyncQuery classes.
+
+**The sharpest sub-pattern is a function announcing its own name** — a log string opening
+`Identifier::`, as in `"CharDataLoadingCompleted:: Create Char Instance failed!!"`. 38 unnamed
+functions have such a prefix, and **30 of them would have been named wrongly**: `BattleArena`,
+`ScheduleExecutor`, `ScheduleJob`, `ALCHEMY` and `Scheduleing` are **subsystem log tags shared
+by several functions**, so the prefix says which subsystem is talking, not which function. The
+same uniqueness test the SQL pass used separates them — a prefix used by exactly one function
+is a name, one used by several is a tag. Of the 8 survivors, `AQ_Siege` and `NetEngine` are
+*class* names and `StorageOwner` is a data label, leaving three real self-names.
+
+A second trap in the same set: `"failed : SQLAllocHandle : %s"` and `"error : SendFileTo : %s"`
+open with a generic word, so the first segment would have produced two functions named `failed`
+and `error`. The operation is the second segment.
+
+**Applied 12, failed 0**, including a structural one: three different `AQ_*` classes implement
+**slot 8** and each logs its own data-load failure there — `AQ_CharDataLoader` reports
+"Character Data Loading Failed", `AQ_GDBSelector` "Silk Data Loading Failed",
+`AQ_StorageUpdater` "Storage Operation Failed!!!". That makes slot 8 the AsyncQuery completion
+virtual, named `OnQueryCompleted` in each.
+
+The remaining ~260 candidates are **a pool, not a lever**: each needs its string read, because
+no mechanical rule turns an arbitrary failure message into a name. Recorded as such rather than
+worked through with a template.
+
+No value changed.
