@@ -28,9 +28,26 @@ import (
 // itself; see defaultwear.go, and TestStartingKitFillsTheDefaultWearSlots
 // for why this kit fills them anyway with real items. **Two choices are this project's**:
 // the garment family (the table also carries Cloth protector and Copper
-// armour defaults, and the original picks by the class chosen at creation,
-// which this server does not record), and the sword among the five default
-// weapons. Each row's model, name and icon then follow from the id.
+// armour defaults) and the sword among the five default weapons. Each row's
+// model, name and icon then follow from the id.
+//
+// WHY THOSE TWO ARE DISCLOSED RATHER THAN GROUNDED, with the reason proven
+// rather than assumed. An earlier version of this note said "the original
+// picks by the class chosen at creation", which was an unverified claim about
+// the original. What is now established:
+//
+//   - Character creation is opcode 0x7007 action 1, and **SR_GameServer.exe
+//     does not handle it**: its client-message dispatch table carries indices
+//     0x005, 0x006, 0x00d, 0x00f and 0x010, and has no entry at 0x007. The
+//     game server never sees a character being made.
+//   - That work belongs to the AgentServer, which runs before world entry.
+//     The only AgentServer binary this project has is a modified
+//     private-server build -- it carries hardcoded operator IP addresses --
+//     so reading it would ground a *mod's* choice, not the original's.
+//
+// So the original's rule is not recoverable from the binaries available here.
+// These two choices stay the project's own, deliberately, and an operator with
+// different refdata can change them.
 //
 // An operator running with different refdata can change these; an id the
 // client's tables do not know still equips, it just has no name or icon.

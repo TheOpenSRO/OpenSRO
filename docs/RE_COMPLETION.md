@@ -16825,3 +16825,32 @@ struct-offset collision that has misled this log five times now. The shape is re
 meaning is not.
 
 Applied 2, evidence refreshed 4. No value changed.
+
+## 2026-09-18 — the starter kit: closed with a proven reason, not an answer
+
+`starterkit.go` named two choices as the project's own and justified them with a claim about
+the original — "the original picks by the class chosen at creation" — which was never verified.
+The goal allows a value to be **disclosed with a proven reason**; it does not allow an
+unverified claim standing in for one. This tick replaced it.
+
+**Character creation is not the game server's job.** Opcode `0x7007` action 1 is the create
+request, and `SR_GameServer.exe` has **no dispatch entry at index 0x007** — the table carries
+0x005, 0x006, 0x00d, 0x00f and 0x010 around it. The game server never sees a character being
+made, which is also why sweeping it for a default-item table found only `_REFCHARDEFAULT_QUEST`.
+
+**The binary that would answer it is a mod.** That work belongs to the AgentServer, and the
+only AgentServer this project has is a modified private-server build — it carries hardcoded
+operator IP addresses in its string table. It is not packed and could be read, but reading it
+would ground *a mod's* choice and present it as the original's, which is worse than leaving the
+choice disclosed.
+
+So the reason is now proven: **the original's rule is not recoverable from the binaries
+available here.** The two choices stay the project's own, deliberately and with that stated.
+
+Two negatives on the way, both checked rather than assumed. The `CPSCharacterCreate*` classes
+never write the five packet fields at `+0x128..+0x138` — searched in both the `param_1 + 0x…`
+and the `param_1[0x4a]` array-index forms, since one representation has hidden fields from this
+project before. And the AgentServer's empty string greps were verified against a section dump
+rather than read as "packed": 1,603 strings and ordinary `.text`/`.rdata`/`.data` sections.
+
+No value changed — only the justification behind one. Full suite green, 53 packages.
