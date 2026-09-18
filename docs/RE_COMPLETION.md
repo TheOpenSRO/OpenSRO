@@ -15579,3 +15579,32 @@ destination settles it without any inference.
 
 srrevamp's SP-per-kill is still the disclosed whole-point fallback the grounding audit
 records, and it stays that way until this is read.
+
+## The formula pair is academy-related; the EXP/SP split is still unproven (2026-09-18)
+
+Running the probe named last tick — follow the caller's writes to see which character field
+each formula's return lands in — moved the identification forward without closing it.
+
+**Confirmed: the caller is academy code.** `CGObjPC::vslot_420` calls
+**`TrainingCamp_FindMemberByKey`** and **`TrainingCampMember_IsSecondGuardian`**, both
+named earlier in this session. Together with the percentage it divides by 100 and the
+member-list sum behind it, the academy-bonus reading is now supported by the caller's own
+callees rather than by the shape of the arithmetic.
+
+**Still unproven: which formula is EXP and which is SP.** Three probes failed to settle it:
+
+- neither caller reaches `GObjPC_GainExpAndLevel` or `GObjPC_AddSkillPoints`, and nor do
+  any of their five immediate callees;
+- `vslot_420` performs **zero stores into object fields** — it works through registers and
+  the stack, so the decompiler's four-parameter signature is incomplete and the values
+  leave through out-parameters the decompile does not show;
+- no other class implements vtable slot 420, so there is no sibling to name it from.
+
+The binary does name `GObjPC_GainExpAndLevel` and `GObjPC_AddSkillPoints`, so the
+destination test remains the right one — it just needs the caller's real signature, which
+means reading `vslot_420`'s 1,426 bytes in assembly rather than in the decompile. That is
+the next step, and it is a read rather than a search.
+
+Nothing named. The academy-bonus reading is now well supported and still short of the
+use-site that would settle it, and the difference between those two states is the whole
+point of the rule.
