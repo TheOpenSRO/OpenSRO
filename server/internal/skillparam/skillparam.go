@@ -591,3 +591,24 @@ var Contributions = map[Code][]Contribution{
 	"tpad": {{13, 1}, {14, 1}},
 	"tpdd": {{5, 1}},
 }
+
+// The two skill parameters Formulae::Formula_SkillPhysDamage takes as input,
+// read at its call site inside Combat_ResolveDamage:
+//
+//	58f4e2  cmp DWORD PTR [ebx+0x234],0x0   ; the whole branch is gated on pdmg
+//	58f4f0  mov eax,[ebx+0x538]             ; the bonus selector -> the implicit arg
+//	58f4f6  mov ecx,[ebx+0x234]             ; the base           -> param_1
+//	58f4ff  call 0x40f5f0                   ; Formula_SkillPhysDamage
+//
+// PhysDamage ('pdmg', skill+0x234) is the base: param_1 is a pointer and the
+// formula's first act is `mov edi,[ecx]`, so the base is that record's first
+// dword. PhysDamageBonus ('SAAA', skill+0x538) keys a lookup whose result adds
+// its +0x4 field to the base before the level scaling.
+//
+// This is the third independent confirmation that 'pdmg' is 0x234: the branch
+// walk that built Field, the annotation on Formula_SkillPhysDamage written in
+// an earlier session, and now the call site itself.
+const (
+	PhysDamageBonus      Code = "SAAA"
+	PhysDamageBonusField      = 0x538
+)

@@ -16994,3 +16994,45 @@ coherent families, but the mnemonics are not evidence and no meaning is assigned
 contributors to one slot combine. The slot is read; the arithmetic inside it is not.
 
 Full suite green, 53 packages.
+
+## 2026-09-18 — re-deriving a shipped formula, and one reading of mine that was wrong
+
+Taking "stop inventing, be grounded" at the largest invented value: skill damage. Re-derived
+`Formulae::Formula_SkillPhysDamage` from the asm without looking at what the repo already had,
+then compared.
+
+**The shipped implementation is right on every point.** `combat.SkillLevelPenaltyPerLevel` and
+`SkillLevelPenaltyFloorPercent` already carry 2.5% per level and a 10% floor, gated on the level
+difference being positive, and an independent reading agrees: the gate at `40f643`, the factor
+`1 - (d * 2.5)/100`, the `imul 0x51eb851f ; sar edx,5` divide-by-100 making the floor 10% of
+base, and the clamp to `[floor, base]`. The two constants were additionally read **out of the
+binary's data** rather than off the disassembly — `0x00b45e50` is the double `2.5` and
+`0x00b45af0` is `100.0` — which is a second confirmation of the numbers themselves.
+
+**One reading of mine was wrong and the repo was right.** I called the conversion at `40f671` a
+rounding helper, because Ghidra renders it `ROUND(in_ST0)`. The repo's comment says `__ftol2`,
+truncating toward zero. The instruction settles it: `cvttsd2si` — `tt` is truncate — with an
+`fnstcw`/`fldcw` fallback for non-SSE2. **Ghidra's `ROUND()` is its generic float-to-int
+operator, not a statement about rounding mode**, and taking it as one is exactly the kind of
+inference from a rendering rather than an instruction that this log keeps recording.
+
+**What is new is where the formula's inputs come from.** Reading its call site inside
+`Combat_ResolveDamage`:
+
+	58f4e2  cmp DWORD PTR [ebx+0x234],0x0   ; the branch is gated on the base being non-zero
+	58f4f0  mov eax,[ebx+0x538]             ; the bonus selector
+	58f4f6  mov ecx,[ebx+0x234]             ; the base
+	58f4ff  call 0x40f5f0
+
+`skill+0x234` is `'pdmg'` and `skill+0x538` is `'SAAA'` in the recovered table, so the base is
+the **pdmg** parameter and the bonus is keyed by **SAAA**. That is a third independent
+confirmation that `'pdmg'` is 0x234 — the branch walk that built `Field`, an annotation written
+in an earlier session from a different function, and now the call site. Both are wired as
+`skillparam.PhysDamage`/`PhysDamageBonus` with a test pinning the offsets.
+
+**What stays invented, stated plainly**: `skill.Catalog`'s flat `DamageBonus` (15 and 10 for two
+made-up skills). It is a fallback used only when no real skill refdata is loaded; with refdata
+the damage comes from the skill's own parameters. Grounding the fallback is not possible — there
+is nothing to ground it *to*, because the skills themselves are invented.
+
+Full suite green, 53 packages.

@@ -203,3 +203,25 @@ func TestSlotsAreInRange(t *testing.T) {
 		}
 	}
 }
+
+// TestPhysDamageInputsMatchTheCallSite pins the two parameters
+// Formula_SkillPhysDamage is actually handed. Combat_ResolveDamage reads
+// skill+0x234 into ECX as the base and skill+0x538 as the bonus selector; if
+// either constant drifts from the Field table, the formula's inputs are wrong.
+func TestPhysDamageInputsMatchTheCallSite(t *testing.T) {
+	if PhysDamageField != 0x234 {
+		t.Errorf("PhysDamageField = %#x, want 0x234 -- the offset ECX is loaded from", PhysDamageField)
+	}
+	if PhysDamageBonusField != 0x538 {
+		t.Errorf("PhysDamageBonusField = %#x, want 0x538 -- the offset EAX is loaded from", PhysDamageBonusField)
+	}
+	if got := Field[PhysDamage]; got != PhysDamageField {
+		t.Errorf("Field[%q] = %#x, want %#x", PhysDamage, got, PhysDamageField)
+	}
+	if got := Field[PhysDamageBonus]; got != PhysDamageBonusField {
+		t.Errorf("Field[%q] = %#x, want %#x", PhysDamageBonus, got, PhysDamageBonusField)
+	}
+	if PhysDamage == PhysDamageBonus {
+		t.Error("the base and the bonus selector are two different parameters")
+	}
+}
