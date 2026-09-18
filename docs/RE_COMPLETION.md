@@ -16792,3 +16792,36 @@ utility opcode looks like. The earlier refusal was right for the wrong reason, a
 senders are now named.
 
 Applied 4, failed 0. No value changed.
+
+## 2026-09-18 — correcting yesterday's 0x7007: an action packet, not a name check
+
+Last tick concluded that opcode `0x7007` "is a name-availability check". **That is wrong**, and
+the way it went wrong is the useful part.
+
+I looked at four senders, saw all four write the same leading byte `4`, and read the opcode's
+identity off them. Sweeping the senders I had *not* looked at settles it differently:
+
+	0084e610  CPSCharacterCreateChina    action 1
+	008520a0  CPSCharacterCreateEurope   action 1
+	008560e0                             action 2
+	0084ed90 / 00852830 / 00857b40 / 00858c00   action 4
+
+So `0x7007` is a **character-selection action packet** whose first byte selects the action, and
+4 — a name followed by nothing else — is only one of them. The four senders I sampled agreed
+with each other because they do the same thing, not because the opcode does only that thing.
+**Sampling a subset of senders and generalising is the same mistake as reading a subset of a
+dispatcher's branches**, which this log has recorded twice before from the other direction.
+
+The four names stand — they do request a name check — but their evidence lines are corrected,
+in the record and in the Ghidra database, to say that the *opcode* is not one. The two create
+senders are named `SendCharacterCreateChina` and `SendCharacterCreateEurope`.
+
+**And the starting-kit question stays open.** Action 1 writes the name, then five consecutive
+dwords read from the window at `+0x128`, `+0x12c`, `+0x130`, `+0x134`, `+0x138`, then a byte at
+`+0x218`. Five consecutive dwords on a character-create screen look exactly like chosen item
+ids, which is what `starterkit.go` needs — and that is precisely why it is not claimed. A sweep
+for what writes those offsets returns unrelated structures that merely share them, the same
+struct-offset collision that has misled this log five times now. The shape is recorded; the
+meaning is not.
+
+Applied 2, evidence refreshed 4. No value changed.
