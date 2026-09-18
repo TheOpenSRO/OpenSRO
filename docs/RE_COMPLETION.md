@@ -15837,3 +15837,41 @@ established is that the item path and the defence pair still do not meet: the it
 writer touches params 34, 35, 36, 37, 59 and 141, and the graph feeds 34→17, 36→18, 35→19,
 37→20 — not 5 or 7. srrevamp's damage model is unchanged, because changing it on this much
 would be exactly the "suggestive curve" mistake.
+
+## 2026-09-18 — the accumulator, traced: no equipment on that path
+
+Last tick's entry named the next place to look — the untraced accumulator at `0x004969a3`
+that decides whether equipment can reach param 7, the percentage physical reduction. It is
+now read, and it closes that question in the negative.
+
+Both defence sources have the same shape, param 6 from block `[0x6a]` and param 7 from
+`[0x68]`:
+
+	field = ref[0x1dc] * count  +  lerp(ref[0x1d4], ref[0x1d8], t)
+
+Every term is either a field of the reference record at `[[char+0x34]+0x18]` or a
+character-derived scalar. **No equipment value enters**, so equipment does not reach param 7
+along this path. The whole block is gated on virtual slot 36 returning 1 — and that gate is
+*not* identified: the slot resolves to one folded address shared by `CGObjPC`, `CGObjChar`,
+`CGObjMob` and `CGObjCOS_Summoned`, so its `CGObjCOS_Summoned::IsAccessory` label is an
+artifact of MSVC's identical-code folding, not its meaning here.
+
+**I nearly shipped a wrong answer.** Sweeping every writer of `+0x1a0` produced
+`CGItemEquip::vslot_000` — the equipped-item class writing the field that feeds param 7,
+plus `+0x1a8` and the gate `+0x190`. That is exactly the result the search was looking for.
+It is a **field-reset constructor zeroing its own object**; `CGItemEquip` simply has fields
+at the same offsets. A struct-offset sweep finds offsets, not structs, and only the base
+register says whose struct it is.
+
+A second trap cost a probe: the decompiler prints some struct offsets in **decimal**, so
+`+0x190` appears as `param_1 + 400` and `+0x1d4` as `+ 468`. A hex-only grep for a field
+comes back empty and reads as "this function never touches it" — which is how I first
+concluded, wrongly, that the reference record could not be a `RefObjChar`. It still is not
+one, but for a different and now-checked reason: `RefObjChar_ExtractData` genuinely never
+writes those three offsets.
+
+No names applied and no value changed — the one candidate this tick produced was the false
+lead above, and srrevamp's damage model is untouched. What moved is that a question that had
+been open since the equipment retraction now has a definite answer on one path, and the
+remaining unknown is narrowed to a single thing: which authored table the reference record
+comes from.

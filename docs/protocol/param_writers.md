@@ -163,10 +163,59 @@ directly anywhere (**zero** direct call sites) and neither appears in any vtable
 reached only through the pointers `GObjPC::FUN_004a40c0` installs at `+0xe38` and `+0xe50`,
 0x18 apart, which is why a call-graph search for them comes back empty.
 
-## Still open: where equipped defence enters
+## The accumulator, traced
 
-This tick narrowed it without closing it. The item-entry writer
-`RemoveParamKeeperItemEntry` touches params **34, 35, 36, 37, 59 and 141** — and the graph
-feeds 34→17, 36→18, 35→19, 37→20, which is not the 5/7 defence pair. So the item path and
-the defence params still do not meet anywhere that has been read. The untraced accumulator
-at `0x004969a3` is the next place to look.
+The accumulator left untraced above is now read. The block that produces param 7's source
+is gated and assembled like this:
+
+	49691e  mov edx,[ebx]            ; the character's vtable
+	496920  mov eax,[edx+0x90]       ; virtual slot 36
+	496928  call eax
+	49692a  cmp eax,0x1
+	49692d  jne 0x496a32             ; whole block skipped unless it returns 1
+	496933  fild DWORD PTR [esp+0xc] ; an integer count, widened
+	496937  mov ecx,[ebx+0x34]
+	49693a  mov eax,[ecx+0x18]       ; -> the reference record
+	496941  fld DWORD PTR [eax+0x1dc]
+	496947  fmul [esp+0xc]           ; ref[0x1dc] * count
+	49694b  fstp [esp+0x18]          ; -> the accumulator
+
+So both defence sources are the same shape, param 6 from `[ebx+0x1a8]` and param 7 from
+`[ebx+0x1a0]`:
+
+	field = ref[0x1dc] * count  +  lerp(ref[0x1d4], ref[0x1d8], t)
+
+Every term comes from the reference record at `[[char+0x34]+0x18]` or from a
+character-derived scalar. **No equipment value enters this computation**, so equipment does
+not reach param 7 along this path.
+
+**The gate is not identified.** Virtual slot 36 resolves to the *same address* in
+`CGObjPC`, `CGObjChar`, `CGObjMob` and `CGObjCOS_Summoned`, so MSVC folded four identical
+implementations into one. It currently carries the label
+`CGObjCOS_Summoned::IsAccessory`, recovered from one class's assert — that label is an
+artifact of the folding and is **not** evidence of what the gate means here.
+
+## Still open
+
+Which authored table the reference record comes from. It is reached as
+`[[char+0x34]+0x18]`, and `+0x34` is far too common an offset to identify (478 writers), so
+the record's class is unpinned and `ref[0x1d4]`, `ref[0x1d8]` and `ref[0x1dc]` cannot yet be
+named as columns. It is **not** `RefObjChar`: `RefObjChar_ExtractData` never writes those
+three offsets.
+
+What has not changed is srrevamp's damage model. The item path still writes params 34, 35,
+36, 37, 59 and 141, which the graph feeds into 17-20, and the defence pair 5/7 is still not
+reached from equipment anywhere that has been read.
+
+## Two traps this cost
+
+**A struct-offset sweep does not establish struct identity.** Sweeping every writer of
+`+0x1a0` turned up `CGItemEquip::vslot_000` — the equipped-item class writing the exact
+field that feeds param 7, alongside `+0x1a8` and the gate `+0x190`. It reads as the answer.
+It is a **field-reset constructor zeroing its own object**, and `CGItemEquip` merely happens
+to have fields at those offsets. Offsets collide across unrelated classes, and the base
+register is the only thing that says whose struct it is.
+
+**The decompiler prints some struct offsets in decimal.** `*(undefined4 *)(param_1 + 400)`
+is `+0x190`, and `+0x1d4` appears as `+ 468`. A hex-only grep for a field silently returns
+nothing, which reads as "this function does not touch that field".
