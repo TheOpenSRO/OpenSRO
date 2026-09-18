@@ -28,55 +28,72 @@ be reconciled with the three-character ones here, and the dispatcher's own immed
 
 ## The table
 
-Tag, the site that tests it, the param it writes, the slot, and the developers' description
-where the dump function supplies one.
+One row per tag: the site that tests it, the param it writes, a second param where the
+branch defers one, and the developers' description where `DumpItemOptionsVerbose` supplies
+one.
 
-	'evbl' 004986c7  param 56    slot 0    evbl +%d%%
-	'hpa'  004986d8  param 3     slot -    Ava hp +%d
-	'mp'   004986e9  param 4     slot 0    mp +%d
-	'fz'   004986fa  param -     slot -    anti-frostbite +%d%%
-	'fz'   0049871a  param -     slot -    anti-frostbite +%d%%
-	'bu'   00498733  param 27    slot -    anti-burn +%d%%
-	'es'   0049873e  param 29    slot -    anti-eshock +%d%%
-	'bri'  004987c4  param 10    slot -    block rate +%d
-	'ps'   004987d5  param -     slot -    
-	'zb'   004987e0  param -     slot -    anti-zombie +%d%%
-	'ape'  004987eb  param 27    slot -    ape(%d%%): %d,
-	'ps'   0049880b  param 31    slot -    
-	'zb'   00498812  param 31    slot -    anti-zombie +%d%%
-	'cri'  004988e4  param 12    slot -    critical +%d
-	'era'  004988eb  param 9     slot 1    
-	'atha' 004989bc  param -     slot -    atha(%d%%): %d
-	'rep'  004989cd  param -     slot -    
-	'hra'  004989de  param 11    slot 1    
-	'int'  004989e9  param -     slot -    Ava hr +%d%%
-	'mpa'  004989f0  param 4     slot -    Ava mp +%d
-	'str'  00498aa2  param 1     slot -    
-	'astr' 00498aa9  param -     slot -    astr +%d
-	'drua' 00498af5  param 128   slot -    Ava daru +%d%%
-	'brna' 00498b06  param 128   slot -    
-	'dara' 00498b11  param 174   slot -    Ava dara +%d%%
-	'rals' 00498c83  param 27    slot 0    
-	'intv' 00498c94  param -     slot -    
-	'hprg' 00498ca5  param 25    slot 1    Ava hprg +%d%%
-	'evcr' 00498cb6  param 57    slot 0    
-	'hpmp' 00498cc1  param 25    slot -    regen hpmp +%d%%
-	'hpna' 00498cc8  param 52    slot 1    
-	'mpna' 00498e15  param 53    slot 1    
-	'mprg' 00498f08  param 26    slot 1    Ava mprg +%d%%
-	'nrep' 00498f0f  param 26    slot 1    
-	'rsti' 00499027  param -     slot -    
-	'reis' 00499038  param -     slot -    
-	'rcsi' 00499041  param -     slot -    
-	'rdii' 00499048  param -     slot -    resist disease +%d%%
-	'rein' 0049904f  param -     slot -    reinforce +%d%%
-	'rfei' 004990aa  param -     slot -    
-	'rsli' 004990b1  param -     slot -    resist sleep +%d%%
-	'strj' 00499104  param -     slot -    
-	'soli' 0049910d  param -     slot -    resist stun +%d%%
-	'stra' 00499118  param -     slot -    Ava str +%d
-	'strv' 0049916e  param -     slot -    
-	'umdu' 00499175  param 259   slot -    
+	'ape'   004987eb  param -             ape(%d%%): %d,
+	'astr'  00498aa9  param -             astr +%d
+	'atha'  004989bc  param -             atha(%d%%): %d
+	'bri'   004987c4  param 10            block rate +%d
+	'brna'  00498b06  param 10            
+	'bu'    00498733  param 30            anti-burn +%d%%
+	'cri'   004988e4  param 12            critical +%d
+	'dara'  00498b11  param 174           Ava dara +%d%%
+	'drua'  00498af5  param 128           Ava daru +%d%%
+	'era'   004988eb  param 9             
+	'es'    0049873e  param 29            anti-eshock +%d%%
+	'evbl'  004986c7  param 56            evbl +%d%%
+	'evcr'  00498cb6  param 57            
+	'fz'    0049871a  param 27     +28    anti-frostbite +%d%%
+	'hpa'   004986d8  param 3             Ava hp +%d
+	'hpmp'  00498cc1  param 25            regen hpmp +%d%%
+	'hpna'  00498cc8  param 52            
+	'hprg'  00498ca5  param 25            Ava hprg +%d%%
+	'hra'   004989de  param 11            
+	'int'   004989e9  param -             Ava hr +%d%%
+	'intv'  00498c94  param 2             
+	'mp'    004986e9  param 4             mp +%d
+	'mpa'   004989f0  param 4             Ava mp +%d
+	'mpna'  00498e15  param 53            
+	'mprg'  00498f08  param 26            Ava mprg +%d%%
+	'nrep'  00498f0f  param -             
+	'ps'    0049880b  param 31            
+	'rals'  00498c83  param 27            
+	'rcsi'  00499041  param -             
+	'rdii'  00499048  param -             resist disease +%d%%
+	'rein'  0049904f  param -             reinforce +%d%%
+	'reis'  00499038  param -             
+	'rep'   004989cd  param -             
+	'rfei'  004990aa  param -             
+	'rsli'  004990b1  param -             resist sleep +%d%%
+	'rsti'  00499027  param -             
+	'soli'  0049910d  param -             resist stun +%d%%
+	'str'   00498aa2  param 1             
+	'stra'  00499118  param -             Ava str +%d
+	'strj'  00499104  param 1             
+	'strv'  0049916e  param 1             
+	'umdu'  00499175  param 259           
+	'zb'    00498812  param 32            anti-zombie +%d%%
+
+## How a branch is resolved
+
+A tag branch does **not** write inline. It sets the param id in EDI, optionally stores a
+second id in `[esp+0x24]`, and **jumps into a shared tail** that performs one or two
+`ParamKeeper_SetParam` calls:
+
+	4987fc  mov edi,0x1b               ; 'fz' -> param 27
+	498801  mov DWORD PTR [esp+0x24],0x1c   ; and a deferred param 28
+	498809  jmp 0x498829               ; the shared tail
+
+That shape defeated two earlier passes. A linear scan stopped at the next tag test and saw
+nothing; CFG reachability walked past the tail and collected whichever param came next. The
+resolver follows unconditional jumps, treats the conditional as the int-to-float sign fixup
+it is, and stops at the next `cmp eax,<tag>`.
+
+Its output was checked against a block read by hand -- `'bu'`, `'es'`, `'ps'`, `'zb'` and
+`'fz'` -- and agrees on all five, including `'fz'` writing **two** params.
+
 ## What the descriptions settle
 
 The description column is the game's own text, so it grounds readings this page previously
@@ -90,11 +107,20 @@ refused to promote:
 The evasion/block/hit/critical reading of `era`/`bri`/`hra`/`cri` was carried for two ticks as
 "the obvious READING, not a recovery". For `'bri'` and `'cri'` it is now a recovery.
 
-**It also identifies part of the 25-32 block**, which had been listed as unidentified:
-`'bu'` -> param 27 is "anti-burn" and `'es'` -> param 29 is "anti-eshock", so that run is the
-**resist family**. The other resists the dump names — frostbite, toxin, zombie, disease,
-sleep, stun, fear, csmp — belong to the same run, but only the two with a resolved param are
-claimed here.
+**It identifies the 27-32 run as the resist family**, which had been on the open list as
+unidentified. Reading the branches rather than trusting a scan gives:
+
+	27, 28  'fz'  anti-frostbite   (one tag, two params)
+	29      'es'  anti-eshock
+	30      'bu'  anti-burn
+	31      'ps'  -- not named by the dump function
+	32      'zb'  anti-zombie
+
+**CORRECTION.** This page previously said `'bu'` -> param 27 is "anti-burn". That was a
+scanner artifact: `'bu'` is `mov edi,0x1e` = **param 30**, and param 27 belongs to `'fz'`,
+which writes 27 *and* 28. Only `'es'` -> 29 survived unchanged. The wrong pairing was
+published from a script's output without reading the branch, which is the exact failure the
+project's own rule warns about.
 
 ## What is still NOT claimed
 

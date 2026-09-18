@@ -308,9 +308,10 @@ variable and are not counted.
 	param 193  Formula_RollMagicalDamage
 	param 259  Formula_MitigateMagicalDamage, Formula_MitigatePhysicalDamage
 
-Params 27 and 29 are now named: `DumpItemOptionsVerbose` prints them as **"anti-burn"** and
-**"anti-eshock"**, so the 25-32 run listed as unidentified above is the **resist family** (see
-[stat_tags.md](stat_tags.md)).
+Params 27-32 are now named, and the run is the **resist family**: 27 and 28 are
+anti-frostbite (one tag writing two params), 29 anti-eshock, 30 anti-burn, 32 anti-zombie,
+with 31 resolved but unnamed by the dump function. An earlier version of this line said 27
+was anti-burn; that was wrong — anti-burn is 30 (see [stat_tags.md](stat_tags.md)).
 
 Readers are how a param's *meaning* gets settled, because the formula that consumes it says
 what it does. Two were settled this way immediately, and one of them corrected this page.

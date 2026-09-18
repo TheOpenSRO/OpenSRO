@@ -16186,3 +16186,34 @@ shared tail, and `'int'` printing `"Ava hr"` — which is almost certainly a cop
 the game's own dump code and is recorded as what the binary says rather than repaired.
 
 No value changed.
+
+## 2026-09-18 — reading the branches instead of scanning them, and a wrong pairing withdrawn
+
+Last tick's open item was the rest of the resist family. Getting it required reading the
+dispatcher's actual shape rather than scanning for values near a tag test.
+
+A tag branch does not write inline. It sets the param id in EDI, sometimes stores a **second**
+id in `[esp+0x24]`, and jumps into a **shared tail** that issues one or two
+`ParamKeeper_SetParam` calls. That shape defeated both earlier passes: a linear scan stopped
+at the next tag test and saw nothing, and CFG reachability walked through the tail and
+collected whichever param came after. The resolver now follows unconditional jumps, treats the
+conditional as the int-to-float sign fixup it is, and stops at the next `cmp eax,<tag>`.
+
+**28 of 46 tag sites now resolve**, and the output was checked against a block read by hand
+before being believed — `'bu'`, `'es'`, `'ps'`, `'zb'`, `'fz'` — agreeing on all five,
+including `'fz'` writing **two** params.
+
+	27, 28  'fz'  anti-frostbite     29  'es'  anti-eshock     30  'bu'  anti-burn
+	31      'ps'  (not named)        32  'zb'  anti-zombie
+
+**A claim from the previous tick is withdrawn.** I published "param 27 is anti-burn" on a
+script's output. `'bu'` is `mov edi,0x1e` = **param 30**; param 27 belongs to `'fz'`. Only
+`'es'` -> 29 survived. Both `stat_tags.md` and `param_writers.md` are corrected. The rule this
+broke is the project's own — a use-site settles meaning, and I had a scan, not a use-site.
+
+The corrected decoding also filled in the tag names themselves: the four-character forms
+`'brna'`, `'drua'`, `'dara'`, `'rals'`, `'intv'`, `'evcr'`, `'hpna'`, `'mpna'`, `'nrep'`,
+`'rsti'`, `'reis'` were all being published truncated until the decoder was fixed this
+morning.
+
+No value changed.
