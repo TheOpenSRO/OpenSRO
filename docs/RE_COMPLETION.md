@@ -16314,3 +16314,34 @@ category indices — came from the asm, where the `je` target is unambiguous.
 their branch loads into EAX, with `TestStatusResistsAreCategoriesNotParams` asserting that no
 status resist also has a param, that the categories are distinct, that `'soli'` is absent, and
 that the `rsti`/`soli` labels are the dumper's. Full suite green, 52 packages.
+
+## 2026-09-18 — the vtable-slot lever, measured and mostly closed
+
+v0.1.343 built green. With the stat subsystem drilled for several ticks, this one measured
+coverage instead of continuing: the server is 22.3% named and the client 15.1%, but the
+largest unnamed block is not `FUN_*` — it is **`vslot_NNN`, 2,757 in the server and 4,350 in
+the client**. The obvious lever is propagating a slot's name to its siblings.
+
+**It offered 312 names. Eleven of them were real.** The write-up is in
+[vtable_slot_propagation.md](protocol/vtable_slot_propagation.md); the short version is two
+independent ways to be wrong:
+
+- **Rooting at the RTTI root.** Every class roots at `CBase`, so "the family" is the whole
+  binary and slot 2 of `CGObj` (`GetJID`) was offered to `CRgnTerrain` and `CMaintainer`.
+  Replaced by a structural test: two vtables must hold the same address at the same index
+  eight or more times before either can name the other's slot.
+- **Identical code folding.** That cut 312 to 101, still wrong:
+  `SaveCurPosAsLastTelPosition` appeared at slots 15, 16, 22, 215 and 305 across
+  `CServerApp`, `CQEV_GUILD_SUPPORT`, `CGObj` and `CGItem`, because one folded body sits in
+  many unrelated slots and carries one class's name to all of them. Excluding addresses at
+  more than two distinct slot indices, and thunks, leaves **11**.
+
+Those 11 are sound — slot 317 `CanBeEquipedAt` across four item classes, slot 400 `UseItem`
+across four COS classes, and three singletons. Applied 11, failed 0.
+
+**The useful output is the negative.** 312 → 101 → 11, two filters each taking an order of
+magnitude, says the `vslot_` block is **not reachable by propagation** and a slot's meaning
+has to come from evidence about that slot. That closes a lever that would otherwise look like
+the biggest remaining win every time coverage is measured.
+
+No value changed.
