@@ -54,8 +54,20 @@ func _test_decode_list_result_error() -> void:
 	_check(result.error == "not authenticated", "error message round-trips")
 	_check(result.slots.size() == 0, "no slots alongside an error")
 
+## The move request is the list request plus two signed 64-bit slot indices
+## -- the layout server/internal/session's DecodeInventoryMoveRequest reads.
+func _test_encode_move_request() -> void:
+	var encoded := InventoryNet.encode_move_request("Aria", 3, 27)
+	_check(encoded.size() == 2 + 4 + 16, "name prefix + name + two s64 indices")
+	_check(encoded.slice(2, 6).get_string_from_utf8() == "Aria", "name bytes follow prefix")
+	_check(encoded.decode_s64(6) == 3, "from slot is the first s64")
+	_check(encoded.decode_s64(14) == 27, "to slot is the second s64")
+	# A negative index is carried as-is; refusing it is the server's job.
+	_check(InventoryNet.encode_move_request("A", -1, 0).decode_s64(3) == -1, "negative index preserved")
+
 func _init() -> void:
 	_test_encode_list_request()
+	_test_encode_move_request()
 	_test_decode_list_result()
 	_test_decode_list_result_error()
 

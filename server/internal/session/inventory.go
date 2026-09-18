@@ -11,11 +11,10 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 )
 
-// Inventory opcodes, our own protocol. Requires a prior OpLogin. Only
-// listing is exposed over the wire so far -- there's no legitimate way for
-// a player to add/remove items yet (no shops, combat, or drops), so
-// inventory.Store's AddItem/RemoveItem aren't wired to any opcode; they'll
-// get one each once those systems exist.
+// Inventory opcodes, our own protocol. Requires a prior OpLogin. Listing
+// lives here; rearranging the bag is OpInventoryMove (inventorymove.go).
+// Adding and removing are never exposed directly -- they happen through the
+// systems that legitimately do them (shop, loot, storage, trade, use).
 const (
 	OpInventoryList       uint16 = 0x0030 // client -> server
 	OpInventoryListResult uint16 = 0x0031 // server -> client

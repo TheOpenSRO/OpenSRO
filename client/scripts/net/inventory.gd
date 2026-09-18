@@ -6,6 +6,12 @@ class_name InventoryNet
 
 const OP_LIST := 0x0030          # client -> server
 const OP_LIST_RESULT := 0x0031   # server -> client
+## Rearranging the bag (session/inventorymove.go): move a slot's stack onto
+## another slot. The server decides what that means -- a move into a free
+## slot, a merge into a same-item stack, or a swap -- and answers with the
+## whole bag as it stands, in OP_LIST_RESULT's shape (decode_list_result).
+const OP_MOVE := 0x0032          # client -> server
+const OP_MOVE_RESULT := 0x0033   # server -> client
 
 ## One occupied inventory slot.
 class Slot:
@@ -26,6 +32,18 @@ static func encode_list_request(character_name: String) -> PackedByteArray:
 	out.resize(2)
 	out.encode_u16(0, name_bytes.size())
 	out.append_array(name_bytes)
+	return out
+
+## Encodes an OpInventoryMove request: the character name, then the source
+## and destination slot indices as signed 64-bit, the same shape as
+## UseItemNet.encode_use with a second index.
+static func encode_move_request(character_name: String, from_slot: int, to_slot: int) -> PackedByteArray:
+	var out := encode_list_request(character_name)
+	var tail := PackedByteArray()
+	tail.resize(16)
+	tail.encode_s64(0, from_slot)
+	tail.encode_s64(8, to_slot)
+	out.append_array(tail)
 	return out
 
 ## Parses one Slot from data starting at offset, returning it along with

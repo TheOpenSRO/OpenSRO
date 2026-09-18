@@ -291,6 +291,16 @@ func handleEquipmentList(ctx context.Context, sess *gateway.Session, p *proto.Pa
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: errStr}).Encode()})
 	}
 
+	return sendWornList(ctx, sess, store, characterID)
+}
+
+// sendWornList answers with everything the character has on. It is the
+// reply to a list AND to a successful equip or unequip: those used to answer
+// with an empty EquipmentResult{}, which on the wire is identical to "wearing
+// nothing", and the client redrew its paper doll bare from it while the body
+// stayed dressed. Answering with the real list removes the ambiguity the same
+// way OpInventoryMoveResult carries the whole bag.
+func sendWornList(ctx context.Context, sess *gateway.Session, store equipment.Store, characterID int64) error {
 	items, err := store.Get(ctx, characterID)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "list failed"}).Encode()})
@@ -318,7 +328,7 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 	if err := store.Equip(ctx, characterID, req.Slot, req.InventorySlot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}
-	return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{}).Encode()})
+	return sendWornList(ctx, sess, store, characterID)
 }
 
 func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store) error {
@@ -334,7 +344,7 @@ func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	if err := store.Unequip(ctx, characterID, req.Slot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}
-	return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{}).Encode()})
+	return sendWornList(ctx, sess, store, characterID)
 }
 
 func equipErrorMessage(err error) string {

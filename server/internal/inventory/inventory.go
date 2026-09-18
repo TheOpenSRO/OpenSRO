@@ -218,6 +218,20 @@ type Store interface {
 	// RemoveItem removes quantity from the given slot. If that empties the
 	// slot exactly, the slot becomes free again.
 	RemoveItem(ctx context.Context, characterID int64, slot int, quantity int) error
+
+	// MoveItem is what dragging a stack from one bag slot onto another
+	// does. `from` must hold something (ErrSlotEmpty otherwise); both
+	// indices must be in range (ErrInvalidSlot). Then, in order:
+	//
+	//   - `to` empty: the stack moves there and `from` becomes free;
+	//   - `to` holds the SAME item and it stacks: as much as fits is merged
+	//     into `to` (up to its MaxStack) and the rest stays in `from`;
+	//   - anything else (a different item, or a full stack of the same one):
+	//     the two slots swap.
+	//
+	// Moving a slot onto itself is a no-op that succeeds. Quantities are
+	// conserved in every branch -- nothing is created or destroyed.
+	MoveItem(ctx context.Context, characterID int64, from, to int) error
 }
 
 // ExpansionQuestCodes is what raises the inventory cap from MaxSlotsDefault to

@@ -141,10 +141,14 @@ the lattice pitch, the close-button convention and the tile fill were each settl
 The windows are real; their *contents* are a plain list laid over the frame. Each one wants its
 authored presentation instead:
 
-- **Inventory** — *icons done* (hundred-and-eleventh round): the authored slot grid is filled from
-  `itemdata*.txt`, 11,772 items resolvable by id. Note the grid is **4×8 at a 36-pixel pitch**,
-  not 32, so a 32×32 icon sits inside a 36-pixel cell. Still wanted: the gold readout, and drag
-  between slots.
+- **Inventory** — *done* (icons: hundred-and-eleventh round; gold + drag: `docs/rounds/
+  inventory.md`): the authored slot grid is filled from `itemdata*.txt`, 11,772 items resolvable
+  by id. Note the grid is **4×8 at a 36-pixel pitch**, not 32, so a 32×32 icon sits inside a
+  36-pixel cell. The authored gold row (`GDR_INVENTORY_STA_GOLD`) shows the server's balance
+  (`OpCharacterStats`, requested on open). Dragging a stack onto another cell is `OpInventoryMove`
+  — the server decides move / merge / swap and answers with the whole bag; dragging onto a worn
+  slot of the docked doll is `OpEquip`. A successful equip/unequip now answers with the worn
+  list rather than an empty ack (which read as "wearing nothing" and blanked the doll).
 - **Character** — *partly done*: `Phy. atk` and `Phy. def.` carry the numbers combat itself
   resolves from equipment, and the HP row its real value, over a new `OpCharacterStats`. The
   other thirteen rows (strength, intelligence, the magical and balance and hit-rate figures,
