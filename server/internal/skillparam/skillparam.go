@@ -674,3 +674,35 @@ var TimedEffectCodes = []Code{
 	"pao",  // 0x350
 	"pcdu", // 0x364
 }
+
+// The timed-effect record layout, read from the pair of functions that build
+// and advance it: QueueTimedSkillEffect (0x00596960) and TickTimedSkillEffect
+// (0x00596a40).
+//
+// The QUEUE record, allocated when any of TimedEffectCodes is present:
+//
+//	+0x08  the GetTickCount() value when the effect began
+//	+0x14  the first of the eight parameter pointers, then +0x18 .. +0x30
+//
+// Each PARAMETER record the eight point at:
+//
+//	[0] (+0x00)  duration in milliseconds
+//	[1] (+0x04)  a value, used by mode 1
+//	[2] (+0x08)  a second value, used by mode 1 when [1] is zero
+//	[3] (+0x0c)  mode: 0 and 1 are handled; the queue REFUSES a record whose
+//	             mode is 2, so a third mode exists and is excluded here
+//
+// The expiry test is the grounding for [0] being a duration:
+//
+//	if (param[0] <= GetTickCount() - record[+0x8])  -> expired
+//
+// an elapsed-time comparison, which is what makes it milliseconds rather than
+// a count or a magnitude. NOT read: what mode 0 and mode 1 mean, what virtual
+// slot 0x4fc does with the value, or why mode 2 is refused at queue time.
+const (
+	TimedEffectStartTickOffset = 0x08 // in the queue record
+	TimedEffectFirstParamPtr   = 0x14 // in the queue record; eight, stride 4
+	TimedEffectDurationOffset  = 0x00 // in each parameter record, milliseconds
+	TimedEffectModeOffset      = 0x0c // in each parameter record
+	TimedEffectRefusedMode     = 2    // the mode QueueTimedSkillEffect will not queue
+)

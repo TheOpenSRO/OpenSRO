@@ -17137,3 +17137,40 @@ company they keep.
 
 **The timed-effect payout is still open**, and the next attempt needs a discriminator that
 separates a struct field from a vtable slot — the offset alone cannot.
+
+## 2026-09-18 — the timed effect pays out on elapsed milliseconds
+
+The payout was found by **behaviour rather than offset**, which was the point: the previous
+tick's `+0x278` sweep failed because an offset cannot tell a struct field from a vtable slot.
+The consumer had to read the tick stamp the queue wrote and touch the eight pointers it copied,
+so that is what was searched for — functions calling `GetTickCount` and referencing four or more
+of `+0x14..+0x30`. Sixteen matched; `FUN_00596a40` matched on **all eight** and sits immediately
+after `QueueTimedSkillEffect` in the same translation unit.
+
+Named `TickTimedSkillEffect`. Its expiry test is the whole finding:
+
+	if (param[0] <= GetTickCount() - record[+0x8])   -> expired
+
+**That comparison is what makes `param[0]` a duration in milliseconds** rather than a count or a
+magnitude — it is measured against elapsed time from the stamp the queue recorded. Nothing about
+the name or the position says that; the arithmetic does.
+
+The record layout falls out of the pair:
+
+	queue record   +0x08  the GetTickCount() when the effect began
+	               +0x14  the eight parameter pointers, stride 4, to +0x30
+	parameter      [0]    duration, milliseconds
+	               [1],[2] values used by mode 1
+	               [3]    mode -- 0 and 1 are handled, and the QUEUE REFUSES mode 2
+
+Mode 2 being refused at queue time is worth recording: a third mode exists and this path is not
+it, which is a fact about what is *not* here.
+
+Wired as constants in `skillparam` with a test that the eighth pointer lands exactly where the
+queue writes it, so the layout cannot drift.
+
+**Left unresolved and said so**: what modes 0 and 1 mean, what virtual slot `0x4fc` does with the
+value, and why the apply path is gated on the same byte the expiry sets — that control flow reads
+oddly and is not explained rather than being smoothed over.
+
+Full suite green, 53 packages.

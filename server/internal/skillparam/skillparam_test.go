@@ -272,3 +272,22 @@ func TestTimedEffectCodesMatchTheFieldsQueued(t *testing.T) {
 		t.Error("'pmdg' is a timed-effect parameter, not a damage-formula base")
 	}
 }
+
+// TestTimedEffectLayoutIsSelfConsistent pins the record layout the queue and
+// tick functions agree on. The eight pointers are contiguous with stride 4, so
+// the last one must land where the queue writes it.
+func TestTimedEffectLayoutIsSelfConsistent(t *testing.T) {
+	last := TimedEffectFirstParamPtr + 4*(len(TimedEffectCodes)-1)
+	if last != 0x30 {
+		t.Errorf("the eighth parameter pointer lands at %#x, want 0x30 -- the queue writes +0x14..+0x30", last)
+	}
+	if TimedEffectStartTickOffset >= TimedEffectFirstParamPtr {
+		t.Error("the start tick is written before the parameter pointers in the record")
+	}
+	if TimedEffectDurationOffset != 0 {
+		t.Errorf("the duration is the parameter record's first dword, got %#x", TimedEffectDurationOffset)
+	}
+	if TimedEffectModeOffset != 0x0c {
+		t.Errorf("the mode is field [3], %#x, got %#x", 0x0c, TimedEffectModeOffset)
+	}
+}
