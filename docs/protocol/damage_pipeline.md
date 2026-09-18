@@ -534,3 +534,38 @@ agree.
 
 Recorded as `combat.AfflictionResistParam` / `AfflictionSecondParam` with a cross-check test. **Not
 wired** — srrevamp has no status-effect system — so these are reference data, read by no game code.
+
+## Every shipped combat constant re-verified from the exe (2026-09-18)
+
+After the floor-band bug (a tenth of `damage` where the engine uses a tenth of `base`), every
+shipped combat constant was re-read from `.rdata` in `SR_GameServer.exe` and every shipped formula
+re-derived from asm. All the rest hold:
+
+| constant | .rdata | value | used by | verdict |
+|---|---|---|---|---|
+| mitigation `+1.0` | `0xb45ac0` | 1.0 (f64) | `MitigateDamage` `/(1+p/100)` | ✓ |
+| mitigation `/100` | `0xb45af0` | 100.0 (f64) | `MitigateDamage`, floor band | ✓ |
+| berserk/crit mult | `0xb45f30` | 2.0 (f64) | `CriticalMultiplier`, berserk ×2 | ✓ |
+| floor-band threshold | `0xb45f60` | 0.05 (f64) | `FloorBandThreshold` | ✓ |
+| floor-band scale | `0xb45c60` | 10 (f64) | `FloorBandScale` | ✓ (base, fixed) |
+| `RAND_MAX` | `0xb45af8` | 32767 (f64) | `FloorBandRandMax` | ✓ |
+| level-adv per level | `0xb45dc8` | 0.03 (f64) | `LevelAdvantagePerLevel` | ✓ |
+| level-adv cap | `0xb45b8c` | 0.30 (f32) | `LevelAdvantageCap` | ✓ |
+
+Two formula checks worth recording:
+
+- **Core mitigation is correct despite srrevamp rounding a stage earlier.** The engine computes
+  `attack/(1+red/100) - flat` as one float and rounds once at the end; `MitigateDamage` rounds the
+  quotient then subtracts the integer `flat`. Subtracting an integer commutes with rounding, so the
+  two agree; the only residue is that srrevamp rounds between mitigation and the level term, a ≤1
+  difference, not a systematic bias.
+
+- **A disclosed ordering divergence, berserk vs the floor band.** The engine folds the critical and
+  berserk factors into ONE multiplier applied at stage 13, *before* the floor band at stage 16.
+  srrevamp applies the critical inside `ResolveBlow` (before the floor band, ✓) but berserk in
+  `performAttack` *after* `ResolveBlow` returns (after the floor band). So for the rare case of a
+  berserk blow mitigated below 5% of base, srrevamp runs the floor band on the un-doubled damage and
+  then doubles, where the engine doubles first. It only reaches the band on a berserk hit into a
+  high-defence target, and both paths end at a small value; recorded as a known low-impact
+  divergence rather than a silent one, because fixing it means threading the berserk tracker into
+  `ResolveBlow`, a refactor out of proportion to the effect.

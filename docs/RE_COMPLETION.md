@@ -17875,3 +17875,22 @@ Effect on play: heavily out-geared hits (high-defence targets) now land for a ra
 attacker's attack instead of ~1 — a meaningful minimum, as the engine intends. Fixed in
 `combat.ApplyFloorBand`, wired already through `ResolveBlow`. `go test -p 1 ./...` green.
 Applied 0 names (the functions were named).
+
+## Combat-formula audit: the rest hold (2026-09-18)
+
+Prompted by the floor-band bug, the shipped combat formulas were re-derived from asm and their
+constants re-read from `SR_GameServer.exe`'s `.rdata`. Result: the floor band was the only error.
+
+- **Level advantage** (`FUN_0040fd60`): `clamp(diff * 0.03, 0, 0.30)`, with 0.03 the double at
+  `0xb45dc8` and 0.30 the float at `0xb45b8c` — exactly `LevelAdvantagePerLevel`/`LevelAdvantageCap`.
+- **Core mitigation** (`0x0040e450`): `attack/(1+red/100) - flat`, one float rounded once. srrevamp
+  rounds the quotient then subtracts integer `flat`; subtracting an integer commutes with rounding,
+  so it agrees (≤1 residue from rounding a stage early, not a bias).
+- **Critical** ×2 and **berserk** ×2 both trace to `0xb45f30 = 2.0`.
+
+One low-impact divergence disclosed rather than fixed: the engine folds crit+berserk into one
+multiplier applied *before* the floor band; srrevamp applies berserk after `ResolveBlow` (after the
+band). Only reachable on a berserk hit into a high-defence target. See `damage_pipeline.md`.
+
+Net for the two ticks: one shipped bug found and fixed (floor band), every other shipped combat
+constant and formula re-verified from the binary. Docs only this tick; 0 names.
