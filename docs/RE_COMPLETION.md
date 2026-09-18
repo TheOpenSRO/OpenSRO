@@ -15758,3 +15758,47 @@ in the wrong program. They were reverted to their Ghidra default names (safe, be
 applier reported `kept 0`, so all six had been unnamed), and the 77 were then confirmed
 present in `sro_client.exe` by a targeted re-run reporting `evidence refreshed 77`.
 **Always pass `-process <program>`.**
+
+## 2026-09-18 — naming backwards across the wire, from the window that sends it
+
+The senders named last tick left 141 unnamed only because their *server* handler was, so
+this tick runs the join in the other direction: the client window class that sends an
+opcode is authored, and it identifies the feature the server handler serves.
+
+**43 names applied (32 client, 11 server), 0 failed.** The handler table is now **90 of 162
+rows named**, up from 84. The eleven server handlers are `GuildSummonReq` (0x031), `Stall`
+(0x0b2, 0x0b5), `Alias` (0x0e3), `EventGuide` (0x0ea), `ItemMall` (0x11a),
+`AlchemyReinforce` (0x150, 0x151), `AlchemyDecompEquipment` (0x157), `Socket` (0x16a) and
+`SummonPartyUser` (0x51c).
+
+**What this citation is, and is not.** It rests entirely on the client: the server bodies
+reply with their matching `0xbNNN` and read their fields, but none of them names itself.
+Every one of the eleven was re-derived from a second, independently computed ownership
+table before being recorded, and all eleven agreed.
+
+Getting there took four wrong probes, each caught rather than believed:
+
+- The dump had been **rebuilt with last tick's names**, so a sweep for
+  `FUN_00841780(0x7…)` found 6 senders instead of 226. The helper is now
+  `Net_SendRequestPacket`.
+- Matching callers by a sender's bare name counted `vslot_043` and `Create` as calls,
+  which put `0x7001`/`0x7007` in `CFrustum`, `CRTBone` and `CNetEngine`. Restricting to
+  bare names that are unique in the binary removed the noise — only 3 senders were
+  excluded, and they accounted for nearly all of it.
+- Host-ness was first measured per class, which let `0x7007` through although ~60 classes
+  send it. It is a property of the **opcode**: an opcode sent by more than three distinct
+  window classes is plumbing, not a feature. Four are — `0x7050`, `0x7034`, `0x704b`,
+  `0x705e`.
+- `switchD_0084c129` is a Ghidra jump-table label, and was being treated as a class name.
+
+Two judgements are recorded rather than hidden. An explicit list of eleven container and
+entry-point classes (`CIF_NPCTalk`, which sends 15 opcodes, `CGInterface`,
+`CIFSlotWithHelp`, `CIFInventory`, …) is excluded from owning anything, because a window
+that hosts many features names none of them. And `0x7007` was dropped by hand: its owners
+span character-select and character-create windows that do not agree.
+
+`0x0ba` is the case that shows why the exclusions matter. The client says `CIFInventory`
+sends it; the server handler calls `CFleaMarket__BroadcastToParticipants`. Both are
+probably true — an inventory action inside a running stall — but "Inventory" would have
+been the wrong name, and the server's own callee is the better evidence. It is left as it
+was.

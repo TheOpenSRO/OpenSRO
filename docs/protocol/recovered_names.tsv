@@ -1911,3 +1911,46 @@
 008a8c20	client	SendShopMsg_046	reading	calls the send helper FUN_00841780 with 0x7046; the server dispatches that opcode at index 0x046 to GObjPC_HandleShopMsg_046, so this is that request's client sender
 00841780	client	Net_SendRequestPacket	reading	every one of the 154 client request opcodes is built through this function as its first argument (284 call sites), including the independently read SendIncreaseStatRequest (FUN_00841780(0x7050,...)); it is the request send helper
 0053cea0	client	CMsgStreamBuffer_Construct	reading	constructor storing the opcode at +0x18 and installing vtable 0x00d831e4, which RTTI names CMsgStreamBuffer; 272 call sites pair it with the request opcodes
+00557af0	client	SendConsoleMsg_025_557af0	reading	the only client window class that sends 0x7025 is CIFConsole; the server dispatches it at index 0x025
+00564410	client	SendConsoleMsg_025_564410	reading	the only client window class that sends 0x7025 is CIFConsole; the server dispatches it at index 0x025
+0065b720	client	SendConsoleMsg_025_65b720	reading	the only client window class that sends 0x7025 is CIFConsole; the server dispatches it at index 0x025
+007907d0	client	SendConsoleMsg_025_7907d0	reading	the only client window class that sends 0x7025 is CIFConsole; the server dispatches it at index 0x025
+0081d610	client	SendGuildSummonReqMsg_031	reading	the only client window class that sends 0x7031 is CIFGuildSummonReq; the server dispatches it at index 0x031
+0078f7c0	client	SendMagicStateMsg_074_78f7c0	reading	the only client window class that sends 0x7074 is CIFMagicStateBoard; the server dispatches it at index 0x074
+00791d40	client	SendMagicStateMsg_074_791d40	reading	the only client window class that sends 0x7074 is CIFMagicStateBoard; the server dispatches it at index 0x074
+00793570	client	SendMagicStateMsg_074_793570	reading	the only client window class that sends 0x7074 is CIFMagicStateBoard; the server dispatches it at index 0x074
+0081c5b0	client	SendMagicStateMsg_074_81c5b0	reading	the only client window class that sends 0x7074 is CIFMagicStateBoard; the server dispatches it at index 0x074
+009ec080	client	SendMagicStateMsg_074_9ec080	reading	the only client window class that sends 0x7074 is CIFMagicStateBoard; the server dispatches it at index 0x074
+0081e0d0	client	SendStallMsg_0b2	reading	the only client window class that sends 0x70b2 is CIFStall; the server dispatches it at index 0x0b2
+0081e250	client	SendStallMsg_0b5	reading	the only client window class that sends 0x70b5 is CIFStall; the server dispatches it at index 0x0b5
+00824030	client	SendAliasMsg_0e3	reading	the only client window class that sends 0x70e3 is UI_ALIAS; the server dispatches it at index 0x0e3
+0081eda0	client	SendEventGuideMsg_0ea	reading	the only client window class that sends 0x70ea is CEventGuideManager; the server dispatches it at index 0x0ea
+007d40c0	client	SendItemMallMsg_11a_7d40c0	reading	the client window classes sending 0x711a (CIFItemMall, CIFNewItemMall) agree on ItemMall; the server dispatches it at index 0x11a
+007d4210	client	SendItemMallMsg_11a_7d4210	reading	the client window classes sending 0x711a (CIFItemMall, CIFNewItemMall) agree on ItemMall; the server dispatches it at index 0x11a
+007d5ea0	client	SendItemMallMsg_11a_7d5ea0	reading	the client window classes sending 0x711a (CIFItemMall, CIFNewItemMall) agree on ItemMall; the server dispatches it at index 0x11a
+007d6000	client	SendItemMallMsg_11a_7d6000	reading	the client window classes sending 0x711a (CIFItemMall, CIFNewItemMall) agree on ItemMall; the server dispatches it at index 0x11a
+007eabe0	client	SendItemMallMsg_11a_7eabe0	reading	the client window classes sending 0x711a (CIFItemMall, CIFNewItemMall) agree on ItemMall; the server dispatches it at index 0x11a
+007ecb90	client	SendItemMallMsg_11a_7ecb90	reading	the client window classes sending 0x711a (CIFItemMall, CIFNewItemMall) agree on ItemMall; the server dispatches it at index 0x11a
+008210f0	client	SendAlchemyReinforceMsg_150_8210f0_151	reading	the client window classes sending 0x7150 (CAlchemyMgrReinforce, CIFAlchemyReinforce) agree on AlchemyReinforce; the server dispatches it at index 0x150 | the client window classes sending 0x7151 (CAlchemyMgrReinforce, CIFAlchemyReinforce) agree on AlchemyReinforce; the server dispatches it at index 0x151
+008214f0	client	SendAlchemyReinforceMsg_150_8214f0	reading	the client window classes sending 0x7150 (CAlchemyMgrReinforce, CIFAlchemyReinforce) agree on AlchemyReinforce; the server dispatches it at index 0x150
+00825c50	client	SendAlchemyReinforceMsg_150_825c50	reading	the client window classes sending 0x7150 (CAlchemyMgrReinforce, CIFAlchemyReinforce) agree on AlchemyReinforce; the server dispatches it at index 0x150
+008215f0	client	SendAlchemyReinforceMsg_151_8215f0	reading	the client window classes sending 0x7151 (CAlchemyMgrReinforce, CIFAlchemyReinforce) agree on AlchemyReinforce; the server dispatches it at index 0x151
+00825dc0	client	SendAlchemyReinforceMsg_151_825dc0	reading	the client window classes sending 0x7151 (CAlchemyMgrReinforce, CIFAlchemyReinforce) agree on AlchemyReinforce; the server dispatches it at index 0x151
+00820ff0	client	SendAlchemyDecompEquipmentMsg_157_820ff0	reading	the only client window class that sends 0x7157 is CAlchemyMgrDecompEquipment; the server dispatches it at index 0x157
+008259a0	client	SendAlchemyDecompEquipmentMsg_157_8259a0	reading	the only client window class that sends 0x7157 is CAlchemyMgrDecompEquipment; the server dispatches it at index 0x157
+00822db0	client	SendSocketMsg_16a_822db0	reading	the client window classes sending 0x716a (CNIFSocketWnd, UI_SOCKET) agree on Socket; the server dispatches it at index 0x16a
+00822ec0	client	SendSocketMsg_16a_822ec0	reading	the client window classes sending 0x716a (CNIFSocketWnd, UI_SOCKET) agree on Socket; the server dispatches it at index 0x16a
+00822fd0	client	SendSocketMsg_16a_822fd0	reading	the client window classes sending 0x716a (CNIFSocketWnd, UI_SOCKET) agree on Socket; the server dispatches it at index 0x16a
+008230f0	client	SendSocketMsg_16a_8230f0	reading	the client window classes sending 0x716a (CNIFSocketWnd, UI_SOCKET) agree on Socket; the server dispatches it at index 0x16a
+00823410	client	SendSummonPartyUserMsg_51c	reading	the only client window class that sends 0x751c is CNIFSummonPartyUserWnd; the server dispatches it at index 0x51c
+004ee1d0	server	GObjPC_HandleGuildSummonReqMsg_031	reading	the only client window class that sends 0x7031 is CIFGuildSummonReq; this is the handler the server dispatch table reaches for that opcode
+00516130	server	GObjPC_HandleStallMsg_0b2	reading	the only client window class that sends 0x70b2 is CIFStall; this is the handler the server dispatch table reaches for that opcode
+005164c0	server	GObjPC_HandleStallMsg_0b5	reading	the only client window class that sends 0x70b5 is CIFStall; this is the handler the server dispatch table reaches for that opcode
+00512540	server	GObjPC_HandleAliasMsg_0e3	reading	the only client window class that sends 0x70e3 is UI_ALIAS; this is the handler the server dispatch table reaches for that opcode
+00516870	server	GObjPC_HandleEventGuideMsg_0ea	reading	the only client window class that sends 0x70ea is CEventGuideManager; this is the handler the server dispatch table reaches for that opcode
+00518cd0	server	GObjPC_HandleItemMallMsg_11a	reading	the client window classes sending 0x711a (CIFItemMall, CIFNewItemMall) agree on ItemMall; this is the handler the server dispatch table reaches for that opcode
+00506e20	server	GObjPC_HandleAlchemyReinforceMsg_150	reading	the client window classes sending 0x7150 (CAlchemyMgrReinforce, CIFAlchemyReinforce) agree on AlchemyReinforce; this is the handler the server dispatch table reaches for that opcode
+00506ee0	server	GObjPC_HandleAlchemyReinforceMsg_151	reading	the client window classes sending 0x7151 (CAlchemyMgrReinforce, CIFAlchemyReinforce) agree on AlchemyReinforce; this is the handler the server dispatch table reaches for that opcode
+0050c140	server	GObjPC_HandleAlchemyDecompEquipmentMsg_157	reading	the only client window class that sends 0x7157 is CAlchemyMgrDecompEquipment; this is the handler the server dispatch table reaches for that opcode
+00506fa0	server	GObjPC_HandleSocketMsg_16a	reading	the client window classes sending 0x716a (CNIFSocketWnd, UI_SOCKET) agree on Socket; this is the handler the server dispatch table reaches for that opcode
+0051bf10	server	GObjPC_HandleSummonPartyUserMsg_51c	reading	the only client window class that sends 0x751c is CNIFSummonPartyUserWnd; this is the handler the server dispatch table reaches for that opcode
