@@ -17915,3 +17915,31 @@ Both constants read straight from the exe: `0xb462ac` = 1000.0 (f32), `0xb45ea0`
 So the audit pass (this tick + the last two) stands at: **one shipped bug found and fixed (floor
 band), and the core damage pipeline, the level curve, and the HP/MP stat formula all independently
 re-verified against the binary.** Docs only; 0 names.
+
+## Two server builds: the dump is authoritative, srgs.asm is a mod (2026-09-18)
+
+Auditing the death penalty turned up that the RE box has **two different SR_GameServer builds**, and
+it matters for every asm/constant read:
+
+- The **Ghidra dump** (`/var/tmp/decomp_server`, project `re_server`) — what srrevamp is recovered
+  from — has the player-unflagged death multiplier at **×20** (branches: monster 100 /
+  monster-flagged 300 / player 20 / player-flagged 100). `leveldata.DeathPenalty*` matches this.
+- The **on-disk exe** (`/var/tmp/SR_GameServer.exe`, md5 `864ffd0d2b76`) and **`/var/tmp/srgs.asm`**
+  are a **modded build**: the player branches are merged at **×100** (only three imul sites, no ×20 —
+  byte-searched all encodings). srgs.asm is a disassembly of this build, not the dump.
+
+So the death penalty was verified correct against the DUMP's decompile (×20, the mapping read branch
+by branch: monster/player × flagged, plus the ≤10 grace and the `+0x1c` exp unit).
+
+**And the floor-band fix was re-verified against the authoritative binary.** Because srgs.asm is the
+modded build, the v0.1.369 fix (band uses `base`, not `damage`) was re-checked by disassembling
+`Formula_MitigatePhysicalDamage` from the DUMP via Ghidra `Disasm.java`: `0x40e6ff FSTP ST1` pops the
+mitigated damage and leaves the base (`ESP+0x28`), and `0x40e706 FMUL [0xb45c60]` multiplies THAT —
+byte-identical to srgs.asm. The fix is correct in the authoritative build; the floor band is unmodded
+between the two.
+
+**Method correction, recorded as a memory:** for anything moddable, use the dump (Ghidra `Disasm.java`
+on `re_server`) as authoritative, not `srgs.asm` or the on-disk exe. Structural readings and `.rdata`
+addresses are shared between the builds, so the session's structural findings hold; only values at
+moddable sites can diverge, and the death penalty is one that does. Docs only; 0 names; no code change
+(both audited items are correct in the authoritative build).
