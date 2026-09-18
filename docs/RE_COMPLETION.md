@@ -16251,3 +16251,32 @@ then delete the test rather than work around it. Both done, in that order.
 writes, and the comment now says so. And yesterday's `param_writers.md` line calling param 27
 "anti-burn" is wrong twice over: anti-burn is 30, and 27 is shared between `'fz'` and
 `'rals'`.
+
+## 2026-09-18 — the status resists are a different mechanism entirely
+
+v0.1.342 built green (CI and the release client both succeeded). The remaining open item was
+the status-resist tags — disease, sleep, stun, fear, csmp — recorded as "where they go is not
+read".
+
+They do not go anywhere in the ParamKeeper. Their branches call `Char_InsertResistEntry` with
+a **category index in EAX**, which indexes an array of 24-byte associative containers at
+`object+0x20` and inserts through a red-black tree. EAX is not mapped to a parameter by the
+decompiler, so the C output shows the call with no index at all — the same register-hidden
+shape as `ParamKeeper_SetParam`, and the reason this looked like a dead end from the
+decompilation.
+
+	'rsli' 0   'rfei' 3   'rsti' 7   'rdii' 8   'rcsi' 15
+
+with `'rals'` inserting here too, consistent with "resist all" covering both mechanisms.
+
+**`'soli'` is accepted and ignored.** The dump function names it "resist stun", and the
+dispatcher recognises the tag and jumps straight to the plain epilogue without doing anything.
+Recorded because an item carrying that option would look like it should work.
+
+**The tempting conclusion is refused.** These indices are small integers and the abnormal-state
+code space is also 0..31, so reading "sleep = state 0, fear = state 3" is right there. The
+arrays are different: abnormal states live at `object+0xc` with a `0x1c` stride, this one is
+`object+0x20` with `0x18`. Matching shapes is not evidence, and `'rsti'` is deliberately *not*
+recorded as stun — the dump gives that name to `'soli'`, the tag that does nothing.
+
+Named `Char_InsertResistEntry` and `StdMap_InsertNode`; applied 2, failed 0. No value changed.

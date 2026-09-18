@@ -122,6 +122,36 @@ which writes 27 *and* 28. Only `'es'` -> 29 survived unchanged. The wrong pairin
 published from a script's output without reading the branch, which is the exact failure the
 project's own rule warns about.
 
+
+## The status resists are a second mechanism
+
+The elemental resists write ParamKeeper params. The **status** resists do not. Their branches
+call `Char_InsertResistEntry` with a small category index in EAX, which indexes an array of
+24-byte associative containers at `object+0x20` and inserts through a red-black tree
+(`StdMap_InsertNode`). The index is invisible in the decompilation, because EAX is not mapped
+to a parameter.
+
+	'rsli'  index 0    "resist sleep +%d%%"
+	'rfei'  index 3    "resist fear +%d%%"
+	'rsti'  index 7    -- not named by the dump function
+	'rdii'  index 8    "resist disease +%d%%"
+	'rcsi'  index 15   "resist csmp +%d%%"
+
+`'rals'` inserts here as well as writing params 27-32, which is consistent with it being
+"resist all" — it covers both mechanisms.
+
+`'soli'`, which the dump names **"resist stun"**, is recognised by the dispatcher and then
+jumps straight to the plain epilogue: it is **accepted and ignored**. That is worth stating
+because a reader seeing the tag in an item's options would reasonably expect it to do
+something.
+
+**What these indices are is not claimed.** They are small integers into a per-character array
+of containers, and the abnormal-state code space recovered elsewhere is also 0..31 — but that
+array is at `object+0xc` with a `0x1c` stride and this one is at `object+0x20` with `0x18`,
+so they are **different arrays**. Reading the resist names onto abnormal-state codes would be
+exactly the kind of matching-shapes inference this project has been burned by. `'rsti'` in
+particular is *not* recorded as stun: the dump gives that name to `'soli'`.
+
 ## What is still NOT claimed
 
 - Twenty tags have no description in the dump function, and several have no resolved param
