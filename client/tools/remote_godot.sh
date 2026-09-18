@@ -37,8 +37,14 @@ sync_client() {
 # `-n` matters: without it ssh reads the caller's stdin, which ate the rest
 # of the test loop's file list below and left it running one suite out of
 # fifty-nine while reporting success.
+# One Godot at a time on the box: qa_shot.sh kills every running Godot/Xvfb
+# before it starts, so a headless run launched beside a render would be
+# killed mid-flight. Every Godot here takes the same box-wide lock (as
+# ghidra, so the lock file stays ghidra's); a second caller waits its turn.
+GODOT_LOCK="${GODOT_LOCK:-/var/tmp/godot-lock/lock}"
+
 remote_godot() {
-  ssh -n "$RENDER_HOST" "su - ghidra -c \"$RENDER_GODOT --headless --path '$RENDER_DIR' $*\""
+  ssh -n "$RENDER_HOST" "su - ghidra -c \"flock '$GODOT_LOCK' $RENDER_GODOT --headless --path '$RENDER_DIR' $*\""
 }
 
 import_project() {

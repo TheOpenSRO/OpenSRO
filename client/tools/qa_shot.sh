@@ -48,6 +48,16 @@
 # Environment: CLIENT_DIR and PK2_DIR default to the RE box's own layout.
 set -euo pipefail
 
+# One run at a time on this box. The startup below kills every running
+# Godot/Xvfb, so two runs launched together would kill each other; instead
+# the second waits for the first. Taken by re-executing under flock, so the
+# whole run (kill, server, client, frames) happens inside the lock.
+GODOT_LOCK="${GODOT_LOCK:-/var/tmp/godot-lock/lock}"
+if [ -z "${QA_SHOT_LOCKED:-}" ]; then
+  mkdir -p "$(dirname "$GODOT_LOCK")" 2>/dev/null || true
+  exec env QA_SHOT_LOCKED=1 flock "$GODOT_LOCK" "$0" "$@"
+fi
+
 CLIENT_DIR="${CLIENT_DIR:-/opt/srrevamp-client}"
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
 GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
