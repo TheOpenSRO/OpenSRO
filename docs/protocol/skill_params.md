@@ -1171,3 +1171,34 @@ and itemdata confirms what those name. Every item with `TypeID3 == 4`:
 So bow skills spend one arrow, rogue skills one or three bolts. **TypeID3 4 is
 not only shields** — it holds shields and ammunition, told apart by TypeID2
 (1 equipment, 3 etc.), which refines the note in `refdata.Item`.
+
+## `efr` is a targeting mode, read the same way by two functions (2026-09-18)
+
+`efr` is the third most common parameter (10,627 real skills). Its field is selected by its **first**
+value — 1 → `0x28c`, 2 → `0x290`, 3 → `0x294` — which the parser reads and which the census confirms
+is always in {1,2,3} (10,419 / 112 / 96). Its **second** value is a MODE, and this is grounded by
+two functions reading the same field at the same offset with no shared call path:
+
+- `Combat_ResolveDamage` (`0x0058e5f0`): `if (*(int *)(skill[0x28c] + 4) != 6) return;` — a skill
+  with no other combat parameter resolves a blow only in mode 6.
+- `FUN_00593f50`, the skill-effect applier called by `EngageSkill` (`0x00593540`):
+  `iVar13 = *(int *)(skill[0x28c] + 4); if (iVar13 == 6) {...} else if (iVar13 == 7) {...}`.
+
+The mode distribution across real skills is {2: 3992, 1: 3159, 6: 1531, 3: 1062, 4: 844, 7: 39}.
+What the applier does for the two modes it special-cases, read from the code (the English labels are
+descriptions of the mechanism, not asserted names):
+
+- **mode 6** walks the skill-use's target vector and applies the effect to every entry, each scaled
+  by a per-entry byte at `+5` of the pair — an area effect with a per-target factor. This is why a
+  skill carrying only `efr` still lands a blow in mode 6: it hits each area target. 1,531 skills.
+- **mode 7** walks the same vector and, when the effect's own sub-flag (value[3] == 1) is set,
+  selects the single target with the lowest `GetCurHP/GetMaxHP` ratio (slots 66/68) rather than all
+  of them — a "most-wounded target" selection. 39 skills.
+
+Modes 1–4 fall through to the applier's default loop, which was not traced further.
+
+**Not wired.** srrevamp has no area-targeting or multi-target skill path, so this changes no
+behaviour; it is recorded because it explains `skillparam.EfrCombatSelector` (the `== 6` in the
+damage path is "area mode 6") and because it is the anchor for a targeting system when one is built.
+The field offsets (`0x28c`/`0x290`/`0x294` and the `+4` mode) are grounded; the mechanics of modes 6
+and 7 are read from one function and would want a second witness before implementation.

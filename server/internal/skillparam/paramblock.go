@@ -607,8 +607,21 @@ var CombatParameters = []Code{
 
 // EfrCombatSelector is the value 'efr' must carry as its SECOND value for a
 // skill with no other combat parameter to resolve a blow at all:
-// `if (*(int *)(efr + 4) != 6) return;`. What the 6 selects is not read.
+// `if (*(int *)(efr + 4) != 6) return;`.
+//
+// The 6 is now read: 'efr' value[1] is a targeting MODE, and mode 6 is an area
+// effect that applies to every entry of the skill's target vector -- so a skill
+// carrying only 'efr' in mode 6 does land a blow, on each area target. The same
+// field+offset is read as a mode by FUN_00593f50 (the skill-effect applier
+// called by EngageSkill), which special-cases modes 6 and 7; the two functions
+// share no call path, which is what grounds it. See docs/protocol/skill_params.md,
+// "efr is a targeting mode". srrevamp has no area-targeting path, so this is the
+// citation for the constant rather than something wired in.
 const EfrCombatSelector = 6
+
+// EfrModeOffset is where the mode sits within the 'efr' run: value[1], i.e. +4
+// from the field pointer (which points at value[0], the field selector).
+const EfrModeOffset = 4
 
 // CarriesCombatParameter reports whether a skill's Param block carries any of
 // the parameters Combat_ResolveDamage tests before it will resolve a blow.
