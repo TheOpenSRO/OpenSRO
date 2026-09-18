@@ -15159,3 +15159,31 @@ the operation's own extra check, which `alchemy.md` already describes. Nothing t
 
 srrevamp's `internal/alchemy` implements reinforce only, so there is nothing to wire yet;
 the rates are recorded for when the other operations are built.
+
+## UpperReinforce: the rate is not where I said it was (2026-09-18)
+
+Last tick's entry closed six of seven alchemy rates and said the seventh,
+`CEnchant_UpperReinforce`, "computes its rate inside its own slot 1". That was an
+inference from its rate slots holding a folded stub, and reading slot 1 disproves it.
+
+`CEnchant_UpperReinforce::MakeAttempt` contains **no roll at all** — no `rand`, no
+clamp, nothing resembling `CEnchant_Reinforce`'s `rand() % 100 < rate`. It calls slot 4,
+then slot 5, then slot 9 with the out-parameter, and logs the result with
+`FUN_00468a80(0xa0, …)`.
+
+The outcome is decided in **slot 9** (`0x00506430`), which reaches the global
+reference-data singleton `DAT_00d6aa18`, asserts the array holds at least `0x34` (52)
+entries, and takes the pointer at `+0xcc` — **entry 51**. That singleton is read by
+`PCData`, `CharData`, `AsyncQuery` and the open-market queries, so it is the reference
+table array rather than anything alchemy-specific.
+
+**Identifying reference table 51 is the next step**, and it is a data question like the
+stone operations' `+0x300` was. Nothing is named this tick: slot 9's contract is
+described in `alchemy.md` as "the result/commit step", which is this project's own
+reading rather than a recovered name, and naming UpperReinforce's override after it
+would be building on an inference.
+
+This is the second correction in two ticks of something I wrote confidently one tick
+earlier. Both had the same shape: a structural observation ("the rate slots are stubs",
+"the remover writes param 59") used to conclude *where* a value must come from, without
+reading the function that would confirm it.

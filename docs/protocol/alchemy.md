@@ -321,7 +321,13 @@ not established here.
   derived. The client's flag byte says what it *can* display; which server path
   sets which bit is unread.
 - **`CEnchant_UpperReinforce`'s rate.** Its slots 6 and 7 do not point at rate
-  functions at all — both hold a folded stub shared with `CAIState::OnLeave` —
-  so whatever rate it uses is computed inside its own slot 1, which is unread.
-  The other six operations' rates were read on 2026-09-18, below.
+  functions at all — both hold a folded stub shared with `CAIState::OnLeave`.
+  **Corrected 2026-09-18:** the guess that its rate is therefore computed in its
+  own slot 1 is wrong. `MakeAttempt` was read and contains no roll — no `rand`,
+  no clamp — it calls slot 4, slot 5, then slot 9 and logs the result. The
+  outcome is decided in **slot 9** (`0x00506430`), which indexes the global
+  reference-data singleton `DAT_00d6aa18` (the same one `PCData`, `CharData` and
+  the async queries read), asserts the array holds at least `0x34` entries, and
+  takes the pointer at `+0xcc` — entry 51. Identifying reference table 51 is the
+  next step. The other six operations' rates were read the same day, below.
 - **The `CMakeStuff_*` trio** entirely.
