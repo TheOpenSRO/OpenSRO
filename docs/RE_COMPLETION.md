@@ -17174,3 +17174,30 @@ value, and why the apply path is gated on the same byte the expiry sets — that
 oddly and is not explained rather than being smoothed over.
 
 Full suite green, 53 packages.
+
+## 2026-09-18 — the effect-application slot is a forwarder, and the slot number proves nothing
+
+Resolving virtual slot `0x4fc`, the call `TickTimedSkillEffect` applies its effect through.
+
+**Slot 319 has two implementations, not one.** `FUN_004a7500` sits there in the seventeen
+character and COS classes, `FUN_0048f6d0` in the seven `CGItem` classes. Both are now named
+`Char_ForwardToAttachedObject` and `Item_ForwardToAttachedObject`. That is worth recording
+beyond the names: **a slot number is not an identity**. Two unrelated object families share
+index 319 with different code, so "slot 319" answers nothing until the receiver's class is
+known — the same lesson the vtable-propagation pass arrived at by measurement, now from a
+single concrete case.
+
+**The character one is a forwarder, not the implementation.** It asserts the object at
+`this+0xd8` is non-null and passes all six arguments to *that* object's slot 10. So the effect
+does not land on the character; it lands on something attached to it.
+
+`CGObj::EnterWorld` installs that attachment: `this+0xd8` is filled from slot 23 of the object
+at `this+0x98`, with an assert if it comes back null. So whatever receives skill effects exists
+from world entry onward and is reached through two further indirections.
+
+**What the attached object is, is not read**, and the name says so. Three hops from
+`TickTimedSkillEffect` — slot 319, then `+0xd8`, then its slot 10 — each hop is an indirection
+whose receiver class has to be established separately, and guessing at the end of that chain is
+how a wrong name gets into the record. It stops here with the chain documented.
+
+Applied 2.
