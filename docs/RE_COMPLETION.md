@@ -17653,3 +17653,27 @@ still partition all 33,632 rows.
 
 `skillparam.Walk`/`Find` are now reliable on every real row, and `KindVarLen` is gone, replaced by
 `KindMarker` and `KindTerminator`. Applied 0 names.
+
+## The heal formula, read (2026-09-18)
+
+"What a non-damaging skill DOES" is the frontier the last several rounds kept naming. The heal case
+is now grounded, from `Skill_ApplyHealToObject` (`0x005a0850`) and its getter
+`ParamKeeper_GetParamChecked` (`0x004b3740`):
+
+	if 'nmh' (skill+0x598):  hp = target.MaxHP * hp / 100        # percent-of-max mode
+	dHP = round((1 + GetParam(170)/100) * hp) + mwhhTerm
+	dMP = round((1 + GetParam(171)/100) * mp) + mwmhTerm
+	ApplyHPMPDelta(target, dHP, dMP, 0x40)
+
+The base amount is the skill's `'heal'` value[0] (333 real skills carry it). `'nmh'` (10 skills)
+switches HP to a percent of the target's MaxHP via `GetMaxHP` (slot 68). Params 170/171 scale each
+half; they are read from **the healed object's own keeper** — confirmed from the call site, where the
+same pointer feeds both `ApplyHPMPDelta`'s target and the `GetParam` reads, so no caster/target
+guess is needed — and each has **exactly one writer**, the skill applier `FUN_00594ac0`, so they are
+skill-granted buffs (a "healing received" stat). `'mwhh'`/`'mwmh'` (107/44 skills) add an Int/level
+term via `FUN_00411080`, whose exact magnitude is **not read** and is flagged.
+
+Full spec, with the grounded/not-read/not-wired split, in `docs/protocol/heal.md`. srrevamp has no
+heal system, so this changes no behaviour — `'heal'`/`'nmh'`/`'mwhh'`/`'mwmh'` and params 170/171
+are in `internal/skillparam` but read by no game code. Applied **2 names**:
+`Skill_ApplyHealToObject`, `ParamKeeper_GetParamChecked`.
