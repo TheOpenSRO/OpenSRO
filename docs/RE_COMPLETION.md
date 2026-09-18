@@ -15716,3 +15716,45 @@ as unnamed that later ticks had named, and the generator would have overwritten
 `SiegeFortress_DispatchCommand` with a worse name. The generator now filters against the
 live index, and the table's name column has been refreshed — **84 of 162 rows** now carry
 a real name, up from 34.
+
+## 2026-09-18 — the request senders, joined to the server across the wire
+
+With the server handlers' subsystems settled, the other side of the wire becomes
+recoverable: every client request is built by one thin function, and the opcode is the
+fact both sides share.
+
+**The shape is validated, not assumed.** All 154 request opcodes in the client are built
+through a single helper, `FUN_00841780`, whose first argument is the opcode — the same
+function the independently-read `SendIncreaseStatRequest` uses. 225 client functions call
+it, 213 of them building exactly one opcode (median body 59 lines). It is named
+`Net_SendRequestPacket`; the packet object it fills is constructed by `FUN_0053cea0`,
+which installs vtable `0x00d831e4` — RTTI names that **CMsgStreamBuffer**.
+
+Joining each sender to the server handler that serves `opcode & 0x7ff` names **77 client
+functions**, applied 77, failed 0. Where the server handler names the operation the client
+sender inherits it (`SendOpenMarketPutonGoodsReq`); where the server side proves only a
+subsystem, the sender says only that (`SendPartyMsg_060`). 141 senders are still unnamed
+because their server handler is.
+
+**Three probes were wrong before they were right, each caught by a control:**
+
+- The client's *reply* dispatch was the first idea. A scan for a static handler table
+  found nothing, so the scanner was run against the server, where the table's address is
+  already known — and it did not find that either. The table is at `0x00cd3d08` in
+  `.data` and is **built at runtime**, so no static scan can ever find it. The control
+  turned a plausible negative into a fact about the method.
+- A stride-8 pair scan for `{opcode, handler}` init arrays found only MSVC thunk tables,
+  in both binaries.
+- The first join matched *any* call taking a `0x7xxx` first argument and read server names
+  with `startswith("FUN_")`, which misses a namespaced `X::FUN_0051de90`. That produced
+  eleven client functions all named after one server handler. Requiring the literal
+  `FUN_00841780(0x7…)` shape and rejecting `FUN_` anywhere in the name fixed both.
+
+**A trap worth recording.** `analyzeHeadless … -process` with no program name runs against
+*every* program in the project, and `re_client` holds six — `sro_client.exe`,
+`GatewayServer.exe`, `AgentServer.exe`, a stray `SR_GameServer.exe`, and two DLLs. Six
+client addresses are also function starts in that stray server copy, so six names landed
+in the wrong program. They were reverted to their Ghidra default names (safe, because the
+applier reported `kept 0`, so all six had been unnamed), and the 77 were then confirmed
+present in `sro_client.exe` by a targeted re-run reporting `evidence refreshed 77`.
+**Always pass `-process <program>`.**
