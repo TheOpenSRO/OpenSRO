@@ -762,19 +762,131 @@ func load_texture_region(ddj_path: String, uv_lt: Vector2, uv_rb: Vector2) -> Te
 	atlas.region = region
 	return atlas
 
-## The client's own UI fonts, loaded from the player's Media.pk2 at runtime.
+## The client's UI typeface, chosen the way the client chooses it.
 ##
-## `fonts\\` in a real Media.pk2 holds three `.ttf` files (plus `vplus\\
-## vfont.ttf`). Their names are Korean and survive the archive as mangled
-## bytes, so they are found by extension rather than named -- which is also
-## why this walks the directory instead of hardcoding a path.
+## The client does not pick a font per `FontIndex`; it picks ONE face by name
+## and builds every index from it at a different size. Read out of the binary
+## (docs/rounds/ui.md has the addresses):
 ##
-## Nothing is committed: the font is read out of the user's own archive the
-## same way every texture is, per docs/LEGAL.md.
+## - `Game.cpp` walks `fonts\\` in Media.pk2, extracts each file to a hidden
+##   file on disk and registers it with `AddFontResourceA`
+##   (`gfxmainframe::FUN_00ba60b0`), so the bundled faces are installed.
+## - The font-table builder `FUN_00469350` receives the face name from its
+##   caller, which looks it up in the UI text table: `FUN_008c9c30(
+##   L"UIC_STT_FONTNAME")`. A NULL name falls back to the literal at
+##   `0xe172d8`, CP949 `b1bc b8b2 c3bc` = "굴림체" (GulimChe). The same name
+##   is in ESI for all five `GNFontChar::FUN_004927b0(index, size)` calls.
+## - `FUN_00baa110` then does `CreateFontIndirectA` with that `lfFaceName`.
+##
+## In a real Media.pk2 `UIC_STT_FONTNAME` is **Tahoma** in the English column
+## ("굴림체" in the Korean one; an older row says Arial). The bundled files
+## are TaeUtum, SeUtum, Arial Rounded MT Bold (`fonts\\`) and Arial
+## (`vplus\\vfont.ttf`) -- none is Tahoma, which is a Windows system font, so
+## the real client renders the English UI in the *system's* Tahoma.
+##
+## Resolution, in the client's own order: a bundled file whose family IS the
+## named face; else the system's font of that name (what the real client
+## gets on Windows); else -- DISCLOSED, ours -- Arial from `vplus\\vfont.ttf`,
+## the archive's other authored value for this same key, so a machine
+## without Tahoma still draws a plain sans from the archive rather than
+## Godot's default. A system match is accepted only if the file's own family
+## name is the one asked for: fontconfig hands back a substitute (DejaVu Sans
+## for Tahoma) rather than nothing, and that must not pass as the real face.
+##
+## Nothing is committed: faces come from the user's own archive or their own
+## operating system, per docs/LEGAL.md.
 const FONT_DIR := "fonts"
+const FONT_FALLBACK_FILE := "vplus\\vfont.ttf"
+const FONT_NAME_KEY := "UIC_STT_FONTNAME"
+## The binary's own default when the text table has no name (`0xe172d8`).
+const FONT_NAME_BINARY_DEFAULT := "굴림체"
+## The face the disclosed fallback file carries, named so a log reads plainly.
+const FONT_FALLBACK_FAMILY := "Arial"
 
-var _fonts: Array[FontFile] = []
+var _ui_font: FontFile = null
+var _ui_font_source := ""
 var _fonts_loaded := false
+
+## The face name the client would ask GDI for: the text table's
+## `UIC_STT_FONTNAME`, else the binary's default.
+func ui_face_name() -> String:
+	var name := ""
+	if _text_table != null:
+		name = _text_table.get_text(FONT_NAME_KEY, "")
+		if name == FONT_NAME_KEY:
+			name = ""
+	elif _media_pk2 != null:
+		# A builder made without a text table (the login screen builds one
+		# just for the font) still gets the archive's answer: only that one
+		# row is scanned, not the whole 3.5 MB table parsed.
+		name = _scan_face_name_row()
+	return name if name != "" else FONT_NAME_BINARY_DEFAULT
+
+func _scan_face_name_row() -> String:
+	var entry := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\textuisystem.txt")
+	if entry == null:
+		return ""
+	var text := _media_pk2.read_file(entry).get_string_from_utf16()
+	var at := text.find("\t" + FONT_NAME_KEY + "\t")
+	while at != -1:
+		var line_start := text.rfind("\n", at) + 1
+		var line_end := text.find("\n", at)
+		var line := text.substr(line_start, (line_end if line_end != -1 else text.length()) - line_start)
+		var picked := UiTextTable._pick_language_column(line.strip_edges().split("\t"), UiTextTable.COL_ENGLISH)
+		if picked != "":
+			return picked
+		at = text.find("\t" + FONT_NAME_KEY + "\t", at + 1)
+	return ""
+
+func _new_font(data: PackedByteArray) -> FontFile:
+	if data.is_empty():
+		return null
+	var font := FontFile.new()
+	font.data = data
+	if font.get_face_count() == 0:
+		return null
+	# The reference client's text is aliased: every glyph pixel in the
+	# reference screenshots is one luminance level (measured, round in
+	# docs/rounds/ui.md). GDI drew it at integer pixel positions with the
+	# face's own hints. These are Godot's settings for that same look; the
+	# aliasing is measured, the hinting/subpixel choice is the analog of
+	# GDI's behaviour, not a value read from the binary.
+	font.antialiasing = TextServer.FONT_ANTIALIASING_NONE
+	font.hinting = TextServer.HINTING_NORMAL
+	font.force_autohinter = false
+	font.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
+	return font
+
+func _bundled_fonts() -> Dictionary:
+	# family name (lower) -> FontFile, for every font file the archive carries.
+	var found := {}
+	if _media_pk2 == null:
+		return found
+	var dir_entry := ObjectLoader.find_file(_media_pk2, FONT_DIR)
+	if dir_entry != null and dir_entry.is_dir:
+		for entry in _media_pk2.read_dir_at(dir_entry):
+			if entry.is_dir or not entry.name.to_lower().ends_with(".ttf"):
+				continue
+			var font := _new_font(_media_pk2.read_file(entry))
+			if font != null:
+				found[font.get_font_name().to_lower()] = font
+	var vfont := ObjectLoader.find_file(_media_pk2, FONT_FALLBACK_FILE)
+	if vfont != null:
+		var font := _new_font(_media_pk2.read_file(vfont))
+		if font != null and not found.has(font.get_font_name().to_lower()):
+			found[font.get_font_name().to_lower()] = font
+	return found
+
+func _system_font(face: String) -> FontFile:
+	var path := OS.get_system_font_path(face)
+	if path == "" or not FileAccess.file_exists(path):
+		return null
+	var font := _new_font(FileAccess.get_file_as_bytes(path))
+	# Only the face that was asked for; a fontconfig substitute is not it.
+	if font == null or font.get_font_name().to_lower() != face.to_lower():
+		return null
+	_ui_font_source = "system font %s" % path
+	return font
 
 func _load_fonts() -> void:
 	if _fonts_loaded:
@@ -782,33 +894,37 @@ func _load_fonts() -> void:
 	_fonts_loaded = true
 	if _media_pk2 == null:
 		return
-	var dir_entry := ObjectLoader.find_file(_media_pk2, FONT_DIR)
-	if dir_entry == null or not dir_entry.is_dir:
+	var face := ui_face_name()
+	var bundled := _bundled_fonts()
+	if bundled.has(face.to_lower()):
+		_ui_font = bundled[face.to_lower()]
+		_ui_font_source = "bundled in the archive"
+	else:
+		_ui_font = _system_font(face)
+	if _ui_font == null and bundled.has(FONT_FALLBACK_FAMILY.to_lower()):
+		_ui_font = bundled[FONT_FALLBACK_FAMILY.to_lower()]
+		_ui_font_source = "'%s' not installed -- disclosed fallback %s (%s)" % [face, FONT_FALLBACK_FILE, FONT_FALLBACK_FAMILY]
+	if _ui_font == null and not bundled.is_empty():
+		_ui_font = bundled.values()[0]
+		_ui_font_source = "'%s' not installed -- first bundled face" % face
+	if _ui_font == null:
+		print("UiBuilder: UI face '%s' (%s): no font available -- Godot's default" % [face, FONT_NAME_KEY])
 		return
-	for entry in _media_pk2.read_dir_at(dir_entry):
-		if entry.is_dir or not entry.name.to_lower().ends_with(".ttf"):
-			continue
-		var data := _media_pk2.read_file(entry)
-		if data.is_empty():
-			continue
-		var font := FontFile.new()
-		font.data = data
-		if font.get_face_count() > 0:
-			_fonts.append(font)
+	print("UiBuilder: UI face '%s' (%s) -> %s (family '%s'); sizes px %s" % [
+		face, FONT_NAME_KEY, _ui_font_source, _ui_font.get_font_name(), str(FONT_SIZES)])
 
-## The UI font at index (a control's `FontIndex`), or null if the archive
-## has none. Out-of-range indices fall back to the first font rather than
-## to Godot's default, which looks nothing like the client's.
-func font_at(index: int) -> FontFile:
+## The UI font for a control's `FontIndex`. One face serves every index --
+## the client builds all five from the same name -- so the index only ever
+## selects a size (FONT_SIZES); it is kept in the signature because that is
+## what a layout carries. Null only if the archive has no font at all.
+func font_at(_index: int) -> FontFile:
 	_load_fonts()
-	if _fonts.is_empty():
-		return null
-	return _fonts[index] if index >= 0 and index < _fonts.size() else _fonts[0]
+	return _ui_font
 
-## How many UI fonts the archive supplied.
+## How many UI fonts are in play: one, or none.
 func font_count() -> int:
 	_load_fonts()
-	return _fonts.size()
+	return 1 if _ui_font != null else 0
 
 ## The archive this builder reads from, for callers that need to pull data
 ## files out of it rather than textures.
@@ -831,29 +947,29 @@ func _resolve_text(key_or_text: String) -> String:
 		return _text_table.get_text(key_or_text)
 	return key_or_text
 
-## Pixel size for each `FontIndex`, read out of the client.
+## The size of each `FontIndex`, read out of the client -- in the unit the
+## client actually uses.
 ##
-## `FUN_00469350` builds the font table with five consecutive calls, each
-## pushing a size and an index:
+## `FUN_00469350` registers the five indices with `GNFontChar::FUN_004927b0
+## (index, size)`: (0, 9), (1, 8), (2, 12), (3, 11), (4, 15). Those are
+## **points**, not pixels: the creator `FUN_00baa110` fills a LOGFONTA with
 ##
-##   PUSH 0x9  PUSH 0x0   -> index 0, 9px
-##   PUSH 0x8  PUSH 0x1   -> index 1, 8px
-##   PUSH 0xc  PUSH 0x2   -> index 2, 12px
-##   PUSH 0xb  PUSH 0x3   -> index 3, 11px
-##   PUSH 0xf  PUSH 0x4   -> index 4, 15px
+##   lfHeight = -MulDiv(size, 0x60, 0x48)     i.e.  -(size * 96 / 72)
 ##
-## (The two branches there pick different typefaces -- a Korean set and a
-## western one -- but assign the same sizes to the same indices.)
+## a hardcoded 96 dpi, and a negative lfHeight is the em height in pixels.
+## So index 0 is 9pt = a 12px em, which is also what the reference
+## screenshots measure (a 9-row cap height on Tahoma; a 12px em gives 8.7px,
+## a 9px em 6.5px -- docs/rounds/ui.md). An earlier version used the point
+## values as pixel sizes, which is why every window's text was a third too
+## small for its authored box.
 ##
-## This replaces a fitted size. An earlier version of this file started at
-## 12px and stepped down until each string fitted its control, because the
-## layouts were clipping. They were clipping because 12px is the size of
-## *index 2*, and almost every control uses index 0, which is **9**. The
-## layout was always right about its box; the guess was wrong about the
-## text.
-const FONT_SIZES := [9, 8, 12, 11, 15]
+## Per index the client also creates a bold (weight 600) variant; which
+## controls draw with it is not recovered, so none is applied here.
+const FONT_POINT_SIZES := [9, 8, 12, 11, 15]
+## MulDiv rounds to nearest: 9->12, 8->10.67->11, 12->16, 11->14.67->15, 15->20.
+const FONT_SIZES := [12, 11, 16, 15, 20]
 ## Used only for a FontIndex outside the table, which no real layout has.
-const FONT_SIZE_FALLBACK := 9
+const FONT_SIZE_FALLBACK := 12
 
 func _apply_font(label: Label, def: UiLayoutParser.ControlDef) -> void:
 	var font := font_at(def.font_index)
@@ -861,9 +977,13 @@ func _apply_font(label: Label, def: UiLayoutParser.ControlDef) -> void:
 		label.add_theme_font_override("font", font)
 	var size: int = FONT_SIZES[def.font_index] if def.font_index >= 0 and def.font_index < FONT_SIZES.size() else FONT_SIZE_FALLBACK
 	label.add_theme_font_size_override("font_size", size)
-	# Authored rows are tight, and a runtime value longer than anything the
-	# layout anticipated would still push into the row under it.
-	label.clip_text = true
+	# Not clipped to the authored rect, because the client does not clip:
+	# in the reference screenshot "Phy. balance" is 63.8px wide and "Mag.
+	# balance" 65.7px, drawn in GDR_PI_TEXT_PHYBAL / _MAGBAL rects that are
+	# 58 wide (the same overrun rule 13 of UI_TODO.md records for
+	# TEXT_HP_DAT). Clipping here cut them to "Phy. balan". A long string
+	# runs out to the right, as it does in the original; nothing wraps.
+	label.clip_text = false
 
 func _insert_suffix(path: String, suffix: String) -> String:
 	var dot := path.rfind(".")

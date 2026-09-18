@@ -87,6 +87,7 @@ Section = Create,"0,0,200,100","0"
 	_check_section_size()
 	_check_lattice()
 	_check_slice_base_beats_the_type_name()
+	_check_font_table()
 
 	if _failures == 0:
 		print("ALL PASS")
@@ -200,3 +201,25 @@ Section = Create,"0,0,0,0","0"
 		"a .ddj path is a texture, not a base")
 	_check(not UiBuilder.is_slice_base(""),
 		"no artwork is not a base")
+
+## The font table's two halves that need no archive: every pixel size is the
+## client's own `-MulDiv(points, 96, 72)` of its point size (nearest
+## rounding, as MulDiv does), and the face name falls back to the binary's
+## own default when there is neither a text table nor an archive to ask.
+func _check_font_table() -> void:
+	_check(UiBuilder.FONT_POINT_SIZES.size() == 5 and UiBuilder.FONT_SIZES.size() == 5,
+		"five FontIndex entries, as FUN_00469350 registers")
+	for i in range(UiBuilder.FONT_POINT_SIZES.size()):
+		var pt: int = UiBuilder.FONT_POINT_SIZES[i]
+		var px: int = int(round(pt * 96.0 / 72.0))
+		_check(UiBuilder.FONT_SIZES[i] == px,
+			"FontIndex %d: %dpt -> %dpx em (table says %d)" % [i, pt, px, UiBuilder.FONT_SIZES[i]])
+	_check(UiBuilder.FONT_SIZES[0] == 12, "index 0, the common one, is a 12px em")
+	var bare := UiBuilder.new(null, null)
+	_check(bare.ui_face_name() == UiBuilder.FONT_NAME_BINARY_DEFAULT,
+		"no table, no archive: the binary's default face '%s'" % UiBuilder.FONT_NAME_BINARY_DEFAULT)
+	_check(bare.font_at(0) == null and bare.font_count() == 0,
+		"no archive: no font (Godot's default), not a crash")
+	var with_name := UiTextTable.parse("1\tUIC_STT_FONTNAME\t굴림체\t0\t0\t0\t0\t0\t0\tTahoma\n".to_utf16_buffer())
+	_check(UiBuilder.new(null, with_name).ui_face_name() == "Tahoma",
+		"the text table's UIC_STT_FONTNAME English column names the face")
