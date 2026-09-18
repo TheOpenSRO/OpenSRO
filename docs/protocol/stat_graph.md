@@ -95,9 +95,13 @@ writing those on a character is `Char_BuildAggregateStats`, which interpolates t
 59 are zero, the scale is zero, and the flat absorb is zero — with no equipment appearing
 anywhere in this chain.
 
-**Where an equipped item's defence actually goes is still unlocated.** The per-item
-ParamKeeper entries exist, and `RemoveParamKeeperItemEntry` removes them, but nothing
-read so far shows what they feed.
+**PARTLY ANSWERED 2026-09-18.** An equipped item reaches the ParamKeeper through its
+**magic options**, not through the base defence chain: `IBindingOptionOP` slot 3 decodes up
+to 12 packed entries off the item record and applies each one through
+`Stat_ApplyTaggedModifier`. See [item_magic_options.md](item_magic_options.md) for the route
+and [stat_tags.md](stat_tags.md) for the vocabulary. What is still **not** shown is any
+option reaching params 5 or 7 specifically — neither appears among the 19 resolved tag
+branches — so the flat absorb and the percentage reduction remain character-side values.
 
 ## What is NOT read
 

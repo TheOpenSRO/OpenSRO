@@ -15977,3 +15977,35 @@ heuristic failing rather than two tags sharing a field.
 **What is deliberately not claimed**: expanding `era`/`bri`/`hra`/`cri` into evasion, block,
 hit and critical. That is a reading, the characterdata notes already flag it as one, and it
 stays flagged. No value changed.
+
+## 2026-09-18 — how equipment reaches the ParamKeeper, and one constant the binary states
+
+Following the tag vocabulary to its callers answers a question open since the equipment
+retraction. `Stat_ApplyTaggedModifier` has three callers, and two of them are
+`CAlchemyMagicOptionOP` and `CSetMagicOptionOP` at **vtable slot 3** — the slot the base
+class's own assert names `SetParamKeeperForMagicOpt`. So **equipment does reach the
+ParamKeeper**, through an item's *magic options* rather than through the base defence chain.
+The route is in [item_magic_options.md](protocol/item_magic_options.md).
+
+**The binary names the field and states the cap.** The applier reads
+`MagParamNum` off the item record at `+0x58` and checks it with its own format string,
+`"Item's MagParamNum(%d) is out of range"`, against `0xc` — so **at most 12 magic options per
+item**, read off the assert rather than inferred from data. The options are 8-byte entries at
+`record + 0x60`; the high dword is the magnitude, and the low dword's code resolves through a
+reference container to the three-character tag.
+
+A third implementation, `CSocketOptionOP`'s, is a **stub** that logs `## Illegal ##` and
+asserts, so socket options do not travel this path in this build. That is worth recording
+because it is the kind of thing that reads as an oversight in a dump and is actually the
+answer.
+
+Named `Item_DecodeMagicOption`, `MagicOption_ResolveTag` and the two real slot-3 overrides;
+applied 4, failed 0.
+
+**What this does not settle, stated plainly.** Params 5 and 7 — the flat absorb and the
+percentage physical reduction — are still fed on the character side from authored
+`RefObjChar` fields with no equipment term anywhere in the arithmetic. An item could reach
+them only via a magic option whose tag maps to 5 or 7, and **neither appears among the 19
+resolved tag branches**. So the route is established while the specific defence question is
+not, and srrevamp's damage model stays unchanged. `stat_graph.md`'s open note is updated from
+"unlocated" to "partly answered" rather than closed.
