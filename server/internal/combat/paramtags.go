@@ -322,6 +322,39 @@ var SecondParamFor = map[string]int{
 // (MATTR_RESIST_ALL_SET), whose leaf writes exactly these six in order.
 var ResistParams = []int{27, 28, 29, 30, 31, 32}
 
+// AfflictionResistParam is the READ side of ResistParams, recovered from
+// Combat_ApplyStatusEffects (0x00590680), the status-effect phase of a blow
+// (called by Combat_ResolveDamage). For each affliction a skill carries in one
+// of six fields, that function reads the TARGET's resist param via GetParam and
+// skips the affliction when the resist is >= 100:
+//
+//	skill field 0x30c 'fz' -> GetParam(27)      skill field 0x318 'bu' -> GetParam(30)
+//	skill field 0x310 'fb' -> GetParam(28)      skill field 0x31c 'ps' -> GetParam(31)
+//	skill field 0x314 'es' -> GetParam(29)      skill field 0x320 'zb' -> GetParam(32)
+//
+// so the six afflictions map 1:1 to ResistParams in field order. This SETTLES
+// the meaning of params 27-32 from a use site: each is the per-affliction resist
+// PERCENTAGE, on the afflicted target (a resist gates the affliction, so it is
+// the target's). ParamFor above is the WRITE side (which item/skill tag grants
+// a param); this is what reading the param does.
+//
+// 'fb' is NOT an item magic-option tag (zero comparisons in
+// Stat_ApplyTaggedModifier), while item 'fz' writes BOTH 27 and 28 -- see
+// SecondParamFor. So anti-frostbite gear covers the fz and fb afflictions
+// together, which is why the fz item tag grants two resist params and there is
+// no separate fb one.
+var AfflictionResistParam = map[string]int{
+	"fz": 27, "fb": 28, "es": 29, "bu": 30, "ps": 31, "zb": 32,
+}
+
+// AfflictionSecondParam is a second per-affliction param Combat_ApplyStatusEffects
+// reads right after the resist (id = resist + 0x76) and SUBTRACTS from the
+// effect's magnitude: `if (0 < GetParam(resist) reduction - GetParam(second))`.
+// What it represents beyond "a second reduction term" is not read.
+var AfflictionSecondParam = map[string]int{
+	"fz": 145, "fb": 146, "es": 147, "bu": 148, "ps": 149, "zb": 150,
+}
+
 // ResistCategoryFor maps a status-resist tag to the category index its branch
 // passes to Char_InsertResistEntry (0x0059de70). These tags write no
 // ParamKeeper param at all: the branch loads a small index into EAX -- a

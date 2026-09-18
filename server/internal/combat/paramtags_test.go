@@ -423,3 +423,25 @@ func keysOf[V any](m map[string]V) []string {
 	}
 	return out
 }
+
+// The affliction->resist map is the read side of ResistParams and must line up
+// with it: the six afflictions map 1:1 onto 27..32 in field order, and each
+// second param sits 0x76 above its resist (the offset the status phase uses).
+// Recovered from Combat_ApplyStatusEffects (0x00590680) -- a different function
+// from the ParamFor write side -- so this is a cross-check, not a restatement.
+func TestAfflictionResistMapMatchesResistRun(t *testing.T) {
+	order := []string{"fz", "fb", "es", "bu", "ps", "zb"}
+	for i, tag := range order {
+		if AfflictionResistParam[tag] != ResistParams[i] {
+			t.Errorf("AfflictionResistParam[%q] = %d, want ResistParams[%d] = %d",
+				tag, AfflictionResistParam[tag], i, ResistParams[i])
+		}
+		if AfflictionSecondParam[tag] != ResistParams[i]+0x76 {
+			t.Errorf("AfflictionSecondParam[%q] = %d, want %d (resist + 0x76)",
+				tag, AfflictionSecondParam[tag], ResistParams[i]+0x76)
+		}
+	}
+	if len(AfflictionResistParam) != 6 || len(AfflictionSecondParam) != 6 {
+		t.Errorf("expected 6 afflictions, got %d/%d", len(AfflictionResistParam), len(AfflictionSecondParam))
+	}
+}

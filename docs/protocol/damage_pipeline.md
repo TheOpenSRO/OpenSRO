@@ -489,3 +489,37 @@ transform, no structures, no fortress weapons in play, no snowman — so kind 0 
 to have built first, and that is now a statement with the conditions written down rather than an
 assumption. Kinds 2 and 4 are wired into `session.performAttack` anyway, because they are fully
 read and cheap, and so the winter event or a fortress weapon cannot arrive ahead of the rule.
+
+## Status effects are a phase of the blow, gated by the target's resists (2026-09-18)
+
+After the damage kinds, `Combat_ResolveDamage` calls `Combat_ApplyStatusEffects` (`0x00590680`) to
+apply the afflictions a skill carries. This is the READ side of `combat.ResistParams` (27–32),
+recovered from that function and settling what those params mean from a use site.
+
+A skill carries up to six afflictions, one per field, and each is gated by the target's matching
+resist param:
+
+	skill field 0x30c 'fz' -> GetParam(27)      0x318 'bu' -> GetParam(30)
+	skill field 0x310 'fb' -> GetParam(28)      0x31c 'ps' -> GetParam(31)
+	skill field 0x314 'es' -> GetParam(29)      0x320 'zb' -> GetParam(32)
+
+a **1:1 mapping in field order**, so params 27–32 are the six per-affliction **resist percentages**,
+read from the afflicted target (a resist gates the affliction, so it belongs to the target). For
+each:
+
+	resist = GetParam(target, 27+i)
+	if resist >= 100:  skip -- fully resisted
+	mag = (100 - resist)-scaled effect strength - GetParam(target, 145+i)   # second term at resist+0x76
+	if mag > 0:  build an effect record and queue it
+
+The second param (145–150 = resist + 0x76) is a further reduction; what it represents beyond that
+is not read.
+
+`'fb'` is **not** an item magic-option tag (zero comparisons in `Stat_ApplyTaggedModifier`), while
+the item tag `'fz'` writes **both** params 27 and 28 (`combat.SecondParamFor`). So anti-frostbite
+gear covers the `fz` and `fb` afflictions together — the write side grants two resists from one tag
+because the read side has two afflictions sharing that gear. The two sides, from two functions,
+agree.
+
+Recorded as `combat.AfflictionResistParam` / `AfflictionSecondParam` with a cross-check test. **Not
+wired** — srrevamp has no status-effect system — so these are reference data, read by no game code.

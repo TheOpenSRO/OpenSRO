@@ -17733,3 +17733,24 @@ Two names applied: `Formula_WeaponAvgDamagePercent`, `GObjPC_GetItem` (the slot-
 unread items (`ApplyHPMPDelta`'s `0x40` flag; the exact identity of weapon `+0x1c0`/`+0x1c4`). Not
 wired -- srrevamp has no heal system and does not implement the `'mwhs'` alt-damage branch either.
 Applied 0 Go changes.
+
+## Params 27-32 are per-affliction resists: the read side, from a use site (2026-09-18)
+
+`combat.ResistParams` (27–32) existed as a write-side run (`'bgra'`/`'rals'` grant them) but nothing
+read them in the repo's model — a value referenced without a grounded consumer. The consumer is
+`Combat_ApplyStatusEffects` (`0x00590680`, named this round), the status phase of a blow called by
+`Combat_ResolveDamage`. It reads each of the six resist params from the **target** to gate the six
+afflictions a skill carries in fields 0x30c–0x320 (`fz fb es bu ps zb`), 1:1 in field order:
+`resist >= 100` fully resists, otherwise the effect magnitude is `(100-resist)`-scaled and reduced
+by a second param at `resist + 0x76` (145–150).
+
+This settles params 27–32 as per-affliction resist percentages from a use site rather than from the
+write curve — the discipline the project's own history (characterdata col 79) demands.
+
+A cross-check fell out and held: `'fb'` is **not** an item magic-option tag (0 comparisons in
+`Stat_ApplyTaggedModifier`), yet item `'fz'` writes params 27 **and** 28. The read side explains why
+— anti-frostbite gear covers both the `fz` and `fb` afflictions — so the write side's odd
+"one tag, two params" and the read side's clean 1:1 are the same fact seen from two functions.
+
+Added `combat.AfflictionResistParam`/`AfflictionSecondParam` and a test tying them to `ResistParams`.
+Not wired (no status-effect system). Applied 1 name: `Combat_ApplyStatusEffects`.
