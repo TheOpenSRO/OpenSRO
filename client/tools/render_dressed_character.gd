@@ -15,7 +15,14 @@ extends SceneTree
 ##     --script res://tools/render_dressed_character.gd -- \
 ##     --pk2=/path/Data.pk2 --body="Res\\Char\\China\\chinaman_fighter.bsr" \
 ##     --items="Res\\Item\\China\\MAN_ITEM\\clothes_01_ba.bsr,Res\\Item\\China\\MAN_ITEM\\clothes_01_la.bsr" \
-##     [--out=/var/tmp/dressed.png]
+##     [--pose=<seconds>] [--group=sword] [--ban=<explicit .ban>] [--out=/var/tmp/dressed.png]
+##
+## --pose applies the body's real standing idle (the type-0 entry of the
+## named animation group; `chinaman_fighter_standcity.ban` for `sword`) at
+## that many seconds in, through the same Skeleton3DBuilder.apply_ban_pose_at
+## the world runs every frame -- so a rig question is answered here in one
+## ~40 s run instead of a world boot. Without it the body is in its rest
+## pose (arms out). tools/probe_skinning.gd gives the same pose as numbers.
 
 func _arg(flag: String, fallback: String = "") -> String:
 	for a in OS.get_cmdline_user_args():
@@ -69,6 +76,23 @@ func _initialize() -> void:
 		var mode := ("own skeleton on '%s'" % attached.attach_bone) if attached.attach_bone != "" else "weighted onto the body"
 		print("   worn: %-40s (%s)" % [item_str.get_file(), mode])
 	print("dressed with %d of %d item(s)" % [worn, items.size()])
+
+	# Optional real pose, exactly as the world applies it.
+	var pose_arg := _arg("--pose")
+	if pose_arg != "":
+		var group := _arg("--group", "sword")
+		var ban_path := _arg("--ban")
+		if ban_path == "":
+			ban_path = assembled.parsed.animation_for(BsrReader.AnimationEntry.TYPE_STAND, group)
+		var ban_bytes := AssetSource.read_bytes(ban_path, archive)
+		if ban_bytes.is_empty():
+			ban_bytes = AssetSource.read_bytes("res\\" + ban_path, archive)
+		var anim := BanReader.parse(ban_bytes) if not ban_bytes.is_empty() else null
+		if anim == null or anim.bones.is_empty():
+			printerr("   could not read the pose animation ", ban_path)
+		else:
+			Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, float(pose_arg), true)
+			print("   posed with %s at %.2fs (%d tracks)" % [ban_path.get_file(), float(pose_arg), anim.bones.size()])
 
 	var root := get_root()
 	var world := Node3D.new()

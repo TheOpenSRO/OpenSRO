@@ -5788,8 +5788,18 @@ func _qa_rig_report() -> void:
 		print("QA RIG   nothing under the column from %.1f above the feet" % 60.0)
 	else:
 		var who: Node = hit.collider
+		var above: float = float(hit.position.y) - player.global_position.y
 		print("QA RIG   first surface down from overhead: y %.2f (%.2f from the feet) on %s" % [
-			hit.position.y, hit.position.y - player.global_position.y, who.get_path() if who != null else "?"])
+			hit.position.y, above, who.get_path() if who != null else "?"])
+		# A solid top well above the feet means the player was put INSIDE that
+		# object -- QA_AT teleports without collision -- and everything below
+		# that height is hidden in it. This is what "the legs vanish" was at
+		# the square (see WORLD_ISSUES: the dragon pedestal, 11.45 tall), and
+		# it was in this very line all along; say it in words so it is not
+		# read as a rig bug again.
+		if above > 0.5:
+			print("QA RIG   ** player is INSIDE %s: its top is %.2f above the feet, so the body below that height is hidden in it -- move the spot, this is not the rig **" % [
+				who.name if who != null else "that object", above])
 	var every := PackedFloat32Array()
 	if not pair.is_empty():
 		var group: Node3D = pair[1]
