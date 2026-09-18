@@ -17850,3 +17850,28 @@ berserk config) have each ended in a checked negative or a bounded refinement ra
 value, which is itself a finding: the client-authoritative RE surface for the systems srrevamp lacks
 is largely exhausted, and the remaining disclosed values are server-side by construction. Docs only,
 0 names.
+
+## The floor band uses a tenth of the BASE, not the damage — a shipped bug fixed (2026-09-18)
+
+Re-deriving the minimum-damage rule from asm (chasing the "ResultDamage is under PhyAttackPoint's
+5%" string) turned up that `combat.ApplyFloorBand`, shipped and cited, had it wrong. Stage 16 of
+`Formula_MitigatePhysicalDamage`: a blow mitigated below 5% of its pre-mitigation base is reshaped
+to `1 + (band-1) * rand()/32767` where **`band = base * 10 / 100`** — a tenth of the BASE. The
+shipped code computed `band = damage * 10 / 100`, a tenth of the already-mitigated damage.
+
+The FPU trace settles it: at `40e6f9` `fmul st,st(1)` forms `0.05*base`; `40e6fb` `fcomp st(2)`
+compares it with the damage and pops; `40e6ff` `fstp st(1)` pops the damage and leaves the base on
+the stack top; `40e706` then multiplies THAT (the base) by 10 and divides by 100. `[esp+0x28]` (the
+base) is the same operand the 5% threshold uses, confirmed by the compare direction.
+
+The bug was degenerate in the direction that matters: since the branch only runs when damage < 5% of
+base, a tenth of the damage is always ~1 — the constant-1 the stage exists to replace. The function's
+own doc said it makes a hit "land for a small RANDOM amount rather than a constant 1", which only the
+base reading achieves. So the code contradicted its own stated intent, and three tests encoded the
+degenerate values (40→4, band top ~40); all three now assert the base reading (40→100, band top
+~10000) and fail under the old `damage` version.
+
+Effect on play: heavily out-geared hits (high-defence targets) now land for a random 1..10% of the
+attacker's attack instead of ~1 — a meaningful minimum, as the engine intends. Fixed in
+`combat.ApplyFloorBand`, wired already through `ResolveBlow`. `go test -p 1 ./...` green.
+Applied 0 names (the functions were named).

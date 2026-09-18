@@ -562,9 +562,15 @@ func TestFloorBandOnlyTriggersBelowFivePercentOfBase(t *testing.T) {
 	if got := ApplyFloorBand(60, 1000, nil); got != 60 {
 		t.Errorf("60 of base 1000 (6%%) = %d, want it untouched", got)
 	}
-	// 40 out of 1000 is 4%, below: a tenth, so 4.
-	if got := ApplyFloorBand(40, 1000, nil); got != 4 {
-		t.Errorf("40 of base 1000 (4%%) = %d, want 4 (a tenth, nil r takes the max)", got)
+	// 40 out of 1000 is 4%, below: reshaped to a tenth of the BASE (100), not
+	// of the damage (which would be 4 -- the degenerate ~1 case this stage
+	// exists to avoid). nil r takes the max.
+	if got := ApplyFloorBand(40, 1000, nil); got != 100 {
+		t.Errorf("40 of base 1000 (4%%) = %d, want 100 (a tenth of the base)", got)
+	}
+	// The regression guard: a tenth of the DAMAGE would be 4. It must not be.
+	if got := ApplyFloorBand(40, 1000, nil); got == 4 {
+		t.Errorf("band used a tenth of the damage (4), not of the base (100)")
 	}
 	// Exactly at the threshold is not below it.
 	if got := ApplyFloorBand(50, 1000, nil); got != 50 {
@@ -584,15 +590,16 @@ func TestFloorBandNeverGoesBelowOne(t *testing.T) {
 	}
 }
 
-// The randomisation spans [1, tenth] rather than being constant -- the whole
-// point of the stage. 400 of a base of 100000 is 0.4%, a tenth of which is 40.
+// The randomisation spans [1, tenth-of-base] rather than being constant -- the
+// whole point of the stage. 400 of a base of 100000 is 0.4%, and the band is a
+// tenth of the BASE = 10000, so the roll spans [1, 10000].
 func TestFloorBandRandomisesBetweenOneAndTheTenth(t *testing.T) {
 	r := rand.New(rand.NewSource(7))
 	lo, hi := 1<<30, 0
 	for i := 0; i < 500; i++ {
 		got := ApplyFloorBand(400, 100000, r)
-		if got < 1 || got > 40 {
-			t.Fatalf("got %d, outside [1, 40]", got)
+		if got < 1 || got > 10000 {
+			t.Fatalf("got %d, outside [1, 10000]", got)
 		}
 		if got < lo {
 			lo = got
@@ -604,8 +611,8 @@ func TestFloorBandRandomisesBetweenOneAndTheTenth(t *testing.T) {
 	if lo == hi {
 		t.Errorf("the band produced the constant %d over 500 rolls, want a spread", lo)
 	}
-	if hi < 30 {
-		t.Errorf("the band's top observed value was %d, want it to reach near 40", hi)
+	if hi < 7000 {
+		t.Errorf("the band's top observed value was %d, want it to reach near 10000", hi)
 	}
 }
 
@@ -638,10 +645,12 @@ func TestResolveBlowAppliesTheFloorBandWithoutDisturbingOrdinaryHits(t *testing.
 	if got.Damage != 100 {
 		t.Errorf("an unmitigated blow = %d, want 100", got.Damage)
 	}
-	// Heavy mitigation drives it under the threshold, so the band reshapes it.
+	// Heavy mitigation drives it under the threshold (20 of 1000 = 2%), so the
+	// band reshapes it UP to a tenth of the BASE (100) -- a meaningful minimum,
+	// not the ~1 a tenth of the mitigated 20 would give. nil r takes the max.
 	heavy := ResolveBlow(1000, 0, 980, 0, 0, 0, 0, nil, nil)
-	if heavy.Damage > 20 {
-		t.Errorf("a blow mitigated to 20 of 1000 should be reshaped, got %d", heavy.Damage)
+	if heavy.Damage != 100 {
+		t.Errorf("a blow mitigated to 20 of base 1000 should reshape to a tenth of the base (100), got %d", heavy.Damage)
 	}
 	if heavy.Damage < 1 {
 		t.Errorf("the band must never go below 1, got %d", heavy.Damage)

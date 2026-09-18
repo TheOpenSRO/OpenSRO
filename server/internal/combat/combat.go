@@ -886,19 +886,30 @@ const (
 
 // ApplyFloorBand is stage 16 of Formula_MitigatePhysicalDamage
 // (docs/protocol/damage_pipeline.md): a blow that has been mitigated below 5%
-// of its pre-mitigation base is NOT simply floored at 1. It is divided by ten,
-// floored at 1, and then randomised uniformly between 1 and that value:
+// of its pre-mitigation base is NOT simply floored at 1. It is reshaped to a
+// tenth of the BASE, floored at 1, and then randomised uniformly between 1 and
+// that value:
 //
 //	40e6eb  if (damage < base * 0.05):
-//	40e706      damage = damage * 10 / 100        // a tenth
-//	40e716      if (damage <= 0) damage = 1
+//	40e706      band = base * 10 / 100           // a tenth of the base, NOT of damage
+//	40e716      if (band <= 0) band = 1
 //	40e729      r = rand()                        // 0x9dd338
-//	40e732      damage = 1 + (damage - 1) * r / 32767
+//	40e732      damage = 1 + (band - 1) * r / 32767
 //
 // So a heavily out-geared hit lands for a small RANDOM amount rather than a
 // constant 1. This is a different clamp from the floor of 1 that
 // Combat_ResolveDamage applies later, which catches a zero; this one reshapes
 // the whole low end.
+//
+// CORRECTED 2026-09-18: the tenth is of `base`, not of `damage`. The asm at
+// 40e6f9..40e706 leaves the FPU stack holding the BASE (`[esp+0x28]`, the same
+// value the 5% threshold compares against) when it multiplies by 10 and divides
+// by 100 -- an fstp st(1) after the compare pops the mitigated damage off and
+// leaves the base on top. The earlier reading took it as `damage * 10/100`,
+// which is degenerate: in this branch damage is already below 5% of base, so a
+// tenth of it is always ~1, i.e. the same constant-1 the doc says this stage
+// exists to AVOID. A tenth of the base is a meaningful minimum (1..10% of the
+// attacker's attack), which is what "lands for a small RANDOM amount" means.
 //
 // A nil r takes the maximum outcome, the convention RollDamage and RollChance
 // already use, which leaves the tenth undisturbed.
@@ -906,7 +917,7 @@ func ApplyFloorBand(damage, base int, r *rand.Rand) int {
 	if base <= 0 || float64(damage) >= float64(base)*FloorBandThreshold {
 		return damage
 	}
-	v := float64(damage) * FloorBandScale / 100
+	v := float64(base) * FloorBandScale / 100
 	if v <= 0 {
 		v = 1
 	}

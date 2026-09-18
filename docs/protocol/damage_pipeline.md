@@ -182,15 +182,26 @@ Bit `0x2` doubles the term again, to 4.
 ## Stage 16, the floor band — a mechanic nothing had
 
 	40e6eb  if (damage < base * 0.05):
-	40e706      damage = damage * 10 / 100        // i.e. damage / 10
-	40e716      if (damage <= 0) damage = 1
+	40e706      band = base * 10 / 100            // a tenth of the BASE, not of damage
+	40e716      if (band <= 0) band = 1
 	40e729      r = rand()                        // 0x9dd338
-	40e732      damage = 1 + (damage - 1) * r / 32767
+	40e732      damage = 1 + (band - 1) * r / 32767
 
 So a blow mitigated below **5% of its pre-mitigation base** is not simply
-floored at 1: it is divided by ten, floored at 1, and then **randomised
-uniformly between 1 and that value**. Heavily out-geared hits land for a small
-random amount rather than a constant.
+floored at 1: it is reshaped to **a random amount between 1 and a tenth of the
+base**. Heavily out-geared hits land for a small random amount rather than a
+constant.
+
+**CORRECTED 2026-09-18: the tenth is of `base`, not of `damage`.** The line at
+`40e706` multiplies by 10 and divides by 100 the value the FPU stack holds after
+the compare, and an `fstp st(1)` at `40e6ff` pops the mitigated damage and leaves
+the **base** (`[esp+0x28]`, the same value the 5% test compares against) on top.
+An earlier reading took it as `damage * 10/100`, which is degenerate: in this
+branch `damage` is already below 5% of base, so a tenth of it is always ~1 — the
+very constant-1 this stage exists to avoid. A tenth of the base is 1..10% of the
+attacker's attack, a meaningful minimum, which is what "lands for a small random
+amount" means. `combat.ApplyFloorBand` shipped the `damage` reading and is now
+fixed, with tests that fail under the old one.
 
 This is separate from the floor of 1 that `Combat_ResolveDamage` applies later
 (see `combat.MitigateDamage`) — that one catches a zero; this one reshapes the
