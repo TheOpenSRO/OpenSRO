@@ -16046,3 +16046,35 @@ armour into the flat term and the engine does not do that. But what equipment *d
 contribute defensively is still unread — several writable ids (25-32, 128-131) are
 unidentified — so there is nothing grounded to replace it with, and replacing a wrong model
 with a guess is worse than leaving it. The damage model is untouched.
+
+## 2026-09-18 — the reader side, and a correction to my own reading of the damage formula
+
+The blocker named last tick was that nothing grounded was known about what equipment
+contributes defensively. Params are read back through a virtual getter at vtable offset
+`0x104`, so sweeping that gives the counterpart to the writer map: **189 call sites, 44
+params read with a literal id**, now in [param_writers.md](protocol/param_writers.md).
+
+**It corrected my own documentation immediately.** I had recorded
+`Formula_MitigatePhysicalDamage` as reading params 5 and 7. That is the first half of the
+function and it is where I stopped reading. It reads **seven values**: 5 flat, 7 as
+`X / (1 + param7/100)`, param 128 or 129 off the *attacker* selected by flag bits, param 259
+off the attacker when the defender's type check returns 3, param 189 off the attacker under
+another flag, param 178 off the attacker with the result discarded, and **param 180 off the
+defender as a direct multiplier on the final damage**.
+
+So the previous tick's conclusion — that equipment contributes nothing to physical mitigation
+— was drawn from two terms out of seven. The negative it proved is still true but much
+narrower than it sounded: equipment cannot reach params **5 or 7**. It said nothing about
+180, because 180 had not been read.
+
+**Two things this tick did not let me promote.** `'mdu'` -> param 259 looked, for about a
+minute, like the equipment-defends answer: an item magic option writing a param the
+mitigation formula reads. It is read off the **attacker** and gated on the defender's type,
+so it is conditional offence, not defence — the side it acts from settles it, and the write
+alone would have misled. And **param 180's writer is unidentified**: the `SetParam` sweep
+finds one site in an unnamed function, and 180 is not in the tag dispatcher's writable set,
+so no magic option can produce it. Where it comes from is the next question.
+
+No value changed. What moved is a reader map to pair with the writer map, a corrected
+annotation on the mitigation formula in both the record and the Ghidra database, and a
+defensive term — param 180 — that is now identified by its use even though its source is not.

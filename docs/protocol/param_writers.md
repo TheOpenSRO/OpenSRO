@@ -255,6 +255,97 @@ So `+0x1d4`/`+0x1d8`/`+0x1dc` stay recorded as **RefObjChar binary fields 17, 18
 `+0x25c defaulting to 3000 = col 82` note carried in that function's own recovered comment
 mixes the two axes the same way and should not be relied on.
 
+
+## Who READS each param
+
+The writer map above has a counterpart. Params are read back through a virtual getter at
+vtable offset `0x104`, so sweeping `(**(code **)(*obj + 0x104))(<literal>)` gives the reader
+side. **189 call sites, of which 44 params are read with a literal id**; the rest pass a
+variable and are not counted.
+
+	param 1    CGItemEquip::CanBeEquipedAt, FUN_00594ac0, FUN_0059e450, GObjPC::FUN_0049aa70
+	param 2    CGItemEquip::CanBeEquipedAt, FUN_00594ac0, FUN_0059e450, GObjPC::FUN_0049aa70
+	param 3    CBattleArenaInfo::vslot_004, FLAG_WORLD_EVENT_HANDLERS::OnUpdate_FlagChecker::Handle, FUN_0050fee0, GObjPC::FU
+	param 4    CBattleArenaInfo::vslot_004, FLAG_WORLD_EVENT_HANDLERS::OnUpdate_FlagChecker::Handle, FUN_0050fee0, GObjPC::FU
+	param 5    FUN_0040f1b0, Formula_MitigatePhysicalDamage
+	param 6    FUN_0040f3d0, Formula_MitigateMagicalDamage
+	param 7    FUN_0040f1b0, Formula_MitigatePhysicalDamage
+	param 8    FUN_0040f3d0, Formula_MitigateMagicalDamage
+	param 10   Combat_ResolveDamage
+	param 12   Combat_ResolveDamage
+	param 23   CGObjPC::vslot_215
+	param 24   CGObjPC::vslot_215, FUN_00567190
+	param 27   FUN_00590680
+	param 28   FUN_00590680
+	param 29   FUN_00590680
+	param 30   FUN_00590680
+	param 31   FUN_00590680
+	param 32   FUN_00590680
+	param 56   Combat_ResolveDamage
+	param 57   Combat_ResolveDamage
+	param 140  GObjPC::FUN_004aa530
+	param 141  FUN_005830b0, FUN_005857b0, FUN_00586700, Skill_CheckUseConditions
+	param 145  FUN_00590680
+	param 146  FUN_00590680
+	param 147  FUN_00590680
+	param 148  FUN_00590680
+	param 149  FUN_00590680
+	param 150  FUN_00590680
+	param 169  FUN_00590680
+	param 172  Enchant_SuccessRateBasePlusBonus
+	param 173  CEnchant_Reinforce::GetSuccessRate
+	param 178  FUN_0040ebe0, Formula_MitigatePhysicalDamage
+	param 179  FUN_0040eef0, Formula_MitigateMagicalDamage
+	param 180  FUN_0040ebe0, FUN_0040f1b0, Formula_MitigatePhysicalDamage
+	param 181  FUN_0040eef0, FUN_0040f3d0, Formula_MitigateMagicalDamage
+	param 184  FUN_00410880
+	param 187  Combat_ResolveDamage
+	param 188  Combat_ResolveDamage
+	param 189  FUN_0040ebe0, FUN_0040eef0, Formula_MitigateMagicalDamage, Formula_MitigatePhysicalDamage
+	param 190  Formula_RollWeaponDamage
+	param 191  Formula_RollWeaponDamage
+	param 192  Formula_RollMagicalDamage
+	param 193  Formula_RollMagicalDamage
+	param 259  Formula_MitigateMagicalDamage, Formula_MitigatePhysicalDamage
+
+Readers are how a param's *meaning* gets settled, because the formula that consumes it says
+what it does. Two were settled this way immediately, and one of them corrected this page.
+
+## Correction: the physical mitigation formula reads six params, not two
+
+This page previously described `Formula_MitigatePhysicalDamage` as reading params 5 and 7.
+That is what the first half of the function does, and it is where the reading stopped. The
+function reads **seven values in all**:
+
+	param 5     subtracted flat
+	param 7     divides as X / (1 + param7/100)
+	param 128 or 129   on the ATTACKER, selected by flag bits 1 and 2; enters as
+	                   (v/100 + 1.0) * damage
+	param 259   on the ATTACKER, only when the defender's type check returns 3;
+	            adds (v/100) * damage
+	param 189   on the ATTACKER when flag bit 4 is set; becomes a multiplier v + K
+	param 178   on the ATTACKER, result discarded in the decompile
+	param 180   on the DEFENDER: `if (v != 0) damage = v * damage`
+
+The understatement mattered. Concluding from params 5 and 7 alone that equipment contributes
+nothing to physical mitigation was reading two terms out of seven.
+
+## What that changes, and what it does not
+
+**`'mdu'` -> param 259 is not a defensive bonus.** It is read off the *attacker* and applies
+only when the defender's type check returns 3, so it is conditional offence. The tempting
+reading — "equipment reaches the mitigation formula, so equipment defends" — is wrong on the
+side it acts from.
+
+**Param 180 is a genuine defender-side multiplier**, read off the defender and multiplying
+the final damage outright. Its writer is **not identified**: the `SetParam` sweep finds a
+single write site in an unnamed function, and 180 is *not* in the tag dispatcher's writable
+set, so an item magic option cannot produce it. Where it comes from is the next question.
+
+The previous tick's negative stands unchanged and is narrower than it sounded: equipment
+cannot reach params **5 or 7**. It says nothing about 180, which was not enumerated because
+the formula's reads had not been fully read.
+
 ## Two traps this cost
 
 **A struct-offset sweep does not establish struct identity.** Sweeping every writer of
