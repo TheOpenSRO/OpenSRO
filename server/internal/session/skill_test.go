@@ -730,3 +730,211 @@ func TestFloorBlowSkillDealsExactlyOne(t *testing.T) {
 		t.Errorf("monster HP %d -> %d; a floor blow takes exactly 1", before, monster.HP)
 	}
 }
+
+// Damage kind 4: a PC whose weapon-slot item has TypeID4 == 16, a fortress
+// weapon, deals exactly 1 to anything that is not a fortress structure.
+// Combat_ResolveDamage tests `(Equip_GetWeaponTID() & 0xf800) == 0x8000` and its
+// case 4 writes `total = 1`. See combat.SelectDamageKind.
+func TestFortressWeaponDealsExactlyOne(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+
+	// A degenerate weapon range so the blow is exact, and no reinforce so
+	// Strength contributes nothing to this particular assertion.
+	items := stubCombatItems{100: {ID: 100, PhysAttackMin: 30, PhysAttackMax: 30, TypeID3: 6, TypeID4: combat.FortressWeaponTypeID4}}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	inv.TruncateForTest(ctx)
+	inv.AddItem(ctx, c.ID, 100, 1)
+
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	eq.TruncateForTest(ctx)
+	eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0)
+
+	skills, err := skill.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("skill.OpenSQLStore: %v", err)
+	}
+	defer skills.Close()
+	skills.TruncateForTest(ctx)
+	if err := skills.Learn(ctx, c.ID, 997); err != nil {
+		t.Fatalf("Learn: %v", err)
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 1000, 10, 5, 500)
+
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	quests.TruncateForTest(ctx)
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}, nil, mana.NewTracker(), nil),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	resp = send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 997, TargetMonsterID: monster.ID}).Encode())
+	ar, err := DecodeAttackResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeAttackResult: %v", err)
+	}
+	if ar.Error != "" {
+		t.Fatalf("skill cast failed: %s", ar.Error)
+	}
+	// Skill 997 is 200% of a 30-point weapon into 10 defence -- 40 on the
+	// ordinary kind. A fortress weapon is damage kind 4, which assigns the
+	// total directly and past every formula, so the percentage never applies.
+	if ar.MonsterDamage != 1 {
+		t.Fatalf("a fortress weapon dealt %d, want exactly 1 (40 would mean the ordinary kind ran)", ar.MonsterDamage)
+	}
+}
+
+// Damage kind 2: the hard-coded event list. EventMobList_BuildWinterSnowman
+// (0x00615b20) looks up the literal "MOB_EV_WINTER_SNOWMAN" and stores 1 as the
+// damage every blow deals, and real characterdata gives that monster 11 HP --
+// eleven blows from anyone, whatever they are holding.
+func TestWinterSnowmanTakesExactlyOnePerBlow(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+
+	// A degenerate weapon range so the blow is exact, and no reinforce so
+	// Strength contributes nothing to this particular assertion.
+	items := stubCombatItems{100: {ID: 100, PhysAttackMin: 30, PhysAttackMax: 30}}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	inv.TruncateForTest(ctx)
+	inv.AddItem(ctx, c.ID, 100, 1)
+
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	eq.TruncateForTest(ctx)
+	eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0)
+
+	skills, err := skill.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("skill.OpenSQLStore: %v", err)
+	}
+	defer skills.Close()
+	skills.TruncateForTest(ctx)
+	if err := skills.Learn(ctx, c.ID, 997); err != nil {
+		t.Fatalf("Learn: %v", err)
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	monster := monsters.SpawnSpecies("jangan", combat.Species{Name: "Snowman", CodeName: "MOB_EV_WINTER_SNOWMAN"}, 0, 0, 0, 11, 10, 5, 500)
+
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	quests.TruncateForTest(ctx)
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}, nil, mana.NewTracker(), nil),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	resp = send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 997, TargetMonsterID: monster.ID}).Encode())
+	ar, err := DecodeAttackResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeAttackResult: %v", err)
+	}
+	if ar.Error != "" {
+		t.Fatalf("skill cast failed: %s", ar.Error)
+	}
+	// The same 200% skill that lands for 40 on a Mangyang. The snowman's real
+	// MaxHP is 11, so under the ordinary kind this one cast would kill it.
+	if ar.MonsterDamage != 1 {
+		t.Fatalf("the winter snowman took %d, want exactly 1", ar.MonsterDamage)
+	}
+	if ar.MonsterDied || ar.MonsterRemainingHP != 10 {
+		t.Fatalf("after one blow: died=%v hp=%d, want alive at 10 of 11", ar.MonsterDied, ar.MonsterRemainingHP)
+	}
+}

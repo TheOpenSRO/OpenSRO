@@ -17577,3 +17577,46 @@ existing test pinned `-1` as a "neutral" percent; nothing ever passed a negative
 (two callers, both fed by `skillDamageBonus`), so the test now says what is true.
 
 Applied 0 names.
+
+## The four other damage kinds, named from the binary AND the data (2026-09-18)
+
+The last two rounds scoped every skill-damage rule to "the ORDINARY damage kind, case 0 of the
+hit-record switch" and left the other four unread. They are read, and the scope limit is now a
+closed statement: **none of the four is reachable with the content srrevamp spawns.**
+
+	kind 1   the attacker is under the monster transform     Formula_RollLevelDamage
+	kind 2   the target is the hard-coded event monster      the list's value: 1
+	kind 3   the target is a fortress structure or flag      FUN_0040f990 (unread)
+	kind 4   the attacker wields a fortress weapon           exactly 1
+
+All four require `attacker->IsPC()`. The full selector, its order and the evidence are in
+`docs/protocol/damage_pipeline.md`; what is worth recording here is the METHOD, because it is the
+one this project's rules ask for and it worked four times in a row: **the binary gives a pattern,
+real data names it, and neither is taken alone.**
+
+- Slots 244/248 turned out to be TID bit tests with a single implementation shared by all 30 object
+  classes. A bit pattern is not a name. Tabulating real `characterdata` by TypeID gave
+  **5 rows, all `STRUCTURE_*_FLAG`** and **71 rows, all `STRUCTURE_*`**, zero exceptions — and those
+  are the names.
+- `(weaponTID & 0xf800) == 0x8000` is only "TypeID4 == 16" because the weapon gate had already
+  proved `TID >> 11` is TypeID4, and only "a fortress weapon" because `skill_params.md` had already
+  tied code 16 to `SKILL_*_FORTRESSWEAPON`. Two earlier findings, neither made for this.
+- The kind-2 list looked like a DB-loaded table. It is not: there is ONE record builder in the
+  binary and its monster is a string literal, `"MOB_EV_WINTER_SNOWMAN"`. Real data: level 1,
+  MaxHP 11, and the builder stores 1 as the damage — an event you win by hitting it eleven times.
+- Kind 1 gates on `'msch'` value[0] == 1. Of 25 real skills carrying `'msch'`, exactly one
+  qualifies: `SKILL_ETC_TRANS_MONSTER_01`.
+
+**The TID layout falls out of the two predicates** and is recorded in `damage_pipeline.md`. Bits
+1–15 are each confirmed (bit 1 against all 17,868 rows, TypeID4 independently by the weapon gate);
+bit 0 is only *consistent with* column 7 and is marked unconfirmed.
+
+**Wired, not just written down.** `combat.SelectDamageKind` reproduces the selector in the engine's
+order, and `session.performAttack` applies kinds 2 and 4. Both end-to-end tests fail without the
+wiring, reporting 40 — the ordinary kind's answer for the same cast.
+
+Applied **7 names** to the server project: `CGObj::IsFortressFlag`,
+`CGObj::IsFortressStructure`, `Equip_GetWeaponTID`, `EventMobList_Contains`,
+`EventMobList_GetFixedDamage`, `EventMobList_BuildWinterSnowman`, `EventMobList_AddWinterSnowman`.
+The two slot functions had carried an interpolated `CGObjCOS_Summoned` attribution; a function in
+slot 244 of all 30 classes is a `CGObj` method.

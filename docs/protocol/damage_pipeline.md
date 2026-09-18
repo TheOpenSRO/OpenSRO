@@ -424,3 +424,68 @@ A consequence worth stating, since it is arithmetic on recovered constants
 rather than a further claim: `1 − 0.025·d` reaches the 10% floor at exactly
 **d = 36**, so the penalty saturates 36 levels below the target and every
 deeper deficit is identical.
+
+## The pipeline above is ONE of five damage kinds (2026-09-18)
+
+Everything on this page is what `Combat_ResolveDamage` (`0x0058e5f0`) does for **damage kind 0**.
+The function switches on a byte at `+5` of the per-hit record, which the allocator leaves 0 and a
+selector sets to 1..4 in four cases — all of them only when the **attacker is a PC**
+(`IGObj::IsPC`, slot 7). A blow from anything else is always kind 0.
+
+	if (attacker->IsPC()) {
+	    if (attacker[0x308] ... its skill's 'msch' value[0] == 1)    kind = 1;
+	    else if (target->IsFortressStructure() == 1 ||
+	             target->IsFortressFlag()      == 1)                 kind = 3;
+	    else if ((Equip_GetWeaponTID() & 0xf800) == 0x8000)          kind = 4;
+	    else if (target->IsMonster() && EventMobList_Contains(id))   kind = 2;
+	}
+
+| kind | selected when | damage | status |
+|---|---|---|---|
+| 0 | none of the below | the computed blow — this page | implemented |
+| 1 | the attacker's attached object carries `'msch'` with value[0] == 1 | `Formula_RollLevelDamage` — a roll from the two levels, no weapon | identified, **not modelled** |
+| 2 | the target is on the hard-coded event list | the list's own 16-bit value | implemented |
+| 3 | the target is a fortress structure or flag | `FUN_0040f990` (736 bytes) | identified, **formula unread** |
+| 4 | the weapon-slot item has TypeID4 == 16 | exactly **1** | implemented |
+
+The order is part of the rule: a fortress weapon swung at a structure is kind 3, not 4, and a
+fortress weapon swung at the event monster is kind 4, not 2. `combat.SelectDamageKind` reproduces
+it and has a test for each of those.
+
+**How each condition was grounded.** The binary gave a pattern and real data named it; neither was
+taken alone.
+
+- **Slots 244 and 248 are TID bit tests with ONE implementation each**, shared by all 30 object
+  classes — so the answer is data, not an override. Read against real `characterdata`:
+  TypeID (1,2,4,2) is **exactly 5 rows, all `STRUCTURE_*_FLAG`**, and TypeID (1,2,5,\*) is
+  **exactly 71 rows, all `STRUCTURE_*`** — fort stones, guard and lightning towers, gates, defensive
+  positions, headquarters, barricades. Zero exceptions either way. Named
+  `CGObj::IsFortressFlag` / `CGObj::IsFortressStructure`.
+- **`TID >> 11` is TypeID4** — already proven by the weapon gate — so `& 0xf800 == 0x8000` is
+  TypeID4 == 16, which `skill_params.md` had already recorded as the fortress weapon
+  (`SKILL_*_FORTRESSWEAPON`). `Equip_GetWeaponTID` reads storage slot 6, the weapon slot.
+- **The event list has one record builder in the whole binary**, and it looks up the string literal
+  `"MOB_EV_WINTER_SNOWMAN"` and stores `1` at the record's `+0x1c`, the value kind 2 deals. Real
+  `characterdata` has that monster: **level 1, MaxHP 11** — eleven blows from anyone, whatever they
+  hold.
+- **`'msch'` is `skill+0x4a4`.** 25 real skills carry it and **exactly one** has value[0] == 1:
+  `SKILL_ETC_TRANS_MONSTER_01`, the transform-into-a-monster skill. That the kind-1 damage is a
+  level roll "used when no weapon range applies" was annotated on `Formula_RollLevelDamage` days
+  before this, from a different read.
+
+**The TID layout, which these predicates spell out** (`& 2`, `& 0x1c`, `& 0x60`, `& 0x780`,
+`& 0xf800`):
+
+	bit 1        characterdata col 8      1 on all 17,868 rows; both predicates require it
+	bits 2-4     col 9    TypeID1
+	bits 5-6     col 10   TypeID2
+	bits 7-10    col 11   TypeID3
+	bits 11-15   col 12   TypeID4         independently proven by the weapon gate
+
+Bit 0 is *consistent with* column 7 by adjacency and is **not** confirmed by a use-site.
+
+**What this means for srrevamp.** None of the four is reachable with the content it spawns — no
+transform, no structures, no fortress weapons in play, no snowman — so kind 0 was the right thing
+to have built first, and that is now a statement with the conditions written down rather than an
+assumption. Kinds 2 and 4 are wired into `session.performAttack` anyway, because they are fully
+read and cheap, and so the winter event or a fortress weapon cannot arrive ahead of the rule.

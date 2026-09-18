@@ -855,6 +855,36 @@ func performAttack(
 		net = zerk.Boost(characterID, net)
 	}
 
+	// THE DAMAGE KIND. Everything above is the engine's ORDINARY kind, and
+	// Combat_ResolveDamage switches away from it in four cases -- see
+	// combat.SelectDamageKind for the selector and how each condition was
+	// grounded. Two of the four replace the blow with a constant and are
+	// applied here: a fortress weapon deals exactly 1 to anything that is not a
+	// structure, and the hard-coded event monster takes its listed damage
+	// whatever hits it. Both assign the total directly inside the engine's
+	// per-hit loop, past every formula, so nothing computed above survives --
+	// not the skill percentage, not berserk -- and a multi-hit skill lands the
+	// constant once per hit.
+	//
+	// Neither is reachable with the content this server spawns today; they are
+	// here because the rule is fully read and cheap, and so that a fortress
+	// weapon or the winter event cannot arrive ahead of it. The other two kinds
+	// (the monster transform, fortress structures) are identified but NOT
+	// modelled -- the first needs a transform system and the second's formula
+	// is unread -- and an srrevamp monster carries no TypeID, so a target is
+	// never taken for a structure.
+	kindIn := combat.KindInput{AttackerIsPC: true, TargetCodeName: monster.CodeName}
+	if _, t4, known := equippedWeaponType(ctx, characterID, eq, items); known {
+		kindIn.WeaponTypeID4 = t4
+	}
+	if perHit, fixed := combat.FixedDamagePerHit(combat.SelectDamageKind(kindIn), monster.CodeName); fixed {
+		n := hits
+		if n < 1 {
+			n = 1
+		}
+		net = perHit * n
+	}
+
 	updated, monsterDied, ok := monsters.ApplyDamage(targetMonsterID, net)
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found"}).Encode()})

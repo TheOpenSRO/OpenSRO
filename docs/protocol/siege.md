@@ -189,3 +189,22 @@ The dungeon caps and the structure-upgrade costs are the two places where a real
 number is being read from a structure this project has not mapped. Both lead to
 the same place: **`AQ_Siege::FUN_006232c0`, 11,816 bytes**, which is where most
 of the fortress logic lives and which no pass has read through.
+
+## What a structure IS, and what a fortress weapon does (2026-09-18)
+
+Recovered from the damage path rather than from `AQ_Siege`, and recorded here because this is the
+page that will need it. Full evidence in `damage_pipeline.md`, "ONE of five damage kinds".
+
+- **A fortress structure is TypeID (1,2,5,\*)** — `CGObj::IsFortressStructure`, slot 248. Real
+  `characterdata` has 71: `STRUCTURE_FORT_STONE_*` (5,1), `STRUCTURE_GUARD_TOWER_*` /
+  `STRUCTURE_LIGHTNING_TOWER_*` (5,2), `STRUCTURE_BIG_GATE_*` (5,3),
+  `STRUCTURE_SMALL_DEFENSIVE_POSITION_*` (5,4), `STRUCTURE_HEADQUARTERS_*` (5,5),
+  `STRUCTURE_BARRICADE_*` (5,6).
+- **A fortress flag is TypeID (1,2,4,2)** — `CGObj::IsFortressFlag`, slot 244. Five rows:
+  `STRUCTURE_AGGRESSIVE_FLAG`, `_DEFENSIVE_FLAG`, `_HEALING_FLAG` and two `_UP`. The rest of
+  (1,2,4,\*) is NOT structures: (4,1) and (4,4) are `COS_GUARD_*` and (4,3) is `MOB_FW_*`, which is
+  why slot 244 tests TypeID4 and slot 248 does not.
+- **A PC's blow against either is damage kind 3**, computed by `FUN_0040f990` (736 bytes) after
+  reading the attacker's weapon TID. **Unread** — it is the next probe for structure damage.
+- **A fortress weapon (weapon-slot TypeID4 == 16) deals exactly 1 to anything that is not a
+  structure or flag** — damage kind 4. Implemented as `combat.KindFortressWeapon`.
