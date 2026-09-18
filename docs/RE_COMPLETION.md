@@ -15608,3 +15608,34 @@ the next step, and it is a read rather than a search.
 Nothing named. The academy-bonus reading is now well supported and still short of the
 use-site that would settle it, and the difference between those two states is the whole
 point of the rule.
+
+## The "EXP and SP pair" hypothesis does not survive (2026-09-18)
+
+Reading `CGObjPC::vslot_420` in assembly, as named last tick, produced a clean structural
+picture and then killed the hypothesis it was meant to confirm.
+
+**The structure, read:** the function takes the member record's class byte (`[member+0x34]
++0x50`, the same field `TrainingCampMember_IsStudent` reads), passes four out-parameter
+pointers to `0x004e41f0`, and **accumulates across members** — `add [esp+0x38],edi ; adc
+[esp+0x3c],esi` for a 64-bit quantity and `add [esp+0x1c],eax` for a 32-bit one — before
+handing the totals to `GObjPC::FUN_004fcb00`. It writes nothing to any object and has no
+out-parameters of its own, which is why the earlier field-write probes found nothing.
+
+**The hypothesis was that the 64-bit value is EXP and the 32-bit one SP.** It had the
+right shape: EXP is the engine's 64-bit quantity, `0x00410110` returns a `longlong` floored
+at 1, and the caller accumulates it with `add/adc`.
+
+**Then both formulas turned out to call the EXP scalers.** `0x004106b0` calls
+`Formula_ExpScaleByLevelWindow` and `Formula_ExpScaleByLevelDiff` exactly as `0x00410110`
+does, and additionally calls **`RefLevel_GetEntry`** — the level table. So the pair is not
+"one EXP, one SP": both sit in the experience-reward family, and what distinguishes them
+is whether they consult the level table, not which stat they feed.
+
+Nothing named. Had the comparison not been run, `0x00410110` would have been named as an
+EXP formula on three converging facts — the scalers, the 64-bit return, the `add/adc`
+accumulate — and `0x004106b0` left as the presumed SP half, which the evidence does not
+support.
+
+This is the third tick in a row to end without names. Each ended by killing a hypothesis
+that looked well supported: equipment feeding the flat absorb, UpperReinforce's rate
+living in its slot 1, and now the EXP/SP pair.
