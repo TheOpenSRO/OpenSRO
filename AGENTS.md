@@ -119,4 +119,6 @@ Do not re-derive or contradict these without new evidence; each is recorded with
 - **`.o2` list 2** is a region's own objects; the other lists cross-reference objects belonging
   elsewhere, and drawing them duplicates region-straddling structures.
 - **Jangan**: town is region 97/168 (square and dragon at local ~1002, 917), palace is 98/168
-  directly **north**, farmland is 96/x.
+  directly **north**, farmland is 96/x. **Stand at the game's own spawn, local (1002, 1020)** —
+  (1002, 917) is the dragon's pedestal, a solid 11.45 tall; `QA_AT` teleports without
+  collision and puts a player *inside* it, which reads as "legs missing" (round 198).
