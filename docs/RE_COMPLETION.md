@@ -15242,3 +15242,36 @@ vtable layout alone.
 Inherited entries were deliberately skipped: naming a slot that still points at the
 base's function would attach a derived class's name to the base's code, which is the
 folded-function mistake in a different costume.
+
+## Slot-name propagation swept across both binaries, and it is nearly exhausted (2026-09-18)
+
+Yesterday's AI-state pass and the alchemy pass before it used the same shape: a base
+class whose own slots are named, and derived classes whose overrides of those slots are
+not. This tick generalised it into a sweep over **every** class in both binaries, with
+four guards — the ancestor's name must be real (not `FUN_`/`vslot_`/a destructor), the
+derived function must differ from the ancestor's (else it is inherited), the dump must
+attribute it to that class, and no other class's vtable may point at it.
+
+**The yield is small, and that is the finding:**
+
+	server   12 nameable overrides     2,197 slots have NO ancestor name
+	client    0 nameable overrides     1,583 slots have no ancestor name
+
+So propagation is essentially done. The bottleneck is not that names fail to travel down
+the hierarchy; it is that **the base classes themselves are unnamed**, which is where
+future effort has to go. The client yields nothing at all because almost no client base
+class has a named slot.
+
+Applied 11 of the 12 (`CGObjCOS_Mercenary::Create`, `CGObjPC::EngageBuffSkill`,
+`IsActiveBuff`, `GetRemainSkillPoint`, `NotifyClientAPIconStatus`, the pet `Create`s, and
+four `CEnchant_*::CheckPreconditions`). **Applied 11, failed 0.**
+
+**The twelfth was dropped for a name collision.** The sweep proposed
+`CEnchant_Reinforce::CheckPreconditions` for its slot-4 override, but that class already
+has a `CheckPreconditions` at slot 5 — its *own extra* precondition check, which
+`alchemy.md` distinguishes from the base's common one. Two different virtuals cannot
+wear the same name inside one class, so the row was dropped rather than applied with a
+made-up suffix. The collision check is now part of the append step, not an afterthought.
+
+`client/tools/re/propagate_slot_names.py` keeps the sweep so the next pass that names a
+base class can re-run it and collect whatever newly propagates.
