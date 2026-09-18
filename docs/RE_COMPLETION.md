@@ -16734,3 +16734,33 @@ operation. The difference between the two halves of this tick is whether the evi
 dependency or a neighbourhood.
 
 No value changed.
+
+## 2026-09-18 — three levers measured and closed in one tick
+
+Last tick's `RegisterNamedProbe` pairs a display name with a handler through a data dependency,
+which is the safest naming evidence this project has found. The obvious move is to generalise
+it. **Three generalisations were tried and all three are empty**, which is worth recording so
+none of them is tried again.
+
+	RegisterNamedProbe call sites, binary-wide              4   (the four already named)
+	calls passing BOTH a string literal and a function ptr  1
+	unnamed functions holding a LOADTARGET_/QUERY_ token    5, of which 2 unique
+
+The middle one explains the other two: this engine's registrations pass **the record**, not the
+function, so a name and a handler almost never appear in the same argument list. The four
+probes are the exception rather than a pattern. And the `AQ_*` failure messages, which looked
+like a token vocabulary, are mostly prose — "COS Data Loading Failed" rather than a
+`LOADTARGET_` constant.
+
+Three names came out of the remains, applied 3, failed 0:
+
+- **`OnLoad_CHARDATA_N_INVENTORY_ForPetTimedJob`** and
+  **`OnLoad_CHARDATA_N_INVENTORY_MagicCubeStorage`** — each reports a `LOADTARGET_` enum the
+  game names itself, and each token is held by exactly one function.
+- **`ValidateItemExchange`** (`AQ_ItemXChanger`) — every string it holds is a precondition
+  failure of an exchange: "nothing to exchange", "Char DBID of trading participant is 0",
+  "can't find trading participant object", "[P2P exchange or Flemarket error] given Item is
+  NULL", "unknown trading context usage: %d". Five strings agreeing on one operation is the
+  case the string rule was written for.
+
+No value changed.
