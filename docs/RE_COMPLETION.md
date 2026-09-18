@@ -16578,3 +16578,35 @@ find a walker that is wrong somewhere else.
 Shipped as `skillparam.Field`, 154 entries, with tests for distinctness, for the map and the
 code list agreeing, and for the two absences being exactly the named pair. Full suite green,
 53 packages.
+
+## 2026-09-18 — the skill applier, and why "zero callers" kept being wrong
+
+v0.1.345 built green. With the param-code table shipped, the next question is what a code
+*means*, and meaning comes from the use-site: whichever function reads the field the code fills.
+
+**Sweeping readers of the 154 skill offsets is contaminated**, and visibly so —
+`CQNO_RM_MEETROC_6::PayQuestReward` appears to read 16 of them. Quest classes do not read skill
+records; their own struct simply has fields at the same offsets. That is the struct-offset
+collision this log has hit four times now, so the sweep was not used as evidence on its own.
+
+**One function survives on independent grounds.** `FUN_00594ac0` is (a) called from
+`EngageSkill`, (b) the reader of 43 distinct skill-record offsets, all of them fields
+`RefSkill_ParseParams` fills, and (c) the binary's largest writer of ParamKeeper params, around
+sixty ids. Three facts from three different directions make it the step that turns a skill's
+authored parameters into the character's stats. Named **`ApplySkillParamsToChar`**; applied 1.
+
+**A method finding worth more than the name.** `FUN_005830b0`, the second-largest skill reader,
+appeared to have **zero references anywhere** — no call, no vtable entry. That reading was
+wrong, and checking the probe caught it: searching the *binary* rather than the disassembly
+finds its address once, at file offset `0x863c88`, in `.data`. A direct `call` encodes a
+**relative** offset, so a function's absolute address never appears in an instruction listing;
+only a pointer stored in data does. Its neighbourhood is a handler table —
+`FUN_00586700`, `FUN_005857b0`, `FUN_005830b0`, `FUN_00587260` beside string pointers and the
+small integers 8, 9, 0xb, 0xc, 0xe.
+
+That explains a pattern this log has recorded several times as a curiosity: the param 5/6
+callback pair, the abnormal-state appliers, and now this one all "had no callers". They are all
+in data tables. **"No references in the disassembly" is not "no references"** — the check is a
+byte search of the image for the little-endian address.
+
+No value changed.
