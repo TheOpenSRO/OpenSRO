@@ -17201,3 +17201,31 @@ whose receiver class has to be established separately, and guessing at the end o
 how a wrong name gets into the record. It stops here with the chain documented.
 
 Applied 2.
+
+## 2026-09-18 — the effect attachment comes from the game world, not the character
+
+Continuing the chain from skill timed effects, using the route that worked for the manager
+singletons: follow the thing that *produces* the object rather than the offset it sits at.
+
+`CGObj::EnterWorld` fills `char+0x98` two statements after **asserting the `CGameWorldMgr`
+singleton** (`DAT_00d6a9a4`, identified in the singleton pass), by calling `0x005f6b80`. That
+function is now `GameWorldMgr_FindByID`: a 16-bit id in AX, bounds-checked against the count at
+`this+0xc`, returning the matching entry or asserting.
+
+**The receiver was confirmed from a different call site than the one that prompted the read** --
+at `0x0040375a` the singleton is loaded into EDI, an id into AX, then `mov ecx,edi` immediately
+before the call. Taking the receiver from `EnterWorld` alone would have been an inference from
+adjacency; a second site with the singleton explicitly in ECX settles it.
+
+So the chain behind a skill's timed effect is:
+
+	char+0x98  = GameWorldMgr_FindByID(id)      -- an entry of the game world manager
+	char+0xd8  = slot 23 of that entry          -- installed by CGObj::EnterWorld
+	apply      = char slot 319 -> char+0xd8 slot 10
+
+**Skill effects are applied through an object obtained from the world the character is in**, not
+through the character directly. That is the shape; what the world entry's class is, and what its
+slot 23 returns, are not read. The chain is recorded so the next hop starts from a fact rather
+than from this tick's guess.
+
+Applied 1.
