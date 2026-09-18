@@ -1598,8 +1598,33 @@ func _refresh_zone_label_position() -> void:
 				var ry: int = parts[1].to_int()
 				_hud_minimap.update_player(rx, ry, local, player.rotation_degrees.y)
 				_hud_minimap.set_area_name(_current_zone_name)
+				_hud_minimap.update_signs(player.global_position, _minimap_npc_positions(),
+					_minimap_body_positions(_monster_bodies), _minimap_body_positions(_other_bodies))
 				if _hud_worldmap != null and is_instance_valid(_hud_worldmap):
 					_hud_worldmap.update_player(rx, ry, local)
+
+## World positions of every placed NPC, for the minimap's signs: the `Npc_*`
+## holders under each loaded region group (the same walk _qa_npc_body_report
+## does). UI seam -- the minimap only ever sees positions, never the nodes.
+func _minimap_npc_positions() -> Array:
+	var out: Array = []
+	for group in get_children():
+		if not (group is Node3D) or not String(group.name).begins_with("RealTerrain_"):
+			continue
+		for holder in group.get_children():
+			if holder is Node3D and String(holder.name).begins_with("Npc_"):
+				out.append((holder as Node3D).global_position)
+	return out
+
+## World positions of the live bodies in an id -> Node3D map (monsters,
+## other players), skipping ones that are gone or hidden (a dead monster).
+func _minimap_body_positions(bodies: Dictionary) -> Array:
+	var out: Array = []
+	for id in bodies:
+		var body: Node3D = bodies[id] as Node3D
+		if body != null and is_instance_valid(body) and body.visible:
+			out.append(body.global_position)
+	return out
 
 ## Bone positions of the first few animated characters, so two calls can be
 ## differenced. Keyed by skeleton instance id.

@@ -199,11 +199,17 @@ to fill them with — no server side exists. Either build it (server lane, see
 [HANDOFF_OPENSRO.md](HANDOFF_OPENSRO.md)) or make them client-side where they legitimately are
 (Auto Potion is a client setting; System is Option/Help/Restart/Exit).
 
-### 5. Minimap signs
-The zone name and X/Y readout now render (they were silently built as plain Controls rather than
-Labels, which the empty-CIFStatic fix cured). `interface\minimap\` has `mm_sign_npc`, `mm_sign_questnpc`, `mm_sign_monster`,
-`mm_sign_otherplayer`, `mm_sign_party` and the quest/party arrows, which want the entity lists the
-client already receives. Zoom in/out buttons are wired but untested.
+### 5. Minimap signs — *done for NPCs, monsters and other players*
+The zone name and X/Y readout render (they were silently built as plain Controls rather than
+Labels, which the empty-CIFStatic fix cured). `HudMinimap.update_signs` draws `mm_sign_npc`,
+`mm_sign_monster` and `mm_sign_otherplayer` at the entities' real positions from the lists the
+client already has (NPC holders per loaded region, monster and other-player bodies), on the same
+tile rule that places the player (1920 units per `256 × zoom` px, world X along u, Z along v),
+hidden outside the 52.5 px aperture. The client's art has **monsters red, NPCs blue**. Measured at
+the Jangan spawn: `signs drawn 8 of 71 entities`, every one accounted for in the frame or under
+the arrow / frame marker (see the UI rounds). Still open: `mm_sign_questnpc` and `mm_sign_party`
+(nothing received yet says which NPC carries a quest or who is in the party) and the quest/party
+arrows. Zoom in/out buttons are wired but untested.
 
 ### 6. World map
 `GDR_WORLDMAP`, `ifworldmap.txt`, 652×424. The reference shows both a regional view with named
@@ -218,9 +224,21 @@ where a position lands on it, is now recovered** — see the end of this file an
 - **A `Theme` built at runtime from `Media.pk2`.** 8,538 files under `interface\`, with the
   `_focus`/`_press` convention mapping onto `StyleBoxTexture`. Every panel then inherits the real
   look instead of styling each one.
-- **Fonts.** The reference's text is a small bitmap-ish face; Godot's default is visibly wrong at
-  these sizes. `Media.pk2` has `vplus\vfont.ttf`, and `FontIndex` appears on every control, so
-  there is probably an authored font table — **not yet investigated**.
+- **Fonts — done, recovered from the client.** There is no per-index font table: the client
+  picks **one face by name** from the UI text table (`UIC_STT_FONTNAME` = **Tahoma** in the
+  English column, 굴림체 in the Korean; the binary's NULL fallback at `0xe172d8` is 굴림체) and
+  builds all five `FontIndex` entries from it at `(0,9) (1,8) (2,12) (3,11) (4,15)` **points**,
+  `lfHeight = -MulDiv(pt, 96, 72)` → em pixels **12, 11, 16, 15, 20** (`FUN_00469350`,
+  `GNFontChar::FUN_004927b0`, `FUN_00baa110`). The bundled `fonts\` files (TaeUtum, SeUtum, Arial
+  Rounded MT Bold) and `vplus\vfont.ttf` (Arial) are installed with `AddFontResourceA` but none is
+  Tahoma, a Windows system font. `UiBuilder` resolves in that order — text-table name → bundled
+  family → the system's font of that name (family-checked, so fontconfig's DejaVu substitute is
+  refused) → *disclosed* Arial from `vplus\vfont.ttf`. Reference text is aliased (one luminance
+  level), so the face renders without antialiasing. Measured against `character.png` (a 1.066×
+  crop): cap 9 rows / 2 descender rows / one luminance level, identical. The client also does
+  **not clip** a static's text to its rect ("Phy. balance" is 63.8 px in a 58 px rect), so
+  `clip_text` is off. Open: which controls use the bold (600) variant. `tools/dump_fonts.gd`
+  prints the archive's answer; details in the UI rounds.
 - **Localised strings.** `UiTextTable` reads `textuisystem.txt` (3.5 MB); button and title text in
   the layouts is given as `SN_` keys, so resolve through it rather than hardcoding English.
 - **Scaling.** The layouts are authored for a 1024×768 default at 1:1 pixel size. Decide what
