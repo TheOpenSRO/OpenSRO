@@ -16118,3 +16118,36 @@ and the table's split is right.
 
 No value changed, and the slot index's meaning is deliberately not claimed — the table says
 which applier sits at an index and which params it touches, not what an index *is*.
+
+## 2026-09-18 — the applier table is the abnormal-state system, and 178-181 are status effects
+
+Last tick created 20 appliers and left the table's index meaning explicitly unclaimed. The
+index is now identified, and it reframes the defence result.
+
+Following the indexed accesses into the table found `FUN_004a4390`, which logs the binary's
+own tag `"[ABNORMAL] update owner clear[%d:%d]"` **and indexes that very table twice**. That
+is a use-site, not adjacency — the distinction matters, because only two functions in the
+entire binary carry the `[ABNORMAL]` tag and an argument from proximity alone would have been
+weak. A second, `"[ABNORMAL] push vital info active/mask"`, indexes it as well.
+
+The vocabulary is bounded too: `AbnormalState_CompareForSlot` asserts the code at record`+5`
+against `0x1f`, so abnormal-state types run **0..31**, with a per-object array of 32 slots of
+`0x1c` bytes at `obj+0xc + code*0x1c`.
+
+**So params 178-181 are status-effect contributions.** Param 180 — the defender-side
+multiplier the physical mitigation formula applies to the final damage — is written by
+abnormal-state applier 20, and 178/179 by applier 19. That is why no equipment path was ever
+going to reach them, and it retires the question rather than narrowing it again: the
+multipliers in the mitigation formula come from buffs and debuffs.
+
+Named `AbnormalState_UpdateOwnerClear`, `AbnormalState_PushVitalInfo` and
+`AbnormalState_CompareForSlot`, and **renamed last tick's 20 `ParamApplier_*` to
+`AbnormalState_Apply*`** now that the owning system is known; applied 23, forced 20, failed 0.
+The record and the Ghidra database were both updated.
+
+**One claim deliberately withheld.** The table is *reached from* abnormal-state code, which is
+not the same as every slot *being* an abnormal state — a general per-effect table used by
+several systems would look identical from here. The rename reflects where the evidence points;
+the evidence line on every renamed function says exactly that much and no more.
+
+No value changed.

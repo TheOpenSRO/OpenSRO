@@ -347,12 +347,23 @@ cannot reach params **5 or 7**. It says nothing about 180, which was not enumera
 the formula's reads had not been fully read.
 
 
-## The effect-applier table
+## The abnormal-state applier table
 
 **Recovered 2026-09-18.** `GObjPC_InstallParamContributionCallbacks` (`0x004a40c0`) builds a
 table of **23 function pointers** at `+0xe0c` onward, stepping by four, and every one of them
 is a contribution applier: a function taking a mode byte (0 applies, 2 removes) plus a record,
 which writes or clears specific ParamKeeper params.
+
+**The table belongs to the abnormal-state (buff/debuff) system.** That is not adjacency:
+`AbnormalState_UpdateOwnerClear` logs the binary's own tag
+`"[ABNORMAL] update owner clear[%d:%d]"` **and indexes this very table twice**, and
+`AbnormalState_PushVitalInfo` (`"[ABNORMAL] push vital info active/mask"`) indexes it too.
+`AbnormalState_CompareForSlot` asserts the code at record`+5` against `0x1f`, so the type
+space is **0..31**, alongside a per-object array of 32 slots of `0x1c` bytes at
+`obj+0xc + code*0x1c`. The appliers were renamed from `ParamApplier_*` to
+`AbnormalState_Apply*` on that evidence. What is **not** established is that every slot is an
+abnormal state — the table is reached from abnormal-state code, which is weaker than the table
+being exclusively theirs.
 
 **Twenty of the twenty-three targets were functions Ghidra had never defined.** They are real
 game logic that was absent from the decompiled dump entirely, which is why a call-graph search
@@ -396,8 +407,9 @@ check that the attributions were not over-scanning to begin with.
 **Param 180's writer is slot 20** (`0x004a50b0`), paired with 181. Param 180 is the
 defender-side multiplier the physical mitigation formula applies to the final damage, so this
 is the applier that produces the game's real defensive multiplier — and it is reached through
-the effect table, not through an item's magic options, which is why the tag dispatcher could
-not produce it.
+the abnormal-state table, not through an item's magic options, which is why the tag dispatcher
+could not produce it. **Params 178-181 are status-effect contributions**, which is the reason
+no equipment path was ever going to reach them.
 
 Slot 19 (`0x004a5000`) is its twin for params 178 and 179, the attacker-side pair the same
 formula reads.
