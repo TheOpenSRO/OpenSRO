@@ -132,3 +132,22 @@ func ReplyOpcode(request uint16) (reply uint16, ok bool) {
 	}
 	return 0xB000 | index, true
 }
+
+// Spending a stat point, read from both sides on 2026-09-18.
+//
+// The client's sender picks the opcode by a selector:
+//
+//	0078f4e0  if (selector == 1) FUN_00841780(0x7050, ...)
+//	          if (selector == 2) FUN_00841780(0x7051, ...)
+//
+// and the server's handlers sit at the matching dispatch indices 0x050 and
+// 0x051. Which is which is settled by what each handler does, not by the order:
+// GObjPC_HandleIncreaseStr calls GObjPC_SpendStatPoints(1, 0) and logs event
+// 0x18 with charData+0x74, the field the server's own SQL DDL names Strength;
+// GObjPC_HandleIncreaseInt calls (0, 1) and logs event 0x19 with +0x76.
+const (
+	OpIncreaseStrRequest uint16 = 0x7050
+	OpIncreaseStrAck     uint16 = 0xB050
+	OpIncreaseIntRequest uint16 = 0x7051
+	OpIncreaseIntAck     uint16 = 0xB051
+)

@@ -15639,3 +15639,37 @@ support.
 This is the third tick in a row to end without names. Each ended by killing a hypothesis
 that looked well supported: equipment feeding the flat absorb, UpperReinforce's rate
 living in its slot 1, and now the EXP/SP pair.
+
+## Stat-point opcodes read from both sides; five handlers named (2026-09-18)
+
+Back to the mode that produces names: measure across a family. Of the 137 still-unnamed
+handlers in the server dispatch table, **55 call at least one already-named function and
+34 call exactly one** — and a single named callee is often the whole answer.
+
+**The stat-point pair, both halves read:**
+
+	client  0078f4e0   if (selector == 1) FUN_00841780(0x7050, ...)
+	                   if (selector == 2) FUN_00841780(0x7051, ...)
+	server  005112f0   dispatch index 0x050, replies 0xb050
+	                   GObjPC_SpendStatPoints(1, 0), logs event 0x18 with charData+0x74
+	server  005113b0   dispatch index 0x051, replies 0xb051
+	                   GObjPC_SpendStatPoints(0, 1), logs event 0x19 with charData+0x76
+
+Which is which is settled by what each handler *does*, not by the order: `+0x74` is the
+field the server's own SQL DDL names Strength, and `+0x76` is Intellect beside it.
+
+**A reading of mine was wrong on the way, and srrevamp's own notes corrected it.** The
+decompile shows `GObjPC_SpendStatPoints(0)` and `(1)`, which I first read as a stat
+selector. `internal/session/combat.go` already records the signature as
+`(strDelta, intDelta)` from `GObjPC_SetLevel`, and the assembly agrees — `mov eax,1` with
+`push 0` is `(1, 0)`. The visible argument was the second one. The conclusion held because
+it rests on the logged character fields, not on the argument.
+
+Named: `GObjPC_HandleIncreaseStr`, `GObjPC_HandleIncreaseInt`, `Skill_HandleMasteryLevelUp`
+(its only named callee is `Mastery_LevelUp`), `Trade_HandleExchange` (calls
+`TradeMgr::CTradeMgr__Exchange`, replies 0xb083), and client `SendIncreaseStatRequest`.
+**Applied 5, failed 0.**
+
+Wired into `internal/proto` as `OpIncreaseStr/IntRequest` and their acks, with a test that
+each pair lands on dispatch slots 0x050 and 0x051 and that the two are adjacent — the
+swap being the one mistake that would look right. Full suite green, 52 packages.

@@ -75,3 +75,32 @@ func TestReplyOpcodeMatchesTheReadPairs(t *testing.T) {
 		t.Error("0x7A55 carries bit 0x800 and must not be reported as dispatched")
 	}
 }
+
+// The stat-point opcodes reach dispatch slots 0x050 and 0x051, which is where
+// the two handlers that call GObjPC_SpendStatPoints sit.
+func TestStatPointOpcodesReachTheirHandlers(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		req, ack uint16
+		slot     uint16
+	}{
+		{"strength", OpIncreaseStrRequest, OpIncreaseStrAck, 0x050},
+		{"intellect", OpIncreaseIntRequest, OpIncreaseIntAck, 0x051},
+	} {
+		ri, rok := DispatchIndex(tc.req)
+		ai, aok := DispatchIndex(tc.ack)
+		if !rok || !aok || ri != tc.slot || ai != tc.slot {
+			t.Errorf("%s: request %#x -> (%#x, %v), ack %#x -> (%#x, %v), want both %#x",
+				tc.name, tc.req, ri, rok, tc.ack, ai, aok, tc.slot)
+		}
+		if got, ok := ReplyOpcode(tc.req); !ok || got != tc.ack {
+			t.Errorf("%s: ReplyOpcode(%#x) = (%#x, %v), want (%#x, true)", tc.name, tc.req, got, ok, tc.ack)
+		}
+	}
+	// Strength and Intellect are adjacent and must not be swapped: the
+	// handler at 0x050 is the one logging charData+0x74.
+	if OpIncreaseIntRequest != OpIncreaseStrRequest+1 {
+		t.Errorf("the two requests are adjacent in the engine: %#x and %#x",
+			OpIncreaseStrRequest, OpIncreaseIntRequest)
+	}
+}
