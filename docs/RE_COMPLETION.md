@@ -16610,3 +16610,36 @@ in data tables. **"No references in the disassembly" is not "no references"** �
 byte search of the image for the little-endian address.
 
 No value changed.
+
+## 2026-09-18 — scanning .data for handler tables: a lever opened and closed
+
+Last tick established that a function reached only through a data-table pointer looks callerless
+in a disassembly. The natural follow-up is to scan the data sections for function-pointer tables
+and enumerate the dispatch surfaces that way. **It does not work on this binary, and the
+measurement says why.**
+
+The first pass found **1,102 pointer runs** — and all the large ones are `.rdata` class vtables
+already indexed in `vt_server.json`, where "never called directly" is simply what virtual
+dispatch looks like. Restricted to `.data`, where a runtime handler table would live, there is
+**exactly one** run of four or more known function pointers: seven consecutive entries at
+`0x00c63f64`.
+
+**And those seven cannot be shown to be a table.** No instruction indexes `0x00c63f64`. The
+nearby global that *is* written, `0x00c63f60`, is parser state — `RefSkill_ParseParams`
+increments it while walking a skill's parameters. Ghidra annotates the seven as "table
+0x00c63f64 slot N", but its own note admits the shape "cannot tell a vtable and a callback array
+apart", and nothing here settles it. Naming them `SkillActionHandler_0..6` would assert an index
+meaning I have not established, so they are left alone.
+
+So: **the engine builds its dispatch tables at runtime**, which is consistent with everything
+this log has found — the abnormal-state appliers were installed by
+`GObjPC_InstallParamContributionCallbacks`, the message dispatch table is built into `.data` at
+startup, and now a static scan confirms there is no third kind. The way to find a handler table
+here is to find its *installer*, not to scan for the table.
+
+One artifact came out of the scan: the server's **assert/debug flag enum**, nine names beside
+their values, recorded in [db_tables.md](protocol/db_tables.md). Its values are not in table
+order — `WRITE_MINIDUMP` is `0x200` while sitting between `0x008` and `0x010` — so reading the
+layout as the bit sequence would have produced three wrong values.
+
+No names applied and no value changed.

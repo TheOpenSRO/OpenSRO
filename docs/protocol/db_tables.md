@@ -257,3 +257,24 @@ server mentions the object, not that every column is known.
 	_timedjob
 	_trijobrewards
 	_user
+
+# Appendix: the server's assert/debug flag enum
+
+Found while scanning `.data` for function-pointer tables. The binary carries the flag names
+beside their values, so the enum is read rather than inferred:
+
+	DEBUG_OPTION_ASSERT_DONOT_SHOW_MESSAGEBOX      0x001
+	DEBUG_OPTION_ASSERT_SHOW_MESSAGEBOX_OKCANCEL   0x002
+	DEBUG_OPTION_ASSERT_SHOW_MESSAGEBOX_OK         0x004
+	DEBUG_OPTION_ASSERT_SHOW_CALLSTACK             0x008
+	DEBUG_OPTION_ASSERT_ADVANCE_BREAK              0x010
+	DEBUG_OPTION_ASSERT_ADVANCE_NORMAL             0x020
+	DEBUG_OPTION_ASSERT_CANCEL_EXIT                0x100
+	DEBUG_OPTION_ASSERT_WRITE_MINIDUMP             0x200
+	DEBUG_OPTION_ASSERT_CALL_CALLBACK              0x400
+
+They are laid out as (name pointer, value) pairs, and the values are **not** in table order —
+`WRITE_MINIDUMP` is 0x200 while sitting between 0x008 and 0x010 — so reading the order as the
+bit sequence would have produced three wrong values. This governs the server's own assert
+behaviour, not gameplay; it is recorded because it is a named value set the binary states
+outright.
