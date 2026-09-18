@@ -15482,3 +15482,40 @@ registry**, which also explains why its entries line up with systems.
 Recording a tick that produced no names is the point: the alternative was to name quest
 slot 23 from its neighbours, which is exactly the reasoning that produced two retractions
 earlier today.
+
+## Self-naming labels: 38 candidates, 10 survived (2026-09-18)
+
+A lever not measured before: functions that name themselves as `SomeName()` inside one of
+their own strings — the bare-call form, where the `Class::Method` form was already
+measured and spent.
+
+**The raw numbers looked good and were wrong.** 69 distinct labels in the server and 38
+in the client; after requiring the label to appear in exactly one function, that function
+to carry no other label, and no other function to already bear the name, **38 candidates
+survived — 19 per binary.**
+
+**Then the client's candidates turned out to be assert conditions.** Not one names its
+containing function:
+
+	FUN_0049e490(0x2b, "D:\\vss-od\\JMX_Library\\navmesh\\MapLoader.cpp", "ar.IsOpen()")
+	L"pWSR->GetGold() >= pSO->m_sCost.Cost[PAYMENT_DEVICE_GOLDPRICE]"
+	"item1.GetItemDataPtr()->m_sTID.wTypeID == item2.GetItemDataPtr()->m_sTID.wTypeID"
+
+`ar` is a local, `pWSR` is another object. Applying these would have renamed a navmesh
+routine `MapLoader::IsOpen` on the strength of an assert it happens to perform.
+
+**The discriminator is whether the string is a message or an expression.** A self-report
+starts with the label and continues in prose — `"EngageSkill() [target:%s]"`,
+`"SetCooperativeLevel() Failed!"`. An assert continues in C++ — `->`, `==`, a member
+access. Requiring the label at the start with no operator after it keeps **10** and
+rejects 28, including genuinely ambiguous ones like `"Failed to InsertNewSpawnData()"`,
+which could as easily be a caller reporting a callee.
+
+Applied 5 server (`CGameServer::InitializeLocalData`, `SkillActionHandler`,
+`EngageSkill`, `GetMemberByJID`, `GObjPC::_AddMagicOptions`) and 5 client (`GScript::SaveGameData`
+and four `DxSound`/`Dx3DSoundBuffer` methods). **Applied 10, failed 0.**
+
+Ten names from a lever that first appeared to offer 38 is the honest yield. The 28
+rejections are the useful part of the record: the same measurement run without the
+message-versus-expression check would have looked like a 38-name pass and put wrong names
+on 19 client functions.
