@@ -16345,3 +16345,39 @@ has to come from evidence about that slot. That closes a lever that would otherw
 the biggest remaining win every time coverage is measured.
 
 No value changed.
+
+## 2026-09-18 — naming a virtual by the string it prints, not the slot it sits in
+
+The previous tick closed slot-name propagation and stated the criterion for what comes next:
+a slot's meaning has to come from evidence about *that* slot. This tick applied it.
+
+**The self-naming lever is empty.** Sweeping every `vslot_` function in both binaries for a
+string containing its own class and a method name — the pattern that gave `CPSTitle::OnCreate`
+— yields exactly **two** functions in 7,096. Applied both (`StorageOperation` on
+`CGObjPC::vslot_386`, from `"PC::StorageOperation posting AsyncQuery failed"`, where the log
+abbreviates the class; and `OnCreate` on `CPSTitle::vslot_010`). Worth recording as a closed
+lever rather than a promising one.
+
+**The strings themselves are the lever, though.** 496 server `vslot_` functions carry a real
+string literal, and reading a sample shows families that share one message. The largest:
+
+	"why do you about to delete already deleted !!! [%s]"      123 functions, none named
+
+Reading one (`CGItemEquip::vslot_213`) settles what the virtual is: it tests an alive flag at
+`+0x140`, clears it, invokes the object's own next virtual, returns the object to its pool and
+nulls the caller's pointer; on a second release the flag is already clear, so it logs that
+string with the class name and breaks to the debugger. Named **`ReleaseAndClear`**, applied
+123, failed 0.
+
+**The slot index is not the invariant — the string is.** These 123 sit at slots 0, 1, 3, 4, 9,
+44 and 213 depending on hierarchy, plus one function Ghidra never put in a class at all. A
+pass keyed on the slot would have found at most the 58 at slot 0 and would have had no way to
+know they were the same virtual; a pass keyed on the string finds all of them and says why.
+That is the same distinction the previous tick arrived at from the other direction.
+
+Two smaller families are visible and left alone for now: four `trs_sm_*::vslot_008` printing
+`"<class> [querytype: %d]"`, and a set of `AQ_*` slots printing specific query-failure
+messages. Both are nameable on the same principle; neither was read this tick, so neither is
+named.
+
+No value changed.
