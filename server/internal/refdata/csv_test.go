@@ -326,3 +326,35 @@ func TestLoadItemsCSVRequirementSlots(t *testing.T) {
 		t.Errorf("old export should carry no later slots: %+v", it)
 	}
 }
+
+// The skill CSV is a strict suffix: an export made before a column existed must
+// still load, with that column's Go zero value.
+//
+// NoCombatParam is NEGATIVE for exactly this reason. False means "this skill
+// does resolve a blow", which is what every export predating the column already
+// meant -- so an old export keeps its behaviour instead of silently muting the
+// 5.6% of skills that carry no combat parameter.
+func TestSkillCSVNoCombatParamIsAStrictSuffix(t *testing.T) {
+	// A 34-field row: everything up to and including ReqCastAll, and no more.
+	old := make([]string, 34)
+	for i := range old {
+		old[i] = "0"
+	}
+	old[2] = "SKILL_TEST"
+	sk, err := parseSkillRow(old)
+	if err != nil {
+		t.Fatalf("parseSkillRow on a pre-column export: %v", err)
+	}
+	if sk.NoCombatParam {
+		t.Error("an export predating NoCombatParam loaded as true; it must default to false, meaning the skill still resolves a blow")
+	}
+
+	withCol := append(old, "1")
+	sk, err = parseSkillRow(withCol)
+	if err != nil {
+		t.Fatalf("parseSkillRow with the column: %v", err)
+	}
+	if !sk.NoCombatParam {
+		t.Error("NoCombatParam=1 did not load as true")
+	}
+}

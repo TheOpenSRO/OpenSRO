@@ -609,3 +609,38 @@ var CombatParameters = []Code{
 // skill with no other combat parameter to resolve a blow at all:
 // `if (*(int *)(efr + 4) != 6) return;`. What the 6 selects is not read.
 const EfrCombatSelector = 6
+
+// CarriesCombatParameter reports whether a skill's Param block carries any of
+// the parameters Combat_ResolveDamage tests before it will resolve a blow.
+//
+// decided says whether the answer is trustworthy. Finding one settles it
+// immediately, even if the rest of the block cannot be walked. Finding none
+// settles it only when the walk finished: a variable-length code hides whatever
+// follows it, and a caller must not read "none found" as "this skill has none".
+//
+// 'efr' counts only when its SECOND value is EfrCombatSelector, which is the
+// engine's own extra condition:
+//
+//	if (!efr)                       return;
+//	if (*(int *)(efr + 4) != 6)     return;
+func CarriesCombatParameter(words []int32) (carries, decided bool) {
+	combat := make(map[Code]bool, len(CombatParameters))
+	for _, c := range CombatParameters {
+		combat[c] = true
+	}
+	entries, _, complete := Walk(words)
+	for _, e := range entries {
+		if !combat[e.Code] {
+			continue
+		}
+		if e.Code == "efr" {
+			// values start at e.Index+1, so the second value is +2.
+			if e.Index+2 < len(words) && words[e.Index+2] == EfrCombatSelector {
+				return true, true
+			}
+			continue
+		}
+		return true, true
+	}
+	return false, complete
+}

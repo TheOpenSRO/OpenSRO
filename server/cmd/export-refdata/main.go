@@ -537,6 +537,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		reqItemCount(cols),    // 31 ReqCastListCount -- 'reqi' runs; non-zero disables the weapon gate
 		reqItemList(cols),     // 32 ReqCastList -- the 'reqi' records as kind:value;...
 		reqAll(cols),          // 33 ReqCastAll -- 'reqn': the list is ALL-of, not ANY-of
+		noCombatParam(cols),   // 34 NoCombatParam -- the engine resolves no blow for this skill
 	}, true
 }
 
@@ -784,6 +785,45 @@ func reqItemList(cols []string) string {
 		}
 	}
 	return strings.Join(out, ";")
+}
+
+// noCombatParam reports, as "1" or "0", that Combat_ResolveDamage would return
+// WITHOUT RESOLVING A BLOW for this skill: it carries none of the 33 parameters
+// that function tests, and no 'efr' whose second value is 6. See
+// skillparam.CombatParameters for the list and the citation.
+//
+// THE COLUMN IS NEGATIVE ON PURPOSE. Skill CSV columns are a strict suffix: an
+// export made before a column existed loads with the Go zero value. False here
+// means "this skill does resolve a blow", which is what every older export
+// already assumed, so an old export keeps its current behaviour instead of
+// silently muting a third of the table.
+//
+// UNDECIDABLE ROWS ANSWER "0". A row whose Param block stops at a
+// variable-length code hides whatever follows, so nothing can be concluded
+// about it -- 1,265 of 33,632 real rows are like this. They answer "0", the
+// conservative direction: the skill keeps the damage it has today rather than
+// being silenced on evidence that does not exist.
+func noCombatParam(cols []string) string {
+	if len(cols) <= skillparam.ParamBlockColumn {
+		return "0"
+	}
+	words := make([]int32, 0, len(cols)-skillparam.ParamBlockColumn)
+	for _, v := range cols[skillparam.ParamBlockColumn:] {
+		s := strings.TrimSpace(v)
+		if s == "" {
+			continue
+		}
+		n, err := strconv.ParseInt(s, 10, 32)
+		if err != nil {
+			return "0"
+		}
+		words = append(words, int32(n))
+	}
+	carries, decided := skillparam.CarriesCombatParameter(words)
+	if decided && !carries {
+		return "1"
+	}
+	return "0"
 }
 
 // reqAll reports whether the skill carries 'reqn', as "1" or "0".

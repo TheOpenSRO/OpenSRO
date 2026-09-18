@@ -132,6 +132,22 @@ type Skill struct {
 	// from ANY-of into ALL-of. 128 real skills set it, 966 do not.
 	ReqCastList string
 	ReqCastAll  bool
+
+	// NoCombatParam is true when Combat_ResolveDamage (0x0058e5f0) would return
+	// WITHOUT RESOLVING A BLOW for this skill, because it carries none of the 33
+	// parameters that function tests and no 'efr' whose second value is 6. See
+	// skillparam.CombatParameters.
+	//
+	// 1,797 of the 32,367 real skill rows that walk cleanly (5.6%) are like
+	// this -- the buffs, heals and passives. Before this column srrevamp gave
+	// every one of them an invented per-level damage bonus, because
+	// session.skillDamageBonus fell back to the disclosed value whenever
+	// AttackPercent was zero.
+	//
+	// Negative on purpose: an export predating the column loads false, which
+	// means "this skill does resolve a blow" -- the behaviour every older
+	// export already had.
+	NoCombatParam bool
 	// HitCount is how many times one cast strikes: 1 for most skills, up to 5.
 	//
 	// CONFIRMED INDEPENDENTLY 2026-09-16: the client's own localisation key for

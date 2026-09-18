@@ -17404,3 +17404,47 @@ rest. `combat.go`'s note, which described `local_d0` as picking the floor, has b
 both of these.
 
 Applied 0 names.
+
+## Buffs stop dealing damage: the first behaviour change out of the Param block (2026-09-18)
+
+The previous round established that `Combat_ResolveDamage` (`0x0058e5f0`) **returns before resolving
+anything** when a skill carries none of its 33-parameter test and no `'efr'` whose second value is
+6, and sized it at **1,797 of the 32,367** real rows that walk cleanly. srrevamp gave every one of
+them `DisclosedSkillDamagePerLevel * level`, because `session.skillDamageBonus` fell back to the
+disclosed bonus whenever `AttackPercent` was zero. Using a buff on a monster hurt it.
+
+This round wired it through, end to end:
+
+	skillparam.CarriesCombatParameter   the predicate, where the evidence is
+	  -> export-refdata column 34       NoCombatParam
+	  -> refdata.Skill.NoCombatParam    CSV + schema migration + both selects
+	  -> session.UseSkillHandler        no blow at all for such a skill
+
+**Verified on real data.** The exporter run over all seven skilldata shards from a real `Media.pk2`
+flags **exactly 1,797** rows, matching the independent measurement, and **zero** of them carry an
+attack percent — the consistency check, since a skill flagged non-combat must not have `'att'`.
+The flagged rows are the right shape: `SKILL_CH_SWORD_SHIELD_D_01..04` (shield buffs),
+`SKILL_ETC_TRANS_MONSTER_01` (a transform).
+
+**The column is negative on purpose.** Skill CSV columns are a strict suffix, so an export made
+before this one loads with the Go zero value. `false` means "this skill does resolve a blow", which
+is exactly what every older export already meant — an operator who has not re-exported keeps
+today's behaviour instead of silently muting a twentieth of the table. There is a test for that.
+
+**Undecidable rows answer "does resolve a blow".** 1,265 rows stop at a variable-length code, which
+hides whatever follows, so nothing can be concluded about them. They keep the damage they have
+rather than being silenced on evidence that does not exist, and `CarriesCombatParameter` returns a
+`decided` flag so the caller cannot read "none found" as "has none".
+
+**The test was checked for being a test.** With the guard disabled,
+`TestNoCombatParamSkillDealsNoDamage` fails reporting **20 damage** — a level-5 skill times the
+disclosed 4 per level, which is precisely the old behaviour it is there to catch.
+
+**What is still NOT claimed.** What such a skill does INSTEAD of a blow is not modelled: srrevamp
+has no buff or heal system, so the cast succeeds, pays its costs and records its cooldown, and does
+nothing else. And `local_d0 = 1` — the other branch, for a skill with no `'att'` that DOES carry
+some other combat parameter — still gates `Formula_MitigatePhysicalDamage` in ways that have not
+been read. Those skills keep the disclosed fallback, which is now the only place it applies to real
+data.
+
+Applied 0 names.

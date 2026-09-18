@@ -327,6 +327,14 @@ const DisclosedSkillDamagePerLevel = 4
 // A skill with no real row falls back to the disclosed per-level bonus, which
 // is flat and therefore has no percentage half.
 func skillDamageBonus(ref *refdata.Skill) (flat, percent int) {
+	// A skill the engine resolves no blow for has no damage to split. This is
+	// NOT the disclosed fallback: refdata.Skill.NoCombatParam is a real answer
+	// out of Combat_ResolveDamage's own 33-parameter test, so there is nothing
+	// left to stand in for. See UseSkillHandler, which does not reach the
+	// attack path at all for one of these.
+	if ref.NoCombatParam {
+		return 0, 0
+	}
 	if ref.AttackPercent <= 0 {
 		return disclosedSkillDamageBonus(ref), 0
 	}
@@ -425,6 +433,9 @@ func UseSkillHandler(
 		var reqCastList int
 		var reqCastReqs []combat.CastRequirement
 		var reqCastAll bool
+		// noCombat: the engine resolves no blow at all for this skill. See
+		// refdata.Skill.NoCombatParam and skillparam.CombatParameters.
+		var noCombat bool
 		// REAL SKILLS WIN. This used to check skill.Catalog first, which
 		// silently shadowed two real skills: the own-design catalog occupies
 		// ids 1 and 2, and those are SKILL_PUNCH_01 and SKILL_CH_SWORD_BASE_01
@@ -449,6 +460,7 @@ func UseSkillHandler(
 			reqCastList = ref.ReqCastListCount
 			reqCastReqs = combat.ParseCastRequirements(ref.ReqCastList)
 			reqCastAll = ref.ReqCastAll
+			noCombat = ref.NoCombatParam
 			// The engine takes the higher of the skill's TWO mastery slots;
 			// refdata carries only the first (see refdata.Skill.Mastery1), so
 			// the second is reported as unoccupied and contributes the engine's
@@ -591,6 +603,35 @@ func UseSkillHandler(
 
 		if err := skills.RecordUse(ctx, characterID, req.SkillID, now); err != nil {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
+		}
+
+		// NO BLOW AT ALL, and this is the engine's own answer rather than a
+		// choice. Combat_ResolveDamage (0x0058e5f0) opens with a 33-parameter
+		// test -- skillparam.CombatParameters -- and RETURNS before resolving
+		// anything when the skill carries none of them and no 'efr' whose second
+		// value is 6. It is 1,797 of the 32,367 real skill rows that walk
+		// cleanly (5.6%): the buffs, heals and passives.
+		//
+		// Until this column existed every one of them dealt
+		// DisclosedSkillDamagePerLevel * level, because skillDamageBonus fell
+		// back to the disclosed bonus whenever AttackPercent was zero. So using
+		// a buff on a monster hurt it. It no longer does.
+		//
+		// The cast still SUCCEEDS: costs were paid and the use recorded above,
+		// which is the order the engine checks them in. What the skill does
+		// INSTEAD of a blow is not modelled -- srrevamp has no buff or heal
+		// system yet -- so this is the faithful half of an unfinished answer,
+		// the same shape as the weapon gate before its other branch was read.
+		//
+		// The gauge rides along unchanged so the HUD orbs do not blink to zero
+		// on a cast that simply is not an attack.
+		if noCombat {
+			res := &AttackResult{}
+			if zerk != nil {
+				res.BerserkGauge = int32(zerk.Gauge(characterID))
+				res.BerserkActive = zerk.Active(characterID)
+			}
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
 		}
 
 		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType)

@@ -365,3 +365,60 @@ func TestCombatParametersAreWalkable(t *testing.T) {
 		t.Errorf("EfrCombatSelector = %d, want 6 -- `if (*(int *)(efr + 4) != 6) return`", EfrCombatSelector)
 	}
 }
+
+func TestCarriesCombatParameter(t *testing.T) {
+	// 'att' is a combat parameter, so a block with one carries.
+	if carries, decided := CarriesCombatParameter(block("att")); !carries || !decided {
+		t.Errorf("att: carries=%v decided=%v, want true/true", carries, decided)
+	}
+	// 'bl' is in the list too. A skill with no 'att' is NOT automatically a
+	// non-combat skill -- that conflation is the mistake this guards.
+	if carries, decided := CarriesCombatParameter(block("bl")); !carries || !decided {
+		t.Errorf("bl without att: carries=%v decided=%v, want true/true", carries, decided)
+	}
+	// 'dura' is not in the list, so a block with only that carries nothing.
+	if carries, decided := CarriesCombatParameter(block("dura")); carries || !decided {
+		t.Errorf("dura only: carries=%v decided=%v, want false/true", carries, decided)
+	}
+	if carries, decided := CarriesCombatParameter(nil); carries || !decided {
+		t.Errorf("empty block: carries=%v decided=%v, want false/true", carries, decided)
+	}
+}
+
+// 'efr' counts only with the right second value, which is the engine's own
+// extra condition and not a detail to round off.
+func TestEfrCountsOnlyWithItsSelector(t *testing.T) {
+	efr := func(second int32) []int32 {
+		w := block("efr") // run 7: code + 6 values
+		w[2] = second     // values start at index 1, so the second value is 2
+		return w
+	}
+	if carries, _ := CarriesCombatParameter(efr(EfrCombatSelector)); !carries {
+		t.Errorf("efr with second value %d should carry", EfrCombatSelector)
+	}
+	if carries, decided := CarriesCombatParameter(efr(EfrCombatSelector + 1)); carries || !decided {
+		t.Errorf("efr with the wrong second value: carries=%v decided=%v, want false/true", carries, decided)
+	}
+}
+
+// A walk that cannot finish has not proved the skill carries nothing, and must
+// say so -- otherwise 1,265 real rows would be silenced on no evidence.
+func TestCarriesCombatParameterDoesNotDecidePastAVarLenCode(t *testing.T) {
+	var varlen Code
+	for c, k := range Kind {
+		if k == KindVarLen {
+			varlen = c
+			break
+		}
+	}
+	words := append([]int32{codeWord(varlen)}, 1, 2, 3)
+	carries, decided := CarriesCombatParameter(words)
+	if carries || decided {
+		t.Errorf("stopped walk: carries=%v decided=%v, want false/false", carries, decided)
+	}
+	// But a combat parameter BEFORE the stop still settles it.
+	words = append(block("att"), append([]int32{codeWord(varlen)}, 1, 2, 3)...)
+	if carries, decided := CarriesCombatParameter(words); !carries || !decided {
+		t.Errorf("att before the stop: carries=%v decided=%v, want true/true", carries, decided)
+	}
+}

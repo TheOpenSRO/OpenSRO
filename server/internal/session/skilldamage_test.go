@@ -145,3 +145,25 @@ func TestRealSkillsWinOverTheOwnDesignCatalog(t *testing.T) {
 			cat.DamageBonus, flat)
 	}
 }
+
+// A skill the engine resolves no blow for has no damage bonus at all -- not the
+// disclosed per-level fallback it used to get. The fallback survives for skills
+// with no real row, which is a different case.
+func TestNoCombatParamSkillHasNoDamageBonus(t *testing.T) {
+	buff := &refdata.Skill{ID: 1, BasicLevel: 5, NoCombatParam: true}
+	if flat, pct := skillDamageBonus(buff); flat != 0 || pct != 0 {
+		t.Errorf("skillDamageBonus(no-combat skill) = (%d, %d), want (0, 0)", flat, pct)
+	}
+	// The same skill without the flag still gets the disclosed bonus, so the
+	// test above is measuring the flag rather than the level.
+	same := &refdata.Skill{ID: 1, BasicLevel: 5}
+	if flat, _ := skillDamageBonus(same); flat != 5*DisclosedSkillDamagePerLevel {
+		t.Errorf("without the flag the disclosed fallback should still apply; got %d, want %d",
+			flat, 5*DisclosedSkillDamagePerLevel)
+	}
+	// And a skill with a real 'att' is untouched by any of this.
+	real := &refdata.Skill{ID: 1, BasicLevel: 5, AttackPercent: 143, DamageMin: 15, DamageMax: 15}
+	if flat, pct := skillDamageBonus(real); flat != 15 || pct != 143 {
+		t.Errorf("skillDamageBonus(att skill) = (%d, %d), want (15, 143)", flat, pct)
+	}
+}

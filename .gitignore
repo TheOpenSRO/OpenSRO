@@ -31,3 +31,7 @@ client/build/
 # OS/editor
 .DS_Store
 *.swp
+
+# Compiled dev tools, accidentally committed three times (2.6 MB a go).
+# `go build ./cmd/export-refdata/` drops this in the tree; it is regenerable.
+/server/export-refdata

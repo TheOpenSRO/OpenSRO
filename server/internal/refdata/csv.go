@@ -295,6 +295,10 @@ var skillCSVColumns = []string{
 	"ReqCastListCount",
 	// Appended later (the list records themselves, and the ALL-of flag).
 	"ReqCastList", "ReqCastAll",
+	// Appended later (whether the engine resolves a blow for this skill at
+	// all). A strict suffix, and NEGATIVE so an older export loads false,
+	// meaning "it does resolve a blow" -- exactly what it meant before.
+	"NoCombatParam",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -430,6 +434,9 @@ func parseSkillRow(f []string) (Skill, error) {
 	}
 	if len(f) > 33 {
 		sk.ReqCastAll = parseInt(f[33]) != 0
+	}
+	if len(f) > 34 {
+		sk.NoCombatParam = parseInt(f[34]) != 0
 	}
 
 	if err != nil {

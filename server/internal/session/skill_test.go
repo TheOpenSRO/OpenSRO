@@ -56,6 +56,13 @@ func (fakeSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error
 	if id == 997 {
 		return &refdata.Skill{ID: 997, BasicLevel: 1, ReuseDelayMs: 0, AttackPercent: 200}, nil
 	}
+	// 996 carries NO combat parameter -- a buff, heal or passive, which is
+	// 5.6% of the real table. BasicLevel 5 is deliberate: under the disclosed
+	// fallback this skill dealt 5 * DisclosedSkillDamagePerLevel, so a test
+	// that finds zero is finding the flag and not an accident of the numbers.
+	if id == 996 {
+		return &refdata.Skill{ID: 996, BasicLevel: 5, ReuseDelayMs: 0, NoCombatParam: true}, nil
+	}
 	return nil, errors.New("no such skill")
 }
 
@@ -394,5 +401,113 @@ func TestSkillPercentageAppliesAfterMitigation(t *testing.T) {
 	}
 	if ar.MonsterDamage != wantCorrect {
 		t.Fatalf("skill damage = %d, want %d ((30 - 10) * 2)", ar.MonsterDamage, wantCorrect)
+	}
+}
+
+// Casting a skill the engine resolves no blow for must not hurt the monster.
+//
+// This is the behaviour Combat_ResolveDamage's 33-parameter test settles: it
+// RETURNS before resolving anything when a skill carries none of them. Before
+// refdata.Skill.NoCombatParam existed, every such skill dealt
+// DisclosedSkillDamagePerLevel * level, so using a buff on a monster hurt it.
+//
+// Skill 996 is level 5, so the old behaviour would be a visible 20 damage.
+func TestNoCombatParamSkillDealsNoDamage(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+
+	items := stubCombatItems{100: {ID: 100, PhysAttackMin: 30, PhysAttackMax: 30}}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	inv.TruncateForTest(ctx)
+	inv.AddItem(ctx, c.ID, 100, 1)
+
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	eq.TruncateForTest(ctx)
+	eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0)
+
+	skills, err := skill.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("skill.OpenSQLStore: %v", err)
+	}
+	defer skills.Close()
+	skills.TruncateForTest(ctx)
+	if err := skills.Learn(ctx, c.ID, 996); err != nil {
+		t.Fatalf("Learn: %v", err)
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 1000, 10, 5, 500)
+	before := monster.HP
+
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	quests.TruncateForTest(ctx)
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}, nil, mana.NewTracker(), nil),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	resp = send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 996, TargetMonsterID: monster.ID}).Encode())
+	ar, err := DecodeAttackResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeAttackResult: %v", err)
+	}
+	// The cast SUCCEEDS -- the engine pays the costs and records the use, it
+	// simply resolves no blow.
+	if ar.Error != "" {
+		t.Fatalf("cast of a no-combat skill failed: %s", ar.Error)
+	}
+	if ar.MonsterDamage != 0 {
+		t.Errorf("a skill with no combat parameter dealt %d damage, want 0", ar.MonsterDamage)
+	}
+	if monster.HP != before {
+		t.Errorf("monster HP %d -> %d; a skill with no combat parameter must not hurt it", before, monster.HP)
 	}
 }
