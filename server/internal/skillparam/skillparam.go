@@ -418,3 +418,84 @@ var Field = map[Code]int{
 	"trap": 0x4a0,
 	"zb":   0x320,
 }
+
+// DrivesParams maps a skill-parameter code to the ParamKeeper params that
+// parameter makes the applier write.
+//
+// HOW IT WAS READ. ApplySkillParamsToChar (0x00594ac0) is a run of guarded
+// blocks -- `if (skill+off) { ... ParamKeeper_SetParam }` -- so the pairing is
+// local to a block. The param id travels in EDI and is invisible in the C, so
+// this is read from the asm, with each block bounded by the next skill-field
+// reference so a walk cannot run into its neighbour. That function is a safe
+// place to do it because it is provably a skill consumer: EngageSkill calls it,
+// which is what rules out the struct-offset collisions that make a binary-wide
+// sweep of these offsets useless.
+//
+// WHY IT IS TRUSTED. Five entries agree with facts recovered elsewhere, from
+// different functions and before this table existed:
+//
+//	'stri' -> 1     Strength, the same param combat.ParamFor gives 'str'
+//	'inti' -> 2     Intellect, likewise for 'int'
+//	'hpi'  -> 3     the MaxHP chain head, likewise for 'hpa'
+//	'mpi'  -> 4     the MaxMP chain head, likewise for 'mp'
+//	'bgra' -> 27..32  exactly combat.ResistParams, the run 'rals' writes
+//
+// 'luck' and 'alcu' landing on 172 and 173 is a sixth: those are the two params
+// CEnchant_Reinforce::GetSuccessRate and Enchant_SuccessRateBasePlusBonus read.
+//
+// A code driving SEVERAL params is not an error. 'bgra' writes the whole resist
+// run, 'defp' both the physical and magical flat absorbs; that is what a
+// parameter affecting a family looks like.
+//
+// WHAT IS NOT CLAIMED is the ARITHMETIC -- how the parameter's value becomes the
+// param's, which slot it lands in, or how several contributors combine. Only
+// which params a code touches is read.
+var DrivesParams = map[Code][]int{
+	"STSP": {23, 24},
+	"alcu": {172},
+	"apau": {13, 14, 15, 16},
+	"apru": {13, 14, 15, 16},
+	"bgra": {27, 28, 29, 30, 31, 32},
+	"bldr": {198, 199, 200},
+	"dar":  {132, 133, 134, 135},
+	"dcmp": {141},
+	"dcri": {57, 136, 137, 138, 139},
+	"defp": {5, 6},
+	"defr": {5, 6, 7, 8, 12},
+	"dru":  {128, 129, 130, 131},
+	"dru2": {128, 129, 130, 131},
+	"expi": {185, 186},
+	"expu": {186, 202},
+	"gdr":  {182},
+	"hide": {23, 24},
+	"hpi":  {3},
+	"hr":   {9, 11},
+	"hst2": {23, 24},
+	"hst3": {23, 24},
+	"hste": {23, 24},
+	"hwir": {184},
+	"hwit": {195},
+	"inti": {2},
+	"irgc": {25, 26},
+	"luck": {173},
+	"mpi":  {4},
+	"msid": {188},
+	"msr":  {196, 197},
+	"odar": {174, 175, 176, 177},
+	"onff": {26},
+	"pmdg": {178, 179},
+	"pmdp": {5, 6},
+	"pmhp": {3},
+	"pmmp": {4},
+	"reat": {145, 146, 147, 148, 149, 150},
+	"rhru": {170, 171},
+	"ru":   {33},
+	"spda": {5, 13, 14},
+	"spi":  {194},
+	"stri": {1},
+	"tant": {187},
+	"terd": {9},
+	"thrd": {11},
+	"tpad": {13, 14},
+	"tpdd": {5},
+}

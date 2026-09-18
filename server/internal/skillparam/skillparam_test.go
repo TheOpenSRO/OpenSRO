@@ -95,3 +95,47 @@ func TestEveryFieldKeyIsAKnownCode(t *testing.T) {
 		t.Errorf("codes without a field: %v; expected exactly three, whose branches loop or dispatch further", missing)
 	}
 }
+
+// TestDrivesParamsAgreesWithTheStatTags is the cross-check that makes the rest
+// of DrivesParams credible. These five come from a different function, read
+// before this table existed, and the two readings agree.
+func TestDrivesParamsAgreesWithTheStatTags(t *testing.T) {
+	for _, c := range []struct {
+		code  Code
+		param int
+	}{{"stri", 1}, {"inti", 2}, {"hpi", 3}, {"mpi", 4}} {
+		got, ok := DrivesParams[c.code]
+		if !ok || len(got) != 1 || got[0] != c.param {
+			t.Errorf("DrivesParams[%q] = %v (present %v), want [%d] -- the stat tags "+
+				"give the same param to the matching tag", c.code, got, ok, c.param)
+		}
+	}
+}
+
+// TestBgraDrivesTheWholeResistRun ties this table to a separately recovered one:
+// 'bgra' must write exactly the six params 'rals' (MATTR_RESIST_ALL_SET) writes.
+// If either changes without the other, one of them is wrong.
+func TestBgraDrivesTheWholeResistRun(t *testing.T) {
+	got, ok := DrivesParams["bgra"]
+	if !ok {
+		t.Fatal("'bgra' is absent; it is the entry tying this table to the resist run")
+	}
+	want := []int{27, 28, 29, 30, 31, 32} // combat.ResistParams, duplicated to avoid an import cycle
+	if len(got) != len(want) {
+		t.Fatalf("'bgra' drives %v, want the resist run %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("'bgra' drives %v, want the resist run %v", got, want)
+		}
+	}
+}
+
+// TestDrivesParamsKeysAreKnownCodes keeps this table from drifting from Codes.
+func TestDrivesParamsKeysAreKnownCodes(t *testing.T) {
+	for c := range DrivesParams {
+		if !slices.Contains(Codes, c) {
+			t.Errorf("DrivesParams has %q, which is not a code the parser recognises", c)
+		}
+	}
+}

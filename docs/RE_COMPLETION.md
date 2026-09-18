@@ -16922,3 +16922,41 @@ dispatcher-derived tables is in it. The next decoder that quietly loses a code w
 rather than ship.
 
 Full suite green, 53 packages.
+
+## 2026-09-18 — what a skill parameter actually does: 47 codes mapped to the params they drive
+
+The skill vocabulary gave code -> field. The open half was what a code *means*, and the answer
+is the same one this project keeps arriving at: **the use-site settles it.** For a skill
+parameter the use-site is `ApplySkillParamsToChar`, the function `EngageSkill` calls to turn a
+skill's parameters into the character's stats.
+
+It is a run of guarded blocks — `if (skill+off) { … ParamKeeper_SetParam }` — so the pairing is
+local. The param id travels in EDI and is invisible in the C, so this was read from the asm with
+each block bounded by the next skill-field reference. **47 codes drive a ParamKeeper write**, 20
+of them exactly one param. Now in `skillparam.DrivesParams`.
+
+**Being inside that one function is what makes it safe.** A binary-wide sweep of these offsets
+was tried earlier and was useless — `CQNO_RM_MEETROC_6::PayQuestReward` appeared to read sixteen
+skill fields, because quest structs have fields at the same offsets. `ApplySkillParamsToChar` is
+provably a skill consumer, so an offset it reads is a skill offset by construction. The
+collision problem is dissolved rather than filtered.
+
+**Six entries validate the table against work done before it existed:**
+
+	'stri' -> 1        Strength, the param combat.ParamFor gives 'str'
+	'inti' -> 2        Intellect, likewise for 'int'
+	'hpi'  -> 3        the MaxHP chain head, likewise for 'hpa'
+	'mpi'  -> 4        the MaxMP chain head, likewise for 'mp'
+	'bgra' -> 27..32   exactly combat.ResistParams, the run 'rals' writes
+	'luck','alcu' -> 173, 172   the two params the enchant success-rate readers consume
+
+The `'bgra'` one is the strongest: a skill parameter and an item tag, recovered weeks apart from
+different dispatchers, writing the same six consecutive params. A test now asserts it, so if
+either table moves without the other, one of them fails.
+
+A code driving several params is not an error — `'defp'` writes both the physical and magical
+flat absorbs, `'bgra'` the whole resist family. **What is not claimed is the arithmetic**: how a
+parameter's value becomes the param's, which slot it lands in, or how contributors combine. Only
+which params a code touches is read.
+
+Full suite green, 53 packages.
