@@ -42,6 +42,24 @@ var _current_region_x: int = -1
 var _current_region_y: int = -1
 var _zoom_level: float = 1.0
 
+## The client's own sign artwork for what stands around the player, from
+## `interface\minimap\`. Quest-NPC and party signs also exist there
+## (mm_sign_questnpc, mm_sign_party) but nothing the client receives yet says
+## which NPC carries a quest or who is in the party, so they are not drawn.
+const SIGN_TEXTURES := {
+	"npc": "interface\\minimap\\mm_sign_npc.ddj",
+	"monster": "interface\\minimap\\mm_sign_monster.ddj",
+	"other": "interface\\minimap\\mm_sign_otherplayer.ddj",
+}
+## The aperture is a circle; a sign whose centre falls outside it is hidden
+## rather than left for the frame to cover.
+const APERTURE_RADIUS := 105.0 / 2.0
+
+var _signs_root: Control
+var _sign_textures := {}   # kind -> Texture2D
+var _sign_pools := {}      # kind -> Array[TextureRect]
+var _last_sign_report := Vector2i(-1, -1)  # (drawn, total), so the log speaks only on change
+
 func _init(builder: UiBuilder = null, media_pk2: Pk2Reader = null, text_table: UiTextTable = null) -> void:
 	_ui_builder = builder
 	_media_pk2 = media_pk2
@@ -89,6 +107,18 @@ func setup(layout_data: Variant = null) -> void:
 			mat.set_shader_parameter("aperture_size", APERTURE_RECT.size)
 			_map_rect.material = mat
 	_map_clip.add_child(_map_rect)
+
+	# Entity signs sit over the map and under the player's own arrow.
+	_signs_root = Control.new()
+	_signs_root.name = "Signs"
+	_signs_root.mouse_filter = MOUSE_FILTER_IGNORE
+	_map_clip.add_child(_signs_root)
+	if _ui_builder != null:
+		for kind in SIGN_TEXTURES:
+			var tex := _ui_builder.load_texture(SIGN_TEXTURES[kind])
+			if tex != null:
+				_sign_textures[kind] = tex
+			_sign_pools[kind] = []
 
 	# Player heading marker (mm_sign_character.ddj)
 	_player_arrow = TextureRect.new()
@@ -202,6 +232,72 @@ func update_player(region_x: int, region_y: int, local_pos: Vector3, yaw_degrees
 func set_area_name(area_name: String) -> void:
 	if _lbl_area != null:
 		_lbl_area.text = area_name
+
+## Where an entity's sign goes, in aperture pixels from the aperture centre.
+##
+## The map tile is laid so the player sits at the centre and one region
+## (REGION_SPAN world units) spans `map_size` pixels, with world X along the
+## tile's u axis and world Z along its v axis -- the same convention
+## update_player positions the tile by, so a sign lands where the map's own
+## pixel for that spot is. Pure, so it can be tested without a scene.
+static func sign_offset(player_world: Vector3, entity_world: Vector3, map_size: float) -> Vector2:
+	var d := entity_world - player_world
+	return Vector2(d.x, d.z) / REGION_SPAN * map_size
+
+## Marks the entities around the player on the map with the client's own
+## sign artwork, at their real positions. Each list holds world positions;
+## a sign outside the circular aperture is hidden. Pools the TextureRects
+## so a frame's update allocates nothing once the counts have settled.
+func update_signs(player_world: Vector3, npcs: Array, monsters: Array, others: Array) -> void:
+	if _signs_root == null:
+		return
+	var map_size: float = 256.0 * _zoom_level
+	var centre := APERTURE_RECT.size / 2.0
+	var drawn := 0
+	var total := 0
+	var placed: PackedStringArray = []  # kind@(dx,dy) per drawn sign, for the log
+	var lists := {"npc": npcs, "monster": monsters, "other": others}
+	for kind in lists:
+		var positions: Array = lists[kind]
+		var pool: Array = _sign_pools.get(kind, [])
+		var tex: Texture2D = _sign_textures.get(kind, null)
+		var used := 0
+		if tex != null:
+			var sign_size := tex.get_size()
+			for pos in positions:
+				total += 1
+				var at: Vector2 = centre + sign_offset(player_world, pos, map_size)
+				if at.distance_to(centre) > APERTURE_RADIUS:
+					continue
+				var sign: TextureRect
+				if used < pool.size():
+					sign = pool[used]
+				else:
+					sign = TextureRect.new()
+					sign.name = "%s_%d" % [kind, used]
+					sign.texture = tex
+					sign.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+					sign.stretch_mode = TextureRect.STRETCH_SCALE
+					sign.mouse_filter = MOUSE_FILTER_IGNORE
+					sign.size = sign_size
+					_signs_root.add_child(sign)
+					pool.append(sign)
+				sign.position = at - sign_size / 2.0
+				sign.visible = true
+				used += 1
+				drawn += 1
+				var off := at - centre
+				placed.append("%s@(%d,%d)" % [kind, roundi(off.x), roundi(off.y)])
+		else:
+			total += positions.size()
+		for i in range(used, pool.size()):
+			(pool[i] as TextureRect).visible = false
+		_sign_pools[kind] = pool
+	var report := Vector2i(drawn, total)
+	if report != _last_sign_report:
+		_last_sign_report = report
+		print("HudMinimap: signs drawn %d of %d entities (npc %d, monster %d, other %d): %s" % [
+			drawn, total, npcs.size(), monsters.size(), others.size(), " ".join(placed)])
 
 func _load_region_map(rx: int, ry: int) -> void:
 	if _ui_builder == null:

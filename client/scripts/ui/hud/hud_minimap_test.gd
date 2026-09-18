@@ -67,6 +67,27 @@ Section = Create,"0,0,150,180","0"
 	_check(lbl_x.text == "X:6432", "Palace gate X is 6432 (got %s)" % lbl_x.text)
 	_check(lbl_y.text == "Y:1184", "Palace gate Y is 1184 (got %s)" % lbl_y.text)
 
+	# Entity signs: one region (1920 units) spans the tile's 256 px at zoom
+	# 1, world X along u and world Z along v -- the player's own placement
+	# rule, so a sign lands on the map's pixel for that spot.
+	var p := Vector3(1002, -52, 917)
+	_check(HudMinimap.sign_offset(p, p + Vector3(192, 0, 0), 256.0).is_equal_approx(Vector2(25.6, 0)),
+		"192 units east is 25.6 px right at zoom 1")
+	_check(HudMinimap.sign_offset(p, p + Vector3(0, 0, -960), 256.0).is_equal_approx(Vector2(0, -128)),
+		"half a region north (-Z) is 128 px up")
+	_check(HudMinimap.sign_offset(p, p + Vector3(192, 0, 0), 512.0).is_equal_approx(Vector2(51.2, 0)),
+		"zoomed in 2x, the same 192 units are 51.2 px")
+	_check(HudMinimap.sign_offset(p, p + Vector3(1920, 0, 0), 256.0).x > HudMinimap.APERTURE_RADIUS,
+		"a full region away falls outside the %.1f px aperture and is culled" % HudMinimap.APERTURE_RADIUS)
+	_check(HudMinimap.sign_offset(p, p + Vector3(0, 30, 0), 256.0) == Vector2.ZERO,
+		"height does not move a sign")
+	# With no archive there is no sign artwork: the update must count the
+	# entities and draw none, not fail.
+	minimap.update_signs(p, [p + Vector3(50, 0, 0)], [p + Vector3(0, 0, 50)], [])
+	var signs := minimap.get_node_or_null("MapClip/Signs")
+	_check(signs != null and signs.get_child_count() == 0,
+		"no artwork, no sign nodes (got %d)" % (signs.get_child_count() if signs != null else -1))
+
 	minimap.free()
 
 	if _failures == 0:
