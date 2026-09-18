@@ -17894,3 +17894,24 @@ band). Only reachable on a berserk hit into a high-defence target. See `damage_p
 
 Net for the two ticks: one shipped bug found and fixed (floor band), every other shipped combat
 constant and formula re-verified from the binary. Docs only this tick; 0 names.
+
+## MaxHP/MaxMP formula re-verified from asm — correct (2026-09-18)
+
+Continuing the audit the floor-band bug prompted, the most impactful shipped value — the
+every-character `MaxHP = Str * 10 * 1.02^(level-1)` (and MaxMP with Int) — was re-derived from
+`GObjPC_InitStats` (0x4e3200) asm at the two points a floor-band-style misread could hide:
+
+- **Exponent is level-1, not level.** 0x4e35f6 calls `GetLevel` (vtable 0x124), 0x4e3601 is
+  `sub eax,0x1`, and that feeds the 1.02 square-and-multiply at 0x4e35f8. So the growth term is
+  `1.02^(level-1)`, matching `character.StatGrowth` used with `level-1`.
+- **The 1000 is a scale (÷100 → ×10), not a ×1000.** 0x4e32ca/0x4e32e0 push the f32 1000.0
+  (`.rdata 0xb462ac`) into `ParamKeeper_SetParam` with `edi=3` -- slot 3, the SCALE slot -- which
+  `ParamKeeper_EvaluateParam` divides by 100. A point of Str is worth ten of the pool. Had it been a
+  direct multiply, srrevamp (which uses `HPPerStr=10`) would be 100x low; it is not.
+
+Both constants read straight from the exe: `0xb462ac` = 1000.0 (f32), `0xb45ea0` = 1.02 (f64).
+`character.derivedStat` = `round(stat * 10 * 1.02^(level-1))` matches exactly. No bug.
+
+So the audit pass (this tick + the last two) stands at: **one shipped bug found and fixed (floor
+band), and the core damage pipeline, the level curve, and the HP/MP stat formula all independently
+re-verified against the binary.** Docs only; 0 names.

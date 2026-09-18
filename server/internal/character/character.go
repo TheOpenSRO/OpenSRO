@@ -103,6 +103,15 @@ const (
 	MPPerInt = 10
 	// StatGrowth is .rdata 0x00b45ea0, raised to (level-1) by binary
 	// exponentiation in GObjPC_InitStats and pushed as a percent scale.
+	//
+	// RE-VERIFIED FROM ASM 2026-09-18, at the two points it could have been
+	// wrong (the floor-band bug was a value read one operand off, so the whole
+	// pipeline was re-audited). In GObjPC_InitStats: 0x4e35f6 calls GetLevel
+	// (vtable 0x124), 0x4e3601 `sub eax,0x1` -- the exponent is level-1, not
+	// level -- and the 1000 at 0x4e32ca/0x4e32e0 is pushed into slot 3 (the
+	// SCALE slot, edi=3 at the SetParam call), which ParamKeeper_EvaluateParam
+	// divides by 100, so a point of the stat is worth ten of the pool, not a
+	// thousand. Both `stat*10` and `1.02^(level-1)` confirmed.
 	StatGrowth = 1.02
 )
 
