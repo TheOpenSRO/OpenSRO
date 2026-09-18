@@ -16453,3 +16453,32 @@ Client: none. What remains behind shared strings is the C++ runtime or subject i
 name has to come from a different kind of evidence.
 
 No value changed.
+
+## 2026-09-18 — names from the statements the server issues
+
+Last tick closed the shared-string lever with a rule: a string names a function only when it
+describes **what the function did**. The obvious place that rule points is the DB layer, where
+a SQL statement is exactly that.
+
+The server carries **216 `_Name` SQL identifiers** and **33 distinct SQL/EXEC statements** as
+literals. 22 of the statements are held by exactly one unnamed function, and **15 functions
+were named from them**, applied 15, failed 0 — `ExecQuestManage` (`exec _quest_manage`),
+`ExecSkillManage`, `ExecAddTrijobReward`, `UpdateCharRefObjIDAndScale`
+(`UPDATE _CHAR SET REFOBJID = %d, SCALE = %d`), `SelectGuildGPHistoryTop100`, and the siege
+fortress insert/update/delete set. The inventory and the method are in
+[db_tables.md](protocol/db_tables.md).
+
+**Two judgements kept the set honest.** `SelectUsedSlotsForStorage` holds four statements of
+one shape over `_CHEST`, `_GUILDCHEST`, `_INVENTORY` and `_INVENTORYFORAVATAR`, so it is named
+for the shape rather than for whichever table happened to sort first — naming it
+`SelectChestSlots` would have been wrong three ways out of four. And a bare `"select"` literal
+was skipped: it identifies nothing, and it is the same failure as the `UIIT_STT_CONFIRM_BOX`
+families the client sweep rejected.
+
+This also settles the 182-function DB registration family for good. Those functions hold
+`"DBTable Registering Failed: %s"` and the `%s` is a table name, but the name comes from the
+caller; the statement-holders are a different, smaller set, and they are the ones that can be
+named. The distinction is the same one the rule draws — mentioning a table is not doing
+something to it.
+
+No value changed.
