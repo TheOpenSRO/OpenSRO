@@ -16151,3 +16151,38 @@ several systems would look identical from here. The rename reflects where the ev
 the evidence line on every renamed function says exactly that much and no more.
 
 No value changed.
+
+## 2026-09-18 — the developers' own names for the tags, and a rewrite of my own table
+
+Chasing the abnormal-state vocabulary found `DumpItemOptionsVerbose`, which prints an item's
+options for a human and therefore carries a **tag -> English description** table the
+developers wrote: "block rate", "critical", "anti-burn", "resist stun", 27 pairs in all.
+
+**It exposed a material error in [stat_tags.md](protocol/stat_tags.md), which is now
+rewritten.** The tags are multi-char literals of **variable length — two, three or four
+characters** — and my decoder read exactly three bytes. That silently **truncated every
+four-character tag and dropped every two-character one**: `'evbl'` was recorded as `'vbl'`,
+`'soli'` as `'oli'`, `'stra'` as `'str'`, and `'mp'`, `'fz'`, `'bu'`, `'es'`, `'ps'` were
+missing entirely. The table claimed 37 tags; there are **46**.
+
+The failure only showed up because a *second* function named the same tags and its
+four-character codes could not be reconciled with my three-character ones. The dispatcher's
+own immediate `0x6576626c` then settled it. A single-source reading would have stayed wrong
+indefinitely, and it had already been published twice.
+
+**A second, quieter bug nearly hid it.** My first fix was a string replacement against the
+script's decoder, and it silently matched nothing — the run produced byte-identical output,
+which I checked rather than took as confirmation. Identical output after a fix is a claim to
+verify, not a result.
+
+**What the descriptions ground.** `'bri'` -> "block rate" (param 10) and `'cri'` -> "critical"
+(param 12) turn a reading this project carried for two ticks as explicitly *not* recovered
+into a recovery. And `'bu'` -> param 27 "anti-burn" with `'es'` -> param 29 "anti-eshock"
+identifies the 25-32 run as the **resist family**, which had been on the open list as
+unidentified.
+
+Still not claimed: the twenty tags with no description, the tags whose branch jumps into a
+shared tail, and `'int'` printing `"Ava hr"` — which is almost certainly a copy-paste slip in
+the game's own dump code and is recorded as what the binary says rather than repaired.
+
+No value changed.
