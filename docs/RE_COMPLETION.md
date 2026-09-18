@@ -17826,3 +17826,27 @@ loop-populated strided array, not a sequential field), so this is recorded as a 
 its anchor, not a guessed constant. Two leads this tick -- teleport cost/level (cols 3/8/9) and the
 item cooltime -- were run down; teleport's consumer was not located and is unbuilt in srrevamp, and
 the cooltime is minutes-scale as above. Docs only, applied 0 names.
+
+## Berserk config is not in client data (checked, 2026-09-18)
+
+Chasing the buff read side, `hwit` (skill param → ParamKeeper 195, `PARAM_HWAN_TIME_INCREASE`)
+looked like the berserk-duration bonus, and the engine has a `_RefHWANLevel` table
+(`VCRefHWANLevel`) whose client file `hwanleveldata.txt` IS in `Media.pk2` (37 KB). Both leads were
+run down and both are negatives, recorded so they are not re-chased:
+
+- **`hwanleveldata.txt` is Hwan level NAMES**, not the mechanic: 257 rows of `id,
+  UIO_SECOND_HWAN_<race>_NAME_LEVEL_n, <same>` — four columns, two of them the same UI-name string
+  id, no numbers. So the berserk duration/gauge/per-level values are confirmed **server-side DB
+  rows**, not client-groundable, exactly as `GROUNDING_AUDIT.md` said "genuinely unrecovered" — now
+  with the client table actually opened and checked.
+- **param 195 (`hwit`) has no findable reader.** No literal `GetParam(0xc3)` anywhere; the one
+  hit for its skill field `0x588` was `GObjPC::FUN_004a6930`, which is a vtable **slot 354**
+  forwarder (offset 0x588 = the slot, not the field) — the offset-is-not-a-field trap, caught. So
+  `hwit`'s "berserk-duration bonus" reading stays the inference `skill_params.md` already flags.
+
+Net: srrevamp's disclosed berserk numbers (20 s, 8/hit) are correctly disclosed — no client source
+exists to ground them. Three consecutive ticks of leads (teleport cost/level, item cooltime,
+berserk config) have each ended in a checked negative or a bounded refinement rather than a wired
+value, which is itself a finding: the client-authoritative RE surface for the systems srrevamp lacks
+is largely exhausted, and the remaining disclosed values are server-side by construction. Docs only,
+0 names.
