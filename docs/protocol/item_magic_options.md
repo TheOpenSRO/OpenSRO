@@ -57,9 +57,19 @@ It settles **that** equipment reaches the params and **by what route**. It does 
 which authored table the option records come from, nor what bits 16..31 of the low dword are
 for — both are read as structure, not as meaning.
 
-It also leaves the original defence question where the previous ticks left it. Params 5 and
-7, the flat absorb and the percentage physical reduction, are still fed on the character side
-from authored `RefObjChar` fields with no equipment term. An item can reach those params only
-if one of its magic options carries a tag that maps to them, and **which tags map to 5 and 7
-is not established** — the tag map resolves 19 of 37 branches and neither 5 nor 7 is among
-them. srrevamp's damage model is unchanged.
+**It also settles the original defence question, in the negative.** Params 5 and 7 — the
+flat absorb and the percentage physical reduction — cannot be written through this path at
+all. `Stat_ApplyTaggedModifier` writes exactly 31 literal param ids plus two computed ones
+that are both pinned (`lea edi,[ebx+0x2]` on a branch reached only when `ebx == 0`, so 2; and
+a deferred id that is only ever -1 or 28), and neither 5 nor 7 is among them — see
+[stat_tags.md](stat_tags.md) for the enumeration.
+
+Combined with the character-side reading, where params 6 and 7 come from authored
+`RefObjChar` fields with no equipment term in the arithmetic, **equipment does not reach
+params 5 or 7 by either route** in this build.
+
+That is a statement about the engine, not a verdict on srrevamp. srrevamp's `defenderArmor`
+adds equipment armour into the flat term, which the engine does not do — but what equipment
+*does* contribute defensively is still unread (several of the writable ids, 25-32 and
+128-131, are unidentified), so there is nothing yet to replace it with. The damage model is
+left alone.

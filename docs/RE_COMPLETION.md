@@ -16009,3 +16009,40 @@ them only via a magic option whose tag maps to 5 or 7, and **neither appears amo
 resolved tag branches**. So the route is established while the specific defence question is
 not, and srrevamp's damage model stays unchanged. `stat_graph.md`'s open note is updated from
 "unlocated" to "partly answered" rather than closed.
+
+## 2026-09-18 — equipment cannot reach params 5 or 7: a checked negative
+
+The open question was whether an item's magic options could feed the flat absorb (param 5)
+or the percentage physical reduction (param 7). **They cannot**, and this is a checked
+negative rather than an empty grep.
+
+`Stat_ApplyTaggedModifier`'s complete writable set was enumerated directly — every value
+that reaches EDI before a `ParamKeeper_SetParam` call. Thirty-one literal ids, and neither 5
+nor 7 among them. The two **computed** EDI values are the part a negative would normally die
+on, and both are pinned:
+
+	498a31  lea edi,[ebx+0x2]     on a branch reached only when ebx == 0, so exactly 2
+	49885e  mov edi,[esp+0x24]    a deferred id, initialised to -1 and set to 0x1c = 28
+	                              at the one site that assigns it
+
+and the only other function it calls that might have written a param, `FUN_0059de70` (9 call
+sites), does not reach the ParamKeeper at all. Three ways the negative could have been wrong,
+each closed.
+
+With the character side already read — params 6 and 7 built from authored `RefObjChar` fields
+with no equipment term — **equipment does not reach params 5 or 7 by either route** in this
+build.
+
+**The tag map also gained a second method and lost some rows.** Resolving each branch by CFG
+reachability with a symbolic EDI (reachability over a state set, which is why it did not
+explode as an earlier path-enumeration attempt did) agrees with the branch-isolated linear
+scan on **18 tags**. It disagrees on `'rna'` (128 vs 10), and it exposed three rows as
+artifacts: `'trj'`, `'tra'` and `'trv'` all resolve to Strength because **reachability
+over-approximates** — a branch that does nothing falls through and collects the next
+branch's write. Those are now marked unresolved rather than carried as findings.
+
+**What this means for srrevamp, and why nothing changed.** `defenderArmor` adds equipment
+armour into the flat term and the engine does not do that. But what equipment *does*
+contribute defensively is still unread — several writable ids (25-32, 128-131) are
+unidentified — so there is nothing grounded to replace it with, and replacing a wrong model
+with a guess is worse than leaving it. The damage model is untouched.

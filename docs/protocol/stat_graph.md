@@ -99,9 +99,10 @@ anywhere in this chain.
 **magic options**, not through the base defence chain: `IBindingOptionOP` slot 3 decodes up
 to 12 packed entries off the item record and applies each one through
 `Stat_ApplyTaggedModifier`. See [item_magic_options.md](item_magic_options.md) for the route
-and [stat_tags.md](stat_tags.md) for the vocabulary. What is still **not** shown is any
-option reaching params 5 or 7 specifically — neither appears among the 19 resolved tag
-branches — so the flat absorb and the percentage reduction remain character-side values.
+and [stat_tags.md](stat_tags.md) for the vocabulary. **Params 5 and 7 are now shown to be unreachable from that path**: the tag dispatcher's
+complete set of writable param ids was enumerated, including both computed EDI values, and
+neither 5 nor 7 is in it. So the flat absorb and the percentage reduction are character-side
+values that equipment does not touch by either route in this build.
 
 ## What is NOT read
 

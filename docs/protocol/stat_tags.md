@@ -100,6 +100,50 @@ comes from a first-match heuristic and is **not** to be relied on; `'bri'` and `
 report `+0x1a4`, which is the heuristic showing its limits rather than two tags sharing a
 field.
 
+
+## Cross-checked by a second method
+
+The table above comes from a **branch-isolated linear scan**. A second, independent pass
+resolves each branch by **CFG reachability** with a symbolic EDI — reachability over a state
+set, not path enumeration, which is what made an earlier attempt at this explode.
+
+The two methods agree on **18 tags**:
+
+	'str' 1    'hpa' 3    'mpa' 4    'era' 9    'bri' 10   'hra' 11
+	'cri' 12   'prg' 25   'prg' 26   'als' 27   'pna' 52   'pna' 53
+	'vbl' 56   'vcr' 57   'rua' 128  'ara' 174  'pmp' 25   'mdu' 259
+
+Those are the trustworthy rows. The rest are listed as what they are:
+
+- **`'rna'` disagrees** — 128 by the linear scan, 10 by reachability. Unresolved.
+- **`'int'` -> 2 and `'ntv'` -> 2** come from reachability only. `'int'` landing on param 2,
+  which `stat_graph.md` independently has as Intellect, is a good sign but is not a second
+  method agreeing.
+- **`'trj'`, `'tra'`, `'trv'` -> 1** are almost certainly artifacts. Reachability
+  **over-approximates**: a branch that does nothing falls through and picks up whatever the
+  next branch writes, which is exactly how these three all came out as Strength.
+- `'ape'`, `'rep'`, `'ein'` produced a value linearly but no `je` target for the CFG pass.
+
+## Every param this function can write
+
+Enumerated directly rather than by reachability — every value that reaches EDI before a
+`ParamKeeper_SetParam` call:
+
+	1 2 3 4 9 10 11 12 25 26 27 28 29 30 31 32 52 53 56 57
+	128 129 130 131 173 174 175 176 177 188 259
+
+Two EDI values are computed rather than literal, and both are pinned:
+
+	498a31  lea edi,[ebx+0x2]        reached only when ebx == 0, so EDI = 2
+	49885e  mov edi,[esp+0x24]       a deferred id, initialised to -1 (meaning "none")
+	                                 and set to 0x1c = 28 at the single site that assigns it
+
+The only other function this dispatcher calls that could plausibly write a param,
+`FUN_0059de70` (9 call sites), **does not reach the ParamKeeper** at all.
+
+**So params 5 and 7 are not writable here.** That is a checked negative, not an empty grep:
+the literal set, both computed sites and the one candidate helper were each examined.
+
 ## What is NOT claimed
 
 The obvious expansion of `era`/`bri`/`hra`/`cri` into evasion, block, hit and critical is a
