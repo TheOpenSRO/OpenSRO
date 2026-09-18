@@ -15344,3 +15344,34 @@ yield was zero.
 A note on what these names are worth: like the 201 class-name accessors, they are
 accessors, not game logic. But 185 DB record classes now state which table they are,
 which is exactly the kind of fact the schema work needs.
+
+## 18 async-query DoWork methods, identified by the siblings that were already named (2026-09-18)
+
+Next on the payoff ranking: `AQ_Base`, the async DB query family, 27 classes. This one
+inverted the usual lever — instead of a base naming a slot for its children, **three
+children had already named the slot for the base**:
+
+	slot 6   AQ_COSManipulator_DoWork,  AQ_StorageUpdater__DoWork,  DoWork
+
+Three classes, named by separate earlier passes on separate evidence, all landing on
+slot 6 with the same word. Since every one of the 27 derives `AQ_Base`, slot 6 is one
+virtual across the family, so the rest of the family's slot-6 overrides are `DoWork` too.
+
+Named on 18 of them (9 were already named). **Applied 18, failed 0.** A spot check first:
+`AQ_CharDataLoader`'s slot 6 is 2,504 bytes and its class is a `ServerFramework::COverlapJob`
+— an overlapped job whose work body is exactly what one expects behind `DoWork`.
+
+**What I left alone:** slots 9 and 10 both show `SaveCurPosAsLastTelPosition` across ten
+classes. One name appearing at two different slots in ten classes is a folded function,
+not ten overrides, and naming per class there would repeat the mistake the flat-named
+alchemy helpers exist to avoid.
+
+### Where the ranking stands
+
+	done      CDBRecStream slot 0 (201), CDBRecord slots 2+3 (366), AQ_Base slot 6 (18)
+	declined  CBasicQuest slot 22 (105) -- 73/94 evidence, twice measured, twice refused
+	open      the client's CNIFWnd slots 0-2 and 10, where no base class names anything
+
+Three passes in three ticks have now come from the payoff measurement. The server's
+named-base levers are close to spent; what is left of that ranking is the quest slot I
+keep declining and the client, which needs a base class named before anything propagates.
