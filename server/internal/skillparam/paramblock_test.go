@@ -511,3 +511,24 @@ func TestBlowIsFloor(t *testing.T) {
 		}
 	}
 }
+
+// The healing-received chain must stay joined: the params the heal formula reads
+// are exactly the ones the 'rhru' buff drives, at the base slot. If any of the
+// three tables drifts, this fails -- they were recovered from different
+// functions (Skill_ApplyHealToObject reads, ApplySkillParamsToChar writes) and
+// only agree because both are right.
+func TestHealScaleChainIsJoined(t *testing.T) {
+	driven := DrivesParams[HealScaleBuffCode]
+	if len(driven) != 2 || driven[0] != HealHPScaleParam || driven[1] != HealMPScaleParam {
+		t.Fatalf("DrivesParams[%q] = %v, want [%d %d]", HealScaleBuffCode, driven, HealHPScaleParam, HealMPScaleParam)
+	}
+	for _, c := range Contributions[HealScaleBuffCode] {
+		if c.Slot != SlotBase {
+			t.Errorf("%q writes param %d at slot %d, want the base slot 0", HealScaleBuffCode, c.Param, c.Slot)
+		}
+	}
+	// 'rhru' carries exactly the two values it files into 170/171.
+	if Run[HealScaleBuffCode] != 3 {
+		t.Errorf("Run[%q] = %d, want 3 (code + two values)", HealScaleBuffCode, Run[HealScaleBuffCode])
+	}
+}

@@ -817,3 +817,26 @@ func BlowIsFloor(hasAtt bool, attType, attPercent int32, carriesCk bool) bool {
 	}
 	return attPercent == 0
 }
+
+// The healing-received buff chain, three recovered pieces that meet at two
+// ParamKeeper params.
+//
+// A heal's size is scaled by (1 + GetParam(id)/100) -- see docs/protocol/heal.md
+// and Skill_ApplyHealToObject (0x005a0850) -- with these two ids, read from the
+// HEALED object's keeper:
+const (
+	HealHPScaleParam = 170 // 0xaa, scales the HP half of a heal
+	HealMPScaleParam = 171 // 0xab, scales the MP half
+)
+
+// HealScaleBuffCode is the skill parameter that GRANTS those two params. Its
+// write site is in ApplySkillParamsToChar (0x00594ac0): the 'rhru' field
+// (skill+0x2a4) value[0] -> param 170 and value[1] -> param 171, both slot 0
+// (base) -- verified from that write site, and matching DrivesParams["rhru"].
+//
+// Real data: 8 skills carry 'rhru', all SKILL_EU_BARD_DANCEA_CLERIC_* -- the
+// Bard's cleric-dance buff, granting +18/22/26/... % HP healing received with a
+// zero MP term. It does not co-occur with 'heal' on the same skill, which is
+// the point: the buff is cast on an ally, and a separate heal skill landing on
+// that ally later reads param 170 from them.
+const HealScaleBuffCode Code = "rhru"

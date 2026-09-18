@@ -17677,3 +17677,30 @@ Full spec, with the grounded/not-read/not-wired split, in `docs/protocol/heal.md
 heal system, so this changes no behaviour — `'heal'`/`'nmh'`/`'mwhh'`/`'mwmh'` and params 170/171
 are in `internal/skillparam` but read by no game code. Applied **2 names**:
 `Skill_ApplyHealToObject`, `ParamKeeper_GetParamChecked`.
+
+## The healing-received buff, and the chain closed (2026-09-18)
+
+Yesterday's heal spec left one item open: *which skill code grants the scaling params 170/171 that
+`Skill_ApplyHealToObject` reads.* It is **`'rhru'`**, and the answer was already half-present in
+`skillparam.DrivesParams` — this round verified it from the write site and joined the three pieces.
+
+`ApplySkillParamsToChar` (`0x00594ac0`) at the `rhru` field (skill+0x2a4): value[0] → ParamKeeper
+param 170, value[1] → param 171, both slot 0 (base). Read straight off the annotated write site, so
+it is a use-site confirmation of `DrivesParams["rhru"] = {170, 171}`, not a trust of the earlier
+extraction.
+
+The chain now reads end to end, each link from a different function:
+
+	'rhru' on a skill  --ApplySkillParamsToChar-->  param 170 (HP) / 171 (MP) on the buffed target
+	a 'heal' skill lands on that target  --Skill_ApplyHealToObject-->  heal * (1 + param170/100)
+
+Real data makes it concrete: 8 skills carry `'rhru'`, all `SKILL_EU_BARD_DANCEA_CLERIC_*` — the
+Bard's cleric dance, +18/22/26/… % HP recovery, zero MP term. It never shares a skill with `'heal'`,
+which is the point: the dance buffs an ally and a later heal reads the buff off them. That the
+scaling param is read from the *healed* object (confirmed last round from the call site) is exactly
+what this cross-skill design needs.
+
+Added `skillparam.HealHPScaleParam`/`HealMPScaleParam`/`HealScaleBuffCode` and a guard test that
+fails if `DrivesParams["rhru"]`, the heal params, or the slots ever drift apart — the two halves
+were recovered from different functions and only agree because both are right. Still not wired (no
+heal system); `heal.md` updated to close the open item. Applied 0 names.
