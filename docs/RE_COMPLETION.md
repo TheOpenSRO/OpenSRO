@@ -16514,3 +16514,34 @@ no mechanical rule turns an arbitrary failure message into a name. Recorded as s
 worked through with a template.
 
 No value changed.
+
+## 2026-09-18 — the skill parameter vocabulary, and an offset table withheld
+
+Auditing srrevamp for values that are *not* grounded found the clearest one:
+`internal/skill/skill.go` says its catalog is "entirely invented placeholder", and the note
+blocking it is that skilldata's `Params` column — where skill damage lives — was never decoded.
+
+`SkillGlobal::RefSkill_ParseParams` (`0x00587630`) is that decoder. Every `cmp reg,<imm32>` in
+it whose immediate decodes as four printable characters, **big-endian**, gives the vocabulary:
+**156 distinct parameter codes**, now in `server/internal/skillparam`. No control flow is
+followed to produce that list, so it depends on no walker.
+
+**A field table was built and then withheld.** Following each branch to the store its leaf
+performs resolved 169 of 171 sites to a skill-record offset, and the result passed the obvious
+cross-check: `'pdmg'` landed on `skill+0x234`, matching an annotation on
+`Formulae::Formula_SkillPhysDamage` written in an earlier session from a different function.
+Then a guard test I had written for exactly this caught **`'setv'` and `'slcc'` resolving to the
+same offset**, and reading the asm shows why — `'setv'`'s branch contains a loop, so the walk
+ran past the branch into unrelated code. One demonstrated wrong row means the others cannot be
+trusted individually, and **a table that is right in most places is worse than no table**,
+because nothing marks the rows that are wrong. It is not shipped.
+
+What survives is the vocabulary plus the single offset two independent readings agree on:
+`PhysDamage = "pdmg"` at `PhysDamageField = 0x234`. The meanings of the other codes are
+deliberately not inferred from their mnemonics — `'atca'` and `'lkdh'` are read as text and
+nothing more.
+
+Wired through with three tests: the `pdmg`/`0x234` agreement, that every code is exactly four
+printable characters (the check that would have caught the stat-tag truncation published twice
+before it was found), and that the list stays distinct and full-sized. Full suite green, **53
+packages**.
