@@ -16381,3 +16381,40 @@ messages. Both are nameable on the same principle; neither was read this tick, s
 named.
 
 No value changed.
+
+## 2026-09-18 — the string-family lever, measured across the whole server
+
+Last tick found one 123-member string family by sampling. This tick did it systematically:
+cluster every unnamed server function by the strings it holds. The result is **68 strings
+shared by five or more unnamed functions, covering 5,082 function slots** — and almost all of
+it is unusable, which is the finding. Written up in
+[string_families.md](protocol/string_families.md).
+
+**About 4,400 of the 5,082 are STL container template instantiations** — "invalid map/set<T>
+iterator", "list<T> too long" and a dozen more. Fourteen strings account for them.
+
+**Two families look like the game and are not.** 364 functions hold "Unknown DB Table" and 182
+hold "DBTable Registering Failed: %s", whose `%s` the registry notes say is the class's own
+table name — so 182 functions each named for its table looked like a large grounded win.
+Reading one kills it: `CGameServer::FUN_0073c140` is a **generic get-or-create template** whose
+only class vtable is `CDBRecord`, the base. The table identity comes from the caller, so nothing
+in the body can name it.
+
+**What survives is small and real**: 53 game-specific families, all quest and NPC logic. The
+largest, 23 functions printing "fail pay quest : %s[%d] -> %s", was read at
+`CQTUTORIAL2_CH_1::vslot_085` (`CBasicQuest : CQuestBase : IQuest`) and named
+**`PayQuestReward`**; applied 23, failed 0. Its members sit at slots 85, 103 and 104 plus two
+functions Ghidra never classed — the same spread that made the string the right key last tick.
+
+**And it produced a rule worth keeping.** A shared string names a family only when it describes
+*what the function did*. A string naming a *thing the function mentions* — a DB table, an NPC
+id, a dialogue constant — identifies the subject, not the operation, and would attach one name
+to functions doing entirely different jobs. That is why the 182 DB registrations and the 17
+holders of "NPC_CA_POTION" are left alone despite being the largest game-adjacent clusters on
+the list.
+
+Two smaller families are identified and deliberately unnamed because I did not read them:
+9 functions printing "Failed to add item to player [JID: %d]" and 7 printing "fail pay quest.
+because don`t have Catch Mob".
+
+No value changed.
