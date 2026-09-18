@@ -15944,3 +15944,36 @@ No value changed. What moved is that an open discrepancy is closed with a mechan
 than a guess, and the temptation to "fix" it by adjusting a loop count — which would have
 produced eight wrong column numbers that happened to match a grounded anchor — was tested
 and rejected.
+
+## 2026-09-18 — the stat tag vocabulary: the binary's own names for its params
+
+The defence chain left `RefObjChar` fields 17-19 unnamed, and the rule is that a **use-site**
+settles meaning. Sweeping every reader of those offsets found one that matters:
+`Stat_ApplyTaggedModifier` reads `+0x1dc` inside a branch selected by a three-character tag.
+That function is a whole vocabulary — 37 tag sites, the binary's own labels for the params
+that were previously known only by number. It is now in
+[stat_tags.md](protocol/stat_tags.md).
+
+**19 of 37 tags resolve to a param within their own branch**; the other 18 jump into shared
+tails and are listed as unresolved rather than guessed. That distinction was not free: the
+first extraction gave every unresolved branch the *next* branch's value, inventing a param
+for all of them and reporting `259` five times. Stopping the scan at the following
+`cmp eax,<tag>` fixed it and moved `'ape'` from 31 to 27 — a silent single-row error that
+would have been indistinguishable from a real reading.
+
+**Four independent checks say the map is right.** `'str'` lands on param 1, which
+`stat_graph.md` already had as Strength; `'hpa'` and `'mpa'` land on params 3 and 4, which
+head the MaxHP and MaxMP chains. The strongest is the fourth: the characterdata work
+recorded `col 75 = 'era', 76 = 'bri', 77 = 'hra', 78 = 'cri'`, and this dispatcher — read
+from the other end, sharing no evidence — gives `era -> 9, bri -> 10, hra -> 11, cri -> 12`.
+Four consecutive columns, four consecutive params, same order.
+
+`'cri'` reads block field `+0x1dc` behind the same `+0x190` gate that
+`Char_PublishCombatStats` uses for params 6 and 7 — confirmed by reading the branch, not by
+the script. The `field` column for the other tags comes from a first-match heuristic and is
+explicitly marked unreliable: `'bri'` and `'rna'` both report `+0x1a4`, which is the
+heuristic failing rather than two tags sharing a field.
+
+**What is deliberately not claimed**: expanding `era`/`bri`/`hra`/`cri` into evasion, block,
+hit and critical. That is a reading, the characterdata notes already flag it as one, and it
+stays flagged. No value changed.
