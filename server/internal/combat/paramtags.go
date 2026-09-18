@@ -131,14 +131,27 @@ func UnpackTag(v uint32) string {
 //
 // All six came back right, from a function none of them were derived from.
 //
-// THE RESIST FAMILY IS DELIBERATELY ABSENT. 'fz', 'ps' and 'zb' (frostbite,
-// poison, zombie) share one tail block, each setting its own EDI before
-// jumping in, and a walk that explores both arms of every branch reaches all
-// of params 27, 29, 30, 31 and 32 from each of them. The family occupies that
-// range -- that much is certain -- but this walk does not separate which tag
-// takes which, so none of them is listed. ('bu' resolved singly in both the
-// conservative and the exhaustive walk and is listed, but it belongs to the
-// same block and carries the same caveat.)
+// THE RESIST FAMILY IS NOW SEPARATED (2026-09-18). It was left out because a
+// walk exploring both arms of every branch reached all of 27, 29, 30, 31 and
+// 32 from each tag -- an over-approximation, not a limit of the evidence.
+// Reading each `je` target instead resolves them, because every leaf is
+// reached by exactly one jump:
+//
+//	4987f5  mov edi,0x1e   <- 'bu'   30
+//	4987fc  mov edi,0x1b + [esp+0x24]=0x1c   <- 'fz'   27 AND 28
+//	498745  mov edi,0x1d   <- 'es'   29   (the fallthrough arm)
+//	498824  mov edi,0x1f   <- 'ps'   31
+//	49881d  mov edi,0x20   <- 'zb'   32
+//
+// 'bu' -> 30 is the control: the earlier conservative walk resolved it singly
+// and this reading agrees. The block's extent is confirmed from the other end
+// by 'rals' (MATTR_RESIST_ALL_SET), whose leaf at 0x498f46 writes params 27,
+// 28, 29, 30, 31 and 32 in one consecutive run -- the game's own "resist all"
+// enumerating the family. Six params, five tags, with 'fz' taking two.
+//
+// The other resists the dumper names -- disease, sleep, stun, fear, csmp --
+// are the four-character 'rdii'/'rsli'/'soli'/'rfei'/'rcsi' tags and do NOT
+// live in this range; where they go is not read.
 var ParamFor = map[string]int{
 	TagStr:           1,   // MATTR_STR
 	TagInt:           2,   // MATTR_INT
@@ -158,8 +171,12 @@ var ParamFor = map[string]int{
 	"strj":           1,   // MATTR_STR_3JOB  -- Strength, like 'str'
 	"strv":           1,   // MATTR_STR_AVATAR
 	"intv":           2,   // MATTR_INT_AVATAR
-	"rals":           27,  // MATTR_RESIST_ALL_SET
-	"bu":             30,  // MATTR_RESIST_BURN -- see the resist caveat above
+	"rals":           27,  // MATTR_RESIST_ALL_SET -- writes 27..32; 27 is the first
+	"bu":             30,  // MATTR_RESIST_BURN
+	"fz":             27,  // anti-frostbite -- also writes 28, see SecondParamFor
+	"es":             29,  // anti-eshock
+	"ps":             31,  // anti-toxin
+	"zb":             32,  // anti-zombie
 }
 
 // REGENERATION IS AN ITEM STAT, NOT A BASELINE ONE. Params 25 and 26 are
@@ -289,3 +306,19 @@ const (
 	MagicOptionChanceOffset = 0x14
 	MaxMagicParamsPerItem   = 12
 )
+
+
+// SecondParamFor records the tags whose leaf writes a *second* param. The leaf
+// sets the first id in EDI and stashes the second in [esp+0x24]; the shared
+// tail writes the first, then writes the second if the stash is not -1.
+//
+//	4987fc  mov edi,0x1b                  ; first  -> 27
+//	498801  mov DWORD PTR [esp+0x24],0x1c ; second -> 28
+//	498809  jmp 0x498829                  ; the shared tail does both
+var SecondParamFor = map[string]int{
+	"fz": 28,
+}
+
+// ResistParams is the elemental resist run, enumerated by 'rals'
+// (MATTR_RESIST_ALL_SET), whose leaf writes exactly these six in order.
+var ResistParams = []int{27, 28, 29, 30, 31, 32}

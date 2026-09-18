@@ -16217,3 +16217,37 @@ The corrected decoding also filled in the tag names themselves: the four-charact
 morning.
 
 No value changed.
+
+## 2026-09-18 — the resist family separated, and a guard test retired as designed
+
+An earlier session built the same tag walker, validated it against six controls, and then
+**deliberately left the resist family out** of `combat.ParamFor`, with a comment saying a walk
+exploring both arms of every branch reaches all of 27, 29, 30, 31 and 32 from each tag. That
+was an over-approximation, not a limit of the evidence: every leaf is reached by exactly one
+`je`, so reading the targets separates them.
+
+	4987f5  mov edi,0x1e                     'bu'  -> 30
+	4987fc  mov edi,0x1b + [esp+0x24]=0x1c   'fz'  -> 27 AND 28
+	498745  mov edi,0x1d                     'es'  -> 29   (fallthrough arm)
+	498824  mov edi,0x1f                     'ps'  -> 31
+	49881d  mov edi,0x20                     'zb'  -> 32
+
+**`'bu'` -> 30 is the control** — the earlier conservative walk resolved that one singly and
+this reading agrees. The block's extent is fixed from the other end by `'rals'`
+(MATTR_RESIST_ALL_SET), whose leaf writes params **27, 28, 29, 30, 31, 32** in one consecutive
+run: the game's own "resist all" enumerating its own family. Six params, five tags, `'fz'`
+taking two, covering the run exactly once.
+
+**Wired through**: `ParamFor` gains `fz`, `es`, `ps`, `zb`; `SecondParamFor` records that
+`'fz'` writes a second param; `ResistParams` is the run. `TestResistFamilyIsTheRunRalsWrites`
+asserts the assignments, that the run is consecutive, and that the tags cover it exactly once.
+Full suite green, 52 packages.
+
+**The codebase caught me first.** `TestParamForExcludesTheAmbiguousResists` existed precisely
+to fail when someone added these tags, and it did — telling me to say how it is now known and
+then delete the test rather than work around it. Both done, in that order.
+
+`'rals'` was already in the table as 27; that is the first id of six, not the whole of what it
+writes, and the comment now says so. And yesterday's `param_writers.md` line calling param 27
+"anti-burn" is wrong twice over: anti-burn is 30, and 27 is shared between `'fz'` and
+`'rals'`.

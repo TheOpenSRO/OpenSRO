@@ -138,19 +138,10 @@ func TestParamForOppositionsArePaired(t *testing.T) {
 	}
 }
 
-// TestParamForExcludesTheAmbiguousResists documents a deliberate absence. The
-// frostbite/poison/zombie tags share a tail block and the walk cannot say which
-// of params 27..32 each takes, so they are left out rather than guessed. A
-// later tick that separates them should delete this test, not work around it.
-func TestParamForExcludesTheAmbiguousResists(t *testing.T) {
-	for _, tag := range []string{"fz", "ps", "zb"} {
-		if p, ok := ParamFor[tag]; ok {
-			t.Errorf("%q maps to param %d, but the walk that produced this table "+
-				"reaches five different params from it -- if this is now known, "+
-				"say how in the comment and remove it from this test", tag, p)
-		}
-	}
-}
+// The resist family's deliberate absence ended on 2026-09-18. The test that
+// guarded it, TestParamForExcludesTheAmbiguousResists, said a later tick that
+// separated them should delete it rather than work around it, so it is gone;
+// TestResistFamilyIsTheRunRalsWrites below replaces it and states the evidence.
 
 // TestEveryParamForTagPacks keeps the map's keys real tags: each must survive
 // the pack/unpack round trip, which a typo would not.
@@ -314,5 +305,53 @@ func TestMaxMagicOptionsPerItem(t *testing.T) {
 	}
 	if MaxMagicOptionsPerItem > 0xff {
 		t.Error("the count is a byte (m_btMagParamNum); the cap cannot exceed 255")
+	}
+}
+
+// TestResistFamilyIsTheRunRalsWrites ties the five elemental resist tags to the
+// run 'rals' enumerates. The binding is not a curve fit: each tag's leaf is
+// reached by exactly one `je`, and 'rals' (MATTR_RESIST_ALL_SET) writes the
+// whole run consecutively at 0x498f46, which is what fixes its extent.
+func TestResistFamilyIsTheRunRalsWrites(t *testing.T) {
+	want := map[string]int{"fz": 27, "es": 29, "bu": 30, "ps": 31, "zb": 32}
+	for tag, param := range want {
+		if got, ok := ParamFor[tag]; !ok || got != param {
+			t.Errorf("ParamFor[%q] = %d (present %v); the leaf loads %d", tag, got, ok, param)
+		}
+	}
+	// 'fz' is the one tag whose leaf writes two params.
+	if second, ok := SecondParamFor["fz"]; !ok || second != 28 {
+		t.Errorf("SecondParamFor[\"fz\"] = %d (present %v), want 28", second, ok)
+	}
+	// Every resist tag's param must fall inside the run 'rals' writes, and the
+	// run itself must be the six consecutive ids read off that leaf.
+	inRun := map[int]bool{}
+	for i, p := range ResistParams {
+		inRun[p] = true
+		if i > 0 && p != ResistParams[i-1]+1 {
+			t.Fatalf("ResistParams is not consecutive at %d: %v", i, ResistParams)
+		}
+	}
+	if len(ResistParams) != 6 || ResistParams[0] != 27 {
+		t.Fatalf("ResistParams = %v, want the six ids 27..32", ResistParams)
+	}
+	for tag, param := range want {
+		if !inRun[param] {
+			t.Errorf("%q -> param %d is outside ResistParams %v", tag, param, ResistParams)
+		}
+	}
+	if !inRun[SecondParamFor["fz"]] {
+		t.Errorf("fz's second param %d is outside the run", SecondParamFor["fz"])
+	}
+	// The five tags plus fz's second must account for all six ids exactly once.
+	seen := map[int]int{}
+	for _, p := range want {
+		seen[p]++
+	}
+	seen[SecondParamFor["fz"]]++
+	for _, p := range ResistParams {
+		if seen[p] != 1 {
+			t.Errorf("param %d is claimed by %d tags; the run should be covered exactly once", p, seen[p])
+		}
 	}
 }
