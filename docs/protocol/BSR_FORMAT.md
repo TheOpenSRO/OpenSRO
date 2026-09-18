@@ -97,6 +97,41 @@ The animation-group parse ends exactly on the sound-effect pointer in every file
 `chinaman_fighter`, `chinawoman_fighter`, `chinaman_warrior`, `mangnyang`, `chinaquest_priest`,
 `sword_01`, `clothes_01_sa` — which is what makes the entry layout a reading rather than a guess.
 
+### How an item with its own skeleton hangs on the body
+
+The skeleton entry's bone name is the only placement data an item carries -- there is no attach
+matrix in the file -- and the composition is the client's, read out of `sro_client.exe`
+(2026-09-18, `docs/rounds/attach.md` has the evidence; the decompile is on the RE box, not in
+this repo):
+
+- **Link.** `CCompChar::FUN_00c4fc70`: if the part's attach-bone string (a `std::string` at
+  `+0x58` of the part; its size at `+0x6c`) is non-empty, that bone is looked up in the body and
+  stored as the item **root bone's parent socket** (`root+0xc`), and the root's update mode
+  (`root+0xa0`) is set to **1**. The item skeleton is also registered in the body skeleton's
+  child list so it updates after the body.
+- **Update.** Every runtime bone (`CRTBone`, base `CRTSocket`; dummies are `CRTDummy`) keeps
+  three 4x4 matrices: `mat0` local, `mat1` world, `mat2` skin. Mode 0
+  (`RTSkeleton::FUN_00c49f20`) is ordinary forward kinematics, `mat1 = mat0 x parent.mat1`
+  (D3D row vectors, `out = a x b`), then `mat2 = primInvBind x mat1`. **Mode 1**
+  (`CRTBone::FUN_00c48fe0`) differs only in the parent frame: `mat1 = mat0 x [R(parent.mat2) |
+  t(parent.mat1)]` -- the attach bone's **skin rotation** (its rotation relative to its bind,
+  `invBind x world`) at the attach bone's **world position**.
+- **What that means.** A root's local is its bind, so `invBind_root x local_root` cancels and the
+  item's skin matrix is `[R(attach.skin) | t(attach.world)]`: the item's **model space lands at
+  the attach bone's position with the body's axes**, rotated only by how far the bone has turned
+  from its rest. Its own root rest never shows. Child bones of the item (a collar's two flap
+  chains, a weapon's `ai_start`/`ai_end`) are mode 0 under that root and come out the same way.
+  In Godot terms, under a `BoneAttachment3D` (which applies the bone's full pose) the item
+  skeleton's local transform is the constant `(B_rest_attach^-1, 0)`; `SkinnedBsrAssembler
+  .attach_item_from_archive` does exactly that.
+
+Measured on the man's body (`tools/probe_attach.gd`), this puts `sword_01`, `blade_01` and
+`spear_01` -- one hand, one set of clips -- on one heading (forward, -Z, in the T-pose; forward at
+hip height in the town idle), and `clothes_01_sa` centred on `Bip01 Neck1`, 1.6 above it, across
+the shoulders. The earlier "undo the item root's own rest" (round 137) only ever fitted
+`sword_01`, whose root rest happens to equal the hand's global rest; it pointed the blade and spear
+down and turned the collar front-to-back (round 141).
+
 ### Animation groups: which animation plays for what
 
 The groups are keyed by **weapon kind**, and the client's own table of the names is built by one

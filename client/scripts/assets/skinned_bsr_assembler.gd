@@ -235,13 +235,32 @@ class AttachedItem:
 ##   `blade_01.bsk` and `Bip01 R HandMid`; a shoulder piece `clothes_sa.bsk`
 ##   and `Bip01 Neck1`. Its mesh is weighted onto *that* skeleton
 ##   (`blade_01.bms`'s palette is `Bone01`), so the item's skeleton is built,
-##   the mesh skinned to it, and the whole thing put under a
-##   BoneAttachment3D on the named body bone at identity -- the item's own
-##   root sits where the body bone is.
+##   the mesh skinned to it, and the whole thing hung from the named body
+##   bone by the client's own composition (below).
 ##
 ## The second convention is what the shoulder piece needed all along. Its
 ## vertices are in its own skeleton's space, not the body's, which is why
 ## reading them as body-space geometry put it near the pelvis.
+##
+## **How the client composes an own-skeleton item onto the bone** (read from
+## `sro_client.exe`, see docs/protocol/BSR_FORMAT.md): `CCompChar::FUN_00c4fc70`
+## looks the `.bsr`'s attach-bone name up in the body and makes that bone the
+## item ROOT bone's parent socket, in update mode 1; mode 1
+## (`CRTBone::FUN_00c48fe0`) is `world_root = local_root x [R(attach.skin) |
+## t(attach.world)]`, then `skin_root = invBind_root x world_root`, where
+## `attach.skin = invBind_attach x world_attach` is the bone's rotation
+## RELATIVE TO ITS BIND. A root's local is its bind, so `invBind_root x
+## local_root` cancels: the item's model space lands at the attach bone's
+## world position, rotated only by how far that bone has turned from its
+## rest -- its axes are the body's at rest, not the bone's. Under a
+## BoneAttachment3D (which applies the bone's full global pose) that is the
+## constant child transform `(B_rest_attach^-1, 0)`. The item's own root
+## rest is left as the file gives it, so its skin is identity at rest.
+## Measured (tools/probe_attach.gd): this puts sword, blade and spear -- one
+## hand, one set of clips -- on one heading, and the `_sa` collar across the
+## shoulders 1.6 above `Bip01 Neck1`, where round 137's "undo the item
+## root's rest" only ever fitted `sword_01` (whose root rest happens to
+## equal the hand's) and turned the collar front-to-back.
 ##
 ## Returns null, having attached nothing, if the file is missing, is not an
 ## item, or none of its meshes could be loaded.
@@ -329,18 +348,22 @@ static func attach_item_from_archive(
 	attachment.bone_name = parsed.attach_bone
 	skeleton.add_child(attachment)
 	attachment.add_child(item_skeleton)
-	# The item's own root bone is put *onto* the body bone -- not the item's
-	# model origin. An item skeleton's root carries a real rest of its own
-	# (`sword_01.bsk`'s Bone01 is a near-180-degree turn, `blade_01.bsk`'s
-	# exactly 180 about Y, both read with dump_bsk.gd), and hanging the
-	# model origin at the hand let that rest cancel out of the picture: the
-	# sword drew held blade-forward, flat, which is not how the game holds
-	# one. Undoing the root's rest under the attachment makes the root bone
-	# coincide with the hand, and the sword hangs as it does in the game.
-	# The composition was chosen by rendering both, not read from the
-	# client; the data says only that the root's rest is not identity.
-	if item_skeleton.get_bone_count() > 0:
-		item_skeleton.transform = item_skeleton.get_bone_rest(0).affine_inverse()
+	# The client's composition (see this function's doc comment): the item's
+	# model space sits at the attach bone's position, rotated by the bone's
+	# turn away from its rest and nothing else. The BoneAttachment3D applies
+	# the bone's full global pose `[B_pose | p]`; multiplying by the inverse
+	# of the bone's global REST rotation leaves `[B_pose * B_rest^-1 | p]`,
+	# which is `attach.skin`'s rotation at `attach.world`'s position -- mode
+	# 1 of CRTBone::FUN_00c48fe0 with the root's own rest cancelled. The
+	# item skeleton keeps its file rest, so its root's skin is identity.
+	#
+	# Round 137 undid the ITEM ROOT's rest here instead. That fitted
+	# `sword_01` only because its root rest happens to equal the hand's
+	# global rest; it pointed the blade and spear down where the sword
+	# pointed forward, and turned the `_sa` collar front-to-back (round
+	# 141). tools/probe_attach.gd has the numbers for both.
+	item_skeleton.transform = Transform3D(
+		skeleton.get_bone_global_rest(bone_idx).basis.inverse(), Vector3.ZERO)
 	var any_attached := false
 	for pair in meshes:
 		var mesh: BmsReader.ParsedMesh = pair[0]

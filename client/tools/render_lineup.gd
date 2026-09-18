@@ -73,8 +73,17 @@ func _initialize() -> void:
 				var item_str := String(item_path).strip_edges()
 				if item_str == "":
 					continue
-				if SkinnedBsrAssembler.attach_item_from_archive(data, skeleton, item_str) != null:
+				var att := SkinnedBsrAssembler.attach_item_from_archive(data, skeleton, item_str)
+				if att != null:
 					worn += 1
+					# --gizmo: draw the own-skeleton item node's axes (red X,
+					# green Y, blue Z, 5 long) so a render shows where the
+					# node's frame is against where the mesh actually draws.
+					if _arg("--gizmo") != "" and att.attach_bone != "":
+						var item_node := att.node.get_child(0) as Node3D
+						if item_node != null:
+							item_node.add_child(_axes_gizmo(5.0))
+							print("   gizmo on %s (item node under '%s')" % [item_str.get_file(), att.attach_bone])
 		# Measure this character's own width so the next one clears its arms.
 		var own := _skel_bounds(skeleton)
 		skeleton.position = Vector3(cursor_x - own.get_center().x, 0.0, 0.0)
@@ -125,6 +134,21 @@ func _initialize() -> void:
 	get_root().get_texture().get_image().save_png(out_path)
 	print("saved to ", out_path)
 	quit(0)
+
+## Three coloured axis lines from the origin: red +X, green +Y, blue +Z.
+func _axes_gizmo(length: float) -> MeshInstance3D:
+	var im := ImmediateMesh.new()
+	for axis in [[Vector3.RIGHT, Color.RED], [Vector3.UP, Color.GREEN], [Vector3.BACK, Color.BLUE]]:
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.albedo_color = axis[1]
+		im.surface_begin(Mesh.PRIMITIVE_LINES, mat)
+		im.surface_add_vertex(Vector3.ZERO)
+		im.surface_add_vertex((axis[0] as Vector3) * length)
+		im.surface_end()
+	var mi := MeshInstance3D.new()
+	mi.mesh = im
+	return mi
 
 ## Combined AABB of every drawable mesh under a skeleton, in skeleton-local
 ## space (skinned MeshInstances sit at identity under the skeleton).

@@ -117,6 +117,27 @@ not noise, and a real Biped rig (`dubhe.bsk`, `mob/dm/dubhe.bsk`) renders as a g
 recognizable humanoid figure — head, spine, mirrored arms with fingers, mirrored legs. The
 leading field's own content (4 bytes) isn't identified.
 
+### Confirmed from the client's own loader (2026-09-18)
+
+The loader this file said could not be found is `CPrimBranch::vslot_001` (`FUN_00bfb580`,
+`objengine\PrimSkeleton.cpp`, asserting `nCount == 0` twice on the trailer), with the per-bone
+record read by `PrimSkeleton::FUN_00bfae90` and applied by `PrimSkeleton::FUN_00bf9e60`
+(decompile on the RE box, not in this repo; `docs/rounds/attach.md`). The header's `uint32` at
+0x0c is the **bone count** (read by `FUN_00410f50` straight after the magic); then one record per
+bone:
+
+| Field | Meaning |
+|---|---|
+| 1 byte | bone kind: `0` -> a bone (`CPrimBone`/`CRTBone`), `1` -> a **dummy** (`CPrimDummy`/`CRTDummy`, a 3ds Max helper); both derive from `CPrimSocket`/`CRTSocket` |
+| length-prefixed string | bone name |
+| length-prefixed string | parent name (empty for the root -- that empty string's 4-byte length is the "leading dword" / "1 extra byte" puzzle above) |
+| 3 x 28 bytes | **three (quaternion, vector) transforms, in this order: local (parent-relative), world bind, inverse bind.** Each is read into the record at +0x3c/+0x58/+0x74 and turned into the prim's three 4x4 matrices one-to-one (`FUN_00bf9e60` builds the rotation from the quaternion and drops the vector into row 3). The "second quaternion" at 0x1c is therefore the world bind rotation (only equal to the local one for a root), and the third is its inverse |
+| `uint32` count + that many strings | **child bone names** -- the "announced" names of the announce/resolve model; a leaf writes 0 |
+
+The 22nd "float" of the 88-byte reading above is this child count. Root records are 92 bytes
+because the empty parent name costs 4; there are not two record shapes, only an empty or
+non-empty parent field.
+
 ## Implementation notes
 
 - `server/internal/bsk` (Go) and `client/scripts/bsk/bsk_reader.gd` (GDScript) both parse the
