@@ -8858,6 +8858,47 @@ foot. The worn slots around it are still empty frames -- filling them
 with the equipped icons, and the item table's armour defence block, are
 the follow-ups.
 
+## Hundred-and-forty-first round: the equipment pipeline drawn and measured, and the one accessory it mis-hangs
+
+The character + equipment + texture path had been assembled and shipped but not
+looked at in a while, so it was rendered on the box against real `Data.pk2` and
+checked piece by piece. It works, with one precise exception.
+
+**What renders correctly** (`render_dressed_character.gd`, a new tool that
+assembles a body `.bsr` and hangs item `.bsr`s on it the way `World3D` dresses
+the player):
+
+- The `chinaman_fighter` body: 43 bones, 9 skinned pieces, textured (skin, hair,
+  face, loincloth) — a person in T-pose, not scattered.
+- The Cotton Suit worn over it — `clothes_01_{ba,la,aa,fa,ha}.bsr`, five armour
+  pieces, each **type 5, no own skeleton, weighted onto the body's own bones by
+  name**. All five land right: grey tunic, trousers, shoes, wristbands.
+- `sword_01.bsr` in the right hand — **own skeleton hung from the hand bone**,
+  blade extending correctly from the grip.
+- The `chinaquest_priest` NPC, self-contained `.bsr`, in his monk robes.
+
+So both attach modes — weighted-to-body armour and own-skeleton weapon — are
+correct, and DDJ→material→skinned-mesh is sound end to end.
+
+**The one exception, and it is measured, not guessed.** `clothes_01_sa.bsr`
+renders as a small grey rectangle floating by the neck. It is NOT the weighted
+kind: its `.bsr` names its own skeleton `prim\skel\item\china\clothes_sa.bsk` and
+an attach bone `Bip01 Neck1`, so it takes the same own-skeleton path the sword
+does. The mismatch is the transform. Measured vertex bounds:
+
+	clothes_01_ba.bms (weighted armour):  centre (0,13,0)  — ABSOLUTE character space (torso is (0,14,0))
+	clothes_01_sa.bms (own-skeleton):     centre (0,2,0), 16 verts — ITEM-LOCAL space, like a weapon
+
+So `_sa` is an item-local accessory, correctly routed to the own-skeleton branch,
+but placed by `SkinnedBsrAssembler`'s `item_skeleton.transform =
+get_bone_rest(0).affine_inverse()` — a composition the code's own comment says was
+"chosen by rendering" to make the **sword** hang right, not read from the client.
+It does not generalise to an accessory on `Bip01 Neck1`. **Next step, grounded:**
+the client's item-attach transform composition, read from the binary rather than
+tuned per item — the sword and the collar need one rule, not two render-picks.
+Left unfixed rather than render-tuned again, per the project rule. (Tools added:
+`render_dressed_character.gd`, `measure_mesh.gd`.)
+
 ## Hundred-and-fortieth round: a weapon's stats on hover, measured off a real tooltip
 
 "If I hover over an item it shows me the stats." Hovering an inventory
