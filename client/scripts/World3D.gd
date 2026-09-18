@@ -4733,6 +4733,13 @@ func _body_animation_path(gender: String, action_type: int, group: String) -> St
 ## query would otherwise await a signal that can never fire.
 func _real_player_equipped_items() -> Dictionary:
 	if not NetClient.is_connected_to_server() or NetClient.current_character_name == "":
+		# QA stand-in: with no server, an env-supplied loadout lets a dressed
+		# character be rendered for a screenshot. The ids resolve through the
+		# real item table exactly as the server's list would, so this exercises
+		# the real id -> worn-model path, not a shortcut around it.
+		var qa_equip := OS.get_environment("SRREVAMP_QA_EQUIP")
+		if qa_equip != "":
+			return _parse_qa_equip(qa_equip)
 		return {}
 	NetClient.list_equipment(NetClient.current_character_name)
 	var answer: Array = await NetClient.equipment_result
@@ -4742,6 +4749,23 @@ func _real_player_equipped_items() -> Dictionary:
 	var equipped := {}
 	for item in items:
 		equipped[item.slot] = item.item_id
+	return equipped
+
+## Parses a QA equipment loadout, "slot=item_id" pairs separated by commas
+## (e.g. "1=3637,4=3638,5=3639,6=3632" -- chest, legs, boots, sword), into the
+## slot -> item id dictionary _build_assembled_character expects. Slots are the
+## EquipmentNet.SLOT_* numbers; item ids are real ones from the item table. A
+## malformed pair is skipped with a log line rather than guessed at. Only the
+## QA screenshot harness sets SRREVAMP_QA_EQUIP -- see _real_player_equipped_items.
+func _parse_qa_equip(spec: String) -> Dictionary:
+	var equipped := {}
+	for pair in spec.split(",", false):
+		var kv: PackedStringArray = String(pair).split("=")
+		if kv.size() != 2 or not kv[0].strip_edges().is_valid_int() or not kv[1].strip_edges().is_valid_int():
+			printerr("World3D: SRREVAMP_QA_EQUIP: bad pair '%s' (want slot=item_id)" % pair)
+			continue
+		equipped[int(kv[0].strip_edges())] = int(kv[1].strip_edges())
+	print("World3D: QA equipment loadout %s" % str(equipped))
 	return equipped
 
 ## Loads a real Map.pk2 region's real object placements (SRREVAMP_MAPO_PATH,
@@ -5232,6 +5256,11 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_ANIM=1     play the real character animation (off by
 ##                          default -- it still renders wrongly, see
 ##                          docs/WORLD_ISSUES.md's ninetieth round)
+##   SRREVAMP_QA_EQUIP="s=id,.." dress the player from this loadout when no
+##                          server is present: "slot=item_id" pairs (slots per
+##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
+##                          for the China-man heavy set plus the starter sword),
+##                          resolved through the real item table
 ##   SRREVAMP_QA_RIG=1      report where each assembled character piece is
 ##                          against where its own bone is
 ##   SRREVAMP_QA_SCAN=n     sweep the region on an n x n grid and report

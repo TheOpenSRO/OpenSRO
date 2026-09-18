@@ -8697,6 +8697,55 @@ unchanged. Rendered with the new `qa_shot.sh --scene res://scenes/Login.tscn`
 (which boots any scene, not just the world), the fields sit on their slots
 and the screen reads as the original's.
 
+## Hundred-and-fiftieth round: a dressed fighter standing in the real world, and the legs that the animation still eats
+
+"Focus on textures, equipment, images from the pk2." So: dress the player
+*in the world*, not on a plain backdrop, and drive it from real item ids
+the server could actually send.
+
+**The hook.** `SRREVAMP_QA_EQUIP="slot=item_id,.."` (and `qa_shot.sh
+--equip`) stands in for the server's equipment list when no server is
+present. It feeds `_real_player_equipped_items` a `slot -> item id`
+dictionary (slots are `EquipmentNet.SLOT_*`), so the ids resolve through
+the real item table (`_item_models`) on the exact same path the server's
+list drives -- not a shortcut around it. The loadout used is the China-man
+newbie **default** kit, read out of Media.pk2 by the new
+`tools/dump_item_set.gd` (filter the item table by code-name substring):
+the `_DEF` rows are the literal starting gear. `ITEM_CH_M_HEAVY_01_BA/LA/FA`
+= **3637 / 3638 / 3639** (chest, legs, boots; the `BA`/`LA`/`FA` suffix and
+`type_ids[3]` = 3/4/6 give the worn slot), and `ITEM_CH_SWORD_01_A_DEF` =
+**3632** (`type_ids[3]` = 2 -> the `sword` animation group). The client
+logs `china_man wears 4/4 item(s)`; chest/legs/boots attach weighted onto
+the body, the sword hangs from its own skeleton on `Bip01 R HandMid`. The
+`_sa` shoulder is deliberately left out (round 141's mis-hung accessory).
+
+**A measured find, not a screenshot one.** In the world the dressed body
+renders only from the waist up -- the legs are below the plaza tiles, in a
+front shot at 55 units as much as a back shot at 16. That reads as "sunk,"
+but it is not: `SRREVAMP_QA_RIG` puts the lowest bone `Bip01 R Toe0` at
+y -51.89 against a landing height of -51.90 -- **the feet are on the
+ground**, and the bone chain spans a correct 16 units up to the head. The
+same body assembled by `tools/measure_assembled.gd`/`render_dressed_character.gd`
+in its **rest pose** renders whole, legs and all (bounds 18x19x9). The only
+difference between the two is the per-frame `apply_ban_pose_at` running the
+town idle (`chinaman_fighter_standcity.ban`) on the in-world skeleton. So
+the fault is in the **skinned mesh under that pose**, not in where the
+bones sit -- the lower-body verts stop following their (correctly placed)
+leg bones once the idle is applied.
+
+This is the same `apply_ban_pose` bug this file has chased before (the
+"arms and legs splayed" note in `World3D.gd`, and the 2026-09-02 round that
+left it disabled). It was re-enabled 2026-09-08 as "stands correctly, arms
+at its sides" -- but that check, by its own admission, "only ever looked at
+a bare skeleton's bone positions, never at real attached body meshes."
+This round is that missing check: with real meshes on, the animated pose
+eats the legs. The bone globals reading correct is exactly why a bone-only
+look passed it. Left as a measured finding for the rig lane, not flipped
+from here -- the enable/disable toggle has been flipped on screenshots
+before, and the honest datum is "rest pose whole, idle pose legless," with
+the fault localised to the skinning, not the placement. The equipment
+pipeline itself is correct end to end.
+
 ## Hundred-and-forty-ninth round: floating damage numbers
 
 Every blow now shows its damage the way the original does: a number that
