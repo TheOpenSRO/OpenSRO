@@ -17943,3 +17943,21 @@ on `re_server`) as authoritative, not `srgs.asm` or the on-disk exe. Structural 
 addresses are shared between the builds, so the session's structural findings hold; only values at
 moddable sites can diverge, and the death penalty is one that does. Docs only; 0 names; no code change
 (both audited items are correct in the authoritative build).
+
+## The combat .rdata constants are shared across both builds (2026-09-18)
+
+Closing the risk the two-builds finding opened: all ten combat constants srrevamp cites were read
+from the AUTHORITATIVE dump build with `ReadConst.java`, and every one matches the on-disk exe:
+
+	0xb45ac0 = 1.0     0xb45af0 = 100.0   0xb45f30 = 2.0     (mitigation, berserk/crit)
+	0xb45f60 = 0.05    0xb45c60 = 10.0    0xb45af8 = 32767   (floor band)
+	0xb45dc8 = 0.03    0xb45b8c = 0.30                        (level advantage)
+	0xb462ac = 1000.0  0xb45ea0 = 1.02                        (MaxHP/MaxMP)
+
+So the two builds diverge only in CODE (the death-penalty player multiplier, x20 in the dump vs x100
+in the modded on-disk build); their `.rdata` formula constants are identical. Every combat/stat
+constant this session grounded is therefore confirmed on the build srrevamp is recovered from, and
+the damage pipeline audit (floor band fixed, mitigation/level/crit/berserk/HP-MP verified, death
+penalty verified) now stands entirely against the authoritative binary. `.rdata` constant reads from
+the on-disk exe are safe; only code-immediate rates need per-value confirmation against the dump.
+Docs only; 0 names.
