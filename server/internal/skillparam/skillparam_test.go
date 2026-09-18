@@ -84,15 +84,24 @@ func TestEveryFieldKeyIsAKnownCode(t *testing.T) {
 			t.Errorf("Field has %q, which is not in Codes", c)
 		}
 	}
-	// The two absences are deliberate and named, so a silent third one is a bug.
+	// Exactly one code has no field, and it is 'getv', which genuinely has
+	// none: it is a two-word prefix whose SECOND word selects the field, so
+	// its 40 fields live in GetvSub rather than here.
+	//
+	// This used to be three. 'att' and 'setv' were unresolved because their
+	// branches do not store the way the others do -- 'att' stores through the
+	// _Dst pointer the prologue set to skill+0x230, and 'setv' scans a
+	// five-slot array at 0x388 for the first free one. Reading the parser's
+	// dispatch tree rather than each leaf in isolation resolves both; see
+	// paramblock.go.
 	var missing []Code
 	for _, c := range Codes {
 		if _, ok := Field[c]; !ok {
 			missing = append(missing, c)
 		}
 	}
-	if len(missing) != 3 {
-		t.Errorf("codes without a field: %v; expected exactly three, whose branches loop or dispatch further", missing)
+	if len(missing) != 1 || missing[0] != "getv" {
+		t.Errorf("codes without a field: %v; expected exactly [getv]", missing)
 	}
 }
 

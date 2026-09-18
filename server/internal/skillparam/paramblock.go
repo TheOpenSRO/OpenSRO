@@ -1,0 +1,560 @@
+package skillparam
+
+// The Param block: how a skill's parameter stream is laid out, and how far the
+// parser moves for each code.
+//
+// RECOVERED 2026-09-18 from SkillGlobal::RefSkill_ParseParams (0x00587630) in
+// SR_GameServer.exe, by walking its dispatch tree and reading, for each code,
+// the field it stores into and the amount it advances the cursor.
+//
+// WHAT THE PARSER ACTUALLY DOES, which is not what an earlier reading assumed.
+// A code's field does NOT receive the parameter's value. It receives a POINTER
+// into the stream, just past the code word:
+//
+//	00587a4b  mov [esi+0x434],eax      ; eax = cursor + 1, i.e. the values
+//	add DAT_00c826bc,4                 ; cursor advances by the run
+//
+// So Field[code] says where the engine remembers the run, and Run[code] says
+// how long the run is. Reading a value needs both.
+//
+// THREE STRUCTURAL FACTS, each of which bounds the table and would fail loudly
+// if the extraction were wrong:
+//
+//   - The prologue is memset(skill+0x230, 0, 0x37c), so every field the parser
+//     writes lies in [0x230, 0x5ac). All 186 do.
+//   - The cursor starts at skill+0x16c and is a uint*, so every advance is in
+//     32-bit words, not bytes.
+//   - The loop ends on `if (0x31 < index) return`, capping the block at 50
+//     words -- which is independently what refdata.Skill calls "the 50 generic
+//     Param slots".
+//
+// The dispatch tree is exhaustive: the last code tested is 'trap', and its
+// miss path is the parser's own error, "unknown skill param!!! [RefSkill ID:
+// %d, ParamValue: %d]". Nothing falls through silently.
+//
+// MEASURED AGAINST REAL DATA. Walking all 33,632 rows of the seven skilldata
+// shards in a real Media.pk2 with this table: 32,367 rows (96.2%) consume their
+// Param block exactly to the end, and the remaining 1,265 stop at a
+// variable-length code, which is expected because those do not state a length.
+// **No row hits an unrecognised code.** A wrong run length anywhere derails the
+// rest of a row, so 32,367 clean traversals are that many independent
+// confirmations of every length they touch.
+
+// ParamKind is how the parser consumes a run.
+type ParamKind int
+
+const (
+	// KindFixed: the parser states the run length. Run[code] is it.
+	KindFixed ParamKind = iota
+	// KindVarLen: the parser advances ONE word and points the field at what
+	// follows, without stating how much of it belongs to the run. Whatever
+	// reads the field decides. A walk cannot continue past one of these, and
+	// Run has no entry for them.
+	KindVarLen
+	// KindArray: the run fills the next free slot of a fixed-size array, so the
+	// code may legitimately appear several times in one block.
+	KindArray
+	// KindPrefix: a SECOND word selects the parameter. Only 'getv' is one; its
+	// 40 sub-codes are in GetvSub.
+	KindPrefix
+)
+
+// ParamBlockColumn is the 0-based index of a skilldata row's first Param word
+// -- column 70 counting from 1.
+//
+// CORRECTED 2026-09-18, and this is the correction that mattered most.
+// docs/protocol/skill_params.md said column 69, and under that alignment only
+// 21,385 of 33,632 rows walked to the end: 11,907 stopped immediately, reading
+// a neighbouring column's value (1, 3 or 4) as a code. Shifting by one column
+// takes the walk to 32,367 with zero unrecognised codes. 'att' sits at column
+// 70 in 29,312 rows and is the first code of the block in all of them.
+const ParamBlockColumn = 69
+
+// ParamBlockMaxWords is the cap the parser's own loop enforces.
+const ParamBlockMaxWords = 50
+
+// The region the parser clears and then fills with pointers, and the field the
+// stream itself starts at.
+const (
+	ParsedRegionStart = 0x230
+	ParsedRegionLen   = 0x37c
+	StreamField       = 0x16c
+)
+
+// Run is the run length in 32-bit WORDS, including the code word, so a run of 6
+// carries 5 values. Variable-length codes have no entry.
+var Run = map[Code]int{
+	"att":  6,
+	"pdmg": 2,
+	"pdm2": 2,
+	"ko":   3,
+	"da":   2,
+	"cr":   3,
+	"ck":   2,
+	"hr":   3,
+	"ru":   2,
+	"kb":   3,
+	"saps": 3,
+	"defp": 4,
+	"defr": 3,
+	"spda": 3,
+	"ar":   3,
+	"dar":  3,
+	"odar": 3,
+	"br":   3,
+	"er":   3,
+	"dura": 2,
+	"onff": 3,
+	"mc":   3,
+	"efr":  7,
+	"esht": 3,
+	"cnsm": 4,
+	"rhru": 3,
+	"dcmp": 2,
+	"hpi":  3,
+	"mpi":  3,
+	"pw":   5,
+	"hste": 2,
+	"hst2": 2,
+	"hst3": 2,
+	"irgc": 3,
+	"apru": 3,
+	"apau": 3,
+	"terd": 2,
+	"thrd": 2,
+	"tpdd": 2,
+	"tpad": 2,
+	"tele": 3,
+	"tel2": 3,
+	"tel3": 3,
+	"bgra": 3,
+	"reat": 3,
+	"real": 4,
+	"pola": 3,
+	"summ": 6,
+	"fz":   3,
+	"fb":   3,
+	"es":   4,
+	"bu":   4,
+	"ps":   4,
+	"zb":   3,
+	"heal": 5,
+	"mwhh": 2,
+	"mwmh": 2,
+	"resu": 3,
+	"cura": 2,
+	"pmhp": 5,
+	"pmmp": 5,
+	"pmdg": 5,
+	"pmdp": 5,
+	"pao":  2,
+	"pcdu": 3,
+	"chcr": 2,
+	"cmcr": 2,
+	"lnks": 5,
+	"lkcp": 2,
+	"ovl2": 2,
+	"scls": 2,
+	"puls": 2,
+	"reqc": 2,
+	"reqa": 2,
+	"atca": 3,
+	"pwtt": 2,
+	"mwtt": 2,
+	"tant": 3,
+	"tnt2": 3,
+	"dtnt": 3,
+	"pwdt": 2,
+	"mwdt": 2,
+	"dmgt": 3,
+	"lkdh": 4,
+	"dru":  3,
+	"dru2": 3,
+	"expi": 3,
+	"stri": 3,
+	"inti": 3,
+	"abir": 3,
+	"tkss": 2,
+	"lfst": 2,
+	"mwhs": 2,
+	"tran": 3,
+	"curt": 3,
+	"curl": 4,
+	"rcur": 2,
+	"dmgr": 5,
+	"abnb": 2,
+	"dtt":  3,
+	"dttp": 3,
+	"hide": 4,
+	"dcri": 2,
+	"se":   4,
+	"rt":   4,
+	"sl":   4,
+	"fe":   4,
+	"my":   5,
+	"bl":   6,
+	"stns": 4,
+	"dn":   5,
+	"st":   4,
+	"ds":   5,
+	"ca":   4,
+	"cssr": 5,
+	"csit": 5,
+	"cspd": 5,
+	"csmd": 5,
+	"cshp": 7,
+	"csmp": 7,
+	"tb":   5,
+	"lkdr": 4,
+	"lkag": 3,
+	"lkdd": 2,
+	"thld": 2,
+	"tcmd": 3,
+	"skc":  4,
+	"pchr": 2,
+	"qest": 5,
+	"msch": 3,
+	"mcap": 3,
+	"rmut": 2,
+	"alcu": 2,
+	"luck": 2,
+	"mstc": 2,
+	"mscc": 2,
+	"msid": 2,
+	"gdr":  2,
+	"dgmp": 2,
+	"hwir": 2,
+	"mom":  5,
+	"expu": 3,
+	"spi":  2,
+	"hwit": 2,
+	"bldr": 4,
+	"msr":  3,
+	"setv": 4,
+	"reqi": 3,
+	// 'getv' has no advance of its own: each of its 40 sub-branches advances,
+	// and all 40 advance by 2. So the run is 2 -- the code word and the
+	// sub-code -- and the sub-code is the value.
+	"getv": 2,
+}
+
+// Kind classifies every top-level code. There are 169: 146 fixed-run, 20
+// variable-length, 2 arrays and the one two-word prefix.
+var Kind = map[Code]ParamKind{
+	"att":  KindFixed,
+	"pdmg": KindFixed,
+	"pdm2": KindFixed,
+	"ko":   KindFixed,
+	"da":   KindFixed,
+	"cr":   KindFixed,
+	"ck":   KindFixed,
+	"hr":   KindFixed,
+	"ru":   KindFixed,
+	"kb":   KindFixed,
+	"saps": KindFixed,
+	"defp": KindFixed,
+	"defr": KindFixed,
+	"spda": KindFixed,
+	"ar":   KindFixed,
+	"dar":  KindFixed,
+	"odar": KindFixed,
+	"br":   KindFixed,
+	"er":   KindFixed,
+	"dura": KindFixed,
+	"onff": KindFixed,
+	"mc":   KindFixed,
+	"efr":  KindFixed,
+	"esht": KindFixed,
+	"cnsm": KindFixed,
+	"rhru": KindFixed,
+	"dcmp": KindFixed,
+	"hpi":  KindFixed,
+	"mpi":  KindFixed,
+	"pw":   KindFixed,
+	"hste": KindFixed,
+	"hst2": KindFixed,
+	"hst3": KindFixed,
+	"irgc": KindFixed,
+	"apru": KindFixed,
+	"apau": KindFixed,
+	"terd": KindFixed,
+	"thrd": KindFixed,
+	"tpdd": KindFixed,
+	"tpad": KindFixed,
+	"tele": KindFixed,
+	"tel2": KindFixed,
+	"tel3": KindFixed,
+	"bgra": KindFixed,
+	"reat": KindFixed,
+	"real": KindFixed,
+	"pola": KindFixed,
+	"summ": KindFixed,
+	"fz":   KindFixed,
+	"fb":   KindFixed,
+	"es":   KindFixed,
+	"bu":   KindFixed,
+	"ps":   KindFixed,
+	"zb":   KindFixed,
+	"heal": KindFixed,
+	"mwhh": KindFixed,
+	"mwmh": KindFixed,
+	"resu": KindFixed,
+	"cura": KindFixed,
+	"pmhp": KindFixed,
+	"pmmp": KindFixed,
+	"pmdg": KindFixed,
+	"pmdp": KindFixed,
+	"pao":  KindFixed,
+	"pcdu": KindFixed,
+	"chcr": KindFixed,
+	"cmcr": KindFixed,
+	"lnks": KindFixed,
+	"lkcp": KindFixed,
+	"ovl2": KindFixed,
+	"scls": KindFixed,
+	"puls": KindFixed,
+	"reqc": KindFixed,
+	"reqa": KindFixed,
+	"atca": KindFixed,
+	"pwtt": KindFixed,
+	"mwtt": KindFixed,
+	"tant": KindFixed,
+	"tnt2": KindFixed,
+	"dtnt": KindFixed,
+	"pwdt": KindFixed,
+	"mwdt": KindFixed,
+	"dmgt": KindFixed,
+	"lkdh": KindFixed,
+	"dru":  KindFixed,
+	"dru2": KindFixed,
+	"expi": KindFixed,
+	"stri": KindFixed,
+	"inti": KindFixed,
+	"abir": KindFixed,
+	"tkss": KindFixed,
+	"lfst": KindFixed,
+	"mwhs": KindFixed,
+	"tran": KindFixed,
+	"curt": KindFixed,
+	"curl": KindFixed,
+	"rcur": KindFixed,
+	"dmgr": KindFixed,
+	"abnb": KindFixed,
+	"dtt":  KindFixed,
+	"dttp": KindFixed,
+	"hide": KindFixed,
+	"dcri": KindFixed,
+	"se":   KindFixed,
+	"rt":   KindFixed,
+	"sl":   KindFixed,
+	"fe":   KindFixed,
+	"my":   KindFixed,
+	"bl":   KindFixed,
+	"stns": KindFixed,
+	"dn":   KindFixed,
+	"st":   KindFixed,
+	"ds":   KindFixed,
+	"ca":   KindFixed,
+	"cssr": KindFixed,
+	"csit": KindFixed,
+	"cspd": KindFixed,
+	"csmd": KindFixed,
+	"cshp": KindFixed,
+	"csmp": KindFixed,
+	"tb":   KindFixed,
+	"lkdr": KindFixed,
+	"lkag": KindFixed,
+	"lkdd": KindFixed,
+	"thld": KindFixed,
+	"tcmd": KindFixed,
+	"skc":  KindFixed,
+	"pchr": KindFixed,
+	"qest": KindFixed,
+	"msch": KindFixed,
+	"mcap": KindFixed,
+	"rmut": KindFixed,
+	"alcu": KindFixed,
+	"luck": KindFixed,
+	"mstc": KindFixed,
+	"mscc": KindFixed,
+	"msid": KindFixed,
+	"gdr":  KindFixed,
+	"dgmp": KindFixed,
+	"hwir": KindFixed,
+	"mom":  KindFixed,
+	"expu": KindFixed,
+	"spi":  KindFixed,
+	"hwit": KindFixed,
+	"bldr": KindFixed,
+	"msr":  KindFixed,
+	"ao":   KindVarLen,
+	"eshp": KindVarLen,
+	"tctc": KindVarLen,
+	"hitm": KindVarLen,
+	"rpkt": KindVarLen,
+	"php1": KindVarLen,
+	"pmp1": KindVarLen,
+	"ssou": KindVarLen,
+	"cbuf": KindVarLen,
+	"nbuf": KindVarLen,
+	"bbuf": KindVarLen,
+	"lks2": KindVarLen,
+	"reqn": KindVarLen,
+	"hntp": KindVarLen,
+	"slcc": KindVarLen,
+	"trap": KindVarLen,
+	"efta": KindVarLen,
+	"fitp": KindVarLen,
+	"nmf":  KindVarLen,
+	"nmh":  KindVarLen,
+	"setv": KindArray,
+	"reqi": KindArray,
+	"getv": KindPrefix,
+}
+
+// GetvSub is the sub-vocabulary of the two-word 'getv' parameter: the second
+// word selects which field the run fills. Every one of them is a run of 2, so
+// the value IS the sub-code and 'getv' always advances two words.
+//
+// These 40 were the bulk of what docs/protocol/skill_params.md recorded as an
+// open lead -- "roughly 55 further tag comparisons ... whether the vocabulary
+// is really ~105 or ~145 is open". It is 209: 169 top-level codes and these.
+var GetvSub = map[Code]int{
+	"E1SA": 0x4d4,
+	"E2SA": 0x4d8,
+	"E2AA": 0x4dc,
+	"E2AH": 0x4e0,
+	"WIMD": 0x4e4,
+	"WIRU": 0x4e8,
+	"EAAT": 0x4ec,
+	"COAT": 0x4f0,
+	"FIAT": 0x4f4,
+	"LIAT": 0x4f8,
+	"RPDU": 0x500,
+	"RPTU": 0x504,
+	"RPBU": 0x508,
+	"CBRA": 0x50c,
+	"CBAT": 0x510,
+	"STSP": 0x514,
+	"STDU": 0x518,
+	"DGAT": 0x51c,
+	"DGHR": 0x520,
+	"DGAA": 0x524,
+	"DTAT": 0x528,
+	"DTDR": 0x52c,
+	"BLAT": 0x530,
+	"BSHP": 0x534,
+	"SAAA": 0x538,
+	"TRAA": 0x53c,
+	"MUAT": 0x540,
+	"MUER": 0x544,
+	"MUCR": 0x548,
+	"DSER": 0x54c,
+	"DSCR": 0x550,
+	"BDMD": 0x554,
+	"HLRU": 0x558,
+	"HLMD": 0x55c,
+	"HLAT": 0x560,
+	"HLFS": 0x564,
+	"HLMI": 0x568,
+	"HLBP": 0x56c,
+	"HLSM": 0x570,
+	"MAAT": 0x574,
+}
+
+// EfrField: 'efr' picks its target field from its FIRST VALUE rather than
+// having one. A value outside this set is parsed and discarded -- the cursor
+// still advances the full 7 words.
+//
+// This is why skillparam.Field carried 0x294 for 'efr' while a second reading
+// of the same branch produced 0x28c: both are real, and neither is the whole
+// code. It is also why the code looked variable-length and was reported as the
+// most common thing stopping a walk; it is a fixed run of 7.
+var EfrField = map[int]int{
+	1: 0x28c,
+	2: 0x290,
+	3: 0x294,
+}
+
+// The two array parameters, each scanning its slots for the first empty one and
+// asserting when full.
+const (
+	SetvArrayBase  = 0x388
+	SetvArraySlots = 5
+	ReqiArrayBase  = 0x3a0
+	ReqiArraySlots = 5
+)
+
+// Entry is one run a walk consumed.
+type Entry struct {
+	Code  Code
+	Index int // word index of the CODE word within the block
+	Run   int // words consumed, including the code word
+}
+
+// CodeOf decodes a stored Param word into its code. The codes are C
+// multi-character literals held big-endian, so the leading zero bytes are
+// padding and the remaining bytes are the letters in order. Reading the stored
+// integer little-endian spells every code backwards, which has produced a wrong
+// answer in this project twice; this is the direction that is right.
+func CodeOf(w int32) Code {
+	var b [4]byte
+	b[0] = byte(w >> 24)
+	b[1] = byte(w >> 16)
+	b[2] = byte(w >> 8)
+	b[3] = byte(w)
+	i := 0
+	for i < 4 && b[i] == 0 {
+		i++
+	}
+	return Code(b[i:])
+}
+
+// Walk parses a skill's Param block the way the engine does: each run is a code
+// word followed by Run[code]-1 values, and a zero word is padding to skip.
+//
+// It returns the runs it consumed, and reports complete=false with the code
+// that stopped it. A walk stops for exactly two reasons, and they mean
+// different things:
+//
+//   - a KindVarLen code, which is not an error -- the parser genuinely does not
+//     state that run's length, so nothing can know where the next one starts;
+//   - a word that is no code at all, which IS an error and means either the
+//     block does not start where the caller thinks it does or the table is
+//     wrong. Across all 33,632 real rows this does not happen.
+//
+// Callers that only need to locate one parameter should prefer Find, which says
+// what to do about an incomplete walk.
+func Walk(words []int32) (entries []Entry, stopped Code, complete bool) {
+	for i := 0; i < len(words) && i < ParamBlockMaxWords; {
+		if words[i] == 0 {
+			i++
+			continue
+		}
+		c := CodeOf(words[i])
+		if Kind[c] == KindVarLen {
+			return entries, c, false
+		}
+		run, ok := Run[c]
+		if !ok || run < 1 {
+			return entries, c, false
+		}
+		entries = append(entries, Entry{Code: c, Index: i, Run: run})
+		i += run
+	}
+	return entries, "", true
+}
+
+// Find returns the word index of the first run carrying code, and whether the
+// walk that looked for it finished. A caller that gets found=false and
+// complete=false learned nothing -- the code may sit past where the walk
+// stopped -- and should fall back rather than conclude the skill lacks it.
+func Find(words []int32, code Code) (index int, found bool, complete bool) {
+	entries, _, complete := Walk(words)
+	for _, e := range entries {
+		if e.Code == code {
+			return e.Index, true, complete
+		}
+	}
+	return 0, false, complete
+}

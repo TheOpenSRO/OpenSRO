@@ -17268,3 +17268,75 @@ What the whole trace has established, and what it has not, now reads cleanly:
 	that object's class, and its slot 10                                             NOT READ
 
 Applied 1.
+
+## The skill Param block, end to end, and an off-by-one that cost half the table (2026-09-18)
+
+The skill parameter vocabulary was an open lead in `docs/protocol/skill_params.md`: *"whether the
+vocabulary is really ~105 or ~145 is open."* It is **209**, and closing it turned up a bug in the
+document's own alignment that mattered more than the missing codes.
+
+**What was done.** `SkillGlobal::RefSkill_ParseParams` (`0x00587630`) was walked structurally --
+the decompiled dispatch tree parsed as a tree -- rather than by collecting `cmp` immediates. The
+tree has four branch shapes, and each earlier pass matched some of them:
+
+| shape | body is | count |
+|---|---|---|
+| `if (uVar1 == C) { … }` | the block | most |
+| `if (uVar1 != C) goto <error>;` | the **fall-through** | 20 |
+| `if (uVar1 != C) { …more tests… }` | the **else** | 2 (`spda`, `trap`) |
+| `if (uVar1 == 'getv')` then switch on the **second word** | a two-word code | 1, 40 sub-codes |
+
+**169 top-level codes and 40 `getv` sub-codes.** Classified: 146 fixed-run, 20 variable-length, 2
+arrays (`setv`, `reqi`), 1 prefix.
+
+**What makes it credible rather than a fourth guess.** It reproduces **all 131 rows of the
+existing fixed-run table with zero disagreements**, including the five the document nominated as
+its own controls (`att`, `defp`, `defr`, `spda`, `odar`). Three structural invariants hold that
+would fail loudly otherwise: every field lies inside the parser's own `memset(skill+0x230, 0,
+0x37c)`; no two codes share a field; and the tree is exhaustive, since the last code tested is
+`trap` and its miss path is the parser's error string `"unknown skill param!!!"`.
+
+**The off-by-one.** The document said the Param block starts at **column 69**. It starts at
+**70**. Measured over all 33,632 rows of the seven skilldata shards in a real `Media.pk2`:
+
+| first column | walks to the end | stops on a non-code |
+|---|---|---|
+| 69 | 21,385 | **11,907** |
+| **70** | **32,367 (96.2%)** | **0** |
+
+At 69 the walk reads a neighbouring column's value -- `1`, `3` or `4` -- as a code on a third of
+the table. The remaining 1,265 rows at column 70 stop at a variable-length code, which is
+expected: the parser does not state those run lengths. **No row hits an unrecognised code.**
+
+**Three corrections to things this repo already asserted.**
+
+- `efr` was "the most common stopper (9,534 rows)" and classified variable-length. It is a
+  **fixed run of 7** whose first value picks which of three fields it fills (1 → `0x28c`,
+  2 → `0x290`, 3 → `0x294`; anything else parsed and discarded). That is also why `skillparam.Field`
+  and a second reading of the same branch disagreed about `efr` -- both offsets are real.
+- `skillparam` said three codes could not be resolved to a field. It is **one**: `getv`, which
+  genuinely has none because its second word selects among 40. `att` stores through the `_Dst`
+  pointer the prologue sets to `skill+0x230`, and `setv` scans a five-slot array at `0x388`;
+  a per-leaf reading could see neither. `refdata/skill.go`'s claim that `att`'s "branch loops
+  instead of storing once" was wrong and is corrected.
+- `skillparam.Codes` was 187 and is **209**; `Field` gained 24 entries.
+
+**A structural fact that changes how the table is read.** A code's field does not receive the
+parameter's value -- it receives a **pointer into the stream**, just past the code word. So
+`Field[code]` and `Run[code]` are both needed to read anything, and until now only the first
+existed.
+
+**Wired through, and measured rather than argued.** `cmd/export-refdata` found `att`, `mc` and
+`reqi` by scanning the whole row for the code literal -- a heuristic whose own comment spends
+thirty lines arguing it is safe. It now walks the block with `skillparam.Walk` and falls back to
+the scan only for the 1,265 rows the walk cannot finish. Running both binaries over all seven real
+shards produces **byte-identical CSVs** (`md5 8aee684a…`, 33,632 rows). So this is not a fix:
+it replaces an argument that the scan is safe with a method that does not need the argument.
+
+The one case that looked like a live bug is not one. Skill `MSKILL_FW_HYEONGCHEON_ATTACK03_013`
+has **28003 as its id** in column 2, which is the `mc` code, so the whole-row scan does find it
+there first -- but `hitCountParam`'s selector guard (`cols[i+1] == "2"`) rejects it and the loop
+goes on to the real one. Worth recording because the first measurement flagged it, and checking
+the probe rather than the finding is what showed the shipping code was already right.
+
+Applied 0 names; this was a format recovery, not a naming pass.

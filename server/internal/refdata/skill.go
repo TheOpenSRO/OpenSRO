@@ -25,10 +25,13 @@ package refdata
 // 'att' parameter of that same block, so this file was using the system its
 // own header said had not been found.
 //
-// 'att' is one of only three codes skillparam cannot resolve to a single
-// field, because its branch loops instead of storing once -- which is exactly
-// what a parameter carrying five values does, and matches what
-// cmd/export-refdata reads out of it independently.
+// RESOLVED 2026-09-18. This said 'att' was one of three codes skillparam could
+// not place, because its branch "loops instead of storing once". It does not
+// loop: it stores through the _Dst pointer the parser's prologue sets to
+// skill+0x230, which a per-leaf reading could not see. 'att' is a fixed run of
+// six words at field 0x230 -- the code plus the five values
+// (type, percent, min, max, percent) that AttackPercent/DamageMin/DamageMax
+// below already come from, which is the second, independent reading agreeing.
 //
 // skill.Catalog's own DamageBonus remains an own-design choice, but it is now
 // a fallback over a system that IS mapped rather than over an unknown one.

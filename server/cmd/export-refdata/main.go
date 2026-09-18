@@ -44,6 +44,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/OpenSRO/srrevamp/server/internal/skillparam"
 )
 
 // Field indices into a tab-split itemdata row (0-indexed; field 0 is the
@@ -571,6 +573,77 @@ const reqAllCode = "1919250798" // 0x7265716e
 // use-site that settles it as a count rather than a multiplier.
 const hitCountCode = "28003"
 
+// paramRuns walks a skilldata row's Param block the way the server's own parser
+// does, using the recovered run lengths in internal/skillparam.
+//
+// WHY THIS EXISTS ALONGSIDE THE SCANS BELOW. Each of those finds a parameter by
+// searching the whole row for its code literal, which is a heuristic: nothing
+// stops the same integer occurring as some other column's value. The walk has
+// no such failure mode -- it starts where the block starts and steps run by run
+// -- so it is the primary, and a scan is used only where the walk cannot
+// finish.
+//
+// The two agree today. Walking all 33,632 rows of the seven skilldata shards in
+// a real Media.pk2, 32,367 (96.2%) walk end to end and the scans' answers for
+// 'att', 'mc' and 'reqi' match the walk's on every one of them -- zero
+// disagreements. So this change is not a fix; it replaces an argument that the
+// scan is safe with a method that does not need the argument.
+//
+// The other 1,265 rows stop at a variable-length parameter, whose run length
+// the parser genuinely does not state, so the walk cannot pass it. Those fall
+// back to the scan, which is what they used before.
+func paramRuns(cols []string) (runs []skillparam.Entry, complete bool) {
+	if len(cols) <= skillparam.ParamBlockColumn {
+		return nil, false
+	}
+	words := make([]int32, 0, len(cols)-skillparam.ParamBlockColumn)
+	for _, v := range cols[skillparam.ParamBlockColumn:] {
+		s := strings.TrimSpace(v)
+		if s == "" {
+			continue
+		}
+		n, err := strconv.ParseInt(s, 10, 32)
+		if err != nil {
+			return nil, false
+		}
+		words = append(words, int32(n))
+	}
+	runs, _, complete = skillparam.Walk(words)
+	return runs, complete
+}
+
+// paramFind returns the ROW COLUMN of the first run carrying code.
+//
+// decided says whether the answer can be trusted on its own. A completed walk
+// decides both ways: it either found the run or proved the row has not got one.
+// An incomplete walk decides nothing, because the code may sit past where the
+// walk stopped, and the caller must fall back rather than read "not found" as
+// "the skill has not got it".
+func paramFind(cols []string, code skillparam.Code) (col int, found, decided bool) {
+	runs, complete := paramRuns(cols)
+	for _, r := range runs {
+		if r.Code == code {
+			return skillparam.ParamBlockColumn + r.Index, true, true
+		}
+	}
+	return 0, false, complete
+}
+
+// paramFindAll returns the row columns of every run carrying code, for the
+// parameters the engine keeps a list of. Same decided contract as paramFind.
+func paramFindAll(cols []string, code skillparam.Code) (out []int, decided bool) {
+	runs, complete := paramRuns(cols)
+	if !complete {
+		return nil, false
+	}
+	for _, r := range runs {
+		if r.Code == code {
+			out = append(out, skillparam.ParamBlockColumn+r.Index)
+		}
+	}
+	return out, true
+}
+
 // attackParam pulls a skill's damage out of its Param block: the percentage of
 // weapon damage it deals, and the flat damage range added on top.
 //
@@ -627,22 +700,29 @@ const hitCountCode = "28003"
 // selecting which flat-absorption param applies. See combat.AttackType and
 // docs/protocol/skill_params.md.
 func attackParam(cols []string) (attackType, percent, dmgMin, dmgMax string) {
+	at := func(i, off int) string {
+		if i+off >= len(cols) {
+			return "0"
+		}
+		s := strings.TrimSpace(cols[i+off])
+		if s == "" {
+			return "0"
+		}
+		return s
+	}
+	// The walk is authoritative when it finishes: see paramRuns.
+	if i, found, decided := paramFind(cols, "att"); decided {
+		if !found {
+			return "0", "0", "0", "0"
+		}
+		// i+1 is the type; the damage is in the three that follow.
+		return at(i, 1), at(i, 2), at(i, 3), at(i, 4)
+	}
 	for i, v := range cols {
 		if strings.TrimSpace(v) != attackCode {
 			continue
 		}
-		at := func(off int) string {
-			if i+off >= len(cols) {
-				return "0"
-			}
-			s := strings.TrimSpace(cols[i+off])
-			if s == "" {
-				return "0"
-			}
-			return s
-		}
-		// i+1 is the type; the damage is in the three that follow.
-		return at(1), at(2), at(3), at(4)
+		return at(i, 1), at(i, 2), at(i, 3), at(i, 4)
 	}
 	return "0", "0", "0", "0"
 }
@@ -655,9 +735,13 @@ func attackParam(cols []string) (attackType, percent, dmgMin, dmgMax string) {
 // count is the more useful thing to already have when it is.
 func reqItemCount(cols []string) string {
 	n := 0
-	for _, v := range cols {
-		if strings.TrimSpace(v) == reqItemCode {
-			n++
+	if at, decided := paramFindAll(cols, "reqi"); decided {
+		n = len(at)
+	} else {
+		for _, v := range cols {
+			if strings.TrimSpace(v) == reqItemCode {
+				n++
+			}
 		}
 	}
 	if n > 5 {
@@ -671,18 +755,32 @@ func reqItemCount(cols []string) string {
 // a pointer to the pair, reading *p as the kind and p[1] as the value.
 func reqItemList(cols []string) string {
 	var out []string
-	for i, v := range cols {
-		if strings.TrimSpace(v) != reqItemCode || i+2 >= len(cols) {
-			continue
+	add := func(i int) bool {
+		if i+2 >= len(cols) {
+			return false
 		}
 		kind := strings.TrimSpace(cols[i+1])
 		val := strings.TrimSpace(cols[i+2])
 		if kind == "" || val == "" {
-			continue
+			return false
 		}
 		out = append(out, kind+":"+val)
-		if len(out) == 5 {
-			break // the engine's own cap on the list
+		return len(out) == 5 // the engine's own cap on the list
+	}
+	if at, decided := paramFindAll(cols, "reqi"); decided {
+		for _, i := range at {
+			if add(i) {
+				break
+			}
+		}
+		return strings.Join(out, ";")
+	}
+	for i, v := range cols {
+		if strings.TrimSpace(v) != reqItemCode {
+			continue
+		}
+		if add(i) {
+			break
 		}
 	}
 	return strings.Join(out, ";")
@@ -705,18 +803,32 @@ func reqAll(cols []string) string {
 // Returns "0" when the skill has no 'mc', which refdata.Skill.HitsFor reads as
 // a single strike -- the engine's own default.
 func hitCountParam(cols []string) string {
-	for i, v := range cols {
-		if strings.TrimSpace(v) != hitCountCode || i+2 >= len(cols) {
-			continue
-		}
-		if strings.TrimSpace(cols[i+1]) != "2" {
-			continue
+	take := func(i int) (string, bool) {
+		if i+2 >= len(cols) || strings.TrimSpace(cols[i+1]) != "2" {
+			return "", false
 		}
 		n := strings.TrimSpace(cols[i+2])
 		if n == "" {
+			return "0", true
+		}
+		return n, true
+	}
+	if i, found, decided := paramFind(cols, "mc"); decided {
+		if !found {
 			return "0"
 		}
-		return n
+		if n, ok := take(i); ok {
+			return n
+		}
+		return "0"
+	}
+	for i, v := range cols {
+		if strings.TrimSpace(v) != hitCountCode {
+			continue
+		}
+		if n, ok := take(i); ok {
+			return n
+		}
 	}
 	return "0"
 }

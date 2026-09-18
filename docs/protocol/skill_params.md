@@ -12,6 +12,23 @@ walks the stream and files each recognised run into a field of the skill struct.
 
 ## Two branch shapes, and why the distinction matters
 
+> **Superseded 2026-09-18.** There are four, and two of them were not matched by
+> the pass that wrote this section — see "CLOSED 2026-09-18" below. The two
+> described here are real and the distinction still matters; they are just not
+> all of them. Three further facts the same pass established, each of which
+> bounds the table:
+>
+> - A code's field does **not** receive the parameter's value. It receives a
+>   **pointer into the stream**, just past the code word. `Field[code]` says
+>   where the engine remembers the run; the run length says how much is there.
+>   Reading a value needs both.
+> - The parser's prologue is `memset(skill+0x230, 0, 0x37c)`, so every field it
+>   writes lies in `[0x230, 0x5ac)`. All 186 do.
+> - The loop ends on `if (0x31 < index) return`, capping the block at **50
+>   words** — independently what `refdata.Skill` calls "the 50 generic Param
+>   slots".
+
+
 **Fixed-run codes** state their own length:
 
 	if (uVar1 == <code>) {
@@ -64,6 +81,35 @@ already over-reported once (it read the in-handler `cmp edx,0x4` value tests as
 tags until it was constrained to tags ≥ 0x100). So the count above is still the
 extractor's; whether the vocabulary is really ~105 or ~145 is open.
 
+**CLOSED 2026-09-18. It is 209**, and the lead was right that there were more.
+A third pass walked the decompiled dispatch tree structurally rather than
+collecting comparisons, which matters because the tree has *four* branch shapes
+and the earlier passes matched one or two of them:
+
+| shape | how the code is tested | how many |
+|---|---|---|
+| `if (uVar1 == C) { store; advance; }` | block follows | most |
+| `if (uVar1 != C) goto <error>;` | body is the **fall-through** | 20 |
+| `if (uVar1 != C) { …more tests… }` | body is the **else** | 2 (`spda`, `trap`) |
+| `if (uVar1 == 'getv') { switch second word }` | a **two-word** code | 1, with 40 sub-codes |
+
+That gives **169 top-level codes and 40 `getv` sub-codes**. The classification
+is 146 fixed-run, 20 variable-length, 2 arrays (`setv`, `reqi`) and the one
+prefix.
+
+The pass reproduces **all 131 rows of the fixed-run table below with zero
+disagreements**, which is what makes the 57 it adds credible rather than a
+fourth guess. The new codes are load-bearing: at the corrected column, the
+131-row table still leaves 573 rows stopping on an unrecognised code (`setv`
+540, `lkdr` 26, `chcr` 7) and the full table leaves none.
+
+The tree is also now known to be **exhaustive**: the last code tested is `trap`,
+and its miss path is the parser's own error, `"unknown skill param!!! [RefSkill
+ID: %d, ParamValue: %d]"`. Nothing falls through silently.
+
+The table now lives in Go as `server/internal/skillparam/paramblock.go`
+(`Run`, `Kind`, `GetvSub`, `Walk`), with the counts under test.
+
 **What this is and is not.** It is the parser's own structure: every code the
 server recognises, where it files the values, and how far the cursor moves. It is
 **not** a statement of what any code MEANS. The names are suggestive (`heal`,
@@ -77,15 +123,37 @@ is flagged as one rather than entered in the table.
 
 ## Where the block starts, and what actually occurs
 
-The Param block begins at **column 69** of a skilldata row (rows are 118-119
-columns wide). That is measured, not assumed: across every real skill row the
-`att` code appears at column 69 in 30,677 of them and never earlier, the later
-positions (71, 81, 84) being rows where another run comes first.
+**CORRECTED 2026-09-18: the block begins at column 70, not 69.** Everything
+below this paragraph that says 69 is off by one, and that off-by-one is what
+held the walk at roughly half the table.
 
-Walking from column 69 with the fixed-run lengths below, **19,839 of 36,389 rows
-consume their Param block exactly to the end**. The remainder stop at a
-variable-length code, which is expected: those do not state a length. The most
-common stopper is `efr` (9,534 rows).
+The correction is measured, on all 33,632 rows of the seven skilldata shards in
+a real `Media.pk2`, walking each one and recording where it stops:
+
+| first Param column | walks to the end | stops on a non-code | stops at a variable-length code |
+|---|---|---|---|
+| 69 | 21,385 | **11,907** | 340 |
+| **70** | **32,367** | **0** | 1,265 |
+| 71 | 1,079 | 32,281 | 272 |
+
+At column 69 the walk reads a neighbouring column's value — literally `1`, `3`
+or `4` — as a code on 11,907 rows. At 70 that never happens once. `att` is the
+first code of the block and sits at column 70 in 29,312 rows.
+
+The old paragraph said `att` "appears at column 69 in 30,677 of them and never
+earlier", which was the right shape of argument applied one column out.
+
+Walking from column 70 with the run lengths below, **32,367 of 33,632 rows
+(96.2%) consume their Param block exactly to the end**, and **no row hits an
+unrecognised code**. The remaining 1,265 stop at a variable-length code, which
+is expected: those do not state a length.
+
+`efr` was previously reported as "the most common stopper (9,534 rows)". It is
+not variable-length at all — it is a **fixed run of 7** whose first value
+selects which of three fields it fills (1 → `0x28c`, 2 → `0x290`, 3 → `0x294`,
+anything else parsed and discarded). Classified correctly it walks, and the
+remaining stoppers are `ssou` (292), `eshp` (33), `nmh` (10), `nmf` (3) and
+`fitp` (2).
 
 Codes at verified code positions, most common first:
 
