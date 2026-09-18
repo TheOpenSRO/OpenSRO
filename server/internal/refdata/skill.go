@@ -10,13 +10,28 @@ package refdata
 // weapon-cast requirements, and the 50 generic Param slots -- real, but not
 // curated in yet.
 //
-// Notably absent: any damage/effect value. No confirmed _RefSkill column
-// encodes what a skill actually does in combat, even after all 118 columns
-// were catalogued -- that data plausibly lives in a separate, uncatalogued
-// ability/effect system this project hasn't found yet. skill.Catalog's own
-// DamageBonus stays an own-design choice layered on top of whichever real
-// skill this identifies, not replaced by real data the way refdata.Item's
-// stats are.
+// CORRECTED 2026-09-18. This note used to say that no column encodes what a
+// skill does in combat, and that the data "plausibly lives in a separate,
+// uncatalogued ability/effect system this project hasn't found yet". That
+// system is found: it is the **Params block**, and the engine parses it in
+// SkillGlobal::RefSkill_ParseParams. See internal/skillparam for the recovered
+// vocabulary -- 187 parameter codes, 184 of them resolved to the skill-record
+// field the code fills.
+//
+// The damage is in there. skillparam.PhysDamage ('pdmg') lands at skill+0x234,
+// which is the field Formulae::Formula_SkillPhysDamage reads -- two readings
+// from different functions agreeing. 'pmdg', its magical counterpart, is at
+// 0x340. And AttackPercent/DamageMin/DamageMax below already come from the
+// 'att' parameter of that same block, so this file was using the system its
+// own header said had not been found.
+//
+// 'att' is one of only three codes skillparam cannot resolve to a single
+// field, because its branch loops instead of storing once -- which is exactly
+// what a parameter carrying five values does, and matches what
+// cmd/export-refdata reads out of it independently.
+//
+// skill.Catalog's own DamageBonus remains an own-design choice, but it is now
+// a fallback over a system that IS mapped rather than over an unknown one.
 type Skill struct {
 	ID      int64
 	GroupID int64

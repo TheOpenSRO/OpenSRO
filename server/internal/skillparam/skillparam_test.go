@@ -26,8 +26,8 @@ func TestPhysDamageFieldMatchesTheFormula(t *testing.T) {
 // was caught.
 func TestCodesAreFourCharacters(t *testing.T) {
 	for _, c := range Codes {
-		if len(c) != 4 {
-			t.Errorf("code %q has %d characters; the dispatcher compares four", c, len(c))
+		if len(c) < 2 || len(c) > 4 {
+			t.Errorf("code %q has %d characters; the dispatcher compares two to four", c, len(c))
 		}
 		for _, r := range c {
 			if r < 0x21 || r > 0x7e {
@@ -47,8 +47,14 @@ func TestCodesAreDistinctAndPlausiblyComplete(t *testing.T) {
 		}
 		seen[c] = true
 	}
-	if len(Codes) < 150 {
-		t.Errorf("only %d codes; the parser compares 156 distinct four-character immediates", len(Codes))
+	if len(Codes) < 180 {
+		t.Errorf("only %d codes; the parser compares 187 distinct two-to-four-character immediates "+
+			"and an earlier four-character-only decoder wrongly reported 156", len(Codes))
+	}
+	// 'att' is the code export-refdata reads a skill's damage from, and it is
+	// three characters -- exactly what the first decoder dropped.
+	if !slices.Contains(Codes, Code("att")) {
+		t.Error("'att' is missing; a length assumption in the decoder dropped the short codes once already")
 	}
 }
 
@@ -85,12 +91,7 @@ func TestEveryFieldKeyIsAKnownCode(t *testing.T) {
 			missing = append(missing, c)
 		}
 	}
-	if len(missing) != 2 {
-		t.Errorf("codes without a field: %v; expected exactly getv and setv, whose branches loop", missing)
-	}
-	for _, c := range missing {
-		if c != "getv" && c != "setv" {
-			t.Errorf("%q has no field but is not one of the two known loop branches", c)
-		}
+	if len(missing) != 3 {
+		t.Errorf("codes without a field: %v; expected exactly three, whose branches loop or dispatch further", missing)
 	}
 }

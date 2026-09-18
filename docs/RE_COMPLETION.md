@@ -16854,3 +16854,34 @@ project before. And the AgentServer's empty string greps were verified against a
 rather than read as "packed": 1,603 strings and ordinary `.text`/`.rdata`/`.data` sections.
 
 No value changed — only the justification behind one. Full suite green, 53 packages.
+
+## 2026-09-18 — the skill param table was short by 31 codes, and 'att' was one
+
+Auditing the next ungrounded value led to `refdata/skill.go`, whose header says no column
+encodes what a skill does in combat and that the data "plausibly lives in a separate,
+uncatalogued ability/effect system this project hasn't found yet" — while its own body reads
+damage out of the skill's **`'att'` parameter**. The header contradicted the file.
+
+Checking that against `skillparam` exposed a fault in my own table: **`'att'` was not in it.**
+The decoder required exactly four characters, so the shipped list of "every parameter code the
+parser recognises" silently dropped **16 two-character and 15 three-character codes** —
+`att`, `hpi`, `mpi`, `spi`, `dar`, `zb`, `hr` and the rest. There are **187**, not 156.
+
+That is the same class of error as the stat-tag table, which was published twice with
+four-character codes truncated to three. Both times a length assumption was baked into a
+decoder and nothing downstream could see it. The guard that would have caught this — a check
+that the table contains a code the project already uses elsewhere — now exists as a test.
+
+Re-resolved with the corrected decoder and the same leaf bounding: **187 codes, 184 with a
+field offset, zero collisions**, and `'pdmg'` still at `skill+0x234`.
+
+**`'att'` is one of the three codes with no single field**, because its branch loops rather
+than storing once. That is not a gap — it is what a parameter carrying five values looks like,
+and it matches what `cmd/export-refdata` independently reads out of `'att'` (type, percent,
+min, max, percent). Two readings of the same parameter from opposite ends agreeing on its
+shape.
+
+`refdata/skill.go`'s header is corrected: the ability/effect system is found, it is the Params
+block, and this file was already using it.
+
+Full suite green, 53 packages.

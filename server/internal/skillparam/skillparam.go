@@ -1,27 +1,32 @@
 package skillparam
 
-// Code is a four-character skill-parameter code out of skilldata's Params column.
-// The engine dispatches on them in SkillGlobal::RefSkill_ParseParams (0x00587630).
+// Code is a skill-parameter code out of skilldata's Params column. The engine
+// dispatches on them in SkillGlobal::RefSkill_ParseParams (0x00587630).
 //
-// HOW THE CODES WERE READ. Every `cmp reg,<imm32>` in that function whose
-// immediate decodes as four printable characters, big-endian -- the same encoding
-// as the stat tags, where decoding little-endian spells every code backwards. No
-// control flow is followed for this list.
+// HOW THE CODES WERE READ. Every `cmp reg,<imm>` in that function whose
+// immediate decodes as two, three or four printable characters, big-endian --
+// the same encoding as the stat tags, where decoding little-endian spells every
+// code backwards.
 //
-// HOW THE FIELDS WERE READ, AND THE BUG THAT SHAPED IT. Each code's `je` leads to
-// a leaf that stores into the skill record. A first attempt walked forward a fixed
-// window from each leaf and was WITHHELD: a guard test caught 'setv' and 'slcc'
-// resolving to the same offset, because 'setv's branch contains a loop and the
-// walk ran past it into 'slcc's code. The fix is to bound each leaf by the next
-// leaf: in a binary-search dispatcher every leaf is a `je` target, so the sorted
-// targets give a hard upper bound. With that bound there are **no collisions at
-// all**, 'slcc' keeps the 0x494 its leaf really stores, and 'setv' is absent
-// rather than re-guessed.
+// CORRECTED 2026-09-18: the codes are NOT all four characters. The first
+// version of this file required exactly four and so published 156 codes,
+// silently dropping 16 two-character and 15 three-character ones -- including
+// 'att', the parameter this project's own export-refdata already reads a
+// skill's damage from. That is the same class of error as the stat-tag table,
+// which was published twice with four-character codes truncated to three: a
+// length assumption baked into a decoder. There are 187 codes.
 //
-// WHAT VALIDATES IT. Formulae::Formula_SkillPhysDamage was annotated in an earlier
-// session, from a different function, as being called "when the skill carries
-// 'pdmg' (skill+0x234)". This table, built without reference to that, puts 'pdmg'
-// at 0x234.
+// HOW THE FIELDS WERE READ. Each code's `je` leads to a leaf that stores into
+// the skill record. An early attempt walked a fixed window from each leaf and
+// was withheld after a guard caught two codes resolving to one offset, because
+// a leaf containing a loop ran into its neighbour. Each leaf is now bounded by
+// the next leaf -- in a binary-search dispatcher every leaf is a `je` target --
+// and with that bound there are no collisions at any code length.
+//
+// WHAT VALIDATES IT. Formulae::Formula_SkillPhysDamage was annotated in an
+// earlier session, from a different function, as being called "when the skill
+// carries 'pdmg' (skill+0x234)". This table, built without reference to that,
+// puts 'pdmg' at 0x234.
 //
 // WHAT IS NOT CLAIMED is what a code MEANS. 'atca' and 'lkdh' are read as text;
 // nothing here infers a semantic from the mnemonic.
@@ -79,9 +84,12 @@ var Codes = []Code{
 	"apau",
 	"apru",
 	"atca",
+	"att",
 	"bbuf",
 	"bgra",
+	"bl",
 	"bldr",
+	"ca",
 	"cbuf",
 	"chcr",
 	"cmcr",
@@ -93,6 +101,8 @@ var Codes = []Code{
 	"cspd",
 	"cssr",
 	"curt",
+	"da",
+	"dar",
 	"dcmp",
 	"dcri",
 	"defp",
@@ -100,21 +110,30 @@ var Codes = []Code{
 	"dgmp",
 	"dmgr",
 	"dmgt",
+	"dn",
+	"dru",
 	"dru2",
+	"ds",
 	"dtnt",
+	"dtt",
 	"dttp",
 	"dura",
+	"efr",
 	"efta",
 	"eshp",
 	"esht",
 	"expi",
 	"expu",
+	"fb",
 	"fitp",
+	"gdr",
 	"getv",
 	"heal",
 	"hide",
 	"hitm",
 	"hntp",
+	"hpi",
+	"hr",
 	"hst2",
 	"hst3",
 	"hste",
@@ -129,20 +148,28 @@ var Codes = []Code{
 	"lks2",
 	"lnks",
 	"luck",
+	"mc",
 	"mcap",
+	"mom",
+	"mpi",
 	"mscc",
 	"msch",
 	"msid",
+	"msr",
 	"mstc",
 	"mwdt",
 	"mwhh",
 	"mwhs",
 	"mwmh",
 	"mwtt",
+	"my",
 	"nbuf",
+	"nmf",
+	"nmh",
 	"odar",
 	"onff",
 	"ovl2",
+	"pao",
 	"pcdu",
 	"pchr",
 	"pdm2",
@@ -154,7 +181,9 @@ var Codes = []Code{
 	"pmmp",
 	"pmp1",
 	"pola",
+	"ps",
 	"puls",
+	"pw",
 	"pwdt",
 	"pwtt",
 	"qest",
@@ -167,16 +196,22 @@ var Codes = []Code{
 	"rhru",
 	"rmut",
 	"rpkt",
+	"rt",
+	"ru",
 	"saps",
 	"scls",
 	"setv",
+	"skc",
 	"slcc",
 	"spda",
+	"spi",
 	"ssou",
+	"st",
 	"stns",
 	"stri",
 	"summ",
 	"tant",
+	"tb",
 	"tcmd",
 	"tctc",
 	"tel2",
@@ -191,11 +226,12 @@ var Codes = []Code{
 	"tpdd",
 	"tran",
 	"trap",
+	"zb",
 }
 
-// Field maps a code to the skill-record offset its leaf stores into. Two codes
-// the parser recognises are absent -- 'setv' and 'getv', whose branches loop
-// rather than storing directly -- so a lookup here can miss even for a real code.
+// Field maps a code to the skill-record offset its leaf stores into. 3 codes
+// are absent -- 'att', 'getv', 'setv' -- because their branches loop or dispatch further rather
+// than storing directly, so a lookup here can miss even for a real code.
 var Field = map[Code]int{
 	"BDMD": 0x554,
 	"BLAT": 0x530,
@@ -243,7 +279,9 @@ var Field = map[Code]int{
 	"atca": 0x3bc,
 	"bbuf": 0x360,
 	"bgra": 0x2f8,
+	"bl":   0x444,
 	"bldr": 0x58c,
+	"ca":   0x458,
 	"cbuf": 0x358,
 	"chcr": 0x368,
 	"cmcr": 0x36c,
@@ -255,6 +293,8 @@ var Field = map[Code]int{
 	"cspd": 0x464,
 	"cssr": 0x45c,
 	"curt": 0x40c,
+	"da":   0x240,
+	"dar":  0x26c,
 	"dcmp": 0x2a8,
 	"dcri": 0x42c,
 	"defp": 0x25c,
@@ -262,20 +302,29 @@ var Field = map[Code]int{
 	"dgmp": 0x4cc,
 	"dmgr": 0x418,
 	"dmgt": 0x3dc,
+	"dn":   0x44c,
+	"dru":  0x3e4,
 	"dru2": 0x3e8,
+	"ds":   0x454,
 	"dtnt": 0x3d0,
+	"dtt":  0x420,
 	"dttp": 0x424,
 	"dura": 0x280,
+	"efr":  0x294,
 	"efta": 0x4b0,
 	"eshp": 0x298,
 	"esht": 0x29c,
 	"expi": 0x3ec,
 	"expu": 0x580,
+	"fb":   0x310,
 	"fitp": 0x578,
+	"gdr":  0x4c8,
 	"heal": 0x324,
 	"hide": 0x428,
 	"hitm": 0x2c8,
 	"hntp": 0x48c,
+	"hpi":  0x2ac,
+	"hr":   0x24c,
 	"hst2": 0x2bc,
 	"hst3": 0x2c0,
 	"hste": 0x2b8,
@@ -290,20 +339,28 @@ var Field = map[Code]int{
 	"lks2": 0x374,
 	"lnks": 0x370,
 	"luck": 0x4b8,
+	"mc":   0x288,
 	"mcap": 0x4a8,
+	"mom":  0x57c,
+	"mpi":  0x2b0,
 	"mscc": 0x4c0,
 	"msch": 0x4a4,
 	"msid": 0x4c4,
+	"msr":  0x590,
 	"mstc": 0x4bc,
 	"mwdt": 0x3d8,
 	"mwhh": 0x328,
 	"mwhs": 0x404,
 	"mwmh": 0x32c,
 	"mwtt": 0x3c4,
+	"my":   0x440,
 	"nbuf": 0x35c,
+	"nmf":  0x594,
+	"nmh":  0x598,
 	"odar": 0x270,
 	"onff": 0x284,
 	"ovl2": 0x37c,
+	"pao":  0x350,
 	"pcdu": 0x364,
 	"pchr": 0x498,
 	"pdm2": 0x238,
@@ -315,7 +372,9 @@ var Field = map[Code]int{
 	"pmmp": 0x33c,
 	"pmp1": 0x34c,
 	"pola": 0x304,
+	"ps":   0x31c,
 	"puls": 0x384,
+	"pw":   0x2b4,
 	"pwdt": 0x3d4,
 	"pwtt": 0x3c0,
 	"qest": 0x49c,
@@ -328,15 +387,21 @@ var Field = map[Code]int{
 	"rhru": 0x2a4,
 	"rmut": 0x4ac,
 	"rpkt": 0x2cc,
+	"rt":   0x434,
+	"ru":   0x250,
 	"saps": 0x258,
 	"scls": 0x380,
+	"skc":  0x490,
 	"slcc": 0x494,
 	"spda": 0x264,
+	"spi":  0x584,
 	"ssou": 0x354,
+	"st":   0x450,
 	"stns": 0x448,
 	"stri": 0x3f0,
 	"summ": 0x308,
 	"tant": 0x3c8,
+	"tb":   0x474,
 	"tcmd": 0x488,
 	"tctc": 0x2c4,
 	"tel2": 0x2f0,
@@ -351,4 +416,5 @@ var Field = map[Code]int{
 	"tpdd": 0x2e4,
 	"tran": 0x408,
 	"trap": 0x4a0,
+	"zb":   0x320,
 }
