@@ -285,6 +285,34 @@ not. This is a **fifth** independent witness for that 13, from a different
 binary and a different subsystem than the four already recorded in
 `docs/protocol/EQUIP_SLOTS.md`.
 
+## The other operations' rates, read 2026-09-18
+
+`CEnchant_Reinforce`'s pair was already recovered. The remaining classes:
+
+| operation | slot 6, the base rate | slot 7, the final rate |
+|---|---|---|
+| `SocketMaker`, `SocketStoneInserter`, `SocketStoneEraser` | `Enchant_SuccessRateAlways100` | the same function |
+| `EnchantAttrStone` | item ref record `+0x300` | `Enchant_SuccessRateBasePlusBonus` |
+| `EnchantMagicStone` | item ref record `+0x300` | the same function |
+| `EnchantAvatarItem` | assert, then `100` | the same function |
+| `UpperReinforce` | a folded stub | a folded stub |
+
+**The three socket operations cannot fail.** One function, `0x00504d00`, returns the
+literal `100` and occupies *both* rate slots for all three of them (and slot 8 of
+`CBless_AvatarItemWithNPC`). It is named flat rather than after any one class because
+four classes share it.
+
+**The two stone operations read their base rate from the item.** Both walk the loaded
+item at context `+0x2252` to its ref record (`[item+0x34]+0x18`) and return the dword at
+**`+0x300`** — the same offset in both, which is what makes it a record field rather than
+a coincidence. Their final rate is `base + round(bonus)`; the addend passes through
+`FUN_009fbb40`, a float-to-int rounding helper with 612 call sites across the binary,
+not a game value.
+
+This also answers part of "which ref-record offset holds the packed rates": for the
+stone operations it is `+0x300`. Whether the reinforce rates live in the same record is
+not established here.
+
 ## What is not recovered
 
 - **Which ref-record offset holds the packed rates.** See §1.
@@ -292,7 +320,8 @@ binary and a different subsystem than the four already recorded in
   durability or destruction outcome is decided server-side and transmitted, or
   derived. The client's flag byte says what it *can* display; which server path
   sets which bit is unread.
-- **The other seven operations' rates.** Only `CEnchant_Reinforce`'s slots 6
-  and 7 were read; magic stones, attribute stones and the three socket
-  operations each have their own pair.
+- **`CEnchant_UpperReinforce`'s rate.** Its slots 6 and 7 do not point at rate
+  functions at all — both hold a folded stub shared with `CAIState::OnLeave` —
+  so whatever rate it uses is computed inside its own slot 1, which is unread.
+  The other six operations' rates were read on 2026-09-18, below.
 - **The `CMakeStuff_*` trio** entirely.

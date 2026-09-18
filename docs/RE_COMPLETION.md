@@ -15130,3 +15130,32 @@ the site tells you a param is touched, and nothing more.
 
 srrevamp is unchanged, and the grounding audit's "the flat `Defense` term is disclosed"
 stands as written.
+
+## Six alchemy operations' success rates, and the family's attempt entry (2026-09-18)
+
+`docs/protocol/alchemy.md` listed "the other seven operations' rates" as not recovered.
+Six are now read, and the family's shared entry point is named.
+
+**The vtable made it cheap.** `CEnchant_Reinforce` already had slots named by this
+project — slot 1 `MakeAttempt`, slot 6 `GetBaseSuccessRate`, slot 7 `GetSuccessRate` —
+and all eight operations derive `CEnchant`, so those slot numbers carry across the
+family. Reading the *other* classes' functions at the same slots answers the same
+questions without re-deriving anything.
+
+	the three socket operations   rate = 100, one shared function at BOTH slots: they cannot fail
+	EnchantAttrStone / MagicStone base rate = item ref record +0x300; final = base + round(bonus)
+	EnchantAvatarItem             base rate = 100, after an assert
+	UpperReinforce                both rate slots are a folded stub, so its rate is inside its slot 1
+
+Named: `MakeAttempt` on the eight slot-1 implementations, `GetBaseSuccessRate` on the
+three stone classes, and two shared functions given **flat** names because four and three
+classes respectively share them — `Enchant_SuccessRateAlways100` and
+`Enchant_SuccessRateBasePlusBonus`. **Applied 13, failed 0.**
+
+A suspicion that did not survive checking: `CheckPreconditions` appears at slot 4 in the
+base and slot 5 in `CEnchant_Reinforce`, which looked like a mis-slotted name. Both rows
+state their slot explicitly and they are different virtuals — the base's common check and
+the operation's own extra check, which `alchemy.md` already describes. Nothing to fix.
+
+srrevamp's `internal/alchemy` implements reinforce only, so there is nothing to wire yet;
+the rates are recorded for when the other operations are built.
