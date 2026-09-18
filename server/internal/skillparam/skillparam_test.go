@@ -139,3 +139,67 @@ func TestDrivesParamsKeysAreKnownCodes(t *testing.T) {
 		}
 	}
 }
+
+// TestFlatAndRatioPairsShareTheirParams is the structural check that makes
+// Contributions credible: the binary pairs a flat code with a ratio code over
+// the same params, and nothing in the extraction assumed that. If a slot were
+// misread the pairing would break.
+func TestFlatAndRatioPairsShareTheirParams(t *testing.T) {
+	for _, p := range []struct{ flat, ratio Code }{{"apau", "apru"}, {"defp", "defr"}} {
+		f, ok1 := Contributions[p.flat]
+		r, ok2 := Contributions[p.ratio]
+		if !ok1 || !ok2 {
+			t.Fatalf("%q/%q: one of the pair is missing", p.flat, p.ratio)
+		}
+		flatParams := map[int]bool{}
+		for _, c := range f {
+			if c.Slot != SlotBase {
+				t.Errorf("%q writes param %d in slot %d, want the base slot", p.flat, c.Param, c.Slot)
+			}
+			flatParams[c.Param] = true
+		}
+		// every param the flat code touches must also be touched by the ratio
+		// code, through the percentage slot.
+		for param := range flatParams {
+			found := false
+			for _, c := range r {
+				if c.Param == param && c.Slot == SlotPct {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%q covers param %d but %q does not cover it in the percentage slot",
+					p.flat, param, p.ratio)
+			}
+		}
+	}
+}
+
+// TestContributionsAgreeWithDrivesParams keeps the two views of one reading
+// from drifting apart.
+func TestContributionsAgreeWithDrivesParams(t *testing.T) {
+	for code, cs := range Contributions {
+		want := map[int]bool{}
+		for _, p := range DrivesParams[code] {
+			want[p] = true
+		}
+		for _, c := range cs {
+			if !want[c.Param] {
+				t.Errorf("Contributions[%q] has param %d, absent from DrivesParams", code, c.Param)
+			}
+		}
+	}
+}
+
+// TestSlotsAreInRange guards the slot read: ParamKeeper_EvaluateParam combines
+// exactly four accumulators, so anything outside 0..3 means the wrong push was
+// taken for the argument.
+func TestSlotsAreInRange(t *testing.T) {
+	for code, cs := range Contributions {
+		for _, c := range cs {
+			if c.Slot < SlotBase || c.Slot > SlotScale {
+				t.Errorf("Contributions[%q] uses slot %d; the keeper has four", code, c.Slot)
+			}
+		}
+	}
+}

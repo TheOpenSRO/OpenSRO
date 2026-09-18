@@ -499,3 +499,95 @@ var DrivesParams = map[Code][]int{
 	"tpad": {13, 14},
 	"tpdd": {5},
 }
+
+// Slot is which of a param's four accumulators a contribution lands in.
+// GParamKeeper::ParamKeeper_EvaluateParam combines them as
+//
+//	value = base * (1 + pct/100) * mult * (scale/100)
+//
+// so the slot is half the arithmetic: it says whether a skill parameter adds a
+// flat amount, a percentage, or a multiplier.
+type Slot int
+
+const (
+	SlotBase  Slot = 0
+	SlotPct   Slot = 1
+	SlotMult  Slot = 2
+	SlotScale Slot = 3
+)
+
+// Contribution is one param a skill parameter writes, and how.
+type Contribution struct {
+	Param int
+	Slot  Slot
+}
+
+// Contributions maps a skill-parameter code to every (param, slot) pair
+// ApplySkillParamsToChar writes for it. Read from the asm the same way as
+// DrivesParams -- the slot is the first visible argument to
+// ParamKeeper_SetParam, the last pushed immediate before the call.
+//
+// THE TABLE VALIDATES ITSELF STRUCTURALLY. The binary pairs a flat code with a
+// ratio code over the same params:
+//
+//	'apau' -> params 13, 14, 15, 16 in SlotBase
+//	'apru' -> params 13, 14, 15, 16 in SlotPct
+//	'defp' -> params 5, 6 in SlotBase
+//	'defr' -> params 5, 6 in SlotPct  (plus 7, 8, 12 in base)
+//
+// Two codes touching one set of params through different slots is what an
+// absolute/percentage pair looks like, and nothing here had to assume it -- the
+// slots were read, and the pairing fell out. A test asserts both pairs.
+//
+// STILL NOT CLAIMED: how the parameter's own value becomes the number written,
+// and how several contributors to one slot combine. The slot is read; the
+// arithmetic inside it is not.
+var Contributions = map[Code][]Contribution{
+	"STSP": {{23, 2}, {24, 2}},
+	"alcu": {{172, 0}},
+	"apau": {{13, 0}, {14, 0}, {15, 0}, {16, 0}},
+	"apru": {{13, 1}, {14, 1}, {15, 1}, {16, 1}},
+	"bgra": {{27, 0}, {28, 0}, {29, 0}, {30, 0}, {31, 0}, {32, 0}},
+	"bldr": {{198, 0}, {199, 0}, {200, 0}},
+	"dar":  {{132, 0}, {133, 0}, {134, 0}, {135, 0}},
+	"dcmp": {{141, 0}},
+	"dcri": {{57, 0}, {136, 0}, {137, 0}, {138, 0}, {139, 0}},
+	"defp": {{5, 0}, {6, 0}},
+	"defr": {{5, 1}, {6, 1}, {7, 0}, {8, 0}, {12, 0}, {12, 1}},
+	"dru":  {{128, 0}, {129, 0}, {130, 0}, {131, 0}},
+	"dru2": {{128, 0}, {129, 0}, {130, 0}, {131, 0}},
+	"expi": {{185, 0}, {186, 0}},
+	"expu": {{186, 0}, {202, 0}},
+	"gdr":  {{182, 0}},
+	"hide": {{23, 2}, {24, 2}},
+	"hpi":  {{3, 0}, {3, 1}},
+	"hr":   {{9, 0}, {9, 1}, {11, 0}, {11, 1}},
+	"hst2": {{23, 2}, {24, 2}},
+	"hst3": {{23, 2}, {24, 2}},
+	"hste": {{23, 2}, {24, 2}},
+	"hwir": {{184, 0}},
+	"hwit": {{195, 0}},
+	"inti": {{2, 0}},
+	"irgc": {{25, 1}, {26, 1}},
+	"luck": {{173, 0}},
+	"mpi":  {{4, 0}, {4, 1}},
+	"msid": {{188, 0}},
+	"msr":  {{196, 0}, {197, 0}},
+	"odar": {{174, 2}, {175, 2}, {176, 2}, {177, 2}},
+	"onff": {{26, 3}},
+	"pmdg": {{178, 2}, {179, 2}},
+	"pmdp": {{5, 1}, {6, 1}},
+	"pmhp": {{3, 1}},
+	"pmmp": {{4, 1}},
+	"reat": {{145, 0}, {146, 0}, {147, 0}, {148, 0}, {149, 0}, {150, 0}},
+	"rhru": {{170, 0}, {171, 0}},
+	"ru":   {{33, 0}},
+	"spda": {{5, 0}, {13, 0}, {14, 0}},
+	"spi":  {{194, 0}},
+	"stri": {{1, 0}},
+	"tant": {{187, 0}},
+	"terd": {{9, 0}},
+	"thrd": {{11, 0}},
+	"tpad": {{13, 1}, {14, 1}},
+	"tpdd": {{5, 1}},
+}

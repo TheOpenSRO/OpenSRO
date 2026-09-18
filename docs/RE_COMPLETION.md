@@ -16960,3 +16960,37 @@ parameter's value becomes the param's, which slot it lands in, or how contributo
 which params a code touches is read.
 
 Full suite green, 53 packages.
+
+## 2026-09-18 — half the arithmetic: which slot each skill parameter writes
+
+Last tick mapped 47 skill parameters to the params they drive and said plainly that the
+arithmetic was not claimed. The most tractable piece of it is the **slot**, because
+`ParamKeeper_EvaluateParam` combines a param's four accumulators as
+
+	value = base * (1 + pct/100) * mult * (scale/100)
+
+so the slot says whether a skill parameter adds a flat amount, a percentage or a multiplier.
+It is the first visible argument to `ParamKeeper_SetParam` — the last pushed immediate before
+the call — read from the same bounded blocks. **47 codes, 107 contributions: 70 base, 20 pct,
+16 mult, 1 scale.** Now `skillparam.Contributions`.
+
+**The table validates itself structurally, and nothing in the extraction set that up.** The
+binary pairs a flat code with a ratio code over the same params:
+
+	'apau' -> 13, 14, 15, 16  in the BASE slot
+	'apru' -> 13, 14, 15, 16  in the PCT  slot
+	'defp' -> 5, 6            in the BASE slot
+	'defr' -> 5, 6            in the PCT  slot   (plus 7, 8, 12 in base)
+
+Two codes covering one set of params through different slots is exactly an absolute/percentage
+pair. The slots were read and the pairing fell out of them; a misread slot would break it. A
+test asserts both pairs, so the invariant guards the reading rather than decorating it.
+
+Other structure is visible and deliberately left unnamed: `'hide'`, `'hst2'`, `'hst3'`, `'hste'`
+and `'STSP'` all multiply params 23 and 24, and `'dru'`/`'dru2'` write the same four params —
+coherent families, but the mnemonics are not evidence and no meaning is assigned.
+
+**Still not claimed**: how a parameter's own value becomes the number written, and how several
+contributors to one slot combine. The slot is read; the arithmetic inside it is not.
+
+Full suite green, 53 packages.
