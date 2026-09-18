@@ -332,7 +332,7 @@ func skillDamageBonus(ref *refdata.Skill) (flat, percent int) {
 	// out of Combat_ResolveDamage's own 33-parameter test, so there is nothing
 	// left to stand in for. See UseSkillHandler, which does not reach the
 	// attack path at all for one of these.
-	if ref.NoCombatParam {
+	if ref.NoCombatParam || ref.ZeroDamage {
 		return 0, 0
 	}
 	if ref.AttackPercent <= 0 {
@@ -433,9 +433,11 @@ func UseSkillHandler(
 		var reqCastList int
 		var reqCastReqs []combat.CastRequirement
 		var reqCastAll bool
-		// noCombat: the engine resolves no blow at all for this skill. See
-		// refdata.Skill.NoCombatParam and skillparam.CombatParameters.
-		var noCombat bool
+		// noCombat: the engine resolves no blow at all for this skill, and
+		// zeroDmg: it resolves one whose damage is zero. The first is a strict
+		// subset of the second and srrevamp treats them the same way today; see
+		// refdata.Skill.NoCombatParam and refdata.Skill.ZeroDamage.
+		var noCombat, zeroDmg bool
 		// REAL SKILLS WIN. This used to check skill.Catalog first, which
 		// silently shadowed two real skills: the own-design catalog occupies
 		// ids 1 and 2, and those are SKILL_PUNCH_01 and SKILL_CH_SWORD_BASE_01
@@ -461,6 +463,7 @@ func UseSkillHandler(
 			reqCastReqs = combat.ParseCastRequirements(ref.ReqCastList)
 			reqCastAll = ref.ReqCastAll
 			noCombat = ref.NoCombatParam
+			zeroDmg = ref.ZeroDamage
 			// The engine takes the higher of the skill's TWO mastery slots;
 			// refdata carries only the first (see refdata.Skill.Mastery1), so
 			// the second is reported as unoccupied and contributes the engine's
@@ -605,17 +608,24 @@ func UseSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
 		}
 
-		// NO BLOW AT ALL, and this is the engine's own answer rather than a
-		// choice. Combat_ResolveDamage (0x0058e5f0) opens with a 33-parameter
-		// test -- skillparam.CombatParameters -- and RETURNS before resolving
-		// anything when the skill carries none of them and no 'efr' whose second
-		// value is 6. It is 1,797 of the 32,367 real skill rows that walk
-		// cleanly (5.6%): the buffs, heals and passives.
+		// NO DAMAGE, and this is the engine's own answer rather than a choice.
+		// Combat_ResolveDamage (0x0058e5f0) reaches it two ways, and srrevamp
+		// treats them alike because it models neither of the differences yet:
 		//
-		// Until this column existed every one of them dealt
+		//   - It RETURNS before resolving anything when the skill carries none
+		//     of the 33 in skillparam.CombatParameters and no 'efr' whose
+		//     second value is 6. 1,813 real rows, 1,797 after the 'efr' ones.
+		//   - Otherwise `local_d0` is 1 whenever the skill carries neither
+		//     'att' nor 'ck', and the ordinary damage kind then writes ZERO to
+		//     both the physical and magical halves, whose sum is the total.
+		//     2,482 real rows, containing the first group.
+		//
+		// Until these columns existed every one of them dealt
 		// DisclosedSkillDamagePerLevel * level, because skillDamageBonus fell
 		// back to the disclosed bonus whenever AttackPercent was zero. So using
-		// a buff on a monster hurt it. It no longer does.
+		// a buff on a monster hurt it. It no longer does, and that constant no
+		// longer touches real skill data at all -- only the own-design
+		// skill.Catalog, which has no real row.
 		//
 		// The cast still SUCCEEDS: costs were paid and the use recorded above,
 		// which is the order the engine checks them in. What the skill does
@@ -625,7 +635,7 @@ func UseSkillHandler(
 		//
 		// The gauge rides along unchanged so the HUD orbs do not blink to zero
 		// on a cast that simply is not an attack.
-		if noCombat {
+		if noCombat || zeroDmg {
 			res := &AttackResult{}
 			if zerk != nil {
 				res.BerserkGauge = int32(zerk.Gauge(characterID))

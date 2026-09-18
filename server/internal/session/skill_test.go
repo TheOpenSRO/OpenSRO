@@ -63,6 +63,13 @@ func (fakeSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error
 	if id == 996 {
 		return &refdata.Skill{ID: 996, BasicLevel: 5, ReuseDelayMs: 0, NoCombatParam: true}, nil
 	}
+	// 995 is the WIDER case: it carries a combat parameter, so the engine does
+	// resolve a blow for it, but it has no 'att' and no 'ck', so `local_d0` is
+	// 1 and the blow's damage is zero. 669 real rows are like this, and they
+	// are NOT covered by NoCombatParam.
+	if id == 995 {
+		return &refdata.Skill{ID: 995, BasicLevel: 5, ReuseDelayMs: 0, ZeroDamage: true}, nil
+	}
 	return nil, errors.New("no such skill")
 }
 
@@ -509,5 +516,105 @@ func TestNoCombatParamSkillDealsNoDamage(t *testing.T) {
 	}
 	if monster.HP != before {
 		t.Errorf("monster HP %d -> %d; a skill with no combat parameter must not hurt it", before, monster.HP)
+	}
+}
+
+func TestZeroDamageSkillDealsNoDamage(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+
+	items := stubCombatItems{100: {ID: 100, PhysAttackMin: 30, PhysAttackMax: 30}}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	inv.TruncateForTest(ctx)
+	inv.AddItem(ctx, c.ID, 100, 1)
+
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	eq.TruncateForTest(ctx)
+	eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0)
+
+	skills, err := skill.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("skill.OpenSQLStore: %v", err)
+	}
+	defer skills.Close()
+	skills.TruncateForTest(ctx)
+	if err := skills.Learn(ctx, c.ID, 995); err != nil {
+		t.Fatalf("Learn: %v", err)
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 1000, 10, 5, 500)
+	before := monster.HP
+
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	quests.TruncateForTest(ctx)
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}, nil, mana.NewTracker(), nil),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	resp = send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 995, TargetMonsterID: monster.ID}).Encode())
+	ar, err := DecodeAttackResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeAttackResult: %v", err)
+	}
+	// The cast SUCCEEDS -- the engine pays the costs and records the use, it
+	// simply resolves no blow.
+	if ar.Error != "" {
+		t.Fatalf("cast of a no-combat skill failed: %s", ar.Error)
+	}
+	if ar.MonsterDamage != 0 {
+		t.Errorf("a zero-damage skill dealt %d damage, want 0", ar.MonsterDamage)
+	}
+	if monster.HP != before {
+		t.Errorf("monster HP %d -> %d; a zero-damage skill must not hurt it", before, monster.HP)
 	}
 }

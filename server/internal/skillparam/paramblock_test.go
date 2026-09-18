@@ -422,3 +422,47 @@ func TestCarriesCombatParameterDoesNotDecidePastAVarLenCode(t *testing.T) {
 		t.Errorf("att before the stop: carries=%v decided=%v, want true/true", carries, decided)
 	}
 }
+
+func TestDealsZeroDamage(t *testing.T) {
+	// 'att' means the blow is computed.
+	if zero, decided := DealsZeroDamage(block("att")); zero || !decided {
+		t.Errorf("att: zero=%v decided=%v, want false/true", zero, decided)
+	}
+	// 'ck' alone is enough to keep local_d0 at 0, which is why it is exported
+	// rather than inferred from the attack percent.
+	if zero, decided := DealsZeroDamage(block("ck")); zero || !decided {
+		t.Errorf("ck: zero=%v decided=%v, want false/true", zero, decided)
+	}
+	// A combat parameter that is NEITHER of the two still deals zero: it gets
+	// past the early return and then has both halves written zero.
+	if zero, decided := DealsZeroDamage(block("bl")); !zero || !decided {
+		t.Errorf("bl: zero=%v decided=%v, want true/true", zero, decided)
+	}
+	// Which makes the two rules nest: everything CarriesCombatParameter calls
+	// non-combat must also be zero-damage, never the other way round.
+	for _, c := range []Code{"dura", "bl", "mc"} {
+		carries, _ := CarriesCombatParameter(block(c))
+		zero, _ := DealsZeroDamage(block(c))
+		if !carries && !zero {
+			t.Errorf("%q carries no combat parameter but is not zero-damage; the first must be inside the second", c)
+		}
+	}
+}
+
+func TestDealsZeroDamageDoesNotDecidePastAVarLenCode(t *testing.T) {
+	var varlen Code
+	for c, k := range Kind {
+		if k == KindVarLen {
+			varlen = c
+			break
+		}
+	}
+	if zero, decided := DealsZeroDamage([]int32{codeWord(varlen), 1, 2}); !zero || decided {
+		t.Errorf("stopped walk: zero=%v decided=%v, want true/false (undecided)", zero, decided)
+	}
+	// An 'att' before the stop settles it.
+	words := append(block("att"), codeWord(varlen), 1, 2)
+	if zero, decided := DealsZeroDamage(words); zero || !decided {
+		t.Errorf("att before the stop: zero=%v decided=%v, want false/true", zero, decided)
+	}
+}

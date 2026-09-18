@@ -167,3 +167,21 @@ func TestNoCombatParamSkillHasNoDamageBonus(t *testing.T) {
 		t.Errorf("skillDamageBonus(att skill) = (%d, %d), want (15, 143)", flat, pct)
 	}
 }
+
+// ZeroDamage is the wider rule and NoCombatParam is inside it: a skill that
+// carries a combat parameter but neither 'att' nor 'ck' still deals nothing,
+// because Combat_ResolveDamage's local_d0 zeroes both halves of the blow.
+func TestZeroDamageSkillHasNoDamageBonus(t *testing.T) {
+	zero := &refdata.Skill{ID: 1, BasicLevel: 5, ZeroDamage: true}
+	if flat, pct := skillDamageBonus(zero); flat != 0 || pct != 0 {
+		t.Errorf("skillDamageBonus(zero-damage skill) = (%d, %d), want (0, 0)", flat, pct)
+	}
+	// A skill carrying 'ck' but no 'att' is NOT zero-damage: local_d0 stays 0,
+	// the mitigation path runs and the weapon's own blow lands. Exactly one
+	// real skill is like this, which is why the flag is exported rather than
+	// inferred from AttackPercent alone.
+	ckOnly := &refdata.Skill{ID: 1, BasicLevel: 5}
+	if flat, pct := skillDamageBonus(ckOnly); flat == 0 && pct == 0 {
+		t.Error("a skill with no att but no ZeroDamage flag should still get the disclosed fallback, not zero")
+	}
+}

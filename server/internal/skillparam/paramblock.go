@@ -644,3 +644,58 @@ func CarriesCombatParameter(words []int32) (carries, decided bool) {
 	}
 	return false, complete
 }
+
+// DamageParameters are the two parameters that decide whether a skill's blow is
+// computed at all, as opposed to merely whether the function runs.
+//
+// Combat_ResolveDamage (0x0058e5f0) sets its `local_d0` flag from exactly these
+// two, and `local_d0` then selects between computing the blow and zeroing it:
+//
+//	if ((skill[0x230] == 0) && (skill[0x248] == 0)) { ... local_d0 = 1; }
+//
+//	case 0:                                   // the ordinary damage kind
+//	  if (local_d0 == 0) {
+//	      result[0x28] = Formula_MitigatePhysicalDamage(...);
+//	      result[0x24] = Formula_MitigateMagicalDamage(...);
+//	  } else {
+//	      result[0x28] = 0;                   // physical
+//	      result[0x24] = 0;                   // magical
+//	  }
+//	  result[0x20] = result[0x28] + result[0x24];
+//
+// So a skill carrying neither 'att' nor 'ck' deals **zero**: both halves are
+// written zero and the total is their sum. This is a wider rule than the early
+// return CombatParameters describes -- that one decides whether a blow is
+// resolved at all, this one decides whether a resolved blow has any damage in
+// it -- and the first is a strict subset of the second.
+//
+// SCOPED TO THE ORDINARY DAMAGE KIND. The switch is on a byte of the hit record
+// that is left 0 unless one of four conditions sets it to 1..4, and only case 0
+// consults local_d0; the others compute damage by other means
+// (Formula_RollLevelDamage, a fixed 1, two singleton lookups). What selects
+// those kinds has not been read, so this rule is stated for the default kind
+// and not claimed for all four.
+//
+// MEASURED over the 32,367 real skill rows that walk cleanly: 29,884 carry
+// 'att', **exactly one** carries 'ck', and **2,482 carry neither**. Of those
+// 2,482, 1,813 also carry none of CombatParameters and take the earlier return;
+// the other 669 resolve a blow of zero.
+var DamageParameters = []Code{"att", "ck"}
+
+// DealsZeroDamage reports whether Combat_ResolveDamage's `local_d0` would be 1
+// for this skill: it carries neither of DamageParameters, so the ordinary
+// damage kind writes zero to both halves of the blow.
+//
+// decided carries the same meaning as in CarriesCombatParameter: finding one of
+// the two settles it, finding neither settles it only when the walk finished.
+func DealsZeroDamage(words []int32) (zero, decided bool) {
+	entries, _, complete := Walk(words)
+	for _, e := range entries {
+		for _, d := range DamageParameters {
+			if e.Code == d {
+				return false, true
+			}
+		}
+	}
+	return true, complete
+}

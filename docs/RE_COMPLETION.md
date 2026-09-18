@@ -17448,3 +17448,64 @@ been read. Those skills keep the disclosed fallback, which is now the only place
 data.
 
 Applied 0 names.
+
+## `local_d0 == 1` reads: a skill with no `att` and no `ck` deals zero (2026-09-18)
+
+The previous round left this open: `local_d0 = 1` gates the
+`Formula_MitigatePhysicalDamage` call as well as the damage floor, and "the branches taken instead
+have not been read". They are read now, and the answer is flat.
+
+	case 0:                                   // the ordinary damage kind
+	  if (local_d0 == 0) {
+	      result[0x28] = Formula_MitigatePhysicalDamage(...);   // physical
+	      result[0x24] = Formula_MitigateMagicalDamage(...);    // magical
+	  } else {
+	      result[0x28] = 0;
+	      result[0x24] = 0;
+	  }
+	  result[0x20] = result[0x28] + result[0x24];               // total
+
+Both halves are written zero and the total is their sum, so **`local_d0 == 1` means zero damage**.
+And `local_d0` comes from exactly two parameters:
+
+	if ((skill[0x230] == 0) && (skill[0x248] == 0)) { ... local_d0 = 1; }
+
+`0x230` is `'att'` and `0x248` is `'ck'`. So the rule is: **a skill carrying neither `'att'` nor
+`'ck'` deals zero damage.** That is wider than the previous round's early-return rule and contains
+it.
+
+**SCOPED, and the scope is stated rather than assumed.** The switch is on a byte of a freshly
+allocated hit record that stays 0 unless one of four conditions sets it to 1..4, and **only case 0
+consults `local_d0`**; the others compute damage by other means (`Formula_RollLevelDamage`, a fixed
+1, two singleton lookups). What selects those kinds is not read, so this is the rule for the
+default kind and is not claimed for all four.
+
+**Measured over the 32,367 real rows that walk cleanly:**
+
+	carry 'att'                       29,884
+	carry 'ck'                             1       <- one skill in the whole table
+	carry NEITHER  (local_d0 = 1)      2,482
+	  ...of which carry none of the 33   1,813     (the earlier return; 1,797 after 'efr')
+	  ...of which carry some other         669     (resolve a blow, of zero)
+
+`'ck'` being carried by a single row is why it is exported rather than inferred from the attack
+percent: "no `att`" and "zero damage" are the same set in this data and are not the same rule.
+
+**Wired through as `refdata.Skill.ZeroDamage`**, the same path as the previous column, and verified
+on real data: the exporter flags **exactly 2,482**, `NoCombatParam` is a **strict subset**
+(1,797 of 1,797 also flagged), and **zero** flagged rows carry an attack percent. Both end-to-end
+tests fail without the change, reporting 40 damage and a bonus of (20, 0).
+
+**What this does NOT finish, stated because the number is easy to overstate.**
+`DisclosedSkillDamagePerLevel` is gone from 2,482 rows but still applies to **1,526**: rows with no
+attack percent that are not flagged zero-damage. Two causes, and they overlap rather than
+partition, because `attackParam` falls back to the whole-row scan on a row the walk cannot finish:
+
+- **1,265** rows stop at a variable-length code, so nothing can be concluded about them;
+- **440** walked rows carry `'att'` with a percent of **0**, and what the engine does with a zero
+  percent has not been read.
+
+So the honest summary is that the disclosed constant is retired for the 2,482 rows where the engine
+gives a grounded answer, and survives on 1,526 where it does not yet.
+
+Applied 0 names.

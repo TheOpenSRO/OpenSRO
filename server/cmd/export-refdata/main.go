@@ -538,6 +538,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		reqItemList(cols),     // 32 ReqCastList -- the 'reqi' records as kind:value;...
 		reqAll(cols),          // 33 ReqCastAll -- 'reqn': the list is ALL-of, not ANY-of
 		noCombatParam(cols),   // 34 NoCombatParam -- the engine resolves no blow for this skill
+		zeroDamage(cols),      // 35 ZeroDamage -- a resolved blow whose damage is zero
 	}, true
 }
 
@@ -611,6 +612,26 @@ func paramRuns(cols []string) (runs []skillparam.Entry, complete bool) {
 	}
 	runs, _, complete = skillparam.Walk(words)
 	return runs, complete
+}
+
+// paramWords is a row's Param block as the 32-bit words the parser walks.
+func paramWords(cols []string) ([]int32, bool) {
+	if len(cols) <= skillparam.ParamBlockColumn {
+		return nil, false
+	}
+	words := make([]int32, 0, len(cols)-skillparam.ParamBlockColumn)
+	for _, v := range cols[skillparam.ParamBlockColumn:] {
+		s := strings.TrimSpace(v)
+		if s == "" {
+			continue
+		}
+		n, err := strconv.ParseInt(s, 10, 32)
+		if err != nil {
+			return nil, false
+		}
+		words = append(words, int32(n))
+	}
+	return words, true
 }
 
 // paramFind returns the ROW COLUMN of the first run carrying code.
@@ -787,6 +808,31 @@ func reqItemList(cols []string) string {
 	return strings.Join(out, ";")
 }
 
+// zeroDamage reports, as "1" or "0", that Combat_ResolveDamage's `local_d0`
+// would be 1 for this skill -- it carries neither 'att' nor 'ck', so the
+// ordinary damage kind writes zero to both halves of the blow and their sum is
+// the total. See skillparam.DamageParameters.
+//
+// This is WIDER than noCombatParam and contains it: 2,482 real rows carry
+// neither, of which 1,813 also carry none of the 33 and return earlier still.
+// Both columns are exported because the distinction is real -- no blow at all
+// versus a blow of zero -- even though srrevamp models both as no damage today.
+//
+// Positive sense is safe here for the same reason the other column's negative
+// sense is: an export predating this one loads false, which means "this skill's
+// damage is computed", the behaviour every older export already had.
+func zeroDamage(cols []string) string {
+	words, ok := paramWords(cols)
+	if !ok {
+		return "0"
+	}
+	zero, decided := skillparam.DealsZeroDamage(words)
+	if decided && zero {
+		return "1"
+	}
+	return "0"
+}
+
 // noCombatParam reports, as "1" or "0", that Combat_ResolveDamage would return
 // WITHOUT RESOLVING A BLOW for this skill: it carries none of the 33 parameters
 // that function tests, and no 'efr' whose second value is 6. See
@@ -804,20 +850,9 @@ func reqItemList(cols []string) string {
 // conservative direction: the skill keeps the damage it has today rather than
 // being silenced on evidence that does not exist.
 func noCombatParam(cols []string) string {
-	if len(cols) <= skillparam.ParamBlockColumn {
+	words, ok := paramWords(cols)
+	if !ok {
 		return "0"
-	}
-	words := make([]int32, 0, len(cols)-skillparam.ParamBlockColumn)
-	for _, v := range cols[skillparam.ParamBlockColumn:] {
-		s := strings.TrimSpace(v)
-		if s == "" {
-			continue
-		}
-		n, err := strconv.ParseInt(s, 10, 32)
-		if err != nil {
-			return "0"
-		}
-		words = append(words, int32(n))
 	}
 	carries, decided := skillparam.CarriesCombatParameter(words)
 	if decided && !carries {

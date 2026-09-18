@@ -148,6 +148,23 @@ type Skill struct {
 	// means "this skill does resolve a blow" -- the behaviour every older
 	// export already had.
 	NoCombatParam bool
+
+	// ZeroDamage is true when Combat_ResolveDamage's `local_d0` would be 1 for
+	// this skill: it carries neither 'att' nor 'ck', so the ordinary damage
+	// kind writes zero to BOTH halves of the blow and the total is their sum.
+	// See skillparam.DamageParameters.
+	//
+	// Wider than NoCombatParam and containing it -- 2,482 real rows against
+	// 1,813 -- because that one decides whether a blow is resolved at all and
+	// this one decides whether a resolved blow carries damage. Both are kept
+	// because the distinction is real, even though srrevamp models both as no
+	// damage today.
+	//
+	// This is what finally removes DisclosedSkillDamagePerLevel from real data:
+	// every skill without 'att' now has a grounded answer instead of an
+	// invented per-level bonus. The constant survives only for the own-design
+	// skill.Catalog, which has no real row at all.
+	ZeroDamage bool
 	// HitCount is how many times one cast strikes: 1 for most skills, up to 5.
 	//
 	// CONFIRMED INDEPENDENTLY 2026-09-16: the client's own localisation key for

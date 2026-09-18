@@ -299,6 +299,10 @@ var skillCSVColumns = []string{
 	// all). A strict suffix, and NEGATIVE so an older export loads false,
 	// meaning "it does resolve a blow" -- exactly what it meant before.
 	"NoCombatParam",
+	// Appended later (a resolved blow whose damage is zero; wider than the
+	// column above and containing it). Also a strict suffix: false means "this
+	// skill's damage is computed", which is what older exports meant.
+	"ZeroDamage",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -437,6 +441,9 @@ func parseSkillRow(f []string) (Skill, error) {
 	}
 	if len(f) > 34 {
 		sk.NoCombatParam = parseInt(f[34]) != 0
+	}
+	if len(f) > 35 {
+		sk.ZeroDamage = parseInt(f[35]) != 0
 	}
 
 	if err != nil {

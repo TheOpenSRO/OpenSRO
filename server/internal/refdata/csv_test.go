@@ -358,3 +358,23 @@ func TestSkillCSVNoCombatParamIsAStrictSuffix(t *testing.T) {
 		t.Error("NoCombatParam=1 did not load as true")
 	}
 }
+
+// ZeroDamage is the second appended column and must behave the same way: an
+// export predating it loads false, meaning "this skill's damage is computed".
+func TestSkillCSVZeroDamageIsAStrictSuffix(t *testing.T) {
+	old := make([]string, 35) // through NoCombatParam, no further
+	for i := range old {
+		old[i] = "0"
+	}
+	old[2] = "SKILL_TEST"
+	sk, err := parseSkillRow(old)
+	if err != nil {
+		t.Fatalf("parseSkillRow on a pre-column export: %v", err)
+	}
+	if sk.ZeroDamage {
+		t.Error("an export predating ZeroDamage loaded as true; it must default to false")
+	}
+	if sk, err = parseSkillRow(append(old, "1")); err != nil || !sk.ZeroDamage {
+		t.Errorf("ZeroDamage=1 did not load as true (err=%v)", err)
+	}
+}
