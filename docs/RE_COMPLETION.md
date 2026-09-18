@@ -15308,3 +15308,39 @@ attached to a function in each of 201 classes, which makes the next questions ch
 and the same measurement points at the remaining targets: `CBasicQuest` slot 22 (105
 overrides, still the biggest and still declined at 73/94 evidence), `CDBRecord` slots 2
 and 3, `AQ_Base`'s four, and on the client `CNIFWnd` slots 0-2 and 10.
+
+## 366 DB table-name accessors (2026-09-18)
+
+Continuing down the payoff ranking from the last tick: `CDBRecord`, 249 overrides, with
+slots 2 and 3 at the top. Both are pure virtual in the base and implemented by 185
+classes.
+
+**What they are, read rather than guessed:**
+
+	slot 3   mov eax,<addr> ; ret                          the address of a per-class static std::string
+	slot 2   cmp capacity,0x10 ; use buffer or heap ptr     the MSVC c_str() inline over that same string
+
+That gives the *shape* but not the meaning, and a per-class static string could be a
+class name, a query, anything. **The meaning comes from the class's own registration
+function**, which formats that same static into
+
+	"DBTable Registering Failed: %s"
+
+so the string is the **DB table name**. Checked address for address rather than by
+pattern: `CRefSkill`'s slot 3 returns `0xd1b6b0`, its slot 2 reads the buffer at
+`0xd1b6b8`, and its registrar passes `0xd1b6b8` to that message.
+
+Named `GetTableName` and `GetTableNameCStr` across the family. **Applied 366, failed 0.**
+Skipped: 846 already named, 251 whose slot-2/3 body is a different shape (so the pair
+does not apply), 13 attributed to another class.
+
+**This is the second pass in two ticks that came from the payoff measurement**, and both
+landed because the measurement pointed at a base class rather than at a system. The
+remaining ranked targets are unchanged: `CBasicQuest` slot 22 (105, declined on 73/94
+evidence), `AQ_Base`'s four slots at 26 each, and on the client `CNIFWnd` slots 0-2 and
+10 — the client still has no named base slot anywhere, which is why its propagation
+yield was zero.
+
+A note on what these names are worth: like the 201 class-name accessors, they are
+accessors, not game logic. But 185 DB record classes now state which table they are,
+which is exactly the kind of fact the schema work needs.
