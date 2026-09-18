@@ -16076,5 +16076,10 @@ finds one site in an unnamed function, and 180 is not in the tag dispatcher's wr
 so no magic option can produce it. Where it comes from is the next question.
 
 No value changed. What moved is a reader map to pair with the writer map, a corrected
-annotation on the mitigation formula in both the record and the Ghidra database, and a
-defensive term — param 180 — that is now identified by its use even though its source is not.
+annotation on the mitigation formula, and a defensive term — param 180 — that is now
+identified by its use even though its source is not.
+
+A footnote on the record itself: `Formula_MitigatePhysicalDamage` turned out **not** to be
+in `recovered_names.tsv` at all. It had been named in an earlier session and its evidence
+lived only in the Ghidra database, so the in-place correction matched nothing and said so.
+The corrected row is now appended, and the two stores agree.
