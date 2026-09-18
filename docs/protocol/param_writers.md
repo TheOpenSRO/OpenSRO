@@ -195,17 +195,49 @@ implementations into one. It currently carries the label
 `CGObjCOS_Summoned::IsAccessory`, recovered from one class's assert — that label is an
 artifact of the folding and is **not** evidence of what the gate means here.
 
-## Still open
+## The reference record is a RefObjChar — settled
 
-Which authored table the reference record comes from. It is reached as
-`[[char+0x34]+0x18]`, and `+0x34` is far too common an offset to identify (478 writers), so
-the record's class is unpinned and `ref[0x1d4]`, `ref[0x1d8]` and `ref[0x1dc]` cannot yet be
-named as columns. It is **not** `RefObjChar`: `RefObjChar_ExtractData` never writes those
-three offsets.
+`[[char+0x34]+0x18]` is a **RefObjChar**, the characterdata row. Proven by a named accessor
+that walks the identical path and reads a field the extractor names:
 
-What has not changed is srrevamp's damage model. The item path still writes params 34, 35,
-36, 37, 59 and 141, which the graph feeds into 17-20, and the defence pair 5/7 is still not
-reached from equipment anywhere that has been read.
+	004a66e0  CGObjCOS_Summoned::GetGender
+	          mov eax,[ecx+0x34] ; mov ecx,[eax+0x18] ; mov al,BYTE PTR [ecx+0x199]
+
+and `RefObjChar_ExtractData` writes `+0x199` as its `CharGender` byte. Two independent
+routes to the same class.
+
+`RefObjChar_ExtractData` does write `+0x1d4`, `+0x1d8` and `+0x1dc`, despite no such text
+appearing in its decompile. It fills them through a **pointer walk**:
+
+	local_4c = param_1 + 0x1a4;   local_48 = 0x20;
+	do { *local_4c = *(cursor + base); cursor += 4; counter += 1; local_4c++; }
+	while (--local_48);
+
+— a run of **32 consecutive dwords from `+0x1a4` to `+0x220`**, of which `+0x1d4`, `+0x1d8`
+and `+0x1dc` are entries 12, 13 and 14.
+
+So the two floats param 7 interpolates between, and the per-count term added to them, are
+**authored characterdata values**. That settles the identity question left open above and
+confirms the finding: no equipment term is involved.
+
+## Why no column numbers are quoted here
+
+The obvious next step is to turn those field positions into characterdata column numbers by
+counting. **It does not work, and the repo already says why.**
+`server/cmd/export-refdata/main.go` records that for itemdata "binary field 57 and text
+column 57 are simply different fields at the same index". The serialised row and the
+authored `.txt` row are two different indexings.
+
+Counting confirms the gap rather than closing it. `RefObjCommon_ExtractData` consumes
+**48** binary fields before `RefObjChar`'s own portion starts (28 straight-line reads plus a
+four-trip loop reading two fields per trip), which would put `Lvl` at binary field 49. The
+grounded text-column anchor is `Level = col 57`. The two differ by 8, and nothing read so
+far says which fields the text row carries that the binary row does not.
+
+So `+0x1d4`/`+0x1d8`/`+0x1dc` are recorded here as **RefObjChar binary fields 17, 18 and 19**
+(entries 12-14 of the `+0x1a4` run) and deliberately **not** as column numbers. The
+`+0x25c defaulting to 3000 = col 82` note carried in that function's own recovered comment
+mixes the two indexings the same way and should not be relied on.
 
 ## Two traps this cost
 

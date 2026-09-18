@@ -15875,3 +15875,38 @@ lead above, and srrevamp's damage model is untouched. What moved is that a quest
 been open since the equipment retraction now has a definite answer on one path, and the
 remaining unknown is narrowed to a single thing: which authored table the reference record
 comes from.
+
+## 2026-09-18 — the reference record identified, and a column-index conflation caught
+
+The one unknown left from the previous tick was which authored table the reference record at
+`[[char+0x34]+0x18]` belongs to. It is a **RefObjChar** — the characterdata row — proven by
+`CGObjCOS_Summoned::GetGender`, which walks the identical `[+0x34]` → `[+0x18]` path and
+reads `+0x199`, the byte `RefObjChar_ExtractData` fills as `CharGender`.
+
+That also explains why the extractor appeared not to write `+0x1d4`. It fills a run of **32
+consecutive dwords from `+0x1a4`** through a pointer walk, so no `param_1 + 0x1d4` text ever
+appears; `+0x1d4`, `+0x1d8` and `+0x1dc` are entries 12-14 of that run. The values param 7
+interpolates between are therefore **authored characterdata**, which confirms the previous
+tick's conclusion with the record's identity now pinned.
+
+**Three offset collisions in one tick**, all of which looked like answers:
+`RefObjItem::ExtractData` writes `+0x1d4`, `+0x1dc` and `+0x200`, three of the four offsets
+in question, which would have flipped the conclusion to "equipment after all";
+`CGameServer::FUN_00723910` writes `+0x1d4` with the same float-store form and is a
+constructor zeroing its own fields; and last tick's `CGItemEquip::vslot_000` was the same
+shape. A struct-offset sweep finds offsets, not structs.
+
+**The column numbers are deliberately not promoted.** Turning binary field positions into
+characterdata column numbers by counting does not work, and this repo already knew it:
+`server/cmd/export-refdata/main.go` records that for itemdata "binary field 57 and text
+column 57 are simply different fields at the same index". Counting makes the gap explicit
+rather than closing it — `RefObjCommon_ExtractData` consumes **48** binary fields before
+`RefObjChar`'s portion, putting `Lvl` at binary field 49 against the grounded text anchor of
+`Level = col 57`, a difference of 8 that nothing read so far explains. So the three fields
+are recorded as RefObjChar binary fields, not columns. The `+0x25c … = col 82` note in that
+function's own recovered comment mixes the same two indexings and is flagged as unsafe.
+
+No names applied and no value changed. What moved is that the defence chain is now traced
+end to end on the character side — param 7 <- block `[0x68]` <- interpolation of authored
+characterdata fields, with equipment absent throughout — and the one step that would have
+produced fabricated column numbers was caught before it was taken.
