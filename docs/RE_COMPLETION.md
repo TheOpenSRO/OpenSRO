@@ -15211,3 +15211,34 @@ accesses because it allowed 14 instructions between the array load and the index
 the real gap in the function I had already read by hand is about 20. Comparing a scan's
 output against one case read manually is what caught it, and that is now the third time
 this session that habit has caught a silent miss.
+
+## 32 AI state methods, from a base class that already named its own slots (2026-09-18)
+
+After five ticks on a single value, this one went for breadth. First a measurement: is
+there another **single-virtual family** like `CEVENTHandler`, where every derived class
+overrides one slot and naming it names them all? **No** — the only sizeable candidate is
+`CBasicQuest` slot 22 with 21 classes, which is the slot measured and declined two ticks
+ago at 73/94. That lever is spent on the server.
+
+The productive shape turned out to be the *other* one, the same as the alchemy pass: **a
+base class whose own slots are already named.** `CAIState` has thirteen:
+
+	slot 2  OnEnter      slot 3  OnUpdate     slot 4  OnLeave      slot 18 ExtendDwell
+	slot 30 OnCSNM_Activate_AI   slot 36 DispatchMessage
+	slots 38, 42, 44, 45, 46, 47  OnMsg_0x22 / 0x26 / 0x28 / 0x29 / 0x2a / 0x2b
+
+and **19 classes derive it** — the engine's AI state machine, including `BATTLE`, `DEAD`,
+`EMOTION`, `PICKITEM` and `AUTOCOMMAND`. Of the 19 × 13 possible overrides, **156 are
+inherited** (so not the class's own), 23 are already named or shared, and **32 are the
+class's own unnamed override**. Those 32 are now named, e.g. `CAIState_BATTLE::OnEnter`,
+`::OnUpdate`, `::OnLeave`, `::OnMsg_0x28`. **Applied 32, failed 0.**
+
+**A per-function check, not just a structural one.** `CAIState_BATTLE`'s slot-3 override
+opens by calling **`CAIState::OnUpdate()`** — the derived method calling the base's
+version of the same virtual. That is the override pattern in the binary's own code, and
+it confirms the slot identity carries into the derived class rather than resting on the
+vtable layout alone.
+
+Inherited entries were deliberately skipped: naming a slot that still points at the
+base's function would attach a derived class's name to the base's code, which is the
+folded-function mistake in a different costume.
