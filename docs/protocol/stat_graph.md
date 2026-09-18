@@ -34,21 +34,21 @@ project recovered separately, which is the check that the decoding is right.
 	 15  <- 19                16 <- 20
 	 16  <- 20                17 <- 1, 18 <- 1, 19 <- 2, 20 <- 2
 
-## What this settles: armour does reach the flat absorb
+## What this settles, and what it does not
 
-`Formula_MitigatePhysicalDamage` subtracts **param 5** as flat absorption. Four ticks of
-enumerating param-5 writers found publishers, skill effects and timed debuffs but no
-equipment — because **equipment never writes param 5 directly**:
+`Formula_MitigatePhysicalDamage` subtracts **param 5** as flat absorption, and nothing
+writes param 5 for a player except the publisher, skill effects and timed debuffs. The
+chain that produces it is:
 
-	item entry -> param 59 -> param 50 -> param 21 -> param 5
+	characterdata -> block[0x6c], block[0x6d] -> params 58, 59 -> param 50 -> param 21 -> param 5
+	                                                                Strength  ->  param 21
 
 `param 59` has exactly two writers: `Char_PublishCombatStats` and
-**`RemoveParamKeeperItemEntry`**, the per-item entry function. So an equipped item's
-contribution arrives at the flat absorb through the graph.
+`RemoveParamKeeperItemEntry`. **The second writes 0.0** (see the retraction below), so
+this does not show equipment reaching the absorb.
 
-`param 21` also takes `param 1`, Strength. So the flat absorb has **two upstream
-sources, equipment and Strength**, and the magical twin (`6 <- 22 <- 2/51`) mirrors it
-with Intellect.
+`param 21` takes `param 1`, Strength, as its base and `param 50` as its scale, and the
+magical twin (`6 <- 22 <- 2/51`) mirrors it with Intellect.
 
 ## The slots, which are the arithmetic
 
@@ -69,10 +69,28 @@ Decoded with the slot, the flat-absorb chain reads:
 and `GParamKeeper::FUN_004b2e60` combines a slot's contributors by slot type: a scale
 slot starts at **100.0** and each contributor composes as `acc = contrib * acc / 100`.
 
-**So equipment does not add to the flat absorb; it scales it.** The absorb is a
-Strength-derived base multiplied by a percentage that `param 50` carries, and `param 50`
-is where the per-item entries land (via `param 59`). The magical twin is identical with
-Intellect and `param 51`.
+So the absorb is a Strength-derived base multiplied by a percentage `param 50` carries,
+and the magical twin is identical with Intellect and `param 51`.
+
+**RETRACTED 2026-09-18: the claim that equipment feeds `param 50`.** It rested on
+`RemoveParamKeeperItemEntry` being one of `param 59`'s two writers. Reading the *value*
+at that site shows `fldz` — it writes **0.0**, twice, to params 58 and 59. It clears the
+contributions before a republish; it is not a contribution.
+
+What actually feeds 58 and 59 is read, and it is not equipment:
+
+	Char_PublishCombatStats  0x00497e6d  fld [ebp+0x1b0] ; *100 -> param 58
+	                         0x00497ea7  fld [ebp+0x1b4] ; *100 -> param 59
+
+`+0x1b0` and `+0x1b4` are block fields `[0x6c]` and `[0x6d]`, and the only function
+writing those on a character is `Char_BuildAggregateStats`, which interpolates them from
+**characterdata columns**. So for a player, whose characterdata row carries zeros, 58 and
+59 are zero, the scale is zero, and the flat absorb is zero — with no equipment appearing
+anywhere in this chain.
+
+**Where an equipped item's defence actually goes is still unlocated.** The per-item
+ParamKeeper entries exist, and `RemoveParamKeeperItemEntry` removes them, but nothing
+read so far shows what they feed.
 
 ## What is NOT read
 

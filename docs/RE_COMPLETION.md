@@ -15084,3 +15084,49 @@ base slot combines its several contributors (`58 -> 50` and `59 -> 50` both land
 and which aggregate fields 58 and 59 actually are. Switching the model on three quarters
 of a reading would give a character with armour and no Strength an absorb of zero, and
 that would be a confident regression rather than a recovery.
+
+## Retraction: equipment was not shown to reach the flat absorb (2026-09-18)
+
+Last tick concluded that an equipped item's contribution arrives at the flat absorb
+through the stat graph, on the strength of `param 59` having exactly two writers, one of
+them `RemoveParamKeeperItemEntry`. **That is wrong, and reading the value settles it:**
+
+	004e3b74  fldz                      <- 0.0
+	004e3b7a  lea edi,[eax+0x39]        <- param 58
+	004e3b81  call ParamKeeper_SetParam
+	004e3b86  fldz                      <- 0.0
+	004e3b90  mov edi,0x3b              <- param 59
+	004e3b95  call ParamKeeper_SetParam
+
+It **clears** 58 and 59 before a republish. A site that writes a param is not a site that
+*feeds* it, and I had counted one as the other.
+
+What actually feeds them is now read, and it is not equipment:
+
+	Char_PublishCombatStats  fld [ebp+0x1b0] * 100 -> param 58
+	                         fld [ebp+0x1b4] * 100 -> param 59
+
+`+0x1b0` / `+0x1b4` are block fields `[0x6c]` / `[0x6d]`, and scanning writers of those
+two offsets (float stores included) finds only `Char_BuildAggregateStats` on a character
+— which interpolates **characterdata columns**. For a player, whose characterdata row is
+zeros, that makes 58 and 59 zero, the scale zero, and the flat absorb zero.
+
+**So where an equipped item's defence goes is unlocated again.** The per-item ParamKeeper
+entries exist and are removed by name; what they feed is not established.
+
+### What still stands from the last two ticks
+
+The graph itself is read and unaffected: 30 edges with their slots, `Strength -> 21` as
+base, `50 -> 21` as scale, `21 -> 5` as base, the slot combiner's rules (base slots sum,
+scale slots start at 100 and compose multiplicatively), and the check that the first
+edges reproduce the independently recovered MaxHP and MaxMP chains.
+
+### The failure mode, stated plainly
+
+Three times on this one value I have taken "function X touches param N" as "function X
+supplies param N". The debuff appliers write **negative** values; the remover writes
+**zero**; only the publisher writes a real one. **Read the value, not just the site** —
+the site tells you a param is touched, and nothing more.
+
+srrevamp is unchanged, and the grounding audit's "the flat `Defense` term is disclosed"
+stands as written.
