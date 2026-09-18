@@ -17229,3 +17229,42 @@ slot 23 returns, are not read. The chain is recorded so the next hop starts from
 than from this tick's guess.
 
 Applied 1.
+
+## 2026-09-18 — the world entry is a CGameWorld, and the chain stalls one hop later
+
+Continuing from `GameWorldMgr_FindByID`: what class is the entry it returns?
+
+**Answered by RTTI rather than by the offset.** Sweeping the world manager's address
+neighbourhood for vtable installs and resolving them through `vt_server.json` finds
+`CGameWorld_Chins_Floor5` and `CGameWorld_Chins_Floor6` built there, alongside `CGameWorldMgr`
+itself. So the manager's entries are **`CGameWorld` objects** -- a thirteen-class family:
+`CGameWorld`, `CGameWorld_BattleArena`, `CGameWorld_Chins`, `_Chins_Floor5`, `_Chins_Floor6`,
+`_Default`, `_Flag`, `_RocFront`, `_Siege`, `CDataDrivenGameWorld`, `CGameWorldLayer`,
+`CGameWorldMgr`.
+
+That settles `char+0x98`. With the class known, its slot 23 can be read off the vtable index
+instead of guessed: **one shared implementation across eleven of the thirteen**, four
+instructions long --
+
+	8240b0  mov eax,DWORD PTR [ecx+0x38]
+	8240b3  ret
+
+Named `GameWorld_GetAttachedObject`, for the role that is read: `CGObj::EnterWorld` calls it on
+the world entry and stores the result on the character at `+0xd8`, which is where
+`Char_ForwardToAttachedObject` sends a skill's timed effect.
+
+**The chain stalls at the next hop and the reason is recorded.** What the member at
+`CGameWorld+0x38` *is* remains unread: no function whose name contains `GameWorld` writes that
+field, so its installer is somewhere else and the offset alone cannot find it -- `+0x38` is far
+too common. Guessing the type from the getter would put a wrong class into the record, which is
+how `pmdg` went wrong.
+
+What the whole trace has established, and what it has not, now reads cleanly:
+
+	QueueTimedSkillEffect -> record with a tick stamp and eight parameter pointers   READ
+	TickTimedSkillEffect  -> expiry on elapsed ms, mode at param[3]                  READ
+	char slot 319         -> Char_ForwardToAttachedObject                            READ
+	char+0xd8             <- GameWorld_GetAttachedObject = CGameWorld[+0x38]         READ
+	that object's class, and its slot 10                                             NOT READ
+
+Applied 1.
