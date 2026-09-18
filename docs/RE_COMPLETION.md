@@ -16280,3 +16280,37 @@ arrays are different: abnormal states live at `object+0xc` with a `0x1c` stride,
 recorded as stun — the dump gives that name to `'soli'`, the tag that does nothing.
 
 Named `Char_InsertResistEntry` and `StdMap_InsertNode`; applied 2, failed 0. No value changed.
+
+## 2026-09-18 — the description table withdrawn, and 'soli' was never a resist
+
+Cross-checking against this repo's own `combat.LabelFor` caught two wrong claims I published
+yesterday and one unreliable method behind them.
+
+**`'soli'` is "solid" — MATTR_SOLID, a bless — not "resist stun".** Reading the dumper's
+branch directly settles it: `if (iVar2 != 0x736f6c69) { … } else { pcVar5 = "solid(%d%%): %d" }`.
+"Resist stun" belongs to `'rsti'`, exactly as `LabelFor` already had it. So yesterday's note
+that `'soli'` is "a resist accepted and ignored" was wrong twice: wrong name, and the empty
+branch is expected rather than a bug, because a *stat* dispatcher has nothing to do with a
+bless.
+
+**Which means `'rsti'` -> category 7 is resist stun after all.** I refused that yesterday on
+the grounds that "the dump gives that name to `'soli'`" — a refusal built on the mis-pairing,
+not on the binary.
+
+**The method behind it is withdrawn.** My tag -> description table came from pairing each
+`iVar2 == C` with the next string assignment, and that function's branch tree is too deep for
+text pairing. Rebuilding the parser to skip routing guards did not rescue it — it then
+produced *two* descriptions per tag (`'bu'` -> "anti-burn" and "er"; `'fz'` -> "anti-frostbite"
+and "hp"), which is the parser failing, not the binary. The table is withdrawn from
+`stat_tags.md`. `'bri'` -> "block rate" and `'cri'` -> "critical" survive, but on `LabelFor`
+and the MATTR_ enum names, not on my parser.
+
+The lesson is narrow and worth keeping: **the decompiled C is fine for finding candidates and
+unsafe for pairing them**, because Ghidra's nesting does not preserve which condition guards
+which statement. Every pairing this session got right — the tag leaves, the resist run, the
+category indices — came from the asm, where the `je` target is unambiguous.
+
+**Wired through**: `ResistCategoryFor` maps the five status-resist tags to the category index
+their branch loads into EAX, with `TestStatusResistsAreCategoriesNotParams` asserting that no
+status resist also has a param, that the categories are distinct, that `'soli'` is absent, and
+that the `rsti`/`soli` labels are the dumper's. Full suite green, 52 packages.

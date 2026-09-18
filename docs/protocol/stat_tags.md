@@ -94,6 +94,24 @@ it is, and stops at the next `cmp eax,<tag>`.
 Its output was checked against a block read by hand -- `'bu'`, `'es'`, `'ps'`, `'zb'` and
 `'fz'` -- and agrees on all five, including `'fz'` writing **two** params.
 
+## WITHDRAWN: the description column
+
+**The tag -> description table this page carried is withdrawn.** It was built by pairing each
+`iVar2 == C` in `DumpItemOptionsVerbose` with the next string assignment, and that function's
+branch tree is far too deep for text pairing. Rebuilding the parser to skip routing guards
+only made the failure visible: it then produced **two** descriptions for the same tag
+(`'bu'` -> "anti-burn" *and* "er", `'fz'` -> "anti-frostbite" *and* "hp"), which is a parser
+artifact, not the binary disagreeing with itself.
+
+At least one published pair was simply wrong: `'soli'` was recorded as "resist stun". It is
+**"solid"** — MATTR_SOLID, a *bless*, not a resist — and "resist stun" belongs to `'rsti'`.
+The authority for tag names is `combat.LabelFor` in this repo, read from the same dumper but
+branch by branch in an earlier session; it had both right.
+
+The two descriptions this page leaned on, `'bri'` -> "block rate" and `'cri'` -> "critical",
+survive — but on `LabelFor`'s evidence and the MATTR_BLOCKRATE / MATTR_CRITICAL enum names,
+not on the parser's.
+
 ## What the descriptions settle
 
 The description column is the game's own text, so it grounds readings this page previously
@@ -140,17 +158,21 @@ to a parameter.
 `'rals'` inserts here as well as writing params 27-32, which is consistent with it being
 "resist all" — it covers both mechanisms.
 
-`'soli'`, which the dump names **"resist stun"**, is recognised by the dispatcher and then
-jumps straight to the plain epilogue: it is **accepted and ignored**. That is worth stating
-because a reader seeing the tag in an item's options would reasonably expect it to do
-something.
+`'soli'` is recognised by the dispatcher and then jumps straight to the plain epilogue. That
+is **not** a resist being ignored: `'soli'` is MATTR_SOLID, a *bless* that the dumper prints
+as "solid", so a stat dispatcher having nothing to do with it is expected. An earlier version
+of this page called it "resist stun" and read the empty branch as a bug; both were wrong.
 
 **What these indices are is not claimed.** They are small integers into a per-character array
 of containers, and the abnormal-state code space recovered elsewhere is also 0..31 — but that
 array is at `object+0xc` with a `0x1c` stride and this one is at `object+0x20` with `0x18`,
 so they are **different arrays**. Reading the resist names onto abnormal-state codes would be
-exactly the kind of matching-shapes inference this project has been burned by. `'rsti'` in
-particular is *not* recorded as stun: the dump gives that name to `'soli'`.
+exactly the kind of matching-shapes inference this project has been burned by.
+
+The names themselves are settled, from `combat.LabelFor`: category 0 is sleep, 3 fear,
+**7 stun**, 8 disease, 15 csmp. An earlier version of this page refused to call 7 stun on the
+grounds that "the dump gives that name to `'soli'`" — that was the parser's mis-pairing, not
+the binary's word.
 
 ## What is still NOT claimed
 

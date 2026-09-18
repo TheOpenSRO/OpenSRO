@@ -355,3 +355,36 @@ func TestResistFamilyIsTheRunRalsWrites(t *testing.T) {
 		}
 	}
 }
+
+// TestStatusResistsAreCategoriesNotParams keeps the two resist mechanisms
+// apart. The elemental resists write ParamKeeper params; the status resists
+// write none and instead insert into a per-category container. Mixing them up
+// is the mistake this test exists to catch.
+func TestStatusResistsAreCategoriesNotParams(t *testing.T) {
+	for tag, cat := range ResistCategoryFor {
+		if p, ok := ParamFor[tag]; ok {
+			t.Errorf("%q has category %d but also ParamFor %d; the status resists "+
+				"write no param -- their branch calls Char_InsertResistEntry", tag, cat, p)
+		}
+		if _, ok := LabelFor[tag]; !ok {
+			t.Errorf("%q has a category but no LabelFor entry", tag)
+		}
+	}
+	// Categories must be distinct: two tags sharing one would mean the read of
+	// the EAX loads was wrong.
+	seen := map[int]string{}
+	for tag, cat := range ResistCategoryFor {
+		if prev, dup := seen[cat]; dup {
+			t.Errorf("category %d is claimed by both %q and %q", cat, prev, tag)
+		}
+		seen[cat] = tag
+	}
+	// 'soli' is a bless, not a resist: it must not appear here.
+	if _, ok := ResistCategoryFor["soli"]; ok {
+		t.Error("'soli' is MATTR_SOLID, a bless that prints as \"solid\"; it is not a status resist")
+	}
+	if LabelFor["rsti"] != "resist stun" || LabelFor["soli"] != "solid" {
+		t.Errorf("rsti/soli labels are %q/%q; the dumper prints \"resist stun\" and \"solid\"",
+			LabelFor["rsti"], LabelFor["soli"])
+	}
+}

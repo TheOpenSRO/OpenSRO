@@ -322,3 +322,33 @@ var SecondParamFor = map[string]int{
 // ResistParams is the elemental resist run, enumerated by 'rals'
 // (MATTR_RESIST_ALL_SET), whose leaf writes exactly these six in order.
 var ResistParams = []int{27, 28, 29, 30, 31, 32}
+
+// ResistCategoryFor maps a status-resist tag to the category index its branch
+// passes to Char_InsertResistEntry (0x0059de70). These tags write no
+// ParamKeeper param at all: the branch loads a small index into EAX -- a
+// register the decompiler does not map, so the C output shows the call with no
+// index -- and the callee indexes an array of 24-byte associative containers at
+// object+0x20, inserting through a red-black tree.
+//
+//	4990c1  xor eax,eax       'rsli'  0
+//	4990d7  mov eax,0x3       'rfei'  3
+//	4990f0  mov eax,0x7       'rsti'  7
+//	49905e  mov eax,0x8       'rdii'  8
+//	499077  mov eax,0xf       'rcsi'  15
+//
+// The names come from LabelFor, which is read from the engine's own dumper.
+// 'rals' inserts here too, which is consistent with it being "resist all":
+// it covers both this mechanism and the param run in ResistParams.
+//
+// WHAT THESE INDICES ARE IS NOT CLAIMED. They are indices into this array and
+// nothing more. The abnormal-state code space recovered separately is also
+// 0..31, but that array is at object+0xc with a 0x1c stride while this one is
+// object+0x20 with 0x18 -- different arrays, and matching ranges is not
+// evidence.
+var ResistCategoryFor = map[string]int{
+	"rsli": 0,
+	"rfei": 3,
+	"rsti": 7,
+	"rdii": 8,
+	"rcsi": 15,
+}
