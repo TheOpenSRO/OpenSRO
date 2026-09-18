@@ -223,21 +223,37 @@ confirms the finding: no equipment term is involved.
 ## Why no column numbers are quoted here
 
 The obvious next step is to turn those field positions into characterdata column numbers by
-counting. **It does not work, and the repo already says why.**
-`server/cmd/export-refdata/main.go` records that for itemdata "binary field 57 and text
-column 57 are simply different fields at the same index". The serialised row and the
-authored `.txt` row are two different indexings.
+counting. **It does not work, for two independent reasons**, and the repo already knew the
+first: `server/cmd/export-refdata/main.go` records that for itemdata "binary field 57 and
+text column 57 are simply different fields at the same index".
 
-Counting confirms the gap rather than closing it. `RefObjCommon_ExtractData` consumes
-**48** binary fields before `RefObjChar`'s own portion starts (28 straight-line reads plus a
-four-trip loop reading two fields per trip), which would put `Lvl` at binary field 49. The
-grounded text-column anchor is `Level = col 57`. The two differ by 8, and nothing read so
-far says which fields the text row carries that the binary row does not.
+The second reason is structural, and it makes the arithmetic invalid rather than merely
+risky. **The two extractors do not read one stream.** `RefObjCommon_ExtractData` parses the
+row its caller hands it. `RefObjChar_ExtractData` looks its own row up:
 
-So `+0x1d4`/`+0x1d8`/`+0x1dc` are recorded here as **RefObjChar binary fields 17, 18 and 19**
-(entries 12-14 of the `+0x1a4` run) and deliberately **not** as column numbers. The
+	iVar11 = RefTable_FindRowById(0xd, this->id);
+	iVar7  = <read dword at cursor>; counter++; cursor += 4;
+	if (iVar7 != this->id) { assert }
+
+Reading a field and asserting it **equals the object id** is what a stream sitting at the
+start of a row looks like. So `RefObjChar`'s field indices are counted within its own row,
+and adding them to `RefObjCommon`'s 48 puts two different axes on one number.
+
+That 48 is itself now verified rather than inferred: the one loop that contributes to it
+initialises its counter to 4 and reads **two** fields per trip — a dword and a byte, with
+the destination pointer advancing by 8 — so it contributes exactly 8, and the total is 48.
+
+`RefTable_FindRowById` is the accessor that makes this readable. An index picks the table
+through a bounds-checked vector accessor, it walks that table's linked list of rows, and it
+compares a key chosen by a selector — the row's **first dword** for selectors `0xc`, `0xd`
+and `0xe`, or the field at `+0x30` for `3` and `0x11`. While probing it saves the row's
+cursor and field counter, zeroes them to read the key at offset 0, then restores both, so a
+probe never disturbs a parse in progress.
+
+So `+0x1d4`/`+0x1d8`/`+0x1dc` stay recorded as **RefObjChar binary fields 17, 18 and 19**
+(entries 12-14 of the `+0x1a4` run) and are deliberately **not** given column numbers. The
 `+0x25c defaulting to 3000 = col 82` note carried in that function's own recovered comment
-mixes the two indexings the same way and should not be relied on.
+mixes the two axes the same way and should not be relied on.
 
 ## Two traps this cost
 

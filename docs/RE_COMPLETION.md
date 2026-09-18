@@ -15910,3 +15910,37 @@ No names applied and no value changed. What moved is that the defence chain is n
 end to end on the character side — param 7 <- block `[0x68]` <- interpolation of authored
 characterdata fields, with equipment absent throughout — and the one step that would have
 produced fabricated column numbers was caught before it was taken.
+
+## 2026-09-18 — the column arithmetic was never valid; the mechanism says why
+
+The previous tick ended on a clean discrepancy: binary field counting put `Lvl` at field 49
+against the grounded text anchor `Level = col 57`, a gap of exactly 8 — suspiciously the
+size of one loop's contribution. The obvious hypothesis was that the loop's trip count was
+wrong. **It is not.** Its counter initialises to 4 and each trip reads two fields, a dword
+and a byte, with the destination pointer advancing by 8; it contributes exactly 8 and the
+total of 48 is now verified by reading the body rather than inferred by regex.
+
+The gap has a different cause, and it means the arithmetic was never valid.
+**The two extractors do not read one stream.** `RefObjCommon_ExtractData` parses the row
+handed to it; `RefObjChar_ExtractData` looks its own row up with
+`RefTable_FindRowById(0xd, id)` and then reads a field and asserts it **equals the object
+id** — which is what a stream positioned at the start of a row looks like. Adding
+`RefObjChar`'s field index to `RefObjCommon`'s 48 puts two different axes on one number, so
+the 8 was never a discrepancy to explain away. Last tick's refusal to publish column numbers
+was right, and is now positively justified instead of merely cautious.
+
+Named the two functions that make this readable, applied 2, failed 0:
+
+- **`RefTable_FindRowById`** — an index selects a table through a bounds-checked vector
+  accessor, it walks that table's linked list of rows, and compares a key chosen by a
+  selector: the row's first dword for selectors `0xc`/`0xd`/`0xe`, the field at `+0x30` for
+  `3`/`0x11`. While probing it saves the row's cursor and field counter, zeroes them to read
+  the key at offset 0, then restores both, so probing never disturbs a parse in progress.
+- **`Vector_AtChecked`** — bounds-checked `std::vector` element access with the index in
+  **EDI**, invisible to the decompiler, the same register-hidden pattern as
+  `ParamKeeper_SetParam`.
+
+No value changed. What moved is that an open discrepancy is closed with a mechanism rather
+than a guess, and the temptation to "fix" it by adjusting a loop count — which would have
+produced eight wrong column numbers that happened to match a grounded anchor — was tested
+and rejected.
