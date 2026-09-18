@@ -15187,3 +15187,27 @@ This is the second correction in two ticks of something I wrote confidently one 
 earlier. Both had the same shape: a structural observation ("the rate slots are stubs",
 "the remover writes param 59") used to conclude *where* a value must come from, without
 reading the function that would confirm it.
+
+## The manager singleton array, and how far the last alchemy rate got (2026-09-18)
+
+Chasing `CEnchant_UpperReinforce`'s rate to "reference table 51" turned into a reusable
+artifact: `DAT_00d6aa18` holds a vector of the server's manager singletons, reached by
+index, and **the readers identify the entries** — guild at 11/13/14/15, training camp at
+22/23/24, siege at 37-43, timed jobs at 17/18, item drop at 52. That map is now
+`docs/protocol/manager_singletons.md`, useful for any future "which singleton is this".
+
+**Entry 51 has exactly four readers**, two of them alchemy commit steps
+(`CEnchant_SocketMaker::vslot_009` and `CEnchant_UpperReinforce::vslot_009`). So the
+upper-reinforce outcome is decided in its commit step against a singleton it shares with
+the socket maker — **and that singleton is still unnamed.** Neither non-alchemy reader
+names it, and the vector is filled by index rather than by per-entry writes, so the
+loader did not fall out of this pass either.
+
+No name was applied. The honest position is that the last of the seven alchemy rates is
+one identification away, not that it is recovered.
+
+**A third empty probe that was about the probe.** The first mapping scan returned zero
+accesses because it allowed 14 instructions between the array load and the indexed read;
+the real gap in the function I had already read by hand is about 20. Comparing a scan's
+output against one case read manually is what caught it, and that is now the third time
+this session that habit has caught a silent miss.
