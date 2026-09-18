@@ -16679,3 +16679,27 @@ The win is that all 18 are now defined and will appear in the next dump, where t
 levers can reach them.
 
 No value changed.
+
+## 2026-09-18 — following the installer chain to the handlers it registers
+
+The 18 functions created last tick are in the dump (server 34,189 -> **34,207**) and can now be
+read. Fourteen sat behind installers that were themselves unnamed, so this tick took the largest
+of them.
+
+`FUN_00427d90` turns out not to be a table installer at all. It clears the `0x1c`-byte record
+array at `DAT_00cc3fe4` and then allocates **27 records**, each carrying a kind at `+0x00`, an
+entry id at `+0x04` and a handler at `+0x18` — and **only two distinct handlers are ever
+installed**, one for kind 0 and one for kind 1. The "nine pointers at +0x18" the sweep reported
+were nine *stores* of two functions, which is why the sweep's own distinct-target list had only
+two entries from it. Worth noting: a count of stores is not a count of handlers.
+
+**The two handlers settle each other.** `FUN_004279a0` and `FUN_00427940` are byte for byte the
+same scan of the vector at `this+0xc..this+0x10`, with the two returns swapped: one returns 1
+when it finds the value, the other returns 1 when it does not. Named `ValueIsInList` and
+`ValueIsNotInList`, and the installer `RegisterValueListFilters` — so the kind flag on each
+record selects **include-list against exclude-list** semantics for that entry. Applied 3.
+
+That is a case where neither function could be named alone — a scan returning 0 or 1 says
+nothing — and the pair plus the registration says all of it.
+
+No value changed.
