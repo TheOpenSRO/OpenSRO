@@ -225,3 +225,23 @@ func TestPhysDamageInputsMatchTheCallSite(t *testing.T) {
 		t.Error("the base and the bonus selector are two different parameters")
 	}
 }
+
+// TestAltDamageInputsMatchTheCallSite pins the second skill-damage formula's
+// inputs the same way the physical one's are pinned. Combat_ResolveDamage tests
+// skill+0x400 first and only falls through to the pdmg path when it is zero.
+func TestAltDamageInputsMatchTheCallSite(t *testing.T) {
+	for _, c := range []struct {
+		code  Code
+		field int
+	}{{AltDamage, AltDamageField}, {AltDamageExtra, AltDamageExtraField}, {AltDamageBonus, AltDamageBonusField}} {
+		got, ok := Field[c.code]
+		if !ok || got != c.field {
+			t.Errorf("Field[%q] = %#x (present %v), want %#x", c.code, got, ok, c.field)
+		}
+	}
+	// The two formulas must not share inputs: they are alternatives, and the
+	// selector being the same field would mean one of the reads is wrong.
+	if AltDamage == PhysDamage || AltDamageField == PhysDamageField {
+		t.Error("the two skill-damage formulas must take different base parameters")
+	}
+}

@@ -17036,3 +17036,39 @@ the damage comes from the skill's own parameters. Grounding the fallback is not 
 is nothing to ground it *to*, because the skills themselves are invented.
 
 Full suite green, 53 packages.
+
+## 2026-09-18 — there are two skill-damage formulas, and srrevamp implements one
+
+Last tick read `Formula_SkillPhysDamage`'s call site and stopped at the `pdmg` branch. The
+branch immediately above it calls a *different* formula, and reading the selection settles
+something that matters for correctness rather than for naming:
+
+	58f4b5  cmp DWORD PTR [ebx+0x400],0x0   ; 'lfst' -- tested FIRST
+	58f4c3  je  0x58f4e2                    ; only if absent, fall through
+	58f4d8  call 0x40f750                   ; the other formula
+	58f4e2  cmp DWORD PTR [ebx+0x234],0x0   ; 'pdmg'
+	58f4ff  call 0x40f5f0                   ; Formula_SkillPhysDamage
+
+**The two are alternatives chosen by which parameter the skill carries**, and the one srrevamp
+does *not* implement is the one tried first. Named `Formula_SkillDamageCappedByHP` for what
+distinguishes it structurally: its base is the `'lfst'` record, with `'BSHP'` keying a bonus and
+`'mwhs'` adding a term, it applies the same positive-level-difference gate as the physical
+formula, and then **clamps its result against a participant's current HP** — virtual slot 66,
+`GetCurHP`, called twice.
+
+The three inputs are wired as `skillparam.AltDamage`/`AltDamageBonus`/`AltDamageExtra` with a
+test pinning their offsets and asserting the two formulas do not share a base — if they did,
+one of the reads would be wrong.
+
+**The names say structure, not meaning.** `'lfst'`, `'BSHP'` and `'mwhs'` read like abbreviations
+for things, and none of that is claimed: they are named for their role in this formula. The
+project's own rule is that a mnemonic is not evidence, and it has been wrong about exactly this
+before.
+
+**The gap is recorded in the code, not approximated.** `grep` confirms srrevamp has no `lfst`
+path anywhere — a skill carrying that parameter takes the other branch in the real engine and
+does not here. That is a missing branch rather than a wrong constant, so it is written into
+`skillparam` where the next person to implement skill damage will see it, instead of being
+patched over with the formula that is implemented.
+
+Full suite green, 53 packages.

@@ -612,3 +612,34 @@ const (
 	PhysDamageBonus      Code = "SAAA"
 	PhysDamageBonusField      = 0x538
 )
+
+// Combat_ResolveDamage chooses between TWO skill-damage formulas, and the
+// choice is made on which parameter the skill carries:
+//
+//	58f4b5  cmp DWORD PTR [ebx+0x400],0x0   ; 'lfst' -- tried FIRST
+//	58f4c3  je  0x58f4e2                    ; if absent, fall through
+//	58f4d8  call 0x40f750                   ; Formula_SkillDamageCappedByHP
+//	58f4e2  cmp DWORD PTR [ebx+0x234],0x0   ; 'pdmg'
+//	58f4ff  call 0x40f5f0                   ; Formula_SkillPhysDamage
+//
+// AltDamage ('lfst') is the base of the first, with AltDamageBonus ('BSHP')
+// keying its bonus and AltDamageExtra ('mwhs') adding a further term. That
+// formula applies the same positive-level-difference gate as the physical one
+// and then clamps its result against a participant's current HP (virtual slot
+// 66, GetCurHP).
+//
+// WHAT THIS MEANS FOR srrevamp: it implements the 'pdmg' formula only. A skill
+// carrying 'lfst' would take the other branch in the real engine and does not
+// here. That is a missing branch, not a wrong constant, and it is recorded
+// rather than approximated.
+//
+// What 'lfst', 'BSHP' and 'mwhs' MEAN is not read. They are named for their
+// role in this formula and nothing is inferred from the mnemonics.
+const (
+	AltDamage           Code = "lfst"
+	AltDamageField           = 0x400
+	AltDamageExtra      Code = "mwhs"
+	AltDamageExtraField      = 0x404
+	AltDamageBonus      Code = "BSHP"
+	AltDamageBonusField      = 0x534
+)
