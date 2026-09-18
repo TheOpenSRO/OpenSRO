@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
@@ -183,5 +184,16 @@ func TestZeroDamageSkillHasNoDamageBonus(t *testing.T) {
 	ckOnly := &refdata.Skill{ID: 1, BasicLevel: 5}
 	if flat, pct := skillDamageBonus(ckOnly); flat == 0 && pct == 0 {
 		t.Error("a skill with no att but no ZeroDamage flag should still get the disclosed fallback, not zero")
+	}
+}
+
+// A floor-blow skill asks for a real zero percentage and no flat term. It must
+// NOT fall through to the disclosed per-level bonus, which is what every such
+// skill got while "percent 0" and "no att" were the same thing.
+func TestFloorBlowSkillAsksForARealZeroPercent(t *testing.T) {
+	pet := &refdata.Skill{ID: 1, BasicLevel: 5, FloorBlow: true}
+	flat, pct := skillDamageBonus(pet)
+	if flat != 0 || pct != combat.SkillPercentZero {
+		t.Errorf("skillDamageBonus(floor-blow skill) = (%d, %d), want (0, %d)", flat, pct, combat.SkillPercentZero)
 	}
 }

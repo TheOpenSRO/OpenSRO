@@ -539,6 +539,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		reqAll(cols),          // 33 ReqCastAll -- 'reqn': the list is ALL-of, not ANY-of
 		noCombatParam(cols),   // 34 NoCombatParam -- the engine resolves no blow for this skill
 		zeroDamage(cols),      // 35 ZeroDamage -- a resolved blow whose damage is zero
+		floorBlow(cols),       // 36 FloorBlow -- a computed blow that is identically zero, so always the floor of 1
 	}, true
 }
 
@@ -732,21 +733,46 @@ func attackParam(cols []string) (attackType, percent, dmgMin, dmgMax string) {
 		}
 		return s
 	}
-	// The walk is authoritative when it finishes: see paramRuns.
+	i, found := attackRun(cols)
+	if !found {
+		return "0", "0", "0", "0"
+	}
+	// i+1 is the type; the damage is in the three that follow.
+	return at(i, 1), at(i, 2), at(i, 3), at(i, 4)
+}
+
+// attackRun returns the row column of the skill's 'att' code word. The walk is
+// authoritative when it finishes (see paramRuns); otherwise the whole-row scan
+// the comment above measures.
+func attackRun(cols []string) (col int, found bool) {
 	if i, found, decided := paramFind(cols, "att"); decided {
-		if !found {
-			return "0", "0", "0", "0"
-		}
-		// i+1 is the type; the damage is in the three that follow.
-		return at(i, 1), at(i, 2), at(i, 3), at(i, 4)
+		return i, found
 	}
 	for i, v := range cols {
-		if strings.TrimSpace(v) != attackCode {
-			continue
+		if strings.TrimSpace(v) == attackCode {
+			return i, true
 		}
-		return at(i, 1), at(i, 2), at(i, 3), at(i, 4)
 	}
-	return "0", "0", "0", "0"
+	return 0, false
+}
+
+// literalAbsent reports that NONE of the codes' stored words appears anywhere in
+// the row. It is the one inference about a Param block that needs no walk: a
+// parameter whose code word is nowhere in the row cannot be in the block. Only
+// absence is proof -- presence is not, since the same integer could be some
+// other column's value -- so this is used to decide rows the walk cannot
+// finish, and only ever in the direction that is sound.
+func literalAbsent(cols []string, codes []skillparam.Code) bool {
+	present := make(map[string]bool, len(cols))
+	for _, v := range cols {
+		present[strings.TrimSpace(v)] = true
+	}
+	for _, c := range codes {
+		if present[strconv.Itoa(int(skillparam.WordOf(c)))] {
+			return false
+		}
+	}
+	return true
 }
 
 // reqItemCount counts the skill's 'reqi' runs, i.e. how many entries it puts in
@@ -808,6 +834,47 @@ func reqItemList(cols []string) string {
 	return strings.Join(out, ";")
 }
 
+// floorBlow reports, as "1" or "0", that every blow this skill lands is exactly
+// the engine's floor of 1: `local_d0` is 0, so the blow IS computed, but the
+// computation is identically zero and Combat_ResolveDamage floors it. See
+// skillparam.BlowIsFloor for the three ways that happens and their citations.
+//
+// 446 real rows: 440 carrying 'att' with a percent of 0 (420 of them the mall
+// pets' elemental skills), 5 carrying a percent but neither damage bit, and the
+// single row in the table that carries 'ck' alone. Before this column every one
+// of them dealt a full weapon blow plus DisclosedSkillDamagePerLevel * level.
+//
+// A row that is zero-damage is not a floor blow, and a row where neither
+// parameter was found but absence could not be proved answers "0".
+func floorBlow(cols []string) string {
+	if zeroDamage(cols) == "1" {
+		return "0"
+	}
+	num := func(i int) int32 {
+		if i >= len(cols) {
+			return 0
+		}
+		n, err := strconv.ParseInt(strings.TrimSpace(cols[i]), 10, 32)
+		if err != nil {
+			return 0
+		}
+		return int32(n)
+	}
+	i, hasAtt := attackRun(cols)
+	var attType, attPercent int32
+	if hasAtt {
+		attType, attPercent = num(i+1), num(i+2)
+	}
+	_, carriesCk, _ := paramFind(cols, "ck")
+	if !hasAtt && !carriesCk {
+		return "0"
+	}
+	if skillparam.BlowIsFloor(hasAtt, attType, attPercent, carriesCk) {
+		return "1"
+	}
+	return "0"
+}
+
 // zeroDamage reports, as "1" or "0", that Combat_ResolveDamage's `local_d0`
 // would be 1 for this skill -- it carries neither 'att' nor 'ck', so the
 // ordinary damage kind writes zero to both halves of the blow and their sum is
@@ -827,7 +894,19 @@ func zeroDamage(cols []string) string {
 		return "0"
 	}
 	zero, decided := skillparam.DealsZeroDamage(words)
-	if decided && zero {
+	if decided {
+		if zero {
+			return "1"
+		}
+		return "0"
+	}
+	// The walk stopped at a variable-length code and proved nothing -- but if
+	// neither 'att' nor 'ck' appears ANYWHERE in the row, the block cannot
+	// carry them. That is proof, not a heuristic, and it decides 1,085 of the
+	// 1,265 real rows the walk cannot finish. (The other 180 all carry the
+	// 'att' literal, so with this the three classes -- 'att', 'ck' alone,
+	// neither -- partition all 33,632 rows with nothing left over.)
+	if literalAbsent(cols, skillparam.DamageParameters) {
 		return "1"
 	}
 	return "0"
@@ -855,7 +934,17 @@ func noCombatParam(cols []string) string {
 		return "0"
 	}
 	carries, decided := skillparam.CarriesCombatParameter(words)
-	if decided && !carries {
+	if decided {
+		if !carries {
+			return "1"
+		}
+		return "0"
+	}
+	// Same sound inference as zeroDamage: a row in which none of the 33 code
+	// words appears anywhere cannot carry any of them. 872 of the 1,265 rows
+	// the walk cannot finish are decided this way. 'efr' is in the list, so a
+	// row passing this has no 'efr' to qualify either.
+	if literalAbsent(cols, skillparam.CombatParameters) {
 		return "1"
 	}
 	return "0"

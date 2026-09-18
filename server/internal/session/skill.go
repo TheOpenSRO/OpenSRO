@@ -335,6 +335,13 @@ func skillDamageBonus(ref *refdata.Skill) (flat, percent int) {
 	if ref.NoCombatParam || ref.ZeroDamage {
 		return 0, 0
 	}
+	// A computed blow that is identically zero: the engine's floor makes it
+	// exactly 1, whatever the weapon. No flat term either -- the flat min/max
+	// join the roll BEFORE the multiply that zeroes it. See
+	// refdata.Skill.FloorBlow and combat.SkillPercentZero.
+	if ref.FloorBlow {
+		return 0, combat.SkillPercentZero
+	}
 	if ref.AttackPercent <= 0 {
 		return disclosedSkillDamageBonus(ref), 0
 	}

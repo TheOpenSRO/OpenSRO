@@ -378,3 +378,21 @@ func TestSkillCSVZeroDamageIsAStrictSuffix(t *testing.T) {
 		t.Errorf("ZeroDamage=1 did not load as true (err=%v)", err)
 	}
 }
+
+func TestSkillCSVFloorBlowIsAStrictSuffix(t *testing.T) {
+	old := make([]string, 36) // through ZeroDamage, no further
+	for i := range old {
+		old[i] = "0"
+	}
+	old[2] = "SKILL_TEST"
+	sk, err := parseSkillRow(old)
+	if err != nil {
+		t.Fatalf("parseSkillRow on a pre-column export: %v", err)
+	}
+	if sk.FloorBlow {
+		t.Error("an export predating FloorBlow loaded as true; it must default to false")
+	}
+	if sk, err = parseSkillRow(append(old, "1")); err != nil || !sk.FloorBlow {
+		t.Errorf("FloorBlow=1 did not load as true (err=%v)", err)
+	}
+}

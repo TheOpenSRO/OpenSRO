@@ -466,3 +466,37 @@ func TestDealsZeroDamageDoesNotDecidePastAVarLenCode(t *testing.T) {
 		t.Errorf("att before the stop: zero=%v decided=%v, want false/true", zero, decided)
 	}
 }
+
+func TestWordOfIsTheInverseOfCodeOf(t *testing.T) {
+	for c := range Kind {
+		if got := CodeOf(WordOf(c)); got != c {
+			t.Errorf("CodeOf(WordOf(%q)) = %q", c, got)
+		}
+	}
+	if WordOf("att") != 0x00617474 {
+		t.Errorf("WordOf(att) = %#x, want 0x617474", WordOf("att"))
+	}
+}
+
+// The three ways a computed blow is identically zero, and the two ways it is
+// not. Each case is one the mitigation formulas settle on their own.
+func TestBlowIsFloor(t *testing.T) {
+	for _, c := range []struct {
+		name               string
+		hasAtt             bool
+		attType, attPct    int32
+		carriesCk, isFloor bool
+	}{
+		{"ordinary physical skill", true, 5, 143, false, false},
+		{"ordinary magical skill", true, 10, 200, false, false},
+		{"att with a percent of 0", true, 8, 0, false, true},
+		{"att with a percent but neither damage bit", true, 1, 121, false, true},
+		{"att type 0", true, 0, 0, false, true},
+		{"ck with no att", false, 0, 0, true, true},
+		{"neither parameter -- that is zero damage, not a floor", false, 0, 0, false, false},
+	} {
+		if got := BlowIsFloor(c.hasAtt, c.attType, c.attPct, c.carriesCk); got != c.isFloor {
+			t.Errorf("%s: BlowIsFloor = %v, want %v", c.name, got, c.isFloor)
+		}
+	}
+}

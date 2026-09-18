@@ -70,6 +70,13 @@ func (fakeSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error
 	if id == 995 {
 		return &refdata.Skill{ID: 995, BasicLevel: 5, ReuseDelayMs: 0, ZeroDamage: true}, nil
 	}
+	// 994 is a FLOOR blow: it carries 'att', so the engine does compute its
+	// damage, but with a percent of 0 -- the mall pets' elemental skills are 420
+	// of the 446 real rows like this. The computed blow is identically zero and
+	// the engine floors it at 1.
+	if id == 994 {
+		return &refdata.Skill{ID: 994, BasicLevel: 5, ReuseDelayMs: 0, FloorBlow: true}, nil
+	}
 	return nil, errors.New("no such skill")
 }
 
@@ -616,5 +623,110 @@ func TestZeroDamageSkillDealsNoDamage(t *testing.T) {
 	}
 	if monster.HP != before {
 		t.Errorf("monster HP %d -> %d; a zero-damage skill must not hurt it", before, monster.HP)
+	}
+}
+
+// A FLOOR blow: the skill carries 'att', so Combat_ResolveDamage computes its
+// damage, but the percent is 0, the mitigation formulas multiply by it with no
+// guard, and the engine floors the computed zero at 1. The weapon here rolls 30
+// into a defence of 10, so anything but exactly 1 means the percent was read as
+// "no percentage" (a full 20) or the disclosed bonus crept back in (40).
+func TestFloorBlowSkillDealsExactlyOne(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+
+	items := stubCombatItems{100: {ID: 100, PhysAttackMin: 30, PhysAttackMax: 30}}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	inv.TruncateForTest(ctx)
+	inv.AddItem(ctx, c.ID, 100, 1)
+
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	eq.TruncateForTest(ctx)
+	eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0)
+
+	skills, err := skill.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("skill.OpenSQLStore: %v", err)
+	}
+	defer skills.Close()
+	skills.TruncateForTest(ctx)
+	if err := skills.Learn(ctx, c.ID, 994); err != nil {
+		t.Fatalf("Learn: %v", err)
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 1000, 10, 5, 500)
+	before := monster.HP
+
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	quests.TruncateForTest(ctx)
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}, nil, mana.NewTracker(), nil),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	resp = send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	resp = send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: 994, TargetMonsterID: monster.ID}).Encode())
+	ar, err := DecodeAttackResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeAttackResult: %v", err)
+	}
+	// The cast SUCCEEDS -- the engine pays the costs and records the use, it
+	// simply resolves no blow.
+	if ar.Error != "" {
+		t.Fatalf("cast of a no-combat skill failed: %s", ar.Error)
+	}
+	if ar.MonsterDamage != 1 {
+		t.Errorf("a floor-blow skill dealt %d damage, want exactly 1", ar.MonsterDamage)
+	}
+	if monster.HP != before-1 {
+		t.Errorf("monster HP %d -> %d; a floor blow takes exactly 1", before, monster.HP)
 	}
 }

@@ -165,6 +165,20 @@ type Skill struct {
 	// invented per-level bonus. The constant survives only for the own-design
 	// skill.Catalog, which has no real row at all.
 	ZeroDamage bool
+
+	// FloorBlow is true when every blow this skill lands is exactly the engine's
+	// floor of 1: the blow is computed (the skill carries 'att' or 'ck') but the
+	// computation is identically zero -- an 'att' percent of 0, an 'att' with
+	// neither damage bit, or 'ck' with no 'att' at all -- and
+	// Combat_ResolveDamage floors a computed zero at 1. See
+	// skillparam.BlowIsFloor for the three cases and their citations.
+	//
+	// 446 real rows, 420 of them the mall pets' elemental skills. With
+	// NoCombatParam and ZeroDamage this closes the set: on a fresh export every
+	// one of the 33,632 real rows has a grounded damage answer, and
+	// DisclosedSkillDamagePerLevel applies to none of them -- only to an export
+	// predating these columns and to the own-design skill.Catalog.
+	FloorBlow bool
 	// HitCount is how many times one cast strikes: 1 for most skills, up to 5.
 	//
 	// CONFIRMED INDEPENDENTLY 2026-09-16: the client's own localisation key for

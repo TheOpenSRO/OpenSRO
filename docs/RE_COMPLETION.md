@@ -17509,3 +17509,71 @@ So the honest summary is that the disclosed constant is retired for the 2,482 ro
 gives a grounded answer, and survives on 1,526 where it does not yet.
 
 Applied 0 names.
+
+## Every real skill row now has a grounded damage class (2026-09-18)
+
+The previous round left `DisclosedSkillDamagePerLevel` on **1,526** real rows and named the two
+causes. Both are closed, and the result is a partition with nothing left over.
+
+**1. A zero percent is a real zero.** 440 rows carry `'att'` with a percent of 0, and srrevamp read
+that as "no percentage": `combat.ApplySkillPercent` returned the blow unchanged for `percent <= 0`,
+and `skillDamageBonus` added the disclosed bonus on top. The engine does neither.
+`Formula_MitigatePhysicalDamage` (`0x0040e450`) and its magical twin (`0x0040e830`) both do
+
+	pbVar1 = *(byte **)(skill + 0x230);
+	damage = ((float)*(int *)(pbVar1 + 4) * damage) / 100.0;      // no guard around zero
+
+and every later term is proportional to that damage, so the mitigated blow is zero.
+`Combat_ResolveDamage` then floors a COMPUTED zero:
+
+	if (total == 0) {
+	    if (local_d0 == 0) { total = 1; }
+	    else               { ...flag bit 0x10 on the result; the total stays 0... }
+	}
+
+So the blow is **exactly 1** — and the `else` is a third, independent site agreeing that a skill
+with no `'att'`/`'ck'` deals zero. The flat min/max cannot rescue a zero percent (they join the
+roll *before* the multiply), and in the data the question never arises: **all 440 carry a zero min
+and max.** 420 of them are the mall pets' cold, fire and lightning skills.
+
+Two sibling cases are identically zero for reasons the same formulas settle: `'att'` with neither
+damage bit (each formula returns 0 at its own bit test — 5 more rows) and `'ck'` with no `'att'`
+(both formulas open with `if (skill[0x230] == 0) return 0` — the 1 row). **446** in all, exported as
+`FloorBlow` and carried to the blow as `combat.SkillPercentZero`, a sentinel that is negative
+because the engine reads the percent unsigned, so no real value can collide with it. Berserk does
+not boost a floor blow: its multiplier is a term inside the zeroed formula, and the floor lands
+after it.
+
+**2. The "undecidable" rows were decidable, soundly.** 1,265 rows stop at a variable-length code,
+and the walk proves nothing past it. But one inference needs no walk: **a code word that appears
+nowhere in the whole row cannot be in the block.** Only absence is proof — presence is not, since
+the same integer can be another column's value, and there is a test pinning that direction. It
+decides 1,085 of the 1,265 as zero-damage (872 of them as no-combat), and the other 180 all carry
+the `'att'` literal.
+
+**The partition, measured by running the exporter over a real `Media.pk2`.** Every count below was
+predicted before the run and hit exactly:
+
+	computed blow ('att', percent > 0, a damage bit)   29,619
+	floor blow of 1                                       446
+	zero                                                3,567      (2,669 of them no blow at all)
+	                                                   ------
+	                                                   33,632  of 33,632
+
+	rows still reaching DisclosedSkillDamagePerLevel        0
+
+30,064 rows carry `'att'` — the same figure `export-refdata`'s own comment recorded on 2026-09-16
+from a different measurement. The disclosed constant now reaches no real row on a fresh export; it
+survives for an export predating these columns and for the own-design `skill.Catalog`.
+
+**Scope, unchanged from the previous round and still the honest limit:** all of this is the
+ORDINARY damage kind, case 0 of the hit-record switch. Cases 1–4 compute damage by other means and
+what selects them is unread. That is now the named next probe on the Skills row of
+`docs/SYSTEMS.md`.
+
+**Caught on the way.** The SQL store test caught a malformed `ON CONFLICT` clause — a substring
+replace had matched inside it — that compiled fine and would have failed only at import. And an
+existing test pinned `-1` as a "neutral" percent; nothing ever passed a negative to mean "none"
+(two callers, both fed by `skillDamageBonus`), so the test now says what is true.
+
+Applied 0 names.

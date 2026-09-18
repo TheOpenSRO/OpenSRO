@@ -266,9 +266,29 @@ func MitigateDamage(raw, reductionPercent, flat int) int {
 	return out
 }
 
+// SkillPercentZero says the skill's percentage is a REAL zero, as opposed to the
+// 0 that means "this blow carries no skill percentage" (a plain attack, or an
+// own-design catalog skill).
+//
+// The two are different in the engine and were conflated here until 2026-09-18.
+// When the attack descriptor exists the multiply is unconditional -- the
+// disassembly below has no branch around `fild [eax+4] / fmul / fdiv 100`, in
+// either the physical formula or its magical twin (0040e830) -- so a percent of
+// zero makes the mitigated blow zero, every later term being proportional to
+// it. Combat_ResolveDamage then floors a computed zero at 1:
+//
+//	if (total == 0) { if (local_d0 == 0) { total = 1; } ... }
+//
+// So the blow is exactly 1. It is negative because no real percentage can be:
+// the engine reads the field unsigned (it adds 2^32 to a negative int before
+// the multiply). See skillparam.BlowIsFloor for the full class -- 446 real
+// rows -- and refdata.Skill.FloorBlow for how a skill is known to be in it.
+const SkillPercentZero = -1
+
 // ApplySkillPercent scales an already-mitigated blow by a skill's attack
-// percentage. percent <= 0 means the skill declares none and the blow is
-// unchanged.
+// percentage. percent == 0 means the blow carries no skill percentage and is
+// unchanged; SkillPercentZero means a real percentage of zero, which the
+// engine's floor turns into exactly 1.
 //
 // ORDER, and it is the whole point of this function existing separately:
 // the game applies a skill's percentage AFTER mitigation and after the clamp
@@ -300,6 +320,9 @@ func MitigateDamage(raw, reductionPercent, flat int) int {
 // defence away, so a 200% skill paid only half the armour it should. It is the
 // same mistake, and the same fix, as the berserk multiplier's ordering.
 func ApplySkillPercent(damage, percent int) int {
+	if percent == SkillPercentZero {
+		return 1
+	}
 	if percent <= 0 || percent == 100 {
 		return damage
 	}

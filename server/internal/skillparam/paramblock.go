@@ -699,3 +699,66 @@ func DealsZeroDamage(words []int32) (zero, decided bool) {
 	}
 	return true, complete
 }
+
+// WordOf is CodeOf's inverse: the 32-bit word a code is stored as. A caller
+// holding a whole skilldata row can use it for the one inference about a Param
+// block that needs no walk at all -- if a code's word appears NOWHERE in the
+// row, the block cannot carry that parameter. The converse is not sound (the
+// same integer could be some other column's value), so only absence is proof.
+func WordOf(c Code) int32 {
+	var w int32
+	for _, b := range []byte(c) {
+		w = w<<8 | int32(b)
+	}
+	return w
+}
+
+// The two bits of 'att' value[0] that gate the mitigation formulas. Each
+// formula's first test returns 0 outright when its bit is clear:
+//
+//	Formula_MitigatePhysicalDamage  if ((**(byte **)(skill + 0x230) & 4) == 0) return 0;
+//	Formula_MitigateMagicalDamage   if ((**(byte **)(skill + 0x230) & 8) == 0) return 0;
+const (
+	AttPhysicalBit = 4
+	AttMagicalBit  = 8
+)
+
+// BlowIsFloor reports whether every blow this skill lands on the ordinary
+// damage kind is exactly the engine's floor of 1.
+//
+// That happens when `local_d0` is 0 -- the skill carries 'att' or 'ck', so the
+// blow IS computed -- but the computation is identically zero, because
+// Combat_ResolveDamage then floors it:
+//
+//	if (total == 0) { if (local_d0 == 0) { total = 1; } ... }
+//
+// There are three ways to be identically zero, each read off the formulas:
+//
+//   - no 'att' at all (a 'ck'-only skill): both formulas open with
+//     `if (skill[0x230] == 0) return 0`;
+//   - 'att' whose value[0] has neither AttPhysicalBit nor AttMagicalBit: each
+//     formula returns 0 at its own bit test;
+//   - 'att' whose percent, value[1], is 0: the formulas compute
+//     `damage = percent * damage / 100` with no guard around a zero, and every
+//     later term is proportional to that damage.
+//
+// The flat min/max cannot rescue the third case: they join the roll BEFORE the
+// multiply. In the real table the question does not even arise -- all 440 rows
+// with a zero percent carry a zero min and max.
+//
+// MEASURED over all 33,632 real rows: 440 carry 'att' with a percent of 0 (420
+// of them the mall pets' cold, fire and lightning skills), 5 more carry a
+// percent but neither damage bit, and 1 carries 'ck' alone. 446 in all.
+//
+// hasAtt, attType and attPercent describe the row's 'att' run; carriesCk says
+// whether it carries 'ck'. A skill with neither parameter is not a floor blow,
+// it is a zero one -- see DealsZeroDamage.
+func BlowIsFloor(hasAtt bool, attType, attPercent int32, carriesCk bool) bool {
+	if !hasAtt {
+		return carriesCk
+	}
+	if attType&(AttPhysicalBit|AttMagicalBit) == 0 {
+		return true
+	}
+	return attPercent == 0
+}

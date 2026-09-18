@@ -117,6 +117,7 @@ ALTER TABLE skills ADD COLUMN IF NOT EXISTS req_cast_list TEXT NOT NULL DEFAULT 
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS req_cast_all BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS no_combat_param BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS zero_damage BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS floor_blow BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS monster_drops (
 	monster_id      BIGINT NOT NULL,
@@ -370,8 +371,8 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			mastery1, mastery_level1,
 			attack_percent, damage_min, damage_max, hit_count, attack_type,
 			req_cast_weapon1, req_cast_weapon2, req_cast_list_count,
-			req_cast_list, req_cast_all, no_combat_param, zero_damage
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
+			req_cast_list, req_cast_all, no_combat_param, zero_damage, floor_blow
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
 		ON CONFLICT (id) DO UPDATE SET
 			group_id=excluded.group_id, basic_code=excluded.basic_code, basic_name=excluded.basic_name,
 			basic_level=excluded.basic_level, basic_chain_code=excluded.basic_chain_code,
@@ -390,7 +391,8 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			req_cast_weapon1=excluded.req_cast_weapon1, req_cast_weapon2=excluded.req_cast_weapon2,
 			req_cast_list_count=excluded.req_cast_list_count,
 			req_cast_list=excluded.req_cast_list, req_cast_all=excluded.req_cast_all,
-			no_combat_param=excluded.no_combat_param, zero_damage=excluded.zero_damage
+			no_combat_param=excluded.no_combat_param, zero_damage=excluded.zero_damage,
+			floor_blow=excluded.floor_blow
 	`)
 	if err != nil {
 		return fmt.Errorf("refdata: preparing insert: %w", err)
@@ -406,7 +408,7 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			sk.Mastery1, sk.MasteryLevel1,
 			sk.AttackPercent, sk.DamageMin, sk.DamageMax, sk.HitCount, sk.AttackType,
 			sk.ReqCastWeapon1, sk.ReqCastWeapon2, sk.ReqCastListCount,
-			sk.ReqCastList, sk.ReqCastAll, sk.NoCombatParam, sk.ZeroDamage,
+			sk.ReqCastList, sk.ReqCastAll, sk.NoCombatParam, sk.ZeroDamage, sk.FloorBlow,
 		); err != nil {
 			return fmt.Errorf("refdata: inserting skill %d: %w", sk.ID, err)
 		}
@@ -425,7 +427,7 @@ func (s *SQLStore) GetSkill(ctx context.Context, id int64) (*Skill, error) {
 			mastery1, mastery_level1,
 			attack_percent, damage_min, damage_max, hit_count, attack_type,
 			req_cast_weapon1, req_cast_weapon2, req_cast_list_count,
-			req_cast_list, req_cast_all, no_combat_param, zero_damage
+			req_cast_list, req_cast_all, no_combat_param, zero_damage, floor_blow
 		FROM skills WHERE id = $1`, id)
 	if err := row.Scan(
 		&sk.ID, &sk.GroupID, &sk.BasicCode, &sk.BasicName, &sk.BasicLevel, &sk.BasicChainCode,
@@ -435,7 +437,7 @@ func (s *SQLStore) GetSkill(ctx context.Context, id int64) (*Skill, error) {
 		&sk.Mastery1, &sk.MasteryLevel1,
 		&sk.AttackPercent, &sk.DamageMin, &sk.DamageMax, &sk.HitCount, &sk.AttackType,
 		&sk.ReqCastWeapon1, &sk.ReqCastWeapon2, &sk.ReqCastListCount,
-		&sk.ReqCastList, &sk.ReqCastAll, &sk.NoCombatParam, &sk.ZeroDamage,
+		&sk.ReqCastList, &sk.ReqCastAll, &sk.NoCombatParam, &sk.ZeroDamage, &sk.FloorBlow,
 	); err != nil {
 		return nil, fmt.Errorf("refdata: querying skill %d: %w", id, err)
 	}
@@ -453,7 +455,7 @@ func (s *SQLStore) ListAllSkills(ctx context.Context) ([]*Skill, error) {
 			mastery1, mastery_level1,
 			attack_percent, damage_min, damage_max, hit_count, attack_type,
 			req_cast_weapon1, req_cast_weapon2, req_cast_list_count,
-			req_cast_list, req_cast_all, no_combat_param, zero_damage
+			req_cast_list, req_cast_all, no_combat_param, zero_damage, floor_blow
 		FROM skills ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("refdata: listing skills: %w", err)
@@ -471,7 +473,7 @@ func (s *SQLStore) ListAllSkills(ctx context.Context) ([]*Skill, error) {
 			&sk.Mastery1, &sk.MasteryLevel1,
 			&sk.AttackPercent, &sk.DamageMin, &sk.DamageMax, &sk.HitCount, &sk.AttackType,
 			&sk.ReqCastWeapon1, &sk.ReqCastWeapon2, &sk.ReqCastListCount,
-			&sk.ReqCastList, &sk.ReqCastAll, &sk.NoCombatParam, &sk.ZeroDamage,
+			&sk.ReqCastList, &sk.ReqCastAll, &sk.NoCombatParam, &sk.ZeroDamage, &sk.FloorBlow,
 		); err != nil {
 			return nil, fmt.Errorf("refdata: scanning skill: %w", err)
 		}

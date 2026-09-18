@@ -303,6 +303,9 @@ var skillCSVColumns = []string{
 	// column above and containing it). Also a strict suffix: false means "this
 	// skill's damage is computed", which is what older exports meant.
 	"ZeroDamage",
+	// Appended later (a computed blow that is identically zero and therefore
+	// always the floor of 1). Strict suffix; false is what older exports meant.
+	"FloorBlow",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -444,6 +447,9 @@ func parseSkillRow(f []string) (Skill, error) {
 	}
 	if len(f) > 35 {
 		sk.ZeroDamage = parseInt(f[35]) != 0
+	}
+	if len(f) > 36 {
+		sk.FloorBlow = parseInt(f[36]) != 0
 	}
 
 	if err != nil {

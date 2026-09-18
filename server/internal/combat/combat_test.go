@@ -489,8 +489,15 @@ func TestApplySkillPercentComesAfterMitigation(t *testing.T) {
 }
 
 // A skill that declares no percentage, or exactly 100%, leaves the blow alone.
+//
+// -1 used to be in this list as a robustness sample. It is now
+// SkillPercentZero, a REAL percentage of zero, and has its own test below;
+// nothing ever passed a negative to mean "none" -- the only two callers are in
+// session.performAttack, fed by skillDamageBonus, which returns the skill's own
+// positive percent, 0, or the sentinel. Any OTHER negative is nonsense input
+// and still leaves the blow alone rather than zeroing it.
 func TestApplySkillPercentNeutralCases(t *testing.T) {
-	for _, pct := range []int{0, -1, 100} {
+	for _, pct := range []int{0, -2, 100} {
 		if got := ApplySkillPercent(57, pct); got != 57 {
 			t.Errorf("ApplySkillPercent(57, %d) = %d, want 57 unchanged", pct, got)
 		}
@@ -801,5 +808,21 @@ func TestMasteryDamageScale(t *testing.T) {
 	}
 	if got := ApplyMasteryScale(0, 90); got != 0 {
 		t.Errorf("scaling a zero base gave %d, want 0", got)
+	}
+}
+
+// A real percentage of zero is not the same as no percentage. The engine's
+// multiply is unconditional once the attack descriptor exists, so zero makes
+// the mitigated blow zero, and Combat_ResolveDamage floors a computed zero at 1.
+func TestApplySkillPercentRealZeroIsTheFloor(t *testing.T) {
+	if got := ApplySkillPercent(500, SkillPercentZero); got != 1 {
+		t.Errorf("ApplySkillPercent(500, SkillPercentZero) = %d, want 1", got)
+	}
+	// 0 still means "this blow carries no skill percentage" -- a plain attack.
+	if got := ApplySkillPercent(500, 0); got != 500 {
+		t.Errorf("ApplySkillPercent(500, 0) = %d, want 500 unchanged", got)
+	}
+	if SkillPercentZero >= 0 {
+		t.Error("SkillPercentZero must be negative: the engine reads the field unsigned, so no real percentage can collide with it")
 	}
 }

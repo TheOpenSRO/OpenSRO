@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"strconv"
+
+	"github.com/OpenSRO/srrevamp/server/internal/skillparam"
 )
 
 // A synthetic itemdata row with the Copper Sword's real, verified values at
@@ -287,5 +290,79 @@ func TestSameRecordComparesNumbersAsNumbers(t *testing.T) {
 				t.Errorf("sameRecord(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
 			}
 		})
+	}
+}
+
+// skillRow builds a synthetic 119-column skilldata row whose Param block (from
+// skillparam.ParamBlockColumn) holds the given words. No real row is used.
+func skillRow(words ...int32) []string {
+	cols := make([]string, 119)
+	for i := range cols {
+		cols[i] = "0"
+	}
+	for i, w := range words {
+		cols[skillparam.ParamBlockColumn+i] = strconv.Itoa(int(w))
+	}
+	return cols
+}
+
+func TestSkillDamageClassColumns(t *testing.T) {
+	att := skillparam.WordOf("att")
+	ck := skillparam.WordOf("ck")
+	bl := skillparam.WordOf("bl")
+	dura := skillparam.WordOf("dura")
+	// 'ssou' is variable-length: the walk cannot pass it.
+	ssou := skillparam.WordOf("ssou")
+	if skillparam.Kind["ssou"] != skillparam.KindVarLen {
+		t.Fatal("test premise: ssou must be variable-length")
+	}
+
+	for _, c := range []struct {
+		name                    string
+		cols                    []string
+		noCombat, zero, floorBl string
+	}{
+		{"ordinary att skill", skillRow(att, 5, 143, 15, 18, 0), "0", "0", "0"},
+		{"att with a percent of 0", skillRow(att, 8, 0, 0, 0, 0), "0", "0", "1"},
+		{"att with neither damage bit", skillRow(att, 1, 121, 0, 0, 0), "0", "0", "1"},
+		{"ck alone", skillRow(ck, 100), "0", "0", "1"},
+		{"a combat parameter but no att/ck", skillRow(bl, 1, 2, 3, 4, 5), "0", "1", "0"},
+		{"no combat parameter at all", skillRow(dura, 30000), "1", "1", "0"},
+		// The walk stops at ssou, but NEITHER literal is anywhere in the row,
+		// which is proof rather than a guess.
+		{"stopped walk, literals absent", skillRow(ssou, 7, 7), "1", "1", "0"},
+		// The walk stops, and the att literal IS in the row past the stop. The
+		// scan finds it, so this is an att skill, not a zero-damage one.
+		{"stopped walk, att past the stop", skillRow(ssou, 7, att, 5, 143, 15, 18, 0), "0", "0", "0"},
+	} {
+		if got := noCombatParam(c.cols); got != c.noCombat {
+			t.Errorf("%s: noCombatParam = %s, want %s", c.name, got, c.noCombat)
+		}
+		if got := zeroDamage(c.cols); got != c.zero {
+			t.Errorf("%s: zeroDamage = %s, want %s", c.name, got, c.zero)
+		}
+		if got := floorBlow(c.cols); got != c.floorBl {
+			t.Errorf("%s: floorBlow = %s, want %s", c.name, got, c.floorBl)
+		}
+		// The three damage classes must never overlap.
+		if zeroDamage(c.cols) == "1" && floorBlow(c.cols) == "1" {
+			t.Errorf("%s: both zero-damage and floor-blow", c.name)
+		}
+		// And no-combat must sit inside zero-damage.
+		if noCombatParam(c.cols) == "1" && zeroDamage(c.cols) != "1" {
+			t.Errorf("%s: no-combat but not zero-damage; the first must be inside the second", c.name)
+		}
+	}
+}
+
+// Absence of a code word from the whole row is proof; PRESENCE is not, because
+// the same integer can be another column's value. A stopped row that has the
+// att literal only OUTSIDE the block -- as a skill id, say -- must not be
+// declared zero-damage on the strength of the walk having found nothing.
+func TestLiteralAbsenceIsOnlyUsedInTheSoundDirection(t *testing.T) {
+	cols := skillRow(skillparam.WordOf("ssou"), 7, 7)
+	cols[1] = strconv.Itoa(int(skillparam.WordOf("att"))) // the literal, but as the ID column
+	if got := zeroDamage(cols); got != "0" {
+		t.Errorf("zeroDamage = %s with the att literal present in the row; absence was not proved, so it must answer 0", got)
 	}
 }

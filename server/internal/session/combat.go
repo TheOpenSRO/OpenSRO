@@ -846,7 +846,12 @@ func performAttack(
 	// formula implies" -- it is not, and the two differ whenever the flat
 	// term is non-zero: 2*(d/(1+p) - f) against (2d)/(1+p) - f, the second
 	// of which quietly scales the defence away and over-pays berserk.
-	if zerk != nil {
+	// ...except a floor blow. Berserk's multiplier is a term INSIDE the
+	// mitigation formula, so when a zero percentage has already made that
+	// formula's result zero, berserk multiplies zero, and the floor of 1 is
+	// applied after it. Boosting the floored 1 here would double a blow the
+	// engine leaves at exactly 1. See combat.SkillPercentZero.
+	if zerk != nil && damagePercent != combat.SkillPercentZero {
 		net = zerk.Boost(characterID, net)
 	}
 
