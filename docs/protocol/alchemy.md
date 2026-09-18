@@ -126,21 +126,40 @@ So **four success percentages are packed into each 32-bit field**, one per plus
 level inside a tier, ordered high byte first; `n >= 12` always takes the low byte
 of the tier-3 field.
 
-**What the offset means is not settled.** `(tier + 21) * 32` yields `0x2c0`,
-`0x2e0` and `0x300`, three fields 32 bytes apart in the `_RefObjItem` record.
-That spacing looks like a strided array, but `RefObjItem::ExtractData`
-(`0x006a3d50`) is a **sequential field-by-field deserializer** — it advances a
-cursor by each field's own width and counts fields as it goes — so the offsets
-are a struct layout, not a column index, and the tempting reading "itemdata
-columns 22, 23, 24" is **not** supported. Mapping offset to column means counting
-fields through 7,052 bytes of `ExtractData`, and that is this system's next
-probe.
+**SETTLED 2026-09-18: it IS a strided array, and here is the loop that fills it.**
+`RefObjItem::ExtractData` (`0x006a3d50`) is a sequential deserializer for most of
+the record, but the `0x2a0..0x520` region is a **20-element strided array**
+written by one loop (`local_104 = 0; do { ... } while (local_104 < 0x14)`):
+
+	element = param_1 + (local_104 + 0x15) * 0x20      ; (tier+21)*0x20, base 0x2a0, stride 0x20
+	*(uint32*)element        = next 4-byte token       ; the dword LookupPackedRate reads
+	RefData_ReadStringField(element + 4)               ; a per-element string
+
+So each element is `[+0 dword] [+4 string]`, 0x20 bytes, 20 of them, base `0x2a0`.
+`(tier + 21) * 32` is `element[tier]`, and `CEnchant_Reinforce::LookupPackedRate`
+reads the dword of elements 1–3 (`0x2c0`/`0x2e0`/`0x300`). This is why the
+"tempting" text-column reading fails: the offsets are array indices, not
+sequential columns, so no field count maps them — confirmed below, and now with
+the mechanism rather than only the conclusion.
+
+**The array is not reinforce-specific.** Element 0 (`0x2a0`) is read elsewhere via
+`TimeSpan_SetDaysMinutesSeconds`, and `ExtractData`'s own error string for a bad
+element is *"invalid parameter has been assigned for item cooltime"* — so this is
+a general per-index array (item cooltimes and, in elements 1–3, the packed
+reinforce rates), one dword + one string per element. `LookupPackedRate` is one
+consumer of it, not its definition.
 
 **Progress on it, 2026-09-17.** `client/tools/re/fields.py` reads these
 deserializers mechanically and is now **validated**: it returns exactly the 58
 fields `docs/protocol/refobj_binary_format.md` fixes for `_RefObjCommon`, with
 three of that document's own anchors landing. It gives `RefObjItem::ExtractData`
-153 fields with 79 offsets resolved.
+153 fields with ~77 offsets resolved.
+
+**Why 77 and not more, established 2026-09-18.** fields.py's resolved offsets run
+`0x198..0x294` then jump to `0x524..0x570` — the gap `0x298..0x520` is exactly the
+20-element strided array above, filled by a loop rather than sequential fields, so
+a field-by-field walker cannot and should not sequence it. The gap is not missing
+work; it is array data, and its structure is now known.
 
 **Which half of the record they live in is settled**, which is half the
 question. A `CRefObjItem` is one object with two adjacent halves —

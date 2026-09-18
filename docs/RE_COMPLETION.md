@@ -17775,3 +17775,35 @@ The rest of the map's readers were already documented (status resists -> Combat_
 12/57/178/179/187/188/259 -> the damage pipeline), which is itself a useful negative: the buff read
 side is now almost entirely accounted for. Nothing wired -- these feed enchant/status/buff systems
 srrevamp lacks. Applied 0 names.
+
+## The alchemy reinforce offset is a 20-element strided array (2026-09-18)
+
+`alchemy.md` carried an open probe: the reinforce base rate is read at
+`refObjItem + (tier+21)*32` (`0x2c0`/`0x2e0`/`0x300`), "looks like a strided array" but "what the
+offset means is not settled -- counting fields through 7,052 bytes of ExtractData is this system's
+next probe." Settled, and not by counting fields.
+
+`RefObjItem::ExtractData` fills `0x2a0..0x520` with **one loop**, not sequential fields:
+
+	local_104 = 0
+	do {
+	    element = param_1 + (local_104 + 0x15) * 0x20     ; (tier+21)*0x20, base 0x2a0, stride 0x20
+	    *(uint32*)element     = next 4-byte token          ; the dword LookupPackedRate reads
+	    RefData_ReadStringField(element + 4)               ; a per-element string
+	    local_104 = local_104 + 1
+	} while (local_104 < 0x14)                             ; 20 elements
+
+So the region is a 20-element array of `[dword, string]` (0x20 each). `(tier+21)*32` is
+`element[tier]`; `CEnchant_Reinforce::LookupPackedRate` reads the dword of elements 1-3. This is why
+no field count maps these to text columns -- they are array indices, which the doc had concluded but
+now has the mechanism for.
+
+It also cross-checks fields.py: its resolved offsets run `0x198..0x294` then jump to `0x524..0x570`,
+and the gap `0x298..0x520` IS this array -- so the "unresolved" span was array data, not missing
+work. And it qualifies the reinforce reading: element 0 (`0x2a0`) is read as a TimeSpan and
+ExtractData's error calls the array "item cooltime", so it is a general per-index array (cooltimes,
+and packed reinforce rates in elements 1-3), not a reinforce-only table. `LookupPackedRate` is one
+consumer, not its definition.
+
+Docs only; `CEnchant_Reinforce::LookupPackedRate` was already named. Not wired -- srrevamp's alchemy
+uses its own rates and has no real per-item reinforce table loaded. Applied 0 names.
