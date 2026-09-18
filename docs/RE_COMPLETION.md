@@ -16418,3 +16418,38 @@ Two smaller families are identified and deliberately unnamed because I did not r
 because don`t have Catch Mob".
 
 No value changed.
+
+## 2026-09-18 — the client sweep returns nothing, exactly as the rule predicted
+
+Last tick's rule was that a shared string names a family only when it describes **what the
+function did**, not a thing it mentions. This tick tested that against ground it had never
+seen: the client's 36,971 unnamed functions.
+
+**81 strings shared by five or more, covering 3,360 slots, and nothing nameable.** The large
+families are the same STL instantiations as the server's, and every game-specific one is a text
+id the function asks for — `UIIT_STT_CONFIRM_BOX` (28), `UIIT_STT_GOLD` (16), `PARAM_SECOND`
+(16), `PARAM_MINUTE`, `PARAM_HOUR`, `UIIT_STT_UNIT`. Dozens of unrelated functions request the
+same confirm-box or time-unit token, so the string identifies the subject and would put one name
+on functions doing different jobs. None named. The rule predicted this before the sweep ran,
+which is the argument for keeping it.
+
+**The two server families left unread last tick are now read and named**, applied 16, failed 0:
+
+- **`PayQuestRewardCatchMob`** (7) — read at `CQNO_RM_FLYSHIP1_3::vslot_032`; pays a
+  catch-a-monster quest and logs "fail pay quest. because don`t have Catch Mob" when the player
+  has none. A different slot and a different message from `PayQuestReward`, so a distinct
+  virtual rather than more of the same.
+- **`GiveQuestItemToPlayer`** (9) — read at `CQNO_TQ_STONEBOARD_4::vslot_024`; hands over a
+  quest item and logs "Failed to add item to player [JID: %d]" when the inventory refuses. Its
+  members sit at slots 24, 1 and 103.
+
+A third family, the 12 printing "fail pay quest. because don`t have QuestData", turned out to
+be **11 functions already named `PayQuestReward`** — the same functions carry both messages.
+Only one member sits elsewhere (`vslot_002`) and it is left unread rather than swept in with
+the others.
+
+**The lever is worked out.** Server: one 123-member release family and four quest families.
+Client: none. What remains behind shared strings is the C++ runtime or subject ids, so the next
+name has to come from a different kind of evidence.
+
+No value changed.

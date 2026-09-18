@@ -43,8 +43,9 @@ logic — `CQTUTORIAL2_*`, `CQEV_ALL_BASIC_*`, `CQNO_*`, `CQSP_*`:
 	23  "fail pay quest : %s[%d] -> %s"                 -> named PayQuestReward
 	19  "SN_TALK_COMMON_OK" / 23 "SN_TALK_COMMON_END"      dialogue constants
 	17  "NPC_CA_POTION" and the other NPC_*_POTION ids     quest-string constants
-	 9  "Failed to add item to player [JID: %d]"           identified, not read
-	 7  "fail pay quest. because don`t have Catch Mob"     identified, not read
+	 9  "Failed to add item to player [JID: %d]"        -> named GiveQuestItemToPlayer
+	 7  "fail pay quest. because don`t have Catch Mob"  -> named PayQuestRewardCatchMob
+	12  "fail pay quest. because don`t have QuestData"     11 of 12 are PayQuestReward already
 
 `PayQuestReward` was read at `CQTUTORIAL2_CH_1::vslot_085` (`CBasicQuest : CQuestBase : IQuest`)
 before naming. Its 23 members sit at slots **85, 103 and 104**, plus two functions Ghidra never
@@ -61,3 +62,27 @@ A shared string names a family only when it describes **what the function did**.
 names a *thing the function mentions* — a table, an NPC, a dialogue id — identifies the
 subject, not the operation, and will attach the same name to functions doing different jobs.
 The 182 DB registrations and the 17 `NPC_CA_POTION` holders are both that second kind.
+
+
+## The client, swept the same way
+
+The same clustering over the client's 36,971 unnamed functions gives **81 strings shared by
+five or more, covering 3,360 slots**, and it yields **nothing nameable**. The large families
+are the same STL instantiations, and every game-specific one is a text id the function
+*mentions*:
+
+	28  UIIT_STT_CONFIRM_BOX        16  UIIT_STT_GOLD       14  UIIT_STT_UNIT
+	16  PARAM_SECOND                15  PARAM_MINUTE        14  PARAM_HOUR
+
+These are exactly the second kind from the rule above — a confirm-box id or a time-unit token
+identifies what a function *talks about*, not what it does, and dozens of unrelated functions
+ask for the same one. None is named.
+
+That the rule predicted this before the sweep was run is the reason to keep it.
+
+## Where this lever now stands
+
+Server: one 123-member family (`ReleaseAndClear`) and four quest families (`PayQuestReward` 23,
+`GiveQuestItemToPlayer` 9, `PayQuestRewardCatchMob` 7, plus 11 of the QuestData family already
+covered). Client: nothing. **The lever is worked out** — what remains behind shared strings is
+either the C++ runtime or subject ids, and a fresh name now needs a different kind of evidence.
