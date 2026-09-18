@@ -15519,3 +15519,32 @@ Ten names from a lever that first appeared to offer 38 is the honest yield. The 
 rejections are the useful part of the record: the same measurement run without the
 message-versus-expression check would have looked like a 38-name pass and put wrong names
 on 19 client functions.
+
+## The binary's own source-file map (2026-09-18)
+
+A lever the dump comments mention but this project had never measured: the `__FILE__`
+paths in the engine's asserts. A function that hands a path to an assert **is in that
+file** — the binary stating its own layout rather than the call-graph inference the dump
+otherwise falls back on.
+
+	server   153 functions carry a path,  72 unnamed,  47 files
+	client   420 functions carry a path, 409 unnamed, 149 files
+
+Recorded as `docs/protocol/source_files.tsv` (573 rows) with `source_files.md` for the
+shape of it. Two structural facts fall out of the paths themselves:
+
+- the client's object engine lives under `TOOLS & PLUGINS\SimpleViewer\objengine`, so the
+  renderer's object code was shared with an internal viewer tool;
+- there are **two** navmesh libraries, `JMX_Library\navmesh` and `JMX_Library\NavMesh_new`.
+
+**25 unnamed functions have an attribution that disagrees with their own file** — three
+attributed `SWorld` are in `Map.cpp`, three `CVBDynamic`/`CVBStatic` are in
+`VertexBuffer.cpp`, two `UI_ALCHEMYBOX` are in `DropItemManager.cpp`. Where a function
+carries its own path, the path wins. One apparent disagreement is not one:
+`CNIFDragableArea` versus `NIFDraggableArea.cpp` is the same thing spelled two ways, both
+the binary's own.
+
+**Nothing was named.** Attribution is not a name, and inventing class names out of file
+names would be exactly the shape of mistake this session has been correcting. The value
+is targeting: "where is the drop logic" now answers with an address list, and a future
+pass that names one function in a file knows which others share it.

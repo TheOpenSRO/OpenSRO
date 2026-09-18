@@ -1,0 +1,574 @@
+address	binary	current_name	source_file	full_path
+0040f5f0	server	Formulae::Formula_SkillPhysDamage	Formulae.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\Formulae.cpp
+00410110	server	Formulae::FUN_00410110	Formulae.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\Formulae.cpp
+004106b0	server	Formulae::FUN_004106b0	Formulae.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\Formulae.cpp
+00440cb0	server	AsyncQuery::AQ_COSManipulator__LoadStorage	AsyncQuery.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\AsyncQuery.cpp
+0044b840	server	AsyncQuery_BindOptionWithItem::AQ_BindOptionWithItem__DoWork_THIS	AsyncQuery_BindOptionWithItem.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\AsyncQuery_BindOptionWithItem.cpp
+0044baa0	server	AsyncQuery_BindOptionWithItem::AQ_BindOptionWithItem__DoWork_All	AsyncQuery_BindOptionWithItem.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\AsyncQuery_BindOptionWithItem.cpp
+00452f90	server	AsyncQuery_OpenMarket::AQ_OpenMarket__DoWorkReceipt	AsyncQuery_OpenMarket.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\AsyncQuery_OpenMarket.cpp
+0045c270	server	AsyncQuery_Storage::AQ_StorageUpdater__DoWork_AddBindingOption	AsyncQuery_Storage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\AsyncQuery_Storage.cpp
+0045c7d0	server	AsyncQuery_Storage::AQ_StorageUpdater__DoWork_AddRentInfo	AsyncQuery_Storage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\AsyncQuery_Storage.cpp
+0045ebd0	server	AsyncQuery_Storage::AQ_StorageUpdaterForPacakageItem__DoWork_AddRentInfo	AsyncQuery_Storage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\AsyncQuery_Storage.cpp
+00472700	server	FleaMarket::CFleaMarket__SellFMarketItem	FleaMarket.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\FleaMarket.cpp
+0047f0f0	server	TradeMgr::trade_p2p__VerifyLoadedItemValidity	TradeMgr.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\TradeMgr.cpp
+0047f620	server	TradeMgr::CTradeMgr__OpenTradeSession	TradeMgr.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\TradeMgr.cpp
+0047f970	server	TradeMgr::CTradeMgr__EstablishTradeSession	TradeMgr.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\TradeMgr.cpp
+0047fe40	server	TradeMgr::CTradeMgr__Exchange	TradeMgr.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\TradeMgr.cpp
+004802a0	server	TradeMgr::CTradeMgr__DealIt	TradeMgr.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\TradeMgr.cpp
+00484b80	server	CGObj::Create	GObj.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObj.cpp
+00492560	server	GItem::CGItem__GetBindOption	GItem.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GItem.cpp
+00496d90	server	GItemEquip::FUN_00496d90	GItemEquip.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GItemEquip.cpp
+00496e60	server	GItemEquip::ComputeRepair	GItemEquip.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GItemEquip.cpp
+00497f20	server	GItemEquip::CGItemEquip__DoJob	GItemEquip.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GItemEquip.cpp
+0049ee80	server	CGItemExpendable::vslot_313	GItemExpendable.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GItemExpendable.cpp
+004a66f0	server	GObjChar::FUN_004a66f0	GObjChar.h	d:\work2005\source\silkroadonline\server\sr_gameserver\GObjChar.h
+004a6790	server	GObjChar::FUN_004a6790	GObjChar.h	d:\work2005\source\silkroadonline\server\sr_gameserver\GObjChar.h
+004ab390	server	GObjChar::CGObjChar__GetBindingOptionOP	GObjChar.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjChar.cpp
+004b3210	server	GParamKeeper::ParamKeeper_EvaluateParam	GParamKeeper.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GParamKeeper.cpp
+004b7e90	server	GStorage::CGStorage__SetItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b7f10	server	GStorage::CGStorage__PopItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b7f80	server	GStorage::CGStorage__MoveItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8000	server	GStorage::CGStorage__GetItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8070	server	GStorage::CGStorage__SplitItemTo	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b80f0	server	GStorage::CGStorage__SwapItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8170	server	GStorage::CGStorage__RemoveItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b81e0	server	GStorage::CGStorage__RemoveItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8260	server	GStorage::CGStorage__FindFirstEmptySlot	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b82e0	server	GStorage::CGStorage__FindTotalEmptySlot	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8350	server	GStorage::CGStorage__FindSameItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b83d0	server	GStorage::CGStorage__FindItemHasSameTID	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8460	server	GStorage::CGStorage__FindItemHasSameRefObj	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b84f0	server	GStorage::CGStorage__FindItemSlot	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8570	server	GStorage::CGStorage__FindItemSlot	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b85f0	server	GStorage::CGStorage__FindItemByDBID	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8670	server	GStorage::CGStorage__CountCanBeMerged	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b86f0	server	GStorage::CGStorage__CountItemsHasSameRefObj	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8770	server	GStorage::CGStorage__CountItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b87f0	server	GStorage::CGStorage__CountEmptySlot	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8870	server	GStorage::CGStorage__GetFirstItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b88f0	server	GStorage::CGStorage__RandomSelectNonEmptySlotForDeathPenalty	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8970	server	GStorage::CGStorage__ItemExists	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b89f0	server	GStorage::CGStorage__CanStoreThisItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8a60	server	GStorage::CGStorage__MakeAllItemOfflined	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8d90	server	GStorage::CGStorage__RefreshEquipParamEntryForPC	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8e00	server	GStorage::CGStorage__RefreshEngagedCOSItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8e70	server	GStorage::CGStorage__CheckEquipsetIntegrity	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8ee0	server	GStorage::CGStorage__CheckAvatarsetIntegrity	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8f50	server	GStorage::CGStorage__ProtectItemsFromPenaltyDrop	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b8fc0	server	GStorage::CGStorage__InsertItemWithCreatedItemInDataBase	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b9060	server	GStorage::CGStorage__CheckRentalItemValidity	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b90d0	server	GStorage::CGStorage__ApplySetItemOptLevel2ThisGroup	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b9150	server	GStorage::CGStorage__PushItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b91d0	server	GStorage::CGStorage__PopItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b9240	server	GStorage::CGStorage__AttachLinkedStorageToItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b92b0	server	GStorage::CGStorage__CanPushItem	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b9320	server	GStorage::CGStorage__GetLatestAvailableSlot	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004b93a0	server	GStorage::CGStorage__UpdateRentItemInEquipSlot	GStorage.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorage.cpp
+004ba100	server	CGStorageOP::RandomSelectNonEmptySlotForDeathPenalty	GStorageOP.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorageOP.cpp
+004ba910	server	CGStorageOP::RefreshEquipParamEntryForPC	GStorageOP.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorageOP.cpp
+004baab0	server	CGStorageOP::CheckEquipsetIntegrity	GStorageOP.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorageOP.cpp
+004baae0	server	CGStorageOP::CheckAvatarsetIntegrity	GStorageOP.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorageOP.cpp
+004baea0	server	CGStorageOP::CheckRentalItemValidity	GStorageOP.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorageOP.cpp
+004baed0	server	CGStorageOP::PushItem	GStorageOP.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorageOP.cpp
+004baf00	server	CGStorageOP::AttachLinkedStorageToItem	GStorageOP.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorageOP.cpp
+004baf30	server	CGStorageOP::CanPushItem	GStorageOP.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorageOP.cpp
+004baf60	server	CGStorageOP::GetLatestAvailableSlot	GStorageOP.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorageOP.cpp
+004baf90	server	CGStorageOP::ApplySetItemOptLevel2ThisGroup	GStorageOP.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorageOP.cpp
+004bafc0	server	CGStorageOP::UpdateRentItemInEquipSlot	GStorageOP.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GStorageOP.cpp
+004c1b00	server	CGObjMob::vslot_362	GObjMob.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjMob.cpp
+004c8220	server	GObjNPCNPC::FUN_004c8220	GObjNPCNPC.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjNPCNPC.cpp
+004c8810	server	GObjNPCNPC::FUN_004c8810	GObjNPCNPC.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjNPCNPC.cpp
+004c8b90	server	GObjNPCNPC::FUN_004c8b90	GObjNPCNPC.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjNPCNPC.cpp
+004cfd50	server	GObjSiegeStruct::FUN_004cfd50	GObjSiegeStruct.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjSiegeStruct.cpp
+004d1a50	server	GObjCOS::FUN_004d1a50	GObjCOS.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjCOS.cpp
+004d6c80	server	GObjCOS_Pet::FUN_004d6c80	GObjCOS_Pet.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjCOS_Pet.cpp
+004e2990	server	CGObjPC::vslot_362	GObjPC.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjPC.cpp
+004e5250	server	GObjPC::GObjPC_GainExpAndLevel	GObjPC.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjPC.cpp
+004e6980	server	GObjPC::GObjPC_OnDeath	GObjPC.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjPC.cpp
+004e6d60	server	GObjPC::FUN_004e6d60	GObjPC.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjPC.cpp
+00524cd0	server	GObjPC_StorageManipulator::CGObjPC__AttachEquipItem	GObjPC_StorageManipulator.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjPC_StorageManipulator.cpp
+005255e0	server	GObjPC_StorageManipulator::CGObjPC__DetachEquipItem	GObjPC_StorageManipulator.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\GObjPC_StorageManipulator.cpp
+00547570	server	AITactics_ExtRoutine::FUN_00547570	AITactics_ExtRoutine.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\AITactics_ExtRoutine.cpp
+0054daf0	server	RefClassFactory::FUN_0054daf0	RefClassFactory.h	d:\work2005\source\silkroadonline\server\sr_gameserver\RefClassFactory.h
+0055f190	server	AIHive::FUN_0055f190	AIHive.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\AIHive.cpp
+005893e0	server	SkillGlobal::FUN_005893e0	SkillGlobal.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\skill\SkillGlobal.cpp
+0060e0a0	server	TrijobMgr::FUN_0060e0a0	TrijobMgr.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\TrijobMgr.cpp
+0060f710	server	EventDaemon_Action::FUN_0060f710	EventDaemon_Action.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\EventDaemon_Action.cpp
+00634950	server	SiegeFortressMgr::HandleStructureRepair	SiegeFortressMgr.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\SiegeFortressMgr.cpp
+0066e200	server	SocketOptionOP::CSocketOptionOP__PutonTheBindingItem	SocketOptionOP.cpp	D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\SocketOptionOP.cpp
+006a3d50	server	RefObjItem::ExtractData	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006a58f0	server	ReferenceData::RefObjChar_ExtractData	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006a61b0	server	ReferenceData::FUN_006a61b0	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006a6660	server	ReferenceData::FUN_006a6660	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006a7650	server	ReferenceData::FUN_006a7650	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006a7980	server	ReferenceData::FUN_006a7980	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006a8090	server	ReferenceData::FUN_006a8090	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006a8d80	server	ReferenceData::FUN_006a8d80	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006a94a0	server	ReferenceData::FUN_006a94a0	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006a9630	server	ReferenceData::FUN_006a9630	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006a9840	server	ReferenceData::FUN_006a9840	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006a99c0	server	ReferenceData::FUN_006a99c0	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006a9ab0	server	ReferenceData::FUN_006a9ab0	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006a9fb0	server	ReferenceData::FUN_006a9fb0	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006abd20	server	ReferenceData::FUN_006abd20	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006ac710	server	RefMagicOptByItemOptLevel::vslot_000	ReferenceData.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ReferenceData.cpp
+006bef30	server	RefInstanceGenerator::FUN_006bef30	RefInstanceGenerator.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\RefInstanceGenerator.cpp
+00720a70	server	ReferenceData::FUN_00720a70	ReferenceData.h	d:\work2005\source\silkroadonline\server\servercommon\ReferenceData.h
+00720c50	server	ReferenceData::std__find	ReferenceData.h	d:\work2005\source\silkroadonline\server\servercommon\ReferenceData.h
+00724a00	server	RefItemDrop::CRefDropData__AddAssignedItemDrop	RefItemDrop.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\RefItemDrop.cpp
+00728470	server	RefItemDrop::FUN_00728470	RefItemDrop.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\RefItemDrop.cpp
+00731540	server	ShardDB::FUN_00731540	ShardDB.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ShardDB.cpp
+00867660	server	ShopApp::FUN_00867660	ShopApp.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ShopApp.cpp
+00867850	server	ShopApp::FUN_00867850	ShopApp.cpp	D:\WORK2005\Source\SilkroadOnline\Server\ServerCommon\ShopApp.cpp
+00956160	server	MassiveMsg::FUN_00956160	MassiveMsg.cpp	D:\WORK2005\Source\Common\Framework\MassiveMsg.cpp
+00975600	server	TimeSpan::FUN_00975600	TimeSpan.cpp	D:\WORK2005\Source\JMX_Library\BSLib\Util\TimeSpan.cpp
+00985f60	server	threadmanager::FUN_00985f60	threadmanager.cpp	D:\WORK2005\Source\JMX_Library\BSLib\thread\threadmanager.cpp
+0098a660	server	CRegionManagerBody::vslot_001	RegionManagerBody.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\RegionManagerBody.cpp
+0098aab0	server	CRegionManagerBody::vslot_004	RegionManagerBody.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\RegionManagerBody.cpp
+0098be30	server	RegionManagerBody::FUN_0098be30	RegionManagerBody.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\RegionManagerBody.cpp
+0098d0c0	server	CRegionManagerBody::vslot_024	RegionManagerBody.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\RegionManagerBody.cpp
+0098e820	server	IMemory::FUN_0098e820	IMemory.h	d:\work2005\source\jmx_library\enginecommon\IMemory.h
+0098e9a0	server	IMemory::FUN_0098e9a0	IMemory.h	d:\work2005\source\jmx_library\enginecommon\IMemory.h
+00996ee0	server	IMemory::FUN_00996ee0	IMemory.h	d:\work2005\source\jmx_library\enginecommon\IMemory.h
+00996fb0	server	IMemory::FUN_00996fb0	IMemory.h	d:\work2005\source\jmx_library\enginecommon\IMemory.h
+00997fe0	server	RTNavMeshDungeon::FUN_00997fe0	RTNavMeshDungeon.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\RTNavMeshDungeon.cpp
+0099f370	server	RTNavMeshTerrain::FUN_0099f370	RTNavMeshTerrain.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\RTNavMeshTerrain.cpp
+0099ff00	server	RTNavMeshTerrain::FUN_0099ff00	RTNavMeshTerrain.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\RTNavMeshTerrain.cpp
+009a0030	server	RTNavMeshTerrain::FUN_009a0030	RTNavMeshTerrain.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\RTNavMeshTerrain.cpp
+009a8000	server	MapLoader::FUN_009a8000	MapLoader.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\MapLoader.cpp
+009a8070	server	MapLoader::FUN_009a8070	MapLoader.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\MapLoader.cpp
+009a8390	server	MapLoader::FUN_009a8390	MapLoader.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\MapLoader.cpp
+009a8b10	server	MapLoader::FUN_009a8b10	MapLoader.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\MapLoader.cpp
+009a9280	server	MapLoader::FUN_009a9280	MapLoader.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\MapLoader.cpp
+009a96f0	server	MapLoader::MapLoader__Initialize	MapLoader.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\MapLoader.cpp
+009a9ed0	server	MapLoader::FUN_009a9ed0	MapLoader.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\MapLoader.cpp
+009a9f50	server	MapLoader::FUN_009a9f50	MapLoader.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\MapLoader.cpp
+009aa330	server	MapLoader::FUN_009aa330	MapLoader.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\MapLoader.cpp
+009aa540	server	MapLoader::FUN_009aa540	MapLoader.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\MapLoader.cpp
+009aa920	server	MapLoader::FUN_009aa920	MapLoader.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\MapLoader.cpp
+009b26e0	server	IMemory::FUN_009b26e0	IMemory.h	d:\work2005\source\jmx_library\enginecommon\IMemory.h
+009b43b0	server	RTNavMeshObj::FUN_009b43b0	RTNavMeshObj.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\RTNavMeshObj.cpp
+009b4d30	server	RTNavMeshObj::FUN_009b4d30	RTNavMeshObj.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\RTNavMeshObj.cpp
+009b6990	server	RTNavMeshObj::FUN_009b6990	RTNavMeshObj.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\RTNavMeshObj.cpp
+009b6c80	server	RTNavMeshObj::FUN_009b6c80	RTNavMeshObj.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\RTNavMeshObj.cpp
+009c0b10	server	CRTNavEdgeGlobal::vslot_007	RTNavEdge.cpp	D:\WORK2005\Source\JMX_Library\NavMesh_new\RTNavEdge.cpp
+00403450	client	RTNavMeshTerrain::FUN_00403450	RTNavMeshTerrain.cpp	D:\vss-od\JMX_Library\navmesh\RTNavMeshTerrain.cpp
+00403f30	client	RTNavMeshTerrain::FUN_00403f30	RTNavMeshTerrain.cpp	D:\vss-od\JMX_Library\navmesh\RTNavMeshTerrain.cpp
+00404060	client	RTNavMeshTerrain::FUN_00404060	RTNavMeshTerrain.cpp	D:\vss-od\JMX_Library\navmesh\RTNavMeshTerrain.cpp
+00411960	client	CRegionManagerBody::vslot_001	RegionManagerBody.cpp	D:\vss-od\JMX_Library\navmesh\RegionManagerBody.cpp
+00411e20	client	CRegionManagerBody::vslot_004	RegionManagerBody.cpp	D:\vss-od\JMX_Library\navmesh\RegionManagerBody.cpp
+00412660	client	CRegionManagerBody::vslot_012	RegionManagerBody.cpp	D:\vss-od\JMX_Library\navmesh\RegionManagerBody.cpp
+00413260	client	RegionManagerBody::FUN_00413260	RegionManagerBody.cpp	D:\vss-od\JMX_Library\navmesh\RegionManagerBody.cpp
+00414600	client	CRegionManagerBody::vslot_024	RegionManagerBody.cpp	D:\vss-od\JMX_Library\navmesh\RegionManagerBody.cpp
+004163c0	client	IMemory::FUN_004163c0	IMemory.h	d:\project\jmx_library\enginecommon\IMemory.h
+00416550	client	IMemory::FUN_00416550	IMemory.h	d:\project\jmx_library\enginecommon\IMemory.h
+004255a0	client	IMemory::FUN_004255a0	IMemory.h	d:\project\jmx_library\enginecommon\IMemory.h
+004256e0	client	IMemory::FUN_004256e0	IMemory.h	d:\project\jmx_library\enginecommon\IMemory.h
+004263e0	client	MapLoader::FUN_004263e0	MapLoader.cpp	D:\vss-od\JMX_Library\navmesh\MapLoader.cpp
+00426450	client	MapLoader::FUN_00426450	MapLoader.cpp	D:\vss-od\JMX_Library\navmesh\MapLoader.cpp
+00426810	client	MapLoader::FUN_00426810	MapLoader.cpp	D:\vss-od\JMX_Library\navmesh\MapLoader.cpp
+00426fe0	client	MapLoader::FUN_00426fe0	MapLoader.cpp	D:\vss-od\JMX_Library\navmesh\MapLoader.cpp
+004277b0	client	MapLoader::FUN_004277b0	MapLoader.cpp	D:\vss-od\JMX_Library\navmesh\MapLoader.cpp
+004281d0	client	MapLoader::FUN_004281d0	MapLoader.cpp	D:\vss-od\JMX_Library\navmesh\MapLoader.cpp
+00428a40	client	MapLoader::FUN_00428a40	MapLoader.cpp	D:\vss-od\JMX_Library\navmesh\MapLoader.cpp
+004295f0	client	MapLoader::FUN_004295f0	MapLoader.cpp	D:\vss-od\JMX_Library\navmesh\MapLoader.cpp
+00429670	client	MapLoader::FUN_00429670	MapLoader.cpp	D:\vss-od\JMX_Library\navmesh\MapLoader.cpp
+0042a6e0	client	MapLoader::FUN_0042a6e0	MapLoader.cpp	D:\vss-od\JMX_Library\navmesh\MapLoader.cpp
+0042b8b0	client	MapLoader::FUN_0042b8b0	MapLoader.cpp	D:\vss-od\JMX_Library\navmesh\MapLoader.cpp
+0042bad0	client	MapLoader::FUN_0042bad0	MapLoader.cpp	D:\vss-od\JMX_Library\navmesh\MapLoader.cpp
+0042bed0	client	MapLoader::FUN_0042bed0	MapLoader.cpp	D:\vss-od\JMX_Library\navmesh\MapLoader.cpp
+0043be40	client	IMemory::FUN_0043be40	IMemory.h	d:\project\jmx_library\enginecommon\IMemory.h
+0043dcc0	client	RTNavMeshDungeon::FUN_0043dcc0	RTNavMeshDungeon.cpp	D:\vss-od\JMX_Library\navmesh\RTNavMeshDungeon.cpp
+0043e8c0	client	RTNavMeshDungeon::FUN_0043e8c0	RTNavMeshDungeon.cpp	D:\vss-od\JMX_Library\navmesh\RTNavMeshDungeon.cpp
+00449630	client	RTNavMeshObj::FUN_00449630	RTNavMeshObj.cpp	D:\vss-od\JMX_Library\navmesh\RTNavMeshObj.cpp
+0044a790	client	RTNavMeshObj::FUN_0044a790	RTNavMeshObj.cpp	D:\vss-od\JMX_Library\navmesh\RTNavMeshObj.cpp
+0044d060	client	RTNavMeshObj::FUN_0044d060	RTNavMeshObj.cpp	D:\vss-od\JMX_Library\navmesh\RTNavMeshObj.cpp
+0044d330	client	RTNavMeshObj::FUN_0044d330	RTNavMeshObj.cpp	D:\vss-od\JMX_Library\navmesh\RTNavMeshObj.cpp
+0045d1e0	client	CRTNavEdgeGlobal::vslot_007	RTNavEdge.cpp	D:\vss-od\JMX_Library\navmesh\RTNavEdge.cpp
+0045ef50	client	NavMeshBuilder::FUN_0045ef50	NavMeshBuilder.cpp	D:\vss-od\JMX_Library\navmesh\NavMeshBuilder.cpp
+0045fd60	client	NavMeshBuilder::FUN_0045fd60	NavMeshBuilder.cpp	D:\vss-od\JMX_Library\navmesh\NavMeshBuilder.cpp
+00467e10	client	NavCell::FUN_00467e10	NavCell.cpp	D:\vss-od\JMX_Library\navmesh\NavCell.cpp
+00467f00	client	NavCell::FUN_00467f00	NavCell.cpp	D:\vss-od\JMX_Library\navmesh\NavCell.cpp
+00469080	client	NInterfaceResource::FUN_00469080	NInterfaceResource.cpp	D:\vss-od\JMX_Library\sriflib\sriflib\NInterfaceResource.cpp
+00482860	client	CNIFDragableArea::vslot_017	NIFDraggableArea.cpp	D:\vss-od\JMX_Library\sriflib\sriflib\NIFDraggableArea.cpp
+004927b0	client	GNFontChar::FUN_004927b0	GNFontChar.cpp	D:\vss-od\JMX_Library\sriflib\sriflib\GNFontChar.cpp
+00492bc0	client	GNFontChar::FUN_00492bc0	GNFontChar.cpp	D:\vss-od\JMX_Library\sriflib\sriflib\GNFontChar.cpp
+004ea570	client	CharacterVisualChangeManager::FUN_004ea570	CharacterVisualChangeManager.cpp	D:\vss-od\Silkroad\Client\client\CharacterVisualChangeManager.cpp
+004ec9d0	client	CharacterVisualChangeManager::FUN_004ec9d0	CharacterVisualChangeManager.cpp	D:\vss-od\Silkroad\Client\client\CharacterVisualChangeManager.cpp
+004ed040	client	CharacterVisualChangeManager::FUN_004ed040	CharacterVisualChangeManager.cpp	D:\vss-od\Silkroad\Client\client\CharacterVisualChangeManager.cpp
+004ed440	client	CharacterVisualChangeManager::FUN_004ed440	CharacterVisualChangeManager.cpp	D:\vss-od\Silkroad\Client\client\CharacterVisualChangeManager.cpp
+004ed530	client	CharacterVisualChangeManager::FUN_004ed530	CharacterVisualChangeManager.cpp	D:\vss-od\Silkroad\Client\client\CharacterVisualChangeManager.cpp
+004f7220	client	MsgStreamBuffer::FUN_004f7220	MsgStreamBuffer.h	d:\vss-od\silkroad\client\client\MsgStreamBuffer.h
+005061c0	client	MsgStreamBuffer::FUN_005061c0	MsgStreamBuffer.h	d:\vss-od\silkroad\client\client\MsgStreamBuffer.h
+00507e40	client	GScript::FUN_00507e40	GScript.cpp	D:\vss-od\Silkroad\Client\client\GScript.cpp
+0050ebe0	client	GScript::FUN_0050ebe0	GScript.cpp	D:\vss-od\Silkroad\Client\client\GScript.cpp
+005161f0	client	GScript::FUN_005161f0	GScript.cpp	D:\vss-od\Silkroad\Client\client\GScript.cpp
+00518370	client	GScript::SaveGameData	GScript.cpp	D:\vss-od\Silkroad\Client\client\GScript.cpp
+005287a0	client	GScript::FUN_005287a0	GScript.cpp	D:\vss-od\Silkroad\Client\client\GScript.cpp
+00534220	client	CICATStruct::vslot_025	ICATStruct.cpp	D:\vss-od\Silkroad\Client\client\ICATStruct.cpp
+0053baa0	client	IFConsole::FUN_0053baa0	IFConsole.cpp	D:\vss-od\Silkroad\Client\client\IFConsole.cpp
+0053bb00	client	IFConsole::FUN_0053bb00	IFConsole.cpp	D:\vss-od\Silkroad\Client\client\IFConsole.cpp
+00555db0	client	IFConsole::FUN_00555db0	IFConsole.cpp	D:\vss-od\Silkroad\Client\client\IFConsole.cpp
+0055a150	client	IFGNGWCRank::FUN_0055a150	IFGNGWCRank.cpp	D:\vss-od\Silkroad\Client\client\IFGNGWCRank.cpp
+00561780	client	UI_SILKMALL::FUN_00561780	IFRenderStatic.cpp	D:\vss-od\Silkroad\Client\client\IFRenderStatic.cpp
+00562f00	client	FUN_00562f00	IFSupporterChatWnd.cpp	D:\vss-od\Silkroad\Client\client\IFSupporterChatWnd.cpp
+00564920	client	IFTargetWindowFortressStructure::FUN_00564920	IFTargetWindowFortressStructure.cpp	D:\vss-od\Silkroad\Client\client\IFTargetWindowFortressStructure.cpp
+00565f90	client	IFTargetWindowFortressStructure::FUN_00565f90	IFTargetWindowFortressStructure.cpp	D:\vss-od\Silkroad\Client\client\IFTargetWindowFortressStructure.cpp
+0056eb00	client	MemBufManager::FUN_0056eb00	MemBufManager.cpp	D:\vss-od\Silkroad\Client\client\MemBufManager.cpp
+0056ebe0	client	MemBufManager::FUN_0056ebe0	MemBufManager.cpp	D:\vss-od\Silkroad\Client\client\MemBufManager.cpp
+0057ac10	client	NIFAllianceGuild::FUN_0057ac10	NIFAllianceGuild.cpp	D:\vss-od\Silkroad\Client\client\NIFAllianceGuild.cpp
+005807e0	client	NIFBattleArenaGuildWnd::FUN_005807e0	NIFBattleArenaGuildWnd.cpp	D:\vss-od\Silkroad\Client\client\NIFBattleArenaGuildWnd.cpp
+00580dd0	client	NIFBattleArenaGuildWnd::FUN_00580dd0	NIFBattleArenaGuildWnd.cpp	D:\vss-od\Silkroad\Client\client\NIFBattleArenaGuildWnd.cpp
+00580f40	client	NIFBattleArenaGuildWnd::FUN_00580f40	NIFBattleArenaGuildWnd.cpp	D:\vss-od\Silkroad\Client\client\NIFBattleArenaGuildWnd.cpp
+00582310	client	NIFBattleArenaGuildWnd::FUN_00582310	NIFBattleArenaGuildWnd.cpp	D:\vss-od\Silkroad\Client\client\NIFBattleArenaGuildWnd.cpp
+00582920	client	NIFBattleArenaGuildWnd::FUN_00582920	NIFBattleArenaGuildWnd.cpp	D:\vss-od\Silkroad\Client\client\NIFBattleArenaGuildWnd.cpp
+00582980	client	NIFBattleArenaGuildWnd::FUN_00582980	NIFBattleArenaGuildWnd.cpp	D:\vss-od\Silkroad\Client\client\NIFBattleArenaGuildWnd.cpp
+00583a70	client	NIFBattleArenaRuleWnd::FUN_00583a70	NIFBattleArenaRuleWnd.cpp	D:\vss-od\Silkroad\Client\client\NIFBattleArenaRuleWnd.cpp
+00583ad0	client	NIFBattleArenaRuleWnd::FUN_00583ad0	NIFBattleArenaRuleWnd.cpp	D:\vss-od\Silkroad\Client\client\NIFBattleArenaRuleWnd.cpp
+00591910	client	NIFEnchantWnd::FUN_00591910	NIFEnchantWnd.cpp	D:\vss-od\Silkroad\Client\client\NIFEnchantWnd.cpp
+005bbf80	client	NIFHostileGuild::FUN_005bbf80	NIFHostileGuild.cpp	D:\vss-od\Silkroad\Client\client\NIFHostileGuild.cpp
+005cc890	client	NIFOpenMarket::FUN_005cc890	NIFOpenMarket.cpp	D:\vss-od\Silkroad\Client\client\NIFOpenMarket.cpp
+005fd5f0	client	NIFOption::FUN_005fd5f0	NIFOption.cpp	D:\vss-od\Silkroad\Client\client\NIFOption.cpp
+0060bea0	client	NIFUnderMenuBar::FUN_0060bea0	NIFUnderMenuBar.cpp	D:\vss-od\Silkroad\Client\client\NIFUnderMenuBar.cpp
+0061ea60	client	NIFWorldMap::FUN_0061ea60	NIFWorldMap.cpp	D:\vss-od\Silkroad\Client\client\NIFWorldMap.cpp
+006217e0	client	NIFWorldMap::FUN_006217e0	NIFWorldMap.cpp	D:\vss-od\Silkroad\Client\client\NIFWorldMap.cpp
+00622b60	client	NIFWorldMap::FUN_00622b60	NIFWorldMap.cpp	D:\vss-od\Silkroad\Client\client\NIFWorldMap.cpp
+00653b30	client	IFWnd::FUN_00653b30	IFWnd.cpp	D:\vss-od\Silkroad\Client\client\IFWnd.cpp
+00655fe0	client	IFButton::FUN_00655fe0	IFButton.cpp	D:\vss-od\Silkroad\Client\client\IFButton.cpp
+00657890	client	IFRadioButton::FUN_00657890	IFRadioButton.cpp	D:\vss-od\Silkroad\Client\client\IFRadioButton.cpp
+00657970	client	IFRadioButton::FUN_00657970	IFRadioButton.cpp	D:\vss-od\Silkroad\Client\client\IFRadioButton.cpp
+00657ad0	client	IFRadioButton::FUN_00657ad0	IFRadioButton.cpp	D:\vss-od\Silkroad\Client\client\IFRadioButton.cpp
+00676570	client	IFSlotWithHelp::FUN_00676570	IFSlotWithHelp.cpp	D:\vss-od\Silkroad\Client\client\IFSlotWithHelp.cpp
+0067eec0	client	IFSlotWithHelp::FUN_0067eec0	IFSlotWithHelp.cpp	D:\vss-od\Silkroad\Client\client\IFSlotWithHelp.cpp
+00680da0	client	IFSlotWithHelp::FUN_00680da0	IFSlotWithHelp.cpp	D:\vss-od\Silkroad\Client\client\IFSlotWithHelp.cpp
+00687800	client	IFSlotWithHelp::FUN_00687800	IFSlotWithHelp.cpp	D:\vss-od\Silkroad\Client\client\IFSlotWithHelp.cpp
+00687c70	client	IFSlotWithHelp::FUN_00687c70	IFSlotWithHelp.cpp	D:\vss-od\Silkroad\Client\client\IFSlotWithHelp.cpp
+0068cec0	client	IFUnderBar::FUN_0068cec0	IFUnderBar.cpp	D:\vss-od\Silkroad\Client\client\IFUnderBar.cpp
+00696ca0	client	IFWorldMap::FUN_00696ca0	IFWorldMap.cpp	D:\vss-od\Silkroad\Client\client\IFWorldMap.cpp
+0069d380	client	IFSKillBoard::FUN_0069d380	IFSKillBoard.cpp	D:\vss-od\Silkroad\Client\client\IFSKillBoard.cpp
+0069d930	client	IFSKillBoard::FUN_0069d930	IFSKillBoard.cpp	D:\vss-od\Silkroad\Client\client\IFSKillBoard.cpp
+0069f860	client	IFSkillMastery::CIFSkillMastery_SetMasteryData	IFSkillMastery.cpp	D:\vss-od\Silkroad\Client\client\IFSkillMastery.cpp
+006a04e0	client	IFSkillMasteryWndManager::FUN_006a04e0	IFSkillMasteryWndManager.cpp	D:\vss-od\Silkroad\Client\client\IFSkillMasteryWndManager.cpp
+006a15f0	client	IFSkillSlot::FUN_006a15f0	IFSkillSlot.cpp	D:\vss-od\Silkroad\Client\client\IFSkillSlot.cpp
+006a1a30	client	CIFDragableArea::vslot_017	IFDragableArea.cpp	D:\vss-od\Silkroad\Client\client\IFDragableArea.cpp
+006a1d20	client	IFMainPopup::FUN_006a1d20	IFMainPopup.cpp	D:\vss-od\Silkroad\Client\client\IFMainPopup.cpp
+006a1d50	client	IFMainPopup::FUN_006a1d50	IFMainPopup.cpp	D:\vss-od\Silkroad\Client\client\IFMainPopup.cpp
+006a1d80	client	IFMainPopup::FUN_006a1d80	IFMainPopup.cpp	D:\vss-od\Silkroad\Client\client\IFMainPopup.cpp
+006a1db0	client	IFMainPopup::FUN_006a1db0	IFMainPopup.cpp	D:\vss-od\Silkroad\Client\client\IFMainPopup.cpp
+006a1de0	client	IFMainPopup::FUN_006a1de0	IFMainPopup.cpp	D:\vss-od\Silkroad\Client\client\IFMainPopup.cpp
+006a1e10	client	IFMainPopup::FUN_006a1e10	IFMainPopup.cpp	D:\vss-od\Silkroad\Client\client\IFMainPopup.cpp
+006a1e40	client	IFMainPopup::FUN_006a1e40	IFMainPopup.cpp	D:\vss-od\Silkroad\Client\client\IFMainPopup.cpp
+006a1e70	client	IFMainPopup::FUN_006a1e70	IFMainPopup.cpp	D:\vss-od\Silkroad\Client\client\IFMainPopup.cpp
+006a3fb0	client	IFAction::FUN_006a3fb0	IFAction.cpp	D:\vss-od\Silkroad\Client\client\IFAction.cpp
+006b6620	client	IFInventory::FUN_006b6620	IFInventory.cpp	D:\vss-od\Silkroad\Client\client\IFInventory.cpp
+006b7020	client	IFInventory::FUN_006b7020	IFInventory.cpp	D:\vss-od\Silkroad\Client\client\IFInventory.cpp
+006ba370	client	IFStall::FUN_006ba370	IFStall.cpp	D:\vss-od\Silkroad\Client\client\IFStall.cpp
+006ce720	client	IFStorageRoom::FUN_006ce720	IFStorageRoom.cpp	D:\vss-od\Silkroad\Client\client\IFStorageRoom.cpp
+006ce9c0	client	IFStorageRoom::thunk_FUN_006ce720	IFStorageRoom.cpp	D:\vss-od\Silkroad\Client\client\IFStorageRoom.cpp
+006d6640	client	IFParty::FUN_006d6640	IFParty.cpp	D:\vss-od\Silkroad\Client\client\IFParty.cpp
+006d7e60	client	IFQuickPartySlot::FUN_006d7e60	IFQuickPartySlot.cpp	D:\vss-od\Silkroad\Client\client\IFQuickPartySlot.cpp
+006db380	client	CIFQuickPartyWnd::vslot_012	IFQuickPartyWnd.cpp	D:\vss-od\Silkroad\Client\client\IFQuickPartyWnd.cpp
+006e8780	client	IFApprenticeShip::FUN_006e8780	IFApprenticeShip.cpp	D:\vss-od\Silkroad\Client\client\IFApprenticeShip.cpp
+006e8ed0	client	IFApprenticeShip::FUN_006e8ed0	IFApprenticeShip.cpp	D:\vss-od\Silkroad\Client\client\IFApprenticeShip.cpp
+006ea670	client	IFApprenticeShipSlot::FUN_006ea670	IFApprenticeShipSlot.cpp	D:\vss-od\Silkroad\Client\client\IFApprenticeShipSlot.cpp
+006f43c0	client	IFOption_Video::FUN_006f43c0	IFOption_Video.cpp	D:\vss-od\Silkroad\Client\client\IFOption_Video.cpp
+006f73d0	client	IF_NPCTalk::FUN_006f73d0	IF_NPCTalk.cpp	D:\vss-od\Silkroad\Client\client\IF_NPCTalk.cpp
+006f79c0	client	IF_NPCTalk::FUN_006f79c0	IF_NPCTalk.cpp	D:\vss-od\Silkroad\Client\client\IF_NPCTalk.cpp
+006fdeb0	client	IF_NPCTalk::FUN_006fdeb0	IF_NPCTalk.cpp	D:\vss-od\Silkroad\Client\client\IF_NPCTalk.cpp
+006fe030	client	IF_NPCTalk::FUN_006fe030	IF_NPCTalk.cpp	D:\vss-od\Silkroad\Client\client\IF_NPCTalk.cpp
+00703ff0	client	IF_NPCWindow::FUN_00703ff0	IF_NPCWindow.cpp	D:\vss-od\Silkroad\Client\client\IF_NPCWindow.cpp
+0071bf30	client	IFRequestGuildWar::FUN_0071bf30	IFRequestGuildWar.cpp	D:\vss-od\Silkroad\Client\client\IFRequestGuildWar.cpp
+0074e350	client	IFSpecialtyDeal::FUN_0074e350	IFSpecialtyDeal.cpp	D:\vss-od\Silkroad\Client\client\IFSpecialtyDeal.cpp
+0074f960	client	IFSpecialtyDeal::FUN_0074f960	IFSpecialtyDeal.cpp	D:\vss-od\Silkroad\Client\client\IFSpecialtyDeal.cpp
+00753280	client	GameWorldData::FUN_00753280	GameWorldData.cpp	D:\vss-od\Silkroad\Client\client\GameWorldData.cpp
+00761fd0	client	IFFortressWarApplyWnd::FUN_00761fd0	IFFortressWarApplyWnd.cpp	D:\vss-od\Silkroad\Client\client\IFFortressWarApplyWnd.cpp
+00762fa0	client	IFFortressWarApplyWndSlot::FUN_00762fa0	IFFortressWarApplyWndSlot.cpp	D:\vss-od\Silkroad\Client\client\IFFortressWarApplyWndSlot.cpp
+00763b00	client	IFFortressWarApplyWndSlot::FUN_00763b00	IFFortressWarApplyWndSlot.cpp	D:\vss-od\Silkroad\Client\client\IFFortressWarApplyWndSlot.cpp
+00788750	client	GInterface::FUN_00788750	GInterface.cpp	D:\vss-od\Silkroad\Client\client\GInterface.cpp
+00789820	client	CGInterface::vslot_005	GInterface.cpp	D:\vss-od\Silkroad\Client\client\GInterface.cpp
+0078bb50	client	GInterface::FUN_0078bb50	GInterface.cpp	D:\vss-od\Silkroad\Client\client\GInterface.cpp
+0078c910	client	CGInterface::Create	GInterface.cpp	D:\vss-od\Silkroad\Client\client\GInterface.cpp
+00793b00	client	GInterfaceSend::FUN_00793b00	GInterfaceSend.cpp	D:\vss-od\Silkroad\Client\client\GInterfaceSend.cpp
+007978a0	client	GInterfaceSend::FUN_007978a0	GInterfaceSend.cpp	D:\vss-od\Silkroad\Client\client\GInterfaceSend.cpp
+0079b790	client	GInterfaceWndRelation::FUN_0079b790	GInterfaceWndRelation.cpp	D:\vss-od\Silkroad\Client\client\GInterfaceWndRelation.cpp
+0079b8a0	client	GInterfaceWndRelation::FUN_0079b8a0	GInterfaceWndRelation.cpp	D:\vss-od\Silkroad\Client\client\GInterfaceWndRelation.cpp
+007a4170	client	IFCOSInfo::FUN_007a4170	IFCOSInfo.cpp	D:\vss-od\Silkroad\Client\client\IFCOSInfo.cpp
+007a6e00	client	IFCOSInventory::FUN_007a6e00	IFCOSInventory.cpp	D:\vss-od\Silkroad\Client\client\IFCOSInventory.cpp
+007a6ee0	client	IFCOSInventory::FUN_007a6ee0	IFCOSInventory.cpp	D:\vss-od\Silkroad\Client\client\IFCOSInventory.cpp
+007a6fe0	client	IFCOSInventory::FUN_007a6fe0	IFCOSInventory.cpp	D:\vss-od\Silkroad\Client\client\IFCOSInventory.cpp
+007a8290	client	IFCOSSetup::FUN_007a8290	IFCOSSetup.cpp	D:\vss-od\Silkroad\Client\client\IFCOSSetup.cpp
+007ab230	client	IFChatViewer::FUN_007ab230	IFChatViewer.cpp	D:\vss-od\Silkroad\Client\client\IFChatViewer.cpp
+007b4b20	client	IFPlayerMiniInfo::FUN_007b4b20	IFPlayerMiniInfo.cpp	D:\vss-od\Silkroad\Client\client\IFPlayerMiniInfo.cpp
+007bcde0	client	IFSkillWithdrawal::FUN_007bcde0	IFSkillWithdrawal.cpp	D:\vss-od\Silkroad\Client\client\IFSkillWithdrawal.cpp
+007c08e0	client	IFItemMall::FUN_007c08e0	IFItemMall.cpp	D:\vss-od\Silkroad\Client\client\IFItemMall.cpp
+007d8bf0	client	UI_SILKMALL::FUN_007d8bf0	IFNewItemMall.cpp	D:\vss-od\Silkroad\Client\client\IFNewItemMall.cpp
+007e8320	client	NewItemMallConfirmBuy::FUN_007e8320	NewItemMallConfirmBuy.cpp	D:\vss-od\Silkroad\Client\client\NewItemMallConfirmBuy.cpp
+007eeb30	client	IFChangePlayerModel::FUN_007eeb30	IFChangePlayerModel.cpp	D:\vss-od\Silkroad\Client\client\IFChangePlayerModel.cpp
+0081c8f0	client	InterfaceNetSender::FUN_0081c8f0	InterfaceNetSender.cpp	D:\vss-od\Silkroad\Client\client\InterfaceNetSender.cpp
+00821f00	client	InterfaceNetSender::TrainingCamp_SendInviteRequest	InterfaceNetSender.cpp	D:\vss-od\Silkroad\Client\client\InterfaceNetSender.cpp
+0082cd50	client	AutoPotion::FUN_0082cd50	AutoPotion.cpp	D:\vss-od\Silkroad\Client\client\AutoPotion.cpp
+0082cdb0	client	AutoPotion::FUN_0082cdb0	AutoPotion.cpp	D:\vss-od\Silkroad\Client\client\AutoPotion.cpp
+0082ce90	client	AutoPotion::FUN_0082ce90	AutoPotion.cpp	D:\vss-od\Silkroad\Client\client\AutoPotion.cpp
+00831b20	client	Client::FUN_00831b20	Client.cpp	D:\vss-od\Silkroad\Client\client\Client.cpp
+008371d0	client	Game::CObjChild__m_pGfxEttManager	Game.cpp	D:\vss-od\Silkroad\Client\client\Game.cpp
+00837210	client	Game::CObjChild__m_pGfxEttManager	Game.cpp	D:\vss-od\Silkroad\Client\client\Game.cpp
+0083a490	client	Game::FUN_0083a490	Game.cpp	D:\vss-od\Silkroad\Client\client\Game.cpp
+00840a80	client	Game::FUN_00840a80	Game.cpp	D:\vss-od\Silkroad\Client\client\Game.cpp
+00842b60	client	CGame::vslot_015	Game.cpp	D:\vss-od\Silkroad\Client\client\Game.cpp
+00842ff0	client	MsgStreamBuffer::FUN_00842ff0	MsgStreamBuffer.h	d:\vss-od\silkroad\client\client\MsgStreamBuffer.h
+00844310	client	Game::FUN_00844310	Game.cpp	D:\vss-od\Silkroad\Client\client\Game.cpp
+0085a580	client	PSCharacterSelect::FUN_0085a580	PSCharacterSelect.cpp	D:\vss-od\Silkroad\Client\client\PSCharacterSelect.cpp
+008721b0	client	FUN_008721b0	NetProcessInInner.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInInner.cpp
+00873c10	client	NetProcessInInner::FUN_00873c10	NetProcessInInner.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInInner.cpp
+00873d60	client	NetProcessInInner::FUN_00873d60	NetProcessInInner.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInInner.cpp
+00873ff0	client	NetProcessInInner::FUN_00873ff0	NetProcessInInner.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInInner.cpp
+0087b770	client	NetProcessInInner::FUN_0087b770	NetProcessInInner.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInInner.cpp
+0087ba20	client	NetProcessInInner::FUN_0087ba20	NetProcessInInner.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInInner.cpp
+0087f370	client	NetProcessInInner::FUN_0087f370	NetProcessInInner.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInInner.cpp
+00880330	client	NetProcessInInterface::FUN_00880330	NetProcessInInterface.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInInterface.cpp
+00880be0	client	NetProcessInInterface::FUN_00880be0	NetProcessInInterface.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInInterface.cpp
+00880cc0	client	FUN_00880cc0	NetProcessInInterface.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInInterface.cpp
+00880e90	client	FUN_00880e90	NetProcessInInterface.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInInterface.cpp
+00884dd0	client	NetProcessInInterface::FUN_00884dd0	NetProcessInInterface.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInInterface.cpp
+00888da0	client	FUN_00888da0	NetProcessInInterface.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInInterface.cpp
+008a4b00	client	NetProcessInNavAndSkill::FUN_008a4b00	NetProcessInNavAndSkill.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInNavAndSkill.cpp
+008a4ec0	client	FUN_008a4ec0	NetProcessInNavAndSkill.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInNavAndSkill.cpp
+008a4f80	client	NetProcessInNavAndSkill::FUN_008a4f80	NetProcessInNavAndSkill.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInNavAndSkill.cpp
+008a5230	client	FUN_008a5230	NetProcessInNavAndSkill.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInNavAndSkill.cpp
+008a5280	client	NetProcessInNavAndSkill::FUN_008a5280	NetProcessInNavAndSkill.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInNavAndSkill.cpp
+008a52f0	client	FUN_008a52f0	NetProcessInNavAndSkill.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInNavAndSkill.cpp
+008a5750	client	NetProcessInNavAndSkill::FUN_008a5750	NetProcessInNavAndSkill.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInNavAndSkill.cpp
+008a5fd0	client	NetProcessInNavAndSkill::FUN_008a5fd0	NetProcessInNavAndSkill.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInNavAndSkill.cpp
+008a69b0	client	FUN_008a69b0	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008a6cc0	client	FUN_008a6cc0	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008a6d20	client	FUN_008a6d20	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008a6dc0	client	FUN_008a6dc0	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008a6e80	client	FUN_008a6e80	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008a75c0	client	FUN_008a75c0	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008a7630	client	FUN_008a7630	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008a7950	client	FUN_008a7950	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008a7d20	client	FUN_008a7d20	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008a80a0	client	FUN_008a80a0	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008abbd0	client	FUN_008abbd0	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008abfa0	client	FUN_008abfa0	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008ac0e0	client	FUN_008ac0e0	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008ac340	client	FUN_008ac340	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008ac610	client	FUN_008ac610	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008ad030	client	FUN_008ad030	NetProcessInObject.cpp	D:\vss-od\Silkroad\Client\client\NetProcessInObject.cpp
+008add60	client	MsgStreamBuffer::FUN_008add60	MsgStreamBuffer.h	d:\vss-od\silkroad\client\client\MsgStreamBuffer.h
+008af960	client	UI_ALCHEMYBOX::FUN_008af960	DropItemManager.cpp	D:\vss-od\Silkroad\Client\client\DropItemManager.cpp
+008afb50	client	UI_ALCHEMYBOX::FUN_008afb50	DropItemManager.cpp	D:\vss-od\Silkroad\Client\client\DropItemManager.cpp
+008b5250	client	InterfaceResource::FUN_008b5250	InterfaceResource.cpp	D:\vss-od\Silkroad\Client\client\InterfaceResource.cpp
+008bacc0	client	SOItem::FUN_008bacc0	SOItem.cpp	D:\vss-od\Silkroad\Client\client\SOItem.cpp
+008bcdf0	client	SOItem::FUN_008bcdf0	SOItem.cpp	D:\vss-od\Silkroad\Client\client\SOItem.cpp
+008bd760	client	SOItem::FUN_008bd760	SOItem.cpp	D:\vss-od\Silkroad\Client\client\SOItem.cpp
+008ca8f0	client	TextStringManager::FUN_008ca8f0	TextStringManager.cpp	D:\vss-od\Silkroad\Client\client\TextStringManager.cpp
+008cac30	client	TextStringManager::FUN_008cac30	TextStringManager.cpp	D:\vss-od\Silkroad\Client\client\TextStringManager.cpp
+00936bf0	client	GlobalDataManager::FUN_00936bf0	GlobalDataManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalDataManager.cpp
+00939ea0	client	GlobalDataManager::FUN_00939ea0	GlobalDataManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalDataManager.cpp
+0093ef10	client	GlobalDataManager::FUN_0093ef10	GlobalDataManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalDataManager.cpp
+0093f5f0	client	GlobalDataManager::FUN_0093f5f0	GlobalDataManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalDataManager.cpp
+0093f670	client	GlobalDataManager::CGlobalDataManager__GetTIDFromObjectID	GlobalDataManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalDataManager.cpp
+009447f0	client	GlobalDataManager::FUN_009447f0	GlobalDataManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalDataManager.cpp
+009463e0	client	GlobalDataManager::FUN_009463e0	GlobalDataManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalDataManager.cpp
+009465c0	client	GlobalDataManager::FUN_009465c0	GlobalDataManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalDataManager.cpp
+00946930	client	GlobalDataManager::FUN_00946930	GlobalDataManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalDataManager.cpp
+0094ccb0	client	GlobalDataManager::FUN_0094ccb0	GlobalDataManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalDataManager.cpp
+0094dc00	client	GlobalDataManager::FUN_0094dc00	GlobalDataManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalDataManager.cpp
+00978140	client	GameGuideData::FUN_00978140	GameGuideData.cpp	D:\vss-od\Silkroad\Client\client\GameGuideData.cpp
+0097a5c0	client	GameGuideData::FUN_0097a5c0	GameGuideData.cpp	D:\vss-od\Silkroad\Client\client\GameGuideData.cpp
+00991d80	client	CharacterDependentData::FUN_00991d80	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00991e80	client	CharacterDependentData::FUN_00991e80	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00991ef0	client	CharacterDependentData::FUN_00991ef0	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00991f60	client	CharacterDependentData::FUN_00991f60	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00992020	client	CharacterDependentData::FUN_00992020	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+009920a0	client	CharacterDependentData::FUN_009920a0	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00992160	client	CharacterDependentData::FUN_00992160	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+009921e0	client	CharacterDependentData::FUN_009921e0	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00992260	client	CharacterDependentData::FUN_00992260	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00992380	client	CharacterDependentData::FUN_00992380	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00992400	client	CharacterDependentData::FUN_00992400	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00992490	client	CharacterDependentData::FUN_00992490	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00992710	client	CharacterDependentData::FUN_00992710	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00996540	client	CharacterDependentData::FUN_00996540	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00996ba0	client	CharacterDependentData::FUN_00996ba0	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00996c70	client	CharacterDependentData::FUN_00996c70	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00996fa0	client	CharacterDependentData::FUN_00996fa0	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00997290	client	CharacterDependentData::FUN_00997290	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00998cb0	client	CharacterDependentData::FUN_00998cb0	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00999120	client	CharacterDependentData::FUN_00999120	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00999260	client	CharacterDependentData::FUN_00999260	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+00999550	client	CharacterDependentData::FUN_00999550	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+0099a2e0	client	CharacterDependentData::FUN_0099a2e0	CharacterDependentData.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData.cpp
+0099d920	client	CharacterDependentData_Vote::FUN_0099d920	CharacterDependentData_Vote.cpp	D:\vss-od\Silkroad\Client\client\CharacterDependentData_Vote.cpp
+009b6b70	client	PMLTag::FUN_009b6b70	PMLTag.cpp	D:\vss-od\Silkroad\Client\client\PMLTag.cpp
+009bb9c0	client	SkillCoolTimeManager::FUN_009bb9c0	SkillCoolTimeManager.cpp	D:\vss-od\Silkroad\Client\client\SkillCoolTimeManager.cpp
+009bba90	client	SkillCoolTimeManager::FUN_009bba90	SkillCoolTimeManager.cpp	D:\vss-od\Silkroad\Client\client\SkillCoolTimeManager.cpp
+009bbb60	client	SkillCoolTimeManager::FUN_009bbb60	SkillCoolTimeManager.cpp	D:\vss-od\Silkroad\Client\client\SkillCoolTimeManager.cpp
+009bfd10	client	SkillRunTimeManager::FUN_009bfd10	SkillRunTimeManager.cpp	D:\vss-od\Silkroad\Client\client\SkillRunTimeManager.cpp
+009c0ff0	client	SkillStructureByServer::FUN_009c0ff0	SkillStructureByServer.cpp	D:\vss-od\Silkroad\Client\client\Skill\SkillStructureByServer.cpp
+009c1240	client	SkillStructureByServer::FUN_009c1240	SkillStructureByServer.cpp	D:\vss-od\Silkroad\Client\client\Skill\SkillStructureByServer.cpp
+009c12b0	client	SkillStructureByServer::FUN_009c12b0	SkillStructureByServer.cpp	D:\vss-od\Silkroad\Client\client\Skill\SkillStructureByServer.cpp
+009c1750	client	SkillStructureByServer::FUN_009c1750	SkillStructureByServer.cpp	D:\vss-od\Silkroad\Client\client\Skill\SkillStructureByServer.cpp
+009c1fa0	client	IGIDObject::FUN_009c1fa0	IGIDObject.cpp	D:\vss-od\Silkroad\Client\client\IGIDObject.cpp
+009c31a0	client	IGIDObject::FUN_009c31a0	IGIDObject.cpp	D:\vss-od\Silkroad\Client\client\IGIDObject.cpp
+009c3270	client	IGIDObject::FUN_009c3270	IGIDObject.cpp	D:\vss-od\Silkroad\Client\client\IGIDObject.cpp
+009c3790	client	IGIDObject::FUN_009c3790	IGIDObject.cpp	D:\vss-od\Silkroad\Client\client\IGIDObject.cpp
+009c60b0	client	CICCos::vslot_025	ICCos.cpp	D:\vss-od\Silkroad\Client\client\ICCos.cpp
+009c7930	client	ICharactor::FUN_009c7930	ICharactor.cpp	D:\vss-od\Silkroad\Client\client\ICharactor.cpp
+009cec80	client	IEntity::FUN_009cec80	IEntity.h	d:\vss-od\jmx_library\gfx\gfxmainframe\IEntity.h
+009d05d0	client	ICharactor::FUN_009d05d0	ICharactor.cpp	D:\vss-od\Silkroad\Client\client\ICharactor.cpp
+009d15a0	client	ICharactor::FUN_009d15a0	ICharactor.cpp	D:\vss-od\Silkroad\Client\client\ICharactor.cpp
+009d2fa0	client	ICMonster::FUN_009d2fa0	ICMonster.cpp	D:\vss-od\Silkroad\Client\client\ICMonster.cpp
+009d3470	client	ICMonster::FUN_009d3470	ICMonster.cpp	D:\vss-od\Silkroad\Client\client\ICMonster.cpp
+009d8f40	client	IEntity::FUN_009d8f40	IEntity.h	d:\vss-od\jmx_library\gfx\gfxmainframe\IEntity.h
+009e2590	client	icscriptobj::FUN_009e2590	icscriptobj.cpp	D:\vss-od\Silkroad\Client\client\icscriptobj.cpp
+009e3c40	client	icscriptobj::FUN_009e3c40	icscriptobj.cpp	D:\vss-od\Silkroad\Client\client\icscriptobj.cpp
+009e4e30	client	icscriptobj::FUN_009e4e30	icscriptobj.cpp	D:\vss-od\Silkroad\Client\client\icscriptobj.cpp
+009ed970	client	BufRender::FUN_009ed970	BufRender.cpp	D:\vss-od\Silkroad\Client\Landscape\MapEngine\BufRender.cpp
+009edb60	client	BufRender::FUN_009edb60	BufRender.cpp	D:\vss-od\Silkroad\Client\Landscape\MapEngine\BufRender.cpp
+009efc60	client	SWorld::vslot_035	DynamicShadow.cpp	D:\vss-od\Silkroad\Client\Landscape\MapEngine\DynamicShadow.cpp
+009fe760	client	Map::FUN_009fe760	Map.cpp	D:\vss-od\Silkroad\Client\Landscape\MapEngine\Map.cpp
+00a0d6e0	client	SWorld::vslot_039	Map.cpp	D:\vss-od\Silkroad\Client\Landscape\MapEngine\Map.cpp
+00a1b390	client	SWorld::vslot_016	Map.cpp	D:\vss-od\Silkroad\Client\Landscape\MapEngine\Map.cpp
+00a232a0	client	Map::FUN_00a232a0	Map.cpp	D:\vss-od\Silkroad\Client\Landscape\MapEngine\Map.cpp
+00a291a0	client	SWorld::vslot_013	Map.cpp	D:\vss-od\Silkroad\Client\Landscape\MapEngine\Map.cpp
+00a361b0	client	FUN_00a361b0	MapCallBack.cpp	D:\vss-od\Silkroad\Client\Landscape\MapEngine\MapCallBack.cpp
+00a42680	client	IEntity::FUN_00a42680	IEntity.h	d:\vss-od\jmx_library\gfx\gfxmainframe\IEntity.h
+00a442c0	client	CWRain::vslot_009	IEntity.h	d:\vss-od\jmx_library\gfx\gfxmainframe\IEntity.h
+00a44a00	client	CWRainWave::vslot_009	IEntity.h	d:\vss-od\jmx_library\gfx\gfxmainframe\IEntity.h
+00a44a40	client	CWRainWaveSplash::vslot_009	IEntity.h	d:\vss-od\jmx_library\gfx\gfxmainframe\IEntity.h
+00a45470	client	CWSnow::vslot_009	IEntity.h	d:\vss-od\jmx_library\gfx\gfxmainframe\IEntity.h
+00a45c30	client	CWSnow2::vslot_009	IEntity.h	d:\vss-od\jmx_library\gfx\gfxmainframe\IEntity.h
+00a465a0	client	CIDamageText::vslot_009	IEntity.h	d:\vss-od\jmx_library\gfx\gfxmainframe\IEntity.h
+00a513a0	client	IDecoSkill::FUN_00a513a0	IDecoSkill.cpp	D:\vss-od\Silkroad\Client\client\IDecoSkill.cpp
+00a51bc0	client	IDecoSkill::FUN_00a51bc0	IDecoSkill.cpp	D:\vss-od\Silkroad\Client\client\IDecoSkill.cpp
+00a569b0	client	SkillManager::FUN_00a569b0	SkillManager.cpp	D:\vss-od\Silkroad\Client\client\SkillManager.cpp
+00a5ba90	client	CObjCharacter::FUN_00a5ba90	CObjCharacter.cpp	D:\vss-od\Silkroad\Client\client\CObjCharacter.cpp
+00a5bb50	client	CObjCharacter::FUN_00a5bb50	CObjCharacter.cpp	D:\vss-od\Silkroad\Client\client\CObjCharacter.cpp
+00a5bb90	client	CObjCharacter::FUN_00a5bb90	CObjCharacter.cpp	D:\vss-od\Silkroad\Client\client\CObjCharacter.cpp
+00a5bbd0	client	CObjCharacter::FUN_00a5bbd0	CObjCharacter.cpp	D:\vss-od\Silkroad\Client\client\CObjCharacter.cpp
+00a5bd10	client	CObjCharacter::FUN_00a5bd10	CObjCharacter.cpp	D:\vss-od\Silkroad\Client\client\CObjCharacter.cpp
+00a5cca0	client	CObjCharacter::SetDefaultWear	CObjCharacter.cpp	D:\vss-od\Silkroad\Client\client\CObjCharacter.cpp
+00a5d460	client	CObjCharacter::FUN_00a5d460	CObjCharacter.cpp	D:\vss-od\Silkroad\Client\client\CObjCharacter.cpp
+00a5f3e0	client	CObjCharacter::FUN_00a5f3e0	CObjCharacter.cpp	D:\vss-od\Silkroad\Client\client\CObjCharacter.cpp
+00a5f4f0	client	CObjCharacter::FUN_00a5f4f0	CObjCharacter.cpp	D:\vss-od\Silkroad\Client\client\CObjCharacter.cpp
+00a604f0	client	CObjCharacter::FUN_00a604f0	CObjCharacter.cpp	D:\vss-od\Silkroad\Client\client\CObjCharacter.cpp
+00a60a90	client	CObjCharacter::FUN_00a60a90	CObjCharacter.cpp	D:\vss-od\Silkroad\Client\client\CObjCharacter.cpp
+00a611e0	client	CObjCharacter::FUN_00a611e0	CObjCharacter.cpp	D:\vss-od\Silkroad\Client\client\CObjCharacter.cpp
+00a61f20	client	InventoryManager::FUN_00a61f20	InventoryManager.cpp	D:\vss-od\Silkroad\Client\client\InventoryManager.cpp
+00a62020	client	InventoryManager::FUN_00a62020	InventoryManager.cpp	D:\vss-od\Silkroad\Client\client\InventoryManager.cpp
+00a75020	client	CGEffSoundBody::vslot_008	GEffSound.cpp	D:\vss-od\Silkroad\Client\client\GEffSound.cpp
+00a7b2f0	client	GlobalEffectManager::FUN_00a7b2f0	GlobalEffectManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalEffectManager.cpp
+00a7f5a0	client	GlobalEffectManager::FUN_00a7f5a0	GlobalEffectManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalEffectManager.cpp
+00a9d0f0	client	GlobalEffectManager::FUN_00a9d0f0	GlobalEffectManager.cpp	D:\vss-od\Silkroad\Client\client\GlobalEffectManager.cpp
+00b37a30	client	IFTVariable::FUN_00b37a30	IFTVariable.cpp	D:\vss-od\Silkroad\tools & plugins\InterfaceTool\InterfaceToolLib\IFTVariable.cpp
+00bbdc30	client	ObjEngine::FUN_00bbdc30	ObjEngine.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ObjEngine.cpp
+00bbedb0	client	RStateMgr::FUN_00bbedb0	RStateMgr.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RStateMgr.cpp
+00bc1270	client	GlobalObj::FUN_00bc1270	GlobalObj.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\GlobalObj.cpp
+00bc3fd0	client	TextureMgr::FUN_00bc3fd0	TextureMgr.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\TextureMgr.cpp
+00bc4580	client	TextureMgr::FUN_00bc4580	TextureMgr.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\TextureMgr.cpp
+00bc47f0	client	TextureMgr::FUN_00bc47f0	TextureMgr.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\TextureMgr.cpp
+00bc5690	client	Prim::FUN_00bc5690	Prim.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\Prim.cpp
+00bc6d90	client	CScreenDistortion::vslot_000	ScreenDistortion.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ScreenDistortion.cpp
+00bc79b0	client	CScreenDistortion::vslot_001	ScreenDistortion.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ScreenDistortion.cpp
+00bc8050	client	ResObject::FUN_00bc8050	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00bc81d0	client	IndexBuffer::FUN_00bc81d0	IndexBuffer.h	d:\project\silkroadonline\tools & plugins\simpleviewer\objengine\IndexBuffer.h
+00bcb2d0	client	ResObject::FUN_00bcb2d0	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00bce3b0	client	ResObject::FUN_00bce3b0	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00bce590	client	G::__CIBStatic::vslot_004	IndexBuffer.h	d:\project\silkroadonline\tools & plugins\simpleviewer\objengine\IndexBuffer.h
+00bcf590	client	ResourceMgr::FUN_00bcf590	ResourceMgr.h	d:\project\silkroadonline\tools & plugins\simpleviewer\objengine\ResourceMgr.h
+00bd0460	client	ResObject::FUN_00bd0460	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00bd3590	client	ResObject::FUN_00bd3590	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00bd37d0	client	ResObject::FUN_00bd37d0	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00bd39d0	client	ResObject::FUN_00bd39d0	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00bdecf0	client	ResObject::FUN_00bdecf0	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00bdef90	client	ResObject::FUN_00bdef90	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00bdf1f0	client	ResObject::FUN_00bdf1f0	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00be2700	client	ResObject::FUN_00be2700	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00be28d0	client	ResObject::FUN_00be28d0	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00be2f80	client	ResObject::FUN_00be2f80	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00be3540	client	ResObject::FUN_00be3540	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00be3fb0	client	ResObject::FUN_00be3fb0	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00be41d0	client	ResObject::FUN_00be41d0	ResObject.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResObject.cpp
+00bebc60	client	ResourceMgr::FUN_00bebc60	ResourceMgr.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResourceMgr.cpp
+00bebee0	client	ResourceMgr::FUN_00bebee0	ResourceMgr.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResourceMgr.cpp
+00bec690	client	ResourceMgr::FUN_00bec690	ResourceMgr.h	d:\project\silkroadonline\tools & plugins\simpleviewer\objengine\ResourceMgr.h
+00bec720	client	ResourceMgr::FUN_00bec720	ResourceMgr.h	d:\project\silkroadonline\tools & plugins\simpleviewer\objengine\ResourceMgr.h
+00bed8d0	client	ResourceMgr::FUN_00bed8d0	ResourceMgr.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResourceMgr.cpp
+00bedba0	client	ResourceMgr::FUN_00bedba0	ResourceMgr.h	d:\project\silkroadonline\tools & plugins\simpleviewer\objengine\ResourceMgr.h
+00bee090	client	Indexbuffer::FUN_00bee090	Indexbuffer.h	d:\project\silkroadonline\tools & plugins\simpleviewer\objengine\Indexbuffer.h
+00beecc0	client	CObjRendererVS::vslot_025	ObjRendererVS.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ObjRendererVS.cpp
+00bf05e0	client	CObjRendererVS::FUN_00bf05e0	ObjRendererVS.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ObjRendererVS.cpp
+00bf1840	client	CObjRendererVS::FUN_00bf1840	ObjRendererVS.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ObjRendererVS.cpp
+00bf3b70	client	CObjRendererVS::FUN_00bf3b70	ObjRendererVS.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ObjRendererVS.cpp
+00bf67c0	client	CObjRendererVS::FUN_00bf67c0	ObjRendererVS.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ObjRendererVS.cpp
+00bf7890	client	DxSound::Get3DListenerInterface	DxSound.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\DxSound.cpp
+00bf7ff0	client	DxSound::FUN_00bf7ff0	DxSound.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\DxSound.cpp
+00bf8ad0	client	PrimMtrlSet::FUN_00bf8ad0	PrimMtrlSet.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\PrimMtrlSet.cpp
+00bfb580	client	CPrimBranch::vslot_001	PrimSkeleton.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\PrimSkeleton.cpp
+00bfcfb0	client	PrimAnimation::FUN_00bfcfb0	PrimAnimation.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\PrimAnimation.cpp
+00c02170	client	CVBDynamic::vslot_006	VertexBuffer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\VertexBuffer.cpp
+00c02260	client	CVBDynamic::vslot_003	VertexBuffer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\VertexBuffer.cpp
+00c023d0	client	CVBStatic::vslot_003	VertexBuffer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\VertexBuffer.cpp
+00c02520	client	CVBStatic::vslot_008	VertexBuffer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\VertexBuffer.cpp
+00c02810	client	CVBDynamic::vslot_002	VertexBuffer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\VertexBuffer.cpp
+00c02940	client	CVBStatic::vslot_002	VertexBuffer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\VertexBuffer.cpp
+00c0a200	client	ModPalette::FUN_00c0a200	ModPalette.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ModPalette.cpp
+00c0b1a0	client	ModPalette::FUN_00c0b1a0	ModPalette.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ModPalette.cpp
+00c0c040	client	ModPalette::FUN_00c0c040	ModPalette.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ModPalette.cpp
+00c121f0	client	PrimGeometry::FUN_00c121f0	PrimGeometry.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\PrimGeometry.cpp
+00c1ba00	client	PrimGeometry::FUN_00c1ba00	PrimGeometry.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\PrimGeometry.cpp
+00c1c740	client	G::__CIBDynamic::vslot_004	IndexBuffer.h	d:\project\silkroadonline\tools & plugins\simpleviewer\objengine\IndexBuffer.h
+00c1cc40	client	PrimTexture::FUN_00c1cc40	PrimTexture.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\PrimTexture.cpp
+00c1da40	client	Dx3DSoundBuffer::FUN_00c1da40	Dx3DSoundBuffer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\Dx3DSoundBuffer.cpp
+00c1e310	client	Dx3DSoundBuffer::FUN_00c1e310	Dx3DSoundBuffer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\Dx3DSoundBuffer.cpp
+00c1e460	client	Dx3DSoundBuffer::FillBufferWithSound	Dx3DSoundBuffer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\Dx3DSoundBuffer.cpp
+00c1e840	client	Dx3DSoundBuffer::CreateSoundBuffer	Dx3DSoundBuffer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\Dx3DSoundBuffer.cpp
+00c1efd0	client	CResChar::vslot_007	ResChar.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\ResChar.cpp
+00c1fce0	client	CDungeonObj::vslot_006	DungeonObj.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\DungeonObj.cpp
+00c209a0	client	DungeonObj::FUN_00c209a0	DungeonObj.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\DungeonObj.cpp
+00c25990	client	CompoundObj::FUN_00c25990	CompoundObj.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\CompoundObj.cpp
+00c259f0	client	CompoundObj::FUN_00c259f0	CompoundObj.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\CompoundObj.cpp
+00c27fd0	client	CompoundObj::FUN_00c27fd0	CompoundObj.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\CompoundObj.cpp
+00c2b050	client	CompoundObj::FUN_00c2b050	CompoundObj.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\CompoundObj.cpp
+00c2be80	client	CompoundObj::FUN_00c2be80	CompoundObj.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\CompoundObj.cpp
+00c2bef0	client	CompoundObj::FUN_00c2bef0	CompoundObj.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\CompoundObj.cpp
+00c2fa70	client	ResourceMgr::FUN_00c2fa70	ResourceMgr.h	d:\project\silkroadonline\tools & plugins\simpleviewer\objengine\ResourceMgr.h
+00c2fcf0	client	CompoundObj::FUN_00c2fcf0	CompoundObj.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\CompoundObj.cpp
+00c40a50	client	ResObject::FUN_00c40a50	ResObject.h	d:\project\silkroadonline\tools & plugins\simpleviewer\objengine\ResObject.h
+00c4a180	client	RTSkeleton::FUN_00c4a180	RTSkeleton.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RTSkeleton.cpp
+00c51ef0	client	RTSkeleton::FUN_00c51ef0	RTSkeleton.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RTSkeleton.cpp
+00c52a30	client	AniMixer::FUN_00c52a30	AniMixer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\AniMixer.cpp
+00c550d0	client	AniMixer::FUN_00c550d0	AniMixer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\AniMixer.cpp
+00c551a0	client	AniMixer::FUN_00c551a0	AniMixer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\AniMixer.cpp
+00c55360	client	AniMixer::FUN_00c55360	AniMixer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\AniMixer.cpp
+00c554e0	client	AniMixer::FUN_00c554e0	AniMixer.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\AniMixer.cpp
+00c5a930	client	VertexShader::FUN_00c5a930	VertexShader.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\VertexShader.cpp
+00c5abf0	client	Dx3DSoundListener::FUN_00c5abf0	Dx3DSoundListener.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\Dx3DSoundListener.cpp
+00c60410	client	IResModData::FUN_00c60410	IResModData.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\IResModData.cpp
+00c62ff0	client	IResModData::FUN_00c62ff0	IResModData.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\IResModData.cpp
+00c63160	client	IResModData::FUN_00c63160	IResModData.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\IResModData.cpp
+00c64860	client	RTGeomDS::FUN_00c64860	RTGeomDS.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RTGeomDS.cpp
+00c649a0	client	RTGeomDS::FUN_00c649a0	RTGeomDS.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RTGeomDS.cpp
+00c65940	client	Taga::FUN_00c65940	Taga.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\Taga.cpp
+00c66ad0	client	RTDunBlock::FUN_00c66ad0	RTDunBlock.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RTDunBlock.cpp
+00c68430	client	RTDunBlock::FUN_00c68430	RTDunBlock.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RTDunBlock.cpp
+00c6a4c0	client	RTDunBlock::FUN_00c6a4c0	RTDunBlock.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RTDunBlock.cpp
+00c6be00	client	RTDunBlock::FUN_00c6be00	RTDunBlock.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RTDunBlock.cpp
+00c6c870	client	RTDunBlock::FUN_00c6c870	RTDunBlock.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RTDunBlock.cpp
+00c6dc00	client	CRTDunBlock::vslot_004	RTDunBlock.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RTDunBlock.cpp
+00c6f1d0	client	RTDunBlock::FUN_00c6f1d0	RTDunBlock.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RTDunBlock.cpp
+00c797f0	client	FxModManager::FUN_00c797f0	FxModManager.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\FxModManager.cpp
+00c7fa40	client	FxModManager::FUN_00c7fa40	FxModManager.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\FxModManager.cpp
+00c81970	client	Shader::FUN_00c81970	Shader.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\Shader.cpp
+00c83ed0	client	CRTModSound::vslot_008	RTModSound.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RTModSound.cpp
+00c83fc0	client	CRTModSound::vslot_001	RTModSound.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\SimpleViewer\objengine\RTModSound.cpp
+00c866a0	client	IMemory::FUN_00c866a0	IMemory.h	d:\project\jmx_library\enginecommon\IMemory.h
+00c86820	client	IMemory::FUN_00c86820	IMemory.h	d:\project\jmx_library\enginecommon\IMemory.h
+00c881b0	client	IMemory::FUN_00c881b0	IMemory.h	d:\project\jmx_library\enginecommon\IMemory.h
+00caa850	client	IMemory::FUN_00caa850	IMemory.h	d:\project\jmx_library\enginecommon\IMemory.h
+00caeff0	client	EFEffect::FUN_00caeff0	EFEffect.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\EasyFxComposer\EASYFXLIB\EFEffect.cpp
+00cb4ff0	client	EFGlobal::FUN_00cb4ff0	EFGlobal.cpp	D:\Project\SilkroadOnline\TOOLS & PLUGINS\EasyFxComposer\EASYFXLIB\EFGlobal.cpp
+00cb8a00	client	IMemory::FUN_00cb8a00	IMemory.h	d:\project\jmx_library\enginecommon\IMemory.h
+00cb8b70	client	IMemory::FUN_00cb8b70	IMemory.h	d:\project\jmx_library\enginecommon\IMemory.h
