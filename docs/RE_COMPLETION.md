@@ -16764,3 +16764,31 @@ Three names came out of the remains, applied 3, failed 0:
   case the string rule was written for.
 
 No value changed.
+
+## 2026-09-18 — what opcode 0x7007 actually is, and a starting-kit question left open
+
+Back to the values half. The audit's clearest remaining gap is `equipment/starterkit.go`, which
+names two choices as **this project's own** — the garment family and the sword among five
+default weapons — on the stated grounds that "the original picks by the class chosen at
+creation, which this server does not record". That claim about the original is itself
+unverified, so the tick went looking for where the real server picks a starting kit.
+
+**It is not on the server side.** The 216 recovered SQL identifiers hold `_REFCHARDEFAULT_QUEST`
+— default *quests* — and nothing resembling a default-item table. So the answer is elsewhere and
+the note in `starterkit.go` stands as a disclosed choice rather than a grounded one. Recorded as
+still open rather than papered over.
+
+**The detour settled something else.** Character creation was traced through the client's
+`0x7007` senders, and `0x7007` is **not the create packet**: it writes a one-byte kind followed
+by a name string, and the guild path in the very same function sends the twin opcode `0x7450`
+instead. It is a **name-availability check**. Four senders were compared and all four write the
+same kind byte, 4 — so the kind does not separate character names from guild names; the opcode
+does.
+
+That also retires an item from an earlier tick. `0x7007` was dropped from a naming pass because
+"its owners span character-select and character-create windows that do not agree". They do not
+disagree: several windows legitimately send the same name check, which is exactly what a shared
+utility opcode looks like. The earlier refusal was right for the wrong reason, and the four
+senders are now named.
+
+Applied 4, failed 0. No value changed.
