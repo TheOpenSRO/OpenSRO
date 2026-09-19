@@ -5014,6 +5014,10 @@ whole hatch scheduler are read: per-nest alive cap, respawn flag, a uniform dela
 window in seconds re-rolled per hatch, the timer armed by the first loss out of a
 full nest, the champion/giant roll with the engine's `GiantMonster_SpawnRatio`
 (default 14). `respawnDelay = 10 s` disclosed against it; 17 functions named.
+Round 240: the row-parser catalogue -- 66 positional parsers harvested by shape
+(`refdata_tables.md`), 19 tied to their tables by assert strings, family-inserter
+case numbers and structure; 34 functions named (`RefX_ExtractData`, the family
+inserters, the list loaders). Docs only.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

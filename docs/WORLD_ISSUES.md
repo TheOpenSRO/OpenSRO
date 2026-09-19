@@ -7075,6 +7075,33 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-fortieth round: the row-parser catalogue -- 66 positional parsers, 19 tied to their tables, 34 functions named in one pass
+
+The RE tick for 2026-09-19 13:11 took the systematic lever the last two rounds exposed:
+every reference table reaches the game through a positional stream parser, and the parsers
+share one shape (a cursor at `+0x1c`, a column counter at `+0x28`). `/var/tmp/parsers3.py`
+on the box harvests all of them with their read widths, the inserter that allocates their
+record (and its size), and the list loader `CGameServer::LoadReferenceData` calls.
+
+**Which table is which** was settled three ways, never by column count (the client's
+textdata files carry more columns than the server reads -- `refshoptab.txt` has 7, the
+parser reads 5): (1) a parser's own assert names it -- `can't find %s from _RefShopTabGroup.
+check _RefShopTab` names the table being loaded, the one to "check"; (2) a **family
+inserter's case number** -- shops, shop tabs, shop groups and package items travel as one
+stream whose rows carry a kind byte, and `RefShop_InsertFamilyRow` (0x6b4590) switches
+0 -> `_RefShop` (0xd4), 1 -> `_RefMappingShopWithTab`, 2 -> `_RefAccessPermissionOfShop`,
+3 -> `_RefTreatItemOfShop`, while `RefPackageItem_InsertFamilyRow` (0x6b41b0) switches
+0 -> `_RefPackageItem` (0x188), 1 -> `_RefScrapOfPackageItem` (0x110), 2 ->
+`_RefPricePolicyOfItem`, 3/4 -> the sell-package reward/condition rows; (3) structure --
+the teleport parser reads `d d S d w w w w w b b w b`, teleportdata.txt's 14 columns minus
+its client-only zone-name string, beside its `[tel id: %s]` assert.
+
+Nineteen parsers now carry their table (`RefX_ExtractData`), plus nine inserters and eight
+list loaders: 34 names. The catalogue -- all 66 rows, 47 of them still blank -- is in
+`docs/protocol/refdata_tables.md`, so the next table anyone needs (the hive, the AI skills,
+the drop-class selectors) is a lookup by record size and assert rather than a rediscovery.
+No shipped value changed.
+
 ## Two-hundred-and-thirty-ninth round: the `_RefNest` row and the hatch scheduler -- how the real game respawns
 
 The RE tick for 2026-09-19 12:58, the follow-on the last round named. The nest table has no
