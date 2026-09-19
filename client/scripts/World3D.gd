@@ -3559,173 +3559,65 @@ func _set_hp_bar(body: Node3D, hp: int, max_hp: int) -> void:
 	if bar != null and max_hp > 0:
 		bar.texture = _hp_bar_texture(float(hp) / float(max_hp))
 
-## The target window: the current target's name and HP bar at the top of
-## the screen, the way the original shows whatever the player has clicked.
-## A name-plus-bar rather than the authored iftargetwindow frame (whose
-## name/HP/level are client-drawn over it, so this shows the same
-## information honestly); shown on click/attack, updated on damage, hidden
-## on death or when nothing is targeted.
-# The current-target window at the top of the screen, built on the client's
-# own frame art (interface\targetwindow\tw_type1.ddj, 200x72). Name, the real
-# level (grounded from characterdata _RefObjChar col 57, carried in the monster
-# snapshot), and an HP bar with its percent -- all data the server sends. The
-# real window's rank gem is still left off: rank isn't grounded/on the wire yet,
-# and inventing it is against the rules. See docs/WORLD_ISSUES.md.
-const TARGET_FRAME_DDJ := "interface\\targetwindow\\tw_type1.ddj"
-const TARGET_WINDOW_WIDTH := 320.0
-const TARGET_WINDOW_HEIGHT := 115.0
-# Slot rects [x, y, w, h] as fractions of the frame, eyeballed from the real
-# 200x72 art and tuned by rendering -- a disclosed layout choice.
-const TARGET_NAME_RECT := [0.15, 0.10, 0.80, 0.26]
-const TARGET_HP_RECT := [0.08, 0.56, 0.85, 0.18]
-var _target_window: Control = null
-var _target_name_label: Label = null
-var _target_hp_fill: ColorRect = null
-var _target_hp_pct: Label = null
-var _target_rank_icon: TextureRect = null
-var _target_hp_full := 0.0
+## The target window: whatever the player has clicked, at the top of the
+## screen. Built by HudTarget from the client's own layouts
+## (iftargetwindowex + iftw_commonenemy / iftw_specialmob) and placed where
+## ginterface.txt registers GDR_TARGETWINDOW; shown on click/attack, updated
+## on damage, hidden on death or when nothing is targeted. Everything it
+## shows is the server's snapshot -- see hud_target.gd for the recovery.
+var _hud_target: HudTarget = null
 
 func _build_target_window() -> void:
-	_target_window = Control.new()
-	_target_window.name = "TargetWindow"
-	_target_window.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_target_window.anchor_left = 0.5
-	_target_window.anchor_right = 0.5
-	_target_window.offset_left = -TARGET_WINDOW_WIDTH / 2.0
-	_target_window.offset_right = TARGET_WINDOW_WIDTH / 2.0
-	_target_window.offset_top = 12.0
-	_target_window.offset_bottom = 12.0 + TARGET_WINDOW_HEIGHT
-	_target_window.visible = false
+	_hud_target = HudTarget.new(_ui_builder)
+	_hud_target.name = "TargetWindow"
+	if not _hud_target.setup():
+		# No archive: no window, no stand-in. Keep the node so callers are
+		# null-safe through the wrappers below.
+		ui_control.add_child(_hud_target)
+		return
+	# The registry puts it at (442, 10) in the client's 1024-wide layout. That
+	# is not a centring number ((1024-196)/2 is 414), so it is kept as an
+	# offset from the layout's centre line: identical at 1024 wide, and the
+	# window stays near the top centre on wider screens. Whether the real
+	# client anchors it to the left edge or the centre is not recovered.
+	var reg := _ui_builder.window_def(HudTarget.REGISTRY_NAME) if _ui_builder != null else null
+	var authored_x := 442.0
+	var authored_y := 10.0
+	if reg != null:
+		authored_x = float(reg.rect.position.x)
+		authored_y = float(reg.rect.position.y)
+	_hud_target.anchor_left = 0.5
+	_hud_target.anchor_right = 0.5
+	_hud_target.offset_left = authored_x - 512.0
+	_hud_target.offset_right = authored_x - 512.0 + _hud_target.size.x
+	_hud_target.offset_top = authored_y
+	_hud_target.offset_bottom = authored_y + _hud_target.size.y
+	_hud_target.closed.connect(func() -> void: _last_attack_target = -1)
+	ui_control.add_child(_hud_target)
 
-	# The authored frame, or a plain box if no archive is loaded.
-	var frame_tex: Texture2D = _ui_builder.load_texture(TARGET_FRAME_DDJ) if _ui_builder != null else null
-	if frame_tex != null:
-		var frame := TextureRect.new()
-		frame.texture = frame_tex
-		frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		frame.stretch_mode = TextureRect.STRETCH_SCALE
-		frame.set_anchors_preset(Control.PRESET_FULL_RECT)
-		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_target_window.add_child(frame)
-	else:
-		var bg := ColorRect.new()
-		bg.color = Color(0.0, 0.0, 0.0, 0.55)
-		bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_target_window.add_child(bg)
-
-	_target_name_label = Label.new()
-	_target_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_target_name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_target_name_label.position = Vector2(TARGET_WINDOW_WIDTH * TARGET_NAME_RECT[0], TARGET_WINDOW_HEIGHT * TARGET_NAME_RECT[1])
-	_target_name_label.size = Vector2(TARGET_WINDOW_WIDTH * TARGET_NAME_RECT[2], TARGET_WINDOW_HEIGHT * TARGET_NAME_RECT[3])
-	_target_name_label.add_theme_color_override("font_color", NAME_PLATE_COLOUR)
-	_target_name_label.add_theme_color_override("font_outline_color", Color.BLACK)
-	_target_name_label.add_theme_constant_override("outline_size", 3)
-	if _ui_builder != null:
-		var font := _ui_builder.font_at(0)
-		if font != null:
-			_target_name_label.add_theme_font_override("font", font)
-		_target_name_label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
-	_target_window.add_child(_target_name_label)
-
-	var hp_x := TARGET_WINDOW_WIDTH * TARGET_HP_RECT[0]
-	var hp_y := TARGET_WINDOW_HEIGHT * TARGET_HP_RECT[1]
-	_target_hp_full = TARGET_WINDOW_WIDTH * TARGET_HP_RECT[2]
-	var hp_h := TARGET_WINDOW_HEIGHT * TARGET_HP_RECT[3]
-
-	var hp_bg := ColorRect.new()
-	hp_bg.color = HP_BAR_BG
-	hp_bg.position = Vector2(hp_x, hp_y)
-	hp_bg.size = Vector2(_target_hp_full, hp_h)
-	hp_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_target_window.add_child(hp_bg)
-
-	_target_hp_fill = ColorRect.new()
-	_target_hp_fill.color = HP_BAR_FILL
-	_target_hp_fill.position = Vector2(hp_x, hp_y)
-	_target_hp_fill.size = Vector2(_target_hp_full, hp_h)
-	_target_hp_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_target_window.add_child(_target_hp_fill)
-
-	_target_hp_pct = Label.new()
-	_target_hp_pct.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_target_hp_pct.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_target_hp_pct.position = Vector2(hp_x, hp_y - 1.0)
-	_target_hp_pct.size = Vector2(_target_hp_full, hp_h + 2.0)
-	_target_hp_pct.add_theme_color_override("font_color", Color(1, 1, 1))
-	_target_hp_pct.add_theme_color_override("font_outline_color", Color.BLACK)
-	_target_hp_pct.add_theme_constant_override("outline_size", 3)
-	_target_hp_pct.add_theme_font_size_override("font_size", 11)
-	_target_hp_pct.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_target_window.add_child(_target_hp_pct)
-
-	# The rank gem (top-left), set per target from its rarity. Position is a
-	# disclosed layout choice like the name/HP rects; the gem art and the
-	# rarity->gem mapping are grounded (see _rank_icon_path).
-	_target_rank_icon = TextureRect.new()
-	_target_rank_icon.position = Vector2(10, 8)
-	_target_rank_icon.size = Vector2(22, 22)
-	_target_rank_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_target_rank_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_target_rank_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_target_window.add_child(_target_rank_icon)
-
-	ui_control.add_child(_target_window)
-
-## The target-window rank gem for a monster's rarity (characterdata _RefObjChar
-## col 15). The mapping is recovered from the retail client (FUN_0069b4c0's
-## switch): 0/7 normal, 1 champion, 3/8 unique, 4 giant, 5 titan, 6 elite; any
-## other value shows no gem. Returns "" for no gem.
+## The target-window rank icon for a rarity -- kept as the one place callers
+## already use; the mapping lives with the window now.
 func _rank_icon_path(rarity: int) -> String:
-	match rarity:
-		0, 7:
-			return "interface\\targetwindow\\tw_icon_normal.ddj"
-		1:
-			return "interface\\targetwindow\\tw_icon_champion.ddj"
-		3, 8:
-			return "interface\\targetwindow\\tw_icon_unique.ddj"
-		4:
-			return "interface\\targetwindow\\tw_icon_giant.ddj"
-		5:
-			return "interface\\targetwindow\\tw_icon_titan.ddj"
-		6:
-			return "interface\\targetwindow\\tw_icon_elite.ddj"
-	return ""
+	return HudTarget.rank_icon_path(rarity)
 
 ## Shows the target window for a monster id, or hides it if the id is not a
 ## known live monster.
 func _show_target(monster_id: int) -> void:
-	if _target_window == null:
+	if _hud_target == null:
 		return
 	var snap = _monster_snapshots.get(monster_id)
 	if snap == null:
-		_target_window.visible = false
+		_hud_target.clear()
 		return
-	# Name plus the monster's real level (from characterdata, sent in the
-	# snapshot). Rank is still omitted -- it isn't grounded/on the wire yet.
-	if snap.level > 0:
-		_target_name_label.text = "%s  Lv %d" % [snap.monster_name, snap.level]
-	else:
-		_target_name_label.text = snap.monster_name
-	# The rank gem, from the monster's rarity (grounded mapping).
-	if _target_rank_icon != null:
-		var gem := _rank_icon_path(snap.rarity)
-		_target_rank_icon.texture = _ui_builder.load_texture(gem) if (gem != "" and _ui_builder != null) else null
-	_set_target_hp(snap.hp, snap.max_hp)
-	_target_window.visible = true
+	_hud_target.show_target(snap.monster_name, snap.level, snap.rarity, snap.hp, snap.max_hp)
 
 func _set_target_hp(hp: int, max_hp: int) -> void:
-	if _target_hp_fill == null or max_hp <= 0:
-		return
-	var fraction := clampf(float(hp) / float(max_hp), 0.0, 1.0)
-	_target_hp_fill.size.x = _target_hp_full * fraction
-	if _target_hp_pct != null:
-		_target_hp_pct.text = "%d%%" % roundi(fraction * 100.0)
+	if _hud_target != null:
+		_hud_target.set_hp(hp, max_hp)
 
 func _clear_target() -> void:
-	if _target_window != null:
-		_target_window.visible = false
+	if _hud_target != null:
+		_hud_target.clear()
 
 # How far the number climbs while it fades, in world units. Scaled by
 # PLAYER_SCALE_RATIO like every other height here (a character is about
@@ -7512,6 +7404,8 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 	if stats.max_hp > 0:
 		_last_enter_world_hp = stats.hp
 		_last_enter_world_max_hp = stats.max_hp
+	if _hud_target != null:
+		_hud_target.set_player_level(stats.level)
 	if _hud_player_info != null:
 		_hud_player_info.set_character(NetClient.current_character_name, stats.level)
 		if stats.max_hp > 0:
