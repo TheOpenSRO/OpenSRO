@@ -1127,6 +1127,7 @@ func _ready() -> void:
 	var _t_region := Time.get_ticks_msec()
 	_load_initial_region_neighborhood()
 	_try_initialize_pk2_ui()
+	_try_load_cursors()
 	await _drain_initial_load(_t_region)
 
 ## Initializes authentic Silkroad UI components (minimap, underbar) from Media.pk2 if available.
@@ -5285,6 +5286,10 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_ANIM=1     play the real character animation (off by
 ##                          default -- it still renders wrongly, see
 ##                          docs/WORLD_ISSUES.md's ninetieth round)
+##   SRREVAMP_QA_CLICK="monster,npc,ground" (needs --server for monsters) left-click
+##                          each through the real dispatcher after standing in
+##                          front of it, logging what the NPC ray and the monster
+##                          ray hit and which path took the click
 ##   SRREVAMP_QA_EQUIP="s=id,.." dress the player from this loadout when no
 ##                          server is present: "slot=item_id" pairs (slots per
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
@@ -5376,6 +5381,14 @@ func _qa_step() -> void:
 				(node as CanvasItem).visible = false
 		if OS.get_environment("SRREVAMP_QA_ATTACK") != "" and NetClient.is_connected_to_server():
 			_qa_attacking = true
+		# SRREVAMP_QA_CLICK="monster,npc,ground": synthetic left clicks through
+		# the real dispatcher, one after another (see _qa_advance_click).
+		var qa_click := OS.get_environment("SRREVAMP_QA_CLICK")
+		if qa_click != "":
+			for kind in qa_click.split(",", false):
+				_qa_click_queue.append(String(kind).strip_edges())
+			# The monster list arrives after the connect; give it two seconds.
+			_qa_click_wait = 120
 		# SRREVAMP_QA_LEVELUP=<level> fires the real level-up burst a moment
 		# after the player is placed, so a movie render catches it mid-play
 		# (it lasts LevelUpEffect.LIFE). Movie mode advances 1/60 a frame, so
@@ -5595,6 +5608,8 @@ func _qa_step() -> void:
 	var _qa_attack_interval := 10 if OS.get_environment("SRREVAMP_QA_ATTACK_FAST") != "" else 60
 	if _qa_attacking and _qa_tick % _qa_attack_interval == 0:
 		_qa_attack_nearest()
+	if not _qa_click_queue.is_empty():
+		_qa_advance_click()
 
 	if not _qa_shots.is_empty():
 		_qa_advance_shots()
@@ -5769,6 +5784,145 @@ func _qa_attack_nearest() -> void:
 	_last_attack_target = nearest_id
 	_show_target(nearest_id)
 	NetClient.attack(NetClient.current_character_name, nearest_id)
+
+## SRREVAMP_QA_CLICK="monster,npc,ground": each kind becomes a real left
+## click through _dispatch_left_click -- after the player is put 40 units in
+## front of the nearest such target with the camera aimed at it -- and the
+## log shows what the NPC ray and the monster ray each hit at that screen
+## point and which path took the click. That is the measurement behind
+## "clicking a monster opened the talk window": the node, not the impression.
+var _qa_click_queue: Array = []
+var _qa_click_stage := 0
+var _qa_click_wait := 0
+var _qa_click_target: Dictionary = {}
+## True only while a QA click is being dispatched, so the pickers print
+## what their rays hit without spamming real play.
+var _qa_click_logging := false
+
+func _qa_advance_click() -> void:
+	if _qa_click_wait > 0:
+		_qa_click_wait -= 1
+		return
+	var kind: String = _qa_click_queue[0]
+	if _qa_click_stage == 0:
+		_qa_click_target = _qa_click_target_for(kind)
+		if _qa_click_target.is_empty():
+			print("QA CLICK %s: no such target in the world (monsters %d)" % [kind, _monster_bodies.size()])
+			_qa_click_queue.pop_front()
+			return
+		if kind != "ground":
+			# Stand 40 units short of the target, on the walkable surface, and
+			# look along +Z at it with a shallow camera so it sits mid-frame.
+			var stand: Vector3 = _qa_click_target["pos"] + Vector3(0.0, 0.0, -40.0)
+			var pair := _nav_graph_for(stand)
+			if not pair.is_empty():
+				var group: Node3D = pair[1]
+				var local: Vector3 = group.to_local(stand)
+				stand = group.to_global(Vector3(local.x, (pair[0] as NavGraph).landing_height_at(local.x, local.z), local.z))
+			player.global_position = stand
+			player.velocity = Vector3.ZERO
+			camera_arm.rotation_degrees = Vector3(-15.0, 180.0, 0.0)
+		_qa_click_stage = 1
+		_qa_click_wait = 30
+		return
+	# Stage 1: aim at the target's middle and click there.
+	var aim: Vector3 = _qa_click_target["pos"] + Vector3(0.0, float(_qa_click_target["half_height"]), 0.0)
+	if camera_3d.is_position_behind(aim):
+		print("QA CLICK %s: target %s is behind the camera" % [kind, str(_qa_click_target["name"])])
+	else:
+		var screen := camera_3d.unproject_position(aim)
+		print("QA CLICK %s: '%s' at world %s -> screen %s" % [kind, str(_qa_click_target["name"]), str(aim.round()), str(screen.round())])
+		_probe_click_rays(screen)
+		_qa_click_logging = true
+		var took := _dispatch_left_click(screen)
+		_qa_click_logging = false
+		print("QA CLICK %s: dispatched -> %s" % [kind, took])
+		# The cursor the same point would show, and a swatch of it drawn at
+		# that point so the frame carries the decoded art (the OS cursor is
+		# never in an offscreen frame; this is a QA swatch, not the cursor).
+		var hover := _hover_kind_at(screen)
+		var cid: int = CURSOR_KIND_IDS.get(hover, -1)
+		print("QA CURSOR at %s: kind=%s id=0x%x hotspot=%s (of %d loaded) frame %d" % [
+			str(screen.round()), hover, cid, str(_cursor_hotspots.get(cid, Vector2i(-1, -1))),
+			_cursor_textures.size(), Engine.get_frames_drawn()])
+		_qa_show_cursor_swatch(cid, screen)
+	_qa_click_queue.pop_front()
+	_qa_click_stage = 0
+	_qa_click_wait = 30
+
+## The nearest target of a kind: {pos, half_height, name}, or {} if none.
+## "ground" is a spot 30 units ahead of the player.
+func _qa_click_target_for(kind: String) -> Dictionary:
+	match kind:
+		"monster":
+			var best_m: Node3D = null
+			var best_md := INF
+			for monster_id in _monster_bodies:
+				var body: Node3D = _monster_bodies[monster_id]
+				if not is_instance_valid(body) or _dying_until.has(monster_id):
+					continue
+				var d := body.global_position.distance_to(player.global_position)
+				if d < best_md:
+					best_md = d
+					best_m = body
+			if best_m == null:
+				return {}
+			return {"pos": best_m.global_position, "half_height": _qa_click_half_height(best_m, "ClickBody"),
+				"name": (best_m.get_node("Label") as Label3D).text if best_m.has_node("Label") else best_m.name}
+		"npc":
+			var best_n: Node3D = null
+			var best_nd := INF
+			for group in get_children():
+				if not (group is Node3D) or not String(group.name).begins_with("RealTerrain_"):
+					continue
+				for holder in group.get_children():
+					if not (holder is Node3D) or not holder.has_meta("npc_name"):
+						continue
+					var d := (holder as Node3D).global_position.distance_to(player.global_position)
+					if d < best_nd:
+						best_nd = d
+						best_n = holder
+			if best_n == null:
+				return {}
+			return {"pos": best_n.global_position, "half_height": _qa_click_half_height(best_n, "Body"),
+				"name": str(best_n.get_meta("npc_name"))}
+		"ground":
+			var spot := player.global_position + Vector3(0.0, 0.0, 30.0)
+			var pair := _nav_graph_for(spot)
+			if not pair.is_empty():
+				var group: Node3D = pair[1]
+				var local: Vector3 = group.to_local(spot)
+				spot = group.to_global(Vector3(local.x, (pair[0] as NavGraph).landing_height_at(local.x, local.z), local.z))
+			return {"pos": spot, "half_height": 0.0, "name": "ground"}
+	return {}
+
+## Draws the decoded cursor for a resource id at a screen point, twice its
+## size with its hotspot on the point -- a QA stand-in for the OS cursor,
+## which offscreen frames never capture.
+func _qa_show_cursor_swatch(cursor_id: int, at: Vector2) -> void:
+	if not _cursor_textures.has(cursor_id):
+		return
+	var swatch: TextureRect = get_node_or_null("UI/QaCursorSwatch")
+	if swatch == null:
+		swatch = TextureRect.new()
+		swatch.name = "QaCursorSwatch"
+		swatch.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		swatch.stretch_mode = TextureRect.STRETCH_SCALE
+		swatch.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		$UI.add_child(swatch)
+	var tex: Texture2D = _cursor_textures[cursor_id]
+	swatch.texture = tex
+	swatch.size = tex.get_size() * 2.0
+	swatch.position = at - Vector2(_cursor_hotspots[cursor_id]) * 2.0
+
+## Half the height of the click capsule under a body, so the QA click aims at
+## the target's middle rather than its feet.
+func _qa_click_half_height(body: Node3D, collider_name: String) -> float:
+	if body.has_node(collider_name):
+		for child in body.get_node(collider_name).get_children():
+			if child is CollisionShape3D and (child as CollisionShape3D).shape is CapsuleShape3D:
+				return ((child as CollisionShape3D).shape as CapsuleShape3D).height * 0.5
+	return 5.0
 
 func _qa_rig_report() -> void:
 	if _player_skeleton == null:
@@ -6895,6 +7049,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_panels"):
 		_toggle_action_panels()
 
+	# Motion that gets this far was not consumed by a window -- see _input.
+	if event is InputEventMouseMotion:
+		_hover_reached_world = true
+
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT:
 			_right_button_held = event.pressed
@@ -6906,11 +7064,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_left_press_position = event.position
 				_left_dragging = false
 			elif not _left_dragging:
-				# A click on an NPC talks to it, on a monster attacks it, and
-				# anywhere else walks there -- the original's left-click scheme.
-				if not _try_talk_to_npc(_left_press_position) \
-						and not _try_attack_monster(_left_press_position):
-					_try_set_move_target(_left_press_position)
+				_dispatch_left_click(_left_press_position)
 			_left_button_held = event.pressed
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			camera_arm.spring_length = clampf(camera_arm.spring_length - CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
@@ -6944,6 +7098,132 @@ func _unhandled_input(event: InputEvent) -> void:
 ## _npc_collider puts on NAVMESH_WALL_COLLISION_LAYER); returns true when it
 ## opened a dialogue, so the caller does not also walk there. The holder the
 ## collider hangs under carries the NPC's name (set where it is placed).
+## The game's own cursors (see CursorSet), keyed by resource id, as textures
+## for Input.set_custom_mouse_cursor with each one's hotspot. Empty when the
+## client exe is not beside the archives -- the system arrow then stays, and
+## the log says so once.
+var _cursor_textures: Dictionary = {}
+var _cursor_hotspots: Dictionary = {}
+var _cursor_kind := ""
+var _cursor_last_check_ms := 0
+const CURSOR_HOVER_INTERVAL_MS := 50
+## Hover kind -> the resource id the client's own mouse-move handler picks
+## for that object class (CGInterface::vslot_005; the table in CursorSet).
+const CURSOR_KIND_IDS := {
+	"normal": CursorSet.ID_NORMAL, "attack": CursorSet.ID_ATTACK, "talk": CursorSet.ID_TALK,
+	"pickup": CursorSet.ID_PICKUP, "gate": CursorSet.ID_GATE,
+}
+
+func _try_load_cursors() -> void:
+	var loaded := CursorSet.load_from_exe(CursorSet.exe_beside(OS.get_environment("SRREVAMP_PK2_PATH")))
+	for id in loaded:
+		var cur: CursorSet.Cursor = loaded[id]
+		_cursor_textures[id] = ImageTexture.create_from_image(cur.image)
+		_cursor_hotspots[id] = cur.hotspot
+	if not _cursor_textures.is_empty():
+		_apply_cursor("normal")
+
+## Every mouse motion is seen here first; whether it then reaches
+## _unhandled_input says if a window consumed it. The hover is settled once
+## per frame, deferred, after both have had their turn -- so the cursor is
+## the arrow over a window and the world's kind over the world, using the
+## engine's own GUI routing rather than a hit-test of our own (4.2 has no
+## gui_get_hovered_control; that arrived in 4.3).
+var _hover_pos := Vector2.ZERO
+var _hover_reached_world := false
+var _hover_settle_queued := false
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion and not _camera_orbiting and not _left_button_held:
+		_hover_pos = (event as InputEventMouseMotion).position
+		_hover_reached_world = false
+		if not _hover_settle_queued:
+			_hover_settle_queued = true
+			call_deferred("_settle_hover_cursor")
+
+func _settle_hover_cursor() -> void:
+	_hover_settle_queued = false
+	if _cursor_textures.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	if now - _cursor_last_check_ms < CURSOR_HOVER_INTERVAL_MS:
+		return
+	_cursor_last_check_ms = now
+	_apply_cursor(_hover_kind_at(_hover_pos) if _hover_reached_world else "normal")
+
+## What the cursor should be over this screen point in the world: the same
+## two rays the click uses, in the same order -- a monster's click capsule
+## means attack, an NPC's means talk, anything else the arrow. Ground items
+## and gates plug in here when the world has them.
+func _hover_kind_at(screen_pos: Vector2) -> String:
+	if _ray_hit_tagged(screen_pos, MONSTER_COLLISION_LAYER, "monster_id") != null:
+		return "attack"
+	if _ray_hit_tagged(screen_pos, NPC_COLLISION_LAYER, "npc_name") != null:
+		return "talk"
+	return "normal"
+
+## The tagged node under a screen point on a collision layer, or null: the
+## ray from the camera through the point, then the first ancestor of the
+## collider carrying the meta. The click pickers do the same walk.
+func _ray_hit_tagged(screen_pos: Vector2, mask: int, meta: String) -> Node:
+	var from := camera_3d.project_ray_origin(screen_pos)
+	var dir := camera_3d.project_ray_normal(screen_pos)
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
+	query.exclude = [player.get_rid()]
+	query.collision_mask = mask
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return null
+	var node := hit["collider"] as Node
+	while node != null and not node.has_meta(meta):
+		node = node.get_parent()
+	return node
+
+## Sets the mouse cursor for a kind (CURSOR_KIND_IDS) when it changes.
+func _apply_cursor(kind: String) -> void:
+	if kind == _cursor_kind:
+		return
+	var id: int = CURSOR_KIND_IDS.get(kind, CursorSet.ID_NORMAL)
+	if not _cursor_textures.has(id):
+		return
+	Input.set_custom_mouse_cursor(_cursor_textures[id], Input.CURSOR_ARROW, _cursor_hotspots[id])
+	_cursor_kind = kind
+
+## The original's left-click scheme, in the original's order: a click on a
+## monster attacks it, on an NPC talks to it, and anywhere else walks there.
+##
+## Monster before NPC is deliberate. The NPC ray runs on the navmesh wall
+## layer (NPC_COLLISION_LAYER is that layer), which is also what building
+## walls sit on, so a monster standing in front of a wall used to lose the
+## click to the wall test first -- and the real client's own hover code
+## (CGInterface::vslot_005 in sro_client.exe, read for the cursors below)
+## classifies the object under the mouse, monsters and NPCs alike, from what
+## the pick returns, never wall-first. Returns which path took the click,
+## for the QA hook's log.
+func _dispatch_left_click(screen_pos: Vector2) -> String:
+	if _try_attack_monster(screen_pos):
+		return "attack"
+	if _try_talk_to_npc(screen_pos):
+		return "talk"
+	_try_set_move_target(screen_pos)
+	return "walk"
+
+## One line saying what a click ray actually hit: the collider's path, the
+## layer bits it is on, and which tag was found walking up from it. This is
+## what settles "it opened the talk window" -- the node, not the impression.
+func _describe_click_hit(hit: Dictionary, wanted_meta: String) -> String:
+	if hit.is_empty():
+		return "no hit"
+	var collider := hit["collider"] as Node
+	var layer := -1
+	if collider is CollisionObject3D:
+		layer = (collider as CollisionObject3D).collision_layer
+	var node := collider
+	while node != null and not node.has_meta(wanted_meta):
+		node = node.get_parent()
+	var tagged := ("%s=%s on %s" % [wanted_meta, str(node.get_meta(wanted_meta)), node.name]) if node != null else ("no %s up the chain" % wanted_meta)
+	return "%s (layer 0b%s) -> %s" % [collider.get_path() if collider != null else "?", String.num_int64(layer, 2), tagged]
+
 func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 	if _hud_panels == null:
 		return false
@@ -6959,7 +7239,11 @@ func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 	while node != null and not node.has_meta("npc_name"):
 		node = node.get_parent()
 	if node == null:
+		if _qa_click_logging:
+			print("QA CLICK   npc ray: %s" % _describe_click_hit(hit, "npc_name"))
 		return false
+	if _qa_click_logging:
+		print("QA CLICK   npc ray: %s" % _describe_click_hit(hit, "npc_name"))
 	var npc_name := str(node.get_meta("npc_name"))
 	if npc_name == "":
 		npc_name = "..."
@@ -7267,6 +7551,8 @@ func _try_attack_monster(screen_pos: Vector2) -> bool:
 	query.exclude = [player.get_rid()]
 	query.collision_mask = MONSTER_COLLISION_LAYER
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if _qa_click_logging:
+		print("QA CLICK   monster ray: %s" % _describe_click_hit(hit, "monster_id"))
 	if hit.is_empty():
 		return false
 	var node := hit["collider"] as Node
@@ -7278,6 +7564,19 @@ func _try_attack_monster(screen_pos: Vector2) -> bool:
 	_show_target(_last_attack_target)
 	NetClient.attack(NetClient.current_character_name, _last_attack_target)
 	return true
+
+## Side-effect-free version of both click rays, for the QA hook: what the
+## NPC-layer ray and the monster-layer ray each hit at this screen point,
+## whatever order the dispatcher runs them in.
+func _probe_click_rays(screen_pos: Vector2) -> void:
+	var from := camera_3d.project_ray_origin(screen_pos)
+	var dir := camera_3d.project_ray_normal(screen_pos)
+	for probe in [["npc", NPC_COLLISION_LAYER, "npc_name"], ["monster", MONSTER_COLLISION_LAYER, "monster_id"]]:
+		var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
+		query.exclude = [player.get_rid()]
+		query.collision_mask = int(probe[1])
+		var hit := get_world_3d().direct_space_state.intersect_ray(query)
+		print("QA CLICK   probe %-7s layer 0b%s: %s" % [probe[0], String.num_int64(int(probe[1]), 2), _describe_click_hit(hit, str(probe[2]))])
 
 ## Reconciles _monster_bodies against live, the authoritative full monster
 ## list for the player's current zone (see _on_monster_list_result) --
