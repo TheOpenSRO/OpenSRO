@@ -149,14 +149,20 @@ authored presentation instead:
   — the server decides move / merge / swap and answers with the whole bag; dragging onto a worn
   slot of the docked doll is `OpEquip`. A successful equip/unequip now answers with the worn
   list rather than an empty ack (which read as "wearing nothing" and blanked the doll).
-- **Character** — *partly done*: `Phy. atk` and `Phy. def.` carry the numbers combat itself
-  resolves from equipment, and the HP row its real value, over a new `OpCharacterStats`. The
-  other thirteen rows (strength, intelligence, the magical and balance and hit-rate figures,
-  the three job grades, current and next experience) stay blank because **nothing on this server
-  computes them** — filling them would be indistinguishable from real data. They need a stat and
-  levelling system first; `server_dep\silkroad\textdata\leveldata.txt` in the archive is the
-  real exp curve when that happens (140 rows, column 1 is the experience to advance from that
-  level: 118 at level 1, 470 at 2, 1058 at 3).
+- **Character** — *done for every row the server can state* (2026-09-19): the title's level,
+  Current/Next Exp. as the client's own absolute `%I64d`s (`CURXP2`/`NEXTXP2`; next = leveldata's
+  exp to advance from this level), Stat Point (`STAT2`) with the two `com_plus_button`s spending
+  the pool through `OpSpendStatPoints` (the engine's `GObjPC_SpendStatPoints` rule: refused unless
+  the spend fits the pool, else plain increments), Str/Int, HP/MP over the authored `chr_hp`/`chr_mp`
+  gauges, `Phy. atk`/`Mag. atk` as the "%d ~ %d" ranges from `combat.WeaponRange` (the physical
+  half reinforced by Str, the magical by Int — the parameter graph), `Phy. def.`/`Mag. def.` as
+  the armour sums. The old `Phy. atk` was a single ROLL of the range on every request. Left as the
+  layout drew them, each with a stated reason (see `HudPanels._fill_character_window`):
+  **Phy./Mag. balance** — the client shows a stored byte (`CICPlayer+0x20d8`) whose source is
+  unread and this server computes no balance; **Hit rate / Parry ratio** — engine params 11/9,
+  a base of 10.0 plus each worn item's own *per-instance* rate (needs the item variance this server
+  does not carry), and params the engine never reads (RE_COMPLETION, "Attack rate and parry are
+  DEAD params"); **Trader/Hunter/Thief grades** and **Honor point** — no job or honour system here.
 - **Party / Community / Guild** — the row controls exist (`CIFPartySlot` builds as a slot); they
   need one row per member with name, level and HP.
 - **Skill** — *done (window + economy + per-skill learning, v0.1.121)*: the real `CIFSkillBoard`

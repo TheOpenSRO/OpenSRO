@@ -21,8 +21,8 @@ func TestCharacterStatsResultRoundTrip(t *testing.T) {
 func TestCharacterStatsResultBackCompat(t *testing.T) {
 	full := (&CharacterStatsResult{Gold: 1, HP: 2, MaxHP: 3, PhysAttack: 4, PhysDefense: 5,
 		Level: 9, Exp: 9, ExpToNext: 9, SkillPoints: 9}).Encode()
-	// Trim the 24-byte tail (keep the length-prefixed error + the first 24).
-	old := full[:len(full)-24]
+	// Keep the length-prefixed error + the first 24 body bytes only.
+	old := full[:len(full)-(len(full)-2-24)]
 	out, err := DecodeCharacterStatsResult(old)
 	if err != nil {
 		t.Fatalf("decode of 24-byte result: %v", err)
@@ -47,8 +47,8 @@ func TestCharacterStatsResultCarriesMana(t *testing.T) {
 	if back.MP != 119 || back.MaxMP != 120 {
 		t.Errorf("mana did not survive: got MP=%d MaxMP=%d, want 119/120", back.MP, back.MaxMP)
 	}
-	// Truncate the mana pair off the end: the rest must still decode.
-	short := encoded[:len(encoded)-8]
+	// Keep only the 48 body bytes before the mana pair: the rest must still decode.
+	short := encoded[:2+48]
 	back, err = DecodeCharacterStatsResult(short)
 	if err != nil {
 		t.Fatalf("decoding a mana-less result: %v", err)
@@ -58,5 +58,49 @@ func TestCharacterStatsResultCarriesMana(t *testing.T) {
 	}
 	if back.MP != 0 || back.MaxMP != 0 {
 		t.Errorf("older result should leave mana at 0, got %d/%d", back.MP, back.MaxMP)
+	}
+}
+
+// The character rows -- Str/Int, the stat-point pool, both attack ranges and
+// the magical defence -- are the third appended tail: they must round-trip,
+// and a 56-byte result from an older server must still decode with them 0.
+func TestCharacterStatsResultCarriesCharacterRows(t *testing.T) {
+	in := &CharacterStatsResult{
+		Gold: 1267, HP: 185, MaxHP: 214, PhysAttack: 14, PhysDefense: 6,
+		Level: 2, Exp: 3, ExpToNext: 470, SkillPoints: 9, MP: 214, MaxMP: 214,
+		Str: 21, Int: 21, StatPoints: 3,
+		PhysAttackMin: 12, MagAttackMin: 0, MagAttackMax: 0, MagDefense: 4,
+	}
+	encoded := in.Encode()
+	if got := len(encoded) - 2; got != 84 {
+		t.Fatalf("body is %d bytes, want 84", got)
+	}
+	out, err := DecodeCharacterStatsResult(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if *out != *in {
+		t.Fatalf("round trip changed the result:\n got %+v\nwant %+v", out, in)
+	}
+	old, err := DecodeCharacterStatsResult(encoded[:2+56])
+	if err != nil {
+		t.Fatalf("decoding a 56-byte result: %v", err)
+	}
+	if old.MaxMP != 214 || old.Level != 2 {
+		t.Errorf("older result lost its head: %+v", old)
+	}
+	if old.Str != 0 || old.StatPoints != 0 || old.PhysAttackMin != 0 || old.MagDefense != 0 {
+		t.Errorf("older result should leave the character rows at 0: %+v", old)
+	}
+}
+
+func TestSpendStatPointsRequestRoundTrip(t *testing.T) {
+	in := &SpendStatPointsRequest{Name: "Aria", Str: 2, Int: 1}
+	out, err := DecodeSpendStatPointsRequest(in.Encode())
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if *out != *in {
+		t.Fatalf("round trip changed the request: got %+v want %+v", out, in)
 	}
 }

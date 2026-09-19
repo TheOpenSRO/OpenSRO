@@ -83,6 +83,38 @@ func _init() -> void:
 	_check(req.decode_u16(0) == 4, "request length prefix is the name's length")
 	_check(req.slice(2).get_string_from_utf8() == "Aria", "request carries the name")
 
+	# The character rows are the third appended tail (84 body bytes): Str,
+	# Int, the stat-point pool, the bottom of the physical range, the magical
+	# range and the magical defence -- mirroring server stats.go. A 56-byte
+	# body from an older server leaves them 0 and has_character_rows false.
+	var rows := _server_payload_full(1267, 185, 214, 2, 3, 470, 9)
+	var mana := PackedByteArray()
+	mana.resize(8)
+	mana.encode_s32(0, 214)
+	mana.encode_s32(4, 214)
+	rows.append_array(mana)
+	var older := StatsNet.decode_result(rows)
+	_check(not older.has_character_rows and older.str == 0, "a 56-byte body has no character rows")
+	var chr := PackedByteArray()
+	chr.resize(28)
+	chr.encode_s32(0, 21)   # str
+	chr.encode_s32(4, 22)   # int
+	chr.encode_s32(8, 3)    # stat points
+	chr.encode_s32(12, 12)  # phys attack min
+	chr.encode_s32(16, 5)   # mag attack min
+	chr.encode_s32(20, 7)   # mag attack max
+	chr.encode_s32(24, 4)   # mag defence
+	rows.append_array(chr)
+	var full := StatsNet.decode_result(rows)
+	_check(full.has_character_rows, "an 84-byte body carries the character rows")
+	_check(full.str == 21 and full.intel == 22 and full.stat_points == 3,
+		"str/int/stat points decoded (got %d/%d/%d)" % [full.str, full.intel, full.stat_points])
+	_check(full.phys_attack_min == 12 and full.mag_attack_min == 5 and full.mag_attack_max == 7,
+		"ranges decoded (got %d, %d~%d)" % [full.phys_attack_min, full.mag_attack_min, full.mag_attack_max])
+	_check(full.mag_defense == 4, "magical defence decoded (got %d)" % full.mag_defense)
+	var spend := StatsNet.encode_spend_request("Aria", 2, 1)
+	_check(spend.size() == 8 and spend[6] == 2 and spend[7] == 1, "spend request is the name then two bytes")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

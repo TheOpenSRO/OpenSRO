@@ -2496,25 +2496,29 @@ func connect_net() -> void:
 	NetClient.storage_withdraw_result.connect(_on_storage_withdraw_result)
 	NetClient.storage_gold_result.connect(_on_storage_gold_result)
 
-## The character panel's own control names, from resinfo\\ifplayerinfo.txt.
-## Every value field is a `_DAT` sibling of its label.
+## The character panel's own control names, from resinfo\\ifplayerinfo.txt
+## (dumped 2026-09-19; 73 controls). Every value field is the `_DAT` -- or
+## `2` -- sibling of its label: the label `GDR_PI_TEXT_CURXP` sits at (32, 41)
+## and the VALUE `GDR_PI_TEXT_CURXP2` at (96, 41), likewise `NEXTXP`/`NEXTXP2`
+## and `STAT`/`STAT2`. The "+" buttons beside Str and Int are named
+## `BTN_ADDHP` / `BTN_ADDMP` in the layout -- a point on Str raises HP, on Int
+## raises MP -- and sit at (62, 109) and (62, 138), the Str and Int rows.
 const CHARACTER_FIELDS := {
 	"GDR_PI_TEXT_LEVEL": "level",
 	"GDR_PI_TEXT_HP_DAT": "hp",
 	"GDR_PI_TEXT_MP_DAT": "mp",
 	"GDR_PI_TEXT_STRENGTH_DAT": "strength",
 	"GDR_PI_TEXT_INTELLECT_DAT": "intellect",
-	"GDR_PI_TEXT_CURXP": "current_exp",
+	"GDR_PI_TEXT_CURXP2": "current_exp",
+	"GDR_PI_TEXT_NEXTXP2": "next_exp",
+	"GDR_PI_TEXT_STAT2": "stat_points",
 }
 
-## Fills the character panel from what the client actually knows.
-##
-## Only some of these have a server behind them: HP and MaxHP arrive with
-## EnterWorldResult and on every attack, and the character's name and level
-## come from the character list. Strength, intellect, the attack/defence
-## rows and the job grades are **not sent by this project's server at all**,
-## so their fields are left as the layout drew them rather than filled with
-## invented numbers. See docs/UI_TODO.md.
+## Fills the character panel's vitals from the world's own knowledge (HP and
+## MaxHP arrive with EnterWorldResult and on every attack). The level the
+## world passes is a placeholder 1; the real level, and every other row, come
+## with the server's stats result (_apply_stats), which is authoritative
+## once it has arrived.
 func set_character_vitals(hp: int, max_hp: int, level: int) -> void:
 	_character_hp = hp
 	_character_max_hp = max_hp
@@ -2532,19 +2536,19 @@ func _apply_character_fields() -> void:
 	var values := {}
 	if _character_max_hp > 0:
 		values["GDR_PI_TEXT_HP_DAT"] = "%d / %d" % [_character_hp, _character_max_hp]
-	if _character_level > 0:
-		values["GDR_PI_TEXT_LEVEL"] = "Lv %d" % _character_level
+		_set_gauge(window, "GDR_PI_GAUGE_HPGAUGE", _character_hp, _character_max_hp)
+	# The title row is the server's once its stats have arrived; before that
+	# the world's placeholder level is all there is.
+	if _character_level > 0 and _stats == null:
+		values["GDR_PI_TEXT_LEVEL"] = _level_title(_character_level)
 	for control_name in values:
 		var label := window.node(control_name) as Label
 		if label != null:
 			label.text = values[control_name]
 
-## Fills every field the server actually has a number for.
-##
-## The character panel has thirteen more rows -- strength, intelligence, the
-## magical and balance and hit-rate figures, the three job grades -- and
-## nothing computes them, so they stay as the layout drew them. Filling them
-## with a plausible number would be indistinguishable from a real one.
+## Fills every field the server actually has a number for -- see
+## _fill_character_window for the row-by-row account of what is shown, from
+## where, and what is deliberately left as the layout drew it.
 func _apply_stats(stats: StatsNet.Stats) -> void:
 	if stats == null or stats.error != "":
 		if stats != null and stats.error != "":
@@ -2565,12 +2569,121 @@ func _apply_stats(stats: StatsNet.Stats) -> void:
 
 	var character: HudWindow = _windows.get("character")
 	if character != null:
-		_set_label(character, "GDR_PI_TEXT_PHYATT_DAT", str(stats.phys_attack))
-		_set_label(character, "GDR_PI_TEXT_PHYDEF_DAT", str(stats.phys_defense))
-		if stats.max_hp > 0:
-			_set_label(character, "GDR_PI_TEXT_HP_DAT", "%d / %d" % [stats.hp, stats.max_hp])
+		_fill_character_window(character, stats)
 
 var _stats: StatsNet.Stats = null
+var _stat_buttons_wired := false
+
+## The character window, row by row, from the server's stats result.
+##
+## SHOWN, each from a real source:
+##   title            level                 (the client formats UIIT_STT_LV_LEVEL
+##                                          with the level byte -- CIFPlayerInfo)
+##   Current Exp.     exp                   absolute, as the client's own %I64d
+##   Next Exp.        exp_to_next           leveldata's exp to advance from this level
+##   Stat point       stat_points           the unspent pool; the "+" buttons spend it
+##   Str / Int        str / intel           the stored stats
+##   HP / MP          hp/max, mp/max        "%d / %d" over the chr_hp / chr_mp gauges
+##   Phy. atk         phys_attack_min ~ max combat.WeaponRange, physical (Str reinforce)
+##   Mag. atk         mag_attack_min ~ max  combat.WeaponRange, magical (Int reinforce)
+##   Phy. def.        phys_defense          the armour sum combat mitigates with
+##   Mag. def.        mag_defense           the same sum over the magical column
+##
+## LEFT AS THE LAYOUT DREW THEM, each with its reason:
+##   Phy./Mag. balance   the client shows a stored byte (CICPlayer+0x20d8) whose
+##                       source is unread; this server computes no balance.
+##   Hit rate / Parry    engine params 11 / 9: a base of 10.0 plus each worn
+##                       item's own per-instance rate, which needs the item
+##                       variance this server does not carry -- and the engine
+##                       never reads either param (docs/RE_COMPLETION.md).
+##   Trader/Hunter/Thief no job system on this server.
+##   Honor point         no honour system on this server.
+## A guessed number in any of these would be indistinguishable from a real one.
+func _fill_character_window(window: HudWindow, s: StatsNet.Stats) -> void:
+	_set_label(window, "GDR_PI_TEXT_LEVEL", _level_title(s.level))
+	_set_label(window, "GDR_PI_TEXT_CURXP2", _grouped(s.exp))
+	_set_label(window, "GDR_PI_TEXT_NEXTXP2", _grouped(s.exp_to_next) if s.exp_to_next > 0 else "")
+	if s.max_hp > 0:
+		_set_label(window, "GDR_PI_TEXT_HP_DAT", "%d / %d" % [s.hp, s.max_hp])
+		_set_gauge(window, "GDR_PI_GAUGE_HPGAUGE", s.hp, s.max_hp)
+	if s.max_mp > 0:
+		_set_label(window, "GDR_PI_TEXT_MP_DAT", "%d / %d" % [s.mp, s.max_mp])
+		_set_gauge(window, "GDR_PI_GAUGE_MPGAUGE", s.mp, s.max_mp)
+	_set_label(window, "GDR_PI_TEXT_PHYDEF_DAT", str(s.phys_defense))
+	if s.has_character_rows:
+		_set_label(window, "GDR_PI_TEXT_STAT2", str(s.stat_points))
+		_set_label(window, "GDR_PI_TEXT_STRENGTH_DAT", str(s.str))
+		_set_label(window, "GDR_PI_TEXT_INTELLECT_DAT", str(s.intel))
+		_set_label(window, "GDR_PI_TEXT_PHYATT_DAT", "%d ~ %d" % [s.phys_attack_min, s.phys_attack])
+		_set_label(window, "GDR_PI_TEXT_MAGATT_DAT", "%d ~ %d" % [s.mag_attack_min, s.mag_attack_max])
+		_set_label(window, "GDR_PI_TEXT_MAGDEF_DAT", str(s.mag_defense))
+	else:
+		# A server too old to send the rows: the one number it does send.
+		_set_label(window, "GDR_PI_TEXT_PHYATT_DAT", str(s.phys_attack))
+	_wire_stat_buttons(window)
+	for button_name in ["GDR_PI_BTN_ADDHP", "GDR_PI_BTN_ADDMP"]:
+		var button := window.node(button_name) as BaseButton
+		if button != null:
+			button.disabled = not s.has_character_rows or s.stat_points <= 0
+	# Every row next to the server's number, so a render's log is checked
+	# against the frame and against the server rather than by eye.
+	print("HudPanels: character window: %s | exp %d / next %d | stat points %d | str %d int %d | hp %d/%d mp %d/%d | phy %d~%d def %d | mag %d~%d def %d | rows sent: %s" % [
+		_level_title(s.level), s.exp, s.exp_to_next, s.stat_points, s.str, s.intel,
+		s.hp, s.max_hp, s.mp, s.max_mp, s.phys_attack_min, s.phys_attack, s.phys_defense,
+		s.mag_attack_min, s.mag_attack_max, s.mag_defense, str(s.has_character_rows)])
+	# QA: SRREVAMP_QA_SPEND_STAT=1 presses the Str "+" once as soon as there is
+	# a point to spend, so a render's log shows the round trip (str +1, pool
+	# -1, MaxHP up) against the server's own reply.
+	if OS.get_environment("SRREVAMP_QA_SPEND_STAT") != "" and not _qa_spent_stat \
+			and s.has_character_rows and s.stat_points > 0:
+		_qa_spent_stat = true
+		_spend_stat_point(1, 0)
+
+var _qa_spent_stat := false
+
+## The title row: the client's own UIIT_STT_LV_LEVEL string with the level in
+## it (CIFPlayerInfo formats that key with the level byte). Falls back to a
+## plain "Lv N" when the text table is not loaded.
+func _level_title(level: int) -> String:
+	var fmt := _resolve_ui("UIIT_STT_LV_LEVEL", "")
+	if fmt.contains("%d"):
+		return fmt % level
+	if fmt != "":
+		return "%s %d" % [fmt, level]
+	return "Lv %d" % level
+
+## A TextureProgressBar built for a CIFGauge (UiBuilder._build_gauge, max 100).
+func _set_gauge(window: HudWindow, control_name: String, value: int, maximum: int) -> void:
+	var gauge := window.node(control_name) as TextureProgressBar
+	if gauge == null or maximum <= 0:
+		return
+	gauge.value = clampf(float(value) / float(maximum), 0.0, 1.0) * 100.0
+
+## The "+" buttons spend one stat point each: BTN_ADDHP is the Str row's, and
+## a point on Str raises HP; BTN_ADDMP is the Int row's, raising MP -- which
+## is why the layout names them so. The server applies the engine's rule
+## (GObjPC_SpendStatPoints: refused unless the spend fits the pool, else a
+## plain increment) and answers with the refreshed stats, which redraws.
+func _wire_stat_buttons(window: HudWindow) -> void:
+	if _stat_buttons_wired:
+		return
+	var plus_str := window.node("GDR_PI_BTN_ADDHP") as BaseButton
+	var plus_int := window.node("GDR_PI_BTN_ADDMP") as BaseButton
+	if plus_str == null and plus_int == null:
+		return
+	_stat_buttons_wired = true
+	if plus_str != null:
+		plus_str.pressed.connect(func() -> void: _spend_stat_point(1, 0))
+	if plus_int != null:
+		plus_int.pressed.connect(func() -> void: _spend_stat_point(0, 1))
+
+func _spend_stat_point(str_points: int, int_points: int) -> void:
+	if not NetClient.is_connected_to_server() or NetClient.current_character_name == "":
+		return
+	if _stats != null and _stats.stat_points <= 0:
+		return
+	print("HudPanels: spending %d stat point(s) on %s" % [str_points + int_points, "Str" if str_points > 0 else "Int"])
+	NetClient.spend_stat_points(NetClient.current_character_name, str_points, int_points)
 
 func _set_label(window: HudWindow, control_name: String, text: String) -> void:
 	var label := window.node(control_name) as Label
