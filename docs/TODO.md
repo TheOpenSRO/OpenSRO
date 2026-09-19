@@ -90,12 +90,12 @@ In order. Each is checked off here when it ships in a release, with its round in
       shard DB supersedes it via `import-refdata -drops-csv/-drop-groups-csv`.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
-- [ ] **Day/night cycle.** The clock is read (round 224, `docs/protocol/game_clock.md`): the server's
-      local time, sent as `0x34be` every 600 s, advanced 1:1 by the client, lockable by
-      `S_SetWorldTime`. Not read: how the sky/fog sampler maps it onto the environment tables' 0..1
-      axis (one real day or compressed). Next probe: the sampler's time source (readers of
-      `CGame+0x8f8`, `FUN_0065d9e0`, the `CWeather` update). Until then the client samples a fixed
-      midday (`ENVIRONMENT_REFERENCE_TIME`), disclosed.
+- [x] ~~Day/night cycle~~ -- **not a gap** (round 226, `docs/protocol/game_clock.md`): the retail
+      client renders the environment at a FIXED phase of 0.5 (SWorld's constructor sets it; the
+      per-frame advance is gated by a flag nothing sets; the graphs are sampled at the raw phase), and
+      the server clock (`0x34be`) feeds nothing in the sky. `ENVIRONMENT_REFERENCE_TIME = 0.5` is now
+      read, not disclosed. The engine's dormant machinery (0.0005/s = a 2000 s day, sun angle
+      `(phase-0.25)*2pi`) is recorded should a live cycle ever be wanted as our own design.
 - [x] **"Stuck in a building"** (round 213): the cause was `NavGraph`'s own rule -- footing inferred
       from height let a terrain mover walk through a shop wall whose floor sat 5 units up, get
       lifted onto the floor, then be held by the same walls from inside. Replaced by the client's

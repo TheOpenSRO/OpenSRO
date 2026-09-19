@@ -7075,6 +7075,29 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-twenty-sixth round: the retail sky is fixed at midday -- ENVIRONMENT_REFERENCE_TIME = 0.5 is the client's own value
+
+The RE tick's step for 2026-09-19 09:34, the second and last budgeted on the day/night link,
+and it closed the other way round: there is no cycle to reproduce.
+
+- `SWorld` keeps a day/night phase at `+0x26a3`. Its constructor (`Map::FUN_00a2f370`) sets
+  it to **0.5** (`_DAT_00e1b7e0`, read from the image) and clears the advance flag.
+- `SWorld::vslot_004`, the per-frame update, advances the phase only under that flag:
+  `phase += dt * 0.0005` (`_DAT_00de4f88`; `dt` is the seconds frame delta -- clamped to 3.0
+  beside a millisecond twin clamped to 3000), wrapping at 1.0 with a 30-day counter -- a
+  **2000 s** day, dormant. Nothing in this build sets the flag, and the setter
+  `SWorld::vslot_020` has no time-passing caller.
+- The environment update `Map::FUN_00a1baf0` evaluates every graph at the RAW phase through
+  `FUN_004e55e0` (16-byte keyframes, time at `+0xc` -- the ColorGraph evaluator); the sun
+  and its shadow are drawn for `0.25 <= phase <= 0.875`.
+
+So the retail client renders a fixed midday, exactly what srrevamp has done since round 136
+as a "flagged simplification". `ENVIRONMENT_REFERENCE_TIME = 0.5` is promoted from
+disclosed to read; the day/night TODO closes as not-a-gap; the server's `0x34be` clock is
+confirmed to feed nothing in the sky. The dormant machinery (rate, shift, sun angle) is
+written down in `docs/protocol/game_clock.md` for the day a live cycle is wanted as our own
+design.
+
 ## Two-hundred-and-twenty-fifth round: the sky does not read the game clock -- a negative result that reshapes the day/night probe
 
 The RE tick's step for 2026-09-19 09:19, one tick on round 224's open link. Read: the

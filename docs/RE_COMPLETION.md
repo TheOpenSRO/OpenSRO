@@ -4922,6 +4922,10 @@ The 600 s job on the same timer table is the clock sync: `FUN_004f9320` packs
 0..1 day axis is NOT read, so no cycle is built. `docs/protocol/game_clock.md`.
 Round 225: nothing outside the clock module reads the clock -- the sky is not fed by it;
 the probe moves to `SWorld`'s update slot (own accumulator, or a pushed value).
+Round 226 -- CLOSED: `SWorld` keeps its own phase, set to 0.5 by its constructor
+(`0xe1b7e0`), advanced (`+= dt * 0.0005`, a 2000 s day) only under a flag nothing sets,
+and sampled raw by the environment update (`FUN_004e55e0`). The retail sky is fixed at
+midday; `ENVIRONMENT_REFERENCE_TIME = 0.5` is READ. The server clock feeds no sky.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

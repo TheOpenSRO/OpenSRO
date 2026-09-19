@@ -2369,15 +2369,14 @@ var _sky_material: ProceduralSkyMaterial
 ## per-block IDs would still only get the first block's color (an honest
 ## simplification, not wrong for any zone checked so far).
 ##
-## ENVIRONMENT_REFERENCE_TIME is a deliberate, flagged simplification: the
-## real data is a full day/night color-keyframe cycle (see the format doc).
-## The server-side game-time signal DOES exist and is read (round 224,
-## docs/protocol/game_clock.md): the server's local wall-clock time, sent as
-## opcode 0x34be every 600 s and advanced 1:1 in real time by the client.
-## What is still not read is how the sky/fog sampler maps that clock onto the
-## tables' 0..1 axis (one real day, or compressed) -- so a live cycle is not
-## built yet, and sampling a fixed midday time gives a real, per-zone-accurate
-## *snapshot* color instead of an invented cycle.
+## ENVIRONMENT_REFERENCE_TIME is READ from the client (round 226,
+## docs/protocol/game_clock.md): SWorld's day/night phase is initialised to
+## 0.5 (the float at 0xe1b7e0) in its constructor, the per-frame advance
+## (phase += dt * 0.0005, a 2000 s cycle) is gated by a flag nothing in this
+## build sets, and the environment graphs are evaluated at that raw phase
+## (Map::FUN_00a1baf0 -> FUN_004e55e0). So the retail client samples a fixed
+## 0.5 too; a live day/night cycle would be OUR design, not a recovered one.
+## The server's game clock (0x34be) feeds nothing in the sky.
 const ENVIRONMENT_REFERENCE_TIME := 0.5
 static var _environment_table: EnvironmentReader.ParsedFile = null
 static var _environment_load_attempted := false
