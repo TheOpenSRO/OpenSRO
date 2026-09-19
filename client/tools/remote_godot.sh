@@ -65,9 +65,19 @@ case "$cmd" in
     remote_godot "--script res://tools/check_scripts.gd"
     ;;
   script)
-    sync_client
-    import_project
-    remote_godot "$@"
+    # A bare `res://tools/foo.gd` is NOT a script to Godot: without `--script`
+    # it ignores the path, boots the project's main scene (the login screen)
+    # headless and sits there for ever. One lane lost 15 minutes to exactly
+    # that on 2026-09-19, so supply the flag when the caller left it out.
+    if [ $# -eq 0 ]; then
+      echo "usage: $0 script [--script] res://tools/<tool>.gd [-- --flag=value ...]" >&2
+      exit 2
+    fi
+    case "$*" in
+      *--script*) remote_godot "$@" ;;
+      res://*)    remote_godot "--script" "$@" ;;
+      *)          remote_godot "$@" ;;
+    esac
     ;;
   tests)
     sync_client
