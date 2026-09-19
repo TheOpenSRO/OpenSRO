@@ -53,6 +53,14 @@ signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
 signal loot_dropped(dropped: CombatNet.LootDropped)
 signal monster_list_result(monsters: Array, error: String)
+## Items on the ground (GroundItemsNet): the zone's list, one appearing, one
+## leaving (picked or expired), one whose owner window passed, and the
+## outcome of our own pick-up.
+signal ground_item_list_result(items: Array, error: String)
+signal ground_item_spawned(item: GroundItemsNet.Snapshot)
+signal ground_item_removed(removed: GroundItemsNet.Removed)
+signal ground_item_owner_released(ground_id: int)
+signal pick_up_result(result: GroundItemsNet.PickUpResult)
 ## The player's character just advanced a level: its new level and its total
 ## unspent stat points. Sent only to the character that levelled.
 signal level_up(new_level: int, stat_points: int)
@@ -338,6 +346,13 @@ func berserk(char_name: String) -> void:
 func list_monsters() -> void:
 	_send(CombatNet.OP_MONSTER_LIST, CombatNet.encode_monster_list())
 
+func list_ground_items() -> void:
+	_send(GroundItemsNet.OP_LIST, GroundItemsNet.encode_list())
+
+## Asks to pick a ground item up; the server decides range and ownership.
+func pick_up(char_name: String, ground_id: int) -> void:
+	_send(GroundItemsNet.OP_PICK_UP, GroundItemsNet.encode_pick_up(char_name, ground_id))
+
 func learn_skill(char_name: String, skill_id: int) -> void:
 	_send(SkillNet.OP_LEARN, SkillNet.encode_learn(char_name, skill_id))
 
@@ -518,6 +533,25 @@ func _dispatch(p: Packet) -> void:
 		CombatNet.OP_MONSTER_LIST_RESULT:
 			var r := CombatNet.decode_monster_list_result(p.data)
 			monster_list_result.emit(r.monsters, r.error)
+		GroundItemsNet.OP_LIST_RESULT:
+			var gl := GroundItemsNet.decode_list_result(p.data)
+			ground_item_list_result.emit(gl.items, gl.error)
+		GroundItemsNet.OP_SPAWNED:
+			var spawned := GroundItemsNet.decode_snapshot(p.data)
+			if spawned != null:
+				ground_item_spawned.emit(spawned)
+		GroundItemsNet.OP_REMOVED:
+			var removed := GroundItemsNet.decode_removed(p.data)
+			if removed != null:
+				ground_item_removed.emit(removed)
+		GroundItemsNet.OP_OWNER_RELEASED:
+			var released := GroundItemsNet.decode_owner_released(p.data)
+			if released != -1:
+				ground_item_owner_released.emit(released)
+		GroundItemsNet.OP_PICK_UP_RESULT:
+			var pr := GroundItemsNet.decode_pick_up_result(p.data)
+			if pr != null:
+				pick_up_result.emit(pr)
 		CombatNet.OP_LEVEL_UP:
 			var lu := CombatNet.decode_level_up(p.data)
 			level_up.emit(lu.new_level, lu.stat_points)

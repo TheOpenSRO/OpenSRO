@@ -928,6 +928,14 @@ var _item_models: Dictionary = {}
 ## item id -> its TypeID4, for the weapons: which animation group a held
 ## weapon selects.
 var _item_kinds: Dictionary = {}
+## Item id -> the drop model (itemdata's drop .bsr) and the parsed row, for
+## the items lying on the ground (GroundItems).
+var _item_drop_models: Dictionary = {}
+var _item_rows: Dictionary = {}
+## The items on the ground in this zone, as the server reports them.
+var _ground_items: GroundItems = null
+## A ground item we clicked but were too far from: picked again on arrival.
+var _pending_pickup_id := -1
 ## The animation group the player's held weapon selects, "default" when the
 ## hands are empty or the weapon's kind is not mapped.
 var _player_weapon_group := "default"
@@ -1007,6 +1015,11 @@ func _ready() -> void:
 	NetClient.monster_died.connect(_on_monster_died)
 	NetClient.level_up.connect(_on_level_up)
 	NetClient.loot_dropped.connect(_on_loot_dropped)
+	NetClient.ground_item_list_result.connect(_on_ground_item_list_result)
+	NetClient.ground_item_spawned.connect(_on_ground_item_spawned)
+	NetClient.ground_item_removed.connect(_on_ground_item_removed)
+	NetClient.ground_item_owner_released.connect(_on_ground_item_owner_released)
+	NetClient.pick_up_result.connect(_on_pick_up_result)
 	NetClient.inventory_list_result.connect(_on_inventory_list_result)
 	NetClient.equipment_result.connect(_on_equipment_result)
 	NetClient.quest_list_result.connect(_on_quest_list_result)
@@ -1110,6 +1123,7 @@ func _ready() -> void:
 	# spam "_send called while not connected" errors otherwise.
 	if NetClient.is_connected_to_server():
 		NetClient.list_monsters()
+		NetClient.list_ground_items()
 		NetClient.list_inventory(NetClient.current_character_name)
 		NetClient.list_equipment(NetClient.current_character_name)
 		NetClient.list_quests(NetClient.current_character_name)
@@ -1122,6 +1136,7 @@ func _ready() -> void:
 	_try_load_real_scenery()
 	_try_load_real_decoration_skeleton()
 	_try_apply_real_player_character()
+	_try_setup_ground_items()
 	_try_add_real_sky()
 	_apply_camera_far_plane()
 	var _t_region := Time.get_ticks_msec()
@@ -3234,6 +3249,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		_monster_bodies[monster_id].queue_free()
 	_monster_bodies.clear()
 	NetClient.list_monsters()
+	NetClient.list_ground_items()
 
 	_reload_zone_assets(result.zone)
 
@@ -4455,6 +4471,9 @@ func _load_character_assets() -> void:
 		if entry == null:
 			continue
 		for item in ItemTableReader.parse(_media_pk2.read_file(entry)).values():
+			_item_rows[item.id] = item
+			if item.drop_model_path != "":
+				_item_drop_models[item.id] = item.drop_model_path
 			if item.model_path != "":
 				_item_models[item.id] = item.model_path
 				if item.type_ids.size() >= 4:
@@ -5271,6 +5290,8 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
 ##   SRREVAMP_QA_NOUI=1     hide the HUD (for comparison shots)
 ##   SRREVAMP_QA_WORLDMAP=1 open the world map window over the world
+##   SRREVAMP_QA_ATTACK_NAME=s  only monsters whose plate contains s (e.g. Mangyang)
+##   SRREVAMP_QA_ATTACK_GOTO=1  stand next to the target first (QA teleport)
 ##   SRREVAMP_QA_ATTACK=1   attack the nearest monster every second, so a
 ##                          hit reaction and a death can be rendered
 ##   SRREVAMP_QA_FLOAT=r     report placed objects within r that sit clear
@@ -5290,6 +5311,9 @@ func _update_blob_shadow() -> void:
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
 ##                          for the China-man heavy set plus the starter sword),
 ##                          resolved through the real item table
+##   SRREVAMP_QA_PICKUP=1   (needs --server) when a ground item appears, step onto
+##                          it and pick it up, printing the server's answers:
+##                          the item's position, the pick result and the bag after
 ##   SRREVAMP_QA_MOVE="from,to" (needs --server) unequip the boots into the bag,
 ##                          then move that bag slot onto another and print the
 ##                          bag before and after from the server's own answers
@@ -5753,18 +5777,38 @@ var _qa_attacking := false
 func _qa_attack_nearest() -> void:
 	var nearest_id := -1
 	var nearest := INF
+	# SRREVAMP_QA_ATTACK_NAME narrows the pick to monsters whose name plate
+	# contains it (the nearest monster to the spawn is a Yeoha that kills a
+	# fresh character; a drop test wants a Mangyang).
+	var wanted := OS.get_environment("SRREVAMP_QA_ATTACK_NAME")
 	for monster_id in _monster_bodies:
 		if _dying_until.has(monster_id):
 			continue
 		var body: Node3D = _monster_bodies[monster_id]
 		if not is_instance_valid(body):
 			continue
+		if wanted != "":
+			var plate: Label3D = body.get_node_or_null("Label")
+			if plate == null or not plate.text.contains(wanted):
+				continue
 		var d := body.global_position.distance_to(player.global_position)
 		if d < nearest:
 			nearest = d
 			nearest_id = monster_id
 	if nearest_id == -1:
 		return
+	# SRREVAMP_QA_ATTACK_GOTO=1 stands the player a few units from the target
+	# first (a QA teleport, no collision), so the frames -- and any drop --
+	# are in front of the camera rather than 2,000 units away.
+	if OS.get_environment("SRREVAMP_QA_ATTACK_GOTO") != "" and nearest > 12.0:
+		var target: Node3D = _monster_bodies[nearest_id]
+		var spot := target.global_position + Vector3(8.0, 0.0, 0.0)
+		spot.y = _terrain_height_at(spot)
+		player.global_position = spot
+		player.velocity = Vector3.ZERO
+		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		nearest = target.global_position.distance_to(player.global_position)
+		print("QA ATTACK: moved next to monster %d at %.1f,%.1f,%.1f" % [nearest_id, spot.x, spot.y, spot.z])
 	print("QA ATTACK: monster %d at %.0f" % [nearest_id, nearest])
 	_last_attack_target = nearest_id
 	_show_target(nearest_id)
@@ -6403,6 +6447,7 @@ func _physics_process(delta: float) -> void:
 	if manual_input:
 		input_dir = input_dir.normalized()
 		_has_move_target = false # manual movement always cancels a pending click-to-move
+		_pending_pickup_id = -1
 		# Relative to the camera, as in the original: W walks away from the
 		# camera whichever way it has been orbited, not along a world axis.
 		var yaw := deg_to_rad(camera_arm.rotation_degrees.y)
@@ -6419,6 +6464,10 @@ func _physics_process(delta: float) -> void:
 			_has_move_target = false
 			player.velocity.x = 0.0
 			player.velocity.z = 0.0
+			# Walked up to a ground item we were too far from: ask again now
+			# that we stand on it; the server is the judge of the 10 units.
+			if _pending_pickup_id != -1 and NetClient.is_connected_to_server():
+				NetClient.pick_up(NetClient.current_character_name, _pending_pickup_id)
 		else:
 			var dir := to_target.normalized()
 			player.velocity.x = dir.x * MOVE_SPEED
@@ -7277,6 +7326,133 @@ func _try_attack_monster(screen_pos: Vector2) -> bool:
 	_last_attack_target = int(node.get_meta("monster_id"))
 	_show_target(_last_attack_target)
 	NetClient.attack(NetClient.current_character_name, _last_attack_target)
+	return true
+
+## The items on the ground: a GroundItems node under other_entities, fed by
+## the server's list and its spawned/removed/released broadcasts, drawing
+## each stack with its drop model out of Data.pk2. Skipped without an
+## archive (nothing to draw them with).
+func _try_setup_ground_items() -> void:
+	if _data_pk2 == null:
+		return
+	_ground_items = GroundItems.new()
+	_ground_items.name = "GroundItems"
+	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _name_plate, _terrain_height_at)
+	other_entities.add_child(_ground_items)
+
+## The item table's English name for an id (the same resolution the tooltips
+## use), or a bare "item N" when the row is unknown.
+func _item_display_name(item_id: int) -> String:
+	var row = _item_rows.get(item_id)
+	if row == null:
+		return "item %d" % item_id
+	return row.display_name(_ui_text_table)
+
+func _on_ground_item_list_result(items: Array, error: String) -> void:
+	if error != "":
+		print("World3D: ground item list: %s" % error)
+		return
+	if _ground_items == null:
+		return
+	_ground_items.apply_list(items)
+	print("World3D: %d item(s) on the ground in this zone" % _ground_items.count())
+
+func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
+	if _ground_items == null:
+		return
+	_ground_items.spawn(snap)
+	print("World3D: ground item %d (%s) at %.1f,%.1f,%.1f owner %d (%.1f from the player)" % [
+		snap.id, _ground_items.label_text(snap), snap.x, snap.y, snap.z, snap.owner_id,
+		_ground_items.position_of(snap.id).distance_to(player.global_position)])
+	# QA: step onto the drop and pick it, so a render's log carries the
+	# server's own verdict and the bag after (see the hook list above).
+	if OS.get_environment("SRREVAMP_QA_PICKUP") != "" and NetClient.is_connected_to_server():
+		_pending_pickup_id = snap.id
+		var pos := _ground_items.position_of(snap.id)
+		player.global_position = pos + Vector3(2.0, 0.0, 0.0)
+		player.velocity = Vector3.ZERO
+		# Tell the server where we now stand and let that packet land before the
+		# pick, so its range check sees us on the item, not where we were.
+		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		_last_sent_pos = player.position
+		print("QA PICKUP: standing at %.1f,%.1f,%.1f next to ground item %d; picking shortly" % [
+			player.global_position.x, player.global_position.y, player.global_position.z, snap.id])
+		# A moment on the ground (frames show the drop lying there), then pick.
+		# The attack loop is gated off while _pending_pickup_id is set, so
+		# nothing teleports us away in between.
+		await get_tree().create_timer(1.2).timeout
+		if _ground_items != null and _ground_items.has(snap.id):
+			NetClient.move_to(player.position.x, player.position.y, player.position.z)
+			await get_tree().create_timer(0.2).timeout
+			NetClient.pick_up(NetClient.current_character_name, snap.id)
+
+func _on_ground_item_removed(removed: GroundItemsNet.Removed) -> void:
+	if _ground_items == null:
+		return
+	_ground_items.remove(removed.id)
+	if _pending_pickup_id == removed.id:
+		_pending_pickup_id = -1
+	print("World3D: ground item %d gone (%s)" % [removed.id,
+		"picked by %d" % removed.picker_id if removed.reason == GroundItemsNet.REMOVED_PICKED else "expired"])
+
+func _on_ground_item_owner_released(ground_id: int) -> void:
+	if _ground_items != null:
+		_ground_items.release_owner(ground_id)
+
+## The server's verdict on our pick. Too far keeps the walk going (the
+## arrival branch of the movement code asks again); anything else ends it.
+## A success refreshes what changed hands: the bag, or the gold on the stats.
+func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
+	match result.code:
+		0:
+			_pending_pickup_id = -1
+			var what := ("%d gold" % result.quantity) if result.gold else ("item %d x%d" % [result.item_id, result.quantity])
+			print("World3D: picked up %s (ground item %d)" % [what, result.ground_id])
+			if NetClient.is_connected_to_server():
+				if result.gold:
+					NetClient.character_stats(NetClient.current_character_name)
+				else:
+					NetClient.list_inventory(NetClient.current_character_name)
+			if OS.get_environment("SRREVAMP_QA_PICKUP") != "":
+				print("QA PICKUP: result 0 -> %s" % what)
+		GroundItemsNet.ERR_TOO_FAR:
+			print("World3D: ground item %d is out of reach (%.0f units) -- walking to it" % [result.ground_id, GroundItemsNet.PICK_RANGE])
+			if OS.get_environment("SRREVAMP_QA_PICKUP") != "":
+				print("QA PICKUP: result 4 (too far)")
+		_:
+			_pending_pickup_id = -1
+			print("World3D: cannot pick up ground item %d (server code 0x%x)" % [result.ground_id, result.code])
+			if OS.get_environment("SRREVAMP_QA_PICKUP") != "":
+				print("QA PICKUP: result 0x%x" % result.code)
+
+## A left click on a ground item picks it up, the way clicking one does in
+## the original. Ray-tests the ground-item layer only; on a hit, asks the
+## server (which judges the 10-unit range and the ownership) and, so the
+## player ends up in reach if they were not, walks toward the item; the
+## arrival branch asks again. Returns true so the click does not also walk.
+func _try_pick_up_item(screen_pos: Vector2) -> bool:
+	if _ground_items == null or not NetClient.is_connected_to_server():
+		return false
+	var from := camera_3d.project_ray_origin(screen_pos)
+	var dir := camera_3d.project_ray_normal(screen_pos)
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
+	query.exclude = [player.get_rid()]
+	query.collision_mask = GroundItems.GROUND_ITEM_COLLISION_LAYER
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return false
+	var node := hit["collider"] as Node
+	while node != null and not node.has_meta("ground_item_id"):
+		node = node.get_parent()
+	if node == null:
+		return false
+	var ground_id := int(node.get_meta("ground_item_id"))
+	_pending_pickup_id = ground_id
+	var target := _ground_items.position_of(ground_id)
+	if target != Vector3.INF:
+		_move_target = target
+		_has_move_target = true
+	NetClient.pick_up(NetClient.current_character_name, ground_id)
 	return true
 
 ## Reconciles _monster_bodies against live, the authoritative full monster
