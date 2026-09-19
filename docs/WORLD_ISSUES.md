@@ -7075,6 +7075,23 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-thirty-third round: distances in the tables are tenths of a metre; the metre-to-world-unit factor is a curve, not yet a reading
+
+The RE tick's step for 2026-09-19 11:19, second on the attack distance. The server never
+returns `0x3007`; the client's item/skill tooltips are where distances are formatted, and
+every one of them (`ICPlayer::FUN_00960b50`: piercing range, transition range, the return
+scroll's distance) prints `value / 10.0` with `%.1fm` (the double at `0xe1b840`). So the
+`Range` column and the distance params are in **tenths of a metre**: the melee skills' 6, 10
+and 17 are 0.6, 1.0 and 1.7 m, and the sword's "0.6 m" is a 6.
+
+What remains is metres -> world units, and five readings now agree with **1 world unit =
+0.1 m**: walk/run 16/50 = 1.6/5.0 m/s, the region span 1920 = 192 m, Jangan's fog
+1250..2250 = 125..225 m, the character's 14.3 units = 1.43 m, a standing lamp 19.9 = 2 m.
+Agreement is the suggestive curve the rules forbid promoting; the approach comparison in
+the client (range plus the target's `BCRadius`, column 50, against world distance) is the
+use-site that would settle it, and until it is read no attack range is wired. TODO carries
+the state.
+
 ## Two-hundred-and-thirty-second round: attacks have no distance rule -- the server never refuses on it, the client's approach is the rule
 
 The RE tick's step for 2026-09-19 11:04. Looking for the next per-fight value found an

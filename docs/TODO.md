@@ -99,6 +99,12 @@ In order. Each is checked off here when it ships in a release, with its round in
       column; other skills carry 6..200 (150 for 6,889 rows). Next probe: the itemdata `Range` column
       (the tooltip's "0.6 m" on a sword) and the client's comparison that turns skill/weapon range
       plus the target's `BCRadius` (column 50) into world units -- then a client-side approach step.
+      Round 233 read the TABLE unit: every distance param the client prints goes through
+      `value / 10.0` with `%.1fm` (`ICPlayer::FUN_00960b50`, divisor at `0xe1b840`), so skill/weapon
+      ranges are in tenths of a metre (melee 6/10/17 = 0.6/1.0/1.7 m). Still unread: metres to world
+      units. Five readings agree with 1 unit = 0.1 m (walk/run 16/50 = 1.6/5.0 m/s, region 1920 =
+      192 m, fog 1250..2250 = 125..225 m, character 14.3 = 1.43 m, lamp 19.9 = 2 m) -- corroboration,
+      not a use-site; do not wire a range on it until the approach comparison is read.
 - [ ] **Linear fog between the real planes.** Read in round 229: the client's fog is D3D linear fog
       from `channel 10 x view distance` to `channel 11 x view distance` (2500 by default) -- zero
       until the near plane (Jangan: 1250), complete at the far one (2250). `FOG_DENSITY` is an

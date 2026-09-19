@@ -4979,6 +4979,9 @@ The server has no `0x3007` (WRONGDISTANCE) anywhere while `0x3003..0x3009` all o
 it does not refuse on distance; the client approaches first. Basic attacks have skill
 `Range` 0 (melee -> the weapon's range); skills 6..200. srrevamp gates nothing yet.
 Next: itemdata's `Range` column and the client comparison (with `BCRadius`, column 50).
+Round 233: the tables' distance unit is tenths of a metre (the client prints every distance
+param as `value / 10.0` `%.1fm`). Metres-to-world-units is unread; five independent numbers
+agree with 1 unit = 0.1 m but that is a curve, not a use-site. Next: the approach comparison.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
