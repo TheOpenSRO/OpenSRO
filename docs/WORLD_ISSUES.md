@@ -7075,6 +7075,20 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-seventy-second round: guild points are the skill points a member earns
+
+The RE tick for 2026-09-19 20:47 took the Guild row's open item and it was sitting in a function
+already read for another reason. `GObjPC_GainExpAndLevel`, right after the 400:1 skill-experience
+conversion grants whole skill points (slot 93), adds the same count to `pc[0x861]` (pc+0x2184)
+when the character has a guild, and once that exceeds 9 hands it to
+`CGuildManager::RequestAddGuildPoints` (`0x5c62e0`: a PC, a guild, guild level below 6 -> `0x78F7
+{guild, member, points}` to the global server) and resets it. The echo comes back through the
+inter-server dispatcher to `CGuild::AddPoints` (`0x5c4110`): the guild's total at `guild+0x3c` and
+the member's own contribution at `member+0x40` both grow by the count, and `0x38F5` types 5 and 6
+tell the online members. **Guild points = skill points earned, one for one, in batches of at least
+ten per member.** `guild.PointAccumulator` carries the rule with a test; srrevamp's guild has no
+level or points total yet, so the wiring is a build item. Three names.
+
 ## Two-hundred-and-seventy-first round: two short negatives, each with its reason
 
 The RE tick for 2026-09-19 20:32, docs only.

@@ -88,6 +88,11 @@ In order. Each is checked off here when it ships in a release, with its round in
 - [ ] **Drop content is still the placeholder table.** The mechanic is real (round 207); the per-monster
       tables are DB-only and in no archive we have (`smc.bak` is the manager DB). An operator with the
       shard DB supersedes it via `import-refdata -drops-csv/-drop-groups-csv`.
+- [ ] **Guild points and levels.** Read in round 272: a guild's points are the skill points its
+      members earn (1:1, batched at 10 per member, credited to the guild total and the member's
+      contribution); the level-up costs are already in `guild.LevelUpCost`. srrevamp's guild has no
+      level, no points and no contributions -- add them to the store, credit from the kill path
+      through `guild.PointAccumulator`, and let the master spend them on a level-up.
 - [ ] **Monsters do not move, chase or notice anyone.** They strike only when struck (round 254's
       cadence cap). The machine is read: sixteen states, WANDER's leg and dwell (round 251), BATTLE's
       attack step through the same action machine as a player's cast (254), the approach walk

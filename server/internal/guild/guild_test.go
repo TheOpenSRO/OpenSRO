@@ -174,3 +174,26 @@ func TestLevelUpGoldIsAnArithmeticProgression(t *testing.T) {
 		t.Error("the guild-point costs became a progression; they are a hand-tuned table")
 	}
 }
+
+// Guild points are the skill points a member earns, batched: nine pending
+// stays pending, the tenth flushes all of it, and a big grant flushes at once.
+func TestGuildPointsAccumulateFromSkillPoints(t *testing.T) {
+	var acc PointAccumulator
+	for i := 0; i < 9; i++ {
+		if got := acc.Add(1); got != 0 {
+			t.Fatalf("point %d flushed %d; want nothing before ten", i+1, got)
+		}
+	}
+	if acc.Pending() != 9 {
+		t.Fatalf("pending %d; want 9", acc.Pending())
+	}
+	if got := acc.Add(1); got != 10 || acc.Pending() != 0 {
+		t.Fatalf("the tenth point flushes 10 and clears: got %d, pending %d", got, acc.Pending())
+	}
+	if got := acc.Add(25); got != 25 {
+		t.Fatalf("a grant past the threshold flushes at once: %d", got)
+	}
+	if got := acc.Add(0); got != 0 || acc.Pending() != 0 {
+		t.Fatalf("nothing earned, nothing booked: %d / %d", got, acc.Pending())
+	}
+}

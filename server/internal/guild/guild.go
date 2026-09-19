@@ -249,3 +249,46 @@ type Store interface {
 	// exist.
 	Get(ctx context.Context, guildID int64) (*Guild, error)
 }
+
+// Where guild points come from -- read 2026-09-19 (round 272,
+// docs/protocol/guild.md "Where guild points come from"). They are the SKILL
+// POINTS a member earns: GObjPC_GainExpAndLevel (0x4e5250), right after it
+// converts skill experience into whole points at 400:1 and grants them
+// (slot 93), adds the same count to the character's accumulator (pc+0x2184)
+// when the character is in a guild, and once the accumulator exceeds 9 hands
+// it to CGuildManager::RequestAddGuildPoints (0x5c62e0): a PC in a guild below
+// level 6 sends 0x78F7 {guild, member, points} to the global server, which
+// answers 0x38F5 and CGuild::AddPoints (0x5c4110) adds the count to the
+// guild's total (guild+0x3c) AND to the member's own contribution
+// (member+0x40). So a member's guild points are exactly the skill points they
+// gain, delivered in batches of at least ten.
+const (
+	// GuildPointsPerSkillPoint is the 1:1 the accumulator carries over.
+	GuildPointsPerSkillPoint = 1
+	// PointBatchThreshold is the `9 < acc` test: the batch goes out once the
+	// accumulated points reach ten.
+	PointBatchThreshold = 10
+)
+
+// PointAccumulator is one character's pending guild points -- the engine's
+// pc+0x2184. Add books skill points just earned and returns the batch to
+// credit, or 0 while the threshold is not yet reached. A character with no
+// guild never accumulates: callers only Add while the member is in one.
+type PointAccumulator struct{ pending int }
+
+// Add books sp skill points and returns the guild points to credit now.
+func (a *PointAccumulator) Add(sp int) int {
+	if sp <= 0 {
+		return 0
+	}
+	a.pending += sp * GuildPointsPerSkillPoint
+	if a.pending < PointBatchThreshold {
+		return 0
+	}
+	out := a.pending
+	a.pending = 0
+	return out
+}
+
+// Pending is what has accumulated below the threshold.
+func (a *PointAccumulator) Pending() int { return a.pending }

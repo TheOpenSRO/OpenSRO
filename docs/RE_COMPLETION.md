@@ -5203,6 +5203,11 @@ invitee's answer builds a 0x1114-byte request the global/agent process
 answers), which is why no local writer exists; the teleport link binder is
 still unread after the unnamed RefInstanceGenerator helpers turned out to be
 map templates.
+Round 272 (docs + guild helper): guild points ARE the skill points a member
+earns -- GainExpAndLevel accumulates the converted points at pc+0x2184 while in
+a guild and, past 9, RequestAddGuildPoints sends them (0x78F7) for the global
+server to echo into CGuild::AddPoints (guild+0x3c and member+0x40). 1:1, batches
+of >= 10. `guild.PointAccumulator` + test. Three names.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

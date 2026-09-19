@@ -95,6 +95,31 @@ so a character's gold is a 64-bit value at `+0x78` (low) and `+0x7c` (high), and
 the engine really does compare all of it. Guild points are a dword at
 `guild + 0x3c`.
 
+## Where guild points come from (round 272)
+
+They are the **skill points a member earns**, one for one. `GObjPC_GainExpAndLevel`
+(`0x4e5250`), right after converting skill experience into whole points at 400:1
+and granting them through slot 93, does
+
+	if (points > 0 && pc[0x72f] /* the guild */ != 0) {
+	    pc[0x861] += points;                 // pc+0x2184, the pending guild points
+	    if (pc[0x861] > 9) { CGuildManager::RequestAddGuildPoints(pc[0x861]); pc[0x861] = 0; }
+	}
+
+`RequestAddGuildPoints` (`0x5c62e0`) requires a PC (`0x4c07` otherwise), a guild
+(`0x4c0d`) and a guild level below 6, and sends **`0x78F7 {byte, guild id,
+member id, points}`** to the global server; the game server later receives the
+echo and `CGuild::AddPoints` (`0x5c4110`, from the `0x5c9bd0` inter-server
+dispatcher through `0x5ca500`) adds the count to **the guild's total at
+`guild+0x3c`** (dirty bit 8) and to **the member's own contribution at
+`member+0x40`** (dirty bit 4), broadcasting `0x38F5` type 5 (the guild total)
+and type 6 (the member's contribution) to the online members.
+
+So a guild's points grow by exactly the skill points its members gain, delivered
+in batches of at least ten per member. `guild.PointAccumulator` carries the
+rule; srrevamp's guild has neither a level nor a points total yet, so wiring it
+is the build item (`docs/TODO.md`).
+
 ## Permissions
 
 Unchanged from the earlier pass and recorded here for completeness: each member
@@ -267,5 +292,5 @@ will have to be undone.
 - **What maintains `guild + 0x44`.**
 - **The warehouse.** Only the permission bit and `GUILD_WAREHOUSE_LIMIT` are
   known; the limit's value is not.
-- **Guild points: where they come from.** The costs above are grounded; what
-  earns a guild a point is not.
+- ~~**Guild points: where they come from.**~~ READ in round 272 -- see "Where guild
+  points come from" below.
