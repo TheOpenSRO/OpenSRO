@@ -62,6 +62,19 @@ In order. Each is checked off here when it ships in a release, with its round in
       `CIFSkillBoard`) is filled from `skilldata`, and the server tracks mastery levels and skill
       points (`OpSkillState`/`OpRaiseMastery`), so learning a skill and raising a mastery both
       work from the window. What is still own-design is the *mastery cost* (`masteryUpCost`).
+- [ ] **A new character spawns with the placeholder 200/200 HP; a respawn uses the grounded
+      MaxHP formula** (seen 2026-09-19 on the public server: 107 left after a 93 blow from 200, then
+      respawn at 80). The creation path does not run `character.MaxHPFor`; make it.
+- [ ] **Two `internal/session` full-flow tests race under host load** (`TestInventoryFullFlow` reads the
+      bag before the kill's loot lands; `TestTradeFullFlow` reads an unexpected opcode). Pass 3/3 alone
+      and as a package; failed only inside full runs while five lanes built at once. Give them
+      deterministic waits for the message they need.
+- [ ] **A non-gold drop's name plate shows the Korean column** (`HP ?? ??` for the potion): the item's
+      `SN_ITEM_*` id did not resolve through the UI text table on that path, and the fallback font has
+      no Hangul. Resolve it the way the tooltips do, or show nothing.
+- [ ] **Drop content is still the placeholder table.** The mechanic is real (round 207); the per-monster
+      tables are DB-only and in no archive we have (`smc.bak` is the manager DB). An operator with the
+      shard DB supersedes it via `import-refdata -drops-csv/-drop-groups-csv`.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
 - [ ] "Stuck in a building" and "floating things in Alexandria": not reproduced (round 134's
