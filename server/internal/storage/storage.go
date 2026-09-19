@@ -37,6 +37,31 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 )
 
+// DefaultCapacity is the warehouse's slot count for every account.
+//
+// What the game does is READ, and it is not a constant: the capacity is a
+// per-user row, `_ChestInfo.ChestSize` (the server's binder DB_Bind__ChestInfo,
+// 0x8586e0, names the table and column), loaded by UserJID in
+// AQ_CharDataLoader::DoWork (0x43d980) into the character object at +0x110 --
+// and a user without the row fails to load ("failed to load user's chest size
+// [UserJID: %d]"), so the binary carries no default. The starting size is
+// written by the database's user-creation procedure, which is in no archive
+// this project holds. The ceiling is read: the storage expander refuses a new
+// size above 0x70 (inventory.MaxStorageSlots, 112).
+//
+// So this number is DISCLOSED, not grounded: 50 is what this server has
+// enforced since the warehouse existed (inherited from the bag's
+// SlotsPerCharacter), kept so no tester's reach shrinks. The client pages the
+// warehouse by 30 (CIFStorageRoom::Create builds 0x1e slot controls and
+// addresses a slot as cell + page*0x1e, client 0x6cd350), so 50 shows as a
+// full page and a page of 20 -- the same shape 112 would have (3 x 30 + 22).
+// When an operator has the shard database, ChestSize per account replaces
+// this constant; the expansion path caps it at MaxCapacity.
+const DefaultCapacity = 50
+
+// MaxCapacity is the largest warehouse the game's expander allows (0x70).
+const MaxCapacity = inventory.MaxStorageSlots
+
 // ErrSlotEmpty is returned when the slot to move from holds nothing.
 var ErrSlotEmpty = errors.New("storage: nothing in that slot")
 
@@ -58,6 +83,12 @@ type Service struct {
 type Balances struct {
 	Carried int64
 	Stored  int64
+}
+
+// Capacity is the warehouse's slot count, as the container enforces it. The
+// client pages its authored 30-slot lattice from this.
+func (s *Service) Capacity() int {
+	return s.Warehouse.Capacity()
 }
 
 // accountOf resolves the acting character to its account.

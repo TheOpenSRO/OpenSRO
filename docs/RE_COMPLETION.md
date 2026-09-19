@@ -4859,7 +4859,19 @@ stored gold (counted), and a `pg_dump` was taken. The gold side gained its own
 citation while doing it: `AQ_StorageUpdater::MoveItemWithGold` (`0x45af70`)
 calls `_UPDATE_USER_N_CHAR_GOLD(userJID, userGold, charID, charGold)`, the
 user's balance being the player object's int64 at `+0x1ca8`, the character's the
-char-data int64 at `+0x78`. Left unread: the per-user chest CAPACITY's source.
+char-data int64 at `+0x78`.
+
+### The capacity, 2026-09-19 (v0.1.391)
+
+Per-user row `_ChestInfo.ChestSize` (binder `0x8586e0`), loaded by UserJID at
+`0x43d980` into char+`0x110`; a missing row fails the load, so there is NO default
+in the binary -- it is written by the database's user-creation procedure, absent
+from every archive here (re-checked, including the 2.6 GB server pack: no `.bak`,
+no `.sql`). Ceiling `0x70` = 112. The client pages by 30 (`0x6cc780` builds `0x1e`
+slots; `0x6cd350` addresses `cell + page*0x1e`), and `CNIFSpinButtonCtrl`'s geometry
+and art were read off its constructor (`0x49d2e0`) so the authored page spinner is
+built and works. `storage.DefaultCapacity` (50) is disclosed on those terms; the
+server sends it with the list and the client pages from it. Round 216.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

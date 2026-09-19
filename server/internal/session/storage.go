@@ -163,6 +163,44 @@ func StorageHandler(chars character.Store, svc *storage.Service) gateway.Handler
 	}
 }
 
+// StorageListResult is OpStorageListResult's payload: the warehouse as an
+// InventoryListResult, then the container's CAPACITY as a trailing u16. The
+// client needs it to page the authored 30-slot lattice (the original's
+// CIFStorageRoom::Create builds 0x1e slot controls and addresses a warehouse
+// slot as cell + page*0x1e -- client 0x6cd350 -- with the page count coming
+// from the server). It follows the durability block, where an older client
+// stops reading, so the list still decodes there.
+type StorageListResult struct {
+	InventoryListResult
+	Capacity int
+}
+
+func (r *StorageListResult) Encode() []byte {
+	out := r.InventoryListResult.Encode()
+	return append(out, byte(r.Capacity), byte(r.Capacity>>8))
+}
+
+// DecodeStorageListResult reads the list and, when the sender was new enough
+// to append it, the capacity (0 otherwise).
+func DecodeStorageListResult(data []byte) (*StorageListResult, error) {
+	inv, err := DecodeInventoryListResult(data)
+	if err != nil {
+		return nil, err
+	}
+	res := &StorageListResult{InventoryListResult: *inv}
+	// Walk to the end of what DecodeInventoryListResult consumed: the error
+	// string, the slots, then the durability block (2 + 12 per entry, when
+	// present at all).
+	off := 2 + len(inv.Error) + 2 + len(inv.Slots)*inventorySlotSnapshotSize
+	if off+2 <= len(data) {
+		off += 2 + 12*len(inv.Durabilities)
+	}
+	if off+2 <= len(data) {
+		res.Capacity = int(binary.LittleEndian.Uint16(data[off:]))
+	}
+	return res, nil
+}
+
 func handleStorageList(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *storage.Service) error {
 	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
@@ -180,7 +218,8 @@ func handleStorageList(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	for i, sl := range slots {
 		snaps[i] = InventorySlotSnapshot{Slot: sl.Index, ItemID: sl.ItemID, Quantity: sl.Quantity}
 	}
-	return sess.Send(&proto.Packet{Opcode: OpStorageListResult, Data: (&InventoryListResult{Slots: snaps}).Encode()})
+	result := &StorageListResult{InventoryListResult: InventoryListResult{Slots: snaps}, Capacity: svc.Capacity()}
+	return sess.Send(&proto.Packet{Opcode: OpStorageListResult, Data: result.Encode()})
 }
 
 func handleStorageMove(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *storage.Service, deposit bool) error {

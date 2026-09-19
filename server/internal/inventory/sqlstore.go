@@ -57,6 +57,7 @@ type SQLStore struct {
 	maxStacks    MaxStackLookup
 	table        string
 	owner        string // the owner column: character_id (bag) or account_id (warehouse)
+	capacity     int    // this container's slot count (SlotsPerCharacter unless SetCapacity said otherwise)
 	durabilities DurabilityLookup
 	// Rand is the source the instance rolls draw from; tests set it.
 	Rand durability.Rand
@@ -112,8 +113,19 @@ func OpenSQLStoreOwned(dsn string, maxStacks MaxStackLookup, table, owner string
 		db.Close()
 		return nil, fmt.Errorf("inventory: creating schema: %w", err)
 	}
-	return &SQLStore{db: db, maxStacks: maxStacks, table: table, owner: owner}, nil
+	return &SQLStore{db: db, maxStacks: maxStacks, table: table, owner: owner, capacity: SlotsPerCharacter}, nil
 }
+
+// SetCapacity sets this container's slot count. The bag keeps
+// SlotsPerCharacter; the warehouse is opened with storage.DefaultCapacity.
+func (s *SQLStore) SetCapacity(n int) {
+	if n > 0 {
+		s.capacity = n
+	}
+}
+
+// Capacity implements Store.
+func (s *SQLStore) Capacity() int { return s.capacity }
 
 // DB exposes the connection for a one-off migration (storage.MigrateToAccounts)
 // that has to read this container's rows alongside other tables.
@@ -205,7 +217,7 @@ func (s *SQLStore) AddItemInstance(ctx context.Context, characterID, itemID int6
 
 // SetDurability implements Store.
 func (s *SQLStore) SetDurability(ctx context.Context, characterID int64, slot int, durabilityLeft int) error {
-	if slot < 0 || slot >= SlotsPerCharacter {
+	if slot < 0 || slot >= s.capacity {
 		return ErrInvalidSlot
 	}
 	res, err := s.db.ExecContext(ctx,
@@ -283,7 +295,7 @@ func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quant
 
 // RemoveItem implements Store.
 func (s *SQLStore) RemoveItem(ctx context.Context, characterID int64, slot int, quantity int) error {
-	if slot < 0 || slot >= SlotsPerCharacter {
+	if slot < 0 || slot >= s.capacity {
 		return ErrInvalidSlot
 	}
 	// See MemStore.RemoveItem: a negative quantity passes the upper-bound check
@@ -330,7 +342,7 @@ func (s *SQLStore) RemoveItem(ctx context.Context, characterID int64, slot int, 
 // MoveItem implements Store. See the interface for the three outcomes. One
 // transaction, so a swap can never be observed half-done.
 func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int) error {
-	if from < 0 || from >= SlotsPerCharacter || to < 0 || to >= SlotsPerCharacter {
+	if from < 0 || from >= s.capacity || to < 0 || to >= s.capacity {
 		return ErrInvalidSlot
 	}
 	if from == to {
@@ -434,10 +446,10 @@ func (s *SQLStore) mergeSpace(ctx context.Context, itemID int64, have int) int {
 	return limit - have
 }
 
-// loadOccupancy returns the current slots plus a SlotsPerCharacter-sized
-// occupancy map, for AddItem's stacking/placement logic.
-func (s *SQLStore) loadOccupancy(ctx context.Context, tx *sql.Tx, characterID int64) ([]Slot, [SlotsPerCharacter]bool, error) {
-	var occupied [SlotsPerCharacter]bool
+// loadOccupancy returns the current slots plus a capacity-sized occupancy
+// map, for AddItem's stacking/placement logic.
+func (s *SQLStore) loadOccupancy(ctx context.Context, tx *sql.Tx, characterID int64) ([]Slot, []bool, error) {
+	occupied := make([]bool, s.capacity)
 	rows, err := tx.QueryContext(ctx,
 		s.q(`SELECT slot, item_id, quantity FROM %s WHERE character_id = $1 ORDER BY slot`),
 		characterID)
@@ -452,7 +464,7 @@ func (s *SQLStore) loadOccupancy(ctx context.Context, tx *sql.Tx, characterID in
 		if err := rows.Scan(&sl.Index, &sl.ItemID, &sl.Quantity); err != nil {
 			return nil, occupied, fmt.Errorf("inventory: scanning row: %w", err)
 		}
-		if sl.Index >= 0 && sl.Index < SlotsPerCharacter {
+		if sl.Index >= 0 && sl.Index < s.capacity {
 			occupied[sl.Index] = true
 		}
 		out = append(out, sl)
@@ -460,7 +472,7 @@ func (s *SQLStore) loadOccupancy(ctx context.Context, tx *sql.Tx, characterID in
 	return out, occupied, rows.Err()
 }
 
-func firstFree(occupied [SlotsPerCharacter]bool) int {
+func firstFree(occupied []bool) int {
 	for i, taken := range occupied {
 		if !taken {
 			return i

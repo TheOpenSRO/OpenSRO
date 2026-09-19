@@ -70,8 +70,15 @@ static func decode_move_result(data: PackedByteArray) -> MoveResult:
 	return result
 
 ## The list result is the inventory list shape.
+## The warehouse list is the bag's list plus a trailing u16: the container's
+## CAPACITY (session/storage.go's StorageListResult). The client pages the
+## authored 30-slot lattice from it; an older server sends none and the
+## capacity stays 0 ("unknown").
 static func decode_list_result(data: PackedByteArray) -> InventoryNet.ListResult:
-	return InventoryNet.decode_list_result(data)
+	var result := InventoryNet.decode_list_result(data)
+	if result.error == "" and result.bytes_read + 2 <= data.size():
+		result.capacity = data.decode_u16(result.bytes_read)
+	return result
 
 ## Encodes an OpStorageGold request: character name, op (u32), amount (s64).
 static func encode_gold(character_name: String, op: int, amount: int) -> PackedByteArray:

@@ -134,11 +134,25 @@ warehouse. The per-character warehouse it kept until then (`storage_slots`,
 `characters.storage_gold`) is moved over once at boot by
 `storage.MigrateToAccounts`, losslessly: a row keeps its slot where free and
 takes the lowest free slot otherwise, gold is summed, and `schema_migrations`
-records the run. What is still not read is the chest CAPACITY: `failed to load
-user's chest size [UserJID: %d]` says it is loaded per user, but the column or
-procedure that supplies it, and its default, have not been located (see
-`inventory.MaxStorageSlots`, 112, and the 210 expansion cap, both read from the
-expansion code paths rather than from the load).
+records the run.
+
+**The capacity (read 2026-09-19).** It is a per-user row: the server's binder
+`DB_Bind__ChestInfo` (`0x8586e0`) names the table `_ChestInfo` and its column
+`ChestSize`; `AQ_CharDataLoader::DoWork` (`0x43d980`) loads it by UserJID through
+the bound query (`GetSingleton_00d6aa18(1,0,1, userJID)`) into the character
+object at `+0x110`, and a user WITHOUT the row fails to load
+(`LOADTARGET_CHEST Failed` / `failed to load user's chest size [UserJID: %d]`) --
+so the binary carries no default. The ceiling is the expander's `0x70` = 112
+(`inventory.MaxStorageSlots`). The client shows the warehouse in PAGES of 30:
+`CIFStorageRoom::Create` (`0x6cc780`) builds exactly `0x1e` slot controls, the
+move handler (`0x6cd350`) addresses a warehouse slot as `cell + page * 0x1e`,
+and the authored `GDR_STORAGE_SPIN_PAGE` (a `CNIFSpinButtonCtrl`: left arrow at
+(0,0) 16x16, value label at (16,4) 18x12 showing value+1, right arrow at (34,0),
+over `store\str_slot_02.ddj` -- constructor `0x49d2e0`) picks the page. The
+starting `ChestSize` is written by the database's user-creation procedure, which
+is in no archive this project holds: `storage.DefaultCapacity` (50) is therefore
+DISCLOSED, the server sends it as the trailing field of the storage list, and the
+client pages from it.
 
 Two smaller facts fall out of the same queries and cost nothing:
 

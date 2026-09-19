@@ -51,7 +51,8 @@ signal repair_result(code: int, gold_spent: int, durabilities: Array)
 signal shop_buy_result(ok: bool, reason: String)
 signal shop_list_result(entries: Array, error: String)
 signal shop_sell_result(ok: bool, reason: String, gold_received: int)
-signal storage_list_result(slots: Array, error: String)
+## capacity is the warehouse's slot count (0 from a server that did not send it).
+signal storage_list_result(slots: Array, error: String, capacity: int)
 signal storage_deposit_result(ok: bool, reason: String)
 signal storage_withdraw_result(ok: bool, reason: String)
 signal storage_gold_result(ok: bool, reason: String, carried: int, stored: int)
@@ -567,7 +568,7 @@ func _dispatch(p: Packet) -> void:
 			use_item_result.emit(UseItemNet.decode_result(p.data))
 		StorageNet.OP_LIST_RESULT:
 			var r := StorageNet.decode_list_result(p.data)
-			storage_list_result.emit(r.slots, r.error)
+			storage_list_result.emit(r.slots, r.error, r.capacity)
 		StorageNet.OP_DEPOSIT_RESULT:
 			var r := StorageNet.decode_move_result(p.data)
 			storage_deposit_result.emit(r.ok, r.reason if r.error == "" else r.error)

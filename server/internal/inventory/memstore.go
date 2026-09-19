@@ -17,6 +17,9 @@ type MemStore struct {
 	mu        sync.RWMutex
 	slots     map[int64]map[int]*Slot // characterID -> slot index -> slot
 	maxStacks MaxStackLookup
+	// capacity is this container's slot count (SlotsPerCharacter unless
+	// SetCapacity said otherwise -- the warehouse has its own).
+	capacity int
 	// durabilities rolls a fresh item's instance and initialises legacy
 	// rows; nil leaves every instance Untracked (see SetDurabilityLookup).
 	durabilities DurabilityLookup
@@ -28,8 +31,19 @@ type MemStore struct {
 // case nothing stacks -- one item per slot, which is what SQLStore does
 // for an item with no configured limit.
 func NewMemStore(maxStacks MaxStackLookup) *MemStore {
-	return &MemStore{slots: make(map[int64]map[int]*Slot), maxStacks: maxStacks}
+	return &MemStore{slots: make(map[int64]map[int]*Slot), maxStacks: maxStacks, capacity: SlotsPerCharacter}
 }
+
+// SetCapacity sets this container's slot count. The bag keeps
+// SlotsPerCharacter; the warehouse is opened with storage.DefaultCapacity.
+func (m *MemStore) SetCapacity(n int) {
+	if n > 0 {
+		m.capacity = n
+	}
+}
+
+// Capacity implements Store.
+func (m *MemStore) Capacity() int { return m.capacity }
 
 // SetDurabilityLookup gives the store the reference data it needs to roll a
 // fresh item's variance and durability. Set once, before the store is used.
@@ -75,7 +89,7 @@ func (m *MemStore) AddItemInstance(ctx context.Context, characterID, itemID int6
 
 // SetDurability implements Store.
 func (m *MemStore) SetDurability(_ context.Context, characterID int64, slot int, durabilityLeft int) error {
-	if slot < 0 || slot >= SlotsPerCharacter {
+	if slot < 0 || slot >= m.capacity {
 		return ErrInvalidSlot
 	}
 	m.mu.Lock()
@@ -114,7 +128,7 @@ func (m *MemStore) addItem(ctx context.Context, characterID, itemID int64, quant
 	// half-filled.
 	remaining := quantity
 	topUps := map[int]int{}
-	for index := 0; index < SlotsPerCharacter && remaining > 0; index++ {
+	for index := 0; index < m.capacity && remaining > 0; index++ {
 		sl := held[index]
 		if sl == nil || sl.ItemID != itemID || sl.Quantity+topUps[index] >= maxStack {
 			continue
@@ -124,7 +138,7 @@ func (m *MemStore) addItem(ctx context.Context, characterID, itemID int64, quant
 		remaining -= add
 	}
 	var fresh []Slot
-	for index := 0; index < SlotsPerCharacter && remaining > 0; index++ {
+	for index := 0; index < m.capacity && remaining > 0; index++ {
 		if held[index] != nil {
 			continue
 		}
@@ -148,7 +162,7 @@ func (m *MemStore) addItem(ctx context.Context, characterID, itemID int64, quant
 
 // RemoveItem implements Store.
 func (m *MemStore) RemoveItem(_ context.Context, characterID int64, slot int, quantity int) error {
-	if slot < 0 || slot >= SlotsPerCharacter {
+	if slot < 0 || slot >= m.capacity {
 		return ErrInvalidSlot
 	}
 	// Checked BEFORE the upper bound, because `quantity > slot.Quantity` passes
@@ -194,7 +208,7 @@ func (m *MemStore) maxStackFor(ctx context.Context, itemID int64) (int, error) {
 
 // MoveItem implements Store. See the interface for the three outcomes.
 func (m *MemStore) MoveItem(ctx context.Context, characterID int64, from, to int) error {
-	if from < 0 || from >= SlotsPerCharacter || to < 0 || to >= SlotsPerCharacter {
+	if from < 0 || from >= m.capacity || to < 0 || to >= m.capacity {
 		return ErrInvalidSlot
 	}
 	if from == to {

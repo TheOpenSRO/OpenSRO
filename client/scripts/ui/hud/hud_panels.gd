@@ -896,10 +896,36 @@ func qa_sell_first(quantity: int) -> void:
 
 # --- The NPC storage (warehouse) --------------------------------------------
 #
-# The authored warehouse window (ifstorageroom) shows the character's stored
-# items in its 6x5 grid. Opening it puts the bag alongside: click a bag item to
-# deposit it, click a stored item to withdraw it. Both moves go through the
-# server (storage.Service), which shares the bag's stacking rules.
+# The authored warehouse window (ifstorageroom) shows the ACCOUNT's stored
+# items in its 6x5 lattice, one PAGE of 30 at a time: the original's
+# CIFStorageRoom::Create builds exactly 0x1e slot controls and addresses a
+# warehouse slot as cell + page * 0x1e (client 0x6cd350), the page chosen by
+# the authored spin control GDR_STORAGE_SPIN_PAGE. The page count comes from
+# the server's capacity (the trailing field of the storage list). Opening it
+# puts the bag alongside: click a bag item to deposit it, click a stored item
+# to withdraw it. Both moves go through the server (storage.Service), which
+# shares the bag's stacking rules.
+const STORAGE_PAGE_SLOTS := 30
+
+## The warehouse as last listed, the page shown, and the server's capacity
+## (0 until a list arrives -- then one page).
+var _storage_slots_cache: Array = []
+var _storage_page := 0
+var _storage_capacity := 0
+
+func _storage_page_count() -> int:
+	return maxi(1, int(ceil(float(_storage_capacity) / STORAGE_PAGE_SLOTS)))
+
+## Wires GDR_STORAGE_SPIN_PAGE once: stepping it redraws the lattice for
+## that page.
+func _wire_storage_page_spinner(window: HudWindow) -> void:
+	var spin := window.node("GDR_STORAGE_SPIN_PAGE") as Control
+	if spin == null or spin.has_meta("wh_wired"):
+		return
+	spin.set_meta("wh_wired", true)
+	spin.connect("spin_changed", func(value: int) -> void:
+		_storage_page = value
+		_fill_storage_grid(_storage_slots_cache))
 
 ## Opens the warehouse for an NPC, with the bag beside it. Refills both from
 ## the server.
@@ -909,6 +935,7 @@ func open_storage(npc_name: String) -> void:
 		return
 	window.set_title(npc_name)
 	_wire_storage_money_button(window)
+	_wire_storage_page_spinner(window)
 	window.show()
 	window.move_to_front()
 	var bag: HudWindow = open("inventory")
@@ -953,11 +980,21 @@ func _fill_storage_grid(slots: Array) -> void:
 		if count0 != null:
 			count0.text = ""
 	var cells := grid.get_child_count()
+	# Keep the spinner's range on the server's capacity and the page in it.
+	_storage_page = clampi(_storage_page, 0, _storage_page_count() - 1)
+	var spin := window.node("GDR_STORAGE_SPIN_PAGE") as Control
+	if spin != null and spin.has_meta("value"):
+		UiBuilder.set_spin_range(spin, 0, _storage_page_count() - 1)
+		if UiBuilder.spin_value(spin) != _storage_page:
+			spin.set_meta("value", _storage_page)
+			UiBuilder.set_spin_range(spin, 0, _storage_page_count() - 1)
+	var first := _storage_page * STORAGE_PAGE_SLOTS
 	for entry in slots:
 		var index: int = entry.slot_index
-		if index < 0 or index >= cells:
+		var cell_index := index - first
+		if cell_index < 0 or cell_index >= mini(cells, STORAGE_PAGE_SLOTS):
 			continue
-		var cell := grid.get_child(index)
+		var cell := grid.get_child(cell_index)
 		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
 		if icon == null:
 			continue
@@ -1081,7 +1118,7 @@ func _refresh_storage_and_bag() -> void:
 		NetClient.list_storage(who)
 		NetClient.list_inventory(who)
 
-func _on_storage_list_result(slots: Array, error: String) -> void:
+func _on_storage_list_result(slots: Array, error: String, capacity: int) -> void:
 	if error != "":
 		push_warning("HudPanels: storage list refused: %s" % error)
 		return
@@ -1090,7 +1127,10 @@ func _on_storage_list_result(slots: Array, error: String) -> void:
 	var total := 0
 	for sl in slots:
 		total += int(sl.quantity)
-	print("HudPanels: warehouse lists %d slot(s), %d item(s)" % [slots.size(), total])
+	_storage_slots_cache = slots
+	_storage_capacity = capacity
+	print("HudPanels: warehouse lists %d slot(s), %d item(s); capacity %d = %d page(s) of %d" % [
+		slots.size(), total, capacity, _storage_page_count(), STORAGE_PAGE_SLOTS])
 	_fill_storage_grid(slots)
 
 func _on_storage_deposit_result(ok: bool, reason: String) -> void:

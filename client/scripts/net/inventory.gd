@@ -32,6 +32,13 @@ class ListResult:
 	var error: String
 	var slots: Array[Slot] = []
 	var durabilities: Array[Durability] = []
+	## How many bytes the decoder consumed (through the durability block),
+	## so a container that appends more -- the warehouse's capacity -- can
+	## read on from here.
+	var bytes_read: int = 0
+	## The container's slot count, when the sender appended it (the
+	## warehouse list does); 0 means "not sent".
+	var capacity: int = 0
 
 ## Encodes an OpInventoryList request: just a character name (same shape
 ## as CharacterNet's create/delete name requests).
@@ -105,6 +112,9 @@ static func decode_list_result(data: PackedByteArray) -> ListResult:
 		offset = decoded[1]
 
 	result.durabilities = decode_durability_block(data, offset)
+	result.bytes_read = offset
+	if offset + 2 <= data.size():
+		result.bytes_read = offset + 2 + 12 * result.durabilities.size()
 	return result
 
 ## Decodes the trailing durability block (u16 count, then per entry u32 slot,

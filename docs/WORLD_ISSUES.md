@@ -7075,6 +7075,68 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-sixteenth round: the warehouse's capacity -- a per-user row, no default in the binary, and the client's own 30-slot pages
+
+The RE tick's step for 2026-09-19 07:00, following round 215's open probe. srrevamp's
+warehouse accepted 50 slots because the container inherited the bag's
+`SlotsPerCharacter`, while its authored window (`ifstorageroom`) draws 30 cells -- so
+slots 30-49 were stored but unreachable. Both halves are read now.
+
+### Read from the server
+
+- The capacity is a per-user row: `DB_Bind__ChestInfo` (`0x8586e0`) names the table
+  `_ChestInfo` and its column `ChestSize`; `AQ_CharDataLoader::DoWork` (`0x43d980`)
+  loads it by UserJID through the bound query into the character object at `+0x110`.
+- A user without the row FAILS to load (`LOADTARGET_CHEST Failed` / `failed to load
+  user's chest size [UserJID: %d]`): the binary carries no default. The starting size
+  is written by the database's user-creation procedure. That procedure is in no archive
+  this project holds -- checked again: the 2.6 GB "complete server files" pack is five
+  inner rars of binaries, media, tools and a billing website (its ASP pages call
+  `_GetSilkDataForGameServer`/`CGI_WebPurchaseSilk`, nothing that creates a user), no
+  `.bak`/`.sql` anywhere.
+- The ceiling is the expander's `0x70` = 112 (already `inventory.MaxStorageSlots`).
+
+### Read from the client
+
+- `CIFStorageRoom::Create` (`0x6cc780`) builds exactly `0x1e` = 30 slot controls; the
+  move handler (`0x6cd350`) addresses a warehouse slot as `cell + page * 0x1e` -- the
+  warehouse is PAGED by 30, the page chosen by the authored `GDR_STORAGE_SPIN_PAGE`.
+- `CNIFSpinButtonCtrl` (constructor `0x49d2e0`): the control is backed by
+  `store\str_slot_02.ddj`, with `com_left_arrow.ddj` at (0,0) 16x16, the value label
+  at (16,4) 18x12, `com_right_arrow.ddj` at (34,0) 16x16; the label shows value+1
+  (`0x49d4d0`), and the arrows step within [min,max] (`0x49d580`/`0x49d5c0`).
+
+### What changed
+
+- `inventory.Store` gained `Capacity()`; both stores carry a per-container capacity
+  (the bag keeps 50; the warehouse is opened with `storage.DefaultCapacity`).
+- `storage.DefaultCapacity = 50` is DISCLOSED in its own comment: kept at what this
+  server has enforced so no tester's reach shrinks; `storage.MaxCapacity` = 112.
+- The storage list reply carries the capacity as a trailing u16 after the durability
+  block (`session.StorageListResult`); an older client stops reading before it.
+- The client builds `CIFSpinButtonCtrl` from the constructor's geometry and art, and the
+  storage window pages its lattice: `_storage_page`, `ceil(capacity / 30)` pages, a
+  withdraw addresses `cell + page * 30`.
+
+### Measured
+
+- `go test`: 56 packages ok, including the list round-trip with and without durability
+  entries and against an old payload (capacity 0). Doc guards pass.
+- Box: `ALL LOAD` (233 scripts); 76 suites, 0 failing (`storage_test.gd` new).
+- End to end (`SRREVAMP_QA_STORAGE_ITEM=1 --server`, the new binary): `warehouse lists 0
+  slot(s), 0 item(s); capacity 50 = 2 page(s) of 30` -> `deposit accepted` -> `warehouse
+  lists 1 slot(s), 1 item(s); capacity 50 = 2 page(s) of 30`, 0 script errors; the frame
+  shows the spin control (arrows, page "1") on the authored strip under the lattice.
+
+### Left open
+
+The storage-expansion item's slot increment (an itemdata param) and the expander path
+(`AQ_StorageExpander`, `_STRG_ADD_LINKED_STORAGE`), which would make the capacity grow
+as the game's does. A pre-existing note from this run: `hud_window_test.gd` prints
+`Compile Error: Identifier not found: NetClient` (hud_panels.gd:379, the shop code,
+unchanged) under `remote_godot.sh script`, yet reports `ALL PASS`; the suite runner does
+not count "Compile Error" as a failure -- worth tightening.
+
 ## Two-hundred-and-fifteenth round: the warehouse is the account's -- the game's own SQL applied, with a lossless migration
 
 The RE tick's step for 2026-09-19 06:30. `docs/SYSTEMS.md` carried "per-account vs

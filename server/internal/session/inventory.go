@@ -27,6 +27,9 @@ type InventorySlotSnapshot struct {
 	Quantity int
 }
 
+// inventorySlotSnapshotSize is one encoded slot: u32 slot, i64 item, u32 count.
+const inventorySlotSnapshotSize = 4 + 8 + 4
+
 func (s *InventorySlotSnapshot) Encode() []byte {
 	out := make([]byte, 4)
 	binary.LittleEndian.PutUint32(out, uint32(s.Slot))

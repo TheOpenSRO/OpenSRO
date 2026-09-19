@@ -194,6 +194,8 @@ func build_control(def: UiLayoutParser.ControlDef) -> Control:
 				node = _build_tile(def)
 			"CIFEdit", "CIFEInputChatBox":
 				node = _build_edit(def)
+			"CIFSpinButtonCtrl":
+				node = _build_spin(def)
 			_ when def.type.contains("Slot"):
 				# Matched on the name rather than listed: the archive has
 				# fifteen slot types and the four that were listed reached
@@ -690,6 +692,89 @@ func _add_row_bar_from(parent: Control, base: String, bar_size: Vector2) -> void
 	_add_slice(bar, mid, Rect2(cap_w, 0.0, bar_size.x - cap_w - cap_r, bar_size.y), true)
 	_add_slice(bar, right, Rect2(bar_size.x - cap_r, 0.0, cap_r, bar_size.y))
 	parent.add_child(bar)
+
+## The spin control's parts, read from the client's own constructor
+## (CNIFSpinButtonCtrl, 0x49d2e0): the control is backed by
+## `interface\store\str_slot_02.ddj`, a left arrow button at (0,0) 16x16
+## (`com_left_arrow.ddj`), the value label at (16,4) 18x12, and a right arrow
+## at (34,0) 16x16 (`com_right_arrow.ddj`). The label shows value+1
+## (0x49d4d0), so a 0-based page reads "1"; the arrows step within
+## [min, max] (0x49d580 / 0x49d5c0).
+const SPIN_BG_DDJ := "interface\\store\\str_slot_02.ddj"
+const SPIN_LEFT_DDJ := "interface\\ifcommon\\com_left_arrow.ddj"
+const SPIN_RIGHT_DDJ := "interface\\ifcommon\\com_right_arrow.ddj"
+const SPIN_ARROW_SIZE := Vector2(16, 16)
+const SPIN_LABEL_RECT := Rect2(16, 4, 18, 12)
+const SPIN_RIGHT_X := 34
+
+## Builds an authored spin button: a control whose "value" meta is stepped by
+## its two arrow buttons ("Left"/"Right") between the "min" and "max" metas,
+## with the label ("Value") showing value+1 as the original does. The owner
+## sets the range with set_spin_range and listens on the "spin_changed"
+## user signal.
+func _build_spin(def: UiLayoutParser.ControlDef) -> Control:
+	var ctrl := Control.new()
+	ctrl.mouse_filter = Control.MOUSE_FILTER_PASS
+	ctrl.add_user_signal("spin_changed", [{"name": "value", "type": TYPE_INT}])
+	ctrl.set_meta("value", 0)
+	ctrl.set_meta("min", 0)
+	ctrl.set_meta("max", 0)
+
+	var bg := TextureRect.new()
+	bg.name = "Background"
+	bg.texture = load_texture(SPIN_BG_DDJ)
+	bg.stretch_mode = TextureRect.STRETCH_SCALE
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ctrl.add_child(bg)
+
+	var label := Label.new()
+	label.name = "Value"
+	label.position = SPIN_LABEL_RECT.position
+	label.size = SPIN_LABEL_RECT.size
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_font(label, def)
+	ctrl.add_child(label)
+
+	for side in [["Left", SPIN_LEFT_DDJ, 0.0, -1], ["Right", SPIN_RIGHT_DDJ, float(SPIN_RIGHT_X), 1]]:
+		var btn := TextureButton.new()
+		btn.name = side[0]
+		btn.ignore_texture_size = true
+		btn.stretch_mode = TextureButton.STRETCH_SCALE
+		btn.texture_normal = load_texture(side[1])
+		btn.texture_hover = load_texture(_insert_suffix(side[1], "_focus"))
+		btn.texture_pressed = load_texture(_insert_suffix(side[1], "_press"))
+		btn.position = Vector2(side[2], 0.0)
+		btn.size = SPIN_ARROW_SIZE
+		var step: int = side[3]
+		btn.pressed.connect(func() -> void: _spin_step(ctrl, step))
+		ctrl.add_child(btn)
+	_spin_refresh(ctrl)
+	return ctrl
+
+static func set_spin_range(ctrl: Control, minimum: int, maximum: int) -> void:
+	ctrl.set_meta("min", minimum)
+	ctrl.set_meta("max", maxi(minimum, maximum))
+	ctrl.set_meta("value", clampi(int(ctrl.get_meta("value", 0)), minimum, maxi(minimum, maximum)))
+	_spin_refresh(ctrl)
+
+static func spin_value(ctrl: Control) -> int:
+	return int(ctrl.get_meta("value", 0))
+
+static func _spin_step(ctrl: Control, step: int) -> void:
+	var value := int(ctrl.get_meta("value", 0)) + step
+	if value < int(ctrl.get_meta("min", 0)) or value > int(ctrl.get_meta("max", 0)):
+		return
+	ctrl.set_meta("value", value)
+	_spin_refresh(ctrl)
+	ctrl.emit_signal("spin_changed", value)
+
+static func _spin_refresh(ctrl: Control) -> void:
+	var label := ctrl.get_node_or_null("Value") as Label
+	if label != null:
+		label.text = str(int(ctrl.get_meta("value", 0)) + 1)
 
 func _build_generic(def: UiLayoutParser.ControlDef) -> Control:
 	var ctrl := Control.new()

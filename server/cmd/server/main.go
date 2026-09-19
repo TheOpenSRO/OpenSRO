@@ -448,6 +448,7 @@ func main() {
 		inv = memInv
 		memWarehouse := inventory.NewMemStore(memRef) // a second, independent container, keyed by account id
 		memWarehouse.SetDurabilityLookup(memRef)
+		memWarehouse.SetCapacity(storage.DefaultCapacity)
 		warehouse = memWarehouse
 		eq = equipment.NewMemStore(memInv)
 		skills = skill.NewMemStore()
@@ -518,6 +519,7 @@ func main() {
 		}
 		defer sqlWarehouse.Close()
 		sqlWarehouse.SetDurabilityLookup(sqlRef)
+		sqlWarehouse.SetCapacity(storage.DefaultCapacity)
 		storageGold = sqlAccounts
 		if moved, err := storage.MigrateToAccounts(ctx, sqlWarehouse.DB(), logger); err != nil {
 			logger.Error("moving the warehouse to accounts", "error", err)

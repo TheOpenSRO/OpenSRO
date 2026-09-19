@@ -272,6 +272,12 @@ type Store interface {
 	// a break). It does not clamp or refuse -- durability.Apply decides the
 	// value, this stores it. ErrSlotEmpty when nothing is there.
 	SetDurability(ctx context.Context, characterID int64, slot int, durability int) error
+
+	// Capacity is this container's slot count: how many indices AddItem may
+	// use and List may report. The bag's is SlotsPerCharacter; the warehouse
+	// has its own (storage.DefaultCapacity), which the client needs to page
+	// the authored 30-slot lattice.
+	Capacity() int
 }
 
 // ExpansionQuestCodes is what raises the inventory cap from MaxSlotsDefault to
