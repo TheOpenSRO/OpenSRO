@@ -321,6 +321,18 @@ type Item struct {
 	// (round 262). alchemy.BaseRate unpacks them (ReinforceRates gathers the
 	// three). Zero on non-elixir rows and on exports predating the columns.
 	ReinforceRate1, ReinforceRate2, ReinforceRate3 uint32
+
+	// CooltimeGroup / CooltimeMs are the item's reuse delay: the item parser
+	// finds the Param/Desc128 pair whose descriptor reads "COOLTIME:<group>"
+	// and stores the group at ref+0x520 and the delay, in milliseconds, at
+	// ref+0x524. Item_HandleUseItem refuses a use (0x185b,
+	// WAIT_FOR_REUSE_DELAY) while the character's timer for that GROUP runs,
+	// and arms it for CooltimeMs on success; items sharing a group share the
+	// timer (round 263). 148 retail rows carry one (cure pills 20 s, event
+	// items up to 23 h); no HP/MP potion does, so a potion has no server
+	// cooldown. Zero when the row has none.
+	CooltimeGroup uint32
+	CooltimeMs    int
 }
 
 // ReinforceRates is the three packed dwords in tier order, the shape

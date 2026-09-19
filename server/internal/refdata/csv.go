@@ -74,6 +74,11 @@ var itemCSVColumns = []string{
 	// suffix; an older export reads zeros, which alchemy.BaseRate turns into
 	// a 0 % base rate rather than an invented one.
 	"ReinforceRate1", "ReinforceRate2", "ReinforceRate3",
+	// Appended later still (round 263): the reuse cooltime group and delay
+	// (ms) an item's "COOLTIME:<group>" descriptor carries. A strict suffix;
+	// an older export reads 0 and 0: no reuse delay, which is also what the
+	// engine does for every row without the descriptor.
+	"CooltimeGroup", "CooltimeMs",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -306,6 +311,10 @@ func parseItemRow(f []string) (Item, error) {
 		it.ReinforceRate1 = parseU32(f[61])
 		it.ReinforceRate2 = parseU32(f[62])
 		it.ReinforceRate3 = parseU32(f[63])
+		if len(f) > 65 {
+			it.CooltimeGroup = parseU32(f[64])
+			it.CooltimeMs = parseInt(f[65])
+		}
 	}
 
 	if err != nil {

@@ -7075,6 +7075,35 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-sixty-third round: the reuse delay is a descriptor -- and potions do not have one
+
+The RE tick for 2026-09-19 18:33 followed round 262's array mapping one step further, to the
+note from 2026-09-18 that srrevamp "enforces NO item cooldown" and that the column feeding the
+item's reuse span "is not identified".
+
+**The rule.** `RefObjItem::ExtractData` reads every `(Param, Desc128)` element's descriptor; one
+containing `cooltime` (case-insensitive) is parsed as **`COOLTIME:<group>`** -- the group in hex
+after `0x` or in decimal -- into `ref+0x520`, with that element's Param stored at `ref+0x524` as
+the **cooltime in milliseconds** (a bad descriptor logs `invalid parameter has been assigned for
+item cooltime: %s, %s`). `Item_HandleUseItem` (`0x510980`) refuses a use with **`0x185b`
+`UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY`** while `ItemCooldowns::IsReady` (`0x64c040`, the skill
+gate's own cooldown block, item groups in their own map) says the GROUP's timer is running, and
+after the success reply `ItemCooldowns::Arm` (`0x64c320`) starts it for that many ms -- a delay of
+300 000 ms or more taking a persisted branch (`time32`), so long cooldowns survive a relog.
+
+**The data.** 148 retail rows carry a descriptor: the random-cure pills (group `0xC8`, 20 000 ms),
+event and premium items from 5 s to 23 h, a few at 1 ms. **No HP, MP or vigour potion carries
+one** -- the server puts no reuse delay on potions; whatever pacing the retail client applies to
+potion clicks is the client's. So the 2026-09-18 "gap" was, for potions, the engine's own rule.
+
+**Shipped (v0.1.407):** `refdata.Item.CooltimeGroup/CooltimeMs` as export columns 64-65 (the
+exporter finds the descriptor the parser's way; a strict suffix, older files read 0/0 = no delay),
+the SQL columns and round trip, `session/itemcooldown.go` (a per-character, per-group timer) and
+the gate in `UseItemHandler` -- refused inside the timer, armed after success, in memory (the
+300 s persistence is disclosed as unbuilt). Live but idle: the handler still consumes only restore
+items, and none of those has a cooltime. Tests: the exporter's descriptor scan on the cure pill's
+row shape, the tracker's group semantics. Two names.
+
 ## Two-hundred-and-sixty-second round: the elixir names its own rates -- the 0x2a0 array is the Param block
 
 The RE tick for 2026-09-19 18:17 took the alchemy row's open item: the reinforce base rates were

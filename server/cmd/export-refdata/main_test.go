@@ -372,3 +372,41 @@ func TestLiteralAbsenceIsOnlyUsedInTheSoundDirection(t *testing.T) {
 		t.Errorf("zeroDamage = %s with the att literal present in the row; absence was not proved, so it must answer 0", got)
 	}
 }
+
+// The cooltime pair comes from whichever (Param, Desc128) element reads
+// "COOLTIME:<group>" -- the parser's own rule, case-insensitive with a decimal
+// or 0x-hex group -- and a row without one exports 0/0. The retail cure pill
+// ITEM_ETC_CURE_RANDOM_01 (10374) carries its pair in element 4: 20000 ms,
+// group 0xC8 (round 263).
+func TestItemRecordFindsTheCooltimeDescriptor(t *testing.T) {
+	cols := make([]string, 160)
+	for i := range cols {
+		cols[i] = "0"
+	}
+	for k := 0; k < 20; k++ {
+		cols[fParam1+2*k+1] = "xxx"
+	}
+	cols[fID] = "10374"
+	cols[fParam1+2*3] = "20000"
+	cols[fParam1+2*3+1] = "COOLTIME:0x000000C8"
+	if g, ms := cooltimeOf(cols); g != "200" || ms != "20000" {
+		t.Fatalf("cooltimeOf = %s,%s; want 200 (0xC8), 20000", g, ms)
+	}
+	rec, ok := itemRecord(cols)
+	if !ok {
+		t.Fatal("itemRecord rejected the row")
+	}
+	if rec[64] != "200" || rec[65] != "20000" {
+		t.Fatalf("columns 64/65 = %s/%s; want 200/20000", rec[64], rec[65])
+	}
+	// Decimal groups and mixed case are the same rule.
+	cols[fParam1+2*3+1] = "cooltime:7"
+	if g, _ := cooltimeOf(cols); g != "7" {
+		t.Fatalf("decimal group: %s; want 7", g)
+	}
+	// No descriptor, no delay -- an HP potion's row.
+	cols[fParam1+2*3+1] = "HP"
+	if g, ms := cooltimeOf(cols); g != "0" || ms != "0" {
+		t.Fatalf("a row without the descriptor exports 0/0, got %s/%s", g, ms)
+	}
+}

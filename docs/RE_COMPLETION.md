@@ -5149,6 +5149,14 @@ own Desc texts ("1,2,3,4" / "5,6,7,8" / "9,10,11,12") name the plus levels
 each dword packs: A-grade 25/20/15/10 %, 10 % x5, 5 %. `refdata.Item.
 ReinforceRate1..3` + `ReinforceRates()`; test on the retail row. Alchemy's
 handler is still unwired, so nothing shipped changes.
+Round 263 (item use, export cols 64-65, v0.1.407): the item REUSE DELAY is read
+end to end -- ExtractData keys it off a Param/Desc128 pair whose descriptor is
+"COOLTIME:<group>" (group -> ref+0x520, ms -> ref+0x524), Item_HandleUseItem
+refuses 0x185b inside the group's timer and arms it after the success reply
+(>= 300 s persisted). 148 retail rows carry one; NO potion does, so potions have
+no server cooldown -- the 2026-09-18 "gap" note is superseded. Wired:
+refdata.Item.CooltimeGroup/CooltimeMs, session/itemcooldown.go, the gate in
+UseItemHandler (live but idle: nothing usable today carries one). Two names.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
@@ -18127,7 +18135,11 @@ long reuse delay a scroll or special consumable carries.
 can be used as fast as the client sends. Wiring the real one needs the itemdata column that feeds
 `item+0x2a0` imported into `refdata.Item`; the column is not identified (it is inside the
 loop-populated strided array, not a sequential field), so this is recorded as a grounded gap with
-its anchor, not a guessed constant. Two leads this tick -- teleport cost/level (cols 3/8/9) and the
+its anchor, not a guessed constant. **SUPERSEDED, round 263 (2026-09-19):** the array is the
+itemdata Param/Desc128 block and the REUSE DELAY is the element whose descriptor reads
+`COOLTIME:<group>` (`ref+0x520` group, `ref+0x524` ms; `Item_HandleUseItem` -> `0x185b`). No potion
+carries one, so "no cooldown on potions" is the engine's rule; the 148 rows that do are exported
+(item columns 64-65) and gated in `UseItemHandler`. Two leads this tick -- teleport cost/level (cols 3/8/9) and the
 item cooltime -- were run down; teleport's consumer was not located and is unbuilt in srrevamp, and
 the cooltime is minutes-scale as above. Docs only, applied 0 names.
 

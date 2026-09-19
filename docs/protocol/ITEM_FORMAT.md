@@ -403,3 +403,43 @@ new character, dressed by the server, draws in the white Cotton set the table na
 earlier code had chosen an ornate gold set by `item_id % 8` — and the first render of the six
 `_RARE` Cotton pieces put the hat on the head, the talisman at the collar and the wristlet on
 the forearm, each from its own file.
+
+## Reuse cooltime: a descriptor names it, a group shares it (round 263)
+
+The item record's `0x2a0` strided array is itemdata's 20 `(Param, Desc128)`
+pairs (round 262). `RefObjItem::ExtractData` (`0x6a3d50`) reads every
+element's descriptor, and when it contains **`cooltime`** (case-insensitive;
+the retail rows write `COOLTIME:0x000000C8`) it parses the text after the
+colon as the **cooltime group** -- hex after `0x`, decimal otherwise -- into
+`ref+0x520`, and stores that element's `Param` at `ref+0x524` as the
+**cooltime in milliseconds**. A descriptor that fails to parse logs `invalid
+parameter has been assigned for item cooltime: %s, %s` (the item's code and the
+descriptor). Element 0 without such a descriptor falls through the fortress /
+skill-bound special cases and is divided by 1000 (the minutes-scale reuse span
+the use-result packet carries -- the earlier reading of `+0x2a0`).
+
+The use-site is `Item_HandleUseItem` (`0x510980`): when `ref+0x524` is
+non-zero, `ItemCooldowns::IsReady(pc+0x1f40, ...)` (`0x64c040`, the same
+cooldown block the skill gate uses, item groups in their own map) must pass or
+the use is refused with **`0x185b` `UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY`**;
+after the success reply, `ItemCooldowns::Arm(block, group, ms, ...)`
+(`0x64c320`) starts the group's timer, and a delay of **300 000 ms or more**
+takes the persisted branch (a `time32` stamp, so a long cooldown survives a
+relog).
+
+**What the retail table says.** 148 rows carry a descriptor; **no HP, MP or
+vigour potion does**, so the server puts no reuse delay on potions at all --
+whatever pacing the retail client applies to potion clicks is the client's,
+not this rule. Examples: the random-cure pills `ITEM_ETC_CURE_RANDOM_0x`
+group `0xC8` **20 000 ms**; group `0xF0` 1 200 000 ms (20 min); group `0x71`
+18 000 000 ms (5 h); group `0x00` from 5 000 ms to 7 200 000 ms; a handful at
+`1` ms. Items in one group share the timer.
+
+**srrevamp** exports the pair as item columns 64-65 (`CooltimeGroup`,
+`CooltimeMs`; `refdata.Item`), and `UseItemHandler` refuses a use inside the
+group's timer with "wait for the reuse delay" and arms it on success
+(`session/itemcooldown.go`, in memory; the 300 s persistence is not built --
+disclosed). Nothing usable today carries a cooltime -- the handler still only
+consumes restore items -- so the rule is live but idle, and the earlier note
+that "srrevamp enforces no item cooldown" is now the engine's own behaviour
+for every potion.

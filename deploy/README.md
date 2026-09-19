@@ -60,7 +60,7 @@ order() { iconv -f UTF-16LE -t UTF-8 "$1" | tr -d '\r' | sed 's/^\xef\xbb\xbf//'
 /tmp/export-refdata  -mode npcpos -out npcpos.csv npcpos.txt                # 12,367 placements; the server reads it with -npcpos-csv
 rm -f itemdata_* skilldata_* npcpos.txt   # the extracted tables are game data; keep only the CSVs
 
-# The exporter grows a strict-suffix column now and then (latest: the three elixir reinforce-rate columns 61-63, round 262, 2026-09-19; before that the six skill prerequisite columns, round 250 -- re-run the SKILLS export too);
+# The exporter grows a strict-suffix column now and then (latest: item columns 61-65 -- the three elixir reinforce-rate dwords and the cooltime group/ms, rounds 262-263, 2026-09-19; before that the six skill prerequisite columns, round 250 -- re-run the SKILLS export too);
 # an older items.csv still loads, but the new column reads as 0 until the export is re-run.
 # Re-run steps 1-3 after pulling such a change.
 

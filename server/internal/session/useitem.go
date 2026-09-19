@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
@@ -154,6 +155,13 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		if it.RestoreHP <= 0 && it.RestoreMP <= 0 && it.RestoreHPPct <= 0 && it.RestoreMPPct <= 0 {
 			return fail("that cannot be used")
 		}
+		// The reuse delay, the engine's way (round 263): only an item whose
+		// row carries a COOLTIME descriptor has one, the timer belongs to the
+		// item's cooltime GROUP, and a use inside it is refused with
+		// WAIT_FOR_REUSE_DELAY (0x185b). A plain HP/MP potion carries none.
+		if it.CooltimeMs > 0 && !itemCooldowns.Ready(characterID, it.CooltimeGroup, time.Now()) {
+			return fail("wait for the reuse delay")
+		}
 
 		owned, err := chars.GetByID(ctx, characterID)
 		if err != nil {
@@ -207,6 +215,13 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 			return fail("using failed")
 		}
 		remaining := have - 1
+		// Armed after the use succeeds, as Item_HandleUseItem does (its
+		// 0x64c320 call sits behind the success reply). In memory only: the
+		// engine persists a delay of five minutes or more across a relog,
+		// srrevamp does not yet -- disclosed.
+		if it.CooltimeMs > 0 {
+			itemCooldowns.Arm(characterID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, time.Now())
+		}
 
 		return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{
 			HP: int32(newHP), MaxHP: int32(maxHP),

@@ -127,6 +127,7 @@ const (
 	// Param3, Param4 -- are an elixir's packed reinforce success rates
 	// (round 262; the table's own Desc texts read "1,2,3,4" / "5,6,7,8" /
 	// "9,10,11,12").
+	fParam1        = 118
 	fParam2        = 120
 	fParam3        = 122
 	fParam4        = 124
@@ -426,6 +427,7 @@ func itemRecord(cols []string) ([]string, bool) {
 		}
 		return "0"
 	}
+	cooltimeGroup, cooltimeMs := cooltimeOf(cols)
 	return []string{
 		get(fID),                 // 0  ID
 		get(fMaxStack),           // 1  MaxStack (col 57: 1 for equipment, real cap for stackables)
@@ -531,7 +533,53 @@ func itemRecord(cols []string) ([]string, bool) {
 		get(fParam2), // 61 ReinforceRate1 (col 120)
 		get(fParam3), // 62 ReinforceRate2 (col 122)
 		get(fParam4), // 63 ReinforceRate3 (col 124)
+		// 64-65: the item's reuse cooltime. RefObjItem::ExtractData scans the
+		// 20 Desc128 strings for "cooltime" and, on "COOLTIME:<group>", stores
+		// the group (decimal, or hex after "0x") at ref+0x520 and that
+		// element's Param -- milliseconds -- at ref+0x524; Item_HandleUseItem
+		// refuses 0x185b WAIT_FOR_REUSE_DELAY while the group's timer runs and
+		// arms it for that many ms on success (round 263). 148 retail rows
+		// carry one; no HP/MP potion does.
+		cooltimeGroup, cooltimeMs,
 	}, true
+}
+
+// cooltimeOf finds the (Param, Desc128) pair whose descriptor reads
+// "COOLTIME:<group>" and returns the group and the delay in milliseconds as
+// strings, "0"/"0" when the row has none -- the parser's own rule (case-
+// insensitive "cooltime", the group after ':' in decimal or 0x-hex).
+func cooltimeOf(cols []string) (group, ms string) {
+	group, ms = "0", "0"
+	for k := 0; k < 20; k++ {
+		vi, di := fParam1+2*k, fParam1+2*k+1
+		if di >= len(cols) {
+			break
+		}
+		desc := strings.TrimSpace(cols[di])
+		if !strings.Contains(strings.ToLower(desc), "cooltime") {
+			continue
+		}
+		colon := strings.IndexByte(desc, ':')
+		if colon < 0 {
+			continue
+		}
+		g := strings.TrimSpace(desc[colon+1:])
+		var v uint64
+		var err error
+		if strings.HasPrefix(strings.ToLower(g), "0x") {
+			v, err = strconv.ParseUint(g[2:], 16, 32)
+		} else {
+			v, err = strconv.ParseUint(g, 10, 32)
+		}
+		if err != nil {
+			continue
+		}
+		if _, err := strconv.ParseUint(strings.TrimSpace(cols[vi]), 10, 32); err != nil {
+			continue
+		}
+		return strconv.FormatUint(v, 10), strings.TrimSpace(cols[vi])
+	}
+	return group, ms
 }
 
 // skillRecord maps one tab-split skilldata row to the 24-column skill CSV
