@@ -122,6 +122,14 @@ const (
 	fReqInt        = 60
 	fDurabilityMin = 63 // and 64 for max
 	fRange         = 94 // the weapon's reach, world units (tenths of a metre)
+	// The 20 (Param, Desc128) pairs the item parser stores as a strided array
+	// at record+0x2a0: Param{k+1} is column 118 + 2k. Elements 1..3 -- Param2,
+	// Param3, Param4 -- are an elixir's packed reinforce success rates
+	// (round 262; the table's own Desc texts read "1,2,3,4" / "5,6,7,8" /
+	// "9,10,11,12").
+	fParam2        = 120
+	fParam3        = 122
+	fParam4        = 124
 	fPhysAttackMin = 95 // and 97 for max (96/98 one-indexed)
 	fPhysAttackMax = 97
 	fMagAttackMin  = 100
@@ -518,6 +526,11 @@ func itemRecord(cols []string) ([]string, bool) {
 		// stores at ref+0x224 and Char_PublishCombatStats publishes as param 33
 		// (round 247). World units: swords 6, spears 18, bows 180, daggers 3.
 		get(fRange), // 60 Range (col 94)
+		// 61-63: an elixir's packed reinforce rates, itemdata Param2/3/4
+		// (columns 120/122/124), decimal dwords as the table prints them.
+		get(fParam2), // 61 ReinforceRate1 (col 120)
+		get(fParam3), // 62 ReinforceRate2 (col 122)
+		get(fParam4), // 63 ReinforceRate3 (col 124)
 	}, true
 }
 

@@ -289,3 +289,22 @@ func TestTwoCodesShareTheAstralMessage(t *testing.T) {
 		t.Errorf("%#x maps to %q", ErrAstral, ErrorMessages[ErrAstral])
 	}
 }
+
+// The three packed dwords come from the elixir's own itemdata row --
+// Param2/3/4, whose Desc128 texts read "1,2,3,4", "5,6,7,8" and "9,10,11,12".
+// ITEM_ETC_ARCHEMY_REINFORCE_RECIPE_WEAPON_A (id 3675) carries
+// 420744970 / 168430090 / 168101125, i.e. 0x19140F0A / 0x0A0A0A0A / 0x0A050505,
+// so going for +1..+4 is 25/20/15/10 %, +5..+8 is 10 % each, +9 is 10 % and
+// +10..+12 (and beyond) 5 % (round 262).
+func TestBaseRateFromTheRetailElixirRow(t *testing.T) {
+	tiers := [3]uint32{420744970, 168430090, 168101125}
+	want := []int{25, 20, 15, 10, 10, 10, 10, 10, 10, 5, 5, 5, 5, 5}
+	for plus, w := range want {
+		if got := BaseRate(plus, tiers); got != w {
+			t.Errorf("from +%d: base rate %d %%; want %d", plus, got, w)
+		}
+	}
+	if got := BaseRate(0, [3]uint32{}); got != 0 {
+		t.Errorf("an export without the columns yields a 0 %% base, not an invented one: %d", got)
+	}
+}

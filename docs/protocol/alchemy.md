@@ -167,6 +167,33 @@ fields `docs/protocol/refobj_binary_format.md` fixes for `_RefObjCommon`, with
 three of that document's own anchors landing. It gives `RefObjItem::ExtractData`
 153 fields with ~77 offsets resolved.
 
+**SETTLED 2026-09-19 (round 262): the array IS the itemdata `Param`/`Desc128`
+block, and the elixir rows name their own dwords.** The parser's loop consumes
+its 20 `(dword, string)` pairs from the row stream in order after the fixed
+fields, and the text table ends in exactly that shape: `Param1, Desc128_1, ...
+Param20, Desc128_20` = columns `118 + 2k` / `119 + 2k` (0-based, 160 columns).
+So element `k` at `0x2a0 + 0x20k` is `Param{k+1}`, and `LookupPackedRate`'s
+elements 1–3 are **`Param2`, `Param3`, `Param4`** (columns 120/122/124). The
+retail row for `ITEM_ETC_ARCHEMY_REINFORCE_RECIPE_WEAPON_A` (id 3675) reads:
+
+| column | value | bytes, high first | its own `Desc128` |
+|---|---|---|---|
+| `Param2` (120) | 420744970 | `0x19 0x14 0x0F 0x0A` = 25, 20, 15, 10 % | **`1,2,3,4`** |
+| `Param3` (122) | 168430090 | `0x0A 0x0A 0x0A 0x0A` = 10, 10, 10, 10 % | **`5,6,7,8`** |
+| `Param4` (124) | 168101125 | `0x0A 0x05 0x05 0x05` = 10, 5, 5, 5 % | **`9,10,11,12`** |
+
+The descriptors are the table's own words for what each dword packs -- the
+plus levels being attempted -- and `BaseRate`'s `tier = n/4 + 1`, `within =
+n % 4`, high byte first lands +1 on 25 %, +5 on 10 %, +9 on 10 % and +10..+12
+(and everything past, via the low byte of tier 3) on 5 %. The shield, armour
+and accessory elixirs of the same grade carry the same three dwords; their
+`Param1` differs (`0x06000000` weapon, `0x04000000` shield, `0x01020300`
+armour, `0x05000000` accessory -- by shape the TypeID3 set the elixir applies
+to, **not read** at a use-site). Shipped: `refdata.Item.ReinforceRate1..3`
+(export columns 61-63, a strict suffix), `Item.ReinforceRates()` for
+`alchemy.Inputs.Tiers`, and `TestBaseRateFromTheRetailElixirRow`. The alchemy
+handler itself is still unwired.
+
 **Why 77 and not more, established 2026-09-18.** fields.py's resolved offsets run
 `0x198..0x294` then jump to `0x524..0x570` — the gap `0x298..0x520` is exactly the
 20-element strided array above, filled by a loop rather than sequential fields, so

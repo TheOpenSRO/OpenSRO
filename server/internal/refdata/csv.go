@@ -69,6 +69,11 @@ var itemCSVColumns = []string{
 	// Appended later still (round 247): the weapon's Range, itemdata column
 	// 94, world units. A strict suffix; an older export reads 0, unarmed.
 	"Range",
+	// Appended later still (round 262): an elixir's three packed reinforce
+	// success dwords, itemdata Param2/3/4 (columns 120/122/124). A strict
+	// suffix; an older export reads zeros, which alchemy.BaseRate turns into
+	// a 0 % base rate rather than an invented one.
+	"ReinforceRate1", "ReinforceRate2", "ReinforceRate3",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -287,6 +292,20 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 60 {
 		it.Range = parseInt(f[60])
+	}
+	if len(f) > 63 {
+		// The packed dwords are exported as plain decimals, the way itemdata
+		// prints them; the top byte can be set, so they are read unsigned.
+		parseU32 := func(s string) uint32 {
+			var v uint64
+			if err == nil {
+				v, err = strconv.ParseUint(s, 10, 32)
+			}
+			return uint32(v)
+		}
+		it.ReinforceRate1 = parseU32(f[61])
+		it.ReinforceRate2 = parseU32(f[62])
+		it.ReinforceRate3 = parseU32(f[63])
 	}
 
 	if err != nil {

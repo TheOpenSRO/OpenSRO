@@ -7075,6 +7075,34 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-sixty-second round: the elixir names its own rates -- the 0x2a0 array is the Param block
+
+The RE tick for 2026-09-19 18:17 took the alchemy row's open item: the reinforce base rates were
+read as three packed dwords in the item record's strided array (`0x2c0/0x2e0/0x300`, rounds of
+2026-09-18) but "not mapped to a column". They are, and the data says so itself.
+
+**The mapping.** `RefObjItem::ExtractData`'s loop consumes its 20 `(dword, string)` pairs from
+the row stream in order after the fixed fields, and itemdata's 160 columns END in exactly that
+shape: `Param1, Desc128_1 ... Param20, Desc128_20` at columns `118 + 2k / 119 + 2k`. Element
+`k` at `0x2a0 + 0x20k` is `Param{k+1}`; the three `LookupPackedRate` reads are **`Param2`,
+`Param3`, `Param4`** (columns 120/122/124).
+
+**The corroboration is the table's own words.** `ITEM_ETC_ARCHEMY_REINFORCE_RECIPE_WEAPON_A`
+(id 3675) has `Param2 = 420744970 = 0x19140F0A` with `Desc128_2 = "1,2,3,4"`, `Param3 =
+168430090 = 0x0A0A0A0A` with `"5,6,7,8"`, `Param4 = 168101125 = 0x0A050505` with
+`"9,10,11,12"` -- the descriptors list the plus levels each dword packs, high byte first,
+exactly as `alchemy.BaseRate`'s `tier = n/4 + 1, within = n % 4` reads them: **+1 25 %, +2 20 %,
++3 15 %, +4 10 %, +5..+9 10 %, +10 and beyond 5 %** for the A-grade elixirs. Shield, armour and
+accessory elixirs carry the same dwords; their `Param1` differs by target type (by shape the
+TypeID3 set, not read at a use-site -- said so).
+
+**Shipped:** `refdata.Item.ReinforceRate1..3` as export columns 61-63 (a strict suffix -- the
+public server's 61-column file still loads and reads zeros, which is a 0 % base rate rather
+than an invented one), the SQL columns and round trip, `Item.ReinforceRates()` in the shape
+`alchemy.Inputs.Tiers` takes, and `TestBaseRateFromTheRetailElixirRow` pinning the fourteen
+percentages. No handler runs `alchemy.Rate` yet, so no player-visible value changed and there
+is no release; the public server's items export is refreshed when alchemy is wired.
+
 ## Two-hundred-and-sixty-first round: HOMING -- the way home, and the window in which a returning monster ignores you
 
 The RE tick for 2026-09-19 18:02 read the last unread state body of the monster machine.

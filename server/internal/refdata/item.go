@@ -310,4 +310,21 @@ type Item struct {
 	// 33, and the server's action tick adds it to the two BCRadius values to
 	// decide how far a blow lands -- combat.ApproachBand (round 247).
 	Range int
+
+	// ReinforceRates are the three packed success-rate dwords an ELIXIR row
+	// carries: itemdata Param2/Param3/Param4 (columns 120/122/124), which the
+	// item parser's 20-element loop stores at record+0x2c0/+0x2e0/+0x300 --
+	// elements 1..3 of the (dword, string) array -- and
+	// CEnchant_Reinforce::LookupPackedRate reads by tier. Four percentages per
+	// dword, high byte first; the table's own Desc128 texts for the three are
+	// "1,2,3,4", "5,6,7,8" and "9,10,11,12": the plus levels each dword packs
+	// (round 262). alchemy.BaseRate unpacks them (ReinforceRates gathers the
+	// three). Zero on non-elixir rows and on exports predating the columns.
+	ReinforceRate1, ReinforceRate2, ReinforceRate3 uint32
+}
+
+// ReinforceRates is the three packed dwords in tier order, the shape
+// alchemy.Inputs.Tiers takes.
+func (it *Item) ReinforceRates() [3]uint32 {
+	return [3]uint32{it.ReinforceRate1, it.ReinforceRate2, it.ReinforceRate3}
 }

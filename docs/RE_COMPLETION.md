@@ -5142,6 +5142,13 @@ Round 261 (docs + `ai` constants): HOMING read -- home = nest/spawn displaced
 heading wobble outside the roam radius, and a re-aggro blackout of
 detectionRadius/runSpeed seconds. Six names (incl. the context timer table's
 shape). Every state the BATTLE loop runs is now read.
+Round 262 (alchemy, export cols 61-63): the item record's 0x2a0 strided array
+IS itemdata's Param/Desc128 block (element k = Param{k+1}, col 118+2k), so the
+packed reinforce base rates are the ELIXIR row's Param2/3/4 -- and the rows'
+own Desc texts ("1,2,3,4" / "5,6,7,8" / "9,10,11,12") name the plus levels
+each dword packs: A-grade 25/20/15/10 %, 10 % x5, 5 %. `refdata.Item.
+ReinforceRate1..3` + `ReinforceRates()`; test on the retail row. Alchemy's
+handler is still unwired, so nothing shipped changes.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

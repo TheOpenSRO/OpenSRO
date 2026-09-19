@@ -74,6 +74,11 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS reinforce_mag_min_hi DOUBLE PRECISION
 ALTER TABLE items ADD COLUMN IF NOT EXISTS reinforce_mag_max_hi DOUBLE PRECISION NOT NULL DEFAULT 0;
 -- The weapon's Range, itemdata column 94, world units (round 247).
 ALTER TABLE items ADD COLUMN IF NOT EXISTS attack_range INTEGER NOT NULL DEFAULT 0;
+-- An elixir's three packed reinforce success dwords, itemdata Param2/3/4
+-- (round 262); BIGINT because the top byte can be set.
+ALTER TABLE items ADD COLUMN IF NOT EXISTS reinforce_rate1 BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS reinforce_rate2 BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS reinforce_rate3 BIGINT NOT NULL DEFAULT 0;
 -- The potion restore amounts. REAL and exported since the Param block was
 -- decoded, and parsed by the CSV loader -- but there were no columns here, so
 -- ImportItems dropped them and every potion failed useitem's "cannot be used"
@@ -212,8 +217,8 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			req_level_type4, req_level4, repair_cost, decay_time_ms,
 			phys_attack_min_hi, phys_attack_max_hi, mag_attack_min_hi, mag_attack_max_hi,
 			reinforce_phys_min_hi, reinforce_phys_max_hi, reinforce_mag_min_hi, reinforce_mag_max_hi,
-			attack_range
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61)
+			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64)
 		ON CONFLICT (id) DO UPDATE SET
 			type_id1=excluded.type_id1, type_id2=excluded.type_id2, type_id3=excluded.type_id3, type_id4=excluded.type_id4,
 			country=excluded.country, req_gender=excluded.req_gender,
@@ -245,7 +250,8 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			mag_attack_min_hi=excluded.mag_attack_min_hi, mag_attack_max_hi=excluded.mag_attack_max_hi,
 			reinforce_phys_min_hi=excluded.reinforce_phys_min_hi, reinforce_phys_max_hi=excluded.reinforce_phys_max_hi,
 			reinforce_mag_min_hi=excluded.reinforce_mag_min_hi, reinforce_mag_max_hi=excluded.reinforce_mag_max_hi,
-			attack_range=excluded.attack_range
+			attack_range=excluded.attack_range,
+			reinforce_rate1=excluded.reinforce_rate1, reinforce_rate2=excluded.reinforce_rate2, reinforce_rate3=excluded.reinforce_rate3
 	`)
 	if err != nil {
 		return fmt.Errorf("refdata: preparing insert: %w", err)
@@ -266,7 +272,7 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			it.ReqLevelType2, it.ReqLevel2, it.ReqLevelType3, it.ReqLevel3, it.ReqLevelType4, it.ReqLevel4, it.RepairCost, it.DecayTimeMs,
 			it.PhysAttackMinHi, it.PhysAttackMaxHi, it.MagAttackMinHi, it.MagAttackMaxHi,
 			it.ReinforcePhysMinHi, it.ReinforcePhysMaxHi, it.ReinforceMagMinHi, it.ReinforceMagMaxHi,
-			it.Range,
+			it.Range, int64(it.ReinforceRate1), int64(it.ReinforceRate2), int64(it.ReinforceRate3),
 		); err != nil {
 			return fmt.Errorf("refdata: inserting item %d: %w", it.ID, err)
 		}
@@ -292,8 +298,9 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 			req_level_type4, req_level4, repair_cost, decay_time_ms,
 			phys_attack_min_hi, phys_attack_max_hi, mag_attack_min_hi, mag_attack_max_hi,
 			reinforce_phys_min_hi, reinforce_phys_max_hi, reinforce_mag_min_hi, reinforce_mag_max_hi,
-			attack_range
+			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3
 		FROM items WHERE id = $1`, id)
+	var rr [3]int64
 	if err := row.Scan(
 		&it.ID, &it.MaxStack, &it.ReqStr, &it.ReqInt, &it.ItemClass, &it.TwoHanded,
 		&it.DurabilityMin, &it.DurabilityMax, &it.PhysDefenseMin, &it.PhysDefenseMax,
@@ -307,13 +314,14 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 		&it.ReqLevelType2, &it.ReqLevel2, &it.ReqLevelType3, &it.ReqLevel3, &it.ReqLevelType4, &it.ReqLevel4, &it.RepairCost, &it.DecayTimeMs,
 		&it.PhysAttackMinHi, &it.PhysAttackMaxHi, &it.MagAttackMinHi, &it.MagAttackMaxHi,
 		&it.ReinforcePhysMinHi, &it.ReinforcePhysMaxHi, &it.ReinforceMagMinHi, &it.ReinforceMagMaxHi,
-		&it.Range,
+		&it.Range, &rr[0], &rr[1], &rr[2],
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("refdata: querying item %d: %w", id, ErrItemNotFound)
 		}
 		return nil, fmt.Errorf("refdata: querying item %d: %w", id, err)
 	}
+	it.ReinforceRate1, it.ReinforceRate2, it.ReinforceRate3 = uint32(rr[0]), uint32(rr[1]), uint32(rr[2])
 	return &it, nil
 }
 
@@ -338,7 +346,7 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			req_level_type4, req_level4, repair_cost, decay_time_ms,
 			phys_attack_min_hi, phys_attack_max_hi, mag_attack_min_hi, mag_attack_max_hi,
 			reinforce_phys_min_hi, reinforce_phys_max_hi, reinforce_mag_min_hi, reinforce_mag_max_hi,
-			attack_range
+			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3
 		FROM items ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("refdata: listing items: %w", err)
@@ -348,6 +356,7 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 	var out []*Item
 	for rows.Next() {
 		var it Item
+		var rr [3]int64
 		if err := rows.Scan(
 			&it.ID, &it.MaxStack, &it.ReqStr, &it.ReqInt, &it.ItemClass, &it.TwoHanded,
 			&it.DurabilityMin, &it.DurabilityMax, &it.PhysDefenseMin, &it.PhysDefenseMax,
@@ -361,10 +370,11 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			&it.ReqLevelType2, &it.ReqLevel2, &it.ReqLevelType3, &it.ReqLevel3, &it.ReqLevelType4, &it.ReqLevel4, &it.RepairCost, &it.DecayTimeMs,
 			&it.PhysAttackMinHi, &it.PhysAttackMaxHi, &it.MagAttackMinHi, &it.MagAttackMaxHi,
 			&it.ReinforcePhysMinHi, &it.ReinforcePhysMaxHi, &it.ReinforceMagMinHi, &it.ReinforceMagMaxHi,
-			&it.Range,
+			&it.Range, &rr[0], &rr[1], &rr[2],
 		); err != nil {
 			return nil, fmt.Errorf("refdata: scanning item: %w", err)
 		}
+		it.ReinforceRate1, it.ReinforceRate2, it.ReinforceRate3 = uint32(rr[0]), uint32(rr[1]), uint32(rr[2])
 		out = append(out, &it)
 	}
 	return out, rows.Err()
