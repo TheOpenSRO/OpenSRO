@@ -7075,6 +7075,17 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-twenty-fifth round: the sky does not read the game clock -- a negative result that reshapes the day/night probe
+
+The RE tick's step for 2026-09-19 09:19, one tick on round 224's open link. Read: the
+`S_SetWorldTime` handler (`0x54f6b0`) sets a calendar time on the clock and locks it. Found
+by enumeration: nothing outside the clock module reads the clock's fields -- not the
+hour/minute, not the synced `time_t`, not the seconds value (one alchemy timer), not the
+elapsed counter (UI timers). So the environment sampler is not fed by this clock's fields;
+either a value is pushed to it by a call, or `SWorld` runs its own day/night accumulator
+with a period of its own. The probe moves to `SWorld`'s update slot
+(`docs/protocol/game_clock.md`). No value changed.
+
 ## Two-hundred-and-twenty-fourth round: the game clock -- server time every ten minutes, real-time advance, and the four other periodic jobs named
 
 The RE tick's step for 2026-09-19 09:04. Round 223's timer table left four jobs unnamed;

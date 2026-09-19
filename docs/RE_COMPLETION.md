@@ -4920,6 +4920,8 @@ The 600 s job on the same timer table is the clock sync: `FUN_004f9320` packs
 `CGame::vslot_011` advances 1:1 and publishes as seconds (`x 0.001`, double at
 `0xdd3020`); `S_SetWorldTime` locks it. The environment sampler's mapping onto the
 0..1 day axis is NOT read, so no cycle is built. `docs/protocol/game_clock.md`.
+Round 225: nothing outside the clock module reads the clock -- the sky is not fed by it;
+the probe moves to `SWorld`'s update slot (own accumulator, or a pushed value).
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

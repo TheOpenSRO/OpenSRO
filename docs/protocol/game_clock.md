@@ -56,9 +56,26 @@ sky/fog sampler's time source was not located, so whether a game day is one real
 client keeps sampling the environment at a fixed `t = 0.5` (`ENVIRONMENT_REFERENCE_TIME`),
 which is disclosed there.
 
-*Next probe:* readers of `CGame+0x8f8` (elapsed ms) and callers of `FUN_00834c70` /
-`FUN_00834d40` outside the UI (`0x65d9e0` is the one not yet read), or the `CWeather`
-family's update, for a division whose divisor is the day length.
+Second pass (round 225) narrowed it without closing it:
+
+- The `S_SetWorldTime` handler is `FUN_0054f6b0` (`0x54f6b0`): it parses year, month, day,
+  hour, minute, second, sets the clock (`FUN_00834bf0`), re-seeds the ms counter
+  (`FUN_00834df0`) and locks it (`FUN_00834dd0(1)`). A scene sets a *calendar* time -- so
+  whatever consumes the clock takes a calendar, not a compressed phase.
+- No function outside the clock module reads the clock's fields: `+0x938/+0x93c`
+  (min/hour) are read only by the module's own setter/splitter; `+0x958` by the module and
+  one UI; the seconds value `+0x92c` only by an alchemy timer; `+0x8f8` only by UI timers.
+  The tm getters `FUN_00834c70`/`FUN_00834d40` are called by event-window checks and the
+  `ServerTime` console print. So the sky/fog sampler is not fed by a field read of this
+  clock. Either it is pushed a value through a call that copies it (not matched by offset),
+  or the environment cycle runs on `SWorld`'s own timer, independent of server time.
+- `SWorld` (51 vtable functions, `0x9ef420..`) owns `environment.ifo` (`SWorld::vslot_013`
+  loads it); its per-frame update is the place the answer lives.
+
+*Next probe:* `SWorld`'s update slot -- the one that reads the loaded environment record's
+graphs -- and the value it interpolates with; if that value is a free-running accumulator,
+the cycle length is the constant it is divided by, and the clock above has nothing to do
+with the sky (which would also explain why nothing reads it).
 
 ## What srrevamp does
 
