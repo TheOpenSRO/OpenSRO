@@ -28,3 +28,21 @@ func TestSpawnScalesHPByRarity(t *testing.T) {
 		t.Fatalf("giant spawn: MaxHP/HP = %d/%d, want 1080/1080", m.MaxHP, m.HP)
 	}
 }
+
+// TestPartySupportMonsterHasTenTimesTheBase: MonsterType 1 (IsPartySupportMonster
+// is exactly that) starts the percentage at 1000 before the rank multiplier;
+// a unique keeps its row's HP even as a party monster.
+func TestPartySupportMonsterHasTenTimesTheBase(t *testing.T) {
+	for _, tc := range []struct {
+		rarity int
+		party  bool
+		want   int
+	}{{0, true, 1000}, {1, true, 2000}, {4, true, 20000}, {3, true, 100}, {0, false, 100}} {
+		if got := MonsterHPPercent(tc.rarity, tc.party); got != tc.want {
+			t.Errorf("MonsterHPPercent(%d, %v) = %d, want %d", tc.rarity, tc.party, got, tc.want)
+		}
+	}
+	if got := ScaleHPForMonster(54, 4, true); got != 10800 {
+		t.Fatalf("party giant Mangyang: %d, want 10800", got)
+	}
+}

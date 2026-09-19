@@ -18124,3 +18124,18 @@ constant in this project that operand size decided. Wired as
 `combat.RarityHPPercent`/`ScaleHPForRarity` at spawn, with tests; every species
 srrevamp spawns is rank 0 today, so no live number moved -- the next
 champion or giant will carry the right health.
+
+## The x10 HP mode is the party monster -- read, not inferred (2026-09-19)
+
+Last entry's disclosed inference (vtable slot 192 "most likely a party monster,
+by adjacency") is now a reading. The IGObj base stub at slot 192 is
+`IGObj::GetMonsterType`; `CGObjMob::GetMonsterType` returns the HIGH nibble of
+the byte at `this+0x1cd8`, `CGObjMob::GetMonsterClass` (slot 75, the rank the
+HP switch keys on) its LOW nibble, and `CGObjMob::IsPartySupportMonster` (slot
+193) is exactly `(byte & 0xf0) == 0x10` -- MonsterType 1. So
+`CGObjMob::PublishStats` starting from 1000 % instead of 100 % when
+`GetMonsterType() == 1` is the party monster's tenfold HP, on top of the rank
+multiplier. Wired as `combat.MonsterHPPercent`/`ScaleHPForMonster` with the
+flag carried but unset for every species srrevamp spawns; no live value moved.
+Which spawns are party monsters comes from the nest/tactics tables, still
+unread.

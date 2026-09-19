@@ -24,13 +24,17 @@ package combat
 // monster's displayed maximum (round 205), which is the display half of this
 // rule.
 //
-// DISCLOSED, not applied: before the switch, an object answering 1 through
-// vtable slot 192 starts from 1000.0 (float at 0xb462ac) instead of 100.0 --
-// a x10 on top of the rank. Slot 193 is IsPartySupportMonster (round 203), so
-// by adjacency 192 is most likely "is a party monster"; nothing srrevamp
-// spawns carries that flag and no data here says which species do, so the
-// x10 is recorded and not wired. The rank names are the ones
-// combat.Monster.Rarity already documents from characterdata column 15.
+// The x10 mode is READ, not inferred (2026-09-19): before the switch,
+// PublishStats starts from 1000.0 (float at 0xb462ac) instead of 100.0 when
+// vtable slot 192 answers 1. Slot 192 is GetMonsterType -- CGObjMob's override
+// returns the HIGH nibble of the byte at this+0x1cd8, whose LOW nibble is
+// GetMonsterClass (the rank above, slot 75) -- and IsPartySupportMonster
+// (slot 193) is exactly `(byte & 0xf0) == 0x10`, i.e. MonsterType == 1. A
+// party monster therefore carries ten times the HP percentage before its
+// rank multiplies it (a party giant is x200). Nothing srrevamp spawns is a
+// party monster today; the flag is carried so the first one will be right.
+// The rank names are the ones combat.Monster.Rarity already documents from
+// characterdata column 15.
 func RarityHPPercent(rarity int) int {
 	switch rarity {
 	case 0:
@@ -55,8 +59,24 @@ func RarityHPPercent(rarity int) int {
 	}
 }
 
+// MonsterHPPercent is the whole percentage the engine publishes: the rank
+// multiplier on a base of 100, or of 1000 for a party-support monster
+// (MonsterType 1). Uniques (ranks 3 and 8) keep their row's HP either way.
+func MonsterHPPercent(rarity int, partySupport bool) int {
+	pct := RarityHPPercent(rarity)
+	if partySupport && rarity != 3 && rarity != 8 {
+		pct *= 10
+	}
+	return pct
+}
+
 // ScaleHPForRarity applies RarityHPPercent to a species' authored max HP the
 // way the engine's percentage param scales the published stat.
 func ScaleHPForRarity(maxHP, rarity int) int {
 	return maxHP * RarityHPPercent(rarity) / 100
+}
+
+// ScaleHPForMonster is ScaleHPForRarity with the party-support x10 folded in.
+func ScaleHPForMonster(maxHP, rarity int, partySupport bool) int {
+	return maxHP * MonsterHPPercent(rarity, partySupport) / 100
 }
