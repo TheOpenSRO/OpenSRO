@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 )
@@ -42,10 +43,14 @@ type Monster struct {
 	// BCRadius is the species' collision radius (characterdata col 50), the
 	// monster's half of the attack-distance rule's base -- see ApproachBand.
 	BCRadius int
-	Zone     string
-	X, Y, Z  float64 // own design placeholder position -- see Hub.Spawn
-	MaxHP    int
-	HP       int
+	// AttackReuseMs / AttackRange: the primary attack skill's ReuseDelay and
+	// Range -- see Species. The hub's CounterattackReady enforces the delay.
+	AttackReuseMs int
+	AttackRange   int
+	Zone          string
+	X, Y, Z       float64 // own design placeholder position -- see Hub.Spawn
+	MaxHP         int
+	HP            int
 	// Defense is the monster's flat absorption, and it is REAL: characterdata
 	// col 71, which GObjMob_PublishStats publishes into ParamKeeper param 5 --
 	// exactly the term Formula_MitigatePhysicalDamage subtracts. See
@@ -663,11 +668,35 @@ type Hub struct {
 	mu     sync.Mutex
 	byID   map[int64]*Monster
 	nextID atomic.Int64
+	// lastBlow is when each monster last struck: the re-use gate below.
+	lastBlow map[int64]time.Time
 }
 
 // NewHub returns an empty Hub.
 func NewHub() *Hub {
-	return &Hub{byID: make(map[int64]*Monster)}
+	return &Hub{byID: make(map[int64]*Monster), lastBlow: make(map[int64]time.Time)}
+}
+
+// CounterattackReady reports whether monster id may strike at now, and when
+// it may, records the blow. A monster's blows are at least its attack skill's
+// ReuseDelay apart (Monster.AttackReuseMs); a monster with no known delay is
+// always ready. srrevamp's monster still strikes only when struck (it has no
+// BATTLE loop of its own yet), so this is a ceiling on its cadence, not the
+// cadence -- the real one is the skill's re-use delay on its own timer.
+func (h *Hub) CounterattackReady(id int64, now time.Time) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	m, ok := h.byID[id]
+	if !ok {
+		return false
+	}
+	if m.AttackReuseMs > 0 {
+		if last, struck := h.lastBlow[id]; struck && now.Sub(last) < time.Duration(m.AttackReuseMs)*time.Millisecond {
+			return false
+		}
+	}
+	h.lastBlow[id] = now
+	return true
 }
 
 // Spawn creates a new monster in zone at (x, y, z) with full HP and returns
@@ -700,6 +729,16 @@ type Species struct {
 	// col 50 (the common record's word at +0xee, IGObj slot 344) -- one of the
 	// two radii the attack-distance rule adds to a range (see ApproachBand).
 	BCRadius int
+	// AttackReuseMs is the ReuseDelay (skilldata column 14) of the species'
+	// primary attack skill (characterdata col 83), and AttackRange that
+	// skill's Range (column 21, world units). In the real BATTLE state the
+	// monster fires that skill through the same action machine a player's
+	// cast runs (AITactics_Handler_0e8 -> the tactics' AI-skill Execute), so
+	// it cannot strike more often than the skill's re-use delay: Mangyang
+	// 3000 ms, Gyo 2000, Yeoha 2500 (read from the retail table 2026-09-19,
+	// round 254). Zero means unknown and imposes no cadence.
+	AttackReuseMs int
+	AttackRange   int
 	// Critical is the species' real critical-hit chance, characterdata
 	// _RefObjChar col 78. See Monster.Critical.
 	Critical int
@@ -719,7 +758,7 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, AttackReuseMs: species.AttackReuseMs, AttackRange: species.AttackRange, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
 		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
 	h.byID[id] = m
 	return m

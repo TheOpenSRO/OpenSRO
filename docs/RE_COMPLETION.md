@@ -5081,6 +5081,10 @@ resolved, to settle it from the reporter's own archives.
 Round 253 (v0.1.403): every roster species takes its real `npcpos` placements
 (`export-refdata -mode npcpos`, `internal/spawn`, `-npcpos-csv`); the town anchors
 are the fallback only. Grounds eleven species' positions that were own design.
+Round 254 (v0.1.404): BATTLE's attack step read (`AITactics_Handler_0e8`): the
+monster's cadence is its attack skill's ReuseDelay (skilldata col 14: Mangyang
+3000 ms, Gyo 2000, Yeoha 2500); `combat.Hub.CounterattackReady` caps the
+counter-blow at that delay. The monster still strikes only when struck.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

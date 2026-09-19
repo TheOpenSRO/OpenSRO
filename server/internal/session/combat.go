@@ -1107,6 +1107,10 @@ func performAttack(
 				return fmt.Errorf("combat: granting skill points: %w", err)
 			}
 		}
+	} else if !monsters.CounterattackReady(monster.ID, time.Now()) {
+		// Inside its attack skill's re-use delay: the real monster is still
+		// in that skill's action and cannot strike again yet (combat.Hub.
+		// CounterattackReady). The player's blow landed; there is no reply.
 	} else {
 		armor, err := defenderArmor(ctx, characterID, eq, items)
 		if err != nil {

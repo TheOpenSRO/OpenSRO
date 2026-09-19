@@ -7075,6 +7075,26 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-fifty-fourth round: a monster's attack cadence is its skill's re-use delay
+
+The RE tick for 2026-09-19 16:04. BATTLE's attack step is `AITactics_Handler_0e8` (`0x5472a0`,
+behaviour `+0xe8`): it waits on the tactics timer, takes the AI-skill selector's pick (ctx
+`+0x9c`, slots 4/7) and runs Execute (slot 8) -- the skill goes through the same action machine
+a player's cast does (round 247's `ActionTick_UseSkill`), so **a monster cannot strike more
+often than its attack skill's ReuseDelay**, and on a landed blow it stamps ctx `+0xcc`, the
+5000 ms window the give-up check reads. The species' attack skills (characterdata col 83) carry
+the numbers in skilldata columns 13/14/21: Mangyang `MSKILL_CH_MANGNYANG_ATTACK01` action 2400
+/ reuse **3000** / range 10; Gyo 1700/**2000**/7; Yeoha cast 1070 + action 830 / **2500** / 7;
+Tomb Stone ghost **2500** at range **100** (a ranged monster); Earth Ghost 1533/**2000**/7.
+
+**Wired (v0.1.404):** `combat.Species/Monster.AttackReuseMs` and `AttackRange` on the roster
+from the table, and `combat.Hub.CounterattackReady` -- a monster's blows are at least its
+re-use delay apart; the session skips the counter-blow inside the window. srrevamp's monster
+still strikes only when struck (there is no BATTLE loop of its own yet), so this is a ceiling
+on its cadence, not the cadence -- said in the code. Before this a player swinging once a
+second took a Mangyang blow once a second; the real Mangyang swings every three. Test on the
+gate; full suite green (57 packages). One name.
+
 ## Two-hundred-and-fifty-third round: every roster species stands where the game puts it
 
 Follow-up to the playtest report "why are there Yeohas in town" (round 250). Only Mangyang had
