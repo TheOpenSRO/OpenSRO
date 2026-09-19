@@ -18070,3 +18070,21 @@ row shape is what `import-refdata -drops-csv` must be fed in.
 Also retracted the same day: a "new character spawns with placeholder 200 HP"
 item logged from a playtest note -- `MaxHPFor(20, 1)` is 200 and the respawn at
 80 is `RespawnFraction 0.4`; the grounded numbers coincide with the placeholder.
+
+## The telelink consumer: a measured narrowing, not a find (2026-09-19)
+
+Took the Teleport row's probe (the consumer of `_REFTELELINK`, to settle
+teleportlink columns 3/8/9 as fee and level bounds). What it is NOT, each read
+rather than assumed: `0x0082d770` is the table registration for class
+`CRefTeleLink` (and the `0x30` in it is the per-table descriptor size, present
+in every registration in that file -- not a row size); the other readers of its
+globals are DB-registration plumbing ("DBTable Registering Failed"); the request
+path behind "someone designated unknown teleport gate" (`CGObjPC::FUN_004e08a0`
+-> `FUN_004e0a40` -> `FUN_00407760`) designates a gate, it does not charge a
+trip; and a census of every inline-cursor deserializer in shards 006-008 by
+opening widths (telelink must open `u8 Service, i32, i32, i32 fee`) found the
+drop row (`0x006a6aa0`), the price policy (`0x006a8b80`) and two name-plus-pairs
+tables, none of them telelink. The `CRefTeleLink` row reader therefore reads
+through a helper or lives outside those shards. The row's next probe is now
+specific: the class's vtable slot for `ExtractData`, or `RefInstanceGenerator`'s
+`VCRefTeleLink` walk. No value changed; nothing to wire.
