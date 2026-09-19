@@ -121,6 +121,13 @@ byte at `entry+6` against a level-shaped value -- but those entries are the
 list. *Next probe:* the server's reply to a gate talk (the list builder), or
 the list packet's layout on the client side of that same function.
 
+One more structural fact (2026-09-19): the runtime link vector hangs off the gate's
+`CRefTeleport` ref object (`ref+0x190`, vector at `+0x3c/+0x40`), and a link's first
+word is a **pointer to the destination `CRefTeleport`** (`CGObjNPCNPC::Create` reads its
+code name through it -- the `GATE_TD` special case) with the fee second; the pass that
+builds those links from `_REFTELELINK` rows is not among `RefInstanceGenerator`'s named
+helpers and is unread.
+
 ## `teleportbuilding.txt` — the gate objects
 
 **77 enabled rows, 59 columns.** The physical gates: `2094 STORE_CH_GATE`,
