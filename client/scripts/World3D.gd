@@ -1864,15 +1864,52 @@ func _zone_label_position_suffix() -> String:
 	var suffix := String(group.name).replace("RealTerrain_", "")
 	return " [%s] local %d, %d, %d" % [suffix, local.x, local.y, local.z]
 
-func _update_zone_label_for_region(region_x: int, region_y: int) -> void:
+## The client's own per-region zone names (Media.pk2's
+## `server_dep\\silkroad\\textdata\\textzonename.txt`), loaded once per run.
+## Empty means "already tried, nothing usable" -- see _zone_name_for_region.
+const TEXT_ZONE_NAME_PATH := "server_dep\\silkroad\\textdata\\textzonename.txt"
+var _text_zone_names: Dictionary = {}
+var _text_zone_names_load_attempted := false
+
+func _load_text_zone_names() -> Dictionary:
+	if _text_zone_names_load_attempted:
+		return _text_zone_names
+	_text_zone_names_load_attempted = true
+	var archive := _open_media_pk2_if_set()
+	if archive == null:
+		return _text_zone_names
+	var bytes := AssetSource.read_bytes(TEXT_ZONE_NAME_PATH, archive)
+	if bytes.is_empty():
+		print("World3D: no real per-region zone-name table at ", TEXT_ZONE_NAME_PATH, " -- the zone label falls back to Shader\\regioninfo.txt's 15 zones")
+		return _text_zone_names
+	_text_zone_names = TextZoneNameReader.parse(bytes)
+	print("World3D: loaded real per-region zone names (%d regions) from %s" % [_text_zone_names.size(), TEXT_ZONE_NAME_PATH])
+	return _text_zone_names
+
+## The display name of the zone a region belongs to. The per-region text
+## table is the game's own answer and covers the whole world (Alexandria,
+## the dungeons, the arenas); `Shader\\regioninfo.txt` names only the 15
+## original zones, so it is the fallback -- and a region neither knows
+## keeps the label as it is rather than inventing a name. Before the text
+## table was read (docs/rounds/map.md, 2026-09-19) a travel to Alexandria
+## left the label and the minimap saying "Jangan".
+func _zone_name_for_region(region_x: int, region_y: int) -> String:
+	var zone_name := TextZoneNameReader.name_for(_load_text_zone_names(), region_x, region_y)
+	if zone_name != "":
+		return zone_name
 	var table := _load_regioninfo()
 	if table == null:
-		return
-	var zone_name := RegioninfoNames.display_for_region(table, region_x, region_y)
+		return ""
+	return RegioninfoNames.display_for_region(table, region_x, region_y)
+
+func _update_zone_label_for_region(region_x: int, region_y: int) -> void:
+	var zone_name := _zone_name_for_region(region_x, region_y)
 	if zone_name == "":
 		return
 	_current_zone_name = zone_name
 	zone_label.text = "Zone: %s%s" % [zone_name, _zone_label_position_suffix()]
+	if _hud_minimap != null and is_instance_valid(_hud_minimap):
+		_hud_minimap.set_area_name(zone_name)
 
 func _load_tile_index() -> TileIndexReader.Table:
 	if _tile_index_load_attempted:
@@ -1911,7 +1948,7 @@ static var _ground_texture_cache: Dictionary = {}
 ## against a real Map.pk2). Returns {} (not an error) if tile_table is
 ## null or SRREVAMP_MAP_PK2_PATH isn't set -- callers already treat an
 ## empty lookup as "use the flat tile-type color instead."
-func _load_real_ground_textures(region: MapmReader.ParsedRegion, tile_table: TileIndexReader.Table) -> Dictionary:
+func _load_real_ground_textures(region: MapmReader.ParsedRegion, tile_table: TileIndexReader.Table, region_name: String = "") -> Dictionary:
 	var result := {}
 	if tile_table == null:
 		return result
@@ -1926,13 +1963,24 @@ func _load_real_ground_textures(region: MapmReader.ParsedRegion, tile_table: Til
 				continue
 			ids[vertex.extra.decode_u16(0) & 0x3ff] = true
 
+	var no_entry := 0
+	var unreadable := 0
 	for id in ids.keys():
 		var entry := tile_table.lookup(id)
 		if entry == null or entry.filename == "":
+			no_entry += 1
 			continue
 		var tex := _load_ground_texture_file(entry.filename, archive)
 		if tex != null:
 			result[id] = tex
+		else:
+			unreadable += 1
+	# One line per region, so a playtest log can say whether a flat or white
+	# floor was a texture the archive did not have (unreadable), an id the
+	# tile table did not know (no entry), or neither (a rendering problem).
+	print("World3D: ground textures for %s -- %d ids, %d resolved, %d without a tile2d.ifo entry, %d files missing or undecodable%s" % [
+		region_name, ids.size(), result.size(), no_entry, unreadable,
+		"" if not result.is_empty() else " -- NOTHING resolved, the region draws the flat fallback"])
 	return result
 
 ## Loads and caches one real Tile2D\<filename>.ddj -- see
@@ -2607,7 +2655,7 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	var fog_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_FOG_COLOR, ENVIRONMENT_REFERENCE_TIME)
 	_fog_near_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_NEAR_PLANE, ENVIRONMENT_REFERENCE_TIME) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
 	_fog_far_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_FAR_PLANE, ENVIRONMENT_REFERENCE_TIME) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
-	print("World3D: environment fog planes (real, channels 10/11 x view distance %.0f): near %.0f, far %.0f -- drawn with Godot density %g (disclosed)" % [
+	print("World3D: environment fog planes (real, channels 10/11 x view distance %.0f): near %.0f, far %.0f -- drawn with Godot density %.5f (disclosed)" % [
 		EnvironmentReader.VIEW_DISTANCE_DEFAULT, _fog_near_real, _fog_far_real, FOG_DENSITY])
 	var env := world_environment.environment
 	env.fog_enabled = true
@@ -4061,7 +4109,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# (build_full_region_mesh) is a strictly better fallback than a
 	# multi-surface mesh where every single surface is the color fallback
 	# anyway.
-	var ground_textures := _load_real_ground_textures(region, tile_table)
+	var ground_textures := _load_real_ground_textures(region, tile_table, mapm_path)
 	var textured := not ground_textures.is_empty()
 
 	# Real, fully deterministic full-region assembly (2026-08-23) -- see
