@@ -82,10 +82,17 @@ type realSpawn struct {
 	LocalX, LocalZ float64
 }
 
-// monsterStatsForLevel is what is still this project's OWN DESIGN in a
-// monster's combat profile: counter-attack and gold, derived from the grounded
-// level. MaxHP left in 2026-09-14 (real, characterdata col 59) and DEFENCE left
-// in 2026-09-15 -- both halves of it are real now:
+// monsterStatsForLevel is the FALLBACK half of a monster's combat profile:
+// a flat counter-attack and a flat gold reward derived from the grounded
+// level, used only for a species whose real numbers are missing. In the live
+// table every species has them -- AttackMin/AttackMax from its primary
+// attack skill (characterdata col 83 -> that skill's 'att' param) and
+// GoldMin/GoldMax from levelgold.txt -- so this curve does not decide a fight
+// on the public server; it exists so a species added without them still
+// fights. (An older version of this comment said attack and gold "have no
+// identified real table"; they do, see combat.Monster.) MaxHP left in
+// 2026-09-14 (real, characterdata col 59) and DEFENCE left in 2026-09-15 --
+// both halves of it are real now:
 //
 //   - the flat absorption is characterdata col 71 (monsterSpec.Defense), and
 //   - the percentage reduction is col 73, which is the monster's own level
@@ -97,8 +104,8 @@ type realSpawn struct {
 // (the percentage), and GObjMob_PublishStats publishes cols 71 and 73 into
 // exactly those two params.
 //
-// Attack and gold have no identified real table and stay a disclosed curve.
-// Exp per kill is real (leveldata col 5); SP still comes from combat.SPFor.
+// The curve itself stays disclosed own design, as a fallback. Exp per kill is
+// real (leveldata col 5); SP still comes from combat.SPFor.
 func monsterStatsForLevel(level, rarity int) (attack int, gold int64) {
 	if level < 1 {
 		level = 1

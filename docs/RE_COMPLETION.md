@@ -4936,6 +4936,19 @@ exporter (column 52), the CSV loader, the SQL store (`decay_time_ms`) and the hu
 (`SetDecayLookup`); the public server re-imported (10000 ms for 6,494 rows, 180000 for
 8,402). The 30 s ownership window outlasting a 10 s drop is the game's own rule.
 
+### Coverage and the remaining disclosed census, 2026-09-19 (round 228)
+
+Server dump: 34,207 functions, 5,124 named by leaf (15.0%; `vslot_`/`FUN_` counted
+as unnamed). The self-naming-string levers are exhausted: one unnamed function still
+carries a `Class::Method()` string (`FUN_005bb770`, `Party::BroadcastToLocalMember()`)
+and the bare `Class::Method` form yields only the four pool constructors already named
+and a siege query label. Of the code's own DISCLOSED/own-design markers, the ones a
+fight touches are all fallbacks now (`monsterStatsForLevel` attack/gold, the skill
+catalog's DamageBonus, `session/skill.go`'s level+1) or enumerated decisions (skill
+experience on kill, MP not persisted, regen percentage); `monsterStatsForLevel`'s
+comment said attack and gold had "no identified real table" -- stale since the col-83
+skill and `levelgold.txt` were wired -- and now says it is the fallback.
+
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
 via `nItemDBID`), and an empty slot is a real row with `ItemID = 0 or NULL`

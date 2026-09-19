@@ -2265,3 +2265,4 @@
 0054f130	server	AI_AIMsgPool_Construct	reading	NamedPool_Construct inlined for the pool named 'AI::CAIMsg'.
 0096d8e0	server	CNetEngine::SocketPool_Construct	reading	constructs a named socket pool: FUN_0096ee60(pool, name) then FUN_00976530(pool+0x5c); called for 'NetEngine::ActiveSocketPool' and 'NetEngine::PassiveSocketPool'.
 0096b330	server	CNetEngine::InitSocketPools	reading	constructs the engine's ActiveSocketPool at this+0x66 and PassiveSocketPool at this+0x8c by name.
+005bb770	server	CParty::BroadcastToLocalMember	reading	its own error strings name it: "Party::BroadcastToLocalMember(), Member pointer is NULL!!" and "CParty::BroadcastToLocalMember() - Cant get client context from PC!!!" (round 228).

@@ -7075,6 +7075,20 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-twenty-eighth round: the disclosed census is fallbacks and decisions; a stale comment corrected; naming levers measured
+
+The RE tick's step for 2026-09-19 10:07. A census of every DISCLOSED / own-design marker in
+the server code, against what a fight actually uses: monster attack and gold come from
+the species' attack skill (col 83 -> `'att'`) and `levelgold.txt`; `monsterStatsForLevel`
+is only their fallback, though its comment still said the two had "no identified real
+table" -- corrected. The others in the fight path are fallbacks too (the own-design skill
+catalog's DamageBonus; `session/skill.go`'s level+1 when no table) or enumerated
+decisions with their reasons written (skill experience on kill: 42 call sites read; MP
+not persisted; the regen percentage kept above the engine's floor of 1). Naming
+coverage measured from the index: 15.0% of 34,207 server functions named by leaf; the
+self-naming-string levers are spent (one `Class::Method()` leftover,
+`FUN_005bb770` = `Party::BroadcastToLocalMember`, named now). No value changed.
+
 ## Two-hundred-and-twenty-seventh round: how long a drop lies on the ground -- DecayTime, read and wired per item
 
 The RE tick's step for 2026-09-19 09:49, from the disclosed census: `grounditem.Lifetime`
