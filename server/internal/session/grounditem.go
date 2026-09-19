@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"math/rand"
 	"time"
@@ -353,9 +354,26 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 			if !ok || ground == nil || inv == nil {
 				return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: req.GroundItemID})
 			}
+			// The engine measures the 10 units in 3-D. Here the vertical term is
+			// dropped ON PURPOSE: srrevamp's monsters (and so their drops) sit
+			// at a placeholder y of 0 (combat.Monster: "own design placeholder
+			// position") while clients report their real terrain height, so
+			// a faithful 3-D distance in Jangan is ~50 units of pure height
+			// mismatch. The rule in internal/grounditem stays the engine's;
+			// this call site feeds it the item's own y until the server has
+			// terrain heights of its own.
+			var probe grounditem.Item
+			if cur, ok := ground.Get(req.GroundItemID); ok {
+				probe = cur
+			}
 			it, code := ground.PickCheck(req.GroundItemID, characterID,
-				float32(entity.Pos.X), float32(entity.Pos.Y), float32(entity.Pos.Z), samePartyFunc(parties))
+				float32(entity.Pos.X), probe.Y, float32(entity.Pos.Z), samePartyFunc(parties))
 			if code != 0 {
+				// The refusal and its measurement, so a QA run's server.log says
+				// which rule fired and with what numbers.
+				slog.Info("pick-up refused", "character_id", characterID, "ground_item", req.GroundItemID,
+					"code", fmt.Sprintf("%#x", code), "player_x", entity.Pos.X, "player_z", entity.Pos.Z,
+					"item_x", probe.X, "item_z", probe.Z, "owner", probe.OwnerAt(time.Now()))
 				return reply(&PickUpResult{Code: int32(code), GroundItemID: req.GroundItemID})
 			}
 			// The item is ours to take now (busy for everyone else). Move it.
