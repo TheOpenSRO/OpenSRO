@@ -7075,6 +7075,36 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-seventieth round: the warehouse cap is 210, not 112 -- and the expansion items say +30 / +32
+
+The RE tick for 2026-09-19 20:17 took the Storage row's Next -- the expansion item's increment --
+and corrected a cap on the way.
+
+**The increments are the items' own Param1.** `CGItemExpendable::UseByKind` (`0x49c2b0`, the
+expendable-use switch on TypeID4) case `0x11` passes the row's `Param1` byte as the amount and maps
+`Param2` to the container: 0 -> the bag (`CGObjPC::ExpandInventory` slot 173, kind 0: caps 77, or
+99 with the expansion-quest flag, never reaching 100), 1 -> **kind 3, the warehouse** (refused
+once the new size would pass `0xd2` = 210, error `0x18fe`
+`UIIT_STT_STORAGE_EXPANSION_USE_ERORR`). The two rows: `ITEM_MALL_INVENTORY_ADDITION` (24365)
+**32 / 0**, `ITEM_MALL_WAREHOUSE_ADDITION` (24366) **30 / 1**, their own `Desc128` reading
+"0 = ..., 1 = ...".
+
+**The correction.** Since 2026-09-16 the warehouse ceiling was cited as the slot-174 overload's
+`0x70` = 112 ("that is STORAGE, not inventory"). It is not: that overload compares
+`[esi+0x1c2c]` -- the bag's `InventorySize`, the same field the item path uses -- and its callers
+are the QUEST-REWARD appliers (`GObjPC::ApplyQuestReward`'s byte at `+0x4d1`, the `CQTUTORIAL2_*`
+rewards' `+0x3db`). So 112 is the quest-granted inventory cap (a quest can take a bag past the
+item path's 77/99), and the warehouse's ceiling is the kind-3 path's 210 -- the "UNRESOLVED
+112 vs 210" note in `inventory.go` resolves that way. `inventory.MaxStorageSlots` is renamed
+`MaxSlotsByQuestReward`; `storage.MaxCapacity` now follows `MaxStorageExpansionSlots` (210): from
+the disclosed 50, the item reaches 80, 110, 140, 170, 200. The warehouse migration's
+"beyond the slot count" warning follows the new cap.
+
+Shipped (v0.1.408): the renamed and retargeted constants with `InventoryAdditionSlots` /
+`WarehouseAdditionSlots`, the tests pinning 0x70 / 0xd2 and the increments, `server_sql.md` and
+the SYSTEMS row corrected. No player-visible change today -- srrevamp has no expansion path yet
+-- but the cap srrevamp would enforce is no longer the wrong one. Two names.
+
 ## Two-hundred-and-sixty-ninth round: the party flag the aggro link tests is the exp-sharing bit
 
 The RE tick for 2026-09-19 20:02, a short cross-reference. Round 258 left "bit 0 of the party's

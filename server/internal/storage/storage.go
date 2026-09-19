@@ -46,21 +46,27 @@ import (
 // and a user without the row fails to load ("failed to load user's chest size
 // [UserJID: %d]"), so the binary carries no default. The starting size is
 // written by the database's user-creation procedure, which is in no archive
-// this project holds. The ceiling is read: the storage expander refuses a new
-// size above 0x70 (inventory.MaxStorageSlots, 112).
+// this project holds. The ceiling is read, and it was misattributed until
+// round 270: the expander that refuses above 0x70 = 112 is the QUEST-REWARD
+// inventory path (it reads the bag's InventorySize); the warehouse item
+// (ITEM_MALL_WAREHOUSE_ADDITION, +30 a use) runs the kind-3 path, which
+// refuses once current + 30 would pass 0xd2 = 210
+// (inventory.MaxStorageExpansionSlots).
 //
 // So this number is DISCLOSED, not grounded: 50 is what this server has
 // enforced since the warehouse existed (inherited from the bag's
 // SlotsPerCharacter), kept so no tester's reach shrinks. The client pages the
 // warehouse by 30 (CIFStorageRoom::Create builds 0x1e slot controls and
 // addresses a slot as cell + page*0x1e, client 0x6cd350), so 50 shows as a
-// full page and a page of 20 -- the same shape 112 would have (3 x 30 + 22).
-// When an operator has the shard database, ChestSize per account replaces
-// this constant; the expansion path caps it at MaxCapacity.
+// full page and a page of 20. When an operator has the shard database,
+// ChestSize per account replaces this constant; the expansion path caps it at
+// MaxCapacity.
 const DefaultCapacity = 50
 
-// MaxCapacity is the largest warehouse the game's expander allows (0x70).
-const MaxCapacity = inventory.MaxStorageSlots
+// MaxCapacity is the largest warehouse the game's expander allows: the kind-3
+// path refuses when current + amount would exceed 0xd2, so 210 -- and with the
+// item's 30-slot steps from 50 the reachable sizes are 80, 110, 140, 170, 200.
+const MaxCapacity = inventory.MaxStorageExpansionSlots
 
 // ErrSlotEmpty is returned when the slot to move from holds nothing.
 var ErrSlotEmpty = errors.New("storage: nothing in that slot")

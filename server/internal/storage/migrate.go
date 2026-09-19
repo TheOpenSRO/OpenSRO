@@ -139,7 +139,7 @@ func MigrateToAccounts(ctx context.Context, db *sql.DB, logger *slog.Logger) (Mi
 					slot++
 				}
 				out.Reslotted++
-				if slot >= inventory.MaxStorageSlots && logger != nil {
+				if slot >= inventory.MaxStorageExpansionSlots && logger != nil {
 					logger.Warn("warehouse migration: a row landed beyond the warehouse's slot count",
 						"account", r.account, "character", r.character, "from_slot", r.slot, "to_slot", slot)
 				}

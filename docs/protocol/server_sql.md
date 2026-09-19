@@ -142,8 +142,10 @@ records the run.
 the bound query (`GetSingleton_00d6aa18(1,0,1, userJID)`) into the character
 object at `+0x110`, and a user WITHOUT the row fails to load
 (`LOADTARGET_CHEST Failed` / `failed to load user's chest size [UserJID: %d]`) --
-so the binary carries no default. The ceiling is the expander's `0x70` = 112
-(`inventory.MaxStorageSlots`). The client shows the warehouse in PAGES of 30:
+so the binary carries no default. The ceiling: the expander path the warehouse item takes
+(`ITEM_MALL_WAREHOUSE_ADDITION`, +30 a use, `ExpandInventory` kind 3) refuses once the new size would
+pass `0xd2` = 210 (`inventory.MaxStorageExpansionSlots`; round 270 -- the `0x70` = 112 this line used
+to cite is the quest-reward INVENTORY path, which reads the bag's size). The client shows the warehouse in PAGES of 30:
 `CIFStorageRoom::Create` (`0x6cc780`) builds exactly `0x1e` slot controls, the
 move handler (`0x6cd350`) addresses a warehouse slot as `cell + page * 0x1e`,
 and the authored `GDR_STORAGE_SPIN_PAGE` (a `CNIFSpinButtonCtrl`: left arrow at

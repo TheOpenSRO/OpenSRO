@@ -5191,6 +5191,13 @@ Round 269 (docs): the aggro link's party condition is the EXP-SHARING bit
 (party.md's bit 0, named by the client's refusal); bit 1 is item sharing;
 GObjPC::GetPartyFlags named; the writer of the byte is still unfound (the
 create request's type byte rides the invitation).
+Round 270 (v0.1.408): the warehouse cap CORRECTED -- 0x70 = 112 belongs to the
+quest-reward INVENTORY path (slot 174 reads the bag's InventorySize; its callers
+are the quest-reward appliers); the warehouse is the kind-3 path, 0xd2 = 210.
+The expansion items' increments are their Param1: bag +32, warehouse +30, with
+Param2 picking the container (0/1). `inventory.MaxStorageSlots` ->
+`MaxSlotsByQuestReward`, `storage.MaxCapacity` -> 210, increments as constants,
+tests. Two names.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

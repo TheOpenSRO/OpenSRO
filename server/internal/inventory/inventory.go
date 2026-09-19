@@ -107,12 +107,17 @@ const (
 	// 100` -- so an inventory never reaches this value.
 	SlotsHardLimit = 100
 
-	// MaxStorageSlots is the separate cap on STORAGE, not inventory: the
-	// slot-174 overload of ExpandInventory (0x004e19d0) returns early when the
-	// new size would exceed 0x70, and routes through AQ_StorageExpander.
-	// srrevamp's storage is its own design and does not use this yet; it is
-	// recorded because the two caps are easy to confuse and they differ.
-	MaxStorageSlots = 112
+	// MaxSlotsByQuestReward is the cap of the OTHER inventory expansion path,
+	// and it is an INVENTORY cap after all (round 270, 2026-09-19): the
+	// slot-174 overload of ExpandInventory (0x004e19d0) tests
+	// `[esi+0x1c2c] + amount <= 0x70` -- the same InventorySize field the item
+	// path uses -- and its callers are the quest-reward appliers
+	// (GObjPC::FUN_0092ee90's reward byte at +0x4d1, the CQTUTORIAL2_* rewards'
+	// +0x3db), never an item. A quest can therefore take a bag to 112 where
+	// the expansion item stops at 77 (99 with the quest flag). This constant
+	// was called MaxStorageSlots until the callers were read; the warehouse's
+	// ceiling is MaxStorageExpansionSlots below.
+	MaxSlotsByQuestReward = 112
 
 	// MaxThirdContainerSlots is a THIRD cap, on the container ExpandInventory
 	// reaches when its `kind` argument is 3 -- a pointer at `this + 0x21d8`
@@ -138,11 +143,20 @@ const (
 	// 0x18fe a storage-expansion-use error -- which is the standard this project
 	// accepts for a name.
 	//
-	// UNRESOLVED, and worth flagging rather than smoothing over: MaxStorageSlots
-	// above is 112 and reached through AQ_StorageExpander, while this path caps
-	// at 210. Two different limits in the same area of the engine. Which governs
-	// what is not established here.
+	// RESOLVED (round 270): the 112 cap belongs to the quest-reward INVENTORY
+	// path (MaxSlotsByQuestReward); THIS is the warehouse's ceiling. The item
+	// that reaches it is ITEM_MALL_WAREHOUSE_ADDITION (24366): the expendable
+	// use switch (CGItemExpendable::vslot_309, case 0x11) passes the row's
+	// Param1 as the amount -- 30 slots -- and maps Param2 (0 = inventory,
+	// 1 = warehouse; the row's own Desc128 lists "0 = ..., 1 = ...") to the
+	// container kind, 1 -> 3. ITEM_MALL_INVENTORY_ADDITION (24365) is the
+	// Param2 = 0 sibling: +32 bag slots against the 77/99 cap. Both routes go
+	// through AQ_StorageExpander, the engine's generic container-resize job.
 	MaxStorageExpansionSlots = 210
+
+	// The two mall items' increments, itemdata Param1 (column 118).
+	InventoryAdditionSlots = 32
+	WarehouseAdditionSlots = 30
 )
 
 // ErrNoRoom is returned by Store.AddItem when there's no slot available to

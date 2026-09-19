@@ -30,19 +30,26 @@ func TestSlotsPerCharacterFitsTheEngine(t *testing.T) {
 	if MaxSlotsExpanded >= SlotsHardLimit {
 		t.Errorf("the expanded cap (%d) must stay under the hard limit (%d)", MaxSlotsExpanded, SlotsHardLimit)
 	}
-	// The three caps are distinct and must not be conflated: 99 inventory,
-	// 112 storage, 210 for the unidentified kind-3 container.
+	// The three caps are distinct and must not be conflated: 99 inventory by
+	// item, 112 inventory by quest reward, 210 warehouse.
 	if MaxStorageExpansionSlots != 0xd2 {
 		t.Errorf("MaxStorageExpansionSlots = %d, want 0xd2 = 210 (the `cmp ecx,0xd2` at 004e194d)",
 			MaxStorageExpansionSlots)
 	}
-	if MaxStorageSlots == MaxStorageExpansionSlots || MaxStorageSlots == MaxSlotsExpanded {
+	if MaxSlotsByQuestReward == MaxStorageExpansionSlots || MaxSlotsByQuestReward == MaxSlotsExpanded {
 		t.Error("the three recovered caps are different numbers; collapsing them loses a distinction the engine makes")
 	}
-	// Storage is a different cap and must not be conflated with inventory.
-	if MaxStorageSlots <= SlotsHardLimit {
-		t.Errorf("MaxStorageSlots = %d; the slot-174 overload caps at 0x70 = 112, above the inventory limit",
-			MaxStorageSlots)
+	if MaxSlotsByQuestReward != 0x70 {
+		t.Errorf("MaxSlotsByQuestReward = %d; the slot-174 overload caps at 0x70 = 112 (the `cmp eax,0x70` at 004e19e1)",
+			MaxSlotsByQuestReward)
+	}
+	// The warehouse item's 30 slots never overshoot its own cap from a full
+	// page count, and the bag item's 32 fit under the quest-raised cap once.
+	if DefaultCapacityFits := 50 + 5*WarehouseAdditionSlots; DefaultCapacityFits > MaxStorageExpansionSlots {
+		t.Errorf("five warehouse additions from 50 reach %d, above the 210 cap", DefaultCapacityFits)
+	}
+	if 45+InventoryAdditionSlots > MaxSlotsDefault {
+		t.Errorf("one bag addition from the retail 45 (%d) overshoots the 77 cap", 45+InventoryAdditionSlots)
 	}
 }
 
