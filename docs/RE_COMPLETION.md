@@ -4994,6 +4994,10 @@ a type-7 special drop of three `x4` piles; everything else reads `LevelGold_GetM
 formulas. Ordinary kill gold is a monster's assigned drop row (DB-only). The client's
 `levelgold.txt` is (level, min, max) with no chance. srrevamp's per-kill range stays a
 disclosed stand-in, now with the real path named; no number can be read for it.
+Round 236: the type-7 special drop is RANK 7 -- `GetMonsterClass` (slot 75) is the low
+nibble of `mob+0x1cd8`, the same rank byte the HP scale switches on -- so a rank-7 monster
+drops three extra `x4` level-gold piles at death. Recorded in `combat/rarity.go`;
+`LevelGold_Roll` and `CGObjMob_DropRank7GoldPiles` named. srrevamp spawns no rank 7 yet.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

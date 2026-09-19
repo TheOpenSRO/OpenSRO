@@ -7075,6 +7075,19 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-thirty-sixth round: the three x4 gold piles are a rank-7 death rule
+
+The RE tick's step for 2026-09-19 12:04, closing round 235's loose end: the "type 7" that
+`FUN_009348f0` tests through vtable slot 75 is `CGObjMob::GetMonsterClass`, the low nibble
+of `mob+0x1cd8` -- the rank byte `PublishStats` already switches on for the HP scale (rank
+7 = x30 HP). So a rank-7 monster, on death, drops three extra `ITEM_ETC_GOLD_03` piles of
+`LevelGold_Roll * 4` (species 10100 and 11000 excepted), and no other rank takes that path.
+Recorded beside the rank table in `combat/rarity.go`; two functions named
+(`LevelGold_Roll`, `CGObjMob_DropRank7GoldPiles`). srrevamp spawns no rank-7 species, so
+nothing applies it yet; no value changed. A small consistency note: the `30.0` at
+`0xb45e58` serves both the rank-7 HP factor and the 30 s drop-ownership window -- one
+pooled constant, two readings that agree on its value.
+
 ## Two-hundred-and-thirty-fifth round: the per-level gold table is not what an ordinary kill drops -- the stand-in stays, its gap named exactly
 
 The RE tick's step for 2026-09-19 11:49, on the kill gold's inferred linkage. Read:

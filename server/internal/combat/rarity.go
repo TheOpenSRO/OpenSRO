@@ -1,5 +1,14 @@
 package combat
 
+// A second thing rank 7 does, read 2026-09-19 (round 236): when a monster whose
+// GetMonsterClass (slot 75, the low nibble of +0x1cd8) is 7 dies,
+// GObjPC::FUN_009348f0 drops THREE extra piles of ITEM_ETC_GOLD_03, each the
+// per-level gold roll (CRefDropGold: rand()%101 <= chance, then [min, max])
+// times FOUR -- unless the species id is 10100 or 11000. No other rank takes
+// that path, and no ordinary kill rolls that table (combat.RollGold's note).
+// srrevamp spawns no rank-7 species today, so nothing applies it; it is
+// recorded here so the rule is not re-derived when one is added.
+//
 // RarityHPPercent is the engine's HP scale for a monster's rank, as a percent.
 //
 // Read from SR_GameServer.exe, CGObjMob::PublishStats (0x004c19f0, vtable slot
