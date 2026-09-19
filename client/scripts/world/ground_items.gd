@@ -91,9 +91,15 @@ func spawn(snap: GroundItemsNet.Snapshot) -> void:
 	var model: Node3D = null
 	var model_path: String = _drop_models.get(snap.item_id, "")
 	if _archive != null and model_path != "":
-		model = ObjectLoader.load_object(_archive, model_path)
-		if model == null and not model_path.to_lower().begins_with("res\\"):
+		# itemdata's drop paths are relative to `res\` (`item\etc\drop_ch_bag.bsr`
+		# is `Res\Item\Etc\drop_ch_bag.bsr` in the archive -- measured with
+		# pk2list, round 211's log), so try that first: the loader prints a
+		# "not found" for every miss, and trying the bare path first logged one
+		# for every drop that then drew fine.
+		if not model_path.to_lower().begins_with("res\\"):
 			model = ObjectLoader.load_object(_archive, "res\\" + model_path)
+		if model == null:
+			model = ObjectLoader.load_object(_archive, model_path)
 	var top := FALLBACK_BOX_SIZE
 	if model != null:
 		body.add_child(model)

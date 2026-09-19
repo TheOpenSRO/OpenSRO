@@ -74,10 +74,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       `textuisystem.txt` (zero `SN_ITEM_` keys) instead of `textdata_object.txt`; the potion's column 3
       is literally `HP ?? ??` in the archive. Every item-name site now resolves like the tooltips;
       a name the archive lacks shows nothing.
-- [ ] **Two ground-item drop models do not resolve in this archive**: the render log shows
-      `item\etc\drop_ch_money_large.bsr` and `drop_ch_bag.bsr` "not found in archive" (charwin lane,
-      2026-09-19) while a pile still draws -- find what path the item table's drop column really
-      maps to (a `res\` prefix, a folder, a per-archive name) and what drew instead.
+- [x] ~~Two ground-item drop models do not resolve~~ -- log noise, not a miss (2026-09-19): itemdata's
+      drop paths are relative to `res\` (`Res\Item\Etc\drop_ch_money_large.bsr` exists, measured with
+      pk2list); the client tried the bare path first and logged every miss before the `res\` retry drew
+      the pile. It now tries `res\` first, so only a real miss is logged.
 - [ ] **Drop content is still the placeholder table.** The mechanic is real (round 207); the per-monster
       tables are DB-only and in no archive we have (`smc.bak` is the manager DB). An operator with the
       shard DB supersedes it via `import-refdata -drops-csv/-drop-groups-csv`.
