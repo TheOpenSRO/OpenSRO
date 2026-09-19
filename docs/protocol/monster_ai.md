@@ -259,7 +259,7 @@ locals) found no reader in the AI namespace.
 | 6 | `+0x14` | u32 | the **detection distance** (world units): the target-acquisition radius is `BCRadius + this` (`ctx+0x15c`, round 257 below). Non-zero installs the acquire-a-target behaviour at context `+0xf8` (`AITactics_AcquireTarget`, `0x5478f0`; zero installs the no-op `FUN_00559000`), lets the AI-skill scan (`AI::CTactics::RegisterAISkill`, `0x53fa70`) raise the context's max skill range `+0x160`, and at `Init` seeds `+0x7c` from that range for an immobile monster (run speed `+0x170 <= 0`). `FUN_005473c0` (behaviour `+0xec`) credits an attacker of an immobile monster only when `Distance(self, attacker) <= +0x14` |
 | 7 | `+0x18` | u8 | **aggression mode** 0/1/2 (above) |
 | 8 | `+0x1c` | u32 | **aggressive chance, percent**, for mode 2 |
-| 9 | `+0x20` | u8 | **retarget-on-hit rule**, `AITactics_Handler_0fc`: 1 -> `SetTarget(1)` when the attacker is not the current target; 2 -> the same test against `FUN_00545680(attacker)`'s object (its owner, by shape; unread); 0 -> keep the target |
+| 9 | `+0x20` | u8 | **retarget rule** (round 259, "The threat table"): 0 keep the first attacker; 1 face the latest attacker; 2 by hate -- `AITactics_ResolveTarget`: the challenger overtakes on more hate or after two idle attack intervals, a third attacker only when it stands farther than the target (round 238 read `FUN_00545680` as an owner lookup; it is the hate resolver) |
 | 10 | `+0x21` | u8 | `== 2` disables behaviour `+0x10c` (`FUN_00548950`), whose message builder `FUN_00541200` writes this byte, the object id, the TacticsID and slot 73's byte into a request. In this build the trigger also needs the HP bucket (`FUN_00541d70`: `GetCurHP/GetMaxHP` against 0.2/0.4/0.6/0.8) to be **negative**, which it never is -- `jge` at `0x54898d` -- so the request is dead |
 | 11 | `+0x22` | u8 | read by `AI::CTactics::FUN_00540120` (unread) |
 | 12 | `+0x23` | u8 |  |
@@ -578,6 +578,65 @@ outside the loader touches `0xc82528`. A knob with no consumer.
 A solo player never links anything: with no party the routine returns 0 before
 gathering. What bit 0 of the party's `+0x10` means is still unnamed (the
 berserk party share tests the same word); the link needs it set.
+## The threat table: whom a monster fights when several things hit it (round 259)
+
+**Two seats.** The context keeps exactly two attackers -- the TARGET at
+`+0xbc..+0xcc` and one CHALLENGER at `+0xd0..+0xe0`, each `{id, damage, hate,
+hits (byte +0xd), lastHitTick}` -- and the total damage taken at `+0xb0`. A
+third attacker is not tracked. `SetTarget(0)` and the leave paths zero all
+ten words.
+
+**The credit**, `AITactics_CreditAttacker` (`0x5473c0`, behaviour `+0xec`),
+takes the attack record `{attacker, damage, hate, hatePercent}`:
+
+	guard: an immobile monster (owner IsMonster, slot 75 == 3, walk and run speed <= 0)
+	       credits only an attacker within row+0x14; otherwise it zeroes the attacker's
+	       hate and returns 1
+	total (+0xb0) += damage
+	seat = target if empty or the attacker         -> code 0
+	     | challenger if empty or the attacker     -> code 1
+	     | none                                    -> code 2, nothing booked
+	seat.hits++ ; seat.id = attacker ; seat.damage += damage
+	seat.hate = clamp(seat.hate + seat.hate*hatePercent/100 + hate, 0, INT_MAX)
+	seat.lastHit = g_tickMs
+	return 1 when code == 0 and seat.hate < 1     ; the target is DROPPED
+
+so a blow that empties the target's hate (a hate-reducing skill: the `tant`/
+`tnt2`/`dtnt` params are where such values come from) makes BATTLE's
+`OnAttacked` go to IDLE. The record's hate is what `OnAttacked` sets to
+`raw * 1.15` for the victim and what the aggro link halves per neighbour.
+
+**The choice**, `AITactics_Handler_0fc` (`0x548090`, behaviour `+0xfc`,
+BATTLE's slot 6): credit first; a refusal returns 1 (-> IDLE). Then the
+tactics row's `+0x20` (column 9) decides:
+
+| rule | behaviour |
+|---|---|
+| 0 | keep the first attacker |
+| 1 | `SetTarget(attacker)` whenever it is not the target -- the seat keeps its damage, hate and hit count; only the id and tick change |
+| 2 | `AITactics_ResolveTarget(code, attacker)` (`0x545680`), below |
+
+`ResolveTarget` by the credit code: **0** -- the target hit us, nothing
+changes. **1** -- the challenger hit us: an invalid target is replaced by the
+challenger outright (the seat copied down, the challenger cleared); otherwise
+the seats SWAP (`0x545580`) when `target.hate < challenger.hate` **or**
+`g_tickMs - target.lastHit >= 2 x the attack interval` (selector `+0x48`).
+**2** -- an untracked third attacker: with a valid target, `d_candidate` and
+`d_target` (`GObj_DistanceBetween`) are compared at `0x545720` and the target
+is KEPT when `d_candidate <= d_target` (`fcomp; test ah,0x41; jne keep`);
+a **farther** attacker takes the seat -- the old target is copied into the
+challenger seat (`0x545550`) and the newcomer starts a fresh seat with one hit.
+
+**The attack interval.** `AI::CAISkill_Basic::ArmNextAttack` (`0x5619e0`):
+`+0x44 = the chosen skill; +0x48 = skill.ReuseDelay + rand % (J + 1)`, with
+`J = clamp(previous +0x48 / 5, 500, 2000)` ms -- so a Mangyang (ReuseDelay
+3000) swings every 3000..3600 ms once running, and round 254's "cadence is the
+ReuseDelay" is the floor of that window. The idle test above doubles this
+interval.
+
+`ai.ThreatTable` (`internal/ai/threat.go`) carries the credit, the drop, the
+three rules and the interval with tests; nothing in srrevamp runs it yet.
+
 ## The behaviour table at context `+0xe8`
 
 `AI::CTactics::vslot_017` (`0x53fc00`) fills sixteen function pointers at

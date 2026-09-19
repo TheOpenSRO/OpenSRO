@@ -7075,6 +7075,40 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-fifty-ninth round: the threat table -- two seats, three rules, and a jittered swing
+
+The RE tick for 2026-09-19 17:44 read the attacker accounting behind behaviour `+0xec`, the last
+rule the monster BATTLE loop needs before it can be built: whom a monster fights when several
+things hit it.
+
+**Two seats, not a list.** The context keeps a TARGET seat (`+0xbc..+0xcc`) and one CHALLENGER
+seat (`+0xd0..+0xe0`), each `{id, damage, hate, hits, lastHitTick}`, plus the total damage taken
+(`+0xb0`). `AITactics_CreditAttacker` (`0x5473c0`) books a blow `{attacker, damage, hate,
+hatePercent}` into whichever seat is empty or already the attacker's -- code 0 the target, 1
+the challenger, **2 nobody: a third attacker is not tracked** -- as `hate = clamp(hate +
+hate*pct/100 + delta, 0, INT_MAX)`, and returns "drop" when the target's hate ends below 1.
+An immobile monster credits only attackers within its detection distance.
+
+**Three retarget rules**, the tactics row's `+0x20` (column 9), applied in BATTLE by
+`Handler_0fc`: **0** keep the first attacker; **1** face the latest (the seat keeps its
+history: only the id and tick change -- the engine's, kept); **2** by hate through
+`AITactics_ResolveTarget` (`0x545680`; round 238 had it as an owner lookup): the challenger
+overtakes when its hate exceeds the target's **or** the target has not hit for **two attack
+intervals**; an invalid target is replaced by the challenger outright; an untracked third
+attacker takes the seat **only when it stands farther than the target** (`fcomp` at
+`0x545720`, keep on `d_candidate <= d_target` -- the flags checked), the old target moving
+down to the challenger seat.
+
+**The swing has jitter.** `AI::CAISkill_Basic::ArmNextAttack` (`0x5619e0`) arms the next
+attack at `ReuseDelay + rand % (J + 1)`, `J = clamp(previous interval / 5, 500, 2000)` ms: a
+Mangyang swings every 3000..3600 ms, and round 254's "cadence = ReuseDelay" is the window's
+floor. The idle window above is twice this interval.
+
+Recorded: `monster_ai.md` "The threat table" and column 9 relabelled; `ai.ThreatTable`
+(`Credit`, `Face`, `Resolve`, `FaceAfterHit`), `ai.AttackIntervalRange`/`AttackJitterMs`, with
+four tests; six names. No shipped value changed (srrevamp's monsters still only counter-strike);
+no release.
+
 ## Two-hundred-and-fifty-eighth round: the aggro link -- what the ten nearest monsters are for
 
 The RE tick for 2026-09-19 17:36 closed round 257's open thread. The list of monsters a

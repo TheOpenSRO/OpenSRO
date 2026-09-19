@@ -5124,6 +5124,13 @@ members within 1000 units, halving the credited damage per link, while the
 victim books 1.15x; a solo hit links nothing. `AI::CTactics` is the monster's
 command source. `HwanGainFactor` is loaded (pre-config 100 -> clamped 10) and
 read nowhere -- the rates comment corrected; `PCSpeedRatio` added. Nine names.
+Round 259 (docs + `ai.ThreatTable`): the attacker accounting is TWO seats
+(target + challenger, {id, damage, hate, hits, lastHit}); a third attacker is
+untracked; hate = clamp(hate + hate*pct/100 + delta); a target at hate < 1 is
+dropped. Retarget rule (`_RefTactics` col 9): 0 keep first, 1 latest, 2 by hate
+(challenger overtakes on more hate or two idle attack intervals; a third
+attacker only when farther than the target). The swing interval is ReuseDelay
++ rand%(J+1), J = clamp(prev/5, 500, 2000). Six names, four tests.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
