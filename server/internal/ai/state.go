@@ -443,3 +443,34 @@ func AggroLinkDamage(damage int, link int, ratio float64) int {
 	}
 	return damage
 }
+
+// HOMING, read off CAIState_HOMING::OnEnter/MoveHome/OnUpdate and
+// AITactics_HomingStep (round 261, docs/protocol/monster_ai.md "HOMING").
+const (
+	// HomingArrivalRadius: within this many units of the destination the
+	// monster is home (0xb45b28, fld DWORD 5.0).
+	HomingArrivalRadius = 5.0
+	// HomingWobbleMin/Max scale the heading blended into the direction while
+	// the monster is still outside its roam radius: (rand % 101 + 50) / 100.
+	HomingWobbleMin = 0.5
+	HomingWobbleMax = 1.5
+)
+
+// HomingScatterRange is the displacement of the homing destination along the
+// home-to-monster line for a nest radius (or roam radius) R:
+// rand % (1 + ftol(R/3)) - R/9, so [-R/9, +2R/9] in whole steps.
+func HomingScatterRange(radius float64) (min, max float64) {
+	third := float64(int(radius / 3))
+	return -radius / 9, third - radius/9
+}
+
+// HomingReaggroDelayMs is how long a homing monster ignores players: the
+// time to cover its detection radius at its run speed (units per second),
+// rounded to milliseconds. Zero speed means never (the engine would divide
+// by zero; an immobile monster does not home).
+func HomingReaggroDelayMs(detectionRadius, runSpeed float64) int {
+	if runSpeed <= 0 {
+		return 0
+	}
+	return int(detectionRadius/runSpeed*1000 + 0.5)
+}

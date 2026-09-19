@@ -678,6 +678,50 @@ and a tactics-bound skill fires on its HP threshold once or on its timer,
 ahead of any draw. `ai.SkillWeight`, `ai.TriggerHPBelow/Periodic` carry the
 rules with a test.
 
+## HOMING: the way home (round 261)
+
+`CAIState_HOMING::OnEnter` (`0x55a540`): a monster with neither a nest
+(`ctx+0x30`) nor a saved location record (`+0x1bc`) asks `0x558af0` for its
+spawn record and asserts out (-> state 0) when that has none. Then: a timer is
+armed through the indexed setter (`0x53d600`, arguments `(2, 500)`), the dwell
+is `AIState_DwellMs` (HOMING's 50 s), `MoveHome` starts the walk, the state's
+`+0x1c` is set to **`round(detectionRadius / runSpeed x 1000)` ms** (the
+`ctx+0x15c` radius over the owner's `+0x170`), the `0x704f` motion notice
+goes out, `+0x164` gets a random sign, and `SetTarget(0)` forgets the fight.
+
+**`MoveHome`** (`0x545c50`): home is the nest's position record (`nest+0x10`)
+when there is a nest, else the context's own spawn record (`ctx+0x1b4`). With
+`R` = the nest's radius (`nest+0x20`) or the roam radius (`ctx+0x1cc`), the
+destination is home displaced along the home-to-monster line by
+
+	offset = rand % (1 + ftol(R / 3)) - R / 9        ; -3.0 at 0xb45e08, 3.0 at 0xb45ab8
+	                                                 ; i.e. -R/9 .. +2R/9 units
+
+unless the owner's slot 243 says otherwise (then exactly home), and the world's
+move request (`DAT_00cc387c` slot 12) is issued -- flag 1 for a player or a
+slot-11 object, 0 for a monster.
+
+**The step**, behaviour `+0x118` (`AITactics_HomingStep`, `0x5496c0`), each
+time timer 0 of the context's table (`ctx+0x34`) is due: **arrived** when the
+owner stands within **5.0** units of the destination (`AITactics_HasArrived`,
+`0x541f60`, `fcomp DWORD 0xb45b28`) -> return 2 -> message `0x24` -> IDLE.
+Otherwise, with `d_pos` = |owner - spawn| and `d_dest` = |destination - spawn|:
+when `d_dest <= d_pos` (the destination lies inward) the step continues --
+while `d_pos` is still beyond the roam radius (`ctx+0x1cc`) the direction gets
+a wobble, `dir = normalise(dir + heading x k)`, `k = (rand % 101 + 50) / 100`
+= **0.50..1.50** (`fmul QWORD 0xb46068` = 0.01), then a blocked probe
+(`0x541890`, mode 3) and `AITactics_MoveAlongDirection` for the remaining
+distance; when the destination would be **farther** from the spawn than the
+monster already is, the step returns 2 as well -> IDLE.
+
+**Re-aggro on the way.** `HOMING::OnUpdate` (`0x55a690`): the 50 s dwell ->
+message `0x25` -> IDLE; otherwise, once the state's slot 48
+(`ReaggroWindowPassed`, `0x55a720`: `now - enteredAt > +0x1c`) is true, the
+acquire behaviour runs and a hit scan (-> message `0x22`) can send the monster
+straight back to BATTLE -- so a monster ignores players for the time it would
+take to run its own detection radius, then notices them again. `ai.Homing*`
+carries the constants with a test.
+
 ## The behaviour table at context `+0xe8`
 
 `AI::CTactics::vslot_017` (`0x53fc00`) fills sixteen function pointers at

@@ -5137,6 +5137,11 @@ Round 260 (docs + `ai` helpers): the BATTLE skill choice -- tactics-bound skills
 once), which settles the three columns round 241 left blank; otherwise a weighted
 random draw over the attack list, weight = AI_AttackChance (col 66) + the reach
 margin in units. Ten names.
+Round 261 (docs + `ai` constants): HOMING read -- home = nest/spawn displaced
+-R/9..+2R/9 along the approach line, arrival within 5.0 units, a 0.5..1.5
+heading wobble outside the roam radius, and a re-aggro blackout of
+detectionRadius/runSpeed seconds. Six names (incl. the context timer table's
+shape). Every state the BATTLE loop runs is now read.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

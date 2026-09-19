@@ -336,3 +336,20 @@ func TestAggroLink(t *testing.T) {
 		t.Errorf("victim's own credit: %d; want 51", got)
 	}
 }
+
+// Homing: arrival at 5 units, the scatter band, and the re-aggro window a
+// Mangyang (detection 56 at run speed 50) keeps shut for 1120 ms.
+func TestHomingRules(t *testing.T) {
+	if HomingArrivalRadius != 5.0 {
+		t.Fatal("arrival is 5.0 units")
+	}
+	if lo, hi := HomingScatterRange(200); lo != -200.0/9 || hi != 66-200.0/9 {
+		t.Fatalf("scatter for R=200: %v..%v", lo, hi)
+	}
+	if d := HomingReaggroDelayMs(56, 50); d != 1120 {
+		t.Fatalf("re-aggro delay %d ms; want 1120", d)
+	}
+	if d := HomingReaggroDelayMs(56, 0); d != 0 {
+		t.Fatalf("no speed, no window: %d", d)
+	}
+}

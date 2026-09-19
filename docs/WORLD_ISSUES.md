@@ -7075,6 +7075,30 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-sixty-first round: HOMING -- the way home, and the window in which a returning monster ignores you
+
+The RE tick for 2026-09-19 18:02 read the last unread state body of the monster machine.
+
+`CAIState_HOMING::OnEnter` (`0x55a540`) arms a timer, takes the 50 s dwell, starts `MoveHome`,
+and stores **`round(detectionRadius / runSpeed x 1000)` ms** in the state: for that long
+(`ReaggroWindowPassed`, HOMING's 49th vtable slot) the update does NOT run the acquire scan, so
+a monster walking home ignores players for the time it would take to run its own detection
+radius, then notices them again and can go straight back to BATTLE. `MoveHome` (`0x545c50`)
+aims at the nest's position (or the spawn record) displaced along the home-to-monster line by
+`rand % (1 + ftol(R/3)) - R/9` -- between -R/9 and +2R/9 with `R` the nest or roam radius
+(`-3.0` at `0xb45e08` and `3.0` at `0xb45ab8`, both doubles). The step (`AITactics_HomingStep`,
+behaviour `+0x118`) runs on a context timer: **arrived within 5.0 units** (`fcomp DWORD
+0xb45b28`) -> IDLE; otherwise, while still outside the roam radius, the direction is blended
+with the current heading scaled **0.50..1.50** (`(rand % 101 + 50) x 0.01`, `fmul QWORD
+0xb46068`), a blocked probe, and a move along it; a destination that would be farther from the
+spawn than the monster already stands ends the state too.
+
+Recorded: `monster_ai.md` "HOMING: the way home"; `ai.HomingArrivalRadius`,
+`ai.HomingScatterRange`, `ai.HomingReaggroDelayMs`, the wobble bounds, with a test; six names
+including the context's timer table (`AITactics_ArmTimer`/`TimerDue` -- shape read, the
+meaning of each index not). With this every state the loop runs is read; the build is next.
+No shipped value changed; no release.
+
 ## Two-hundred-and-sixtieth round: the skill choice -- triggers first, then a weighted draw, and three columns settled
 
 The RE tick for 2026-09-19 17:49 read `AI::CAISkill_Basic::PickSkill` (`0x561b00`), the
