@@ -120,6 +120,7 @@ const (
 	fReqStr        = 59
 	fReqInt        = 60
 	fDurabilityMin = 63 // and 64 for max
+	fRange         = 94 // the weapon's reach, world units (tenths of a metre)
 	fPhysAttackMin = 95 // and 97 for max (96/98 one-indexed)
 	fPhysAttackMax = 97
 	fMagAttackMin  = 100
@@ -495,6 +496,10 @@ func itemRecord(cols []string) ([]string, bool) {
 		num(fReinforcePhysMax + 1), // 57 ReinforcePhysMaxHi  (col 108)
 		num(fReinforceMagMin + 1),  // 58 ReinforceMagMinHi   (col 110)
 		num(fReinforceMagMax + 1),  // 59 ReinforceMagMaxHi   (col 112)
+		// 60: the weapon's Range, itemdata column 94 -- the u16 the item parser
+		// stores at ref+0x224 and Char_PublishCombatStats publishes as param 33
+		// (round 247). World units: swords 6, spears 18, bows 180, daggers 3.
+		get(fRange), // 60 Range (col 94)
 	}, true
 }
 

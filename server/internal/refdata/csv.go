@@ -66,6 +66,9 @@ var itemCSVColumns = []string{
 	// loads and a weapon reads its lo ends alone, as it did before.
 	"PhysAttackMinHi", "PhysAttackMaxHi", "MagAttackMinHi", "MagAttackMaxHi",
 	"ReinforcePhysMinHi", "ReinforcePhysMaxHi", "ReinforceMagMinHi", "ReinforceMagMaxHi",
+	// Appended later still (round 247): the weapon's Range, itemdata column
+	// 94, world units. A strict suffix; an older export reads 0, unarmed.
+	"Range",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -281,6 +284,9 @@ func parseItemRow(f []string) (Item, error) {
 		it.ReinforcePhysMaxHi = parseFloat(f[57])
 		it.ReinforceMagMinHi = parseFloat(f[58])
 		it.ReinforceMagMaxHi = parseFloat(f[59])
+	}
+	if len(f) > 60 {
+		it.Range = parseInt(f[60])
 	}
 
 	if err != nil {

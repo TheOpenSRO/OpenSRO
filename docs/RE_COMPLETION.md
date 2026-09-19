@@ -5052,6 +5052,13 @@ and publishes each item's block through `Char_PublishCombatStats(item, pc)`
 (keyed by the item), so the shield's PD/MD count; `defenderArmor`/`MagicArmor`
 now include the shield with groups 4/5 (v0.1.399). The publisher's first
 argument (open since 2026-09-15) is the equipped item.
+Round 247: the ATTACK-DISTANCE rule read off `GObjPC::ActionTick_UseSkill`
+(0x4ad8e0): reach = casterBC + targetBC + range (skill Range, else param 33 =
+the weapon's Range column, itemdata 94), stop banded at 4/10, in reach when
+int(dist) <= reach + 2, else the SERVER walks the attacker (corrects round 232's
+"the client walks"). Table units are world units (1 = 0.1 m, the use-site).
+BCRadius is ref +0xee (Scale is a dword) -- correction to the common map.
+`combat.ApproachBand` + data wired (v0.1.400); behaviour still to build.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

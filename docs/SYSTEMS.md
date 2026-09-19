@@ -36,7 +36,7 @@ one cannot rot the same way without the build going red.
 
 | System | Classes | Status | Spec | Anchors | Next probe |
 |---|---|---|---|---|---|
-| Damage pipeline | ~156 fns | SPECIFIED | docs/protocol/damage_pipeline.md | MitigateDamage, ApplyFloorBand, ApplySkillPercent | stages 17+ run to 0x40e819 and are unread; nothing needs them |
+| Damage pipeline | ~156 fns | SPECIFIED | docs/protocol/damage_pipeline.md | MitigateDamage, ApplyFloorBand, ApplySkillPercent | stages 17+ run to 0x40e819 and are unread; nothing needs them; the attack-DISTANCE rule is read (round 247, `combat.ApproachBand`): reach = both BCRadius + range (skill Range or weapon Range col 94 = param 33), +2 slack, the server walks the attacker to a banded stop distance -- data wired, behaviour not yet |
 | Death penalty and death causes | 6 fns | SPECIFIED | docs/protocol/damage_pipeline.md | DeathCause, DeathPenaltyFactorFor, DeathPenaltyExp | — |
 | Passive regeneration | 4 fns | SPECIFIED | docs/protocol/param_registry.md | RegenPerTick, RegenInterval, RegenHalfCapDivisor | — |
 | `_RefObjCommon` binary format | 3 parsers | SPECIFIED | docs/protocol/refobj_binary_format.md | ItemCSVColumnCount | — |

@@ -188,9 +188,14 @@ After field 41 (`+0xd4`, column 40) the deserializer reads field 42 -- column 41
 `RegionID` -- and resolves it through the region singleton (`0xd6aa14`, `FUN_005a2090`),
 storing the found pointer or zero at `+0xd8` (the two stores at `0x6a385d`/`0x6a3878`;
 `fields.py` took the zero store for a field). The record pointer then moves to `ebx` and
-**nine fields are read as words with a 2-byte stream advance each** (`0x6a3899..`):
-`+0xdc, +0xde, +0xe0, +0xe2, +0xe4, +0xe6, +0xe8, +0xea, +0xec` -- fields 43..51, text
-columns 42..50: `Dir, OffsetX, OffsetY, OffsetZ, Speed1, Speed2, Scale, BCHeight, BCRadius`.
+**nine fields follow** (`0x6a3899..`) -- six words, a DWORD, two words:
+`+0xdc, +0xde, +0xe0, +0xe2, +0xe4, +0xe6` (2-byte advances), **`+0xe8` (a 4-byte
+advance)**, `+0xec, +0xee` (2-byte advances) -- fields 43..51, text columns 42..50:
+`Dir, OffsetX, OffsetY, OffsetZ, Speed1, Speed2, Scale, BCHeight, BCRadius`. (Round 247
+corrected this line, which had `Scale` as a word at `+0xe8` and the two radii at
+`+0xea/+0xec`; the parser's `+ 4` advance after `+0xe8` puts `BCHeight` at `+0xec` and
+**`BCRadius` at `+0xee`** -- and IGObj slot 344 (`GObjPC::FUN_004a68c0`, `0x4a68c0`),
+which the attack-distance rule adds for both parties, returns exactly `ref+0xee`.)
 
 The speeds are settled by their use-site, not by the schema's names:
 

@@ -302,4 +302,12 @@ type Item struct {
 	MagAttackMinHi, MagAttackMaxHi         float64
 	ReinforcePhysMinHi, ReinforcePhysMaxHi float64
 	ReinforceMagMinHi, ReinforceMagMaxHi   float64
+
+	// Range is the weapon's reach, itemdata column 94 (the item ref record's
+	// u16 at +0x224), in world units = tenths of a metre: every sword and
+	// blade 6, spear and glaive 18, bow and crossbow 180, dagger 3 in the
+	// retail table. Char_PublishCombatStats publishes it as ParamKeeper param
+	// 33, and the server's action tick adds it to the two BCRadius values to
+	// decide how far a blow lands -- combat.ApproachBand (round 247).
+	Range int
 }

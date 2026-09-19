@@ -38,11 +38,14 @@ type Monster struct {
 	// column 15): 0 normal, 1 champion, 3/8 unique, 4 giant, 5 titan, 6 elite.
 	// The client maps it to the target-window rank gem (mapping recovered from
 	// the retail client). Structural data, so grounded like Level.
-	Rarity  int
-	Zone    string
-	X, Y, Z float64 // own design placeholder position -- see Hub.Spawn
-	MaxHP   int
-	HP      int
+	Rarity int
+	// BCRadius is the species' collision radius (characterdata col 50), the
+	// monster's half of the attack-distance rule's base -- see ApproachBand.
+	BCRadius int
+	Zone     string
+	X, Y, Z  float64 // own design placeholder position -- see Hub.Spawn
+	MaxHP    int
+	HP       int
 	// Defense is the monster's flat absorption, and it is REAL: characterdata
 	// col 71, which GObjMob_PublishStats publishes into ParamKeeper param 5 --
 	// exactly the term Formula_MitigatePhysicalDamage subtracts. See
@@ -693,6 +696,10 @@ type Species struct {
 	AttackMin, AttackMax int
 	// GoldMin/GoldMax are the real per-level gold range (levelgold.txt).
 	GoldMin, GoldMax int64
+	// BCRadius is the species' collision radius, characterdata _RefObjChar
+	// col 50 (the common record's word at +0xee, IGObj slot 344) -- one of the
+	// two radii the attack-distance rule adds to a range (see ApproachBand).
+	BCRadius int
 	// Critical is the species' real critical-hit chance, characterdata
 	// _RefObjChar col 78. See Monster.Critical.
 	Critical int
@@ -712,7 +719,7 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
 		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
 	h.byID[id] = m
 	return m

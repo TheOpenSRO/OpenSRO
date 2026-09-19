@@ -7075,6 +7075,47 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-forty-seventh round: the attack-distance rule -- read on the server, where it lives
+
+The RE tick for 2026-09-19 14:37 took the parked item with the route round 234 left, and
+the route was wrong in one respect that mattered: the client sends the action at once, and
+the SERVER walks the attacker into reach. Round 232's "the client walks into range before it
+sends" is corrected.
+
+**The rule**, in `GObjPC::ActionTick_UseSkill` (`0x4ad8e0`, the action state machine
+switched on `action+0x1c`), phase 0:
+
+	base  = caster.BCRadius + target.BCRadius       ; IGObj slot 344 = ref +0xee, characterdata col 50
+	range = skill.Range (CRefSkill+0x92)            ; 0 for every basic attack, so:
+	      | round(param 33)                         ; = the weapon's Range column, itemdata 94
+	range += two skill range modifiers (skill+0x50c/+0x4e8; unread)
+	range *= 1 - param183/100                       ; unread percent
+	reach = base + range                            ; action+0x18
+	stop  = base + f(range)                         ; action+0x14
+	f(r)  = r (r <= 4) | r - 2 (4 < r < 10) | 0.7 r (r > 10) | 0 at exactly 10 (the engine's hole)
+
+Phase 1: `Action_IsTargetWithinReach` (`0x4ad4a0`) = `int(distance) <= reach + 2` on the
+region-aware separation; when false, `GObjPC::MoveTowardObject(target, round(stop))`
+(`0x4b0350`); when true, the conditions are re-checked and the blow executes (phase 2 sends
+`0x7070`). Param 33 is the weapon's Range: `Char_PublishCombatStats` publishes the item
+ref's u16 at `+0x224` (itemdata column 94 -- sword 6, spear 18, bow 180, dagger 3 across
+every weapon row of each type; 0 while broken), and `Char_GetAttackRange` (`0x4ac890`)
+rounds it back. The comparison takes the table's tenths-of-a-metre numbers as world units
+with no conversion: the use-site round 233 asked for -- **1 world unit = 0.1 m**.
+
+**A layout correction on the way.** Slot 344 returns `ref+0xee`, which the common-record
+map had as one past `BCRadius`. Re-reading the parser: `Scale` at `+0xe8` is a DWORD
+(4-byte advance), so `BCHeight` is `+0xec` and `BCRadius` `+0xee` -- column 50, as the TODO
+predicted. Real values: every playable body 4; Mangyang 6, Gyo 10, Yeoha 11, Tomb Stone 4.
+So a sword against Mangyang lands from 16 (+2), and the walk stops at 14.
+
+**Wired (v0.1.400):** `combat.ApproachBand`, `EffectiveRange`, `InReach` with the cited
+constants and tests (the three bands, the hole, the slack); `combat.Species.BCRadius` on the
+roster from the table; `refdata.Item.Range` as CSV column 60 / SQL `attack_range` (the
+public server's items re-imported). **Not yet built:** the behaviour -- srrevamp's server does
+not drive player movement, so the walk has to be the client's, and monsters need their BATTLE
+approach; recorded in `docs/TODO.md` with the rule. Six names.
+
 ## Two-hundred-and-forty-sixth round: where gear aggregates -- the shield's defence counts
 
 Continuing from round 245's open item. The question was whether a worn shield's own

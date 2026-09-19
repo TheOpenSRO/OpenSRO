@@ -109,6 +109,17 @@ In order. Each is checked off here when it ships in a release, with its round in
       (tooltip `UI_SILKMALL::FUN_0066c5b0`, printed /10 in metres); offset greps for its consumer hit
       only tooltips. PARKED after three ticks. Route left: the client's attack send site (the action
       packet's `GInterfaceSend` caller) walked back to the distance test that precedes it.
+      **Round 247: THE RULE IS READ, and it is the SERVER's, not the client's** -- round 232's "the
+      client walks into range before it sends" was wrong; the client sends at once and the server
+      walks the attacker. `GObjPC::ActionTick_UseSkill` (`0x4ad8e0`): reach = casterBCRadius +
+      targetBCRadius + range, stop = the same base + f(range) (f = r for r <= 4, r - 2 for 4 < r < 10,
+      0.7 r for r > 10), range = the skill's Range or the weapon's Range column (itemdata 94 = param
+      33: sword 6, spear 18, bow 180, dagger 3), in reach when `int(dist) <= reach + 2`, else
+      `MoveTowardObject(target, stop)`. Table units ARE world units (1 = 0.1 m) -- the comparison
+      has no conversion. `combat.ApproachBand`/`InReach`/`EffectiveRange` carry it, `refdata.Item.Range`
+      and `combat.Species.BCRadius` the data (v0.1.400). STILL TO BUILD: the behaviour -- the server
+      moving the attacker (srrevamp's server does not drive player movement) or the client walking
+      to `stop` before it sends, and the monster's own approach in BATTLE.
 - [ ] **Linear fog between the real planes.** Read in round 229: the client's fog is D3D linear fog
       from `channel 10 x view distance` to `channel 11 x view distance` (2500 by default) -- zero
       until the near plane (Jangan: 1250), complete at the far one (2250). `FOG_DENSITY` is an

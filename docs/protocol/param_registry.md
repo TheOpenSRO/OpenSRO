@@ -124,7 +124,7 @@ branches).
 | 30 | 0x01e | 0 | 100 | **0** | 0 |  |
 | 31 | 0x01f | 0 | 100 | **0** | 0 |  |
 | 32 | 0x020 | 0 | 100 | **0** | 0 |  |
-| 33 | 0x021 | 0 | 9999999 | **0** | 0 |  |
+| 33 | 0x021 | 0 | 9999999 | **0** | 0 | **attack range** -- `Char_PublishCombatStats` publishes the equipped weapon's `Range` column (item ref `+0x224`, itemdata 94; 0 while broken) here, and the action tick (`0x4ad8e0`) reads `round(param 33)` as the reach of any skill whose own Range is 0, i.e. every basic attack (round 247) |
 | 34 | 0x022 | 0 | 1000 | **100** | 0 |  |
 | 35 | 0x023 | 0 | 1000 | **100** | 0 |  |
 | 36 | 0x024 | 0 | 1000 | **100** | 0 |  |
