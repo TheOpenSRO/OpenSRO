@@ -5157,6 +5157,11 @@ refuses 0x185b inside the group's timer and arms it after the success reply
 no server cooldown -- the 2026-09-18 "gap" note is superseded. Wired:
 refdata.Item.CooltimeGroup/CooltimeMs, session/itemcooldown.go, the gate in
 UseItemHandler (live but idle: nothing usable today carries one). Two names.
+Round 264 (docs): Consume_WHAN (col 56, CRefSkill+0xd2) is copied into the cast
+context's +0x18 by both cast builders and spent by EngageSkill -- and no loaded
+retail row is non-zero, so the berserk row's "skill hwan cost" closes as
+data-dead. The client's item-use sender has no timing gate (scoped negative:
+the double-click path before it is unread). Two names.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

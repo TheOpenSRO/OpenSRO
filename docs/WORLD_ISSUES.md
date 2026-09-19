@@ -7075,6 +7075,27 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-sixty-fourth round: a skill's hwan cost is data-dead, and the client's item sender has no pacing gate
+
+The RE tick for 2026-09-19 18:50, two short closures.
+
+**`Consume_WHAN` closed.** With the CRefSkill fixed layout (round 256) the berserk row's
+"skill_ref+0x18" resolves: the two cast-context builders (`0x5857b0`, `0x586700`) copy the row's
+`Consume_WHAN` (`CRefSkill+0xd2`, skilldata column 56) into the skill-use context's `+0x18`, which
+`EngageSkill` subtracts from the hwan count. **No loaded retail row carries a non-zero
+`Consume_WHAN`** (every service-1 row over all skilldata parts on the box reads 0), so there is
+nothing to wire: a cast never spends berserk in this data. Two names.
+
+**Potion pacing, scoped negative.** Following round 263 ("no potion carries a cooltime"), the
+client's item-use sender (`SendItem_HandleUseItem_796660`, 0x704c) was read for a timing gate: it
+has none -- its refusals are pet/COS and buff-overlap messages, and `CIFDelayInfo` is the delayed
+action (cast-bar) path for scrolls, not a potion limiter. What the retail client does between a
+slot double-click (`IFSlotWithHelp::FUN_00674b90/676570`) and the sender is unread, so this says
+only that the sender itself does not pace; srrevamp's client, like its server, paces potions not
+at all, which is consistent with everything read so far.
+
+Docs only; no shipped value changed.
+
 ## Two-hundred-and-sixty-third round: the reuse delay is a descriptor -- and potions do not have one
 
 The RE tick for 2026-09-19 18:33 followed round 262's array mapping one step further, to the
