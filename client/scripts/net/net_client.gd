@@ -305,6 +305,12 @@ func move_item(char_name: String, from_slot: int, to_slot: int) -> void:
 func character_stats(char_name: String) -> void:
 	_send(StatsNet.OP_STATS, StatsNet.encode_request(char_name))
 
+## Spends unspent stat points on Strength and/or Intellect. The server
+## applies the engine's rule (the sum must fit the pool; plain increments)
+## and answers with a character_stats_result carrying the new numbers.
+func spend_stat_points(char_name: String, str_points: int, int_points: int) -> void:
+	_send(StatsNet.OP_SPEND_STAT, StatsNet.encode_spend_request(char_name, str_points, int_points))
+
 func list_equipment(char_name: String) -> void:
 	_send(EquipmentNet.OP_LIST, EquipmentNet.encode_list_request(char_name))
 

@@ -5,14 +5,19 @@ class_name StatsNet
 ## server/internal/session (stats.go). Requires a prior login.
 ##
 ## Only what the server really computes is here. The character panel
-## (`resinfo\ifplayerinfo.txt`) also has rows for strength, intelligence,
-## magical attack and defence, balance, hit rate, parry and three job
-## grades; nothing on this server produces any of them, so they are not on
-## the wire and the panel leaves them as the layout drew them rather than
-## filling them with numbers that would look live.
+## (`resinfo\ifplayerinfo.txt`) shows the rows the server can state -- level,
+## exp and exp-to-next, Str/Int and the unspent stat points, HP/MP, both
+## attack ranges, both defence sums -- and leaves the rest as the layout drew
+## them: the balance percentages (the client shows a stored byte whose source
+## is unread), hit rate and parry (engine params the server does not carry
+## per instance and the engine never reads), the job grades and honour (no
+## such systems here). See HudPanels._apply_stats for the row-by-row reasons.
 
 const OP_STATS := 0x00EE        # client -> server
 const OP_STATS_RESULT := 0x00EF # server -> client
+## Spend unspent stat points on Strength / Intellect; the server answers
+## with an OP_STATS_RESULT carrying the new numbers.
+const OP_SPEND_STAT := 0x00F0   # client -> server
 
 class Stats:
 	var error: String
@@ -34,6 +39,19 @@ class Stats:
 	## spends mana. 0 from a server too old to send the pair.
 	var mp: int = 0
 	var max_mp: int = 0
+	## The character rows (third appended tail; 0 from a server too old to
+	## send them): the stored Str/Int and the unspent stat-point pool, the
+	## bottom of the physical range (phys_attack is its top), the magical
+	## range, and the magical defence sum.
+	var str: int = 0
+	var intel: int = 0
+	var stat_points: int = 0
+	var phys_attack_min: int = 0
+	var mag_attack_min: int = 0
+	var mag_attack_max: int = 0
+	var mag_defense: int = 0
+	## True when the server sent the character rows at all.
+	var has_character_rows: bool = false
 
 	## The EXP gauge fill, 0..100, or 0 when exp-to-next is unknown.
 	func exp_percent() -> float:
@@ -79,4 +97,22 @@ static func decode_result(data: PackedByteArray) -> Stats:
 	if offset + 56 <= data.size():
 		stats.mp = data.decode_s32(offset + 48)
 		stats.max_mp = data.decode_s32(offset + 52)
+	# The character rows are the third tail; a 56-byte result omits them.
+	if offset + 84 <= data.size():
+		stats.str = data.decode_s32(offset + 56)
+		stats.intel = data.decode_s32(offset + 60)
+		stats.stat_points = data.decode_s32(offset + 64)
+		stats.phys_attack_min = data.decode_s32(offset + 68)
+		stats.mag_attack_min = data.decode_s32(offset + 72)
+		stats.mag_attack_max = data.decode_s32(offset + 76)
+		stats.mag_defense = data.decode_s32(offset + 80)
+		stats.has_character_rows = true
 	return stats
+
+## Encodes an OpSpendStatPoints request: the name, then how many points go
+## to Strength and how many to Intellect (one byte each).
+static func encode_spend_request(character_name: String, str_points: int, int_points: int) -> PackedByteArray:
+	var out := encode_request(character_name)
+	out.append(clampi(str_points, 0, 255))
+	out.append(clampi(int_points, 0, 255))
+	return out

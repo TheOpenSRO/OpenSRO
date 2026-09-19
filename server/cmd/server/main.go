@@ -608,6 +608,7 @@ func main() {
 		session.InventoryMoveHandler(chars, inv),
 		session.EquipmentHandlerWithRules(chars, eq, inv, refItems),
 		session.CharacterStatsHandler(chars, eq, refItems, skills, manaTracker),
+		session.SpendStatPointsHandler(chars, eq, refItems, skills, manaTracker),
 		session.ShopHandler(chars, shopSvc),
 		session.StorageHandler(chars, storageSvc),
 		session.UseItemHandler(chars, inv, refItems, manaTracker),
