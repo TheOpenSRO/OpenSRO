@@ -1778,6 +1778,18 @@ const SKILL_BADGE_POS := Vector2(19, 17)
 ## Reads the skill tree once: the groups (skillgroup.txt) and the skills in each
 ## (skilldata_*.txt), kept to the player's own masteries. Lazy -- the first time
 ## the skill window opens -- because it scans a few MB of archive.
+## The skill-name table (textdata_equip&skill.txt): a skill's UI_SkillName
+## (skilldata col 62, an `SN_SKILL_*` id) and its SN_ description resolve here,
+## not in the UI system table -- without it every tooltip showed the raw key.
+## Same file family as textdata_object.txt for items; parsed the same way.
+const SKILL_NAME_TABLE_PATH := "server_dep\\silkroad\\textdata\\textdata_equip&skill.txt"
+var _skill_names: UiTextTable = null
+
+## The table a skill's name or description id resolves through: the
+## equip&skill table when it loaded, else the UI system table.
+func _skill_text_table() -> UiTextTable:
+	return _skill_names if _skill_names != null else _text_table()
+
 func _load_skill_catalog() -> void:
 	if _skill_catalog_loaded:
 		return
@@ -1787,6 +1799,12 @@ func _load_skill_catalog() -> void:
 	var archive := _builder.media_archive()
 	if archive == null:
 		return
+	var names_entry := ObjectLoader.find_file(archive, SKILL_NAME_TABLE_PATH)
+	if names_entry != null:
+		_skill_names = UiTextTable.parse(archive.read_file(names_entry))
+		print("HudPanels: skill names read from %s" % SKILL_NAME_TABLE_PATH.get_file())
+	else:
+		print("HudPanels: no %s -- skill names show their SN_ ids" % SKILL_NAME_TABLE_PATH.get_file())
 	var gentry := ObjectLoader.find_file(archive, SkillDataReader.GROUP_TABLE)
 	if gentry != null:
 		_skill_groups = SkillDataReader.parse_groups(archive.read_file(gentry))
@@ -1856,6 +1874,21 @@ func _mastery_level(mastery_id: int) -> int:
 func _fill_skill_masteries(window: HudWindow) -> void:
 	_load_masteries()
 	_load_skill_catalog()
+	# QA: SRREVAMP_QA_SKILL_STATE="sp=9,level=3,257=3" sets the points, the
+	# character level and any mastery levels (id=level) the board explains
+	# against, so a render can show a given player's window without a server.
+	if OS.has_environment("SRREVAMP_QA_SKILL_STATE"):
+		for part in OS.get_environment("SRREVAMP_QA_SKILL_STATE").split(",", false):
+			var kv: PackedStringArray = String(part).split("=")
+			if kv.size() != 2 or not kv[1].strip_edges().is_valid_int():
+				continue
+			var key := kv[0].strip_edges()
+			match key:
+				"sp": _skill_points = int(kv[1])
+				"level": _skill_char_level = int(kv[1])
+				_:
+					if key.is_valid_int():   # "257=3": mastery id 257 at level 3
+						_skill_mastery_levels[int(key)] = int(kv[1])
 	var board := window.node("GDR_SKILL_BOARD") as Control
 	if board == null:
 		return
@@ -2006,6 +2039,10 @@ func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> voi
 	if reason != "":
 		levelup.disabled = true
 		levelup.tooltip_text = reason
+	if OS.has_environment("SRREVAMP_QA_SKILL_STATE"):
+		print("QA SKILL: %s Lv %d, %d SP, char Lv %d, total %d/%d -> LEVEL UP %s%s" % [
+			mastery.display_name(_text_table()), real_level, _skill_points, _skill_char_level, total_now,
+			MASTERY_TOTAL_CAP_PER_LEVEL * _skill_char_level, "disabled: " if reason != "" else "enabled", reason])
 	host.add_child(levelup)
 
 	var lvl_lbl := Label.new()
@@ -2108,7 +2145,10 @@ func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: Skil
 			icon.texture = _load_skill_icon(s.icon_path)
 			icon.modulate = Color(0.45, 0.45, 0.45, 0.85)
 		icon.mouse_filter = Control.MOUSE_FILTER_PASS
-		icon.tooltip_text = _skill_cell_tooltip(s, learned)
+		icon.tooltip_text = _skill_cell_tooltip(s, learned, mastery)
+		if OS.has_environment("SRREVAMP_QA_SKILL_STATE") and group.row == 0 and col == 0:
+			print("QA SKILL: first cell (%s) state: learned=%d available=%s; tooltip:\n%s" % [
+				s.basic_code, learned, str(available), icon.tooltip_text])
 
 		# A learned skill shows its level badge over the icon's lower-right, and
 		# clicking it casts that skill (World3D picks the target and animates).
@@ -2137,7 +2177,7 @@ func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: Skil
 			add_btn.mouse_filter = Control.MOUSE_FILTER_STOP
 			var target_id: int = s.level_ids[next_level - 1]
 			add_btn.pressed.connect(func(): _on_skill_learn(target_id))
-			add_btn.tooltip_text = "Learn %s Lv %d" % [s.display_name(_text_table()), next_level]
+			add_btn.tooltip_text = "Learn %s Lv %d" % [s.display_name(_skill_text_table()), next_level]
 			cell.add_child(add_btn)
 
 ## The highest contiguous level of a skill the character has learned (0 = not
@@ -2161,8 +2201,8 @@ func _skill_learned_level(s: SkillDataReader.BaseSkill) -> int:
 ## skilldata: name + level, the description, real cast stats (MP, cast time,
 ## cooldown, range), and the next level's SP/mastery requirement. All grounded
 ## (see the skilldata-columns note); no invented numbers.
-func _skill_cell_tooltip(s: SkillDataReader.BaseSkill, learned: int) -> String:
-	var names := _text_table()
+func _skill_cell_tooltip(s: SkillDataReader.BaseSkill, learned: int, mastery: MasteryReader.Mastery = null) -> String:
+	var names := _skill_text_table()
 	var nm := s.display_name(names)
 	var lines := PackedStringArray()
 	if learned >= s.max_level and s.max_level > 0:
@@ -2188,12 +2228,28 @@ func _skill_cell_tooltip(s: SkillDataReader.BaseSkill, learned: int) -> String:
 	stats.append(rng)
 	if not stats.is_empty():
 		lines.append(" · ".join(stats))
-	# The next level's real learn cost, for the ADD button.
+	# The next level's real learn gate, stated against what the player HAS --
+	# so a locked skill says why it is locked instead of only what it costs.
+	# The numbers are skilldata's own (ReqCommon_MasteryLevel1 col 36,
+	# ReqLearn_SP col 46); the SP label is the client's own UIIT_STT_NEED_SP.
+	# A level-3 fighter asked why Bicheon 3 offered nothing: its first skill,
+	# SKILL_CH_SWORD_SMASH_A_01, needs Bicheon 5, and a mastery cannot pass the
+	# character's level (Mastery_LevelUp refuses with 0x3804) -- both were true
+	# and neither was on screen.
 	if learned < s.max_level:
 		var nxt: int = learned + 1
 		var sp: int = s.level_sp[nxt - 1] if nxt - 1 < s.level_sp.size() else 0
 		var req: int = s.level_reqs[nxt - 1] if nxt - 1 < s.level_reqs.size() else s.min_req_mastery_level
-		lines.append("Learn Lv %d: %d SP (mastery Lv %d)" % [nxt, sp, req])
+		var mname: String = mastery.display_name(_text_table()) if mastery != null else "mastery"
+		var have: int = _mastery_level(mastery.id) if mastery != null else 0
+		lines.append("Learn Lv %d: %s Lv %d required (yours: Lv %d)" % [nxt, mname, req, have])
+		lines.append("%s: %d" % [_resolve_ui("UIIT_STT_NEED_SP", "Skill point needed"), sp])
+		if req > have:
+			if _skill_char_level > 0 and req > _skill_char_level:
+				lines.append("A mastery cannot pass your character level (Lv %d). Reach character level %d, then raise %s to Lv %d." % [
+					_skill_char_level, req, mname, req])
+			else:
+				lines.append("Raise %s to Lv %d (LEVEL UP) first." % [mname, req])
 	return "\n".join(lines)
 
 ## Draws the learned-level badge (skl_level_tab) over the icon's lower-right,
