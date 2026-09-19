@@ -47,8 +47,8 @@ In order. Each is checked off here when it ships in a release, with its round in
         and GROUNDING_AUDIT.md). Stackables stack to their real MaxStack (col 57). The in-memory
         server loads items via `-items-csv` (qa_shot feeds `items.csv` beside the pk2s); PostgreSQL
         imports them via `import-refdata` (regenerate/re-import to pick up price + stack columns).
-        Still open: **repair** (the authored buttons are inert -- needs a per-item durability
-        system, which does not exist yet) and paging past 30 goods (no current NPC needs it).
+        Repair **done** (round 212, v0.1.386): per-item durability exists now and the authored
+        Repair / Repair All buttons charge itemdata's own repair price. Still open: paging past 30 goods (no current NPC needs it).
 - [x] **Item tooltips** with the real stats -- round 140 (weapon attack, pinned against the Copper
       Sword +5 the user sent) and round 170 (armour/shield defence at columns 65-77, grounded from
       the DB column order + the cloth=magic / heavy=physical relationship). See ITEM_FORMAT.md.
