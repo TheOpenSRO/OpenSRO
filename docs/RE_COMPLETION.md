@@ -5078,6 +5078,9 @@ per-region `textzonename.txt` (4,176 rows) instead of the 15-zone Shader table
 that had no Alexandria; the "white ground" did NOT reproduce on the box (13/13
 tile textures resolve for 90/48) -- the client now logs per region how many
 resolved, to settle it from the reporter's own archives.
+Round 253 (v0.1.403): every roster species takes its real `npcpos` placements
+(`export-refdata -mode npcpos`, `internal/spawn`, `-npcpos-csv`); the town anchors
+are the fallback only. Grounds eleven species' positions that were own design.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

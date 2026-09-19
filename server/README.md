@@ -34,6 +34,7 @@ in `deploy/README.md` and `docs/HANDOFF_OPENSRO.md`.
 | `-leveldata-csv` | `SRREVAMP_LEVELDATA_CSV` | the EXP curve (`export-leveldata`); **without it characters never level** |
 | `-skills-csv` | `SRREVAMP_SKILLS_CSV` | skill reference data (`export-refdata`), in-memory mode; PostgreSQL imports it instead |
 | `-items-csv` | `SRREVAMP_ITEMS_CSV` | item reference data (`export-refdata`), in-memory mode; PostgreSQL imports it instead |
+| `-npcpos-csv` | `SRREVAMP_NPCPOS_CSV` | the game's monster placements (`export-refdata -mode npcpos` on a client's `npcpos.txt`); every roster species with rows stands where the game puts it, otherwise at its own-design anchor near the town |
 | `-gm-accounts` | `SRREVAMP_GM_ACCOUNTS` | comma-separated account usernames allowed to run the in-game GM commands (`/tp`, `/give`, `/level`, ...); case as stored in `accounts.username`; default none. Every command is logged with the account. See `docs/DEBUG_TOOLS.md` |
 
 At boot the server logs what reference data its database holds

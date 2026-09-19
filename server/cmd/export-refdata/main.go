@@ -46,6 +46,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/OpenSRO/srrevamp/server/internal/skillparam"
+	"github.com/OpenSRO/srrevamp/server/internal/spawn"
 )
 
 // Field indices into a tab-split itemdata row (0-indexed; field 0 is the
@@ -262,15 +263,22 @@ const (
 
 func main() {
 	out := flag.String("out", "-", "output CSV path, or - for stdout")
-	mode := flag.String("mode", "items", "which reference table the input files are: items or skills")
+	mode := flag.String("mode", "items", "which reference table the input files are: items, skills or npcpos")
 	flag.Parse()
-	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills") {
-		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills] -out out.csv <data_*.txt> ...")
+	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos") {
+		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		os.Exit(2)
 	}
 	record, noun := itemRecord, "item"
-	if *mode == "skills" {
+	switch *mode {
+	case "skills":
 		record, noun = skillRecord, "skill"
+	case "npcpos":
+		// npcpos rows are placements, not records keyed by id: one species
+		// has dozens of them. Every row goes out, in file order, under the
+		// header spawn.NpcPosCSVColumns.
+		exportNpcPos(*out)
+		return
 	}
 
 	var sink *os.File
@@ -1073,4 +1081,57 @@ func decode(raw []byte) string {
 		return string(utf16.Decode(u16))
 	}
 	return string(raw)
+}
+
+// exportNpcPos writes the client's npcpos.txt (5 tab-separated columns:
+// object id, region id, local x, y, z -- 12,367 rows in a retail archive,
+// 12,110 of them monsters) as the CSV cmd/server's -npcpos-csv reads. Unlike
+// the item and skill tables a row is not unique by id, so nothing is
+// de-duplicated: a species with 55 placements gets 55 rows.
+func exportNpcPos(out string) {
+	var sink *os.File
+	if out == "-" {
+		sink = os.Stdout
+	} else {
+		f, err := os.Create(out)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "creating %s: %v\n", out, err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		sink = f
+	}
+	w := csv.NewWriter(sink)
+	defer w.Flush()
+	if err := w.Write(spawn.NpcPosCSVColumns); err != nil {
+		fmt.Fprintf(os.Stderr, "writing: %v\n", err)
+		os.Exit(1)
+	}
+	written, skipped := 0, 0
+	for _, path := range flag.Args() {
+		rows, err := readTable(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "reading %s: %v\n", path, err)
+			os.Exit(1)
+		}
+		for _, cols := range rows {
+			if len(cols) < 5 {
+				skipped++
+				continue
+			}
+			id := strings.TrimSpace(cols[0])
+			if _, err := strconv.Atoi(id); err != nil {
+				skipped++
+				continue
+			}
+			rec := []string{id, strings.TrimSpace(cols[1]), strings.TrimSpace(cols[2]), strings.TrimSpace(cols[3]), strings.TrimSpace(cols[4])}
+			if err := w.Write(rec); err != nil {
+				fmt.Fprintf(os.Stderr, "writing: %v\n", err)
+				os.Exit(1)
+			}
+			written++
+		}
+	}
+	w.Flush()
+	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d npcpos rows, skipped %d\n", written, skipped)
 }

@@ -7075,6 +7075,24 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-fifty-third round: every roster species stands where the game puts it
+
+Follow-up to the playtest report "why are there Yeohas in town" (round 250). Only Mangyang had
+its real placements (four embedded rows); the other ten species stood at own-design anchors a
+few hundred units from Jangan's square -- Yeoha, a level-10 monster, among them. The data was
+always there: `npcpos.txt`, 12,367 placements keyed by the species' characterdata id with a
+packed region and a local position, converted by the transform this project measured for it.
+
+Wired (v0.1.403): `export-refdata -mode npcpos` streams the table to a CSV (rows are not
+id-unique, so nothing is de-duplicated -- a species with 55 placements gets 55 rows); the new
+`internal/spawn` loads it; `cmd/server -npcpos-csv` gives every roster species with rows ALL of
+them, replacing embedded rows and anchors alike (a configured path that fails to load is fatal,
+not a silent fall-back). The roster now carries each species' numeric id (`RefObjID`, read from
+the retail table: Mangyang 1933 ... Yeoha 1943, Earth Ghost 1963), test-checked distinct. The
+public server's compose command passes the flag and its data directory holds the CSV. The
+anchors stay only as the fallback when no file is configured or a species has no rows -- and
+the roster comment says so. Full suite green (57 packages).
+
 ## Two-hundred-and-fifty-second round (world lane): the Alexandria "white ground" report, and the zone label that never moved
 
 Reported from a real playtest: after the debug panel's **Alexandria** button (zone target

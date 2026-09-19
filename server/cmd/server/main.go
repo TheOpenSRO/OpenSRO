@@ -32,6 +32,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/session"
 	"github.com/OpenSRO/srrevamp/server/internal/shop"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
+	"github.com/OpenSRO/srrevamp/server/internal/spawn"
 	"github.com/OpenSRO/srrevamp/server/internal/storage"
 	"github.com/OpenSRO/srrevamp/server/internal/trade"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
@@ -48,10 +49,15 @@ type monsterSpec struct {
 	Zone     string
 	Name     string
 	CodeName string // the species' characterdata key; what the client draws it by
-	Level    int    // real level, from the client's characterdata (_RefObjChar col 57)
-	Rarity   int    // real rank, from characterdata (_RefObjChar col 15); 0 = normal
-	MaxHP    int    // real max HP, from characterdata (_RefObjChar col 59) -- see below
-	Defense  int    // real flat absorption, from characterdata col 71 -- see below
+	// RefObjID is the species' numeric characterdata id -- the key npcpos.txt
+	// places monsters by (its rows carry ids, not code names). Read from the
+	// retail table 2026-09-19 for the roster; a spec without one cannot take
+	// real placements from -npcpos-csv and keeps its anchor.
+	RefObjID int64
+	Level    int // real level, from the client's characterdata (_RefObjChar col 57)
+	Rarity   int // real rank, from characterdata (_RefObjChar col 15); 0 = normal
+	MaxHP    int // real max HP, from characterdata (_RefObjChar col 59) -- see below
+	Defense  int // real flat absorption, from characterdata col 71 -- see below
 	// BCRadius is the species' collision radius, characterdata col 50, read
 	// from the retail table 2026-09-19 (round 247): Mangyang/Bigeye/Water
 	// Ghost 6, Gyo/Stone Ghost 10, Yeoha 11, Tomb Stone/Earth Ghost 4. It is
@@ -211,24 +217,24 @@ var monsterSpecs = []monsterSpec{
 	// are deliberately not carried: the client resolves standing height from
 	// the region's walkable graph and ignores the authored y, so a height
 	// here would be a number nothing reads.
-	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1, BCRadius: 6, Critical: 2, MaxHP: 54, Defense: 7, AttackMin: 17, AttackMax: 19, GoldMin: 28, GoldMax: 59, Spawns: []realSpawn{
+	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", RefObjID: 1933, Level: 1, BCRadius: 6, Critical: 2, MaxHP: 54, Defense: 7, AttackMin: 17, AttackMax: 19, GoldMin: 28, GoldMax: 59, Spawns: []realSpawn{
 		{RegionID: 24744, LocalX: 1089.65, LocalZ: 600.09003},
 		{RegionID: 24744, LocalX: 1842.3, LocalZ: 600.94},
 		{RegionID: 24744, LocalX: 553.73999, LocalZ: 471.07001},
 		{RegionID: 24744, LocalX: 1260.99, LocalZ: 22.690001},
 	}},
-	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", Level: 2, BCRadius: 6, Critical: 2, MaxHP: 55, Defense: 9, AttackMin: 21, AttackMax: 23, GoldMin: 32, GoldMax: 66, X: -170, Z: -880, Count: 2},
-	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", Level: 3, BCRadius: 6, Critical: 2, MaxHP: 85, Defense: 9, AttackMin: 25, AttackMax: 29, GoldMin: 35, GoldMax: 74, X: 170, Z: -880, Count: 2},
-	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", Level: 4, BCRadius: 10, Critical: 2, MaxHP: 83, Defense: 12, AttackMin: 30, AttackMax: 34, GoldMin: 39, GoldMax: 81, X: -170, Z: -760, Count: 2},
+	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", RefObjID: 1934, Level: 2, BCRadius: 6, Critical: 2, MaxHP: 55, Defense: 9, AttackMin: 21, AttackMax: 23, GoldMin: 32, GoldMax: 66, X: -170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", RefObjID: 1935, Level: 3, BCRadius: 6, Critical: 2, MaxHP: 85, Defense: 9, AttackMin: 25, AttackMax: 29, GoldMin: 35, GoldMax: 74, X: 170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", RefObjID: 1936, Level: 4, BCRadius: 10, Critical: 2, MaxHP: 83, Defense: 12, AttackMin: 30, AttackMax: 34, GoldMin: 39, GoldMax: 81, X: -170, Z: -760, Count: 2},
 	// A higher ground east of the fields (the (340,-340) anchor):
-	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", Level: 5, BCRadius: 10, Critical: 2, MaxHP: 119, Defense: 12, AttackMin: 35, AttackMax: 40, GoldMin: 42, GoldMax: 88, X: 340, Z: -340, Count: 3},
-	{Zone: "jangan", Name: "Water Ghost slave", CodeName: "MOB_CH_WATERGHOST_CLON", Level: 6, BCRadius: 6, Critical: 2, MaxHP: 114, Defense: 15, AttackMin: 41, AttackMax: 47, GoldMin: 46, GoldMax: 96, X: 500, Z: -360, Count: 2},
-	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", Level: 7, BCRadius: 6, Critical: 2, MaxHP: 156, Defense: 15, AttackMin: 47, AttackMax: 54, GoldMin: 49, GoldMax: 103, X: 340, Z: -500, Count: 2},
-	{Zone: "jangan", Name: "Tomb Stone Ghost", CodeName: "MOB_CH_TOMBSTONE_CLON", Level: 8, BCRadius: 4, Critical: 2, MaxHP: 204, Defense: 15, AttackMin: 74, AttackMax: 83, GoldMin: 53, GoldMax: 110, X: 500, Z: -500, Count: 2},
-	{Zone: "jangan", Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", Level: 9, BCRadius: 10, Critical: 2, MaxHP: 194, Defense: 22, AttackMin: 60, AttackMax: 70, GoldMin: 56, GoldMax: 118, X: 200, Z: -480, Count: 2},
-	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", Level: 10, BCRadius: 11, Critical: 2, MaxHP: 249, Defense: 22, AttackMin: 67, AttackMax: 79, GoldMin: 60, GoldMax: 125, X: 200, Z: -220, Count: 2},
+	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", RefObjID: 1937, Level: 5, BCRadius: 10, Critical: 2, MaxHP: 119, Defense: 12, AttackMin: 35, AttackMax: 40, GoldMin: 42, GoldMax: 88, X: 340, Z: -340, Count: 3},
+	{Zone: "jangan", Name: "Water Ghost slave", CodeName: "MOB_CH_WATERGHOST_CLON", RefObjID: 1938, Level: 6, BCRadius: 6, Critical: 2, MaxHP: 114, Defense: 15, AttackMin: 41, AttackMax: 47, GoldMin: 46, GoldMax: 96, X: 500, Z: -360, Count: 2},
+	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", RefObjID: 1939, Level: 7, BCRadius: 6, Critical: 2, MaxHP: 156, Defense: 15, AttackMin: 47, AttackMax: 54, GoldMin: 49, GoldMax: 103, X: 340, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Tomb Stone Ghost", CodeName: "MOB_CH_TOMBSTONE_CLON", RefObjID: 1950, Level: 8, BCRadius: 4, Critical: 2, MaxHP: 204, Defense: 15, AttackMin: 74, AttackMax: 83, GoldMin: 53, GoldMax: 110, X: 500, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", RefObjID: 1941, Level: 9, BCRadius: 10, Critical: 2, MaxHP: 194, Defense: 22, AttackMin: 60, AttackMax: 70, GoldMin: 56, GoldMax: 118, X: 200, Z: -480, Count: 2},
+	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", RefObjID: 1943, Level: 10, BCRadius: 11, Critical: 2, MaxHP: 249, Defense: 22, AttackMin: 67, AttackMax: 79, GoldMin: 60, GoldMax: 125, X: 200, Z: -220, Count: 2},
 	// The donghwang example kept from before (a far, higher-level zone).
-	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", Level: 27, BCRadius: 4, Critical: 2, MaxHP: 1451, Defense: 103, AttackMin: 219, AttackMax: 261, GoldMin: 119, GoldMax: 250, X: 70, Z: -50, Count: 1},
+	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", RefObjID: 1963, Level: 27, BCRadius: 4, Critical: 2, MaxHP: 1451, Defense: 103, AttackMin: 219, AttackMax: 261, GoldMin: 119, GoldMax: 250, X: 70, Z: -50, Count: 1},
 }
 
 // respawnDelay is DISCLOSED, own design. The real game respawns per NEST
@@ -364,6 +370,10 @@ func main() {
 		"path to a skill-refdata CSV (from cmd/export-refdata -mode skills); with -in-memory it "+
 			"lets the server gate learning on real skills. With PostgreSQL, import it via "+
 			"cmd/import-refdata instead. Without either, learning real skills is unavailable.")
+	npcposCSV := flag.String("npcpos-csv", os.Getenv("SRREVAMP_NPCPOS_CSV"),
+		"path to the game's monster placements (from cmd/export-refdata -mode npcpos on a client's "+
+			"own npcpos.txt). Every roster species with rows in it stands where the game puts it; "+
+			"without the file the species keep their own-design anchors near the town.")
 	itemsCSV := flag.String("items-csv", os.Getenv("SRREVAMP_ITEMS_CSV"),
 		"path to an item-refdata CSV (from cmd/export-refdata -mode items); with -in-memory it "+
 			"feeds the shop catalogue and prices, item stat lookups and inventory stack limits. "+
@@ -639,6 +649,31 @@ func main() {
 	parties := party.NewHub()
 	duels := duel.NewHub()
 	trades := trade.NewHub()
+	// The game's own placements, when the operator supplies them: every
+	// species with rows takes them all, replacing both the embedded rows and
+	// the own-design anchor. A configured path that does not load is fatal
+	// rather than a silent fall-back to the anchors.
+	if *npcposCSV != "" {
+		table, err := spawn.LoadCSV(*npcposCSV)
+		if err != nil {
+			logger.Error("loading npcpos placements", "path", *npcposCSV, "err", err)
+			os.Exit(1)
+		}
+		applied := 0
+		for i := range monsterSpecs {
+			rows := table.Rows(monsterSpecs[i].RefObjID)
+			if len(rows) == 0 {
+				continue
+			}
+			real := make([]realSpawn, 0, len(rows))
+			for _, r := range rows {
+				real = append(real, realSpawn{RegionID: r.RegionID, LocalX: r.LocalX, LocalZ: r.LocalZ})
+			}
+			monsterSpecs[i].Spawns = real
+			applied++
+		}
+		logger.Info("npcpos placements loaded", "species_in_table", len(table), "roster_species_placed", applied)
+	}
 	for _, spec := range monsterSpecs {
 		// A species with real npcpos placements gets one monster per real
 		// row, where the game itself puts it. No spread: these are already

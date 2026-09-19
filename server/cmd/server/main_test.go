@@ -262,3 +262,20 @@ func TestMonsterGoldIsReal(t *testing.T) {
 		}
 	}
 }
+
+// TestRosterCarriesRealObjectIDs: every roster species names its characterdata
+// id (what npcpos places by), distinct across the roster, so -npcpos-csv can
+// give each its real placements.
+func TestRosterCarriesRealObjectIDs(t *testing.T) {
+	seen := map[int64]string{}
+	for _, spec := range monsterSpecs {
+		if spec.RefObjID <= 0 {
+			t.Errorf("%s (%s) has no RefObjID", spec.Name, spec.CodeName)
+			continue
+		}
+		if prev, dup := seen[spec.RefObjID]; dup && prev != spec.CodeName {
+			t.Errorf("RefObjID %d is both %s and %s", spec.RefObjID, prev, spec.CodeName)
+		}
+		seen[spec.RefObjID] = spec.CodeName
+	}
+}

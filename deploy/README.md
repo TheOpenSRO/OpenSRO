@@ -56,7 +56,9 @@ order() { iconv -f UTF-16LE -t UTF-8 "$1" | tr -d '\r' | sed 's/^\xef\xbb\xbf//'
 /tmp/export-refdata  -mode items  -out items.csv  $(order itemdata.txt)     # 15,338 rows from a retail archive
 /tmp/export-refdata  -mode skills -out skills.csv $(order skilldata.txt)    # 33,698 rows
 /tmp/export-leveldata -out leveldata.csv leveldata.txt                      # 140 levels
-rm -f itemdata_* skilldata_*   # the extracted tables are game data; keep only the CSVs
+/tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\npcpos.txt" -out npcpos.txt
+/tmp/export-refdata  -mode npcpos -out npcpos.csv npcpos.txt                # 12,367 placements; the server reads it with -npcpos-csv
+rm -f itemdata_* skilldata_* npcpos.txt   # the extracted tables are game data; keep only the CSVs
 
 # The exporter grows a strict-suffix column now and then (latest: the six skill prerequisite columns, round 250, 2026-09-19 -- re-run the SKILLS export too);
 # an older items.csv still loads, but the new column reads as 0 until the export is re-run.
@@ -77,6 +79,7 @@ rm -f itemdata_* skilldata_*   # the extracted tables are game data; keep only t
 #         - "-addr=:15779"
 #         - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/srrevamp?sslmode=disable"
 #         - "-leveldata-csv=/data/leveldata.csv"
+#         - "-npcpos-csv=/data/npcpos.csv"       # real monster placements (round 253); omit for the town anchors
 docker compose up -d
 ```
 
