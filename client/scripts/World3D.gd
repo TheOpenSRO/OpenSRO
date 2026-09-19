@@ -5095,14 +5095,69 @@ func _move_on_nav_graph(delta: float) -> bool:
 
 	# The move is expressed in the region's own space, via the terrain group's
 	# own transform, so the world mirror cannot skew it -- and the decision
-	# itself lives in NavGraph.step, where it can be unit tested.
+	# itself lives in NavGraph.step_tracked, where it can be unit tested.
 	var world_step := Vector3(player.velocity.x, 0.0, player.velocity.z) * delta
 	var local := group.to_local(player.global_position)
 	var target := group.to_local(player.global_position + world_step)
-	local = graph.step(local, Vector2(target.x - local.x, target.z - local.z))
-	player.global_position = group.to_global(local)
+
+	# What the player stands on is carried from frame to frame, the way the
+	# real client carries its current cell: being on an object is a state
+	# entered by crossing one of its outline edges (a doorway, a stair's foot),
+	# not something read off the height. It is re-settled from the height only
+	# when something other than this walk moved the player -- a teleport, a
+	# zone change, the physics fallback -- or when the player crossed into a
+	# region whose graph numbers its objects differently.
+	var trace := _qa_walk != "" or OS.get_environment("SRREVAMP_QA_NAVTRACE") != ""
+	if graph != _nav_footing_graph or player.global_position.distance_to(_nav_footing_pos) > NAV_FOOTING_RESETTLE_DISTANCE:
+		_nav_footing = graph.surface_at(local.x, local.z, local.y).object_index
+		_nav_footing_graph = graph
+		if trace:
+			print("NAV %4d: footing settled on %s at local %.1f, %.1f (y %.1f)" % [
+				_qa_tick, _nav_footing_name(graph, _nav_footing), local.x, local.z, local.y])
+	var step := graph.step_tracked(local, Vector2(target.x - local.x, target.z - local.z), _nav_footing)
+	if trace and OS.get_environment("SRREVAMP_QA_NAVTRACE") == "2":
+		print("NAV %4d: %.2f, %.2f -> %.2f, %.2f (y %.2f) on %s" % [
+			_qa_tick, local.x, local.z, step.position.x, step.position.z, step.position.y,
+			_nav_footing_name(graph, step.standing_on)])
+	if trace:
+		if step.entered != -1:
+			print("NAV %4d: onto %s at local %.1f, %.1f (y %.1f)" % [
+				_qa_tick, _nav_footing_name(graph, step.entered), step.position.x, step.position.z, step.position.y])
+		if step.exited != -1:
+			print("NAV %4d: off %s at local %.1f, %.1f (y %.1f)" % [
+				_qa_tick, _nav_footing_name(graph, step.exited), step.position.x, step.position.z, step.position.y])
+		if step.blocked and not _nav_blocked_last_frame:
+			print("NAV %4d: wall at local %.1f, %.1f (on %s)" % [
+				_qa_tick, step.position.x, step.position.z, _nav_footing_name(graph, step.standing_on)])
+		_nav_blocked_last_frame = step.blocked
+	_nav_footing = step.standing_on
+	player.global_position = group.to_global(step.position)
+	_nav_footing_pos = player.global_position
 	player.velocity.y = 0.0
 	return true
+
+## What the walk believes the player stands on: NavGraph.ON_TERRAIN or a real
+## object index into the current graph's region. See _move_on_nav_graph.
+var _nav_footing: int = NavGraph.ON_TERRAIN
+var _nav_footing_graph: NavGraph = null
+## Where the walk left the player last frame; a player found elsewhere was
+## moved by something else, and the footing is re-settled from the height.
+var _nav_footing_pos := Vector3.INF
+var _nav_blocked_last_frame := false
+## How far the player may be from where the walk left them before the
+## footing is re-settled. A project choice: well above any float drift, well
+## below any teleport.
+const NAV_FOOTING_RESETTLE_DISTANCE := 1.0
+
+## "terrain", or the object's model name if the graph tagged one, else its
+## index -- for the walk's trace lines and the QA position line.
+func _nav_footing_name(graph: NavGraph, footing: int) -> String:
+	if footing == NavGraph.ON_TERRAIN:
+		return "terrain"
+	var placed: NavGraph.PlacedObject = graph.objects.get(footing)
+	if placed != null and placed.has_meta("model"):
+		return "object %s" % placed.get_meta("model")
+	return "object %d" % footing
 
 ## How wide the real character shadow blob is drawn, in world units.
 ##
@@ -5579,12 +5634,14 @@ func _qa_step() -> void:
 			# of.
 			var graph: NavGraph = pair[0]
 			var surface := graph.surface_at(l.x, l.z, l.y)
+			# The footing the walk itself carries (see _move_on_nav_graph),
+			# which is what decides whose walls apply; the height query is
+			# only the fallback when the walk has not run on this graph yet.
 			var what := "terrain"
-			if not surface.is_terrain:
-				what = "object %d" % surface.object_index
-				var placed: NavGraph.PlacedObject = graph.objects[surface.object_index]
-				if placed != null and placed.has_meta("model"):
-					what = "object %s" % placed.get_meta("model")
+			if _nav_footing_graph == graph:
+				what = _nav_footing_name(graph, _nav_footing)
+			elif not surface.is_terrain:
+				what = _nav_footing_name(graph, surface.object_index)
 			standing = "  on %s at %.1f (%.1f below feet)" % [what, surface.height, l.y - surface.height]
 
 			# What the walkable graph says and what is actually *drawn*

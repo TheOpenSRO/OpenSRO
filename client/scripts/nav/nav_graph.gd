@@ -9,8 +9,8 @@ class_name NavGraph
 ##
 ##   * `height_at` -- how high is the ground here, counting anything the
 ##     player can stand on (a bridge deck, a staircase, a raised floor);
-##   * `blocked` -- does moving from here to there cross something the real
-##     game refuses to let you through.
+##   * `step_tracked` -- where does a move from here end up, given what the
+##     character is standing on, and what does it stand on afterwards.
 ##
 ## **No physics.** Nothing here builds a collision shape. That is the point:
 ## driving Godot collision from this data was tried and reverted (see
@@ -19,6 +19,61 @@ class_name NavGraph
 ## world's mirrored transform forces that surface to be two-sided. The real
 ## client has no capsule and no surface -- it finds the cell underfoot, takes
 ## its height, and tests each edge it crosses as a 2D line. So does this.
+##
+## ## The movement rule, as the client itself runs it
+##
+## Recovered from `sro_client.exe`'s own navmesh walk (the decompiled
+## `CRTNavMeshTerrain::vslot_002` at 0x4047a0, `RTNavMeshTerrain::FUN_00404060`,
+## `CRTNavMeshObj::vslot_002` at 0x44b500, the object-entry test
+## `RTNavMeshObj::FUN_0044a790` and the in-object cell walk
+## `CRTNavMeshObj::FUN_0044add0`; written up in docs/protocol/NAVMESH_MOVEMENT.md):
+##
+##   * The character is always either on the terrain or **on one object**, and
+##     the client remembers which. Being "on" an object is a state entered by
+##     crossing one of its outline edges, never inferred from height.
+##   * On the terrain, the move is tested against the terrain's own blocking
+##     edges and against the **outline** edges of the objects listed for the
+##     cells it passes through. An outline edge with bit 0 set stops the
+##     move; one with bit 0 clear lets the character *onto* the object, and
+##     the height then comes from that object's cell. Edges with bit 4
+##     (0x10) are not tested at all from outside: they are how a character
+##     walks *under* a city wall's archway while the wall's own walkway stays
+##     fenced (real `cj_s.bsr`: 121 walls, 21 such edges over its gates).
+##   * On an object, **only that object's edges** are tested -- its internal
+##     edges directionally (value 1 blocks a mover on the edge's `cell_to`
+##     side, value 2 one on its `cell_from` side), its outline edges as exits
+##     (value 2 or 0x10 blocks leaving; anything else steps back onto the
+##     terrain). Neither the terrain's walls nor any other object's apply
+##     while standing on an object, unless the object's own navigation mesh
+##     names an event called "event"/"EVENT" (the client's loader sets a
+##     byte for exactly those two spellings at 0x449395/0x4495d9, and the
+##     terrain walk reads it at 0x404c71): those 59 real objects are all
+##     fortress-war structures, dungeon doors and arena pads.
+##   * The client pushes the character 0.01 past a crossed edge and 0.01
+##     short of a blocking one (the double at 0x00e1b820), and slides along
+##     a wall instead of sticking to it.
+##
+## Measured over every object the object index names (2,043 with a
+## navigation mesh, 62,120 outline edges, 90,018 internal ones): 81.1% of
+## outline edges carry flag 3 (a wall from both sides), 11.5% flag 0x83, 5.3%
+## flag 0 (a doorway: real `cj_weapon.bsr` has 3 of them against 31 walls,
+## `cj_pal_indoor.bsr` 10 against 56), 0.9% flag 0x10 (an archway
+## underpass). Internal edges are 94.2% flag 4 (open), 3.8% flag 7 (a railing
+## across a walkable deck), and 25 in 90,018 are genuinely one-way.
+##
+## ## What this replaced, and why
+##
+## The previous model inferred "on an object" from height: whatever surface
+## lay within SURFACE_REACH_UP above the mover was the ground, and an
+## object's walls only applied to someone already on it. That is exactly how
+## a player got trapped inside a building: walking into the footprint of a
+## shop whose floor sits a few units up was allowed (its walls were not
+## tested for a terrain mover), the floor was then within reach so the
+## player was lifted onto it, and from then on the same walls -- now
+## applicable -- refused every way out except a doorway they had never used.
+## Round 162 measured the Alexandria case at exactly that shape: terrain at
+## 863, a floor at 868.5, and a player standing inside. Crossing edges
+## instead of inferring height cannot produce that state.
 ##
 ## ## How objects attach to the region
 ##
@@ -51,12 +106,44 @@ class_name NavGraph
 const TILE_SIZE := 20.0
 
 ## How far above a reference height a surface may still be chosen as "the
-## ground under me". A project choice, not recovered data: it exists because
-## `height_at` is asked about a point, while the real client tracks which cell
-## the character is already in and never has to guess. Generous enough to step
-## onto a real stair tread, small enough not to teleport the player onto a
-## bridge passing overhead.
+## ground under me" by the height *queries* (`surface_at`, `height_at`). A
+## project choice, not recovered data: those queries are asked about a point,
+## while the real client tracks which cell the character is already in and
+## never has to guess. Movement no longer uses it to decide what the mover
+## is on (see `step_tracked`); it only settles what to stand on after a
+## teleport, a region change or a landing.
 const SURFACE_REACH_UP := 12.0
+
+## The object-edge flag bits, as the client's own walk reads them. Names are
+## this project's; the values and their tests are the binary's.
+## Stops a mover standing on the edge's `cell_to` side -- outside, for an
+## outline edge. The entry test (`RTNavMeshObj::FUN_0044a790`) checks only
+## this bit.
+const EDGE_BLOCKS_FROM_OUTSIDE := 0x01
+## Stops a mover standing on the edge's `cell_from` side -- inside, for an
+## outline edge; the in-object walk tests it against the current cell.
+const EDGE_BLOCKS_FROM_INSIDE := 0x02
+## The edge joins two cells of the same object (the second list).
+const EDGE_INTERNAL := 0x04
+## The edge is stitched to another object's edge (`MapObject.linked_edges`).
+const EDGE_LINKED := 0x08
+## Not tested for a mover who is not on the object -- they pass beneath --
+## and a wall for one who is (`(flags & 0x12) != 0` in the in-object walk).
+const EDGE_IGNORED_FROM_OUTSIDE := 0x10
+
+## How far past a crossed edge, and short of a blocking one, the character is
+## placed: the client's own value, a double at 0x00e1b820 that both the entry
+## test and the in-object walk multiply an edge normal by.
+const CONTACT_PUSH := 0.01
+
+## How many edge events one frame's motion may pass through (a doorway, then
+## a wall to slide along, then a second wall...). A project choice; the real
+## client recurses without a bound. Eight covers any real frame at walking
+## speed, and a corner two walls meet in is stopped rather than looped in.
+const MAX_SUBSTEPS := 8
+
+## `standing_on` value for the terrain.
+const ON_TERRAIN := -1
 
 ## One real placed object's navigation mesh, already transformed into the
 ## region's own coordinate space so nothing downstream repeats the work.
@@ -66,18 +153,45 @@ class PlacedObject:
 	var vertices: PackedVector3Array = PackedVector3Array()
 	## Flat triples of indices into `vertices`.
 	var cells: PackedInt32Array = PackedInt32Array()
-	## Flat pairs of 2D points: every real blocking edge, in region space.
+	## Flat pairs of 2D points: every real edge whose flags carry either
+	## blocking bit, in region space. Kept for the QA reports that list an
+	## object's walls; movement reads the per-edge arrays below.
 	var blocking: PackedVector2Array = PackedVector2Array()
+	## Every real edge, outline list first then internal, as flat 2D pairs
+	## in region space, with its file flags, its two vertex indices, whether
+	## it is an outline edge, and a point on its `cell_from` side (that cell's
+	## centroid) so a mover's side of the line can be told.
+	var edges: PackedVector2Array = PackedVector2Array()
+	var edge_flags: PackedInt32Array = PackedInt32Array()
+	var edge_v0: PackedInt32Array = PackedInt32Array()
+	var edge_v1: PackedInt32Array = PackedInt32Array()
+	var edge_outline: PackedByteArray = PackedByteArray()
+	var edge_inside: PackedVector2Array = PackedVector2Array()
+	## The "event"/"EVENT" marker (see the class comment): the terrain and the
+	## other objects keep blocking a mover who stands on this object.
+	var terrain_collides: bool = false
 	var bounds_min: Vector2 = Vector2.INF
 	var bounds_max: Vector2 = -Vector2.INF
 
 ## What `surface_at` found underfoot.
 class Surface:
 	var height: float = 0.0
-	## -1 for the region's own terrain, else a real index into the region's
-	## object list.
+	## ON_TERRAIN for the region's own terrain, else a real index into the
+	## region's object list.
 	var object_index: int = -1
 	var is_terrain: bool = true
+
+## What one `step_tracked` did.
+class StepResult:
+	var position: Vector3
+	## What the mover stands on afterwards: ON_TERRAIN or an object index.
+	var standing_on: int = -1
+	## The object stepped onto through one of its outline edges this step, or
+	## -1; the object left the same way, or -1; whether a wall stopped or
+	## deflected the move. For traces and tests.
+	var entered: int = -1
+	var exited: int = -1
+	var blocked: bool = false
 
 var region: NvmReader.ParsedRegion
 
@@ -136,6 +250,37 @@ static func place(
 		var b: Vector3 = placed.vertices[edge.v1]
 		placed.blocking.append(Vector2(a.x, a.z))
 		placed.blocking.append(Vector2(b.x, b.z))
+	for list_index in range(2):
+		var list: Array[BmsReader.CollisionEdge] = collision.outline_edges if list_index == 0 else collision.internal_edges
+		for edge in list:
+			if edge.v0 >= placed.vertices.size() or edge.v1 >= placed.vertices.size():
+				continue
+			# Which cell is "from" decides what the directional bits mean, so
+			# an edge that names no valid from-cell cannot be tested and is
+			# left out rather than guessed at. Real data never does this: all
+			# 62,120 outline edges name a real cell on their from side.
+			var from_cell := edge.cell_from
+			if from_cell == BmsReader.NO_CELL or from_cell * 3 + 2 >= placed.cells.size():
+				from_cell = edge.cell_to
+			if from_cell == BmsReader.NO_CELL or from_cell * 3 + 2 >= placed.cells.size():
+				continue
+			var a: Vector3 = placed.vertices[edge.v0]
+			var b: Vector3 = placed.vertices[edge.v1]
+			var ca: Vector3 = placed.vertices[placed.cells[from_cell * 3]]
+			var cb: Vector3 = placed.vertices[placed.cells[from_cell * 3 + 1]]
+			var cc: Vector3 = placed.vertices[placed.cells[from_cell * 3 + 2]]
+			placed.edges.append(Vector2(a.x, a.z))
+			placed.edges.append(Vector2(b.x, b.z))
+			placed.edge_flags.append(edge.flags)
+			placed.edge_v0.append(edge.v0)
+			placed.edge_v1.append(edge.v1)
+			placed.edge_outline.append(1 if list_index == 0 else 0)
+			placed.edge_inside.append(Vector2((ca.x + cb.x + cc.x) / 3.0, (ca.z + cb.z + cc.z) / 3.0))
+	for name in collision.events:
+		# The loader's own comparison: a five-character match against
+		# "event" or "EVENT", nothing looser.
+		if name == "event" or name == "EVENT":
+			placed.terrain_collides = true
 	return placed
 
 ## Builds a graph for one real region. `placed_objects` may be empty (terrain
@@ -240,11 +385,16 @@ func heights_at(x: float, z: float) -> PackedFloat32Array:
 ## that is not more than SURFACE_REACH_UP above them, so a real bridge passing
 ## overhead is not mistaken for the ground. Falls back to the lowest surface
 ## when every candidate is out of reach above.
+##
+## This is a point query for settling what a *placed* character stands on
+## (after a teleport, a landing or a region change); a walking character's
+## footing is tracked by `step_tracked` instead, which is what the real
+## client does and what keeps a wall a wall.
 func surface_at(x: float, z: float, reference_y: float) -> Surface:
 	var best := Surface.new()
 	best.height = NvmCollision.sample_height(region, x, z)
 	best.is_terrain = true
-	best.object_index = -1
+	best.object_index = ON_TERRAIN
 	var found := false
 	for oi in objects_at(x, z):
 		var placed: PlacedObject = objects[oi]
@@ -317,91 +467,247 @@ func landing_height_at(x: float, z: float) -> float:
 				best = h
 	return best
 
+## Advances a position on the graph by one horizontal motion without a
+## tracked footing: what the mover stands on is settled first by height
+## (`surface_at`), then `step_tracked` does the walk. For callers that have no
+## state to carry -- tests, one-off probes. A character that keeps walking
+## should carry `StepResult.standing_on` from frame to frame instead, because
+## inferring footing from height is exactly what let a wall be walked
+## through (see the class comment).
+func step(from: Vector3, motion: Vector2) -> Vector3:
+	var on := surface_at(from.x, from.z, from.y).object_index
+	return step_tracked(from, motion, on).position
+
 ## Advances a position on the graph by one horizontal motion, the way the real
-## client moves a character: a move that crosses a real blocking edge is
-## refused, and the height then comes from whatever real cell is underfoot.
-##
-## This is the whole movement model, deliberately kept here rather than in
-## World3D so it can be exercised headless. The two bugs that cost this
-## project a bad release were both movement bugs that only showed up in a
-## running world -- a character that stood on a surface and could not move
-## along it, and one that fell through. Both are expressible against a
-## synthetic ramp in a unit test, and now are.
+## client moves a character: the move is walked edge by edge, an outline edge
+## crossed lets the character onto or off an object, a blocking edge stops
+## the move and the remainder slides along it, and the height then comes
+## from whatever real cell is underfoot.
 ##
 ## `from` and the result are region-local; `motion` is a region-local X/Z
-## displacement, already scaled by the frame's own delta.
-func step(from: Vector3, motion: Vector2) -> Vector3:
+## displacement, already scaled by the frame's own delta; `standing_on` is
+## what the character stands on now, ON_TERRAIN or an object index, as the
+## previous step reported it (or `surface_at` settled it after a teleport).
+func step_tracked(from: Vector3, motion: Vector2, standing_on: int) -> StepResult:
+	var result := StepResult.new()
 	var pos := from
-	if motion.length_squared() > 0.0:
-		var from2 := Vector2(from.x, from.z)
-		var to2 := from2 + motion
-		# Which real surface the mover is on decides whose edges can stop it.
-		var on := surface_at(from.x, from.z, from.y).object_index
-		if not blocked(from2, to2, on, from.y):
-			pos = Vector3(to2.x, from.y, to2.y)
+	var on := standing_on
+	# A footing that no longer exists under the mover -- a stale index after a
+	# region change, or a surface walked off through a gap in its outline --
+	# is the terrain.
+	if on != ON_TERRAIN and (not objects.has(on) or is_nan(_surface_near(objects[on], pos.x, pos.z, pos.y))):
+		on = ON_TERRAIN
+	var remaining := motion
+	for _sub in range(MAX_SUBSTEPS):
+		if remaining.length_squared() <= 1.0e-10:
+			break
+		var from2 := Vector2(pos.x, pos.z)
+		var to2 := from2 + remaining
+		var hit := _first_event(from2, to2, on)
+		if hit.is_empty():
+			pos.x = to2.x
+			pos.z = to2.y
+			remaining = Vector2.ZERO
+			break
+		var length := remaining.length()
+		var dir := remaining / length
+		var contact: Vector2 = hit["point"]
+		match String(hit["kind"]):
+			"enter":
+				var oi: int = hit["object"]
+				var placed: PlacedObject = objects[oi]
+				var landed := contact + dir * CONTACT_PUSH
+				pos.x = landed.x
+				pos.z = landed.y
+				# The height of the cell just entered, chosen nearest the
+				# mover's own height so a stacked floor is entered at the
+				# level walked in from; the crossed edge's own height at the
+				# crossing when the push lands a hair outside every cell.
+				var h := _surface_near(placed, pos.x, pos.z, pos.y)
+				if is_nan(h):
+					h = _edge_height_at(placed, hit["edge"], contact)
+				pos.y = h
+				on = oi
+				result.entered = oi
+				remaining = _onward(to2 - landed, dir)
+			"exit":
+				var left: int = on
+				var landed := contact + dir * CONTACT_PUSH
+				pos.x = landed.x
+				pos.z = landed.y
+				on = ON_TERRAIN
+				result.exited = left
+				# Stepping off one object straight onto another whose edge
+				# lies along the same line -- a stair's head against a deck,
+				# one bridge span against the next -- crosses both edges at
+				# once, and the push lands past the second one unseen. Hand
+				# the footing over when a surface at the mover's own height
+				# is right there.
+				var reach := _seam_object_at(pos.x, pos.z, pos.y, left)
+				if reach != ON_TERRAIN:
+					on = reach
+					result.entered = reach
+					pos.y = _surface_near(objects[reach], pos.x, pos.z, pos.y)
+				else:
+					pos.y = NvmCollision.sample_height(region, pos.x, pos.z)
+				remaining = _onward(to2 - landed, dir)
+			"block":
+				result.blocked = true
+				var short := maxf(from2.distance_to(contact) - CONTACT_PUSH, 0.0)
+				var stopped := from2 + dir * short
+				pos.x = stopped.x
+				pos.z = stopped.y
+				# Slide: what is left of the move, projected along the wall,
+				# so a wall is followed rather than becoming flypaper.
+				var a: Vector2 = hit["a"]
+				var b: Vector2 = hit["b"]
+				var along := (b - a).normalized()
+				var rest := to2 - stopped
+				remaining = along * rest.dot(along)
+				if remaining.length() < 1.0e-4:
+					remaining = Vector2.ZERO
+					break
+	# The height comes from whatever real cell is underfoot.
+	if on != ON_TERRAIN:
+		var h := _surface_near(objects[on], pos.x, pos.z, pos.y)
+		if is_nan(h):
+			on = ON_TERRAIN
 		else:
-			# Slide: keep whichever single axis of the move is still allowed,
-			# so a real wall is followed rather than becoming flypaper.
-			var along_x := Vector2(to2.x, from2.y)
-			var along_z := Vector2(from2.x, to2.y)
-			if not blocked(from2, along_x, on, from.y):
-				pos = Vector3(along_x.x, from.y, along_x.y)
-			elif not blocked(from2, along_z, on, from.y):
-				pos = Vector3(along_z.x, from.y, along_z.y)
-	pos.y = height_at(pos.x, pos.z, pos.y)
-	return pos
+			pos.y = h
+	if on == ON_TERRAIN:
+		pos.y = NvmCollision.sample_height(region, pos.x, pos.z)
+	result.position = pos
+	result.standing_on = on
+	return result
 
-## Does moving from `from` to `to` (both region-local X/Z) cross a real
-## blocking edge? This is the real client's own test: an edge is a 2D line,
-## not geometry, so nothing here depends on heights, winding or shape
-## thickness.
-## `standing_on` is the real object whose surface the mover is currently on
-## (-1 for the region's own terrain), as `surface_at` reports it.
+## Does moving from `from` to `to` (both region-local X/Z) run into a wall?
+## `standing_on` is what the mover stands on, as `step_tracked` reports it.
+## A move that merely steps onto or off an object is not blocked.
+func blocked(from: Vector2, to: Vector2, standing_on: int = ON_TERRAIN) -> bool:
+	var hit := _first_event(from, to, standing_on)
+	return not hit.is_empty() and String(hit["kind"]) == "block"
+
+## The first thing along the move that changes it: the nearest wall, doorway
+## or exit edge, as {kind, point, a, b, object, edge}, or {} when the move is
+## clear. `kind` is "block", "enter" or "exit".
 ##
-## **Why that matters** (fixed 2026-09-07, see docs/WORLD_ISSUES.md's
-## seventy-fifth round): the real client moves a character *within a cell* and
-## only ever tests the edges of the cell it is in. This tested every blocking
-## edge of every nearby object at once, so a character standing in a real gateway
-## was stopped by the walls of a *different* object it was not standing on --
-## real `cj_pal_indoor`'s own walls closed the real Jangan palace gate, and a
-## walk south out of the plaza stopped dead in the open doorway.
-##
-## A region's own terrain edges are always tested: the real terrain navmesh
-## carries the walls around real buildings (411 of them in real Jangan), which is
-## what stops someone walking into a building from outside. An object's own edges
-## only apply to whoever is standing on that object.
-func blocked(from: Vector2, to: Vector2, standing_on: int = -1, mover_y: float = INF) -> bool:
-	if _crosses_any(terrain_blocking, from, to):
-		return true
-	for oi in _candidate_objects(from, to):
-		if not objects.has(oi):
+## A mover on the terrain (or on an object that keeps terrain collision)
+## meets the terrain's blocking edges and the outline edges of every object
+## the move passes; a mover on an object meets that object's own edges.
+func _first_event(from: Vector2, to: Vector2, standing_on: int) -> Dictionary:
+	var best := {}
+	var best_d := INF
+	var on_object := standing_on != ON_TERRAIN and objects.has(standing_on)
+	var test_world := not on_object or (objects[standing_on] as PlacedObject).terrain_collides
+	if test_world:
+		var t := _first_crossing(terrain_blocking, from, to)
+		if t >= 0:
+			var p: Vector2 = terrain_blocking[t]
+			var q: Vector2 = terrain_blocking[t + 1]
+			var hit: Variant = Geometry2D.segment_intersects_segment(from, to, p, q)
+			if hit != null:
+				var d: float = from.distance_squared_to(hit)
+				if d < best_d:
+					best_d = d
+					best = {"kind": "block", "point": hit, "a": p, "b": q, "object": ON_TERRAIN, "edge": t / 2}
+		for oi in _candidate_objects(from, to):
+			if oi == standing_on or not objects.has(oi):
+				continue
+			var placed: PlacedObject = objects[oi]
+			if maxf(from.x, to.x) < placed.bounds_min.x or minf(from.x, to.x) > placed.bounds_max.x:
+				continue
+			if maxf(from.y, to.y) < placed.bounds_min.y or minf(from.y, to.y) > placed.bounds_max.y:
+				continue
+			var e := 0
+			while e < placed.edge_flags.size():
+				var flags := placed.edge_flags[e]
+				# The entry test walks only outline edges, and skips those
+				# marked to be passed beneath.
+				if placed.edge_outline[e] == 0 or (flags & EDGE_IGNORED_FROM_OUTSIDE) != 0:
+					e += 1
+					continue
+				var a: Vector2 = placed.edges[e * 2]
+				var b: Vector2 = placed.edges[e * 2 + 1]
+				var hit: Variant = _segment_hit(from, to, a, b)
+				if hit != null:
+					var d: float = from.distance_squared_to(hit)
+					if d < best_d:
+						if _on_from_side(a, b, from, placed.edge_inside[e]):
+							# Already inside the outline, on the terrain, and
+							# walking out. The client's entry test does not
+							# distinguish sides and would refuse a wall from
+							# within too; letting the mover out is this
+							# project's choice, because the only ways into
+							# that state -- a teleport, a gap in an outline --
+							# are not the player's doing, and refusing turns
+							# each into a trap.
+							pass
+						elif (flags & EDGE_BLOCKS_FROM_OUTSIDE) != 0:
+							best_d = d
+							best = {"kind": "block", "point": hit, "a": a, "b": b, "object": oi, "edge": e}
+						else:
+							best_d = d
+							best = {"kind": "enter", "point": hit, "a": a, "b": b, "object": oi, "edge": e}
+				e += 1
+	if on_object:
+		var placed: PlacedObject = objects[standing_on]
+		var e := 0
+		while e < placed.edge_flags.size():
+			var flags := placed.edge_flags[e]
+			var a: Vector2 = placed.edges[e * 2]
+			var b: Vector2 = placed.edges[e * 2 + 1]
+			var hit: Variant = _segment_hit(from, to, a, b)
+			if hit != null:
+				var d: float = from.distance_squared_to(hit)
+				if d < best_d:
+					var inside := _on_from_side(a, b, from, placed.edge_inside[e])
+					if placed.edge_outline[e] != 0:
+						if inside:
+							if (flags & (EDGE_BLOCKS_FROM_INSIDE | EDGE_IGNORED_FROM_OUTSIDE)) != 0:
+								best_d = d
+								best = {"kind": "block", "point": hit, "a": a, "b": b, "object": standing_on, "edge": e}
+							else:
+								best_d = d
+								best = {"kind": "exit", "point": hit, "a": a, "b": b, "object": standing_on, "edge": e}
+						# Crossing our own outline from outside: the mover had
+						# drifted off the footprint while still counted on
+						# the object (a concave outline), and is coming back;
+						# the entry rule applies.
+						elif (flags & EDGE_IGNORED_FROM_OUTSIDE) == 0 and (flags & EDGE_BLOCKS_FROM_OUTSIDE) != 0:
+							best_d = d
+							best = {"kind": "block", "point": hit, "a": a, "b": b, "object": standing_on, "edge": e}
+					else:
+						var bit := EDGE_BLOCKS_FROM_INSIDE if inside else EDGE_BLOCKS_FROM_OUTSIDE
+						if (flags & bit) != 0:
+							best_d = d
+							best = {"kind": "block", "point": hit, "a": a, "b": b, "object": standing_on, "edge": e}
+			e += 1
+	return best
+
+## What is left of a move after the push past an edge: nothing, when the
+## edge was met at the very end of the move and the push overshot it. Without
+## this a crossing that lands exactly on an edge steps back and forth over it
+## until the sub-step budget runs out.
+static func _onward(rest: Vector2, dir: Vector2) -> Vector2:
+	return rest if rest.dot(dir) > 0.0 else Vector2.ZERO
+
+## An object other than `except` with a walkable cell at (x, z) within
+## SURFACE_REACH_UP of `y`, or ON_TERRAIN. The seam hand-off of `step_tracked`.
+func _seam_object_at(x: float, z: float, y: float, except: int) -> int:
+	var best := ON_TERRAIN
+	var best_gap := INF
+	for oi in objects_at(x, z):
+		if oi == except:
 			continue
 		var placed: PlacedObject = objects[oi]
-		if maxf(from.x, to.x) < placed.bounds_min.x or minf(from.x, to.x) > placed.bounds_max.x:
+		var h := _surface_near(placed, x, z, y)
+		if is_nan(h):
 			continue
-		if maxf(from.y, to.y) < placed.bounds_min.y or minf(from.y, to.y) > placed.bounds_max.y:
-			continue
-		if oi != standing_on:
-			# An object the mover is not standing on only gets to stop them
-			# when the move would put them *underneath* it. Without this a
-			# real playtest could walk in under a shop's floor and stand
-			# inside the building's footprint below it: the shop's own
-			# walls are its object edges, and those were only ever tested
-			# for whoever was already standing on the shop. Restricting it
-			# to "would end up under" keeps the seventy-fifth round's fix
-			# intact -- a mover in a real gateway is standing on the
-			# gateway's own floor cell, so the gate is still not closed by
-			# a neighbouring object's walls -- and leaves a real bridge
-			# walkable underneath unless its own navigation mesh actually
-			# says otherwise.
-			if mover_y == INF:
-				continue
-			var above := surface_height_of(placed, to.x, to.y)
-			if is_nan(above) or above <= mover_y + SURFACE_REACH_UP:
-				continue
-		if _crosses_any(placed.blocking, from, to):
-			return true
-	return false
+		var gap := absf(h - y)
+		if gap <= SURFACE_REACH_UP and gap < best_gap:
+			best_gap = gap
+			best = oi
+	return best
 
 ## The highest point of one placed object's own walkable surface at (x, z),
 ## or NAN where that object has no surface there.
@@ -420,6 +726,36 @@ static func surface_height_of(placed: PlacedObject, x: float, z: float) -> float
 			best = h
 	return best
 
+## The height of the object's cell at (x, z) nearest to `reference_y` -- the
+## floor a mover at that height is on, where an object stacks several -- or
+## NAN where the object has no cell there.
+static func _surface_near(placed: PlacedObject, x: float, z: float, reference_y: float) -> float:
+	var best := NAN
+	var i := 0
+	while i + 2 <= placed.cells.size() - 1:
+		var a: Vector3 = placed.vertices[placed.cells[i]]
+		var b: Vector3 = placed.vertices[placed.cells[i + 1]]
+		var c: Vector3 = placed.vertices[placed.cells[i + 2]]
+		i += 3
+		var h := _triangle_height(a, b, c, x, z)
+		if is_nan(h):
+			continue
+		if is_nan(best) or absf(h - reference_y) < absf(best - reference_y):
+			best = h
+	return best
+
+## The height along one of the object's edges at the 2D point `at` on it.
+static func _edge_height_at(placed: PlacedObject, edge: int, at: Vector2) -> float:
+	var a: Vector3 = placed.vertices[placed.edge_v0[edge]]
+	var b: Vector3 = placed.vertices[placed.edge_v1[edge]]
+	var a2 := Vector2(a.x, a.z)
+	var b2 := Vector2(b.x, b.z)
+	var span := a2.distance_to(b2)
+	if span < 1.0e-6:
+		return a.y
+	var s := clampf(a2.distance_to(at) / span, 0.0, 1.0)
+	return a.y + s * (b.y - a.y)
+
 ## Real objects worth testing for a move: those listed by the real cells the
 ## move passes through, sampled along its length so a move spanning several
 ## cells does not miss one.
@@ -435,19 +771,46 @@ func _candidate_objects(from: Vector2, to: Vector2) -> Array[int]:
 				out.append(oi)
 	return out
 
-static func _crosses_any(segments: PackedVector2Array, from: Vector2, to: Vector2) -> bool:
+## Is `p` on the same side of the line through a and b as `inside`? A point
+## on the line itself counts as inside, so a mover standing exactly on an
+## edge is judged by the rule for the cell the edge belongs to.
+static func _on_from_side(a: Vector2, b: Vector2, p: Vector2, inside: Vector2) -> bool:
+	var dir := b - a
+	var side_p := dir.cross(p - a)
+	var side_in := dir.cross(inside - a)
+	if side_p == 0.0:
+		return true
+	return (side_p > 0.0) == (side_in > 0.0)
+
+## The crossing of the move with one edge, or null. A bounding check first,
+## because an object's edge list is long and most of it is nowhere near.
+static func _segment_hit(from: Vector2, to: Vector2, a: Vector2, b: Vector2) -> Variant:
+	if maxf(a.x, b.x) < minf(from.x, to.x) or minf(a.x, b.x) > maxf(from.x, to.x):
+		return null
+	if maxf(a.y, b.y) < minf(from.y, to.y) or minf(a.y, b.y) > maxf(from.y, to.y):
+		return null
+	return Geometry2D.segment_intersects_segment(from, to, a, b)
+
+## Index (into the flat pair array) of the segment the move crosses first, or
+## -1 when it crosses none.
+static func _first_crossing(segments: PackedVector2Array, from: Vector2, to: Vector2) -> int:
+	var best := -1
+	var best_d := INF
 	var i := 0
 	while i + 1 <= segments.size() - 1:
 		var a: Vector2 = segments[i]
 		var b: Vector2 = segments[i + 1]
+		var hit: Variant = _segment_hit(from, to, a, b)
+		if hit != null:
+			var d: float = from.distance_squared_to(hit)
+			if d < best_d:
+				best_d = d
+				best = i
 		i += 2
-		if maxf(a.x, b.x) < minf(from.x, to.x) or minf(a.x, b.x) > maxf(from.x, to.x):
-			continue
-		if maxf(a.y, b.y) < minf(from.y, to.y) or minf(a.y, b.y) > maxf(from.y, to.y):
-			continue
-		if Geometry2D.segment_intersects_segment(from, to, a, b) != null:
-			return true
-	return false
+	return best
+
+static func _crosses_any(segments: PackedVector2Array, from: Vector2, to: Vector2) -> bool:
+	return _first_crossing(segments, from, to) >= 0
 
 ## Height of the plane of triangle (a, b, c) at (x, z), or NAN when (x, z)
 ## lies outside the triangle in plan view.

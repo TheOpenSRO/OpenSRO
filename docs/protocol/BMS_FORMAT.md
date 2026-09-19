@@ -309,6 +309,24 @@ The **adjacency split is total; the flag split is not**. A real internal edge ma
 mostly flag 7 — a passable bit set alongside the blocking bits), and a real outline edge may not.
 That is why `BmsCollision` tests the flags rather than trusting which list an edge came from.
 
+**Refined 2026-09-19 — the two bits are directional.** The client's own object-navmesh walk
+(`CRTNavMeshObj::FUN_0044add0`, entry test `RTNavMeshObj::FUN_0044a790`; the full recovery is in
+[NAVMESH_MOVEMENT.md](NAVMESH_MOVEMENT.md)) reads them separately: **value 1 blocks a mover on
+the edge's `cell_to` side, value 2 one on its `cell_from` side**. For an outline edge (`cell_to`
+= none) that is "1 = no entry from outside, 2 = no exit from inside"; flag 3 is a wall from
+both sides, **flag 0 is a doorway** — and 5.3% of all outline edges are flag 0, one to three per
+shop. Bit 4 (`0x10`) marks an edge a mover *not* on the object ignores entirely (walking under a
+city wall's arch) while a mover on it is stopped by it; bit 3 (`0x08`) marks an edge stitched to
+another object's (the `.nvm`'s `linked_edges`). The whole-index histogram is in that document.
+
+**The wide-record extra byte** (bit 0 / bit 1 of the `0x38` bitfield above) is not padding: the
+deserializer stores it at edge `+0x38` and cell `+0x8b`, and the walk tests its `0xc0` bits
+against the region's event state (`FUN_0044a720`) — the mechanism behind fortress gates and
+dungeon doors that open and close. The event-name list is the same feature's names
+(`structure_pos_ja_defensive_01_r0`, `gate_jinsi_out`); the two literal names `"event"`/`"EVENT"`
+additionally set a per-mesh byte the terrain walk reads (see NAVMESH_MOVEMENT.md). The
+GDScript reader still skips the extra byte; nothing here reads the event state yet.
+
 ## Implementation notes
 
 - `server/internal/bms` (Go) and `client/scripts/bms/bms_reader.gd` (GDScript): both parse the
