@@ -45,6 +45,22 @@ const (
 	// block that stores max durability).
 	DurabilityGroup = 0
 
+	// The variance group each OTHER stat reads is the ORDER of
+	// Char_BuildAggregateStats' (0x00495d60) interpolation blocks for that
+	// item kind -- `mov esi,N` before each Item_VarianceFactor call -- and
+	// that order is NOT the stat's triple index in the ref row (round 243,
+	// 2026-09-19, read off the disassembly; an earlier note said "triple k =
+	// group k", which holds for durability alone). Armour: group 1 is PDStr,
+	// 2 MDInt, 3 physical defence (ref +0x1bc/+0x1c0/+0x1c4 -> item+0x198,
+	// param 5), 4 magic defence (+0x1ec/+0x1f0/+0x1f4 -> +0x1a8, param 6),
+	// 5 ER. A shield inserts block rate at 3 (+0x1e0.. -> +0x1a4, param 10)
+	// and shifts the two defences to 4 and 5.
+	ArmourPhysDefenseGroup = 3 // 0x495f26
+	ArmourMagDefenseGroup  = 4 // 0x495fa0
+	ShieldBlockGroup       = 3 // 0x4967b0
+	ShieldPhysDefenseGroup = 4 // 0x49682a
+	ShieldMagDefenseGroup  = 5 // 0x4968a4
+
 	// Untracked marks an instance whose durability is not (yet) followed:
 	// a legacy row from before this existed, or a store without reference
 	// data to roll from. It is treated as whole and never breaks.
@@ -94,6 +110,15 @@ func RollVariance(r Rand) uint64 {
 // Group returns the 5-bit value of variance group k.
 func Group(variance uint64, k int) int {
 	return int((variance >> (5 * uint(k))) & 0x1f)
+}
+
+// WhiteStat is the base of every stat Char_BuildAggregateStats interpolates:
+// L + q*(U-L), q the instance's factor for the stat's variance group (Group/31).
+// The engine adds Inc*plus on top; srrevamp instances carry no plus level, so
+// that term is zero here. A zero range (U == L) returns L whatever the variance.
+func WhiteStat(lo, hi float64, variance uint64, group int) float64 {
+	q := float64(Group(variance, group)) / GroupMax
+	return lo + q*(hi-lo)
 }
 
 // Tracked reports whether an item has a durability at all: its reference row

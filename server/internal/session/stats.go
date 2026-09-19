@@ -8,6 +8,7 @@ import (
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/durability"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
@@ -37,8 +38,8 @@ const (
 // the two defence sums combat already fights with. Not stated, and left as
 // the layout drew them: physical/magical BALANCE (the client shows a stored
 // byte whose source is unread), HIT RATE and PARRY (engine params 11/9 --
-// base 10.0 plus each item's own per-instance rate, which needs the item
-// variance this server does not carry; and the engine never reads them),
+// base 10.0 plus each item's own per-instance rate; the variance is carried
+// now, but the engine never reads these two, so they stay unstated),
 // the three job grades and honour (no job or honour system here).
 //
 // PhysAttack/PhysDefense are the original pair and keep their place so an
@@ -51,8 +52,8 @@ type CharacterStatsResult struct {
 	MaxHP int32
 
 	// PhysAttack is the equipped weapon's PhysAttackMax, or the unarmed
-	// damage when nothing is equipped. PhysDefense sums PhysDefenseMax
-	// across the worn armour.
+	// damage when nothing is equipped. PhysDefense sums each worn armour
+	// piece's physical defence through its instance's variance.
 	PhysAttack  int32
 	PhysDefense int32
 
@@ -84,8 +85,9 @@ type CharacterStatsResult struct {
 	// combat.WeaponRange -- the weapon's columns plus the Str (physical) or
 	// Int (magical) reinforce term the engine's parameter graph assigns.
 	// Unarmed: the physical pair is the unarmed damage, the magical pair 0.
-	// MagDefense sums MagDefenseMax over the worn armour exactly as
-	// PhysDefense sums PhysDefenseMax (the same disclosed sum, other column).
+	// MagDefense is the worn armour's magic defence exactly as PhysDefense
+	// is its physical: each piece's range through its instance's variance
+	// (the engine's own interpolation, see defenderArmor).
 	PhysAttackMin int32
 	MagAttackMin  int32
 	MagAttackMax  int32
@@ -210,33 +212,15 @@ func weaponRanges(ctx context.Context, characterID int64, str, intel int, eq equ
 	return unarmedDamage, unarmedDamage, 0, 0, nil
 }
 
-// defenderMagicArmor is defenderArmor's twin for the magical column: the
-// sum of MagDefenseMax over the worn armour. The same disclosed sum, so the
-// two defence rows are built the same way.
+// defenderMagicArmor is defenderArmor's twin for the magical column: each
+// worn piece's MD_L..MD_U through the instance's variance, group 4 for armour
+// (durability.ArmourMagDefenseGroup; Char_BuildAggregateStats' block at
+// 0x495fa0 -> item+0x1a8, param 6). The same walk, so the two defence rows
+// are built the same way.
 func defenderMagicArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
-	equipped, err := eq.Get(ctx, characterID)
-	if err != nil {
-		return 0, fmt.Errorf("reading equipment: %w", err)
-	}
-	isArmorSlot := make(map[equipment.Slot]bool, len(equipment.ArmorSlots))
-	for _, s := range equipment.ArmorSlots {
-		isArmorSlot[s] = true
-	}
-	total := 0
-	for _, e := range equipped {
-		if !isArmorSlot[e.Slot] {
-			continue
-		}
-		item, err := items.GetItem(ctx, e.ItemID)
-		if errors.Is(err, refdata.ErrItemNotFound) {
-			continue
-		}
-		if err != nil {
-			return 0, fmt.Errorf("looking up armor stats: %w", err)
-		}
-		total += int(item.MagDefenseMax)
-	}
-	return total, nil
+	return defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64) {
+		return it.MagDefenseMin, it.MagDefenseMax
+	}, durability.ArmourMagDefenseGroup)
 }
 
 // buildCharacterStats fills a CharacterStatsResult for owned from every

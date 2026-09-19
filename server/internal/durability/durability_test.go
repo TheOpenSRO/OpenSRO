@@ -158,3 +158,33 @@ func (s *seqRand) Intn(n int) int {
 	}
 	return v
 }
+
+// TestWhiteStat pins the interpolation and the group each defence reads:
+// a full group gives the top of the range, an empty one the bottom, and the
+// groups are read from their own 5 bits and nobody else's.
+func TestWhiteStat(t *testing.T) {
+	full := uint64(31) << (5 * ArmourPhysDefenseGroup)
+	if got := WhiteStat(10, 20, full, ArmourPhysDefenseGroup); got != 20 {
+		t.Errorf("full physical-defence group: got %v, want 20", got)
+	}
+	if got := WhiteStat(10, 20, 0, ArmourPhysDefenseGroup); got != 10 {
+		t.Errorf("empty group: got %v, want 10", got)
+	}
+	// The magic-defence group is a different 5 bits: a full physical group
+	// leaves it at the bottom of its own range.
+	if got := WhiteStat(4, 8, full, ArmourMagDefenseGroup); got != 4 {
+		t.Errorf("magic defence read the physical group: got %v, want 4", got)
+	}
+	// Halfway-ish: group value 16 of 31.
+	v := uint64(16) << (5 * ArmourMagDefenseGroup)
+	want := 4 + 16.0/31*(8-4)
+	if got := WhiteStat(4, 8, v, ArmourMagDefenseGroup); got != want {
+		t.Errorf("group 16/31: got %v, want %v", got, want)
+	}
+	if got := WhiteStat(7, 7, full, ArmourPhysDefenseGroup); got != 7 {
+		t.Errorf("zero range: got %v, want 7", got)
+	}
+	if ArmourPhysDefenseGroup == ArmourMagDefenseGroup || ShieldPhysDefenseGroup == ShieldBlockGroup {
+		t.Fatal("the groups must be distinct 5-bit fields")
+	}
+}

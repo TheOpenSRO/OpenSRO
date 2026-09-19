@@ -244,11 +244,25 @@ two-hander rule, column 93. Between the anchors the four synthesized slots fall
 exactly on the four stats whose text has no increment column (durability, block
 rate, `PDStr`, `MDInt`). Round 170's "defence at columns 65-77" is triples 1-5.
 
-The triple index is also the **variance group**: `Item_VarianceFactor` takes
-`(Variance >> 5*k) & 0x1f`, and `Char_BuildAggregateStats` walks the triples with
-`ESI = 0, 1, 2, ...` (durability's `xor esi,esi` is read on the asm; the rest is
-the same block repeated). So an item's twelve 5-bit variance groups are its
-twelve stat triples in this order.
+**The variance group is NOT the triple index** (corrected round 243, 2026-09-19;
+this paragraph used to say it was, on the strength of durability's `xor esi,esi`
+and "the rest is the same block repeated"). `Item_VarianceFactor` takes
+`(Variance >> 5*k) & 0x1f`, but `k` is the ORDER of `Char_BuildAggregateStats`'
+interpolation blocks for that item kind, read off every `mov esi,N` in the
+function (`0x495d60`, 3334 bytes, three kind branches):
+
+| item kind | group 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|---|
+| armour (`0x495d99..0x49601a`) | durability → `+0x194` | PDStr (triple 7) → `+0x1b0` | MDInt (8) → `+0x1b4` | **physical defence (1) → `+0x198`** | **magic defence (5) → `+0x1a8`** | ER (2) → `+0x19c` | |
+| weapon (`0x4960b7..0x496586`) | durability | `+0x258/+0x25c/+0x26c` → `+0x1c8` | `+0x270/+0x274/+0x284` → `+0x1d0` | `+0x288/+0x28c/+0x290` → `+0x1d8` (attack rate) | `+0x228/+0x22c/+0x23c` → `+0x1b8` (phys dmg) | `+0x240/+0x244/+0x254` → `+0x1c0` (mag dmg) | `+0x294/+0x298/+0x29c` → `+0x1dc` (critical) |
+| shield (`0x496623..0x4968a4`) | durability | PDStr → `+0x1b0` | MDInt → `+0x1b4` | **block rate (4) → `+0x1a4`** | **physical defence → `+0x198`** | **magic defence → `+0x1a8`** | |
+| then (`0x496941`) | PAR (3) → `+0x1a0` | MR (6) → `+0x1ac` | | | | | |
+
+The store offsets are the fields `Char_PublishCombatStats` publishes (`+0x198` =
+param 5, `+0x1a8` = param 6, `+0x1a4` = param 10, `+0x19c` = param 9, ...), so
+this table is also the item-side origin of those params. Durability's group 0
+is the one case where triple index and group agree.
+`durability.ArmourPhysDefenseGroup` (3) and its siblings carry these constants.
 
 The seven text columns the item deserializer never consumes are therefore not in
 63..93; they are elsewhere in the row, still unlocated.

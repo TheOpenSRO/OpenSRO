@@ -5028,6 +5028,12 @@ Round 242: the reference-table census corrected from 85 to **124** -- both
 29 mixed-case `_Ref*` loaders (quest rewards, the trigger family, server events,
 collection book, rent items). `persistence.ReferenceTables` = 124 with tests
 (v0.1.395); 35 loaders named `DB_Load_RefX`; quest tables are six, not four.
+Round 243: a worn piece's defence is its instance's white stat, wired (v0.1.396):
+`defenderArmor`/`defenderMagicArmor` interpolate `L + q*(U-L)` by the instance's
+variance instead of summing `PhysDefenseMax`; the variance GROUP is the block
+order of `Char_BuildAggregateStats` per item kind (armour: PD = 3, MD = 4;
+shield: block 3, PD 4, MD 5), NOT the ref row's triple index -- a correction to
+`refobj_binary_format.md`.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

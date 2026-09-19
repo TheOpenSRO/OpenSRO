@@ -7075,6 +7075,38 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-forty-third round: a worn piece's defence is its instance's white stat -- and the variance group is not the triple index
+
+The RE tick for 2026-09-19 13:49 went after a shipped value with a weak reason:
+`defenderArmor` summed `PhysDefenseMax` over the worn armour, a stand-in from before item
+instances carried a variance. They do now (the durability round), and the engine's rule for
+what a worn piece contributes was already read in `durability.md`:
+`Char_BuildAggregateStats` (`0x495d60`) stores `L + q*(U-L)` (+ `Inc*plus`, zero here) with
+`q = ((Variance >> 5k) & 31)/31`. What was NOT right was `k`.
+
+**The correction.** `refobj_binary_format.md` said the variance group is the stat's triple
+index in the ref row ("durability's `xor esi,esi` is read on the asm; the rest is the same
+block repeated"). Reading every `mov esi,N` in the 3334-byte function says otherwise: the
+group is the ORDER of the interpolation blocks per item kind. Armour: 0 durability, 1 PDStr,
+2 MDInt, **3 physical defence** (ref `+0x1bc/+0x1c0/+0x1c4` -> item `+0x198`, param 5), **4
+magic defence** (`+0x1ec..` -> `+0x1a8`, param 6), 5 ER. A shield inserts block rate at 3
+(`+0x1e0..` -> `+0x1a4`, param 10) and shifts the defences to 4 and 5; a weapon's six groups
+are its two damage triples, attack rate, critical and two more. Had the wiring used
+"triple 1 = group 1", every armour piece would have read its PDStr bits as its defence.
+
+**Wired through (v0.1.396):** `durability.WhiteStat(lo, hi, variance, group)` and the group
+constants; `defenderArmor` / `defenderMagicArmor` share one walk that interpolates each worn
+piece by its instance (an Untracked row -- no instance to read -- still counts at the top,
+as before; a broken one still counts nothing) and rounds the float sum once for the int32
+wire field. Tests pin the groups, the interpolation and the Untracked/broken cases;
+`go test -p 1 ./...` is green (56 packages). The shop listing keeps `PhysDefenseMax`: an
+unsold item has no instance and a listing shows the range's top.
+
+What this changes for a player: a fresh instance's white stat is the minimum of three
+uniform draws (mean about 25 %), so defence on the public server drops from the range's top
+to roughly a quarter of the way up it -- which is what the real game gives a freshly
+dropped or bought piece.
+
 ## Two-hundred-and-forty-second round: the reference-table census was short by 39 -- 124 tables, not 85
 
 The RE tick for 2026-09-19 13:34. While tying parsers to tables, the `_RefQuestReward`

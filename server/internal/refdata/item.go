@@ -200,13 +200,14 @@ type Item struct {
 	// oversight.
 	//
 	// A real item has per-instance variance: the table gives a range and each
-	// dropped or bought instance sits somewhere inside it. srrevamp models no
-	// such variance, so every consumer has to pick an end, and neither end is
-	// more correct than the other:
+	// dropped or bought instance sits somewhere inside it. Since 2026-09-19
+	// srrevamp instances carry that variance (inventory.Instance.Variance),
+	// and the two DEFENCE sums read the engine's own interpolation through it
+	// (session.defenderArmor, durability.WhiteStat). The consumers below
+	// still pick an end, for the reasons given:
 	//
-	//	defenderArmor       PhysDefenseMax   (long-standing; also feeds the
-	//	                                      shop price and the shop listing
-	//	                                      the client displays)
+	//	shop price/listing  PhysDefenseMax   (a listing shows the range's top;
+	//	                                      an unsold item has no instance)
 	//	attackerCritical    CriticalMin      (col 116, the variance FLOOR --
 	//	                                      and this IS a choice after all.
 	//	                                      An earlier note here said the
@@ -223,9 +224,9 @@ type Item struct {
 	//	                                      end, so a shield is never
 	//	                                      overstated)
 	//
-	// Changing defenderArmor to match would move a displayed stat and a shop
-	// price for no grounded reason, so it stays; this comment is the record
-	// that the difference was examined rather than missed.
+	// defenderArmor used to be in this list at PhysDefenseMax; it left it
+	// when the variance arrived, because with an instance in hand the engine's
+	// rule is readable and there is no end to pick.
 
 	// BlockRatioMin/BlockRatioMax are a SHIELD's block ratio, itemdata
 	// columns 74-75 -- present on exactly the 500 shield rows in the real

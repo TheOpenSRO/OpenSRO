@@ -1334,10 +1334,27 @@ func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq
 	return unarmedDamage, nil
 }
 
-// defenderArmor sums PhysDefenseMax across every real armor piece
-// (equipment.ArmorSlots -- HELM/MAIL/SHOULDERGUARD/PANTS/BOOTS) characterID
-// currently has equipped, for mitigating a monster's counterattack.
+// defenderArmor sums each worn armour piece's physical defence
+// (equipment.ArmorSlots -- HELM/MAIL/SHOULDERGUARD/PANTS/BOOTS) for
+// mitigating a monster's counterattack. A piece's defence is what the engine's
+// Char_BuildAggregateStats (0x00495d60) computes for it: the ref row's
+// PD_L..PD_U interpolated by the INSTANCE's variance, group 3 for armour
+// (durability.ArmourPhysDefenseGroup; the block at 0x495f26 stores it to
+// item+0x198, published as param 5). Until 2026-09-19 this summed
+// PhysDefenseMax, a disclosed stand-in from before instances carried a
+// variance. A worn row that never got one (Untracked -- no reference data to
+// roll from) still counts at the top of its range, as it always did.
 func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
+	return defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64) {
+		return it.PhysDefenseMin, it.PhysDefenseMax
+	}, durability.ArmourPhysDefenseGroup)
+}
+
+// defenderDefence is the shared walk behind defenderArmor and its magical
+// twin: the worn armour, each piece's range through its instance's variance
+// group, summed and rounded once at the end (the engine keeps floats and
+// srrevamp's wire field is an int32).
+func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, rangeOf func(*refdata.Item) (float64, float64), group int) (int, error) {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {
 		return 0, fmt.Errorf("reading equipment: %w", err)
@@ -1348,7 +1365,7 @@ func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, i
 		isArmorSlot[s] = true
 	}
 
-	total := 0
+	total := 0.0
 	for _, e := range equipped {
 		if !isArmorSlot[e.Slot] {
 			continue
@@ -1367,9 +1384,14 @@ func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, i
 		if err != nil {
 			return 0, fmt.Errorf("looking up armor stats: %w", err)
 		}
-		total += int(item.PhysDefenseMax)
+		lo, hi := rangeOf(item)
+		if e.Durability == durability.Untracked {
+			total += hi
+			continue
+		}
+		total += durability.WhiteStat(lo, hi, e.Variance, group)
 	}
-	return total, nil
+	return int(math.Round(total)), nil
 }
 
 // attackerCritical is the player's critical-hit chance: the equipped weapon's
