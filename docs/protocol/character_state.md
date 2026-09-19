@@ -72,10 +72,10 @@ from the wall clock to the stance counter is read:
    |---|---|---|---|
    | 364 | `0x4ac6b0` | **`fld1` = 1.0** (three registration sites, `0x4a7031/0x4a70c0/0x4a7136`) | `controller->slot11(pc)` -> `CGObjPC::vslot_415` |
    | 362 | `0x4ac6f0` | 4.0 (`0xb45dc0`) | HP/MP regeneration (`internal/mana`) |
-   | 365 | `0x4ac6d0` | 10.0 (`0xb45b44`) | |
-   | 368 | `0x4ac6c0` | 30.0 (`0xb45b48`) | |
-   | 366 | `0x4ac700` | 60.0 (`0xb461bc`) | |
-   | 367 | `0x4ac710` | 600.0 (`0xb46198`) | |
+   | 365 | `0x4ac6d0` | 10.0 (`0xb45b44`) | `CGStorage::CheckRentalItemValidity` (rental expiry) |
+   | 368 | `0x4ac6c0` | 30.0 (`0xb45b48`) | COS only (`CGObjCOS_SilkPet` / `CGObjCOS_Mercenary` implement it) |
+   | 366 | `0x4ac700` | 60.0 (`0xb461bc`) | training-camp accounting (`AQ_TrainingCamp`, ops `0x3c86`/`0x3c87`) and `CGStorage::UpdateRentItemInEquipSlot` |
+   | 367 | `0x4ac710` | 600.0 (`0xb46198`) | the game-clock sync, opcode `0x34be` ([game_clock.md](game_clock.md)) |
 
 2. The ticker is `GObjPC::FUN_004ab690(float dt)`: for each node,
    `elapsed += dt; if elapsed >= interval { elapsed -= interval; callback() }`. It is called

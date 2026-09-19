@@ -4911,6 +4911,16 @@ slot 362 with 4.0; 10/30/60/600 for the others), ticked by `GObjPC::FUN_004ab690
 the seconds accumulator `_DAT_00d6a8ec`. Stance 20 s, berserk 60 s, regen 4 s are read.
 Rounds 220/222's "slot 364 is dead" was a two-byte error (thunk entry vs its `jmp`).
 
+### The game clock, 2026-09-19 (round 224)
+
+The 600 s job on the same timer table is the clock sync: `FUN_004f9320` packs
+`GetLocalTime()` into 32 bits (year-16:6 | month:4 | day:5 | hour:5 | min:6 | sec:6) and
+`vslot_367` sends it as `0x34be`; the client's handler `FUN_0089a250` unpacks it,
+`mktime`s it, and seeds a millisecond clock (ms since the server-local week start) that
+`CGame::vslot_011` advances 1:1 and publishes as seconds (`x 0.001`, double at
+`0xdd3020`); `S_SetWorldTime` locks it. The environment sampler's mapping onto the
+0..1 day axis is NOT read, so no cycle is built. `docs/protocol/game_clock.md`.
+
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
 via `nItemDBID`), and an empty slot is a real row with `ItemID = 0 or NULL`

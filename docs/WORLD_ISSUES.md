@@ -7075,6 +7075,29 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-twenty-fourth round: the game clock -- server time every ten minutes, real-time advance, and the four other periodic jobs named
+
+The RE tick's step for 2026-09-19 09:04. Round 223's timer table left four jobs unnamed;
+naming them found the clock. Spec: `docs/protocol/game_clock.md`.
+
+- **10 s** (slot 365): `CGStorage::CheckRentalItemValidity`. **30 s** (slot 368): COS-only
+  (silk pet / mercenary). **60 s** (slot 366): training-camp accounting (`AQ_TrainingCamp`,
+  ops `0x3c86`/`0x3c87`) plus rent items in equip slots. **600 s** (slot 367): the clock.
+- The clock: the server packs `GetLocalTime()` into 32 bits (year-16:6, month:4, day:5,
+  hour:5, minute:6, second:6) and sends `0x34be`; the client's handler (`0x89a250`,
+  registered in the opcode table beside `0x34aa`, `0x34d2`...) unpacks the same fields,
+  `mktime`s them, seeds a millisecond clock (ms since the server-local week start) and
+  advances it 1:1 with real time (`CGame::vslot_011`, published as seconds via the double
+  `0.001` at `0xdd3020`), re-syncing every ten minutes with a 2000 ms drift reset. The scene
+  command `S_SetWorldTime` locks it (`+0x931`); the console prints it as `ServerTime`.
+- **Not read:** the sky/fog sampler's mapping from that clock onto the environment tables'
+  0..1 axis -- its only located readers are the clock's own display and an alchemy timer.
+  So no day/night cycle is wired; `ENVIRONMENT_REFERENCE_TIME`'s note, which said "no
+  server-side game-time signal", now says the signal is read and names what is not.
+
+No srrevamp value changed. A `0x34be`-shaped sync is an additive op away once the mapping
+is read.
+
 ## Two-hundred-and-twenty-third round: the PC tick is one second, read -- and it grounds three shipped units at once
 
 The RE tick's step for 2026-09-19 08:49. Round 222 had parked the period of

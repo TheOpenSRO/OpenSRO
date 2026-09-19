@@ -2370,13 +2370,14 @@ var _sky_material: ProceduralSkyMaterial
 ## simplification, not wrong for any zone checked so far).
 ##
 ## ENVIRONMENT_REFERENCE_TIME is a deliberate, flagged simplification: the
-## real data is a full day/night color-keyframe cycle (see the format doc),
-## but this project has no real day/night clock system (no confirmed real
-## time-compression ratio, no server-side game-time signal) -- implementing
-## one is real, separate future work. Sampling a fixed midday time gives a
-## real, per-zone-accurate *snapshot* color instead of the old
-## flat-color-derived guess, without pretending to reproduce the real
-## dynamic cycle.
+## real data is a full day/night color-keyframe cycle (see the format doc).
+## The server-side game-time signal DOES exist and is read (round 224,
+## docs/protocol/game_clock.md): the server's local wall-clock time, sent as
+## opcode 0x34be every 600 s and advanced 1:1 in real time by the client.
+## What is still not read is how the sky/fog sampler maps that clock onto the
+## tables' 0..1 axis (one real day, or compressed) -- so a live cycle is not
+## built yet, and sampling a fixed midday time gives a real, per-zone-accurate
+## *snapshot* color instead of an invented cycle.
 const ENVIRONMENT_REFERENCE_TIME := 0.5
 static var _environment_table: EnvironmentReader.ParsedFile = null
 static var _environment_load_attempted := false
