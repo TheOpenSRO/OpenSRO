@@ -105,6 +105,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       units. Five readings agree with 1 unit = 0.1 m (walk/run 16/50 = 1.6/5.0 m/s, region 1920 =
       192 m, fog 1250..2250 = 125..225 m, character 14.3 = 1.43 m, lamp 19.9 = 2 m) -- corroboration,
       not a use-site; do not wire a range on it until the approach comparison is read.
+      Round 234: the weapon's own reach is `PARAM_RANGE`, the client item record's field at `+0x254`
+      (tooltip `UI_SILKMALL::FUN_0066c5b0`, printed /10 in metres); offset greps for its consumer hit
+      only tooltips. PARKED after three ticks. Route left: the client's attack send site (the action
+      packet's `GInterfaceSend` caller) walked back to the distance test that precedes it.
 - [ ] **Linear fog between the real planes.** Read in round 229: the client's fog is D3D linear fog
       from `channel 10 x view distance` to `channel 11 x view distance` (2500 by default) -- zero
       until the near plane (Jangan: 1250), complete at the far one (2250). `FOG_DENSITY` is an

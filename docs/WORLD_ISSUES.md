@@ -7075,6 +7075,17 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-thirty-fourth round: the weapon's reach is PARAM_RANGE at item +0x254; the approach rule is parked
+
+The RE tick's step for 2026-09-19 11:34, the third and last budgeted on the attack distance.
+Read: the client prints a weapon's attack distance from `PARAM_RANGE`, the item record's
+field at `+0x254`, as `value / 10.0` metres (`UI_SILKMALL::FUN_0066c5b0`) -- the sword's
+"0.6 m" is a 6 in tenths of a metre, the same unit as the skills' `Range`. Not found: the
+client's approach comparison; every reader of `+0x254` outside the parsers is a tooltip
+(`ICPlayer::FUN_00960b50`, `FUN_0096b150`, `FUN_006771c0`), and `0x254` is a common offset in
+unrelated structs. Parked with the route left (walk back from the attack action's send site
+to the distance test before it). No value changed; attacks stay ungated.
+
 ## Two-hundred-and-thirty-third round: distances in the tables are tenths of a metre; the metre-to-world-unit factor is a curve, not yet a reading
 
 The RE tick's step for 2026-09-19 11:19, second on the attack distance. The server never

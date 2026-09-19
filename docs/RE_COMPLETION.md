@@ -4982,6 +4982,9 @@ Next: itemdata's `Range` column and the client comparison (with `BCRadius`, colu
 Round 233: the tables' distance unit is tenths of a metre (the client prints every distance
 param as `value / 10.0` `%.1fm`). Metres-to-world-units is unread; five independent numbers
 agree with 1 unit = 0.1 m but that is a curve, not a use-site. Next: the approach comparison.
+Round 234: the weapon reach is `PARAM_RANGE` = client item record `+0x254` (dm). The
+approach comparison was not found by offset greps (every reader of `+0x254` outside
+parsers is a tooltip). PARKED; route left: the attack send site walked back.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
