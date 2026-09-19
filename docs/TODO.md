@@ -214,13 +214,14 @@ mechanism rather than with a deletion.
 dialogs / web panel were not recovered — the Help window's interior is ours inside the authored
 `ifgameguide` frame; (2) `/give` by item *code* is client-side only (the server's item table has no
 code column), so a code the client has not loaded is refused; (3) a GM `/spawn` reaches other
-clients only on their next monster list (there is no spawn broadcast); (4) `client/docs/RELEASE_NOTES.md`
-is a committed snapshot — the release workflow does not regenerate it (needs `fetch-depth: 0` and a
-`bundle_docs.sh` step); (5) the GM run's `SRREVAMP_QA_COMMANDS` verification used frame ticks
-because a `SceneTreeTimer` did not fire inside a movie-writer run — worth understanding; (6) **a real bug
+clients only on their next monster list (there is no spawn broadcast); (4) ~~`client/docs/RELEASE_NOTES.md`
+is a committed snapshot~~ — done at merge: the release workflow fetches tags and runs
+`bundle_docs.sh` before the export, and `internal/systems/bundled_docs_test.go` keeps the committed
+copies equal to `docs/`; (5) the GM run's `SRREVAMP_QA_COMMANDS` verification used frame ticks
+because a `SceneTreeTimer` did not fire inside a movie-writer run — worth understanding; (6) ~~**a real bug
 the tools surfaced**: every zone change prints `Trying to assign invalid previously freed instance` from
-`_tick_idle_animations` (World3D.gd:3406) ~125 times — the typed assignment precedes the
-`is_instance_valid` check; world lane's file, one-line fix.
+`_tick_idle_animations` (World3D.gd:3406) ~125 times~~ — fixed at merge (round 214): the raw
+Variant is checked with `is_instance_valid` before the typed assignment.
 
 ## Parked, with the state written down
 

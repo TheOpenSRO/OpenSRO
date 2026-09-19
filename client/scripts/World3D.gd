@@ -3403,8 +3403,15 @@ func _tick_idle_animations(delta: float) -> void:
 	_idle_anim_time += delta
 	var alive: Array = []
 	for entry in _animated:
+		# A zone change frees every region's skeletons while their entries
+		# are still listed here, and Godot raises "Trying to assign invalid
+		# previously freed instance" on the TYPED assignment itself, before
+		# any check can run -- 125 error lines per zone change (round 214).
+		# So test the raw Variant first and type it after.
+		if not is_instance_valid(entry[0]):
+			continue
 		var skeleton: Skeleton3D = entry[0]
-		if not is_instance_valid(skeleton) or not skeleton.is_inside_tree():
+		if not skeleton.is_inside_tree():
 			continue
 		var anim: BanReader.ParsedAnimation = entry[1]
 		var phase: float = entry[3]

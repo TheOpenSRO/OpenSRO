@@ -50,6 +50,15 @@ jobs:
         run: |
           sed -i "s/const GITHUB_TOKEN := \"\"/const GITHUB_TOKEN := \"${UPDATE_CHECK_TOKEN}\"/" scripts/update/update_checker.gd
 
+      # The in-client Help window (ESC -> Help, /help) renders Markdown bundled
+      # under client/docs/. Regenerate it here so the shipped copies are the
+      # docs/ of the tagged commit and RELEASE_NOTES.md lists the real tags
+      # (the default checkout is shallow and has none).
+      - name: Bundle the in-client docs
+        run: |
+          git fetch --tags --force --quiet || true
+          bash client/tools/bundle_docs.sh
+
       - name: Import project
         working-directory: client
         run: |
