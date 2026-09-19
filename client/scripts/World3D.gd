@@ -1313,6 +1313,9 @@ func _try_initialize_pk2_ui() -> void:
 	ui_control.add_child(_hud_panels)
 	_hud_panels.connect_net()
 	# QA: rearrange the bag once (SRREVAMP_QA_MOVE="from,to") so a render's
+##   SRREVAMP_QA_STORAGE_ITEM=1 (needs --server) unequip the boots into the bag, open the
+##                          warehouse, the quantity dialog, and deposit 1 of the
+##                          first bag item -- the flow that crashed a playtest
 	# log shows a drag landing server-side -- see HudPanels.qa_move_sequence.
 	if OS.get_environment("SRREVAMP_QA_MOVE") != "" and NetClient.is_connected_to_server():
 		_hud_panels.qa_move_sequence(OS.get_environment("SRREVAMP_QA_MOVE"))
@@ -5494,6 +5497,27 @@ func _qa_step() -> void:
 			_hud_panels.qa_open_gold_dialog()
 		elif _qa_tick == 92:
 			_hud_panels.qa_gold_deposit(250)
+
+	# SRREVAMP_QA_STORAGE_ITEM=1 deposits the first ITEM in the bag into the
+	# warehouse (SRREVAMP_QA_MOVE="0,9" first puts the boots there): open
+	# storage, the quantity dialog, then the deposit itself -- the flow a
+	# playtest reported crashing the client on 2026-09-19, so a render's log
+	# carries the error instead of a description of it.
+	if OS.get_environment("SRREVAMP_QA_STORAGE_ITEM") != "" and _hud_panels != null:
+		if _qa_tick == 120 and NetClient.is_connected_to_server():
+			# Something real in the bag first: the boots, the same real OP_UNEQUIP
+			# the move sequence uses (they land in the lowest free slot).
+			NetClient.unequip(NetClient.current_character_name, EquipmentNet.SLOT_BOOTS)
+			print("QA STORAGE_ITEM: boots unequipped into the bag")
+		elif _qa_tick == 150:
+			_hud_panels.open_storage("Warehouse Keeper")
+			print("QA STORAGE_ITEM: storage opened")
+		elif _qa_tick == 175:
+			_hud_panels.qa_deposit_first()
+			print("QA STORAGE_ITEM: quantity dialog for the first bag item")
+		elif _qa_tick == 200:
+			_hud_panels.qa_do_deposit_first(1)
+			print("QA STORAGE_ITEM: deposit of 1 sent")
 
 	# SRREVAMP_QA_NAVGAP compares each nearby object's *solid* footprint
 	# against its *walkable* one. A player can stand inside anything where

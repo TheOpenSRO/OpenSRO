@@ -110,8 +110,14 @@ static func decode_list_result(data: PackedByteArray) -> ListResult:
 ## Decodes the trailing durability block (u16 count, then per entry u32 slot,
 ## s32 current, s32 max) written by session/durability.go. A short or absent
 ## tail -- an older server -- yields an empty array, never an error.
-static func decode_durability_block(data: PackedByteArray, offset: int) -> Array:
-	var out: Array = []
+## Returns a TYPED Array[Durability]: ListResult.durabilities is declared
+## Array[Durability], and Godot 4 refuses to assign a plain Array to a typed
+## array property at runtime ("Invalid set index 'durabilities' ... with value
+## of type 'Array'") -- which the load check cannot see. That assignment
+## failing made every inventory, equipment and storage list decode to Nil and
+## crashed a playtest's storage deposit on 2026-09-19.
+static func decode_durability_block(data: PackedByteArray, offset: int) -> Array[Durability]:
+	var out: Array[Durability] = []
 	if offset + 2 > data.size():
 		return out
 	var count := data.decode_u16(offset)

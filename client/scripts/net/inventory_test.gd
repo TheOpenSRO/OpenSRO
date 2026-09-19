@@ -70,6 +70,7 @@ func _init() -> void:
 	_test_encode_move_request()
 	_test_decode_list_result()
 	_test_decode_list_result_error()
+	_test_list_result_with_durability_block()
 
 	if _failures == 0:
 		print("ALL PASS")
@@ -77,3 +78,21 @@ func _init() -> void:
 	else:
 		print("%d FAILURES" % _failures)
 		quit(1)
+
+## A list with the trailing durability block must decode with the block read
+## into the typed field -- the assignment that failed at runtime on 2026-09-19
+## and turned every list result into Nil.
+func _test_list_result_with_durability_block() -> void:
+	var payload := _build_list_result("", [{"slot": 2, "item_id": 3645, "quantity": 1}])
+	var block := PackedByteArray()
+	block.resize(14)
+	block.encode_u16(0, 1)
+	block.encode_u32(2, 2)
+	block.encode_s32(6, 40)
+	block.encode_s32(10, 62)
+	var result := InventoryNet.decode_list_result(payload + block)
+	_check(result != null and result.error == "", "list with durability block decodes")
+	if result != null:
+		_check(result.durabilities.size() == 1, "one durability entry read (got %d)" % result.durabilities.size())
+		if result.durabilities.size() == 1:
+			_check(result.durabilities[0].slot == 2 and result.durabilities[0].current == 40 and result.durabilities[0].maximum == 62, "durability slot 2 = 40/62 read")
