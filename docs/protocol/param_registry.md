@@ -188,7 +188,7 @@ branches).
 | 180 | 0x0b4 | 0 | 100 | **0** | 0 |  |
 | 181 | 0x0b5 | 0 | 100 | **0** | 0 |  |
 | 182 | 0x0b6 | 0 | 100 | **0** | 0 |  |
-| 183 | 0x0b7 | 0 | 100 | **0** | 0 |  |
+| 183 | 0x0b7 | 0 | 100 | **0** | 0 | **attack-range reduction percent** of the Myopia (short-sight) state: written by `AbnormalState_Myopia_Apply10` (slot 5) and read by `GObjPC::ActionTick_UseSkill` as `range * (1 - p/100)` (rounds 247-248) |
 | 184 | 0x0b8 | 0 | 1000 | **0** | 0 |  |
 | 185 | 0x0b9 | 0 | 9999999 | **0** | 0 |  |
 | 186 | 0x0ba | 0 | 1000 | **0** | 0 |  |

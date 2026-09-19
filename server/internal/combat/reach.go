@@ -15,8 +15,12 @@ import "math"
 //	                                                   ; bow 180, dagger 3), published
 //	                                                   ; by Char_PublishCombatStats from
 //	                                                   ; the item ref's +0x224
-//	range += two optional skill range modifiers        ; skill+0x50c / +0x4e8 (unread)
-//	range *= 1 - param183/100                          ; a percent reduction (unread)
+//	range += two conditional bonuses                   ; skill params CBRA (+0x50c) and WIRU
+//	                                                   ; (+0x4e8): value[0] names a state in
+//	                                                   ; the caster's active-effect map
+//	                                                   ; (pc+0xa30), whose +4 is added
+//	range *= 1 - param183/100                          ; the Myopia (short-sight) state's
+//	                                                   ; percent (status_effects.md); 0 here
 //	reach  = base + range                              ; action+0x18
 //	stop   = base + f(range)                           ; action+0x14, where the
 //	                                                   ; approach walks to

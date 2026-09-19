@@ -7075,6 +7075,35 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-forty-eighth round: the status-effect vocabulary -- one bit numbering on both sides, and param 183 is Myopia's range cut
+
+The RE tick for 2026-09-19 14:53 closed round 247's two unread terms and found a vocabulary
+behind one of them. The reach formula's percent, param 183, has one writer: the server's
+abnormal-state applier for slot 10 (`0x4a4c60`, `pc+0xe0c + 4*10`), which stores the
+effect's value at param 183 while the state is on and removes it on expiry. Which state is
+slot 10? The client answers: its icon switch (`sro_client.exe` `0x7fdab0`) maps the
+abnormal-state MASK to icon files, bit by bit -- `0x1` freeze, `0x2` frostbite, `0x4`
+electricshock, `0x8` burn, `0x10` poisoning, `0x20` zombi, `0x40` sleep, `0x80` root, `0x100`
+blunting, `0x200` fear, **`0x400` myopia**, `0x800` bleeding, `0x2000` dark, ..., `0x1000000`
+incubation -- and the server's applier table is indexed by the same bits. Six independent
+agreements hold the alignment: slot 3 lowers parry / bit 3 is burn; slot 8 lowers speed /
+blunting; slot 10 cuts range / myopia (short sight); slot 17 cuts physical defence / decay;
+slot 18 cuts magical defence / weakness; slot 13 cuts attack rate / dark. So **param 183 is
+the Myopia state's attack-range reduction percent**, and `range * (1 - p/100)` in the action
+tick is short sight doing what its name says.
+
+The other two terms, the skill fields `+0x50c`/`+0x4e8`, are the params `CBRA` and `WIRU`
+(`skill_fields.md`): the action tick looks each one's first value up in the caster's
+active-effect map (`pc+0xa30`, the same `FUN_005a0330` the damage formulae and
+`Combat_ApplyStatusEffects` use) and adds the found record's `+4` to the range -- a
+conditional range bonus while a named state is active. What the two states are is unread.
+
+Recorded: `docs/protocol/status_effects.md` (the 25-bit table with each applier and the
+params thirteen of them write), the 22 appliers renamed with their state
+(`AbnormalState_Myopia_Apply10`, ...), param 183 in the registry, a new PARTIAL row in
+SYSTEMS.md (headline 12/22/0 of 34), and the comments in `combat/reach.go`. No shipped value
+changed: srrevamp has no status effects, so its myopia percent is 0.
+
 ## Two-hundred-and-forty-seventh round: the attack-distance rule -- read on the server, where it lives
 
 The RE tick for 2026-09-19 14:37 took the parked item with the route round 234 left, and

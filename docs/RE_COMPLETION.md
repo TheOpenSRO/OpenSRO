@@ -5059,6 +5059,12 @@ int(dist) <= reach + 2, else the SERVER walks the attacker (corrects round 232's
 "the client walks"). Table units are world units (1 = 0.1 m, the use-site).
 BCRadius is ref +0xee (Scale is a dword) -- correction to the common map.
 `combat.ApproachBand` + data wired (v0.1.400); behaviour still to build.
+Round 248: param 183 = the Myopia (short-sight) state's attack-range reduction
+percent -- the abnormal-state bits are ONE numbering on both sides (the client's
+icon switch at 0x7fdab0 names 25 bits; the server's applier table at pc+0xe0c is
+indexed by them; six param/icon agreements). `status_effects.md` (new), 22
+appliers renamed with their state, the CBRA/WIRU range bonuses identified as
+active-state lookups. Docs only.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
