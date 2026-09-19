@@ -7104,6 +7104,15 @@ the gate in `UseItemHandler` -- refused inside the timer, armed after success, i
 items, and none of those has a cooltime. Tests: the exporter's descriptor scan on the cure pill's
 row shape, the tracker's group semantics. Two names.
 
+**Data refreshed on the public server** (2026-09-19 18:47): items re-exported from the archive on
+the box (66 columns, 15,338 rows, the transient extracts deleted) and imported -- `items` now
+carries 101 rows with a cooltime (10374: group 200, 20 000 ms) and the elixirs' packed rates
+(3675: 420744970 / 168430090 / 168101125). One export fix on the way: the Param columns of rows
+that are not elixirs hold "-1" among other things, which the unsigned reader refused and aborted
+the whole import; the exporter now writes 0 for anything that is not a dword and the reader
+tolerates it. The public server picks the new server up from `dev`; the tag `v0.1.407` builds the
+client.
+
 ## Two-hundred-and-sixty-second round: the elixir names its own rates -- the 0x2a0 array is the Param block
 
 The RE tick for 2026-09-19 18:17 took the alchemy row's open item: the reinforce base rates were

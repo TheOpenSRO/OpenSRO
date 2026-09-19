@@ -402,6 +402,19 @@ func itemRecord(cols []string) ([]string, bool) {
 		}
 		return s
 	}
+	// An unsigned dword field: the Param columns of rows that are not
+	// elixirs hold other things, "-1" among them, and a packed-rate reader
+	// wants a dword or nothing.
+	u32 := func(i int) string {
+		if i >= len(cols) {
+			return "0"
+		}
+		s := strings.TrimSpace(cols[i])
+		if _, err := strconv.ParseUint(s, 10, 32); err != nil {
+			return "0"
+		}
+		return s
+	}
 	// A float field: itemdata writes some as "2.4"; keep as-is, default 0.
 	num := func(i int) string {
 		if i >= len(cols) {
@@ -530,9 +543,9 @@ func itemRecord(cols []string) ([]string, bool) {
 		get(fRange), // 60 Range (col 94)
 		// 61-63: an elixir's packed reinforce rates, itemdata Param2/3/4
 		// (columns 120/122/124), decimal dwords as the table prints them.
-		get(fParam2), // 61 ReinforceRate1 (col 120)
-		get(fParam3), // 62 ReinforceRate2 (col 122)
-		get(fParam4), // 63 ReinforceRate3 (col 124)
+		u32(fParam2), // 61 ReinforceRate1 (col 120)
+		u32(fParam3), // 62 ReinforceRate2 (col 122)
+		u32(fParam4), // 63 ReinforceRate3 (col 124)
 		// 64-65: the item's reuse cooltime. RefObjItem::ExtractData scans the
 		// 20 Desc128 strings for "cooltime" and, on "COOLTIME:<group>", stores
 		// the group (decimal, or hex after "0x") at ref+0x520 and that

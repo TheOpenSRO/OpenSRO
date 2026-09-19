@@ -301,10 +301,13 @@ func parseItemRow(f []string) (Item, error) {
 	if len(f) > 63 {
 		// The packed dwords are exported as plain decimals, the way itemdata
 		// prints them; the top byte can be set, so they are read unsigned.
+		// A dword column; anything that is not one (an older hand-edited
+		// file, a "-1") reads as 0 -- no rate, no cooltime -- rather than
+		// failing the whole import.
 		parseU32 := func(s string) uint32 {
-			var v uint64
-			if err == nil {
-				v, err = strconv.ParseUint(s, 10, 32)
+			v, e := strconv.ParseUint(s, 10, 32)
+			if e != nil {
+				return 0
 			}
 			return uint32(v)
 		}

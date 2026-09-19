@@ -319,7 +319,10 @@ type Item struct {
 	// dword, high byte first; the table's own Desc128 texts for the three are
 	// "1,2,3,4", "5,6,7,8" and "9,10,11,12": the plus levels each dword packs
 	// (round 262). alchemy.BaseRate unpacks them (ReinforceRates gathers the
-	// three). Zero on non-elixir rows and on exports predating the columns.
+	// three). The columns carry Param2/3/4 of EVERY row: only an elixir's
+	// (TypeID 3/3/10) are rates -- a cure pill's read 3/100/20000, a coupon's
+	// export as 0 for "-1" -- so a reader must check the kind first. Zero on
+	// exports predating the columns.
 	ReinforceRate1, ReinforceRate2, ReinforceRate3 uint32
 
 	// CooltimeGroup / CooltimeMs are the item's reuse delay: the item parser
