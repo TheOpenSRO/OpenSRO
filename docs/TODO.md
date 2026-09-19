@@ -90,6 +90,15 @@ In order. Each is checked off here when it ships in a release, with its round in
       shard DB supersedes it via `import-refdata -drops-csv/-drop-groups-csv`.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
+- [ ] **Attack distance.** Neither the client nor the server gates an attack by distance today: a
+      monster can be hit from anywhere (an absent rule, by omission). Read in round 232: the SERVER
+      never refuses on distance -- `0x3007 UIIT_SKILL_USE_FAIL_WRONGDISTANCE` occurs nowhere in its
+      dump while its neighbours 0x3003-0x3009 all do (`Skill_CheckUseConditions`, `CanBeAttackedBy`);
+      the original's CLIENT walks into range before it sends. Basic attacks (`SKILL_*_BASE_01`,
+      `SKILL_PUNCH_01`) carry skilldata `Range` 0 = melee, so their reach is the WEAPON's range
+      column; other skills carry 6..200 (150 for 6,889 rows). Next probe: the itemdata `Range` column
+      (the tooltip's "0.6 m" on a sword) and the client's comparison that turns skill/weapon range
+      plus the target's `BCRadius` (column 50) into world units -- then a client-side approach step.
 - [ ] **Linear fog between the real planes.** Read in round 229: the client's fog is D3D linear fog
       from `channel 10 x view distance` to `channel 11 x view distance` (2500 by default) -- zero
       until the near plane (Jangan: 1250), complete at the far one (2250). `FOG_DENSITY` is an

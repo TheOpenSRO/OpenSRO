@@ -7075,6 +7075,20 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-thirty-second round: attacks have no distance rule -- the server never refuses on it, the client's approach is the rule
+
+The RE tick's step for 2026-09-19 11:04. Looking for the next per-fight value found an
+absent rule instead: srrevamp's client sends an attack for any clicked monster and its
+server accepts it at any distance. Read: the server dump contains no `0x3007`
+(`UIIT_SKILL_USE_FAIL_WRONGDISTANCE`) while every neighbouring skill-failure code does
+(`0x3003/4/5/8/9` in `Skill_CheckUseConditions`, `0x3006` in `CanBeAttackedBy`), so the
+original server does not gate by distance either -- its client walks into range before it
+sends. Basic attacks carry skilldata `Range` 0 (melee), meaning the weapon's own range;
+other skills 6..200 in the table (150 on 6,889 rows), a unit not yet tied to world units.
+Filed in TODO with the next probe (the itemdata `Range` column, the client's comparison
+with the target's `BCRadius`). No value changed; monsters do not move server-side, so their
+speed columns are not a shipped number yet either.
+
 ## Two-hundred-and-thirty-first round: the run speed is 50 world units per second, read at its use-site, and the client moves at the table's number
 
 The RE tick's step for 2026-09-19 10:49, closing round 230. The chain, every link read

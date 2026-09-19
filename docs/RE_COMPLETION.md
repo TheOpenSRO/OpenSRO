@@ -4973,6 +4973,13 @@ RegionID resolved to a pointer at `+0xd8`), so Speed1/Speed2 are `+0xe4/+0xe6`;
 capped at 160 -- world units per second. The client now moves at its body row's run speed
 (50; the tuned 47.8 is the fallback), QA-measured at 49 units in the first second.
 
+### Attack distance, 2026-09-19 (round 232) -- the rule is client-side; unit unread
+
+The server has no `0x3007` (WRONGDISTANCE) anywhere while `0x3003..0x3009` all occur, so
+it does not refuse on distance; the client approaches first. Basic attacks have skill
+`Range` 0 (melee -> the weapon's range); skills 6..200. srrevamp gates nothing yet.
+Next: itemdata's `Range` column and the client comparison (with `BCRadius`, column 50).
+
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
 via `nItemDBID`), and an empty slot is a real row with `ItemID = 0 or NULL`
