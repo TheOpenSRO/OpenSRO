@@ -212,6 +212,64 @@ Two more tags in the same loop scale per-instance floats by `(1 + value/100)`:
 their tags they are most likely the parry- and attack-rate percentage options,
 and that is an inference.
 
+## Creating an item: the variance roll and the initial durability (2026-09-19)
+
+Where `q` comes from, read from the creation path so that srrevamp never has to
+invent it.
+
+### `GObjPC::InitItemVarianceAndData` -- `0x007286c0`
+
+Takes a creation spec (`in_EAX`, flag word first). **Flag 1**: use the spec's
+own 64-bit Variance (`spec[2..3]`), then set the initial `Data` to
+`round(Dur_L + WhiteStatOffset(v0))`. **Flag 8**: use the spec's own `Data`
+(`spec[4]`) directly. **Otherwise** roll every group:
+
+	for each of the 12 groups:  v = round( RollWhiteStatUnit() * 31 )     ; 31.0 at 0xb45e28
+
+and pack them 5 bits apiece (group k at bits `5k..5k+4`; `Item_VarianceFactor`
+reads them back the same way).
+
+### `GObjPC::RollWhiteStatUnit` -- `0x00729280` -- the shape of a white stat
+
+```
+u = 1.0
+three times:  r = rand() / 32767 ; if r < u: u = r      ; 32767 at 0xb45af8
+assert(u < 1)
+return u
+```
+
+**The minimum of three uniform draws.** Its density is `3(1-x)^2`: mean 25%,
+median 21%; a group at 31/31 needs `u >= 30.5/31` on all three draws, about
+**1 in 250,000**, and >= 90% about 1 in 1,000. This is the skew players know
+from the game, read rather than remembered.
+
+### `GObjPC::WhiteStatOffset` -- `0x00728ed0`
+
+For an `(L, U)` pair at ESI (`assert(L <= U)`) and a group value `v` in AL:
+`round(U - L) * (v / 31)`. So a fresh item's `Data` is its own max durability,
+`Dur_L + round(Dur_U - Dur_L) * v0/31`.
+
+### `RefItemDrop::SetInitialItemData` -- `0x00728470`
+
+Clamps the requested `Data` into the item's valid range (`CLAMP()` log at
+`RefItemDrop.cpp:3592`), writes it with dirty bit 4, and then keeps group 0
+honest: for equipment kinds it computes
+`v0 = round((Data - min) / (max - min) * 31)` and ORs it into the low five bits
+through `GObjPC::SetItemVariance` (`0x0042fb80`, a plain `(lo, hi)` setter).
+Durability's variance and the durability itself can therefore never disagree.
+
+### What srrevamp needs, all of it now grounded
+
+| step | rule | source |
+|---|---|---|
+| roll | 12 groups, `round(min(u1,u2,u3) * 31)`, `u = rand()/32767` | `RollWhiteStatUnit`, `InitItemVarianceAndData` |
+| max durability | `round(Dur_L + v0/31 * (Dur_U - Dur_L))` | `Char_BuildAggregateStats`, loader zeroes the increment |
+| initial durability | = max durability | `WhiteStatOffset`, `SetInitialItemData` |
+| loss | -1 at `min(2*hits,100)`% weapon / 2% per armour slot in order / 2% shield on block | `RollDurabilityLoss`, `Combat_ResolveDamage` |
+| broken | at 0 the item's stats are removed; refuses to go below 0 | `ChangeItemDurability` |
+| client | `0x3052 [u8 slot][s32 durability]` | `ChangeItemDurability` |
+| repair | `cost = ceil-ish(col28 / max) * units`, see above | `ComputeRepair` |
+
 ## What consumes durability (2026-09-18)
 
 Read from the Ghidra dump by following the **writers** of the durability field,

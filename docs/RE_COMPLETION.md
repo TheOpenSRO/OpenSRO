@@ -18018,3 +18018,19 @@ repair use-site, 93 (`TwoHanded`) by `CGObjPC__AttachEquipItem` testing
 `ref+0x223 == 1`. This nuances `refobj_binary_format.md`'s dead end: counting
 consumed reads does convert inside 63..93; the seven unconsumed text columns
 live elsewhere in the row. No srrevamp value changes.
+
+## The white-stat roll, and a fresh item's durability (2026-09-19)
+
+The one thing that kept per-instance durability from being buildable honestly
+was `q`: srrevamp has no item variance and could not invent one. The creation
+path reads cleanly. `GObjPC::InitItemVarianceAndData` (`0x007286c0`) rolls the
+twelve 5-bit groups as `round(RollWhiteStatUnit() * 31)`; `RollWhiteStatUnit`
+(`0x00729280`) is **the minimum of three `rand()/32767` draws** -- density
+`3(1-x)^2`, mean 25%, a 31/31 group about 1 in 250,000 -- which is the skew
+every player knows, now read off the binary. `WhiteStatOffset` (`0x00728ed0`)
+is `round(U-L) * v/31`, so a new item's `Data` is its own max durability, and
+`RefItemDrop::SetInitialItemData` (`0x00728470`) back-derives group 0 from the
+`Data` it wrote so the two can never disagree. Five names added; the durability
+row's every value is now grounded and its next step is construction, not
+reading. The item-stats row gains the instance field map (plus level is
+record+0x2c, a byte, not a column).
