@@ -18106,3 +18106,21 @@ is short. That is a use-site: teleportlink column 3 is the fee. Columns 8/9
 `0x1c14` is the interaction-range test (`GObjPC::FUN_004a8e10`), `0x1c0f` an
 index out of the gate's list. Four names added. srrevamp has no teleport yet;
 nothing to wire.
+
+## A ranked monster's HP scale, and the operand-size trap again (2026-09-19)
+
+The target-window round found the client multiplying a special monster's
+displayed maximum by its rank. The server does the same to the real value:
+`CGObjMob::PublishStats` (`0x004c19f0`) sets ParamKeeper param 3 -- the `'hp'`
+slot -- to a **percentage** by the rank the object reports through vtable slot
+75: base 100 (champion 200, elite 400, giant 2,000, rank 7 3,000, titan 10,000),
+uniques (ranks 3 and 8) returning before the publish so their authored HP
+stands. The bases are `fld DWORD` floats (100.0 at `0xb45e10`, 1000.0 at
+`0xb462ac` when slot 192 answers 1 -- by adjacency to `IsPartySupportMonster`
+at 193 most likely a party monster, disclosed as an inference and not wired);
+the multipliers are QWORD doubles at `0xb45cf0/0xb45ac8/0xb45e58/0xb45af0`.
+Read as doubles the bases come out 131072 and 1.5e10, which is the fifth
+constant in this project that operand size decided. Wired as
+`combat.RarityHPPercent`/`ScaleHPForRarity` at spawn, with tests; every species
+srrevamp spawns is rank 0 today, so no live number moved -- the next
+champion or giant will carry the right health.

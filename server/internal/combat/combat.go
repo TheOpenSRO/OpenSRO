@@ -684,6 +684,10 @@ type Species struct {
 // SpawnSpecies is Spawn with the species' code name carried along, so the
 // client can resolve the model without depending on the display name.
 func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP, defense, attack int, goldReward int64) *Monster {
+	// The engine scales a ranked monster's HP by its rank (champion x2, elite
+	// x4, giant x20, titan x100 -- RarityHPPercent, read from CGObjMob::
+	// PublishStats); the authored row is the general's figure.
+	maxHP = ScaleHPForRarity(maxHP, species.Rarity)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
