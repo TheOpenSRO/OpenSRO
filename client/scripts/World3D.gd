@@ -5229,6 +5229,10 @@ func _update_blob_shadow() -> void:
 ##                          second-nearest monster in turn (a retarget every swing)
 ##   SRREVAMP_QA_ATTACK=1   attack the nearest monster every second, so a
 ##                          hit reaction and a death can be rendered
+##   SRREVAMP_QA_COMMANDS="/a;/b"  feed these lines through the chat console
+##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
+##                          "QA COMMAND: <line>" and a GM reply "GM REPLY: ..."
+##   SRREVAMP_QA_HELP=1     open the in-client Help window 2 s after boot
 ##   SRREVAMP_QA_FLOAT=r     report placed objects within r that sit clear
 ##                          of their own region's ground
 ##   SRREVAMP_QA_THROUGH=z0,z1,y[,step]
@@ -5438,6 +5442,16 @@ func _qa_step() -> void:
 	# tiled rather than centred so several are visible in one shot.
 	if OS.get_environment("SRREVAMP_QA_PANELS") != "" and _qa_tick == 30:
 		_qa_open_panels(OS.get_environment("SRREVAMP_QA_PANELS"))
+
+	# SRREVAMP_QA_HELP=1 opens the in-client Help window at tick 30;
+	# SRREVAMP_QA_COMMANDS="/a;/b" feeds those lines through the chat console
+	# at tick 60 (docs/DEBUG_TOOLS.md). Frame ticks, like every hook here: a
+	# SceneTreeTimer did not fire inside a movie-writer run.
+	if OS.get_environment("SRREVAMP_QA_HELP") != "" and _qa_tick == 30 and _help_window != null:
+		_help_window.open()
+		print("QA HELP: opened the Help window")
+	if OS.get_environment("SRREVAMP_QA_COMMANDS") != "" and _qa_tick == 60:
+		_run_qa_commands(OS.get_environment("SRREVAMP_QA_COMMANDS"))
 
 	# SRREVAMP_QA_CASTANIM="<anim_base>" plays a skill's cast animation on the
 	# player at tick 90 (and replays it), so a render can verify the grounded
@@ -7023,17 +7037,11 @@ func _setup_console_and_help() -> void:
 		if menu_btn is Control:
 			(menu_btn as Control).tooltip_text = _command_tooltip()
 
-	# QA: feed a semicolon-separated list of command lines through the same
-	# parser the chat uses, so a --server render can verify each reply lands
-	# in the log. e.g. SRREVAMP_QA_COMMANDS="/where;/give 3 5;/tp -300 -880".
-	var qa_commands := OS.get_environment("SRREVAMP_QA_COMMANDS")
-	if qa_commands != "":
-		_run_qa_commands(qa_commands)
-	if OS.get_environment("SRREVAMP_QA_HELP") != "":
-		get_tree().create_timer(2.0).timeout.connect(func() -> void:
-			if _help_window != null:
-				_help_window.open()
-			print("QA HELP: opened the Help window"))
+	# The QA hooks (SRREVAMP_QA_COMMANDS, SRREVAMP_QA_HELP) fire from the
+	# frame-tick block in the QA process function, like every other hook.
+	print("Console: ready (help window %s, log %s)" % [
+		"authored frame" if _help_window != null and _help_window.has_authored_frame() else "plain frame",
+		ProjectSettings.globalize_path("user://logs/srrevamp.log")])
 
 ## The documents the Help window lists, shipped under res://docs/ by
 ## client/tools/bundle_docs.sh.
@@ -7156,20 +7164,19 @@ func _refresh_command_tooltip() -> void:
 			(input as Control).tooltip_text = _command_tooltip()
 		_hud_chat.tooltip_text = _command_tooltip()
 
-## Feeds SRREVAMP_QA_COMMANDS through the console after a short delay (so the
-## world and the server connection are up), printing a marker per line.
+## Feeds SRREVAMP_QA_COMMANDS through the console -- the same parser the chat
+## uses -- printing a "QA COMMAND:" marker per line so the log pairs each with
+## its reply. Called from the QA tick block once the world has settled.
 func _run_qa_commands(list: String) -> void:
-	var lines := list.split(";", false)
-	get_tree().create_timer(2.0).timeout.connect(func() -> void:
-		for raw in lines:
-			var line := String(raw).strip_edges()
-			if line == "":
-				continue
-			print("QA COMMAND: %s" % line)
-			if line.begins_with("/") and _console != null:
-				_console.submit(line)
-			else:
-				NetClient.say(line))
+	for raw in list.split(";", false):
+		var line := String(raw).strip_edges()
+		if line == "":
+			continue
+		print("QA COMMAND: %s" % line)
+		if line.begins_with("/") and _console != null:
+			_console.submit(line)
+		else:
+			NetClient.say(line)
 
 var _help_hinted := false
 
@@ -7186,9 +7193,12 @@ func _hint_help_once() -> void:
 ## this account is a GM. Guarded so it is sent once per world entry.
 func _fire_gm_probe() -> void:
 	if not NetClient.is_connected_to_server():
+		print("Console: GM probe skipped -- not connected")
 		return
 	if NetClient.current_character_name == "":
+		print("Console: GM probe skipped -- no character name yet")
 		return
+	print("Console: GM probe sent for %s" % NetClient.current_character_name)
 	NetClient.gm_command(NetClient.current_character_name, "", 0)
 
 ## The server's GM reply: sets GM state, prints the text, applies any move,

@@ -45,6 +45,11 @@ off there).
 for a line like `SRRevamp log file: <path>`) — Windows: `%APPDATA%\Godot\app_userdata\SRRevamp\
 logs\srrevamp.log`, Linux: `~/.local/share/godot/app_userdata/SRRevamp/logs/srrevamp.log`. Attach
 that file (not just a description) when reporting a bug — no terminal needed to get it.
+Type `/help` on the chat line for the tester console: `/where`, `/copy` (the F3 report plus the
+last log lines and script errors, straight to the clipboard), `/entities`, `/fps`, `/errors`,
+`/wire on` and more; the Escape menu's Help opens the in-client Help window. GM commands
+(`/tp`, `/give`, `/level`, `/spawn`, ...) exist for accounts an operator names in
+`SRREVAMP_GM_ACCOUNTS`. All of it is in [docs/DEBUG_TOOLS.md](docs/DEBUG_TOOLS.md).
 
 ## Running locally
 

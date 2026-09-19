@@ -41,6 +41,7 @@ func setup(builder: UiBuilder, docs: Array, is_gm: bool) -> bool:
 	_frame.name = "HelpFrame"
 	add_child(_frame)
 	var framed := _frame.build(builder, AUTHORED_LAYOUT, "Help")
+	_authored = framed
 	if not framed:
 		# The authored layout did not build (an operator's archive may lack
 		# it); a plain sized frame still gives a working, legible Help window.
@@ -179,6 +180,12 @@ func open() -> void:
 	show()
 	if _frame != null:
 		_frame.move_to_front()
+
+## Whether the authored ifgameguide frame built (false = the plain fallback).
+func has_authored_frame() -> bool:
+	return _authored
+
+var _authored := false
 
 func set_is_gm(is_gm: bool) -> void:
 	if _is_gm == is_gm:
