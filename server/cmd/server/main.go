@@ -421,6 +421,28 @@ func main() {
 		}
 		defer sqlRef.Close()
 
+		// Say at boot what reference data the database actually holds. The
+		// public test server ran for a week with every one of these at zero --
+		// no weapon stats, so every hit did the placeholder 1; no skills to
+		// learn; no drops -- and nothing in the log said so, because unlike
+		// leveldata (a CSV flag that warns when unset) these come from tables
+		// the operator fills with cmd/import-refdata. An empty items table is
+		// worth a warning in the same breath as the missing EXP curve.
+		{
+			ctx := context.Background()
+			items, _ := sqlRef.Count(ctx)
+			skills, _ := sqlRef.CountSkills(ctx)
+			drops, _ := sqlRef.CountMonsterDrops(ctx)
+			groups, _ := sqlRef.CountDropGroupEntries(ctx)
+			logger.Info("reference data in PostgreSQL", "items", items, "skills", skills,
+				"monsterDrops", drops, "dropGroupEntries", groups)
+			if items == 0 {
+				logger.Warn("items table is EMPTY -- weapons have no stats and the shop sells nothing; " +
+					"export the client's itemdata with cmd/export-refdata and load it with cmd/import-refdata " +
+					"(see docs/HANDOFF_OPENSRO.md, 'Where the server actually is today')")
+			}
+		}
+
 		sqlInv, err := inventory.OpenSQLStore(*postgresDSN, sqlRef)
 		if err != nil {
 			logger.Error("opening inventory store", "error", err)

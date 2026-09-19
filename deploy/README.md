@@ -25,35 +25,69 @@ What it refuses to do, and says so in the journal:
 
 Old image layers are pruned after each successful update so the disk does not fill over months.
 
-## Reference data (items): making the shop and real weapon damage work
+## Reference data: making EXP, real weapon damage and skills work (BYO)
 
-The server ships with no item reference data — its `items` table is empty until an operator
-imports it, and until then the shop catalogue is empty and combat falls back to a flat unarmed
-damage (5) for every weapon. `export-refdata` turns a client's own itemdata tables into the CSV
-`import-refdata` loads:
+**The server ships with no reference data, and until an operator loads it a kill pays no EXP,
+every hit deals the floor-band 1-2, the shop sells nothing and no skill can be learned.** The
+public test server ran that way from 2026-09-11 to 2026-09-19 without anyone noticing, because
+only the EXP curve warned in the log. The data comes from the operator's own client archives
+(`Media.pk2` -> `server_dep\silkroad\textdata\`), never from this repo.
+
+Three tables matter and they load two different ways: **items and skills** go into Postgres with
+`cmd/import-refdata`; **leveldata is CSV-only** and is passed to the server on its command line.
 
 ```
-# on a machine with the extracted itemdata tables (BYO, not in the repo):
-export-refdata -out items.csv itemdata_1000.txt itemdata_5000.txt ...   # all parts
+# 1. On a machine with the client's Media.pk2 (BYO). Build the tools:
+cd server && for t in pk2list export-refdata export-leveldata import-refdata; do
+  CGO_ENABLED=0 GOOS=linux go build -o /tmp/$t ./cmd/$t; done
 
-# on the server (the CSV copied in):
-docker compose cp items.csv server:/tmp/items.csv
-docker compose exec server import-refdata -items-csv /tmp/items.csv \
-    -postgres-dsn postgres://postgres:postgres@postgres:5432/srrevamp?sslmode=disable
+# 2. Extract the text tables. The archive carries more itemdata_*/skilldata_* parts than the
+#    client loads; the index files itemdata.txt / skilldata.txt name the ones it does, in order,
+#    and the exporter keeps the LAST definition of a duplicated id -- so feed the parts in the
+#    index's order, not glob order (they differ: 1000,2000,... vs 1000,10000,11000,...).
+MEDIA=/path/to/Media.pk2; mkdir refsrc && cd refsrc
+for f in itemdata.txt skilldata.txt leveldata.txt; do
+  /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\$f" -out $f; done
+/tmp/pk2list -pk2 "$MEDIA" -filter 'textdata\' | awk '{print $2}' \
+  | grep -iE 'textdata\\(itemdata|skilldata)_[0-9]+\.txt$' | while IFS= read -r p; do
+    /tmp/pk2list -pk2 "$MEDIA" -extract "$p" -out "$(basename "$(echo "$p" | tr '\\' /)")"; done
+order() { iconv -f UTF-16LE -t UTF-8 "$1" | tr -d '\r' | sed 's/^\xef\xbb\xbf//' | grep -v '^$' \
+          | tr 'A-Z' 'a-z' | while read -r n; do [ -f "$n" ] && echo "$n"; done; }
+/tmp/export-refdata  -mode items  -out items.csv  $(order itemdata.txt)     # 15,338 rows from a retail archive
+/tmp/export-refdata  -mode skills -out skills.csv $(order skilldata.txt)    # 33,698 rows
+/tmp/export-leveldata -out leveldata.csv leveldata.txt                      # 140 levels
+rm -f itemdata_* skilldata_*   # the extracted tables are game data; keep only the CSVs
+
+# 3. On the server host (CSVs and import-refdata copied to ~/srrevamp-data; Postgres is pinned to
+#    127.0.0.1:5432 by docker-compose.override.yml):
+~/srrevamp-data/import-refdata -items-csv ~/srrevamp-data/items.csv -skills-csv ~/srrevamp-data/skills.csv \
+    -postgres-dsn 'postgres://postgres:postgres@127.0.0.1:5432/srrevamp?sslmode=disable'
+
+# 4. leveldata is a command-line flag: mount the directory and restate the command in the
+#    (untracked) docker-compose.override.yml -- `command` in an override REPLACES the base list:
+#   services:
+#     server:
+#       volumes:
+#         - /home/srrevamp/srrevamp-data:/data:ro
+#       command:
+#         - "-addr=:15779"
+#         - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/srrevamp?sslmode=disable"
+#         - "-leveldata-csv=/data/leveldata.csv"
+docker compose up -d
 ```
 
-The exporter maps only the columns this project has measured and, where a ground truth existed,
-verified against a real tooltip: weapon physical/magical attack, durability, attack rate,
-critical, the type ids, country, gender and level requirement (see its own package doc and
-`docs/protocol/ITEM_FORMAT.md`). Fields it has not pinned are honest defaults, not guesses:
-`MaxStack` is 1 (the server already treats every item as one-to-a-slot, so this changes nothing),
-and armour **defence is 0** (armour keeps its defence in different columns than a weapon's attack,
-and there is no ground-truth armour tooltip yet to label them; combat does not read defence, so the
-only effect is that the shop prices armour at its base price).
+The boot log then reads `loaded EXP curve path=/data/leveldata.csv maxLevel=140` and
+`reference data in PostgreSQL items=15338 skills=33698 ...`; an empty items table logs a WARN
+naming this section. Verified on the public server on 2026-09-19 by a level-1 QA character at a
+real Mangyang spawn (97/168 local 130,2280): hits of 12-14 (26 on a crit) instead of 1, a
+Mangyang dead in four, and after five kills the character's row read level 2, exp 3, gold +267,
+str/int 21, 3 stat points.
 
-**This changes live gameplay** — with it imported, a weapon deals its real attack instead of 5, and
-the equipment rules enforce the real race/gender/level requirements — so it is the operator's call
-to run, not something the deploy loop does. It is reversible: `TRUNCATE items;` in the database
-returns the server to the flat-damage, empty-shop state.
+The exporter maps only the columns this project has measured (see its package doc and
+`docs/protocol/ITEM_FORMAT.md`); fields it has not pinned are honest defaults, not guesses.
+**This changes live gameplay**, so it is the operator's call to run, not something the deploy loop
+does. It is reversible: `TRUNCATE items, skills;` returns the server to the empty state, and
+removing the `-leveldata-csv` line stops levelling. The QA harness on the render box reads the
+same three CSVs from beside the pk2s (`PK2_DIR`), so keep a copy there too.
 
 Reference data is otherwise not touched by the update loop.
