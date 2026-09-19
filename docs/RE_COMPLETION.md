@@ -18034,3 +18034,39 @@ is `round(U-L) * v/31`, so a new item's `Data` is its own max durability, and
 row's every value is now grounded and its next step is construction, not
 reading. The item-stats row gains the instance field map (plus level is
 record+0x2c, a byte, not a column).
+
+## The loot census, redone properly -- and the drop row's shape (2026-09-19)
+
+The 2026-09-15 census concluded the drop tables are "not shipped anywhere this
+project can reach". The user pushed back, and the check showed the census had
+been a search by **filename** on one machine. Redone by name, by content shape
+and inside archives, across the box AND the 1.9 TB `/mnt/silkroad` mount that a
+`find -xdev` had silently skipped:
+
+- `smc.bak` is **not a database backup**: its strings are Win32 imports
+  (`GetDlgItem`, `EnableMenuItem`); it is a backup copy of the SMC executable.
+- `/mnt/silkroad/pserver` is the same y0gi pack (`Complete_Server_Files.rar` =
+  the five inner rars, all extracted, no DB in any) plus a clean client;
+  `/mnt/silkroad/duckroad` is another private server's **client** (its own
+  4.3 GB Data.pk2, launcher, MaxiGuard), not a database.
+- None of the 238 refdata tables, neither client's `server_dep`, nor the SMC
+  package holds a monster->item table under any name (`drop`, `assign`, `rnd`,
+  `reward`, `sel`); the drop class names occur only in the game server's RTTI.
+
+So the conclusion stands but is now a measured negative: the rows live only in
+`SRO_VT_SHARD`, which these packs distribute as a separate rar not present
+here. What IS here is the **schema**. `CGameServer::FUN_006a6aa0` (`0x006a6aa0`),
+next to `RefObjItem::ExtractData`, deserialises one row of the monster-drop
+assignment table: `u8 Service`, `i32 RefMonsterID` (checked in
+`_RefObjCommon`), `i32 ItemGroupID` (checked: "Can't find ItemGroupID(%d)
+within _RefMonster_AssignedItemRndDrop Table"), a string field, `u8`, then
+`u8 DropAmountMin` / `u8 DropAmountMax` (the min<=max assert is on those two
+bytes), then three `i32`. The rest of the module -- `CRefDropGold`,
+`CRefDropOptLevelSel`, the `CRefDropClassSel_*` selectors, and
+`CRefDropData::AddAssignedItemDrop` walking 48-byte entries on the monster's
+ref object -- is the roll itself, unread. When the shard backup arrives, this
+row shape is what `import-refdata -drops-csv` must be fed in.
+
+Also retracted the same day: a "new character spawns with placeholder 200 HP"
+item logged from a playtest note -- `MaxHPFor(20, 1)` is 200 and the respawn at
+80 is `RespawnFraction 0.4`; the grounded numbers coincide with the placeholder.

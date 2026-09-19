@@ -62,9 +62,9 @@ In order. Each is checked off here when it ships in a release, with its round in
       `CIFSkillBoard`) is filled from `skilldata`, and the server tracks mastery levels and skill
       points (`OpSkillState`/`OpRaiseMastery`), so learning a skill and raising a mastery both
       work from the window. What is still own-design is the *mastery cost* (`masteryUpCost`).
-- [ ] **A new character spawns with the placeholder 200/200 HP; a respawn uses the grounded
-      MaxHP formula** (seen 2026-09-19 on the public server: 107 left after a 93 blow from 200, then
-      respawn at 80). The creation path does not run `character.MaxHPFor`; make it.
+- [x] ~~A new character spawns with placeholder 200/200 HP~~ -- **not a bug, checked 2026-09-19**:
+      `MaxHPFor(StartingStr 20, level 1) = 200` exactly, and a respawn at 80 is the binary's
+      `RespawnFraction 0.4` x 200. The two grounded numbers coincide with the old placeholder.
 - [ ] **Two `internal/session` full-flow tests race under host load** (`TestInventoryFullFlow` reads the
       bag before the kill's loot lands; `TestTradeFullFlow` reads an unexpected opcode). Pass 3/3 alone
       and as a package; failed only inside full runs while five lanes built at once. Give them
