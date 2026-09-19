@@ -129,6 +129,12 @@ func _test_gm_forwarding_and_unknown() -> void:
 	c.submit("/tp -300 -880")
 	_check(_calls.get("gm") == "tp -300 -880", "a GM command is forwarded to the server verbatim (no slash)")
 	_check(_logged.is_empty(), "forwarding a GM command prints nothing locally (the server replies)")
+	# Every GM word the server's help line names is forwarded -- /heal was
+	# missing from the list once and silently became "unknown command".
+	for word in ["tp", "goto", "give", "gold", "level", "heal", "spawn", "kill", "durability", "sp"]:
+		_reset()
+		c.submit("/" + word)
+		_check(_calls.get("gm") == word, "/%s is forwarded to the server" % word)
 	_reset()
 	c.submit("/frobnicate 1 2")
 	_check(_joined().contains("Unknown command /frobnicate"), "an unknown command gets the help line")

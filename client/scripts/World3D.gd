@@ -7056,7 +7056,11 @@ func _help_documents() -> Array:
 ## itself has no dependency on World3D and is tested headless with stubs.
 func _console_host() -> Dictionary:
 	return {
-		"log": func(t: String) -> void: _log_system(t),
+		# Chat AND the log file (print reaches user://logs/srrevamp.log), so a
+		# report can quote the console's own output.
+		"log": func(t: String) -> void:
+			_log_system(t)
+			print("CONSOLE: " + t),
 		"open_help": func() -> void:
 			if _help_window != null:
 				_help_window.open(),

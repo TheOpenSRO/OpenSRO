@@ -20,7 +20,7 @@ const CLIENT_COMMANDS := ["help", "where", "log", "copy", "fps", "entities", "wi
 ## GM commands the console forwards to the server, which gates and runs them.
 ## Listed so a typo gets the help line while a real GM word reaches the
 ## server (which refuses a non-GM). Mirrors server/internal/gm's dispatcher.
-const GM_COMMANDS := ["tp", "goto", "give", "gold", "level", "spawn", "kill", "durability", "sp"]
+const GM_COMMANDS := ["tp", "goto", "give", "gold", "level", "heal", "spawn", "kill", "durability", "sp"]
 
 ## Set from the server's GM probe reply; decides whether help shows the GM
 ## line and its window shows the GM section.
