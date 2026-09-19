@@ -34,14 +34,16 @@ in `deploy/README.md` and `docs/HANDOFF_OPENSRO.md`.
 | `-leveldata-csv` | `SRREVAMP_LEVELDATA_CSV` | the EXP curve (`export-leveldata`); **without it characters never level** |
 | `-skills-csv` | `SRREVAMP_SKILLS_CSV` | skill reference data (`export-refdata`), in-memory mode; PostgreSQL imports it instead |
 | `-items-csv` | `SRREVAMP_ITEMS_CSV` | item reference data (`export-refdata`), in-memory mode; PostgreSQL imports it instead |
+| `-gm-accounts` | `SRREVAMP_GM_ACCOUNTS` | comma-separated account usernames allowed to run the in-game GM commands (`/tp`, `/give`, `/level`, ...); case as stored in `accounts.username`; default none. Every command is logged with the account. See `docs/DEBUG_TOOLS.md` |
 
 At boot the server logs what reference data its database holds
 (`reference data in PostgreSQL items= skills= monsterDrops= dropGroupEntries=`)
 and **warns when it has no items** — that state is what made every hit deal 1
-and no kill pay EXP on the public server until 2026-09-19. Env-only settings:
-`SRREVAMP_GM_ACCOUNTS` (comma-separated usernames allowed the in-game GM
-commands, see `docs/DEBUG_TOOLS.md` once that lands) and the QA accelerants,
-which are never for real play (`SRREVAMP_DURABILITY_LOSS_ALWAYS`).
+and no kill pay EXP on the public server until 2026-09-19. Env-only settings
+are the QA accelerants, which are never for real play
+(`SRREVAMP_DURABILITY_LOSS_ALWAYS`). The GM console's account list is the
+`-gm-accounts` flag above (env `SRREVAMP_GM_ACCOUNTS`); the commands a tester
+and a GM get are in `docs/DEBUG_TOOLS.md`.
 
 ## Reference data
 
