@@ -54,7 +54,7 @@ func DecodeInventoryMoveRequest(data []byte) (*InventoryMoveRequest, error) {
 // the whole bag as it stands after the move -- the same wire shape the
 // storage list reuses -- so the client redraws from the server's own answer
 // instead of assuming the move happened and asking again.
-func InventoryMoveHandler(chars character.Store, inv inventory.Store) gateway.Handler {
+func InventoryMoveHandler(chars character.Store, inv inventory.Store, items ItemLookup) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpInventoryMove {
 			return nil
@@ -93,6 +93,6 @@ func InventoryMoveHandler(chars character.Store, inv inventory.Store) gateway.Ha
 		for _, sl := range slots {
 			snaps = append(snaps, InventorySlotSnapshot{Slot: sl.Index, ItemID: sl.ItemID, Quantity: sl.Quantity})
 		}
-		return sess.Send(&proto.Packet{Opcode: OpInventoryMoveResult, Data: (&InventoryListResult{Slots: snaps}).Encode()})
+		return sess.Send(&proto.Packet{Opcode: OpInventoryMoveResult, Data: (&InventoryListResult{Slots: snaps, Durabilities: inventoryDurabilities(ctx, slots, items)}).Encode()})
 	}
 }

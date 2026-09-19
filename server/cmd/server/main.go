@@ -388,12 +388,17 @@ func main() {
 			logger.Info("loaded item refdata for the shop", "items", len(it))
 		}
 		memInv := inventory.NewMemStore(memRef)
+		// The item table also says which items have a durability and its
+		// range, so every fresh grant rolls its instance (durability.md).
+		memInv.SetDurabilityLookup(memRef)
 		memAccounts := account.NewMemStore()
 		accounts, registerer = memAccounts, memAccounts
 		chars = character.NewMemStore()
 		refItems = memRef
 		inv = memInv
-		warehouse = inventory.NewMemStore(memRef) // a second, independent container
+		memWarehouse := inventory.NewMemStore(memRef) // a second, independent container
+		memWarehouse.SetDurabilityLookup(memRef)
+		warehouse = memWarehouse
 		eq = equipment.NewMemStore(memInv)
 		skills = skill.NewMemStore()
 		guilds = guild.NewMemStore()
@@ -450,6 +455,7 @@ func main() {
 			os.Exit(1)
 		}
 		defer sqlInv.Close()
+		sqlInv.SetDurabilityLookup(sqlRef)
 
 		// The warehouse is a second inventory container on its own table.
 		sqlWarehouse, err := inventory.OpenSQLStoreNamed(*postgresDSN, sqlRef, "storage_slots")
@@ -458,6 +464,7 @@ func main() {
 			os.Exit(1)
 		}
 		defer sqlWarehouse.Close()
+		sqlWarehouse.SetDurabilityLookup(sqlRef)
 
 		sqlEq, err := equipment.OpenSQLStore(*postgresDSN, sqlInv)
 		if err != nil {
@@ -465,6 +472,11 @@ func main() {
 			os.Exit(1)
 		}
 		defer sqlEq.Close()
+		// Worn rows written before durability existed get their instance on
+		// first read, with the same roll a fresh bag item gets.
+		sqlEq.SetFreshInstanceRoller(func(ctx context.Context, itemID int64) (inventory.Instance, error) {
+			return inventory.FreshInstance(ctx, sqlRef, nil, itemID)
+		})
 
 		sqlSkills, err := skill.OpenSQLStore(*postgresDSN)
 		if err != nil {
@@ -604,11 +616,12 @@ func main() {
 			logger.Info("dressing a character that had nothing", "character", c.Name)
 			return equipment.GiveStartingKit(ctx, inv, eq, c.ID, c.Gender)
 		}),
-		session.InventoryHandler(chars, inv),
-		session.InventoryMoveHandler(chars, inv),
+		session.InventoryHandler(chars, inv, refItems),
+		session.InventoryMoveHandler(chars, inv, refItems),
 		session.EquipmentHandlerWithRules(chars, eq, inv, refItems),
 		session.CharacterStatsHandler(chars, eq, refItems, skills, manaTracker),
 		session.ShopHandler(chars, shopSvc),
+		session.RepairHandler(chars, eq, refItems),
 		session.StorageHandler(chars, storageSvc),
 		session.UseItemHandler(chars, inv, refItems, manaTracker),
 		session.CombatHandlerWithGround(chars, eq, refItems, hub, monsters, quests, inv, skills, zerkTracker, manaTracker, parties, ground),

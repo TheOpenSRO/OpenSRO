@@ -6,6 +6,7 @@ package equipment
 import (
 	"context"
 	"errors"
+	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 )
 
 // Slot identifies one equipment slot, numbered in the game's own order.
@@ -210,6 +211,15 @@ var ErrInventorySlotEmpty = errors.New("equipment: inventory slot is empty")
 type Equipped struct {
 	Slot   Slot
 	ItemID int64
+	// Variance and Durability are the worn item's instance, carried from the
+	// bag slot it came from and back again (see inventory.Slot).
+	Variance   uint64
+	Durability int
+}
+
+// Instance returns the worn item's per-instance fields.
+func (e Equipped) Instance() inventory.Instance {
+	return inventory.Instance{Variance: e.Variance, Durability: e.Durability}
 }
 
 // Store is anything that can equip, unequip, and list a character's
@@ -228,6 +238,11 @@ type Store interface {
 	// character's inventory. Returns ErrSlotEmpty if nothing is equipped
 	// there, or inventory.ErrNoRoom if there's nowhere to put it.
 	Unequip(ctx context.Context, characterID int64, slot Slot) error
+
+	// SetDurability writes a worn item's current durability (a loss, a
+	// repair, a break); durability.Apply decides the value. ErrSlotEmpty
+	// when nothing is worn there.
+	SetDurability(ctx context.Context, characterID int64, slot Slot, durability int) error
 }
 
 // ErrTwoHandedShield is returned when a shield and a two-handed weapon would

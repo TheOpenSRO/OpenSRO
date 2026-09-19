@@ -19,10 +19,19 @@ class Slot:
 	var item_id: int
 	var quantity: int
 
-## Result of decode_list_result(): either an error, or the occupied slots.
+## One slot's per-instance durability, from the trailing block a newer
+## server appends (session/durability.go). Absent for items with none.
+class Durability:
+	var slot: int
+	var current: int
+	var maximum: int
+
+## Result of decode_list_result(): either an error, or the occupied slots,
+## plus any per-slot durability (empty against an older server).
 class ListResult:
 	var error: String
 	var slots: Array[Slot] = []
+	var durabilities: Array[Durability] = []
 
 ## Encodes an OpInventoryList request: just a character name (same shape
 ## as CharacterNet's create/delete name requests).
@@ -95,4 +104,25 @@ static func decode_list_result(data: PackedByteArray) -> ListResult:
 		result.slots.append(decoded[0])
 		offset = decoded[1]
 
+	result.durabilities = decode_durability_block(data, offset)
 	return result
+
+## Decodes the trailing durability block (u16 count, then per entry u32 slot,
+## s32 current, s32 max) written by session/durability.go. A short or absent
+## tail -- an older server -- yields an empty array, never an error.
+static func decode_durability_block(data: PackedByteArray, offset: int) -> Array:
+	var out: Array = []
+	if offset + 2 > data.size():
+		return out
+	var count := data.decode_u16(offset)
+	offset += 2
+	for i in range(count):
+		if offset + 12 > data.size():
+			break
+		var d := Durability.new()
+		d.slot = data.decode_u32(offset)
+		d.current = data.decode_s32(offset + 4)
+		d.maximum = data.decode_s32(offset + 8)
+		offset += 12
+		out.append(d)
+	return out

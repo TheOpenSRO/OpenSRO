@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/OpenSRO/srrevamp/server/internal/durability"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 
@@ -15,15 +16,20 @@ CREATE TABLE IF NOT EXISTS equipment_slots (
 	character_id BIGINT NOT NULL,
 	slot         SMALLINT NOT NULL,
 	item_id      BIGINT NOT NULL,
+	variance     BIGINT NOT NULL DEFAULT 0,
+	durability   INTEGER NOT NULL DEFAULT -1,
 	PRIMARY KEY (character_id, slot)
 );
+ALTER TABLE equipment_slots ADD COLUMN IF NOT EXISTS variance BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE equipment_slots ADD COLUMN IF NOT EXISTS durability INTEGER NOT NULL DEFAULT -1;
 `
 
 // SQLStore is a Store backed by PostgreSQL. Depends on an inventory.Store
 // to move items between inventory and equipment.
 type SQLStore struct {
-	db  *sql.DB
-	inv inventory.Store
+	db        *sql.DB
+	inv       inventory.Store
+	rollFresh func(ctx context.Context, itemID int64) (inventory.Instance, error)
 }
 
 // OpenSQLStore opens a PostgreSQL database at dsn and ensures its schema
@@ -69,7 +75,7 @@ func validSlot(slot Slot) bool {
 // Get implements Store.
 func (s *SQLStore) Get(ctx context.Context, characterID int64) ([]Equipped, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT slot, item_id FROM equipment_slots WHERE character_id = $1`, characterID)
+		`SELECT slot, item_id, variance, durability FROM equipment_slots WHERE character_id = $1`, characterID)
 	if err != nil {
 		return nil, fmt.Errorf("equipment: listing equipped items: %w", err)
 	}
@@ -79,13 +85,39 @@ func (s *SQLStore) Get(ctx context.Context, characterID int64) ([]Equipped, erro
 	for rows.Next() {
 		var e Equipped
 		var slot int
-		if err := rows.Scan(&slot, &e.ItemID); err != nil {
+		var variance int64
+		if err := rows.Scan(&slot, &e.ItemID, &variance, &e.Durability); err != nil {
 			return nil, fmt.Errorf("equipment: scanning row: %w", err)
 		}
 		e.Slot = Slot(slot)
+		e.Variance = uint64(variance)
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// A worn row from before durability existed gets its instance on first
+	// read, the same way the bag does (inventory.SQLStore.List), so that no
+	// sword already on a character reads as broken.
+	for i := range out {
+		if out[i].Durability != durability.Untracked || s.rollFresh == nil {
+			continue
+		}
+		inst, err := s.rollFresh(ctx, out[i].ItemID)
+		if err != nil {
+			return nil, err
+		}
+		if inst.Durability == durability.Untracked {
+			continue
+		}
+		out[i].Variance, out[i].Durability = inst.Variance, inst.Durability
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE equipment_slots SET variance = $1, durability = $2 WHERE character_id = $3 AND slot = $4`,
+			int64(inst.Variance), inst.Durability, characterID, int(out[i].Slot)); err != nil {
+			return nil, fmt.Errorf("equipment: initialising slot %d: %w", out[i].Slot, err)
+		}
+	}
+	return out, nil
 }
 
 // Equip implements Store.
@@ -98,14 +130,14 @@ func (s *SQLStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 	if err != nil {
 		return fmt.Errorf("equipment: reading inventory: %w", err)
 	}
-	var newItemID int64 = -1
-	for _, sl := range invSlots {
-		if sl.Index == inventorySlot {
-			newItemID = sl.ItemID
+	var incoming *inventory.Slot
+	for i := range invSlots {
+		if invSlots[i].Index == inventorySlot {
+			incoming = &invSlots[i]
 			break
 		}
 	}
-	if newItemID == -1 {
+	if incoming == nil {
 		return ErrInventorySlotEmpty
 	}
 
@@ -120,9 +152,9 @@ func (s *SQLStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 	}
 
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO equipment_slots (character_id, slot, item_id) VALUES ($1, $2, $3)
-		 ON CONFLICT (character_id, slot) DO UPDATE SET item_id = excluded.item_id`,
-		characterID, int(slot), newItemID); err != nil {
+		`INSERT INTO equipment_slots (character_id, slot, item_id, variance, durability) VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (character_id, slot) DO UPDATE SET item_id = excluded.item_id, variance = excluded.variance, durability = excluded.durability`,
+		characterID, int(slot), incoming.ItemID, int64(incoming.Variance), incoming.Durability); err != nil {
 		return fmt.Errorf("equipment: equipping item: %w", err)
 	}
 	return nil
@@ -134,10 +166,11 @@ func (s *SQLStore) Unequip(ctx context.Context, characterID int64, slot Slot) er
 		return ErrInvalidSlot
 	}
 
-	var itemID int64
+	var itemID, variance int64
+	var dura int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT item_id FROM equipment_slots WHERE character_id = $1 AND slot = $2`,
-		characterID, int(slot)).Scan(&itemID)
+		`SELECT item_id, variance, durability FROM equipment_slots WHERE character_id = $1 AND slot = $2`,
+		characterID, int(slot)).Scan(&itemID, &variance, &dura)
 	if err == sql.ErrNoRows {
 		return ErrSlotEmpty
 	}
@@ -145,7 +178,7 @@ func (s *SQLStore) Unequip(ctx context.Context, characterID int64, slot Slot) er
 		return fmt.Errorf("equipment: reading slot: %w", err)
 	}
 
-	if err := s.inv.AddItem(ctx, characterID, itemID, 1); err != nil {
+	if err := s.inv.AddItemInstance(ctx, characterID, itemID, 1, inventory.Instance{Variance: uint64(variance), Durability: dura}); err != nil {
 		return fmt.Errorf("equipment: returning item to inventory: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx,
@@ -157,6 +190,30 @@ func (s *SQLStore) Unequip(ctx context.Context, characterID int64, slot Slot) er
 
 // unequipIfPresent is like Unequip but treats an empty slot as a no-op,
 // for Equip's "clear the slot first" step.
+// SetDurability implements Store.
+func (s *SQLStore) SetDurability(ctx context.Context, characterID int64, slot Slot, durabilityLeft int) error {
+	if !validSlot(slot) {
+		return ErrInvalidSlot
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE equipment_slots SET durability = $1 WHERE character_id = $2 AND slot = $3`,
+		durabilityLeft, characterID, int(slot))
+	if err != nil {
+		return fmt.Errorf("equipment: setting durability of slot %d: %w", slot, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrSlotEmpty
+	}
+	return nil
+}
+
+// SetFreshInstanceRoller gives the store a way to initialise worn rows
+// written before durability existed: the same roll the bag store makes for
+// a new item. Optional; without it legacy worn rows stay Untracked.
+func (s *SQLStore) SetFreshInstanceRoller(roll func(ctx context.Context, itemID int64) (inventory.Instance, error)) {
+	s.rollFresh = roll
+}
+
 func (s *SQLStore) unequipIfPresent(ctx context.Context, characterID int64, slot Slot) error {
 	err := s.Unequip(ctx, characterID, slot)
 	if err == ErrSlotEmpty {

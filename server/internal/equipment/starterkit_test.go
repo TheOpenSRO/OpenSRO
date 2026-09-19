@@ -52,6 +52,9 @@ func (f *fakeStores) Equip(_ context.Context, _ int64, slot Slot, inventorySlot 
 }
 
 func (f *fakeStores) Unequip(_ context.Context, _ int64, _ Slot) error { return nil }
+func (f *fakeStores) SetDurability(_ context.Context, _ int64, _ Slot, _ int) error {
+	return nil
+}
 
 // TestGiveStartingKitDressesEveryWearableSlot is the point of the kit: the
 // client renders a character bare when the server reports nothing equipped,

@@ -512,23 +512,25 @@ var errOfferInvalid = errors.New("trade: offer no longer valid")
 // offerItemID resolves the item ID currently sitting in offer's ItemSlot
 // for characterID, validating there's still enough quantity there.
 // Returns 0, nil if the offer has no item component.
-func offerItemID(ctx context.Context, inv inventory.Store, characterID int64, offer trade.Offer) (int64, error) {
+// offerItemID resolves an offer's bag slot to its item id and the instance
+// in it -- the instance crosses to the other party unchanged.
+func offerItemID(ctx context.Context, inv inventory.Store, characterID int64, offer trade.Offer) (int64, inventory.Instance, error) {
 	if offer.ItemSlot < 0 {
-		return 0, nil
+		return 0, inventory.Instance{}, nil
 	}
 	slots, err := inv.List(ctx, characterID)
 	if err != nil {
-		return 0, err
+		return 0, inventory.Instance{}, err
 	}
 	for _, s := range slots {
 		if s.Index == offer.ItemSlot {
 			if s.Quantity < offer.Quantity {
-				return 0, errOfferInvalid
+				return 0, inventory.Instance{}, errOfferInvalid
 			}
-			return s.ItemID, nil
+			return s.ItemID, s.Instance(), nil
 		}
 	}
-	return 0, errOfferInvalid
+	return 0, inventory.Instance{}, errOfferInvalid
 }
 
 // executeTrade performs the actual gold/item transfer once both sides have
@@ -544,14 +546,15 @@ func offerItemID(ctx context.Context, inv inventory.Store, characterID int64, of
 // failing -> credit everything) minimizes the window, and the one gap
 // left is documented at the final AddItem calls below.
 func executeTrade(ctx context.Context, chars character.Store, inv inventory.Store, items ItemLookup, sess *trade.Session) (itemA, itemB int64, failReason string, err error) {
-	itemA, err = offerItemID(ctx, inv, sess.A.CharacterID, sess.OfferA)
+	var instA, instB inventory.Instance
+	itemA, instA, err = offerItemID(ctx, inv, sess.A.CharacterID, sess.OfferA)
 	if err != nil {
 		if errors.Is(err, errOfferInvalid) {
 			return 0, 0, "offer no longer valid", nil
 		}
 		return 0, 0, "", err
 	}
-	itemB, err = offerItemID(ctx, inv, sess.B.CharacterID, sess.OfferB)
+	itemB, instB, err = offerItemID(ctx, inv, sess.B.CharacterID, sess.OfferB)
 	if err != nil {
 		if errors.Is(err, errOfferInvalid) {
 			return 0, 0, "offer no longer valid", nil
@@ -606,7 +609,7 @@ func executeTrade(ctx context.Context, chars character.Store, inv inventory.Stor
 		if err := inv.RemoveItem(ctx, sess.B.CharacterID, sess.OfferB.ItemSlot, sess.OfferB.Quantity); err != nil {
 			refundGold(ctx, chars, sess)
 			if sess.OfferA.ItemSlot >= 0 {
-				inv.AddItem(ctx, sess.A.CharacterID, itemA, sess.OfferA.Quantity)
+				inv.AddItemInstance(ctx, sess.A.CharacterID, itemA, sess.OfferA.Quantity, instA)
 			}
 			return 0, 0, "offer no longer valid", nil
 		}
@@ -628,12 +631,12 @@ func executeTrade(ctx context.Context, chars character.Store, inv inventory.Stor
 	// validated and is not by the time it commits, which needs a shared
 	// transaction across the two stores rather than a better check.
 	if sess.OfferA.ItemSlot >= 0 {
-		if err := inv.AddItem(ctx, sess.B.CharacterID, itemA, sess.OfferA.Quantity); err != nil {
+		if err := inv.AddItemInstance(ctx, sess.B.CharacterID, itemA, sess.OfferA.Quantity, instA); err != nil {
 			return 0, 0, "", fmt.Errorf("crediting item to recipient: %w", err)
 		}
 	}
 	if sess.OfferB.ItemSlot >= 0 {
-		if err := inv.AddItem(ctx, sess.A.CharacterID, itemB, sess.OfferB.Quantity); err != nil {
+		if err := inv.AddItemInstance(ctx, sess.A.CharacterID, itemB, sess.OfferB.Quantity, instB); err != nil {
 			return 0, 0, "", fmt.Errorf("crediting item to recipient: %w", err)
 		}
 	}

@@ -102,7 +102,7 @@ func TestInventoryFullFlow(t *testing.T) {
 		t.Fatalf("seeding inventory: %v", err)
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), InventoryHandler(chars, invStore))
+	handle := gateway.Chain(LoginHandler(accounts), InventoryHandler(chars, invStore, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 

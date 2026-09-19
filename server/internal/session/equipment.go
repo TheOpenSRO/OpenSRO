@@ -53,6 +53,9 @@ func decodeEquippedSnapshot(data []byte) (*EquippedSnapshot, []byte, error) {
 type EquipmentResult struct {
 	Error string
 	Items []EquippedSnapshot
+	// Durabilities is the trailing per-slot durability block (see
+	// DurabilitySnapshot): additive, so an older client ignores it.
+	Durabilities []DurabilitySnapshot
 }
 
 func (r *EquipmentResult) Encode() []byte {
@@ -63,7 +66,7 @@ func (r *EquipmentResult) Encode() []byte {
 	for _, it := range r.Items {
 		out = append(out, it.Encode()...)
 	}
-	return out
+	return encodeDurabilityBlock(out, r.Durabilities)
 }
 
 func DecodeEquipmentResult(data []byte) (*EquipmentResult, error) {
@@ -86,6 +89,7 @@ func DecodeEquipmentResult(data []byte) (*EquipmentResult, error) {
 		}
 		result.Items = append(result.Items, *snap)
 	}
+	result.Durabilities = decodeDurabilityBlock(rest)
 	return result, nil
 }
 
@@ -162,11 +166,11 @@ func EquipmentHandlerWithRules(chars character.Store, store equipment.Store, inv
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpEquipmentList:
-			return handleEquipmentList(ctx, sess, p, chars, store)
+			return handleEquipmentList(ctx, sess, p, chars, store, items)
 		case OpEquip:
 			return handleEquip(ctx, sess, p, chars, store, inv, items)
 		case OpUnequip:
-			return handleUnequip(ctx, sess, p, chars, store)
+			return handleUnequip(ctx, sess, p, chars, store, items)
 		default:
 			return nil
 		}
@@ -281,7 +285,7 @@ func resolveCharacterID(ctx context.Context, sess *gateway.Session, chars charac
 	return -1, "no such character on this account"
 }
 
-func handleEquipmentList(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store) error {
+func handleEquipmentList(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, items ItemLookup) error {
 	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "malformed request"}).Encode()})
@@ -291,7 +295,7 @@ func handleEquipmentList(ctx context.Context, sess *gateway.Session, p *proto.Pa
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: errStr}).Encode()})
 	}
 
-	return sendWornList(ctx, sess, store, characterID)
+	return sendWornList(ctx, sess, store, items, characterID)
 }
 
 // sendWornList answers with everything the character has on. It is the
@@ -300,16 +304,16 @@ func handleEquipmentList(ctx context.Context, sess *gateway.Session, p *proto.Pa
 // nothing", and the client redrew its paper doll bare from it while the body
 // stayed dressed. Answering with the real list removes the ambiguity the same
 // way OpInventoryMoveResult carries the whole bag.
-func sendWornList(ctx context.Context, sess *gateway.Session, store equipment.Store, characterID int64) error {
-	items, err := store.Get(ctx, characterID)
+func sendWornList(ctx context.Context, sess *gateway.Session, store equipment.Store, lookup ItemLookup, characterID int64) error {
+	worn, err := store.Get(ctx, characterID)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "list failed"}).Encode()})
 	}
-	snaps := make([]EquippedSnapshot, len(items))
-	for i, it := range items {
+	snaps := make([]EquippedSnapshot, len(worn))
+	for i, it := range worn {
 		snaps[i] = EquippedSnapshot{Slot: int(it.Slot), ItemID: it.ItemID}
 	}
-	return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Items: snaps}).Encode()})
+	return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Items: snaps, Durabilities: equipmentDurabilities(ctx, worn, lookup)}).Encode()})
 }
 
 func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup) error {
@@ -328,10 +332,10 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 	if err := store.Equip(ctx, characterID, req.Slot, req.InventorySlot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}
-	return sendWornList(ctx, sess, store, characterID)
+	return sendWornList(ctx, sess, store, items, characterID)
 }
 
-func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store) error {
+func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, items ItemLookup) error {
 	req, err := DecodeUnequipRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "malformed request"}).Encode()})
@@ -344,7 +348,7 @@ func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	if err := store.Unequip(ctx, characterID, req.Slot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}
-	return sendWornList(ctx, sess, store, characterID)
+	return sendWornList(ctx, sess, store, items, characterID)
 }
 
 func equipErrorMessage(err error) string {

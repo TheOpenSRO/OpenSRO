@@ -61,6 +61,9 @@ func decodeInventorySlotSnapshot(data []byte) (*InventorySlotSnapshot, []byte, e
 type InventoryListResult struct {
 	Error string // non-empty on failure; Slots is empty in that case
 	Slots []InventorySlotSnapshot
+	// Durabilities is the trailing per-slot durability block (see
+	// DurabilitySnapshot): additive, so an older client ignores it.
+	Durabilities []DurabilitySnapshot
 }
 
 func (r *InventoryListResult) Encode() []byte {
@@ -71,7 +74,7 @@ func (r *InventoryListResult) Encode() []byte {
 	for _, sl := range r.Slots {
 		out = append(out, sl.Encode()...)
 	}
-	return out
+	return encodeDurabilityBlock(out, r.Durabilities)
 }
 
 func DecodeInventoryListResult(data []byte) (*InventoryListResult, error) {
@@ -94,6 +97,7 @@ func DecodeInventoryListResult(data []byte) (*InventoryListResult, error) {
 		}
 		result.Slots = append(result.Slots, *snap)
 	}
+	result.Durabilities = decodeDurabilityBlock(rest)
 	return result, nil
 }
 
@@ -101,7 +105,7 @@ func DecodeInventoryListResult(data []byte) (*InventoryListResult, error) {
 // against store, scoped to whichever account authenticated on the
 // connection. Takes character name via the same "resolve by name against
 // the authenticated account" pattern as WorldHandler.
-func InventoryHandler(chars character.Store, store inventory.Store) gateway.Handler {
+func InventoryHandler(chars character.Store, store inventory.Store, items ItemLookup) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpInventoryList {
 			return nil
@@ -158,7 +162,7 @@ func InventoryHandler(chars character.Store, store inventory.Store) gateway.Hand
 		}
 		return sess.Send(&proto.Packet{
 			Opcode: OpInventoryListResult,
-			Data:   (&InventoryListResult{Slots: snaps}).Encode(),
+			Data:   (&InventoryListResult{Slots: snaps, Durabilities: inventoryDurabilities(ctx, slots, items)}).Encode(),
 		})
 	}
 }

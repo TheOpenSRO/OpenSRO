@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	unitsPerDisplayed = 10.0
+	unitsPerDisplayed  = 10.0
 	displayedPerRegion = 192
 	regionXOrigin      = 92  // drives displayed Y
 	regionYOrigin      = 135 // drives displayed X
