@@ -65,10 +65,11 @@ In order. Each is checked off here when it ships in a release, with its round in
 - [x] ~~A new character spawns with placeholder 200/200 HP~~ -- **not a bug, checked 2026-09-19**:
       `MaxHPFor(StartingStr 20, level 1) = 200` exactly, and a respawn at 80 is the binary's
       `RespawnFraction 0.4` x 200. The two grounded numbers coincide with the old placeholder.
-- [ ] **Two `internal/session` full-flow tests race under host load** (`TestInventoryFullFlow` reads the
-      bag before the kill's loot lands; `TestTradeFullFlow` reads an unexpected opcode). Pass 3/3 alone
-      and as a package; failed only inside full runs while five lanes built at once. Give them
-      deterministic waits for the message they need.
+- [x] ~~Two `internal/session` full-flow tests race under host load~~ -- **not a race in the code**
+      (2026-09-19): eleven packages' tests share the local `srrevamp_test` PostgreSQL database, and
+      two `go test` processes on one host clobbered each other's rows (the trade test's 0x00DE was
+      the system cancel from mismatched state). `internal/testdb.Lock` now serialises processes via
+      an advisory file lock held in each such package's `TestMain`; two concurrent runs both pass.
 - [ ] **A non-gold drop's name plate shows the Korean column** (`HP ?? ??` for the potion): the item's
       `SN_ITEM_*` id did not resolve through the UI text table on that path, and the fallback font has
       no Hangul. Resolve it the way the tooltips do, or show nothing.

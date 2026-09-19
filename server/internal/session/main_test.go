@@ -3,6 +3,8 @@ package session
 import (
 	"os"
 	"testing"
+
+	"github.com/OpenSRO/srrevamp/server/internal/testdb"
 )
 
 // TestMain pins the damage roll to its maximum for every test in this package.
@@ -17,7 +19,14 @@ import (
 // this package asserted before the roll existed, so the expectations are
 // unchanged rather than loosened. The roll itself is tested where it lives, in
 // internal/combat.
+// It also holds the shared test-database lock for the whole run: this
+// package's full-flow tests use the local PostgreSQL test database, and two
+// `go test` processes on one host clobbered each other's rows on 2026-09-19
+// (see internal/testdb).
 func TestMain(m *testing.M) {
 	damageRollNG = nil
-	os.Exit(m.Run())
+	release := testdb.Lock(inventoryTestDSN())
+	code := m.Run()
+	release()
+	os.Exit(code)
 }
