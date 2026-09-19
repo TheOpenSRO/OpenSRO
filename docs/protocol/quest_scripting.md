@@ -146,11 +146,16 @@ inferred its contents from its file counterpart — or they are simple enough
 (talk to an NPC, receive a reward) that the lifecycle needs no objective at all.
 
 **Settled for the data half (2026-09-17).** `DB_Load_RefQuest` (`0x008341b0`)
-was read, and more usefully every loader like it: the server loads **85**
-reference tables and the complete list is in
-`docs/protocol/refdata_tables.md`. The quest-related entries are exactly four —
-`_REFQUEST`, `_REFCHARDEFAULT_QUEST`, `_REFSIEGEQUEST`, `_REFSIEGEQUESTREWARD` —
-and **none is a table of objectives**.
+was read, and more usefully every loader like it: the server loads **124**
+reference tables (this said 85 until round 242 found the 39 mixed-case and
+`TAB_` names the census had missed) and the complete list is in
+`docs/protocol/refdata_tables.md`. The quest-related entries are six —
+`_REFQUEST`, `_REFCHARDEFAULT_QUEST`, `_REFSIEGEQUEST`, `_REFSIEGEQUESTREWARD`,
+and the two the first census missed, `_RefQuestReward` and
+`_RefQuestRewardItems` (loaders `0x83a640`/`0x83a8b0`, read at
+`REFDATA_MGR+0xb40` by `FUN_009287c0`: `Can not find QuestRewardData :
+QuestID [%d]`) — and **none is a table of objectives**: the two new ones are the
+reward side, which strengthens rather than weakens the conclusion below.
 
 So there is no objective data anywhere: not in the client's two quest files, not
 in the server's entire reference surface. *"Objectives are code"* is now settled

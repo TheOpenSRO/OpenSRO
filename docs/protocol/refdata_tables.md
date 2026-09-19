@@ -1,9 +1,11 @@
 # The server's reference-table catalogue
 
 Every reference table `SR_GameServer.exe` loads, with the class it loads into and
-the address of its loader. **85 tables.** This is the server's entire
-reference-data surface: if a value is not in one of these, the server does not
-read it from reference data at all.
+the address of its loader. **124 tables** -- 85 spelt upper-case, 10 with a
+`TAB_` prefix, 29 in mixed case (corrected 2026-09-19, round 242; this page
+said **85** for two days). This is the server's entire reference-data surface:
+if a value is not in one of these, the server does not read it from reference
+data at all.
 
 ## How it was found, and why it is a census rather than a sample
 
@@ -14,9 +16,18 @@ generic reader:
 	            FUN_00401fc0("_REFQUEST", 9);        <- name, length
 	            _DAT_00d1b7b8 = &PTR_s_CRefQuest_…;  <- the class it fills
 
-Finding every function that names a `_REF*` table therefore finds every table the
-server loads. That is what makes the list below an **enumeration**: not "these
-are the tables we found", but "these are the tables that exist".
+Finding every function that builds a table name this way therefore finds every
+table the server loads. That is what makes the list below an **enumeration**:
+not "these are the tables we found", but "these are the tables that exist".
+
+**The correction (round 242).** The first census, and the string-pool probe that
+"confirmed" it, both matched only the upper-case spelling. The binary builds
+**124** names through that call: the 85 below, the ten `TAB_REF*` names the
+Monster AI pages had already met, and 29 mixed-case `_Ref*` names -- quest
+rewards, the twelve trigger tables, server events, the collection book, rent
+items, game-world groups, UI strings. Two probes that share a regex are one
+probe. The 39 are listed in their own section further down, with their loaders
+and classes, and `persistence.ReferenceTables` carries all 124.
 
 **A constant that is NOT a record size.** Each loader also stores `0x30` or
 `0x18` near the class pointer, and it is tempting to read that as the record
@@ -53,7 +64,7 @@ The catalogue below is every parser found by the cursor-advance shape
 (`/var/tmp/parsers3.py` on the render box regenerates it). Widths are the read
 sequence (`b`/`w`/`d`/`q` = 1/2/4/8 bytes; strings are not in the sequence but
 are counted); the table column is filled only where the parser's own assert
-string names it (`check _RefX` / `at RefX`) or a family inserter's case 0 does.
+string names it (`check <table>` / `at <table>`) or a family inserter's case 0 does.
 Column NAMES live in the database; the client's `textdata` files carry more
 columns than the server reads (the shop tab's file has 7, the parser reads 5),
 so the layouts here are the server's, not the files'.
@@ -132,6 +143,63 @@ table is settled by an assert string inside it, by a family inserter's case
 number, or by a use-site that reads the record -- never by matching column
 counts against the client's files, which read more columns than the server
 does.
+
+## The 39 tables the first census missed (round 242)
+
+Same loader shape, same descriptor table (`.rdata 0xadda70..`), same
+`FUN_00401fc0(name, len)` -- only the spelling differs. None of the 39 has a
+client `textdata` file (checked against the archive's file list), so all are
+server-only.
+
+| table | class | loader |
+|---|---|---|
+| `TAB_REFHIVE` | `CRefHive` | `0x00833270` |
+| `TAB_REFTACTICS` | `CRefTactics` | `0x008334e0` |
+| `TAB_REFNEST` | `CRefNest` | `0x00833750` |
+| `TAB_REFAISKILL` | `CRefAISkill` | `0x008339c0` |
+| `TAB_REFRANKING_TRADERACTIVITY` | `CRefRankingTraderActivity` | `0x00835110` |
+| `TAB_REFRANKING_ROBBERACTIVITY` | `CRefRankingRobberActivity` | `0x00835380` |
+| `TAB_REFRANKING_HUNTERACTIVITY` | `CRefRankingHunterActivity` | `0x008355f0` |
+| `TAB_REFRANKING_TRADERCONTRIBUTION` | `CRefRankingTraderContribution` | `0x00835860` |
+| `TAB_REFRANKING_ROBBERCONTRIBUTION` | `CRefRankingRobberContribution` | `0x00835ad0` |
+| `TAB_REFRANKING_HUNTERCONTRIBUTION` | `CRefRankingHunterContribution` | `0x00835d40` |
+| `_RefServerEvent` | `CRefServerEvent` | `0x00839a10` |
+| `_RefServerEventReward` | `CRefServerEventReward` | `0x00839c80` |
+| `_RefServerEventReward_ExpUPForPlayers` | `CRefServerEventReward_ExpUPForPlayers` | `0x00839ef0` |
+| `_RefServerEventReward_SpawnMonster` | `CRefServerEventReward_SpawnMonster` | `0x0083a160` |
+| `_RefRentItem` | `CRefRentItem` | `0x0083a3d0` |
+| `_RefQuestReward` | `CRefQuestReward` | `0x0083a640` |
+| `_RefQuestRewardItems` | `CRefQuestRewardItems` | `0x0083a8b0` |
+| `_RefEventReward` | `CRefEventReward` | `0x0083ab20` |
+| `_RefEventRewardItems` | `CRefEventRewardItems` | `0x0083ad90` |
+| `_RefCollectionBook_Theme` | `CRefCollectionBook_Theme` | `0x0083b000` |
+| `_RefCollectionBook_Item` | `CRefCollectionBook_Item` | `0x0083b270` |
+| `_RefUIString_Mt` | `CRefUIString` | `0x0083b4f0` |
+| `_RefGameWorldBindTriggerCategory` | `CRefGameWorldBindTriggerCategory` | `0x0083b770` |
+| `_RefTriggerCategory` | `CRefTriggerCategory` | `0x0083b9e0` |
+| `_RefTriggerCategoryBindTrigger` | `CRefTriggerCategoryBindTrigger` | `0x0083bc60` |
+| `_RefTrigger` | `CRefTrigger` | `0x0083bed0` |
+| `_RefTriggerVariable` | `CRefTriggerVariable` | `0x0083c160` |
+| `_RefTriggerBindEvent` | `CRefTriggerBindEvent` | `0x0083c3e0` |
+| `_RefTriggerBindCondition` | `CRefTriggerBindCondition` | `0x0083c650` |
+| `_RefTriggerBindAction` | `CRefTriggerBindAction` | `0x0083c8c0` |
+| `_RefTriggerCommon` | `CRefTriggerCommon` | `0x0083cb30` |
+| `_RefTriggerEvent` | `CRefTriggerEvent` | `0x0083cdb0` |
+| `_RefTriggerCondition` | `CRefTriggerCondition` | `0x0083d030` |
+| `_RefTriggerAction` | `CRefTriggerAction` | `0x0083d2b0` |
+| `_RefTriggerConditionParam` | `CRefTriggerConditionParam` | `0x0083d580` |
+| `_RefTriggerActionParam` | `CRefTriggerActionParam` | `0x0083d810` |
+| `_RefGameWorldBindGameWorldGroup` | `CRefGameWorldBindGameWorldGroup` | `0x0083da90` |
+| `_RefGameWorldGroup` | `CRefGameWorldGroup` | `0x0083dd10` |
+| `_RefGameWorldGroup_Config` | `CRefGameWorldGroup_Config` | `0x0083dfa0` |
+
+The four AI tables were read in rounds 238-241 (`monster_ai.md`); the six ranking
+tables and the 29 mixed-case tables are unread. Two of them matter to open
+systems: `_RefQuestReward` / `_RefQuestRewardItems` are the reward side of the
+quest system (`quest_scripting.md` said the quest tables were "exactly four" --
+they are six), read at `REFDATA_MGR+0xb40` by `FUN_009287c0` (`Can not find
+QuestRewardData : QuestID [%d]`), and the twelve `_RefTrigger*` tables are the
+data behind `CGameTrigger*`.
 
 ## What is NOT here
 

@@ -186,12 +186,14 @@ An early harvest of `_UPPERCASE` identifiers found 120 — the 85 plus only 35 o
 the runtime ones — because its pattern was uppercase-only. See the correction
 below.
 
-**The 85 are exactly the set `docs/protocol/refdata_tables.md` enumerated** —
-same count, same members, no difference in either direction. That catalogue was
-built by finding the 85 loader *functions*; this list was built by harvesting
-*strings*. The probes share nothing, and they agree, which is what turns "85
-reference tables" from a count of what was found into a complete count.
-`server/internal/persistence` has a test that fails if the two ever drift.
+**The 85 were exactly the set `docs/protocol/refdata_tables.md` enumerated** —
+same count, same members — and that agreement was taken as proof of
+completeness: "the probes share nothing". They shared one thing, an upper-case
+`_REF` pattern, and on 2026-09-19 (round 242) the loader count came out at
+**124**: the 85, ten `TAB_REF*` tables and 29 mixed-case `_Ref*` tables (quest
+rewards, the trigger family, server events, the collection book). Two probes
+with the same regex are one probe. `persistence.ReferenceTables` now carries
+all 124 and the drift test compares names case-insensitively.
 
 The runtime tables are the ones the server reads and writes as it runs.
 

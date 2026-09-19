@@ -115,13 +115,16 @@ func TestReferenceTablesMatchTheCatalogue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The binary spells its tables three ways (_REFNAME, TAB_REFNAME,
+	// _RefName) and the docs quote them as they appear; compare the names
+	// normalised -- upper-cased, without the leading underscore or TAB_.
 	inDoc := map[string]bool{}
-	for _, m := range regexp.MustCompile(`_REF[A-Z0-9_]+`).FindAllString(string(raw), -1) {
-		inDoc[m] = true
+	for _, m := range regexp.MustCompile(`(?:_REF|_Ref|TAB_REF)[A-Za-z0-9_]+`).FindAllString(string(raw), -1) {
+		inDoc[normaliseTableName(m)] = true
 	}
 	inCode := map[string]bool{}
 	for _, tbl := range ReferenceTables {
-		inCode[tbl] = true
+		inCode[normaliseTableName(tbl)] = true
 	}
 	for tbl := range inDoc {
 		if !inCode[tbl] {
@@ -133,9 +136,15 @@ func TestReferenceTablesMatchTheCatalogue(t *testing.T) {
 			t.Errorf("%s is in ReferenceTables but not in refdata_tables.md", tbl)
 		}
 	}
-	if len(ReferenceTables) != 85 {
-		t.Errorf("%d reference tables, want 85", len(ReferenceTables))
+	if len(ReferenceTables) != 124 {
+		t.Errorf("%d reference tables, want 124", len(ReferenceTables))
 	}
+}
+
+func normaliseTableName(name string) string {
+	n := strings.ToUpper(name)
+	n = strings.TrimPrefix(n, "TAB_")
+	return strings.TrimPrefix(n, "_")
 }
 
 func TestTablesAreDistinctAndDisjoint(t *testing.T) {
@@ -145,8 +154,8 @@ func TestTablesAreDistinctAndDisjoint(t *testing.T) {
 			t.Errorf("%s appears twice (%s)", tbl, prev)
 		}
 		seen[tbl] = "reference"
-		if !strings.HasPrefix(tbl, "_REF") {
-			t.Errorf("%s is in ReferenceTables but is not a _REF table", tbl)
+		if !strings.HasPrefix(tbl, "_REF") && !strings.HasPrefix(tbl, "_Ref") && !strings.HasPrefix(tbl, "TAB_REF") {
+			t.Errorf("%s is in ReferenceTables but is not a reference table by any of the three spellings", tbl)
 		}
 	}
 	for _, tbl := range RuntimeTables {

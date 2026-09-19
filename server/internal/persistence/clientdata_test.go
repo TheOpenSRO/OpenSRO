@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// The three lists must partition the 85 reference tables exactly: every table
+// The three lists must partition the 124 reference tables exactly: every table
 // in one of them, none in two.
 func TestTheThreeListsPartitionTheReferenceTables(t *testing.T) {
 	seen := map[string]string{}
@@ -38,7 +38,7 @@ func TestTheThreeListsPartitionTheReferenceTables(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("%s is listed but is not one of the 85 reference tables", tbl)
+			t.Errorf("%s is listed but is not one of the 124 reference tables", tbl)
 		}
 	}
 	if n := len(seen); n != len(ReferenceTables) {
@@ -53,8 +53,10 @@ func TestMeasuredCounts(t *testing.T) {
 	if len(ServerOnlyLootTables) != 17 {
 		t.Errorf("%d loot tables, measured 17", len(ServerOnlyLootTables))
 	}
-	if len(ServerOnlyOtherTables) != 17 {
-		t.Errorf("%d other server-only tables, measured 17", len(ServerOnlyOtherTables))
+	// 17 measured on 2026-09-17, plus the 39 tables the census had missed
+	// (round 242), none of which has a client file.
+	if len(ServerOnlyOtherTables) != 56 {
+		t.Errorf("%d other server-only tables, measured 56", len(ServerOnlyOtherTables))
 	}
 }
 

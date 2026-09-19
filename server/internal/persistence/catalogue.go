@@ -128,11 +128,15 @@ var Procs = []Proc{
 	{Name: "_SiegeFortressCollectForgedItem", Args: 8, Caller: "AQ_Siege::FUN_006282f0"},
 }
 
-// ReferenceTables are the 85 read-only tables the server loads at start-up.
-// This list was harvested from the string pool and is EXACTLY the set
-// docs/protocol/refdata_tables.md enumerated from the 85 loader functions --
-// same count, same members, from two probes with nothing in common. That is
-// what makes "85" a complete count rather than a count of what was found.
+// ReferenceTables are the 124 read-only tables the server loads at start-up,
+// in the binary's own spelling: 85 `_REFNAME`, 10 `TAB_REFNAME`, 29 `_RefName`.
+//
+// This list said 85 until 2026-09-19 (round 242). It had been harvested from
+// the string pool and matched docs/protocol/refdata_tables.md's count from the
+// loader functions -- "two probes with nothing in common" -- but both probes
+// used an upper-case `_REF` pattern, so both missed the same 39 names. The
+// count that is complete is the number of loaders that build a table name
+// through FUN_00401fc0(name, len): 124, every one with a CRef* descriptor.
 var ReferenceTables = []string{
 	"_REFABILITYBYITEMOPTLEVEL",
 	"_REFACCESSPERMISSIONOFSHOP",
@@ -219,6 +223,47 @@ var ReferenceTables = []string{
 	"_REFTELELINK",
 	"_REFTELEPORT",
 	"_REFTREATITEMOFSHOP",
+	// The ten TAB_REF* tables (the AI's four and the six job rankings).
+	"TAB_REFHIVE",
+	"TAB_REFTACTICS",
+	"TAB_REFNEST",
+	"TAB_REFAISKILL",
+	"TAB_REFRANKING_TRADERACTIVITY",
+	"TAB_REFRANKING_ROBBERACTIVITY",
+	"TAB_REFRANKING_HUNTERACTIVITY",
+	"TAB_REFRANKING_TRADERCONTRIBUTION",
+	"TAB_REFRANKING_ROBBERCONTRIBUTION",
+	"TAB_REFRANKING_HUNTERCONTRIBUTION",
+	// The 29 mixed-case tables the first census missed (round 242).
+	"_RefServerEvent",
+	"_RefServerEventReward",
+	"_RefServerEventReward_ExpUPForPlayers",
+	"_RefServerEventReward_SpawnMonster",
+	"_RefRentItem",
+	"_RefQuestReward",
+	"_RefQuestRewardItems",
+	"_RefEventReward",
+	"_RefEventRewardItems",
+	"_RefCollectionBook_Theme",
+	"_RefCollectionBook_Item",
+	"_RefUIString_Mt",
+	"_RefGameWorldBindTriggerCategory",
+	"_RefTriggerCategory",
+	"_RefTriggerCategoryBindTrigger",
+	"_RefTrigger",
+	"_RefTriggerVariable",
+	"_RefTriggerBindEvent",
+	"_RefTriggerBindCondition",
+	"_RefTriggerBindAction",
+	"_RefTriggerCommon",
+	"_RefTriggerEvent",
+	"_RefTriggerCondition",
+	"_RefTriggerAction",
+	"_RefTriggerConditionParam",
+	"_RefTriggerActionParam",
+	"_RefGameWorldBindGameWorldGroup",
+	"_RefGameWorldGroup",
+	"_RefGameWorldGroup_Config",
 }
 
 // RuntimeTables are the tables the server reads and writes as it runs.

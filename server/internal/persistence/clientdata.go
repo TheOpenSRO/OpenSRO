@@ -2,14 +2,15 @@ package persistence
 
 // Which reference tables ship to the client, and which do not.
 //
-// The server loads all 85 reference tables from its database. The CLIENT
+// The server loads all 124 reference tables from its database. The CLIENT
 // carries a `server_dep\silkroad\textdata\*.txt` copy of some of them, and
 // that copy is the only way this project can read one without a real database.
 //
-// Measured 2026-09-17 against a retail Media.pk2: **51 of the 85 have a file,
-// 34 do not.** Before this, docs/protocol/refdata_tables.md said "77 of 85
-// unread", which conflated "not yet read" with "not readable" -- most of them
-// were sitting in the archive.
+// Measured 2026-09-17 against a retail Media.pk2: **51 have a file, the rest do
+// not.** Before this, docs/protocol/refdata_tables.md said "77 of 85 unread",
+// which conflated "not yet read" with "not readable" -- most of them were
+// sitting in the archive. The 39 tables the census missed (round 242,
+// 2026-09-19) were checked against the same file list: none has a file.
 //
 // Only the FILENAME is recorded here. No table content is, and none may be:
 // see docs/LEGAL.md.
@@ -113,6 +114,46 @@ var ServerOnlyLootTables = []string{
 // docs/protocol/refobj_binary_format.md established from the other end. The
 // rest are simply absent.
 var ServerOnlyOtherTables = []string{
+	// The 39 tables found in round 242: none has a client file.
+	"TAB_REFHIVE",
+	"TAB_REFTACTICS",
+	"TAB_REFNEST",
+	"TAB_REFAISKILL",
+	"TAB_REFRANKING_TRADERACTIVITY",
+	"TAB_REFRANKING_ROBBERACTIVITY",
+	"TAB_REFRANKING_HUNTERACTIVITY",
+	"TAB_REFRANKING_TRADERCONTRIBUTION",
+	"TAB_REFRANKING_ROBBERCONTRIBUTION",
+	"TAB_REFRANKING_HUNTERCONTRIBUTION",
+	"_RefServerEvent",
+	"_RefServerEventReward",
+	"_RefServerEventReward_ExpUPForPlayers",
+	"_RefServerEventReward_SpawnMonster",
+	"_RefRentItem",
+	"_RefQuestReward",
+	"_RefQuestRewardItems",
+	"_RefEventReward",
+	"_RefEventRewardItems",
+	"_RefCollectionBook_Theme",
+	"_RefCollectionBook_Item",
+	"_RefUIString_Mt",
+	"_RefGameWorldBindTriggerCategory",
+	"_RefTriggerCategory",
+	"_RefTriggerCategoryBindTrigger",
+	"_RefTrigger",
+	"_RefTriggerVariable",
+	"_RefTriggerBindEvent",
+	"_RefTriggerBindCondition",
+	"_RefTriggerBindAction",
+	"_RefTriggerCommon",
+	"_RefTriggerEvent",
+	"_RefTriggerCondition",
+	"_RefTriggerAction",
+	"_RefTriggerConditionParam",
+	"_RefTriggerActionParam",
+	"_RefGameWorldBindGameWorldGroup",
+	"_RefGameWorldGroup",
+	"_RefGameWorldGroup_Config",
 	"_REFALCHEMYMERIT",
 	"_REFCHARDEFAULT_QUEST",
 	"_REFCHARGEN",

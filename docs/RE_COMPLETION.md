@@ -5023,6 +5023,11 @@ columns; population scaling of the hatch rate) read; a CORRECTION to round 238 -
 the tactics row's trailing string is not the skill list, the skills are
 `_RefAISkill` rows whose `Basic_Code` is bound through `m_RefSkillByCodename`
 (skilldata rows). Nest column 2 = HiveID. 15 names. Docs only.
+Round 242: the reference-table census corrected from 85 to **124** -- both
+"independent" probes shared an upper-case regex and missed the 10 `TAB_REF*` and
+29 mixed-case `_Ref*` loaders (quest rewards, the trigger family, server events,
+collection book, rent items). `persistence.ReferenceTables` = 124 with tests
+(v0.1.395); 35 loaders named `DB_Load_RefX`; quest tables are six, not four.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

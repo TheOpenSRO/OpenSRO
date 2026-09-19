@@ -7075,6 +7075,34 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-forty-second round: the reference-table census was short by 39 -- 124 tables, not 85
+
+The RE tick for 2026-09-19 13:34. While tying parsers to tables, the `_RefQuestReward`
+reader (`Can not find QuestRewardData : QuestID [%d]`, `REFDATA_MGR+0xb40`) pointed at a
+table that `refdata_tables.md` did not list -- and that page, `persistence.ReferenceTables`
+and `quest_scripting.md` all called their 85 **proven complete**, on the strength of two
+probes that agreed. They agreed because they shared a blind spot: both matched an upper-case
+`_REF` pattern. The count that is actually complete is the number of loaders that build a
+table name through `FUN_00401fc0(name, len)`: **124** -- the 85, the ten `TAB_REF*` tables
+(the AI's four and six job rankings) and **29 mixed-case `_Ref*` tables** the census never
+saw: `_RefQuestReward`/`_RefQuestRewardItems`, `_RefEventReward`/`Items`, four
+`_RefServerEvent*`, `_RefRentItem`, two `_RefCollectionBook_*`, `_RefUIString_Mt`, three
+`_RefGameWorldGroup*`, and the twelve `_RefTrigger*` tables behind `CGameTrigger*`. Every one
+has a `CRef*` descriptor in the table at `.rdata 0xadda70` and the same 503-byte loader
+shape; none has a client `textdata` file.
+
+**Wired through** (v0.1.395): `persistence.ReferenceTables` carries 124 names in the binary's
+own spelling; the 39 join `ServerOnlyOtherTables` (17 -> 56); the doc-drift test compares
+names case-insensitively and without the `TAB_`/underscore prefix; the counts in the three
+tests moved (85 -> 124, 17 -> 56). `refdata_tables.md`, `persistence.md`,
+`quest_scripting.md` ("exactly four" quest tables -> six, the two new ones being rewards,
+which strengthens "objectives are code") and SYSTEMS.md carry the correction. The 35 unnamed
+loaders are named `DB_Load_RefX`.
+
+The lesson is the one the rules already state, applied to a census: two probes that share a
+regex are one probe. What would have caught it earlier is the descriptor table -- 121
+classes against 85 names is a 36-row gap that was visible in round 238 and not counted.
+
 ## Two-hundred-and-forty-first round: the AI-skill and hive rows -- and a correction to round 238
 
 The RE tick for 2026-09-19 13:19 closed the last two of the Monster AI's four tables and
