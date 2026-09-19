@@ -83,8 +83,18 @@ In order. Each is checked off here when it ships in a release, with its round in
       shard DB supersedes it via `import-refdata -drops-csv/-drop-groups-csv`.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
-- [ ] "Stuck in a building" and "floating things in Alexandria": not reproduced (round 134's
-      addendum); wait for an F3 -> Copy from the spot.
+- [x] **"Stuck in a building"** (round 213): the cause was `NavGraph`'s own rule -- footing inferred
+      from height let a terrain mover walk through a shop wall whose floor sat 5 units up, get
+      lifted onto the floor, then be held by the same walls from inside. Replaced by the client's
+      actual walk (`docs/protocol/NAVMESH_MOVEMENT.md`: on the terrain or on exactly one object;
+      entry only through an outline edge with bit 0 clear; on an object only its own edges apply,
+      directionally; `0x10` = underpass; push 0.01). `nav_graph_test` 55 checks; `tools/walk_probe.gd`
+      traces it on real Jangan in ~10 s. "Floating things in Alexandria": the measured sweep found
+      0 floats > 12 in Alexandria, Hotan, Constantinople, Samarkand and the three Jangan regions.
+- [ ] Movement follow-ups from round 213: `_avoid_spawning_under_roof` relocates a QA start
+      without consulting the graph (once onto a shop floor); linked edges (`0x08`, the hand-over
+      between objects) and event gates (fortress/dungeon doors, `0xc0` bits) are documented but
+      not implemented -- no town object uses either.
 - [~] Battle stance (round 132): the player now HOLDS the real STAND_BATTLE clip while
       recently in combat (v0.1.128) — but its hold duration is a DISCLOSED stand-in
       (`COMBAT_STANCE_SECONDS`); the retail revert timeout is still not read from the client

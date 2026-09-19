@@ -19,8 +19,13 @@ what to do next. It is a snapshot, not a spec — when it disagrees with `docs/T
 2. **`docs/TODO.md`** — the ordered list of what is left, plus a "do not re-derive" section of
    facts that were expensive to establish.
 3. **`docs/WORLD_ISSUES.md`, last two or three rounds** — the running log. Every non-obvious
-   finding is a numbered round with its evidence. The most recent is the ninety-ninth. **Append a
-   new round when you finish something**; that is the project's memory.
+   finding is a numbered round with its evidence. The newest sits at the top of the descending
+   block (`grep -nE "^## Two-hundred"`); as of 2026-09-19 it is the 213th. **Append a new round
+   when you finish something**; that is the project's memory.
+5. **`docs/protocol/NAVMESH_MOVEMENT.md`** before touching how the player moves — the client's
+   own walk (recovered from the binary, round 213): a character is on the terrain or on exactly
+   one object, entered only through a doorway edge; nothing is inferred from height. Do not put
+   height-guessed footing back.
 4. **`docs/RENDER_BOX.md`** and **`client/tools/README.md`** — the machine renders run on, and how
    to take a picture without waiting ten minutes for one.
 
