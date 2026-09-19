@@ -70,9 +70,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       two `go test` processes on one host clobbered each other's rows (the trade test's 0x00DE was
       the system cancel from mismatched state). `internal/testdb.Lock` now serialises processes via
       an advisory file lock held in each such package's `TestMain`; two concurrent runs both pass.
-- [ ] **A non-gold drop's name plate shows the Korean column** (`HP ?? ??` for the potion): the item's
-      `SN_ITEM_*` id did not resolve through the UI text table on that path, and the fallback font has
-      no Hangul. Resolve it the way the tooltips do, or show nothing.
+- [x] ~~A non-gold drop's name plate shows the Korean column~~ -- round 210: the plate resolver used
+      `textuisystem.txt` (zero `SN_ITEM_` keys) instead of `textdata_object.txt`; the potion's column 3
+      is literally `HP ?? ??` in the archive. Every item-name site now resolves like the tooltips;
+      a name the archive lacks shows nothing.
 - [ ] **Drop content is still the placeholder table.** The mechanic is real (round 207); the per-monster
       tables are DB-only and in no archive we have (`smc.bak` is the manager DB). An operator with the
       shard DB supersedes it via `import-refdata -drops-csv/-drop-groups-csv`.
