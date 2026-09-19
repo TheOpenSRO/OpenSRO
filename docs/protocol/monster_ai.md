@@ -224,20 +224,21 @@ the `pct` rolls out of 100 that fall below it).
 Init also picks a random sign, `+1` or `-1`, into `this+0x59` from
 `rand() & 0x80000001`.
 
-The row layouts of the tactics and nest tables are read below. The hive and
-AI-skill rows are not yet: the AI-skill parser is among the string-reader
-callers near `0x6ab4b0`, the hive's is numeric and is found by the
-cursor-advance shape (`/var/tmp/parsers.py` on the box lists every parser).
+The row layouts of all four tables are read below (tactics and nest in rounds
+238-239, AI skill and hive in round 241).
 
 ## The `_RefTactics` row, read off its parser (round 238)
 
 The server does not bind these tables by column name. Rows arrive as a byte
 stream and each table has a positional parser; the tactics one is
 `RefTactics_ExtractData` (`0x6aaab0`, was `CGameServer::FUN_006aaab0`), which
-reads **43 columns** into a **0xbc-byte** record, then tokenises the trailing
-string as AI-skill code names and binds each through the AI-skill map --
-`Invalid AIRefSkill is bound!! TacticsID[%d] SKILL[%s]` rejects the row on an
-unknown name. `FUN_006e38f0` allocates the record, calls the parser, refuses a
+reads **43 columns** into a **0xbc-byte** record and then binds the row's AI
+skills: an `equal_range` on the `_RefAISkill` multimap at `REFDATA_MGR+0x25c`
+keyed by this TacticsID (`0x67ef90`, disassembly at `0x6ab085`), each hit's
+code name looked up in `m_RefSkillByCodename` (`+0x894`, the real skill table by
+`Basic_Code`) -- `Invalid AIRefSkill is bound!! TacticsID[%d] SKILL[%s]` rejects
+the row on an unknown name. (Round 238 read the trailing string as that skill
+list; it is not -- round 241.) `FUN_006e38f0` allocates the record, calls the parser, refuses a
 duplicate `TacticsID` (`FUN_00501ac0`) and inserts it (`FUN_006e4c50`);
 `FUN_006e0700` walks the row list; both hang off `CGameServer::FUN_006bd920`,
 the 3.6 KB master reference load that calls one such list loader per table.
@@ -278,7 +279,7 @@ locals) found no reader in the AI namespace.
 | 40 | `+0x89` | u8 | 0..3 in `FUN_00548120` (behaviour `+0x100`, the reach test `BATTLE::OnUpdate` runs first): 1 or 2 -> returns 1 at once; 3 -> returns 1 while the HP bucket is < 2 (HP under 40%); otherwise the `+0x7c` test decides |
 | 41 | `+0x8c` | u32 |  |
 | 42 | `+0x90` | u32 | **flags**. Bit 2 (`0x4`), bit 7 (`0x80`) and bit 8 (`0x100`) pick the target-kind filter pair the acquire behaviour scans with ((2,1) default, (3,5) bit 2, (4,5) bit 7, (5,0x11) bit 8); bits 2/7 also swap the `+0x100` behaviour for `FUN_005481a0`/`FUN_00548270`, make the give-up check return 0, disable the `+0x10c` trigger, and shorten `Init`'s first action delay from `rand()%491+10` to `rand()%41+10` (unit unread -- `FUN_0053d600`) |
-| 43 | string | 2-byte length + bytes | the **AI-skill code names**, whitespace-tokenised (`FUN_0067ef90`) and bound by name |
+| 43 | string | 2-byte length + bytes | stored at record `+0x94`; no reader found (round 238 called it the skill list -- wrong, the skills come from `_RefAISkill` rows, below) |
 
 **The give-up distance, `+0x7c`.** `BATTLE::OnUpdate` calls behaviour `+0x100`
 (`FUN_00548120`) with the target: 0 means the target is still in reach
@@ -318,7 +319,7 @@ as for the tactics row; widths and offsets are the parser's.
 | # | offset | width | read by / meaning |
 |---|---|---|---|
 | 1 | `+0x00` | u32 | **NestID** -- `NestID[%d]` in `Nest Region is invalid!!! NestID[%d] NestRegionID[%d]` (`AI::CNest::ValidateRegion`, `0x560e90`) |
-| 2 | `+0x04` | u32 | no reader found in the AI code (the hive->nest vector is built at load) |
+| 2 | `+0x04` | u32 | **HiveID** -- `AIHive::Init` (`0x55e5b0`) asserts, for every nest id in the hive's list, that the nest row's `+0x04` equals the hive row's `+0x00` (round 241) |
 | 3 | `+0x08` | u32 | **TacticsID** -- `AI::CNest::BindTactics` (`0x560570`) looks it up through the tactics map (`FUN_00501ac0`, the same lookup the tactics loader's duplicate check uses) and then the tactics' `RefObjID` through `FUN_004260b0` |
 | 4 | `+0x0c` | u16 | **RegionID** -- `NestRegionID[%d]`; copied to the runtime nest's `+0x18` |
 | 5-7 | `+0x10`, `+0x14`, `+0x18` | u32 x3 | the **position** (copied to the runtime nest's `+0x1c..+0x24`, validated with the region by `FUN_005380b0(world, 0, 0, region, x, y, z)`) |
@@ -366,6 +367,50 @@ hold (the client's `npcpos.txt` is the five-column projection id/region/x/y/z).
 The mechanism -- a per-nest alive cap, the timer armed by the first death out of
 a full nest, a uniform window re-rolled per hatch -- is the shape to implement
 when the nest data exists; the numbers cannot be.
+
+## The `_RefAISkill` and `_RefHive` rows (round 241)
+
+**`_RefAISkill`** -- `RefAISkill_ExtractData` (`0x6ab4b0`), 5 columns into a
+0x2c-byte record, inserted into a **multimap keyed by the first column**
+(`REFDATA_MGR+0x25c`; the insert at `0x6b55fc` keys on `[record+0]`):
+
+| # | offset | width | meaning |
+|---|---|---|---|
+| 1 | `+0x00` | u32 | **TacticsID** -- the multimap key the tactics parser's `equal_range` matches against its own TacticsID |
+| 2 | `+0x04` | string (`std::string`, 0x1c bytes) | **skill `Basic_Code`** -- looked up in `m_RefSkillByCodename`, so a monster's AI skills are ordinary skilldata rows (the `MSKILL_*` ids characterdata column 83 already pointed at) |
+| 3 | `+0x20` | u8 | no reader found |
+| 4 | `+0x24` | u32 | no reader found |
+| 5 | `+0x28` | u32 | no reader found |
+
+`m_RefSkillByCodename` itself is built by
+`RefInstanceGenerator::BuildRefSkillByCodename` (`0x6f68f0`) from the
+`CRefSkill` list at `+0x888`, asserting each `Basic_Code` is unique -- the
+assert text names both the map and the field.
+
+**`_RefHive`** -- `RefHive_ExtractData` (`0x6aa960`), 9 columns into a
+0x30-byte record at `REFDATA_MGR+0x250`. `CMainProcess::CreateHivesForWorld`
+(`0x54b8d0`) walks that container when a game world is built and constructs an
+`AIHive` (0x38 bytes, vtable `0xaf9b80`) for every row whose `+0x1a` equals the
+world id, first the rows with `+0x1c == 1`, then those with `+0x1c == 2`:
+
+| # | offset | width | read by / meaning |
+|---|---|---|---|
+| 1 | `+0x00` | u32 | **HiveID** -- what a nest row's `+0x04` must equal (`AIHive::Init`) |
+| 2 | `+0x04` | u8 | **mode**: `== 1` turns on the population scaling -- `AIHive::Init` divides the hive's total alive cap by column 4, and `AIHive_PopulationTick` (`0x55f0e0`) runs only then |
+| 3 | `+0x08` | u32 | the hive-wide count `AIHive_HatchPass_TotalCapped` hatches up to |
+| 4 | `+0x0c` | float | the **divisor** of the summed nest caps in mode 1 (`round(sum / +0x0c)` -> hive `+0x2c`) |
+| 5 | `+0x10` | u32 | **rate**: `AIHive::AdjustHatchRateByPopulation` (`0x55f190`, `AIHive.cpp:0x23c`) sets every nest slot's percentage to `round(sample / hive+0x2c) * +0x10` |
+| 6 | `+0x14` | u32 | **the cap on that percentage** (the `CLAMP()` upper bound) |
+| 7 | `+0x18` | u8 | no reader found |
+| 8 | `+0x1a` | u16 | **game-world id** the hive belongs to |
+| 9 | `+0x1c` | u16 | **hatch kind** 1 or 2 -- the two construction passes |
+
+The percentage a hive sets on its nests is what `NestSlot_RollHatchDelay`
+splits the rolled interval by: the hatch fires after `interval * (1 - pct/100)`,
+so a busier hive (a larger `sample`) hatches sooner, up to column 6. `sample` is
+what `AI::CNest::ValidateRegion` returns for each nest -- a per-region word from
+`FUN_005347c0` (region object `+0x28` table) averaged over two ticks; by the
+shape a population count, **not read** as such.
 
 ## The behaviour table at context `+0xe8`
 

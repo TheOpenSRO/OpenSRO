@@ -5018,6 +5018,11 @@ Round 240: the row-parser catalogue -- 66 positional parsers harvested by shape
 (`refdata_tables.md`), 19 tied to their tables by assert strings, family-inserter
 case numbers and structure; 34 functions named (`RefX_ExtractData`, the family
 inserters, the list loaders). Docs only.
+Round 241: `_RefAISkill` (5 columns, a TacticsID multimap) and `_RefHive` (9
+columns; population scaling of the hatch rate) read; a CORRECTION to round 238 --
+the tactics row's trailing string is not the skill list, the skills are
+`_RefAISkill` rows whose `Basic_Code` is bound through `m_RefSkillByCodename`
+(skilldata rows). Nest column 2 = HiveID. 15 names. Docs only.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

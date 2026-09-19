@@ -94,10 +94,10 @@ so the layouts here are the server's, not the files'.
 | `0x6aa550` | | 4 (0) | `bddd` | 0xc | `0x6e3ab0` | `0x6e3ab0` |
 | `0x6aa620` | | 3 (0) | `bdd` | 0xc | `0x6e3b10` | `0x6e3b10` |
 | `0x6aa6d0` | | 2 (0) | `dd` | 0xc | `0x6e3be0` | `0x6e3be0` |
-| `0x6aa960` | | 9 (0) | `dbddddbww` | 0x30 | `0x6e39d0` | `0x6e39d0` |
+| `0x6aa960` | `_RefHive` | 9 (0) | `dbddddbww` | 0x30 | `0x6e39d0` | `0x6e0770` |
 | `0x6aaab0` | `_RefTactics` | 43 (1) | see `monster_ai.md` | 0xbc | `0x6e38f0` | `0x6e0700` |
-| `0x6ab230` | `_RefNest` | 17 (0) | `dddwdddwddddddbbb` | 0x3c | `0x6e3110` | |
-| `0x6ab4b0` | | 5 (1) | `dbdd` | 0x2c | `0x6b5570` | `0x6e07e0` |
+| `0x6ab230` | `_RefNest` | 17 (0) | `dddwdddwddddddbbb` | 0x3c | `0x6e3110` | `0x6dffe0` |
+| `0x6ab4b0` | `_RefAISkill` | 5 (1) | `d S b d d` | 0x2c | `0x6b5570` | `0x6e07e0` |
 | `0x6ab9f0` | | 3 (0) | `bdb` | 0x64 | `0x6b6610` | `0x6e0d10` |
 | `0x6abb50` | | 5 (1) | `bbdb` | 0x2c | `0x6e31f0` | `0x6e31f0` |
 | `0x6abc00` | | 4 (1) | `bbd` | 0x28 | `0x6e32d0` | `0x6e32d0` |
@@ -126,7 +126,7 @@ so the layouts here are the server's, not the files'.
 | `0x6aea60` | | 7 (3) | `dddd` | 0x60 | `0x6b8e70` | `0x6e1f50` |
 | `0x6b3d40` | | 8 (0) | `ddbbbbbb` | 0x540 | `0x6b3d40` | `0x6e03f0` |
 
-Nineteen of these are named (`recovered_names.tsv`, `RefX_ExtractData`, with
+Twenty-one of these are named (`recovered_names.tsv`, `RefX_ExtractData`, with
 their inserters and list loaders). The blank rows are the next lever: a row's
 table is settled by an assert string inside it, by a family inserter's case
 number, or by a use-site that reads the record -- never by matching column

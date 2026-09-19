@@ -7075,6 +7075,40 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-forty-first round: the AI-skill and hive rows -- and a correction to round 238
+
+The RE tick for 2026-09-19 13:19 closed the last two of the Monster AI's four tables and
+corrected a reading two rounds old. Full text in `docs/protocol/monster_ai.md`.
+
+**The correction.** Round 238 said the tactics row's trailing string is "the AI-skill code
+names, whitespace-tokenised (`FUN_0067ef90`)". The disassembly at `0x6ab085` says
+otherwise: after the string is stored at record `+0x94`, the parser calls `FUN_0067ef90`
+with `REFDATA_MGR+0x25c` and the record itself -- and that function is a
+`std::multimap::equal_range` on the record's first dword, the TacticsID. The skills come
+from **`_RefAISkill` rows** (parser `0x6ab4b0`: u32 TacticsID, string `Basic_Code`, u8, u32,
+u32) inserted into that multimap keyed on TacticsID (`mov eax,[edi]` at `0x6b55f4`); each
+hit's code name is then looked up in `m_RefSkillByCodename` (`+0x894`), whose builder
+`RefInstanceGenerator::FUN_006f68f0` names itself in its own assert
+(`m_RefSkillByCodename.end() == m_RefSkillByCodename.find(pRefSkill->m_Basic_Code.c_str())`).
+So a monster's AI skills are ordinary **skilldata rows**, the `MSKILL_*` ids characterdata
+column 83 already pointed at; the tactics string has no reader. A use-site settled it, as
+the rules say -- the earlier reading came from the decompiled shape alone.
+
+**`_RefHive`** is the 9-column, 0x30-byte parser `0x6aa960` at `REFDATA_MGR+0x250`, settled
+by `CMainProcess::CreateHivesForWorld` (`0x54b8d0`), which walks that container building an
+`AIHive` per row whose `+0x1a` is the world id (kind `+0x1c` 1 then 2), and by
+`AIHive::Init`/`AdjustHatchRateByPopulation`: `+0x00` HiveID (a nest row's `+0x04` must
+equal it -- nest column 2 settled too), `+0x04` mode (1 = population scaling), `+0x08` the
+hive-wide count cap, `+0x0c` a float divisor, `+0x10` rate and `+0x14` its cap
+(`AIHive.cpp:0x23c`'s `CLAMP`). The hive sets every nest slot's percentage to
+`round(sample / (sum of caps / divisor)) * rate`, capped, and the hatch fires after
+`interval * (1 - pct/100)`: busier hives hatch sooner. The `sample` is a per-region word read
+at each nest's position (`FUN_005347c0`) -- by shape a population count, not read as such.
+
+Fifteen names, including `RefInstanceGenerator::BuildRefSkillByCodename` from the engine's own
+assert. No shipped value changed. Open: the tactics `+0x94` string's reader (none found),
+`_RefAISkill` columns 3-5, and the region word's writers.
+
 ## Two-hundred-and-fortieth round: the row-parser catalogue -- 66 positional parsers, 19 tied to their tables, 34 functions named in one pass
 
 The RE tick for 2026-09-19 13:11 took the systematic lever the last two rounds exposed:
