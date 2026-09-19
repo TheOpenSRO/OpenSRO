@@ -55,6 +55,11 @@ var itemCSVColumns = []string{
 	// a strict suffix like every block before it, so an older export still
 	// loads and simply reports no repair basis.
 	"RepairCost",
+	// Appended later still (how long a dropped item lies on the ground,
+	// itemdata column 13 DecayTime in milliseconds): a strict suffix like every
+	// block before it, so an older export still loads and grounditem keeps its
+	// disclosed fallback for every item.
+	"DecayTime",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -256,6 +261,9 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 50 {
 		it.RepairCost = parseInt(f[50])
+	}
+	if len(f) > 51 {
+		it.DecayTimeMs = parseInt(f[51])
 	}
 
 	if err != nil {

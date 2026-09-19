@@ -104,21 +104,67 @@ func TestBusyFlag(t *testing.T) {
 	}
 }
 
-func TestExpireAfterLifetime(t *testing.T) {
+// Without reference data every drop gets the disclosed fallback.
+func TestExpireAfterFallbackLifetime(t *testing.T) {
 	start := time.Unix(1000, 0)
 	h, now := newTestHub(start)
 	old := h.Drop("jangan", 4, 1, false, 0, 0, 0, 0)
-	*now = start.Add(Lifetime - time.Second)
+	*now = start.Add(FallbackLifetime - time.Second)
 	fresh := h.Drop("jangan", 4, 1, false, 0, 0, 0, 0)
 	if gone := h.Expire(); len(gone) != 0 {
 		t.Fatalf("Expire before lifetime removed %d, want 0", len(gone))
 	}
-	*now = start.Add(Lifetime)
+	*now = start.Add(FallbackLifetime)
 	gone := h.Expire()
 	if len(gone) != 1 || gone[0].ID != old.ID {
 		t.Fatalf("Expire at lifetime = %+v, want just %d", gone, old.ID)
 	}
 	if _, ok := h.Get(fresh.ID); !ok {
 		t.Fatal("fresh item expired too early")
+	}
+}
+
+// With reference data, each drop lives for ITS row's DecayTime (itemdata
+// column 13, milliseconds): the engine's rule, in which an ordinary 10 s drop
+// is gone before its 30 s ownership window ends, and a row with no DecayTime
+// (0) still gets the fallback.
+func TestExpireUsesEachItemsOwnDecayTime(t *testing.T) {
+	start := time.Unix(1000, 0)
+	h, now := newTestHub(start)
+	h.SetDecayLookup(func(itemID int64) int {
+		switch itemID {
+		case 3: // gold
+			return 10000
+		case 500: // a 3-minute item
+			return 180000
+		}
+		return 0 // unknown / old export
+	})
+	gold := h.Drop("jangan", 3, 57, true, 0, 0, 0, 42)
+	long := h.Drop("jangan", 500, 1, false, 0, 0, 0, 42)
+	unknown := h.Drop("jangan", 999, 1, false, 0, 0, 0, 42)
+	if got := gold.ExpiresAt.Sub(gold.DroppedAt); got != 10*time.Second {
+		t.Fatalf("gold lifetime %v, want 10s", got)
+	}
+	if got := long.ExpiresAt.Sub(long.DroppedAt); got != 180*time.Second {
+		t.Fatalf("180000 ms item lifetime %v, want 3m", got)
+	}
+	if got := unknown.ExpiresAt.Sub(unknown.DroppedAt); got != FallbackLifetime {
+		t.Fatalf("unknown item lifetime %v, want the fallback %v", got, FallbackLifetime)
+	}
+
+	*now = start.Add(10 * time.Second)
+	gone := h.Expire()
+	if len(gone) != 1 || gone[0].ID != gold.ID {
+		t.Fatalf("at 10 s Expire = %+v, want just the gold %d", gone, gold.ID)
+	}
+	// The gold vanished while still owned: the window (30 s) outlasts it.
+	if gold.OwnerAt(start.Add(10*time.Second)) != 42 {
+		t.Fatal("gold should still have been reserved for its owner when it vanished")
+	}
+	*now = start.Add(180 * time.Second)
+	gone = h.Expire()
+	if len(gone) != 2 || gone[0].ID != long.ID || gone[1].ID != unknown.ID {
+		t.Fatalf("at 180 s Expire = %+v, want the 3-minute item and the fallback one", gone)
 	}
 }

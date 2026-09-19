@@ -160,6 +160,28 @@ The common prefix is unaffected: there the two orders agree by four independent
 anchors, so **a common-record offset still converts**, as `field N → text
 column N−1`.
 
+## Field 14 of the common prefix is DecayTime, kept in seconds (2026-09-19, round 227)
+
+`RefObjCommon_ExtractData` reads field 14 as a signed dword, bumps the column counter
+(`0x6a332a`), converts it through `fild` with the unsigned fix (`+ 2^32` at `0xb45ba4`
+when negative), **divides by the double at `0xb45c68` -- 1000.0** -- and stores the float
+at record `+0x84` (`0x6a334b: fstp DWORD PTR [esi+0x84]`). Counting the fields before it
+(nine inline bumps, four `RefData_ReadStringField` calls, one schema skip) puts it at
+field 14, which the rule above makes **text column 13** -- `DecayTime`, milliseconds in
+the text, seconds in the record. `fields.py` misses the `fstp` store (it matches `mov`
+stores only), which is why it reported field 14 at `+0x80`; the packed type word at
+`+0x80` belongs to fields 10-13, the four TypeIDs. The same rule's anchor on the far side
+holds: field 41 = `+0xd4` = column 40, the regen amount `internal/mana` had already placed.
+
+Its use-site is `CGObj::Update` (`0x484d10`): for an object in life-state 2 it adds the
+frame delta (seconds -- the main loop's, see `character_state.md`) to `obj+0x3c` and,
+once the float at `ref+0x18 -> +0x84` is exceeded, calls slot 218, whose base is
+`SetLifeState(3, 0xff, 0)` -- removal. A dropped item enters the world in state 2 with
+the accumulator at zero (`CGObj::EnterWorld` -> slot 226 -> `SetLifeState(2, 0xff, 0)`),
+so `DecayTime` is exactly how long a drop lies on the ground. `internal/grounditem` uses
+it per item now; `FUN_004181d0` uses the same field the other way, pre-loading it to
+remove an object on the spot.
+
 ## The item-half stat block is countable once its synthesized slots are known (2026-09-19)
 
 The dead end above is real for the table as a whole, but one stretch of the item

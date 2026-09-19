@@ -7075,6 +7075,41 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-twenty-seventh round: how long a drop lies on the ground -- DecayTime, read and wired per item
+
+The RE tick's step for 2026-09-19 09:49, from the disclosed census: `grounditem.Lifetime`
+was a 3-minute own-design value ("the sweep that deletes stale items was not located").
+
+### Read
+
+- `CGItem::Update` asserts a ground item is in life-state 2; `CGObj::Update` (`0x484d10`)
+  accumulates the frame delta for a state-2 object at `obj+0x3c` and, once the float at
+  `ref+0x18 -> +0x84` is exceeded, fires slot 218 = `SetLifeState(3, 0xff, 0)` -- removal.
+  `CGObj::EnterWorld` puts the object into state 2 with the accumulator at zero (slot 226
+  -> `SetLifeState(2, 0xff, 0)`; the base setter *adds* its third argument to the
+  accumulator, which `FUN_004181d0` exploits by pre-loading the full value to remove an
+  object on the spot).
+- `+0x84` is field 14 of `RefObjCommon_ExtractData`: nine inline counter bumps, four string
+  reads and one schema skip precede its bump; the value is `fild`ed, unsigned-fixed and
+  divided by the 1000.0 at `0xb45c68` before `fstp [esi+0x84]` -- **milliseconds in the
+  text, seconds in the record.** Field 14 -> text column 13 (`refobj_binary_format.md`'s
+  rule, anchored again by field 41 = column 40 = the regen amount). `fields.py` had
+  mis-attributed it because it matches `mov` stores only; noted in the doc.
+- The player's own table: 10000 for 6,494 of 15,338 rows (gold, potions, weapons, armour),
+  180000 for 8,402, 20000 for 383, 1800000 for 55, 3600000 for 1, 1000 for 2.
+- Consequence the data forces: an ordinary drop (10 s) vanishes before its 30 s ownership
+  window ends. That is the game's rule.
+
+### Wired (v0.1.393)
+
+`DecayTime` is column 52 of the items export (a strict suffix), `refdata.Item.DecayTimeMs`,
+`items.decay_time_ms` in PostgreSQL, and `grounditem.Hub.SetDecayLookup`: each drop's
+`ExpiresAt` is fixed from its own row at drop time; `FallbackLifetime` (the old 3 min,
+still disclosed) applies only to a row with no value. Tests cover both. The public server's
+items were re-exported from the user's Media.pk2 and re-imported (15,338 rows); the render
+box's `items.csv` for `qa_shot --server` was refreshed. `deploy/README.md` says to re-run the
+export when the exporter grows a column.
+
 ## Two-hundred-and-twenty-sixth round: the retail sky is fixed at midday -- ENVIRONMENT_REFERENCE_TIME = 0.5 is the client's own value
 
 The RE tick's step for 2026-09-19 09:34, the second and last budgeted on the day/night link,

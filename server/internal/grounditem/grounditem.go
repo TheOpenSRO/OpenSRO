@@ -16,8 +16,17 @@
 //   - a pick in progress marks the item busy (+0x14c) and a second picker is
 //     refused with 0x1813.
 //
-// What is NOT read: how long an unclaimed item lies there before it vanishes.
-// Lifetime below is this project's own value, said so, and easy to replace.
+// How long an item lies there before it vanishes IS read now (2026-09-19,
+// round 227): it is the item's own row -- `_RefObjCommon DecayTime`, itemdata
+// column 13, in milliseconds (refdata.Item.DecayTimeMs has the reading). The
+// engine accumulates the object's seconds from the moment it enters the world
+// in life-state 2 (CGObj::EnterWorld -> SetLifeState(2, 0xff, 0)) and removes
+// it once they pass that value (CGObj::Update, 0x484d10). Note the consequence
+// the data forces: most drops carry 10000 (ten seconds), SHORTER than the 30 s
+// ownership window, so an ordinary drop vanishes while still reserved for its
+// owner -- that is the game's rule, not a bug here. FallbackLifetime below is
+// used only for an item whose row has no DecayTime (an export predating the
+// column), and is disclosed as this project's own value.
 package grounditem
 
 import (
@@ -38,12 +47,22 @@ const PickRange = 10.0
 // threshold CGItem::Update's elapsed-time field is held against.
 const OwnershipWindow = 30 * time.Second
 
-// Lifetime is how long an item lies on the ground before it vanishes. NOT
-// read from the binary -- CGItem::DoJob is a stub and the sweep that deletes
-// stale items was not located -- so this is own design, disclosed. Three
-// minutes is long enough to walk back for a drop and short enough that a
-// farmed field does not fill with junk.
-const Lifetime = 3 * time.Minute
+// FallbackLifetime is how long an item lies on the ground when its reference
+// row carries no DecayTime (zero: an items export made before that column
+// existed). Own design, disclosed: three minutes is long enough to walk back
+// for a drop and short enough that a farmed field does not fill with junk.
+// An item with a real DecayTime never uses it -- see LifetimeFor.
+const FallbackLifetime = 3 * time.Minute
+
+// LifetimeFor turns an item's DecayTime (milliseconds, itemdata column 13)
+// into the time it lies on the ground: the row's value when it has one, the
+// disclosed fallback when it does not.
+func LifetimeFor(decayTimeMs int) time.Duration {
+	if decayTimeMs <= 0 {
+		return FallbackLifetime
+	}
+	return time.Duration(decayTimeMs) * time.Millisecond
+}
 
 // GoldItemID is the reference item a pile of dropped gold is: ITEM_ETC_GOLD_03,
 // itemdata id 3, which FUN_009348f0 spawns with an amount rolled from the
@@ -71,6 +90,9 @@ type Item struct {
 	// DroppedAt; 0 once released (or if it never had one).
 	OwnerID   int64
 	DroppedAt time.Time
+	// ExpiresAt is when the world removes the stack: DroppedAt plus the
+	// item's own DecayTime (LifetimeFor), fixed when it is dropped.
+	ExpiresAt time.Time
 	// Instance is the stack's own variance and durability when it already
 	// had one (an item a player dropped, a stack picked back up); nil for a
 	// stack fresh off the loot table, which the bag rolls on pick-up exactly
@@ -96,19 +118,36 @@ type Hub struct {
 	items  map[int64]*Item
 	// now is swappable for tests.
 	now func() time.Time
+	// decayTimeMs answers an item's DecayTime in ms (0 = unknown); nil means
+	// no reference data was given and every drop gets FallbackLifetime.
+	decayTimeMs func(itemID int64) int
 }
 
 func NewHub() *Hub {
 	return &Hub{items: make(map[int64]*Item), now: time.Now}
 }
 
-// Drop puts a stack on the ground at (x, y, z) in zone, owned by ownerID.
+// SetDecayLookup gives the hub the reference data that says how long each
+// item lies on the ground. Without one every drop gets FallbackLifetime.
+func (h *Hub) SetDecayLookup(decayTimeMs func(itemID int64) int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.decayTimeMs = decayTimeMs
+}
+
+// Drop puts a stack on the ground at (x, y, z) in zone, owned by ownerID. It
+// lies there for its own DecayTime (LifetimeFor) from this moment.
 func (h *Hub) Drop(zone string, itemID int64, quantity int32, gold bool, x, y, z float32, ownerID int64) Item {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.nextID++
+	now := h.now()
+	decay := 0
+	if h.decayTimeMs != nil {
+		decay = h.decayTimeMs(itemID)
+	}
 	it := &Item{ID: h.nextID, Zone: zone, ItemID: itemID, Quantity: quantity, Gold: gold,
-		X: x, Y: y, Z: z, OwnerID: ownerID, DroppedAt: h.now()}
+		X: x, Y: y, Z: z, OwnerID: ownerID, DroppedAt: now, ExpiresAt: now.Add(LifetimeFor(decay))}
 	h.items[it.ID] = it
 	return *it
 }
@@ -204,14 +243,14 @@ func (h *Hub) ReleaseOwnerships() []Item {
 	return out
 }
 
-// Expire removes every item older than Lifetime and returns them.
+// Expire removes every item whose own DecayTime has passed and returns them.
 func (h *Hub) Expire() []Item {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.now()
 	var out []Item
 	for id, it := range h.items {
-		if !now.Before(it.DroppedAt.Add(Lifetime)) {
+		if !now.Before(it.ExpiresAt) {
 			out = append(out, *it)
 			delete(h.items, id)
 		}

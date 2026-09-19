@@ -22,6 +22,7 @@ every part. The columns that matter here, checked against real rows:
 | 2 | code name | `ITEM_CH_M_CLOTHES_01_BA_A_RARE` |
 | 3 | display name | `Cotton Suit` |
 | 9–12 | TypeID1…4 | `3 / 1 / 1 / 3` |
+| 13 | **DecayTime**, ms on the ground before the world removes the drop -- read 2026-09-19 (round 227): the server stores field 14 at `+0x84` as `int / 1000.0` (`RefObjCommon_ExtractData` `0x6a334b`), `CGObj::Update` removes a state-2 object once its accumulated seconds pass it; 10000 for 6,494 of the 15,338 rows, 180000 for 8,402 | `10000` |
 | 14 | Country | `0` |
 | 32, 33 | ReqLevelType1, ReqLevel1 (and three more pairs at 34–39) | `1, 1` |
 | **52** | **the model it is worn as** | `item\china\man_item\clothes_01_ba.bsr` |

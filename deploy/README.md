@@ -58,6 +58,10 @@ order() { iconv -f UTF-16LE -t UTF-8 "$1" | tr -d '\r' | sed 's/^\xef\xbb\xbf//'
 /tmp/export-leveldata -out leveldata.csv leveldata.txt                      # 140 levels
 rm -f itemdata_* skilldata_*   # the extracted tables are game data; keep only the CSVs
 
+# The exporter grows a strict-suffix column now and then (latest: DecayTime, 2026-09-19);
+# an older items.csv still loads, but the new column reads as 0 until the export is re-run.
+# Re-run steps 1-3 after pulling such a change.
+
 # 3. On the server host (CSVs and import-refdata copied to ~/srrevamp-data; Postgres is pinned to
 #    127.0.0.1:5432 by docker-compose.override.yml):
 ~/srrevamp-data/import-refdata -items-csv ~/srrevamp-data/items.csv -skills-csv ~/srrevamp-data/skills.csv \

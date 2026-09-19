@@ -54,6 +54,9 @@ const (
 	fID      = 1
 	fTypeID1 = 9 // TypeID1..4 run 9..12
 	fCountry = 14
+	// DecayTime: how long a dropped item lies on the ground, in ms (see
+	// refdata.Item.DecayTimeMs for the reading that ties column 13 to it).
+	fDecayTime = 13
 	// MaxStack: 1 for all equipment, a real cap for stackables (col 57).
 	//
 	// CONTESTED 2026-09-16 AND RESOLVED THE SAME DAY. The conflict was real
@@ -474,6 +477,7 @@ func itemRecord(cols []string) ([]string, bool) {
 		get(fReqLevelType4),    // 48 ReqLevelType4
 		get(fReqLevel4),        // 49 ReqLevel4
 		num(fRepairCost),       // 50 RepairCost
+		get(fDecayTime),        // 51 DecayTime (ms on the ground)
 	}, true
 }
 

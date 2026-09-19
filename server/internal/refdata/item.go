@@ -92,9 +92,26 @@ type Item struct {
 	// Note also that repair.Estimate has NO callers in the server yet -- there is
 	// no repair handler -- so this field is loaded but not consumed.
 	RepairCost int
-	ReqStr     int
-	ReqInt     int
-	ItemClass  int
+
+	// DecayTimeMs is how long this item lies on the ground before the world
+	// removes it, in milliseconds -- itemdata column 13 (`_RefObjCommon
+	// DecayTime`). READ 2026-09-19 (round 227): the server's common-record
+	// deserializer stores field 14 at +0x84 as `int / 1000.0` (RefObjCommon_ExtractData
+	// 0x6a334b, the divisor being the 1000.0 at 0xb45c68), field 14 converts to
+	// text column 13 by the documented rule (refobj_binary_format.md; the same
+	// rule places the regen amount at field 41 = column 40), and CGObj::Update
+	// (0x484d10) accumulates the object's seconds in life-state 2 and removes it
+	// (slot 218 -> SetLifeState(3)) once they pass that float; a dropped item
+	// enters the world in state 2 with the accumulator at zero
+	// (CGObj::EnterWorld -> slot 226 -> SetLifeState(2, 0xff, 0)). In the
+	// player's own table: 10000 for 2,435 of 2,876 rows in itemdata_5000 (gold,
+	// potions, weapons, armour), 180000 for 420, 1800000 for 18, 3600000 for 1.
+	// Zero means the export predates this column; grounditem falls back to its
+	// disclosed constant then.
+	DecayTimeMs int
+	ReqStr      int
+	ReqInt      int
+	ItemClass   int
 	// SetID is the item set this piece belongs to, 0 for most items. It is
 	// the key of the game's own `_RefSetItemGroup` table (shipped as
 	// `textdata\refsetitemgroup.txt`), and wearing one piece in each of a

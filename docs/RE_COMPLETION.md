@@ -4927,6 +4927,15 @@ Round 226 -- CLOSED: `SWorld` keeps its own phase, set to 0.5 by its constructor
 and sampled raw by the environment update (`FUN_004e55e0`). The retail sky is fixed at
 midday; `ENVIRONMENT_REFERENCE_TIME = 0.5` is READ. The server clock feeds no sky.
 
+### Ground-item lifetime, 2026-09-19 (round 227, v0.1.393)
+
+`grounditem.Lifetime` (a disclosed 3 min) is replaced by each item's own `DecayTime`:
+itemdata column 13 in milliseconds, field 14 of the common record at `+0x84` stored as
+seconds (`/ 1000.0`), consumed by `CGObj::Update`'s state-2 timer. Wired through the
+exporter (column 52), the CSV loader, the SQL store (`decay_time_ms`) and the hub
+(`SetDecayLookup`); the public server re-imported (10000 ms for 6,494 rows, 180000 for
+8,402). The 30 s ownership window outlasting a 10 s drop is the game's own rule.
+
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
 via `nItemDBID`), and an empty slot is a real row with `ItemID = 0 or NULL`

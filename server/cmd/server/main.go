@@ -589,6 +589,15 @@ func main() {
 	// picked up (internal/grounditem). The sweep releases ownerships after the
 	// 30 s window and removes stale items, telling each zone.
 	ground := grounditem.NewHub()
+	// Each drop lies there for its own row's DecayTime (itemdata column 13);
+	// an item without one gets grounditem.FallbackLifetime.
+	ground.SetDecayLookup(func(itemID int64) int {
+		it, err := refItems.GetItem(ctx, itemID)
+		if err != nil || it == nil {
+			return 0
+		}
+		return it.DecayTimeMs
+	})
 	go session.RunGroundItemSweep(ctx, ground, hub)
 	// The server's own gain multipliers, under the game's knob names. All
 	// default to 1x, and the engine's floor means a server cannot be
