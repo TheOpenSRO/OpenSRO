@@ -5085,6 +5085,10 @@ Round 254 (v0.1.404): BATTLE's attack step read (`AITactics_Handler_0e8`): the
 monster's cadence is its attack skill's ReuseDelay (skilldata col 14: Mangyang
 3000 ms, Gyo 2000, Yeoha 2500); `combat.Hub.CounterattackReady` caps the
 counter-blow at that delay. The monster still strikes only when struck.
+Round 255 (v0.1.405): the player's plain swing is the weapon type's `_BASE_01`
+skill on its ReuseDelay (sword 1200 ms, bow 840, punch 1500 ...); `combat.
+BaseAttackSkillFor` + `session.swingReady` drop a click inside the delay. The
+server-side keep-up (auto-attack, `ActionTick_UseSkill` phase 3) is a TODO.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

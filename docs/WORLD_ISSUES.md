@@ -7075,6 +7075,26 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-fifty-fifth round: a plain swing is a skill with a re-use delay -- the player's attack cadence
+
+The RE tick for 2026-09-19 16:19. The server accepted an `OpAttack` per click with no cadence
+at all: a fast clicker swung several times a second. In the real game the plain attack IS a
+skill -- each weapon type's `_BASE_01` row, named by its `ReqCast_Weapon1` byte (the itemdata
+TypeID4) -- and it runs through the same action machine as any cast (round 247), so its
+`ReuseDelay` (= its `ActionDuration`) is the swing rate. Read from the retail table:
+`SKILL_CH_SWORD_BASE_01` (types 2/3) **1200 ms**, spear/glaive 1166, bow **840**, EU sword 1333,
+two-hander 2000, axe 1500, crossbow 1333, dagger 1000, the staff/wand bolts 1666, harp 2000,
+`SKILL_PUNCH_01` (bare hand, type 1) **1500**. `AutoAttackType` is 1 for every melee and bow
+base and 0 for the three magic bolts.
+
+**Wired (v0.1.405):** `combat.BaseAttackSkillFor(typeID4)` keeps only the row ids (structural);
+the delay is read from the imported skill table at run time; `session.swingReady` drops a swing
+inside the equipped weapon's delay (a broken weapon swings bare-handed on the punch's), exactly
+as the engine ignores a use while the action runs, and records the swing under the base skill's
+id in the existing cooldown store. Tests on the map and the gate; full suite green (57). Not
+built, and now in `docs/TODO.md`: the **keep-up** -- the real server repeats the swing on its own
+(`ActionTick_UseSkill` phase 3, `[HANDLE_ATTACK-KeepUp]`); srrevamp still wants a click per blow.
+
 ## Two-hundred-and-fifty-fourth round: a monster's attack cadence is its skill's re-use delay
 
 The RE tick for 2026-09-19 16:04. BATTLE's attack step is `AITactics_Handler_0e8` (`0x5472a0`,

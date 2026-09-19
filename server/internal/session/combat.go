@@ -663,6 +663,12 @@ func CombatHandlerWithGround(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 			}
 
+			// A plain swing is the weapon's base attack skill, on that skill's
+			// own re-use delay (round 255). A click inside the delay is the
+			// engine's "action already running": nothing happens, no reply.
+			if !swingReady(ctx, characterID, eq, items, skills, time.Now()) {
+				return nil
+			}
 			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, characterID, req.TargetMonsterID, 0, 0, 0, 1, combat.AttackPhysical)
 		case OpMonsterList:
 			return handleMonsterList(sess, hub, monsters)
@@ -1298,6 +1304,45 @@ func performAttack(
 func attackerDamage(ctx context.Context, characterID int64, str int, eq equipment.Store, items combat.ItemLookup) (int, error) {
 	// A caller with no skill in hand is swinging a weapon, which is physical.
 	return attackerDamageOf(ctx, characterID, str, 0, eq, items, combat.AttackPhysical)
+}
+
+// swingReady is the plain attack's cadence gate: the equipped weapon type's
+// base attack skill (combat.BaseAttackSkillFor -- SKILL_CH_SWORD_BASE_01 for
+// a sword, SKILL_PUNCH_01 bare-handed) has a ReuseDelay in the imported skill
+// table, and a swing inside it is dropped, exactly as the engine's action
+// machine ignores a second use while the first runs. When it passes, the
+// swing is recorded against that skill id. Without reference data for the
+// skill (or a store that cannot look skills up) there is no gate, as before.
+func swingReady(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, skills skill.Store, now time.Time) bool {
+	skillRef, ok := items.(SkillRefStore)
+	if !ok || skills == nil {
+		return true
+	}
+	typeID4 := combat.BareHandTypeID4
+	if equipped, err := eq.Get(ctx, characterID); err == nil {
+		for _, e := range equipped {
+			if e.Slot != equipment.SlotWeapon || durability.IsBroken(e.Durability) {
+				continue
+			}
+			if item, err := items.GetItem(ctx, e.ItemID); err == nil && item != nil && item.TypeID4 > 0 {
+				typeID4 = item.TypeID4
+			}
+		}
+	}
+	baseID := combat.BaseAttackSkillFor(typeID4)
+	if baseID == 0 {
+		return true
+	}
+	ref, err := skillRef.GetSkill(ctx, baseID)
+	if err != nil || ref == nil || ref.ReuseDelayMs <= 0 {
+		return true
+	}
+	last, ever, err := skills.LastUsed(ctx, characterID, baseID)
+	if err == nil && ever && now.Sub(last) < time.Duration(ref.ReuseDelayMs)*time.Millisecond {
+		return false
+	}
+	_ = skills.RecordUse(ctx, characterID, baseID, now)
+	return true
 }
 
 // attackerDamageOf is attackerDamage for a blow whose damage-type mask is

@@ -95,6 +95,12 @@ In order. Each is checked off here when it ships in a release, with its round in
       every roster species with rows all of them (Yeoha's 26, Mangyang's 55 ...), replacing the town
       anchors; the public server runs with it. The anchors remain only as the fallback when no file
       is configured or a species has no rows.
+- [ ] **Auto-attack (keep-up).** Read in rounds 247/255: one click starts the real game's plain attack
+      and the SERVER repeats it -- `GObjPC::ActionTick_UseSkill` phase 3 (`[HANDLE_ATTACK-KeepUp]`)
+      re-runs the base attack every ReuseDelay while the target lives, for the skills whose
+      `AutoAttackType` (skilldata col 19) is 1 (every melee/bow/crossbow base; the staff, wand and
+      harp bolts are 0). srrevamp needs a click per swing. The cadence itself is grounded and
+      enforced since v0.1.405 (`session.swingReady`); the repeat is not built.
 - [ ] **Attack distance.** Neither the client nor the server gates an attack by distance today: a
       monster can be hit from anywhere (an absent rule, by omission). Read in round 232: the SERVER
       never refuses on distance -- `0x3007 UIIT_SKILL_USE_FAIL_WRONGDISTANCE` occurs nowhere in its
