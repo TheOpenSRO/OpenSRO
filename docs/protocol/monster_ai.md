@@ -224,9 +224,10 @@ the `pct` rolls out of 100 that fall below it).
 Init also picks a random sign, `+1` or `-1`, into `this+0x59` from
 `rand() & 0x80000001`.
 
-The row layout of the tactics table is read below. The nest, hive and AI-skill
-rows are not yet: their parsers sit in the same family (`RefData_ReadStringField`
-callers around `0x6ab4b0`) and are the next probe.
+The row layouts of the tactics and nest tables are read below. The hive and
+AI-skill rows are not yet: the AI-skill parser is among the string-reader
+callers near `0x6ab4b0`, the hive's is numeric and is found by the
+cursor-advance shape (`/var/tmp/parsers.py` on the box lists every parser).
 
 ## The `_RefTactics` row, read off its parser (round 238)
 
@@ -304,6 +305,67 @@ argument) against the radius at `+0x1cc`, scaled by `+0x80` as above, and is
 short-circuited to true by `+0x80 >= 2`, by "no nest and `+0x84 < 1`", and for
 the two TID shapes (1,2,4,1) and (1,2,4,4) (object slots 242/243) the home
 location is always used even when a nest exists.
+
+## The `_RefNest` row and the hatch scheduler (round 239)
+
+The nest table is numeric only, so its parser is not among the string-reader
+callers; it was found by its cursor-advance shape. `RefNest_ExtractData`
+(`0x6ab230`) reads **17 columns** into a **0x3c-byte** record whose constructor
+(`RefNest_ParseAndInsert`, `0x6e3110`) zeroes everything except `+0x39 = 1`;
+`Nest_FindByID` (`0x560250`) refuses a duplicate id. Column names are DB-only,
+as for the tactics row; widths and offsets are the parser's.
+
+| # | offset | width | read by / meaning |
+|---|---|---|---|
+| 1 | `+0x00` | u32 | **NestID** -- `NestID[%d]` in `Nest Region is invalid!!! NestID[%d] NestRegionID[%d]` (`AI::CNest::ValidateRegion`, `0x560e90`) |
+| 2 | `+0x04` | u32 | no reader found in the AI code (the hive->nest vector is built at load) |
+| 3 | `+0x08` | u32 | **TacticsID** -- `AI::CNest::BindTactics` (`0x560570`) looks it up through the tactics map (`FUN_00501ac0`, the same lookup the tactics loader's duplicate check uses) and then the tactics' `RefObjID` through `FUN_004260b0` |
+| 4 | `+0x0c` | u16 | **RegionID** -- `NestRegionID[%d]`; copied to the runtime nest's `+0x18` |
+| 5-7 | `+0x10`, `+0x14`, `+0x18` | u32 x3 | the **position** (copied to the runtime nest's `+0x1c..+0x24`, validated with the region by `FUN_005380b0(world, 0, 0, region, x, y, z)`) |
+| 8 | `+0x1c` | u16 | **initial direction**: `Nest_Hatch` turns it into radians as `v / 65535.0 * 360.0 * (pi/180)` (`0xb45c28`, `0xb45c30`, `0xb45e00`) for a rarity-3 species; every other species gets `rand()/32767 * 2pi` |
+| 9 | `+0x20` | u32 | the **roam radius** handed to `AI::CTactics::Attach` when the monster has a nest (previous section) |
+| 10 | `+0x24` | u32 | passed as a float into the spawn routine `GObjPC::FUN_005f6eb0` beside the direction (its use inside is not traced) |
+| 11 | `+0x28` | u32 | **champion chance, percent**: `Nest_Hatch` rolls `rand() % 101 < +0x28` when the tactics row's `+0x8c` (tactics column 41) is non-zero; a second roll `rand() % 101 > GiantMonster_SpawnRatio` makes the hatch a **champion** (class 1, x2 HP), else a **giant** (class 4, x20 HP -- the rank table in `internal/combat/rarity.go`); the monster then runs under the tactics row `+0x8c` names (its own, with the class cleared, when that row does not exist). `GiantMonster_SpawnRatio` is the engine's own config key (`.rdata 0xae0a04`, read in `CMainProcess::FUN_00427050` as `atol(value)/100`, **default 14** when absent or zero), so with the default about 15 in 101 of the rolls come up giant |
+| 12 | `+0x2c` | u32 | **hatch delay, minimum, seconds** |
+| 13 | `+0x30` | u32 | **hatch delay, maximum, seconds** |
+| 14 | `+0x34` | u32 | **alive cap**: the hatch pass requires `slot.alive < +0x34`; with column 16 zero it is also the finite budget of hatches (decremented per hatch) |
+| 15 | `+0x38` | u8 | no reader found |
+| 16 | `+0x39` | u8 | **respawns**: non-zero hatches forever; zero spends column 14 as a budget (`FUN_0055ea90`: `slot[6] != 0 \|\| 0 < slot[7]`) |
+| 17 | `+0x3a` | u8 | must be **zero** for the scheduler to hatch the nest at all (`slot[5] = (+0x3a == 0)`) -- the non-zero nests are the trigger-driven ones (`CGameTriggerAction_MONSTER_ACTIVE_NEST` exists) |
+
+**The delay, exactly.** `AI::CNest::RollHatchDelay` (`0x560e40`, disassembly:
+`mov ecx,[eax+8]; mov eax,[ecx+0x2c]; mov ecx,[ecx+0x30]; jmp 0x560380`) hands
+columns 12 and 13 to `NestSlot_RollHatchDelay` (`0x560380`):
+
+	lo = col12 * 1000 ; hi = col13 * 1000           (milliseconds)
+	interval = hi > lo ? lo + rand()/32767.0 * (hi - lo) : lo
+	part = (int)(interval * slot.pct / 100.0)       ; slot.pct is a float the hive sets (AIHive::FUN_0055f190 -> 0x560e70)
+	slot.base = interval - part ; slot.variance = part
+
+so the delay is **uniform between the two columns, in seconds**, re-rolled at
+every hatch. The per-nest slot (0x20 bytes, built by
+`CMainProcess::BuildHiveNestSlots`, `0x54bbf0`) is `{stamp, base, alive, pct,
+variance, col17==0, col16, col14}`, and the hive's pass `AIHive_HatchPass`
+(`0x55ea90`) hatches one monster from a nest when
+
+	slot.col17==0  &&  (slot.col16 != 0 || slot.budget > 0)
+	&& stamp + base <= GetTickCount()  &&  alive < col14
+
+The stamp is set by `Nest_Hatch` on success (with `alive++` and a fresh roll),
+and by `AI::CNest::vslot_004` -- the alive-count decrement hook -- **only when
+the nest was full** (`alive == col14`), so the timer runs from the first loss
+out of a full nest, not from every death. A hatch whose placement fails with
+out-flag 1 halves `base` with a floor of 1000 ms (`NestSlot_HalveHatchDelay`,
+`0x560e10`) and retries sooner. `AIHive_HatchPass_TotalCapped` (`0x55ec10`) is
+the same pass under a hive-wide count read from the hive row's `+0x08`.
+
+**What this settles for srrevamp.** `respawnDelay = 10 s` in
+`server/cmd/server/main.go` is own design with a proven reason: the real delay
+is a per-nest window `[col12, col13]` seconds in a table the project does not
+hold (the client's `npcpos.txt` is the five-column projection id/region/x/y/z).
+The mechanism -- a per-nest alive cap, the timer armed by the first death out of
+a full nest, a uniform window re-rolled per hatch -- is the shape to implement
+when the nest data exists; the numbers cannot be.
 
 ## The behaviour table at context `+0xe8`
 

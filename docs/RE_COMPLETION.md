@@ -5009,6 +5009,11 @@ Round 238: the `_RefTactics` row layout is read off its positional parser
 flags), 15 functions named, the 121-entry CRef descriptor table recorded (the
 loaders' 0x30 is the wrapper's `new` size). Column names are DB-only. Docs only;
 `docs/protocol/monster_ai.md`.
+Round 239: the `_RefNest` row (17 columns, `RefNest_ExtractData` 0x6ab230) and the
+whole hatch scheduler are read: per-nest alive cap, respawn flag, a uniform delay
+window in seconds re-rolled per hatch, the timer armed by the first loss out of a
+full nest, the champion/giant roll with the engine's `GiantMonster_SpawnRatio`
+(default 14). `respawnDelay = 10 s` disclosed against it; 17 functions named.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

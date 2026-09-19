@@ -224,6 +224,15 @@ var monsterSpecs = []monsterSpec{
 	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", Level: 27, Critical: 2, MaxHP: 1451, Defense: 103, AttackMin: 219, AttackMax: 261, GoldMin: 119, GoldMax: 250, X: 70, Z: -50, Count: 1},
 }
 
+// respawnDelay is DISCLOSED, own design. The real game respawns per NEST
+// (`_RefNest`, a server-only table): each nest keeps up to its alive cap of
+// monsters, and when a full nest loses one, a timer armed at that death runs
+// for a delay drawn uniformly between the nest row's two delay columns (in
+// seconds, re-rolled every hatch) before one monster hatches per scheduler
+// pass -- read off AIHive_HatchPass / NestSlot_RollHatchDelay, round 239,
+// docs/protocol/monster_ai.md. The client's npcpos.txt carries only the
+// nests' ids and positions, so the window itself is data this project does
+// not hold; 10 s stands in for it.
 const respawnDelay = 10 * time.Second
 
 // maintainMonster keeps exactly one instance of spec's species alive in its

@@ -7075,6 +7075,38 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-thirty-ninth round: the `_RefNest` row and the hatch scheduler -- how the real game respawns
+
+The RE tick for 2026-09-19 12:58, the follow-on the last round named. The nest table has no
+string column, so its parser is not a `RefData_ReadStringField` caller; it was found by the
+cursor-advance shape every positional parser shares (`/var/tmp/parsers.py` on the box now
+lists all of them). Full write-up in `docs/protocol/monster_ai.md`.
+
+**The row.** `RefNest_ExtractData` (`0x6ab230`): 17 columns into a 0x3c-byte record --
+NestID (engine string), u32, TacticsID (the tactics lookup), RegionID u16 (engine string),
+position x3, direction u16 (`/65535 * 360 deg` for rarity-3 species, random otherwise),
+the roam radius `Attach` already used, u32, champion percent, **delay-min s, delay-max s,
+alive cap**, u8, **respawns**, **scheduler-off**. Column names are DB-only, as before.
+
+**The scheduler, exactly** (`AIHive_HatchPass` 0x55ea90, `NestSlot_RollHatchDelay`
+0x560380 read from the asm because the decompiler dropped the roll): a nest hatches one
+monster per pass when `col17 == 0 && (col16 != 0 || budget > 0) && stamp + base <= now &&
+alive < col14`; the delay is **uniform between col12 and col13 seconds**, re-rolled at
+every hatch; the stamp is set on a hatch and -- by `AI::CNest::OnHatchedRemoved` -- only
+when a FULL nest loses one, so the timer runs from the first loss, not every death; a
+failed placement halves the base with a 1000 ms floor. `col16 == 0` turns the cap into a
+finite budget. The champion roll: `rand()%101 < col11` when the tactics row's column 41
+is non-zero, then `rand()%101 > GiantMonster_SpawnRatio` (the engine's own config key,
+`.rdata 0xae0a04`, default 14) for a champion (x2) else a giant (x20), running under
+tactics column 41's row.
+
+**What moved for srrevamp:** nothing numeric -- `respawnDelay = 10 s` is now disclosed
+against the mechanism it stands in for (comment in `server/cmd/server/main.go`): the real
+window is per-nest data the project does not hold (`npcpos.txt` carries only id, region
+and position). Seventeen functions named. Open: the hive row (`refHive+0x08` caps a
+hive-wide count, `+0x08 == 1` selects a mode), column 10's use inside the spawn routine,
+and `OnHatchedRemoved`'s caller.
+
 ## Two-hundred-and-thirty-eighth round: the `_RefTactics` row read off its parser -- 43 columns, and the ones the AI consults settled at their use-sites
 
 The RE tick for 2026-09-19 12:34 took the Monster AI row's own next probe: the tactics
