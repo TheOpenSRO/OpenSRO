@@ -1341,27 +1341,39 @@ func weaponInstance(e equipment.Equipped) combat.Instance {
 	return combat.Instance{Variance: e.Variance, Tracked: e.Durability != durability.Untracked}
 }
 
-// defenderArmor sums each worn armour piece's physical defence
-// (equipment.ArmorSlots -- HELM/MAIL/SHOULDERGUARD/PANTS/BOOTS) for
-// mitigating a monster's counterattack. A piece's defence is what the engine's
-// Char_BuildAggregateStats (0x00495d60) computes for it: the ref row's
-// PD_L..PD_U interpolated by the INSTANCE's variance, group 3 for armour
-// (durability.ArmourPhysDefenseGroup; the block at 0x495f26 stores it to
-// item+0x198, published as param 5). Until 2026-09-19 this summed
-// PhysDefenseMax, a disclosed stand-in from before instances carried a
-// variance. A worn row that never got one (Untracked -- no reference data to
-// roll from) still counts at the top of its range, as it always did.
+// defenderArmor sums each worn piece's physical defence -- the six armour
+// slots (equipment.ArmorSlots) AND the shield -- for mitigating a monster's
+// counterattack. A piece's defence is what the engine's Char_BuildAggregateStats
+// (0x00495d60) computes for it: the ref row's PD_L..PD_U interpolated by the
+// INSTANCE's variance, group 3 for armour (durability.ArmourPhysDefenseGroup;
+// the block at 0x495f26 stores it to item+0x198) and group 4 for a shield
+// (the shield branch at 0x49682a, same field). Every equipped item's block is
+// then published into the character's params keyed by the item:
+// CGPCInventoryOP::RefreshEquipParamEntryForPC (0x004bb3e0) walks all 13
+// equipment slots and, for each item that answers "equipment" (vslot 33) and
+// passes CGItemEquip::CheckEquipRequirements, calls Char_PublishCombatStats
+// (0x00497830) with the ITEM -- +0x198 -> param 5, +0x1a8 -> param 6 -- so a
+// shield's defence counts exactly as armour's does (round 246; until then
+// srrevamp left the shield out of the sum). A weapon's block carries no
+// defence (its branch never stores +0x198), so weapons add nothing here.
+//
+// Until 2026-09-19 this summed PhysDefenseMax, a disclosed stand-in from
+// before instances carried a variance. A worn row that never got one
+// (Untracked -- no reference data to roll from) still counts at the top of
+// its range, as it always did; a broken piece counts nothing (the publisher
+// zeroes params 5/6 while the item's broken flag, item+0x190, is set).
 func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
 	return defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64) {
 		return it.PhysDefenseMin, it.PhysDefenseMax
-	}, durability.ArmourPhysDefenseGroup)
+	}, durability.ArmourPhysDefenseGroup, durability.ShieldPhysDefenseGroup)
 }
 
 // defenderDefence is the shared walk behind defenderArmor and its magical
-// twin: the worn armour, each piece's range through its instance's variance
-// group, summed and rounded once at the end (the engine keeps floats and
+// twin: the worn armour and shield, each piece's range through its instance's
+// variance group (armourGroup for the six armour slots, shieldGroup for the
+// shield), summed and rounded once at the end (the engine keeps floats and
 // srrevamp's wire field is an int32).
-func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, rangeOf func(*refdata.Item) (float64, float64), group int) (int, error) {
+func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, rangeOf func(*refdata.Item) (float64, float64), armourGroup, shieldGroup int) (int, error) {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {
 		return 0, fmt.Errorf("reading equipment: %w", err)
@@ -1374,7 +1386,12 @@ func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store,
 
 	total := 0.0
 	for _, e := range equipped {
-		if !isArmorSlot[e.Slot] {
+		group := armourGroup
+		switch {
+		case isArmorSlot[e.Slot]:
+		case e.Slot == equipment.SlotShield:
+			group = shieldGroup
+		default:
 			continue
 		}
 		if durability.IsBroken(e.Durability) {

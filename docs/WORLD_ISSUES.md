@@ -7075,6 +7075,31 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-forty-sixth round: where gear aggregates -- the shield's defence counts
+
+Continuing from round 245's open item. The question was whether a worn shield's own
+physical/magic defence (its block's `+0x198/+0x1a8`, computed by the shield branch of
+`Char_BuildAggregateStats` with variance groups 4/5) reaches the character's params 5/6, and
+the answer is the site that folds equipment into the character:
+
+- `Char_PublishCombatStats` (`0x497830`) takes the equipped **item** as its first argument
+  (RE_COMPLETION had this open since 2026-09-15): it requires the item to answer vslot 33
+  (equipment), `item+0x14c != 0` and the broken flag `item+0x190 != 1`, then publishes the
+  item's block into the PC's keeper **keyed by the item** -- `+0x198` -> param 5, `+0x1a8` ->
+  6, `+0x1a0` -> 7, and the rest of the table already recorded. While broken it publishes
+  zero defence; `GItemEquip::SetBrokenFlag` (`0x495980`) is what sets `+0x190`.
+- `GObjPC::PublishEquipItemParams` (`0x4e3760`) calls it after `CheckEquipRequirements`; it is
+  the re-add half of the pair `ChangeItemDurability` uses around the broken flag, whose remove
+  half is `RemoveParamKeeperItemEntry`.
+- `CGPCInventoryOP::RefreshEquipParamEntryForPC` (`0x4bb3e0`, vtable slot 31) walks equipment
+  slots **0..12** and publishes every item that is equipment and not an expired rental.
+
+Slot 7 is the shield, and the shield branch stores `+0x198/+0x1a8`, so **a worn shield's
+defence counts exactly as armour's does**. Wired (v0.1.399): the defence walk includes the
+shield with its own groups (PD 4, MD 5 -- not the armour's 3/4, and not its own block group
+3), a weapon still adds nothing (its branch never stores `+0x198`), broken and Untracked
+rows behave as before; a test pins all three. Full suite green. Five names.
+
 ## Two-hundred-and-forty-fifth round: the shield's block rate reads the instance
 
 The RE tick for 2026-09-19 14:19, the third piece of the item-instance thread. `defenderBlock`

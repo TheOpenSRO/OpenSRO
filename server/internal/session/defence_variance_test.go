@@ -129,3 +129,41 @@ func TestBlockRateReadsTheInstance(t *testing.T) {
 		t.Errorf("broken shield: got %d, want 0", got)
 	}
 }
+
+// TestShieldDefenceCountsWithItsOwnGroups pins round 246: a worn shield's
+// defence is summed like armour's (the equip publisher walks all 13 slots),
+// but a shield's physical defence reads variance group 4 and its magical
+// defence group 5 -- the shield branch inserts block rate at 3.
+func TestShieldDefenceCountsWithItsOwnGroups(t *testing.T) {
+	ctx := context.Background()
+	items := stubCombatItems{
+		300: {ID: 300, PhysDefenseMin: 10, PhysDefenseMax: 20, MagDefenseMin: 2, MagDefenseMax: 6, BlockRatioMin: 10, BlockRatioMax: 20, DurabilityMin: 40, DurabilityMax: 50},
+		100: {ID: 100, PhysAttackMin: 30, PhysAttackMax: 40, PhysDefenseMax: 99, DurabilityMin: 40, DurabilityMax: 50}, // a weapon: never defence
+	}
+	full := func(g int) uint64 { return uint64(31) << (5 * uint(g)) }
+	eq := fixedEquipment{worn: []equipment.Equipped{
+		{Slot: equipment.SlotShield, ItemID: 300, Variance: full(durability.ShieldPhysDefenseGroup), Durability: 45},
+		{Slot: equipment.SlotWeapon, ItemID: 100, Variance: full(durability.ArmourPhysDefenseGroup), Durability: 45},
+	}}
+	phys, err := defenderArmor(ctx, 1, eq, items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if phys != 20 {
+		t.Errorf("shield with a full group 4: got %d, want 20 (and nothing from the weapon)", phys)
+	}
+	mag, err := defenderMagicArmor(ctx, 1, eq, items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mag != 2 {
+		t.Errorf("shield's group 4 must not move its magic defence (group 5): got %d, want 2", mag)
+	}
+	// The armour group 3 is the shield's BLOCK group, not its defence: a full
+	// group 3 leaves the shield's defence at the bottom.
+	eq.worn[0].Variance = full(durability.ArmourPhysDefenseGroup)
+	phys, _ = defenderArmor(ctx, 1, eq, items)
+	if phys != 10 {
+		t.Errorf("shield read the armour group: got %d, want 10", phys)
+	}
+}

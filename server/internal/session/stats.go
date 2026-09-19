@@ -215,12 +215,12 @@ func weaponRanges(ctx context.Context, characterID int64, str, intel int, eq equ
 // defenderMagicArmor is defenderArmor's twin for the magical column: each
 // worn piece's MD_L..MD_U through the instance's variance, group 4 for armour
 // (durability.ArmourMagDefenseGroup; Char_BuildAggregateStats' block at
-// 0x495fa0 -> item+0x1a8, param 6). The same walk, so the two defence rows
-// are built the same way.
+// 0x495fa0 -> item+0x1a8, param 6) and group 5 for the shield (0x4968a4).
+// The same walk, so the two defence rows are built the same way.
 func defenderMagicArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
 	return defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64) {
 		return it.MagDefenseMin, it.MagDefenseMax
-	}, durability.ArmourMagDefenseGroup)
+	}, durability.ArmourMagDefenseGroup, durability.ShieldMagDefenseGroup)
 }
 
 // buildCharacterStats fills a CharacterStatsResult for owned from every

@@ -1375,10 +1375,15 @@ A second slip in the same pass: the code list was harvested with
 Both mistakes produce *false negatives*, which are the dangerous kind here: an
 absent value looks like a settled question.
 
-**Now genuinely open:** the class of `Char_PublishCombatStats`'s first argument
-(it answers a virtual at slot 33, `+0x84`, and is *not* `CRefObjChar` — that has
-`uint8 Lvl` at 0x198, read here as a float). Not needed for the above, but it is
-the handle on where gear aggregates.
+**Closed (round 246, 2026-09-19):** `Char_PublishCombatStats`'s first argument
+is the equipped ITEM (`GItemEquip`), and this is where gear aggregates:
+`CGPCInventoryOP::RefreshEquipParamEntryForPC` (`0x4bb3e0`) walks the 13
+equipment slots and, through `GObjPC::PublishEquipItemParams` (`0x4e3760`,
+after `CheckEquipRequirements`), publishes each item's own aggregate block
+(`+0x198` -> param 5, `+0x1a8` -> 6, ...) into the character's keeper keyed by
+the item. A shield's block is built by the shield branch of
+`Char_BuildAggregateStats`, so a worn shield's defence counts like armour's;
+srrevamp's defence sum includes it since v0.1.399.
 
 ## The death penalty, and half of `pc[0x72d]` (2026-09-15)
 
@@ -5042,6 +5047,11 @@ Round 245: the shield's block rate reads the instance (`BR_L + q*(BR_U-BR_L)`,
 shield-branch group 3 -> item+0x1a4 = param 10 'bri'; v0.1.398). Open: whether a
 worn shield's own PD/MD (groups 4/5) reach the character's params -- the equip
 summation site is unread.
+Round 246: read -- `RefreshEquipParamEntryForPC` walks all 13 equipment slots
+and publishes each item's block through `Char_PublishCombatStats(item, pc)`
+(keyed by the item), so the shield's PD/MD count; `defenderArmor`/`MagicArmor`
+now include the shield with groups 4/5 (v0.1.399). The publisher's first
+argument (open since 2026-09-15) is the equipped item.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
