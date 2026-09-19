@@ -207,7 +207,10 @@ code column), so a code the client has not loaded is refused; (3) a GM `/spawn` 
 clients only on their next monster list (there is no spawn broadcast); (4) `client/docs/RELEASE_NOTES.md`
 is a committed snapshot — the release workflow does not regenerate it (needs `fetch-depth: 0` and a
 `bundle_docs.sh` step); (5) the GM run's `SRREVAMP_QA_COMMANDS` verification used frame ticks
-because a `SceneTreeTimer` did not fire inside a movie-writer run — worth understanding.
+because a `SceneTreeTimer` did not fire inside a movie-writer run — worth understanding; (6) **a real bug
+the tools surfaced**: every zone change prints `Trying to assign invalid previously freed instance` from
+`_tick_idle_animations` (World3D.gd:3406) ~125 times — the typed assignment precedes the
+`is_instance_valid` check; world lane's file, one-line fix.
 
 ## Parked, with the state written down
 

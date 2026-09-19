@@ -7100,10 +7100,11 @@ func _where_report() -> PackedStringArray:
 		var local := group.to_local(p)
 		if local.x < 0.0 or local.x >= REGION_SPAN or local.z < 0.0 or local.z >= REGION_SPAN:
 			continue
-		# Node name RealTerrain_<region_x>_<region_y>.
+		# Node name RealTerrain_<region_x>_<region_y>; written x/y, the
+		# project's own notation (Jangan town is "97/168", file 97\168.m).
 		var parts := String(group.name).split("_")
 		if parts.size() >= 3:
-			out.append("region y/x: %s/%s (node %s)" % [parts[2], parts[1], group.name])
+			out.append("region: %s/%s (x/y as in %s\\%s.m)" % [parts[1], parts[2], parts[1], parts[2]])
 		out.append("local: %.1f, %.1f" % [local.x, local.z])
 		out.append("world: %.1f, %.1f, %.1f" % [p.x, p.y, p.z])
 		out.append("walkable height here: %.2f (graph), terrain ray %.2f, feet at %.2f" % [

@@ -191,6 +191,21 @@ region. It now finds the loaded `RealTerrain_<x>_<y>` cell whose own space
 contains the player (the inverse of `_place_at_region_local`) and reports
 that, plus the walkable graph's height and the terrain ray's.
 
+The final short run: `/where` → `region: 97/168 (x/y as in 97\168.m)`, `local:
+1002.0, 1020.0`, `walkable height here: -30.12 (graph), terrain ray -43.52,
+feet at -30.12`; `/heal` → `healed: HP 200/200, MP 200/200`; `/kill` with
+nothing selected → `no target selected -- click a monster first`; `/goto
+donwhang` → `travelling to donwhang` and the zone changed.
+
+**Found by the tools, not fixed here (world lane's code):** the zone change
+`/goto` triggered prints `SCRIPT ERROR: Trying to assign invalid previously
+freed instance. at: _tick_idle_animations (World3D.gd:3406)` 125 times --
+`var skeleton: Skeleton3D = entry[0]` assigns the freed node to a typed
+variable *before* the `is_instance_valid` check on the next line (commit
+115d88b). It is not new: `/var/tmp/potion2.log` on the box, another lane's
+run, has the same lines. `/errors` and the F3 Copy payload now show exactly
+this kind of thing to a tester.
+
 ### Left out (see docs/TODO.md)
 
 - The original's help dialogs and the web panel were not recovered; the Help
