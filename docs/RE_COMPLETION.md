@@ -17985,3 +17985,18 @@ which is why it gates the block roll and both drains alike. Six names added to
 `recovered_names.tsv`. Not wired: srrevamp still has no per-instance durability,
 so nothing in the server changes until that exists; the row stays PARTIAL with
 that as its next probe.
+
+## Max durability, and the item's white-stat factor (2026-09-19)
+
+`GItemEquip+0x194` is built by `Char_BuildAggregateStats` (`0x00495d60`) run with
+the **item** as `this`: `round(Dur_L + q*(Dur_U - Dur_L) + inc*plus)` from the
+ref row's triple at `+0x1b0/+0x1b4/+0x1b8` (text columns 63/64 for L/U; the
+increment's column is not identified), with `q = Item_VarianceFactor(0)`
+(`0x00495d10`): `((Variance >> 5*group) & 0x1f) / 31.0` on the instance's
+64-bit `Variance` at `record+0x30`, durability being group 0 (`xor esi,esi`
+before the call, `lea ecx,[esi+esi*4]` for the shift, `fdiv [0xb45e28]` = 31.0
+read from .rdata). Then `GItemEquip::ApplyDurabilityAndRateOptions`
+(`0x00496a70`) nets the `'duru'`/`'dura'`/`'nrep'` options into a percent and
+applies `max += round(max*pct/100)`, floored at 1 (100.0 at `0xb45af0`, read).
+Two names added. Spec in `durability.md`. srrevamp still carries no per-instance
+durability or variance, so no value changed; the row's next probe stands.

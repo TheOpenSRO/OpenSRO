@@ -142,6 +142,71 @@ follows from `missing = item[0x194] - itemData[0x38]` needing to be positive for
 there to be anything to repair, and from the division producing a sensible
 per-point price only in that direction. Nothing names either field.
 
+## Max durability (2026-09-19)
+
+The number the tooltip shows and `ComputeRepair` divides by, `GItemEquip+0x194`,
+is built in two steps.
+
+### 1. The base, from the ref row and the instance's variance -- `Char_BuildAggregateStats`, `0x00495d60`
+
+`Char_BuildAggregateStats` is shared by everything stat-bearing; called with an
+item as `this` (which `GItemEquip::FUN_00495ca0` does after a rebuild), its first
+block under the "is equipment" virtual (`slot 39 == 1`) reads the item's ref row
+(`this[0xd]+0x18`) and stores `+0x194`:
+
+```
+495d99  fld [eax+0x1b8]        ; per-plus increment
+495da7  fld [eax+0x1b0]        ; Dur_L   (itemdata column 63)
+495db1  fld [eax+0x1b4]        ; Dur_U   (itemdata column 64)
+495de1  xor esi,esi            ; variance group 0
+495de3  call 0x495d10          ; q = Item_VarianceFactor(0)
+495e25  mov [ebx+0x194],eax    ; max durability
+```
+
+	maxDurability = round( Dur_L + q * (Dur_U - Dur_L) + inc * plus )
+	                assert(Dur_L <= Dur_U); plus = the item's +N level
+
+`Item_VarianceFactor` (`0x00495d10`) is the item's "white stat" factor:
+
+```
+495d28  lea ecx,[esi+esi*4]    ; shift = 5 * group
+495d2b  call __allshr          ; Variance (record+0x30, 64-bit) >> shift
+495d30  and ax,0x1f            ; 5 bits
+495d3f  fdiv qword [0xb45e28]  ; / 31.0   (.rdata, read: 31)
+```
+
+	q(group) = ((Variance >> 5*group) & 0x1f) / 31      ; group < 12 asserted
+
+so durability's own 5 bits are **group 0** of the instance's `Variance`, and a
+full-variance item gets `Dur_U`. Columns 63/64 are the text columns
+`export-refdata` already maps to `DurabilityMin/Max` (the starter sword's
+62/76). **`+0x1b8`'s text column is not identified**: the itemdata schema this
+project has read carries no durability increment column beside `Dur_L/Dur_U`,
+so what the loader puts there is the next probe (`RefObjItem::ExtractData`'s
+fill order around `+0x1b0..+0x1b8`); until then the `inc * plus` term is
+recorded, not valued.
+
+### 2. The magic options on top -- `GItemEquip::ApplyDurabilityAndRateOptions`, `0x00496a70`
+
+Walks the instance's magic options (count at `record+0x58`, "Item's
+MagParamNum(%d) is out of range" above 12), decoding each with
+`Item_DecodeMagicOption`, and nets a percentage `pct`:
+
+| tag | effect on `pct` |
+|---|---|
+| `'duru'` `0x64757275` | `+ value` (durability up) |
+| `'dura'` `0x64757261` | `- value` when non-zero (the dec-dura penalty option) |
+| `'nrep'` `0x6e726570` | `+ optionRecord[0x10]`, a fixed field of the option's own row |
+
+	if pct != 0: max += round(max * pct / 100)   ; 100.0 from .rdata 0xb45af0
+	if max == 0: max = 1
+
+Two more tags in the same loop scale per-instance floats by `(1 + value/100)`:
+`'er'` (`0x6572`) on `+0x19c` and `'hr'` (`0x6872`) on `+0x1d8`. Their identity is
+**not read** (no other float reader of those instance fields turned up); by
+their tags they are most likely the parry- and attack-rate percentage options,
+and that is an inference.
+
 ## What consumes durability (2026-09-18)
 
 Read from the Ghidra dump by following the **writers** of the durability field,
