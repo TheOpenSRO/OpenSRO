@@ -7075,6 +7075,24 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-seventy-first round: two short negatives, each with its reason
+
+The RE tick for 2026-09-19 20:32, docs only.
+
+**The party flag byte's writer is on another server.** The invitee's answer builds a 0x1114-byte
+request (`trs_wait_response::FUN_005be4f0`: a kind byte, the two ids, the invite record's `+0x34`
+word, and for a fresh party two 0x68-byte member records with name, level, HP ratio and position)
+and dispatches it through the request's slot 3 -- the party is created in the global/agent
+process, and `party+0x10` is filled when the response returns. That is why round 269's store
+patterns found no local writer, and it is now written into `party.md`.
+
+**The teleport link binder stayed unread.** The unnamed `RefInstanceGenerator` helpers are all
+`std::map` insert/find instantiations, and the 0xe0-byte parser carrying a `TELEPORT` string is
+another table; the pass that fills a `CRefTeleport`'s `+0x3c/+0x40` link vector from
+`_REFTELELINK` rows remains the row's open probe.
+
+No shipped value changed.
+
 ## Two-hundred-and-seventieth round: the warehouse cap is 210, not 112 -- and the expansion items say +30 / +32
 
 The RE tick for 2026-09-19 20:17 took the Storage row's Next -- the expansion item's increment --

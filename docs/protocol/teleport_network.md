@@ -166,7 +166,10 @@ One more structural fact (2026-09-19): the runtime link vector hangs off the gat
 word is a **pointer to the destination `CRefTeleport`** (`CGObjNPCNPC::Create` reads its
 code name through it -- the `GATE_TD` special case) with the fee second; the pass that
 builds those links from `_REFTELELINK` rows is not among `RefInstanceGenerator`'s named
-helpers and is unread.
+helpers and is unread. (Round 271 checked the unnamed ones: `0x6f6ad0/6c40/6cb0/6e60/6ef0/6f60/6fd0`
+and `0x6bef30/6c0950/6c55d0/6c7590/6d1b30` are `std::map` insert/find template instantiations
+attributed to the namespace, not binders; the 0xe0-byte parser that carries a `TELEPORT` string
+(`0x6a7650`, 6 columns) is a different table. The binder is still unread.)
 
 ## `teleportbuilding.txt` — the gate objects
 

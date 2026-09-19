@@ -5198,6 +5198,11 @@ The expansion items' increments are their Param1: bag +32, warehouse +30, with
 Param2 picking the container (0/1). `inventory.MaxStorageSlots` ->
 `MaxSlotsByQuestReward`, `storage.MaxCapacity` -> 210, increments as constants,
 tests. Two names.
+Round 271 (docs): the party flag byte is written on another server (the
+invitee's answer builds a 0x1114-byte request the global/agent process
+answers), which is why no local writer exists; the teleport link binder is
+still unread after the unnamed RefInstanceGenerator helpers turned out to be
+map templates.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

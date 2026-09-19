@@ -88,7 +88,17 @@ list -- unread beyond that gate. The writer of the byte -- where the create
 request's type byte (`HandlePartyMsg_060` reads a u32 target and a u8 after
 `CParty::CheckCanCreate`, and hands the byte to `0x5be280` with the invitation)
 lands in the party object -- was not found by the store patterns this round;
-the invite record carries it until the accept.
+the invite record carries it until the accept. **Round 271 explains why:** the
+party is not created locally. On the invitee's answer `trs_wait_response::
+FUN_005be4f0` (`0x5be4f0`) builds a 0x1114-byte request (`0x46cf50` constructs
+it): a kind byte at `+0x28`, the requester's and the invitee's ids at
+`+0x2c/+0x30`, the invite record's `+0x34` word at `+0x34`, and for a fresh
+party two 0x68-byte member records (`0x5bad30`/`0x5bae80`: name, level,
+HP ratio, position...) at `+0x38/+0x3c`; it is dispatched through the request's
+slot 3 to another server (the party lives in the global/agent process), and the
+flag byte lands in the party object when the response comes back -- a path the
+local store patterns cannot see. srrevamp's parties are its own design, so
+nothing shipped depends on it.
 
 ## Not recovered
 
