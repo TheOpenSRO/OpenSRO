@@ -4901,6 +4901,9 @@ build (its vcall thunk is unreferenced); virtual calls in this image are
 and `FUN_00605010`. Round 221: "OnTimer_Second" is an ordinal; no 1000 ms event timer
 exists (`FUN_0063ccc0` arming calls all read); the scheduler is one of 175 load-form
 slot-11 sites -- a disassembly walk is what is left.
+Round 222: the world keeps its controller at `world+8` (slot-1 setter `FUN_005eb2c0`);
+no decompiled reader of it calls slot 11 by any spelling. PARKED after five ticks --
+the unit is labelled on both values it touches; route left: a Ghidra data-flow pass.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

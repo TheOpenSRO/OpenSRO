@@ -106,8 +106,11 @@ In order. Each is checked off here when it ships in a release, with its round in
       the real STAND_BATTLE clip while recently in combat; the hold is now the server's own
       rule -- BattleState (SetCharacterState type 8) is entered with a 20-tick countdown in the
       PC's periodic update (`CGObjPC::vslot_415`) and reverts to peace at zero. What is still
-      inferred is that update's period (1 s), the same inference berserk's 60 already rests on;
-      the scheduler between the main loop and `vslot_415` is the probe that would close both.
+      inferred is that update's period (1 s), the same inference berserk's 60 already rests on.
+      The scheduler hunt is PARKED after five RE ticks (rounds 218-222): the world keeps its
+      controller at `world+8`, slot 415's callers are exactly two, and no decompiled reader of
+      `world+8` dispatches slot 11 -- a Ghidra data-flow pass is the route left
+      (`docs/protocol/character_state.md`). Reopen only if a shipped value comes to depend on it.
 
 ## Next up
 

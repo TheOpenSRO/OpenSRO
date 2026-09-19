@@ -7075,6 +7075,21 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-twenty-second round: the world keeps its controller at +8; the PC tick's scheduler is parked with its state written down
+
+The RE tick's step for 2026-09-19 08:34, the fifth on the period of `CGObjPC::vslot_415`.
+Read: the world's vtable slot 1 stores the controller at `world+8`
+(`GObjPC::FUN_005eb2c0`, in the CGameWorld unit), called from the zone-name switch in
+`CMainProcess::FUN_005f5b60`; `CGObjPC::vslot_373` is the AsyncQuery completion callback,
+not the tick. Not found: any decompiled function that reads `world+8` and calls slot 11 on
+it, by any spelling, within five lines -- so the dispatch is not a text pattern.
+
+Parked, deliberately: the unit is already labelled as an inference on the two values it
+touches (berserk 60, stance 20), both consistent only with a one-second tick; the answer
+would change a label, not a shipped number. The remaining route (a Ghidra data-flow pass
+from the `world+8` stores) is written in `docs/protocol/character_state.md`. Five
+ticks is the budget this question gets until a value depends on it.
+
 ## Two-hundred-and-twenty-first round: "OnTimer_Second" is an ordinal -- the event system is not the PC tick
 
 The RE tick's step for 2026-09-19 08:19, on round 220's probe. A correction and a

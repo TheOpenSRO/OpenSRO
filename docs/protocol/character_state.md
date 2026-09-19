@@ -127,10 +127,28 @@ finds 321 `mov r,[r+0x2c]; call r` sites, 175 outside quest scripts; many take t
 receiver from the global at `0xcc387c` (a manager's slot 11, used by message handlers),
 which is not a controller.
 
-*Next probe:* among those 175 sites, the one whose receiver is loaded from a world
-object's field and whose argument is a PC -- a disassembly walk with Ghidra
-(`Disasm.java` on `re_server`) of the non-quest sites in `CMainProcess`/`CGameWorld*`
-functions is the remaining mechanical route.
+Fifth pass (round 222): two more facts and a park.
+
+- **The world keeps its controller at `world+8`**: the world's vtable slot 1 is the setter
+  `GObjPC::FUN_005eb2c0` (`*(this+8) = controller`, misattributed to GObjPC by the module
+  pass; it sits in the CGameWorld unit), which is what the world-setup switch
+  (`CMainProcess::FUN_005f5b60`) calls after choosing a controller by zone name
+  (`INS_FORT_*` etc.).
+- `CGObjPC::vslot_373`'s `param_2->slot11(pc)` is the AsyncQuery completion callback
+  (its callers are `AQ_*::vslot_007/008`), another class's slot 11 -- not the tick.
+- No function in the dump reads `world+8` (as `+ 8)` or `[2]`) and calls slot 11 on it,
+  in one expression or within five lines, and no tiny getter returning `*(this+8)` exists
+  in the world unit. So the live dispatch is not expressible as a pattern over the
+  decompiled text; it needs a data-flow walk.
+
+**PARKED (2026-09-19)** after five ticks: the unit is already labelled as an inference on
+both values it affects (berserk 60, stance 20), both consistent only with a one-second
+tick, and nothing srrevamp ships changes with the answer except the label. The route left
+is a Ghidra data-flow pass: from the five controller vtables' slot-11 entries backwards is
+impossible (virtual), so forwards from the stores into `world+8` -- Ghidra's
+`ReferenceManager` on the field's readers with the receiver type resolved, or a
+debugger-less trace of `CMainProcess::FUN_00413b30`'s callees three levels deep for a
+`[reg+0x2c]` load whose object came from `[world+8]`.
 
 ## What srrevamp does
 
