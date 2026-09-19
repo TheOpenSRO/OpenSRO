@@ -5162,6 +5162,14 @@ context's +0x18 by both cast builders and spent by EngageSkill -- and no loaded
 retail row is non-zero, so the berserk row's "skill hwan cost" closes as
 data-dead. The client's item-use sender has no timing gate (scoped negative:
 the double-click path before it is unread). Two names.
+Round 265 (docs + skillparam): `efr` is the skill's TARGET PATTERN, not a buff --
+Skill_CollectTargetsByEffect dispatches value[1] to seven collectors (area
+around caster/target, line from caster/target, party, chain, monster group);
+value[2] radius, value[3] cap, value[4] falloff % per extra target (35 % on
+6,725 rows; the applier's mode-6 per-entry byte), value[5] flags. SYSTEMS'
+"ApplySkillParamsToChar reads efr's 0x28c" corrected (it is the character's
++0xa30). `skillparam.EfrKind*`, `AreaTargetShare`, test; eleven names. Not
+wired -- one target per cast remains a build item.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

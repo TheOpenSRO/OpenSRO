@@ -840,3 +840,54 @@ const (
 // the point: the buff is cast on an ally, and a separate heal skill landing on
 // that ally later reads param 170 from them.
 const HealScaleBuffCode Code = "rhru"
+
+// 'efr' at the cast: the seven TARGET PATTERNS (round 265). Before a skill
+// with damage executes, Skill_CollectTargetsByEffect (0x0058cb70) reads the
+// run the skill's efr field points at and dispatches on value[1] through a
+// table of seven collectors (DAT_00c63f60[1..7]); each fills the skill-use
+// context's target vector from the regions around a centre:
+//
+//	1  area around the CASTER      radius = casterBC + v2
+//	2  area around the TARGET      radius = targetBC + v2
+//	3  a LINE from the caster      half-width v2 (Skill_WithinLine, 0x0058af60)
+//	4  a LINE from the target      the same test from the target's position
+//	5  the caster's PARTY          v5 bit 0 adds the caster itself
+//	6  a CHAIN: the nearest others within v2 x (v3 + 1) of the caster
+//	7  every monster of the caster's own group (monsters only)
+//
+// value[2] is the radius / width in world units, value[3] the maximum number
+// of targets (0 = no cap), value[4] the FALLOFF PERCENT each further target
+// loses -- the per-entry byte the applier's mode 6 scales by starts at 100 and
+// becomes round(share * (100 - v4) / 100) with every target added -- and
+// value[5] a flag word (bit 0 include the primary/self; bits 1..3 relation
+// filters; 0x10 a second pass; 4 or 5 turn kinds other than 5/6 into 5, a
+// party scope). The retail rows use kinds 1 (3,184), 2 (3,992), 3 (1,062),
+// 4 (844), 6 (1,531) and 7 (39); the falloff is 35 % on 6,725 area rows,
+// then 0, 20 and 5; the caps are mostly 3 and 8.
+const (
+	EfrKindAreaCaster   = 1
+	EfrKindAreaTarget   = 2
+	EfrKindLineCaster   = 3
+	EfrKindLineTarget   = 4
+	EfrKindParty        = 5
+	EfrKindChain        = 6
+	EfrKindMonsterGroup = 7
+
+	// Word offsets within the run, from the field pointer (value[0]).
+	EfrRadiusOffset     = 8    // value[2]
+	EfrMaxTargetsOffset = 0xc  // value[3]
+	EfrFalloffOffset    = 0x10 // value[4]
+	EfrFlagsOffset      = 0x14 // value[5]
+)
+
+// AreaTargetShare is the percentage of the blow the i-th target of an area
+// skill takes (i = 0 the first), under a per-target falloff: 100 for the
+// first, then round(previous * (100 - falloff) / 100) each step, exactly as
+// the collectors carry it (0x58a0xx: `(100 - v4) * share / 100`, rounded).
+func AreaTargetShare(i, falloffPercent int) int {
+	share := 100
+	for k := 0; k < i; k++ {
+		share = int(float32(share*(100-falloffPercent))/100 + 0.5)
+	}
+	return share
+}

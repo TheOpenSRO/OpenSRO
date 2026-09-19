@@ -532,3 +532,17 @@ func TestHealScaleChainIsJoined(t *testing.T) {
 		t.Errorf("Run[%q] = %d, want 3 (code + two values)", HealScaleBuffCode, Run[HealScaleBuffCode])
 	}
 }
+
+// The area falloff: with the retail table's usual 35 %, the second target
+// takes 65 %, the third 42 %, the fourth 27 %; with 0 % every target takes
+// the whole blow.
+func TestAreaTargetShare(t *testing.T) {
+	for i, want := range []int{100, 65, 42, 27, 18} {
+		if got := AreaTargetShare(i, 35); got != want {
+			t.Errorf("target %d at 35 %%: %d; want %d", i, got, want)
+		}
+	}
+	if got := AreaTargetShare(3, 0); got != 100 {
+		t.Errorf("no falloff: %d; want 100", got)
+	}
+}

@@ -1208,6 +1208,52 @@ damage path is "area mode 6") and because it is the anchor for a targeting syste
 The field offsets (`0x28c`/`0x290`/`0x294` and the `+4` mode) are grounded; the mechanics of modes 6
 and 7 are read from one function and would want a second witness before implementation.
 
+## `efr`'s values are the target pattern, read at the cast (round 265, 2026-09-19)
+
+The section above read modes 6 and 7 in the applier. The cast path gives all seven their meaning.
+Both cast-context builders (`Skill_BuildUseContext_A/B`, `0x5857b0`/`0x586700`) call
+**`Skill_CollectTargetsByEffect`** (`0x58cb70`) with the skill and its `efr` field pointer before
+`Combat_ResolveDamage`; it asserts `value[1] <= 7`, forces the kind to 5 when it is not 5/6 and
+`value[5]` is 4 or 5, and dispatches `DAT_00c63f60[value[1]]` -- a `.data` table of seven
+collectors, each filling the skill-use context's target vector (`SkillContext_AddTarget`,
+`0x48dbb0`, 8-byte entries; `SkillContext_ClearTargets`, `0x48dc30`):
+
+| kind | collector | centre and shape |
+|---|---|---|
+| 1 | `SkillTargets_AreaAroundCaster` (`0x58a020`) | every live object within `casterBC + value[2]` of the caster's own position |
+| 2 | `SkillTargets_AreaAroundTarget` (`0x58a7c0`) | the same circle around the primary TARGET's position |
+| 3 | `SkillTargets_LineFromCaster` (`0x58b160`) | `Skill_WithinLine` (`0x58af60`): within the aim vector's length plus both radii along it, and `sin(angle) x distance < targetBC + value[2]` off it -- a beam of half-width `value[2]` |
+| 4 | `SkillTargets_LineFromTarget` (`0x58b870`) | the same beam test from the target's position |
+| 5 | `SkillTargets_Party` (`0x58bef0`) | the caster's party members (alive, same world, in range); `value[5]` bit 0 adds the caster |
+| 6 | `SkillTargets_Chain` (`0x58c170`) | the nearest OTHER candidates around the caster within `value[2] x (value[3] + 1)` (capped by a constant), the primary target excluded -- a chain / multi-arrow; with `value[5]` 4 or 5 the party instead |
+| 7 | `SkillTargets_MonsterGroup` (`0x58ca60`) | monsters only: every member of the caster's own group (`0x5875d0` by the group id) |
+
+The values, at their word offsets from the field pointer: **`value[2]` (+8) radius or half-width**
+in world units, **`value[3]` (+0xc) the maximum number of targets** (0 = uncapped; the loop stops
+when `count >= value[3]`), **`value[4]` (+0x10) the FALLOFF PERCENT** -- every collector carries a
+share byte that starts at 100 and becomes `round(share x (100 - value[4]) / 100)` for each target
+it adds, which is the per-entry byte at `+5` of the pair the applier's mode 6 scales by -- and
+**`value[5]` (+0x14) flags** (bit 0 include the primary/self, bits 1-3 relation filters through
+`0x589d20`, `0x10` a second pass over the object list).
+
+The retail rows agree with the read: kinds 1/2/3/4/6/7 occur 3,184 / 3,992 / 1,062 / 844 / 1,531 /
+39 times (kind 5 does not appear on a service-1 row; party buffs travel another way), the falloff
+is **35 %** on 6,725 of the area rows (then 0 on 1,473, 20, 5, 30, 25), and the caps are 3 (3,003),
+8 (2,745), 4, 5, 2. `SKILL_CH_SPEAR_PIERCE_D_01` is kind 3 with half-width 2, two targets and 25 %
+-- the spear's pierce is a two-target line; `GSKILL_CH_COLD_BINGPAN_A_001` is kind 4, width 20,
+three targets, no falloff; `HSKILL_BOW_MAGIC_0997` is kind 6, radius 50, three targets, 35 %.
+
+**A correction.** SYSTEMS.md carried "`efr` is read nowhere -- `ApplySkillParamsToChar` reads its
+field `0x28c`". That read is the CHARACTER's `+0xa30` (the function indexes an `int*`, so
+`param_1 + 0x28c` is byte `0xa30`, the active-effect book), not the skill's `efr` field. `efr` is
+read at the cast (this section), by `Combat_ResolveDamage` (mode 6), and by the applier's mode
+switch (the section above).
+
+`skillparam.EfrKind*`, the four value offsets and `skillparam.AreaTargetShare` carry the vocabulary
+with a test. **Not wired**: srrevamp resolves a skill against one monster; an area or line skill
+hits its primary target only. Building the patterns needs the server to hold positions of every
+monster (it does) and to send several results per cast.
+
 ## The 20 "variable-length" codes: 19 markers and 1 terminator (2026-09-18)
 
 The section above and the table below call 20 codes "variable-length" and say a walk cannot pass

@@ -7075,6 +7075,35 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-sixty-fifth round: `efr` is the target pattern -- seven collectors, a radius, a cap and a 35 % falloff
+
+The RE tick for 2026-09-19 19:05 opened the Skills row's "buff write path, start with `efr`" and
+found `efr` is not a buff at all: it is how a skill picks its TARGETS.
+
+**The dispatcher.** Both cast-context builders call `Skill_CollectTargetsByEffect` (`0x58cb70`)
+before `Combat_ResolveDamage`: it asserts `value[1] <= 7`, forces kind 5 when `value[5]` is 4 or 5,
+and dispatches `DAT_00c63f60[value[1]]` -- seven collectors in `.data` that fill the skill-use
+context's target vector: **1 area around the caster, 2 area around the target, 3 a line from the
+caster, 4 a line from the target, 5 the party, 6 a chain (the nearest others within
+`value[2] x (value[3] + 1)`), 7 the monster's own group.** `value[2]` is the radius or half-width
+(`Skill_WithinLine`, `0x58af60`: `sin(angle) x distance < BC + width`), `value[3]` the maximum
+number of targets, **`value[4]` the falloff percent** -- every collector carries a share byte from
+100 down by `round(share x (100 - v4) / 100)` per target added, the very byte the applier's mode 6
+scales by -- and `value[5]` flags (bit 0 include self/primary).
+
+**The data agrees.** Kinds 1/2/3/4/6/7 occur 3,184 / 3,992 / 1,062 / 844 / 1,531 / 39 times; the
+falloff is 35 % on 6,725 area rows; the caps mostly 3 and 8. The spear's `PIERCE_D` is a two-target
+line of half-width 2 at 25 %; the bow's multi-shot a kind-6 chain of three at 35 %.
+
+**A correction.** SYSTEMS said `ApplySkillParamsToChar` reads the skill's `efr` field `0x28c`; that
+read is the CHARACTER's `+0xa30` (an `int*` indexed by 0x28c), the active-effect book. `efr` is
+read at the cast, by the damage resolver (mode 6) and by the applier's mode switch.
+
+Recorded: `skill_params.md` "efr's values are the target pattern", `skillparam.EfrKind*` with the
+value offsets and `AreaTargetShare` (100, 65, 42, 27 at 35 %) with a test, eleven names. **Not
+wired**: srrevamp hits one target per cast; the pattern needs several results per cast and is a
+build item. No shipped value changed; no release.
+
 ## Two-hundred-and-sixty-fourth round: a skill's hwan cost is data-dead, and the client's item sender has no pacing gate
 
 The RE tick for 2026-09-19 18:50, two short closures.
