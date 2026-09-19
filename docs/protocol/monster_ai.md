@@ -576,8 +576,10 @@ is 100.0 (`0xb45e10`), the clamp turns that into 10.0, and no instruction
 outside the loader touches `0xc82528`. A knob with no consumer.
 
 A solo player never links anything: with no party the routine returns 0 before
-gathering. What bit 0 of the party's `+0x10` means is still unnamed (the
-berserk party share tests the same word); the link needs it set.
+gathering. Bit 0 of the party's `+0x10` is the **experience-sharing** flag
+(`party.md`: the join-time cap test names it through the client's
+`MEMBER_FULL_EXP_SHARED_PARTY` refusal), so the link fires only for a member of
+an exp-sharing party; the berserk party share tests the same bit.
 ## The threat table: whom a monster fights when several things hit it (round 259)
 
 **Two seats.** The context keeps exactly two attackers -- the TARGET at
