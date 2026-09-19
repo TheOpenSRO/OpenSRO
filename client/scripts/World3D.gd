@@ -441,6 +441,11 @@ const WORLD_FLOOR_Y := -500.0
 ## perspective stays, and real ground detail survives. Still a disclosed
 ## choice, only now one bounded by real evidence rather than by feel.
 const FOG_DENSITY := 0.00005
+## The zone's real fog planes in world units (channels 10/11 of environment.ifo
+## times the client's view distance), kept for the log and QA_LOOK; see
+## _apply_real_environment_lighting for why they are not yet what is drawn.
+var _fog_near_real := 0.0
+var _fog_far_real := 0.0
 
 ## How much the haze brightens toward the sun -- Godot's approximation of the
 ## real Henyey-Greenstein phase term in the real terrain vertex shader. Also a
@@ -2581,15 +2586,20 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# real per-zone data: environment.ifo's own FogColor channel, sampled at
 	# the same fixed ENVIRONMENT_REFERENCE_TIME as the sky and sun above.
 	#
-	# The density is NOT real data and is not presented as such. The real
-	# beta_1/beta_2 scattering coefficients are runtime shader constants the
-	# client computes; environment.ifo's two real scalar fog channels
-	# (CHANNEL_FOG_NEAR_PLANE/CHANNEL_FOG_FAR_PLANE) hold normalized values in
-	# [-1, +1] in every real record checked -- not world distances -- so how
-	# they map onto real scattering coefficients isn't recoverable from the
-	# asset data alone. FOG_DENSITY is therefore a disclosed rendering choice,
-	# the same way BOUNDARY_BLEND_ALPHA is.
+	# The real fog RANGE is read now (round 229, EnvironmentReader's channel
+	# notes): the client's fog near and far planes are channels 10 and 11
+	# times its view distance (2500 by default) -- a linear D3D fog that is
+	# zero until the near plane and complete at the far one. What is still a
+	# disclosed rendering choice is FOG_DENSITY: Godot 4.2's fog is
+	# exponential from the camera (no depth-range mode until 4.3), so the
+	# real planes cannot be applied without a shader pass; until that exists
+	# they are computed, logged and shown by QA_LOOK, and the density stays
+	# the bounded choice described at FOG_DENSITY.
 	var fog_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_FOG_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	_fog_near_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_NEAR_PLANE, ENVIRONMENT_REFERENCE_TIME) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
+	_fog_far_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_FAR_PLANE, ENVIRONMENT_REFERENCE_TIME) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
+	print("World3D: environment fog planes (real, channels 10/11 x view distance %.0f): near %.0f, far %.0f -- drawn with Godot density %g (disclosed)" % [
+		EnvironmentReader.VIEW_DISTANCE_DEFAULT, _fog_near_real, _fog_far_real, FOG_DENSITY])
 	var env := world_environment.environment
 	env.fog_enabled = true
 	env.fog_light_color = fog_color
@@ -6527,6 +6537,8 @@ func _qa_look_report() -> void:
 	hits.sort_custom(func(a, b): return a[0] < b[0])
 	print("QA LOOK from %s facing %s -- %d real object(s) under the crosshair" % [
 		origin.round(), direction.round(), hits.size()])
+	if _fog_far_real > 0.0:
+		print("QA LOOK   zone fog planes (real): near %.0f, far %.0f; drawn with density %g" % [_fog_near_real, _fog_far_real, FOG_DENSITY])
 	for i in range(mini(hits.size(), 10)):
 		print("QA LOOK   %7.1f away  %s  placed at local %s" % [
 			hits[i][0], hits[i][1], (hits[i][2] as Vector3).round()])

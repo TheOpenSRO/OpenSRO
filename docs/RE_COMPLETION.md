@@ -4949,6 +4949,15 @@ experience on kill, MP not persisted, regen percentage); `monsterStatsForLevel`'
 comment said attack and gold had "no identified real table" -- stale since the col-83
 skill and `levelgold.txt` were wired -- and now says it is the fallback.
 
+### The fog planes, 2026-09-19 (round 229)
+
+`Map::FUN_00a1baf0` scales environment channels **10 and 11** by the view-distance global
+(`0xec54b0`, 2500.0) for the fog near/far planes (fallback `-0.2` and `1.0` times it); the
+public doc's "FogNearPlane/FogFarPlane" at 7/8 is wrong for this client -- 7, 8, 12, 15 are
+[-1, 1] channels mapped through `(v+1)/2` and `1-v`. The files agree (10: [-0.147, 0.813];
+11: [0.467, 1.0]; Jangan 0.5/0.9 -> 1250/2250). `EnvironmentReader` corrected; the planes
+are computed and logged; drawing linear fog is a TODO (Godot 4.2 has no depth-range fog).
+
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
 via `nItemDBID`), and an empty slot is a real row with `ItemID = 0 or NULL`

@@ -97,16 +97,55 @@ decompiled from a binary in this repo's own history), documents this exact forma
 4  (unnamed -- "Graph4" in the public doc)
 5  TerrainAmbientColor   (4-float ColorGraph)
 6  TerrainShadowColor    (4-float ColorGraph, added v1003)
-7  FogNearPlane          (2-float FloatGraph: value + time)
-8  FogFarPlane           (2-float FloatGraph)
+7  "FogNearPlane" per the public doc -- WRONG for this client, see below (2-float FloatGraph)
+8  "FogFarPlane"  per the public doc -- WRONG for this client, see below (2-float FloatGraph)
 9  FogColor              (4-float ColorGraph)
-10 (unnamed -- "Graph10")
-11 (unnamed -- "Graph11")
+10 FOG NEAR PLANE, as a fraction of the view distance (read from the client, below)
+11 FOG FAR PLANE,  as a fraction of the view distance (read from the client, below)
 12 (unnamed -- "Graph12", added v1001)
 13 SkyBottomColor        (4-float ColorGraph, added v1002)
 14 WaterColor            (4-float ColorGraph, added v1002)
 15 (unnamed -- "Graph15", added v1002)
 ```
+
+## The fog planes are channels 10 and 11, times the view distance (read 2026-09-19, round 229)
+
+The public naming above puts the fog planes at 7 and 8. The client's own environment
+update says otherwise. `Map::FUN_00a1baf0` (`sro_client.exe`, `0xa1baf0`) evaluates the
+six FloatGraphs of the current record through `FUN_004e5770` in file order -- the graph
+objects sit at record `+0x25c, +0x288, +0x2e8, +0x314, +0x340, +0x36c` (stride 0x2c; the
+ColorGraphs are 0x34 apart), i.e. channels 7, 8, 10, 11, 12, 15 -- and treats them as:
+
+| call | record offset | channel | transform | stored at |
+|---|---|---|---|---|
+| 1 | `+0x25c` | 7 | `(v + 1.0) * 0.5` (doubles at `0xe1b7f0`, `0xe1b7d0`) | world `+0x689b` |
+| 2 | `+0x288` | 8 | clamp to [-1, 1] (`0xe1b878`), then `2.0 - (v + 1.0)` (`0xe1b898`) | world `+0x689f` |
+| 3 | `+0x2e8` | **10** | **`v * viewDistance`** (`fmul DWORD PTR ds:0xec54b0`) | world `+0x68af` -- **fog near** |
+| 4 | `+0x314` | **11** | **`v * viewDistance`** | world `+0x68b3` -- **fog far** |
+| 5 | `+0x340` | 12 | `(v + 1.0) * 0.5` | world `+0x68c7` |
+| 6 | `+0x36c` | 15 | raw | |
+
+The no-record fallback names the roles: it sets the same two slots to `-0.2 * viewDistance`
+(the double at `0xde4d00`) and `1.0 * viewDistance` -- a linear fog whose near plane sits a
+fifth of the view distance behind the camera and whose far plane is the view distance. The
+view distance is the `.data` float at `0xec54b0`, **2500.0** in the image (a setting may
+change it at runtime). The values are eased toward per frame (the `(new - old) * f + old`
+lines that follow), then applied as the fog range.
+
+The real files agree, which is the second, independent half (`client/tools/
+dump_environment_floats.gd`, all 74 records): channel 10 ranges over **[-0.147, 0.813]** and
+channel 11 over **[0.467, 1.0]** -- a near fraction that may dip slightly behind the camera
+and a far fraction at or inside the view distance -- while 7, 8, 12 and 15 range over
+[-1, 1], the shape the `(v + 1) / 2` and `1 - v` transforms expect. Jangan's `Env7`
+(record 7): near 0.5, far 0.9 -> 1250 and 2250 world units at the default view distance.
+
+What 7, 8, 12 and 15 mean is not named here: the world fields they land in (`+0x689b`,
+`+0x689f`, `+0x68c7`) were not followed to their shader constants in this pass.
+
+`EnvironmentReader.CHANNEL_FOG_NEAR_PLANE/FAR_PLANE` are 10 and 11 accordingly, and
+`VIEW_DISTANCE_DEFAULT` is 2500. The client computes and logs each zone's real planes;
+drawing them needs a depth-range fog Godot 4.2 does not offer (its fog is exponential from
+the camera) -- see `docs/TODO.md`.
 
 **This matches this project's own independently-confirmed real per-channel group-float-count
 sequence exactly** (`[4,4,4,4,4,4,4,2,2,4,2,2,2,4,4,2]`, derived from decompiling the real reader's

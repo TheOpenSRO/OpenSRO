@@ -56,7 +56,28 @@ func _build_file(records: Array) -> PackedByteArray:
 		_append_record(buf, r[0], r[1], r[2], r[3], r[4])
 	return buf
 
+## The fog planes are channels 10 and 11 (read from the client, round 229),
+## and a FloatGraph samples by linear interpolation between its keys.
+func _test_fog_channels_and_float_sampling() -> void:
+	_check(EnvironmentReader.CHANNEL_FOG_NEAR_PLANE == 10 and EnvironmentReader.CHANNEL_FOG_FAR_PLANE == 11,
+		"fog planes are channels 10/11, the pair the client scales by its view distance")
+	_check(EnvironmentReader.CHANNEL_GROUP_FLOATS[10] == 2 and EnvironmentReader.CHANNEL_GROUP_FLOATS[11] == 2,
+		"channels 10/11 are 2-float graphs")
+	var rec := EnvironmentReader.Record.new()
+	rec.channels.resize(16)
+	for i in range(16):
+		rec.channels[i] = []
+	rec.channels[10] = [PackedFloat32Array([0.2, 0.0]), PackedFloat32Array([0.6, 0.5]), PackedFloat32Array([0.2, 1.0])]
+	rec.channels[11] = [PackedFloat32Array([0.9, 0.0]), PackedFloat32Array([0.9, 1.0])]
+	_check(is_equal_approx(EnvironmentReader.sample_float_channel(rec, 10, 0.25), 0.4), "midpoint between keys interpolates (0.2 -> 0.6 at t=0.25)")
+	_check(is_equal_approx(EnvironmentReader.sample_float_channel(rec, 10, 0.5), 0.6), "a key's own time returns its value")
+	_check(is_equal_approx(EnvironmentReader.sample_float_channel(rec, 10, 1.0), 0.2), "the last key is returned at t=1")
+	_check(is_equal_approx(EnvironmentReader.sample_float_channel(rec, 11, 0.5), 0.9), "a flat two-key channel samples flat")
+	_check(is_equal_approx(EnvironmentReader.sample_float_channel(rec, 11, 0.5) * EnvironmentReader.VIEW_DISTANCE_DEFAULT, 2250.0),
+		"a far fraction of 0.9 is 2250 world units at the client's default view distance")
+
 func _init() -> void:
+	_test_fog_channels_and_float_sampling()
 	_check(EnvironmentReader.CHANNEL_GROUP_FLOATS.size() == 16, "16 real channels defined (got %d)" % EnvironmentReader.CHANNEL_GROUP_FLOATS.size())
 	_check(EnvironmentReader.CHANNEL_GROUP_FLOATS.count(4) == 10, "10 real 4-float channels (got %d)" % EnvironmentReader.CHANNEL_GROUP_FLOATS.count(4))
 	_check(EnvironmentReader.CHANNEL_GROUP_FLOATS.count(2) == 6, "6 real 2-float channels (got %d)" % EnvironmentReader.CHANNEL_GROUP_FLOATS.count(2))

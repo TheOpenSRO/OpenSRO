@@ -90,6 +90,13 @@ In order. Each is checked off here when it ships in a release, with its round in
       shard DB supersedes it via `import-refdata -drops-csv/-drop-groups-csv`.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
+- [ ] **Linear fog between the real planes.** Read in round 229: the client's fog is D3D linear fog
+      from `channel 10 x view distance` to `channel 11 x view distance` (2500 by default) -- zero
+      until the near plane (Jangan: 1250), complete at the far one (2250). `FOG_DENSITY` is an
+      exponential-from-the-camera stand-in because Godot 4.2 has no depth-range fog; the honest
+      fix is a full-screen depth pass (a quad with `hint_depth_texture`) or per-material fog code
+      applying `(d - near) / (far - near)` with the zone's real FogColor. The planes are already
+      computed and logged (`World3D: environment fog planes`, and in QA_LOOK).
 - [x] ~~Day/night cycle~~ -- **not a gap** (round 226, `docs/protocol/game_clock.md`): the retail
       client renders the environment at a FIXED phase of 0.5 (SWorld's constructor sets it; the
       per-frame advance is gated by a flag nothing sets; the graphs are sampled at the raw phase), and

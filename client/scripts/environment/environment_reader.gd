@@ -46,9 +46,26 @@ const CHANNEL_DIFFUSE_COLOR := 2
 const CHANNEL_OBJECT_AMBIENT_COLOR := 3
 const CHANNEL_TERRAIN_AMBIENT_COLOR := 5
 const CHANNEL_TERRAIN_SHADOW_COLOR := 6
-const CHANNEL_FOG_NEAR_PLANE := 7
-const CHANNEL_FOG_FAR_PLANE := 8
+## The fog PLANES are channels 10 and 11, not 7 and 8 -- READ from the client
+## (round 229): the environment update Map::FUN_00a1baf0 evaluates the six
+## FloatGraphs in file order (record +0x25c, +0x288, +0x2e8, +0x314, +0x340,
+## +0x36c = channels 7, 8, 10, 11, 12, 15) and multiplies the third and fourth
+## -- channels 10 and 11 -- by the view-distance global at 0xec54b0 (2500.0 in
+## the image; its no-record fallback is -0.2 and 1.0 times the same global),
+## storing them as the fog near and far planes (world +0x68af/+0x68b3). The
+## real files agree: channel 10 ranges over [-0.147, 0.813] and 11 over
+## [0.467, 1.0] across all 74 records (tools/dump_environment_floats.gd) --
+## fractions of the view distance, a near plane that may sit just behind the
+## camera, a far plane at or inside it. Channels 7 and 8 hold [-1, 1] values
+## the client maps through (v + 1) / 2 and 1 - v; their roles are not named
+## here. The public source's "FogNearPlane/FogFarPlane" at 7/8 is wrong for
+## this client.
+const CHANNEL_FOG_NEAR_PLANE := 10
+const CHANNEL_FOG_FAR_PLANE := 11
 const CHANNEL_FOG_COLOR := 9
+## The client's view distance the fog fractions scale by: the initial value of
+## the global at 0xec54b0 (`.data`, so a setting may change it at runtime).
+const VIEW_DISTANCE_DEFAULT := 2500.0
 const CHANNEL_SKY_BOTTOM_COLOR := 13
 const CHANNEL_WATER_COLOR := 14
 
@@ -165,6 +182,25 @@ static func parse(data: PackedByteArray) -> ParsedFile:
 ## Color(1,1,1) if the channel has fewer than 2 groups (nothing real to
 ## interpolate) or channel_idx is out of range -- an honest neutral
 ## fallback, not a guessed color.
+## Samples a 2-float (value, time) FloatGraph channel at t, interpolating
+## between the two keyframes around t exactly as sample_color_channel does
+## for colours (the client's FUN_004e5770 walks 8-byte keys the same way).
+static func sample_float_channel(record: Record, channel_idx: int, t: float) -> float:
+	var groups: Array = record.channels[channel_idx]
+	if groups.is_empty():
+		return 0.0
+	var prev: PackedFloat32Array = groups[0]
+	for g in groups:
+		var group: PackedFloat32Array = g
+		if group[1] >= t:
+			var span := group[1] - prev[1]
+			if span <= 0.0:
+				return group[0]
+			var f := clampf((t - prev[1]) / span, 0.0, 1.0)
+			return lerpf(prev[0], group[0], f)
+		prev = group
+	return prev[0]
+
 static func sample_color_channel(record: Record, channel_idx: int, t: float) -> Color:
 	if channel_idx < 0 or channel_idx >= record.channels.size():
 		return Color(1, 1, 1)

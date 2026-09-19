@@ -7075,6 +7075,28 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-twenty-ninth round: the fog planes are channels 10 and 11 times the view distance -- the model behind FOG_DENSITY, read
+
+The RE tick's step for 2026-09-19 10:19, from the client's disclosed constants: `FOG_DENSITY`
+had been a bounded rendering choice because "environment.ifo's two fog channels hold
+normalized values, not distances". Both halves are read now (`ENVIRONMENT_FORMAT.md`):
+
+- The client's environment update `Map::FUN_00a1baf0` evaluates the six FloatGraphs in file
+  order (record `+0x25c .. +0x36c`, channels 7, 8, 10, 11, 12, 15) and multiplies the third
+  and fourth -- **channels 10 and 11** -- by the view-distance global at `0xec54b0`
+  (**2500.0** in the image), storing them as the fog near and far planes; its no-record
+  fallback is `-0.2` and `1.0` times the same global. Channels 7, 8, 12 and 15 go through
+  `(v + 1) / 2` and `1 - v` instead. The public doc's "FogNearPlane/FogFarPlane" at 7/8 is
+  wrong for this client.
+- The 74 real records agree: channel 10 in [-0.147, 0.813], channel 11 in [0.467, 1.0]
+  (`tools/dump_environment_floats.gd`, new); the others span [-1, 1]. Jangan's Env7 puts
+  the fog at 1250..2250 world units.
+- `EnvironmentReader.CHANNEL_FOG_NEAR_PLANE/FAR_PLANE` are 10/11 now, with a float-channel
+  sampler and tests; `World3D` computes each zone's real planes, logs them and shows them
+  in QA_LOOK. What is still disclosed is the drawing: Godot 4.2's fog is exponential from
+  the camera, so the real linear range needs a depth pass -- filed in TODO with the formula.
+  No drawn pixel changed this round.
+
 ## Two-hundred-and-twenty-eighth round: the disclosed census is fallbacks and decisions; a stale comment corrected; naming levers measured
 
 The RE tick's step for 2026-09-19 10:07. A census of every DISCLOSED / own-design marker in
