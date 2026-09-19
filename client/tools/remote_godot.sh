@@ -26,7 +26,7 @@ PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 sync_client() {
-  tar cf - -C "$repo_root" client/scripts client/tools client/scenes client/project.godot \
+  tar cf - -C "$repo_root" client/scripts client/tools client/scenes client/docs client/project.godot \
     | ssh "$RENDER_HOST" "tar xf - -C '$RENDER_DIR' --strip-components=1 \
         && chmod +x '$RENDER_DIR'/tools/*.sh \
         && chown -R ghidra:ghidra '$RENDER_DIR'"

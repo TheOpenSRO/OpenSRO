@@ -209,6 +209,19 @@ are built and reachable from the underbar's MENU and from hotkeys.
 there is another way to travel — it is the only one — so this finishes with a real travel
 mechanism rather than with a deletion.
 
+### Tester tools: the chat console, GM commands, the Help window — **done, with these left**
+`docs/DEBUG_TOOLS.md` and `docs/rounds/debug.md`. Left out of that lane: (1) the original's help
+dialogs / web panel were not recovered — the Help window's interior is ours inside the authored
+`ifgameguide` frame; (2) `/give` by item *code* is client-side only (the server's item table has no
+code column), so a code the client has not loaded is refused; (3) a GM `/spawn` reaches other
+clients only on their next monster list (there is no spawn broadcast); (4) `client/docs/RELEASE_NOTES.md`
+is a committed snapshot — the release workflow does not regenerate it (needs `fetch-depth: 0` and a
+`bundle_docs.sh` step); (5) the GM run's `SRREVAMP_QA_COMMANDS` verification used frame ticks
+because a `SceneTreeTimer` did not fire inside a movie-writer run — worth understanding; (6) **a real bug
+the tools surfaced**: every zone change prints `Trying to assign invalid previously freed instance` from
+`_tick_idle_animations` (World3D.gd:3406) ~125 times — the typed assignment precedes the
+`is_instance_valid` check; world lane's file, one-line fix.
+
 ## Parked, with the state written down
 
 ### Moat water

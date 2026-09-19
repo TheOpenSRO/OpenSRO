@@ -55,6 +55,8 @@
 // the retail client DISPLAYS, has no mirror, and must not be substituted here.
 package worldmap
 
+import "sort"
+
 // RegionSpan is one region's extent in world units, on both axes. The real
 // value: a region's own mesh is 97 vertices at TILE_SIZE, exactly 1920 units.
 const RegionSpan = 1920.0
@@ -100,6 +102,17 @@ var ZoneCentre = map[string][2]int{
 	"constantinople": {100, 98},
 	"hotan":          {87, 118},
 	"samarkand":      {88, 130},
+}
+
+// ZoneNames returns the named zones ToZoneWorld can convert into, sorted --
+// the keys of ZoneCentre. It is what the GM console's /goto offers.
+func ZoneNames() []string {
+	out := make([]string, 0, len(ZoneCentre))
+	for name := range ZoneCentre {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ToZoneWorld converts a real region-local placement into the world

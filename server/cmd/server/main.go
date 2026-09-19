@@ -18,6 +18,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/friend"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/gm"
 	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
 	"github.com/OpenSRO/srrevamp/server/internal/guild"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
@@ -269,6 +270,44 @@ func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Log
 	}
 }
 
+// gmSpecies converts the running monster roster into the species the GM
+// console's /spawn and /goto know, with the same stats maintainMonster
+// hands a live spawn (monsterStatsForLevel plus the roster's own real HP,
+// defence and gold). Its go-to spot is the species' first real npcpos
+// placement in world coordinates when it has one, else the own-design
+// anchor -- so /goto lands where the server actually keeps the monster.
+func gmSpecies() []gm.Species {
+	out := make([]gm.Species, 0, len(monsterSpecs))
+	for _, spec := range monsterSpecs {
+		attack, gold := monsterStatsForLevel(spec.Level, spec.Rarity)
+		defense := spec.Defense
+		if defense < 1 {
+			defense = 1 + spec.Level/3
+		}
+		maxHP := spec.MaxHP
+		if maxHP < 1 {
+			maxHP = 1
+		}
+		x, z := spec.X, spec.Z
+		if len(spec.Spawns) > 0 {
+			s := spec.Spawns[0]
+			rx, ry := worldmap.RegionXY(s.RegionID)
+			if wx, wz, ok := worldmap.ToZoneWorld(spec.Zone, rx, ry, s.LocalX, s.LocalZ); ok {
+				x, z = wx, wz
+			}
+		}
+		out = append(out, gm.Species{
+			Species: combat.Species{
+				Name: spec.Name, CodeName: spec.CodeName, Level: spec.Level, Rarity: spec.Rarity,
+				AttackMin: spec.AttackMin, AttackMax: spec.AttackMax,
+				GoldMin: spec.GoldMin, GoldMax: spec.GoldMax, Critical: spec.Critical,
+			},
+			Zone: spec.Zone, MaxHP: maxHP, Defense: defense, Attack: attack, Gold: gold, X: x, Z: z,
+		})
+	}
+	return out
+}
+
 // refItemStore is the slice of reference data the running server needs:
 // the shop's catalog listing plus the per-item lookup combat uses for
 // attack and defence. Both the PostgreSQL and the in-memory store satisfy
@@ -303,12 +342,18 @@ func main() {
 			"feeds the shop catalogue and prices, item stat lookups and inventory stack limits. "+
 			"With PostgreSQL, import it via cmd/import-refdata instead. Without either, the shop "+
 			"has no items to sell.")
+	gmAccounts := flag.String("gm-accounts", os.Getenv("SRREVAMP_GM_ACCOUNTS"),
+		"comma-separated account usernames allowed to run GM commands (env SRREVAMP_GM_ACCOUNTS). "+
+			"Case is compared as stored in accounts.username. Default none: nobody is a GM. See "+
+			"docs/DEBUG_TOOLS.md.")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	// Install the EXP curve if the operator provided one. Game data, so never
-	// committed -- see docs/LEVELING.md.
+	// committed -- see docs/LEVELING.md. Kept in scope so the GM console's
+	// /level can use the same table.
+	var levelTable *leveldata.Table
 	if *leveldataCSV != "" {
 		f, err := os.Open(*leveldataCSV)
 		if err != nil {
@@ -321,6 +366,7 @@ func main() {
 			logger.Error("parsing leveldata CSV", "path", *leveldataCSV, "error", err)
 			os.Exit(1)
 		}
+		levelTable = table
 		session.SetLevelTable(table)
 		logger.Info("loaded EXP curve", "path", *leveldataCSV, "maxLevel", table.MaxLevel())
 	} else {
@@ -585,6 +631,22 @@ func main() {
 		}
 	}
 
+	// The GM console (docs/DEBUG_TOOLS.md). The gate is the account-username
+	// list; the deps are the same stores every other handler uses, so a GM
+	// command is those stores' own methods and nothing more. The species and
+	// zones a GM can name are built from the running roster and the world map.
+	gmGate := gm.ParseAccounts(*gmAccounts)
+	if names := gmGate.Names(); len(names) > 0 {
+		logger.Info("GM accounts enabled", "accounts", names)
+	} else {
+		logger.Info("no GM accounts set (-gm-accounts / SRREVAMP_GM_ACCOUNTS) -- the GM console is off")
+	}
+	gmDeps := &gm.Deps{
+		Chars: chars, Inv: inv, Equip: eq, Items: refItems, Skills: skills,
+		Monsters: monsters, Mana: manaTracker, Levels: levelTable,
+		Species: gmSpecies(), Zones: worldmap.ZoneNames(), Logger: logger,
+	}
+
 	handle := gateway.Chain(
 		session.LoginHandler(accounts),
 		session.RegisterHandler(registerer),
@@ -621,6 +683,7 @@ func main() {
 		session.EquipmentHandlerWithRules(chars, eq, inv, refItems),
 		session.CharacterStatsHandler(chars, eq, refItems, skills, manaTracker),
 		session.SpendStatPointsHandler(chars, eq, refItems, skills, manaTracker),
+		session.GMCommandHandler(chars, gmGate, gmDeps, hub, logger),
 		session.ShopHandler(chars, shopSvc),
 		session.RepairHandler(chars, eq, refItems),
 		session.StorageHandler(chars, storageSvc),

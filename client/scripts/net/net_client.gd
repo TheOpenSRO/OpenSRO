@@ -128,6 +128,10 @@ signal friend_pending_list_result(requests: Array, error: String)
 ## Using a consumable: what it restored, and how many are left.
 signal use_item_result(result: UseItemNet.Result)
 
+## The GM console's reply (GmNet.Result): whether this account is a GM, the
+## text to print, and any place to move to / views to refresh.
+signal gm_command_result(result: GmNet.Result)
+
 var _tcp_peer: StreamPeerTCP  # the real socket, always present once connecting starts
 var _peer: StreamPeer         # what packets are actually read/written through -- _tcp_peer directly, or a StreamPeerTLS wrapping it once connected with use_tls
 var _connecting := false
@@ -439,6 +443,11 @@ func say(message_text: String) -> void:
 func whisper(target_name: String, message_text: String) -> void:
 	_send(ChatNet.OP_WHISPER, ChatNet.encode_whisper(target_name, message_text))
 
+## Sends a GM console command line (the server gates and runs it). An empty
+## line is the enter-world probe that asks whether this account is a GM.
+func gm_command(char_name: String, line: String, selected_monster: int) -> void:
+	_send(GmNet.OP_COMMAND, GmNet.encode_command(char_name, line, selected_monster))
+
 func list_quests(char_name: String) -> void:
 	_send(QuestNet.OP_LIST, QuestNet.encode_list_request(char_name))
 
@@ -487,7 +496,14 @@ func friend_remove(char_name: String, friend_id: int) -> void:
 func friend_pending_list(char_name: String) -> void:
 	_send(FriendNet.OP_PENDING_LIST, FriendNet.encode_name_request(char_name))
 
+## When on (the /wire console command), every received packet's opcode and
+## size is printed to stdout, which the file logger also captures -- for
+## chasing a desync or a crash from the log.
+var wire_logging := false
+
 func _dispatch(p: Packet) -> void:
+	if wire_logging:
+		print("WIRE recv opcode=0x%04x size=%d" % [p.opcode, p.data.size()])
 	match p.opcode:
 		Auth.OP_LOGIN_RESULT:
 			var r := Auth.decode_result(p.data)
@@ -716,5 +732,9 @@ func _dispatch(p: Packet) -> void:
 		FriendNet.OP_PENDING_LIST_RESULT:
 			var r := FriendNet.decode_pending_list_result(p.data)
 			friend_pending_list_result.emit(r.requests, r.error)
+		GmNet.OP_COMMAND_RESULT:
+			var r := GmNet.decode_result(p.data)
+			if r != null:
+				gm_command_result.emit(r)
 		_:
 			push_warning("NetClient: unhandled opcode 0x%04x" % p.opcode)
