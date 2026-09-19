@@ -7075,6 +7075,25 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-thirty-fifth round: the per-level gold table is not what an ordinary kill drops -- the stand-in stays, its gap named exactly
+
+The RE tick's step for 2026-09-19 11:49, on the kill gold's inferred linkage. Read:
+
+- The server's per-level table is `CRefDropGold` (`_REFDROPGOLD`, binder `0x8312c0`, record
+  base 0x30), found by level via `CGameServer::LevelGold_FindEntry`; an entry is (chance,
+  min, max), and the roll `GObjPC::FUN_00724330` is `rand()%101 <= chance`, then a value in
+  [min, max] with `min <= max` asserted.
+- Its readers: `LevelGold_GetMin` for formulas (`Formula_SkillWithdrawGoldCost`, a COS cost,
+  a `x3` in `FUN_00410370`), and the roll in exactly one place, `GObjPC::FUN_009348f0`: when
+  the dying object's type (vtable slot 300) is 7 it drops three `ITEM_ETC_GOLD_03` piles of
+  `roll * 4` each (ids 10100 and 11000 excepted). **No ordinary monster kill rolls it.**
+- The client's `levelgold.txt` is 140 rows of (level, min, max) -- no chance column -- so it
+  cannot be the server's table either.
+
+So srrevamp's every-kill gold in levelgold's range is a stand-in twice removed from the
+real path (a monster's assigned drop row, DB-only) and never gates by chance. Nothing can be
+read to replace it; `RollGold`'s note now says exactly that. No value changed.
+
 ## Two-hundred-and-thirty-fourth round: the weapon's reach is PARAM_RANGE at item +0x254; the approach rule is parked
 
 The RE tick's step for 2026-09-19 11:34, the third and last budgeted on the attack distance.

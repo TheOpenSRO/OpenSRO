@@ -4986,6 +4986,15 @@ Round 234: the weapon reach is `PARAM_RANGE` = client item record `+0x254` (dm).
 approach comparison was not found by offset greps (every reader of `+0x254` outside
 parsers is a tooltip). PARKED; route left: the attack send site walked back.
 
+### Kill gold, 2026-09-19 (round 235) -- the level table is not the ordinary kill's source
+
+`CRefDropGold` (`_REFDROPGOLD`) entries are (chance, min, max) found by level; the only
+ROLL of it (`FUN_00724330`: `rand()%101 <= chance`, then [min, max]) is `FUN_009348f0`,
+a type-7 special drop of three `x4` piles; everything else reads `LevelGold_GetMin` for
+formulas. Ordinary kill gold is a monster's assigned drop row (DB-only). The client's
+`levelgold.txt` is (level, min, max) with no chance. srrevamp's per-kill range stays a
+disclosed stand-in, now with the real path named; no number can be read for it.
+
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
 via `nItemDBID`), and an empty slot is a real row with `ItemID = 0 or NULL`

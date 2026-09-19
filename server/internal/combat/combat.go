@@ -591,6 +591,26 @@ func RollDamage(min, max int, r *rand.Rand) int {
 // made-up `10 + level*5`. A real client table of per-level gold ranges is better
 // evidence than an invention, and the gap is named rather than hidden. If an
 // operator ever supplies `_REFDROPGOLD`, that supersedes this outright.
+//
+// **Read 2026-09-19 (round 235), and it moves the goalposts, not the number.**
+// The server's per-level table is `CRefDropGold` (`_REFDROPGOLD`, binder
+// 0x8312c0, record base 0x30), found by level through
+// `CGameServer::LevelGold_FindEntry`, each entry (chance, min, max): the roll
+// `GObjPC::FUN_00724330` is `rand()%101 <= chance` then a value in [min, max]
+// (`min <= max` asserted). Its readers are exactly: `LevelGold_GetMin` for
+// FORMULAS (the skill-withdrawal cost at `Formula_SkillWithdrawGoldCost`, a
+// COS cost, a x3 in `FUN_00410370`), and the ROLL in one place only --
+// `GObjPC::FUN_009348f0`, which fires when the dying object's type (vtable slot
+// 300) is 7 and drops THREE piles of `ITEM_ETC_GOLD_03`, each `roll * 4`,
+// skipping ids 10100 and 11000. **No ordinary monster kill rolls this table.**
+// A normal kill's gold is one of the monster's assigned drop rows -- the same
+// DB-only content as its item drops. So this range is a stand-in twice over:
+// levelgold.txt is not the server's table, and the server's table is not the
+// ordinary kill's source. It also never gates: the real roll fails
+// `100 - chance` percent of the time; here gold drops on every kill. Both are
+// disclosed here rather than modelled, because neither number exists outside
+// the shard database. The client's levelgold.txt (level, min, max -- no chance
+// column; 140 rows, level 1 = 28..59, level 140 = 515..1080) stays the range.
 func RollGold(min, max int64, flat int64, r *rand.Rand) int64 {
 	if max <= 0 || max < min {
 		return flat
