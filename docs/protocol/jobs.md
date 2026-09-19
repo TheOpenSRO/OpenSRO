@@ -26,10 +26,13 @@ The join handler reads one byte and accepts exactly three values:
 	else if (kind == 3) x = 0x16;
 	else return 0x4828;
 
-**Which kind is trader, hunter or thief is NOT recovered.** The game has three
-such jobs and there are three kinds, but nothing read so far names them in
-order, so `server/internal/jobs` calls them A, B and C rather than committing to
-a guess.
+**Which kind is trader, hunter or thief -- READ (round 273).** The engine labels
+them itself, twice and independently: `FUN_00466e70` switches on `GetJobType()`
+(vtable slot 71) and `GObjPC::FUN_0060da10` on the job record's byte at `+0x1c`,
+and both spell **1 "Trader", 2 "Robber", 3 "Hunter"** (0 "no job"; the second
+prints "UNKNOWN" otherwise). `server/internal/jobs` now names them
+`KindTrader`, `KindThief`, `KindHunter` (the old A/B/C remain as aliases) and
+`Kind.Name()` returns the engine's words.
 
 **A coincidence worth naming before it causes a bug:** kind 1 maps to `0x14`,
 which is 20, and the minimum level is also 20. They are different things — an

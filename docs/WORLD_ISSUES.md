@@ -7075,6 +7075,15 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-seventy-third round: the three job kinds, in the engine's own words
+
+The RE tick for 2026-09-19 21:02 closed the Jobs row's oldest open item without a curve. Two
+functions label the kind byte independently -- `FUN_00466e70` switching on `GetJobType()` (vtable
+slot 71) and `GObjPC::FUN_0060da10` on the job record's `+0x1c` -- and both spell **1 "Trader",
+2 "Robber", 3 "Hunter"** (0 "no job"). `jobs.KindTrader/KindThief/KindHunter` replace the A/B/C
+placeholders (kept as aliases), `Kind.Name()` returns the words, the ids `0x14..0x16` are
+unchanged. Two names; no shipped value changed.
+
 ## Two-hundred-and-seventy-second round: guild points are the skill points a member earns
 
 The RE tick for 2026-09-19 20:47 took the Guild row's open item and it was sitting in a function

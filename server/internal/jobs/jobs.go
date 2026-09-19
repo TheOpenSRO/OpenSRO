@@ -34,10 +34,33 @@ const MinJobLevel = 20
 type Kind uint8
 
 const (
-	KindA Kind = 1
-	KindB Kind = 2
-	KindC Kind = 3
+	KindTrader Kind = 1
+	KindThief  Kind = 2 // "Robber" in the engine's own word
+	KindHunter Kind = 3
+
+	// The former placeholders, kept as aliases so nothing that used A/B/C
+	// breaks; the names above are the engine's.
+	KindA = KindTrader
+	KindB = KindThief
+	KindC = KindHunter
 )
+
+// Name is the engine's own word for a kind: two independent labellers,
+// 0x466e70 (on GetJobType, vtable slot 71) and GObjPC::FUN_0060da10 (on the
+// job record's byte at +0x1c), both spell 1 "Trader", 2 "Robber", 3 "Hunter",
+// and 0 "no job" (round 273). Nothing else in the package depends on the
+// order; the ids 0x14..0x16 stay what the join handler maps.
+func (k Kind) Name() string {
+	switch k {
+	case KindTrader:
+		return "Trader"
+	case KindThief:
+		return "Robber"
+	case KindHunter:
+		return "Hunter"
+	}
+	return "no job"
+}
 
 // kindIDs is what the handler maps each kind byte to:
 //
@@ -48,10 +71,9 @@ const (
 // are different things -- one is an identifier, the other a level -- and they
 // are only equal by accident. Collapsing them would be a real bug.
 //
-// WHICH KIND IS TRADER, HUNTER OR THIEF IS NOT RECOVERED. The game has three
-// such jobs and there are three kinds, but nothing read so far names them, so
-// they are A, B and C here rather than a guess in a fixed order.
-var kindIDs = map[Kind]int{KindA: 0x14, KindB: 0x15, KindC: 0x16}
+// Which kind is which WAS unrecovered until round 273; the engine's own
+// labellers name them (see Kind.Name), and the ids below are unchanged.
+var kindIDs = map[Kind]int{KindTrader: 0x14, KindThief: 0x15, KindHunter: 0x16}
 
 // ID returns the identifier the join handler maps a kind to, and whether the
 // kind is one the handler accepts.

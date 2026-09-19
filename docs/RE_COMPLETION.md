@@ -5208,6 +5208,9 @@ earns -- GainExpAndLevel accumulates the converted points at pc+0x2184 while in
 a guild and, past 9, RequestAddGuildPoints sends them (0x78F7) for the global
 server to echo into CGuild::AddPoints (guild+0x3c and member+0x40). 1:1, batches
 of >= 10. `guild.PointAccumulator` + test. Three names.
+Round 273 (docs + jobs names): the job kinds are 1 Trader, 2 Robber (thief),
+3 Hunter -- two independent labellers in the binary spell them; `jobs.Kind*`
+renamed with aliases, `Kind.Name()`. Two names.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
