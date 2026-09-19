@@ -261,6 +261,16 @@ func LearnSkillHandler(chars character.Store, skills skill.Store, skillRef Skill
 				return fail("mastery level too low")
 			}
 		}
+		// Gated by what the character already knows: the previous level of the
+		// same skill, and the skilldata prerequisites (ReqLearn_Skill1..3 at
+		// ReqLearn_SkillLevel1..3 -- group ids and levels, columns 40..45).
+		knownIDs, err := skills.KnownSkills(ctx, characterID)
+		if err != nil {
+			return fail("lookup failed")
+		}
+		if reason := learnPrerequisiteFailure(ctx, skillRef, ref, knownIDs); reason != "" {
+			return fail(reason)
+		}
 		// Paid for with skill points.
 		points, err := skills.SkillPoints(ctx, characterID)
 		if err != nil {
@@ -282,6 +292,62 @@ func LearnSkillHandler(chars character.Store, skills skill.Store, skillRef Skill
 		}
 		return sess.Send(&proto.Packet{Opcode: OpLearnSkillResult, Data: (&LearnSkillResult{OK: true}).Encode()})
 	}
+}
+
+// knownGroupLevels folds a character's known real skills into the highest
+// level known per skill GROUP (skilldata GroupID) -- the shape the engine keeps
+// a learned skill in: one entry per group, at a level.
+func knownGroupLevels(ctx context.Context, skillRef SkillRefStore, known []int64) map[int64]int {
+	levels := map[int64]int{}
+	for _, id := range known {
+		r, err := skillRef.GetSkill(ctx, id)
+		if err != nil || r == nil {
+			continue // an own-design catalog skill, not a real row
+		}
+		if r.GroupID == 0 {
+			continue // no group, no chain (a test double; every real row has one)
+		}
+		if r.BasicLevel > levels[r.GroupID] {
+			levels[r.GroupID] = r.BasicLevel
+		}
+	}
+	return levels
+}
+
+// learnPrerequisiteFailure is the part of the learn gate that depends on what
+// the character already knows. Empty means the prerequisites are met.
+//
+// Two rules. First, a skill group holds ONE learned level and the next level
+// is the only one learnable: level N needs level N-1 known (level 1 needs
+// nothing) -- the client's window offers only that "+" and the server now
+// refuses the rest (structural; the engine's own check is unread). Second,
+// the row's ReqLearn_Skill1..3 / ReqLearn_SkillLevel1..3 (skilldata columns
+// 40..45, 3,305 of the real rows carry one): each names a skill GROUP that
+// must be known at at least the given level -- Power Strike's B series needs
+// the A series (group 174) at level 9. Verified on the real chain 2026-09-19.
+func learnPrerequisiteFailure(ctx context.Context, skillRef SkillRefStore, ref *refdata.Skill, known []int64) string {
+	levels := knownGroupLevels(ctx, skillRef, known)
+	if ref.GroupID != 0 {
+		if ref.BasicLevel > 1 && levels[ref.GroupID] < ref.BasicLevel-1 {
+			return fmt.Sprintf("learn level %d first", ref.BasicLevel-1)
+		}
+		if ref.BasicLevel > 0 && levels[ref.GroupID] >= ref.BasicLevel {
+			return "already known"
+		}
+	}
+	for _, req := range [][2]int64{
+		{ref.ReqLearnSkill1, ref.ReqLearnSkillLevel1},
+		{ref.ReqLearnSkill2, ref.ReqLearnSkillLevel2},
+		{ref.ReqLearnSkill3, ref.ReqLearnSkillLevel3},
+	} {
+		if req[0] == 0 {
+			continue
+		}
+		if int64(levels[req[0]]) < req[1] {
+			return fmt.Sprintf("requires skill group %d at level %d", req[0], req[1])
+		}
+	}
+	return ""
 }
 
 // DisclosedSkillDamagePerLevel is this project's OWN-DESIGN skill-damage rate,

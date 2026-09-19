@@ -58,7 +58,7 @@ order() { iconv -f UTF-16LE -t UTF-8 "$1" | tr -d '\r' | sed 's/^\xef\xbb\xbf//'
 /tmp/export-leveldata -out leveldata.csv leveldata.txt                      # 140 levels
 rm -f itemdata_* skilldata_*   # the extracted tables are game data; keep only the CSVs
 
-# The exporter grows a strict-suffix column now and then (latest: the weapon Range column, round 247, 2026-09-19);
+# The exporter grows a strict-suffix column now and then (latest: the six skill prerequisite columns, round 250, 2026-09-19 -- re-run the SKILLS export too);
 # an older items.csv still loads, but the new column reads as 0 until the export is re-run.
 # Re-run steps 1-3 after pulling such a change.
 

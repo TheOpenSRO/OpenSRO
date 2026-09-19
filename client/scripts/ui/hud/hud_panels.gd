@@ -76,6 +76,10 @@ signal system_help_requested
 ## activating that quickslot is what casts it. basic_code names the cast .ban
 ## clip; icon is the skill's already-loaded cell texture for the slot.
 signal skill_assign_requested(skill_id: int, basic_code: String, icon: Texture2D)
+## A learned skill was DRAGGED out of the window and released at a screen
+## position: World3D resolves the position against the underbar's quickslots
+## and puts the skill there (the original's way onto the hotbar).
+signal skill_drop_requested(at: Vector2, skill_id: int, basic_code: String, icon: Texture2D)
 ## A talk-box service line other than "End conversation" was chosen; `key` is
 ## the service's stable key (NpcServiceReader.Service.key -- "shop", "repair",
 ## ...). World3D acts on it (opens the shop, ...).
@@ -1642,7 +1646,93 @@ func _equipment_slot_at(point: Vector2) -> int:
 ## The drag's motion and release arrive here rather than on the cell, since
 ## the mouse has left it by then. Nothing is consumed unless a drag actually
 ## ends on a release, so ordinary clicks elsewhere are unaffected.
+# --- Dragging a skill out of the skill window --------------------------------
+#
+# The same hand-rolled drag as the bag's: a press on a learned skill arms it,
+# moving past the threshold starts it (a ghost of the icon follows the mouse),
+# and the release is handed to World3D with the screen position -- it owns the
+# underbar and resolves the quickslot. A release without movement is a click,
+# and keeps the "next free slot" shortcut.
+
+var _skill_drag_id := 0
+var _skill_drag_code := ""
+var _skill_drag_icon: Texture2D = null
+var _skill_drag_source: Control = null
+var _skill_drag_origin := Vector2.ZERO
+var _skill_drag_preview: TextureRect = null
+var _skill_drag_armed := false
+
+func _arm_skill_drag(skill_id: int, basic_code: String, icon: Texture2D, source: Control, at: Vector2) -> void:
+	_cancel_skill_drag()
+	_skill_drag_id = skill_id
+	_skill_drag_code = basic_code
+	_skill_drag_icon = icon
+	_skill_drag_source = source
+	_skill_drag_origin = at
+	_skill_drag_armed = true
+
+func _start_skill_drag() -> void:
+	if _skill_drag_preview != null or _skill_drag_icon == null:
+		return
+	var preview := TextureRect.new()
+	preview.texture = _skill_drag_icon
+	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	preview.custom_minimum_size = Vector2(32, 32)
+	preview.size = Vector2(32, 32)
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	preview.top_level = true
+	preview.z_index = 4096
+	preview.modulate = Color(1, 1, 1, 0.85)
+	add_child(preview)
+	_skill_drag_preview = preview
+	if _skill_drag_source != null:
+		_skill_drag_source.modulate = Color(1, 1, 1, 0.35)
+	_skill_drag_preview.global_position = get_global_mouse_position() - Vector2(16, 16)
+
+func _cancel_skill_drag() -> void:
+	if _skill_drag_preview != null:
+		_skill_drag_preview.queue_free()
+		_skill_drag_preview = null
+	if _skill_drag_source != null and is_instance_valid(_skill_drag_source):
+		_skill_drag_source.modulate = Color(1, 1, 1, 1)
+	_skill_drag_source = null
+	_skill_drag_armed = false
+
+func _skill_drag_input(event: InputEvent) -> bool:
+	if not _skill_drag_armed:
+		return false
+	if event is InputEventMouseMotion:
+		var motion := event as InputEventMouseMotion
+		if _skill_drag_preview == null:
+			if motion.global_position.distance_to(_skill_drag_origin) >= BAG_DRAG_THRESHOLD:
+				_start_skill_drag()
+		if _skill_drag_preview != null:
+			_skill_drag_preview.global_position = motion.global_position - Vector2(16, 16)
+		return true
+	if event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
+		if _skill_drag_preview != null:
+			_cancel_skill_drag()
+			get_viewport().set_input_as_handled()
+		return true
+	if event is InputEventMouseButton and not (event as InputEventMouseButton).pressed \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		var dragging := _skill_drag_preview != null
+		var at := (event as InputEventMouseButton).global_position
+		var id := _skill_drag_id
+		var code := _skill_drag_code
+		var icon := _skill_drag_icon
+		_cancel_skill_drag()
+		if dragging:
+			get_viewport().set_input_as_handled()
+			skill_drop_requested.emit(at, id, code, icon)
+		else:
+			skill_assign_requested.emit(id, code, icon)
+		return true
+	return false
+
 func _input(event: InputEvent) -> void:
+	if _skill_drag_input(event):
+		return
 	if _bag_drag_slot < 0:
 		return
 	if event is InputEventMouseMotion:
@@ -2277,15 +2367,25 @@ func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: Skil
 			var cast_id: int = s.level_ids[learned - 1]
 			var cast_code: String = s.basic_code
 			var cast_icon: Texture2D = icon.texture
+			# A press arms a drag (see _input): moving starts it and the release
+			# drops the skill on a quickslot; a plain click keeps the shortcut of
+			# putting it on the next free slot.
 			icon.gui_input.connect(func(ev: InputEvent) -> void:
 				if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-					skill_assign_requested.emit(cast_id, cast_code, cast_icon))
+					_arm_skill_drag(cast_id, cast_code, cast_icon, icon, (ev as InputEventMouseButton).global_position))
 
 		# The "+" appears when the next level is within the current mastery level;
 		# the server enforces the SP cost (refdata ReqLearnSP) and refunds on fail.
 		var next_level := learned + 1
 		var can_learn := next_level <= s.max_level and next_level <= s.level_reqs.size() \
 			and mastery_level >= s.level_reqs[next_level - 1] and s.level_ids[next_level - 1] > 0
+		# The real prerequisites too (skilldata ReqLearn_Skill1..3): another
+		# skill group known at a level. The server refuses these as well; the
+		# window simply doesn't offer the "+" and says so in the tooltip.
+		var missing := _missing_prerequisites(s, next_level)
+		if not missing.is_empty():
+			can_learn = false
+			icon.tooltip_text += "\nRequires: " + ", ".join(missing)
 		if can_learn and levelup_tex != null:
 			var add_btn := TextureButton.new()
 			add_btn.texture_normal = levelup_tex
@@ -2302,6 +2402,35 @@ func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: Skil
 ## The highest contiguous level of a skill the character has learned (0 = not
 ## learned). Learning is sequential, so this is how many of the skill's levels
 ## from level 1 up are in the server's known-skills set.
+## The prerequisite groups of s's level `level` that the character has not
+## reached, as "Name Lv N" strings (the group's name when the window knows the
+## group, else its id). Empty when the level is learnable on that count.
+func _missing_prerequisites(s: SkillDataReader.BaseSkill, level: int) -> Array:
+	var out: Array = []
+	if level < 1 or level > s.level_prereqs.size():
+		return out
+	for pair in s.level_prereqs[level - 1]:
+		var group_id := int(pair[0])
+		var need := int(pair[1])
+		var have := 0
+		var other: SkillDataReader.BaseSkill = _skill_by_base_id(group_id)
+		if other != null:
+			have = _skill_learned_level(other)
+		if have < need:
+			var label := other.display_name(_skill_text_table()) if other != null else "skill %d" % group_id
+			out.append("%s Lv %d" % [label, need])
+	return out
+
+## The board's BaseSkill for a skill group id (skilldata GroupID / base id),
+## or null when the archive's board does not carry it.
+func _skill_by_base_id(base_id: int) -> SkillDataReader.BaseSkill:
+	for key in _skill_grid:
+		for entry in _skill_grid[key]:
+			var bs: SkillDataReader.BaseSkill = entry
+			if bs.base_id == base_id:
+				return bs
+	return null
+
 func _skill_learned_level(s: SkillDataReader.BaseSkill) -> int:
 	# QA only: pretend the first N levels of every skill are learned, so a render
 	# can show the learned badge + the next level's "+" without a live server.

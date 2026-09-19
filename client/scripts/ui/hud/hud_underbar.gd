@@ -172,3 +172,38 @@ func _prev_page() -> void:
 func _update_page_visibility() -> void:
 	if _lbl_page != null:
 		_lbl_page.text = str(_current_page)
+	# The layout carries all 50 slot controls (GDR_TMPQS_0..49); only the
+	# current page's ten are shown -- slots (page-1)*10 .. +9.
+	for i in _slot_nodes:
+		var node: Control = _slot_nodes[i]
+		node.visible = _page_of_slot(int(i)) == _current_page
+
+## The 1-based page a slot index belongs to.
+func _page_of_slot(slot_index: int) -> int:
+	return slot_index / SLOTS_PER_PAGE + 1
+
+## The absolute slot index of the current page's k-th slot (0..9): what the
+## number keys 1..9,0 address.
+func slot_for_key(k: int) -> int:
+	return (_current_page - 1) * SLOTS_PER_PAGE + k
+
+## The number key k (0..9, where the "0" key is the tenth slot) was pressed:
+## activate that slot of the current page.
+func activate_key(k: int) -> void:
+	quickslot_activated.emit(slot_for_key(k))
+
+## The visible quickslot under a screen position, or -1. This is what a skill
+## dragged out of the skill window is dropped onto.
+func slot_index_at(global_pos: Vector2) -> int:
+	for i in _slot_nodes:
+		var node: Control = _slot_nodes[i]
+		if node.visible and node.get_global_rect().has_point(global_pos):
+			return int(i)
+	return -1
+
+## Whether a slot currently shows an icon.
+func slot_has_item(slot_index: int) -> bool:
+	if not _slot_nodes.has(slot_index):
+		return false
+	var icon_rect := (_slot_nodes[slot_index] as Control).get_node_or_null("ItemIcon") as TextureRect
+	return icon_rect != null and icon_rect.texture != null

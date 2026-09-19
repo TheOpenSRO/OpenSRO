@@ -1375,6 +1375,7 @@ func _try_initialize_pk2_ui() -> void:
 		else:
 			_log_system("Controls: click to move, drag to turn the camera, mouse wheel to zoom. F1 dev tools, F3 debug panel, I inventory, K skill, M map. Type /help for commands."))
 	_hud_panels.skill_assign_requested.connect(_on_skill_assign_requested)
+	_hud_panels.skill_drop_requested.connect(_on_skill_drop_requested)
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
 
 	# The chat window, bottom-left where its registry entry puts it. This
@@ -4714,11 +4715,40 @@ func _on_skill_assign_requested(skill_id: int, basic_code: String, icon: Texture
 			return
 	_log_system("Quickslots are full.")
 
-## A quickslot was activated (clicked): cast the skill assigned to it.
+## A learned skill was dragged out of the skill window and released: put it
+## on the quickslot under the mouse (replacing whatever was there), or do
+## nothing when it was dropped elsewhere.
+func _on_skill_drop_requested(at: Vector2, skill_id: int, basic_code: String, icon: Texture2D) -> void:
+	var slot := _hud_underbar.slot_index_at(at)
+	if slot < 0:
+		return
+	_quickslot_skills[slot] = {"id": skill_id, "code": basic_code}
+	_hud_underbar.set_slot_item(slot, icon)
+	_log_system("Assigned skill to quickslot %d." % (slot % HudUnderbar.SLOTS_PER_PAGE + 1))
+
+## A quickslot was activated (clicked, or its number key pressed): cast the
+## skill assigned to it.
 func _on_quickslot_activated(slot_index: int) -> void:
 	var entry = _quickslot_skills.get(slot_index)
 	if entry != null:
 		_cast_skill(int(entry["id"]), String(entry["code"]))
+
+## The number keys 1..9 and 0 are the current page's ten quickslots, as in the
+## original. Only reached when no text field has focus (a focused LineEdit
+## consumes the key before it becomes unhandled input).
+func _quickslot_hotkey(event: InputEvent) -> bool:
+	if not (event is InputEventKey) or _hud_underbar == null:
+		return false
+	var key := event as InputEventKey
+	if not key.pressed or key.echo or key.ctrl_pressed or key.alt_pressed:
+		return false
+	if key.keycode >= KEY_1 and key.keycode <= KEY_9:
+		_hud_underbar.activate_key(key.keycode - KEY_1)
+		return true
+	if key.keycode == KEY_0:
+		_hud_underbar.activate_key(9)
+		return true
+	return false
 
 ## Casts a skill: plays its real cast animation (from basic_code) and sends the
 ## use-skill request against the current target. The animation plays regardless
@@ -4731,12 +4761,16 @@ func _cast_skill(skill_id: int, basic_code: String) -> void:
 	var us := anim_base.rfind("_")
 	if us > 0 and anim_base.substr(us + 1).is_valid_int():
 		anim_base = anim_base.substr(0, us)
+	if _last_attack_target == -1:
+		# Nothing selected: the original refuses too ("no target"), and a
+		# swing at nothing only looked like a cast that did nothing.
+		_log_system("Select a target first (click a monster), then use the skill.")
+		return
 	_last_combat_time = _player_anim_time
 	_play_skill_cast_anim(anim_base)
-	if _last_attack_target != -1:
-		_show_target(_last_attack_target)
-		_pending_skill_hit_code = basic_code
-		NetClient.use_skill(NetClient.current_character_name, skill_id, _last_attack_target)
+	_show_target(_last_attack_target)
+	_pending_skill_hit_code = basic_code
+	NetClient.use_skill(NetClient.current_character_name, skill_id, _last_attack_target)
 
 ## The group entry behind _body_animation_for, for its events.
 func _body_animation_entry(gender: String, action_type: int, group: String) -> BsrReader.AnimationEntry:
@@ -7448,6 +7482,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and (event as InputEventKey).pressed \
 			and (event as InputEventKey).keycode == KEY_F3 and _debug_panel != null:
 		_debug_panel.toggle()
+		get_viewport().set_input_as_handled()
+		return
+	# 1..9 and 0: the current page's quickslots.
+	if _quickslot_hotkey(event):
 		get_viewport().set_input_as_handled()
 		return
 	# R goes berserk: the server activates it only if the five-orb gauge is

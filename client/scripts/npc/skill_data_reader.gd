@@ -55,6 +55,15 @@ const S_REUSE_DELAY := 14         # the cooldown
 const S_RANGE := 21               # 0 = melee
 const S_MASTERY := 34
 const S_REQ_MASTERY_LEVEL := 36
+# The learn prerequisites: up to three (skill GROUP id, level) pairs a level
+# needs known first -- skilldata ReqLearn_Skill1..3 / ReqLearn_SkillLevel1..3.
+# Verified 2026-09-19 on SKILL_CH_SWORD_SMASH_B_01: 174 (the A series) at 9.
+const S_REQ_SKILL_1 := 40
+const S_REQ_SKILL_2 := 41
+const S_REQ_SKILL_3 := 42
+const S_REQ_SKILL_LEVEL_1 := 43
+const S_REQ_SKILL_LEVEL_2 := 44
+const S_REQ_SKILL_LEVEL_3 := 45
 const S_REQ_SP := 46              # SP to learn this level
 const S_CONSUME_MP := 53
 const S_GROUP_ROW := 59
@@ -99,6 +108,10 @@ class BaseSkill:
 	var level_sp: PackedInt32Array = PackedInt32Array()
 	## MP each level costs to cast, aligned with level_ids (skilldata Consume_MP).
 	var level_mp: PackedInt32Array = PackedInt32Array()
+	## Each level's learn prerequisites, aligned with level_ids: an Array of
+	## [group_id, level] pairs (skilldata ReqLearn_Skill1..3 / SkillLevel1..3),
+	## empty when the level needs nothing but its mastery level and SP.
+	var level_prereqs: Array = []
 	## Cast timing / range, constant across a skill's levels (verified for SMASH_A):
 	## cast time and cooldown in ms, range in game units (0 = melee), and the
 	## tooltip description code resolved through the UI text table.
@@ -207,6 +220,11 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 			var unique_id := _int_at(cols, S_UNIQUE_ID)
 			var sp := _int_at(cols, S_REQ_SP)
 			var mp := _int_at(cols, S_CONSUME_MP)
+			var prereqs: Array = []
+			for pair in [[S_REQ_SKILL_1, S_REQ_SKILL_LEVEL_1], [S_REQ_SKILL_2, S_REQ_SKILL_LEVEL_2], [S_REQ_SKILL_3, S_REQ_SKILL_LEVEL_3]]:
+				var g := _int_at(cols, pair[0])
+				if g > 0:
+					prereqs.append([g, _int_at(cols, pair[1])])
 			if by_base.has(base_id):
 				var existing: BaseSkill = by_base[base_id]
 				existing.max_level = maxi(existing.max_level, level)
@@ -216,7 +234,7 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				if level == 1:
 					existing.first_level_id = unique_id
 				if level >= 1:
-					existing._levels[level] = [unique_id, req, sp, mp]
+					existing._levels[level] = [unique_id, req, sp, mp, prereqs]
 			else:
 				var s := BaseSkill.new()
 				s.base_id = base_id
@@ -229,7 +247,7 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				if level == 1:
 					s.first_level_id = unique_id
 				if level >= 1:
-					s._levels[level] = [unique_id, req, sp, mp]
+					s._levels[level] = [unique_id, req, sp, mp, prereqs]
 				by_base[base_id] = s
 			var bs: BaseSkill = by_base[base_id]
 			if bs.cast_time_ms == 0 and bs.cooldown_ms == 0 and bs.range_val == 0 and bs.desc_code == "":
@@ -271,12 +289,17 @@ static func _finalize_levels(s: BaseSkill) -> void:
 	s.level_reqs.resize(top)
 	s.level_sp.resize(top)
 	s.level_mp.resize(top)
+	s.level_prereqs.resize(top)
+	for i in range(top):
+		s.level_prereqs[i] = []
 	for lv in s._levels:
 		var info: Array = s._levels[lv]
 		s.level_ids[int(lv) - 1] = int(info[0])
 		s.level_reqs[int(lv) - 1] = int(info[1])
 		s.level_sp[int(lv) - 1] = int(info[2])
 		s.level_mp[int(lv) - 1] = int(info[3])
+		if info.size() > 4:
+			s.level_prereqs[int(lv) - 1] = info[4]
 
 static func _int_at(cols: PackedStringArray, col: int) -> int:
 	if col >= cols.size():

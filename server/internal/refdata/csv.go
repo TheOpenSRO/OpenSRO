@@ -337,6 +337,11 @@ var skillCSVColumns = []string{
 	// Appended later (a computed blow that is identically zero and therefore
 	// always the floor of 1). Strict suffix; false is what older exports meant.
 	"FloorBlow",
+	// Appended later (the learn prerequisites, skilldata columns 40..45): a
+	// strict suffix, so an older export loads with none and learning is gated
+	// by the mastery level and SP alone, as it was before these existed.
+	"ReqLearnSkill1", "ReqLearnSkillLevel1", "ReqLearnSkill2", "ReqLearnSkillLevel2",
+	"ReqLearnSkill3", "ReqLearnSkillLevel3",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -481,6 +486,15 @@ func parseSkillRow(f []string) (Skill, error) {
 	}
 	if len(f) > 36 {
 		sk.FloorBlow = parseInt(f[36]) != 0
+	}
+	// The learn prerequisites (group id, level) x3, optional in the same way.
+	if len(f) > 42 {
+		sk.ReqLearnSkill1 = parseInt64(f[37])
+		sk.ReqLearnSkillLevel1 = parseInt64(f[38])
+		sk.ReqLearnSkill2 = parseInt64(f[39])
+		sk.ReqLearnSkillLevel2 = parseInt64(f[40])
+		sk.ReqLearnSkill3 = parseInt64(f[41])
+		sk.ReqLearnSkillLevel3 = parseInt64(f[42])
 	}
 
 	if err != nil {

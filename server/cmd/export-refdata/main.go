@@ -243,9 +243,19 @@ const (
 	// 0xff (255) marks an unused slot; both 0xff means no requirement.
 	skReqCastWeapon1 = 50
 	skReqCastWeapon2 = 51
-	skReqLearnSP     = 46 // ReqLearn_SP (learn cost, verified 2/5/7 across SMASH_A 1-3)
-	skReqLearnRace   = 47 // ReqLearn_Race
-	skName           = 62 // SN_SKILL_ name code
+	// The learn prerequisites: three (group id, required level) pairs.
+	// Verified on the Power Strike chain 2026-09-19: SKILL_CH_SWORD_SMASH_B_01
+	// carries 174/9 -- the A series' group at level 9 -- and 3,305 of the
+	// 33,632 real rows carry one.
+	skReqLearnSkill1      = 40
+	skReqLearnSkill2      = 41
+	skReqLearnSkill3      = 42
+	skReqLearnSkillLevel1 = 43
+	skReqLearnSkillLevel2 = 44
+	skReqLearnSkillLevel3 = 45
+	skReqLearnSP          = 46 // ReqLearn_SP (learn cost, verified 2/5/7 across SMASH_A 1-3)
+	skReqLearnRace        = 47 // ReqLearn_Race
+	skName                = 62 // SN_SKILL_ name code
 	// The highest field skillRecord reads; a shorter row isn't a real skill.
 	skMax = 62
 )
@@ -566,6 +576,13 @@ func skillRecord(cols []string) ([]string, bool) {
 		noCombatParam(cols),   // 34 NoCombatParam -- the engine resolves no blow for this skill
 		zeroDamage(cols),      // 35 ZeroDamage -- a resolved blow whose damage is zero
 		floorBlow(cols),       // 36 FloorBlow -- a computed blow that is identically zero, so always the floor of 1
+		// 37..42: the learn prerequisites (group id, level) x3, skilldata 40..45.
+		get(skReqLearnSkill1),      // 37 ReqLearnSkill1
+		get(skReqLearnSkillLevel1), // 38 ReqLearnSkillLevel1
+		get(skReqLearnSkill2),      // 39 ReqLearnSkill2
+		get(skReqLearnSkillLevel2), // 40 ReqLearnSkillLevel2
+		get(skReqLearnSkill3),      // 41 ReqLearnSkill3
+		get(skReqLearnSkillLevel3), // 42 ReqLearnSkillLevel3
 	}, true
 }
 

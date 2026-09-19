@@ -68,9 +68,19 @@ Section = Create,"0,0,800,60","0"
 
 	underbar._next_page()
 	_check(lbl_page.text == "2", "next page is 2")
+	# The number keys address the CURRENT page's ten slots: key 1 is the
+	# eleventh slot on page 2, the "0" key the twentieth.
+	_check(underbar.slot_for_key(0) == 10 and underbar.slot_for_key(9) == 19,
+		"number keys address the current page's slots (got %d, %d)" % [underbar.slot_for_key(0), underbar.slot_for_key(9)])
+	var fired := [-1]
+	underbar.quickslot_activated.connect(func(idx: int) -> void: fired[0] = idx)
+	underbar.activate_key(2)
+	_check(fired[0] == 12, "activate_key fires the page's slot (got %d)" % fired[0])
 
 	underbar._prev_page()
 	_check(lbl_page.text == "1", "prev page is 1")
+	_check(underbar.slot_for_key(0) == 0, "back on page 1, key 1 is slot 0")
+	_check(underbar.slot_index_at(Vector2(-1000, -1000)) == -1, "no slot under a point outside the bar")
 
 	underbar.free()
 

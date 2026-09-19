@@ -7075,6 +7075,35 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-fiftieth round: playtest -- skill prerequisites, the hotbar's drag/keys/pages, and a target before a cast
+
+Three things the user hit while playing (2026-09-19, ~15:00 UTC), fixed together (v0.1.401):
+
+1. **"There aren't skill restrictions."** The learn gate checked the mastery level and the SP
+   and nothing else. skilldata columns 40..45 (`ReqLearn_Skill1..3` / `ReqLearn_SkillLevel1..3`)
+   are the real prerequisites -- a skill GROUP that must be known at a level; verified on the
+   Power Strike chain (`SKILL_CH_SWORD_SMASH_B_01` needs group 174, the A series, at level 9;
+   3,305 of 33,632 rows carry one). Exported as six strict-suffix skill columns, in
+   `refdata.Skill`, and enforced by `session.learnPrerequisiteFailure` together with the level
+   chain (level N needs N-1 of the same group known -- structural, the engine's own check
+   unread). The client's reader parses the same columns (`level_prereqs`) and the window
+   withholds the "+" and says *Requires: Power Strike Lv 9* in the tooltip. Tests on both sides.
+2. **"Skills should be click-and-draggable" / "I can't use the skills."** A learned skill can
+   now be dragged out of the window and dropped on a quickslot (the bag's hand-rolled drag,
+   reused; a plain click keeps the next-free-slot shortcut); the number keys **1..9, 0** cast
+   the current page's slots (there were no hotkeys at all -- the "or its key" in the log line
+   was a promise the code never kept); the underbar's four pages now actually show their own
+   ten slots (`_update_page_visibility` only relabelled before). And a cast with no target
+   selected says so instead of playing a swing at nothing, which is what "can't use" looked
+   like: the screenshot shows ten skills assigned and a Mangyang targeted from Alexandria.
+3. The **Alexandria white ground** is in a world-lane agent (render box); its round follows.
+
+Verified: `go test -p 1 ./...` 56 packages green; the client compiles on the render box
+(`check`: 233 scripts) and the underbar/skill-reader suites pass with new cases for the key
+mapping and the prerequisite columns. The drag gesture itself is not exercisable headless --
+it needs a hand test. `HELP_PLAYING.md` gained a "Skills and the hotbar" section. The Yeoha-in-
+town report is a spawn-data item now in `docs/TODO.md` (only Mangyang has real `npcpos` rows).
+
 ## Two-hundred-and-forty-ninth round: how a skill applies a status -- the resist pairs settled per state
 
 The RE tick for 2026-09-19 15:04 read `Combat_ApplyStatusEffects` (`0x590680`) with a

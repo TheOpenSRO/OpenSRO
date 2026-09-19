@@ -90,6 +90,13 @@ In order. Each is checked off here when it ships in a release, with its round in
       shard DB supersedes it via `import-refdata -drops-csv/-drop-groups-csv`.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
+- [ ] **Real spawn points for every roster species.** Playtest 2026-09-19: "why are there Yeohas in
+      town?" -- only Mangyang has its real `npcpos` rows wired (4 of them); the other ten species
+      still stand at the own-design anchors near the town square (Yeoha at `200,-220`, ~300 units
+      from the spawn). The data exists (`npcpos.txt`: 26 Yeoha rows, all outside town) and the
+      region transform is measured; what is missing is loading `npcpos` at runtime like items.csv
+      (an `export-npcpos` + `-npcpos-csv` flag) rather than embedding 400 coordinates in `main.go`.
+      Until then the anchors are labelled own design in the roster comment.
 - [ ] **Attack distance.** Neither the client nor the server gates an attack by distance today: a
       monster can be hit from anywhere (an absent rule, by omission). Read in round 232: the SERVER
       never refuses on distance -- `0x3007 UIIT_SKILL_USE_FAIL_WRONGDISTANCE` occurs nowhere in its

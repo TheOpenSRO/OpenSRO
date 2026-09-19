@@ -210,6 +210,18 @@ type Skill struct {
 	ReqLearnSP   int
 	ReqLearnRace int
 
+	// The learn PREREQUISITES, skilldata columns 40..45 (ReqLearn_Skill1..3 /
+	// ReqLearn_SkillLevel1..3): up to three skill GROUP ids that must be known
+	// at at least the given level before this skill can be learned. In the
+	// retail table 3,305 of 33,632 rows carry one -- e.g. Power Strike's B
+	// series (SKILL_CH_SWORD_SMASH_B_01, mastery level 27) requires group 174
+	// (the A series) at level 9. Zero = no prerequisite in that slot. Within
+	// one group the levels chain structurally: a group has one learned level
+	// and the next level is the only one learnable (session.LearnSkillHandler).
+	ReqLearnSkill1, ReqLearnSkillLevel1 int64
+	ReqLearnSkill2, ReqLearnSkillLevel2 int64
+	ReqLearnSkill3, ReqLearnSkillLevel3 int64
+
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the
 	// skill window gates a skill on -- a skill is learnable once the character's

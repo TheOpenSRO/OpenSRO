@@ -37,6 +37,19 @@ Three views (the names the original's own Option window uses):
 Click an NPC to talk, buy, or use storage. Click a monster to target it, then
 attack.
 
+## Skills and the hotbar
+
+Open **Skills** (K). A skill you can learn shows a **+** under its icon; learning
+costs the SP shown and needs your mastery at the level shown -- and, as in the
+original, some skills need another skill first (the tooltip says which, e.g.
+*Requires: Power Strike Lv 9*), and each level needs the one before it.
+
+**Drag a learned skill out of the window and drop it on a quickslot** of the
+underbar (a plain click also puts it on the next free slot). The number keys
+**1..9 and 0** cast the current page's ten quickslots, or click a slot; the
+arrows beside the slots flip between four pages. A skill needs a **target**:
+click a monster first, then cast.
+
 ## Chat and commands
 
 The chat line takes messages and slash commands. `/help` opens this help and

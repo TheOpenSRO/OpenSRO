@@ -46,6 +46,11 @@ func _skill(base_id: String, level: String, mastery: String, req_ml: String,
 	cols[SkillDataReader.S_REQ_SP] = str(int(level) * 10)
 	cols[SkillDataReader.S_CONSUME_MP] = str(int(level) * 5)
 	cols[SkillDataReader.S_TOOLTIP_DESC] = name + "_TT"
+	# Level 2 of every synthetic skill needs group 174 at level 9 -- the shape
+	# of the real SKILL_CH_SWORD_SMASH_B_01 row (ReqLearn_Skill1/Level1).
+	if level == "2":
+		cols[SkillDataReader.S_REQ_SKILL_1] = "174"
+		cols[SkillDataReader.S_REQ_SKILL_LEVEL_1] = "9"
 	return "\t".join(cols)
 
 func _init() -> void:
@@ -127,5 +132,9 @@ func _test_skills() -> void:
 				"cast time / cooldown / range are the skill's constants")
 			_check(r0[0].desc_code == "SN_SKILL_CH_SWORD_SMASH_A_TT",
 				"desc_code is the tooltip description token")
+			_check(r0[0].level_prereqs.size() == 2 and (r0[0].level_prereqs[0] as Array).is_empty()
+				and (r0[0].level_prereqs[1] as Array).size() == 1
+				and int(r0[0].level_prereqs[1][0][0]) == 174 and int(r0[0].level_prereqs[1][0][1]) == 9,
+				"level_prereqs holds each level's (group, level) prerequisites (got %s)" % str(r0[0].level_prereqs))
 			_check(r0[0].cast_anim_name() == "skill_ch_sword_smash_a",
 				"cast_anim_name lowercases Basic_Code and drops the level suffix (got %s)" % r0[0].cast_anim_name())
