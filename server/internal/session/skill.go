@@ -664,7 +664,7 @@ func UseSkillHandlerWithGround(
 		// The gauge rides along unchanged so the HUD orbs do not blink to zero
 		// on a cast that simply is not an attack.
 		if noCombat || zeroDmg {
-			res := &AttackResult{}
+			res := &AttackResult{MonsterID: req.TargetMonsterID}
 			if zerk != nil {
 				res.BerserkGauge = int32(zerk.Gauge(characterID))
 				res.BerserkActive = zerk.Active(characterID)

@@ -868,6 +868,12 @@ var _player_one_shot_until := 0.0
 ## The monster the last attack was sent at, so its swing and the player's
 ## reaction to it can be played when the result comes back.
 var _last_attack_target := -1
+## Monsters the local player's own blow is about to make flinch, keyed to the
+## scene-time (ms) until which _on_attack_result owns that reaction. The zone
+## broadcast for the same hit arrives right behind the result, and used to
+## decide "mine or someone else's" by comparing against the CURRENT target --
+## which double-flinched the real victim after a retarget.
+var _own_hit_until: Dictionary = {}
 ## Underbar quickslot index -> {"id": skill id, "code": Basic_Code} for skills
 ## the player has put on the hotbar from the skill window. Activating a slot
 ## casts its skill.
@@ -5185,6 +5191,8 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_WORLDMAP=1 open the world map window over the world
 ##   SRREVAMP_QA_ATTACK_NAME=s  only monsters whose plate contains s (e.g. Mangyang)
 ##   SRREVAMP_QA_ATTACK_GOTO=1  stand next to the target first (QA teleport)
+##   SRREVAMP_QA_ATTACK_ALTERNATE=1  with QA_ATTACK: swing at the nearest and the
+##                          second-nearest monster in turn (a retarget every swing)
 ##   SRREVAMP_QA_ATTACK=1   attack the nearest monster every second, so a
 ##                          hit reaction and a death can be rendered
 ##   SRREVAMP_QA_FLOAT=r     report placed objects within r that sit clear
@@ -5677,6 +5685,7 @@ func _qa_advance_shots() -> void:
 ## reasoning about it: for every piece, where the bone is, where the piece
 ## ended up, and how far apart they are.
 var _qa_attacking := false
+var _qa_alternate_flip := false
 
 ## Attacks whichever live monster is nearest the player -- the same
 ## request the Attack button sends -- so the combat animations can be
@@ -5688,6 +5697,7 @@ func _qa_attack_nearest() -> void:
 	# contains it (the nearest monster to the spawn is a Yeoha that kills a
 	# fresh character; a drop test wants a Mangyang).
 	var wanted := OS.get_environment("SRREVAMP_QA_ATTACK_NAME")
+	var candidates: Array = []  # [distance, id], nearest first
 	for monster_id in _monster_bodies:
 		if _dying_until.has(monster_id):
 			continue
@@ -5699,11 +5709,21 @@ func _qa_attack_nearest() -> void:
 			if plate == null or not plate.text.contains(wanted):
 				continue
 		var d := body.global_position.distance_to(player.global_position)
-		if d < nearest:
-			nearest = d
-			nearest_id = monster_id
-	if nearest_id == -1:
+		candidates.append([d, monster_id])
+	if candidates.is_empty():
 		return
+	candidates.sort_custom(func(a, b): return float(a[0]) < float(b[0]))
+	nearest = float(candidates[0][0])
+	nearest_id = int(candidates[0][1])
+	# SRREVAMP_QA_ATTACK_ALTERNATE=1 swings at the nearest and the second
+	# nearest in turn, so the target changes between a swing and its landing
+	# -- the situation that made the wrong monster animate (round on the
+	# result's monster id). With one candidate it degrades to the nearest.
+	if OS.get_environment("SRREVAMP_QA_ATTACK_ALTERNATE") != "" and candidates.size() > 1:
+		_qa_alternate_flip = not _qa_alternate_flip
+		if _qa_alternate_flip:
+			nearest = float(candidates[1][0])
+			nearest_id = int(candidates[1][1])
 	# SRREVAMP_QA_ATTACK_GOTO=1 stands the player a few units from the target
 	# first (a QA teleport, no collision), so the frames -- and any drop --
 	# are in front of the camera rather than 2,000 units away.
@@ -7734,40 +7754,61 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			_play_player_once(swing)
 		var hit_ms := swing_entry.first_event_time(BsrReader.AnimationEntry.EVENT_HIT)
 		lands_after = float(hit_ms) / 1000.0 if hit_ms > 0 else 0.0
-	# The monster this result is about: attack results carry no monster id,
-	# so it is the target the attack was sent for. Captured now because a
-	# killing blow may clear _last_attack_target before the blow lands, and
-	# the floating damage number still has to appear over the dying body.
-	var damage_target := _last_attack_target
+	# The monster this result is about. The server names it (AttackResult.
+	# MonsterID; NetClient fills it from the target the attack was sent at
+	# when a server predates the field). It is NOT _last_attack_target: the
+	# result lands a swing later than it was sent, and a retarget in between
+	# used to make the new target flinch, take the number and swing back
+	# while the old one fell -- "one Mangyang killed another". Every
+	# animation, number and effect below is pinned to this id.
+	var monster: int = result.monster_id if result.monster_id != 0 else _last_attack_target
+	if monster != _last_attack_target:
+		print("World3D: attack result for monster %d while targeting %d -- animating %d" % [
+			monster, _last_attack_target, monster])
+	elif OS.get_environment("SRREVAMP_QA_ATTACK") != "":
+		print("World3D: attack result for monster %d -> animating %d" % [monster, monster])
 	# A skill cast (not a plain attack) plays that skill's own hit effect on the
 	# target when the blow lands. Consumed here so the next plain attack doesn't
 	# inherit it.
 	var skill_hit_code := _pending_skill_hit_code
 	_pending_skill_hit_code = ""
-	if _last_attack_target != -1:
+	if monster != -1:
 		var dealt := result.monster_damage
+		var died := result.monster_died
+		_own_hit_until[monster] = Time.get_ticks_msec() + int(lands_after * 1000.0) + 750
 		_after(lands_after, func() -> void:
-			# _last_attack_target (not the captured id) so a monster that died
-			# in the meantime keeps its die animation instead of a hit reaction.
-			_play_monster_action(_last_attack_target, BsrReader.AnimationEntry.TYPE_HIT)
-			var hit_body = _monster_bodies.get(damage_target)
+			# The moment that used to go wrong: the blow lands a swing after it
+			# was sent, and the live target may already be another monster.
+			if OS.get_environment("SRREVAMP_QA_ATTACK") != "" and monster != _last_attack_target:
+				print("World3D: blow lands on monster %d (now targeting %d) -- animating %d" % [
+					monster, _last_attack_target, monster])
+			# A monster this blow killed keeps its die animation (played by the
+			# list sync) instead of a hit reaction; a surviving one flinches.
+			if not died:
+				_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_HIT)
+			var hit_body = _monster_bodies.get(monster)
 			if hit_body != null and is_instance_valid(hit_body):
-				_floating_damage(hit_body, _monster_text_height(damage_target), dealt, DAMAGE_DEALT_COLOUR)
+				_floating_damage(hit_body, _monster_text_height(monster), dealt, DAMAGE_DEALT_COLOUR)
 				if skill_hit_code != "":
-					_play_skill_hit_effect_on(hit_body, _monster_text_height(damage_target), skill_hit_code))
+					_play_skill_hit_effect_on(hit_body, _monster_text_height(monster), skill_hit_code))
 	if result.player_damage_taken > 0 and _player_skeleton != null:
 		# The monster strikes back: its own attack, and the player's hit
-		# reaction (type 3) when that swing's hit event falls.
+		# reaction (type 3) when that swing's hit event falls. Only the monster
+		# that took the blow counterattacks -- the server resolves the counter
+		# from the same target -- so it is pinned to `monster` too.
 		var strike_after := 0.0
-		if _last_attack_target != -1:
-			var assembled: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(_last_attack_target)
+		if monster != -1:
+			var assembled: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(monster)
 			if assembled != null and assembled.parsed != null:
 				var strike := assembled.parsed.animation_entry_for(BsrReader.AnimationEntry.TYPE_ATTACK)
 				if strike != null:
 					var ms := strike.first_event_time(BsrReader.AnimationEntry.EVENT_HIT)
 					strike_after = float(ms) / 1000.0 if ms > 0 else 0.0
 			_after(lands_after, func() -> void:
-				_play_monster_action(_last_attack_target, BsrReader.AnimationEntry.TYPE_ATTACK))
+				if OS.get_environment("SRREVAMP_QA_ATTACK") != "" and monster != _last_attack_target:
+					print("World3D: counter-swing by monster %d (now targeting %d) -- animating %d" % [
+						monster, _last_attack_target, monster])
+				_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_ATTACK))
 		_after(lands_after + strike_after, func() -> void:
 			var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
 			if hit != null:
@@ -7814,8 +7855,11 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 
 func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
 	# Someone else's hit on a monster: play its reaction now. The local
-	# player's own hits are timed to the swing in _on_attack_result.
-	if damaged != null and damaged.monster_id != _last_attack_target:
+	# player's own hits are timed to the swing in _on_attack_result, which
+	# marks the monster it is about to animate (see _own_hit_until) -- not
+	# "whatever I am targeting now", which is a different monster after a
+	# retarget.
+	if damaged != null and int(_own_hit_until.get(damaged.monster_id, 0)) < Time.get_ticks_msec():
 		_play_monster_action(damaged.monster_id, BsrReader.AnimationEntry.TYPE_HIT)
 	# Shrink the HP bar at once, before the list round-trip, so it tracks
 	# each hit. The max comes from the last snapshot of this monster.

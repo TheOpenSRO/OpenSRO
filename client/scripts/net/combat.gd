@@ -80,6 +80,10 @@ class AttackResult:
 	## Experience lost to the death penalty, 0 when the player did not die or
 	## is still inside the level-10 grace period.
 	var death_exp_lost: int = 0
+	## The monster this result is about (the one that took monster_damage and
+	## counterattacked). 0 when the server predates the field or refused
+	## before resolving a target; World3D then falls back to the id it sent.
+	var monster_id: int = 0
 
 ## Result of decode_monster_damaged().
 class MonsterDamaged:
@@ -173,6 +177,8 @@ static func decode_attack_result(data: PackedByteArray) -> AttackResult:
 		result.player_critical = data[offset + 32] != 0
 	if offset + 34 <= data.size():
 		result.player_blocked = data[offset + 33] != 0
+	if offset + 42 <= data.size():
+		result.monster_id = data.decode_s64(offset + 34)
 
 	return result
 

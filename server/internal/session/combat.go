@@ -280,6 +280,15 @@ type AttackResult struct {
 	// see leveldata.DeathPenaltyExp. Appended, so an older client that stops
 	// reading at the berserk tail still decodes the rest.
 	DeathExpLost int64
+
+	// MonsterID names the monster this result is about -- the one that took
+	// MonsterDamage and, if it survived, counterattacked. Without it the
+	// client could only guess from "whatever I am targeting now", and a
+	// retarget between the swing and its landing made the wrong monster
+	// animate ("one Mangyang killed another"). Appended after the flag bytes,
+	// so a client that stops at 34 bytes still decodes; 0 means unknown (an
+	// old server, or a refusal before the target was resolved).
+	MonsterID int64
 }
 
 func (r *AttackResult) Encode() []byte {
@@ -309,6 +318,8 @@ func (r *AttackResult) Encode() []byte {
 	if r.PlayerBlocked {
 		buf[33] = 1
 	}
+	// Trailing, additive: see MonsterID's doc comment.
+	buf = append(buf, encodeInt64(r.MonsterID)...)
 	return append(out, buf...)
 }
 
@@ -345,6 +356,9 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 	}
 	if len(rest) >= 34 {
 		r.PlayerBlocked = rest[33] != 0
+	}
+	if len(rest) >= 42 {
+		r.MonsterID = int64(binary.LittleEndian.Uint64(rest[34:42]))
 	}
 	return r, nil
 }
@@ -781,7 +795,7 @@ func performAttack(
 ) error {
 	monster, ok := monsters.Get(targetMonsterID)
 	if !ok {
-		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found"}).Encode()})
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
 	}
 
 	// A monster is only reachable from its own zone -- MonsterListResult
@@ -791,7 +805,7 @@ func performAttack(
 	// than leaking that a target with that ID exists somewhere else.
 	attacker, ok := hub.EntityBySession(sess.ID())
 	if !ok || attacker.Zone != monster.Zone {
-		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found"}).Encode()})
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
 	}
 
 	// Both sides' levels, for the level-advantage term below and for the
@@ -807,7 +821,7 @@ func performAttack(
 
 	base, err := attackerDamageOf(ctx, characterID, playerStr, playerInt, eq, items, attackType)
 	if err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed"}).Encode()})
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed", MonsterID: targetMonsterID}).Encode()})
 	}
 
 	// Stage 1: the roll is scaled by the caster's mastery before anything else
@@ -909,11 +923,11 @@ func performAttack(
 
 	updated, monsterDied, ok := monsters.ApplyDamage(targetMonsterID, net)
 	if !ok {
-		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found"}).Encode()})
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
 	}
 
-	result := &AttackResult{MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP), MonsterDied: monsterDied,
-		PlayerCritical: playerCrit}
+	result := &AttackResult{MonsterID: targetMonsterID, MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP),
+		MonsterDied: monsterDied, PlayerCritical: playerCrit}
 	// The berserk orbs ride along on every attack result so the HUD tracks
 	// them -- but a blow that does not kill earns nothing: the engine adds
 	// hwan only on the killing blow (see berserk.EarnOnKill), which is

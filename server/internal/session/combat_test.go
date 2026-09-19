@@ -46,6 +46,30 @@ func TestAttackResultRoundTrip(t *testing.T) {
 	}
 }
 
+// The result names its monster, and it does so in a trailing field: a
+// result written by an older server (34 bytes after the error string) still
+// decodes with MonsterID 0, and a 42-byte one carries the id.
+func TestAttackResultCarriesMonsterID(t *testing.T) {
+	want := &AttackResult{MonsterID: 0x1122334455, MonsterDamage: 12, MonsterRemainingHP: 42,
+		PlayerDamageTaken: 3, PlayerHP: 197, BerserkGauge: 20, PlayerCritical: true}
+	enc := want.Encode()
+	got, err := DecodeAttackResult(enc)
+	if err != nil {
+		t.Fatalf("DecodeAttackResult: %v", err)
+	}
+	if *got != *want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	// An older server's payload: cut the trailing id off.
+	old, err := DecodeAttackResult(enc[:len(enc)-8])
+	if err != nil {
+		t.Fatalf("DecodeAttackResult(old): %v", err)
+	}
+	if old.MonsterID != 0 || old.MonsterDamage != 12 || !old.PlayerCritical {
+		t.Fatalf("old payload decoded as %+v; want MonsterID 0 and the rest intact", old)
+	}
+}
+
 func TestMonsterDamagedRoundTrip(t *testing.T) {
 	want := &MonsterDamaged{MonsterID: 1, Damage: 10, RemainingHP: 90}
 	got, err := DecodeMonsterDamaged(want.Encode())

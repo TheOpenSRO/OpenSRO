@@ -215,6 +215,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	_tcp_peer = StreamPeerTCP.new()
 	_peer = null
 	_reader = PacketReader.new()
+	_attack_targets_in_flight.clear()
 	_use_tls = use_tls
 	_tls_host = host
 	server_host = host
@@ -237,6 +238,7 @@ func disconnect_from_server() -> void:
 	_peer = null
 	_connected = false
 	_tls_handshaking = false
+	_attack_targets_in_flight.clear()
 	disconnected.emit()
 
 func is_connected_to_server() -> bool:
@@ -337,8 +339,20 @@ func withdraw_from_storage(char_name: String, warehouse_slot: int, quantity: int
 func storage_gold(char_name: String, op: int, amount: int) -> void:
 	_send(StorageNet.OP_GOLD, StorageNet.encode_gold(char_name, op, amount))
 
+## Which monster each outstanding attack/skill was sent AT, oldest first. The
+## server answers every OpAttack and OpUseSkill with exactly one OpAttackResult
+## (refusals included) and now names the monster in it; this queue is the
+## fallback for a server that predates that field (monster_id 0), so the
+## client still attributes the blow to the monster it swung at rather than to
+## whatever it is targeting by the time the result lands. Pushed only when the
+## send actually went out, so the queue stays aligned with the replies.
+var _attack_targets_in_flight: Array[int] = []
+
 func attack(char_name: String, target_monster_id: int) -> void:
+	if not is_connected_to_server():
+		return
 	_send(CombatNet.OP_ATTACK, CombatNet.encode_attack(char_name, target_monster_id))
+	_attack_targets_in_flight.append(target_monster_id)
 
 func berserk(char_name: String) -> void:
 	_send(CombatNet.OP_BERSERK, CombatNet.encode_berserk(char_name))
@@ -359,7 +373,10 @@ func learn_skill(char_name: String, skill_id: int) -> void:
 ## Response arrives as attack_result (see SkillNet's doc comment: using a
 ## skill reuses OpAttackResult, since it's just an attack with a bonus).
 func use_skill(char_name: String, skill_id: int, target_monster_id: int) -> void:
+	if not is_connected_to_server():
+		return
 	_send(SkillNet.OP_USE, SkillNet.encode_use(char_name, skill_id, target_monster_id))
+	_attack_targets_in_flight.append(target_monster_id)
 
 func list_skills(char_name: String) -> void:
 	_send(SkillNet.OP_LIST, SkillNet.encode_list(char_name))
@@ -520,7 +537,15 @@ func _dispatch(p: Packet) -> void:
 			var r := StorageNet.decode_gold_result(p.data)
 			storage_gold_result.emit(r.ok, r.reason if r.error == "" else r.error, r.carried, r.stored)
 		CombatNet.OP_ATTACK_RESULT:
-			attack_result.emit(CombatNet.decode_attack_result(p.data))
+			var ar := CombatNet.decode_attack_result(p.data)
+			# One reply per swing: consume the oldest sent target. The server's
+			# own id wins when it gave one; the queue only fills a 0.
+			var sent_at := -1
+			if not _attack_targets_in_flight.is_empty():
+				sent_at = _attack_targets_in_flight.pop_front()
+			if ar.monster_id == 0 and sent_at != -1:
+				ar.monster_id = sent_at
+			attack_result.emit(ar)
 		CombatNet.OP_BERSERK_RESULT:
 			var br := CombatNet.decode_berserk_result(p.data)
 			berserk_result.emit(br.activated, br.gauge, br.active)
