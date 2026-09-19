@@ -103,6 +103,24 @@ fee waiver below 21 -- so if the restriction columns are enforced, it is
 elsewhere (`FUN_00485d00`, which fails with code 3 before the switch, is the
 unread candidate) or client-side in the destination list.
 
+## The columns' structure, from the client's own parser (2026-09-19)
+
+`GlobalDataManager::RefParse_teleportlink` (`sro_client.exe`, `0x00976c80`) reads
+a row as sequential tokens: five direct fields to `+0x8, +0xc, +0x10, +0x14,
++0x18`, then **five triples stored column-major** -- `(type_k, data_k_1,
+data_k_2)` to `+0x1c+4k`, `+0x30+4k`, `+0x44+4k` for `k = 0..4`. That is the
+shape the data shows: column 7 (`{0,1,2}`), 8 and 9 (the level-looking pair),
+then 10 (`{0,1,2}`) again -- **restriction type, data, data, five times from
+column 7.** So columns 8/9 are the first restriction's two data words; whether
+its type value denotes a *level* restriction is what remains unread: the
+client's teleport dialog (`UI_TELEPORT::FUN_006fd3e0`, `0x006fd3e0`) formats
+each destination with `UIIT_CTL_TELEPORT_FREE_RESULT` when the entry's fee word
+is 0 and `UIIT_CTL_TELEPORT_RESULT` (with the fee) otherwise, and compares a
+byte at `entry+6` against a level-shaped value -- but those entries are the
+**server's list reply**, so the gate is applied when the server builds that
+list. *Next probe:* the server's reply to a gate talk (the list builder), or
+the list packet's layout on the client side of that same function.
+
 ## `teleportbuilding.txt` — the gate objects
 
 **77 enabled rows, 59 columns.** The physical gates: `2094 STORE_CH_GATE`,
