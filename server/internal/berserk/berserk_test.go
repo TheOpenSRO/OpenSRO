@@ -5,83 +5,163 @@ import (
 	"time"
 )
 
-func TestFillCapsAndActivates(t *testing.T) {
-	tr := NewTracker()
-	const id = int64(1)
+// forceRoll pins rand()%10000 for one test and restores it afterwards.
+func forceRoll(t *testing.T, v int) {
+	t.Helper()
+	prev := roll10000
+	roll10000 = func() int { return v }
+	t.Cleanup(func() { roll10000 = prev })
+}
 
-	// Fills by FillPerHit, capped at Max.
-	got := 0
-	for i := 0; i < 100; i++ {
-		got = tr.Fill(id)
+// TestGainChanceIsTheBinarysTable pins FUN_00410880 point by point -- the
+// numbers are the .rdata constants read off SR_GameServer.exe (8.0 at
+// 0xb45e14, 0.25 at 0xb45b50 and 0xb45ca8, 8.0 at 0xb45eb0) run through the
+// asm at 0x410880-0x4109c0, and the rarity cases are its jump table at
+// 0x4109e8. Chance is in units of 1/100 % (rolled against rand()%10000).
+func TestGainChanceIsTheBinarysTable(t *testing.T) {
+	cases := []struct {
+		name           string
+		killer, victim int
+		monster        bool
+		rarity         int
+		gainPct        int
+		wantChance     int
+		wantAmount     int
+	}{
+		{"same level: base 8%", 20, 20, true, 0, 0, 800, 1},
+		{"victim 3 below: still class 0", 20, 17, true, 0, 0, 800, 1},
+		{"victim 4 below: class 2 but clamped to base", 20, 16, true, 0, 0, 800, 1},
+		{"victim 5 below: exactly base", 20, 15, true, 0, 0, 800, 1},
+		{"victim 6 below: 7.75%", 20, 14, true, 0, 0, 775, 1},
+		{"victim 10 below: 6.75%", 20, 10, true, 0, 0, 675, 1},
+		{"victim 36 below: reaches the 0.25% floor", 40, 4, true, 0, 0, 25, 1},
+		{"victim 60 below: floored", 80, 20, true, 0, 0, 25, 1},
+		{"victim 10 above: class 0, base", 20, 30, true, 0, 0, 800, 1},
+		{"victim 11 above: class 1, no bonus", 20, 31, true, 0, 0, 800, 1},
+		{"champion: no modifier", 20, 20, true, 1, 0, 800, 1},
+		{"unique (3): all five, certain", 20, 20, true, RarityUnique, 0, GainCertain, UniqueGain},
+		{"unique (8): all five, certain", 20, 20, true, RarityUnique2, 0, GainCertain, UniqueGain},
+		{"giant: x5", 20, 20, true, RarityGiant, 0, 4000, 1},
+		{"titan: no modifier", 20, 20, true, 5, 0, 800, 1},
+		{"elite: x2", 20, 20, true, RarityElite, 0, 1600, 1},
+		{"giant far below: x5 on the decayed chance", 20, 10, true, RarityGiant, 0, 3375, 1},
+		{"not a monster: no rarity switch", 20, 20, false, RarityUnique, 0, 800, 1},
+		{"param 184 = 200: doubles", 20, 20, true, 0, 200, 1600, 1},
+		{"param 184 = 50 on a giant: 4000*50/100", 20, 20, true, RarityGiant, 50, 2000, 1},
 	}
-	if got != Max {
-		t.Fatalf("gauge capped at %d, got %d", Max, got)
-	}
-
-	// Not active until activated; activation needs a full gauge.
-	if tr.Active(id) {
-		t.Fatal("should not be active before activation")
-	}
-	if !tr.Activate(id) {
-		t.Fatal("a full gauge should activate")
-	}
-	if tr.Gauge(id) != 0 {
-		t.Fatalf("gauge should empty on activation, got %d", tr.Gauge(id))
-	}
-	if !tr.Active(id) {
-		t.Fatal("should be active after activation")
+	for _, c := range cases {
+		chance, amount := GainChance(Kill{KillerLevel: c.killer, VictimLevel: c.victim,
+			VictimIsMonster: c.monster, VictimRarity: c.rarity, GainPercent: c.gainPct})
+		if chance != c.wantChance || amount != c.wantAmount {
+			t.Errorf("%s: GainChance = (%d, %d), want (%d, %d)", c.name, chance, amount, c.wantChance, c.wantAmount)
+		}
 	}
 }
 
-func TestActivateNeedsFullGauge(t *testing.T) {
+// TestLevelGapClassIsFUN_0040fe60 pins the three classes: diff < -3 -> 2,
+// diff < 11 -> 0, else 1, with diff = victim - killer.
+func TestLevelGapClassIsFUN_0040fe60(t *testing.T) {
+	for diff, want := range map[int]int{-4: 2, -3: 0, 0: 0, 10: 0, 11: 1, 50: 1, -100: 2} {
+		if got := LevelGapClass(50, 50+diff); got != want {
+			t.Errorf("LevelGapClass(diff %d) = %d, want %d", diff, got, want)
+		}
+	}
+}
+
+// TestEarnOnKillRollsWholeOrbs: the dice decide, a success adds whole orbs,
+// a unique adds all five regardless of the dice, and the count caps at Orbs.
+func TestEarnOnKillRollsWholeOrbs(t *testing.T) {
 	tr := NewTracker()
 	const id = int64(1)
-	tr.Fill(id) // one hit, nowhere near full
-	if tr.Activate(id) {
-		t.Fatal("a partial gauge must not activate")
+	same := Kill{KillerLevel: 10, VictimLevel: 10, VictimIsMonster: true}
+
+	forceRoll(t, 800) // rand()%10000 == chance: NOT below it, so no gain
+	if got := tr.EarnOnKill(id, same); got != 0 || tr.Charges(id) != 0 {
+		t.Fatalf("roll == chance must fail: gained %d, charges %d", got, tr.Charges(id))
 	}
-	if tr.Gauge(id) != FillPerHit {
-		t.Fatalf("a failed activation must not empty the gauge, got %d", tr.Gauge(id))
+	forceRoll(t, 799) // just below: success, one orb
+	if got := tr.EarnOnKill(id, same); got != 1 || tr.Charges(id) != 1 {
+		t.Fatalf("roll < chance must add one orb: gained %d, charges %d", got, tr.Charges(id))
+	}
+	if tr.Gauge(id) != Max/Orbs {
+		t.Fatalf("one orb on the wire = %d, got %d", Max/Orbs, tr.Gauge(id))
+	}
+	forceRoll(t, 9999) // the worst roll: a unique still pays, and all five
+	unique := Kill{KillerLevel: 10, VictimLevel: 10, VictimIsMonster: true, VictimRarity: RarityUnique}
+	if got := tr.EarnOnKill(id, unique); got != Orbs-1 || tr.Charges(id) != Orbs {
+		t.Fatalf("a unique fills to the cap: gained %d, charges %d", got, tr.Charges(id))
+	}
+	if got := tr.EarnOnKill(id, unique); got != 0 || tr.Charges(id) != Orbs {
+		t.Fatalf("at the cap nothing more is added: gained %d, charges %d", got, tr.Charges(id))
+	}
+	if tr.Gauge(id) != Max {
+		t.Fatalf("five orbs on the wire = Max %d, got %d", Max, tr.Gauge(id))
+	}
+}
+
+// TestActivateNeedsAllFiveAndSpendsThem: the handler refuses below 5 (error 1)
+// and spends exactly -5; and AddHwanCount refuses gains while berserk is on.
+func TestActivateNeedsAllFiveAndSpendsThem(t *testing.T) {
+	tr := NewTracker()
+	const id = int64(7)
+	forceRoll(t, 0)
+	k := Kill{KillerLevel: 10, VictimLevel: 10, VictimIsMonster: true}
+	for i := 0; i < Orbs-1; i++ {
+		tr.EarnOnKill(id, k)
+	}
+	if tr.Activate(id) {
+		t.Fatal("activation with four orbs must be refused")
+	}
+	if tr.Charges(id) != Orbs-1 {
+		t.Fatalf("a refused activation must not spend: charges %d", tr.Charges(id))
+	}
+	tr.EarnOnKill(id, k)
+	if !tr.Activate(id) {
+		t.Fatal("activation with five orbs must succeed")
+	}
+	if tr.Charges(id) != 0 || tr.Gauge(id) != 0 {
+		t.Fatalf("activation spends all five: charges %d gauge %d", tr.Charges(id), tr.Gauge(id))
+	}
+	if !tr.Active(id) {
+		t.Fatal("berserk should be active after activation")
+	}
+	if got := tr.EarnOnKill(id, k); got != 0 || tr.Charges(id) != 0 {
+		t.Fatalf("no hwan is earned while berserk: gained %d, charges %d", got, tr.Charges(id))
 	}
 }
 
 func TestBoostOnlyWhenActive(t *testing.T) {
 	tr := NewTracker()
-	const id = int64(1)
+	const id = int64(2)
 	if tr.Boost(id, 100) != 100 {
-		t.Fatal("no boost when inactive")
+		t.Fatal("boost must be a no-op when not berserk")
 	}
-	for i := 0; i < 100; i++ {
-		tr.Fill(id)
+	forceRoll(t, 0)
+	for i := 0; i < Orbs; i++ {
+		tr.EarnOnKill(id, Kill{KillerLevel: 1, VictimLevel: 1, VictimIsMonster: true})
 	}
 	tr.Activate(id)
 	if got := tr.Boost(id, 100); got != 200 {
-		t.Fatalf("boosted damage = %d, want %d", got, 200)
+		t.Fatalf("berserk doubles the blow: Boost(100) = %d, want 200", got)
+	}
+	tr.Clear(id)
+	if tr.Active(id) || tr.Charges(id) != 0 {
+		t.Fatal("Clear must drop the state")
 	}
 }
 
-// The multiplier is the recovered one, not a balance knob: berserk doubles
-// the blow, because Formula_MitigatePhysicalDamage replaces its 1.0 damage
-// multiplier with GetParam(189) + 2.0 when the attacker IsBerserk(), and
-// param 189 is zero unless the separate berserk-damage stat has been granted.
-//
-// Pinned as a test rather than left as a constant nobody rereads: this was
-// +50% own design until 2026-09-15, and a later "let's tune it" edit should
-// have to delete a citation to do it.
+// TestBerserkDoublesTheBlow pins the recovered x2 across a few amounts.
 func TestBerserkDoublesTheBlow(t *testing.T) {
-	if DamageNumerator != 2 || DamageDenominator != 1 {
-		t.Fatalf("berserk multiplier = %d/%d, want 2/1 (.rdata 0x00b45f30 = 2.0)",
-			DamageNumerator, DamageDenominator)
-	}
 	tr := NewTracker()
-	const id = int64(7)
-	for i := 0; i < Max/FillPerHit+1; i++ {
-		tr.Fill(id)
+	const id = int64(3)
+	forceRoll(t, 0)
+	for i := 0; i < Orbs; i++ {
+		tr.EarnOnKill(id, Kill{KillerLevel: 1, VictimLevel: 1, VictimIsMonster: true})
 	}
 	if !tr.Activate(id) {
-		t.Fatal("a full gauge must activate")
+		t.Fatal("could not activate")
 	}
-	for _, tc := range []struct{ in, want int }{{0, 0}, {1, 2}, {37, 74}, {1000, 2000}} {
+	for _, tc := range []struct{ in, want int }{{1, 2}, {7, 14}, {50, 100}, {123, 246}} {
 		if got := tr.Boost(id, tc.in); got != tc.want {
 			t.Errorf("Boost(%d) = %d, want %d", tc.in, got, tc.want)
 		}
@@ -96,8 +176,7 @@ func TestBerserkDoublesTheBlow(t *testing.T) {
 // when the count is not 5 and error 0x183e when it is. A limit that refuses at
 // exactly 5 is a cap of 5.
 //
-// Max and FillPerHit are deliberately NOT pinned here: they are own design, and
-// a test asserting an invented number only makes it harder to replace.
+// Max is deliberately NOT pinned here: it is only the HUD's wire scale.
 func TestOrbsIsTheRecoveredCap(t *testing.T) {
 	if Orbs != 5 {
 		t.Errorf("Orbs = %d, want 5 -- the cap CUsedItemLimit refuses at", Orbs)

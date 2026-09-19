@@ -1,22 +1,30 @@
-// Package berserk implements the Silkroad berserk gauge: fighting fills a
-// five-orb gauge, and when it is full the player can go berserk for a burst of
-// extra damage before it empties. The mechanic is the real one; how fast the
-// gauge fills and how long a berserk lasts are still this project's own
-// disclosed design.
+// Package berserk implements the Silkroad berserk ("Hwan") charges: killing
+// blows earn whole orbs by chance, five orbs let the player go berserk for a
+// burst of doubled damage, and the berserk spends all five. Every number in
+// the earn, the spend, the duration and the multiplier is now read from
+// SR_GameServer.exe (2026-09-19 for the earn; see EarnOnKill).
 //
-// HOW MUCH IT HITS FOR IS NOT. That one is recovered -- see DamageNumerator.
+// There is NO fractional gauge in the engine. The one piece of state is
+// `_CHAR.RemainHwanCount` (charData+0x86, 0..5); this package used to fill a
+// 0..100 bar per attack as its own design, and that is gone. The 0..100 value
+// still crosses the wire (Gauge) only because the HUD lights orb i at
+// gauge >= (i+1)*20 -- it is Charges * 20, nothing more.
+//
 // Berserk is "Hwan" inside the game, which is why three sessions of grepping
 // for "berserk" found nothing.
 package berserk
 
 import (
+	"math"
+	"math/rand"
 	"sync"
 	"time"
 )
 
 const (
-	// Max is a full gauge and each orb is Max/Orbs of it. Max and the gauge
-	// SHAPE are own design; Orbs is not.
+	// Max is the wire scale of the orb display (each orb is Max/Orbs of it);
+	// Orbs is the engine's own cap, and the count behind it is the engine's
+	// own state -- neither is a design choice any more.
 	//
 	// **Orbs = 5 is RECOVERED.** `_CHAR.RemainHwanCount` (charData+0x86 in the
 	// schema CharData_BindDBColumns spells out) is a persisted count, and
@@ -30,19 +38,68 @@ const (
 	// pips the client draws are five real charges rather than a display
 	// choice.
 	//
-	// **The shape around it is still ours, and the engine's is different.**
-	// The game persists a COUNT that an item can raise and a berserk spends;
-	// this package fills a 0..100 gauge from combat. Those are different
-	// mechanics that happen to agree on the number five, and nothing found so
-	// far says how the real count is earned -- so FillPerHit below stays own
-	// design rather than being dressed up as a fill rate for a gauge the game
-	// does not have.
+	// **How the count is earned is RECOVERED too (2026-09-19)** -- see
+	// EarnOnKill and the Gain* constants. The engine keeps only that count;
+	// Max is the wire scale the HUD expects (orb i lights at gauge >=
+	// (i+1)*Max/Orbs), and Gauge is Charges*Max/Orbs.
 	Max  = 100
 	Orbs = 5
 
-	// FillPerHit is the gauge gained from one of the player's attacks (own
-	// design): ~13 hits to fill from empty.
-	FillPerHit = 8
+	// THE EARN RULE, read off the binary function by function. The only
+	// mover of charData+0x86 is GObjPC::AddHwanCount (0x004e4d00: delta in
+	// ESI, clamp [0,5], no gain while GetBodyMode()==1, persist with dirty bit
+	// 0x10). Its combat caller is the per-target apply pass FUN_00593800, and
+	// the condition it fires on is written by Combat_ResolveDamage at the
+	// KILLING blow (crd line 1150): when the accumulated damage reaches the
+	// target's HP it sets effect+0x54 = 1 -- but only if the attacker is not
+	// berserk (GetBodyMode()!=1) and the target answered IGObj::GetLifeState
+	// (slot 62) == 1, i.e. was alive. The apply pass then requires the
+	// attacker to be a PC (slot 7 IsPC), calls FUN_00410880(pc,&amount) for a
+	// chance out of 10000, and on `rand()%10000 < chance` adds `amount`.
+	//
+	// FUN_00410880, from its asm (0x410880-0x4109c0):
+	//
+	//	amount = 1
+	//	pct    = 8.0                                  ; .rdata 0xb45e14 (float), read
+	//	if LevelGapClass(target-attacker) == 2:       ; target more than 3 below
+	//	    pct = 8.0 - 0.25 * (attackerLvl - targetLvl - 5)  ; 0xb45eb0, 0xb45ca8 (doubles), read
+	//	    pct = clamp(pct, 0.25, 8.0)              ; floor 0xb45b50 (float), read
+	//	chance = ftol(pct * 100.0)                    ; 0xb45af0 -> units of 1/100 %
+	//	if target.IsMonster():
+	//	    switch target.GetMonsterClass():          ; slot 75; jump table 0x4109e8
+	//	      3, 8: amount = 5; chance = 10,000,000   ; unique -- all five, certain
+	//	      4:    chance *= 5                         ; giant
+	//	      6:    chance *= 2                         ; elite
+	//	if p := attacker.GetParam(184); p != 0:  chance = chance * p / 100
+	//	return chance & 0xffff
+	//
+	// LevelGapClass is FUN_0040fe60: diff = target - attacker (bytes);
+	// diff < -3 -> 2, diff < 11 -> 0, else 1. Classes 0 and 1 both keep the
+	// 8% -- a much higher target earns no bonus; only a much lower one
+	// decays, 0.25% per level past a five-level gap, to a 0.25% floor.
+	//
+	// Param 184 (registry: default 0, max 1000, no tag recovered) is the
+	// engine's own gain modifier; srrevamp publishes no source for it, so it
+	// is 0 here and the branch is inert -- carried as Kill.GainPercent so a
+	// buff that sets it can reach it. The rarity values are characterdata
+	// column 15's (0 normal, 1 champion, 3/8 unique, 4 giant, 5 titan, 6
+	// elite), the same field combat.Monster.Rarity carries.
+	GainBasePercent      = 8.0
+	GainFloorPercent     = 0.25
+	GainSlopePerLevel    = 0.25
+	GainSlopeStartLevels = 5
+	GainCertain          = 10000 // a chance at or past this always succeeds (the engine's 10,000,000 sentinel)
+	UniqueGain           = 5
+
+	// Monster ranks the earn switch names (characterdata col 15).
+	RarityUnique  = 3
+	RarityGiant   = 4
+	RarityElite   = 6
+	RarityUnique2 = 8
+
+	// Level-gap classes of FUN_0040fe60.
+	gapTooLow  = -3 // diff < -3: the target is more than three levels below
+	gapTooHigh = 11 // diff >= 11: the target is eleven or more above
 
 	// Duration is how long a berserk lasts: **60 seconds**, RECOVERED.
 	//
@@ -197,47 +254,130 @@ const (
 	DamageDenominator = 1
 )
 
+// Kill is what EarnOnKill needs to know about a killing blow.
+type Kill struct {
+	KillerLevel     int
+	VictimLevel     int
+	VictimIsMonster bool
+	// VictimRarity is characterdata column 15 (combat.Monster.Rarity); only
+	// read when VictimIsMonster.
+	VictimRarity int
+	// GainPercent is the killer's param 184, the engine's own modifier
+	// (chance = chance * GainPercent / 100 when non-zero). srrevamp has no
+	// source for it yet; pass 0.
+	GainPercent int
+}
+
+// LevelGapClass is FUN_0040fe60: the class of a victim's level against the
+// killer's. 2 means the victim is more than three levels below, 1 eleven or
+// more above, 0 anything between.
+func LevelGapClass(killerLevel, victimLevel int) int {
+	diff := victimLevel - killerLevel
+	switch {
+	case diff < gapTooLow:
+		return 2
+	case diff < gapTooHigh:
+		return 0
+	default:
+		return 1
+	}
+}
+
+// GainChance is FUN_00410880 without the dice: the chance in units of 1/100
+// of a percent (compared against rand()%10000) and the orbs a success adds.
+// Pure, so the table in the tests is the table in the binary.
+func GainChance(k Kill) (chance int, amount int) {
+	amount = 1
+	pct := GainBasePercent
+	if LevelGapClass(k.KillerLevel, k.VictimLevel) == 2 {
+		pct = GainBasePercent - GainSlopePerLevel*float64(k.KillerLevel-k.VictimLevel-GainSlopeStartLevels)
+		pct = math.Min(math.Max(pct, GainFloorPercent), GainBasePercent)
+	}
+	// ftol(pct * 100): every reachable pct is a multiple of 0.25, so the
+	// product is an exact integer and the rounding mode cannot matter.
+	chance = int(math.Round(pct * 100))
+	if k.VictimIsMonster {
+		switch k.VictimRarity {
+		case RarityUnique, RarityUnique2:
+			amount = UniqueGain
+			chance = GainCertain
+		case RarityGiant:
+			chance *= 5
+		case RarityElite:
+			chance *= 2
+		}
+	}
+	if k.GainPercent != 0 {
+		chance = chance * k.GainPercent / 100
+	}
+	return chance, amount
+}
+
+// roll10000 is rand()%10000; swapped by tests to force the dice.
+var roll10000 = func() int { return rand.Intn(10000) }
+
 // Tracker holds each character's transient berserk state. Not persisted --
-// berserk is in-the-moment combat state, cleared on disconnect like a duel.
+// the real count is a DB column, but srrevamp clears it on disconnect like a
+// duel until the character store carries it.
 type Tracker struct {
 	mu          sync.Mutex
-	gauge       map[int64]int
+	charges     map[int64]int
 	activeUntil map[int64]time.Time
 }
 
 func NewTracker() *Tracker {
-	return &Tracker{gauge: map[int64]int{}, activeUntil: map[int64]time.Time{}}
+	return &Tracker{charges: map[int64]int{}, activeUntil: map[int64]time.Time{}}
 }
 
-// Fill adds one attack's worth of gauge (capped at Max) and returns the new
-// gauge value.
-func (t *Tracker) Fill(characterID int64) int {
+// EarnOnKill rolls the engine's hwan gain for a killing blow the character
+// landed and returns the orbs it added (0, 1, or UniqueGain), the count
+// clamped at Orbs. Nothing is earned while berserk is active -- both the
+// killing-blow test in Combat_ResolveDamage and AddHwanCount itself refuse
+// it. The victim must have been alive when the blow landed; callers only
+// reach this on a kill, which is that condition.
+func (t *Tracker) EarnOnKill(characterID int64, k Kill) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	g := t.gauge[characterID] + FillPerHit
-	if g > Max {
-		g = Max
+	if time.Now().Before(t.activeUntil[characterID]) {
+		return 0
 	}
-	t.gauge[characterID] = g
-	return g
+	chance, amount := GainChance(k)
+	if chance < GainCertain && roll10000() >= chance {
+		return 0
+	}
+	before := t.charges[characterID]
+	after := before + amount
+	if after > Orbs {
+		after = Orbs
+	}
+	t.charges[characterID] = after
+	return after - before
 }
 
-// Gauge returns the current gauge (0..Max).
-func (t *Tracker) Gauge(characterID int64) int {
+// Charges returns the character's orb count (0..Orbs) -- the engine's
+// RemainHwanCount.
+func (t *Tracker) Charges(characterID int64) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.gauge[characterID]
+	return t.charges[characterID]
 }
 
-// Activate goes berserk if the gauge is full, emptying it and returning true.
-// A gauge that is not full is left untouched and false is returned.
+// Gauge returns the wire value the HUD expects (0..Max): Charges scaled so
+// that orb i lights at gauge >= (i+1)*Max/Orbs.
+func (t *Tracker) Gauge(characterID int64) int {
+	return t.Charges(characterID) * (Max / Orbs)
+}
+
+// Activate goes berserk if all Orbs charges are held, spending all of them
+// (the handler's FUN_004e4d00(-5)) and returning true. Fewer charges leave
+// the count untouched and return false (the handler's error 1).
 func (t *Tracker) Activate(characterID int64) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.gauge[characterID] < Max {
+	if t.charges[characterID] < Orbs {
 		return false
 	}
-	t.gauge[characterID] = 0
+	t.charges[characterID] = 0
 	t.activeUntil[characterID] = time.Now().Add(Duration)
 	return true
 }
@@ -268,6 +408,6 @@ func (t *Tracker) Boost(characterID int64, damage int) int {
 func (t *Tracker) Clear(characterID int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.gauge, characterID)
+	delete(t.charges, characterID)
 	delete(t.activeUntil, characterID)
 }

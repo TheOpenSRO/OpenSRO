@@ -892,10 +892,12 @@ func performAttack(
 
 	result := &AttackResult{MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP), MonsterDied: monsterDied,
 		PlayerCritical: playerCrit}
-	// Fighting fills the berserk gauge; report it (and whether berserk is on)
-	// so the HUD orbs and aura track it as the fight goes.
+	// The berserk orbs ride along on every attack result so the HUD tracks
+	// them -- but a blow that does not kill earns nothing: the engine adds
+	// hwan only on the killing blow (see berserk.EarnOnKill), which is
+	// applied below once the kill is known.
 	if zerk != nil {
-		result.BerserkGauge = int32(zerk.Fill(characterID))
+		result.BerserkGauge = int32(zerk.Gauge(characterID))
 		result.BerserkActive = zerk.Active(characterID)
 	}
 	var levelUp *LevelUp // set on a kill that crosses the exp curve, sent below
@@ -906,6 +908,23 @@ func performAttack(
 		// The monster's object is gone, so its blocking streak goes with it.
 		// The engine's accumulator lives on the object; nothing survives it.
 		chanceMemory.Forget(targetMonsterID)
+		// Hwan (berserk orbs) are earned on the KILLING blow, by chance:
+		// 8% base, decaying for a victim more than three levels below the
+		// killer, x5 for a giant, x2 for an elite, all five orbs for a
+		// unique -- the rule read off FUN_00410880 (see internal/berserk).
+		// The killer's level is the character's; a store that cannot say
+		// leaves the base chance, disclosed here rather than guessed.
+		if zerk != nil {
+			killerLevel := 0
+			if kc, err := chars.GetByID(ctx, characterID); err == nil {
+				killerLevel = kc.Level
+			}
+			zerk.EarnOnKill(characterID, berserk.Kill{
+				KillerLevel: killerLevel, VictimLevel: monster.Level,
+				VictimIsMonster: true, VictimRarity: monster.Rarity,
+			})
+			result.BerserkGauge = int32(zerk.Gauge(characterID))
+		}
 		// No damage taken, but the client still wants to know current HP.
 		hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
 		if err != nil {
