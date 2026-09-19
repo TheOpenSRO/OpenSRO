@@ -7659,11 +7659,15 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 			var what: String
 			if result.gold:
 				what = "%d gold" % result.quantity
+				print("World3D: picked up %s (ground item %d, item %d)" % [what, result.ground_id, result.item_id])
+				# No self-gold acquire key was found in the UI text table
+				# (UIIT_MSG_PARTYGET_GOLD is the party share), so this line is ours.
+				_log_system("Picked up %s." % what)
 			else:
 				var label := _item_label_for_line(result.item_id)
 				what = ("%dx %s" % [result.quantity, label]) if label != "" else ("%dx" % result.quantity)
-			print("World3D: picked up %s (ground item %d, item %d)" % [what, result.ground_id, result.item_id])
-			_log_system("Picked up %s." % what)
+				print("World3D: picked up %s (ground item %d, item %d)" % [what, result.ground_id, result.item_id])
+				_log_system(_acquired_item_line(label, result.quantity))
 			if NetClient.is_connected_to_server():
 				if result.gold:
 					NetClient.character_stats(NetClient.current_character_name)
@@ -8052,12 +8056,29 @@ func _play_monster_action(monster_id: int, action_type: int, hold: bool = false)
 		return 0.0
 	return _play_once(assembled.skeleton, anim, hold)
 
+## The client's own "item gained" chat line, from the UI text table: this
+## archive's English is `item [%s %d pieces]gained.` for an expendable
+## (UIIT_MSG_STATE_GET_ITEM_EXPENDABLE) and `item [%s]gained.` for one that
+## is not (UIIT_MSG_STATE_GET_ITEM_NONEXPENDABLE) -- typos and spacing are the
+## file's, not ours. A quantity above one is what marks a stack here (the
+## client keys on the item's expendable class; the wording is the same). Only
+## when the table lacks the key does our own wording stand in.
+func _acquired_item_line(label: String, quantity: int) -> String:
+	var key := "UIIT_MSG_STATE_GET_ITEM_EXPENDABLE" if quantity > 1 else "UIIT_MSG_STATE_GET_ITEM_NONEXPENDABLE"
+	var template := _ui_text_table.get_text(key, "") if _ui_text_table != null else ""
+	if template != "" and label != "":
+		if quantity > 1:
+			return template % [label, quantity]
+		return template % [label]
+	if label == "":
+		return "Picked up %dx." % quantity
+	return ("Picked up %dx %s." % [quantity, label]) if quantity > 1 else ("Picked up %s." % label)
+
 func _on_loot_dropped(dropped: CombatNet.LootDropped) -> void:
 	if dropped == null:
 		return
 	for d in dropped.drops:
-		var label := _item_label_for_line(d.item_id)
-		_log_system(("Looted %dx %s." % [d.quantity, label]) if label != "" else ("Looted %dx." % d.quantity))
+		_log_system(_acquired_item_line(_item_label_for_line(d.item_id), d.quantity))
 	NetClient.list_inventory(NetClient.current_character_name)
 
 # --- Inventory tab ---------------------------------------------------------
