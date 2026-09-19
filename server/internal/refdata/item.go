@@ -284,4 +284,22 @@ type Item struct {
 	MagAttackMin, MagAttackMax         float64
 	HitRateMin, HitRateMax             float64
 	CriticalMin, CriticalMax           float64
+
+	// The per-instance HIGH ends of the eight weapon stats above, itemdata
+	// columns 96/98, 101/103 (attack) and 106/108, 110/112 (reinforce). Each
+	// weapon stat is a (lo, hi) pair the engine interpolates by the INSTANCE's
+	// variance -- Char_BuildAggregateStats (0x00495d60), weapon branch:
+	// damage min/max by group 4 (physical, ref +0x228/+0x22c and
+	// +0x234/+0x238 -> item +0x1b8/+0x1bc, params 13/14) and group 5
+	// (magical, +0x240/+0x244 and +0x24c/+0x250 -> +0x1c0/+0x1c4, params
+	// 15/16); the reinforce pairs by group 1 (physical, +0x258/+0x25c and
+	// +0x264/+0x268) and group 2 (magical, +0x270/+0x274 and +0x27c/+0x280),
+	// read off the disassembly 2026-09-19 (round 244). The *Min/*Max fields
+	// above are the lo ends (columns 95/97, 100/102, 105/107, 109/111); an
+	// export older than these eight columns leaves the hi ends 0, and
+	// combat.WeaponRange then uses the lo end alone, as it always did.
+	PhysAttackMinHi, PhysAttackMaxHi       float64
+	MagAttackMinHi, MagAttackMaxHi         float64
+	ReinforcePhysMinHi, ReinforcePhysMaxHi float64
+	ReinforceMagMinHi, ReinforceMagMaxHi   float64
 }

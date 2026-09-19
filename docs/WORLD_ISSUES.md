@@ -7075,6 +7075,31 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-forty-fourth round: a worn weapon's damage and reinforce read the instance -- eight hi-end columns exported
+
+The RE tick for 2026-09-19 14:04 finished what round 243 started on the other half of the
+item. `combat.WeaponRange` read every weapon stat at its variance FLOOR: the export carried
+only the lo end of each (lo, hi) pair (columns 95/97, 100/102, 105/107, 109/111), so a sword
+hit for its worst possible roll whatever its instance said.
+
+**The read.** The weapon branch of `Char_BuildAggregateStats` (`0x4960b7..0x496586`) is six
+interpolation blocks after durability, and one `mov esi,N` serves a PAIR of stores each:
+group 4 (`0x4963f0`) computes physical damage min from `+0x228/+0x22c` and max from
+`+0x234/+0x238`, both with the increment at `+0x23c`; group 5 the magical pair
+(`+0x240/+0x244`, `+0x24c/+0x250`); group 1 the physical reinforce pair; group 2 the
+magical; 3 attack rate; 6 critical. `RefObjItem::ExtractData` lays the block out with a
+synthesized zero between the min and max pairs (`+0x230`), which is why column 97 is the
+max's LO end and 98 its hi, not a continuation of the min.
+
+**Wired through (v0.1.397):** eight strict-suffix columns 52-59 in the item CSV
+(`PhysAttackMinHi` ... `ReinforceMagMaxHi`, itemdata 96/98, 101/103, 106/108, 110/112),
+through `refdata.Item`, the SQL schema (`ALTER TABLE ... IF NOT EXISTS`, default 0) and the
+exporter; `combat.WeaponRange(item, inst, str, intel, atk)` takes the instance and
+interpolates each pair by its group, reading the lo end alone for `NoInstance`, an Untracked
+row, or an older export whose hi ends are zero -- the previous behaviour, kept as the
+fallback. Tests pin the groups, the pair-per-group rule, and the old-export path; the full
+suite is green. The public server's `items.csv` is re-exported and re-imported below.
+
 ## Two-hundred-and-forty-third round: a worn piece's defence is its instance's white stat -- and the variance group is not the triple index
 
 The RE tick for 2026-09-19 13:49 went after a shipped value with a weak reason:

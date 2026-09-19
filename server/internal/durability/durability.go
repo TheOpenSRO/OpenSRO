@@ -60,6 +60,19 @@ const (
 	ShieldBlockGroup       = 3 // 0x4967b0
 	ShieldPhysDefenseGroup = 4 // 0x49682a
 	ShieldMagDefenseGroup  = 5 // 0x4968a4
+	// A weapon (the branch at 0x4960b7..0x496586): group 1 the physical
+	// reinforce pair (+0x258/+0x25c min, +0x264/+0x268 max -> +0x1c8/+0x1cc,
+	// params 34/36), 2 the magical reinforce pair (+0x270.. -> +0x1d0/+0x1d4,
+	// params 35/37), 3 attack rate, 4 the PHYSICAL DAMAGE pair (+0x228/+0x22c
+	// min and +0x234/+0x238 max, one `mov esi,4` at 0x4963f0 serving both
+	// stores at +0x1b8/+0x1bc, params 13/14), 5 the MAGICAL DAMAGE pair
+	// (+0x240.. and +0x24c.. -> +0x1c0/+0x1c4, params 15/16), 6 critical.
+	WeaponPhysReinforceGroup = 1 // 0x496150
+	WeaponMagReinforceGroup  = 2 // 0x49623f
+	WeaponAttackRateGroup    = 3 // 0x49632e
+	WeaponPhysDamageGroup    = 4 // 0x4963f0
+	WeaponMagDamageGroup     = 5 // 0x4964df
+	WeaponCriticalGroup      = 6 // 0x4965ce
 
 	// Untracked marks an instance whose durability is not (yet) followed:
 	// a legacy row from before this existed, or a store without reference

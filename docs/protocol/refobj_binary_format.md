@@ -260,7 +260,16 @@ function (`0x495d60`, 3334 bytes, three kind branches):
 
 The store offsets are the fields `Char_PublishCombatStats` publishes (`+0x198` =
 param 5, `+0x1a8` = param 6, `+0x1a4` = param 10, `+0x19c` = param 9, ...), so
-this table is also the item-side origin of those params. Durability's group 0
+this table is also the item-side origin of those params. The weapon branch's
+groups each serve a PAIR of stores (one `mov esi,4` at `0x4963f0`, then
+`+0x1b8` from `+0x228/+0x22c/+0x23c` and `+0x1bc` from `+0x234/+0x238/+0x23c`),
+and the parser lays the weapon block out as: `+0x228/+0x22c` = columns 95/96
+(physical min lo/hi), `+0x230` synthesized 0, `+0x234/+0x238` = 97/98 (physical
+max lo/hi), `+0x23c` = 99 (the shared per-plus increment), `+0x240/+0x244` =
+100/101 and `+0x24c/+0x250` = 102/103 (magical), `+0x254` = 104; the reinforce
+block `+0x258..+0x280` = columns 105..112 as four lo/hi pairs divided by 1000 on
+the way in (their `Inc` slots synthesized 0), `+0x288/+0x28c/+0x290` = 113/114/115
+(attack rate lo/hi/inc), `+0x294/+0x298` = 116/117 (critical). Round 244. Durability's group 0
 is the one case where triple index and group agree.
 `durability.ArmourPhysDefenseGroup` (3) and its siblings carry these constants.
 

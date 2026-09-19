@@ -60,6 +60,12 @@ var itemCSVColumns = []string{
 	// block before it, so an older export still loads and grounditem keeps its
 	// disclosed fallback for every item.
 	"DecayTime",
+	// Appended later still (round 244): the per-instance HIGH ends of the
+	// eight weapon stats -- itemdata columns 96/98, 101/103, 106/108, 110/112.
+	// A strict suffix like every block before it, so an older export still
+	// loads and a weapon reads its lo ends alone, as it did before.
+	"PhysAttackMinHi", "PhysAttackMaxHi", "MagAttackMinHi", "MagAttackMaxHi",
+	"ReinforcePhysMinHi", "ReinforcePhysMaxHi", "ReinforceMagMinHi", "ReinforceMagMaxHi",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -264,6 +270,17 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 51 {
 		it.DecayTimeMs = parseInt(f[51])
+	}
+	// The weapon stats' high ends, optional in the same way (see Item).
+	if len(f) > 59 {
+		it.PhysAttackMinHi = parseFloat(f[52])
+		it.PhysAttackMaxHi = parseFloat(f[53])
+		it.MagAttackMinHi = parseFloat(f[54])
+		it.MagAttackMaxHi = parseFloat(f[55])
+		it.ReinforcePhysMinHi = parseFloat(f[56])
+		it.ReinforcePhysMaxHi = parseFloat(f[57])
+		it.ReinforceMagMinHi = parseFloat(f[58])
+		it.ReinforceMagMaxHi = parseFloat(f[59])
 	}
 
 	if err != nil {

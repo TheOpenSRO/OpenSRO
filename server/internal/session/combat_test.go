@@ -1242,16 +1242,16 @@ func TestWeaponRangePicksTheRightColumnsAndStat(t *testing.T) {
 
 	// A magical-only weapon uses the magical columns: 448 real items would
 	// otherwise read 0 and land every swing on MitigateDamage's floor of 1.
-	if min, max := combat.WeaponRange(staff, 0, 0, combat.AttackPhysical); min != 25 || max != 28 {
+	if min, max := combat.WeaponRange(staff, combat.NoInstance, 0, 0, combat.AttackPhysical); min != 25 || max != 28 {
 		t.Errorf("magical-only weapon: got %d-%d, want 25-28 (not 0-0)", min, max)
 	}
 	// A physical blow with a weapon carrying both stays physical.
-	if min, max := combat.WeaponRange(sword, 0, 0, combat.AttackPhysical); min != 15 || max != 16 {
+	if min, max := combat.WeaponRange(sword, combat.NoInstance, 0, 0, combat.AttackPhysical); min != 15 || max != 16 {
 		t.Errorf("both-carrying weapon, physical blow: got %d-%d, want 15-16", min, max)
 	}
 	// A MAGICAL blow with that same weapon takes the magical columns. This is
 	// the behaviour the damage-type mask unlocked.
-	if min, max := combat.WeaponRange(sword, 0, 0, combat.AttackMagical); min != 25 || max != 28 {
+	if min, max := combat.WeaponRange(sword, combat.NoInstance, 0, 0, combat.AttackMagical); min != 25 || max != 28 {
 		t.Errorf("both-carrying weapon, magical blow: got %d-%d, want 25-28", min, max)
 	}
 	// A magical blow with a weapon that has no magical damage contributes
@@ -1262,10 +1262,10 @@ func TestWeaponRangePicksTheRightColumnsAndStat(t *testing.T) {
 	//
 	// This is the case the previous tick deliberately did not ship, on two
 	// reasons that were both measured wrong afterwards. See combat.WeaponRange.
-	if min, max := combat.WeaponRange(club, 0, 0, combat.AttackMagical); min != 0 || max != 0 {
+	if min, max := combat.WeaponRange(club, combat.NoInstance, 0, 0, combat.AttackMagical); min != 0 || max != 0 {
 		t.Errorf("physical-only weapon, magical blow: got %d-%d, want 0-0 (the weapon contributes nothing)", min, max)
 	}
-	if min, max := combat.WeaponRange(nil, 0, 0, combat.AttackPhysical); min != 0 || max != 0 {
+	if min, max := combat.WeaponRange(nil, combat.NoInstance, 0, 0, combat.AttackPhysical); min != 0 || max != 0 {
 		t.Errorf("no item: got %d-%d, want 0-0", min, max)
 	}
 }
@@ -1283,8 +1283,8 @@ func TestWeaponRangeScalesMagicalDamageWithIntellect(t *testing.T) {
 	}
 	const str, intel = 100, 40
 
-	pMin, pMax := combat.WeaponRange(w, str, intel, combat.AttackPhysical)
-	mMin, mMax := combat.WeaponRange(w, str, intel, combat.AttackMagical)
+	pMin, pMax := combat.WeaponRange(w, combat.NoInstance, str, intel, combat.AttackPhysical)
+	mMin, mMax := combat.WeaponRange(w, combat.NoInstance, str, intel, combat.AttackMagical)
 
 	wantPhys := 10 + combat.ReinforceDamage(str, 1000)
 	wantMag := 10 + combat.ReinforceDamage(intel, 1000)

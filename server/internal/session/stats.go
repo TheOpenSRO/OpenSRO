@@ -205,8 +205,8 @@ func weaponRanges(ctx context.Context, characterID int64, str, intel int, eq equ
 		if err != nil {
 			return 0, 0, 0, 0, fmt.Errorf("looking up weapon stats: %w", err)
 		}
-		pMin, pMax = combat.WeaponRange(item, str, intel, combat.AttackPhysical)
-		mMin, mMax = combat.WeaponRange(item, str, intel, combat.AttackMagical)
+		pMin, pMax = combat.WeaponRange(item, weaponInstance(e), str, intel, combat.AttackPhysical)
+		mMin, mMax = combat.WeaponRange(item, weaponInstance(e), str, intel, combat.AttackMagical)
 		return pMin, pMax, mMin, mMax, nil
 	}
 	return unarmedDamage, unarmedDamage, 0, 0, nil

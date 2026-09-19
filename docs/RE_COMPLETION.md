@@ -5034,6 +5034,10 @@ variance instead of summing `PhysDefenseMax`; the variance GROUP is the block
 order of `Char_BuildAggregateStats` per item kind (armour: PD = 3, MD = 4;
 shield: block 3, PD 4, MD 5), NOT the ref row's triple index -- a correction to
 `refobj_binary_format.md`.
+Round 244: the weapon half -- `WeaponRange` interpolates the damage pairs by
+group 4/5 and the reinforce pairs by group 1/2 between lo/hi columns the export
+now carries (itemdata 96/98, 101/103, 106/108, 110/112; eight strict-suffix CSV
+columns, SQL columns, tests; v0.1.397). One `mov esi,N` serves a min/max pair.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

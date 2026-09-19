@@ -478,6 +478,23 @@ func itemRecord(cols []string) ([]string, bool) {
 		get(fReqLevel4),        // 49 ReqLevel4
 		num(fRepairCost),       // 50 RepairCost
 		get(fDecayTime),        // 51 DecayTime (ms on the ground)
+		// 52..59: the weapon stats' per-instance HIGH ends (round 244). The
+		// item parser (RefObjItem::ExtractData, 0x006a3d50) reads columns 95/96
+		// into the physical-damage-min pair at +0x228/+0x22c, 97/98 into the
+		// max pair at +0x234/+0x238 (99 is the shared per-plus increment at
+		// +0x23c), 100/101 and 102/103 into the magical pairs, and 105..112
+		// into the four reinforce pairs (divided by 1000 on the way in). The
+		// weapon branch of Char_BuildAggregateStats interpolates each pair by
+		// the instance's variance group -- 4, 5, 1, 2 respectively -- which is
+		// what combat.WeaponRange now does with these.
+		num(fPhysAttackMin + 1),    // 52 PhysAttackMinHi     (col 96)
+		num(fPhysAttackMax + 1),    // 53 PhysAttackMaxHi     (col 98)
+		num(fMagAttackMin + 1),     // 54 MagAttackMinHi      (col 101)
+		num(fMagAttackMax + 1),     // 55 MagAttackMaxHi      (col 103)
+		num(fReinforcePhysMin + 1), // 56 ReinforcePhysMinHi  (col 106)
+		num(fReinforcePhysMax + 1), // 57 ReinforcePhysMaxHi  (col 108)
+		num(fReinforceMagMin + 1),  // 58 ReinforceMagMinHi   (col 110)
+		num(fReinforceMagMax + 1),  // 59 ReinforceMagMaxHi   (col 112)
 	}, true
 }
 

@@ -1,9 +1,11 @@
 package combat
 
 import (
+	"math"
 	"strconv"
 	"strings"
 
+	"github.com/OpenSRO/srrevamp/server/internal/durability"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 )
 
@@ -124,12 +126,35 @@ func (t AttackType) Known() bool { return t&(AttackPhysical|AttackMagical) != 0 
 //
 // Slot 3 is the percent scale (ParamKeeper_EvaluateParam divides it by 100), so
 // each derived term is stat*reinforce/100 -- see ReinforceDamage.
-func WeaponRange(item *refdata.Item, str, intel int, atk AttackType) (min, max int) {
+//
+// The INSTANCE decides where in each stat's (lo, hi) pair the weapon sits:
+// Char_BuildAggregateStats (0x00495d60) interpolates the damage pairs by
+// variance group 4 (physical) / 5 (magical) and the reinforce pairs by group
+// 1 / 2 -- durability.WeaponPhysDamageGroup and its siblings, each cited to
+// its `mov esi,N`. NoInstance (or an item exported before the hi columns
+// existed, whose hi ends are zero) reads the lo end alone, which is what this
+// function did for every weapon until 2026-09-19 (round 244).
+func WeaponRange(item *refdata.Item, inst Instance, str, intel int, atk AttackType) (min, max int) {
 	if item == nil {
 		return 0, 0
 	}
-	min = int(item.PhysAttackMin) + ReinforceDamage(str, item.ReinforcePhysMin)
-	max = int(item.PhysAttackMax) + ReinforceDamage(str, item.ReinforcePhysMax)
+	stat := func(lo, hi float64, group int) float64 {
+		if !inst.Tracked || hi <= lo {
+			return lo
+		}
+		return durability.WhiteStat(lo, hi, inst.Variance, group)
+	}
+	physMin := stat(item.PhysAttackMin, item.PhysAttackMinHi, durability.WeaponPhysDamageGroup)
+	physMax := stat(item.PhysAttackMax, item.PhysAttackMaxHi, durability.WeaponPhysDamageGroup)
+	magMin := stat(item.MagAttackMin, item.MagAttackMinHi, durability.WeaponMagDamageGroup)
+	magMax := stat(item.MagAttackMax, item.MagAttackMaxHi, durability.WeaponMagDamageGroup)
+	rPhysMin := stat(item.ReinforcePhysMin, item.ReinforcePhysMinHi, durability.WeaponPhysReinforceGroup)
+	rPhysMax := stat(item.ReinforcePhysMax, item.ReinforcePhysMaxHi, durability.WeaponPhysReinforceGroup)
+	rMagMin := stat(item.ReinforceMagMin, item.ReinforceMagMinHi, durability.WeaponMagReinforceGroup)
+	rMagMax := stat(item.ReinforceMagMax, item.ReinforceMagMaxHi, durability.WeaponMagReinforceGroup)
+
+	min = int(math.Round(physMin)) + ReinforceDamage(str, rPhysMin)
+	max = int(math.Round(physMax)) + ReinforceDamage(str, rPhysMax)
 
 	switch {
 	// A MAGICAL blow reads the magical columns and nothing else, even when the
@@ -163,8 +188,8 @@ func WeaponRange(item *refdata.Item, str, intel int, atk AttackType) (min, max i
 	// nothing. Measured: all 574 physical-only items carry no magical
 	// reinforce, no exceptions.
 	case atk.IsMagical():
-		min = int(item.MagAttackMin) + ReinforceDamage(intel, item.ReinforceMagMin)
-		max = int(item.MagAttackMax) + ReinforceDamage(intel, item.ReinforceMagMax)
+		min = int(math.Round(magMin)) + ReinforceDamage(intel, rMagMin)
+		max = int(math.Round(magMax)) + ReinforceDamage(intel, rMagMax)
 
 	// A blow with no known mask on a weapon that has no physical damage: 448 of
 	// 1,582 real attack-carrying items are magical-only, and reading only the
@@ -177,11 +202,23 @@ func WeaponRange(item *refdata.Item, str, intel int, atk AttackType) (min, max i
 	// AttackPhysical for every weapon, so this stands in for picking the right
 	// basic skill. It disappears once OpAttack resolves one.
 	case max <= 0 && item.MagAttackMax > 0:
-		min = int(item.MagAttackMin) + ReinforceDamage(intel, item.ReinforceMagMin)
-		max = int(item.MagAttackMax) + ReinforceDamage(intel, item.ReinforceMagMax)
+		min = int(math.Round(magMin)) + ReinforceDamage(intel, rMagMin)
+		max = int(math.Round(magMax)) + ReinforceDamage(intel, rMagMax)
 	}
 	return min, max
 }
+
+// Instance is the part of a worn weapon WeaponRange needs: its variance and
+// whether it has one. A weapon without an instance (NoInstance -- a row from
+// before durability existed, or a store with no reference data to roll from)
+// reads every stat at its lo end.
+type Instance struct {
+	Variance uint64
+	Tracked  bool
+}
+
+// NoInstance reads every weapon stat at its lo end.
+var NoInstance = Instance{}
 
 // Weapon type codes, the values a skill's ReqCastWeapon bytes and an item's
 // TypeID4 both carry. RECOVERED, and confirmed independently by three sources

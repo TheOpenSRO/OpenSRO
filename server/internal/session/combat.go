@@ -1328,10 +1328,17 @@ func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq
 		// stat scales which half, and when the magical columns are used -- is
 		// recovered there from the engine's own parameter graph, together with
 		// what is deliberately not done and why.
-		min, max := combat.WeaponRange(item, str, intel, atk)
+		min, max := combat.WeaponRange(item, weaponInstance(e), str, intel, atk)
 		return rollDamage(min, max), nil
 	}
 	return unarmedDamage, nil
+}
+
+// weaponInstance is the worn weapon's per-instance part for combat.WeaponRange:
+// its variance, and whether it has one at all (an Untracked row never rolled
+// one and reads its lo ends, as every weapon did before round 244).
+func weaponInstance(e equipment.Equipped) combat.Instance {
+	return combat.Instance{Variance: e.Variance, Tracked: e.Durability != durability.Untracked}
 }
 
 // defenderArmor sums each worn armour piece's physical defence
