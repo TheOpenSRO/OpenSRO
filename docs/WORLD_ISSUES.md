@@ -7075,6 +7075,55 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-fifty-eighth round: the aggro link -- what the ten nearest monsters are for
+
+The RE tick for 2026-09-19 17:36 closed round 257's open thread. The list of monsters a
+monster gathers when it enters BATTLE is the **aggro link**, and that is the engine's own word
+for it: the config key is `MONSTER_AGGRO_LINK_DECREASE_RATIO`.
+
+**The route.** Being hit reaches a monster as command 2 through its command source -- and
+`AI::CTactics` IS the monster's command source (its vtable shares `CCmdSrcNet::PostCommand`
+at slot 1; slot 7, `DispatchCommandToState`, hands a command to the current state's slot 5,
+`CAIState::DispatchCommand`, `0x558bb0`, whose switch maps command codes to state slots: 2 ->
+slot 6, 0xe -> slot 29, and thirteen more). Slot 6 is **`CAIState::OnAttacked`** (`0x558ea0`)
+for IDLE, WANDER, FLEE and HOMING:
+
+	raw = record.damage
+	behaviour +0xf0 (record)                         ; the link
+	record.damage = ftol(raw * 1.15)                 ; 0xb46300, double, used nowhere else
+	if attacker accounting (+0xec) == 0: SetTarget(1); ChangeState(BATTLE)   ; edi = 3, EBX zeroed
+
+**The link**, `AITactics_ExtRoutine::LinkAggroToNearbyMonsters` (`0x547570`, behaviour `+0xf0`;
+its CLAMP assert cites `AITactics_ExtRoutine.cpp` line 0x662): the attacker must be a player in
+a party whose `+0x10` word has bit 0; `AITactics_CollectNearbyMonsters(attacker)` gathers the
+ten nearest monsters inside `LevelScaledRadius(BCRadius + detection, attacker)` (round 257's
+list); `n` = party members within **1000.0** units of the attacker (`0xb45c68`, double), the
+attacker counting; `CLAMP(n, 0, gathered)`; then the first `n` gathered monsters each receive
+`cmdsrc->slot7(0xe, record, 0)` and the record's damage is multiplied by
+`g_MonsterAggroLinkDecreaseRatio` (`0xc8252c`) and `ftol`'d between them. Command 0xe is slot
+29, **`CAIState::OnAggroLinked`** (`0x559bb0`): attacker accounting, `SetTarget(1)`,
+`ChangeState(BATTLE)` -- the same entry a direct hit makes, minus the link, so it never
+cascades. So: **a party's blow on one monster pulls in as many of its neighbours as the party
+has members on the spot, credited 100 %, 50 %, 25 % ... of the blow, while the victim itself
+books the attacker at 115 %.** A solo player links nothing.
+
+**The knob, and the block it lives in.** `CMainProcess::LoadServerConfig` (`0x427050`) reads
+`MONSTER_AGGRO_LINK_DECREASE_RATIO` as a percentage over 100 with **default 0.5** (`0xb45b68`,
+`fld DWORD`) and no floor -- alongside the gain knobs `internal/rates` already mirrors. Two
+corrections to that package's comment fell out of reading the whole block: `PCSpeedRatio`
+(`0xc8253c`, cap 3.0) exists and scales the player's speed params in `GObjPC_InitStats`; and
+**`HwanGainFactor` is a knob with no consumer** -- its pre-config value is 100.0 (`0xb45e10`),
+the clamp turns that into 10.0, and no instruction outside the loader reads `0xc82528` (the
+`ds:0xc82528` census over the whole image has only the loader's stores). The berserk earn was
+right not to multiply by it. The full key vocabulary (25 keys through `ServerConfig_Get`,
+`0x426b00`) is in the names table.
+
+Recorded: `monster_ai.md` "The aggro link" (round 257's "unread" note now points at it),
+`ai.AggroLinkMaxHelpers/MemberRange/DecreaseRatio/VictimDamageFactor`, `ai.AggroLinkCount`,
+`ai.AggroLinkDamage` with a test, the `rates` package comment corrected, nine names. No
+shipped value changed -- srrevamp has no monster BATTLE loop yet, and this is one of the rules
+it will run on. No release.
+
 ## Two-hundred-and-fifty-seventh round: how a monster notices you -- the detection radius, and where the level term really is
 
 The RE tick for 2026-09-19 17:20 turned to the monster's side of round 256: srrevamp's monsters

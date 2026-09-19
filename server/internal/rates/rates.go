@@ -9,9 +9,10 @@
 //	if (value >= cap) value = cap          // clamped at a per-knob ceiling
 //
 // so a setting of 100 means 1x, 250 means 2.5x, and anything below 100 is
-// ignored in favour of 1x. The globals are also statically initialised to
-// 0x3f800000 (1.0f) before the config is read, which is an independent
-// confirmation of the default.
+// ignored in favour of 1x. The four gain globals are also statically
+// initialised to 0x3f800000 (1.0f) before the config is read, which is an
+// independent confirmation of the default. (HwanGainFactor is the exception,
+// below.)
 //
 // **Rates below 1x are impossible.** The floor is not a clamp on bad input, it
 // is the engine's design: the `< 1.0` branch is the one that logs
@@ -20,11 +21,23 @@
 // The knob names below are the game's own strings, and the caps are the
 // constants each comparison loads (all `fld DWORD`, so float32):
 //
-//	ExpRatio            cap 2.5   (0xb45b90)
-//	ExpRatioParty       cap 2.5   (0xb45b90)
-//	DropItemRatio       cap 3.0   (0xb45b84)
-//	DropGoldAmountCoef  cap 2.5   (0xb45b90)
-//	HwanGainFactor      cap 10.0  (0xb45b44)
+//	ExpRatio            cap 2.5   (0xb45b90)   -> 0xc82518
+//	ExpRatioParty       cap 2.5   (0xb45b90)   -> 0xc8251c
+//	DropItemRatio       cap 3.0   (0xb45b84)   -> 0xc82520
+//	DropGoldAmountCoef  cap 2.5   (0xb45b90)   -> 0xc82524
+//	HwanGainFactor      cap 10.0  (0xb45b44)   -> 0xc82528
+//
+// The same loader reads three more (round 258): PCSpeedRatio (0xc8253c, cap
+// 3.0, multiplies the player's speed params in GObjPC_InitStats when it is not
+// 1), MONSTER_AGGRO_LINK_DECREASE_RATIO (0xc8252c, default 0.5 with no floor;
+// ai.AggroLinkDecreaseRatio) and GiantMonster_SpawnRatio (0xc82538, u16, 0 ->
+// 14), plus boolean switches.
+//
+// HwanGainFactor is a knob with no consumer. Its pre-config value is 100.0
+// (0xb45e10), which the clamp turns into 10.0, and NO instruction outside the
+// loader reads 0xc82528 -- the berserk earn (internal/berserk) never multiplies
+// by it. It is kept here as the engine's own vocabulary; nothing applies it,
+// and nothing should.
 //
 // srrevamp reads them from the environment, since that is how this server is
 // already configured (SRREVAMP_LEVELDATA_CSV and friends), under the game's own
@@ -64,8 +77,8 @@ type Rates struct {
 	DropItem float64
 	// Gold multiplies a kill's gold.
 	Gold float64
-	// HwanGain multiplies berserk gain. Carried for completeness; srrevamp's
-	// gauge fill is own design, so nothing applies this yet.
+	// HwanGain is the HwanGainFactor knob. The engine loads it and never
+	// reads it (see the package comment), so nothing applies it here either.
 	HwanGain float64
 }
 

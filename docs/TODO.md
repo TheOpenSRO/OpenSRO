@@ -93,8 +93,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       attack step through the same action machine as a player's cast (254), the approach walk
       (`MoveTowardObject` to the round-247 band, 256) and now **target acquisition** (round 257):
       radius = BCRadius + `_RefTactics.+0x14`, the nearest player, no level term; the level bands
-      1.4/1.2/1.0/0.8/0.6 scale a BATTLE-entry gathering of the ten nearest monsters. `ai.DetectionRadius`
-      / `ai.LevelScaledRadius` carry them. To build: server-driven monster movement (a move packet the
+      1.4/1.2/1.0/0.8/0.6 scale a BATTLE-entry gathering of the ten nearest monsters, which is the
+      **aggro link** (round 258): a party member's hit pulls in as many of them as the party has
+      members within 1000 units, at 100/50/25 % credit; solo hits link nothing. `ai.DetectionRadius`
+      / `ai.LevelScaledRadius` / `ai.AggroLinkCount` carry them. To build: server-driven monster movement (a move packet the
       client interpolates with the walk clip), WANDER legs on the dwell timer, BATTLE = walk to `stop`
       then swing on ReuseDelay, give-up/HOMING by the read rules. The per-species detection distance is
       in no archive we hold (the tactics table is shard-DB only; the package's GameServer minidumps have

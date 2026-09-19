@@ -306,3 +306,33 @@ func TestDetectionAndLevelScaledRadius(t *testing.T) {
 		}
 	}
 }
+
+// The link count is the nearby party members clamped to the gathered
+// monsters (at most ten), and each link's damage halves by default,
+// truncating like ftol.
+func TestAggroLink(t *testing.T) {
+	if got := AggroLinkCount(3, 10); got != 3 {
+		t.Fatalf("3 members, 10 gathered: %d links; want 3", got)
+	}
+	if got := AggroLinkCount(8, 2); got != 2 {
+		t.Fatalf("8 members, 2 gathered: %d links; want 2", got)
+	}
+	if got := AggroLinkCount(12, 15); got != 10 {
+		t.Fatalf("the gather never holds more than ten: got %d", got)
+	}
+	if got := AggroLinkCount(-1, 5); got != 0 {
+		t.Fatalf("a negative count clamps to 0: got %d", got)
+	}
+	// 45 damage: the first linked monster is credited 45, the second 22, the
+	// third 11 (45 * 0.5 = 22.5 -> 22, 22 * 0.5 = 11).
+	for i, want := range []int{45, 22, 11, 5} {
+		if got := AggroLinkDamage(45, i, AggroLinkDecreaseRatio); got != want {
+			t.Errorf("link %d: %d damage; want %d", i, got, want)
+		}
+	}
+	// The victim books 45 * 1.15 = 51.75 -> 51.
+	raw := 45.0
+	if got := int(raw * AggroVictimDamageFactor); got != 51 {
+		t.Errorf("victim's own credit: %d; want 51", got)
+	}
+}

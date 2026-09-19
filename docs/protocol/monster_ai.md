@@ -509,11 +509,10 @@ target level` and with doubles (`fmul QWORD` at `0x541e62/73/84/95`):
 | -6 .. -4 | **0.8** | `0xb45bf0` |
 | <= -7 | **0.6** | `0xb45bf8` |
 
-What the gathered list drives is unread (its readers share the `+0x84` offset
-with a position record, which defeated the census this round); the shape --
-allies within a radius that grows with the monster's level advantage over its
-target -- is recorded, not interpreted. `AI::CTactics::FUN_00540500` builds
-the same list for an explicit target from `FUN_0053fe30`.
+What the gathered list drives was unread when this was written; round 258
+(next section) read it: it is the **aggro link**, the engine's own name.
+`AI::CTactics::FUN_00540500` builds the same list for an explicit target from
+`FUN_0053fe30`.
 
 **What srrevamp can use.** `ai.DetectionRadius` and `ai.LevelScaledRadius`
 carry the two rules with a test. The per-species `+0x14` distances are in no
@@ -524,6 +523,61 @@ the client-side text tables plus shop/teleport/quest files; its three
 when srrevamp's monsters learn to notice a player, the distance itself will be
 disclosed per species, and the rule around it will not be.
 
+## The aggro link: a party's hit pulls the neighbours in (round 258)
+
+Being hit reaches a monster as **command 2** through its command source --
+`AI::CTactics` IS the monster's command source (its vtable shares
+`CCmdSrcNet::PostCommand` at slot 1; slot 7, `AI::CTactics::DispatchCommandToState`,
+forwards a command to the current state's slot 5, `CAIState::DispatchCommand`,
+`0x558bb0`, which maps command codes to vtable slots: `0->7 2->6 4->8 5->9 6->10
+8->11 9->12 10->13 0xb->14 0xc->15 0xd->16 0xe->29 0xf->30 0x10->17 0x11->18`).
+Command 2 lands in **slot 6, `CAIState::OnAttacked`** (`0x558ea0`, the base
+used by IDLE, WANDER, FLEE and HOMING; BATTLE overrides it with the retarget
+rule of behaviour `+0xfc`):
+
+	raw = record.damage
+	behaviour +0xf0 (record)                   ; the aggro link, below -- it decays record.damage
+	record.damage = ftol(raw * 1.15)           ; 0xb46300, double, its only use: the victim itself
+	                                           ; credits the attacker with 15 % MORE than the blow
+	if behaviour +0xec (attacker accounting) == 0:
+	    SetTarget(1) ; ChangeState(3)          ; edi = 3 -> BATTLE (asm: xor ebx,ebx ; lea edi,[ebx+3])
+
+**The link itself**, `AITactics_ExtRoutine::LinkAggroToNearbyMonsters`
+(`0x547570`, behaviour `+0xf0`, `AITactics_ExtRoutine.cpp` -- its CLAMP assert
+cites line 0x662):
+
+	attacker must be a PC; its party (pc+0x1cb8) must exist and have bit 0 of party+0x10
+	AITactics_CollectNearbyMonsters(attacker)             ; the ten nearest monsters inside
+	                                                      ; LevelScaledRadius(BCRadius + detection)
+	n = party members within 1000.0 units of the attacker ; 0xb45c68, double; the attacker counts
+	n = CLAMP(n, 0, gathered)
+	for i in 0 .. n-1:
+	    gathered[i].cmdsrc->slot7(0xe, record, 0)         ; command 0xe -> slot 29
+	    record.damage = ftol(record.damage * g_MonsterAggroLinkDecreaseRatio)
+
+so **as many neighbouring monsters as the party has members on the spot join
+the fight, each credited with a smaller share of the blow than the last** (the
+first link gets the raw damage, the second half of it, the third a quarter --
+`ftol` at each step), while the victim itself books 1.15 x the raw blow.
+Command 0xe lands in **slot 29, `CAIState::OnAggroLinked`** (`0x559bb0`): the
+attacker accounting, `SetTarget(1)`, `ChangeState(3)` -- the same entry into
+BATTLE as a direct hit, but WITHOUT running the link again, so a link never
+cascades. BATTLE's own slot 29 (`0x55a320`) only credits the attacker, and
+goes to IDLE (`edi = 1`) if the accounting refuses.
+
+`g_MonsterAggroLinkDecreaseRatio` (`0xc8252c`) is the server config key
+**`MONSTER_AGGRO_LINK_DECREASE_RATIO`** (a percentage, /100), default **0.5**
+(`0xb45b68`, `fld DWORD`), read by `CMainProcess::FUN_00427050` with the other
+knobs -- the block `internal/rates` already mirrors. The same pass shows two
+more keys that block did not list: `PCSpeedRatio` (`0xc8253c`, default 1.0, cap
+3.0; `GObjPC_InitStats` multiplies the speed params by it when it is not 1),
+and `HwanGainFactor`, which is **loaded and never read** -- its pre-config value
+is 100.0 (`0xb45e10`), the clamp turns that into 10.0, and no instruction
+outside the loader touches `0xc82528`. A knob with no consumer.
+
+A solo player never links anything: with no party the routine returns 0 before
+gathering. What bit 0 of the party's `+0x10` means is still unnamed (the
+berserk party share tests the same word); the link needs it set.
 ## The behaviour table at context `+0xe8`
 
 `AI::CTactics::vslot_017` (`0x53fc00`) fills sixteen function pointers at

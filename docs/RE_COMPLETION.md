@@ -5116,6 +5116,14 @@ the tactics row is now the detection distance, not "a distance". The per-species
 values are shard-DB only: the package's GameRefData folder is client text tables
 and its GameServer minidumps carry no heap (checked). `ai.DetectionRadius`,
 `ai.LevelScaledRadius`, test. 10 names.
+Round 258 (docs + `ai` constants): the ten-nearest-monsters list is the AGGRO LINK
+(the engine's word, from the config key `MONSTER_AGGRO_LINK_DECREASE_RATIO`,
+default 0.5): a party member's hit forwards the attack record (command 0xe ->
+`CAIState::OnAggroLinked`) to as many gathered neighbours as the party has
+members within 1000 units, halving the credited damage per link, while the
+victim books 1.15x; a solo hit links nothing. `AI::CTactics` is the monster's
+command source. `HwanGainFactor` is loaded (pre-config 100 -> clamped 10) and
+read nowhere -- the rates comment corrected; `PCSpeedRatio` added. Nine names.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

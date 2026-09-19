@@ -391,3 +391,55 @@ func LevelScaledRadius(base float64, monsterLevel, targetLevel int) float64 {
 	}
 	return base * LevelRadiusNear
 }
+
+// The aggro link, read off CAIState::OnAttacked (0x558ea0) and
+// AITactics_ExtRoutine::LinkAggroToNearbyMonsters (0x547570), round 258
+// (docs/protocol/monster_ai.md "The aggro link"). A hit from a PARTY member
+// (the party's +0x10 bit 0 set) makes the struck monster gather the ten
+// nearest monsters inside LevelScaledRadius(its detection radius, attacker)
+// and forward the attack record to as many of them as the party has members
+// within 1000 units of the attacker; each successive link carries the damage
+// times the decrease ratio. A linked monster enters BATTLE against the
+// attacker without linking further. A solo player never links anything.
+const (
+	// AggroLinkMaxHelpers is the gather's cap: the ten nearest monsters.
+	AggroLinkMaxHelpers = 10
+	// AggroLinkMemberRange is how near a party member must stand to the
+	// attacker to count (0xb45c68, double).
+	AggroLinkMemberRange = 1000.0
+	// AggroLinkDecreaseRatio is MONSTER_AGGRO_LINK_DECREASE_RATIO's default,
+	// 0.5 (0xb45b68, fld DWORD): the factor each link's credited damage
+	// shrinks by. A configured value is a percentage over 100 with no floor.
+	AggroLinkDecreaseRatio = 0.5
+	// AggroVictimDamageFactor is what the struck monster itself books the
+	// blow at in its attacker accounting: raw damage x 1.15 (0xb46300, a
+	// double used nowhere else), truncated. The links get the raw value and
+	// its halvings; the victim weighs its own attacker 15 % heavier.
+	AggroVictimDamageFactor = 1.15
+)
+
+// AggroLinkCount is how many gathered monsters a hit links: the party
+// members near the attacker (the attacker included), clamped to the gathered
+// count -- the routine's own CLAMP (AITactics_ExtRoutine.cpp:0x662).
+func AggroLinkCount(membersNear, gathered int) int {
+	if membersNear < 0 {
+		membersNear = 0
+	}
+	if gathered > AggroLinkMaxHelpers {
+		gathered = AggroLinkMaxHelpers
+	}
+	if membersNear > gathered {
+		return gathered
+	}
+	return membersNear
+}
+
+// AggroLinkDamage is the damage the i-th linked monster (0-based) is credited
+// with: the blow's damage times the decrease ratio i times, truncated toward
+// zero at each step as the engine's ftol does.
+func AggroLinkDamage(damage int, link int, ratio float64) int {
+	for i := 0; i < link; i++ {
+		damage = int(float64(damage) * ratio)
+	}
+	return damage
+}
