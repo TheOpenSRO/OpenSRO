@@ -7075,6 +7075,27 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-forty-fifth round: the shield's block rate reads the instance
+
+The RE tick for 2026-09-19 14:19, the third piece of the item-instance thread. `defenderBlock`
+returned `BlockRatioMin` -- "the low end, so a shield is never overstated", a choice from
+before instances carried a variance. The shield branch of `Char_BuildAggregateStats`
+(`0x496623..0x4968a4`) settles it: `mov esi,3` at `0x4967b0`, then `BR_L + q*(BR_U-BR_L)`
+from the ref row's `+0x1e0/+0x1e4` (itemdata 74/75) into item `+0x1a4` -- the field
+`Char_PublishCombatStats` publishes as param 10, `'bri'`, the blocking rate the block roll
+reads (round 236's `Formula_...` chain). Wired (v0.1.398): `defenderBlock` interpolates by
+`durability.ShieldBlockGroup`, keeps the low end for an Untracked row, rounds for
+`RollChance`'s whole percent, and a broken shield still blocks nothing; a test pins the
+group, the interpolation and both edge cases. Full suite green.
+
+**Open, and said plainly:** the shield branch also stores the shield's own physical and
+magic defence (groups 4/5 -> `+0x198/+0x1a8`), and srrevamp's `ArmorSlots` do not count the
+shield in the defence sum. Whether a worn shield's `+0x198` reaches the character's param 5
+is decided at the site that folds an equipped item's block into the character's params,
+and that site is unread -- the two callbacks `param_writers.md` records for param 5
+(`0x4a4cc0`, `0x4a5160`) are timed effects, not equipment. Until it is read, the shield's
+defence stays out.
+
 ## Two-hundred-and-forty-fourth round: a worn weapon's damage and reinforce read the instance -- eight hi-end columns exported
 
 The RE tick for 2026-09-19 14:04 finished what round 243 started on the other half of the

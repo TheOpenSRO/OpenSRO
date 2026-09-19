@@ -96,3 +96,36 @@ func TestDefenceIsNotTheSumOfMaxima(t *testing.T) {
 	}
 	_ = refdata.ErrItemNotFound
 }
+
+// TestBlockRateReadsTheInstance pins the shield branch: the block rate is
+// BR_L + q*(BR_U-BR_L) with q from variance group 3 (durability.ShieldBlockGroup),
+// the low end for an Untracked row, and nothing for a broken shield.
+func TestBlockRateReadsTheInstance(t *testing.T) {
+	ctx := context.Background()
+	items := stubCombatItems{300: {ID: 300, BlockRatioMin: 10, BlockRatioMax: 20, DurabilityMin: 40, DurabilityMax: 50}}
+	full := uint64(31) << (5 * uint(durability.ShieldBlockGroup))
+	eq := fixedEquipment{worn: []equipment.Equipped{{Slot: equipment.SlotShield, ItemID: 300, Variance: full, Durability: 45}}}
+	if got := defenderBlock(ctx, 1, eq, items); got != 20 {
+		t.Errorf("full block group: got %d, want 20", got)
+	}
+	// Group 16 of 31: 10 + 16/31*10 = 15.16 -> 15.
+	eq.worn[0].Variance = uint64(16) << (5 * uint(durability.ShieldBlockGroup))
+	if got := defenderBlock(ctx, 1, eq, items); got != 15 {
+		t.Errorf("group 16/31: got %d, want 15", got)
+	}
+	// The physical-defence group of a shield is 4, a different field: a full
+	// group 4 leaves the block rate at its low end.
+	eq.worn[0].Variance = uint64(31) << (5 * uint(durability.ShieldPhysDefenseGroup))
+	if got := defenderBlock(ctx, 1, eq, items); got != 10 {
+		t.Errorf("group 4 must not move the block rate: got %d, want 10", got)
+	}
+	eq.worn[0].Durability = durability.Untracked
+	eq.worn[0].Variance = full
+	if got := defenderBlock(ctx, 1, eq, items); got != 10 {
+		t.Errorf("untracked shield: got %d, want the low end 10", got)
+	}
+	eq.worn[0].Durability = durability.Broken
+	if got := defenderBlock(ctx, 1, eq, items); got != 0 {
+		t.Errorf("broken shield: got %d, want 0", got)
+	}
+}

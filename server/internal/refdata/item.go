@@ -220,9 +220,9 @@ type Item struct {
 	//	                                      never displays as a range. See
 	//	                                      cmd/export-refdata for the engine
 	//	                                      triple that settles it.)
-	//	defenderBlock       BlockRatioMin    (a genuine 10~20 range; the low
-	//	                                      end, so a shield is never
-	//	                                      overstated)
+	//	(defenderBlock left this list in round 245: a worn shield's block
+	//	rate is its instance's white stat, BR_L + q*(BR_U-BR_L), like the
+	//	armour's defence and the weapon's damage before it.)
 	//
 	// defenderArmor used to be in this list at PhysDefenseMax; it left it
 	// when the variance arrived, because with an instance in hand the engine's

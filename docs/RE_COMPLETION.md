@@ -5038,6 +5038,10 @@ Round 244: the weapon half -- `WeaponRange` interpolates the damage pairs by
 group 4/5 and the reinforce pairs by group 1/2 between lo/hi columns the export
 now carries (itemdata 96/98, 101/103, 106/108, 110/112; eight strict-suffix CSV
 columns, SQL columns, tests; v0.1.397). One `mov esi,N` serves a min/max pair.
+Round 245: the shield's block rate reads the instance (`BR_L + q*(BR_U-BR_L)`,
+shield-branch group 3 -> item+0x1a4 = param 10 'bri'; v0.1.398). Open: whether a
+worn shield's own PD/MD (groups 4/5) reach the character's params -- the equip
+summation site is unread.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

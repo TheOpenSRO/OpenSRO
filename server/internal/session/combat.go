@@ -1498,7 +1498,19 @@ func defenderBlock(ctx context.Context, characterID int64, eq equipment.Store, i
 		if err != nil || item == nil {
 			return 0
 		}
-		return int(item.BlockRatioMin)
+		// The shield's block rate is its instance's white stat, like every
+		// other equipment stat: the shield branch of Char_BuildAggregateStats
+		// (0x4967b0, `mov esi,3`) stores BR_L + q*(BR_U-BR_L) from the ref
+		// row's +0x1e0/+0x1e4 into item+0x1a4, the field Char_PublishCombatStats
+		// publishes as param 10 ('bri', the blocking rate the block roll
+		// reads). Until 2026-09-19 (round 245) this returned BlockRatioMin, the
+		// low end, "so a shield is never overstated" -- a choice made before
+		// instances carried a variance. An Untracked row still reads the low
+		// end. Rounded because RollChance takes whole percent.
+		if e.Durability == durability.Untracked {
+			return int(item.BlockRatioMin)
+		}
+		return int(math.Round(durability.WhiteStat(item.BlockRatioMin, item.BlockRatioMax, e.Variance, durability.ShieldBlockGroup)))
 	}
 	return 0
 }
