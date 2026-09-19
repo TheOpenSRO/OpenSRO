@@ -100,3 +100,22 @@ func TestAttackIntervalJitter(t *testing.T) {
 		t.Fatalf("range %d..%d; want 3000..3600", lo, hi)
 	}
 }
+
+// The draw weight is AI_AttackChance plus the reach margin in whole units; a
+// zero chance never draws; the HP trigger fires at or below the threshold.
+func TestSkillChoice(t *testing.T) {
+	// Mangyang (BC 6) attacking a player (BC 4) with a Range-10 skill from
+	// 12.5 units away: margin 10 + 6 + 4 - 12.5 = 7.5 -> 7.
+	if w := SkillWeight(30, 10, 6, 4, 12.5); w != 37 {
+		t.Fatalf("weight %d; want 30 + 7", w)
+	}
+	if w := SkillWeight(30, 10, 6, 4, 25); w != 30 {
+		t.Fatalf("out of reach adds nothing: %d", w)
+	}
+	if w := SkillWeight(0, 10, 6, 4, 0); w != 0 {
+		t.Fatalf("AI_AttackChance 0 never draws: %d", w)
+	}
+	if !TriggerHPBelowHolds(30, 100, 30) || TriggerHPBelowHolds(31, 100, 30) || TriggerHPBelowHolds(1, 0, 30) {
+		t.Fatal("the HP trigger holds at or below the threshold, never with MaxHP 0")
+	}
+}

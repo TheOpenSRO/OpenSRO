@@ -5131,6 +5131,12 @@ dropped. Retarget rule (`_RefTactics` col 9): 0 keep first, 1 latest, 2 by hate
 (challenger overtakes on more hate or two idle attack intervals; a third
 attacker only when farther than the target). The swing interval is ReuseDelay
 + rand%(J+1), J = clamp(prev/5, 500, 2000). Six names, four tests.
+Round 260 (docs + `ai` helpers): the BATTLE skill choice -- tactics-bound skills
+(those with a `_RefAISkill` row) are TRIGGERS checked first: column 3 is the type
+(0 = once when HP % <= column 4; 1 = every column-4 ms, column 5 bit 0 = fire at
+once), which settles the three columns round 241 left blank; otherwise a weighted
+random draw over the attack list, weight = AI_AttackChance (col 66) + the reach
+margin in units. Ten names.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

@@ -194,3 +194,41 @@ func (t *ThreatTable) FaceAfterHit(rule, code int, attacker int64, targetValid b
 	}
 	return t.Target.ID
 }
+
+// The skill choice, read off AI::CAISkill_Basic::PickSkill (0x561b00) and its
+// trigger evaluators (0x5611d0, 0x561210), round 260 (docs/protocol/
+// monster_ai.md "The skill choice"). Triggers -- skills bound to the tactics
+// row by a _RefAISkill row -- are checked first; otherwise one attack skill
+// is drawn at random in proportion to its weight.
+
+// AISkill trigger types, _RefAISkill column 3.
+const (
+	TriggerHPBelow  = 0 // once, when HP % <= column 4
+	TriggerPeriodic = 1 // every column-4 ms; column 5 bit 0 fires at once the first time
+)
+
+// SkillWeight is an attack skill's share of the draw: its AI_AttackChance
+// (skilldata column 66) plus, when the target is inside the skill's reach,
+// the margin in whole units (skill Range + both BCRadius - distance, ftol'd).
+// A skill with AI_AttackChance 0 is never drawn.
+func SkillWeight(attackChance, skillRange, ownerBC, targetBC int, distance float64) int {
+	if attackChance == 0 {
+		return 0
+	}
+	w := attackChance
+	if margin := float64(skillRange+ownerBC+targetBC) - distance; margin > 0 {
+		w += int(margin)
+	}
+	return w
+}
+
+// TriggerHPBelowHolds is trigger type 0: the owner's HP percentage
+// (CurHP*100/MaxHP, as the engine computes it in floats) at or below the
+// row's threshold. The caller disables the entry once it fires.
+func TriggerHPBelowHolds(curHP, maxHP, threshold int) bool {
+	if maxHP <= 0 {
+		return false
+	}
+	pct := float32(curHP) * 100 / float32(maxHP)
+	return float32(threshold) >= pct
+}

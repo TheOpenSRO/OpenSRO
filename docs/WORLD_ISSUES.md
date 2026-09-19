@@ -7075,6 +7075,35 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-sixtieth round: the skill choice -- triggers first, then a weighted draw, and three columns settled
+
+The RE tick for 2026-09-19 17:49 read `AI::CAISkill_Basic::PickSkill` (`0x561b00`), the
+selector BATTLE's attack step asks, and with it the three `_RefAISkill` columns that had no
+reader since round 241.
+
+**Two lists on the selector.** `RegisterSkill` (slot 3, `0x5614d0`) files each of the owner's
+skills by whether `FindAISkillRow` (`0x6ab1d0`) knows it: a skill WITH a `_RefAISkill` row
+becomes a 24-byte **trigger entry** `{skill, row, enabled, lastFired, phased}`; one without
+joins the plain **attack list** (three branches on `AI_SkillType`, column 67, that all end in
+the same push -- the difference unread).
+
+**The pick.** `CheckTriggers` (slot 12) first: the first enabled entry whose condition holds is
+armed at once. The conditions are the columns: **column 3 (`+0x20`) is the trigger type** --
+0 = `Trigger_HPBelow`: the owner's `CurHP*100/MaxHP` (slots 66/68, floats) at or below
+**column 4**, firing ONCE (the entry is disabled); 1 = `Trigger_Periodic`: every **column-4
+milliseconds**, the first evaluation arming the timer (or firing at once when **column 5 bit
+0** is set), phase-aligned once after that. Otherwise the attack list is drawn from at random
+in proportion to `weight = AI_AttackChance (column 66) + max(0, ftol(Range + ownerBC +
+targetBC - distance))` -- a skill whose reach covers the target by more units is likelier --
+and the pick goes to `ArmNextAttack` (round 259's jittered interval). A monster with one
+attack skill always swings it, which is the whole Jangan roster.
+
+Recorded: `monster_ai.md` "The skill choice" and the `_RefAISkill` table's columns 3-5;
+`ai.SkillWeight`, `ai.TriggerHPBelowHolds`, `ai.TriggerHPBelow/Periodic` with a test; ten
+names (`PickSkill`, `CheckTriggers`, `TriggerHolds`, `Trigger_HPBelow`, `Trigger_Periodic`,
+`OwnerHPPercent`, `RegisterSkill`, `GetArmedSkill`, `FindAISkillRow`, `NoTriggers`). No shipped
+value changed; no release.
+
 ## Two-hundred-and-fifty-ninth round: the threat table -- two seats, three rules, and a jittered swing
 
 The RE tick for 2026-09-19 17:44 read the attacker accounting behind behaviour `+0xec`, the last

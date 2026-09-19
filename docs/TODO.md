@@ -97,7 +97,8 @@ In order. Each is checked off here when it ships in a release, with its round in
       **aggro link** (round 258): a party member's hit pulls in as many of them as the party has
       members within 1000 units, at 100/50/25 % credit; solo hits link nothing; and the threat
       table (round 259): two seats, hate accounting, the retarget rule (col 9), a jittered swing
-      interval (ReuseDelay + 0..J). `ai.DetectionRadius` / `ai.LevelScaledRadius` /
+      interval (ReuseDelay + 0..J); and the skill choice (round 260): `_RefAISkill` triggers first
+      (HP-threshold once / periodic), else a draw weighted by AI_AttackChance + reach margin. `ai.DetectionRadius` / `ai.LevelScaledRadius` /
       `ai.AggroLinkCount` / `ai.ThreatTable` / `ai.AttackIntervalRange` carry them. To build: server-driven monster movement (a move packet the
       client interpolates with the walk clip), WANDER legs on the dwell timer, BATTLE = walk to `stop`
       then swing on ReuseDelay, give-up/HOMING by the read rules. The per-species detection distance is

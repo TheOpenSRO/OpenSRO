@@ -378,9 +378,9 @@ when the nest data exists; the numbers cannot be.
 |---|---|---|---|
 | 1 | `+0x00` | u32 | **TacticsID** -- the multimap key the tactics parser's `equal_range` matches against its own TacticsID |
 | 2 | `+0x04` | string (`std::string`, 0x1c bytes) | **skill `Basic_Code`** -- looked up in `m_RefSkillByCodename`, so a monster's AI skills are ordinary skilldata rows (the `MSKILL_*` ids characterdata column 83 already pointed at) |
-| 3 | `+0x20` | u8 | no reader found |
-| 4 | `+0x24` | u32 | no reader found |
-| 5 | `+0x28` | u32 | no reader found |
+| 3 | `+0x20` | u8 | **trigger type** (round 260, "The skill choice"): 0 = fire once when the owner's HP % has dropped to column 4 or below; 1 = fire every column-4 milliseconds |
+| 4 | `+0x24` | u32 | the **HP-percent threshold** (type 0) or the **period in ms** (type 1) |
+| 5 | `+0x28` | u32 | bit 0, type 1 only: **fire at once** the first time the trigger is evaluated instead of waiting a full period |
 
 `m_RefSkillByCodename` itself is built by
 `RefInstanceGenerator::BuildRefSkillByCodename` (`0x6f68f0`) from the
@@ -636,6 +636,47 @@ interval.
 
 `ai.ThreatTable` (`internal/ai/threat.go`) carries the credit, the drop, the
 three rules and the interval with tests; nothing in srrevamp runs it yet.
+
+## The skill choice: triggers first, then a weighted draw (round 260)
+
+The selector object at `ctx+0x9c` is an `AI::CAISkill_Basic` (vtable
+`0xaf9d24`; the `Unique_Summon_A/B/C` classes at `0xaf9d5c/0xaf9d94/0xaf9dcc`
+override slots 2, 3, 6, 7, 8 and 12 for the unique-monster tactics ids). Two
+lists live on it: the **attack list** (`+0x18/+0x1c`, plain skill pointers) and
+the **trigger list** (`+0x8/+0xc`, 24-byte entries `{?, skill, aiSkillRow,
+enabled, lastFired, phased}`).
+
+**Registration** -- `AI::CTactics::RegisterAISkill` passes each of the owner's
+skills with `AI::CTactics::FindAISkillRow(skillId)` (`0x6ab1d0`, a map at
+`+0xb0` of the object in EAX) to slot 3, `CAISkill_Basic::RegisterSkill`
+(`0x5614d0`): a skill WITH a `_RefAISkill` row becomes a trigger entry; one
+without goes to the attack list, through three branches on `AI_SkillType`
+(`CRefSkill+0x166`, skilldata column 67: `'D'`, `'S'`, other) that all end in
+the same push (`GObjPC::FUN_004ab760`; the branch's effect is unread).
+
+**The pick** -- slot 7, `CAISkill_Basic::PickSkill` (`0x561b00`), called by
+BATTLE's attack step with the target:
+
+	slot 12 CheckTriggers (0x561a50): the first ENABLED trigger entry whose condition holds
+	        is chosen at once -- TriggerHolds (0x561180) by the row's +0x20:
+	          type 0  HPBelow (0x5611d0): owner CurHP*100/MaxHP (slots 66/68) <= row+0x24
+	                  -> fire, and DISABLE the entry (one shot per life)
+	          type 1  Periodic (0x561210): first evaluation arms lastFired = now (or fires at once
+	                  when row+0x28 bit 0), later ones phase-align once and fire when
+	                  now - lastFired >= row+0x24
+	otherwise, over the attack list, every skill with AI_AttackChance (CRefSkill+0x164,
+	column 66) != 0 gets
+	          weight = AI_AttackChance
+	                 + max(0, ftol(skill.Range + ownerBC + targetBC - distance))
+	and one is drawn at random in proportion (rand(); cumulative weights, 0x5632d0)
+	the pick goes to slot 5, ArmNextAttack: +0x44 = the skill, +0x48 = ReuseDelay + rand % (J + 1)
+
+So a monster with one attack skill (the whole Jangan roster: characterdata
+column 83) always swings it; a monster with several prefers, in proportion to
+`AI_AttackChance`, the ones whose reach covers the target by the most units;
+and a tactics-bound skill fires on its HP threshold once or on its timer,
+ahead of any draw. `ai.SkillWeight`, `ai.TriggerHPBelow/Periodic` carry the
+rules with a test.
 
 ## The behaviour table at context `+0xe8`
 
