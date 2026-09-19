@@ -111,12 +111,34 @@ server's own error text says `failed to load user's chest size [UserJID: %d]`,
 so the warehouse's CAPACITY is an account property too. **All of an account's
 characters share one warehouse.**
 
-srrevamp keys its warehouse and its `storage_gold` by character instead, so its
-characters each get a private warehouse. That is a real divergence from the game,
-recorded here rather than fixed: correcting it means merging every existing
-account's per-character warehouses into one, and a merge that overflows a slot
-limit destroys items belonging to live testers. It is on the open list as a
-migration to do deliberately, not as something to slip into an unattended tick.
+The warehouse GOLD is the user's too. The deposit/withdraw path
+(`AQ_StorageUpdater::MoveItemWithGold`, `0x45af70`) issues
+
+```
+{?=CALL _UPDATE_USER_N_CHAR_GOLD (%d,%I64d, %d,%I64d)}
+```
+
+with `(userJID, user gold, charID, character gold)` -- the first id from the
+player object's vslot at `+8`, its balance the int64 at player `+0x1ca8`; the
+second id from the vslot at `+0x380`, its balance the int64 at char-data `+0x78`
+-- and the guild counterpart is `_UPDATE_GUILD_N_CHAR_GOLD`. The item
+procedures (`_STRG_MOVE_ITEM (%d,%d,%d,%d,%d,%d,%d,0)`) receive *both* ids and
+a move kind (`+0x28`: 2 = bag to chest, `0x20`/`0x21` = guild chest, 10/11/12 =
+the gold moves), leaving the choice of key to the procedure -- which the
+`SelectUsedSlotsForStorage` queries above show.
+
+**srrevamp follows this since 2026-09-19 (v0.1.390).** Its warehouse table is
+`account_storage_slots` keyed by `account_id`, its stored gold is
+`accounts.storage_gold`, and every character on an account opens the same
+warehouse. The per-character warehouse it kept until then (`storage_slots`,
+`characters.storage_gold`) is moved over once at boot by
+`storage.MigrateToAccounts`, losslessly: a row keeps its slot where free and
+takes the lowest free slot otherwise, gold is summed, and `schema_migrations`
+records the run. What is still not read is the chest CAPACITY: `failed to load
+user's chest size [UserJID: %d]` says it is loaded per user, but the column or
+procedure that supplies it, and its default, have not been located (see
+`inventory.MaxStorageSlots`, 112, and the 210 expansion cap, both read from the
+expansion code paths rather than from the load).
 
 Two smaller facts fall out of the same queries and cost nothing:
 

@@ -4846,6 +4846,21 @@ the citation, rather than being half-done tonight.
 The alternative — shipping the key change and letting the merge happen
 implicitly — would have looked like progress and lost player items.
 
+### Fixed 2026-09-19 (v0.1.390), the way the paragraph above asked for
+
+The migration is `storage.MigrateToAccounts`, and it cannot destroy anything:
+a row keeps its slot when that slot is free in the account's warehouse and
+takes the lowest free slot otherwise, gold is summed onto `accounts.storage_gold`,
+every step runs in one transaction, a legacy row is deleted only after its copy
+is written, and a `schema_migrations` row makes a second boot a no-op. Tested on
+the real schema with two characters colliding on slot 0 (`migrate_test.go`).
+Before it deployed, the public server held exactly one warehouse row and no
+stored gold (counted), and a `pg_dump` was taken. The gold side gained its own
+citation while doing it: `AQ_StorageUpdater::MoveItemWithGold` (`0x45af70`)
+calls `_UPDATE_USER_N_CHAR_GOLD(userJID, userGold, charID, charGold)`, the
+user's balance being the player object's int64 at `+0x1ca8`, the character's the
+char-data int64 at `+0x78`. Left unread: the per-user chest CAPACITY's source.
+
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
 via `nItemDBID`), and an empty slot is a real row with `ItemID = 0 or NULL`

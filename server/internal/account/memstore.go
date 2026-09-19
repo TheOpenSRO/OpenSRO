@@ -2,6 +2,7 @@ package account
 
 import (
 	"context"
+	"errors"
 	"sync"
 )
 
@@ -77,3 +78,57 @@ func (m *MemStore) Authenticate(_ context.Context, username, password string) (*
 type errNotFound string
 
 func (e errNotFound) Error() string { return "account: no such account: " + string(e) }
+
+// byID finds an account by id; the map is keyed by username and stays small.
+func (m *MemStore) byID(accountID int64) *Account {
+	for _, acc := range m.byUser {
+		if acc.ID == accountID {
+			return acc
+		}
+	}
+	return nil
+}
+
+// StorageGold implements StorageGoldStore.
+func (m *MemStore) StorageGold(_ context.Context, accountID int64) (int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	acc := m.byID(accountID)
+	if acc == nil {
+		return 0, ErrNoSuchAccount
+	}
+	return acc.StorageGold, nil
+}
+
+// AddStorageGold implements StorageGoldStore.
+func (m *MemStore) AddStorageGold(_ context.Context, accountID int64, amount int64) error {
+	if amount <= 0 {
+		return errors.New("account: storage gold amount must be positive")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	acc := m.byID(accountID)
+	if acc == nil {
+		return ErrNoSuchAccount
+	}
+	acc.StorageGold += amount
+	return nil
+}
+
+// DeductStorageGold implements StorageGoldStore.
+func (m *MemStore) DeductStorageGold(_ context.Context, accountID int64, amount int64) error {
+	if amount <= 0 {
+		return errors.New("account: storage gold amount must be positive")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	acc := m.byID(accountID)
+	if acc == nil {
+		return ErrNoSuchAccount
+	}
+	if acc.StorageGold < amount {
+		return ErrInsufficientStorageGold
+	}
+	acc.StorageGold -= amount
+	return nil
+}

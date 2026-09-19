@@ -1085,16 +1085,24 @@ func _on_storage_list_result(slots: Array, error: String) -> void:
 	if error != "":
 		push_warning("HudPanels: storage list refused: %s" % error)
 		return
+	# Said in the log so a QA run can read the warehouse's state after a
+	# move, instead of inferring it from the absence of a refusal.
+	var total := 0
+	for sl in slots:
+		total += int(sl.quantity)
+	print("HudPanels: warehouse lists %d slot(s), %d item(s)" % [slots.size(), total])
 	_fill_storage_grid(slots)
 
 func _on_storage_deposit_result(ok: bool, reason: String) -> void:
 	if ok:
+		print("HudPanels: deposit accepted")
 		_refresh_storage_and_bag()
 	else:
 		push_warning("HudPanels: deposit refused: %s" % reason)
 
 func _on_storage_withdraw_result(ok: bool, reason: String) -> void:
 	if ok:
+		print("HudPanels: withdraw accepted")
 		_refresh_storage_and_bag()
 	else:
 		push_warning("HudPanels: withdraw refused: %s" % reason)

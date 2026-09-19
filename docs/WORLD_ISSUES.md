@@ -7075,6 +7075,68 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-fifteenth round: the warehouse is the account's -- the game's own SQL applied, with a lossless migration
+
+The RE tick's step for 2026-09-19 06:30. `docs/SYSTEMS.md` carried "per-account vs
+per-character scope" as the storage row's open probe. The fact itself had been read
+on 2026-09-16 (`docs/protocol/server_sql.md`): `AQ_CharDataLoader::SelectUsedSlotsForStorage`
+(`0x43d2c0`) issues `SELECT SLOT FROM _CHEST WHERE UserJID=%d ...` for the warehouse
+against `... FROM _INVENTORY WHERE CharID=%d ...` for the bag and `_GUILDCHEST WHERE
+GuildID` for the guild's -- and it was parked because merging per-character warehouses
+"could overflow and destroy items". This round closes it.
+
+### What was read this time
+
+The gold side had no citation of its own. `AQ_StorageUpdater::MoveItemWithGold`
+(`0x45af70`) calls
+
+```
+{?=CALL _UPDATE_USER_N_CHAR_GOLD (%d,%I64d, %d,%I64d)}
+```
+
+with `(userJID, user gold, charID, character gold)`: the first id is the player
+object's vslot at `+8` and its balance the int64 at player `+0x1ca8`; the second id
+is the vslot at `+0x380` and its balance the char-data int64 at `+0x78`. The item
+procedures (`_STRG_MOVE_ITEM (%d,%d,%d,%d,%d,%d,%d,0)`) receive both ids plus a move
+kind (`+0x28`: 2 = bag to chest, `0x20`/`0x21` = guild chest, 10/11/12 = the gold
+moves). So the warehouse's gold is the USER's balance, exactly as its items are.
+
+### What changed in srrevamp
+
+- `inventory.SQLStore` takes an owner column (`OpenSQLStoreOwned`); the bag stays
+  `character_id`, the warehouse is `account_storage_slots` keyed by `account_id`.
+- `account.StorageGoldStore` (`accounts.storage_gold`) replaces
+  `characters.storage_gold` as the stored balance; `storage.Service` resolves the
+  acting character to its account and never takes an account id from a caller.
+- `storage.MigrateToAccounts` moves the old per-character rows and gold once at boot.
+  Lossless by construction: a row keeps its slot when free, else the lowest free
+  slot; gold is summed; one transaction; a legacy row is deleted only after its copy
+  is written; a `schema_migrations` row makes a second boot a no-op.
+
+### Measured
+
+- Public server before deploy: 1 warehouse row, 0 stored gold, no account with two
+  characters holding anything (counted in the database); `pg_dump` taken
+  (`~/backups/srrevamp-20260919T065504Z-before-warehouse-per-account.sql.gz`).
+- `migrate_test.go` on the real schema: two characters on one account, both with
+  slot 0 -> the account holds all four rows (the collision moved to slot 2, the
+  others where they were), 500 gold summed, legacy table empty, second run a no-op
+  even with a fresh legacy row present.
+- `storage_test.go`: what Aria deposits, Bram (same account) lists and withdraws;
+  another account's character sees nothing; gold likewise.
+- End to end on the box (`SRREVAMP_QA_STORAGE_ITEM=1 --server`, the new binary):
+  `warehouse lists 0 slot(s)` -> `deposit accepted` -> `warehouse lists 1 slot(s), 1
+  item(s)`, 0 script errors. The client now prints the warehouse's state on every
+  list result and on each accepted move, so this is read from the log rather than
+  inferred from the absence of a refusal.
+- Go: 56 packages ok. Doc guards pass.
+
+### Left unread
+
+The per-user chest CAPACITY (`failed to load user's chest size [UserJID: %d]`):
+which column or procedure supplies it and its default. The 112 and 210 caps in
+`inventory.go` come from the expansion paths, not from the load.
+
 ## Two-hundred-and-fourteenth round: debug lane: a console in the chat line, GM commands behind a gate, and a Help window
 
 "Give me more debug tools to test the client" — after a playtest crash in the

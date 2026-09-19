@@ -36,8 +36,11 @@ In order. Each is checked off here when it ships in a release, with its round in
         (each a quantity dialog), and the money button opens a gold deposit/withdraw dialog --
         rounds 168-169 / releases v0.1.139-140. The warehouse is a second inventory container
         (`storage_slots` table, `storage.Service`) plus a per-character `storage_gold` balance,
-        reachable in real play from the grounded warehouse NPCs (`NPC_CH_WAREHOUSE_M`/`_W`). Still
-        open: per-account vs per-character scope (currently per-character).
+        reachable in real play from the grounded warehouse NPCs (`NPC_CH_WAREHOUSE_M`/`_W`). **Scope
+        settled (round 215, v0.1.390)**: the warehouse and its gold are the ACCOUNT's, as the game's
+        `_CHEST WHERE UserJID` / `_UPDATE_USER_N_CHAR_GOLD` say; every character on an account shares
+        them, and the old per-character rows were moved over losslessly at boot. Still unread: the
+        per-account chest capacity's source.
       - [x] **Merchant shop -- buy AND sell.** Talk -> Buy opens the authored store window
         (`ifstore`) with the NPC's real goods, tabs, real prices, quantity buying, and selling
         from the bag -- rounds 165-167 / releases v0.1.134-138. Per-NPC goods come from the real

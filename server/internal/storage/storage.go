@@ -4,34 +4,27 @@
 // it there" between the bag and the warehouse. This keeps all the
 // stacking/placement rules identical to the bag's.
 //
-// KNOWN DIVERGENCE, recorded 2026-09-16 rather than fixed: **this warehouse is
-// per CHARACTER, and the game's is per ACCOUNT.**
+// **The warehouse belongs to the ACCOUNT, not the character.** The bag is the
+// character's. That is the game's own rule, read from the server's SQL: every
+// statement touching the warehouse table filters on the account id, never a
+// character id --
 //
-// The evidence is the server's own SQL, which is about as unambiguous as this
-// project's evidence gets. Every statement touching the warehouse table filters
-// on the account id, never a character id:
+//	SELECT SLOT FROM _CHEST WHERE UserJID=%d AND ItemID<>0 ...      (AQ_CharDataLoader::SelectUsedSlotsForStorage, 0x43d2c0)
+//	SELECT SLOT FROM _INVENTORY WHERE CharID=%d AND ItemID<>0 ...   (the bag, same function)
+//	SELECT SLOT FROM _GUILDCHEST WHERE GuildID=%d ...                (the guild's)
 //
-//	SELECT SLOT FROM _CHEST WHERE UserJID=%d AND ItemID<>0 ...
-//	SELECT IT.*   FROM _Chest C JOIN _ITEMS IT ON C.ItemID=IT.ID64 WHERE C.UserJID=%d ...
-//	SELECT BIND.* FROM _Chest C ... WHERE C.UserJID=%d ...
-//	SELECT R.*    FROM _Chest C ... WHERE C.UserJID=%d ...
+// and the warehouse GOLD is the user's balance: the deposit calls
+// `_UPDATE_USER_N_CHAR_GOLD(userJID, userGold, charID, charGold)`
+// (AQ_StorageUpdater::MoveItemWithGold, 0x45af70). See
+// docs/protocol/server_sql.md. So every character on an account opens the
+// same warehouse and the same stored gold -- which is also how items and gold
+// move between a player's own characters.
 //
-// and the server's own error text is `failed to load user's chest size
-// [UserJID: %d]`, so the warehouse's CAPACITY is an account property too. By
-// contrast `_Inventory` is keyed by `CharID`, `_InvCOS` by `COSID` and
-// `_GuildChest` by `GuildID` -- the binary distinguishes all four owners
-// deliberately. See docs/protocol/server_sql.md.
-//
-// So in the real game every character on an account opens the same warehouse.
-// Here each gets a private one, and `character.storage_gold` is likewise a
-// per-character column.
-//
-// WHY IT IS NOT FIXED HERE. Correcting it is a data migration, not a code
-// change: every existing account's per-character warehouses would have to be
-// merged into one, and a merge that overflows the slot limit destroys items
-// belonging to live testers. That is a deliberate, supervised change with a
-// backup behind it, not something to slip into an unattended pass. It is on the
-// open list in docs/RE_COMPLETION.md.
+// Until 2026-09-19 this warehouse was per character (recorded as a known
+// divergence since 2026-09-16, parked because merging per-character
+// warehouses could overflow and destroy items). MigrateToAccounts is that
+// merge, done losslessly: rows keep their slot where it is free and take the
+// lowest free slot otherwise, gold is summed, and nothing is dropped.
 package storage
 
 import (
@@ -39,6 +32,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/OpenSRO/srrevamp/server/internal/account"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 )
@@ -49,40 +43,60 @@ var ErrSlotEmpty = errors.New("storage: nothing in that slot")
 // ErrNothingToMove is returned for a non-positive quantity.
 var ErrNothingToMove = errors.New("storage: quantity must be positive")
 
-// Service moves items between a character's bag and warehouse, and gold
-// between the character's purse and the warehouse.
+// Service moves items between a character's bag and the account's warehouse,
+// and gold between the character's purse and the account's stored gold.
+// Every method takes the acting CHARACTER; the account is looked up from it,
+// never taken from a caller.
 type Service struct {
-	Bag       inventory.Store
-	Warehouse inventory.Store
-	Gold      character.Store
+	Bag       inventory.Store          // owned by the character
+	Warehouse inventory.Store          // owned by the ACCOUNT (inventory.WarehouseOwnerColumn)
+	Gold      character.Store          // the purse
+	Accounts  account.StorageGoldStore // the warehouse gold
 }
 
-// Balances is a character's carried gold and warehouse gold.
+// Balances is a character's carried gold and the account's warehouse gold.
 type Balances struct {
 	Carried int64
 	Stored  int64
 }
 
-// GoldBalances returns the character's carried and stored gold.
-func (s *Service) GoldBalances(ctx context.Context, characterID int64) (Balances, error) {
+// accountOf resolves the acting character to its account.
+func (s *Service) accountOf(ctx context.Context, characterID int64) (*character.Character, error) {
 	c, err := s.Gold.GetByID(ctx, characterID)
 	if err != nil {
-		return Balances{}, fmt.Errorf("storage: reading balances: %w", err)
+		return nil, fmt.Errorf("storage: resolving character %d: %w", characterID, err)
 	}
-	return Balances{Carried: c.Gold, Stored: c.StorageGold}, nil
+	return c, nil
 }
 
-// DepositGold moves amount from the character's purse into the warehouse,
-// returning the balances afterwards. Refunds the purse if crediting the
-// warehouse fails.
+// GoldBalances returns the character's carried gold and the account's stored gold.
+func (s *Service) GoldBalances(ctx context.Context, characterID int64) (Balances, error) {
+	c, err := s.accountOf(ctx, characterID)
+	if err != nil {
+		return Balances{}, err
+	}
+	stored, err := s.Accounts.StorageGold(ctx, c.AccountID)
+	if err != nil {
+		return Balances{}, fmt.Errorf("storage: reading warehouse gold: %w", err)
+	}
+	return Balances{Carried: c.Gold, Stored: stored}, nil
+}
+
+// DepositGold moves amount from the character's purse into the account's
+// warehouse, returning the balances afterwards. Refunds the purse if crediting
+// the warehouse fails.
 func (s *Service) DepositGold(ctx context.Context, characterID int64, amount int64) (Balances, error) {
 	if amount <= 0 {
 		return Balances{}, ErrNothingToMove
 	}
+	c, err := s.accountOf(ctx, characterID)
+	if err != nil {
+		return Balances{}, err
+	}
 	if err := s.Gold.DeductGold(ctx, characterID, amount); err != nil {
 		return Balances{}, fmt.Errorf("storage: taking gold from purse: %w", err)
 	}
-	if err := s.Gold.AddStorageGold(ctx, characterID, amount); err != nil {
+	if err := s.Accounts.AddStorageGold(ctx, c.AccountID, amount); err != nil {
 		if backErr := s.Gold.AddGold(ctx, characterID, amount); backErr != nil {
 			return Balances{}, fmt.Errorf("storage: crediting warehouse failed (%w) AND refunding purse failed (%v) -- gold may be lost", err, backErr)
 		}
@@ -91,18 +105,25 @@ func (s *Service) DepositGold(ctx context.Context, characterID int64, amount int
 	return s.GoldBalances(ctx, characterID)
 }
 
-// WithdrawGold moves amount from the warehouse back into the character's
-// purse, returning the balances afterwards. Refunds the warehouse if crediting
-// the purse fails.
+// WithdrawGold moves amount from the account's warehouse back into the
+// character's purse, returning the balances afterwards. Refunds the warehouse
+// if crediting the purse fails.
 func (s *Service) WithdrawGold(ctx context.Context, characterID int64, amount int64) (Balances, error) {
 	if amount <= 0 {
 		return Balances{}, ErrNothingToMove
 	}
-	if err := s.Gold.DeductStorageGold(ctx, characterID, amount); err != nil {
+	c, err := s.accountOf(ctx, characterID)
+	if err != nil {
+		return Balances{}, err
+	}
+	if err := s.Accounts.DeductStorageGold(ctx, c.AccountID, amount); err != nil {
+		if errors.Is(err, account.ErrInsufficientStorageGold) {
+			return Balances{}, fmt.Errorf("storage: taking gold from warehouse: %w", character.ErrInsufficientGold)
+		}
 		return Balances{}, fmt.Errorf("storage: taking gold from warehouse: %w", err)
 	}
 	if err := s.Gold.AddGold(ctx, characterID, amount); err != nil {
-		if backErr := s.Gold.AddStorageGold(ctx, characterID, amount); backErr != nil {
+		if backErr := s.Accounts.AddStorageGold(ctx, c.AccountID, amount); backErr != nil {
 			return Balances{}, fmt.Errorf("storage: crediting purse failed (%w) AND returning to warehouse failed (%v) -- gold may be lost", err, backErr)
 		}
 		return Balances{}, fmt.Errorf("storage: crediting purse gold: %w", err)
@@ -110,19 +131,31 @@ func (s *Service) WithdrawGold(ctx context.Context, characterID int64, amount in
 	return s.GoldBalances(ctx, characterID)
 }
 
-// List returns the warehouse's contents for a character.
+// List returns the account's warehouse as seen by this character.
 func (s *Service) List(ctx context.Context, characterID int64) ([]inventory.Slot, error) {
-	return s.Warehouse.List(ctx, characterID)
+	c, err := s.accountOf(ctx, characterID)
+	if err != nil {
+		return nil, err
+	}
+	return s.Warehouse.List(ctx, c.AccountID)
 }
 
-// Deposit moves quantity from the character's bag slot into the warehouse.
+// Deposit moves quantity from the character's bag slot into the account's warehouse.
 func (s *Service) Deposit(ctx context.Context, characterID int64, bagSlot, quantity int) error {
-	return move(ctx, s.Bag, s.Warehouse, characterID, bagSlot, quantity)
+	c, err := s.accountOf(ctx, characterID)
+	if err != nil {
+		return err
+	}
+	return move(ctx, s.Bag, characterID, s.Warehouse, c.AccountID, bagSlot, quantity)
 }
 
-// Withdraw moves quantity from the warehouse slot back into the bag.
+// Withdraw moves quantity from the account's warehouse slot back into the character's bag.
 func (s *Service) Withdraw(ctx context.Context, characterID int64, warehouseSlot, quantity int) error {
-	return move(ctx, s.Warehouse, s.Bag, characterID, warehouseSlot, quantity)
+	c, err := s.accountOf(ctx, characterID)
+	if err != nil {
+		return err
+	}
+	return move(ctx, s.Warehouse, c.AccountID, s.Bag, characterID, warehouseSlot, quantity)
 }
 
 // move takes quantity from `from`'s slot and adds it to `to`, reading the
@@ -130,11 +163,11 @@ func (s *Service) Withdraw(ctx context.Context, characterID int64, warehouseSlot
 // is there) and moving no more than the slot holds. If adding to the
 // destination fails after the source was decremented, the items are returned
 // to the source before the error propagates.
-func move(ctx context.Context, from, to inventory.Store, characterID int64, slot, quantity int) error {
+func move(ctx context.Context, from inventory.Store, fromOwner int64, to inventory.Store, toOwner int64, slot, quantity int) error {
 	if quantity <= 0 {
 		return ErrNothingToMove
 	}
-	slots, err := from.List(ctx, characterID)
+	slots, err := from.List(ctx, fromOwner)
 	if err != nil {
 		return fmt.Errorf("storage: reading source: %w", err)
 	}
@@ -152,13 +185,13 @@ func move(ctx context.Context, from, to inventory.Store, characterID int64, slot
 		quantity = found.Quantity
 	}
 
-	if err := from.RemoveItem(ctx, characterID, slot, quantity); err != nil {
+	if err := from.RemoveItem(ctx, fromOwner, slot, quantity); err != nil {
 		return fmt.Errorf("storage: removing from source: %w", err)
 	}
 	// The same instance crosses the counter -- its variance and durability
 	// go with it and come back with it, never re-rolled.
-	if err := to.AddItemInstance(ctx, characterID, found.ItemID, quantity, found.Instance()); err != nil {
-		if backErr := from.AddItemInstance(ctx, characterID, found.ItemID, quantity, found.Instance()); backErr != nil {
+	if err := to.AddItemInstance(ctx, toOwner, found.ItemID, quantity, found.Instance()); err != nil {
+		if backErr := from.AddItemInstance(ctx, fromOwner, found.ItemID, quantity, found.Instance()); backErr != nil {
 			return fmt.Errorf("storage: adding to destination failed (%w) AND returning it failed (%v) -- character may have lost an item", err, backErr)
 		}
 		return fmt.Errorf("storage: adding to destination: %w", err)

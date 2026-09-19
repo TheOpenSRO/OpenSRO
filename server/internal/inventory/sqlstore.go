@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/OpenSRO/srrevamp/server/internal/durability"
 
@@ -15,22 +16,31 @@ import (
 // stacking and placement logic is shared rather than duplicated.
 const DefaultTable = "inventory_slots"
 
-// schemaFor returns the CREATE TABLE for a container's table. The table name
-// is a trusted constant (never user input), so interpolating it is safe.
-func schemaFor(table string) string {
+// WarehouseTable is the warehouse's table, owned by the ACCOUNT
+// (WarehouseOwnerColumn). The older per-character table `storage_slots` is
+// left in place, read once by storage.MigrateToAccounts and never written
+// again.
+const WarehouseTable = "account_storage_slots"
+
+// schemaFor returns the CREATE TABLE for a container's table. The table and
+// owner-column names are trusted constants (never user input), so
+// interpolating them is safe. The owner column is `character_id` for the bag
+// and `account_id` for the warehouse -- the game's `_INVENTORY` is keyed by
+// CharID and its `_CHEST` by UserJID (docs/protocol/server_sql.md).
+func schemaFor(table, owner string) string {
 	return fmt.Sprintf(`
-CREATE TABLE IF NOT EXISTS %s (
-	character_id BIGINT NOT NULL,
+CREATE TABLE IF NOT EXISTS %[1]s (
+	%[2]s        BIGINT NOT NULL,
 	slot         INTEGER NOT NULL,
 	item_id      BIGINT NOT NULL,
 	quantity     INTEGER NOT NULL,
 	variance     BIGINT NOT NULL DEFAULT 0,
 	durability   INTEGER NOT NULL DEFAULT -1,
-	PRIMARY KEY (character_id, slot)
+	PRIMARY KEY (%[2]s, slot)
 );
-ALTER TABLE %s ADD COLUMN IF NOT EXISTS variance BIGINT NOT NULL DEFAULT 0;
-ALTER TABLE %s ADD COLUMN IF NOT EXISTS durability INTEGER NOT NULL DEFAULT -1;
-`, table, table, table)
+ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS variance BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS durability INTEGER NOT NULL DEFAULT -1;
+`, table, owner)
 }
 
 // The per-instance columns. `variance` is the 64-bit white-stat field
@@ -46,9 +56,18 @@ type SQLStore struct {
 	db           *sql.DB
 	maxStacks    MaxStackLookup
 	table        string
+	owner        string // the owner column: character_id (bag) or account_id (warehouse)
 	durabilities DurabilityLookup
 	// Rand is the source the instance rolls draw from; tests set it.
 	Rand durability.Rand
+}
+
+// q renders one statement for this container: `%s` is the table, and the
+// literal column token `character_id` becomes the owner column, so the same
+// statements serve the bag (owned by a character) and the warehouse (owned
+// by an account).
+func (s *SQLStore) q(stmt string) string {
+	return strings.ReplaceAll(fmt.Sprintf(stmt, s.table), "character_id", s.owner)
 }
 
 // SetDurabilityLookup gives the store the reference data it needs to roll a
@@ -62,9 +81,25 @@ func OpenSQLStore(dsn string, maxStacks MaxStackLookup) (*SQLStore, error) {
 }
 
 // OpenSQLStoreNamed opens a PostgreSQL-backed container using the given table,
-// ensuring its schema exists. The warehouse passes its own table so it is a
-// separate container sharing all of the bag's logic.
+// owned by a character (owner column `character_id`), ensuring its schema
+// exists. A container owned by something else passes its own column through
+// OpenSQLStoreOwned.
 func OpenSQLStoreNamed(dsn string, maxStacks MaxStackLookup, table string) (*SQLStore, error) {
+	return OpenSQLStoreOwned(dsn, maxStacks, table, DefaultOwnerColumn)
+}
+
+// DefaultOwnerColumn is the bag's owner column; the warehouse uses
+// WarehouseOwnerColumn because the game keys it by the account.
+const (
+	DefaultOwnerColumn   = "character_id"
+	WarehouseOwnerColumn = "account_id"
+)
+
+// OpenSQLStoreOwned opens a PostgreSQL-backed container on `table` whose rows
+// belong to whatever id the owner column names. The warehouse is opened this
+// way on WarehouseTable with WarehouseOwnerColumn: every character on an
+// account shares it, as the game's `_CHEST WHERE UserJID=%d` does.
+func OpenSQLStoreOwned(dsn string, maxStacks MaxStackLookup, table, owner string) (*SQLStore, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("inventory: opening postgres connection: %w", err)
@@ -73,12 +108,16 @@ func OpenSQLStoreNamed(dsn string, maxStacks MaxStackLookup, table string) (*SQL
 		db.Close()
 		return nil, fmt.Errorf("inventory: connecting to postgres: %w", err)
 	}
-	if _, err := db.Exec(schemaFor(table)); err != nil {
+	if _, err := db.Exec(schemaFor(table, owner)); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("inventory: creating schema: %w", err)
 	}
-	return &SQLStore{db: db, maxStacks: maxStacks, table: table}, nil
+	return &SQLStore{db: db, maxStacks: maxStacks, table: table, owner: owner}, nil
 }
+
+// DB exposes the connection for a one-off migration (storage.MigrateToAccounts)
+// that has to read this container's rows alongside other tables.
+func (s *SQLStore) DB() *sql.DB { return s.db }
 
 // TruncateForTest clears all inventory data. Exported only so other
 // packages' tests (which share this Postgres instance and can't reach the
@@ -93,7 +132,7 @@ func OpenSQLStoreNamed(dsn string, maxStacks MaxStackLookup, table string) (*SQL
 // therefore run one package at a time (`go test -p 1`); see the CI
 // workflow.
 func (s *SQLStore) TruncateForTest(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`TRUNCATE TABLE %s`, s.table))
+	_, err := s.db.ExecContext(ctx, s.q(`TRUNCATE TABLE %s`))
 	return err
 }
 
@@ -105,7 +144,7 @@ func (s *SQLStore) Close() error {
 // List implements Store.
 func (s *SQLStore) List(ctx context.Context, characterID int64) ([]Slot, error) {
 	rows, err := s.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT slot, item_id, quantity, variance, durability FROM %s WHERE character_id = $1 ORDER BY slot`, s.table),
+		s.q(`SELECT slot, item_id, quantity, variance, durability FROM %s WHERE character_id = $1 ORDER BY slot`),
 		characterID)
 	if err != nil {
 		return nil, fmt.Errorf("inventory: listing slots: %w", err)
@@ -136,7 +175,7 @@ func (s *SQLStore) List(ctx context.Context, characterID int64) ([]Slot, error) 
 	// once and every later read agrees with this one.
 	for _, sl := range legacy {
 		if _, err := s.db.ExecContext(ctx,
-			fmt.Sprintf(`UPDATE %s SET variance = $1, durability = $2 WHERE character_id = $3 AND slot = $4`, s.table),
+			s.q(`UPDATE %s SET variance = $1, durability = $2 WHERE character_id = $3 AND slot = $4`),
 			int64(sl.Variance), sl.Durability, characterID, sl.Index); err != nil {
 			return nil, fmt.Errorf("inventory: initialising slot %d: %w", sl.Index, err)
 		}
@@ -170,7 +209,7 @@ func (s *SQLStore) SetDurability(ctx context.Context, characterID int64, slot in
 		return ErrInvalidSlot
 	}
 	res, err := s.db.ExecContext(ctx,
-		fmt.Sprintf(`UPDATE %s SET durability = $1 WHERE character_id = $2 AND slot = $3`, s.table),
+		s.q(`UPDATE %s SET durability = $1 WHERE character_id = $2 AND slot = $3`),
 		durabilityLeft, characterID, slot)
 	if err != nil {
 		return fmt.Errorf("inventory: setting durability of slot %d: %w", slot, err)
@@ -215,7 +254,7 @@ func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quant
 		room := maxStack - sl.Quantity
 		add := min(room, remaining)
 		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`UPDATE %s SET quantity = quantity + $1 WHERE character_id = $2 AND slot = $3`, s.table),
+			s.q(`UPDATE %s SET quantity = quantity + $1 WHERE character_id = $2 AND slot = $3`),
 			add, characterID, sl.Index); err != nil {
 			return fmt.Errorf("inventory: topping up slot %d: %w", sl.Index, err)
 		}
@@ -232,7 +271,7 @@ func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quant
 
 		add := min(maxStack, remaining)
 		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability) VALUES ($1, $2, $3, $4, $5, $6)`, s.table),
+			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability) VALUES ($1, $2, $3, $4, $5, $6)`),
 			characterID, slotIdx, itemID, add, int64(inst.Variance), inst.Durability); err != nil {
 			return fmt.Errorf("inventory: inserting into slot %d: %w", slotIdx, err)
 		}
@@ -261,7 +300,7 @@ func (s *SQLStore) RemoveItem(ctx context.Context, characterID int64, slot int, 
 
 	var current int
 	err = tx.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT quantity FROM %s WHERE character_id = $1 AND slot = $2`, s.table),
+		s.q(`SELECT quantity FROM %s WHERE character_id = $1 AND slot = $2`),
 		characterID, slot).Scan(&current)
 	if err == sql.ErrNoRows {
 		return ErrSlotEmpty
@@ -275,12 +314,12 @@ func (s *SQLStore) RemoveItem(ctx context.Context, characterID int64, slot int, 
 
 	if quantity == current {
 		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`DELETE FROM %s WHERE character_id = $1 AND slot = $2`, s.table), characterID, slot); err != nil {
+			s.q(`DELETE FROM %s WHERE character_id = $1 AND slot = $2`), characterID, slot); err != nil {
 			return fmt.Errorf("inventory: clearing slot %d: %w", slot, err)
 		}
 	} else {
 		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`UPDATE %s SET quantity = quantity - $1 WHERE character_id = $2 AND slot = $3`, s.table),
+			s.q(`UPDATE %s SET quantity = quantity - $1 WHERE character_id = $2 AND slot = $3`),
 			quantity, characterID, slot); err != nil {
 			return fmt.Errorf("inventory: decrementing slot %d: %w", slot, err)
 		}
@@ -312,7 +351,7 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 	}
 	readSlot := func(slot int) (r row, found bool, err error) {
 		err = tx.QueryRowContext(ctx,
-			fmt.Sprintf(`SELECT item_id, quantity, variance, durability FROM %s WHERE character_id = $1 AND slot = $2`, s.table),
+			s.q(`SELECT item_id, quantity, variance, durability FROM %s WHERE character_id = $1 AND slot = $2`),
 			characterID, slot).Scan(&r.itemID, &r.qty, &r.variance, &r.durability)
 		if err == sql.ErrNoRows {
 			return row{}, false, nil
@@ -344,7 +383,7 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 	case !dstFound:
 		// Plain move into a free slot.
 		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`UPDATE %s SET slot = $1 WHERE character_id = $2 AND slot = $3`, s.table),
+			s.q(`UPDATE %s SET slot = $1 WHERE character_id = $2 AND slot = $3`),
 			to, characterID, from); err != nil {
 			return fmt.Errorf("inventory: moving slot %d to %d: %w", from, to, err)
 		}
@@ -352,17 +391,17 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 		// Same item with room: merge what fits, the rest stays behind.
 		moved := min(space, srcQty)
 		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`UPDATE %s SET quantity = quantity + $1 WHERE character_id = $2 AND slot = $3`, s.table),
+			s.q(`UPDATE %s SET quantity = quantity + $1 WHERE character_id = $2 AND slot = $3`),
 			moved, characterID, to); err != nil {
 			return fmt.Errorf("inventory: merging into slot %d: %w", to, err)
 		}
 		if moved == srcQty {
 			if _, err := tx.ExecContext(ctx,
-				fmt.Sprintf(`DELETE FROM %s WHERE character_id = $1 AND slot = $2`, s.table), characterID, from); err != nil {
+				s.q(`DELETE FROM %s WHERE character_id = $1 AND slot = $2`), characterID, from); err != nil {
 				return fmt.Errorf("inventory: clearing slot %d: %w", from, err)
 			}
 		} else if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`UPDATE %s SET quantity = quantity - $1 WHERE character_id = $2 AND slot = $3`, s.table),
+			s.q(`UPDATE %s SET quantity = quantity - $1 WHERE character_id = $2 AND slot = $3`),
 			moved, characterID, from); err != nil {
 			return fmt.Errorf("inventory: decrementing slot %d: %w", from, err)
 		}
@@ -370,12 +409,12 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 		// Swap. (character_id, slot) is the primary key, so the two rows are
 		// rewritten rather than renumbered past each other.
 		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`DELETE FROM %s WHERE character_id = $1 AND slot IN ($2, $3)`, s.table),
+			s.q(`DELETE FROM %s WHERE character_id = $1 AND slot IN ($2, $3)`),
 			characterID, from, to); err != nil {
 			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability) VALUES ($1, $2, $3, $4, $5, $6), ($1, $7, $8, $9, $10, $11)`, s.table),
+			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability) VALUES ($1, $2, $3, $4, $5, $6), ($1, $7, $8, $9, $10, $11)`),
 			characterID, to, srcItem, srcQty, src.variance, src.durability, from, dstItem, dstQty, dst.variance, dst.durability); err != nil {
 			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
 		}
@@ -400,7 +439,7 @@ func (s *SQLStore) mergeSpace(ctx context.Context, itemID int64, have int) int {
 func (s *SQLStore) loadOccupancy(ctx context.Context, tx *sql.Tx, characterID int64) ([]Slot, [SlotsPerCharacter]bool, error) {
 	var occupied [SlotsPerCharacter]bool
 	rows, err := tx.QueryContext(ctx,
-		fmt.Sprintf(`SELECT slot, item_id, quantity FROM %s WHERE character_id = $1 ORDER BY slot`, s.table),
+		s.q(`SELECT slot, item_id, quantity FROM %s WHERE character_id = $1 ORDER BY slot`),
 		characterID)
 	if err != nil {
 		return nil, occupied, fmt.Errorf("inventory: loading current slots: %w", err)

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 	blocked       BOOLEAN NOT NULL DEFAULT FALSE,
 	block_reason  TEXT NOT NULL DEFAULT ''
 );
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS storage_gold BIGINT NOT NULL DEFAULT 0;
 `
 
 // SQLStore is a Store and Registerer backed by PostgreSQL (via the pgx
@@ -113,4 +114,53 @@ func (s *SQLStore) SetBlocked(ctx context.Context, username string, blocked bool
 
 func isUniqueConstraintErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "duplicate key value violates unique constraint")
+}
+
+// StorageGold implements StorageGoldStore.
+func (s *SQLStore) StorageGold(ctx context.Context, accountID int64) (int64, error) {
+	var gold int64
+	err := s.db.QueryRowContext(ctx, `SELECT storage_gold FROM accounts WHERE id = $1`, accountID).Scan(&gold)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNoSuchAccount
+	}
+	if err != nil {
+		return 0, fmt.Errorf("account: reading storage gold: %w", err)
+	}
+	return gold, nil
+}
+
+// AddStorageGold implements StorageGoldStore.
+func (s *SQLStore) AddStorageGold(ctx context.Context, accountID int64, amount int64) error {
+	if amount <= 0 {
+		return errors.New("account: storage gold amount must be positive")
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE accounts SET storage_gold = storage_gold + $1 WHERE id = $2`, amount, accountID)
+	if err != nil {
+		return fmt.Errorf("account: adding storage gold: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNoSuchAccount
+	}
+	return nil
+}
+
+// DeductStorageGold implements StorageGoldStore. The balance check is in the
+// statement itself, so two withdrawals cannot both pass it.
+func (s *SQLStore) DeductStorageGold(ctx context.Context, accountID int64, amount int64) error {
+	if amount <= 0 {
+		return errors.New("account: storage gold amount must be positive")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE accounts SET storage_gold = storage_gold - $1 WHERE id = $2 AND storage_gold >= $1`, amount, accountID)
+	if err != nil {
+		return fmt.Errorf("account: deducting storage gold: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var exists bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM accounts WHERE id = $1)`, accountID).Scan(&exists); err == nil && !exists {
+			return ErrNoSuchAccount
+		}
+		return ErrInsufficientStorageGold
+	}
+	return nil
 }

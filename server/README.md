@@ -83,7 +83,9 @@ The full recipe, as actually run on the public server, is `deploy/README.md`.
 
 `internal/` is one package per system; the ones that carry recovered rules cite
 their source in the code (`combat`, `durability`, `berserk`, `leveldata`,
-`skillparam`, `character`, `equipment`, `grounditem`, `repair`, `rates`).
+`skillparam`, `character`, `equipment`, `grounditem`, `repair`, `rates`,
+`storage` -- the warehouse is the account's, with a one-time boot migration
+from the older per-character table).
 `session` holds the wire handlers (our own protocol; opcodes and payloads are
 documented next to the handlers and in `docs/protocol/`), `gateway` the TCP
 layer, `world` the zone hub, `persistence` the recovered model of the original
@@ -91,7 +93,7 @@ database, and `systems` the test that keeps `docs/SYSTEMS.md` honest.
 
 ## Tests
 
-`go test -p 1 ./...` from this directory. Eleven packages' tests use a local
+`go test -p 1 ./...` from this directory. Twelve packages' tests use a local
 PostgreSQL test database (`SRREVAMP_TEST_POSTGRES_DSN`, default
 `postgres://postgres:postgres@localhost:5432/srrevamp_test?sslmode=disable`);
 `internal/testdb` serialises test *processes* on it with an advisory file lock,

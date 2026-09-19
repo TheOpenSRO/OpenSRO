@@ -385,12 +385,15 @@ func main() {
 		chars      character.Store
 		refItems   refItemStore
 		inv        inventory.Store
-		warehouse  inventory.Store // the storage NPC's container (a 2nd inventory)
-		eq         equipment.Store
-		skills     skill.Store
-		guilds     guild.Store
-		quests     quest.Store
-		friends    friend.Store
+		warehouse  inventory.Store // the storage NPC's container (a 2nd inventory), owned by the ACCOUNT
+		// The warehouse gold, kept per account as the game keeps it
+		// (accounts.storage_gold; see internal/storage).
+		storageGold account.StorageGoldStore
+		eq          equipment.Store
+		skills      skill.Store
+		guilds      guild.Store
+		quests      quest.Store
+		friends     friend.Store
 	)
 
 	if *inMemory {
@@ -439,10 +442,11 @@ func main() {
 		memInv.SetDurabilityLookup(memRef)
 		memAccounts := account.NewMemStore()
 		accounts, registerer = memAccounts, memAccounts
+		storageGold = memAccounts
 		chars = character.NewMemStore()
 		refItems = memRef
 		inv = memInv
-		memWarehouse := inventory.NewMemStore(memRef) // a second, independent container
+		memWarehouse := inventory.NewMemStore(memRef) // a second, independent container, keyed by account id
 		memWarehouse.SetDurabilityLookup(memRef)
 		warehouse = memWarehouse
 		eq = equipment.NewMemStore(memInv)
@@ -503,14 +507,26 @@ func main() {
 		defer sqlInv.Close()
 		sqlInv.SetDurabilityLookup(sqlRef)
 
-		// The warehouse is a second inventory container on its own table.
-		sqlWarehouse, err := inventory.OpenSQLStoreNamed(*postgresDSN, sqlRef, "storage_slots")
+		// The warehouse is a second inventory container on its own table,
+		// owned by the ACCOUNT (the game's `_CHEST WHERE UserJID=%d`; see
+		// internal/storage). A database written by the older per-character
+		// server is moved over once, losslessly, before anything opens it.
+		sqlWarehouse, err := inventory.OpenSQLStoreOwned(*postgresDSN, sqlRef, inventory.WarehouseTable, inventory.WarehouseOwnerColumn)
 		if err != nil {
 			logger.Error("opening warehouse store", "error", err)
 			os.Exit(1)
 		}
 		defer sqlWarehouse.Close()
 		sqlWarehouse.SetDurabilityLookup(sqlRef)
+		storageGold = sqlAccounts
+		if moved, err := storage.MigrateToAccounts(ctx, sqlWarehouse.DB(), logger); err != nil {
+			logger.Error("moving the warehouse to accounts", "error", err)
+			os.Exit(1)
+		} else if moved.Applied {
+			logger.Info("warehouse moved from characters to accounts",
+				"rows", moved.Rows, "reslotted", moved.Reslotted, "gold", moved.Gold,
+				"characters", moved.Characters, "accounts", moved.Accounts, "orphanRowsLeft", moved.Orphans)
+		}
 
 		sqlEq, err := equipment.OpenSQLStore(*postgresDSN, sqlInv)
 		if err != nil {
@@ -561,7 +577,7 @@ func main() {
 	}
 
 	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
-	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars}
+	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: storageGold}
 	zerkTracker := berserk.NewTracker()
 	manaTracker := mana.NewTracker()
 

@@ -27,6 +27,13 @@ var ErrBlocked = errors.New("account: account is blocked")
 // username already exists.
 var ErrUsernameTaken = errors.New("account: username already taken")
 
+// ErrInsufficientStorageGold is returned by DeductStorageGold when the
+// account's warehouse holds less than asked.
+var ErrInsufficientStorageGold = errors.New("account: insufficient warehouse gold")
+
+// ErrNoSuchAccount is returned for an account id that does not exist.
+var ErrNoSuchAccount = errors.New("account: no such account")
+
 // Account is one registered player account.
 type Account struct {
 	ID           int64
@@ -34,6 +41,12 @@ type Account struct {
 	PasswordHash []byte
 	Blocked      bool
 	BlockReason  string
+	// StorageGold is the gold kept in the warehouse. It belongs to the
+	// ACCOUNT, not to a character: the game's chest deposit runs
+	// `_UPDATE_USER_N_CHAR_GOLD(userJID, userGold, charID, charGold)`
+	// (AQ_StorageUpdater::MoveItemWithGold, 0x45af70), the user's balance
+	// moving opposite the character's. See docs/protocol/server_sql.md.
+	StorageGold int64
 }
 
 // HashPassword hashes a plaintext password for storage. Never store
@@ -57,6 +70,20 @@ type Store interface {
 	// password is wrong, or ErrBlocked if the credentials are correct but
 	// the account is currently blocked.
 	Authenticate(ctx context.Context, username, password string) (*Account, error)
+}
+
+// StorageGoldStore is the warehouse gold, kept per ACCOUNT because the game
+// keeps it on the user row (see Account.StorageGold). Every character on the
+// account deposits into and withdraws from the same balance.
+type StorageGoldStore interface {
+	// StorageGold returns accountID's warehouse gold.
+	StorageGold(ctx context.Context, accountID int64) (int64, error)
+	// AddStorageGold credits amount (must be positive) to accountID's
+	// warehouse gold.
+	AddStorageGold(ctx context.Context, accountID int64, amount int64) error
+	// DeductStorageGold debits amount (must be positive) from accountID's
+	// warehouse gold. Returns ErrInsufficientStorageGold if it holds less.
+	DeductStorageGold(ctx context.Context, accountID int64, amount int64) error
 }
 
 // Registerer is anything that can create new accounts. Kept separate from
