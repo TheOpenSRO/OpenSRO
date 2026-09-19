@@ -7075,6 +7075,45 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-seventeenth round: the teleport list is the client's own, and columns 8/9 have no reader -- a correction and a narrowed probe
+
+The RE tick's step for 2026-09-19 07:23. The teleport row's open probe was "the
+server's destination-list builder", on the belief (recorded in `teleport_network.md`)
+that the entries `UI_TELEPORT::FUN_006fd3e0` formats were a server reply. They are not.
+
+### Read
+
+- The client builds the destination list from its **own** link records:
+  `UI_TELEPORT::FUN_009767b0` counts the current gate's links,
+  `GlobalDataManager::FUN_00976a30(k)` selects one, and each becomes a 0x18-byte list
+  item numbered `"%d. %s"`. Free vs fee reads the record word at `+0x10` --
+  `RefParse_teleportlink`'s third direct field, column 3 -- so the client agrees with the
+  server's use-site (`FUN_00513590`) that **column 3 is the fee**: two binaries, neither
+  consulted about the other.
+- The `entry+6` byte is not a level. It is set only when the gate is `STORE_TOMB_GATE_IN`
+  (string at `0xdaddb8`, read from the image with a PE section walk), to the item's
+  ordinal, and the item is greyed (`0xff969696`) when the player byte at `+0x20ff` is 0
+  or below it. That byte is the SERVER's: the NPC-talk reply handler
+  `NetProcessInInterface::FUN_0088b200` stores one payload byte there for
+  `STORE_TOMB_GATE_IN`, and reads two for `STORE_DESERT_MERCHANT_HUNTER_GATE` /
+  `STORE_DESERT_THIEF_GATE` (`0xdae620` / `0xdae5f0`). The tomb's per-floor gating is a
+  per-player count handed over at talk time, keyed by gate name -- not a link column.
+- The one level range the client's gate code shows, `UIIT_STT_GOD_LV_EXTENT`
+  (`CITeleportGate::vslot_025`: `"%d - %d"` from `+0x2bc/+0x2c0`, class switch on
+  `+0x2b4`), is formatted from the gate STRUCTURE's own object record
+  (`GlobalDataManager::FUN_0093f5f0` -> `RefData_usableresobjiddata`), not a link.
+- Nothing in the dialog or the gate object reads the link's restriction triples.
+
+### What it means
+
+Columns 8/9 have no reader in the server's use handler, the client's dialog, or the
+client's gate object. srrevamp does not consume them, so nothing changes in code; the
+spec and the SYSTEMS row now say exactly where they were looked for and not found. The
+remaining place is the server's link-binding pass (a `CRefTeleport`'s link vector is
+filled from `CRefTeleLink` rows; the `_REFTELELINK` binder, `0x82d770`, keeps its column
+names in a static descriptor table, so the names are not in the dump). Tool added on the
+box: `/var/tmp/infn2.sh <re1> <re2>` lists functions matching BOTH patterns.
+
 ## Two-hundred-and-sixteenth round: the warehouse's capacity -- a per-user row, no default in the binary, and the client's own 30-slot pages
 
 The RE tick's step for 2026-09-19 07:00, following round 215's open probe. srrevamp's

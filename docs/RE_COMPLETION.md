@@ -4873,6 +4873,17 @@ and art were read off its constructor (`0x49d2e0`) so the authored page spinner 
 built and works. `storage.DefaultCapacity` (50) is disclosed on those terms; the
 server sends it with the list and the client pages from it. Round 216.
 
+### Teleport columns 8/9, 2026-09-19 (round 217): no reader, and a correction
+
+The dialog's entries are the client's OWN link records, not a server list
+(`UI_TELEPORT::FUN_006fd3e0` over `GlobalDataManager::FUN_00976a30(k)`); it reads
+only the fee word (`+0x10`, column 3 -- the client now agrees with the server's
+use-site). Its only per-destination gate is the `STORE_TOMB_GATE_IN` special case,
+a per-player byte the server sends in the talk reply (`0x88b200` -> `+0x20ff`).
+`UIIT_STT_GOD_LV_EXTENT` comes from the gate structure's object record. Columns
+8/9 therefore have no reader in either binary's ordinary-gate paths; srrevamp
+does not use them; the remaining probe is the server's link-binding pass.
+
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
 via `nItemDBID`), and an empty slot is a real row with `ItemID = 0 or NULL`

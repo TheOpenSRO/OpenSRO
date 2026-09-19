@@ -121,6 +121,46 @@ byte at `entry+6` against a level-shaped value -- but those entries are the
 list. *Next probe:* the server's reply to a gate talk (the list builder), or
 the list packet's layout on the client side of that same function.
 
+## The client's list, read (2026-09-19, second pass)
+
+The earlier guess that the dialog's entries were "the server's list reply" was wrong.
+`UI_TELEPORT::FUN_006fd3e0` (`0x006fd3e0`) builds the destination list from the
+**client's own link records**: `UI_TELEPORT::FUN_009767b0` gives the count for the
+current gate, `GlobalDataManager::FUN_00976a30(k)` selects link *k*, and for each it
+allocates a 0x18-byte list item, numbers it `"%d. %s"`, and formats the name with
+`UIIT_CTL_TELEPORT_FREE_RESULT` when the link record's word at `+0x10` is 0 and
+`UIIT_CTL_TELEPORT_RESULT` with that word (through the thousands formatter
+`FUN_006fc910`) otherwise. `+0x10` is the third direct field of `RefParse_teleportlink`
+-- **column 3, the fee** -- so the client agrees with the server's use-site
+(`FUN_00513590` above): two binaries, neither consulted about the other.
+
+**Nothing in the dialog reads the restriction triples** (`+0x1c..`, `+0x30..`,
+`+0x44..`), and the byte at `entry+6` is not a level: it is set only when the gate's
+code name is `STORE_TOMB_GATE_IN` (the string at `0xdaddb8`, read from the image),
+to the item's ordinal *k*, and the item is greyed (`entry+0x14 = 0`, colour
+`0xff969696`) when the player byte at `+0x20ff` is 0 or less than *k*. That byte is
+**sent by the server**: the NPC-talk reply handler `NetProcessInInterface::FUN_0088b200`
+stores one payload byte there when the talked-to gate is `STORE_TOMB_GATE_IN` (and
+reads a 2-byte payload for `STORE_DESERT_MERCHANT_HUNTER_GATE` / `STORE_DESERT_THIEF_GATE`,
+`0xdae620`/`0xdae5f0`). So the tomb entrance's per-floor gating is a per-player count the
+server hands the client at talk time -- a special case by gate name, not a link column.
+
+The one level range the client's gate code does display, `UIIT_STT_GOD_LV_EXTENT`
+(`CITeleportGate::vslot_025`, `0x009e9eb0`: `"%d - %d"` from `+0x2bc`/`+0x2c0`, a class
+switch on `+0x2b4`), is formatted from the gate STRUCTURE's own object record
+(`GlobalDataManager::FUN_0093f5f0` -> `RefData_usableresobjiddata`), not from a
+teleport link.
+
+**Where that leaves columns 8/9:** no consumer in the server's use handler, none in
+the client's dialog, none in the client's gate object. Either the restriction triples
+are applied when the server BINDS links at load (`RestrictBindMethod` would be the
+name for it, if the DB column names match the client parser's shape -- the server's
+`_REFTELELINK` binder keeps its column names in a static descriptor table, so they are
+not greppable in the dump), or these builds do not apply them to ordinary gates at all.
+srrevamp does not consume them. *Next probe:* the pass that fills a `CRefTeleport`'s
+link vector from `CRefTeleLink` rows (the runtime link's first word is the destination
+ref pointer, its second the fee); a read of the triples there would settle it.
+
 One more structural fact (2026-09-19): the runtime link vector hangs off the gate's
 `CRefTeleport` ref object (`ref+0x190`, vector at `+0x3c/+0x40`), and a link's first
 word is a **pointer to the destination `CRefTeleport`** (`CGObjNPCNPC::Create` reads its
