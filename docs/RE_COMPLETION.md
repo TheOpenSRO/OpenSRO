@@ -5073,6 +5073,11 @@ Round 251: WANDER's leg (85+-39 units, a 45..135 degree turn, a 30-unit blocked
 probe that reverses) and `AIState_DwellMs` per state (IDLE 2-6 s, WANDER 5-6 s,
 FLEE 3-5 s, EMOTION 3-5 s, default 50 s) read; `ai.DwellRange` + leg constants
 with a test. Monsters still do not move in srrevamp.
+Round 252 (world lane, v0.1.402): the zone label comes from the game's own
+per-region `textzonename.txt` (4,176 rows) instead of the 15-zone Shader table
+that had no Alexandria; the "white ground" did NOT reproduce on the box (13/13
+tile textures resolve for 90/48) -- the client now logs per region how many
+resolved, to settle it from the reporter's own archives.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

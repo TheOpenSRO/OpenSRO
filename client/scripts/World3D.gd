@@ -7171,6 +7171,12 @@ func _on_change_zone_pressed() -> void:
 	if zone == "":
 		return
 	_pending_zone_local = target.get("local", null)
+	# A zone change leaves the old zone's monsters behind: drop the target
+	# with them, or the window keeps showing (and skills keep aiming at) a
+	# Mangyang two zones away -- the reporter's Alexandria screenshot.
+	_last_attack_target = -1
+	if _hud_target != null:
+		_hud_target.clear()
 	NetClient.change_zone(zone)
 
 ## Chat panel, ported from the 2D World.gd HUD (see docs/PROGRESS.md) --
