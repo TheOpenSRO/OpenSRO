@@ -7072,7 +7072,7 @@ func _where_report() -> PackedStringArray:
 	var out: PackedStringArray = []
 	var p := player.global_position
 	var result = NetClient.last_enter_world_result
-	var zone := result.zone if result != null else "?"
+	var zone: String = result.zone if result != null else "?"
 	out.append("zone: %s" % zone)
 	# Region is world X -> region y, world Z -> region x (a project fact --
 	# see AGENTS.md): local coordinates run [0, REGION_SPAN).
