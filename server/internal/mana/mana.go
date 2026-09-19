@@ -130,9 +130,11 @@ import (
 const (
 	RegenPercentPerTick = 4
 	// RegenInterval is REAL: the float the timer registration hands to the
-	// tick callback, `.rdata 0x00b45dc0` = 4.0. The unit is inferred as
-	// seconds -- the same inference the berserk duration carries, and for the
-	// same reason: nothing in the timer module converts it.
+	// tick callback, `.rdata 0x00b45dc0` = 4.0. THE UNIT IS READ (2026-09-19,
+	// round 223): the timer vector this job sits in is ticked by
+	// CGObjChar::Update(dt) with the main loop's delta, which is GetTickCount
+	// milliseconds / 1000 (docs/protocol/character_state.md) -- so 4.0 is four
+	// seconds, and the 1-second job beside it (slot 364) is the same proof.
 	RegenInterval = 4 * time.Second
 )
 

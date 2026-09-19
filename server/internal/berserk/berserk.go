@@ -144,12 +144,14 @@ const (
 	// PARAM_HWAN_TIME_INCREASE -- and InitStats sets it to 0, its registry
 	// default, so an unbuffed berserk is exactly 60 and a buffed one is longer.
 	//
-	// THE UNIT IS INFERRED, not read. What is recovered is the number 60 and
-	// the fact that it counts down as a float against elapsed time; no
-	// conversion appears in the AJStateChanger module, so the tick's delta unit
-	// was never actually read. Seconds is the only reading that makes sense of
-	// a float countdown from 60.0 with a buff term capped at 100, but it is an
-	// inference and is labelled one.
+	// THE UNIT IS READ (2026-09-19, round 223): the countdown is advanced by
+	// the PC's periodic update CGObjPC::vslot_415 with a delta of 1.0 per call
+	// (FUN_006560c0(pc+0x1dfc, 1.0f)), and vslot_415 is the callback of the
+	// character's 1.0-second timer job (CGObjChar::Create registers the
+	// slot-364 thunk with fld1; the timer vector is ticked by CGObjChar::Update
+	// with the main loop's delta, GetTickCount milliseconds / 1000 -- see
+	// docs/protocol/character_state.md). So 60.0 is sixty seconds. This note
+	// used to call the unit an inference; it no longer is.
 	//
 	// The charge model is now recovered too, and it is NOT this package's
 	// gauge: berserk requires all five charges and spends all five at once.

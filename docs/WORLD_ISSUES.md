@@ -7075,6 +7075,39 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-twenty-third round: the PC tick is one second, read -- and it grounds three shipped units at once
+
+The RE tick's step for 2026-09-19 08:49. Round 222 had parked the period of
+`CGObjPC::vslot_415`. The repo's own `internal/mana` note held the mechanism (the regen job
+is a TIMER registered with a vcall thunk and a `.rdata` interval); following it closes the
+question and corrects two earlier rounds. Spec: `docs/protocol/character_state.md`.
+
+### Read
+
+- `CGObjChar::Create` (`0x4a6f40`) registers the character's periodic jobs on a timer
+  vector at `this+0x18c` (0x18-byte nodes: elapsed, interval, callback), each callback the
+  vcall thunk of a vtable slot. Slot 364 -- the job that calls `controller->slot11(pc)`,
+  which is `CGObjPC::vslot_415` -- is registered three times with `fld1` = **1.0**. Beside
+  it: slot 362 (regen) 4.0, slot 365 10.0, slot 368 30.0, slot 366 60.0, slot 367 600.0.
+- The ticker `GObjPC::FUN_004ab690(dt)` adds dt to each node and fires the callback when
+  it reaches the interval; it is called from `CGObjChar::Update(dt)` (slot 211, offset
+  `0x34c`) -- the slot the main loop's fixed step `CMainProcess::FUN_00413b30` calls on
+  every object, passing `_DAT_00d6a8ec`, the accumulator round 219 showed is in seconds.
+- Therefore the intervals are seconds: `vslot_415` runs once per second; the battle
+  stance reverts **20 s** after the last blow; berserk's float countdown (advanced 1.0 per
+  `vslot_415` call) is **60 s**; regeneration ticks every **4 s**. Three shipped values whose
+  unit was labelled "inferred" are read, and their code comments say so now.
+
+### Corrected
+
+Rounds 220 and 222 said slot 364 was dead because nothing referenced `0x4ac6b2`. That is
+the thunk's `jmp`; the entry is `0x4ac6b0` (`mov eax,[ecx]` first), referenced three times.
+The vcall-thunk search must take the entry. And the "parked" verdict of round 222 was
+premature by one grep of the repo: the mechanism was already written down in
+`internal/mana/mana.go` -- docs before dump, again.
+
+No numeric value changed (20, 60, 4 were already shipped); labels and specs did.
+
 ## Two-hundred-and-twenty-second round: the world keeps its controller at +8; the PC tick's scheduler is parked with its state written down
 
 The RE tick's step for 2026-09-19 08:34, the fifth on the period of `CGObjPC::vslot_415`.

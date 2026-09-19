@@ -894,11 +894,12 @@ var _last_combat_time := -1000.0
 ## arms a countdown of 20 at pc+0x203c; the PC's periodic update
 ## CGObjPC::vslot_415 decrements it once per call and, at zero, calls the
 ## same setter back to peace. So the stance lasts exactly 20 ticks of that
-## update -- the update that also advances the timed-effect list with a
-## delta of 1.0 (FUN_006560c0(..., 1.0f)), the unit berserk's 60.0 counts in.
-## THE TICK'S PERIOD IS NOT READ: 20 s here rests on the same inference as
-## berserk's 60 s (a 1-second tick), stated as such. In the original this is
-## server-driven; here the client holds the pose itself from its last action.
+## update. THE TICK IS ONE SECOND, READ (round 223): vslot_415 is reached
+## from the PC's 1.0-second timer job (CGObjChar::Create registers the slot-364
+## thunk with fld1; the timer vector is advanced by CGObjChar::Update with the
+## main loop's delta, which is GetTickCount milliseconds / 1000). So 20 ticks
+## is 20 seconds. In the original this is server-driven; here the client holds
+## the pose itself from its last action (docs/protocol/character_state.md).
 const COMBAT_STANCE_SECONDS := 20.0
 ## skilleffect.txt parsed once: Basic_Code (upper) -> hit `.efp` path. Lazy.
 var _skill_hit_efp: Dictionary = {}

@@ -4904,6 +4904,12 @@ slot-11 sites -- a disassembly walk is what is left.
 Round 222: the world keeps its controller at `world+8` (slot-1 setter `FUN_005eb2c0`);
 no decompiled reader of it calls slot 11 by any spelling. PARKED after five ticks --
 the unit is labelled on both values it touches; route left: a Ghidra data-flow pass.
+Round 223 -- CLOSED, one second, read: the PC's periodic jobs are a timer vector
+registered in `CGObjChar::Create` (slot 364's thunk `0x4ac6b0` with `fld1` = 1.0; regen
+slot 362 with 4.0; 10/30/60/600 for the others), ticked by `GObjPC::FUN_004ab690` from
+`CGObjChar::Update(dt)` (slot 211 = `0x34c`), which the main loop's fixed step calls with
+the seconds accumulator `_DAT_00d6a8ec`. Stance 20 s, berserk 60 s, regen 4 s are read.
+Rounds 220/222's "slot 364 is dead" was a two-byte error (thunk entry vs its `jmp`).
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
