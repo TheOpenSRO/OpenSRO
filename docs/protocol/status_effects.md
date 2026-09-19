@@ -51,3 +51,48 @@ spec for one. The params a state writes were harvested from the appliers' own
 `ParamKeeper_SetParam`/remove pairs (`FUN_004b3510`/`FUN_004b3570` with slot 5); the states
 whose row says only a name have appliers that act through object virtuals rather than
 params, and are unread past that.
+
+## How a skill applies one -- `Combat_ApplyStatusEffects` (`0x590680`), round 249
+
+The applier is one block per status the skill row can carry, in this order of skill
+fields (`skill_fields.md` offsets), each guarded by the field being present. Every block
+asks the target's active-effect map (`target+0xa30`, `FUN_005a1a20(map, kind << 24, level)`)
+whether the state can be applied at this level, and the six elemental blocks then roll the
+same way (read in full for burn at `0x590af9..0x590c5d`):
+
+	level  = value[1] + bonus                       ; the skill's status level
+	if GetParam(resist%) >= 100: skip
+	chance = round((100 - resist%) / 100 * value[0]) - round(GetParam(flat resist))
+	if chance <= 0: skip
+	record: +0x14 level, +0x1a chance, +0x20 1.0, +0x24 word[0xc63c94 + 4*value[2]],
+	        +0x10 tick interval = skill 'puls' value[0], else 2000 ms (0x7d0)
+
+The **kind** in the map key is the client's icon bit + 1, and the server's applier slot
+(`pc+0xe0c + 4*slot`) is the bit itself -- three numberings, one order:
+
+| skill code | field | kind (`<<24`) | client bit / icon | resist % / flat params |
+|---|---|---|---|---|
+| `fz` | `+0x30c` | 1 | 0 freeze | **27 / 145** |
+| `fb` | `+0x310` | 2 | 1 frostbite | **28 / 146** |
+| `es` | `+0x314` | 3 | 2 electricshock | **29 / 147** |
+| `bu` | `+0x318` | 4 | 3 burn | **30 / 148** (`bu` = `MATTR_RESIST_BURN` on 30, already known) |
+| `ps` | `+0x31c` | 5 | 4 poisoning | **31 / 149** |
+| `zb` | `+0x320` | 6 | 5 zombi | **32 / 150** |
+| `se` | `+0x430` | 7 | 6 sleep | -- |
+| `rt` | `+0x434` | 8 | 7 root | -- |
+| `sl` | `+0x438` | 9 | 8 blunting | -- |
+| `fe` | `+0x43c` | 10 | 9 fear | -- |
+| `my` | `+0x440` | 11 | 10 myopia | -- (its value becomes param 183 through the slot-10 applier) |
+| `bl` | `+0x444` | 12 | 11 bleeding | -- |
+| `dn` | `+0x44c` | 14 | 13 dark | -- |
+| `st` | `+0x450` | 15 | 14 stun | -- |
+| `ds` | `+0x454` | 17 | 16 confusion | -- |
+| `ca` | `+0x458` | 18 | 17 decay | -- |
+| `cssr` | `+0x45c` | 19 | 18 weakness | -- |
+
+So the resist family is settled per tag, which `magic_options.md` had left open: freeze
+27/145, frostbite 28/146, electric shock 29/147, burn 30/148, poison 31/149, zombie 32/150.
+The function opens by reading **param 169** (the Disease applier's param) -- the gate on the
+whole roll, which is what "disease" does. The blocks after the six elemental ones (sleep
+onward) do not read a resist pair; their chance path is not read yet, nor is the
+`0xc63c94` word table the `value[2]` index selects (by shape a duration table).

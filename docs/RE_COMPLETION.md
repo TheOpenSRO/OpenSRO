@@ -5065,6 +5065,10 @@ icon switch at 0x7fdab0 names 25 bits; the server's applier table at pc+0xe0c is
 indexed by them; six param/icon agreements). `status_effects.md` (new), 22
 appliers renamed with their state, the CBRA/WIRU range bonuses identified as
 active-state lookups. Docs only.
+Round 249: `Combat_ApplyStatusEffects` read for the six elemental states --
+chance = (100-resist%)/100*base - flat against the per-state pairs 27..32 /
+145..150 (settled per tag), kind = icon bit + 1, tick = `puls` or 2000 ms,
+disease (169) gates the roll. Docs only.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

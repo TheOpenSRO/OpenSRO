@@ -158,10 +158,10 @@ resists and the run 145..150 in strict alternation -- 27, 145, 28, 146, 29, 147,
 32, 150 -- so they are six `(percent, flat)` pairs, and `bu`'s flat term is param **148**. See
 `docs/protocol/param_registry.md`. The bounds agree: 27..32 cap at 100, 145..150 at 9,999,999.
 
-**Not listed, deliberately:** `fz`, `ps`, `zb` and the other resists share one tail block, each
-setting its own EDI before jumping in, so a walk that explores both arms of every branch reaches
-all of params 27, 29, 30, 31 and 32 from each. The family occupies that range; which tag takes
-which, this walk does not say. (`bu` resolved singly in both a conservative and an exhaustive
+**Which tag takes which is settled from the other end (round 249):** `Combat_ApplyStatusEffects`
+reads each status's resist pair in its own block -- freeze 27/145, frostbite 28/146, electric
+shock 29/147, burn 30/148, poison 31/149, zombie 32/150 (`status_effects.md`). The item-tag
+walk below could not separate them because the resists share one tail block. (`bu` resolved singly in both a conservative and an exhaustive
 walk and is listed, but it is in the same block and carries the same caveat.)
 
 **Regeneration is an item stat.** Params 25/26 exist and `MATTR_REGENHPMP`/`MATTR_AVATAR_HPRG`/

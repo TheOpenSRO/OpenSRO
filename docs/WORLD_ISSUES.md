@@ -7075,6 +7075,23 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-forty-ninth round: how a skill applies a status -- the resist pairs settled per state
+
+The RE tick for 2026-09-19 15:04 read `Combat_ApplyStatusEffects` (`0x590680`) with a
+re-synchronised disassembly (the whole-image listing is desynchronised there). One block per
+status field of the skill row, in order `fz fb es bu ps zb` then `se rt sl fe my bl dn st ds
+ca cssr`; each asks the target's active-effect map whether the state applies at this level,
+keyed by **kind << 24** where kind = the client's icon bit + 1 (freeze 1 ... myopia 11 ...
+decay 18); the six elemental blocks roll `chance = (100 - resist%)/100 * value[0] - flat`
+against **their own resist pair** -- freeze 27/145, frostbite 28/146, electric shock 29/147,
+burn 30/148, poison 31/149, zombie 32/150 -- which settles the per-tag question
+`magic_options.md` had left open. A passing roll builds the effect record: level, chance,
+the tick interval from the skill's `puls` value or **2000 ms** by default, and a word from
+the table at `0xc63c94` indexed by `value[2]` (unread, by shape a duration). The function
+opens on param 169, the Disease applier's param: disease gates the whole roll. Recorded in
+`status_effects.md`; the SYSTEMS row's next probe moves to the non-elemental blocks and the
+duration table. No shipped value changed.
+
 ## Two-hundred-and-forty-eighth round: the status-effect vocabulary -- one bit numbering on both sides, and param 183 is Myopia's range cut
 
 The RE tick for 2026-09-19 14:53 closed round 247's two unread terms and found a vocabulary

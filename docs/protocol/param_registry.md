@@ -118,12 +118,12 @@ branches).
 | 24 | 0x018 | 0 | 9999999 | **0** | -1 | run speed -- the word at `+0xe6` (column 47, `Speed2`), published beside 23 (round 231/237) |
 | 25 | 0x019 | 0 | 100 | **0** | 0 | hprg |
 | 26 | 0x01a | 0 | 100 | **0** | 0 | mprg |
-| 27 | 0x01b | 0 | 100 | **0** | 0 | rals |
-| 28 | 0x01c | 0 | 100 | **0** | 0 |  |
-| 29 | 0x01d | 0 | 100 | **0** | 0 |  |
+| 27 | 0x01b | 0 | 100 | **0** | 0 | rals; **freeze resist %** -- Combat_ApplyStatusEffects' block for that status reads it (round 249) |
+| 28 | 0x01c | 0 | 100 | **0** | 0 | **frostbite resist %** -- Combat_ApplyStatusEffects' block for that status reads it (round 249) |
+| 29 | 0x01d | 0 | 100 | **0** | 0 | **electric shock resist %** -- Combat_ApplyStatusEffects' block for that status reads it (round 249) |
 | 30 | 0x01e | 0 | 100 | **0** | 0 |  |
-| 31 | 0x01f | 0 | 100 | **0** | 0 |  |
-| 32 | 0x020 | 0 | 100 | **0** | 0 |  |
+| 31 | 0x01f | 0 | 100 | **0** | 0 | **poison resist %** -- Combat_ApplyStatusEffects' block for that status reads it (round 249) |
+| 32 | 0x020 | 0 | 100 | **0** | 0 | **zombie resist %** -- Combat_ApplyStatusEffects' block for that status reads it (round 249) |
 | 33 | 0x021 | 0 | 9999999 | **0** | 0 | **attack range** -- `Char_PublishCombatStats` publishes the equipped weapon's `Range` column (item ref `+0x224`, itemdata 94; 0 while broken) here, and the action tick (`0x4ad8e0`) reads `round(param 33)` as the reach of any skill whose own Range is 0, i.e. every basic attack (round 247) |
 | 34 | 0x022 | 0 | 1000 | **100** | 0 |  |
 | 35 | 0x023 | 0 | 1000 | **100** | 0 |  |
