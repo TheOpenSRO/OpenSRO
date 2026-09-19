@@ -252,3 +252,29 @@ func TestNilStatesAreSkipped(t *testing.T) {
 		t.Errorf("ended in %s, want WANDER", got)
 	}
 }
+
+// TestDwellRangesAreTheSwitchArms pins AIState_DwellMs (0x00545b70) arm by arm,
+// including the 50 000 ms default HOMING falls into.
+func TestDwellRangesAreTheSwitchArms(t *testing.T) {
+	cases := []struct {
+		s        State
+		min, max int
+		ok       bool
+	}{
+		{StateIdle, 2001, 5999, true},
+		{StateWander, 5000, 5999, true},
+		{StateFlee, 3000, 5000, true},
+		{StateEmotion, 3001, 4999, true},
+		{StateHoming, 50000, 50000, false},
+		{StateBattle, 50000, 50000, false},
+	}
+	for _, c := range cases {
+		min, max, ok := DwellRange(c.s)
+		if min != c.min || max != c.max || ok != c.ok {
+			t.Errorf("%s: got %d..%d ok=%v, want %d..%d ok=%v", c.s, min, max, ok, c.min, c.max, c.ok)
+		}
+	}
+	if lo, hi := WanderDistanceRange(); lo != 46 || hi != 124 {
+		t.Errorf("wander leg 85 +- 39: got %v..%v", lo, hi)
+	}
+}

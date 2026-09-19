@@ -132,7 +132,7 @@ const (
 	MsgArrived      Message = 0x24 // -> IDLE (folded default)
 	MsgInterrupted  Message = 0x25 // -> IDLE (folded default)
 	MsgReturnHome   Message = 0x26 // -> HOMING
-	MsgUnused27     Message = 0x27 // -> IDLE (folded default); no sender in the image
+	MsgUnused27     Message = 0x27 // -> IDLE (folded default); sent by BATTLE::OnUpdate when the reach test fails (round 238)
 	MsgTeleportHome Message = 0x28 // restores a saved location, then -> IDLE
 	MsgTargetLost   Message = 0x29 // clears the target; no transition
 	MsgBodyChanged  Message = 0x2a // argument-dependent; -> IDLE on argument 1
@@ -258,4 +258,67 @@ func (m *Machine) ChangeState(next State) (State, error) {
 		}
 	}
 	return m.cur, nil
+}
+
+// --- Dwell times and the wander leg (round 251, 2026-09-19) ------------------
+//
+// AIState_DwellMs (0x00545b70) is the per-state duration a state stores in
+// its own +0x14 on entry -- the timeout the base OnUpdate expires it by. Every
+// caller passes the entering state's own id (IDLE/HOMING through GetStateID,
+// EMOTION from its +0x8; WANDER and FLEE materialise 2 and 4), and the switch
+// is, in milliseconds with rand()'s usual bounds:
+//
+//	IDLE   (1): 4000 + (rand % 2000) * (random sign)   -> 2001 .. 5999
+//	WANDER (2): 5000 + rand % 1000                     -> 5000 .. 5999
+//	FLEE   (4): 3000 + |rand| % 2001                   -> 3000 .. 5000
+//	EMOTION(7): 4000 + (rand % 1000) * (random sign)   -> 3001 .. 4999
+//	default:    50000                                   (HOMING and the rest)
+//
+// WANDER::OnEnter (0x00559df0) stores 1000 instead when no leg could be picked.
+
+// DwellRange is the [min, max] milliseconds AIState_DwellMs returns for a
+// state; ok is false for a state that takes the 50 000 ms default.
+func DwellRange(s State) (min, max int, ok bool) {
+	switch s {
+	case StateIdle:
+		return 2001, 5999, true
+	case StateWander:
+		return 5000, 5999, true
+	case StateFlee:
+		return 3000, 5000, true
+	case StateEmotion:
+		return 3001, 4999, true
+	}
+	return DwellDefaultMs, DwellDefaultMs, false
+}
+
+// DwellDefaultMs is the switch's default arm.
+const DwellDefaultMs = 50000
+
+// The wander leg, read off CAIState_WANDER::PickWanderLeg (0x00545860),
+// which WANDER::OnEnter runs for a monster whose run speed is above 1e-6:
+//
+//	distance  = 85 +- (rand % 40)                     ; 46 .. 124 world units (0xb46160 = 85.0)
+//	heading   = current heading +- (45 + rand % 91) deg ; a 45..135 degree turn, left or right
+//	direction = (cos heading, 0, sin heading)
+//	probe     = position + direction * 30              ; 0xb45e58 = 30.0
+//	if the world's probe (DAT_00cc387c slot 12) of that point reports bit 0 or
+//	bit 28 -- blocked -- the direction is reversed (* -1.0, 0xb45e68)
+//
+// then FUN_00540f70 sets the destination position + direction * distance and
+// the move starts; the leg's state timeout is the WANDER dwell above. A leg
+// whose destination cannot be picked leaves the state after 1000 ms.
+const (
+	WanderDistanceBase   = 85.0
+	WanderDistanceSpread = 40 // rand % 40, either sign
+	WanderTurnMinDegrees = 45
+	WanderTurnSpreadDeg  = 91 // rand % 91, so a turn of 45..135 degrees
+	WanderProbeDistance  = 30.0
+	WanderNoLegTimeoutMs = 1000
+	WanderMinRunSpeed    = 1e-6 // 0xb45c84
+)
+
+// WanderDistanceRange is the leg length's [min, max] in world units.
+func WanderDistanceRange() (min, max float64) {
+	return WanderDistanceBase - float64(WanderDistanceSpread-1), WanderDistanceBase + float64(WanderDistanceSpread-1)
 }

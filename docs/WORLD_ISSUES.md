@@ -7075,6 +7075,20 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-fifty-first round: how a monster wanders -- the leg, the turn, the probe, and every state's dwell time
+
+The RE tick for 2026-09-19 15:28 (dump-only; the render box was the world lane's). The Monster
+AI row's next probe was WANDER's destination pick. `CAIState_WANDER::PickWanderLeg`
+(`0x545860`): a leg of **85 +- rand%40 units** (46..124, `0xb46160`) along the current heading
+turned by **45..135 degrees** to a random side; a **30-unit** look-ahead probe through the world
+singleton's slot 12, and a blocked answer (bit 0 or bit 28) **reverses** the direction; then
+`AITactics_MoveAlongDirection` walks it. How long each state lives comes from one function,
+`AIState_DwellMs` (`0x545b70`, misattributed to HOMING by its first caller): every state passes
+its own id -- **IDLE 2001..5999 ms, WANDER 5000..5999, FLEE 3000..5000, EMOTION 3001..4999,
+everything else 50 000** (HOMING among them). `server/internal/ai` carries the table
+(`DwellRange`) and the leg constants with a test; the doc has the rule. Four names. No shipped
+behaviour changed -- srrevamp's monsters still stand still; this is the cadence to build.
+
 ## Two-hundred-and-fiftieth round: playtest -- skill prerequisites, the hotbar's drag/keys/pages, and a target before a cast
 
 Three things the user hit while playing (2026-09-19, ~15:00 UTC), fixed together (v0.1.401):

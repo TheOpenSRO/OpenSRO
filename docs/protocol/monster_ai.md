@@ -412,6 +412,39 @@ what `AI::CNest::ValidateRegion` returns for each nest -- a per-region word from
 `FUN_005347c0` (region object `+0x28` table) averaged over two ticks; by the
 shape a population count, **not read** as such.
 
+## WANDER's leg and every state's dwell time (round 251)
+
+`CAIState_WANDER::OnEnter` (`0x559df0`) refuses (returns -1, so `ChangeState` drops the
+monster into IDLE) when the owner's HP is 0 or a monster's `IsNPC` object has no home
+(slot 15); otherwise it clears the target and asks `CAIState_WANDER::PickWanderLeg`
+(`0x545860`) for a leg:
+
+	requires run speed > 1e-6 (0xb45c84) and the object's location record (+0x7c)
+	distance  = 85 +- (rand % 40)                      ; 0xb46160 = 85.0 -> 46..124 units
+	heading   = atan2(current direction) +- (45 + rand % 91) degrees   ; a 45..135 degree turn
+	direction = (cos, 0, sin) of that heading (FUN_00489490 / FUN_004894b0)
+	probe     = position + direction * 30              ; 0xb45e58 = 30.0
+	world probe (DAT_00cc387c slot 12, flags (0|1, 1)) -> bit 0 or bit 28 set = blocked
+	    -> direction *= -1.0 (0xb45e68): walk the other way
+
+`FUN_00540f70(distance)` then sets the destination `position + direction * distance` and the
+walk begins. The leg's duration is the state's dwell: **`AIState_DwellMs`** (`0x545b70`,
+formerly attributed to HOMING), called with the entering state's own id by IDLE, WANDER,
+FLEE, HOMING and EMOTION:
+
+| state (id) | dwell |
+|---|---|
+| IDLE (1) | `4000 +- rand % 2000` ms -> 2001..5999 |
+| WANDER (2) | `5000 + rand % 1000` ms -> 5000..5999 |
+| FLEE (4) | `3000 + |rand| % 2001` ms -> 3000..5000 |
+| EMOTION (7) | `4000 +- rand % 1000` ms -> 3001..4999 |
+| HOMING (5) and the rest | 50 000 ms |
+
+WANDER stores 1000 ms instead when no leg could be picked. So an idle monster stands
+2-6 s, walks 46-124 units off its heading for 5-6 s, and repeats -- going HOMING (via
+`0x26`) whenever `IsWithinRoamRadius` says it has strayed. `server/internal/ai` carries the
+table (`DwellRange`) and the leg constants; srrevamp's server does not move monsters yet.
+
 ## The behaviour table at context `+0xe8`
 
 `AI::CTactics::vslot_017` (`0x53fc00`) fills sixteen function pointers at

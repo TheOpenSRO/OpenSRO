@@ -5069,6 +5069,10 @@ Round 249: `Combat_ApplyStatusEffects` read for the six elemental states --
 chance = (100-resist%)/100*base - flat against the per-state pairs 27..32 /
 145..150 (settled per tag), kind = icon bit + 1, tick = `puls` or 2000 ms,
 disease (169) gates the roll. Docs only.
+Round 251: WANDER's leg (85+-39 units, a 45..135 degree turn, a 30-unit blocked
+probe that reverses) and `AIState_DwellMs` per state (IDLE 2-6 s, WANDER 5-6 s,
+FLEE 3-5 s, EMOTION 3-5 s, default 50 s) read; `ai.DwellRange` + leg constants
+with a test. Monsters still do not move in srrevamp.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
