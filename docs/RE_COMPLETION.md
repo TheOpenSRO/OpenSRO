@@ -18000,3 +18000,21 @@ read from .rdata). Then `GItemEquip::ApplyDurabilityAndRateOptions`
 applies `max += round(max*pct/100)`, floored at 1 (100.0 at `0xb45af0`, read).
 Two names added. Spec in `durability.md`. srrevamp still carries no per-instance
 durability or variance, so no value changed; the row's next probe stands.
+
+## The durability increment is zero by construction, and the item stat block counts (2026-09-19)
+
+The one unvalued term in max durability, `inc * plus` from `ref+0x1b8`, is valued:
+`RefObjItem::ExtractData` (`0x006a3d50`) consumes two dwords into `+0x1b0/+0x1b4`
+and then writes **`+0x1b8 = 0` without advancing the stream** -- there is no
+durability increment column, and the loader says so. So `maxDurability =
+round(Dur_L + q*(Dur_U - Dur_L))`, nothing else.
+
+Reading that loader's store sequence showed the item half is an array of
+`(L, U, Inc)` triples from `+0x1b0` in text-column order, with `Inc` synthesized 0
+exactly where the schema has no increment column (durability, block rate,
+`PDStr`, `MDInt` -- four for four), the triple index being the variance group.
+Anchored at both ends without counting: 63/64 by the `+0x194` store and the
+repair use-site, 93 (`TwoHanded`) by `CGObjPC__AttachEquipItem` testing
+`ref+0x223 == 1`. This nuances `refobj_binary_format.md`'s dead end: counting
+consumed reads does convert inside 63..93; the seven unconsumed text columns
+live elsewhere in the row. No srrevamp value changes.

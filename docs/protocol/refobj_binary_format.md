@@ -159,3 +159,44 @@ reads is not.
 The common prefix is unaffected: there the two orders agree by four independent
 anchors, so **a common-record offset still converts**, as `field N → text
 column N−1`.
+
+## The item-half stat block is countable once its synthesized slots are known (2026-09-19)
+
+The dead end above is real for the table as a whole, but one stretch of the item
+half converts cleanly, because it is an **array of `(L, U, Inc)` triples**, 12 bytes
+each from `+0x1b0`, and the loader fills them in text-column order -- except that
+where the text has no increment column it **writes `Inc = 0` without consuming a
+field**. Read off `RefObjItem::ExtractData` (`0x006a3d50`): a two-dword loop into
+`L, U`, then either a third consumed dword or a bare `= 0`.
+
+| triple k (= variance group) | offsets L / U / Inc | text columns | Inc |
+|---|---|---|---|
+| 0 durability | `+0x1b0 / +0x1b4 / +0x1b8` | 63, 64 | **synthesized 0** |
+| 1 physical defence | `+0x1bc / +0x1c0 / +0x1c4` | 65, 66, 67 | read |
+| 2 (`ER`) | `+0x1c8 / +0x1cc / +0x1d0` | 68, 69, 70 | read |
+| 3 parry rate (`PAR`) | `+0x1d4 / +0x1d8 / +0x1dc` | 71, 72, 73 | read |
+| 4 block rate (`BR`) | `+0x1e0 / +0x1e4 / +0x1e8` | 74, 75 | **synthesized 0** |
+| 5 magic defence | `+0x1ec / +0x1f0 / +0x1f4` | 76, 77, 78 | read |
+| 6 (`MR`) | `+0x1f8 / +0x1fc / +0x200` | 79, 80, 81 | read |
+| 7 (`PDStr`) | `+0x204 / +0x208 / +0x20c` | 82, 83 | **synthesized 0** |
+| 8 (`MDInt`) | `+0x210 / +0x214 / +0x218` | 84, 85 | **synthesized 0** |
+| bytes | `+0x21c .. +0x223` | 86 .. 93 | Quivered, Ammo1-5, SpeedClass, **TwoHanded** |
+
+Anchored at both ends, independently of the count: `+0x1b0/+0x1b4` are what
+`Char_BuildAggregateStats` interpolates into max durability (`+0x194`, the value
+`ComputeRepair` divides by), and columns 63/64 are the durability pair
+`export-refdata` already maps; `+0x223 == 1` is the test
+`GObjPC_StorageManipulator::CGObjPC__AttachEquipItem` makes when equipping -- the
+two-hander rule, column 93. Between the anchors the four synthesized slots fall
+exactly on the four stats whose text has no increment column (durability, block
+rate, `PDStr`, `MDInt`). Round 170's "defence at columns 65-77" is triples 1-5.
+
+The triple index is also the **variance group**: `Item_VarianceFactor` takes
+`(Variance >> 5*k) & 0x1f`, and `Char_BuildAggregateStats` walks the triples with
+`ESI = 0, 1, 2, ...` (durability's `xor esi,esi` is read on the asm; the rest is
+the same block repeated). So an item's twelve 5-bit variance groups are its
+twelve stat triples in this order.
+
+The seven text columns the item deserializer never consumes are therefore not in
+63..93; they are elsewhere in the row, still unlocated.
+

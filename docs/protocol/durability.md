@@ -180,11 +180,16 @@ block under the "is equipment" virtual (`slot 39 == 1`) reads the item's ref row
 so durability's own 5 bits are **group 0** of the instance's `Variance`, and a
 full-variance item gets `Dur_U`. Columns 63/64 are the text columns
 `export-refdata` already maps to `DurabilityMin/Max` (the starter sword's
-62/76). **`+0x1b8`'s text column is not identified**: the itemdata schema this
-project has read carries no durability increment column beside `Dur_L/Dur_U`,
-so what the loader puts there is the next probe (`RefObjItem::ExtractData`'s
-fill order around `+0x1b0..+0x1b8`); until then the `inc * plus` term is
-recorded, not valued.
+62/76). **`+0x1b8` is not a column at all: `RefObjItem::ExtractData` writes it as a
+constant 0** -- the stream reader consumes two dwords into `+0x1b0/+0x1b4` and then stores
+`+0x1b8 = 0` without advancing its cursor (2026-09-19; the next stat's third field, `PDInc`
+at `+0x1c4`, *is* consumed, so the difference is deliberate). The `inc * plus` term is
+therefore **zero for durability**, and the base is simply
+
+	maxDurability = round( Dur_L + q * (Dur_U - Dur_L) )
+
+with `q` from the instance's variance, group 0. See `refobj_binary_format.md` for the
+triple array this sits in.
 
 ### 2. The magic options on top -- `GItemEquip::ApplyDurabilityAndRateOptions`, `0x00496a70`
 
