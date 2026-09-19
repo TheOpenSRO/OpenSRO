@@ -108,8 +108,9 @@ func spawn(snap: GroundItemsNet.Snapshot) -> void:
 		print("GroundItems: item %d has no drop model%s -- drawn as a box" % [
 			snap.item_id, "" if model_path == "" else " (%s failed to load)" % model_path])
 
-	if _plate_for.is_valid():
-		var label: Label3D = _plate_for.call(label_text(snap), top)
+	var text := label_text(snap)
+	if _plate_for.is_valid() and text != "":
+		var label: Label3D = _plate_for.call(text, top)
 		label.name = "Label"
 		body.add_child(label)
 
@@ -143,13 +144,17 @@ func release_owner(ground_id: int) -> void:
 	if snap != null:
 		snap.owner_id = 0
 
-## "Gold 57", "HP Potion x2", or the bare name.
+## "57 Gold", "HP Recovery Herb x2", or the bare name. A plate shows the
+## client's own name for the item or nothing at all -- never an id, and never
+## the archive's mangled column-3 text (the resolver decides that; see
+## ItemTableReader.Item.display_name). With no name the plate is left empty,
+## so a nameless stack still shows its count when there is one.
 func label_text(snap: GroundItemsNet.Snapshot) -> String:
 	if snap.gold:
 		return "%d Gold" % snap.quantity
-	var text: String = _name_for.call(snap.item_id) if _name_for.is_valid() else "item %d" % snap.item_id
+	var text: String = str(_name_for.call(snap.item_id)) if _name_for.is_valid() else ""
 	if snap.quantity > 1:
-		text += " x%d" % snap.quantity
+		text = ("%s x%d" % [text, snap.quantity]) if text != "" else ("x%d" % snap.quantity)
 	return text
 
 ## Highest point of a loaded model's meshes, in the model's own space.
