@@ -99,10 +99,24 @@ func _build_body() -> void:
 	var margin := 12.0
 	var list_w := minf(150.0, w * 0.32)
 
+	# The authored layout has a document menu of its own, GDR_GUIDE_MENU (the
+	# CIFGGMenu frame the original lists its guide sections in, hung to the
+	# LEFT of the main frame at x=-206). When it built, the document list goes
+	# inside it and the whole main frame is left to the text; otherwise the
+	# list takes a strip inside the frame.
+	var list_rect := Rect2(Vector2(margin, top), Vector2(list_w, h - top - margin))
+	var content_x := margin + list_w + margin
+	var menu: Control = null
+	if _authored and _frame != null:
+		menu = _frame.node("GDR_GUIDE_MENU") as Control
+	if menu != null and menu.size.x > 40.0 and menu.size.y > 60.0:
+		list_rect = Rect2(menu.position + Vector2(14.0, 36.0), menu.size - Vector2(28.0, 50.0))
+		content_x = margin
+
 	var list_bg := ColorRect.new()
 	list_bg.color = Color(0.05, 0.05, 0.05, 0.9)
-	list_bg.position = Vector2(margin, top)
-	list_bg.size = Vector2(list_w, h - top - margin)
+	list_bg.position = list_rect.position
+	list_bg.size = list_rect.size
 	list_bg.mouse_filter = Control.MOUSE_FILTER_STOP
 	frame.add_child(list_bg)
 
@@ -118,7 +132,6 @@ func _build_body() -> void:
 	_list.item_selected.connect(_show_doc)
 	frame.add_child(_list)
 
-	var content_x := margin + list_w + margin
 	var content_bg := ColorRect.new()
 	content_bg.color = Color(0.08, 0.07, 0.06, 0.95)
 	content_bg.position = Vector2(content_x, top)

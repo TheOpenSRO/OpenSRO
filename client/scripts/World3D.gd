@@ -7086,16 +7086,35 @@ func _where_report() -> PackedStringArray:
 	var result = NetClient.last_enter_world_result
 	var zone: String = result.zone if result != null else "?"
 	out.append("zone: %s" % zone)
-	# Region is world X -> region y, world Z -> region x (a project fact --
-	# see AGENTS.md): local coordinates run [0, REGION_SPAN).
-	var region_y := int(floor(p.x / REGION_SPAN))
-	var region_x := int(floor(p.z / REGION_SPAN))
-	var local_x := p.x - float(region_y) * REGION_SPAN
-	var local_z := p.z - float(region_x) * REGION_SPAN
-	out.append("region y/x: %d/%d" % [region_y, region_x])
-	out.append("local: %.1f, %.1f" % [local_x, local_z])
-	out.append("world: %.1f, %.1f, %.1f" % [p.x, p.y, p.z])
-	out.append("walkable height here: %.2f" % _terrain_height_at(p))
+	# The region is whichever loaded cell's own space contains the player --
+	# each RealTerrain_<x>_<y> node's local space IS that region's real
+	# coordinate space (see _region_nav_graphs), so this is the inverse of
+	# _place_at_region_local rather than arithmetic on the world origin,
+	# which named the *relative* cell (0/-1) instead of the real one (97/168).
+	var found := false
+	for pair in _region_nav_graphs:
+		var group := pair[1] as Node3D
+		var graph := pair[0] as NavGraph
+		if group == null or graph == null:
+			continue
+		var local := group.to_local(p)
+		if local.x < 0.0 or local.x >= REGION_SPAN or local.z < 0.0 or local.z >= REGION_SPAN:
+			continue
+		# Node name RealTerrain_<region_x>_<region_y>.
+		var parts := String(group.name).split("_")
+		if parts.size() >= 3:
+			out.append("region y/x: %s/%s (node %s)" % [parts[2], parts[1], group.name])
+		out.append("local: %.1f, %.1f" % [local.x, local.z])
+		out.append("world: %.1f, %.1f, %.1f" % [p.x, p.y, p.z])
+		out.append("walkable height here: %.2f (graph), terrain ray %.2f, feet at %.2f" % [
+			group.to_global(Vector3(local.x, graph.height_at(local.x, local.z, local.y), local.z)).y,
+			_terrain_height_at(p), p.y])
+		found = true
+		break
+	if not found:
+		out.append("region: not inside any loaded region cell")
+		out.append("world: %.1f, %.1f, %.1f" % [p.x, p.y, p.z])
+		out.append("terrain ray height here: %.2f" % _terrain_height_at(p))
 	return out
 
 ## /entities: counts of what is in view around the player.

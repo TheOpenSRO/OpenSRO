@@ -122,8 +122,74 @@ the new `-gm-accounts` row). Box: `remote_godot.sh check` → `ALL LOAD` (229
 scripts, 5 scenes); `gm_test.gd`, `console_test.gd`, `md_to_bbcode_test.gd` →
 `ALL PASS`. Two `--server` renders with `SERVER_BIN=/var/tmp/srv-debug` and
 `SRREVAMP_QA_COMMANDS` feeding lines through the same parser as the chat: the
-GM run (`SRREVAMP_GM_ACCOUNTS=qa`) and the non-GM run (unset). Their log lines
-are in the lane's final report and quoted below once collected.
+GM run (`SRREVAMP_GM_ACCOUNTS=qa`) and the non-GM run (unset) -- both from the
+lane's own client copy (`CLIENT_DIR=/opt/srrevamp-client-debug`; the first two
+attempts rendered the default `/opt/srrevamp-client` and proved nothing, which
+is the trap to remember: `qa_shot.sh` does `cd "$CLIENT_DIR"`).
+
+GM run, client log (`Console:`/`QA COMMAND:`/`CONSOLE:`/`GM REPLY:` are the
+markers):
+
+```
+Console: GM probe sent for QaTester
+Console: ready (help window authored frame, log .../SRRevamp/logs/srrevamp.log)
+GM REPLY: GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /kill, /durability <slot> <n>, /sp <n>
+QA HELP: opened the Help window
+QA COMMAND: /where          -> CONSOLE: zone: jangan / local: 42.0, 1860.0 / world: 42.0, -30.1, -60.0 / walkable height ...
+QA COMMAND: /fps            -> CONSOLE: FPS: 3.0            (a movie-writer run)
+QA COMMAND: /entities       -> CONSOLE: monsters 23, npcs (name plates) 95, other players 0, ground items 0
+QA COMMAND: /cam orbit      -> CONSOLE: Camera: orbit.
+QA COMMAND: /frobnicate     -> CONSOLE: Unknown command /frobnicate. Commands: /help /where ... + the GM tools line
+QA COMMAND: /give 3 5       -> GM REPLY: gave 5 x item 3
+QA COMMAND: /give 3645 1    -> GM REPLY: gave 1 x item 3645
+QA COMMAND: /gold 500       -> GM REPLY: gold now 1500
+QA COMMAND: /level 3        -> GM REPLY: level 1 -> 3: +6 stat points (6 unspent), Str 22, Int 22, HP 229, MP 229
+QA COMMAND: /heal           -> GM REPLY: healed: HP 229/229, MP 229/229
+QA COMMAND: /sp 5           -> GM REPLY: skill points now 5
+QA COMMAND: /durability 6 3 -> GM REPLY: slot 6 durability set to 3
+QA COMMAND: /spawn MOB_CH_MANGNYANG 2 -> GM REPLY: spawned 2 x Mangyang (level 1, HP 54) at 48, -60 -- ids 25,26; no respawn
+QA COMMAND: /tp -300 -880   -> GM REPLY: teleporting to -300.0, -880.0
+QA COMMAND: /errors         -> CONSOLE: No script errors logged this session.
+QA COMMAND: /copy           -> CONSOLE: Copied the debug report (4253 chars) to the clipboard.
+QA COMMAND: /log            -> CONSOLE: Log file: .../srrevamp.log / Opened the log folder.
+```
+
+(`/spawn MOB_CH_MANGYANG` in the first pass was refused with the list of real
+code names -- the roster spells it `MOB_CH_MANGNYANG` -- which is the "refuses
+unknown, lists what it knows" behaviour working. The HUD in frame 150 shows
+`Lv 3`, `229 / 229` after `/level 3`: the level-up went through to the stats
+packet.) `/heal` did not reach the server in that first pass: `heal` was
+missing from the console's forwarded-word list and fell to "unknown command";
+fixed, and `console_test.gd` now checks every GM word forwards.
+
+GM run, server log (every command with the account):
+
+```
+"GM accounts enabled" accounts=[qa]
+"gm command" account=qa character=QaTester line="give 3 5" refused=false reply="gave 5 x item 3"
+"gm command" account=qa character=QaTester line="level 3" refused=false reply="level 1 -> 3: ..."
+"gm command" account=qa character=QaTester line=heal refused=false reply="healed: HP 229/229, MP 229/229"
+"gm command" account=qa character=QaTester line="spawn MOB_CH_MANGNYANG 2" refused=false reply="spawned 2 x Mangyang ..."
+"gm command" account=qa character=QaTester line="tp -300 -880" refused=false reply="teleporting to -300.0, -880.0"
+```
+
+Non-GM run (gate unset): the probe is silent (no GM line, no GM tools in
+`/help`), and
+
+```
+QA COMMAND: /give 3 5       -> GM REPLY: GM commands are not enabled for your account.
+QA COMMAND: /tp -300 -880   -> GM REPLY: GM commands are not enabled for your account.
+QA COMMAND: /help           -> CONSOLE: Commands: /help /where /log /copy /fps /entities /wire on|off /cam free|orbit /errors /unstuck /w <name> <msg>
+server: "no GM accounts set (-gm-accounts / SRREVAMP_GM_ACCOUNTS) -- the GM console is off"
+server: "gm command refused: not a GM" account=qa character=QaTester line="give 3 5"
+server: "gm command refused: not a GM" account=qa character=QaTester line="tp -300 -880"
+```
+
+`/where`'s first version printed `region y/x: 0/-1` -- arithmetic on the
+world origin, i.e. the cell *relative to the zone centre*, not the real
+region. It now finds the loaded `RealTerrain_<x>_<y>` cell whose own space
+contains the player (the inverse of `_place_at_region_local`) and reports
+that, plus the walkable graph's height and the terrain ray's.
 
 ### Left out (see docs/TODO.md)
 
