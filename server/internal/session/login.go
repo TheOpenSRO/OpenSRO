@@ -91,7 +91,7 @@ func LoginHandler(store account.Store) gateway.Handler {
 				result.Reason = "invalid username or password"
 			}
 		} else {
-			authenticate(sess, acc.ID)
+			authenticate(sess, acc.ID, acc.Username)
 		}
 
 		return sess.Send(&proto.Packet{Opcode: OpLoginResult, Data: result.Encode()})

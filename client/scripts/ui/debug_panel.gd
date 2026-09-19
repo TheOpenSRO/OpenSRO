@@ -354,7 +354,38 @@ func diagnostics() -> String:
 		Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0,
 		int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)),
 		int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT))])
+
+	# The tail of the log and the session's script errors, so a pasted report
+	# carries what a tester would otherwise have to attach the log file for.
+	var log_lines := _tail_log_lines(20)
+	var errors: PackedStringArray = []
+	for line in _tail_log_lines(400):
+		if line.contains("SCRIPT ERROR") or line.begins_with("ERROR") or line.contains("Parse Error"):
+			errors.append(line)
+	if errors.size() > 20:
+		errors = errors.slice(errors.size() - 20)
+	lines.append("== script errors (%d)" % errors.size())
+	for e in errors:
+		lines.append("  " + e)
+	lines.append("== last %d log lines" % log_lines.size())
+	for l in log_lines:
+		lines.append("  " + l)
+
 	return "\n".join(lines)
+
+## The last `n` lines of the session log (user://logs/srrevamp.log), or empty
+## if it cannot be read -- for the Copy payload above.
+func _tail_log_lines(n: int) -> PackedStringArray:
+	var path := "user://logs/srrevamp.log"
+	if not FileAccess.file_exists(path):
+		return PackedStringArray()
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return PackedStringArray()
+	var all := f.get_as_text().split("\n", false)
+	if all.size() > n:
+		return all.slice(all.size() - n)
+	return all
 
 func _copy() -> void:
 	DisplayServer.clipboard_set(diagnostics())

@@ -79,6 +79,22 @@ func decodeInt64(data []byte) (v int64, rest []byte, err error) {
 	return int64(binary.LittleEndian.Uint64(data)), data[8:], nil
 }
 
+// encodeInt32 serializes v as 4 bytes LE.
+func encodeInt32(v int32) []byte {
+	buf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buf, uint32(v))
+	return buf
+}
+
+// decodeInt32 reads a 4-byte LE int32 from the front of data, returning it
+// along with whatever bytes remain.
+func decodeInt32(data []byte) (v int32, rest []byte, err error) {
+	if len(data) < 4 {
+		return 0, nil, errors.New("truncated int32")
+	}
+	return int32(binary.LittleEndian.Uint32(data)), data[4:], nil
+}
+
 // encodeFloat32 serializes v as 4 bytes LE (IEEE 754 bit pattern).
 func encodeFloat32(v float32) []byte {
 	buf := make([]byte, 4)

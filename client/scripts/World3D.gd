@@ -979,6 +979,15 @@ func _seed_vitals_from_last_enter_world() -> void:
 		_last_enter_world_max_hp = entered.max_hp
 var _hud_panels: HudPanels
 var _hud_chat: HudChat
+## The chat-input slash console (scripts/ui/console.gd) and the in-client
+## Help window (scripts/ui/help_window.gd). GM state comes from the server's
+## probe reply, not a guess.
+var _console: Console = null
+var _help_window: HelpWindow = null
+var _is_gm := false
+var _gm_greeted := false
+## Packet wire logging (/wire): when on, NetClient prints every opcode+size.
+var _wire_logging := false
 
 ## Where the chat window sits relative to the bottom-left corner. The
 ## registry gives its size (399x398) and its corner; clearing the underbar
@@ -1259,7 +1268,12 @@ func _try_initialize_pk2_ui() -> void:
 				_hud_panels.set_character_vitals(result.hp, result.max_hp, 1)
 			# Pull the full stats so the level, EXP gauge and SP are live from
 			# the moment the world loads, not just HP.
-			_request_world_stats())
+			_request_world_stats()
+			# Ask the server whether this account is a GM (an empty command
+			# line is the probe); the reply enables the GM tooltip/section and
+			# greets a GM once.
+			_fire_gm_probe()
+			_hint_help_once())
 	NetClient.attack_result.connect(func(result) -> void:
 		if result != null and _last_enter_world_max_hp > 0:
 			if _hud_player_info != null:
@@ -1332,7 +1346,11 @@ func _try_initialize_pk2_ui() -> void:
 		get_tree().change_scene_to_file("res://scenes/Login.tscn"))
 	_hud_panels.system_exit_requested.connect(func(): get_tree().quit())
 	_hud_panels.system_help_requested.connect(func():
-		_log_system("Controls: click to move, right-drag or left-drag to orbit, mouse wheel to zoom. F1 dev tools, F3 debug panel, I inventory, K skill, M map. Type /unstuck if you get wedged in geometry."))
+		_hud_panels.close("system")
+		if _help_window != null:
+			_help_window.open()
+		else:
+			_log_system("Controls: click to move, drag to turn the camera, mouse wheel to zoom. F1 dev tools, F3 debug panel, I inventory, K skill, M map. Type /help for commands."))
 	_hud_panels.skill_assign_requested.connect(_on_skill_assign_requested)
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
 
@@ -1359,6 +1377,7 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_chat.offset_bottom = -float(HudUnderbar.BODY_HEIGHT) - CHAT_MARGIN_Y
 	_hud_chat.offset_top = _hud_chat.offset_bottom - _hud_chat.size.y
 	_hud_chat.message_submitted.connect(_on_chat_submitted)
+	_setup_console_and_help()
 	# The panels are built after the vitals arrive, so they are seeded from
 	# the same cached result rather than waiting for a signal that already
 	# fired.
@@ -3281,6 +3300,14 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 				result.zone, spot.x, spot.y])
 	else:
 		_place_at_zone_spawn(result.zone)
+
+	# A GM /goto or /tp that crossed a zone boundary carried a world position
+	# to stand at once the zone loaded -- honour it now, over the zone's own
+	# landing spot.
+	if _pending_gm_pos != null:
+		var gm_spot: Vector2 = _pending_gm_pos
+		_pending_gm_pos = null
+		_place_player_at_world(gm_spot.x, gm_spot.y)
 
 	# Pump the new zone's queued neighbour cells behind the loading screen (if
 	# one is up), then drop it -- the same drain the first entry uses.
@@ -6828,6 +6855,9 @@ func _on_disconnect_pressed() -> void:
 ## _on_change_zone_result once the new region has actually loaded. null
 ## means "wherever the server puts us", the original behavior.
 var _pending_zone_local: Variant = null
+## A GM /tp or /goto world position (Vector2 x,z) to stand at once a
+## cross-zone change finishes loading; null when there is none.
+var _pending_gm_pos: Variant = null
 
 ## Splits what was typed into the zone box into the zone the server is
 ## asked for and an optional region-local spot to stand on afterwards:
@@ -6962,6 +6992,263 @@ func _log_system(text: String) -> void:
 	if _hud_chat != null:
 		_hud_chat.add_message("", "* " + text)
 	chat_log.add_text("* %s\n" % text)
+
+# --- Debug console and Help window ----------------------------------------
+
+## Builds the slash console and the in-client Help window, wires the server's
+## GM reply, and puts a tooltip on the chat line telling a tester the
+## commands exist. Called once from _ready after the chat is set up.
+func _setup_console_and_help() -> void:
+	_help_window = HelpWindow.new()
+	_help_window.name = "HelpWindow"
+	ui_control.add_child(_help_window)
+	_help_window.setup(_ui_builder, _help_documents(), _is_gm)
+
+	_console = Console.new(_console_host())
+	NetClient.gm_command_result.connect(_on_gm_command_result)
+	# This scene usually loads after enter_world_result has already fired, so
+	# the probe in that handler never ran for it -- fire it now if the world
+	# is already entered.
+	if NetClient.last_enter_world_result != null and NetClient.last_enter_world_result.ok:
+		_fire_gm_probe()
+		_hint_help_once()
+
+	# Discoverability: hovering the chat line says the commands exist. Godot
+	# tooltips need a control that takes hover, so mark the input and the
+	# underbar's menu button. Our own wording (the client has no authored
+	# string for this).
+	_refresh_command_tooltip()
+	if _hud_underbar != null:
+		var menu_btn := _hud_underbar.find_child("GDR_BTN_MENU", true, false)
+		if menu_btn is Control:
+			(menu_btn as Control).tooltip_text = _command_tooltip()
+
+	# QA: feed a semicolon-separated list of command lines through the same
+	# parser the chat uses, so a --server render can verify each reply lands
+	# in the log. e.g. SRREVAMP_QA_COMMANDS="/where;/give 3 5;/tp -300 -880".
+	var qa_commands := OS.get_environment("SRREVAMP_QA_COMMANDS")
+	if qa_commands != "":
+		_run_qa_commands(qa_commands)
+	if OS.get_environment("SRREVAMP_QA_HELP") != "":
+		get_tree().create_timer(2.0).timeout.connect(func() -> void:
+			if _help_window != null:
+				_help_window.open()
+			print("QA HELP: opened the Help window"))
+
+## The documents the Help window lists, shipped under res://docs/ by
+## client/tools/bundle_docs.sh.
+func _help_documents() -> Array:
+	return [
+		{"title": "Playing", "path": "res://docs/HELP_PLAYING.md"},
+		{"title": "Debug tools", "path": "res://docs/DEBUG_TOOLS.md"},
+		{"title": "Release notes", "path": "res://docs/RELEASE_NOTES.md"},
+	]
+
+## The host of Callables the console reports through. Kept here so the console
+## itself has no dependency on World3D and is tested headless with stubs.
+func _console_host() -> Dictionary:
+	return {
+		"log": func(t: String) -> void: _log_system(t),
+		"open_help": func() -> void:
+			if _help_window != null:
+				_help_window.open(),
+		"where": Callable(self, "_where_report"),
+		"log_path": func() -> String: return ProjectSettings.globalize_path("user://logs/srrevamp.log"),
+		"open_log_dir": Callable(self, "_open_log_dir"),
+		"copy_payload": func() -> String: return _debug_panel.diagnostics() if _debug_panel != null else "",
+		"set_clipboard": func(s: String) -> void: DisplayServer.clipboard_set(s),
+		"fps": func() -> float: return Engine.get_frames_per_second(),
+		"entities": Callable(self, "_entities_report"),
+		"recent_errors": Callable(self, "_recent_script_errors"),
+		"set_wire": Callable(self, "_set_wire_logging"),
+		"set_camera_mode": Callable(self, "_console_set_camera"),
+		"whisper": func(n: String, m: String) -> void: NetClient.whisper(n, m),
+		"unstuck": func() -> void: _unstuck_player(),
+		"forward_gm": func(line: String) -> void: NetClient.gm_command(NetClient.current_character_name, line, _last_attack_target if _last_attack_target > 0 else 0),
+	}
+
+## /where: zone, region y/x, local and world coordinates, walkable height.
+func _where_report() -> PackedStringArray:
+	var out: PackedStringArray = []
+	var p := player.global_position
+	var result = NetClient.last_enter_world_result
+	var zone := result.zone if result != null else "?"
+	out.append("zone: %s" % zone)
+	# Region is world X -> region y, world Z -> region x (a project fact --
+	# see AGENTS.md): local coordinates run [0, REGION_SPAN).
+	var region_y := int(floor(p.x / REGION_SPAN))
+	var region_x := int(floor(p.z / REGION_SPAN))
+	var local_x := p.x - float(region_y) * REGION_SPAN
+	var local_z := p.z - float(region_x) * REGION_SPAN
+	out.append("region y/x: %d/%d" % [region_y, region_x])
+	out.append("local: %.1f, %.1f" % [local_x, local_z])
+	out.append("world: %.1f, %.1f, %.1f" % [p.x, p.y, p.z])
+	out.append("walkable height here: %.2f" % _terrain_height_at(p))
+	return out
+
+## /entities: counts of what is in view around the player.
+func _entities_report() -> String:
+	var monsters := _monster_bodies.size()
+	var npcs := get_tree().get_nodes_in_group("name_plates").size()
+	var players := _other_bodies.size()
+	var ground := _ground_items.count() if _ground_items != null else 0
+	return "monsters %d, npcs (name plates) %d, other players %d, ground items %d" % [monsters, npcs, players, ground]
+
+## /log on desktop: open the folder holding the log file. Returns whether it
+## did (headless/servers cannot, and say so).
+func _open_log_dir() -> bool:
+	if OS.has_feature("web") or DisplayServer.get_name() == "headless":
+		return false
+	var dir := ProjectSettings.globalize_path("user://logs")
+	OS.shell_open(dir)
+	return true
+
+## /errors: the last `count` script-error lines from this session's log file.
+func _recent_script_errors(count: int) -> PackedStringArray:
+	var out: PackedStringArray = []
+	for line in _tail_log_lines(400):
+		if line.contains("SCRIPT ERROR") or line.begins_with("ERROR") or line.contains("Parse Error"):
+			out.append(line)
+	if out.size() > count:
+		out = out.slice(out.size() - count)
+	return out
+
+## The last `n` lines of the log file (user://logs/srrevamp.log), or empty if
+## it cannot be read.
+func _tail_log_lines(n: int) -> PackedStringArray:
+	var path := "user://logs/srrevamp.log"
+	if not FileAccess.file_exists(path):
+		return PackedStringArray()
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return PackedStringArray()
+	var all := f.get_as_text().split("\n")
+	if all.size() > n:
+		return all.slice(all.size() - n)
+	return all
+
+func _set_wire_logging(on: bool) -> void:
+	_wire_logging = on
+	NetClient.wire_logging = on
+
+## /cam free|orbit: map the two console words onto the client's own views
+## (set_camera_view). "orbit" is the fixed-pitch, yaw-free Quarter Angle
+## view -- the one that reads as orbiting.
+func _console_set_camera(mode: String) -> bool:
+	match mode:
+		"free":
+			set_camera_view(CAMERA_VIEW_FREE)
+			return true
+		"orbit":
+			set_camera_view(CAMERA_VIEW_QUARTER)
+			return true
+	return false
+
+## The chat-line tooltip: the client commands, plus (for a GM) the GM line.
+func _command_tooltip() -> String:
+	var base := "Slash commands: type /help for the list.\n%s" % (_console.help_line() if _console != null else "/help /where /copy /fps /entities")
+	return base
+
+func _refresh_command_tooltip() -> void:
+	if _hud_chat != null:
+		var input := _hud_chat.find_child("*Input*", true, false)
+		if input is Control:
+			(input as Control).tooltip_text = _command_tooltip()
+		_hud_chat.tooltip_text = _command_tooltip()
+
+## Feeds SRREVAMP_QA_COMMANDS through the console after a short delay (so the
+## world and the server connection are up), printing a marker per line.
+func _run_qa_commands(list: String) -> void:
+	var lines := list.split(";", false)
+	get_tree().create_timer(2.0).timeout.connect(func() -> void:
+		for raw in lines:
+			var line := String(raw).strip_edges()
+			if line == "":
+				continue
+			print("QA COMMAND: %s" % line)
+			if line.begins_with("/") and _console != null:
+				_console.submit(line)
+			else:
+				NetClient.say(line))
+
+var _help_hinted := false
+
+## Prints the one-line "type /help" hint once on entering the world. The
+## original raised a login notice through its web panel; this is the native,
+## non-intrusive equivalent (a chat line, our own wording).
+func _hint_help_once() -> void:
+	if _help_hinted:
+		return
+	_help_hinted = true
+	_log_system("Type /help for controls and commands, or open Help from the Escape menu.")
+
+## Fires the GM probe: an empty command line the server answers with whether
+## this account is a GM. Guarded so it is sent once per world entry.
+func _fire_gm_probe() -> void:
+	if not NetClient.is_connected_to_server():
+		return
+	if NetClient.current_character_name == "":
+		return
+	NetClient.gm_command(NetClient.current_character_name, "", 0)
+
+## The server's GM reply: sets GM state, prints the text, applies any move,
+## refreshes the views a command changed, and announces a level-up.
+func _on_gm_command_result(result: GmNet.Result) -> void:
+	if result == null:
+		return
+	if result.is_gm != _is_gm:
+		_is_gm = result.is_gm
+		if _console != null:
+			_console.is_gm = _is_gm
+		if _help_window != null:
+			_help_window.set_is_gm(_is_gm)
+		_refresh_command_tooltip()
+	# On enter-world a GM's client fires an empty probe; greet once.
+	if _is_gm and not _gm_greeted:
+		_gm_greeted = true
+		if _console != null:
+			_log_system(_console.gm_help_line())
+	if result.text != "":
+		_log_system(result.text)
+		print("GM REPLY: %s" % result.text)
+	if result.new_level > 0:
+		_on_level_up(result.new_level, result.stat_points)
+	if result.has_pos or result.zone != "":
+		_apply_gm_move(result)
+	if result.refresh & GmNet.REFRESH_STATS:
+		_request_world_stats()
+	if result.refresh & GmNet.REFRESH_MONSTERS:
+		NetClient.list_monsters()
+	if result.refresh & GmNet.REFRESH_INVENTORY:
+		if NetClient.current_character_name != "":
+			NetClient.list_inventory(NetClient.current_character_name)
+	if result.refresh & GmNet.REFRESH_EQUIPMENT:
+		if NetClient.current_character_name != "":
+			NetClient.list_equipment(NetClient.current_character_name)
+
+## Applies a /tp or /goto move: a zone change first if the reply names a
+## different zone (the position is applied when that zone loads), else the
+## position now. Movement is client-authoritative, so placing the player and
+## letting the move sync inform the server is the same path /unstuck uses.
+func _apply_gm_move(result: GmNet.Result) -> void:
+	if result.zone != "" and (NetClient.last_enter_world_result == null or result.zone != NetClient.last_enter_world_result.zone):
+		if result.has_pos:
+			_pending_gm_pos = Vector2(result.x, result.z)
+		NetClient.change_zone(result.zone)
+		return
+	if result.has_pos:
+		_place_player_at_world(result.x, result.z)
+
+## Stands the player at a world X/Z, resolving the height off the terrain --
+## the same safety net _unstuck uses. Clears velocity and lets the move sync
+## tell the server.
+func _place_player_at_world(x: float, z: float) -> void:
+	var spot := Vector3(x, player.global_position.y, z)
+	spot.y = _terrain_height_at(spot)
+	player.global_position = spot
+	player.velocity = Vector3.ZERO
+	_last_sent_pos = player.position
+	NetClient.move_to(player.position.x, player.position.y, player.position.z)
 
 ## Toggles the whole hideable UI panel (character/zone labels, chat, action
 ## tabs, etc.) -- see HideUIButton's own doc-free scene node and the
@@ -7312,22 +7599,12 @@ func _on_chat_submitted(text: String) -> void:
 func _send_chat(text: String) -> void:
 	if text.is_empty():
 		return
-
-	if text.begins_with("/w "):
-		var rest := text.substr(3)
-		var space_index := rest.find(" ")
-		if space_index == -1:
-			_log_system("Usage: /w <name> <message>")
-			return
-		var target_name := rest.substr(0, space_index)
-		var whisper_text := rest.substr(space_index + 1)
-		NetClient.whisper(target_name, whisper_text)
+	# Every slash line goes through the console (scripts/ui/console.gd): it
+	# runs the client commands, forwards GM commands to the server, and
+	# answers an unknown one with the help line -- never silence. Anything
+	# else is ordinary chat.
+	if text.begins_with("/") and _console != null and _console.submit(text):
 		return
-
-	if text == "/unstuck" or text == "/stuck":
-		_unstuck_player()
-		return
-
 	NetClient.say(text)
 
 ## Frees a player wedged into geometry: teleports them back to the zone's own
