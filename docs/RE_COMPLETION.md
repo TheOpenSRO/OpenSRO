@@ -4892,6 +4892,9 @@ it and reverts to peace at zero. `COMBAT_STANCE_SECONDS` is 20 now (was a disclo
 5.0); the tick's period is inferred as one second on the same grounds as berserk's
 60 (the same update advances timed effects with dt = 1.0). Spec:
 `docs/protocol/character_state.md`. Open: the scheduler that fires `vslot_415`.
+Round 219 narrowed it: the main loop's delta is in seconds (`0xb45c68` = 1000, from
+two use-sites), the fixed step at `CMainProcess+0x44` drives slots `0x618`/`0x34c`
+not 415, and no `CGameWorldLayer` function dispatches it -- one hop left.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

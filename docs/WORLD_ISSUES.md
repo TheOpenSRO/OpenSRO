@@ -7075,6 +7075,24 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-nineteenth round: the server's clock is in seconds; the PC tick's scheduler is still one hop away
+
+The RE tick's step for 2026-09-19 07:49, chasing round 218's open unit (the period of
+`CGObjPC::vslot_415`, which would ground both berserk's 60 and the stance's 20). Not
+closed; what was read is in `docs/protocol/character_state.md`:
+
+- The main loop's delta is in seconds: `const@0xb45c68` divides milliseconds into the delta
+  fed to `CMainProcess::FUN_00413840` and multiplies the accumulated delta back into
+  milliseconds for `FUN_0041bfa0`, so it is 1000 -- read from two use-sites.
+- `FUN_00413840` clamps the delta to 1.0, accumulates it, and fires a fixed step
+  (`FUN_00413b30`) at a period kept in `CMainProcess+0x44`, initialised 0 and set at
+  runtime (unlocated). That step drives object slots `0x618`/`0x34c`, not `vslot_415`.
+- All 578 `CGameWorldLayer` functions were scanned for a slot-11 or slot-415 dispatch:
+  none. Controllers' slot 11 is "update this PC" for every world kind.
+
+So the scheduler that calls `controller->slot11(pc)` is the one function left between the
+loop and the stance/berserk countdowns. No srrevamp value changed this round.
+
 ## Two-hundred-and-eighteenth round: the battle stance lasts 20 ticks -- the server's BattleState timer, read
 
 The RE tick's step for 2026-09-19 07:34. `COMBAT_STANCE_SECONDS` (how long the player

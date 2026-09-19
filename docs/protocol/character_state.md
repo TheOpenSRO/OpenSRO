@@ -74,6 +74,29 @@ keeps a 1000 ms accumulator, but what it drives per second was not tied to slot 
 one-second tick is the only reading under which berserk is a minute and dt = 1.0 is a
 second; srrevamp ships both on that inference, labelled.
 
+What the second pass (2026-09-19, round 219) did establish about the server's clock, so
+the next attempt starts past it:
+
+- The main loop (`CMainProcess::vslot_003`, `0x402870`) drains messages for up to 3000 ms,
+  then computes `dt = (GetTickCount() - last) / const@0xb45c68` and calls
+  `CMainProcess::FUN_00413840(dt)` while the server state is 4 or 5. Inside, dt is clamped
+  to at most 1.0, accumulated at `this+0x40`, and when the accumulator reaches the period
+  at `this+0x44` the fixed step `CMainProcess::FUN_00413b30` fires and
+  `round(accumulated * const@0xb45c68)` is passed on as an integer. The same constant
+  divides milliseconds into the delta and multiplies the delta back into milliseconds,
+  so **it is 1000 and the loop's delta is in seconds** -- read from its two use-sites,
+  not from the data.
+- The period at `this+0x44` is initialised to 0 in `CMainProcess::FUN_00644380` and set
+  elsewhere at runtime (not located); the fixed step iterates the object lists calling
+  slots `0x618` and `0x34c` -- **not** `vslot_415`. So the PC's periodic update is on a
+  third path, still unlocated: not the layer (`CGameWorldLayer`, all 578 functions
+  checked for a slot-11 or slot-415 dispatch: none), not the fixed step.
+- Controllers' slot 11 is the same "update this PC" for every world kind
+  (`FUN_00605010` is reached as slot 11 of `CDefaultWorldContextController`,
+  `CFlagWorldContextController`, `CInstanceWorldContextController`,
+  `CBattleArenaContextController` and `CDataDrivenWCC_NormalizeA`; the siege one goes
+  through `vslot_416`). Whoever calls `controller->slot11(pc)` is the scheduler wanted.
+
 ## What srrevamp does
 
 The client holds `STAND_BATTLE` for `COMBAT_STANCE_SECONDS = 20` after its own last
