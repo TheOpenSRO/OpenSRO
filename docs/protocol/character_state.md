@@ -97,6 +97,29 @@ the next attempt starts past it:
   `CBattleArenaContextController` and `CDataDrivenWCC_NormalizeA`; the siege one goes
   through `vslot_416`). Whoever calls `controller->slot11(pc)` is the scheduler wanted.
 
+Third pass (round 220), byte-level on the image (`/var/tmp/SR_GameServer.exe`, whose code
+layout matches the dump; MSVC here emits virtual calls as `mov r,[r+disp]; call r`, so a
+`call [r+disp]` search finds almost nothing -- the pattern that works is the load):
+
+- `[r+0x67c]` (slot 415) is loaded in exactly two places, `CGObjPC::vslot_416` (`0x52d9bb`)
+  and `FUN_00605010` (`0x605016`); `[r+0x680]` (slot 416) in one,
+  `CSiegeWorldContextController::vslot_011`. The dump and the image agree.
+- `CGObjPC::vslot_364` (`0x4eb780`, slot 364 at `+0x5b0`) is the function that calls
+  `(*(pc+0xd8))->slot11(pc)` -- but the ONLY `[r+0x5b0]` in the image is its own vcall
+  thunk at `0x4ac6b2` (`jmp [eax+0x5b0]`, in the padding after `GObjPC::FUN_004ac630`),
+  and nothing references that thunk or `0x4eb780` except the vtable entry at `0xaf5fac`.
+  **Slot 364 is dead in this build.** The live path into `FUN_00605010` therefore loads
+  the controller from somewhere other than `pc+0xd8` and calls it through a
+  `mov r,[r+0x2c]; call r` sequence -- one of thousands; not yet isolated.
+- The event system has per-second events (`ROCTOP_WORLD_EVENT_HANDLERS::OnTimer_Second`,
+  `QNO_EU_HWAN_2_1::OnTimer_Second::Handle`; every `CEVENTHandler` implements one virtual,
+  slot 1). If the default world's PC update is such a handler, the poster of the
+  `Timer_Second` event is the scheduler, and its period is where that event is armed.
+
+*Next probe:* find the poster of the `OnTimer_Second` event (the handler classes are
+registered with an event id; the poster uses the same id), or scan the image for
+`mov r,[r+0x2c]; call r` sequences whose preceding loads name a world-context field.
+
 ## What srrevamp does
 
 The client holds `STAND_BATTLE` for `COMBAT_STANCE_SECONDS = 20` after its own last

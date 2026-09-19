@@ -4895,6 +4895,10 @@ it and reverts to peace at zero. `COMBAT_STANCE_SECONDS` is 20 now (was a disclo
 Round 219 narrowed it: the main loop's delta is in seconds (`0xb45c68` = 1000, from
 two use-sites), the fixed step at `CMainProcess+0x44` drives slots `0x618`/`0x34c`
 not 415, and no `CGameWorldLayer` function dispatches it -- one hop left.
+Round 220 (byte-level): slot 364, the PC-field path to the controller, is dead in this
+build (its vcall thunk is unreferenced); virtual calls in this image are
+`mov r,[r+disp]; call r`, and by that form slot 415's callers are exactly `vslot_416`
+and `FUN_00605010`. Next: the poster of the `OnTimer_Second` event.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

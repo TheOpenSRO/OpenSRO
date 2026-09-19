@@ -7075,6 +7075,26 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-twentieth round: the PC tick's dispatch, byte-checked -- slot 364 is dead, and the pattern that finds virtual calls in this image
+
+The RE tick's step for 2026-09-19 08:04, still after the period of `CGObjPC::vslot_415`
+(rounds 218-219). Not closed. What was established, at the byte level of the server image
+(`docs/protocol/character_state.md`, third pass):
+
+- The image encodes virtual calls as `mov r,[r+disp]; call r`; a `call [r+disp]` search
+  finds three in seven megabytes. Scanning the load form, the dump and the image agree
+  exactly on who reaches the PC update: slot 415 from `vslot_416` and `FUN_00605010`
+  only, slot 416 from the siege controller only.
+- `CGObjPC::vslot_364`, the one function that calls `controller->slot11(pc)` from a PC
+  field, is **dead in this build**: the only `[r+0x5b0]` in the image is its vcall thunk
+  (`0x4ac6b2`), referenced by nothing; its entry is referenced only by the vtable.
+- The event system carries per-second events (`OnTimer_Second` handlers), which is the
+  likeliest live path; its poster is the next probe.
+
+Method notes worth keeping: the vcall-thunk search (`FF A0 <disp32>` in the padding after
+a function) and the load-form scan are both in the round's commands; `/var/tmp/infn2.sh`
+for two-pattern function greps. No srrevamp value changed.
+
 ## Two-hundred-and-nineteenth round: the server's clock is in seconds; the PC tick's scheduler is still one hop away
 
 The RE tick's step for 2026-09-19 07:49, chasing round 218's open unit (the period of
