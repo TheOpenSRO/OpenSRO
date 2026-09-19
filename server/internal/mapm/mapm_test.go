@@ -35,9 +35,9 @@ func buildBlock(buf []byte, vertexLen, reservedLen int, heightFn func(v int) flo
 		buf = appendFloat32(buf, heightFn(v))
 		buf = append(buf, make([]byte, vertexLen-4)...)
 	}
-	buf = append(buf, 0xff)         // PlaneType = -1 (Normal)
-	buf = append(buf, 0)            // WaveID
-	buf = appendFloat32(buf, 0)     // PlaneHeight
+	buf = append(buf, 0xff)     // PlaneType = -1 (Normal)
+	buf = append(buf, 0)        // WaveID
+	buf = appendFloat32(buf, 0) // PlaneHeight
 	buf = append(buf, make([]byte, tileFlagLen)...)
 	buf = appendFloat32(buf, 0) // HeightMax
 	buf = appendFloat32(buf, 0) // HeightMin

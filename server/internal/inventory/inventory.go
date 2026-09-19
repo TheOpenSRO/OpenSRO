@@ -187,6 +187,33 @@ type Slot struct {
 	Index    int
 	ItemID   int64
 	Quantity int
+	// Variance is the instance's 64-bit white-stat field: twelve 5-bit groups,
+	// group 0 being durability's (docs/protocol/durability.md). Rolled once,
+	// when the item is created, and carried wherever the item goes.
+	Variance uint64
+	// Durability is the instance's current durability: durability.Untracked
+	// (-1) for an item that has none or was created before this existed,
+	// 0 when broken, otherwise the points left of its max.
+	Durability int
+}
+
+// Instance is what makes one item different from another of the same id:
+// the fields a transfer between containers must carry along unchanged.
+type Instance struct {
+	Variance   uint64
+	Durability int
+}
+
+// Instance returns the slot's per-instance fields.
+func (s Slot) Instance() Instance { return Instance{Variance: s.Variance, Durability: s.Durability} }
+
+// DurabilityLookup answers, for an item id, the reference row's durability
+// range (itemdata columns 63/64, Dur_L/Dur_U). ok is false for an item that
+// has no durability -- a consumable, a quest item, an unknown id. Stores that
+// hold one roll a fresh instance on every new grant and initialise legacy
+// rows on first read; stores without one leave durability Untracked.
+type DurabilityLookup interface {
+	DurabilityRange(ctx context.Context, itemID int64) (durMin, durMax float64, ok bool, err error)
 }
 
 // MaxStackLookup resolves an item's max stack size, so Store.AddItem knows
@@ -232,6 +259,19 @@ type Store interface {
 	// Moving a slot onto itself is a no-op that succeeds. Quantities are
 	// conserved in every branch -- nothing is created or destroyed.
 	MoveItem(ctx context.Context, characterID int64, from, to int) error
+
+	// AddItemInstance is AddItem for an item that already EXISTS somewhere
+	// -- coming back from the worn slots, across a trade or the warehouse,
+	// or up off the ground -- so its instance travels with it instead of
+	// being rolled afresh. Same room and stacking rules as AddItem; a
+	// stackable that merges into an existing stack keeps that stack's
+	// instance (stackables carry none that matters).
+	AddItemInstance(ctx context.Context, characterID, itemID int64, quantity int, inst Instance) error
+
+	// SetDurability writes one slot's current durability (a loss, a repair,
+	// a break). It does not clamp or refuse -- durability.Apply decides the
+	// value, this stores it. ErrSlotEmpty when nothing is there.
+	SetDurability(ctx context.Context, characterID int64, slot int, durability int) error
 }
 
 // ExpansionQuestCodes is what raises the inventory cap from MaxSlotsDefault to

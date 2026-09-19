@@ -2,6 +2,7 @@ package inventory
 
 import (
 	"context"
+	"github.com/OpenSRO/srrevamp/server/internal/durability"
 	"sort"
 	"sync"
 )
@@ -16,6 +17,11 @@ type MemStore struct {
 	mu        sync.RWMutex
 	slots     map[int64]map[int]*Slot // characterID -> slot index -> slot
 	maxStacks MaxStackLookup
+	// durabilities rolls a fresh item's instance and initialises legacy
+	// rows; nil leaves every instance Untracked (see SetDurabilityLookup).
+	durabilities DurabilityLookup
+	// Rand is the source the instance rolls draw from; tests set it.
+	Rand durability.Rand
 }
 
 // NewMemStore returns an empty MemStore. maxStacks may be nil, in which
@@ -25,13 +31,22 @@ func NewMemStore(maxStacks MaxStackLookup) *MemStore {
 	return &MemStore{slots: make(map[int64]map[int]*Slot), maxStacks: maxStacks}
 }
 
+// SetDurabilityLookup gives the store the reference data it needs to roll a
+// fresh item's variance and durability. Set once, before the store is used.
+func (m *MemStore) SetDurabilityLookup(l DurabilityLookup) { m.durabilities = l }
+
 // List implements Store.
-func (m *MemStore) List(_ context.Context, characterID int64) ([]Slot, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+func (m *MemStore) List(ctx context.Context, characterID int64) ([]Slot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	var out []Slot
 	for _, sl := range m.slots[characterID] {
+		// A row from before durability existed gets its instance on first
+		// read rather than reading as broken.
+		if _, err := initLegacy(ctx, m.durabilities, m.Rand, sl); err != nil {
+			return nil, err
+		}
 		out = append(out, *sl)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Index < out[j].Index })
@@ -43,6 +58,37 @@ func (m *MemStore) AddItem(ctx context.Context, characterID, itemID int64, quant
 	if quantity <= 0 {
 		return ErrInvalidQuantity
 	}
+	inst, err := FreshInstance(ctx, m.durabilities, m.Rand, itemID)
+	if err != nil {
+		return err
+	}
+	return m.addItem(ctx, characterID, itemID, quantity, inst)
+}
+
+// AddItemInstance implements Store: an existing instance moving in.
+func (m *MemStore) AddItemInstance(ctx context.Context, characterID, itemID int64, quantity int, inst Instance) error {
+	if quantity <= 0 {
+		return ErrInvalidQuantity
+	}
+	return m.addItem(ctx, characterID, itemID, quantity, inst)
+}
+
+// SetDurability implements Store.
+func (m *MemStore) SetDurability(_ context.Context, characterID int64, slot int, durabilityLeft int) error {
+	if slot < 0 || slot >= SlotsPerCharacter {
+		return ErrInvalidSlot
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sl := m.slots[characterID][slot]
+	if sl == nil {
+		return ErrSlotEmpty
+	}
+	sl.Durability = durabilityLeft
+	return nil
+}
+
+func (m *MemStore) addItem(ctx context.Context, characterID, itemID int64, quantity int, inst Instance) error {
 	maxStack := 1
 	if m.maxStacks != nil {
 		n, err := m.maxStacks.GetMaxStack(ctx, itemID)
@@ -83,7 +129,7 @@ func (m *MemStore) AddItem(ctx context.Context, characterID, itemID int64, quant
 			continue
 		}
 		add := min(maxStack, remaining)
-		fresh = append(fresh, Slot{Index: index, ItemID: itemID, Quantity: add})
+		fresh = append(fresh, Slot{Index: index, ItemID: itemID, Quantity: add, Variance: inst.Variance, Durability: inst.Durability})
 		remaining -= add
 	}
 	if remaining > 0 {

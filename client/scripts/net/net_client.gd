@@ -30,6 +30,11 @@ signal entity_left(character_id: int)
 signal change_zone_result(result: WorldNet.ChangeZoneResult)
 
 signal inventory_list_result(slots: Array, error: String)
+## The most recent inventory/equipment list's per-slot durability
+## (InventoryNet.Durability), stashed rather than threaded through every
+## signal. Empty against a server too old to send the trailing block.
+var last_inventory_durabilities: Array = []
+var last_equipment_durabilities: Array = []
 ## The bag after a move_item (the server's own list, not an assumption), or
 ## why the move was refused.
 signal inventory_move_result(slots: Array, error: String)
@@ -40,6 +45,9 @@ signal character_stats_result(stats: StatsNet.Stats)
 ## an empty items array). Callers that need to react to "my equip request
 ## succeeded" specifically should track that they're awaiting one.
 signal equipment_result(items: Array, error: String)
+## A repair's outcome: 0 = repaired, otherwise a refusal code; the gold spent
+## and the worn slots' durability afterwards (EquipmentNet.RepairResult).
+signal repair_result(code: int, gold_spent: int, durabilities: Array)
 signal shop_buy_result(ok: bool, reason: String)
 signal shop_list_result(entries: Array, error: String)
 signal shop_sell_result(ok: bool, reason: String, gold_received: int)
@@ -320,6 +328,11 @@ func equip(char_name: String, slot: int, inventory_slot: int) -> void:
 func unequip(char_name: String, slot: int) -> void:
 	_send(EquipmentNet.OP_UNEQUIP, EquipmentNet.encode_unequip(char_name, slot))
 
+## Repairs a worn slot, or every worn item (EquipmentNet.REPAIR_ALL), for
+## gold. The server answers OP_REPAIR_RESULT -> repair_result.
+func repair(char_name: String, slot: int) -> void:
+	_send(EquipmentNet.OP_REPAIR, EquipmentNet.encode_repair_request(char_name, slot))
+
 func shop_buy(char_name: String, item_id: int, quantity: int) -> void:
 	_send(ShopNet.OP_BUY, ShopNet.encode_buy(char_name, item_id, quantity))
 
@@ -510,15 +523,21 @@ func _dispatch(p: Packet) -> void:
 			change_zone_result.emit(zone_result)
 		InventoryNet.OP_LIST_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)
+			last_inventory_durabilities = r.durabilities
 			inventory_list_result.emit(r.slots, r.error)
 		InventoryNet.OP_MOVE_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)
+			last_inventory_durabilities = r.durabilities
 			inventory_move_result.emit(r.slots, r.error)
 		StatsNet.OP_STATS_RESULT:
 			character_stats_result.emit(StatsNet.decode_result(p.data))
 		EquipmentNet.OP_RESULT:
 			var r := EquipmentNet.decode_result(p.data)
+			last_equipment_durabilities = r.durabilities
 			equipment_result.emit(r.items, r.error)
+		EquipmentNet.OP_REPAIR_RESULT:
+			var rr := EquipmentNet.decode_repair_result(p.data)
+			repair_result.emit(rr.code, rr.gold_spent, rr.durabilities)
 		ShopNet.OP_BUY_RESULT:
 			var r := ShopNet.decode_buy_result(p.data)
 			shop_buy_result.emit(r.ok, r.reason if r.error == "" else r.error)

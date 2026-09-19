@@ -382,10 +382,19 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 					ground.Release(it.ID)
 					return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: it.ID})
 				}
-			} else if err := inv.AddItem(ctx, characterID, it.ItemID, int(it.Quantity)); err != nil {
-				// A full bag or an unknown item leaves the stack where it is.
-				ground.Release(it.ID)
-				return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: it.ID})
+			} else {
+				// A stack that already had an instance keeps it; a fresh drop
+				// gets one the way any new item does (rolled by the bag).
+				var addErr error
+				if it.Instance != nil {
+					addErr = inv.AddItemInstance(ctx, characterID, it.ItemID, int(it.Quantity), *it.Instance)
+				} else {
+					addErr = inv.AddItem(ctx, characterID, it.ItemID, int(it.Quantity))
+				}
+				if addErr != nil {
+					ground.Release(it.ID)
+					return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: it.ID})
+				}
 			}
 			ground.Remove(it.ID)
 			// The picker hears the result before the zone hears the removal,

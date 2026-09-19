@@ -155,8 +155,10 @@ func move(ctx context.Context, from, to inventory.Store, characterID int64, slot
 	if err := from.RemoveItem(ctx, characterID, slot, quantity); err != nil {
 		return fmt.Errorf("storage: removing from source: %w", err)
 	}
-	if err := to.AddItem(ctx, characterID, found.ItemID, quantity); err != nil {
-		if backErr := from.AddItem(ctx, characterID, found.ItemID, quantity); backErr != nil {
+	// The same instance crosses the counter -- its variance and durability
+	// go with it and come back with it, never re-rolled.
+	if err := to.AddItemInstance(ctx, characterID, found.ItemID, quantity, found.Instance()); err != nil {
+		if backErr := from.AddItemInstance(ctx, characterID, found.ItemID, quantity, found.Instance()); backErr != nil {
 			return fmt.Errorf("storage: adding to destination failed (%w) AND returning it failed (%v) -- character may have lost an item", err, backErr)
 		}
 		return fmt.Errorf("storage: adding to destination: %w", err)

@@ -24,6 +24,8 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 )
 
 // PickRange is how close a player must stand to pick an item up, in world
@@ -69,7 +71,12 @@ type Item struct {
 	// DroppedAt; 0 once released (or if it never had one).
 	OwnerID   int64
 	DroppedAt time.Time
-	busy      bool
+	// Instance is the stack's own variance and durability when it already
+	// had one (an item a player dropped, a stack picked back up); nil for a
+	// stack fresh off the loot table, which the bag rolls on pick-up exactly
+	// as it would any new item.
+	Instance *inventory.Instance
+	busy     bool
 }
 
 // OwnerAt returns who owns the item at t: its owner inside the window, 0

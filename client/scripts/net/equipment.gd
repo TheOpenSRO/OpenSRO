@@ -40,6 +40,7 @@ class Equipped:
 ## Result of decode_result(): either a list (from OP_LIST) or just an
 ## error/success marker (from OP_EQUIP/OP_UNEQUIP -- items is empty then).
 class Result:
+	var durabilities: Array = []  # InventoryNet.Durability, from the trailing block
 	var error: String
 	var items: Array[Equipped] = []
 
@@ -119,4 +120,47 @@ static func decode_result(data: PackedByteArray) -> Result:
 		result.items.append(decoded[0])
 		offset = decoded[1]
 
+	# The same trailing per-slot durability block the inventory list carries
+	# (session/durability.go); empty against an older server.
+	result.durabilities = InventoryNet.decode_durability_block(data, offset)
 	return result
+
+## Repair opcodes (session/repair.go). An NPC's repair buttons: restore a
+## worn slot, or all worn items, to full durability for gold.
+const OP_REPAIR := 0x007a        # client -> server
+const OP_REPAIR_RESULT := 0x007b # server -> client
+## Slot value meaning "repair everything worn" (session.RepairAllSlots).
+const REPAIR_ALL := -1
+
+## Result of decode_repair_result(): a refusal code (0 = repaired), the gold
+## spent, and the worn slots' durability afterwards (InventoryNet.Durability).
+class RepairResult:
+	var code: int
+	var gold_spent: int
+	var durabilities: Array = []
+
+## Encodes an OpRepair request: character name, then the equipment slot as
+## signed 32-bit (REPAIR_ALL for every worn item).
+static func encode_repair_request(character_name: String, slot: int) -> PackedByteArray:
+	var name_bytes := character_name.to_utf8_buffer()
+	var out := PackedByteArray()
+	out.resize(2)
+	out.encode_u16(0, name_bytes.size())
+	out.append_array(name_bytes)
+	var tail := PackedByteArray()
+	tail.resize(4)
+	tail.encode_s32(0, slot)
+	out.append_array(tail)
+	return out
+
+## Decodes an OpRepairResult payload: s32 code, s64 gold, then the durability
+## block. Truncation yields a refusal so the UI never acts on garbage.
+static func decode_repair_result(data: PackedByteArray) -> RepairResult:
+	var r := RepairResult.new()
+	if data.size() < 12:
+		r.code = 0x1c11  # CANNOT_BE_REPAIRED
+		return r
+	r.code = data.decode_s32(0)
+	r.gold_spent = data.decode_s64(4)
+	r.durabilities = InventoryNet.decode_durability_block(data, 12)
+	return r

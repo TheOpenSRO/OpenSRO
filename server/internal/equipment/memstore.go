@@ -16,13 +16,13 @@ import (
 // inventory store has to be handed to both.
 type MemStore struct {
 	mu   sync.RWMutex
-	worn map[int64]map[Slot]int64 // characterID -> slot -> itemID
+	worn map[int64]map[Slot]Equipped // characterID -> slot -> the worn instance
 	inv  inventory.Store
 }
 
 // NewMemStore returns an empty MemStore backed by inv.
 func NewMemStore(inv inventory.Store) *MemStore {
-	return &MemStore{worn: make(map[int64]map[Slot]int64), inv: inv}
+	return &MemStore{worn: make(map[int64]map[Slot]Equipped), inv: inv}
 }
 
 // Get implements Store.
@@ -31,8 +31,9 @@ func (m *MemStore) Get(_ context.Context, characterID int64) ([]Equipped, error)
 	defer m.mu.RUnlock()
 
 	var out []Equipped
-	for slot, itemID := range m.worn[characterID] {
-		out = append(out, Equipped{Slot: slot, ItemID: itemID})
+	for slot, e := range m.worn[characterID] {
+		e.Slot = slot
+		out = append(out, e)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Slot < out[j].Slot })
 	return out, nil
@@ -48,14 +49,14 @@ func (m *MemStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 	if err != nil {
 		return err
 	}
-	var newItemID int64 = -1
-	for _, sl := range invSlots {
-		if sl.Index == inventorySlot {
-			newItemID = sl.ItemID
+	var incoming *inventory.Slot
+	for i := range invSlots {
+		if invSlots[i].Index == inventorySlot {
+			incoming = &invSlots[i]
 			break
 		}
 	}
-	if newItemID == -1 {
+	if incoming == nil {
 		return ErrInventorySlotEmpty
 	}
 
@@ -71,9 +72,10 @@ func (m *MemStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.worn[characterID] == nil {
-		m.worn[characterID] = make(map[Slot]int64)
+		m.worn[characterID] = make(map[Slot]Equipped)
 	}
-	m.worn[characterID][slot] = newItemID
+	// The instance moves with the item: same variance, same durability.
+	m.worn[characterID][slot] = Equipped{Slot: slot, ItemID: incoming.ItemID, Variance: incoming.Variance, Durability: incoming.Durability}
 	return nil
 }
 
@@ -84,7 +86,7 @@ func (m *MemStore) Unequip(ctx context.Context, characterID int64, slot Slot) er
 	}
 
 	m.mu.Lock()
-	itemID, ok := m.worn[characterID][slot]
+	worn, ok := m.worn[characterID][slot]
 	if !ok {
 		m.mu.Unlock()
 		return ErrSlotEmpty
@@ -94,14 +96,31 @@ func (m *MemStore) Unequip(ctx context.Context, characterID int64, slot Slot) er
 
 	// Putting it back can fail on a full bag. Re-equip it rather than
 	// destroying it, and report the failure.
-	if err := m.inv.AddItem(ctx, characterID, itemID, 1); err != nil {
+	// Back to the bag as the same instance, not a fresh roll.
+	if err := m.inv.AddItemInstance(ctx, characterID, worn.ItemID, 1, worn.Instance()); err != nil {
 		m.mu.Lock()
 		if m.worn[characterID] == nil {
-			m.worn[characterID] = make(map[Slot]int64)
+			m.worn[characterID] = make(map[Slot]Equipped)
 		}
-		m.worn[characterID][slot] = itemID
+		m.worn[characterID][slot] = worn
 		m.mu.Unlock()
 		return err
 	}
+	return nil
+}
+
+// SetDurability implements Store.
+func (m *MemStore) SetDurability(_ context.Context, characterID int64, slot Slot, durabilityLeft int) error {
+	if !validSlot(slot) {
+		return ErrInvalidSlot
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	worn, ok := m.worn[characterID][slot]
+	if !ok {
+		return ErrSlotEmpty
+	}
+	worn.Durability = durabilityLeft
+	m.worn[characterID][slot] = worn
 	return nil
 }

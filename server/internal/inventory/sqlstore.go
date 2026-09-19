@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/OpenSRO/srrevamp/server/internal/durability"
+
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )
 
@@ -22,20 +24,36 @@ CREATE TABLE IF NOT EXISTS %s (
 	slot         INTEGER NOT NULL,
 	item_id      BIGINT NOT NULL,
 	quantity     INTEGER NOT NULL,
+	variance     BIGINT NOT NULL DEFAULT 0,
+	durability   INTEGER NOT NULL DEFAULT -1,
 	PRIMARY KEY (character_id, slot)
 );
-`, table)
+ALTER TABLE %s ADD COLUMN IF NOT EXISTS variance BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE %s ADD COLUMN IF NOT EXISTS durability INTEGER NOT NULL DEFAULT -1;
+`, table, table, table)
 }
+
+// The per-instance columns. `variance` is the 64-bit white-stat field
+// (twelve 5-bit groups; it never uses the sign bit); `durability` is the
+// current points, -1 (durability.Untracked) for a row written before this
+// existed -- initialised on first read, never read as broken.
 
 // SQLStore is a Store backed by PostgreSQL, consistent with
 // account/character/refdata's approach. Needs a MaxStackLookup (in
 // production, refdata.SQLStore) to know each item's stack limit. `table` is
 // the container's table -- the bag or the warehouse.
 type SQLStore struct {
-	db        *sql.DB
-	maxStacks MaxStackLookup
-	table     string
+	db           *sql.DB
+	maxStacks    MaxStackLookup
+	table        string
+	durabilities DurabilityLookup
+	// Rand is the source the instance rolls draw from; tests set it.
+	Rand durability.Rand
 }
+
+// SetDurabilityLookup gives the store the reference data it needs to roll a
+// fresh item's variance and durability. Set once, before the store is used.
+func (s *SQLStore) SetDurabilityLookup(l DurabilityLookup) { s.durabilities = l }
 
 // OpenSQLStore opens the bag store (the DefaultTable). See OpenSQLStoreNamed
 // for a second container.
@@ -87,22 +105,43 @@ func (s *SQLStore) Close() error {
 // List implements Store.
 func (s *SQLStore) List(ctx context.Context, characterID int64) ([]Slot, error) {
 	rows, err := s.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT slot, item_id, quantity FROM %s WHERE character_id = $1 ORDER BY slot`, s.table),
+		fmt.Sprintf(`SELECT slot, item_id, quantity, variance, durability FROM %s WHERE character_id = $1 ORDER BY slot`, s.table),
 		characterID)
 	if err != nil {
 		return nil, fmt.Errorf("inventory: listing slots: %w", err)
 	}
 	defer rows.Close()
-
 	var out []Slot
+	var legacy []Slot
 	for rows.Next() {
 		var sl Slot
-		if err := rows.Scan(&sl.Index, &sl.ItemID, &sl.Quantity); err != nil {
-			return nil, fmt.Errorf("inventory: scanning row: %w", err)
+		var variance int64
+		if err := rows.Scan(&sl.Index, &sl.ItemID, &sl.Quantity, &variance, &sl.Durability); err != nil {
+			return nil, fmt.Errorf("inventory: scanning slot: %w", err)
+		}
+		sl.Variance = uint64(variance)
+		changed, err := initLegacy(ctx, s.durabilities, s.Rand, &sl)
+		if err != nil {
+			return nil, err
+		}
+		if changed {
+			legacy = append(legacy, sl)
 		}
 		out = append(out, sl)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("inventory: iterating slots: %w", err)
+	}
+	// Persist the instances legacy rows just received, so the roll happens
+	// once and every later read agrees with this one.
+	for _, sl := range legacy {
+		if _, err := s.db.ExecContext(ctx,
+			fmt.Sprintf(`UPDATE %s SET variance = $1, durability = $2 WHERE character_id = $3 AND slot = $4`, s.table),
+			int64(sl.Variance), sl.Durability, characterID, sl.Index); err != nil {
+			return nil, fmt.Errorf("inventory: initialising slot %d: %w", sl.Index, err)
+		}
+	}
+	return out, nil
 }
 
 // AddItem implements Store.
@@ -110,6 +149,39 @@ func (s *SQLStore) AddItem(ctx context.Context, characterID, itemID int64, quant
 	if quantity <= 0 {
 		return ErrInvalidQuantity
 	}
+	inst, err := FreshInstance(ctx, s.durabilities, s.Rand, itemID)
+	if err != nil {
+		return err
+	}
+	return s.addItem(ctx, characterID, itemID, quantity, inst)
+}
+
+// AddItemInstance implements Store: an existing instance moving in.
+func (s *SQLStore) AddItemInstance(ctx context.Context, characterID, itemID int64, quantity int, inst Instance) error {
+	if quantity <= 0 {
+		return ErrInvalidQuantity
+	}
+	return s.addItem(ctx, characterID, itemID, quantity, inst)
+}
+
+// SetDurability implements Store.
+func (s *SQLStore) SetDurability(ctx context.Context, characterID int64, slot int, durabilityLeft int) error {
+	if slot < 0 || slot >= SlotsPerCharacter {
+		return ErrInvalidSlot
+	}
+	res, err := s.db.ExecContext(ctx,
+		fmt.Sprintf(`UPDATE %s SET durability = $1 WHERE character_id = $2 AND slot = $3`, s.table),
+		durabilityLeft, characterID, slot)
+	if err != nil {
+		return fmt.Errorf("inventory: setting durability of slot %d: %w", slot, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrSlotEmpty
+	}
+	return nil
+}
+
+func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quantity int, inst Instance) error {
 	maxStack, err := s.maxStacks.GetMaxStack(ctx, itemID)
 	if err != nil {
 		return fmt.Errorf("inventory: looking up max stack for item %d: %w", itemID, err)
@@ -160,8 +232,8 @@ func (s *SQLStore) AddItem(ctx context.Context, characterID, itemID int64, quant
 
 		add := min(maxStack, remaining)
 		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`INSERT INTO %s (character_id, slot, item_id, quantity) VALUES ($1, $2, $3, $4)`, s.table),
-			characterID, slotIdx, itemID, add); err != nil {
+			fmt.Sprintf(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability) VALUES ($1, $2, $3, $4, $5, $6)`, s.table),
+			characterID, slotIdx, itemID, add, int64(inst.Variance), inst.Durability); err != nil {
 			return fmt.Errorf("inventory: inserting into slot %d: %w", slotIdx, err)
 		}
 		remaining -= add
@@ -232,26 +304,34 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 	}
 	defer tx.Rollback()
 
-	readSlot := func(slot int) (itemID int64, qty int, found bool, err error) {
+	type row struct {
+		itemID     int64
+		qty        int
+		variance   int64
+		durability int
+	}
+	readSlot := func(slot int) (r row, found bool, err error) {
 		err = tx.QueryRowContext(ctx,
-			fmt.Sprintf(`SELECT item_id, quantity FROM %s WHERE character_id = $1 AND slot = $2`, s.table),
-			characterID, slot).Scan(&itemID, &qty)
+			fmt.Sprintf(`SELECT item_id, quantity, variance, durability FROM %s WHERE character_id = $1 AND slot = $2`, s.table),
+			characterID, slot).Scan(&r.itemID, &r.qty, &r.variance, &r.durability)
 		if err == sql.ErrNoRows {
-			return 0, 0, false, nil
+			return row{}, false, nil
 		}
 		if err != nil {
-			return 0, 0, false, fmt.Errorf("inventory: reading slot %d: %w", slot, err)
+			return row{}, false, fmt.Errorf("inventory: reading slot %d: %w", slot, err)
 		}
-		return itemID, qty, true, nil
+		return r, true, nil
 	}
-	srcItem, srcQty, srcFound, err := readSlot(from)
+	src, srcFound, err := readSlot(from)
 	if err != nil {
 		return err
 	}
 	if !srcFound {
 		return ErrSlotEmpty
 	}
-	dstItem, dstQty, dstFound, err := readSlot(to)
+	srcItem, srcQty := src.itemID, src.qty
+	dst, dstFound, err := readSlot(to)
+	dstItem, dstQty := dst.itemID, dst.qty
 	if err != nil {
 		return err
 	}
@@ -295,8 +375,8 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`INSERT INTO %s (character_id, slot, item_id, quantity) VALUES ($1, $2, $3, $4), ($1, $5, $6, $7)`, s.table),
-			characterID, to, srcItem, srcQty, from, dstItem, dstQty); err != nil {
+			fmt.Sprintf(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability) VALUES ($1, $2, $3, $4, $5, $6), ($1, $7, $8, $9, $10, $11)`, s.table),
+			characterID, to, srcItem, srcQty, src.variance, src.durability, from, dstItem, dstQty, dst.variance, dst.durability); err != nil {
 			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
 		}
 	}

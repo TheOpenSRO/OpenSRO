@@ -197,7 +197,7 @@ func (s *Service) Sell(ctx context.Context, characterID int64, slot, quantity in
 		return 0, fmt.Errorf("shop: removing sold item: %w", err)
 	}
 	if err := s.Gold.AddGold(ctx, characterID, gold); err != nil {
-		if backErr := s.Inv.AddItem(ctx, characterID, found.ItemID, quantity); backErr != nil {
+		if backErr := s.Inv.AddItemInstance(ctx, characterID, found.ItemID, quantity, found.Instance()); backErr != nil {
 			return 0, fmt.Errorf("shop: crediting gold failed (%w) AND putting the item back failed (%v) -- character may have lost an item", err, backErr)
 		}
 		return 0, fmt.Errorf("shop: crediting gold: %w", err)

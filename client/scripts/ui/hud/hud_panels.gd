@@ -358,6 +358,7 @@ func open_shop(npc_name: String, tabs: Array) -> void:
 	_shop_selected = 0
 	_build_shop_tab_strip(window)
 	_build_shop_purse(window)
+	_wire_repair_buttons(window)
 	_select_shop_tab(0)
 	window.show()
 	window.move_to_front()
@@ -453,6 +454,46 @@ func _select_shop_tab(index: int) -> void:
 				(child as TextureButton).texture_normal = on if selected else off
 	if index >= 0 and index < _shop_tabs.size():
 		_fill_shop_grid((_shop_tabs[index] as ShopReader.Tab).item_codes)
+
+## Wires the store's two authored repair buttons -- GDR_STORE_BTN_REPAIR
+## (the selected worn slot) and GDR_STORE_BTN_REPAIRALL (everything worn) --
+## to the repair op. Repair All is the one that always applies; single-slot
+## repair uses the last equipment slot the player clicked, or all if none.
+## On the result, the equipment list is re-read so the paper doll and the
+## tooltips show the restored durability.
+func _wire_repair_buttons(window: HudWindow) -> void:
+	if not NetClient.repair_result.is_connected(_on_repair_result):
+		NetClient.repair_result.connect(_on_repair_result)
+	var all_btn := window.node("GDR_STORE_BTN_REPAIRALL") as BaseButton
+	if all_btn != null and not all_btn.pressed.is_connected(_on_repair_all_pressed):
+		all_btn.pressed.connect(_on_repair_all_pressed)
+	var one_btn := window.node("GDR_STORE_BTN_REPAIR") as BaseButton
+	if one_btn != null and not one_btn.pressed.is_connected(_on_repair_one_pressed):
+		one_btn.pressed.connect(_on_repair_one_pressed)
+
+func _on_repair_all_pressed() -> void:
+	var who := NetClient.current_character_name
+	if who != "":
+		NetClient.repair(who, EquipmentNet.REPAIR_ALL)
+
+func _on_repair_one_pressed() -> void:
+	var who := NetClient.current_character_name
+	if who == "":
+		return
+	# Without a selected slot, "Repair" behaves like "Repair All" rather than
+	# doing nothing -- a repair NPC never leaves a broken item unrepairable.
+	NetClient.repair(who, _repair_selected_slot if _repair_selected_slot >= 0 else EquipmentNet.REPAIR_ALL)
+
+func _on_repair_result(code: int, gold_spent: int, _durabilities: Array) -> void:
+	var who := NetClient.current_character_name
+	if code == 0:
+		print("HudPanels: repaired for %d gold" % gold_spent)
+		if who != "":
+			# Refresh the worn list (durability + doll) and the purse.
+			NetClient.list_equipment(who)
+			NetClient.character_stats(who)
+	else:
+		print("HudPanels: repair refused (0x%x)" % code)
 
 ## Fills the store's 6x5 grid (GDR_STORE_LAT) with the icons of the goods, in
 ## the tab's own order. One page for now -- our NPCs' tabs each fit the 30
@@ -1335,12 +1376,30 @@ func _item_icon(item_id: int) -> Texture2D:
 
 ## The multi-line hover tooltip for an item id -- its real stats -- or just
 ## the id when the item table does not know it.
-func _item_tooltip(item_id: int) -> String:
+## The item's tooltip. When cur >= 0 the item is a specific instance whose
+## durability the server reported (session/durability.go's trailing block),
+## so the placeholder "Durability L / L" line off the reference row is
+## replaced with the instance's real current / max -- and marked broken at 0.
+func _item_tooltip(item_id: int, cur: int = -1, maximum: int = -1) -> String:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)
 	if item == null:
 		return "Item %d" % item_id
-	return "\n".join(PackedStringArray(item.tooltip_lines(_object_names)))
+	var lines := PackedStringArray(item.tooltip_lines(_object_names))
+	if cur >= 0 and maximum > 0:
+		for i in range(lines.size()):
+			if lines[i].begins_with("Durability "):
+				lines[i] = "Durability %d / %d%s" % [cur, maximum, "  (broken)" if cur == 0 else ""]
+				break
+	return "\n".join(lines)
+
+## Builds slot index -> [current, max] from the durability block a list
+## result stashed on NetClient, for the tooltip and the broken-icon tint.
+func _durability_map(entries: Array) -> Dictionary:
+	var out := {}
+	for d in entries:
+		out[int(d.slot)] = [int(d.current), int(d.maximum)]
+	return out
 
 func _item_name(item_id: int) -> String:
 	_load_items()
@@ -1370,6 +1429,7 @@ func _fill_inventory_grid(slots: Array) -> void:
 		var count := cell.get_node_or_null("CountLabel") as Label
 		if count != null:
 			count.text = ""
+	var durability := _durability_map(NetClient.last_inventory_durabilities)
 	var cells := grid.get_child_count()
 	for entry in slots:
 		var index := int(_first_field(entry, ["slot", "slot_index", "index"]) if _first_field(entry, ["slot", "slot_index", "index"]) != null else -1)
@@ -1388,7 +1448,15 @@ func _fill_inventory_grid(slots: Array) -> void:
 			# durability, reinforce, requirement -- read straight off the
 			# item table (ItemTableReader.Item.tooltip_lines). STOP so the
 			# hover registers; the cell behind it still takes clicks.
-			icon.tooltip_text = _item_tooltip(int(item_id))
+			var dur: Array = durability.get(index, [])
+			if dur.size() == 2:
+				icon.tooltip_text = _item_tooltip(int(item_id), dur[0], dur[1])
+				# A broken item (0 durability) is dimmed. The exact treatment
+				# the original uses is not recovered; this grey is ours.
+				icon.modulate = Color(0.45, 0.45, 0.45) if dur[0] == 0 else Color.WHITE
+			else:
+				icon.tooltip_text = _item_tooltip(int(item_id))
+				icon.modulate = Color.WHITE
 			icon.mouse_filter = Control.MOUSE_FILTER_STOP
 			# The slot's identity, so a click can sell it while a shop is open.
 			icon.set_meta("inv_slot", index)
@@ -1707,6 +1775,9 @@ func qa_fill_sample_inventory() -> void:
 ## The worn items as last reported, so opening the equipment window fills
 ## its slots even if the list arrived while it was closed.
 var _equipped_items: Array = []
+## The worn slot the store's single "Repair" button acts on, or -1 for
+## "repair all" (no per-slot selection UI exists yet -- disclosed).
+var _repair_selected_slot: int = -1
 
 ## China's masteries, read once from the player's own Media.pk2.
 var _masteries: Array = []
@@ -2434,6 +2505,7 @@ func _fill_equipment_slots(items: Array) -> void:
 			var icon := slot.get_node_or_null("ItemIcon") as TextureRect
 			if icon != null:
 				icon.texture = null
+	var durability := _durability_map(NetClient.last_equipment_durabilities)
 	for entry in items:
 		var slot_index = _first_field(entry, ["slot", "slot_index", "index"])
 		var item_id = _first_field(entry, ["item_id", "id"])
@@ -2445,7 +2517,13 @@ func _fill_equipment_slots(items: Array) -> void:
 		var icon := slot.get_node_or_null("ItemIcon") as TextureRect
 		if icon != null:
 			icon.texture = _item_icon(int(item_id))
-			icon.tooltip_text = _item_tooltip(int(item_id))
+			var dur: Array = durability.get(int(slot_index), [])
+			if dur.size() == 2:
+				icon.tooltip_text = _item_tooltip(int(item_id), dur[0], dur[1])
+				icon.modulate = Color(0.45, 0.45, 0.45) if dur[0] == 0 else Color.WHITE
+			else:
+				icon.tooltip_text = _item_tooltip(int(item_id))
+				icon.modulate = Color.WHITE
 			icon.mouse_filter = Control.MOUSE_FILTER_STOP
 
 func connect_net() -> void:

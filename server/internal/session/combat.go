@@ -13,6 +13,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/durability"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
@@ -925,6 +926,8 @@ func performAttack(
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
 	}
+	// A landed blow wears the weapon: one roll at rate = hits (2% a hit).
+	wearWeapon(ctx, eq, characterID, hits)
 
 	result := &AttackResult{MonsterID: targetMonsterID, MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP),
 		MonsterDied: monsterDied, PlayerCritical: playerCrit}
@@ -1151,6 +1154,13 @@ func performAttack(
 		incoming := counter.Damage
 		result.MonsterCritical = counter.Critical
 		result.PlayerBlocked = counter.Blocked
+		// The counterattack wears the defender's gear: a blocked hit the
+		// shield, any other hit one armour piece.
+		if counter.Blocked {
+			wearShield(ctx, eq, characterID)
+		} else if counter.Damage > 0 {
+			wearArmour(ctx, eq, characterID)
+		}
 		hp, playerDied, err := chars.ApplyDamage(ctx, characterID, incoming)
 		if err != nil {
 			return fmt.Errorf("combat: applying counterattack: %w", err)
@@ -1298,6 +1308,10 @@ func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq
 		if e.Slot != equipment.SlotWeapon {
 			continue
 		}
+		if durability.IsBroken(e.Durability) {
+			// A broken weapon carries none of its attack; you swing bare-fisted.
+			return unarmedDamage, nil
+		}
 		item, err := items.GetItem(ctx, e.ItemID)
 		if errors.Is(err, refdata.ErrItemNotFound) {
 			// A weapon nobody has stats for hits as a bare fist rather
@@ -1338,6 +1352,9 @@ func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, i
 	for _, e := range equipped {
 		if !isArmorSlot[e.Slot] {
 			continue
+		}
+		if durability.IsBroken(e.Durability) {
+			continue // a broken piece defends for nothing
 		}
 		item, err := items.GetItem(ctx, e.ItemID)
 		if errors.Is(err, refdata.ErrItemNotFound) {
@@ -1444,6 +1461,9 @@ func defenderBlock(ctx context.Context, characterID int64, eq equipment.Store, i
 	for _, e := range equipped {
 		if e.Slot != equipment.SlotShield {
 			continue
+		}
+		if durability.IsBroken(e.Durability) {
+			return 0 // a broken shield blocks nothing
 		}
 		item, err := items.GetItem(ctx, e.ItemID)
 		if err != nil || item == nil {
