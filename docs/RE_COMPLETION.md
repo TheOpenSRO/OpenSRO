@@ -5170,6 +5170,10 @@ value[2] radius, value[3] cap, value[4] falloff % per extra target (35 % on
 "ApplySkillParamsToChar reads efr's 0x28c" corrected (it is the character's
 +0xa30). `skillparam.EfrKind*`, `AreaTargetShare`, test; eleven names. Not
 wired -- one target per cast remains a build item.
+Round 266 (docs): EngageSkill's order read (costs, hwan, per-kind sub-effects
+by param field, ApplySkillParamsToChar, heal + Skill_BroadcastBuffAdded_B0BD,
+QueueTimedSkillEffect); the buff-added packet is 0xB0BD; the buff EXPIRY tick is
+still unlocated (next: the active-effect book's list readers). Three names.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

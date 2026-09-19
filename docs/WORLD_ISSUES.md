@@ -7075,6 +7075,27 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-sixty-sixth round: EngageSkill in order, the buff-added packet, and the expiry still to find
+
+The RE tick for 2026-09-19 19:20 followed round 265 into the real buff path. `EngageSkill`
+(`0x593540`) does, per target and in this order: take the HP/MP costs (slot 194), spend the row's
+`Consume_WHAN` through `GObjPC::AddHwanCount`, run the per-kind sub-effects each gated by its own
+param field (`pw`, `onff`, `summ`, `ssou`, `hntp`, `hitm`), then `ApplySkillParamsToChar` (the
+ParamKeeper writes), then `Skill_ApplyEffectsAndNotify` (`0x593f50`: the heal branch and
+**`Skill_BroadcastBuffAdded_B0BD`** (`0x59af00`) -- the 0xB0BD packet `{owner id, skill id, effect
+token, optional words}` that puts a buff icon on the client), then `QueueTimedSkillEffect` for the
+periodic effects. `GObjPC::ReapplyBuffWithRemaining` (`0x650d40`) is the restore path: a remaining
+time clamped to the row's `dura`.
+
+**Not found this round, said plainly:** the tick that ENDS a character buff. `dura` (+0x280, ms) is
+read by placed skill objects, a debug printer and the restore path; the active-effect book at
+`char+0xa30` receives entries from `ApplySkillParamsToChar` (`0x59df20`), but the comparison of a
+buff's start against `dura` that removes the skill's contributions was not located -- the next
+probe is the readers of the book's own list rather than of the skill field.
+
+Recorded: `skill_params.md` "EngageSkill, step by step", three names, SYSTEMS' Skills row. Docs
+only; no shipped value changed.
+
 ## Two-hundred-and-sixty-fifth round: `efr` is the target pattern -- seven collectors, a radius, a cap and a 35 % falloff
 
 The RE tick for 2026-09-19 19:05 opened the Skills row's "buff write path, start with `efr`" and

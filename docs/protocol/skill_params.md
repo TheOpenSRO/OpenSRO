@@ -1254,6 +1254,39 @@ with a test. **Not wired**: srrevamp resolves a skill against one monster; an ar
 hits its primary target only. Building the patterns needs the server to hold positions of every
 monster (it does) and to send several results per cast.
 
+## EngageSkill, step by step (round 266, 2026-09-19)
+
+`EngageSkill` (`0x593540`; `this` = the TARGET character in EAX, the effect record in EDI, the
+skill in EBX) is what a resolved cast does to one target, in this order:
+
+1. `slot 194 (0x308)(ctx+0x10, ctx+0x14, 4)` -- the HP and MP costs are taken;
+2. `ctx+0x18` (the row's `Consume_WHAN`, round 264) non-zero on a PC -> `GObjPC::AddHwanCount(-cost)`;
+3. the per-kind sub-effects, each gated by its own field: `+0x50`/`+0x54` of the record (a
+   position -> `slot 305`), **`pw`** (`+0x2b4`) -> a timed state (`0x5aa330`) then `slot 343
+   (0x11, 0xff, 0)`, **`onff`** (`+0x284`) -> a state record stamped `GetTickCount` (`0x5aa390`),
+   **`summ`** (`+0x308`) -> the same shape (`0x5aa3f0`) and `pc[0x304] = record`, **`ssou`**
+   (`+0x354`) on a monster -> `0x596e50`, **`hntp`** (`+0x48c`) with record kind 1 -> `0x5872c0`
+   into the target entry's `+0x38`, **`hitm`** (`+0x2c8`) with kind 2 -> `pc[0x306]`, and a
+   `+0x168 == 3` active row with `att` (`+0x230`) -> `pc[0x305]`;
+4. **`ApplySkillParamsToChar`** (`0x594ac0`) -- the ParamKeeper writes -- unless slot 14 says
+   otherwise for a target-required row without an attached object;
+5. **`Skill_ApplyEffectsAndNotify`** (`0x593f50`) -- the heal branch (`heal.md`), then
+   **`Skill_BroadcastBuffAdded_B0BD`** (`0x59af00`) for the caster or each target: the 0xB0BD
+   packet `{owner id, skill id, effect token (ctx+0xc), optional words}` the client shows a buff
+   icon for;
+6. **`QueueTimedSkillEffect`** (`0x596960`) -- the periodic effects (`pmhp`/`pmmp`/`pmdg`/
+   `pmdp`/`php1`/`pmp1`/`pao`/`pcdu`), ticked by `TickTimedSkillEffect`.
+
+**Still open, stated precisely:** where a character buff EXPIRES. `dura` (`+0x280`, milliseconds)
+is read by `CGSkillObject::Update` (placed skill objects), by the debug printer `0x59b8d0`
+(`[0]/1000`) and by `GObjPC::ReapplyBuffWithRemaining` (`0x650d40`, which clamps a remaining time
+to it); the active-effect book at `char+0xa30` receives `0x59df20(book, skill[0x300][0], token)`
+from `ApplySkillParamsToChar` and its five-entry `+0x388` list is copied out at the end
+(`0x5a02e0`), but the tick that compares a buff's start against `dura` and removes the skill's
+ParamKeeper contributions has not been located yet -- `CGObjChar::Update`'s only book-adjacent
+call (`0x59e840`) is a speed refresh. Next probe: the readers of the book's own list, not of the
+skill field.
+
 ## The 20 "variable-length" codes: 19 markers and 1 terminator (2026-09-18)
 
 The section above and the table below call 20 codes "variable-length" and say a walk cannot pass
