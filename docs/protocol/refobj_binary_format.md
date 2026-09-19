@@ -182,6 +182,29 @@ so `DecayTime` is exactly how long a drop lies on the ground. `internal/groundit
 it per item now; `FUN_004181d0` uses the same field the other way, pre-loading it to
 remove an object on the spot.
 
+## Fields 44-52 of the common prefix are nine 16-bit words (2026-09-19, round 230)
+
+After field 43 (`+0xd8`, a dword the deserializer zeroes) the record pointer moves to `ebx`
+and the next nine fields are read as **words** with a 2-byte stream advance each
+(`0x6a3899..`): `+0xdc, +0xde, +0xe0, +0xe2, +0xe4, +0xe6, +0xe8, +0xea, +0xec` -- fields
+44..52, text columns 43..51. `fields.py` reports them unresolved because it keys on the
+`esi` base. By the schema this project's anchors have matched at every checked column
+(13 DecayTime, 15 Rarity, 26 Price, 31 SellPrice, 32-39 the requirement pairs, 52-56 the
+asset strings), those columns are `OffsetX, OffsetY, OffsetZ, Speed1, Speed2, Scale,
+BCHeight, BCRadius, EventID` -- so a character's **walk speed is the word at `+0xe2`
+(column 46) and its run speed the word at `+0xe4` (column 47)**, and a species' bounding
+radius is at `+0xea` (column 50). In the player's own table every `CHAR_CH_MAN_*` /
+`CHAR_CH_WOMAN_*` row reads `16 / 50` (Mangyang `8 / 22`, Tigerwoman `20 / 90`).
+
+What is NOT read yet is the unit and the chain that applies it: the server's speed getter
+`GObjPC::FUN_0048b840(kind)` dispatches to the character's current mover
+(`CGObjMoverByDest` / `CGObjMoverByCmd`, at `this+0x14c/+0x150`, selected by the byte at
+`+0x154`), whose slot 7 returns a published float, and the movers' slot 3 takes a
+displacement the caller has already scaled by time. Until `PublishStats` is read handing
+`+0xe2/+0xe4` to their params and a movement step is read multiplying by seconds, "50 world
+units per second" is a plausible reading -- the client's feel-tuned `MOVE_SPEED` (47.8) sits
+within 5% of it -- not a recovered one, and `MOVE_SPEED` stays as it is.
+
 ## The item-half stat block is countable once its synthesized slots are known (2026-09-19)
 
 The dead end above is real for the table as a whole, but one stretch of the item

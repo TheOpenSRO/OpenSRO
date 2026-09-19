@@ -222,6 +222,15 @@ const REGIONINFO_PATH := "Shader\\regioninfo.txt"
 ## invented here; this constant only corrects a provably wrong measurement.
 const REAL_CHARACTER_NATIVE_HEIGHT := 14.34
 const PLAYER_SCALE_RATIO := REAL_CHARACTER_NATIVE_HEIGHT / 1.8
+## MOVE_SPEED is 6.0 "human metres" per second scaled to the character --
+## about 47.8 world units per second -- a feel tuning. The game's own number is
+## in reach but not yet READ (round 230, refobj_binary_format.md): characterdata
+## column 47 (`Speed2`, the run speed; column 46 is the walk speed) is 50 for
+## every player row and 16/50 walk/run, which agrees with this tuning within
+## 5% if the unit is world units per second -- but the chain that applies it
+## (PublishStats -> the mover's speed param -> a step multiplied by seconds)
+## has not been read, so 50 is not promoted here. Do not "fix" this to 50
+## without reading that chain; do not change it for feel either.
 const MOVE_SPEED := 6.0 * PLAYER_SCALE_RATIO
 const GRAVITY := 20.0 * PLAYER_SCALE_RATIO
 

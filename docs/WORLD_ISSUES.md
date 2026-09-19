@@ -7075,6 +7075,22 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-thirtieth round: the character record's speed words, and why MOVE_SPEED is not changed to 50 yet
+
+The RE tick's step for 2026-09-19 10:34, on the client's feel-tuned `MOVE_SPEED` (6 metres
+per second scaled to the character, about 47.8 units/s). Read: the common record's fields
+44-52 are nine 16-bit words at `+0xdc..+0xec` (the deserializer switches its base register
+to `ebx` there, which is why `fields.py` left them unresolved), so `Speed1/Speed2` --
+columns 46/47 by the schema every checked anchor has matched -- are the words at
+`+0xe2/+0xe4`; every `CHAR_CH_*`/`CHAR_EU_*` player row in the user's table reads **16 / 50**
+(Mangyang 8/22, Tigerwoman 20/90). The server's speed getter `GObjPC::FUN_0048b840` goes
+through the character's current mover (`CGObjMoverByDest`/`ByCmd` at `+0x14c/+0x150`), whose
+speed slot returns a published float; the step that multiplies by time was not found this
+pass. So 50 agrees with the tuning within 5% under one reading of the unit, and that is
+exactly the "suggestive curve" the rules say not to promote: `MOVE_SPEED` stays, its
+comment now says what the number in reach is and what reading would earn it.
+`refobj_binary_format.md` carries the layout; `RE_COMPLETION.md` the next probe.
+
 ## Two-hundred-and-twenty-ninth round: the fog planes are channels 10 and 11 times the view distance -- the model behind FOG_DENSITY, read
 
 The RE tick's step for 2026-09-19 10:19, from the client's disclosed constants: `FOG_DENSITY`

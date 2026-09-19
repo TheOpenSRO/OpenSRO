@@ -4958,6 +4958,15 @@ public doc's "FogNearPlane/FogFarPlane" at 7/8 is wrong for this client -- 7, 8,
 11: [0.467, 1.0]; Jangan 0.5/0.9 -> 1250/2250). `EnvironmentReader` corrected; the planes
 are computed and logged; drawing linear fog is a TODO (Godot 4.2 has no depth-range fog).
 
+### Movement speed, 2026-09-19 (round 230) -- in reach, not yet read
+
+Common-record fields 44-52 are words at `+0xdc..+0xec`; `Speed1/Speed2` (columns 46/47)
+are the words at `+0xe2/+0xe4`; every player row reads 16/50. The client's feel-tuned
+`MOVE_SPEED` (47.8) is within 5% of 50 if the unit is world units per second, but the
+applying chain (`PublishStats` -> mover speed param -> a step scaled by seconds) is
+unread, so nothing is promoted. Next probe: `GObjMob_PublishStats`/`GObjPC` reading
+`+0xe2/+0xe4`, then the caller of `CGObjMoverByDest::vslot_003` that scales by time.
+
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
 via `nItemDBID`), and an empty slot is a real row with `ItemID = 0 or NULL`
