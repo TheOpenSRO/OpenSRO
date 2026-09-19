@@ -36,14 +36,22 @@ func _edge(flags: int, a: Vector2, b: Vector2) -> NvmReader.Edge:
 	e.line_max = b
 	return e
 
-## A ramp climbing from y=0 at z=0 to y=`rise` at z=`run`, `width` wide in X,
-## as two real-shaped navigation cells plus a blocking edge down each side.
-func _ramp(rise: float, run: float, width: float) -> BmsReader.CollisionMesh:
+func _cedge(v0: int, v1: int, cell_from: int, cell_to: int, flags: int) -> BmsReader.CollisionEdge:
+	var e := BmsReader.CollisionEdge.new()
+	e.v0 = v0
+	e.v1 = v1
+	e.cell_from = cell_from
+	e.cell_to = cell_to
+	e.flags = flags
+	return e
+
+## A quad of four points (in order around it) as two real-shaped cells
+## [0,1,2] and [0,2,3], with its outline edges carrying the given flags in
+## the order 0-1, 1-2, 2-3, 3-0 and the shared diagonal 0-2 as an internal
+## edge of `diagonal_flags`.
+func _quad(points: Array, outline_flags: Array, diagonal_flags: int = 4) -> BmsReader.CollisionMesh:
 	var cm := BmsReader.CollisionMesh.new()
-	for p in [
-		Vector3(0.0, 0.0, 0.0), Vector3(width, 0.0, 0.0),
-		Vector3(width, rise, run), Vector3(0.0, rise, run),
-	]:
+	for p in points:
 		var v := BmsReader.CollisionVertex.new()
 		v.position = p
 		cm.vertices.append(v)
@@ -53,16 +61,27 @@ func _ramp(rise: float, run: float, width: float) -> BmsReader.CollisionMesh:
 		c.b = tri[1]
 		c.c = tri[2]
 		cm.cells.append(c)
-	# Sides block; the foot and the head do not, so the ramp can be entered.
-	for pair in [[1, 2], [3, 0]]:
-		var e := BmsReader.CollisionEdge.new()
-		e.v0 = pair[0]
-		e.v1 = pair[1]
-		e.cell_from = 0
-		e.cell_to = BmsReader.NO_CELL
-		e.flags = 3
-		cm.outline_edges.append(e)
+	# Edges 0-1 and 1-2 bound cell 0; 2-3 and 3-0 bound cell 1.
+	cm.outline_edges.append(_cedge(0, 1, 0, BmsReader.NO_CELL, outline_flags[0]))
+	cm.outline_edges.append(_cedge(1, 2, 0, BmsReader.NO_CELL, outline_flags[1]))
+	cm.outline_edges.append(_cedge(2, 3, 1, BmsReader.NO_CELL, outline_flags[2]))
+	cm.outline_edges.append(_cedge(3, 0, 1, BmsReader.NO_CELL, outline_flags[3]))
+	cm.internal_edges.append(_cedge(0, 2, 0, 1, diagonal_flags))
 	return cm
+
+## A ramp climbing from y=0 at z=0 to y=`rise` at z=`run`, `width` wide in X,
+## as two real-shaped navigation cells: its sides are walls (flag 3, the
+## value 81% of real outline edges carry) and its foot and head are open
+## (flag 0, the real doorway value), so it can be walked onto and off.
+func _ramp(rise: float, run: float, width: float) -> BmsReader.CollisionMesh:
+	return _quad([
+		Vector3(0.0, 0.0, 0.0), Vector3(width, 0.0, 0.0),
+		Vector3(width, rise, run), Vector3(0.0, rise, run),
+	], [0, 3, 0, 3])
+
+func _placed_list(placed: NavGraph.PlacedObject) -> Array[NavGraph.PlacedObject]:
+	var out: Array[NavGraph.PlacedObject] = [placed]
+	return out
 
 func _initialize() -> void:
 	# --- terrain only -------------------------------------------------
@@ -94,12 +113,12 @@ func _initialize() -> void:
 	region.cells[0].object_indices = [0]
 	var ramp := _ramp(20.0, 40.0, 30.0)
 	var placed := NavGraph.place(ramp, 0, Vector3(100.0, 5.0, 200.0), 0.0)
-	var placed_list: Array[NavGraph.PlacedObject] = [placed]
-	var g3 := NavGraph.build(region, placed_list)
+	var g3 := NavGraph.build(region, _placed_list(placed))
 
 	_check(g3.objects_at(110.0, 210.0) == ([0] as Array[int]),
 		"the real cell's own object list is what finds the object")
-	_check(g3.objects_at(1000.0, 1000.0).is_empty() or true, "objects_at tolerates empty ground")
+	_check(placed.edge_flags.size() == 5 and placed.edge_outline.count(1) == 4,
+		"every edge is kept with its list (%d edges, %d outline)" % [placed.edge_flags.size(), placed.edge_outline.count(1)])
 
 	# The ramp's own real heights, offset by where it is placed.
 	_check(absf(g3.height_at(110.0, 200.0, 5.0) - 5.0) < 0.01,
@@ -130,62 +149,90 @@ func _initialize() -> void:
 	# A surface far overhead is not the ground: standing at the foot, the top
 	# of the ramp must not be picked up.
 	var high := _ramp(200.0, 40.0, 30.0)
-	var high_placed: Array[NavGraph.PlacedObject] = [NavGraph.place(high, 0, Vector3(100.0, 5.0, 200.0), 0.0)]
-	var g4 := NavGraph.build(region, high_placed)
+	var g4 := NavGraph.build(region, _placed_list(NavGraph.place(high, 0, Vector3(100.0, 5.0, 200.0), 0.0)))
 	_check(absf(g4.height_at(110.0, 239.0, 0.0)) < 0.001,
 		"a surface far overhead is not mistaken for the ground (got %s)" % g4.height_at(110.0, 239.0, 0.0))
 
-	# An object's own real blocking edges stop movement **for whoever is
-	# standing on that object**, in region space.
-	_check(g3.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), 0),
-		"the object's own real blocking edge stops someone standing on it")
+	# --- the client's own rule: walls block from both sides, doorways let
+	# you on, and only the object you stand on has a say ------------------
+	# An object's wall (flag 3) stops someone standing on it...
+	_check(g3.blocked(Vector2(105.0, 220.0), Vector2(95.0, 220.0), 0),
+		"the object's own real wall stops someone standing on it")
 	_check(not g3.blocked(Vector2(110.0, 205.0), Vector2(110.0, 235.0), 0),
 		"moving up the ramp between its sides is not blocked")
+	# ...and someone on the terrain walking into it. This is what the real
+	# entry test does (bit 0 of the edge's flags), and it is what used to be
+	# missing: a terrain mover was let through the wall whenever the floor
+	# behind it was within reach, then trapped by the same wall from inside.
+	_check(g3.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), NavGraph.ON_TERRAIN),
+		"the same wall stops someone on the terrain walking in through it")
+	_check(g4.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), NavGraph.ON_TERRAIN),
+		"however high the floor behind it is")
+	# ...but not someone standing on a *different* object: the real walk
+	# tests only the current object's edges. This is what keeps the real
+	# Jangan palace gate open, where the palace interior's own walls used to
+	# close the gateway (docs/WORLD_ISSUES.md's seventy-fifth round).
+	var two := _region(0.0)
+	two.cells[0].object_indices = [0, 1]
+	var gate_floor := NavGraph.place(_quad([
+		Vector3(0.0, 0.0, 0.0), Vector3(60.0, 0.0, 0.0), Vector3(60.0, 0.0, 60.0), Vector3(0.0, 0.0, 60.0),
+	], [0, 0, 0, 0]), 1, Vector3(80.0, 0.0, 190.0), 0.0)
+	var pair_list: Array[NavGraph.PlacedObject] = [placed, gate_floor]
+	var g_two := NavGraph.build(two, pair_list)
+	_check(not g_two.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), 1),
+		"another object's wall does not stop someone standing on a neighbouring object")
+	# ...unless that object keeps terrain collision (the "event" marker).
+	var pad_mesh := _quad([
+		Vector3(0.0, 0.0, 0.0), Vector3(60.0, 0.0, 0.0), Vector3(60.0, 0.0, 60.0), Vector3(0.0, 0.0, 60.0),
+	], [0, 0, 0, 0])
+	pad_mesh.events.append("EVENT")
+	var pad := NavGraph.place(pad_mesh, 1, Vector3(80.0, 0.0, 190.0), 0.0)
+	_check(pad.terrain_collides, "an object naming an \"EVENT\" keeps terrain collision")
+	var pad_list: Array[NavGraph.PlacedObject] = [placed, pad]
+	var g_pad := NavGraph.build(two, pad_list)
+	_check(g_pad.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), 1),
+		"...and then a neighbour's wall does stop someone standing on it")
 
-	# ...and only for them. A real object's walls must not stop someone who is
-	# not on it: that is what closed the real Jangan palace gate, where the
-	# real palace interior's own walls blocked a player standing in the open
-	# gateway (see docs/WORLD_ISSUES.md's seventy-fifth round). Terrain edges
-	# are what stop someone approaching a real building from outside, and the
-	# real terrain navmesh carries them.
-	_check(not g3.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), -1),
-		"the same edge does not stop someone standing on terrain")
-	_check(not g3.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), 99),
-		"nor someone standing on a different object")
-
-	# An object *above* the mover does get to stop them walking in
-	# underneath it. A real playtest reported being able to walk in under a
-	# shop's floor and stand inside the building's footprint below it: the
-	# shop's walls are its own object edges, and those had only ever been
-	# tested for whoever was already standing on the shop. `high` is placed
-	# with its surface 100 units overhead, well out of reach.
-	_check(g4.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), -1, 0.0),
-		"an object overhead stops someone walking in underneath it")
-	_check(not g4.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), -1),
-		"...only when the mover's own height is known -- without it, unchanged")
-	# ...and never traps whoever is already under: leaving is always allowed,
-	# because the place being moved *to* is not under anything.
-	_check(not g4.blocked(Vector2(105.0, 220.0), Vector2(95.0, 220.0), -1, 0.0),
-		"someone already underneath can still walk back out")
-	# An object whose surface is within reach is something to stand *on*, not
-	# something to be stopped by -- this is what keeps a real gateway open.
-	_check(not g3.blocked(Vector2(95.0, 220.0), Vector2(105.0, 220.0), -1, 12.0),
-		"a surface within reach is stepped onto, not walked into")
-
-	# Terrain's own blocking edges always apply, whatever you are standing on.
+	# Terrain's own blocking edges apply on the terrain, and not to someone
+	# on an object (the real walk consults only that object's mesh).
 	var tw := _region(0.0)
-	tw.internal_edges = [_edge(2, Vector2(200.0, 0.0), Vector2(200.0, 400.0))]
-	var gtw := NavGraph.build(tw, [] as Array[NavGraph.PlacedObject])
-	_check(gtw.blocked(Vector2(190.0, 100.0), Vector2(210.0, 100.0), -1),
+	tw.cells[0].object_indices = [0]
+	tw.internal_edges = [_edge(2, Vector2(110.0, 0.0), Vector2(110.0, 400.0))]
+	var gtw := NavGraph.build(tw, _placed_list(NavGraph.place(_ramp(0.0, 40.0, 30.0), 0, Vector3(100.0, 0.0, 200.0), 0.0)))
+	_check(gtw.blocked(Vector2(105.0, 100.0), Vector2(115.0, 100.0), NavGraph.ON_TERRAIN),
 		"a real terrain blocking edge stops someone on terrain")
-	_check(gtw.blocked(Vector2(190.0, 100.0), Vector2(210.0, 100.0), 0),
-		"and still stops someone standing on an object")
+	_check(not gtw.blocked(Vector2(105.0, 220.0), Vector2(115.0, 220.0), 0),
+		"and not someone standing on an object that crosses it")
+
+	# An edge marked 0x10 is passed beneath by someone on the terrain and is a
+	# wall for someone on the object -- a city wall's walkway over its arch.
+	var arch := NavGraph.place(_quad([
+		Vector3(0.0, 40.0, 0.0), Vector3(30.0, 40.0, 0.0), Vector3(30.0, 40.0, 40.0), Vector3(0.0, 40.0, 40.0),
+	], [0x10, 3, 0x10, 3]), 0, Vector3(100.0, 0.0, 200.0), 0.0)
+	var g_arch := NavGraph.build(region, _placed_list(arch))
+	var under := g_arch.step_tracked(Vector3(115.0, 0.0, 190.0), Vector2(0.0, 60.0), NavGraph.ON_TERRAIN)
+	_check(under.standing_on == NavGraph.ON_TERRAIN and absf(under.position.z - 250.0) < 0.01 and absf(under.position.y) < 0.001,
+		"someone on the terrain walks under a 0x10 edge and stays on the terrain (z %.1f, on %d)" % [under.position.z, under.standing_on])
+	var on_wall := g_arch.step_tracked(Vector3(115.0, 40.0, 220.0), Vector2(0.0, 30.0), 0)
+	_check(on_wall.blocked and on_wall.standing_on == 0 and on_wall.position.z < 240.0,
+		"someone on the walkway is stopped by the same edge (z %.2f)" % on_wall.position.z)
+
+	# A one-way internal edge: value 1 stops a mover on the edge's cell_to
+	# side, value 2 one on its cell_from side. The diagonal 0-2 has cell 0
+	# (the +x/-z half) as its from side.
+	var one_way := NavGraph.place(_quad([
+		Vector3(0.0, 0.0, 0.0), Vector3(40.0, 0.0, 0.0), Vector3(40.0, 0.0, 40.0), Vector3(0.0, 0.0, 40.0),
+	], [3, 3, 3, 3], 4 | 1), 0, Vector3(100.0, 0.0, 200.0), 0.0)
+	var g_one := NavGraph.build(region, _placed_list(one_way))
+	_check(not g_one.blocked(Vector2(130.0, 210.0), Vector2(110.0, 230.0), 0),
+		"a flag-5 internal edge lets a mover cross from its cell_from side")
+	_check(g_one.blocked(Vector2(110.0, 230.0), Vector2(130.0, 210.0), 0),
+		"and stops one crossing back from its cell_to side")
 
 	# Yaw must actually rotate the placement, or every object would be axis
 	# aligned and only the unrotated ones would work.
 	var turned := NavGraph.place(_ramp(20.0, 40.0, 30.0), 0, Vector3(100.0, 0.0, 200.0), PI / 2.0)
-	var turned_list: Array[NavGraph.PlacedObject] = [turned]
-	var g5 := NavGraph.build(region, turned_list)
+	var g5 := NavGraph.build(region, _placed_list(turned))
 	# A +90 degree yaw turns the ramp's own local +z run onto world +x, so its
 	# head lands at world x = 100 + 40 and its width spans world z 170..200.
 	_check(absf(g5.height_at(140.0, 185.0, 20.0) - 20.0) < 0.01,
@@ -207,18 +254,16 @@ func _initialize() -> void:
 	# along it at all, which is exactly this test failing at step 1.
 	var walk := _region(0.0)
 	walk.cells[0].object_indices = [0]
-	var walk_ramp: Array[NavGraph.PlacedObject] = [
-		NavGraph.place(_ramp(20.0, 40.0, 30.0), 0, Vector3(100.0, 0.0, 200.0), 0.0)
-	]
-	var gw := NavGraph.build(walk, walk_ramp)
+	var gw := NavGraph.build(walk, _placed_list(NavGraph.place(_ramp(20.0, 40.0, 30.0), 0, Vector3(100.0, 0.0, 200.0), 0.0)))
 	var pos := Vector3(115.0, 0.0, 201.0)
 	pos.y = gw.height_at(pos.x, pos.z, 0.0)
 	var start_y := pos.y
-	# The ramp runs z 200..240, so 78 steps of 0.5 walks it foot to head.
+	# The ramp runs z 200..240, so 76 steps of 0.5 walks it from z=201 to
+	# z=239, one step short of the open head edge.
 	var moved := 0
 	var monotonic_walk := true
 	var last_y := start_y
-	for _i in range(78):
+	for _i in range(76):
 		var before := pos
 		pos = gw.step(pos, Vector2(0.0, 0.5))
 		if not before.is_equal_approx(pos):
@@ -226,16 +271,38 @@ func _initialize() -> void:
 		if pos.y < last_y - 0.001:
 			monotonic_walk = false
 		last_y = pos.y
-	_check(moved == 78, "the player moves on every step (moved %d of 78)" % moved)
+	_check(moved == 76, "the player moves on every step (moved %d of 76)" % moved)
 	_check(monotonic_walk, "and never loses height on the way up")
 	_check(pos.y > start_y + 15.0,
 		"walking up a real ramp arrives at the top (y %s -> %s)" % [start_y, pos.y])
-	_check(absf(pos.y - 20.0) < 0.5, "and arrives at the ramp's real height (got %s)" % pos.y)
+	_check(absf(pos.y - 19.5) < 0.5, "and arrives at the ramp's real height there (got %s)" % pos.y)
 
 	# Continuing past the top must land on terrain, not drop through the world.
 	for _i in range(60):
 		pos = gw.step(pos, Vector2(0.0, 0.5))
 	_check(absf(pos.y) < 0.001, "walking off the top lands on terrain (got %s)" % pos.y)
+
+	# The same walk with the footing tracked the way the client tracks it:
+	# from the terrain in front of the foot, through the open foot edge (on),
+	# up, and out through the open head edge (off).
+	var tracked := NavGraph.StepResult.new()
+	tracked.position = Vector3(115.0, 0.0, 195.0)
+	tracked.standing_on = NavGraph.ON_TERRAIN
+	var entered_at := -1.0
+	var exited_at := -1.0
+	var peak := -INF
+	for i in range(120):
+		tracked = gw.step_tracked(tracked.position, Vector2(0.0, 0.5), tracked.standing_on)
+		if tracked.entered == 0 and entered_at < 0.0:
+			entered_at = tracked.position.z
+		if tracked.exited == 0 and exited_at < 0.0:
+			exited_at = tracked.position.z
+		peak = maxf(peak, tracked.position.y)
+	_check(absf(entered_at - 200.0) < 0.6, "the tracked walk steps onto the ramp at its open foot (z %.2f)" % entered_at)
+	_check(peak > 19.0, "climbs to its head (peak y %.2f)" % peak)
+	_check(absf(exited_at - 240.0) < 0.6, "steps off through its open head edge (z %.2f)" % exited_at)
+	_check(tracked.standing_on == NavGraph.ON_TERRAIN and absf(tracked.position.y) < 0.001,
+		"and is back on the terrain (on %d, y %.2f)" % [tracked.standing_on, tracked.position.y])
 
 	# A real blocking edge stops a move rather than being walked through.
 	var wall := _region(0.0)
@@ -259,6 +326,46 @@ func _initialize() -> void:
 	var still_after := gwall.step(still, Vector2.ZERO)
 	_check(absf(still_after.y - still.y) < 0.001, "standing still keeps its height")
 
+	# --- the building trap, as measured in Alexandria (round 162) ---------
+	# A floor a few units above the terrain, walled on three sides with a
+	# doorway on the fourth. Walking at a wall must stop at the wall -- not
+	# pass through it onto the floor -- and the doorway must work both ways.
+	var house_mesh := _quad([
+		Vector3(0.0, 5.5, 0.0), Vector3(40.0, 5.5, 0.0), Vector3(40.0, 5.5, 40.0), Vector3(0.0, 5.5, 40.0),
+	], [3, 3, 3, 0]) # the doorway is the 3-0 edge, along x=0
+	var house := _region(0.0)
+	house.cells[0].object_indices = [0]
+	var gh := NavGraph.build(house, _placed_list(NavGraph.place(house_mesh, 0, Vector3(100.0, 0.0, 200.0), 0.0)))
+	var at_wall := gh.step_tracked(Vector3(120.0, 0.0, 190.0), Vector2(0.0, 20.0), NavGraph.ON_TERRAIN)
+	_check(at_wall.blocked and at_wall.standing_on == NavGraph.ON_TERRAIN and at_wall.position.z < 200.0 and absf(at_wall.position.y) < 0.001,
+		"a terrain mover walking at the house wall stops outside it, on the ground (z %.2f, y %.2f, on %d)" % [
+			at_wall.position.z, at_wall.position.y, at_wall.standing_on])
+	var through_door := gh.step_tracked(Vector3(90.0, 0.0, 220.0), Vector2(20.0, 0.0), NavGraph.ON_TERRAIN)
+	_check(through_door.entered == 0 and through_door.standing_on == 0 and absf(through_door.position.y - 5.5) < 0.01,
+		"walking in through the doorway steps onto the floor (y %.2f, on %d)" % [through_door.position.y, through_door.standing_on])
+	var inside_wall := gh.step_tracked(through_door.position, Vector2(0.0, -40.0), 0)
+	_check(inside_wall.blocked and inside_wall.standing_on == 0 and inside_wall.position.z > 200.0,
+		"inside, the wall stops the mover from the other side too (z %.2f)" % inside_wall.position.z)
+	var back_out := gh.step_tracked(through_door.position, Vector2(-30.0, 0.0), 0)
+	_check(back_out.exited == 0 and back_out.standing_on == NavGraph.ON_TERRAIN and absf(back_out.position.y) < 0.001,
+		"and the doorway leads back out onto the ground (y %.2f, on %d)" % [back_out.position.y, back_out.standing_on])
+
+	# Two decks sharing an open edge: stepping off one lands on the other,
+	# not on the terrain between them for a frame.
+	var seam := _region(0.0)
+	seam.cells[0].object_indices = [0, 1]
+	var deck_a := NavGraph.place(_quad([
+		Vector3(0.0, 10.0, 0.0), Vector3(40.0, 10.0, 0.0), Vector3(40.0, 10.0, 40.0), Vector3(0.0, 10.0, 40.0),
+	], [3, 0, 3, 3]), 0, Vector3(100.0, 0.0, 200.0), 0.0)
+	var deck_b := NavGraph.place(_quad([
+		Vector3(0.0, 10.0, 0.0), Vector3(40.0, 10.0, 0.0), Vector3(40.0, 10.0, 40.0), Vector3(0.0, 10.0, 40.0),
+	], [3, 3, 3, 0]), 1, Vector3(140.0, 0.0, 200.0), 0.0)
+	var decks: Array[NavGraph.PlacedObject] = [deck_a, deck_b]
+	var g_seam := NavGraph.build(seam, decks)
+	var across := g_seam.step_tracked(Vector3(130.0, 10.0, 220.0), Vector2(20.0, 0.0), 0)
+	_check(across.standing_on == 1 and absf(across.position.y - 10.0) < 0.01,
+		"stepping across a shared edge hands the footing to the next deck (on %d, y %.2f)" % [across.standing_on, across.position.y])
+
 	# Landing is a different question from walking. A deck just over
 	# SURFACE_REACH_UP above the terrain is correctly refused by height_at
 	# -- you cannot step up onto it -- but something placed into the world
@@ -267,9 +374,7 @@ func _initialize() -> void:
 	# 12.0, which put the player and every NPC on the town square inside it.
 	var deck_rise := NavGraph.SURFACE_REACH_UP + 1.8
 	var deck := _ramp(0.0, 40.0, 30.0)
-	var deck_placed: Array[NavGraph.PlacedObject] = [
-		NavGraph.place(deck, 0, Vector3(100.0, deck_rise, 200.0), 0.0)]
-	var g_deck := NavGraph.build(region, deck_placed)
+	var g_deck := NavGraph.build(region, _placed_list(NavGraph.place(deck, 0, Vector3(100.0, deck_rise, 200.0), 0.0)))
 	var walking := g_deck.height_at(110.0, 239.0, 0.0)
 	_check(absf(walking) < 0.001,
 		"height_at refuses a deck %.1f up against a reach of %.1f (got %.2f)" % [
