@@ -7075,6 +7075,59 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-fifty-seventh round: how a monster notices you -- the detection radius, and where the level term really is
+
+The RE tick for 2026-09-19 17:20 turned to the monster's side of round 256: srrevamp's monsters
+strike only when struck because nothing ever picks a target. The acquisition rule is now read,
+and one row of the tactics table changes meaning.
+
+**The radius is `BCRadius + _RefTactics.+0x14`.** `AI::CTactics::BindSkillsAndRanges` (`0x53f780`)
+ends with three instructions Ghidra did not show -- it rendered the store as `= 0` and cut the
+function at a misread noreturn:
+
+	53fa2b  call [vtbl+0x560]          ; GetBCRadius (slot 344, characterdata col 50)
+	53fa46  fst  DWORD [ctx+0x158]     ; = BCRadius
+	53fa4c  fiadd DWORD [row+0x14]     ; + the tactics row's column 6
+	53fa4f  fstp DWORD [ctx+0x15c]     ; = the detection radius
+
+Round 238 had column 6 as "a distance" that installs the acquire behaviour; it is the DETECTION
+DISTANCE, and the radius the scan uses is the body's radius plus it.
+
+**The scan takes the nearest player, and nothing about levels.** `AITactics_AcquireTarget`
+(`0x5478f0`, behaviour `+0xf8`, WANDER/HOMING/WATCHOUT/EMOTION) rounds `ctx+0x15c`, picks a
+kind mask and a selector from the row's flag word (players and "nearest" by default), and
+`AITactics_ScanForTargets` (`0x5405b0`) walks the regions within the radius handing every object
+to the selector at `ctx+0x128 + selector*4` -- a second eight-entry table the constructor
+`AI::CTactics::CTactics` (`0x53ea60`) fills. Selector 2 (`0x5464e0`) keeps a candidate that
+passes the kind mask (`GObj_MatchesKindMask`, `0x540b90`), stands within the radius by the
+region-aware distance and is nearer than the best so far. A player's summoned objects get a
+detour (`GObjPC::FUN_004fc160(pc+0x1ce8)`; a pet may be picked instead -- shape only). Then
+`SetTarget` and 2, which the caller turns into BATTLE. **No level comparison anywhere in it.**
+
+**The level term is at BATTLE entry, and it is not about the player being noticed.**
+`CAIState_BATTLE::OnEnter` -> `AITactics_CollectNearbyMonsters` (`0x540580`): the same base
+radius scaled by `AITactics_LevelScaledRadius` (`0x541e00`) against the TARGET's level --
+**x1.4** when the monster is 4+ levels above it, **x1.2** at 1..3 above, 1.0 from 3 below to
+equal, **x0.8** at 4..6 below, **x0.6** at 7+ below (doubles at `0xb45c08/c00/bf0/bf8`; `fmul
+QWORD`, checked) -- bounds `AITactics_GatherObjectsWithin` (`0x540860`, kind mask 2), which
+moves the **ten nearest monsters** (never a `MOB_AUTOMOB`) into the vector at `ctx+0x80`. What
+that list drives is unread this round: its readers share `+0x84` with a position record and
+the census was polluted; the shape is recorded, not interpreted.
+
+**Where the numbers would come from, checked rather than assumed.** The per-species column-6
+distances live in `_RefTactics`, a shard-database table. The server package on the box has no
+shard backup: its `SR_GameRefData` folder is the client-side text tables plus shop, teleport
+and quest files (no tactics, nest, hive or AI-skill file), `smc.bak` is the manager's own
+database, and the three `SR_GameServer_*.dmp` files are 2 MB minidumps with eight streams
+(threads, modules, a small memory list, exception, system info) and no heap -- `MOB_CH_` occurs
+in none of them. So the RULE is grounded and the per-species distance will be disclosed when
+srrevamp's monsters learn to notice a player.
+
+Recorded: a new section in `docs/protocol/monster_ai.md`, column 6 relabelled, `ai.DetectionRadius`
+and `ai.LevelScaledRadius` with a test (`internal/ai`), the build item in `docs/TODO.md`
+("Monsters do not move, chase or notice anyone" -- every rule it needs is now listed with its
+round), ten names. No shipped value changed; no release.
+
 ## Two-hundred-and-fifty-sixth round: one click fights to the death -- the keep-up, read and built
 
 The RE tick for 2026-09-19 16:34 took round 255's TODO: the real server repeats the plain

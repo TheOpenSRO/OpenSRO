@@ -322,3 +322,72 @@ const (
 func WanderDistanceRange() (min, max float64) {
 	return WanderDistanceBase - float64(WanderDistanceSpread-1), WanderDistanceBase + float64(WanderDistanceSpread-1)
 }
+
+// Target acquisition, read off the tactics context (round 257,
+// docs/protocol/monster_ai.md "Target acquisition"):
+//
+//	detection = BCRadius + _RefTactics[+0x14]          ; ctx+0x15c, set at the end of
+//	                                                    ; AI::CTactics::BindSkillsAndRanges
+//	                                                    ; (0x53fa23..0x53fa4f: fild BCRadius,
+//	                                                    ; fiadd [row+0x14])
+//
+// AITactics_AcquireTarget (0x5478f0, behaviour +0xf8, installed only when the
+// row's +0x14 is non-zero) scans the regions within round(detection) for
+// PLAYERS (kind mask 1 by default; the row's flag bits 2/7/8 widen the kinds)
+// and takes the NEAREST by the region-aware distance (selector 2,
+// 0x5464e0). No level term: a level-1 Mangyang and a level-60 player are the
+// same candidate. The row's aggression mode gates whether the scan runs at
+// all (mode 1 never, mode 2 by its percent, rolled once at spawn).
+//
+// The level term lives elsewhere: on entering BATTLE the same base radius is
+// scaled against the TARGET's level and the ten nearest MONSTERS inside it
+// (never MOB_AUTOMOB) are gathered into ctx+0x80 (AITactics_LevelScaledRadius
+// 0x541e00 -> AITactics_GatherObjectsWithin 0x540860, mask 2). What that
+// list drives is unread. The factors are doubles (fmul QWORD):
+//
+//	monster level - target level >= 4   : x 1.4  (0xb45c08)
+//	                          1 .. 3   : x 1.2  (0xb45c00)
+//	                         -3 .. 0   : x 1.0
+//	                         -6 .. -4  : x 0.8  (0xb45bf0)
+//	                          <= -7    : x 0.6  (0xb45bf8)
+//
+// The per-species +0x14 distances are in no archive this project holds
+// (_RefTactics is a server database table; the package on the box carries
+// no shard backup, and its GameServer minidumps hold no heap), so a
+// monster's detection distance stays disclosed until a source appears.
+const (
+	LevelRadiusFarAbove  = 1.4 // target at least 4 levels below the monster
+	LevelRadiusAbove     = 1.2 // 1 to 3 levels below
+	LevelRadiusNear      = 1.0 // up to 3 levels above
+	LevelRadiusBelow     = 0.8 // 4 to 6 levels above
+	LevelRadiusFarBelow  = 0.6 // 7 or more levels above
+	LevelRadiusAboveBand = 4
+	LevelRadiusBelowBand = -4
+	LevelRadiusFarBand   = -7
+)
+
+// DetectionRadius is how far a monster notices a player: its BCRadius plus
+// its tactics row's +0x14 distance. ok is false when the distance is zero --
+// such a monster never acquires a target on its own.
+func DetectionRadius(bcRadius, tacticsDistance int) (radius float64, ok bool) {
+	if tacticsDistance <= 0 {
+		return 0, false
+	}
+	return float64(bcRadius + tacticsDistance), true
+}
+
+// LevelScaledRadius applies the BATTLE-entry level bands to a base radius.
+func LevelScaledRadius(base float64, monsterLevel, targetLevel int) float64 {
+	diff := monsterLevel - targetLevel
+	switch {
+	case diff >= LevelRadiusAboveBand:
+		return base * LevelRadiusFarAbove
+	case diff >= 1:
+		return base * LevelRadiusAbove
+	case diff <= LevelRadiusFarBand:
+		return base * LevelRadiusFarBelow
+	case diff <= LevelRadiusBelowBand:
+		return base * LevelRadiusBelow
+	}
+	return base * LevelRadiusNear
+}

@@ -88,6 +88,17 @@ In order. Each is checked off here when it ships in a release, with its round in
 - [ ] **Drop content is still the placeholder table.** The mechanic is real (round 207); the per-monster
       tables are DB-only and in no archive we have (`smc.bak` is the manager DB). An operator with the
       shard DB supersedes it via `import-refdata -drops-csv/-drop-groups-csv`.
+- [ ] **Monsters do not move, chase or notice anyone.** They strike only when struck (round 254's
+      cadence cap). The machine is read: sixteen states, WANDER's leg and dwell (round 251), BATTLE's
+      attack step through the same action machine as a player's cast (254), the approach walk
+      (`MoveTowardObject` to the round-247 band, 256) and now **target acquisition** (round 257):
+      radius = BCRadius + `_RefTactics.+0x14`, the nearest player, no level term; the level bands
+      1.4/1.2/1.0/0.8/0.6 scale a BATTLE-entry gathering of the ten nearest monsters. `ai.DetectionRadius`
+      / `ai.LevelScaledRadius` carry them. To build: server-driven monster movement (a move packet the
+      client interpolates with the walk clip), WANDER legs on the dwell timer, BATTLE = walk to `stop`
+      then swing on ReuseDelay, give-up/HOMING by the read rules. The per-species detection distance is
+      in no archive we hold (the tactics table is shard-DB only; the package's GameServer minidumps have
+      no heap) -- disclose it per species when built.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
 - [x] ~~Real spawn points for every roster species~~ -- **done, v0.1.403 (round 253)**: `export-refdata

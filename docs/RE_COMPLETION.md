@@ -5105,6 +5105,17 @@ melee skill hands back to plain swings, moving/casting/zoning/dying/leaving
 cancels; the server cannot walk the player so an out-of-reach repeat ends the
 run (disclosed). `Session.Send` is now one frame per call (it was two writes,
 unguarded across goroutines). 21 names.
+Round 257 (docs + `ai` helpers): how a monster NOTICES a player. The detection
+radius is `BCRadius + _RefTactics.+0x14` (ctx+0x15c, written at the tail of
+`AI::CTactics::BindSkillsAndRanges` -- a store Ghidra rendered as `= 0`, settled
+by objdump); `AITactics_AcquireTarget` takes the NEAREST player inside it by the
+region-aware distance, with no level term; the level bands 1.4/1.2/1.0/0.8/0.6
+(doubles, by monster-minus-target level >= 4 / 1..3 / -3..0 / -6..-4 / <= -7)
+scale a BATTLE-entry gathering of the ten nearest monsters instead. Column 6 of
+the tactics row is now the detection distance, not "a distance". The per-species
+values are shard-DB only: the package's GameRefData folder is client text tables
+and its GameServer minidumps carry no heap (checked). `ai.DetectionRadius`,
+`ai.LevelScaledRadius`, test. 10 names.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

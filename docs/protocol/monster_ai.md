@@ -256,7 +256,7 @@ locals) found no reader in the AI namespace.
 | 3 | `+0x08` | u8 |  |
 | 4 | `+0x0c` | u32 |  |
 | 5 | `+0x10` | u8 |  |
-| 6 | `+0x14` | u32 | a **distance** (world units). Non-zero installs the acquire-a-target behaviour at context `+0xf8` (`FUN_005478f0`; zero installs the no-op `FUN_00559000`), lets the AI-skill scan (`AI::CTactics::FUN_0053fa70`) raise the context's max skill range `+0x160`, and at `Init` seeds `+0x7c` from that range for an immobile monster (run speed `+0x170 <= 0`). `FUN_005473c0` (behaviour `+0xec`) credits an attacker of an immobile monster only when `Distance(self, attacker) <= +0x14` |
+| 6 | `+0x14` | u32 | the **detection distance** (world units): the target-acquisition radius is `BCRadius + this` (`ctx+0x15c`, round 257 below). Non-zero installs the acquire-a-target behaviour at context `+0xf8` (`AITactics_AcquireTarget`, `0x5478f0`; zero installs the no-op `FUN_00559000`), lets the AI-skill scan (`AI::CTactics::RegisterAISkill`, `0x53fa70`) raise the context's max skill range `+0x160`, and at `Init` seeds `+0x7c` from that range for an immobile monster (run speed `+0x170 <= 0`). `FUN_005473c0` (behaviour `+0xec`) credits an attacker of an immobile monster only when `Distance(self, attacker) <= +0x14` |
 | 7 | `+0x18` | u8 | **aggression mode** 0/1/2 (above) |
 | 8 | `+0x1c` | u32 | **aggressive chance, percent**, for mode 2 |
 | 9 | `+0x20` | u8 | **retarget-on-hit rule**, `AITactics_Handler_0fc`: 1 -> `SetTarget(1)` when the attacker is not the current target; 2 -> the same test against `FUN_00545680(attacker)`'s object (its owner, by shape; unread); 0 -> keep the target |
@@ -444,6 +444,85 @@ WANDER stores 1000 ms instead when no leg could be picked. So an idle monster st
 2-6 s, walks 46-124 units off its heading for 5-6 s, and repeats -- going HOMING (via
 `0x26`) whenever `IsWithinRoamRadius` says it has strayed. `server/internal/ai` carries the
 table (`DwellRange`) and the leg constants; srrevamp's server does not move monsters yet.
+
+## Target acquisition: the detection radius and the nearest-player rule (round 257)
+
+**The radius.** `AI::CTactics::BindSkillsAndRanges` (`0x53f780`, the pass that
+picks the AI-skill selector class by TacticsID and registers the monster's ten
+skills) ends, at `0x53fa23..0x53fa4f`, with:
+
+	ctx+0x158 = float(owner.GetBCRadius())          ; slot 344, characterdata col 50
+	ctx+0x15c = float(BCRadius) + int(row+0x14)     ; fild ; fiadd DWORD [row+0x14] ; fstp
+
+so **`_RefTactics` column 6 (`+0x14`) is the detection DISTANCE, and the
+detection radius is `BCRadius + that`**. (Ghidra rendered the store as
+`= 0`; the disassembly is what settled it -- the decompile of this function
+also stops early at a misread noreturn.) Earlier in the same pass,
+`ctx+0x160 = round(param 33) + old(+0x158)` (the `mov eax,0x21` before
+`ParamKeeper_GetParamChecked` is param 33, the attack range of round 247),
+and `AI::CTactics::RegisterAISkill` (`0x53fa70`) then raises `ctx+0x24` to the
+largest skill `Range` (`CRefSkill+0x92`) and, only when `+0x14` is non-zero,
+`ctx+0x160` too.
+
+**The scan.** `AITactics_AcquireTarget` (`0x5478f0`, behaviour `+0xf8`,
+installed only when `+0x14` is non-zero; run from WANDER, HOMING, WATCHOUT and
+EMOTION while the aggression byte `+0x168` is 0 or 3):
+
+	radius   = round(ctx+0x15c)
+	kinds, selector = (1, 2)                 ; players, "nearest"
+	              | (5, 3) when row+0x90 has bit 2
+	              | (5, 4) when it has bit 7
+	              | (0x11, 5) when it has bit 8
+	AITactics_ScanForTargets(ctx, kinds, selector, &list, &radius)   ; 0x5405b0
+	first (or CTactics::FUN_005436f0's pick) -> AI::CTactics::SetTarget -> return 2
+
+`ScanForTargets` asks the owner for the regions within the radius (slot 5),
+walks their player list (kind bit 1) and object list (bits 2..5), and hands
+each object that is not the owner to the selector at `ctx+0x128 + selector*4`
+-- a second table of eight, filled by the constructor `AI::CTactics::CTactics`
+(`0x53ea60`): `[0] 0x546330 [1] 0x546460 [2] 0x5464e0 [3] 0x546790 [4]
+0x546a30 [5] 0x547070 [6] 0x546ca0 [7] 0x546e60`. Selector 2
+(`AITactics_Select_Nearest`) keeps a candidate that passes the kind mask
+(`GObj_MatchesKindMask`, `0x540b90`: 1 = slot 7 IsPC, 2 = slot 10 IsMonster,
+4 = slot 11, 8 = slot 18, 0x10 = slots 242/243/245), whose region-aware
+distance (`GObj_DistanceBetween`) is **at most the radius**, and that is
+**nearer than the best so far** -- the nearest player wins. A player candidate
+first detours through `GObjPC::FUN_004fc160(pc+0x1ce8)`, the player's summoned
+objects (a monster may pick a pet instead; the branch is unread beyond its
+shape). **There is no level term in acquisition.**
+
+**The level term is at BATTLE entry.** `CAIState_BATTLE::OnEnter` calls
+`AITactics_CollectNearbyMonsters` (`0x540580`) with the new target:
+
+	r = AITactics_LevelScaledRadius(ctx+0x15c, target)      ; 0x541e00
+	AITactics_GatherObjectsWithin(&r, ctx, ctx+0x80)         ; 0x540860, kind mask 2
+
+which gathers the **ten nearest MONSTERS** within `r` (a `MOB_AUTOMOB` never
+counts) into the vector at `ctx+0x80`. The scaling, by `monster level -
+target level` and with doubles (`fmul QWORD` at `0x541e62/73/84/95`):
+
+| difference | factor | .rdata |
+|---|---|---|
+| >= 4 | **1.4** | `0xb45c08` |
+| 1 .. 3 | **1.2** | `0xb45c00` |
+| -3 .. 0 | 1.0 | -- |
+| -6 .. -4 | **0.8** | `0xb45bf0` |
+| <= -7 | **0.6** | `0xb45bf8` |
+
+What the gathered list drives is unread (its readers share the `+0x84` offset
+with a position record, which defeated the census this round); the shape --
+allies within a radius that grows with the monster's level advantage over its
+target -- is recorded, not interpreted. `AI::CTactics::FUN_00540500` builds
+the same list for an explicit target from `FUN_0053fe30`.
+
+**What srrevamp can use.** `ai.DetectionRadius` and `ai.LevelScaledRadius`
+carry the two rules with a test. The per-species `+0x14` distances are in no
+archive this project holds: `_RefTactics` is a shard-database table, the
+server package on the box has no shard backup (its `SR_GameRefData` folder is
+the client-side text tables plus shop/teleport/quest files; its three
+`SR_GameServer` minidumps are 2 MB thread-and-module dumps with no heap). So
+when srrevamp's monsters learn to notice a player, the distance itself will be
+disclosed per species, and the rule around it will not be.
 
 ## The behaviour table at context `+0xe8`
 

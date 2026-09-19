@@ -278,3 +278,31 @@ func TestDwellRangesAreTheSwitchArms(t *testing.T) {
 		t.Errorf("wander leg 85 +- 39: got %v..%v", lo, hi)
 	}
 }
+
+// The detection radius is BCRadius + the row's distance, and nothing when the
+// row carries none; the BATTLE-entry bands are the five doubles at their
+// level differences, with the engine's own boundaries (>= 4, >= 1, <= -7,
+// <= -4, else 1.0).
+func TestDetectionAndLevelScaledRadius(t *testing.T) {
+	if r, ok := DetectionRadius(6, 50); !ok || r != 56 {
+		t.Fatalf("DetectionRadius(6, 50) = %v,%v; want 56,true", r, ok)
+	}
+	if _, ok := DetectionRadius(6, 0); ok {
+		t.Fatal("a zero tactics distance never acquires")
+	}
+	cases := []struct {
+		monster, target int
+		want            float64
+	}{
+		{10, 6, 1.4}, {10, 5, 1.4}, // diff 4, 5
+		{10, 9, 1.2}, {10, 7, 1.2}, // diff 1, 3
+		{10, 10, 1.0}, {10, 13, 1.0}, // diff 0, -3
+		{10, 14, 0.8}, {10, 16, 0.8}, // diff -4, -6
+		{10, 17, 0.6}, {1, 60, 0.6}, // diff -7, -59
+	}
+	for _, c := range cases {
+		if got := LevelScaledRadius(100, c.monster, c.target); got != 100*c.want {
+			t.Errorf("LevelScaledRadius(100, %d, %d) = %v; want %v", c.monster, c.target, got, 100*c.want)
+		}
+	}
+}
