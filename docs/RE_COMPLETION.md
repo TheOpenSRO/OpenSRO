@@ -5003,6 +5003,12 @@ publishers read the record words at `+0xe4/+0xe6`; the mover step settles the un
 The monster publisher's full offset->param map is recorded in the round; six params
 (27-32 <- `+0x1a4..+0x1b8`) sit in the type-specific half and stay unnamed until the
 `_RefObjChar` deserializer's field map is read past the common prefix.
+Round 238: the `_RefTactics` row layout is read off its positional parser
+`RefTactics_ExtractData` (0x6aaab0): 43 columns, 16 with AI use-sites settled
+(aggression mode/percent, give-up distance, roam-radius rule and fallback 200,
+flags), 15 functions named, the 121-entry CRef descriptor table recorded (the
+loaders' 0x30 is the wrapper's `new` size). Column names are DB-only. Docs only;
+`docs/protocol/monster_ai.md`.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

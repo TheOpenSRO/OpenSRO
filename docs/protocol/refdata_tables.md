@@ -25,6 +25,17 @@ width. It is not: `_REFOBJITEM` — the item table with 160 columns — and
 value does not vary with table complexity. It is an allocator constant. Recorded
 because the wrong reading was made and discarded during this pass.
 
+*What it is (round 238):* the `.rdata` run at `0xadda70..0xade3bc` is a table of
+121 five-dword descriptors `{class-name, new-size, factory, 0x8364e0, table}`,
+one per `CRef*`/`CInstanceUser` class, and each factory is
+`operator new(new-size)` followed by the shared constructor `FUN_007350c0`. The
+`0x30`/`0x18` a loader stores is that class's descriptor `new-size` -- the size
+of its DB-record wrapper object, not of the row. The row itself is parsed
+elsewhere, positionally, from a byte stream (for the tactics table into a
+0xbc-byte struct: `docs/protocol/monster_ai.md`); the sizes that do vary
+(`CRefSkill` 0x248, `CRefQuest` 0x108, `CRefMagicOpt` 0x200, `CRefGameWorld`
+0x68, ...) are the wrappers that carry their row inline.
+
 ## What is NOT here
 
 There is **no quest-objective table**. The quest-related entries are exactly

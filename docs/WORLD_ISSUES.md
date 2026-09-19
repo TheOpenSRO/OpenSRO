@@ -7075,6 +7075,48 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-thirty-eighth round: the `_RefTactics` row read off its parser -- 43 columns, and the ones the AI consults settled at their use-sites
+
+The RE tick for 2026-09-19 12:34 took the Monster AI row's own next probe: the tactics
+table's layout. Full write-up in `docs/protocol/monster_ai.md` (two new sections); the
+shape of the finding here.
+
+**Where the columns are.** Not in the DB loaders. `PTR_s_CRefTactics_00adde58` is one entry
+of a 121-record descriptor table (`0xadda70..0xade3bc`: class name, `new` size, factory,
+shared fn, table pointer), and the `0x30` every loader stores is that wrapper's `new` size
+-- which is why `refdata_tables.md` found it constant. The rows come in as a byte stream
+and each table has a positional parser; the tactics one is `RefTactics_ExtractData`
+(`0x6aaab0`): **43 columns** (u32/u8 by read width) into a 0xbc-byte record, then the
+trailing string tokenised as AI-skill code names and bound by name (`Invalid AIRefSkill is
+bound!!`). Its caller chain runs up to `CGameServer::LoadReferenceData` (`0x6bd920`),
+which calls one list loader per table in a fixed order -- the lever for naming the other
+55 parsers next.
+
+**What the AI reads, and what it means** (three probes over the AI namespace: direct,
+nested and aliased access to the row pointer at context `+0x2c`):
+
+| col | offset | settled by |
+|---|---|---|
+| 7/8 | `+0x18` u8, `+0x1c` u32 | aggression mode 0/1/2 and its percent: the flag they set (ctx `+0x168`) is what gates `AITactics_AcquireTarget` (`0x5478f0`), the only path to `SetTarget` from WANDER/HOMING/WATCHOUT |
+| 6 | `+0x14` u32 | a distance; non-zero installs the acquire behaviour at all, feeds the max-skill-range, and bounds attacker credit for an immobile monster (`FUN_005473c0`) |
+| 9 | `+0x20` u8 | retarget-on-hit rule 0/1/2 (`AITactics_Handler_0fc`) |
+| 36 | `+0x7c` u32 | the give-up distance: `BATTLE::OnUpdate` -> `AITactics_BattleGiveUpCheck` (`fild [+0x7c]; fcompp`, `0x54842a`) -> `0x2a(1)` -> IDLE at `Distance >= +0x7c`; and `AITactics_TargetOutOfReach` -> `0x27` -> IDLE (the "no sender" row of the message table was wrong -- the id travels in a register) |
+| 37/38 | `+0x80` u8, `+0x84` u32 | the roam-radius rule (1 -> x1.5, >= 2 -> never home) and the nest-less radius (fallback 200.0 at `0xb45d68`), through `AI::CTactics::Attach` and `AITactics_IsWithinRoamRadius`, whose false sends `0x26` -> HOMING from IDLE::OnEnter and WANDER::OnUpdate |
+| 35 | `+0x79` u8 | 0/2 switch the chase tests off; 2 has its own branches |
+| 40 | `+0x89` u8 | 1/2 make the reach test fail at once; 3 makes it fail under 40% HP (`GetCurHP/GetMaxHP` buckets 0.2/0.4/0.6/0.8) |
+| 42 | `+0x90` u32 | flags: bits 2/7/8 pick the target-kind filter pair and bits 2/7 swap two behaviours and shorten the first action delay |
+
+Fifteen functions named for it (`recovered_names.tsv`), among them `GObj_DistanceBetween`
+(`0x53d7a0`, region-aware, 1920 a region) and `AI::CTactics::InstallBehaviourTable`
+(`0x53fc00`), the sixteen-pointer table at ctx `+0xe8` the states call instead of reading
+the row. One dead branch: the low-HP request behaviour (`+0x10c`) tests the HP bucket for
+`< 0` (`jge` at `0x54898d`), so it never fires in this build.
+
+**Not settled:** 27 columns have no AI reader in the three probes; column NAMES are in the
+database only (the package on the box has no shard DB). No shipped value changed --
+srrevamp's server does not move monsters yet (`docs/TODO.md`); the roam and give-up rules
+above are what that work implements first.
+
 ## Two-hundred-and-thirty-seventh round: two params named from the speed read, and the monster publisher's offset map recorded
 
 The RE tick's step for 2026-09-19 12:19, the param-vocabulary lever: pairing every
