@@ -15,6 +15,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
@@ -612,6 +613,26 @@ func CombatHandler(
 	mp *mana.Tracker,
 	parties *party.Hub,
 ) gateway.Handler {
+	return CombatHandlerWithGround(chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, nil)
+}
+
+// CombatHandlerWithGround is CombatHandler with a ground-item hub: a kill's
+// gold and loot then lie on the ground near the corpse (internal/grounditem)
+// instead of landing in the killer's bag. A nil hub keeps the direct grant.
+func CombatHandlerWithGround(
+	chars character.Store,
+	eq equipment.Store,
+	items combat.ItemLookup,
+	hub *world.Hub,
+	monsters *combat.Hub,
+	quests quest.Store,
+	inv inventory.Store,
+	skills skill.Store,
+	zerk *berserk.Tracker,
+	mp *mana.Tracker,
+	parties *party.Hub,
+	ground *grounditem.Hub,
+) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpBerserk:
@@ -627,7 +648,7 @@ func CombatHandler(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 			}
 
-			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, characterID, req.TargetMonsterID, 0, 0, 0, 1, combat.AttackPhysical)
+			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, characterID, req.TargetMonsterID, 0, 0, 0, 1, combat.AttackPhysical)
 		case OpMonsterList:
 			return handleMonsterList(sess, hub, monsters)
 		default:
@@ -742,6 +763,7 @@ func performAttack(
 	zerk *berserk.Tracker,
 	mp *mana.Tracker,
 	parties *party.Hub,
+	ground *grounditem.Hub,
 	characterID, targetMonsterID int64,
 	damageBonus int,
 	damagePercent int,
@@ -899,6 +921,7 @@ func performAttack(
 		result.BerserkActive = zerk.Active(characterID)
 	}
 	var levelUp *LevelUp // set on a kill that crosses the exp curve, sent below
+	var killGold int64   // the kill's gold, dropped on the ground below when a ground hub exists
 
 	// A dead monster can't counterattack. A surviving one always hits
 	// back -- there's no dodge/evade system yet, see docs' open items.
@@ -930,8 +953,15 @@ func performAttack(
 		if g := rates.Current().Gold; g != 1 {
 			gold = int64(math.Round(float64(gold) * g))
 		}
-		if err := chars.AddGold(ctx, characterID, gold); err != nil {
-			return fmt.Errorf("combat: granting gold reward: %w", err)
+		killGold = gold
+		// With a ground-item hub the gold lands on the ground as the pile the
+		// engine spawns (ITEM_ETC_GOLD_03) and is picked up, so nothing is
+		// credited here -- see the drop block below. Without one (tests, an
+		// older wiring) it is credited directly as before.
+		if ground == nil {
+			if err := chars.AddGold(ctx, characterID, gold); err != nil {
+				return fmt.Errorf("combat: granting gold reward: %w", err)
+			}
 		}
 
 		// Skill points from the kill are granted BELOW, out of the kill's own
@@ -1191,6 +1221,12 @@ func performAttack(
 			}
 		}
 
+		if ground != nil {
+			// The kill's gold and loot lie on the ground near the corpse,
+			// owned by the killer for the 30 s window, announced to the zone.
+			dropKillLoot(ground, hub, monster, characterID, killGold, rollDrops(monster.Name))
+			return nil
+		}
 		if drops := rollLoot(ctx, inv, characterID, monster.Name); len(drops) > 0 {
 			lootMsg := &LootDropped{MonsterID: targetMonsterID, Drops: drops}
 			if err := sess.Send(&proto.Packet{Opcode: OpLootDropped, Data: lootMsg.Encode()}); err != nil {
