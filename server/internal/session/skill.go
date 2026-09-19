@@ -14,6 +14,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/party"
@@ -382,6 +383,26 @@ func UseSkillHandler(
 	mp *mana.Tracker,
 	parties *party.Hub,
 ) gateway.Handler {
+	return UseSkillHandlerWithGround(chars, eq, items, skills, hub, monsters, quests, inv, skillRef, zerk, mp, parties, nil)
+}
+
+// UseSkillHandlerWithGround is UseSkillHandler with a ground-item hub, so a
+// skill kill drops its loot on the ground like a plain-attack kill does.
+func UseSkillHandlerWithGround(
+	chars character.Store,
+	eq equipment.Store,
+	items combat.ItemLookup,
+	skills skill.Store,
+	hub *world.Hub,
+	monsters *combat.Hub,
+	quests quest.Store,
+	inv inventory.Store,
+	skillRef SkillRefStore,
+	zerk *berserk.Tracker,
+	mp *mana.Tracker,
+	parties *party.Hub,
+	ground *grounditem.Hub,
+) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpUseSkill {
 			return nil
@@ -651,7 +672,7 @@ func UseSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
 		}
 
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType)
+		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType)
 	}
 }
 

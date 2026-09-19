@@ -18,6 +18,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/friend"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
 	"github.com/OpenSRO/srrevamp/server/internal/guild"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
@@ -508,6 +509,11 @@ func main() {
 
 	hub := world.NewHub()
 	monsters := combat.NewHub()
+	// Items on the ground: what a kill leaves near the corpse until it is
+	// picked up (internal/grounditem). The sweep releases ownerships after the
+	// 30 s window and removes stale items, telling each zone.
+	ground := grounditem.NewHub()
+	go session.RunGroundItemSweep(ctx, ground, hub)
 	// The server's own gain multipliers, under the game's knob names. All
 	// default to 1x, and the engine's floor means a server cannot be
 	// configured slower than retail -- see internal/rates.
@@ -605,9 +611,10 @@ func main() {
 		session.ShopHandler(chars, shopSvc),
 		session.StorageHandler(chars, storageSvc),
 		session.UseItemHandler(chars, inv, refItems, manaTracker),
-		session.CombatHandler(chars, eq, refItems, hub, monsters, quests, inv, skills, zerkTracker, manaTracker, parties),
+		session.CombatHandlerWithGround(chars, eq, refItems, hub, monsters, quests, inv, skills, zerkTracker, manaTracker, parties, ground),
+		session.GroundItemHandler(chars, hub, ground, inv, parties),
 		session.LearnSkillHandler(chars, skills, refItems),
-		session.UseSkillHandler(chars, eq, refItems, skills, hub, monsters, quests, inv, refItems, zerkTracker, manaTracker, parties),
+		session.UseSkillHandlerWithGround(chars, eq, refItems, skills, hub, monsters, quests, inv, refItems, zerkTracker, manaTracker, parties, ground),
 		session.SkillListHandler(chars, skills),
 		session.SkillStateHandler(chars, skills),
 		session.RaiseMasteryHandler(chars, skills),
