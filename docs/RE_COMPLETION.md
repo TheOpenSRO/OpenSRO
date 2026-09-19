@@ -4898,7 +4898,9 @@ not 415, and no `CGameWorldLayer` function dispatches it -- one hop left.
 Round 220 (byte-level): slot 364, the PC-field path to the controller, is dead in this
 build (its vcall thunk is unreferenced); virtual calls in this image are
 `mov r,[r+disp]; call r`, and by that form slot 415's callers are exactly `vslot_416`
-and `FUN_00605010`. Next: the poster of the `OnTimer_Second` event.
+and `FUN_00605010`. Round 221: "OnTimer_Second" is an ordinal; no 1000 ms event timer
+exists (`FUN_0063ccc0` arming calls all read); the scheduler is one of 175 load-form
+slot-11 sites -- a disassembly walk is what is left.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

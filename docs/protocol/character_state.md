@@ -116,9 +116,21 @@ layout matches the dump; MSVC here emits virtual calls as `mov r,[r+disp]; call 
   slot 1). If the default world's PC update is such a handler, the poster of the
   `Timer_Second` event is the scheduler, and its period is where that event is armed.
 
-*Next probe:* find the poster of the `OnTimer_Second` event (the handler classes are
-registered with an event id; the poster uses the same id), or scan the image for
-`mov r,[r+0x2c]; call r` sequences whose preceding loads name a world-context field.
+Fourth pass (round 221) closed the event-system lead: "OnTimer_Second" is an ORDINAL (a
+world's second timer), not "per second". `CEVENTHandler` timers are armed with
+`FUN_0063ccc0(ms, ms)` after construction and registered with `FUN_0063d070(world, ..)`
+(`CGameWorld_RocTop::vslot_014`: 3600000/0, 300000/300000; quest scripts: 10000/0,
+300000/0); nothing arms a 1000 ms timer anywhere, so the PC update is not an event
+handler. The main loop's other consumer of the seconds-delta,
+`CMainProcess::CLobby_RemoveStalePlayers`, is only that. The load-form scan of the image
+finds 321 `mov r,[r+0x2c]; call r` sites, 175 outside quest scripts; many take their
+receiver from the global at `0xcc387c` (a manager's slot 11, used by message handlers),
+which is not a controller.
+
+*Next probe:* among those 175 sites, the one whose receiver is loaded from a world
+object's field and whose argument is a PC -- a disassembly walk with Ghidra
+(`Disasm.java` on `re_server`) of the non-quest sites in `CMainProcess`/`CGameWorld*`
+functions is the remaining mechanical route.
 
 ## What srrevamp does
 

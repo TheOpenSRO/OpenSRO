@@ -7075,6 +7075,20 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-twenty-first round: "OnTimer_Second" is an ordinal -- the event system is not the PC tick
+
+The RE tick's step for 2026-09-19 08:19, on round 220's probe. A correction and a
+narrowing, no value changed (`docs/protocol/character_state.md`, fourth pass):
+
+- The `CEVENTHandler` timer API is read: a handler is constructed, armed with
+  `FUN_0063ccc0(ms, ms)`, and registered with `FUN_0063d070(world, ..)`. Every arming call
+  in the binary is a script's (10 s, 5 min, 1 h); none is 1000 ms. "OnTimer_Second" names a
+  world's second timer, not a per-second event -- round 220's reading of it was wrong.
+- `CLobby_RemoveStalePlayers(dt)`, the main loop's other seconds consumer, is only that.
+- The load-form scan finds 321 slot-11 call sites, 175 outside quest scripts; a common
+  receiver is the global manager at `0xcc387c`, not a controller. The scheduler is one of
+  the rest, and the remaining route is a disassembly walk of those sites.
+
 ## Two-hundred-and-twentieth round: the PC tick's dispatch, byte-checked -- slot 364 is dead, and the pattern that finds virtual calls in this image
 
 The RE tick's step for 2026-09-19 08:04, still after the period of `CGObjPC::vslot_415`
