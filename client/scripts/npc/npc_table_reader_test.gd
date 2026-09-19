@@ -114,12 +114,16 @@ func _init() -> void:
 	body.fill("0")
 	body[1] = "1907"
 	body[2] = "CHAR_CH_MAN_FIGHTER"
+	body[46] = "16"
+	body[47] = "50"
 	body[52] = "char\\china\\chinaman_fighter.bsr"
 	var mob := PackedStringArray()
 	mob.resize(104)
 	mob.fill("0")
 	mob[1] = "1933"
 	mob[2] = "MOB_CH_MANGNYANG"
+	mob[46] = "8"
+	mob[47] = "22"
 	mob[52] = "mob\\china\\mangnyang.bsr"
 	var coded_rows := ("\t".join(body) + "\n" + "\t".join(mob) + "\n" + "\t".join(modelless) + "\n").to_utf16_buffer()
 	var bodies := NpcTableReader.parse_models_by_code(coded_rows)
@@ -128,6 +132,15 @@ func _init() -> void:
 	var everything := NpcTableReader.parse_models_by_code(coded_rows, {}, "")
 	_check(everything.size() == 2 and everything.get("MOB_CH_MANGNYANG", "") == "mob\\china\\mangnyang.bsr",
 		"an empty prefix takes the MOB_ row too, and a row with no model is left out (got %s)" % str(everything))
+
+	# The walk/run speeds (columns 46/47, world units per second -- the words
+	# the server's deserializer keeps at +0xe4/+0xe6 and its movers apply).
+	var speeds := NpcTableReader.parse_speeds_by_code(coded_rows)
+	_check(speeds.size() == 1 and speeds.get("CHAR_CH_MAN_FIGHTER", []) == [16.0, 50.0],
+		"the player row's speeds read as walk 16 / run 50 (got %s)" % str(speeds))
+	var all_speeds := NpcTableReader.parse_speeds_by_code(coded_rows, {}, "")
+	_check(all_speeds.get("MOB_CH_MANGNYANG", []) == [8.0, 22.0],
+		"an empty prefix reads the Mangyang's 8 / 22 too (got %s)" % str(all_speeds.get("MOB_CH_MANGNYANG", [])))
 
 	if _failures == 0:
 		print("ALL PASS")

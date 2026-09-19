@@ -222,16 +222,16 @@ const REGIONINFO_PATH := "Shader\\regioninfo.txt"
 ## invented here; this constant only corrects a provably wrong measurement.
 const REAL_CHARACTER_NATIVE_HEIGHT := 14.34
 const PLAYER_SCALE_RATIO := REAL_CHARACTER_NATIVE_HEIGHT / 1.8
-## MOVE_SPEED is 6.0 "human metres" per second scaled to the character --
-## about 47.8 world units per second -- a feel tuning. The game's own number is
-## in reach but not yet READ (round 230, refobj_binary_format.md): characterdata
-## column 47 (`Speed2`, the run speed; column 46 is the walk speed) is 50 for
-## every player row and 16/50 walk/run, which agrees with this tuning within
-## 5% if the unit is world units per second -- but the chain that applies it
-## (PublishStats -> the mover's speed param -> a step multiplied by seconds)
-## has not been read, so 50 is not promoted here. Do not "fix" this to 50
-## without reading that chain; do not change it for feel either.
-const MOVE_SPEED := 6.0 * PLAYER_SCALE_RATIO
+## The player's run speed, in world units per second, READ from the
+## character table at load (round 231): characterdata column 47 (`Speed2`) of
+## the player's body row -- 50 for every playable row -- applied exactly as
+## the server applies it (see NpcTableReader.COL_SPEED_RUN for the chain:
+## record word -> walk/run slots -> live speed -> position += dir * speed *
+## seconds). MOVE_SPEED_FALLBACK is the old feel tuning (6 "human metres" per
+## second scaled to the character, about 47.8), used only when no table is
+## loaded, and disclosed as such.
+const MOVE_SPEED_FALLBACK := 6.0 * PLAYER_SCALE_RATIO
+var _move_speed := MOVE_SPEED_FALLBACK
 const GRAVITY := 20.0 * PLAYER_SCALE_RATIO
 
 ## How high a step the player can walk up, as a fraction of their own real
@@ -481,8 +481,8 @@ const MIN_SEND_DISTANCE := 0.05 * PLAYER_SCALE_RATIO
 ## entity's visual body closes the gap to its latest known real position --
 ## see _other_body_targets. A real engineering tuning choice, not
 ## reverse-engineered client behavior: high enough to visually catch up
-## well within one real MIN_SEND_INTERVAL period at typical real
-## MOVE_SPEED, not a claim about real interpolation timing.
+## well within one real MIN_SEND_INTERVAL period at the real run speed
+## (50 units/s), not a claim about real interpolation timing.
 const OTHER_BODY_INTERPOLATION_SPEED := 15.0
 
 ## The body each gender is drawn with: a row of characterdata, the same
@@ -4430,10 +4430,22 @@ func _load_character_assets() -> void:
 		return
 
 	var bodies := {}
+	var speeds := {}
 	for path in NpcTableReader.MODEL_TABLE_PATHS:
 		var entry := ObjectLoader.find_file(_media_pk2, path)
 		if entry != null:
-			bodies = NpcTableReader.parse_models_by_code(_media_pk2.read_file(entry), bodies)
+			var bytes := _media_pk2.read_file(entry)
+			bodies = NpcTableReader.parse_models_by_code(bytes, bodies)
+			speeds = NpcTableReader.parse_speeds_by_code(bytes, speeds)
+	# The player's run speed is the body row's own (column 47), the number the
+	# server moves the character by; see NpcTableReader.COL_SPEED_RUN.
+	var player_speeds: Array = speeds.get(GENDER_BODY_CODE[DEFAULT_GENDER], [])
+	if player_speeds.size() == 2 and float(player_speeds[1]) > 0.0:
+		_move_speed = float(player_speeds[1])
+		print("World3D: player run speed %.0f units/s (characterdata column 47 of %s; walk %.0f)" % [
+			_move_speed, GENDER_BODY_CODE[DEFAULT_GENDER], float(player_speeds[0])])
+	else:
+		print("World3D: no speed row for %s -- keeping the fallback %.1f units/s" % [GENDER_BODY_CODE[DEFAULT_GENDER], MOVE_SPEED_FALLBACK])
 	for path in ItemTableReader.TABLE_PATHS:
 		var entry := ObjectLoader.find_file(_media_pk2, path)
 		if entry == null:
@@ -6683,8 +6695,8 @@ func _physics_process(delta: float) -> void:
 		var forward := Vector3(0.0, 0.0, 1.0).rotated(Vector3.UP, yaw)
 		var right := forward.cross(Vector3.UP)
 		var dir := (forward * -input_dir.z + right * input_dir.x).normalized()
-		player.velocity.x = dir.x * MOVE_SPEED
-		player.velocity.z = dir.z * MOVE_SPEED
+		player.velocity.x = dir.x * _move_speed
+		player.velocity.z = dir.z * _move_speed
 		player.rotation.y = atan2(dir.x, dir.z)
 	elif _has_move_target:
 		var to_target := _move_target - player.position
@@ -6699,15 +6711,15 @@ func _physics_process(delta: float) -> void:
 				NetClient.pick_up(NetClient.current_character_name, _pending_pickup_id)
 		else:
 			var dir := to_target.normalized()
-			player.velocity.x = dir.x * MOVE_SPEED
-			player.velocity.z = dir.z * MOVE_SPEED
+			player.velocity.x = dir.x * _move_speed
+			player.velocity.z = dir.z * _move_speed
 			player.rotation.y = atan2(dir.x, dir.z)
 	elif _qa_walk != "":
 		# SRREVAMP_QA_WALK: walk on a fixed world heading, as a held key
 		# would, so a render shows the run and the log the path.
 		var ang := deg_to_rad(float(_qa_walk))
-		player.velocity.x = sin(ang) * MOVE_SPEED
-		player.velocity.z = cos(ang) * MOVE_SPEED
+		player.velocity.x = sin(ang) * _move_speed
+		player.velocity.z = cos(ang) * _move_speed
 		player.rotation.y = ang
 	else:
 		player.velocity.x = 0.0

@@ -46,6 +46,17 @@ const COL_POS_Z := 4
 ## the code name (`CHAR_CH_MAN_FIGHTER`, `MOB_CH_MANGNYANG`).
 const COL_MODEL_ID := 1
 const COL_CODE_NAME := 2
+## A character's walk and run speeds, in WORLD UNITS PER SECOND -- read from
+## the server (round 231): its common-record deserializer stores text columns
+## 46 and 47 as the words at record +0xe4/+0xe6 (RefObjCommon_ExtractData,
+## fields 47/48), CGObjMobile::vslot_215 loads them into the walk/run slots
+## (+0x16c/+0x170), GObjPC::FUN_0048b810 picks one into the live speed (+0x174)
+## by move mode, and CGObjMoverByDest::FUN_0048bff0 advances the position by
+## dir * |speed * dt| with dt the main loop's seconds delta (capped at 160 per
+## step). GObjPC_InitStats publishes them as params 23 and 24. Every playable
+## row in the table reads 16 / 50.
+const COL_SPEED_WALK := 46
+const COL_SPEED_RUN := 47
 
 class Spawn:
 	var npc_id: int
@@ -163,6 +174,24 @@ static func parse_models_by_code(data: PackedByteArray, into: Dictionary = {}, p
 		if code == "" or not code.begins_with(prefix):
 			continue
 		into[code] = model
+	return into
+
+## Parses one characterdata part into {code name -> [walk, run]} (world units
+## per second, COL_SPEED_WALK/COL_SPEED_RUN) for rows whose code starts with
+## `prefix`, merging into `into`. A row missing either column is skipped.
+static func parse_speeds_by_code(data: PackedByteArray, into: Dictionary = {}, prefix: String = "CHAR_") -> Dictionary:
+	for line in _lines(data):
+		var cols := line.split("\t")
+		if cols.size() <= COL_SPEED_RUN:
+			continue
+		var code := cols[COL_CODE_NAME].strip_edges()
+		if code == "" or not code.begins_with(prefix):
+			continue
+		var walk := cols[COL_SPEED_WALK].strip_edges()
+		var run := cols[COL_SPEED_RUN].strip_edges()
+		if not walk.is_valid_float() or not run.is_valid_float():
+			continue
+		into[code] = [float(walk), float(run)]
 	return into
 
 ## Parses one characterdata part into {id -> display name}, merging into

@@ -4966,6 +4966,12 @@ are the words at `+0xe2/+0xe4`; every player row reads 16/50. The client's feel-
 applying chain (`PublishStats` -> mover speed param -> a step scaled by seconds) is
 unread, so nothing is promoted. Next probe: `GObjMob_PublishStats`/`GObjPC` reading
 `+0xe2/+0xe4`, then the caller of `CGObjMoverByDest::vslot_003` that scales by time.
+Round 231 -- READ and wired (v0.1.394): the words are fields 43-51 (field 42 is
+RegionID resolved to a pointer at `+0xd8`), so Speed1/Speed2 are `+0xe4/+0xe6`;
+`CGObjMobile::vslot_215` loads them as walk/run, `FUN_0048b810` selects by mode, and
+`CGObjMoverByDest::FUN_0048bff0` advances `dir * |speed * dt|` with the seconds delta,
+capped at 160 -- world units per second. The client now moves at its body row's run speed
+(50; the tuned 47.8 is the fallback), QA-measured at 49 units in the first second.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

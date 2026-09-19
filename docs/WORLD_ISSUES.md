@@ -7075,6 +7075,25 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-thirty-first round: the run speed is 50 world units per second, read at its use-site, and the client moves at the table's number
+
+The RE tick's step for 2026-09-19 10:49, closing round 230. The chain, every link read
+(`refobj_binary_format.md`):
+
+- Field 42 of the common record is `RegionID`, resolved to a pointer at `+0xd8` -- which is
+  why the nine words that follow are fields 43-51, one later than round 230 counted:
+  `Speed1` is the word at **`+0xe4`**, `Speed2` at **`+0xe6`** (columns 46/47).
+- `CGObjMobile::vslot_215` loads exactly those two into the walk (`+0x16c`) and run
+  (`+0x170`) slots; `GObjPC_InitStats` publishes them as params 23/24; `FUN_0048b810`
+  copies one into the live speed by move mode; and the step
+  `CGObjMoverByDest::FUN_0048bff0` advances the position by `dir * |speed * dt|`, `dt` the
+  main loop's seconds delta, capped at 160 per step. **World units per second.** (Round
+  230's "speed getter" `FUN_0048b840` is the heading -- `atan2` of the direction.)
+- Wired: `NpcTableReader.parse_speeds_by_code` (columns 46/47, tested); `World3D` reads
+  the player's body row at load and moves at its run speed -- 50 -- with the old feel
+  tuning (47.8) kept only as `MOVE_SPEED_FALLBACK`, disclosed. A straight QA walk covered
+  49 units in its first 60 frames, then the navmesh stopped it at the pedestal; 0 errors.
+
 ## Two-hundred-and-thirtieth round: the character record's speed words, and why MOVE_SPEED is not changed to 50 yet
 
 The RE tick's step for 2026-09-19 10:34, on the client's feel-tuned `MOVE_SPEED` (6 metres
