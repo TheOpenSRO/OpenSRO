@@ -220,3 +220,62 @@ listed here as list-valued when it was a filter bug.
 | `reat` | `0x2fc` | | `stri` | `0x3f0` | | `mstc` | `0x4bc` | | `nmf` | `0x594` |
 | `real` | `0x300` | | `inti` | `0x3f4` | | `mscc` | `0x4c0` | | `nmh` | `0x598` |
 | `pola` | `0x304` | | `abir` | `0x3f8` | | `msid` | `0x4c4` | |  |  |
+
+## The fixed columns, before the param block (round 256)
+
+The record's first `0x230` bytes are the non-param skilldata columns, and one
+function spells the whole layout out: `CRefSkill::CopyFixedColumns`
+(`0x6ab5a0`) copies a record field by field, at each field's own width. Read
+with the retail column order it gives every fixed column an offset. Widths are
+the copy's (`u8`/`u16`/`u32`, or a `std::string` of 0x1c bytes).
+
+| offset | width | column | offset | width | column |
+|---|---|---|---|---|---|
+| `+0x0` | u8 | Service | `+0x9d` | u8 | TargetGroup_Neutral |
+| `+0x4` | u32 | ID | `+0x9e` | u8 | TargetGroup_DontCare |
+| `+0x8` | u32 | GroupID | `+0x9f` | u8 | TargetEtc_SelectDeadBody |
+| `+0xc` | str | Basic_Code | `+0xa0` | u32 | ReqCommon_Mastery1 |
+| `+0x28` | str | Basic_Name | `+0xa4` | u32 | ReqCommon_Mastery2 |
+| `+0x44` | str | Basic_Group | `+0xa8` | u8 | ReqCommon_MasteryLevel1 |
+| `+0x60` | u32 | Basic_Original | `+0xa9` | u8 | ReqCommon_MasteryLevel2 |
+| `+0x64` | u8 | Basic_Level | `+0xaa` | u16 | ReqCommon_Str |
+| `+0x65` | u8 | Basic_Activity | `+0xac` | u16 | ReqCommon_Int |
+| `+0x68` | u32 | Basic_ChainCode | `+0xb0` | u32 | ReqLearn_Skill1 |
+| `+0x6c` | u32 | Basic_RecycleCost | `+0xb4` | u32 | ReqLearn_Skill2 |
+| `+0x70` | u32 | Action_PreparingTime | `+0xb8` | u32 | ReqLearn_Skill3 |
+| `+0x74` | u32 | Action_CastingTime (+= PreparingTime at load) | `+0xbc` | u8 | ReqLearn_SkillLevel1 |
+| `+0x78` | u32 | Action_ActionDuration | `+0xbd` | u8 | ReqLearn_SkillLevel2 |
+| `+0x7c` | u32 | Action_ReuseDelay | `+0xbe` | u8 | ReqLearn_SkillLevel3 |
+| `+0x80` | u32 | Action_CoolTime | `+0xc0` | u32 | ReqLearn_SP |
+| `+0x84` | u32 | Action_FlyingSpeed | `+0xc4` | u8 | ReqLearn_Race |
+| `+0x88` | u8 | Action_Interruptable | `+0xc5` | u8 | Req_Restriction1 |
+| `+0x8c` | u32 | Action_Overlap (high byte `+0x8f` = cooldown group) | `+0xc6` | u8 | Req_Restriction2 |
+| `+0x90` | u8 | Action_AutoAttackType | `+0xc7` | u8 | ReqCast_Weapon1 |
+| `+0x91` | u8 | Action_InTown | `+0xc8` | u8 | ReqCast_Weapon2 |
+| `+0x92` | u16 | Action_Range | `+0xca` | u16 | Consume_HP |
+| `+0x94` | u8 | Target_Required | `+0xcc` | u16 | Consume_MP |
+| `+0x95` | u8 | TargetType_Animal | `+0xce` | u16 | Consume_HPRatio |
+| `+0x96` | u8 | TargetType_Land | `+0xd0` | u16 | Consume_MPRatio |
+| `+0x97` | u8 | TargetType_Building | `+0xd2` | u8 | Consume_WHAN |
+| `+0x98` | u8 | TargetGroup_Self | `+0xd3`..`+0xd6` | u8 ×4 | UI_SkillTab / Page / Column / Row |
+| `+0x99` | u8 | TargetGroup_Ally | `+0xd8` .. `+0x148` | str ×5 | UI_IconFile, SkillName, ToolTip, ToolTip_Desc, SkillStudy_Desc |
+| `+0x9a` | u8 | TargetGroup_Party | `+0x164` | u16 | AI_AttackChance |
+| `+0x9b` | u8 | TargetGroup_Enemy_M | `+0x166` | u8 | AI_SkillType |
+| `+0x9c` | u8 | TargetGroup_Enemy_P | `+0x168` | u32 ×50 | Param1..Param50 |
+
+Checks against readers already in this folder, none of which the copy was
+read with: `+0x92` is the Range the action ticks read; `+0x94` is the
+`Target_Required` the skill-use gate tests; `+0xca`/`+0xcc`/`+0xce` are the
+HP/MP/HP-ratio costs the gate charges; `+0xc7`/`+0xc8` are the two weapon codes
+`SkillGlobal` asserts on (`"ReqWeapon Error"`); `+0x65 == 2` is the "active
+skill" test in the action ticks; `+0x68` is the chain link `PostLoadSkillTable`
+follows; `+0x64 ± 1` is how it finds a row's level neighbours; `+0x7c` is the
+ReuseDelay `SkillCooldowns::IsReady` arms. The param area starts at `+0x168`
+in the copy and the parser's memset starts at `+0x230`: the 50 raw param dwords
+(`0x168 + 50*4 = 0x230`) sit exactly between them, so the parsed field block
+begins where the raw params end. Everything agrees; the offsets in between are
+filled by the copy's widths alone.
+
+What it opens: **`Consume_WHAN` is `+0xd2`** (column 56), the berserk-cost byte
+the Skills row of SYSTEMS.md was waiting on; `AutoAttackType` is `+0x90`, the
+byte the skill tick's hand-off tests (`docs/protocol/auto_command.md`).

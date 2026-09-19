@@ -2,10 +2,12 @@ package combat
 
 import "math"
 
-// The attack-distance rule, read off the server's skill-action tick
-// (GObjPC::ActionTick_UseSkill, 0x004ad8e0, phases 0 and 3) on 2026-09-19
-// (round 247). Neither client nor server refuses a blow for distance -- the
-// server WALKS the attacker into reach and fires when it gets there:
+// The attack-distance rule, read off the server's plain-attack action tick
+// (CGCharAutoCommandActor::Tick_Attack, 0x004ad8e0, phases 0 and 3 -- round
+// 247 called it ActionTick_UseSkill; round 256 found the skill tick is its
+// sibling 0x004ae590, which computes the same band with the skill's own
+// Range) on 2026-09-19. Neither client nor server refuses a blow for distance
+// -- the server WALKS the attacker into reach and fires when it gets there:
 //
 //	base   = casterBC + targetBC                      ; both IGObj slot 344, the
 //	                                                   ; ref row's BCRadius (col 50)

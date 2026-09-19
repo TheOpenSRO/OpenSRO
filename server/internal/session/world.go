@@ -533,6 +533,7 @@ func WorldDisconnectHandler(hub *world.Hub) func(sess *gateway.Session) {
 		if !ok {
 			return
 		}
+		keepUp.Cancel(left.CharacterID)
 		msg := &EntityLeft{CharacterID: left.CharacterID}
 		for _, other := range remaining {
 			other.Session.Send(&proto.Packet{Opcode: OpEntityLeft, Data: msg.Encode()})
@@ -639,6 +640,7 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
 	}
+	keepUp.Cancel(old.CharacterID)
 
 	otherSnapshots := make([]EntitySnapshot, len(othersNew))
 	for i, o := range othersNew {
@@ -681,6 +683,9 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub) error {
 	if !ok {
 		return nil // not in the world yet (no OpEnterWorld) -- ignore
 	}
+	// A move is the player's own cancel of a running auto-attack -- see
+	// keepup.go for why this packet stands in for the retail client's.
+	keepUp.Cancel(entity.CharacterID)
 
 	msg := &EntityMoved{CharacterID: entity.CharacterID, X: req.X, Y: req.Y, Z: req.Z}
 	for _, other := range others {

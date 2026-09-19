@@ -7075,6 +7075,86 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-fifty-sixth round: one click fights to the death -- the keep-up, read and built
+
+The RE tick for 2026-09-19 16:34 took round 255's TODO: the real server repeats the plain
+attack on its own, srrevamp wanted a click per swing. Reading the "keep-up" phase properly
+turned over more than the repeat.
+
+**The machine has a name.** The action queue behind attacks, skills, pick-ups and traces is
+`CGCharAutoCommandActor` -- the binary's own RTTI class (vtable `0xaecd0c`, ctor `0x4ac9f0`).
+Its constructor stores a handler table by action kind: `[1] 0x4ad8e0` attack, `[2] 0x4ae0c0`
+pick up, `[3] 0x4ae3d0` trace, `[4] 0x4ae590` use skill, `[5] 0x4ae520`. So **`0x4ad8e0`, which
+round 247 named `GObjPC::ActionTick_UseSkill`, is the plain-ATTACK tick**; the skill tick is its
+sibling `0x4ae590`, which computes the same approach band from the skill's own `Range` (plus a
+`+0x250` param when that is 0). The rule round 247 read stands for both; the name is corrected
+(`recovered_names.tsv`, forced). `CGObjChar::Update` ticks the actor at most every 30 ms.
+
+**The keep-up, phase by phase** (`docs/protocol/auto_command.md` has the whole thing):
+
+	phase 1  PrepareAction: ctx.skill = the weapon's DEFAULT ATTACK (re-resolved every pass),
+	         target check, gate 0x24; out of reach -> MoveTowardObject(stop), in reach -> gate 0x81
+	phase 2  serialise the ctx into a 0x7070 command and POST IT TO THE CHARACTER'S OWN COMMAND
+	         SOURCE (CCmdSrcNet::PostCommand, the queue the client's packets arrive through);
+	         accepted -> phase 3, refused (queue full) -> the action ends
+	phase 3  [HANDLE_ATTACK-KeepUp]: the ctx skill must still resolve, else log and end;
+	         Skill_CheckUseConditions mask 1 = THE COOLDOWN TEST ALONE -> wait while it refuses;
+	         a second queued action (depth 2) -> end; target gone or dead (slot 6) -> end;
+	         recompute the band -> phase 1
+
+So the cadence is the base attack's `ReuseDelay` by construction (round 255's guess at the
+mechanism was right), the server walks back into reach on every repeat, and what ends it is the
+target's death, the player's next action, or the client's cancel.
+
+**The skill side.** The skill tick's phase 3 waits `CastingTime + ActionDuration` after the
+post (`CastingTime` already carries `PreparingTime`: `SkillGlobal` adds it at load), re-enters
+phase 2 for a chain link (`ChainCode`), and otherwise -- when the row's **`AutoAttackType`
+(`CRefSkill+0x90`, skilldata col 19) is 1**, the target is a live monster and nothing else is
+queued -- **pushes a brand-new kind-1 ATTACK action carrying the same context** (`0x4ac910`,
+phase 5, `Push` at `0x4ad630`). That is why a sword skill leaves the character swinging.
+
+**The default attack is the engine's table, not a name convention.**
+`SkillGlobal::PostLoadSkillTable` (`0x5893e0`, `SkillGlobal.cpp`) walks the loaded rows once
+and fills `g_DefaultAttackSkillByTID4` (`0xc82638`, 32 dwords) by comparing each `Basic_Code`
+with literals: `[1] SKILL_PUNCH_01`, `[2][3] SKILL_CH_SWORD_BASE_01`, `[4][5]
+SKILL_CH_SPEAR_BASE_01`, `[6] SKILL_CH_BOW_BASE_01`, `[7] SKILL_EU_SWORD_BASE_01`, `[8]
+..TSWORD..`, `[9] ..AXE..`, `[10] ..WAND_WARLOCK..`, `[11] ..STAFF..`, `[12] ..CROSSBOW..`,
+`[13] ..DAGGER..`, `[14] ..HARP..`, `[15] ..WAND_CLERIC..`, plus the two `FORTRESSWEAPON` rows
+by race. Resolved against the retail skilldata on the box the ids are 1, 2, 40, 70, 8419, 8420,
+8421, 10625, 9944, 9354, 9355, 11162, 11526 -- **row for row what round 255's
+`combat.BaseAttackSkillFor` derived from the `ReqCast_Weapon1` bytes**. It is grounded now; no
+value changed. `SkillBook::DefaultAttackSkillIDForWeaponTID` (`0x59e650`) reads it: no weapon
+is TID4 1 (bare hand), the row must also be learned.
+
+**Free with it: the whole CRefSkill fixed-column layout.** `0x6ab5a0` copies a record field by
+field at each field's own width -- Service u8 .. ID +4, GroupID +8, three strings, Original
++0x60, Level +0x64, Activity +0x65, ChainCode +0x68 .. ReuseDelay +0x7c .. Interruptable +0x88,
+Overlap +0x8c (its high byte +0x8f is the COOLDOWN GROUP `SkillCooldowns::IsReady` keys a shared
+map on), AutoAttackType +0x90, InTown +0x91, Range +0x92, the twelve Target bytes +0x94..+0x9f,
+the requirements +0xa0..+0xc8, the four costs +0xca..+0xd0, **Consume_WHAN +0xd2**, UI bytes,
+five UI strings, AI +0x164/+0x166, Param1..50 at +0x168 -- ending exactly where
+`RefSkill_ParseParams`' memset begins (+0x230). Recorded in `skill_fields.md`; it agrees with
+every offset the gate, the ticks and `SkillGlobal` already used.
+
+**Built (v0.1.406).** `server/internal/session/keepup.go`: one accepted click arms a per-character
+run that swings again every base-attack `ReuseDelay` (falling back into step if a manual click
+landed in between), a cast with `AutoAttackType` 1 arms it after `CastingTime + ActionDuration`,
+and a cast, a move, a zone change, death, disconnect, or the target's death ends it. Two
+departures are written where they live: the server cannot walk the player, so a repeat that
+finds the target out of reach ENDS the run (the reach test is the engine's, `keepUpInReach`);
+and the retail client's explicit cancel on a move click is stood in for by `OpMove`, which
+srrevamp's client only sends for a real move. `Session.Send` gained a mutex: it was two writes
+per frame with broadcasts already arriving from other goroutines, and the repeats made that
+routine. Tests: the tracker's replace/cancel semantics, the reach band (sword vs Mangyang lands
+from 18, not 19), the hand-off rule, and a TCP round trip where a single `OpAttack` produces
+three results and a kill, then a move stops the next run. `go test -p 1 ./...` green. Names: 21
+(`CGCharAutoCommandActor::{Tick_Attack,Tick_UseSkill,Update,Push,PrepareAction,FinishFront,
+RunInstantSkill}`, `SkillBook::{ResolveUsableSkillRef,FindLearned,DefaultAttackSkillID,
+DefaultAttackSkillIDForWeaponTID}`, `SkillGlobal::PostLoadSkillTable`,
+`CRefSkill::CopyFixedColumns`, `CCmdSrcNet::{PostCommand,NewCommand,ReleaseCommand}`,
+`SkillCooldowns::IsReady`, `GObjPC::{HandleCharacterActionRequest_7074,SendActionResult_B074}`,
+`Action_OverrideBandForRangedVsFlying`).
+
 ## Two-hundred-and-fifty-fifth round: a plain swing is a skill with a re-use delay -- the player's attack cadence
 
 The RE tick for 2026-09-19 16:19. The server accepted an `OpAttack` per click with no cadence

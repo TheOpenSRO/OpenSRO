@@ -1,11 +1,16 @@
 package combat
 
 // The plain swing is a SKILL in the real game: every weapon type has one
-// `_BASE_01` row in skilldata whose ReqCast_Weapon1 names the type (memory
-// note "skilldata columns"; the bytes are itemdata TypeID4 values). The server
-// runs it through the same action machine as any cast (round 247), and its
-// ActionDuration == ReuseDelay is the attack cadence -- read from the retail
-// table 2026-09-19 (round 255):
+// `_BASE_01` row in skilldata, and the SERVER picks it by the weapon's
+// TypeID4 from a table it builds at load -- SkillGlobal::PostLoadSkillTable
+// (0x005893e0, SkillGlobal.cpp) matches every row's Basic_Code against the
+// literals below and stores the id at g_DefaultAttackSkillByTID4[TypeID4]
+// (0xc82638); SkillBook::DefaultAttackSkillIDForWeaponTID (0x0059e650) reads
+// it back, treating no weapon as TypeID4 1. Round 255 derived the same map
+// from the rows' ReqCast_Weapon1 bytes; round 256 read the engine's own
+// table, and the two agree row for row (docs/protocol/auto_command.md). The
+// attack tick re-resolves it before every swing, and its ReuseDelay is the
+// attack cadence -- read from the retail table 2026-09-19 (round 255):
 //
 //	SKILL_PUNCH_01              (1)  1500 ms      SKILL_EU_TSWORD_BASE_01    (8)  2000 ms
 //	SKILL_CH_SWORD_BASE_01    (2,3)  1200 ms      SKILL_EU_AXE_BASE_01       (9)  1500 ms
@@ -53,6 +58,7 @@ func BaseAttackSkillFor(typeID4 int) int64 {
 	return 0
 }
 
-// BareHandTypeID4 is the weapon type the engine reports for an empty hand
-// (ReqCast_Weapon byte 1 -- SKILL_PUNCH_01 requires it).
+// BareHandTypeID4 is the weapon type the engine reports for an empty hand:
+// DefaultAttackSkillIDForWeaponTID maps a TID4 of 0 to 1 (0x800 >> 11), the
+// slot SKILL_PUNCH_01 was stored in.
 const BareHandTypeID4 = 1

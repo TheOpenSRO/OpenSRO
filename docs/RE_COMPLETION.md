@@ -5089,6 +5089,22 @@ Round 255 (v0.1.405): the player's plain swing is the weapon type's `_BASE_01`
 skill on its ReuseDelay (sword 1200 ms, bow 840, punch 1500 ...); `combat.
 BaseAttackSkillFor` + `session.swingReady` drop a click inside the delay. The
 server-side keep-up (auto-attack, `ActionTick_UseSkill` phase 3) is a TODO.
+Round 256 (v0.1.406): the keep-up READ AND BUILT. The action machine is
+`CGCharAutoCommandActor` (RTTI name): 0x4ad8e0 is the plain-ATTACK tick (round
+247's "ActionTick_UseSkill" -- corrected; the skill tick is 0x4ae590), its
+phase 3 waits on the base attack's cooldown (gate mask 1) and loops to phase 1
+until the target is dead/gone or a second action queues; the skill tick's
+phase 3 pushes a fresh attack action when `AutoAttackType` (col 19,
+CRefSkill+0x90) is 1, after CastingTime + ActionDuration. `BaseAttackSkillFor`
+is now grounded by the engine's own table (`SkillGlobal::PostLoadSkillTable`
+matches the 13 `Basic_Code` literals into `g_DefaultAttackSkillByTID4`; ids
+agree row for row). Free with it: the entire CRefSkill fixed-column layout from
+`CRefSkill::CopyFixedColumns` (`skill_fields.md`) -- `Consume_WHAN` is +0xd2,
+col 56. Shipped: `session/keepup.go` -- one click fights to the death, a
+melee skill hands back to plain swings, moving/casting/zoning/dying/leaving
+cancels; the server cannot walk the player so an out-of-reach repeat ends the
+run (disclosed). `Session.Send` is now one frame per call (it was two writes,
+unguarded across goroutines). 21 names.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

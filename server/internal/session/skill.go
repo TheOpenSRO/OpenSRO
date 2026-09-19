@@ -532,6 +532,9 @@ func UseSkillHandlerWithGround(
 		// subset of the second and srrevamp treats them the same way today; see
 		// refdata.Skill.NoCombatParam and refdata.Skill.ZeroDamage.
 		var noCombat, zeroDmg bool
+		// The row itself, kept for the keep-up hand-off below (its
+		// AutoAttackType and timings); nil for a catalog skill.
+		var castRow *refdata.Skill
 		// REAL SKILLS WIN. This used to check skill.Catalog first, which
 		// silently shadowed two real skills: the own-design catalog occupies
 		// ids 1 and 2, and those are SKILL_PUNCH_01 and SKILL_CH_SWORD_BASE_01
@@ -546,6 +549,7 @@ func UseSkillHandlerWithGround(
 		// the rule the rest of the project follows -- shop.Price says it
 		// outright: "The real number is what a player pays, so it wins."
 		if ref, err := skillRef.GetSkill(ctx, req.SkillID); err == nil && ref != nil {
+			castRow = ref
 			cooldown = time.Duration(ref.ReuseDelayMs) * time.Millisecond
 			mpCost = ref.ConsumeMP
 			hpCost = ref.ConsumeHP
@@ -701,6 +705,11 @@ func UseSkillHandlerWithGround(
 		if err := skills.RecordUse(ctx, characterID, req.SkillID, now); err != nil {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
 		}
+		// A cast is a new action: whatever the character was auto-attacking
+		// stops here (the actor's queue rule -- a second action ends the
+		// keep-up), and the plain swings resume only through the hand-off at
+		// the end.
+		keepUp.Cancel(characterID)
 
 		// NO DAMAGE, and this is the engine's own answer rather than a choice.
 		// Combat_ResolveDamage (0x0058e5f0) reaches it two ways, and srrevamp
@@ -738,7 +747,19 @@ func UseSkillHandlerWithGround(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
 		}
 
-		return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType)
+		if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType); err != nil {
+			return err
+		}
+		// The skill tick's hand-off (round 256, keepup.go): a row with
+		// AutoAttackType 1 leaves a plain attack running against the same
+		// target once its CastingTime + ActionDuration has played.
+		if skillHandsOff(castRow) {
+			if m, ok := monsters.Get(req.TargetMonsterID); ok && m.HP > 0 {
+				deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground}
+				armKeepUp(sess, deps, characterID, req.TargetMonsterID, handOffDelay(castRow))
+			}
+		}
+		return nil
 	}
 }
 

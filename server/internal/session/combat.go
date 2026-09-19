@@ -669,7 +669,18 @@ func CombatHandlerWithGround(
 			if !swingReady(ctx, characterID, eq, items, skills, time.Now()) {
 				return nil
 			}
-			return performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, characterID, req.TargetMonsterID, 0, 0, 0, 1, combat.AttackPhysical)
+			if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, characterID, req.TargetMonsterID, 0, 0, 0, 1, combat.AttackPhysical); err != nil {
+				return err
+			}
+			// One click is the whole fight: the server repeats the swing on
+			// the base attack's ReuseDelay until the target is dead (round
+			// 256, keepup.go). A target the swing could not find arms
+			// nothing; the first repeat would only find the same.
+			if m, ok := monsters.Get(req.TargetMonsterID); ok && m.HP > 0 {
+				deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground}
+				armKeepUp(sess, deps, characterID, req.TargetMonsterID, 0)
+			}
+			return nil
 		case OpMonsterList:
 			return handleMonsterList(sess, hub, monsters)
 		default:
@@ -1210,6 +1221,9 @@ func performAttack(
 			if err := chars.RespawnHP(ctx, characterID); err != nil {
 				return fmt.Errorf("combat: respawning player: %w", err)
 			}
+			// Death ends the action queue with everything else: no repeat
+			// fires for a character who has just been put back on their feet.
+			keepUp.Cancel(characterID)
 			// Back at character.RespawnFraction of the maximum, not all of
 			// it: the game restores a character whose stored pool is zero --
 			// which is what death leaves -- to 40%, for HP and MP alike. See
@@ -1314,34 +1328,18 @@ func attackerDamage(ctx context.Context, characterID int64, str int, eq equipmen
 // swing is recorded against that skill id. Without reference data for the
 // skill (or a store that cannot look skills up) there is no gate, as before.
 func swingReady(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, skills skill.Store, now time.Time) bool {
-	skillRef, ok := items.(SkillRefStore)
-	if !ok || skills == nil {
+	if skills == nil {
 		return true
 	}
-	typeID4 := combat.BareHandTypeID4
-	if equipped, err := eq.Get(ctx, characterID); err == nil {
-		for _, e := range equipped {
-			if e.Slot != equipment.SlotWeapon || durability.IsBroken(e.Durability) {
-				continue
-			}
-			if item, err := items.GetItem(ctx, e.ItemID); err == nil && item != nil && item.TypeID4 > 0 {
-				typeID4 = item.TypeID4
-			}
-		}
-	}
-	baseID := combat.BaseAttackSkillFor(typeID4)
-	if baseID == 0 {
+	ref, ok := baseAttackOf(ctx, characterID, eq, items)
+	if !ok || ref.ReuseDelayMs <= 0 {
 		return true
 	}
-	ref, err := skillRef.GetSkill(ctx, baseID)
-	if err != nil || ref == nil || ref.ReuseDelayMs <= 0 {
-		return true
-	}
-	last, ever, err := skills.LastUsed(ctx, characterID, baseID)
+	last, ever, err := skills.LastUsed(ctx, characterID, ref.ID)
 	if err == nil && ever && now.Sub(last) < time.Duration(ref.ReuseDelayMs)*time.Millisecond {
 		return false
 	}
-	_ = skills.RecordUse(ctx, characterID, baseID, now)
+	_ = skills.RecordUse(ctx, characterID, ref.ID, now)
 	return true
 }
 

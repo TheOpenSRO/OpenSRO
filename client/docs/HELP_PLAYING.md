@@ -34,8 +34,12 @@ Three views (the names the original's own Option window uses):
 | M | World map / minimap |
 | Escape | System menu (Option, Help, Restart, Exit); or close the top window |
 
-Click an NPC to talk, buy, or use storage. Click a monster to target it, then
-attack.
+Click an NPC to talk, buy, or use storage. **Click a monster once to attack
+it**: as in the original, your character keeps swinging at the weapon's own
+pace until it is dead. Walking away stops the attack, and so does going out of
+reach (the original walks you back in; this client does not yet, so step
+closer and click again). A melee skill hands back to plain attacks when its
+animation ends; the staff, wand and harp bolts do not.
 
 ## Skills and the hotbar
 

@@ -54,6 +54,13 @@ type Session struct {
 	sendSum  *proto.PacketChecksum
 	recvRoll *proto.RollingByte
 	recvSum  *proto.PacketChecksum
+
+	// sendMu makes each Send one frame on the wire. Packets reach a session
+	// from other goroutines than its own read loop -- zone broadcasts from
+	// other sessions' handlers, and the server's own repeated swings
+	// (session/keepup.go) -- and proto.Write is two writes (header, body)
+	// that must not interleave with another packet's.
+	sendMu sync.Mutex
 }
 
 // SetSecurity installs this session's real per-direction RollingByte/
@@ -117,6 +124,8 @@ func (s *Session) Get(key string) (any, bool) {
 // Send writes a packet back to this session's client.
 func (s *Session) Send(p *proto.Packet) error {
 	sendRoll, sendSum, _, _ := s.security()
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
 	return proto.Write(s.conn, p, sendRoll, sendSum)
 }
 
