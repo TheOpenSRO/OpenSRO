@@ -7075,6 +7075,24 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-thirty-seventh round: two params named from the speed read, and the monster publisher's offset map recorded
+
+The RE tick's step for 2026-09-19 12:19, the param-vocabulary lever: pairing every
+`ParamKeeper param id` annotation in `GObjPC_InitStats` and `GObjMob_PublishStats` with the
+record read just before it.
+
+| param | record offset | column | meaning |
+|---|---|---|---|
+| 3, 4 | `+0x19c`, `+0x1a0` | 59, 60 | MaxHP, MaxMP (known) |
+| 5, 6, 7, 8 | `+0x230 .. +0x23c` | 71-74 | the defence block (known: 5 flat absorption, 7 the %) |
+| 9, 10, 11, 12 | `+0x240 .. +0x24c` | 75-78 | `era`/`bri`/`hra`/`cri` (known) |
+| **23, 24** | **`+0xe4`, `+0xe6`** | **46, 47** | **walk / run speed -- new, from rounds 230-231** |
+| 27, 28, 30, 29, 31, 32 | `+0x1a4 .. +0x1b8` | ? | type-specific half; not countable to columns yet |
+
+`param_registry.md` carries 23 and 24 now. The six at `+0x1a4..+0x1b8` wait for the
+`_RefObjChar` deserializer's field map past the common prefix (`refobj_binary_format.md`
+records why counting does not reach there). No value changed.
+
 ## Two-hundred-and-thirty-sixth round: the three x4 gold piles are a rank-7 death rule
 
 The RE tick's step for 2026-09-19 12:04, closing round 235's loose end: the "type 7" that

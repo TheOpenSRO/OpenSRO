@@ -4998,6 +4998,11 @@ Round 236: the type-7 special drop is RANK 7 -- `GetMonsterClass` (slot 75) is t
 nibble of `mob+0x1cd8`, the same rank byte the HP scale switches on -- so a rank-7 monster
 drops three extra `x4` level-gold piles at death. Recorded in `combat/rarity.go`;
 `LevelGold_Roll` and `CGObjMob_DropRank7GoldPiles` named. srrevamp spawns no rank 7 yet.
+Round 237: the param vocabulary gained 23 = walk speed and 24 = run speed (both
+publishers read the record words at `+0xe4/+0xe6`; the mover step settles the unit).
+The monster publisher's full offset->param map is recorded in the round; six params
+(27-32 <- `+0x1a4..+0x1b8`) sit in the type-specific half and stay unnamed until the
+`_RefObjChar` deserializer's field map is read past the common prefix.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

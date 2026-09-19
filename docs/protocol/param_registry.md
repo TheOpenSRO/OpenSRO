@@ -114,8 +114,8 @@ branches).
 | 20 | 0x014 | 0 | 9999999 | **0** | 0 |  |
 | 21 | 0x015 | 0 | 9999999 | **0** | 0 |  |
 | 22 | 0x016 | 0 | 9999999 | **0** | 0 |  |
-| 23 | 0x017 | 0 | 9999999 | **0** | -1 |  |
-| 24 | 0x018 | 0 | 9999999 | **0** | -1 |  |
+| 23 | 0x017 | 0 | 9999999 | **0** | -1 | walk speed -- `GObjPC_InitStats` and `GObjMob_PublishStats` publish the common record's word at `+0xe4` (characterdata column 46, `Speed1`) here; the mover's step multiplies it by seconds (round 231/237) |
+| 24 | 0x018 | 0 | 9999999 | **0** | -1 | run speed -- the word at `+0xe6` (column 47, `Speed2`), published beside 23 (round 231/237) |
 | 25 | 0x019 | 0 | 100 | **0** | 0 | hprg |
 | 26 | 0x01a | 0 | 100 | **0** | 0 | mprg |
 | 27 | 0x01b | 0 | 100 | **0** | 0 | rals |
