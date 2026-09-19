@@ -891,3 +891,35 @@ func AreaTargetShare(i, falloffPercent int) int {
 	}
 	return share
 }
+
+// The FIRST word of the Param block is not a code: it is the skill's ACTION
+// KIND, the index SkillActionHandler (0x589b50) dispatches through the table
+// at 0xc63c7c (round 267). 0 is the ordinary instant action (attacks, heals,
+// instant self-effects -- 20,460 retail rows; the cast-context builder B),
+// 1 the bow family's projectile action (8,840; builder A), 3 a TIMED BUFF
+// (SkillAction_Buff, 0x5830b0: 2,213 rows such as the fire shield, the
+// speed-up scrolls, the transforms) and 4 a macro-guarded kind (540; not
+// read). 2, 5 and 6 have no handler.
+const (
+	ActionKindInstant    = 0
+	ActionKindProjectile = 1
+	ActionKindBuff       = 3
+)
+
+// A timed buff (action kind 3) runs as one record in the target's skill book
+// and ends -- SkillAction_Buff's active phase, 0x5851xx -- when
+//
+//	now - startTick > dura[0] + extension        ; 'dura' (+0x280) in ms; startTick is
+//	                                             ; when the cast completed and EngageSkill ran;
+//	                                             ; the extension is the cast context's +0x24
+//	or, for a toggle ('onff'): every onff[0] ms the MP cost onff[1] is taken and the
+//	   buff ends when current MP < that cost
+//	or, for a summon ('summ'): now - startTick > summ[0]
+//
+// then SkillAction_BuffEnd (0x5829d0) runs, SkillBook::Update removes the
+// skill's ParamKeeper contributions (ParamKeeper_RemoveContributionsOf,
+// 0x4b3660) and the ended token is broadcast in 0xB072
+// (SkillBook::FlushEndedBuffs_B072). BuffEndsAt is that first rule.
+func BuffEndsAt(startTickMs, duraMs, extensionMs int64) int64 {
+	return startTickMs + duraMs + extensionMs
+}

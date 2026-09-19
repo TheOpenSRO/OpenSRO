@@ -1277,15 +1277,56 @@ skill in EBX) is what a resolved cast does to one target, in this order:
 6. **`QueueTimedSkillEffect`** (`0x596960`) -- the periodic effects (`pmhp`/`pmmp`/`pmdg`/
    `pmdp`/`php1`/`pmp1`/`pao`/`pcdu`), ticked by `TickTimedSkillEffect`.
 
-**Still open, stated precisely:** where a character buff EXPIRES. `dura` (`+0x280`, milliseconds)
-is read by `CGSkillObject::Update` (placed skill objects), by the debug printer `0x59b8d0`
-(`[0]/1000`) and by `GObjPC::ReapplyBuffWithRemaining` (`0x650d40`, which clamps a remaining time
-to it); the active-effect book at `char+0xa30` receives `0x59df20(book, skill[0x300][0], token)`
-from `ApplySkillParamsToChar` and its five-entry `+0x388` list is copied out at the end
-(`0x5a02e0`), but the tick that compares a buff's start against `dura` and removes the skill's
-ParamKeeper contributions has not been located yet -- `CGObjChar::Update`'s only book-adjacent
-call (`0x59e840`) is a speed refresh. Next probe: the readers of the book's own list, not of the
-skill field.
+**The expiry was found the next round** -- see "The buff lifecycle" below: a timed buff is
+an action-kind-3 record in the skill book, ended by `SkillAction_Buff`'s active phase when
+`elapsed > dura + extension`.
+
+## The buff lifecycle: action kind 3, `dura`, and 0xB072 (round 267, 2026-09-19)
+
+**The first Param word is the ACTION KIND.** `SkillActionHandler` (`0x589b50`) reads
+`skill+0x168` -- the first raw Param word, itemdata column 68 -- and dispatches the table at
+`0xc63c7c`: **0** the ordinary instant action (20,460 retail rows: attacks, heals, instant
+self-effects; the cast-context builder B, `0x586700`), **1** the bow family's projectile action
+(8,840; builder A, `0x5857b0`), **3 a TIMED BUFF** (`SkillAction_Buff`, `0x5830b0`, 9,247 bytes:
+`SKILL_CH_FIRE_SHIELD_A_01`, `SKILL_MALL_MOVE_SPEED_UP_*`, `SKILL_ETC_TRANS_MONSTER_*` -- 2,213
+rows), **4** a macro-guarded kind (540; `Macro Detected!` when its second argument is zero; not
+read). 2, 5, 6 are empty; the `Params` code runs start at the second word.
+
+**`SkillBook::Update`** (`0x59bb80`, the per-character tick of the active-effect book at
+`char+0xa30`) drives four lists: the periodic effects (`TickTimedSkillEffect`; an expired one has
+its contributions removed by `ParamKeeper_RemoveContributionsOf`, `0x4b3660`), a pending-engage
+queue (`0x59b070`), a third list (`0x593ed0` per entry) and the **active actions** (`book+0x268`):
+for each record whose row is active it calls `SkillActionHandler(record)` and, on a non-zero
+return, erases the record, removes the skill's contributions, and -- on return **3** -- queues the
+record's token for **`SkillBook::FlushEndedBuffs_B072`** (`0x59ecd0`: `0xB072 {count, tokens...}`
+broadcast to the region), which runs at the end of every update.
+
+**`SkillAction_Buff`** (phase in the first argument; the record's `+0xc` is its sub-state):
+sub-state 0 waits **`CastingTime`** (`skill+0x74`) from `record+8`, then collects the targets
+(`Skill_CollectTargetsByEffect(skill, efr, 2)`), takes the costs and sends the result; sub-state 1
+stamps **`record+8 = GetTickCount()`**, runs `EngageSkill` (the ParamKeeper writes, `0xB0BD`) and
+enters sub-state 2; sub-state 2 runs the periodic sub-effects (`puls` pulses of HP/MP through
+`ApplyHPMPDelta`, the `hitm` hit counters, the weapon/equipment conditions) and ENDS the buff
+when, in this order:
+
+	ctx+0xc has bits 4 and 8:  elapsed > ctx+0x18                       ; a restored buff's remaining time
+	'onff' (+0x284, a toggle): every onff[0] ms the MP cost onff[1] (scaled by +0x554 when set)
+	                           is taken (slot 194); ends when current MP (slot 67) < the cost
+	'dura' (+0x280):           elapsed > dura[0] + ctx+0x24              ; the duration in ms plus the
+	                                                                    ; cast context's extension term
+	'summ' (+0x308):           elapsed > summ[0]                          ; a summon's lifetime
+	                           (elapsed = GetTickCount() - record+8, i.e. since the cast completed)
+
+ending goes through **`SkillAction_BuffEnd`** (`0x5829d0`), and its return climbs back to
+`SkillBook::Update`, which removes the contributions and broadcasts the token in `0xB072`.
+Ending early is the same path: a disabling condition (the equipment checks, a `SKILL_CH_FIRE_SHIELD_`
+name test on a weapon change, a lost target) sets the end flag.
+
+`skillparam.ActionKind*` and `skillparam.BuffEndsAt` carry the vocabulary and the first rule with a
+test. **Not wired**: srrevamp has no buff records; a non-damaging cast succeeds and does nothing
+(round 223's "faithful half"). What a build needs is now all read: the params to write
+(`ApplySkillParamsToChar`, 43 fields -> ~60 ParamKeeper ids), the duration, the end path and both
+packets (`0xB0BD` start, `0xB072` end).
 
 ## The 20 "variable-length" codes: 19 markers and 1 terminator (2026-09-18)
 

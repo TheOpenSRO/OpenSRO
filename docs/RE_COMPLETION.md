@@ -5174,6 +5174,14 @@ Round 266 (docs): EngageSkill's order read (costs, hwan, per-kind sub-effects
 by param field, ApplySkillParamsToChar, heal + Skill_BroadcastBuffAdded_B0BD,
 QueueTimedSkillEffect); the buff-added packet is 0xB0BD; the buff EXPIRY tick is
 still unlocated (next: the active-effect book's list readers). Three names.
+Round 267 (docs + skillparam): the buff lifecycle. The first Param word is the
+ACTION KIND (0 instant, 1 projectile, 3 timed buff, 4 macro-guarded);
+SkillBook::Update ticks each character's active records through
+SkillActionHandler; SkillAction_Buff ends a buff when elapsed > dura[0] +
+ctx+0x24 (toggles when MP runs out, summons after summ[0]); the end removes the
+skill's ParamKeeper contributions (ParamKeeper_RemoveContributionsOf) and
+broadcasts the token in 0xB072. Everything a buff system needs is read. Six
+names; `skillparam.ActionKind*`, `BuffEndsAt`, test.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

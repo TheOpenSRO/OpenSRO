@@ -7075,6 +7075,36 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-sixty-seventh round: the buff lifecycle -- action kind 3, `dura`, and 0xB072
+
+The RE tick for 2026-09-19 19:33 ran the probe round 266 wrote down (the active-effect book's own
+readers) and found the whole lifecycle.
+
+**The first Param word is the action kind.** `SkillActionHandler` (`0x589b50`) dispatches
+`skill+0x168` -- itemdata column 68, the word BEFORE the `(code, values)` runs -- through the table
+at `0xc63c7c`: 0 the ordinary instant action (20,460 rows), 1 the bow family's projectile action
+(8,840), **3 a timed buff** (`SkillAction_Buff`, `0x5830b0`; 2,213 rows: the fire shield, speed-up
+scrolls, transforms), 4 a macro-guarded kind (540, unread).
+
+**`SkillBook::Update`** (`0x59bb80`) ticks each character's book (`char+0xa30`): periodic effects,
+a pending-engage queue, and every active action record through `SkillActionHandler`; a non-zero
+return erases the record and removes the skill's ParamKeeper contributions
+(`ParamKeeper_RemoveContributionsOf`, `0x4b3660`), a 3 also queues the token for
+**`SkillBook::FlushEndedBuffs_B072`** (`0x59ecd0`) -- the `0xB072 {count, tokens}` broadcast the
+client takes the icon down on.
+
+**`SkillAction_Buff`**: sub-state 0 waits `CastingTime` from the cast, collects targets, takes the
+costs; sub-state 1 stamps `record+8 = GetTickCount()` and runs `EngageSkill` (the writes, `0xB0BD`);
+sub-state 2 pulses and **ends the buff when `elapsed > dura[0] + ctx+0x24`** (`dura` in ms plus
+the cast context's extension term), or -- for a toggle (`onff`) -- when its MP cost, taken every
+`onff[0]` ms, exceeds the current MP, or -- for a summon -- after `summ[0]` ms, or for a restored
+buff after its remaining `ctx+0x18`; the end runs `SkillAction_BuffEnd` (`0x5829d0`) and climbs
+back to the update.
+
+Recorded: `skill_params.md` "The buff lifecycle" (round 266's "still open" paragraph now points at
+it), `skillparam.ActionKind*` and `BuffEndsAt` with a test, six names, SYSTEMS' Skills row --
+every piece a buff system needs is read; the row's Next is the build. No shipped value changed.
+
 ## Two-hundred-and-sixty-sixth round: EngageSkill in order, the buff-added packet, and the expiry still to find
 
 The RE tick for 2026-09-19 19:20 followed round 265 into the real buff path. `EngageSkill`

@@ -546,3 +546,15 @@ func TestAreaTargetShare(t *testing.T) {
 		t.Errorf("no falloff: %d; want 100", got)
 	}
 }
+
+// A 30 s fire shield cast at tick 1000 with no extension is over once the
+// clock passes 31000 (the engine tests `elapsed > dura`, so 31000 itself is
+// still inside).
+func TestBuffEndsAt(t *testing.T) {
+	if got := BuffEndsAt(1000, 30000, 0); got != 31000 {
+		t.Fatalf("BuffEndsAt = %d; want 31000", got)
+	}
+	if got := BuffEndsAt(1000, 30000, 5000); got != 36000 {
+		t.Fatalf("with a 5 s extension: %d; want 36000", got)
+	}
+}
