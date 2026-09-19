@@ -888,10 +888,18 @@ var _pending_skill_hit_code := ""
 ## STAND_BATTLE clip (sword falls back to the body's chinaman_standbattle.ban).
 var _last_combat_time := -1000.0
 ## How long the battle stance is held after the last combat action, in seconds.
-## DISCLOSED own-design: the retail client's real revert timeout was never found
-## (round 132) and combat state is server-driven, so this is a labeled stand-in,
-## not a recovered value.
-const COMBAT_STANCE_SECONDS := 5.0
+##
+## READ from the server (round 218): the stance is the wire's BattleState
+## (CGObjPC::SetCharacterState case 8 -> GObjPC::FUN_004e2910). Entering it
+## arms a countdown of 20 at pc+0x203c; the PC's periodic update
+## CGObjPC::vslot_415 decrements it once per call and, at zero, calls the
+## same setter back to peace. So the stance lasts exactly 20 ticks of that
+## update -- the update that also advances the timed-effect list with a
+## delta of 1.0 (FUN_006560c0(..., 1.0f)), the unit berserk's 60.0 counts in.
+## THE TICK'S PERIOD IS NOT READ: 20 s here rests on the same inference as
+## berserk's 60 s (a 1-second tick), stated as such. In the original this is
+## server-driven; here the client holds the pose itself from its last action.
+const COMBAT_STANCE_SECONDS := 20.0
 ## skilleffect.txt parsed once: Basic_Code (upper) -> hit `.efp` path. Lazy.
 var _skill_hit_efp: Dictionary = {}
 var _skill_hit_efp_loaded := false

@@ -7075,6 +7075,40 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-eighteenth round: the battle stance lasts 20 ticks -- the server's BattleState timer, read
+
+The RE tick's step for 2026-09-19 07:34. `COMBAT_STANCE_SECONDS` (how long the player
+holds `STAND_BATTLE` after combat) had been a disclosed 5.0 since round 132: "the retail
+revert timeout was never found". It is the server's, not the client's, and it is read now.
+
+### Read (`docs/protocol/character_state.md`)
+
+- `CGObjPC::SetCharacterState` (`0x4f0ad0`, slot 171) switches on the state type; case 8
+  -- the wire's BattleState -- is `GObjPC::FUN_004e2910`, which arms `pc+0x203c = 20`
+  when the value is 1, stores the byte at `chardata+0xd`, and announces it (`0x30bf`,
+  through `GObjPC::FUN_004a8340`: opcode, object id, type, value). Case 7 is PvP state.
+- `CGObjPC::vslot_415` (`0x52aa90`), the PC's periodic update, decrements that counter
+  once per call and calls the setter back at zero. Every attack re-arms it. So the stance
+  lasts **20 ticks** after the last combat action.
+- The same update advances the timed-effect list with `dt = 1.0`
+  (`FUN_006560c0(pc+0x1dfc, 1.0f)`) -- the float countdown berserk's 60.0 runs on -- so
+  berserk and the stance count in the same unit; the stance is a third of a berserk.
+
+### Not read
+
+The period of `vslot_415`. It is reached via `vslot_416` and `FUN_00605010` behind the
+world-context controllers' slot 11; the scheduler that fires those was not located (the
+main loop's `CMainProcess::FUN_00414140` has a 1000 ms accumulator, but the link to slot
+415 was not traced). A one-second tick is the only reading under which berserk is a
+minute; `COMBAT_STANCE_SECONDS = 20` now rests on exactly that inference, labelled the
+same way berserk's 60 is -- which replaces a 5.0 that had no relation to the binary.
+
+### srrevamp's gap, named
+
+The original's stance is server-driven and visible to everyone in range; srrevamp's
+client holds the pose itself from its own last action, and its server carries no
+battle-state byte. Recorded in the spec as the next step for this channel.
+
 ## Two-hundred-and-seventeenth round: the teleport list is the client's own, and columns 8/9 have no reader -- a correction and a narrowed probe
 
 The RE tick's step for 2026-09-19 07:23. The teleport row's open probe was "the

@@ -102,10 +102,12 @@ In order. Each is checked off here when it ships in a release, with its round in
       without consulting the graph (once onto a shop floor); linked edges (`0x08`, the hand-over
       between objects) and event gates (fortress/dungeon doors, `0xc0` bits) are documented but
       not implemented -- no town object uses either.
-- [~] Battle stance (round 132): the player now HOLDS the real STAND_BATTLE clip while
-      recently in combat (v0.1.128) — but its hold duration is a DISCLOSED stand-in
-      (`COMBAT_STANCE_SECONDS`); the retail revert timeout is still not read from the client
-      (combat state is server-driven; a dedicated dig would be needed to confirm a client value).
+- [x] Battle stance (round 132, hold duration read in round 218 / v0.1.392): the player HOLDS
+      the real STAND_BATTLE clip while recently in combat; the hold is now the server's own
+      rule -- BattleState (SetCharacterState type 8) is entered with a 20-tick countdown in the
+      PC's periodic update (`CGObjPC::vslot_415`) and reverts to peace at zero. What is still
+      inferred is that update's period (1 s), the same inference berserk's 60 already rests on;
+      the scheduler between the main loop and `vslot_415` is the probe that would close both.
 
 ## Next up
 

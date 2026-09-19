@@ -4884,6 +4884,15 @@ a per-player byte the server sends in the talk reply (`0x88b200` -> `+0x20ff`).
 8/9 therefore have no reader in either binary's ordinary-gate paths; srrevamp
 does not use them; the remaining probe is the server's link-binding pass.
 
+### Battle stance timer, 2026-09-19 (round 218, v0.1.392)
+
+BattleState is `SetCharacterState` case 8 -> `GObjPC::FUN_004e2910`: entering arms a
+20-count at `pc+0x203c`; `CGObjPC::vslot_415` (the PC's periodic update) decrements
+it and reverts to peace at zero. `COMBAT_STANCE_SECONDS` is 20 now (was a disclosed
+5.0); the tick's period is inferred as one second on the same grounds as berserk's
+60 (the same update advances timed effects with dt = 1.0). Spec:
+`docs/protocol/character_state.md`. Open: the scheduler that fires `vslot_415`.
+
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
 via `nItemDBID`), and an empty slot is a real row with `ItemID = 0 or NULL`
