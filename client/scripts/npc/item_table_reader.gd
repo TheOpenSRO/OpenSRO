@@ -190,15 +190,41 @@ class Item:
 		return ("%.1f" % value).trim_suffix(".0")
 
 	## The real English display name: the name string id (column 5) resolved
-	## through textdata_object.txt, falling back to the column-3 object name
-	## when no table is given or the id does not resolve. This is what a player
-	## should see; item_name alone shows Korean for many consumables.
+	## through textdata_object.txt -- and ONLY that table: the 9,315 `SN_ITEM_`
+	## keys live there and nowhere else (textuisystem.txt holds none, measured
+	## 2026-09-19), so a caller handing in the UI-string table gets nothing
+	## resolved. When no table is given or the id does not resolve, the
+	## column-3 object name is used only if it reads as English: it is English
+	## for weapons and armour but Korean for many consumables, and in this
+	## archive the Korean is already mangled to question marks in the file
+	## itself (`ITEM_ETC_HP_POTION_01`'s column 3 is literally "HP ?? ??").
+	## Otherwise "" -- a player is shown the client's own name or nothing,
+	## never an id and never a row of question marks.
 	func display_name(names: UiTextTable = null) -> String:
 		if names != null and name_strid != "":
 			var resolved := names.get_text(name_strid)
 			if resolved != "" and resolved != name_strid:
 				return resolved
-		return item_name
+		if reads_as_english(item_name):
+			return item_name
+		return ""
+
+	## True when a column-3 object name is usable as an English label:
+	## printable ASCII with at least one letter and no '?' (the archive's
+	## mark of a lost non-Latin character). A name with a Hangul character,
+	## a "?", or nothing but digits and punctuation is not shown.
+	static func reads_as_english(text: String) -> bool:
+		var trimmed := text.strip_edges()
+		if trimmed == "" or trimmed.contains("?"):
+			return false
+		var has_letter := false
+		for ch in trimmed:
+			var code := ch.unicode_at(0)
+			if code < 0x20 or code > 0x7e:
+				return false
+			if (code >= 0x41 and code <= 0x5a) or (code >= 0x61 and code <= 0x7a):
+				has_letter = true
+		return has_letter
 
 	## The lines a hover tooltip shows, top to bottom -- the item's own real
 	## figures, none invented. A weapon shows its attack block; every

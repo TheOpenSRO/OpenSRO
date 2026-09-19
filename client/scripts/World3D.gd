@@ -951,6 +951,10 @@ var _player_weapon_group := "default"
 var _player_equipped_last: Dictionary = {}
 
 var _media_pk2: Pk2Reader
+## textuisystem.txt -- the UI string catalog (button captions, system
+## messages). It holds NO item or NPC names; those are `SN_` keys in
+## textdata_object.txt -- see _object_names(), which shares the one parse
+## with the monster-model loader (_object_name_table).
 var _ui_text_table: UiTextTable
 var _ui_builder: UiBuilder
 var _hud_minimap: HudMinimap
@@ -7382,11 +7386,9 @@ func _monster_model_path(code_name: String, species_name: String) -> String:
 		if _media_pk2 == null:
 			_media_pk2 = _open_media_pk2_if_set()
 		if _media_pk2 != null:
-			var names_entry := ObjectLoader.find_file(_media_pk2, NpcTableReader.OBJECT_NAME_TABLE_PATH)
-			var names: UiTextTable = null
-			if names_entry != null:
-				names = UiTextTable.parse(_media_pk2.read_file(names_entry))
-			_object_name_table = names
+			# One parse of textdata_object.txt for the whole world (the item
+			# names use it too) -- see _object_names().
+			var names: UiTextTable = _object_names()
 			for path in NpcTableReader.MODEL_TABLE_PATHS:
 				var entry := ObjectLoader.find_file(_media_pk2, path)
 				if entry == null:
@@ -7557,13 +7559,42 @@ func _try_setup_ground_items() -> void:
 	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _name_plate, _terrain_height_at)
 	other_entities.add_child(_ground_items)
 
-## The item table's English name for an id (the same resolution the tooltips
-## use), or a bare "item N" when the row is unknown.
+## The object-name table (textdata_object.txt), parsed once on first use and
+## shared with the monster-model loader, which fills the same variable.
+## This is where item and NPC `SN_` names live -- the UI-string catalog
+## (_ui_text_table, textuisystem.txt) has none of the 9,315 `SN_ITEM_` keys,
+## which is how a dropped potion came to be labelled with its mangled
+## column-3 name ("HP ?? ??") while the same item's tooltip, resolved by the
+## HUD through this table, read "HP Recovery Herb".
+func _object_names() -> UiTextTable:
+	if _object_name_table == null and _media_pk2 != null:
+		var entry := ObjectLoader.find_file(_media_pk2, NpcTableReader.OBJECT_NAME_TABLE_PATH)
+		if entry != null:
+			_object_name_table = UiTextTable.parse(_media_pk2.read_file(entry))
+	return _object_name_table
+
+## The client's own English name for an item id, resolved the way the
+## tooltips resolve it (ItemTableReader.Item.display_name through the
+## object-name table), or "" -- never an id, never a row of question marks.
+## A name plate or a chat line that gets "" shows nothing for the name.
 func _item_display_name(item_id: int) -> String:
 	var row = _item_rows.get(item_id)
 	if row == null:
-		return "item %d" % item_id
-	return row.display_name(_ui_text_table)
+		return ""
+	return row.display_name(_object_names())
+
+## What a chat or log line calls an item: its display name, else its code
+## name (the game's own `ITEM_*` identifier from the item table -- English,
+## and a real fact about the item, unlike an invented label), else nothing.
+## The code name is for lines, not plates: a plate shows the name or nothing.
+func _item_label_for_line(item_id: int) -> String:
+	var name := _item_display_name(item_id)
+	if name != "":
+		return name
+	var row = _item_rows.get(item_id)
+	if row != null and String(row.code_name) != "":
+		return String(row.code_name)
+	return ""
 
 func _on_ground_item_list_result(items: Array, error: String) -> void:
 	if error != "":
@@ -7623,8 +7654,16 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 	match result.code:
 		0:
 			_pending_pickup_id = -1
-			var what := ("%d gold" % result.quantity) if result.gold else ("item %d x%d" % [result.item_id, result.quantity])
-			print("World3D: picked up %s (ground item %d)" % [what, result.ground_id])
+			# The item's own name in the chat line, never its id (a name the
+			# table cannot give falls to the code name, see _item_label_for_line).
+			var what: String
+			if result.gold:
+				what = "%d gold" % result.quantity
+			else:
+				var label := _item_label_for_line(result.item_id)
+				what = ("%dx %s" % [result.quantity, label]) if label != "" else ("%dx" % result.quantity)
+			print("World3D: picked up %s (ground item %d, item %d)" % [what, result.ground_id, result.item_id])
+			_log_system("Picked up %s." % what)
 			if NetClient.is_connected_to_server():
 				if result.gold:
 					NetClient.character_stats(NetClient.current_character_name)
@@ -8017,7 +8056,8 @@ func _on_loot_dropped(dropped: CombatNet.LootDropped) -> void:
 	if dropped == null:
 		return
 	for d in dropped.drops:
-		_log_system("Looted %dx item #%d." % [d.quantity, d.item_id])
+		var label := _item_label_for_line(d.item_id)
+		_log_system(("Looted %dx %s." % [d.quantity, label]) if label != "" else ("Looted %dx." % d.quantity))
 	NetClient.list_inventory(NetClient.current_character_name)
 
 # --- Inventory tab ---------------------------------------------------------
@@ -8029,7 +8069,8 @@ func _on_inventory_list_result(slots: Array, error: String) -> void:
 	_inventory_slots.assign(slots)
 	inventory_list.clear()
 	for s in _inventory_slots:
-		inventory_list.add_item("Slot %d: item #%d x%d" % [s.slot_index, s.item_id, s.quantity])
+		# The dev list names items too: the client's own name, else the code name.
+		inventory_list.add_item("Slot %d: %s x%d" % [s.slot_index, _item_label_for_line(s.item_id), s.quantity])
 
 func _on_equip_pressed(slot: int) -> void:
 	var selected := inventory_list.get_selected_items()
@@ -8061,7 +8102,7 @@ func _on_equipment_result(items: Array, error: String) -> void:
 	equipment_list.clear()
 	for e in items:
 		var slot_name: String = "Weapon" if e.slot == EquipmentNet.SLOT_WEAPON else ARMOR_SLOT_LABELS.get(e.slot, "Slot %d" % e.slot)
-		equipment_list.add_item("%s: item #%d" % [slot_name, e.item_id])
+		equipment_list.add_item("%s: %s" % [slot_name, _item_label_for_line(e.item_id)])
 
 func _on_unequip_pressed(slot: int) -> void:
 	_awaiting_equip_ack = true
@@ -8154,8 +8195,8 @@ func _on_shop_list_result(entries: Array, error: String) -> void:
 	_shop_entries.assign(entries)
 	shop_list.clear()
 	for e in _shop_entries:
-		shop_list.add_item("Item #%d (class %d, atk %.1f/def %.1f) -- %dg" % [
-			e.item_id, e.item_class, e.phys_attack_max, e.phys_defense_max, e.price
+		shop_list.add_item("%s (class %d, atk %.1f/def %.1f) -- %dg" % [
+			_item_label_for_line(e.item_id), e.item_class, e.phys_attack_max, e.phys_defense_max, e.price
 		])
 
 func _on_shop_buy_pressed() -> void:
@@ -8384,10 +8425,11 @@ func _on_trade_offer_updated(updated: TradeNet.OfferUpdated) -> void:
 func _on_trade_completed(completed: TradeNet.Completed) -> void:
 	if completed == null:
 		return
-	_log_system("Trade complete! Received %dg%s" % [
-		completed.received_gold,
-		(" and %dx item #%d" % [completed.received_quantity, completed.received_item_id]) if completed.received_item_id != 0 else ""
-	])
+	var received := ""
+	if completed.received_item_id != 0:
+		var label := _item_label_for_line(completed.received_item_id)
+		received = (" and %dx %s" % [completed.received_quantity, label]) if label != "" else (" and %dx" % completed.received_quantity)
+	_log_system("Trade complete! Received %dg%s" % [completed.received_gold, received])
 	NetClient.list_inventory(NetClient.current_character_name)
 
 func _on_trade_cancelled(cancelled: TradeNet.Cancelled) -> void:

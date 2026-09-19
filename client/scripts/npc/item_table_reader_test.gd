@@ -145,6 +145,43 @@ func _init() -> void:
 		_check(joined.contains("Mag. reinforce 51.9 % ~ 59.1 %"), "tooltip shows mag reinforce as a percent (got: %s)" % joined)
 		_check(joined.contains("Sort of item: Sword") and joined.contains("Required level 1"), "tooltip shows sort and required level")
 
+	# display_name: the client's own English name or nothing -- never the
+	# archive's mangled column 3, never an id. Shapes taken from the real
+	# archive (2026-09-19): the potion's row has column 3 "HP ?? ??" and its
+	# SN_ key resolves in textdata_object with 0-based column 7 "0" and column
+	# 8 the English; a weapon's column 3 is English and stands in when no table is
+	# given; a name of only "?" or digits shows nothing.
+	var potion_cols := _row("4", "HP ?? ??", "", 54).split("\t")
+	potion_cols[ItemTableReader.COL_CODE_NAME] = "ITEM_ETC_HP_POTION_01"
+	potion_cols[ItemTableReader.COL_NAME_STRID] = "SN_ITEM_ETC_HP_POTION_01"
+	var sword_cols := _row("3632", "Copper Sword", "", 54).split("\t")
+	sword_cols[ItemTableReader.COL_CODE_NAME] = "ITEM_CH_SWORD_01_A_DEF"
+	sword_cols[ItemTableReader.COL_NAME_STRID] = "SN_ITEM_CH_SWORD_01_A_DEF"
+	var name_items := ItemTableReader.parse(("\t".join(potion_cols) + "\n" + "\t".join(sword_cols) + "\n").to_utf16_buffer())
+	var potion: ItemTableReader.Item = name_items.get(4)
+	var copper: ItemTableReader.Item = name_items.get(3632)
+	_check(potion != null and copper != null, "name fixture rows parse")
+	if potion != null and copper != null:
+		# The object table in the real file's shape (0-based): column 7 holds
+		# "0", column 8 -- the parser's first choice -- the English.
+		var object_names := UiTextTable.parse(
+			"1\tSN_ITEM_ETC_HP_POTION_01\tHP\t\t\t\t\t0\tHP Recovery Herb\n".to_utf16_buffer())
+		_check(potion.display_name(object_names) == "HP Recovery Herb",
+			"potion resolves through the object table (got '%s')" % potion.display_name(object_names))
+		# The UI-string catalog has no SN_ITEM_ keys: nothing resolves, and the
+		# mangled column 3 must NOT be shown.
+		var ui_strings := UiTextTable.parse("1\tUIIT_STT_GOLD\t\t\t\t\t\t\tGold\n".to_utf16_buffer())
+		_check(potion.display_name(ui_strings) == "",
+			"potion through the UI catalog shows nothing, not 'HP ?? ??' (got '%s')" % potion.display_name(ui_strings))
+		_check(potion.display_name(null) == "", "potion with no table shows nothing")
+		_check(copper.display_name(null) == "Copper Sword", "an English column 3 stands in when no table is given")
+		_check(copper.display_name(ui_strings) == "Copper Sword", "an English column 3 stands in when the key is unknown")
+	_check(ItemTableReader.Item.reads_as_english("Copper Sword"), "reads_as_english: plain English")
+	_check(not ItemTableReader.Item.reads_as_english("HP ?? ??"), "reads_as_english: question marks rejected")
+	_check(not ItemTableReader.Item.reads_as_english("회복 약"), "reads_as_english: Hangul rejected")
+	_check(not ItemTableReader.Item.reads_as_english("12 34"), "reads_as_english: digits only rejected")
+	_check(not ItemTableReader.Item.reads_as_english("   "), "reads_as_english: blank rejected")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
