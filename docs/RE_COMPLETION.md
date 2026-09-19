@@ -5187,6 +5187,10 @@ SkillAction_Stance 0x587260 engages once and stays in the book) -- a function
 the dump never defined, read from objdump; the dump-gap caveat recorded. Two
 names. Coverage today: server 7,950/34,207 named (23.2 %), client 6,732/43,562
 (15.5 %), measured off index.txt.
+Round 269 (docs): the aggro link's party condition is the EXP-SHARING bit
+(party.md's bit 0, named by the client's refusal); bit 1 is item sharing;
+GObjPC::GetPartyFlags named; the writer of the byte is still unfound (the
+create request's type byte rides the invitation).
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

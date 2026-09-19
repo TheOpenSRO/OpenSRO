@@ -394,9 +394,10 @@ func LevelScaledRadius(base float64, monsterLevel, targetLevel int) float64 {
 
 // The aggro link, read off CAIState::OnAttacked (0x558ea0) and
 // AITactics_ExtRoutine::LinkAggroToNearbyMonsters (0x547570), round 258
-// (docs/protocol/monster_ai.md "The aggro link"). A hit from a PARTY member
-// (the party's +0x10 bit 0 set) makes the struck monster gather the ten
-// nearest monsters inside LevelScaledRadius(its detection radius, attacker)
+// (docs/protocol/monster_ai.md "The aggro link"). A hit from a member of an
+// EXP-SHARING party (the party's +0x10 bit 0, named in party.md) makes the
+// struck monster gather the ten nearest monsters inside
+// LevelScaledRadius(its detection radius, attacker)
 // and forward the attack record to as many of them as the party has members
 // within 1000 units of the attacker; each successive link carries the damage
 // times the decrease ratio. A linked monster enters BATTLE against the

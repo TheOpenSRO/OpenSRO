@@ -7075,6 +7075,21 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-sixty-ninth round: the party flag the aggro link tests is the exp-sharing bit
+
+The RE tick for 2026-09-19 20:02, a short cross-reference. Round 258 left "bit 0 of the party's
+`+0x10`" unnamed in the aggro-link write-up; `party.md` had already named it: the join-time cap
+test at `0x5145cc` selects 8 or 4 by that bit and the client's `MEMBER_FULL_EXP_SHARED_PARTY`
+refusal names the set case -- so **a party member's hit pulls neighbouring monsters in only in an
+exp-sharing party**, and the berserk party share tests the same bit. Bit 1 is item sharing
+(`ground_items.md`). `GObjPC::GetPartyFlags` (`0x4ea200`) is the getter every reader uses. The
+byte's WRITER (the create request's type byte travels with the invitation to the accept) was not
+found by the store patterns this round and is written down as such in `party.md`.
+
+Docs and a comment; no shipped value changed. One name. (The first commit of this round carried
+only the `monster_ai.md` line -- an edit script stopped at a stale anchor after writing the first
+file; the rest followed in a second commit.)
+
 ## Two-hundred-and-sixty-eighth round: action kind 4 is the stance, and the dump has gaps
 
 The RE tick for 2026-09-19 19:47 closed the one action kind round 267 left: **4 is the STANCE**.

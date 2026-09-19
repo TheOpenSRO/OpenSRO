@@ -74,6 +74,22 @@ A separate subsystem with its own nine codes (`PARTYMATCH_*`), entered through
 code — it appears in nine different functions — so "only the leader may do this"
 is the party system's dominant rule.
 
+## Who reads the flag word (round 269)
+
+`GObjPC::GetPartyFlags` (`0x4ea200`) returns the byte at `party+0x10` through
+`pc+0x1cb8`. Its readers, each settled at its own use-site: **bit 0**
+(exp-sharing) gates the join cap above, the **aggro link** (a party member's
+hit pulls neighbouring monsters in only in an exp-sharing party;
+`monster_ai.md`) and the berserk party share; **bit 1** is item sharing --
+`ground_items.md`: a party member may pick a reserved drop when the party
+shares items (`GetPartyFlags() & 2`); `FUN_005bbae0` (from `0x5bc210` and
+`CMainProcess::FUN_005bf150`) requires BOTH bits before it walks a member's
+list -- unread beyond that gate. The writer of the byte -- where the create
+request's type byte (`HandlePartyMsg_060` reads a u32 target and a u8 after
+`CParty::CheckCanCreate`, and hands the byte to `0x5be280` with the invitation)
+lands in the party object -- was not found by the store patterns this round;
+the invite record carries it until the accept.
+
 ## Not recovered
 
 - **Bit 2 of the party flags.** The attempt is recorded in
