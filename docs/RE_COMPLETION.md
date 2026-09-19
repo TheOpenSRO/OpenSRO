@@ -18088,3 +18088,21 @@ tables, none of them telelink. The `CRefTeleLink` row reader therefore reads
 through a helper or lives outside those shards. The row's next probe is now
 specific: the class's vtable slot for `ExtractData`, or `RefInstanceGenerator`'s
 `VCRefTeleLink` walk. No value changed; nothing to wire.
+
+## The teleport fee at its use-site, and a vtable that has no ExtractData (2026-09-19)
+
+Continuing the probe named earlier the same day. Reading `CRefTeleLink`'s vtable
+from the binary (`0xb0bfd0`) showed nine slots -- GetClassName, the destructor,
+the two table-name getters and five implementations shared with the neighbouring
+record classes -- so there is **no class-specific `ExtractData`** to find: the
+row is filled by the generic schema reader in text order. The consumer was then
+reachable from the gold side: of the five sites that refuse `0x1c07`, the
+unnamed `FUN_00513590` is the **teleport-use handler**. For a link it takes
+`links[index]` off the gate (`FUN_004884c0`), reads `fee = link[1]`, **waives it
+below level 21**, adds a gate-flag surcharge (`FUN_00486390`, unread; the siege
+tax by context), and refuses `0x1c07` when the 64-bit gold at `inv+0x78/+0x7c`
+is short. That is a use-site: teleportlink column 3 is the fee. Columns 8/9
+(the level range) stay inferred -- no level-vs-link comparison is on that path;
+`0x1c14` is the interaction-range test (`GObjPC::FUN_004a8e10`), `0x1c0f` an
+index out of the gate's list. Four names added. srrevamp has no teleport yet;
+nothing to wire.
