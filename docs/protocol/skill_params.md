@@ -1289,8 +1289,11 @@ an action-kind-3 record in the skill book, ended by `SkillAction_Buff`'s active 
 self-effects; the cast-context builder B, `0x586700`), **1** the bow family's projectile action
 (8,840; builder A, `0x5857b0`), **3 a TIMED BUFF** (`SkillAction_Buff`, `0x5830b0`, 9,247 bytes:
 `SKILL_CH_FIRE_SHIELD_A_01`, `SKILL_MALL_MOVE_SPEED_UP_*`, `SKILL_ETC_TRANS_MONSTER_*` -- 2,213
-rows), **4** a macro-guarded kind (540; `Macro Detected!` when its second argument is zero; not
-read). 2, 5, 6 are empty; the `Params` code runs start at the second word.
+rows), **4 a STANCE** (540 rows, every one led by `setv` -- the EU warrior's shield and stance
+skills; `SkillAction_Stance`, `0x587260`, a 96-byte function the dump had NOT defined, read from
+objdump: phase 3 engages once and registers the record in the book, phase 6 files its `+0x300`
+word; the `Macro Detected!` guard is the dispatcher's, for a phase-4 call with a zero argument).
+2, 5, 6 are empty; the `Params` code runs start at the second word.
 
 **`SkillBook::Update`** (`0x59bb80`, the per-character tick of the active-effect book at
 `char+0xa30`) drives four lists: the periodic effects (`TickTimedSkillEffect`; an expired one has

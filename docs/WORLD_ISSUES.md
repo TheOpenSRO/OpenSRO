@@ -7075,6 +7075,22 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-sixty-eighth round: action kind 4 is the stance, and the dump has gaps
+
+The RE tick for 2026-09-19 19:47 closed the one action kind round 267 left: **4 is the STANCE**.
+All 540 retail rows with it are led by `setv` -- the EU warrior's shield and stance skills
+(`SKILL_EU_WARRIOR_SHIELDP_ATTACK_A_*` and kin) -- and the handler at `0x587260` engages the
+record once (`EngageSkill`, then `GObjPC::FUN_0059e220` registers it in the skill book) and files
+its `+0x300` word on phase 6; the `Macro Detected!` guard belongs to the dispatcher.
+
+**The finding about the finding:** `0x587260` is a 96-byte function **Ghidra never defined** --
+the dump's index jumps from `0x587210` to `0x5872c0` -- so a pointer-table slot that resolves to
+no index entry is not evidence of a bad table. It was read from objdump. Recorded in the RE
+memory note as a dump limitation beside "code only".
+
+Recorded: `skill_params.md` (the action-kind list), `skillparam.ActionKindStance`, two names.
+Docs only; no shipped value changed.
+
 ## Two-hundred-and-sixty-seventh round: the buff lifecycle -- action kind 3, `dura`, and 0xB072
 
 The RE tick for 2026-09-19 19:33 ran the probe round 266 wrote down (the active-effect book's own

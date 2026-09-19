@@ -898,12 +898,16 @@ func AreaTargetShare(i, falloffPercent int) int {
 // instant self-effects -- 20,460 retail rows; the cast-context builder B),
 // 1 the bow family's projectile action (8,840; builder A), 3 a TIMED BUFF
 // (SkillAction_Buff, 0x5830b0: 2,213 rows such as the fire shield, the
-// speed-up scrolls, the transforms) and 4 a macro-guarded kind (540; not
-// read). 2, 5 and 6 have no handler.
+// speed-up scrolls, the transforms) and 4 a STANCE (540 rows, every one led
+// by 'setv': the EU warrior's shield and stance skills -- SkillAction_Stance,
+// 0x587260, a 96-byte function the dump had not defined: it engages once and
+// stays registered in the skill book; the "Macro Detected!" guard belongs to
+// its dispatcher). 2, 5 and 6 have no handler.
 const (
 	ActionKindInstant    = 0
 	ActionKindProjectile = 1
 	ActionKindBuff       = 3
+	ActionKindStance     = 4
 )
 
 // A timed buff (action kind 3) runs as one record in the target's skill book
