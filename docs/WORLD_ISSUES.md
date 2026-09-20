@@ -7115,6 +7115,20 @@ Four names: the assert helper itself, `PrimMtrlSet::SaveToFile`,
 changed; this is a map to read from, and `docs/protocol/client_source_map.md` says what it
 does and does not establish.
 
+**Corrected within the hour: the material half of this round was not new.**
+`docs/protocol/BMT_FORMAT.md` already carried `PrimMtrlSet`, its `objengine` assert path, the
+magic as three integers, the per-layer field order AND the flag word's location at material
+`+0x60` -- and `object_loader.gd` already uses bit 0 of it (`LAYER_FLAG_ALPHA`, gated behind
+`LAYER_FLAG_MASK`) with a pixel fallback. The field was never "parsed and ignored"; only
+`bmt_reader.gd`'s local name for it says `unknown`. This round re-derived a recorded fact and
+said it was fresh.
+
+That is the second time this exact failure has cost a tick -- the first is in this project's
+notes as "grep docs/protocol for the row before the dump", after the warehouse-scope fact
+turned out to be recorded already. The genuinely open question is unchanged and narrower than
+round 279 implied: **where material+0x60 is TESTED**. The writers are all it found, and the
+reader is what would settle bit 0 against the binary instead of against a correlation.
+
 ## Two-hundred-and-seventy-eighth round: the state vocabulary, and a code that lies about itself
 
 The RE tick for 2026-09-20 took round 277's leftover -- six status fields the page had never

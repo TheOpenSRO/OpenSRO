@@ -5284,7 +5284,12 @@ names. The same dig LOCATED but did not read the material layer's unknown
 dword: PrimMtrlSet::WriteLayer puts it at CPrimMtrl+0x60, between power
 (+0x40) and the texture path (+0x64), and it is the obvious candidate for the
 blend flags behind playtest items 6 and 14 -- left unpromoted until its
-reader is read.
+reader is read. CORRECTED same day: that half was NOT new. BMT_FORMAT.md
+already recorded PrimMtrlSet, the field order and the flag word at +0x60, and
+object_loader.gd already uses bit 0 (LAYER_FLAG_ALPHA behind LAYER_FLAG_MASK)
+with a pixel fallback; only bmt_reader.gd's local name says `unknown`. Second
+instance of "grep docs/protocol before the dump". The open question is
+unchanged: where material+0x60 is TESTED.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

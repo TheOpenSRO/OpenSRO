@@ -50,21 +50,40 @@ section in. `ResObject.cpp`, `MapLoader.cpp`, `CompoundObj.cpp`, `VertexBuffer.c
 and `RTDunBlock.cpp` are the world-rendering family; `CharacterDependentData.cpp`
 has 23 functions and is the largest single file in the table.
 
-## What this did NOT settle: the material layer's flags word
+## What this did NOT settle -- and what I had already been told
 
-The same dig went looking for what `bmt_reader.gd` calls `Layer.unknown` -- a
-dword every material layer carries, parsed and then ignored, which is the
-obvious candidate for the alpha/blend flags that playtest items 6 and 14
-(see-through clothes, hair as a solid block) turn on.
+The same dig went looking for what `bmt_reader.gd` calls `Layer.unknown`, on the
+assumption it was an unread field. **It is not, and this page said so before
+round 279 ran.**
 
-**Its location is now exact.** `PrimMtrlSet::WriteLayer` (`0x00bf8970`) writes a
-layer in this order: the name string, four 16-byte colour blocks (member `+0x10`,
-`+0x00`, `+0x20`, `+0x30` -- note the file order is not the member order), the
-dword at member `+0x40` (`power`), **the dword at member `+0x60`**, then the
-texture path at `+0x64`. So the field we do not understand is `CPrimMtrl+0x60`.
+`docs/protocol/BMT_FORMAT.md` already records, from an earlier pass:
 
-**What it means is not read**, and nothing here promotes a guess. The next step
-is the reader of `+0x60` on a `CPrimMtrl`, which is where the renderer decides
-a blend mode -- and until that is read, the client's character materials keep
-their current, honest state: no transparency set at all, which is why hair with
-an alpha channel draws as a block.
+- `PrimMtrlSet::SaveToFile` and its `objengine\PrimMtrlSet.cpp` assert;
+- the magic written as three integers, `JMXV` / `BMT ` / `0102`;
+- the per-layer field order out of the serialiser;
+- **that the flag word is the dword at material struct offset `0x60`**;
+- and that bit 0 means "this layer's alpha is a cutout mask", inferred from a
+  perfect correlation across ~25 layers plus the artists' `_al` naming
+  convention, with the binary confirmation explicitly still open.
+
+`object_loader.gd` then *uses* it: `LAYER_FLAG_ALPHA = 0x1` gated behind
+`LAYER_FLAG_MASK = 0x40`, with a pixel-inspection fallback for layers whose word
+does not look like a flag word. So the field is read, understood well enough to
+ship, and only its *binary* confirmation is missing.
+
+Round 279 re-derived the layout and briefly presented it as new. It was not.
+The lesson is the one already in this project's notes and now earned twice:
+**grep `docs/protocol/` for the row before going to the dump.**
+
+What remains genuinely open is narrower and is what BMT_FORMAT.md already names:
+**where material+0x60 is TESTED** in the render path. The states are set
+numerically and there are no alpha-test strings to anchor a search, so the way in
+is the field's readers, not its writers -- and the writers are all round 279
+found.
+
+## What IS new here
+
+The assert lever itself, and nothing about materials: 165 source paths, 736 call
+sites, 364 functions mapped to a translation unit, 352 of which had no name. That
+map is the contribution, and `NIFOption.cpp`, `InventoryManager.cpp`,
+`SkillManager.cpp` and the rest are where it pays off.
