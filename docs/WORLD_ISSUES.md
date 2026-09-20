@@ -7075,6 +7075,38 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-ninety-sixth round: columns 3 and 4 have no reader, and the sweep lied twice first
+
+Round 295 left columns 3 and 4 predicted by the packing at `row+0x14`/`+0x18`, with no reader
+found. Sweeping every function that touches `DAT_00d6aa14` settles it: **there are none.** The
+columns are real in the file and unread in the server, which is a fact about the engine rather
+than a gap in the search.
+
+**The search is the part worth recording, because it produced the right-looking wrong answer
+twice.** The first sweep reported `FUN_00410f10` reading `0x10 0x14 0x18` -- exactly the
+predicted col 2/3/4 triple, in a `Formulae` function, which is precisely where such a reader
+should live. It is not one:
+
+	iVar3 = DAT_00d6aa14;                  ; the singleton
+	iVar1 = *(int *)(iVar3 + 0x14);        ; the VECTOR's begin
+	       *(int *)(iVar3 + 0x18)          ; the VECTOR's end
+	iVar3 = *(int *)(iVar1 + uVar2 * 4);   ; ...and NOW iVar3 is the row
+
+The vector's `begin`/`end` sit at `+0x14`/`+0x18` of the singleton -- **the same two numbers as
+the predicted columns**. A second sweep, rewritten to track only variables assigned from
+`rows[i]`, reported `CGObjCOS_GoldPet::vslot_215` reading `0x14` and `0x18`, and that was the
+same trap again: the decompiler reuses one variable for the singleton and then for the row, so
+the bounds checks are attributed to the row.
+
+Only a probe that keeps the two apart answers. Two plausible hits, both bounds checks, and the
+coincidence is structural rather than bad luck -- anyone sweeping this table will meet it.
+
+**What did come out of the sweep**, since it enumerated the readers properly: two names.
+`Formulae::SumMasteryUpCost` (`0x00410f10`) walks the rows downward accumulating `+0x10`,
+leveldata column 2 -- a second use site for that column beside the mastery level-up handler.
+And `GetSingleton_00d6aa14` (`0x00404ca0`) is the named accessor for the singleton
+`manager_singletons.md` still lists as unidentified.
+
 ## Two-hundred-and-ninety-fifth round: the level record, pinned at four points, and the three jobs
 
 Round 294 put column 1 at `+8`/`+0xc`. That made a **prediction** worth testing: if the record

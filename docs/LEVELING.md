@@ -46,7 +46,7 @@ separate readers pin four points of it -- no packing argument required:
 | `+0x10` | **2** -- mastery SP cost | `FUN_0059c4e0`, the mastery level-up handler, accumulates it over the levels raised |
 | `+0x1c` | **5** -- exp unit | `Formula_MonsterExpReward`, and a getter at `0x004e68xx` returning `row+0x1c` |
 | `+0x20`, `+0x24`, `+0x28` | **6, 7, 8** -- one per job | see below |
-| `+0x14`, `+0x18` | 3, 4 -- *predicted by the packing, no reader found yet* | |
+| `+0x14`, `+0x18` | 3, 4 -- *predicted by the packing; **swept for, and no reader exists** (round 296)* | |
 
 Four anchors agreeing on one stride is what turns this from an inference into a
 layout. It also retires an older argument: `cmd/export-leveldata` justified
@@ -76,6 +76,32 @@ the character's experience path has. Which is why this page's older note that
 
 srrevamp does not model job levels yet, so nothing here is wired in; the
 columns are recorded for when `internal/jobs` needs them.
+
+### Columns 3 and 4 have no reader, and the sweep that says so lied twice first
+
+Every function referencing `DAT_00d6aa14` was swept for reads at `row+0x14` and
+`row+0x18`. **There are none.** Columns 3 and 4 stay predicted by the packing
+with no consumer in the server, which is a fact about the engine and not a gap
+in the search.
+
+The search is worth recording because it produced the right-looking wrong
+answer **twice**:
+
+	iVar3 = DAT_00d6aa14;                      ; the singleton
+	iVar1 = *(int *)(iVar3 + 0x14);            ; the VECTOR's begin
+	       *(int *)(iVar3 + 0x18)              ; the VECTOR's end
+	iVar3 = *(int *)(iVar1 + uVar2 * 4);       ; ...and now iVar3 is the ROW
+
+The vector's `begin`/`end` live at `+0x14`/`+0x18` of the singleton -- **the same
+two numbers as the predicted columns** -- and the decompiler reuses one variable
+for the singleton and then the row. A sweep that keys on "offsets read from a
+variable that later holds a row" therefore reports `0x14` and `0x18` for
+`CGObjCOS_GoldPet::vslot_215` and others, and they are bounds checks every time.
+
+Only a probe that separates the two answers correctly. The lesson generalises to
+this whole table: `+0x14`/`+0x18` on the *singleton* is the vector, on a *row* it
+would be columns 3 and 4, and nothing distinguishes them but which variable is
+which.
 
 Other columns (10 total; cols 2/5/6-8 look job/cost/gold-related) are not needed for basic
 leveling and are left unread until a use for them is pinned. **leveldata.txt carries no per-level

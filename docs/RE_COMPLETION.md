@@ -5456,6 +5456,18 @@ That retires the elimination argument export-leveldata used for +0x1c. Cols
 2 Robber, 3 Hunter, the byte round 273 read off JobRecordKindName. Cols 3 and 4
 are predicted at +0x14/+0x18 with no reader found, and recorded as predicted.
 Nothing wired: srrevamp models job kinds but not job levels.
+Round 296 (docs + 2 names): columns 3 and 4 have NO READER -- swept every
+function touching DAT_00d6aa14. They are real in the file and unread in the
+server. The sweep produced the right-looking wrong answer TWICE first: the
+vector's begin/end live at singleton+0x14/+0x18, the same two numbers as the
+predicted columns, and the decompiler reuses one variable for the singleton
+and then the row it indexes, so both a naive sweep and a row-tracking one
+reported bounds checks as column reads. Recorded as a structural trap for
+anyone sweeping this table. Two names fell out of enumerating the readers
+properly: Formulae::SumMasteryUpCost (0x410f10), which walks rows downward
+accumulating +0x10 = column 2 (a second use site beside the mastery handler),
+and GetSingleton_00d6aa14 (0x404ca0), the named accessor for the singleton
+manager_singletons.md lists as unidentified.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

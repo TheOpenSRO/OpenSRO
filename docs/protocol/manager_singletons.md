@@ -234,3 +234,10 @@ By `refdata_tables.md`'s enumeration the per-level table is `_REFLEVEL`
 traced: the rows are placed from further out than `0x0082afc0`, and no function
 references both this global and a `"_REF…"` literal. `FUN_006f8950` frees the
 vector's rows, so it is teardown rather than the fill.
+
+**It has a named accessor** (round 296): `GetSingleton_00d6aa14` (`0x00404ca0`)
+returns the singleton's `+0x10`. And its vector's `begin`/`end` sit at `+0x14`
+and `+0x18` -- worth knowing before reading any sweep of this global, because
+those are also the offsets a *row's* columns 3 and 4 would occupy, and the
+decompiler routinely reuses one variable for the singleton and then the row it
+indexes out of it.
