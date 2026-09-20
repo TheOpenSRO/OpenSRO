@@ -248,3 +248,40 @@ before an opcode moves, so nothing is changed here.
 | `0x516` | `GObjPC_HandleSiegeMsg_516` | `0xb516` |
 | `0x51a` | `GObjPC_HandleCallUserMsg_51a` | `0xb51a` |
 | `0x51c` | `GObjPC_HandleSummonPartyUserMsg_51c` | `-` |
+
+
+## The server's message buffer, field by field (round 327)
+
+`MsgBuf_ReadUInt8` already carried three of these in its annotation. Reading the
+writer, `MsgBuf_AppendBytes` (`0x00404090`), completes the map:
+
+| offset | field |
+|---|---|
+| `+0x1034` | buffer base |
+| `+0x103c` | **read** cursor |
+| `+0x103e` | size, which is also the **write** position |
+| `+0x104c` | capacity -- exceeding it throws rather than truncating |
+| `+0x1050` | the opcode (the dispatcher reads its first word) |
+| `+0x1054` | **pointer to the on-wire header's Size word** |
+
+The append does, after the `memcpy` and the size bump:
+
+	*(ushort *)this[0x1054] = (*(ushort *)this[0x1054] & 0x8000) | (size - 6)
+
+**`size - 6` is the payload length**, which confirms the **6-byte header** and
+the reserved **`0x8000`** top bit from the writer's side. Both were already
+recorded in `docs/protocol/opcodes/handshake.md`, read from the checksum side --
+"`(Size & 0x7fff) + 6` bytes ... including the real 6-byte header". Two
+independent routes to the same frame, which is worth more than either alone.
+
+**This does not revive round 326's killed hypothesis.** That one read a byte at
+`+6` of `this->[0x30]`, a different object entirely; the header is real, it was
+simply not there. A correct constant found in the wrong place is still the wrong
+place.
+
+### Why this matters for the opcode roadmap
+
+Round 324 listed 93 real handlers whose remaining work is "the payload layout".
+Every one of them reads its payload through `MsgBuf_Read*` against this buffer,
+so the layout of any handler is the **sequence of those calls** -- which is now
+a greppable question rather than a reading one.

@@ -6074,6 +6074,28 @@ THE MEMBERSHIP CHANGED from the withdrawn list -- 0x1806 drops out, 0x1403,
 wrong. 0x4828 is corroborated from jobs.md, which records it as the job-join
 refusal for a kind outside {1,2,3}, read in round 273 from another function.
 
+Round 327 (1 name, the frame confirmed): THE MESSAGE BUFFER, FIELD BY FIELD.
+Item_HandleUseItem never touches +0x1050 (the message); it reads a word at
++0x103e repeatedly, which looked like a parsed field and is the message SIZE --
+MsgBuf_ReadUInt8 was ALREADY named and annotated in this repo with buffer
++0x1034, read cursor +0x103c, size +0x103e. The writer completes the map:
+0x00404090, called eight times by that handler and also by
+Msg_SendTwoFieldReply, checks capacity at +0x104c, memcpy's into
+buffer+0x1034 at the current size, advances it, then sets
+*(ushort*)this[0x1054] = (old & 0x8000) | (size - 6). Filed as
+MsgBuf_AppendBytes; two new fields fall out, +0x104c capacity and +0x1054 a
+POINTER to the on-wire header's Size word. `size - 6` is the payload length, so
+the 6-BYTE HEADER and the reserved 0x8000 top bit are confirmed FROM THE WRITER
+SIDE -- both already recorded in opcodes/handshake.md from the CHECKSUM side
+("(Size & 0x7fff) + 6 bytes ... including the real 6-byte header"), so two
+independent routes agree on the frame. This does NOT revive round 326's killed
+hypothesis: that read a byte at +6 of this->[0x30], a different object, and a
+correct constant found in the wrong place is still the wrong place. WHAT IT
+BUYS: round 324 left 93 real handlers whose remaining work is "the payload
+layout", and every one reads through MsgBuf_Read* against this buffer, so a
+handler's layout is the SEQUENCE OF THOSE CALLS -- greppable rather than a
+reading.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

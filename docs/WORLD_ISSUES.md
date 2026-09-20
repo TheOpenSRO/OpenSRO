@@ -7075,6 +7075,50 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-twenty-seventh round: the message buffer, and a hunch that was right in the wrong place
+
+Chasing the use-item payload a third time. `Item_HandleUseItem` never touches
+`+0x1050`, the message -- it reads a word at `+0x103e` over and over, which
+looked like a parsed field.
+
+It is not. `MsgBuf_ReadUInt8` (`0x00404f80`) is **already named and annotated**
+in this repo, and says what those offsets are: buffer `+0x1034`, read cursor
+`+0x103c`, size `+0x103e`. The handler was checking the message **size**.
+
+### The writer completes the map
+
+`0x00404090` is called eight times by that one handler and also by
+`Msg_SendTwoFieldReply`. It is the append:
+
+	if (this[0x104c] < AX + this[0x103e]) throw     ; capacity
+	memcpy(this[0x1034] + this[0x103e], src, AX)    ; append at the size
+	this[0x103e] += AX
+	*(ushort *)this[0x1054] = (*(ushort *)this[0x1054] & 0x8000) | (this[0x103e] - 6)
+
+Filed as `MsgBuf_AppendBytes`. Two new fields fall out -- `+0x104c` capacity and
+`+0x1054`, a **pointer to the on-wire header's Size word**.
+
+### The 6, confirmed from the other side
+
+`size - 6` is the payload length, so the header is **six bytes** and bit
+**`0x8000`** of the Size word is reserved. Both were already recorded in
+`opcodes/handshake.md`, read from the **checksum** side: *"(Size & 0x7fff) + 6
+bytes ... including the real 6-byte header"*. Two independent routes to the same
+frame.
+
+**And this does not revive the hypothesis round 326 killed.** That one read a
+byte at `+6` of `this->[0x30]` -- a different object entirely. The header is
+real; it simply was not there. **A correct constant found in the wrong place is
+still the wrong place**, and killing it was right even though the number turned
+out to be the header size after all.
+
+### What it buys
+
+Round 324 left 93 real handlers whose remaining work is "the payload layout".
+Every one reads its payload through `MsgBuf_Read*` against this buffer, so a
+handler's layout is **the sequence of those calls** -- a greppable question now,
+not a reading one. That is the tool the last three rounds were missing.
+
 ## Three-hundred-and-twenty-sixth round: the handler ABI, and round 323 redone properly
 
 Two things, and the first makes the second cheap.
