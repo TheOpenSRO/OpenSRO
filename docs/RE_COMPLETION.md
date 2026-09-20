@@ -5504,6 +5504,19 @@ path writing this field would settle it. Also checked and left alone:
 ground_items.md's despawn timer and drop scatter are own-design-disclosed in
 srrevamp, and its ownership window (30.0 s at 0xb45e58) was already fully
 recorded -- the constant that led here.
+Round 300 (docs + a name caveat): THE HUNGER GAUGE, closed. Round 299's probe
+(the feed path writing +0x68) failed because CGItemExpendable::vslot_327 is
+not in the index and HGPFULL_NODRINK is in NEITHER binary -- it is the
+client's name for error code 0x18b3. Exactly one server function emits that,
+and it is the feed: it reads the pet data record's ushort at +0x68 as
+value * 100 / 10000.0 and refuses at >= 99.0. So the gauge IS hunger, by a use
+site. Capacity 10,000; full at 99 %; below 30 % the half-strength penalty of
+round 299; restored per feed by item[0x2a0] * 100, asserted into 1..9999 --
+per item, from alchemy.md's +0x2a0 strided array, which is why "its rate" read
+as unrecoverable. CAVEAT recorded: the feed is CASE 9 of vtable slot 327,
+which this project named SetEngagedCOSforOpenMarket BY PROPAGATION; the
+function is a multi-case dispatcher and the propagated name describes one
+case, so propagation can get the function right and the meaning wrong.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

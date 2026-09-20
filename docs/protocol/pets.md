@@ -246,10 +246,9 @@ recovered** for either.
 
 - ~~**What the five switch cases are.**~~ **Recovered 2026-09-20 (round 289)** --
   see "What the switch is switching on" above.
-- **The hunger gauge** — `HGPFULL_NODRINK` names it, and its **rate** is still
-  unread. Its capacity, threshold and penalty are read: see "A pet gauge with a
-  capacity, a threshold and a penalty" below. Whether that gauge *is* the hunger
-  gauge is the part still missing.
+- ~~**The hunger gauge**~~ **Recovered 2026-09-20 (round 300)** -- field,
+  capacity, both thresholds, the penalty and the per-feed restore. See "The
+  hunger gauge, end to end" below.
 - ~~**Pet growth.**~~ **Recovered 2026-09-20 (round 291)** -- both paths read,
   see below. What remains is the reference row the thresholds come from.
 - **The mercenary**, which is the only class of the six with a different vtable
@@ -283,9 +282,40 @@ argument position writes **100.0 as the neutral** when electric shock's
 contribution is removed (round 275, `AbnormalState_Apply03_p9`), so 100 is
 "unchanged" in this space and 50 is half.
 
-**Is this the hunger gauge?** It is the obvious candidate -- a pet-side gauge
-with a capacity and a penalty for running low -- but **no writer for `+0x68` was
-found**, in the COS range or elsewhere, so nothing here ties it to feeding or to
-`HGPFULL_NODRINK`. Recorded as a gauge with its numbers, not as hunger. The
-probe that would settle it is the feed path (`CGItemExpendable::vslot_327`)
-writing this field.
+**It is the hunger gauge** -- settled in round 300 by the feed path, below.
+## The hunger gauge, end to end (round 300)
+
+The previous round found a pet gauge and declined to call it hunger because
+nothing tied it to feeding. The tie is the **error code**, not a string:
+`HGPFULL_NODRINK` is not in either binary -- it is the client's name for
+**`0x18b3`** (`error_codes.md`), and the server emits that number.
+
+Exactly one function does, and it is the feed:
+
+	local_54 = (int *)piVar4[0xd];                    ; the pet's data record
+	local_58 = (float)((uint)*(ushort *)(local_54 + 0x1a) * 100)
+	           / (float)_DAT_00b45f90;                ; +0x1a on an int* = byte +0x68, / 10000.0
+	if (_DAT_00b462e4 <= local_58) { *local_60 = 0x18b3; ... }   ; >= 99.0  -> "gauge is full"
+
+`local_54 + 0x1a` on an `int *` is **byte offset `0x68`** -- the same field, read
+through the same `/ 10000.0` percentage as the penalty test. That is the
+citation the last round was missing.
+
+| | |
+|---|---|
+| field | pet data record `+0x68`, a `ushort` |
+| capacity | **10,000** (`_DAT_00b45f90`); every test is `value * 100 / 10000.0`, i.e. a percentage |
+| full | **>= 99 %** (`_DAT_00b462e4`) refuses a feed with `0x18b3 UIIT_MSG_COSPETERR_HGPFULL_NODRINK` |
+| low | **< 30 %** (`_DAT_00b45e58`) applies the half-strength penalty (round 299) |
+| restored per feed | `item[0x2a0] * 10000 / 100`, i.e. `item[0x2a0] * 100`, asserted into **1..9999** |
+
+The restore amount is **per item**, from the same `+0x2a0` strided array
+`alchemy.md` documents, so there is no single "rate" constant to recover -- the
+drink's own record carries it.
+
+**A naming caveat worth more than the gauge.** The feed is **case 9** of
+`CGItemExpendable` vtable slot 327, which this project named
+`SetEngagedCOSforOpenMarket` by propagation from `CGItemCOSSummoner`. The
+function is a multi-case dispatcher over expendable-item operations; the
+propagated name describes one of its cases and would send a reader looking for
+pet feeding anywhere but here. The row now carries that caveat.

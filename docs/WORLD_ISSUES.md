@@ -7075,6 +7075,45 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundredth round: the hunger gauge, and the tie was an error code rather than a string
+
+Round 299 found a pet gauge with a capacity, a threshold and a penalty, and refused to call it
+hunger because nothing connected it to feeding. It named the probe: the feed path writing that
+field.
+
+**The probe failed, and the reason was the interesting part.** `CGItemExpendable::vslot_327`
+is not in the dump's index, and `HGPFULL_NODRINK` is **in neither binary** -- so there was no
+string to grep and no function to open. The name is the client's, for an **error code**:
+`0x18b3`, per `error_codes.md`. The server emits numbers, not names.
+
+**Exactly one function emits `0x18b3`**, and it is the feed:
+
+	local_54 = (int *)piVar4[0xd];                    ; the pet's data record
+	local_58 = (float)((uint)*(ushort *)(local_54 + 0x1a) * 100)
+	           / (float)_DAT_00b45f90;                ; +0x1a on an int* = byte +0x68, / 10000.0
+	if (_DAT_00b462e4 <= local_58) { *local_60 = 0x18b3; }   ; >= 99.0 -> "the gauge is full"
+
+`local_54 + 0x1a` on an `int *` is **byte `0x68`** -- the same field as the penalty test, read
+through the same percentage. So the gauge **is** hunger, settled by a use site:
+
+	field      pet data record +0x68, a ushort
+	capacity   10,000 -- every test is value * 100 / 10000.0, a percentage
+	full       >= 99 %   refuses a feed with 0x18b3 HGPFULL_NODRINK
+	low        <  30 %   half strength on eight combat params (round 299)
+	per feed   item[0x2a0] * 100, asserted into 1..9999
+
+The restore is **per item**, out of the same `+0x2a0` strided array `alchemy.md` documents, so
+there is no single rate constant to find -- which is why "its rate" read as unrecoverable.
+
+**And a naming caveat worth more than the gauge.** The feed is **case 9** of vtable slot 327,
+which this project named `SetEngagedCOSforOpenMarket` by propagation from `CGItemCOSSummoner`.
+The function is a multi-case dispatcher; the propagated name describes one case and would send
+a reader looking for pet feeding anywhere but there. Propagation gets the *function* right and
+can get the *meaning* badly wrong, and the row now says so.
+
+Three rounds on one field: a constant noticed in an unrelated function, a gauge described but
+not named, and then the error vocabulary closing it.
+
 ## Two-hundred-and-ninety-ninth round: a pet gauge, its capacity, and the half-strength penalty
 
 Round 298 left a curated list of genuinely open bullets. This one went at `ground_items.md`'s
