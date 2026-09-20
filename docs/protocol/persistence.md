@@ -243,9 +243,9 @@ rather than "every table it touches".
 
 - **Column layouts for any of the 35 runtime tables.** `_CHARQUEST` is the one
   partial exception, from `docs/protocol/quest_scripting.md`.
-- **The parameters of any procedure**, beyond how many there are. The call
+- **The parameters of most procedures**, beyond how many there are. The call
   literal is `(%d, %d, %d)`; what each `%d` is means reading the caller's
-  argument set-up.
+  argument set-up. **Two are now partly traced** -- see below -- out of 72.
 - **The ordering and transactionality guarantees.** The queries are
   asynchronous and each carries a state field, but the queue that runs them,
   and what happens when one fails mid-sequence, is unread.
@@ -267,3 +267,46 @@ attaching a name, and note that two different things are being counted there —
 genuine COMDAT folds of tiny functions, where even the method name is
 arbitrary, and inherited base-class methods, where the method name is right and
 only the class prefix names an arbitrary member of the sharing set.
+
+## Tracing a procedure's parameters (2026-09-20, round 284)
+
+The list above has always said the parameters are "not recovered, beyond how
+many there are". Two of the 72 are now partly traced, and the method is worth
+more than the two results.
+
+**The method: an argument that is also passed to a known accessor names
+itself.** A bare `%d` in the call literal says nothing, but the same value
+handed to `CGStorage::GetItem` a few lines earlier is a **storage slot index**,
+because that is what `GetItem` takes. No inference about the column, no curve --
+the argument's other use site is the citation.
+
+### `_STRG_DEL_ITEM (%d, %I64d, %d, %I64d)` -- `AQ_StorageUpdater::DeleteItem` (`0x0045a840`)
+
+| arg | source | what it is |
+|---:|---|---|
+| 1 | byte at `this+0x28` | **unread** |
+| 2 | the call's own 64-bit argument | the item, as a 64-bit id -- this is a delete-by-item call |
+| 3 | byte at `this+0x2b` | a **storage slot**: the same byte is passed to `CGStorage::GetItem`, and `-1` in it makes the function log `AQ_StorageUpdater::Init() Failed` |
+| 4 | 64-bit at `*(param_2+0x34) + 0x78` | **unread** -- a 64-bit id belonging to the object in `param_2` |
+
+The guard is worth noting on its own: the function refuses when
+`GetItem(this+0x2b)` returns **non-zero**, i.e. the slot must already be empty
+before the row is deleted. The in-memory removal happens first and the query
+follows.
+
+### `_STRG_MOVE_ITEM (%d,%d,%d,%I64d,%d,%d,%d,%d)` -- `AQ_StorageUpdater::MoveItem` (`0x0045c9a0`)
+
+Eight arguments, of which four are placed:
+
+| arg | source | what it is |
+|---:|---|---|
+| 4 | the call's 64-bit argument pair | a 64-bit id, as in DeleteItem |
+| 5 | `this[3]` | the **source slot** -- passed to `CGStorage::GetItem` |
+| 6 | `this[4]` | the **destination slot** -- passed to `CGStorage::GetItem` |
+| 8 | the literal `0` | a constant, whatever the column means |
+
+Arguments 1, 2, 3 and 7 are read from fields and locals this pass did not
+follow, and are **not** guessed at here.
+
+Two slots side by side, both through `GetItem`, is what makes 5 and 6 a
+source/destination pair rather than two unrelated numbers.

@@ -5332,6 +5332,17 @@ archive), resolved by TypeID like any other. That CORRECTS round 281's
 conclusion: the engine does not hide body meshes either, so "we never hide"
 is not why skin shows through our armour -- what srrevamp lacks is the
 default wear, plus whatever keeps worn geometry clear of the skin (unread).
+Round 284 (docs): two candidate levers measured and CLOSED -- class
+attribution vs assert file agrees 95.4 % (332/348) with legitimate misses, so
+it is a cross-check not a name source; and the SQL `{?=CALL _PROC}` literals
+agree only SEMANTICALLY with existing names (31 functions found here against
+the 72 literals persistence.md already had). What moved instead is that
+page's own open item, the PARAMETERS of a procedure: `_STRG_DEL_ITEM` arg 3
+and `_STRG_MOVE_ITEM` args 5/6 are storage SLOTS, because the same bytes are
+passed to CGStorage::GetItem -- an argument that is also passed to a known
+accessor names itself. The unread arguments are left unread. Also corrected:
+real naming coverage is 5.3 % server / 3.0 % client, not the 21.7/14.8 this
+lane had been quoting (the old count treated vslot_NNN as a name).
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

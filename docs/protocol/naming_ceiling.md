@@ -96,3 +96,32 @@ Perfect, and cleanly separable from the one-part form by regex. Its yield is
 gives 0% and another gives 100%, and telling them apart cost one control run.
 A lever is not "text that looks like a name" — it is a pattern whose agreement
 with known answers has been measured.
+
+## Two more levers, measured and closed (2026-09-20, round 284)
+
+Both were proposed as "structure rather than text" candidates and both were
+controlled before use, per the rule this page ends on.
+
+**Class attribution vs. assert file — 95.4 %, and not a lever.** For the 348
+functions in `client_translation_units.tsv` that already carry a class-qualified
+name, does the class agree with the `.cpp` the assert names? 332 yes, 16 no. The
+misses are legitimate rather than errors: a class may live in a file named for
+something else (`CVBDynamic` in `VertexBuffer.cpp`, `CPrimBranch` in
+`PrimSkeleton.cpp`, `SWorld` methods in `Map.cpp`). So this is a **cross-check
+that validates both attributions**, not a source of new names.
+
+**SQL procedure literals — already spent.** 31 server functions issue a
+`{?=CALL _PROC}` literal, 20 of them still `FUN_`. Controlled against the 11
+already named: the agreement is *semantic*, not lexical
+(`AQ_StorageUpdater::DeleteItem` for `_STRG_DEL_ITEM`,
+`CTimedJob::PersistToDBForPet` for `_ADDTIMEDJOBFORPET`), so the literal
+describes the function but does not spell its name. And
+`docs/protocol/persistence.md` had already harvested all three call forms --
+39 `{?=CALL}`, 26 `{CALL}`, 7 `EXEC` -- which is more than this pass's grep
+found.
+
+**What was open there, and moved instead:** that page's "the parameters of any
+procedure are not recovered". Two are now partly traced, by a rule worth
+keeping: **an argument that is also passed to a known accessor names itself**
+(a `%d` handed to `CGStorage::GetItem` is a storage slot). See
+`persistence.md`.

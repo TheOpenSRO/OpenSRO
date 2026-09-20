@@ -7075,6 +7075,47 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-eighty-fourth round: two levers measured shut, and the first procedure parameters
+
+`ls docs/protocol/` first again, and it paid twice: `naming_ceiling.md` and `absence_audit.md`
+between them already say what this lane keeps rediscovering.
+
+**The coverage number this project quotes was wrong and is corrected in the repo already.**
+Real naming is **5.3 % server / 3.0 % client**, not 21.7/14.8 -- the old figures counted
+`vslot_NNN`, a vtable slot number, as a real name. A slot number and a module name are the same
+kind of knowing: where a function lives, not what it does. (My own memory was carrying the
+inflated figure and is now fixed.)
+
+**Two candidate levers, both controlled, both closed.**
+
+*Class attribution vs. assert file*: for the 348 functions with a class-qualified name in
+`client_translation_units.tsv`, the class agrees with the assert's `.cpp` **332 times out of
+348 (95.4 %)**, and the 16 misses are legitimate -- `CVBDynamic` lives in `VertexBuffer.cpp`,
+`SWorld` methods in `Map.cpp`. That makes it a cross-check validating both attributions, not a
+source of names.
+
+*SQL procedure literals*: 31 functions issue a `{?=CALL _PROC}` literal, 20 still `FUN_`.
+Controlled against the 11 named, the agreement is **semantic, not lexical** --
+`AQ_StorageUpdater::DeleteItem` for `_STRG_DEL_ITEM` -- so the literal describes the function
+without spelling its name. And `persistence.md` had already harvested all three call forms, 72
+literals against this pass's 31.
+
+**What did move** is the item `persistence.md` lists as not recovered: *the parameters of any
+procedure, beyond how many there are*. Two of the 72 are now partly traced, by a rule worth
+keeping -- **an argument that is also passed to a known accessor names itself**:
+
+- `_STRG_DEL_ITEM (%d, %I64d, %d, %I64d)`: arg 2 is the call's own 64-bit item id, and arg 3 is
+  a **storage slot**, because the same byte is handed to `CGStorage::GetItem` and `-1` in it
+  makes the function log `Init() Failed`. Args 1 and 4 are left unread rather than guessed. The
+  function also refuses unless that slot is already **empty** -- the in-memory removal happens
+  first and the query follows.
+- `_STRG_MOVE_ITEM (%d,%d,%d,%I64d,%d,%d,%d,%d)`: args 5 and 6 are the **source and destination
+  slots**, both through `GetItem`; arg 4 is a 64-bit id; arg 8 is the literal `0`. Four of the
+  eight are still unread and are not guessed at.
+
+Two slots side by side, both through the same accessor, is what makes them a pair rather than
+two unrelated numbers.
+
 ## Two-hundred-and-eighty-third round: one visual per slot, and an empty slot wears clothes
 
 The first command of this tick was `ls docs/protocol/` -- the rule the previous round's
