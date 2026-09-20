@@ -7075,6 +7075,55 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-sixteenth round: skill animations are action types, and the client was using the wrong mechanism entirely
+
+Round 315 measured that only **59 of 338** derived cast-clip names exist and
+concluded most skills ship no animation. That conclusion was half right and the
+half it got wrong is the important one: **the clips exist; the lookup is wrong.**
+
+**The decompiled client contains ZERO references to the `.ban` extension.** It
+never builds a clip path in code. It looks an entry up in the body `.bsr`'s
+animation table by **action type** and follows the index into the animation
+list. `BSR_FORMAT.md` had already noted "26 and up are skills"; counted with a
+new probe on `char\china\chinaman_fighter.bsr`:
+
+| group | entries | action type >= 26 |
+|---|---:|---:|
+| `default` | 92 | **74** |
+| `spear` | 58 | **50** |
+| `sword` | 52 | **47** |
+| `bow` | 49 | **46** |
+
+Around fifty skill animations per weapon group, **99 distinct types** across
+`sword` and `default`, running 26..220. Against that, the 59 filename matches
+are the coincidences -- names that happen to exist in
+`Prim\Ani\Char\China\man\` -- not the mechanism.
+
+So srrevamp's client has been asking the wrong question since cast animations
+were added, and "i used a skill, no animation" is the direct consequence.
+
+### The column is NOT settled, and the obvious probe cannot settle it
+
+Scanning every skilldata column for values inside the 99-type set ranks
+**column 36 first, at 64 % of rows**. Column 36 is already documented as the
+**required mastery level**. With 99 permitted values spread over 26..220, any
+numeric column scores well by chance, so the range test discriminates nothing
+and **no column is promoted**.
+
+This is the third time this session a "value falls in the right set" probe has
+produced a confident false positive -- after the `0x54` descriptor's type code
+and the `_CHAR` offset naming lever. The pattern is the same each time: a wide
+permitted set makes agreement cheap.
+
+**The next probe is a join, not a range test.** For the 59 skills whose derived
+filename does exist the clip is known, so printing each BSR entry's action type
+beside the clip it indexes gives those skills their action type directly; the
+column is then whichever one carries that number on those rows.
+
+Recorded rather than wired: the client keeps its disclosed weapon-swing
+fallback until the real mapping is in hand, which is the honest state and is
+labelled as such at the function.
+
 ## Three-hundred-and-fifteenth round: the skill animation that does not exist, and a listing that nearly lied
 
 "i used a skill, no animation" (playtest 2026-09-20). The cause is not a bug in

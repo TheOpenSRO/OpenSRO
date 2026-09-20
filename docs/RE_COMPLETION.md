@@ -5840,6 +5840,37 @@ binary unauthoritative -- so TestGroundingAuditMatchesTheShippedCombat now pairs
 three claims with three symbols and was verified by breaking it. A prose page
 cannot be checked in general; a specific pairing can.
 
+Round 315 (playtest, a measurement): THE SKILL CAST-CLIP NAMING RULE, MEASURED.
+The client derives Prim\Ani\Char\China\<gender>\<Basic_Code lowercased,
+level suffix dropped>.ban. A truncated directory listing suggested the
+skill_ch_ prefix was not used in filenames; the numbers said otherwise before
+the fix got anywhere (540/2944 rows for the current rule against 56 for the
+stripped form, and grep -c "^skill_ch_" on the listing is 135 of 334 -- the tail
+had shown only the alphabetical end). Of the 338 DISTINCT derived names only 59
+exist. No skilldata column names a .ban either: exactly one scored (column 5,
+1,482 of 2,944 rows) and it is circular -- column 5 holds the skill's base code,
+the same string the derivation produces.
+
+Round 316 (a MECHANISM recovered, a column left open): SKILL ANIMATIONS ARE
+ACTION TYPES, and round 315's conclusion was half wrong. The decompiled client
+has ZERO references to the .ban extension -- it never builds a clip path in
+code, it looks an entry up in the body .bsr's animation table by ACTION TYPE and
+follows the index into the animation list. BSR_FORMAT.md had noted "26 and up
+are skills"; counted on char\china\chinaman_fighter.bsr with the new
+probe_anim_types.gd: default 74 of 92 entries, spear 50 of 58, sword 47 of 52,
+bow 46 of 49 -- about fifty skill animations per weapon group, 99 distinct types
+across sword and default, running 26..220. So the clips exist and the filename
+derivation is simply the wrong mechanism, which is why only 59 of 338 matched.
+NOT SETTLED: which skilldata column carries the action type. Scanning every
+column for values inside the 99-type set ranks column 36 first at 64%, and
+column 36 is the documented required mastery level, which lives in the same
+range; with 99 permitted values over 26..220 any numeric column scores, so
+nothing is promoted. Third false positive of this shape this session, after the
+0x54 descriptor's type code and the _CHAR offset naming lever. NEXT PROBE is a
+JOIN, not a range test: for the 59 skills whose derived filename exists the clip
+is known, so printing each BSR entry's action type beside the clip it indexes
+gives those skills their type directly, and the column is whichever carries it.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

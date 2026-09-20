@@ -389,3 +389,42 @@ Flagged as a real, promising, correctly-scoped next step rather than guessed at 
   (`go test`) against synthetic fixtures for both orders (never real game data).
 - `client/scripts/bsr/bsr_reader.gd` (GDScript): mirrors the Go implementation field-for-field,
   used at runtime by `ObjectLoader` to build real, textured `Node3D`/`MeshInstance3D` trees.
+
+
+## Skill animations are ACTION TYPES, not filenames (2026-09-20)
+
+The table above notes "26 and up are skills". Counted, with
+`client/tools/probe_anim_types.gd` on `char\china\chinaman_fighter.bsr`:
+
+| group | entries | action type >= 26 |
+|---|---:|---:|
+| `default` | 92 | **74** |
+| `spear` | 58 | **50** |
+| `sword` | 52 | **47** |
+| `bow` | 49 | **46** |
+| `cart`, `avatar_wing` | 3, 1 | 0 |
+
+So each weapon group carries around fifty skill animations, keyed by action
+type. **The union across `sword` and `default` is 99 distinct types**, running
+26..220.
+
+**This settles how a cast animation is selected, and it is not by filename.**
+The decompiled client contains **zero** references to the `.ban` extension: it
+never builds a clip path in code, it looks an entry up in this table by action
+type and follows the index into the animation list. srrevamp's client derives
+`Prim\Ani\Char\China\<gender>\<basic_code>.ban` instead, which is why only
+**59 of 338** skills find anything (`docs/protocol/skill_fields.md`) -- it is
+the wrong mechanism, not a broken path.
+
+**Which skilldata column carries the action type is NOT settled.** Scanning
+every column for values inside the 99-type set puts column 36 first at 64 % of
+rows -- and column 36 is already documented as the **required mastery level**,
+which simply lives in the same numeric range. With 99 permitted values spread
+over 26..220 any numeric column scores, so the test cannot discriminate and
+nothing is promoted from it.
+
+**Next probe, and it is a join rather than a range test.** For the 59 skills
+whose derived filename *does* exist, the clip is known. Print each BSR entry's
+action type beside the clip name it indexes, and the skills whose clip matches
+give their action type directly; the column is then whichever one holds that
+number for those rows.
