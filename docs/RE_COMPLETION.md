@@ -5818,6 +5818,28 @@ berserk either, and srrevamp dropping it on logout is FAITHFUL, not a gap. The
 absence of a column is the proof, the same shape as the quest-objective finding:
 proving the data does not exist is itself a recovery.
 
+Round 314 (audit CORRECTED + a guard): THE GROUNDING AUDIT WAS THREE FEATURES
+BEHIND THE CODE. docs/GROUNDING_AUDIT.md's closing "what is genuinely still
+assumed" section is the list of everything not yet at the project's bar, and it
+was wrong about most of what it listed. Checked against shipping code:
+criticals ARE rolled (PlayerCritical/MonsterCritical on the wire, and not
+memoryless -- combat/chancememory.go implements the engine's per-actor
+accumulator from FUN_00599cc0); blocking IS real (PlayerBlocked, a blocked hit
+deals nothing); the monster does NOT always counterattack (Hub.CounterattackReady
+since round 254, Mangyang 3000 ms / Gyo 2000 / Yeoha 2500 from each species'
+attack-skill ReuseDelay); monster stats are grounded (characterdata col 59 MaxHP,
+col 83's skill 'att' attack, both cited in internal/combat/combat.go); prices
+grounded (itemdata cols 26/31); flat HP superseded by the recovered MaxHP
+formula; and LOOT is not a placeholder but a PROVEN ABSENCE -- DB-only, censused
+at 17 server-side tables with a test that fails if the count drifts, which is
+"disclosed with a proven reason", not an open assumption. What survives: the
+attack-combo order, parry and evade (parry recovered as param 9 but unwired;
+evade tags are vocabulary only), quest objectives, and loot item ids 500-502.
+The section has now rotted TWICE -- 2026-09-17 found it calling the server
+binary unauthoritative -- so TestGroundingAuditMatchesTheShippedCombat now pairs
+three claims with three symbols and was verified by breaking it. A prose page
+cannot be checked in general; a specific pairing can.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

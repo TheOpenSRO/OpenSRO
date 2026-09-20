@@ -393,3 +393,43 @@ func sameSubject(a, b string) bool {
 	}
 	return strings.Contains(na, tb) || strings.Contains(nb, ta)
 }
+
+// docs/GROUNDING_AUDIT.md's "what is genuinely still assumed" section makes
+// claims about what srrevamp does NOT implement. Those claims decay silently as
+// the code catches up, and this one has decayed twice: the 2026-09-17 pass found
+// it calling the server binary unauthoritative, and round 314 found it saying
+// combat had no criticals, no blocking and an always-counterattacking monster --
+// three features that had shipped.
+//
+// The page is prose and cannot be checked in general. What CAN be checked is the
+// specific pairing it now asserts: these mechanics exist in the code, and the
+// audit says they do. If one is ever removed, the audit becomes wrong again and
+// this fails; if the audit is edited back to claiming they are absent, the
+// mismatch below is the place to look.
+func TestGroundingAuditMatchesTheShippedCombat(t *testing.T) {
+	root := repoRoot(t)
+	audit, err := os.ReadFile(filepath.Join(root, "docs", "GROUNDING_AUDIT.md"))
+	if err != nil {
+		t.Fatalf("reading the grounding audit: %v", err)
+	}
+	text := string(audit)
+	for _, m := range []struct {
+		symbol string // must exist in the server
+		claim  string // the audit must say so
+	}{
+		{"PlayerCritical", "Criticals are real and rolled"},
+		{"PlayerBlocked", "Blocking is real"},
+		{"CounterattackReady", "does NOT always counterattack"},
+	} {
+		cmd := exec.Command("grep", "-rqlE", `\b`+m.symbol+`\b`,
+			"--include=*.go", filepath.Join(root, "server"))
+		if err := cmd.Run(); err != nil {
+			t.Errorf("GROUNDING_AUDIT credits the code with %q, but %s appears nowhere in server/",
+				m.claim, m.symbol)
+		}
+		if !strings.Contains(text, m.claim) {
+			t.Errorf("the code has %s but GROUNDING_AUDIT no longer says %q -- the "+
+				"still-assumed section has drifted from the code again", m.symbol, m.claim)
+		}
+	}
+}

@@ -288,11 +288,42 @@ disclosed placeholder, to confirm against the client when the relevant system is
   **Not verified**: whether this particular build was patched after compilation. Nothing seen
   suggests it, but no integrity check was run, so "Joymax's build" is a claim about its
   provenance and not about its byte-for-byte purity.
-- Attack-combo order (the four animation types are real; the order is ours).
-- Monster always counterattacks; no dodge/crit/evade (disclosed own-design combat).
-- The rest of the own-design economy/combat layer (damage, flat HP, monster stats, prices, quests,
-  loot values, gold) — placeholder by intent, to be replaced from `refdata` + the recovered
-  derived-stat formulas.
+- Attack-combo order (the four animation types are real; the order is ours). **Still true.**
+- ~~Monster always counterattacks; no dodge/crit/evade (disclosed own-design combat).~~
+  **STALE, corrected 2026-09-20 (round 314).** Three of the four clauses have since been
+  grounded and shipped:
+  - **Criticals are real and rolled.** `PlayerCritical`/`MonsterCritical` ride the combat
+    result packet, and the roll is not even memoryless — `internal/combat/chancememory.go`
+    implements the engine's per-actor accumulator from `FUN_00599cc0`, reached from
+    `Combat_ResolveDamage` via `GObjPC::RollChance`.
+  - **Blocking is real.** `PlayerBlocked` is on the wire; a blocked hit deals nothing, read in
+    `docs/RE_COMPLETION.md`, "Blocking: a blocked hit deals nothing (2026-09-15)".
+  - **The monster does NOT always counterattack.** It strikes no more often than its attack
+    skill's ReuseDelay — `combat.Hub.CounterattackReady`, round 254, with Mangyang 3000 ms,
+    Gyo 2000, Yeoha 2500.
+  - What survives: **parry and evade are still not rolled.** Parry is recovered as ParamKeeper
+    param 9 (the status-effect work) but nothing wires it, and the evade tags in
+    `combat/paramtags.go` are vocabulary only.
+- ~~The rest of the own-design economy/combat layer (damage, flat HP, monster stats, prices,
+  quests, loot values, gold) — placeholder by intent.~~ **STALE, corrected 2026-09-20.** Most
+  of that list is grounded now, and the headline table above already says so:
+  - **Monster stats**: MaxHP is `characterdata` col 59 and the attack range is col 83's skill
+    `'att'` — both cited in `internal/combat/combat.go` itself.
+  - **Prices**: `itemdata` cols 26/31, with `SellPrice < Price` checked on every real row.
+  - **Flat HP**: superseded by the recovered `MaxHP = Str x 10 x 1.02^(lvl-1)`.
+  - **Loot values**: not a placeholder but a **proven absence** — loot is DB-only, censused at
+    17 server-side tables, with a test that fails if that count drifts
+    (`persistence.ServerOnlyLootTables`). That is a disclosed value WITH a proven reason,
+    which is the bar this project sets, not an open assumption.
+  - Still genuinely ours: **quest objectives** (proven not to be data, above) and the
+    placeholder loot item ids 500-502.
+
+**This section has now rotted twice**, which is why each bullet above carries its citation
+inline: the 2026-09-17 correction found it telling readers the server binary was not
+authoritative, and this pass found it describing a combat system three features behind the
+code. `internal/systems` guards `docs/SYSTEMS.md` against exactly this and nothing guarded
+this page; `TestGroundingAuditMatchesTheShippedCombat` now does, for the three mechanics
+above.
 
 ## A mechanical citation check (2026-09-20, round 287)
 

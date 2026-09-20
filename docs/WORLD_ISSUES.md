@@ -7075,6 +7075,52 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-fourteenth round: the grounding audit was three features behind the code
+
+The project's goal is that every value is **grounded with a citation or disclosed
+with a proven reason**, and `docs/GROUNDING_AUDIT.md` is the page that says which
+is which. Its closing section -- *"what is genuinely still assumed (summary for
+the next pass)"* -- is therefore the list of everything not yet at that bar.
+
+**It was wrong about most of what it listed.** Checked against the shipping code
+rather than against itself:
+
+| the audit said | the code says |
+|---|---|
+| "no dodge/crit/evade" | `PlayerCritical`/`MonsterCritical` are on the wire, and the roll is not even memoryless -- `combat/chancememory.go` implements the engine's per-actor accumulator from `FUN_00599cc0` |
+| (same bullet) | `PlayerBlocked` is on the wire; a blocked hit deals nothing |
+| "monster always counterattacks" | gated by `combat.Hub.CounterattackReady` since round 254 -- Mangyang 3000 ms, Gyo 2000, Yeoha 2500, each the species' own attack-skill ReuseDelay |
+| "monster stats ... placeholder by intent" | MaxHP is `characterdata` col 59 and the attack range col 83's skill `'att'`, both cited in `internal/combat/combat.go` itself |
+| "prices ... placeholder" | `itemdata` cols 26/31, `SellPrice < Price` on every real row |
+| "flat HP" | superseded by `MaxHP = Str x 10 x 1.02^(lvl-1)` |
+| "loot values ... placeholder by intent" | a **proven absence**: loot is DB-only, censused at 17 server-side tables with a test that fails if the count drifts |
+
+That last one matters for the goal's wording. "Placeholder by intent" and
+"disclosed with a proven reason" are different states, and loot has been in the
+second for a while: the tables were counted and shown to be server-side. Calling
+it a placeholder undersold a finished piece of work.
+
+**What actually survives**, and is now all the section claims: the attack-combo
+order, **parry and evade** (parry is recovered as ParamKeeper param 9 but nothing
+wires it; the evade tags in `paramtags.go` are vocabulary only), quest objectives
+(proven not to be data), and the placeholder loot item ids 500-502.
+
+### Twice is a pattern, so this one gets a guard
+
+This section has now rotted twice. The 2026-09-17 pass found it telling readers
+the server binary was "a third-party emulator bundle, not authoritative" --
+discounting the artifact most recovered values come from. This pass found it
+describing a combat system three features behind the code.
+
+`internal/systems` guards `SYSTEMS.md` against exactly this and nothing guarded
+this page. `TestGroundingAuditMatchesTheShippedCombat` now pairs three claims
+with three symbols: if `PlayerCritical`, `PlayerBlocked` or `CounterattackReady`
+disappears the audit has become wrong, and if the audit stops crediting them the
+mismatch says so. Verified by breaking it -- editing "Criticals are real and
+rolled" out of the page fails the test with that sentence quoted back.
+
+A prose page cannot be checked in general. A specific pairing can.
+
 ## Three-hundred-and-thirteenth round: a lever measured and rejected, and a "next step" that was never a gap
 
 ### The obvious use of 409 offsets does not work
