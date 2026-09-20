@@ -5426,6 +5426,15 @@ is the obvious candidate (per-level, 140 rows, matching the level-up guard) and
 is deliberately NOT recorded as the answer: that is a resemblance, and the
 probe that settles it is the vector's fill site, which no function shares with
 a "_REF..." literal.
+Round 293 (docs + a code note): that answer ARRIVED, as a use site rather than
+the fill site. GObjPC::GObjPC_SetLevel indexes the same DAT_00d6aa14 vector
+with `level - 1` and stores the row on the character at +0x1cb0, so the vector
+is THE PER-LEVEL ROW TABLE and pet levelling reads the same rows as character
+levelling. Six call sites index it that way. By refdata_tables.md's
+enumeration that table is _REFLEVEL / leveldata.txt, which srrevamp already
+loads -- a pet system needs no new table, only the threshold column. The link
+from the global to the loader is still untraced and recorded as such
+(FUN_006f8950 frees the rows, so it is teardown, not the fill).
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

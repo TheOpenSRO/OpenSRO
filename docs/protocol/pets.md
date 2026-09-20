@@ -202,13 +202,29 @@ vector out of the global **`DAT_00d6aa14`**, which `OffsetExpPoint` also loads
 So the shape is settled: a **singleton holding a vector of rows, indexed by
 level**, each row carrying the 64-bit threshold at `+8`/`+0xc`.
 
-**Which table those rows are is NOT read.** `_REFLEVEL` (`leveldata.txt`) is the
-obvious candidate -- it is the per-level table, it has 140 rows, and 140 is the
-number the level-up path guards against -- but that is a resemblance, not a
-citation, and this project has been wrong twice on exactly that kind of
-reasoning. The probe that would settle it is the vector's **fill** site: no
-single function references both `DAT_00d6aa14` and a `"_REF…"` table literal
-(checked), so the rows are placed from somewhere further out than the loader.
+**Which rows those are -- settled by a use site (round 293).** The same vector
+is indexed by **`GObjPC::GObjPC_SetLevel`**:
+
+	uVar3 = uVar3 - 1;                          ; level - 1, a 0-based index
+	iVar4 = rows[uVar3];                        ; the same DAT_00d6aa14 +0x14/+0x18 vector
+	piVar1[0x72c] = iVar4;                      ; stored on the CHARACTER at +0x1cb0
+
+So the vector is **the per-level row table, indexed by `level - 1`**, and the
+function that sets a character's level is what reads it. The pet does the same
+thing into its own field (`+0x1ce0`) and takes a 64-bit at `row+8`/`+0xc` as
+its experience threshold.
+
+**Pet levelling and character levelling read the same per-level rows.** That is
+the answer the previous round withheld, and it arrived as a use site rather
+than a resemblance: not "140 rows looks like leveldata" but "the character's
+own level-set indexes this exact vector by level".
+
+By `refdata_tables.md`'s enumeration the per-level table is `_REFLEVEL`
+(`leveldata.txt`), which srrevamp already loads as `leveldata.csv`. The link
+from this vector to that loader is **not** traced -- the rows are placed from
+further out than `0x0082afc0`, and no function references both the global and a
+`"_REF…"` literal -- so the identification rests on the use site and the
+enumeration, not on the loader.
 
 ## The database surface
 

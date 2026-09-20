@@ -7075,6 +7075,39 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-ninety-third round: the answer withheld last round, arriving as a use site
+
+Round 292 traced the pet's experience thresholds to a vector held by the singleton
+`DAT_00d6aa14`, said `_REFLEVEL` was the obvious candidate, and refused to record it -- "that is
+a resemblance, not a citation". The probe it named was the vector's fill site. The fill site did
+not answer; a **use site** did.
+
+**`GObjPC::GObjPC_SetLevel` indexes the same vector**:
+
+	uVar3 = uVar3 - 1;          ; level - 1, a 0-based index
+	iVar4 = rows[uVar3];        ; the same DAT_00d6aa14 +0x14/+0x18 vector
+	piVar1[0x72c] = iVar4;      ; stored on the CHARACTER at +0x1cb0
+
+So the vector is **the per-level row table, indexed by `level - 1`**, and the function that
+sets a character's level is what reads it. The gold pet does the same into its own field and
+takes the 64-bit at `row+8`/`+0xc` as its threshold. **Pet levelling and character levelling
+read the same rows.**
+
+That is the difference between the two rounds, and it is the whole method: not "140 rows looks
+like leveldata", but "the character's own level-set indexes this exact vector by level". Six
+call sites index it that way, and one of them is a function this project had already grounded
+for another reason.
+
+By `refdata_tables.md`'s enumeration the per-level table is `_REFLEVEL` (`leveldata.txt`),
+which srrevamp already loads as `leveldata.csv` -- so a pet system here needs no new table,
+only the column holding the threshold. **The link from the global to that loader is still not
+traced** and is recorded as such: the rows are placed from further out than `0x0082afc0`, no
+function references both the global and a `"_REF…"` literal, and `FUN_006f8950` -- the one
+function that walks the vector by its static symbols -- frees the rows rather than filling
+them, so it is teardown.
+
+Waiting a round cost nothing and bought a citation instead of a guess.
+
 ## Two-hundred-and-ninety-second round: the pet's threshold row, traced to a singleton and stopped there
 
 Round 291 closed pet growth and left one thread: the per-level thresholds come from a reference

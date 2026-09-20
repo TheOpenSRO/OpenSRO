@@ -221,6 +221,16 @@ worth having before the next attempt:
 - It is referenced on **961 decompiled lines**, so it is a major singleton
   rather than a corner of one subsystem.
 
-`_REFLEVEL` is the obvious guess and is deliberately not recorded as the answer:
-the next probe is the vector's fill site, and no function references both this
-global and a `"_REF…"` literal.
+**What it is, from a use site (round 293).** `GObjPC::GObjPC_SetLevel` indexes
+the same vector with `level - 1` and stores the row on the character at
+`+0x1cb0`. So `DAT_00d6aa14` holds **the per-level row table**, indexed by
+level, read by the character's own level-set and by the gold pet's experience
+function alike. Six call sites index it that way
+(`GObjPC_SetLevel`, `FUN_004d6210`, `FUN_004e6820`, `FUN_0060dd90`,
+`CGObjCOS_GoldPet::vslot_215`, `OffsetExpPoint`).
+
+By `refdata_tables.md`'s enumeration the per-level table is `_REFLEVEL`
+(`leveldata.txt`). The link from this global to that loader is still not
+traced: the rows are placed from further out than `0x0082afc0`, and no function
+references both this global and a `"_REF…"` literal. `FUN_006f8950` frees the
+vector's rows, so it is teardown rather than the fill.

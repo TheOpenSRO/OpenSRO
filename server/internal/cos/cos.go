@@ -209,6 +209,14 @@ func SummonKindIsGuild(typeID4 int) bool { return typeID4 == KindGuildCOS }
 // The thresholds are per level and come from a reference row (`this+0x1ce0`,
 // +8/+0xc as a 64-bit), not from any constant here, and experience itself is
 // 64-bit at the pet's data record +0x60/+0x64.
+//
+// Those rows are **the same per-level table the character's own level uses**:
+// `GObjPC::GObjPC_SetLevel` indexes the identical vector with `level - 1` and
+// keeps the row on the character at `+0x1cb0` (round 293). By
+// `docs/protocol/refdata_tables.md`'s enumeration that is `_REFLEVEL` /
+// `leveldata.txt`, which this server already loads as `leveldata.csv` -- so a
+// pet system here needs no new table, only the column that holds the
+// threshold.
 const (
 	// PetLevelUpBoundary is the 110 at 0x4d641b. At or above it the clamp
 	// path is taken unconditionally. Named for what the code does with it
