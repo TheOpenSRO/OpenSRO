@@ -226,6 +226,14 @@ further out than `0x0082afc0`, and no function references both the global and a
 `"_REF…"` literal -- so the identification rests on the use site and the
 enumeration, not on the loader.
 
+**Which field, settled (round 294).** `GObjPC::GObjPC_GainExpAndLevel` reads the
+character's own level row at **`+8`/`+0xc` as a 64-bit pair** -- the same offset
+the pet takes its threshold from. The character's exp-to-next is
+`leveldata.txt` **column 1**, which `docs/LEVELING.md` matched against a real
+level-9 character's "Next Exp" of 17,978. So the pet's level-up threshold **is
+the character EXP curve**, not a pet-specific table, and the same record's
+`+0x1c` (column 5, the exp unit) anchors the layout from the other end.
+
 ## The database surface
 
 	_AddNewCOS       12 args        _ChangeCOSState   2 args

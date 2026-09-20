@@ -3,6 +3,7 @@ package leveldata
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -572,5 +573,26 @@ func TestStatPointsPerLevelMatchesTheEngineArithmetic(t *testing.T) {
 	// The original observation this replaces: a level-9 character had 24 points.
 	if got := (9 - 1) * StatPointsPerLevel; got != 24 {
 		t.Errorf("a level-9 character should hold 24 spendable points, got %d", got)
+	}
+}
+
+// The exp curve is 64-bit because the engine's own field is: the level record
+// carries it at +8/+0xc and GObjPC_GainExpAndLevel reads the pair together
+// (round 294). A 32-bit column would silently wrap on the high levels, so this
+// pins the width rather than any particular number.
+func TestExpToNextSurvivesBeyondThirtyTwoBits(t *testing.T) {
+	const beyond32 = int64(1) << 33 // 8,589,934,592
+	src := "level,exp\n1,100\n2," + strconv.FormatInt(beyond32, 10) + "\n"
+	parsed, err := ParseCSV(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("parsing a curve with a value past 2^32: %v", err)
+	}
+	got, ok := parsed.ExpToNext(2)
+	if !ok {
+		t.Fatal("level 2 missing from the parsed curve")
+	}
+	if got != beyond32 {
+		t.Errorf("ExpToNext(2) = %d, want %d -- the column must not be truncated to 32 bits",
+			got, beyond32)
 	}
 }

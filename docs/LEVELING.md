@@ -21,6 +21,20 @@ is `17978`, which is exactly the "Next Exp" a level-9 character showed. Sample:
 | 10 | 23500 |
 | 11 | 34898 |
 
+**Column 1 is grounded in the binary too (round 294, 2026-09-20).** The live
+"Next Exp" match above is one witness; the server is the other.
+`GObjPC::GObjPC_SetLevel` stores the level row on the character at `+0x1cb0`
+(indexing the per-level vector by `level - 1`), and
+`GObjPC::GObjPC_GainExpAndLevel` reads **`row+8` / `row+0xc` as a 64-bit pair**
+-- adding to it, dividing by it with `__alldiv`, and walking successive rows to
+carry several levels in one gain. The same record's `+0x1c` is column 5, the
+exp unit `cmd/export-leveldata` already cites, so both offsets sit in one
+record. That is why `leveldata.Table.expToNext` is `int64` and not `int`.
+
+The gold pet reads **the same field of the same table** for its own level-up
+threshold (`docs/protocol/pets.md`), so pet and character levelling share one
+curve.
+
 Other columns (10 total; cols 2/5/6-8 look job/cost/gold-related) are not needed for basic
 leveling and are left unread until a use for them is pinned. **leveldata.txt carries no per-level
 HP/MP** — those come from a derived-stat formula not yet recovered.

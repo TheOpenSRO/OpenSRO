@@ -7075,6 +7075,33 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-ninety-fourth round: the pet's threshold is the character's EXP curve, column 1
+
+Round 293 established that the pet and the character read the same per-level rows, and left the
+column open. `GObjPC::GObjPC_GainExpAndLevel` closes it.
+
+**The character reads its own exp-to-next from `row+8`/`row+0xc`, as a 64-bit pair** -- adding
+to it, dividing by it with `__alldiv`, and walking successive rows to carry several levels in
+one gain. `param_1[0x72c]` is `char+0x1cb0`, the row `GObjPC_SetLevel` stored. The gold pet's
+`OffsetExpPoint` takes its threshold from **the same offset of the same kind of row**.
+
+So the pet's level-up threshold is the **character EXP curve**, `leveldata.txt` **column 1** --
+the value `docs/LEVELING.md` had already matched against a real level-9 character's "Next Exp"
+of 17,978. Column 1 now has two independent groundings: a live character's readout, and the
+server's own 64-bit field.
+
+**The layout is anchored at both ends.** The same record's `+0x1c` is column 5, the exp unit
+`cmd/export-leveldata` has cited for a while; `+8`/`+0xc` is column 1. Two offsets, one record,
+each established separately.
+
+**What it changes here: nothing, and that is the useful part.** `leveldata.Table.expToNext` is
+already `int64`, so srrevamp was right by construction -- but it was right on the strength of
+one live observation, and it is now right with the engine's own field width behind it. A test
+pins the width rather than a number: a curve carrying a value past 2^32 must survive parsing,
+because a 32-bit column would wrap silently at the high levels.
+
+A pet system here needs no new table either -- only `ExpToNext`.
+
 ## Two-hundred-and-ninety-third round: the answer withheld last round, arriving as a use site
 
 Round 292 traced the pet's experience thresholds to a vector held by the singleton

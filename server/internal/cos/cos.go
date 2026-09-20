@@ -214,9 +214,14 @@ func SummonKindIsGuild(typeID4 int) bool { return typeID4 == KindGuildCOS }
 // `GObjPC::GObjPC_SetLevel` indexes the identical vector with `level - 1` and
 // keeps the row on the character at `+0x1cb0` (round 293). By
 // `docs/protocol/refdata_tables.md`'s enumeration that is `_REFLEVEL` /
-// `leveldata.txt`, which this server already loads as `leveldata.csv` -- so a
-// pet system here needs no new table, only the column that holds the
-// threshold.
+// `leveldata.txt`, which this server already loads as `leveldata.csv`.
+//
+// And the column is settled (round 294): `GObjPC_GainExpAndLevel` reads the
+// character's own row at the same `+8`/`+0xc` 64-bit pair, and the character's
+// exp-to-next is **column 1** -- the value `docs/LEVELING.md` matched against a
+// real level-9 character's 17,978. So a pet's level-up threshold is
+// `leveldata.Table.ExpToNext`, the curve this server already has; nothing new
+// needs loading.
 const (
 	// PetLevelUpBoundary is the 110 at 0x4d641b. At or above it the clamp
 	// path is taken unconditionally. Named for what the code does with it

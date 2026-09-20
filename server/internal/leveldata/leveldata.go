@@ -85,6 +85,19 @@ const MaxCharacterLevel = 110
 // Table is the level -> EXP-to-advance curve. expToNext[L] is the experience a
 // character must accumulate at level L to reach level L+1.
 type Table struct {
+	// expToNext[L] is what leveldata.txt column 1 holds for level L, and it
+	// is int64 because THE ENGINE'S FIELD IS 64-BIT.
+	//
+	// Grounded twice, from different directions. docs/LEVELING.md matched
+	// column 1 against a real level-9 character's "Next Exp" of 17,978. And
+	// the server reads it as a 64-bit pair: GObjPC_SetLevel stores the level
+	// row on the character at +0x1cb0, and GObjPC_GainExpAndLevel reads
+	// `row+8` / `row+0xc` together -- including an __alldiv by that pair --
+	// while walking rows to carry several levels at once (round 294).
+	//
+	// The same row's +0x1c is column 5, the exp unit, which is the anchor
+	// cmd/export-leveldata already cites; +8/+0xc sits with it in the same
+	// record.
 	expToNext map[int]int64
 	// masterySP[L] is the skill-point cost to raise a mastery from level L to
 	// L+1 -- leveldata's column 2. REAL: the server sums exactly this field

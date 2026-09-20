@@ -5435,6 +5435,16 @@ enumeration that table is _REFLEVEL / leveldata.txt, which srrevamp already
 loads -- a pet system needs no new table, only the threshold column. The link
 from the global to the loader is still untraced and recorded as such
 (FUN_006f8950 frees the rows, so it is teardown, not the fill).
+Round 294 (docs + a citation + a test): WHICH COLUMN. GObjPC_GainExpAndLevel
+reads the character's own level row at +8/+0xc as a 64-bit pair (adding,
+__alldiv-ing by it, and walking rows to carry several levels), and the pet
+takes its threshold from the same offset -- so the pet's level-up threshold is
+the CHARACTER EXP CURVE, leveldata.txt column 1, the value LEVELING.md had
+matched against a real level-9 character's 17,978. Column 1 now has two
+independent groundings, and the record is anchored at both ends (+8/+0xc =
+col 1, +0x1c = col 5). Nothing moved: leveldata.Table.expToNext was already
+int64, so srrevamp was right by construction and is now right with the
+engine's field width behind it; a test pins the width rather than a number.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
