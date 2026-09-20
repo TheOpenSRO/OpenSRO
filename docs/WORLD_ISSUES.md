@@ -7075,6 +7075,53 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-twenty-first round: sweeping for cheap unread regions, and the gate surcharge is the fortress tax
+
+Round 320's win came from a doc naming a **bounded** unread region with an
+address -- about 190 bytes, and it closed a row's standing gap. That is a
+repeatable shape, so this round swept every page for it: sentences claiming
+something is unread AND naming an address. **Five**, one of them the one round
+320 had just closed, and one already answered by a later round (the `0xc63c94`
+table, settled in round 275 as burn's damage curve).
+
+The best of the rest affects a value srrevamp ships: `teleport_network.md` had
+`fee += FUN_00486390(fee, 0)` with the note *"a surcharge on top -- unread; the
+siege tax by context, labelled an inference"*.
+
+**The inference was right, and is now a reading.** `FUN_00486390` is a 36-byte
+float wrapper over `FUN_004862a0`, which:
+
+- looks the fortress up with `AQ_Siege::FUN_00456e20` from the object's
+  association at `+0x148`, then reads a **short at `fortress[4] + 0x20`** --
+  the `TaxRatio` a guild master sets through `FUN_0062f640`, range **-20..+20**;
+- returns a negative ratio **unchanged** (`if (rate < 1) return rate`);
+- returns **0** with no association, on a failed lookup, and on two membership
+  tests.
+
+Filed as `Fortress_TaxRatioForActor` and `Fortress_TaxRatioAsFloat`.
+
+### Two readings, taken apart, meeting
+
+`siege.md` already recorded **"a negative tax is legal"**, read off the
+*setting* function's `(uint16)(ratio + 20) <= 40` bounds check. This is the
+*paying* function, read on a different day from a different address, and its
+`if (rate < 1) return rate` says the same thing: a negative ratio reaches the
+fee rather than being floored. Neither reading knew about the other.
+
+### What is NOT read, and is left that way
+
+The two exemptions. By position they are the owning guild and its alliance --
+and reading a meaning off a position is exactly what characterdata column 79
+punished twice, so they stay an inference with the functions named
+(`GObjPC::FUN_0061d280` with `FUN_005e4390`, and `GObjPC::FUN_0061d300`).
+
+One transcription correction fell out of it: the page showed
+`FUN_00486390(fee, 0)`, which is the decompiler's guess. The callee takes the
+object in EAX and the actor in EBX and reads no stack arguments.
+
+srrevamp has no fortresses, so nothing live moves -- but the teleport fee it
+already ships now has its full formula written down rather than a labelled hole.
+
 ## Three-hundred-and-twentieth round: the damage pipeline, read to its end
 
 `damage_pipeline.md` has carried the line *"stages past 17 run to `40e819` and

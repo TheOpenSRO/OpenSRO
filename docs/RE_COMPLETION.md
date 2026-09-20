@@ -5946,6 +5946,28 @@ constant rests on, not just the number. Unreachable with today's content,
 present so an engine ceiling is cited rather than discovered later as a
 divergence.
 
+Round 321 (2 names, an inference upgraded): THE GATE SURCHARGE IS THE FORTRESS
+TAX. Round 320's win came from a doc naming a BOUNDED unread region with an
+address, so this round swept every page for that shape: five sentences claim
+something is unread AND name an address, one being what round 320 closed and one
+already answered later (0xc63c94, settled in round 275). The best of the rest
+touches a shipped value: teleport_network.md had `fee += FUN_00486390(fee, 0)`
+with "a surcharge on top -- unread; the siege tax by context, labelled an
+inference". The inference was right and is now a reading. FUN_00486390 is a
+36-byte float wrapper over FUN_004862a0, which looks the fortress up with
+AQ_Siege::FUN_00456e20 from the object's association at +0x148, reads a SHORT at
+fortress[4]+0x20 -- the TaxRatio set through FUN_0062f640, range -20..+20 -- and
+returns a negative ratio UNCHANGED (`if (rate < 1) return rate`), returning 0
+with no association, on a failed lookup, and on two membership tests. Filed as
+Fortress_TaxRatioForActor and Fortress_TaxRatioAsFloat. TWO READINGS MEETING:
+siege.md recorded "a negative tax is legal" off the SETTING function's
+(uint16)(ratio+20) <= 40 check; this is the PAYING function, read on another day
+from another address, saying the same thing. NOT read and left that way: the two
+exemptions, which by position are the owning guild and its alliance -- reading a
+meaning off a position is what characterdata column 79 punished twice. Also
+corrected: the page's FUN_00486390(fee, 0) signature is the decompiler's guess;
+the callee takes the object in EAX and the actor in EBX with no stack arguments.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

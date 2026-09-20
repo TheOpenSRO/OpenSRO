@@ -75,8 +75,7 @@ piVar5 = FUN_00485d60()                     ; the gate's link for that index
 if piVar5 == 0 or piVar5[0] == 0: refuse 2  ; no such link
 fee = piVar5[1]                             ; THE FEE
 if level (PC vtable slot 74) < 21: fee = 0  ; waived for low levels (a second `< 11` test is redundant)
-if gate flag (vtable slot 276): fee += FUN_00486390(fee, 0)   ; a surcharge on top -- unread; the siege
-                                                             ;   tax by context, labelled an inference
+if gate flag (vtable slot 276): fee += Fortress_TaxRatioAsFloat()  ; the fortress TAX -- READ, round 321
 if gold (inv+0x7c:+0x78, 64-bit) < fee: refuse 0x1c07        ; NOT_ENOUGH_MONEY, the repair code
 CGObjPC::FUN_004e0a40(...)                  ; set the teleport state; the trip proceeds
 ```
@@ -195,3 +194,29 @@ recovery, from the same kind of table.
 
 What it could **not** yet claim is the cost and the level gate, until the
 `_REFTELELINK` consumer is read.
+
+
+## The gate surcharge is the fortress tax, and it is now read (round 321)
+
+This page inferred it from context and said so. `Fortress_TaxRatioAsFloat`
+(`0x00486390`) is a 36-byte wrapper over `Fortress_TaxRatioForActor`
+(`0x004862a0`), which:
+
+- looks the fortress up with `AQ_Siege::FUN_00456e20` from the object's
+  association at `+0x148`, and reads a **short at `fortress[4] + 0x20`** -- the
+  `TaxRatio` a guild master sets through `FUN_0062f640`, accepted range
+  **-20..+20** (`docs/protocol/siege.md`);
+- returns a **negative ratio unchanged** (`if (rate < 1) return rate`), which
+  agrees with that page's separately read "a negative tax is legal" -- two
+  independent readings meeting;
+- returns **0** when there is no association, when the lookup fails, and on two
+  membership tests (`GObjPC::FUN_0061d280` against `FUN_005e4390`, and
+  `GObjPC::FUN_0061d300`).
+
+**The exemptions' identity is NOT read.** By position they are the owning guild
+and its alliance, and that is exactly the kind of by-position reading this
+project has had to walk back before, so it stays an inference here.
+
+One correction to the transcription above: the decompiled `FUN_00486390(fee, 0)`
+signature is the decompiler's guess. The callee takes the object in EAX and the
+actor in EBX and takes no stack arguments.

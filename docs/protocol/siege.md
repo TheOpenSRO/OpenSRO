@@ -85,6 +85,13 @@ Accepted changes go to `AQ_Siege__QUERY_SIEGE_TAX_RATIO`, and the answer on
 **A negative tax is legal**, which is worth stating because it is the kind of
 thing a reimplementation would clamp to zero without noticing.
 
+**And the paying side agrees (round 321).** `Fortress_TaxRatioForActor`
+(`0x004862a0`) -- the term a teleport fee gains at a fortress-controlled gate --
+reads the ratio as a short at `fortress[4] + 0x20` and returns it unchanged when
+it is below 1, so a negative ratio reaches the fee rather than being floored.
+The setting side and the paying side were read from different functions on
+different days and say the same thing.
+
 ## Attacking a fortress structure — vtable slot 395
 
 `CGObjSiegeStruct::vslot_395` (`0x0052c500`) and `CGObjSiegeObject::vslot_395`
