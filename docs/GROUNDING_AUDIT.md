@@ -293,3 +293,47 @@ disclosed placeholder, to confirm against the client when the relevant system is
 - The rest of the own-design economy/combat layer (damage, flat HP, monster stats, prices, quests,
   loot values, gold) — placeholder by intent, to be replaced from `refdata` + the recovered
   derived-stat formulas.
+
+## A mechanical citation check (2026-09-20, round 287)
+
+The audit above classifies *mechanics*. This one asks something narrower and
+entirely mechanical: **the strings this project quotes as the engine's own
+words — are they actually in the binary?**
+
+The question is not idle. Round 286 found that a text sweep over the decompiled
+dumps matches **this project's own annotations**, because the dumps carry both
+the code and everything we have written onto it. A citation harvested that way
+would look exactly like a citation harvested from the program.
+
+**The check.** Every double-quoted span of 8 characters or more in
+`recovered_names.tsv`'s evidence column — 856 occurrences, **286 unique
+(binary, string) pairs** — tested against the bytes of `SR_GameServer.exe` and
+`sro_client.exe` directly, ASCII and UTF-16, verbatim first and then by the
+longest literal fragment between format specifiers.
+
+**The result.**
+
+| | |
+|---|---|
+| found verbatim in the binary | 279 |
+| found once a documentation ellipsis or escaped quote was removed | 5 |
+| not a claimed literal at all (prose caught by the extractor) | 1 |
+| **a real defect** | **1** |
+
+**Nothing fabricated.** The one defect is a paraphrase presented as a quotation:
+seven rows for `PayQuestRewardCatchMob` quoted "the engine's own"
+
+	fail pay quest. because don`t have Catch Mob : ID[n] -> TARGET
+
+where the binary says
+
+	fail pay quest. because don`t have Catch Mob : %d[%d] - >%s
+
+The format specifiers had been rewritten into readable placeholders. The
+meaning survived; the claim "the engine's own" did not, because those are not
+the engine's characters. Corrected in all seven rows.
+
+**What this does not cover.** Evidence that is a *description* rather than a
+quotation, which is most of the file, and numeric citations (offsets, slots,
+constants). It covers exactly the claim "the binary says this, in these
+characters", which is the one a reader is most likely to take on trust.

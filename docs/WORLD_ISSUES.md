@@ -7075,6 +7075,39 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-eighty-seventh round: are the quoted strings really the engine's words? 279 of 286, and one paraphrase
+
+Round 286 found that a text sweep over the dumps matches **this project's own annotations**,
+because the dumps carry the code and our prose about it in the same file. That is a way to
+manufacture a citation without noticing, so the obvious next question is whether it has ever
+happened here.
+
+**The check.** Every double-quoted span of 8+ characters in `recovered_names.tsv`'s evidence
+column -- 856 occurrences, **286 unique (binary, string) pairs** -- tested against the bytes of
+`SR_GameServer.exe` and `sro_client.exe` directly, ASCII and UTF-16, verbatim and then by the
+longest literal fragment between format specifiers.
+
+	found verbatim                                        279
+	found once an ellipsis or escaped quote was removed      5
+	not a claimed literal (prose the extractor caught)       1
+	a real defect                                            1
+
+**Nothing fabricated.** For a project whose characteristic failure is a made-up constant
+dressed as a finding, 286 quotations with no invention in them is the answer worth having.
+
+**The one defect** is a paraphrase presented as a quotation. Seven rows for
+`PayQuestRewardCatchMob` quoted "the engine's own"
+`fail pay quest. because don``t have Catch Mob : ID[n] -> TARGET`, where the binary says
+`fail pay quest. because don``t have Catch Mob : %d[%d] - >%s`. Someone had rewritten the
+format specifiers into readable placeholders. The meaning survived the edit; the claim did not,
+because those are not the engine's characters. Corrected in all seven.
+
+**Checking the probe, as ever.** The first pass reported seven misses. Five were documentation
+ellipses (`...`) and an escaped quote, which is the doc's formatting rather than a bad citation,
+and one was a sentence of ordinary prose that happened to sit inside quotes. Only after
+re-testing each by an unelided fragment did the count come down to one. A raw miss count would
+have read as seven defects and been wrong by six.
+
 ## Two-hundred-and-eighty-sixth round: swept -- one procedure in sixty-nine disagrees with itself
 
 Round 285 found `_STRG_MOVE_ITEM` issued from three functions with three different format

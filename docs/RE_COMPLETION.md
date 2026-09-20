@@ -5361,6 +5361,16 @@ The probe first reported two, the second being an `_ADDTIMEDJOB` form that is
 THIS PROJECT'S OWN SHORTHAND in a recovered annotation inside the dump -- the
 dumps carry both code and our prose about it, so a literal regex matches both.
 Checked before recording; that is why the count is 1.
+Round 287 (docs + 7 corrected rows): a mechanical CITATION CHECK, prompted by
+286's finding that the dumps carry our own prose. Every double-quoted span of
+8+ chars in recovered_names.tsv's evidence -- 286 unique (binary, string)
+pairs -- tested against the raw bytes of both exes. 279 verbatim, 5 more once
+a documentation ellipsis or escaped quote was removed, 1 was prose rather than
+a claimed literal, and 1 REAL DEFECT: seven PayQuestRewardCatchMob rows quoted
+"the engine's own" string with its format specifiers rewritten as readable
+placeholders (`ID[n] -> TARGET` for `%d[%d] - >%s`). Corrected. Nothing
+fabricated in 286 quotations, which is the answer worth having for a project
+whose characteristic failure is a made-up constant dressed as a finding.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
