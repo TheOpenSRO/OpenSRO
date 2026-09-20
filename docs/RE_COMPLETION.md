@@ -6156,6 +6156,48 @@ missing 163rd row; six names filed. srrevamp's own `OpUseItem` was NOT changed t
 match -- the gap is now measured, and changing the wire format is a deliberate
 migration, not a side effect of a naming round.
 
+Round 329 (103 handler payloads, 0 names): ROUND 327'S PROMISE ACTUALLY CASHED.
+Round 328 found the tool; this spends it. THE FAMILY ENUMERATED BY SHAPE, not by
+the addresses already known -- any function referencing +0x1034 that advances the
+cursor +0x103c or the size +0x103e. 23 primitives, paired front/tail at every
+width, and the per-width duplicates are COMDAT twins, which is precisely why
+round 328's grep for two known addresses came back empty on a handler reading two
+fields. THE ENUMERATION TOOK THREE ATTEMPTS AND BOTH FAILURES WERE THE PROBE:
+attempt 1 required `in_EAX` and missed every primitive taking the buffer as an
+ordinary parameter; attempt 2 still missed MsgBuf_ReadUInt8 because its cursor
+advance is written `*(ushort *)` where others use `*(short *)`. THE TELL BOTH
+TIMES was that primitives ALREADY NAMED IN THIS REPO were absent from a list
+claiming to be complete -- an empty result was a fact about the regex, not the
+binary. THE PASS: for each of the 163 handlers, the ordered sequence of primitive
+calls, collapsing each front/tail pair into one field. 103 OF 163 DECODED; 60
+have no reader call at all (11 inline the reads outright, the rest delegate to a
+callee). THE COLLAPSE WAS VERIFIED, NOT ASSUMED: 66 of 69 pairs have a 0x1048
+test within the six preceding lines; the 3 that do not are flagged `check-pair`
+rather than counted, because a wrong collapse is a wrong layout. CONFIDENCE IS
+CARRIED IN THE TABLE: 74 linear (reads at function top level, source order = wire
+order), 26 BRANCHED (reads inside conditionals, where source order is NOT
+necessarily wire order and a human is still needed), 3 check-pair. THE
+CROSS-CHECK THAT MATTERS -- a server-side decode is one probe, so the client's
+encoder was read as an independent one in the other binary: for 0x704c the client
+writes 1 byte then 2 bytes (u8,u16), EXACTLY what the server-side pass derived
+without reference to it, and forms the slot as `(char)param_1 + '\r'` -- +13, the
+same constant as the server's `(byte)(slot - 0x0d) < 99`, reached from the
+opposite side. Two binaries, two derivations, one layout and one constant. IT
+ALSO IMPROVES ROUND 328's SECOND FIELD: FUN_008ba440 looks the item up in
+GlobalDataManager by its +0x34 and the client writes the first u16 of that
+refdata record after bit-testing it (& 0x1c == 0xc, & 0x780 == 0x180, & 0xf800 ==
+0x2800), so the field is the item's PACKED TYPE CODE, sent so the server can
+check the client's claim against the item actually in the slot -- which is what
+"matched against a list derived from the item, then echoed" meant. IT STILL GETS
+NO NAME: the refdata field's own identity is unconfirmed, and a consistent story
+is not a citation.
+
+**What moved:** no shipped value. `docs/protocol/handler_payloads.tsv` is new --
+163 rows, 103 with a decoded field sequence and a confidence column that says
+which are safe to read as wire order. This is the lever round 324 asked for: 93
+handlers whose remaining work was "the payload layout" are now mostly a table
+lookup rather than 93 readings.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

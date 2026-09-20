@@ -395,3 +395,97 @@ observed behaviour; what it selects has not been settled, so it gets no name.
 name, s64 slot)`, which is its own invention -- consistent with round 324's
 finding that 0 of 143 srrevamp opcodes are real. The gap is now measured rather
 than suspected, and nothing was changed on the strength of it.
+
+## Round 329: every handler's payload, in one pass
+
+Round 328 identified the reader family and the traps around it. This round spends
+that: **103 of the 163 real handlers now have a decoded field sequence**, in
+`docs/protocol/handler_payloads.tsv`. It replaces 93 separate readings with one
+pass, which is what round 327 promised and round 328 made possible.
+
+### The family is complete and symmetric
+
+Enumerated **by shape, not by the addresses already known** -- any function that
+references `+0x1034` and advances either the cursor `+0x103c` or the size
+`+0x103e`. Twenty-three primitives, paired front/tail at every width:
+
+| width | front (at the cursor) | tail (off the end) |
+|---|---|---|
+| 1 | `0x00404f80`, `0x00521750` | `0x005217a0` |
+| 2 | `0x004263c0`, `0x0048ba70`, `0x005e32b0` | `0x00409910` |
+| 4 | `0x00403f60`, `0x00404e00`, `0x00423f20`, `0x005e3200` | `0x00423f70`, `0x005216c0` |
+| 8 | `0x0042c6e0`, `0x00969830` | `0x0042c740`, `0x00969890` |
+| 12/16/24 | `0x005b8520`, `0x005e2c20`, `0x004b22b0` | -- |
+| 256/272 | `0x004a1b40`, `0x00438e80` | -- |
+| variable | `0x00404c20` (length in DI) | -- |
+
+The duplicates per width are COMDAT twins, which is exactly why round 328's grep
+for two known addresses came back empty on a handler that reads two fields.
+
+**The enumeration took three attempts, and both failures were the probe.** The
+first required `in_EAX` and so missed every primitive taking the buffer as an
+ordinary parameter. The second still missed `MsgBuf_ReadUInt8` because the cursor
+advance is written `*(ushort *)` there and `*(short *)` elsewhere, and the regex
+allowed only the latter. An empty result was a fact about the regex both times;
+the tell was that primitives *already named in this repo* were absent from a list
+claiming to be complete.
+
+### Reading a pair as one field
+
+A handler selects front or tail on the session's `+0x1048`, so a single wire
+field decompiles as two calls:
+
+	if (*(int *)(session + 0x1048) == 0) ReadUInt8FromTail(&slot);
+	else                                 ReadUInt8(&slot);
+
+These collapse to one field when both calls share a width and an out-argument.
+**The collapse was verified, not assumed**: 66 of 69 collapsed pairs have a
+`0x1048` test within the six preceding lines. The three that do not are flagged
+`check-pair` in the table rather than trusted -- a wrong collapse is a wrong
+layout, so they are marked, not quietly counted.
+
+### What the table says, and what it does not
+
+| | handlers |
+|---|---:|
+| decoded field sequence | **103** |
+| of those, `linear` (all reads at function top level) | 74 |
+| of those, `branched` (reads inside conditionals) | 26 |
+| of those, `check-pair` (collapse unverified) | 3 |
+| no reader calls -- inlined or delegated to a callee | 60 |
+
+**`branched` is a real caveat, not a formality.** The sequence is *source* order,
+which is wire order only when the reads are unconditional. Where reads sit inside
+branches the order still needs a human; those 26 are marked so nobody reads the
+column as settled.
+
+The 60 with no reader calls are not failures of the method -- eleven of them
+inline the reads outright (`GObjPC_HandleGuildMsg_104`,
+`CGObjPC::vslot_291`, both Temple gate handlers, and seven more), and the rest
+hand the buffer to a callee. Both are tractable; neither is done here.
+
+### The cross-check that matters
+
+A server-side decode is one probe. The **client's encoder is an independent one**,
+in a different binary, and the two must describe the same wire. For `OpUseItem`
+(`0x704c`) the client does:
+
+	local_49 = (char)param_1 + '\r';       // bag index + 13
+	FUN_00508fe0(&local_49,1);             // write 1 byte
+	uVar6 = FUN_008ba440();                // the item's refdata record
+	FUN_00508fe0(uVar6,2);                 // write 2 bytes
+
+**`u8` then `u16`** -- exactly what the server-side pass derived, without
+reference to the client. And `+ '\r'` is **+13**, the same constant as the
+server's range check `(byte)(slot - 0x0d) < 99`, reached from the opposite side.
+Two binaries, two derivations, one layout and one constant.
+
+It also improves round 328's reading of the second field. `FUN_008ba440` looks
+the item up in `GlobalDataManager` by its `+0x34` and the client writes the first
+`u16` of that reference-data record, having bit-tested it as a discriminator
+(`& 0x1c == 0xc`, `& 0x780 == 0x180`, `& 0xf800 == 0x2800`). So the field is the
+item's **packed type code**, sent so the server can check the client's claim
+against the item actually in the slot -- which is what "matched against a list
+derived from the item, then echoed" meant. **It still gets no name**: the refdata
+field's own identity has not been confirmed, and a consistent story is not a
+citation.

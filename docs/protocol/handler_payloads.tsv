@@ -1,0 +1,164 @@
+index	handler	server_name	fields	confidence
+0x005	0050eff0	GObjPC::FUN_0050eff0	u8	branched
+0x006	0050f130	FUN_0050f130		
+0x00d	00516960	FUN_00516960		
+0x00f	009bf500	FUN_009bf500		
+0x010	0051de90	GObjPC_MsgHandler_SpecialCommand::FUN_0051de90	u16,u32,u8,u8,u16,u16,u32,u8,u8,u8	branched
+0x02a	0051cb20	FUN_0051cb20		
+0x02f	004ee090	FUN_004ee090	u32,u32	linear
+0x031	004ee1d0	GObjPC::GObjPC_HandleGuildSummonReqMsg_031		
+0x034	0051cb30	FUN_0051cb30		
+0x03c	00511910	FUN_00511910	u32,u8	branched
+0x03e	00513250	FUN_00513250	u32	linear
+0x03f	00513250	FUN_00513250	u32	linear
+0x045	0050fe50	FUN_0050fe50	u32	linear
+0x046	00510250	GObjPC_HandleShopMsg_046	u32,u8	linear
+0x04b	00510660	FUN_00510660		
+0x04c	00510980	Item_HandleUseItem	u8,u16	linear
+0x050	005112f0	GObjPC_HandleIncreaseStr		
+0x051	005113b0	GObjPC_HandleIncreaseInt		
+0x053	0050fee0	FUN_0050fee0	u8	branched
+0x059	00513410	FUN_00513410	u32	linear
+0x05a	00513590	GObjPC::HandleTeleportUse	u32,u8,u8	branched
+0x05b	00513ea0	GObjPC::FUN_00513ea0		
+0x05d	0051a5b0	FUN_0051a5b0	u32	linear
+0x05e	00519e60	SiegeFortress_DispatchCommand	u32,u8	linear
+0x060	005143b0	GObjPC_HandlePartyMsg_060	u32,u8	linear
+0x061	00514530	FUN_00514530		
+0x062	00514560	CParty::CheckCanJoin	u32	linear
+0x063	005146d0	GObjPC_HandlePartyMsg_063	u32	linear
+0x069	00514750	OnRegisterPartyReq		
+0x06a	005147c0	PartyMatch_HandleModify		
+0x06b	00514810	GObjPC_HandlePartyMsg_06b		
+0x06c	00514860	GObjPC_HandlePartyMsg_06c		
+0x06d	005148b0	GObjPC_HandlePartyMsg_06d		
+0x06e	00514900	FUN_00514900	u32,u32,u8	branched
+0x06f	00514af0	FUN_00514af0		
+0x080	005157f0	FUN_005157f0		
+0x081	005154e0	GObjPC_HandleTradeMsg_081	u32	branched
+0x082	00515820	GObjPC_HandleTradeMsg_082		
+0x083	005158f0	Trade_HandleExchange		
+0x084	005159c0	GObjPC_HandleTradeMsg_084		
+0x0a1	00515a60	GObjPC_HandleSkillMsg_0a1	u32	linear
+0x0a2	00515ab0	Skill_HandleMasteryLevelUp	u32,u8	linear
+0x0a7	00515b30	FUN_00515b30	u8	linear
+0x0b1	00515f10	FleaMarket_HandleOpenStall		
+0x0b2	00516130	GObjPC_HandleStallMsg_0b2		
+0x0b3	00516270	FUN_00516270	u32	branched
+0x0b4	00516560	FleaMarket_HandleBuyItem	u8	branched
+0x0b5	005164c0	GObjPC_HandleStallMsg_0b5		
+0x0b6	00516250	FUN_00516250		
+0x0ba	005161b0	FUN_005161b0		
+0x0c0	009bf500	FUN_009bf500		
+0x0c4	0050faf0	FUN_0050faf0	u32	linear
+0x0c5	00511de0	FUN_00511de0	u32	linear
+0x0c6	00511e00	FUN_00511e00	u32	linear
+0x0c7	00511f40	FUN_00511f40	u32,u8	branched
+0x0cb	005119b0	FUN_005119b0	u8,u32	linear
+0x0d4	00516670	FUN_00516670	u8	linear
+0x0d8	00516780	FUN_00516780	u32	linear
+0x0d9	005167d0	FUN_005167d0	u32	linear
+0x0db	00516820	FUN_00516820	u32	linear
+0x0e1	005120f0	CInstanceCharTrijob::HandleJoinJobGuild	u32,u8	linear
+0x0e2	005122b0	JobGuild_HandleWithdraw	u32	linear
+0x0e3	00512540	GObjPC_HandleAliasMsg_0e3	u32,u8	linear
+0x0e4	00512c20	FUN_00512c20	u32,u8,u8	linear
+0x0e5	00512e70	FUN_00512e70	u32,u8	linear
+0x0e6	00513190	FUN_00513190	u32	linear
+0x0ea	00516870	GObjPC_HandleEventGuideMsg_0ea	u64	linear
+0x0ed	005169a0	FUN_005169a0		
+0x0f0	00514ce0	CGuildManager::HandleCreateGuild	u32	branched
+0x0f1	00515340	GObjPC_HandleGuildMsg_0f1	u32	branched
+0x0f2	00515070	GObjPC_HandleGuildMsg_0f2	u32	branched
+0x0f3	00514f10	FUN_00514f10	u32	check-pair
+0x0f4	005151d0	FUN_005151d0		
+0x0f9	00516ea0	Guild_HandleNoticeUpdate		
+0x0fa	00516da0	Guild_HandleLevelUpRequest	u32	linear
+0x0fb	005170b0	GObjPC_HandleGuildMsg_0fb	u32	linear
+0x0fc	005171d0	GObjPC_HandleGuildMsg_0fc		
+0x0fd	00517250	GObjPC_HandleGuildMsg_0fd	u32	linear
+0x0ff	00517e30	GObjPC_HandleGuildMsg_0ff	u32,u8	linear
+0x103	00517300	GObjPC_HandleGuildMsg_103	u32,u32	branched
+0x104	005173e0	GObjPC_HandleGuildMsg_104	u8,u32!tail,u32!tail	branched
+0x105	00517600	GObjPC_HandleGuildMsg_105	u32	linear
+0x106	005176d0	GObjPC_HandleVoteMsg_106	u32	linear
+0x107	00517730	GObjPC_HandleVoteMsg_107	u32,u32,u8	branched
+0x110	00518820	Guild_HandleWarDeclaration		
+0x112	00518930	GObjPC_HandleGuildMsg_112	u32	linear
+0x113	00518a80	GObjPC_HandleGuildMsg_113	u32	linear
+0x114	005189a0	GObjPC_HandleGuildMsg_114	u32	linear
+0x116	00511a60	FUN_00511a60	u32	branched
+0x117	00511bb0	GObjPC::HandleNameCOS	u32	linear
+0x118	00511570	FUN_00511570	u32	linear
+0x119	005115e0	FUN_005115e0	u32	linear
+0x11a	00518cd0	GObjPC_HandleItemMallMsg_11a	u8,u8	linear
+0x121	00511800	GObjPC_HandleShopMsg_121	u16	linear
+0x150	00506e20	GObjPC_HandleAlchemyReinforceMsg_150	u8,u8	branched
+0x151	00506ee0	GObjPC_HandleAlchemyReinforceMsg_151	u8,u8	branched
+0x155	0050a100	FUN_0050a100	u8,u8	branched
+0x157	0050c140	GObjPC_HandleAlchemyDecompEquipmentMsg_157		
+0x158	00518c20	GObjPC::FUN_00518c20	u8	linear
+0x15f	00511640	FUN_00511640	u32,u32	linear
+0x160	00511730	FUN_00511730	u32,u32	linear
+0x168	005118a0	FUN_005118a0	u32	linear
+0x16a	00506fa0	GObjPC_HandleSocketMsg_16a	u8,u8	linear
+0x202	005169d0	GObjPC_HandleSkillMsg_202	u32,u32,u8	linear
+0x203	00516bb0	GObjPC_HandleSkillMsg_203	u32,u32,u8	linear
+0x250	005178b0	Guild_HandleWarehouseUse	u32	linear
+0x251	00517980	GObjPC_HandleGuildMsg_251	u32	linear
+0x252	00517a50	FUN_00517a50	u32	linear
+0x256	00517b70	GObjPC_HandleGuildMsg_256	u32	branched
+0x258	00517cc0	GObjPC_HandleGuildMsg_258	u32	linear
+0x259	00517d60	GObjPC_HandleGuildMsg_259	u32,u8	branched
+0x25a	00517d20	FUN_00517d20		
+0x302	00517f90	GObjPC_HandleMessengerMsg_302		
+0x303	00518080	FUN_00518080		
+0x304	005180b0	GObjPC_HandleMessengerMsg_304	u32	linear
+0x308	00518780	GObjPC_HandleMessengerMsg_308	u8	linear
+0x309	00518120	GObjPC_HandleMessengerMsg_309		
+0x30a	005187d0	GObjPC_HandleMessengerMsg_30a	u8	linear
+0x30b	005180f0	GObjPC_HandleMessengerMsg_30b		
+0x30c	00518330	GObjPC_HandleMessengerMsg_30c	u8,u8	branched
+0x30d	00518db0	FUN_00518db0	u8	linear
+0x402	00518b50	FUN_00518b50	u8	linear
+0x420	00511d10	FUN_00511d10	u32,u8,u32	linear
+0x470	00518fd0	TrainingCamp_HandleOpen	u32	branched
+0x471	00519120	TrainingCamp_HandleDisband		
+0x472	00519230	TrainingCamp_HandleInvite	u32	check-pair
+0x473	005193a0	TrainingCamp_HandleBan		
+0x474	00519510	TrainingCamp_HandleLeave		
+0x475	00519600	TrainingCamp_HandleGraduation	u8	linear
+0x476	00519770	CInstanceTrainingCamp::CheckMembershipLevel		
+0x477	00519900	TrainingCamp_HandleNoticeUpdate		
+0x478	00519ad0	GObjPC_HandleTrainingCampMsg_478	u32	linear
+0x47a	00519b80	TrainingCamp_HandleMatchingEntry		
+0x47b	00519bd0	TrainingCamp_HandleMatchingCorrect		
+0x47c	00519c20	GObjPC_HandleTrainingCampMsg_47c		
+0x47d	00519c70	GObjPC_HandleTrainingCampMsg_47d		
+0x47e	00519cc0	GObjPC_HandleTrainingCampMsg_47e		
+0x47f	00519d10	FUN_00519d10		
+0x483	00519d40	FUN_00519d40		
+0x4a7	00507910	FUN_00507910	u8	linear
+0x4a9	005079c0	FUN_005079c0	u8	check-pair
+0x4b2	0051a7b0	FUN_0051a7b0		
+0x4bf	0051a840	FUN_0051a840	u8,u8	linear
+0x4d3	0051a7e0	FUN_0051a7e0	u8	linear
+0x4d4	0051a8c0	FUN_0051a8c0	u32	linear
+0x4df	0051ad80	GObjPC_HandleAssocReputationMsg_4df	u8,u32	branched
+0x4e0	0051b240	GObjPC_HandleAssocReputationMsg_4e0		
+0x501	00517e90	FUN_00517e90	u32	linear
+0x506	0051b780	GObjPC_HandleOpenMarketGoodsDetailReq		
+0x507	0051b610	FUN_0051b610		
+0x508	0051b6c0	GObjPC_HandleOpenMarketPutonGoodsReq		
+0x509	0051b6f0	GObjPC_HandleOpenMarketPutoutGoodsReq		
+0x50a	0051b660	GObjPC_HandleOpenMarketPurchaseGoodsReq		
+0x50b	0051b750	GObjPC_HandleOpenMarketReceiptReq		
+0x50c	0051b720	GObjPC_HandleOpenMarketSearchReq		
+0x50e	0051b690	GObjPC_HandleOpenMarketMsg_50e		
+0x515	0051b370	FUN_0051b370	u32,u8,u32	branched
+0x516	0051b7b0	GObjPC_HandleSiegeMsg_516	u8	linear
+0x518	0051ba80	FUN_0051ba80	u32	linear
+0x519	0051bb70	FUN_0051bb70	u32	linear
+0x51a	0051bd60	GObjPC_HandleCallUserMsg_51a	u32	linear
+0x51c	0051bf10	GObjPC_HandleSummonPartyUserMsg_51c	u32,u32	linear
+0x51d	0051c050	FUN_0051c050	u32	linear
