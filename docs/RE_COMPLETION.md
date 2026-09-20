@@ -5381,6 +5381,18 @@ records, found without being told. interior and wrong-binary are always
 defects and fail the run; outside reports and passes, because the dumps have
 gaps. The Go test's header now points at the tool instead of saying the
 addresses are uncheckable.
+Round 289 (docs + cos constants + test): pets.md's first unrecovered bullet,
+"what the five switch cases are", CLOSED. GObjPC::CheckCanSummonCOS switches
+on `*(ushort *)(obj + 0x80) >> 11`, which is a TypeID4 -- the client reads one
+the same way (ITEM_FORMAT.md, FUN_00a5a7d0). WHOSE TypeID4 was settled by
+measurement and the first reading was WRONG: as the summoner item's,
+itemdata's COS rows give 1,2,4,6,7,9,12, impossible for a five-case switch; as
+the summoned character's, characterdata TypeID3==3 runs exactly 1..5. The
+rows' own code names and the binary's refusal strings then agree case for
+case: 1 COS_C_ and 2 COS_T_ take the cart refusal, 3 COS_P_WOLF (1,260 rows)
+and 4 COS_P_MYOWON/SEOWON/RABBIT (11) the duplicate-pet refusal, 5
+COS_GUILD_CH_SOLDIER the guild one. Two independent witnesses. What separates
+1 from 2 and 3 from 4 is still unnamed and recorded as such.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
