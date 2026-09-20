@@ -410,3 +410,46 @@ func TestItemRecordFindsTheCooltimeDescriptor(t *testing.T) {
 		t.Fatalf("a row without the descriptor exports 0/0, got %s/%s", g, ms)
 	}
 }
+
+// TestRepairCostReadsTheBasisColumn pins the COLUMN, which is the thing no
+// existing test could see.
+//
+// repair.TestFullRepairCostsExactlyTheBasis asserts that a full repair costs
+// the basis. That is an identity of the formula -- true of whatever number is
+// handed in -- so it described the arithmetic correctly while the exporter read
+// the wrong column for three days. The two candidate columns are adjacent and
+// carry an authored 1.5 ratio (the Copper Sword: 198 at column 27, 297 at
+// column 28), so any test that feeds one number cannot tell them apart.
+//
+// This one gives the neighbours different values and names which must win.
+// `refRecord+0xa4` is _RefObjCommon field 28 = text column 27; `+0xa8`, the
+// flat restore cost, is field 29 = column 28.
+func TestRepairCostReadsTheBasisColumn(t *testing.T) {
+	cols := make([]string, 200)
+	for i := range cols {
+		cols[i] = "0"
+	}
+	set := func(i int, v string) { cols[i] = v }
+	set(0, "1")
+	set(1, "1")
+	set(2, "ITEM_CH_SWORD_01_A")
+	set(fPrice, "890")
+	// The Copper Sword's real pair, kept distinct so a shift by one is visible.
+	set(27, "198") // +0xa4, the price basis -- what a full repair costs
+	set(28, "297") // +0xa8, the adjacent flat restore cost
+
+	rec, ok := itemRecord(cols)
+	if !ok {
+		t.Fatal("itemRecord rejected a valid row")
+	}
+	items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
+	if err != nil {
+		t.Fatalf("the importer rejected export's own output: %v", err)
+	}
+	if got := items[0].RepairCost; got != 198 {
+		t.Errorf("RepairCost = %d, want 198 (itemdata column 27, refRecord+0xa4). "+
+			"297 means the exporter is reading column 28, which is +0xa8, the "+
+			"flat restore cost -- an authored 1.5x that overcharges every repair",
+			got)
+	}
+}

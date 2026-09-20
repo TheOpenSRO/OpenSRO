@@ -55,18 +55,40 @@ const MaxUnitPrice = 9.9999997e+37
 // record, not the item-specific one -- `RefObjItem::ExtractData` writes nothing
 // below `+0x198`.
 //
-// RESOLVED 2026-09-17. `refRecord[0xa4]` is **_RefObjCommon field 28**, which
-// is **itemdata text column 28** -- the field-to-column identification holds
-// here because refobj_binary_format.md's four anchors (indices 1, 14, 32..39,
-// 52..56) bracket it, and the break where the two formats diverge is at 57.
+// RESOLVED 2026-09-17, and CORRECTED 2026-09-20 (round 304).
+// `refRecord[0xa4]` is **_RefObjCommon field 28**, which is **itemdata text
+// column 27**, not 28. Deserializer field indices are 1-based over the row and
+// column indices are 0-based, so the two differ by one, and the earlier note
+// here equated them.
+//
+// The correction is measured, not argued. `fields.py` on
+// `RefObjCommon_ExtractData` (0x006a3090) resolves field 28 -> `+0xa4` and
+// field 29 -> `+0xa8`, and three disjoint anchors tie field k to row field k:
+// fields 3-7 are five string reads against the row's five name strings, fields
+// 33-40 are the stride-8 requirement pairs, fields 53-57 are five more string
+// reads against the row's .bsr/.bsr/.ddj asset paths and two "xxx".
 //
 // WHAT IT IS, from the use-site rather than its shape: the engine computes
 // `price = basis/maxDurability` and `cost = price * units`, so repairing from
-// zero to full buys `units = maxDurability` and costs exactly `basis`. Column 28
+// zero to full buys `units = maxDurability` and costs exactly `basis`. Column 27
 // is therefore **the item's full-repair cost in gold**. Checked against the real
-// table: ITEM_CH_SWORD_01_A has column 28 = 297 and durability 62/76, giving
-// 3.9 gold per unit and a full repair of 297 against a vendor price (column 26)
-// of 890. TestFullRepairCostsExactlyTheBasis pins the identity on five items.
+// table: ITEM_CH_SWORD_01_A has column 27 = 198 and durability 62/76, giving
+// 2.6 gold per unit and a full repair of 198 against a vendor price (column 26)
+// of 890. Column 28 (297) is `+0xa8`, the adjacent flat restore cost.
+//
+// WHY THE OFF-BY-ONE SURVIVED A TEST. TestFullRepairCostsExactlyTheBasis checks
+// that a full repair costs the basis -- which is true of ANY number fed in as
+// the basis, because it is an identity of the formula, not of the column. It
+// described the arithmetic and could never have caught the wrong column. The
+// column is pinned instead by TestRepairCostReadsTheBasisColumn, in the
+// exporter, where the two adjacent columns are given different values.
+//
+// The data agrees, and this is the check that discriminates: across the whole
+// real table column 27 is non-zero for 13,949 of the 13,961 items that have
+// durability and **zero for every one of the items that do not**, which is the
+// predicate a repair basis must satisfy. The twelve exceptions are one coherent
+// set -- the `_SUPER` HEAVY_07 armours, durability 9000/9999, vendor price 0 --
+// which never needs repairing.
 //
 // A FALSE ALARM THIS REPLACES, worth keeping. An earlier note here recorded a
 // conflict: column 28 looked "durability-shaped" -- one of a 1.5-ratio pair

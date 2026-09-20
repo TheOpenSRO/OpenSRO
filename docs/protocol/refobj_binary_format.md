@@ -140,6 +140,13 @@ agree **through the last common field**. `client/tools/re/fields.py` now counts
 binary fields reliably, and running it on all three deserializers shows exactly
 where the agreement stops:
 
+**Field index is column index PLUS ONE** (round 304). The deserializer counts
+fields 1-based over the row; text columns are numbered 0-based. Equating them
+put the repair price basis one column late for three days — see
+`docs/protocol/durability.md`, which lists the four disjoint anchors that fix
+the relationship (the five name strings at 3–7, `DecayTime` at 14 = column 13,
+the requirement pairs at 33–40 = columns 32–39, the five asset paths at 53–57).
+
 | deserializer | binary fields | real text columns |
 |---|---:|---:|
 | `RefObjCommon_ExtractData` | 58 | — (a prefix, not a table) |

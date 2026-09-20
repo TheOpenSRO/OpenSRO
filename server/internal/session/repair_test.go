@@ -82,7 +82,7 @@ func TestRepairHandlerRestoresAndCharges(t *testing.T) {
 	items := refdata.NewMemStore()
 	// ITEM_CH_SWORD_01_A: Dur_L 62, Dur_U 76, full-repair cost 297.
 	if err := items.ImportItems(ctx, []refdata.Item{
-		{ID: 100, MaxStack: 1, DurabilityMin: 62, DurabilityMax: 76, RepairCost: 297,
+		{ID: 100, MaxStack: 1, DurabilityMin: 62, DurabilityMax: 76, RepairCost: 198,
 			TypeID1: equipment.TypeItem, TypeID2: equipment.TypeEquipment, Country: equipment.CountryChina},
 	}); err != nil {
 		t.Fatalf("import: %v", err)

@@ -68,18 +68,26 @@ type Item struct {
 	ReqLevelType4, ReqLevel4 int
 
 	// RepairCost is what a FULL repair of this item costs in gold -- itemdata
-	// column 28, GROUNDED 2026-09-17 from the engine's own arithmetic rather
-	// than from the column's shape.
+	// column 27, GROUNDED 2026-09-17 from the engine's own arithmetic rather
+	// than from the column's shape, and the COLUMN CORRECTED from 28 to 27 on
+	// 2026-09-20 (round 304).
 	//
 	// GItemEquip::ComputeRepair (0x00496e60) computes
 	// `price = refRecord[0xa4] / maxDurability` and `cost = price * units`, so
 	// repairing from zero to full buys `units = maxDurability` and costs exactly
-	// `refRecord[0xa4]`. `refRecord[0xa4]` is _RefObjCommon field 28, and field 28
-	// is text column 28 (docs/protocol/refobj_binary_format.md's anchors at
-	// indices 1, 14, 32..39 and 52..56 bracket it; the formats diverge at 57).
+	// `refRecord[0xa4]`. `refRecord[0xa4]` is _RefObjCommon **field 28**, and
+	// field 28 is text **column 27**: the deserializer's field index is 1-based
+	// over the row and the column index is 0-based, so they differ by one.
 	//
-	// ITEM_CH_SWORD_01_A: column 28 = 297 against durability 62/76, so 3.9 gold a
-	// unit and 297 for a full repair, against a vendor Price of 890.
+	// The earlier note equated them, which put RepairCost on `+0xa8` -- the
+	// adjacent flat restore cost, an authored 1.5x the basis -- and overcharged
+	// every repair by half again. DecayTimeMs, four fields below in this same
+	// struct, had the relationship right all along: it records "field 14 ...
+	// column 13". The struct contradicted itself.
+	//
+	// ITEM_CH_SWORD_01_A: column 27 = 198 against durability 62/76, so 2.6 gold a
+	// unit and 198 for a full repair, against a vendor Price of 890. Column 28
+	// holds 297, which is the `+0xa8` restore cost, not this.
 	//
 	// Zero for an item whose export predates the column. CORRECTED 2026-09-17:
 	// this comment used to claim repair.Estimate treats a zero basis as "no basis

@@ -148,16 +148,25 @@ func TestRestoreCostHasTwoIndependentReaders(t *testing.T) {
 // `basis`. That makes `refRecord[0xa4]` **the item's full-repair cost in gold**
 // -- a use-site identification, not a shape.
 //
-// Checked against the real table: ITEM_CH_SWORD_01_A has itemdata column 28 =
-// 297 and durability 62/76, giving 297/76 = 3.9 gold per unit and a full repair
-// of 297. Its vendor price (column 26) is 890.
+// Checked against the real table: ITEM_CH_SWORD_01_A has itemdata column 27 =
+// 198 and durability 62/76, giving 198/76 = 2.6 gold per unit and a full repair
+// of 198. Its vendor price (column 26) is 890.
+//
+// WHAT THIS TEST CANNOT DO, recorded because it was mistaken for a column
+// check until round 304: the assertion below is an IDENTITY of the formula --
+// a full repair costs the basis, for whatever number is passed as the basis --
+// so it holds just as well when the caller reads the WRONG column. It did, for
+// three days: the exporter took column 28, the adjacent `+0xa8` restore cost,
+// an authored 1.5x that overcharged every repair. The column is pinned by
+// TestRepairCostReadsTheBasisColumn in cmd/export-refdata, which gives the two
+// neighbours different values. The figures below are now the real column 27.
 func TestFullRepairCostsExactlyTheBasis(t *testing.T) {
 	for _, tc := range []struct{ basis, maxDur int }{
-		{297, 76},   // ITEM_CH_SWORD_01_A
-		{500, 78},   // ITEM_CH_SWORD_01_B
-		{1426, 87},  // ITEM_CH_SWORD_03_A
-		{2482, 97},  // ITEM_CH_SWORD_04_C
-		{3718, 107}, // ITEM_CH_SWORD_06_A
+		{198, 76},   // ITEM_CH_SWORD_01_A
+		{333, 78},   // ITEM_CH_SWORD_01_B
+		{950, 87},   // ITEM_CH_SWORD_03_A
+		{1654, 97},  // ITEM_CH_SWORD_04_C
+		{2479, 107}, // ITEM_CH_SWORD_06_A
 	} {
 		q := Estimate(1<<40, tc.basis, tc.maxDur, 0)
 		if q.Units != tc.maxDur {

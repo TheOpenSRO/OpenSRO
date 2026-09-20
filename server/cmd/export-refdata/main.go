@@ -91,7 +91,22 @@ const (
 	fSellPrice = 31
 	// fRepairCost is the item's FULL-REPAIR cost in gold -- see
 	// refdata.Item.RepairCost for the engine arithmetic that identifies it.
-	fRepairCost = 28
+	//
+	// CORRECTED 2026-09-20 from 28 to 27 (round 304). The engine reads the
+	// basis from `refRecord+0xa4`, and `RefObjCommon_ExtractData` writes that
+	// offset at its **field 28**, which is text column **27** -- deserializer
+	// field k is 1-based over the row and column k-1 is 0-based, so they differ
+	// by one. Column 28 is `+0xa8`, the adjacent flat restore cost, and taking
+	// it overcharged every repair by exactly 1.5x (the two columns are an
+	// authored 1.5 ratio: the Copper Sword is 198 and 297).
+	//
+	// Three disjoint anchors fix field k <-> row field k, so the off-by-one is
+	// not a judgement call: fields 3-7 are five string reads and the row's
+	// fields 3-7 are CodeName/ObjName/OrgObjCodeName/NameStrID/DescStrID;
+	// fields 33-40 are the stride-8 (dword,byte) requirement pairs; fields
+	// 53-57 are five more string reads and the row's are the .bsr/.bsr/.ddj
+	// asset paths plus two "xxx". See docs/protocol/refobj_binary_format.md.
+	fRepairCost = 27
 	// The Param block stores a value beside its own label: 118 "HP...",
 	// 120 "HP...(%)", 122 "MP...", 124 "MP...(%)". Potion restore amounts.
 	fRestoreHP    = 118

@@ -7075,6 +7075,74 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-fourth round: every repair was half again too dear
+
+SYSTEMS.md named `RefObjItem::ExtractData` (7,052 bytes) "the most valuable
+function left", blocking two rows: alchemy's packed reinforce rates and
+durability's repair price basis. **It blocked neither.** Alchemy's rates were
+read in round 262. And the price basis is at `refRecord+0xa4`, which
+`durability.md`'s own "Which half of the record, settled 2026-09-17" section had
+already proven is written by **`RefObjCommon_ExtractData`** -- a different
+function, `0x006a3090`, 3,071 bytes, an eighth the size. The page said the
+answer cost 7,052 bytes of counting while the section above it said where the
+answer actually lived.
+
+One run of the already-validated `client/tools/re/fields.py`:
+
+	field 28  ->  +0xa4    the price basis
+	field 29  ->  +0xa8    the flat restore cost
+
+**And the answer was off by one from what srrevamp shipped.** Deserializer
+fields are 1-based over the row; text columns are 0-based. So `+0xa4` is
+itemdata **column 27**. The exporter had `fRepairCost = 28`, which reads
+`+0xa8` -- the adjacent restore cost, which the authored data sets at **1.5x
+the basis**. Every repair srrevamp quoted was half again too expensive. The
+Copper Sword is **198** at column 27 and **297** at column 28; srrevamp charged
+297.
+
+**Four disjoint anchors fix field k to row field k**, and the sharpest is this
+project's own prior work:
+
+| anchor | fields | the row |
+|---|---|---|
+| five string reads | 3-7 | CodeName, ObjName, OrgObjCodeName, NameStrID, DescStrID |
+| `DecayTime` (round 227) | 14 | 10,000 ms -- which this project already calls **column 13** |
+| stride-8 requirement pairs | 33-40 | the four `(dword, byte)` pairs, **columns 32-39** |
+| five asset paths | 53-57 | `.bsr`, `.bsr`, `.ddj`, `xxx`, `xxx` |
+
+`refdata.Item` records "field 14 ... column 13" **four fields below** the
+`RepairCost` comment that equated field 28 with column 28. The struct
+contradicted itself, and the DecayTime half was right all along.
+
+**Why a 1.5-ratio pair cannot be separated by arithmetic, and what did separate
+it.** Any test that feeds one number as "the basis" passes, because
+`fullRepair == basis` is an identity of the formula, not a fact about the
+column -- `TestFullRepairCostsExactlyTheBasis` had been passing on the wrong
+column for three days and could never have caught it. What discriminates is the
+predicate a *repair* basis must satisfy, measured across the whole real table:
+
+| | count |
+|---|---:|
+| durable items with a non-zero column 27 | **13,949** |
+| durable items with a zero column 27 | 12 |
+| **non**-durable items with a non-zero column 27 | **0** |
+
+Not one unrepairable item carries a basis, and the twelve exceptions are a
+single coherent set: the `_SUPER` `HEAVY_07` armours, both genders, all six
+slots, durability 9000/9999, vendor price 0 -- gear that never needs repair.
+Column 30 is 0 for every weapon, which kills the alternative pairing outright:
+were `+0xa4` column 28, the flat restore cost would be a constant zero.
+
+**Wired**: `fRepairCost = 27`, and `TestRepairCostReadsTheBasisColumn` now
+pins the column by giving the two neighbours different values -- verified to
+fail on 28 and pass on 27 before being trusted. Suite green.
+
+**The round-303 note, earning itself immediately.** That round tested
+SYSTEMS.md's table rows for probes naming closed work. This entry's stale probe
+was in the **prose beneath the table**, which no test covers -- and it had been
+pointing every reader at a 7,052-byte function for a value that was never in
+it. Same rot, one paragraph outside the fence.
+
 ## Three-hundred-and-third round: the tracker that cannot rot, rotted
 
 `docs/SYSTEMS.md` is this project's completion tracker, and its header says it

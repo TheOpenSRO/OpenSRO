@@ -16,7 +16,7 @@ func TestBrokenWeaponDealsUnarmed(t *testing.T) {
 	ctx := context.Background()
 	items := refdata.NewMemStore()
 	if err := items.ImportItems(ctx, []refdata.Item{
-		{ID: 100, MaxStack: 1, DurabilityMin: 62, DurabilityMax: 76, RepairCost: 297,
+		{ID: 100, MaxStack: 1, DurabilityMin: 62, DurabilityMax: 76, RepairCost: 198,
 			PhysAttackMin: 40, PhysAttackMax: 50,
 			TypeID1: equipment.TypeItem, TypeID2: equipment.TypeEquipment, Country: equipment.CountryChina},
 	}); err != nil {

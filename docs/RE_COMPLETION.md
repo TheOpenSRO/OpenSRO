@@ -5577,6 +5577,33 @@ lesson is round 302's, aimed at a different artifact: an answer not written
 back into the tracker is not an answer the next session can find -- it is a
 question, still queued, in the file whose job is to say what is left.
 
+Round 304 (VALUE CORRECTED + tag): EVERY REPAIR WAS HALF AGAIN TOO DEAR.
+SYSTEMS.md called RefObjItem::ExtractData (7,052 bytes) the most valuable
+function left, blocking alchemy's packed rates and durability's price basis. It
+blocked neither: alchemy was read in round 262, and +0xa4 is written by
+RefObjCommon_ExtractData (0x006a3090, 3,071 bytes) -- which durability.md's own
+"which half of the record" section had already proven. One fields.py run: field
+28 -> +0xa4, field 29 -> +0xa8. Deserializer fields are 1-based over the row and
+columns 0-based, so +0xa4 is itemdata COLUMN 27, not 28. The exporter had
+fRepairCost = 28, which reads +0xa8, the adjacent flat restore cost at an
+authored 1.5x -- so every repair quoted was half again too expensive (Copper
+Sword: basis 198, restore cost 297, srrevamp charged 297). Four disjoint anchors
+fix field k <-> row field k: the five name strings (3-7), DecayTime (14, which
+this project already called column 13 in round 227), the stride-8 requirement
+pairs (33-40 = columns 32-39), the five asset paths (53-57). refdata.Item
+recorded "field 14 ... column 13" FOUR FIELDS BELOW the RepairCost comment
+equating field 28 with column 28 -- the struct contradicted itself and the
+DecayTime half was right. The 1.5 ratio cannot be resolved by arithmetic:
+TestFullRepairCostsExactlyTheBasis is an identity of the formula, true of any
+number passed as the basis, and had been green on the wrong column for three
+days. What discriminates is the real table -- column 27 is non-zero for 13,949
+of 13,961 durable items and ZERO for every non-durable item, the twelve
+exceptions being one coherent _SUPER HEAVY_07 set at durability 9999 and price
+0. Column 30 is zero for every weapon, killing the alternative pairing. Wired,
+and pinned by TestRepairCostReadsTheBasisColumn (neighbours given different
+values; verified to fail on 28). Round 303's guard earned itself at once: this
+stale probe was in the PROSE BENEATH the table, which no test covers.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

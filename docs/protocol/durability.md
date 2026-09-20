@@ -84,10 +84,10 @@ a character who could pay for it. The order matters and is preserved.
 
 ## The field offsets
 
-| offset | on | reading |
-|---|---|---|
-| `+0xa4` | the **common** record | the price basis |
-| `+0xa8` | the **common** record | a flat restore cost |
+| offset | on | reading | itemdata column |
+|---|---|---|---|
+| `+0xa4` | the **common** record | the price basis | **27** |
+| `+0xa8` | the **common** record | a flat restore cost | **28** |
 | `+0x194` | the item instance | maximum durability |
 | `+0x38` | the item's data block (the one whose `+0x18` is the reference record) | current durability |
 
@@ -381,17 +381,14 @@ same way is the "Durability +%" attribute (`dec-dura` in the option dumper).
   drain's `RollChance`, and the two item virtuals (slot 33 "is equipment",
   slot 36 "has no durability"). Nothing here takes durability off on death or
   on a cast; only hits, blocks and that timed effect do.
-- **Which reference-data column feeds `refRecord[0xa4]`.** The same gap
-  `docs/protocol/alchemy.md` has for its packed success rates: the record is
-  deserialised field-by-field by `RefObjItem::ExtractData`, so mapping an offset
-  to a column means counting through 7,052 bytes of it. That single unread
-  function now blocks two systems, which makes it the most valuable one left.
-
-  `client/tools/re/fields.py` does it mechanically and is **validated** — it
-  returns exactly the 58 fields known for `_RefObjCommon`, and its requirement
-  pairs now land as four `(dword, byte)` pairs at `0xb4/0xb8`, `0xbc/0xc0`,
-  `0xc4/0xc8`, `0xcc/0xd0` — a stride-8 walk, matching the doc's "four
-  requirement pairs" at columns 32..39.
+- ~~**Which reference-data column feeds `refRecord[0xa4]`.**~~ **Recovered
+  2026-09-20 (round 304): itemdata column 27.** See "The price basis is column
+  27" below. The bullet this replaces said the answer meant "counting through
+  7,052 bytes" of `RefObjItem::ExtractData` — but the section *above it in this
+  same file* had already settled that `+0xa4` is written by
+  `RefObjCommon_ExtractData`, a different and far smaller function (3,071
+  bytes), which `client/tools/re/fields.py` resolves in one run. The page
+  contradicted itself, and the contradiction is what made this look expensive.
 
   **Being in the common half is what makes this reachable at all.** Binary field
   order and text column order agree only through the common prefix; the item
@@ -413,3 +410,57 @@ same way is the "Durability +%" attribute (`dec-dura` in the option dumper).
   scanner against a common-prefix anchor that brackets field 28 — the doc's
   "Country at column 14" is field 15 and currently unresolved, so resolving that
   one offset would do it.
+
+
+## The price basis is column 27 (round 304)
+
+`RefObjCommon_ExtractData` (`0x006a3090`, 3,071 bytes) run through
+`client/tools/re/fields.py`:
+
+	field 28  ->  +0xa4    the price basis
+	field 29  ->  +0xa8    the flat restore cost
+
+**Field index and column index differ by one**, because the deserializer's
+field count is 1-based over the row and the text column index is 0-based. So
+`+0xa4` is **itemdata column 27**, not 28.
+
+That off-by-one was live in the exporter. `fRepairCost = 28` read `+0xa8`, the
+adjacent restore cost, which the authored data sets at **1.5x the basis** — so
+every repair srrevamp quoted was half again too expensive. The Copper Sword
+(`ITEM_CH_SWORD_01_A`) is 198 at column 27 and 297 at column 28.
+
+**Four disjoint anchors fix field k to row field k**, none of which relies on
+another:
+
+| anchor | fields | the row's own fields |
+|---|---|---|
+| five string reads | 3–7 | CodeName, ObjName, OrgObjCodeName, NameStrID, DescStrID |
+| `DecayTime`, grounded round 227 | 14 | 10,000 (ms), which this project already calls **column 13** |
+| the stride-8 requirement pairs | 33–40 | the four `(dword, byte)` pairs, **columns 32–39** |
+| five asset-path string reads | 53–57 | `.bsr` model, `.bsr` drop model, `.ddj` icon, `xxx`, `xxx` |
+
+The `DecayTime` anchor is the sharpest, because it is the project's own prior
+recovery: `refdata.Item` records "field 14 ... column 13" four fields below the
+`RepairCost` comment that equated field 28 with column 28. **The struct
+contradicted itself**, and the DecayTime half was right.
+
+### The data agrees, and this is the check that discriminates
+
+A 1.5-ratio pair of adjacent columns cannot be told apart by any test that
+feeds one number. What separates them is the predicate a *repair* basis must
+satisfy, measured over the whole real table:
+
+| | count |
+|---|---:|
+| items with durability and a non-zero column 27 | **13,949** |
+| items with durability and a zero column 27 | 12 |
+| items **without** durability and a non-zero column 27 | **0** |
+
+Not one unrepairable item carries a basis. The twelve exceptions are a single
+coherent set — the `_SUPER` `HEAVY_07` armours, both genders, all six slots,
+durability 9000/9999 and vendor price 0 — gear that never needs repairing.
+
+Column 30, the other neighbour, is **0 for every weapon checked**, which rules
+out the alternative pairing: were `+0xa4` column 28, then `+0xa8` would be
+column 30's zero, and the flat restore cost is a value a second unrelated
+reader uses.
