@@ -5322,6 +5322,16 @@ re-harvest reaches that the Ghidra pass did not; the TSV is now headed as a
 supplement and the duplicate page is deleted. The memory note is now
 mechanical: `ls docs/protocol/` FIRST -- the file names alone would have
 stopped all four.
+Round 283 (docs + 3 names): `ls docs/protocol/` FIRST worked -- EQUIP_SLOTS.md
+already had the nine visual slots, the this+0x38 array and a pointer to the
+appearance installer. From it, CObjCharacter::InstallEquipVisual (0xa61010):
+ONE VISUAL PER SLOT, and installing REPLACES -- an occupied slot makes the
+function call itself with item 0 to detach first. An empty slot is not empty:
+SetDefaultWear fills it from a default-wear ITEM (clothes_00_ba/la in the
+archive), resolved by TypeID like any other. That CORRECTS round 281's
+conclusion: the engine does not hide body meshes either, so "we never hide"
+is not why skin shows through our armour -- what srrevamp lacks is the
+default wear, plus whatever keeps worn geometry clear of the skin (unread).
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

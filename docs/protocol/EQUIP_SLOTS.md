@@ -103,3 +103,33 @@ into the helm slot is refused with "that does not go in that slot".
 By the item's own `.bsr`, not by a bone table here — see ITEM_FORMAT.md. The earlier
 `CharacterAssembler.EQUIPMENT_SLOT_BONES` (slot code → guessed bone, with the shoulder piece
 landing at the pelvis) is gone; the file names the bone.
+
+### One visual per slot, and installing replaces (2026-09-20, round 283)
+
+`CObjCharacter::InstallEquipVisual` (`0x00a61010`) holds exactly one visual per slot and
+**replaces** rather than accumulates. Installing a non-null item checks the slot's array entry
+(`this+0x38 + slot*12`, or `this+0xa4 + slot*12` for the second set) and, if it is occupied,
+**calls itself with item 0 to take the old one off first**, then attaches the new resource
+(`FUN_00a609f0`) and books it (`FUN_00a60080`). The item-0 path detaches (`FUN_00a5fb90`) and
+un-books it (`ItemSet_RemoveWornSlotByItem`), and a completed set raises `this+0x1a0` through
+`ItemSet_IsComplete`.
+
+### An empty slot is not empty: it shows its default wear
+
+`CObjCharacter::SetDefaultWear` (`0x00a5cca0`) fills a slot that has no worn item, and
+`BuildDefaultWearTypeID` (`0x00a5c760`) resolves each default part as a packed item **TypeID**
+(base `0x2c`, bits by gender and `WornArmorClass()`, `| 0x1800` for part 0 and `| 0x2000` for
+part 1) looked up in the item table like any other item. `DEFAULT_WEAR_NUM` is 2, so a slot can
+carry two.
+
+The archive shows what those resolve to: `Res\Item\China\MAN_ITEM\clothes_00_ba.bsr` and
+`clothes_00_la.bsr`, each a normal item `.bsr` with its own mesh
+(`prim\mesh\item\china\man_item\clothes_00_ba.bms`) and material (`clothes_00.bmt`). So a
+character with no chest armour is not bare — the chest slot is showing a **garment item**, and
+equipping armour replaces that garment, not a body mesh.
+
+**This corrects a conclusion**, not an observation: round 281 recorded that srrevamp never hides
+body meshes (true) and concluded that was the cause of skin showing through armour. The engine
+does not hide body meshes either — the body `.bsr`'s skin is drawn under the slot visual in both.
+What srrevamp is actually missing is the **default wear**, and whatever keeps the engine's worn
+geometry clear of the skin. See `docs/PLAYTEST_2026_09_20.md` item 6.

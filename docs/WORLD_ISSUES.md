@@ -7075,6 +7075,40 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-eighty-third round: one visual per slot, and an empty slot wears clothes
+
+The first command of this tick was `ls docs/protocol/` -- the rule the previous round's
+correction put in place -- and the second line of the listing was `EQUIP_SLOTS.md`, a page that
+already carried the nine visual slots, their order, the `this+0x38` array twelve bytes apart,
+`EQUIP_VISUAL_COUNT == 9` from two differently worded asserts, and a pointer to the appearance
+installer. Four rounds of re-derivation stopped in one command.
+
+From that pointer, `CObjCharacter::InstallEquipVisual` (`0x00a61010`) reads plainly. **One
+visual per slot, and installing replaces**: with a non-null item, if the slot's entry is already
+occupied the function **calls itself with item 0** to detach the old visual
+(`FUN_00a5fb90` + `ItemSet_RemoveWornSlotByItem`) before attaching the new one
+(`FUN_00a609f0`, booked by `FUN_00a60080`); a completed set raises `this+0x1a0` through
+`ItemSet_IsComplete`. Slots 9..12 never reach a mesh at all.
+
+**And an empty slot is not empty.** `SetDefaultWear` fills it from a default-wear **item**,
+resolved by `BuildDefaultWearTypeID` into a packed TypeID and looked up in the item table like
+anything else. The archive says what those are: `clothes_00_ba.bsr` and `clothes_00_la.bsr` in
+`MAN_ITEM`, ordinary item `.bsr` files each with their own mesh and `clothes_00.bmt`. A
+character with no chest armour is wearing a garment, not showing skin.
+
+**That corrects round 281's conclusion** -- and only the conclusion; its observation stands.
+srrevamp really never hides body meshes. But the engine does not hide them either: the body
+`.bsr`'s skin is drawn under the slot visual in both. So "we never hide" cannot be why skin
+shows through our armour. What srrevamp is missing is the **default wear** -- an unarmoured slot
+should show `clothes_00_*` and ours shows bare skin -- plus whatever keeps the engine's worn
+geometry clear of the skin, which is still unread.
+
+The buildable step falls out of the same read: nine visual slots, one visual each, default wear
+when nothing is equipped, replace on install. srrevamp has no per-slot bookkeeping at all today.
+
+Three names: the installer's semantics merged into its existing row, and its attach and detach
+halves added.
+
 ## Two-hundred-and-eighty-second round: the assert lever was already documented, and so were the constants
 
 The fourth correction of this kind, and the one worth writing down properly.
