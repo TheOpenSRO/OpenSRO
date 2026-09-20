@@ -70,7 +70,7 @@ func TestKinds(t *testing.T) {
 func TestInterfaceSlotsAreDistinct(t *testing.T) {
 	slots := map[int]string{
 		SlotDestructor: "Destructor", SlotCreate: "Create", SlotPersist: "Persist",
-		SlotPureA: "PureA", SlotPureB: "PureB", SlotPureC: "PureC",
+		SlotTick: "Tick", SlotRelease: "Release", SlotApply: "Apply",
 	}
 	if len(slots) != 6 {
 		t.Errorf("%d distinct slots, want 6 -- two constants collided", len(slots))
@@ -85,5 +85,51 @@ func TestInterfaceSlotsAreDistinct(t *testing.T) {
 func TestPersistenceSurface(t *testing.T) {
 	if len(Tables) != 2 || len(Procs) != 2 || len(Managers) != 3 || len(CommonData) != 3 {
 		t.Error("the surface counts changed")
+	}
+}
+
+// The cadence, and what the two constants mean together: a job is ticked once
+// a second, but a timestamp job reads the clock once in ten of those ticks --
+// so it can outlive its expiry by up to ten seconds, never more.
+func TestATimestampJobReadsTheClockEveryTenTicks(t *testing.T) {
+	var p PollAccumulator
+	polls := 0
+	for i := 0; i < 100; i++ {
+		if p.Add(TickSeconds) {
+			polls++
+		}
+	}
+	if polls != 10 {
+		t.Errorf("%d polls in 100 one-second ticks, want 10", polls)
+	}
+	// Subtracting rather than resetting is what keeps it from drifting: a
+	// half-second overshoot is carried, not thrown away.
+	var q PollAccumulator
+	if q.Add(10.5) != true {
+		t.Fatal("10.5 s should reach the poll")
+	}
+	if q.Pending() != 0.5 {
+		t.Errorf("carried %v, want the 0.5 s overshoot", q.Pending())
+	}
+}
+
+// The countdown style: one second off the remainder each tick, and the job
+// dies on the tick whose elapsed time reaches what is left.
+func TestCountdownExpiresWhenTheElapsedReachesTheRemainder(t *testing.T) {
+	left, alive := Countdown(3, TickSeconds)
+	if !alive || left != 2 {
+		t.Errorf("3 - 1 -> %d (alive=%v), want 2, true", left, alive)
+	}
+	if left, alive = Countdown(1, TickSeconds); alive || left != 0 {
+		t.Errorf("1 - 1 -> %d (alive=%v), want 0, false -- `elapsed < remaining` "+
+			"is strict, so the last whole second expires it", left, alive)
+	}
+	if left, alive = Countdown(0, TickSeconds); alive || left != 0 {
+		t.Errorf("0 - 1 -> %d (alive=%v), want 0, false", left, alive)
+	}
+	// 48 hours is what a penalty-points job re-arms for, not a countdown the
+	// engine ever stores from data.
+	if PenaltyPointsRearmSeconds != 48*3600 {
+		t.Errorf("PenaltyPointsRearmSeconds = %d, want 48 hours", PenaltyPointsRearmSeconds)
 	}
 }

@@ -375,6 +375,13 @@ category byte (vtable slot `0x68`) and an id (slot `0x6c`); `0x4114d0` is its tw
 returning the entry instead of a flag. **Their durations are set where the entries
 are created**, which is why no literal is visible at any check.
 
+**That list is the timed-job manager**, read end to end in round 274 — see
+`docs/protocol/timed_jobs.md`. The entry holds an absolute `__time32_t` of
+`now + span`, and the character's one-second tick polls it against the clock
+**every ten seconds**, so an academy window can run up to ten seconds long.
+A window that has passed is not merely ignored: the entry is unlinked and freed,
+which is what makes the later check answer "no penalty".
+
 #### This corrected a recorded fact, and then grounded it again
 
 Every call site of both helpers, with the two pushed arguments:

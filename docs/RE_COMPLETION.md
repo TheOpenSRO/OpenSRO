@@ -5211,6 +5211,18 @@ of >= 10. `guild.PointAccumulator` + test. Three names.
 Round 273 (docs + jobs names): the job kinds are 1 Trader, 2 Robber (thief),
 3 Hunter -- two independent labellers in the binary spell them; `jobs.Kind*`
 renamed with aliases, `Kind.Name()`. Two names.
+Round 274 (docs + timedjob): HOW A TIMED JOB FIRES, the mechanism twelve
+features sit on. The manager is embedded in GObjPC at +0x1dfc; the one-second
+PC tick sweeps it with the literal 1.0f; slot 8 is Tick(elapsed) -> keep, slot
+10 the release, slot 12 an off-tick apply-to-all. Two expiry styles by id: a
+countdown in the record (48-hour re-arm while penalty points remain) or an
+absolute __time32_t of now+span polled against the clock every 10.0 s -- so
+such a job can outlive its expiry by up to ten seconds. CORRECTION: the
+fourteen _ADDTIMEDJOB getters are on the carrier at job+8, not on the job,
+which the base's fifteen slots had already disproved. `timedjob.PollAccumulator`
++ `Countdown` + tests, slots renamed from the PureA/B/C placeholders. Five
+names, one amended. The stale SYSTEMS Academy row was corrected in the same
+pass (the roles were recovered 2026-09-17 and the row never caught up).
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

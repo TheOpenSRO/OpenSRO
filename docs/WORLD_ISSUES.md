@@ -7075,6 +7075,52 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-seventy-fourth round: how a timed job fires, and the getters were on the wrong object
+
+The RE tick for 2026-09-20 took the Timed jobs row's open item -- "how a job fires. The managers
+presumably poll, and nothing here says at what interval or through what" -- and the answer was
+one call site away from work already done. The academy's 24-hour windows are entries in this
+list, so round 273's dig had already handed over `0x411440` and the list at `pc+0x1dfc`.
+
+**The manager is part of the character.** `CTimedJobManagerForPC` is embedded in `GObjPC` at
+`+0x1dfc`; the call site reads `param_1 + 0x77f` on an `int *`, which is that byte offset. The
+pet's manager sits at `+0x1ce4` of its owner.
+
+**It is swept once a second, and the tick is the expiry test.** `CGObjPC::vslot_415` -- the PC's
+periodic update, grounded at one second back in round 223 -- calls `0x6560c0` with `0x3f800000`,
+which is `1.0f`. The sweep calls each job's **slot 8** with that elapsed time; a job that answers
+0 is handed to manager slot 4, unlinked, and released through **slot 10**, which runs slot 9 and
+returns it to the chunk allocator. So the three `__purecall` slots this project has carried as
+`SlotPureA/B/C` since they were counted are `Tick`, `Release` and -- slot 12 -- `Apply`, which
+`0x656060` runs over every job from two other call sites and never from the tick.
+
+**Two expiry styles, and the second one is loose by design.** `CTJ_PenaltyKeeper::Tick`
+(`0x652080`) switches on the job's own id. Id 0 counts a seconds field down in the record
+(`round(remaining - elapsed)`, the field read unsigned through the `+ 2^32` fixup at `0xb45ba4`)
+and, at zero, re-arms for `0x2a300` = **48 hours** if penalty points remain. Every other id holds
+an absolute `__time32_t` that `Create` wrote as `now + span` -- and the tick only reads the clock
+once its accumulator at `+0xc` reaches the `10.0f` at `0xb45b44`, subtracting the `10.0` *double*
+at `0xb45c60` rather than resetting. **A timestamp job can therefore outlive its expiry by up to
+ten seconds**, and the periodic-not-reset subtraction means that slack never accumulates.
+
+**A recorded fact was wrong, and the page had already disproved it.** `timed_jobs.md` said the
+fourteen `_ADDTIMEDJOB` column getters at `+0x64..+0x98` are "fourteen consecutive getters on the
+job object". `CTimedJob::PersistToDB` reads `piVar2 = *(int **)(param_1 + 8)` and calls them on
+**that**. The page's own slot count settles it without the read: `CTimedJob` is a fifteen-slot
+base and cannot have a slot 38, while the three common-data carriers have 39 slots each. Two of
+those getters are now grounded by use rather than by position -- slot 26 is the category and slot
+27 the id the lookup matches on -- along with the expiry pair, slot 28 to read and slot 13 to
+write.
+
+A third reading fell out for free: `CTJ_CoolTimeKeeper`'s slot 15 returns `owner + 8000`, and
+8000 is `0x1f40` -- the SkillCooldowns block round 256 located independently from the other end.
+
+`timedjob.PollAccumulator` and `timedjob.Countdown` carry the two styles with their constants
+(`TickSeconds`, `WallClockPollSeconds`, `PenaltyPointsRearmSeconds`) and tests; the slot
+constants are named, with the placeholders kept as aliases. Five names, one amended. In the same
+pass the `SYSTEMS.md` Academy row was corrected: it still said the master role and the three
+windows were unread, and both were recovered on 2026-09-17 -- the row had simply never caught up.
+
 ## Two-hundred-and-seventy-third round: the three job kinds, in the engine's own words
 
 The RE tick for 2026-09-19 21:02 closed the Jobs row's oldest open item without a curve. Two
