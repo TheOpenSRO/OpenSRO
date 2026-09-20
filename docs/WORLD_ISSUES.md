@@ -7075,6 +7075,68 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-third round: the tracker that cannot rot, rotted
+
+`docs/SYSTEMS.md` is this project's completion tracker, and its header says it
+"cannot rot the same way without the build going red." It had rotted. Not in a
+way any of its seven tests could see, because every one of them asks whether a
+row is **well formed** -- does the spec document exist, is a next probe present,
+does the headline match the table -- and none asks the question that matters:
+**is the probe still open?**
+
+The Pets and COS row read, as its live work queue:
+
+> the five switch cases in `GObjPC::FUN_004fcef0` are not mapped to COS kinds,
+> and the hunger gauge (`HGPFULL_NODRINK`) is named but unread
+
+Both were answered. `pets.md` carries them as struck-through bullets under its
+own "Not recovered" heading -- the switch cases in **round 289**, the hunger
+gauge in **round 300** -- and `recovered_names.tsv:381` has named `004fcef0`
+`GObjPC::CheckCanSummonCOS` since the former. The tracker was contradicting its
+own spec document, and had been for four rounds.
+
+**The sweep.** Two mechanical rules over all 34 rows:
+
+| rule | rows caught |
+|---|---|
+| probe spells `FUN_<addr>` for an address `recovered_names.tsv` names | **3** (Teleport, Berserk, Pets) |
+| probe calls something unread that its own spec marks recovered | **1** (Pets, twice over) |
+
+The three `FUN_` rows are a milder defect than the Pets contradiction and worth
+separating. Teleport's and Berserk's prose *describes the reading in detail* --
+"the teleport-use handler `FUN_00513590` compares the link's second word to the
+character's gold" -- it simply kept the anonymous spelling for a function the
+project had named. Stale spelling, not a stale claim. It still matters: round
+301's emitter sweep listed `GObjPC::FUN_004a9050` as unnamed while
+`ground_items.md` had read it in full, and round 302 spent itself reconciling
+that. A `FUN_` token in a summary sends the next session to re-derive.
+
+**Both rules are now tests**, and neither was called a guard until it was seen
+to fail on the real defect: `git checkout docs/SYSTEMS.md`, run, five spelling
+failures and two contradiction failures; restore, run, green.
+
+**Two false positives, both kept as comments in the test, because each is the
+project's own prose habit and a checker that flagged them would get silenced.**
+
+1. A fixed 120-character window flagged my *own replacement text*: a recovered
+   token (`item[0x2a0] * 100`) sat 110 characters before the word "Unread",
+   which introduced an unrelated list. The window is now the **clause** -- split
+   on ". " and "; ", never a bare period, which would cut `1..5` and
+   `alchemy.Rate`.
+2. The Skills row says `'efr'` "is **no longer unread**". That sentence is the
+   tracker working exactly as designed, so negations ("no longer", "not",
+   "never") are excluded explicitly.
+
+**What this says about the wider ledger.** The lesson is the same one round 302
+ended on, pointed at a different artifact. There, a name that was not in the
+applier's input did not exist however thoroughly the function had been read.
+Here, **an answer that was not written back into the tracker is not an answer
+the next session can find** -- it is a question, still queued, in the one file
+whose job is to say what is left. Round 289 and round 300 both did the reading
+and both updated `pets.md`; neither updated the row that points at `pets.md`.
+The reading is not the deliverable. The reading, filed where the next reader
+looks, is.
+
 ## Three-hundred-and-second round: names this project had already earned and never filed
 
 Round 301's emitter sweep listed `GObjPC::FUN_004a9050` among its unnamed yield. `ground_items.md`

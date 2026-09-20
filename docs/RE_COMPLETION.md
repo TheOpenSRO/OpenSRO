@@ -5554,6 +5554,29 @@ INSTANCE id that every container references (bindings and rentals hang off it
 via `nItemDBID`), and an empty slot is a real row with `ItemID = 0 or NULL`
 rather than a missing one.
 
+Round 303 (docs + 2 tests): THE TRACKER THAT CANNOT ROT, ROTTED. SYSTEMS.md's
+header promises it "cannot rot the same way without the build going red"; its
+seven tests all ask whether a row is WELL FORMED (spec exists, probe present,
+headline matches) and none asks whether the probe is still OPEN. The Pets and
+COS row had listed, as live work, the COS switch cases (answered round 289) and
+the hunger gauge (answered round 300) -- while pets.md carried both as
+struck-through **Recovered** bullets and recovered_names.tsv had named
+004fcef0 GObjPC::CheckCanSummonCOS. Two mechanical rules over all 34 rows: a
+probe may not spell FUN_<addr> for an address the TSV names (3 rows: Teleport,
+Berserk, Pets), and may not call unread what its own spec marks recovered (1
+row, twice). The three FUN_ rows are the milder defect -- Teleport's and
+Berserk's prose describes the reading in full and merely kept the anonymous
+spelling -- but that is exactly what cost round 302 its tick. Both rules are
+now tests in internal/systems, each verified to FAIL on the restored original
+before being trusted. Two false positives are kept as comments because both are
+the project's own habits: a fixed character window flagged a recovered token
+110 chars before an unrelated "Unread:" list (bounded to the clause now, split
+on ". "/"; " so `1..5` and `alchemy.Rate` survive), and the Skills row's
+"`'efr'` is no longer unread" is the tracker working (negations excluded). The
+lesson is round 302's, aimed at a different artifact: an answer not written
+back into the tracker is not an answer the next session can find -- it is a
+question, still queued, in the file whose job is to say what is left.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

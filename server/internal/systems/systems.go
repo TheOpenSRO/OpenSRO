@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -135,4 +136,38 @@ func Counts(rows []Row) (specified, partial, open int) {
 		}
 	}
 	return
+}
+
+// RecoveredNames maps an address to the name this project gave the function
+// there, read from docs/protocol/recovered_names.tsv.
+//
+// The tracker needs it for one narrow purpose: prose that still spells a
+// function `FUN_<addr>` after the project has named it reads as though the
+// function were anonymous. That is not cosmetic. Round 301's error-emitter
+// sweep listed `GObjPC::FUN_004a9050` among its unnamed yield while
+// `ground_items.md` had already read that function in full, and the wasted pass
+// is what round 302 had to go back and reconcile.
+func RecoveredNames(path string) (map[uint64]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	names := make(map[uint64]string)
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 3 {
+			continue
+		}
+		addr, err := strconv.ParseUint(strings.TrimSpace(fields[0]), 16, 64)
+		if err != nil {
+			continue
+		}
+		if name := strings.TrimSpace(fields[2]); name != "" {
+			names[addr] = name
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("systems: %s yielded no names -- the file's shape changed", path)
+	}
+	return names, nil
 }
