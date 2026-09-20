@@ -213,6 +213,23 @@ func set_page(page: int) -> void:
 func current_page() -> int:
 	return _current_page
 
+## Where a quickslot-bound item now lives in the bag, or -1 if it is gone.
+##
+## A quickslot binding stores the BAG SLOT, because that is what OpUseItem
+## addresses -- but spending, moving or selling shifts what lives in a slot, so
+## a binding left alone would point at whatever took its place and use the
+## wrong item. `bag` maps bag slot -> item id.
+##
+## Prefers the slot the binding already names, so an unmoved item keeps its
+## binding; otherwise finds the item anywhere; otherwise -1.
+static func resolve_item_binding(item_id: int, current_slot: int, bag: Dictionary) -> int:
+	if int(bag.get(current_slot, -1)) == item_id:
+		return current_slot
+	for slot in bag:
+		if int(bag[slot]) == item_id:
+			return int(slot)
+	return -1
+
 ## The 1-based page a slot index belongs to.
 func _page_of_slot(slot_index: int) -> int:
 	return slot_index / SLOTS_PER_PAGE + 1

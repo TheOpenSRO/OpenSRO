@@ -11,7 +11,7 @@ done. The first report of the day is `PLAYTEST_2026_09_20.md`.
 | 4 | "hotbars are assigned to f keys, it just says 1 now, and F1-F4 should scroll through them" | **FIXED** |
 | 5 | "when i drag and unequip my sword, it doesnt go off of my character" | **FIXED** |
 | 6 | "i cant unequip my clothes" | **FIXED** |
-| 7 | "when i try to use this hp berry it just says malformed request" | OPEN — see below |
+| 7 | "when i try to use this hp berry it just says malformed request" | **ADDRESSED** — consumables can now go on the bar; the exact refusal is still unreproduced |
 | 8 | "when i click on a mangyang its health bar appears but then my health shoots all the way down to 0" | **FIXED** |
 | 9 | "there is such thing as hp recovery, its a stat for the player and it passively restores health" | **FIXED** |
 | 10 | "i can still see my butt in my cotton clothes" | OPEN (carried from the first report, item 6) |
@@ -156,5 +156,28 @@ skill window onto the quickslot under the mouse, and clicking a skill assigns it
 to the next free slot. If it is not working in play that is a different bug from
 the one reported, and worth a fresh description.
 
-**Items still cannot go on the bar** — the quickslots hold skills only
-(`_quickslot_skills`), which is the likely root of item 7.
+**Items can now go on the bar too** — see below.
+
+## 7 — consumables on the quickslot bar
+
+The quickslots held **skills only**, so a potion could not be put there at all.
+Dragging a bag item out of the inventory and releasing it over the bar did
+nothing: `_drop_bag_item` handled a bag slot and the paper doll and then simply
+returned.
+
+Bag items now reach the bar through a new `item_drop_requested` signal, and
+activating such a slot sends `OpUseItem` for the item's bag slot.
+
+**The binding is re-resolved on every inventory refresh**, which is the part
+with a real bug in it if done naively. A quickslot stores a BAG SLOT, because
+that is what `OpUseItem` addresses -- but spending, moving or selling shifts
+what lives in a slot, so a binding left alone would point at whatever took its
+place and use the wrong item. `HudUnderbar.resolve_item_binding` prefers the
+slot the binding already names, then finds the item anywhere, then unbinds; six
+cases are tested, including two stacks of the same item.
+
+**The reported message itself is still unreproduced.** `"malformed request"` is
+reachable only from a decode failure, the use-item encoder and decoder match
+byte for byte, and dragging an item onto the bar previously sent nothing at all
+-- so whatever failed was some other request. If it recurs, the opcode is what
+identifies it.

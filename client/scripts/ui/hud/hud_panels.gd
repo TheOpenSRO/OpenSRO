@@ -80,6 +80,14 @@ signal skill_assign_requested(skill_id: int, basic_code: String, icon: Texture2D
 ## position: World3D resolves the position against the underbar's quickslots
 ## and puts the skill there (the original's way onto the hotbar).
 signal skill_drop_requested(at: Vector2, skill_id: int, basic_code: String, icon: Texture2D)
+## A BAG ITEM was dragged out of the inventory and released somewhere that is
+## neither a bag slot nor an equipment slot -- World3D resolves the position
+## against the underbar's quickslots and puts the item there.
+##
+## The quickslots held skills only until now, so a consumable could not reach
+## the bar at all: "skills should be drag and drop" and the HP berry that could
+## not be used from it (playtest 2026-09-20).
+signal item_drop_requested(at: Vector2, item_id: int, inventory_slot: int, icon: Texture2D)
 ## A talk-box service line other than "End conversation" was chosen; `key` is
 ## the service's stable key (NpcServiceReader.Service.key -- "shop", "repair",
 ## ...). World3D acts on it (opens the shop, ...).
@@ -1820,6 +1828,39 @@ func _drop_bag_item(from: int, at: Vector2) -> void:
 		# bag is re-read since the item left it.
 		NetClient.equip(who, worn, from)
 		NetClient.list_inventory(who)
+		return
+	# Neither a bag slot nor the doll: offer it to the quickslot bar, which
+	# World3D owns. It ignores a release that is not over a slot.
+	var icon := _bag_icon_at_slot(from)
+	item_drop_requested.emit(at, _bag_item_id_at_slot(from), from, icon)
+
+## The ItemIcon drawn for a bag slot, or null. The icons live on the cells of
+## the inventory lattice and carry inv_slot/inv_item_id metadata, which is what
+## _fill_inventory_grid puts there.
+func _bag_icon_node(slot: int) -> TextureRect:
+	var window: HudWindow = _windows.get("inventory")
+	if window == null:
+		return null
+	var grid := window.node("GDR_INVENTORY_LATTICE") as Control
+	if grid == null:
+		return null
+	for cell in grid.get_children():
+		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
+		if icon != null and icon.has_meta("inv_slot") and int(icon.get_meta("inv_slot")) == slot:
+			return icon
+	return null
+
+## The icon texture currently drawn in a bag slot, or null.
+func _bag_icon_at_slot(slot: int) -> Texture2D:
+	var icon := _bag_icon_node(slot)
+	return icon.texture if icon != null else null
+
+## The item id in a bag slot, or -1.
+func _bag_item_id_at_slot(slot: int) -> int:
+	var icon := _bag_icon_node(slot)
+	if icon == null or not icon.has_meta("inv_item_id"):
+		return -1
+	return int(icon.get_meta("inv_item_id"))
 
 ## The server's answer to a move: the whole bag as it now stands, or the
 ## refusal. Drawn from the answer, so a refused move leaves the grid as it was.

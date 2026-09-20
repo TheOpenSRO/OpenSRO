@@ -91,6 +91,26 @@ Section = Create,"0,0,800,60","0"
 
 	underbar.free()
 
+	# --- item bindings on the bar ----------------------------------------
+	# A quickslot binding stores the BAG SLOT, because that is what OpUseItem
+	# addresses. Spending or moving items shifts what lives in a slot, so a
+	# stale binding would use whatever took its place.
+	var bag := {3: 4001, 7: 4002, 9: 4001}
+	_check(HudUnderbar.resolve_item_binding(4001, 3, bag) == 3,
+		"an unmoved item keeps its own slot")
+	_check(HudUnderbar.resolve_item_binding(4002, 3, bag) == 7,
+		"an item that moved is found at its new slot")
+	_check(HudUnderbar.resolve_item_binding(4003, 3, bag) == -1,
+		"an item no longer in the bag unbinds")
+	# The slot the binding names wins over another copy elsewhere, so pressing
+	# the key keeps using the stack the player put there.
+	_check(HudUnderbar.resolve_item_binding(4001, 9, bag) == 9,
+		"with two stacks, the bound slot is preferred (got %d)" % HudUnderbar.resolve_item_binding(4001, 9, bag))
+	_check(HudUnderbar.resolve_item_binding(4001, 5, bag) in [3, 9],
+		"a bound slot that no longer holds the item falls back to a real one")
+	_check(HudUnderbar.resolve_item_binding(4001, 3, {}) == -1,
+		"an empty bag unbinds everything")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

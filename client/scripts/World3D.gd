@@ -892,6 +892,9 @@ var _own_hit_until: Dictionary = {}
 ## the player has put on the hotbar from the skill window. Activating a slot
 ## casts its skill.
 var _quickslot_skills: Dictionary = {}
+## Bag items placed on the quickslot bar: slot -> {item, slot}. Separate from
+## _quickslot_skills because activating one uses an item rather than casting.
+var _quickslot_items := {}
 ## The Basic_Code of a skill the player just cast (""=none), consumed by the next
 ## attack result so that skill's own hit effect plays on the target (a plain
 ## attack does not). Set on cast, cleared when the blow lands.
@@ -1380,6 +1383,7 @@ func _try_initialize_pk2_ui() -> void:
 			_log_system("Controls: click to move, drag to turn the camera, mouse wheel to zoom. F1 dev tools, F3 debug panel, I inventory, K skill, M map. Type /help for commands."))
 	_hud_panels.skill_assign_requested.connect(_on_skill_assign_requested)
 	_hud_panels.skill_drop_requested.connect(_on_skill_drop_requested)
+	_hud_panels.item_drop_requested.connect(_on_item_drop_requested)
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
 
 	# The chat window, bottom-left where its registry entry puts it. This
@@ -4884,6 +4888,14 @@ func _on_quickslot_activated(slot_index: int) -> void:
 	var entry = _quickslot_skills.get(slot_index)
 	if entry != null:
 		_cast_skill(int(entry["id"]), String(entry["code"]))
+		return
+	# A CONSUMABLE on the bar. The quickslots held skills only until now, so a
+	# potion could not be put there at all, which is what "skills should be
+	# drag and drop" and the unusable HP berry were both about (playtest
+	# 2026-09-20).
+	var item = _quickslot_items.get(slot_index)
+	if item != null and NetClient.current_character_name != "":
+		NetClient.use_item(NetClient.current_character_name, int(item["slot"]))
 
 ## The number keys 1..9 and 0 are the current page's ten quickslots, as in the
 ## original. Only reached when no text field has focus (a focused LineEdit
@@ -4901,6 +4913,42 @@ func _quickslot_hotkey(event: InputEvent) -> bool:
 		_hud_underbar.activate_key(9)
 		return true
 	return false
+
+## A bag item was dragged onto the quickslot bar: remember which bag slot it
+## came from and show its icon there. Activating that quickslot uses the item.
+##
+## The bag slot is what gets stored, because that is what OpUseItem addresses.
+## It is re-resolved on every inventory refresh (_resync_quickslot_items), since
+## moving or spending items shifts what lives in a slot.
+func _on_item_drop_requested(at: Vector2, item_id: int, inventory_slot: int, icon: Texture2D) -> void:
+	if _hud_underbar == null or item_id < 0:
+		return
+	var slot := _hud_underbar.slot_index_at(at)
+	if slot < 0:
+		return
+	_quickslot_skills.erase(slot)
+	_quickslot_items[slot] = {"item": item_id, "slot": inventory_slot}
+	_hud_underbar.set_slot_item(slot, icon)
+	_log_system("Put the item on quickslot %d." % (slot + 1))
+
+## Keeps the bar's item slots pointing at the right bag slots, and clears any
+## whose item is gone (spent, sold, moved). Called whenever the bag is redrawn.
+func _resync_quickslot_items(slots: Array) -> void:
+	if _hud_underbar == null or _quickslot_items.is_empty():
+		return
+	var by_slot := {}
+	for entry in slots:
+		var sl: InventoryNet.Slot = entry
+		by_slot[sl.slot_index] = sl.item_id
+	for qs in _quickslot_items.keys():
+		var want := int(_quickslot_items[qs]["item"])
+		var bag := int(_quickslot_items[qs]["slot"])
+		var found := HudUnderbar.resolve_item_binding(want, bag, by_slot)
+		if found >= 0:
+			_quickslot_items[qs]["slot"] = found
+		else:
+			_quickslot_items.erase(qs)
+			_hud_underbar.set_slot_item(qs, null)
 
 ## F1..F4 select quickslot pages 1..4. Plain presses only -- Ctrl+F1 and
 ## Ctrl+F3 are the developer toggles, and an echo (key held) must not flip
@@ -8806,6 +8854,10 @@ func _on_inventory_list_result(slots: Array, error: String) -> void:
 		inventory_status_label.text = "Error: %s" % error
 		return
 	_inventory_slots.assign(slots)
+	# Anything on the quickslot bar points at a BAG SLOT, and spending or
+	# moving items shifts what lives in one, so re-resolve before the player
+	# can press it and use the wrong thing.
+	_resync_quickslot_items(slots)
 	inventory_list.clear()
 	for s in _inventory_slots:
 		# The dev list names items too: the client's own name, else the code name.
