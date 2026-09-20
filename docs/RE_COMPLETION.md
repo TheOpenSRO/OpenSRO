@@ -6266,6 +6266,40 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 340 (the event-log family, and a lead left alone on purpose): NEXT ON THE
+SIZE-RANKED WORKLIST WAS 0x00469100, 7,622 bytes, the second-largest unnamed
+function in the game-logic core. THE LEDGER HAD ALREADY CHARACTERISED IT -- the
+2026-09-17 entry calls this exact address "a 7,622-byte logging function full of
+item-serial, drop, gold and token messages", reached while DISPROVING a
+label-based naming rule (it carries a unique `GObjPC::DumpItemWithOptions` label
+and is not that method). It was never filed as a name. My independent read
+agreed line for line, which is the confirmation, and the gap is the same one
+MsgBuf_ReadUInt32FromTail sat in for eleven rounds: BEING CHARACTERISED IN PROSE
+IS NOT BEING NAMED. Filed as ItemEventLog_FormatRecord. WITH ITS SIBLING THAT
+MAKES A FAMILY, now written up in docs/protocol/event_log.md:
+CGameServer::LogFormatted (0x00936640) is the sink, GameEventLog_FormatRecord
+(0x00467100) formats character and world events, ItemEventLog_FormatRecord
+formats item and currency events -- item serial changes, drops and pickups, the
+four arena token currencies (Gold/Silver/Brass/Medal) and trader job level.
+BOTH FORMATTERS HAND RECORDS BACK THROUGH OUT-PARAMETERS AND NEITHER LOGS
+DIRECTLY -- ItemEventLog_FormatRecord makes zero calls to LogFormatted -- so
+where the records finally go is NOT claimed. A LEAD FOUND AND DELIBERATELY NOT
+TAKEN: 0x00468a80 calls the item formatter and is itself called from FIFTY sites,
+each passing a distinctive small constant (0x9f, 0x83, 0x50, 0xaa, 0xa9, 0xa0,
+0x99, 0x94 ...), which looks like a vocabulary of event kinds that would label
+fifty call sites at once. IT IS NOT TAKEN BECAUSE THE ARGUMENT ORDER IS NOT
+TRUSTWORTHY: Ghidra types the first parameter as int* and the body uses it
+immediately as an object with a vtable, yet the call sites read
+FUN_00468a80(0x9f, ...). Both cannot be the first argument. That is precisely the
+shape that forced round 323's retraction, where Ghidra's argument for
+Msg_SendTwoFieldReply was wrong and a whole conclusion rested on it. The next
+step is to read those call sites in srgs.asm and settle which operand is the
+kind, BEFORE labelling any of the fifty.
+
+**What moved:** no shipped value. The second-largest unnamed core function
+named, the three-function event-log family documented, and a fifty-site
+vocabulary left as a stated next step rather than guessed at.
+
 Round 339 (one opcode turns out to be 35 commands): THE SIZE-RANKED WORKLIST'S
 TOP ENTRY IS THE BIGGEST HANDLER IN THE SERVER -- 0x0051de90, 9,173 bytes, opcode
 0x7010 -- AND IT IS BIG BECAUSE IT IS NOT ONE COMMAND. Its body is a single
