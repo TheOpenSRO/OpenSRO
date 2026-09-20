@@ -4,6 +4,20 @@
 string pool in `.rdata` at **`0x00b11b08`–`0x00b12a70`**: **310 identifiers**, of
 which **54 are table names** and the rest are column names.
 
+**The pool is not the whole schema, and 54 is not the runtime table count (round
+307).** The 56 `DB_Bind__<TABLE>` binders cover **59 tables**: the 54 here plus
+`_OpenMarket`, `_ShopItemStockQuantity`, `_RentItemInfo`, `_ChestInfo` and
+`_BindingOptionWithItem`, none of which appears anywhere in the 310 strings.
+They are not missing by accident — their binders declare the table name as an
+**inline literal** instead of a pointer into the pool, and a literal never gets
+registered. `_ChestInfo` corroborates from two directions: the warehouse work
+had already cited its binder at `0x8586e0`, which the binder sweep found
+independently.
+
+**And the binders give the full column list the pool cannot.** See
+`docs/protocol/db_bind_columns.tsv` — 56 binders, 409 columns, with the `_CHAR`
+control landing exactly on `character_schema.md`'s 42 plus the key `CharID`.
+
 Extracted into `server/internal/persistence` (`ColumnPool`, `TableColumns`,
 `SchemaTableOrder`), with tests that would catch a regenerated pool losing a
 name another spec cites.
@@ -51,7 +65,9 @@ schema node.
 ## THE POOL IS DEDUPLICATED — read this before using the table below
 
 Each name appears **once, at first use**. So the table below gives the names
-each table **introduces**, not its full column list. `_TIMEDJOBFORPET` and
+each table **introduces**, not its full column list. The binders do give the
+full list (`db_bind_columns.tsv`, round 307), including for the seven tables
+that introduce nothing at all. `_TIMEDJOBFORPET` and
 `_INVENTORYFORAVATAR` list nothing at all because every name they use was
 already pooled by `_TIMEDJOB` and `_INVENTORY`, and shared names (`ID`,
 `CharID`, `Slot`, `Data1`, `Data2`) belong to many tables.

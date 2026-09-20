@@ -117,3 +117,93 @@ func TestNamesCitedByOtherSpecs(t *testing.T) {
 		}
 	}
 }
+
+// The control that makes BoundColumns trustworthy, and the reason it exists.
+//
+// docs/protocol/character_schema.md states _CHAR's 42 columns, recovered from
+// the deduplicated string pool. The binder read gives 43. They must agree
+// exactly but for the key: nothing the document lists may be missing here, and
+// the single extra must be CharID, which the pool attributes to whichever table
+// introduces it first rather than to _CHAR.
+//
+// If this ever fails, the extraction has drifted and BoundColumns should not be
+// trusted for the other 55 tables either -- this is the only one with an
+// independent answer to check against.
+func TestBoundColumnsMatchTheDocumentedCharSchema(t *testing.T) {
+	bound := BoundColumns["_CHAR"]
+	if len(bound) == 0 {
+		t.Fatal("BoundColumns has no _CHAR")
+	}
+	have := map[string]bool{}
+	for _, c := range bound {
+		have[c] = true
+	}
+	documented := TableColumns["_CHAR"]
+	if len(documented) != 42 {
+		t.Fatalf("TableColumns[_CHAR] has %d names, want the documented 42", len(documented))
+	}
+	for _, c := range documented {
+		if !have[c] {
+			t.Errorf("_CHAR column %q is in the string pool but not in the binder read", c)
+		}
+	}
+	var extra []string
+	for _, c := range bound {
+		found := false
+		for _, d := range documented {
+			if c == d {
+				found = true
+				break
+			}
+		}
+		if !found {
+			extra = append(extra, c)
+		}
+	}
+	if len(extra) != 1 || extra[0] != "CharID" {
+		t.Errorf("binder has extras %v, want exactly [CharID] -- the primary key the "+
+			"pool attributes to another table", extra)
+	}
+}
+
+// LiteralNamedTables are the five runtime tables that have a DB_Bind__ binder
+// but whose names are absent from the 310-string schema pool entirely.
+//
+// This was a wrong assumption before it was a finding: the first version of the
+// test below asserted every bound table is a pool table, and failed on these
+// five. They are not an extraction defect. `_ChestInfo` is the proof from two
+// directions -- the warehouse work already cited its binder at 0x8586e0, which
+// this sweep found independently, and the binder declares the name as an INLINE
+// LITERAL rather than a pointer into the pool. Names reach the pool by being
+// registered through the schema machinery; a literal never enters it.
+//
+// So the pool's 54 table names are not the count of runtime tables. The binder
+// family says at least 59.
+var LiteralNamedTables = map[string]bool{
+	"_OpenMarket":            true,
+	"_ShopItemStockQuantity": true,
+	"_RentItemInfo":          true,
+	"_ChestInfo":             true,
+	"_BindingOptionWithItem": true,
+}
+
+// Every bound table is either one the pool knows or one of the five that
+// declare their name as a literal. A new name in neither set means the
+// extraction has drifted.
+func TestBoundColumnsTablesAreAccountedFor(t *testing.T) {
+	for table := range BoundColumns {
+		if _, ok := TableColumns[table]; ok {
+			continue
+		}
+		if LiteralNamedTables[table] {
+			continue
+		}
+		t.Errorf("BoundColumns has %q, which is neither in the schema pool nor a "+
+			"recorded literal-named table", table)
+	}
+	for table := range LiteralNamedTables {
+		if _, ok := BoundColumns[table]; !ok {
+			t.Errorf("%q is recorded as a literal-named table but has no binder entry", table)
+		}
+	}
+}

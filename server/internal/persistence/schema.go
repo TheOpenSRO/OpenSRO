@@ -461,3 +461,79 @@ const (
 	SchemaPoolStart = 0x00b11b08
 	SchemaPoolEnd   = 0x00b12a70
 )
+
+// BoundColumns maps each runtime table to the column list its DB_Bind__<TABLE>
+// binder actually binds, read in round 307 from all 56 binders.
+//
+// This is a DIFFERENT and more complete thing than TableColumns above, which
+// gives only the names a table INTRODUCES to the deduplicated string pool. A
+// table that reuses a sibling's names introduces none -- seven of them do -- so
+// the pool cannot state a full column list and this can.
+//
+// The control is _CHAR: the 43 names here are exactly the 42 in
+// docs/protocol/character_schema.md plus the key CharID, with nothing in the
+// doc absent here. TestBoundColumnsMatchTheDocumentedCharSchema pins it.
+//
+// A name written `Name*N` in the TSV is stored here as the bare base name,
+// because the binder emits it N times and appends an index at runtime -- the
+// real columns are Name1..NameN. _ALLIEDCLANS (Ally*8), _GUILDWAR and _ITEMS
+// are the three tables that do this, and it is why the pool records
+// _ALLIEDCLANS as introducing a single name for eight columns.
+var BoundColumns = map[string][]string{
+	"_ALLIEDCLANS":               {"ID", "Ally*8", "LastCrestRev", "CurCrestRev"},
+	"_AssociationReputation":     {"AssociationCodeName", "Reputation", "PriorOccupation"},
+	"_BindingOptionWithItem":     {"nItemDBID", "bOptType", "nSlot", "nOptID", "nOptLvl", "nOptValue", "nParam1", "nParam2"},
+	"_BlockedWhisperers":         {"OwnerID", "TargetName"},
+	"_CHAR":                      {"CharID", "Deleted", "RefObjID", "CharName16", "NickName16", "Scale", "CurLevel", "MaxLevel", "ExpOffset", "SExpOffset", "Strength", "Intellect", "RemainGold", "RemainSkillPoint", "RemainStatPoint", "RemainHwanCount", "GatheredExpPoint", "HP", "MP", "LatestRegion", "PosX", "PosY", "PosZ", "AppointedTeleport", "AutoInvestExp", "InventorySize", "DailyPK", "TotalPK", "PKPenaltyPoint", "GuildID", "LastLogout", "TelRegion", "TelPosX", "TelPosY", "TelPosZ", "DiedRegion", "DiedPosX", "DiedPosY", "DiedPosZ", "WorldID", "TelWorldID", "DiedWorldID", "HwanLevel"},
+	"_CHARCOS":                   {"ID", "OwnerCharID", "RefCharID", "HP", "MP", "KeeperNPC", "State", "CharName", "Lvl", "ExpOffset", "HGP", "PetOption", "RentEndTime"},
+	"_CHARQUEST":                 {"CharID", "QuestID", "Status", "AchievementCount", "StartTime", "EndTime", "QuestData1", "QuestData2"},
+	"_CHARSKILL":                 {"CharID", "SkillID", "Enable"},
+	"_CHARSKILLMASTERY":          {"CharID", "MasteryID", "Level"},
+	"_CHEST":                     {"Slot"},
+	"_CharCollectionBook":        {"CharID", "ThemeID", "SlotIndex", "RegDate"},
+	"_CharInstanceWorldData":     {"CharID", "DungeonKeyID", "WorldID", "LayerID", "OpenedTime", "RegionID", "PosX", "PosY", "PosZ", "IsActivated", "EnterCount", "LastEnterTime"},
+	"_CharTrijob":                {"CharID", "JobType", "Level", "Exp", "Contribution", "Reward"},
+	"_CharTrijobSafeTrade":       {"CharID", "AbleCount", "Status", "LastSafeTrade"},
+	"_ChestInfo":                 {"JID", "ChestSize"},
+	"_ClientConfig":              {"CharID", "ConfigType", "SlotSeq", "SlotType", "Data"},
+	"_DELETEDCHAR":               {"CharID", "UserJID", "DeletedDate"},
+	"_FleaMarketNetwork":         {"AbleOpen", "CharID", "Slot", "TidGroupID", "ItemClass", "ItemCount", "MakeZone", "Cash"},
+	"_Friend":                    {"CharID", "FriendCharID", "FriendCharName", "RefObjID"},
+	"_GPHistory":                 {"ID", "GuildID", "UsedTime", "CharName", "UsedGP", "Reason"},
+	"_GUILD":                     {"ID", "Name", "Lvl", "GatheredSP", "FoundationDate", "Alliance", "MasterCommentTitle", "MasterComment", "Booty", "LastCrestRev", "CurCrestRev", "MercenaryAttr"},
+	"_GUILDCHEST":                {"Slot"},
+	"_GUILDMEMBER":               {"GuildID", "CharID", "CharName", "MemberClass", "CharLevel", "GP_Donation", "JoinDate", "Permission", "Contribution", "GuildWarKill", "GuildWarKilled", "Nickname", "RefObjID", "SiegeAuthority"},
+	"_GUILDWAR":                  {"ID", "WarType", "VictoryPointIndex", "LodgedGold", "WarEndTime", "Guild*2", "PointGain*2", "Data1", "Data2"},
+	"_INVCOS":                    {"Slot"},
+	"_INVENTORY":                 {"Slot"},
+	"_INVENTORYFORAVATAR":        {"Slot"},
+	"_INVENTORYFORLINKEDSTORAGE": {"Slot"},
+	"_ITEMQUOTATION":             {"ID", "Service", "AssocNPC", "RefItemID", "BaseQuot", "Quot_LB", "Quot_UB", "BaseStockAmount", "FluctuateAmount", "CurStockAmount"},
+	"_ITEMS":                     {"ID64", "RefItemID", "OptLevel", "Variance", "Data", "CreaterName", "MagParamNum", "MagParam*12", "Serial64"},
+	"_LOGEVENTCHAR":              {"EventTime", "EventID", "Data1", "Data2", "EventPos", "strDesc"},
+	"_LOGEVENTITEM":              {"EventTime", "ItemRefID", "dwData", "TargetStorage", "Operation", "Slot_From", "Slot_To", "EventPos", "strDesc", "Serial64", "Gold"},
+	"_LOGEVENTSIEGEFORTRESS":     {"FortressID", "EventTime", "EventID", "CharID", "Data1", "Data2", "strDesc"},
+	"_LOGSERVEREVENT":            {"ID", "EventTime", "ServerEventID", "LogType", "strDesc"},
+	"_LogSchedule":               {"ID", "ServerType", "ServerBodyID", "ScheduleDefine", "ScheduleIdx", "Type", "OccureTime"},
+	"_Memo":                      {"ID64", "FromCharName", "Message", "Date", "Status", "RefObjID"},
+	"_OpenMarket":                {"JID", "PersnalID", "CharName16", "Status", "RefItemID", "TidGroupID", "ItemClass", "ItemID", "SellCnt", "RegDate", "EndDate", "Price", "Deposit", "SellFee", "UseCash", "Serial64"},
+	"_RentItemInfo":              {"nItemDBID", "nRentType", "nCanDelete", "nCanRecharge", "PeriodBeginTime", "PeriodEndTime", "MeterRateTime", "nPackingState", "nPackingTime"},
+	"_SIEGEFORTRESSSTRUCT":       {"FortressID", "OwnerGuildID", "RefEventStructID", "RefObjID", "HP", "MakeDate", "State"},
+	"_STATICAVATAR":              {"CharID", "Param1"},
+	"_ServerEvent":               {"ID", "CompletionValue", "AchievementCondition", "ProgressCount"},
+	"_ServerEventReward":         {"ServerEventID", "RewardID", "RemainRewardTime"},
+	"_ShopItemStockQuantity":     {"Service", "Country", "RefShopGroupCodeName", "RefPackageItemCodeName", "ConstStockQuantity", "StockQuantity"},
+	"_SiegeFortress":             {"FortressID", "GuildID", "TaxRatio", "Tax", "NPCHired", "TempGuildID", "Introduction", "CreatedDungeonTime", "CreatedDungeonCount", "IntroductionModificationPermission"},
+	"_SiegeFortressBattleRecord": {"FortressID", "CharID", "KillCount", "KilledCount", "RankUpDate", "CurRank"},
+	"_SiegeFortressItemForge":    {"FortressID", "ItemRefID", "Amount", "Finished", "StartDate", "FinishDate"},
+	"_SiegeFortressObject":       {"ID", "FortressID", "OwnerGuildID", "RefObjID", "HP", "Region", "PosX", "PosY", "PosZ", "Direction", "OwnerLevel"},
+	"_SiegeFortressRequest":      {"FortressID", "GuildID", "RequestType"},
+	"_SiegeFortressStoneState":   {"FortressID", "GuildID", "AccumulateDamage"},
+	"_TIMEDJOB":                  {"ID", "CharID", "Category", "JobID", "TimeToKeep", "Data1", "Data2", "Data3", "Data4", "Data5", "Data6", "Data7", "Data8", "Serial64", "JID"},
+	"_TIMEDJOBFORPET":            {"ID", "CharID", "Category", "JobID", "TimeToKeep", "Data1", "Data2", "Data3", "Data4", "Data5", "Data6", "Data7", "Data8", "Serial64", "JID"},
+	"_TRAININGCAMP":              {"ID", "CreationDate", "Rank", "GraduateCount", "EvaluationPoint", "LatestEvaluationDate", "CommentTitle", "Comment"},
+	"_TRAININGCAMPBUFFSTATUS":    {"CampID", "RecipientCharID", "BuffSlotIdx", "DonorCharID", "StartingTime", "RemainBuffPoint", "BuffType"},
+	"_TRAININGCAMPHONORRANK":     {"Ranking", "CampID", "Rank"},
+	"_TRAININGCAMPMEMBER":        {"CampID", "CharID", "RefObjID", "CharName", "JoinDate", "MemberClass", "CharJoinedLevel", "CharCurLevel", "CharMaxLevel", "HonorPoint"},
+	"_USER":                      {"UserJID", "CharID"},
+}

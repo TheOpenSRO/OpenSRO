@@ -1,0 +1,73 @@
+# Runtime-table column lists, read from the 56 DB_Bind__<TABLE> binders (round 307).
+#
+# Each binder declares its table then each column BY NAME -- FUN_00401fc0(name, len),
+# the name being an inline literal OR a pointer into the schema string pool at
+# .rdata 0x00b11b08-0x00b12a70 (docs/protocol/db_columns.md). Reading only the inline
+# form finds 346 columns and reports five tables as empty; resolving the pool
+# pointers finds 409 and none.
+#
+# This is the table's ACTUAL column set, where the pool gives only the names a table
+# INTRODUCES. Control: _CHAR's 43 here are exactly character_schema.md's 42 plus the
+# key CharID, with nothing in the doc missing here.
+#
+# `Name*N` means the binder emits that base name N times and appends an index at
+# runtime (a strlen walk then FUN_0041f4a0), so the real columns are Name1..NameN.
+# That is why the pool lists _ALLIEDCLANS as introducing ONE name for eight columns.
+#
+# addr	function	table	n	columns
+0084ce50	DB_Bind__ALLIEDCLANS	_ALLIEDCLANS	11	ID,Ally*8,LastCrestRev,CurCrestRev
+0085dfa0	DB_Bind__AssociationReputation	_AssociationReputation	3	AssociationCodeName,Reputation,PriorOccupation
+0085e4e0	DB_Bind__BindingOptionWithItem	_BindingOptionWithItem	8	nItemDBID,bOptType,nSlot,nOptID,nOptLvl,nOptValue,nParam1,nParam2
+0085ccd0	DB_Bind__BlockedWhisperers	_BlockedWhisperers	2	OwnerID,TargetName
+0083e6b0	CInstancePC::CharData_BindDBColumns	_CHAR	43	CharID,Deleted,RefObjID,CharName16,NickName16,Scale,CurLevel,MaxLevel,ExpOffset,SExpOffset,Strength,Intellect,RemainGold,RemainSkillPoint,RemainStatPoint,RemainHwanCount,GatheredExpPoint,HP,MP,LatestRegion,PosX,PosY,PosZ,AppointedTeleport,AutoInvestExp,InventorySize,DailyPK,TotalPK,PKPenaltyPoint,GuildID,LastLogout,TelRegion,TelPosX,TelPosY,TelPosZ,DiedRegion,DiedPosX,DiedPosY,DiedPosZ,WorldID,TelWorldID,DiedWorldID,HwanLevel
+008610b0	DB_Bind__CharCollectionBook	_CharCollectionBook	4	CharID,ThemeID,SlotIndex,RegDate
+008414a0	DB_Bind__CHARCOS	_CHARCOS	13	ID,OwnerCharID,RefCharID,HP,MP,KeeperNPC,State,CharName,Lvl,ExpOffset,HGP,PetOption,RentEndTime
+008531d0	DB_Bind__CharInstanceWorldData	_CharInstanceWorldData	12	CharID,DungeonKeyID,WorldID,LayerID,OpenedTime,RegionID,PosX,PosY,PosZ,IsActivated,EnterCount,LastEnterTime
+00848140	DB_Bind__CHARQUEST	_CHARQUEST	8	CharID,QuestID,Status,AchievementCount,StartTime,EndTime,QuestData1,QuestData2
+008465b0	DB_Bind__CHARSKILL	_CHARSKILL	3	CharID,SkillID,Enable
+00846b10	DB_Bind__CHARSKILLMASTERY	_CHARSKILLMASTERY	3	CharID,MasteryID,Level
+00853ff0	DB_Bind__CharTrijob	_CharTrijob	6	CharID,JobType,Level,Exp,Contribution,Reward
+0085d950	DB_Bind__CharTrijobSafeTrade	_CharTrijobSafeTrade	4	CharID,AbleCount,Status,LastSafeTrade
+00842e00	DB_Bind__CHEST	_CHEST	1	Slot
+008586e0	DB_Bind__ChestInfo	_ChestInfo	2	JID,ChestSize
+0085c590	DB_Bind__ClientConfig	_ClientConfig	5	CharID,ConfigType,SlotSeq,SlotType,Data
+008505f0	DB_Bind__DELETEDCHAR	_DELETEDCHAR	3	CharID,UserJID,DeletedDate
+00854830	DB_Bind__FleaMarketNetwork	_FleaMarketNetwork	8	AbleOpen,CharID,Slot,TidGroupID,ItemClass,ItemCount,MakeZone,Cash
+0084ef40	DB_Bind__Friend	_Friend	4	CharID,FriendCharID,FriendCharName,RefObjID
+0084f580	DB_Bind__GPHistory	_GPHistory	6	ID,GuildID,UsedTime,CharName,UsedGP,Reason
+0084b050	DB_Bind__GUILD	_GUILD	12	ID,Name,Lvl,GatheredSP,FoundationDate,Alliance,MasterCommentTitle,MasterComment,Booty,LastCrestRev,CurCrestRev,MercenaryAttr
+0084ebd0	DB_Bind__GUILDCHEST	_GUILDCHEST	1	Slot
+0084be60	DB_Bind__GUILDMEMBER	_GUILDMEMBER	14	GuildID,CharID,CharName,MemberClass,CharLevel,GP_Donation,JoinDate,Permission,Contribution,GuildWarKill,GuildWarKilled,Nickname,RefObjID,SiegeAuthority
+0084dd90	DB_Bind__GUILDWAR	_GUILDWAR	11	ID,WarType,VictoryPointIndex,LodgedGold,WarEndTime,Guild*2,PointGain*2,Data1,Data2
+00843170	DB_Bind__INVCOS	_INVCOS	1	Slot
+008423b0	DB_Bind__INVENTORY	_INVENTORY	1	Slot
+00842720	DB_Bind__INVENTORYFORAVATAR	_INVENTORYFORAVATAR	1	Slot
+00842a90	DB_Bind__INVENTORYFORLINKEDSTORAGE	_INVENTORYFORLINKEDSTORAGE	1	Slot
+008434e0	DB_Bind__ITEMQUOTATION	_ITEMQUOTATION	10	ID,Service,AssocNPC,RefItemID,BaseQuot,Quot_LB,Quot_UB,BaseStockAmount,FluctuateAmount,CurStockAmount
+00844120	DB_Bind__ITEMS	_ITEMS	20	ID64,RefItemID,OptLevel,Variance,Data,CreaterName,MagParamNum,MagParam*12,Serial64
+008596f0	DB_Bind__LOGEVENTCHAR	_LOGEVENTCHAR	6	EventTime,EventID,Data1,Data2,EventPos,strDesc
+00859f20	DB_Bind__LOGEVENTITEM	_LOGEVENTITEM	11	EventTime,ItemRefID,dwData,TargetStorage,Operation,Slot_From,Slot_To,EventPos,strDesc,Serial64,Gold
+0085ac20	DB_Bind__LOGEVENTSIEGEFORTRESS	_LOGEVENTSIEGEFORTRESS	7	FortressID,EventTime,EventID,CharID,Data1,Data2,strDesc
+0085bc80	DB_Bind__LogSchedule	_LogSchedule	7	ID,ServerType,ServerBodyID,ScheduleDefine,ScheduleIdx,Type,OccureTime
+0085b540	DB_Bind__LOGSERVEREVENT	_LOGSERVEREVENT	5	ID,EventTime,ServerEventID,LogType,strDesc
+0084fdb0	DB_Bind__Memo	_Memo	6	ID64,FromCharName,Message,Date,Status,RefObjID
+0085fef0	DB_Bind__OpenMarket	_OpenMarket	16	JID,PersnalID,CharName16,Status,RefItemID,TidGroupID,ItemClass,ItemID,SellCnt,RegDate,EndDate,Price,Deposit,SellFee,UseCash,Serial64
+0085ef00	DB_Bind__RentItemInfo	_RentItemInfo	9	nItemDBID,nRentType,nCanDelete,nCanRecharge,PeriodBeginTime,PeriodEndTime,MeterRateTime,nPackingState,nPackingTime
+00858b50	DB_Bind__ServerEvent	_ServerEvent	4	ID,CompletionValue,AchievementCondition,ProgressCount
+008591a0	DB_Bind__ServerEventReward	_ServerEventReward	3	ServerEventID,RewardID,RemainRewardTime
+0085d120	DB_Bind__ShopItemStockQuantity	_ShopItemStockQuantity	6	Service,Country,RefShopGroupCodeName,RefPackageItemCodeName,ConstStockQuantity,StockQuantity
+00855260	DB_Bind__SiegeFortress	_SiegeFortress	10	FortressID,GuildID,TaxRatio,Tax,NPCHired,TempGuildID,Introduction,CreatedDungeonTime,CreatedDungeonCount,IntroductionModificationPermission
+00857940	DB_Bind__SiegeFortressBattleRecord	_SiegeFortressBattleRecord	6	FortressID,CharID,KillCount,KilledCount,RankUpDate,CurRank
+00856ba0	DB_Bind__SiegeFortressItemForge	_SiegeFortressItemForge	6	FortressID,ItemRefID,Amount,Finished,StartDate,FinishDate
+00855e70	DB_Bind__SiegeFortressObject	_SiegeFortressObject	11	ID,FortressID,OwnerGuildID,RefObjID,HP,Region,PosX,PosY,PosZ,Direction,OwnerLevel
+008573e0	DB_Bind__SiegeFortressRequest	_SiegeFortressRequest	3	FortressID,GuildID,RequestType
+00858180	DB_Bind__SiegeFortressStoneState	_SiegeFortressStoneState	3	FortressID,GuildID,AccumulateDamage
+008477f0	DB_Bind__SIEGEFORTRESSSTRUCT	_SIEGEFORTRESSSTRUCT	7	FortressID,OwnerGuildID,RefEventStructID,RefObjID,HP,MakeDate,State
+00852d60	DB_Bind__STATICAVATAR	_STATICAVATAR	2	CharID,Param1
+00850b40	DB_Bind__TIMEDJOB	_TIMEDJOB	15	ID,CharID,Category,JobID,TimeToKeep,Data1,Data2,Data3,Data4,Data5,Data6,Data7,Data8,Serial64,JID
+00851c50	DB_Bind__TIMEDJOBFORPET	_TIMEDJOBFORPET	15	ID,CharID,Category,JobID,TimeToKeep,Data1,Data2,Data3,Data4,Data5,Data6,Data7,Data8,Serial64,JID
+00848b70	DB_Bind__TRAININGCAMP	_TRAININGCAMP	8	ID,CreationDate,Rank,GraduateCount,EvaluationPoint,LatestEvaluationDate,CommentTitle,Comment
+0084a700	DB_Bind__TRAININGCAMPBUFFSTATUS	_TRAININGCAMPBUFFSTATUS	7	CampID,RecipientCharID,BuffSlotIdx,DonorCharID,StartingTime,RemainBuffPoint,BuffType
+0084a1a0	DB_Bind__TRAININGCAMPHONORRANK	_TRAININGCAMPHONORRANK	3	Ranking,CampID,Rank
+00849590	DB_Bind__TRAININGCAMPMEMBER	_TRAININGCAMPMEMBER	10	CampID,CharID,RefObjID,CharName,JoinDate,MemberClass,CharJoinedLevel,CharCurLevel,CharMaxLevel,HonorPoint
+0083e220	DB_Bind__USER	_USER	2	UserJID,CharID

@@ -241,8 +241,13 @@ rather than "every table it touches".
 
 ## What is not recovered
 
-- **Column layouts for any of the 35 runtime tables.** `_CHARQUEST` is the one
-  partial exception, from `docs/protocol/quest_scripting.md`.
+- ~~**Column layouts for any of the 35 runtime tables.**~~ **Recovered 2026-09-20
+  (round 307)**: every one of the 56 `DB_Bind__<TABLE>` binders declares its
+  table and then each column **by name**, so `docs/protocol/db_bind_columns.tsv`
+  now carries **409 columns across 59 tables** (`persistence.BoundColumns`).
+  What remains is the column ORDER-to-struct-offset map, which the binder also
+  carries and this pass did not extract, and the three tables whose names are
+  built at runtime (`Ally*8` and friends — see the TSV header).
 - **The parameters of most procedures**, beyond how many there are. The call
   literal is `(%d, %d, %d)`; what each `%d` is means reading the caller's
   argument set-up. **Two are now partly traced** -- see below -- out of 72.

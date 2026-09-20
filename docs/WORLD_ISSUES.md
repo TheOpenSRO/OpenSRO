@@ -7075,6 +7075,67 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-seventh round: 409 columns, and 54 was never the table count
+
+Round 306 ended by noticing the `DB_Bind__<TABLE>` family in passing. It is the
+lever that closes a bullet standing in three separate pages: `persistence.md`'s
+"**column layouts for any of the 35 runtime tables**", `academy.md`'s "a
+complete column list for any of the four tables", and the reason `db_columns.md`
+could not give one -- **the schema string pool is deduplicated, so it records
+only the names a table INTRODUCES**, and seven tables introduce none at all.
+
+Each binder declares its table and then every column **by name**. One pass over
+all 56: **409 columns across 59 tables**, now in
+`docs/protocol/db_bind_columns.tsv` and `persistence.BoundColumns`.
+
+**The control, run before the sweep was believed.** `_CHAR` is the one table
+with an independent answer -- `character_schema.md`'s 42 names, from the pool.
+The binder gives 43, and the difference is exactly right:
+
+	in binder, not in doc:  CharID     (the key, which the pool attributes
+	                                    to whichever table introduces it first)
+	in doc, not in binder:  (nothing)
+
+A test pins it, because `_CHAR` is the only one of the 59 that can be checked
+against a second source.
+
+### The first extraction was wrong, and said so loudly
+
+Reading only inline `FUN_00401fc0("Name", len)` literals found 346 columns and
+reported **five tables as having none** -- `_INVENTORY`, `_CHEST`, `_INVCOS` and
+two siblings. That looked plausible, because `db_columns.md` describes exactly
+those tables as "reuses a sibling's". It was wrong: the names are passed as
+**pointers into the schema pool** (`FUN_00401fc0(&DAT_00b11d70, 4)`), which the
+regex could not see. Resolving them through the PE gives 409 and no empty table.
+
+A zero that agrees with something you already believe is the most expensive kind.
+
+### `Ally*8`: names the binary builds rather than stores
+
+`_ALLIEDCLANS` came out as `Ally` repeated eight times. The binder emits the
+base name, walks it for length, and calls `FUN_0041f4a0` to append an index --
+so the real columns are `Ally1..Ally8`. `_GUILDWAR` and `_ITEMS` do the same.
+**This is why the pool lists `_ALLIEDCLANS` as introducing ONE name for eight
+columns**, and the TSV marks the pattern `Name*N` rather than pretending to
+eight distinct strings.
+
+### And a wrong assumption that turned into the round's best finding
+
+The first version of the guard test asserted that every bound table is a table
+the pool knows. It failed on five: `_OpenMarket`, `_ShopItemStockQuantity`,
+`_RentItemInfo`, `_ChestInfo`, `_BindingOptionWithItem`. Not an extraction
+defect -- **none of the five appears anywhere in the 310-string pool**, and the
+reason is visible in the binder: they declare the table name as an **inline
+literal** instead of a pool pointer, and a literal is never registered.
+
+`_ChestInfo` corroborates from two directions: the warehouse work had already
+cited its binder at `0x8586e0`, and this sweep found `DB_Bind__ChestInfo` at
+that same address without being told.
+
+**So `db_columns.md`'s "54 table names" is not the runtime table count.** The
+binders say at least **59**. The test now records the five with the reason
+rather than asserting the thing that was false.
+
 ## Three-hundred-and-sixth round: a dig that re-derived a recorded page, and the pointer that sent it there
 
 **Most of this round confirms what `docs/protocol/db_columns.md` already says,

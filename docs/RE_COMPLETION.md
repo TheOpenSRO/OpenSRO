@@ -5656,6 +5656,33 @@ rounds' opposite-end reads: +0x04 name, +0x18 SSO flag, +0x24 width, +0x30
 failure -- ODBC32.dll is imported, the dump just does not name the thunks. Most
 of this round confirms recorded work; said plainly rather than claimed as new.
 
+Round 307 (409 columns + 2 tests): THE BINDER FAMILY GIVES THE COLUMN LISTS THE
+POOL CANNOT. The 56 DB_Bind__<TABLE> binders each declare their table then every
+column BY NAME, so one pass yields 409 columns across 59 tables
+(docs/protocol/db_bind_columns.tsv, persistence.BoundColumns). This closes a
+bullet standing in three pages: persistence.md's "column layouts for any of the
+35 runtime tables", academy.md's "a complete column list for any of the four
+tables", and the reason db_columns.md could not give one -- the pool is
+deduplicated and records only names a table INTRODUCES, with seven tables
+introducing none. CONTROL, run before believing the sweep: _CHAR is the only
+table with a second source, and the binder's 43 are character_schema.md's 42
+plus the key CharID, with nothing in the doc absent; a test pins it. THE FIRST
+EXTRACTION WAS WRONG: inline-literal-only reading found 346 columns and five
+tables with NONE -- plausible because db_columns.md calls those same tables
+"reuses a sibling's" -- but the names are pointers into the schema pool
+(FUN_00401fc0(&DAT_00b11d70,4)) the regex could not see. A zero that agrees with
+something already believed is the expensive kind. Ally*8: _ALLIEDCLANS,
+_GUILDWAR and _ITEMS build column names at runtime (base name + index appended
+via FUN_0041f4a0), which is WHY the pool lists _ALLIEDCLANS as introducing one
+name for eight columns. BEST FINDING came from a wrong assumption: the guard
+test asserted every bound table is a pool table and failed on five --
+_OpenMarket, _ShopItemStockQuantity, _RentItemInfo, _ChestInfo,
+_BindingOptionWithItem -- none of which is in the 310-string pool at all,
+because their binders declare the name as an INLINE LITERAL and a literal is
+never registered. _ChestInfo corroborates twice: the warehouse work already
+cited its binder at 0x8586e0 and this sweep found DB_Bind__ChestInfo there
+independently. So 54 is NOT the runtime table count; the binders say at least 59.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

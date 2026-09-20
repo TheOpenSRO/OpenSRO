@@ -523,6 +523,8 @@ correspondence is one-to-one and obvious.
   named (`RecipientCharID`, `BuffSlotIdx`, `DonorCharID`, `StartingTime`,
   `RemainBuffPoint`, `BuffType`), so it is a **donated, expiring, slotted** buff
   with a point budget; what the types are is unread.
-- A complete column list for any of the four tables. The binary's schema pool is
-  deduplicated, so it gives each table the names it **introduces**, not all it
-  uses — see `docs/protocol/db_columns.md`.
+- ~~A complete column list for any of the four tables.~~ **Recovered 2026-09-20
+  (round 307).** The pool is deduplicated and gives only the names a table
+  **introduces**, but the `DB_Bind__<TABLE>` binders name every column they
+  bind: `_TRAININGCAMP` 8, `_TRAININGCAMPMEMBER` 10, `_TRAININGCAMPHONORRANK`
+  and `_TRAININGCAMPBUFFSTATUS` in `docs/protocol/db_bind_columns.tsv`.
