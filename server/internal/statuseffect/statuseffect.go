@@ -211,3 +211,74 @@ const DefaultTickIntervalMs = 2000
 func Expired(nowMs, startMs uint32, durationMs uint32) bool {
 	return nowMs-startMs > durationMs
 }
+
+// The non-elemental states -- read 2026-09-20 (round 277).
+//
+// The eleven-plus blocks after the six elemental ones in
+// Combat_ApplyStatusEffects work the other way round. They store **no chance**
+// (`mov WORD PTR [ebx+0x1a],0x0` in all 17 of them), so the elemental
+// `chance x unit` duration cannot apply; instead the block computes the
+// duration AND the chance from two authored values, both scaled down by how
+// far the target's level is above the status's reach.
+//
+// Read as assembly, because the decompiler drops the whole FPU chain into
+// argument-less `FUN_009fbb40()` (the ftol helper) -- the sleep block at
+// 0x590f06..0x590ff9. The stack balances to empty, which is the reading's own
+// check:
+//
+//	d   = max(GetLevel() - 10*(value2 + bonus), 0)     ; the OVERSHOOT
+//	dur = max(ftol(value0 * (1 - 0.025*d)), ftol(0.5 * value0))   -> record+0xc
+//	chn = max(ftol(value1 * (1 - 0.05*d)),  ftol(0.1 * value1))   -> rolled, not stored
+//	record+0x18 = (byte)value2                        ; the status level
+//
+// So value0 is the duration in milliseconds and value1 the chance, each with
+// its own falloff and its own floor.
+const (
+	// LevelReachPerStatusLevel is the 10 in the overshoot: a status of level n
+	// reaches a target of level 10n before it starts weakening
+	// (`lea edi,[eax+eax*4]` then `add edi,edi`).
+	LevelReachPerStatusLevel = 10
+
+	// The falloffs, as fractions per level of overshoot, and the floors they
+	// stop at. 0.025 is the engine's 2.5 divided by its 100; 0.05 is its 5*d
+	// divided by the same 100.
+	DurationFalloffPerLevel = 0.025
+	DurationFloorRatio      = 0.5
+	ChanceFalloffPerLevel   = 0.05
+	ChanceFloorRatio        = 0.1
+)
+
+// LevelOvershoot is how far a target's level exceeds a status's reach, floored
+// at 0. `statusLevel` is the block's value2 plus whatever level bonus the cast
+// carried.
+func LevelOvershoot(targetLevel, statusLevel int) int {
+	if d := targetLevel - LevelReachPerStatusLevel*statusLevel; d > 0 {
+		return d
+	}
+	return 0
+}
+
+// scaleWithFloor is the shared shape: the value falls by `falloff` a level and
+// never below `floor` of itself. ftol truncates toward zero, and so does this.
+func scaleWithFloor(value int, overshoot int, falloff, floor float64) int {
+	if value <= 0 {
+		return 0
+	}
+	scaled := int(float64(value) * (1 - falloff*float64(overshoot)))
+	if f := int(floor * float64(value)); scaled < f {
+		return f
+	}
+	return scaled
+}
+
+// NonElementalDurationMs is the state's lifetime: value0, down 2.5% a level of
+// overshoot, never below half.
+func NonElementalDurationMs(value0, overshoot int) int {
+	return scaleWithFloor(value0, overshoot, DurationFalloffPerLevel, DurationFloorRatio)
+}
+
+// NonElementalChance is the value the block rolls against: value1, down 5% a
+// level of overshoot, never below a tenth. It is NOT stored on the record.
+func NonElementalChance(value1, overshoot int) int {
+	return scaleWithFloor(value1, overshoot, ChanceFalloffPerLevel, ChanceFloorRatio)
+}

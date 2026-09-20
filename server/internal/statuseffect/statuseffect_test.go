@@ -138,3 +138,48 @@ func TestExpiredIsStrictlyGreaterThanTheDuration(t *testing.T) {
 		t.Error("a state that started before the tick wrap should not expire early")
 	}
 }
+
+// The overshoot is levels above ten times the status level, floored at zero.
+func TestLevelOvershoot(t *testing.T) {
+	if got := LevelOvershoot(70, 5); got != 20 {
+		t.Errorf("level 70 against a level-5 status -> %d, want 20", got)
+	}
+	if got := LevelOvershoot(40, 5); got != 0 {
+		t.Errorf("a target inside the reach -> %d, want 0", got)
+	}
+	if got := LevelOvershoot(1, 9); got != 0 {
+		t.Errorf("far inside the reach -> %d, want 0", got)
+	}
+}
+
+// Both falloffs stop at their floor, and the floors bite at the overshoot the
+// constants imply: the duration at 20 levels over, the chance at 18.
+func TestNonElementalFalloffsStopAtTheirFloors(t *testing.T) {
+	if got := NonElementalDurationMs(10000, 0); got != 10000 {
+		t.Errorf("no overshoot -> %d, want the authored 10000", got)
+	}
+	if got := NonElementalDurationMs(10000, 10); got != 7500 {
+		t.Errorf("10 levels over -> %d, want 7500 (2.5%% a level)", got)
+	}
+	if got := NonElementalDurationMs(10000, 20); got != 5000 {
+		t.Errorf("20 levels over -> %d, want the floor 5000", got)
+	}
+	if got := NonElementalDurationMs(10000, 200); got != 5000 {
+		t.Errorf("far over -> %d, want the floor to hold at 5000", got)
+	}
+	if got := NonElementalChance(100, 10); got != 50 {
+		t.Errorf("chance 10 levels over -> %d, want 50 (5%% a level)", got)
+	}
+	if got := NonElementalChance(100, 18); got != 10 {
+		t.Errorf("chance 18 levels over -> %d, want the floor 10", got)
+	}
+	if got := NonElementalChance(100, 999); got != 10 {
+		t.Errorf("chance far over -> %d, want the floor to hold at 10", got)
+	}
+	// The chance falls twice as fast as the duration, so it reaches its floor
+	// first -- a deeply over-levelled target is hard to afflict but, once
+	// afflicted, keeps the state for half its authored time.
+	if NonElementalChance(100, 19) != 10 || NonElementalDurationMs(100, 19) == 50 {
+		t.Error("at 19 levels over the chance should be floored and the duration not yet")
+	}
+}

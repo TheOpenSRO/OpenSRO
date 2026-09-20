@@ -7075,6 +7075,48 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-seventy-seventh round: the other half of the status application, read out of the FPU
+
+The RE tick for 2026-09-20 took the last open piece of `status_effects.md`: the blocks after
+the six elemental ones, whose "chance path is not read yet" had stood since round 249.
+
+**They work the other way round.** The elemental states derive their duration from the
+chance they rolled. These store **no chance at all** -- all seventeen write
+`record+0x1a = 0` -- and compute the duration *and* the chance themselves, from two authored
+values, each scaled by how far the target has out-levelled the status:
+
+	d   = max(GetLevel() - 10*(value[2] + bonus), 0)
+	dur = max(ftol(value[0] * (1 - 0.025*d)), ftol(0.5 * value[0]))   -> record+0xc
+	chn = max(ftol(value[1] * (1 - 0.05*d)),  ftol(0.1 * value[1]))   -> rolled, not stored
+
+**The decompiler cannot show this.** It collapses the FPU chain into five argument-less
+`FUN_009fbb40()` calls -- the `ftol` helper -- so the sleep block had to be read instruction
+by instruction from `0x590f06` to `0x590ff9`. The reading carries its own check: the x87
+stack balances to empty, and each of `2.5`, `100.0`, `0.5` and `0.1` is consumed exactly
+once.
+
+So **value[0] is the duration in milliseconds and value[1] the chance**, and the two have
+different falloffs and different floors: 2.5 % a level down to half, and 5 % a level down to
+a tenth. The chance bottoms out first, at 18 levels over against the duration's 20 -- a
+badly over-levelled target is hard to afflict but, once afflicted, keeps the state for half
+its authored time.
+
+**How far it reaches, by fingerprint rather than by reading seventeen blocks.** Counting the
+constants per block across the whole function: sixteen of the seventeen (skill fields
+`+0x430`..`+0x470`) have exactly one level term, one `2.5`, one `0.5`, one `0.1` and five
+`ftol`s. `+0x438` and `+0x450` prefix an extra iterative term with an `imul`; `+0x474` has
+no level term and neither `2.5` nor `0.5`. Those three are marked unread rather than assumed
+to match.
+
+The same sweep turned up something the page had never recorded: **six more status fields**,
+`+0x460` through `+0x474`, each guarding a block of this family. What states they are is
+*not* read and not guessed -- the elemental blocks could be identified by their resist
+`GetParam` calls, and these have none.
+
+`statuseffect.LevelOvershoot`, `NonElementalDurationMs` and `NonElementalChance` carry it
+with tests that pin both floors at the overshoot the constants imply. No shipped value
+changed.
+
 ## Two-hundred-and-seventy-sixth round: a status effect's lifetime is its chance
 
 The RE tick for 2026-09-20 finished what the previous one left open. Round 275 read the

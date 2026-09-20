@@ -5245,6 +5245,20 @@ decompiler drops both arguments. So the resist-reduced chance is also the
 lifetime. The `al` literals are slots, not client bits (burn 2, electric shock
 3) -- a fourth, independent agreement with round 275's mask table.
 `statuseffect.DurationMs`/`Expired` + tests. One name.
+Round 277 (docs + statuseffect): the NON-ELEMENTAL status blocks, the other
+half of the application. They store no chance (record+0x1a = 0 in all 17) and
+compute both numbers themselves, scaled by the level overshoot
+`d = max(targetLevel - 10*(value2+bonus), 0)`: duration =
+`max(value0*(1-0.025d), 0.5*value0)` into record+0xc, chance =
+`max(value1*(1-0.05d), 0.1*value1)`, rolled and not stored. Read as assembly
+(0x590f06..0x590ff9) because the decompiler drops the FPU chain into
+argument-less ftol calls; the stack balances to empty and each of 2.5, 100,
+0.5, 0.1 is consumed once. The chance floors first (18 levels over vs the
+duration's 20). Fingerprinting the whole function: 16 of 17 blocks share the
+shape, +0x438 and +0x450 prefix an unread iterative term, +0x474 is different,
+and SIX status fields beyond the page's table (+0x460..+0x474) exist and are
+deliberately left unnamed. `statuseffect.LevelOvershoot` +
+`NonElementalDurationMs` + `NonElementalChance` + tests.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

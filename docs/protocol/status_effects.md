@@ -156,6 +156,46 @@ source unconditionally, so no poison tick is ever credited to anyone.
 removal writes **100**. That the neutral is 100 is the useful part: a param-9 contribution
 from this slot is a *percent of normal*, not a flat delta.
 
+### The non-elemental states carry their own duration and chance -- READ (round 277)
+
+The blocks after the six elemental ones work the other way round, and this page's "their
+chance path is not read yet" is now closed for sixteen of the seventeen.
+
+They store **no chance**: every one of the 17 writes `record+0x1a = 0`. So the
+`chance x unit` duration below cannot apply to them, and the block computes both numbers
+itself from two authored values, each scaled by how far the target's level is above the
+status's reach. Read as assembly (the sleep block, `0x590f06..0x590ff9`), because the
+decompiler collapses the whole FPU chain into argument-less `FUN_009fbb40()` calls -- that
+is the `ftol` helper:
+
+	d   = max(GetLevel() - 10*(value[2] + bonus), 0)                  ; the OVERSHOOT
+	dur = max(ftol(value[0] * (1 - 0.025*d)), ftol(0.5 * value[0]))   -> record+0xc
+	chn = max(ftol(value[1] * (1 - 0.05*d)),  ftol(0.1 * value[1]))   -> rolled, not stored
+	record+0x18 = (byte)value[2]                                      ; the status level
+
+The FPU stack balances to empty across that run, which is the reading's own check: every
+one of `2.5` (`0xb45e50`), `100.0` (`0xb45af0`), `0.5` (`0xb45c50`) and `0.1` (`0xb45ec0`)
+is consumed exactly once, and the two `max` pairs are the two `cmp`/`jge` at `0x590fe9` and
+`0x590ff3`.
+
+So **value[0] is the duration in milliseconds and value[1] the chance**, each with its own
+falloff and its own floor: the duration loses 2.5 % a level and stops at half, the chance
+loses 5 % a level and stops at a tenth. The chance therefore bottoms out first (18 levels
+over, against the duration's 20): a badly over-levelled target is hard to afflict, but once
+afflicted keeps the state for half its authored time. `statuseffect.NonElementalDurationMs`,
+`NonElementalChance`, `LevelOvershoot`.
+
+**How far the shape reaches.** Fingerprinting every block in the function by its constants:
+sixteen of the seventeen non-elemental blocks -- skill fields `+0x430` through `+0x470` --
+have exactly one level term, one `2.5`, one `0.5`, one `0.1` and five `ftol`s. Two of them
+(`+0x438`, `+0x450`) prefix an extra iterative term with an `imul`, unread. The last,
+`+0x474`, has no level term and neither `2.5` nor `0.5`: a different computation, unread.
+
+**And there are six status fields this page never listed**: `+0x460`, `+0x464`, `+0x468`,
+`+0x46c`, `+0x470` and `+0x474` all guard a status block of this family. Which skill codes
+and which states they are is **not** read -- the elemental blocks could be identified by
+their resist `GetParam` calls and these have none, so nothing here names them.
+
 ### How long a state lasts -- READ (round 276, 2026-09-20)
 
 The duration lives at **`record+0xc`**, the start stamp at **`+0x64`** (`+0x68` is the
