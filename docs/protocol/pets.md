@@ -246,9 +246,46 @@ recovered** for either.
 
 - ~~**What the five switch cases are.**~~ **Recovered 2026-09-20 (round 289)** --
   see "What the switch is switching on" above.
-- **The hunger gauge** — `HGPFULL_NODRINK` names it and nothing reads its rate,
-  capacity or what happens at zero.
+- **The hunger gauge** — `HGPFULL_NODRINK` names it, and its **rate** is still
+  unread. Its capacity, threshold and penalty are read: see "A pet gauge with a
+  capacity, a threshold and a penalty" below. Whether that gauge *is* the hunger
+  gauge is the part still missing.
 - ~~**Pet growth.**~~ **Recovered 2026-09-20 (round 291)** -- both paths read,
   see below. What remains is the reference row the thresholds come from.
 - **The mercenary**, which is the only class of the six with a different vtable
   length and has not been looked at.
+
+## A pet gauge with a capacity, a threshold and a penalty (round 299)
+
+`CGObjCOS_GoldPet::vslot_215` -- the same periodic function that refreshes the
+pet's level row -- ends on a test:
+
+	(float)((uint)*(ushort *)(petData + 0x68) * 100) / (float)_DAT_00b45f90
+	    < (float)_DAT_00b45e58            ; 10000.0 and 30.0
+	  -> GObjPC::FUN_004d60a0()
+
+So the field at **petData `+0x68` is a `ushort` gauge whose full value is
+10,000**, and the test is a straight percentage against **30 %**.
+
+**What falls below 30 % costs the pet half its combat stats.**
+`GObjPC::FUN_004d60a0` (`0x004d60a0`) sets **eight** ParamKeeper params to
+`_DAT_00b4603c` = **50.0** and flushes:
+
+| params | what they are (`param_registry.md`) |
+|---|---|
+| 13, 14, 15, 16 | physical damage low/high, magical damage low/high |
+| 5, 6 | flat physical and magical defence |
+| 11 | `'hra'`, attack rate |
+| 9 | `'era'`, parry rate |
+
+The 50 reads as **half of normal** rather than a flat +50: the same leading
+argument position writes **100.0 as the neutral** when electric shock's
+contribution is removed (round 275, `AbnormalState_Apply03_p9`), so 100 is
+"unchanged" in this space and 50 is half.
+
+**Is this the hunger gauge?** It is the obvious candidate -- a pet-side gauge
+with a capacity and a penalty for running low -- but **no writer for `+0x68` was
+found**, in the COS range or elsewhere, so nothing here ties it to feeding or to
+`HGPFULL_NODRINK`. Recorded as a gauge with its numbers, not as hunger. The
+probe that would settle it is the feed path (`CGItemExpendable::vslot_327`)
+writing this field.

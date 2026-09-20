@@ -7075,6 +7075,42 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-ninety-ninth round: a pet gauge, its capacity, and the half-strength penalty
+
+Round 298 left a curated list of genuinely open bullets. This one went at `ground_items.md`'s
+two, found both already answered or honestly disclosed, and fell over something better on the
+way.
+
+**The ground-item bullets first, since they cost the probes.** The despawn timer and the drop
+scatter are both `own design, disclosed` in srrevamp (3 minutes, a 2-unit disc) -- which is
+compliant, not a defect. Chasing the engine's scatter went through `CGItem::Create`
+(`0x0048f930`), which copies the drop position from `param_4+0x20/+0x24` already computed, and
+the subclass `Create`s are reached through vtables, so the spawn path is not greppable from
+there. Reading `CGItem::Update` for a second threshold found only the ownership window -- and
+that was **already fully recorded**, 30.0 s at `0xb45e58`. Two probes, nothing new, and the
+page was right both times.
+
+**What the second constant in that expression turned out to be.** `CGObjCOS_GoldPet::vslot_215`
+uses the same `0xb45e58` in a different shape:
+
+	(petData[0x68] as ushort) * 100 / 10000.0  <  30.0   ->  GObjPC::FUN_004d60a0()
+
+So a pet carries a **ushort gauge at `+0x68` whose full value is 10,000**, tested as a straight
+percentage against **30 %**. And `FUN_004d60a0` sets **eight** ParamKeeper params -- physical
+and magical damage low and high (13-16), both flat defences (5, 6), attack rate (11) and parry
+rate (9) -- to **50.0**, then flushes. The 50 reads as *half of normal* because the same
+argument position writes **100.0 as the neutral** when electric shock's contribution is removed
+(round 275). **A pet under 30 % fights at half strength on eight stats.**
+
+**And what it is not called.** `pets.md` lists the hunger gauge as "named but unread", and this
+is the obvious candidate. It is recorded as *a gauge with a capacity, a threshold and a
+penalty* rather than as hunger, because **no writer for `+0x68` was found** and nothing ties it
+to feeding or to `HGPFULL_NODRINK`. The feed path (`CGItemExpendable::vslot_327`) writing this
+field would settle it.
+
+Worth noting how it was found: not by hunting the hunger gauge, but by reading a constant that
+appeared in two unrelated functions and asking what the *other* one did with it.
+
 ## Two-hundred-and-ninety-eighth round: sweeping every "not recovered" bullet -- three pages contradicted themselves
 
 Round 297 struck a stale bullet in `jobs.md` and noted that `docs/protocol` pages have no

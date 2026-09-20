@@ -5492,6 +5492,18 @@ which itself says no writer was found -- reading before striking is why the
 count is three. The rot is structural: a page's body gets edited when
 something is read, its Not-recovered list only if the writer remembers it
 exists, and internal/systems guards SYSTEMS.md but nothing guards these.
+Round 299 (docs): A PET GAUGE with a capacity, a threshold and a penalty.
+CGObjCOS_GoldPet::vslot_215 tests (petData[0x68] as ushort) * 100 / 10000.0 <
+30.0 -- so the gauge's full value is 10,000 and the threshold is 30 % -- and
+below it GObjPC::FUN_004d60a0 sets EIGHT ParamKeeper params (13-16 both damage
+ranges, 5/6 both flat defences, 11 attack rate, 9 parry) to 50.0, which is
+HALF OF NORMAL because the same argument position writes 100.0 as the neutral
+on removal (round 275). Recorded as a gauge, NOT as hunger: no writer for
++0x68 was found, so nothing ties it to feeding or HGPFULL_NODRINK; the feed
+path writing this field would settle it. Also checked and left alone:
+ground_items.md's despawn timer and drop scatter are own-design-disclosed in
+srrevamp, and its ownership window (30.0 s at 0xb45e58) was already fully
+recorded -- the constant that led here.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
