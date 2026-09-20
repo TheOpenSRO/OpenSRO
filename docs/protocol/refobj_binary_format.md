@@ -157,11 +157,36 @@ Both type-specific tables consume **fewer binary fields than their text has
 columns** — item by 7, char by 24. So a type-specific offset cannot be turned
 into a text column by counting, whatever the counting gets right.
 
-**This is a dead end, identified rather than walked into.** The route for a
-type-specific column is the **per-column schema** the stream carries — the
-`(index, width)` records at `+0xe4`/`+0xe8`, stride `0x54`, that `FUN_006b1a80`
-walks to skip a column. That is where a type-specific index lives; counting
-reads is not.
+**This is a dead end, identified rather than walked into.**
+
+**And so is the route this paragraph used to name (round 306).** It sent readers
+to the **per-column schema** the stream carries — the records at `+0xe4`/`+0xe8`,
+stride `0x54`, that `FUN_006b1a80` walks to skip a column — saying "that is where
+a type-specific index lives". It is not. `docs/protocol/db_columns.md` had
+already read the other end of that structure and titled the finding **"Why the
+names are in the binary and the indices are not"**: `Database::FUN_00972b40`
+walks the same `0x54` records and binds each **by NAME**, comparing the declared
+string against the name ODBC reports for the live result set. The ordinal in the
+record is a **database** column number, filled at runtime, and the server never
+sees a text column at all — it reads SQL rows, not the client's `.txt` files.
+
+So **both** routes to a type-specific *text* column are now recorded dead ends:
+counting the deserializer's reads (above), and the schema (here). The client-side
+route is a third: `GlobalDataManager::Client_LoadRefDataFile` carries an
+annotation saying per-type column parsing lives behind it in a per-type manager,
+"which is why the client side of the characterdata column map was a dead end".
+
+What the `0x54` record IS, merging both reads:
+
+| offset | meaning | read in |
+|---|---|---|
+| `+0x04` | the declared column name (`std::string`; SSO, see `+0x18`) | `db_columns.md` |
+| `+0x18` | SSO length flag — `< 0x10` means the name is inline at `+0x04` | `db_columns.md` |
+| `+0x24` | byte width, added to the row cursor to skip the column | round 305 |
+| `+0x30` | the column ordinal, **1-based** (compared against `cursor[10] + 1`) | round 305 |
+
+The common prefix is still convertible, by the four anchors above; it is only the
+type-specific halves that have no route.
 
 The common prefix is unaffected: there the two orders agree by four independent
 anchors, so **a common-record offset still converts**, as `field N → text

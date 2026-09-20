@@ -5638,6 +5638,24 @@ LoadServerConfig is correct and wider, and the edit is reverted. Two
 (0x006a6660, 0x006a94a0) are UNRESOLVED: measured while the rebuild was deleting
 the dump, so the zeroes mean nothing. Three probes lied this round. VERIFIED after the rebuild: TSV server names present in the dump 1,828 -> 2,078, still-FUN_ 250 -> 0; verify_recovered_addresses.py reports 2,421 starts, 0 interior, 0 wrong-binary, 1 known gap. The two UNRESOLVED names re-measured against the finished dump call the skipper 3 and 6 times, so both are deserializers, the TSV is right on all five, and the Java names are corrected. COVERAGE RE-MEASURED with SymbolReport.java on the rebuilt dumps: server NAMED 5,355 (15.7%) against 1,825 (5.3%) on 2026-09-17, client 2,219 (5.1%) against 1,285 (3.0%). The apply is NOT what moved it -- SLOTTED fell 5,617 -> 2,579, so ~3,000 functions known only by a vtable slot now carry a real name, from the slot propagation of the intervening rounds. An index-derived estimate said 5,621 and was not quoted until the project's own tool agreed at 5,355 (the 245 GetSingleton_<addr> placeholders are most of the gap). Tiers in absence_audit.md; the 5.3%/3.0% figures are superseded.
 
+Round 306 (docs, a proven negative): A DIG THAT RE-DERIVED A RECORDED PAGE.
+refobj_binary_format.md ended its dead-end section by naming the per-column
+schema as "where a type-specific index lives". db_columns.md had already read
+the other end of that same 0x54 structure under the heading "Why the names are
+in the binary and the indices are not": Database::FUN_00972b40 binds each column
+BY NAME against the name ODBC reports for the live result set, so the ordinal is
+a database column number filled at runtime and the server never sees a text
+column at all. One page's next probe was another page's proven dead end -- the
+same defect as round 304. The pointer is corrected and cross-referenced. ALL
+THREE routes to a type-specific TEXT column are now recorded dead ends: counting
+deserializer reads (item short by 7, char by 24), the schema (binds by name),
+and the client side (Client_LoadRefDataFile's own annotation says per-type
+parsing is behind a per-type manager). Merged the 0x54 descriptor map from two
+rounds' opposite-end reads: +0x04 name, +0x18 SSO flag, +0x24 width, +0x30
+1-based ordinal. RETRACTED: round 305's "zero ODBC in the server" was a probe
+failure -- ODBC32.dll is imported, the dump just does not name the thunks. Most
+of this round confirms recorded work; said plainly rather than claimed as new.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

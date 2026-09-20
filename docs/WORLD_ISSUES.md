@@ -7075,6 +7075,62 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-sixth round: a dig that re-derived a recorded page, and the pointer that sent it there
+
+**Most of this round confirms what `docs/protocol/db_columns.md` already says,
+and that is worth stating before anything else.** The dig went after the
+per-column schema behind `FUN_006b1a80` and recovered, in order: that the
+records are `0x54` bytes, that the classes are `CDBTable`/`CDBRecord`/
+`CTableKeeper` (RTTI), that `ODBC32.dll` is imported, that binding happens **by
+column name**, and that the binder family is `DB_Bind__<TABLE>`. Every one of
+those is on that page, or in `NameDBBinders.java`, or in `character_schema.md`.
+`ls docs/protocol/` was run at the start of this session; `db_columns.md` was
+never opened, while the dig was explicitly about a *column schema*. Fifth time.
+
+**The genuinely new part is why the dig happened at all.**
+`refobj_binary_format.md` ended its "this is a dead end" section by naming the
+next route:
+
+> The route for a type-specific column is the **per-column schema** the stream
+> carries ... That is where a type-specific index lives; counting reads is not.
+
+`db_columns.md` had already read the *other end of that same structure* and
+titled the result **"Why the names are in the binary and the indices are not"**.
+`Database::FUN_00972b40` walks the identical `0x54` records and binds each **by
+name**, comparing the declared string against the name ODBC reports for the live
+result set. The ordinal is a **database** column number filled at runtime. The
+server never sees a text column: it reads SQL rows, not the client's `.txt`
+files.
+
+So one page's recommended next probe was another page's proven dead end, and the
+tick was spent walking it. Same defect as round 304, where `durability.md` sent
+readers at a 7,052-byte function while the section above named the 3,071-byte one.
+
+**All three routes to a type-specific TEXT column are now recorded dead ends**,
+which converts a vague open probe into a proven negative:
+
+1. counting the deserializer's field reads -- item is 7 short of its text columns, char 24;
+2. the per-column schema -- binds by name against ODBC, holds no text index;
+3. the client side -- `Client_LoadRefDataFile`'s own annotation says per-type
+   parsing lives behind it in a per-type manager, "which is why the client side
+   of the characterdata column map was a dead end".
+
+**One small real merge.** Two rounds read opposite ends of the `0x54` record and
+neither had the whole thing; it is now in one table:
+
+| offset | meaning | read in |
+|---|---|---|
+| `+0x04` | declared column name (`std::string`, SSO) | `db_columns.md` |
+| `+0x18` | SSO length flag, `< 0x10` means inline | `db_columns.md` |
+| `+0x24` | byte width, added to the row cursor to skip | round 305 |
+| `+0x30` | column ordinal, **1-based** | round 305 |
+
+**And one probe failure to retract.** Round 305 reported "zero ODBC in the
+server" from a grep for `SQLFetch|SQLExecDirect` in the decompiled bodies.
+`ODBC32.dll` is in the import table; the dump simply does not name the thunks.
+`db_columns.md` had already written "an ODBC import" months of rounds ago. The
+grep was a fact about the grep.
+
 ## Three-hundred-and-fifth round: 250 names that were filed and still did not exist
 
 Round 302 ended on "a name that is not in the applier's input does not exist,
