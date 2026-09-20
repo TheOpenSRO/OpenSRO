@@ -1,0 +1,126 @@
+package session
+
+import (
+	"bufio"
+	"context"
+	"testing"
+	"time"
+
+	"github.com/OpenSRO/srrevamp/server/internal/account"
+	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/equipment"
+	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/quest"
+	"github.com/OpenSRO/srrevamp/server/internal/skill"
+	"github.com/OpenSRO/srrevamp/server/internal/world"
+)
+
+// An attack result must never report the player's health as zero unless the
+// player is actually dead.
+//
+// PlayerHP is what the client paints the health bar from, and an int32 left at
+// its zero value says "dead". The counterattack branch is skipped whenever the
+// monster is still inside its attack skill's re-use delay -- there is nothing
+// to compute -- and it used to leave the field untouched, so the bar emptied on
+// every swing that drew no reply. Mangyang's delay is 3000 ms and a player
+// swings faster, so it emptied almost at once and was reported as "when i click
+// on a mangyang its health bar appears but then my health shoots all the way
+// down to 0" (playtest 2026-09-20).
+//
+// Two swings back to back: the second is inside the delay by construction.
+func TestAttackResultNeverReportsZeroHealthForALivingPlayer(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+	items := stubCombatItems{100: {ID: 100, PhysAttackMax: 5}}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	if err := inv.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating inventory: %v", err)
+	}
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	if err := eq.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating equipment: %v", err)
+	}
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	if err := quests.TruncateForTest(ctx); err != nil {
+		t.Fatalf("truncating quests: %v", err)
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	// A monster with a real attack re-use delay, and enough HP that neither
+	// swing can kill it.
+	target := monsters.SpawnSpecies("jangan", combat.Species{
+		Name: "Mangyang", Level: 1, AttackReuseMs: 3000, AttackMin: 1, AttackMax: 2,
+	}, 0, 0, 0, 5000, 0, 0, 0)
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		CombatHandler(chars, eq, items, hub, monsters, quests, inv, skill.NewMemStore(), nil, nil, nil),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	if ewr, err := DecodeEnterWorldResult(send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode()).Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	for i := 1; i <= 2; i++ {
+		ar, err := DecodeAttackResult(send(OpAttack,
+			(&AttackRequest{CharacterName: "Aria", TargetMonsterID: target.ID}).Encode()).Data)
+		if err != nil || ar.Error != "" {
+			t.Fatalf("swing %d: err=%v result=%+v", i, err, ar)
+		}
+		live, err := chars.GetByID(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("swing %d: reading the character: %v", i, err)
+		}
+		if live.HP <= 0 {
+			t.Fatalf("swing %d: the fixture killed the player; it proves nothing", i)
+		}
+		if ar.PlayerHP <= 0 {
+			t.Errorf("swing %d: AttackResult.PlayerHP = %d while the character really has %d -- "+
+				"a living player's bar must never be told it is empty", i, ar.PlayerHP, live.HP)
+		}
+		if int(ar.PlayerHP) != live.HP {
+			t.Errorf("swing %d: AttackResult.PlayerHP = %d, the store says %d", i, ar.PlayerHP, live.HP)
+		}
+	}
+}

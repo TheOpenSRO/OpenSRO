@@ -7,12 +7,12 @@ done. The first report of the day is `PLAYTEST_2026_09_20.md`.
 |---|---|---|
 | 1 | "i used a skill, no animation" | OPEN |
 | 2 | "skills should be drag and drop" | OPEN — a drop path exists; needs checking end to end |
-| 3 | "the first slot on the hotbar you press with 1, it should be middle mouse button and rebindable in the settings" | OPEN |
-| 4 | "hotbars are assigned to f keys, it just says 1 now, and F1-F4 should scroll through them" | OPEN |
+| 3 | "the first slot on the hotbar you press with 1, it should be middle mouse button and rebindable in the settings" | **HALF-FIXED** — MMB fires slot 1; rebinding needs a key-bindings UI |
+| 4 | "hotbars are assigned to f keys, it just says 1 now, and F1-F4 should scroll through them" | **FIXED** |
 | 5 | "when i drag and unequip my sword, it doesnt go off of my character" | **FIXED** |
 | 6 | "i cant unequip my clothes" | **FIXED** |
 | 7 | "when i try to use this hp berry it just says malformed request" | OPEN — see below |
-| 8 | "when i click on a mangyang its health bar appears but then my health shoots all the way down to 0" | OPEN |
+| 8 | "when i click on a mangyang its health bar appears but then my health shoots all the way down to 0" | **FIXED** |
 | 9 | "there is such thing as hp recovery, its a stat for the player and it passively restores health" | **FIXED** |
 | 10 | "i can still see my butt in my cotton clothes" | OPEN (carried from the first report, item 6) |
 | 11 | "clothes/armor are not unequippable" | **FIXED** (same as 6) |
@@ -88,10 +88,40 @@ So the request that failed was probably not `OpUseItem`. The hotbar holds
 report, so a berry placed there would go down a skill path. That is the next
 thing to read, together with item 2.
 
-## 8 — HP to zero on clicking a monster
+## 8 — HP to zero on clicking a monster: the server said zero, and meant nothing by it
 
-Unreproduced and serious. There is no target-select opcode; clicking is
-client-side targeting, so something in the attack/counterattack path is
-draining the bar. Worth capturing an `F3 -> Copy` from the moment it happens:
-position, target and the packet log would separate "the server dealt it" from
-"the bar is being drawn wrong".
+Found and fixed. `AttackResult.PlayerHP` is what the client paints the health
+bar from, and an `int32` left at its zero value is indistinguishable from *you
+are dead*.
+
+The handler has three branches after a blow lands: the monster died, the monster
+is **inside its attack skill's re-use delay**, or it counterattacks. Only the
+first and third ever wrote `PlayerHP`. The middle one is a comment and nothing
+else -- there is genuinely no reply to compute -- so it shipped the field at 0.
+
+Mangyang's re-use delay is **3000 ms** and a player swings faster than that, so
+the second swing of any fight hit that branch and emptied the bar. The health
+was never lost; only the number sent to draw it.
+
+`PlayerHP` is now seeded from the character's real HP where the result is built,
+before any branch runs, and every branch that changes HP overwrites it.
+`TestAttackResultNeverReportsZeroHealthForALivingPlayer` swings twice so the
+second is inside the delay by construction, and checks the reported value
+against the store. Reverting the fix makes it fail with
+`PlayerHP = 0 while the character really has 198`.
+
+## 3 and 4 — the hotbar keys
+
+The bar already had four pages of ten slots and a page indicator; the "1" was
+that indicator, working. What was missing was a way to choose a page with the
+keyboard, so **F1..F4 now select pages 1..4** directly.
+
+**This moved two developer keys**, which is worth saying plainly: F1 was the
+dev-UI toggle and F3 the debug panel, and the debug panel is how visual bugs get
+reported (`F3 -> Copy`). They are now **Ctrl+F1** and **Ctrl+F3**.
+
+The middle mouse button now fires the current page's first quickslot. The 1 key
+still addresses the same slot, so this adds a binding rather than removing one.
+**Rebinding is not done**: it needs a key-bindings section in the options window,
+which does not exist -- the same gap as "the old silkroad had a graphics section
+under options" from the first report.

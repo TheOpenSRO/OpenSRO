@@ -4877,6 +4877,20 @@ func _quickslot_hotkey(event: InputEvent) -> bool:
 		return true
 	return false
 
+## F1..F4 select quickslot pages 1..4. Plain presses only -- Ctrl+F1 and
+## Ctrl+F3 are the developer toggles, and an echo (key held) must not flip
+## pages repeatedly.
+func _hotbar_page_hotkey(event: InputEvent) -> bool:
+	if not (event is InputEventKey) or _hud_underbar == null:
+		return false
+	var key := event as InputEventKey
+	if not key.pressed or key.echo or key.ctrl_pressed or key.alt_pressed or key.shift_pressed:
+		return false
+	if key.keycode >= KEY_F1 and key.keycode <= KEY_F4:
+		_hud_underbar.set_page(key.keycode - KEY_F1 + 1)
+		return true
+	return false
+
 ## Casts a skill: plays its real cast animation (from basic_code) and sends the
 ## use-skill request against the current target. The animation plays regardless
 ## (the swing is visible even with no target); the server applies the skill's
@@ -7608,14 +7622,41 @@ func _unhandled_input(event: InputEvent) -> void:
 	# A direct keycode rather than an input action: this is a developer
 	# toggle, not a control anyone plays with, and adding it to
 	# project.godot would put it in the exported key list.
+	# F1..F4 belong to the QUICKSLOT PAGES, as in the original -- the player
+	# asked for them by name (playtest 2026-09-20). The two developer toggles
+	# that used to sit on F1 and F3 have moved to Ctrl+F1 and Ctrl+F3; the
+	# debug panel in particular is how visual bugs get reported (F3 -> Copy),
+	# so it keeps a binding rather than losing one.
 	if event is InputEventKey and (event as InputEventKey).pressed \
+			and (event as InputEventKey).ctrl_pressed \
 			and (event as InputEventKey).keycode == KEY_F1:
 		_toggle_dev_ui()
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and (event as InputEventKey).pressed \
+			and (event as InputEventKey).ctrl_pressed \
 			and (event as InputEventKey).keycode == KEY_F3 and _debug_panel != null:
 		_debug_panel.toggle()
+		get_viewport().set_input_as_handled()
+		return
+	if _hotbar_page_hotkey(event):
+		get_viewport().set_input_as_handled()
+		return
+	# The middle mouse button fires the current page's FIRST quickslot, which
+	# is how the original reaches it: "the first slot thats on the hotbar you
+	# press it with 1, thats not right it should be middle mouse button"
+	# (playtest 2026-09-20). The 1 key still works -- it addresses the same
+	# slot -- so this adds a binding rather than taking one away.
+	#
+	# NOT YET REBINDABLE. The same report asks for that, and it needs a
+	# key-bindings section in the options window that does not exist yet; a
+	# hardcoded second binding is the honest half of the request, and the
+	# other half is recorded in docs/PLAYTEST_2026_09_20b.md rather than
+	# quietly dropped.
+	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_MIDDLE \
+			and _hud_underbar != null:
+		_hud_underbar.activate_key(0)
 		get_viewport().set_input_as_handled()
 		return
 	# 1..9 and 0: the current page's quickslots.

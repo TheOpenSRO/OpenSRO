@@ -861,8 +861,10 @@ func performAttack(
 	// scales damage up, so missing it costs nobody anything -- and leaves
 	// playerStr at zero, which drops the Strength term the same way.
 	playerLevel, playerStr, playerInt := 0, 0, 0
+	playerHPNow := 0
 	if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
 		playerLevel, playerStr, playerInt = c.Level, c.Str, c.Int
+		playerHPNow = c.HP
 	}
 
 	base, err := attackerDamageOf(ctx, characterID, playerStr, playerInt, eq, items, attackType)
@@ -974,8 +976,21 @@ func performAttack(
 	// A landed blow wears the weapon: one roll at rate = hits (2% a hit).
 	wearWeapon(ctx, eq, characterID, hits)
 
+	// PlayerHP is SEEDED with the truth before any branch runs.
+	//
+	// It is what the client paints the player's health bar from, and an int32
+	// left at its zero value is indistinguishable from "you are dead". The
+	// counterattack branch below is skipped entirely when the monster is still
+	// inside its attack skill's re-use delay -- there is no reply to compute --
+	// and it used to leave this at 0, so the bar emptied on every swing that
+	// drew no counterattack. Mangyang's delay is 3000 ms and a player swings
+	// faster than that, so it emptied almost at once: "when i click on a
+	// mangyang its health bar appears but then my health shoots all the way
+	// down to 0" (playtest 2026-09-20).
+	//
+	// Every branch that changes the player's HP overwrites this afterwards.
 	result := &AttackResult{MonsterID: targetMonsterID, MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP),
-		MonsterDied: monsterDied, PlayerCritical: playerCrit}
+		MonsterDied: monsterDied, PlayerCritical: playerCrit, PlayerHP: int32(playerHPNow)}
 	// The berserk orbs ride along on every attack result so the HUD tracks
 	// them -- but a blow that does not kill earns nothing: the engine adds
 	// hwan only on the killing blow (see berserk.EarnOnKill), which is

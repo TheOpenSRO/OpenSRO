@@ -197,6 +197,22 @@ func _update_page_visibility() -> void:
 		var node: Control = _slot_nodes[i]
 		node.visible = _page_of_slot(int(i)) == _current_page
 
+## Selects a quickslot page directly, 1..MAX_PAGES. Out-of-range is ignored
+## rather than clamped, so a stray key cannot silently move the bar.
+##
+## This is what F1..F4 do: "hotbars are assigned to f keys ... when you press
+## f1-f4 you can scroll through them" (playtest 2026-09-20). The up/down
+## buttons were the only way to change page before.
+func set_page(page: int) -> void:
+	if page < 1 or page > MAX_PAGES or page == _current_page:
+		return
+	_current_page = page
+	_update_page_visibility()
+
+## The page currently shown, 1-based.
+func current_page() -> int:
+	return _current_page
+
 ## The 1-based page a slot index belongs to.
 func _page_of_slot(slot_index: int) -> int:
 	return slot_index / SLOTS_PER_PAGE + 1
