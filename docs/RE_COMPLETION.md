@@ -6052,6 +6052,28 @@ reads over 38 sites give 19 distinct ECX values, 16 of them 0xbXXX; the three
 that are not (0x3156, 0x34a8, 0x34aa) are a loose end. The use-item payload
 remains unread -- chasing a wrong premise cost the probe.
 
+Round 326 (the ABI + round 323 redone): THE HANDLER CALLING CONVENTION, AND A
+SOUND SWEEP. server_dispatch.md records how a handler is FOUND, not how it is
+CALLED: `mov eax,[esi+0x1050]` is the received message, `movzx ecx,WORD PTR
+[eax]` its opcode (the message's first word), `push esi` is THE ARGUMENT -- the
+session object, not the message -- and `call edx` invokes handler(this = pc +
+adjustor, esi). That is why Item_HandleUseItem opens `mov esi,[ebp+0x8]` then
+reads [esi+0x1054]. A HYPOTHESIS THIS KILLED: `mov cl,BYTE PTR [eax+0x6]` inside
+the handler looked like a payload read six bytes in, and six is exactly the real
+Silkroad header (size, opcode, count, CRC); the two instructions above show eax
+is this->[0x30], another object. Not a header. THE SWEEP: the refusal shape is
+`push <error code>` + `mov ecx,<reply opcode>` + call, both immediates and
+neither the decompiler's argument, so all 256 call sites in .text were swept
+properly -- 251 have an ECX immediate of which 247 are 0xbXXX, 72 sites push an
+error code, 59 distinct, 38 named by the client (64%), and FIFTEEN are pushed
+with no client case anywhere: 0x1403 0x1807 0x1811 0x181d 0x1c0d 0x1c0e 0x3c0f
+0x3c2a 0x3c32 0x3c33 0x480f 0x4828 0x4c33 0x6006 0x6008. Six lookalikes are
+handled after all (0x6415/0x6416 in the main switch, 0x8006-0x800a elsewhere).
+THE MEMBERSHIP CHANGED from the withdrawn list -- 0x1806 drops out, 0x1403,
+0x480f and 0x4828 appear -- so round 323's list was not merely ill-derived but
+wrong. 0x4828 is corroborated from jobs.md, which records it as the job-join
+refusal for a kind outside {1,2,3}, read in round 273 from another function.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

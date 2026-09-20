@@ -849,11 +849,46 @@ they are *plausibly* error codes. That is where the evidence stops. Whether the
 server emits them, and whether the client can render them, is **not
 established**.
 
-**The sound method**, for whoever picks this up: read the registers per call
-site rather than the decompiled argument. A first pass over 38 resolvable sites
-finds 19 distinct ECX values of which **16 are `0xbXXX`**, confirming ECX is the
-reply opcode; the three that are not (`0x3156`, `0x34a8`, `0x34aa`) are worth a
-look on their own.
+### Re-established soundly (round 326)
+
+The shape, seen three times in disassembly, is that **the error code is PUSHED
+and the reply opcode is in ECX**:
+
+	push 0x185f          ; the error code
+	mov  ecx,0xb04c      ; the reply opcode
+	call 0x4e7250
+
+Both are immediates near the call, and neither is what Ghidra names as the
+argument. Sweeping **all 256 call sites** in `.text` on that shape:
+
+| | |
+|---|---:|
+| call sites | **256** |
+| with an ECX immediate | 251, of which **247 are `0xbXXX`** |
+| pushing an error code | 72 sites, **59 distinct codes** |
+| of those 59, named by the client table | 38 (64 %) |
+
+**Fifteen are pushed as refusals and have no `case` anywhere in the decompiled
+client:**
+
+	0x1403  0x1807  0x1811  0x181d
+	0x1c0d  0x1c0e
+	0x3c0f  0x3c2a  0x3c32  0x3c33
+	0x480f  0x4828  0x4c33
+	0x6006  0x6008
+
+Six others that look the same are handled after all -- `0x6415`/`0x6416` in the
+main switch, `0x8006`-`0x800a` in a different client file -- which is why the
+number is fifteen and not twenty-one.
+
+**The membership changed from the withdrawn list**, which is the point of
+redoing it: `0x1806` drops out, and `0x1403`, `0x480f` and `0x4828` appear. So
+the old list was not merely ill-derived, it was wrong.
+
+**One of the fifteen is corroborated from an unrelated reading.** `0x4828` is
+what `docs/protocol/jobs.md` records the job-join handler returning for a kind
+outside {1,2,3}, read in round 273 from a different function on a different day.
+A refusal a player can actually trigger, with no message behind it.
 
 ### This table is exactly reproducible (checked, round 323)
 

@@ -7075,6 +7075,67 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-twenty-sixth round: the handler ABI, and round 323 redone properly
+
+Two things, and the first makes the second cheap.
+
+### The handler ABI, read from the dispatcher
+
+`server_dispatch.md` records how a handler is *found*. How it is *called* was
+not written down, and every one of the 162 handlers needs it:
+
+	50ef08  mov   eax,[esi+0x1050]    ; the received message
+	50ef0e  movzx ecx,WORD PTR [eax]  ; its opcode -- the message's first word
+	50ef27  push  esi                 ; THE ARGUMENT: the session object
+	50ef4f  call  edx                 ; handler(this = pc + adjustor, esi)
+
+So a handler takes **one stack argument, the session object**, and reaches the
+message through `session+0x1050` -- not the message itself. That is why
+`Item_HandleUseItem` opens with `mov esi,[ebp+0x8]` and then reads
+`[esi+0x1054]`.
+
+**A hypothesis this killed.** A `mov cl, BYTE PTR [eax+0x6]` inside the handler
+looked like a payload read six bytes into the packet -- and six is exactly the
+real Silkroad header (size, opcode, count, CRC), which is the kind of
+coincidence that gets written up. Reading the two instructions above it shows
+`eax` is `this->[0x30]`, another object entirely. Not a header.
+
+### Round 323, redone soundly
+
+The same disassembly showed the real shape of a refusal:
+
+	push 0x185f          ; the ERROR CODE, pushed
+	mov  ecx,0xb04c      ; the REPLY OPCODE, in ECX
+	call 0x4e7250
+
+Both immediates, neither the decompiler's argument. That makes a sound sweep
+greppable, so all **256** call sites in `.text` were done properly:
+
+| | |
+|---|---:|
+| with an ECX immediate | 251, of which **247 are `0xbXXX`** |
+| pushing an error code | 72 sites, **59 distinct codes** |
+| of those, named by the client | 38 (64 %) |
+| **pushed but with no client `case` anywhere** | **15** |
+
+	0x1403  0x1807  0x1811  0x181d  0x1c0d  0x1c0e  0x3c0f  0x3c2a
+	0x3c32  0x3c33  0x480f  0x4828  0x4c33  0x6006  0x6008
+
+Six lookalikes are handled after all (`0x6415`/`0x6416` in the main switch,
+`0x8006`-`0x800a` elsewhere), which is why it is fifteen and not twenty-one.
+
+**The membership changed, which is the whole point of redoing it.** `0x1806`
+drops out and `0x1403`, `0x480f`, `0x4828` appear -- so round 323's list was not
+merely ill-derived, it was wrong, and three real codes were missing from it.
+
+**And one is corroborated from elsewhere.** `0x4828` is what `jobs.md` records
+the job-join handler returning for a kind outside {1,2,3}, read in round 273
+from another function on another day. A refusal a player can trigger, with no
+message behind it.
+
+The use-item payload is still unread -- two rounds now -- but the ABI above is
+what the next attempt needs, and it is written down.
+
 ## Three-hundred-and-twenty-fifth round: round 323 was wrong, and the function it rested on is now named
 
 Round 324's next probe was "take one named handler and recover its payload", so
