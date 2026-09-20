@@ -219,6 +219,19 @@ the client rows it correctly skipped.
 
 	ssh root@192.168.5.78 'rm -f /var/tmp/decomp_*/PROJSTAMP'
 
+**A `-readOnly` run of your own still costs a rebuild (round 305).** Running
+`SymbolReport.java` to measure coverage dirties the project exactly as an apply
+does -- analyzeHeadless touches it whatever the script does -- so the next tick
+sees the dump as stale and spends ~9 minutes rebuilding both. It is
+self-correcting, because the rebuild re-stamps, but it costs a tick. **After any
+read-only analyzeHeadless run, re-stamp instead of leaving it:**
+
+	ssh root@192.168.5.78 'for d in server client; do find /home/ghidra/re_$d -type f \
+	  -printf "%T@\n" | sort -rn | head -1 | cut -d. -f1 > /var/tmp/decomp_$d/PROJSTAMP; done'
+
+Only do that when you have NOT changed the project -- after an apply the dump
+genuinely is stale and must rebuild.
+
 `re_tick.sh` stamps the project's newest mtime *after* a rebuild, so its own
 `-readOnly` run does not look like a change. That is the only stable choice —
 stamping *before* the run instead makes the tool's own touch newer than the
