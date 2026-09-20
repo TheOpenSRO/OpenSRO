@@ -423,8 +423,36 @@ which simply lives in the same numeric range. With 99 permitted values spread
 over 26..220 any numeric column scores, so the test cannot discriminate and
 nothing is promoted from it.
 
-**Next probe, and it is a join rather than a range test.** For the 59 skills
-whose derived filename *does* exist, the clip is known. Print each BSR entry's
-action type beside the clip name it indexes, and the skills whose clip matches
-give their action type directly; the column is then whichever one holds that
-number for those rows.
+**That probe was run (round 317) and returned a NEGATIVE.**
+`client/tools/probe_skill_action_types.gd` prints every entry as
+`group, action type, clip path`; 276 entries for the China man. Joining the 519
+skill rows whose derived clip appears there against every numeric column:
+
+| column | rows carrying that skill's own action type |
+|---|---:|
+| 36 | 14 of 519 (**3 %**) |
+| 80 | 9 (2 %) |
+| everything else | <= 5 |
+
+**No column carries it.** Column 36 leads by chance and is the documented
+required mastery level. The action type is not in skilldata.
+
+**And the BSR table is not a better index than the directory:**
+
+| | |
+|---|---:|
+| distinct CH skill clip names | 338 |
+| present in the man BSR table | **57** |
+| present on disk in `prim\ani\char\china\man` | **59** |
+| in the BSR but not on disk | **0** |
+
+The entries point at exactly that directory (`prim\ani\char\china\man\...`),
+so srrevamp's path construction was never wrong, and switching to the BSR
+lookup would find **two fewer** clips rather than more.
+
+**What this leaves.** The body carries 217 distinct clips against 338 skills, so
+sharing is certain, and the link for the ~280 skills with no clip of their own
+is **not name-based, not a skilldata column, and not in the BSR table**. It is
+in the client's code or in a table not yet identified. Three independent routes
+are now exhausted, which is why the client's weapon-swing fallback stays and is
+labelled disclosed rather than treated as a temporary patch.

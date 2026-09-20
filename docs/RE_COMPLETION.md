@@ -5871,6 +5871,26 @@ JOIN, not a range test: for the 59 skills whose derived filename exists the clip
 is known, so printing each BSR entry's action type beside the clip it indexes
 gives those skills their type directly, and the column is whichever carries it.
 
+Round 317 (the join RAN, a negative): THREE ROUTES EXHAUSTED.
+probe_skill_action_types.gd prints every animation entry as group/action
+type/clip path -- 276 for the China man, clip names exactly matching the
+Basic_Code derivations -- so the join round 316 specified is clean. Across the
+519 skill rows whose derived clip appears there, NO column carries that skill's
+own action type: best is column 36 at 14 of 519 (3%), which is the documented
+required mastery level leading by chance. The action type is not in skilldata.
+Nor is the BSR a better index than the directory: its entries point at exactly
+prim\ani\char\china\man, so srrevamp's path construction was never wrong,
+and of 338 distinct CH skill clip names 57 are in the BSR table against 59 on
+disk, with 0 in the BSR but not on disk -- switching finds TWO FEWER. The body
+carries 217 clips against 338 skills, so sharing is certain, and the link for
+the ~280 clip-less skills is not name-based, not a skilldata column and not in
+the BSR table. Round 315 called this "82% ship no animation" (wrong, the clips
+exist) and round 316 "the client uses the wrong mechanism" (also wrong, the
+mechanism and path are right); only now is the honest statement available. The
+weapon-swing fallback is therefore the answer rather than a placeholder. What
+remains is a hardcoded table in the client's code -- a dump read, not another
+data probe.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

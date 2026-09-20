@@ -7075,6 +7075,60 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-seventeenth round: the join ran, and three routes are now exhausted
+
+Round 316 named a specific next probe -- a join rather than a range test -- and
+said the column would fall out of it. **It ran, and it returned a negative.**
+
+`probe_skill_action_types.gd` prints every animation entry as
+`group, action type, clip path`: 276 for the China man, and the clip names are
+exactly the Basic_Code derivations (`spear 26 skill_ch_spear_pierce_a`), so the
+join is clean. Taking the **519** skill rows whose derived clip appears there
+and checking every numeric column for that skill's own action type:
+
+| column | rows carrying it |
+|---|---:|
+| 36 | 14 of 519 (**3 %**) |
+| 80 | 9 (2 %) |
+| the rest | <= 5 |
+
+**No column carries it.** Column 36 leads by chance and is the documented
+required mastery level -- the same false positive as round 316's range test,
+now ruled out properly rather than by argument.
+
+### And the BSR table is not the better index either
+
+The suspicion worth testing was that srrevamp reads the wrong place: it builds
+`prim\ani\char\china\man\<name>.ban` and reads the archive directly, where
+the real client follows a BSR entry. **The entries point at exactly that
+directory**, so the path was never wrong, and:
+
+| | |
+|---|---:|
+| distinct CH skill clip names | 338 |
+| present in the man BSR table | **57** |
+| present on disk in that directory | **59** |
+| in the BSR but not on disk | **0** |
+
+Switching to the BSR lookup finds **two fewer** clips, not more.
+
+### What is actually established now
+
+The body carries **217** distinct clips against **338** skills, so sharing is
+certain, and the link for the ~280 skills with no clip of their own is **not
+name-based, not a skilldata column, and not in the BSR table**. Three
+independent routes are exhausted.
+
+That is worth more than it sounds: round 315 called this "82 % of skills ship no
+cast animation" (wrong -- the clips exist), round 316 called it "the client uses
+the wrong mechanism" (also wrong -- the mechanism and the path are both right),
+and only now is the honest statement available. **The mapping is not in the data
+this project can reach**, so the client's weapon-swing fallback is the answer
+rather than a placeholder, and stays labelled disclosed.
+
+The remaining place to look is the client's own code -- a hardcoded table -- and
+that is a dump read, not another data probe.
+
 ## Three-hundred-and-sixteenth round: skill animations are action types, and the client was using the wrong mechanism entirely
 
 Round 315 measured that only **59 of 338** derived cast-clip names exist and
