@@ -7075,6 +7075,49 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-twentieth round: the damage pipeline, read to its end
+
+`damage_pipeline.md` has carried the line *"stages past 17 run to `40e819` and
+are not yet read"* for as long as the page has existed, and `SYSTEMS.md` repeated
+it as the row's standing gap. It is about **190 bytes**. Read:
+
+**Stage 18 is stage 17's mirror.** Stage 17 evaluates param `0xb2` (178) on the
+ATTACKER through vtable slot `+0x104`; stage 18 does the identical thing with
+`0xb4` (180) on the DEFENDER -- same slot, same `!= 0` guard, same multiply.
+
+That suggests a 2x2, and suggestion is not enough, so it was checked against the
+other function: `Formula_MitigateMagicalDamage` (`0x0040e830`) pushes `0xb3`
+(179) and `0xb5` (181) **in the same order**.
+
+| | physical | magical |
+|---|---|---|
+| attacker % | 178 | 179 |
+| defender % | 180 | 181 |
+
+All four are range 0..100, default **0**, untagged in the registry -- so inert
+on every object srrevamp builds, the same shape as the player's percentage
+reduction.
+
+**Stage 19 is a ceiling of 16,777,215**, held as a double at `.rdata 0x00b46110`
+and a float at `0x00b46108`, the same number in both, and both present in the
+magical twin. `2^24 - 1` is the last integer a float32 still counts one by one,
+which is why that number: the engine accumulates damage in a float and converts
+at the end. The conversion forces truncation (`or eax, 0xc00` before `fistp`),
+so a fractional blow loses its fraction rather than rounding up.
+
+Wired as `combat.MaxDamage` / `combat.CapDamage`, with a test that also asserts
+the float32 property the constant rests on -- `2^24+1` is indistinguishable from
+`2^24` while `2^24-1` is not -- so the *reason* for the number is pinned and not
+just the number.
+
+**It is unreachable with today's content.** Nothing srrevamp spawns deals
+sixteen million. It is here because a ceiling the engine has should be present
+and cited rather than found later as a divergence, which is the same argument
+the monster-rank HP scale was wired under.
+
+After four rounds of measured negatives, this one is a positive, and it closes
+the last open item on a row marked SPECIFIED.
+
 ## Three-hundred-and-nineteenth round: 437 assert-carrying functions, and none of them can be named that way
 
 Round 318 found that the assert lever reaches `CObjCharacter` -- 12 of its 41

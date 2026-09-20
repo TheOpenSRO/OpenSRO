@@ -835,3 +835,36 @@ func TestApplySkillPercentRealZeroIsTheFloor(t *testing.T) {
 		t.Error("SkillPercentZero must be negative: the engine reads the field unsigned, so no real percentage can collide with it")
 	}
 }
+
+// The engine's damage ceiling, 2^24 - 1, read off the tail of
+// Formula_MitigatePhysicalDamage and confirmed in its magical twin.
+func TestDamageCeiling(t *testing.T) {
+	if MaxDamage != 16777215 {
+		t.Fatalf("MaxDamage is %d; the constant at .rdata 0x00b46108/0x00b46110 is 16777215", MaxDamage)
+	}
+	// WHY 2^24 - 1: it is the last integer a float32 still counts one by one.
+	// The engine accumulates damage in a float and converts at the end, so
+	// above this the number it stores would not be the number it computed.
+	// float32 cannot tell 2^24+1 from 2^24, and that is the first such pair.
+	if float32(MaxDamage+2) != float32(MaxDamage+1) {
+		t.Errorf("float32 still separates %d from %d, so 2^24-1 is not the "+
+			"representability limit and the ceiling's rationale is wrong",
+			MaxDamage+1, MaxDamage+2)
+	}
+	if float32(MaxDamage) == float32(MaxDamage-1) {
+		t.Errorf("float32 already cannot separate %d from %d, so the ceiling "+
+			"would be below the limit", MaxDamage-1, MaxDamage)
+	}
+	for _, tc := range []struct{ in, want int }{
+		{0, 0},
+		{1, 1},
+		{MaxDamage - 1, MaxDamage - 1},
+		{MaxDamage, MaxDamage},
+		{MaxDamage + 1, MaxDamage},
+		{1 << 30, MaxDamage},
+	} {
+		if got := CapDamage(tc.in); got != tc.want {
+			t.Errorf("CapDamage(%d) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}

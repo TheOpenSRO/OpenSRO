@@ -1104,3 +1104,34 @@ func ApplyMasteryScale(base, pct int) int {
 	}
 	return int(math.Round(float64(base) * MasteryDamageScale(pct)))
 }
+
+// MaxDamage is the engine's ceiling on a single blow: **16,777,215**.
+//
+// RECOVERED 2026-09-20 (round 320), reading the tail of
+// `Formula_MitigatePhysicalDamage` (`0x0040e450`) that this project had left
+// unread -- docs/protocol/damage_pipeline.md carried "stages past 17 run to
+// 40e819 and are not yet read" for as long as the page has existed.
+//
+// The function ends by comparing the accumulated damage against the double at
+// `.rdata 0x00b46110` and, when it is exceeded, replacing it with the float at
+// `0x00b46108`. Both hold the same number, 16777215.0 = 2^24 - 1: the largest
+// integer a float32 still counts one by one. The result is then converted with
+// the rounding mode forced to truncate (`or eax, 0xc00` before `fistp`), so a
+// fractional blow loses its fraction rather than rounding up.
+//
+// `Formula_MitigateMagicalDamage` (`0x0040e830`) carries the same two constants,
+// which is the confirmation rather than the finding.
+//
+// It is unreachable with today's content -- nothing srrevamp spawns can deal
+// sixteen million -- and it is here because a ceiling that exists in the engine
+// should exist in the reimplementation, cited, rather than being discovered as
+// a divergence later.
+const MaxDamage = 16777215
+
+// CapDamage applies the engine's ceiling and truncation to a blow.
+func CapDamage(damage int) int {
+	if damage > MaxDamage {
+		return MaxDamage
+	}
+	return damage
+}

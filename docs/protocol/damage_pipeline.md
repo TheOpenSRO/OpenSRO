@@ -33,7 +33,39 @@ accumulator" — it is the damage itself.
 | 16 | `40e6eb` | **floor band** | see below |
 | 17 | `40e758` | attacker % | param **178** (magical twin: 179) |
 
-Stages past 17 run to `40e819` and are not yet read.
+| 18 | `40e78b` | defender % | param **180** (magical twin: **181**), multiplicative, skipped when zero |
+| 19 | `40e7bf` | **ceiling** | `damage = min(damage, 16777215)`, then truncated to an integer |
+
+**The pipeline is now read to its end (round 320).** This line used to say
+"stages past 17 run to `40e819` and are not yet read".
+
+**Stage 18 is stage 17's mirror.** Stage 17 evaluates param `0xb2` (178) on the
+ATTACKER; stage 18 evaluates `0xb4` (180) on the DEFENDER, through the same
+vtable slot (`+0x104`) and with the same `!= 0` guard and multiply. That makes a
+2x2, and `Formula_MitigateMagicalDamage` (`0x0040e830`) proves it rather than
+merely suggesting it -- it pushes `0xb3` (179) and `0xb5` (181) in the same
+order:
+
+| | physical | magical |
+|---|---|---|
+| attacker % | 178 | 179 |
+| defender % | 180 | 181 |
+
+All four are range 0..100 with default **0** in the registry and carry no tag,
+so they are inert on every object srrevamp builds -- the same shape as the
+player's percentage reduction.
+
+**Stage 19 is a ceiling of 16,777,215**, from the double at `.rdata 0x00b46110`
+and the float at `0x00b46108` -- the same number in both, and both appear in the
+magical twin too. `2^24 - 1` is the last integer a float32 still counts one by
+one, which is the reason for that particular number: the engine accumulates
+damage in a float and converts at the end. The conversion forces the rounding
+mode to truncate (`or eax, 0xc00` before `fistp`), so a fractional blow loses
+its fraction rather than rounding up.
+
+Wired as `combat.MaxDamage` / `combat.CapDamage` with a test. Unreachable with
+today's content; it is present so a ceiling the engine has is not discovered as
+a divergence later.
 
 ## Stage 1 is mastery-scaled, and this page had its argument wrong (2026-09-17)
 

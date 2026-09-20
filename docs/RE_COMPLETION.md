@@ -5927,6 +5927,25 @@ the checking. Same shape as the one-part Name:: label at 0/131 against the
 two-part Class::Method at 35/35. The lever stays good for ATTRIBUTION -- file
 and line order a function within its source file -- and is closed for NAMING.
 
+Round 320 (a VALUE wired, the pipeline finished): DAMAGE STAGES 18 AND 19 READ.
+damage_pipeline.md had carried "stages past 17 run to 40e819 and are not yet
+read" since the page existed, and SYSTEMS.md repeated it; it is ~190 bytes.
+Stage 18 mirrors stage 17: 17 evaluates param 0xb2 (178) on the ATTACKER through
+vtable slot +0x104, 18 does the identical thing with 0xb4 (180) on the DEFENDER,
+same slot, same != 0 guard, same multiply. The 2x2 is PROVEN rather than
+suggested -- Formula_MitigateMagicalDamage (0x0040e830) pushes 0xb3 (179) and
+0xb5 (181) in the same order -- giving attacker 178/179 and defender 180/181,
+physical/magical. All four are 0..100, default 0, untagged, so inert on every
+object srrevamp builds. Stage 19 is a CEILING of 16,777,215, the double at
+.rdata 0xb46110 and the float at 0xb46108 (same number, both present in the
+magical twin), with the conversion forcing truncation (or eax,0xc00 before
+fistp) so a fractional blow loses its fraction. 2^24-1 is the last integer a
+float32 counts one by one, which is why that number. Wired as
+combat.MaxDamage/CapDamage with a test that pins the float32 property the
+constant rests on, not just the number. Unreachable with today's content,
+present so an engine ceiling is cited rather than discovered later as a
+divergence.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.
