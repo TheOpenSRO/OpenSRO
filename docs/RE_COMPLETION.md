@@ -5602,7 +5602,15 @@ exceptions being one coherent _SUPER HEAVY_07 set at durability 9999 and price
 0. Column 30 is zero for every weapon, killing the alternative pairing. Wired,
 and pinned by TestRepairCostReadsTheBasisColumn (neighbours given different
 values; verified to fail on 28). Round 303's guard earned itself at once: this
-stale probe was in the PROSE BENEATH the table, which no test covers.
+stale probe was in the PROSE BENEATH the table, which no test covers. The
+same derivation (counting RefObjCommon_ExtractData's field reads) produced four
+other exporter constants, all AUDITED against real data and all correct:
+fCanTrade 16 / fCanSell 17 (0/1 flags), fCanDrop 19 (the 255/223/192/128
+bitmask its comment predicts), fMaxStack 57 (stack sizes), fSetID 62 (45 set
+ids, joined 360/360 to refsetitemgroup). The off-by-one was ISOLATED to the
+basis, and the audit says why: every surviving constant had a discriminating
+data signature, while fRepairCost's only check was an identity true of any
+number. A check that cannot fail is not a check.
 
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is

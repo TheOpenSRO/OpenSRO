@@ -7143,6 +7143,30 @@ was in the **prose beneath the table**, which no test covers -- and it had been
 pointing every reader at a 7,052-byte function for a value that was never in
 it. Same rot, one paragraph outside the fence.
 
+### The same derivation elsewhere: audited, and clean
+
+`fRepairCost` was not the only exporter constant derived by counting
+`RefObjCommon_ExtractData`'s field reads, so the others were checked against
+real data before this round closed:
+
+| constant | column | what the data holds | verdict |
+|---|---|---|---|
+| `fCanTrade` 16 / `fCanSell` 17 | 16, 17 | 0/1 flags (19,017/2,535 and 21,059/493) | correct |
+| `fCanDrop` 19 | 19 | the **bitmask**: 255, 223, 192, 128, 1, 0 | correct |
+| `fMaxStack` 57 | 57 | stack sizes 5000/2500/1000/10/5/3 | correct |
+| `fSetID` 62 | 62 | 45 small set ids | correct |
+
+**The off-by-one was isolated to the repair basis, and the audit says why.**
+Every constant that survived had been cross-checked against a *discriminating*
+data signature -- `fCanDrop`'s comment predicts 255/128/223/192 and the column
+holds exactly those; `fSetID` was joined to `refsetitemgroup.txt` and matched
+360 of 360 rows where a wrong column scored ~25 %. `fRepairCost`'s only check
+was `fullRepair == basis`, which holds for any number at all.
+
+So the failure was not "counting fields is unreliable". It is that **a check
+which cannot fail is not a check**, and it was the only one of the five without
+a signature that could tell a neighbour apart.
+
 ## Three-hundred-and-third round: the tracker that cannot rot, rotted
 
 `docs/SYSTEMS.md` is this project's completion tracker, and its header says it
