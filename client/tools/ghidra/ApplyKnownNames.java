@@ -638,7 +638,7 @@ public class ApplyKnownNames extends GhidraScript {
          "Validates a magic option's value against its allowed range. Reports "
          + "'error data that is a magicoption value. [ItemCode: %d, MagicOptionID: %d]' and "
          + "'(%s) error data out of range to MagicoptionValue', from ReferenceData.cpp."},
-        {"006a6660", "RefMagicOpt_ResolveExtractor",
+        {"006a6660", "RefMagicOptByItemOptLevel_ExtractData",
          "Resolves the per-MagicType extractor for a magic option and validates its custom "
          + "value. Reports 'can`t find MagicType[%d] extractor!!! [MagicOptID:%d]' and "
          + "'CustomValue(RefMagicOptID[%d]) is error data out of range to MagicoptionValue'."},
@@ -656,7 +656,7 @@ public class ApplyKnownNames extends GhidraScript {
         {"006a9ab0", "RefShopGoods_ExtractData",
          "Gates a good on being sellable: asserts 'pRefItem != NULL && (pRefItem->m_dwAvailableOPs "
          + "& OBJ_INTERACT_FLAG_CAN_SELL)' and handles the 'MALL_' name prefix."},
-        {"006a94a0", "RefShop_InsertPricePolicyLevel",
+        {"006a94a0", "RefPackageItem_ExtractData",
          "Inserts a price-policy condition keyed by level: 'insert a PricePolicyConditionLevel "
          + "%s', from ReferenceData.cpp."},
         {"006a7650", "RefTeleport_LoadEntry",

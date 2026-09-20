@@ -7145,12 +7145,25 @@ It also corrupted the row: the long description was written into the status
 column, pushing `reading` out. Caught by reading `git diff` before committing,
 which is the only reason this is a paragraph and not a defect.
 
-### Two still unresolved, honestly
+### Two were unresolved; the rebuilt dump settles them
 
 `0x006a6660` and `0x006a94a0` were measured *while the rebuild was deleting the
-dump underneath them* and returned zeroes that mean nothing -- the caller
-listing taken earlier shows three skipper call sites inside `006a94a0` alone.
-They are marked UNRESOLVED and will be measured against the rebuilt dump.
+dump underneath them* and returned zeroes that mean nothing. Re-measured against
+the finished dump they call the skipper **3** and **6** times, so both are
+deserializers and the TSV is right on all five. The Java names are corrected.
+
+**The apply is verified, which is the claim this round rests on:**
+
+| | before | after |
+|---|---:|---:|
+| TSV server names present in the dump | 1,828 | **2,078** |
+| filed but still `FUN_` | **250** | **0** |
+
+`verify_recovered_addresses.py` over the rebuilt dumps: 2,421 rows land on a
+function **start**, 0 interior, 0 wrong-binary, and the single `outside` is the
+recorded gap (`0x587260 SkillAction_Stance`). The zeroes that meant nothing
+were the same failure as the other two probes this round -- a clean number
+taken from an artifact that was not in a state to answer.
 
 **Three probes lied this round** (the string grep, the skipper count against a
 vanishing dump, and round 303's single-source name check), which is the running

@@ -350,8 +350,6 @@ func TestTheTwoNameSourcesDoNotContradict(t *testing.T) {
 		0x005829d0: "OnEffectExpired / SkillAction_BuffEnd -- buff expiry, named from the caller and the callee side",
 		0x004a86a0: "RecoverHpMp / ApplyHPMPDelta -- the delta may be negative, so the TSV name is the more accurate of the two",
 		0x00427050: "LoadGainRates / LoadServerConfig -- the TSV is right and WIDER: the function reads 25 config keys, not just the four rate ones. Round 305 nearly 'corrected' the TSV to the narrow name off a grep for quoted strings, which sees only the keys that have a log format string; the rest are passed to ServerConfig_Get in ECX",
-		0x006a6660: "ResolveExtractor / RefMagicOptByItemOptLevel_ExtractData -- UNRESOLVED",
-		0x006a94a0: "InsertPricePolicyLevel / RefPackageItem_ExtractData -- UNRESOLVED",
 	}
 	for addr, jn := range java {
 		tn, ok := tsv[addr]
