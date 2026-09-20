@@ -5415,6 +5415,17 @@ accumulates but is held at threshold-1, never advancing); otherwise it levels,
 possibly several times in one gain. A GOLD PET LEVELS ONLY WHILE BELOW ITS
 OWNER'S LEVEL AND BELOW 110. cos.PetLevelUpBoundary / PetMaxLevel /
 PetLevelsUp + test. pets.md's pet-growth bullet closed.
+Round 292 (docs): the pet threshold row traced to a SINGLETON and stopped
+there. this+0x1ce0 is `rows[level]` out of a vector held by DAT_00d6aa14, set
+identically by CGObjCOS_GoldPet::vslot_215 and GObjPC::FUN_004d6210, with the
+64-bit threshold at row+8/+0xc. The singleton is installed by FUN_007158f0 at
+&DAT_00d16c80 with an already-set assert, its object lies past .data's raw
+size so there is NO RTTI to walk, and it is referenced on 961 lines --
+manager_singletons.md listed it as unidentified and now describes it. _REFLEVEL
+is the obvious candidate (per-level, 140 rows, matching the level-up guard) and
+is deliberately NOT recorded as the answer: that is a resemblance, and the
+probe that settles it is the vector's fill site, which no function shares with
+a "_REF..." literal.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

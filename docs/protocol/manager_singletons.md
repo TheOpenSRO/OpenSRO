@@ -200,3 +200,27 @@ instructions between the array load and the indexed read. In
 `CEnchant_UpperReinforce::vslot_009` the two are about 20 apart. The empty result was a
 fact about the window, and it was caught by comparing against an access already read by
 hand.
+
+## `DAT_00d6aa14`, which the strict test rejected (round 292, 2026-09-20)
+
+The list above records this global as one the strict test could not identify.
+It is still unidentified, but it is no longer featureless, and the facts are
+worth having before the next attempt:
+
+- **It is installed as a singleton.** `FUN_007158f0` (`0x007158f0`) asserts it
+  is null and then sets `DAT_00d6aa14 = &DAT_00d16c80`, going on to initialise
+  a run of members at that address.
+- **Its object is in uninitialised `.data`.** `0xd16c80` lies past the section's
+  raw size, so there is no vtable to read statically and **no RTTI to walk** --
+  which is why the class-name levers that work elsewhere do not reach it.
+- **It holds a vector of row pointers, indexed by level.**
+  `CGObjCOS_GoldPet::vslot_215` and `GObjPC::FUN_004d6210` both do
+  `rows[n]` out of it, bounds-checked by `(end - begin) >> 2`, and store the
+  result on the object at `+0x1ce0`. `CGObjCOS_GoldPet::OffsetExpPoint` reads a
+  64-bit at `row+8`/`+0xc` as a **per-level experience threshold**.
+- It is referenced on **961 decompiled lines**, so it is a major singleton
+  rather than a corner of one subsystem.
+
+`_REFLEVEL` is the obvious guess and is deliberately not recorded as the answer:
+the next probe is the vector's fill site, and no function references both this
+global and a `"_REF…"` literal.

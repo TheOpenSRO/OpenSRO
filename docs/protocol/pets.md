@@ -188,9 +188,27 @@ So the two paths are a clamp and a level-up, and the gate chooses between them:
 At or past either boundary it keeps gaining experience and stops advancing,
 which is why the clamp writes `threshold - 1` rather than discarding the gain.
 
-`server/internal/cos` carries the two boundaries and `PetLevelsUp`. The
-thresholds themselves are per level and come from the reference row at
-`this+0x1ce0` (+8/+0xc, 64-bit); which table that row belongs to is not read.
+`server/internal/cos` carries the two boundaries and `PetLevelsUp`.
+
+### Where the thresholds come from, as far as it is read (round 292)
+
+`this+0x1ce0` is a **pointer to one row**, and two sites set it the same way:
+`CGObjCOS_GoldPet::vslot_215` (`0x004d5d50`) and `GObjPC::FUN_004d6210` both
+index a vector of row pointers and store `rows[n]`, bounds-checked against the
+container's own end (`(end - begin) >> 2`, so pointers). The second reads that
+vector out of the global **`DAT_00d6aa14`**, which `OffsetExpPoint` also loads
+(`4d65eb: mov esi, ds:0xd6aa14`) when it walks to the next level's threshold.
+
+So the shape is settled: a **singleton holding a vector of rows, indexed by
+level**, each row carrying the 64-bit threshold at `+8`/`+0xc`.
+
+**Which table those rows are is NOT read.** `_REFLEVEL` (`leveldata.txt`) is the
+obvious candidate -- it is the per-level table, it has 140 rows, and 140 is the
+number the level-up path guards against -- but that is a resemblance, not a
+citation, and this project has been wrong twice on exactly that kind of
+reasoning. The probe that would settle it is the vector's **fill** site: no
+single function references both `DAT_00d6aa14` and a `"_REF…"` table literal
+(checked), so the rows are placed from somewhere further out than the loader.
 
 ## The database surface
 

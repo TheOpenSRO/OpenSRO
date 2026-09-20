@@ -7075,6 +7075,35 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-ninety-second round: the pet's threshold row, traced to a singleton and stopped there
+
+Round 291 closed pet growth and left one thread: the per-level thresholds come from a reference
+row at `this+0x1ce0`, and which table that row belongs to was not read.
+
+**Traced as far as it goes without guessing.** `this+0x1ce0` is a pointer to one row, and two
+sites set it identically -- `CGObjCOS_GoldPet::vslot_215` and `GObjPC::FUN_004d6210` both index
+a vector of row pointers, bounds-checked by `(end - begin) >> 2`, and store `rows[n]`. The
+vector belongs to the global **`DAT_00d6aa14`**, which `OffsetExpPoint` loads directly when it
+walks to the next level's threshold. So: a singleton holding a vector of rows indexed by level,
+each row carrying the 64-bit threshold at `+8`/`+0xc`.
+
+**The singleton, which `manager_singletons.md` lists as unidentified, is now at least
+described.** `FUN_007158f0` installs it with the usual "already set" assert
+(`DAT_00d6aa14 = &DAT_00d16c80`); its object lies past `.data`'s raw size, in uninitialised
+memory, so there is **no vtable and no RTTI to walk** -- which is exactly why the class-name
+levers that work everywhere else do not reach this one. It is referenced on 961 decompiled
+lines.
+
+**And the identification deliberately not made.** `_REFLEVEL` (`leveldata.txt`) is the obvious
+candidate: it is the per-level table, it has 140 rows, and 140 is the number the level-up path
+guards against. That is a resemblance, not a citation. This project has twice been wrong
+promoting exactly that kind of fit, and the cost each time was a value shipped backwards. The
+probe that would settle it is the vector's **fill** site; a sweep for any function referencing
+both `DAT_00d6aa14` and a `"_REF…"` literal returns nothing, so the rows are placed from
+further out than the loader.
+
+Four probes, one answer short, and the answer withheld rather than approximated.
+
 ## Two-hundred-and-ninety-first round: a pet levels only below its owner -- the branch I refused to guess
 
 Round 290 read `CGObjCOS_GoldPet::OffsetExpPoint` as far as it was certain and stopped at one
