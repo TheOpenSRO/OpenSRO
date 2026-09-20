@@ -1,0 +1,380 @@
+# address	current_name	source_file	assert_expression
+# The client's own translation units, recovered 2026-09-20 (round 279).
+#
+# sro_client.exe ships its asserts with __FILE__ and the failing EXPRESSION.
+# The helper is FUN_0049e490(line, file, format, ...) -- the same one
+# PrimMtrlSet uses for "Material File[%s] Open Failed." Every call site
+# therefore names the .cpp its function was compiled from, and many carry a
+# C++ expression with real member and method names.
+#
+# 165 distinct source paths are in the binary and 736 call sites reference
+# one; this table is the 364 that resolve to a single enclosing function,
+# 352 of which had no name at all. An entry is EVIDENCE about a function's
+# owning file, not a name for it -- names go in recovered_names.tsv once the
+# function itself has been read.
+#
+# The assert expression is truncated at 110 characters.
+00403450	RTNavMeshTerrain::FUN_00403450	RTNavMeshTerrain.cpp	
+00403f30	RTNavMeshTerrain::FUN_00403f30	RTNavMeshTerrain.cpp	if(FindHeight(vPos) == FALSE)
+00404060	RTNavMeshTerrain::FUN_00404060	RTNavMeshTerrain.cpp	
+00411960	CRegionManagerBody::vslot_001	RegionManagerBody.cpp	
+00411e20	CRegionManagerBody::vslot_004	RegionManagerBody.cpp	m_sRegionList.size()==0
+00412660	CRegionManagerBody::vslot_012	RegionManagerBody.cpp	%d, %d, %0.2f, %0.2f, %0.2f
+00413260	RegionManagerBody::FUN_00413260	RegionManagerBody.cpp	hf != INVALID_HANDLE_VALUE
+00414600	CRegionManagerBody::vslot_024	RegionManagerBody.cpp	(size_t)info.nIndexName < m_sRegionName.size()
+004263e0	MapLoader::FUN_004263e0	MapLoader.cpp	ar.IsOpen()
+00426450	MapLoader::FUN_00426450	MapLoader.cpp	hSrc(%s) != INVALID_HANDLE_VALUE
+00426810	MapLoader::FUN_00426810	MapLoader.cpp	
+00426fe0	MapLoader::FUN_00426fe0	MapLoader.cpp	hSrc(%s) != INVALID_HANDLE_VALUE
+004277b0	MapLoader::FUN_004277b0	MapLoader.cpp	
+00428a40	MapLoader::FUN_00428a40	MapLoader.cpp	
+004295f0	MapLoader::FUN_004295f0	MapLoader.cpp	it != m_sDungeonInfo.end()
+00429670	MapLoader::FUN_00429670	MapLoader.cpp	it != m_sDungeonInfoH.end()
+0042a6e0	MapLoader::FUN_0042a6e0	MapLoader.cpp	w2DTile < m_s2DTileInfo.size()
+0042b8b0	MapLoader::FUN_0042b8b0	MapLoader.cpp	obj.dwID < m_sObjectInfo.size()
+0042bad0	MapLoader::FUN_0042bad0	MapLoader.cpp	
+0042bed0	MapLoader::FUN_0042bed0	MapLoader.cpp	
+0043dcc0	RTNavMeshDungeon::FUN_0043dcc0	RTNavMeshDungeon.cpp	m_pNMO
+0043e8c0	RTNavMeshDungeon::FUN_0043e8c0	RTNavMeshDungeon.cpp	m_sBlocks.size() == iBlockCount
+00449630	RTNavMeshObj::FUN_00449630	RTNavMeshObj.cpp	REGIONMGR.IsEnableRegist() == FALSE
+0044d060	RTNavMeshObj::FUN_0044d060	RTNavMeshObj.cpp	(*itCellID) < Cells.size()
+0044d330	RTNavMeshObj::FUN_0044d330	RTNavMeshObj.cpp	(*itCellID) < Cells.size()
+0045d1e0	CRTNavEdgeGlobal::vslot_007	RTNavEdge.cpp	pRgnA->GetRegionID() == m_sData.AssocRgn[0]
+0045ef50	NavMeshBuilder::FUN_0045ef50	NavMeshBuilder.cpp	GetObjInstList().size() < 0xFFFF
+0045fd60	NavMeshBuilder::FUN_0045fd60	NavMeshBuilder.cpp	
+00467e10	NavCell::FUN_00467e10	NavCell.cpp	m_sObjList.size() < 256
+00467f00	NavCell::FUN_00467f00	NavCell.cpp	pNMI->m_sObj.dwID == sObj.dwID
+00469080	NInterfaceResource::FUN_00469080	NInterfaceResource.cpp	it != m_interfacemap.end()
+00482860	CNIFDragableArea::vslot_017	NIFDraggableArea.cpp	
+004927b0	GNFontChar::FUN_004927b0	GNFontChar.cpp	CreateFont(%s)
+00492bc0	GNFontChar::FUN_00492bc0	GNFontChar.cpp	CNGFontCharManager Error - GetGlyphOutlineW : %d
+004d60f0	massivemsg::FUN_004d60f0	massivemsg.cpp	(size_t)m_nCurrentReadMsg < m_MsgList.size()
+004ea570	CharacterVisualChangeManager::FUN_004ea570	CharacterVisualChangeManager.cpp	NULL != pStr
+004ec9d0	CharacterVisualChangeManager::FUN_004ec9d0	CharacterVisualChangeManager.cpp	NULL != pItemData
+004ed040	CharacterVisualChangeManager::FUN_004ed040	CharacterVisualChangeManager.cpp	NULL != pStr
+004ed440	CharacterVisualChangeManager::FUN_004ed440	CharacterVisualChangeManager.cpp	NULL != pStr
+004ed530	CharacterVisualChangeManager::FUN_004ed530	CharacterVisualChangeManager.cpp	
+00507e40	GScript::FUN_00507e40	GScript.cpp	
+0050ebe0	GScript::FUN_0050ebe0	GScript.cpp	
+00518370	GScript::SaveGameData	GScript.cpp	SaveGameData(), dwID == SCR_INVALID_VALUE
+005287a0	GScript::FUN_005287a0	GScript.cpp	
+00534220	CICATStruct::vslot_025	ICATStruct.cpp	GetCompoundObj()
+0053bb00	IFConsole::FUN_0053bb00	IFConsole.cpp	byListSub
+00555db0	IFConsole::FUN_00555db0	IFConsole.cpp	
+0055a150	IFGNGWCRank::FUN_0055a150	IFGNGWCRank.cpp	pSimpleMsgBox == m_pMsgBox
+00561780	UI_SILKMALL::FUN_00561780	IFRenderStatic.cpp	false
+00564920	IFTargetWindowFortressStructure::FUN_00564920	IFTargetWindowFortressStructure.cpp	pSimpleMsgBox == m_pMsgBox
+00565f90	IFTargetWindowFortressStructure::FUN_00565f90	IFTargetWindowFortressStructure.cpp	wParam == m_dwSimpleMsgBoxID
+0056eb00	MemBufManager::FUN_0056eb00	MemBufManager.cpp	( d.nCurSize == 0) && ( d.pBuffer == data.pBuffer)
+0056ebe0	MemBufManager::FUN_0056ebe0	MemBufManager.cpp	data.nCurSize <= BUF_SIZE
+0057ac10	NIFAllianceGuild::FUN_0057ac10	NIFAllianceGuild.cpp	m_dwSimpleMsgBoxID == wParam
+005807e0	NIFBattleArenaGuildWnd::FUN_005807e0	NIFBattleArenaGuildWnd.cpp	OnMouseWheel - CNIFStretchWnd == NULL %d
+00580dd0	NIFBattleArenaGuildWnd::FUN_00580dd0	NIFBattleArenaGuildWnd.cpp	SetStaticGuildNum - pGuildStatic == NULL
+00580f40	NIFBattleArenaGuildWnd::FUN_00580f40	NIFBattleArenaGuildWnd.cpp	SetSlotData - CNIFWnd == NULL
+00582310	NIFBattleArenaGuildWnd::FUN_00582310	NIFBattleArenaGuildWnd.cpp	OnSelectRuleSlotClk - nIndex == MINUS
+00582920	NIFBattleArenaGuildWnd::FUN_00582920	NIFBattleArenaGuildWnd.cpp	OnScrolled - CNIFVerticalScroll == NULL
+00582980	NIFBattleArenaGuildWnd::FUN_00582980	NIFBattleArenaGuildWnd.cpp	OnScrolled - CNIFVerticalScroll == NULL
+00583a70	NIFBattleArenaRuleWnd::FUN_00583a70	NIFBattleArenaRuleWnd.cpp	SetDescription - CNIFTextBox == NULL
+00583ad0	NIFBattleArenaRuleWnd::FUN_00583ad0	NIFBattleArenaRuleWnd.cpp	SetSlotData - CNIFWnd == NULL
+00591910	NIFEnchantWnd::FUN_00591910	NIFEnchantWnd.cpp	
+005bbf80	NIFHostileGuild::FUN_005bbf80	NIFHostileGuild.cpp	m_dwSimpleMsgBoxID == wParam
+005cc890	NIFOpenMarket::FUN_005cc890	NIFOpenMarket.cpp	OpenMarket - pSearchButton == NULL
+005fd5f0	NIFOption::FUN_005fd5f0	NIFOption.cpp	
+0060bea0	NIFUnderMenuBar::FUN_0060bea0	NIFUnderMenuBar.cpp	byIndexSot < N_MAX_QUICKSLOT
+0061ea60	NIFWorldMap::FUN_0061ea60	NIFWorldMap.cpp	
+006217e0	NIFWorldMap::FUN_006217e0	NIFWorldMap.cpp	Illigal Dungeon Map Index
+00622b60	NIFWorldMap::FUN_00622b60	NIFWorldMap.cpp	Illigal Map Index
+00653b30	IFWnd::FUN_00653b30	IFWnd.cpp	
+00655fe0	IFButton::FUN_00655fe0	IFButton.cpp	This Functions Must be called at Radio Button
+00657890	IFRadioButton::FUN_00657890	IFRadioButton.cpp	nIndex >= 0 && nIndex < m_nRadioButtonNum
+00657970	IFRadioButton::FUN_00657970	IFRadioButton.cpp	The Number of Radio Button Unit is f than 1
+00657ad0	IFRadioButton::FUN_00657ad0	IFRadioButton.cpp	m_nRadioButtonNum <= 0 , But WHAT button is pressed?
+0067eec0	IFSlotWithHelp::FUN_0067eec0	IFSlotWithHelp.cpp	m_pObject->GetAttr() == AX_ATTR_SOBJECT_ITEM
+00680da0	IFSlotWithHelp::FUN_00680da0	IFSlotWithHelp.cpp	((CSOItem*)m_pObject)->GetOverlapCount()
+00687c70	IFSlotWithHelp::FUN_00687c70	IFSlotWithHelp.cpp	GetParentWndKind() == GDR_UNDERBAR
+0068cec0	IFUnderBar::FUN_0068cec0	IFUnderBar.cpp	byIndexSot < MAX_QUICKSLOT
+00696ca0	IFWorldMap::FUN_00696ca0	IFWorldMap.cpp	Illigal Map Index
+0069d380	IFSKillBoard::FUN_0069d380	IFSKillBoard.cpp	pSkill->pSkillData->GetData()->m_nReq_Sp
+0069d930	IFSKillBoard::FUN_0069d930	IFSKillBoard.cpp	InCorrect Mastery ID :%d
+0069f860	IFSkillMastery::CIFSkillMastery_SetMasteryData	IFSkillMastery.cpp	m_pMasteryData
+006a04e0	IFSkillMasteryWndManager::FUN_006a04e0	IFSkillMasteryWndManager.cpp	m_dwCurActiveMasteryID
+006a1a30	CIFDragableArea::vslot_017	IFDragableArea.cpp	
+006a1d20	IFMainPopup::FUN_006a1d20	IFMainPopup.cpp	
+006a1d50	IFMainPopup::FUN_006a1d50	IFMainPopup.cpp	
+006a1d80	IFMainPopup::FUN_006a1d80	IFMainPopup.cpp	
+006a1db0	IFMainPopup::FUN_006a1db0	IFMainPopup.cpp	
+006a1de0	IFMainPopup::FUN_006a1de0	IFMainPopup.cpp	
+006a1e10	IFMainPopup::FUN_006a1e10	IFMainPopup.cpp	
+006a1e40	IFMainPopup::FUN_006a1e40	IFMainPopup.cpp	
+006a1e70	IFMainPopup::FUN_006a1e70	IFMainPopup.cpp	
+006d6640	IFParty::FUN_006d6640	IFParty.cpp	Party Memeber N - Error
+006d7e60	IFQuickPartySlot::FUN_006d7e60	IFQuickPartySlot.cpp	m_pBufRender->Release()
+006db380	CIFQuickPartyWnd::vslot_012	IFQuickPartyWnd.cpp	pInfo && g_pMyPlayerObj->GetMyJID() != pInfo->m_dwJID
+006e8780	IFApprenticeShip::FUN_006e8780	IFApprenticeShip.cpp	m_pBufRender->Release()
+006e8ed0	IFApprenticeShip::FUN_006e8ed0	IFApprenticeShip.cpp	Illigal ApprenticeShip Member : %d
+006ea670	IFApprenticeShipSlot::FUN_006ea670	IFApprenticeShipSlot.cpp	m_pBufRender->Release()
+006f73d0	IF_NPCTalk::FUN_006f73d0	IF_NPCTalk.cpp	pSimpleMsgBox == m_pMsgBox
+006f79c0	IF_NPCTalk::FUN_006f79c0	IF_NPCTalk.cpp	wParam == m_dwSimpleMsgBoxID
+006fe030	IF_NPCTalk::FUN_006fe030	IF_NPCTalk.cpp	pSkillData
+00703ff0	IF_NPCWindow::FUN_00703ff0	IF_NPCWindow.cpp	
+0071bf30	IFRequestGuildWar::FUN_0071bf30	IFRequestGuildWar.cpp	m_vecStrVictoryPoint.size() > (DWORD)nPointID
+0074e350	IFSpecialtyDeal::FUN_0074e350	IFSpecialtyDeal.cpp	m_dwSimpleMsgBoxID == wParam
+0074f960	IFSpecialtyDeal::FUN_0074f960	IFSpecialtyDeal.cpp	IsShowGWnd() && m_bDealing == true
+00753280	GameWorldData::FUN_00753280	GameWorldData.cpp	Parsing Error - Wrong Type !!!
+00762fa0	IFFortressWarApplyWndSlot::FUN_00762fa0	IFFortressWarApplyWndSlot.cpp	pSimpleMsgBox == m_pMsgBox
+00763b00	IFFortressWarApplyWndSlot::FUN_00763b00	IFFortressWarApplyWndSlot.cpp	wParam == m_dwSimpleMsgBoxID
+00788750	GInterface::FUN_00788750	GInterface.cpp	it != m_mapSimpleMsgBox.end()
+00789820	CGInterface::vslot_005	GInterface.cpp	m_listConQuerStr.size() != 0
+0078bb50	GInterface::FUN_0078bb50	GInterface.cpp	
+007978a0	GInterfaceSend::FUN_007978a0	GInterfaceSend.cpp	ItemMallDealing[%d] <= 0
+007a4170	IFCOSInfo::SendGObjPCMsg_117	IFCOSInfo.cpp	m_pMsgBox == pMsgBox
+007a6e00	IFCOSInventory::FUN_007a6e00	IFCOSInventory.cpp	pDealWnd
+007a6ee0	IFCOSInventory::FUN_007a6ee0	IFCOSInventory.cpp	pDealWnd
+007a6fe0	IFCOSInventory::FUN_007a6fe0	IFCOSInventory.cpp	pDealWnd
+007a8290	IFCOSSetup::FUN_007a8290	IFCOSSetup.cpp	pInfo->IsCashPet()
+007ab230	IFChatViewer::FUN_007ab230	IFChatViewer.cpp	
+007b4b20	IFPlayerMiniInfo::FUN_007b4b20	IFPlayerMiniInfo.cpp	m_pBufRender->Release()
+007bcde0	IFSkillWithdrawal::FUN_007bcde0	IFSkillWithdrawal.cpp	byType == SKILLWND_TYPE_CIRCULAR_GROWUP || byType == SKILLWND_TYPE_WITHDRAWAL
+007c08e0	IFItemMall::FUN_007c08e0	IFItemMall.cpp	
+007d8bf0	UI_SILKMALL::FUN_007d8bf0	IFNewItemMall.cpp	pEquip
+007eeb30	IFChangePlayerModel::FUN_007eeb30	IFChangePlayerModel.cpp	
+0081c8f0	InterfaceNetSender::SendPartyMsg_062	InterfaceNetSender.cpp	Char Ref:%d
+00821f00	InterfaceNetSender::TrainingCamp_SendInviteRequest	InterfaceNetSender.cpp	Char Ref:%d
+0082cd50	AutoPotion::FUN_0082cd50	AutoPotion.cpp	byType < AUTO_POTION_COUNT
+0082cdb0	AutoPotion::FUN_0082cdb0	AutoPotion.cpp	byType < AUTO_POTION_COUNT
+0082ce90	AutoPotion::FUN_0082ce90	AutoPotion.cpp	byType < AUTO_POTION_COUNT
+00831b20	Client::FUN_00831b20	Client.cpp	
+008371d0	Game::CObjChild__m_pGfxEttManager	Game.cpp	CObjChild::m_pGfxEttManager->GetUsedIDNum() == 0
+00837210	Game::CObjChild__m_pGfxEttManager	Game.cpp	CObjChild::m_pGfxEttManager->GetUsedIDNum() == 0
+0083a490	Game::FUN_0083a490	Game.cpp	SHGetSpecialFolderPath
+00842b60	CGame::vslot_015	Game.cpp	CObjChild::m_pGfxDevice
+00844310	Game::FUN_00844310	Game.cpp	hf != INVALID_HANDLE_VALUE
+0085a580	PSCharacterSelect::FUN_0085a580	PSCharacterSelect.cpp	pItemDataExtra
+0087b770	NetProcessInInner::FUN_0087b770	NetProcessInInner.cpp	item1.m_blValid
+0087f370	NetProcessInInner::FUN_0087f370	NetProcessInInner.cpp	
+00880be0	NetProcessInInterface::FUN_00880be0	NetProcessInInterface.cpp	!m_pGInterface->GetMainPopup()->GetSkillAddress()->GetLearnedSkill()->IsLearnedSkill(dwSkillID)
+00880cc0	FUN_00880cc0	NetProcessInInterface.cpp	m_pGInterface->GetMainPopup()->GetSkillAddress()->GetLearnedSkill()->IsLearnedMastery(dwMasteryID)
+00880e90	FUN_00880e90	NetProcessInInterface.cpp	m_pGInterface->GetMainPopup()->GetSkillAddress()->GetLearnedSkill()->IsLearnedMastery(dwMasteryID)
+00884dd0	NetProcessInInterface::FUN_00884dd0	NetProcessInInterface.cpp	g_pMyPlayerObj->GetJobType() == byJobType
+00888da0	FUN_00888da0	NetProcessInInterface.cpp	
+008a5fd0	NetProcessInNavAndSkill::FUN_008a5fd0	NetProcessInNavAndSkill.cpp	pChar
+008a69b0	FUN_008a69b0	NetProcessInObject.cpp	EuqipRefs.size() == OpLevels.size()
+008a6d20	FUN_008a6d20	NetProcessInObject.cpp	byListSub
+008a6dc0	FUN_008a6dc0	NetProcessInObject.cpp	Fun_GetCfgGame()->m_LocalTime.InitTimer(pM->dwRealTime,pM->m_wDay,pM->m_byHour,pM->m_byMin,0)
+008a6e80	FUN_008a6e80	NetProcessInObject.cpp	Fun_GetCfgGame()->m_LocalTime.InitTimer(pM->dwRealTime,pM->m_wDay,pM->m_byHour,pM->m_byMin,0)
+008a7d20	FUN_008a7d20	NetProcessInObject.cpp	pCOSInfo->IsCashPet()
+008abbd0	FUN_008abbd0	NetProcessInObject.cpp	
+008abfa0	FUN_008abfa0	NetProcessInObject.cpp	FindObjList(wSvr) == NULL (%d)
+008ac0e0	FUN_008ac0e0	NetProcessInObject.cpp	byListSub
+008ac340	FUN_008ac340	NetProcessInObject.cpp	
+008ac610	FUN_008ac610	NetProcessInObject.cpp	
+008ad030	FUN_008ad030	NetProcessInObject.cpp	
+008af960	UI_ALCHEMYBOX::FUN_008af960	DropItemManager.cpp	dwGIDItem
+008afb50	UI_ALCHEMYBOX::FUN_008afb50	DropItemManager.cpp	pObj->IsSame( GFX_RUNTIME_CLASS(CICCos) )
+008b5250	InterfaceResource::FUN_008b5250	InterfaceResource.cpp	it != m_interfacemap.end()
+008bacc0	SOItem::FUN_008bacc0	SOItem.cpp	Expendables or Accessory When Repair
+008bcdf0	SOItem::FUN_008bcdf0	SOItem.cpp	m_btMagicParamNum <= MAX_MAGPARAM_PER_ITEM
+008bd760	SOItem::FUN_008bd760	SOItem.cpp	m_btMagicParamNum <= MAX_MAGPARAM_PER_ITEM
+008ca8f0	TextStringManager::FUN_008ca8f0	TextStringManager.cpp	m_DefineStrings.find(dwID) == m_DefineStrings.end()
+008cac30	TextStringManager::FUN_008cac30	TextStringManager.cpp	FileMgr is Null!
+00936bf0	GlobalDataManager::FUN_00936bf0	GlobalDataManager.cpp	
+00939ea0	GlobalDataManager::FUN_00939ea0	GlobalDataManager.cpp	it != m_mapOccupationGuild.end()
+0093ef10	GlobalDataManager::FUN_0093ef10	GlobalDataManager.cpp	dwLoadType < SEEKFILE_TYPE_NUM
+0093f5f0	GlobalDataManager::FUN_0093f5f0	GlobalDataManager.cpp	
+0093f670	GlobalDataManager::CGlobalDataManager__GetTIDFromObjectID	GlobalDataManager.cpp	CGlobalDataManager::GetTIDFromObjectID ( 0x%X )
+009447f0	GlobalDataManager::FUN_009447f0	GlobalDataManager.cpp	slot->dwGroupID == dwGroupID
+009463e0	GlobalDataManager::FUN_009463e0	GlobalDataManager.cpp	pChar
+009465c0	GlobalDataManager::FUN_009465c0	GlobalDataManager.cpp	pItem
+00946930	GlobalDataManager::FUN_00946930	GlobalDataManager.cpp	_psSkill
+0094ccb0	GlobalDataManager::FUN_0094ccb0	GlobalDataManager.cpp	pObjData
+0094dc00	GlobalDataManager::FUN_0094dc00	GlobalDataManager.cpp	pSkill
+00978140	GameGuideData::FUN_00978140	GameGuideData.cpp	NULL != pStr
+0097a5c0	GameGuideData::FUN_0097a5c0	GameGuideData.cpp	NULL != pStr
+00991d80	CharacterDependentData::FUN_00991d80	CharacterDependentData.cpp	Incorrect Party Player Info (Name Size == 0)
+00991e80	CharacterDependentData::FUN_00991e80	CharacterDependentData.cpp	Incorrect Party Player Info (Name Size == 0)
+00991ef0	CharacterDependentData::FUN_00991ef0	CharacterDependentData.cpp	Incorrect Party Player Info (Name Size == 0)
+00991f60	CharacterDependentData::FUN_00991f60	CharacterDependentData.cpp	Incorrect Party Player Info (Name Size == 0)
+00992020	CharacterDependentData::FUN_00992020	CharacterDependentData.cpp	Incorrect Party Player Info (Name Size == 0)
+009920a0	CharacterDependentData::FUN_009920a0	CharacterDependentData.cpp	Incorrect Party Player Info (Name Size == 0)
+00992160	CharacterDependentData::FUN_00992160	CharacterDependentData.cpp	Incorrect Party Player Info (Name Size == 0)
+009921e0	CharacterDependentData::FUN_009921e0	CharacterDependentData.cpp	Incorrent Party Player Info (Name Size == 0)
+00992260	CharacterDependentData::FUN_00992260	CharacterDependentData.cpp	Incorrent Party Player Info (Name Size == 0)
+00992380	CharacterDependentData::FUN_00992380	CharacterDependentData.cpp	Incorrent Party Player Info (Name Size == 0)
+00992400	CharacterDependentData::FUN_00992400	CharacterDependentData.cpp	Incorrent Party Player Info (Name Size == 0)
+00992490	CharacterDependentData::FUN_00992490	CharacterDependentData.cpp	Incorrent Party Player Info (Name Size == 0)
+00992710	CharacterDependentData::FUN_00992710	CharacterDependentData.cpp	Incorrent Party Player Info (Name Size == 0)
+00996540	CharacterDependentData::FUN_00996540	CharacterDependentData.cpp	
+00996ba0	CharacterDependentData::FUN_00996ba0	CharacterDependentData.cpp	not find member
+00996c70	CharacterDependentData::FUN_00996c70	CharacterDependentData.cpp	itMap != pMap->end()
+00996fa0	CharacterDependentData::FUN_00996fa0	CharacterDependentData.cpp	itMap != pMap->end()
+00997290	CharacterDependentData::FUN_00997290	CharacterDependentData.cpp	
+00998cb0	CharacterDependentData::FUN_00998cb0	CharacterDependentData.cpp	
+00999120	CharacterDependentData::FUN_00999120	CharacterDependentData.cpp	!IsAllianceGuild(dwGuildID)
+00999260	CharacterDependentData::FUN_00999260	CharacterDependentData.cpp	!IsHostileGuild(sGuildWarDef.dwGuildWarID)
+00999550	CharacterDependentData::FUN_00999550	CharacterDependentData.cpp	TraningCampMember is Over than 8
+0099a2e0	CharacterDependentData::FUN_0099a2e0	CharacterDependentData.cpp	party usernum > 8
+0099d920	CharacterDependentData_Vote::FUN_0099d920	CharacterDependentData_Vote.cpp	
+009b6b70	PMLTag::FUN_009b6b70	PMLTag.cpp	FALSE
+009bb9c0	SkillCoolTimeManager::FUN_009bb9c0	SkillCoolTimeManager.cpp	pSkill
+009bba90	SkillCoolTimeManager::FUN_009bba90	SkillCoolTimeManager.cpp	pSkill
+009bbb60	SkillCoolTimeManager::FUN_009bbb60	SkillCoolTimeManager.cpp	pSkill
+009c0ff0	SkillStructureByServer::FUN_009c0ff0	SkillStructureByServer.cpp	
+009c1240	SkillStructureByServer::FUN_009c1240	SkillStructureByServer.cpp	
+009c12b0	SkillStructureByServer::FUN_009c12b0	SkillStructureByServer.cpp	
+009c1750	SkillStructureByServer::FUN_009c1750	SkillStructureByServer.cpp	
+009c1fa0	IGIDObject::FUN_009c1fa0	IGIDObject.cpp	false
+009c31a0	IGIDObject::FUN_009c31a0	IGIDObject.cpp	it != g_sGID.end() %s(%d) - %d
+009c3270	IGIDObject::FUN_009c3270	IGIDObject.cpp	it != g_sHashGID.end()
+009c3790	IGIDObject::FUN_009c3790	IGIDObject.cpp	it == g_sHashGID.end() : %d
+009c60b0	CICCos::vslot_025	ICCos.cpp	pSkill
+009c7930	ICharactor::FUN_009c7930	ICharactor.cpp	IsKindOf(GFX_RUNTIME_CLASS(CICUser)) || IsKindOf(GFX_RUNTIME_CLASS(CICGuard))
+009d05d0	ICharactor::FUN_009d05d0	ICharactor.cpp	pBoneTM
+009d15a0	ICharactor::FUN_009d15a0	ICharactor.cpp	Not Defined NPC_CUSTOM_FLAG_EXTRA Recv!!
+009d2fa0	ICMonster::FUN_009d2fa0	ICMonster.cpp	pLoadObj
+009d3470	ICMonster::FUN_009d3470	ICMonster.cpp	
+009e2590	icscriptobj::FUN_009e2590	icscriptobj.cpp	GetCompoundObj()
+009e3c40	icscriptobj::FUN_009e3c40	icscriptobj.cpp	
+009e4e30	icscriptobj::FUN_009e4e30	icscriptobj.cpp	GetCompoundObj()
+009ed970	BufRender::FUN_009ed970	BufRender.cpp	m_blRendering == false
+009edb60	BufRender::FUN_009edb60	BufRender.cpp	m_blRendering == false
+009efc60	SWorld::vslot_035	DynamicShadow.cpp	ity*lnx + itx < MAX_TILE_ASSSUM
+009fe760	Map::FUN_009fe760	Map.cpp	
+00a0d6e0	SWorld::vslot_039	Map.cpp	
+00a1b390	SWorld::vslot_016	Map.cpp	m_BlockCache.size()==0
+00a232a0	Map::FUN_00a232a0	Map.cpp	
+00a291a0	SWorld::vslot_013	Map.cpp	lnObjSize == m_sObjString.size()
+00a361b0	FUN_00a361b0	MapCallBack.cpp	m_pFMMap->CreateFile(ar,chFileName,GENERIC_READ)
+00a513a0	IDecoSkill::FUN_00a513a0	IDecoSkill.cpp	
+00a51bc0	IDecoSkill::FUN_00a51bc0	IDecoSkill.cpp	
+00a569b0	SkillManager::FUN_00a569b0	SkillManager.cpp	IsSkillInstance(dwInst,pObj) == FALSE
+00a5ba90	CObjCharacter::FUN_00a5ba90	CObjCharacter.cpp	(nDefaultWearNum >= 0) && ( nDefaultWearNum < DEFAULT_WEAR_NUM)
+00a5bb50	CObjCharacter::FUN_00a5bb50	CObjCharacter.cpp	dwSlotPos < EQUIP_VISUAL_COUNT
+00a5bb90	CObjCharacter::FUN_00a5bb90	CObjCharacter.cpp	dwSlotPos < EQUIP_VISUAL_COUNT
+00a5bbd0	CObjCharacter::FUN_00a5bbd0	CObjCharacter.cpp	dwSlotPos < EQUIP_VISUAL_COUNT
+00a5bd10	CObjCharacter::FUN_00a5bd10	CObjCharacter.cpp	pStrAniNew
+00a5cca0	CObjCharacter::SetDefaultWear	CObjCharacter.cpp	(nEquipSlot >=0 ) && ( nEquipSlot < EQUIP_VISUAL_COUNT)
+00a5d460	CObjCharacter::FUN_00a5d460	CObjCharacter.cpp	pIResHwanHair
+00a5f3e0	CObjCharacter::FUN_00a5f3e0	CObjCharacter.cpp	pItemData
+00a5f4f0	CObjCharacter::FUN_00a5f4f0	CObjCharacter.cpp	pIResItem
+00a604f0	CObjCharacter::FUN_00a604f0	CObjCharacter.cpp	pVisualData
+00a60a90	CObjCharacter::FUN_00a60a90	CObjCharacter.cpp	GetCompoundObj()
+00a611e0	CObjCharacter::FUN_00a611e0	CObjCharacter.cpp	pObject
+00a61f20	InventoryManager::FUN_00a61f20	InventoryManager.cpp	
+00a62020	InventoryManager::FUN_00a62020	InventoryManager.cpp	dwResId
+00a75020	CGEffSoundBody::vslot_008	GEffSound.cpp	
+00a7b2f0	GlobalEffectManager::FUN_00a7b2f0	GlobalEffectManager.cpp	LINE:%d <%s> <%s>
+00a7f5a0	GlobalEffectManager::FUN_00a7f5a0	GlobalEffectManager.cpp	
+00a9d0f0	GlobalEffectManager::FUN_00a9d0f0	GlobalEffectManager.cpp	SETOE.m_byAniType < MAX_SKILL_EFF_TABLE
+00b37a30	IFTVariable::FUN_00b37a30	IFTVariable.cpp	g_sDefState.size()
+00b876b0	rtloading::FUN_00b876b0	rtloading.cpp	(nFMType >= 0) && ( nFMType < THREADTEXTURE_FMTYPE_NUM)
+00b87700	rtloading::FUN_00b87700	rtloading.cpp	(nFMType >= 0) && ( nFMType < THREADTEXTURE_FMTYPE_NUM)
+00b8ac30	rtloading::FUN_00b8ac30	rtloading.cpp	itFind != m_sListRTTexture.end()
+00b8b140	rtloading::FUN_00b8b140	rtloading.cpp	(nFMType >= 0) && ( nFMType < THREADTEXTURE_FMTYPE_NUM)
+00b8bb40	rtloading::FUN_00b8bb40	rtloading.cpp	hThread
+00b8bbc0	rtloading::FUN_00b8bbc0	rtloading.cpp	g_pRTTextureLoadingManager == NULL
+00b8f270	gwndbase::FUN_00b8f270	gwndbase.cpp	m_lnListLockWrite == 0
+00b8f300	gwndbase::FUN_00b8f300	gwndbase.cpp	m_lnListLockRead
+00b912c0	gwndbase::FUN_00b912c0	gwndbase.cpp	!m_hgWnd
+00b9c8f0	rtti::FUN_00b9c8f0	rtti.cpp	tr.m_lnType >= 0
+00ba20b0	gwnd::FUN_00ba20b0	gwnd.cpp	
+00ba3200	entitymanager::FUN_00ba3200	entitymanager.cpp	
+00ba3770	entitymanager::FUN_00ba3770	entitymanager.cpp	
+00ba3c10	FUN_00ba3c10	gfxmainframe.cpp	!m_blDrawing
+00ba60b0	gfxmainframe::FUN_00ba60b0	gfxmainframe.cpp	AddFontResource(%s)
+00ba6140	gfxmainframe::FUN_00ba6140	gfxmainframe.cpp	CreateFont(%s)
+00ba7620	process::FUN_00ba7620	process.cpp	pProcess
+00ba7b90	process::FUN_00ba7b90	process.cpp	!m_pProcessChild
+00ba9660	process::FUN_00ba9660	process.cpp	m_sThreadList.size() == 0
+00baa6d0	jpegfile::FUN_00baa6d0	jpegfile.cpp	dwIndex < dwSize
+00bbdc30	ObjEngine::FUN_00bbdc30	ObjEngine.cpp	bReleased
+00bbedb0	RStateMgr::FUN_00bbedb0	RStateMgr.cpp	iRef == 0
+00bc1270	GlobalObj::FUN_00bc1270	GlobalObj.cpp	
+00bc3fd0	TextureMgr::FUN_00bc3fd0	TextureMgr.cpp	itFind != Empties.end()
+00bc4580	TextureMgr::FUN_00bc4580	TextureMgr.cpp	%d x %d [%d]
+00bc47f0	TextureMgr::FUN_00bc47f0	TextureMgr.cpp	pTexDescEG->bReleased
+00bc5690	Prim::FUN_00bc5690	Prim.cpp	
+00bc6d90	CScreenDistortion::vslot_000	ScreenDistortion.cpp	nVCountLine > 1
+00bc79b0	CScreenDistortion::vslot_001	ScreenDistortion.cpp	m_pVs
+00bc8050	ResObject::FUN_00bc8050	ResObject.cpp	(iMtrlID >= 0) && (iMtrlID < MATERIALSET_MAXCOUNTMAX)
+00bcb2d0	ResObject::FUN_00bcb2d0	ResObject.cpp	GLOBALOBJEG.GetProgramType() != PROGRAM_CLIENT
+00bce3b0	ResObject::FUN_00bce3b0	ResObject.cpp	
+00bd0460	ResObject::FUN_00bd0460	ResObject.cpp	
+00bd3590	ResObject::FUN_00bd3590	ResObject.cpp	
+00bd37d0	ResObject::FUN_00bd37d0	ResObject.cpp	
+00bd39d0	ResObject::FUN_00bd39d0	ResObject.cpp	
+00bdecf0	ResObject::FUN_00bdecf0	ResObject.cpp	
+00bdef90	ResObject::FUN_00bdef90	ResObject.cpp	nNew < 65536
+00bdf1f0	ResObject::FUN_00bdf1f0	ResObject.cpp	nNew < 65536
+00be2700	ResObject::FUN_00be2700	ResObject.cpp	m_PrimAniGroups.size() == 0
+00be28d0	ResObject::FUN_00be28d0	ResObject.cpp	nVID < 65536
+00be2f80	ResObject::FUN_00be2f80	ResObject.cpp	nNew < 65536
+00be3540	ResObject::FUN_00be3540	ResObject.cpp	pFDB->Indices[iLOD].size() > 0
+00be3fb0	ResObject::FUN_00be3fb0	ResObject.cpp	
+00be41d0	ResObject::FUN_00be41d0	ResObject.cpp	m_PrimMeshGroups.size() == 0
+00bebc60	ResourceMgr::FUN_00bebc60	ResourceMgr.cpp	CompoundObject Data Loading Failed. [%s]
+00bebee0	ResourceMgr::FUN_00bebee0	ResourceMgr.cpp	Dungeon Object Data Loading Failed. [%s]
+00bed8d0	ResourceMgr::FUN_00bed8d0	ResourceMgr.cpp	ResObj Data Loading Failed [%s]
+00beecc0	CObjRendererVS::vslot_025	ObjRendererVS.cpp	pLight
+00bf05e0	CObjRendererVS::FUN_00bf05e0	ObjRendererVS.cpp	Vertex Shader Not Find. - 0x%08x
+00bf1840	CObjRendererVS::FUN_00bf1840	ObjRendererVS.cpp	pBatch->GetVB()
+00bf3b70	CObjRendererVS::FUN_00bf3b70	ObjRendererVS.cpp	pBatch->GetVB()
+00bf67c0	CObjRendererVS::FUN_00bf67c0	ObjRendererVS.cpp	
+00bf7890	DxSound::Get3DListenerInterface	DxSound.cpp	Get3DListenerInterface() -  Failed to create PrimaryBuffer
+00bf7ff0	DxSound::FUN_00bf7ff0	DxSound.cpp	Failed to create DirectSound primary buffer
+00bf8ad0	PrimMtrlSet::FUN_00bf8ad0	PrimMtrlSet.cpp	Material File[%s] Open Failed.
+00bfb580	CPrimBranch::vslot_001	PrimSkeleton.cpp	nCount == 0
+00bfcfb0	PrimAnimation::FUN_00bfcfb0	PrimAnimation.cpp	%s, File Version Error.
+00c02170	CVBDynamic::vslot_006	VertexBuffer.cpp	(iSrcByte % m_nVSize) == 0
+00c02260	CVBDynamic::vslot_003	VertexBuffer.cpp	Dynamic Vertex Lock Error (%d>%d)
+00c023d0	CVBStatic::vslot_003	VertexBuffer.cpp	Static Vertex Lock Error (%d>%d)
+00c02520	CVBStatic::vslot_008	VertexBuffer.cpp	m_pLockedBuf && m_bLocked
+00c02810	CVBDynamic::vslot_002	VertexBuffer.cpp	(VBDynamic) Buffer Craete Error. (%d)%s
+00c02940	CVBStatic::vslot_002	VertexBuffer.cpp	(VBStatic) Buffer Create Error. (%d)%s
+00c0a200	ModPalette::FUN_00c0a200	ModPalette.cpp	
+00c0b1a0	ModPalette::FUN_00c0b1a0	ModPalette.cpp	
+00c0c040	ModPalette::FUN_00c0c040	ModPalette.cpp	
+00c121f0	PrimGeometry::FUN_00c121f0	PrimGeometry.cpp	%s, File Version Error.
+00c1ba00	PrimGeometry::FUN_00c1ba00	PrimGeometry.cpp	
+00c1cc40	PrimTexture::FUN_00c1cc40	PrimTexture.cpp	Texture Size Error. [%d x %d]
+00c1da40	Dx3DSoundBuffer::FUN_00c1da40	Dx3DSoundBuffer.cpp	
+00c1e310	Dx3DSoundBuffer::FUN_00c1e310	Dx3DSoundBuffer.cpp	DirectSound3DBuffer QueryInterface Failed
+00c1e460	Dx3DSoundBuffer::FillBufferWithSound	Dx3DSoundBuffer.cpp	FillBufferWithSound() - Failed to lock buffer! (%d)
+00c1e840	Dx3DSoundBuffer::CreateSoundBuffer	Dx3DSoundBuffer.cpp	CreateSoundBuffer() - Invalid Param
+00c1efd0	CResChar::vslot_007	ResChar.cpp	nComboNum == 0
+00c1fce0	CDungeonObj::vslot_006	DungeonObj.cpp	pLight
+00c209a0	DungeonObj::FUN_00c209a0	DungeonObj.cpp	
+00c25990	CompoundObj::FUN_00c25990	CompoundObj.cpp	( nPos >= 0 ) && ( nPos < AFTERIMAGE_POS_NUM)
+00c259f0	CompoundObj::FUN_00c259f0	CompoundObj.cpp	m_dwEmptyType > 0
+00c27fd0	CompoundObj::FUN_00c27fd0	CompoundObj.cpp	
+00c2b050	CompoundObj::FUN_00c2b050	CompoundObj.cpp	[%s] Buffer Create Error.
+00c2be80	CompoundObj::FUN_00c2be80	CompoundObj.cpp	HasSkinedNavMesh()
+00c2bef0	CompoundObj::FUN_00c2bef0	CompoundObj.cpp	HasSkinedNavMesh()
+00c2fcf0	CompoundObj::FUN_00c2fcf0	CompoundObj.cpp	( nPos >= 0 ) && ( nPos < AFTERIMAGE_POS_NUM)
+00c4a180	RTSkeleton::FUN_00c4a180	RTSkeleton.cpp	(%s) - %d, %f 
+00c51ef0	RTSkeleton::FUN_00c51ef0	RTSkeleton.cpp	Skeleton Create Failed. [%s]
+00c52a30	AniMixer::FUN_00c52a30	AniMixer.cpp	( nAniType >= 0 ) && ( nAniType < ANITYPE_NUM)
+00c550d0	AniMixer::FUN_00c550d0	AniMixer.cpp	pPrimAni
+00c551a0	AniMixer::FUN_00c551a0	AniMixer.cpp	
+00c55360	AniMixer::FUN_00c55360	AniMixer.cpp	
+00c554e0	AniMixer::FUN_00c554e0	AniMixer.cpp	
+00c5a930	VertexShader::FUN_00c5a930	VertexShader.cpp	m_pVertexDeclaration
+00c5abf0	Dx3DSoundListener::FUN_00c5abf0	Dx3DSoundListener.cpp	
+00c60410	IResModData::FUN_00c60410	IResModData.cpp	nTrackNum <= MAX_SOUND_TRACK_PER_ANI
+00c62ff0	IResModData::FUN_00c62ff0	IResModData.cpp	(nTrackNum >= 0) && ( nTrackNum <= MAX_SOUND_TRACK_PER_ANI)
+00c63160	IResModData::FUN_00c63160	IResModData.cpp	nTrackNum <= MAX_SOUND_TRACK_PER_ANI
+00c64860	RTGeomDS::FUN_00c64860	RTGeomDS.cpp	(nVCount > 0) && (nFCount > 0)
+00c649a0	RTGeomDS::FUN_00c649a0	RTGeomDS.cpp	VBlendParam == D3DVBF_DISABLE
+00c65940	Taga::FUN_00c65940	Taga.cpp	Only Support True Color TGA Image!!!
+00c66ad0	RTDunBlock::FUN_00c66ad0	RTDunBlock.cpp	
+00c68430	RTDunBlock::FUN_00c68430	RTDunBlock.cpp	
+00c6a4c0	RTDunBlock::FUN_00c6a4c0	RTDunBlock.cpp	m_pWorldTM
+00c6be00	RTDunBlock::FUN_00c6be00	RTDunBlock.cpp	ResObject [%s] Loading Failed.
+00c6c870	RTDunBlock::FUN_00c6c870	RTDunBlock.cpp	objdata.pObject
+00c6dc00	CRTDunBlock::vslot_004	RTDunBlock.cpp	ResObject [%s] Loading Failed.
+00c797f0	FxModManager::FUN_00c797f0	FxModManager.cpp	
+00c7fa40	FxModManager::FUN_00c7fa40	FxModManager.cpp	
+00c81970	Shader::FUN_00c81970	Shader.cpp	Failed to assemble VertexShader from file
+00c83ed0	CRTModSound::vslot_008	RTModSound.cpp	index < MAX_SOUND_TRACK_PER_ANI
+00c83fc0	CRTModSound::vslot_001	RTModSound.cpp	(%s) m_pSndSet->Tracks.size()(%d) <= MAX_SOUND_TRACK_PER_ANI
+00caeff0	EFEffect::FUN_00caeff0	EFEffect.cpp	pSObj
+00cb4ff0	EFGlobal::FUN_00cb4ff0	EFGlobal.cpp	

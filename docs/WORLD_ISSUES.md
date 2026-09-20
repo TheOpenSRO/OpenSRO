@@ -7075,6 +7075,46 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-seventy-ninth round: the client ships its own source file names
+
+The RE tick for 2026-09-20 went looking for one dword and found a lever for the whole
+client binary.
+
+**The dword first.** `client/scripts/bmt/bmt_reader.gd` parses a `Layer.unknown` out of
+every material layer and ignores it -- the obvious candidate for the alpha/blend flags
+behind two playtest reports (see-through clothes, hair drawing as a solid block). Chasing
+it into the client found `PrimMtrlSet`, the engine's own RTTI name for the `.bmt` material
+set, and `PrimMtrlSet::WriteLayer` (`0x00bf8970`) gives the record's exact field order: the
+name string, four 16-byte colour blocks written as member `+0x10`, `+0x00`, `+0x20`, `+0x30`
+(the file order is deliberately not the member order), the dword at `+0x40`, **the dword at
+`+0x60`**, then the texture path at `+0x64`. So the field we do not understand is
+`CPrimMtrl+0x60`. **What it means is still not read**, and nothing was promoted: the client's
+character materials keep setting no transparency at all, which is exactly why hair with an
+alpha channel draws as a block.
+
+**Then the lever.** `PrimMtrlSet`'s failure path reads
+
+	FUN_0049e490(0x133, "D:\\Project\\SilkroadOnline\\TOOLS & PLUGINS\\SimpleViewer\\objengine\\PrimMtrlSet.cpp",
+	             "Material File[%s] Open Failed.", param_1)
+
+-- an assert helper that takes `__FILE__`. **165 distinct source paths are in the binary and
+736 call sites reach that helper.** 364 resolve to a single enclosing function in the dump,
+and **352 of those 364 had no name at all**, against a client naming coverage of 15.5 %. The
+map is `docs/protocol/client_translation_units.tsv`.
+
+**The expressions are the better half.** 89 sites pass a failing C++ expression rather than
+a message, with real member and method names in it:
+`!m_pGInterface->GetMainPopup()->GetSkillAddress()->GetLearnedSkill()->IsLearnedSkill(dwSkillID)`,
+`pSkill->pSkillData->GetData()->m_nReq_Sp`, `((CSOItem*)m_pObject)->GetOverlapCount()`,
+`g_pMyPlayerObj->GetMyJID()`. The first says the client keeps a `LearnedSkill` set with
+`IsLearnedSkill(id)` on it and treats "already learned" as a programming error -- the same
+question srrevamp's new hotbar gate asks of the same set.
+
+Four names: the assert helper itself, `PrimMtrlSet::SaveToFile`,
+`PrimMtrlSet::WriteLayer`, and `NetProcessInInterface::AddLearnedSkill`. Nothing shipped
+changed; this is a map to read from, and `docs/protocol/client_source_map.md` says what it
+does and does not establish.
+
 ## Two-hundred-and-seventy-eighth round: the state vocabulary, and a code that lies about itself
 
 The RE tick for 2026-09-20 took round 277's leftover -- six status fields the page had never

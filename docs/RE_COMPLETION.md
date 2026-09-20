@@ -5272,6 +5272,19 @@ MaxMP/CURSIE_MP, bit 17 phys def/CURSE_PD, bit 18 mag def/CURSE_MD). Also:
 the client's switch has NO case for bit 23, and DISEASE (bit 15) is a state no
 skill block applies because it is the gate param 169. `statuseffect.States`
 + tests. One name (client).
+Round 279 (docs + client names): THE CLIENT NAMES ITS OWN FILES. Its assert
+helper (0x49e490) carries __FILE__ and the failing C++ EXPRESSION: 165
+distinct source paths, 736 call sites, 364 resolving to one enclosing
+function -- 352 of which had NO NAME AT ALL, against a client naming coverage
+of 15.5 %. Recorded as docs/protocol/client_translation_units.tsv with
+docs/protocol/client_source_map.md for the method. 89 rows carry real member
+and method names (GetLearnedSkill()->IsLearnedSkill(dwSkillID),
+pSkill->pSkillData->GetData()->m_nReq_Sp, g_pMyPlayerObj->GetMyJID()). Four
+names. The same dig LOCATED but did not read the material layer's unknown
+dword: PrimMtrlSet::WriteLayer puts it at CPrimMtrl+0x60, between power
+(+0x40) and the texture path (+0x64), and it is the obvious candidate for the
+blend flags behind playtest items 6 and 14 -- left unpromoted until its
+reader is read.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
