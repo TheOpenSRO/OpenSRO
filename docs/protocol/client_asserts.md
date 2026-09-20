@@ -42,6 +42,20 @@ quantity with `0xc < value` at three sites and logs
 or auto-potions, and whose equipment slots are server-side rather than the
 client's visual ones. They are recorded because they are recovered.
 
+## A wider re-harvest (2026-09-20)
+
+Round 279 re-ran this lever against the decompiled dump rather than through Ghidra, **not
+knowing this page existed** -- see the correction in `docs/WORLD_ISSUES.md`. It duplicated the
+method, the helper, the constants below and even this page's own example. It is recorded here
+rather than as a second page because one thing did come out of it:
+`docs/protocol/client_translation_units.tsv` carries **216 still-`FUN_` functions whose
+addresses this page does not list**, mostly in `IFMainPopup.cpp` (8), `ResObject.cpp` (7),
+`NetProcessInObject.cpp`, `VertexBuffer.cpp` and `RTDunBlock.cpp` (6 each). The dump defines
+functions the Ghidra pass did not, which is where the extra rows come from.
+
+The TSV is a supplement to this page, not a replacement: the analysis, the off-by-one rule and
+the constants all live here.
+
 ## Functions attributable to a source file
 
 263 still-`FUN_` functions can be placed in a translation unit. This is an

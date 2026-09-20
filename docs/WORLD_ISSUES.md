@@ -7075,6 +7075,40 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-eighty-second round: the assert lever was already documented, and so were the constants
+
+The fourth correction of this kind, and the one worth writing down properly.
+
+Round 279 presented the client's assert lever -- `__FILE__` plus the failing expression at
+every `FUN_0049e490` call site -- as a find, and when its material half turned out to be
+recorded, the correction insisted **the lever itself** was "what IS new here". It was not.
+`docs/protocol/client_asserts.md` has carried it for some time: the same helper, the same
+source-file attribution, the same per-file function lists (`CharacterDependentData.cpp` 23,
+`CObjCharacter.cpp` 12 -- identical to the re-harvest), a `harvest_client_asserts.py` to
+regenerate it, and **the same example assert**, `dwSlotPos < EQUIP_VISUAL_COUNT` from
+`CObjCharacter.cpp`.
+
+Worse, round 281 read `EQUIP_VISUAL_COUNT = 9` and `DEFAULT_WEAR_NUM = 2` off those asserts and
+merged them into `recovered_names.tsv` as findings. **Both were already in that page**, in a
+table that also makes a sharper point than round 281 did: the guard gives the bound but the
+**operator** decides the off-by-one, and `MAX_MAGPARAM_PER_ITEM` is 12 rather than 13 because
+its expression uses `<=`. Reading "one past the guard" as a rule would have got that wrong.
+
+**What actually survives.** The re-harvest ran against the decompiled dump rather than through
+Ghidra, and the dump defines functions the Ghidra pass did not: `client_translation_units.tsv`
+holds **216 still-`FUN_` functions whose addresses `client_asserts.md` does not list**, mostly
+in `IFMainPopup.cpp`, `ResObject.cpp`, `NetProcessInObject.cpp`, `VertexBuffer.cpp` and
+`RTDunBlock.cpp`. That is a supplement worth keeping and it is now headed as one, with the
+analysis left where it belongs. `client_source_map.md`, which duplicated the existing page's
+method section, is deleted.
+
+**The pattern.** Four times in one session a dig has re-derived something this repo already
+recorded: the warehouse scope, the `.bmt` layer layout, the assert lever, and these two
+constants. The note in memory said "grep `docs/protocol` for the row before the dump" and was
+not enough, because each time the search was for the *thing* rather than for the *place*. The
+note now says the mechanical version: **`ls docs/protocol/` first** -- the file names alone
+(`client_asserts.md`, `BMT_FORMAT.md`, `CPD_FORMAT.md`) would have stopped all four.
+
 ## Two-hundred-and-eighty-first round: the nipples are geometry, not alpha
 
 OpenSRO looked at the round-280 render and said "his nips are coming out". They are, and the

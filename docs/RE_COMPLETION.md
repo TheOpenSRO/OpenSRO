@@ -5310,6 +5310,18 @@ a packed item TypeID by BuildDefaultWearTypeID (0x2c base, | 0x1800 / |
 first real payoff. Both functions were ALREADY named; the guard refused the
 duplicates and the constants were merged. The mesh-to-slot mapping is NOT
 read and deliberately not coded.
+Round 282 (docs): CORRECTION, the fourth of its kind. The assert lever round
+279 claimed -- and which round 279's own correction insisted was still "what
+IS new" -- was already docs/protocol/client_asserts.md: same helper, same
+per-file lists, same example assert, plus a harvest script. And round 281's
+EQUIP_VISUAL_COUNT = 9 / DEFAULT_WEAR_NUM = 2 were already in that page's
+constants table, which also states the rule round 281 missed: the OPERATOR
+decides the off-by-one (MAX_MAGPARAM_PER_ITEM is 12, not 13, because its
+expression uses <=). What survives is 216 still-FUN_ functions the dump-based
+re-harvest reaches that the Ghidra pass did not; the TSV is now headed as a
+supplement and the duplicate page is deleted. The memory note is now
+mechanical: `ls docs/protocol/` FIRST -- the file names alone would have
+stopped all four.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

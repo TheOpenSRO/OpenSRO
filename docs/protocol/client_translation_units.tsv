@@ -1,18 +1,14 @@
 # address	current_name	source_file	assert_expression
-# The client's own translation units, recovered 2026-09-20 (round 279).
+# A SUPPLEMENT to docs/protocol/client_asserts.md, which is where this lever,
+# its helper (FUN_0049e490), the off-by-one rule and the recovered constants
+# are analysed. That page predates this table.
 #
-# sro_client.exe ships its asserts with __FILE__ and the failing EXPRESSION.
-# The helper is FUN_0049e490(line, file, format, ...) -- the same one
-# PrimMtrlSet uses for "Material File[%s] Open Failed." Every call site
-# therefore names the .cpp its function was compiled from, and many carry a
-# C++ expression with real member and method names.
+# This is a re-harvest run against the decompiled dump instead of through
+# Ghidra, which reaches functions the Ghidra pass did not define: 216 of the
+# rows below are still-FUN_ functions whose addresses client_asserts.md does
+# not list. The rest overlap it.
 #
-# 165 distinct source paths are in the binary and 736 call sites reference
-# one; this table is the 364 that resolve to a single enclosing function,
-# 352 of which had no name at all. An entry is EVIDENCE about a function's
-# owning file, not a name for it -- names go in recovered_names.tsv once the
-# function itself has been read.
-#
+# An entry is EVIDENCE about a function's owning file, not a name for it.
 # The assert expression is truncated at 110 characters.
 00403450	RTNavMeshTerrain::FUN_00403450	RTNavMeshTerrain.cpp	
 00403f30	RTNavMeshTerrain::FUN_00403f30	RTNavMeshTerrain.cpp	if(FindHeight(vPos) == FALSE)
