@@ -329,3 +329,56 @@ four was game code -- the server's logger, now `CGameServer::LogFormatted`.
 So the ranking needs the same exclusion the size table implies before it is a
 worklist. Applied to the whole binary the boilerplate pass did that for
 destructors; nothing has done it for constructors.
+
+## Making the core ranking into a real worklist (round 338)
+
+The previous section ended by saying the handler-dependence ranking "needs the
+same exclusion the size table implies before it is a worklist". That was done,
+and both halves of it came out differently than expected.
+
+### The boilerplate classifier, and the control that caught it wrong
+
+A first classifier flagged anything containing `__CxxThrowException` as a throw
+helper. **The control rejected it: 38.3 % of the core's already-named functions
+were flagged as boilerplate**, including `Item_HandleUseItem` -- a message
+handler -- and every `MsgBuf_*` reader. Game logic *contains* throws constantly;
+the readers throw on underflow. Containing a throw does not make a function a
+throw helper, and without the control this would have published a "true core"
+that excluded a message handler.
+
+With that rule dropped, the classifier keeps only CRT address range, MSVC
+constructors (vtable installed into `*param_1`, object returned) and destructors
+named as such. **The control is then 0 of 359.**
+
+| | functions |
+|---|---:|
+| reachable from a handler | 3,232 |
+| less CRT range | −302 |
+| less constructors | −17 |
+| **true game-logic core** | **2,913, 12 % named** |
+
+**The constructor contamination is 17 functions, not a mass.** The previous
+section's framing -- that the ranking is contaminated by runtime machinery -- was
+right about the *top* of the list and wrong about its *size*: the metric barely
+moves.
+
+### Handler-dependence is the wrong sort order
+
+The most depended-on unnamed core functions are **utilities by construction**,
+because a utility is what many handlers share. The number one entry,
+`0x00401fc0` with 89 handlers, is `std::string`: capacity at `+0x18`, inline
+buffer at `+4`, heap pointer above 15 characters -- MSVC's small-string
+optimisation, unmistakable once looked at. Below it sit null-guarded accessors of
+11 and 15 bytes.
+
+**Sort by SIZE instead.** Big unnamed functions in the core are where the real
+logic is, and that ordering immediately surfaced the one named this round.
+
+### The result
+
+`0x00467100`, 5,067 bytes, reached by 23 of the 163 handlers, is now
+`GameEventLog_FormatRecord` -- identified from its own format strings
+(`GuildWar Guild[%d,%d] Winner[%s]`, `Invested %d SP to guild [%s]`,
+`Trijob Reward Received: %u gold`, `Starvation`, the PvP kill shapes), not from
+position. **2,522 unnamed non-STL game-logic functions remain, 411,570 bytes.**
+That total is the honest size of what is left to read.

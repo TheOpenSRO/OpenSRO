@@ -6266,6 +6266,42 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 338 (the worklist made real, and my own classifier caught wrong): ROUND
+337 ENDED SAYING THE CORE RANKING "NEEDS THE SAME EXCLUSION THE SIZE TABLE
+IMPLIES BEFORE IT IS A WORKLIST". Both halves of doing that came out differently
+than expected. THE FIRST CLASSIFIER WAS WRONG AND THE CONTROL SAID SO: it
+flagged anything containing __CxxThrowException as a throw helper, and **38.3 %
+of the core's already-NAMED functions came back as boilerplate** -- including
+Item_HandleUseItem, a MESSAGE HANDLER, and every MsgBuf_* reader. Game logic
+contains throws constantly; the readers throw on underflow. Containing a throw
+does not make a function a throw helper. Without a control of known answers this
+would have published a "true core" that excluded a message handler. Rule
+dropped; the classifier keeps CRT range, MSVC constructors (vtable into
+*param_1, object returned) and named destructors, and **the control is then 0 of
+359**. THE TRUE CORE IS 2,913 FUNCTIONS AT 12 % NAMED -- and the constructor
+contamination is SEVENTEEN functions, not a mass, so round 337's framing was
+right about the TOP of the list and wrong about its SIZE: the metric barely
+moves. Recorded as a correction rather than quietly restated. HANDLER-DEPENDENCE
+IS THE WRONG SORT ORDER, which is the useful methodological finding: the most
+depended-on unnamed functions are UTILITIES BY CONSTRUCTION, because a utility
+is what many handlers share. The number one entry, 0x00401fc0 with 89 handlers,
+is **std::string** -- capacity at +0x18, inline buffer at +4, heap pointer above
+15 characters, MSVC's small-string optimisation. Below it, null-guarded
+accessors of 11 and 15 bytes. SORTING BY SIZE surfaces real logic immediately.
+THE RESULT: 0x00467100, 5,067 bytes, reached by 23 of the 163 handlers, is now
+GameEventLog_FormatRecord -- identified from its OWN format strings ("GuildWar
+Guild[%d,%d] Winner[%s]", "Invested %d SP to guild [%s]", "Trijob Reward
+Received: %u gold", "Mercenary Count[%d]", "Starvation", and the PvP kill shapes
+"%s,%s,%s vs %s(PC),%s,%s,%s"), calling JobTypeName ten times and the
+CGameServer::LogFormatted named last round. WHERE the records go is NOT claimed:
+only two of the twenty-odd formats reach LogFormatted directly, so the rest go
+back through its LPCSTR*** out-parameter. **2,522 unnamed non-STL game-logic
+functions remain, 411,570 bytes** -- the honest size of what is left to read.
+
+**What moved:** no shipped value. A boilerplate classifier with a control that
+proves it, a corrected core figure, the finding that the obvious ranking sorts
+the wrong way, and the biggest genuinely-unnamed piece of core game logic named.
+
 Round 337 (the denominator was wrong, and 3 core names): WITH THE "NAME THE 55"
 AMBITION CLOSED, THE QUESTION BECAME WHICH FUNCTIONS ACTUALLY MATTER. Coverage
 re-measured off the fresh dumps rather than by running SymbolReport (which would
