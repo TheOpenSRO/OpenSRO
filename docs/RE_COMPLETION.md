@@ -5223,6 +5223,17 @@ which the base's fifteen slots had already disproved. `timedjob.PollAccumulator`
 + `Countdown` + tests, slots renamed from the PureA/B/C placeholders. Five
 names, one amended. The stale SYSTEMS Academy row was corrected in the same
 pass (the roles were recovered 2026-09-17 and the row never caught up).
+Round 275 (docs + statuseffect): the `0xc63c94` table is BURN'S DAMAGE CURVE,
+not the duration table its shape suggested -- one write site (the `bu` block),
+one read site (burn's applier), as `table[value2] / (1 + param8/100) * factor`
+every 2001 ms. Chasing that read CORRECTED round 248: the mask table at
+`0xc63ec8` is `1<<i` for every slot but 2 and 3, which are SWAPPED, so slot 2
+is burn and slot 3 electric shock -- and three data-flow pairs (each applier
+reading the field only its own block writes) agree. Also read: the 32-record
+array at pc+0xc stride 0x70, the applier call `(mode, record)`, poison's
+`min(value2, curHP-1)` which cannot kill and credits nobody, and electric
+shock's `clamp(100-value2, 0, 100)` percent on param 9 with 100 neutral.
+`internal/statuseffect` + tests. Param 8 deliberately left unnamed.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

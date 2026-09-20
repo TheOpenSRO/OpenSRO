@@ -7075,6 +7075,49 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-seventy-fifth round: the table that was "by shape a duration" is burn's damage, and two appliers were the wrong way round
+
+The RE tick for 2026-09-20 took the Status effects row's open item -- the `0xc63c94` word
+table the elemental blocks index, which round 249 recorded as "by shape a duration table",
+with the shape as its only evidence.
+
+**It is burn's damage curve.** The table is written in exactly one place in the binary (the
+`bu` block of `Combat_ApplyStatusEffects`, into the effect record's `+0x24`) and read in
+exactly one place: an applier that, every 2001 ms, computes
+`table[value[2]] / (1 + GetParam(8)/100) * record+0x20` and deals it through the damage
+virtual. Read off the FPU run at `0x4a4720..0x4a4756`: `movzx` the word, `fdiv` the double
+100.0, `fadd` 1.0, `fdivr`, `fmul` the record's float. **Param 8 is left unnamed** -- the
+registry has it as 0..10000 with no tag, and nothing here earns it one.
+
+**Chasing that read corrected round 248.** The applier reading `+0x24` is at *slot 2*, which
+that round recorded as electric shock -- but only the *burn* block writes `+0x24`. The
+engine settles it: `AbnormalState_DeactivateSlotAndRebuildMask` (`0x4a5660`) builds the
+character's client-facing mask at `pc+4` by OR-ing, per active slot, a word from the table
+at **`0xc63ec8`**, and that table is `1 << i` for all 32 slots **except 2 and 3, which are
+swapped** -- slot 2 carries `0x8` (burn), slot 3 carries `0x4` (electric shock). Round 248
+had aligned appliers to icons by slot number and by how plausible each param sounded; this
+is the engine stating the alignment itself.
+
+Three data-flow pairs agree with the table, each applier reading a field only its own
+state's block writes: burn `+0x24` -> slot 2; electric shock `+0x28` -> slot 3, as
+`clamp(100 - value[2], 0, 100)` on param 9 (parry), with **100** written back on removal, so
+that contribution is a percent of normal; poison `+0x38` -> slot 4.
+
+**Poison cannot kill.** Its tick is `loss = max(curHP - value[2], 1)`, `damage = curHP -
+loss`, which is `min(value[2], curHP - 1)`; it also clears the source unconditionally, so no
+poison tick is ever credited. Burn is the opposite: it can kill, and it drops the source
+only when the blow would *not* be fatal -- which is how the killing tick gets attributed.
+
+Also read: the states are a **fixed 32-record array** at `pc+0xc`, stride `0x70`, with the
+applier for record *i* at `pc+0xe0c + 4*i` called as `(mode, record)` -- 0 apply, 1 tick,
+2 remove -- and slot 5 (zombie) holds the shared 3-byte `return 0`, so it is a filled slot
+with no behaviour rather than an unread one.
+
+`internal/statuseffect` carries the mask table, the two damage formulas and the parry
+percent with tests, including the one that would have caught the swap. Two names corrected,
+three added. No shipped value changed: srrevamp still has no status-effect system, and this
+is the spec for one.
+
 ## Two-hundred-and-seventy-fourth round: how a timed job fires, and the getters were on the wrong object
 
 The RE tick for 2026-09-20 took the Timed jobs row's open item -- "how a job fires. The managers
