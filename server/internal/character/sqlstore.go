@@ -31,6 +31,9 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS level INTEGER NOT NULL DEFAULT 1
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS exp BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS stat_points INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS storage_gold BIGINT NOT NULL DEFAULT 0;
+-- The berserk orbs, the engine's _CHAR.RemainHwanCount (charData+0x86). A
+-- persisted column there, so it must survive a logout here too.
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS hwan_count INTEGER NOT NULL DEFAULT 0;
 -- Str and Int are what health and mana are derived from (character.MaxHPFor).
 -- Existing rows default to the starting values rather than 0, which would
 -- otherwise leave every migrated character on zero health.
@@ -72,7 +75,7 @@ func (s *SQLStore) Close() error {
 // ListByAccount implements Store.
 func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Character, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, account_id, name, gold, hp, gender, level, exp, stat_points, str, intel, storage_gold FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
+		`SELECT id, account_id, name, gold, hp, gender, level, exp, stat_points, str, intel, storage_gold, hwan_count FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("character: listing characters: %w", err)
 	}
@@ -81,7 +84,7 @@ func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Chara
 	var out []*Character
 	for rows.Next() {
 		var c Character
-		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level, &c.Exp, &c.StatPoints, &c.Str, &c.Int, &c.StorageGold); err != nil {
+		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level, &c.Exp, &c.StatPoints, &c.Str, &c.Int, &c.StorageGold, &c.HwanCount); err != nil {
 			return nil, fmt.Errorf("character: scanning row: %w", err)
 		}
 		out = append(out, &c)
@@ -182,6 +185,23 @@ func (s *SQLStore) AddStorageGold(ctx context.Context, characterID int64, amount
 		`UPDATE characters SET storage_gold = storage_gold + $1 WHERE id = $2`, amount, characterID)
 	if err != nil {
 		return fmt.Errorf("character: adding storage gold: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("character: checking update result: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetHwanCount implements Store.
+func (s *SQLStore) SetHwanCount(ctx context.Context, characterID int64, count int) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE characters SET hwan_count = $1 WHERE id = $2`, count, characterID)
+	if err != nil {
+		return fmt.Errorf("character: setting hwan count: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
@@ -298,8 +318,8 @@ func (s *SQLStore) ResetHP(ctx context.Context, characterID int64) error {
 func (s *SQLStore) GetByID(ctx context.Context, characterID int64) (*Character, error) {
 	var c Character
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, account_id, name, gold, hp, gender, level, exp, stat_points, str, intel, storage_gold FROM characters WHERE id = $1`, characterID,
-	).Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level, &c.Exp, &c.StatPoints, &c.Str, &c.Int, &c.StorageGold)
+		`SELECT id, account_id, name, gold, hp, gender, level, exp, stat_points, str, intel, storage_gold, hwan_count FROM characters WHERE id = $1`, characterID,
+	).Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level, &c.Exp, &c.StatPoints, &c.Str, &c.Int, &c.StorageGold, &c.HwanCount)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}

@@ -317,6 +317,19 @@ type Character struct {
 	// StorageGold is gold kept in the NPC warehouse, separate from the Gold
 	// the character carries. Moved between the two by the storage service.
 	StorageGold int64
+
+	// HwanCount is the berserk orbs the character is holding, 0..berserk.Orbs.
+	//
+	// GROUNDED as a persisted column. `_CHAR.RemainHwanCount` is bound by
+	// `CInstancePC::CharData_BindDBColumns` to charData `+0x86`
+	// (docs/protocol/db_bind_offsets.tsv, an offset verified twice over -- from
+	// the decompilation and again from raw disassembly). The engine keeps the
+	// count in the character row, so it survives a logout; srrevamp used to drop
+	// it on disconnect and said so in berserk.Tracker's comment.
+	//
+	// The orbs are earned on a killing blow and spent five at a time on
+	// activation -- see internal/berserk, where the rates are recovered.
+	HwanCount int
 }
 
 // MaxHP is this character's maximum health, from its Str and Level.
@@ -354,6 +367,11 @@ type Store interface {
 	// DeductStorageGold debits amount from characterID's warehouse gold.
 	// Returns ErrInsufficientGold if the stored balance is too low.
 	DeductStorageGold(ctx context.Context, characterID int64, amount int64) error
+
+	// SetHwanCount stores characterID's berserk orb count, the engine's
+	// _CHAR.RemainHwanCount. Clamped by the caller to 0..berserk.Orbs; this
+	// only writes what it is given.
+	SetHwanCount(ctx context.Context, characterID int64, count int) error
 
 	// ApplyDamage reduces characterID's HP by amount (never below 0),
 	// returning the resulting HP and whether this brought it to exactly 0.

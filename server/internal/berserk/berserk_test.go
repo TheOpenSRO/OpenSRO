@@ -231,3 +231,41 @@ func TestOrbsMatchesTheChargeSpend(t *testing.T) {
 		t.Errorf("Max/Orbs = %d, want a positive gauge step", perOrb)
 	}
 }
+
+// Seeding is how a character's orbs survive a logout, and seed-once is the part
+// that matters: the live count is the authority once play has started.
+func TestEnsureSeededIsOnlyTheFirstWord(t *testing.T) {
+	tr := NewTracker()
+	tr.EnsureSeeded(7, 3)
+	if got := tr.Charges(7); got != 3 {
+		t.Fatalf("Charges = %d after seeding 3, want 3", got)
+	}
+	// A later re-seed from a stale row must not undo what was earned since.
+	tr.EnsureSeeded(7, 0)
+	if got := tr.Charges(7); got != 3 {
+		t.Errorf("Charges = %d after a second seed, want the live 3 -- a re-seed "+
+			"from a stale row would silently destroy orbs", got)
+	}
+}
+
+// The stored value comes from a database row and is not trusted blindly.
+func TestEnsureSeededClampsAStoredValue(t *testing.T) {
+	tr := NewTracker()
+	tr.EnsureSeeded(1, 99)
+	if got := tr.Charges(1); got != Orbs {
+		t.Errorf("Charges = %d after seeding 99, want the cap %d", got, Orbs)
+	}
+	tr2 := NewTracker()
+	tr2.EnsureSeeded(2, -4)
+	if got := tr2.Charges(2); got != 0 {
+		t.Errorf("Charges = %d after seeding -4, want 0", got)
+	}
+}
+
+// An unseeded character still reads as zero, so seeding is not mandatory for
+// correctness -- only for continuity across a logout.
+func TestUnseededCharacterHasNoOrbs(t *testing.T) {
+	if got := NewTracker().Charges(42); got != 0 {
+		t.Errorf("Charges = %d for an unseeded character, want 0", got)
+	}
+}

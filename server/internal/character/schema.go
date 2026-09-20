@@ -73,6 +73,10 @@ var Mapping = []FieldMapping{
 	{Field: "StorageGold", Column: "",
 		Note: "DIVERGENCE. The engine has no warehouse gold on the character row; " +
 			"storage is the separate _CHEST table"},
+	{Field: "HwanCount", Column: "RemainHwanCount",
+		Note: "the berserk orbs. Bound by CharData_BindDBColumns to charData +0x86 " +
+			"(docs/protocol/db_bind_offsets.tsv), so the engine persists it on the " +
+			"character row and srrevamp now does too -- it used to clear on disconnect"},
 }
 
 // EngineOnlyColumns are `_CHAR` columns srrevamp models nowhere. Listed rather
@@ -86,7 +90,6 @@ var EngineOnlyColumns = map[string]string{
 	"MaxLevel":          "a high-water mark beside CurLevel",
 	"SExpOffset":        "skill experience, beside ExpOffset",
 	"RemainSkillPoint":  "srrevamp keeps SP in internal/skill's own store, not on the character",
-	"RemainHwanCount":   "beside HwanLevel; the berserk economy",
 	"GatheredExpPoint":  "a lifetime total beside the per-level ExpOffset",
 	"MP":                "SEE internal/mana: the engine PERSISTS current MP and srrevamp does not",
 	"LatestRegion":      "position, which srrevamp keeps in the live world rather than on the row",

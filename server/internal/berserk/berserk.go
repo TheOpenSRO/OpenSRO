@@ -318,9 +318,18 @@ func GainChance(k Kill) (chance int, amount int) {
 // roll10000 is rand()%10000; swapped by tests to force the dice.
 var roll10000 = func() int { return rand.Intn(10000) }
 
-// Tracker holds each character's transient berserk state. Not persisted --
-// the real count is a DB column, but srrevamp clears it on disconnect like a
-// duel until the character store carries it.
+// Tracker holds each character's berserk state.
+//
+// The ORB COUNT is persisted as of 2026-09-20: it is `_CHAR.RemainHwanCount`
+// on the engine's character row (charData +0x86, see
+// docs/protocol/db_bind_offsets.tsv), and `character.Character.HwanCount`
+// carries it here. Seed restores it when a character enters the world, and the
+// combat paths write it back through `character.Store.SetHwanCount` whenever
+// an orb is earned or spent.
+//
+// What remains transient is the ACTIVE window -- how long the berserk itself
+// still has to run. The engine keeps that in live state too, and a character
+// that logs out mid-berserk loses it here.
 type Tracker struct {
 	mu          sync.Mutex
 	charges     map[int64]int
@@ -354,6 +363,30 @@ func (t *Tracker) EarnOnKill(characterID int64, k Kill) int {
 	}
 	t.charges[characterID] = after
 	return after - before
+}
+
+// EnsureSeeded installs a character's STORED orb count the first time the
+// character is seen, clamped to the legal range, and does nothing afterwards.
+//
+// Seeding is lazy because a session has no single "entered the world" moment --
+// it resolves a character per request -- and seed-once matters: the live count
+// is the authority once play has started, so a later re-seed from a stale row
+// would undo orbs earned since.
+//
+// It does not touch the active window, which is not persisted.
+func (t *Tracker) EnsureSeeded(characterID int64, stored int) {
+	if stored < 0 {
+		stored = 0
+	}
+	if stored > Orbs {
+		stored = Orbs
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, seen := t.charges[characterID]; seen {
+		return
+	}
+	t.charges[characterID] = stored
 }
 
 // Charges returns the character's orb count (0..Orbs) -- the engine's

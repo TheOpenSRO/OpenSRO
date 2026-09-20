@@ -5774,6 +5774,30 @@ identical across all 50 tables the assembly covers, persistence.ColumnOffsets
 unchanged. Lesson: a number that arrives as a by-product of a good parse is not
 evidence because the thing beside it is.
 
+Round 312 (a VALUE WIRED + 5 tests): THE KEY PARKED ON EVIDENCE, THE ORBS
+PERSISTED. First, round 311's probe: the container cannot be keyed by that int
+alone -- _CHAR passes ~8 distinct values while BindTableSchema walks 43 column
+records, so the key selects something a column HAS. Tested on the 20 tables
+where keys and offsets both align, 15 give one key -> one field width; the 5
+exceptions pair a small width with a larger one ({4,16}, {4,8}, {16,28}),
+exactly what an UNBOUND struct member between two bound columns produces, so the
+delta overstates and the test neither confirms nor refutes a type id. 15 of 20
+is a suggestive curve, so it is recorded with the confound named and NOT
+promoted; by the tick-budget rule it also grounds zero shipped values, which is
+where to stop. Second, the shipped half: berserk.Tracker said the orb count "is
+a DB column, but srrevamp clears it on disconnect". Round 308's schema made it
+concrete -- _CHAR.RemainHwanCount binds at charData +0x86, an offset verified
+from the decompilation AND from raw disassembly -- so it is now persisted:
+character.Character.HwanCount mapped to _CHAR.RemainHwanCount (moved out of
+EngineOnlyColumns), an hwan_count column, Store.SetHwanCount written by both the
+earning killing blow and the spending activation, and Tracker.EnsureSeeded
+restoring it. Seeding is lazy (a session has no single enter-world moment) and
+SEED-ONCE, because the live count is authoritative once play starts and a
+re-seed from a stale row would silently destroy orbs earned since; a test
+asserts that. TestEveryCharacterFieldIsMapped failed the moment the field
+existed and demanded the mapping -- the project's own guard working. Still
+transient: the active berserk window.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

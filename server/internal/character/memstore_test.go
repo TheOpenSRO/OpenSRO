@@ -350,3 +350,33 @@ func TestResetHPHealsToLevelMax(t *testing.T) {
 		t.Fatalf("after reset HP = %d, want the level-5 max %d", got.HP, want)
 	}
 }
+
+// The berserk orbs are a persisted column on the engine's character row
+// (_CHAR.RemainHwanCount, charData +0x86), so the store must carry them.
+func TestSetHwanCountRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemStore()
+	c, err := s.Create(ctx, 1, "Orbholder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.HwanCount != 0 {
+		t.Fatalf("a new character starts with %d orbs, want 0", c.HwanCount)
+	}
+	if err := s.SetHwanCount(ctx, c.ID, 4); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetByID(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HwanCount != 4 {
+		t.Errorf("HwanCount = %d after storing 4, want 4", got.HwanCount)
+	}
+}
+
+func TestSetHwanCountOnAMissingCharacter(t *testing.T) {
+	if err := NewMemStore().SetHwanCount(context.Background(), 999, 1); err != ErrNotFound {
+		t.Errorf("SetHwanCount on a missing character returned %v, want ErrNotFound", err)
+	}
+}

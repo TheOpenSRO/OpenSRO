@@ -121,6 +121,18 @@ func (m *MemStore) DeductGold(_ context.Context, characterID int64, amount int64
 	return nil
 }
 
+// SetHwanCount implements Store.
+func (s *MemStore) SetHwanCount(ctx context.Context, characterID int64, count int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.byID[characterID]
+	if !ok {
+		return ErrNotFound
+	}
+	c.HwanCount = count
+	return nil
+}
+
 // AddStorageGold implements Store.
 func (m *MemStore) AddStorageGold(_ context.Context, characterID int64, amount int64) error {
 	m.mu.Lock()

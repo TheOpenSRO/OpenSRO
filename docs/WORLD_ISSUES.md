@@ -7075,6 +7075,62 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-twelfth round: the key parked on evidence, and the orbs finally persisted
+
+Two halves: one probe closed as far as honesty allows, and one shipped change
+that the last five rounds' work earned.
+
+### The lookup key, parked with a measurement rather than a shrug
+
+Round 311 left "read what populates the container". Following it first corrected
+my own reasoning: **the container cannot be keyed by that int alone.** `_CHAR`
+passes only ~8 distinct values but `BindTableSchema` walks **43** column
+records, so the key selects something a column *has*, not the column itself. A
+per-type handler fits.
+
+Tested on the 20 tables where keys and offsets both align: in **15 a key implies
+exactly one field width** within its table. The 5 exceptions each pair a small
+width with a larger one -- `{4,16}`, `{4,8}`, `{16,28}` -- which is precisely
+what an **unbound struct member sitting between two bound columns** produces,
+since the delta then overstates the field. So the test can neither confirm nor
+refute a type id.
+
+15 of 20 is a suggestive curve, and this project has a rule about those. It is
+recorded in the TSV header with the confound named, and **not promoted**. By the
+tick-budget rule it is also the right place to stop: the key's meaning grounds
+**zero** values srrevamp uses, while the offsets it sits beside are done.
+
+### The berserk orbs now survive a logout
+
+`berserk.Tracker` carried a comment saying the count "is a DB column, but
+srrevamp clears it on disconnect like a duel until the character store carries
+it". Round 308's schema made that concrete: **`_CHAR.RemainHwanCount` is bound
+at charData `+0x86`**, an offset verified from the decompilation and again from
+raw disassembly. The engine persists it on the character row, so srrevamp does
+now too:
+
+- `character.Character.HwanCount`, mapped to `_CHAR.RemainHwanCount` in
+  `character.Mapping` (it moved out of `EngineOnlyColumns`);
+- an `hwan_count` column with the usual `ADD COLUMN IF NOT EXISTS` migration;
+- `Store.SetHwanCount`, written by **both** paths that change the count -- the
+  killing blow that earns and the activation that spends five;
+- `Tracker.EnsureSeeded`, restoring the stored count.
+
+**Seeding is lazy and seed-once, and that is the part with a bug in it if done
+carelessly.** A session has no single "entered the world" moment -- it resolves
+a character per request -- so the seed happens on first touch. Seed-once
+matters because the live count is the authority once play has started: a second
+seed from a stale row would silently destroy orbs earned since. A test asserts
+exactly that, and two more cover a row holding 99 or -4.
+
+The project's own guard caught the change before I did: `TestEveryCharacterFieldIsMapped`
+failed the moment the field existed, demanding it be mapped to a `_CHAR` column
+or declared a divergence. It was already right that `RemainHwanCount` existed;
+what changed is that it is no longer engine-only.
+
+Still transient: the **active window**. A character logging out mid-berserk
+loses the remaining duration, which is now the row's named next step.
+
 ## Three-hundred-and-eleventh round: the second integer was never a per-column code, and I withdrew it
 
 Round 310 left one thing open and named the probe: the binder inserts into a

@@ -124,7 +124,16 @@ func handleBerserk(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	if errStr != "" {
 		return sess.Send(&proto.Packet{Opcode: OpBerserkResult, Data: (&BerserkResult{}).Encode()})
 	}
+	if c, err := chars.GetByID(ctx, characterID); err == nil {
+		zerk.EnsureSeeded(characterID, c.HwanCount)
+	}
 	activated := zerk.Activate(characterID)
+	if activated {
+		// Activation spends orbs; the count lives on the character row.
+		if err := chars.SetHwanCount(ctx, characterID, zerk.Charges(characterID)); err != nil {
+			return fmt.Errorf("combat: persisting berserk spend: %w", err)
+		}
+	}
 	return sess.Send(&proto.Packet{Opcode: OpBerserkResult, Data: (&BerserkResult{
 		Activated: activated, Gauge: int32(zerk.Gauge(characterID)), Active: zerk.Active(characterID),
 	}).Encode()})
@@ -994,11 +1003,20 @@ func performAttack(
 			killerLevel := 0
 			if kc, err := chars.GetByID(ctx, characterID); err == nil {
 				killerLevel = kc.Level
+				// The stored orbs are the starting point for this character;
+				// seed-once, so orbs earned this session are not undone.
+				zerk.EnsureSeeded(characterID, kc.HwanCount)
 			}
-			zerk.EarnOnKill(characterID, berserk.Kill{
+			if gained := zerk.EarnOnKill(characterID, berserk.Kill{
 				KillerLevel: killerLevel, VictimLevel: monster.Level,
 				VictimIsMonster: true, VictimRarity: monster.Rarity,
-			})
+			}); gained > 0 {
+				// The engine's count is a character-row column, so a gain has
+				// to reach the row -- see character.Character.HwanCount.
+				if err := chars.SetHwanCount(ctx, characterID, zerk.Charges(characterID)); err != nil {
+					return fmt.Errorf("combat: persisting berserk orbs: %w", err)
+				}
+			}
 			result.BerserkGauge = int32(zerk.Gauge(characterID))
 		}
 		// No damage taken, but the client still wants to know current HP.

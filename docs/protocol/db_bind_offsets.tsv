@@ -34,8 +34,20 @@
 # it is removed. Known about the key: small (0..11) and REPEATING -- 29 of 50
 # tables reuse a key -- so it is neither a column ordinal nor a unique id.
 #
-# NEXT PROBE: read what populates a per-table container (0xd1fbe4 for _CHAR) and
-# what lives at entry +0x48.
+# WHAT IS KNOWN ABOUT THE KEY (round 312), and why it is PARKED rather than named:
+#   * it is a lookup key -- EBX points at it and the callee compares *EBX with each
+#     node's key; each table has its own container;
+#   * small, 0..11, and repeating -- 29 of 50 tables reuse one;
+#   * the container cannot be keyed by it alone: _CHAR has ~8 distinct keys but
+#     BindTableSchema walks 43 column records, so the key selects something a column
+#     HAS, not the column itself. A per-type handler fits.
+#   * tested on the 20 tables where keys and offsets both align: in 15 a key implies
+#     ONE field width within the table. The 5 exceptions each pair a small width with
+#     a larger one ({4,16}, {4,8}, {16,28}), which is what an UNBOUND struct member
+#     between two bound columns produces -- the delta overestimates the width.
+#   So the test can neither confirm nor refute a type id, and a suggestive curve is
+#   not a recovery here. NEXT PROBE: what populates a per-table container (0xd1fbe4
+#   for _CHAR) and what the binder does with the found entry's +0x48.
 #
 # table	column	offset
 _ALLIEDCLANS	ID	0x18
