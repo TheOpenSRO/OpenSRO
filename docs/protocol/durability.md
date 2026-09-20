@@ -464,3 +464,29 @@ Column 30, the other neighbour, is **0 for every weapon checked**, which rules
 out the alternative pairing: were `+0xa4` column 28, then `+0xa8` would be
 column 30's zero, and the flat restore cost is a value a second unrelated
 reader uses.
+
+
+### Verified end to end on real archives (round 304)
+
+The constant change was checked against the retail table rather than only
+against fixtures: `export-refdata` built and run on the RE box over the real
+`itemdata` parts (11,772 item rows) now emits the basis for all five of the
+swords the identity test names.
+
+| item | id | exported `RepairCost` | column 27 |
+|---|---:|---:|---:|
+| `ITEM_CH_SWORD_01_A` | 71 | 198 | 198 |
+| `ITEM_CH_SWORD_01_B` | 72 | 333 | 333 |
+| `ITEM_CH_SWORD_03_A` | 77 | 950 | 950 |
+| `ITEM_CH_SWORD_04_C` | 82 | 1,654 | 1,654 |
+| `ITEM_CH_SWORD_06_A` | 86 | 2,479 | 2,479 |
+
+Five of five, where the previous export carried the column-28 figures (297,
+500, 1426, 2482, 3718). **A deployment still needs `export-refdata` re-run and
+the CSVs re-imported** -- no game data is committed, so the corrected prices
+travel with the data, not with the tag.
+
+The first attempt at this check reported **0 of 5** and was wrong: the exported
+CSV carries no item code names, so a matcher keyed on `ITEM_*` matched nothing.
+Keyed on the item id it is 5 of 5. A zero from a probe that cannot see its
+subject is not a negative result.
