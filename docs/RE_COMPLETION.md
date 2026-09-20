@@ -6198,6 +6198,40 @@ which are safe to read as wire order. This is the lever round 324 asked for: 93
 handlers whose remaining work was "the payload layout" are now mostly a table
 lookup rather than 93 readings.
 
+Round 330 (98 handlers cross-confirmed, 0 names): THE CROSS-CHECK KILLED THE
+OTHER LEVER, WHICH IS THE USEFUL PART. Round 329 left two next steps: follow the
+60 handlers that delegate instead of reading, and cross-check properly. DOING THE
+SECOND INVALIDATED THE FIRST. Expanding callees one and two levels and splicing
+the callee's reader sequence in raised coverage 103 -> 133 of 163, and NOTHING
+ABOUT THE OUTPUT LOOKED WRONG -- plausible counts, sensible widths. THE CLIENT
+DISAGREED: its encoder is an independent derivation in the other binary
+(CMsgStreamBuffer_Construct(<opcode>) opens a request, FUN_00508fe0(src,len)
+appends each field, len in the second visible argument), giving write sequences
+for 121 request opcodes with no reference to the server. SPLIT BY HOW THE SERVER
+SIDE WAS DERIVED: direct 90 agree / 0 mismatch; inline 1/0; delegated 8 agree / 4
+MISMATCH; delegated2 2 agree / 2 MISMATCH. THE DIRECT DECODE IS 90 FOR 90 AGAINST
+AN INDEPENDENT BINARY -- strong confirmation of round 329. THE DELEGATION
+EXPANSION IS 10 OF 16, at two levels barely better than a coin flip, and EVERY
+mismatch in the whole comparison came from it: Guild_HandleWarDeclaration
+acquired three bytes(DI) fields of unknown length from a spliced helper, 0x706c
+gained a u32 the client never sends. SO THE 30 EXTRA LAYOUTS ARE NOT PUBLISHED. A
+method that produces confident, well-formed, WRONG answers two times in six is
+worse than no method, and the only reason this is known is that a second probe
+with a different failure mode ran before shipping. DELEGATED ROWS SURVIVE ONLY
+WHERE THE CLIENT CONFIRMS THEM EXACTLY -- not circular, because the expansion and
+the encoder fail in unrelated ways, so exact agreement is real evidence though
+the expansion alone is not; ten rows survive and say so in their note.
+
+**What moved:** no shipped value. `handler_payloads.tsv` is now TWO-SIDED: 163
+rows, **98 cross-confirmed by both binaries**, 110 server-decoded, 110
+client-decoded, 122 with at least one side, 41 with neither, and **0 unresolved
+mismatches**. The `agreement` column distinguishes `exact` (81) from
+`server-prefix` (14, handler reads a header and delegates the rest),
+`client-prefix` (3, handler reads a sub-command then branches -- 0x010 is one u16
+selector with ten client variants behind it), `server-only` and `client-only`.
+Coverage went DOWN from round 329's claimed 133 to a defensible 110, which is the
+correct direction when the claim was not defensible.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

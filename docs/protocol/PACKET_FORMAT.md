@@ -444,7 +444,12 @@ These collapse to one field when both calls share a width and an out-argument.
 `check-pair` in the table rather than trusted -- a wrong collapse is a wrong
 layout, so they are marked, not quietly counted.
 
-### What the table says, and what it does not
+### What the table said, and what it does not
+
+**Superseded by round 330 below.** The counts here describe this round's
+single-sided pass; the shipped `handler_payloads.tsv` now carries two derivations
+per row and a different set of columns. The confidence reasoning below still
+holds -- it is why the `direct` rows survived the cross-check intact.
 
 | | handlers |
 |---|---:|
@@ -489,3 +494,82 @@ against the item actually in the slot -- which is what "matched against a list
 derived from the item, then echoed" meant. **It still gets no name**: the refdata
 field's own identity has not been confirmed, and a consistent story is not a
 citation.
+
+## Round 330: reading the other side, and throwing away a third of the answers
+
+Round 329 decoded 103 handlers from the server's readers and noted two obvious
+next levers: the 60 handlers that call no reader (they delegate to a callee), and
+a proper cross-check. Doing the second **killed** the first, which is the useful
+part of this round.
+
+### Following the delegation looked like it worked
+
+Expanding each handler's callees one and two levels deep and splicing the
+callee's reader sequence in at the call site raised coverage from 103 to **133 of
+163**. Nothing about the output looked wrong: plausible field counts, sensible
+widths, no obvious garbage in most rows.
+
+### The client says a third of those are wrong
+
+The client must write the wire the server reads, so its encoder is an independent
+derivation in a different binary. `CMsgStreamBuffer_Construct(<opcode>)` opens a
+request and `FUN_00508fe0(src, len)` -- the client's chunked stream write, `len`
+in the second visible argument -- appends each field. That gives a write sequence
+for **121 request opcodes**, derived without reference to the server at all.
+
+Comparing the two, **split by how the server side was derived**:
+
+| server-side method | agrees with client | mismatches |
+|---|---:|---:|
+| `direct` (reads in the handler itself) | **90** | **0** |
+| `inline` | 1 | 0 |
+| `delegated` (one level) | 8 | 4 |
+| `delegated2` (two levels) | 2 | 2 |
+
+**The direct decode is 90 for 90 against an independent binary.** The delegation
+expansion is 10 of 16 -- at two levels it is barely better than a coin flip. Every
+single mismatch in the whole comparison came from delegation, and some are plainly
+nonsense in hindsight (`Guild_HandleWarDeclaration` acquired three
+`bytes(DI)` fields of unknown length from a spliced helper; `0x706c` gained a
+`u32` the client never sends).
+
+So the 30 extra layouts are **not published as decoded**. A method that produces
+confident, well-formed, wrong answers two times in six is worse than no method,
+and the only reason this is known is that a second probe with a different failure
+mode was run before shipping.
+
+**The delegated rows are kept only where the client confirms them exactly.** That
+is not circular: the expansion and the client encoder fail in unrelated ways, so
+exact agreement between them is real evidence even though the expansion alone is
+not. Ten rows survive that way and say so in their `note`.
+
+### What the table holds now
+
+`docs/protocol/handler_payloads.tsv`, 163 rows, two independent derivations per
+row where both exist:
+
+| | handlers |
+|---|---:|
+| **cross-confirmed by both sides** | **98** |
+| server-side decoded (trusted methods) | 110 |
+| client-side layout available | 110 |
+| at least one side | 122 |
+| neither side | 41 |
+| unresolved mismatches | **0** |
+
+`agreement` says which: `exact` (81), `server-prefix` (14, the handler reads the
+first fields and delegates the rest), `client-prefix` (3, the handler reads a
+sub-command then branches -- `0x010` is the clear case, one `u16` selector and ten
+client variants behind it), `server-only`, `client-only`.
+
+### Reading this table honestly
+
+- **`exact` is a genuine two-binary fact.** Two derivations, no shared code path,
+  same answer.
+- **`client-only` is one-sided evidence**, and it is the *encoder*, so it is good
+  evidence about the wire -- but the server may read those bytes differently, and
+  nothing here proves it does not.
+- **`server-prefix` is expected, not a defect.** A handler that reads a header and
+  hands the rest to a subsystem genuinely reads a prefix.
+- **41 handlers have neither side.** They are not attempted here, and no row
+  pretends otherwise.
