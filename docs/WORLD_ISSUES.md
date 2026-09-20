@@ -7075,6 +7075,41 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-seventy-eighth round: the state vocabulary, and a code that lies about itself
+
+The RE tick for 2026-09-20 took round 277's leftover -- six status fields the page had never
+listed -- and the answer came from a table the repo already had plus one literal per block.
+
+**The kinds.** Every block in `Combat_ApplyStatusEffects` loads `kind << 24` into ECX before
+asking the target's effect map whether the state may be applied. Reading that literal at all
+23 sites gives each skill field its kind directly, with no inference: `+0x430` is 7, `+0x474`
+is 25, and 13 and 16 are absent. `skill_fields.md` already held the field-to-code table, so
+the six unnamed fields are `cssr`, `csit`, `cspd`, `csmd`, `cshp`, `csmp` and `tb`.
+
+**The client names them too.** `0x7fdab0` in the client does not only pick an icon: it
+carries a **label** beside each one, which this project had never recorded. The labels are
+`FZ`, `FB`, `ES`, `BU`, `PS`, `ZB` and `DN` for seven of them -- *the skilldata codes in
+upper case*. That makes the join direct rather than arithmetic, and fifteen of the
+twenty-three agree letter for letter, at both ends of the run and throughout, so
+`kind = bit + 1` is proven rather than assumed and the table cannot be off by a row.
+
+It also confirms round 275 from the other binary: the client's own switch has **case 4 =
+electricshock and case 8 = burn**, the same swap the server's slot table carries.
+
+**And a trap worth the whole round.** The `cs*` codes do not mean what their letters say.
+`cshp` applies the **MP** curse and `csmd` the **HP** curse. Two independent things agree:
+the kind literals, and round 248's appliers -- bit 21 writes MaxHP and the client labels it
+`CURSE_HP`; bit 22 writes MaxMP and is `CURSIE_MP` (the engine's own typo); bit 17 writes
+physical flat defence and is `CURSE_PD`; bit 18 magical and is `CURSE_MD`. Anyone reading
+these codes as mnemonics gets two states backwards. Read the state off its kind.
+
+Two smaller facts fell out. **DISEASE (bit 15) is a state no skill block applies** -- it is
+the gate the applier reads first, param 169. And **bit 23, `csmp`, has no case in the
+client's switch at all**: a state the skill table can carry and the client never draws.
+
+`statuseffect.States` carries code, field, kind, bit, icon and label with tests that pin the
+trap and the internal consistency. One name, in the client. No shipped value changed.
+
 ## Two-hundred-and-seventy-seventh round: the other half of the status application, read out of the FPU
 
 The RE tick for 2026-09-20 took the last open piece of `status_effects.md`: the blocks after

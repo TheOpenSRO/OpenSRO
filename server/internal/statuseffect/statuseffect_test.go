@@ -183,3 +183,70 @@ func TestNonElementalFalloffsStopAtTheirFloors(t *testing.T) {
 		t.Error("at 19 levels over the chance should be floored and the duration not yet")
 	}
 }
+
+// Kind is always the bit plus one, the fields ascend with the kinds, and the
+// codes are unique. If any of those breaks, the table was mis-transcribed.
+func TestStateTableIsInternallyConsistent(t *testing.T) {
+	seenCode := map[string]bool{}
+	seenBit := map[int]bool{}
+	prevField, prevKind := 0, 0
+	for _, s := range States {
+		if s.Kind != s.Bit+1 {
+			t.Errorf("%s: kind %d, bit %d -- kind must be bit+1", s.Code, s.Kind, s.Bit)
+		}
+		if seenCode[s.Code] || seenBit[s.Bit] {
+			t.Errorf("%s / bit %d listed twice", s.Code, s.Bit)
+		}
+		seenCode[s.Code], seenBit[s.Bit] = true, true
+		if s.Field <= prevField || s.Kind <= prevKind {
+			t.Errorf("%s: field %#x kind %d does not ascend", s.Code, s.Field, s.Kind)
+		}
+		prevField, prevKind = s.Field, s.Kind
+	}
+	if len(States) != 23 {
+		t.Errorf("%d states, want the 23 blocks Combat_ApplyStatusEffects carries", len(States))
+	}
+	// The three absent bits.
+	for _, bit := range []int{12, 15, 23} {
+		if s, ok := StateByBit(bit); ok && s.Label != "" {
+			t.Errorf("bit %d should have no applying block with a label, got %q", bit, s.Label)
+		}
+	}
+}
+
+// The trap, pinned: the cs* letters are not the state. Anyone reading `cshp`
+// as "curse HP" gets the MP curse.
+func TestTheCurseCodesDoNotMeanTheirLetters(t *testing.T) {
+	cshp, ok := StateByCode("cshp")
+	if !ok || cshp.Label != "CURSIE_MP" {
+		t.Errorf("cshp -> %+v; it is the MP curse, not HP", cshp)
+	}
+	csmd, ok := StateByCode("csmd")
+	if !ok || csmd.Label != "CURSE_HP" {
+		t.Errorf("csmd -> %+v; it is the HP curse, not MD", csmd)
+	}
+	cssr, _ := StateByCode("cssr")
+	if cssr.Label != "CURSE_MD" {
+		t.Errorf("cssr -> %q; it is the MD curse, not STR", cssr.Label)
+	}
+	// And the ones that DO agree, which is why the join is trustworthy.
+	for code, label := range map[string]string{
+		"fz": "FZ", "bu": "BU", "es": "ES", "dn": "DN", "tb": "TIME_BOMB",
+		"st": "STUN", "my": "MYOPIA", "bl": "BLOOD", "se": "SLEEP", "rt": "ROOT",
+	} {
+		s, ok := StateByCode(code)
+		if !ok || s.Label != label {
+			t.Errorf("%s -> %q, want %q", code, s.Label, label)
+		}
+	}
+	// The client's mask for burn is 0x8 and for electric shock 0x4 -- the same
+	// swap the server's slot table carries, from the other binary.
+	bu, _ := StateByCode("bu")
+	es, _ := StateByCode("es")
+	if 1<<uint(bu.Bit) != 0x8 || 1<<uint(es.Bit) != 0x4 {
+		t.Error("burn must be mask 0x8 and electric shock 0x4")
+	}
+	if MaskForSlot(SlotBurn) != 1<<uint(bu.Bit) || MaskForSlot(SlotElectricShock) != 1<<uint(es.Bit) {
+		t.Error("the server slot table and the client's bits must agree")
+	}
+}

@@ -5259,6 +5259,19 @@ shape, +0x438 and +0x450 prefix an unread iterative term, +0x474 is different,
 and SIX status fields beyond the page's table (+0x460..+0x474) exist and are
 deliberately left unnamed. `statuseffect.LevelOvershoot` +
 `NonElementalDurationMs` + `NonElementalChance` + tests.
+Round 278 (docs + statuseffect): the whole state VOCABULARY, joined from both
+binaries. Every one of the 23 blocks' `kind << 24` literal read at its
+0x5a1a20 call site (code -> field -> kind -> bit), and the client's own LABEL
+beside each icon recovered from 0x7fdab0 -- FZ, FB, ES, BU, PS, ZB, DN are the
+skilldata codes upper-cased, so 15 of 23 agree letter for letter and
+`kind = bit + 1` is proven, not assumed. The six fields round 277 left
+unnamed are cssr, csit, cspd, csmd, cshp, csmp and tb. TRAP recorded: the cs*
+codes do not mean their letters -- `cshp` is the MP curse and `csmd` the HP
+curse, agreed by the appliers' params (bit 21 MaxHP/CURSE_HP, bit 22
+MaxMP/CURSIE_MP, bit 17 phys def/CURSE_PD, bit 18 mag def/CURSE_MD). Also:
+the client's switch has NO case for bit 23, and DISEASE (bit 15) is a state no
+skill block applies because it is the gate param 169. `statuseffect.States`
++ tests. One name (client).
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

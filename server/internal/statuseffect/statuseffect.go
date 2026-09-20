@@ -282,3 +282,85 @@ func NonElementalDurationMs(value0, overshoot int) int {
 func NonElementalChance(value1, overshoot int) int {
 	return scaleWithFloor(value1, overshoot, ChanceFalloffPerLevel, ChanceFloorRatio)
 }
+
+// The whole state vocabulary -- read 2026-09-20 (round 278).
+//
+// Three numberings and two names meet here, and they were joined from both
+// binaries rather than by resemblance:
+//
+//   - the SKILL CODE and its field offset in CRefSkill (docs/protocol/
+//     skill_fields.md, from the param parser);
+//   - the KIND, the literal each block loads into ECX as `kind << 24` before
+//     asking the target's effect map whether the state may be applied
+//     (`mov ecx,0xN000000` before `call 0x5a1a20`, all 23 sites in
+//     Combat_ApplyStatusEffects) -- and kind is always bit + 1;
+//   - the client's mask BIT, its icon file, and the LABEL the client carries
+//     beside the icon (`0x7fdab0` in sro_client.exe).
+//
+// The labels settle it without arithmetic: the client calls the six elemental
+// states FZ, FB, ES, BU, PS and ZB, and dark DN -- the skilldata codes in
+// upper case. Fifteen of the twenty-three agree letter for letter, at both
+// ends of the run and throughout, which leaves no room for the table to be
+// off by a row.
+//
+// **The trap**: the `cs*` codes do NOT mean what their letters suggest.
+// `cshp` applies the MP curse and `csmd` the HP curse. Read the code off the
+// kind, never off the letters.
+type State struct {
+	Code  string // the skilldata param code, and its CRefSkill field
+	Field int    // that field's offset
+	Kind  int    // the `kind << 24` literal, = Bit + 1
+	Bit   int    // the client's mask bit
+	Icon  string // icon\stateodd\s_<Icon>_icon.ddj
+	Label string // the client's own label beside the icon
+}
+
+// States are the twenty-three the skill table can apply, in field order.
+// Bits 12, 15 and 23 are absent: 15 (disease, DISEASE) exists as a state but
+// no skill block applies it -- it is the gate param 169 the applier reads
+// first -- and 12 and 23 have no block at all.
+var States = []State{
+	{"fz", 0x30c, 1, 0, "freeze", "FZ"},
+	{"fb", 0x310, 2, 1, "frostbite", "FB"},
+	{"es", 0x314, 3, 2, "electricshock", "ES"},
+	{"bu", 0x318, 4, 3, "burn", "BU"},
+	{"ps", 0x31c, 5, 4, "poisoning", "PS"},
+	{"zb", 0x320, 6, 5, "zombi", "ZB"},
+	{"se", 0x430, 7, 6, "sleep", "SLEEP"},
+	{"rt", 0x434, 8, 7, "root", "ROOT"},
+	{"sl", 0x438, 9, 8, "blunting", "SLOW"},
+	{"fe", 0x43c, 10, 9, "fear", "FEAR"},
+	{"my", 0x440, 11, 10, "myopia", "MYOPIA"},
+	{"bl", 0x444, 12, 11, "bleeding", "BLOOD"},
+	{"dn", 0x44c, 14, 13, "dark", "DN"},
+	{"st", 0x450, 15, 14, "stun", "STUN"},
+	{"ds", 0x454, 17, 16, "confusion", "CHAOS"},
+	{"ca", 0x458, 18, 17, "decay", "CURSE_PD"},
+	{"cssr", 0x45c, 19, 18, "weakness", "CURSE_MD"},
+	{"csit", 0x460, 20, 19, "powerless", "CURSE_STR"},
+	{"cspd", 0x464, 21, 20, "dissociation", "CURSE_INT"},
+	{"csmd", 0x468, 22, 21, "panic", "CURSE_HP"},
+	{"cshp", 0x46c, 23, 22, "combustion", "CURSIE_MP"}, // the engine's own typo
+	{"csmp", 0x470, 24, 23, "", ""},                    // no icon case, no applier
+	{"tb", 0x474, 25, 24, "incubation", "TIME_BOMB"},
+}
+
+// StateByCode finds a state by its skilldata param code.
+func StateByCode(code string) (State, bool) {
+	for _, s := range States {
+		if s.Code == code {
+			return s, true
+		}
+	}
+	return State{}, false
+}
+
+// StateByBit finds a state by the client's mask bit.
+func StateByBit(bit int) (State, bool) {
+	for _, s := range States {
+		if s.Bit == bit {
+			return s, true
+		}
+	}
+	return State{}, false
+}

@@ -156,6 +156,62 @@ source unconditionally, so no poison tick is ever credited to anyone.
 removal writes **100**. That the neutral is 100 is the useful part: a param-9 contribution
 from this slot is a *percent of normal*, not a flat delta.
 
+## The whole vocabulary, joined from both binaries (round 278, 2026-09-20)
+
+Three numberings and two names meet, and they are joined by reading rather than by
+resemblance:
+
+- the **skill code** and its `CRefSkill` field (`skill_fields.md`, from the param parser);
+- the **kind**, the literal each block loads as `kind << 24` before asking the target's
+  effect map whether the state may be applied (`mov ecx,0xN000000` then `call 0x5a1a20`) --
+  read at all **23** sites in `Combat_ApplyStatusEffects`;
+- the client's mask **bit**, its icon, and the **label** the client carries beside the icon
+  (`0x7fdab0` in `sro_client.exe`), which this page had never recorded.
+
+| code | field | kind | bit | icon | the client's label |
+|---|---:|---:|---:|---|---|
+| `fz` | `0x30c` | 1 | 0 | freeze | **FZ** |
+| `fb` | `0x310` | 2 | 1 | frostbite | **FB** |
+| `es` | `0x314` | 3 | 2 | electricshock | **ES** |
+| `bu` | `0x318` | 4 | 3 | burn | **BU** |
+| `ps` | `0x31c` | 5 | 4 | poisoning | **PS** |
+| `zb` | `0x320` | 6 | 5 | zombi | **ZB** |
+| `se` | `0x430` | 7 | 6 | sleep | SLEEP |
+| `rt` | `0x434` | 8 | 7 | root | ROOT |
+| `sl` | `0x438` | 9 | 8 | blunting | SLOW |
+| `fe` | `0x43c` | 10 | 9 | fear | FEAR |
+| `my` | `0x440` | 11 | 10 | myopia | MYOPIA |
+| `bl` | `0x444` | 12 | 11 | bleeding | BLOOD |
+| `dn` | `0x44c` | 14 | 13 | dark | **DN** |
+| `st` | `0x450` | 15 | 14 | stun | STUN |
+| `ds` | `0x454` | 17 | 16 | confusion | CHAOS |
+| `ca` | `0x458` | 18 | 17 | decay | CURSE_PD |
+| `cssr` | `0x45c` | 19 | 18 | weakness | CURSE_MD |
+| `csit` | `0x460` | 20 | 19 | powerless | CURSE_STR |
+| `cspd` | `0x464` | 21 | 20 | dissociation | CURSE_INT |
+| `csmd` | `0x468` | 22 | 21 | panic | **CURSE_HP** |
+| `cshp` | `0x46c` | 23 | 22 | combustion | **CURSIE_MP** (the engine's own typo) |
+| `csmp` | `0x470` | 24 | 23 | *(no case in the switch)* | *(none)* |
+| `tb` | `0x474` | 25 | 24 | incubation | TIME_BOMB |
+
+**Kind is always bit + 1**, and the labels prove it rather than assuming it: the client calls
+the six elemental states FZ, FB, ES, BU, PS and ZB, and dark DN -- the skilldata codes in
+upper case. Fifteen of the twenty-three agree letter for letter, at both ends of the run and
+throughout it, which leaves the table no room to be off by a row.
+
+**The trap.** The `cs*` codes do **not** mean what their letters suggest: `cshp` applies the
+**MP** curse and `csmd` the **HP** curse. Two independent checks say so -- the kind literals,
+and round 248's appliers (bit 21 writes MaxHP and its label is `CURSE_HP`; bit 22 writes
+MaxMP and its label is `CURSIE_MP`; bit 17 writes physical flat defence and is `CURSE_PD`;
+bit 18 writes magical flat defence and is `CURSE_MD`). Read a state off its kind, never off
+its code's letters. `statuseffect.States`.
+
+Three bits have no applying block: 12 and 23 have none at all, and 15 -- **DISEASE** -- is a
+real state that no skill block applies, because it is the gate the applier reads first
+(param 169). And bit 23's `csmp` is a state the skill table can carry that the client's
+switch has **no case for**, so it is never drawn; whatever "admittance" is in the icon
+directory, this function does not reach it.
+
 ### The non-elemental states carry their own duration and chance -- READ (round 277)
 
 The blocks after the six elemental ones work the other way round, and this page's "their
