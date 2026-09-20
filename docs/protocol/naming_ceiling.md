@@ -233,3 +233,41 @@ function touches dozens of small offsets incidentally, so the overlap measures a
 function's SIZE far more than its subject. The offsets remain valuable for the
 reverse lookup they were built for -- given `charData+0x86`, name the column --
 and that is a different question from naming the function that touches it.
+
+
+## The client assert lever, closed for NAMING (round 319)
+
+`client_asserts.md` harvested every `Assert_FileLineExpression` call. This page
+has listed that as done without saying what it is worth as a *naming* lever.
+Measured now:
+
+| | |
+|---|---:|
+| client functions containing an assert | **458** |
+| of those, still `FUN_` or `vslot_` | **437** |
+| whose expression contains a `Class::Member` or a call | 88 |
+| whose expression quotes **its own** class or name | **0** |
+
+**The control, on the 21 assert-carrying functions that ARE named**, shows what
+the working form looks like -- the expression quotes the function itself:
+
+	GScript::SaveGameData                     <- "SaveGameData(), dwID == SCR_INVALID_VALUE"
+	GlobalDataManager::...GetTIDFromObjectID  <- "CGlobalDataManager::GetTIDFromObjectID ( 0x%X )"
+	Game::CObjChild__m_pGfxEttManager         <- "CObjChild::m_pGfxEttManager->GetUsedIDNum() == 0"
+
+and what the non-working form looks like -- the expression names a variable or
+a *different* function:
+
+	CObjCharacter::SetDefaultWear             <- "(nEquipSlot >=0 ) && ( nEquipSlot < EQUIP_VISUAL_COUNT)"
+	IFSkillMastery::...SetMasteryData         <- "m_pMasteryData"
+
+**Those three are the only instances in the binary.** Of the 88 unnamed
+candidates, **none** quotes its own class -- they assert container sizes
+(`m_sRegionList.size()==0`), handles (`ar.IsOpen()`) or calls to other
+functions (`FindHeight(vPos)`). An assert expression describes *the state being
+checked*, and only rarely the function checking it.
+
+**So the lever is spent for naming and remains valuable for attribution.** The
+file and line still place a function in its source file and order it against its
+neighbours, which is the SLOTTED/ATTRIBUTED tier this page distinguishes from
+NAMED -- knowing *where* a function lives, not what it does.

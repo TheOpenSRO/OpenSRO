@@ -5909,6 +5909,24 @@ is unfound after FIVE routes: derived filename (59/338), BSR table (57), any
 skilldata column (3%), variant-stripping (18/279), group selection. char+0x18c
 is the field to watch.
 
+Round 319 (a lever CLOSED, measured): THE CLIENT ASSERT LEVER CANNOT NAME.
+Round 318 showed asserts reach CObjCharacter (12 of 41 unnamed carry a string),
+which looked like the biggest opening left in a client at 5.1% NAMED. Measured:
+458 client functions contain an assert, 437 are still FUN_/vslot_, 88 have a
+Class::Member or a call in the expression, and ZERO quote their own class or
+name. The control on the 21 already-named ones shows the working form is the
+expression quoting the function itself -- GScript::SaveGameData from
+"SaveGameData(), dwID == ...", GlobalDataManager::GetTIDFromObjectID from
+"CGlobalDataManager::GetTIDFromObjectID ( 0x%X )", Game::CObjChild__m_pGfxEttManager
+from "CObjChild::m_pGfxEttManager->GetUsedIDNum() == 0" -- and those three are
+the ONLY instances in the binary. The first pass counted 88 by matching any ::
+or call, and reading them showed the regex had caught m_sRegionList.size()==0,
+ar.IsOpen() and FindHeight(vPos): containers, handles and calls to OTHER
+functions. An assert describes the state being checked, not the function doing
+the checking. Same shape as the one-part Name:: label at 0/131 against the
+two-part Class::Method at 35/35. The lever stays good for ATTRIBUTION -- file
+and line order a function within its source file -- and is closed for NAMING.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

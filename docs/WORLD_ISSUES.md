@@ -7075,6 +7075,53 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-nineteenth round: 437 assert-carrying functions, and none of them can be named that way
+
+Round 318 found that the assert lever reaches `CObjCharacter` -- 12 of its 41
+unnamed functions carry a string literal. That looked like the biggest naming
+opening left in the client, which is at 5.1 % NAMED against 23,494 UNKNOWN. It
+is not, and the measurement is worth more than the hope was.
+
+| | |
+|---|---:|
+| client functions containing an assert | **458** |
+| still `FUN_` or `vslot_` | **437** |
+| whose expression holds a `Class::Member` or a call | 88 |
+| whose expression quotes **its own** class or name | **0** |
+
+### The control says exactly which form works
+
+Of the 21 assert-carrying functions already named, three got their name from the
+expression, and all three quote the function itself:
+
+	GScript::SaveGameData                     <- "SaveGameData(), dwID == SCR_INVALID_VALUE"
+	GlobalDataManager::...GetTIDFromObjectID  <- "CGlobalDataManager::GetTIDFromObjectID ( 0x%X )"
+	Game::CObjChild__m_pGfxEttManager         <- "CObjChild::m_pGfxEttManager->GetUsedIDNum() == 0"
+
+The rest name a variable or a different function, and did not yield a name:
+
+	CObjCharacter::SetDefaultWear             <- "(nEquipSlot >=0 ) && ( nEquipSlot < EQUIP_VISUAL_COUNT)"
+	IFSkillMastery::...SetMasteryData         <- "m_pMasteryData"
+
+**Those three are the only instances in the whole binary.** My first pass
+counted 88 candidates by matching any `::` or call in the expression -- and
+reading them showed the regex had caught `m_sRegionList.size()==0`,
+`ar.IsOpen()` and `FindHeight(vPos)`: containers, handles and calls to *other*
+functions. Tightened to the form the control validates, the count is **zero**.
+
+### Why this is the honest answer and not a failure
+
+An assert expression describes **the state being checked**, not the function
+doing the checking. The three that name themselves are the accident, not the
+rule -- which is the same shape as this page's earlier finding that a one-part
+`Name::` log label scored 0/131 while the two-part `Class::Method ` form scored
+35/35.
+
+So the lever is **spent for naming and still good for attribution**: file and
+line place a function in its source file and order it against its neighbours,
+which is the ATTRIBUTED tier, not the NAMED one. `naming_ceiling.md` listed the
+harvest as done without saying what it was worth; now it says.
+
 ## Three-hundred-and-eighteenth round: into the client's code, and the group selection is confirmed rather than found
 
 Round 317 said the remaining place to look was a hardcoded table in the client's
