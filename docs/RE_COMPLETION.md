@@ -5704,6 +5704,29 @@ recorded and NOT interpreted: it is not a width (code 2 gives width 4 in 71 of
 121 cases, code 0 in 56 of 66, and codes 84/100/1000 exist) and no use-site has
 been read.
 
+Round 309 (18 offsets CORRECTED + 3 tests): THE STRUCTURAL CHECK WAS TOO WEAK.
+Round 308's no-duplicate-offsets check passed while 18 of 409 offsets were wrong
+across 8 tables, because a COLUMN INDEX has no duplicates either.
+_SiegeFortress binds an index (0,2,3..10) beside the offset
+(24,28,32,40,48,52,56,84,100,101 -- strides 4,4,8,8,4,4,28,16,1, the 28 a string
+exactly like _CHAR's names), and round 308's rule "take the more distinct
+integer" cannot separate them since an index is perfectly distinct. The _CHAR
+controls passed throughout because _CHAR was parsed correctly. The discriminator
+that works is distinct AND SPARSE: density = distinct/(max-min+1) approaches 1
+for an index (_SiegeFortress 0.91) and is far lower for a struct (_CHAR 0.20).
+Re-run: 409 offsets, zero duplicates, seven controls pass, the two new ones
+being _SiegeFortress FortressID 0x18 and Introduction 0x38, added because they
+are the case the _CHAR controls could not see; a test now fails any table whose
+offsets exceed density 0.8. Six single-column binders have no distribution to
+test and are resolved by AGREEMENT instead: all six sibling containers bind Slot
+at 0x18, matching db_columns.md's "reuses a sibling's". LESSON: three parses of
+the same data, the first two passed every control they had and were wrong -- a
+control only fails on a case someone already imagined, and both times that case
+was the one being parsed correctly. The right response to a structural check
+passing is to ask what it cannot distinguish. Also corrected: FUN_00862e40 is a
+std::map lower_bound (the binder builds map<string,{offset,code}>), not the
+"commit" round 308 called it.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

@@ -120,3 +120,9 @@ project had already recovered from unrelated work land exactly:
 
 That makes the reverse lookup cheap, which is the direction this project keeps
 needing: `persistence.ColumnAt("_CHAR", 0x86)` answers `RemainHwanCount`.
+
+`_CHAR`'s offsets were right in round 308 and are unchanged. Eight *other*
+tables were not — see round 309: the binder emits two integers per column and
+which one is the offset is not fixed by source order, so `_SiegeFortress` had a
+column **index** read as its offset. `_CHAR` never showed the fault, which is
+exactly why it was a poor control on its own.

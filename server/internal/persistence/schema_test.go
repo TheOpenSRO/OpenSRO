@@ -300,3 +300,81 @@ func TestColumnAtResolvesARecordedOffset(t *testing.T) {
 		t.Errorf("ColumnAt(_CHAR, 0x86) = %q/%v, want RemainHwanCount", got, ok)
 	}
 }
+
+// The controls the _CHAR ones could not see.
+//
+// Round 308 and round 309's first attempt both passed every _CHAR control while
+// getting _SiegeFortress wrong: its binder emits a dense column INDEX
+// (0, 2, 3 ... 10) alongside the offset, and that index is just as distinct as
+// an offset, so neither the controls nor the no-duplicates check noticed. These
+// two are in the suite so the case that actually broke it cannot break silently.
+func TestSiegeFortressOffsetsAreTheStructNotTheIndex(t *testing.T) {
+	for _, tc := range []struct {
+		column string
+		want   int
+	}{
+		{"FortressID", 0x18},
+		{"GuildID", 0x1c},
+		{"Introduction", 0x38},
+	} {
+		got, ok := OffsetOf("_SiegeFortress", tc.column)
+		if !ok {
+			t.Errorf("_SiegeFortress.%s has no offset", tc.column)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("_SiegeFortress.%s is at 0x%x, want 0x%x -- a small value here means "+
+				"the column index was read as the offset", tc.column, got, tc.want)
+		}
+	}
+}
+
+// The six container tables bind a single column, so there is no distribution to
+// tell the offset from the code. They are resolved by agreement instead: six
+// separate binder functions all put Slot at 0x18. If one ever disagrees, the
+// reading was a coincidence.
+func TestSiblingContainersAgreeOnSlot(t *testing.T) {
+	siblings := []string{
+		"_INVENTORY", "_INVENTORYFORAVATAR", "_INVENTORYFORLINKEDSTORAGE",
+		"_CHEST", "_INVCOS", "_GUILDCHEST",
+	}
+	for _, table := range siblings {
+		got, ok := OffsetOf(table, "Slot")
+		if !ok {
+			t.Errorf("%s.Slot has no offset", table)
+			continue
+		}
+		if got != 0x18 {
+			t.Errorf("%s.Slot is at 0x%x, want 0x18 -- the six siblings must agree", table, got)
+		}
+	}
+}
+
+// An offset set must be SPARSE. A dense near-consecutive run means a column
+// index was read instead, which is the defect that survived round 308 and the
+// first parse of round 309 -- both of which the no-duplicates check passed.
+func TestOffsetsAreSparseNotConsecutive(t *testing.T) {
+	byTable := map[string][]int{}
+	for _, c := range ColumnOffsets {
+		byTable[c.Table] = append(byTable[c.Table], c.Offset)
+	}
+	for table, offs := range byTable {
+		if len(offs) < 4 {
+			continue
+		}
+		lo, hi := offs[0], offs[0]
+		for _, o := range offs {
+			if o < lo {
+				lo = o
+			}
+			if o > hi {
+				hi = o
+			}
+		}
+		density := float64(len(offs)) / float64(hi-lo+1)
+		if density > 0.8 {
+			t.Errorf("%s: %d offsets spanning 0x%x..0x%x is density %.2f -- that is a "+
+				"column index, not a struct layout", table, len(offs), lo, hi, density)
+		}
+	}
+}

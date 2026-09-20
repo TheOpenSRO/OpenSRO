@@ -7075,6 +7075,70 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-ninth round: the structural check was too weak, and 18 offsets were wrong
+
+Round 308 published 409 column offsets and justified them with a structural
+check -- *no two columns of one table may share an offset* -- writing that
+"controls confirm the cases you thought of; a structure constrains the ones you
+did not". **The structure was too weak, and 18 of the 409 were wrong**, across
+eight tables.
+
+`_SiegeFortress` is the case that breaks it:
+
+	FortressID   off=0x0   code=24
+	GuildID      off=0x2   code=28
+	TaxRatio     off=0x3   code=32
+	Tax          off=0x4   code=40
+	...
+	IntroductionModificationPermission  off=0xa  code=101
+
+The left column is `0, 2, 3, 4 ... 10` -- a **column index**. The right is
+`24, 28, 32, 40, 48, 52, 56, 84, 100, 101`: ascending, with strides 4, 4, 8, 8,
+4, 4, **28**, 16, 1 -- a struct, including a 28-byte string for `Introduction`,
+the same width `_CHAR`'s names use. The offsets and the index had been swapped.
+
+**Neither guard caught it.** The `_CHAR` controls passed, because `_CHAR` was
+parsed correctly. The no-duplicates check passed, because **a column index has
+no duplicates either**. Round 308's rule -- take the more *distinct* of the two
+integers -- cannot separate them: an index is perfectly distinct.
+
+### The discriminator that does work
+
+An offset is distinct **and sparse**. A column index is a near-consecutive run,
+so its density (`distinct / (max - min + 1)`) approaches 1; a struct offset set
+is far sparser. `_CHAR` spreads 43 columns over `0x20..0xf2` -- density 0.20.
+`_SiegeFortress`'s index: 10 values over `0x0..0xa` -- density 0.91.
+
+Re-run: **409 offsets, zero duplicates, and all seven controls pass**, the two
+new ones being `_SiegeFortress` `FortressID` 0x18 and `Introduction` 0x38 --
+added precisely because they are the case the `_CHAR` controls could not see.
+A test now also fails any table whose offsets come out denser than 0.8.
+
+### Six columns resolved by agreement rather than by statistics
+
+The single-column binders (`_INVENTORY`, `_CHEST`, `_INVCOS`, `_GUILDCHEST` and
+two more) bind one column, `Slot`, so there is no distribution to test and the
+honest first answer was *unresolved*. They are settled a different way: **all six
+sibling functions bind `Slot` at `0x18` with code 2**. Six independent
+agreements, matching `db_columns.md`'s note that these tables reuse a sibling's
+schema.
+
+### What this says about controls
+
+Three parses of the same data now: the first two passed every control they had
+and were wrong. A control can only fail on a case someone already imagined, and
+both times the imagined case (`_CHAR`) was the one being parsed correctly. What
+found both defects was a property the data must have *in general* -- first
+uniqueness, then sparsity -- and the second only after the first proved
+insufficient. **The right response to a structural check passing is to ask what
+it cannot distinguish.**
+
+The second per-column code remains recorded and uninterpreted: it differs from
+the next-offset delta in 332 of 353 cases, so it is not a width, and no use-site
+has been read. `FUN_00862e40`, which round 308 called "commit the binding", is
+in fact a `std::map` lower_bound -- the binder is building a
+`map<string, {offset, code}>` and that call is its `operator[]`.
+
 ## Three-hundred-and-eighth round: the offsets, and a parse that passed its controls while being wrong
 
 Round 307 named every runtime column and left the other half of each binding

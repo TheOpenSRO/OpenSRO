@@ -557,11 +557,20 @@ type ColumnOffset struct {
 //   - CONTROLS. _CHAR Strength is 0x74 and RemainHwanCount 0x86, both recorded
 //     independently by earlier rounds from unrelated work, and PosX/PosY/PosZ
 //     land on 0x98/0x9c/0xa0.
-//   - STRUCTURE. No (table, offset) pair repeats anywhere in the 409, which a
-//     struct layout must satisfy and a mis-parse would not. The first extraction
-//     failed exactly this check: it took the FIRST assignment after each name as
-//     the offset, which put PosX/PosY/PosZ all at 0x5 because those three emit
-//     the two assignments in the opposite order.
+//   - STRUCTURE. No (table, offset) pair repeats anywhere in the 409.
+//
+// CORRECTED IN ROUND 309, and the correction is the useful part. Round 308 took
+// the more DISTINCT of the two integers as the offset. That is right for _CHAR
+// and wrong for _SiegeFortress, whose other variable is a dense column INDEX
+// (0, 2, 3, ... 10) and just as distinct -- so the no-duplicates check passed
+// while 18 of the 409 offsets were wrong, across 8 tables. The discriminator
+// that works is distinct AND SPARSE: an index is a near-consecutive run, so its
+// density (distinct / (max-min+1)) approaches 1, where a real struct offset set
+// is far sparser (_CHAR: 43 columns spread over 0x20..0xf2, density 0.20).
+//
+// The _CHAR controls passed throughout both wrong parses. _SiegeFortress
+// FortressID 0x18 and Introduction 0x38 are now controls too, precisely because
+// they are the case the _CHAR ones could not see.
 //
 // The binder also writes a second per-column code (2 for Strength, 1 for
 // CharName16, 0xa for LastLogout). It is deliberately NOT modelled here: it is
@@ -591,8 +600,8 @@ var ColumnOffsets = []ColumnOffset{
 	{"_BindingOptionWithItem", "nParam1", 0x30},
 	{"_BindingOptionWithItem", "nParam2", 0x34},
 	{"_BindingOptionWithItem", "nSlot", 0x21},
-	{"_BlockedWhisperers", "OwnerID", 0x0},
-	{"_BlockedWhisperers", "TargetName", 0x2},
+	{"_BlockedWhisperers", "OwnerID", 0x18},
+	{"_BlockedWhisperers", "TargetName", 0x1c},
 	{"_CHAR", "AppointedTeleport", 0xa4},
 	{"_CHAR", "AutoInvestExp", 0xa8},
 	{"_CHAR", "CharID", 0x20},
@@ -879,16 +888,16 @@ var ColumnOffsets = []ColumnOffset{
 	{"_ShopItemStockQuantity", "RefShopGroupCodeName", 0x20},
 	{"_ShopItemStockQuantity", "Service", 0x18},
 	{"_ShopItemStockQuantity", "StockQuantity", 0x5a},
-	{"_SiegeFortress", "CreatedDungeonCount", 0x9},
-	{"_SiegeFortress", "CreatedDungeonTime", 0x8},
-	{"_SiegeFortress", "FortressID", 0x0},
-	{"_SiegeFortress", "GuildID", 0x2},
-	{"_SiegeFortress", "Introduction", 0x7},
-	{"_SiegeFortress", "IntroductionModificationPermission", 0xa},
-	{"_SiegeFortress", "NPCHired", 0x5},
-	{"_SiegeFortress", "Tax", 0x4},
-	{"_SiegeFortress", "TaxRatio", 0x3},
-	{"_SiegeFortress", "TempGuildID", 0x6},
+	{"_SiegeFortress", "CreatedDungeonCount", 0x64},
+	{"_SiegeFortress", "CreatedDungeonTime", 0x54},
+	{"_SiegeFortress", "FortressID", 0x18},
+	{"_SiegeFortress", "GuildID", 0x1c},
+	{"_SiegeFortress", "Introduction", 0x38},
+	{"_SiegeFortress", "IntroductionModificationPermission", 0x65},
+	{"_SiegeFortress", "NPCHired", 0x30},
+	{"_SiegeFortress", "Tax", 0x28},
+	{"_SiegeFortress", "TaxRatio", 0x20},
+	{"_SiegeFortress", "TempGuildID", 0x34},
 	{"_SiegeFortressBattleRecord", "CharID", 0x1c},
 	{"_SiegeFortressBattleRecord", "CurRank", 0x38},
 	{"_SiegeFortressBattleRecord", "FortressID", 0x18},

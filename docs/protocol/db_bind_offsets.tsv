@@ -1,24 +1,31 @@
 # Column -> struct offset for every runtime table, from the 56 DB_Bind__<TABLE>
-# binders (round 308). Each binding is:
+# binders. Each binding is a name, then TWO integers, then a std::map lookup:
 #
-#     FUN_00401fc0("Strength", 8);   // the column name
-#     <offvar> = 0x74;               // the struct offset
-#     <typevar> = 2;                 // a second per-column code -- NOT settled
-#     FUN_00862e40();                // commit the binding
+#     FUN_00401fc0("Strength", 8);
+#     <a> = 0x74;   <b> = 2;
+#     FUN_00862e40();          // std::map lower_bound, i.e. operator[]
 #
-# CONTROLS, all exact: _CHAR Strength 0x74 and RemainHwanCount 0x86 (both recorded
-# independently by earlier rounds), and PosX/PosY/PosZ 0x98/0x9c/0xa0.
-# STRUCTURAL CHECK: no (table, offset) pair repeats across all 409 columns, which a
-# struct layout must satisfy and a mis-parse would not.
+# WHICH OF THE TWO IS THE OFFSET IS NOT FIXED BY SOURCE ORDER. Round 308 assumed
+# it was the first and got 18 of 409 wrong; round 309 assumed the more DISTINCT
+# one, which is right for _CHAR but wrong for _SiegeFortress, where the other
+# variable is a dense column INDEX (0,2,3,4..10) and equally distinct.
 #
-# The two assignments are NOT in a fixed source order -- PosX/PosY/PosZ emit them
-# reversed -- so the offset is identified per function as the variable whose values
-# are distinct across bindings (an offset cannot repeat; a type code does).
+# The discriminator that works: an offset is distinct AND sparse. A column index
+# is a near-consecutive run, so its density (distinct / (max-min+1)) approaches 1;
+# a struct offset's is far lower (_CHAR: 43 columns over 0x20..0xf2, density 0.20).
 #
-# The `code` column is recorded, NOT interpreted. It is not a width: sorting each
-# table by offset and taking deltas gives code 2 a width of 4 in only 71 of 121
-# cases and code 0 in 56 of 66, and codes 84, 100 and 1000 appear. A use-site must
-# settle it.
+# CONTROLS, all exact: _CHAR Strength 0x74, RemainHwanCount 0x86 (both recovered
+# independently by earlier rounds), PosX/PosY/PosZ 0x98/0x9c/0xa0, and
+# _SiegeFortress FortressID 0x18 / Introduction 0x38 -- the last two added because
+# the _CHAR controls alone passed while the parse was wrong.
+# STRUCTURAL: no (table, offset) pair repeats in the 409.
+#
+# The six `Slot` rows come from single-column binders, where there is no
+# distribution to test. They are resolved instead by agreement: all six sibling
+# container tables bind Slot at 0x18 with code 2, in six separate functions.
+#
+# `code` is RECORDED, NOT INTERPRETED. It is not a width -- it differs from the
+# next-offset delta in 332 of 353 cases. No use-site has been read.
 #
 # table	column	offset	code
 _ALLIEDCLANS	ID	0x18	0
@@ -43,8 +50,8 @@ _BindingOptionWithItem	nOptLvl	0x28	2
 _BindingOptionWithItem	nOptValue	0x2c	2
 _BindingOptionWithItem	nParam1	0x30	2
 _BindingOptionWithItem	nParam2	0x34	2
-_BlockedWhisperers	OwnerID	0x0	24
-_BlockedWhisperers	TargetName	0x2	28
+_BlockedWhisperers	OwnerID	0x18	0
+_BlockedWhisperers	TargetName	0x1c	2
 _CHAR	CharID	0x20	0
 _CHAR	Deleted	0x24	1
 _CHAR	RefObjID	0x28	1
@@ -322,16 +329,16 @@ _ShopItemStockQuantity	RefShopGroupCodeName	0x20	1
 _ShopItemStockQuantity	RefPackageItemCodeName	0x3c	1
 _ShopItemStockQuantity	ConstStockQuantity	0x58	1
 _ShopItemStockQuantity	StockQuantity	0x5a	2
-_SiegeFortress	FortressID	0x0	24
-_SiegeFortress	GuildID	0x2	28
-_SiegeFortress	TaxRatio	0x3	32
-_SiegeFortress	Tax	0x4	40
-_SiegeFortress	NPCHired	0x5	48
-_SiegeFortress	TempGuildID	0x6	52
-_SiegeFortress	Introduction	0x7	56
-_SiegeFortress	CreatedDungeonTime	0x8	84
-_SiegeFortress	CreatedDungeonCount	0x9	100
-_SiegeFortress	IntroductionModificationPermission	0xa	101
+_SiegeFortress	FortressID	0x18	0
+_SiegeFortress	GuildID	0x1c	2
+_SiegeFortress	TaxRatio	0x20	3
+_SiegeFortress	Tax	0x28	4
+_SiegeFortress	NPCHired	0x30	5
+_SiegeFortress	TempGuildID	0x34	6
+_SiegeFortress	Introduction	0x38	7
+_SiegeFortress	CreatedDungeonTime	0x54	8
+_SiegeFortress	CreatedDungeonCount	0x64	9
+_SiegeFortress	IntroductionModificationPermission	0x65	10
 _SiegeFortressBattleRecord	FortressID	0x18	0
 _SiegeFortressBattleRecord	CharID	0x1c	0
 _SiegeFortressBattleRecord	KillCount	0x20	2
