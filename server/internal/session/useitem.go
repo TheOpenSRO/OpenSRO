@@ -17,8 +17,22 @@ import (
 // Using a consumable. Until now potions dropped, stacked in the bag and did
 // nothing at all -- the one thing a potion is for was missing.
 const (
-	OpUseItem       uint16 = 0x0080 // client -> server
-	OpUseItemResult uint16 = 0x0081 // server -> client
+	// MOVED from 0x0080/0x0081 on 2026-09-20. Those were already
+	// OpPartyCreate/OpPartyCreateResult, taken a month earlier, and this pair
+	// collided with them.
+	//
+	// gateway.Chain offers a packet to EVERY handler, and each one decides by
+	// opcode whether it is theirs -- so a use-item request was processed twice:
+	// UseItemHandler consumed the berry and replied success, and the party
+	// handler then failed to read a party-create payload out of the same bytes
+	// and replied "malformed request". Both replies carried 0x0081, so the
+	// client displayed both: "it used the berry from my inventory but it took a
+	// second and it still said malformed request" (playtest 2026-09-20).
+	//
+	// Use-item moves because it is the newcomer -- party has held 0x0080 since
+	// 2026-08-19 and use-item took it on 2026-09-14.
+	OpUseItem       uint16 = 0x008a // client -> server
+	OpUseItemResult uint16 = 0x008b // server -> client
 )
 
 // UseItemRequest asks to consume one of whatever is in an inventory slot.

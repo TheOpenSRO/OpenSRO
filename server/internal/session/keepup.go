@@ -344,3 +344,43 @@ func firstSwingInReach(
 	}
 	return keepUpInReach(attacker.Pos, m, equippedWeaponRange(ctx, characterID, eq, items))
 }
+
+// skillInReach is firstSwingInReach for a cast: the same recovered test with
+// the SKILL's range instead of the weapon's.
+//
+// combat.EffectiveRange takes a skill range as its first argument and falls
+// back to the weapon's when the skill declares none, so a melee skill with
+// Action_Range 0 reaches exactly as far as the weapon in hand and a bow skill
+// reaches its own distance. Nothing here is new arithmetic -- the cast path
+// simply never called it, and resolved a skill at any distance at all
+// (playtest 2026-09-20).
+func skillInReach(
+	ctx context.Context,
+	sess *gateway.Session,
+	eq equipment.Store,
+	items combat.ItemLookup,
+	hub *world.Hub,
+	monsters *combat.Hub,
+	characterID, target int64,
+	skillRange int,
+) bool {
+	if hub == nil || monsters == nil {
+		return true
+	}
+	m, ok := monsters.Get(target)
+	if !ok || m.HP <= 0 {
+		return true // performAttack reports the real reason
+	}
+	attacker, ok := hub.EntityBySession(sess.ID())
+	if !ok {
+		return true
+	}
+	if attacker.Zone != m.Zone {
+		// Not a reach question, exactly as for a plain swing.
+		return true
+	}
+	dist := math.Hypot(attacker.Pos.X-m.X, attacker.Pos.Z-m.Z)
+	_, reach := combat.ApproachBand(combat.PlayerBCRadius, m.BCRadius,
+		combat.EffectiveRange(skillRange, equippedWeaponRange(ctx, characterID, eq, items)))
+	return combat.InReach(dist, reach)
+}

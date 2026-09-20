@@ -524,6 +524,9 @@ func UseSkillHandlerWithGround(
 		var reqWeapon1, reqWeapon2 int
 		// How many entries the skill puts in the list at CRefSkill+0x3a0. The
 		// weapon gate applies ONLY when this is zero -- see below.
+		// The skill's own Action_Range. Zero means "use the weapon's", which is
+		// exactly what combat.EffectiveRange does with it.
+		var skillRange int
 		var reqCastList int
 		var reqCastReqs []combat.CastRequirement
 		var reqCastAll bool
@@ -550,6 +553,7 @@ func UseSkillHandlerWithGround(
 		// outright: "The real number is what a player pays, so it wins."
 		if ref, err := skillRef.GetSkill(ctx, req.SkillID); err == nil && ref != nil {
 			castRow = ref
+			skillRange = ref.Range
 			cooldown = time.Duration(ref.ReuseDelayMs) * time.Millisecond
 			mpCost = ref.ConsumeMP
 			hpCost = ref.ConsumeHP
@@ -744,6 +748,22 @@ func UseSkillHandlerWithGround(
 				res.BerserkGauge = int32(zerk.Gauge(characterID))
 				res.BerserkActive = zerk.Active(characterID)
 			}
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
+		}
+
+		// THE SKILL'S OWN REACH. A cast was resolved at any distance at all --
+		// "when i use a skill on a monster even from far away, it still uses
+		// the skill. no distance checking" (playtest 2026-09-20).
+		//
+		// This is the SAME recovered test a plain swing uses, given the skill's
+		// range instead of the weapon's: combat.ApproachBand's reach is
+		// casterBC + targetBC + range with the +2 slack, and
+		// combat.EffectiveRange already takes a skill range as its first
+		// argument and falls back to the weapon's when the skill declares none
+		// (Action_Range, refdata.Skill.Range). Nothing here is new arithmetic;
+		// the skill path simply never called it.
+		if !skillInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange) {
+			res := &AttackResult{MonsterID: req.TargetMonsterID, Error: "too far away"}
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
 		}
 

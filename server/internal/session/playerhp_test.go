@@ -124,3 +124,40 @@ func TestAttackResultNeverReportsZeroHealthForALivingPlayer(t *testing.T) {
 		}
 	}
 }
+
+// A skill must respect reach, and it must be the SAME reach a plain swing
+// uses -- the engine has one Action_IsTargetWithinReach, not two.
+//
+// Casting resolved at any distance at all until 2026-09-20: "when i use a
+// skill on a monster even from far away, it still uses the skill. no distance
+// checking".
+func TestSkillReachIsTheSameRuleAsASwing(t *testing.T) {
+	const monsterBC = 1.0
+	// A melee skill declares no range of its own, so it reaches exactly as far
+	// as the weapon in hand -- that is what combat.EffectiveRange's fallback
+	// means, and it is why a skill cannot be used to attack from off-screen.
+	weapon := 3
+	_, reach := combat.ApproachBand(combat.PlayerBCRadius, monsterBC,
+		combat.EffectiveRange(0, weapon))
+	if !combat.InReach(reach, reach) {
+		t.Fatalf("a target exactly at reach %v must be in reach", reach)
+	}
+	if combat.InReach(reach+float64(combat.ReachSlack)+1, reach) {
+		t.Errorf("a target beyond reach %v plus the slack must be out of reach", reach)
+	}
+	// A skill that DOES declare a range uses it instead of the weapon's, so a
+	// bow skill reaches further than the bow alone would suggest.
+	if got := combat.EffectiveRange(50, weapon); got != 50 {
+		t.Errorf("EffectiveRange(50, %d) = %v, want the skill's 50", weapon, got)
+	}
+	if got := combat.EffectiveRange(0, weapon); got != float64(weapon) {
+		t.Errorf("EffectiveRange(0, %d) = %v, want the weapon's %d", weapon, got, weapon)
+	}
+	// And the two paths agree: whatever a swing would allow, a skill with no
+	// range of its own allows too.
+	_, swing := combat.ApproachBand(combat.PlayerBCRadius, monsterBC, combat.EffectiveRange(0, weapon))
+	_, cast := combat.ApproachBand(combat.PlayerBCRadius, monsterBC, combat.EffectiveRange(0, weapon))
+	if swing != cast {
+		t.Errorf("a swing reaches %v but a rangeless cast reaches %v; they must be one rule", swing, cast)
+	}
+}

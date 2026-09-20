@@ -1305,7 +1305,22 @@ func _try_initialize_pk2_ui() -> void:
 			_fire_gm_probe()
 			_hint_help_once())
 	NetClient.attack_result.connect(func(result) -> void:
-		if result != null and _last_enter_world_max_hp > 0:
+		# A REFUSAL CARRIES NO HEALTH. "too far away", "skill on cooldown",
+		# "target not found" and a dozen others are AttackResults with only an
+		# error string set, so player_hp is the int32 zero value -- and painting
+		# the bar from it said the player was dead. That is the real shape of
+		# "when i click a mangyang ... my health shoots all the way down to 0"
+		# (playtest 2026-09-20): the refusal, not the blow, emptied the bar.
+		#
+		# Only a result that actually reports health may move the bar. Death is
+		# unaffected: a real death is a successful result whose player_hp is 0
+		# and whose monster/attack fields are filled in.
+		if result != null and result.error != "":
+			# Say why. A refused swing or cast used to do nothing visible at
+			# all, so "no distance checking" and "nothing happened" looked the
+			# same from the outside.
+			_log_system(result.error)
+		if result != null and result.error == "" and _last_enter_world_max_hp > 0:
 			if _hud_player_info != null:
 				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
 				_hud_player_info.set_berserk(result.berserk_gauge, result.berserk_active)

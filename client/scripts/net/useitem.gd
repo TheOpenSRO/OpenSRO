@@ -6,8 +6,15 @@ class_name UseItemNet
 ## each Param value beside its own label ("HP..." / "MP..."), so a small potion
 ## gives 120 and a large one 370.
 
-const OP_USE_ITEM := 0x0080   # client -> server
-const OP_RESULT := 0x0081     # server -> client
+## MOVED from 0x0080/0x0081 on 2026-09-20: those are PartyNet.OP_CREATE and its
+## result, held since a month earlier, and this pair collided with them. The
+## server offers a packet to every handler, so a use-item request was handled
+## twice -- the item was consumed and a success sent, then the party handler
+## failed to read a party-create payload from the same bytes and answered
+## "malformed request", and both replies carried 0x0081 so the client showed
+## both.
+const OP_USE_ITEM := 0x008a   # client -> server
+const OP_RESULT := 0x008b     # server -> client
 
 ## What the item did. hp/mp are the values *after* using it, so both bars can
 ## be redrawn without asking for stats again.
