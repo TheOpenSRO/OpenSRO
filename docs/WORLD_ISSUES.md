@@ -7075,6 +7075,49 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-twenty-second round: a composite item is a premium item with a use count
+
+Round 321's sweep left two bounded unread regions. One turned out to be closed
+already -- the academy's "third branch, NOT read" has a heading directly above
+it in the same file recording that it is a refusal, so the append-only log
+answers itself. The other is the note about three "created functions profiled
+but not read": `0x00515340` guild, `0x004ae0c0` storage, `0x00511640` premium.
+
+**`0x00515340` was already named** `GObjPC_HandleGuildMsg_0f1`, so the note was
+two-thirds stale before this round started.
+
+### The premium one, read
+
+`0x00511640` handles client message `0x15f` and replies `0xb15f`:
+
+	entry = GObjPC::FUN_0049a2f0(0x55494c31, ...)   ; keyed search of the list at +0xc
+	if !CTJ_CompositeItemKeeper::FUN_00653f70():
+	        refuse 0x18c6 UIIT_MSG_PREMIUM_USE_OVER
+	if keeper->slot_0x1c(request) == 1:
+	        CTJ_CompositeItemKeeper::FUN_00653f20()
+	        reply 0xb15f
+
+**A "composite item" is a premium item with a bounded number of uses**, and the
+engine says so in its own words rather than by inference: `igobj_vtable.md`
+already holds slots 177-180 as `IsQuestByCompositeItem`,
+`UseQuestByCompositeItem`, **`GetRemainCountOfQuestByCompositeItem`** and
+**`GetMaxCountOfQuestByCompositeItem`**. A remaining/max pair, exhausted into
+`PREMIUM_USE_OVER`.
+
+Two pieces that were already in the repo -- the vtable slot names and the error
+string -- did the work; reading the handler joined them.
+
+**The "premium" label was assigned by profile and turns out right**, which is
+worth saying either way: the refusal string is what settles it, not the profile.
+
+### What stays open, precisely
+
+- the key `0x55494c31`'s meaning;
+- `CTJ_CompositeItemKeeper`'s tick body, one of the eleven `timed_jobs.md` lists;
+- `0x004ae0c0`, now **characterised rather than read**: client opcode `0x7034`,
+  refuses `0x1812 STRGERR_LOCKED_BY_OTHER_ONE`, and its other three codes
+  (`0x1bfc`, `0x103e`, `0x103c`) are absent from `error_codes.md` entirely.
+
 ## Three-hundred-and-twenty-first round: sweeping for cheap unread regions, and the gate surcharge is the fortress tax
 
 Round 320's win came from a doc naming a **bounded** unread region with an

@@ -5968,6 +5968,26 @@ meaning off a position is what characterdata column 79 punished twice. Also
 corrected: the page's FUN_00486390(fee, 0) signature is the decompiler's guess;
 the callee takes the object in EAX and the actor in EBX with no stack arguments.
 
+Round 322 (1 name, a model recovered): A COMPOSITE ITEM IS A PREMIUM ITEM WITH A
+USE COUNT. Round 321's sweep left two bounded regions; one was already closed
+(the academy "third branch" has a heading above it in the same file recording it
+as a refusal -- the append-only log answering itself), and of the three "created
+functions profiled but not read", 0x00515340 was already named
+GObjPC_HandleGuildMsg_0f1, so the note was two-thirds stale. Read the premium
+one: 0x00511640 handles client 0x15f / reply 0xb15f, finds an entry by key
+0x55494c31 in the object's list at +0xc, asks CTJ_CompositeItemKeeper::FUN_00653f70
+whether the item may still be used (false -> refuse 0x18c6
+UIIT_MSG_PREMIUM_USE_OVER), and commits through FUN_00653f20 only when the
+keeper's slot 0x1c returns 1. Filed as GObjPC_HandleCompositeItemMsg_15f. The
+MODEL comes from two things already in the repo, joined by the read:
+igobj_vtable.md slots 177-180 (IsQuestByCompositeItem, UseQuestByCompositeItem,
+GetRemainCountOfQuestByCompositeItem, GetMaxCountOfQuestByCompositeItem -- a
+remaining/max pair) and the error string. The "premium" label had been assigned
+by profile and proves right, settled by the refusal string rather than by the
+profile. Still open: the key 0x55494c31, the keeper's tick body, and 0x004ae0c0,
+now characterised (client 0x7034, refuses 0x1812 STRGERR_LOCKED_BY_OTHER_ONE,
+three further codes absent from error_codes.md) rather than read.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.
@@ -14823,7 +14843,7 @@ the name and settles it.
 validator's neighbour reads as disband, but it answers on two opcodes and the
 validator is unread: one piece of evidence, not two. Recorded as the obvious open
 item, along with the three non-academy created functions (`0x00515340` guild,
-`0x004ae0c0` storage, `0x00511640` premium), which were profiled but not read.
+`0x004ae0c0` storage, `0x00511640` premium), which were profiled but not read. **Round 322 read the premium one** -- `GObjPC_HandleCompositeItemMsg_15f`, and the profile-based label proves correct: its refusal is `0x18c6 UIIT_MSG_PREMIUM_USE_OVER`. `0x00515340` was already named `GObjPC_HandleGuildMsg_0f1`; `0x004ae0c0` is characterised (client opcode `0x7034`, refuses `0x1812 STRGERR_LOCKED_BY_OTHER_ONE`) but not read.
 
 ## The client's handler table joins the two binaries by message (2026-09-17)
 

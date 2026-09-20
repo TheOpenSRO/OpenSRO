@@ -174,3 +174,35 @@ That is a design fact worth having before building a third ad-hoc timer.
 - **What slot 17 counts** at the end of the penalty-points countdown. It gates
   the 48-hour re-arm, so it is "points still owed", but it is not read.
 - **The `_TIMEDJOB` and `_TIMEDJOBFORPET` column layouts**, beyond their arity.
+
+
+## `CTJ_CompositeItemKeeper`: a premium item with a bounded number of uses (round 322)
+
+One of the three "created functions profiled but not read" is `0x00511640`, the
+handler for client message `0x15f` (reply `0xb15f`). Read:
+
+	entry = GObjPC::FUN_0049a2f0(0x55494c31, ...)   ; keyed search of the object's list at +0xc
+	if !CTJ_CompositeItemKeeper::FUN_00653f70():
+	        refuse 0x18c6 UIIT_MSG_PREMIUM_USE_OVER
+	if keeper->slot_0x1c(request) == 1:
+	        CTJ_CompositeItemKeeper::FUN_00653f20()  ; commit
+	        reply 0xb15f
+
+**So a "composite item" is a premium item with a bounded number of uses**, and
+the engine spells the model out in its own words on the IGObj vtable
+(`igobj_vtable.md` slots 177-180): `IsQuestByCompositeItem`,
+`UseQuestByCompositeItem`, **`GetRemainCountOfQuestByCompositeItem`** and
+**`GetMaxCountOfQuestByCompositeItem`** -- a remaining/max pair, with
+`PREMIUM_USE_OVER` as the refusal when the remaining count runs out.
+
+That the refusal is a **premium** string is what settles the earlier note's
+"premium" label, which had been assigned by profile rather than by reading.
+
+**Not read**: the meaning of the key `0x55494c31`, and the keeper's own tick
+body -- it is one of the eleven this page still lists as unread.
+
+**The other two of the three.** `0x00515340` is already named
+`GObjPC_HandleGuildMsg_0f1`. `0x004ae0c0` is storage, which its refusal
+`0x1812 UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE` confirms, on client opcode
+`0x7034`; its other three codes (`0x1bfc`, `0x103e`, `0x103c`) are not in
+`error_codes.md` at all. It is characterised, not read, and stays on the list.
