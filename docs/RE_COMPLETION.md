@@ -6266,6 +6266,46 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 336 (the sender lever: 4 names, and the 55 ambition closed honestly): THE
+LAST USE-SITE LEFT FOR THE 55 PLACEHOLDER-NAMED HANDLERS IS WHO SENDS THE
+REQUEST. Round 328 named 0x51d that way (CIF_NPCTalk sends it), so this built the
+table properly: every CMsgStreamBuffer_Construct(<opcode>) / Net_SendRequestPacket
+site in the client dump, attributed to its enclosing function. **154 request
+opcodes, filed as docs/protocol/client_senders.tsv**, validated against two
+senders read by hand earlier -- 0x751d is CIF_NPCTalk and 0x704c the already-named
+SendItem_HandleUseItem pair, both exact. THE SENDER FUNCTIONS THEMSELVES ADD
+NOTHING: a previous round already named them after the handlers, so 0x70f1's
+sender is SendGuildMsg_0f1 -- the same placeholder, mirrored. THE SENDING CLASS
+IS THE SIGNAL, because it is the UI WINDOW that raises the request. AND ROUND
+331'S LESSON APPLIES DIRECTLY: a class attribution is not a name when the class
+does many things. UI_ALCHEMYBOX taught that as a registrar; here it is measured
+-- CIF_NPCTalk sends TWELVE opcodes and UI_SILKMALL eleven, so their names
+attribute a subsystem and nothing more. 23 of 38 sending classes send exactly
+one. THE RULE USED REQUIRED BOTH DIRECTIONS -- the class sends only that opcode
+AND the opcode is sent only from that class -- which holds for 11 handlers; the
+first, looser version wrongly admitted 0x046, which has three senders. THE
+CONTROL IS WHAT MAKES IT CREDIBLE: six of the eleven merely restate a subsystem
+the handler name already carried, and **all eleven agree** -- CNIFSummonPartyUserWnd
+against ...SummonPartyUserMsg_51c, CIFGuildSummonReq against ...GuildSummonReqMsg_031.
+A lever that reproduces six known answers is trustworthy on the rest. BUT THE
+YIELD IS TWO, NOT 55: only 0x0ff and 0x112 have a class that names an ACTION the
+placeholder lacked -- CIFGuildPositionGrant and NIFHostileGuild. Both pairings
+verified by reply emission (each emits its own 0xb|i and nothing else), so both
+sides were named: Guild_HandleGrantPosition_0ff / Guild_OnGrantPositionResult and
+Guild_HandleHostileGuild_112 / Guild_OnHostileGuildResult, applied to both
+binaries (the server pair needed the applier's `force` column, since replacing a
+placeholder is exactly what force is for). THE VERB IS NOT CLAIMED for 0x112:
+NIFHostileGuild names the feature, not whether the message declares, cancels or
+queries. **THE 55 AMBITION IS CLOSED**: across three rounds the error codes gave
+9 fingerprints and 0 names, and the senders give 11 confirmations and 2 names.
+What remains is that a placeholder already encodes the subsystem, and both levers
+mostly return the subsystem -- so the rest need reading, one at a time, which is
+a cost this now has a number for rather than a hope.
+
+**What moved:** no shipped value. A new artifact (client_senders.tsv, 154
+opcodes), 2 placeholder handler names promoted to real ones and 2 client
+counterparts named, all four applied.
+
 Round 335 (a naming lever closed as a measured negative, and 14 emitters found
 on the way): ROUND 334 ENDED WITH 55 CLIENT HANDLERS BLOCKED BECAUSE THE SERVER
 NAME IS ITSELF A PLACEHOLDER -- GObjPC_HandleGuildMsg_0fb is a subsystem and an
