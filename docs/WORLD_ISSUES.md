@@ -7075,6 +7075,38 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-first round: the error vocabulary, swept back into the server
+
+Round 300 closed a three-round question in one command: `HGPFULL_NODRINK` is in neither
+binary, so grepping the **code** `0x18b3` found its single emitter and that was the feed path.
+That is a lever, and this round measured it.
+
+**The sweep.** Every code in `error_codes.md` taken back through the server dump: 605 codes,
+489 appear, and **294 are emitted by exactly one function** -- 146 already named, **148 still
+`FUN_`**. Grouped by function, that is 144 functions, 75 of them unnamed, in
+`docs/protocol/error_emitters.tsv`.
+
+**The control, and a probe that had to be fixed first.** Measuring the 146 named emitters
+against their messages scored **11 %** -- and the number was wrong. The tokeniser split
+`UIIT_MSG_FLEAMARKET_ERR_NOT_ENOUGH_GOLD` on underscores but left
+`CFleaMarket__SellFMarketItem` whole, so a perfect semantic match shared no token. Splitting
+CamelCase took it to **58.9 %**. An 11 % result would have thrown away a working lever, and it
+is the third time this session a number had to be checked before it could be believed.
+
+**And 58.9 % is a floor, not the agreement.** The remaining "misses" are mostly right:
+`CanBeEquipedAt` raising `HIGHER_STRENGTH_REQUIRED`, `CheckCanUse` raising
+`CANT_PETSUM_HIGHLEVEL`, `OfferItemToPartner` raising `NOT_ENOUGH_OPPONENT_INV_SPACE`. The
+message names the **refusal**, not the function.
+
+**So it attributes and does not name** -- the same verdict the file-attribution lever got in
+round 282, and for the same reason. Turning 148 refusals into 148 names would be exactly the
+fabrication `naming_ceiling.md` records the one-part log label nearly causing.
+
+**The value is the grouping.** 35 unnamed functions raise more than one code, and the
+convergence says what they do: `004a9050` raises both `CANNOT_BE_PICKED` refusals, `00617360`
+the three currency ones, `00617f70` both `DEALER_DONT_TREAT_*`. That is a reading list with the
+subject already attached.
+
 ## Three-hundredth round: the hunger gauge, and the tie was an error code rather than a string
 
 Round 299 found a pet gauge with a capacity, a threshold and a penalty, and refused to call it

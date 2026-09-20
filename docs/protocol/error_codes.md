@@ -93,6 +93,45 @@ The remaining ~29 either `break` without emitting a message, or `goto` into the
 middle of another case's block *after* its push, where no string can be
 attributed to them.
 
+## The other half: which server function raises each code (round 301)
+
+This page maps a code to the **client's** name for it. The server side -- *which
+function returns that number* -- is `docs/protocol/error_emitters.tsv`, swept by
+taking each code in the table below and finding its enclosing functions in the
+server dump.
+
+| | |
+|---|---:|
+| codes in the table | 605 |
+| appearing anywhere in the server dump | 489 |
+| emitted by **exactly one** function | **294** |
+| ...whose emitter is already named (the control) | 146 |
+| ...whose emitter is still `FUN_` (the yield) | **148** |
+
+**It attributes; it does not name.** Controlling on the 146 whose emitter is
+already named, only **58.9 %** share a word with the message. Inspection shows
+most of the remainder are right anyway -- `CanBeEquipedAt` raising
+`HIGHER_STRENGTH_REQUIRED`, `CheckCanUse` raising `CANT_PETSUM_HIGHLEVEL`,
+`OfferItemToPartner` raising `NOT_ENOUGH_OPPONENT_INV_SPACE` -- so 58.9 % is a
+floor on a semantic relation rather than a measure of one. The message names the
+**refusal**, not the function, and turning 148 of them into names would repeat
+the mistake `naming_ceiling.md` records for the one-part log label.
+
+**The measurement needed fixing before it could be believed.** The first pass
+scored **11 %**, because the tokeniser split `UIIT_MSG_FLEAMARKET_ERR…` on
+underscores but left `CFleaMarket__SellFMarketItem` whole. Splitting CamelCase
+took it to 58.9 %. An 11 % result would have discarded a working lever.
+
+**Where the value is: the grouping.** 35 of the unnamed functions raise more than
+one code, and several refusals converging on one address say what it does --
+`004a9050` raises both `CANNOT_BE_PICKED` refusals, `00617360` the three
+currency ones (`NOT_ENOUGH_COIN`, `ARENA_NOT_ENOUGH_COIN`,
+`NOT_ENOUGH_SILK_TO_BUY_ITEM`), `00617f70` both `DEALER_DONT_TREAT_*`.
+
+Round 300 is what suggested this: `HGPFULL_NODRINK` is in neither binary, and
+grepping the server for its **code** found the one emitter and settled a
+three-round question in a single command.
+
 ## The table
 
 | code | message name |

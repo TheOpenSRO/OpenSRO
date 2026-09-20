@@ -5517,6 +5517,20 @@ as unrecoverable. CAVEAT recorded: the feed is CASE 9 of vtable slot 327,
 which this project named SetEngagedCOSforOpenMarket BY PROPAGATION; the
 function is a multi-case dispatcher and the propagated name describes one
 case, so propagation can get the function right and the meaning wrong.
+Round 301 (docs + an artifact): THE ERROR VOCABULARY SWEPT BACK INTO THE
+SERVER, the lever round 300 stumbled on. 605 codes, 489 appear in the dump,
+294 emitted by EXACTLY ONE function -- 146 named (the control), 148 still
+FUN_. Grouped: 144 functions, 75 unnamed, in docs/protocol/error_emitters.tsv.
+CONTROL: 58.9 % of named emitters share a word with their message, and that is
+a FLOOR -- CanBeEquipedAt raising HIGHER_STRENGTH_REQUIRED shares no token and
+is plainly right. So it ATTRIBUTES and does not name, the same verdict the
+file-attribution lever got in 282. The first measurement said 11 % and was
+wrong: the tokeniser split the message on underscores but left
+CFleaMarket__SellFMarketItem whole, so CamelCase had to be split -- third time
+this session a number needed checking before it could be believed. The value
+is the grouping: 35 unnamed functions raise more than one code, and the
+convergence names their subject (004a9050 both CANNOT_BE_PICKED refusals,
+00617360 the three currency ones, 00617f70 both DEALER_DONT_TREAT_*).
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
