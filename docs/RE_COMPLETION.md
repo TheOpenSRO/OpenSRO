@@ -6266,6 +6266,38 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 333 (a standing guard against the failure of the last two rounds):
+BOTH TIMES A MECHANIC WAS RECOVERED, IMPLEMENTED AND LEFT UNCALLED, IT WAS
+FOUND BY ACCIDENT. mana.RegenPerTick had no caller until a player reported that
+health never came back; the real drop tables sat behind ONE field from
+2026-09-15 to 2026-09-20 while every kill rolled the placeholder. THE SIGNATURE
+IS MECHANICAL -- an internal package nothing outside itself imports -- SO IT IS
+NOW A TEST. `internal/systems/unwired_test.go` walks the module and requires
+every such package to be declared with a reason. MEASURED: 14 of 55 internal
+packages have no non-test importer. THIRTEEN ARE HONEST PARKING and say so in
+their own package docs -- arena opens "srrevamp has no arena", siege "is not
+about to grow one", statuseffect "this is the spec for one" -- which is a
+legitimate thing for this project to hold: recovered rule sets with no system to
+attach to. The probe was expected to find bugs and mostly found discipline. THE
+ONE EXCEPTION IS `ai`: 1,187 lines, "recovered whole", no disclaimer, and it is
+the open TODO "Monsters do not move, chase or notice anyone". ITS PACKAGE DOC
+NOW SAYS SO. The gap is not the rules -- states, threat table and detection
+radii are all correct -- it is that there is NO RUNTIME: no monster tick, and no
+monster-initiated attack at all, because the counterattack is a synchronous
+reply inside the player's own attack handler. That is a multi-tick feature with
+a client half, and it was NOT started here rather than started badly. THE PROBE
+CHECKS ITSELF: a third test fails if the walk reports no unimported packages or
+all of them, because a confident empty diff from a broken walk is exactly how
+this project has been fooled before; and the parked list is held from both sides,
+so an entry that gets wired must be removed. Both directions were verified by
+breaking them on purpose. THE CACHE CAVEAT IS WRITTEN INTO THE FILE: this test
+reads .go files at runtime, the same thing that hid a failure in this package
+for eleven rounds, so it carries the `-count=1` warning at the top.
+
+**What moved:** no shipped value. A guard, an inventory of what is recovered but
+not shipped, an honest NOT-WIRED note in `internal/ai`, and `docs/TODO.md`'s drop
+entry narrowed to what round 332 actually left open (data, not code).
+
 Round 332 (a shipped value grounded, and a green suite that was not green):
 THE REAL DROP TABLES ARE WIRED, AND THE BLOCKER WAS ONE FIELD. Five rounds of
 protocol work had not touched the other half of the goal -- srrevamp's own

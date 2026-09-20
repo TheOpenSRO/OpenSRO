@@ -1,6 +1,20 @@
 // Package ai holds the monster AI state machine, recovered whole from
 // SR_GameServer.exe.
 //
+// NOT WIRED, and that is a GAP rather than a decision. Nothing outside this
+// package's own tests imports it. The states, the threat table and the
+// detection radii are all here and correct; what does not exist is a runtime to
+// drive them -- there is no monster tick, and no monster-initiated attack at
+// all (the counterattack in session/combat.go is a synchronous reply inside the
+// player's own attack handler, so a monster only ever acts when struck). This
+// is the open TODO "Monsters do not move, chase or notice anyone".
+//
+// Said here because two mechanics have already been recovered, implemented,
+// tested and left uncalled for weeks -- the HP/MP regen rule and the real drop
+// tables -- and both were found by accident rather than by anything in the
+// code saying so. internal/systems' unwired_test.go now holds this package to
+// that statement.
+//
 // Everything in this file was read out of the binary. The sixteen states are
 // not a guess at what a monster AI should have: each one is a compiled C++
 // class with its own vtable, and each declares its own id in vtable slot 1 as a

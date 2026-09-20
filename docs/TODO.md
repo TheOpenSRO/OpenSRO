@@ -85,9 +85,15 @@ In order. Each is checked off here when it ships in a release, with its round in
       drop paths are relative to `res\` (`Res\Item\Etc\drop_ch_money_large.bsr` exists, measured with
       pk2list); the client tried the bare path first and logged every miss before the `res\` retry drew
       the pile. It now tries `res\` first, so only a real miss is logged.
-- [ ] **Drop content is still the placeholder table.** The mechanic is real (round 207); the per-monster
-      tables are DB-only and in no archive we have (`smc.bak` is the manager DB). An operator with the
-      shard DB supersedes it via `import-refdata -drops-csv/-drop-groups-csv`.
+- [ ] **Drop content is the placeholder table only when an operator has no drop data.** Narrowed in
+      round 332 (2026-09-20): a kill now rolls the REAL `_RefMonster_AssignedItemRndDrop` /
+      `_RefDropItemGroup` tables through the engine's own arithmetic whenever rows exist for that
+      monster, and falls back to the placeholder otherwise. The wiring was one field —
+      `combat.Monster.RefObjID` — which `cmd/server`'s `monsterSpec` had carried since 2026-09-19
+      without passing it down; the loaders, the store and the recovered roll had all existed since
+      2026-09-15. What is left is DATA, not code: the per-monster tables are DB-only and in no
+      archive we have (`smc.bak` is the manager DB), so an operator with the shard DB supplies them
+      via `import-refdata -drops-csv/-drop-groups-csv`.
 - [ ] **Guild points and levels.** Read in round 272: a guild's points are the skill points its
       members earn (1:1, batched at 10 per member, credited to the guild total and the member's
       contribution); the level-up costs are already in `guild.LevelUpCost`. srrevamp's guild has no
