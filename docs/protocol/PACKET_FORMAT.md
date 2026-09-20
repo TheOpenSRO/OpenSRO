@@ -367,7 +367,7 @@ A handler about to refuse first does:
 That is `MsgBuf_ReadRemaining` inlined, and it is a **discard, not a read**:
 consume whatever is left so the unread payload cannot trip a later bounds check,
 then send the refusal. `Item_HandleUseItem` does it at four refusal paths and
-`GObjPC_HandleOpenAlchemyAtNpcMsg_51d` at two more, each immediately before a
+handler `0x51d` (`FUN_0051c050`) at two more, each immediately before a
 `Msg_SendTwoFieldReply` with an error code.
 
 **Cursor writes are therefore not evidence of payload reads.** Counting them is

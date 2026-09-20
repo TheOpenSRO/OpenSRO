@@ -6134,10 +6134,13 @@ then assigns each handler, asserting the slot still holds the thunk so no opcode
 registers twice. 2048 entries x 8 bytes IS WHY THE DISPATCHER MASKS 0x7ff.
 server_handlers.tsv WAS 162, IS 163: slot 0x51d was clipped because it is the
 LAST registration in the installer -- the round-315 truncation trap again, in a
-different tool. It is GObjPC_HandleOpenAlchemyAtNpcMsg_51d: the client's ONLY
-sender of 0x751d is CIF_NPCTalk and its ONLY handler of 0xb51d is UI_ALCHEMYBOX,
-and the server side resolves an object by id and range-checks it at 0x146 --
-the alchemy reading rests on the client, as the server names nothing. THE
+different tool. [**THE NAME GIVEN HERE WAS WRONG AND IS RETRACTED IN ROUND 331.**
+The claim was "its ONLY handler of 0xb51d is UI_ALCHEMYBOX". That function is the
+client's REGISTRATION function, which binds ~50 opcodes across every subsystem,
+and its module attribution says nothing about any one of them. The real handler
+is FUN_0089a760, unnamed. Slot 0x51d is back to FUN_0051c050. What survives: the
+client's only SENDER of 0x751d is CIF_NPCTalk, and the server resolves an object
+by id and range-checks it at 0x146.] THE
 INDEX->OPCODE RULE NOW HAS THREE INDEPENDENT CONFIRMATIONS: idx 76 against the
 0xb04c replies inside that very handler, idx 52 against the client's known
 0x7034, and idx 0x51d against the client sending 0x751d and handling 0xb51d.
@@ -6231,6 +6234,44 @@ mismatches**. The `agreement` column distinguishes `exact` (81) from
 selector with ten client variants behind it), `server-only` and `client-only`.
 Coverage went DOWN from round 329's claimed 133 to a defensible 110, which is the
 correct direction when the claim was not defensible.
+
+Round 331 (1 RETRACTION, 1 table completed, 0 names): I NAMED A HANDLER FROM A
+REGISTRATION FUNCTION'S MODULE, AND THIS REPO HAD ALREADY WRITTEN DOWN WHY THAT
+IS WRONG. Round 328 called slot 0x51d GObjPC_HandleOpenAlchemyAtNpcMsg_51d
+because "its ONLY handler of 0xb51d is UI_ALCHEMYBOX". It is not a handler: the
+client binds every reply as a three-line {opcode, handler} pair passed to a
+registrar, and UI_ALCHEMYBOX::FUN_008a4010 is the REGISTRAR, binding ~50 opcodes
+across every subsystem. Its module attribution says nothing about any one of
+them. THE REAL HANDLER IS FUN_0089a760, unnamed. Slot 0x51d is back to
+FUN_0051c050 in server_handlers.tsv. What survives: the client's only SENDER of
+0x751d is CIF_NPCTalk, and the server resolves an object by id and range-checks
+it at 0x146 -- neither of which names the action, so it gets no name. THE ENTRY
+AT 2026-09-17 ALREADY SAID SO, excluding "attribution-only names such as
+UI_ALCHEMYBOX::FUN_008a4010" by name. SECOND TIME IN FOUR ROUNDS I RE-DERIVED
+DOCUMENTED WORK: the client registration table is docs/protocol/message_handlers.tsv,
+318 rows since 2026-09-17, and I rebuilt it from scratch. The docs probe was too
+narrow both times -- I grepped prose for "client dispatch" where the doc says
+"registration" and the artifact is a .tsv. LIST docs/protocol FIRST; the file
+names are the index. THE ACCIDENT WAS WORTH SOMETHING: two independent parses of
+the same table agree on every row but three, and EACH CAUGHT WHAT THE OTHER
+MISSED -- mine skipped handlers written `(code *)&DAT_xxxx` (0x3076, 0x30a6),
+the original missed 0x0ffc. message_handlers.tsv is now 319 rows with 102 stale
+LAB_ symbols refreshed to the names those addresses now carry, and
+server_handlers.tsv's client column re-synced from it (47 cells). A LEVER FOUND
+AND DELIBERATELY NOT SPENT: the reply handlers in this family all end in
+FUN_00778190(category, code, ...), which tail-calls UI_SILKMALL::FUN_007b8b40 --
+the 643-case error dispatcher error_codes.md is built from. THE FIRST ARGUMENT IS
+THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
+0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
+client handlers by subsystem systematically. Not attempted here, because the
+lesson of this round is that half-doing it is how the last one went wrong.
+
+**What moved:** no shipped value, and one published name withdrawn.
+`message_handlers.tsv` 318 -> 319 rows, symbols refreshed. An open question
+flagged rather than answered: a naive count says 101 unnamed client handlers sit
+opposite a server handler with a real name, but the 2026-09-17 entry measured the
+transferable set at **4** under stricter rules. The two counts need reconciling
+before any of them is used to name anything.
 
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
