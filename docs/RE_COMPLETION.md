@@ -5479,6 +5479,19 @@ and Robber, never Hunter; _DeleteOldTrijobData's single argument comes from
 the object's +0x18, so its age threshold is data, not a constant. The first is
 the useful shape: an argument that sits beside a known enum, is fed from that
 enum's own field, and is still not that enum.
+Round 298 (docs): SWEPT every "Not recovered" bullet in docs/protocol -- 13
+pages, 46 bullets -- after 297 found one stale by accident. THREE were stale
+and all three contradicted their own page: academy.md's three 24-hour windows
+(its own section gives 86,400 s for ids 8/9 and 259,200 s for id 10),
+party.md's "other flag bits" (its flags section reads bit 1 as item sharing),
+and alchemy.md's ref-record offset (its §1 gives the tier-dependent strided
+array at 0x2a0). Each struck with the answer and a pointer to the section that
+had it. ONE looked stale and was not: guild.md's "what maintains guild+0x44"
+is a different question from the section naming that field the hostile count,
+which itself says no writer was found -- reading before striking is why the
+count is three. The rot is structural: a page's body gets edited when
+something is read, its Not-recovered list only if the writer remembers it
+exists, and internal/systems guards SYSTEMS.md but nothing guards these.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

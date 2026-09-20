@@ -373,7 +373,11 @@ not established here.
 
 ## What is not recovered
 
-- **Which ref-record offset holds the packed rates.** See §1.
+- ~~**Which ref-record offset holds the packed rates.**~~ **Read** -- §1 of this
+  page gives it: the record's `0x2a0..0x520` region is a 20-element strided
+  array, `element = base + (tier + 0x15) * 0x20`, so the packed dwords sit at a
+  **tier-dependent** offset rather than a fixed one. Round 262 then identified
+  those dwords as the ELIXIR row's `Param2/3/4` (itemdata columns 120/122/124).
 - **What the server sends on failure** beyond the code — whether the plus level,
   durability or destruction outcome is decided server-side and transmitted, or
   derived. The client's flag byte says what it *can* display; which server path

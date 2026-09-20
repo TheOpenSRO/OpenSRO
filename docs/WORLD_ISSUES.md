@@ -7075,6 +7075,39 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-ninety-eighth round: sweeping every "not recovered" bullet -- three pages contradicted themselves
+
+Round 297 struck a stale bullet in `jobs.md` and noted that `docs/protocol` pages have no
+checker watching them. One stale bullet found by accident is a reason to look for the rest.
+
+**The sweep.** Thirteen protocol pages carry a *Not recovered* section; between them, **46
+bullets**. Each was read against its own page and the corpus.
+
+**Three were stale, and all three contradicted their own page:**
+
+| page | the bullet | what the same page already said |
+|---|---|---|
+| `academy.md` | "The three 24-hour windows, as server-side values" | its own *"Where the entries are created, with their real lengths"* gives ids 8/9 = `0x15180` = 86,400 s and id 10 = `0x3f480` = 259,200 s |
+| `party.md` | "What the other party flag bits mean, beyond bit 0" | its flags section: "**bit 1** is item sharing" |
+| `alchemy.md` | "Which ref-record offset holds the packed rates" | §1: a 20-element strided array, `element = base + (tier + 0x15) * 0x20` |
+
+Each is now struck with the answer and a pointer to the section that had it. The academy one is
+the starkest: the body says in as many words that all three windows are *read*, a dozen lines
+before the list says they are not.
+
+**And one that looked stale and is not.** `guild.md` lists "What maintains `guild + 0x44`"
+while the body has a section titled *"`guild + 0x44` is the hostile count, named by two
+refusals"*. Different questions: the section says what the field **is**, and closes with "**No
+writer was found** -- every access to that offset inside the guild module is a comparison". The
+bullet asks who *maintains* it, and is correctly open. Reading it before striking it is the
+whole reason the count is three and not four.
+
+**Why this keeps happening.** A page's body is edited when something is read; its *Not
+recovered* list is edited only if the writer remembers the list exists. `internal/systems`
+guards `SYSTEMS.md` rows against exactly this rot and nothing guards these pages -- so the
+failure mode is structural, and a sweep is the only thing that catches it. Worth repeating
+after any run of rounds that closes items.
+
 ## Two-hundred-and-ninety-seventh round: a stale "not recovered", and a procedure argument that is not the enum beside it
 
 `jobs.md` listed **"Which of the three kinds is which job"** under *Not recovered*. Round 273

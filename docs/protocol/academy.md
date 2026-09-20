@@ -512,7 +512,11 @@ correspondence is one-to-one and obvious.
   student, each read from a count function. "Master" and "apprentice" were never
   the engine's words.
 - Which timestamp on the camp record the 604,800-second disband window runs from.
-- The three 24-hour windows, as server-side values.
+- ~~The three 24-hour windows, as server-side values.~~ **Read** -- this page's
+  own "Where the entries are created, with their real lengths" gives them from
+  `CTJ_PenaltyKeeper::Create`'s jump table: ids 8 and 9 are `0x15180` = 86,400 s
+  and id 10 is `0x3f480` = 259,200 s, and ban/leave share the 86,400 s helper at
+  `0x005dd3f0`. The bullet outlived the section that answered it.
 - Honour points: how they are earned, what a rank grants, what
   `EvaluationPoint` is scored on. The columns are named; the rules are not.
 - `CInstanceTrainingCampBuffStatus` — a camp confers a buff. Its columns are

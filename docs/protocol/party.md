@@ -104,7 +104,9 @@ nothing shipped depends on it.
 
 - **Bit 2 of the party flags.** The attempt is recorded in
   `server/internal/party` so it is not repeated.
-- **What the other party flag bits mean**, beyond bit 0.
+- ~~**What the other party flag bits mean**, beyond bit 0.~~ **Bit 1 is read**
+  -- item sharing, recorded in this page's own flags section. Bit 2 remains
+  unnamed and has its own bullet above.
 - **The invite and expulsion flows.** Only the refusals are enumerated.
 - **Whether the exp-sharing flag can change after creation.** Nothing read so
   far writes it.
