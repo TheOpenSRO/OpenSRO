@@ -337,3 +337,32 @@ the engine's characters. Corrected in all seven rows.
 quotation, which is most of the file, and numeric citations (offsets, slots,
 constants). It covers exactly the claim "the binary says this, in these
 characters", which is the one a reader is most likely to take on trust.
+
+## The numeric half of the same check (2026-09-20, round 288)
+
+The string check above ends by saying it does not cover numeric citations. The
+addresses are the corpus's backbone -- every row of `recovered_names.tsv` is a
+claim that *this function, at this address, in this binary* is the thing named
+-- and `recovered_names_test.go` says in its own header that it cannot reach
+them.
+
+It can now, on the box:
+`client/tools/re/verify_recovered_addresses.py`. Every row is classified:
+
+| verdict | meaning | count |
+|---|---|---:|
+| `start` | the address is a function START in the claimed binary | **2,415** |
+| `interior` | inside a known function but not at its head -- a name on a jump target | **0** |
+| `wrong-binary` | not a function in the claimed binary, but is one in the other | **0** |
+| `outside` | no function there in either dump | **1** |
+
+The one `outside` is `0x587260` (`SkillAction_Stance`), which is **the dump gap
+`AGENTS.md` already records** -- real code Ghidra never defined. The audit
+rediscovered it without being told, which is the best evidence available that
+the probe works.
+
+`interior` and `wrong-binary` are always defects and the tool exits non-zero on
+them. `outside` is not: it reports and passes, because a new one means *read
+that address* before calling it wrong. The two `client`/`server` mislabels the
+Go test's header remembers are exactly the `wrong-binary` case, and there are
+none left.

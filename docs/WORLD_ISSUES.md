@@ -7075,6 +7075,38 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-eighty-eighth round: every recorded address, checked -- 2,415 starts and one known gap
+
+Round 287 audited the *strings* this project quotes and said plainly what it did not cover:
+numeric citations. Those are the backbone. Every row of `recovered_names.tsv` claims that a
+particular function, at a particular address, in a particular binary, is the thing named -- and
+`recovered_names_test.go` says in its own header that it **cannot check the addresses**, because
+the dumps live on the RE box and the test does not.
+
+So the check was written where the dumps are:
+`client/tools/re/verify_recovered_addresses.py`, which classifies every row.
+
+	start         2,415     the address is a function START in the claimed binary
+	interior          0     inside a known function but not at its head
+	wrong-binary      0     not a function here, but is one in the other binary
+	outside           1     no function there in either dump
+
+**The one `outside` is `0x587260` (`SkillAction_Stance`)** -- the dump gap `AGENTS.md` already
+records as real code Ghidra never defined. The audit found it without being told it existed,
+which is the best evidence available that the probe is working rather than agreeing.
+
+Two of the four verdicts are always defects and the tool exits non-zero on them. `interior`
+would mean a name attached to a jump target rather than a function; `wrong-binary` is precisely
+the mistake the Go test's header remembers happening twice, when two rows were labelled `client`
+for functions in the server dump. **There are none of either.**
+
+`outside` deliberately does not fail the run: the dumps have gaps, so a new one means *go read
+that address* before calling it wrong. The known gap is listed in the tool with its reason, so
+it can be retired when a rebuilt dump defines the function rather than surviving as folklore.
+
+The Go test's header now points at the tool and records the run, so the next reader is not told
+the addresses are uncheckable.
+
 ## Two-hundred-and-eighty-seventh round: are the quoted strings really the engine's words? 279 of 286, and one paraphrase
 
 Round 286 found that a text sweep over the dumps matches **this project's own annotations**,

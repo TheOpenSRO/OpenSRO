@@ -11,11 +11,18 @@ import (
 // the list of names this project has read out of the binaries but not yet
 // written back into the Ghidra projects.
 //
-// It cannot check the addresses -- those live on the RE box -- but it can catch
-// the mistakes that made the file wrong the first time it was written: two rows
-// were labelled `client` for functions that are in the SERVER dump, which the
-// verification pass against the dump index caught. A malformed row would fail
-// silently in the Ghidra applier, which prints and moves on.
+// It cannot check the addresses from here -- those live on the RE box -- but it
+// can catch the mistakes that made the file wrong the first time it was
+// written: two rows were labelled `client` for functions that are in the SERVER
+// dump. A malformed row would fail silently in the Ghidra applier, which prints
+// and moves on.
+//
+// The address half now has a tool of its own,
+// `client/tools/re/verify_recovered_addresses.py`, which runs where the dumps
+// are and classifies every row as start / interior / wrong-binary / outside.
+// Run 2026-09-20 over all 2,416 rows: 2,415 function starts, no interior
+// addresses, no mislabelled binaries, and the single `outside` is the dump gap
+// at 0x587260 that AGENTS.md already records.
 func TestRecoveredNamesFileIsWellFormed(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "docs", "protocol", "recovered_names.tsv")
 	raw, err := os.ReadFile(path)

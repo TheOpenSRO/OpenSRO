@@ -5371,6 +5371,16 @@ a claimed literal, and 1 REAL DEFECT: seven PayQuestRewardCatchMob rows quoted
 placeholders (`ID[n] -> TARGET` for `%d[%d] - >%s`). Corrected. Nothing
 fabricated in 286 quotations, which is the answer worth having for a project
 whose characteristic failure is a made-up constant dressed as a finding.
+Round 288 (docs + a tool): the NUMERIC half, which 287 said it did not cover.
+recovered_names_test.go states it cannot check addresses because the dumps are
+on the box, so the check was written there --
+client/tools/re/verify_recovered_addresses.py. All 2,416 rows: 2,415 function
+STARTS in the claimed binary, 0 interior, 0 wrong-binary, 1 outside -- and the
+one outside is 0x587260 SkillAction_Stance, the dump gap AGENTS.md already
+records, found without being told. interior and wrong-binary are always
+defects and fail the run; outside reports and passes, because the dumps have
+gaps. The Go test's header now points at the tool instead of saying the
+addresses are uncheckable.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
