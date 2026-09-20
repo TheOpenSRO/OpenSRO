@@ -7075,6 +7075,40 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-second round: names this project had already earned and never filed
+
+Round 301's emitter sweep listed `GObjPC::FUN_004a9050` among its unnamed yield. `ground_items.md`
+has read that function **in full** -- `GObjPC::CheckCanPickUp`, its `CanPick` slot, its range
+limits, its ownership rule. The name existed; it had just never been written into
+`recovered_names.tsv`, which is the file the Ghidra applier consumes. So it never reached the
+dump, and every sweep since has counted the function as anonymous.
+
+**The sweep.** Mining `` `Class::Method` `` beside `` `0x…` `` across `docs/`: **160 addresses
+named in prose, 39 absent from the TSV.** Verified against the dump: 9 are already named there
+(correctly absent -- the file is for names the dump lacks), **4 are not function starts at all**,
+1 is a false pairing, 5 are contradictions, and **4 were genuine gaps and are now filed** --
+`CGItemEquip::CheckEquipRequirements`, `GObjPC::CheckCanPickUp`,
+`CMainProcess::ParamRegistry_Register`, `ReferenceData::RefItem_ReadTypeIDs`.
+
+**A third of the plausible candidates were wrong, and each needed checking.** `0xb45b44`
+"named" `CGStorage::CheckRentalItemValidity` is a float constant -- 10.0, the pick-up range this
+very lane read two rounds ago. `party.md` says "…`CParty::CheckCanCreate`, and hands the byte to
+`0x5be280`": the address is the **callee**. `0x410110` took `Formula_SkillPhysDamage` from a
+neighbouring line when it is `Formula_ExpRewardForContributor`. A regex over prose proposes and
+the dump disposes -- which is the only reason the filed count is four rather than nine.
+
+**And three contradictions, recorded rather than resolved.** Prose says
+`AQ_StorageUpdater::DoWork` where the dump's RTTI says `AQ_StorageUpdaterForPacakageItem::DoWork`;
+prose puts `CGObjSiegeStruct::CanRepair` at `0x483e80` where the dump says
+`CGObjCOS_Summoned::CanRepair` **and a separate `CGObjSiegeStruct::CanRepair` exists at
+`0x4cecd0`**; prose calls `0x4a9fc0` `CGObjChar::SetBerserk` where the dump says
+`CGObjCOS_Summoned::SetBodyMode`. The last is not a disagreement about the code -- berserk *is*
+body mode -- but the shared-implementation hazard, where the class prefix names an arbitrary
+member of the sharing set.
+
+The lesson is about bookkeeping rather than reversing: **a name that is not in the applier's
+input does not exist**, however thoroughly the function was read.
+
 ## Three-hundred-and-first round: the error vocabulary, swept back into the server
 
 Round 300 closed a three-round question in one command: `HGPFULL_NODRINK` is in neither

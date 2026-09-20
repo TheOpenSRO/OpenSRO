@@ -5531,6 +5531,23 @@ this session a number needed checking before it could be believed. The value
 is the grouping: 35 unnamed functions raise more than one code, and the
 convergence names their subject (004a9050 both CANNOT_BE_PICKED refusals,
 00617360 the three currency ones, 00617f70 both DEALER_DONT_TREAT_*).
+Round 302 (docs + 4 names): NAMES THIS PROJECT ALREADY EARNED AND NEVER FILED.
+301 listed GObjPC::FUN_004a9050 as unnamed while ground_items.md had read it
+in full as GObjPC::CheckCanPickUp -- the name lived in prose and never reached
+recovered_names.tsv, which is what the applier consumes, so it never reached
+the dump. Swept `Class::Method` beside `0x...` across docs/: 160 addresses
+named in prose, 39 absent from the TSV; verified against the dump, 9 are
+already named there, 4 ARE NOT FUNCTION STARTS (0xb45b44 "named"
+CGStorage::CheckRentalItemValidity is the float 10.0), 1 is a false pairing
+(party.md's 0x5be280 is the callee, not CheckCanCreate), 5 are contradictions,
+and 4 were genuine gaps and are filed. A third of the plausible candidates
+were wrong, so every row needed verifying. Contradictions recorded not
+resolved: prose vs RTTI on AQ_StorageUpdater::DoWork, CGObjSiegeStruct::
+CanRepair (a separate one exists at 0x4cecd0), and CGObjChar::SetBerserk vs
+CGObjCOS_Summoned::SetBodyMode -- the last being the shared-implementation
+hazard rather than a disagreement. The lesson is bookkeeping: a name that is
+not in the applier's input does not exist, however well the function was
+read.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

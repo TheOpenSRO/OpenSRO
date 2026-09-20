@@ -125,3 +125,45 @@ procedure are not recovered". Two are now partly traced, by a rule worth
 keeping: **an argument that is also passed to a known accessor names itself**
 (a `%d` handed to `CGStorage::GetItem` is a storage slot). See
 `persistence.md`.
+
+## A sixth source: names this project already recovered and never filed (round 302)
+
+`recovered_names.tsv` is what the Ghidra applier consumes, so a name that exists
+only in a page's prose never reaches the dump -- and every sweep since counts
+that function as unnamed. Round 301's emitter sweep listed
+`GObjPC::FUN_004a9050` among its unnamed yield while `ground_items.md` had
+**read the function in full** and called it `GObjPC::CheckCanPickUp`.
+
+**The sweep.** Mining `` `Class::Method` `` beside `` `0x…` `` across `docs/` found
+**160 addresses named in prose**, of which **39 were not in the TSV**. Verified
+against the dump, they split:
+
+| | |
+|---|---:|
+| already named in the dump (so correctly absent -- this file is for names the dump lacks) | 9 |
+| **not a function start at all** -- the regex paired a name with a nearby constant | 4 |
+| **false pairing** -- the address belongs to a *different* function in the same sentence | 1 |
+| named in prose, `FUN_` in the dump: **filed** | **4** |
+| contradictions, left for a reading pass | 5 |
+
+**Every row had to be verified, and a third of the plausible ones were wrong.**
+`0xb45b44` "named" `CGStorage::CheckRentalItemValidity` is a float constant
+(10.0). `party.md`'s sentence reads "…`CParty::CheckCanCreate`, and hands the
+byte to `0x5be280`" -- the address is the *callee*. `0x410110` picked up
+`Formula_SkillPhysDamage` from a neighbouring line when it is
+`Formula_ExpRewardForContributor`. A regex over prose proposes; the dump
+disposes.
+
+### The contradictions, recorded rather than resolved
+
+| address | prose says | the dump's RTTI says |
+|---|---|---|
+| `0x45e620` | `AQ_StorageUpdater::DoWork` | `AQ_StorageUpdaterForPacakageItem::DoWork` |
+| `0x483e80` / `0x483eb0` | `CGObjSiegeStruct::CanRepair` / `CanRevive` | `CGObjCOS_Summoned::CanRepair` / `CanRevive` -- and a **separate** `CGObjSiegeStruct::CanRepair` exists at `0x4cecd0` |
+| `0x4a9fc0` / `0x4aa5b0` | `CGObjChar::SetBerserk` / `IsBerserk` | `CGObjCOS_Summoned::SetBodyMode` / `GetBodyMode` |
+
+The last pair is not a disagreement about the code -- berserk *is* body mode
+(`GetBodyMode() == 1`) -- it is the shared-implementation hazard
+`persistence.md` documents, where the class prefix names an arbitrary member of
+the sharing set. The first two are worth a reading pass before either name is
+trusted.
