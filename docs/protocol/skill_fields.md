@@ -311,3 +311,22 @@ and casting one played nothing. The client now falls back to the weapon's own
 attack animation, which is a **disclosed stand-in**: what the original plays for
 those skills is not recovered, and the effect layer (`.efp`) is the obvious
 place still unread.
+
+
+### The clip inventory, counted (2026-09-20)
+
+`client/tools/probe_skill_anim.gd` against the real `Data.pk2`:
+
+| directory | `.ban` clips | `skill_*` | attack/base |
+|---|---:|---:|---:|
+| `Prim\Ani\Char\China\man` | **334** | **181** | 23 |
+| `…\woman` | **306** | **175** | 21 |
+
+So cast clips are not scarce in the archive — 181 of them — they simply do not
+cover the 338 distinct names the skill rows derive.
+
+**There is no per-weapon `_base` attack clip except `bow_base`.** `sword_base`,
+`spear_base` and `blade_base` do not exist, so the ordinary swing cannot be
+coming from a name of that shape: it comes from the body `.bsr`'s own animation
+entry table. That matters for the fallback, which must therefore use the same
+entry table the swing uses rather than a filename guess.

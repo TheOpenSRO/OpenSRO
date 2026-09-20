@@ -4817,8 +4817,17 @@ func _play_player_once(anim: BanReader.ParsedAnimation) -> float:
 ## name-based mapping (see the skill-animations note). Returns the clip length
 ## in seconds, or 0 if it could not be found/parsed (caller falls back).
 func _play_skill_cast_anim(anim_base: String) -> float:
-	if anim_base == "" or _data_pk2 == null or _player_skeleton == null:
+	if _player_skeleton == null:
+		# No assembled body at all: there is nothing to animate, and the
+		# placeholder capsule has no clips.
 		return 0.0
+	if anim_base == "" or _data_pk2 == null:
+		# No archive to read a cast clip from -- still show the weapon swing,
+		# which comes from the already-parsed body assets rather than from a
+		# fresh archive read. Returning 0 here left a cast with no animation
+		# whatsoever, which is the shape the playtest reported.
+		print("World3D: no archive for a cast clip -- falling back to the weapon swing")
+		return _play_weapon_swing_anim()
 	var gender_dir := "woman" if _player_gender == "china_woman" else "man"
 	var path := "Prim\\Ani\\Char\\China\\%s\\%s.ban" % [gender_dir, anim_base]
 	var bytes := AssetSource.read_bytes(path, _data_pk2)
@@ -4848,13 +4857,26 @@ func _play_skill_cast_anim(anim_base: String) -> float:
 ## recovered behaviour -- what the original plays for those skills is not known,
 ## and the effect layer (.efp) is the obvious place still unread.
 func _play_weapon_swing_anim() -> float:
-	var entry := _body_animation_entry(_player_gender, BsrReader.AnimationEntry.TYPE_ATTACK, _player_weapon_group)
-	if entry == null:
-		return 0.0
-	var swing := _body_animation_for(_player_gender, entry.action_type, _player_weapon_group)
-	if swing == null:
-		return 0.0
-	return _play_player_once(swing)
+	# Try the SAME entries the ordinary swing uses, in the same order, rather
+	# than a simplified version of it: the combo types first and TYPE_ATTACK
+	# last. A group whose TYPE_ATTACK entry is missing but whose combo entries
+	# are present would otherwise play nothing here while swinging normally
+	# elsewhere, which is exactly the "no animations" symptom.
+	var types: Array = ATTACK_SEQUENCE.duplicate()
+	types.append(BsrReader.AnimationEntry.TYPE_ATTACK)
+	for t in types:
+		var action_type: int = int(t)
+		var entry := _body_animation_entry(_player_gender, action_type, _player_weapon_group)
+		if entry == null:
+			continue
+		var swing := _body_animation_for(_player_gender, entry.action_type, _player_weapon_group)
+		if swing == null:
+			continue
+		var played := _play_player_once(swing)
+		if played > 0.0:
+			return played
+	print("World3D: no swing animation for group '%s' either -- nothing to play" % _player_weapon_group)
+	return 0.0
 
 ## A learned skill in the window was clicked: assign it to the next free
 ## underbar quickslot (its icon shown there). Activating that quickslot is what
