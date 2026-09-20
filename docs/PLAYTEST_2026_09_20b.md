@@ -5,8 +5,8 @@ done. The first report of the day is `PLAYTEST_2026_09_20.md`.
 
 | # | Reported | State |
 |---|---|---|
-| 1 | "i used a skill, no animation" | OPEN |
-| 2 | "skills should be drag and drop" | OPEN — a drop path exists; needs checking end to end |
+| 1 | "i used a skill, no animation" | **FIXED** (disclosed fallback; see below) |
+| 2 | "skills should be drag and drop" | **ALREADY WORKS** — `_on_skill_drop_requested`; drag a skill onto a quickslot |
 | 3 | "the first slot on the hotbar you press with 1, it should be middle mouse button and rebindable in the settings" | **HALF-FIXED** — MMB fires slot 1; rebinding needs a key-bindings UI |
 | 4 | "hotbars are assigned to f keys, it just says 1 now, and F1-F4 should scroll through them" | **FIXED** |
 | 5 | "when i drag and unequip my sword, it doesnt go off of my character" | **FIXED** |
@@ -125,3 +125,36 @@ still addresses the same slot, so this adds a binding rather than removing one.
 **Rebinding is not done**: it needs a key-bindings section in the options window,
 which does not exist -- the same gap as "the old silkroad had a graphics section
 under options" from the first report.
+
+
+## 1 — the skill that played no animation
+
+Measured rather than guessed, and the answer is that most skills have no clip.
+
+The lookup rule is right: `Prim\Ani\Char\China\<gender>\<base>.ban` where
+the base is the Basic_Code lowercased with its level suffix dropped. A
+truncated directory listing briefly suggested the `skill_ch_` prefix was not
+used in filenames — it is, in **135 of the 334** clips, and the numbers said so
+before the guess got anywhere (18.3 % of rows against 1.9 % for the stripped
+form).
+
+**But of the 338 distinct clip names the China skill rows derive, only 59
+exist.** Stripping the prefix as a fallback gains exactly one. Scanning every
+skilldata column for an animation filename turned up one candidate, column 5 at
+half the rows, which is the skill's own base code matching itself.
+
+So 82 % of skills ship no cast clip, and casting one played **nothing at all**.
+The client now falls back to the weapon's ordinary attack animation, so a cast
+always shows something. That is a **disclosed stand-in**, not recovered
+behaviour: what the original plays for those skills is unknown, and the effect
+layer (`.efp`) is where to look next.
+
+## 2 — drag and drop
+
+Already implemented: `_on_skill_drop_requested` puts a skill dragged out of the
+skill window onto the quickslot under the mouse, and clicking a skill assigns it
+to the next free slot. If it is not working in play that is a different bug from
+the one reported, and worth a fresh description.
+
+**Items still cannot go on the bar** — the quickslots hold skills only
+(`_quickslot_skills`), which is the likely root of item 7.

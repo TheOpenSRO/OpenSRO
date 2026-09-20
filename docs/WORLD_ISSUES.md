@@ -7075,6 +7075,55 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-fifteenth round: the skill animation that does not exist, and a listing that nearly lied
+
+"i used a skill, no animation" (playtest 2026-09-20). The cause is not a bug in
+the lookup -- it is that **most skills have no cast clip at all**.
+
+The client builds the path
+`Prim\Ani\Char\China\<gender>\<Basic_Code lowercased, level suffix dropped>.ban`.
+Listing the real directory and reading its **tail** showed names like
+`sword_smash_a.ban` and `sword_magic_target.ban`, with no `skill_ch_` prefix
+anywhere in view -- so the obvious conclusion was that the client's derivation
+keeps a prefix the filenames do not have.
+
+**That conclusion was wrong, and the measurement caught it before the fix did.**
+
+	current rule (keep skill_ch_, drop _NN)   540 / 2944 rows  (18.3 %)
+	strip skill_ch_, drop _NN                  56 / 2944       ( 1.9 %)
+	strip skill_ch_, keep _NN                   2 / 2944       ( 0.1 %)
+
+The existing rule wins by tenfold. `grep -c "^skill_ch_"` on the listing:
+**135 of 334**. The `tail -15` had shown only the alphabetical end, where the
+`sword_*` names live. This is the same truncated-read mistake as round 308's
+`character_schema.md`, caught this time by running the numbers before editing.
+
+### What is actually true
+
+Of the **338 distinct** clip names the 2,944 China skill rows derive, only
+**59 exist**. Stripping the prefix as a fallback gains exactly **one**
+(`skill_ch_bow_base` -> `bow_base`).
+
+**And there is no animation column.** Every skilldata column was scanned for a
+value naming a real `.ban` file; exactly one scored -- **column 5, 1,482 of
+2,944 rows** -- and it is a false positive of the circular kind. Column 5 holds
+the skill's **base code** (`SKILL_CH_SWORD_SMASH_D` on every level row of
+`..._01..08`), which is the string the derivation already produces, so it
+matched itself. Worth keeping as the better SOURCE of that name -- read rather
+than reconstructed by dropping a suffix -- but it adds no coverage.
+
+So **82 % of China skills ship no dedicated cast animation** under any rule
+tried, and casting one played nothing whatsoever.
+
+### The fix is disclosed, not recovered
+
+The client now falls back to the weapon's own attack clip, so a cast always
+shows something. That is **this project's choice**, labelled as such at the
+function: what the original plays for those skills is not recovered, and the
+effect layer (`.efp`) is the obvious unread place. Recorded in
+`skill_fields.md` with the three tables above, so the next reader does not
+re-measure it.
+
 ## Three-hundred-and-fourteenth round: the grounding audit was three features behind the code
 
 The project's goal is that every value is **grounded with a citation or disclosed

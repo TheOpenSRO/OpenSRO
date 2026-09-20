@@ -279,3 +279,35 @@ filled by the copy's widths alone.
 What it opens: **`Consume_WHAN` is `+0xd2`** (column 56), the berserk-cost byte
 the Skills row of SYSTEMS.md was waiting on; `AutoAttackType` is `+0x90`, the
 byte the skill tick's hand-off tests (`docs/protocol/auto_command.md`).
+
+
+## Cast animations: measured, and mostly absent (2026-09-20)
+
+A skill's cast clip is looked up as
+`Prim\Ani\Char\China\<gender>\<basic_code lowercased, level suffix dropped>.ban`.
+That rule is **right where it applies** and was worth checking, because a
+truncated directory listing briefly suggested the `skill_ch_` prefix was not
+used in filenames at all — it is: **135 of the 334 clips** in `man/` carry it.
+
+**But it covers a minority of skills.** Of the **338 distinct** clip names the
+2,944 China skill rows derive, only **59 exist** — 17.5 %.
+
+| rule | distinct names matched |
+|---|---:|
+| derived name (`skill_ch_sword_smash_a`) | **59** |
+| derived, with `skill_ch_`/`skill_eu_` stripped | 1 more (`bow_base`) |
+| per-row agreement, for scale | 540 of 2,944 rows |
+
+**And there is no animation column.** Every skilldata column was scanned for a
+value naming a real `.ban`: exactly one scored, **column 5, at 1,482 of 2,944
+rows** — and it is a false positive. Column 5 holds the skill's own **base
+code** (`SKILL_CH_SWORD_SMASH_D` on every level row of
+`SKILL_CH_SWORD_SMASH_D_01..08`), which is the string the derivation already
+produces, so it matched itself. It is still the better SOURCE for that name —
+read rather than reconstructed by dropping a suffix — but it adds no coverage.
+
+So **82 % of China skills ship no dedicated cast clip under any name tried**,
+and casting one played nothing. The client now falls back to the weapon's own
+attack animation, which is a **disclosed stand-in**: what the original plays for
+those skills is not recovered, and the effect layer (`.efp`) is the obvious
+place still unread.

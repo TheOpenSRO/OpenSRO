@@ -4804,13 +4804,38 @@ func _play_skill_cast_anim(anim_base: String) -> float:
 	var path := "Prim\\Ani\\Char\\China\\%s\\%s.ban" % [gender_dir, anim_base]
 	var bytes := AssetSource.read_bytes(path, _data_pk2)
 	if bytes.is_empty():
-		print("World3D: no cast animation at %s" % path)
-		return 0.0
+		print("World3D: no cast animation at %s -- falling back to the weapon swing" % path)
+		return _play_weapon_swing_anim()
 	var anim := BanReader.parse(bytes)
 	if anim == null or anim.bones.is_empty():
-		print("World3D: could not parse cast animation %s" % path)
-		return 0.0
+		print("World3D: could not parse cast animation %s -- falling back to the weapon swing" % path)
+		return _play_weapon_swing_anim()
 	return _play_player_once(anim)
+
+## The weapon's ordinary attack clip, played when a skill has no cast clip of
+## its own.
+##
+## MEASURED, and it is why this exists: of the 338 distinct cast-clip names the
+## China skill rows derive (Basic_Code lowercased, level suffix dropped), only
+## **59 exist** in `Prim\Ani\Char\China\man\`. The other 82 % have no clip
+## under that name, under the un-prefixed name (which gains exactly one), or in
+## any skilldata column -- column 5 looked promising at 1,482 of 2,944 rows
+## until it turned out to hold the base code itself, which is the same string
+## the derivation already produces.
+##
+## So most skills genuinely ship no dedicated cast animation here, and casting
+## one played nothing at all: "i used a skill, no animation" (playtest
+## 2026-09-20). Showing the weapon's own swing is a DISCLOSED stand-in, not a
+## recovered behaviour -- what the original plays for those skills is not known,
+## and the effect layer (.efp) is the obvious place still unread.
+func _play_weapon_swing_anim() -> float:
+	var entry := _body_animation_entry(_player_gender, BsrReader.AnimationEntry.TYPE_ATTACK, _player_weapon_group)
+	if entry == null:
+		return 0.0
+	var swing := _body_animation_for(_player_gender, entry.action_type, _player_weapon_group)
+	if swing == null:
+		return 0.0
+	return _play_player_once(swing)
 
 ## A learned skill in the window was clicked: assign it to the next free
 ## underbar quickslot (its icon shown there). Activating that quickslot is what
