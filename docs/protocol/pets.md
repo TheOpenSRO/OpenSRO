@@ -67,6 +67,39 @@ checks, not one rule; nothing here ties them together.
 player's. The name is easy to read the wrong way round, so it is written down
 here.
 
+## What the switch is switching on (round 289, 2026-09-20)
+
+`CheckCanSummonCOS` dispatches on `*(ushort *)(obj + 0x80) >> 11` -- a 16-bit
+packed type id shifted down by eleven, which is how the client reads a
+**TypeID4** as well (`ITEM_FORMAT.md` records `FUN_00a5a7d0` doing exactly that
+to pick a weapon's animation group).
+
+**Whose TypeID4 was settled by measurement, and the first answer was wrong.**
+Read as the summoner ITEM's, the COS rows of `itemdata` carry TypeID4 1, 2, 4,
+6, 7, 9 and 12 -- not a range a five-case switch could cover, so that reading
+is out. Read as the summoned CHARACTER's, `characterdata`'s `TypeID3 == 3`
+family runs exactly 1 to 5 and stops:
+
+| TypeID4 | rows | the rows' own code names | the case's refusal |
+|---:|---:|---|---|
+| 1 | 63 | `COS_C_RUDOLPH`, `COS_C_UNICORN`, `COS_C_OSTRICH_5` | `STRGERR_YOU_CANT_ACTIVATE_CART` |
+| 2 | 39 | `COS_T_LIZARD`, `COS_T_BEHEMOTH`, `COS_T_WHITEELEPHANT_20` | the same |
+| 3 | 1,260 | `COS_P_WOLF_001` … | `COS_CANT_SUMMON_DUPLICATE_PETTYPE` |
+| 4 | 11 | `COS_P_MYOWON`, `COS_P_SEOWON`, `COS_P_RABBIT` | the same |
+| 5 | 2,100 | `COS_GUILD_CH_SOLDIER1_001` … | `GUILD_SOLDIER_SAME_SUMMON_LIMIT`, after a guild-level test |
+
+**Two independent witnesses.** The table's own code prefixes and the binary's
+refusal strings were read from different places and agree case for case: the
+cart error sits on exactly the rows named `COS_C_`/`COS_T_`, the pet error on
+the rows named `COS_P_`, the guild error on the rows named `COS_GUILD_`. That
+is what makes this a reading rather than a correlation.
+
+**What is still not named** is what separates 1 from 2 and 3 from 4. The code
+prefixes differ and the row counts differ wildly (1,260 against 11), but this
+function treats each pair identically, so the distinction lives somewhere this
+pass did not read. `server/internal/cos` carries the five as constants with
+that caveat on them.
+
 ## Naming — `FUN_00511bb0`
 
 	if (len == 0 || 0xc < len) { refuse }
@@ -101,9 +134,8 @@ recovered** for either.
 
 ## Not recovered
 
-- **What the five switch cases are.** Cases 3 and 4 are pets, case 5 needs a
-  guild, one case is the cart; the mapping from case number to COS kind is not
-  established.
+- ~~**What the five switch cases are.**~~ **Recovered 2026-09-20 (round 289)** --
+  see "What the switch is switching on" above.
 - **The hunger gauge** — `HGPFULL_NODRINK` names it and nothing reads its rate,
   capacity or what happens at zero.
 - **Pet growth.** `CGObjCOS_GoldPet` and `_SilkPet` are distinct classes and

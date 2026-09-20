@@ -128,3 +128,56 @@ var Procs = map[string]int{
 	"_ChangeCOSState": 2,
 	"_COS_Naming":     2,
 }
+
+// The five summon kinds, and what distinguishes them.
+//
+// `GObjPC::CheckCanSummonCOS` (`0x004fcef0`) dispatches on
+// `*(ushort *)(obj + 0x80) >> 11` -- a 16-bit packed type id shifted down by
+// eleven, which is how the client reads a **TypeID4** too (`ITEM_FORMAT.md`
+// records `FUN_00a5a7d0` doing exactly that to pick a weapon's animation
+// group). The switch has cases 1 through 5.
+//
+// **Which TypeID4 this is was established by measurement, and the first answer
+// was wrong.** Read as the summoner ITEM's TypeID4, the COS rows of
+// `itemdata` carry 1, 2, 4, 6, 7, 9 and 12 -- not a range a five-case switch
+// could cover. Read as the summoned CHARACTER's, `characterdata`'s
+// `TypeID3 == 3` family runs exactly 1..5 and nothing else:
+//
+//	TID4  rows   code names
+//	   1    63   COS_C_RUDOLPH, COS_C_UNICORN, COS_C_OSTRICH_5
+//	   2    39   COS_T_LIZARD, COS_T_BEHEMOTH, COS_T_WHITEELEPHANT_20
+//	   3  1260   COS_P_WOLF_001 ...
+//	   4    11   COS_P_MYOWON, COS_P_SEOWON, COS_P_RABBIT
+//	   5  2100   COS_GUILD_CH_SOLDIER1_001 ...
+//
+// The engine's own refusals agree with that split from the other side, which
+// is what makes it a reading rather than a correlation: cases 1 and 2 refuse
+// with `STRGERR_YOU_CANT_ACTIVATE_CART`, cases 3 and 4 with
+// `COS_CANT_SUMMON_DUPLICATE_PETTYPE`, and case 5 with
+// `GUILD_SOLDIER_SAME_SUMMON_LIMIT` after a guild-level test. Two independent
+// witnesses, the table's names and the binary's error strings.
+//
+// What separates 1 from 2, and 3 from 4, is NOT named here. The code prefixes
+// differ (`COS_C_` vs `COS_T_`, and a 1,260-row `COS_P_WOLF` family against an
+// eleven-row one) and the engine treats each pair identically in this
+// function, so the distinction lives somewhere this pass did not read.
+const (
+	KindCOS_C     = 1 // COS_C_* -- shares the cart refusal with KindCOS_T
+	KindCOS_T     = 2 // COS_T_*
+	KindPetWolf   = 3 // COS_P_*, the 1,260-row family
+	KindPetSmall  = 4 // COS_P_MYOWON / SEOWON / RABBIT, eleven rows
+	KindGuildCOS  = 5 // COS_GUILD_CH_SOLDIER*
+	KindCOSFamily = 3 // the TypeID3 every one of them carries
+)
+
+// SummonKindIsCart reports whether a kind takes the cart refusal path
+// (`ErrCannotActivateCart`) rather than the pet or guild one.
+func SummonKindIsCart(typeID4 int) bool { return typeID4 == KindCOS_C || typeID4 == KindCOS_T }
+
+// SummonKindIsPet reports whether a kind takes the pet path, where a duplicate
+// of the same type is refused with ErrDuplicatePetType.
+func SummonKindIsPet(typeID4 int) bool { return typeID4 == KindPetWolf || typeID4 == KindPetSmall }
+
+// SummonKindIsGuild reports whether a kind takes the guild path, which also
+// tests the guild's level.
+func SummonKindIsGuild(typeID4 int) bool { return typeID4 == KindGuildCOS }

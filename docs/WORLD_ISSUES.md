@@ -7075,6 +7075,44 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-eighty-ninth round: the five COS kinds, and a hypothesis the item table killed
+
+Three ticks of auditing, so this one went back to reading. `pets.md`'s first unrecovered bullet
+was "what the five switch cases are" in `GObjPC::CheckCanSummonCOS` -- the doc knew cases 3 and
+4 were pets, case 5 needed a guild, and one was the cart, but not which number was which.
+
+**The selector.** The switch is on `*(ushort *)(obj + 0x80) >> 11`. A 16-bit packed type id
+shifted down by eleven is how the client reads a **TypeID4** as well -- `ITEM_FORMAT.md` already
+records `FUN_00a5a7d0` doing exactly that to pick a weapon's animation group -- so the cases are
+TypeID4 values, not an arbitrary enum.
+
+**Whose TypeID4, settled by measurement, and the first answer was wrong.** Taking it as the
+summoner ITEM's, the COS rows of `itemdata` carry TypeID4 **1, 2, 4, 6, 7, 9 and 12** -- not a
+range a five-case switch can cover. The hypothesis predicted 1..5 and the table said otherwise,
+which is the whole value of asking a table instead of asking oneself. Taking it as the summoned
+CHARACTER's, `characterdata`'s `TypeID3 == 3` family runs exactly 1 to 5 and stops:
+
+	TID4  rows   the rows' own names              the case's refusal
+	   1    63   COS_C_RUDOLPH, _UNICORN          STRGERR_YOU_CANT_ACTIVATE_CART
+	   2    39   COS_T_LIZARD, _BEHEMOTH          the same
+	   3  1260   COS_P_WOLF_001 ...               COS_CANT_SUMMON_DUPLICATE_PETTYPE
+	   4    11   COS_P_MYOWON, _SEOWON, _RABBIT   the same
+	   5  2100   COS_GUILD_CH_SOLDIER1_001 ...    GUILD_SOLDIER_SAME_SUMMON_LIMIT
+
+**Two independent witnesses.** The table's code prefixes and the binary's refusal strings come
+from different places and agree case for case: the cart error sits on exactly the `COS_C_` and
+`COS_T_` rows, the pet error on `COS_P_`, the guild error on `COS_GUILD_`. That is what makes it
+a reading rather than a correlation.
+
+Wired into `server/internal/cos` as five constants with the three refusal-path predicates, and a
+test that pins them to 1..5, one path each -- with 6, 7, 9 and 12 in the negative list precisely
+because they are the real COS *item* TypeID4s that killed the first reading.
+
+**Still not named:** what separates 1 from 2, and 3 from 4. The prefixes differ and the row
+counts differ wildly (1,260 against 11), but this function treats each pair identically, so the
+distinction lives somewhere this pass did not read. Recorded as a caveat on the constants rather
+than filled in.
+
 ## Two-hundred-and-eighty-eighth round: every recorded address, checked -- 2,415 starts and one known gap
 
 Round 287 audited the *strings* this project quotes and said plainly what it did not cover:

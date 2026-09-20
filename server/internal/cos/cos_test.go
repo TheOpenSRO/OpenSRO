@@ -127,3 +127,39 @@ func TestPetRequiredLevelIsAnOffsetNotAValue(t *testing.T) {
 		t.Errorf("PetRequiredLevelOffset is %#x, want 0x198", PetRequiredLevelOffset)
 	}
 }
+
+// The five summon kinds are the COS family's TypeID4 (characterdata
+// TypeID3 == 3), 1..5 and nothing else, and each falls in exactly one of the
+// three refusal paths the engine's switch takes.
+func TestSummonKindsCoverOneToFiveExactly(t *testing.T) {
+	seen := map[int]int{}
+	for _, k := range []int{KindCOS_C, KindCOS_T, KindPetWolf, KindPetSmall, KindGuildCOS} {
+		seen[k]++
+		paths := 0
+		for _, in := range []bool{SummonKindIsCart(k), SummonKindIsPet(k), SummonKindIsGuild(k)} {
+			if in {
+				paths++
+			}
+		}
+		if paths != 1 {
+			t.Errorf("kind %d falls in %d refusal paths, want exactly 1", k, paths)
+		}
+	}
+	if len(seen) != 5 {
+		t.Errorf("%d distinct kinds, want 5", len(seen))
+	}
+	for k := 1; k <= 5; k++ {
+		if seen[k] != 1 {
+			t.Errorf("TypeID4 %d is not covered exactly once (%d)", k, seen[k])
+		}
+	}
+	// Nothing outside 1..5 is any of them -- the switch has no other case.
+	for _, k := range []int{0, 6, 7, 9, 12} {
+		if SummonKindIsCart(k) || SummonKindIsPet(k) || SummonKindIsGuild(k) {
+			t.Errorf("TypeID4 %d should not match any summon path", k)
+		}
+	}
+	// The itemdata values that falsified the first reading are deliberately in
+	// that list: 6, 7, 9 and 12 are real COS *item* TypeID4s, and none of them
+	// is a case of this switch.
+}
