@@ -124,6 +124,55 @@ those above:
 | control | `GObjPC::FUN_004d2200` | `YOU_CANT_CONTROL_THIS_OBJ` |
 | moving items | `FUN_00523960`, `FUN_00523f70` | `CANT_MOVETO_SUMITEM`, `CANT_MOVETO_CHEST2` |
 
+## The growth pet is the one with an experience method (round 290, 2026-09-20)
+
+`pets.md` asked what distinguishes `CGObjCOS_GoldPet` from `CGObjCOS_SilkPet`
+beyond their names. Their **method sets** do, and the difference is not subtle:
+
+	GoldPet   Create GetRefObjID OffsetExpPoint ReleaseAndClear Update
+	          vslot_000 vslot_215 vslot_310 vslot_311 vslot_399 vslot_402
+	SilkPet   Create GetRefObjID                ReleaseAndClear Update
+	          vslot_000 vslot_349 vslot_368
+
+**Only GoldPet has `OffsetExpPoint`**, the engine's own name for the
+experience-granting method, and it overrides four slots SilkPet does not.
+SilkPet overrides two entirely different ones. So growth belongs to the gold
+pet; the silk pet has no experience method to call.
+
+(Those slot numbers -- 215, 310, 311, 349, 368, 399, 402 -- are past the 209
+`IGObj` slots `igobj_vtable.md` recovered, so they are unnamed. The
+`## Illegal ##` stub lever does not reach them.)
+
+### What `OffsetExpPoint` does (`0x004d6370`)
+
+Read as far as it is unambiguous, and no further:
+
+- **Pet experience is 64-bit**, at the pet's data record `+0x60` (low) and
+  `+0x64` (high); the delta arrives as a 64-bit pair too.
+- **The level threshold is a 64-bit** read from `this+0x1ce0` at `+8`/`+0xc` --
+  a reference row, not a constant.
+- **Experience is clamped, not rolled over.** When the new total reaches the
+  threshold the function sets it to `threshold - 1` and recomputes the delta to
+  match, so this function never carries a pet past the boundary itself.
+- On a real gain it calls `GObjPC::FUN_004496e0(lo, hi)` and sends text id
+  `0x30c9`.
+
+**The level branch is read but its meaning is not.** In assembly:
+
+	4d641b  cmp  BYTE PTR [esi+0x58], 0x6e     ; the data record's level byte vs 110
+	4d641f  jae  4d643a                        ; >= 110 skips the owner test entirely
+	4d642f  call [owner + 0x124]               ; the owner's GetLevel
+	4d6431  cmp  BYTE PTR [esi+0x58], al
+	4d6434  jb   4d653e                        ; below the owner's level -> elsewhere
+
+So there is a **110 boundary** and a comparison against the **owner's level**,
+both certain. What is *not* certain is what `0x4d653e` does: the decompilation
+shows a second branch further down that also calls `GetLevel`, so that target
+may be an alternative path rather than a plain "no experience" return. Stating
+the rule's direction would need that block read, and it is not read here --
+a pet-growth rule inverted is exactly the kind of error this project has
+learned to leave open instead.
+
 ## The database surface
 
 	_AddNewCOS       12 args        _ChangeCOSState   2 args
@@ -138,7 +187,8 @@ recovered** for either.
   see "What the switch is switching on" above.
 - **The hunger gauge** — `HGPFULL_NODRINK` names it and nothing reads its rate,
   capacity or what happens at zero.
-- **Pet growth.** `CGObjCOS_GoldPet` and `_SilkPet` are distinct classes and
-  nothing here says what distinguishes them beyond their names.
+- **Pet growth.** Partly read -- see "The growth pet is the one with an
+  experience method" below. What the level branch at `0x4d6434` does on its
+  taken side is still open.
 - **The mercenary**, which is the only class of the six with a different vtable
   length and has not been looked at.

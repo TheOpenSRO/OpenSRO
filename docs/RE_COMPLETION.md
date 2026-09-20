@@ -5393,6 +5393,18 @@ case: 1 COS_C_ and 2 COS_T_ take the cart refusal, 3 COS_P_WOLF (1,260 rows)
 and 4 COS_P_MYOWON/SEOWON/RABBIT (11) the duplicate-pet refusal, 5
 COS_GUILD_CH_SOLDIER the guild one. Two independent witnesses. What separates
 1 from 2 and 3 from 4 is still unnamed and recorded as such.
+Round 290 (docs): pets.md's "pet growth" bullet, partly closed. What
+distinguishes CGObjCOS_GoldPet from _SilkPet is their METHOD SETS: only
+GoldPet has OffsetExpPoint, the engine's own name for the experience method,
+and it overrides four slots SilkPet does not while SilkPet overrides two
+others (all past the 209 slots igobj_vtable.md reached, so unnamed). Growth
+belongs to the gold pet. OffsetExpPoint itself: experience is 64-bit at the
+data record +0x60/+0x64, the per-level threshold is a 64-bit from a reference
+row at this+0x1ce0 +8/+0xc, and experience is CLAMPED to threshold-1 rather
+than rolled over. A 110 boundary and an owner-level comparison are certain;
+what the taken branch at 0x4d6434 does is NOT, because its target is shared
+with another path -- the decompiled boolean reads backwards for a growth rule,
+which is the signal to leave it open rather than publish it.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

@@ -7075,6 +7075,44 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-ninetieth round: the growth pet is the one with an experience method
+
+`pets.md` asked what distinguishes `CGObjCOS_GoldPet` from `CGObjCOS_SilkPet` "beyond their
+names". Their **method sets** do, and no reading was needed to see it:
+
+	GoldPet   Create GetRefObjID OffsetExpPoint ReleaseAndClear Update
+	          vslot_000 vslot_215 vslot_310 vslot_311 vslot_399 vslot_402
+	SilkPet   Create GetRefObjID                ReleaseAndClear Update
+	          vslot_000 vslot_349 vslot_368
+
+Only GoldPet has **`OffsetExpPoint`** -- the engine's own name for the experience-granting
+method -- and it overrides four slots SilkPet does not, while SilkPet overrides two different
+ones. Growth belongs to the gold pet; the silk pet has no experience method to call. Those slot
+numbers are all past the 209 `igobj_vtable.md` recovered, so the `## Illegal ##` lever does not
+name them.
+
+**What `OffsetExpPoint` does, as far as it is unambiguous.** Pet experience is **64-bit**, at
+the data record `+0x60`/`+0x64`; the per-level threshold is another 64-bit, read from a
+reference row at `this+0x1ce0` `+8`/`+0xc` rather than from a constant; and experience is
+**clamped rather than rolled over** -- on reaching the threshold the function writes
+`threshold - 1` and recomputes the delta to match, so it never carries a pet past the boundary
+itself. A real gain calls `GObjPC::FUN_004496e0(lo, hi)` and sends text id `0x30c9`.
+
+**And a rule deliberately left unstated.** The gate is, in assembly:
+
+	4d641b  cmp  BYTE PTR [esi+0x58], 0x6e     ; the level byte vs 110
+	4d641f  jae  4d643a                        ; >= 110 skips the owner test
+	4d642f  call [owner + 0x124]               ; the owner's GetLevel
+	4d6431  cmp  BYTE PTR [esi+0x58], al
+	4d6434  jb   4d653e                        ; below the owner's level -> elsewhere
+
+A **110 boundary** and a comparison against the **owner's level** are both certain. What
+`0x4d653e` does is not: the decompilation shows a second branch further down that also calls
+`GetLevel`, so that target may be an alternative path rather than a plain "no experience"
+return. The decompiled boolean reads as "gain when petLevel >= ownerLevel", which is backwards
+from what a pet-growth rule ought to be -- and that is exactly the signal to stop rather than
+publish. A rule inverted is the error this project has been burned by most.
+
 ## Two-hundred-and-eighty-ninth round: the five COS kinds, and a hypothesis the item table killed
 
 Three ticks of auditing, so this one went back to reading. `pets.md`'s first unrecovered bullet
