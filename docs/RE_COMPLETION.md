@@ -6266,6 +6266,41 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 339 (one opcode turns out to be 35 commands): THE SIZE-RANKED WORKLIST'S
+TOP ENTRY IS THE BIGGEST HANDLER IN THE SERVER -- 0x0051de90, 9,173 bytes, opcode
+0x7010 -- AND IT IS BIG BECAUSE IT IS NOT ONE COMMAND. Its body is a single
+switch(selector & 0xffff) over **35 sub-commands**, so this opcode carries a
+whole vocabulary. That is also why handler_payloads.tsv records 0x010 as
+`client-prefix` with ten client variants behind one u16: that u16 IS the
+selector. Named GObjPC_MsgHandler_SpecialCommand::DispatchCommand and written up
+in docs/protocol/gm_commands.md. IDENTIFIED FROM ITS OWN STRINGS -- "MoveTo: [%d,
+(%f, %f, %f)]", "MoveToPlayer: %s ...", "Pos of %s: %s (%.2f, %.2f, %.2f)",
+"ShowMeStatistics: [PC: %d, NPC: %d, ItemOnGrd: %d" -- AND CORROBORATED FROM A
+DIFFERENT LEVER: case 0x1f calls CGObjPC__OnCommandMoveToNpc, a name recovered in
+an earlier pass whose own wording says these are commands. FIVE OF THIRTY-FIVE
+ARE IDENTIFIED AND THE TABLE SAYS SO. Another nine are merely ATTRIBUTED by the
+singleton they reach (CGuildManager, CEventDaemonMgr, CGameWorldMgr) -- the
+subsystem, not the action, which by this project's own rule is not a name. The
+rest read a field and append a reply, carrying no text and no distinctive callee.
+AND WHAT THE TABLE DOES NOT CLAIM: nothing maps these selectors to whatever a GM
+client types, because the command NAMES are not in this binary -- the four format
+strings are log output, not a command table. TWO CORRECTIONS TO OLDER WORK, both
+found by reading the ledger before digging: (1) round 338's headline that
+"handler-dependence surfaces utilities by construction" WAS ALREADY RECORDED --
+an earlier levers-exhausted list says "high-fan-in helpers (the top ten are all
+infrastructure -- assert, std::string assign, buffer write, allocator, list
+clear)", the same observation with the same std::string at the top. What is new
+there is the quantification and the size-ranked alternative, and naming_ceiling.md
+now says so rather than reading as novel. (2) the same old entry says "there is
+no static opcode->handler table to recover -- the mapping is built at runtime",
+which ROUND 328 SUPERSEDED: the table is static, installed by
+GObjPC::InstallClientMessageHandlers. Flagged so the stale paragraph is not acted
+on.
+
+**What moved:** no shipped value. The largest handler in the binary named, a
+35-entry command vocabulary documented with five entries identified and the rest
+honestly marked, and two stale claims in older notes corrected.
+
 Round 338 (the worklist made real, and my own classifier caught wrong): ROUND
 337 ENDED SAYING THE CORE RANKING "NEEDS THE SAME EXCLUSION THE SIZE TABLE
 IMPLIES BEFORE IT IS A WORKLIST". Both halves of doing that came out differently

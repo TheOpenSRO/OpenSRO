@@ -3,7 +3,7 @@ index	handler	server_name	function_exists	client_opcodes	client_handlers	replies
 0x006	0050f130	FUN_0050f130	no	0xb006	FUN_0086dbd0	0xb006
 0x00d	00516960	FUN_00516960	no	-	-	-
 0x00f	009bf500	FUN_009bf500	yes	-	-	-
-0x010	0051de90	GObjPC_MsgHandler_SpecialCommand::FUN_0051de90	yes	0xb010	NetProcessInInner::FUN_008743a0	0xb010
+0x010	0051de90	GObjPC_MsgHandler_SpecialCommand::DispatchCommand	yes	0xb010	NetProcessInInner::FUN_008743a0	0xb010
 0x02a	0051cb20	FUN_0051cb20	no	-	-	-
 0x02f	004ee090	FUN_004ee090	no	-	-	-
 0x031	004ee1d0	GObjPC_HandleGuildSummonReqMsg_031	yes	0xb031	FUN_0088d910	-

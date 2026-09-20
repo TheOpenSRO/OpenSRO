@@ -382,3 +382,21 @@ logic is, and that ordering immediately surfaced the one named this round.
 `Trijob Reward Received: %u gold`, `Starvation`, the PvP kill shapes), not from
 position. **2,522 unnamed non-STL game-logic functions remain, 411,570 bytes.**
 That total is the honest size of what is left to read.
+
+### Correction: the high-fan-in observation was already recorded (round 339)
+
+The previous section presents "handler-dependence surfaces utilities by
+construction" as a finding. **An earlier pass had already written it down**, in
+`RE_COMPLETION.md`'s levers-exhausted list: *"high-fan-in helpers (the top ten
+are all infrastructure — assert, `std::string` assign, buffer write, allocator,
+list clear)"*. Same observation, same `std::string` at the top, reached before.
+
+What is new in that section is the quantification — the 2,913-function core, the
+12 %, the depth curve and the 0-of-359 control — and the size-ranked alternative.
+The qualitative claim was a re-derivation and is marked as one here rather than
+left reading as novel.
+
+The same entry also says *"there is no static opcode→handler table to recover —
+the mapping is built at runtime"*. **Round 328 superseded that**: the table is
+static, installed by `GObjPC::InstallClientMessageHandlers`, and is
+`server_handlers.tsv`. Noted so the older paragraph is not acted on.
