@@ -7165,6 +7165,32 @@ recorded gap (`0x587260 SkillAction_Stance`). The zeroes that meant nothing
 were the same failure as the other two probes this round -- a clean number
 taken from an artifact that was not in a state to answer.
 
+### And the coverage number this project quotes was stale
+
+With the dumps rebuilt, `SymbolReport.java` -- the project's own tool, same four
+tiers -- gives:
+
+| tier | server (2026-09-17) | server (now) | client (was) | client (now) |
+|---|---:|---:|---:|---:|
+| NAMED | 1,825 (5.3 %) | **5,355 (15.7 %)** | 1,285 (3.0 %) | **2,219 (5.1 %)** |
+| SLOTTED | 5,617 | 2,579 | 5,136 | 4,349 |
+| ATTRIBUTED | 14,473 | 14,300 | 13,565 | 13,500 |
+| UNKNOWN | 12,198 | 11,973 | 23,474 | 23,494 |
+
+**The apply is not what moved it.** 264 names is a small part of a 3,530 rise.
+The large movement is `SLOTTED` falling **5,617 -> 2,579**: about three thousand
+functions known only by a vtable slot number now carry a real name, from the
+slot propagation of the intervening rounds. That is the tier boundary
+`absence_audit.md` exists to police, and it moved the right way.
+
+An index-derived estimate taken first said 5,621, and was not quoted until the
+project's own tool agreed -- it landed on 5,355, the 245 `GetSingleton_<addr>`
+placeholders being most of the difference. The standing instruction not to quote
+an inflated coverage figure is the reason that check happened at all.
+
+The client barely moved (3.0 -> 5.1 %) because almost none of this work was done
+on it, and its UNKNOWN tier is unchanged at ~23,500 -- still the honest floor.
+
 **Three probes lied this round** (the string grep, the skipper count against a
 vanishing dump, and round 303's single-source name check), which is the running
 theme: every one returned a clean, plausible number.

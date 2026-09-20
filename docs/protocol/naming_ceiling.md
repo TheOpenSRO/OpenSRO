@@ -186,6 +186,11 @@ server rows** in the TSV were still `FUN_` in the dump -- 12 %. Filing a row
 touches nothing: `ApplyRecoveredNames.java` must be run, and `PROJSTAMP`
 cleared so `re_tick.sh` rebuilds. See the recipe in `docs/RE_LOOP.md`.
 
+**Coverage, re-measured after the apply and the rebuild** (`SymbolReport.java`):
+server NAMED **5,355 (15.7 %)**, client **2,219 (5.1 %)**, against 5.3 % / 3.0 %
+on 2026-09-17. Most of the server's rise is SLOTTED falling 5,617 -> 2,579, not
+the apply. Full tiers in `absence_audit.md`.
+
 **The consequence for every sweep on this page**: a census of `FUN_` functions
 in the dump measures *applied* names, not *recovered* ones, and the two drift
 apart by however many rounds have passed since the last apply. Run the apply

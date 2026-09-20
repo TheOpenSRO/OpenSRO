@@ -79,4 +79,25 @@ was being applied to the wrong tier.
 | SLOTTED (vtable slot only) | 5,617 | 5,136 |
 | ATTRIBUTED (module only) | 14,473 | 13,565 |
 | UNKNOWN | 12,198 | 23,474 |
+
+**Re-measured 2026-09-20 (round 305), after applying 271 filed-but-unapplied
+names and rebuilding both dumps.** Same tool, same tiers:
+
+| | server | client |
+|---|---:|---:|
+| NAMED (a real name) | **5,355 (15.7%)** | **2,219 (5.1%)** |
+| SLOTTED (vtable slot only) | 2,579 | 4,349 |
+| ATTRIBUTED (module only) | 14,300 | 13,500 |
+| UNKNOWN | 11,973 | 23,494 |
+| identified | 22,234 (65.0%) | 20,068 (46.1%) |
+
+**Where the server's three-fold rise came from, and it is not the apply.** The
+264 names applied this round are a small part of it. The large movement is
+`SLOTTED` falling **5,617 → 2,579**: roughly three thousand functions that were
+known only by a vtable slot number now carry a real name, from the slot
+propagation of the intervening rounds. A function moving from SLOTTED to NAMED
+is the tier boundary this page exists to police, and it moved the right way.
+
+The client barely moved (3.0% → 5.1%) because almost none of that work was done
+on it, and its UNKNOWN tier is unchanged at ~23,500 — still the honest floor.
 | — of those, real bodies | 11,495 | 21,270 |
