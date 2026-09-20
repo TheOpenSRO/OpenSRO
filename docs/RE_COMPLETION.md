@@ -6028,6 +6028,30 @@ a placeholder, because a real client would connect, recognise the number and
 misread every byte after it. Next probe: take one named handler and recover its
 payload.
 
+Round 325 (a RETRACTION + 1 name): ROUND 323 WAS WRONG. Opening
+Item_HandleUseItem (real 0x04c) for its payload found, four instructions in,
+`mov ecx,0xb04c ; call 0x4e7250` -- a REPLY OPCODE, not an error code, passed to
+the function round 323 had just called "the refusal sender". Reading it:
+FUN_004e7250 takes the opcode in ECX, opens a message with slot 0x278, appends
+two words from the caller's frame and sends via slot 0x27c -- a generic
+two-field reply helper, with the error code as one of the appended words in a
+DIFFERENT register (at 0x51170f the composite-item handler sets ebp=0x18c6
+PREMIUM_USE_OVER and ecx=0xb15f together). Round 323's thirteen codes came from
+grepping decompiled C for FUN_004e7250(0x...); at the very call site that
+produced 0x1806 the disassembly reads `mov ecx,0xb034`, so Ghidra had named a
+PAYLOAD value as the argument, and across sites it resolves sometimes to the
+opcode and sometimes to the payload. The evidence was in round 323's own output
+-- the list contained 0x3, 0x5 and 0xb, which I explained away as stray
+arguments instead of reading them as proof the extraction could not tell
+arguments apart. WITHDRAWN. What survives: those values are not valid reply
+opcodes (replies are 0xbXXX) and sit among named errors, so they are plausibly
+error codes, but whether the server emits them is NOT established. Filed
+FUN_004e7250 as Msg_SendTwoFieldReply with a warning at the row that Ghidra's
+argument is unreliable for it. Sound method partly run: per-call-site register
+reads over 38 sites give 19 distinct ECX values, 16 of them 0xbXXX; the three
+that are not (0x3156, 0x34a8, 0x34aa) are a loose end. The use-item payload
+remains unread -- chasing a wrong premise cost the probe.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.
