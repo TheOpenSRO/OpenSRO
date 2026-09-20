@@ -965,6 +965,10 @@ var _item_rows: Dictionary = {}
 var _ground_items: GroundItems = null
 ## A ground item we clicked but were too far from: picked again on arrival.
 var _pending_pickup_id := -1
+## True between sending a pick-up and its reply. Without it the walk-arrival
+## branch can send a duplicate request for an id the server has already
+## granted, and the duplicate comes back as a refusal.
+var _pickup_inflight := false
 ## The animation group the player's held weapon selects, "default" when the
 ## hands are empty or the weapon's kind is not mapped.
 var _player_weapon_group := "default"
@@ -4673,7 +4677,20 @@ func _build_assembled_character(equipped: Dictionary = {}, gender: String = DEFA
 ## in which slot, and each is drawn from its own model. A newly-created
 ## character wears the starting kit the server gave it.
 func _try_apply_real_player_character() -> void:
-	var equipped := await _real_player_equipped_items()
+	_apply_player_equipment_visual(await _real_player_equipped_items())
+
+## Rebuilds the player's 3D body from an equipment map already in hand.
+##
+## Split out of _try_apply_real_player_character so the equipment-result
+## handler can redress the character WITHOUT asking the server again -- the
+## coroutine above awaits equipment_result, so calling it from inside that
+## signal's own handler would wait for a reply that has already arrived.
+##
+## Until this existed the model was built once at login and never again, so a
+## successful unequip took the sword out of the slot and left it in the
+## character's hand: "when i drag and unequip my sword, it doesnt go off of my
+## character" (playtest 2026-09-20).
+func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	_player_equipped_last = equipped
 	var gender := DEFAULT_GENDER
 	if NetClient.last_enter_world_result != null and NetClient.last_enter_world_result.gender != "":
@@ -4687,6 +4704,13 @@ func _try_apply_real_player_character() -> void:
 	var skeleton := _build_assembled_character(equipped, gender)
 	if skeleton == null:
 		return
+	# Drop the body we were wearing before. This function used to run exactly
+	# once, at login, so nothing freed the old skeleton; now that an equipment
+	# change redresses the character, leaving it would stack a second dressed
+	# body on the player every time anything was equipped or taken off.
+	if _player_skeleton != null and is_instance_valid(_player_skeleton):
+		_player_skeleton.queue_free()
+		_player_skeleton = null
 	# The assembled body's visual front is its own local -Z, but the player
 	# node points its local +Z at the movement/target direction (rotation.y =
 	# atan2(dir.x, dir.z)). Without correcting for that the body faced away
@@ -6844,7 +6868,8 @@ func _physics_process(delta: float) -> void:
 			player.velocity.z = 0.0
 			# Walked up to a ground item we were too far from: ask again now
 			# that we stand on it; the server is the judge of the 10 units.
-			if _pending_pickup_id != -1 and NetClient.is_connected_to_server():
+			if _pending_pickup_id != -1 and not _pickup_inflight and NetClient.is_connected_to_server():
+				_pickup_inflight = true
 				NetClient.pick_up(NetClient.current_character_name, _pending_pickup_id)
 		else:
 			var dir := to_target.normalized()
@@ -8239,6 +8264,7 @@ func _on_ground_item_owner_released(ground_id: int) -> void:
 ## arrival branch of the movement code asks again); anything else ends it.
 ## A success refreshes what changed hands: the bag, or the gold on the stats.
 func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
+	_pickup_inflight = false
 	match result.code:
 		0:
 			_pending_pickup_id = -1
@@ -8288,8 +8314,15 @@ func _pick_up_refusal_line(code: int) -> String:
 			return "That drop still belongs to someone else."
 		GroundItemsNet.ERR_BUSY:
 			return "Someone else is picking that up."
+		GroundItemsNet.ERR_TOO_FAR:
+			return "That drop is out of reach."
 		GroundItemsNet.ERR_CANNOT_PICK:
-			return "Could not pick that up -- your inventory may be full."
+			# 0x1839 is "no such pickable item", which is overwhelmingly a drop
+			# that is already gone -- someone took it, it expired, or this is a
+			# duplicate request for one we just picked up ourselves. It is NOT
+			# the bag being full, and saying so was a cause this client invented
+			# and the server never gave (playtest 2026-09-20).
+			return "That drop is no longer there."
 	return "Could not pick that up (code 0x%x)." % code
 
 ## A left click on a ground item picks it up, the way clicking one does in
@@ -8315,10 +8348,18 @@ func _try_pick_up_item(screen_pos: Vector2) -> bool:
 		return false
 	var ground_id := int(node.get_meta("ground_item_id"))
 	_pending_pickup_id = ground_id
+	# Only WALK if the drop is actually out of reach. Setting a move target
+	# unconditionally is what made a pick-up report its own success as a
+	# failure (playtest 2026-09-20): gold falls at your feet, so the arrival
+	# branch fired immediately and sent a SECOND pick_up for the same id. The
+	# server granted the first, removed the item, and answered the duplicate
+	# with 0x1839 -- which this client then displayed as "your inventory may be
+	# full". The player had the gold and an error message about it.
 	var target := _ground_items.position_of(ground_id)
-	if target != Vector3.INF:
+	if target != Vector3.INF and player.global_position.distance_to(target) > GroundItemsNet.PICK_RANGE:
 		_move_target = target
 		_has_move_target = true
+	_pickup_inflight = true
 	NetClient.pick_up(NetClient.current_character_name, ground_id)
 	return true
 
@@ -8732,9 +8773,16 @@ func _on_equipment_result(items: Array, error: String) -> void:
 		return
 
 	equipment_list.clear()
+	var equipped := {}
 	for e in items:
 		var slot_name: String = "Weapon" if e.slot == EquipmentNet.SLOT_WEAPON else ARMOR_SLOT_LABELS.get(e.slot, "Slot %d" % e.slot)
 		equipment_list.add_item("%s: %s" % [slot_name, _item_label_for_line(e.item_id)])
+		equipped[e.slot] = e.item_id
+	# REDRESS THE CHARACTER. This list is the server's word on what is worn, and
+	# until now only a text widget listened to it -- the 3D body kept whatever
+	# it was built with at login, so taking a sword off left it in the hand.
+	if _player_skeleton != null and equipped != _player_equipped_last:
+		_apply_player_equipment_visual(equipped)
 
 func _on_unequip_pressed(slot: int) -> void:
 	_awaiting_equip_ack = true

@@ -1784,10 +1784,24 @@ func _drop_worn_item(worn_slot: int, at: Vector2) -> void:
 		return
 	if _equipment_slot_at(at) >= 0:
 		return
-	if _bag_slot_at(at) < 0:
+	# ANYWHERE over the inventory window takes it off, not just dead-on a grid
+	# cell. Requiring an exact cell is why "i cant unequip my clothes" and "when
+	# i drag and unequip my sword, it doesnt go off of my character" were both
+	# reported (playtest 2026-09-20): a release a few pixels into a gutter did
+	# nothing at all, and said nothing either. The server still chooses the bag
+	# slot -- the drop point was never passed on -- so accepting a looser target
+	# changes where you may let go, not where the item lands.
+	if _bag_slot_at(at) < 0 and not _over_inventory_window(at):
 		return
 	NetClient.unequip(who, worn_slot)
 	NetClient.list_inventory(who)
+
+## Whether a global point is over the open inventory window at all.
+func _over_inventory_window(at: Vector2) -> bool:
+	var win: HudWindow = _windows.get("inventory")
+	if win == null or not win.visible:
+		return false
+	return win.get_global_rect().has_point(at)
 
 ## Resolves where a bag drag ended and asks the server for it.
 func _drop_bag_item(from: int, at: Vector2) -> void:

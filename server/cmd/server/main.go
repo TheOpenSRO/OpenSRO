@@ -627,6 +627,14 @@ func main() {
 	manaTracker := mana.NewTracker()
 
 	hub := world.NewHub()
+
+	// Passive recovery. The rule has been recovered in internal/mana for a
+	// while (CGObjPC::vslot_362, a percentage of the CURRENT pool on the
+	// engine's real 4-second interval) and nothing called it, so health never
+	// came back on its own -- reported in the 2026-09-20 playtest.
+	go session.RunRegen(ctx, hub, chars, session.RegenDeps{
+		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
+	}, logger)
 	monsters := combat.NewHub()
 	// Items on the ground: what a kill leaves near the corpse until it is
 	// picked up (internal/grounditem). The sweep releases ownerships after the

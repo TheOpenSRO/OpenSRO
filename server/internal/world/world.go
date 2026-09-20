@@ -142,6 +142,20 @@ func (h *Hub) EntitiesInZone(zone string) []Entity {
 	return out
 }
 
+// AllEntities returns every entity currently in the world, in any zone.
+//
+// For periodic jobs that act on every online character rather than on one
+// zone. Passive regeneration is the first (internal/mana).
+func (h *Hub) AllEntities() []Entity {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make([]Entity, 0, len(h.bySession))
+	for _, e := range h.bySession {
+		out = append(out, *e)
+	}
+	return out
+}
+
 // EntityBySession returns the entity currently associated with sessionID,
 // if it's in the world. Used by systems (e.g. chat) that need to know a
 // session's current character/zone without themselves tracking it.
