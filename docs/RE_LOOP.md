@@ -194,6 +194,16 @@ The dump tick runs `-readOnly`, so **it cannot write names**. Applying a name
 and rebuilding the dump are separate steps, and a name that is only in a commit
 message does not exist.
 
+**Nor does a name that is only in `recovered_names.tsv`.** Filing a row touches
+nothing until the applier below is RUN. On 2026-09-20 this had gone unrun since
+2026-09-18 and **250 of the 2,079 server rows -- 12 % -- were still `FUN_` in
+the dump**, including all four names round 302 had just filed specifically so
+they would stop being invisible. Run this after any round that files a name.
+
+**There is also a second name source**: `client/tools/ghidra/ApplyKnownNames.java`
+holds 191 hardcoded names, 152 of them found nowhere else, applied by
+`ApplyKnownNames.java` rather than by the script below.
+
 	ssh root@192.168.5.78 'rm -f /var/tmp/recovered_names.tsv'
 	ssh root@192.168.5.78 'cat > /var/tmp/recovered_names.tsv' < docs/protocol/recovered_names.tsv
 	ssh root@192.168.5.78 'chown ghidra:ghidra /var/tmp/recovered_names.tsv'

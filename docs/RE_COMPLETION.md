@@ -5612,6 +5612,32 @@ basis, and the audit says why: every surviving constant had a discriminating
 data signature, while fRepairCost's only check was an identity true of any
 number. A check that cannot fail is not a check.
 
+Round 305 (271 names APPLIED + 2 tests): 250 NAMES WERE FILED AND STILL DID NOT
+EXIST. Round 302 ended on "a name not in the applier's input does not exist" and
+filed four names; all four were still FUN_ in the dump, along with 246 others --
+250 of 2,079 server rows, 12%. Cause: filing is not applying. The dump was built
+2026-09-18 21:48 and the TSV last changed 2026-09-20 10:22; re_tick.sh rebuilds
+when the GHIDRA PROJECT changes, and ApplyRecoveredNames.java is the only thing
+that writes into it, so a TSV row touches nothing until the applier is RUN.
+Applied: server 264 (forced 0, reowned 42, failed 0), client 7, PROJSTAMP
+cleared, dumps rebuilding. SECOND FINDING: there are TWO name sources --
+ApplyKnownNames.java holds 191 hardcoded names, 152 found nowhere else, and 34
+of the 39 shared addresses disagree. Round 302's census and round 303's test
+both read only the TSV, so both had an incomplete denominator; merging them
+immediately caught SYSTEMS.md spelling FUN_0059c4e0 for a function the Java
+table has called Mastery_LevelUp since 2026-09-18. internal/systems now merges
+both and forbids the two files from making different claims. Five real
+disagreements were Ref*_ExtractData vs Ref*_<verb>, settled mechanically -- only
+a deserializer calls the column skipper FUN_006b1a80 -- three confirmed
+deserializers, Java names corrected in place, descriptions kept. THE FOURTH
+NEARLY WENT THE WRONG WAY: 0x00427050's quoted strings are four rate labels,
+which names LoadGainRates so neatly the TSV was rewritten to match -- but the
+row's own round-258 description lists 25 keys passed to ServerConfig_Get IN ECX,
+invisible to a string grep. The probe saw 4 of 25 and all four were rates;
+LoadServerConfig is correct and wider, and the edit is reverted. Two
+(0x006a6660, 0x006a94a0) are UNRESOLVED: measured while the rebuild was deleting
+the dump, so the zeroes mean nothing. Three probes lied this round.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

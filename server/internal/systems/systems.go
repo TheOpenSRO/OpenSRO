@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -147,6 +148,11 @@ func Counts(rows []Row) (specified, partial, open int) {
 // sweep listed `GObjPC::FUN_004a9050` among its unnamed yield while
 // `ground_items.md` had already read that function in full, and the wasted pass
 // is what round 302 had to go back and reconcile.
+//
+// THERE ARE TWO NAME SOURCES, and reading only this one understates what the
+// project has named (round 305). `client/tools/ghidra/ApplyKnownNames.java`
+// carries a second, hardcoded table of 191 names, 152 of which appear nowhere
+// else. KnownNamesJava reads it, and AllRecoveredNames merges the two.
 func RecoveredNames(path string) (map[uint64]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -170,4 +176,58 @@ func RecoveredNames(path string) (map[uint64]string, error) {
 		return nil, fmt.Errorf("systems: %s yielded no names -- the file's shape changed", path)
 	}
 	return names, nil
+}
+
+// knownNameRow matches a row of ApplyKnownNames.java's hardcoded table, which
+// is written as {"00952890", "Client_LoadRefDataFile", ...}.
+var knownNameRow = regexp.MustCompile(`\{"([0-9a-fA-F]{6,8})",\s*"([^"]+)"`)
+
+// KnownNamesJava reads the second name source, the table compiled into
+// client/tools/ghidra/ApplyKnownNames.java.
+//
+// It exists because a name can be applied to the Ghidra project from either
+// file, so a checker that consults only recovered_names.tsv will report a
+// function as anonymous when the project has in fact named it. Round 305 found
+// 152 names living only here.
+func KnownNamesJava(path string) (map[uint64]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	names := make(map[uint64]string)
+	for _, m := range knownNameRow.FindAllStringSubmatch(string(raw), -1) {
+		addr, err := strconv.ParseUint(m[1], 16, 64)
+		if err != nil {
+			continue
+		}
+		names[addr] = m[2]
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("systems: %s yielded no names -- the table's shape changed", path)
+	}
+	return names, nil
+}
+
+// AllRecoveredNames merges both sources. The TSV wins a disagreement: it is the
+// file the project maintains per round, and where the two overlap the Java
+// table is generally the older, cruder name (`GetSingleton_00d6a950` against
+// `GetSingleton_COverlappedJobMgr`). 34 of the 39 overlapping addresses
+// disagreed when this was written; see docs/protocol/naming_ceiling.md.
+func AllRecoveredNames(tsvPath, javaPath string) (map[uint64]string, error) {
+	merged := map[uint64]string{}
+	java, err := KnownNamesJava(javaPath)
+	if err != nil {
+		return nil, err
+	}
+	for a, n := range java {
+		merged[a] = n
+	}
+	tsv, err := RecoveredNames(tsvPath)
+	if err != nil {
+		return nil, err
+	}
+	for a, n := range tsv {
+		merged[a] = n
+	}
+	return merged, nil
 }

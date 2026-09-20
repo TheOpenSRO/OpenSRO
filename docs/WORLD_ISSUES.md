@@ -7075,6 +7075,87 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-fifth round: 250 names that were filed and still did not exist
+
+Round 302 ended on "a name that is not in the applier's input does not exist,
+however thoroughly the function was read", and filed four names into
+`recovered_names.tsv`. **All four are still `FUN_` in the dump.** So is a great
+deal else:
+
+| | |
+|---|---:|
+| server rows in `recovered_names.tsv` | 2,079 |
+| names actually present in the dump | 1,828 |
+| **filed but still `FUN_`** | **250** |
+
+**Because filing is not applying.** The dump was built **2026-09-18 21:48**; the
+TSV was last changed **2026-09-20 10:22**. `re_tick.sh` rebuilds when the
+*Ghidra project* changes, and `ApplyRecoveredNames.java` is the only thing that
+writes names into it -- so a row added to the TSV touches nothing at all until
+that applier is **run**. `docs/RE_LOOP.md` has the recipe and even warns that
+"a name that is only in a commit message does not exist"; the next link in the
+same chain was missing. Round 302's lesson was necessary and not sufficient.
+
+**Applied this round:** server `applied 264, forced 0, reowned 42, failed 0`;
+client `applied 7, failed 0`. `PROJSTAMP` cleared on both dumps so the tick
+rebuilds them, which it is now doing.
+
+### There are TWO name sources, and nothing knew it
+
+`client/tools/ghidra/ApplyKnownNames.java` carries a second, hardcoded table:
+
+- **191 names**, of which **152 exist nowhere else**;
+- 39 addresses appear in both files, and **34 of those disagree**.
+
+Round 302's census measured prose against the TSV alone and called names
+"absent"; round 303's `TestProbesSpellFunctionsByTheirRecoveredNames` read the
+TSV alone too. **Both had an incomplete denominator**, and merging the sources
+immediately caught a row the single-source test could not see: SYSTEMS.md spelled
+`FUN_0059c4e0` while the Java table has named it `Mastery_LevelUp` since
+2026-09-18. `internal/systems` now merges both, and a new test forbids the two
+files from making different claims about one function.
+
+### Adjudicating the 34, and a correction I nearly shipped
+
+Most are one subject in two spelling eras (`GetSingleton_00d6a950` against
+`GetSingleton_COverlappedJobMgr`), and those are listed explicitly rather than
+pattern-matched away. Five were real disagreements of the form
+`Ref*_ExtractData` (TSV) against `Ref*_<verb>` (Java), settled by a mechanical
+discriminator: **only a row deserializer calls the column skipper**
+`FUN_006b1a80`. Three call it 4, 1 and 3 times and are deserializers, so the
+TSV wins and the Java names are corrected in place -- their richer
+*descriptions* are kept, because a parser that validates as it reads is both
+things at once.
+
+**The fourth nearly went the wrong way.** `0x00427050`: the Java table says
+`LoadGainRates`, the TSV `LoadServerConfig`. It calls the skipper zero times,
+and a grep of its quoted strings returned exactly four -- "Individual Exp Gain
+Ratio", "Party Exp Gain Ratio", "Item Drop Ratio", "Gold Drop Amount Factor" --
+which names `LoadGainRates` so neatly that the TSV row was rewritten to match.
+
+That was wrong. The row's own existing description, from round 258, lists
+**25 keys**: `MONSTER_AGGRO_LINK_DECREASE_RATIO`, `HwanGainFactor`,
+`PCSpeedRatio`, `GiantMonster_SpawnRatio`, `SET_FEE_RATE`, and more. They are
+passed to `ServerConfig_Get` **in ECX**, so a grep for quoted strings inside the
+function cannot see them. **The probe saw 4 of 25 and the four it saw were all
+rates.** `LoadServerConfig` is correct and the *wider* name; the edit is
+reverted and the near-miss is recorded in the test's own adjudication list.
+
+It also corrupted the row: the long description was written into the status
+column, pushing `reading` out. Caught by reading `git diff` before committing,
+which is the only reason this is a paragraph and not a defect.
+
+### Two still unresolved, honestly
+
+`0x006a6660` and `0x006a94a0` were measured *while the rebuild was deleting the
+dump underneath them* and returned zeroes that mean nothing -- the caller
+listing taken earlier shows three skipper call sites inside `006a94a0` alone.
+They are marked UNRESOLVED and will be measured against the rebuilt dump.
+
+**Three probes lied this round** (the string grep, the skipper count against a
+vanishing dump, and round 303's single-source name check), which is the running
+theme: every one returned a clean, plausible number.
+
 ## Three-hundred-and-fourth round: every repair was half again too dear
 
 SYSTEMS.md named `RefObjItem::ExtractData` (7,052 bytes) "the most valuable

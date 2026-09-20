@@ -167,3 +167,28 @@ The last pair is not a disagreement about the code -- berserk *is* body mode
 `persistence.md` documents, where the class prefix names an arbitrary member of
 the sharing set. The first two are worth a reading pass before either name is
 trusted.
+
+
+## The denominator had two files in it, and the dump had neither (round 305)
+
+Two corrections to how naming coverage is counted here.
+
+**1. There are two name sources.** Besides `docs/protocol/recovered_names.tsv`
+(2,421 rows), `client/tools/ghidra/ApplyKnownNames.java` carries a hardcoded
+table of **191 names, 152 of which appear nowhere else**. Any census that reads
+only the TSV understates what the project has named -- round 302's prose sweep
+and round 303's tracker test both did. `internal/systems.AllRecoveredNames`
+merges them, and `TestTheTwoNameSourcesDoNotContradict` keeps them from making
+different claims about one function.
+
+**2. A filed name is not an applied name.** On 2026-09-20, **250 of the 2,079
+server rows** in the TSV were still `FUN_` in the dump -- 12 %. Filing a row
+touches nothing: `ApplyRecoveredNames.java` must be run, and `PROJSTAMP`
+cleared so `re_tick.sh` rebuilds. See the recipe in `docs/RE_LOOP.md`.
+
+**The consequence for every sweep on this page**: a census of `FUN_` functions
+in the dump measures *applied* names, not *recovered* ones, and the two drift
+apart by however many rounds have passed since the last apply. Run the apply
+before quoting a coverage number, or the number counts work already done as
+work outstanding -- which is precisely what sent round 301 to re-derive
+`GObjPC::CheckCanPickUp` and cost round 302 its tick.

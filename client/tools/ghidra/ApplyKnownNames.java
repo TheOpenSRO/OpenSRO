@@ -634,7 +634,7 @@ public class ApplyKnownNames extends GhidraScript {
          + "'btType1 < MAX_TID1_COUNT' (7 <), 'btType2 < MAX_TID2_COUNT' (3 <), "
          + "'btType3 < MAX_TID3_COUNT' (0xf <), 'btType4 < MAX_TID4_COUNT' (0x1f <). So the "
          + "limits are 2, 8, 4, 16, 32 and the field widths are 1, 3, 2, 4 and 5 bits."},
-        {"006a61b0", "RefMagicOpt_ValidateValue",
+        {"006a61b0", "RefMonsterAssignedItemDrop_ExtractData",
          "Validates a magic option's value against its allowed range. Reports "
          + "'error data that is a magicoption value. [ItemCode: %d, MagicOptionID: %d]' and "
          + "'(%s) error data out of range to MagicoptionValue', from ReferenceData.cpp."},
@@ -642,7 +642,7 @@ public class ApplyKnownNames extends GhidraScript {
          "Resolves the per-MagicType extractor for a magic option and validates its custom "
          + "value. Reports 'can`t find MagicType[%d] extractor!!! [MagicOptID:%d]' and "
          + "'CustomValue(RefMagicOptID[%d]) is error data out of range to MagicoptionValue'."},
-        {"006a8d80", "RefItem_ValidateDurabilityAndStack",
+        {"006a8d80", "RefScrapOfPackageItem_ExtractData",
          "Checks an item package row's durability, max stack and magic-option level. Reports "
          + "'error data that is a durability or maxstack of a item. [PackageID: %s, ItemCode: %s]' "
          + "and the matching magicoption-level message, both keyed by PackageID and ItemCode."},
@@ -653,7 +653,7 @@ public class ApplyKnownNames extends GhidraScript {
         {"006a99c0", "RefShop_ReplacePriceWithSilk",
          "Drops a good's other prices in favour of the silk suit: 'Remove all price of (%s) "
          + "except silkprice suit.' and 'insert cost to %s'."},
-        {"006a9ab0", "RefShop_CheckSellable",
+        {"006a9ab0", "RefShopGoods_ExtractData",
          "Gates a good on being sellable: asserts 'pRefItem != NULL && (pRefItem->m_dwAvailableOPs "
          + "& OBJ_INTERACT_FLAG_CAN_SELL)' and handles the 'MALL_' name prefix."},
         {"006a94a0", "RefShop_InsertPricePolicyLevel",

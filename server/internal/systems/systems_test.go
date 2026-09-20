@@ -188,7 +188,11 @@ func TestSpecifiedRowsDoNotClaimOutstandingWork(t *testing.T) {
 // half. Three rows carried superseded spellings when this test was written.
 func TestProbesSpellFunctionsByTheirRecoveredNames(t *testing.T) {
 	root, rows := load(t)
-	names, err := RecoveredNames(filepath.Join(root, "docs", "protocol", "recovered_names.tsv"))
+	// BOTH sources, or the check understates what the project has named --
+	// 152 names live only in the Java table (round 305).
+	names, err := AllRecoveredNames(
+		filepath.Join(root, "docs", "protocol", "recovered_names.tsv"),
+		filepath.Join(root, "client", "tools", "ghidra", "ApplyKnownNames.java"))
 	if err != nil {
 		t.Fatalf("loading recovered names: %v", err)
 	}
@@ -200,7 +204,8 @@ func TestProbesSpellFunctionsByTheirRecoveredNames(t *testing.T) {
 				continue
 			}
 			if name, ok := names[addr]; ok {
-				t.Errorf("SYSTEMS.md:%d %q spells %s, but recovered_names.tsv names it %q",
+				t.Errorf("SYSTEMS.md:%d %q spells %s, but this project names it %q "+
+					"(recovered_names.tsv or ApplyKnownNames.java)",
 					r.Line, r.Name, m[0], name)
 			}
 		}
@@ -309,4 +314,84 @@ func negatedClaim(s string, i int) bool {
 		}
 	}
 	return false
+}
+
+// The two name sources must not disagree about what a function IS.
+//
+// A differing spelling of the same idea is tolerated -- the Java table holds
+// the older, cruder forms (`GetSingleton_00d6a950` where the TSV has
+// `GetSingleton_COverlappedJobMgr`, `GObjPC_AdjustHwanCount` where it has
+// `GObjPC::AddHwanCount`) and the TSV wins those. What is NOT tolerable is the
+// two files making different claims about the function's subject, because then
+// whichever applier ran last decides what the dump says.
+//
+// Round 305 found exactly one: 0x006a8d80, which the Java table calls
+// RefItem_ValidateDurabilityAndStack and the TSV calls
+// RefScrapOfPackageItem_ExtractData. Those are not two spellings of one fact.
+func TestTheTwoNameSourcesDoNotContradict(t *testing.T) {
+	root := repoRoot(t)
+	tsv, err := RecoveredNames(filepath.Join(root, "docs", "protocol", "recovered_names.tsv"))
+	if err != nil {
+		t.Fatalf("loading the TSV: %v", err)
+	}
+	java, err := KnownNamesJava(filepath.Join(root, "client", "tools", "ghidra", "ApplyKnownNames.java"))
+	if err != nil {
+		t.Fatalf("loading the Java table: %v", err)
+	}
+	// Known-tolerable divergences: the same subject in two spelling eras, each
+	// checked by hand in round 305. They are listed rather than pattern-matched
+	// away, because the pattern that would swallow them ("both mention HP")
+	// would also swallow a real disagreement.
+	tolerated := map[uint64]string{
+		0x004e4d00: "AdjustHwanCount / AddHwanCount -- berserk orbs are both gained and spent, so 'adjust' is the wider verb for one function",
+		0x00594ac0: "Skill_ApplyEffectsToParams / ApplySkillParamsToChar -- same call, argument order reversed in the name",
+		0x005a1a20: "RollChanceForActor / RollChance -- the actor is the argument",
+		0x004b3740: "ParamKeeper_ReadParam / ParamKeeper_GetParamChecked -- the 'Checked' names the bounds assert",
+		0x005829d0: "OnEffectExpired / SkillAction_BuffEnd -- buff expiry, named from the caller and the callee side",
+		0x004a86a0: "RecoverHpMp / ApplyHPMPDelta -- the delta may be negative, so the TSV name is the more accurate of the two",
+		0x00427050: "LoadGainRates / LoadServerConfig -- the TSV is right and WIDER: the function reads 25 config keys, not just the four rate ones. Round 305 nearly 'corrected' the TSV to the narrow name off a grep for quoted strings, which sees only the keys that have a log format string; the rest are passed to ServerConfig_Get in ECX",
+		0x006a6660: "ResolveExtractor / RefMagicOptByItemOptLevel_ExtractData -- UNRESOLVED",
+		0x006a94a0: "InsertPricePolicyLevel / RefPackageItem_ExtractData -- UNRESOLVED",
+	}
+	for addr, jn := range java {
+		tn, ok := tsv[addr]
+		if !ok {
+			continue
+		}
+		if _, known := tolerated[addr]; known {
+			continue
+		}
+		if sameSubject(jn, tn) {
+			continue
+		}
+		t.Errorf("0x%08x is named %q by ApplyKnownNames.java and %q by "+
+			"recovered_names.tsv -- two different claims about one function; "+
+			"whichever applier runs last wins, which is not a decision a file "+
+			"ordering should be making", addr, jn, tn)
+	}
+}
+
+// sameSubject reports whether two names are plausibly the same fact spelled
+// differently: identical once namespaces, separators and a leading class are
+// normalised away, or one contains the other's distinctive tail.
+func sameSubject(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.ToLower(s)
+		s = strings.ReplaceAll(s, "::", "_")
+		return strings.ReplaceAll(s, "_", "")
+	}
+	na, nb := norm(a), norm(b)
+	if na == nb {
+		return true
+	}
+	ta := norm(a[strings.LastIndex(a, "::")+1:])
+	tb := norm(b[strings.LastIndex(b, "::")+1:])
+	if ta == tb {
+		return true
+	}
+	// A GetSingleton_<addr> placeholder against GetSingleton_<class>.
+	if strings.HasPrefix(na, "getsingleton") && strings.HasPrefix(nb, "getsingleton") {
+		return true
+	}
+	return strings.Contains(na, tb) || strings.Contains(nb, ta)
 }
