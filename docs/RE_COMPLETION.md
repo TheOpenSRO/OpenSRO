@@ -6266,6 +6266,47 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 337 (the denominator was wrong, and 3 core names): WITH THE "NAME THE 55"
+AMBITION CLOSED, THE QUESTION BECAME WHICH FUNCTIONS ACTUALLY MATTER. Coverage
+re-measured off the fresh dumps rather than by running SymbolReport (which would
+have dirtied the project for a 9-minute rebuild): server 15.8 % NAMED, client
+5.2 % -- barely moved by this session's ~30 names, as expected against 34k and
+43k functions. **BUT 15.8 % OF EVERYTHING ANSWERS A QUESTION NOBODY ASKED.** The
+goal is every GAME-LOGIC function named, so the core was measured directly: a
+call graph built from the dump (91,337 name-resolved edges) walked from the 163
+message handlers, which are the game's logic entry points. **3,232 functions are
+reachable; 2,930 of those are below the CRT range, and only 12 % of THEM are
+named.** The real completion figure is LOWER than the headline, not higher,
+because the boilerplate pass already named 2,383 destructors and much of the CRT
+while the game's own subsystems stay FUN_. Naming falls off with distance: 59 %
+at the handlers, 23 % at depth 1, 9 % by depth 3. THE BLIND SPOT IS PROVEN BY
+THE NUMBERS THEMSELVES: **SLOTTED is 0 in the reachable set.** 2,579 functions
+in this binary are known only by a vtable slot and the walk reached NONE of
+them, which is proof that a name-based graph cannot see virtual dispatch -- so
+3,232 is a LOWER BOUND and whole subsystems reached only through a vtable are
+missing. Said in naming_ceiling.md rather than left for someone to discover.
+RANKING THE CORE BY HOW MANY HANDLERS DEPEND ON EACH UNNAMED FUNCTION LOOKED
+LIKE A WORKLIST AND IS NOT ONE YET: the top entries are C++ RUNTIME MACHINERY.
+0x00404550 and 0x00404700 are copy constructors for CMsgException and
+CInternalException -- classes already named in boilerplate_names.tsv, whose
+CONSTRUCTORS nobody has named -- and 0x004042f0 is the exception object thrown
+on a message underflow. Only one of the top four was game code. THAT ONE IS NOW
+NAMED: CGameServer::LogFormatted (0x00936640), the server's formatted logger,
+reached from 64 of the 163 handlers, read as __vsnprintf_s into an 8,191-byte
+buffer with a category mask as its first argument. NO FUNCTION IN THIS PROJECT
+CARRIED A LOG NAME BEFORE -- the long-spent "server log calls passing their own
+name" lever harvested this function's CALL SITES and never named the callee.
+AND A GAP CLOSED THAT THIS PROJECT CREATED: MsgBuf_ReadUInt32FromTail
+(0x005216c0, plus its COMDAT twin 0x00423f70) was ENUMERATED AND PUBLISHED in
+round 329's reader table and never filed as a name, so 59 handlers depended on a
+function this project had already identified and still called FUN_. Re-verified
+line by line rather than taken from the table, and the tail family is now
+complete at 8, 16 and 32 bits. Appearing in a published table is not being named.
+
+**What moved:** no shipped value. A completion metric that measures the right
+denominator (12 % of a 2,930-function game-logic core, with its lower-bound
+caveat), and 3 core functions named and applied.
+
 Round 336 (the sender lever: 4 names, and the 55 ambition closed honestly): THE
 LAST USE-SITE LEFT FOR THE 55 PLACEHOLDER-NAMED HANDLERS IS WHO SENDS THE
 REQUEST. Round 328 named 0x51d that way (CIF_NPCTalk sends it), so this built the

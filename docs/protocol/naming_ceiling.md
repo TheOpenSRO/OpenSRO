@@ -271,3 +271,61 @@ checked*, and only rarely the function checking it.
 file and line still place a function in its source file and order it against its
 neighbours, which is the SLOTTED/ATTRIBUTED tier this page distinguishes from
 NAMED -- knowing *where* a function lives, not what it does.
+
+## The denominator is wrong: measure the game-logic core (round 336b, 2026-09-20)
+
+"15.8 % of the server is named" answers a question nobody asked. The goal is
+**every game-logic function named**, and most of this binary is not game logic --
+this page's own size table says so. So the core was measured directly rather
+than estimated.
+
+**Method.** The 163 client-message handlers are the game's logic entry points
+(`server_handlers.tsv`; the table itself comes from the installer
+`GObjPC::InstallClientMessageHandlers`). A call graph was built from the dump by
+resolving every call-by-name to an address -- 91,337 edges -- and walked
+breadth-first from those 163 roots.
+
+| | functions | named |
+|---|---:|---:|
+| whole server binary | 34,207 | 15.8 % |
+| reachable from a message handler | 3,232 | 17.4 % |
+| **of those, below the CRT range (`< 0x009d0000`)** | **2,930** | **12 %** |
+
+**The real completion figure for game logic is 12 %, not 15.8 %**, and it is
+lower than the headline rather than higher, because the boilerplate pass has
+already named 2,383 destructors and much of the CRT while the game's own
+subsystems stay `FUN_`.
+
+Naming falls off sharply with distance from the entry point:
+
+| depth | functions | named |
+|---|---:|---:|
+| 0 (the handlers) | 161 | 59 % |
+| 1 | 413 | 23 % |
+| 2 | 627 | 14 % |
+| 3 | 504 | 9 % |
+| 4 | 413 | 11 % |
+| 5+ | 1,114 | 17 % |
+
+### The blind spot, stated because the numbers show it
+
+**`SLOTTED` is 0 in the reachable set.** 2,579 functions in this binary are known
+only by a vtable slot, and the walk reached *none* of them -- which is proof that
+a name-based call graph cannot see virtual dispatch, and this engine dispatches
+through vtables constantly. So **3,232 is a lower bound on the core**, and whole
+subsystems reached only through a vtable are missing from it entirely. The 12 %
+is a figure for the directly-called core, not for all game logic.
+
+### What the ranking is good for, and how it misleads
+
+Ranking unnamed core functions by how many distinct handlers reach them puts the
+most depended-on first -- but the top of that list is **C++ runtime machinery,
+not game logic**: `0x00404550` and `0x00404700` are copy constructors for
+`CMsgException`/`CInternalException` (the classes are named in
+`boilerplate_names.tsv`, their constructors are not), and `0x004042f0` is the
+exception-object constructor thrown on a message underflow. Only one of the top
+four was game code -- the server's logger, now `CGameServer::LogFormatted`.
+
+So the ranking needs the same exclusion the size table implies before it is a
+worklist. Applied to the whole binary the boilerplate pass did that for
+destructors; nothing has done it for constructors.

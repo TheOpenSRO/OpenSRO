@@ -413,11 +413,13 @@ references `+0x1034` and advances either the cursor `+0x103c` or the size
 |---|---|---|
 | 1 | `0x00404f80`, `0x00521750` | `0x005217a0` |
 | 2 | `0x004263c0`, `0x0048ba70`, `0x005e32b0` | `0x00409910` |
-| 4 | `0x00403f60`, `0x00404e00`, `0x00423f20`, `0x005e3200` | `0x00423f70`, `0x005216c0` |
+| 4 | `0x00403f60`, `0x00404e00`, `0x00423f20`, `0x005e3200` | `MsgBuf_ReadUInt32FromTail` `0x005216c0`, twin `0x00423f70` |
 | 8 | `0x0042c6e0`, `0x00969830` | `0x0042c740`, `0x00969890` |
 | 12/16/24 | `0x005b8520`, `0x005e2c20`, `0x004b22b0` | -- |
 | 256/272 | `0x004a1b40`, `0x00438e80` | -- |
 | variable | `0x00404c20` (length in DI) | -- |
+
+The 32-bit tail pair was enumerated here in round 329 and only FILED as a name in round 336b -- a reminder that appearing in a published table is not the same as being named, the same gap recorded in the naming-coverage memory.
 
 The duplicates per width are COMDAT twins, which is exactly why round 328's grep
 for two known addresses came back empty on a handler that reads two fields.
