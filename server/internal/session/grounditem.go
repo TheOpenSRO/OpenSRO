@@ -17,6 +17,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
@@ -281,6 +282,82 @@ func dropKillLoot(ground *grounditem.Hub, hub *world.Hub, monster combat.Monster
 		}
 	}
 	return out
+}
+
+// DropSource is the real, server-side drop data: the two tables a kill needs
+// to roll loot the way the engine does. Both the SQL and in-memory refdata
+// stores already satisfy it; it is an interface here so the combat handler
+// does not depend on a concrete store.
+type DropSource interface {
+	GetMonsterDrops(ctx context.Context, monsterID int64) ([]*refdata.MonsterDrop, error)
+	GetDropGroupEntries(ctx context.Context, groupID int64) ([]*refdata.DropGroupEntry, error)
+}
+
+// realDrops rolls a kill against the REAL drop tables, returning ok=false when
+// there is no real data for this monster so the caller can fall back.
+//
+// This closes the gap combat/loot.go documented: the algorithm
+// (refdata.MonsterDrop.RollAssignedDrop / refdata.SelectFromGroup, recovered
+// from CRefDropData__AddAssignedItemDrop) and the loaders have existed since
+// 2026-09-15, and the only thing missing was the numeric key -- which
+// cmd/server has carried as monsterSpec.RefObjID since 2026-09-19 and never
+// passed to combat.Monster. Nothing here re-derives the engine's arithmetic;
+// it calls the functions that already implement it.
+//
+// A row produces a COUNT of independent instances, not a stack: RollAssignedDrop
+// picks an attempt count in [DropAmountMin, DropAmountMax] and rolls DropRatio
+// afresh for each, and every success picks its own entry from the group. So the
+// group is re-selected per instance rather than once per row.
+//
+// ok=true WITH AN EMPTY RESULT IS A REAL OUTCOME and must not fall through: a
+// monster with real drop data that rolls nothing has dropped nothing. Falling
+// back there would pay out the own-design table on top of the real one, which
+// is how a kill would end up luckier than the engine ever makes it.
+func realDrops(ctx context.Context, src DropSource, monster combat.Monster) ([]LootDrop, bool) {
+	if src == nil || monster.RefObjID == 0 {
+		return nil, false
+	}
+	rows, err := src.GetMonsterDrops(ctx, monster.RefObjID)
+	if err != nil || len(rows) == 0 {
+		return nil, false
+	}
+	var out []LootDrop
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		n := row.RollAssignedDrop(nil)
+		for i := 0; i < n; i++ {
+			entries, err := src.GetDropGroupEntries(ctx, row.ItemGroupID)
+			if err != nil || len(entries) == 0 {
+				continue
+			}
+			// A group need not be exhaustive -- SelectFromGroup returns nil
+			// when the roll falls past the last entry, which is the engine's
+			// own behaviour, not an error.
+			e := refdata.SelectFromGroup(entries, nil)
+			if e == nil {
+				continue
+			}
+			out = append(out, LootDrop{ItemID: e.ItemID, Quantity: 1})
+		}
+	}
+	return out, true
+}
+
+// dropsForKill is everything a kill produced, before anything is done with it:
+// the real tables when the operator has supplied them for this monster, and the
+// own-design combat.LootTables otherwise.
+//
+// BOTH loot paths go through here on purpose. The ground path and the
+// straight-to-inventory path used to roll separately, so wiring one would have
+// left the other on own-design data -- and the ground path is the one cmd/server
+// actually runs.
+func dropsForKill(ctx context.Context, src DropSource, monster combat.Monster) []LootDrop {
+	if d, ok := realDrops(ctx, src, monster); ok {
+		return d
+	}
+	return rollDrops(monster.Name)
 }
 
 // rollDrops rolls combat.LootTables[monsterName] without touching any

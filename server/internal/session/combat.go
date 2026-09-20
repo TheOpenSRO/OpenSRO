@@ -593,31 +593,21 @@ func DecodeMonsterListResult(data []byte) (*MonsterListResult, error) {
 	return r, nil
 }
 
-// rollLoot rolls combat.LootTables[monsterName] and adds anything won to
-// characterID's inventory, returning what actually landed. AddItem
-// failures (unknown ref item, full inventory) are skipped rather than
-// failing the whole kill -- loot is enrichment on top of a successful
-// attack, not a precondition for one.
-func rollLoot(ctx context.Context, inv inventory.Store, characterID int64, monsterName string) []LootDrop {
-	entries, ok := combat.LootTables[monsterName]
-	if !ok {
-		return nil
-	}
-	var drops []LootDrop
-	for _, e := range entries {
-		if rand.Float64() > e.Chance {
+// rollLoot rolls a kill's drops (real tables when the operator has supplied
+// them, own-design otherwise -- see dropsForKill) and adds what it won to
+// characterID's inventory, returning what actually landed. AddItem failures
+// (unknown ref item, full inventory) are skipped rather than failing the whole
+// kill -- loot is enrichment on top of a successful attack, not a precondition
+// for one.
+func rollLoot(ctx context.Context, inv inventory.Store, characterID int64, monster combat.Monster, src DropSource) []LootDrop {
+	var landed []LootDrop
+	for _, d := range dropsForKill(ctx, src, monster) {
+		if err := inv.AddItem(ctx, characterID, d.ItemID, int(d.Quantity)); err != nil {
 			continue
 		}
-		qty := e.MinQuantity
-		if e.MaxQuantity > e.MinQuantity {
-			qty += rand.Intn(e.MaxQuantity - e.MinQuantity + 1)
-		}
-		if err := inv.AddItem(ctx, characterID, e.ItemID, qty); err != nil {
-			continue
-		}
-		drops = append(drops, LootDrop{ItemID: e.ItemID, Quantity: int32(qty)})
+		landed = append(landed, d)
 	}
-	return drops
+	return landed
 }
 
 // CombatHandler returns a gateway.Handler implementing OpAttack: resolves
@@ -640,6 +630,28 @@ func CombatHandler(
 	return CombatHandlerWithGround(chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, nil)
 }
 
+// CombatHandlerWithDrops is CombatHandlerWithGround plus the real drop tables.
+// A nil dropSrc, or a monster with no rows in them, falls back to the
+// own-design combat.LootTables -- so an operator who has not imported
+// _RefMonster_AssignedItemRndDrop sees exactly the behaviour they saw before.
+func CombatHandlerWithDrops(
+	chars character.Store,
+	eq equipment.Store,
+	items combat.ItemLookup,
+	hub *world.Hub,
+	monsters *combat.Hub,
+	quests quest.Store,
+	inv inventory.Store,
+	skills skill.Store,
+	zerk *berserk.Tracker,
+	mp *mana.Tracker,
+	parties *party.Hub,
+	ground *grounditem.Hub,
+	dropSrc DropSource,
+) gateway.Handler {
+	return combatHandler(chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc)
+}
+
 // CombatHandlerWithGround is CombatHandler with a ground-item hub: a kill's
 // gold and loot then lie on the ground near the corpse (internal/grounditem)
 // instead of landing in the killer's bag. A nil hub keeps the direct grant.
@@ -656,6 +668,26 @@ func CombatHandlerWithGround(
 	mp *mana.Tracker,
 	parties *party.Hub,
 	ground *grounditem.Hub,
+) gateway.Handler {
+	return combatHandler(chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, nil)
+}
+
+// combatHandler is the one implementation both exported constructors delegate
+// to, so a new dependency is added in one place rather than duplicated.
+func combatHandler(
+	chars character.Store,
+	eq equipment.Store,
+	items combat.ItemLookup,
+	hub *world.Hub,
+	monsters *combat.Hub,
+	quests quest.Store,
+	inv inventory.Store,
+	skills skill.Store,
+	zerk *berserk.Tracker,
+	mp *mana.Tracker,
+	parties *party.Hub,
+	ground *grounditem.Hub,
+	dropSrc DropSource,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
@@ -697,7 +729,7 @@ func CombatHandlerWithGround(
 			if !swingReady(ctx, characterID, eq, items, skills, time.Now()) {
 				return nil
 			}
-			if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, characterID, req.TargetMonsterID, 0, 0, 0, 1, combat.AttackPhysical); err != nil {
+			if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, characterID, req.TargetMonsterID, 0, 0, 0, 1, combat.AttackPhysical); err != nil {
 				return err
 			}
 			// One click is the whole fight: the server repeats the swing on
@@ -705,7 +737,7 @@ func CombatHandlerWithGround(
 			// 256, keepup.go). A target the swing could not find arms
 			// nothing; the first repeat would only find the same.
 			if m, ok := monsters.Get(req.TargetMonsterID); ok && m.HP > 0 {
-				deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground}
+				deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc}
 				armKeepUp(sess, deps, characterID, req.TargetMonsterID, 0)
 			}
 			return nil
@@ -824,6 +856,7 @@ func performAttack(
 	mp *mana.Tracker,
 	parties *party.Hub,
 	ground *grounditem.Hub,
+	dropSrc DropSource,
 	characterID, targetMonsterID int64,
 	damageBonus int,
 	damagePercent int,
@@ -1343,10 +1376,10 @@ func performAttack(
 		if ground != nil {
 			// The kill's gold and loot lie on the ground near the corpse,
 			// owned by the killer for the 30 s window, announced to the zone.
-			dropKillLoot(ground, hub, monster, characterID, killGold, rollDrops(monster.Name))
+			dropKillLoot(ground, hub, monster, characterID, killGold, dropsForKill(ctx, dropSrc, monster))
 			return nil
 		}
-		if drops := rollLoot(ctx, inv, characterID, monster.Name); len(drops) > 0 {
+		if drops := rollLoot(ctx, inv, characterID, monster, dropSrc); len(drops) > 0 {
 			lootMsg := &LootDropped{MonsterID: targetMonsterID, Drops: drops}
 			if err := sess.Send(&proto.Packet{Opcode: OpLootDropped, Data: lootMsg.Encode()}); err != nil {
 				return err

@@ -469,6 +469,47 @@ func UseSkillHandlerWithGround(
 	parties *party.Hub,
 	ground *grounditem.Hub,
 ) gateway.Handler {
+	return useSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, skillRef, zerk, mp, parties, ground, nil)
+}
+
+// UseSkillHandlerWithDrops is UseSkillHandlerWithGround plus the real drop
+// tables. A skill kill drops exactly what a plain swing does, which is only
+// true if both paths carry the same source -- see dropsForKill.
+func UseSkillHandlerWithDrops(
+	chars character.Store,
+	eq equipment.Store,
+	items combat.ItemLookup,
+	skills skill.Store,
+	hub *world.Hub,
+	monsters *combat.Hub,
+	quests quest.Store,
+	inv inventory.Store,
+	skillRef SkillRefStore,
+	zerk *berserk.Tracker,
+	mp *mana.Tracker,
+	parties *party.Hub,
+	ground *grounditem.Hub,
+	dropSrc DropSource,
+) gateway.Handler {
+	return useSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, skillRef, zerk, mp, parties, ground, dropSrc)
+}
+
+func useSkillHandler(
+	chars character.Store,
+	eq equipment.Store,
+	items combat.ItemLookup,
+	skills skill.Store,
+	hub *world.Hub,
+	monsters *combat.Hub,
+	quests quest.Store,
+	inv inventory.Store,
+	skillRef SkillRefStore,
+	zerk *berserk.Tracker,
+	mp *mana.Tracker,
+	parties *party.Hub,
+	ground *grounditem.Hub,
+	dropSrc DropSource,
+) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpUseSkill {
 			return nil
@@ -767,7 +808,7 @@ func UseSkillHandlerWithGround(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
 		}
 
-		if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType); err != nil {
+		if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType); err != nil {
 			return err
 		}
 		// The skill tick's hand-off (round 256, keepup.go): a row with
@@ -775,7 +816,7 @@ func UseSkillHandlerWithGround(
 		// target once its CastingTime + ActionDuration has played.
 		if skillHandsOff(castRow) {
 			if m, ok := monsters.Get(req.TargetMonsterID); ok && m.HP > 0 {
-				deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground}
+				deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc}
 				armKeepUp(sess, deps, characterID, req.TargetMonsterID, handOffDelay(castRow))
 			}
 		}

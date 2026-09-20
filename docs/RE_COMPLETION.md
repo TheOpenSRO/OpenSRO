@@ -6266,6 +6266,50 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 332 (a shipped value grounded, and a green suite that was not green):
+THE REAL DROP TABLES ARE WIRED, AND THE BLOCKER WAS ONE FIELD. Five rounds of
+protocol work had not touched the other half of the goal -- srrevamp's own
+values -- so this audited GROUNDING_AUDIT.md instead. Every Go symbol it cites
+was checked against the code: 26 of 26 resolve to real, used code (three
+apparent misses were my own crude definition-regex, not missing code). But TWO
+ROWS WERE STALE. (1) "The two level-gap scalers are NOT recovered and are
+treated as 1.0" -- both were recovered later (Formula_ExpScaleByLevelWindow and
+its classifier, three comparisons on the gap, 1.0 inside a -3..+10 band) and
+both are applied in KillExp. (2) The loot row claimed placeholder ids 500-502
+and an unconfirmed RefMonsterID mapping; the ids were real potion ids and the
+mapping had been settled 2026-09-15. THE ACTUAL STATE was that
+refdata.MonsterDrop.RollAssignedDrop and SelectFromGroup -- the engine's own
+arithmetic, recovered from CRefDropData__AddAssignedItemDrop -- plus the
+loaders and both stores had existed since 2026-09-15, and NOTHING EVER CALLED
+GetMonsterDrops. combat/loot.go named the reason precisely: "combat.Monster
+carries CodeName but no numeric RefObjID, which is the key those tables use."
+cmd/server has carried monsterSpec.RefObjID SINCE 2026-09-19 and never passed
+it down. One field. THE TRAP AVOIDED: there are TWO loot paths, and the one
+cmd/server actually runs is the GROUND path (rollDrops), not rollLoot -- wiring
+the obvious one would have left production on own-design data while the tests
+went green. Both now go through session.dropsForKill. THE SUBTLE RULE, TESTED:
+a monster that HAS real rows and rolls nothing has dropped nothing, and must NOT
+fall through to the own-design table, which would pay out both and make every
+kill luckier than the engine allows. Reverting that guard makes the test fail
+with the own-design potion appearing on top of real data. The fallback survives
+wherever an operator has not imported the tables, which is the ONLY remaining
+gap and is data, not code: the drop tables are server-side DB tables in no
+client archive. AND A FINDING ABOUT THIS PROJECT'S OWN TESTS: internal/systems'
+doc-consistency probes READ docs/*.md AT RUNTIME, which Go's test cache does not
+track, so they served a cached PASS while the docs drifted. TestProbesDoNotContradictTheirSpec
+has actually been failing since ROUND 321, when Fortress_TaxRatioAsFloat was
+named while SYSTEMS.md still called 0x00486390 "unread" -- and every
+`go test -p 1 ./...` since, including rounds 328-331, reported ok from cache.
+SYSTEMS.md is corrected and the suite is green UNCACHED. **Run the doc probes
+with `-count=1`; a cached pass on a test that reads docs is not a pass.**
+
+**What moved:** a shipped value. Loot is now the game's own tables when the
+operator supplies them, with the own-design table as a disclosed fallback --
+`combat.Monster.RefObjID`, `session.DropSource`/`dropsForKill`,
+`CombatHandlerWithDrops`, `UseSkillHandlerWithDrops`, four tests. Two stale
+GROUNDING_AUDIT rows corrected, one of them in the direction that matters
+(claiming less grounding than the code has). One test un-masked.
+
 **What moved:** no shipped value, and one published name withdrawn.
 `message_handlers.tsv` 318 -> 319 rows, symbols refreshed. An open question
 flagged rather than answered: a naive count says 101 unnamed client handlers sit

@@ -277,7 +277,7 @@ func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Log
 		if bc == 0 {
 			bc = combat.PlayerBCRadius
 		}
-		m := monsters.SpawnSpecies(spec.Zone, combat.Species{Name: spec.Name, CodeName: spec.CodeName, Level: spec.Level, Rarity: spec.Rarity, BCRadius: bc, AttackReuseMs: spec.AttackReuseMs, AttackRange: spec.AttackRange,
+		m := monsters.SpawnSpecies(spec.Zone, combat.Species{Name: spec.Name, CodeName: spec.CodeName, RefObjID: spec.RefObjID, Level: spec.Level, Rarity: spec.Rarity, BCRadius: bc, AttackReuseMs: spec.AttackReuseMs, AttackRange: spec.AttackRange,
 			AttackMin: spec.AttackMin, AttackMax: spec.AttackMax,
 			GoldMin: spec.GoldMin, GoldMax: spec.GoldMax, Critical: spec.Critical}, spec.X, 0, spec.Z, maxHP, defense, attack, gold)
 		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone, "level", m.Level)
@@ -337,7 +337,7 @@ func gmSpecies() []gm.Species {
 		}
 		out = append(out, gm.Species{
 			Species: combat.Species{
-				Name: spec.Name, CodeName: spec.CodeName, Level: spec.Level, Rarity: spec.Rarity,
+				Name: spec.Name, CodeName: spec.CodeName, RefObjID: spec.RefObjID, Level: spec.Level, Rarity: spec.Rarity,
 				AttackMin: spec.AttackMin, AttackMax: spec.AttackMax,
 				GoldMin: spec.GoldMin, GoldMax: spec.GoldMax, Critical: spec.Critical,
 			},
@@ -437,6 +437,12 @@ func main() {
 		guilds      guild.Store
 		quests      quest.Store
 		friends     friend.Store
+		// dropSrc is the real drop tables (_RefMonster_AssignedItemRndDrop and
+		// _RefDropItemGroup). Both refdata stores already implement it; it is
+		// bound separately from refItems because that interface is the item
+		// lookup only. Nil, or a monster with no rows, falls back to the
+		// own-design combat.LootTables.
+		dropSrc session.DropSource
 	)
 
 	if *inMemory {
@@ -488,6 +494,7 @@ func main() {
 		storageGold = memAccounts
 		chars = character.NewMemStore()
 		refItems = memRef
+		dropSrc = memRef
 		inv = memInv
 		memWarehouse := inventory.NewMemStore(memRef) // a second, independent container, keyed by account id
 		memWarehouse.SetDurabilityLookup(memRef)
@@ -615,6 +622,7 @@ func main() {
 
 		accounts, registerer = sqlAccounts, sqlAccounts
 		chars, refItems = sqlChars, sqlRef
+		dropSrc = sqlRef
 		warehouse = sqlWarehouse
 		inv, eq, skills = sqlInv, sqlEq, sqlSkills
 		guilds, quests, friends = sqlGuilds, sqlQuests, sqlFriends
@@ -791,10 +799,10 @@ func main() {
 		session.RepairHandler(chars, eq, refItems),
 		session.StorageHandler(chars, storageSvc),
 		session.UseItemHandler(chars, inv, refItems, manaTracker),
-		session.CombatHandlerWithGround(chars, eq, refItems, hub, monsters, quests, inv, skills, zerkTracker, manaTracker, parties, ground),
+		session.CombatHandlerWithDrops(chars, eq, refItems, hub, monsters, quests, inv, skills, zerkTracker, manaTracker, parties, ground, dropSrc),
 		session.GroundItemHandler(chars, hub, ground, inv, parties),
 		session.LearnSkillHandler(chars, skills, refItems),
-		session.UseSkillHandlerWithGround(chars, eq, refItems, skills, hub, monsters, quests, inv, refItems, zerkTracker, manaTracker, parties, ground),
+		session.UseSkillHandlerWithDrops(chars, eq, refItems, skills, hub, monsters, quests, inv, refItems, zerkTracker, manaTracker, parties, ground, dropSrc),
 		session.SkillListHandler(chars, skills),
 		session.SkillStateHandler(chars, skills),
 		session.RaiseMasteryHandler(chars, skills),

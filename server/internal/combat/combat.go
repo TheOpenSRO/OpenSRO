@@ -28,6 +28,16 @@ type Monster struct {
 	// the same string in every client archive where Name is whatever
 	// language column an archive carries. The client draws the model by it.
 	CodeName string
+	// RefObjID is the species' numeric characterdata id (_RefObjChar col 1;
+	// MOB_CH_MANGNYANG is 1933). It is the key the real drop tables use --
+	// _RefMonster_AssignedItemRndDrop.RefMonsterID -- so a kill can only
+	// consult real drop data if the monster carries it.
+	//
+	// combat/loot.go named its absence as one of the two things standing
+	// between this project and the real drop path; cmd/server has carried
+	// monsterSpec.RefObjID since 2026-09-19 and simply never passed it down.
+	// 0 when unknown, which falls back to the own-design LootTables.
+	RefObjID int64
 	// Level is the monster's real level, recovered from the client's own
 	// characterdata (_RefObjChar column 57 -- verified across 31 monsters:
 	// Mangyang 1, Gyo 5 ... TigerWoman 110, monotonic with difficulty). 0 if
@@ -715,6 +725,9 @@ func (h *Hub) Spawn(zone, name string, x, y, z float64, maxHP, defense, attack i
 type Species struct {
 	Name     string
 	CodeName string
+	// RefObjID is the species' numeric characterdata id -- see
+	// Monster.RefObjID, which this populates.
+	RefObjID int64
 	// Level is the real monster level from characterdata (_RefObjChar col 57).
 	Level int
 	// Rarity is the monster rank from characterdata (_RefObjChar col 15).
@@ -758,7 +771,7 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
-	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, AttackReuseMs: species.AttackReuseMs, AttackRange: species.AttackRange, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
+	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, RefObjID: species.RefObjID, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, AttackReuseMs: species.AttackReuseMs, AttackRange: species.AttackRange, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
 		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
 	h.byID[id] = m
 	return m

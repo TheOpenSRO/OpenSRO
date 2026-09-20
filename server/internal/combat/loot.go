@@ -64,9 +64,22 @@ const (
 // standing in for real data -- the machinery to consume that data faithfully is
 // written and tested.
 //
-// Two things remain before the real path can be switched on, and neither is
-// this file's to fix: an operator must supply the tables, and combat.Monster
-// carries CodeName but no numeric RefObjID, which is the key those tables use.
+// UPDATE 2026-09-20: THE SECOND BLOCKER IS GONE AND THE REAL PATH IS ON.
+// combat.Monster now carries RefObjID, and session.dropsForKill consults the
+// real tables first, falling back to this one only when a monster has no rows
+// in them. The key had in fact existed upstream since 2026-09-19 as
+// cmd/server's monsterSpec.RefObjID -- it was simply never passed down, so the
+// loaders, the store and the recovered roll all sat one field away from being
+// reachable. Both loot paths (ground drops and straight-to-inventory) go
+// through dropsForKill, because wiring only one would have left the path
+// cmd/server actually runs on this table.
+//
+// ONE thing remains, and it is not this file's to fix: an operator must supply
+// the tables. Until they do, everything below is what a kill drops.
+//
+// The two blockers as they were recorded: an operator must supply the tables,
+// and combat.Monster carries CodeName but no numeric RefObjID, which is the key
+// those tables use.
 // The rates below are the engine's shape only by accident -- each entry here is
 // a single independent roll with a separate quantity, which is NOT what the
 // engine does (see refdata.MonsterDrop's own comment).

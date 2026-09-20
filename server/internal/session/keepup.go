@@ -233,6 +233,8 @@ type combatDeps struct {
 	mp       *mana.Tracker
 	parties  *party.Hub
 	ground   *grounditem.Hub
+	// dropSrc is the real drop tables; nil falls back to combat.LootTables.
+	dropSrc DropSource
 }
 
 // armKeepUp starts (or restarts) the character's keep-up against target,
@@ -279,7 +281,7 @@ func armKeepUp(
 			}
 			_ = deps.skills.RecordUse(ctx, characterID, base.ID, now)
 		}
-		if err := performAttack(ctx, sess, deps.chars, deps.eq, deps.items, deps.hub, deps.monsters, deps.quests, deps.inv, deps.skills, deps.zerk, deps.mp, deps.parties, deps.ground, characterID, target, 0, 0, 0, 1, combat.AttackPhysical); err != nil {
+		if err := performAttack(ctx, sess, deps.chars, deps.eq, deps.items, deps.hub, deps.monsters, deps.quests, deps.inv, deps.skills, deps.zerk, deps.mp, deps.parties, deps.ground, deps.dropSrc, characterID, target, 0, 0, 0, 1, combat.AttackPhysical); err != nil {
 			return 0, false
 		}
 		if m, ok := deps.monsters.Get(target); !ok || m.HP <= 0 {
