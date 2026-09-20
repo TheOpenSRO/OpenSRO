@@ -5353,6 +5353,14 @@ first argument unread -- it is the move kind, already decoded in server_sql.md
 (2 = bag to chest, 0x20/0x21 = guild chest, 10/11/12 = gold moves). And the
 `_UPDATE_USER_N_CHAR_GOLD` trace this tick set out to do was already complete
 in that page, caught BEFORE publishing rather than after.
+Round 286 (docs): swept every procedure call literal to test whether round
+285's finding generalises. It does not: of 69 distinct procedure names, only
+`_STRG_MOVE_ITEM` is issued with more than one distinct format string, so the
+other 68 can be read from any one call site. A closed negative with its sweep.
+The probe first reported two, the second being an `_ADDTIMEDJOB` form that is
+THIS PROJECT'S OWN SHORTHAND in a recovered annotation inside the dump -- the
+dumps carry both code and our prose about it, so a literal regex matches both.
+Checked before recording; that is why the count is 1.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

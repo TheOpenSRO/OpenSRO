@@ -310,3 +310,27 @@ follow, and are **not** guessed at here.
 
 Two slots side by side, both through `GetItem`, is what makes 5 and 6 a
 source/destination pair rather than two unrelated numbers.
+
+## Do any other procedures disagree with themselves? No -- swept (round 286)
+
+Round 285 found `_STRG_MOVE_ITEM` issued from three functions with three
+different format strings, which raised the obvious question: how many of the
+others do that, and how many recorded signatures are therefore one call site
+of several?
+
+**Swept all three call forms across the server dump: 69 distinct procedure
+names, and exactly one has more than one distinct literal.** That one is
+`_STRG_MOVE_ITEM`. The other 68 are consistent wherever they are issued, so a
+signature quoted from any single call site of them is the signature.
+
+That closes the generalisation rather than leaving it open, and it scopes round
+285 properly: the width disagreement on argument 4 is a one-off in this binary,
+not a habit to expect.
+
+**A false positive the probe threw, worth knowing.** The first pass reported
+two procedures disagreeing, the second being `_ADDTIMEDJOB` with a form
+`(%d x12, %I64d, %d)`. That is not in the binary -- it is **this project's own
+shorthand**, sitting in a recovered annotation in the dump's function header
+(`vtable slot 6. Builds ...`). A regex for call literals will match the prose
+written *about* those literals, because the dumps carry both. Checked before
+the count was recorded; the count above is the checked one.

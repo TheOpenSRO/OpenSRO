@@ -7075,6 +7075,29 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-eighty-sixth round: swept -- one procedure in sixty-nine disagrees with itself
+
+Round 285 found `_STRG_MOVE_ITEM` issued from three functions with three different format
+strings, which raised the question it could not answer from one procedure: **how many of the
+others do that**, and how many recorded signatures are one call site of several?
+
+Swept all three call forms across the server dump. **69 distinct procedure names, and exactly
+one has more than one distinct literal.** It is `_STRG_MOVE_ITEM`. The other 68 are consistent
+wherever they are issued, so a signature quoted from any single call site of them is the
+signature.
+
+That closes the generalisation instead of leaving it hanging, and it scopes the previous round
+properly: argument 4's width disagreement is a one-off in this binary, not a habit to expect
+elsewhere. A negative, with the sweep that produced it.
+
+**The probe threw a false positive, and it is the kind worth knowing.** The first pass reported
+*two* disagreeing procedures, the second being `_ADDTIMEDJOB` with a form `(%d x12, %I64d, %d)`.
+That string is not in the binary. It is **this project's own shorthand**, sitting in a recovered
+annotation in the dump's function header -- `vtable slot 6. Builds ...`, written by round 274.
+A regex for call literals matches the prose written *about* those literals, because the dumps
+carry both the decompiled code and everything this project has annotated onto it. Caught before
+the count was recorded, which is the only reason the count is 1 and not 2.
+
 ## Two-hundred-and-eighty-fifth round: one procedure, three call sites, three signatures
 
 The rule caught it before a word was written this time. Setting out to trace
