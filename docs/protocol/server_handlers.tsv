@@ -161,3 +161,4 @@ index	handler	server_name	function_exists	client_opcodes	client_handlers	replies
 0x519	0051bb70	FUN_0051bb70	yes	0xb519	FUN_0089a590	0xb519
 0x51a	0051bd60	GObjPC_HandleCallUserMsg_51a	yes	0x751a,0xb51a	FUN_0089f010,FUN_0089a6c0	0xb51a
 0x51c	0051bf10	GObjPC_HandleSummonPartyUserMsg_51c	no	0xb51c	FUN_0089a710	-
+0x51d	0051c050	GObjPC_HandleOpenAlchemyAtNpcMsg_51d	yes	0x751d,0xb51d	CIF_NPCTalk::FUN_008234f0,UI_ALCHEMYBOX::FUN_008a4010	-

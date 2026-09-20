@@ -6096,6 +6096,66 @@ layout", and every one reads through MsgBuf_Read* against this buffer, so a
 handler's layout is the SEQUENCE OF THOSE CALLS -- greppable rather than a
 reading.
 
+Round 328 (6 names, the use-item payload READ after four rounds owing it): ROUND
+327'S PROMISE CASHED, WITH TWO TRAPS THAT COST THIS ROUND MOST OF ITS TIME. The
+sequence-of-calls claim is true but not greppable the naive way. TRAP 1, THE
+BUFFER ARRIVES IN EAX: every reader decompiles as `void FUN_00403f60(undefined4
+*param_1) { int in_EAX; ... }` -- Ghidra did not model the message object as a
+parameter, so a reader call reads as `FUN_00403f60(&local)` with no buffer in
+sight and looks like a constructor. TRAP 2, COMDAT TWINS: 0x00521750 and
+0x0048ba70 are byte-identical second emissions of MsgBuf_ReadUInt8 and
+MsgBuf_ReadUInt16, and Item_HandleUseItem calls THE TWINS, so a grep for the two
+known reader addresses finds nothing in it. THE DISCARD IDIOM: `*(ushort
+*)(session + 0x103c) = *(ushort *)(session + 0x103e)` is cursor = size, i.e.
+MsgBuf_ReadRemaining inlined -- consume the rest so the unread payload cannot
+trip a later bounds check, then refuse. Item_HandleUseItem does it at four
+refusal paths, handler 0x51d at two more, each immediately before a
+Msg_SendTwoFieldReply. CURSOR WRITES ARE THEREFORE NOT EVIDENCE OF PAYLOAD
+READS, which is how this round first concluded, wrongly, that the handler reads
+nothing. THE PAYLOAD: u8 inventory slot, range-checked `(byte)(slot - 0x0d) <
+99` so valid slots are 13..111 -- the bag layout stated in the server's own
+arithmetic, 13 equipment/avatar slots then 99 bag slots -- then CGStorage__GetItem(slot
+& 0xff); and a u16 that is matched against a list derived from the item, then
+echoed in the reply. THE u16 GETS NO NAME: that is its whole observed behaviour
+and what it selects is not settled. 0x8000 IS THE ENCODED-REQUEST FLAG, named by
+the game's own string: the handler logs "Not Encoded Item Request (%s)" when
+(Size & 0x8000) == 0. Round 327 called the bit "reserved" from the writer side;
+it is a carried flag, and MsgBuf_AppendBytes preserving it is the corroboration.
+TWO READER FAMILIES: front reads at the cursor and advances it; TAIL reads run
+the message BACKWARDS (size -= n, read at base+size, rewrite the Size word as
+(Size & 0x8000) | (size - 6)) -- they shrink the message as they read, which is
+why they alone rewrite Size. Handlers pick between a matched pair on the
+session's +0x1048, WHICH IS NOT READ and is not guessed here; its correlation
+with the encoded flag is plausible and unmeasured. Filed:
+MsgBuf_ReadUInt8/16 twins, MsgBuf_ReadUInt8FromTail, MsgBuf_ReadUInt16FromTail,
+and GObjPC::InstallClientMessageHandlers (0x0050d0c0) -- a STATIC INITIALIZER
+with no callers that fills 0xcd3d08..0xcd7d08 with the illegal-opcode thunk and
+then assigns each handler, asserting the slot still holds the thunk so no opcode
+registers twice. 2048 entries x 8 bytes IS WHY THE DISPATCHER MASKS 0x7ff.
+server_handlers.tsv WAS 162, IS 163: slot 0x51d was clipped because it is the
+LAST registration in the installer -- the round-315 truncation trap again, in a
+different tool. It is GObjPC_HandleOpenAlchemyAtNpcMsg_51d: the client's ONLY
+sender of 0x751d is CIF_NPCTalk and its ONLY handler of 0xb51d is UI_ALCHEMYBOX,
+and the server side resolves an object by id and range-checks it at 0x146 --
+the alchemy reading rests on the client, as the server names nothing. THE
+INDEX->OPCODE RULE NOW HAS THREE INDEPENDENT CONFIRMATIONS: idx 76 against the
+0xb04c replies inside that very handler, idx 52 against the client's known
+0x7034, and idx 0x51d against the client sending 0x751d and handling 0xb51d.
+SRREVAMP DOES NOT IMPLEMENT THE REAL REQUEST -- its OpUseItem carries (u16 name
+length, name, s64 slot), its own invention, consistent with round 324's 0 of 143.
+MY OWN ERROR, RECORDED: the first extraction of Item_HandleUseItem grabbed the
+INSTALLER instead, because awk matched the first textual occurrence of the name
+in the file and that occurrence is a REGISTRATION, not a definition. The 764-line
+"handler" with no buffer references at all was the tell, and the finding that
+came out of the mistake -- the whole dispatch table -- was worth more than the
+function.
+
+**What moved:** no shipped value. The use-item payload is read and written up in
+`PACKET_FORMAT.md`; the 0x8000 bit is settled; `server_handlers.tsv` gained its
+missing 163rd row; six names filed. srrevamp's own `OpUseItem` was NOT changed to
+match -- the gap is now measured, and changing the wire format is a deliberate
+migration, not a side effect of a naming round.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

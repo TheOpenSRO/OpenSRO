@@ -42,12 +42,13 @@ short one real byte.**
 finding the literal header-serialization function itself, but the arithmetic lines up exactly with
 independently-confirmed real fields: `ACTIVE_SESSION` (the same real class this whole investigation
 traces through, see `handshake.md`) stages a real 2-byte `MsgID`/opcode field and a real 2-byte
-size field (mask `0x7fff`, top bit unconfirmed but plausibly a real flag) on the message object
+size field (mask `0x7fff`; the top bit **is** a real flag -- round 328 reads it as the
+*encoded-request* marker, see below) on the message object
 *before* it's serialized, and separately carries the two real per-packet security bytes
 (`RollingByte`, `PacketChecksum`) this project already reverse-engineered and implemented. `2 + 2 +
 1 + 1 = 6` -- exactly the confirmed real header size, with no field left unaccounted for and no
 padding needed. If this holds, the real header's four fields are **`Opcode(2) + Size(2, high bit
-likely a real flag) + RollingByte(1) + ChecksumByte(1)`**, with both security bytes present
+the encoded-request flag) + RollingByte(1) + ChecksumByte(1)`**, with both security bytes present
 unconditionally on every packet's base header, not gated behind an optional trailer the way this
 project's own `Security`-flags-byte design assumed. **The real wire order is now confirmed (2026-08-22).** Found a real per-message buffer-setup
 function (`FUN_0046d5d0` in `GatewayServer.exe`) that, given a fresh output buffer pointer
@@ -268,8 +269,10 @@ The append does, after the `memcpy` and the size bump:
 
 	*(ushort *)this[0x1054] = (*(ushort *)this[0x1054] & 0x8000) | (size - 6)
 
-**`size - 6` is the payload length**, which confirms the **6-byte header** and
-the reserved **`0x8000`** top bit from the writer's side. Both were already
+**`size - 6` is the payload length**, which confirms the **6-byte header** from
+the writer's side, and shows the **`0x8000`** top bit being deliberately
+*preserved* across every write -- the behaviour of a carried flag rather than of
+a spare bit. Round 328 below says what the flag means. Both were already
 recorded in `docs/protocol/opcodes/handshake.md`, read from the checksum side --
 "`(Size & 0x7fff) + 6` bytes ... including the real 6-byte header". Two
 independent routes to the same frame, which is worth more than either alone.
@@ -285,3 +288,110 @@ Round 324 listed 93 real handlers whose remaining work is "the payload layout".
 Every one of them reads its payload through `MsgBuf_Read*` against this buffer,
 so the layout of any handler is the **sequence of those calls** -- which is now
 a greppable question rather than a reading one.
+
+**Round 328 qualifies that claim.** It is true, but not greppable the naive way,
+and the two traps below cost this round most of its time.
+
+## Round 328: the reader families, and what `0x8000` means
+
+### The top bit is the *encoded-request* flag
+
+`Item_HandleUseItem` opens with this, before it touches the payload:
+
+	if ((**(ushort **)(session + 0x1054) & 0x8000) == 0) {
+	  FUN_004df050(4);
+	  CGameServer::FUN_00936640(0x2000000,"Not Encoded Item Request (%s)",name);
+	}
+
+The literal **`"Not Encoded Item Request (%s)"`** names the bit. `0x8000` set
+means the request is *encoded*; clear means it is not, and the server logs the
+player's name and carries on. This is not an inference from a curve -- the game's
+own string says what the bit is, and `MsgBuf_AppendBytes` preserving it across
+every write is the corroboration.
+
+### Two reader families: front and tail
+
+There are **two** readers for each width, and a handler picks between them on the
+session's `+0x1048`:
+
+| width | front (read at cursor) | tail (read off the end) |
+|---|---|---|
+| 8-bit | `MsgBuf_ReadUInt8` `0x00404f80`, `0x00521750` | `MsgBuf_ReadUInt8FromTail` `0x005217a0` |
+| 16-bit | `MsgBuf_ReadUInt16` `0x004263c0`, `0x0048ba70` | `MsgBuf_ReadUInt16FromTail` `0x00409910` |
+| 32-bit | `MsgBuf_ReadUInt32` `0x00404e00`, `MsgBuf_ReadUInt32Into` `0x00403f60` | -- |
+| bytes | `MsgBuf_ReadBytes` `0x00404c20` | -- |
+| rest | `MsgBuf_ReadRemaining` `0x00404760` | -- |
+
+A **front** read is the ordinary one: bounds-test `cursor + n` against size, read
+at `base + cursor`, `cursor += n`.
+
+A **tail** read runs the message backwards: `size -= n`, read at `base + size`,
+then rewrite the on-wire Size word as `(Size & 0x8000) | (size - 6)`. It
+*shrinks the message as it reads*, which is why it alone must rewrite Size --
+and why it preserves `0x8000` while doing so.
+
+The two are used in matched pairs, one branch each:
+
+	if (*(int *)(session + 0x1048) == 0) MsgBuf_ReadUInt8FromTail(&slot);
+	else                                 MsgBuf_ReadUInt8(&slot);
+
+What `+0x1048` itself is has **not** been read, and is not guessed here. That it
+correlates with the encoded flag is plausible and unproven; it is a separate
+field from `+0x1054`, and the correlation has not been measured.
+
+### Trap 1: the readers take the buffer in EAX
+
+Ghidra renders every one of them as taking a single out-parameter:
+
+	void FUN_00403f60(undefined4 *param_1) { int in_EAX; ... }
+
+The message object arrives in **EAX**, which Ghidra did not model as a parameter.
+So a reader call reads as `FUN_00403f60(&local)` with no buffer in sight, and
+looks like a constructor or an unrelated helper. This is why four earlier rounds
+walked past these call sites.
+
+### Trap 2: COMDAT twins
+
+`0x00521750` and `0x0048ba70` are byte-identical second emissions of
+`MsgBuf_ReadUInt8` and `MsgBuf_ReadUInt16` -- MSVC emitted the inline in more
+than one translation unit. **A handler may call either address.**
+`Item_HandleUseItem` calls the twins, not the originals, so a grep for the two
+known reader addresses finds nothing in it. Grep the whole family or nothing.
+
+### The discard idiom
+
+A handler about to refuse first does:
+
+	*(ushort *)(session + 0x103c) = *(ushort *)(session + 0x103e);   // cursor = size
+
+That is `MsgBuf_ReadRemaining` inlined, and it is a **discard, not a read**:
+consume whatever is left so the unread payload cannot trip a later bounds check,
+then send the refusal. `Item_HandleUseItem` does it at four refusal paths and
+`GObjPC_HandleOpenAlchemyAtNpcMsg_51d` at two more, each immediately before a
+`Msg_SendTwoFieldReply` with an error code.
+
+**Cursor writes are therefore not evidence of payload reads.** Counting them is
+how round 328 first concluded, wrongly, that the use-item handler reads nothing.
+
+### `OpUseItem`'s payload, at last
+
+Four rounds owed this. The real request body is two fields:
+
+| field | width | meaning |
+|---|---|---|
+| 1 | `u8` | **inventory slot**, range-checked `(byte)(slot - 0x0d) < 99` -- valid slots are **13..111** |
+| 2 | `u16` | matched against a list derived from the item, then echoed back in the reply |
+
+The slot range is the bag layout stated in the server's own arithmetic: slots
+`0..12` are the thirteen equipment/avatar slots, and the ninety-nine bag slots
+begin at **13**. The item is then fetched with `CGStorage__GetItem(slot & 0xff)`.
+
+Field 2 is **not named here.** It is read as a `u16`, compared against `*puVar7`
+inside a loop over something belonging to the item, reassigned from that same
+source on the matching branch, and appended to the reply. That is its whole
+observed behaviour; what it selects has not been settled, so it gets no name.
+
+**srrevamp does not implement this.** Its `OpUseItem` carries `(u16 name length,
+name, s64 slot)`, which is its own invention -- consistent with round 324's
+finding that 0 of 143 srrevamp opcodes are real. The gap is now measured rather
+than suspected, and nothing was changed on the strength of it.
