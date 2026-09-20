@@ -5300,6 +5300,16 @@ the hypothesis this tick started from -- that Godot's BC1 path drops the
 hair is correct end to end (flag read, layer matched by name, mask intact,
 scissor shader applied), which NARROWS playtest item 14 rather than fixing
 it: nothing in that chain explains a solid block. No shipped value changed.
+Round 281 (docs + two merged rows): the see-through clothes are GEOMETRY, not
+alpha. srrevamp assembles the whole naked body and then only ADDS worn items,
+so skin and armour are coincident and the skin wins. The engine works per
+visual slot instead: EQUIP_VISUAL_COUNT = 9 and DEFAULT_WEAR_NUM = 2, read
+off CObjCharacter::SetDefaultWear's asserts, with each default part built as
+a packed item TypeID by BuildDefaultWearTypeID (0x2c base, | 0x1800 / |
+0x2000 per index). Found through round 279's translation-unit map -- its
+first real payoff. Both functions were ALREADY named; the guard refused the
+duplicates and the constants were merged. The mesh-to-slot mapping is NOT
+read and deliberately not coded.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

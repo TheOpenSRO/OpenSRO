@@ -7075,6 +7075,46 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-eighty-first round: the nipples are geometry, not alpha
+
+OpenSRO looked at the round-280 render and said "his nips are coming out". They are, and the
+cause is not the alpha channel this lane had been chasing.
+
+**srrevamp draws the naked body AND the armour.** `_build_assembled_character` assembles the
+whole character `.bsr` -- for a China man that is nine meshes, `man_arm_lower`, `man_arm_upper`,
+`man_calf`, `man_pelvis`, `man_thigh`, `man_torso_lower`, `man_torso_upper`, plus face and hair
+-- and then calls `attach_item_from_archive` per worn item, which only ever ADDS meshes.
+Nothing is hidden, ever. Skin and cuirass become near-coincident surfaces and the skin wins
+wherever it is nearer.
+
+That also makes round 280's armour-alpha finding a red herring for this item: those layers are
+99.7-100 % non-opaque with bit 0 CLEAR, so honouring their alpha would make the clothes nearly
+invisible rather than fix them.
+
+**What the engine does instead**, found through round 279's translation-unit map -- which is the
+first time that lever has paid for itself:
+
+- `CObjCharacter::SetDefaultWear` (`0x00a5cca0`) asserts `nEquipSlot` against 0..8 and
+  `nDefaultWearNum` against 0..1, so **`EQUIP_VISUAL_COUNT` = 9** -- the same nine slots
+  `EquipmentNet.SLOT_HELM..SLOT_EXTRA` already uses -- and **`DEFAULT_WEAR_NUM` = 2**.
+- `CObjCharacter::BuildDefaultWearTypeID` (`0x00a5c760`) builds each default part as a packed
+  item **TypeID**: base `0x2c`, bits by gender and `WornArmorClass()`, then `| 0x1800` for
+  index 0 and `| 0x2000` for index 1, resolved through the item table to a `pVisualData`.
+
+So a character's visible parts are **per equip slot**, and a slot shows either its worn item or
+its default wear. The archive agrees: `MAN_ITEM` carries `clothes_00_ba` and `clothes_00_la`
+beside the real armour.
+
+**Both functions were already named in the dump and in `recovered_names.tsv`** -- the guard test
+refused the duplicate rows and the constants were merged into the existing ones instead. Third
+time this session that checking first changed what got written.
+
+**Not established, so not coded:** which body meshes a slot owns, i.e. what the engine hides
+when a slot is filled. The mechanism is read; the mesh-to-slot mapping is not, and guessing it
+would put invented geometry rules into the exact system being reported. The next read is
+`CObjCharacter::FUN_00a604f0` (asserts `pVisualData`) and `FUN_00a60a90` (asserts
+`GetCompoundObj()`).
+
 ## Two-hundred-and-eightieth round: the hair says 0x341, and the alpha survives
 
 The RE tick for 2026-09-20 took the question the previous round's correction left standing --
