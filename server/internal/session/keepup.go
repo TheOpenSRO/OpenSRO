@@ -305,3 +305,42 @@ func handOffDelay(ref *refdata.Skill) time.Duration {
 func skillHandsOff(ref *refdata.Skill) bool {
 	return ref != nil && ref.AutoAttackType == 1
 }
+
+// firstSwingInReach is the reach gate on a manual OpAttack click.
+//
+// It is the same test the repeats use, applied one step earlier: without it
+// the first click of a fight hit from any distance, because only the keep-up
+// checked (playtest 2026-09-20, item 2). A monster or attacker that cannot be
+// resolved, or a zone mismatch, is not in reach.
+//
+// A missing world hub means this server is not tracking positions at all, in
+// which case there is nothing to measure and the swing is allowed: refusing
+// would break a deployment that has no position source rather than fix one.
+func firstSwingInReach(
+	ctx context.Context,
+	sess *gateway.Session,
+	eq equipment.Store,
+	items combat.ItemLookup,
+	hub *world.Hub,
+	monsters *combat.Hub,
+	characterID, target int64,
+) bool {
+	if hub == nil || monsters == nil {
+		return true
+	}
+	m, ok := monsters.Get(target)
+	if !ok || m.HP <= 0 {
+		return true // performAttack reports the real reason
+	}
+	attacker, ok := hub.EntityBySession(sess.ID())
+	if !ok {
+		return true
+	}
+	if attacker.Zone != m.Zone {
+		// Not a reach question: performAttack reports "target not found",
+		// which is what a cross-zone click has always meant and is a better
+		// answer than "too far away".
+		return true
+	}
+	return keepUpInReach(attacker.Pos, m, equippedWeaponRange(ctx, characterID, eq, items))
+}

@@ -129,11 +129,23 @@ func TestGroundDropAndPickUpFlow(t *testing.T) {
 		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
 	}
 
+	// Walk into reach for the kill. The first swing is gated by the same
+	// reach test the keep-up repeats use (playtest 2026-09-20, item 2), so a
+	// character standing 50 units off can no longer hit anything -- which is
+	// the point of the walk back below, where the pickup is refused for the
+	// same distance.
+	write(OpMove, (&MoveRequest{X: monsterX - 2, Y: 0, Z: 0}).Encode())
+	time.Sleep(50 * time.Millisecond)
+
 	// The kill.
 	ar, err := DecodeAttackResult(send(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode()).Data)
 	if err != nil || ar.Error != "" || !ar.MonsterDied {
 		t.Fatalf("kill: err=%v result=%+v", err, ar)
 	}
+
+	// ...and back to the spawn point, 50 units from the corpse.
+	write(OpMove, (&MoveRequest{X: 0, Y: 0, Z: 0}).Encode())
+	time.Sleep(50 * time.Millisecond)
 	// Gold is not credited on the kill any more: it lies on the ground.
 	if after, _ := chars.GetByID(ctx, c.ID); after.Gold != startGold {
 		t.Fatalf("gold credited on the kill: %d -> %d, want it on the ground", startGold, after.Gold)

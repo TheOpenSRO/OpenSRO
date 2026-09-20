@@ -136,12 +136,31 @@ func setup(layout_data: Variant = null) -> void:
 
 	_update_page_visibility()
 
-func set_sp(current: int, maximum: int) -> void:
+## The under-bar's skill-point readout.
+##
+## What the two controls are, read out of a retail `resinfo\ifunderbar.txt`
+## on 2026-09-20: the layout has exactly one `CIFGauge`, `GDR_GAUGE_SP`, at
+## `"17,11,144,8"` with its own artwork (`interface\underbar\ub_sp_bar.ddj`),
+## and `GDR_STATIC_SP` sits immediately to its right at `"167,9,48,12"` --
+## same row. `GDR_STATIC_EXP` is a separate text line *below* both, at
+## `"18,31,198,12"`. So the bar belongs to SP, not to experience.
+##
+## **The number is a plain total.** It read `13/13` because the caller passed
+## `maxi(sp, 1)` as a maximum (playtest 2026-09-20, item 10). That also left
+## the bar permanently full, which is what was being seen as a green EXP bar
+## filling up (item 19) -- the authored art for it is olive.
+##
+## `progress_percent` is how far the character is toward the *next* skill
+## point. The server sends only the unspent total, so callers leave it out
+## and the bar draws EMPTY: a full bar would claim a skill point is about to
+## land, which is a state we would be inventing.
+func set_sp(points: int, progress_percent: float = -1.0) -> void:
 	if _gauge_sp != null:
-		_gauge_sp.max_value = maximum
-		_gauge_sp.value = current
+		_gauge_sp.min_value = 0
+		_gauge_sp.max_value = 100
+		_gauge_sp.value = clampf(progress_percent, 0.0, 100.0) if progress_percent >= 0.0 else 0.0
 	if _lbl_sp != null:
-		_lbl_sp.text = "%d/%d" % [current, maximum]
+		_lbl_sp.text = str(points)
 
 func set_exp(percent: float) -> void:
 	if _lbl_exp != null:

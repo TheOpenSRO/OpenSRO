@@ -663,6 +663,25 @@ func CombatHandlerWithGround(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
 			}
 
+			// Reach first, THEN the cooldown -- the order is the engine's.
+			// Its phase 1 measures the approach band and only gates on the
+			// cooldown (mask 0x81) once the target is within reach; out of
+			// reach it walks instead (round 256, docs/protocol/
+			// auto_command.md).
+			//
+			// The order matters here for a reason of our own: swingReady
+			// RECORDS the use, so testing it first would let a refused,
+			// out-of-reach click burn the re-use delay and silently swallow
+			// the player's next good one.
+			//
+			// The repeats have always tested reach (keepup.go); the FIRST
+			// swing did not, so a click landed a hit from any distance at
+			// all (playtest 2026-09-20, item 2). This server cannot walk the
+			// player into range the way the engine does, so it refuses and
+			// says why -- the same stated departure the keep-up carries.
+			if !firstSwingInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID) {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "too far away"}).Encode()})
+			}
 			// A plain swing is the weapon's base attack skill, on that skill's
 			// own re-use delay (round 255). A click inside the delay is the
 			// engine's "action already running": nothing happens, no reply.

@@ -258,3 +258,91 @@ func TestOneClickKeepsAttackingUntilTheMonsterDies(t *testing.T) {
 		t.Fatal("a move should have cancelled the keep-up")
 	}
 }
+
+// A click from out of reach does not land a hit. The repeats always tested
+// this; the first swing did not, so one click killed things across the map
+// (playtest 2026-09-20, item 2). Walking into reach makes the same click work.
+func TestFirstSwingIsGatedByReach(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+	_ = c
+
+	ref := itemsAndSkills{
+		items:  map[int64]*refdata.Item{100: {ID: 100, TypeID4: 2, PhysAttackMax: 30, Range: 6}},
+		skills: map[int64]*refdata.Skill{2: {ID: 2, ReuseDelayMs: 60}},
+	}
+	eq := fixedEquipment{worn: []equipment.Equipped{{Slot: equipment.SlotWeapon, ItemID: 100, Durability: 50}}}
+	inv := inventory.NewMemStore(ref)
+	quests := quest.NewMemStore()
+	skills := skill.NewMemStore()
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	// Far enough that no weapon reaches: the sword's band is 4 + 6 + 6 (+2).
+	const farX = 400.0
+	monster := monsters.Spawn("jangan", "Mangyang", farX, 0, 0, 200, 0, 0, 0)
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		CombatHandler(chars, eq, ref, hub, monsters, quests, inv, skills, nil, nil, nil),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	write := func(opcode uint16, data []byte) {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+	}
+	read := func() *proto.Packet {
+		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		p, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return p
+	}
+
+	write(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(read().Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	write(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(read().Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	write(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode())
+	ar, err := DecodeAttackResult(read().Data)
+	if err != nil || ar.Error != "too far away" {
+		t.Fatalf("swing from %g units: %+v (err %v), want a refusal", farX, ar, err)
+	}
+	if m, _ := monsters.Get(monster.ID); m.HP != 200 {
+		t.Fatalf("the monster took %d damage from out of reach", 200-m.HP)
+	}
+
+	// Walk up and the same click lands.
+	write(OpMove, (&MoveRequest{X: farX - 2, Y: 0, Z: 0}).Encode())
+	time.Sleep(50 * time.Millisecond)
+	write(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode())
+	for {
+		p := read()
+		if p.Opcode != OpAttackResult {
+			continue
+		}
+		ar, err = DecodeAttackResult(p.Data)
+		if err != nil || ar.Error != "" || ar.MonsterDamage <= 0 {
+			t.Fatalf("swing in reach: %+v (err %v), want a hit", ar, err)
+		}
+		break
+	}
+}

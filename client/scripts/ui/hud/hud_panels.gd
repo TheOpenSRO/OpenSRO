@@ -1959,6 +1959,20 @@ var _skill_char_level: int = 0
 ## a learned skill shows its level badge instead of a "+" learn button.
 var _skill_known: Dictionary = {}
 
+## How an unlearned skill's icon is dimmed. The locked tint is the darker of
+## the two -- it stands in for the authored "locked book" art when the archive
+## has none; the unlearned tint keeps a met-but-unlearned skill legible.
+## Neither is read out of the client: they are ours, and are a display choice
+## rather than a recovered value.
+const SKILL_UNLEARNED_TINT := Color(0.62, 0.62, 0.62, 0.9)
+const SKILL_LOCKED_TINT := Color(0.45, 0.45, 0.45, 0.85)
+
+## Whether the server has told us this exact skill id is learned. World3D asks
+## before putting a skill on a quickslot, so no path can shortcut a skill onto
+## the hotbar that the character does not have (playtest 2026-09-20, item 3).
+func is_skill_known(skill_id: int) -> bool:
+	return _skill_known.has(skill_id)
+
 ## The mastery-total cap per character level: the sum of a character's mastery
 ## levels can reach 3 x its level. Grounded -- retail 80-cap total = 240 = 3x80;
 ## matches the server's MasteryTotalCapPerLevel. The pserver's 440 is a mod.
@@ -2348,11 +2362,18 @@ func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: Skil
 		var available := s.min_req_mastery_level > 0 and mastery_level >= s.min_req_mastery_level
 		if learned > 0 or available:
 			icon.texture = _load_skill_icon(s.icon_path)
+			# A skill whose mastery requirement is met but which has NOT been
+			# learned drew in full colour, identical to a learned one bar the
+			# level badge (playtest 2026-09-20, item 4). Dim it: the icon is
+			# still readable, and "you do not have this yet" is visible at a
+			# glance rather than inferred from a missing badge.
+			if learned == 0:
+				icon.modulate = SKILL_UNLEARNED_TINT
 		elif disable_tex != null:
 			icon.texture = disable_tex   # the real "locked" book
 		else:
 			icon.texture = _load_skill_icon(s.icon_path)
-			icon.modulate = Color(0.45, 0.45, 0.45, 0.85)
+			icon.modulate = SKILL_LOCKED_TINT
 		icon.mouse_filter = Control.MOUSE_FILTER_PASS
 		icon.tooltip_text = _skill_cell_tooltip(s, learned, mastery)
 		if OS.has_environment("SRREVAMP_QA_SKILL_STATE") and group.row == 0 and col == 0:

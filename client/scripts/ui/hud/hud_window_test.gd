@@ -66,6 +66,17 @@ func _init() -> void:
 	var size := UiBuilder.section_size(sec)
 	_check(size == Vector2(176, 308), "section_size reads the frame's rect (got %s)" % size)
 
+	# A window CONSUMES mouse input. It was MOUSE_FILTER_PASS, which delivers
+	# the event and then keeps propagating it, so every click on window chrome
+	# reached World3D._unhandled_input and walked the character, and every
+	# wheel over a window zoomed the camera (playtest 2026-09-20, items 5 and
+	# 13). STOP does not steal from children -- Godot hit-tests the deepest
+	# control first -- it only catches what they did not take.
+	var win := HudWindow.new()
+	_check(win.mouse_filter == Control.MOUSE_FILTER_STOP,
+		"a window consumes mouse input (filter %d, want STOP=%d)" % [win.mouse_filter, Control.MOUSE_FILTER_STOP])
+	win.free()
+
 	# A CIFStatic with no artwork and no text is still a text field. Building
 	# it as a plain Control is what made every live readout in the HUD --
 	# the player block's name and HP/MP among them -- unable to show

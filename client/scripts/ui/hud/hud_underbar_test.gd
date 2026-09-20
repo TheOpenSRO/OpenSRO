@@ -55,9 +55,16 @@ Section = Create,"0,0,800,60","0"
 	var underbar := HudUnderbar.new(builder, null, null)
 	underbar.setup(layout_text)
 
-	underbar.set_sp(500, 1000)
+	# Skill points are a plain total, not a ratio (playtest item 10), and with
+	# no progress given the bar stays empty rather than full (item 19).
+	underbar.set_sp(500)
 	var lbl_sp := underbar.get_node_or_null("Create/GDR_STATIC_SP") as Label
-	_check(lbl_sp != null and lbl_sp.text == "500/1000", "SP text formatted as 500/1000")
+	_check(lbl_sp != null and lbl_sp.text == "500", "SP text is the plain total 500")
+	var gauge_sp := underbar.get_node_or_null("Create/GDR_GAUGE_SP") as TextureProgressBar
+	_check(gauge_sp != null and gauge_sp.value == 0.0, "SP bar is empty with no progress reported")
+	underbar.set_sp(500, 42.0)
+	_check(gauge_sp != null and is_equal_approx(gauge_sp.value, 42.0), "SP bar draws real progress")
+	_check(lbl_sp.text == "500", "the total is unchanged by progress")
 
 	underbar.set_exp(42.5)
 	var lbl_exp := underbar.get_node_or_null("Create/GDR_STATIC_EXP") as Label

@@ -54,6 +54,16 @@ var _drag_offset := Vector2.ZERO
 ## by the authored names (GDR_INVENTORY_LATTICE, GDR_PMI_TXT_HP, ...).
 var panel_root: Control
 
+## A window CONSUMES mouse input, from the moment it exists.
+##
+## This is set here as well as in build() because build() fails when the
+## archive has no such layout, and the caller then draws a plain fallback
+## frame (help_window.gd does exactly that) -- which still has to block
+## clicks. See the note on the assignment in build() for why STOP rather
+## than PASS.
+func _init() -> void:
+	mouse_filter = Control.MOUSE_FILTER_STOP
+
 ## Builds the window from layout_path (an archive path such as
 ## "resinfo\\ifinventory.txt"). Returns false, having built nothing, if the
 ## layout is missing or empty -- a caller should treat that as "this panel
@@ -90,10 +100,19 @@ func build(builder: UiBuilder, layout_path: String, title: String,
 		return false
 	custom_minimum_size = window_size
 	size = window_size
-	# The window itself is opaque chrome and should take clicks (that is
-	# what stops a click landing on the world behind it), but it must also
-	# not steal them from its own children, so PASS rather than STOP.
-	mouse_filter = Control.MOUSE_FILTER_PASS
+	# The window is opaque chrome and must CONSUME clicks, or they land on
+	# the world behind it and walk the character (playtest 2026-09-20, items
+	# 5 and 13).
+	#
+	# This was PASS, on the reasoning that STOP would "steal clicks from its
+	# own children". It does not: Godot hit-tests the deepest control under
+	# the cursor first, so a Button inside the window still gets its click
+	# and STOP only catches what the children did not want. PASS, by
+	# contrast, delivers the event here AND keeps propagating it, so every
+	# click on window chrome -- and every mouse wheel over it -- reached
+	# World3D._unhandled_input, which walked the player and zoomed the
+	# camera.
+	mouse_filter = Control.MOUSE_FILTER_STOP
 
 	# No interior fill is added here any more. A window's body is filled by
 	# its own `CIFNormalTile` controls, which the layout declares and

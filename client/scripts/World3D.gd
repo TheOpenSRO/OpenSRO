@@ -3979,7 +3979,21 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 	var placed := 0
 	var skipped := 0
 	var named := 0
+	var monsters_skipped := 0
 	for spawn in spawns:
+		# npcpos is not a table of NPCs: it holds every placed character,
+		# monsters included, and placing those here made Mangyangs stand in
+		# the fields outside Jangan as talkable NPCs (playtest 2026-09-20,
+		# item 1) -- clicking one opened a talk window instead of attacking.
+		#
+		# The engine's own naming separates them: characterdata's code is
+		# `NPC_CH_SMITH` for a shopkeeper and `MOB_CH_MANGNYANG` for a
+		# Mangyang. Monsters belong to the server, which spawns them from
+		# its own npcpos import (round 253) as real, attackable monsters, so
+		# the client must not also place a decorative copy.
+		if String(_npc_codes.get(spawn.npc_id, "")).begins_with("MOB_"):
+			monsters_skipped += 1
+			continue
 		var model: String = _npc_models.get(spawn.npc_id, "")
 		if model == "":
 			skipped += 1
@@ -4029,8 +4043,8 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 		group.add_child(holder)
 		_animate_skeleton(skeleton, idle_anim)
 		placed += 1
-	print("World3D: %d/%d NPC(s) placed in %d/%d (%d had no model, %d named)" % [
-		placed, spawns.size(), region_x, region_y, skipped, named])
+	print("World3D: %d/%d NPC(s) placed in %d/%d (%d had no model, %d named, %d monster rows left to the server)" % [
+		placed, spawns.size(), region_x, region_y, skipped, named, monsters_skipped])
 
 ## Loads real terrain from a real Map.pk2 region .m file via MapmReader +
 ## MapmTerrainBuilder, replacing both the placeholder ground's visual mesh
@@ -4755,6 +4769,8 @@ func _play_skill_cast_anim(anim_base: String) -> float:
 ## underbar quickslot (its icon shown there). Activating that quickslot is what
 ## casts it -- the authentic Silkroad flow (the window never casts directly).
 func _on_skill_assign_requested(skill_id: int, basic_code: String, icon: Texture2D) -> void:
+	if not _skill_is_assignable(skill_id):
+		return
 	for slot in range(HudUnderbar.SLOTS_PER_PAGE):
 		if not _quickslot_skills.has(slot):
 			_quickslot_skills[slot] = {"id": skill_id, "code": basic_code}
@@ -4767,12 +4783,28 @@ func _on_skill_assign_requested(skill_id: int, basic_code: String, icon: Texture
 ## on the quickslot under the mouse (replacing whatever was there), or do
 ## nothing when it was dropped elsewhere.
 func _on_skill_drop_requested(at: Vector2, skill_id: int, basic_code: String, icon: Texture2D) -> void:
+	if not _skill_is_assignable(skill_id):
+		return
 	var slot := _hud_underbar.slot_index_at(at)
 	if slot < 0:
 		return
 	_quickslot_skills[slot] = {"id": skill_id, "code": basic_code}
 	_hud_underbar.set_slot_item(slot, icon)
 	_log_system("Assigned skill to quickslot %d." % (slot % HudUnderbar.SLOTS_PER_PAGE + 1))
+
+## Whether a skill may go on the hotbar: the server has to have said the
+## character knows it.
+##
+## The skill window only arms a drag on a learned skill, so this is a second
+## gate rather than the only one -- but an unlearned skill was reaching the
+## bar somehow (playtest 2026-09-20, item 3), and every route onto it passes
+## through here. A refusal says so instead of failing silently, so the next
+## report names the route.
+func _skill_is_assignable(skill_id: int) -> bool:
+	if _hud_panels == null or _hud_panels.is_skill_known(skill_id):
+		return true
+	_log_system("You have not learned that skill yet.")
+	return false
 
 ## A quickslot was activated (clicked, or its number key pressed): cast the
 ## skill assigned to it.
@@ -8518,7 +8550,11 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 			_hud_player_info.set_mp(stats.mp, stats.max_mp)
 	if _hud_underbar != null:
 		_hud_underbar.set_exp(stats.exp_percent())
-		_hud_underbar.set_sp(stats.skill_points, maxi(stats.skill_points, 1))
+		# A plain total: SP is not out of anything, and passing a maximum drew
+		# the authored SP bar permanently full (playtest 2026-09-20, items 10
+		# and 19). The bar's real fill is progress toward the next skill
+		# point, which the server does not send yet.
+		_hud_underbar.set_sp(stats.skill_points)
 
 ## Spawns the real level-up burst on the player, sized to the player's own
 ## rendered height. Does nothing (beyond the message already logged) when the
