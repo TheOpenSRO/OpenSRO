@@ -5405,6 +5405,16 @@ than rolled over. A 110 boundary and an owner-level comparison are certain;
 what the taken branch at 0x4d6434 does is NOT, because its target is shared
 with another path -- the decompiled boolean reads backwards for a growth rule,
 which is the signal to leave it open rather than publish it.
+Round 291 (docs + cos rule + test): that branch READ, and the caution was
+right -- 0x4d653e is not a "no experience" return, it is the LEVEL-UP path
+(add, then `sub exp, threshold` and `add level, 1` in a loop back to
+0x4d65f1, guarded by the pet's own level against 0x8c = 140). So
+OffsetExpPoint's two paths are a clamp and a level-up, and the gate picks:
+pet level >= 110 OR >= the owner's level takes the clamp (experience
+accumulates but is held at threshold-1, never advancing); otherwise it levels,
+possibly several times in one gain. A GOLD PET LEVELS ONLY WHILE BELOW ITS
+OWNER'S LEVEL AND BELOW 110. cos.PetLevelUpBoundary / PetMaxLevel /
+PetLevelsUp + test. pets.md's pet-growth bullet closed.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

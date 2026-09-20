@@ -7075,6 +7075,42 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-ninety-first round: a pet levels only below its owner -- the branch I refused to guess
+
+Round 290 read `CGObjCOS_GoldPet::OffsetExpPoint` as far as it was certain and stopped at one
+branch, writing: *the decompiled boolean reads as "gain when petLevel >= ownerLevel", which is
+backwards from what a pet-growth rule ought to be -- and that is the signal to stop rather than
+publish.* Reading the target settles it, and the caution was right: **`0x4d653e` is not a "no
+experience" return at all.** It is the level-up path.
+
+	4d6552  call [this + 0x124]      ; the PET's own level
+	4d6596  cmp  level, 0x8c         ; 140
+	4d65aa  jge  <elsewhere>         ; at 140 this path does not run
+	4d65b0  add/adc                  ; experience += delta, 64-bit
+	4d65fb  cmp  exp, threshold
+	4d6611  sub  exp, threshold      ; LEVEL UP, carrying the remainder
+	4d6619  add  level, 1
+	4d668c  jmp  0x4d65f1            ; and around again -- several levels in one gain
+
+So the function's two paths are a **clamp** and a **level-up**, and the gate at `0x4d641b`
+chooses between them:
+
+| when | path | effect |
+|---|---|---|
+| pet level >= 110, or pet level >= the owner's | clamp | experience accumulates, held at `threshold - 1`; never advances |
+| otherwise, and its own level < 140 | level-up | the threshold is subtracted per level, in a loop |
+
+**A gold pet levels only while it is below its owner's level and below 110.** At or past either
+it keeps gaining experience and stops advancing -- which is exactly why the clamp path writes
+`threshold - 1` instead of discarding the gain. The rule is not backwards; the branch was.
+
+`server/internal/cos` carries `PetLevelUpBoundary`, `PetMaxLevel` and `PetLevelsUp` with a test
+pinning the strictness (`jb` is strict, so a pet *at* its owner's level clamps).
+
+The lesson is the one round 290 banked on: when a decompiled boolean reads backwards for the
+rule it claims to be, the branch target is the thing to read, not the boolean. One objdump
+turned a rule I would have published inverted into the right way round.
+
 ## Two-hundred-and-ninetieth round: the growth pet is the one with an experience method
 
 `pets.md` asked what distinguishes `CGObjCOS_GoldPet` from `CGObjCOS_SilkPet` "beyond their

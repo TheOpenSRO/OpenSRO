@@ -163,3 +163,28 @@ func TestSummonKindsCoverOneToFiveExactly(t *testing.T) {
 	// that list: 6, 7, 9 and 12 are real COS *item* TypeID4s, and none of them
 	// is a case of this switch.
 }
+
+// A gold pet levels only while it is below BOTH its owner's level and 110.
+// At or past either boundary it still gains experience -- the clamp path --
+// but stops advancing.
+func TestPetLevelsUpOnlyBelowTheOwnerAndTheBoundary(t *testing.T) {
+	if !PetLevelsUp(10, 40) {
+		t.Error("a level-10 pet under a level-40 owner should level")
+	}
+	if PetLevelsUp(40, 40) {
+		t.Error("a pet at its owner's level takes the clamp path (jb is strict)")
+	}
+	if PetLevelsUp(41, 40) {
+		t.Error("a pet above its owner's level takes the clamp path")
+	}
+	if !PetLevelsUp(109, 140) {
+		t.Error("109 is still below the boundary")
+	}
+	if PetLevelsUp(PetLevelUpBoundary, 140) {
+		t.Errorf("at %d the clamp path is taken however high the owner is", PetLevelUpBoundary)
+	}
+	if PetLevelUpBoundary >= PetMaxLevel {
+		t.Errorf("the level-up boundary (%d) must sit below the max the other path tests (%d)",
+			PetLevelUpBoundary, PetMaxLevel)
+	}
+}

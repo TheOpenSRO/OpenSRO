@@ -181,3 +181,49 @@ func SummonKindIsPet(typeID4 int) bool { return typeID4 == KindPetWolf || typeID
 // SummonKindIsGuild reports whether a kind takes the guild path, which also
 // tests the guild's level.
 func SummonKindIsGuild(typeID4 int) bool { return typeID4 == KindGuildCOS }
+
+// Pet growth, read from CGObjCOS_GoldPet::OffsetExpPoint (0x004d6370) on
+// 2026-09-20. Only the GOLD pet has this method; the silk pet has no
+// experience method at all (docs/protocol/pets.md).
+//
+// The function has **two paths**, and which one a gain takes is the whole
+// rule. The choice is made on the pet's level byte (its data record +0x58)
+// against two things:
+//
+//		4d641b  cmp byte [pet+0x58], 0x6e     ; 110
+//		4d641f  jae  <clamp path>             ; at 110 or above -> never levels
+//		4d642f  call [owner + 0x124]          ; the owner's GetLevel
+//		4d6431  cmp byte [pet+0x58], al
+//		4d6434  jb   <level-up path>          ; below the owner -> may level
+//
+//	  - CLAMP path: experience is added and then held at `threshold - 1`, the
+//	    function recomputing the delta to match. The pet keeps gaining but can
+//	    never cross into the next level.
+//	  - LEVEL-UP path: experience is added and, while it reaches the level's
+//	    threshold, the threshold is subtracted and the level incremented -- a
+//	    real loop (`jmp 0x4d65f1`), so one gain can carry several levels. It is
+//	    guarded by the pet's own GetLevel against 0x8c = 140.
+//
+// So a gold pet levels only while it is **below its owner's level** and below
+// 110; at or past either it still accumulates experience but stops advancing.
+// The thresholds are per level and come from a reference row (`this+0x1ce0`,
+// +8/+0xc as a 64-bit), not from any constant here, and experience itself is
+// 64-bit at the pet's data record +0x60/+0x64.
+const (
+	// PetLevelUpBoundary is the 110 at 0x4d641b. At or above it the clamp
+	// path is taken unconditionally. Named for what the code does with it
+	// rather than "the cap", because the cap the other path tests is 140.
+	PetLevelUpBoundary = 110
+	// PetMaxLevel is the 0x8c the level-up path tests the pet's own level
+	// against before doing anything.
+	PetMaxLevel = 140
+)
+
+// PetLevelsUp reports whether a gold pet's experience gain takes the level-up
+// path rather than the clamp path.
+func PetLevelsUp(petLevel, ownerLevel int) bool {
+	if petLevel >= PetLevelUpBoundary {
+		return false
+	}
+	return petLevel < ownerLevel
+}

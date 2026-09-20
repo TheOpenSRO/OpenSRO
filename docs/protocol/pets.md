@@ -157,7 +157,7 @@ Read as far as it is unambiguous, and no further:
 - On a real gain it calls `GObjPC::FUN_004496e0(lo, hi)` and sends text id
   `0x30c9`.
 
-**The level branch is read but its meaning is not.** In assembly:
+**The level branch, read in full (round 291).** In assembly:
 
 	4d641b  cmp  BYTE PTR [esi+0x58], 0x6e     ; the data record's level byte vs 110
 	4d641f  jae  4d643a                        ; >= 110 skips the owner test entirely
@@ -165,13 +165,32 @@ Read as far as it is unambiguous, and no further:
 	4d6431  cmp  BYTE PTR [esi+0x58], al
 	4d6434  jb   4d653e                        ; below the owner's level -> elsewhere
 
-So there is a **110 boundary** and a comparison against the **owner's level**,
-both certain. What is *not* certain is what `0x4d653e` does: the decompilation
-shows a second branch further down that also calls `GetLevel`, so that target
-may be an alternative path rather than a plain "no experience" return. Stating
-the rule's direction would need that block read, and it is not read here --
-a pet-growth rule inverted is exactly the kind of error this project has
-learned to leave open instead.
+`0x4d653e` is **not** a "no experience" return -- the caution was warranted.
+It is the **level-up path**, and reading it settles the rule:
+
+	4d6552  call [this + 0x124]           ; the PET's own level
+	4d6596  cmp  level, 0x8c              ; 140
+	4d65aa  jge  <elsewhere>              ; at 140 it does not run
+	4d65b0  add/adc                       ; experience += delta, 64-bit
+	4d65fb  cmp  exp, threshold           ; 64-bit
+	4d6611  sub  exp, threshold           ; LEVEL UP: carry the remainder
+	4d6619  add  level, 1
+	4d668c  jmp  0x4d65f1                 ; and around again -- several levels in one gain
+
+So the two paths are a clamp and a level-up, and the gate chooses between them:
+
+| when | path | effect |
+|---|---|---|
+| pet level >= 110, **or** pet level >= owner's level | clamp | experience accumulates but is held at `threshold - 1`; the pet never advances |
+| otherwise (and its own level < 140) | level-up | experience is added and each threshold subtracted in a loop; several levels can land at once |
+
+**A gold pet levels only while it is below its owner's level and below 110.**
+At or past either boundary it keeps gaining experience and stops advancing,
+which is why the clamp writes `threshold - 1` rather than discarding the gain.
+
+`server/internal/cos` carries the two boundaries and `PetLevelsUp`. The
+thresholds themselves are per level and come from the reference row at
+`this+0x1ce0` (+8/+0xc, 64-bit); which table that row belongs to is not read.
 
 ## The database surface
 
@@ -187,8 +206,7 @@ recovered** for either.
   see "What the switch is switching on" above.
 - **The hunger gauge** — `HGPFULL_NODRINK` names it and nothing reads its rate,
   capacity or what happens at zero.
-- **Pet growth.** Partly read -- see "The growth pet is the one with an
-  experience method" below. What the level branch at `0x4d6434` does on its
-  taken side is still open.
+- ~~**Pet growth.**~~ **Recovered 2026-09-20 (round 291)** -- both paths read,
+  see below. What remains is the reference row the thresholds come from.
 - **The mercenary**, which is the only class of the six with a different vtable
   length and has not been looked at.
