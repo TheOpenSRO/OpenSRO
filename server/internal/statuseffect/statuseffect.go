@@ -139,3 +139,75 @@ func ElectricShockParryPercent(value2 int) int {
 	}
 	return v
 }
+
+// How long a state lasts -- read 2026-09-20 (round 276).
+//
+// The record carries its duration at +0xc and the tick when it started at
+// +0x64 (+0x68 being the LAST-tick stamp, which is a different field).
+// AbnormalState_UpdateOwnerClear (0x4a4390) walks all 32 slots each pass and,
+// for an active one, removes it when either
+//
+//	the owner's mask (pc+4) no longer holds the record's own bit (+0x8), or
+//	GetTickCount() - record+0x64 > record+0xc
+//
+// otherwise it ORs the slot's mask into the new owner mask and calls the
+// applier with mode 1. So the mask is the authority: clearing a bit there
+// removes the state on the next pass.
+//
+// The duration itself comes from a CFormulae switch (0x410b40) that every one
+// of the six elemental blocks calls the same way:
+//
+//	mov cx, WORD PTR [ebx+0x1a]     ; the resist-reduced chance it just computed
+//	mov al, <slot>                  ; freeze 0, frostbite 1, burn 2,
+//	call 0x410b40                   ;   electric shock 3, poison 4, zombie 5
+//	mov [ebx+0xc], eax              ; the duration, in milliseconds
+//
+// **The number that decides whether the state lands also decides how long it
+// lasts.** The kind byte is the SLOT, not the client bit -- burn passes 2 and
+// electric shock 3 -- which is a fourth independent agreement with the mask
+// table (see MaskForSlot).
+
+// DurationUnitMs is the milliseconds-per-chance-point a slot's states last.
+// The six values are the engine's own literals in the switch: 0x61, 0xfa,
+// 0x2ee (twice), 500 and 1000. Slots 2 and 5 share one case.
+func DurationUnitMs(slot int) (int, bool) {
+	switch slot {
+	case SlotFreeze:
+		return 97, true // 0x61
+	case SlotFrostbite:
+		return 250, true // 0xfa
+	case SlotBurn, SlotZombie:
+		return 750, true // 0x2ee
+	case SlotElectricShock:
+		return 500, true
+	case SlotPoison:
+		return 1000, true
+	}
+	// Every other slot asserts in the engine: only the six elemental blocks
+	// take their duration from this formula.
+	return 0, false
+}
+
+// DurationMs is the state's lifetime: the chance the block computed times the
+// slot's unit. The engine masks the chance to 16 bits before multiplying.
+func DurationMs(slot, chance int) (int, bool) {
+	unit, ok := DurationUnitMs(slot)
+	if !ok {
+		return 0, false
+	}
+	if chance < 0 {
+		return 0, true
+	}
+	return (chance & 0xffff) * unit, true
+}
+
+// DefaultTickIntervalMs is what a block writes into record+0x10 when the skill
+// carries no 'puls' value (`mov DWORD PTR [ebx+0x10], 0x7d0`). Only bleeding
+// reads that field; burn, electric shock and poison hard-code TickIntervalMs.
+const DefaultTickIntervalMs = 2000
+
+// Expired is the removal test, with the engine's comparison kept exactly:
+// a state lives while the elapsed time is at most its duration.
+func Expired(nowMs, startMs uint32, durationMs uint32) bool {
+	return nowMs-startMs > durationMs
+}

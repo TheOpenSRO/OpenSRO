@@ -7075,6 +7075,42 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-seventy-sixth round: a status effect's lifetime is its chance
+
+The RE tick for 2026-09-20 finished what the previous one left open. Round 275 read the
+whole state record -- interval, level, chance, factor, the per-state payloads, the source,
+the active byte, the last-tick stamp -- and never found a duration. It is at `record+0xc`,
+and the start stamp is `+0x64`, one field below the last-tick stamp that had been mistaken
+for the whole of the timing.
+
+**The removal test.** `AbnormalState_UpdateOwnerClear` (`0x4a4390`) walks all 32 slots each
+pass and drops an active state when either the owner's mask at `pc+4` no longer holds the
+record's own bit (`+0x8`) or `GetTickCount() - record+0x64 > record+0xc`; otherwise it ORs
+the slot's mask word into the rebuilt owner mask and calls `applier(1, record)`. The mask is
+the authority -- clearing a bit there removes the state on the next pass, which is what the
+function's name has always meant.
+
+**The duration is the chance.** `record+0xc` is written from a `CFormulae` switch
+(`0x410b40`) that multiplies a u16 by a per-kind literal: 0 -> 97 ms, 1 -> 250, 2 and 5 ->
+750, 3 -> 500, 4 -> 1000. The decompiler drops both arguments, so the six call sites had to
+be read as assembly, and all six do the same two instructions:
+
+	mov cx, WORD PTR [ebx+0x1a]      ; the resist-reduced chance the block just computed
+	mov al, <kind>
+
+So the single number that decides **whether** a state lands also decides **how long** it
+lasts: freeze at chance 30 lasts 2.9 s, poison at the same chance lasts 30 s.
+
+**And the kinds are slots, not bits.** Burn passes `al = 2` and electric shock `al = 3` --
+the same swap round 275 recovered from the `0xc63ec8` mask table, now stated by a completely
+different mechanism. That is the fourth independent agreement, and it means the two rows
+round 248 had the wrong way round are settled beyond argument.
+
+`statuseffect.DurationUnitMs`, `DurationMs` and `Expired` carry it with tests, including the
+unsigned wrap `GetTickCount` needs and the strictness of the comparison (a state is alive at
+exactly its duration). One name: `CFormulae::AbnormalStateDurationMs`. Where the
+non-elemental states get their `+0xc` is still unread.
+
 ## Two-hundred-and-seventy-fifth round: the table that was "by shape a duration" is burn's damage, and two appliers were the wrong way round
 
 The RE tick for 2026-09-20 took the Status effects row's open item -- the `0xc63c94` word

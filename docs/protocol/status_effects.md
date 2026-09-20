@@ -156,6 +156,48 @@ source unconditionally, so no poison tick is ever credited to anyone.
 removal writes **100**. That the neutral is 100 is the useful part: a param-9 contribution
 from this slot is a *percent of normal*, not a flat delta.
 
+### How long a state lasts -- READ (round 276, 2026-09-20)
+
+The duration lives at **`record+0xc`**, the start stamp at **`+0x64`** (`+0x68` is the
+LAST-tick stamp, a different field), and the removal test is
+`AbnormalState_UpdateOwnerClear` (`0x4a4390`), which walks all 32 slots each pass:
+
+	for slot in 0..31, if the record is active:
+	    if (ownerMask & record+0x8) == 0                       -> remove
+	    else if GetTickCount() - record+0x64 > record+0xc      -> remove
+	    else  ownerMask' |= maskTable[slot] ; applier(1, record)
+
+Removal clears the flag bytes and calls `applier(2, record)`. **The owner's mask at `pc+4`
+is the authority**: clear a bit there and the state goes on the next pass, which is what the
+function's name means by "owner clear".
+
+The duration itself is a `CFormulae` switch (`0x410b40`), and all six elemental blocks call
+it identically -- the assembly is the whole argument, because the decompiler drops both
+arguments (one in `AL`, one in `CX`):
+
+	mov cx, WORD PTR [ebx+0x1a]      ; the resist-reduced CHANCE this block just computed
+	mov al, <kind>                   ; a literal, per block
+	call 0x410b40
+	mov [ebx+0xc], eax               ; the duration, in milliseconds
+
+| block | state | `al` | multiplier | duration at chance 30 |
+|---|---|---:|---:|---:|
+| `+0x30c` `fz` (`0x590830`) | freeze | 0 | `0x61` = **97 ms** | 2.9 s |
+| `+0x310` `fb` (`0x590965`) | frostbite | 1 | `0xfa` = **250 ms** | 7.5 s |
+| `+0x318` `bu` (`0x590c07`) | burn | **2** | `0x2ee` = **750 ms** | 22.5 s |
+| `+0x314` `es` (`0x590a97`) | electric shock | **3** | **500 ms** | 15 s |
+| `+0x31c` `ps` (`0x590d64`) | poison | 4 | **1000 ms** | 30 s |
+| `zb` (`0x590eb4`) | zombie | 5 | `0x2ee` = **750 ms** | 22.5 s |
+
+Two things fall out of that table. **The number that decides whether a state lands also
+decides how long it lasts** -- one value, `record+0x1a`, is both. And the `al` literal is the
+SERVER SLOT, not the client bit: burn passes 2 and electric shock passes 3, which is a
+fourth independent agreement with the `0xc63ec8` mask table above, from a different
+mechanism again.
+
+Only these six take their duration from the formula; every other `al` hits the switch's
+assert. Where the non-elemental states' `+0xc` comes from is unread.
+
 ### The `0xc63c94` table is burn's damage curve, not a duration table
 
 This page called it "by shape a duration table". It is not. It is written in exactly one

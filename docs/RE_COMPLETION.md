@@ -5234,6 +5234,17 @@ array at pc+0xc stride 0x70, the applier call `(mode, record)`, poison's
 `min(value2, curHP-1)` which cannot kill and credits nobody, and electric
 shock's `clamp(100-value2, 0, 100)` percent on param 9 with 100 neutral.
 `internal/statuseffect` + tests. Param 8 deliberately left unnamed.
+Round 276 (docs + statuseffect): a status effect's LIFETIME. Duration at
+record+0xc, start at +0x64, and AbnormalState_UpdateOwnerClear (0x4a4390)
+removes a state when `GetTickCount() - start > duration` or when the owner's
+mask at pc+4 has dropped its bit -- the mask is the authority. The duration is
+CFormulae's switch at 0x410b40: `chance x unit`, unit by SLOT (freeze 97 ms,
+frostbite 250, burn 750, electric shock 500, poison 1000, zombie 750), read
+from the six call sites' `mov al,<slot>` / `mov cx,[ebx+0x1a]` because the
+decompiler drops both arguments. So the resist-reduced chance is also the
+lifetime. The `al` literals are slots, not client bits (burn 2, electric shock
+3) -- a fourth, independent agreement with round 275's mask table.
+`statuseffect.DurationMs`/`Expired` + tests. One name.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

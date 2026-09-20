@@ -86,3 +86,55 @@ func TestElectricShockParryPercentClampsAroundTheNeutral(t *testing.T) {
 		t.Errorf("a negative value -> %d, want 100 (clamped above)", got)
 	}
 }
+
+// Duration is the chance times the slot's own unit, and only the six elemental
+// slots have one.
+func TestDurationIsTheChanceTimesTheSlotUnit(t *testing.T) {
+	cases := []struct {
+		slot, unit int
+	}{
+		{SlotFreeze, 97}, {SlotFrostbite, 250}, {SlotBurn, 750},
+		{SlotElectricShock, 500}, {SlotPoison, 1000}, {SlotZombie, 750},
+	}
+	for _, c := range cases {
+		got, ok := DurationUnitMs(c.slot)
+		if !ok || got != c.unit {
+			t.Errorf("slot %d unit %d (ok=%v), want %d", c.slot, got, ok, c.unit)
+		}
+		if d, ok := DurationMs(c.slot, 20); !ok || d != 20*c.unit {
+			t.Errorf("slot %d, chance 20 -> %d ms (ok=%v), want %d",
+				c.slot, d, ok, 20*c.unit)
+		}
+	}
+	// A chance of 30 on poison is half a minute; the same chance on freeze is
+	// under three seconds. The spread is the engine's, not a rounding of one
+	// unit.
+	if d, _ := DurationMs(SlotPoison, 30); d != 30000 {
+		t.Errorf("poison at chance 30 -> %d ms, want 30000", d)
+	}
+	if d, _ := DurationMs(SlotFreeze, 30); d != 2910 {
+		t.Errorf("freeze at chance 30 -> %d ms, want 2910", d)
+	}
+	for _, slot := range []int{SlotBleeding, 6, 14, 31} {
+		if _, ok := DurationUnitMs(slot); ok {
+			t.Errorf("slot %d should have no unit -- the engine asserts there", slot)
+		}
+	}
+}
+
+// The removal test keeps the engine's strictness: alive at exactly the
+// duration, gone one millisecond later.
+func TestExpiredIsStrictlyGreaterThanTheDuration(t *testing.T) {
+	const start, dur = 1_000_000, 5_000
+	if Expired(start+dur, start, dur) {
+		t.Error("a state at exactly its duration is still alive")
+	}
+	if !Expired(start+dur+1, start, dur) {
+		t.Error("one millisecond past the duration it must go")
+	}
+	// GetTickCount wraps at 2^32; the engine's unsigned subtraction survives
+	// it, and so must this.
+	if Expired(5, 0xffffffff-5, 20) {
+		t.Error("a state that started before the tick wrap should not expire early")
+	}
+}
