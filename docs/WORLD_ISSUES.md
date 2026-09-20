@@ -7075,6 +7075,39 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-eighty-fifth round: one procedure, three call sites, three signatures
+
+The rule caught it before a word was written this time. Setting out to trace
+`_UPDATE_USER_N_CHAR_GOLD`'s four arguments, `server_sql.md` turned out to have all four
+already -- `(userJID, user gold, charID, character gold)`, the first id from the player
+object's vslot at `+8`, its balance at `+0x1ca8`, the second from the vslot at `+0x380` and
+`char-data +0x78`. Nothing to add, and this time nothing was published before checking.
+
+**It also corrected round 284.** That round called `_STRG_DEL_ITEM`'s first argument "unread".
+It is the **move kind**, and the same page had already decoded the byte: 2 = bag to chest,
+`0x20`/`0x21` = guild chest, 10/11/12 = the gold moves. Fixed in `persistence.md`.
+
+**What was genuinely open, from the same grep.** `_STRG_MOVE_ITEM` is issued from three
+functions, and no two agree on the literal:
+
+	AQ_StorageUpdater::MoveItemWithGold (0x45af70), twice   (%d,%d,%d,%d,%d,%d,%d,0)
+	AQ_StorageUpdater::RearrangeItem    (0x45b5a0)          (%d,%d,%d,%d,%d,%d,%d,%d)
+	AQ_StorageUpdater::MoveItem         (0x45c9a0)          (%d,%d,%d,%I64d,%d,%d,%d,%d)
+
+`server_sql.md` quoted the first as though it were the signature. Two things follow that
+matter to anyone implementing against it:
+
+**Argument 4 is 64 bits.** One call site formats it `%I64d` and the other two `%d`, for the
+same procedure and therefore the same column. A column cannot change width between callers, so
+the narrow sites pass a 32-bit value into a 64-bit parameter -- the engine's habit, not a
+reading of ours.
+
+**Argument 8 is only literally `0` in one of the three.** The other two pass a value, so
+quoting the `,0)` form alone reads as though the column were always zero.
+
+A procedure's signature is not one call site. Three sites, three strings, and the widest one is
+the one that tells you the column's type.
+
 ## Two-hundred-and-eighty-fourth round: two levers measured shut, and the first procedure parameters
 
 `ls docs/protocol/` first again, and it paid twice: `naming_ceiling.md` and `absence_audit.md`

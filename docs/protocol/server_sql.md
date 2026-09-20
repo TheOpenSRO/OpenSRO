@@ -122,10 +122,38 @@ with `(userJID, user gold, charID, character gold)` -- the first id from the
 player object's vslot at `+8`, its balance the int64 at player `+0x1ca8`; the
 second id from the vslot at `+0x380`, its balance the int64 at char-data `+0x78`
 -- and the guild counterpart is `_UPDATE_GUILD_N_CHAR_GOLD`. The item
-procedures (`_STRG_MOVE_ITEM (%d,%d,%d,%d,%d,%d,%d,0)`) receive *both* ids and
-a move kind (`+0x28`: 2 = bag to chest, `0x20`/`0x21` = guild chest, 10/11/12 =
-the gold moves), leaving the choice of key to the procedure -- which the
+procedures (`_STRG_MOVE_ITEM`) receive *both* ids and a move kind (`+0x28`:
+2 = bag to chest, `0x20`/`0x21` = guild chest, 10/11/12 = the gold moves),
+leaving the choice of key to the procedure -- which the
 `SelectUsedSlotsForStorage` queries above show.
+
+### One procedure, three call sites, three different format strings (round 285)
+
+`_STRG_MOVE_ITEM` is issued from three functions and **no two of them agree on
+the literal**:
+
+| function | literal |
+|---|---|
+| `AQ_StorageUpdater::MoveItemWithGold` (`0x45af70`), twice | `(%d,%d,%d,%d,%d,%d,%d,0)` |
+| `AQ_StorageUpdater::RearrangeItem` (`0x45b5a0`) | `(%d,%d,%d,%d,%d,%d,%d,%d)` |
+| `AQ_StorageUpdater::MoveItem` (`0x45c9a0`) | `(%d,%d,%d,%I64d,%d,%d,%d,%d)` |
+
+Two things follow, and both matter to anyone implementing against the form
+quoted above.
+
+**Argument 4 is 64 bits.** `MoveItem` formats it `%I64d` while the other two
+use `%d` for the same procedure and therefore the same column. A column cannot
+change width between callers, so the narrow sites are passing a 32-bit value
+into a 64-bit parameter -- which is the engine's own habit, not a reading of
+ours.
+
+**Argument 8 is only literally `0` in one of the three.** `RearrangeItem` and
+`MoveItem` pass a value there. Quoting the `,0)` form as *the* signature reads
+as though the column were always zero.
+
+`MoveItem`'s own arguments 5 and 6 are the **source and destination slots** --
+both are handed to `CGStorage::GetItem` a few lines earlier, which is what
+tells them apart from the other `%d`s.
 
 **srrevamp follows this since 2026-09-19 (v0.1.390).** Its warehouse table is
 `account_storage_slots` keyed by `account_id`, its stored gold is

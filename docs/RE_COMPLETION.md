@@ -5343,6 +5343,16 @@ passed to CGStorage::GetItem -- an argument that is also passed to a known
 accessor names itself. The unread arguments are left unread. Also corrected:
 real naming coverage is 5.3 % server / 3.0 % client, not the 21.7/14.8 this
 lane had been quoting (the old count treated vslot_NNN as a name).
+Round 285 (docs): `_STRG_MOVE_ITEM` is issued from THREE functions and no two
+agree on the literal -- MoveItemWithGold `(...,0)`, RearrangeItem all-`%d`,
+MoveItem with `%I64d` at argument 4. server_sql.md quoted the first as though
+it were the signature. Argument 4 is therefore 64 bits (a column cannot change
+width between callers, so the narrow sites truncate), and argument 8 is only
+literally 0 at one site. Also corrected: round 284 called `_STRG_DEL_ITEM`'s
+first argument unread -- it is the move kind, already decoded in server_sql.md
+(2 = bag to chest, 0x20/0x21 = guild chest, 10/11/12 = gold moves). And the
+`_UPDATE_USER_N_CHAR_GOLD` trace this tick set out to do was already complete
+in that page, caught BEFORE publishing rather than after.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

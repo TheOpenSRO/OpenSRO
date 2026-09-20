@@ -284,7 +284,7 @@ the argument's other use site is the citation.
 
 | arg | source | what it is |
 |---:|---|---|
-| 1 | byte at `this+0x28` | **unread** |
+| 1 | byte at `this+0x28` | the **move kind** -- `server_sql.md` had already decoded this byte (2 = bag to chest, `0x20`/`0x21` = guild chest, 10/11/12 = gold moves); round 284 called it unread without checking |
 | 2 | the call's own 64-bit argument | the item, as a 64-bit id -- this is a delete-by-item call |
 | 3 | byte at `this+0x2b` | a **storage slot**: the same byte is passed to `CGStorage::GetItem`, and `-1` in it makes the function log `AQ_StorageUpdater::Init() Failed` |
 | 4 | 64-bit at `*(param_2+0x34) + 0x78` | **unread** -- a 64-bit id belonging to the object in `param_2` |
