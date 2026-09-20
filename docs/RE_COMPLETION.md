@@ -5445,6 +5445,17 @@ independent groundings, and the record is anchored at both ends (+8/+0xc =
 col 1, +0x1c = col 5). Nothing moved: leveldata.Table.expToNext was already
 int64, so srrevamp was right by construction and is now right with the
 engine's field width behind it; a test pins the width rather than a number.
+Round 295 (docs): the LEVEL RECORD'S LAYOUT, pinned at four points by four
+different use sites -- +0x08/+0x0c = col 1 (GainExpAndLevel), +0x10 = col 2
+(FUN_0059c4e0, the mastery handler, already recorded for another reason),
++0x1c = col 5 (Formula_MonsterExpReward), +0x20/+0x24/+0x28 = cols 6/7/8. Round
+294's finding PREDICTED col 2 at +0x10 and an older recorded fact confirmed it.
+That retires the elimination argument export-leveldata used for +0x1c. Cols
+6/7/8 are THE THREE JOBS: TrijobMgr's 0x0060dd90 indexes by the JOB level
+(job+0x1d - 1) and picks the column by the job kind at job+0x1c -- 1 Trader,
+2 Robber, 3 Hunter, the byte round 273 read off JobRecordKindName. Cols 3 and 4
+are predicted at +0x14/+0x18 with no reader found, and recorded as predicted.
+Nothing wired: srrevamp models job kinds but not job levels.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it

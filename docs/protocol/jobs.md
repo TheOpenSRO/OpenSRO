@@ -123,3 +123,22 @@ wrapper in the same family.
   helpers.
 - The `_REFTREATITEMOFSHOP`, `_REFPRICEPOLICYOFITEM` and specialty-related
   reference tables, which are in the catalogue and unread.
+
+## The job experience curve is leveldata's columns 6, 7 and 8 (round 295)
+
+A `TrijobMgr` function (`0x0060dd90`) indexes the per-level table by the **job
+level** (the job record's byte at `+0x1d`, minus one) and selects a column by
+the **job kind** at `+0x1c` -- the same byte `GObjPC::JobRecordKindName` reads:
+
+	kind 1 (Trader) -> the level row's +0x20   = leveldata column 6
+	kind 2 (Robber) -> +0x24                   = column 7
+	kind 3 (Hunter) -> +0x28                   = column 8
+	anything else   -> Assert_BreakIfDebugger()
+
+The column offsets follow the level record's packing, which four independent
+readers pin (`docs/LEVELING.md`). So each job kind has its own per-level column
+in the same `leveldata.txt` the character curve comes from, and the function
+that reads it is the one maintaining the job record's running total at `+0x20`.
+
+srrevamp models job kinds but not job levels, so this is recorded rather than
+wired.

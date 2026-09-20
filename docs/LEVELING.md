@@ -35,6 +35,48 @@ The gold pet reads **the same field of the same table** for its own level-up
 threshold (`docs/protocol/pets.md`), so pet and character levelling share one
 curve.
 
+### The level record's layout, from four independent use sites (round 295)
+
+The rows the server indexes by `level - 1` are a flat 4-byte packing, and four
+separate readers pin four points of it -- no packing argument required:
+
+| offset | column | the use site that pins it |
+|---|---:|---|
+| `+0x08`/`+0x0c` (64-bit) | **1** -- exp to next | `GObjPC_GainExpAndLevel` adds to it and `__alldiv`s by it (round 294) |
+| `+0x10` | **2** -- mastery SP cost | `FUN_0059c4e0`, the mastery level-up handler, accumulates it over the levels raised |
+| `+0x1c` | **5** -- exp unit | `Formula_MonsterExpReward`, and a getter at `0x004e68xx` returning `row+0x1c` |
+| `+0x20`, `+0x24`, `+0x28` | **6, 7, 8** -- one per job | see below |
+| `+0x14`, `+0x18` | 3, 4 -- *predicted by the packing, no reader found yet* | |
+
+Four anchors agreeing on one stride is what turns this from an inference into a
+layout. It also retires an older argument: `cmd/export-leveldata` justified
+`+0x1c` = column 5 because "every other packing puts a provably impossible
+value there". That elimination held, and it no longer has to carry the weight
+alone.
+
+### Columns 6, 7 and 8 are the three jobs
+
+A `TrijobMgr` function (`0x0060dd90`) indexes the same vector with the **job**
+level and then picks a column by the **job kind**:
+
+	uVar7 = *(byte *)(job + 0x1d) - 1;        ; the JOB level, as a 0-based index
+	iVar8 = rows[uVar7];
+	cVar1 = *(char *)(job + 0x1c);            ; the job kind byte
+	if (cVar1 == 1) param_1 = row[0x20];      ; column 6
+	else if (cVar1 == 2) param_1 = row[0x24]; ; column 7
+	else if (cVar1 == 3) param_1 = row[0x28]; ; column 8
+	else Assert_BreakIfDebugger();
+
+That kind byte is already recovered: round 273 read **1 Trader, 2 Robber,
+3 Hunter** off `GObjPC::JobRecordKindName`, which switches on this very field.
+So the three columns are **per-job values indexed by job level**, read on the
+path that updates the job record's running total at `+0x20` -- the same shape
+the character's experience path has. Which is why this page's older note that
+"cols 6-8 look job/cost/gold-related" was right about the family.
+
+srrevamp does not model job levels yet, so nothing here is wired in; the
+columns are recorded for when `internal/jobs` needs them.
+
 Other columns (10 total; cols 2/5/6-8 look job/cost/gold-related) are not needed for basic
 leveling and are left unread until a use for them is pinned. **leveldata.txt carries no per-level
 HP/MP** — those come from a derived-stat formula not yet recovered.

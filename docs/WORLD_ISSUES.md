@@ -7075,6 +7075,46 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-ninety-fifth round: the level record, pinned at four points, and the three jobs
+
+Round 294 put column 1 at `+8`/`+0xc`. That made a **prediction** worth testing: if the record
+is a flat 4-byte packing and `+0x1c` is column 5, then column 2 must sit at `+0x10`.
+
+It does. `FUN_0059c4e0`, the mastery level-up handler, "accumulates the level table's
+`entry+0x10`" and that field is leveldata's column 2 -- recorded in this project some time ago,
+for an entirely different reason. The prediction was made from one round's finding and
+confirmed by another round's, with no new reading needed.
+
+**Four anchors now pin the layout**, each from a different use site:
+
+	+0x08/+0x0c  (64-bit)  column 1  exp to next      GObjPC_GainExpAndLevel
+	+0x10                  column 2  mastery SP cost  FUN_0059c4e0
+	+0x1c                  column 5  exp unit         Formula_MonsterExpReward
+	+0x20/+0x24/+0x28      columns 6, 7, 8            TrijobMgr, below
+
+That also retires an argument by elimination: `cmd/export-leveldata` justified `+0x1c` = column
+5 on the grounds that "every other packing puts a provably impossible value there". The
+elimination held, and it no longer carries the weight alone.
+
+**Columns 6, 7 and 8 are the three jobs.** `0x0060dd90` indexes the same vector with the **job**
+level and picks a column by the **job kind**:
+
+	uVar7 = *(byte *)(job + 0x1d) - 1;        ; the JOB level as a 0-based index
+	cVar1 = *(char *)(job + 0x1c);            ; the job kind byte
+	1 -> row[0x20]   2 -> row[0x24]   3 -> row[0x28]   else Assert_BreakIfDebugger()
+
+Round 273 already read that byte: **1 Trader, 2 Robber, 3 Hunter**, off
+`GObjPC::JobRecordKindName`, which switches on this same field. So each job kind has its own
+per-level column in the very table the character curve comes from, read on the path that
+maintains the job record's running total at `+0x20`. The function lives in `TrijobMgr` -- the
+engine's own word for the three-job system.
+
+This page's older note that "cols 6-8 look job/cost/gold-related" turns out to have been right
+about the family and vague about the reason. It now has the reason.
+
+Nothing wired: srrevamp models job kinds but not job levels. Columns 3 and 4 are predicted by
+the packing at `+0x14`/`+0x18` and are recorded as predicted, with no reader found.
+
 ## Two-hundred-and-ninety-fourth round: the pet's threshold is the character's EXP curve, column 1
 
 Round 293 established that the pet and the character read the same per-level rows, and left the
